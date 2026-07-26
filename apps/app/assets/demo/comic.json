@@ -1,0 +1,18 @@
+{
+  "comicId": "zic-demo",
+  "title": "zic Demo",
+  "authors": [
+    "zic"
+  ],
+  "readingDirection": "ltr",
+  "coverUri": "assets/demo/pages/001.png",
+  "chapters": [
+    {
+      "chapterId": "chapter-001",
+      "title": "First Vertical Slice",
+      "sequence": 1,
+      "pageCount": 100,
+      "sourceRevision": "demo-r1"
+    }
+  ]
+}

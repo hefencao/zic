@@ -1,0 +1,17 @@
+name: pipeline
+description: Resource roles, heuristic policy, demand planning, and diffing for zic.
+version: 0.2.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+
+dependencies:
+  domain:
+    path: ../domain
+  telemetry:
+    path: ../telemetry
+
+dev_dependencies:
+  test: ^1.25.0

@@ -1,0 +1,3 @@
+[workspace]
+members = ["native/media_core"]
+resolver = "2"

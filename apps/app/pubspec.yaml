@@ -1,0 +1,38 @@
+name: zic
+description: zic Flutter application.
+publish_to: none
+version: 0.2.0+2
+resolution: workspace
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  domain:
+    path: ../../packages/domain
+  zic_library:
+    path: ../../packages/library
+  bridge:
+    path: ../../packages/bridge
+  pipeline:
+    path: ../../packages/pipeline
+  reader:
+    path: ../../packages/reader
+  sessions:
+    path: ../../packages/sessions
+  telemetry:
+    path: ../../packages/telemetry
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/demo/comic.json
+    - assets/demo/chapter_001.json
+    - assets/demo/pages/

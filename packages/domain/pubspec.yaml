@@ -1,0 +1,11 @@
+name: domain
+description: Core immutable domain models and resource identities for zic.
+version: 0.2.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+
+dev_dependencies:
+  test: ^1.25.0

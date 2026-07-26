@@ -1,0 +1,25 @@
+name: sessions
+description: Demand coordination and encoded-byte download sessions.
+version: 0.2.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+
+dependencies:
+  domain:
+    path: ../domain
+  pipeline:
+    path: ../pipeline
+  storage:
+    path: ../storage
+  telemetry:
+    path: ../telemetry
+  transport:
+    path: ../transport
+
+dev_dependencies:
+  test: ^1.25.0
+  testkit:
+    path: ../testkit

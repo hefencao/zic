@@ -1,0 +1,13 @@
+[package]
+name = "media_core"
+version = "0.2.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"

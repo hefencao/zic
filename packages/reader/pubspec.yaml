@@ -1,0 +1,21 @@
+name: reader
+description: Reader observation model and Flutter reader widgets for zic.
+version: 0.2.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  domain:
+    path: ../domain
+  telemetry:
+    path: ../telemetry
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0

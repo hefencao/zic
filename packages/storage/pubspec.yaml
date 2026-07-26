@@ -1,0 +1,15 @@
+name: storage
+description: Partial artifacts, checksums, sealing, and atomic promotion.
+version: 0.2.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+
+dependencies:
+  domain:
+    path: ../domain
+
+dev_dependencies:
+  test: ^1.25.0

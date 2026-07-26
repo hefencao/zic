@@ -1,0 +1,1014 @@
+{
+  "sourceId": "local-demo",
+  "comicId": "zic-demo",
+  "readingDirection": "ltr",
+  "chapter": {
+    "chapterId": "chapter-001",
+    "title": "First Vertical Slice",
+    "sequence": 1,
+    "pageCount": 100,
+    "sourceRevision": "demo-r1"
+  },
+  "pages": [
+    {
+      "pageId": "page-001",
+      "index": 0,
+      "uri": "assets/demo/pages/001.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 11175,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-002",
+      "index": 1,
+      "uri": "assets/demo/pages/002.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12067,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-003",
+      "index": 2,
+      "uri": "assets/demo/pages/003.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12313,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-004",
+      "index": 3,
+      "uri": "assets/demo/pages/004.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 11536,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-005",
+      "index": 4,
+      "uri": "assets/demo/pages/005.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 11885,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-006",
+      "index": 5,
+      "uri": "assets/demo/pages/006.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12565,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-007",
+      "index": 6,
+      "uri": "assets/demo/pages/007.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 11621,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-008",
+      "index": 7,
+      "uri": "assets/demo/pages/008.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12685,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-009",
+      "index": 8,
+      "uri": "assets/demo/pages/009.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12325,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-010",
+      "index": 9,
+      "uri": "assets/demo/pages/010.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 11178,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-011",
+      "index": 10,
+      "uri": "assets/demo/pages/011.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 11063,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-012",
+      "index": 11,
+      "uri": "assets/demo/pages/012.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12156,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-013",
+      "index": 12,
+      "uri": "assets/demo/pages/013.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12453,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-014",
+      "index": 13,
+      "uri": "assets/demo/pages/014.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 11639,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-015",
+      "index": 14,
+      "uri": "assets/demo/pages/015.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12005,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-016",
+      "index": 15,
+      "uri": "assets/demo/pages/016.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12627,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-017",
+      "index": 16,
+      "uri": "assets/demo/pages/017.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 11736,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-018",
+      "index": 17,
+      "uri": "assets/demo/pages/018.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12801,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-019",
+      "index": 18,
+      "uri": "assets/demo/pages/019.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12614,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-020",
+      "index": 19,
+      "uri": "assets/demo/pages/020.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12020,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-021",
+      "index": 20,
+      "uri": "assets/demo/pages/021.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12133,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-022",
+      "index": 21,
+      "uri": "assets/demo/pages/022.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12098,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-023",
+      "index": 22,
+      "uri": "assets/demo/pages/023.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13244,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-024",
+      "index": 23,
+      "uri": "assets/demo/pages/024.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12439,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-025",
+      "index": 24,
+      "uri": "assets/demo/pages/025.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12870,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-026",
+      "index": 25,
+      "uri": "assets/demo/pages/026.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13504,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-027",
+      "index": 26,
+      "uri": "assets/demo/pages/027.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12598,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-028",
+      "index": 27,
+      "uri": "assets/demo/pages/028.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13657,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-029",
+      "index": 28,
+      "uri": "assets/demo/pages/029.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13456,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-030",
+      "index": 29,
+      "uri": "assets/demo/pages/030.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12292,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-031",
+      "index": 30,
+      "uri": "assets/demo/pages/031.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12414,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-032",
+      "index": 31,
+      "uri": "assets/demo/pages/032.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13284,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-033",
+      "index": 32,
+      "uri": "assets/demo/pages/033.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12327,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-034",
+      "index": 33,
+      "uri": "assets/demo/pages/034.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12803,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-035",
+      "index": 34,
+      "uri": "assets/demo/pages/035.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13196,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-036",
+      "index": 35,
+      "uri": "assets/demo/pages/036.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13726,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-037",
+      "index": 36,
+      "uri": "assets/demo/pages/037.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12875,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-038",
+      "index": 37,
+      "uri": "assets/demo/pages/038.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13927,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-039",
+      "index": 38,
+      "uri": "assets/demo/pages/039.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13678,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-040",
+      "index": 39,
+      "uri": "assets/demo/pages/040.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 11433,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-041",
+      "index": 40,
+      "uri": "assets/demo/pages/041.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 11655,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-042",
+      "index": 41,
+      "uri": "assets/demo/pages/042.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12528,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-043",
+      "index": 42,
+      "uri": "assets/demo/pages/043.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12795,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-044",
+      "index": 43,
+      "uri": "assets/demo/pages/044.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 11529,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-045",
+      "index": 44,
+      "uri": "assets/demo/pages/045.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12383,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-046",
+      "index": 45,
+      "uri": "assets/demo/pages/046.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13005,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-047",
+      "index": 46,
+      "uri": "assets/demo/pages/047.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12114,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-048",
+      "index": 47,
+      "uri": "assets/demo/pages/048.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13172,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-049",
+      "index": 48,
+      "uri": "assets/demo/pages/049.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12938,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-050",
+      "index": 49,
+      "uri": "assets/demo/pages/050.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 11909,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-051",
+      "index": 50,
+      "uri": "assets/demo/pages/051.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12001,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-052",
+      "index": 51,
+      "uri": "assets/demo/pages/052.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12885,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-053",
+      "index": 52,
+      "uri": "assets/demo/pages/053.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13176,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-054",
+      "index": 53,
+      "uri": "assets/demo/pages/054.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12386,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-055",
+      "index": 54,
+      "uri": "assets/demo/pages/055.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 11923,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-056",
+      "index": 55,
+      "uri": "assets/demo/pages/056.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13362,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-057",
+      "index": 56,
+      "uri": "assets/demo/pages/057.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12471,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-058",
+      "index": 57,
+      "uri": "assets/demo/pages/058.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13472,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-059",
+      "index": 58,
+      "uri": "assets/demo/pages/059.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13276,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-060",
+      "index": 59,
+      "uri": "assets/demo/pages/060.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12525,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-061",
+      "index": 60,
+      "uri": "assets/demo/pages/061.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12651,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-062",
+      "index": 61,
+      "uri": "assets/demo/pages/062.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13501,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-063",
+      "index": 62,
+      "uri": "assets/demo/pages/063.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13781,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-064",
+      "index": 63,
+      "uri": "assets/demo/pages/064.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12985,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-065",
+      "index": 64,
+      "uri": "assets/demo/pages/065.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13350,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-066",
+      "index": 65,
+      "uri": "assets/demo/pages/066.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12556,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-067",
+      "index": 66,
+      "uri": "assets/demo/pages/067.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13077,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-068",
+      "index": 67,
+      "uri": "assets/demo/pages/068.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 14117,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-069",
+      "index": 68,
+      "uri": "assets/demo/pages/069.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13930,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-070",
+      "index": 69,
+      "uri": "assets/demo/pages/070.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 11633,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-071",
+      "index": 70,
+      "uri": "assets/demo/pages/071.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 11735,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-072",
+      "index": 71,
+      "uri": "assets/demo/pages/072.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12593,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-073",
+      "index": 72,
+      "uri": "assets/demo/pages/073.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12885,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-074",
+      "index": 73,
+      "uri": "assets/demo/pages/074.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12120,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-075",
+      "index": 74,
+      "uri": "assets/demo/pages/075.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12464,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-076",
+      "index": 75,
+      "uri": "assets/demo/pages/076.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13052,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-077",
+      "index": 76,
+      "uri": "assets/demo/pages/077.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 11634,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-078",
+      "index": 77,
+      "uri": "assets/demo/pages/078.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13284,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-079",
+      "index": 78,
+      "uri": "assets/demo/pages/079.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13059,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-080",
+      "index": 79,
+      "uri": "assets/demo/pages/080.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12692,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-081",
+      "index": 80,
+      "uri": "assets/demo/pages/081.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12777,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-082",
+      "index": 81,
+      "uri": "assets/demo/pages/082.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13643,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-083",
+      "index": 82,
+      "uri": "assets/demo/pages/083.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13906,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-084",
+      "index": 83,
+      "uri": "assets/demo/pages/084.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13163,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-085",
+      "index": 84,
+      "uri": "assets/demo/pages/085.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13546,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-086",
+      "index": 85,
+      "uri": "assets/demo/pages/086.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 14168,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-087",
+      "index": 86,
+      "uri": "assets/demo/pages/087.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13220,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-088",
+      "index": 87,
+      "uri": "assets/demo/pages/088.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12730,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-089",
+      "index": 88,
+      "uri": "assets/demo/pages/089.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 14162,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-090",
+      "index": 89,
+      "uri": "assets/demo/pages/090.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12491,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-091",
+      "index": 90,
+      "uri": "assets/demo/pages/091.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12656,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-092",
+      "index": 91,
+      "uri": "assets/demo/pages/092.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13489,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-093",
+      "index": 92,
+      "uri": "assets/demo/pages/093.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13741,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-094",
+      "index": 93,
+      "uri": "assets/demo/pages/094.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12903,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-095",
+      "index": 94,
+      "uri": "assets/demo/pages/095.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13344,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-096",
+      "index": 95,
+      "uri": "assets/demo/pages/096.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 13772,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-097",
+      "index": 96,
+      "uri": "assets/demo/pages/097.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12999,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-098",
+      "index": 97,
+      "uri": "assets/demo/pages/098.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 14006,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-099",
+      "index": 98,
+      "uri": "assets/demo/pages/099.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12536,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "page-100",
+      "index": 99,
+      "uri": "assets/demo/pages/100.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 11109,
+      "contentKindHint": "png",
+      "animatedHint": false
+    }
+  ]
+}
