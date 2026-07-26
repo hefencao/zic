@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
 import 'package:domain/domain.dart';
+import 'package:flutter/material.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'reader_controller.dart';

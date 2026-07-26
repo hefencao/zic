@@ -2,6 +2,7 @@ import 'package:domain/domain.dart';
 import 'package:transport/transport.dart';
 
 import 'download_session.dart';
+import 'net_lane.dart';
 
 final class DownloadJob {
   const DownloadJob({required this.transport, required this.session});
@@ -9,17 +10,25 @@ final class DownloadJob {
   final Transport transport;
   final DownloadSession session;
 
-  Future<DownloadSnapshot> run({String? expectedChecksum}) async {
+  Future<DownloadSnapshot> run({
+    String? expectedChecksum,
+    CancelToken? cancel,
+  }) async {
     final lease = session.beginRun();
     try {
-      await _run(expectedChecksum: expectedChecksum);
+      cancel?.throwIfCancelled();
+      await _run(expectedChecksum: expectedChecksum, cancel: cancel);
     } finally {
       session.endRun(lease);
     }
     return session.snapshot;
   }
 
-  Future<void> _run({String? expectedChecksum}) async {
+  Future<void> _run({
+    String? expectedChecksum,
+    CancelToken? cancel,
+  }) async {
+    cancel?.throwIfCancelled();
     await session.restore();
     if (session.state == DownloadState.promoted) {
       return;
@@ -46,7 +55,9 @@ final class DownloadJob {
       session.queue();
       start = 0;
     }
+    cancel?.throwIfCancelled();
     var response = await _open(start);
+    await _discardIfCancelled(cancel, response);
     if (start > 0) {
       try {
         requireResumeResponse(
@@ -64,7 +75,9 @@ final class DownloadJob {
         await session.reset();
         session.queue();
         start = 0;
+        cancel?.throwIfCancelled();
         response = await _open(0);
+        await _discardIfCancelled(cancel, response);
       }
     }
 
@@ -84,6 +97,7 @@ final class DownloadJob {
     var offset = session.committedLength;
     try {
       await for (final chunk in response.bytes) {
+        cancel?.throwIfCancelled();
         await session.append(writer, offset, chunk);
         offset += chunk.length;
       }
@@ -98,6 +112,16 @@ final class DownloadJob {
         await session.fail(writer, error);
       }
       rethrow;
+    }
+  }
+
+  Future<void> _discardIfCancelled(
+    CancelToken? cancel,
+    ByteResponse response,
+  ) async {
+    if (cancel?.cancelled ?? false) {
+      await response.discard();
+      cancel!.throwIfCancelled();
     }
   }
 

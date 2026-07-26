@@ -1,5 +1,5 @@
-import 'package:test/test.dart';
 import 'package:domain/domain.dart';
+import 'package:test/test.dart';
 
 void main() {
   test('stale epoch is rejected with a structured error', () {

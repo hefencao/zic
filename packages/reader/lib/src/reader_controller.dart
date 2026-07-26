@@ -1,7 +1,6 @@
-import 'package:flutter/foundation.dart';
 import 'package:domain/domain.dart';
+import 'package:flutter/foundation.dart';
 import 'package:telemetry/telemetry.dart';
-
 
 final class ReaderController extends ChangeNotifier {
   ReaderController({

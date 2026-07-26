@@ -1,7 +1,7 @@
+import 'package:catalog/catalog.dart';
+import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:domain/domain.dart';
-import 'package:zic_library/library.dart';
 import 'package:pipeline/pipeline.dart';
 import 'package:reader/reader.dart';
 import 'package:sessions/sessions.dart';
@@ -74,8 +74,7 @@ final class _DemoReaderLoaderState extends State<_DemoReaderLoader> {
           );
         }
         if (!snapshot.hasData) {
-          return const Scaffold(
-              body: Center(child: CircularProgressIndicator()));
+          return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
         return _ReaderRuntime(chapter: snapshot.requireData);
       },
@@ -96,7 +95,7 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
   late final MonoClock _clock;
   late final MemoryTraceSink _memoryTrace;
   late final TraceSink _trace;
-  late final FakeSessionCoordinator _coordinator;
+  late final FakeCoordinator _coordinator;
   late final PipelineController _pipeline;
   late final ReaderController _reader;
 
@@ -109,7 +108,7 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
       _memoryTrace,
       CallbackTraceSink((event) => debugPrint(event.toJsonLine())),
     ]);
-    _coordinator = FakeSessionCoordinator(
+    _coordinator = FakeCoordinator(
       clock: _clock,
       traceSink: _trace,
     );

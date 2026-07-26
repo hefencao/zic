@@ -19,6 +19,20 @@ final class ContentId {
 
   String get key => '$sourceId/$comicId/$chapterId/$pageId';
 
+  Map<String, Object> toJson() => <String, Object>{
+        'sourceId': sourceId,
+        'comicId': comicId,
+        'chapterId': chapterId,
+        'pageId': pageId,
+      };
+
+  factory ContentId.fromJson(Map<String, Object?> json) => ContentId(
+        sourceId: json['sourceId']! as String,
+        comicId: json['comicId']! as String,
+        chapterId: json['chapterId']! as String,
+        pageId: json['pageId']! as String,
+      );
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -48,6 +62,24 @@ final class DownloadId {
 
   String get key =>
       '${content.key}|$sourceRevision|${canonicalUri.toString()}';
+
+  Map<String, Object> toJson() => <String, Object>{
+        'content': content.toJson(),
+        'sourceRevision': sourceRevision,
+        'canonicalUri': canonicalUri.toString(),
+      };
+
+  factory DownloadId.fromJson(Map<String, Object?> json) {
+    final content = json['content'];
+    if (content is! Map) {
+      throw const FormatException('content must be an object');
+    }
+    return DownloadId(
+      content: ContentId.fromJson(Map<String, Object?>.from(content)),
+      sourceRevision: json['sourceRevision']! as String,
+      canonicalUri: Uri.parse(json['canonicalUri']! as String),
+    );
+  }
 
   @override
   bool operator ==(Object other) =>

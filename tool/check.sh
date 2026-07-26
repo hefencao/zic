@@ -15,7 +15,7 @@ if command -v flutter >/dev/null 2>&1; then
   (cd "$ROOT" && flutter analyze)
   for package_dir in \
     "$ROOT/packages/domain" \
-    "$ROOT/packages/library" \
+    "$ROOT/packages/catalog" \
     "$ROOT/packages/telemetry" \
     "$ROOT/packages/transport" \
     "$ROOT/packages/storage" \

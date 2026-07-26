@@ -20,7 +20,7 @@ jobs:
         run: |
           for package_dir in \
             packages/domain \
-            packages/library \
+            packages/catalog \
             packages/telemetry \
             packages/transport \
             packages/storage \

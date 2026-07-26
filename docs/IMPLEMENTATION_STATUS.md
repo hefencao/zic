@@ -1,92 +1,83 @@
 # Implementation Status
 
-## 0.2.0-dev.2 — Download foundation and naming cleanup
+## 0.3.0-dev.3 — Cache recovery and network lane
 
-### Naming
+### Naming corrections
 
-Internal code no longer repeats the product name where the repository already provides context:
+- Renamed the reserved internal package `library` to `catalog`.
+- Renamed its entry library to `catalog.dart` and updated the App, workspace,
+  benchmark, parser tests, CI, and repository validator.
+- Renamed `SessionCoordinator` / `FakeSessionCoordinator` to
+  `Coordinator` / `FakeCoordinator` inside the already-scoped `sessions`
+  package.
+- Renamed bridge locals to `lib` / `libPath` / `libVersion`.
+- Added a repository gate rejecting the reserved package name `library`.
 
-```text
-apps/app
-packages/domain
-packages/library
-packages/reader
-packages/pipeline
-packages/sessions
-packages/transport
-packages/storage
-packages/telemetry
-packages/testkit
-packages/bridge
-native/media_core
-```
+### Transport correction
 
-Public Dart names were shortened where the meaning remains clear:
+`Validators.fromJson` no longer relies on promotion through a compound type
+check and does not add a redundant `as String`. It branches explicitly:
+null remains null, a String is parsed, and every other type is rejected.
 
-```text
-ContentId / DownloadId / DecodeId / ResourceId
-ReaderObs / Interaction / Coverage
-SessionCoordinator / FakeSessionCoordinator
-MonoClock / DetScheduler / Failure
-```
+### Cache and artifact lifecycle
 
-The `zic_*` prefix remains on C ABI exports because those symbols share a global native namespace.
+- Added `CacheRec`, `CacheState`, and the async `CacheIndex` contract.
+- Added `MemIndex` for deterministic tests.
+- Added `SqliteIndex` with schema version 1, WAL mode, upsert, filtering,
+  totals, and unsupported-version rejection.
+- Added deterministic `CacheLayout` paths based on `DownloadId`.
+- Added `CacheScanner` for metadata recovery, stale record removal, orphan
+  cleanup, checksum rebuild, and active-path protection.
+- Final artifacts now retain authoritative metadata instead of deleting all
+  metadata during promote.
+- Promote stages final metadata before moving bytes and recognizes
+  `.meta.tmp` after interruption.
+- `DownloadId` and `ContentId` now have explicit JSON representations.
+- `DownloadSession` updates/removes cache records on restore, bind, seal,
+  failure, promote, reset, and eviction.
 
-### Implemented in this iteration
+### Real network execution
 
-- `ByteRange`, `Validators`, `ByteResponse`, and `Transport`.
-- `HttpTransport` with `Range`, `If-Range`, ETag, Last-Modified, and Content-Range parsing.
-- `FileTransport` with validator-aware ranged reads.
-- WebP/GIF/fallback content signature sniffing.
-- Streaming CRC32.
-- Durable partial `Artifact` with strict contiguous append.
-- Sidecar metadata write/read.
-- Partial restore and checksum rebuild.
-- Seal with length/checksum validation.
-- Same-filesystem partial-to-final promote.
-- `DownloadState` and immutable `DownloadSnapshot`.
-- Exclusive `RunLease` for active transport and `WriterLease` for byte authority.
-- Stale run/writer/epoch rejection.
-- Detach without cancelling an active receiving writer.
-- Safe reset, dispose, and eviction guards.
-- `DownloadJob` with matching-validator resume.
-- Discard rejected responses, then restart from zero when range or validators are rejected.
-- Promote an already complete restored partial without another request.
-- Trace events for state, committed bytes, resume, seal, promote, and rejected work.
+- Added bounded-concurrency `NetLane` with priority, FIFO tie-breaking,
+  coalescing, queued cancellation, active cancellation tokens, and idle wait.
+- Added `DownloadRegistry` as the sole owner of download sessions.
+- Added `LiveCoordinator`, which maps download demand diffs to the network
+  lane while retaining active receiving tasks after ordinary detach.
+- Added cooperative cancellation to `DownloadJob` and response discard when
+  cancellation arrives after open.
+- Added `StartupRecovery` to open the index, scan artifacts, restore sessions,
+  and emit one cache-scan trace event.
+- Added `IoTransport` routing for HTTP(S) and file URIs.
 
-### Tests added
+### Tests added or adjusted
 
-- Standard CRC32 vector.
-- Arbitrary chunk boundaries.
-- Non-contiguous append rejection.
-- Durable partial restoration.
-- Exclusive writer ownership.
-- Late old-epoch append rejection.
-- Detach-retain behavior.
-- Interrupted download resume.
-- Validator mismatch restart.
-- File transport range behavior.
-- HTTP range and validator parsing.
-- WebP/GIF signature sniffing.
+- Catalog package/import regression coverage.
+- Validator parsing and invalid-type rejection.
+- Memory and SQLite cache index parity.
+- Partial/final scanner reconstruction.
+- Interrupted-promote staged metadata recovery.
+- Active orphan protection.
+- Network lane priority, FIFO, coalescing, and queued cancellation.
+- Live coordinator file download integration.
+- Startup scan and session restoration.
+- Final metadata retention after promote.
 
 ### Validation state
 
-The repository validator passes package boundaries, naming policy, manifest/resource integrity, Dart delimiter checks, and ABI symbol agreement.
+The local repository validator, YAML parser, manifest/resource checks, package
+boundary checks, naming checks, delimiter checks, shell syntax checks, and ABI
+symbol checks pass.
 
-The execution image still lacks Flutter/Dart and Rust toolchains, so analyzer, Dart tests, Flutter tests, and Cargo tests are configured in `tool/check.sh` and CI but cannot be claimed as executed locally.
-
-### Deliberately deferred
-
-- SQLite cache index and startup orphan scanner.
-- Real coordinator network lane and cancellation tokens.
-- Rust Animated WebP source/cursor/frame API.
-- Platform texture path.
-- Adaptive policy.
+This execution image still has no Flutter/Dart or Rust toolchains. Therefore
+`dart format`, analyzer, Dart/Flutter tests, Cargo formatting, and Cargo tests
+remain CI gates and are not claimed as locally executed.
 
 ### Next iteration
 
-1. Add cache records and SQLite-backed index.
-2. Add artifact startup scanner with active-path protection.
-3. Add a real download registry and network lane.
-4. Connect download demand apply/detach to `DownloadSession` without letting UI own transport.
-5. Add fault-injection tests for process interruption around seal/promote.
+1. Add cache capacity policy and LRU candidate selection without bypassing
+   session safety checks.
+2. Add explicit clear-cache orchestration and released-byte reporting.
+3. Add retry/backoff policy for demanded failed downloads.
+4. Add decode/upload lane shells before introducing the Rust WebP cursor API.
+5. Begin the incremental Rust WebP byte-source contract and fuzzable parser
+   boundary.

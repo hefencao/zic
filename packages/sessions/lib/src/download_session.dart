@@ -58,6 +58,7 @@ final class DownloadSession {
     required this.clock,
     this.traceSink = const NoopTraceSink(),
     this.sessionId = 'download',
+    this.index,
   });
 
   final DownloadId id;
@@ -65,6 +66,7 @@ final class DownloadSession {
   final MonoClock clock;
   final TraceSink traceSink;
   final String sessionId;
+  final CacheIndex? index;
 
   DownloadState _state = DownloadState.idle;
   SourceEpoch _epoch = const SourceEpoch(0);
@@ -146,6 +148,7 @@ final class DownloadSession {
 
     if (restored.state == ArtifactState.promoted) {
       _state = DownloadState.promoted;
+      await _syncCache(CacheState.ready);
       return snapshot;
     }
 
@@ -153,7 +156,7 @@ final class DownloadSession {
       var validMeta = false;
       try {
         final meta = await artifact.readMeta();
-        if (meta != null && meta['downloadKey'] == id.key) {
+        if (meta != null && _metaMatches(meta)) {
           final rawValidators = meta['validators'];
           final rawLength = meta['totalLength'];
           if (rawValidators is Map &&
@@ -183,6 +186,7 @@ final class DownloadSession {
 
     _state = DownloadState.idle;
     _failure = null;
+    await _syncCache(CacheState.partial);
     return snapshot;
   }
 
@@ -200,13 +204,15 @@ final class DownloadSession {
     _validators = validators;
     _totalLength = totalLength;
     await artifact.writeMeta(<String, Object?>{
-      'version': 1,
+      'version': 2,
       'downloadKey': id.key,
+      'download': id.toJson(),
       'uri': id.canonicalUri.toString(),
       'sourceRevision': id.sourceRevision,
       'validators': validators.toJson(),
       if (totalLength != null) 'totalLength': totalLength,
     });
+    await _syncCache(CacheState.partial);
   }
 
   WriterLease acquireWriter() {
@@ -275,6 +281,7 @@ final class DownloadSession {
         'kind': _contentKind.name,
       },
     );
+    await _syncCache(CacheState.partial);
     return snapshot;
   }
 
@@ -289,6 +296,7 @@ final class DownloadSession {
         'length': promoted.committedLength,
       },
     );
+    await _syncCache(CacheState.ready);
     return snapshot;
   }
 
@@ -307,6 +315,7 @@ final class DownloadSession {
       TraceEventKind.downloadState,
       <String, Object?>{'state': _state.name, 'error': '$_failure'},
     );
+    await _syncCache(CacheState.partial);
   }
 
   void attach() => _demanded = true;
@@ -342,6 +351,7 @@ final class DownloadSession {
     _failure = null;
     await _restartArtifact();
     _state = DownloadState.idle;
+    await index?.remove(id.key);
   }
 
   Future<void> evict() async {
@@ -358,6 +368,7 @@ final class DownloadSession {
     _totalLength = null;
     _contentKind = ContentKind.unknown;
     _prefix = <int>[];
+    await index?.remove(id.key);
   }
 
   Future<void> dispose() async {
@@ -372,6 +383,46 @@ final class DownloadSession {
     }
     await artifact.dispose();
     _state = DownloadState.disposed;
+  }
+
+
+  bool _metaMatches(Map<String, Object?> meta) {
+    if (meta['downloadKey'] == id.key) {
+      return true;
+    }
+    final raw = meta['download'];
+    if (raw is! Map) {
+      return false;
+    }
+    try {
+      return DownloadId.fromJson(Map<String, Object?>.from(raw)) == id;
+    } on Object {
+      return false;
+    }
+  }
+
+  Future<void> _syncCache(CacheState state) async {
+    final cache = index;
+    if (cache == null ||
+        artifact.state == ArtifactState.empty ||
+        (state == CacheState.partial && artifact.committedLength == 0)) {
+      return;
+    }
+    final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+    final existing = await cache.get(id.key);
+    await cache.put(
+      CacheRec(
+        id: id,
+        state: state,
+        path: state == CacheState.ready
+            ? artifact.finalPath
+            : artifact.partialPath,
+        bytes: artifact.committedLength,
+        checksum: artifact.checksum,
+        createdUs: existing?.createdUs ?? now,
+        touchedUs: now,
+      ),
+    );
   }
 
   Future<void> _restartArtifact() async {

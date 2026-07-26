@@ -21,7 +21,7 @@ PipelineController
 DemandPlan(download/decode/upload/keep)
         |
         v
-SessionCoordinator
+Coordinator
   |          |           |            |
   v          v           v            v
 NetworkLane DecodeLane UploadLane MaintenanceLane
@@ -134,7 +134,7 @@ zic/
 
 ### 3.4 Session
 
-`SessionCoordinator`：
+`Coordinator`：
 
 - 维护 DownloadSession、DecodeSession 和 DisplayLease registry；
 - 合并相同 identity 的任务；

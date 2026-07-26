@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0-dev.3
+
+- Renamed the reserved `library` package to `catalog` and updated all imports, workspace entries, tests, CI, and validation.
+- Reworked Last-Modified JSON parsing without an unnecessary cast.
+- Added cache records, memory/SQLite indexes, deterministic cache layout, startup scanning, orphan repair, and active-path protection.
+- Preserved final artifact metadata and added staged metadata recovery around atomic promote.
+- Added `NetLane`, `DownloadRegistry`, `LiveCoordinator`, cooperative cancellation, and startup session restoration.
+- Added cache/index/scanner/lane/coordinator/recovery tests.
+
 ## 0.2.0-dev.2
 
 - Removed redundant `zic_` prefixes from internal packages, folders, imports, and public Dart types.

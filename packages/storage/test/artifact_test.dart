@@ -44,6 +44,7 @@ void main() {
     expect(await File(promoted.finalPath).readAsBytes(), <int>[1, 2, 3, 4, 5, 6]);
     expect(await File(promoted.partialPath).exists(), isFalse);
     expect(await File('${promoted.partialPath}.meta').exists(), isFalse);
+    expect(await File('${promoted.finalPath}.meta').exists(), isTrue);
   });
 
   test('rejects non-contiguous append', () async {

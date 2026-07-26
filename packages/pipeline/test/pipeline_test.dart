@@ -1,6 +1,6 @@
-import 'package:test/test.dart';
 import 'package:domain/domain.dart';
 import 'package:pipeline/pipeline.dart';
+import 'package:test/test.dart';
 
 void main() {
   final chapter = ChapterManifest(

@@ -1,5 +1,5 @@
-import 'package:flutter_test/flutter_test.dart';
 import 'package:domain/domain.dart';
+import 'package:flutter_test/flutter_test.dart';
 import 'package:reader/reader.dart';
 import 'package:telemetry/telemetry.dart';
 

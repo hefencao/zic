@@ -1,5 +1,5 @@
-import 'package:test/test.dart';
 import 'package:telemetry/telemetry.dart';
+import 'package:test/test.dart';
 
 final class _Clock implements MonoClock {
   @override

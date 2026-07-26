@@ -1,5 +1,5 @@
-import 'package:test/test.dart';
 import 'package:domain/domain.dart';
+import 'package:test/test.dart';
 
 void main() {
   test('observation keeps explicit current and target coverage', () {

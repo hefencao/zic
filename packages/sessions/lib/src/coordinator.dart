@@ -2,13 +2,12 @@ import 'package:domain/domain.dart';
 import 'package:pipeline/pipeline.dart';
 import 'package:telemetry/telemetry.dart';
 
-abstract interface class SessionCoordinator {
+abstract interface class Coordinator {
   void reconcile(String sessionId, PipelineDelta update);
 }
 
-final class FakeSessionCoordinator
-    implements SessionCoordinator {
-  FakeSessionCoordinator({
+final class FakeCoordinator implements Coordinator {
+  FakeCoordinator({
     required this.clock,
     this.traceSink = const NoopTraceSink(),
   });

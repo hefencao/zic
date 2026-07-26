@@ -1,5 +1,5 @@
-import 'package:test/test.dart';
 import 'package:domain/domain.dart';
+import 'package:test/test.dart';
 
 void main() {
   test('download identity reuses encoded bytes only for exact revision and URI', () {
@@ -28,6 +28,22 @@ void main() {
     expect(first, same);
     expect(first.hashCode, same.hashCode);
     expect(first, isNot(changed));
+  });
+
+
+  test('download identity has a stable JSON round trip', () {
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'local',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'p1',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/p1.webp'),
+    );
+
+    expect(DownloadId.fromJson(id.toJson()), id);
   });
 
   test('decode identity includes physical target and renderer', () {

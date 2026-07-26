@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_DEPENDENCIES = {
     'domain': set(),
-    'library': {'domain'},
+    'catalog': {'domain'},
     'telemetry': set(),
     'reader': {'domain', 'telemetry'},
     'pipeline': {'domain', 'telemetry'},
@@ -123,11 +123,16 @@ def check_manifest() -> None:
             fail(f'PNG dimensions mismatch: {asset_path}')
 
 
+DART_RESERVED_PACKAGE_NAMES = {'library'}
+
+
 def check_names() -> None:
     for path in ROOT.glob('packages/*/pubspec.yaml'):
         name = pubspec_name(path)
         if name.startswith('zic_'):
             fail(f'unnecessary project prefix in package name: {name}')
+        if name in DART_RESERVED_PACKAGE_NAMES:
+            fail(f'reserved Dart package name: {name}')
     for path in ROOT.rglob('*.dart'):
         source = path.read_text(encoding='utf-8')
         match = re.search(r'\bZic[A-Z][A-Za-z0-9_]*\b', source)

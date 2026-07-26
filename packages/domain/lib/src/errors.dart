@@ -16,6 +16,7 @@ enum ErrorCode {
   invalidState,
   checksumMismatch,
   policy,
+  cancelled,
 }
 
 final class Failure implements Exception {

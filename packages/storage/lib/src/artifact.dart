@@ -14,6 +14,8 @@ final class ArtifactSnapshot {
     required this.checksum,
     required this.partialPath,
     required this.finalPath,
+    required this.metaPath,
+    required this.finalMetaPath,
   });
 
   final ArtifactState state;
@@ -21,6 +23,8 @@ final class ArtifactSnapshot {
   final String checksum;
   final String partialPath;
   final String finalPath;
+  final String metaPath;
+  final String finalMetaPath;
 }
 
 final class Artifact {
@@ -28,11 +32,14 @@ final class Artifact {
     required this.partialPath,
     required this.finalPath,
     String? metaPath,
-  }) : metaPath = metaPath ?? '$partialPath.meta';
+    String? finalMetaPath,
+  })  : metaPath = metaPath ?? '$partialPath.meta',
+        finalMetaPath = finalMetaPath ?? '$finalPath.meta';
 
   final String partialPath;
   final String finalPath;
   final String metaPath;
+  final String finalMetaPath;
 
   ArtifactState _state = ArtifactState.empty;
   RandomAccessFile? _file;
@@ -50,6 +57,8 @@ final class Artifact {
         checksum: checksum,
         partialPath: partialPath,
         finalPath: finalPath,
+        metaPath: metaPath,
+        finalMetaPath: finalMetaPath,
       );
 
   Future<ArtifactSnapshot> restore() async {
@@ -60,6 +69,7 @@ final class Artifact {
     if (await finalFile.exists()) {
       await _rehash(finalFile);
       _state = ArtifactState.promoted;
+      await _recoverFinalMeta();
       return snapshot;
     }
 
@@ -111,6 +121,7 @@ final class Artifact {
     _requireState(ArtifactState.partial);
     await flush();
     await _closeWriter();
+    await _refreshMeta(state: 'partial');
   }
 
   Future<ArtifactSnapshot> seal({
@@ -134,6 +145,7 @@ final class Artifact {
         message: 'expected checksum $expectedChecksum, got $checksum',
       );
     }
+    await _refreshMeta(state: 'sealed');
     _state = ArtifactState.sealed;
     return snapshot;
   }
@@ -144,6 +156,22 @@ final class Artifact {
     final target = File(finalPath);
     await target.parent.create(recursive: true);
 
+    final sourceMeta = await _readJson(File(metaPath)) ?? <String, Object?>{};
+    final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+    final finalMeta = <String, Object?>{
+      ...sourceMeta,
+      'artifactState': 'ready',
+      'path': finalPath,
+      'bytes': _committed,
+      'checksum': checksum,
+      'touchedUs': now,
+      'createdUs': sourceMeta['createdUs'] is int
+          ? sourceMeta['createdUs']
+          : now,
+    };
+    final stagedMeta = File('$finalMetaPath.tmp');
+    await _writeJson(stagedMeta, finalMeta);
+
     if (await target.exists()) {
       final existingCrc = Crc32();
       var existingLength = 0;
@@ -152,6 +180,7 @@ final class Artifact {
         existingLength += chunk.length;
       }
       if (existingLength != _committed || existingCrc.hex != checksum) {
+        await stagedMeta.delete();
         throw const Failure(
           code: ErrorCode.artifactCorruption,
           message: 'final artifact already exists with different content',
@@ -164,6 +193,7 @@ final class Artifact {
       await partial.rename(finalPath);
     }
 
+    await _replaceFile(stagedMeta, File(finalMetaPath));
     for (final path in <String>[metaPath, '$metaPath.tmp']) {
       final metadata = File(path);
       if (await metadata.exists()) {
@@ -198,43 +228,32 @@ final class Artifact {
 
   Future<Map<String, Object?>?> readMeta() async {
     _requireNotDisposed();
-    final file = File(metaPath);
-    if (!await file.exists()) {
-      return null;
+    if (_state == ArtifactState.promoted) {
+      final ready = await _readJson(File(finalMetaPath));
+      if (ready != null) {
+        return ready;
+      }
+      final staged = await _readJson(File('$finalMetaPath.tmp'));
+      if (staged != null) {
+        return staged;
+      }
     }
-    Object? value;
-    try {
-      value = jsonDecode(await file.readAsString());
-    } on FormatException catch (error) {
-      throw Failure(
-        code: ErrorCode.artifactCorruption,
-        message: 'artifact metadata is invalid JSON',
-        cause: error,
-      );
-    }
-    if (value is! Map) {
-      throw const Failure(
-        code: ErrorCode.artifactCorruption,
-        message: 'artifact metadata is not an object',
-      );
-    }
-    return Map<String, Object?>.from(value);
+    return _readJson(File(metaPath));
   }
 
   Future<void> writeMeta(Map<String, Object?> value) async {
     _requireNotDisposed();
-    final target = File(metaPath);
-    await target.parent.create(recursive: true);
-    final temp = File('$metaPath.tmp');
-    await temp.writeAsString(jsonEncode(value), flush: true);
-    try {
-      await temp.rename(metaPath);
-    } on FileSystemException {
-      if (await target.exists()) {
-        await target.delete();
-      }
-      await temp.rename(metaPath);
-    }
+    final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+    await _writeJson(
+      File(metaPath),
+      <String, Object?>{
+        ...value,
+        'artifactState': 'partial',
+        'path': partialPath,
+        'createdUs': value['createdUs'] is int ? value['createdUs'] : now,
+        'touchedUs': now,
+      },
+    );
   }
 
   Future<void> reset({bool deleteFinal = false}) async {
@@ -245,6 +264,8 @@ final class Artifact {
       metaPath,
       '$metaPath.tmp',
       if (deleteFinal) finalPath,
+      if (deleteFinal) finalMetaPath,
+      if (deleteFinal) '$finalMetaPath.tmp',
     ]) {
       final file = File(path);
       if (await file.exists()) {
@@ -264,6 +285,94 @@ final class Artifact {
     }
     await _closeWriter();
     _state = ArtifactState.disposed;
+  }
+
+  Future<void> _refreshMeta({required String state}) async {
+    final existing = await _readJson(File(metaPath));
+    if (existing == null) {
+      return;
+    }
+    final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+    await _writeJson(
+      File(metaPath),
+      <String, Object?>{
+        ...existing,
+        'artifactState': state,
+        'path': partialPath,
+        'bytes': _committed,
+        'checksum': checksum,
+        'touchedUs': now,
+        'createdUs': existing['createdUs'] is int ? existing['createdUs'] : now,
+      },
+    );
+  }
+
+  Future<void> _recoverFinalMeta() async {
+    final finalMeta = File(finalMetaPath);
+    if (await finalMeta.exists()) {
+      return;
+    }
+    final staged = File('$finalMetaPath.tmp');
+    if (await staged.exists()) {
+      await _replaceFile(staged, finalMeta);
+      return;
+    }
+    final partialMeta = File(metaPath);
+    if (await partialMeta.exists()) {
+      final raw = await _readJson(partialMeta) ?? <String, Object?>{};
+      final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+      await _writeJson(finalMeta, <String, Object?>{
+        ...raw,
+        'artifactState': 'ready',
+        'path': finalPath,
+        'bytes': _committed,
+        'checksum': checksum,
+        'touchedUs': now,
+        'createdUs': raw['createdUs'] is int ? raw['createdUs'] : now,
+      });
+      await partialMeta.delete();
+    }
+  }
+
+  Future<Map<String, Object?>?> _readJson(File file) async {
+    if (!await file.exists()) {
+      return null;
+    }
+    final Object? value;
+    try {
+      value = jsonDecode(await file.readAsString());
+    } on FormatException catch (error) {
+      throw Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'artifact metadata is invalid JSON',
+        cause: error,
+      );
+    }
+    if (value is! Map) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'artifact metadata is not an object',
+      );
+    }
+    return Map<String, Object?>.from(value);
+  }
+
+  Future<void> _writeJson(File target, Map<String, Object?> value) async {
+    await target.parent.create(recursive: true);
+    final temp = File('${target.path}.tmp');
+    await temp.writeAsString(jsonEncode(value), flush: true);
+    await _replaceFile(temp, target);
+  }
+
+  Future<void> _replaceFile(File source, File target) async {
+    try {
+      await source.rename(target.path);
+    } on FileSystemException {
+      if (await target.exists()) {
+        await target.delete();
+      }
+      await source.rename(target.path);
+    }
   }
 
   Future<void> _rehash(File file) async {

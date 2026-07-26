@@ -52,13 +52,17 @@ final class Validators {
     if (etag != null && etag is! String) {
       throw const FormatException('etag must be a string');
     }
-    if (modified != null && modified is! String) {
+    final DateTime? lastModified;
+    if (modified == null) {
+      lastModified = null;
+    } else if (modified is String) {
+      lastModified = DateTime.parse(modified);
+    } else {
       throw const FormatException('lastModified must be a string');
     }
     return Validators(
       etag: etag as String?,
-      lastModified:
-          modified == null ? null : DateTime.parse(modified as String),
+      lastModified: lastModified,
     );
   }
 }

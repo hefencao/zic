@@ -32,7 +32,7 @@
 - Dart 调用 Rust `zic_version()` 成功。
 - CI 执行 Dart test、Rust test 和 Android build。
 
-## Phase 1：Domain、Library 与静态 Reader Vertical Slice
+## Phase 1：Domain、Catalog 与静态 Reader Vertical Slice
 
 ### 目标
 
@@ -93,7 +93,7 @@
 - 实现 HeuristicPolicy。
 - 实现 ResourceRanker 和 PolicyGuard。
 - 实现 DemandPlan/DemandDiff。
-- 实现 SessionCoordinator。
+- 实现 Coordinator。
 - 实现 network/decode/upload/maintenance lane。
 - 实现 current reserve 和任务合并。
 
@@ -310,7 +310,7 @@
 14. 建立 RoleResolver。
 15. 建立 HeuristicPolicy。
 16. 建立 DemandPlan/DemandDiff。
-17. 建立 SessionCoordinator registry。
+17. 建立 Coordinator registry。
 18. 建立静态 Reader vertical slice。
 19. 建立 trace event schema。
 20. 建立首个 100 页性能基准。
@@ -325,7 +325,7 @@
   -> ReaderObs
   -> HeuristicPolicy
   -> DemandPlan
-  -> fake SessionCoordinator
+  -> fake Coordinator
   -> 静态页面显示
   -> trace 输出
 ```

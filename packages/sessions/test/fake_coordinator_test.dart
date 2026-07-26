@@ -1,8 +1,8 @@
-import 'package:test/test.dart';
 import 'package:domain/domain.dart';
 import 'package:pipeline/pipeline.dart';
 import 'package:sessions/sessions.dart';
 import 'package:telemetry/telemetry.dart';
+import 'package:test/test.dart';
 
 final class _Clock implements MonoClock {
   int value = 0;
@@ -15,7 +15,7 @@ void main() {
   test('fake coordinator applies additions and detachments', () {
     final clock = _Clock();
     final traces = MemoryTraceSink();
-    final coordinator = FakeSessionCoordinator(
+    final coordinator = FakeCoordinator(
       clock: clock,
       traceSink: traces,
     );

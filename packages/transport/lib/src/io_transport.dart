@@ -4,6 +4,41 @@ import 'package:domain/domain.dart';
 
 import 'transport.dart';
 
+final class IoTransport implements Transport {
+  IoTransport({HttpTransport? http, FileTransport? file})
+      : http = http ?? HttpTransport(),
+        file = file ?? const FileTransport();
+
+  final HttpTransport http;
+  final FileTransport file;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) {
+    return switch (uri.scheme) {
+      'http' || 'https' => http.open(
+          uri,
+          range: range,
+          validators: validators,
+        ),
+      'file' => file.open(
+          uri,
+          range: range,
+          validators: validators,
+        ),
+      _ => throw Failure(
+          code: ErrorCode.source,
+          message: 'unsupported URI scheme: ${uri.scheme}',
+        ),
+    };
+  }
+
+  void close({bool force = false}) => http.close(force: force);
+}
+
 final class HttpTransport implements Transport {
   HttpTransport({HttpClient? client})
       : _client = client ?? HttpClient(),

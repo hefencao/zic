@@ -17,6 +17,8 @@ enum TraceEventKind {
   resumeAccepted,
   resumeRestarted,
   writerRejected,
+  taskFailed,
+  cacheScan,
 }
 
 final class TraceEvent {
