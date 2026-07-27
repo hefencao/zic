@@ -1,0 +1,31 @@
+{
+  "items": [
+    {
+      "id": "infinite-basic",
+      "title": "无限循环 · 基础帧",
+      "description": "2 帧 Animated WebP，用于验证无限循环和帧时长。",
+      "asset": "assets/demo/animated/animated.webp",
+      "byteLength": 140,
+      "frameCount": 2,
+      "loopCount": 0
+    },
+    {
+      "id": "finite-loop",
+      "title": "有限循环 · 2 次",
+      "description": "2 帧 Animated WebP，容器 play count 为 2。",
+      "asset": "assets/demo/animated/finite_loop.webp",
+      "byteLength": 140,
+      "frameCount": 2,
+      "loopCount": 2
+    },
+    {
+      "id": "partial-blend",
+      "title": "局部帧 · Alpha Blend",
+      "description": "包含半透明局部子帧，用于验证 source-over 合成。",
+      "asset": "assets/demo/animated/partial_blend.webp",
+      "byteLength": 188,
+      "frameCount": 2,
+      "loopCount": 0
+    }
+  ]
+}

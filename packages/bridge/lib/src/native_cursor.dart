@@ -195,7 +195,7 @@ final class NativeCursor implements FrameCursor, LoopCursor {
   }
 }
 
-final class NativeFrame implements FrameRef {
+final class NativeFrame implements PixelFrame {
   NativeFrame._(this._ptr, this._api);
 
   Pointer<_Frame> _ptr;

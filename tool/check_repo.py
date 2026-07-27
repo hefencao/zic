@@ -124,6 +124,54 @@ def check_manifest() -> None:
             fail(f'PNG dimensions mismatch: {asset_path}')
 
 
+def check_animated_demo() -> None:
+    app = ROOT / 'apps' / 'app'
+    index_path = app / 'assets' / 'demo' / 'animated' / 'index.json'
+    if not index_path.is_file():
+        fail('Animated WebP demo index is missing')
+    decoded = json.loads(index_path.read_text(encoding='utf-8'))
+    items = decoded.get('items')
+    if not isinstance(items, list) or len(items) != 3:
+        fail('Animated WebP demo index must contain exactly three fixtures')
+    expected = ('animated.webp', 'finite_loop.webp', 'partial_blend.webp')
+    seen: list[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            fail('Animated WebP demo entry must be an object')
+        asset = item.get('asset')
+        if not isinstance(asset, str):
+            fail('Animated WebP demo asset path is invalid')
+        name = Path(asset).name
+        seen.append(name)
+        bundled = app / asset
+        native = ROOT / 'native' / 'media_core' / 'testdata' / name
+        if not bundled.is_file() or not native.is_file():
+            fail(f'Animated WebP fixture is missing: {name}')
+        if bundled.read_bytes() != native.read_bytes():
+            fail(f'bundled Animated WebP diverges from native fixture: {name}')
+        data = bundled.read_bytes()
+        if len(data) < 12 or data[:4] != b'RIFF' or data[8:12] != b'WEBP':
+            fail(f'invalid bundled WebP header: {name}')
+        if item.get('byteLength') != len(data):
+            fail(f'Animated WebP byteLength mismatch: {name}')
+    if tuple(seen) != expected:
+        fail(f'Animated WebP fixtures must stay ordered as {expected}')
+
+    pubspec = (app / 'pubspec.yaml').read_text(encoding='utf-8')
+    if 'file_selector: ^1.0.3' not in pubspec:
+        fail('local WebP import must use the SDK-compatible file_selector release')
+    if '- assets/demo/animated/' not in pubspec:
+        fail('Animated WebP assets are not declared in the app pubspec')
+    home = (app / 'lib' / 'demo_home.dart').read_text(encoding='utf-8')
+    for label in ('100 页静态章节', '内置动图 WebP', '导入本地 WebP'):
+        if label not in home:
+            fail(f'app demo entry is missing: {label}')
+    player = (app / 'lib' / 'webp_demo.dart').read_text(encoding='utf-8')
+    for required in ('NativeSourceFactory', 'NativeCursorFactory', 'PixelFrame', 'Image.memory'):
+        if required not in player:
+            fail(f'Animated WebP player path is incomplete: {required}')
+
+
 DART_RESERVED_PACKAGE_NAMES = {'library'}
 
 
@@ -257,7 +305,7 @@ def check_compile_regressions() -> None:
     )
     if "import 'source.dart';" not in frame:
         fail('frame.dart must import the EncodedSource contract')
-    for required in ('CursorBinding', 'CursorStep', 'CursorStepKind'):
+    for required in ('CursorBinding', 'CursorStep', 'CursorStepKind', 'PixelFrame'):
         if required not in frame:
             fail(f'frame cursor typing is incomplete: {required}')
     decode = (ROOT / 'packages/sessions/lib/src/decode_session.dart').read_text(
@@ -408,8 +456,8 @@ def check_native_abi() -> None:
             fail(f'ABI symbol is not represented in Rust/header/Dart: {symbol}')
     if 'pub const ABI_VERSION: u32 = 5;' not in rust:
         fail('native ABI version must be 5 for runtime libwebp provenance')
-    if 'pub const LIB_VERSION: u32 = 0x000F_0000;' not in rust:
-        fail('native library version must identify the source-built libwebp release')
+    if 'pub const LIB_VERSION: u32 = 0x0010_0000;' not in rust:
+        fail('native library version must identify the app-integrated WebP demo release')
     webp_path = ROOT / 'native/media_core/src/webp.rs'
     if not webp_path.is_file():
         fail('native WebP decoder module is missing')
@@ -463,6 +511,7 @@ def check_native_abi() -> None:
 def main() -> None:
     check_workspace()
     check_manifest()
+    check_animated_demo()
     check_names()
     check_dart_sources()
     check_tool_dirs()
@@ -470,6 +519,7 @@ def main() -> None:
     check_native_abi()
     print('repository structure: OK')
     print('demo pages: 100')
+    print('demo Animated WebP assets: 3')
     print('packages:', ', '.join(EXPECTED_DEPENDENCIES))
 
 

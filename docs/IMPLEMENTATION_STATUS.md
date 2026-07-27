@@ -1,5 +1,41 @@
 # Implementation Status
 
+## 0.16.0-dev.16 — runnable Animated WebP app entry and local import
+
+### Bundled animation assets
+
+The three deterministic native decoder fixtures are now copied into the Flutter
+asset bundle with a checked catalog. Repository validation compares the bundled
+bytes with `native/media_core/testdata`, validates RIFF/WEBP headers and declared
+byte lengths, and requires all three entries to remain reachable from the app.
+
+### App navigation and local import
+
+The app now opens a demo home instead of entering the 100-page static chapter
+automatically. Separate entries open the static reader, a bundled Animated WebP
+catalog, and the platform file selector for a local `.webp`. Local files are read
+through `XFile` bytes, so the preview does not depend on a manifest or direct I/O
+in the reader package. `file_selector` 1.0.3 preserves the current Dart 3.6 SDK
+floor.
+
+### Native preview path
+
+The Animated WebP preview creates a `NativeSource`, appends and seals the selected
+bytes, validates the pinned libwebp runtime, creates a typed native cursor, copies
+`PixelFrame` RGBA bytes into a Flutter `ui.Image`, and follows native duration and
+loop metadata. RGBA is premultiplied before presentation. The user can switch to
+Flutter's codec for comparison. Missing or invalid native libraries cause an
+automatic Flutter-codec fallback instead of a blank page.
+
+### Next iteration
+
+1. Replace the diagnostic RGBA copy with the Android `SurfaceProducer` texture
+   registry and serial native blit worker.
+2. Connect reader page roles to the real native player instead of the standalone
+   preview route.
+3. Add import of a local directory/CBZ chapter and persist the resulting catalog.
+4. Add Android device tests for lifecycle-safe output retirement and overlap.
+
 ## 0.15.0-dev.15 — pinned libwebp source builds
 
 ### Source ownership

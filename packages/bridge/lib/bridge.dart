@@ -9,6 +9,7 @@ export 'package:media/media.dart'
         FrameCursor,
         FrameRef,
         LoopCursor,
+        PixelFrame,
         SourceFactory,
         SourceKind,
         SourceStatus;

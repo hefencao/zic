@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.16.0-dev.16
+
+- Bundled the three deterministic Animated WebP fixtures as real Flutter app
+  assets and added a checked JSON catalog.
+- Replaced the automatic static-reader launch with a demo home that exposes the
+  100-page chapter, bundled Animated WebP catalog, and local WebP import.
+- Added system file selection through `file_selector` 1.0.3, selected to retain
+  the workspace Dart 3.6 compatibility floor.
+- Added an in-app Animated WebP player that can compare the native source/cursor
+  pipeline with Flutter's codec and automatically falls back when the native
+  runtime is unavailable or incorrectly linked.
+- Added `PixelFrame`, raw RGBA-to-Flutter image presentation, alpha
+  premultiplication, finite/infinite loop playback, pause/resume, and native
+  runtime provenance reporting.
+- Added fixture synchronization, asset/native-byte equality gates, app entry
+  tests, catalog tests, and local-import route tests.
+
 ## 0.15.0-dev.15
 
 - Replaced the external per-ABI `ZIC_ANDROID_WEBP_ROOT` contract with a pinned

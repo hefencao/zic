@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:domain/domain.dart';
 
 import 'source.dart';
@@ -54,6 +56,10 @@ abstract interface class FrameRef {
   bool get disposed;
 
   void dispose();
+}
+
+abstract interface class PixelFrame implements FrameRef {
+  Uint8List copyBytes();
 }
 
 enum CursorStepKind { frame, needMoreData, end }

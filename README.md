@@ -2,7 +2,7 @@
 
 `zic` 是从零开发的高性能漫画阅读器。当前版本已完成静态 Reader、可恢复下载、
 持久化缓存恢复、容量/LRU 策略、受控清理、失败退避重试、独立资源 lane、格式感知 ingress、
-decode/upload registry、frame holder、viewport 播放门控、帧字节预算，以及 Rust 增量 Animated WebP 解码基础。
+decode/upload registry、frame holder、viewport 播放门控、帧字节预算、可运行的 Animated WebP App 入口，以及 Rust 增量 Animated WebP 解码基础。
 
 ```text
 ReaderView
@@ -37,6 +37,47 @@ Rust media_core
   -> retained immutable RGBA frame handles
   -> frame/play-count metadata + explicit cursor rewind
 ```
+
+## App 演示入口
+
+App 不再启动后直接进入静态章节。首页提供三个明确入口：
+
+```text
+100 页静态章节
+内置动图 WebP
+导入本地 WebP
+```
+
+内置动图来自 `native/media_core/testdata/` 的真实 decoder fixtures，并同步到：
+
+```text
+apps/app/assets/demo/animated/
+  animated.webp
+  finite_loop.webp
+  partial_blend.webp
+  index.json
+```
+
+运行：
+
+```bash
+cd apps/app
+flutter run -d android
+```
+
+在“内置动图 WebP”中可以切换 `Native pipeline` 与 `Flutter codec`。Native
+路径会验证 ABI 和锁定的 libwebp 1.6.0 运行时，使用 source/cursor/frame ABI
+解码真实 RGBA 帧；原生库未打包或版本不匹配时会自动回退 Flutter codec。
+“导入本地 WebP”通过系统文件选择器读取单个 `.webp`，不要求先编写 manifest。
+
+同步 native fixture 到 App assets：
+
+```bash
+./tool/sync_demo_webp_assets.sh
+```
+
+仓库检查会逐字节比较 App asset 与 native fixture，避免 UI 演示与 decoder
+测试样本发生漂移。
 
 ## 生成 Flutter 平台工程
 
