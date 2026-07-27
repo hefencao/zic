@@ -402,6 +402,29 @@ def check_compile_regressions() -> None:
     for forbidden in (' is LoopCursor', 'dynamic '):
         if forbidden in decode_session:
             fail(f'DecodeSession must not use runtime cursor typing: {forbidden}')
+    static_demo = (ROOT / 'apps/app/lib/static_demo.dart').read_text(encoding='utf-8')
+    if "import 'package:pipeline/pipeline.dart';" not in static_demo:
+        fail('static demo must import DecodeTarget from pipeline')
+    if 'physicalWidth: 1080' in static_demo or 'physicalHeight: 1920' in static_demo:
+        fail('static demo decode target must follow the physical viewport')
+    target = (ROOT / 'packages/pipeline/lib/src/decode_target.dart').read_text(
+        encoding='utf-8'
+    )
+    for required in ('DecodeTarget.fit', 'devicePixelRatio', 'maxPhysicalPixels'):
+        if required not in target:
+            fail(f'adaptive physical decode target is incomplete: {required}')
+    webp_demo = (ROOT / 'apps/app/lib/webp_demo.dart').read_text(encoding='utf-8')
+    for required in (
+        'LayoutBuilder(',
+        'cacheWidth: target.physicalWidth',
+        'cacheHeight: target.physicalHeight',
+        'FramePacing.remaining(',
+        '_prepareFollowing(',
+    ):
+        if required not in webp_demo:
+            fail(f'WebP preview scaling/pacing regression: {required}')
+    if '_fitDecodeTarget(' in webp_demo or 'const maxSide = 1024' in webp_demo:
+        fail('WebP preview must not use a fixed diagnostic decode target')
 
 
 def check_native_abi() -> None:
@@ -456,12 +479,15 @@ def check_native_abi() -> None:
             fail(f'ABI symbol is not represented in Rust/header/Dart: {symbol}')
     if 'pub const ABI_VERSION: u32 = 5;' not in rust:
         fail('native ABI version must be 5 for runtime libwebp provenance')
-    if 'pub const LIB_VERSION: u32 = 0x0010_0000;' not in rust:
-        fail('native library version must identify the app-integrated WebP demo release')
+    if 'pub const LIB_VERSION: u32 = 0x0011_0000;' not in rust:
+        fail('native library version must identify the adaptive WebP playback release')
     webp_path = ROOT / 'native/media_core/src/webp.rs'
     if not webp_path.is_file():
         fail('native WebP decoder module is missing')
     webp = webp_path.read_text(encoding='utf-8')
+    smoke = (ROOT / 'tools/webp_decoder_smoke.c').read_text(encoding='utf-8')
+    if 'iter.duration == expected_duration_ms' not in smoke:
+        fail('libwebp smoke must validate encoded frame durations')
     for required in (
         'WebPDemuxInternal',
         'WebPDemuxGetFrame',

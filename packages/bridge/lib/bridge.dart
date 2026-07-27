@@ -7,6 +7,7 @@ export 'package:media/media.dart'
         CursorStepKind,
         EncodedSource,
         FrameCursor,
+        FramePacing,
         FrameRef,
         LoopCursor,
         PixelFrame,

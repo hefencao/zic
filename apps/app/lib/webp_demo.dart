@@ -8,6 +8,7 @@ import 'package:domain/domain.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:pipeline/pipeline.dart';
 
 const _webpTypes = <XTypeGroup>[
   XTypeGroup(
@@ -188,15 +189,24 @@ final class NativeWebpPlayer extends StatefulWidget {
 final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   _PlayerEngine _engine = _PlayerEngine.native;
   Uint8List? _encoded;
+  _CanvasSize? _sourceCanvas;
+  DecodeTarget? _target;
+  DecodeTarget? _scheduledTarget;
   ui.Image? _image;
   EncodedSource? _source;
   CursorBinding? _cursor;
+  _PreparedNativeFrame? _pending;
   Timer? _timer;
+  Stopwatch? _frameClock;
+  Stopwatch? _timerClock;
+  Duration _pendingDelay = Duration.zero;
   Object? _nativeError;
   String _status = '加载中';
   int _frameIndex = -1;
   int _cycle = 0;
   bool _paused = false;
+  bool _preparing = false;
+  bool _completionPending = false;
   int _generation = 0;
 
   @override
@@ -208,9 +218,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   @override
   void dispose() {
     _generation++;
-    _timer?.cancel();
-    _disposeNative();
-    _image?.dispose();
+    _resetNative(disposeImage: true);
     super.dispose();
   }
 
@@ -223,9 +231,13 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       }
       setState(() {
         _encoded = bytes;
-        _status = '已读取 ${bytes.length} B';
+        _sourceCanvas = _readWebpCanvas(bytes);
+        _status = '已读取 ${bytes.length} B，等待 viewport';
       });
-      await _startNative(generation);
+      final target = _target;
+      if (target != null && _engine == _PlayerEngine.native) {
+        await _startNative(++_generation);
+      }
     } catch (error) {
       if (!mounted || generation != _generation) {
         return;
@@ -238,15 +250,38 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     }
   }
 
-  Future<void> _startNative(int generation) async {
-    final bytes = _encoded;
-    if (bytes == null || _engine != _PlayerEngine.native) {
+  void _scheduleTarget(DecodeTarget target) {
+    if (_target == target || _scheduledTarget == target) {
       return;
     }
-    _timer?.cancel();
-    _disposeNative();
-    _image?.dispose();
-    _image = null;
+    _scheduledTarget = target;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _scheduledTarget != target) {
+        return;
+      }
+      _scheduledTarget = null;
+      if (_target == target) {
+        return;
+      }
+      setState(() {
+        _target = target;
+        _status = _engine == _PlayerEngine.native
+            ? '重建 native target'
+            : 'Flutter codec · ${target.physicalWidth}×${target.physicalHeight}';
+      });
+      if (_encoded != null && _engine == _PlayerEngine.native) {
+        unawaited(_startNative(++_generation));
+      }
+    });
+  }
+
+  Future<void> _startNative(int generation) async {
+    final bytes = _encoded;
+    final target = _target;
+    if (bytes == null || target == null || _engine != _PlayerEngine.native) {
+      return;
+    }
+    _resetNative(disposeImage: true);
     _nativeError = null;
     _frameIndex = -1;
     _cycle = 0;
@@ -275,8 +310,6 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         source.dispose();
         throw StateError('native source seal failed: ${seal.name}');
       }
-      final size = _readWebpCanvas(bytes);
-      final target = _fitDecodeTarget(size.width, size.height);
       final id = DecodeId(
         download: DownloadId(
           content: ContentId(
@@ -288,8 +321,8 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
           sourceRevision: 'local-v1',
           canonicalUri: widget.sourceUri,
         ),
-        physicalWidth: target.width,
-        physicalHeight: target.height,
+        physicalWidth: target.physicalWidth,
+        physicalHeight: target.physicalHeight,
         pixelFormat: PixelFormat.rgba8888,
         renderer: RendererKind.flutterImage,
       );
@@ -302,12 +335,19 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       _cursor = cursor;
       if (mounted && generation == _generation) {
         setState(() {
-          _status = 'native · ${target.width}×${target.height}';
+          _status = 'native · ${target.physicalWidth}×${target.physicalHeight}';
         });
       }
-      await _decodeNext(generation);
+      final first = await _decodePrepared(generation);
+      if (first == null) {
+        if (mounted && generation == _generation) {
+          setState(() => _status = '播放完成');
+        }
+        return;
+      }
+      _presentPrepared(first, generation);
     } catch (error) {
-      _disposeNative();
+      _resetNative(disposeImage: true);
       if (!mounted || generation != _generation) {
         return;
       }
@@ -319,19 +359,16 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     }
   }
 
-  Future<void> _decodeNext(int generation) async {
-    if (_paused || generation != _generation || !mounted) {
-      return;
-    }
+  Future<_PreparedNativeFrame?> _decodePrepared(int generation) async {
     final binding = _cursor;
     if (binding == null) {
-      return;
+      return null;
     }
-    try {
+    while (mounted && generation == _generation) {
       final step = await binding.frames.decodeNext();
       if (!mounted || generation != _generation) {
         step.frame?.dispose();
-        return;
+        return null;
       }
       switch (step.kind) {
         case CursorStepKind.frame:
@@ -340,7 +377,8 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
             frame?.dispose();
             throw StateError('native cursor returned a non-pixel frame');
           }
-          final bytes = _premultiplyRgba(frame.copyBytes());
+          final rgba = frame.copyBytes();
+          _premultiplyRgbaInPlace(rgba);
           final duration = frame.duration > Duration.zero
               ? frame.duration
               : const Duration(milliseconds: 100);
@@ -348,39 +386,87 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
           final cycle = binding.loop?.cycle ?? 0;
           late final ui.Image image;
           try {
-            image = await _decodeRgba(bytes, frame.width, frame.height);
+            image = await _decodeRgba(rgba, frame.width, frame.height);
           } finally {
             frame.dispose();
           }
-          if (!mounted || generation != _generation) {
-            image.dispose();
-            return;
-          }
-          final previous = _image;
-          setState(() {
-            _image = image;
-            _frameIndex = index;
-            _cycle = cycle;
-            _status = 'native · frame $index · cycle $cycle';
-          });
-          previous?.dispose();
-          _timer?.cancel();
-          _timer = Timer(duration, () => unawaited(_decodeNext(generation)));
-          return;
+          return _PreparedNativeFrame(
+            image: image,
+            duration: duration,
+            index: index,
+            cycle: cycle,
+          );
         case CursorStepKind.needMoreData:
           throw StateError('sealed WebP unexpectedly needs more data');
         case CursorStepKind.end:
           final loop = binding.loop;
           if (loop != null && loop.rewind()) {
-            _timer?.cancel();
-            _timer = Timer(
-              Duration.zero,
-              () => unawaited(_decodeNext(generation)),
-            );
-          } else if (mounted) {
-            setState(() => _status = '播放完成');
+            continue;
           }
-          return;
+          return null;
+      }
+    }
+    return null;
+  }
+
+  void _presentPrepared(_PreparedNativeFrame prepared, int generation) {
+    if (!mounted || generation != _generation || _paused) {
+      if (!mounted || generation != _generation) {
+        prepared.dispose();
+      } else {
+        _pending?.dispose();
+        _pending = prepared;
+        _pendingDelay = Duration.zero;
+      }
+      return;
+    }
+    _timer?.cancel();
+    _timer = null;
+    _timerClock = null;
+    _pending = null;
+    _pendingDelay = Duration.zero;
+
+    final previous = _image;
+    setState(() {
+      _image = prepared.image;
+      _frameIndex = prepared.index;
+      _cycle = prepared.cycle;
+      _status = 'native · frame ${prepared.index} · cycle ${prepared.cycle}';
+    });
+    previous?.dispose();
+
+    final clock = Stopwatch()..start();
+    _frameClock = clock;
+    _preparing = true;
+    unawaited(_prepareFollowing(generation, prepared.duration, clock));
+  }
+
+  Future<void> _prepareFollowing(
+    int generation,
+    Duration currentDuration,
+    Stopwatch clock,
+  ) async {
+    try {
+      final next = await _decodePrepared(generation);
+      if (!mounted || generation != _generation) {
+        next?.dispose();
+        return;
+      }
+      final remaining = FramePacing.remaining(
+        frameDuration: currentDuration,
+        preparationElapsed: clock.elapsed,
+      );
+      if (next == null) {
+        _completionPending = true;
+        _pendingDelay = remaining;
+        _scheduleCompletion(generation);
+        return;
+      }
+      _pending?.dispose();
+      _pending = next;
+      _pendingDelay = remaining;
+      if (!_paused) {
+        _schedulePending(generation);
       }
     } catch (error) {
       if (!mounted || generation != _generation) {
@@ -394,37 +480,92 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         _engine = _PlayerEngine.flutter;
         _status = 'native 解码失败，已回退 Flutter codec';
       });
-      _disposeNative();
+      _resetNative(disposeImage: false);
+    } finally {
+      if (generation == _generation) {
+        _preparing = false;
+      }
     }
   }
 
-  void _disposeNative() {
+  void _schedulePending(int generation) {
+    final pending = _pending;
+    if (pending == null || _paused || generation != _generation) {
+      return;
+    }
+    _timer?.cancel();
+    final clock = Stopwatch()..start();
+    _timerClock = clock;
+    _timer = Timer(_pendingDelay, () {
+      _timer = null;
+      _timerClock = null;
+      final next = _pending;
+      _pending = null;
+      _pendingDelay = Duration.zero;
+      if (next != null) {
+        _presentPrepared(next, generation);
+      }
+    });
+  }
+
+  void _scheduleCompletion(int generation) {
+    if (_paused || generation != _generation) {
+      return;
+    }
+    _timer?.cancel();
+    final clock = Stopwatch()..start();
+    _timerClock = clock;
+    _timer = Timer(_pendingDelay, () {
+      _timer = null;
+      _timerClock = null;
+      _pendingDelay = Duration.zero;
+      _completionPending = false;
+      if (mounted && generation == _generation) {
+        setState(() => _status = '播放完成');
+      }
+    });
+  }
+
+  void _resetNative({required bool disposeImage}) {
     _timer?.cancel();
     _timer = null;
+    _timerClock = null;
+    _frameClock = null;
+    _preparing = false;
+    _completionPending = false;
+    _pendingDelay = Duration.zero;
+    _pending?.dispose();
+    _pending = null;
     _cursor?.frames.dispose();
     _cursor = null;
     _source?.dispose();
     _source = null;
+    if (disposeImage) {
+      _image?.dispose();
+      _image = null;
+    }
   }
 
   void _setEngine(_PlayerEngine engine) {
     if (engine == _engine) {
       return;
     }
+    final generation = ++_generation;
+    _resetNative(disposeImage: true);
     setState(() {
       _engine = engine;
       _paused = false;
       _nativeError = null;
-      _status = engine == _PlayerEngine.native ? '启动 native' : 'Flutter codec';
+      final target = _target;
+      _status = engine == _PlayerEngine.native
+          ? '启动 native'
+          : target == null
+              ? 'Flutter codec'
+              : 'Flutter codec · '
+                  '${target.physicalWidth}×${target.physicalHeight}';
     });
     if (engine == _PlayerEngine.native) {
-      unawaited(_startNative(++_generation));
-    } else {
-      _generation++;
-      _disposeNative();
-      final old = _image;
-      _image = null;
-      old?.dispose();
+      unawaited(_startNative(generation));
     }
   }
 
@@ -432,12 +573,28 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     if (_engine != _PlayerEngine.native) {
       return;
     }
-    setState(() => _paused = !_paused);
-    if (_paused) {
+    final pausing = !_paused;
+    setState(() => _paused = pausing);
+    if (pausing) {
+      _frameClock?.stop();
+      final timerClock = _timerClock;
+      if (_timer != null && timerClock != null) {
+        final remaining = _pendingDelay - timerClock.elapsed;
+        _pendingDelay = remaining;
+      }
       _timer?.cancel();
       _timer = null;
-    } else {
-      unawaited(_decodeNext(_generation));
+      _timerClock = null;
+      return;
+    }
+
+    _frameClock?.start();
+    if (_pending != null) {
+      _schedulePending(_generation);
+    } else if (_completionPending) {
+      _scheduleCompletion(_generation);
+    } else if (!_preparing && _status == '播放完成') {
+      return;
     }
   }
 
@@ -468,28 +625,59 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         Expanded(
           child: ColoredBox(
             color: Colors.black,
-            child: Center(
-              child: switch (_engine) {
-                _PlayerEngine.native => _image == null
-                    ? const CircularProgressIndicator()
-                    : RawImage(
-                        image: _image,
-                        fit: BoxFit.contain,
-                        filterQuality: FilterQuality.low,
-                      ),
-                _PlayerEngine.flutter => encoded == null
-                    ? const CircularProgressIndicator()
-                    : Image.memory(
-                        encoded,
-                        gaplessPlayback: true,
-                        fit: BoxFit.contain,
-                        filterQuality: FilterQuality.low,
-                        errorBuilder: (context, error, stackTrace) => Text(
-                          'Flutter codec 无法解码：$error',
-                          style: const TextStyle(color: Colors.white),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final source = _sourceCanvas;
+                DecodeTarget? target;
+                if (source != null &&
+                    constraints.maxWidth.isFinite &&
+                    constraints.maxHeight.isFinite &&
+                    constraints.maxWidth > 0 &&
+                    constraints.maxHeight > 0) {
+                  target = DecodeTarget.fit(
+                    sourceWidth: source.width,
+                    sourceHeight: source.height,
+                    logicalWidth: constraints.maxWidth,
+                    logicalHeight: constraints.maxHeight,
+                    devicePixelRatio: MediaQuery.of(context).devicePixelRatio,
+                  );
+                  _scheduleTarget(target);
+                }
+                return SizedBox.expand(
+                  child: switch (_engine) {
+                    _PlayerEngine.native => _image == null
+                        ? const Center(child: CircularProgressIndicator())
+                        : RawImage(
+                            image: _image,
+                            fit: BoxFit.contain,
+                            filterQuality: FilterQuality.medium,
+                          ),
+                    _PlayerEngine.flutter => encoded == null || target == null
+                        ? const Center(child: CircularProgressIndicator())
+                        : Image.memory(
+                            encoded,
+                            key: ValueKey<String>(
+                              'flutter-${target.physicalWidth}x'
+                              '${target.physicalHeight}-${widget.sourceUri}',
+                            ),
+                            cacheWidth: target.physicalWidth,
+                            cacheHeight: target.physicalHeight,
+                            width: double.infinity,
+                            height: double.infinity,
+                            gaplessPlayback: true,
+                            fit: BoxFit.contain,
+                            filterQuality: FilterQuality.medium,
+                            isAntiAlias: true,
+                            errorBuilder: (context, error, stackTrace) => Center(
+                              child: Text(
+                                'Flutter codec 无法解码：$error',
+                                style: const TextStyle(color: Colors.white),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          ),
+                  },
+                );
               },
             ),
           ),
@@ -506,6 +694,11 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
                       Text(_status),
+                      if (_target != null)
+                        Text(
+                          'target=${_target!.physicalWidth}×'
+                          '${_target!.physicalHeight} px',
+                        ),
                       if (_engine == _PlayerEngine.native)
                         Text('frame=$_frameIndex · cycle=$_cycle'),
                       if (_nativeError != null)
@@ -513,14 +706,17 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
                           'native: $_nativeError',
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: Theme.of(context).colorScheme.error),
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                          ),
                         ),
                     ],
                   ),
                 ),
                 IconButton.filledTonal(
                   tooltip: _paused ? '继续' : '暂停',
-                  onPressed: _engine == _PlayerEngine.native ? _togglePause : null,
+                  onPressed:
+                      _engine == _PlayerEngine.native ? _togglePause : null,
                   icon: Icon(_paused ? Icons.play_arrow : Icons.pause),
                 ),
               ],
@@ -530,6 +726,22 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       ],
     );
   }
+}
+
+final class _PreparedNativeFrame {
+  _PreparedNativeFrame({
+    required this.image,
+    required this.duration,
+    required this.index,
+    required this.cycle,
+  });
+
+  final ui.Image image;
+  final Duration duration;
+  final int index;
+  final int cycle;
+
+  void dispose() => image.dispose();
 }
 
 Future<ui.Image> _decodeRgba(Uint8List bytes, int width, int height) {
@@ -545,18 +757,16 @@ Future<ui.Image> _decodeRgba(Uint8List bytes, int width, int height) {
   return completer.future;
 }
 
-Uint8List _premultiplyRgba(Uint8List source) {
-  final result = Uint8List.fromList(source);
-  for (var i = 0; i + 3 < result.length; i += 4) {
-    final alpha = result[i + 3];
+void _premultiplyRgbaInPlace(Uint8List bytes) {
+  for (var i = 0; i + 3 < bytes.length; i += 4) {
+    final alpha = bytes[i + 3];
     if (alpha == 255) {
       continue;
     }
-    result[i] = (result[i] * alpha + 127) ~/ 255;
-    result[i + 1] = (result[i + 1] * alpha + 127) ~/ 255;
-    result[i + 2] = (result[i + 2] * alpha + 127) ~/ 255;
+    bytes[i] = (bytes[i] * alpha + 127) ~/ 255;
+    bytes[i + 1] = (bytes[i + 1] * alpha + 127) ~/ 255;
+    bytes[i + 2] = (bytes[i + 2] * alpha + 127) ~/ 255;
   }
-  return result;
 }
 
 final class _CanvasSize {
@@ -575,14 +785,19 @@ _CanvasSize _readWebpCanvas(Uint8List bytes) {
   final data = ByteData.sublistView(bytes);
   var offset = 12;
   while (offset + 8 <= bytes.length) {
-    final tag = ascii.decode(bytes.sublist(offset, offset + 4), allowInvalid: true);
+    final tag = ascii.decode(
+      bytes.sublist(offset, offset + 4),
+      allowInvalid: true,
+    );
     final length = data.getUint32(offset + 4, Endian.little);
     final dataOffset = offset + 8;
     if (tag == 'VP8X' && dataOffset + 10 <= bytes.length) {
-      final width = 1 + bytes[dataOffset + 4] +
+      final width = 1 +
+          bytes[dataOffset + 4] +
           (bytes[dataOffset + 5] << 8) +
           (bytes[dataOffset + 6] << 16);
-      final height = 1 + bytes[dataOffset + 7] +
+      final height = 1 +
+          bytes[dataOffset + 7] +
           (bytes[dataOffset + 8] << 8) +
           (bytes[dataOffset + 9] << 16);
       return _CanvasSize(width, height);
@@ -592,19 +807,3 @@ _CanvasSize _readWebpCanvas(Uint8List bytes) {
   return const _CanvasSize(512, 512);
 }
 
-_CanvasSize _fitDecodeTarget(int sourceWidth, int sourceHeight) {
-  const maxSide = 1024;
-  if (sourceWidth <= 0 || sourceHeight <= 0) {
-    return const _CanvasSize(512, 512);
-  }
-  final scale = sourceWidth >= sourceHeight
-      ? maxSide / sourceWidth
-      : maxSide / sourceHeight;
-  final width = alignPhysicalDimension(
-    (sourceWidth * scale).round().clamp(8, maxSide).toInt(),
-  );
-  final height = alignPhysicalDimension(
-    (sourceHeight * scale).round().clamp(8, maxSide).toInt(),
-  );
-  return _CanvasSize(width, height);
-}

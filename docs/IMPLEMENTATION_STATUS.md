@@ -1,5 +1,28 @@
 # Implementation Status
 
+## 0.17.0-dev.17 — adaptive physical targets and deadline-based WebP playback
+
+### Compile and target repair
+
+`static_demo.dart` now imports the pipeline contract that owns `DecodeTarget`. The target itself has moved into a dedicated pure-Dart module. `DecodeTarget.viewport` converts logical viewport dimensions through the device pixel ratio, while `DecodeTarget.fit` preserves a known source aspect ratio inside that physical viewport. Both paths align dimensions to eight pixels and enforce a bounded decoded-pixel budget.
+
+The static reader recreates its diagnostic binding when MediaQuery dimensions or DPR change. The Animated WebP preview derives its target from the exact `LayoutBuilder` image area, so app bars, controls, rotation, split-screen, and device density are reflected in decode identity.
+
+### Flutter codec scaling
+
+The Flutter path no longer places an intrinsic-size `Image.memory` inside a loose `Center`. It receives tight full-area constraints and matching physical `cacheWidth`/`cacheHeight`, with medium filtering. Tiny bundled fixtures now fill the preview correctly, while large imported files are decoded to the same bounded physical target as native.
+
+### Native pacing
+
+The previous preview decoded the next frame only after the current frame timer expired, making wall time equal to encoded duration plus decode/image-construction time. The player now decodes and builds the next `ui.Image` while the current frame is visible. `FramePacing.remaining` subtracts that preparation time from the current frame duration and presents immediately on overrun. Pause/resume preserves pending deadlines, and finite playback waits through the final frame duration before reporting completion.
+
+### Next iteration
+
+1. Replace diagnostic RGBA-to-`ui.Image` copies with Android texture upload.
+2. Feed viewport target revisions into real reader decode sessions without recreating diagnostic controllers.
+3. Add device timing telemetry comparing encoded, decode, upload, and present intervals.
+4. Add local chapter/CBZ import and persistent catalog entries.
+
 ## 0.16.0-dev.16 — runnable Animated WebP app entry and local import
 
 ### Bundled animation assets

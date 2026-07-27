@@ -1,6 +1,6 @@
 name: media
 description: Encoded-source ownership and streaming ingress contracts.
-version: 0.16.0
+version: 0.17.0
 publish_to: none
 resolution: workspace
 

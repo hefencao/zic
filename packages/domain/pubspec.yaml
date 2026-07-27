@@ -1,6 +1,6 @@
 name: domain
 description: Core immutable domain models and resource identities for zic.
-version: 0.16.0
+version: 0.17.0
 publish_to: none
 resolution: workspace
 

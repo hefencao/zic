@@ -1,3 +1,4 @@
+export 'src/decode_target.dart';
 
 export 'src/demand.dart';
 export 'src/heuristic_policy.dart';

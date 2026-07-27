@@ -2,6 +2,7 @@ import 'package:domain/domain.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'demand.dart';
+import 'decode_target.dart';
 import 'heuristic_policy.dart';
 import 'policy_guard.dart';
 import 'role_window.dart';

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.17.0-dev.17
+
+- Fixed the missing `DecodeTarget` import in the static demo and moved the target model into its own pipeline module.
+- Added viewport/DPR-aware physical decode targets with 8-pixel alignment, aspect-preserving fit, and a four-megapixel safety budget.
+- Replaced the fixed 1024-pixel Animated WebP target; native and Flutter codec paths now share the same target derived from the actual image viewport.
+- Fixed Flutter codec presentation by giving the image tight expanded constraints and matching `cacheWidth`/`cacheHeight` instead of rendering at intrinsic size.
+- Changed native preview playback to prepare the next frame while the current frame is visible and subtract preparation time from the encoded duration, removing decode time from the animation timeline.
+- Added pause-safe pending-frame/completion scheduling, physical-target tests, and frame-pacing regression tests.
+
 ## 0.16.0-dev.16
 
 - Bundled the three deterministic Animated WebP fixtures as real Flutter app

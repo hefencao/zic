@@ -2,10 +2,10 @@ import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:pipeline/pipeline.dart';
 import 'package:reader/reader.dart';
 import 'package:sessions/sessions.dart';
 import 'package:telemetry/telemetry.dart';
-import 'package:pipeline/src/heuristic_policy.dart';
 
 final class StaticDemoScreen extends StatefulWidget {
   const StaticDemoScreen({super.key});
@@ -69,8 +69,8 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
   late final MemoryTraceSink _memoryTrace;
   late final TraceSink _trace;
   late final FakeCoordinator _coordinator;
-  late final ReaderBinding _binding;
-  late final ReaderController _reader;
+  ReaderController? _reader;
+  DecodeTarget? _target;
 
   @override
   void initState() {
@@ -82,29 +82,50 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
       CallbackTraceSink((event) => debugPrint(event.toJsonLine())),
     ]);
     _coordinator = FakeCoordinator(clock: _clock, traceSink: _trace);
-    _binding = ReaderBinding(
+  }
+
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final media = MediaQuery.of(context);
+    final target = DecodeTarget.viewport(
+      logicalWidth: media.size.width,
+      logicalHeight: media.size.height,
+      devicePixelRatio: media.devicePixelRatio,
+    );
+    if (_target == target) {
+      return;
+    }
+    final previous = _reader;
+    final currentIndex = previous?.currentIndex ?? 0;
+    final direction = previous?.direction ?? widget.chapter.readingDirection;
+    previous?.dispose();
+
+    final binding = ReaderBinding(
       chapter: widget.chapter,
-      decodeTarget: DecodeTarget(
-        physicalWidth: 1080,
-        physicalHeight: 1920,
-      ),
+      decodeTarget: target,
       clock: _clock,
       traceSink: _trace,
       coordinator: _coordinator,
       playback: _coordinator,
     );
-    _reader = ReaderController(
+    final reader = ReaderController(
       sessionId: 'demo-session',
       chapter: widget.chapter,
-      onObservation: _binding.accept,
+      initialPage: currentIndex,
+      onObservation: binding.accept,
       clock: _clock,
       traceSink: _trace,
     );
+    reader.setDirection(direction);
+    _target = target;
+    _reader = reader;
   }
 
   @override
   void dispose() {
-    _reader.dispose();
+    _reader?.dispose();
     super.dispose();
   }
 
@@ -116,8 +137,8 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
         actions: <Widget>[
           PopupMenuButton<ReadingDirection>(
             tooltip: '阅读方向',
-            initialValue: _reader.direction,
-            onSelected: _reader.setDirection,
+            initialValue: _reader!.direction,
+            onSelected: _reader!.setDirection,
             itemBuilder: (context) => const <PopupMenuEntry<ReadingDirection>>[
               PopupMenuItem(value: ReadingDirection.ltr, child: Text('LTR')),
               PopupMenuItem(value: ReadingDirection.rtl, child: Text('RTL')),
@@ -131,7 +152,7 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
         ],
       ),
       body: ReaderView(
-        controller: _reader,
+        controller: _reader!,
         clock: _clock,
         traceSink: _trace,
       ),

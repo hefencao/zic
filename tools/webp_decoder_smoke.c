@@ -65,11 +65,13 @@ static int check_all_prefixes(const uint8_t *bytes, size_t size) {
 }
 
 static int check_frame(const WebPDemuxer *demux, int frame_number,
+                       int expected_duration_ms,
                        const uint8_t expected[4]) {
   WebPIterator iter;
   if (!WebPDemuxGetFrame(demux, frame_number, &iter)) return 0;
   int ok = 0;
-  if (iter.complete && iter.width == 2 && iter.height == 2) {
+  if (iter.complete && iter.width == 2 && iter.height == 2 &&
+      iter.duration == expected_duration_ms) {
     uint8_t rgba[16];
     if (WebPDecodeRGBAInto(iter.fragment.bytes, iter.fragment.size, rgba,
                            sizeof(rgba), 8) != NULL) {
@@ -195,7 +197,8 @@ int main(int argc, char **argv) {
 
   const uint8_t red[4] = {255, 0, 0, 255};
   const uint8_t green[4] = {0, 255, 0, 255};
-  if (!check_frame(demux, 1, red) || !check_frame(demux, 2, green)) {
+  if (!check_frame(demux, 1, 80, red) ||
+      !check_frame(demux, 2, 120, green)) {
     fprintf(stderr, "decoded frame content mismatch\n");
     WebPDemuxDelete(demux);
     free(bytes);

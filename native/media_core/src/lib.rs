@@ -12,7 +12,7 @@ use std::slice;
 use std::sync::{Arc, RwLock};
 
 pub const ABI_VERSION: u32 = 5;
-pub const LIB_VERSION: u32 = 0x0010_0000;
+pub const LIB_VERSION: u32 = 0x0011_0000;
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

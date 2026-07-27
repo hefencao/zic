@@ -1,22 +1,8 @@
 import 'package:domain/domain.dart';
 
+import 'decode_target.dart';
 import 'demand.dart';
 import 'role_window.dart';
-
-final class DecodeTarget {
-  DecodeTarget({
-    required int physicalWidth,
-    required int physicalHeight,
-    this.pixelFormat = PixelFormat.rgba8888,
-    this.renderer = RendererKind.flutterImage,
-  })  : physicalWidth = alignPhysicalDimension(physicalWidth),
-        physicalHeight = alignPhysicalDimension(physicalHeight);
-
-  final int physicalWidth;
-  final int physicalHeight;
-  final PixelFormat pixelFormat;
-  final RendererKind renderer;
-}
 
 final class HeuristicPolicy {
   const HeuristicPolicy();
