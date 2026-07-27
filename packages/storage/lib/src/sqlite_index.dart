@@ -119,6 +119,14 @@ final class SqliteIndex implements CacheIndex {
   }
 
   @override
+  Future<void> touch(String key, int touchedUs) async {
+    _requireDb().execute(
+      'UPDATE cache_entry SET touched_us = ? WHERE key = ?',
+      <Object?>[touchedUs, key],
+    );
+  }
+
+  @override
   Future<int> totalBytes({CacheState? state}) async {
     final rows = state == null
         ? _requireDb().select(

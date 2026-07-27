@@ -15,11 +15,12 @@ EXPECTED_DEPENDENCIES = {
     'telemetry': set(),
     'reader': {'domain', 'telemetry'},
     'pipeline': {'domain', 'telemetry'},
+    'media': {'domain', 'transport'},
     'transport': {'domain'},
     'storage': {'domain'},
-    'sessions': {'domain', 'pipeline', 'storage', 'telemetry', 'transport'},
+    'sessions': {'domain', 'media', 'pipeline', 'storage', 'telemetry', 'transport'},
     'testkit': {'domain', 'telemetry', 'transport'},
-    'bridge': set(),
+    'bridge': {'media'},
 }
 
 
@@ -162,11 +163,74 @@ def check_dart_sources() -> None:
                 fail(f'unbalanced {opening}{closing} in {path.relative_to(ROOT)}')
 
 
+
+def check_tool_dirs() -> None:
+    bootstrap = (ROOT / 'tool/bootstrap_platforms.sh').read_text(encoding='utf-8')
+    flutter_tests = (ROOT / 'tool/test_flutter.sh').read_text(encoding='utf-8')
+    dart_tests = (ROOT / 'tool/test_dart.sh').read_text(encoding='utf-8')
+    analyze = (ROOT / 'tool/analyze.sh').read_text(encoding='utf-8')
+    for required in (
+        'APP="$ROOT/apps/app"',
+        '--empty',
+        '--platforms=android,ios',
+        'cd "$APP"',
+    ):
+        if required not in bootstrap:
+            fail(f'Flutter bootstrap directory/command is incomplete: {required}')
+    for required in ('packages/reader', 'apps/app', 'flutter test test'):
+        if required not in flutter_tests:
+            fail(f'Flutter test directory is not explicit: {required}')
+    for required in ('packages/domain', 'packages/media', 'packages/sessions', 'dart test test'):
+        if required not in dart_tests:
+            fail(f'Dart test directory is not explicit: {required}')
+    for required in ('packages/reader', 'apps/app', 'flutter analyze'):
+        if required not in analyze:
+            fail(f'Flutter analyze directory is not explicit: {required}')
+
+def check_compile_regressions() -> None:
+    live = (ROOT / 'packages/sessions/lib/src/live_coordinator.dart').read_text(
+        encoding='utf-8'
+    )
+    if "import 'download_session.dart';" not in live:
+        fail('LiveCoordinator must import its DownloadSession annotation')
+    retry = (ROOT / 'packages/sessions/lib/src/retry_policy.dart').read_text(
+        encoding='utf-8'
+    )
+    for forbidden in (
+        'assert(!baseDelay.isNegative)',
+        'assert(!maxDelay.isNegative)',
+    ):
+        if forbidden in retry:
+            fail(f'const RetryPolicy contains non-constant assertion: {forbidden}')
+    frame = (ROOT / 'packages/media/lib/src/frame.dart').read_text(
+        encoding='utf-8'
+    )
+    if "import 'source.dart';" not in frame:
+        fail('frame.dart must import the EncodedSource contract')
+    artifact = (ROOT / 'packages/storage/lib/src/artifact.dart').read_text(
+        encoding='utf-8'
+    )
+    if 'return await reader.read(length < maxBytes ? length : maxBytes);' not in artifact:
+        fail('Artifact.readPrefix must await the read before closing its file handle')
+
+
 def check_native_abi() -> None:
     rust = (ROOT / 'native/media_core/src/lib.rs').read_text(encoding='utf-8')
     header = (ROOT / 'native/media_core/include/media_core.h').read_text(encoding='utf-8')
-    dart = (ROOT / 'packages/bridge/lib/src/native_version.dart').read_text(encoding='utf-8')
-    for symbol in ('zic_abi_version', 'zic_version'):
+    dart = '\n'.join(path.read_text(encoding='utf-8') for path in (ROOT / 'packages/bridge/lib/src').glob('*.dart'))
+    for symbol in (
+        'zic_abi_version',
+        'zic_version',
+        'zic_source_create',
+        'zic_source_free',
+        'zic_source_append',
+        'zic_source_seal',
+        'zic_source_reset',
+        'zic_source_len',
+        'zic_source_epoch',
+        'zic_source_is_sealed',
+        'zic_source_kind',
+    ):
         if symbol not in rust or symbol not in header or symbol not in dart:
             fail(f'ABI symbol is not represented in Rust/header/Dart: {symbol}')
 
@@ -176,6 +240,8 @@ def main() -> None:
     check_manifest()
     check_names()
     check_dart_sources()
+    check_tool_dirs()
+    check_compile_regressions()
     check_native_abi()
     print('repository structure: OK')
     print('demo pages: 100')

@@ -1,0 +1,17 @@
+name: media
+description: Encoded-source ownership and streaming ingress contracts.
+version: 0.7.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+
+dependencies:
+  domain:
+    path: ../domain
+  transport:
+    path: ../transport
+
+dev_dependencies:
+  test: ^1.25.0

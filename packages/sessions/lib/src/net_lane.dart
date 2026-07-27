@@ -2,16 +2,22 @@ import 'dart:async';
 
 import 'package:domain/domain.dart';
 
-typedef NetTask = Future<void> Function(CancelToken token);
+typedef LaneTask = Future<void> Function(CancelToken token);
 typedef LaneError = void Function(String key, Object error, StackTrace stack);
 
 final class CancelToken {
   bool _cancelled = false;
+  final Completer<void> _cancelledSignal = Completer<void>();
 
   bool get cancelled => _cancelled;
+  Future<void> get whenCancelled => _cancelledSignal.future;
 
   void cancel() {
+    if (_cancelled) {
+      return;
+    }
     _cancelled = true;
+    _cancelledSignal.complete();
   }
 
   void throwIfCancelled() {
@@ -24,15 +30,146 @@ final class CancelToken {
   }
 }
 
-final class NetLane {
-  NetLane({
-    required this.maxActive,
-    this.onError,
-  }) : assert(maxActive > 0);
+abstract interface class TaskLane {
+  int get maxActive;
+  int get queued;
+  int get active;
+  bool get isIdle;
+
+  bool submit({
+    required String key,
+    required int priority,
+    required LaneTask task,
+  });
+
+  bool replace({
+    required String key,
+    required int priority,
+    required LaneTask task,
+  });
+
+  bool cancelQueued(String key);
+  bool cancel(String key);
+  Future<void> idle();
+}
+
+final class NetLane implements TaskLane {
+  NetLane({required int maxActive, LaneError? onError})
+      : _core = _Lane(maxActive: maxActive, onError: onError);
+
+  final _Lane _core;
+
+  @override
+  int get maxActive => _core.maxActive;
+  @override
+  int get queued => _core.queued;
+  @override
+  int get active => _core.active;
+  @override
+  bool get isIdle => _core.isIdle;
+  @override
+  bool submit({required String key, required int priority, required LaneTask task}) =>
+      _core.submit(key: key, priority: priority, task: task);
+  @override
+  bool replace({required String key, required int priority, required LaneTask task}) =>
+      _core.replace(key: key, priority: priority, task: task);
+  @override
+  bool cancelQueued(String key) => _core.cancelQueued(key);
+  @override
+  bool cancel(String key) => _core.cancel(key);
+  @override
+  Future<void> idle() => _core.idle();
+}
+
+final class DecodeLane implements TaskLane {
+  DecodeLane({required int maxActive, LaneError? onError})
+      : _core = _Lane(maxActive: maxActive, onError: onError);
+
+  final _Lane _core;
+
+  @override
+  int get maxActive => _core.maxActive;
+  @override
+  int get queued => _core.queued;
+  @override
+  int get active => _core.active;
+  @override
+  bool get isIdle => _core.isIdle;
+  @override
+  bool submit({required String key, required int priority, required LaneTask task}) =>
+      _core.submit(key: key, priority: priority, task: task);
+  @override
+  bool replace({required String key, required int priority, required LaneTask task}) =>
+      _core.replace(key: key, priority: priority, task: task);
+  @override
+  bool cancelQueued(String key) => _core.cancelQueued(key);
+  @override
+  bool cancel(String key) => _core.cancel(key);
+  @override
+  Future<void> idle() => _core.idle();
+}
+
+final class UploadLane implements TaskLane {
+  UploadLane({required int maxActive, LaneError? onError})
+      : _core = _Lane(maxActive: maxActive, onError: onError);
+
+  final _Lane _core;
+
+  @override
+  int get maxActive => _core.maxActive;
+  @override
+  int get queued => _core.queued;
+  @override
+  int get active => _core.active;
+  @override
+  bool get isIdle => _core.isIdle;
+  @override
+  bool submit({required String key, required int priority, required LaneTask task}) =>
+      _core.submit(key: key, priority: priority, task: task);
+  @override
+  bool replace({required String key, required int priority, required LaneTask task}) =>
+      _core.replace(key: key, priority: priority, task: task);
+  @override
+  bool cancelQueued(String key) => _core.cancelQueued(key);
+  @override
+  bool cancel(String key) => _core.cancel(key);
+  @override
+  Future<void> idle() => _core.idle();
+}
+
+final class MaintenanceLane implements TaskLane {
+  MaintenanceLane({required int maxActive, LaneError? onError})
+      : _core = _Lane(maxActive: maxActive, onError: onError);
+
+  final _Lane _core;
+
+  @override
+  int get maxActive => _core.maxActive;
+  @override
+  int get queued => _core.queued;
+  @override
+  int get active => _core.active;
+  @override
+  bool get isIdle => _core.isIdle;
+  @override
+  bool submit({required String key, required int priority, required LaneTask task}) =>
+      _core.submit(key: key, priority: priority, task: task);
+  @override
+  bool replace({required String key, required int priority, required LaneTask task}) =>
+      _core.replace(key: key, priority: priority, task: task);
+  @override
+  bool cancelQueued(String key) => _core.cancelQueued(key);
+  @override
+  bool cancel(String key) => _core.cancel(key);
+  @override
+  Future<void> idle() => _core.idle();
+}
+
+final class _Lane {
+  _Lane({required this.maxActive, this.onError}) : assert(maxActive > 0);
 
   final int maxActive;
   final LaneError? onError;
-
   final Map<String, _Pending> _pending = <String, _Pending>{};
   final Map<String, CancelToken> _active = <String, CancelToken>{};
   final List<Completer<void>> _idleWaiters = <Completer<void>>[];
@@ -45,11 +182,27 @@ final class NetLane {
   bool submit({
     required String key,
     required int priority,
-    required NetTask task,
+    required LaneTask task,
   }) {
     if (_active.containsKey(key)) {
       return false;
     }
+    _pending[key] = _Pending(
+      key: key,
+      priority: priority,
+      seq: _seq++,
+      task: task,
+    );
+    _pump();
+    return true;
+  }
+
+  bool replace({
+    required String key,
+    required int priority,
+    required LaneTask task,
+  }) {
+    _active[key]?.cancel();
     _pending[key] = _Pending(
       key: key,
       priority: priority,
@@ -81,7 +234,13 @@ final class NetLane {
 
   void _pump() {
     while (_active.length < maxActive && _pending.isNotEmpty) {
-      final next = _pending.values.reduce((a, b) {
+      final eligible = _pending.values
+          .where((pending) => !_active.containsKey(pending.key))
+          .toList(growable: false);
+      if (eligible.isEmpty) {
+        break;
+      }
+      final next = eligible.reduce((a, b) {
         final priority = b.priority.compareTo(a.priority);
         if (priority != 0) {
           return priority > 0 ? b : a;
@@ -131,5 +290,5 @@ final class _Pending {
   final String key;
   final int priority;
   final int seq;
-  final NetTask task;
+  final LaneTask task;
 }

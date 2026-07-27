@@ -13,30 +13,17 @@ jobs:
         with:
           channel: stable
           cache: true
+      - run: ./tool/bootstrap_platforms.sh
       - run: flutter pub get
       - run: dart format --output=none --set-exit-if-changed apps packages
-      - run: flutter analyze
+      - run: ./tool/analyze.sh
       - name: Test pure Dart packages
-        run: |
-          for package_dir in \
-            packages/domain \
-            packages/catalog \
-            packages/telemetry \
-            packages/transport \
-            packages/storage \
-            packages/testkit \
-            packages/pipeline \
-            packages/sessions \
-            packages/bridge; do
-            (cd "$package_dir" && dart test)
-          done
+        run: ./tool/test_dart.sh
       - name: Test Flutter packages
-        run: |
-          for package_dir in \
-            packages/reader \
-            apps/app; do
-            (cd "$package_dir" && flutter test)
-          done
+        run: ./tool/test_flutter.sh
+      - name: Build Android debug APK
+        working-directory: apps/app
+        run: flutter build apk --debug
       - run: python3 tool/check_repo.py
 
   rust:

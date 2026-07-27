@@ -1,83 +1,52 @@
 # Implementation Status
 
-## 0.3.0-dev.3 — Cache recovery and network lane
+## 0.7.0-dev.7 — restore I/O fix and upload/present ownership
 
-### Naming corrections
+### Reported failures fixed
 
-- Renamed the reserved internal package `library` to `catalog`.
-- Renamed its entry library to `catalog.dart` and updated the App, workspace,
-  benchmark, parser tests, CI, and repository validator.
-- Renamed `SessionCoordinator` / `FakeSessionCoordinator` to
-  `Coordinator` / `FakeCoordinator` inside the already-scoped `sessions`
-  package.
-- Renamed bridge locals to `lib` / `libPath` / `libVersion`.
-- Added a repository gate rejecting the reserved package name `library`.
+- `media/src/frame.dart` now imports the local `EncodedSource` contract.
+- `Artifact.readPrefix()` now awaits `RandomAccessFile.read()` before its
+  `finally` block closes the handle. Returning the pending future directly was
+  the common cause of the restore/resume `An async operation is currently
+  pending` failures.
+- Added a regression test that reads a prefix, closes the artifact, and then
+  reopens the file immediately.
+- Repository validation now rejects both regressions.
 
-### Transport correction
+### Upload and present boundary
 
-`Validators.fromJson` no longer relies on promotion through a compound type
-check and does not add a redundant `as String`. It branches explicitly:
-null remains null, a String is parsed, and every other type is rejected.
+- Added pure Dart `OutputFrame` and `FrameUploader` contracts. Output frames can
+  represent Flutter images or platform textures without exposing native frame
+  pointers to application code.
+- Added `UploadSession` and `UploadRegistry`.
+- Upload work takes an upload claim on the decoded frame, releases the claim in
+  all success/failure/cancellation paths, then consumes the source frame only
+  after a renderer-owned output frame exists.
+- Output frames have independent present claims. Detach, replacement, reset,
+  and dispose retire an output immediately only when no present claim is
+  active; otherwise disposal is deferred until the final claim is released.
+- Stale-epoch or wrong-index upload results are disposed and rejected.
+- `LiveCoordinator` can now use either the existing upload callback or a real
+  `UploadRegistry`, and successful decode work wakes matching upload demand.
 
-### Cache and artifact lifecycle
+### Telemetry
 
-- Added `CacheRec`, `CacheState`, and the async `CacheIndex` contract.
-- Added `MemIndex` for deterministic tests.
-- Added `SqliteIndex` with schema version 1, WAL mode, upsert, filtering,
-  totals, and unsupported-version rejection.
-- Added deterministic `CacheLayout` paths based on `DownloadId`.
-- Added `CacheScanner` for metadata recovery, stale record removal, orphan
-  cleanup, checksum rebuild, and active-path protection.
-- Final artifacts now retain authoritative metadata instead of deleting all
-  metadata during promote.
-- Promote stages final metadata before moving bytes and recognizes
-  `.meta.tmp` after interruption.
-- `DownloadId` and `ContentId` now have explicit JSON representations.
-- `DownloadSession` updates/removes cache records on restore, bind, seal,
-  failure, promote, reset, and eviction.
+Added:
 
-### Real network execution
+- `uploadState`
+- `frameUploaded`
+- `framePresented`
 
-- Added bounded-concurrency `NetLane` with priority, FIFO tie-breaking,
-  coalescing, queued cancellation, active cancellation tokens, and idle wait.
-- Added `DownloadRegistry` as the sole owner of download sessions.
-- Added `LiveCoordinator`, which maps download demand diffs to the network
-  lane while retaining active receiving tasks after ordinary detach.
-- Added cooperative cancellation to `DownloadJob` and response discard when
-  cancellation arrives after open.
-- Added `StartupRecovery` to open the index, scan artifacts, restore sessions,
-  and emit one cache-scan trace event.
-- Added `IoTransport` routing for HTTP(S) and file URIs.
+### Tests added
 
-### Tests added or adjusted
-
-- Catalog package/import regression coverage.
-- Validator parsing and invalid-type rejection.
-- Memory and SQLite cache index parity.
-- Partial/final scanner reconstruction.
-- Interrupted-promote staged metadata recovery.
-- Active orphan protection.
-- Network lane priority, FIFO, coalescing, and queued cancellation.
-- Live coordinator file download integration.
-- Startup scan and session restoration.
-- Final metadata retention after promote.
-
-### Validation state
-
-The local repository validator, YAML parser, manifest/resource checks, package
-boundary checks, naming checks, delimiter checks, shell syntax checks, and ABI
-symbol checks pass.
-
-This execution image still has no Flutter/Dart or Rust toolchains. Therefore
-`dart format`, analyzer, Dart/Flutter tests, Cargo formatting, and Cargo tests
-remain CI gates and are not claimed as locally executed.
+- Prefix-read file-handle lifecycle regression.
+- Upload consumes the decoded source frame only after successful upload.
+- Present claim keeps an output alive across detach.
+- Stale uploaded output is disposed and cannot become current.
 
 ### Next iteration
 
-1. Add cache capacity policy and LRU candidate selection without bypassing
-   session safety checks.
-2. Add explicit clear-cache orchestration and released-byte reporting.
-3. Add retry/backoff policy for demanded failed downloads.
-4. Add decode/upload lane shells before introducing the Rust WebP cursor API.
-5. Begin the incremental Rust WebP byte-source contract and fuzzable parser
-   boundary.
+1. Implement native cursor/frame ABI and `FrameRef` bridge handles.
+2. Add Android `SurfaceProducer` texture registry and serial blit worker.
+3. Add decoded/output memory budgets with a current-page reserve.
+4. Add playback clock, present freeze/resume, and frame-duration reset.

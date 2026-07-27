@@ -9,11 +9,17 @@ if ! command -v flutter >/dev/null 2>&1; then
   exit 1
 fi
 
+printf 'Flutter app directory: %s\n' "$APP"
+printf '%s\n' 'Running: flutter create --empty --project-name zic --org dev.zic --platforms=android,ios .'
+
 cd "$APP"
 flutter create \
+  --empty \
   --project-name zic \
   --org dev.zic \
-  --platforms android,ios \
+  --platforms=android,ios \
   .
 
-echo "Platform scaffolding generated in $APP"
+printf 'Platform scaffolding generated in %s\n' "$APP"
+printf '%s\n' 'Run app tests from apps/app: flutter test test'
+printf '%s\n' 'Run reader tests from packages/reader: flutter test test'

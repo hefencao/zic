@@ -75,4 +75,42 @@ void main() {
     await second.seal(expectedLength: 4);
     await second.promote();
   });
+  test('restore keeps partial files closed until the first append', () async {
+    final artifact = createArtifact();
+    final restored = await artifact.restore();
+
+    expect(restored.state, ArtifactState.partial);
+    expect(artifact.hasOpenWriter, isFalse);
+
+    await artifact.append(0, <int>[1, 2, 3]);
+    expect(artifact.hasOpenWriter, isTrue);
+
+    await artifact.pause();
+    expect(artifact.hasOpenWriter, isFalse);
+  });
+
+  test('serializes concurrent append calls', () async {
+    final artifact = createArtifact();
+    await artifact.restore();
+
+    await Future.wait<void>(<Future<void>>[
+      artifact.append(0, <int>[1, 2]),
+      artifact.append(2, <int>[3, 4]),
+    ]);
+
+    expect(artifact.committedLength, 4);
+    await artifact.seal(expectedLength: 4);
+  });
+
+  test('readPrefix awaits the read before closing the file', () async {
+    final artifact = createArtifact();
+    await artifact.restore();
+    await artifact.append(0, <int>[1, 2, 3, 4]);
+    await artifact.pause();
+
+    expect(await artifact.readPrefix(3), <int>[1, 2, 3]);
+    await artifact.dispose();
+    expect(await File(artifact.partialPath).readAsBytes(), <int>[1, 2, 3, 4]);
+  });
+
 }

@@ -5,7 +5,7 @@
 `zic` 使用 Flutter 应用层、Dart 资源策略与 session 编排、Rust 媒体内核、Kotlin/Swift texture 桥接的混合架构。
 
 ```text
-Reader UI / Library UI
+Reader UI / Catalog UI
         |
         v
 ReaderController + ReaderViewportReporter
@@ -24,7 +24,7 @@ DemandPlan(download/decode/upload/keep)
 Coordinator
   |          |           |            |
   v          v           v            v
-NetworkLane DecodeLane UploadLane MaintenanceLane
+NetLane DecodeLane UploadLane MaintenanceLane
   |          |           |
   v          v           v
 Transport  DecodeSession TextureRegistry
@@ -42,13 +42,12 @@ zic/
 
   packages/
     domain/                  领域实体、identity、值对象
-    library/                 书架、章节、来源抽象
+    catalog/                 书架、章节、来源抽象
     reader/                  Reader UI、viewport、交互报告
     pipeline/                policy/window/ranker/demand
     sessions/                download/decode/display session
     transport/               网络、本地文件、resume
     storage/                 artifact、cache index、SQLite
-    policy/                  heuristic/bandit/reward/model store
     telemetry/               指标、事件、trace、设备状态
     bridge/                  FFI 和 texture 平台接口
     testkit/                 fake clock/source/decoder/trace
@@ -352,7 +351,7 @@ idle -> dragging -> overlap -> dominant -> settling -> idle
 
 ### 7.1 Scheduler Lane
 
-- NetworkLane
+- NetLane
 - DecodeLane
 - UploadLane
 - MaintenanceLane
@@ -388,9 +387,8 @@ idle -> dragging -> overlap -> dominant -> settling -> idle
 
 ```text
 cache/
-  artifacts/
-    partial/<hash>.part
-    final/<hash>.bin
+  partial/<token>.part
+  final/<token>.bin
   db/cache.sqlite
   models/policy_model.bin
   traces/
@@ -501,6 +499,14 @@ FrameHolder：
 | high | 192 MiB | 384 MiB | 384 MiB |
 
 系统内存警告可立即降低预算，但仍通过安全驱逐执行。
+
+### 11.3 容量与安全清理
+
+- `CachePolicy` 只根据容量、LRU 和 protected key 生成候选，不删除文件；
+- `CacheOps` 负责 trim/clear 编排；
+- 最终物理删除必须通过 `DownloadRegistry` 和 `DownloadSession.evict`；
+- active run/writer 或调用方保护的资源不能被驱逐；
+- 返回实际释放字节，而不是按索引估算成功。
 
 ## 12. 自适应策略
 

@@ -49,4 +49,34 @@ void main() {
     await lane.idle();
     expect(values, isEmpty);
   });
+  test('replace cancels active work and runs the replacement next', () async {
+    final lane = DecodeLane(maxActive: 1);
+    final started = Completer<void>();
+    final release = Completer<void>();
+    final values = <String>[];
+
+    lane.submit(
+      key: 'same',
+      priority: 1,
+      task: (token) async {
+        values.add('old');
+        started.complete();
+        await Future.any<void>(<Future<void>>[
+          release.future,
+          token.whenCancelled,
+        ]);
+      },
+    );
+    await started.future;
+    lane.replace(
+      key: 'same',
+      priority: 2,
+      task: (_) async => values.add('new'),
+    );
+
+    release.complete();
+    await lane.idle();
+    expect(values, <String>['old', 'new']);
+  });
+
 }

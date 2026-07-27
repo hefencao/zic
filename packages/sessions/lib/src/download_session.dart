@@ -1,9 +1,12 @@
 import 'package:domain/domain.dart';
+import 'package:media/media.dart';
 import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
 enum DownloadState { idle, queued, receiving, sealed, promoted, failed, disposed }
+
+typedef SourceListener = void Function(IngressSnap snapshot);
 
 final class RunLease {
   const RunLease._(this.id);
@@ -35,6 +38,7 @@ final class DownloadSnapshot {
     this.validators = const Validators(),
     this.totalLength,
     this.failure,
+    this.ingress,
   });
 
   final DownloadId id;
@@ -49,6 +53,7 @@ final class DownloadSnapshot {
   final Validators validators;
   final int? totalLength;
   final Failure? failure;
+  final IngressSnap? ingress;
 }
 
 final class DownloadSession {
@@ -59,6 +64,7 @@ final class DownloadSession {
     this.traceSink = const NoopTraceSink(),
     this.sessionId = 'download',
     this.index,
+    this.ingress,
   });
 
   final DownloadId id;
@@ -67,6 +73,7 @@ final class DownloadSession {
   final TraceSink traceSink;
   final String sessionId;
   final CacheIndex? index;
+  final Ingress? ingress;
 
   DownloadState _state = DownloadState.idle;
   SourceEpoch _epoch = const SourceEpoch(0);
@@ -80,6 +87,7 @@ final class DownloadSession {
   int? _totalLength;
   Failure? _failure;
   List<int> _prefix = <int>[];
+  final Set<SourceListener> _sourceListeners = <SourceListener>{};
 
   DownloadState get state => _state;
   SourceEpoch get epoch => _epoch;
@@ -106,7 +114,17 @@ final class DownloadSession {
         validators: _validators,
         totalLength: _totalLength,
         failure: _failure,
+        ingress: ingress?.snapshot,
       );
+
+  void addSourceListener(SourceListener listener) {
+    _requireNotDisposed();
+    _sourceListeners.add(listener);
+  }
+
+  void removeSourceListener(SourceListener listener) {
+    _sourceListeners.remove(listener);
+  }
 
   RunLease beginRun() {
     _requireNotDisposed();
@@ -140,13 +158,17 @@ final class DownloadSession {
       );
     }
     final restored = await artifact.restore();
-    _prefix = await artifact.readPrefix(sniffPrefixLength);
+    _prefix = List<int>.of(
+      await artifact.readPrefix(sniffPrefixLength),
+      growable: true,
+    );
     _contentKind = sniffContent(
       _prefix,
       finalChunk: restored.state == ArtifactState.promoted,
     );
 
     if (restored.state == ArtifactState.promoted) {
+      await _rebuildIngress(sealed: true);
       _state = DownloadState.promoted;
       await _syncCache(CacheState.ready);
       return snapshot;
@@ -184,6 +206,7 @@ final class DownloadSession {
       }
     }
 
+    await _rebuildIngress(sealed: false);
     _state = DownloadState.idle;
     _failure = null;
     await _syncCache(CacheState.partial);
@@ -228,10 +251,10 @@ final class DownloadSession {
       DownloadState.queued,
       DownloadState.failed,
     });
-    if (artifact.state != ArtifactState.partial || !artifact.hasOpenWriter) {
+    if (artifact.state != ArtifactState.partial) {
       throw const Failure(
         code: ErrorCode.invalidState,
-        message: 'artifact is not open for partial writes',
+        message: 'artifact is not ready for partial writes',
       );
     }
     final lease = WriterLease._(id: ++_writerSeq, epoch: _epoch);
@@ -244,16 +267,18 @@ final class DownloadSession {
 
   Future<void> append(WriterLease lease, int offset, List<int> bytes) async {
     _requireWriter(lease);
-    await artifact.append(offset, bytes);
-    if (_prefix.length < sniffPrefixLength && bytes.isNotEmpty) {
+    final chunk = List<int>.of(bytes, growable: false);
+    await artifact.append(offset, chunk);
+    _appendIngress(lease.epoch, offset, chunk);
+    if (_prefix.length < sniffPrefixLength && chunk.isNotEmpty) {
       final remaining = sniffPrefixLength - _prefix.length;
-      _prefix.addAll(bytes.take(remaining));
+      _prefix.addAll(chunk.take(remaining));
       _contentKind = sniffContent(_prefix);
     }
     _emit(
       TraceEventKind.bytesCommitted,
       <String, Object?>{
-        'bytes': bytes.length,
+        'bytes': chunk.length,
         'committedLength': committedLength,
         'kind': _contentKind.name,
       },
@@ -270,6 +295,7 @@ final class DownloadSession {
       expectedLength: expectedLength,
       expectedChecksum: expectedChecksum,
     );
+    ingress?.seal(lease.epoch);
     _writer = null;
     _state = DownloadState.sealed;
     _contentKind = sniffContent(_prefix, finalChunk: true);
@@ -344,6 +370,7 @@ final class DownloadSession {
     _requireNotDisposed();
     _writer = null;
     _epoch = _epoch.next();
+    ingress?.reset(_epoch);
     _validators = const Validators();
     _totalLength = null;
     _contentKind = ContentKind.unknown;
@@ -354,7 +381,7 @@ final class DownloadSession {
     await index?.remove(id.key);
   }
 
-  Future<void> evict() async {
+  Future<int> evict() async {
     _requireNotDisposed();
     if (!canEvict) {
       throw const Failure(
@@ -362,6 +389,9 @@ final class DownloadSession {
         message: 'cannot evict while a writer is active',
       );
     }
+    final released = artifact.committedLength;
+    _epoch = _epoch.next();
+    ingress?.reset(_epoch);
     await artifact.deleteAll();
     _state = DownloadState.idle;
     _validators = const Validators();
@@ -369,6 +399,7 @@ final class DownloadSession {
     _contentKind = ContentKind.unknown;
     _prefix = <int>[];
     await index?.remove(id.key);
+    return released;
   }
 
   Future<void> dispose() async {
@@ -381,10 +412,70 @@ final class DownloadSession {
         message: 'cannot dispose while work is active',
       );
     }
+    _sourceListeners.clear();
+    ingress?.dispose();
     await artifact.dispose();
     _state = DownloadState.disposed;
   }
 
+  Future<void> _rebuildIngress({required bool sealed}) async {
+    final target = ingress;
+    if (target == null) {
+      return;
+    }
+    final before = target.snapshot;
+    await target.rebuild(
+      epoch: _epoch,
+      chunks: artifact.readChunks(),
+      sealed: sealed,
+    );
+    _traceIngress(before, target.snapshot);
+  }
+
+  void _appendIngress(SourceEpoch epoch, int offset, List<int> bytes) {
+    final target = ingress;
+    if (target == null) {
+      return;
+    }
+    final before = target.snapshot;
+    target.append(epoch: epoch, offset: offset, bytes: bytes);
+    _traceIngress(before, target.snapshot);
+  }
+
+  void _traceIngress(IngressSnap before, IngressSnap after) {
+    if (!before.sourceReady && after.sourceReady) {
+      _emit(
+        TraceEventKind.sourceReady,
+        <String, Object?>{
+          'kind': after.kind.name,
+          'length': after.length,
+        },
+      );
+      for (final listener in List<SourceListener>.of(_sourceListeners)) {
+        try {
+          listener(after);
+        } on Object catch (error) {
+          _emit(
+            TraceEventKind.taskFailed,
+            <String, Object?>{
+              'lane': 'source-listener',
+              'error': '$error',
+            },
+          );
+        }
+      }
+    }
+    if (before.failure == null && after.failure != null) {
+      _emit(
+        TraceEventKind.sourceDisabled,
+        <String, Object?>{
+          'kind': after.kind.name,
+          'length': after.length,
+          'error': '${after.failure}',
+        },
+      );
+    }
+  }
 
   bool _metaMatches(Map<String, Object?> meta) {
     if (meta['downloadKey'] == id.key) {

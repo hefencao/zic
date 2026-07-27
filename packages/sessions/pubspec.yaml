@@ -1,6 +1,6 @@
 name: sessions
 description: Demand coordination and encoded-byte download sessions.
-version: 0.3.0
+version: 0.7.0
 publish_to: none
 resolution: workspace
 
@@ -10,6 +10,8 @@ environment:
 dependencies:
   domain:
     path: ../domain
+  media:
+    path: ../media
   pipeline:
     path: ../pipeline
   storage:

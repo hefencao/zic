@@ -45,6 +45,7 @@ final class Artifact {
   RandomAccessFile? _file;
   Crc32 _crc = Crc32();
   int _committed = 0;
+  Future<void> _writeTail = Future<void>.value();
 
   ArtifactState get state => _state;
   int get committedLength => _committed;
@@ -77,19 +78,27 @@ final class Artifact {
     if (await partial.exists()) {
       await _rehash(partial);
       _state = ArtifactState.partial;
-      _file = await partial.open(mode: FileMode.append);
       return snapshot;
     }
 
     await partial.parent.create(recursive: true);
-    _file = await partial.open(mode: FileMode.write);
     _crc = Crc32();
     _committed = 0;
     _state = ArtifactState.partial;
     return snapshot;
   }
 
-  Future<void> append(int offset, List<int> bytes) async {
+  Future<void> append(int offset, List<int> bytes) {
+    final chunk = List<int>.of(bytes, growable: false);
+    final operation = _writeTail.then<void>((_) => _append(offset, chunk));
+    _writeTail = operation.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    return operation;
+  }
+
+  Future<void> _append(int offset, List<int> bytes) async {
     _requireState(ArtifactState.partial);
     if (offset != _committed) {
       throw Failure(
@@ -100,13 +109,7 @@ final class Artifact {
     if (bytes.isEmpty) {
       return;
     }
-    final writer = _file;
-    if (writer == null) {
-      throw const Failure(
-        code: ErrorCode.invalidState,
-        message: 'partial artifact has no open writer',
-      );
-    }
+    final writer = await _writer();
     await writer.writeFrom(bytes);
     _crc.add(bytes);
     _committed += bytes.length;
@@ -114,6 +117,7 @@ final class Artifact {
 
   Future<void> flush() async {
     _requireNotDisposed();
+    await _writeTail;
     await _file?.flush();
   }
 
@@ -204,6 +208,31 @@ final class Artifact {
     return snapshot;
   }
 
+  Stream<List<int>> readChunks({int chunkSize = 64 * 1024}) async* {
+    _requireNotDisposed();
+    if (chunkSize <= 0) {
+      throw ArgumentError.value(chunkSize, 'chunkSize', 'must be positive');
+    }
+    await flush();
+    final path = _state == ArtifactState.promoted ? finalPath : partialPath;
+    final file = File(path);
+    if (!await file.exists()) {
+      return;
+    }
+    final reader = await file.open();
+    try {
+      while (true) {
+        final chunk = await reader.read(chunkSize);
+        if (chunk.isEmpty) {
+          break;
+        }
+        yield chunk;
+      }
+    } finally {
+      await reader.close();
+    }
+  }
+
   Future<List<int>> readPrefix([int maxBytes = 12]) async {
     _requireNotDisposed();
     if (maxBytes <= 0) {
@@ -220,7 +249,7 @@ final class Artifact {
     }
     final reader = await file.open();
     try {
-      return reader.read(length < maxBytes ? length : maxBytes);
+      return await reader.read(length < maxBytes ? length : maxBytes);
     } finally {
       await reader.close();
     }
@@ -386,7 +415,28 @@ final class Artifact {
     _committed = length;
   }
 
+  Future<RandomAccessFile> _writer() async {
+    final existing = _file;
+    if (existing != null) {
+      return existing;
+    }
+    final partial = File(partialPath);
+    await partial.parent.create(recursive: true);
+    final writer = await partial.open(mode: FileMode.append);
+    final length = await writer.length();
+    if (length != _committed) {
+      await writer.close();
+      throw Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'partial length changed from $_committed to $length',
+      );
+    }
+    _file = writer;
+    return writer;
+  }
+
   Future<void> _closeWriter() async {
+    await _writeTail;
     final writer = _file;
     _file = null;
     if (writer != null) {

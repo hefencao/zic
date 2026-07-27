@@ -12,26 +12,9 @@ python3 "$ROOT/tool/check_repo.py"
 if command -v flutter >/dev/null 2>&1; then
   (cd "$ROOT" && flutter pub get)
   (cd "$ROOT" && dart format apps packages)
-  (cd "$ROOT" && flutter analyze)
-  for package_dir in \
-    "$ROOT/packages/domain" \
-    "$ROOT/packages/catalog" \
-    "$ROOT/packages/telemetry" \
-    "$ROOT/packages/transport" \
-    "$ROOT/packages/storage" \
-    "$ROOT/packages/testkit" \
-    "$ROOT/packages/pipeline" \
-    "$ROOT/packages/sessions" \
-    "$ROOT/packages/bridge"; do
-    echo "DART TEST: ${package_dir#$ROOT/}"
-    (cd "$package_dir" && dart test)
-  done
-  for package_dir in \
-    "$ROOT/packages/reader" \
-    "$ROOT/apps/app"; do
-    echo "FLUTTER TEST: ${package_dir#$ROOT/}"
-    (cd "$package_dir" && flutter test)
-  done
+  "$ROOT/tool/analyze.sh"
+  "$ROOT/tool/test_dart.sh"
+  "$ROOT/tool/test_flutter.sh"
 elif [[ "$REQUIRE_TOOLCHAINS" -eq 1 ]]; then
   echo "Flutter SDK is required" >&2
   exit 1

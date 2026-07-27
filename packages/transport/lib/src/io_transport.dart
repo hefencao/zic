@@ -53,6 +53,30 @@ final class HttpTransport implements Transport {
     ByteRange? range,
     Validators? validators,
   }) async {
+    try {
+      return await _open(uri, range: range, validators: validators);
+    } on Failure {
+      rethrow;
+    } on SocketException catch (error) {
+      throw Failure(
+        code: ErrorCode.network,
+        message: 'socket failure for $uri: ${error.message}',
+        cause: error,
+      );
+    } on HttpException catch (error) {
+      throw Failure(
+        code: ErrorCode.network,
+        message: 'HTTP transport failure for $uri: ${error.message}',
+        cause: error,
+      );
+    }
+  }
+
+  Future<ByteResponse> _open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async {
     if (uri.scheme != 'http' && uri.scheme != 'https') {
       throw Failure(
         code: ErrorCode.source,

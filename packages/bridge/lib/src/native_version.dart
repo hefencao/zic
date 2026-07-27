@@ -1,5 +1,6 @@
 import 'dart:ffi';
-import 'dart:io';
+
+import 'native_lib.dart';
 
 typedef _VersionNative = Uint32 Function();
 typedef _VersionDart = int Function();
@@ -11,9 +12,7 @@ final class NativeVersion {
   final int libVersion;
 
   static NativeVersion load({String? libPath}) {
-    final lib = libPath == null
-        ? DynamicLibrary.open(_defaultLibraryName())
-        : DynamicLibrary.open(libPath);
+    final lib = openNativeLib(libPath);
     final abi = lib.lookupFunction<_VersionNative, _VersionDart>(
       'zic_abi_version',
     );
@@ -24,18 +23,5 @@ final class NativeVersion {
       abiVersion: abi(),
       libVersion: version(),
     );
-  }
-
-  static String _defaultLibraryName() {
-    if (Platform.isAndroid || Platform.isLinux) {
-      return 'libmedia_core.so';
-    }
-    if (Platform.isMacOS || Platform.isIOS) {
-      return 'libmedia_core.dylib';
-    }
-    if (Platform.isWindows) {
-      return 'media_core.dll';
-    }
-    throw UnsupportedError('unsupported platform: ${Platform.operatingSystem}');
   }
 }

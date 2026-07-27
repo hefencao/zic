@@ -1,4 +1,5 @@
 import 'package:domain/domain.dart';
+import 'package:media/media.dart';
 import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
 
@@ -10,12 +11,14 @@ final class DownloadRegistry {
     required this.clock,
     this.index,
     this.traceSink = const NoopTraceSink(),
+    this.sources,
   });
 
   final CacheLayout layout;
   final MonoClock clock;
   final CacheIndex? index;
   final TraceSink traceSink;
+  final SourcePool? sources;
 
   final Map<DownloadId, DownloadSession> _sessions =
       <DownloadId, DownloadSession>{};
@@ -32,6 +35,7 @@ final class DownloadRegistry {
         traceSink: traceSink,
         sessionId: 'download:${layout.tokenFor(id)}',
         index: index,
+        ingress: sources?.get(id),
       ),
     );
   }
@@ -60,13 +64,19 @@ final class DownloadRegistry {
     return restored;
   }
 
-  Future<void> evict(DownloadId id) async {
-    final session = _sessions[id];
+  Future<int> evict(DownloadId id) async {
+    var session = _sessions[id];
+    final record = await index?.get(id.key);
     if (session == null) {
-      await index?.remove(id.key);
-      return;
+      if (record == null) {
+        return 0;
+      }
+      session = get(id);
     }
-    await session.evict();
+    if (session.artifact.state == ArtifactState.empty) {
+      await session.restore();
+    }
+    return session.evict();
   }
 
   Future<void> dispose() async {
@@ -74,5 +84,6 @@ final class DownloadRegistry {
       await session.dispose();
     }
     _sessions.clear();
+    sources?.dispose();
   }
 }

@@ -1,26 +1,55 @@
 # Changelog
 
+## 0.7.0-dev.7
+
+- Imported `EncodedSource` in the frame cursor contract.
+- Fixed `Artifact.readPrefix()` closing its random-access file before the
+  asynchronous read completed.
+- Added an immediate prefix-read/file-close regression test.
+- Added renderer-owned output frame and frame uploader contracts.
+- Added upload sessions and registry with upload and present claims.
+- Deferred output disposal while a present claim remains active.
+- Rejected and disposed stale upload results.
+- Connected successful decode work to upload-demand wake-up.
+- Added upload state, uploaded-frame, and presented-frame telemetry.
+
+## 0.6.0-dev.6
+
+- Fixed restored sniff prefixes being stored as unmodifiable lists.
+- Changed artifacts to open partial writers lazily and serialize writes.
+- Removed idle file handles from startup recovery and cache scanning.
+- Added source-ready/source-disabled telemetry and early decode wake-up.
+- Added frame/cursor contracts, frame holder claims, decode sessions, and a
+  decode registry keyed by `DecodeId` and source epoch.
+- Made coordinator idle detection stable across work submitted by other lanes.
+- Added regression coverage for the reported session failures and decode flow.
+- Copied queued byte chunks at ownership boundaries and isolated
+  source-listener failures.
+- Disposed frames decoded after cancellation or epoch supersession.
+- Fixed coordinator upload dispatch and cancellation of detached active
+  downloads during dispose.
+
+## 0.5.0-dev.5
+
+- Fixed the missing `DownloadSession` import in `LiveCoordinator`.
+- Moved `RetryPolicy` duration validation out of const evaluation.
+- Added the pure Dart media contracts, source pool, and format-aware ingress.
+- Mirrored confirmed WebP downloads into native encoded sources while keeping
+  artifacts authoritative.
+- Rebuild encoded sources from restored partial/final artifacts.
+- Added ingress and download-integration regression tests.
+
+## 0.4.0-dev.4
+
+- Fixed Flutter platform-generation and test working directories.
+- Added explicit Flutter and Dart package test runners.
+- Added cache limits, LRU planning, safe trim/clear, and released-byte reports.
+- Added bounded retry/backoff for demanded failed downloads.
+- Added decode, upload, and maintenance lane shells.
+- Added Rust incremental byte-source ABI and Dart FFI wrapper.
+
 ## 0.3.0-dev.3
 
-- Renamed the reserved `library` package to `catalog` and updated all imports, workspace entries, tests, CI, and validation.
-- Reworked Last-Modified JSON parsing without an unnecessary cast.
-- Added cache records, memory/SQLite indexes, deterministic cache layout, startup scanning, orphan repair, and active-path protection.
-- Preserved final artifact metadata and added staged metadata recovery around atomic promote.
-- Added `NetLane`, `DownloadRegistry`, `LiveCoordinator`, cooperative cancellation, and startup session restoration.
-- Added cache/index/scanner/lane/coordinator/recovery tests.
-
-## 0.2.0-dev.2
-
-- Removed redundant `zic_` prefixes from internal packages, folders, imports, and public Dart types.
-- Shortened core types to `ContentId`, `DownloadId`, `DecodeId`, `ResourceId`, and `ReaderObs`.
-- Added `transport` with HTTP/File byte streaming, range requests, validators, and signature sniffing.
-- Added `storage` with durable partial artifacts, CRC32, metadata, seal, reset, and promote.
-- Added `DownloadSession`, exclusive `RunLease`/`WriterLease`, epoch rejection, detach-retain semantics, and safe eviction checks.
-- Added `DownloadJob` with resumable transfer and validator-mismatch restart.
-- Added interruption, stale writer, arbitrary chunk, range, HTTP, and file transport tests.
-
-## 0.1.0-dev.1
-
-- Created the monorepo baseline.
-- Added the first 100-page local static reader vertical slice.
-- Added reader observation, role window, heuristic demand planning, policy guard, demand diff, fake coordinator, trace schema, testkit, and Rust ABI smoke surface.
+- Renamed the reserved `library` package to `catalog`.
+- Added cache index, scanner, startup recovery, network lane, and live download
+  coordination.

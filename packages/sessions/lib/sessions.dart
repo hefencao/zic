@@ -1,3 +1,7 @@
+export 'src/decode_registry.dart';
+export 'src/decode_session.dart';
+export 'src/frame_holder.dart';
+export 'src/cache_ops.dart';
 export 'src/coordinator.dart';
 export 'src/download_job.dart';
 export 'src/download_registry.dart';
@@ -5,3 +9,6 @@ export 'src/download_session.dart';
 export 'src/live_coordinator.dart';
 export 'src/net_lane.dart';
 export 'src/startup_recovery.dart';
+export 'src/retry_policy.dart';
+export 'src/upload_registry.dart';
+export 'src/upload_session.dart';

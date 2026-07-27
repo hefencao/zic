@@ -19,6 +19,17 @@ enum TraceEventKind {
   writerRejected,
   taskFailed,
   cacheScan,
+  cacheTrim,
+  retryScheduled,
+  decodeDemand,
+  decodeState,
+  frameDecoded,
+  uploadState,
+  frameUploaded,
+  framePresented,
+  sourceReady,
+  sourceDisabled,
+  uploadDemand,
 }
 
 final class TraceEvent {

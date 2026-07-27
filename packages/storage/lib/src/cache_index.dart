@@ -80,6 +80,8 @@ abstract interface class CacheIndex {
 
   Future<void> remove(String key);
 
+  Future<void> touch(String key, int touchedUs);
+
   Future<int> totalBytes({CacheState? state});
 
   Future<void> close();
@@ -87,7 +89,7 @@ abstract interface class CacheIndex {
 
 final class MemIndex implements CacheIndex {
   final Map<String, CacheRec> _records = <String, CacheRec>{};
-  bool _closed = false;
+  bool _closed = true;
 
   @override
   Future<void> open() async {
@@ -120,6 +122,15 @@ final class MemIndex implements CacheIndex {
   Future<void> remove(String key) async {
     _requireOpen();
     _records.remove(key);
+  }
+
+  @override
+  Future<void> touch(String key, int touchedUs) async {
+    _requireOpen();
+    final current = _records[key];
+    if (current != null) {
+      _records[key] = current.copyWith(touchedUs: touchedUs);
+    }
   }
 
   @override
