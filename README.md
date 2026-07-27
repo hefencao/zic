@@ -2,11 +2,13 @@
 
 `zic` 是从零开发的高性能漫画阅读器。当前版本已完成静态 Reader、可恢复下载、
 持久化缓存恢复、容量/LRU 策略、受控清理、失败退避重试、独立资源 lane、格式感知 ingress、
-decode registry、frame holder，以及 Rust 增量媒体字节源基础。
+decode/upload registry、frame holder、viewport 播放门控、帧字节预算，以及 Rust 增量媒体字节源基础。
 
 ```text
 ReaderView
   -> ReaderObs
+  -> ReaderBinding
+       -> ViewportResolver / playback gate
   -> HeuristicPolicy
   -> DemandPlan
   -> LiveCoordinator
@@ -16,6 +18,8 @@ ReaderView
        -> DownloadRegistry / DownloadJob / DownloadSession
             -> Ingress / SourcePool
        -> DecodeRegistry / DecodeSession / FrameHolder
+       -> UploadRegistry / UploadSession / OutputFrame
+       -> FrameBudgeter (current reserve)
 
 CacheIndex
   -> CachePolicy (LRU candidate selection)

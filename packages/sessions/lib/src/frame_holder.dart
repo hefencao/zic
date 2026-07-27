@@ -107,6 +107,29 @@ final class FrameHolder {
     return removed;
   }
 
+  int trimBytes(int maxBytes, {int minDepth = 0}) {
+    _requireOpen();
+    if (maxBytes < 0) {
+      throw ArgumentError.value(maxBytes, 'maxBytes', 'must not be negative');
+    }
+    if (minDepth < 0) {
+      throw ArgumentError.value(minDepth, 'minDepth', 'must not be negative');
+    }
+    var removed = 0;
+    for (var index = _frames.length - 1;
+        index >= 0 && bytes > maxBytes && _frames.length > minDepth;
+        index--) {
+      final slot = _frames[index];
+      if (slot.claims.values.any((count) => count > 0)) {
+        continue;
+      }
+      _frames.removeAt(index);
+      removed += slot.frame.byteLength;
+      slot.frame.dispose();
+    }
+    return removed;
+  }
+
   void dispose() {
     if (_disposed) {
       return;

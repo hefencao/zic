@@ -11,6 +11,7 @@ import 'decode_registry.dart';
 import 'download_job.dart';
 import 'download_registry.dart';
 import 'download_session.dart';
+import 'frame_budget.dart';
 import 'net_lane.dart';
 import 'playback_gate.dart';
 import 'retry_policy.dart';
@@ -31,7 +32,7 @@ typedef Sleep = Future<void> Function(Duration delay);
 
 Future<void> _defaultSleep(Duration delay) => Future<void>.delayed(delay);
 
-final class LiveCoordinator implements Coordinator {
+final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   LiveCoordinator({
     required this.registry,
     required this.transportFor,
@@ -43,6 +44,7 @@ final class LiveCoordinator implements Coordinator {
     this.onUpload,
     this.decodes,
     this.uploads,
+    this.budgets,
     NetLane? net,
     DecodeLane? decode,
     UploadLane? upload,
@@ -56,6 +58,14 @@ final class LiveCoordinator implements Coordinator {
     if (onUpload != null && uploads != null) {
       throw ArgumentError('onUpload and uploads are mutually exclusive');
     }
+    final budgeter = budgets;
+    if (budgeter != null &&
+        (!identical(budgeter.decodes, decodes) ||
+            !identical(budgeter.uploads, uploads))) {
+      throw ArgumentError(
+        'budgets must use the coordinator decode and upload registries',
+      );
+    }
   }
 
   final DownloadRegistry registry;
@@ -68,6 +78,7 @@ final class LiveCoordinator implements Coordinator {
   final UploadWork? onUpload;
   final DecodeRegistry? decodes;
   final UploadRegistry? uploads;
+  final FrameBudgeter? budgets;
   final NetLane net;
   final DecodeLane decode;
   final UploadLane upload;
@@ -94,6 +105,7 @@ final class LiveCoordinator implements Coordinator {
     _reconcileDownloads(sessionId, update.diff.downloads);
     _reconcileDecodes(sessionId, update.diff.decodes);
     _reconcileUploads(sessionId, update.diff.uploads);
+    _enforceBudget(sessionId);
   }
 
   Future<void> idle() async {
@@ -363,6 +375,7 @@ final class LiveCoordinator implements Coordinator {
               );
             }
             _wakeUpload(sessionId, entry.key);
+            _enforceBudget(sessionId);
           } on Object catch (error) {
             if (error is! Failure || error.code != ErrorCode.cancelled) {
               _error(sessionId, entry.key.key, 'decode', error);
@@ -405,6 +418,7 @@ final class LiveCoordinator implements Coordinator {
               }
             }
             _wakeUpload(sessionId, id);
+            _enforceBudget(sessionId);
           } on Object catch (error) {
             if (error is! Failure || error.code != ErrorCode.cancelled) {
               _error(sessionId, id.key, 'decode', error);
@@ -490,12 +504,45 @@ final class LiveCoordinator implements Coordinator {
               );
             }
           }
+          _enforceBudget(sessionId);
         } on Object catch (error) {
           if (error is! Failure || error.code != ErrorCode.cancelled) {
             _error(sessionId, id.key, 'upload', error);
           }
         }
       },
+    );
+  }
+
+  void _enforceBudget(String sessionId) {
+    final budgeter = budgets;
+    if (budgeter == null) {
+      return;
+    }
+    final report = budgeter.enforce(
+      decodeDemands: _decodes,
+      uploadDemands: _uploads,
+    );
+    if (report.decodedFreed == 0 && report.outputFreed == 0) {
+      return;
+    }
+    traceSink.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.frameBudget,
+        revision: _revision,
+        payload: <String, Object?>{
+          'decodedBefore': report.decodedBefore,
+          'decodedAfter': report.decodedAfter,
+          'decodedLimit': budgeter.limits.decodedBytes,
+          'outputBefore': report.outputBefore,
+          'outputAfter': report.outputAfter,
+          'outputLimit': budgeter.limits.outputBytes,
+          'currentDecoded': report.currentDecoded,
+          'currentOutput': report.currentOutput,
+        },
+      ),
     );
   }
 

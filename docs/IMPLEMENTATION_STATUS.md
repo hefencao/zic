@@ -1,5 +1,45 @@
 # Implementation Status
 
+## 0.10.0-dev.10 — reader binding and frame budgets
+
+### Requested fix
+
+- Replaced `ReadingDirection.leftToRight` in
+  `pipeline/test/viewport_phase_test.dart` with the canonical `ltr` enum value.
+- Added a repository regression gate that rejects the stale long-form value.
+
+### Reader runtime binding
+
+Added `ReaderBinding` as the application composition boundary for one reader
+session. A single `ReaderObs` now drives `PipelineController`, demand
+reconciliation, `ViewportResolver`, and playback synchronization. The demo app
+uses this binding instead of wiring only the demand callback.
+
+`Coordinator` remains the demand contract. `PlaybackCoordinator` is a separate
+capability implemented by both live and fake coordinators, so non-playback
+coordinators do not need dummy methods.
+
+### Decoded/output budgets
+
+Added `FrameBudget` and `FrameBudgeter` with independent decoded and renderer
+output byte limits. Each limit has a current-page reserve. Non-current sessions
+may use only the remainder and are trimmed in ascending demand priority.
+Current-page resources are not silently discarded when the current page alone
+exceeds a limit.
+
+`FrameHolder` can now trim by bytes while respecting active claims.
+`UploadSession` exposes output bytes and only trims an output when no present
+claim exists. `LiveCoordinator` enforces the budget after reconciliation,
+decode completion, and upload completion, and emits `frameBudget` telemetry
+when bytes are released.
+
+### Next iteration
+
+1. Add native cursor/frame ABI and frame-handle retain/release ownership.
+2. Add Android `SurfaceProducer` registry and serial blit worker.
+3. Resolve frame budgets from device memory/thermal telemetry instead of fixed
+   construction-time limits.
+
 ## 0.9.0-dev.9 — split APK and viewport playback gate
 
 ### Requested fixes

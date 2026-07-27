@@ -22,6 +22,13 @@ final class DecodeRegistry {
   final Map<DecodeId, DecodeSession> _sessions = <DecodeId, DecodeSession>{};
 
   Iterable<DecodeSession> get sessions => _sessions.values;
+  int get totalBytes =>
+      _sessions.values.fold<int>(0, (sum, session) => sum + session.bytes);
+
+  int bytesFor(Set<DecodeId> ids) => ids.fold<int>(
+        0,
+        (sum, id) => sum + (_sessions[id]?.bytes ?? 0),
+      );
 
   DecodeSession? find(DecodeId id) => _sessions[id];
 

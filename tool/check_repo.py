@@ -249,6 +249,27 @@ def check_compile_regressions() -> None:
         fail('sessions must export PlaybackGate')
     if 'void syncPlayback(' not in live or '_playbackGate.apply(' not in live:
         fail('LiveCoordinator must integrate viewport playback gating')
+    viewport_test = (ROOT / 'packages/pipeline/test/viewport_phase_test.dart').read_text(
+        encoding='utf-8'
+    )
+    if 'ReadingDirection.leftToRight' in viewport_test or 'lefttoright' in viewport_test:
+        fail('viewport tests must use the ReadingDirection.ltr abbreviation')
+    binding = (ROOT / 'packages/sessions/lib/src/reader_binding.dart').read_text(
+        encoding='utf-8'
+    )
+    if '_coordinator.reconcile(' not in binding or 'playback.syncPlayback(' not in binding:
+        fail('ReaderBinding must drive both demand and viewport playback')
+    media_output = (ROOT / 'packages/media/lib/src/output.dart').read_text(
+        encoding='utf-8'
+    )
+    if 'int get byteLength;' not in media_output:
+        fail('OutputFrame must expose byteLength for output budgeting')
+    budget = (ROOT / 'packages/sessions/lib/src/frame_budget.dart').read_text(
+        encoding='utf-8'
+    )
+    for required in ('currentDecodedReserve', 'currentOutputReserve', 'FrameBudgeter'):
+        if required not in budget:
+            fail(f'frame budget implementation is incomplete: {required}')
 
 
 def check_native_abi() -> None:

@@ -6,7 +6,11 @@ abstract interface class Coordinator {
   void reconcile(String sessionId, PipelineDelta update);
 }
 
-final class FakeCoordinator implements Coordinator {
+abstract interface class PlaybackCoordinator {
+  void syncPlayback(ViewportState viewport, Map<int, DecodeId> ids);
+}
+
+final class FakeCoordinator implements Coordinator, PlaybackCoordinator {
   FakeCoordinator({
     required this.clock,
     this.traceSink = const NoopTraceSink(),
@@ -23,6 +27,15 @@ final class FakeCoordinator implements Coordinator {
       <DecodeId, UploadDemand>{};
   final Set<ResourceId> _keep = <ResourceId>{};
 
+  ViewportState? _viewport;
+  Map<int, DecodeId> _playbackIds = const <int, DecodeId>{};
+  int _playbackSyncs = 0;
+
+  ViewportState? get viewport => _viewport;
+  Map<int, DecodeId> get playbackIds =>
+      Map<int, DecodeId>.unmodifiable(_playbackIds);
+  int get playbackSyncs => _playbackSyncs;
+
   Map<DownloadId, DownloadDemand> get downloads =>
       Map<DownloadId, DownloadDemand>.unmodifiable(_downloads);
   Map<DecodeId, DecodeDemand> get decodes =>
@@ -30,6 +43,13 @@ final class FakeCoordinator implements Coordinator {
   Map<DecodeId, UploadDemand> get uploads =>
       Map<DecodeId, UploadDemand>.unmodifiable(_uploads);
   Set<ResourceId> get keep => Set<ResourceId>.unmodifiable(_keep);
+
+  @override
+  void syncPlayback(ViewportState viewport, Map<int, DecodeId> ids) {
+    _viewport = viewport;
+    _playbackIds = Map<int, DecodeId>.unmodifiable(ids);
+    _playbackSyncs++;
+  }
 
   @override
   void reconcile(String sessionId, PipelineDelta update) {

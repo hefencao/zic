@@ -317,6 +317,8 @@ final class _Output implements OutputFrame {
   @override
   int get height => 8;
   @override
+  int get byteLength => 256;
+  @override
   Duration get duration => const Duration(milliseconds: 16);
   @override
   RendererKind get renderer => RendererKind.androidTexture;

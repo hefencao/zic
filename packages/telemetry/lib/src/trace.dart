@@ -30,6 +30,7 @@ enum TraceEventKind {
   sourceReady,
   sourceDisabled,
   uploadDemand,
+  frameBudget,
 }
 
 final class TraceEvent {

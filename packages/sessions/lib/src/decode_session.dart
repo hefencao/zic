@@ -56,6 +56,7 @@ final class DecodeSession {
 
   DecodeState get state => _state;
   FrameHolder? get holder => _holder;
+  int get bytes => _holder?.bytes ?? 0;
 
   DecodeSnapshot get snapshot => DecodeSnapshot(
         id: id,
@@ -149,6 +150,19 @@ final class DecodeSession {
     }
     _setState(DecodeState.ready);
     return snapshot;
+  }
+
+  int trimBytes(int maxBytes, {int minDepth = 0}) {
+    _requireOpen();
+    final holder = _holder;
+    if (holder == null) {
+      return 0;
+    }
+    final removed = holder.trimBytes(maxBytes, minDepth: minDepth);
+    if (holder.isEmpty && _state == DecodeState.ready) {
+      _setState(DecodeState.idle);
+    }
+    return removed;
   }
 
   void detach({int retainDepth = 1}) {

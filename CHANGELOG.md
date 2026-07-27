@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.10.0-dev.10
+
+- Replaced the stale `ReadingDirection.leftToRight` test value with `ltr`.
+- Added `ReaderBinding` to drive demand reconciliation and viewport playback
+  from the same reader observation, and connected the demo app to the binding.
+- Added decoded-frame and renderer-output byte budgets with current-page
+  reserves and low-priority non-current trimming.
+- Added output byte accounting, claim-safe frame/output trimming, and frame
+  budget telemetry in `LiveCoordinator`.
+- Added reader-binding and frame-budget integration tests plus regression gates.
+
 ## 0.9.0-dev.9
 
 - Removed invalid trailing commas from native source enum index expressions.

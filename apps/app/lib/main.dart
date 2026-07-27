@@ -96,7 +96,7 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
   late final MemoryTraceSink _memoryTrace;
   late final TraceSink _trace;
   late final FakeCoordinator _coordinator;
-  late final PipelineController _pipeline;
+  late final ReaderBinding _binding;
   late final ReaderController _reader;
 
   @override
@@ -112,7 +112,7 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
       clock: _clock,
       traceSink: _trace,
     );
-    _pipeline = PipelineController(
+    _binding = ReaderBinding(
       chapter: widget.chapter,
       decodeTarget: DecodeTarget(
         physicalWidth: 1080,
@@ -120,12 +120,12 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
       ),
       clock: _clock,
       traceSink: _trace,
-      onUpdate: (update) => _coordinator.reconcile('demo-session', update),
+      coordinator: _coordinator,
     );
     _reader = ReaderController(
       sessionId: 'demo-session',
       chapter: widget.chapter,
-      onObservation: _pipeline.accept,
+      onObservation: _binding.accept,
       clock: _clock,
       traceSink: _trace,
     );

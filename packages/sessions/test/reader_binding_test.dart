@@ -1,0 +1,126 @@
+import 'package:domain/domain.dart';
+import 'package:pipeline/pipeline.dart';
+import 'package:sessions/sessions.dart';
+import 'package:telemetry/telemetry.dart';
+import 'package:test/test.dart';
+
+void main() {
+  test('reader binding reconciles demand and viewport playback together', () {
+    final coordinator = FakeCoordinator(clock: _Clock());
+    final binding = ReaderBinding(
+      chapter: _chapter(),
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+      clock: _Clock(),
+      coordinator: coordinator,
+    );
+
+    binding.accept(_obs(
+      interaction: Interaction.dragging,
+      current: 1,
+      currentFraction: 0.4,
+      target: 2,
+      targetFraction: 0.6,
+    ));
+
+    expect(coordinator.downloads, isNotEmpty);
+    expect(coordinator.decodes, hasLength(2));
+    expect(coordinator.uploads, hasLength(2));
+    expect(coordinator.viewport?.phase, ViewportPhase.dominant);
+    expect(coordinator.viewport?.dominantPageIndex, 2);
+    expect(coordinator.playbackIds.keys, containsAll(<int>[1, 2]));
+    expect(coordinator.playbackSyncs, 1);
+  });
+
+  test('continuous binding freezes viewport while scrolling', () {
+    final coordinator = FakeCoordinator(clock: _Clock());
+    final binding = ReaderBinding(
+      chapter: _chapter(),
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+      clock: _Clock(),
+      coordinator: coordinator,
+      discretePages: false,
+    );
+
+    binding.accept(_obs(
+      interaction: Interaction.scrolling,
+      current: 0,
+      currentFraction: 0.8,
+      target: 1,
+      targetFraction: 0.2,
+    ));
+
+    expect(coordinator.viewport?.phase, ViewportPhase.continuous);
+    expect(coordinator.viewport?.freezesPresentation, isTrue);
+  });
+}
+
+ChapterManifest _chapter() {
+  final pages = List<PageAsset>.generate(
+    3,
+    (index) => PageAsset(
+      pageId: 'page-$index',
+      chapterId: 'chapter',
+      index: index,
+      uri: Uri.parse('https://example.test/page-$index.webp'),
+      contentKindHint: ContentKindHint.webp,
+      animatedHint: true,
+    ),
+  );
+  return ChapterManifest(
+    sourceId: 'source',
+    comicId: 'comic',
+    chapter: const Chapter(
+      chapterId: 'chapter',
+      comicId: 'comic',
+      title: 'Chapter',
+      sequence: 1,
+      pageCount: 3,
+      sourceRevision: 'r1',
+    ),
+    pages: pages,
+    readingDirection: ReadingDirection.ltr,
+  );
+}
+
+ReaderObs _obs({
+  required Interaction interaction,
+  required int current,
+  required double currentFraction,
+  int? target,
+  double targetFraction = 0,
+}) {
+  return ReaderObs(
+    sessionId: 'reader',
+    currentIndex: current,
+    stableIndex: current,
+    interaction: interaction,
+    logicalPosition: current.toDouble(),
+    velocity: 0,
+    currentCoverage: Coverage(
+      pageIndex: current,
+      assetKey: 'chapter/page-$current',
+      fraction: currentFraction,
+    ),
+    targetCoverage: target == null
+        ? null
+        : Coverage(
+            pageIndex: target,
+            assetKey: 'chapter/page-$target',
+            fraction: targetFraction,
+          ),
+    direction: ReadingDirection.ltr,
+    timestamp: DateTime.utc(2026),
+    monotonicMicros: 0,
+  );
+}
+
+final class _Clock implements MonoClock {
+  @override
+  int nowMicros() => 0;
+}

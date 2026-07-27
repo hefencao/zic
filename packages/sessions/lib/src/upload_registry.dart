@@ -22,6 +22,13 @@ final class UploadRegistry {
   final Map<DecodeId, UploadSession> _sessions = <DecodeId, UploadSession>{};
 
   Iterable<UploadSession> get sessions => _sessions.values;
+  int get totalBytes =>
+      _sessions.values.fold<int>(0, (sum, session) => sum + session.outputBytes);
+
+  int bytesFor(Set<DecodeId> ids) => ids.fold<int>(
+        0,
+        (sum, id) => sum + (_sessions[id]?.outputBytes ?? 0),
+      );
 
   UploadSession? find(DecodeId id) => _sessions[id];
 

@@ -11,6 +11,7 @@ abstract interface class OutputFrame {
   int get index;
   int get width;
   int get height;
+  int get byteLength;
   Duration get duration;
   RendererKind get renderer;
   bool get disposed;

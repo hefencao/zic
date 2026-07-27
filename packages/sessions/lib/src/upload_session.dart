@@ -17,6 +17,7 @@ final class UploadSnapshot {
     required this.epoch,
     required this.revision,
     required this.presentClaims,
+    required this.outputBytes,
     this.frameIndex,
     this.failure,
   });
@@ -26,6 +27,7 @@ final class UploadSnapshot {
   final SourceEpoch epoch;
   final int revision;
   final int presentClaims;
+  final int outputBytes;
   final int? frameIndex;
   final Failure? failure;
 }
@@ -90,6 +92,8 @@ final class UploadSession {
   OutputFrame? get frame => _slot?.frame;
   int get preparedDepth =>
       _slot == null || _slot!.frame.disposed ? 0 : 1;
+  int get outputBytes =>
+      _slot == null || _slot!.frame.disposed ? 0 : _slot!.frame.byteLength;
   PlaybackState get playbackState => _playback.state;
 
   UploadSnapshot get snapshot => UploadSnapshot(
@@ -98,6 +102,7 @@ final class UploadSession {
         epoch: _epoch,
         revision: _revision,
         presentClaims: _slot?.claims ?? 0,
+        outputBytes: outputBytes,
         frameIndex: _slot?.frame.index,
         failure: _failure,
       );
@@ -201,6 +206,20 @@ final class UploadSession {
       },
     );
     return snapshot;
+  }
+
+  int trimOutput() {
+    _requireOpen();
+    final slot = _slot;
+    if (slot == null || slot.frame.disposed || slot.claims > 0) {
+      return 0;
+    }
+    final bytes = slot.frame.byteLength;
+    _playback.clear();
+    _slot = null;
+    slot.retire();
+    _setState(UploadState.waitingFrame);
+    return bytes;
   }
 
   bool advance(int frameIndex) {
