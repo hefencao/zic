@@ -206,7 +206,12 @@ Dart presenter 输出：
 
 - `queueMicros`、`uploadMicros`、`deadlineMissMicros`；
 - `frameBytes`、`textureBytes`、`inFlightBytes`；
+- `sessionId`、`decodeIdentity`、`demandRevision`、`epoch` 归因上下文；
 - platform failure 的 fallback telemetry。
+
+Reader 媒体页将 native decode、frame preparation、texture upload、present 与
+fallback 写入同一 monotonic trace。`ReaderBinding.revision` 是输出层只读的
+需求版本来源，播放器不得自行生成与 PipelineController 无关的 revision。
 
 非 Android：
 

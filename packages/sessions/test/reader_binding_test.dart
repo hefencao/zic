@@ -33,6 +33,7 @@ void main() {
     expect(coordinator.viewport?.dominantPageIndex, 2);
     expect(coordinator.playbackIds.keys, containsAll(<int>[1, 2]));
     expect(coordinator.playbackSyncs, 1);
+    expect(binding.revision, 1);
   });
 
   test('reader binding uses explicit demand and playback contracts', () {

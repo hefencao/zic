@@ -106,18 +106,46 @@ final class _MediaPipelineReaderScreenState
         }
         return _ReaderRuntime(
           chapter: snapshot.requireData,
-          pageBuilder: _buildMediaReaderPage,
+          mediaPipeline: true,
         );
       },
     );
   }
 }
 
+DownloadId readerPageDownloadId(
+  ChapterManifest chapter,
+  PageAsset asset,
+) {
+  if (asset.chapterId != chapter.chapter.chapterId) {
+    throw ArgumentError.value(
+      asset.chapterId,
+      'asset.chapterId',
+      'must match ${chapter.chapter.chapterId}',
+    );
+  }
+  return DownloadId(
+    content: ContentId(
+      sourceId: chapter.sourceId,
+      comicId: chapter.comicId,
+      chapterId: asset.chapterId,
+      pageId: asset.pageId,
+    ),
+    sourceRevision: chapter.chapter.sourceRevision,
+    canonicalUri: asset.uri,
+  );
+}
+
 Widget? _buildMediaReaderPage(
   BuildContext context,
   PageAsset asset,
-  VoidCallback reportFirstFrame,
-) {
+  VoidCallback reportFirstFrame, {
+  required ChapterManifest chapter,
+  required MonoClock clock,
+  required TraceSink traceSink,
+  required String sessionId,
+  required int Function() demandRevision,
+}) {
   if (asset.contentKindHint != ContentKindHint.webp) {
     return null;
   }
@@ -138,15 +166,25 @@ Widget? _buildMediaReaderPage(
       showEngineControls: false,
       showStatus: false,
       onFirstFrame: reportFirstFrame,
+      traceClock: clock,
+      traceSink: traceSink,
+      traceSessionId: sessionId,
+      demandRevision: demandRevision,
+      downloadIdentity: readerPageDownloadId(chapter, asset),
     ),
   );
 }
 
 final class _ReaderRuntime extends StatefulWidget {
-  const _ReaderRuntime({required this.chapter, this.pageBuilder});
+  const _ReaderRuntime({
+    required this.chapter,
+    this.pageBuilder,
+    this.mediaPipeline = false,
+  });
 
   final ChapterManifest chapter;
   final ReaderPageBuilder? pageBuilder;
+  final bool mediaPipeline;
 
   @override
   State<_ReaderRuntime> createState() => _ReaderRuntimeState();
@@ -157,6 +195,7 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
   late final MemoryTraceSink _memoryTrace;
   late final TraceSink _trace;
   late final FakeCoordinator _coordinator;
+  ReaderBinding? _binding;
   ReaderController? _reader;
   DecodeTarget? _target;
 
@@ -206,6 +245,7 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
       traceSink: _trace,
     );
     reader.setDirection(direction);
+    _binding = binding;
     _target = target;
     _reader = reader;
   }
@@ -218,6 +258,22 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
 
   @override
   Widget build(BuildContext context) {
+    final ReaderPageBuilder? pageBuilder;
+    if (widget.mediaPipeline) {
+      pageBuilder = (context, asset, reportFirstFrame) =>
+          _buildMediaReaderPage(
+        context,
+        asset,
+        reportFirstFrame,
+        chapter: widget.chapter,
+        clock: _clock,
+        traceSink: _trace,
+        sessionId: _reader!.sessionId,
+        demandRevision: () => _binding?.revision ?? 0,
+      );
+    } else {
+      pageBuilder = widget.pageBuilder;
+    }
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.chapter.chapter.title),
@@ -242,7 +298,7 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
         controller: _reader!,
         clock: _clock,
         traceSink: _trace,
-        pageBuilder: widget.pageBuilder,
+        pageBuilder: pageBuilder,
       ),
     );
   }

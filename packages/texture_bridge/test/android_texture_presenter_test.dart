@@ -53,8 +53,18 @@ void main() {
     );
     final lease = await presenter.create(width: 4, height: 4);
     final frame = _FakeFrame(ownership: ownership);
+    const context = TextureTelemetryContext(
+      sessionId: 'reader-1',
+      decodeIdentity: 'decode-7',
+      demandRevision: 9,
+      epoch: 3,
+    );
 
-    final sample = await lease.present(frame, deadlineAfterMicros: 100);
+    final sample = await lease.present(
+      frame,
+      deadlineAfterMicros: 100,
+      context: context,
+    );
 
     expect(ownership.retains, 1);
     expect(ownership.releases, 1);
@@ -65,6 +75,11 @@ void main() {
     expect(sample.queueMicros, 11);
     expect(sample.uploadMicros, 23);
     expect(sample.deadlineMissMicros, 5);
+    expect(sample.context, same(context));
+    expect(sample.context.sessionId, 'reader-1');
+    expect(sample.context.decodeIdentity, 'decode-7');
+    expect(sample.context.demandRevision, 9);
+    expect(sample.context.epoch, 3);
     expect(events, <TextureTelemetry>[sample]);
     expect(calls.map((call) => call.method), <String>['create', 'present']);
     expect(calls.last.arguments, containsPair('deadlineAfterMicros', 100));
@@ -81,8 +96,18 @@ void main() {
     );
     final lease = await presenter.create(width: 4, height: 4);
 
+    const context = TextureTelemetryContext(
+      sessionId: 'reader-fallback',
+      decodeIdentity: 'decode-fallback',
+      demandRevision: 11,
+      epoch: 4,
+    );
+
     await expectLater(
-      lease.present(_FakeFrame(ownership: ownership)),
+      lease.present(
+        _FakeFrame(ownership: ownership),
+        context: context,
+      ),
       throwsA(isA<PlatformException>()),
     );
 
@@ -90,6 +115,25 @@ void main() {
     expect(ownership.releases, 1);
     expect(events, hasLength(1));
     expect(events.single, isA<TextureFallbackTelemetry>());
+    final fallback = events.single as TextureFallbackTelemetry;
+    expect(fallback.context, same(context));
+    expect(fallback.context.demandRevision, 11);
+  });
+
+  test('telemetry sink failure cannot turn a successful present into fallback',
+      () async {
+    final ownership = _Ownership();
+    final presenter = AndroidTexturePresenter(
+      channel: channel,
+      telemetrySink: (_) => throw StateError('telemetry unavailable'),
+    );
+    final lease = await presenter.create(width: 4, height: 4);
+
+    final sample = await lease.present(_FakeFrame(ownership: ownership));
+
+    expect(sample.textureId, 17);
+    expect(ownership.retains, 1);
+    expect(ownership.releases, 1);
   });
 
   test('resize updates identity and release is idempotent', () async {

@@ -9,6 +9,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:pipeline/pipeline.dart';
+import 'package:telemetry/telemetry.dart';
 import 'package:texture_bridge/texture_bridge.dart';
 
 const _webpTypes = <XTypeGroup>[
@@ -299,6 +300,11 @@ final class NativeWebpPlayer extends StatefulWidget {
     this.showEngineControls = true,
     this.showStatus = true,
     this.onFirstFrame,
+    this.traceSink = const NoopTraceSink(),
+    this.traceClock,
+    this.traceSessionId = 'webp-preview',
+    this.demandRevision,
+    this.downloadIdentity,
     super.key,
   });
 
@@ -308,6 +314,11 @@ final class NativeWebpPlayer extends StatefulWidget {
   final bool showEngineControls;
   final bool showStatus;
   final VoidCallback? onFirstFrame;
+  final TraceSink traceSink;
+  final MonoClock? traceClock;
+  final String traceSessionId;
+  final int Function()? demandRevision;
+  final DownloadId? downloadIdentity;
 
   @override
   State<NativeWebpPlayer> createState() => _NativeWebpPlayerState();
@@ -325,10 +336,13 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   RasterPlan? _scheduledRaster;
   ui.Image? _image;
   late final AndroidTexturePresenter _texturePresenter;
+  late final MonoClock _traceClock;
   AndroidTextureLease? _texture;
   int? _textureId;
   TexturePresentTelemetry? _lastTexturePresent;
   TextureFallbackTelemetry? _lastTextureFallback;
+  DecodeId? _decodeId;
+  int? _nativeEpoch;
   EncodedSource? _source;
   CursorBinding? _cursor;
   _PreparedNativeFrame? _pending;
@@ -351,6 +365,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   @override
   void initState() {
     super.initState();
+    _traceClock = widget.traceClock ?? SystemClock();
     _texturePresenter = AndroidTexturePresenter(
       telemetrySink: _recordTextureTelemetry,
     );
@@ -358,6 +373,39 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   }
 
   void _recordTextureTelemetry(TextureTelemetry event) {
+    final context = event.context;
+    switch (event) {
+      case TexturePresentTelemetry():
+        _recordTrace(
+          TraceEventKind.frameUploaded,
+          sessionId: context.sessionId,
+          identityHash: context.decodeIdentity,
+          revision: context.demandRevision,
+          epoch: context.epoch,
+          payload: <String, Object?>{
+            'frame': event.frameIndex,
+            'queueMicros': event.queueMicros,
+            'uploadMicros': event.uploadMicros,
+            'deadlineMissMicros': event.deadlineMissMicros,
+            'frameBytes': event.frameBytes,
+            'textureBytes': event.textureBytes,
+            'inFlightBytes': event.inFlightBytes,
+            'renderer': RendererKind.androidTexture.name,
+          },
+        );
+      case TextureFallbackTelemetry():
+        _recordTrace(
+          TraceEventKind.taskFailed,
+          sessionId: context.sessionId,
+          identityHash: context.decodeIdentity,
+          revision: context.demandRevision,
+          epoch: context.epoch,
+          payload: <String, Object?>{
+            'lane': 'texture',
+            'reason': event.reason,
+          },
+        );
+    }
     if (!mounted) {
       return;
     }
@@ -370,6 +418,27 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
           _lastTextureFallback = event;
       }
     });
+  }
+
+  void _recordTrace(
+    TraceEventKind kind, {
+    String? sessionId,
+    String? identityHash,
+    int? revision,
+    int? epoch,
+    Map<String, Object?> payload = const <String, Object?>{},
+  }) {
+    widget.traceSink.record(
+      traceEvent(
+        clock: _traceClock,
+        sessionId: sessionId ?? widget.traceSessionId,
+        kind: kind,
+        identityHash: identityHash ?? _decodeId?.key,
+        revision: revision ?? widget.demandRevision?.call(),
+        epoch: epoch ?? _nativeEpoch,
+        payload: payload,
+      ),
+    );
   }
 
   @override
@@ -495,16 +564,17 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         throw StateError('native source seal failed: ${seal.name}');
       }
       final id = DecodeId(
-        download: DownloadId(
-          content: ContentId(
-            sourceId: 'demo',
-            comicId: 'animated-webp',
-            chapterId: 'preview',
-            pageId: widget.title,
-          ),
-          sourceRevision: 'local-v1',
-          canonicalUri: widget.sourceUri,
-        ),
+        download: widget.downloadIdentity ??
+            DownloadId(
+              content: ContentId(
+                sourceId: 'demo',
+                comicId: 'animated-webp',
+                chapterId: 'preview',
+                pageId: widget.title,
+              ),
+              sourceRevision: 'local-v1',
+              canonicalUri: widget.sourceUri,
+            ),
         physicalWidth: raster.decodeWidth,
         physicalHeight: raster.decodeHeight,
         pixelFormat: PixelFormat.rgba8888,
@@ -530,6 +600,8 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
 
       _source = source;
       _cursor = cursor;
+      _decodeId = id;
+      _nativeEpoch = epoch;
       _texture = pendingTexture;
       _textureId = pendingTexture?.textureId;
       pendingSource = null;
@@ -552,6 +624,17 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       if (!mounted || generation != _generation) {
         return;
       }
+      _recordTrace(
+        TraceEventKind.taskFailed,
+        identityHash: _decodeId?.key ?? widget.sourceUri.toString(),
+        revision: widget.demandRevision?.call(),
+        epoch: _nativeEpoch ?? generation,
+        payload: <String, Object?>{
+          'lane': 'native-start',
+          'reason': error.toString(),
+          'fallback': RendererKind.flutterImage.name,
+        },
+      );
       _resetNative(disposeImage: true);
       setState(() {
         _nativeError = error;
@@ -578,7 +661,9 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       return null;
     }
     while (mounted && generation == _generation) {
+      final decodeClock = Stopwatch()..start();
       final step = await binding.frames.decodeNext();
+      final decodeMicros = decodeClock.elapsedMicroseconds;
       if (!mounted || generation != _generation) {
         step.frame?.dispose();
         return null;
@@ -600,13 +685,20 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
               frame.dispose();
               throw StateError('Android texture requires a native frame owner');
             }
-            return _PreparedTextureFrame(
+            final prepared = _PreparedTextureFrame(
               frame: NativeTextureFrameOwner(frame),
               duration: duration,
               index: index,
               cycle: cycle,
+              frameBytes: frame.byteLength,
+              decodeMicros: decodeMicros,
+              prepareMicros: 0,
             );
+            _recordDecoded(prepared, RendererKind.androidTexture);
+            return prepared;
           }
+          final frameBytes = frame.byteLength;
+          final prepareClock = Stopwatch()..start();
           final rgba = frame.copyBytes();
           _premultiplyRgbaInPlace(rgba);
           late final ui.Image image;
@@ -615,12 +707,17 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
           } finally {
             frame.dispose();
           }
-          return _PreparedImageFrame(
+          final prepared = _PreparedImageFrame(
             image: image,
             duration: duration,
             index: index,
             cycle: cycle,
+            frameBytes: frameBytes,
+            decodeMicros: decodeMicros,
+            prepareMicros: prepareClock.elapsedMicroseconds,
           );
+          _recordDecoded(prepared, RendererKind.flutterImage);
+          return prepared;
         case CursorStepKind.needMoreData:
           throw StateError('sealed WebP unexpectedly needs more data');
         case CursorStepKind.end:
@@ -632,6 +729,23 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       }
     }
     return null;
+  }
+
+  void _recordDecoded(
+    _PreparedNativeFrame prepared,
+    RendererKind renderer,
+  ) {
+    _recordTrace(
+      TraceEventKind.frameDecoded,
+      payload: <String, Object?>{
+        'frame': prepared.index,
+        'cycle': prepared.cycle,
+        'frameBytes': prepared.frameBytes,
+        'decodeMicros': prepared.decodeMicros,
+        'prepareMicros': prepared.prepareMicros,
+        'renderer': renderer.name,
+      },
+    );
   }
 
   Future<void> _presentPrepared(
@@ -666,6 +780,12 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
           await texture.present(
             frame,
             deadlineAfterMicros: _textureUploadBudget.inMicroseconds,
+            context: TextureTelemetryContext(
+              sessionId: widget.traceSessionId,
+              decodeIdentity: _decodeId?.key,
+              demandRevision: widget.demandRevision?.call(),
+              epoch: _nativeEpoch,
+            ),
           );
         } finally {
           frame.dispose();
@@ -701,6 +821,20 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         previous?.dispose();
         _reportFirstFrame();
     }
+
+    _recordTrace(
+      TraceEventKind.framePresented,
+      payload: <String, Object?>{
+        'frame': prepared.index,
+        'cycle': prepared.cycle,
+        'frameBytes': prepared.frameBytes,
+        'decodeMicros': prepared.decodeMicros,
+        'prepareMicros': prepared.prepareMicros,
+        'renderer': prepared is _PreparedTextureFrame
+            ? RendererKind.androidTexture.name
+            : RendererKind.flutterImage.name,
+      },
+    );
 
     final clock = Stopwatch()..start();
     _frameClock = clock;
@@ -739,6 +873,14 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       if (!mounted || generation != _generation) {
         return;
       }
+      _recordTrace(
+        TraceEventKind.taskFailed,
+        payload: <String, Object?>{
+          'lane': 'decode',
+          'reason': error.toString(),
+          'fallback': RendererKind.flutterImage.name,
+        },
+      );
       final oldImage = _image;
       _image = null;
       oldImage?.dispose();
@@ -758,6 +900,16 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   void _fallbackFromNative(Object error, int generation) {
     if (!mounted || generation != _generation) {
       return;
+    }
+    if (_lastTextureFallback == null) {
+      _recordTrace(
+        TraceEventKind.taskFailed,
+        payload: <String, Object?>{
+          'lane': 'present',
+          'reason': error.toString(),
+          'fallback': RendererKind.flutterImage.name,
+        },
+      );
     }
     final oldImage = _image;
     _image = null;
@@ -826,6 +978,8 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     _cursor = null;
     _source?.dispose();
     _source = null;
+    _decodeId = null;
+    _nativeEpoch = null;
     final texture = _texture;
     _texture = null;
     _textureId = null;
@@ -1122,11 +1276,17 @@ sealed class _PreparedNativeFrame {
     required this.duration,
     required this.index,
     required this.cycle,
+    required this.frameBytes,
+    required this.decodeMicros,
+    required this.prepareMicros,
   });
 
   final Duration duration;
   final int index;
   final int cycle;
+  final int frameBytes;
+  final int decodeMicros;
+  final int prepareMicros;
 
   void dispose();
 }
@@ -1137,6 +1297,9 @@ final class _PreparedImageFrame extends _PreparedNativeFrame {
     required super.duration,
     required super.index,
     required super.cycle,
+    required super.frameBytes,
+    required super.decodeMicros,
+    required super.prepareMicros,
   }) : _image = image;
 
   ui.Image? _image;
@@ -1160,6 +1323,9 @@ final class _PreparedTextureFrame extends _PreparedNativeFrame {
     required super.duration,
     required super.index,
     required super.cycle,
+    required super.frameBytes,
+    required super.decodeMicros,
+    required super.prepareMicros,
   }) : _frame = frame;
 
   TextureFrameOwner? _frame;

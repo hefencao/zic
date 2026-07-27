@@ -6,17 +6,38 @@ const String textureBridgeChannelName = 'dev.zic/texture';
 
 typedef TextureTelemetrySink = void Function(TextureTelemetry event);
 
+@immutable
+final class TextureTelemetryContext {
+  const TextureTelemetryContext({
+    this.sessionId,
+    this.decodeIdentity,
+    this.demandRevision,
+    this.epoch,
+  });
+
+  final String? sessionId;
+  final String? decodeIdentity;
+  final int? demandRevision;
+  final int? epoch;
+}
+
 sealed class TextureTelemetry {
-  const TextureTelemetry({required this.textureId, required this.timestamp});
+  const TextureTelemetry({
+    required this.textureId,
+    required this.timestamp,
+    this.context = const TextureTelemetryContext(),
+  });
 
   final int textureId;
   final DateTime timestamp;
+  final TextureTelemetryContext context;
 }
 
 final class TexturePresentTelemetry extends TextureTelemetry {
   const TexturePresentTelemetry({
     required super.textureId,
     required super.timestamp,
+    super.context,
     required this.frameIndex,
     required this.frameBytes,
     required this.textureBytes,
@@ -39,6 +60,7 @@ final class TextureFallbackTelemetry extends TextureTelemetry {
   const TextureFallbackTelemetry({
     required super.textureId,
     required super.timestamp,
+    super.context,
     required this.reason,
   });
 
@@ -133,6 +155,7 @@ final class AndroidTexturePresenter {
     AndroidTextureLease lease,
     TextureFrameOwner frame, {
     int? deadlineAfterMicros,
+    TextureTelemetryContext context = const TextureTelemetryContext(),
   }) async {
     if (deadlineAfterMicros != null && deadlineAfterMicros < 0) {
       throw ArgumentError.value(
@@ -163,6 +186,7 @@ final class AndroidTexturePresenter {
       final sample = TexturePresentTelemetry(
         textureId: lease.textureId,
         timestamp: DateTime.now(),
+        context: context,
         frameIndex: retained.index,
         frameBytes: retained.byteLength,
         textureBytes: _readInt(response, 'textureBytes'),
@@ -171,13 +195,14 @@ final class AndroidTexturePresenter {
         uploadMicros: _readInt(response, 'uploadMicros'),
         deadlineMissMicros: _readInt(response, 'deadlineMissMicros'),
       );
-      telemetrySink?.call(sample);
+      _emit(sample);
       return sample;
     } catch (error) {
-      telemetrySink?.call(
+      _emit(
         TextureFallbackTelemetry(
           textureId: lease.textureId,
           timestamp: DateTime.now(),
+          context: context,
           reason: error.toString(),
         ),
       );
@@ -191,6 +216,14 @@ final class AndroidTexturePresenter {
         'release',
         <String, Object?>{'textureId': lease.textureId},
       );
+
+  void _emit(TextureTelemetry event) {
+    try {
+      telemetrySink?.call(event);
+    } catch (error) {
+      debugPrint('texture telemetry sink failed: $error');
+    }
+  }
 }
 
 final class AndroidTextureLease {
@@ -222,12 +255,14 @@ final class AndroidTextureLease {
   Future<TexturePresentTelemetry> present(
     TextureFrameOwner frame, {
     int? deadlineAfterMicros,
+    TextureTelemetryContext context = const TextureTelemetryContext(),
   }) {
     _requireActive();
     return _presenter._present(
       this,
       frame,
       deadlineAfterMicros: deadlineAfterMicros,
+      context: context,
     );
   }
 

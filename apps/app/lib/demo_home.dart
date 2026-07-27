@@ -129,6 +129,7 @@ final class _DemoCard extends StatelessWidget {
     required this.subtitle,
     required this.onTap,
     this.trailing,
+    super.key,
   });
 
   final IconData icon;

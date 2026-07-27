@@ -1,8 +1,11 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:bridge/bridge.dart' show parseWebpInfo;
+import 'package:domain/domain.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zic/static_demo.dart';
 import 'package:zic/webp_demo.dart';
 
 File _nativeFixture(String name) {
@@ -51,6 +54,60 @@ void main() {
     expect(picked, isNotNull);
     expect(picked!.file, same(file));
     expect(picked.displayName, 'selected.webp');
+  });
+
+  test('Reader media identity matches the chapter manifest contract', () {
+    final asset = PageAsset(
+      pageId: 'page',
+      chapterId: 'chapter',
+      index: 0,
+      uri: Uri.parse('asset:///page.webp'),
+      contentKindHint: ContentKindHint.webp,
+    );
+    final chapter = ChapterManifest(
+      sourceId: 'source',
+      comicId: 'comic',
+      chapter: const Chapter(
+        chapterId: 'chapter',
+        comicId: 'comic',
+        title: 'Chapter',
+        sequence: 1,
+        pageCount: 1,
+        sourceRevision: 'revision',
+      ),
+      pages: <PageAsset>[asset],
+      readingDirection: ReadingDirection.ltr,
+    );
+
+    final download = readerPageDownloadId(chapter, asset);
+
+    expect(download.content.sourceId, 'source');
+    expect(download.content.comicId, 'comic');
+    expect(download.content.chapterId, 'chapter');
+    expect(download.content.pageId, 'page');
+    expect(download.sourceRevision, 'revision');
+    expect(download.canonicalUri, asset.uri);
+  });
+
+  test('Reader media player owns the supplied download identity', () {
+    final download = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'revision',
+      canonicalUri: Uri.parse('asset:///page.webp'),
+    );
+    final player = NativeWebpPlayer(
+      title: 'page',
+      sourceUri: download.canonicalUri,
+      loadBytes: () async => Uint8List(0),
+      downloadIdentity: download,
+    );
+
+    expect(player.downloadIdentity, same(download));
   });
 
   test('system picker preserves cancellation as null', () async {

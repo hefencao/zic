@@ -495,6 +495,8 @@ def check_compile_regressions() -> None:
         'system picker preserves cancellation as null',
         'valid local WebP passes container validation',
         'malformed local WebP fails container validation',
+        'Reader media identity matches the chapter manifest contract',
+        'Reader media player owns the supplied download identity',
         "XFile('/virtual/source-with-unrelated-name')",
     ):
         if required not in contract_test:
@@ -526,6 +528,27 @@ def check_compile_regressions() -> None:
             fail(f'local WebP product contract is incomplete: {required}')
     if "_status = 'WebP 文件无效'" in webp_demo:
         fail('preview status must not duplicate the keyed WebP validation error')
+    demo_home = (ROOT / 'apps/app/lib/demo_home.dart').read_text(encoding='utf-8')
+    if 'super.key,' not in demo_home:
+        fail('_DemoCard must accept and forward stable semantic keys')
+    if "import 'package:bridge/bridge.dart' show parseWebpInfo;" not in contract_test:
+        fail('WebP validation tests must import their public parser contract directly')
+    for required in (
+        'TraceEventKind.frameDecoded',
+        'TraceEventKind.frameUploaded',
+        'TraceEventKind.framePresented',
+        'TraceEventKind.taskFailed',
+        'TextureTelemetryContext(',
+        'demandRevision: widget.demandRevision?.call()',
+        'widget.downloadIdentity ??',
+        "'decodeMicros'",
+        "'prepareMicros'",
+        "'deadlineMissMicros'",
+    ):
+        if required not in webp_demo:
+            fail(f'Reader media telemetry attribution is incomplete: {required}')
+    if 'int get revision => pipeline.revision;' not in binding:
+        fail('ReaderBinding must expose the applied demand revision to media output')
 
     reader_view = (ROOT / 'packages/reader/lib/src/reader_view.dart').read_text(
         encoding='utf-8'
@@ -542,7 +565,12 @@ def check_compile_regressions() -> None:
         'MediaPipelineReaderScreen',
         'chapter_media_pipeline.json',
         'NativeWebpPlayer(',
-        'pageBuilder: _buildMediaReaderPage',
+        'mediaPipeline: true',
+        'traceSessionId:',
+        'demandRevision:',
+        'downloadIdentity: readerPageDownloadId(chapter, asset)',
+        'DownloadId readerPageDownloadId(',
+        'sourceRevision: chapter.chapter.sourceRevision',
     ):
         if required not in static_demo:
             fail(f'Reader media pipeline route is incomplete: {required}')
@@ -567,6 +595,11 @@ def check_compile_regressions() -> None:
         'retained.dispose()',
         "'frameHandle': retained.handleAddress",
         'deadlineAfterMicros',
+        'TextureTelemetryContext',
+        'sessionId',
+        'decodeIdentity',
+        'demandRevision',
+        'epoch',
         'TexturePresentTelemetry',
         'TextureFallbackTelemetry',
         'frameBytes',

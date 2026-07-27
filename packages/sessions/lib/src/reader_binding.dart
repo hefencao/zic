@@ -41,6 +41,7 @@ final class ReaderBinding {
   ViewportState? _viewport;
 
   ViewportState? get viewport => _viewport;
+  int get revision => pipeline.revision;
 
   void accept(ReaderObs observation) {
     _observation = observation;

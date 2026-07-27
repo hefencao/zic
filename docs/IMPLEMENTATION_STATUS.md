@@ -1,6 +1,15 @@
 # Implementation Status
 
-## Unreleased candidate from 0.18.3-dev.21 — test boundaries and Android texture vertical slice
+## Unreleased candidate from 0.18.3-dev.21 — compile repair and attributed Reader texture telemetry
+
+### Flutter compile repair
+
+The first external Flutter run exposed two candidate-only compile regressions.
+`_DemoCard` accepted semantic keys at its call sites but did not forward `key` to
+`StatelessWidget`, and `webp_demo_test.dart` relied on a transitive import for
+`parseWebpInfo`. `_DemoCard` now accepts `super.key`; the validation test imports
+the parser directly from the public `bridge` package contract. Repository gates
+now preserve both compile contracts.
 
 ### Test architecture
 
@@ -26,18 +35,25 @@ release, or engine detach. Lifecycle locking prevents `scheduleFrame` from
 racing detach.
 
 Present telemetry reports queue, upload, deadline miss, frame, texture, and
-in-flight memory values. Platform failures emit fallback telemetry and return to
-the Flutter codec. `ReaderView` now accepts a media page builder, and the demo
-chapter uses the same Animated WebP player inside the Reader rather than only on
-a standalone preview route.
+in-flight memory values. Every decode, texture upload, present, and fallback
+trace is now attributed to the Reader session, decode identity, demand revision,
+and native epoch. Reader decode identity is derived from the actual chapter
+manifest instead of the standalone-preview placeholder identity. Decode and
+image-preparation durations are recorded separately.
+Platform failures emit fallback traces and return to the Flutter codec.
+`ReaderView` accepts a media page builder, and the demo chapter uses the same
+Animated WebP player inside the Reader rather than only on a standalone preview
+route.
 
 ### Validation status
 
-The repository structure check, C header syntax check, shell syntax check,
-Python compilation, and Kotlin source compilation against minimal API stubs pass
-in the current environment. The environment does not contain Flutter, Dart,
-Rust/Cargo, Android SDK, or Android NDK, so the required target tests, analyzer,
-Rust tests, and Android build are not yet validated here.
+The external Flutter report reached compilation and identified the two issues
+above; the updated candidate has not yet been rerun in that Flutter-equipped
+environment. The repository structure check, C header syntax check, shell syntax
+check, Python compilation, and Kotlin source compilation against minimal API
+stubs pass in the current environment. This sandbox does not contain Flutter,
+Dart, Rust/Cargo, Android SDK, or Android NDK, so the required target tests,
+analyzer, Rust tests, and Android build remain environment-blocked here.
 
 The version therefore remains `0.18.3-dev.21`. This working tree is a validation
 candidate, not a stable baseline.

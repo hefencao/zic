@@ -10,6 +10,9 @@ Flutter/Android-equipped environment.
 
 ## Candidate changes
 
+- The external Flutter compile failures are repaired: `_DemoCard` forwards
+  `super.key`, and the WebP validation test imports `parseWebpInfo` directly from
+  `bridge` instead of relying on a transitive import.
 - Picker, route navigation, WebP container validation, and preview page state are
   independent test boundaries.
 - `PickedWebp(displayName, file)` remains the explicit product contract.
@@ -19,7 +22,10 @@ Flutter/Android-equipped environment.
   release, current-frame redraw ownership, and detach-safe frame scheduling are
   implemented.
 - Texture telemetry covers queue, upload, relative deadline miss, frame bytes,
-  texture bytes, in-flight bytes, and fallback.
+  texture bytes, in-flight bytes, and fallback. Decode/upload/present/fallback
+  traces carry Reader session, decode identity, demand revision, and native epoch;
+  Reader identity is derived from the chapter manifest rather than preview
+  placeholders.
 - Animated WebP is connected to a real `ReaderView` page through
   `ReaderPageBuilder`; the standalone preview remains a diagnostic entry.
 
@@ -49,10 +55,11 @@ and a new stable source archive be produced.
 
 ## Next mainline work after validation
 
-1. Replace the demo-only `FakeCoordinator` upload path with the production
+1. Rerun the three target Flutter tests and the complete validation gate in the
+   Flutter-equipped environment; do not version the candidate before they pass.
+2. Replace the demo-only `FakeCoordinator` demand path with the production
    decode/upload/present session path used by Reader demands.
-2. Attribute decode, upload, present, fallback, and memory telemetry to
-   session/decode identity and demand revision.
-3. Add device tests for surface loss/recreation and concurrent PageView overlap.
+3. Add Android device tests for surface loss/recreation and concurrent PageView
+   overlap, including retained-frame redraw and detach races.
 4. Extend the real Reader media path to local chapter/CBZ import and persisted
    catalog entries.
