@@ -31,4 +31,7 @@ fn main() {
             println!("cargo:rustc-link-lib={lib}");
         }
     }
+    if env::var("CARGO_CFG_TARGET_OS").ok().as_deref() == Some("android") {
+        println!("cargo:rustc-link-lib=android");
+    }
 }

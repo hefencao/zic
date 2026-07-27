@@ -223,6 +223,14 @@ final class NativeFrame implements PixelFrame {
 
   int get formatCode => _api.frameFormat(_requirePtr());
 
+  /// Opaque native handle used only by platform presenters.
+  ///
+  /// Callers must retain this frame before crossing an asynchronous boundary
+  /// and release that retained owner only after the platform acknowledges the
+  /// upload. The address is not a byte pointer and must never be dereferenced
+  /// outside the media-core ABI.
+  int get handleAddress => _requirePtr().address;
+
   @override
   Duration get duration =>
       Duration(microseconds: _api.frameDurationUs(_requirePtr()));

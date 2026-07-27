@@ -1,143 +1,122 @@
-import 'dart:typed_data';
-
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zic/demo_home.dart';
 import 'package:zic/main.dart';
+import 'package:zic/static_demo.dart';
 import 'package:zic/webp_demo.dart';
 
 Future<void> _pumpUntilFound(
   WidgetTester tester,
   Finder finder, {
-  int maxPumps = 40,
-  Duration step = const Duration(milliseconds: 25),
+  int maxFrames = 60,
 }) async {
-  for (var i = 0; i < maxPumps; i++) {
-    await tester.pump(step);
+  for (var frame = 0; frame < maxFrames; frame++) {
+    await tester.pump();
     if (finder.evaluate().isNotEmpty) {
       return;
     }
   }
-  throw TestFailure('Timed out waiting for $finder');
+  throw TestFailure('Timed out waiting for $finder after $maxFrames frames');
+}
+
+Future<void> _pumpUntilAbsent(
+  WidgetTester tester,
+  Finder finder, {
+  int maxFrames = 60,
+}) async {
+  for (var frame = 0; frame < maxFrames; frame++) {
+    await tester.pump();
+    if (finder.evaluate().isEmpty) {
+      return;
+    }
+  }
+  throw TestFailure('Timed out waiting for $finder to disappear');
 }
 
 void main() {
-  testWidgets('home exposes static, bundled WebP, and local import entries', (
-    tester,
-  ) async {
+  testWidgets('home exposes product entry points by semantic identity', (tester) async {
     await tester.pumpWidget(const App());
     await tester.pump();
 
-    expect(find.text('100 页静态章节'), findsOneWidget);
-    expect(find.text('内置动图 WebP'), findsOneWidget);
-    expect(find.text('导入本地 WebP'), findsOneWidget);
+    expect(find.byKey(staticDemoEntryKey), findsOneWidget);
+    expect(find.byKey(mediaPipelineReaderEntryKey), findsOneWidget);
+    expect(find.byKey(bundledWebpEntryKey), findsOneWidget);
+    expect(find.byKey(localWebpImportKey), findsOneWidget);
   });
 
-  testWidgets('static demo opens from home', (tester) async {
+  testWidgets('static route opens from its semantic entry', (tester) async {
     await tester.pumpWidget(const App());
-    await tester.tap(find.text('100 页静态章节'));
+    await tester.tap(find.byKey(staticDemoEntryKey));
     await tester.pumpAndSettle();
 
     expect(find.text('1 / 100'), findsOneWidget);
   });
 
-  testWidgets('bundled Animated WebP catalog is reachable', (tester) async {
+  testWidgets('Reader route hosts the real WebP media pipeline', (tester) async {
     await tester.pumpWidget(const App());
-    await tester.tap(find.text('内置动图 WebP'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
+    await tester.tap(find.byKey(mediaPipelineReaderEntryKey));
+    await _pumpUntilFound(tester, find.byKey(readerMediaWebpPageKey));
+    await _pumpUntilFound(tester, find.byKey(webpPreviewStateKey));
 
-    expect(find.text('无限循环 · 基础帧'), findsOneWidget);
+    WebpPreviewState? state;
+    for (var frame = 0; frame < 80; frame++) {
+      await tester.pump();
+      final region = tester.widget<WebpPreviewStateRegion>(
+        find.byKey(webpPreviewStateKey),
+      );
+      state = region.state;
+      if (state.phase == WebpPreviewPhase.ready) {
+        break;
+      }
+    }
+
+    expect(state?.phase, WebpPreviewPhase.ready);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('bundled WebP catalog opens from its semantic entry', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const App());
+    await tester.tap(find.byKey(bundledWebpEntryKey));
+    await _pumpUntilFound(tester, find.text('无限循环 · 基础帧'));
+
     expect(find.text('有限循环 · 2 次'), findsOneWidget);
     expect(find.text('局部帧 · Alpha Blend'), findsOneWidget);
   });
 
-  testWidgets('local WebP picker opens a preview route', (tester) async {
-    final data = await rootBundle.load(
-      'assets/demo/animated/finite_loop.webp',
+  testWidgets('picked WebP navigates with the owned display name', (
+    tester,
+  ) async {
+    final picked = PickedWebp(
+      file: XFile('/virtual/route-source.webp'),
+      displayName: 'route-owned.webp',
     );
-    final bytes = data.buffer.asUint8List(
-      data.offsetInBytes,
-      data.lengthInBytes,
-    );
-    await tester.pumpWidget(
-      App(
-        picker: () async => PickedWebp(
-          file: XFile.fromData(
-            bytes,
-            mimeType: 'image/webp',
-          ),
-          displayName: 'local.webp',
-        ),
-      ),
-    );
-    await tester.tap(find.text('导入本地 WebP'));
-    await tester.pump();
-    await _pumpUntilFound(
-      tester,
-      find.byKey(webpPreviewScreenKey),
-    );
+    await tester.pumpWidget(App(picker: () async => picked));
 
-    final title = tester.widget<Text>(
-      find.byKey(webpPreviewTitleKey),
-    );
-    expect(title.data, 'local.webp');
+    await tester.tap(find.byKey(localWebpImportKey));
+    await _pumpUntilFound(tester, find.byKey(webpPreviewScreenKey));
+
+    final title = tester.widget<Text>(find.byKey(webpPreviewTitleKey));
+    expect(title.data, 'route-owned.webp');
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
   });
 
-  testWidgets('malformed local WebP shows a controlled preview error', (
+  testWidgets('cancelled picker stays on home without opening a route', (
     tester,
   ) async {
-    final bytes = Uint8List.fromList(<int>[
-      0x52,
-      0x49,
-      0x46,
-      0x46,
-      0,
-      0,
-      0,
-      0,
-      0x57,
-      0x45,
-      0x42,
-      0x50,
-    ]);
-    await tester.pumpWidget(
-      App(
-        picker: () async => PickedWebp(
-          file: XFile.fromData(
-            bytes,
-            mimeType: 'image/webp',
-          ),
-          displayName: 'broken.webp',
-        ),
-      ),
-    );
-    await tester.tap(find.text('导入本地 WebP'));
-    await tester.pump();
-    await _pumpUntilFound(
-      tester,
-      find.byKey(webpPreviewScreenKey),
-    );
-    await _pumpUntilFound(
-      tester,
-      find.byKey(webpPreviewErrorKey),
-    );
+    await tester.pumpWidget(App(picker: () async => null));
 
-    final title = tester.widget<Text>(
-      find.byKey(webpPreviewTitleKey),
-    );
-    expect(title.data, 'broken.webp');
-    final error = tester.widget<Text>(
-      find.byKey(webpPreviewErrorKey),
-    );
-    expect(error.data, contains('WebP 文件无效'));
-    expect(find.text('加载失败'), findsOneWidget);
+    await tester.tap(find.byKey(localWebpImportKey));
+    await _pumpUntilAbsent(tester, find.byKey(localWebpPickerProgressKey));
 
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump();
+    expect(find.byKey(webpPreviewScreenKey), findsNothing);
+    expect(find.byKey(localWebpImportKey), findsOneWidget);
+    expect(find.byKey(localWebpPickerProgressKey), findsNothing);
   });
 }

@@ -5,6 +5,7 @@
 //! use shared ownership so releasing a source handle cannot invalidate an
 //! already-created cursor, while epoch checks still reject stale work.
 
+mod android_texture;
 mod webp;
 
 use std::ptr;

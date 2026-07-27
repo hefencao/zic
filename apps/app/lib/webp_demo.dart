@@ -9,6 +9,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:pipeline/pipeline.dart';
+import 'package:texture_bridge/texture_bridge.dart';
 
 const _webpTypes = <XTypeGroup>[
   XTypeGroup(
@@ -19,6 +20,7 @@ const _webpTypes = <XTypeGroup>[
 ];
 
 typedef WebpPicker = Future<PickedWebp?> Function();
+typedef LocalWebpSelector = Future<XFile?> Function();
 
 final class PickedWebp {
   factory PickedWebp({
@@ -62,11 +64,55 @@ String webpDisplayName(XFile file) {
 
 const webpPreviewScreenKey = ValueKey<String>('webp-preview-screen');
 const webpPreviewTitleKey = ValueKey<String>('webp-preview-title');
+const webpPreviewStateKey = ValueKey<String>('webp-preview-state');
+const webpPreviewLoadingKey = ValueKey<String>('webp-preview-loading');
+const webpPreviewReadyKey = ValueKey<String>('webp-preview-ready');
 const webpPreviewErrorKey = ValueKey<String>('webp-preview-error');
+const webpEngineControlKey = ValueKey<String>('webp-engine-control');
+const webpFlutterEngineOptionKey =
+    ValueKey<String>('webp-engine-flutter-option');
+const webpFlutterPreviewKey = ValueKey<String>('webp-flutter-preview');
 
-Future<PickedWebp?> pickLocalWebp() async {
-  final file = await openFile(acceptedTypeGroups: _webpTypes);
+Future<PickedWebp?> pickLocalWebp({LocalWebpSelector? selectFile}) async {
+  final file = await (selectFile ??
+      () => openFile(acceptedTypeGroups: _webpTypes))();
   return file == null ? null : PickedWebp.fromFile(file);
+}
+
+Future<PickedWebp?> defaultWebpPicker() => pickLocalWebp();
+
+enum WebpPreviewPhase { loading, ready, invalid }
+
+@immutable
+final class WebpPreviewState {
+  const WebpPreviewState._({required this.phase, this.info, this.error});
+
+  const WebpPreviewState.loading()
+      : this._(phase: WebpPreviewPhase.loading);
+
+  const WebpPreviewState.ready(WebpInfo info)
+      : this._(phase: WebpPreviewPhase.ready, info: info);
+
+  const WebpPreviewState.invalid(Object error)
+      : this._(phase: WebpPreviewPhase.invalid, error: error);
+
+  final WebpPreviewPhase phase;
+  final WebpInfo? info;
+  final Object? error;
+}
+
+final class WebpPreviewStateRegion extends StatelessWidget {
+  const WebpPreviewStateRegion({
+    required this.state,
+    required this.child,
+    super.key,
+  });
+
+  final WebpPreviewState state;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => child;
 }
 
 final class WebpDemoEntry {
@@ -203,6 +249,23 @@ final class WebpPlayerScreen extends StatelessWidget {
     );
   }
 
+  factory WebpPlayerScreen.picked(PickedWebp picked) =>
+      WebpPlayerScreen.file(
+        picked.file,
+        displayName: picked.displayName,
+      );
+
+  factory WebpPlayerScreen.bytes({
+    required String displayName,
+    required Uint8List bytes,
+    Uri? sourceUri,
+  }) =>
+      WebpPlayerScreen._(
+        title: displayName,
+        sourceUri: sourceUri ?? Uri(scheme: 'memory', path: displayName),
+        loadBytes: () async => bytes,
+      );
+
   final String title;
   final Uri sourceUri;
   final Future<Uint8List> Function() loadBytes;
@@ -233,18 +296,26 @@ final class NativeWebpPlayer extends StatefulWidget {
     required this.title,
     required this.sourceUri,
     required this.loadBytes,
+    this.showEngineControls = true,
+    this.showStatus = true,
+    this.onFirstFrame,
     super.key,
   });
 
   final String title;
   final Uri sourceUri;
   final Future<Uint8List> Function() loadBytes;
+  final bool showEngineControls;
+  final bool showStatus;
+  final VoidCallback? onFirstFrame;
 
   @override
   State<NativeWebpPlayer> createState() => _NativeWebpPlayerState();
 }
 
 final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
+  static const _textureUploadBudget = Duration(microseconds: 16667);
+
   _PlayerEngine _engine = _PlayerEngine.native;
   Uint8List? _encoded;
   WebpInfo? _sourceCanvas;
@@ -253,6 +324,11 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   RasterPlan? _raster;
   RasterPlan? _scheduledRaster;
   ui.Image? _image;
+  late final AndroidTexturePresenter _texturePresenter;
+  AndroidTextureLease? _texture;
+  int? _textureId;
+  TexturePresentTelemetry? _lastTexturePresent;
+  TextureFallbackTelemetry? _lastTextureFallback;
   EncodedSource? _source;
   CursorBinding? _cursor;
   _PreparedNativeFrame? _pending;
@@ -262,6 +338,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   Duration _pendingDelay = Duration.zero;
   Object? _nativeError;
   Object? _loadError;
+  WebpPreviewState _previewState = const WebpPreviewState.loading();
   String _status = '加载中';
   int _frameIndex = -1;
   int _cycle = 0;
@@ -269,11 +346,30 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   bool _preparing = false;
   bool _completionPending = false;
   int _generation = 0;
+  bool _reportedFirstFrame = false;
 
   @override
   void initState() {
     super.initState();
+    _texturePresenter = AndroidTexturePresenter(
+      telemetrySink: _recordTextureTelemetry,
+    );
     unawaited(_load());
+  }
+
+  void _recordTextureTelemetry(TextureTelemetry event) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      switch (event) {
+        case TexturePresentTelemetry():
+          _lastTexturePresent = event;
+          _lastTextureFallback = null;
+        case TextureFallbackTelemetry():
+          _lastTextureFallback = event;
+      }
+    });
   }
 
   @override
@@ -295,6 +391,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         _encoded = bytes;
         _sourceCanvas = canvas;
         _loadError = null;
+        _previewState = WebpPreviewState.ready(canvas);
         _status = '已读取 ${bytes.length} B，等待 viewport';
       });
       final target = _target;
@@ -310,6 +407,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         _encoded = null;
         _sourceCanvas = null;
         _loadError = error;
+        _previewState = WebpPreviewState.invalid(error);
         _nativeError = null;
         _engine = _PlayerEngine.flutter;
         _status = '加载失败';
@@ -355,17 +453,24 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     final bytes = _encoded;
     final target = _target;
     final raster = _raster;
-    if (bytes == null ||
+    if (!mounted ||
+        generation != _generation ||
+        bytes == null ||
         target == null ||
         raster == null ||
         _engine != _PlayerEngine.native) {
       return;
     }
     _resetNative(disposeImage: true);
+    _lastTexturePresent = null;
+    _lastTextureFallback = null;
     _nativeError = null;
     _frameIndex = -1;
     _cycle = 0;
 
+    EncodedSource? pendingSource;
+    CursorBinding? pendingCursor;
+    AndroidTextureLease? pendingTexture;
     try {
       final version = NativeVersion.load();
       if (!version.usesPinnedWebp) {
@@ -380,14 +485,13 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         epoch: epoch,
         maxBytes: bytes.length,
       );
+      pendingSource = source;
       final append = source.append(epoch: epoch, offset: 0, bytes: bytes);
       if (append != SourceStatus.ok) {
-        source.dispose();
         throw StateError('native source append failed: ${append.name}');
       }
       final seal = source.seal(epoch);
       if (seal != SourceStatus.ok) {
-        source.dispose();
         throw StateError('native source seal failed: ${seal.name}');
       }
       final id = DecodeId(
@@ -404,20 +508,38 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         physicalWidth: raster.decodeWidth,
         physicalHeight: raster.decodeHeight,
         pixelFormat: PixelFormat.rgba8888,
-        renderer: RendererKind.flutterImage,
+        renderer: AndroidTexturePresenter.isSupported
+            ? RendererKind.androidTexture
+            : RendererKind.flutterImage,
       );
       final cursor = const NativeCursorFactory().create(
         id: id,
         source: source,
         epoch: epoch,
       );
+      pendingCursor = cursor;
+      if (AndroidTexturePresenter.isSupported) {
+        pendingTexture = await _texturePresenter.create(
+          width: raster.decodeWidth,
+          height: raster.decodeHeight,
+        );
+      }
+      if (!mounted || generation != _generation) {
+        return;
+      }
+
       _source = source;
       _cursor = cursor;
-      if (mounted && generation == _generation) {
-        setState(() {
-          _status = 'native · ${raster.decodeWidth}×${raster.decodeHeight}';
-        });
-      }
+      _texture = pendingTexture;
+      _textureId = pendingTexture?.textureId;
+      pendingSource = null;
+      pendingCursor = null;
+      pendingTexture = null;
+      setState(() {
+        _status = _texture == null
+            ? 'native image · ${raster.decodeWidth}×${raster.decodeHeight}'
+            : 'native texture · ${raster.decodeWidth}×${raster.decodeHeight}';
+      });
       final first = await _decodePrepared(generation);
       if (first == null) {
         if (mounted && generation == _generation) {
@@ -425,17 +547,28 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         }
         return;
       }
-      _presentPrepared(first, generation);
+      await _presentPrepared(first, generation);
     } catch (error) {
-      _resetNative(disposeImage: true);
       if (!mounted || generation != _generation) {
         return;
       }
+      _resetNative(disposeImage: true);
       setState(() {
         _nativeError = error;
         _engine = _PlayerEngine.flutter;
         _status = 'native 不可用，已回退 Flutter codec';
       });
+    } finally {
+      pendingCursor?.frames.dispose();
+      pendingSource?.dispose();
+      final texture = pendingTexture;
+      if (texture != null) {
+        try {
+          await texture.release();
+        } catch (_) {
+          // The untransferred texture is already unreachable; best-effort release.
+        }
+      }
     }
   }
 
@@ -457,20 +590,32 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
             frame?.dispose();
             throw StateError('native cursor returned a non-pixel frame');
           }
-          final rgba = frame.copyBytes();
-          _premultiplyRgbaInPlace(rgba);
           final duration = frame.duration > Duration.zero
               ? frame.duration
               : const Duration(milliseconds: 100);
           final index = frame.index;
           final cycle = binding.loop?.cycle ?? 0;
+          if (_texture != null) {
+            if (frame is! NativeFrame) {
+              frame.dispose();
+              throw StateError('Android texture requires a native frame owner');
+            }
+            return _PreparedTextureFrame(
+              frame: NativeTextureFrameOwner(frame),
+              duration: duration,
+              index: index,
+              cycle: cycle,
+            );
+          }
+          final rgba = frame.copyBytes();
+          _premultiplyRgbaInPlace(rgba);
           late final ui.Image image;
           try {
             image = await _decodeRgba(rgba, frame.width, frame.height);
           } finally {
             frame.dispose();
           }
-          return _PreparedNativeFrame(
+          return _PreparedImageFrame(
             image: image,
             duration: duration,
             index: index,
@@ -489,7 +634,10 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     return null;
   }
 
-  void _presentPrepared(_PreparedNativeFrame prepared, int generation) {
+  Future<void> _presentPrepared(
+    _PreparedNativeFrame prepared,
+    int generation,
+  ) async {
     if (!mounted || generation != _generation || _paused) {
       if (!mounted || generation != _generation) {
         prepared.dispose();
@@ -506,14 +654,53 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     _pending = null;
     _pendingDelay = Duration.zero;
 
-    final previous = _image;
-    setState(() {
-      _image = prepared.image;
-      _frameIndex = prepared.index;
-      _cycle = prepared.cycle;
-      _status = 'native · frame ${prepared.index} · cycle ${prepared.cycle}';
-    });
-    previous?.dispose();
+    switch (prepared) {
+      case _PreparedTextureFrame():
+        final texture = _texture;
+        final frame = prepared.takeFrame();
+        if (texture == null || frame == null) {
+          frame?.dispose();
+          throw StateError('native texture ownership was lost before present');
+        }
+        try {
+          await texture.present(
+            frame,
+            deadlineAfterMicros: _textureUploadBudget.inMicroseconds,
+          );
+        } finally {
+          frame.dispose();
+        }
+        if (!mounted || generation != _generation) {
+          return;
+        }
+        final previous = _image;
+        setState(() {
+          _image = null;
+          _textureId = texture.textureId;
+          _frameIndex = prepared.index;
+          _cycle = prepared.cycle;
+          _status = 'native texture · frame ${prepared.index} · '
+              'cycle ${prepared.cycle}';
+        });
+        previous?.dispose();
+        _reportFirstFrame();
+      case _PreparedImageFrame():
+        final image = prepared.takeImage();
+        if (image == null) {
+          throw StateError('native image ownership was lost before present');
+        }
+        final previous = _image;
+        setState(() {
+          _image = image;
+          _textureId = null;
+          _frameIndex = prepared.index;
+          _cycle = prepared.cycle;
+          _status = 'native image · frame ${prepared.index} · '
+              'cycle ${prepared.cycle}';
+        });
+        previous?.dispose();
+        _reportFirstFrame();
+    }
 
     final clock = Stopwatch()..start();
     _frameClock = clock;
@@ -568,6 +755,21 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     }
   }
 
+  void _fallbackFromNative(Object error, int generation) {
+    if (!mounted || generation != _generation) {
+      return;
+    }
+    final oldImage = _image;
+    _image = null;
+    oldImage?.dispose();
+    setState(() {
+      _nativeError = error;
+      _engine = _PlayerEngine.flutter;
+      _status = 'native present 失败，已回退 Flutter codec';
+    });
+    _resetNative(disposeImage: false);
+  }
+
   void _schedulePending(int generation) {
     final pending = _pending;
     if (pending == null || _paused || generation != _generation) {
@@ -583,7 +785,11 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       _pending = null;
       _pendingDelay = Duration.zero;
       if (next != null) {
-        _presentPrepared(next, generation);
+        unawaited(
+          _presentPrepared(next, generation).catchError((Object error, StackTrace stackTrace) {
+            _fallbackFromNative(error, generation);
+          }),
+        );
       }
     });
   }
@@ -620,10 +826,25 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     _cursor = null;
     _source?.dispose();
     _source = null;
+    final texture = _texture;
+    _texture = null;
+    _textureId = null;
+    _lastTexturePresent = null;
+    if (texture != null) {
+      unawaited(texture.release().catchError((Object _) {}));
+    }
     if (disposeImage) {
       _image?.dispose();
       _image = null;
     }
+  }
+
+  void _reportFirstFrame() {
+    if (_reportedFirstFrame) {
+      return;
+    }
+    _reportedFirstFrame = true;
+    widget.onFirstFrame?.call();
   }
 
   void _setEngine(_PlayerEngine engine) {
@@ -635,6 +856,8 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     setState(() {
       _engine = engine;
       _paused = false;
+      _lastTexturePresent = null;
+      _lastTextureFallback = null;
       _nativeError = null;
       final target = _target;
       _status = engine == _PlayerEngine.native
@@ -681,182 +904,277 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   @override
   Widget build(BuildContext context) {
     final encoded = _encoded;
-    return Column(
-      children: <Widget>[
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-          child: SegmentedButton<_PlayerEngine>(
-            segments: const <ButtonSegment<_PlayerEngine>>[
-              ButtonSegment(
-                value: _PlayerEngine.native,
-                icon: Icon(Icons.memory),
-                label: Text('Native pipeline'),
-              ),
-              ButtonSegment(
-                value: _PlayerEngine.flutter,
-                icon: Icon(Icons.image),
-                label: Text('Flutter codec'),
-              ),
-            ],
-            selected: <_PlayerEngine>{_engine},
-            onSelectionChanged: (selection) => _setEngine(selection.single),
-          ),
-        ),
-        Expanded(
-          child: ColoredBox(
-            color: Colors.black,
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final source = _sourceCanvas;
-                DecodeTarget? target;
-                RasterPlan? raster;
-                if (source != null &&
-                    constraints.maxWidth.isFinite &&
-                    constraints.maxHeight.isFinite &&
-                    constraints.maxWidth > 0 &&
-                    constraints.maxHeight > 0) {
-                  target = DecodeTarget.fit(
-                    sourceWidth: source.width,
-                    sourceHeight: source.height,
-                    logicalWidth: constraints.maxWidth,
-                    logicalHeight: constraints.maxHeight,
-                    devicePixelRatio: MediaQuery.of(context).devicePixelRatio,
-                  );
-                  raster = RasterPlan.fit(
-                    sourceWidth: source.width,
-                    sourceHeight: source.height,
-                    display: target,
-                  );
-                  _scheduleTarget(target, raster);
-                }
-                final loadError = _loadError;
-                if (loadError != null && encoded == null) {
-                  return Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Text(
-                        'WebP 文件无效：$loadError',
-                        key: webpPreviewErrorKey,
-                        style: const TextStyle(color: Colors.white),
-                        textAlign: TextAlign.center,
-                      ),
+    return WebpPreviewStateRegion(
+      key: webpPreviewStateKey,
+      state: _previewState,
+      child: Column(
+        children: <Widget>[
+          if (widget.showEngineControls)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: SegmentedButton<_PlayerEngine>(
+                key: webpEngineControlKey,
+                segments: const <ButtonSegment<_PlayerEngine>>[
+                  ButtonSegment(
+                    value: _PlayerEngine.native,
+                    icon: Icon(Icons.memory),
+                    label: Text('Native pipeline'),
+                  ),
+                  ButtonSegment(
+                    value: _PlayerEngine.flutter,
+                    icon: Icon(Icons.image),
+                    label: Text(
+                      'Flutter codec',
+                      key: webpFlutterEngineOptionKey,
                     ),
+                  ),
+                ],
+                selected: <_PlayerEngine>{_engine},
+                onSelectionChanged: (selection) =>
+                    _setEngine(selection.single),
+              ),
+            ),
+          Expanded(
+            child: ColoredBox(
+              color: Colors.black,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final source = _sourceCanvas;
+                  DecodeTarget? target;
+                  RasterPlan? raster;
+                  if (source != null &&
+                      constraints.maxWidth.isFinite &&
+                      constraints.maxHeight.isFinite &&
+                      constraints.maxWidth > 0 &&
+                      constraints.maxHeight > 0) {
+                    target = DecodeTarget.fit(
+                      sourceWidth: source.width,
+                      sourceHeight: source.height,
+                      logicalWidth: constraints.maxWidth,
+                      logicalHeight: constraints.maxHeight,
+                      devicePixelRatio:
+                          MediaQuery.of(context).devicePixelRatio,
+                    );
+                    raster = RasterPlan.fit(
+                      sourceWidth: source.width,
+                      sourceHeight: source.height,
+                      display: target,
+                    );
+                    _scheduleTarget(target, raster);
+                  }
+                  final loadError = _loadError;
+                  if (loadError != null && encoded == null) {
+                    return Center(
+                      key: webpPreviewErrorKey,
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Text(
+                          'WebP 文件无效：$loadError',
+                          style: const TextStyle(color: Colors.white),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    );
+                  }
+                  final nearest = raster?.prefersNearestNeighbor ?? false;
+                  final quality = nearest
+                      ? FilterQuality.none
+                      : FilterQuality.medium;
+                  return SizedBox.expand(
+                    key: _previewState.phase == WebpPreviewPhase.ready
+                        ? webpPreviewReadyKey
+                        : webpPreviewLoadingKey,
+                    child: switch (_engine) {
+                      _PlayerEngine.native => _textureId != null
+                          ? Texture(
+                              textureId: _textureId!,
+                              filterQuality: quality,
+                            )
+                          : _image == null
+                              ? const Center(
+                                  child: CircularProgressIndicator(),
+                                )
+                              : RawImage(
+                                  image: _image,
+                                  fit: BoxFit.contain,
+                                  filterQuality: quality,
+                                  isAntiAlias: !nearest,
+                                ),
+                      _PlayerEngine.flutter =>
+                        encoded == null || target == null || raster == null
+                            ? const Center(
+                                child: CircularProgressIndicator(),
+                              )
+                            : Image.memory(
+                                encoded,
+                                key: webpFlutterPreviewKey,
+                                cacheWidth: raster.isDownsampled
+                                    ? raster.decodeWidth
+                                    : null,
+                                cacheHeight: raster.isDownsampled
+                                    ? raster.decodeHeight
+                                    : null,
+                                width: double.infinity,
+                                height: double.infinity,
+                                gaplessPlayback: true,
+                                frameBuilder: (
+                                  context,
+                                  child,
+                                  frame,
+                                  wasSynchronouslyLoaded,
+                                ) {
+                                  if (frame != null || wasSynchronouslyLoaded) {
+                                    _reportFirstFrame();
+                                  }
+                                  return child;
+                                },
+                                fit: BoxFit.contain,
+                                filterQuality: quality,
+                                isAntiAlias: !nearest,
+                                errorBuilder: (context, error, stackTrace) =>
+                                    Center(
+                                  child: Text(
+                                    'Flutter codec 无法解码：$error',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
+                              ),
+                    },
                   );
-                }
-                final nearest = raster?.prefersNearestNeighbor ?? false;
-                final quality = nearest
-                    ? FilterQuality.none
-                    : FilterQuality.medium;
-                return SizedBox.expand(
-                  child: switch (_engine) {
-                    _PlayerEngine.native => _image == null
-                        ? const Center(child: CircularProgressIndicator())
-                        : RawImage(
-                            image: _image,
-                            fit: BoxFit.contain,
-                            filterQuality: quality,
-                            isAntiAlias: !nearest,
-                          ),
-                    _PlayerEngine.flutter =>
-                      encoded == null || target == null || raster == null
-                        ? const Center(child: CircularProgressIndicator())
-                        : Image.memory(
-                            encoded,
-                            key: ValueKey<String>(
-                              'flutter-${raster.decodeWidth}x'
-                              '${raster.decodeHeight}-${widget.sourceUri}',
+                },
+              ),
+            ),
+          ),
+          if (widget.showStatus)
+            SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Text(_status),
+                          if (_target != null)
+                            Text(
+                              'display=${_target!.physicalWidth}×'
+                              '${_target!.physicalHeight} px',
                             ),
-                            cacheWidth: raster.isDownsampled
-                                ? raster.decodeWidth
-                                : null,
-                            cacheHeight: raster.isDownsampled
-                                ? raster.decodeHeight
-                                : null,
-                            width: double.infinity,
-                            height: double.infinity,
-                            gaplessPlayback: true,
-                            fit: BoxFit.contain,
-                            filterQuality: quality,
-                            isAntiAlias: !nearest,
-                            errorBuilder: (context, error, stackTrace) => Center(
-                              child: Text(
-                                'Flutter codec 无法解码：$error',
-                                style: const TextStyle(color: Colors.white),
-                                textAlign: TextAlign.center,
+                          if (_raster != null)
+                            Text(
+                              'decode=${_raster!.decodeWidth}×'
+                              '${_raster!.decodeHeight} px',
+                            ),
+                          if (_engine == _PlayerEngine.native)
+                            Text('frame=$_frameIndex · cycle=$_cycle'),
+                          if (_lastTexturePresent case final sample?)
+                            Text(
+                              'texture queue=${sample.queueMicros} µs · '
+                              'upload=${sample.uploadMicros} µs · '
+                              'deadline miss=${sample.deadlineMissMicros} µs · '
+                              'memory frame=${sample.frameBytes} B · '
+                              'texture=${sample.textureBytes} B · '
+                              'in-flight=${sample.inFlightBytes} B',
+                            ),
+                          if (_lastTextureFallback case final fallback?)
+                            Text(
+                              'texture fallback: ${fallback.reason}',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          if (_nativeError != null)
+                            Text(
+                              'native: $_nativeError',
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.error,
                               ),
                             ),
-                          ),
-                  },
-                );
-              },
-            ),
-          ),
-        ),
-        SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: <Widget>[
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      Text(_status),
-                      if (_target != null)
-                        Text(
-                          'display=${_target!.physicalWidth}×'
-                          '${_target!.physicalHeight} px',
-                        ),
-                      if (_raster != null)
-                        Text(
-                          'decode=${_raster!.decodeWidth}×'
-                          '${_raster!.decodeHeight} px',
-                        ),
-                      if (_engine == _PlayerEngine.native)
-                        Text('frame=$_frameIndex · cycle=$_cycle'),
-                      if (_nativeError != null)
-                        Text(
-                          'native: $_nativeError',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.error,
-                          ),
-                        ),
-                    ],
-                  ),
+                        ],
+                      ),
+                    ),
+                    IconButton.filledTonal(
+                      tooltip: _paused ? '继续' : '暂停',
+                      onPressed: _engine == _PlayerEngine.native
+                          ? _togglePause
+                          : null,
+                      icon: Icon(_paused ? Icons.play_arrow : Icons.pause),
+                    ),
+                  ],
                 ),
-                IconButton.filledTonal(
-                  tooltip: _paused ? '继续' : '暂停',
-                  onPressed:
-                      _engine == _PlayerEngine.native ? _togglePause : null,
-                  icon: Icon(_paused ? Icons.play_arrow : Icons.pause),
-                ),
-              ],
+              ),
             ),
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 }
 
-final class _PreparedNativeFrame {
+sealed class _PreparedNativeFrame {
   _PreparedNativeFrame({
-    required this.image,
     required this.duration,
     required this.index,
     required this.cycle,
   });
 
-  final ui.Image image;
   final Duration duration;
   final int index;
   final int cycle;
 
-  void dispose() => image.dispose();
+  void dispose();
+}
+
+final class _PreparedImageFrame extends _PreparedNativeFrame {
+  _PreparedImageFrame({
+    required ui.Image image,
+    required super.duration,
+    required super.index,
+    required super.cycle,
+  }) : _image = image;
+
+  ui.Image? _image;
+
+  ui.Image? takeImage() {
+    final image = _image;
+    _image = null;
+    return image;
+  }
+
+  @override
+  void dispose() {
+    _image?.dispose();
+    _image = null;
+  }
+}
+
+final class _PreparedTextureFrame extends _PreparedNativeFrame {
+  _PreparedTextureFrame({
+    required TextureFrameOwner frame,
+    required super.duration,
+    required super.index,
+    required super.cycle,
+  }) : _frame = frame;
+
+  TextureFrameOwner? _frame;
+
+  TextureFrameOwner? takeFrame() {
+    final frame = _frame;
+    _frame = null;
+    return frame;
+  }
+
+  @override
+  void dispose() {
+    _frame?.dispose();
+    _frame = null;
+  }
 }
 
 Future<ui.Image> _decodeRgba(Uint8List bytes, int width, int height) {

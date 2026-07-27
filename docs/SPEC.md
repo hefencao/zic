@@ -222,7 +222,40 @@ Demand 必须包含：
 - last error；
 - texture readiness。
 
-### 6.4 Native FFI
+### 6.4 本地 WebP 选择与预览
+
+选择器返回 `PickedWebp(displayName, file)`：
+
+- `displayName` 由选择边界显式拥有并传给路由；
+- `file` 只负责字节访问；
+- 用户取消返回 `null`，不得创建预览路由；
+- 合法和非法 WebP 必须先经过纯容器校验，再进入具体 renderer；
+- 预览页面通过显式状态对象暴露 `loading`、`ready`、`invalid`；
+- 错误区域、页面、标题和 renderer 控件使用稳定语义 key；
+- 新增辅助文案、状态栏或布局不应破坏业务测试。
+
+### 6.5 Android Texture Present
+
+一次 present 的所有权顺序：
+
+1. 调用者持有原始 `NativeFrame`；
+2. Dart presenter retain 临时 owner 并跨 MethodChannel；
+3. Kotlin lane 在 blit 前通过 JNI retain 平台 owner；
+4. 成功呈现后平台 owner 成为 texture 当前帧；
+5. MethodChannel 完成后 Dart 临时 owner release；
+6. 下一帧、resize、texture release 或 engine detach release 平台 owner。
+
+平台必须串行执行 blit、resize 和 release。任何失败路径都必须完成调用并释放
+临时 owner。engine detach 后禁止调用 `scheduleFrame`。
+
+present telemetry 至少包含：
+
+- decode/frame index 与 frame bytes；
+- queue、upload 和 deadline miss 微秒数；
+- texture bytes 与 in-flight bytes；
+- fallback reason。
+
+### 6.6 Native FFI
 
 最小 ABI：
 

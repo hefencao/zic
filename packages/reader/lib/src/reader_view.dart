@@ -6,17 +6,25 @@ import 'package:telemetry/telemetry.dart';
 
 import 'reader_controller.dart';
 
+typedef ReaderPageBuilder = Widget? Function(
+  BuildContext context,
+  PageAsset asset,
+  VoidCallback reportFirstFrame,
+);
+
 final class ReaderView extends StatefulWidget {
   const ReaderView({
     required this.controller,
     required this.clock,
     this.traceSink = const NoopTraceSink(),
+    this.pageBuilder,
     super.key,
   });
 
   final ReaderController controller;
   final MonoClock clock;
   final TraceSink traceSink;
+  final ReaderPageBuilder? pageBuilder;
 
   @override
   State<ReaderView> createState() => _ReaderViewState();
@@ -46,8 +54,12 @@ final class _ReaderViewState extends State<ReaderView> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
       _pageController.dispose();
-      _pageController = PageController(initialPage: widget.controller.currentIndex);
+      _pageController = PageController(
+        initialPage: widget.controller.currentIndex,
+      );
       _lastLogicalPosition = widget.controller.currentIndex.toDouble();
+      _lastMicros = widget.clock.nowMicros();
+      _interaction = Interaction.idle;
     }
   }
 
@@ -77,11 +89,12 @@ final class _ReaderViewState extends State<ReaderView> {
                 reverse: direction == ReadingDirection.rtl,
                 scrollDirection: isVertical ? Axis.vertical : Axis.horizontal,
                 onPageChanged: _handlePageChanged,
-                itemBuilder: (context, index) => _StaticReaderPage(
+                itemBuilder: (context, index) => _ReaderPageHost(
                   asset: chapter.pages[index],
                   sessionId: widget.controller.sessionId,
                   clock: widget.clock,
                   traceSink: widget.traceSink,
+                  pageBuilder: widget.pageBuilder,
                 ),
               ),
             ),
@@ -203,25 +216,84 @@ final class _ReaderViewState extends State<ReaderView> {
   }
 }
 
-final class _StaticReaderPage extends StatefulWidget {
-  const _StaticReaderPage({
+final class _ReaderPageHost extends StatefulWidget {
+  const _ReaderPageHost({
     required this.asset,
     required this.sessionId,
     required this.clock,
     required this.traceSink,
+    required this.pageBuilder,
   });
 
   final PageAsset asset;
   final String sessionId;
   final MonoClock clock;
   final TraceSink traceSink;
+  final ReaderPageBuilder? pageBuilder;
 
   @override
-  State<_StaticReaderPage> createState() => _StaticReaderPageState();
+  State<_ReaderPageHost> createState() => _ReaderPageHostState();
 }
 
-final class _StaticReaderPageState extends State<_StaticReaderPage> {
+final class _ReaderPageHostState extends State<_ReaderPageHost> {
   bool _reportedFirstFrame = false;
+
+  @override
+  void didUpdateWidget(covariant _ReaderPageHost oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.asset.assetKey != widget.asset.assetKey) {
+      _reportedFirstFrame = false;
+    }
+  }
+
+  void _reportFirstFrame() {
+    if (_reportedFirstFrame) {
+      return;
+    }
+    _reportedFirstFrame = true;
+    final asset = widget.asset;
+    final clock = widget.clock;
+    final sessionId = widget.sessionId;
+    final traceSink = widget.traceSink;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || widget.asset.assetKey != asset.assetKey) {
+        return;
+      }
+      traceSink.record(
+        traceEvent(
+          clock: clock,
+          sessionId: sessionId,
+          kind: TraceEventKind.firstFrameReady,
+          identityHash: asset.assetKey,
+          payload: <String, Object?>{'pageIndex': asset.index},
+        ),
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final custom = widget.pageBuilder?.call(
+      context,
+      widget.asset,
+      _reportFirstFrame,
+    );
+    return custom ??
+        _StaticReaderPage(
+          asset: widget.asset,
+          onFirstFrame: _reportFirstFrame,
+        );
+  }
+}
+
+final class _StaticReaderPage extends StatelessWidget {
+  const _StaticReaderPage({
+    required this.asset,
+    required this.onFirstFrame,
+  });
+
+  final PageAsset asset;
+  final VoidCallback onFirstFrame;
 
   @override
   Widget build(BuildContext context) {
@@ -229,29 +301,18 @@ final class _StaticReaderPageState extends State<_StaticReaderPage> {
       color: Colors.black,
       child: Center(
         child: Image.asset(
-          widget.asset.uri.toString(),
+          asset.uri.toString(),
           fit: BoxFit.contain,
           filterQuality: FilterQuality.low,
           frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-            if (!_reportedFirstFrame && (frame != null || wasSynchronouslyLoaded)) {
-              _reportedFirstFrame = true;
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                widget.traceSink.record(
-                  traceEvent(
-                    clock: widget.clock,
-                    sessionId: widget.sessionId,
-                    kind: TraceEventKind.firstFrameReady,
-                    identityHash: widget.asset.assetKey,
-                    payload: <String, Object?>{'pageIndex': widget.asset.index},
-                  ),
-                );
-              });
+            if (frame != null || wasSynchronouslyLoaded) {
+              onFirstFrame();
             }
             return child;
           },
           errorBuilder: (context, error, stackTrace) => Center(
             child: Text(
-              'Page ${widget.asset.index + 1} failed to load',
+              'Page ${asset.index + 1} failed to load',
               style: const TextStyle(color: Colors.white),
             ),
           ),

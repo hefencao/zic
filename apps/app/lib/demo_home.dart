@@ -3,6 +3,14 @@ import 'package:flutter/material.dart';
 import 'static_demo.dart';
 import 'webp_demo.dart';
 
+const staticDemoEntryKey = ValueKey<String>('demo-entry-static');
+const mediaPipelineReaderEntryKey =
+    ValueKey<String>('demo-entry-media-pipeline-reader');
+const bundledWebpEntryKey = ValueKey<String>('demo-entry-bundled-webp');
+const localWebpImportKey = ValueKey<String>('demo-entry-local-webp');
+const localWebpPickerProgressKey =
+    ValueKey<String>('local-webp-picker-progress');
+
 final class DemoHome extends StatefulWidget {
   const DemoHome({required this.picker, super.key});
 
@@ -27,10 +35,7 @@ final class _DemoHomeState extends State<DemoHome> {
       }
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => WebpPlayerScreen.file(
-            picked.file,
-            displayName: picked.displayName,
-          ),
+          builder: (_) => WebpPlayerScreen.picked(picked),
         ),
       );
     } catch (error) {
@@ -65,6 +70,7 @@ final class _DemoHomeState extends State<DemoHome> {
           ),
           const SizedBox(height: 24),
           _DemoCard(
+            key: staticDemoEntryKey,
             icon: Icons.menu_book,
             title: '100 页静态章节',
             subtitle: 'PageView、阅读方向、viewport observation 与 demand 基线。',
@@ -74,6 +80,19 @@ final class _DemoHomeState extends State<DemoHome> {
           ),
           const SizedBox(height: 12),
           _DemoCard(
+            key: mediaPipelineReaderEntryKey,
+            icon: Icons.texture,
+            title: 'Reader 媒体管线',
+            subtitle: 'Reader 页面直接使用 Animated WebP native texture 管线。',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const MediaPipelineReaderScreen(),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          _DemoCard(
+            key: bundledWebpEntryKey,
             icon: Icons.animation,
             title: '内置动图 WebP',
             subtitle: '真实 assets；可切换 native pipeline 与 Flutter codec。',
@@ -83,11 +102,14 @@ final class _DemoHomeState extends State<DemoHome> {
           ),
           const SizedBox(height: 12),
           _DemoCard(
+            key: localWebpImportKey,
             icon: Icons.file_open,
             title: '导入本地 WebP',
-            subtitle: '通过系统文件选择器读取本地 .webp；native 不可用时自动回退。',
+            subtitle: '通过系统文件选择器读取本地 .webp；'
+                'native 不可用时自动回退。',
             trailing: _picking
                 ? const SizedBox.square(
+                    key: localWebpPickerProgressKey,
                     dimension: 24,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )

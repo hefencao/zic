@@ -1,5 +1,47 @@
 # Implementation Status
 
+## Unreleased candidate from 0.18.3-dev.21 — test boundaries and Android texture vertical slice
+
+### Test architecture
+
+The prior malformed-file smoke coverage mixed picker completion, navigation,
+filename derivation, byte loading, container validation, codec startup, and
+page text matching. The candidate separates those boundaries:
+
+- picker and `PickedWebp(displayName, file)` contract;
+- route identity and owned display name;
+- pure valid/malformed WebP container validation;
+- preview `loading`/`ready`/`invalid` state through explicit state objects and keys.
+
+The three target tests reject fixed-duration pumping, `find.textContaining` as
+component identity, and `XFile.fromData` metadata assumptions.
+
+### Android texture and Reader integration
+
+A new Flutter plugin creates Android `SurfaceProducer` outputs and serializes
+blit, resize, redraw, and release work. Native frames cross Dart and Kotlin with
+explicit retain/release ownership. The platform retains the currently presented
+frame for surface recreation and releases it on replacement, resize, output
+release, or engine detach. Lifecycle locking prevents `scheduleFrame` from
+racing detach.
+
+Present telemetry reports queue, upload, deadline miss, frame, texture, and
+in-flight memory values. Platform failures emit fallback telemetry and return to
+the Flutter codec. `ReaderView` now accepts a media page builder, and the demo
+chapter uses the same Animated WebP player inside the Reader rather than only on
+a standalone preview route.
+
+### Validation status
+
+The repository structure check, C header syntax check, shell syntax check,
+Python compilation, and Kotlin source compilation against minimal API stubs pass
+in the current environment. The environment does not contain Flutter, Dart,
+Rust/Cargo, Android SDK, or Android NDK, so the required target tests, analyzer,
+Rust tests, and Android build are not yet validated here.
+
+The version therefore remains `0.18.3-dev.21`. This working tree is a validation
+candidate, not a stable baseline.
+
 ## 0.18.3-dev.21 — unambiguous malformed-WebP error state
 
 ### Root cause

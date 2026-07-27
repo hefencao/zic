@@ -16,6 +16,8 @@ dependencies:
     path: ../../packages/catalog
   bridge:
     path: ../../packages/bridge
+  texture_bridge:
+    path: ../../packages/texture_bridge
   file_selector: ^1.0.3
   pipeline:
     path: ../../packages/pipeline
@@ -36,5 +38,6 @@ flutter:
   assets:
     - assets/demo/comic.json
     - assets/demo/chapter_001.json
+    - assets/demo/chapter_media_pipeline.json
     - assets/demo/pages/
     - assets/demo/animated/

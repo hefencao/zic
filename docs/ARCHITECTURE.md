@@ -49,13 +49,12 @@ zic/
     transport/               网络、本地文件、resume
     storage/                 artifact、cache index、SQLite
     telemetry/               指标、事件、trace、设备状态
-    bridge/                  FFI 和 texture 平台接口
+    bridge/                  FFI、native source/cursor/frame handle
+    texture_bridge/          Flutter texture 契约与 Android 插件
     testkit/                 fake clock/source/decoder/trace
 
   native/
-    media_core/              Rust 增量解析、解码和帧内存
-    android_texture/         Kotlin + JNI/NDK bridge
-    ios_texture/             Swift/ObjC bridge
+    media_core/              Rust 增量解析、解码、帧内存和 Android blit
 
   tools/
     bench/                   解码、滚动、缓存和回放基准
@@ -194,16 +193,55 @@ abstract interface class FrameCursor {
 
 Android：
 
-- `SurfaceProducer`/texture entry；
-- 专用串行 blit 线程；
-- frame address 在提交完成回调前保持有效；
-- texture create 与首次 blit 分离；
-- resize 只在真实目标尺寸变化时发生。
+- `texture_bridge` 创建 `SurfaceProducer`，每次绘制重新获取当前 `Surface`；
+- 一个 engine attachment 只拥有一条串行 native blit lane；
+- Dart 在 MethodChannel 调用期间 retain 一份 frame owner；
+- 平台成功呈现后另行 retain 当前 texture frame，直到下一帧、resize 或 release；
+- `onSurfaceAvailable` 只重绘平台持有的当前帧，不借用已归还给 Dart 的 handle；
+- engine detach 与 `scheduleFrame` 通过生命周期锁串行，detach 后不再请求 engine frame；
+- present deadline 使用提交后的相对预算，统一基于平台单调时钟计算；
+- texture create、首次 blit、resize 和 release 是独立操作。
+
+Dart presenter 输出：
+
+- `queueMicros`、`uploadMicros`、`deadlineMissMicros`；
+- `frameBytes`、`textureBytes`、`inFlightBytes`；
+- platform failure 的 fallback telemetry。
 
 非 Android：
 
 - Flutter `ui.Image` renderer；
+- Android texture 创建、上传或生命周期操作失败时回退 Flutter codec；
 - iOS texture path 在 v1.0 前补齐。
+
+### 3.8 本地 WebP 与预览测试边界
+
+本地选择结果使用显式产品对象：
+
+```dart
+final class PickedWebp {
+  final String displayName;
+  final XFile file;
+}
+```
+
+`displayName` 是路由标题契约，不能由测试后续重新推断，也不能依赖
+`XFile.fromData` 在不同平台是否保留 `name`。测试分为四个边界：
+
+1. picker：选择、取消和 `PickedWebp` 归一化；
+2. route：入口到预览页面及标题传递；
+3. validation：纯字节 WebP 容器校验；
+4. preview state：`loading`、`ready`、`invalid` 显式状态和语义 key。
+
+这些测试不把辅助文案、状态栏或布局节点当作页面身份，也不通过固定
+`pump(Duration(...))` 猜测异步完成。
+
+### 3.9 Reader 媒体页面
+
+`ReaderView` 接受可选 `ReaderPageBuilder`。默认仍渲染静态 asset；媒体页面
+可以返回真实播放器，并在实际首帧呈现后调用 `reportFirstFrame`。页面 host
+对同一 asset 只记录一次首帧，并在 asset identity 改变时重置，避免把预览页
+专用管线误当成 Reader 集成。
 
 ## 4. 核心领域模型
 

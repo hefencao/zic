@@ -9,7 +9,7 @@ void main() {
 }
 
 final class App extends StatelessWidget {
-  const App({this.picker = pickLocalWebp, super.key});
+  const App({this.picker = defaultWebpPicker, super.key});
 
   final WebpPicker picker;
 

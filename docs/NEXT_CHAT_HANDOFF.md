@@ -1,37 +1,58 @@
 # zic next-chat handoff
 
-Use `zic_v0.18.3-dev.21.zip` as the only code baseline. Do not roll back to earlier packages or copy individual files from old releases.
+## Baseline and candidate status
 
-## Required pre-handoff validation
+The only verified input baseline for this iteration is
+`zic_v0.18.3-dev.21.zip`. The current working tree contains an unreleased
+candidate built strictly from that archive. Do not call the candidate stable and
+do not increment any version until the validation gate below passes in a
+Flutter/Android-equipped environment.
 
-Run these commands in the Flutter-equipped development environment before starting the next chat:
+## Candidate changes
+
+- Picker, route navigation, WebP container validation, and preview page state are
+  independent test boundaries.
+- `PickedWebp(displayName, file)` remains the explicit product contract.
+- Tests use semantic keys or `WebpPreviewState`, not helper text identity,
+  fixed-duration pumping, or `XFile.fromData` name behavior.
+- Android `SurfaceProducer` output, one serial blit lane, JNI frame retain/blit/
+  release, current-frame redraw ownership, and detach-safe frame scheduling are
+  implemented.
+- Texture telemetry covers queue, upload, relative deadline miss, frame bytes,
+  texture bytes, in-flight bytes, and fallback.
+- Animated WebP is connected to a real `ReaderView` page through
+  `ReaderPageBuilder`; the standalone preview remains a diagnostic entry.
+
+## Mandatory validation gate
+
+Run from the repository root:
 
 ```bash
-cd /home/unkloser/projects/zic
 flutter pub get
-cd apps/app
-flutter test test/app_smoke_test.dart
-cd ../..
-bash ./tool/test_flutter.sh
+flutter test apps/app/test/app_smoke_test.dart
+flutter test apps/app/test/webp_preview_test.dart
+flutter test apps/app/test/webp_demo_test.dart
 bash ./tool/test_dart.sh
+bash ./tool/test_flutter.sh
 bash ./tool/analyze.sh
+bash ./tool/check_native_header.sh
 bash ./tool/check_webp.sh
-cargo fmt --all -- --check
-cargo test --workspace
+bash ./tool/test_rust.sh
+bash ./tool/build_android_native.sh release
+bash ./tool/build_android.sh debug
 ```
 
-The two local-import smoke cases must both pass, show the exact keyed titles `local.webp` and `broken.webp`, and expose malformed validation only through `webpPreviewErrorKey`.
+Also run Android lifecycle/device coverage for background/foreground surface
+recreation, overlapping Reader pages, texture replacement, resize, and engine
+detach. Only after all applicable checks pass should the version be incremented
+and a new stable source archive be produced.
 
-## Current state
+## Next mainline work after validation
 
-- The local picker returns `PickedWebp`, which owns both bytes/file access and a normalized display name; malformed validation uses a unique keyed detail while the footer reports only `加载失败`.
-- Static 100-page reader, built-in Animated WebP previews, local WebP import, Flutter-codec fallback, Rust/libwebp decoding, finite/infinite loops, adaptive physical targets, source-aware raster plans, frame pacing, cache/session infrastructure, and independent scheduler lanes remain implemented.
-- libwebp 1.6.0 is built from pinned upstream source for host and Android ABIs.
-
-## Next implementation target
-
-1. Android `SurfaceProducer` texture output backed by native decoded frames.
-2. Serial native blit lane and explicit texture/frame ownership.
-3. Runtime telemetry for decode, upload, present deadlines, memory, and fallback.
-4. Connect the production media path to actual reader pages rather than the preview-only screen.
-5. Preserve Flutter-image fallback and split-APK packaging.
+1. Replace the demo-only `FakeCoordinator` upload path with the production
+   decode/upload/present session path used by Reader demands.
+2. Attribute decode, upload, present, fallback, and memory telemetry to
+   session/decode identity and demand revision.
+3. Add device tests for surface loss/recreation and concurrent PageView overlap.
+4. Extend the real Reader media path to local chapter/CBZ import and persisted
+   catalog entries.

@@ -7,6 +7,8 @@ import 'package:reader/reader.dart';
 import 'package:sessions/sessions.dart';
 import 'package:telemetry/telemetry.dart';
 
+import 'webp_demo.dart';
+
 final class StaticDemoScreen extends StatefulWidget {
   const StaticDemoScreen({super.key});
 
@@ -55,10 +57,96 @@ final class _StaticDemoScreenState extends State<StaticDemoScreen> {
   }
 }
 
+const readerMediaWebpPageKey = ValueKey<String>('reader-media-webp-page');
+
+final class MediaPipelineReaderScreen extends StatefulWidget {
+  const MediaPipelineReaderScreen({super.key});
+
+  @override
+  State<MediaPipelineReaderScreen> createState() =>
+      _MediaPipelineReaderScreenState();
+}
+
+final class _MediaPipelineReaderScreenState
+    extends State<MediaPipelineReaderScreen> {
+  late final Future<ChapterManifest> _chapter;
+
+  @override
+  void initState() {
+    super.initState();
+    final source = LocalManifestSource(
+      sourceId: 'local-demo',
+      loader: rootBundle.loadString,
+      comicManifestPaths: const <String, String>{
+        'zic-demo': 'assets/demo/comic.json',
+      },
+      chapterManifestPaths: const <String, String>{
+        'chapter-media-pipeline':
+            'assets/demo/chapter_media_pipeline.json',
+      },
+    );
+    _chapter = source.loadChapter('chapter-media-pipeline');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<ChapterManifest>(
+      future: _chapter,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('Reader Media Pipeline')),
+            body: Center(child: Text('加载演示失败：${snapshot.error}')),
+          );
+        }
+        if (!snapshot.hasData) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        return _ReaderRuntime(
+          chapter: snapshot.requireData,
+          pageBuilder: _buildMediaReaderPage,
+        );
+      },
+    );
+  }
+}
+
+Widget? _buildMediaReaderPage(
+  BuildContext context,
+  PageAsset asset,
+  VoidCallback reportFirstFrame,
+) {
+  if (asset.contentKindHint != ContentKindHint.webp) {
+    return null;
+  }
+  return ColoredBox(
+    key: readerMediaWebpPageKey,
+    color: Colors.black,
+    child: NativeWebpPlayer(
+      key: ValueKey<String>(asset.assetKey),
+      title: asset.pageId,
+      sourceUri: asset.uri,
+      loadBytes: () async {
+        final data = await rootBundle.load(asset.uri.toString());
+        return data.buffer.asUint8List(
+          data.offsetInBytes,
+          data.lengthInBytes,
+        );
+      },
+      showEngineControls: false,
+      showStatus: false,
+      onFirstFrame: reportFirstFrame,
+    ),
+  );
+}
+
 final class _ReaderRuntime extends StatefulWidget {
-  const _ReaderRuntime({required this.chapter});
+  const _ReaderRuntime({required this.chapter, this.pageBuilder});
 
   final ChapterManifest chapter;
+  final ReaderPageBuilder? pageBuilder;
 
   @override
   State<_ReaderRuntime> createState() => _ReaderRuntimeState();
@@ -83,7 +171,6 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
     ]);
     _coordinator = FakeCoordinator(clock: _clock, traceSink: _trace);
   }
-
 
   @override
   void didChangeDependencies() {
@@ -155,6 +242,7 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
         controller: _reader!,
         clock: _clock,
         traceSink: _trace,
+        pageBuilder: widget.pageBuilder,
       ),
     );
   }

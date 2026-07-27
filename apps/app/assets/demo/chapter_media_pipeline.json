@@ -1,0 +1,42 @@
+{
+  "sourceId": "local-demo",
+  "comicId": "zic-demo",
+  "readingDirection": "ltr",
+  "chapter": {
+    "chapterId": "chapter-media-pipeline",
+    "title": "Reader Media Pipeline",
+    "sequence": 2,
+    "pageCount": 3,
+    "sourceRevision": "demo-media-r1"
+  },
+  "pages": [
+    {
+      "pageId": "animated-page",
+      "index": 0,
+      "uri": "assets/demo/animated/finite_loop.webp",
+      "byteLength": 140,
+      "contentKindHint": "webp",
+      "animatedHint": true
+    },
+    {
+      "pageId": "static-page-001",
+      "index": 1,
+      "uri": "assets/demo/pages/001.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 11175,
+      "contentKindHint": "png",
+      "animatedHint": false
+    },
+    {
+      "pageId": "static-page-002",
+      "index": 2,
+      "uri": "assets/demo/pages/002.png",
+      "width": 720,
+      "height": 1280,
+      "byteLength": 12067,
+      "contentKindHint": "png",
+      "animatedHint": false
+    }
+  ]
+}

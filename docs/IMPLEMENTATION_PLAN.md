@@ -152,6 +152,17 @@
 - 实现后台/前台和 texture release 排空。
 - 实现 Flutter fallback renderer。
 
+### 当前候选实现（仍需 Flutter/Android 验证）
+
+- 已增加 `texture_bridge`、`SurfaceProducer`、串行 blit lane 和 JNI RGBA blit；
+- 已建立 Dart 临时 owner 与平台当前帧 owner 的双层 retain/release；
+- 已增加 queue/upload/deadline/memory/fallback telemetry；
+- 已通过 `ReaderPageBuilder` 将 Animated WebP 播放器接入 Reader 页面；
+- 已重构 picker、路由、容器校验和预览状态的测试边界。
+
+此候选不得在目标 Flutter 测试、analyze、Rust/Android native 构建完成前升级版本
+或标记为稳定基线。
+
 ### 验收
 
 - 当前页 Animated WebP 可在下载封口前播放。
@@ -159,6 +170,7 @@
 - texture resize 不在每帧执行。
 - release 不与在途 blit 竞争。
 - 后台返回后 session 可继续或安全恢复。
+- 三个指定 app 测试、完整 Flutter/Dart/analyze 和可用 native 检查全部通过。
 
 ## Phase 6：Transition、播放时序与缓存
 

@@ -1,4 +1,5 @@
 import 'package:domain/domain.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reader/reader.dart';
 import 'package:telemetry/telemetry.dart';
@@ -91,6 +92,71 @@ void main() {
       ),
     );
     expect(notifications, 1);
+    controller.dispose();
+  });
+
+  testWidgets('custom media page reports first frame exactly once', (
+    tester,
+  ) async {
+    final chapter = ChapterManifest(
+      sourceId: 'local',
+      comicId: 'comic',
+      chapter: const Chapter(
+        chapterId: 'chapter',
+        comicId: 'comic',
+        title: 'Chapter',
+        sequence: 1,
+        pageCount: 1,
+        sourceRevision: 'r1',
+      ),
+      pages: <PageAsset>[
+        PageAsset(
+          pageId: 'p0',
+          chapterId: 'chapter',
+          index: 0,
+          uri: Uri.parse('assets/p0.webp'),
+        ),
+      ],
+      readingDirection: ReadingDirection.ltr,
+    );
+    final trace = MemoryTraceSink();
+    final controller = ReaderController(
+      sessionId: 'media-session',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: _Clock(),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderView(
+          controller: controller,
+          clock: _Clock(),
+          traceSink: trace,
+          pageBuilder: (context, asset, reportFirstFrame) {
+            reportFirstFrame();
+            reportFirstFrame();
+            return const SizedBox(
+              key: ValueKey<String>('custom-media-page'),
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey<String>('custom-media-page')),
+      findsOneWidget,
+    );
+    final firstFrames = trace.events
+        .where((event) => event.kind == TraceEventKind.firstFrameReady)
+        .toList();
+    expect(firstFrames, hasLength(1));
+    expect(firstFrames.single.identityHash, chapter.pages.single.assetKey);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
     controller.dispose();
   });
 }

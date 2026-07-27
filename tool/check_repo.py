@@ -21,6 +21,7 @@ EXPECTED_DEPENDENCIES = {
     'sessions': {'domain', 'media', 'pipeline', 'storage', 'telemetry', 'transport'},
     'testkit': {'domain', 'telemetry', 'transport'},
     'bridge': {'media'},
+    'texture_bridge': {'bridge'},
 }
 
 
@@ -163,11 +164,23 @@ def check_animated_demo() -> None:
     if '- assets/demo/animated/' not in pubspec:
         fail('Animated WebP assets are not declared in the app pubspec')
     home = (app / 'lib' / 'demo_home.dart').read_text(encoding='utf-8')
-    for label in ('100 页静态章节', '内置动图 WebP', '导入本地 WebP'):
+    for label in (
+        '100 页静态章节',
+        'Reader 媒体管线',
+        '内置动图 WebP',
+        '导入本地 WebP',
+    ):
         if label not in home:
             fail(f'app demo entry is missing: {label}')
     player = (app / 'lib' / 'webp_demo.dart').read_text(encoding='utf-8')
-    for required in ('NativeSourceFactory', 'NativeCursorFactory', 'PixelFrame', 'Image.memory'):
+    for required in (
+        'NativeSourceFactory',
+        'NativeCursorFactory',
+        'PixelFrame',
+        'Image.memory',
+        'AndroidTexturePresenter',
+        'RendererKind.androidTexture',
+    ):
         if required not in player:
             fail(f'Animated WebP player path is incomplete: {required}')
 
@@ -443,40 +456,157 @@ def check_compile_regressions() -> None:
             fail(f'WebP preview scaling/pacing regression: {required}')
     if '_fitDecodeTarget(' in webp_demo or 'const maxSide = 1024' in webp_demo:
         fail('WebP preview must not use a fixed diagnostic decode target')
-    smoke = (ROOT / 'apps/app/test/app_smoke_test.dart').read_text(encoding='utf-8')
-    if 'finite_loop.webp' not in smoke or 'malformed local WebP' not in smoke:
-        fail('local WebP route tests must use a real fixture and cover invalid input')
+    app_test = ROOT / 'apps/app/test'
+    smoke = (app_test / 'app_smoke_test.dart').read_text(encoding='utf-8')
+    preview_test = (app_test / 'webp_preview_test.dart').read_text(
+        encoding='utf-8'
+    )
+    contract_test = (app_test / 'webp_demo_test.dart').read_text(
+        encoding='utf-8'
+    )
+    for name, source in (
+        ('app_smoke_test.dart', smoke),
+        ('webp_preview_test.dart', preview_test),
+        ('webp_demo_test.dart', contract_test),
+    ):
+        if 'pump(Duration(' in source or 'pump(const Duration(' in source:
+            fail(f'{name} must synchronize on state, not fixed pump durations')
+        if 'find.textContaining(' in source:
+            fail(f'{name} must not use textContaining as component identity')
+        if 'XFile.fromData' in source:
+            fail(f'{name} must not depend on XFile.fromData metadata behavior')
+
     for required in (
-        '_pumpUntilFound(',
+        'staticDemoEntryKey',
+        'mediaPipelineReaderEntryKey',
+        'bundledWebpEntryKey',
+        'localWebpImportKey',
         'webpPreviewScreenKey',
         'webpPreviewTitleKey',
-        'webpPreviewErrorKey',
+        'cancelled picker stays on home',
+        'Reader route hosts the real WebP media pipeline',
     ):
         if required not in smoke:
-            fail(f'local WebP route test synchronization is incomplete: {required}')
+            fail(f'smoke navigation boundary is incomplete: {required}')
+
+    for required in (
+        'PickedWebp owns its explicit display-name contract',
+        'system picker wraps the selected file',
+        'system picker preserves cancellation as null',
+        'valid local WebP passes container validation',
+        'malformed local WebP fails container validation',
+        "XFile('/virtual/source-with-unrelated-name')",
+    ):
+        if required not in contract_test:
+            fail(f'picker/validation contract boundary is incomplete: {required}')
+
+    for required in (
+        'WebpPreviewStateRegion',
+        'WebpPreviewPhase.ready',
+        'WebpPreviewPhase.invalid',
+        'webpPreviewReadyKey',
+        'webpPreviewErrorKey',
+        'valid local WebP reaches an explicit ready state',
+        'malformed local WebP reaches a controlled invalid state',
+    ):
+        if required not in preview_test:
+            fail(f'preview state boundary is incomplete: {required}')
+
+    home = (ROOT / 'apps/app/lib/demo_home.dart').read_text(encoding='utf-8')
     for required in (
         'typedef WebpPicker = Future<PickedWebp?> Function()',
         'final class PickedWebp',
         'displayName: picked.displayName',
-        "displayName: 'local.webp'",
-        "displayName: 'broken.webp'",
-    ):
-        if required not in webp_demo and required not in smoke and required not in (ROOT / 'apps/app/lib/demo_home.dart').read_text(encoding='utf-8'):
-            fail(f'local WebP display-name ownership is incomplete: {required}')
-    if "_status = 'WebP 文件无效'" in webp_demo:
-        fail('preview status must not duplicate the keyed WebP validation error')
-    if "find.textContaining('WebP 文件无效')" in smoke:
-        fail('malformed WebP test must use the stable error key, not a global text finder')
-    for required in (
-        "const webpPreviewScreenKey = ValueKey<String>('webp-preview-screen')",
-        "const webpPreviewTitleKey = ValueKey<String>('webp-preview-title')",
-        "const webpPreviewErrorKey = ValueKey<String>('webp-preview-error')",
-        'key: webpPreviewScreenKey',
-        'key: webpPreviewTitleKey',
+        'WebpPlayerScreen.picked(picked)',
+        'final class WebpPreviewState',
+        'key: webpPreviewStateKey',
         'key: webpPreviewErrorKey',
     ):
-        if required not in webp_demo:
-            fail(f'WebP preview route identity is incomplete: {required}')
+        if required not in webp_demo and required not in home:
+            fail(f'local WebP product contract is incomplete: {required}')
+    if "_status = 'WebP 文件无效'" in webp_demo:
+        fail('preview status must not duplicate the keyed WebP validation error')
+
+    reader_view = (ROOT / 'packages/reader/lib/src/reader_view.dart').read_text(
+        encoding='utf-8'
+    )
+    for required in (
+        'typedef ReaderPageBuilder',
+        'final ReaderPageBuilder? pageBuilder',
+        '_ReaderPageHost',
+        'reportFirstFrame',
+    ):
+        if required not in reader_view:
+            fail(f'Reader media integration seam is incomplete: {required}')
+    for required in (
+        'MediaPipelineReaderScreen',
+        'chapter_media_pipeline.json',
+        'NativeWebpPlayer(',
+        'pageBuilder: _buildMediaReaderPage',
+    ):
+        if required not in static_demo:
+            fail(f'Reader media pipeline route is incomplete: {required}')
+
+    texture = (
+        ROOT / 'packages/texture_bridge/lib/src/android_texture_presenter.dart'
+    ).read_text(encoding='utf-8')
+    kotlin = (
+        ROOT
+        / 'packages/texture_bridge/android/src/main/kotlin/dev/zic/texture'
+        / 'TextureBridgePlugin.kt'
+    ).read_text(encoding='utf-8')
+    android_rust = (
+        ROOT / 'native/media_core/src/android_texture.rs'
+    ).read_text(encoding='utf-8')
+    cursor = (ROOT / 'packages/bridge/lib/src/native_cursor.dart').read_text(
+        encoding='utf-8'
+    )
+    for required in (
+        'TextureFrameOwner retain()',
+        'final retained = frame.retain()',
+        'retained.dispose()',
+        "'frameHandle': retained.handleAddress",
+        'deadlineAfterMicros',
+        'TexturePresentTelemetry',
+        'TextureFallbackTelemetry',
+        'frameBytes',
+        'textureBytes',
+        'inFlightBytes',
+    ):
+        if required not in texture:
+            fail(f'Android texture ownership/telemetry is incomplete: {required}')
+    for required in (
+        'createSurfaceProducer()',
+        'newSingleThreadExecutor',
+        'NativeBlitter.retain',
+        'NativeBlitter.blit',
+        'NativeBlitter.release',
+        'onSurfaceAvailable',
+        'onSurfaceDestroyed',
+        'scheduleRedraw',
+        'producer.scheduleFrame()',
+        'synchronized(lifecycleLock)',
+        'scheduleProducerFrame',
+        'retainedFrameBytes',
+        'queueMicros',
+        'uploadMicros',
+        'deadlineMissMicros',
+    ):
+        if required not in kotlin:
+            fail(f'Android serial blit lane is incomplete: {required}')
+    for required in (
+        'Java_dev_zic_texture_NativeBlitter_retain',
+        'Java_dev_zic_texture_NativeBlitter_release',
+        'Java_dev_zic_texture_NativeBlitter_blit',
+        'ANativeWindow_lock',
+        'ANativeWindow_unlockAndPost',
+        'copy_premultiplied_rgba',
+    ):
+        if required not in android_rust:
+            fail(f'native Android blit implementation is incomplete: {required}')
+    if 'int get handleAddress' not in cursor:
+        fail('NativeFrame must expose an opaque retained handle to presenters')
+
 
 
 def check_native_abi() -> None:
@@ -557,7 +687,7 @@ def check_native_abi() -> None:
     if not finite_fixture.is_file() or finite_fixture.stat().st_size < 32:
         fail('finite-loop Animated WebP fixture is missing or invalid')
     build = (ROOT / 'native/media_core/build.rs').read_text(encoding='utf-8')
-    for required in ('ZIC_WEBP_LIB_DIR', 'webpdemux', 'webp'):
+    for required in ('ZIC_WEBP_LIB_DIR', 'webpdemux', 'webp', 'rustc-link-lib=android'):
         if required not in build:
             fail(f'native libwebp link configuration is incomplete: {required}')
     ci = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
