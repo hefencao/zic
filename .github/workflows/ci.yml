@@ -34,5 +34,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+      - name: Install libwebp development files
+        run: sudo apt-get update && sudo apt-get install -y libwebp-dev pkg-config
+      - run: ./tool/check_webp.sh
       - run: cargo fmt --all -- --check
       - run: cargo test --workspace

@@ -1,4 +1,4 @@
-.PHONY: check bootstrap test analyze dart-test flutter-test android-apk
+.PHONY: check bootstrap test analyze dart-test flutter-test android-apk webp-check
 
 check:
 	./tool/check.sh
@@ -20,3 +20,6 @@ flutter-test:
 
 android-apk:
 	./tool/build_android.sh release
+
+webp-check:
+	./tool/check_webp.sh

@@ -122,7 +122,7 @@ final class NativeCursor implements FrameCursor {
         case _CursorStatus.staleEpoch:
           throw StateError('native cursor rejected a stale epoch');
         case _CursorStatus.unsupported:
-          throw UnsupportedError('native WebP decoding is not linked');
+          throw UnsupportedError('native cursor does not support this content');
         case _CursorStatus.nullPointer:
           throw StateError('native cursor is unavailable');
         case _CursorStatus.failed:

@@ -1,5 +1,47 @@
 # Implementation Status
 
+## 0.12.0-dev.12 — real incremental Animated WebP decode
+
+### Native decoder
+
+The existing ABI v3 cursor now performs real WebP work instead of returning
+`unsupported`. It reparses the authoritative committed prefix with
+`WebPDemuxPartial`, requests the next one-based frame, and only decodes when the
+iterator marks that frame complete. A partial frame returns `needMoreData`
+without mutating the canvas or advancing the frame index.
+
+Complete frame fragments are decoded to straight RGBA with libwebp, scaled to
+the physical `DecodeId` target, and composed onto a persistent target-size
+canvas. Composition implements `WEBP_MUX_BLEND`, `WEBP_MUX_NO_BLEND`, and
+previous-frame background disposal. The immutable composed canvas becomes the
+retained native frame payload, with frame duration propagated in microseconds.
+
+The decoder currently performs one pass. Session-level loop count and cursor
+reset semantics remain explicit next work rather than being hidden in the
+native cursor.
+
+### Native dependency boundary
+
+`build.rs` links `webpdemux` and `webp`. Desktop builds use system libraries;
+custom/Android builds may set `ZIC_WEBP_LIB_DIR` and optionally
+`ZIC_WEBP_STATIC=1`. The Flutter Android package does not yet bundle these
+transitive native libraries.
+
+A deterministic two-frame lossless Animated WebP fixture is checked into the
+native test data. Rust tests validate partial-prefix waiting, real red/green
+RGBA output, duration/size metadata, and end-of-stream. A C smoke program also
+compiles and runs directly against the installed libwebp to validate the
+headers, partial demux behavior, fixture metadata, and fragment decode.
+
+### Next iteration
+
+1. Add animation metadata and loop/repetition semantics to the cursor/session
+   contract.
+2. Add Android `SurfaceProducer` registry and serial blit worker.
+3. Package media-core and libwebp per Android ABI and connect a no-copy uploader.
+4. Replace baseline software frame scaling with decoder-native scaling where
+   platform profiling proves it beneficial.
+
 ## 0.11.0-dev.11 — explicit playback capability and native frame ABI
 
 ### Requested fix

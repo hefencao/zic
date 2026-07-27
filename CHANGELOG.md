@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.12.0-dev.12
+
+- Replaced the native WebP cursor placeholder with real incremental Animated
+  WebP decoding through libwebp partial demux.
+- Decode only complete frame fragments; incomplete prefixes return
+  `needMoreData` without advancing cursor state.
+- Added target-size RGBA composition with WebP blend and dispose handling,
+  immutable frame handles, duration propagation, and one-pass end detection.
+- Added a deterministic two-frame Animated WebP fixture and Rust tests for
+  complete decode, partial-prefix waiting, frame bytes, and end-of-stream.
+- Added system/custom libwebp link configuration, C dependency smoke checks,
+  CI installation, and repository gates.
+
 ## 0.11.0-dev.11
 
 - Made `ReaderBinding` require explicit `Coordinator` and

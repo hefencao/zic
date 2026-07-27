@@ -2,7 +2,7 @@
 
 `zic` 是从零开发的高性能漫画阅读器。当前版本已完成静态 Reader、可恢复下载、
 持久化缓存恢复、容量/LRU 策略、受控清理、失败退避重试、独立资源 lane、格式感知 ingress、
-decode/upload registry、frame holder、viewport 播放门控、帧字节预算，以及 Rust 增量媒体字节源基础。
+decode/upload registry、frame holder、viewport 播放门控、帧字节预算，以及 Rust 增量 Animated WebP 解码基础。
 
 ```text
 ReaderView
@@ -32,7 +32,9 @@ media
 Rust media_core
   -> source create / append / seal / reset
   -> epoch + contiguous offset + memory budget
-  -> incremental WebP/GIF signature boundary
+  -> libwebp partial demux
+  -> complete-frame decode + blend/dispose composition
+  -> retained immutable RGBA frame handles
 ```
 
 ## 生成 Flutter 平台工程
@@ -114,3 +116,16 @@ native ABI 的 fat APK。调试构建可执行：
 ```bash
 ./tool/build_android.sh debug
 ```
+
+## Native WebP 开发依赖
+
+桌面 Rust 构建需要 `libwebp`、`libwebpdemux` 和 `pkg-config`。先运行：
+
+```bash
+./tool/check_webp.sh
+cargo test --workspace
+```
+
+Android 交叉编译可通过 `ZIC_WEBP_LIB_DIR` 指向对应 ABI 的预编译库；当前
+版本完成真实 cursor/frame 解码，Android `SurfaceProducer` 打包与纹理上传仍在
+下一阶段。

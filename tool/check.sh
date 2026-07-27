@@ -9,6 +9,15 @@ fi
 
 python3 "$ROOT/tool/check_repo.py"
 "$ROOT/tool/check_native_header.sh"
+if command -v pkg-config >/dev/null 2>&1 && \
+   pkg-config --exists libwebp libwebpdemux; then
+  "$ROOT/tool/check_webp.sh"
+elif [[ "$REQUIRE_TOOLCHAINS" -eq 1 ]]; then
+  echo "libwebp development files are required" >&2
+  exit 1
+else
+  echo "SKIP: libwebp development files are not installed"
+fi
 
 if command -v flutter >/dev/null 2>&1; then
   (cd "$ROOT" && flutter pub get)

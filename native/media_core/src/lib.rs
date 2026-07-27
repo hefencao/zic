@@ -5,12 +5,14 @@
 //! use shared ownership so releasing a source handle cannot invalidate an
 //! already-created cursor, while epoch checks still reject stale work.
 
+mod webp;
+
 use std::ptr;
 use std::slice;
 use std::sync::{Arc, RwLock};
 
 pub const ABI_VERSION: u32 = 3;
-pub const LIB_VERSION: u32 = 0x000B_0000;
+pub const LIB_VERSION: u32 = 0x000C_0000;
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -111,6 +113,7 @@ pub struct Cursor {
     target_width: u32,
     target_height: u32,
     next_index: u32,
+    decoder: webp::Decoder,
 }
 
 #[derive(Debug)]
@@ -297,6 +300,7 @@ pub unsafe extern "C" fn zic_cursor_create(
         target_width,
         target_height,
         next_index: 0,
+        decoder: webp::Decoder::new(target_width, target_height),
     }))
 }
 
@@ -337,14 +341,27 @@ pub unsafe extern "C" fn zic_cursor_decode_next(
     match source.sniff() {
         ContainerKind::Unknown => CursorStatus::NeedMoreData as u32,
         ContainerKind::Gif | ContainerKind::Other => CursorStatus::Unsupported as u32,
-        ContainerKind::Webp if !source.sealed => CursorStatus::NeedMoreData as u32,
-        ContainerKind::Webp => {
-            // The stable ownership ABI is complete; the actual WebP decoder is
-            // introduced in the next native iteration. Do not synthesize a
-            // frame or consume cursor state before a real decoder exists.
-            let _ = (cursor.target_width, cursor.target_height, cursor.next_index);
-            CursorStatus::Unsupported as u32
-        }
+        ContainerKind::Webp => match cursor.decoder.decode_next(&source.bytes, source.sealed) {
+            Ok(decoded) => {
+                let frame = FrameHandle {
+                    data: Arc::new(FrameData {
+                        epoch,
+                        index: cursor.next_index,
+                        width: decoded.width,
+                        height: decoded.height,
+                        duration_us: decoded.duration_us,
+                        format: PixelFormat::Rgba8888,
+                        bytes: decoded.bytes,
+                    }),
+                };
+                cursor.next_index = cursor.next_index.saturating_add(1);
+                *out_frame = Box::into_raw(Box::new(frame));
+                CursorStatus::Ok as u32
+            }
+            Err(webp::DecodeError::NeedMoreData) => CursorStatus::NeedMoreData as u32,
+            Err(webp::DecodeError::End) => CursorStatus::End as u32,
+            Err(webp::DecodeError::Failed) => CursorStatus::Failed as u32,
+        },
     }
 }
 
@@ -420,7 +437,7 @@ mod tests {
     #[test]
     fn exported_versions_are_stable() {
         assert_eq!(zic_abi_version(), 3);
-        assert_eq!(zic_version(), 0x000B_0000);
+        assert_eq!(zic_version(), 0x000C_0000);
     }
 
     #[test]
@@ -453,6 +470,7 @@ mod tests {
             target_width: 8,
             target_height: 8,
             next_index: 0,
+            decoder: webp::Decoder::new(8, 8),
         };
         drop(source);
         assert_eq!(cursor.source.read().unwrap().epoch, 4);
@@ -471,6 +489,152 @@ mod tests {
         assert_eq!(unsafe { zic_frame_index(retained) }, 3);
         assert_eq!(unsafe { zic_frame_len(retained) }, 4);
         unsafe { zic_frame_release(retained) };
+    }
+
+    #[test]
+    fn animated_webp_decodes_real_frames_and_reaches_end() {
+        let bytes = include_bytes!("../testdata/animated.webp");
+        let source = Box::new(ByteSource::new(9, bytes.len() + 16));
+        let source_ptr = Box::into_raw(source);
+        assert_eq!(
+            unsafe { zic_source_append(source_ptr, 9, 0, bytes.as_ptr(), bytes.len()) },
+            Status::Ok as u32
+        );
+        assert_eq!(unsafe { zic_source_seal(source_ptr, 9) }, Status::Ok as u32);
+        let cursor = unsafe { zic_cursor_create(source_ptr, 9, 2, 2) };
+        assert!(!cursor.is_null());
+
+        let mut first = ptr::null_mut();
+        assert_eq!(
+            unsafe { zic_cursor_decode_next(cursor, 9, &mut first) },
+            CursorStatus::Ok as u32
+        );
+        assert_eq!(unsafe { zic_frame_index(first) }, 0);
+        assert_eq!(unsafe { zic_frame_width(first) }, 2);
+        assert_eq!(unsafe { zic_frame_height(first) }, 2);
+        assert_eq!(unsafe { zic_frame_len(first) }, 16);
+        assert_eq!(unsafe { zic_frame_duration_us(first) }, 80_000);
+        let first_bytes = unsafe {
+            slice::from_raw_parts(zic_frame_data(first), zic_frame_len(first))
+        };
+        assert!(first_bytes.chunks_exact(4).all(|px| px == &[255, 0, 0, 255]));
+
+        let mut second = ptr::null_mut();
+        assert_eq!(
+            unsafe { zic_cursor_decode_next(cursor, 9, &mut second) },
+            CursorStatus::Ok as u32
+        );
+        assert_eq!(unsafe { zic_frame_index(second) }, 1);
+        assert_eq!(unsafe { zic_frame_duration_us(second) }, 120_000);
+        let second_bytes = unsafe {
+            slice::from_raw_parts(zic_frame_data(second), zic_frame_len(second))
+        };
+        assert!(second_bytes.chunks_exact(4).all(|px| px == &[0, 255, 0, 255]));
+
+        let mut end = ptr::null_mut();
+        assert_eq!(
+            unsafe { zic_cursor_decode_next(cursor, 9, &mut end) },
+            CursorStatus::End as u32
+        );
+        assert!(end.is_null());
+
+        unsafe {
+            zic_frame_release(first);
+            zic_frame_release(second);
+            zic_cursor_free(cursor);
+            zic_source_free(source_ptr);
+        }
+    }
+
+    #[test]
+    fn animated_webp_composes_partial_alpha_frames() {
+        let bytes = include_bytes!("../testdata/partial_blend.webp");
+        let source = Box::new(ByteSource::new(11, bytes.len() + 16));
+        let source_ptr = Box::into_raw(source);
+        assert_eq!(
+            unsafe { zic_source_append(source_ptr, 11, 0, bytes.as_ptr(), bytes.len()) },
+            Status::Ok as u32
+        );
+        assert_eq!(
+            unsafe { zic_source_seal(source_ptr, 11) },
+            Status::Ok as u32
+        );
+        let cursor = unsafe { zic_cursor_create(source_ptr, 11, 4, 4) };
+        let mut frame = ptr::null_mut();
+        assert_eq!(
+            unsafe { zic_cursor_decode_next(cursor, 11, &mut frame) },
+            CursorStatus::Ok as u32
+        );
+        unsafe { zic_frame_release(frame) };
+
+        frame = ptr::null_mut();
+        assert_eq!(
+            unsafe { zic_cursor_decode_next(cursor, 11, &mut frame) },
+            CursorStatus::Ok as u32
+        );
+        let rgba = unsafe {
+            slice::from_raw_parts(zic_frame_data(frame), zic_frame_len(frame))
+        };
+        for (index, pixel) in rgba.chunks_exact(4).enumerate() {
+            if index == 10 {
+                assert!((pixel[0] as i32 - 127).abs() <= 1);
+                assert!((pixel[1] as i32 - 128).abs() <= 1);
+                assert_eq!(pixel[2], 0);
+                assert_eq!(pixel[3], 255);
+            } else {
+                assert_eq!(pixel, &[255, 0, 0, 255]);
+            }
+        }
+
+        unsafe {
+            zic_frame_release(frame);
+            zic_cursor_free(cursor);
+            zic_source_free(source_ptr);
+        }
+    }
+
+    #[test]
+    fn incomplete_webp_waits_without_advancing_cursor() {
+        let bytes = include_bytes!("../testdata/animated.webp");
+        let source = Box::new(ByteSource::new(3, bytes.len() + 16));
+        let source_ptr = Box::into_raw(source);
+        assert_eq!(
+            unsafe { zic_source_append(source_ptr, 3, 0, bytes.as_ptr(), 12) },
+            Status::Ok as u32
+        );
+        let cursor = unsafe { zic_cursor_create(source_ptr, 3, 2, 2) };
+        let mut frame = ptr::null_mut();
+        assert_eq!(
+            unsafe { zic_cursor_decode_next(cursor, 3, &mut frame) },
+            CursorStatus::NeedMoreData as u32
+        );
+        assert!(frame.is_null());
+        assert_eq!(unsafe { (*cursor).next_index }, 0);
+
+        assert_eq!(
+            unsafe {
+                zic_source_append(
+                    source_ptr,
+                    3,
+                    12,
+                    bytes[12..].as_ptr(),
+                    bytes.len() - 12,
+                )
+            },
+            Status::Ok as u32
+        );
+        assert_eq!(unsafe { zic_source_seal(source_ptr, 3) }, Status::Ok as u32);
+        assert_eq!(
+            unsafe { zic_cursor_decode_next(cursor, 3, &mut frame) },
+            CursorStatus::Ok as u32
+        );
+        assert_eq!(unsafe { zic_frame_index(frame) }, 0);
+
+        unsafe {
+            zic_frame_release(frame);
+            zic_cursor_free(cursor);
+            zic_source_free(source_ptr);
+        }
     }
 
     #[test]

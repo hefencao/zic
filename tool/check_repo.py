@@ -314,7 +314,33 @@ def check_native_abi() -> None:
         if symbol not in rust or symbol not in header or symbol not in dart:
             fail(f'ABI symbol is not represented in Rust/header/Dart: {symbol}')
     if 'pub const ABI_VERSION: u32 = 3;' not in rust:
-        fail('native ABI version must be 3 for cursor/frame ownership')
+        fail('native ABI version must remain 3 for the compatible cursor/frame ABI')
+    if 'pub const LIB_VERSION: u32 = 0x000C_0000;' not in rust:
+        fail('native library version must identify the real WebP decoder release')
+    webp_path = ROOT / 'native/media_core/src/webp.rs'
+    if not webp_path.is_file():
+        fail('native WebP decoder module is missing')
+    webp = webp_path.read_text(encoding='utf-8')
+    for required in (
+        'WebPDemuxInternal',
+        'WebPDemuxGetFrame',
+        'WebPDecodeRGBAInto',
+        'iter.0.complete == 0',
+        'blend_source_over',
+        'dispose_background',
+    ):
+        if required not in webp:
+            fail(f'native WebP decoder is incomplete: {required}')
+    fixture = ROOT / 'native/media_core/testdata/animated.webp'
+    if not fixture.is_file() or fixture.stat().st_size < 32:
+        fail('native Animated WebP fixture is missing or invalid')
+    build = (ROOT / 'native/media_core/build.rs').read_text(encoding='utf-8')
+    for required in ('ZIC_WEBP_LIB_DIR', 'webpdemux', 'webp'):
+        if required not in build:
+            fail(f'native libwebp link configuration is incomplete: {required}')
+    ci = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
+    if 'libwebp-dev' not in ci or './tool/check_webp.sh' not in ci:
+        fail('CI must install and smoke-test libwebp before Rust tests')
     cursor = (ROOT / 'packages/bridge/lib/src/native_cursor.dart').read_text(
         encoding='utf-8'
     )
