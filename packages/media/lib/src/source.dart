@@ -5,6 +5,7 @@ enum SourceStatus {
   invalidOffset,
   sealed,
   budget,
+  failed,
 }
 
 enum SourceKind { unknown, webp, gif, other }

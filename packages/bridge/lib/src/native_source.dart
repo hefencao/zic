@@ -1,9 +1,12 @@
 import 'dart:ffi';
+import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
 import 'package:media/media.dart';
 
 import 'native_lib.dart';
+
+part 'native_cursor.dart';
 
 final class _Source extends Opaque {}
 

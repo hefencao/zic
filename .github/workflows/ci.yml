@@ -24,6 +24,8 @@ jobs:
       - name: Build split Android debug APKs
         run: ./tool/build_android.sh debug
       - run: python3 tool/check_repo.py
+      - name: Check native C header
+        run: ./tool/check_native_header.sh
 
   rust:
     runs-on: ubuntu-latest

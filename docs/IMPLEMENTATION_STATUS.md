@@ -1,5 +1,68 @@
 # Implementation Status
 
+## 0.11.0-dev.11 — explicit playback capability and native frame ABI
+
+### Requested fix
+
+`ReaderBinding` no longer derives a local `playback` variable from a value typed
+as `Coordinator`. Its constructor now requires the demand and playback
+capabilities separately:
+
+```dart
+required Coordinator coordinator,
+required PlaybackCoordinator playback,
+```
+
+The binding stores `_coordinator` and `_playback` with their actual interface
+types. The app and tests explicitly pass the same live/fake object when it
+implements both contracts. A regression test also supplies two separate
+objects, proving the binding does not depend on a runtime type check.
+
+### Native cursor and frame ownership ABI
+
+The Rust media core ABI is now version 3. `ByteSource` uses shared source state;
+a cursor clones that state, so releasing the source handle cannot leave an
+existing cursor with a dangling pointer. Source reset still advances the epoch,
+and cursor decode rejects stale epochs.
+
+Added stable C/Rust/Dart symbols for:
+
+- cursor create/free/epoch/decode-next;
+- frame retain/release;
+- frame epoch/index/size/duration/format/length/data access.
+
+A frame handle owns an `Arc` to immutable frame data. `retain` creates another
+independent handle, and the data remains valid until the final handle is
+released. Dart wraps this as `NativeCursor`, `NativeFrame`, and
+`NativeCursorFactory`; copied byte access does not expose a long-lived raw
+pointer to application code.
+
+The ABI intentionally returns `unsupported` for sealed WebP decode until the
+real WebP decoder is linked. It does not synthesize frames or advance cursor
+state. Unknown/incomplete input returns `needMoreData`.
+
+### Source failure status
+
+Added `SourceStatus.failed` at ABI index 6 and mapped lock/native failures to a
+structured source failure. `Ingress` disables only the derived native source;
+the durable artifact remains authoritative.
+
+### Tests and gates
+
+- Added explicit demand/playback contract coverage for `ReaderBinding`.
+- Added native cursor factory contract coverage and ABI enum/version checks.
+- Added Rust tests for source/cursor shared ownership and retained frame handles.
+- Repository validation now requires the explicit playback field and every new
+  cursor/frame ABI symbol in Rust, C, and Dart.
+
+### Next iteration
+
+1. Link a real incremental Animated WebP decoder behind the cursor ABI.
+2. Add Android `SurfaceProducer` registry and serial blit worker.
+3. Connect native frame handles to the Android uploader without copying through
+   MethodChannel.
+4. Resolve frame budgets from live device memory and thermal telemetry.
+
 ## 0.10.0-dev.10 — reader binding and frame budgets
 
 ### Requested fix

@@ -121,6 +121,7 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
       clock: _clock,
       traceSink: _trace,
       coordinator: _coordinator,
+      playback: _coordinator,
     );
     _reader = ReaderController(
       sessionId: 'demo-session',

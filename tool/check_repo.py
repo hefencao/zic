@@ -257,8 +257,16 @@ def check_compile_regressions() -> None:
     binding = (ROOT / 'packages/sessions/lib/src/reader_binding.dart').read_text(
         encoding='utf-8'
     )
-    if '_coordinator.reconcile(' not in binding or 'playback.syncPlayback(' not in binding:
-        fail('ReaderBinding must drive both demand and viewport playback')
+    for required in (
+        'required PlaybackCoordinator playback',
+        'final PlaybackCoordinator _playback;',
+        '_coordinator.reconcile(',
+        '_playback.syncPlayback(',
+    ):
+        if required not in binding:
+            fail(f'ReaderBinding capability wiring is incomplete: {required}')
+    if 'final playback = _coordinator' in binding or 'is! PlaybackCoordinator' in binding:
+        fail('ReaderBinding must not derive playback capability from Coordinator')
     media_output = (ROOT / 'packages/media/lib/src/output.dart').read_text(
         encoding='utf-8'
     )
@@ -288,9 +296,31 @@ def check_native_abi() -> None:
         'zic_source_epoch',
         'zic_source_is_sealed',
         'zic_source_kind',
+        'zic_cursor_create',
+        'zic_cursor_free',
+        'zic_cursor_epoch',
+        'zic_cursor_decode_next',
+        'zic_frame_retain',
+        'zic_frame_release',
+        'zic_frame_epoch',
+        'zic_frame_index',
+        'zic_frame_width',
+        'zic_frame_height',
+        'zic_frame_duration_us',
+        'zic_frame_format',
+        'zic_frame_len',
+        'zic_frame_data',
     ):
         if symbol not in rust or symbol not in header or symbol not in dart:
             fail(f'ABI symbol is not represented in Rust/header/Dart: {symbol}')
+    if 'pub const ABI_VERSION: u32 = 3;' not in rust:
+        fail('native ABI version must be 3 for cursor/frame ownership')
+    cursor = (ROOT / 'packages/bridge/lib/src/native_cursor.dart').read_text(
+        encoding='utf-8'
+    )
+    for required in ('NativeCursorFactory', 'NativeCursor', 'NativeFrame', 'retain()'):
+        if required not in cursor:
+            fail(f'native Dart cursor/frame wrapper is incomplete: {required}')
 
 
 def main() -> None:

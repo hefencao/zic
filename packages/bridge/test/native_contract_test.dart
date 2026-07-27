@@ -6,15 +6,20 @@ void main() {
     expect(SourceStatus.ok.index, 0);
     expect(SourceStatus.staleEpoch.index, 2);
     expect(SourceStatus.budget.index, 5);
+    expect(SourceStatus.failed.index, 6);
     expect(SourceKind.unknown.index, 0);
     expect(SourceKind.webp.index, 1);
     expect(SourceKind.gif.index, 2);
     expect(SourceKind.other.index, 3);
   });
 
+  test('native cursor factory satisfies the media contract', () {
+    expect(const NativeCursorFactory(), isA<CursorFactory>());
+  });
+
   test('native version value object is independent of dynamic loading', () {
-    const version = NativeVersion(abiVersion: 2, libVersion: 0x00070000);
-    expect(version.abiVersion, 2);
-    expect(version.libVersion, 0x00070000);
+    const version = NativeVersion(abiVersion: 3, libVersion: 0x000B0000);
+    expect(version.abiVersion, 3);
+    expect(version.libVersion, 0x000B0000);
   });
 }

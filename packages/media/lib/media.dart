@@ -1,3 +1,4 @@
+export 'package:domain/domain.dart' show DecodeId;
 export 'src/frame.dart';
 export 'src/ingress.dart';
 export 'src/source.dart';

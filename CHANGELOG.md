@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.11.0-dev.11
+
+- Made `ReaderBinding` require explicit `Coordinator` and
+  `PlaybackCoordinator` dependencies instead of deriving playback capability
+  from a demand coordinator at runtime.
+- Added ABI v3 native cursor create/free/decode contracts with epoch checks and
+  shared source ownership.
+- Added retained native frame handles with immutable metadata/data access and
+  independent retain/release lifetimes.
+- Added Dart `NativeCursorFactory`, `NativeCursor`, and `NativeFrame` wrappers.
+- Added `SourceStatus.failed` and source-lock failure handling.
+- Added reader-binding interface separation, ABI enum/version, source/cursor
+  ownership, and frame-retain regression tests.
+
 ## 0.10.0-dev.10
 
 - Replaced the stale `ReadingDirection.leftToRight` test value with `ltr`.

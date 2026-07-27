@@ -15,6 +15,7 @@ void main() {
       ),
       clock: _Clock(),
       coordinator: coordinator,
+      playback: coordinator,
     );
 
     binding.accept(_obs(
@@ -34,6 +35,31 @@ void main() {
     expect(coordinator.playbackSyncs, 1);
   });
 
+  test('reader binding uses explicit demand and playback contracts', () {
+    final demand = _DemandOnly();
+    final playback = _PlaybackOnly();
+    final binding = ReaderBinding(
+      chapter: _chapter(),
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+      clock: _Clock(),
+      coordinator: demand,
+      playback: playback,
+    );
+
+    binding.accept(_obs(
+      interaction: Interaction.idle,
+      current: 0,
+      currentFraction: 1,
+    ));
+
+    expect(demand.reconciles, 1);
+    expect(playback.syncs, 1);
+    expect(playback.ids, isNotEmpty);
+  });
+
   test('continuous binding freezes viewport while scrolling', () {
     final coordinator = FakeCoordinator(clock: _Clock());
     final binding = ReaderBinding(
@@ -44,6 +70,7 @@ void main() {
       ),
       clock: _Clock(),
       coordinator: coordinator,
+      playback: coordinator,
       discretePages: false,
     );
 
@@ -123,4 +150,24 @@ ReaderObs _obs({
 final class _Clock implements MonoClock {
   @override
   int nowMicros() => 0;
+}
+
+final class _DemandOnly implements Coordinator {
+  int reconciles = 0;
+
+  @override
+  void reconcile(String sessionId, PipelineDelta update) {
+    reconciles++;
+  }
+}
+
+final class _PlaybackOnly implements PlaybackCoordinator {
+  int syncs = 0;
+  Map<int, DecodeId> ids = const <int, DecodeId>{};
+
+  @override
+  void syncPlayback(ViewportState viewport, Map<int, DecodeId> ids) {
+    syncs++;
+    this.ids = Map<int, DecodeId>.unmodifiable(ids);
+  }
 }

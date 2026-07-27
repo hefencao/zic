@@ -8,6 +8,7 @@ if [[ "${1:-}" == "--require-toolchains" ]]; then
 fi
 
 python3 "$ROOT/tool/check_repo.py"
+"$ROOT/tool/check_native_header.sh"
 
 if command -v flutter >/dev/null 2>&1; then
   (cd "$ROOT" && flutter pub get)

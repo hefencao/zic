@@ -13,11 +13,13 @@ final class ReaderBinding {
     required this.chapter,
     required DecodeTarget decodeTarget,
     required MonoClock clock,
-    required FakeCoordinator coordinator,
+    required Coordinator coordinator,
+    required PlaybackCoordinator playback,
     TraceSink traceSink = const NoopTraceSink(),
     ViewportResolver viewportResolver = const ViewportResolver(),
     this.discretePages = true,
   })  : _coordinator = coordinator,
+        _playback = playback,
         _viewportResolver = viewportResolver {
     pipeline = PipelineController(
       chapter: chapter,
@@ -30,7 +32,8 @@ final class ReaderBinding {
 
   final ChapterManifest chapter;
   final bool discretePages;
-  final FakeCoordinator _coordinator;
+  final Coordinator _coordinator;
+  final PlaybackCoordinator _playback;
   final ViewportResolver _viewportResolver;
   late final PipelineController pipeline;
 
@@ -51,16 +54,12 @@ final class ReaderBinding {
     }
     _coordinator.reconcile(observation.sessionId, update);
 
-    final playback = _coordinator;
-    if (playback is! PlaybackCoordinator) {
-      return;
-    }
     final viewport = _viewportResolver.resolve(
       observation,
       discretePages: discretePages,
     );
     _viewport = viewport;
-    playback.syncPlayback(viewport, _decodeIds(update.plan));
+    _playback.syncPlayback(viewport, _decodeIds(update.plan));
   }
 
   Map<int, DecodeId> _decodeIds(DemandPlan plan) {

@@ -248,6 +248,14 @@ final class Ingress {
           ),
         );
         return;
+      case SourceStatus.failed:
+        _disable(
+          Failure(
+            code: ErrorCode.source,
+            message: 'native source failed during $operation',
+          ),
+        );
+        return;
     }
   }
 
