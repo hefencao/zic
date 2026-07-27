@@ -26,10 +26,16 @@ int main(void) {
   zic_cursor *cursor = zic_cursor_create(source, 0, 8, 8);
   zic_frame *frame = 0;
   (void)zic_cursor_decode_next(cursor, 0, &frame);
+  (void)zic_cursor_frame_count(cursor);
+  (void)zic_cursor_loop_count(cursor);
+  (void)zic_cursor_metadata_complete(cursor);
+  (void)zic_cursor_cycle(cursor);
+  (void)zic_cursor_rewind(cursor, 0);
   if (frame != 0) {
     zic_frame *retained = zic_frame_retain(frame);
     (void)zic_frame_epoch(frame);
     (void)zic_frame_index(frame);
+    (void)zic_frame_cycle(frame);
     (void)zic_frame_width(frame);
     (void)zic_frame_height(frame);
     (void)zic_frame_duration_us(frame);

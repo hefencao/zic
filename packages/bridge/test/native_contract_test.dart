@@ -18,8 +18,8 @@ void main() {
   });
 
   test('native version value object is independent of dynamic loading', () {
-    const version = NativeVersion(abiVersion: 3, libVersion: 0x000C0000);
-    expect(version.abiVersion, 3);
-    expect(version.libVersion, 0x000C0000);
+    const version = NativeVersion(abiVersion: 4, libVersion: 0x000D0000);
+    expect(version.abiVersion, 4);
+    expect(version.libVersion, 0x000D0000);
   });
 }

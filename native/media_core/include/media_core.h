@@ -64,11 +64,17 @@ void zic_cursor_free(zic_cursor *cursor);
 uint64_t zic_cursor_epoch(const zic_cursor *cursor);
 uint32_t zic_cursor_decode_next(zic_cursor *cursor, uint64_t epoch,
                                 zic_frame **out_frame);
+uint32_t zic_cursor_frame_count(const zic_cursor *cursor);
+uint32_t zic_cursor_loop_count(const zic_cursor *cursor);
+uint32_t zic_cursor_metadata_complete(const zic_cursor *cursor);
+uint32_t zic_cursor_cycle(const zic_cursor *cursor);
+uint32_t zic_cursor_rewind(zic_cursor *cursor, uint64_t epoch);
 
 zic_frame *zic_frame_retain(const zic_frame *frame);
 void zic_frame_release(zic_frame *frame);
 uint64_t zic_frame_epoch(const zic_frame *frame);
 uint32_t zic_frame_index(const zic_frame *frame);
+uint32_t zic_frame_cycle(const zic_frame *frame);
 uint32_t zic_frame_width(const zic_frame *frame);
 uint32_t zic_frame_height(const zic_frame *frame);
 uint64_t zic_frame_duration_us(const zic_frame *frame);

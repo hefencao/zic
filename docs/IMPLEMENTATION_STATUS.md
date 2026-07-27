@@ -1,5 +1,43 @@
 # Implementation Status
 
+## 0.13.0-dev.13 — animation metadata and loop semantics
+
+### Native cursor metadata
+
+ABI v4 adds frame count, WebP play count, metadata completeness, zero-based
+cycle, rewind, and frame-cycle accessors. The native decoder refreshes metadata
+from every successful partial demux. Rewind is accepted only after a real
+end-of-stream result. A play count of zero is infinite; a positive value limits
+the total number of cycles. Rewind resets canvas composition and frame numbering
+while retaining source ownership and epoch.
+
+A deterministic `finite_loop.webp` fixture declares two frames and a play count
+of two. Rust tests cover one allowed rewind and the final rejected rewind. The
+C smoke test validates frame count and loop metadata independently through the
+installed libwebp headers and library.
+
+### Session loop ownership
+
+The media contract now exposes `AnimationInfo` and the optional `LoopCursor`
+capability. `DecodeSession` keeps non-looping fake/fallback cursors unchanged.
+For a looping cursor, it rewinds only after EOF and only when the holder is
+empty, so a deeper watermark cannot introduce duplicate frame indexes while an
+older cycle is still retained. Infinite content continues with a new cycle;
+finite content enters the explicit `DecodeState.ended` state once its play count
+is exhausted.
+
+Decode snapshots expose animation metadata and cycle. Every successful rewind
+emits `animationLoop` telemetry.
+
+### Next iteration
+
+1. Add Android native build/package automation for arm64-v8a, armeabi-v7a, and
+   x86_64, including libwebp dependencies.
+2. Add a Kotlin `SurfaceProducer` registry and serial blit worker.
+3. Connect native frame handles to an Android texture uploader without sending
+   RGBA bytes through MethodChannel.
+4. Add lifecycle-safe texture retirement and background/foreground tests.
+
 ## 0.12.0-dev.12 — real incremental Animated WebP decode
 
 ### Native decoder

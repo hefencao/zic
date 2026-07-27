@@ -35,6 +35,7 @@ Rust media_core
   -> libwebp partial demux
   -> complete-frame decode + blend/dispose composition
   -> retained immutable RGBA frame handles
+  -> frame/play-count metadata + explicit cursor rewind
 ```
 
 ## 生成 Flutter 平台工程
@@ -127,5 +128,5 @@ cargo test --workspace
 ```
 
 Android 交叉编译可通过 `ZIC_WEBP_LIB_DIR` 指向对应 ABI 的预编译库；当前
-版本完成真实 cursor/frame 解码，Android `SurfaceProducer` 打包与纹理上传仍在
-下一阶段。
+版本已完成真实 cursor/frame 解码和有限/无限循环语义；Android `SurfaceProducer`
+打包与纹理上传仍在下一阶段。

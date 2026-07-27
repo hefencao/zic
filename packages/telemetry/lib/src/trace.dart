@@ -24,6 +24,7 @@ enum TraceEventKind {
   decodeDemand,
   decodeState,
   frameDecoded,
+  animationLoop,
   uploadState,
   frameUploaded,
   framePresented,

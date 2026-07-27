@@ -79,9 +79,29 @@ static int check_partial_blend_fixture(const char *path) {
   return ok;
 }
 
+
+static int check_finite_loop_fixture(const char *path) {
+  size_t size = 0;
+  uint8_t *bytes = read_file(path, &size);
+  if (bytes == NULL) return 0;
+  WebPData data = {bytes, size};
+  WebPDemuxer *demux = WebPDemux(&data);
+  if (demux == NULL) {
+    free(bytes);
+    return 0;
+  }
+  int ok = WebPDemuxGetI(demux, WEBP_FF_FRAME_COUNT) == 2 &&
+           WebPDemuxGetI(demux, WEBP_FF_LOOP_COUNT) == 2;
+  WebPDemuxDelete(demux);
+  free(bytes);
+  return ok;
+}
+
 int main(int argc, char **argv) {
-  if (argc != 3) {
-    fprintf(stderr, "usage: %s animated.webp partial_blend.webp\n", argv[0]);
+  if (argc != 4) {
+    fprintf(stderr,
+            "usage: %s animated.webp partial_blend.webp finite_loop.webp\n",
+            argv[0]);
     return 2;
   }
   size_t size = 0;
@@ -134,6 +154,10 @@ int main(int argc, char **argv) {
     fprintf(stderr, "partial blend fixture mismatch\n");
     return 8;
   }
-  printf("libwebp incremental fixtures: OK\n");
+  if (!check_finite_loop_fixture(argv[3])) {
+    fprintf(stderr, "finite loop fixture mismatch\n");
+    return 9;
+  }
+  printf("libwebp incremental and loop fixtures: OK\n");
   return 0;
 }

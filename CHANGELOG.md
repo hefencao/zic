@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.13.0-dev.13
+
+- Added native Animated WebP frame-count, play-count, metadata-complete, cycle,
+  and rewind ABI functions.
+- Added explicit infinite and finite animation loop semantics. Rewind is only
+  accepted after end-of-stream and finite play counts are enforced natively.
+- Added `AnimationInfo` and optional `LoopCursor` media contracts.
+- Updated `DecodeSession` to rewind only after held frames are consumed and to
+  enter an explicit `ended` state after a finite animation is exhausted.
+- Added animation-loop telemetry, a finite-loop WebP fixture, C smoke coverage,
+  Rust ownership/rewind tests, and Dart session-level loop tests.
+
 ## 0.12.0-dev.12
 
 - Replaced the native WebP cursor placeholder with real incremental Animated

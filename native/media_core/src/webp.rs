@@ -8,7 +8,9 @@ const WEBP_DEMUX_DONE: c_int = 2;
 
 const WEBP_FF_CANVAS_WIDTH: c_int = 1;
 const WEBP_FF_CANVAS_HEIGHT: c_int = 2;
+const WEBP_FF_LOOP_COUNT: c_int = 3;
 const WEBP_FF_BACKGROUND_COLOR: c_int = 4;
+const WEBP_FF_FRAME_COUNT: c_int = 5;
 
 const WEBP_MUX_DISPOSE_BACKGROUND: c_int = 1;
 const WEBP_MUX_NO_BLEND: c_int = 1;
@@ -77,6 +79,13 @@ pub(crate) enum DecodeError {
     Failed,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct AnimationMeta {
+    pub(crate) frame_count: u32,
+    pub(crate) loop_count: u32,
+    pub(crate) complete: bool,
+}
+
 #[derive(Debug)]
 pub(crate) struct DecodedFrame {
     pub(crate) width: u32,
@@ -109,6 +118,8 @@ pub(crate) struct Decoder {
     previous: Option<PreviousFrame>,
     next_frame_number: c_int,
     initialized: bool,
+    meta: AnimationMeta,
+    ended: bool,
 }
 
 impl Decoder {
@@ -123,6 +134,8 @@ impl Decoder {
             previous: None,
             next_frame_number: 1,
             initialized: false,
+            meta: AnimationMeta::default(),
+            ended: false,
         }
     }
 
@@ -160,6 +173,11 @@ impl Decoder {
             });
         }
         let demux = Demux(demux_ptr);
+        self.meta = AnimationMeta {
+            frame_count: unsafe { WebPDemuxGetI(demux.0, WEBP_FF_FRAME_COUNT) },
+            loop_count: unsafe { WebPDemuxGetI(demux.0, WEBP_FF_LOOP_COUNT) },
+            complete: demux_state == WEBP_DEMUX_DONE,
+        };
 
         let source_width = unsafe { WebPDemuxGetI(demux.0, WEBP_FF_CANVAS_WIDTH) } as usize;
         let source_height = unsafe { WebPDemuxGetI(demux.0, WEBP_FF_CANVAS_HEIGHT) } as usize;
@@ -177,11 +195,11 @@ impl Decoder {
             WebPDemuxGetFrame(demux.0, self.next_frame_number, &mut raw_iter)
         } != 0;
         if !found {
-            return Err(if sealed || demux_state == WEBP_DEMUX_DONE {
-                DecodeError::End
-            } else {
-                DecodeError::NeedMoreData
-            });
+            if sealed || demux_state == WEBP_DEMUX_DONE {
+                self.ended = true;
+                return Err(DecodeError::End);
+            }
+            return Err(DecodeError::NeedMoreData);
         }
         let iter = Iter(raw_iter);
         if iter.0.complete == 0 {
@@ -276,6 +294,7 @@ impl Decoder {
             dispose_background: iter.0.dispose_method == WEBP_MUX_DISPOSE_BACKGROUND,
         });
         self.next_frame_number = self.next_frame_number.saturating_add(1);
+        self.ended = false;
 
         Ok(DecodedFrame {
             width: self.target_width as u32,
@@ -283,6 +302,25 @@ impl Decoder {
             duration_us,
             bytes: self.canvas.clone(),
         })
+    }
+
+    pub(crate) fn metadata(&self) -> AnimationMeta {
+        self.meta
+    }
+
+    pub(crate) fn ended(&self) -> bool {
+        self.ended
+    }
+
+    pub(crate) fn rewind(&mut self) {
+        self.source_width = 0;
+        self.source_height = 0;
+        self.background = [0; 4];
+        self.canvas.clear();
+        self.previous = None;
+        self.next_frame_number = 1;
+        self.initialized = false;
+        self.ended = false;
     }
 
     fn ensure_canvas(

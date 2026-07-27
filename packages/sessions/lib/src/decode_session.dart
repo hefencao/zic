@@ -7,7 +7,7 @@ import 'download_session.dart';
 import 'frame_holder.dart';
 import 'net_lane.dart';
 
-enum DecodeState { idle, waitingSource, decoding, ready, failed, disposed }
+enum DecodeState { idle, waitingSource, decoding, ready, ended, failed, disposed }
 
 final class DecodeSnapshot {
   const DecodeSnapshot({
@@ -17,6 +17,8 @@ final class DecodeSnapshot {
     required this.depth,
     required this.bytes,
     required this.revision,
+    required this.animation,
+    required this.cycle,
     this.failure,
   });
 
@@ -26,6 +28,8 @@ final class DecodeSnapshot {
   final int depth;
   final int bytes;
   final int revision;
+  final AnimationInfo animation;
+  final int cycle;
   final Failure? failure;
 }
 
@@ -57,6 +61,17 @@ final class DecodeSession {
   DecodeState get state => _state;
   FrameHolder? get holder => _holder;
   int get bytes => _holder?.bytes ?? 0;
+  AnimationInfo get _animation {
+    final cursor = _cursor;
+    return cursor is LoopCursor
+        ? cursor.animation
+        : const AnimationInfo.unknown();
+  }
+
+  int get _cycle {
+    final cursor = _cursor;
+    return cursor is LoopCursor ? cursor.cycle : 0;
+  }
 
   DecodeSnapshot get snapshot => DecodeSnapshot(
         id: id,
@@ -65,6 +80,8 @@ final class DecodeSession {
         depth: _holder?.depth ?? 0,
         bytes: _holder?.bytes ?? 0,
         revision: _revision,
+        animation: _animation,
+        cycle: _cycle,
         failure: _failure,
       );
 
@@ -133,6 +150,22 @@ final class DecodeSession {
         );
       }
       if (frame == null) {
+        final cursor = _cursor!;
+        if (cursor is LoopCursor && cursor.ended) {
+          if (holder.isEmpty && cursor.rewind()) {
+            _emit(
+              TraceEventKind.animationLoop,
+              <String, Object?>{
+                'cycle': cursor.cycle,
+                'frameCount': cursor.animation.frameCount,
+                'loopCount': cursor.animation.loopCount,
+              },
+            );
+            continue;
+          }
+          _setState(holder.isEmpty ? DecodeState.ended : DecodeState.ready);
+          return snapshot;
+        }
         _setState(DecodeState.waitingSource);
         return snapshot;
       }

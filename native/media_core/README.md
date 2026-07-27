@@ -20,8 +20,11 @@ The cursor uses libwebp's partial demux API on every decode attempt:
    target, and composed according to WebP blend/dispose semantics.
 5. The frame index advances only after an immutable `zic_frame` is created.
 
-The current cursor performs one pass through the available animation. Loop
-count and playback repetition remain session-level follow-up work.
+The cursor also exposes frame count, WebP play count, metadata completeness,
+and a zero-based cycle index. `zic_cursor_rewind` is accepted only after
+end-of-stream. A WebP play count of zero is treated as infinite; a positive
+count limits the total number of cycles. Rewind resets composition state and
+frame numbering without changing source ownership or epoch.
 
 ## Native dependency
 

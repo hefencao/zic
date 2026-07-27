@@ -11,8 +11,8 @@ use std::ptr;
 use std::slice;
 use std::sync::{Arc, RwLock};
 
-pub const ABI_VERSION: u32 = 3;
-pub const LIB_VERSION: u32 = 0x000C_0000;
+pub const ABI_VERSION: u32 = 4;
+pub const LIB_VERSION: u32 = 0x000D_0000;
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -113,6 +113,7 @@ pub struct Cursor {
     target_width: u32,
     target_height: u32,
     next_index: u32,
+    cycle: u32,
     decoder: webp::Decoder,
 }
 
@@ -120,6 +121,7 @@ pub struct Cursor {
 struct FrameData {
     epoch: u64,
     index: u32,
+    cycle: u32,
     width: u32,
     height: u32,
     duration_us: u64,
@@ -138,6 +140,7 @@ impl FrameHandle {
             data: Arc::new(FrameData {
                 epoch,
                 index,
+                cycle: 0,
                 width: 1,
                 height: 1,
                 duration_us: 16_000,
@@ -300,6 +303,7 @@ pub unsafe extern "C" fn zic_cursor_create(
         target_width,
         target_height,
         next_index: 0,
+        cycle: 0,
         decoder: webp::Decoder::new(target_width, target_height),
     }))
 }
@@ -347,6 +351,7 @@ pub unsafe extern "C" fn zic_cursor_decode_next(
                     data: Arc::new(FrameData {
                         epoch,
                         index: cursor.next_index,
+                        cycle: cursor.cycle,
                         width: decoded.width,
                         height: decoded.height,
                         duration_us: decoded.duration_us,
@@ -363,6 +368,63 @@ pub unsafe extern "C" fn zic_cursor_decode_next(
             Err(webp::DecodeError::Failed) => CursorStatus::Failed as u32,
         },
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zic_cursor_frame_count(cursor: *const Cursor) -> u32 {
+    cursor
+        .as_ref()
+        .map_or(0, |cursor| cursor.decoder.metadata().frame_count)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zic_cursor_loop_count(cursor: *const Cursor) -> u32 {
+    cursor
+        .as_ref()
+        .map_or(0, |cursor| cursor.decoder.metadata().loop_count)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zic_cursor_metadata_complete(cursor: *const Cursor) -> u32 {
+    cursor.as_ref().map_or(0, |cursor| {
+        if cursor.decoder.metadata().complete { 1 } else { 0 }
+    })
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zic_cursor_cycle(cursor: *const Cursor) -> u32 {
+    cursor.as_ref().map_or(0, |cursor| cursor.cycle)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zic_cursor_rewind(cursor: *mut Cursor, epoch: u64) -> u32 {
+    let Some(cursor) = cursor.as_mut() else {
+        return CursorStatus::Null as u32;
+    };
+    if epoch != cursor.epoch {
+        return CursorStatus::StaleEpoch as u32;
+    }
+    let Ok(source) = cursor.source.read() else {
+        return CursorStatus::Failed as u32;
+    };
+    if source.epoch != epoch {
+        return CursorStatus::StaleEpoch as u32;
+    }
+    drop(source);
+    if !cursor.decoder.ended() {
+        return CursorStatus::Failed as u32;
+    }
+    let meta = cursor.decoder.metadata();
+    if !meta.complete {
+        return CursorStatus::NeedMoreData as u32;
+    }
+    if meta.loop_count != 0 && cursor.cycle.saturating_add(1) >= meta.loop_count {
+        return CursorStatus::End as u32;
+    }
+    cursor.cycle = cursor.cycle.saturating_add(1);
+    cursor.next_index = 0;
+    cursor.decoder.rewind();
+    CursorStatus::Ok as u32
 }
 
 #[no_mangle]
@@ -390,6 +452,11 @@ pub unsafe extern "C" fn zic_frame_epoch(frame: *const FrameHandle) -> u64 {
 #[no_mangle]
 pub unsafe extern "C" fn zic_frame_index(frame: *const FrameHandle) -> u32 {
     frame.as_ref().map_or(0, |frame| frame.data.index)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zic_frame_cycle(frame: *const FrameHandle) -> u32 {
+    frame.as_ref().map_or(0, |frame| frame.data.cycle)
 }
 
 #[no_mangle]
@@ -436,8 +503,8 @@ mod tests {
 
     #[test]
     fn exported_versions_are_stable() {
-        assert_eq!(zic_abi_version(), 3);
-        assert_eq!(zic_version(), 0x000C_0000);
+        assert_eq!(zic_abi_version(), 4);
+        assert_eq!(zic_version(), 0x000D_0000);
     }
 
     #[test]
@@ -470,6 +537,7 @@ mod tests {
             target_width: 8,
             target_height: 8,
             next_index: 0,
+            cycle: 0,
             decoder: webp::Decoder::new(8, 8),
         };
         drop(source);
@@ -514,6 +582,11 @@ mod tests {
         assert_eq!(unsafe { zic_frame_height(first) }, 2);
         assert_eq!(unsafe { zic_frame_len(first) }, 16);
         assert_eq!(unsafe { zic_frame_duration_us(first) }, 80_000);
+        assert_eq!(unsafe { zic_cursor_frame_count(cursor) }, 2);
+        assert_eq!(unsafe { zic_cursor_loop_count(cursor) }, 0);
+        assert_eq!(unsafe { zic_cursor_metadata_complete(cursor) }, 1);
+        assert_eq!(unsafe { zic_cursor_cycle(cursor) }, 0);
+        assert_eq!(unsafe { zic_frame_cycle(first) }, 0);
         let first_bytes = unsafe {
             slice::from_raw_parts(zic_frame_data(first), zic_frame_len(first))
         };
@@ -537,8 +610,21 @@ mod tests {
             CursorStatus::End as u32
         );
         assert!(end.is_null());
+        assert_eq!(
+            unsafe { zic_cursor_rewind(cursor, 9) },
+            CursorStatus::Ok as u32
+        );
+        assert_eq!(unsafe { zic_cursor_cycle(cursor) }, 1);
+        let mut repeated = ptr::null_mut();
+        assert_eq!(
+            unsafe { zic_cursor_decode_next(cursor, 9, &mut repeated) },
+            CursorStatus::Ok as u32
+        );
+        assert_eq!(unsafe { zic_frame_index(repeated) }, 0);
+        assert_eq!(unsafe { zic_frame_cycle(repeated) }, 1);
 
         unsafe {
+            zic_frame_release(repeated);
             zic_frame_release(first);
             zic_frame_release(second);
             zic_cursor_free(cursor);
@@ -588,6 +674,56 @@ mod tests {
 
         unsafe {
             zic_frame_release(frame);
+            zic_cursor_free(cursor);
+            zic_source_free(source_ptr);
+        }
+    }
+
+    #[test]
+    fn finite_loop_count_limits_rewinds() {
+        let bytes = include_bytes!("../testdata/finite_loop.webp");
+        let source = Box::new(ByteSource::new(13, bytes.len() + 16));
+        let source_ptr = Box::into_raw(source);
+        assert_eq!(
+            unsafe { zic_source_append(source_ptr, 13, 0, bytes.as_ptr(), bytes.len()) },
+            Status::Ok as u32
+        );
+        assert_eq!(
+            unsafe { zic_source_seal(source_ptr, 13) },
+            Status::Ok as u32
+        );
+        let cursor = unsafe { zic_cursor_create(source_ptr, 13, 2, 2) };
+        assert!(!cursor.is_null());
+
+        for expected_cycle in 0..2 {
+            for expected_index in 0..2 {
+                let mut frame = ptr::null_mut();
+                assert_eq!(
+                    unsafe { zic_cursor_decode_next(cursor, 13, &mut frame) },
+                    CursorStatus::Ok as u32
+                );
+                assert_eq!(unsafe { zic_frame_index(frame) }, expected_index);
+                assert_eq!(unsafe { zic_frame_cycle(frame) }, expected_cycle);
+                unsafe { zic_frame_release(frame) };
+            }
+            let mut end = ptr::null_mut();
+            assert_eq!(
+                unsafe { zic_cursor_decode_next(cursor, 13, &mut end) },
+                CursorStatus::End as u32
+            );
+            assert!(end.is_null());
+            assert_eq!(unsafe { zic_cursor_frame_count(cursor) }, 2);
+            assert_eq!(unsafe { zic_cursor_loop_count(cursor) }, 2);
+            assert_eq!(unsafe { zic_cursor_metadata_complete(cursor) }, 1);
+            let rewind = unsafe { zic_cursor_rewind(cursor, 13) };
+            if expected_cycle == 0 {
+                assert_eq!(rewind, CursorStatus::Ok as u32);
+            } else {
+                assert_eq!(rewind, CursorStatus::End as u32);
+            }
+        }
+
+        unsafe {
             zic_cursor_free(cursor);
             zic_source_free(source_ptr);
         }

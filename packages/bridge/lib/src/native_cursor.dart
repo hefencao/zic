@@ -29,6 +29,13 @@ typedef _CursorFreeNative = Void Function(Pointer<_Cursor> cursor);
 typedef _CursorFreeDart = void Function(Pointer<_Cursor> cursor);
 typedef _CursorEpochNative = Uint64 Function(Pointer<_Cursor> cursor);
 typedef _CursorEpochDart = int Function(Pointer<_Cursor> cursor);
+typedef _CursorU32Native = Uint32 Function(Pointer<_Cursor> cursor);
+typedef _CursorU32Dart = int Function(Pointer<_Cursor> cursor);
+typedef _CursorRewindNative = Uint32 Function(
+  Pointer<_Cursor> cursor,
+  Uint64 epoch,
+);
+typedef _CursorRewindDart = int Function(Pointer<_Cursor> cursor, int epoch);
 typedef _DecodeNative = Uint32 Function(
   Pointer<_Cursor> cursor,
   Uint64 epoch,
@@ -88,16 +95,30 @@ final class NativeCursorFactory implements CursorFactory {
   }
 }
 
-final class NativeCursor implements FrameCursor {
+final class NativeCursor implements FrameCursor, LoopCursor {
   NativeCursor._(this._ptr, this._api);
 
   Pointer<_Cursor> _ptr;
   final _CursorApi _api;
+  bool _ended = false;
 
   bool get disposed => _ptr == nullptr;
 
   @override
   int get epoch => _api.epoch(_requirePtr());
+
+  @override
+  AnimationInfo get animation => AnimationInfo(
+        frameCount: _api.frameCount(_requirePtr()),
+        loopCount: _api.loopCount(_requirePtr()),
+        complete: _api.metadataComplete(_requirePtr()) != 0,
+      );
+
+  @override
+  int get cycle => _api.cycle(_requirePtr());
+
+  @override
+  bool get ended => _ended;
 
   @override
   Future<FrameRef?> decodeNext() async {
@@ -111,13 +132,17 @@ final class NativeCursor implements FrameCursor {
       final status = _CursorStatus.values[raw];
       switch (status) {
         case _CursorStatus.ok:
+          _ended = false;
           final frame = out.value;
           if (frame == nullptr) {
             throw StateError('native cursor returned OK without a frame');
           }
           return NativeFrame._(frame, _api);
         case _CursorStatus.needMoreData:
+          _ended = false;
+          return null;
         case _CursorStatus.end:
+          _ended = true;
           return null;
         case _CursorStatus.staleEpoch:
           throw StateError('native cursor rejected a stale epoch');
@@ -130,6 +155,33 @@ final class NativeCursor implements FrameCursor {
       }
     } finally {
       calloc.free(out);
+    }
+  }
+
+  @override
+  bool rewind() {
+    final raw = _api.rewind(_requirePtr(), epoch);
+    if (raw < 0 || raw >= _CursorStatus.values.length) {
+      throw StateError('native cursor returned unknown rewind status $raw');
+    }
+    final status = _CursorStatus.values[raw];
+    switch (status) {
+      case _CursorStatus.ok:
+        _ended = false;
+        return true;
+      case _CursorStatus.end:
+        _ended = true;
+        return false;
+      case _CursorStatus.needMoreData:
+        return false;
+      case _CursorStatus.staleEpoch:
+        throw StateError('native cursor rejected a stale rewind epoch');
+      case _CursorStatus.unsupported:
+        throw UnsupportedError('native cursor cannot rewind this content');
+      case _CursorStatus.nullPointer:
+        throw StateError('native cursor is unavailable');
+      case _CursorStatus.failed:
+        throw StateError('native cursor rewind failed');
     }
   }
 
@@ -165,6 +217,8 @@ final class NativeFrame implements FrameRef {
 
   @override
   int get index => _api.frameIndex(_requirePtr());
+
+  int get cycle => _api.frameCycle(_requirePtr());
 
   @override
   int get width => _api.frameWidth(_requirePtr());
@@ -234,6 +288,22 @@ final class _CursorApi {
         decode = lib.lookupFunction<_DecodeNative, _DecodeDart>(
           'zic_cursor_decode_next',
         ),
+        frameCount = lib.lookupFunction<_CursorU32Native, _CursorU32Dart>(
+          'zic_cursor_frame_count',
+        ),
+        loopCount = lib.lookupFunction<_CursorU32Native, _CursorU32Dart>(
+          'zic_cursor_loop_count',
+        ),
+        metadataComplete =
+            lib.lookupFunction<_CursorU32Native, _CursorU32Dart>(
+          'zic_cursor_metadata_complete',
+        ),
+        cycle = lib.lookupFunction<_CursorU32Native, _CursorU32Dart>(
+          'zic_cursor_cycle',
+        ),
+        rewind = lib.lookupFunction<_CursorRewindNative, _CursorRewindDart>(
+          'zic_cursor_rewind',
+        ),
         frameRetain =
             lib.lookupFunction<_FrameRetainNative, _FrameRetainDart>(
           'zic_frame_retain',
@@ -247,6 +317,9 @@ final class _CursorApi {
         ),
         frameIndex = lib.lookupFunction<_FrameU32Native, _FrameU32Dart>(
           'zic_frame_index',
+        ),
+        frameCycle = lib.lookupFunction<_FrameU32Native, _FrameU32Dart>(
+          'zic_frame_cycle',
         ),
         frameWidth = lib.lookupFunction<_FrameU32Native, _FrameU32Dart>(
           'zic_frame_width',
@@ -271,10 +344,16 @@ final class _CursorApi {
   final _CursorFreeDart free;
   final _CursorEpochDart epoch;
   final _DecodeDart decode;
+  final _CursorU32Dart frameCount;
+  final _CursorU32Dart loopCount;
+  final _CursorU32Dart metadataComplete;
+  final _CursorU32Dart cycle;
+  final _CursorRewindDart rewind;
   final _FrameRetainDart frameRetain;
   final _FrameReleaseDart frameRelease;
   final _FrameU64Dart frameEpoch;
   final _FrameU32Dart frameIndex;
+  final _FrameU32Dart frameCycle;
   final _FrameU32Dart frameWidth;
   final _FrameU32Dart frameHeight;
   final _FrameU64Dart frameDurationUs;

@@ -1,9 +1,11 @@
 export 'package:media/media.dart'
     show
+        AnimationInfo,
         CursorFactory,
         EncodedSource,
         FrameCursor,
         FrameRef,
+        LoopCursor,
         SourceFactory,
         SourceKind,
         SourceStatus;

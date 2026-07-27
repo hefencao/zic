@@ -278,6 +278,22 @@ def check_compile_regressions() -> None:
     for required in ('currentDecodedReserve', 'currentOutputReserve', 'FrameBudgeter'):
         if required not in budget:
             fail(f'frame budget implementation is incomplete: {required}')
+    media_frame = (ROOT / 'packages/media/lib/src/frame.dart').read_text(
+        encoding='utf-8'
+    )
+    for required in ('AnimationInfo', 'LoopCursor', 'bool rewind()'):
+        if required not in media_frame:
+            fail(f'animation cursor contract is incomplete: {required}')
+    decode_session = (ROOT / 'packages/sessions/lib/src/decode_session.dart').read_text(
+        encoding='utf-8'
+    )
+    for required in (
+        'DecodeState.ended',
+        'cursor is LoopCursor && cursor.ended',
+        'TraceEventKind.animationLoop',
+    ):
+        if required not in decode_session:
+            fail(f'decode loop semantics are incomplete: {required}')
 
 
 def check_native_abi() -> None:
@@ -300,10 +316,16 @@ def check_native_abi() -> None:
         'zic_cursor_free',
         'zic_cursor_epoch',
         'zic_cursor_decode_next',
+        'zic_cursor_frame_count',
+        'zic_cursor_loop_count',
+        'zic_cursor_metadata_complete',
+        'zic_cursor_cycle',
+        'zic_cursor_rewind',
         'zic_frame_retain',
         'zic_frame_release',
         'zic_frame_epoch',
         'zic_frame_index',
+        'zic_frame_cycle',
         'zic_frame_width',
         'zic_frame_height',
         'zic_frame_duration_us',
@@ -313,10 +335,10 @@ def check_native_abi() -> None:
     ):
         if symbol not in rust or symbol not in header or symbol not in dart:
             fail(f'ABI symbol is not represented in Rust/header/Dart: {symbol}')
-    if 'pub const ABI_VERSION: u32 = 3;' not in rust:
-        fail('native ABI version must remain 3 for the compatible cursor/frame ABI')
-    if 'pub const LIB_VERSION: u32 = 0x000C_0000;' not in rust:
-        fail('native library version must identify the real WebP decoder release')
+    if 'pub const ABI_VERSION: u32 = 4;' not in rust:
+        fail('native ABI version must be 4 for animation metadata and rewind')
+    if 'pub const LIB_VERSION: u32 = 0x000D_0000;' not in rust:
+        fail('native library version must identify the loop-semantics release')
     webp_path = ROOT / 'native/media_core/src/webp.rs'
     if not webp_path.is_file():
         fail('native WebP decoder module is missing')
@@ -334,6 +356,9 @@ def check_native_abi() -> None:
     fixture = ROOT / 'native/media_core/testdata/animated.webp'
     if not fixture.is_file() or fixture.stat().st_size < 32:
         fail('native Animated WebP fixture is missing or invalid')
+    finite_fixture = ROOT / 'native/media_core/testdata/finite_loop.webp'
+    if not finite_fixture.is_file() or finite_fixture.stat().st_size < 32:
+        fail('finite-loop Animated WebP fixture is missing or invalid')
     build = (ROOT / 'native/media_core/build.rs').read_text(encoding='utf-8')
     for required in ('ZIC_WEBP_LIB_DIR', 'webpdemux', 'webp'):
         if required not in build:
@@ -344,7 +369,15 @@ def check_native_abi() -> None:
     cursor = (ROOT / 'packages/bridge/lib/src/native_cursor.dart').read_text(
         encoding='utf-8'
     )
-    for required in ('NativeCursorFactory', 'NativeCursor', 'NativeFrame', 'retain()'):
+    for required in (
+        'NativeCursorFactory',
+        'NativeCursor',
+        'NativeFrame',
+        'LoopCursor',
+        'AnimationInfo',
+        'rewind()',
+        'retain()',
+    ):
         if required not in cursor:
             fail(f'native Dart cursor/frame wrapper is incomplete: {required}')
 
