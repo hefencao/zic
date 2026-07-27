@@ -56,27 +56,53 @@ abstract interface class FrameRef {
   void dispose();
 }
 
+enum CursorStepKind { frame, needMoreData, end }
+
+final class CursorStep {
+  const CursorStep._(this.kind, this.frame);
+
+  const CursorStep.frame(FrameRef frame)
+      : this._(CursorStepKind.frame, frame);
+
+  const CursorStep.needMoreData()
+      : this._(CursorStepKind.needMoreData, null);
+
+  const CursorStep.end() : this._(CursorStepKind.end, null);
+
+  final CursorStepKind kind;
+  final FrameRef? frame;
+}
+
 abstract interface class FrameCursor {
   int get epoch;
 
-  Future<FrameRef?> decodeNext();
+  Future<CursorStep> decodeNext();
   void dispose();
 }
 
-/// Optional animation capability implemented by cursors with explicit end and
-/// rewind semantics.
+/// Optional animation capability implemented by cursors with explicit rewind
+/// semantics. End-of-stream is reported by [CursorStepKind.end].
 abstract interface class LoopCursor {
   AnimationInfo get animation;
   int get cycle;
-  bool get ended;
 
   /// Rewinds after end-of-stream when the container allows another cycle.
   /// Returns false when the finite play count is exhausted.
   bool rewind();
 }
 
+final class CursorBinding {
+  const CursorBinding({required this.frames, this.loop});
+
+  /// Owns the cursor lifetime. Disposing this cursor also invalidates [loop].
+  final FrameCursor frames;
+
+  /// Optional non-owning animation view over [frames].
+  final LoopCursor? loop;
+}
+
 abstract interface class CursorFactory {
-  FrameCursor create({
+  CursorBinding create({
     required DecodeId id,
     required EncodedSource source,
     required int epoch,

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.14.0-dev.14
+
+- Replaced the nullable `FrameCursor.decodeNext()` result with explicit
+  `CursorStep.frame`, `CursorStep.needMoreData`, and `CursorStep.end` states.
+- Added `CursorBinding`, so `DecodeSession` receives frame and optional loop
+  capabilities with static types and no `is LoopCursor` runtime branch.
+- Updated native and fake cursor factories to return typed bindings; non-loop
+  EOF now enters `DecodeState.ended` instead of being confused with incomplete
+  input.
+- Added media/session regressions for explicit cursor states and cancellation
+  disposal.
+- Hardened libwebp verification by checking every byte prefix of all animation
+  fixtures and adding a bytewise native cursor test.
+- Added Android Rust/libwebp per-ABI packaging scripts for arm64-v8a,
+  armeabi-v7a, and x86_64, with shared/static dependency layouts.
+
 ## 0.13.0-dev.13
 
 - Added native Animated WebP frame-count, play-count, metadata-complete, cycle,

@@ -166,14 +166,21 @@ Artifact：
 统一接口：
 
 ```dart
-abstract interface class AnimatedFormatRuntime {
-  Future<SourceHandle> createSource(SourceIdentity id);
-  Future<void> append(SourceHandle source, int offset, Uint8List bytes);
-  Future<CursorHandle> createCursor(SourceHandle source, DecodeTarget target);
-  Future<DecodedFrame> decodeNext(CursorHandle cursor);
-  Future<void> reset(SourceHandle source, int epoch);
-  Future<void> disposeCursor(CursorHandle cursor);
+abstract interface class CursorFactory {
+  CursorBinding create({
+    required DecodeId id,
+    required EncodedSource source,
+    required int epoch,
+  });
 }
+
+abstract interface class FrameCursor {
+  Future<CursorStep> decodeNext();
+  void dispose();
+}
+
+// CursorStep explicitly distinguishes frame, needMoreData, and end.
+// CursorBinding carries an optional non-owning LoopCursor capability.
 ```
 
 具体实现：

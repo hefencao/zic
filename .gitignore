@@ -7,6 +7,7 @@ build/
 .flutter-plugins-dependencies
 **/android/.gradle/
 **/android/local.properties
+apps/app/android/app/src/main/jniLibs/
 **/ios/Pods/
 **/ios/.symlinks/
 

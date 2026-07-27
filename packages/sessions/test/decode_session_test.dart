@@ -118,7 +118,7 @@ void main() {
 
     final frame = _Frame(0, 0);
     token.cancel();
-    factory.cursor.next.complete(frame);
+    factory.cursor.next.complete(CursorStep.frame(frame));
 
     await expectLater(
       pending,
@@ -305,6 +305,94 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('need-more-data is explicit and does not require loop capability', () async {
+    final temp = await Directory.systemTemp.createTemp('decode_wait_test_');
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: const _StepCursorFactory(CursorStep.needMoreData()),
+      clock: _Clock(),
+    );
+
+    final result = await decode.fill(
+      demand: const DecodeDemand(
+        role: PageRole.current,
+        priority: 1000,
+        targetWatermark: 1,
+        reason: 'wait',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+
+    expect(result.state, DecodeState.waitingSource);
+    expect(result.depth, 0);
+
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
+  test('non-loop cursor reports terminal end explicitly', () async {
+    final temp = await Directory.systemTemp.createTemp('decode_plain_end_test_');
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: const _StepCursorFactory(CursorStep.end()),
+      clock: _Clock(),
+    );
+
+    final result = await decode.fill(
+      demand: const DecodeDemand(
+        role: PageRole.current,
+        priority: 1000,
+        targetWatermark: 1,
+        reason: 'end',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+
+    expect(result.state, DecodeState.ended);
+    expect(result.depth, 0);
+
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
 }
 
 DownloadId _downloadId() => DownloadId(
@@ -386,14 +474,14 @@ final class _CursorFactory implements CursorFactory {
   int get created => cursors.length;
 
   @override
-  FrameCursor create({
+  CursorBinding create({
     required DecodeId id,
     required EncodedSource source,
     required int epoch,
   }) {
     final cursor = _Cursor(epoch);
     cursors.add(cursor);
-    return cursor;
+    return CursorBinding(frames: cursor);
   }
 }
 
@@ -405,7 +493,8 @@ final class _Cursor implements FrameCursor {
   int next = 0;
 
   @override
-  Future<FrameRef?> decodeNext() async => _Frame(epoch, next++);
+  Future<CursorStep> decodeNext() async =>
+      CursorStep.frame(_Frame(epoch, next++));
 
   @override
   void dispose() {}
@@ -440,15 +529,18 @@ final class _LoopCursorFactory implements CursorFactory {
   final int loopCount;
 
   @override
-  FrameCursor create({
+  CursorBinding create({
     required DecodeId id,
     required EncodedSource source,
     required int epoch,
-  }) => _LoopCursor(
-        epoch: epoch,
-        frameCount: frameCount,
-        loopCount: loopCount,
-      );
+  }) {
+    final cursor = _LoopCursor(
+      epoch: epoch,
+      frameCount: frameCount,
+      loopCount: loopCount,
+    );
+    return CursorBinding(frames: cursor, loop: cursor);
+  }
 }
 
 final class _LoopCursor implements FrameCursor, LoopCursor {
@@ -464,7 +556,6 @@ final class _LoopCursor implements FrameCursor, LoopCursor {
   final int loopCount;
   int _next = 0;
   int _cycle = 0;
-  bool _ended = false;
 
   @override
   AnimationInfo get animation => AnimationInfo(
@@ -477,21 +568,16 @@ final class _LoopCursor implements FrameCursor, LoopCursor {
   int get cycle => _cycle;
 
   @override
-  bool get ended => _ended;
-
-  @override
-  Future<FrameRef?> decodeNext() async {
+  Future<CursorStep> decodeNext() async {
     if (_next >= frameCount) {
-      _ended = true;
-      return null;
+      return const CursorStep.end();
     }
-    _ended = false;
-    return _Frame(epoch, _next++);
+    return CursorStep.frame(_Frame(epoch, _next++));
   }
 
   @override
   bool rewind() {
-    if (!_ended) {
+    if (_next < frameCount) {
       throw StateError('cursor must reach end before rewind');
     }
     if (loopCount != 0 && _cycle + 1 >= loopCount) {
@@ -499,9 +585,35 @@ final class _LoopCursor implements FrameCursor, LoopCursor {
     }
     _cycle++;
     _next = 0;
-    _ended = false;
     return true;
   }
+
+  @override
+  void dispose() {}
+}
+
+final class _StepCursorFactory implements CursorFactory {
+  const _StepCursorFactory(this.step);
+
+  final CursorStep step;
+
+  @override
+  CursorBinding create({
+    required DecodeId id,
+    required EncodedSource source,
+    required int epoch,
+  }) => CursorBinding(frames: _StepCursor(epoch, step));
+}
+
+final class _StepCursor implements FrameCursor {
+  const _StepCursor(this.epoch, this.step);
+
+  @override
+  final int epoch;
+  final CursorStep step;
+
+  @override
+  Future<CursorStep> decodeNext() async => step;
 
   @override
   void dispose() {}
@@ -511,13 +623,13 @@ final class _DelayedCursorFactory implements CursorFactory {
   late final _DelayedCursor cursor;
 
   @override
-  FrameCursor create({
+  CursorBinding create({
     required DecodeId id,
     required EncodedSource source,
     required int epoch,
   }) {
     cursor = _DelayedCursor(epoch);
-    return cursor;
+    return CursorBinding(frames: cursor);
   }
 }
 
@@ -526,10 +638,10 @@ final class _DelayedCursor implements FrameCursor {
 
   @override
   final int epoch;
-  final Completer<FrameRef?> next = Completer<FrameRef?>();
+  final Completer<CursorStep> next = Completer<CursorStep>();
 
   @override
-  Future<FrameRef?> decodeNext() => next.future;
+  Future<CursorStep> decodeNext() => next.future;
 
   @override
   void dispose() {}

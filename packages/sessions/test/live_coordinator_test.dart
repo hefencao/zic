@@ -345,11 +345,11 @@ final class _TestSource implements EncodedSource {
 
 final class _TestCursorFactory implements CursorFactory {
   @override
-  FrameCursor create({
+  CursorBinding create({
     required DecodeId id,
     required EncodedSource source,
     required int epoch,
-  }) => _TestCursor(epoch);
+  }) => CursorBinding(frames: _TestCursor(epoch));
 }
 
 final class _TestCursor implements FrameCursor {
@@ -360,7 +360,8 @@ final class _TestCursor implements FrameCursor {
   int next = 0;
 
   @override
-  Future<FrameRef?> decodeNext() async => _TestFrame(epoch, next++);
+  Future<CursorStep> decodeNext() async =>
+      CursorStep.frame(_TestFrame(epoch, next++));
 
   @override
   void dispose() {}

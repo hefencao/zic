@@ -69,7 +69,7 @@ final class NativeCursorFactory implements CursorFactory {
   final String? libPath;
 
   @override
-  FrameCursor create({
+  CursorBinding create({
     required DecodeId id,
     required EncodedSource source,
     required int epoch,
@@ -91,7 +91,8 @@ final class NativeCursorFactory implements CursorFactory {
     if (ptr == nullptr) {
       throw StateError('native cursor allocation failed');
     }
-    return NativeCursor._(ptr, api);
+    final cursor = NativeCursor._(ptr, api);
+    return CursorBinding(frames: cursor, loop: cursor);
   }
 }
 
@@ -100,7 +101,6 @@ final class NativeCursor implements FrameCursor, LoopCursor {
 
   Pointer<_Cursor> _ptr;
   final _CursorApi _api;
-  bool _ended = false;
 
   bool get disposed => _ptr == nullptr;
 
@@ -118,10 +118,7 @@ final class NativeCursor implements FrameCursor, LoopCursor {
   int get cycle => _api.cycle(_requirePtr());
 
   @override
-  bool get ended => _ended;
-
-  @override
-  Future<FrameRef?> decodeNext() async {
+  Future<CursorStep> decodeNext() async {
     final out = calloc<Pointer<_Frame>>();
     try {
       out.value = nullptr;
@@ -132,18 +129,15 @@ final class NativeCursor implements FrameCursor, LoopCursor {
       final status = _CursorStatus.values[raw];
       switch (status) {
         case _CursorStatus.ok:
-          _ended = false;
           final frame = out.value;
           if (frame == nullptr) {
             throw StateError('native cursor returned OK without a frame');
           }
-          return NativeFrame._(frame, _api);
+          return CursorStep.frame(NativeFrame._(frame, _api));
         case _CursorStatus.needMoreData:
-          _ended = false;
-          return null;
+          return const CursorStep.needMoreData();
         case _CursorStatus.end:
-          _ended = true;
-          return null;
+          return const CursorStep.end();
         case _CursorStatus.staleEpoch:
           throw StateError('native cursor rejected a stale epoch');
         case _CursorStatus.unsupported:
@@ -167,10 +161,8 @@ final class NativeCursor implements FrameCursor, LoopCursor {
     final status = _CursorStatus.values[raw];
     switch (status) {
       case _CursorStatus.ok:
-        _ended = false;
         return true;
       case _CursorStatus.end:
-        _ended = true;
         return false;
       case _CursorStatus.needMoreData:
         return false;

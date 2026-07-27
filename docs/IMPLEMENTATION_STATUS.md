@@ -1,5 +1,44 @@
 # Implementation Status
 
+## 0.14.0-dev.14 — statically typed cursor outcomes and Android native packaging
+
+### Cursor contract repair
+
+`FrameCursor.decodeNext()` no longer returns nullable frames. `CursorStep`
+separates a produced frame, an incremental wait, and terminal end-of-stream.
+`CursorBinding` carries the mandatory frame cursor and an optional loop view.
+`DecodeSession` stores that binding directly and no longer performs a runtime
+`is LoopCursor` check or uses `null` to infer native state.
+
+A non-loop cursor can now report a real terminal end. A looping cursor receives
+rewind only after an explicit end step and an empty holder. Cancellation still
+disposes a frame returned after the demand was superseded.
+
+### Incremental decoder hardening
+
+The libwebp C smoke test now parses every byte prefix of all three deterministic
+fixtures and rejects false parse errors or complete frames without fragments.
+The Rust ABI test appends the primary animation one byte at a time, drains only
+real complete frames, and verifies that cursor indexes never advance on
+`NeedMoreData`.
+
+### Android native packaging
+
+`tool/build_android_native.sh` builds `media_core` for arm64-v8a,
+armeabi-v7a, and x86_64 using the Android NDK and per-ABI libwebp libraries. It
+packages `libmedia_core.so` and shared libwebp dependencies into Flutter
+`jniLibs`, or supports PIC static archives when requested.
+`tool/check_android_native.sh` validates the produced layout. The split APK
+script invokes native packaging whenever `ZIC_ANDROID_WEBP_ROOT` is configured.
+
+### Next iteration
+
+1. Add a Kotlin `SurfaceProducer` registry and a dedicated serial blit worker.
+2. Pass retained native frame handles to Android through JNI without copying
+   RGBA through MethodChannel.
+3. Separate texture allocation from first blit and add lifecycle-safe retirement.
+4. Add Android device tests for background/foreground and PageView overlap.
+
 ## 0.13.0-dev.13 — animation metadata and loop semantics
 
 ### Native cursor metadata

@@ -1,7 +1,10 @@
 export 'package:media/media.dart'
     show
         AnimationInfo,
+        CursorBinding,
         CursorFactory,
+        CursorStep,
+        CursorStepKind,
         EncodedSource,
         FrameCursor,
         FrameRef,

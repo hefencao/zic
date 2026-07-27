@@ -52,7 +52,7 @@ final class DecodeSession {
 
   DecodeState _state = DecodeState.idle;
   SourceEpoch _epoch = const SourceEpoch(0);
-  FrameCursor? _cursor;
+  CursorBinding? _cursor;
   FrameHolder? _holder;
   Failure? _failure;
   int _revision = 0;
@@ -61,17 +61,10 @@ final class DecodeSession {
   DecodeState get state => _state;
   FrameHolder? get holder => _holder;
   int get bytes => _holder?.bytes ?? 0;
-  AnimationInfo get _animation {
-    final cursor = _cursor;
-    return cursor is LoopCursor
-        ? cursor.animation
-        : const AnimationInfo.unknown();
-  }
+  AnimationInfo get _animation =>
+      _cursor?.loop?.animation ?? const AnimationInfo.unknown();
 
-  int get _cycle {
-    final cursor = _cursor;
-    return cursor is LoopCursor ? cursor.cycle : 0;
-  }
+  int get _cycle => _cursor?.loop?.cycle ?? 0;
 
   DecodeSnapshot get snapshot => DecodeSnapshot(
         id: id,
@@ -139,9 +132,9 @@ final class DecodeSession {
           message: 'decode demand was superseded',
         );
       }
-      final frame = await _cursor!.decodeNext();
+      final step = await _cursor!.frames.decodeNext();
       if (cancel.cancelled || download.epoch != epoch || _revision != revision) {
-        frame?.dispose();
+        step.frame?.dispose();
         cancel.throwIfCancelled();
         epoch.requireMatch(download.epoch);
         throw const Failure(
@@ -149,37 +142,45 @@ final class DecodeSession {
           message: 'decode demand was superseded',
         );
       }
-      if (frame == null) {
-        final cursor = _cursor!;
-        if (cursor is LoopCursor && cursor.ended) {
-          if (holder.isEmpty && cursor.rewind()) {
+      switch (step.kind) {
+        case CursorStepKind.needMoreData:
+          _setState(DecodeState.waitingSource);
+          return snapshot;
+        case CursorStepKind.end:
+          final loop = _cursor!.loop;
+          if (loop != null && holder.isEmpty && loop.rewind()) {
             _emit(
               TraceEventKind.animationLoop,
               <String, Object?>{
-                'cycle': cursor.cycle,
-                'frameCount': cursor.animation.frameCount,
-                'loopCount': cursor.animation.loopCount,
+                'cycle': loop.cycle,
+                'frameCount': loop.animation.frameCount,
+                'loopCount': loop.animation.loopCount,
               },
             );
             continue;
           }
           _setState(holder.isEmpty ? DecodeState.ended : DecodeState.ready);
           return snapshot;
-        }
-        _setState(DecodeState.waitingSource);
-        return snapshot;
+        case CursorStepKind.frame:
+          final frame = step.frame;
+          if (frame == null) {
+            throw const Failure(
+              code: ErrorCode.invalidState,
+              message: 'frame cursor returned a frame step without a frame',
+            );
+          }
+          holder.add(frame);
+          _emit(
+            TraceEventKind.frameDecoded,
+            <String, Object?>{
+              'frame': frame.index,
+              'bytes': frame.byteLength,
+              'depth': holder.depth,
+              'target': targetDepth,
+              'preparedDepth': preparedDepth,
+            },
+          );
       }
-      holder.add(frame);
-      _emit(
-        TraceEventKind.frameDecoded,
-        <String, Object?>{
-          'frame': frame.index,
-          'bytes': frame.byteLength,
-          'depth': holder.depth,
-          'target': targetDepth,
-          'preparedDepth': preparedDepth,
-        },
-      );
     }
     _setState(DecodeState.ready);
     return snapshot;
@@ -210,7 +211,7 @@ final class DecodeSession {
   void reset(SourceEpoch epoch) {
     _requireOpen();
     _revision++;
-    _cursor?.dispose();
+    _cursor?.frames.dispose();
     _cursor = null;
     _holder?.dispose();
     _holder = null;
@@ -223,7 +224,7 @@ final class DecodeSession {
     if (_disposed) {
       return;
     }
-    _cursor?.dispose();
+    _cursor?.frames.dispose();
     _holder?.dispose();
     _cursor = null;
     _holder = null;
@@ -235,7 +236,7 @@ final class DecodeSession {
     if (_cursor != null && _epoch == epoch) {
       return;
     }
-    _cursor?.dispose();
+    _cursor?.frames.dispose();
     _holder?.dispose();
     _epoch = epoch;
     _cursor = cursors.create(id: id, source: source, epoch: epoch.value);

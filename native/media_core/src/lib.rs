@@ -12,7 +12,7 @@ use std::slice;
 use std::sync::{Arc, RwLock};
 
 pub const ABI_VERSION: u32 = 4;
-pub const LIB_VERSION: u32 = 0x000D_0000;
+pub const LIB_VERSION: u32 = 0x000E_0000;
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -504,7 +504,7 @@ mod tests {
     #[test]
     fn exported_versions_are_stable() {
         assert_eq!(zic_abi_version(), 4);
-        assert_eq!(zic_version(), 0x000D_0000);
+        assert_eq!(zic_version(), 0x000E_0000);
     }
 
     #[test]
@@ -627,6 +627,63 @@ mod tests {
             zic_frame_release(repeated);
             zic_frame_release(first);
             zic_frame_release(second);
+            zic_cursor_free(cursor);
+            zic_source_free(source_ptr);
+        }
+    }
+
+    #[test]
+    fn animated_webp_accepts_every_byte_prefix_without_false_progress() {
+        let bytes = include_bytes!("../testdata/animated.webp");
+        let source = Box::new(ByteSource::new(10, bytes.len() + 16));
+        let source_ptr = Box::into_raw(source);
+        let cursor = unsafe { zic_cursor_create(source_ptr, 10, 2, 2) };
+        assert!(!cursor.is_null());
+        let mut decoded = 0u32;
+
+        for (offset, byte) in bytes.iter().enumerate() {
+            assert_eq!(
+                unsafe { zic_source_append(source_ptr, 10, offset, byte, 1) },
+                Status::Ok as u32
+            );
+            loop {
+                let mut frame = ptr::null_mut();
+                match unsafe { zic_cursor_decode_next(cursor, 10, &mut frame) } {
+                    status if status == CursorStatus::Ok as u32 => {
+                        assert!(!frame.is_null());
+                        assert_eq!(unsafe { zic_frame_index(frame) }, decoded);
+                        decoded += 1;
+                        unsafe { zic_frame_release(frame) };
+                    }
+                    status if status == CursorStatus::NeedMoreData as u32 => break,
+                    status if status == CursorStatus::End as u32 => break,
+                    status => panic!(
+                        "unexpected cursor status {status} at prefix {}",
+                        offset + 1
+                    ),
+                }
+            }
+        }
+
+        assert_eq!(
+            unsafe { zic_source_seal(source_ptr, 10) },
+            Status::Ok as u32
+        );
+        loop {
+            let mut frame = ptr::null_mut();
+            match unsafe { zic_cursor_decode_next(cursor, 10, &mut frame) } {
+                status if status == CursorStatus::Ok as u32 => {
+                    assert_eq!(unsafe { zic_frame_index(frame) }, decoded);
+                    decoded += 1;
+                    unsafe { zic_frame_release(frame) };
+                }
+                status if status == CursorStatus::End as u32 => break,
+                status => panic!("unexpected sealed cursor status {status}"),
+            }
+        }
+        assert_eq!(decoded, 2);
+
+        unsafe {
             zic_cursor_free(cursor);
             zic_source_free(source_ptr);
         }

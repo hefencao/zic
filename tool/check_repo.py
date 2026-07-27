@@ -191,6 +191,21 @@ def check_tool_dirs() -> None:
     for required in ('APP="$ROOT/apps/app"', '--split-per-abi', 'flutter build apk'):
         if required not in android_build:
             fail(f'Android split APK build is incomplete: {required}')
+    android_native = (ROOT / 'tool/build_android_native.sh').read_text(
+        encoding='utf-8'
+    )
+    for required in (
+        'arm64-v8a',
+        'armeabi-v7a',
+        'x86_64',
+        'ZIC_ANDROID_WEBP_ROOT',
+        'jniLibs',
+        'libmedia_core.so',
+    ):
+        if required not in android_native:
+            fail(f'Android native packaging is incomplete: {required}')
+    if 'build_android_native.sh' not in android_build:
+        fail('split APK build must invoke native packaging when configured')
     if './tool/build_android.sh debug' not in ci:
         fail('CI must build split debug APKs through tool/build_android.sh')
     if 'flutter build apk --debug' in ci:
@@ -216,6 +231,14 @@ def check_compile_regressions() -> None:
     )
     if "import 'source.dart';" not in frame:
         fail('frame.dart must import the EncodedSource contract')
+    for required in ('CursorBinding', 'CursorStep', 'CursorStepKind'):
+        if required not in frame:
+            fail(f'frame cursor typing is incomplete: {required}')
+    decode = (ROOT / 'packages/sessions/lib/src/decode_session.dart').read_text(
+        encoding='utf-8'
+    )
+    if ' is LoopCursor' in decode or 'Future<FrameRef?> decodeNext()' in frame:
+        fail('decode cursor states must be explicit and statically bound')
     artifact = (ROOT / 'packages/storage/lib/src/artifact.dart').read_text(
         encoding='utf-8'
     )
@@ -281,7 +304,13 @@ def check_compile_regressions() -> None:
     media_frame = (ROOT / 'packages/media/lib/src/frame.dart').read_text(
         encoding='utf-8'
     )
-    for required in ('AnimationInfo', 'LoopCursor', 'bool rewind()'):
+    for required in (
+        'AnimationInfo',
+        'CursorBinding',
+        'CursorStepKind',
+        'LoopCursor',
+        'bool rewind()',
+    ):
         if required not in media_frame:
             fail(f'animation cursor contract is incomplete: {required}')
     decode_session = (ROOT / 'packages/sessions/lib/src/decode_session.dart').read_text(
@@ -289,11 +318,16 @@ def check_compile_regressions() -> None:
     )
     for required in (
         'DecodeState.ended',
-        'cursor is LoopCursor && cursor.ended',
+        'CursorStepKind.needMoreData',
+        'CursorStepKind.end',
+        '_cursor!.loop',
         'TraceEventKind.animationLoop',
     ):
         if required not in decode_session:
-            fail(f'decode loop semantics are incomplete: {required}')
+            fail(f'decode cursor semantics are incomplete: {required}')
+    for forbidden in (' is LoopCursor', 'dynamic '):
+        if forbidden in decode_session:
+            fail(f'DecodeSession must not use runtime cursor typing: {forbidden}')
 
 
 def check_native_abi() -> None:
@@ -337,8 +371,8 @@ def check_native_abi() -> None:
             fail(f'ABI symbol is not represented in Rust/header/Dart: {symbol}')
     if 'pub const ABI_VERSION: u32 = 4;' not in rust:
         fail('native ABI version must be 4 for animation metadata and rewind')
-    if 'pub const LIB_VERSION: u32 = 0x000D_0000;' not in rust:
-        fail('native library version must identify the loop-semantics release')
+    if 'pub const LIB_VERSION: u32 = 0x000E_0000;' not in rust:
+        fail('native library version must identify the typed-cursor release')
     webp_path = ROOT / 'native/media_core/src/webp.rs'
     if not webp_path.is_file():
         fail('native WebP decoder module is missing')

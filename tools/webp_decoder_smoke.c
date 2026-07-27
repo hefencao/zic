@@ -29,6 +29,41 @@ static uint8_t *read_file(const char *path, size_t *size) {
   return bytes;
 }
 
+
+static int check_all_prefixes(const uint8_t *bytes, size_t size) {
+  for (size_t length = 1; length <= size; ++length) {
+    WebPData data = {bytes, length};
+    WebPDemuxState state = WEBP_DEMUX_PARSING_HEADER;
+    WebPDemuxer *demux = WebPDemuxPartial(&data, &state);
+    if (state == WEBP_DEMUX_PARSE_ERROR) {
+      if (demux != NULL) WebPDemuxDelete(demux);
+      fprintf(stderr, "valid fixture prefix %zu/%zu parsed as error\n", length,
+              size);
+      return 0;
+    }
+    if (demux != NULL) {
+      uint32_t frame_count = WebPDemuxGetI(demux, WEBP_FF_FRAME_COUNT);
+      for (uint32_t frame_number = 1; frame_number <= frame_count;
+           ++frame_number) {
+        WebPIterator iter;
+        if (WebPDemuxGetFrame(demux, (int)frame_number, &iter)) {
+          if (iter.complete &&
+              (iter.fragment.bytes == NULL || iter.fragment.size == 0)) {
+            WebPDemuxReleaseIterator(&iter);
+            WebPDemuxDelete(demux);
+            fprintf(stderr, "complete frame has no fragment at prefix %zu\n",
+                    length);
+            return 0;
+          }
+          WebPDemuxReleaseIterator(&iter);
+        }
+      }
+      WebPDemuxDelete(demux);
+    }
+  }
+  return 1;
+}
+
 static int check_frame(const WebPDemuxer *demux, int frame_number,
                        const uint8_t expected[4]) {
   WebPIterator iter;
@@ -55,6 +90,10 @@ static int check_partial_blend_fixture(const char *path) {
   size_t size = 0;
   uint8_t *bytes = read_file(path, &size);
   if (bytes == NULL) return 0;
+  if (!check_all_prefixes(bytes, size)) {
+    free(bytes);
+    return 0;
+  }
   WebPData data = {bytes, size};
   WebPDemuxer *demux = WebPDemux(&data);
   if (demux == NULL) {
@@ -84,6 +123,10 @@ static int check_finite_loop_fixture(const char *path) {
   size_t size = 0;
   uint8_t *bytes = read_file(path, &size);
   if (bytes == NULL) return 0;
+  if (!check_all_prefixes(bytes, size)) {
+    free(bytes);
+    return 0;
+  }
   WebPData data = {bytes, size};
   WebPDemuxer *demux = WebPDemux(&data);
   if (demux == NULL) {
@@ -111,6 +154,11 @@ int main(int argc, char **argv) {
     return 3;
   }
 
+  if (!check_all_prefixes(bytes, size)) {
+    free(bytes);
+    return 4;
+  }
+
   WebPData prefix = {bytes, size < 12 ? size : 12};
   WebPDemuxState prefix_state = WEBP_DEMUX_PARSING_HEADER;
   WebPDemuxer *partial = WebPDemuxPartial(&prefix, &prefix_state);
@@ -118,7 +166,7 @@ int main(int argc, char **argv) {
   if (prefix_state == WEBP_DEMUX_PARSE_ERROR) {
     fprintf(stderr, "valid prefix parsed as error\n");
     free(bytes);
-    return 4;
+    return 5;
   }
 
   WebPData data = {bytes, size};
@@ -128,7 +176,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "full fixture did not finish demux\n");
     if (demux != NULL) WebPDemuxDelete(demux);
     free(bytes);
-    return 5;
+    return 6;
   }
   if (WebPDemuxGetI(demux, WEBP_FF_CANVAS_WIDTH) != 2 ||
       WebPDemuxGetI(demux, WEBP_FF_CANVAS_HEIGHT) != 2 ||
@@ -136,7 +184,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "unexpected animation metadata\n");
     WebPDemuxDelete(demux);
     free(bytes);
-    return 6;
+    return 7;
   }
 
   const uint8_t red[4] = {255, 0, 0, 255};
@@ -145,18 +193,18 @@ int main(int argc, char **argv) {
     fprintf(stderr, "decoded frame content mismatch\n");
     WebPDemuxDelete(demux);
     free(bytes);
-    return 7;
+    return 8;
   }
 
   WebPDemuxDelete(demux);
   free(bytes);
   if (!check_partial_blend_fixture(argv[2])) {
     fprintf(stderr, "partial blend fixture mismatch\n");
-    return 8;
+    return 9;
   }
   if (!check_finite_loop_fixture(argv[3])) {
     fprintf(stderr, "finite loop fixture mismatch\n");
-    return 9;
+    return 10;
   }
   printf("libwebp incremental and loop fixtures: OK\n");
   return 0;

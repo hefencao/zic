@@ -17,5 +17,15 @@ if [[ ! -d "$APP/android" ]]; then
   "$ROOT/tool/bootstrap_platforms.sh"
 fi
 
+if [[ -n "${ZIC_ANDROID_WEBP_ROOT:-}" ]]; then
+  NATIVE_MODE="$MODE"
+  if [[ "$NATIVE_MODE" == profile ]]; then
+    NATIVE_MODE=release
+  fi
+  "$ROOT/tool/build_android_native.sh" "$NATIVE_MODE"
+else
+  echo "ZIC_ANDROID_WEBP_ROOT is not set; building APK without bundled media_core" >&2
+fi
+
 cd "$APP"
 flutter build apk "--$MODE" --split-per-abi

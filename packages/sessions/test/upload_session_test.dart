@@ -237,11 +237,11 @@ final class _CursorFactory implements CursorFactory {
   final List<_Frame> frames = <_Frame>[];
 
   @override
-  FrameCursor create({
+  CursorBinding create({
     required DecodeId id,
     required EncodedSource source,
     required int epoch,
-  }) => _Cursor(epoch, frames);
+  }) => CursorBinding(frames: _Cursor(epoch, frames));
 }
 
 final class _Cursor implements FrameCursor {
@@ -253,10 +253,10 @@ final class _Cursor implements FrameCursor {
   int next = 0;
 
   @override
-  Future<FrameRef?> decodeNext() async {
+  Future<CursorStep> decodeNext() async {
     final frame = _Frame(epoch, next++);
     frames.add(frame);
-    return frame;
+    return CursorStep.frame(frame);
   }
 
   @override

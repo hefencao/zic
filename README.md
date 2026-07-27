@@ -127,6 +127,24 @@ native ABI 的 fat APK。调试构建可执行：
 cargo test --workspace
 ```
 
-Android 交叉编译可通过 `ZIC_WEBP_LIB_DIR` 指向对应 ABI 的预编译库；当前
-版本已完成真实 cursor/frame 解码和有限/无限循环语义；Android `SurfaceProducer`
-打包与纹理上传仍在下一阶段。
+Android 原生库按 ABI 构建时，准备以下目录：
+
+```text
+$ZIC_ANDROID_WEBP_ROOT/
+  arm64-v8a/lib/libwebp.so + libwebpdemux.so
+  armeabi-v7a/lib/libwebp.so + libwebpdemux.so
+  x86_64/lib/libwebp.so + libwebpdemux.so
+```
+
+然后运行：
+
+```bash
+export ANDROID_NDK_HOME=/path/to/android-ndk
+export ZIC_ANDROID_WEBP_ROOT=/path/to/android-webp
+./tool/build_android_native.sh release
+./tool/build_android.sh release
+```
+
+默认使用共享 libwebp；设置 `ZIC_ANDROID_WEBP_LINK=static` 可使用 PIC 静态归档。
+当前版本已完成真实 cursor/frame 解码、显式 cursor step、有限/无限循环和
+Android 多 ABI 原生库打包；Kotlin `SurfaceProducer` 与纹理上传仍在下一阶段。
