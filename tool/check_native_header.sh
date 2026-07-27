@@ -22,6 +22,10 @@ cat >"$TMP/smoke.c" <<'C'
 #include "native/media_core/include/media_core.h"
 
 int main(void) {
+  (void)zic_abi_version();
+  (void)zic_version();
+  (void)zic_webp_decoder_version();
+  (void)zic_webp_demux_version();
   zic_byte_source *source = zic_source_create(0, 1024);
   zic_cursor *cursor = zic_cursor_create(source, 0, 8, 8);
   zic_frame *frame = 0;

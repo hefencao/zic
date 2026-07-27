@@ -118,33 +118,46 @@ native ABI 的 fat APK。调试构建可执行：
 ./tool/build_android.sh debug
 ```
 
-## Native WebP 开发依赖
+## Native WebP 源码构建
 
-桌面 Rust 构建需要 `libwebp`、`libwebpdemux` 和 `pkg-config`。先运行：
+项目不接受外部预编译的 Android libwebp 目录。host 与 Android native 构建都使用
+`native/libwebp.lock` 固定的官方源码版本、仓库和 commit：
+
+```text
+libwebp 1.6.0
+commit 4fa21912338357f89e4fd51cf2368325b59e9bd9
+```
+
+首次执行会把源码拉取到 `.deps/src/`，构建和安装结果写入 `.deps/build/` 与
+`.deps/install/`。这些目录不进入版本控制。
+
+Host smoke 与 Rust 测试：
 
 ```bash
 ./tool/check_webp.sh
-cargo test --workspace
+./tool/test_rust.sh
 ```
 
-Android 原生库按 ABI 构建时，准备以下目录：
-
-```text
-$ZIC_ANDROID_WEBP_ROOT/
-  arm64-v8a/lib/libwebp.so + libwebpdemux.so
-  armeabi-v7a/lib/libwebp.so + libwebpdemux.so
-  x86_64/lib/libwebp.so + libwebpdemux.so
-```
-
-然后运行：
+Android 三 ABI 构建：
 
 ```bash
 export ANDROID_NDK_HOME=/path/to/android-ndk
-export ZIC_ANDROID_WEBP_ROOT=/path/to/android-webp
 ./tool/build_android_native.sh release
 ./tool/build_android.sh release
 ```
 
-默认使用共享 libwebp；设置 `ZIC_ANDROID_WEBP_LINK=static` 可使用 PIC 静态归档。
-当前版本已完成真实 cursor/frame 解码、显式 cursor step、有限/无限循环和
-Android 多 ABI 原生库打包；Kotlin `SurfaceProducer` 与纹理上传仍在下一阶段。
+构建脚本通过 Android NDK CMake toolchain 从源码分别生成 `arm64-v8a`、
+`armeabi-v7a` 和 `x86_64` 的 libwebp，再链接 `media_core`。默认从源码生成 PIC 静态归档并合入 `libmedia_core.so`，避免 Android APK 中的
+版本化 SONAME 和传递依赖问题。`jniLibs` 默认只需要 `libmedia_core.so`。设置
+`ZIC_ANDROID_WEBP_LINK=shared` 可用于显式的共享库调试构建。
+
+网络受限时可指定一个受信任的源码 checkout：
+
+```bash
+export ZIC_WEBP_SOURCE=/path/to/libwebp
+```
+
+该 checkout 默认必须位于锁定 commit；只有明确的本地实验才使用
+`ZIC_WEBP_ALLOW_UNPINNED=1`。构建会把上游 `COPYING`、`PATENTS` 和源码版本信息
+写入 Android assets。native ABI v5 还会在运行时报告 decoder/demux 版本，
+`NativeVersion.usesPinnedWebp` 可验证两者是否均为锁定的 1.6.0。

@@ -18,8 +18,14 @@ void main() {
   });
 
   test('native version value object is independent of dynamic loading', () {
-    const version = NativeVersion(abiVersion: 4, libVersion: 0x000E0000);
-    expect(version.abiVersion, 4);
-    expect(version.libVersion, 0x000E0000);
+    const version = NativeVersion(
+      abiVersion: 5,
+      libVersion: 0x000F0000,
+      webpDecoderVersion: 0x00010600,
+      webpDemuxVersion: 0x00010600,
+    );
+    expect(version.abiVersion, 5);
+    expect(version.libVersion, 0x000F0000);
+    expect(version.usesPinnedWebp, isTrue);
   });
 }

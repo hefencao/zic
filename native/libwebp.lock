@@ -1,0 +1,5 @@
+# Pinned upstream libwebp source used by host and Android native builds.
+WEBP_VERSION=1.6.0
+WEBP_TAG=v1.6.0
+WEBP_COMMIT=4fa21912338357f89e4fd51cf2368325b59e9bd9
+WEBP_REPO=https://chromium.googlesource.com/webm/libwebp

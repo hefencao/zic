@@ -9,14 +9,19 @@ fi
 
 python3 "$ROOT/tool/check_repo.py"
 "$ROOT/tool/check_native_header.sh"
-if command -v pkg-config >/dev/null 2>&1 && \
-   pkg-config --exists libwebp libwebpdemux; then
+
+SOURCE_TOOLS=(git cmake ninja)
+MISSING_SOURCE=()
+for command in "${SOURCE_TOOLS[@]}"; do
+  command -v "$command" >/dev/null 2>&1 || MISSING_SOURCE+=("$command")
+done
+if ((${#MISSING_SOURCE[@]} == 0)); then
   "$ROOT/tool/check_webp.sh"
 elif [[ "$REQUIRE_TOOLCHAINS" -eq 1 ]]; then
-  echo "libwebp development files are required" >&2
+  echo "source-build tools are required: ${MISSING_SOURCE[*]}" >&2
   exit 1
 else
-  echo "SKIP: libwebp development files are not installed"
+  echo "SKIP: libwebp source-build tools are missing: ${MISSING_SOURCE[*]}"
 fi
 
 if command -v flutter >/dev/null 2>&1; then
@@ -25,7 +30,7 @@ if command -v flutter >/dev/null 2>&1; then
   "$ROOT/tool/analyze.sh"
   "$ROOT/tool/test_dart.sh"
   "$ROOT/tool/test_flutter.sh"
-  "$ROOT/tool/build_android.sh" debug
+  ZIC_ANDROID_NATIVE=0 "$ROOT/tool/build_android.sh" debug
 elif [[ "$REQUIRE_TOOLCHAINS" -eq 1 ]]; then
   echo "Flutter SDK is required" >&2
   exit 1
@@ -33,12 +38,11 @@ else
   echo "SKIP: Flutter SDK is not installed"
 fi
 
-if command -v cargo >/dev/null 2>&1; then
-  (cd "$ROOT" && cargo fmt --all -- --check)
-  (cd "$ROOT" && cargo test --workspace)
+if command -v cargo >/dev/null 2>&1 && ((${#MISSING_SOURCE[@]} == 0)); then
+  "$ROOT/tool/test_rust.sh"
 elif [[ "$REQUIRE_TOOLCHAINS" -eq 1 ]]; then
-  echo "Rust toolchain is required" >&2
+  echo "Rust plus git/cmake/ninja are required" >&2
   exit 1
 else
-  echo "SKIP: Rust toolchain is not installed"
+  echo "SKIP: Rust or source-build tools are not installed"
 fi

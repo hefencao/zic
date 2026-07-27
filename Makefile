@@ -1,4 +1,4 @@
-.PHONY: check bootstrap test analyze dart-test flutter-test android-apk android-native webp-check
+.PHONY: check bootstrap test analyze dart-test flutter-test android-apk android-native webp-source webp-check rust-test
 
 check:
 	./tool/check.sh
@@ -24,5 +24,11 @@ android-apk:
 android-native:
 	./tool/build_android_native.sh release
 
+webp-source:
+	./tool/fetch_webp.sh
+
 webp-check:
 	./tool/check_webp.sh
+
+rust-test:
+	./tool/test_rust.sh

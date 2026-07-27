@@ -194,20 +194,46 @@ def check_tool_dirs() -> None:
     android_native = (ROOT / 'tool/build_android_native.sh').read_text(
         encoding='utf-8'
     )
+    android_webp = (ROOT / 'tool/build_webp_android.sh').read_text(
+        encoding='utf-8'
+    )
+    fetch_webp = (ROOT / 'tool/fetch_webp.sh').read_text(encoding='utf-8')
     for required in (
         'arm64-v8a',
         'armeabi-v7a',
         'x86_64',
-        'ZIC_ANDROID_WEBP_ROOT',
+        'build_webp_android.sh',
         'jniLibs',
         'libmedia_core.so',
+        'COPYING',
+        'PATENTS',
     ):
         if required not in android_native:
             fail(f'Android native packaging is incomplete: {required}')
+    for required in (
+        'android.toolchain.cmake',
+        'ANDROID_ABI',
+        'BUILD_SHARED_LIBS',
+        'WEBP_BUILD_LIBWEBPMUX=OFF',
+    ):
+        if required not in android_webp:
+            fail(f'Android libwebp source build is incomplete: {required}')
+    for required in (
+        'chromium.googlesource.com/webm/libwebp',
+        'WEBP_COMMIT',
+        'git -C "$TMP" fetch',
+    ):
+        lock_or_fetch = fetch_webp + (ROOT / 'native/libwebp.lock').read_text(encoding='utf-8')
+        if required not in lock_or_fetch:
+            fail(f'pinned libwebp source fetch is incomplete: {required}')
+    if 'ZIC_ANDROID_WEBP_ROOT' in android_native or 'ZIC_ANDROID_WEBP_ROOT' in android_build:
+        fail('Android native build must not depend on prebuilt libwebp directories')
     if 'build_android_native.sh' not in android_build:
-        fail('split APK build must invoke native packaging when configured')
-    if './tool/build_android.sh debug' not in ci:
-        fail('CI must build split debug APKs through tool/build_android.sh')
+        fail('split APK build must invoke source-built native packaging')
+    if 'ZIC_ANDROID_NATIVE=0 ./tool/build_android.sh debug' not in ci:
+        fail('Flutter CI must build split debug APKs through tool/build_android.sh')
+    if './tool/build_android_native.sh release' not in ci:
+        fail('CI must build Android media libraries from pinned libwebp source')
     if 'flutter build apk --debug' in ci:
         fail('CI must not build a single fat debug APK')
 
@@ -331,12 +357,23 @@ def check_compile_regressions() -> None:
 
 
 def check_native_abi() -> None:
+    lock = (ROOT / 'native/libwebp.lock').read_text(encoding='utf-8')
+    for required in (
+        'WEBP_VERSION=1.6.0',
+        'WEBP_TAG=v1.6.0',
+        'WEBP_COMMIT=4fa21912338357f89e4fd51cf2368325b59e9bd9',
+        'WEBP_REPO=https://chromium.googlesource.com/webm/libwebp',
+    ):
+        if required not in lock:
+            fail(f'libwebp source lock is incomplete: {required}')
     rust = (ROOT / 'native/media_core/src/lib.rs').read_text(encoding='utf-8')
     header = (ROOT / 'native/media_core/include/media_core.h').read_text(encoding='utf-8')
     dart = '\n'.join(path.read_text(encoding='utf-8') for path in (ROOT / 'packages/bridge/lib/src').glob('*.dart'))
     for symbol in (
         'zic_abi_version',
         'zic_version',
+        'zic_webp_decoder_version',
+        'zic_webp_demux_version',
         'zic_source_create',
         'zic_source_free',
         'zic_source_append',
@@ -369,10 +406,10 @@ def check_native_abi() -> None:
     ):
         if symbol not in rust or symbol not in header or symbol not in dart:
             fail(f'ABI symbol is not represented in Rust/header/Dart: {symbol}')
-    if 'pub const ABI_VERSION: u32 = 4;' not in rust:
-        fail('native ABI version must be 4 for animation metadata and rewind')
-    if 'pub const LIB_VERSION: u32 = 0x000E_0000;' not in rust:
-        fail('native library version must identify the typed-cursor release')
+    if 'pub const ABI_VERSION: u32 = 5;' not in rust:
+        fail('native ABI version must be 5 for runtime libwebp provenance')
+    if 'pub const LIB_VERSION: u32 = 0x000F_0000;' not in rust:
+        fail('native library version must identify the source-built libwebp release')
     webp_path = ROOT / 'native/media_core/src/webp.rs'
     if not webp_path.is_file():
         fail('native WebP decoder module is missing')
@@ -398,8 +435,15 @@ def check_native_abi() -> None:
         if required not in build:
             fail(f'native libwebp link configuration is incomplete: {required}')
     ci = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
-    if 'libwebp-dev' not in ci or './tool/check_webp.sh' not in ci:
-        fail('CI must install and smoke-test libwebp before Rust tests')
+    if 'libwebp-dev' in ci:
+        fail('CI must not use distribution prebuilt libwebp development packages')
+    for required in ('./tool/test_rust.sh', './tool/check_webp.sh', './tool/build_android_native.sh release'):
+        if required not in ci:
+            fail(f'CI must build and test pinned libwebp source: {required}')
+    version = (ROOT / 'packages/bridge/lib/src/native_version.dart').read_text(encoding='utf-8')
+    for required in ('webpDecoderVersion', 'webpDemuxVersion', 'usesPinnedWebp'):
+        if required not in version:
+            fail(f'native libwebp runtime provenance is incomplete: {required}')
     cursor = (ROOT / 'packages/bridge/lib/src/native_cursor.dart').read_text(
         encoding='utf-8'
     )

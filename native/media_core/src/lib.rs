@@ -11,8 +11,8 @@ use std::ptr;
 use std::slice;
 use std::sync::{Arc, RwLock};
 
-pub const ABI_VERSION: u32 = 4;
-pub const LIB_VERSION: u32 = 0x000E_0000;
+pub const ABI_VERSION: u32 = 5;
+pub const LIB_VERSION: u32 = 0x000F_0000;
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -173,6 +173,16 @@ pub extern "C" fn zic_abi_version() -> u32 {
 #[no_mangle]
 pub extern "C" fn zic_version() -> u32 {
     LIB_VERSION
+}
+
+#[no_mangle]
+pub extern "C" fn zic_webp_decoder_version() -> u32 {
+    webp::decoder_version()
+}
+
+#[no_mangle]
+pub extern "C" fn zic_webp_demux_version() -> u32 {
+    webp::demux_version()
 }
 
 #[no_mangle]
@@ -503,8 +513,10 @@ mod tests {
 
     #[test]
     fn exported_versions_are_stable() {
-        assert_eq!(zic_abi_version(), 4);
-        assert_eq!(zic_version(), 0x000E_0000);
+        assert_eq!(zic_abi_version(), 5);
+        assert_eq!(zic_version(), 0x000F_0000);
+        assert_eq!(zic_webp_decoder_version(), 0x0001_0600);
+        assert_eq!(zic_webp_demux_version(), 0x0001_0600);
     }
 
     #[test]

@@ -48,6 +48,8 @@ struct WebPIterator {
 }
 
 extern "C" {
+    fn WebPGetDecoderVersion() -> c_int;
+    fn WebPGetDemuxVersion() -> c_int;
     fn WebPDemuxInternal(
         data: *const WebPData,
         allow_partial: c_int,
@@ -70,6 +72,15 @@ extern "C" {
         output_buffer_size: usize,
         output_stride: c_int,
     ) -> *mut u8;
+}
+
+
+pub(crate) fn decoder_version() -> u32 {
+    unsafe { WebPGetDecoderVersion() as u32 }
+}
+
+pub(crate) fn demux_version() -> u32 {
+    unsafe { WebPGetDemuxVersion() as u32 }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

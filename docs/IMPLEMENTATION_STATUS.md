@@ -1,5 +1,45 @@
 # Implementation Status
 
+## 0.15.0-dev.15 — pinned libwebp source builds
+
+### Source ownership
+
+Host and Android builds no longer accept prebuilt per-ABI libwebp directories.
+`native/libwebp.lock` pins libwebp 1.6.0 to the official WebM repository and
+commit `4fa21912338357f89e4fd51cf2368325b59e9bd9`. `fetch_webp.sh` creates a
+shallow detached checkout and verifies the exact commit before any native build.
+A local source override is rejected unless it is the pinned git checkout or the
+caller explicitly enables an unpinned development source.
+
+### Reproducible host and Android builds
+
+`build_webp_host.sh` and `build_webp_android.sh` use the upstream CMake project
+with only libraries enabled. Build and install outputs are isolated below
+`.deps` by source version, platform, ABI, mode, and link type. Android uses the
+NDK CMake toolchain for arm64-v8a, armeabi-v7a, and x86_64. `media_core` links
+those generated artifacts; no downloaded binary archive is accepted.
+
+Android defaults to PIC static archives linked into `libmedia_core.so`, avoiding
+versioned shared-library SONAME dependencies in `jniLibs`. An explicit shared
+mode remains available for diagnostics. Android assets include upstream COPYING, PATENTS, and exact
+source provenance.
+
+### CI and local checks
+
+Host C smoke and Rust tests now build the pinned source first. CI no longer
+installs a distribution `libwebp-dev` package and has a dedicated Android-native
+job that builds all configured ABIs. Flutter-only split APK CI uses
+`ZIC_ANDROID_NATIVE=0`; normal `build_android.sh` includes native media by
+default. ABI v5 also exposes the linked decoder and demux versions; the Dart
+bridge reports whether both equal the pinned 1.6.0 packed version.
+
+### Next iteration
+
+1. Add the Kotlin `SurfaceProducer` texture registry and serial blit worker.
+2. Pass retained frame handles through JNI without MethodChannel pixel copies.
+3. Separate texture creation, first blit, present, and lifecycle-safe retirement.
+4. Add Android device tests for background/foreground and PageView overlap.
+
 ## 0.14.0-dev.14 — statically typed cursor outcomes and Android native packaging
 
 ### Cursor contract repair

@@ -141,6 +141,12 @@ static int check_finite_loop_fixture(const char *path) {
 }
 
 int main(int argc, char **argv) {
+  if (WebPGetDecoderVersion() != 0x010600 ||
+      WebPGetDemuxVersion() != 0x010600) {
+    fprintf(stderr, "unexpected libwebp version: decoder=%06x demux=%06x\n",
+            WebPGetDecoderVersion(), WebPGetDemuxVersion());
+    return 11;
+  }
   if (argc != 4) {
     fprintf(stderr,
             "usage: %s animated.webp partial_blend.webp finite_loop.webp\n",

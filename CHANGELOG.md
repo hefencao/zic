@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.15.0-dev.15
+
+- Replaced the external per-ABI `ZIC_ANDROID_WEBP_ROOT` contract with a pinned
+  upstream libwebp source checkout.
+- Added `native/libwebp.lock` for version 1.6.0 and exact commit verification
+  against the official WebM repository.
+- Added host and Android CMake source builders with isolated `.deps` build and
+  install trees, Android NDK ABI configuration, and a static-by-default APK link.
+- Updated Android native packaging to link only source-generated libraries and
+  package upstream `COPYING`, `PATENTS`, and source provenance.
+- Added source-built host smoke/Rust scripts and CI coverage for all Android
+  ABIs; distribution `libwebp-dev` packages are no longer used by CI.
+- Made native inclusion explicit with `ZIC_ANDROID_NATIVE`; split APK builds
+  include the source-built media core by default and can opt out for UI-only CI.
+- Bumped the native ABI to v5 and exposed linked libwebp decoder/demux versions
+  so Dart can reject an incorrectly linked runtime instead of trusting filenames.
+
 ## 0.14.0-dev.14
 
 - Replaced the nullable `FrameCursor.decodeNext()` result with explicit
