@@ -2,7 +2,7 @@
 
 `zic` 是从零开发的高性能漫画阅读器。当前版本已完成静态 Reader、可恢复下载、
 持久化缓存恢复、容量/LRU 策略、受控清理、失败退避重试、独立资源 lane、格式感知 ingress、
-decode/upload registry、frame holder、viewport 播放门控、帧字节预算、可运行的 Animated WebP App 入口、viewport/DPR 自适应物理解码目标，以及 Rust 增量 Animated WebP 解码基础。
+decode/upload registry、frame holder、viewport 播放门控、帧字节预算、可运行的 Animated WebP App 入口、viewport/DPR 自适应显示目标、source-aware 解码 raster，以及 Rust 增量 Animated WebP 解码基础。
 
 ```text
 ReaderView
@@ -70,7 +70,7 @@ flutter run -d android
 解码真实 RGBA 帧；原生库未打包或版本不匹配时会自动回退 Flutter codec。
 “导入本地 WebP”通过系统文件选择器读取单个 `.webp`，不要求先编写 manifest。
 
-Native 与 Flutter codec 使用同一个 `DecodeTarget.fit`：目标取实际预览区域的逻辑尺寸乘以设备 DPR，保持源图比例并按 8 个物理像素对齐。Flutter 路径使用紧约束和对应 `cacheWidth/cacheHeight`；native 路径提前准备下一帧，并从帧时长中扣除准备耗时，避免解码时间把动画总时长拉长。
+Native 与 Flutter codec 使用同一个自适应物理显示目标：目标取实际预览区域的逻辑尺寸乘以设备 DPR，保持源图比例并按 8 个物理像素对齐。`RasterPlan` 再决定实际 decode raster：大图按目标下采样，小图保持原始画布，避免 animated codec 在合成局部子帧前先放大插值。极小素材显示时使用 nearest-neighbour，正常漫画页面继续使用平滑滤镜。Native 路径还会提前准备下一帧，并从帧时长中扣除准备耗时，避免解码时间把动画总时长拉长。
 
 同步 native fixture 到 App assets：
 

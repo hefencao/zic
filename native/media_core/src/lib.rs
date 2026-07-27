@@ -12,7 +12,7 @@ use std::slice;
 use std::sync::{Arc, RwLock};
 
 pub const ABI_VERSION: u32 = 5;
-pub const LIB_VERSION: u32 = 0x0011_0000;
+pub const LIB_VERSION: u32 = 0x0012_0300;
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -514,7 +514,7 @@ mod tests {
     #[test]
     fn exported_versions_are_stable() {
         assert_eq!(zic_abi_version(), 5);
-        assert_eq!(zic_version(), 0x0010_0000);
+        assert_eq!(zic_version(), 0x0012_0300);
         assert_eq!(zic_webp_decoder_version(), 0x0001_0600);
         assert_eq!(zic_webp_demux_version(), 0x0001_0600);
     }

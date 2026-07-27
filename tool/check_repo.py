@@ -413,11 +413,29 @@ def check_compile_regressions() -> None:
     for required in ('DecodeTarget.fit', 'devicePixelRatio', 'maxPhysicalPixels'):
         if required not in target:
             fail(f'adaptive physical decode target is incomplete: {required}')
+    webp_info = (ROOT / 'packages/media/lib/src/webp_info.dart').read_text(
+        encoding='utf-8'
+    )
+    for required in ('parseWebpInfo', "tag == 'VP8X'", "tag == 'VP8 '", "tag == 'VP8L'"):
+        if required not in webp_info:
+            fail(f'WebP import validation is incomplete: {required}')
+    raster = (ROOT / 'packages/pipeline/lib/src/raster_plan.dart').read_text(
+        encoding='utf-8'
+    )
+    for required in (
+        'final class RasterPlan',
+        'isDownsampled',
+        'prefersNearestNeighbor',
+    ):
+        if required not in raster:
+            fail(f'codec/display raster separation is incomplete: {required}')
     webp_demo = (ROOT / 'apps/app/lib/webp_demo.dart').read_text(encoding='utf-8')
     for required in (
         'LayoutBuilder(',
-        'cacheWidth: target.physicalWidth',
-        'cacheHeight: target.physicalHeight',
+        'RasterPlan.fit(',
+        'cacheWidth: raster.isDownsampled',
+        'FilterQuality.none',
+        'WebP 文件无效',
         'FramePacing.remaining(',
         '_prepareFollowing(',
     ):
@@ -425,6 +443,40 @@ def check_compile_regressions() -> None:
             fail(f'WebP preview scaling/pacing regression: {required}')
     if '_fitDecodeTarget(' in webp_demo or 'const maxSide = 1024' in webp_demo:
         fail('WebP preview must not use a fixed diagnostic decode target')
+    smoke = (ROOT / 'apps/app/test/app_smoke_test.dart').read_text(encoding='utf-8')
+    if 'finite_loop.webp' not in smoke or 'malformed local WebP' not in smoke:
+        fail('local WebP route tests must use a real fixture and cover invalid input')
+    for required in (
+        '_pumpUntilFound(',
+        'webpPreviewScreenKey',
+        'webpPreviewTitleKey',
+        'webpPreviewErrorKey',
+    ):
+        if required not in smoke:
+            fail(f'local WebP route test synchronization is incomplete: {required}')
+    for required in (
+        'typedef WebpPicker = Future<PickedWebp?> Function()',
+        'final class PickedWebp',
+        'displayName: picked.displayName',
+        "displayName: 'local.webp'",
+        "displayName: 'broken.webp'",
+    ):
+        if required not in webp_demo and required not in smoke and required not in (ROOT / 'apps/app/lib/demo_home.dart').read_text(encoding='utf-8'):
+            fail(f'local WebP display-name ownership is incomplete: {required}')
+    if "_status = 'WebP 文件无效'" in webp_demo:
+        fail('preview status must not duplicate the keyed WebP validation error')
+    if "find.textContaining('WebP 文件无效')" in smoke:
+        fail('malformed WebP test must use the stable error key, not a global text finder')
+    for required in (
+        "const webpPreviewScreenKey = ValueKey<String>('webp-preview-screen')",
+        "const webpPreviewTitleKey = ValueKey<String>('webp-preview-title')",
+        "const webpPreviewErrorKey = ValueKey<String>('webp-preview-error')",
+        'key: webpPreviewScreenKey',
+        'key: webpPreviewTitleKey',
+        'key: webpPreviewErrorKey',
+    ):
+        if required not in webp_demo:
+            fail(f'WebP preview route identity is incomplete: {required}')
 
 
 def check_native_abi() -> None:
@@ -479,8 +531,8 @@ def check_native_abi() -> None:
             fail(f'ABI symbol is not represented in Rust/header/Dart: {symbol}')
     if 'pub const ABI_VERSION: u32 = 5;' not in rust:
         fail('native ABI version must be 5 for runtime libwebp provenance')
-    if 'pub const LIB_VERSION: u32 = 0x0011_0000;' not in rust:
-        fail('native library version must identify the adaptive WebP playback release')
+    if 'pub const LIB_VERSION: u32 = 0x0012_0300;' not in rust:
+        fail('native library version must identify the explicit picker-name repair release')
     webp_path = ROOT / 'native/media_core/src/webp.rs'
     if not webp_path.is_file():
         fail('native WebP decoder module is missing')

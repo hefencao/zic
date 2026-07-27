@@ -20,12 +20,12 @@ void main() {
   test('native version value object is independent of dynamic loading', () {
     const version = NativeVersion(
       abiVersion: 5,
-      libVersion: 0x00110000,
+      libVersion: 0x00120300,
       webpDecoderVersion: 0x00010600,
       webpDemuxVersion: 0x00010600,
     );
     expect(version.abiVersion, 5);
-    expect(version.libVersion, 0x00110000);
+    expect(version.libVersion, 0x00120300);
     expect(version.usesPinnedWebp, isTrue);
   });
 }

@@ -107,7 +107,7 @@
 
 ## Phase 4：Rust Animated WebP Core
 
-> 状态：`0.17.0-dev.17` 已完成增量 source、真实 WebP decode、frame ownership、
+> 状态：`0.18.3-dev.21` 已完成增量 source、真实 WebP decode、frame ownership、
 > blend/dispose、metadata、有限/无限循环、显式 cursor step，以及从固定上游源码生成 Android 三 ABI libwebp/media_core；
 > Kotlin texture 与设备级生命周期测试仍继续推进。
 

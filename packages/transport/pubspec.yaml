@@ -1,6 +1,6 @@
 name: transport
 description: Encoded-byte transport contracts and content sniffing.
-version: 0.17.0
+version: 0.18.3
 publish_to: none
 resolution: workspace
 

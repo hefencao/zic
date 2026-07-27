@@ -1,4 +1,3 @@
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import 'static_demo.dart';
@@ -22,13 +21,16 @@ final class _DemoHomeState extends State<DemoHome> {
     }
     setState(() => _picking = true);
     try {
-      final XFile? file = await widget.picker();
-      if (!mounted || file == null) {
+      final PickedWebp? picked = await widget.picker();
+      if (!mounted || picked == null) {
         return;
       }
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => WebpPlayerScreen.file(file),
+          builder: (_) => WebpPlayerScreen.file(
+            picked.file,
+            displayName: picked.displayName,
+          ),
         ),
       );
     } catch (error) {

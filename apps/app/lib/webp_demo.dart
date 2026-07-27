@@ -18,9 +18,56 @@ const _webpTypes = <XTypeGroup>[
   ),
 ];
 
-typedef WebpPicker = Future<XFile?> Function();
+typedef WebpPicker = Future<PickedWebp?> Function();
 
-Future<XFile?> pickLocalWebp() => openFile(acceptedTypeGroups: _webpTypes);
+final class PickedWebp {
+  factory PickedWebp({
+    required XFile file,
+    String? displayName,
+  }) {
+    final explicit = displayName?.trim() ?? '';
+    return PickedWebp._(
+      file: file,
+      displayName: explicit.isEmpty ? webpDisplayName(file) : explicit,
+    );
+  }
+
+  const PickedWebp._({
+    required this.file,
+    required this.displayName,
+  });
+
+  factory PickedWebp.fromFile(XFile file) => PickedWebp(file: file);
+
+  final XFile file;
+  final String displayName;
+}
+
+String webpDisplayName(XFile file) {
+  final name = file.name.trim();
+  if (name.isNotEmpty) {
+    return name;
+  }
+  final path = file.path.trim();
+  if (path.isNotEmpty) {
+    final normalized = path.replaceAll('\\', '/');
+    final slash = normalized.lastIndexOf('/');
+    final base = slash < 0 ? normalized : normalized.substring(slash + 1);
+    if (base.isNotEmpty) {
+      return base;
+    }
+  }
+  return '本地 WebP';
+}
+
+const webpPreviewScreenKey = ValueKey<String>('webp-preview-screen');
+const webpPreviewTitleKey = ValueKey<String>('webp-preview-title');
+const webpPreviewErrorKey = ValueKey<String>('webp-preview-error');
+
+Future<PickedWebp?> pickLocalWebp() async {
+  final file = await openFile(acceptedTypeGroups: _webpTypes);
+  return file == null ? null : PickedWebp.fromFile(file);
+}
 
 final class WebpDemoEntry {
   const WebpDemoEntry({
@@ -141,11 +188,16 @@ final class WebpPlayerScreen extends StatelessWidget {
     );
   }
 
-  factory WebpPlayerScreen.file(XFile file) {
+  factory WebpPlayerScreen.file(
+    XFile file, {
+    String? displayName,
+  }) {
+    final explicit = displayName?.trim() ?? '';
+    final title = explicit.isEmpty ? webpDisplayName(file) : explicit;
     return WebpPlayerScreen._(
-      title: file.name,
+      title: title,
       sourceUri: file.path.isEmpty
-          ? Uri(scheme: 'memory', path: file.name)
+          ? Uri(scheme: 'memory', path: title)
           : Uri.file(file.path),
       loadBytes: file.readAsBytes,
     );
@@ -158,7 +210,13 @@ final class WebpPlayerScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(title)),
+      key: webpPreviewScreenKey,
+      appBar: AppBar(
+        title: Text(
+          title,
+          key: webpPreviewTitleKey,
+        ),
+      ),
       body: NativeWebpPlayer(
         title: title,
         sourceUri: sourceUri,
@@ -189,9 +247,11 @@ final class NativeWebpPlayer extends StatefulWidget {
 final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   _PlayerEngine _engine = _PlayerEngine.native;
   Uint8List? _encoded;
-  _CanvasSize? _sourceCanvas;
+  WebpInfo? _sourceCanvas;
   DecodeTarget? _target;
   DecodeTarget? _scheduledTarget;
+  RasterPlan? _raster;
+  RasterPlan? _scheduledRaster;
   ui.Image? _image;
   EncodedSource? _source;
   CursorBinding? _cursor;
@@ -201,6 +261,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   Stopwatch? _timerClock;
   Duration _pendingDelay = Duration.zero;
   Object? _nativeError;
+  Object? _loadError;
   String _status = '加载中';
   int _frameIndex = -1;
   int _cycle = 0;
@@ -229,9 +290,11 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       if (!mounted || generation != _generation) {
         return;
       }
+      final canvas = parseWebpInfo(bytes);
       setState(() {
         _encoded = bytes;
-        _sourceCanvas = _readWebpCanvas(bytes);
+        _sourceCanvas = canvas;
+        _loadError = null;
         _status = '已读取 ${bytes.length} B，等待 viewport';
       });
       final target = _target;
@@ -242,34 +305,47 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       if (!mounted || generation != _generation) {
         return;
       }
+      _resetNative(disposeImage: true);
       setState(() {
-        _nativeError = error;
+        _encoded = null;
+        _sourceCanvas = null;
+        _loadError = error;
+        _nativeError = null;
         _engine = _PlayerEngine.flutter;
-        _status = '读取失败';
+        _status = '加载失败';
       });
     }
   }
 
-  void _scheduleTarget(DecodeTarget target) {
-    if (_target == target || _scheduledTarget == target) {
+  void _scheduleTarget(DecodeTarget target, RasterPlan raster) {
+    if ((_target == target && _raster == raster) ||
+        (_scheduledTarget == target && _scheduledRaster == raster)) {
       return;
     }
     _scheduledTarget = target;
+    _scheduledRaster = raster;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _scheduledTarget != target) {
+      if (!mounted ||
+          _scheduledTarget != target ||
+          _scheduledRaster != raster) {
         return;
       }
       _scheduledTarget = null;
-      if (_target == target) {
-        return;
-      }
+      _scheduledRaster = null;
+      final decodeChanged = _raster?.decodeWidth != raster.decodeWidth ||
+          _raster?.decodeHeight != raster.decodeHeight;
       setState(() {
         _target = target;
+        _raster = raster;
         _status = _engine == _PlayerEngine.native
-            ? '重建 native target'
-            : 'Flutter codec · ${target.physicalWidth}×${target.physicalHeight}';
+            ? decodeChanged
+                ? '重建 native decode target'
+                : 'native display target 已更新'
+            : 'Flutter codec · ${raster.decodeWidth}×${raster.decodeHeight}';
       });
-      if (_encoded != null && _engine == _PlayerEngine.native) {
+      if (decodeChanged &&
+          _encoded != null &&
+          _engine == _PlayerEngine.native) {
         unawaited(_startNative(++_generation));
       }
     });
@@ -278,7 +354,11 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   Future<void> _startNative(int generation) async {
     final bytes = _encoded;
     final target = _target;
-    if (bytes == null || target == null || _engine != _PlayerEngine.native) {
+    final raster = _raster;
+    if (bytes == null ||
+        target == null ||
+        raster == null ||
+        _engine != _PlayerEngine.native) {
       return;
     }
     _resetNative(disposeImage: true);
@@ -321,8 +401,8 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
           sourceRevision: 'local-v1',
           canonicalUri: widget.sourceUri,
         ),
-        physicalWidth: target.physicalWidth,
-        physicalHeight: target.physicalHeight,
+        physicalWidth: raster.decodeWidth,
+        physicalHeight: raster.decodeHeight,
         pixelFormat: PixelFormat.rgba8888,
         renderer: RendererKind.flutterImage,
       );
@@ -335,7 +415,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       _cursor = cursor;
       if (mounted && generation == _generation) {
         setState(() {
-          _status = 'native · ${target.physicalWidth}×${target.physicalHeight}';
+          _status = 'native · ${raster.decodeWidth}×${raster.decodeHeight}';
         });
       }
       final first = await _decodePrepared(generation);
@@ -629,6 +709,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
               builder: (context, constraints) {
                 final source = _sourceCanvas;
                 DecodeTarget? target;
+                RasterPlan? raster;
                 if (source != null &&
                     constraints.maxWidth.isFinite &&
                     constraints.maxHeight.isFinite &&
@@ -641,8 +722,31 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
                     logicalHeight: constraints.maxHeight,
                     devicePixelRatio: MediaQuery.of(context).devicePixelRatio,
                   );
-                  _scheduleTarget(target);
+                  raster = RasterPlan.fit(
+                    sourceWidth: source.width,
+                    sourceHeight: source.height,
+                    display: target,
+                  );
+                  _scheduleTarget(target, raster);
                 }
+                final loadError = _loadError;
+                if (loadError != null && encoded == null) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        'WebP 文件无效：$loadError',
+                        key: webpPreviewErrorKey,
+                        style: const TextStyle(color: Colors.white),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  );
+                }
+                final nearest = raster?.prefersNearestNeighbor ?? false;
+                final quality = nearest
+                    ? FilterQuality.none
+                    : FilterQuality.medium;
                 return SizedBox.expand(
                   child: switch (_engine) {
                     _PlayerEngine.native => _image == null
@@ -650,24 +754,30 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
                         : RawImage(
                             image: _image,
                             fit: BoxFit.contain,
-                            filterQuality: FilterQuality.medium,
+                            filterQuality: quality,
+                            isAntiAlias: !nearest,
                           ),
-                    _PlayerEngine.flutter => encoded == null || target == null
+                    _PlayerEngine.flutter =>
+                      encoded == null || target == null || raster == null
                         ? const Center(child: CircularProgressIndicator())
                         : Image.memory(
                             encoded,
                             key: ValueKey<String>(
-                              'flutter-${target.physicalWidth}x'
-                              '${target.physicalHeight}-${widget.sourceUri}',
+                              'flutter-${raster.decodeWidth}x'
+                              '${raster.decodeHeight}-${widget.sourceUri}',
                             ),
-                            cacheWidth: target.physicalWidth,
-                            cacheHeight: target.physicalHeight,
+                            cacheWidth: raster.isDownsampled
+                                ? raster.decodeWidth
+                                : null,
+                            cacheHeight: raster.isDownsampled
+                                ? raster.decodeHeight
+                                : null,
                             width: double.infinity,
                             height: double.infinity,
                             gaplessPlayback: true,
                             fit: BoxFit.contain,
-                            filterQuality: FilterQuality.medium,
-                            isAntiAlias: true,
+                            filterQuality: quality,
+                            isAntiAlias: !nearest,
                             errorBuilder: (context, error, stackTrace) => Center(
                               child: Text(
                                 'Flutter codec 无法解码：$error',
@@ -696,8 +806,13 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
                       Text(_status),
                       if (_target != null)
                         Text(
-                          'target=${_target!.physicalWidth}×'
+                          'display=${_target!.physicalWidth}×'
                           '${_target!.physicalHeight} px',
+                        ),
+                      if (_raster != null)
+                        Text(
+                          'decode=${_raster!.decodeWidth}×'
+                          '${_raster!.decodeHeight} px',
                         ),
                       if (_engine == _PlayerEngine.native)
                         Text('frame=$_frameIndex · cycle=$_cycle'),
@@ -767,43 +882,5 @@ void _premultiplyRgbaInPlace(Uint8List bytes) {
     bytes[i + 1] = (bytes[i + 1] * alpha + 127) ~/ 255;
     bytes[i + 2] = (bytes[i + 2] * alpha + 127) ~/ 255;
   }
-}
-
-final class _CanvasSize {
-  const _CanvasSize(this.width, this.height);
-
-  final int width;
-  final int height;
-}
-
-_CanvasSize _readWebpCanvas(Uint8List bytes) {
-  if (bytes.length < 30 ||
-      ascii.decode(bytes.sublist(0, 4), allowInvalid: true) != 'RIFF' ||
-      ascii.decode(bytes.sublist(8, 12), allowInvalid: true) != 'WEBP') {
-    return const _CanvasSize(512, 512);
-  }
-  final data = ByteData.sublistView(bytes);
-  var offset = 12;
-  while (offset + 8 <= bytes.length) {
-    final tag = ascii.decode(
-      bytes.sublist(offset, offset + 4),
-      allowInvalid: true,
-    );
-    final length = data.getUint32(offset + 4, Endian.little);
-    final dataOffset = offset + 8;
-    if (tag == 'VP8X' && dataOffset + 10 <= bytes.length) {
-      final width = 1 +
-          bytes[dataOffset + 4] +
-          (bytes[dataOffset + 5] << 8) +
-          (bytes[dataOffset + 6] << 16);
-      final height = 1 +
-          bytes[dataOffset + 7] +
-          (bytes[dataOffset + 8] << 8) +
-          (bytes[dataOffset + 9] << 16);
-      return _CanvasSize(width, height);
-    }
-    offset = dataOffset + length + (length.isOdd ? 1 : 0);
-  }
-  return const _CanvasSize(512, 512);
 }
 

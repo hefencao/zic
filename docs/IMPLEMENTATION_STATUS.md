@@ -1,5 +1,90 @@
 # Implementation Status
 
+## 0.18.3-dev.21 — unambiguous malformed-WebP error state
+
+### Root cause
+
+The malformed-file preview rendered two widgets containing `WebP 文件无效`: the primary validation detail and the footer status. `find.textContaining` therefore correctly returned two matches even though navigation, filename ownership, and validation were all working.
+
+### Repair
+
+The detailed validation message now owns `webpPreviewErrorKey`. The footer reports the broader state `加载失败`, while the test waits for and reads the keyed detail widget. Repository gates reject both a duplicated footer validation phrase and a return to page-wide text matching.
+
+### Validation before the next chat
+
+```bash
+cd /home/unkloser/projects/zic
+flutter pub get
+cd apps/app
+flutter test test/app_smoke_test.dart
+cd ../..
+bash ./tool/test_flutter.sh
+bash ./tool/test_dart.sh
+bash ./tool/analyze.sh
+```
+
+Continue from `zic_v0.18.3-dev.21.zip` only after those checks pass in the Flutter-equipped environment.
+
+## 0.18.2-dev.20 — explicit local-import display-name ownership
+
+### Root cause
+
+`XFile.fromData(..., name: ...)` does not provide a portable guarantee that the resulting `XFile.name` is non-empty in every Flutter test backend. The previous route synchronization repair reached the correct preview screen, but `WebpPlayerScreen.file` reconstructed its title from `file.name`, so the keyed title existed with an empty string.
+
+### Repair
+
+`WebpPicker` now returns `PickedWebp`, which owns both the `XFile` and its normalized `displayName`. Production system-picking derives the name from `XFile.name`, then the path basename, then `本地 WebP`. Tests inject the expected display names explicitly. `DemoHome` passes the owned name into `WebpPlayerScreen.file`, and the screen only falls back to file metadata when no explicit non-empty name is supplied.
+
+The stable route/title keys and bounded pumping remain in place. This separates three concerns cleanly: asynchronous route synchronization, selected-file bytes, and user-facing naming.
+
+### Validation before the next chat
+
+Run at minimum:
+
+```bash
+cd /home/unkloser/projects/zic
+flutter pub get
+cd apps/app
+flutter test test/app_smoke_test.dart
+cd ../..
+bash ./tool/test_flutter.sh
+bash ./tool/test_dart.sh
+bash ./tool/analyze.sh
+```
+
+Continue from `zic_v0.18.2-dev.20.zip` only after those checks pass in the Flutter-equipped environment.
+
+## 0.18.1-dev.19 — deterministic local-import route tests
+
+### Picker route synchronization
+
+The local picker is asynchronous and the material route transition is scheduled after the picker future completes. A single fixed-duration `pump` can end on the first route frame rather than after the destination is discoverable, so exact-title finders were timing-dependent. The preview now exposes stable screen and title keys, and the widget tests use a bounded frame pump until the destination marker appears.
+
+Malformed imports use the same route marker, then independently wait for the controlled `WebP 文件无效` state. This preserves the product behavior while removing dependence on animation timing and codec scheduling.
+
+### Next chat
+
+Continue from `zic_v0.18.1-dev.19.zip` only. The next engineering target remains Android `SurfaceProducer` texture presentation, followed by runtime telemetry and real reader-page integration.
+
+## 0.18.0-dev.18 — validated local import and source-aware raster quality
+
+### Local import stability
+
+The picker route test now injects the real finite-loop WebP asset rather than a twelve-byte RIFF signature. `WebpInfo` validates complete RIFF length and reads VP8X, VP8, or VP8L canvas dimensions before the preview creates a Flutter or native codec. Malformed imports remain on the preview route and show a controlled error instead of feeding invalid bytes into the image pipeline.
+
+### Decode raster versus display target
+
+`DecodeTarget` remains the DPR-aware, eight-pixel-aligned physical display target. The new `RasterPlan` derives the actual encoded-image decode dimensions. Large images are downsampled to the bounded display target, while sources smaller than the viewport remain at intrinsic dimensions. This prevents animated codecs from interpolating tiny partial subframes before composition and avoids allocating multi-megapixel buffers for four-pixel fixtures.
+
+Both native `RawImage` and Flutter `Image.memory` use nearest-neighbour rendering only for very small sources enlarged by at least 2x. Normal comic pages retain medium filtering. Native cursor identity follows the decode raster, so viewport-only display changes no longer recreate a cursor when the decoded pixel dimensions remain unchanged.
+
+### Next iteration
+
+1. Move native RGBA presentation to Android `SurfaceProducer` texture output.
+2. Add device telemetry for decode raster, display scale, frame preparation, and present deadlines.
+3. Connect the source-aware raster plan to real reader page decode sessions.
+4. Add local chapter/CBZ import with persisted catalog metadata.
+
 ## 0.17.0-dev.17 — adaptive physical targets and deadline-based WebP playback
 
 ### Compile and target repair

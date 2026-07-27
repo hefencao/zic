@@ -1,6 +1,6 @@
 name: reader
 description: Reader observation model and Flutter reader widgets for zic.
-version: 0.17.0
+version: 0.18.3
 publish_to: none
 resolution: workspace
 

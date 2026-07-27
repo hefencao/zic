@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.18.3-dev.21
+
+- Fixed the malformed-local-WebP smoke test by giving the primary validation message a stable `webpPreviewErrorKey`.
+- Changed the secondary footer status from `WebP 文件无效` to `加载失败`, so product UI no longer exposes two matching validation messages.
+- Replaced the global `find.textContaining` assertion with a keyed error-widget assertion and kept the exact imported filename check.
+- Added repository regression gates that reject duplicate validation status text and unkeyed malformed-WebP assertions.
+- Updated workspace/native versions to the 0.18.3 baseline.
+
+## 0.18.2-dev.20
+
+- Replaced the platform-dependent `Future<XFile?>` picker contract with `Future<PickedWebp?>`, which carries the selected file and an explicit normalized display name.
+- Fixed local-import preview titles when `XFile.fromData` reports an empty `name` in Flutter tests; route titles now receive `local.webp` and `broken.webp` from the picker result rather than re-reading platform metadata.
+- Added filename fallback from `XFile.name`, URI/path basename, and finally `本地 WebP` for real system-picker results.
+- Kept the stable preview route/title keys and bounded route pumping from the previous repair, while adding repository gates for display-name ownership.
+- Updated the native library version and its stale Rust assertion to the 0.18.2 baseline.
+
+## 0.18.1-dev.19
+
+- Fixed local WebP picker widget tests by waiting for a stable preview-route marker instead of assuming one timed pump completes asynchronous picker navigation and the route transition.
+- Added stable preview screen/title keys shared by production code and widget tests.
+- Kept malformed-file verification separate: tests first wait for the route, then wait for the controlled validation error.
+- Added repository regression gates for preview route identity and asynchronous test synchronization.
+- Added a next-chat handoff document for continuing from this exact baseline.
+
+## 0.18.0-dev.18
+
+- Fixed the local WebP picker smoke test to use a real finite-loop fixture and added a separate malformed-file regression with a controlled in-app error.
+- Added `WebpInfo` parsing for VP8X, VP8, and VP8L containers so imported bytes are validated before either codec is created.
+- Added `RasterPlan` to separate the adaptive physical display target from the encoded-image decode size.
+- Stopped Flutter and native paths from upscaling tiny sources during decode; small partial-frame animations now compose at intrinsic size and use nearest-neighbour rendering.
+- Kept large comic pages on aligned, DPR-aware downsample targets with smooth filtering and bounded pixel budgets.
+- Avoided native cursor recreation when a viewport change alters only display scale but not the actual decode raster.
+- Added pure-Dart raster/parser tests and a Flutter widget regression for the partial-blend fixture.
+
 ## 0.17.0-dev.17
 
 - Fixed the missing `DecodeTarget` import in the static demo and moved the target model into its own pipeline module.

@@ -13,6 +13,8 @@ export 'package:media/media.dart'
         PixelFrame,
         SourceFactory,
         SourceKind,
-        SourceStatus;
+        SourceStatus,
+        WebpInfo,
+        parseWebpInfo;
 export 'src/native_source.dart';
 export 'src/native_version.dart';
