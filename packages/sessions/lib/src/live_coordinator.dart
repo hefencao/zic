@@ -12,6 +12,7 @@ import 'download_job.dart';
 import 'download_registry.dart';
 import 'download_session.dart';
 import 'net_lane.dart';
+import 'playback_gate.dart';
 import 'retry_policy.dart';
 import 'upload_registry.dart';
 
@@ -77,6 +78,7 @@ final class LiveCoordinator implements Coordinator {
   final Map<DecodeId, UploadDemand> _uploads = <DecodeId, UploadDemand>{};
   final Map<DownloadId, SourceListener> _sourceListeners =
       <DownloadId, SourceListener>{};
+  final PlaybackGate _playbackGate = PlaybackGate();
   int _revision = 0;
 
   Map<DownloadId, DownloadDemand> get demands =>
@@ -110,6 +112,30 @@ final class LiveCoordinator implements Coordinator {
 
   bool resumePlayback(DecodeId id) => uploads?.resumePlayback(id) ?? false;
 
+  void syncPlayback(
+    ViewportState viewport,
+    Map<int, DecodeId> ids,
+  ) {
+    _playbackGate.apply(
+      viewport: viewport,
+      ids: ids,
+      freeze: (id) {
+        if (uploads?.find(id) == null) {
+          return false;
+        }
+        freezePlayback(id);
+        return true;
+      },
+      resume: (id) {
+        if (uploads?.find(id) == null) {
+          return false;
+        }
+        resumePlayback(id);
+        return true;
+      },
+    );
+  }
+
   bool advanceDueFrame(String sessionId, DecodeId id) {
     final frameIndex = uploads?.takeDueFrame(id);
     if (frameIndex == null) {
@@ -137,6 +163,15 @@ final class LiveCoordinator implements Coordinator {
   }
 
   Future<void> dispose() async {
+    _playbackGate.clear(
+      freeze: (id) {
+        if (uploads?.find(id) == null) {
+          return false;
+        }
+        freezePlayback(id);
+        return true;
+      },
+    );
     for (final entry in _sourceListeners.entries) {
       registry.find(entry.key)?.removeSourceListener(entry.value);
     }

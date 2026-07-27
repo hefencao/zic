@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.0-dev.9
+
+- Removed invalid trailing commas from native source enum index expressions.
+- Added split-per-ABI Android APK builds through `tool/build_android.sh`.
+- Switched CI and full toolchain checks from fat APK to split APK output.
+- Added viewport idle/dominant/overlap/continuous phase resolution.
+- Added playback gating and coordinator integration for viewport freeze/resume.
+- Added regression tests for discrete overlap, target dominance, continuous
+  scrolling, and playback-gate state transitions.
+
 ## 0.8.0-dev.8
 
 - Fixed duplicate upload work caused by source-ready and download-complete wake-ups.

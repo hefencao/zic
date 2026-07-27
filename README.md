@@ -93,3 +93,20 @@ flutter run -d android
 ```
 
 完整架构、规格、计划与实施状态位于 `docs/`。
+
+## 构建 Android split APK
+
+从仓库根目录运行：
+
+```bash
+./tool/build_android.sh release
+# 或
+make android-apk
+```
+
+脚本固定使用 `--split-per-abi`，分别生成各 ABI 的 APK，避免发布单个包含全部
+native ABI 的 fat APK。调试构建可执行：
+
+```bash
+./tool/build_android.sh debug
+```

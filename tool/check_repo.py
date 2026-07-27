@@ -169,6 +169,8 @@ def check_tool_dirs() -> None:
     flutter_tests = (ROOT / 'tool/test_flutter.sh').read_text(encoding='utf-8')
     dart_tests = (ROOT / 'tool/test_dart.sh').read_text(encoding='utf-8')
     analyze = (ROOT / 'tool/analyze.sh').read_text(encoding='utf-8')
+    android_build = (ROOT / 'tool/build_android.sh').read_text(encoding='utf-8')
+    ci = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
     for required in (
         'APP="$ROOT/apps/app"',
         '--empty',
@@ -186,6 +188,13 @@ def check_tool_dirs() -> None:
     for required in ('packages/reader', 'apps/app', 'flutter analyze'):
         if required not in analyze:
             fail(f'Flutter analyze directory is not explicit: {required}')
+    for required in ('APP="$ROOT/apps/app"', '--split-per-abi', 'flutter build apk'):
+        if required not in android_build:
+            fail(f'Android split APK build is incomplete: {required}')
+    if './tool/build_android.sh debug' not in ci:
+        fail('CI must build split debug APKs through tool/build_android.sh')
+    if 'flutter build apk --debug' in ci:
+        fail('CI must not build a single fat debug APK')
 
 def check_compile_regressions() -> None:
     live = (ROOT / 'packages/sessions/lib/src/live_coordinator.dart').read_text(
@@ -223,6 +232,23 @@ def check_compile_regressions() -> None:
     )
     if 'bool follow({' not in lane or '_core.follow(' not in lane:
         fail('task lanes must support non-cancelling follow-up work')
+    native_source = (ROOT / 'packages/bridge/lib/src/native_source.dart').read_text(
+        encoding='utf-8'
+    )
+    if re.search(r'\),\s*\];', native_source):
+        fail('native source index expressions must not contain a trailing comma')
+    pipeline = (ROOT / 'packages/pipeline/lib/pipeline.dart').read_text(
+        encoding='utf-8'
+    )
+    if "export 'src/viewport_phase.dart';" not in pipeline:
+        fail('pipeline must export viewport playback phases')
+    sessions = (ROOT / 'packages/sessions/lib/sessions.dart').read_text(
+        encoding='utf-8'
+    )
+    if "export 'src/playback_gate.dart';" not in sessions:
+        fail('sessions must export PlaybackGate')
+    if 'void syncPlayback(' not in live or '_playbackGate.apply(' not in live:
+        fail('LiveCoordinator must integrate viewport playback gating')
 
 
 def check_native_abi() -> None:

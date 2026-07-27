@@ -13,3 +13,4 @@ export 'src/startup_recovery.dart';
 export 'src/retry_policy.dart';
 export 'src/upload_registry.dart';
 export 'src/upload_session.dart';
+export 'src/playback_gate.dart';

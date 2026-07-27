@@ -1,4 +1,4 @@
-.PHONY: check bootstrap test analyze dart-test flutter-test
+.PHONY: check bootstrap test analyze dart-test flutter-test android-apk
 
 check:
 	./tool/check.sh
@@ -17,3 +17,6 @@ dart-test:
 
 flutter-test:
 	./tool/test_flutter.sh
+
+android-apk:
+	./tool/build_android.sh release

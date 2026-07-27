@@ -21,9 +21,8 @@ jobs:
         run: ./tool/test_dart.sh
       - name: Test Flutter packages
         run: ./tool/test_flutter.sh
-      - name: Build Android debug APK
-        working-directory: apps/app
-        run: flutter build apk --debug
+      - name: Build split Android debug APKs
+        run: ./tool/build_android.sh debug
       - run: python3 tool/check_repo.py
 
   rust:

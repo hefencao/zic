@@ -15,6 +15,7 @@ if command -v flutter >/dev/null 2>&1; then
   "$ROOT/tool/analyze.sh"
   "$ROOT/tool/test_dart.sh"
   "$ROOT/tool/test_flutter.sh"
+  "$ROOT/tool/build_android.sh" debug
 elif [[ "$REQUIRE_TOOLCHAINS" -eq 1 ]]; then
   echo "Flutter SDK is required" >&2
   exit 1
