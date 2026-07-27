@@ -212,6 +212,17 @@ def check_compile_regressions() -> None:
     )
     if 'return await reader.read(length < maxBytes ? length : maxBytes);' not in artifact:
         fail('Artifact.readPrefix must await the read before closing its file handle')
+    if 'preparedDepth: uploads?.preparedDepth(id) ?? 0' not in live:
+        fail('ready uploaded output must contribute to the decode watermark')
+    if 'decode.follow(' not in live:
+        fail('source wake-up must queue a decode successor without cancelling active work')
+    if '_submitUpload(sessionId, id, demand, follow: true);' not in live:
+        fail('decode wake-up must coalesce upload work without replacing active upload')
+    lane = (ROOT / 'packages/sessions/lib/src/net_lane.dart').read_text(
+        encoding='utf-8'
+    )
+    if 'bool follow({' not in lane or '_core.follow(' not in lane:
+        fail('task lanes must support non-cancelling follow-up work')
 
 
 def check_native_abi() -> None:

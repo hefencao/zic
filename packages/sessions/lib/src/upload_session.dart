@@ -6,6 +6,7 @@ import 'package:telemetry/telemetry.dart';
 import 'decode_session.dart';
 import 'frame_holder.dart';
 import 'net_lane.dart';
+import 'playback_timer.dart';
 
 enum UploadState { idle, waitingFrame, uploading, ready, failed, disposed }
 
@@ -83,9 +84,13 @@ final class UploadSession {
   Failure? _failure;
   int _revision = 0;
   bool _disposed = false;
+  final PlaybackTimer _playback = PlaybackTimer();
 
   UploadState get state => _state;
   OutputFrame? get frame => _slot?.frame;
+  int get preparedDepth =>
+      _slot == null || _slot!.frame.disposed ? 0 : 1;
+  PlaybackState get playbackState => _playback.state;
 
   UploadSnapshot get snapshot => UploadSnapshot(
         id: id,
@@ -198,6 +203,23 @@ final class UploadSession {
     return snapshot;
   }
 
+  bool advance(int frameIndex) {
+    _requireOpen();
+    final slot = _slot;
+    if (slot == null ||
+        slot.frame.disposed ||
+        slot.frame.index != frameIndex) {
+      return false;
+    }
+    _revision++;
+    _playback.clear();
+    _slot = null;
+    slot.retire();
+    _failure = null;
+    _setState(UploadState.waitingFrame);
+    return true;
+  }
+
   PresentClaim? claimPresent() {
     _requireOpen();
     final slot = _slot;
@@ -215,11 +237,24 @@ final class UploadSession {
   Future<void> present(PresentClaim claim) async {
     _requireOpen();
     await claim.present();
+    if (identical(_slot?.frame, claim.frame)) {
+      _playback.start(
+        frameIndex: claim.frame.index,
+        duration: claim.frame.duration,
+        nowUs: clock.nowMicros(),
+      );
+    }
     _emit(
       TraceEventKind.framePresented,
       <String, Object?>{'frame': claim.frame.index},
     );
   }
+
+  bool freezePlayback() => _playback.freeze(clock.nowMicros());
+
+  bool resumePlayback() => _playback.resume(clock.nowMicros());
+
+  int? takeDueFrame() => _playback.takeDue(clock.nowMicros());
 
   void detach() {
     _requireOpen();
@@ -248,6 +283,7 @@ final class UploadSession {
   }
 
   void _retireCurrent() {
+    _playback.clear();
     final slot = _slot;
     _slot = null;
     slot?.retire();

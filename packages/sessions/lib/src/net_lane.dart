@@ -48,6 +48,12 @@ abstract interface class TaskLane {
     required LaneTask task,
   });
 
+  bool follow({
+    required String key,
+    required int priority,
+    required LaneTask task,
+  });
+
   bool cancelQueued(String key);
   bool cancel(String key);
   Future<void> idle();
@@ -73,6 +79,9 @@ final class NetLane implements TaskLane {
   @override
   bool replace({required String key, required int priority, required LaneTask task}) =>
       _core.replace(key: key, priority: priority, task: task);
+  @override
+  bool follow({required String key, required int priority, required LaneTask task}) =>
+      _core.follow(key: key, priority: priority, task: task);
   @override
   bool cancelQueued(String key) => _core.cancelQueued(key);
   @override
@@ -102,6 +111,9 @@ final class DecodeLane implements TaskLane {
   bool replace({required String key, required int priority, required LaneTask task}) =>
       _core.replace(key: key, priority: priority, task: task);
   @override
+  bool follow({required String key, required int priority, required LaneTask task}) =>
+      _core.follow(key: key, priority: priority, task: task);
+  @override
   bool cancelQueued(String key) => _core.cancelQueued(key);
   @override
   bool cancel(String key) => _core.cancel(key);
@@ -130,6 +142,9 @@ final class UploadLane implements TaskLane {
   bool replace({required String key, required int priority, required LaneTask task}) =>
       _core.replace(key: key, priority: priority, task: task);
   @override
+  bool follow({required String key, required int priority, required LaneTask task}) =>
+      _core.follow(key: key, priority: priority, task: task);
+  @override
   bool cancelQueued(String key) => _core.cancelQueued(key);
   @override
   bool cancel(String key) => _core.cancel(key);
@@ -157,6 +172,9 @@ final class MaintenanceLane implements TaskLane {
   @override
   bool replace({required String key, required int priority, required LaneTask task}) =>
       _core.replace(key: key, priority: priority, task: task);
+  @override
+  bool follow({required String key, required int priority, required LaneTask task}) =>
+      _core.follow(key: key, priority: priority, task: task);
   @override
   bool cancelQueued(String key) => _core.cancelQueued(key);
   @override
@@ -203,6 +221,21 @@ final class _Lane {
     required LaneTask task,
   }) {
     _active[key]?.cancel();
+    _pending[key] = _Pending(
+      key: key,
+      priority: priority,
+      seq: _seq++,
+      task: task,
+    );
+    _pump();
+    return true;
+  }
+
+  bool follow({
+    required String key,
+    required int priority,
+    required LaneTask task,
+  }) {
     _pending[key] = _Pending(
       key: key,
       priority: priority,

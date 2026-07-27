@@ -248,6 +248,17 @@ void main() {
     expect(uploads.find(decodeId)?.state, UploadState.ready);
     expect(uploader.outputs, hasLength(1));
 
+    final claim = uploads.find(decodeId)?.claimPresent();
+    expect(claim, isNotNull);
+    await uploads.find(decodeId)!.present(claim!);
+    claim.release();
+    expect(coordinator.advanceFrame('reader', decodeId, 0), isTrue);
+    await coordinator.idle();
+
+    expect(uploader.outputs, hasLength(2));
+    expect(uploads.find(decodeId)?.snapshot.frameIndex, 1);
+    expect(decodes.find(decodeId)?.snapshot.depth, 0);
+
     await coordinator.dispose();
     uploads.dispose();
     decodes.dispose();

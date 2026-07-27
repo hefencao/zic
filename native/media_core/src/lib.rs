@@ -6,7 +6,7 @@
 use std::slice;
 
 pub const ABI_VERSION: u32 = 2;
-pub const LIB_VERSION: u32 = 0x0007_0000;
+pub const LIB_VERSION: u32 = 0x0008_0000;
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn exported_versions_are_stable() {
         assert_eq!(zic_abi_version(), 2);
-        assert_eq!(zic_version(), 0x0007_0000);
+        assert_eq!(zic_version(), 0x0008_0000);
     }
 
     #[test]

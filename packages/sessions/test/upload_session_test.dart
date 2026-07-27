@@ -46,11 +46,12 @@ void main() {
     );
 
     final uploader = _Uploader();
+    final playbackClock = _Clock();
     final upload = UploadSession(
       id: decode.id,
       decode: decode,
       uploader: uploader,
-      clock: _Clock(),
+      clock: playbackClock,
     );
     final ready = await upload.prepare(
       demand: const UploadDemand(
@@ -72,6 +73,9 @@ void main() {
     expect(claim, isNotNull);
     await upload.present(claim!);
     expect(uploader.outputs.single.presented, 1);
+    expect(upload.takeDueFrame(), isNull);
+    playbackClock.value = 16000;
+    expect(upload.takeDueFrame(), 0);
 
     upload.detach();
     expect(uploader.outputs.single.disposed, isFalse);
@@ -174,8 +178,10 @@ DecodeId _decodeId(DownloadId download) => DecodeId(
     );
 
 final class _Clock implements MonoClock {
+  int value = 0;
+
   @override
-  int nowMicros() => 0;
+  int nowMicros() => value;
 }
 
 final class _SourceFactory implements SourceFactory {

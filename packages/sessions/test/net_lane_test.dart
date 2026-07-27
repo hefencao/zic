@@ -79,4 +79,38 @@ void main() {
     expect(values, <String>['old', 'new']);
   });
 
+
+  test('follow queues one successor without cancelling active work', () async {
+    final lane = UploadLane(maxActive: 1);
+    final started = Completer<void>();
+    final release = Completer<void>();
+    final values = <String>[];
+
+    lane.submit(
+      key: 'same',
+      priority: 1,
+      task: (token) async {
+        values.add('active');
+        started.complete();
+        await release.future;
+        expect(token.cancelled, isFalse);
+      },
+    );
+    await started.future;
+    lane.follow(
+      key: 'same',
+      priority: 2,
+      task: (_) async => values.add('old-follow'),
+    );
+    lane.follow(
+      key: 'same',
+      priority: 3,
+      task: (_) async => values.add('latest-follow'),
+    );
+
+    release.complete();
+    await lane.idle();
+    expect(values, <String>['active', 'latest-follow']);
+  });
+
 }

@@ -25,6 +25,8 @@ final class UploadRegistry {
 
   UploadSession? find(DecodeId id) => _sessions[id];
 
+  int preparedDepth(DecodeId id) => _sessions[id]?.preparedDepth ?? 0;
+
   UploadSession get(DecodeId id) {
     return _sessions.putIfAbsent(id, () {
       return UploadSession(
@@ -49,6 +51,20 @@ final class UploadRegistry {
       revision: revision,
       cancel: token,
     );
+  }
+
+  bool freezePlayback(DecodeId id) {
+    return _sessions[id]?.freezePlayback() ?? false;
+  }
+
+  bool resumePlayback(DecodeId id) {
+    return _sessions[id]?.resumePlayback() ?? false;
+  }
+
+  int? takeDueFrame(DecodeId id) => _sessions[id]?.takeDueFrame();
+
+  bool advance(DecodeId id, int frameIndex) {
+    return _sessions[id]?.advance(frameIndex) ?? false;
   }
 
   void detach(DecodeId id) {

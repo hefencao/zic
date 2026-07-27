@@ -71,8 +71,16 @@ final class DecodeSession {
     required DecodeDemand demand,
     required int revision,
     required CancelToken cancel,
+    int preparedDepth = 0,
   }) async {
     _requireOpen();
+    if (preparedDepth < 0) {
+      throw ArgumentError.value(
+        preparedDepth,
+        'preparedDepth',
+        'must not be negative',
+      );
+    }
     _revision = revision;
     final ingress = download.ingress;
     final source = ingress?.source;
@@ -94,14 +102,17 @@ final class DecodeSession {
 
     _bind(source, epoch);
     final holder = _holder!;
-    holder.trimTo(demand.targetWatermark);
-    if (holder.depth >= demand.targetWatermark) {
+    final targetDepth = demand.targetWatermark > preparedDepth
+        ? demand.targetWatermark - preparedDepth
+        : 0;
+    holder.trimTo(targetDepth);
+    if (holder.depth >= targetDepth) {
       _setState(DecodeState.ready);
       return snapshot;
     }
 
     _setState(DecodeState.decoding);
-    while (holder.depth < demand.targetWatermark) {
+    while (holder.depth < targetDepth) {
       cancel.throwIfCancelled();
       epoch.requireMatch(download.epoch);
       if (_revision != revision) {
@@ -131,7 +142,8 @@ final class DecodeSession {
           'frame': frame.index,
           'bytes': frame.byteLength,
           'depth': holder.depth,
-          'target': demand.targetWatermark,
+          'target': targetDepth,
+          'preparedDepth': preparedDepth,
         },
       );
     }

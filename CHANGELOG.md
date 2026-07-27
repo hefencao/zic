@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0-dev.8
+
+- Fixed duplicate upload work caused by source-ready and download-complete wake-ups.
+- Counted renderer-owned ready output toward the decode watermark.
+- Added non-cancelling lane follow-up work with per-key coalescing.
+- Added explicit frame advancement; source progress alone no longer advances playback.
+- Added a playback timer whose duration starts after actual present, with freeze/resume.
+- Added regressions for duplicate upload, prepared depth, lane follow-up, and playback timing.
+
 ## 0.7.0-dev.7
 
 - Imported `EncodedSource` in the frame cursor contract.

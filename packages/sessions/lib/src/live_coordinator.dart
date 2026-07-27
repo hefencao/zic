@@ -106,6 +106,36 @@ final class LiveCoordinator implements Coordinator {
     }
   }
 
+  bool freezePlayback(DecodeId id) => uploads?.freezePlayback(id) ?? false;
+
+  bool resumePlayback(DecodeId id) => uploads?.resumePlayback(id) ?? false;
+
+  bool advanceDueFrame(String sessionId, DecodeId id) {
+    final frameIndex = uploads?.takeDueFrame(id);
+    if (frameIndex == null) {
+      return false;
+    }
+    return advanceFrame(sessionId, id, frameIndex);
+  }
+
+  bool advanceFrame(
+    String sessionId,
+    DecodeId id,
+    int frameIndex,
+  ) {
+    final registry = uploads;
+    if (registry == null) {
+      return false;
+    }
+    upload.cancel(id.key);
+    if (!registry.advance(id, frameIndex)) {
+      return false;
+    }
+    _wakeUpload(sessionId, id);
+    _wakeDecodes(sessionId, id.download);
+    return true;
+  }
+
   Future<void> dispose() async {
     for (final entry in _sourceListeners.entries) {
       registry.find(entry.key)?.removeSourceListener(entry.value);
@@ -294,6 +324,7 @@ final class LiveCoordinator implements Coordinator {
                 current,
                 token,
                 revision: _revision,
+                preparedDepth: uploads?.preparedDepth(entry.key) ?? 0,
               );
             }
             _wakeUpload(sessionId, entry.key);
@@ -314,7 +345,7 @@ final class LiveCoordinator implements Coordinator {
       }
       final id = entry.key;
       final demand = entry.value;
-      decode.replace(
+      decode.follow(
         key: id.key,
         priority: demand.priority,
         task: (token) async {
@@ -334,6 +365,7 @@ final class LiveCoordinator implements Coordinator {
                   current,
                   token,
                   revision: _revision,
+                  preparedDepth: uploads?.preparedDepth(id) ?? 0,
                 );
               }
             }
@@ -371,7 +403,12 @@ final class LiveCoordinator implements Coordinator {
         );
         continue;
       }
-      _submitUpload(sessionId, entry.key, entry.value);
+      _submitUpload(
+        sessionId,
+        entry.key,
+        entry.value,
+        replace: diff.changed.containsKey(entry.key),
+      );
     }
   }
 
@@ -380,7 +417,7 @@ final class LiveCoordinator implements Coordinator {
     if (demand == null || (onUpload == null && uploads == null)) {
       return;
     }
-    _submitUpload(sessionId, id, demand, replace: true);
+    _submitUpload(sessionId, id, demand, follow: true);
   }
 
   void _submitUpload(
@@ -388,8 +425,13 @@ final class LiveCoordinator implements Coordinator {
     DecodeId id,
     UploadDemand demand, {
     bool replace = false,
+    bool follow = false,
   }) {
-    final submit = replace ? upload.replace : upload.submit;
+    final submit = replace
+        ? upload.replace
+        : follow
+            ? upload.follow
+            : upload.submit;
     submit(
       key: id.key,
       priority: demand.priority,

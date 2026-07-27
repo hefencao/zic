@@ -44,11 +44,13 @@ final class DecodeRegistry {
     DecodeDemand demand,
     CancelToken token, {
     required int revision,
+    int preparedDepth = 0,
   }) async {
     await get(id).fill(
       demand: demand,
       revision: revision,
       cancel: token,
+      preparedDepth: preparedDepth,
     );
   }
 

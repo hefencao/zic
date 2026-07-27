@@ -8,6 +8,7 @@ export 'src/download_registry.dart';
 export 'src/download_session.dart';
 export 'src/live_coordinator.dart';
 export 'src/net_lane.dart';
+export 'src/playback_timer.dart';
 export 'src/startup_recovery.dart';
 export 'src/retry_policy.dart';
 export 'src/upload_registry.dart';

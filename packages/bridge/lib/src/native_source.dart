@@ -95,14 +95,14 @@ final class NativeSource implements EncodedSource {
           offset,
           nullptr.cast<Uint8>(),
           0,
-        ),
+        )
       ];
     }
     final data = calloc<Uint8>(bytes.length);
     try {
       data.asTypedList(bytes.length).setAll(0, bytes);
       return SourceStatus.values[
-        _api.append(_requirePtr(), epoch, offset, data, bytes.length),
+        _api.append(_requirePtr(), epoch, offset, data, bytes.length)
       ];
     } finally {
       calloc.free(data);

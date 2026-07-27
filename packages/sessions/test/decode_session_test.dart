@@ -135,6 +135,51 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('prepared output contributes to the target watermark', () async {
+    final temp = await Directory.systemTemp.createTemp('decode_prepared_test_');
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final cursors = _CursorFactory();
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: cursors,
+      clock: _Clock(),
+    );
+
+    await decode.fill(
+      demand: const DecodeDemand(
+        role: PageRole.current,
+        priority: 1000,
+        targetWatermark: 1,
+        reason: 'prepared',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+      preparedDepth: 1,
+    );
+
+    expect(decode.snapshot.depth, 0);
+    expect(cursors.cursors.single.next, 0);
+
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
 }
 
 DownloadId _downloadId() => DownloadId(
@@ -211,7 +256,9 @@ final class _Source implements EncodedSource {
 }
 
 final class _CursorFactory implements CursorFactory {
-  int created = 0;
+  final List<_Cursor> cursors = <_Cursor>[];
+
+  int get created => cursors.length;
 
   @override
   FrameCursor create({
@@ -219,8 +266,9 @@ final class _CursorFactory implements CursorFactory {
     required EncodedSource source,
     required int epoch,
   }) {
-    created++;
-    return _Cursor(epoch);
+    final cursor = _Cursor(epoch);
+    cursors.add(cursor);
+    return cursor;
   }
 }
 
