@@ -38,8 +38,8 @@ void main() {
       <String>['chapter-1', 'chapter-2'],
     );
     expect(comic.totalPages, 4);
-    expect(comic.latestChapter.chapter.chapterId, 'chapter-2');
-    expect(comic.resumeChapter.chapter.chapterId, 'chapter-1');
+    expect(comic.latestChapter!.chapter.chapterId, 'chapter-2');
+    expect(comic.resumeChapter!.chapter.chapterId, 'chapter-1');
   });
 
   test('library aggregation emits one comic per comic identity', () {
@@ -105,7 +105,7 @@ void main() {
 
     expect(comic.authors, containsAll(<String>['作者 A', '作者 B']));
     expect(comic.description, '远程简介');
-    expect(comic.coverChapter.chapter.chapterId, 'chapter-meta-2');
+    expect(comic.coverChapter!.chapter.chapterId, 'chapter-meta-2');
   });
 
   test('same native comic id from different sources stays separated', () {
@@ -131,6 +131,100 @@ void main() {
     expect(comics, hasLength(2));
     expect(comics.map((comic) => comic.sourceId),
         containsAll(<String>['local-folder', 'remote-fixture']));
+  });
+
+
+  test('saved remote comic projects a whole work without importing chapters', () {
+    final manifest = _remoteManifest(
+      sourceId: 'remote-source',
+      comicId: 'saved-comic',
+      chapterTitles: const <String>['第 1 话', '第 2 话'],
+    );
+    final saved = SavedComicRecord.fromManifest(
+      manifest,
+      savedAt: DateTime.utc(2026, 7, 28),
+      updatedAt: DateTime.utc(2026, 7, 28, 1),
+    );
+
+    final comic = aggregateImportedLibrary(
+      const <ImportedLibraryEntry>[],
+      savedComics: <SavedComicRecord>[saved],
+    ).single;
+
+    expect(comic.sourceId, 'remote-source');
+    expect(comic.comicId, 'saved-comic');
+    expect(comic.chapters, isEmpty);
+    expect(comic.sourceChapters, hasLength(2));
+    expect(comic.resumeChapter, isNull);
+    expect(comic.hasSourceCatalog, isTrue);
+  });
+
+  test('source migration only marks title and sequence matches exact', () {
+    final sourceEntry = ImportedLibraryEntry(
+      chapter: _chapter(
+        chapterId: 'source-chapter-1',
+        title: '第 1 话',
+        sequence: 1,
+        importedAt: DateTime.utc(2026, 7, 28),
+      ).copyWith(sourceId: 'source-a'),
+      progress: ReadingProgress(
+        comicId: 'comic-1',
+        chapterId: 'source-chapter-1',
+        pageIndex: 1,
+        subPageOffset: 0.5,
+        readerMode: ReaderMode.continuous,
+        updatedAt: DateTime.utc(2026, 7, 28, 1),
+      ),
+    );
+    final source = LibraryComic.fromEntries(<ImportedLibraryEntry>[sourceEntry]);
+    final target = _remoteManifest(
+      sourceId: 'source-b',
+      comicId: 'target-comic',
+      chapterTitles: const <String>['第 1 话'],
+    );
+
+    final plan = ComicSourceMigrationPlan.build(
+      source: source,
+      target: target,
+    );
+
+    expect(plan.chapterMatches, hasLength(1));
+    expect(
+      plan.chapterMatches.single.confidence,
+      ChapterMigrationConfidence.exact,
+    );
+    final migrated = plan.migratePreference(
+      ComicPreference.defaults(comicId: source.comicId).copyWith(
+        liked: true,
+        collected: true,
+        categoryIds: const <String>{'reading'},
+      ),
+      targetCustomOrder: 9,
+    );
+    expect(migrated.comicId, 'target-comic');
+    expect(migrated.liked, isTrue);
+    expect(migrated.collected, isTrue);
+    expect(migrated.categoryIds, contains('reading'));
+    expect(migrated.customOrder, 9);
+  });
+
+  test('saved comic JSON keeps a lightweight chapter catalog', () {
+    final saved = SavedComicRecord.fromManifest(
+      _remoteManifest(
+        sourceId: 'remote-json',
+        comicId: 'comic-json',
+        chapterTitles: const <String>['第一章'],
+      ),
+      savedAt: DateTime.utc(2026, 7, 28),
+      updatedAt: DateTime.utc(2026, 7, 28, 2),
+    );
+
+    final restored = SavedComicRecord.fromJson(saved.toJson());
+    expect(restored.toJson(), saved.toJson());
+    expect(restored.chapters.single.title, '第一章');
+
+    final legacy = Map<String, Object?>.from(saved.toJson())..remove('chapters');
+    expect(SavedComicRecord.fromJson(legacy).chapters, isEmpty);
   });
 
   test('chapter JSON remains compatible while persisting aggregate metadata', () {
@@ -239,3 +333,32 @@ ImportedChapterRecord _chapter({
     ],
   );
 }
+
+
+ComicManifest _remoteManifest({
+  required String sourceId,
+  required String comicId,
+  required List<String> chapterTitles,
+}) =>
+    ComicManifest(
+      comic: Comic(
+        comicId: comicId,
+        sourceId: sourceId,
+        title: '远程漫画',
+        authors: const <String>['作者'],
+        coverUri: Uri.https('example.invalid', '/cover.png'),
+        description: '简介',
+        readingDirection: ReadingDirection.ltr,
+      ),
+      chapters: <Chapter>[
+        for (var index = 0; index < chapterTitles.length; index++)
+          Chapter(
+            chapterId: '$sourceId-chapter-${index + 1}',
+            comicId: comicId,
+            title: chapterTitles[index],
+            sequence: index + 1,
+            pageCount: 2,
+            sourceRevision: '$sourceId-r${index + 1}',
+          ),
+      ],
+    );

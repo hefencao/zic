@@ -79,11 +79,58 @@ void main() {
     expect(find.byKey(bookshelfSourceFilterKey), findsOneWidget);
     expect(find.byKey(bookshelfSortKey), findsOneWidget);
     expect(find.byKey(bookshelfViewKey), findsOneWidget);
-    final shelfCover = find.byKey(comicCoverKey(chapter.comicId));
+    final shelfCover = find.byKey(comicCoverKey(chapter.sourceId, chapter.comicId));
     expect(shelfCover, findsOneWidget);
     expect(tester.getSize(shelfCover), homeCoverSize);
     expect(homeCoverSize.width, ComicCoverCard.cardWidth);
     expect(homeCoverSize.height, ComicCoverCard.cardExtent);
+  });
+
+  testWidgets('same native comic id from different sources keeps separate UI selection',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    const comicId = 'shared-native-id';
+    await store.upsertSavedComic(
+      SavedComicRecord(
+        sourceId: 'source-a',
+        comicId: comicId,
+        title: '来源 A 漫画',
+        savedAt: DateTime.utc(2026, 7, 28),
+        updatedAt: DateTime.utc(2026, 7, 28),
+      ),
+    );
+    await store.upsertSavedComic(
+      SavedComicRecord(
+        sourceId: 'source-b',
+        comicId: comicId,
+        title: '来源 B 漫画',
+        savedAt: DateTime.utc(2026, 7, 28),
+        updatedAt: DateTime.utc(2026, 7, 28, 1),
+      ),
+    );
+    await store.saveComicPreference(
+      ComicPreference.defaults(comicId: comicId).copyWith(inShelf: true),
+    );
+
+    await tester.pumpWidget(App(libraryStore: store));
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
+    await tester.pump(const Duration(milliseconds: 320));
+
+    final first = find.byKey(comicCoverKey('source-a', comicId));
+    final second = find.byKey(comicCoverKey('source-b', comicId));
+    expect(first, findsOneWidget);
+    expect(second, findsOneWidget);
+
+    await tester.tap(find.byKey(bookshelfManageKey));
+    await tester.pump(const Duration(milliseconds: 320));
+    await tester.tap(first);
+    await tester.pump(const Duration(milliseconds: 320));
+
+    expect(tester.widget<ComicCoverCard>(first).selected, isTrue);
+    expect(tester.widget<ComicCoverCard>(second).selected, isFalse);
   });
 
   testWidgets('custom sort keeps gallery view and long-press drag order',
@@ -99,26 +146,26 @@ void main() {
     await tester.pumpWidget(App(libraryStore: store));
     await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
     await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 320));
 
     await tester.tap(find.byKey(bookshelfSortKey));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 320));
     await tester.tap(find.text('自定义排序'));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 320));
     await tester.tap(find.byKey(bookshelfManageKey));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 320));
 
     expect(find.byType(LongPressDraggable<String>), findsNWidgets(2));
     expect(find.byType(GridView), findsOneWidget);
 
-    final firstCover = find.byKey(comicCoverKey(first.comicId));
-    final secondCover = find.byKey(comicCoverKey(second.comicId));
+    final firstCover = find.byKey(comicCoverKey(first.sourceId, first.comicId));
+    final secondCover = find.byKey(comicCoverKey(second.sourceId, second.comicId));
     final gesture = await tester.startGesture(tester.getCenter(firstCover));
     await tester.pump(const Duration(milliseconds: 700));
     await gesture.moveTo(tester.getCenter(secondCover));
     await tester.pump(const Duration(milliseconds: 100));
     await gesture.up();
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 320));
 
     final firstPreference = await store.getComicPreference(first.comicId);
     final secondPreference = await store.getComicPreference(second.comicId);
@@ -127,7 +174,7 @@ void main() {
     expect(firstPreference!.customOrder, greaterThan(secondPreference!.customOrder));
 
     await tester.tap(find.byKey(bookshelfViewKey));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 320));
     expect(find.byType(ReorderableListView), findsOneWidget);
     expect(find.byTooltip('切换画廊视图'), findsOneWidget);
   });
@@ -143,31 +190,31 @@ void main() {
     await tester.pumpWidget(App(libraryStore: store));
     await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
     await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 320));
 
     await tester.tap(find.byKey(bookshelfAddCategoryKey));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 320));
     await tester.enterText(find.byType(TextField), '测试分类');
     await tester.tap(find.widgetWithText(FilledButton, '创建'));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 320));
 
     await tester.tap(find.text('测试分类'));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 320));
     expect(find.byKey(bookshelfAddComicToCategoryKey), findsOneWidget);
-    expect(find.byKey(comicCoverKey(chapter.comicId)), findsNothing);
+    expect(find.byKey(comicCoverKey(chapter.sourceId, chapter.comicId)), findsNothing);
 
     await tester.tap(find.byKey(bookshelfAddComicToCategoryKey));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 320));
     await tester.tap(find.byType(CheckboxListTile));
     await tester.pump();
     await tester.tap(find.widgetWithText(FilledButton, '添加'));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 320));
 
     final categories = await store.listCategories();
     final preference = await store.getComicPreference(chapter.comicId);
     expect(categories, hasLength(1));
     expect(preference?.categoryIds, contains(categories.single.categoryId));
-    expect(find.byKey(comicCoverKey(chapter.comicId)), findsOneWidget);
+    expect(find.byKey(comicCoverKey(chapter.sourceId, chapter.comicId)), findsOneWidget);
   });
 
   testWidgets('management selection exposes move actions and isolates delete',
@@ -200,22 +247,22 @@ void main() {
     await tester.pumpWidget(App(libraryStore: store));
     await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
     await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 320));
     await tester.tap(find.byKey(bookshelfManageKey));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(comicCoverKey(chapter.comicId)));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 320));
+    await tester.tap(find.byKey(comicCoverKey(chapter.sourceId, chapter.comicId)));
+    await tester.pump(const Duration(milliseconds: 320));
 
     expect(find.byKey(bookshelfManagementBarKey), findsOneWidget);
     expect(find.byTooltip('移动到其他分类'), findsOneWidget);
     expect(find.byTooltip('复制漫画信息'), findsOneWidget);
-    expect(find.byKey(comicDeleteKey(chapter.comicId)), findsOneWidget);
+    expect(find.byKey(comicDeleteKey(chapter.sourceId, chapter.comicId)), findsOneWidget);
     expect(find.byKey(comicDetailsScreenKey), findsNothing);
 
     await tester.tap(find.byTooltip('移动到其他分类'));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 320));
     await tester.tap(find.text('移动到 分类二'));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 320));
 
     final preference = await store.getComicPreference(chapter.comicId);
     expect(preference?.categoryIds, contains(secondCategoryId));
@@ -291,7 +338,7 @@ void main() {
       find.byKey(chapterReadKey(chapter.chapterId)),
       const Offset(320, 0),
     );
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 320));
     expect(read, isFalse);
   });
 

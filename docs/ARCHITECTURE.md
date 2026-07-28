@@ -254,12 +254,14 @@ chapter/comic identity 校验后恢复页码与 paged/continuous 模式。
 桌面使用原路径。`ImportedLibraryStore` 在 upsert 时按旧当前页的 source identity 迁移进度，
 避免前置页面新增或删除导致阅读对象漂移。
 
-`catalog/LibraryComic` 是持久化章节快照上的只读漫画级投影：它聚合同一漫画的章节，
-解析 cover/latest/resume chapter、作者、简介、总页数与更新时间，供 Home、Bookshelf 和详情页共享。
-统一详情页再把该持久化子集与 `BrowsableComicSource.loadComic` 返回的完整上游目录按
-`sourceId + chapterId` 合并。上游新章节不会因刷新自动持久化；上游暂时缺失的已保存章节
-保留为本地记录。聚合不写数据库、不接管 Reader/DownloadSession，也不隐藏 chapter identity；
-目录刷新、阅读进度、read state 和删除级联仍由原 store/session 契约负责。
+`catalog/LibraryComic` 是 `SavedComicRecord` 与持久化章节上的只读漫画级投影，聚合身份为
+`sourceId + comicId`。`SavedComicRecord` 可在零章节时保存整部漫画元数据和轻量来源目录；
+章节记录继续拥有页面 manifest、进度和 read state。Home 与 Bookshelf 只消费该投影。
+
+详情保留两个状态所有者：远程页加载完整上游目录，本地页读取保存的目录快照和持久章节。
+两页共享呈现组件并通过集中路由选择，但不会合并生命周期。上游目录刷新不会自动下载章节；
+点击章节才确保 Reader manifest，行尾下载才创建持久离线 artifact。聚合不接管 source、
+Reader 或 DownloadSession 所有权，也不隐藏 chapter identity。
 
 非 Android：
 
@@ -772,7 +774,7 @@ history cards from persisted `ReadingProgress`. Bookshelf derives all views from
 persisted chapter records plus `ComicPreference`; source/category filters and
 sort modes do not create parallel copies of catalog data.
 
-`ImportedLibraryStore` schema version 3 owns `LibraryCategory`,
+`ImportedLibraryStore` schema version 4 owns source-aware `SavedComicRecord` plus `LibraryCategory`,
 `ComicPreference` and `ChapterReadState`. Preferences include shelf membership,
 liked/collected flags, category membership, source kind and custom order. Read
 state is intentionally distinct from precise Reader progress so restoring a
@@ -813,16 +815,16 @@ The App receives source instances through composition, derives the enabled/order
 management; a bottom strip switches only among enabled sources.
 
 `MangaDexSource` is the first implementation. Browse/detail/feed requests produce `Comic`,
-`Chapter` and `ChapterManifest` values. Saving or opening converts the manifest to
-`ImportedChapterRecord`; no source creates Reader controllers, DownloadSessions or artifacts.
-Source-browser cover requests use `loadResource`, while chapter pages are downloaded by the existing
-Reader transport and promoted-artifact path.
+`Chapter` and `ChapterManifest` values. Whole-comic preference actions persist `SavedComicRecord`;
+opening or downloading one chapter converts only that chapter manifest to `ImportedChapterRecord`.
+No source creates Reader controllers, DownloadSessions or artifacts. Source-browser cover requests
+use `loadResource`, while chapter pages are downloaded by the existing Reader transport and
+promoted-artifact path.
 
 Remote delivery URLs are mutable. `ImportedPageRecord.pageId` stores the source-provided stable page
 identity separately from `sourceId`/URI. A remote chapter resolves a fresh manifest before opening,
 and store reconciliation follows `stablePageId`; a unique display-name fallback only supports
-records written before page IDs existed. SQLite schema version 3 adds `comic_source_preference` and
-migrates version 2 without changing chapter/progress ownership.
+records written before page IDs existed. SQLite schema version 3 added `comic_source_preference`; version 4 adds `saved_comic` with a composite `(source_id, comic_id)` key without changing legacy chapter/progress ownership.
 
 This contract is intentionally smaller than a Mihon extension runtime. External extension support
 must be an isolated adapter with explicit lifecycle, permissions, version compatibility and failure
@@ -839,3 +841,21 @@ capability is reviewable and reproducible from repository source.
 This host preparation is separate from `Transport`. `HttpTransport` continues to own request/response
 semantics, range validators and socket failures. Source presentation receives structured failures and
 may format/copy diagnostics, but it does not resolve DNS, open sockets or alter TLS policy.
+
+## 3.13 Detail ownership, durable comic records and source migration
+
+`RemoteComicDetailsScreen` and `LocalComicDetailsScreen` compose shared presentation widgets but own
+different state. `resolveComicDetailsRoute` is the only source-card routing decision and checks exact
+`sourceId + comicId` durability. `SavedComicRecord` lets whole-comic preference actions retain metadata
+and a source chapter catalog independently of imported chapters.
+
+`PersistentChapterDownloadService` owns the durable offline root and index. It reuses the existing
+transport/download session machinery, promotes every page, verifies chapter completeness and exposes
+page-byte reads after restart. Reader may consume those bytes, but details Widgets only submit commands
+and display status.
+
+Cross-source migration creates a target comic copy rather than mutating source identity. Exact
+normalized-title plus sequence matches can rehydrate target chapter metadata and copy bounded progress
+and read state. Source URLs, caches and original records are never transferred or deleted. Until schema
+version 5 makes all preference/chapter/progress/read keys source-composite, native-ID collisions are
+explicitly rejected or skipped.

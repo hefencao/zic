@@ -418,8 +418,8 @@
    unread swipe. **Implemented for grouped persisted chapters.**
 5. Group local/remote chapter records into comic-level detail models.
    **Implemented for persisted chapter records.**
-6. Bind authoritative DownloadSession progress and per-chapter download commands to
-   the comic-level projection. **Next.**
+6. Bind per-chapter durable download commands to the comic-level projection.
+   **Implemented in 0.23.0-dev.27; authoritative cover progress/cancel/retry UI remains next.**
 
 
 ## Android library management and Reader controls slice
@@ -432,10 +432,10 @@
    **Implemented.**
 4. Add custom gallery long-press drag and list reordering. **Implemented.**
 5. Add immersive Reader overlays, slider, animation controls, rotation, favorite and cache command.
-   **Implemented; chapter cache remains session-scoped unless an external durable callback is supplied.**
+   **Implemented; 0.23.0-dev.27 supplies the durable chapter-download callback.**
 6. Add page-local pinch/double-tap zoom with PageView gesture arbitration and navigation reset.
    **Implemented.**
-7. Move Reader chapter cache to durable storage and bind authoritative aggregate progress. **Next.**
+7. Move Reader chapter cache to durable storage. **Implemented in 0.23.0-dev.27; authoritative aggregate progress and download management remain next.**
 
 
 ## Remote comic source browser slice
@@ -449,7 +449,7 @@
    plus existing Reader artifact ingress. **Implemented with MangaDex.**
 5. Persist page identity independently of mutable remote delivery URLs and reconcile progress across
    refresh. **Implemented.**
-6. Add source account/auth settings, update polling and durable offline download state. **Next.**
+6. Add source account/auth settings and update polling. Durable chapter offline state is implemented in 0.23.0-dev.27; management/cancel/retry UI remains next.
 7. Evaluate a sandboxed Mihon/Keiyoushi adapter after defining plugin ABI, permissions, lifecycle and
    compatibility policy. **Later; do not embed extension code in Widgets.**
 
@@ -464,7 +464,7 @@
 4. Validate native platform HTTP adapters for proxy/VPN parity before changing the core streaming
    transport. **Next; no TLS or hostname bypass is permitted.**
 
-## Unified comic-details and refresh slice
+## Superseded unified comic-details and refresh slice
 
 1. Route source browse, Home updates, reading history and Bookshelf through one details component.
    **Implemented in 0.22.0-dev.26.**
@@ -479,3 +479,19 @@
 6. Add durable source update timestamps and update ingestion for the Home update rail.
    **Next.**
 
+
+## Two detail owners, whole-comic shelf and source migration slice
+
+1. Restore separate remote and local state owners while sharing stable details components and one exact
+   route decision. **Implemented in 0.23.0-dev.27.**
+2. Persist whole-comic metadata/catalog independently of chapters and migrate SQLite to schema 4.
+   **Implemented.**
+3. Make liked/shelf/collected/category actions whole-comic operations; make the chapter trailing action
+   a durable download. **Implemented.**
+4. Reuse complete persistent chapter artifacts in Reader after restart. **Implemented.**
+5. Copy cross-source preferences and only exact chapter/progress/read matches after resolving target
+   manifests; retain original source and bytes. **Implemented with native-ID collision guards.**
+6. Migrate all legacy keys to source-composite schema 5 and add download management/cancel/retry.
+   **Next.**
+7. Add target-source search and candidate comparison before migration instead of requiring a manual ID.
+   **Next.**

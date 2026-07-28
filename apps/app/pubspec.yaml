@@ -1,7 +1,7 @@
 name: zic
 description: zic Flutter application.
 publish_to: none
-version: 0.22.0+26
+version: 0.23.0+27
 resolution: workspace
 
 environment:

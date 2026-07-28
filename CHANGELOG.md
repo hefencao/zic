@@ -1,3 +1,29 @@
+## 0.23.0-dev.27 — two detail owners, whole-comic shelf, durable chapter downloads
+
+- Replace the single stateful details owner with `RemoteComicDetailsScreen` and
+  `LocalComicDetailsScreen`, while reusing the same header, preference/category controls, chapter
+  rows, error panel and pull-to-refresh scaffold.
+- Centralize exact `sourceId + comicId` routing: an unsaved source work stays remote; durable comic
+  metadata or chapters route the same source work to local details.
+- Add `SavedComicRecord` and SQLite schema version 4 so a whole comic can be liked, collected or
+  added to the shelf without importing an arbitrary chapter. Persist a lightweight source chapter
+  catalog for the local details page.
+- Make the primary chapter trailing action a durable offline download. Persist promoted page
+  artifacts outside the Reader session workspace and reuse complete offline bytes after restart;
+  the in-memory fallback also owns actual page bytes before reporting completion.
+- Add conservative cross-source copy migration for whole-comic preferences plus exact
+  title-and-sequence chapter matches. Search the selected target source by the current title, let the
+  user choose a candidate (with manual native-ID fallback), fetch target manifests anew, clamp
+  migrated progress, copy read state, retain the original source and never copy source URLs or
+  offline bytes.
+- Use source-aware comic identities for aggregation, management selection, category insertion,
+  custom drag targets and Widget keys. Guard legacy native-ID collisions instead of overwriting the
+  current preference/chapter/read tables.
+- Fix the missing `ImportedChapterRecord` import reported by the compiler and replace fragile
+  indefinite animation settling/off-screen taps with state-bound product regressions.
+- Replace the framework multi-tap recognizer dependency with a Reader-owned tap window so double-tap
+  zoom keeps the real gesture path without leaving a pending test timer.
+
 ## 0.22.0-dev.26 — unified source-aware comic details and pull refresh
 
 - Replace the separate remote details presentation with one `UnifiedComicDetailsScreen` used by

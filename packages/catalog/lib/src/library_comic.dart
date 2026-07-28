@@ -1,11 +1,15 @@
-import 'imported_library_store.dart';
-import 'imported_chapter.dart';
+import 'package:domain/domain.dart';
 
-/// Comic-level projection over one or more persisted chapter entries.
+import 'imported_chapter.dart';
+import 'imported_library_store.dart';
+import 'saved_comic.dart';
+
+/// Read-only comic projection over durable comic metadata and any persisted
+/// chapter entries.
 ///
-/// The aggregate does not own storage. It groups immutable store snapshots so
-/// Home, Bookshelf and details routes share one comic identity while chapter
-/// refresh/progress remain authoritative in [ImportedLibraryStore].
+/// A comic may contain zero chapters: adding a remote work to the shelf or
+/// collecting it must not implicitly persist an arbitrary chapter. Chapter
+/// progress, read state and offline bytes remain chapter-owned.
 final class LibraryComic {
   LibraryComic({
     required this.sourceId,
@@ -13,8 +17,18 @@ final class LibraryComic {
     required this.title,
     required Iterable<String> authors,
     required this.description,
+    required this.coverSourceId,
+    required this.readingDirection,
     required Iterable<ImportedLibraryEntry> chapters,
+    required Iterable<Chapter> sourceChapters,
+    required this.savedAt,
+    required this.metadataUpdatedAt,
   })  : authors = List<String>.unmodifiable(authors),
+        sourceChapters = List<Chapter>.unmodifiable(
+          sourceChapters.toList(growable: false)..sort(
+                (left, right) => left.sequence.compareTo(right.sequence),
+              ),
+        ),
         chapters = List<ImportedLibraryEntry>.unmodifiable(
           chapters.toList(growable: false)..sort(_compareChapters),
         ) {
@@ -22,9 +36,6 @@ final class LibraryComic {
         comicId.trim().isEmpty ||
         title.trim().isEmpty) {
       throw ArgumentError('source, comic identity and title must be non-empty');
-    }
-    if (this.chapters.isEmpty) {
-      throw ArgumentError.value(chapters, 'chapters', 'must not be empty');
     }
     for (final entry in this.chapters) {
       if (entry.chapter.sourceId != sourceId ||
@@ -38,53 +49,95 @@ final class LibraryComic {
     }
   }
 
-  factory LibraryComic.fromEntries(Iterable<ImportedLibraryEntry> entries) {
+  factory LibraryComic.fromEntries(
+    Iterable<ImportedLibraryEntry> entries, {
+    SavedComicRecord? savedComic,
+  }) {
     final chapters = entries.toList(growable: false);
-    if (chapters.isEmpty) {
-      throw ArgumentError.value(entries, 'entries', 'must not be empty');
+    if (chapters.isEmpty && savedComic == null) {
+      throw ArgumentError('a comic projection needs metadata or chapters');
     }
-    final sourceId = chapters.first.chapter.sourceId;
-    final comicId = chapters.first.chapter.comicId;
-    final newest = chapters.reduce(
-      (left, right) => right.chapter.importedAt.isAfter(left.chapter.importedAt)
-          ? right
-          : left,
-    );
-    final metadata = chapters.fold<ImportedLibraryEntry>(
-      newest,
-      (selected, entry) {
-        final selectedScore = _metadataScore(selected.chapter);
-        final entryScore = _metadataScore(entry.chapter);
-        if (entryScore != selectedScore) {
-          return entryScore > selectedScore ? entry : selected;
-        }
-        return entry.chapter.importedAt.isAfter(selected.chapter.importedAt)
-            ? entry
-            : selected;
-      },
-    );
-    final authors = <String>{};
+    final sourceId = savedComic?.sourceId ?? chapters.first.chapter.sourceId;
+    final comicId = savedComic?.comicId ?? chapters.first.chapter.comicId;
+    if (savedComic != null &&
+        chapters.any(
+          (entry) =>
+              entry.chapter.sourceId != sourceId ||
+              entry.chapter.comicId != comicId,
+        )) {
+      throw ArgumentError('saved metadata and chapters identify different comics');
+    }
+
+    ImportedLibraryEntry? metadataEntry;
+    for (final entry in chapters) {
+      final selected = metadataEntry;
+      if (selected == null ||
+          _metadataScore(entry.chapter) >
+              _metadataScore(selected.chapter) ||
+          (_metadataScore(entry.chapter) ==
+                  _metadataScore(selected.chapter) &&
+              entry.chapter.importedAt.isAfter(
+                selected.chapter.importedAt,
+              ))) {
+        metadataEntry = entry;
+      }
+    }
+    final metadata = metadataEntry?.chapter;
+    final authors = <String>{...?savedComic?.authors};
     for (final entry in chapters) {
       authors.addAll(entry.chapter.comicAuthors);
     }
+    final newestChapterAt = chapters.isEmpty
+        ? null
+        : chapters
+            .map((entry) => entry.chapter.importedAt)
+            .reduce((left, right) => right.isAfter(left) ? right : left);
+    final savedAt = savedComic?.savedAt ?? newestChapterAt!;
+    final metadataUpdatedAt = <DateTime>[
+      if (savedComic != null) savedComic.updatedAt,
+      if (newestChapterAt != null) newestChapterAt,
+    ].reduce((left, right) => right.isAfter(left) ? right : left);
+
     return LibraryComic(
       sourceId: sourceId,
       comicId: comicId,
-      title: metadata.chapter.comicTitle,
+      title: savedComic?.title ?? metadata!.comicTitle,
       authors: authors,
-      description: metadata.chapter.comicDescription,
+      description: savedComic?.description ?? metadata?.comicDescription,
+      coverSourceId: savedComic?.coverSourceId ?? metadata?.coverSourceId,
+      readingDirection:
+          savedComic?.readingDirection ?? metadata!.readingDirection,
       chapters: chapters,
+      sourceChapters: savedComic?.chapters
+              .map((chapter) => chapter.toChapter(comicId)) ??
+          const <Chapter>[],
+      savedAt: savedAt,
+      metadataUpdatedAt: metadataUpdatedAt,
     );
   }
+
+  factory LibraryComic.fromSaved(SavedComicRecord comic) =>
+      LibraryComic.fromEntries(
+        const <ImportedLibraryEntry>[],
+        savedComic: comic,
+      );
 
   final String sourceId;
   final String comicId;
   final String title;
   final List<String> authors;
   final String? description;
+  final String? coverSourceId;
+  final ReadingDirection readingDirection;
   final List<ImportedLibraryEntry> chapters;
+  final List<Chapter> sourceChapters;
+  final DateTime savedAt;
+  final DateTime metadataUpdatedAt;
 
+  String get identity => '$sourceId\u0000$comicId';
   bool get hasMultipleChapters => chapters.length > 1;
+  bool get hasChapters => chapters.isNotEmpty;
+  bool get hasSourceCatalog => sourceChapters.isNotEmpty;
 
   int get totalPages => chapters.fold<int>(
         0,
@@ -93,18 +146,23 @@ final class LibraryComic {
 
   Set<String> get sourceIds => Set<String>.unmodifiable(<String>{sourceId});
 
-  ImportedLibraryEntry get coverChapter {
+  ImportedLibraryEntry? get coverChapter {
     for (final chapter in chapters.reversed) {
       if (chapter.chapter.coverSourceId != null) {
         return chapter;
       }
     }
-    return chapters.first;
+    return chapters.isEmpty ? null : chapters.first;
   }
 
-  ImportedLibraryEntry get latestChapter => chapters.reduce(
-        (left, right) => _compareLatest(left, right) >= 0 ? left : right,
-      );
+  ImportedLibraryEntry? get latestChapter {
+    if (chapters.isEmpty) {
+      return null;
+    }
+    return chapters.reduce(
+      (left, right) => _compareLatest(left, right) >= 0 ? left : right,
+    );
+  }
 
   ImportedLibraryEntry? get lastReadChapter {
     ImportedLibraryEntry? selected;
@@ -122,17 +180,22 @@ final class LibraryComic {
     return selected;
   }
 
-  ImportedLibraryEntry get resumeChapter => lastReadChapter ?? latestChapter;
+  ImportedLibraryEntry? get resumeChapter => lastReadChapter ?? latestChapter;
 
-  DateTime get latestImportedAt => chapters.fold<DateTime>(
-        chapters.first.chapter.importedAt,
-        (latest, entry) => entry.chapter.importedAt.isAfter(latest)
-            ? entry.chapter.importedAt
-            : latest,
-      );
+  DateTime get latestImportedAt {
+    if (chapters.isEmpty) {
+      return savedAt;
+    }
+    return chapters.fold<DateTime>(
+      savedAt,
+      (latest, entry) => entry.chapter.importedAt.isAfter(latest)
+          ? entry.chapter.importedAt
+          : latest,
+    );
+  }
 
   DateTime get latestUpdatedAt {
-    var latest = chapters.first.chapter.importedAt;
+    var latest = metadataUpdatedAt;
     for (final entry in chapters) {
       if (entry.chapter.importedAt.isAfter(latest)) {
         latest = entry.chapter.importedAt;
@@ -147,19 +210,28 @@ final class LibraryComic {
 }
 
 List<LibraryComic> aggregateImportedLibrary(
-  Iterable<ImportedLibraryEntry> entries,
-) {
+  Iterable<ImportedLibraryEntry> entries, {
+  Iterable<SavedComicRecord> savedComics = const <SavedComicRecord>[],
+}) {
   final grouped = <String, List<ImportedLibraryEntry>>{};
   for (final entry in entries) {
     final identity = '${entry.chapter.sourceId}\u0000${entry.chapter.comicId}';
     grouped.putIfAbsent(identity, () => <ImportedLibraryEntry>[])..add(entry);
   }
-  final comics = grouped.values
-      .map(LibraryComic.fromEntries)
-      .toList(growable: false)
+  final savedByIdentity = <String, SavedComicRecord>{
+    for (final comic in savedComics) comic.identity: comic,
+  };
+  final identities = <String>{...grouped.keys, ...savedByIdentity.keys};
+  final comics = <LibraryComic>[
+    for (final identity in identities)
+      LibraryComic.fromEntries(
+        grouped[identity] ?? const <ImportedLibraryEntry>[],
+        savedComic: savedByIdentity[identity],
+      ),
+  ]
     ..sort((left, right) {
-      final recent = right.latestImportedAt.compareTo(left.latestImportedAt);
-      return recent != 0 ? recent : left.comicId.compareTo(right.comicId);
+      final recent = right.latestUpdatedAt.compareTo(left.latestUpdatedAt);
+      return recent != 0 ? recent : left.identity.compareTo(right.identity);
     });
   return List<LibraryComic>.unmodifiable(comics);
 }

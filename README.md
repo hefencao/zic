@@ -2,7 +2,7 @@
 
 `zic` 是从零开发的高性能漫画阅读器。当前版本已完成静态 Reader、可恢复下载、
 持久化缓存恢复、容量/LRU 策略、受控清理、失败退避重试、独立资源 lane、格式感知 ingress、
-decode/upload registry、frame holder、viewport 播放门控、帧字节预算、可运行的 Animated WebP App 入口、viewport/DPR 自适应显示目标、source-aware 解码 raster、Rust 增量 Animated WebP 解码基础，以及按 `sourceId + comicId` 聚合多章节的 Android Home/Bookshelf/详情闭环。`0.20.0-dev.23` 统一首页与书架封面、补齐分类与管理操作、自定义画廊拖动，并为 Reader 增加沉浸控制与缩放。`0.21.0-dev.24` 新增第三个漫画源页面、持久化源管理、底部源切换和首个可浏览的 MangaDex 远程源；远程章节继续进入现有目录库与 Reader artifact 管线。`0.21.1-dev.25` 修复生成 Android host 的发布联网权限，补充可选择/复制的完整漫画源错误诊断、连接超时和有界瞬时重试。`0.22.0-dev.26` 统一漫画源、首页更新、阅读历史和书架的详情页，并以来源感知的章节身份合并上游目录与已持久化章节，支持下拉更新。
+decode/upload registry、frame holder、viewport 播放门控、帧字节预算、可运行的 Animated WebP App 入口、viewport/DPR 自适应显示目标、source-aware 解码 raster、Rust 增量 Animated WebP 解码基础，以及按 `sourceId + comicId` 聚合多章节的 Android Home/Bookshelf/详情闭环。`0.20.0-dev.23` 统一首页与书架封面、补齐分类与管理操作、自定义画廊拖动，并为 Reader 增加沉浸控制与缩放。`0.21.0-dev.24` 新增第三个漫画源页面、持久化源管理、底部源切换和首个可浏览的 MangaDex 远程源；远程章节继续进入现有目录库与 Reader artifact 管线。`0.21.1-dev.25` 修复生成 Android host 的发布联网权限，补充可选择/复制的完整漫画源错误诊断、连接超时和有界瞬时重试。`0.22.0-dev.26` 验证了来源感知目录合并和下拉更新；`0.23.0-dev.27` 将状态所有权收敛为远程/本地两套详情页、共享稳定组件与集中路由，并补充整部漫画收藏/入架、章节持久下载及保守的跨源迁移。
 
 ```text
 ReaderView
@@ -69,9 +69,13 @@ flutter run -d android
 
 ## 漫画源
 
-主导航第三页为漫画源浏览，首次进入时才创建远程浏览页。顶部入口管理源的启用状态与顺序，页面底部在已启用源之间切换。当前内置 `MangaDexSource`，支持分页发现、标题搜索、详情、章节列表以及加入书架或直接打开。源层只产生 catalog manifest；漫画源、首页更新、阅读历史和书架入口复用同一个详情投影。完整上游章节目录按 `sourceId + chapterId` 与已保存章节合并，新发现章节在用户打开或明确加入前不会写入 `ImportedLibraryStore`；已保存但上游暂时缺失的章节继续显示为本地保留。远程章节写入后仍由 `ReaderRuntimeScreen -> DownloadSession -> promoted artifact` 读取。
+主导航第三页为漫画源浏览，首次进入时才创建远程浏览页。顶部入口管理源的启用状态与顺序，页面底部在已启用源之间切换。当前内置 `MangaDexSource`，支持分页发现、标题搜索、详情和章节列表。源层只产生 catalog manifest，不创建 Reader、DownloadSession 或数据库。
 
-详情页支持下拉更新和顶部刷新按钮。刷新只调用漫画源、目录扫描器和目录库各自的契约，不把网络、目录或 Reader 资源所有权转移到 Widget。远程作者、简介和封面身份随已保存章节向后兼容地持久化，因此从首页或历史进入时不会退化成另一套简化详情。
+详情采用两套状态所有者和一套共享呈现组件：未持久化的 `sourceId + comicId` 进入 `RemoteComicDetailsScreen`；整部漫画已经收藏、加入书架、喜欢，或已有持久章节时，同一源入口集中路由到 `LocalComicDetailsScreen`。两页复用封面/元数据头部、整部漫画偏好、分类、章节行、错误面板和下拉更新，但不会让远程瞬时目录与本地持久状态竞争同一个 Widget 生命周期。
+
+`SavedComicRecord` 独立保存整部漫画元数据和轻量章节目录，因此加入书架或收藏不再隐式导入任意章节。章节点击负责阅读；章节行尾部的主要持久操作是下载。远程章节在阅读或下载时才写入 `ImportedLibraryStore`，并继续由 `ReaderRuntimeScreen -> DownloadSession -> promoted artifact` 读取。完整章节离线 artifact 写入持久下载根，应用重启后 Reader 会优先复用。
+
+详情页支持下拉更新和顶部刷新按钮。远程页刷新源目录，本地页刷新保存的目录快照或本地文件夹；都不转移网络、目录或 Reader 资源所有权。不同来源迁移采用显式复制：用户先选择目标源，默认按当前标题搜索并从候选作品中确认，也可手动填写目标原生 ID。整部漫画偏好会复制到目标源，只有标题与序号同时匹配的章节才迁移经目标源重新解析的元数据、阅读位置和已读状态；源 URL、离线字节和原来源始终保留。当前旧偏好/章节表尚未完全使用来源复合主键，检测到原生 ID 冲突时会中止或跳过，而不是覆盖。
 
 远程图片交付 URI 可能变化，因此 `ImportedPageRecord` 单独保存源提供的稳定 page ID。每次打开远程章节会重新解析当前 manifest，再按稳定 page ID 迁移阅读位置。当前内置源只请求英文 safe/suggestive 内容，不包含账户登录、Cookie、反爬挑战或站点绕过。
 
@@ -98,9 +102,10 @@ Reader 默认以 `immersiveSticky` 进入并隐藏顶部、底部控制栏，轻
 底部滑杆直接提交有边界校验的 `ReaderController.requestPage`；旋转只改变页面呈现，
 不会重写下载 identity。双指缩放和双击缩放由当前页 `InteractiveViewer` 持有，放大时
 暂停 PageView 翻页，跳到其他页后重置旧页缩放。暂停和倍速继续复用原 `NativeWebpPlayer`
-与 Flutter codec 路径，不旁路 download identity、telemetry 或 raster 下采样。当前“缓存本章”
-会把本章页面推进到当前 Reader 会话的 promoted artifact；离开 Reader 后仍会清理临时根，
-持久离线下载状态与书架水位投影留给后续存储阶段。
+与 Flutter codec 路径，不旁路 download identity、telemetry 或 raster 下采样。Reader 的
+章节下载命令现在委托 `ChapterDownloadService`：完整章节写入持久离线根并由索引验证，
+重启后可直接读取；未完成下载仍由原 DownloadSession 恢复语义处理。下载管理页、取消/重试
+入口和封面权威水位仍是后续 UI 工作。
 
 Native 与 Flutter codec 使用同一个自适应物理显示目标：目标取实际预览区域的逻辑尺寸乘以设备 DPR，保持源图比例并按 8 个物理像素对齐。`RasterPlan` 再决定实际 decode raster：大图按目标下采样，小图保持原始画布，避免 animated codec 在合成局部子帧前先放大插值。极小素材显示时使用 nearest-neighbour，正常漫画页面继续使用平滑滤镜。Native 路径还会提前准备下一帧，并从帧时长中扣除准备耗时，避免解码时间把动画总时长拉长。
 

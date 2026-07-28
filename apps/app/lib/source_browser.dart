@@ -545,9 +545,12 @@ final class SourceComicDetailsScreen extends StatelessWidget {
     required this.loadCover,
     required this.reloadLibrary,
     required this.ensureSourceChapter,
+    required this.persistComic,
     required this.onPreferenceChanged,
     required this.onReadChanged,
     required this.onOpenChapter,
+    required this.onDownloadChapter,
+    required this.isChapterDownloaded,
     super.key,
   });
 
@@ -558,30 +561,30 @@ final class SourceComicDetailsScreen extends StatelessWidget {
   final details.ComicDetailsCoverLoader loadCover;
   final details.ComicDetailsLibraryReloader reloadLibrary;
   final details.ComicDetailsChapterEnsurer ensureSourceChapter;
+  final details.ComicDetailsComicPersister persistComic;
   final Future<void> Function(ComicPreference preference) onPreferenceChanged;
   final Future<void> Function(ImportedLibraryEntry chapter, bool isRead)
       onReadChanged;
   final details.ComicDetailsChapterOpener onOpenChapter;
+  final details.ComicDetailsChapterDownloader onDownloadChapter;
+  final details.ComicDetailsChapterDownloadStatus isChapterDownloaded;
 
   @override
   Widget build(BuildContext context) {
-    return details.UnifiedComicDetailsScreen(
+    return details.RemoteComicDetailsScreen(
       initialLibrary: initialLibrary,
-      sources: <details.ComicDetailsSourceBinding>[
-        details.ComicDetailsSourceBinding(
-          source: source,
-          comicId: summary.comicId,
-          summary: summary,
-        ),
-      ],
-      initialSourceId: source.sourceId,
+      source: source,
+      summary: summary,
       categories: categories,
       loadCover: loadCover,
       reloadLibrary: reloadLibrary,
       ensureSourceChapter: ensureSourceChapter,
+      persistComic: persistComic,
       onPreferenceChanged: onPreferenceChanged,
       onReadChanged: onReadChanged,
       onOpenChapter: onOpenChapter,
+      onDownloadChapter: onDownloadChapter,
+      isChapterDownloaded: isChapterDownloaded,
     );
   }
 }
@@ -689,24 +692,6 @@ final class _SourceFailurePanel extends StatelessWidget {
                   const SizedBox(height: 8),
                   Text(failure.guidance, textAlign: TextAlign.center),
                   const SizedBox(height: 14),
-                  DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: colors.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 220),
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.all(12),
-                        child: SelectableText(
-                          failure.details,
-                          key: comicSourceErrorDetailsKey,
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
                   Wrap(
                     alignment: WrapAlignment.center,
                     spacing: 10,
@@ -726,6 +711,24 @@ final class _SourceFailurePanel extends StatelessWidget {
                         label: const Text('复制完整错误'),
                       ),
                     ],
+                  ),
+                  const SizedBox(height: 14),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: colors.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 220),
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(12),
+                        child: SelectableText(
+                          failure.details,
+                          key: comicSourceErrorDetailsKey,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                    ),
                   ),
                 ],
               ),

@@ -830,7 +830,9 @@ def check_compile_regressions() -> None:
         'reportFirstFrame',
         'InteractiveViewer(',
         'maxScale: 5',
-        'onDoubleTapDown: _toggleZoom',
+        'onPointerDown: _handlePointerDown',
+        'onPointerUp: _handlePointerUp',
+        '_singleTapTimer',
         'NeverScrollableScrollPhysics',
         'rotationQuarterTurns',
     ):
@@ -1156,7 +1158,9 @@ def check_compile_regressions() -> None:
         ROOT / 'packages/storage/lib/src/sqlite_imported_library_store.dart'
     ).read_text(encoding='utf-8')
     for required in (
-        'PRAGMA user_version = 3',
+        'PRAGMA user_version = 4',
+        'saved_comic',
+        'upsertSavedComic',
         'library_category',
         'comic_preference',
         'chapter_read_state',
@@ -1246,27 +1250,68 @@ def check_compile_regressions() -> None:
     if 'tester.doubleTap(' in reader_navigation_test:
         fail('Reader gesture test must use SDK-compatible real tap events')
     if 'Duration(milliseconds: 400)' not in reader_navigation_test:
-        fail('Reader double-tap test must drain the framework recognizer timer')
+        fail('Reader double-tap test must drain the app-owned tap window')
     for required in (
-        'final class UnifiedComicDetailsScreen',
-        'final class ComicDetailsSourceBinding',
+        'final class LocalComicDetailsScreen',
+        'final class RemoteComicDetailsScreen',
+        'ComicDetailsRouteKind resolveComicDetailsRoute',
         'final class ComicDetailsLibrarySnapshot',
+        'final class _ComicDetailsScaffold',
+        'final class _ComicDetailsHeader',
+        'final class _ComicChapterList',
         'RefreshIndicator(',
         'AlwaysScrollableScrollPhysics',
-        '_projectedChapters',
-        'upstreamAvailable',
-        'comicDetailsSourceFilterKey',
         'comicDetailsReadKey(',
-        'dismissThresholds:',
+        'comicDetailsDownloadKey(',
         'DismissDirection.startToEnd',
         'ensureSourceChapter',
+        'persistComic',
         'reloadLibrary(refreshContent:',
         'SelectableText(failure.details)',
     ):
         if required not in details_ui:
-            fail(f'unified comic details UI is incomplete: {required}')
+            fail(f'local/remote comic details UI is incomplete: {required}')
+    saved_comic = (
+        ROOT / 'packages/catalog/lib/src/saved_comic.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class SavedComicRecord',
+        'final class SavedChapterRecord',
+        'SavedComicRecord.fromManifest',
+        "'chapters': chapters.map",
+    ):
+        if required not in saved_comic:
+            fail(f'comic-level durable metadata is incomplete: {required}')
+    downloads = (ROOT / 'apps/app/lib/chapter_downloads.dart').read_text(
+        encoding='utf-8',
+    )
+    for required in (
+        'abstract interface class ChapterDownloadService',
+        'final class MemoryChapterDownloadService',
+        'final class PersistentChapterDownloadService',
+        'ChapterPageLoader',
+        '_chapters[_identity(entry)]',
+        'DownloadJob(',
+        'DownloadState.promoted',
+        'offline_chapters',
+    ):
+        if required not in downloads:
+            fail(f'durable chapter download service is incomplete: {required}')
+    migration = (
+        ROOT / 'packages/catalog/lib/src/comic_source_migration.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class ComicSourceMigrationPlan',
+        'ChapterMigrationConfidence',
+        'migratePreference',
+    ):
+        if required not in migration:
+            fail(f'comic source migration contract is incomplete: {required}')
 
     home = (ROOT / 'apps/app/lib/demo_home.dart').read_text(encoding='utf-8')
+    if 'String? _managedComicId;' in home:
+        fail('bookshelf management selection must use source-aware comic identity')
+
     for required in (
         'homeUpdatesSectionKey',
         'homeHistorySectionKey',
@@ -1283,11 +1328,19 @@ def check_compile_regressions() -> None:
         '_moveComicToCategory',
         'bookshelfManagementBarKey',
         'ComicDownloadProgress',
-        'aggregateImportedLibrary(_libraryEntries)',
+        'aggregateImportedLibrary(',
+        'savedComics: _savedComics',
+        'comicCoverKey(String sourceId, String comicId)',
+        '_managedComicIdentity',
+        'comic.identity',
         'final LibraryComic comic',
         '_sourcePageVisited',
         'ComicSourcesPage(',
         'comicSourceManageKey',
+        '_selectSourceMigrationTarget',
+        "label: const Text('搜索同名作品')",
+        "throw StateError('目标漫画源返回了不匹配的漫画或章节身份')",
+        "throw StateError('目标漫画源返回了不匹配的章节详情身份')",
         "label: '漫画源'",
     ):
         if required not in home:

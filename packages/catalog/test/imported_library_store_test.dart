@@ -169,6 +169,47 @@ void main() {
       isEmpty,
     );
   });
+
+  test('memory library keeps a whole comic without an imported chapter', () async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final manifest = _savedManifest();
+    final saved = SavedComicRecord.fromManifest(
+      manifest,
+      savedAt: DateTime.utc(2026, 7, 28),
+      updatedAt: DateTime.utc(2026, 7, 28, 1),
+    );
+    final preference = ComicPreference.defaults(
+      comicId: manifest.comic.comicId,
+      sourceKind: ComicSourceKind.remote,
+    ).copyWith(
+      inShelf: true,
+      collected: true,
+      updatedAt: DateTime.utc(2026, 7, 28, 2),
+    );
+
+    await store.upsertSavedComic(saved);
+    await store.saveComicPreference(preference);
+
+    expect(await store.list(), isEmpty);
+    expect(
+      (await store.getSavedComic('fixture-source', 'fixture-comic'))?.toJson(),
+      saved.toJson(),
+    );
+    expect(
+      aggregateImportedLibrary(
+        await store.list(),
+        savedComics: await store.listSavedComics(),
+      ).single.sourceChapters,
+      hasLength(2),
+    );
+
+    await store.removeSavedComic('fixture-source', 'fixture-comic');
+    expect(await store.listSavedComics(), isEmpty);
+    expect(await store.getComicPreference('fixture-comic'), isNull);
+  });
+
   test('remote refresh keeps progress by stable page identity', () async {
     final previous = _remoteChapter(
       urls: const <String>[
@@ -257,3 +298,32 @@ ImportedChapterRecord _remoteChapter({required List<String> urls}) {
     ],
   );
 }
+
+
+ComicManifest _savedManifest() => ComicManifest(
+      comic: Comic(
+        comicId: 'fixture-comic',
+        sourceId: 'fixture-source',
+        title: '整部漫画',
+        authors: const <String>['作者'],
+        readingDirection: ReadingDirection.ltr,
+      ),
+      chapters: const <Chapter>[
+        Chapter(
+          chapterId: 'fixture-chapter-1',
+          comicId: 'fixture-comic',
+          title: '第 1 话',
+          sequence: 1,
+          pageCount: 1,
+          sourceRevision: 'r1',
+        ),
+        Chapter(
+          chapterId: 'fixture-chapter-2',
+          comicId: 'fixture-comic',
+          title: '第 2 话',
+          sequence: 2,
+          pageCount: 1,
+          sourceRevision: 'r2',
+        ),
+      ],
+    );

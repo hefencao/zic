@@ -37,7 +37,8 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
           _createImportedLibraryTables(db);
           _createLibraryPreferenceTables(db);
           _createSourcePreferenceTables(db);
-          db.execute('PRAGMA user_version = 3');
+          _createSavedComicTables(db);
+          db.execute('PRAGMA user_version = 4');
           db.execute('COMMIT');
         } on Object {
           db.execute('ROLLBACK');
@@ -48,7 +49,8 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
         try {
           _createLibraryPreferenceTables(db);
           _createSourcePreferenceTables(db);
-          db.execute('PRAGMA user_version = 3');
+          _createSavedComicTables(db);
+          db.execute('PRAGMA user_version = 4');
           db.execute('COMMIT');
         } on Object {
           db.execute('ROLLBACK');
@@ -58,13 +60,24 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
         db.execute('BEGIN IMMEDIATE');
         try {
           _createSourcePreferenceTables(db);
-          db.execute('PRAGMA user_version = 3');
+          _createSavedComicTables(db);
+          db.execute('PRAGMA user_version = 4');
           db.execute('COMMIT');
         } on Object {
           db.execute('ROLLBACK');
           rethrow;
         }
-      } else if (version != 3) {
+      } else if (version == 3) {
+        db.execute('BEGIN IMMEDIATE');
+        try {
+          _createSavedComicTables(db);
+          db.execute('PRAGMA user_version = 4');
+          db.execute('COMMIT');
+        } on Object {
+          db.execute('ROLLBACK');
+          rethrow;
+        }
+      } else if (version != 4) {
         throw StateError(
           'unsupported imported library schema version: $version',
         );
@@ -196,6 +209,85 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
     db.execute(
       'DELETE FROM imported_chapter WHERE chapter_id = ?',
       <Object?>[chapterId],
+    );
+    final remaining = db.select(
+      'SELECT 1 FROM imported_chapter WHERE comic_id = ? LIMIT 1',
+      <Object?>[comicId],
+    );
+    final saved = db.select(
+      'SELECT 1 FROM saved_comic WHERE comic_id = ? LIMIT 1',
+      <Object?>[comicId],
+    );
+    if (remaining.isEmpty && saved.isEmpty) {
+      db.execute(
+        'DELETE FROM comic_preference WHERE comic_id = ?',
+        <Object?>[comicId],
+      );
+    }
+  }
+
+  @override
+  Future<List<SavedComicRecord>> listSavedComics() async {
+    final rows = _requireDb().select('''
+      SELECT comic_json
+      FROM saved_comic
+      ORDER BY updated_us DESC, source_id, comic_id
+    ''');
+    return rows
+        .map((row) => _decodeSavedComic(row['comic_json']! as String))
+        .toList(growable: false);
+  }
+
+  @override
+  Future<SavedComicRecord?> getSavedComic(
+    String sourceId,
+    String comicId,
+  ) async {
+    final rows = _requireDb().select(
+      'SELECT comic_json FROM saved_comic '
+      'WHERE source_id = ? AND comic_id = ? LIMIT 1',
+      <Object?>[sourceId, comicId],
+    );
+    return rows.isEmpty
+        ? null
+        : _decodeSavedComic(rows.first['comic_json']! as String);
+  }
+
+  @override
+  Future<void> upsertSavedComic(SavedComicRecord comic) async {
+    final db = _requireDb();
+    final rows = db.select(
+      'SELECT updated_us FROM saved_comic '
+      'WHERE source_id = ? AND comic_id = ? LIMIT 1',
+      <Object?>[comic.sourceId, comic.comicId],
+    );
+    final updatedUs = comic.updatedAt.toUtc().microsecondsSinceEpoch;
+    if (rows.isNotEmpty && (rows.first['updated_us']! as int) > updatedUs) {
+      return;
+    }
+    db.execute('''
+      INSERT INTO saved_comic (
+        source_id, comic_id, saved_us, updated_us, comic_json
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(source_id, comic_id) DO UPDATE SET
+        saved_us = excluded.saved_us,
+        updated_us = excluded.updated_us,
+        comic_json = excluded.comic_json
+    ''', <Object?>[
+      comic.sourceId,
+      comic.comicId,
+      comic.savedAt.toUtc().microsecondsSinceEpoch,
+      updatedUs,
+      jsonEncode(comic.toJson()),
+    ]);
+  }
+
+  @override
+  Future<void> removeSavedComic(String sourceId, String comicId) async {
+    final db = _requireDb();
+    db.execute(
+      'DELETE FROM saved_comic WHERE source_id = ? AND comic_id = ?',
+      <Object?>[sourceId, comicId],
     );
     final remaining = db.select(
       'SELECT 1 FROM imported_chapter WHERE comic_id = ? LIMIT 1',
@@ -458,6 +550,14 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
     return ReadingProgress.fromJson(Map<String, Object?>.from(value));
   }
 
+  SavedComicRecord _decodeSavedComic(String source) {
+    final value = jsonDecode(source);
+    if (value is! Map) {
+      throw const FormatException('stored comic must be an object');
+    }
+    return SavedComicRecord.fromJson(Map<String, Object?>.from(value));
+  }
+
   LibraryCategory _decodeCategory(String source) {
     final value = jsonDecode(source);
     if (value is! Map) {
@@ -557,6 +657,24 @@ void _createLibraryPreferenceTables(sql.Database db) {
   );
 }
 
+
+
+void _createSavedComicTables(sql.Database db) {
+  db.execute('''
+    CREATE TABLE IF NOT EXISTS saved_comic (
+      source_id TEXT NOT NULL,
+      comic_id TEXT NOT NULL,
+      saved_us INTEGER NOT NULL,
+      updated_us INTEGER NOT NULL,
+      comic_json TEXT NOT NULL,
+      PRIMARY KEY(source_id, comic_id)
+    )
+  ''');
+  db.execute(
+    'CREATE INDEX IF NOT EXISTS saved_comic_recent '
+    'ON saved_comic(updated_us DESC, source_id, comic_id)',
+  );
+}
 
 void _createSourcePreferenceTables(sql.Database db) {
   db.execute('''

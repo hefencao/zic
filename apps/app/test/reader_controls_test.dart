@@ -42,6 +42,39 @@ IgnorePointer _controlsPointer(WidgetTester tester, Finder controls) {
   return tester.widget<IgnorePointer>(pointer.first);
 }
 
+const _frameStep = Duration(milliseconds: 20);
+
+Future<void> _pumpUntilControls(
+  WidgetTester tester,
+  Finder top,
+  Finder bottom, {
+  required bool ignoring,
+  int maxFrames = 40,
+}) async {
+  for (var frame = 0; frame < maxFrames; frame++) {
+    await tester.pump(_frameStep);
+    if (_controlsPointer(tester, top).ignoring == ignoring &&
+        _controlsPointer(tester, bottom).ignoring == ignoring) {
+      return;
+    }
+  }
+  throw TestFailure('Timed out waiting for reader controls ignoring=$ignoring');
+}
+
+Future<void> _pumpUntilFound(
+  WidgetTester tester,
+  Finder finder, {
+  int maxFrames = 40,
+}) async {
+  for (var frame = 0; frame < maxFrames; frame++) {
+    await tester.pump(_frameStep);
+    if (finder.evaluate().isNotEmpty) {
+      return;
+    }
+  }
+  throw TestFailure('Timed out waiting for $finder');
+}
+
 void main() {
   testWidgets('reader starts immersive and exposes complete bottom controls',
       (tester) async {
@@ -77,7 +110,12 @@ void main() {
     expect(_controlsPointer(tester, bottom).ignoring, isTrue);
 
     await tester.tap(find.byType(ReaderView));
-    await tester.pumpAndSettle();
+    await _pumpUntilControls(
+      tester,
+      top,
+      bottom,
+      ignoring: false,
+    );
     expect(_controlsPointer(tester, top).ignoring, isFalse);
     expect(_controlsPointer(tester, bottom).ignoring, isFalse);
     expect(find.byKey(readerPageSliderKey), findsOneWidget);
@@ -98,9 +136,9 @@ void main() {
     );
 
     await tester.tap(find.byKey(readerSpeedKey));
-    await tester.pumpAndSettle();
+    await _pumpUntilFound(tester, find.text('2×'));
     await tester.tap(find.text('2×').last);
-    await tester.pumpAndSettle();
+    await _pumpUntilFound(tester, find.byKey(readerSpeedKey));
     expect(find.text('2×'), findsOneWidget);
 
     await tester.tap(find.byKey(readerRotateKey));
@@ -137,7 +175,12 @@ void main() {
     );
 
     await tester.tap(find.byType(ReaderView));
-    await tester.pumpAndSettle();
+    await _pumpUntilControls(
+      tester,
+      top,
+      bottom,
+      ignoring: true,
+    );
     expect(_controlsPointer(tester, bottom).ignoring, isTrue);
   });
 }

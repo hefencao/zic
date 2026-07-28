@@ -3,18 +3,27 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:storage_bridge/storage_bridge.dart';
 
+import 'chapter_downloads.dart';
 import 'demo_home.dart';
 import 'webp_demo.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   ImportedLibraryStore? libraryStore;
+  ChapterDownloadService? chapterDownloads;
   try {
+    final root = await getDefaultZicStorageRoot();
     libraryStore = await openDefaultImportedLibraryStore();
+    chapterDownloads = await PersistentChapterDownloadService.open(root);
   } on Object catch (error) {
-    debugPrint('durable imported library unavailable: $error');
+    debugPrint('durable application storage unavailable: $error');
   }
-  runApp(App(libraryStore: libraryStore));
+  runApp(
+    App(
+      libraryStore: libraryStore,
+      chapterDownloads: chapterDownloads,
+    ),
+  );
 }
 
 final class App extends StatelessWidget {
@@ -23,6 +32,7 @@ final class App extends StatelessWidget {
     this.folderPicker = defaultImageFolderPicker,
     this.folderRefresher = defaultImageFolderRefresher,
     this.libraryStore,
+    this.chapterDownloads,
     this.comicSources,
     super.key,
   });
@@ -31,6 +41,7 @@ final class App extends StatelessWidget {
   final ImageFolderPicker folderPicker;
   final ImageFolderRefresher folderRefresher;
   final ImportedLibraryStore? libraryStore;
+  final ChapterDownloadService? chapterDownloads;
   final List<BrowsableComicSource>? comicSources;
 
   @override
@@ -55,6 +66,7 @@ final class App extends StatelessWidget {
         folderPicker: folderPicker,
         folderRefresher: folderRefresher,
         libraryStore: libraryStore,
+        chapterDownloads: chapterDownloads,
         comicSources: comicSources,
       ),
     );

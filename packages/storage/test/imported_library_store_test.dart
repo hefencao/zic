@@ -268,6 +268,61 @@ void main() {
     expect(values.last.toJson(), first.toJson());
   });
 
+
+  test('sqlite persists a whole comic without importing a chapter', () async {
+    final store = SqliteImportedLibraryStore.memory();
+    await store.open();
+    addTearDown(store.close);
+    final saved = _savedComic();
+    final preference = ComicPreference.defaults(
+      comicId: saved.comicId,
+      sourceKind: ComicSourceKind.remote,
+    ).copyWith(
+      inShelf: true,
+      collected: true,
+      updatedAt: DateTime.utc(2026, 7, 28, 12),
+    );
+
+    await store.upsertSavedComic(saved);
+    await store.saveComicPreference(preference);
+
+    expect(await store.list(), isEmpty);
+    expect(
+      (await store.getSavedComic(saved.sourceId, saved.comicId))?.toJson(),
+      saved.toJson(),
+    );
+    expect((await store.listSavedComics()).single.chapters, hasLength(2));
+
+    await store.removeSavedComic(saved.sourceId, saved.comicId);
+    expect(await store.listSavedComics(), isEmpty);
+    expect(await store.getComicPreference(saved.comicId), isNull);
+  });
+
+  test('sqlite migrates schema 3 to saved comic schema 4', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-saved-comic-migration-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final path = '${directory.path}/library.sqlite3';
+    final legacy = sql.sqlite3.open(path);
+    legacy.execute('PRAGMA user_version = 3');
+    legacy.dispose();
+
+    final store = SqliteImportedLibraryStore(path);
+    await store.open();
+    addTearDown(store.close);
+    final saved = _savedComic();
+    await store.upsertSavedComic(saved);
+
+    expect(
+      (await store.getSavedComic(saved.sourceId, saved.comicId))?.toJson(),
+      saved.toJson(),
+    );
+    final db = sql.sqlite3.open(path);
+    addTearDown(db.dispose);
+    expect(db.select('PRAGMA user_version').single.values.single, 4);
+  });
+
   test('sqlite keeps comic preference until the last grouped chapter is removed',
       () async {
     final store = SqliteImportedLibraryStore.memory();
@@ -316,3 +371,32 @@ ImportedChapterRecord _groupedChapter(String chapterId, int sequence) {
     ],
   );
 }
+
+
+SavedComicRecord _savedComic() => SavedComicRecord(
+      sourceId: 'fixture-source',
+      comicId: 'fixture-comic',
+      title: '整部漫画',
+      authors: const <String>['作者'],
+      description: '简介',
+      coverSourceId: 'https://example.invalid/cover.png',
+      readingDirection: ReadingDirection.ltr,
+      chapters: const <SavedChapterRecord>[
+        SavedChapterRecord(
+          chapterId: 'fixture-chapter-1',
+          title: '第 1 话',
+          sequence: 1,
+          pageCount: 1,
+          sourceRevision: 'r1',
+        ),
+        SavedChapterRecord(
+          chapterId: 'fixture-chapter-2',
+          title: '第 2 话',
+          sequence: 2,
+          pageCount: 1,
+          sourceRevision: 'r2',
+        ),
+      ],
+      savedAt: DateTime.utc(2026, 7, 28),
+      updatedAt: DateTime.utc(2026, 7, 28, 1),
+    );

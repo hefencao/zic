@@ -1,6 +1,6 @@
 # ADR 0009: unified source-aware comic details
 
-- Status: Accepted
+- Status: Superseded by ADR 0010
 - Version: `0.22.0-dev.26`
 
 ## Context
@@ -21,6 +21,10 @@ non-durable until the user opens or explicitly adds them.
 Pull-to-refresh invokes source and library callbacks; the Widget never reads files, performs raw HTTP,
 or owns Reader artifacts. Remote author, description and cover metadata is stored in backward-compatible
 chapter JSON so a library route can render the same header before source refresh completes.
+
+## Supersession
+
+Version 0.23.0-dev.27 retained the shared presentation pieces but restored separate remote and local state owners. See ADR 0010.
 
 ## Consequences
 

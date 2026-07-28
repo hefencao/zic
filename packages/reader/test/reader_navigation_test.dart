@@ -123,8 +123,7 @@ void main() {
           .getMaxScaleOnAxis(),
       1,
     );
-    // Let the framework's double-tap recognizer finish its countdown so the
-    // test closes with the same gesture lifecycle as a real event loop.
+    // Drain the reader's own delayed single-tap window before disposal.
     await tester.pump(const Duration(milliseconds: 400));
   });
 

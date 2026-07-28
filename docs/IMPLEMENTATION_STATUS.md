@@ -1,4 +1,33 @@
-## Current iteration — unified source-aware details and pull refresh
+## Current iteration — two detail owners, whole-comic persistence and chapter downloads
+
+`RemoteComicDetailsScreen` and `LocalComicDetailsScreen` now own different lifecycles while composing
+the same header, preference/category controls, chapter rows, error presentation and pull-to-refresh
+scaffold. `resolveComicDetailsRoute` is the centralized decision: exact durable `sourceId + comicId`
+metadata or chapters use local details; an unsaved source result uses remote details.
+
+`SavedComicRecord` separates whole-comic persistence from chapter persistence. SQLite schema version 4
+stores source-aware comic metadata and a lightweight chapter-catalog snapshot. Liking, collecting or
+adding a comic to the shelf can therefore retain the whole work with zero imported chapters. Chapter
+click opens Reader; the chapter trailing action downloads that chapter.
+
+`PersistentChapterDownloadService` uses the existing DownloadRegistry/DownloadJob pipeline but places
+complete promoted page artifacts under a persistent offline root. It verifies complete chapters and
+reopens page bytes after service restart. Reader selects those loaders only when the whole chapter is
+complete; temporary Reader workspaces remain separately owned.
+
+Cross-source migration is explicit and copy-based. It searches the selected target source by the
+current title, lets the user confirm a candidate (or provide a manual native ID), copies whole-comic
+preferences, fetches target chapter manifests, and migrates progress/read state only for
+normalized-title plus sequence matches.
+It never copies source URLs or offline bytes and never deletes the original source. Because legacy
+preference/chapter/read tables are still keyed by native IDs, collision guards stop or skip unsafe
+writes. UI selection, category insertion, drag targets and keys already use source-composite identities.
+
+The reported missing `ImportedChapterRecord` type import is fixed in `library_comic.dart`. Reader zoom
+uses an app-owned two-tap window whose timer is canceled on disposal, and App tests wait for explicit
+state/hit-test conditions instead of indefinite settling around continuously animated media.
+
+## Previous iteration — unified source-aware details and pull refresh
 
 Comic Sources, Home updates, reading history and Bookshelf now route through one
 `UnifiedComicDetailsScreen`. The screen renders the same cover, metadata, preferences, categories,
@@ -24,7 +53,7 @@ The App now imports the domain models used by its source-to-library adapter, rep
 assertion, then advances beyond the recognizer countdown so no timer remains after disposal.
 Repository structural checks pass here; Flutter/Dart/Cargo/Android toolchains remain external gates.
 
-## Current iteration — remote comic source browser
+## Previous iteration — remote comic source browser
 
 The Android shell now has a lazy-created third `漫画源` destination, so startup does not browse the network. The top app-bar action opens a reorderable
 source manager; the source page keeps a compact bottom switcher for enabled sources. Search, refresh,
@@ -56,7 +85,7 @@ Cookie, challenge-solving or anti-bot bypass was added.
 Cargo, Android SDK and Android NDK are unavailable, so analyzer, Flutter tests, Rust tests and APK
 builds remain explicit external gates.
 
-## Current iteration — library management and immersive Reader controls
+## Previous iteration — library management and immersive Reader controls
 
 The Home product surface no longer exposes per-directory refresh/removal maintenance. Folder
 import remains a first-class action, while media diagnostics are collapsed under a secondary
@@ -89,7 +118,7 @@ projection and persistent shelf waterline remain the next storage slice.
 Android NDK are unavailable here, so the target tests, analyzer and device/native builds remain
 external validation gates rather than claimed results.
 
-## Current iteration — comic-level aggregation and reliable unread restore
+## Previous iteration — comic-level aggregation and reliable unread restore
 
 The persisted library now exposes a catalog-owned `LibraryComic` projection that groups
 all `ImportedLibraryEntry` snapshots with the same `sourceId` and `comicId`. `ImportedChapterRecord`
@@ -120,7 +149,7 @@ checks pass in this environment. Flutter, Dart and Rust toolchains are not insta
 the source libwebp check also cannot fetch its pinned checkout because outbound DNS is blocked.
 The full commands in `NEXT_CHAT_HANDOFF.md` remain an external validation gate.
 
-## Current iteration — persisted directory refresh and stable page reconciliation
+## Previous iteration — persisted directory refresh and stable page reconciliation
 
 Persisted local chapters can now be rescanned without reopening the system picker. Android
 reuses the stored SAF tree URI through `scanImageDirectory`; desktop platforms rescan the
@@ -140,7 +169,7 @@ The directory test fixture now uses a complete decodable PNG. A 24-byte signatur
 prefix is correctly rejected by the production sniffer because it cannot satisfy the
 minimum 33-byte PNG header contract.
 
-## Current candidate — durable imported library and progress restore
+## Previous candidate — durable imported library and progress restore
 
 Imported image folders now become durable catalog entries rather than route-local values.
 `catalog` owns the `ImportedLibraryStore` contract and in-memory reference implementation;
@@ -157,7 +186,7 @@ PNG directory sniffing now rejects a bare signature or incomplete IHDR label. Bo
 Android require a complete signature, IHDR length/type and non-zero dimensions before
 returning PNG; full codec validation remains authoritative after admission.
 
-## Current candidate — imported-folder Reader artifact pipeline
+## Previous candidate — imported-folder Reader artifact pipeline
 
 The working folder importer now crosses the same production Reader boundary as manifest
 chapters. A selected folder is normalized into a serializable `ImportedChapterRecord` with
@@ -186,7 +215,7 @@ chunk tag while remaining permissive about unknown printable chunk types. Full v
 still owned by the parser/codec. The version remains `0.18.3-dev.21` pending the external
 Flutter/Android gate.
 
-## Current candidate — local-media package boundary and deferred SAF validation
+## Previous candidate — local-media package boundary and deferred SAF validation
 
 Local image models, recursive filesystem enumeration and header sniffing have moved from
 `apps/app/lib` to `packages/local_media`. The App retains only a compatibility export and
@@ -202,7 +231,7 @@ build caches while preserving lock files and pinned source.
 
 # Implementation Status
 
-## Current candidate — Android scoped document-tree folder import
+## Previous candidate — Android scoped document-tree folder import
 
 The remaining Android folder-import failure was not a filename or WebP signature problem.
 The endorsed selector returned a raw filesystem path for a selected SAF document tree,
@@ -231,7 +260,7 @@ scanned, unrecognized and unreadable file counts.
 The package version remains `0.18.3-dev.21` until Flutter and Android device validation
 passes. This candidate is not a stable baseline.
 
-## Current candidate — native contain geometry and permissive image sniffing
+## Previous candidate — native contain geometry and permissive image sniffing
 
 The Android external texture was previously inserted directly into a tight expanded
 viewport. `Texture` has no `BoxFit`, so it stretched to the viewport even though the
@@ -257,7 +286,7 @@ ready/failure transitions without waiting on the Flutter test image pipeline.
 The package version remains `0.18.3-dev.21` until the external Flutter/Android validation
 gate passes. This candidate is not a stable baseline.
 
-## Current candidate — header-detected mixed-image folder import
+## Previous candidate — header-detected mixed-image folder import
 
 Directory import no longer filters filenames for `.webp`. It recursively examines all
 ordinary files outside the UI isolate, probes their file headers, and creates a
@@ -277,7 +306,7 @@ cannot miss the initial state.
 The package version remains `0.18.3-dev.21` until the Flutter/Android validation gate
 passes. This candidate is not a stable baseline.
 
-## Current fixed-overlay baseline — production Reader artifact ingress
+## Previous fixed-overlay baseline — production Reader artifact ingress
 
 ### Baseline ownership
 

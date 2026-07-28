@@ -178,15 +178,18 @@ abstract interface class ComicSource {
 
 - comicId
 - comicTitle
-- ordered chapter entries
+- sourceId + comicId identity
+- ordered persisted chapter entries
+- optional saved source-catalog chapter snapshot
 - cover/latest/resume chapter
 - aggregate page count
 - latest import/activity timestamps
 
-该投影组合持久化章节快照；统一详情可额外投影当前来源返回的完整章节目录。
-合并身份为 `sourceId + chapterId`：未持久化的上游章节只用于浏览，用户打开或明确加入后
-才写入目录库；已持久化但上游暂时缺失的章节不得被刷新删除。chapter progress、read state、
-download session 和 artifact ownership 仍保持逐章节/逐资源权威。
+`SavedComicRecord` 可在零持久章节时保存整部漫画元数据与轻量目录快照。远程详情拥有实时
+上游目录，本地详情拥有该记录和持久章节；两者复用组件但不共享状态所有权。用户打开章节
+时才持久化 Reader manifest，行尾下载才持久化离线 artifact。chapter progress、read state、
+download session 和 artifact ownership 仍保持逐章节/逐资源权威。跨源迁移不得仅按标题
+自动聚合；必须显式选择目标并重新解析目标源 manifest。
 
 ### PageAsset
 

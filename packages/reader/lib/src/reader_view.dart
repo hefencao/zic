@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:domain/domain.dart';
@@ -273,6 +274,12 @@ final class _ZoomableReaderPage extends StatefulWidget {
 final class _ZoomableReaderPageState extends State<_ZoomableReaderPage> {
   late final TransformationController _transformation;
   bool _zoomed = false;
+  int? _pointer;
+  Offset? _pointerDown;
+  bool _tapCandidate = false;
+  Timer? _singleTapTimer;
+  DateTime? _lastTapAt;
+  Offset? _lastTapPosition;
 
   @override
   void initState() {
@@ -282,6 +289,7 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage> {
 
   @override
   void dispose() {
+    _singleTapTimer?.cancel();
     _transformation.dispose();
     super.dispose();
   }
@@ -297,12 +305,11 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage> {
     widget.onZoomChanged(zoomed);
   }
 
-  void _toggleZoom(TapDownDetails details) {
+  void _toggleZoom(Offset position) {
     if (_zoomed) {
       _transformation.value = Matrix4.identity();
     } else {
       const scale = 2.25;
-      final position = details.localPosition;
       _transformation.value = Matrix4.identity()
         ..translate(
           -position.dx * (scale - 1),
@@ -313,12 +320,82 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage> {
     _publishZoom();
   }
 
+  void _handlePointerDown(PointerDownEvent event) {
+    if (_pointer != null) {
+      _tapCandidate = false;
+      return;
+    }
+    _pointer = event.pointer;
+    _pointerDown = event.localPosition;
+    _tapCandidate = true;
+  }
+
+  void _handlePointerMove(PointerMoveEvent event) {
+    if (event.pointer != _pointer || !_tapCandidate) {
+      return;
+    }
+    final origin = _pointerDown;
+    if (origin == null || (event.localPosition - origin).distance > 12) {
+      _tapCandidate = false;
+    }
+  }
+
+  void _handlePointerCancel(PointerCancelEvent event) {
+    if (event.pointer == _pointer) {
+      _clearPointer();
+    }
+  }
+
+  void _handlePointerUp(PointerUpEvent event) {
+    if (event.pointer != _pointer) {
+      return;
+    }
+    final candidate = _tapCandidate;
+    final position = event.localPosition;
+    _clearPointer();
+    if (!candidate) {
+      return;
+    }
+    final now = DateTime.now();
+    final lastAt = _lastTapAt;
+    final lastPosition = _lastTapPosition;
+    final isDoubleTap = lastAt != null &&
+        now.difference(lastAt) <= const Duration(milliseconds: 280) &&
+        lastPosition != null &&
+        (position - lastPosition).distance <= 48;
+    if (isDoubleTap) {
+      _singleTapTimer?.cancel();
+      _singleTapTimer = null;
+      _lastTapAt = null;
+      _lastTapPosition = null;
+      _toggleZoom(position);
+      return;
+    }
+    _lastTapAt = now;
+    _lastTapPosition = position;
+    _singleTapTimer?.cancel();
+    _singleTapTimer = Timer(const Duration(milliseconds: 280), () {
+      _singleTapTimer = null;
+      _lastTapAt = null;
+      _lastTapPosition = null;
+      widget.onTap?.call();
+    });
+  }
+
+  void _clearPointer() {
+    _pointer = null;
+    _pointerDown = null;
+    _tapCandidate = false;
+  }
+
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return Listener(
       behavior: HitTestBehavior.opaque,
-      onTap: widget.onTap,
-      onDoubleTapDown: _toggleZoom,
+      onPointerDown: _handlePointerDown,
+      onPointerMove: _handlePointerMove,
+      onPointerUp: _handlePointerUp,
+      onPointerCancel: _handlePointerCancel,
       child: InteractiveViewer(
         transformationController: _transformation,
         minScale: 1,

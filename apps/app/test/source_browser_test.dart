@@ -6,6 +6,7 @@ import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zic/comic_details.dart' as details;
 import 'package:zic/demo_home.dart';
 import 'package:zic/main.dart';
 import 'package:zic/source_browser.dart';
@@ -66,7 +67,7 @@ void main() {
     );
 
     await tester.tap(find.byKey(comicSourceManageKey));
-    await tester.pumpAndSettle();
+    await tester.pump();
     expect(find.text('漫画源管理'), findsOneWidget);
     expect(find.byType(SwitchListTile), findsNWidgets(2));
 
@@ -79,7 +80,7 @@ void main() {
     );
 
     await tester.pageBack();
-    await tester.pumpAndSettle();
+    await tester.pump();
     expect(find.byKey(comicSourceChoiceKey('fixture-b')), findsNothing);
     expect(find.byKey(comicSourceChoiceKey('fixture-a')), findsOneWidget);
   });
@@ -130,19 +131,23 @@ void main() {
     await _pumpUntilFound(tester, find.byKey(comicSourceErrorKey));
 
     expect(find.text('无法解析 api.mangadex.org'), findsOneWidget);
-    final details = tester.widget<SelectableText>(
+    final detailsText = tester.widget<SelectableText>(
       find.byKey(comicSourceErrorDetailsKey),
     );
-    expect(details.data, contains('https://api.mangadex.org/manga?limit=24'));
-    expect(details.data, contains('Cause: Bad state: Failed host lookup'));
+    expect(detailsText.data, contains('https://api.mangadex.org/manga?limit=24'));
+    expect(detailsText.data, contains('Cause: Bad state: Failed host lookup'));
 
-    await tester.tap(find.byKey(comicSourceCopyErrorKey));
+    final copy = find.byKey(comicSourceCopyErrorKey);
+    await tester.ensureVisible(copy);
+    await tester.pump();
+    await tester.tap(copy);
     await tester.pump();
     expect(clipboardWrites, hasLength(1));
-    expect(clipboardWrites.single, details.data);
+    expect(clipboardWrites.single, detailsText.data);
   });
 
-  testWidgets('source chapter enters the durable library model', (tester) async {
+  testWidgets('whole comic shelf and chapter download have separate ownership',
+      (tester) async {
     final store = MemoryImportedLibraryStore();
     await store.open();
     addTearDown(store.close);
@@ -160,30 +165,40 @@ void main() {
       tester,
       find.byKey(sourceComicCardKey('fixture-comic')),
     );
-
     await tester.tap(find.byKey(sourceComicCardKey('fixture-comic')));
-    await _pumpUntilFound(tester, find.byKey(sourceChapterKey('fixture-chapter')));
-    await tester.tap(find.byTooltip('加入书架'));
-    await tester.pumpAndSettle();
+    await _pumpUntilFound(tester, find.byKey(details.remoteComicDetailsScreenKey));
+
+    final shelf = find.byKey(details.comicDetailsShelfKey);
+    await tester.ensureVisible(shelf);
+    await tester.tap(shelf);
+    await tester.pump();
+
+    expect(await store.getSavedComic('fixture', 'fixture-comic'), isNotNull);
+    expect(await store.get('fixture-chapter'), isNull);
+    expect(
+      (await store.getComicPreference('fixture-comic'))?.inShelf,
+      isTrue,
+    );
+
+    final download = details.comicDetailsDownloadKey('fixture', 'fixture-chapter');
+    await tester.ensureVisible(find.byKey(download));
+    await tester.tap(find.byKey(download));
+    await _pumpUntilFound(tester, find.textContaining('已下载'));
 
     final entry = await store.get('fixture-chapter');
     expect(entry, isNotNull);
     expect(entry!.chapter.sourceId, 'fixture');
     expect(entry.chapter.pages.single.stablePageId, 'fixture-page-1');
-    expect(
-      (await store.getComicPreference('fixture-comic'))?.sourceKind,
-      ComicSourceKind.remote,
-    );
   });
 
-  testWidgets('source and home cards reuse the unified aggregated details',
+  testWidgets('central route opens remote then local details for the same source',
       (tester) async {
     final store = MemoryImportedLibraryStore();
     await store.open();
     addTearDown(store.close);
     final source = _FixtureSource(
-      'fixture-unified',
-      '统一详情源',
+      'fixture-route',
+      '集中路由源',
       includeSecondChapter: true,
     );
 
@@ -197,44 +212,46 @@ void main() {
     await tester.tap(find.byIcon(Icons.public_outlined));
     await _pumpUntilFound(
       tester,
-      find.byKey(sourceComicCardKey('fixture-unified-comic')),
+      find.byKey(sourceComicCardKey('fixture-route-comic')),
     );
-    await tester.tap(
-      find.byKey(sourceComicCardKey('fixture-unified-comic')),
-    );
-    await _pumpUntilFound(tester, find.byKey(comicDetailsScreenKey));
-    expect(find.byKey(sourceChapterKey('fixture-unified-chapter')), findsOneWidget);
-    expect(
-      find.byKey(sourceChapterKey('fixture-unified-chapter-2')),
-      findsOneWidget,
-    );
+    await tester.tap(find.byKey(sourceComicCardKey('fixture-route-comic')));
+    await _pumpUntilFound(tester, find.byKey(details.remoteComicDetailsScreenKey));
+    expect(find.byKey(details.localComicDetailsScreenKey), findsNothing);
 
-    await tester.tap(find.byTooltip('加入书架').first);
-    await tester.pumpAndSettle();
-    expect(await store.get('fixture-unified-chapter'), isNotNull);
-    expect(await store.get('fixture-unified-chapter-2'), isNull);
+    final collect = find.byKey(details.comicDetailsCollectedKey);
+    await tester.ensureVisible(collect);
+    await tester.tap(collect);
+    await tester.pump();
+    expect(await store.get('fixture-route-chapter'), isNull);
+    expect(
+      (await store.getSavedComic('fixture-route', 'fixture-route-comic'))
+          ?.chapters,
+      hasLength(2),
+    );
 
     await tester.pageBack();
-    await tester.pumpAndSettle();
-    await tester.tap(find.byIcon(Icons.home_outlined));
-    await _pumpUntilFound(
-      tester,
-      find.byKey(importedChapterEntryKey('fixture-unified-chapter')),
-    );
-    await tester.tap(
-      find.byKey(importedChapterEntryKey('fixture-unified-chapter')),
-    );
-    await _pumpUntilFound(tester, find.byKey(comicDetailsScreenKey));
-
-    expect(find.text('统一详情源 漫画'), findsOneWidget);
-    expect(find.text('2 章 · 2 页'), findsOneWidget);
+    await tester.pump();
+    await tester.tap(find.byKey(sourceComicCardKey('fixture-route-comic')));
+    await _pumpUntilFound(tester, find.byKey(details.localComicDetailsScreenKey));
+    expect(find.byKey(details.remoteComicDetailsScreenKey), findsNothing);
+    expect(find.byKey(sourceChapterKey('fixture-route-chapter')), findsOneWidget);
     expect(
-      find.byKey(sourceChapterKey('fixture-unified-chapter-2')),
+      find.byKey(sourceChapterKey('fixture-route-chapter-2')),
       findsOneWidget,
     );
+
+    final secondDownload = details.comicDetailsDownloadKey(
+      'fixture-route',
+      'fixture-route-chapter-2',
+    );
+    await tester.ensureVisible(find.byKey(secondDownload));
+    await tester.tap(find.byKey(secondDownload));
+    await _pumpUntilFound(tester, find.textContaining('已下载'));
+    expect(await store.get('fixture-route-chapter'), isNull);
+    expect(await store.get('fixture-route-chapter-2'), isNotNull);
   });
 
-  testWidgets('pull refresh expands source chapters without importing them',
+  testWidgets('pull refresh expands remote catalog without downloading chapters',
       (tester) async {
     final store = MemoryImportedLibraryStore();
     await store.open();
@@ -257,9 +274,7 @@ void main() {
       tester,
       find.byKey(sourceComicCardKey('fixture-refresh-comic')),
     );
-    await tester.tap(
-      find.byKey(sourceComicCardKey('fixture-refresh-comic')),
-    );
+    await tester.tap(find.byKey(sourceComicCardKey('fixture-refresh-comic')));
     await _pumpUntilFound(
       tester,
       find.byKey(sourceChapterKey('fixture-refresh-chapter')),
@@ -270,7 +285,7 @@ void main() {
     );
 
     await tester.drag(
-      find.byType(CustomScrollView),
+      find.byKey(details.remoteComicDetailsScreenKey),
       const Offset(0, 360),
     );
     await tester.pump();
@@ -281,6 +296,10 @@ void main() {
 
     expect(source.comicLoads, 2);
     expect(await store.get('fixture-refresh-chapter-2'), isNull);
+    expect(
+      await store.getSavedComic('fixture-refresh', 'fixture-refresh-comic'),
+      isNull,
+    );
   });
 
   testWidgets('source comic details retries a transient source failure',
@@ -309,7 +328,9 @@ void main() {
     await tester.tap(find.byKey(sourceComicCardKey('fixture-retry-comic')));
     await _pumpUntilFound(tester, find.textContaining('漫画详情加载失败'));
 
-    await tester.tap(find.widgetWithText(FilledButton, '重试'));
+    final retry = find.widgetWithText(FilledButton, '重试');
+    await tester.ensureVisible(retry);
+    await tester.tap(retry);
     await _pumpUntilFound(
       tester,
       find.byKey(sourceChapterKey('fixture-retry-chapter')),
