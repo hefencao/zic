@@ -1,4 +1,7 @@
-.PHONY: check bootstrap test analyze dart-test flutter-test android-apk android-native webp-source webp-check rust-test
+.PHONY: clean check bootstrap test analyze dart-test flutter-test android-apk android-native webp-source webp-check rust-test
+
+clean:
+	./tool/clean.sh
 
 check:
 	./tool/check.sh

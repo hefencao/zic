@@ -11,12 +11,12 @@ void main() {
 final class App extends StatelessWidget {
   const App({
     this.picker = defaultWebpPicker,
-    this.folderPicker = defaultWebpFolderPicker,
+    this.folderPicker = defaultImageFolderPicker,
     super.key,
   });
 
   final WebpPicker picker;
-  final WebpFolderPicker folderPicker;
+  final ImageFolderPicker folderPicker;
 
   @override
   Widget build(BuildContext context) {

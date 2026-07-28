@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
@@ -5,8 +9,11 @@ import 'package:flutter/services.dart';
 import 'package:pipeline/pipeline.dart';
 import 'package:reader/reader.dart';
 import 'package:sessions/sessions.dart';
+import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
+import 'package:transport/transport.dart';
 
+import 'asset_bundle_transport.dart';
 import 'webp_demo.dart';
 
 const staticDemoScreenKey = ValueKey<String>('static-demo-screen');
@@ -67,11 +74,22 @@ const mediaPipelineReaderScreenKey =
 const readerMediaWebpPageKey = ValueKey<String>('reader-media-webp-page');
 
 typedef ChapterManifestLoader = Future<ChapterManifest> Function();
+typedef ReaderMediaBytesLoader = Future<Uint8List> Function(
+  PageAsset asset,
+  WebpLoadToken token,
+);
 
 final class MediaPipelineReaderScreen extends StatefulWidget {
-  const MediaPipelineReaderScreen({this.chapterLoader, super.key});
+  const MediaPipelineReaderScreen({
+    this.chapterLoader,
+    this.mediaBytesLoader,
+    this.onPreviewStateChanged,
+    super.key,
+  });
 
   final ChapterManifestLoader? chapterLoader;
+  final ReaderMediaBytesLoader? mediaBytesLoader;
+  final WebpPreviewStateChanged? onPreviewStateChanged;
 
   @override
   State<MediaPipelineReaderScreen> createState() =>
@@ -125,6 +143,8 @@ final class _MediaPipelineReaderScreenState
           return _ReaderRuntime(
             chapter: snapshot.requireData,
             mediaPipeline: true,
+            mediaBytesLoader: widget.mediaBytesLoader,
+            onPreviewStateChanged: widget.onPreviewStateChanged,
           );
         },
       ),
@@ -164,6 +184,11 @@ Widget? _buildMediaReaderPage(
   required TraceSink traceSink,
   required String sessionId,
   required int Function() demandRevision,
+  required Future<Uint8List> Function(
+    PageAsset asset,
+    WebpLoadToken token,
+  ) loadBytes,
+  WebpPreviewStateChanged? onPreviewStateChanged,
 }) {
   if (asset.contentKindHint != ContentKindHint.webp) {
     return null;
@@ -175,13 +200,7 @@ Widget? _buildMediaReaderPage(
       key: ValueKey<String>(asset.assetKey),
       title: asset.pageId,
       sourceUri: asset.uri,
-      loadBytes: () async {
-        final data = await rootBundle.load(asset.uri.toString());
-        return data.buffer.asUint8List(
-          data.offsetInBytes,
-          data.lengthInBytes,
-        );
-      },
+      loadBytes: (token) => loadBytes(asset, token),
       showEngineControls: false,
       showStatus: false,
       initialEngine: WebpPlayerEngine.flutter,
@@ -191,6 +210,7 @@ Widget? _buildMediaReaderPage(
       traceSessionId: sessionId,
       demandRevision: demandRevision,
       downloadIdentity: readerPageDownloadId(chapter, asset),
+      onPreviewStateChanged: onPreviewStateChanged,
     ),
   );
 }
@@ -200,21 +220,32 @@ final class _ReaderRuntime extends StatefulWidget {
     required this.chapter,
     this.pageBuilder,
     this.mediaPipeline = false,
+    this.mediaBytesLoader,
+    this.onPreviewStateChanged,
   });
 
   final ChapterManifest chapter;
   final ReaderPageBuilder? pageBuilder;
   final bool mediaPipeline;
+  final ReaderMediaBytesLoader? mediaBytesLoader;
+  final WebpPreviewStateChanged? onPreviewStateChanged;
 
   @override
   State<_ReaderRuntime> createState() => _ReaderRuntimeState();
 }
 
 final class _ReaderRuntimeState extends State<_ReaderRuntime> {
+  static int _sessionSequence = 0;
+
+  late final String _sessionId;
   late final MonoClock _clock;
   late final MemoryTraceSink _memoryTrace;
   late final TraceSink _trace;
-  late final FakeCoordinator _coordinator;
+  late final Directory _cacheRoot;
+  late final AssetBundleTransport _assetTransport;
+  late final IoTransport _ioTransport;
+  late final DownloadRegistry _downloads;
+  late final LiveCoordinator _coordinator;
   ReaderBinding? _binding;
   ReaderController? _reader;
   DecodeTarget? _target;
@@ -222,13 +253,27 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
   @override
   void initState() {
     super.initState();
+    _sessionId = 'reader-${++_sessionSequence}';
     _clock = SystemClock();
     _memoryTrace = MemoryTraceSink();
     _trace = MultiTraceSink(<TraceSink>[
       _memoryTrace,
       CallbackTraceSink((event) => debugPrint(event.toJsonLine())),
     ]);
-    _coordinator = FakeCoordinator(clock: _clock, traceSink: _trace);
+    _cacheRoot = Directory.systemTemp.createTempSync('zic-reader-media-');
+    _assetTransport = AssetBundleTransport(rootBundle);
+    _ioTransport = IoTransport();
+    _downloads = DownloadRegistry(
+      layout: CacheLayout(_cacheRoot.path),
+      clock: _clock,
+      traceSink: _trace,
+    );
+    _coordinator = LiveCoordinator(
+      registry: _downloads,
+      transportFor: _transportFor,
+      clock: _clock,
+      traceSink: _trace,
+    );
   }
 
   @override
@@ -246,7 +291,10 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
     final previous = _reader;
     final currentIndex = previous?.currentIndex ?? 0;
     final direction = previous?.direction ?? widget.chapter.readingDirection;
-    previous?.dispose();
+    if (previous != null) {
+      _binding?.detach(previous.sessionId);
+      previous.dispose();
+    }
 
     final binding = ReaderBinding(
       chapter: widget.chapter,
@@ -257,7 +305,7 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
       playback: _coordinator,
     );
     final reader = ReaderController(
-      sessionId: 'demo-session',
+      sessionId: _sessionId,
       chapter: widget.chapter,
       initialPage: currentIndex,
       onObservation: binding.accept,
@@ -270,10 +318,94 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
     _reader = reader;
   }
 
+  Transport _transportFor(Uri uri) {
+    if (uri.scheme.isEmpty || uri.scheme == 'asset') {
+      return _assetTransport;
+    }
+    return _ioTransport;
+  }
+
+  Future<Uint8List> _loadMediaBytes(
+    PageAsset asset,
+    WebpLoadToken token,
+  ) async {
+    token.throwIfCancelled();
+    final id = readerPageDownloadId(widget.chapter, asset);
+    final session = _downloads.get(id);
+    if (session.state != DownloadState.promoted) {
+      final ready = Completer<DownloadSnapshot>();
+      late final DownloadSnapshotListener listener;
+      listener = (snapshot) {
+        if (ready.isCompleted) {
+          return;
+        }
+        switch (snapshot.state) {
+          case DownloadState.promoted:
+            ready.complete(snapshot);
+            break;
+          case DownloadState.failed:
+            ready.completeError(
+              snapshot.failure ??
+                  const Failure(
+                    code: ErrorCode.network,
+                    message: 'reader media download failed',
+                  ),
+            );
+            break;
+          case DownloadState.disposed:
+            ready.completeError(
+              const Failure(
+                code: ErrorCode.cancelled,
+                message: 'reader media download was disposed',
+              ),
+            );
+            break;
+          case DownloadState.idle:
+          case DownloadState.queued:
+          case DownloadState.receiving:
+          case DownloadState.sealed:
+            break;
+        }
+      };
+      session.addSnapshotListener(listener);
+      try {
+        await Future.any<DownloadSnapshot>(<Future<DownloadSnapshot>>[
+          ready.future,
+          token.whenCancelled.then<DownloadSnapshot>((_) {
+            token.throwIfCancelled();
+            throw StateError('unreachable cancellation path');
+          }),
+        ]);
+      } finally {
+        session.removeSnapshotListener(listener);
+      }
+    }
+    token.throwIfCancelled();
+    return File(session.artifact.finalPath).readAsBytes();
+  }
+
   @override
   void dispose() {
-    _reader?.dispose();
+    final reader = _reader;
+    if (reader != null) {
+      _binding?.detach(reader.sessionId);
+      reader.dispose();
+    }
+    unawaited(
+      _disposeRuntime().catchError((Object error, StackTrace stackTrace) {
+        debugPrint('reader runtime dispose failed: $error');
+      }),
+    );
     super.dispose();
+  }
+
+  Future<void> _disposeRuntime() async {
+    await _coordinator.dispose();
+    await _downloads.dispose();
+    _ioTransport.close(force: true);
+    if (await _cacheRoot.exists()) {
+      await _cacheRoot.delete(recursive: true);
+    }
   }
 
   @override
@@ -290,6 +422,8 @@ final class _ReaderRuntimeState extends State<_ReaderRuntime> {
         traceSink: _trace,
         sessionId: _reader!.sessionId,
         demandRevision: () => _binding?.revision ?? 0,
+        loadBytes: widget.mediaBytesLoader ?? _loadMediaBytes,
+        onPreviewStateChanged: widget.onPreviewStateChanged,
       );
     } else {
       pageBuilder = widget.pageBuilder;

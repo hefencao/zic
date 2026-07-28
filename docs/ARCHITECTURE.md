@@ -51,6 +51,8 @@ zic/
     telemetry/               指标、事件、trace、设备状态
     bridge/                  FFI、native source/cursor/frame handle
     texture_bridge/          Flutter texture 契约与 Android 插件
+    local_media/             本地图片模型、格式嗅探、桌面目录枚举和平台 facade
+    local_media_bridge/      Android SAF document tree/content URI 插件
     testkit/                 fake clock/source/decoder/trace
 
   native/
@@ -200,7 +202,8 @@ Android：
 - `onSurfaceAvailable` 只重绘平台持有的当前帧，不借用已归还给 Dart 的 handle；
 - engine detach 与 `scheduleFrame` 通过生命周期锁串行，detach 后不再请求 engine frame；
 - present deadline 使用提交后的相对预算，统一基于平台单调时钟计算；
-- texture create、首次 blit、resize 和 release 是独立操作。
+- texture create、首次 blit、resize 和 release 是独立操作；
+- Flutter 侧以源画布 `AspectRatio` 建立 contain paint box，再让 `Texture` 填充该 box，禁止 texture 直接吃满 Reader/预览 viewport。
 
 Dart presenter 输出：
 
@@ -218,10 +221,17 @@ Flutter codec。Reader 和文件夹切换隐藏 native 控件；只有独立预�
 确认后才建立 FFI source/cursor 和 Android texture。这使普通阅读与批量切换共享
 安全路径，同时保留可观测的 native 诊断入口。
 
-本地文件夹导入位于 App/catalog 边界，不进入 `reader` package。目录枚举在后台
-isolate 中递归执行，输出不可变的 `PickedWebpFolder`，每个 `PickedWebp` 自己拥有
-相对 `displayName` 和 `XFile`。文件切换复用单个可见播放器位置，旧播放器随 key
-替换而完整释放，避免为整个目录同时创建动画 codec 或 native texture。
+本地图片文件夹导入位于 App/catalog 边界，不进入 `reader` package。桌面和普通 IO
+平台在后台 isolate 中递归枚举文件并探测前 64 字节；Android 不再把 SAF tree URI
+转换为原始路径，而由 `local_media_bridge` 持有 `ACTION_OPEN_DOCUMENT_TREE` grant，
+通过 `DocumentsContract` 递归枚举，并用 `ContentResolver.openInputStream` 读取文件头
+和当前页面字节。两条路径都不以扩展名作为类型依据。签名层只负责最小 magic-byte
+格式嗅探，完整 WebP parser 或 Flutter codec 负责最终有效性。
+
+输出不可变的 `PickedImageFolder`；每个 `PickedImage` 拥有相对 `displayName`、显式
+`sourceId`、兼容 `XFile` 和 byte-loader。Android `sourceId` 是持久授权的 content URI，
+不得再经 `Uri.file` 或 `dart:io File` 解释。文件切换复用单个可见播放器位置，旧播放器
+随 key 替换而完整释放，避免为整个目录同时创建图片 codec 或 native texture。
 
 非 Android：
 
@@ -229,7 +239,7 @@ isolate 中递归执行，输出不可变的 `PickedWebpFolder`，每个 `Picked
 - Android texture 创建、上传或生命周期操作失败时回退 Flutter codec；
 - iOS texture path 在 v1.0 前补齐。
 
-### 3.8 本地 WebP 与预览测试边界
+### 3.8 本地媒体与预览测试边界
 
 本地选择结果使用显式产品对象：
 
@@ -255,8 +265,25 @@ final class PickedWebp {
 
 `ReaderView` 接受可选 `ReaderPageBuilder`。默认仍渲染静态 asset；媒体页面
 可以返回真实播放器，并在实际首帧呈现后调用 `reportFirstFrame`。页面 host
-对同一 asset 只记录一次首帧，并在 asset identity 改变时重置，避免把预览页
-专用管线误当成 Reader 集成。
+对同一 asset 只记录一次首帧，并在 asset identity 改变时重置。
+
+App composition 使用 `ReaderBinding -> LiveCoordinator -> DownloadRegistry`，不再
+用 `FakeCoordinator` 模拟需求。manifest 的 `source/comic/chapter/page/revision/URI`
+生成唯一 `DownloadId`；播放器只在对应 `DownloadSession` promoted 后读取 final
+artifact。因此 Reader demand、下载 telemetry 和最终显示字节共享同一身份。asset
+URI 通过只读 AssetBundle transport 进入相同 DownloadJob，file/http(s) 则使用
+IoTransport。
+
+`DownloadSession` snapshot listener 是只读观察契约：立即提供当前状态，并在
+receiving/sealed/promoted/failed/disposed 等状态变化时通知；观察者异常不能破坏
+权威 session。播放器加载持有 `WebpLoadToken`，离屏销毁时先取消 token，使等待
+promotion 的 listener 在 `finally` 中立即解除。viewport target 更换或 Reader 销毁
+前，`ReaderBinding.detach` 必须把旧 plan reconcile 到 empty，之后再取消
+coordinator lane 并释放 artifact registry。
+
+当前阶段只把生产 ingress/artifact 接入 Reader；可见 WebP 仍由 Flutter codec
+解码和呈现。后续 DecodeRegistry/UploadRegistry 接入必须复用相同 DownloadId、
+epoch、revision 和 deadline telemetry，而不能重新建立预览专用身份。
 
 ## 4. 核心领域模型
 
@@ -698,3 +725,13 @@ enum DemandProfile {
 - 缓存数据库和模型文件不包含认证 token。
 - 远程 source 凭据通过平台安全存储。
 - 日志对 URI query、cookie、authorization 和本地路径脱敏。
+
+
+### Local-media import boundary
+
+`apps/app` 不拥有目录枚举或文件头读取。`packages/local_media` 提供本地图片
+模型、格式嗅探、桌面 `dart:io` 扫描和平台 facade；
+`packages/local_media_bridge` 只实现 Android SAF document tree 与 content URI
+读取。App 中的 `local_image_folder.dart` 仅为兼容导出。Android 文件头探测
+失败时，MIME/文件名图片候选不会被提前丢弃，最终有效性由打开页面时的
+完整 parser/codec 判定。

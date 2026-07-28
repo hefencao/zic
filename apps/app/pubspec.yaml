@@ -18,6 +18,8 @@ dependencies:
     path: ../../packages/bridge
   texture_bridge:
     path: ../../packages/texture_bridge
+  local_media:
+    path: ../../packages/local_media
   file_selector: ^1.0.3
   pipeline:
     path: ../../packages/pipeline
@@ -25,8 +27,12 @@ dependencies:
     path: ../../packages/reader
   sessions:
     path: ../../packages/sessions
+  storage:
+    path: ../../packages/storage
   telemetry:
     path: ../../packages/telemetry
+  transport:
+    path: ../../packages/transport
 
 dev_dependencies:
   flutter_test:

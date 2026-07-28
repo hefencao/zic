@@ -12,7 +12,9 @@ import 'package:pipeline/pipeline.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:texture_bridge/texture_bridge.dart';
 
-import 'local_webp_folder.dart';
+import 'local_image_folder.dart';
+
+export 'local_image_folder.dart';
 
 const _webpTypes = <XTypeGroup>[
   XTypeGroup(
@@ -23,37 +25,164 @@ const _webpTypes = <XTypeGroup>[
 ];
 
 typedef WebpPicker = Future<PickedWebp?> Function();
-typedef WebpFolderPicker = Future<PickedWebpFolder?> Function();
+typedef ImageFolderPicker = Future<PickedImageFolder?> Function();
+@Deprecated('Use ImageFolderPicker')
+typedef WebpFolderPicker = ImageFolderPicker;
 typedef LocalWebpSelector = Future<XFile?> Function();
+typedef WebpBytesLoader = Future<Uint8List> Function(WebpLoadToken token);
+typedef LocalImageBytesLoader = Future<Uint8List> Function(PickedImage image);
+typedef LocalImageDecodeProbe = Future<void> Function(Uint8List bytes);
 
-final class PickedWebpFolder {
+final class WebpLoadToken {
+  final Completer<void> _cancelled = Completer<void>();
+
+  bool get isCancelled => _cancelled.isCompleted;
+  Future<void> get whenCancelled => _cancelled.future;
+
+  void cancel() {
+    if (!isCancelled) {
+      _cancelled.complete();
+    }
+  }
+
+  void throwIfCancelled() {
+    if (isCancelled) {
+      throw const Failure(
+        code: ErrorCode.cancelled,
+        message: 'WebP byte load was cancelled',
+      );
+    }
+  }
+}
+
+final class PickedImage {
+  factory PickedImage({
+    required XFile file,
+    required LocalImageFormat format,
+    String? displayName,
+    String? sourceId,
+    LocalImageFileBytesLoader? readBytes,
+  }) {
+    final explicit = displayName?.trim() ?? '';
+    final explicitSource = sourceId?.trim() ?? '';
+    final fallbackSource = file.path.trim().isEmpty
+        ? 'memory:${explicit.isEmpty ? imageDisplayName(file) : explicit}'
+        : file.path.trim();
+    return PickedImage._(
+      file: file,
+      format: format,
+      displayName: explicit.isEmpty ? imageDisplayName(file) : explicit,
+      sourceId: explicitSource.isEmpty ? fallbackSource : explicitSource,
+      bytesLoader: readBytes,
+    );
+  }
+
+  const PickedImage._({
+    required this.file,
+    required this.format,
+    required this.displayName,
+    required this.sourceId,
+    required LocalImageFileBytesLoader? bytesLoader,
+  }) : _bytesLoader = bytesLoader;
+
+  final XFile file;
+  final LocalImageFormat format;
+  final String displayName;
+  final String sourceId;
+  final LocalImageFileBytesLoader? _bytesLoader;
+
+  Uri get sourceUri {
+    final parsed = Uri.tryParse(sourceId);
+    if (parsed != null &&
+        parsed.hasScheme &&
+        (sourceId.contains('://') || parsed.scheme == 'memory')) {
+      return parsed;
+    }
+    return Uri.file(sourceId);
+  }
+
+  Future<Uint8List> readAsBytes() =>
+      _bytesLoader == null ? file.readAsBytes() : _bytesLoader();
+}
+
+class PickedImageFolder {
+  factory PickedImageFolder({
+    required String directoryPath,
+    required List<PickedImage> files,
+    String? displayName,
+    int? scannedFiles,
+    int unreadableFiles = 0,
+  }) {
+    if (files.isEmpty) {
+      throw ArgumentError.value(
+        files,
+        'files',
+        'must contain at least one image',
+      );
+    }
+    final explicit = displayName?.trim() ?? '';
+    return PickedImageFolder._(
+      directoryPath: directoryPath,
+      displayName: explicit.isEmpty
+          ? imageDirectoryDisplayName(directoryPath)
+          : explicit,
+      files: List<PickedImage>.unmodifiable(files),
+      scannedFiles: scannedFiles ?? files.length,
+      unreadableFiles: unreadableFiles,
+    );
+  }
+
+  const PickedImageFolder._({
+    required this.directoryPath,
+    required this.displayName,
+    required this.files,
+    required this.scannedFiles,
+    required this.unreadableFiles,
+  });
+
+  final String directoryPath;
+  final String displayName;
+  final List<PickedImage> files;
+  final int scannedFiles;
+  final int unreadableFiles;
+}
+
+@Deprecated('Use PickedImageFolder')
+final class PickedWebpFolder extends PickedImageFolder {
   factory PickedWebpFolder({
     required String directoryPath,
     required List<PickedWebp> files,
     String? displayName,
   }) {
-    if (files.isEmpty) {
-      throw ArgumentError.value(
-          files, 'files', 'must contain at least one WebP');
-    }
     final explicit = displayName?.trim() ?? '';
     return PickedWebpFolder._(
       directoryPath: directoryPath,
-      displayName:
-          explicit.isEmpty ? webpDirectoryDisplayName(directoryPath) : explicit,
-      files: List<PickedWebp>.unmodifiable(files),
+      displayName: explicit.isEmpty
+          ? imageDirectoryDisplayName(directoryPath)
+          : explicit,
+      files: List<PickedImage>.unmodifiable(
+        files.map(
+          (picked) => PickedImage(
+            file: picked.file,
+            format: LocalImageFormat.webp,
+            displayName: picked.displayName,
+          ),
+        ),
+      ),
     );
   }
 
   const PickedWebpFolder._({
-    required this.directoryPath,
-    required this.displayName,
-    required this.files,
-  });
-
-  final String directoryPath;
-  final String displayName;
-  final List<PickedWebp> files;
+    required String directoryPath,
+    required String displayName,
+    required List<PickedImage> files,
+  }) : super._(
+          directoryPath: directoryPath,
+          displayName: displayName,
+          files: files,
+          scannedFiles: files.length,
+          unreadableFiles: 0,
+        );
 }
 
 final class PickedWebp {
@@ -79,7 +208,7 @@ final class PickedWebp {
   final String displayName;
 }
 
-String webpDisplayName(XFile file) {
+String imageDisplayName(XFile file) {
   final name = file.name.trim();
   if (name.isNotEmpty) {
     return name;
@@ -93,8 +222,10 @@ String webpDisplayName(XFile file) {
       return base;
     }
   }
-  return '本地 WebP';
+  return '本地图片';
 }
+
+String webpDisplayName(XFile file) => imageDisplayName(file);
 
 const webpCatalogScreenKey = ValueKey<String>('webp-catalog-screen');
 const webpPreviewScreenKey = ValueKey<String>('webp-preview-screen');
@@ -112,13 +243,39 @@ const webpNativeConfirmDialogKey =
 const webpNativeConfirmKey = ValueKey<String>('webp-native-confirm');
 const webpNativeCancelKey = ValueKey<String>('webp-native-cancel');
 const webpFlutterPreviewKey = ValueKey<String>('webp-flutter-preview');
-const webpFolderScreenKey = ValueKey<String>('webp-folder-screen');
-const webpFolderTitleKey = ValueKey<String>('webp-folder-title');
-const webpFolderCurrentFileKey = ValueKey<String>('webp-folder-current-file');
-const webpFolderPositionKey = ValueKey<String>('webp-folder-position');
-const webpFolderPreviousKey = ValueKey<String>('webp-folder-previous');
-const webpFolderNextKey = ValueKey<String>('webp-folder-next');
-const webpFolderFileMenuKey = ValueKey<String>('webp-folder-file-menu');
+const webpNativeTextureViewportKey =
+    ValueKey<String>('webp-native-texture-viewport');
+const imageFolderScreenKey = ValueKey<String>('webp-folder-screen');
+const imageFolderTitleKey = ValueKey<String>('webp-folder-title');
+const imageFolderCurrentFileKey = ValueKey<String>('webp-folder-current-file');
+const imageFolderPositionKey = ValueKey<String>('webp-folder-position');
+const imageFolderPreviousKey = ValueKey<String>('webp-folder-previous');
+const imageFolderNextKey = ValueKey<String>('webp-folder-next');
+const imageFolderFileMenuKey = ValueKey<String>('webp-folder-file-menu');
+@Deprecated('Use imageFolderScreenKey')
+const webpFolderScreenKey = imageFolderScreenKey;
+@Deprecated('Use imageFolderTitleKey')
+const webpFolderTitleKey = imageFolderTitleKey;
+@Deprecated('Use imageFolderCurrentFileKey')
+const webpFolderCurrentFileKey = imageFolderCurrentFileKey;
+@Deprecated('Use imageFolderPositionKey')
+const webpFolderPositionKey = imageFolderPositionKey;
+@Deprecated('Use imageFolderPreviousKey')
+const webpFolderPreviousKey = imageFolderPreviousKey;
+@Deprecated('Use imageFolderNextKey')
+const webpFolderNextKey = imageFolderNextKey;
+@Deprecated('Use imageFolderFileMenuKey')
+const webpFolderFileMenuKey = imageFolderFileMenuKey;
+const imageFolderPreviewStateKey =
+    ValueKey<String>('image-folder-preview-state');
+const imageFolderPreviewReadyKey =
+    ValueKey<String>('image-folder-preview-ready');
+const imageFolderPreviewLoadingKey =
+    ValueKey<String>('image-folder-preview-loading');
+const imageFolderPreviewErrorKey =
+    ValueKey<String>('image-folder-preview-error');
+const imageFolderFlutterPreviewKey =
+    ValueKey<String>('image-folder-flutter-preview');
 
 Key webpCatalogEntryKey(String id) => ValueKey<String>('webp-catalog:$id');
 
@@ -130,11 +287,29 @@ Future<PickedWebp?> pickLocalWebp({LocalWebpSelector? selectFile}) async {
 
 Future<PickedWebp?> defaultWebpPicker() => pickLocalWebp();
 
-Future<PickedWebpFolder?> pickLocalWebpFolder({
-  LocalWebpDirectorySelector? selectDirectory,
-  LocalWebpDirectoryLoader? listFiles,
+Future<PickedImageFolder?> pickLocalImageFolder({
+  LocalImageDirectoryContentsPicker? pickDirectoryContents,
+  LocalImageDirectorySelector? selectDirectory,
+  LocalImageDirectoryLoader? listFiles,
 }) async {
-  final directoryPath = await (selectDirectory ?? selectLocalWebpDirectory)();
+  final useScopedPicker = pickDirectoryContents != null ||
+      (selectDirectory == null &&
+          listFiles == null &&
+          prefersScopedLocalImageDirectoryPicker);
+  if (useScopedPicker) {
+    final picker = pickDirectoryContents ?? pickScopedLocalImageDirectory;
+    final selection = await picker();
+    if (selection == null) {
+      return null;
+    }
+    return _pickedImageFolderFromScan(
+      directoryId: selection.directoryId,
+      displayName: selection.displayName,
+      scan: selection.scan,
+    );
+  }
+
+  final directoryPath = await (selectDirectory ?? selectLocalImageDirectory)();
   if (directoryPath == null) {
     return null;
   }
@@ -142,32 +317,76 @@ Future<PickedWebpFolder?> pickLocalWebpFolder({
   if (normalizedDirectory.isEmpty) {
     throw const FormatException('文件夹路径不能为空');
   }
-  final selected = await (listFiles ?? listLocalWebpDirectory)(
-    normalizedDirectory,
-  );
-  if (selected.isEmpty) {
-    throw const FormatException('所选文件夹中没有 WebP 文件');
-  }
-  final files = selected
-      .map(
-        (file) => PickedWebp(
-          file: file,
-          displayName: _relativeWebpName(normalizedDirectory, file.path),
-        ),
-      )
-      .toList(growable: false);
-  return PickedWebpFolder(
-    directoryPath: normalizedDirectory,
-    files: files,
+  final scan = await (listFiles ?? listLocalImageDirectory)(normalizedDirectory);
+  return _pickedImageFolderFromScan(
+    directoryId: normalizedDirectory,
+    displayName: imageDirectoryDisplayName(normalizedDirectory),
+    scan: scan,
+    relativeRoot: normalizedDirectory,
   );
 }
 
-Future<PickedWebpFolder?> defaultWebpFolderPicker() => pickLocalWebpFolder();
+PickedImageFolder _pickedImageFolderFromScan({
+  required String directoryId,
+  required String displayName,
+  required LocalImageDirectoryScan scan,
+  String? relativeRoot,
+}) {
+  if (scan.images.isEmpty) {
+    throw FormatException(
+      '所选文件夹中没有可识别的图片（已按文件头检查 '
+      '${scan.scannedFiles} 个文件；'
+      '${scan.headerRecognizedFiles} 个文件头识别；'
+      '${scan.metadataRecognizedFiles} 个元数据候选；'
+      '${scan.unrecognizedFiles} 个文件签名不匹配；'
+      '${scan.unreadableFiles} 个文件不可读取）',
+    );
+  }
+  final files = scan.images
+      .map(
+        (image) => PickedImage(
+          file: image.file,
+          format: image.format,
+          displayName: image.displayName ??
+              (relativeRoot == null
+                  ? imageDisplayName(image.file)
+                  : _relativeImageName(relativeRoot, image.file.path)),
+          sourceId: image.sourceId,
+          readBytes: image.readBytes,
+        ),
+      )
+      .toList(growable: false);
+  return PickedImageFolder(
+    directoryPath: directoryId,
+    displayName: displayName,
+    files: files,
+    scannedFiles: scan.scannedFiles,
+    unreadableFiles: scan.unreadableFiles,
+  );
+}
 
-String webpDirectoryDisplayName(String path) {
+Future<PickedImageFolder?> defaultImageFolderPicker() => pickLocalImageFolder();
+
+@Deprecated('Use pickLocalImageFolder')
+Future<PickedImageFolder?> pickLocalWebpFolder({
+  LocalImageDirectoryContentsPicker? pickDirectoryContents,
+  LocalImageDirectorySelector? selectDirectory,
+  LocalImageDirectoryLoader? listFiles,
+}) =>
+    pickLocalImageFolder(
+      pickDirectoryContents: pickDirectoryContents,
+      selectDirectory: selectDirectory,
+      listFiles: listFiles,
+    );
+
+@Deprecated('Use defaultImageFolderPicker')
+Future<PickedImageFolder?> defaultWebpFolderPicker() =>
+    defaultImageFolderPicker();
+
+String imageDirectoryDisplayName(String path) {
   final normalized = path.trim().replaceAll('\\', '/');
   if (normalized.isEmpty) {
-    return '本地 WebP 文件夹';
+    return '本地图片文件夹';
   }
   final withoutTrailing = normalized.endsWith('/')
       ? normalized.substring(0, normalized.length - 1)
@@ -175,10 +394,12 @@ String webpDirectoryDisplayName(String path) {
   final slash = withoutTrailing.lastIndexOf('/');
   final name =
       slash < 0 ? withoutTrailing : withoutTrailing.substring(slash + 1);
-  return name.isEmpty ? '本地 WebP 文件夹' : name;
+  return name.isEmpty ? '本地图片文件夹' : name;
 }
 
-String _relativeWebpName(String directoryPath, String filePath) {
+String webpDirectoryDisplayName(String path) => imageDirectoryDisplayName(path);
+
+String _relativeImageName(String directoryPath, String filePath) {
   final root = directoryPath.replaceAll('\\', '/');
   final path = filePath.replaceAll('\\', '/');
   final prefix = root.endsWith('/') ? root : '$root/';
@@ -191,6 +412,8 @@ String _relativeWebpName(String directoryPath, String filePath) {
 }
 
 enum WebpPreviewPhase { loading, ready, invalid }
+
+typedef WebpPreviewStateChanged = void Function(WebpPreviewState state);
 
 @immutable
 final class WebpPreviewState {
@@ -217,6 +440,50 @@ final class WebpPreviewStateRegion extends StatelessWidget {
   });
 
   final WebpPreviewState state;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => child;
+}
+
+enum ImagePreviewPhase { loading, ready, invalid }
+
+typedef ImagePreviewStateChanged = void Function(ImagePreviewState state);
+
+@immutable
+final class ImagePreviewState {
+  const ImagePreviewState._({
+    required this.phase,
+    required this.format,
+    this.error,
+  });
+
+  const ImagePreviewState.loading(LocalImageFormat format)
+      : this._(phase: ImagePreviewPhase.loading, format: format);
+
+  const ImagePreviewState.ready(LocalImageFormat format)
+      : this._(phase: ImagePreviewPhase.ready, format: format);
+
+  const ImagePreviewState.invalid(LocalImageFormat format, Object error)
+      : this._(
+          phase: ImagePreviewPhase.invalid,
+          format: format,
+          error: error,
+        );
+
+  final ImagePreviewPhase phase;
+  final LocalImageFormat format;
+  final Object? error;
+}
+
+final class ImagePreviewStateRegion extends StatelessWidget {
+  const ImagePreviewStateRegion({
+    required this.state,
+    required this.child,
+    super.key,
+  });
+
+  final ImagePreviewState state;
   final Widget child;
 
   @override
@@ -331,22 +598,293 @@ final class WebpCatalogScreen extends StatelessWidget {
   }
 }
 
-final class WebpFolderScreen extends StatefulWidget {
-  const WebpFolderScreen({required this.folder, super.key});
+final class LocalImagePlayer extends StatefulWidget {
+  const LocalImagePlayer({
+    required this.image,
+    this.bytesLoader,
+    this.decodeProbe,
+    this.onPreviewStateChanged,
+    super.key,
+  });
 
-  final PickedWebpFolder folder;
+  final PickedImage image;
+  final LocalImageBytesLoader? bytesLoader;
+  final LocalImageDecodeProbe? decodeProbe;
+  final ImagePreviewStateChanged? onPreviewStateChanged;
+
+  Uri get sourceUri => image.sourceUri;
 
   @override
-  State<WebpFolderScreen> createState() => _WebpFolderScreenState();
+  State<LocalImagePlayer> createState() => _LocalImagePlayerState();
 }
 
-final class _WebpFolderScreenState extends State<WebpFolderScreen> {
-  int _index = 0;
-
-  PickedWebp get _current => widget.folder.files[_index];
+final class _LocalImagePlayerState extends State<LocalImagePlayer> {
+  late ImagePreviewState _state;
+  Uint8List? _bytes;
+  MemoryImage? _imageProvider;
+  ImageStream? _imageStream;
+  ImageStreamListener? _imageStreamListener;
+  int _generation = 0;
 
   @override
-  void didUpdateWidget(covariant WebpFolderScreen oldWidget) {
+  void initState() {
+    super.initState();
+    _state = ImagePreviewState.loading(widget.image.format);
+    _scheduleObserverSnapshot();
+    unawaited(_load());
+  }
+
+  @override
+  void didUpdateWidget(covariant LocalImagePlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.image.sourceId != widget.image.sourceId ||
+        oldWidget.image.displayName != widget.image.displayName ||
+        oldWidget.image.format != widget.image.format) {
+      _generation++;
+      _detachImageStream();
+      _bytes = null;
+      _imageProvider = null;
+      _state = ImagePreviewState.loading(widget.image.format);
+      _notifyObserver(_state);
+      unawaited(_load());
+    }
+  }
+
+  Future<void> _load() async {
+    final generation = ++_generation;
+    try {
+      final loader = widget.bytesLoader;
+      final bytes = loader == null
+          ? await widget.image.readAsBytes()
+          : await loader(widget.image);
+      if (!mounted || generation != _generation) {
+        return;
+      }
+      final detected = detectLocalImageFormat(bytes, fileLength: bytes.length);
+      if (detected == null) {
+        throw const FormatException('文件头不是可识别的图片格式');
+      }
+      if (detected != widget.image.format) {
+        throw FormatException(
+          '图片格式在扫描后发生变化：'
+          '${widget.image.format.label} → ${detected.label}',
+        );
+      }
+      final provider = detected.isWebp ? null : MemoryImage(bytes);
+      final decodeProbe = widget.decodeProbe;
+      if (provider != null && decodeProbe != null) {
+        await decodeProbe(bytes);
+        if (!mounted || generation != _generation) {
+          return;
+        }
+      }
+      setState(() {
+        _bytes = bytes;
+        _imageProvider = provider;
+      });
+      if (provider != null) {
+        if (decodeProbe != null) {
+          _publish(ImagePreviewState.ready(detected));
+        } else {
+          _listenForImage(provider, generation, detected);
+        }
+      }
+    } catch (error) {
+      if (!mounted || generation != _generation) {
+        return;
+      }
+      _publish(ImagePreviewState.invalid(widget.image.format, error));
+    }
+  }
+
+  @override
+  void dispose() {
+    _generation++;
+    _detachImageStream();
+    super.dispose();
+  }
+
+  void _listenForImage(
+    MemoryImage provider,
+    int generation,
+    LocalImageFormat format,
+  ) {
+    _detachImageStream();
+    final stream = provider.resolve(createLocalImageConfiguration(context));
+    late final ImageStreamListener listener;
+    listener = ImageStreamListener(
+      (_, __) {
+        if (!mounted || generation != _generation) {
+          return;
+        }
+        _publish(ImagePreviewState.ready(format));
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && generation == _generation) {
+            _detachImageStream();
+          }
+        });
+      },
+      onError: (Object error, StackTrace? stackTrace) {
+        if (!mounted || generation != _generation) {
+          return;
+        }
+        _publish(ImagePreviewState.invalid(format, error));
+        _detachImageStream();
+      },
+    );
+    _imageStream = stream;
+    _imageStreamListener = listener;
+    stream.addListener(listener);
+  }
+
+  void _detachImageStream() {
+    final stream = _imageStream;
+    final listener = _imageStreamListener;
+    _imageStream = null;
+    _imageStreamListener = null;
+    if (stream != null && listener != null) {
+      stream.removeListener(listener);
+    }
+  }
+
+  void _scheduleObserverSnapshot() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _notifyObserver(_state);
+      }
+    });
+  }
+
+  void _notifyObserver(ImagePreviewState state) {
+    try {
+      widget.onPreviewStateChanged?.call(state);
+    } on Object catch (error) {
+      debugPrint('image preview state observer failed: $error');
+    }
+  }
+
+  void _publish(ImagePreviewState state) {
+    if (!mounted ||
+        (_state.phase == state.phase &&
+            _state.format == state.format &&
+            _state.error == state.error)) {
+      return;
+    }
+    setState(() => _state = state);
+    _notifyObserver(state);
+  }
+
+  void _scheduleError(Object error) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _publish(ImagePreviewState.invalid(widget.image.format, error));
+      }
+    });
+  }
+
+  void _onWebpState(WebpPreviewState state) {
+    switch (state.phase) {
+      case WebpPreviewPhase.loading:
+        break;
+      case WebpPreviewPhase.ready:
+        _publish(ImagePreviewState.ready(LocalImageFormat.webp));
+        break;
+      case WebpPreviewPhase.invalid:
+        _publish(
+          ImagePreviewState.invalid(
+            LocalImageFormat.webp,
+            state.error ?? const FormatException('WebP 文件无效'),
+          ),
+        );
+        break;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = _bytes;
+    final imageProvider = _imageProvider;
+    final Widget content;
+    if (_state.phase == ImagePreviewPhase.invalid) {
+      content = Center(
+        child: SelectionArea(
+          child: Text(
+            '图片无法打开：${_state.error}',
+            key: imageFolderPreviewErrorKey,
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    } else if (bytes == null) {
+      content = const Center(
+        child: CircularProgressIndicator(),
+      );
+    } else if (widget.image.format.isWebp) {
+      content = NativeWebpPlayer(
+        title: widget.image.displayName,
+        sourceUri: widget.sourceUri,
+        loadBytes: (_) async => bytes,
+        showEngineControls: false,
+        showStatus: false,
+        initialEngine: WebpPlayerEngine.flutter,
+        onPreviewStateChanged: _onWebpState,
+      );
+    } else {
+      content = Center(
+        child: Image(
+          image: imageProvider!,
+          key: imageFolderFlutterPreviewKey,
+          fit: BoxFit.contain,
+          filterQuality: FilterQuality.medium,
+          errorBuilder: (context, error, stackTrace) {
+            _scheduleError(error);
+            return const SizedBox.shrink();
+          },
+        ),
+      );
+    }
+    final keyed = switch (_state.phase) {
+      ImagePreviewPhase.loading => KeyedSubtree(
+          key: imageFolderPreviewLoadingKey,
+          child: content,
+        ),
+      ImagePreviewPhase.ready => KeyedSubtree(
+          key: imageFolderPreviewReadyKey,
+          child: content,
+        ),
+      ImagePreviewPhase.invalid => content,
+    };
+    return ImagePreviewStateRegion(
+      key: imageFolderPreviewStateKey,
+      state: _state,
+      child: keyed,
+    );
+  }
+}
+
+final class ImageFolderScreen extends StatefulWidget {
+  const ImageFolderScreen({
+    required this.folder,
+    this.bytesLoader,
+    this.onPreviewStateChanged,
+    super.key,
+  });
+
+  final PickedImageFolder folder;
+  final LocalImageBytesLoader? bytesLoader;
+  final ImagePreviewStateChanged? onPreviewStateChanged;
+
+  @override
+  State<ImageFolderScreen> createState() => _ImageFolderScreenState();
+}
+
+final class _ImageFolderScreenState extends State<ImageFolderScreen> {
+  int _index = 0;
+
+  PickedImage get _current => widget.folder.files[_index];
+
+  @override
+  void didUpdateWidget(covariant ImageFolderScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (_index >= widget.folder.files.length) {
       _index = widget.folder.files.length - 1;
@@ -365,15 +903,15 @@ final class _WebpFolderScreenState extends State<WebpFolderScreen> {
     final current = _current;
     final count = widget.folder.files.length;
     return Scaffold(
-      key: webpFolderScreenKey,
+      key: imageFolderScreenKey,
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text(widget.folder.displayName, key: webpFolderTitleKey),
+            Text(widget.folder.displayName, key: imageFolderTitleKey),
             Text(
-              current.displayName,
-              key: webpFolderCurrentFileKey,
+              '${current.displayName} · ${current.format.label}',
+              key: imageFolderCurrentFileKey,
               style: Theme.of(context).textTheme.bodySmall,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -382,15 +920,18 @@ final class _WebpFolderScreenState extends State<WebpFolderScreen> {
         ),
         actions: <Widget>[
           PopupMenuButton<int>(
-            key: webpFolderFileMenuKey,
-            tooltip: '选择 WebP',
+            key: imageFolderFileMenuKey,
+            tooltip: '选择图片',
             initialValue: _index,
             onSelected: _select,
             itemBuilder: (context) => <PopupMenuEntry<int>>[
               for (var index = 0; index < count; index++)
                 PopupMenuItem<int>(
                   value: index,
-                  child: Text(widget.folder.files[index].displayName),
+                  child: Text(
+                    '${widget.folder.files[index].displayName} · '
+                    '${widget.folder.files[index].format.label}',
+                  ),
                 ),
             ],
           ),
@@ -399,17 +940,13 @@ final class _WebpFolderScreenState extends State<WebpFolderScreen> {
       body: Column(
         children: <Widget>[
           Expanded(
-            child: NativeWebpPlayer(
+            child: LocalImagePlayer(
               key: ValueKey<String>(
-                'folder-webp:${current.file.path}:$_index',
+                'folder-image:${current.sourceId}:${current.format.name}:$_index',
               ),
-              title: current.displayName,
-              sourceUri: current.file.path.isEmpty
-                  ? Uri(scheme: 'memory', path: current.displayName)
-                  : Uri.file(current.file.path),
-              loadBytes: current.file.readAsBytes,
-              showEngineControls: false,
-              initialEngine: WebpPlayerEngine.flutter,
+              image: current,
+              bytesLoader: widget.bytesLoader,
+              onPreviewStateChanged: widget.onPreviewStateChanged,
             ),
           ),
           SafeArea(
@@ -419,21 +956,21 @@ final class _WebpFolderScreenState extends State<WebpFolderScreen> {
               child: Row(
                 children: <Widget>[
                   IconButton.filledTonal(
-                    key: webpFolderPreviousKey,
-                    tooltip: '上一个 WebP',
+                    key: imageFolderPreviousKey,
+                    tooltip: '上一张图片',
                     onPressed: _index == 0 ? null : () => _select(_index - 1),
                     icon: const Icon(Icons.chevron_left),
                   ),
                   Expanded(
                     child: Text(
                       '${_index + 1} / $count',
-                      key: webpFolderPositionKey,
+                      key: imageFolderPositionKey,
                       textAlign: TextAlign.center,
                     ),
                   ),
                   IconButton.filledTonal(
-                    key: webpFolderNextKey,
-                    tooltip: '下一个 WebP',
+                    key: imageFolderNextKey,
+                    tooltip: '下一张图片',
                     onPressed:
                         _index + 1 >= count ? null : () => _select(_index + 1),
                     icon: const Icon(Icons.chevron_right),
@@ -448,6 +985,27 @@ final class _WebpFolderScreenState extends State<WebpFolderScreen> {
   }
 }
 
+@Deprecated('Use ImageFolderScreen')
+final class WebpFolderScreen extends StatelessWidget {
+  const WebpFolderScreen({
+    required this.folder,
+    this.bytesLoader,
+    this.onPreviewStateChanged,
+    super.key,
+  });
+
+  final PickedImageFolder folder;
+  final LocalImageBytesLoader? bytesLoader;
+  final ImagePreviewStateChanged? onPreviewStateChanged;
+
+  @override
+  Widget build(BuildContext context) => ImageFolderScreen(
+        folder: folder,
+        bytesLoader: bytesLoader,
+        onPreviewStateChanged: onPreviewStateChanged,
+      );
+}
+
 final class WebpPlayerScreen extends StatelessWidget {
   const WebpPlayerScreen._({
     required this.title,
@@ -459,7 +1017,7 @@ final class WebpPlayerScreen extends StatelessWidget {
     return WebpPlayerScreen._(
       title: entry.title,
       sourceUri: Uri.parse(entry.asset),
-      loadBytes: () async {
+      loadBytes: (_) async {
         final data = await rootBundle.load(entry.asset);
         return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
       },
@@ -477,7 +1035,7 @@ final class WebpPlayerScreen extends StatelessWidget {
       sourceUri: file.path.isEmpty
           ? Uri(scheme: 'memory', path: title)
           : Uri.file(file.path),
-      loadBytes: file.readAsBytes,
+      loadBytes: (_) => file.readAsBytes(),
     );
   }
 
@@ -494,12 +1052,12 @@ final class WebpPlayerScreen extends StatelessWidget {
       WebpPlayerScreen._(
         title: displayName,
         sourceUri: sourceUri ?? Uri(scheme: 'memory', path: displayName),
-        loadBytes: () async => bytes,
+        loadBytes: (_) async => bytes,
       );
 
   final String title;
   final Uri sourceUri;
-  final Future<Uint8List> Function() loadBytes;
+  final WebpBytesLoader loadBytes;
 
   @override
   Widget build(BuildContext context) {
@@ -536,12 +1094,13 @@ final class NativeWebpPlayer extends StatefulWidget {
     this.demandRevision,
     this.downloadIdentity,
     this.initialEngine = WebpPlayerEngine.flutter,
+    this.onPreviewStateChanged,
     super.key,
   });
 
   final String title;
   final Uri sourceUri;
-  final Future<Uint8List> Function() loadBytes;
+  final WebpBytesLoader loadBytes;
   final bool showEngineControls;
   final bool showStatus;
   final VoidCallback? onFirstFrame;
@@ -551,6 +1110,7 @@ final class NativeWebpPlayer extends StatefulWidget {
   final int Function()? demandRevision;
   final DownloadId? downloadIdentity;
   final WebpPlayerEngine initialEngine;
+  final WebpPreviewStateChanged? onPreviewStateChanged;
 
   @override
   State<NativeWebpPlayer> createState() => _NativeWebpPlayerState();
@@ -593,15 +1153,22 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   bool _completionPending = false;
   int _generation = 0;
   bool _reportedFirstFrame = false;
+  late final WebpLoadToken _loadToken;
 
   @override
   void initState() {
     super.initState();
+    _loadToken = WebpLoadToken();
     _engine = widget.initialEngine;
     _traceClock = widget.traceClock ?? SystemClock();
     _texturePresenter = AndroidTexturePresenter(
       telemetrySink: _recordTextureTelemetry,
     );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _notifyPreviewObserver(_previewState);
+      }
+    });
     unawaited(_load());
   }
 
@@ -677,14 +1244,28 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   @override
   void dispose() {
     _generation++;
+    _loadToken.cancel();
     _resetNative(disposeImage: true);
     super.dispose();
+  }
+
+  void _notifyPreviewObserver(WebpPreviewState state) {
+    try {
+      widget.onPreviewStateChanged?.call(state);
+    } on Object catch (error) {
+      debugPrint('preview state observer failed: $error');
+    }
+  }
+
+  void _publishPreviewState(WebpPreviewState state) {
+    _previewState = state;
+    _notifyPreviewObserver(state);
   }
 
   Future<void> _load() async {
     final generation = ++_generation;
     try {
-      final bytes = await widget.loadBytes();
+      final bytes = await widget.loadBytes(_loadToken);
       if (!mounted || generation != _generation) {
         return;
       }
@@ -693,7 +1274,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         _encoded = bytes;
         _sourceCanvas = canvas;
         _loadError = null;
-        _previewState = WebpPreviewState.ready(canvas);
+        _publishPreviewState(WebpPreviewState.ready(canvas));
         _status = '已读取 ${bytes.length} B，等待 viewport';
       });
       final target = _target;
@@ -709,7 +1290,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         _encoded = null;
         _sourceCanvas = null;
         _loadError = error;
-        _previewState = WebpPreviewState.invalid(error);
+        _publishPreviewState(WebpPreviewState.invalid(error));
         _nativeError = null;
         _engine = WebpPlayerEngine.flutter;
         _status = '加载失败';
@@ -1409,9 +1990,16 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
                         : webpPreviewLoadingKey,
                     child: switch (_engine) {
                       WebpPlayerEngine.native => _textureId != null
-                          ? Texture(
+                          ? NativeTextureViewport(
                               textureId: _textureId!,
+                              sourceWidth: source?.width ??
+                                  raster?.sourceWidth ??
+                                  1,
+                              sourceHeight: source?.height ??
+                                  raster?.sourceHeight ??
+                                  1,
                               filterQuality: quality,
+                              viewportKey: webpNativeTextureViewportKey,
                             )
                           : _image == null
                               ? const Center(

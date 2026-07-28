@@ -1,12 +1,22 @@
 import 'package:file_selector/file_selector.dart';
 
-import 'local_webp_folder_stub.dart'
-    if (dart.library.io) 'local_webp_folder_io.dart' as platform;
+import 'local_image_folder.dart';
 
-typedef LocalWebpDirectorySelector = Future<String?> Function();
+@Deprecated('Use LocalImageDirectorySelector')
+typedef LocalWebpDirectorySelector = LocalImageDirectorySelector;
+
+@Deprecated('Use LocalImageDirectoryLoader')
 typedef LocalWebpDirectoryLoader = Future<List<XFile>> Function(String path);
 
-Future<String?> selectLocalWebpDirectory() => getDirectoryPath();
+@Deprecated('Use selectLocalImageDirectory')
+Future<String?> selectLocalWebpDirectory() => selectLocalImageDirectory();
 
-Future<List<XFile>> listLocalWebpDirectory(String path) =>
-    platform.listLocalWebpDirectory(path);
+@Deprecated('Use listLocalImageDirectory')
+Future<List<XFile>> listLocalWebpDirectory(String path) async {
+  final scan = await listLocalImageDirectory(path);
+  return List<XFile>.unmodifiable(
+    scan.images
+        .where((image) => image.format == LocalImageFormat.webp)
+        .map((image) => image.file),
+  );
+}

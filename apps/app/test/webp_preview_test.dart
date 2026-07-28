@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -52,6 +53,31 @@ Future<void> _pumpUntilFound(
 }
 
 void main() {
+  testWidgets('preview observer receives the current loading snapshot', (
+    tester,
+  ) async {
+    final bytes = Completer<Uint8List>();
+    final states = <WebpPreviewState>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NativeWebpPlayer(
+          title: 'pending.webp',
+          sourceUri: Uri.parse('memory:pending.webp'),
+          loadBytes: (_) => bytes.future,
+          onPreviewStateChanged: states.add,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(states, isNotEmpty);
+    expect(states.last.phase, WebpPreviewPhase.loading);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    bytes.complete(_nativeFixture('finite_loop.webp').readAsBytesSync());
+    await tester.pump();
+  });
+
   testWidgets('valid local WebP reaches an explicit ready state', (
     tester,
   ) async {
@@ -161,6 +187,37 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
+  });
+
+  testWidgets('disposing a WebP player cancels its byte load', (tester) async {
+    final started = Completer<void>();
+    final cancelled = Completer<void>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: NativeWebpPlayer(
+          title: 'cancellable.webp',
+          sourceUri: Uri.parse('memory:cancellable.webp'),
+          loadBytes: (token) async {
+            started.complete();
+            await token.whenCancelled;
+            cancelled.complete();
+            token.throwIfCancelled();
+            throw StateError('unreachable cancellation path');
+          },
+        ),
+      ),
+    );
+    await tester.runAsync(
+      () => started.future.timeout(const Duration(seconds: 10)),
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await tester.runAsync(
+      () => cancelled.future.timeout(const Duration(seconds: 10)),
+    );
+
+    expect(cancelled.isCompleted, isTrue);
   });
 
   testWidgets('tiny partial-frame WebP is not upscaled by Flutter codec', (

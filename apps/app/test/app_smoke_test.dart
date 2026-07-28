@@ -1,4 +1,7 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
 import 'package:file_selector/file_selector.dart';
@@ -18,51 +21,6 @@ File _nativeFixture(String name) {
     (file) => file.existsSync(),
     orElse: () => throw StateError('Missing native fixture: $name'),
   );
-}
-
-Future<void> _pumpUntilAbsent(
-  WidgetTester tester,
-  Finder finder, {
-  int maxFrames = 60,
-}) async {
-  for (var frame = 0; frame < maxFrames; frame++) {
-    await tester.pump(const Duration(milliseconds: 10));
-    if (finder.evaluate().isEmpty) {
-      return;
-    }
-  }
-  throw TestFailure('Timed out waiting for $finder to disappear');
-}
-
-Future<WebpPreviewState> _pumpUntilPreviewPhase(
-  WidgetTester tester,
-  WebpPreviewPhase phase, {
-  int maxFrames = 80,
-}) async {
-  for (var frame = 0; frame < maxFrames; frame++) {
-    await tester.pump(const Duration(milliseconds: 10));
-    final finder = find.byKey(webpPreviewStateKey);
-    if (finder.evaluate().isEmpty) {
-      continue;
-    }
-    final region = tester.widget<WebpPreviewStateRegion>(finder);
-    if (region.state.phase == phase) {
-      return region.state;
-    }
-  }
-  final regions = find.byKey(webpPreviewStateKey).evaluate();
-  if (regions.isNotEmpty) {
-    final state = tester
-        .widget<WebpPreviewStateRegion>(
-          find.byKey(webpPreviewStateKey),
-        )
-        .state;
-    throw TestFailure(
-      'Preview never reached ${phase.name}; '
-      'actual=${state.phase.name}, error=${state.error}',
-    );
-  }
-  throw TestFailure('Preview state region was not mounted');
 }
 
 ChapterManifest _mediaChapterFixture() {
@@ -91,29 +49,38 @@ ChapterManifest _mediaChapterFixture() {
   );
 }
 
-PickedWebpFolder _folderFixture() {
+Uint8List _tinyPng() => base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+      'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    );
+
+PickedImageFolder _folderFixture() {
   final first = _nativeFixture('finite_loop.webp');
-  final second = _nativeFixture('partial_blend.webp');
-  return PickedWebpFolder(
+  return PickedImageFolder(
     directoryPath: first.parent.path,
     displayName: 'chapter',
-    files: <PickedWebp>[
-      PickedWebp(
-        file: XFile.fromData(
-          first.readAsBytesSync(),
-          path: first.path,
-        ),
+    files: <PickedImage>[
+      PickedImage(
+        file: XFile(first.path),
+        format: LocalImageFormat.webp,
         displayName: '001.webp',
       ),
-      PickedWebp(
-        file: XFile.fromData(
-          second.readAsBytesSync(),
-          path: second.path,
-        ),
-        displayName: '002.webp',
+      PickedImage(
+        file: XFile('${first.parent.path}/002.bin'),
+        format: LocalImageFormat.png,
+        displayName: '002.bin',
       ),
     ],
   );
+}
+
+Future<Uint8List> _folderBytes(PickedImage image) async {
+  return switch (image.format) {
+    LocalImageFormat.webp =>
+      _nativeFixture('finite_loop.webp').readAsBytesSync(),
+    LocalImageFormat.png => _tinyPng(),
+    _ => throw StateError('unexpected test image format: ${image.format}'),
+  };
 }
 
 const _catalogEntries = <WebpDemoEntry>[
@@ -157,7 +124,7 @@ void main() {
     expect(find.byKey(mediaPipelineReaderEntryKey), findsOneWidget);
     expect(find.byKey(bundledWebpEntryKey), findsOneWidget);
     expect(find.byKey(localWebpImportKey), findsOneWidget);
-    expect(find.byKey(localWebpFolderImportKey), findsOneWidget);
+    expect(find.byKey(localImageFolderImportKey), findsOneWidget);
   });
 
   testWidgets('static entry pushes its keyed route', (tester) async {
@@ -185,25 +152,31 @@ void main() {
   testWidgets('Reader screen hosts the real WebP media component', (
     tester,
   ) async {
+    final bytes = Completer<Uint8List>();
+
     await tester.pumpWidget(
       MaterialApp(
         home: MediaPipelineReaderScreen(
           chapterLoader: () async => _mediaChapterFixture(),
+          mediaBytesLoader: (asset, token) {
+            token.throwIfCancelled();
+            return bytes.future;
+          },
         ),
       ),
     );
+    await tester.pump();
 
-    final state = await _pumpUntilPreviewPhase(
-      tester,
-      WebpPreviewPhase.ready,
-    );
-
-    expect(state.info, isNotNull);
     expect(find.byKey(readerMediaWebpPageKey), findsOneWidget);
-    expect(find.byKey(webpFlutterPreviewKey), findsOneWidget);
+    expect(find.byType(NativeWebpPlayer), findsOneWidget);
+    final state = tester.widget<WebpPreviewStateRegion>(
+      find.byKey(webpPreviewStateKey),
+    );
+    expect(state.state.phase, WebpPreviewPhase.loading);
     expect(find.byKey(webpEngineControlKey), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
+    bytes.complete(_nativeFixture('finite_loop.webp').readAsBytesSync());
     await tester.pump();
   });
 
@@ -221,23 +194,15 @@ void main() {
   testWidgets('bundled catalog exposes entries by stable identity', (
     tester,
   ) async {
+    final entries = Completer<List<WebpDemoEntry>>();
     await tester.pumpWidget(
       MaterialApp(
-        home: WebpCatalogScreen(
-          entriesLoader: () async => _catalogEntries,
-        ),
+        home: WebpCatalogScreen(entriesLoader: () => entries.future),
       ),
     );
 
-    for (var frame = 0; frame < 40; frame++) {
-      await tester.pump(const Duration(milliseconds: 10));
-      if (find
-          .byKey(webpCatalogEntryKey('infinite-basic'))
-          .evaluate()
-          .isNotEmpty) {
-        break;
-      }
-    }
+    entries.complete(_catalogEntries);
+    await tester.pump();
 
     expect(find.byKey(webpCatalogEntryKey('infinite-basic')), findsOneWidget);
     expect(find.byKey(webpCatalogEntryKey('finite-loop')), findsOneWidget);
@@ -250,13 +215,19 @@ void main() {
   testWidgets('picked WebP navigates with the owned display name', (
     tester,
   ) async {
+    final result = Completer<PickedWebp?>();
     final picked = PickedWebp(
       file: XFile('/virtual/route-source.webp'),
       displayName: 'route-owned.webp',
     );
-    await tester.pumpWidget(App(picker: () async => picked));
+    await tester.pumpWidget(App(picker: () => result.future));
 
     await tester.tap(find.byKey(localWebpImportKey));
+    await tester.pump();
+    expect(find.byKey(localWebpPickerProgressKey), findsOneWidget);
+
+    result.complete(picked);
+    await tester.pump();
     await tester.pump();
 
     final titleFinder = find.byKey(webpPreviewTitleKey, skipOffstage: false);
@@ -267,10 +238,15 @@ void main() {
   testWidgets('cancelled picker stays on home without opening a route', (
     tester,
   ) async {
-    await tester.pumpWidget(App(picker: () async => null));
+    final result = Completer<PickedWebp?>();
+    await tester.pumpWidget(App(picker: () => result.future));
 
     await tester.tap(find.byKey(localWebpImportKey));
-    await _pumpUntilAbsent(tester, find.byKey(localWebpPickerProgressKey));
+    await tester.pump();
+    expect(find.byKey(localWebpPickerProgressKey), findsOneWidget);
+
+    result.complete(null);
+    await tester.pumpAndSettle();
 
     expect(find.byKey(webpPreviewScreenKey), findsNothing);
     expect(find.byKey(localWebpImportKey), findsOneWidget);
@@ -278,73 +254,112 @@ void main() {
   });
 
   testWidgets('picked folder navigates to the folder reader', (tester) async {
+    final result = Completer<PickedImageFolder?>();
     final folder = _folderFixture();
-    await tester.pumpWidget(App(folderPicker: () async => folder));
+    await tester.pumpWidget(App(folderPicker: () => result.future));
 
-    final folderEntry = find.byKey(localWebpFolderImportKey);
+    final folderEntry = find.byKey(localImageFolderImportKey);
     await tester.ensureVisible(folderEntry);
     await tester.pumpAndSettle();
     await tester.tap(folderEntry);
     await tester.pump();
+    expect(find.byKey(localImageFolderPickerProgressKey), findsOneWidget);
+
+    result.complete(folder);
+    await tester.pump();
+    await tester.pump();
 
     expect(
-      find.byKey(webpFolderScreenKey, skipOffstage: false),
+      find.byKey(imageFolderScreenKey, skipOffstage: false),
       findsOneWidget,
     );
   });
 
-  testWidgets('folder reader switches WebP files by explicit identity', (
+  testWidgets('folder reader switches mixed image files by explicit identity', (
     tester,
   ) async {
+    final pending = <String, Completer<Uint8List>>{
+      '001.webp': Completer<Uint8List>(),
+      '002.bin': Completer<Uint8List>(),
+    };
     await tester.pumpWidget(
-      MaterialApp(home: WebpFolderScreen(folder: _folderFixture())),
+      MaterialApp(
+        home: ImageFolderScreen(
+          folder: _folderFixture(),
+          bytesLoader: (image) => pending[image.displayName]!.future,
+        ),
+      ),
     );
-    await _pumpUntilPreviewPhase(tester, WebpPreviewPhase.ready);
 
     expect(
-      tester.widget<Text>(find.byKey(webpFolderCurrentFileKey)).data,
-      '001.webp',
+      tester.widget<Text>(find.byKey(imageFolderCurrentFileKey)).data,
+      '001.webp · WebP',
     );
     expect(
-      tester.widget<Text>(find.byKey(webpFolderPositionKey)).data,
+      tester.widget<Text>(find.byKey(imageFolderPositionKey)).data,
       '1 / 2',
     );
     expect(
-      tester.widget<NativeWebpPlayer>(find.byType(NativeWebpPlayer)).sourceUri,
+      tester.widget<LocalImagePlayer>(find.byType(LocalImagePlayer)).sourceUri,
       Uri.file(_nativeFixture('finite_loop.webp').path),
     );
+    expect(
+      tester
+          .widget<ImagePreviewStateRegion>(
+            find.byKey(imageFolderPreviewStateKey),
+          )
+          .state
+          .phase,
+      ImagePreviewPhase.loading,
+    );
 
-    await tester.tap(find.byKey(webpFolderNextKey));
+    await tester.tap(find.byKey(imageFolderNextKey));
     await tester.pump();
-    await _pumpUntilPreviewPhase(tester, WebpPreviewPhase.ready);
 
     expect(
-      tester.widget<Text>(find.byKey(webpFolderCurrentFileKey)).data,
-      '002.webp',
+      tester.widget<Text>(find.byKey(imageFolderCurrentFileKey)).data,
+      '002.bin · PNG',
     );
     expect(
-      tester.widget<Text>(find.byKey(webpFolderPositionKey)).data,
+      tester.widget<Text>(find.byKey(imageFolderPositionKey)).data,
       '2 / 2',
     );
     expect(
-      tester.widget<NativeWebpPlayer>(find.byType(NativeWebpPlayer)).sourceUri,
-      Uri.file(_nativeFixture('partial_blend.webp').path),
+      tester.widget<LocalImagePlayer>(find.byType(LocalImagePlayer)).sourceUri,
+      Uri.file('${_nativeFixture('finite_loop.webp').parent.path}/002.bin'),
     );
+    expect(
+      tester
+          .widget<ImagePreviewStateRegion>(
+            find.byKey(imageFolderPreviewStateKey),
+          )
+          .state
+          .phase,
+      ImagePreviewPhase.loading,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    pending['001.webp']!.complete(_folderBytes(_folderFixture().files.first));
+    pending['002.bin']!.complete(_folderBytes(_folderFixture().files.last));
+    await tester.pump();
   });
 
   testWidgets('cancelled folder picker stays on home', (tester) async {
-    await tester.pumpWidget(App(folderPicker: () async => null));
+    final result = Completer<PickedImageFolder?>();
+    await tester.pumpWidget(App(folderPicker: () => result.future));
 
-    final folderEntry = find.byKey(localWebpFolderImportKey);
+    final folderEntry = find.byKey(localImageFolderImportKey);
     await tester.ensureVisible(folderEntry);
     await tester.pumpAndSettle();
     await tester.tap(folderEntry);
-    await _pumpUntilAbsent(
-      tester,
-      find.byKey(localWebpFolderPickerProgressKey),
-    );
+    await tester.pump();
+    expect(find.byKey(localImageFolderPickerProgressKey), findsOneWidget);
 
-    expect(find.byKey(webpFolderScreenKey), findsNothing);
-    expect(find.byKey(localWebpFolderImportKey), findsOneWidget);
+    result.complete(null);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(imageFolderScreenKey), findsNothing);
+    expect(find.byKey(localImageFolderImportKey), findsOneWidget);
+    expect(find.byKey(localImageFolderPickerProgressKey), findsNothing);
   });
 }

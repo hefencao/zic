@@ -103,15 +103,60 @@ void main() {
     final player = NativeWebpPlayer(
       title: 'page',
       sourceUri: download.canonicalUri,
-      loadBytes: () async => Uint8List(0),
+      loadBytes: (_) async => Uint8List(0),
       downloadIdentity: download,
     );
 
     expect(player.downloadIdentity, same(download));
   });
 
+  test('scoped folder picker preserves content URI byte access', () async {
+    final bytes = Uint8List.fromList(<int>[
+      ...'RIFF'.codeUnits,
+      4,
+      0,
+      0,
+      0,
+      ...'WEBP'.codeUnits,
+    ]);
+    var reads = 0;
+    final folder = await pickLocalImageFolder(
+      pickDirectoryContents: () async => LocalImageDirectorySelection(
+        directoryId: 'content://provider/tree/chapter',
+        displayName: 'chapter',
+        scan: LocalImageDirectoryScan(
+          images: <LocalImageFile>[
+            LocalImageFile(
+              file: XFile('content://provider/document/page-1'),
+              format: LocalImageFormat.webp,
+              displayName: 'sub/001.webp',
+              sourceId: 'content://provider/document/page-1',
+              readBytes: () async {
+                reads++;
+                return bytes;
+              },
+            ),
+          ],
+          scannedFiles: 1,
+          unreadableFiles: 0,
+        ),
+      ),
+    );
+
+    expect(folder, isNotNull);
+    expect(folder!.directoryPath, 'content://provider/tree/chapter');
+    expect(folder.displayName, 'chapter');
+    expect(folder.files.single.displayName, 'sub/001.webp');
+    expect(
+      folder.files.single.sourceUri.toString(),
+      'content://provider/document/page-1',
+    );
+    expect(await folder.files.single.readAsBytes(), bytes);
+    expect(reads, 1);
+  });
+
   test('folder picker preserves cancellation as null', () async {
-    final picked = await pickLocalWebpFolder(
+    final picked = await pickLocalImageFolder(
       selectDirectory: () async => null,
       listFiles: (_) async => throw StateError('must not enumerate'),
     );
@@ -122,32 +167,66 @@ void main() {
   test(
     'folder picker owns relative display names independently of XFile.name',
     () async {
-      final first = XFile('/library/chapter/001.webp');
-      final nested = XFile('/library/chapter/sub/002.webp');
+      final first = XFile('/library/chapter/001.data');
+      final nested = XFile('/library/chapter/sub/002.bin');
 
-      final folder = await pickLocalWebpFolder(
+      final folder = await pickLocalImageFolder(
         selectDirectory: () async => '/library/chapter',
-        listFiles: (_) async => <XFile>[first, nested],
+        listFiles: (_) async => LocalImageDirectoryScan(
+          images: <LocalImageFile>[
+            LocalImageFile(file: first, format: LocalImageFormat.webp),
+            LocalImageFile(file: nested, format: LocalImageFormat.png),
+          ],
+          scannedFiles: 3,
+          unreadableFiles: 1,
+        ),
       );
 
       expect(folder, isNotNull);
       expect(folder!.displayName, 'chapter');
       expect(folder.files.map((file) => file.displayName), <String>[
-        '001.webp',
-        'sub/002.webp',
+        '001.data',
+        'sub/002.bin',
+      ]);
+      expect(folder.files.map((file) => file.format), <LocalImageFormat>[
+        LocalImageFormat.webp,
+        LocalImageFormat.png,
       ]);
       expect(folder.files[0].file, same(first));
       expect(folder.files[1].file, same(nested));
+      expect(folder.scannedFiles, 3);
+      expect(folder.unreadableFiles, 1);
     },
   );
 
-  test('folder picker rejects a directory without WebP files', () async {
+  test('folder picker rejects a directory without recognized images', () async {
     await expectLater(
-      pickLocalWebpFolder(
+      pickLocalImageFolder(
         selectDirectory: () async => '/library/empty',
-        listFiles: (_) async => <XFile>[],
+        listFiles: (_) async => LocalImageDirectoryScan(
+          images: const <LocalImageFile>[],
+          scannedFiles: 7,
+          unreadableFiles: 2,
+        ),
       ),
-      throwsA(isA<FormatException>()),
+      throwsA(
+        isA<FormatException>()
+            .having(
+              (error) => error.message,
+              'message',
+              contains('没有可识别的图片'),
+            )
+            .having(
+              (error) => error.message,
+              'scan count',
+              contains('7 个文件'),
+            )
+            .having(
+              (error) => error.message,
+              'unreadable count',
+              contains('2 个文件不可读取'),
+            ),
+      ),
     );
   });
 

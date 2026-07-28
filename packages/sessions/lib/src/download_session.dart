@@ -7,6 +7,7 @@ import 'package:transport/transport.dart';
 enum DownloadState { idle, queued, receiving, sealed, promoted, failed, disposed }
 
 typedef SourceListener = void Function(IngressSnap snapshot);
+typedef DownloadSnapshotListener = void Function(DownloadSnapshot snapshot);
 
 final class RunLease {
   const RunLease._(this.id);
@@ -88,6 +89,8 @@ final class DownloadSession {
   Failure? _failure;
   List<int> _prefix = <int>[];
   final Set<SourceListener> _sourceListeners = <SourceListener>{};
+  final Set<DownloadSnapshotListener> _snapshotListeners =
+      <DownloadSnapshotListener>{};
 
   DownloadState get state => _state;
   SourceEpoch get epoch => _epoch;
@@ -126,6 +129,25 @@ final class DownloadSession {
     _sourceListeners.remove(listener);
   }
 
+  void addSnapshotListener(
+    DownloadSnapshotListener listener, {
+    bool fireImmediately = true,
+  }) {
+    _requireNotDisposed();
+    _snapshotListeners.add(listener);
+    if (fireImmediately) {
+      try {
+        listener(snapshot);
+      } on Object {
+        // Application observers must not break the authoritative session.
+      }
+    }
+  }
+
+  void removeSnapshotListener(DownloadSnapshotListener listener) {
+    _snapshotListeners.remove(listener);
+  }
+
   RunLease beginRun() {
     _requireNotDisposed();
     if (_run != null) {
@@ -136,6 +158,7 @@ final class DownloadSession {
     }
     final lease = RunLease._(++_runSeq);
     _run = lease;
+    _notifySnapshot();
     return lease;
   }
 
@@ -147,6 +170,7 @@ final class DownloadSession {
       );
     }
     _run = null;
+    _notifySnapshot();
   }
 
   Future<DownloadSnapshot> restore() async {
@@ -171,6 +195,7 @@ final class DownloadSession {
       await _rebuildIngress(sealed: true);
       _state = DownloadState.promoted;
       await _syncCache(CacheState.ready);
+      _notifySnapshot();
       return snapshot;
     }
 
@@ -210,6 +235,7 @@ final class DownloadSession {
     _state = DownloadState.idle;
     _failure = null;
     await _syncCache(CacheState.partial);
+    _notifySnapshot();
     return snapshot;
   }
 
@@ -236,6 +262,7 @@ final class DownloadSession {
       if (totalLength != null) 'totalLength': totalLength,
     });
     await _syncCache(CacheState.partial);
+    _notifySnapshot();
   }
 
   WriterLease acquireWriter() {
@@ -344,7 +371,13 @@ final class DownloadSession {
     await _syncCache(CacheState.partial);
   }
 
-  void attach() => _demanded = true;
+  void attach() {
+    if (_demanded) {
+      return;
+    }
+    _demanded = true;
+    _notifySnapshot();
+  }
 
   void recordResume({required bool restarted}) {
     _emit(
@@ -379,6 +412,10 @@ final class DownloadSession {
     await _restartArtifact();
     _state = DownloadState.idle;
     await index?.remove(id.key);
+    _emit(
+      TraceEventKind.downloadState,
+      <String, Object?>{'state': _state.name, 'reset': true},
+    );
   }
 
   Future<int> evict() async {
@@ -399,6 +436,10 @@ final class DownloadSession {
     _contentKind = ContentKind.unknown;
     _prefix = <int>[];
     await index?.remove(id.key);
+    _emit(
+      TraceEventKind.downloadState,
+      <String, Object?>{'state': _state.name, 'evictedBytes': released},
+    );
     return released;
   }
 
@@ -416,6 +457,8 @@ final class DownloadSession {
     ingress?.dispose();
     await artifact.dispose();
     _state = DownloadState.disposed;
+    _notifySnapshot();
+    _snapshotListeners.clear();
   }
 
   Future<void> _rebuildIngress({required bool sealed}) async {
@@ -574,5 +617,22 @@ final class DownloadSession {
         payload: payload,
       ),
     );
+    _notifySnapshot();
+  }
+
+  void _notifySnapshot() {
+    if (_snapshotListeners.isEmpty) {
+      return;
+    }
+    final current = snapshot;
+    for (final listener in List<DownloadSnapshotListener>.of(
+      _snapshotListeners,
+    )) {
+      try {
+        listener(current);
+      } on Object {
+        // Application observers must not break the authoritative session.
+      }
+    }
   }
 }

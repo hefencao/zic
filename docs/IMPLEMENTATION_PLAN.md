@@ -8,14 +8,17 @@
 - 每个阶段都有可运行 vertical slice，不长期维护不可运行大分支。
 - 所有优化都要有 trace 和基准。
 
-## 当前 dev.21 候选收敛门禁
+## 当前 fixed-overlay dev.21 候选收敛门禁
 
+- 唯一基线是上一完整候选与 `fixed.zip` 五文件覆盖后的合并树，映射和 ingress
+  hash 记录于 `docs/FIXED_OVERLAY_BASELINE.md`。
 - 普通 WebP 打开固定从 Flutter codec 开始，native 必须显式二次确认。
 - picker、route、容器校验、codec 页面状态和文件夹切换分别测试。
-- Reader 路由测试只验证 keyed route；Reader 媒体内容测试注入 chapter manifest，
-  不依赖路由转场或辅助文案。
-- 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见 WebP 的播放器。
-- 在 Flutter/Android 环境完成三项目标测试、全量 Dart/Flutter/analyze、native build
+- 异步测试同步到 `WebpPreviewState` 或受控 future，不推进猜测的固定 frame 时长。
+- Reader app 使用 `LiveCoordinator + DownloadRegistry`，播放器只读取 promoted
+  artifact；viewport 重建或销毁前必须 detach 旧 demand plan。
+- 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
+- 在 Flutter/Android 环境完成目标测试、全量 Dart/Flutter/analyze、native build
   和真机 lifecycle 测试之前，不升级版本、不标记稳定。
 
 ## 2. 阶段划分
@@ -165,9 +168,13 @@
 ### 当前候选实现（仍需 Flutter/Android 验证）
 
 - 已增加 `texture_bridge`、`SurfaceProducer`、串行 blit lane 和 JNI RGBA blit；
+- external texture 使用源画布比例的 contain viewport，不直接拉伸到页面 viewport；
 - 已建立 Dart 临时 owner 与平台当前帧 owner 的双层 retain/release；
 - 已增加 queue/upload/deadline/memory/fallback telemetry；
 - 已通过 `ReaderPageBuilder` 将 Animated WebP 播放器接入 Reader 页面；
+- Reader demand 已由真实 `LiveCoordinator` 下载到 promoted artifact，asset/file/http
+  transport 与 manifest `DownloadId` 共享身份；
+- `DownloadSession` 提供 observer-safe snapshot，`ReaderBinding.detach` 清理旧计划；
 - 已重构 picker、路由、容器校验和预览状态的测试边界。
 
 此候选不得在目标 Flutter 测试、analyze、Rust/Android native 构建完成前升级版本
@@ -390,3 +397,11 @@
 - 文档更新；
 - 无新增 analyzer warning；
 - 性能敏感改动提供前后基准。
+
+
+### Local-media 分层门禁
+
+- App 页面不得实现目录递归、文件头 I/O 或 Android URI 访问。
+- `packages/local_media` 拥有平台无关契约和桌面扫描。
+- `packages/local_media_bridge` 拥有 Android SAF 与 resolver stream fallback。
+- 修改 Flutter plugin 后必须通过 `./tool/clean.sh` 做干净构建。

@@ -86,6 +86,44 @@ void main() {
     expect(coordinator.viewport?.phase, ViewportPhase.continuous);
     expect(coordinator.viewport?.freezesPresentation, isTrue);
   });
+
+  test('detaching a binding removes every outstanding demand', () {
+    final coordinator = FakeCoordinator(clock: _Clock());
+    final binding = ReaderBinding(
+      chapter: _chapter(),
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+      clock: _Clock(),
+      coordinator: coordinator,
+      playback: coordinator,
+    );
+
+    binding.accept(_obs(
+      interaction: Interaction.idle,
+      current: 1,
+      currentFraction: 1,
+    ));
+    expect(coordinator.downloads, isNotEmpty);
+    expect(coordinator.decodes, isNotEmpty);
+    expect(coordinator.uploads, isNotEmpty);
+
+    binding.detach('reader');
+
+    expect(coordinator.downloads, isEmpty);
+    expect(coordinator.decodes, isEmpty);
+    expect(coordinator.uploads, isEmpty);
+    expect(coordinator.keep, isEmpty);
+    expect(
+      () => binding.accept(_obs(
+        interaction: Interaction.idle,
+        current: 0,
+        currentFraction: 1,
+      )),
+      throwsStateError,
+    );
+  });
 }
 
 ChapterManifest _chapter() {

@@ -47,7 +47,7 @@ App 不再启动后直接进入静态章节。首页提供五个明确入口：
 Reader 媒体管线
 内置动图 WebP
 导入本地 WebP
-导入 WebP 文件夹
+导入图片文件夹
 ```
 
 内置动图来自 `native/media_core/testdata/` 的真实 decoder fixtures，并同步到：
@@ -73,9 +73,17 @@ FFI/texture。Reader 与文件夹切换页固定使用安全 codec；独立预�
 初始化、上传或生命周期操作失败时回退 Flutter codec。Native 路径会验证 ABI
 和锁定的 libwebp 1.6.0 运行时，并使用 source/cursor/frame ABI 解码真实 RGBA 帧。
 
-“导入本地 WebP”读取单个 `.webp`。“导入 WebP 文件夹”通过系统目录选择器取得
-目录路径，在后台 isolate 中递归枚举 `.webp`，按自然路径顺序生成显式相对显示名，
-并在只保留一个当前播放器的页面中提供上一项、下一项和文件菜单切换。
+“导入本地 WebP”读取单个 `.webp`。“导入图片文件夹”通过系统目录选择器取得
+目录路径，在后台 isolate 中递归枚举所有普通文件，只读取文件头识别 PNG、JPEG、
+GIF、WebP、BMP、TIFF、ICO、AVIF 和 HEIF，不信任扩展名或大小写。识别结果按
+自然路径顺序生成显式相对显示名，并在只保留一个当前播放器的页面中提供上一项、
+下一项和文件菜单切换；完全没有可识别图片时才报告空目录诊断。
+
+Reader 媒体入口已使用真实 `LiveCoordinator` 和 `DownloadRegistry`。页面需求从
+manifest identity 生成 `DownloadId`，经 AssetBundle/file/http transport 下载到
+promoted artifact 后，播放器才读取最终字节。viewport target 更换或页面退出会
+先 reconcile 掉旧需求，避免后台下载和旧 decode identity 残留。当前可见 WebP
+仍固定使用 Flutter codec；native texture 只在独立预览中显式确认后启用。
 
 Native 与 Flutter codec 使用同一个自适应物理显示目标：目标取实际预览区域的逻辑尺寸乘以设备 DPR，保持源图比例并按 8 个物理像素对齐。`RasterPlan` 再决定实际 decode raster：大图按目标下采样，小图保持原始画布，避免 animated codec 在合成局部子帧前先放大插值。极小素材显示时使用 nearest-neighbour，正常漫画页面继续使用平滑滤镜。Native 路径还会提前准备下一帧，并从帧时长中扣除准备耗时，避免解码时间把动画总时长拉长。
 

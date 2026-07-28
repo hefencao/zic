@@ -39,13 +39,46 @@ final class ReaderBinding {
 
   ReaderObs? _observation;
   ViewportState? _viewport;
+  bool _detached = false;
 
   ViewportState? get viewport => _viewport;
   int get revision => pipeline.revision;
 
   void accept(ReaderObs observation) {
+    if (_detached) {
+      throw StateError('reader binding is detached');
+    }
     _observation = observation;
     pipeline.accept(observation);
+  }
+
+  /// Reconciles every outstanding demand to empty before this binding is
+  /// replaced or the reader session leaves the widget tree.
+  ///
+  /// This matters for live coordinators: constructing a new PipelineController
+  /// starts its diff history from an empty plan and therefore cannot remove
+  /// decode identities owned by the prior physical viewport target.
+  void detach(String sessionId) {
+    if (_detached) {
+      return;
+    }
+    _detached = true;
+    final previous = pipeline.currentPlan;
+    if (previous.downloads.isEmpty &&
+        previous.decodes.isEmpty &&
+        previous.uploads.isEmpty &&
+        previous.keep.isEmpty) {
+      return;
+    }
+    final empty = DemandPlan.empty(revision: pipeline.revision + 1);
+    _coordinator.reconcile(
+      sessionId,
+      PipelineDelta(
+        plan: empty,
+        diff: DemandDiff.between(previous, empty),
+        window: RoleWindow(const <int, PageRole>{}),
+      ),
+    );
   }
 
   void _onUpdate(PipelineDelta update) {

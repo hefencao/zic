@@ -1,4 +1,140 @@
+## Current candidate — local-media package boundary and deferred SAF validation
+
+Local image models, recursive filesystem enumeration and header sniffing have moved from
+`apps/app/lib` to `packages/local_media`. The App retains only a compatibility export and
+UI behavior. Android document-tree access remains in `packages/local_media_bridge`.
+
+The Android scanner now retains MIME/name image candidates when a header stream cannot be
+probed, and document reads try ordinary, asset-file and typed-asset resolver streams. A
+protocol-version handshake detects stale cached native plugin code and instructs a clean
+build instead of reporting its old empty-directory result as current behavior.
+
+`tool/clean.sh` removes project Flutter/Dart, Gradle, Rust, CMake/libwebp and generated JNI
+build caches while preserving lock files and pinned source. All `tool/*.sh` scripts are
+required to be executable. The version remains `0.18.3-dev.21` pending Flutter/Android
+device validation.
+
 # Implementation Status
+
+## Current candidate — Android scoped document-tree folder import
+
+The remaining Android folder-import failure was not a filename or WebP signature problem.
+The endorsed selector returned a raw filesystem path for a selected SAF document tree,
+while single-file selection read through `ContentResolver`. On scoped-storage devices the
+raw path does not inherit the tree URI grant, so directory probing could not reliably read
+the same bytes that the single-file WebP workflow could open.
+
+A dedicated `local_media_bridge` plugin now owns Android `ACTION_OPEN_DOCUMENT_TREE`,
+persists the read grant, recursively enumerates `DocumentsContract` children, probes each
+document through `ContentResolver.openInputStream`, and returns immutable content-URI
+identities with explicit relative display names and detected formats. Switching pages reads
+the selected document through that same content URI instead of reconstructing a raw path.
+Recognition is layered: magic bytes are authoritative for admission, provider MIME is a
+compatibility fallback, and the display-name extension is used only as the final candidate
+hint; the real parser/codec still validates bytes on open. Scan results expose separate
+header-recognized and metadata-fallback counts for device diagnostics. Desktop and other
+IO platforms retain the isolate-backed filesystem scanner.
+
+`PickedImage` now has an explicit `sourceId` and byte-loader contract in addition to its
+compatibility `XFile`. This keeps content URI identity, display name and bytes coupled
+without relying on `XFile.name` or treating a content URI as a filesystem path. Signature
+checks are intentionally minimal magic-byte sniffing; the full WebP parser or Flutter codec
+remains authoritative after selection. Empty-folder diagnostics now use stable wording for
+scanned, unrecognized and unreadable file counts.
+
+The package version remains `0.18.3-dev.21` until Flutter and Android device validation
+passes. This candidate is not a stable baseline.
+
+## Current candidate — native contain geometry and permissive image sniffing
+
+The Android external texture was previously inserted directly into a tight expanded
+viewport. `Texture` has no `BoxFit`, so it stretched to the viewport even though the
+reported display/decode dimensions retained the expected source ratio. Native output now
+uses `NativeTextureViewport`: a centered source-canvas `AspectRatio` box provides contain
+geometry and the texture fills only that box. Wide and tall layout tests cover the visual
+contract independently of Android texture registration.
+
+Folder import now treats signature recognition as format sniffing rather than full
+container validation. WebP files with metadata or unknown RIFF chunks before the image
+chunk are accepted by the folder boundary as long as RIFF/WEBP and a readable first chunk
+tag are present; the actual WebP parser/codec remains authoritative. File-length values
+smaller than an already-read prefix no longer invalidate the prefix. BMP and other raster
+magic checks use minimum structural fields rather than requiring an entire declared file
+inside the 64-byte probe. Empty-folder diagnostics report scanned, unrecognized and
+unreadable counts separately.
+
+Generic-image readiness is now driven by a shared `MemoryImage` stream listener instead
+of a render-time `frameBuilder` callback. Production uses the same provider for readiness
+and display, avoiding a second decode; tests may inject an explicit decode probe to cover
+ready/failure transitions without waiting on the Flutter test image pipeline.
+
+The package version remains `0.18.3-dev.21` until the external Flutter/Android validation
+gate passes. This candidate is not a stable baseline.
+
+## Current candidate — header-detected mixed-image folder import
+
+Directory import no longer filters filenames for `.webp`. It recursively examines all
+ordinary files outside the UI isolate, probes their file headers, and creates a
+`PickedImageFolder` containing explicit relative names and detected formats. Files with
+missing, misleading or uppercase extensions behave identically. A folder is considered
+empty only when no recognized image signature is present; diagnostics retain scanned
+and unreadable counts. Android `content://` results are rejected as an unsupported path
+contract rather than being misreported as an empty folder.
+
+The two preview-state timeouts reported in `app_smoke_test.dart` are removed from the
+smoke boundary. Reader hosting and folder switching now assert keyed component identity,
+source URI, format and explicit loading state while byte futures are deliberately held.
+Valid/invalid decoder completion remains in dedicated preview tests. Both WebP and mixed
+image players publish their current state snapshot after first layout so an observer
+cannot miss the initial state.
+
+The package version remains `0.18.3-dev.21` until the Flutter/Android validation gate
+passes. This candidate is not a stable baseline.
+
+## Current fixed-overlay baseline — production Reader artifact ingress
+
+### Baseline ownership
+
+The current baseline is the prior complete WebP-safe-folder candidate with the five
+files from `fixed.zip` replaced exactly as recorded in
+`docs/FIXED_OVERLAY_BASELINE.md`. All work below is layered on that merged tree.
+The package version remains `0.18.3-dev.21` until Flutter and Android validation
+passes; archive names no longer carry the old
+`_webp-safe-folder-candidate_UNVERIFIED` suffix.
+
+### Reader production ingress
+
+The Reader app runtime no longer composes its demand plan with `FakeCoordinator`.
+`ReaderBinding` now drives a real `LiveCoordinator` and `DownloadRegistry`. Asset,
+file and HTTP identities use the manifest-owned `DownloadId`; media bytes are read
+only after the corresponding `DownloadSession` reaches `promoted`, so Reader
+telemetry and the displayed WebP share the same source identity and artifact.
+
+`DownloadSession` exposes an observer-safe snapshot contract for promotion/failure
+waiting. Observer failures cannot mutate or abort the authoritative state machine.
+The app runtime detaches every prior demand plan when the physical viewport target
+changes and again on disposal, then cancels coordinator work before disposing the
+registry and its temporary artifact root. `NativeWebpPlayer` also owns a
+`WebpLoadToken`; disposal cancels an in-flight promoted-artifact wait and immediately
+removes its snapshot listener. This closes stale-demand, offscreen-listener and
+teardown races that were hidden by the previous fake coordinator.
+
+This is a staged production integration: network/artifact ingress is real, while the
+visible Reader WebP remains on the crash-safe Flutter codec. Native decode/upload/
+present remains an explicit standalone experiment until device lifecycle checks pass.
+
+### Test synchronization
+
+The overlay's local Flutter fixes are preserved, but asynchronous preview tests now
+synchronize through explicit preview-state regions, observer snapshots and controlled
+picker/catalog futures. They do not advance a guessed fixed frame duration, identify components by
+copy, or depend on `XFile.fromData` metadata.
+
+### Validation status
+
+Repository constraints and available host syntax/native-stub checks pass in this
+sandbox. Flutter, Dart, Rust/Cargo, Android SDK and Android NDK remain unavailable,
+so this tree is still an unverified candidate and is not a stable versioned baseline.
 
 ## Unreleased candidate from 0.18.3-dev.21 — crash-safe WebP entry and local folder switching
 
@@ -26,15 +162,12 @@ than called from the serial blit worker. Surface callbacks use
 `onSurfaceAvailable`/`onSurfaceCleanup`; the blit lane retains the current frame
 for redraw and releases it on replacement, resize, output release, or detach.
 
-### Local WebP folder import
+### Original local WebP folder stage (superseded)
 
-The app adds a directory picker contract and `PickedWebpFolder`. Directory contents
-are recursively enumerated in a background isolate, filtered case-insensitively
-for `.webp`, naturally path-sorted, and converted to explicit relative display
-names independent of `XFile.name`. The folder screen keeps one current player and
-provides previous, next, and lazy-on-open file selection controls. Cancellation,
-empty folders, recursive ordering, route ownership, and file switching have
-independent tests.
+This stage first introduced recursive folder enumeration, natural sorting, explicit
+relative display names and a single current player. The current candidate supersedes
+the `.webp` filename filter with mixed-image file-header detection while retaining
+those ownership and switching guarantees.
 
 ### Validation status
 

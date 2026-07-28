@@ -1,14 +1,39 @@
+## Unreleased — local-media boundary and Android folder import repair
+
+- Move local image models, recursive filesystem scanning and format sniffing from the App
+  package to `packages/local_media`.
+- Keep Android SAF documents as MIME/name candidates when a header probe is unavailable,
+  and read them through ordinary, asset or typed-asset content resolver streams.
+- Add local-media bridge protocol version 2 to detect stale native plugin caches.
+- Add `tool/clean.sh` and enforce executable permissions for every `tool/*.sh` command.
+
 # Changelog
 
-## Unreleased candidate from 0.18.3-dev.21
+## Unreleased fixed-overlay candidate from 0.18.3-dev.21
 
-- Split Reader route navigation from direct WebP media-state testing, eliminating
-  the zero-elapsed route-transition timeout.
-- Defaulted all WebP entry points to Flutter codec and added explicit confirmation
-  before native FFI/texture startup.
-- Posted Android `SurfaceProducer.scheduleFrame` work to the main handler.
-- Added recursive local WebP folder import with natural sorting, explicit relative
-  display names, single-player previous/next/menu switching, and independent tests.
+- Generalized directory import from extension-filtered WebP files to header-detected
+  local images, including extensionless and incorrectly named image files.
+- Added PNG/JPEG/GIF/WebP/BMP/TIFF/ICO/AVIF/HEIF signature recognition, stronger
+  container-prefix checks, recursive natural sorting, and scan/unreadable diagnostics.
+- Pinned the Android file-selector implementation that returns directory paths and
+  rejects unexpected `content://` results as a path-capability error instead of an
+  empty-image-folder result.
+- Split Reader/folder smoke coverage from decoder completion: smoke tests assert
+  component identity and explicit loading state, while preview tests own ready/invalid
+  behavior. Preview observers now publish the current snapshot after first layout.
+- Adopted the previous WebP-safe-folder candidate plus the exact five-file
+  `fixed.zip` overlay as the sole continuing baseline.
+- Preserved the overlay's partial-WebP decoder fixes while replacing fixed-duration
+  widget synchronization with explicit preview-state observers and controlled futures.
+- Replaced the Reader app's `FakeCoordinator` with `LiveCoordinator`, real transport
+  selection, `DownloadRegistry`, and promoted-artifact media loading.
+- Added observer-safe `DownloadSession` snapshots, cancellable WebP byte loads, and
+  explicit Reader binding detach, preventing stale promotion listeners and demand
+  plans during page replacement and teardown.
+- Kept Reader WebP presentation on Flutter codec until Android native texture
+  lifecycle/device validation succeeds.
+- Retained recursive local-folder import, natural sorting, explicit relative
+  display names and single-player switching, then generalized it to header-detected images.
 
 
 ## 0.18.3-dev.21

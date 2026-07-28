@@ -19,6 +19,8 @@ workspace:
   - packages/testkit
   - packages/bridge
   - packages/texture_bridge
+  - packages/local_media_bridge
+  - packages/local_media
 
 dev_dependencies:
   flutter_lints: ^5.0.0

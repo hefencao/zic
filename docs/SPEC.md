@@ -104,6 +104,19 @@ abstract interface class ComicSource {
 
 来源不得直接访问 Reader Widget。
 
+### 4.1 Reader artifact ingress（当前 v0.x 契约）
+
+- `ReaderObs` 经 `ReaderBinding` 产生的 download demand 必须交给生产
+  `LiveCoordinator`，App 不得用 fake coordinator 代替运行时生命周期。
+- manifest 的 source/comic/chapter/page/sourceRevision/canonical URI 共同生成
+  `DownloadId`；显示层不得为同一页面重新发明另一套下载身份。
+- Reader 媒体字节只从 promoted artifact 读取。asset bundle、file 和 http(s) 可以
+  使用不同 transport，但必须经过同一 DownloadJob/DownloadSession 状态机。
+- viewport target 或 Reader session 被替换时，旧 binding 必须先 reconcile 到 empty；
+  旧异步结果仍受 epoch、identity 和 cancel token 约束。
+- 等待 promotion 使用只读 snapshot observer。observer 失败不得改变下载状态、writer
+  lease、artifact 或 lane 调度。
+
 ## 5. 数据模型
 
 ### Comic
@@ -234,14 +247,20 @@ Demand 必须包含：
 - 错误区域、页面、标题和 renderer 控件使用稳定语义 key；
 - 新增辅助文案、状态栏或布局不应破坏业务测试。
 
-目录选择返回 `PickedWebpFolder(directoryPath, displayName, files)`：
+目录选择返回 `PickedImageFolder(directoryPath, displayName, files, scannedFiles, unreadableFiles)`：
 
 - 用户取消返回 `null`，不得枚举目录或创建路由；
-- 目录枚举递归过滤大小写不敏感的 `.webp`，并在 UI isolate 之外执行；
-- 每个文件的相对 `displayName` 由导入边界显式拥有，不依赖 `XFile.name`；
+- 目录枚举递归访问所有普通文件并在 UI isolate 之外执行；
+- 类型由文件头签名识别，不依赖扩展名、扩展名大小写或 `XFile.name`；
+- 文件头阶段只负责格式嗅探，不把 RIFF 声明长度、首个 WebP chunk 类型或完整 codec 校验混入目录筛选；未知/元数据前置 chunk 不得导致可解码 WebP 漏检；
+- 当前识别 PNG、JPEG、GIF、WebP、BMP、TIFF、ICO、AVIF 和 HEIF；
+- 扩展名像图片但文件头不匹配的文件必须忽略；无扩展名或错误扩展名的真实图片必须导入；
+- Android 若返回不可枚举的 `content://` URI，必须报告路径能力错误，不得转换为空目录提示；
+- 每个文件的相对 `displayName` 和 `LocalImageFormat` 由导入边界显式拥有；
 - 顺序使用确定性的自然路径排序；
-- 切换时只保留一个当前播放器，不得同时启动整个目录的动画 codec/texture；
-- 上一项、下一项和文件选择使用稳定语义 key，必须测试真实 source 切换。
+- 切换时只保留一个当前播放器，不得同时启动整个目录的 codec/texture；
+- 完全没有可识别图片时才提示空目录，并附带扫描与不可读文件计数；
+- 上一项、下一项和文件选择使用稳定语义 key，必须测试真实 source 与格式切换。
 
 所有 WebP 页面默认使用 Flutter codec。Native FFI/texture 只能在用户显式选择
 实验 renderer 并确认后启动；取消确认不得创建 source、cursor 或 texture。
@@ -261,7 +280,7 @@ Demand 必须包含：
 临时 owner。`SurfaceProducer` 的 callback、setSize、release 和 scheduleFrame 由
 平台主线程拥有；blit lane 只执行 native surface 写入和 frame owner 变更。
 已排队的 scheduleFrame 必须同时检查 engine attachment 与 output 存活状态。
-engine detach 或 output release 后禁止调用 `scheduleFrame`。
+engine detach 或 output release 后禁止调用 `scheduleFrame`。Flutter `Texture` 不提供 `BoxFit`，因此 texture 必须先放入以源画布宽高比约束的 contain viewport；decode/display telemetry 数值正确不能替代实际布局比例验证。
 
 present telemetry 至少包含：
 

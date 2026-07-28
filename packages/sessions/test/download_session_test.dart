@@ -92,6 +92,40 @@ void main() {
     expect(session.canEvict, isTrue);
   });
 
+  test(
+    'snapshot observers follow promotion and cannot break the session',
+    () async {
+      final states = <DownloadState>[];
+      session.addSnapshotListener((snapshot) => states.add(snapshot.state));
+      session.addSnapshotListener((_) => throw StateError('observer failure'));
+
+      final writer = session.acquireWriter();
+      await session.append(writer, 0, <int>[1, 2, 3]);
+      await session.seal(writer, expectedLength: 3);
+      await session.promote();
+
+      expect(
+        states,
+        containsAllInOrder(<DownloadState>[
+          DownloadState.idle,
+          DownloadState.receiving,
+          DownloadState.sealed,
+          DownloadState.promoted,
+        ]),
+      );
+      expect(session.state, DownloadState.promoted);
+    },
+  );
+
+  test('snapshot observers receive terminal disposal', () async {
+    final states = <DownloadState>[];
+    session.addSnapshotListener((snapshot) => states.add(snapshot.state));
+
+    await session.dispose();
+
+    expect(states.last, DownloadState.disposed);
+  });
+
   test('corrupt resume metadata discards the partial safely', () async {
     await session.dispose();
     final partial = File('${temp.path}/partial/page.webp');
@@ -112,7 +146,6 @@ void main() {
     expect(restored.committedLength, 0);
     expect(restored.state, DownloadState.idle);
   });
-
 }
 
 DownloadId _id() => DownloadId(

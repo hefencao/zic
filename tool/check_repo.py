@@ -22,6 +22,8 @@ EXPECTED_DEPENDENCIES = {
     'testkit': {'domain', 'telemetry', 'transport'},
     'bridge': {'media'},
     'texture_bridge': {'bridge'},
+    'local_media_bridge': set(),
+    'local_media': {'local_media_bridge'},
 }
 
 
@@ -160,7 +162,11 @@ def check_animated_demo() -> None:
 
     pubspec = (app / 'pubspec.yaml').read_text(encoding='utf-8')
     if 'file_selector: ^1.0.3' not in pubspec:
-        fail('local WebP import must use the SDK-compatible file_selector release')
+        fail('local import must use the SDK-compatible file_selector release')
+    if 'file_selector_android:' in pubspec:
+        fail('app must not depend on the raw-path Android directory selector implementation')
+    if 'local_media:' not in pubspec:
+        fail('app must depend on the local_media source package')
     if '- assets/demo/animated/' not in pubspec:
         fail('Animated WebP assets are not declared in the app pubspec')
     home = (app / 'lib' / 'demo_home.dart').read_text(encoding='utf-8')
@@ -169,7 +175,7 @@ def check_animated_demo() -> None:
         'Reader 媒体管线',
         '内置动图 WebP',
         '导入本地 WebP',
-        '导入 WebP 文件夹',
+        '导入图片文件夹',
     ):
         if label not in home:
             fail(f'app demo entry is missing: {label}')
@@ -214,6 +220,10 @@ def check_dart_sources() -> None:
             for forbidden in ('File(', '.readAsBytes', 'HttpClient(', 'openRead('):
                 if forbidden in source:
                     fail(f'reader UI contains direct I/O ({forbidden}): {path}')
+        if path.parent == ROOT / 'apps/app/lib' and path.name.startswith('local_image_'):
+            for forbidden in ("import 'dart:io';", 'Directory(', 'RandomAccessFile', 'Isolate.run('):
+                if forbidden in source:
+                    fail(f'app local-media facade contains platform/file I/O ({forbidden}): {path}')
         stripped = re.sub(
             r"//.*?$|/\*.*?\*/|'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"",
             '',
@@ -233,6 +243,25 @@ def check_tool_dirs() -> None:
     analyze = (ROOT / 'tool/analyze.sh').read_text(encoding='utf-8')
     android_build = (ROOT / 'tool/build_android.sh').read_text(encoding='utf-8')
     ci = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
+    clean = (ROOT / 'tool/clean.sh').read_text(encoding='utf-8')
+    for script in sorted((ROOT / 'tool').glob('*.sh')):
+        if script.stat().st_mode & 0o111 == 0:
+            fail(f'tool script is not executable: {script.relative_to(ROOT)}')
+    for required in (
+        'flutter clean',
+        '.dart_tool',
+        '.gradle',
+        'target',
+        '.deps/build',
+        '.deps/install',
+        'jniLibs',
+        'pubspec.lock',
+    ):
+        if required == 'pubspec.lock':
+            if 'pubspec.lock' in clean:
+                fail('clean script must preserve dependency lock files')
+        elif required not in clean:
+            fail(f'project cache clean script is incomplete: {required}')
     for required in (
         'APP="$ROOT/apps/app"',
         '--empty',
@@ -241,13 +270,13 @@ def check_tool_dirs() -> None:
     ):
         if required not in bootstrap:
             fail(f'Flutter bootstrap directory/command is incomplete: {required}')
-    for required in ('packages/reader', 'apps/app', 'flutter test test'):
+    for required in ('packages/reader', 'packages/local_media_bridge', 'packages/local_media', 'apps/app', 'flutter test test'):
         if required not in flutter_tests:
             fail(f'Flutter test directory is not explicit: {required}')
     for required in ('packages/domain', 'packages/media', 'packages/sessions', 'dart test test'):
         if required not in dart_tests:
             fail(f'Dart test directory is not explicit: {required}')
-    for required in ('packages/reader', 'apps/app', 'flutter analyze'):
+    for required in ('packages/reader', 'packages/local_media_bridge', 'packages/local_media', 'apps/app', 'flutter analyze'):
         if required not in analyze:
             fail(f'Flutter analyze directory is not explicit: {required}')
     for required in ('APP="$ROOT/apps/app"', '--split-per-abi', 'flutter build apk'):
@@ -465,10 +494,23 @@ def check_compile_regressions() -> None:
     contract_test = (app_test / 'webp_demo_test.dart').read_text(
         encoding='utf-8'
     )
+    image_preview_test = (app_test / 'local_image_preview_test.dart').read_text(
+        encoding='utf-8'
+    )
+    local_media_test = ROOT / 'packages/local_media/test'
+    image_signature_test = (
+        local_media_test / 'local_image_signature_test.dart'
+    ).read_text(encoding='utf-8')
+    image_folder_test = (
+        local_media_test / 'local_image_folder_test.dart'
+    ).read_text(encoding='utf-8')
     for name, source in (
         ('app_smoke_test.dart', smoke),
         ('webp_preview_test.dart', preview_test),
         ('webp_demo_test.dart', contract_test),
+        ('local_image_preview_test.dart', image_preview_test),
+        ('packages/local_media/test/local_image_signature_test.dart', image_signature_test),
+        ('packages/local_media/test/local_image_folder_test.dart', image_folder_test),
     ):
         if 'pump(Duration(' in source or 'pump(const Duration(' in source:
             fail(f'{name} must synchronize on state, not fixed pump durations')
@@ -476,6 +518,9 @@ def check_compile_regressions() -> None:
             fail(f'{name} must not use textContaining as component identity')
         if 'XFile.fromData' in source:
             fail(f'{name} must not depend on XFile.fromData metadata behavior')
+
+    if '_pumpUntilWebpPhase' in smoke or '_pumpUntilImagePhase' in smoke:
+        fail('smoke tests must stop at component/state identity, not decoder completion')
 
     for required in (
         'staticDemoEntryKey',
@@ -488,8 +533,8 @@ def check_compile_regressions() -> None:
         'cancelled picker stays on home',
         'Reader entry pushes the media pipeline route',
         'Reader screen hosts the real WebP media component',
-        'localWebpFolderImportKey',
-        'folder reader switches WebP files by explicit identity',
+        'localImageFolderImportKey',
+        'folder reader switches mixed image files by explicit identity',
         'bundled catalog exposes entries by stable identity',
     ):
         if required not in smoke:
@@ -517,6 +562,8 @@ def check_compile_regressions() -> None:
         'native pipeline requires explicit confirmation',
         'valid local WebP reaches an explicit ready state',
         'malformed local WebP reaches a controlled invalid state',
+        'disposing a WebP player cancels its byte load',
+        'preview observer receives the current loading snapshot',
     ):
         if required not in preview_test:
             fail(f'preview state boundary is incomplete: {required}')
@@ -535,6 +582,15 @@ def check_compile_regressions() -> None:
             fail(f'local WebP product contract is incomplete: {required}')
     if "_status = 'WebP 文件无效'" in webp_demo:
         fail('preview status must not duplicate the keyed WebP validation error')
+    for required in (
+        'final class WebpLoadToken',
+        '_loadToken.cancel()',
+        'widget.loadBytes(_loadToken)',
+        '_notifyPreviewObserver(_previewState)',
+        '_scheduleObserverSnapshot()',
+    ):
+        if required not in webp_demo:
+            fail(f'WebP byte-load cancellation is incomplete: {required}')
     if 'this.initialEngine = WebpPlayerEngine.flutter' not in webp_demo:
         fail('WebP pages must use the deterministic Flutter codec until native is explicit')
     for required in (
@@ -544,21 +600,150 @@ def check_compile_regressions() -> None:
     ):
         if required not in webp_demo:
             fail(f'native WebP activation is not explicitly quarantined: {required}')
+    texture_viewport = (
+        ROOT / 'packages/texture_bridge/lib/src/native_texture_viewport.dart'
+    ).read_text(encoding='utf-8')
     for required in (
-        'final class PickedWebpFolder',
-        'pickLocalWebpFolder(',
-        'final class WebpFolderScreen',
-        'webpFolderCurrentFileKey',
-        'webpFolderNextKey',
+        'final class NativeTextureViewport',
+        'child: AspectRatio(',
+        'aspectRatio: aspectRatio',
+        'child: Texture(',
+    ):
+        if required not in texture_viewport:
+            fail(f'native texture contain geometry is incomplete: {required}')
+    if 'NativeTextureViewport(' not in webp_demo:
+        fail('native WebP texture must use aspect-preserving viewport geometry')
+    texture_viewport_test = (
+        ROOT / 'packages/texture_bridge/test/native_texture_viewport_test.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'external texture uses contain geometry for a wide source',
+        'external texture uses contain geometry for a tall source',
+    ):
+        if required not in texture_viewport_test:
+            fail(f'native texture geometry test is incomplete: {required}')
+    for required in (
+        'final class PickedImage',
+        'class PickedImageFolder',
+        'pickLocalImageFolder(',
+        'final class LocalImagePlayer',
+        'final class ImageFolderScreen',
+        "@Deprecated('Use ImageFolderScreen')",
+        'imageFolderCurrentFileKey',
+        'imageFolderNextKey',
+        'ImagePreviewStateRegion',
+        'MemoryImage(bytes)',
+        'ImageStreamListener(',
+        'final LocalImageDecodeProbe? decodeProbe',
+        'final String sourceId',
+        'Future<Uint8List> readAsBytes()',
     ):
         if required not in webp_demo:
-            fail(f'local WebP folder contract is incomplete: {required}')
-    folder_io = (ROOT / 'apps/app/lib/local_webp_folder_io.dart').read_text(
+            fail(f'local image folder contract is incomplete: {required}')
+    folder_io = (
+        ROOT / 'packages/local_media/lib/src/local_image_platform_io.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'recursive: true',
+        'detectLocalImageFormat',
+        '_headerProbeBytes',
+        '_naturalPathCompare',
+        'unreadableFiles',
+        "selectedUri.scheme.toLowerCase() == 'content'",
+        'pickScopedLocalImageDirectory',
+        '_androidBridge.readDocument',
+    ):
+        if required not in folder_io:
+            fail(f'local image folder enumeration is incomplete: {required}')
+    image_types = (
+        ROOT / 'packages/local_media/lib/src/local_image_model.dart'
+    ).read_text(encoding='utf-8')
+    app_folder_facade = (ROOT / 'apps/app/lib/local_image_folder.dart').read_text(
         encoding='utf-8'
     )
-    for required in ('recursive: true', "endsWith('.webp')", '_naturalPathCompare'):
-        if required not in folder_io:
-            fail(f'local WebP folder enumeration is incomplete: {required}')
+    if "export 'package:local_media/local_media.dart';" not in app_folder_facade:
+        fail('app local-image facade must export the local_media package')
+    for forbidden_path in (
+        'local_image_folder_io.dart',
+        'local_image_folder_stub.dart',
+        'local_image_types.dart',
+    ):
+        if (ROOT / 'apps/app/lib' / forbidden_path).exists():
+            fail(f'app UI layer still owns local-media I/O/model file: {forbidden_path}')
+    for required in (
+        'enum LocalImageFormat',
+        'detectLocalImageFormat',
+        "_asciiAt(bytes, 8, 'WEBP')",
+        "_startsWithAscii(bytes, 'BM')",
+        "0x89, 0x50, 0x4e, 0x47",
+        "_startsWithAscii(bytes, 'GIF89a')",
+        'LocalImageFormat.png',
+        'LocalImageFormat.jpeg',
+        'int get unrecognizedFiles',
+    ):
+        if required not in image_types:
+            fail(f'image signature recognition is incomplete: {required}')
+    for required in (
+        'image signature detector recognizes supported raster families',
+        'directory loader recognizes image headers independent of filename',
+        'extensionless PNG reaches the generic ready state',
+        'directory loader rejects a content URI instead of reporting no images',
+        'image observer receives the current loading snapshot',
+        'image signature detector rejects truncated container labels',
+        'WebP sniffing tolerates metadata or unknown leading chunks',
+        'codec probe failure reaches a controlled invalid state',
+    ):
+        if required not in image_signature_test and required not in image_folder_test and required not in image_preview_test:
+            fail(f'local image test boundary is incomplete: {required}')
+    local_media_dart = (
+        ROOT / 'packages/local_media_bridge/lib/src/local_media_bridge.dart'
+    ).read_text(encoding='utf-8')
+    local_media_kotlin = (
+        ROOT
+        / 'packages/local_media_bridge/android/src/main/kotlin/dev/zic/localmedia'
+        / 'LocalMediaBridgePlugin.kt'
+    ).read_text(encoding='utf-8')
+    local_media_format_kotlin = (
+        ROOT
+        / 'packages/local_media_bridge/android/src/main/kotlin/dev/zic/localmedia'
+        / 'LocalMediaFormat.kt'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'pickImageDirectory',
+        'readDocument',
+        'LocalMediaDirectory',
+        'LocalMediaDocument',
+        'localMediaBridgeProtocolVersion = 2',
+        './tool/clean.sh',
+    ):
+        if required not in local_media_dart:
+            fail(f'local media Dart bridge is incomplete: {required}')
+    for required in (
+        'Intent.ACTION_OPEN_DOCUMENT_TREE',
+        'takePersistableUriPermission',
+        'buildChildDocumentsUriUsingTree',
+        'withDocumentInputStream(',
+        'openTypedAssetFileDescriptor',
+        'openAssetFileDescriptor',
+        'resolveDirectoryCandidate',
+        'readDocument(call, result)',
+        'headerRecognizedFiles',
+        'metadataRecognizedFiles',
+        'PROTOCOL_VERSION = 2',
+    ):
+        if required not in local_media_kotlin:
+            fail(f'Android scoped document tree bridge is incomplete: {required}')
+    for required in (
+        'sniffImageFormat',
+        'imageFormatFromMimeType',
+        'imageFormatFromDisplayName',
+        'ImageFormatResolution',
+    ):
+        if required not in local_media_format_kotlin:
+            fail(f'Android local media format resolution is incomplete: {required}')
+    if 'getDirectoryPath' in local_media_kotlin or 'FileUtils.getPathFromUri' in local_media_kotlin:
+        fail('Android scoped document tree bridge must not reconstruct raw filesystem paths')
+
     demo_home = (ROOT / 'apps/app/lib/demo_home.dart').read_text(encoding='utf-8')
     if 'super.key,' not in demo_home:
         fail('_DemoCard must accept and forward stable semantic keys')
@@ -578,6 +763,11 @@ def check_compile_regressions() -> None:
     ):
         if required not in webp_demo:
             fail(f'Reader media telemetry attribution is incomplete: {required}')
+    image_base_declaration = (
+        "final base = slash < 0 ? normalized : normalized.substring(slash + 1);"
+    )
+    if webp_demo.count(image_base_declaration) != 1:
+        fail('imageDisplayName must declare its basename exactly once')
     if 'int get revision => pipeline.revision;' not in binding:
         fail('ReaderBinding must expose the applied demand revision to media output')
 
@@ -605,6 +795,59 @@ def check_compile_regressions() -> None:
     ):
         if required not in static_demo:
             fail(f'Reader media pipeline route is incomplete: {required}')
+    asset_transport_path = ROOT / 'apps/app/lib/asset_bundle_transport.dart'
+    asset_transport_test_path = (
+        ROOT / 'apps/app/test/asset_bundle_transport_test.dart'
+    )
+    if not asset_transport_test_path.is_file():
+        fail('AssetBundle transport tests are missing')
+    asset_transport = asset_transport_path.read_text(encoding='utf-8')
+    for required in (
+        'final class AssetBundleTransport',
+        'rangeSupported: true',
+        'validators.matches(currentValidators)',
+    ):
+        if required not in asset_transport:
+            fail(f'AssetBundle transport is incomplete: {required}')
+    for required in (
+        'LiveCoordinator(',
+        'DownloadRegistry(',
+        'CacheLayout(',
+        'loadBytes: widget.mediaBytesLoader ?? _loadMediaBytes',
+        'addSnapshotListener(listener)',
+        '_binding?.detach(',
+        'AssetBundleTransport(rootBundle)',
+    ):
+        if required not in static_demo:
+            fail(f'Reader live artifact path is incomplete: {required}')
+    if 'FakeCoordinator(' in static_demo:
+        fail('Reader app runtime must not use the fake coordinator')
+    app_pubspec = (ROOT / 'apps/app/pubspec.yaml').read_text(
+        encoding='utf-8'
+    )
+    for required in (
+        'storage:',
+        'transport:',
+    ):
+        if required not in app_pubspec:
+            fail(f'Reader app runtime dependency is missing: {required}')
+    download_session = (
+        ROOT / 'packages/sessions/lib/src/download_session.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'typedef DownloadSnapshotListener',
+        'void addSnapshotListener(',
+        'void removeSnapshotListener(',
+        'void _notifySnapshot()',
+    ):
+        if required not in download_session:
+            fail(f'Download promotion observation is incomplete: {required}')
+    for required in (
+        'void detach(String sessionId)',
+        'DemandDiff.between(previous, empty)',
+    ):
+        if required not in binding:
+            fail(f'Reader binding lifecycle cleanup is incomplete: {required}')
 
     texture = (
         ROOT / 'packages/texture_bridge/lib/src/android_texture_presenter.dart'

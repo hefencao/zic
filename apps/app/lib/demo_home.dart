@@ -8,12 +8,16 @@ const mediaPipelineReaderEntryKey =
     ValueKey<String>('demo-entry-media-pipeline-reader');
 const bundledWebpEntryKey = ValueKey<String>('demo-entry-bundled-webp');
 const localWebpImportKey = ValueKey<String>('demo-entry-local-webp');
-const localWebpFolderImportKey =
-    ValueKey<String>('demo-entry-local-webp-folder');
+const localImageFolderImportKey =
+    ValueKey<String>('demo-entry-local-image-folder');
+@Deprecated('Use localImageFolderImportKey')
+const localWebpFolderImportKey = localImageFolderImportKey;
 const localWebpPickerProgressKey =
     ValueKey<String>('local-webp-picker-progress');
-const localWebpFolderPickerProgressKey =
-    ValueKey<String>('local-webp-folder-picker-progress');
+const localImageFolderPickerProgressKey =
+    ValueKey<String>('local-image-folder-picker-progress');
+@Deprecated('Use localImageFolderPickerProgressKey')
+const localWebpFolderPickerProgressKey = localImageFolderPickerProgressKey;
 
 final class DemoHome extends StatefulWidget {
   const DemoHome({
@@ -23,7 +27,7 @@ final class DemoHome extends StatefulWidget {
   });
 
   final WebpPicker picker;
-  final WebpFolderPicker folderPicker;
+  final ImageFolderPicker folderPicker;
 
   @override
   State<DemoHome> createState() => _DemoHomeState();
@@ -62,19 +66,19 @@ final class _DemoHomeState extends State<DemoHome> {
     }
   }
 
-  Future<void> _importWebpFolder() async {
+  Future<void> _importImageFolder() async {
     if (_picking || _pickingFolder) {
       return;
     }
     setState(() => _pickingFolder = true);
     try {
-      final PickedWebpFolder? folder = await widget.folderPicker();
+      final PickedImageFolder? folder = await widget.folderPicker();
       if (!mounted || folder == null) {
         return;
       }
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => WebpFolderScreen(folder: folder),
+          builder: (_) => ImageFolderScreen(folder: folder),
         ),
       );
     } catch (error) {
@@ -82,7 +86,7 @@ final class _DemoHomeState extends State<DemoHome> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('导入 WebP 文件夹失败：$error')),
+        SnackBar(content: Text('导入图片文件夹失败：$error')),
       );
     } finally {
       if (mounted) {
@@ -104,7 +108,7 @@ final class _DemoHomeState extends State<DemoHome> {
           ),
           const SizedBox(height: 8),
           Text(
-            '静态章节、内置 Animated WebP，以及本地 WebP 导入共用一个入口。',
+            '静态章节、Animated WebP、本地文件与图片文件夹共用 Reader 入口。',
             style: Theme.of(context).textTheme.bodyLarge,
           ),
           const SizedBox(height: 24),
@@ -158,18 +162,18 @@ final class _DemoHomeState extends State<DemoHome> {
           ),
           const SizedBox(height: 12),
           _DemoCard(
-            key: localWebpFolderImportKey,
+            key: localImageFolderImportKey,
             icon: Icons.folder_open,
-            title: '导入 WebP 文件夹',
-            subtitle: '递归读取文件夹中的 .webp，并在同一阅读页中切换。',
+            title: '导入图片文件夹',
+            subtitle: 'Android 使用文档树授权读取；文件头优先识别图片并自然排序。',
             trailing: _pickingFolder
                 ? const SizedBox.square(
-                    key: localWebpFolderPickerProgressKey,
+                    key: localImageFolderPickerProgressKey,
                     dimension: 24,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : null,
-            onTap: _picking || _pickingFolder ? null : _importWebpFolder,
+            onTap: _picking || _pickingFolder ? null : _importImageFolder,
           ),
         ],
       ),
