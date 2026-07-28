@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
@@ -14,6 +15,15 @@ import 'package:transport/transport.dart';
 import 'asset_bundle_transport.dart';
 import 'media_load_token.dart';
 
+const readerTopControlsKey = ValueKey<String>('reader-top-controls');
+const readerBottomControlsKey = ValueKey<String>('reader-bottom-controls');
+const readerPageSliderKey = ValueKey<String>('reader-page-slider');
+const readerPauseKey = ValueKey<String>('reader-pause');
+const readerSpeedKey = ValueKey<String>('reader-speed');
+const readerRotateKey = ValueKey<String>('reader-rotate');
+const readerFavoriteKey = ValueKey<String>('reader-favorite');
+const readerDownloadKey = ValueKey<String>('reader-download');
+
 typedef ReaderArtifactBytesLoader = Future<Uint8List> Function(
   PageAsset asset,
   MediaLoadToken token,
@@ -21,6 +31,39 @@ typedef ReaderArtifactBytesLoader = Future<Uint8List> Function(
 typedef ReaderPageBytesLoader = Future<Uint8List> Function(
   MediaLoadToken token,
 );
+
+@immutable
+final class ReaderPlaybackState {
+  const ReaderPlaybackState({
+    this.paused = false,
+    this.speed = 1,
+  })  : assert(speed >= 0.25),
+        assert(speed <= 4);
+
+  final bool paused;
+  final double speed;
+
+  ReaderPlaybackState copyWith({bool? paused, double? speed}) =>
+      ReaderPlaybackState(
+        paused: paused ?? this.paused,
+        speed: speed ?? this.speed,
+      );
+}
+
+final class ReaderPlaybackController
+    extends ValueNotifier<ReaderPlaybackState> {
+  ReaderPlaybackController() : super(const ReaderPlaybackState());
+
+  void togglePaused() => value = value.copyWith(paused: !value.paused);
+
+  void setSpeed(double speed) {
+    if (value.speed == speed) {
+      return;
+    }
+    value = value.copyWith(speed: speed);
+  }
+}
+
 final class ReaderPageRuntime {
   const ReaderPageRuntime({
     required this.chapter,
@@ -29,6 +72,7 @@ final class ReaderPageRuntime {
     required this.sessionId,
     required this.demandRevision,
     required this.loadBytes,
+    required this.playback,
   });
 
   final ChapterManifest chapter;
@@ -37,6 +81,7 @@ final class ReaderPageRuntime {
   final String sessionId;
   final int Function() demandRevision;
   final ReaderPageBytesLoader loadBytes;
+  final ReaderPlaybackController playback;
 }
 
 typedef ReaderArtifactPageBuilder = Widget? Function(
@@ -91,6 +136,9 @@ final class ReaderRuntimeScreen extends StatefulWidget {
     this.appBarActionsBuilder,
     this.initialProgress,
     this.onProgressChanged,
+    this.initialFavorite = false,
+    this.onFavoriteChanged,
+    this.onDownloadRequested,
     this.screenKey,
     super.key,
   });
@@ -103,6 +151,9 @@ final class ReaderRuntimeScreen extends StatefulWidget {
   final ReaderAppBarActionsBuilder? appBarActionsBuilder;
   final ReadingProgress? initialProgress;
   final ReaderProgressWriter? onProgressChanged;
+  final bool initialFavorite;
+  final FutureOr<void> Function(bool favorite)? onFavoriteChanged;
+  final FutureOr<void> Function()? onDownloadRequested;
   final Key? screenKey;
 
   @override
@@ -127,10 +178,18 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   DecodeTarget? _target;
   int? _lastProgressPage;
   ReaderMode? _lastProgressMode;
+  late final ReaderPlaybackController _playback;
+  late bool _favorite;
+  bool _controlsVisible = false;
+  bool _downloading = false;
+  bool _downloaded = false;
 
   @override
   void initState() {
     super.initState();
+    _playback = ReaderPlaybackController();
+    _favorite = widget.initialFavorite;
+    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky));
     _sessionId = 'reader-${++_sessionSequence}';
     _clock = SystemClock();
     _memoryTrace = MemoryTraceSink();
@@ -158,6 +217,9 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   @override
   void didUpdateWidget(covariant ReaderRuntimeScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialFavorite != widget.initialFavorite) {
+      _favorite = widget.initialFavorite;
+    }
     if (!_sameChapterSession(oldWidget.chapter, widget.chapter) ||
         !_sameLoaderSources(
           oldWidget.loaderSources,
@@ -266,6 +328,16 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
           ? ReaderMode.continuous
           : ReaderMode.paged;
 
+  String _playbackSpeedLabel(double speed) {
+    final tenths = speed * 10;
+    final digits = speed == speed.roundToDouble()
+        ? 0
+        : tenths == tenths.roundToDouble()
+            ? 1
+            : 2;
+    return '${speed.toStringAsFixed(digits)}×';
+  }
+
   Transport _transportFor(Uri uri) {
     if (_loaderTransport.contains(uri)) {
       return _loaderTransport;
@@ -345,6 +417,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       _binding?.detach(reader.sessionId);
       reader.dispose();
     }
+    _playback.dispose();
+    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
     unawaited(
       _disposeRuntime().catchError((Object error, StackTrace stackTrace) {
         debugPrint('reader runtime dispose failed: $error');
@@ -358,6 +432,315 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     await _downloads.dispose();
     _ioTransport.close(force: true);
     await _workspace.dispose();
+  }
+
+  void _toggleControls() {
+    setState(() => _controlsVisible = !_controlsVisible);
+    unawaited(
+      SystemChrome.setEnabledSystemUIMode(
+        _controlsVisible ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky,
+      ),
+    );
+  }
+
+  Future<void> _toggleFavorite() async {
+    final callback = widget.onFavoriteChanged;
+    if (callback == null) {
+      return;
+    }
+    final next = !_favorite;
+    setState(() => _favorite = next);
+    try {
+      await Future<void>.sync(() => callback(next));
+    } on Object catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _favorite = !next);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('收藏状态保存失败：$error')),
+      );
+    }
+  }
+
+  Future<void> _downloadChapter() async {
+    if (_downloading || _downloaded) {
+      return;
+    }
+    setState(() => _downloading = true);
+    try {
+      final external = widget.onDownloadRequested;
+      if (external != null) {
+        await Future<void>.sync(external);
+      } else {
+        for (final asset in widget.chapter.pages) {
+          final id = readerPageDownloadId(widget.chapter, asset);
+          final session = _downloads.get(id);
+          if (session.state == DownloadState.promoted) {
+            continue;
+          }
+          if (session.activeRun) {
+            await _waitForPromotion(session);
+            continue;
+          }
+          try {
+            await DownloadJob(
+              transport: _transportFor(asset.uri),
+              session: session,
+            ).run();
+          } on Failure catch (error) {
+            if (error.code != ErrorCode.sessionBusy) {
+              rethrow;
+            }
+            await _waitForPromotion(session);
+          }
+        }
+      }
+      if (!mounted) {
+        return;
+      }
+      setState(() => _downloaded = true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('本章已缓存')),
+      );
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('缓存本章失败：$error')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _downloading = false);
+      }
+    }
+  }
+
+  Future<void> _waitForPromotion(DownloadSession session) {
+    final completer = Completer<void>();
+    late final DownloadSnapshotListener listener;
+    listener = (snapshot) {
+      if (completer.isCompleted) {
+        return;
+      }
+      switch (snapshot.state) {
+        case DownloadState.promoted:
+          completer.complete();
+          break;
+        case DownloadState.failed:
+          completer.completeError(
+            snapshot.failure ??
+                const Failure(
+                  code: ErrorCode.network,
+                  message: 'chapter cache failed',
+                ),
+          );
+          break;
+        case DownloadState.disposed:
+          completer.completeError(
+            const Failure(
+              code: ErrorCode.cancelled,
+              message: 'chapter cache was disposed',
+            ),
+          );
+          break;
+        case DownloadState.idle:
+        case DownloadState.queued:
+        case DownloadState.receiving:
+        case DownloadState.sealed:
+          break;
+      }
+    };
+    session.addSnapshotListener(listener);
+    return completer.future.whenComplete(
+      () => session.removeSnapshotListener(listener),
+    );
+  }
+
+  Widget _topControls(
+    BuildContext context,
+    ReaderController reader,
+  ) {
+    final titleBuilder = widget.appBarTitleBuilder;
+    return SafeArea(
+      key: readerTopControlsKey,
+      bottom: false,
+      child: Material(
+        color: Colors.black.withValues(alpha: 0.72),
+        child: IconTheme(
+          data: const IconThemeData(color: Colors.white),
+          child: DefaultTextStyle.merge(
+            style: const TextStyle(color: Colors.white),
+            child: SizedBox(
+              height: kToolbarHeight,
+              child: Row(
+                children: <Widget>[
+                  IconButton(
+                    tooltip: '返回',
+                    onPressed: () => Navigator.of(context).maybePop(),
+                    icon: const Icon(Icons.arrow_back),
+                  ),
+                  Expanded(
+                    child: titleBuilder == null
+                        ? Text(
+                            widget.chapter.chapter.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          )
+                        : titleBuilder(
+                            context,
+                            widget.chapter,
+                            reader.currentIndex,
+                          ),
+                  ),
+                  ...?widget.appBarActionsBuilder?.call(context, reader),
+                  PopupMenuButton<ReadingDirection>(
+                    tooltip: '阅读方向',
+                    initialValue: reader.direction,
+                    onSelected: reader.setDirection,
+                    itemBuilder: (context) =>
+                        const <PopupMenuEntry<ReadingDirection>>[
+                      PopupMenuItem(
+                        value: ReadingDirection.ltr,
+                        child: Text('LTR'),
+                      ),
+                      PopupMenuItem(
+                        value: ReadingDirection.rtl,
+                        child: Text('RTL'),
+                      ),
+                      PopupMenuItem(
+                        value: ReadingDirection.vertical,
+                        child: Text('纵向'),
+                      ),
+                    ],
+                    icon: const Icon(Icons.swap_horiz),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _bottomControls(
+    BuildContext context,
+    ReaderController reader,
+  ) {
+    final pages = widget.chapter.pages.length;
+    return SafeArea(
+      key: readerBottomControlsKey,
+      top: false,
+      child: Material(
+        color: Colors.black.withValues(alpha: 0.78),
+        child: IconTheme(
+          data: const IconThemeData(color: Colors.white),
+          child: DefaultTextStyle.merge(
+            style: const TextStyle(color: Colors.white),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      Text('${reader.currentIndex + 1}'),
+                      Expanded(
+                        child: Slider(
+                          key: readerPageSliderKey,
+                          value: reader.currentIndex.toDouble(),
+                          min: 0,
+                          max: math.max(1, pages - 1).toDouble(),
+                          divisions: pages > 1 ? pages - 1 : null,
+                          onChanged: pages <= 1
+                              ? null
+                              : (value) => reader.requestPage(value.round()),
+                        ),
+                      ),
+                      Text('$pages'),
+                    ],
+                  ),
+                  ValueListenableBuilder<ReaderPlaybackState>(
+                    valueListenable: _playback,
+                    builder: (context, playback, _) => Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: <Widget>[
+                        IconButton(
+                          key: readerPauseKey,
+                          tooltip: playback.paused ? '继续播放' : '暂停动画',
+                          onPressed: _playback.togglePaused,
+                          icon: Icon(
+                            playback.paused ? Icons.play_arrow : Icons.pause,
+                          ),
+                        ),
+                        PopupMenuButton<double>(
+                          key: readerSpeedKey,
+                          tooltip: '播放速度',
+                          initialValue: playback.speed,
+                          onSelected: _playback.setSpeed,
+                          itemBuilder: (context) =>
+                              const <PopupMenuEntry<double>>[
+                            PopupMenuItem(value: 0.5, child: Text('0.5×')),
+                            PopupMenuItem(value: 0.75, child: Text('0.75×')),
+                            PopupMenuItem(value: 1, child: Text('1×')),
+                            PopupMenuItem(value: 1.5, child: Text('1.5×')),
+                            PopupMenuItem(value: 2, child: Text('2×')),
+                          ],
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            child: Text(
+                              _playbackSpeedLabel(playback.speed),
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          key: readerRotateKey,
+                          tooltip: '顺时针旋转',
+                          onPressed: reader.rotateClockwise,
+                          icon: const Icon(Icons.rotate_right),
+                        ),
+                        IconButton(
+                          key: readerFavoriteKey,
+                          tooltip: _favorite ? '取消收藏' : '收藏',
+                          onPressed: widget.onFavoriteChanged == null
+                              ? null
+                              : _toggleFavorite,
+                          icon: Icon(
+                            _favorite
+                                ? Icons.bookmark
+                                : Icons.bookmark_border,
+                          ),
+                        ),
+                        IconButton(
+                          key: readerDownloadKey,
+                          tooltip: _downloaded ? '本章已缓存' : '缓存本章',
+                          onPressed: _downloading || _downloaded
+                              ? null
+                              : _downloadChapter,
+                          icon: _downloading
+                              ? const SizedBox.square(
+                                  dimension: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Icon(
+                                  _downloaded
+                                      ? Icons.download_done
+                                      : Icons.download_outlined,
+                                ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -378,55 +761,57 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                 demandRevision: () => _binding?.revision ?? 0,
                 loadBytes: (token) =>
                     (widget.mediaBytesLoader ?? _loadMediaBytes)(asset, token),
+                playback: _playback,
               ),
             );
     return AnimatedBuilder(
       animation: reader,
-      builder: (context, _) {
-        final titleBuilder = widget.appBarTitleBuilder;
-        return Scaffold(
-          key: widget.screenKey,
-          appBar: AppBar(
-            title: titleBuilder == null
-                ? Text(widget.chapter.chapter.title)
-                : titleBuilder(
-                    context,
-                    widget.chapter,
-                    reader.currentIndex,
+      builder: (context, _) => Scaffold(
+        key: widget.screenKey,
+        backgroundColor: Colors.black,
+        body: Stack(
+          fit: StackFit.expand,
+          children: <Widget>[
+            ReaderView(
+              controller: reader,
+              clock: _clock,
+              traceSink: _trace,
+              pageBuilder: pageBuilder,
+              onTap: _toggleControls,
+            ),
+            AnimatedSlide(
+              offset: _controlsVisible ? Offset.zero : const Offset(0, -1),
+              duration: const Duration(milliseconds: 180),
+              child: AnimatedOpacity(
+                opacity: _controlsVisible ? 1 : 0,
+                duration: const Duration(milliseconds: 140),
+                child: IgnorePointer(
+                  ignoring: !_controlsVisible,
+                  child: Align(
+                    alignment: Alignment.topCenter,
+                    child: _topControls(context, reader),
                   ),
-            actions: <Widget>[
-              ...?widget.appBarActionsBuilder?.call(context, reader),
-              PopupMenuButton<ReadingDirection>(
-                tooltip: '阅读方向',
-                initialValue: reader.direction,
-                onSelected: reader.setDirection,
-                itemBuilder: (context) =>
-                    const <PopupMenuEntry<ReadingDirection>>[
-                  PopupMenuItem(
-                    value: ReadingDirection.ltr,
-                    child: Text('LTR'),
-                  ),
-                  PopupMenuItem(
-                    value: ReadingDirection.rtl,
-                    child: Text('RTL'),
-                  ),
-                  PopupMenuItem(
-                    value: ReadingDirection.vertical,
-                    child: Text('纵向'),
-                  ),
-                ],
-                icon: const Icon(Icons.swap_horiz),
+                ),
               ),
-            ],
-          ),
-          body: ReaderView(
-            controller: reader,
-            clock: _clock,
-            traceSink: _trace,
-            pageBuilder: pageBuilder,
-          ),
-        );
-      },
+            ),
+            AnimatedSlide(
+              offset: _controlsVisible ? Offset.zero : const Offset(0, 1),
+              duration: const Duration(milliseconds: 180),
+              child: AnimatedOpacity(
+                opacity: _controlsVisible ? 1 : 0,
+                duration: const Duration(milliseconds: 140),
+                child: IgnorePointer(
+                  ignoring: !_controlsVisible,
+                  child: Align(
+                    alignment: Alignment.bottomCenter,
+                    child: _bottomControls(context, reader),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

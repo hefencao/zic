@@ -2,7 +2,7 @@
 
 `zic` 是从零开发的高性能漫画阅读器。当前版本已完成静态 Reader、可恢复下载、
 持久化缓存恢复、容量/LRU 策略、受控清理、失败退避重试、独立资源 lane、格式感知 ingress、
-decode/upload registry、frame holder、viewport 播放门控、帧字节预算、可运行的 Animated WebP App 入口、viewport/DPR 自适应显示目标、source-aware 解码 raster、Rust 增量 Animated WebP 解码基础，以及按 `comicId` 聚合多章节的 Android Home/Bookshelf/详情闭环。
+decode/upload registry、frame holder、viewport 播放门控、帧字节预算、可运行的 Animated WebP App 入口、viewport/DPR 自适应显示目标、source-aware 解码 raster、Rust 增量 Animated WebP 解码基础，以及按 `comicId` 聚合多章节的 Android Home/Bookshelf/详情闭环。`0.20.0-dev.23` 进一步统一首页与书架封面、补齐分类与管理操作、自定义画廊拖动，并为 Reader 增加默认沉浸、页码滑杆、暂停/倍速、旋转、收藏、章节缓存和缩放手势。
 
 ```text
 ReaderView
@@ -85,6 +85,14 @@ manifest identity 生成 `DownloadId`，经 AssetBundle/file/http transport 下�
 promoted artifact 后，播放器才读取最终字节。viewport target 更换或页面退出会
 先 reconcile 掉旧需求，避免后台下载和旧 decode identity 残留。当前可见 WebP
 仍固定使用 Flutter codec；native texture 只在独立预览中显式确认后启用。
+
+Reader 默认以 `immersiveSticky` 进入并隐藏顶部、底部控制栏，轻触页面显示或再次隐藏。
+底部滑杆直接提交有边界校验的 `ReaderController.requestPage`；旋转只改变页面呈现，
+不会重写下载 identity。双指缩放和双击缩放由当前页 `InteractiveViewer` 持有，放大时
+暂停 PageView 翻页，跳到其他页后重置旧页缩放。暂停和倍速继续复用原 `NativeWebpPlayer`
+与 Flutter codec 路径，不旁路 download identity、telemetry 或 raster 下采样。当前“缓存本章”
+会把本章页面推进到当前 Reader 会话的 promoted artifact；离开 Reader 后仍会清理临时根，
+持久离线下载状态与书架水位投影留给后续存储阶段。
 
 Native 与 Flutter codec 使用同一个自适应物理显示目标：目标取实际预览区域的逻辑尺寸乘以设备 DPR，保持源图比例并按 8 个物理像素对齐。`RasterPlan` 再决定实际 decode raster：大图按目标下采样，小图保持原始画布，避免 animated codec 在合成局部子帧前先放大插值。极小素材显示时使用 nearest-neighbour，正常漫画页面继续使用平滑滤镜。Native 路径还会提前准备下一帧，并从帧时长中扣除准备耗时，避免解码时间把动画总时长拉长。
 

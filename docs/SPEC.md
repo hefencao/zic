@@ -13,7 +13,10 @@
 - 添加本地文件夹、归档文件或远程章节清单；
 - 查看漫画、章节、封面和最后阅读位置；
 - 删除书架条目而选择是否保留离线缓存；
-- 查看章节下载状态。
+- 查看章节下载状态；
+- 在画廊或列表视图中使用相同排序方式；
+- 在管理模式中选择漫画、移动分类、编辑分类归属和确认删除；
+- 在自定义排序中长按拖动封面或重排列表行。
 
 ### 2.2 阅读器
 
@@ -28,7 +31,9 @@
 - 静态 JPEG/PNG/WebP；
 - Animated WebP；
 - GIF fallback；
-- 本地和远程来源。
+- 本地和远程来源；
+- 默认沉浸并隐藏控制栏，轻触切换控制栏；
+- 页码滑杆、暂停、倍速、旋转、收藏和章节缓存命令。
 
 ### 2.3 下载与离线
 
@@ -572,18 +577,27 @@ Coordinator 验证安全条件。结果：
 
 ## 2.5 Android Home, Bookshelf and comic details
 
-The Android primary navigation contains Home and Bookshelf.
+The Android primary navigation contains Home and Bookshelf. Home displays update and
+reading-history rails using the same fixed-size cover-card contract as the Bookshelf gallery.
+Local-folder import is visible; directory maintenance is not part of the Home product surface.
+Diagnostics remain collapsed and secondary.
 
-Home displays update cards and reading-history cards. Bookshelf supports custom
-categories, local/remote source filtering, management deletion, recent/title/
-page-count/custom sorting, and drag reordering in custom mode.
+Bookshelf supports custom categories, local/remote filtering, recent/title/page-count/custom
+sorting and an independent gallery/list view choice. Custom ordering does not force a list. In
+management mode, tapping a comic selects it and exposes move, category membership and copy-info
+actions. Delete is isolated from non-destructive actions and requires confirmation. Gallery custom
+order uses long-press drag; list custom order uses reorderable rows. A selected category can add
+existing shelf comics. Selected chips use highlight alone without a redundant checkmark.
 
-Cover cards support animated thumbnails. While a remote comic is downloading,
-the cover is dimmed and overlaid with a bottom-up completion waterline, percent,
-and completed/total page count. Tap opens Reader. Long press opens details only
-when the source has rich metadata; metadata-free local imports open Reader.
+Cover cards support animated thumbnails. While a remote comic is downloading, the cover may be
+dimmed and overlaid with a bottom-up completion waterline, percent and completed/total page count.
+The presentation receives progress values but does not own DownloadSession.
 
-Comic details display cover, title, liked, shelf and collected state, category
-membership and chapters. Chapter order can be reversed. Read chapters are
-dimmed; a start-to-end swipe restores unread state without deleting Reader
-progress.
+Comic details display cover, title, liked, shelf and collected state, category membership and
+chapters. Chapter order can be reversed. Read chapters are dimmed; a start-to-end swipe restores
+unread state without deleting Reader progress.
+
+Reader starts with system and app controls hidden. A page tap toggles top/bottom overlays. Page
+slider input submits a bounded Reader command. Pause/speed state is injected into animated media
+players; rotation changes presentation only. Pinch/pan and double-tap zoom are page-local, block
+PageView scrolling while active and reset after navigation.

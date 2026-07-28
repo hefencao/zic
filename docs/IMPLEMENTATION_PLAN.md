@@ -420,3 +420,19 @@
    **Implemented for persisted chapter records.**
 6. Bind authoritative DownloadSession progress and per-chapter download commands to
    the comic-level projection. **Next.**
+
+
+## Android library management and Reader controls slice
+
+1. Remove Home directory-maintenance presentation while preserving import/source contracts.
+   **Implemented.**
+2. Reuse exact cover geometry across Home and Bookshelf; decouple view from sort mode.
+   **Implemented.**
+3. Add management selection, category insertion/move and isolated confirmed deletion.
+   **Implemented.**
+4. Add custom gallery long-press drag and list reordering. **Implemented.**
+5. Add immersive Reader overlays, slider, animation controls, rotation, favorite and cache command.
+   **Implemented; chapter cache remains session-scoped unless an external durable callback is supplied.**
+6. Add page-local pinch/double-tap zoom with PageView gesture arbitration and navigation reset.
+   **Implemented.**
+7. Move Reader chapter cache to durable storage and bind authoritative aggregate progress. **Next.**

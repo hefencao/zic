@@ -68,8 +68,9 @@ void main() {
 
     expect(find.byKey(homeUpdatesSectionKey), findsOneWidget);
     expect(find.byKey(homeHistorySectionKey), findsOneWidget);
-    expect(find.byKey(importedChapterEntryKey(chapter.chapterId)),
-        findsOneWidget);
+    final homeCover = find.byKey(importedChapterEntryKey(chapter.chapterId));
+    expect(homeCover, findsOneWidget);
+    final homeCoverSize = tester.getSize(homeCover);
 
     await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
     await tester.pump();
@@ -77,7 +78,148 @@ void main() {
     expect(find.byKey(bookshelfPageKey), findsOneWidget);
     expect(find.byKey(bookshelfSourceFilterKey), findsOneWidget);
     expect(find.byKey(bookshelfSortKey), findsOneWidget);
+    expect(find.byKey(bookshelfViewKey), findsOneWidget);
+    final shelfCover = find.byKey(comicCoverKey(chapter.comicId));
+    expect(shelfCover, findsOneWidget);
+    expect(tester.getSize(shelfCover), homeCoverSize);
+    expect(homeCoverSize.width, ComicCoverCard.cardWidth);
+    expect(homeCoverSize.height, ComicCoverCard.cardExtent);
+  });
+
+  testWidgets('custom sort keeps gallery view and long-press drag order',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final first = _chapter(name: '甲漫画');
+    final second = _chapter(name: '乙漫画');
+    await store.upsertChapter(first);
+    await store.upsertChapter(second);
+
+    await tester.pumpWidget(App(libraryStore: store));
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(bookshelfSortKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('自定义排序'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(bookshelfManageKey));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(LongPressDraggable<String>), findsNWidgets(2));
+    expect(find.byType(GridView), findsOneWidget);
+
+    final firstCover = find.byKey(comicCoverKey(first.comicId));
+    final secondCover = find.byKey(comicCoverKey(second.comicId));
+    final gesture = await tester.startGesture(tester.getCenter(firstCover));
+    await tester.pump(const Duration(milliseconds: 700));
+    await gesture.moveTo(tester.getCenter(secondCover));
+    await tester.pump(const Duration(milliseconds: 100));
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    final firstPreference = await store.getComicPreference(first.comicId);
+    final secondPreference = await store.getComicPreference(second.comicId);
+    expect(firstPreference, isNotNull);
+    expect(secondPreference, isNotNull);
+    expect(firstPreference!.customOrder, greaterThan(secondPreference!.customOrder));
+
+    await tester.tap(find.byKey(bookshelfViewKey));
+    await tester.pumpAndSettle();
+    expect(find.byType(ReorderableListView), findsOneWidget);
+    expect(find.byTooltip('切换画廊视图'), findsOneWidget);
+  });
+
+  testWidgets('category can add comics from the current category view',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final chapter = _chapter(name: '待分类漫画');
+    await store.upsertChapter(chapter);
+
+    await tester.pumpWidget(App(libraryStore: store));
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(bookshelfAddCategoryKey));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '测试分类');
+    await tester.tap(find.widgetWithText(FilledButton, '创建'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('测试分类'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(bookshelfAddComicToCategoryKey), findsOneWidget);
+    expect(find.byKey(comicCoverKey(chapter.comicId)), findsNothing);
+
+    await tester.tap(find.byKey(bookshelfAddComicToCategoryKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(CheckboxListTile));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, '添加'));
+    await tester.pumpAndSettle();
+
+    final categories = await store.listCategories();
+    final preference = await store.getComicPreference(chapter.comicId);
+    expect(categories, hasLength(1));
+    expect(preference?.categoryIds, contains(categories.single.categoryId));
     expect(find.byKey(comicCoverKey(chapter.comicId)), findsOneWidget);
+  });
+
+  testWidgets('management selection exposes move actions and isolates delete',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final chapter = _chapter(name: '管理漫画');
+    await store.upsertChapter(chapter);
+    final now = DateTime.utc(2026, 7, 28);
+    const firstCategoryId = 'category-first';
+    const secondCategoryId = 'category-second';
+    await store.upsertCategory(
+      LibraryCategory(
+        categoryId: firstCategoryId,
+        name: '分类一',
+        sortOrder: 0,
+        createdAt: now,
+      ),
+    );
+    await store.upsertCategory(
+      LibraryCategory(
+        categoryId: secondCategoryId,
+        name: '分类二',
+        sortOrder: 1,
+        createdAt: now,
+      ),
+    );
+
+    await tester.pumpWidget(App(libraryStore: store));
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(bookshelfManageKey));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(comicCoverKey(chapter.comicId)));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(bookshelfManagementBarKey), findsOneWidget);
+    expect(find.byTooltip('移动到其他分类'), findsOneWidget);
+    expect(find.byTooltip('复制漫画信息'), findsOneWidget);
+    expect(find.byKey(comicDeleteKey(chapter.comicId)), findsOneWidget);
+    expect(find.byKey(comicDetailsScreenKey), findsNothing);
+
+    await tester.tap(find.byTooltip('移动到其他分类'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('移动到 分类二'));
+    await tester.pumpAndSettle();
+
+    final preference = await store.getComicPreference(chapter.comicId);
+    expect(preference?.categoryIds, contains(secondCategoryId));
+    expect(preference?.categoryIds, isNot(contains(firstCategoryId)));
   });
 
   testWidgets('cover download overlay reports waterline and page progress',

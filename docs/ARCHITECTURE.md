@@ -780,3 +780,23 @@ Cover widgets only receive byte-loader and progress value objects. Animated
 thumbnail decoding uses Flutter `Image.memory`; download waterline presentation
 does not own a DownloadSession. Reader navigation continues through the existing
 promoted-artifact path.
+
+
+## 3.10 Bookshelf management and Reader interaction shell
+
+Home and Bookshelf both consume catalog-owned `LibraryComic` projections and the same
+`ComicCoverCard`; view geometry is presentation policy, not a second library model. Sort mode and
+view mode are independent. Management selection is transient App state, while custom order,
+category membership and deletion persist through `ImportedLibraryStore`. Drag widgets emit reorder
+commands only; they do not mutate catalog lists in place.
+
+Reader app controls are an overlay around `ReaderView`. Page slider, direction and rotation call
+`ReaderController`; favorite delegates to an application callback; chapter cache delegates to an
+external callback or the existing DownloadRegistry. `ReaderPlaybackController` is a small
+ValueNotifier passed through `ReaderPageRuntime` to animated renderers. It does not own encoded
+bytes, decode sessions, frames or textures.
+
+Zoom is owned by each current page through `InteractiveViewer`. The parent only receives a boolean
+zoom state to suspend PageView physics. Navigation changes the zoom-page identity so stale transforms
+cannot reappear with page scrolling re-enabled. Rotation wraps the page presentation and leaves all
+content/download identities unchanged.

@@ -186,6 +186,7 @@ Widget? _buildMediaReaderPage(
       demandRevision: runtime.demandRevision,
       downloadIdentity: readerPageDownloadId(runtime.chapter, asset),
       onPreviewStateChanged: onPreviewStateChanged,
+      playback: runtime.playback,
     ),
   );
 }

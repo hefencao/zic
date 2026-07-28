@@ -29,18 +29,33 @@ final class ReaderController extends ChangeNotifier {
   ReadingDirection _direction;
   int? _requestedIndex;
   int _navigationRevision = 0;
+  int _rotationQuarterTurns = 0;
 
   int get currentIndex => _currentIndex;
   int get stableIndex => _stableIndex;
   ReadingDirection get direction => _direction;
   int? get requestedIndex => _requestedIndex;
   int get navigationRevision => _navigationRevision;
+  int get rotationQuarterTurns => _rotationQuarterTurns;
 
   void setDirection(ReadingDirection value) {
     if (_direction == value) {
       return;
     }
     _direction = value;
+    notifyListeners();
+  }
+
+  void rotateClockwise() {
+    _rotationQuarterTurns = (_rotationQuarterTurns + 1) % 4;
+    notifyListeners();
+  }
+
+  void resetRotation() {
+    if (_rotationQuarterTurns == 0) {
+      return;
+    }
+    _rotationQuarterTurns = 0;
     notifyListeners();
   }
 

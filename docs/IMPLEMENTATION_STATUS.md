@@ -1,3 +1,36 @@
+## Current iteration — library management and immersive Reader controls
+
+The Home product surface no longer exposes per-directory refresh/removal maintenance. Folder
+import remains a first-class action, while media diagnostics are collapsed under a secondary
+expansion section. Home update/history rails and the Bookshelf gallery now instantiate the same
+`ComicCoverCard` with an exact 132 × 238 card extent and 3:4 cover ratio. The gallery centers
+fixed-width cards instead of stretching them to fill arbitrary grid cells.
+
+Bookshelf sorting no longer changes presentation mode. Gallery and list are explicit user-selected
+views; custom order works in either. In management mode, a card tap selects the comic and exposes
+move/category/copy operations. Deletion is separated by spacing and a divider, uses the error color,
+and requires confirmation. Custom gallery order uses long-press drag targets; custom list order uses
+`ReorderableListView`. A selected category can add one or more existing shelf comics, and move
+semantics remove the active category before adding the target category. Duplicate inner shelf titles
+and selected-chip checkmarks were removed.
+
+Reader enters `SystemUiMode.immersiveSticky` with both control surfaces hidden. A page tap toggles
+top and bottom overlays. The bottom overlay owns the page slider, pause, playback speed, clockwise
+rotation, favorite and chapter-cache commands. Page jumps remain `ReaderController` commands.
+Pinch/pan and double-tap zoom are page-local; PageView scrolling is disabled while zoomed and the
+old page is rebuilt at identity scale after navigation.
+
+Animation control is injected into the existing `NativeWebpPlayer`/Flutter codec composition rather
+than replacing it. Controlled WebP decoding retains viewport-aware target dimensions, telemetry,
+download identity and the native fallback boundary. Native and Flutter timers preserve remaining
+frame delay across pause and speed changes. The chapter-cache action promotes all chapter pages in
+the current Reader workspace; that workspace is intentionally session-scoped, so a durable offline
+projection and persistent shelf waterline remain the next storage slice.
+
+`python3 tool/check_repo.py` passes in this environment. Flutter, Dart, Cargo, Android SDK and
+Android NDK are unavailable here, so the target tests, analyzer and device/native builds remain
+external validation gates rather than claimed results.
+
 ## Current iteration — comic-level aggregation and reliable unread restore
 
 The persisted library now exposes a catalog-owned `LibraryComic` projection that groups
@@ -9,8 +42,9 @@ route without moving chapter progress or refresh ownership out of the store.
 Home update/history rails and Bookshelf filtering, sorting, custom ordering, category
 membership and comic deletion now operate on comic aggregates. The details route renders
 all grouped chapters in sequence order, opens the selected chapter, and keeps precise
-progress plus explicit read state per chapter. Local maintenance remains chapter-scoped so
-directory refresh and identity reconciliation are not hidden behind the aggregate.
+progress plus explicit read state per chapter. Refresh and identity-reconciliation ownership remain
+chapter-scoped in the source/store layer; the later library-management iteration removes those
+maintenance controls from the Home product surface.
 Refresh copies the scanned source revision and page snapshot onto the existing chapter,
 preserving its aggregate `comicId`, `comicTitle`, chapter identity and sequence.
 
@@ -39,9 +73,10 @@ selection.
 Imported page IDs are derived from stable source identities rather than list positions.
 When refresh inserts or removes files before the current page, both memory and SQLite
 stores reconcile `ReadingProgress` to the same source when it still exists; only a removed
-current source falls back to a clamped valid page. The home library exposes per-chapter
+current source falls back to a clamped valid page. The source/store path supports per-chapter
 refresh progress and reports added/removed page counts while leaving the previous chapter
-untouched when scanning fails.
+untouched when scanning fails. The later library-management iteration removes that maintenance
+presentation from Home while retaining the underlying refresh contract.
 
 The directory test fixture now uses a complete decodable PNG. A 24-byte signature/IHDR
 prefix is correctly rejected by the production sniffer because it cannot satisfy the

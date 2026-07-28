@@ -59,6 +59,87 @@ void main() {
     expect(controller.requestedIndex, isNull);
   });
 
+  testWidgets('ReaderView rotates pages and supports double-tap zoom',
+      (tester) async {
+    final chapter = _chapter(pageCount: 2);
+    final controller = ReaderController(
+      sessionId: 'reader-gesture-test',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: FakeClock(),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderView(
+          controller: controller,
+          clock: FakeClock(),
+          pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
+            color: Colors.black,
+            child: Center(child: Text(asset.pageId)),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final rotation = find.byKey(
+      const ValueKey<String>('reader-page-rotation:0'),
+    );
+    expect(tester.widget<RotatedBox>(rotation).quarterTurns, 0);
+
+    controller.rotateClockwise();
+    await tester.pump();
+    expect(tester.widget<RotatedBox>(rotation).quarterTurns, 1);
+
+    final viewer = find.descendant(
+      of: rotation,
+      matching: find.byType(InteractiveViewer),
+    );
+    await tester.doubleTap(viewer);
+    await tester.pump();
+    final interactive = tester.widget<InteractiveViewer>(viewer);
+    expect(
+      interactive.transformationController!.value.getMaxScaleOnAxis(),
+      greaterThan(2),
+    );
+
+    controller.requestPage(1);
+    await tester.pump();
+    controller.requestPage(0);
+    await tester.pump();
+    final resetViewer = find.descendant(
+      of: rotation,
+      matching: find.byType(InteractiveViewer),
+    );
+    expect(
+      tester
+          .widget<InteractiveViewer>(resetViewer)
+          .transformationController!
+          .value
+          .getMaxScaleOnAxis(),
+      1,
+    );
+  });
+
+  test('rotation cycles and can reset', () {
+    final controller = ReaderController(
+      sessionId: 'reader-rotation-test',
+      chapter: _chapter(pageCount: 1),
+      onObservation: (_) {},
+      clock: FakeClock(),
+    );
+    addTearDown(controller.dispose);
+
+    for (var index = 0; index < 5; index++) {
+      controller.rotateClockwise();
+    }
+    expect(controller.rotationQuarterTurns, 1);
+    controller.resetRotation();
+    expect(controller.rotationQuarterTurns, 0);
+  });
+
   test('page requests deduplicate and can cancel back to current', () {
     final chapter = _chapter(pageCount: 3);
     final controller = ReaderController(
@@ -112,7 +193,6 @@ void main() {
     expect(() => controller.requestPage(1), throwsRangeError);
   });
 }
-
 
 ChapterManifest _chapter({required int pageCount}) {
   return ChapterManifest(

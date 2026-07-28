@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:local_media/local_media.dart';
 
 import 'static_demo.dart';
@@ -12,10 +13,16 @@ const homePageKey = ValueKey<String>('home-page');
 const bookshelfPageKey = ValueKey<String>('bookshelf-page');
 const homeUpdatesSectionKey = ValueKey<String>('home-updates-section');
 const homeHistorySectionKey = ValueKey<String>('home-history-section');
+const homeDiagnosticsKey = ValueKey<String>('home-diagnostics');
 const bookshelfManageKey = ValueKey<String>('bookshelf-manage');
 const bookshelfSourceFilterKey = ValueKey<String>('bookshelf-source-filter');
 const bookshelfSortKey = ValueKey<String>('bookshelf-sort');
+const bookshelfViewKey = ValueKey<String>('bookshelf-view');
 const bookshelfAddCategoryKey = ValueKey<String>('bookshelf-add-category');
+const bookshelfAddComicToCategoryKey =
+    ValueKey<String>('bookshelf-add-comic-to-category');
+const bookshelfManagementBarKey =
+    ValueKey<String>('bookshelf-management-bar');
 const comicDetailsScreenKey = ValueKey<String>('comic-details-screen');
 const comicDetailsReverseKey = ValueKey<String>('comic-details-reverse');
 const staticDemoEntryKey = ValueKey<String>('demo-entry-static');
@@ -31,19 +38,12 @@ const localWebpPickerProgressKey =
     ValueKey<String>('local-webp-picker-progress');
 const localImageFolderPickerProgressKey =
     ValueKey<String>('local-image-folder-picker-progress');
-const importedLibrarySectionKey = ValueKey<String>('imported-library-section');
 const importedLibraryLoadingKey = ValueKey<String>('imported-library-loading');
 const importedLibraryErrorKey = ValueKey<String>('imported-library-error');
 Key importedChapterEntryKey(String chapterId) =>
     ValueKey<String>('imported-chapter:$chapterId');
 Key historyChapterEntryKey(String chapterId) =>
     ValueKey<String>('history-chapter:$chapterId');
-Key importedChapterRefreshKey(String chapterId) =>
-    ValueKey<String>('refresh-imported-chapter:$chapterId');
-Key importedChapterRefreshProgressKey(String chapterId) =>
-    ValueKey<String>('refreshing-imported-chapter:$chapterId');
-Key importedChapterRemoveKey(String chapterId) =>
-    ValueKey<String>('remove-imported-chapter:$chapterId');
 Key comicCoverKey(String comicId) => ValueKey<String>('comic-cover:$comicId');
 Key comicDeleteKey(String comicId) => ValueKey<String>('comic-delete:$comicId');
 Key comicCategoryKey(String comicId) =>
@@ -54,6 +54,8 @@ Key chapterReadKey(String chapterId) =>
 const localWebpFolderPickerProgressKey = localImageFolderPickerProgressKey;
 
 enum _SourceFilter { all, local, remote }
+
+enum _ShelfViewMode { gallery, list }
 
 final class DemoHome extends StatefulWidget {
   const DemoHome({
@@ -79,7 +81,6 @@ final class _DemoHomeState extends State<DemoHome> {
   late final Future<void> _libraryReady;
   final Map<String, Future<Uint8List>> _coverBytes =
       <String, Future<Uint8List>>{};
-  final Set<String> _refreshingChapters = <String>{};
 
   List<ImportedLibraryEntry> _libraryEntries = const <ImportedLibraryEntry>[];
   List<LibraryCategory> _categories = const <LibraryCategory>[];
@@ -92,10 +93,12 @@ final class _DemoHomeState extends State<DemoHome> {
   bool _picking = false;
   bool _pickingFolder = false;
   bool _manageShelf = false;
+  String? _managedComicId;
   int _navigationIndex = 0;
   _SourceFilter _sourceFilter = _SourceFilter.all;
   String? _selectedCategoryId;
   LibrarySortMode _sortMode = LibrarySortMode.recent;
+  _ShelfViewMode _shelfViewMode = _ShelfViewMode.gallery;
 
   List<LibraryComic> get _libraryComics =>
       aggregateImportedLibrary(_libraryEntries);
@@ -325,11 +328,21 @@ final class _DemoHomeState extends State<DemoHome> {
     }
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => ImportedImageChapterScreen(
-          record: entry.chapter,
-          initialProgress: entry.progress,
-          onProgressChanged: _library.saveProgress,
-        ),
+        builder: (_) {
+          final preference = _preferences[entry.chapter.comicId] ??
+              ComicPreference.defaults(comicId: entry.chapter.comicId);
+          return ImportedImageChapterScreen(
+            record: entry.chapter,
+            initialProgress: entry.progress,
+            onProgressChanged: _library.saveProgress,
+            initialFavorite: preference.collected,
+            onFavoriteChanged: (favorite) {
+              final current = _preferences[entry.chapter.comicId] ??
+                  ComicPreference.defaults(comicId: entry.chapter.comicId);
+              return _savePreference(current.copyWith(collected: favorite));
+            },
+          );
+        },
       ),
     );
     if (mounted) {
@@ -383,73 +396,6 @@ final class _DemoHomeState extends State<DemoHome> {
       return;
     }
     await _openImportedChapter(comic.resumeChapter);
-  }
-
-  Future<void> _refreshImportedChapter(ImportedLibraryEntry entry) async {
-    final chapterId = entry.chapter.chapterId;
-    if (_refreshingChapters.contains(chapterId)) {
-      return;
-    }
-    setState(() => _refreshingChapters.add(chapterId));
-    try {
-      await _ensureLibraryReady();
-      final folder = await widget.folderRefresher(entry.chapter);
-      final scanned = imageFolderChapterRecord(
-        folder,
-        readingDirection: entry.chapter.readingDirection,
-        importedAt: entry.chapter.importedAt,
-      );
-      final refreshed = entry.chapter.copyWith(
-        directoryId: scanned.directoryId,
-        displayName: scanned.displayName,
-        sourceId: scanned.sourceId,
-        sourceRevision: scanned.sourceRevision,
-        pages: scanned.pages,
-        readingDirection: scanned.readingDirection,
-      );
-      if (refreshed.chapterId != chapterId) {
-        throw StateError('刷新结果改变了目录章节 identity');
-      }
-      final previousSources =
-          entry.chapter.pages.map((page) => page.sourceId).toSet();
-      final refreshedSources =
-          refreshed.pages.map((page) => page.sourceId).toSet();
-      final added = refreshedSources.difference(previousSources).length;
-      final removed = previousSources.difference(refreshedSources).length;
-      await _library.upsertChapter(refreshed);
-      _coverBytes.clear();
-      await _reloadLibrary();
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '目录已刷新：${refreshed.pages.length} 页'
-            '（新增 $added，移除 $removed）',
-          ),
-        ),
-      );
-    } on Object catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('刷新图片文件夹失败：$error')),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _refreshingChapters.remove(chapterId));
-      }
-    }
-  }
-
-  Future<void> _removeImportedChapter(ImportedLibraryEntry entry) async {
-    await _ensureLibraryReady();
-    await _library.removeChapter(entry.chapter.chapterId);
-    _coverBytes.remove(entry.chapter.pages.first.sourceId);
-    if (mounted) {
-      await _reloadLibrary();
-    }
   }
 
   Future<void> _removeComic(LibraryComic comic) async {
@@ -692,7 +638,7 @@ final class _DemoHomeState extends State<DemoHome> {
           ),
           const SizedBox(height: 10),
           _buildHorizontalComics(updates),
-          const SizedBox(height: 28),
+          const SizedBox(height: 24),
           _SectionTitle(
             key: homeHistorySectionKey,
             title: '阅读历史',
@@ -700,18 +646,27 @@ final class _DemoHomeState extends State<DemoHome> {
           ),
           const SizedBox(height: 10),
           _buildHorizontalComics(history, history: true),
-          const SizedBox(height: 28),
-          Text('导入与媒体诊断', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 10),
-          _buildImportAndDemoCards(),
-          const SizedBox(height: 28),
-          Text(
-            '本地目录维护',
-            key: importedLibrarySectionKey,
-            style: Theme.of(context).textTheme.titleLarge,
+          const SizedBox(height: 24),
+          FilledButton.icon(
+            key: localImageFolderImportKey,
+            onPressed: _picking || _pickingFolder ? null : _importImageFolder,
+            icon: _pickingFolder
+                ? const SizedBox.square(
+                    key: localImageFolderPickerProgressKey,
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.create_new_folder_outlined),
+            label: const Text('导入漫画文件夹'),
           ),
-          const SizedBox(height: 8),
-          Card(child: _buildImportedLibraryMaintenance()),
+          const SizedBox(height: 12),
+          ExpansionTile(
+            key: homeDiagnosticsKey,
+            tilePadding: EdgeInsets.zero,
+            title: const Text('开发与媒体诊断'),
+            subtitle: const Text('普通阅读无需使用'),
+            children: <Widget>[_buildImportAndDemoCards()],
+          ),
         ],
       ),
     );
@@ -730,7 +685,7 @@ final class _DemoHomeState extends State<DemoHome> {
       );
     }
     return SizedBox(
-      height: 226,
+      height: ComicCoverCard.cardExtent,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: comics.length,
@@ -739,7 +694,7 @@ final class _DemoHomeState extends State<DemoHome> {
           final comic = comics[index];
           final resume = comic.resumeChapter;
           return SizedBox(
-            width: 132,
+            width: ComicCoverCard.cardWidth,
             child: ComicCoverCard(
               key: history
                   ? historyChapterEntryKey(resume.chapter.chapterId)
@@ -761,21 +716,6 @@ final class _DemoHomeState extends State<DemoHome> {
   Widget _buildImportAndDemoCards() {
     return Column(
       children: <Widget>[
-        _DemoCard(
-          key: localImageFolderImportKey,
-          icon: Icons.create_new_folder_outlined,
-          title: '导入图片文件夹',
-          subtitle: 'Android 文档树批量导入图片并加入书架。',
-          trailing: _pickingFolder
-              ? const SizedBox.square(
-                  key: localImageFolderPickerProgressKey,
-                  dimension: 24,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : null,
-          onTap: _picking || _pickingFolder ? null : _importImageFolder,
-        ),
-        const SizedBox(height: 10),
         _DemoCard(
           key: localWebpImportKey,
           icon: Icons.file_open,
@@ -826,145 +766,517 @@ final class _DemoHomeState extends State<DemoHome> {
     );
   }
 
-  Widget _buildImportedLibraryMaintenance() {
-    if (_libraryEntries.isEmpty) {
-      return const ListTile(
-        leading: Icon(Icons.library_books_outlined),
-        title: Text('尚未导入本地漫画'),
+  Future<void> _confirmRemoveComic(LibraryComic comic) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除漫画'),
+        content: Text('从书架和本地记录中删除“${comic.title}”？此操作不可撤销。'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+              foregroundColor: Theme.of(context).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+    await _removeComic(comic);
+    if (mounted && _managedComicId == comic.comicId) {
+      setState(() => _managedComicId = null);
+    }
+  }
+
+  Future<void> _copyComicInfo(LibraryComic comic) async {
+    final sources = comic.chapters
+        .map((entry) => entry.chapter.directoryId)
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .join('\n');
+    await Clipboard.setData(
+      ClipboardData(
+        text: sources.isEmpty ? comic.title : '${comic.title}\n$sources',
+      ),
+    );
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('漫画信息已复制')),
       );
     }
-    return Column(
-      children: <Widget>[
-        for (final entry in _libraryEntries)
-          ListTile(
-            title: Text(entry.chapter.displayName),
-            subtitle: Text(
-              '${entry.chapter.pages.length} 页 · '
-              '${entry.progress == null ? '未开始' : '第 ${entry.progress!.pageIndex + 1} 页'}',
+  }
+
+  Future<void> _moveComicToCategory(
+    LibraryComic comic,
+    String? targetCategoryId,
+  ) async {
+    final preference = _preferenceForComic(comic);
+    final ids = preference.categoryIds.toSet();
+    final current = _selectedCategoryId;
+    if (current != null) {
+      ids.remove(current);
+    }
+    if (targetCategoryId != null) {
+      ids.add(targetCategoryId);
+    }
+    await _savePreference(preference.copyWith(categoryIds: ids));
+  }
+
+  Future<void> _addComicsToSelectedCategory() async {
+    final categoryId = _selectedCategoryId;
+    if (categoryId == null) {
+      return;
+    }
+    LibraryCategory? category;
+    for (final item in _categories) {
+      if (item.categoryId == categoryId) {
+        category = item;
+        break;
+      }
+    }
+    if (category == null) {
+      return;
+    }
+    final selectedCategory = category;
+    final candidates = _libraryComics
+        .where((comic) => _preferenceForComic(comic).inShelf)
+        .where(
+          (comic) => !_preferenceForComic(comic).categoryIds.contains(categoryId),
+        )
+        .toList(growable: false);
+    if (candidates.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('所有书架漫画都已在该分类中')),
+      );
+      return;
+    }
+    final selected = <String>{};
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('添加到“${selectedCategory.name}”'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: candidates.length,
+              itemBuilder: (context, index) {
+                final comic = candidates[index];
+                return CheckboxListTile(
+                  value: selected.contains(comic.comicId),
+                  title: Text(comic.title),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  onChanged: (checked) {
+                    setDialogState(() {
+                      if (checked ?? false) {
+                        selected.add(comic.comicId);
+                      } else {
+                        selected.remove(comic.comicId);
+                      }
+                    });
+                  },
+                );
+              },
             ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                if (_refreshingChapters.contains(entry.chapter.chapterId))
-                  SizedBox.square(
-                    key: importedChapterRefreshProgressKey(
-                      entry.chapter.chapterId,
-                    ),
-                    dimension: 24,
-                    child: const CircularProgressIndicator(strokeWidth: 2),
-                  )
-                else
-                  IconButton(
-                    key: importedChapterRefreshKey(entry.chapter.chapterId),
-                    tooltip: '重新扫描目录',
-                    onPressed: () => _refreshImportedChapter(entry),
-                    icon: const Icon(Icons.refresh),
-                  ),
-                IconButton(
-                  key: importedChapterRemoveKey(entry.chapter.chapterId),
-                  tooltip: '移除漫画',
-                  onPressed: () => _removeImportedChapter(entry),
-                  icon: const Icon(Icons.delete_outline),
-                ),
-              ],
-            ),
-            onTap: () => _openImportedChapter(entry),
           ),
-      ],
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: selected.isEmpty
+                  ? null
+                  : () => Navigator.of(context).pop(true),
+              child: const Text('添加'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+    for (final comic in candidates.where(
+      (comic) => selected.contains(comic.comicId),
+    )) {
+      final preference = _preferenceForComic(comic);
+      await _savePreference(
+        preference.copyWith(
+          categoryIds: <String>{...preference.categoryIds, categoryId},
+        ),
+      );
+    }
+  }
+
+  Future<void> _reorderCustomComic(
+    String draggedComicId,
+    String targetComicId,
+  ) async {
+    if (draggedComicId == targetComicId) {
+      return;
+    }
+    final comics = _filteredShelfComics();
+    final oldIndex =
+        comics.indexWhere((comic) => comic.comicId == draggedComicId);
+    final targetIndex =
+        comics.indexWhere((comic) => comic.comicId == targetComicId);
+    if (oldIndex < 0 || targetIndex < 0) {
+      return;
+    }
+    await _reorderCustom(
+      oldIndex,
+      targetIndex > oldIndex ? targetIndex + 1 : targetIndex,
+    );
+  }
+
+  void _handleShelfTap(LibraryComic comic) {
+    if (_manageShelf) {
+      setState(() {
+        _managedComicId = _managedComicId == comic.comicId ? null : comic.comicId;
+      });
+      return;
+    }
+    unawaited(_openComic(comic));
+  }
+
+  Widget _buildManagementBar(LibraryComic comic) {
+    final currentCategoryId = _selectedCategoryId;
+    final moveTargets = _categories
+        .where((category) => category.categoryId != currentCategoryId)
+        .toList(growable: false);
+    return Card(
+      key: bookshelfManagementBarKey,
+      margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+      child: Padding(
+        padding: const EdgeInsets.only(left: 12, right: 4),
+        child: Row(
+          children: <Widget>[
+            Expanded(
+              child: Text(
+                comic.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+            ),
+            PopupMenuButton<String>(
+              tooltip: '移动到其他分类',
+              enabled: moveTargets.isNotEmpty || currentCategoryId != null,
+              onSelected: (value) => _moveComicToCategory(
+                comic,
+                value == '__uncategorized__' ? null : value,
+              ),
+              itemBuilder: (context) => <PopupMenuEntry<String>>[
+                if (currentCategoryId != null)
+                  const PopupMenuItem<String>(
+                    value: '__uncategorized__',
+                    child: Text('移出当前分类'),
+                  ),
+                for (final category in moveTargets)
+                  PopupMenuItem<String>(
+                    value: category.categoryId,
+                    child: Text('移动到 ${category.name}'),
+                  ),
+              ],
+              icon: const Icon(Icons.drive_file_move_outline),
+            ),
+            _CategoryPopup(
+              categories: _categories,
+              selectedIds: _preferenceForComic(comic).categoryIds,
+              onToggle: (categoryId) => _toggleCategory(comic, categoryId),
+            ),
+            IconButton(
+              tooltip: '复制漫画信息',
+              onPressed: () => _copyComicInfo(comic),
+              icon: const Icon(Icons.copy_outlined),
+            ),
+            const SizedBox(width: 16),
+            const SizedBox(
+              height: 32,
+              child: VerticalDivider(width: 24),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              key: comicDeleteKey(comic.comicId),
+              tooltip: '删除漫画',
+              color: Theme.of(context).colorScheme.error,
+              onPressed: () => _confirmRemoveComic(comic),
+              icon: const Icon(Icons.delete_outline),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGalleryTile(LibraryComic comic) {
+    final selected = _managedComicId == comic.comicId;
+    Widget tile = ComicCoverCard(
+      key: comicCoverKey(comic.comicId),
+      comic: comic,
+      preference: _preferenceForComic(comic),
+      coverBytes: _coverLoaderForComic(comic),
+      selected: selected,
+      onTap: () => _handleShelfTap(comic),
+      onLongPress: _manageShelf
+          ? null
+          : () => _hasDetails(comic)
+              ? _openComicDetails(comic)
+              : _openImportedChapter(comic.resumeChapter),
+    );
+    if (!_manageShelf || _sortMode != LibrarySortMode.custom) {
+      return tile;
+    }
+    final baseTile = tile;
+    final target = DragTarget<String>(
+      onWillAcceptWithDetails: (details) => details.data != comic.comicId,
+      onAcceptWithDetails: (details) {
+        unawaited(_reorderCustomComic(details.data, comic.comicId));
+      },
+      builder: (context, candidates, rejected) => DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: candidates.isEmpty
+              ? null
+              : Border.all(
+                  color: Theme.of(context).colorScheme.primary,
+                  width: 3,
+                ),
+        ),
+        child: baseTile,
+      ),
+    );
+    return LongPressDraggable<String>(
+      data: comic.comicId,
+      feedback: Material(
+        elevation: 10,
+        borderRadius: BorderRadius.circular(12),
+        child: SizedBox(
+          width: ComicCoverCard.cardWidth,
+          height: ComicCoverCard.cardExtent,
+          child: ComicCoverCard(
+            comic: comic,
+            preference: _preferenceForComic(comic),
+            coverBytes: _coverLoaderForComic(comic),
+            onTap: () {},
+          ),
+        ),
+      ),
+      childWhenDragging: Opacity(opacity: 0.25, child: target),
+      child: target,
+    );
+  }
+
+  Widget _buildShelfGallery(List<LibraryComic> comics) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const spacing = 12.0;
+        final candidateCount = ((constraints.maxWidth + spacing) /
+                (ComicCoverCard.cardWidth + spacing))
+            .floor();
+        final count = candidateCount < 1 ? 1 : candidateCount;
+        final usedWidth = count * ComicCoverCard.cardWidth +
+            (count - 1) * spacing;
+        final centeredPadding = (constraints.maxWidth - usedWidth) / 2;
+        final sidePadding = centeredPadding < 12 ? 12.0 : centeredPadding;
+        return GridView.builder(
+          padding: EdgeInsets.fromLTRB(sidePadding, 8, sidePadding, 24),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: count,
+            mainAxisExtent: ComicCoverCard.cardExtent,
+            crossAxisSpacing: spacing,
+            mainAxisSpacing: 12,
+          ),
+          itemCount: comics.length,
+          itemBuilder: (context, index) => _buildGalleryTile(comics[index]),
+        );
+      },
+    );
+  }
+
+  Widget _buildShelfList(List<LibraryComic> comics) {
+    Widget item(LibraryComic comic) => _ShelfListTile(
+          key: ValueKey<String>(comic.comicId),
+          comic: comic,
+          preference: _preferenceForComic(comic),
+          coverBytes: _coverLoaderForComic(comic),
+          selected: _managedComicId == comic.comicId,
+          onTap: () => _handleShelfTap(comic),
+          onLongPress: _manageShelf
+              ? null
+              : () => _hasDetails(comic)
+                  ? _openComicDetails(comic)
+                  : _openImportedChapter(comic.resumeChapter),
+        );
+    if (_manageShelf && _sortMode == LibrarySortMode.custom) {
+      return ReorderableListView.builder(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+        itemCount: comics.length,
+        onReorder: (oldIndex, newIndex) {
+          unawaited(_reorderCustom(oldIndex, newIndex));
+        },
+        itemBuilder: (context, index) => item(comics[index]),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+      itemCount: comics.length,
+      itemBuilder: (context, index) => item(comics[index]),
     );
   }
 
   Widget _buildBookshelfPage() {
     final comics = _filteredShelfComics();
+    LibraryComic? selectedComic;
+    final managedComicId = _managedComicId;
+    if (managedComicId != null) {
+      for (final comic in _libraryComics) {
+        if (comic.comicId == managedComicId) {
+          selectedComic = comic;
+          break;
+        }
+      }
+    }
     return Column(
       key: bookshelfPageKey,
       children: <Widget>[
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-          child: Row(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+          child: Column(
             children: <Widget>[
-              Expanded(
-                child: Text('书架', style: Theme.of(context).textTheme.titleLarge),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: SegmentedButton<_SourceFilter>(
+                      key: bookshelfSourceFilterKey,
+                      showSelectedIcon: false,
+                      segments: const <ButtonSegment<_SourceFilter>>[
+                        ButtonSegment(
+                          value: _SourceFilter.all,
+                          label: Text('全部'),
+                        ),
+                        ButtonSegment(
+                          value: _SourceFilter.local,
+                          label: Text('本地'),
+                        ),
+                        ButtonSegment(
+                          value: _SourceFilter.remote,
+                          label: Text('远程'),
+                        ),
+                      ],
+                      selected: <_SourceFilter>{_sourceFilter},
+                      onSelectionChanged: (selection) {
+                        setState(() => _sourceFilter = selection.single);
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  TextButton.icon(
+                    key: bookshelfManageKey,
+                    onPressed: () => setState(() {
+                      _manageShelf = !_manageShelf;
+                      _managedComicId = null;
+                    }),
+                    icon: Icon(
+                      _manageShelf ? Icons.done : Icons.edit_outlined,
+                    ),
+                    label: Text(_manageShelf ? '完成' : '管理'),
+                  ),
+                ],
               ),
-              TextButton.icon(
-                key: bookshelfManageKey,
-                onPressed: () => setState(() => _manageShelf = !_manageShelf),
-                icon: Icon(_manageShelf ? Icons.done : Icons.edit_outlined),
-                label: Text(_manageShelf ? '完成' : '管理'),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: <Widget>[
+                  IconButton(
+                    key: bookshelfViewKey,
+                    tooltip: _shelfViewMode == _ShelfViewMode.gallery
+                        ? '切换列表视图'
+                        : '切换画廊视图',
+                    onPressed: () => setState(() {
+                      _shelfViewMode = _shelfViewMode == _ShelfViewMode.gallery
+                          ? _ShelfViewMode.list
+                          : _ShelfViewMode.gallery;
+                    }),
+                    icon: Icon(
+                      _shelfViewMode == _ShelfViewMode.gallery
+                          ? Icons.view_list_outlined
+                          : Icons.grid_view_outlined,
+                    ),
+                  ),
+                  PopupMenuButton<LibrarySortMode>(
+                    key: bookshelfSortKey,
+                    tooltip: '排序方式',
+                    initialValue: _sortMode,
+                    onSelected: (value) => setState(() {
+                      _sortMode = value;
+                      _managedComicId = null;
+                    }),
+                    itemBuilder: (context) =>
+                        const <PopupMenuEntry<LibrarySortMode>>[
+                      PopupMenuItem(
+                        value: LibrarySortMode.recent,
+                        child: Text('最近更新'),
+                      ),
+                      PopupMenuItem(
+                        value: LibrarySortMode.title,
+                        child: Text('标题'),
+                      ),
+                      PopupMenuItem(
+                        value: LibrarySortMode.pageCount,
+                        child: Text('页数'),
+                      ),
+                      PopupMenuItem(
+                        value: LibrarySortMode.custom,
+                        child: Text('自定义排序'),
+                      ),
+                    ],
+                    icon: const Icon(Icons.sort),
+                  ),
+                ],
               ),
             ],
           ),
         ),
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            children: <Widget>[
-              SegmentedButton<_SourceFilter>(
-                key: bookshelfSourceFilterKey,
-                segments: const <ButtonSegment<_SourceFilter>>[
-                  ButtonSegment(value: _SourceFilter.all, label: Text('全部')),
-                  ButtonSegment(value: _SourceFilter.local, label: Text('本地')),
-                  ButtonSegment(value: _SourceFilter.remote, label: Text('远程')),
-                ],
-                selected: <_SourceFilter>{_sourceFilter},
-                onSelectionChanged: (selection) {
-                  setState(() => _sourceFilter = selection.single);
-                },
-              ),
-              const SizedBox(width: 12),
-              DropdownButton<LibrarySortMode>(
-                key: bookshelfSortKey,
-                value: _sortMode,
-                items: const <DropdownMenuItem<LibrarySortMode>>[
-                  DropdownMenuItem(
-                    value: LibrarySortMode.recent,
-                    child: Text('最近更新'),
-                  ),
-                  DropdownMenuItem(
-                    value: LibrarySortMode.title,
-                    child: Text('标题'),
-                  ),
-                  DropdownMenuItem(
-                    value: LibrarySortMode.pageCount,
-                    child: Text('页数'),
-                  ),
-                  DropdownMenuItem(
-                    value: LibrarySortMode.custom,
-                    child: Text('自定义'),
-                  ),
-                ],
-                onChanged: (value) {
-                  if (value != null) {
-                    setState(() => _sortMode = value);
-                  }
-                },
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 6),
         SizedBox(
-          height: 52,
+          height: 48,
           child: ListView(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 12),
             children: <Widget>[
-              FilterChip(
+              ChoiceChip(
                 label: const Text('全部分类'),
                 selected: _selectedCategoryId == null,
-                onSelected: (_) => setState(() => _selectedCategoryId = null),
+                showCheckmark: false,
+                onSelected: (_) => setState(() {
+                  _selectedCategoryId = null;
+                  _managedComicId = null;
+                }),
               ),
               const SizedBox(width: 8),
               for (final category in _categories) ...<Widget>[
-                InputChip(
-                  label: Text(category.name),
-                  selected: _selectedCategoryId == category.categoryId,
-                  onPressed: () => setState(
-                    () => _selectedCategoryId = category.categoryId,
-                  ),
-                  onDeleted:
+                GestureDetector(
+                  onLongPress:
                       _manageShelf ? () => _deleteCategory(category) : null,
+                  child: ChoiceChip(
+                    label: Text(category.name),
+                    selected: _selectedCategoryId == category.categoryId,
+                    showCheckmark: false,
+                    onSelected: (_) => setState(() {
+                      _selectedCategoryId = category.categoryId;
+                      _managedComicId = null;
+                    }),
+                  ),
                 ),
                 const SizedBox(width: 8),
               ],
@@ -974,92 +1286,34 @@ final class _DemoHomeState extends State<DemoHome> {
                 label: const Text('分类'),
                 onPressed: _createCategory,
               ),
+              if (_selectedCategoryId != null) ...<Widget>[
+                const SizedBox(width: 8),
+                ActionChip(
+                  key: bookshelfAddComicToCategoryKey,
+                  avatar: const Icon(Icons.playlist_add, size: 18),
+                  label: const Text('添加漫画'),
+                  onPressed: _addComicsToSelectedCategory,
+                ),
+              ],
             ],
           ),
         ),
+        if (_manageShelf && selectedComic != null)
+          _buildManagementBar(selectedComic),
+        if (_manageShelf && _sortMode == LibrarySortMode.custom)
+          const Padding(
+            padding: EdgeInsets.fromLTRB(12, 2, 12, 4),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text('长按漫画并拖动以调整顺序'),
+            ),
+          ),
         Expanded(
           child: comics.isEmpty
               ? const Center(child: Text('当前筛选下没有漫画'))
-              : _sortMode == LibrarySortMode.custom
-                  ? ReorderableListView.builder(
-                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
-                      itemCount: comics.length,
-                      onReorder: (oldIndex, newIndex) {
-                        unawaited(_reorderCustom(oldIndex, newIndex));
-                      },
-                      itemBuilder: (context, index) {
-                        final comic = comics[index];
-                        return _ShelfListTile(
-                          key: ValueKey<String>(comic.comicId),
-                          comic: comic,
-                          preference: _preferenceForComic(comic),
-                          coverBytes: _coverLoaderForComic(comic),
-                          manage: _manageShelf,
-                          categories: _categories,
-                          onTap: () => _openComic(comic),
-                          onLongPress: () => _hasDetails(comic)
-                              ? _openComicDetails(comic)
-                              : _openImportedChapter(comic.resumeChapter),
-                          onDelete: () => _removeComic(comic),
-                          onToggleCategory: (categoryId) =>
-                              _toggleCategory(comic, categoryId),
-                        );
-                      },
-                    )
-                  : GridView.builder(
-                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 3,
-                        childAspectRatio: 0.58,
-                        crossAxisSpacing: 10,
-                        mainAxisSpacing: 12,
-                      ),
-                      itemCount: comics.length,
-                      itemBuilder: (context, index) {
-                        final comic = comics[index];
-                        return Stack(
-                          children: <Widget>[
-                            Positioned.fill(
-                              child: ComicCoverCard(
-                                key: comicCoverKey(comic.comicId),
-                                comic: comic,
-                                preference: _preferenceForComic(comic),
-                                coverBytes: _coverLoaderForComic(comic),
-                                onTap: () => _openComic(comic),
-                                onLongPress: () => _hasDetails(comic)
-                                    ? _openComicDetails(comic)
-                                    : _openImportedChapter(comic.resumeChapter),
-                              ),
-                            ),
-                            if (_manageShelf)
-                              Positioned(
-                                top: 2,
-                                right: 2,
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: <Widget>[
-                                    _CategoryPopup(
-                                      key: comicCategoryKey(comic.comicId),
-                                      categories: _categories,
-                                      selectedIds:
-                                          _preferenceForComic(comic).categoryIds,
-                                      onToggle: (categoryId) =>
-                                          _toggleCategory(comic, categoryId),
-                                    ),
-                                    IconButton.filledTonal(
-                                      key: comicDeleteKey(comic.comicId),
-                                      tooltip: '删除漫画',
-                                      onPressed: () => _removeComic(comic),
-                                      icon: const Icon(Icons.delete_outline),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                          ],
-                        );
-                      },
-                    ),
+              : _shelfViewMode == _ShelfViewMode.gallery
+                  ? _buildShelfGallery(comics)
+                  : _buildShelfList(comics),
         ),
       ],
     );
@@ -1121,17 +1375,23 @@ final class ComicCoverCard extends StatelessWidget {
     required this.preference,
     required this.coverBytes,
     required this.onTap,
-    required this.onLongPress,
+    this.onLongPress,
     this.downloadProgress,
+    this.selected = false,
     super.key,
   });
+
+  static const double coverAspectRatio = 3 / 4;
+  static const double cardWidth = 132;
+  static const double cardExtent = 238;
 
   final LibraryComic comic;
   final ComicPreference preference;
   final Future<Uint8List> Function() coverBytes;
   final VoidCallback onTap;
-  final VoidCallback onLongPress;
+  final VoidCallback? onLongPress;
   final ComicDownloadProgress? downloadProgress;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
@@ -1139,66 +1399,79 @@ final class ComicCoverCard extends StatelessWidget {
     final scope = comic.hasMultipleChapters
         ? '${comic.chapters.length} 章 · ${comic.totalPages} 页'
         : '${comic.totalPages} 页';
+    final borderColor = selected
+        ? Theme.of(context).colorScheme.primary
+        : Colors.transparent;
     return Semantics(
       button: true,
+      selected: selected,
       label: '${comic.title}，$scope',
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        onLongPress: onLongPress,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Expanded(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(12),
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: <Widget>[
-                    _CoverImage(loader: coverBytes),
-                    if (downloadProgress != null)
-                      _DownloadWatermark(progress: downloadProgress!),
-                    if (preference.liked || preference.collected)
-                      Positioned(
-                        top: 6,
-                        left: 6,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.62),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(5),
-                            child: Icon(
-                              preference.collected
-                                  ? Icons.bookmark
-                                  : Icons.favorite,
-                              size: 16,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.all(2),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: borderColor, width: 2),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          onLongPress: onLongPress,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              AspectRatio(
+                aspectRatio: coverAspectRatio,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: <Widget>[
+                      _CoverImage(loader: coverBytes),
+                      if (downloadProgress != null)
+                        _DownloadWatermark(progress: downloadProgress!),
+                      if (preference.liked || preference.collected)
+                        Positioned(
+                          top: 6,
+                          left: 6,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.62),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(5),
+                              child: Icon(
+                                preference.collected
+                                    ? Icons.bookmark
+                                    : Icons.favorite,
+                                size: 16,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(height: 7),
-            Text(
-              comic.title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-            Text(
-              progress == null
-                  ? scope
-                  : '上次 ${comic.resumeChapter.chapter.displayName} '
-                      '第 ${progress.pageIndex + 1} 页',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
+              const SizedBox(height: 7),
+              Text(
+                comic.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              Text(
+                progress == null
+                    ? scope
+                    : '上次 ${comic.resumeChapter.chapter.displayName} '
+                        '第 ${progress.pageIndex + 1} 页',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1566,24 +1839,18 @@ final class _ShelfListTile extends StatelessWidget {
     required this.comic,
     required this.preference,
     required this.coverBytes,
-    required this.manage,
-    required this.categories,
+    required this.selected,
     required this.onTap,
-    required this.onLongPress,
-    required this.onDelete,
-    required this.onToggleCategory,
+    this.onLongPress,
     super.key,
   });
 
   final LibraryComic comic;
   final ComicPreference preference;
   final Future<Uint8List> Function() coverBytes;
-  final bool manage;
-  final List<LibraryCategory> categories;
+  final bool selected;
   final VoidCallback onTap;
-  final VoidCallback onLongPress;
-  final VoidCallback onDelete;
-  final ValueChanged<String> onToggleCategory;
+  final VoidCallback? onLongPress;
 
   @override
   Widget build(BuildContext context) {
@@ -1591,37 +1858,28 @@ final class _ShelfListTile extends StatelessWidget {
         ? '${comic.chapters.length} 章 · ${comic.totalPages} 页'
         : '${comic.totalPages} 页';
     return Card(
+      color: selected ? Theme.of(context).colorScheme.secondaryContainer : null,
       child: ListTile(
         leading: SizedBox(
           width: 48,
-          height: 64,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(6),
-            child: _CoverImage(loader: coverBytes),
+          child: AspectRatio(
+            aspectRatio: ComicCoverCard.coverAspectRatio,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: _CoverImage(loader: coverBytes),
+            ),
           ),
         ),
         title: Text(comic.title),
         subtitle: Text(subtitle),
         onTap: onTap,
         onLongPress: onLongPress,
-        trailing: manage
-            ? Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  _CategoryPopup(
-                    categories: categories,
-                    selectedIds: preference.categoryIds,
-                    onToggle: onToggleCategory,
-                  ),
-                  IconButton(
-                    tooltip: '删除漫画',
-                    onPressed: onDelete,
-                    icon: const Icon(Icons.delete_outline),
-                  ),
-                  const Icon(Icons.drag_handle),
-                ],
+        trailing: selected
+            ? Icon(
+                Icons.radio_button_checked,
+                color: Theme.of(context).colorScheme.primary,
               )
-            : const Icon(Icons.drag_handle),
+            : null,
       ),
     );
   }

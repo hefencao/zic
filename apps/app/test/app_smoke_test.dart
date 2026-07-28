@@ -29,6 +29,14 @@ Future<void> _pumpUntilFound(
   throw TestFailure('Timed out waiting for $finder');
 }
 
+Future<void> _expandDiagnostics(WidgetTester tester) async {
+  final diagnostics = find.byKey(homeDiagnosticsKey);
+  await _pumpUntilFound(tester, diagnostics);
+  await tester.ensureVisible(diagnostics);
+  await tester.tap(diagnostics);
+  await tester.pumpAndSettle();
+}
+
 Future<void> _pumpUntilKeyText(
   WidgetTester tester,
   Key key,
@@ -110,31 +118,6 @@ PickedImageFolder _folderFixture() {
   );
 }
 
-PickedImageFolder _refreshedFolderFixture() {
-  final first = _nativeFixture('finite_loop.webp');
-  return PickedImageFolder(
-    directoryPath: first.parent.path,
-    displayName: 'chapter',
-    files: <PickedImage>[
-      PickedImage(
-        file: XFile('${first.parent.path}/000.jpg'),
-        format: LocalImageFormat.jpeg,
-        displayName: '000.jpg',
-      ),
-      PickedImage(
-        file: XFile(first.path),
-        format: LocalImageFormat.webp,
-        displayName: '001.webp',
-      ),
-      PickedImage(
-        file: XFile('${first.parent.path}/002.bin'),
-        format: LocalImageFormat.png,
-        displayName: '002.bin',
-      ),
-    ],
-  );
-}
-
 Future<Uint8List> _folderBytes(PickedImage image) async {
   return switch (image.format) {
     LocalImageFormat.webp =>
@@ -180,6 +163,7 @@ void main() {
   ) async {
     await tester.pumpWidget(const App());
     await _pumpUntilFound(tester, find.byKey(localImageFolderImportKey));
+    await _expandDiagnostics(tester);
 
     expect(find.byKey(staticDemoEntryKey), findsOneWidget);
     expect(find.byKey(mediaPipelineReaderEntryKey), findsOneWidget);
@@ -190,6 +174,7 @@ void main() {
 
   testWidgets('static entry pushes its keyed route', (tester) async {
     await tester.pumpWidget(const App());
+    await _expandDiagnostics(tester);
     final entry = find.byKey(staticDemoEntryKey);
     await _pumpUntilFound(tester, entry);
     await tester.ensureVisible(entry);
@@ -204,6 +189,7 @@ void main() {
 
   testWidgets('Reader entry pushes the media pipeline route', (tester) async {
     await tester.pumpWidget(const App());
+    await _expandDiagnostics(tester);
     final entry = find.byKey(mediaPipelineReaderEntryKey);
     await _pumpUntilFound(tester, entry);
     await tester.ensureVisible(entry);
@@ -249,6 +235,7 @@ void main() {
 
   testWidgets('bundled WebP entry pushes the catalog route', (tester) async {
     await tester.pumpWidget(const App());
+    await _expandDiagnostics(tester);
     final entry = find.byKey(bundledWebpEntryKey);
     await _pumpUntilFound(tester, entry);
     await tester.ensureVisible(entry);
@@ -291,6 +278,7 @@ void main() {
       displayName: 'route-owned.webp',
     );
     await tester.pumpWidget(App(picker: () => result.future));
+    await _expandDiagnostics(tester);
 
     final importEntry = find.byKey(localWebpImportKey);
     await _pumpUntilFound(tester, importEntry);
@@ -313,6 +301,7 @@ void main() {
   ) async {
     final result = Completer<PickedWebp?>();
     await tester.pumpWidget(App(picker: () => result.future));
+    await _expandDiagnostics(tester);
 
     final importEntry = find.byKey(localWebpImportKey);
     await _pumpUntilFound(tester, importEntry);
@@ -374,7 +363,7 @@ void main() {
   });
 
 
-  testWidgets('library refresh preserves current page identity after insertion', (
+  testWidgets('home omits the local directory maintenance surface', (
     tester,
   ) async {
     final store = MemoryImportedLibraryStore();
@@ -382,45 +371,16 @@ void main() {
     addTearDown(store.close);
     final record = imageFolderChapterRecord(_folderFixture());
     await store.upsertChapter(record);
-    await store.saveProgress(
-      ReadingProgress(
-        comicId: record.comicId,
-        chapterId: record.chapterId,
-        pageIndex: 1,
-        subPageOffset: 0.5,
-        readerMode: ReaderMode.continuous,
-        updatedAt: DateTime.utc(2026, 7, 28),
-      ),
-    );
-    final refresh = Completer<PickedImageFolder>();
-    await tester.pumpWidget(
-      App(
-        libraryStore: store,
-        folderRefresher: (_) => refresh.future,
-      ),
-    );
-    await tester.pump();
 
-    final refreshButton = find.byKey(
-      importedChapterRefreshKey(record.chapterId),
-    );
-    await _pumpUntilFound(tester, refreshButton);
-    await tester.ensureVisible(refreshButton);
-    await tester.tap(refreshButton);
-    await tester.pump();
-    expect(
-      find.byKey(importedChapterRefreshProgressKey(record.chapterId)),
-      findsOneWidget,
+    await tester.pumpWidget(App(libraryStore: store));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(importedChapterEntryKey(record.chapterId)),
     );
 
-    refresh.complete(_refreshedFolderFixture());
-    await tester.pump();
-    await tester.pump();
-
-    final entry = await store.get(record.chapterId);
-    expect(entry?.chapter.pages.length, 3);
-    expect(entry?.progress?.pageIndex, 2);
-    expect(entry?.progress?.subPageOffset, 0.5);
+    expect(find.text('本地目录维护'), findsNothing);
+    expect(find.byIcon(Icons.refresh), findsNothing);
+    expect(find.byTooltip('删除本地记录'), findsNothing);
   });
 
   testWidgets('picked folder navigates to the folder reader', (tester) async {
@@ -496,6 +456,8 @@ void main() {
       ImagePreviewPhase.loading,
     );
 
+    await tester.tap(find.byKey(imageFolderScreenKey));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(imageFolderNextKey));
     await _pumpUntilKeyText(
       tester,

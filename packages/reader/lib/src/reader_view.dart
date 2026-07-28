@@ -18,6 +18,7 @@ final class ReaderView extends StatefulWidget {
     required this.clock,
     this.traceSink = const NoopTraceSink(),
     this.pageBuilder,
+    this.onTap,
     super.key,
   });
 
@@ -25,6 +26,7 @@ final class ReaderView extends StatefulWidget {
   final MonoClock clock;
   final TraceSink traceSink;
   final ReaderPageBuilder? pageBuilder;
+  final VoidCallback? onTap;
 
   @override
   State<ReaderView> createState() => _ReaderViewState();
@@ -36,6 +38,7 @@ final class _ReaderViewState extends State<ReaderView> {
   int _lastMicros = 0;
   Interaction _interaction = Interaction.idle;
   int _handledNavigationRevision = 0;
+  int? _zoomedPage;
 
   @override
   void initState() {
@@ -66,6 +69,7 @@ final class _ReaderViewState extends State<ReaderView> {
       _lastMicros = widget.clock.nowMicros();
       _interaction = Interaction.idle;
       _handledNavigationRevision = widget.controller.navigationRevision;
+      _zoomedPage = null;
     }
   }
 
@@ -85,18 +89,34 @@ final class _ReaderViewState extends State<ReaderView> {
       builder: (context, _) {
         final direction = widget.controller.direction;
         final isVertical = direction == ReadingDirection.vertical;
-        return Stack(
-          fit: StackFit.expand,
-          children: <Widget>[
-            NotificationListener<ScrollNotification>(
-              onNotification: _handleScrollNotification,
-              child: PageView.builder(
-                controller: _pageController,
-                itemCount: chapter.pages.length,
-                reverse: direction == ReadingDirection.rtl,
-                scrollDirection: isVertical ? Axis.vertical : Axis.horizontal,
-                onPageChanged: _handlePageChanged,
-                itemBuilder: (context, index) => _ReaderPageHost(
+        return NotificationListener<ScrollNotification>(
+          onNotification: _handleScrollNotification,
+          child: PageView.builder(
+            controller: _pageController,
+            itemCount: chapter.pages.length,
+            reverse: direction == ReadingDirection.rtl,
+            scrollDirection: isVertical ? Axis.vertical : Axis.horizontal,
+            physics: _zoomedPage == null
+                ? const PageScrollPhysics()
+                : const NeverScrollableScrollPhysics(),
+            onPageChanged: _handlePageChanged,
+            itemBuilder: (context, index) => RotatedBox(
+              key: ValueKey<String>('reader-page-rotation:$index'),
+              quarterTurns: widget.controller.rotationQuarterTurns,
+              child: _ZoomableReaderPage(
+                key: ValueKey<String>(
+                  'zoom:${chapter.pages[index].assetKey}:'
+                  '${index == widget.controller.currentIndex}',
+                ),
+                onTap: widget.onTap,
+                onZoomChanged: (zoomed) {
+                  final next = zoomed ? index : null;
+                  if (_zoomedPage == next) {
+                    return;
+                  }
+                  setState(() => _zoomedPage = next);
+                },
+                child: _ReaderPageHost(
                   asset: chapter.pages[index],
                   sessionId: widget.controller.sessionId,
                   clock: widget.clock,
@@ -105,24 +125,7 @@ final class _ReaderViewState extends State<ReaderView> {
                 ),
               ),
             ),
-            Positioned(
-              right: 12,
-              bottom: 12,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.55),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  child: Text(
-                    '${widget.controller.currentIndex + 1} / ${chapter.pages.length}',
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                ),
-              ),
-            ),
-          ],
+          ),
         );
       },
     );
@@ -149,6 +152,7 @@ final class _ReaderViewState extends State<ReaderView> {
     }
     _handledNavigationRevision = revision;
     _interaction = Interaction.jumping;
+    _zoomedPage = null;
     _pageController.jumpToPage(requested);
     controller.acknowledgePageRequest(revision);
   }
@@ -173,7 +177,8 @@ final class _ReaderViewState extends State<ReaderView> {
     if (metrics is! PageMetrics) {
       return;
     }
-    final logicalPosition = metrics.page ?? widget.controller.currentIndex.toDouble();
+    final logicalPosition =
+        metrics.page ?? widget.controller.currentIndex.toDouble();
     final now = widget.clock.nowMicros();
     final elapsedSeconds = math.max(1, now - _lastMicros) / 1000000.0;
     final velocity = (logicalPosition - _lastLogicalPosition) / elapsedSeconds;
@@ -183,6 +188,7 @@ final class _ReaderViewState extends State<ReaderView> {
   }
 
   void _handlePageChanged(int index) {
+    _zoomedPage = null;
     _lastLogicalPosition = index.toDouble();
     _interaction = Interaction.settling;
     _emitObservation(index.toDouble(), 0, stableIndex: index);
@@ -245,6 +251,86 @@ final class _ReaderViewState extends State<ReaderView> {
       monotonicMicros: widget.clock.nowMicros(),
     );
     widget.controller.report(observation);
+  }
+}
+
+final class _ZoomableReaderPage extends StatefulWidget {
+  const _ZoomableReaderPage({
+    required this.child,
+    required this.onZoomChanged,
+    this.onTap,
+    super.key,
+  });
+
+  final Widget child;
+  final ValueChanged<bool> onZoomChanged;
+  final VoidCallback? onTap;
+
+  @override
+  State<_ZoomableReaderPage> createState() => _ZoomableReaderPageState();
+}
+
+final class _ZoomableReaderPageState extends State<_ZoomableReaderPage> {
+  late final TransformationController _transformation;
+  bool _zoomed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _transformation = TransformationController();
+  }
+
+  @override
+  void dispose() {
+    _transformation.dispose();
+    super.dispose();
+  }
+
+  double get _scale => _transformation.value.getMaxScaleOnAxis();
+
+  void _publishZoom() {
+    final zoomed = _scale > 1.01;
+    if (_zoomed == zoomed) {
+      return;
+    }
+    _zoomed = zoomed;
+    widget.onZoomChanged(zoomed);
+  }
+
+  void _toggleZoom(TapDownDetails details) {
+    if (_zoomed) {
+      _transformation.value = Matrix4.identity();
+    } else {
+      const scale = 2.25;
+      final position = details.localPosition;
+      _transformation.value = Matrix4.identity()
+        ..translate(
+          -position.dx * (scale - 1),
+          -position.dy * (scale - 1),
+        )
+        ..scale(scale);
+    }
+    _publishZoom();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: widget.onTap,
+      onDoubleTapDown: _toggleZoom,
+      child: InteractiveViewer(
+        transformationController: _transformation,
+        minScale: 1,
+        maxScale: 5,
+        panEnabled: true,
+        scaleEnabled: true,
+        clipBehavior: Clip.hardEdge,
+        onInteractionUpdate: (_) => _publishZoom(),
+        onInteractionEnd: (_) => _publishZoom(),
+        child: SizedBox.expand(child: widget.child),
+      ),
+    );
   }
 }
 

@@ -498,6 +498,9 @@ def check_compile_regressions() -> None:
     image_preview_test = (app_test / 'local_image_preview_test.dart').read_text(
         encoding='utf-8'
     )
+    reader_controls_test = (app_test / 'reader_controls_test.dart').read_text(
+        encoding='utf-8'
+    )
     local_media_test = ROOT / 'packages/local_media/test'
     image_signature_test = (
         local_media_test / 'local_image_signature_test.dart'
@@ -510,6 +513,7 @@ def check_compile_regressions() -> None:
         ('webp_preview_test.dart', preview_test),
         ('webp_demo_test.dart', contract_test),
         ('local_image_preview_test.dart', image_preview_test),
+        ('reader_controls_test.dart', reader_controls_test),
         ('packages/local_media/test/local_image_signature_test.dart', image_signature_test),
         ('packages/local_media/test/local_image_folder_test.dart', image_folder_test),
     ):
@@ -818,6 +822,11 @@ def check_compile_regressions() -> None:
         'final ReaderPageBuilder? pageBuilder',
         '_ReaderPageHost',
         'reportFirstFrame',
+        'InteractiveViewer(',
+        'maxScale: 5',
+        'onDoubleTapDown: _toggleZoom',
+        'NeverScrollableScrollPhysics',
+        'rotationQuarterTurns',
     ):
         if required not in reader_view:
             fail(f'Reader media integration seam is incomplete: {required}')
@@ -837,9 +846,45 @@ def check_compile_regressions() -> None:
         'sourceRevision: chapter.chapter.sourceRevision',
         'final class ReaderRuntimeScreen',
         'LoaderTransport(widget.loaderSources)',
+        'SystemUiMode.immersiveSticky',
+        'readerBottomControlsKey',
+        'readerPageSliderKey',
+        'readerPauseKey',
+        'readerSpeedKey',
+        'readerRotateKey',
+        'readerFavoriteKey',
+        'readerDownloadKey',
+        'ReaderPlaybackController',
+        'playback: _playback',
+        'IconThemeData(color: Colors.white)',
+        'DefaultTextStyle.merge',
+        'Future<void> _downloadChapter()',
     ):
         if required not in reader_runtime:
             fail(f'Reader runtime identity/transport path is incomplete: {required}')
+    for required in (
+        'reader starts immersive and exposes complete bottom controls',
+        'readerTopControlsKey',
+        'readerBottomControlsKey',
+        'readerPageSliderKey',
+        'readerPauseKey',
+        'readerSpeedKey',
+        'readerRotateKey',
+        'readerFavoriteKey',
+        'readerDownloadKey',
+    ):
+        if required not in reader_controls_test:
+            fail(f'Reader controls regression coverage is incomplete: {required}')
+    if 'playback: runtime.playback' not in static_demo:
+        fail('Reader media pipeline must receive pause/speed playback state')
+    for required in (
+        'playback: widget.playback!',
+        'targetWidth: raster.isDownsampled',
+        'targetHeight: raster.isDownsampled',
+        'allowUpscaling: false',
+    ):
+        if required not in webp_demo:
+            fail(f'controlled animated playback regressed: {required}')
     asset_transport_path = ROOT / 'apps/app/lib/asset_bundle_transport.dart'
     asset_transport_test_path = (
         ROOT / 'apps/app/test/asset_bundle_transport_test.dart'
@@ -965,15 +1010,22 @@ def check_compile_regressions() -> None:
         if required not in webp_demo:
             fail(f'persistent local chapter Reader path is incomplete: {required}')
     for required in (
-        'importedLibrarySectionKey',
         '_library.upsertChapter(record)',
         '_library.saveProgress',
         'ImportedImageChapterScreen(',
-        'importedChapterRefreshKey',
-        '_refreshImportedChapter',
+        '_buildHorizontalComics(',
+        'ComicCoverCard(',
     ):
         if required not in demo_home:
             fail(f'imported library UI integration is incomplete: {required}')
+    for forbidden in (
+        '_buildImportedLibraryMaintenance',
+        '_refreshImportedChapter',
+        'importedChapterRefreshKey',
+        'importedChapterRemoveKey',
+    ):
+        if forbidden in demo_home:
+            fail(f'home still exposes local directory maintenance: {forbidden}')
     for required in (
         'this.initialProgress',
         'this.onProgressChanged',
@@ -1114,7 +1166,16 @@ def check_compile_regressions() -> None:
         'homeHistorySectionKey',
         'NavigationBar(',
         'SegmentedButton<_SourceFilter>',
+        'showSelectedIcon: false',
+        'showCheckmark: false',
+        '_ShelfViewMode',
+        'bookshelfViewKey',
+        'LongPressDraggable<String>',
+        'DragTarget<String>',
         'ReorderableListView.builder',
+        '_addComicsToSelectedCategory',
+        '_moveComicToCategory',
+        'bookshelfManagementBarKey',
         'ComicDownloadProgress',
         'ComicDetailsScreen',
         'aggregateImportedLibrary(_libraryEntries)',

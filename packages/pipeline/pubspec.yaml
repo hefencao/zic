@@ -1,6 +1,6 @@
 name: pipeline
 description: Resource roles, heuristic policy, demand planning, and diffing for zic.
-version: 0.19.0
+version: 0.20.0
 publish_to: none
 resolution: workspace
 

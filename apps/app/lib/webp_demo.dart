@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -634,6 +635,7 @@ final class LocalImagePlayer extends StatefulWidget {
     this.traceSink = const NoopTraceSink(),
     this.traceSessionId = 'local-image-preview',
     this.demandRevision,
+    this.playback,
     super.key,
   });
 
@@ -648,6 +650,7 @@ final class LocalImagePlayer extends StatefulWidget {
   final TraceSink traceSink;
   final String traceSessionId;
   final int Function()? demandRevision;
+  final ReaderPlaybackController? playback;
 
   Uri get sourceUri => image.sourceUri;
 
@@ -872,6 +875,15 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     }
   }
 
+  void _onControlledReady() {
+    _publish(ImagePreviewState.ready(widget.image.format));
+    _reportFirstFrame();
+  }
+
+  void _onControlledError(Object error) {
+    _publish(ImagePreviewState.invalid(widget.image.format, error));
+  }
+
   @override
   Widget build(BuildContext context) {
     final bytes = _bytes;
@@ -906,6 +918,15 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         traceSink: widget.traceSink,
         traceSessionId: widget.traceSessionId,
         demandRevision: widget.demandRevision,
+        playback: widget.playback,
+      );
+    } else if (widget.playback != null &&
+        widget.image.format == LocalImageFormat.gif) {
+      content = _ControlledAnimatedImage(
+        bytes: bytes,
+        playback: widget.playback!,
+        onReady: _onControlledReady,
+        onError: _onControlledError,
       );
     } else {
       content = Center(
@@ -936,6 +957,230 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       key: imageFolderPreviewStateKey,
       state: _state,
       child: keyed,
+    );
+  }
+}
+
+
+final class _ControlledAnimatedImage extends StatefulWidget {
+  const _ControlledAnimatedImage({
+    required this.bytes,
+    required this.playback,
+    required this.onReady,
+    required this.onError,
+    this.targetWidth,
+    this.targetHeight,
+    super.key,
+  });
+
+  final Uint8List bytes;
+  final ReaderPlaybackController playback;
+  final int? targetWidth;
+  final int? targetHeight;
+  final VoidCallback onReady;
+  final ValueChanged<Object> onError;
+
+  @override
+  State<_ControlledAnimatedImage> createState() =>
+      _ControlledAnimatedImageState();
+}
+
+final class _ControlledAnimatedImageState
+    extends State<_ControlledAnimatedImage> {
+  ui.Codec? _codec;
+  ui.Image? _image;
+  Timer? _timer;
+  Duration _remaining = Duration.zero;
+  Duration _sourceDuration = Duration.zero;
+  Stopwatch? _timerClock;
+  int _framesPresented = 0;
+  late double _playbackSpeed;
+  late bool _paused;
+  int _generation = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    final playback = widget.playback.value;
+    _playbackSpeed = playback.speed;
+    _paused = playback.paused;
+    widget.playback.addListener(_handlePlaybackChanged);
+    unawaited(_load());
+  }
+
+  @override
+  void didUpdateWidget(covariant _ControlledAnimatedImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.playback != widget.playback) {
+      oldWidget.playback.removeListener(_handlePlaybackChanged);
+      final playback = widget.playback.value;
+      _playbackSpeed = playback.speed;
+      _paused = playback.paused;
+      widget.playback.addListener(_handlePlaybackChanged);
+    }
+    if (!identical(oldWidget.bytes, widget.bytes) ||
+        oldWidget.targetWidth != widget.targetWidth ||
+        oldWidget.targetHeight != widget.targetHeight) {
+      unawaited(_reload());
+    }
+  }
+
+  Future<void> _reload() async {
+    _generation++;
+    _timer?.cancel();
+    _timer = null;
+    _timerClock = null;
+    final oldCodec = _codec;
+    _codec = null;
+    oldCodec?.dispose();
+    final oldImage = _image;
+    if (mounted) {
+      setState(() => _image = null);
+    } else {
+      _image = null;
+    }
+    if (oldImage != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => oldImage.dispose());
+    }
+    _framesPresented = 0;
+    await _load();
+  }
+
+  Future<void> _load() async {
+    final generation = ++_generation;
+    try {
+      final codec = await ui.instantiateImageCodec(
+        widget.bytes,
+        targetWidth: widget.targetWidth,
+        targetHeight: widget.targetHeight,
+        allowUpscaling: false,
+      );
+      if (!mounted || generation != _generation) {
+        codec.dispose();
+        return;
+      }
+      _codec = codec;
+      await _presentNext(generation);
+    } on Object catch (error) {
+      if (mounted && generation == _generation) {
+        widget.onError(error);
+      }
+    }
+  }
+
+  Future<void> _presentNext(int generation) async {
+    final codec = _codec;
+    if (codec == null || !mounted || generation != _generation) {
+      return;
+    }
+    final totalPresentations = codec.repetitionCount < 0
+        ? null
+        : codec.frameCount * (codec.repetitionCount + 1);
+    if (totalPresentations != null && _framesPresented >= totalPresentations) {
+      return;
+    }
+    try {
+      final frame = await codec.getNextFrame();
+      if (!mounted || generation != _generation) {
+        frame.image.dispose();
+        return;
+      }
+      final previous = _image;
+      _sourceDuration = frame.duration <= Duration.zero
+          ? const Duration(milliseconds: 100)
+          : frame.duration;
+      _remaining = _scaledDuration(_sourceDuration);
+      setState(() => _image = frame.image);
+      _framesPresented++;
+      if (_framesPresented == 1) {
+        widget.onReady();
+      }
+      if (previous != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => previous.dispose());
+      }
+      if (codec.frameCount > 1 && !_paused) {
+        _schedule(generation, _remaining);
+      }
+    } on Object catch (error) {
+      if (mounted && generation == _generation) {
+        widget.onError(error);
+      }
+    }
+  }
+
+  Duration _scaledDuration(Duration source) {
+    final micros = math.max(
+      1000,
+      (source.inMicroseconds / _playbackSpeed).round(),
+    ).toInt();
+    return Duration(microseconds: micros);
+  }
+
+  void _schedule(int generation, Duration delay) {
+    _timer?.cancel();
+    _remaining = delay;
+    _timerClock = Stopwatch()..start();
+    _timer = Timer(delay, () {
+      _timer = null;
+      _timerClock = null;
+      unawaited(_presentNext(generation));
+    });
+  }
+
+  void _handlePlaybackChanged() {
+    final codec = _codec;
+    if (!mounted || codec == null || codec.frameCount <= 1) {
+      return;
+    }
+    final playback = widget.playback.value;
+    final oldSpeed = _playbackSpeed;
+    final wasPaused = _paused;
+    var remaining = _remaining;
+    final clock = _timerClock;
+    final hadTimer = _timer != null;
+    if (hadTimer && clock != null) {
+      final next = remaining - clock.elapsed;
+      remaining = next.isNegative ? Duration.zero : next;
+    }
+    if (oldSpeed != playback.speed) {
+      remaining = Duration(
+        microseconds: math.max(
+          0,
+          (remaining.inMicroseconds * oldSpeed / playback.speed).round(),
+        ).toInt(),
+      );
+    }
+    _timer?.cancel();
+    _timer = null;
+    _timerClock = null;
+    _playbackSpeed = playback.speed;
+    _paused = playback.paused;
+    _remaining = remaining;
+    if (!_paused && (hadTimer || wasPaused)) {
+      _schedule(_generation, _remaining);
+    }
+  }
+
+  @override
+  void dispose() {
+    _generation++;
+    widget.playback.removeListener(_handlePlaybackChanged);
+    _timer?.cancel();
+    _codec?.dispose();
+    _image?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final image = _image;
+    if (image == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    return RawImage(
+      image: image,
+      fit: BoxFit.contain,
+      filterQuality: FilterQuality.medium,
     );
   }
 }
@@ -985,6 +1230,9 @@ final class ImageFolderScreen extends StatelessWidget {
     this.onPreviewStateChanged,
     this.initialProgress,
     this.onProgressChanged,
+    this.initialFavorite = false,
+    this.onFavoriteChanged,
+    this.onDownloadRequested,
     super.key,
   });
 
@@ -993,6 +1241,9 @@ final class ImageFolderScreen extends StatelessWidget {
   final ImagePreviewStateChanged? onPreviewStateChanged;
   final ReadingProgress? initialProgress;
   final ReaderProgressWriter? onProgressChanged;
+  final bool initialFavorite;
+  final FutureOr<void> Function(bool favorite)? onFavoriteChanged;
+  final FutureOr<void> Function()? onDownloadRequested;
 
   @override
   Widget build(BuildContext context) {
@@ -1008,6 +1259,9 @@ final class ImageFolderScreen extends StatelessWidget {
       onPreviewStateChanged: onPreviewStateChanged,
       initialProgress: initialProgress,
       onProgressChanged: onProgressChanged,
+      initialFavorite: initialFavorite,
+      onFavoriteChanged: onFavoriteChanged,
+      onDownloadRequested: onDownloadRequested,
     );
   }
 }
@@ -1019,6 +1273,9 @@ final class ImportedImageChapterScreen extends StatelessWidget {
     this.onPreviewStateChanged,
     this.initialProgress,
     this.onProgressChanged,
+    this.initialFavorite = false,
+    this.onFavoriteChanged,
+    this.onDownloadRequested,
     super.key,
   });
 
@@ -1027,6 +1284,9 @@ final class ImportedImageChapterScreen extends StatelessWidget {
   final ImagePreviewStateChanged? onPreviewStateChanged;
   final ReadingProgress? initialProgress;
   final ReaderProgressWriter? onProgressChanged;
+  final bool initialFavorite;
+  final FutureOr<void> Function(bool favorite)? onFavoriteChanged;
+  final FutureOr<void> Function()? onDownloadRequested;
 
   @override
   Widget build(BuildContext context) {
@@ -1050,6 +1310,9 @@ final class ImportedImageChapterScreen extends StatelessWidget {
       loaderSources: sources,
       initialProgress: initialProgress,
       onProgressChanged: onProgressChanged,
+      initialFavorite: initialFavorite,
+      onFavoriteChanged: onFavoriteChanged,
+      onDownloadRequested: onDownloadRequested,
       appBarTitleBuilder: (context, chapter, currentIndex) {
         final current = record.pages[currentIndex];
         final format = _importedPageFormat(current);
@@ -1145,6 +1408,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
             traceSink: runtime.traceSink,
             traceSessionId: runtime.sessionId,
             demandRevision: runtime.demandRevision,
+            playback: runtime.playback,
           ),
         );
       },
@@ -1303,6 +1567,7 @@ final class NativeWebpPlayer extends StatefulWidget {
     this.downloadIdentity,
     this.initialEngine = WebpPlayerEngine.flutter,
     this.onPreviewStateChanged,
+    this.playback,
     super.key,
   });
 
@@ -1319,6 +1584,7 @@ final class NativeWebpPlayer extends StatefulWidget {
   final DownloadId? downloadIdentity;
   final WebpPlayerEngine initialEngine;
   final WebpPreviewStateChanged? onPreviewStateChanged;
+  final ReaderPlaybackController? playback;
 
   @override
   State<NativeWebpPlayer> createState() => _NativeWebpPlayerState();
@@ -1357,6 +1623,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   int _frameIndex = -1;
   int _cycle = 0;
   bool _paused = false;
+  double _playbackSpeed = 1;
   bool _preparing = false;
   bool _completionPending = false;
   int _generation = 0;
@@ -1368,6 +1635,9 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     super.initState();
     _loadToken = WebpLoadToken();
     _engine = widget.initialEngine;
+    _playbackSpeed = widget.playback?.value.speed ?? 1;
+    _paused = widget.playback?.value.paused ?? false;
+    widget.playback?.addListener(_handleExternalPlayback);
     _traceClock = widget.traceClock ?? SystemClock();
     _texturePresenter = AndroidTexturePresenter(
       telemetrySink: _recordTextureTelemetry,
@@ -1378,6 +1648,58 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       }
     });
     unawaited(_load());
+  }
+
+  @override
+  void didUpdateWidget(covariant NativeWebpPlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.playback != widget.playback) {
+      oldWidget.playback?.removeListener(_handleExternalPlayback);
+      widget.playback?.addListener(_handleExternalPlayback);
+      _playbackSpeed = widget.playback?.value.speed ?? 1;
+      _setPaused(widget.playback?.value.paused ?? false, notify: false);
+    }
+  }
+
+  Duration _scaledPlaybackDuration(Duration source) {
+    final micros = math.max(
+      1000,
+      (source.inMicroseconds / _playbackSpeed).round(),
+    ).toInt();
+    return Duration(microseconds: micros);
+  }
+
+  void _handleExternalPlayback() {
+    final state = widget.playback?.value;
+    if (state == null) {
+      return;
+    }
+    final oldSpeed = _playbackSpeed;
+    _playbackSpeed = state.speed;
+    final pacingPending =
+        _timer != null || _pending != null || _completionPending;
+    if (oldSpeed != _playbackSpeed && pacingPending) {
+      final elapsed = _timerClock?.elapsed ?? Duration.zero;
+      final remaining = _pendingDelay - elapsed;
+      final safeRemaining = remaining.isNegative ? Duration.zero : remaining;
+      _pendingDelay = Duration(
+        microseconds: math.max(
+          0,
+          (safeRemaining.inMicroseconds * oldSpeed / _playbackSpeed).round(),
+        ).toInt(),
+      );
+      _timer?.cancel();
+      _timer = null;
+      _timerClock = null;
+      if (!state.paused) {
+        if (_pending != null) {
+          _schedulePending(_generation);
+        } else if (_completionPending) {
+          _scheduleCompletion(_generation);
+        }
+      }
+    }
+    _setPaused(state.paused);
   }
 
   void _recordTextureTelemetry(TextureTelemetry event) {
@@ -1452,6 +1774,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   @override
   void dispose() {
     _generation++;
+    widget.playback?.removeListener(_handleExternalPlayback);
     _loadToken.cancel();
     _resetNative(disposeImage: true);
     super.dispose();
@@ -1897,7 +2220,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         return;
       }
       final remaining = FramePacing.remaining(
-        frameDuration: currentDuration,
+        frameDuration: _scaledPlaybackDuration(currentDuration),
         preparationElapsed: clock.elapsed,
       );
       if (next == null) {
@@ -2091,7 +2414,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     _resetNative(disposeImage: true);
     setState(() {
       _engine = engine;
-      _paused = false;
+      _paused = widget.playback?.value.paused ?? false;
       _lastTexturePresent = null;
       _lastTextureFallback = null;
       _nativeError = null;
@@ -2109,17 +2432,31 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   }
 
   void _togglePause() {
-    if (_engine != WebpPlayerEngine.native) {
+    final playback = widget.playback;
+    if (playback != null) {
+      playback.togglePaused();
       return;
     }
-    final pausing = !_paused;
-    setState(() => _paused = pausing);
+    if (_engine == WebpPlayerEngine.native) {
+      _setPaused(!_paused);
+    }
+  }
+
+  void _setPaused(bool pausing, {bool notify = true}) {
+    if (_paused == pausing) {
+      return;
+    }
+    if (notify && mounted) {
+      setState(() => _paused = pausing);
+    } else {
+      _paused = pausing;
+    }
     if (pausing) {
       _frameClock?.stop();
       final timerClock = _timerClock;
       if (_timer != null && timerClock != null) {
         final remaining = _pendingDelay - timerClock.elapsed;
-        _pendingDelay = remaining;
+        _pendingDelay = remaining.isNegative ? Duration.zero : remaining;
       }
       _timer?.cancel();
       _timer = null;
@@ -2132,8 +2469,6 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       _schedulePending(_generation);
     } else if (_completionPending) {
       _scheduleCompletion(_generation);
-    } else if (!_preparing && _status == '播放完成') {
-      return;
     }
   }
 
@@ -2248,43 +2583,69 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
                             ? const Center(
                                 child: CircularProgressIndicator(),
                               )
-                            : Image.memory(
-                                encoded,
-                                key: webpFlutterPreviewKey,
-                                cacheWidth: raster.isDownsampled
-                                    ? raster.decodeWidth
-                                    : null,
-                                cacheHeight: raster.isDownsampled
-                                    ? raster.decodeHeight
-                                    : null,
-                                width: double.infinity,
-                                height: double.infinity,
-                                gaplessPlayback: true,
-                                frameBuilder: (
-                                  context,
-                                  child,
-                                  frame,
-                                  wasSynchronouslyLoaded,
-                                ) {
-                                  if (frame != null || wasSynchronouslyLoaded) {
-                                    _reportFirstFrame();
-                                  }
-                                  return child;
-                                },
-                                fit: BoxFit.contain,
-                                filterQuality: quality,
-                                isAntiAlias: !nearest,
-                                errorBuilder: (context, error, stackTrace) =>
-                                    Center(
-                                  child: Text(
-                                    'Flutter codec 无法解码：$error',
-                                    style: const TextStyle(
-                                      color: Colors.white,
+                            : widget.playback == null
+                                ? Image.memory(
+                                    encoded,
+                                    key: webpFlutterPreviewKey,
+                                    cacheWidth: raster.isDownsampled
+                                        ? raster.decodeWidth
+                                        : null,
+                                    cacheHeight: raster.isDownsampled
+                                        ? raster.decodeHeight
+                                        : null,
+                                    width: double.infinity,
+                                    height: double.infinity,
+                                    gaplessPlayback: true,
+                                    frameBuilder: (
+                                      context,
+                                      child,
+                                      frame,
+                                      wasSynchronouslyLoaded,
+                                    ) {
+                                      if (frame != null ||
+                                          wasSynchronouslyLoaded) {
+                                        _reportFirstFrame();
+                                      }
+                                      return child;
+                                    },
+                                    fit: BoxFit.contain,
+                                    filterQuality: quality,
+                                    isAntiAlias: !nearest,
+                                    errorBuilder: (
+                                      context,
+                                      error,
+                                      stackTrace,
+                                    ) => Center(
+                                      child: Text(
+                                        'Flutter codec 无法解码：$error',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                        ),
+                                        textAlign: TextAlign.center,
+                                      ),
                                     ),
-                                    textAlign: TextAlign.center,
+                                  )
+                                : _ControlledAnimatedImage(
+                                    key: webpFlutterPreviewKey,
+                                    bytes: encoded,
+                                    playback: widget.playback!,
+                                    targetWidth: raster.isDownsampled
+                                        ? raster.decodeWidth
+                                        : null,
+                                    targetHeight: raster.isDownsampled
+                                        ? raster.decodeHeight
+                                        : null,
+                                    onReady: _reportFirstFrame,
+                                    onError: (error) {
+                                      if (mounted) {
+                                        setState(() {
+                                          _nativeError = error;
+                                          _status =
+                                              'Flutter codec 无法解码：$error';
+                                        });
+                                      }
+                                    },
                                   ),
-                                ),
-                              ),
                     },
                   );
                 },

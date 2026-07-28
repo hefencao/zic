@@ -1,3 +1,24 @@
+## 0.20.0-dev.23 — library management and immersive Reader controls
+
+- Remove the Home local-directory maintenance panel while retaining folder import and the
+  catalog/source refresh contracts outside the primary product surface.
+- Reuse the same fixed-size `ComicCoverCard` for Home update/history rails and the Bookshelf
+  gallery, including centered exact-width grid layout instead of stretched covers.
+- Keep custom sorting in the selected gallery/list view; add a view toggle, long-press cover
+  dragging in gallery management mode, and reorderable rows in list management mode.
+- Add category-scoped comic insertion plus management selection with move, category membership,
+  copy-info and confirmation-gated deletion; visually isolate the destructive action.
+- Remove duplicate shelf labels and selected-chip checkmarks, and collapse diagnostics behind an
+  explicitly secondary Home section.
+- Start Reader in immersive mode with hidden top/bottom controls; tapping reveals page slider,
+  animation pause/speed, rotation, favorite and chapter-cache actions.
+- Add pinch/pan and double-tap zoom, disable page swiping while zoomed, and reset stale zoom when
+  navigating away from a page.
+- Route GIF and WebP pause/speed through the existing player ownership path, retaining download
+  identity, telemetry, native fallback and viewport-aware decode raster selection.
+- Add Flutter regressions for shared cover geometry, custom gallery drag ordering, category add/
+  move actions, Reader controls, rotation and zoom reset.
+
 ## 0.19.0-dev.22 — comic-level library aggregation
 
 - Fix the catalog and SQLite library test files so all registrations remain inside
