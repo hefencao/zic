@@ -569,6 +569,29 @@ def check_compile_regressions() -> None:
         if required not in preview_test:
             fail(f'preview state boundary is incomplete: {required}')
 
+    aggregate = (
+        ROOT / 'packages/catalog/lib/src/library_comic.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class LibraryComic',
+        'aggregateImportedLibrary',
+        'resumeChapter',
+        'hasMultipleChapters',
+    ):
+        if required not in aggregate:
+            fail(f'comic-level library aggregate is incomplete: {required}')
+    imported_chapter = (
+        ROOT / 'packages/catalog/lib/src/imported_chapter.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final String comicTitle',
+        'final int sequence',
+        "'comicTitle': comicTitle",
+        "'sequence': sequence",
+    ):
+        if required not in imported_chapter:
+            fail(f'chapter aggregate metadata is incomplete: {required}')
+
     home = (ROOT / 'apps/app/lib/demo_home.dart').read_text(encoding='utf-8')
     for required in (
         'typedef WebpPicker = Future<PickedWebp?> Function()',
@@ -1094,6 +1117,10 @@ def check_compile_regressions() -> None:
         'ReorderableListView.builder',
         'ComicDownloadProgress',
         'ComicDetailsScreen',
+        'aggregateImportedLibrary(_libraryEntries)',
+        'final LibraryComic comic',
+        'key: chapterReadKey(chapterId)',
+        'dismissThresholds:',
         'DismissDirection.startToEnd',
     ):
         if required not in home:

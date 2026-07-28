@@ -254,6 +254,11 @@ chapter/comic identity 校验后恢复页码与 paged/continuous 模式。
 桌面使用原路径。`ImportedLibraryStore` 在 upsert 时按旧当前页的 source identity 迁移进度，
 避免前置页面新增或删除导致阅读对象漂移。
 
+`catalog/LibraryComic` 是这些章节快照上的只读漫画级投影：它按 `comicId` 聚合章节，
+解析 cover/latest/resume chapter、总页数与更新时间，供 Home、Bookshelf 和详情页共享。
+聚合不写数据库、不接管 Reader/DownloadSession，也不隐藏 chapter identity；目录刷新、
+阅读进度、read state 和删除级联仍由原 store/session 契约负责。
+
 非 Android：
 
 - Flutter `ui.Image` renderer；

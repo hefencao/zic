@@ -122,6 +122,53 @@ void main() {
     expect(entry?.progress?.pageIndex, 0);
     expect(entry?.progress?.readerMode, ReaderMode.continuous);
   });
+
+  test('memory library persists categories, comic preferences, and read state',
+      () async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final now = DateTime.utc(2026, 7, 28, 8);
+    final category = LibraryCategory(
+      categoryId: 'favorites',
+      name: '收藏夹',
+      sortOrder: 0,
+      createdAt: now,
+    );
+    await store.upsertCategory(category);
+    final preference = ComicPreference.defaults(comicId: 'comic-1').copyWith(
+      liked: true,
+      collected: true,
+      categoryIds: const <String>{'favorites'},
+      customOrder: 3,
+      updatedAt: now,
+    );
+    await store.saveComicPreference(preference);
+    final readState = ChapterReadState(
+      comicId: 'comic-1',
+      chapterId: 'chapter-1',
+      isRead: true,
+      updatedAt: now,
+    );
+    await store.saveChapterReadState(readState);
+
+    expect((await store.listCategories()).single.toJson(), category.toJson());
+    expect(
+      (await store.getComicPreference('comic-1'))?.toJson(),
+      preference.toJson(),
+    );
+    expect(
+      (await store.listChapterReadStates('comic-1')).single.toJson(),
+      readState.toJson(),
+    );
+
+    await store.removeCategory('favorites');
+    expect(await store.listCategories(), isEmpty);
+    expect(
+      (await store.getComicPreference('comic-1'))?.categoryIds,
+      isEmpty,
+    );
+  });
 }
 
 ImportedChapterRecord _chapter({required int pageCount}) {
@@ -141,50 +188,3 @@ ImportedChapterRecord _chapter({required int pageCount}) {
     ],
   );
 }
-
-test('memory library persists categories, comic preferences, and read state',
-    () async {
-  final store = MemoryImportedLibraryStore();
-  await store.open();
-  addTearDown(store.close);
-  final now = DateTime.utc(2026, 7, 28, 8);
-  final category = LibraryCategory(
-    categoryId: 'favorites',
-    name: '收藏夹',
-    sortOrder: 0,
-    createdAt: now,
-  );
-  await store.upsertCategory(category);
-  final preference = ComicPreference.defaults(comicId: 'comic-1').copyWith(
-    liked: true,
-    collected: true,
-    categoryIds: const <String>{'favorites'},
-    customOrder: 3,
-    updatedAt: now,
-  );
-  await store.saveComicPreference(preference);
-  final readState = ChapterReadState(
-    comicId: 'comic-1',
-    chapterId: 'chapter-1',
-    isRead: true,
-    updatedAt: now,
-  );
-  await store.saveChapterReadState(readState);
-
-  expect((await store.listCategories()).single.toJson(), category.toJson());
-  expect(
-    (await store.getComicPreference('comic-1'))?.toJson(),
-    preference.toJson(),
-  );
-  expect(
-    (await store.listChapterReadStates('comic-1')).single.toJson(),
-    readState.toJson(),
-  );
-
-  await store.removeCategory('favorites');
-  expect(await store.listCategories(), isEmpty);
-  expect(
-    (await store.getComicPreference('comic-1'))?.categoryIds,
-    isEmpty,
-  );
-});

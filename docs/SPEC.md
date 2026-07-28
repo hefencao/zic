@@ -144,6 +144,19 @@ abstract interface class ComicSource {
 - publishedAt
 - sourceRevision
 
+
+### LibraryComic projection
+
+- comicId
+- comicTitle
+- ordered chapter entries
+- cover/latest/resume chapter
+- aggregate page count
+- latest import/activity timestamps
+
+该投影只组合持久化章节快照；chapter progress、read state、download session 和
+artifact ownership 仍保持逐章节/逐资源权威。
+
 ### PageAsset
 
 - pageId

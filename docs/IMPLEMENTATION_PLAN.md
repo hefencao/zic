@@ -415,6 +415,8 @@
 3. Add animated cover cards and reusable download waterline presentation.
    **Implemented; remote session binding remains next.**
 4. Add details preferences, chapter reverse order, read dimming and restore-
-   unread swipe. **Implemented for the current single-local-chapter model.**
-5. Group remote and multi-chapter catalog records into comic-level detail
-   models and bind live DownloadSession progress. **Next.**
+   unread swipe. **Implemented for grouped persisted chapters.**
+5. Group local/remote chapter records into comic-level detail models.
+   **Implemented for persisted chapter records.**
+6. Bind authoritative DownloadSession progress and per-chapter download commands to
+   the comic-level projection. **Next.**

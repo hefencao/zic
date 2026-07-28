@@ -72,16 +72,20 @@ final class ImportedChapterRecord {
     required this.chapterId,
     required this.sourceRevision,
     required List<ImportedPageRecord> pages,
+    String? comicTitle,
+    this.sequence = 0,
     this.readingDirection = ReadingDirection.ltr,
     DateTime? importedAt,
-  })  : pages = List<ImportedPageRecord>.unmodifiable(pages),
+  })  : comicTitle = (comicTitle ?? displayName).trim(),
+        pages = List<ImportedPageRecord>.unmodifiable(pages),
         importedAt = (importedAt ?? DateTime.now()).toUtc() {
     if (directoryId.trim().isEmpty ||
         displayName.trim().isEmpty ||
         sourceId.trim().isEmpty ||
         comicId.trim().isEmpty ||
         chapterId.trim().isEmpty ||
-        sourceRevision.trim().isEmpty) {
+        sourceRevision.trim().isEmpty ||
+        this.comicTitle.isEmpty) {
       throw ArgumentError('imported chapter identities must be non-empty');
     }
     if (pages.isEmpty) {
@@ -140,6 +144,7 @@ final class ImportedChapterRecord {
       chapterId: 'folder-$identityHash',
       sourceRevision: 'folder-$revisionHash',
       pages: pages,
+      comicTitle: normalizedName,
       readingDirection: readingDirection,
       importedAt: importedAt,
     );
@@ -151,9 +156,39 @@ final class ImportedChapterRecord {
   final String comicId;
   final String chapterId;
   final String sourceRevision;
+  final String comicTitle;
+  final int sequence;
   final List<ImportedPageRecord> pages;
   final ReadingDirection readingDirection;
   final DateTime importedAt;
+
+  ImportedChapterRecord copyWith({
+    String? directoryId,
+    String? displayName,
+    String? sourceId,
+    String? comicId,
+    String? comicTitle,
+    String? chapterId,
+    String? sourceRevision,
+    int? sequence,
+    List<ImportedPageRecord>? pages,
+    ReadingDirection? readingDirection,
+    DateTime? importedAt,
+  }) {
+    return ImportedChapterRecord(
+      directoryId: directoryId ?? this.directoryId,
+      displayName: displayName ?? this.displayName,
+      sourceId: sourceId ?? this.sourceId,
+      comicId: comicId ?? this.comicId,
+      comicTitle: comicTitle ?? this.comicTitle,
+      chapterId: chapterId ?? this.chapterId,
+      sourceRevision: sourceRevision ?? this.sourceRevision,
+      sequence: sequence ?? this.sequence,
+      pages: pages ?? this.pages,
+      readingDirection: readingDirection ?? this.readingDirection,
+      importedAt: importedAt ?? this.importedAt,
+    );
+  }
 
   ChapterManifest toManifest() {
     final assets = <PageAsset>[];
@@ -178,7 +213,7 @@ final class ImportedChapterRecord {
         chapterId: chapterId,
         comicId: comicId,
         title: displayName,
-        sequence: 0,
+        sequence: sequence,
         pageCount: assets.length,
         sourceRevision: sourceRevision,
       ),
@@ -194,6 +229,8 @@ final class ImportedChapterRecord {
         'comicId': comicId,
         'chapterId': chapterId,
         'sourceRevision': sourceRevision,
+        'comicTitle': comicTitle,
+        'sequence': sequence,
         'readingDirection': readingDirection.name,
         'importedAt': importedAt.toIso8601String(),
         'pages': pages.map((page) => page.toJson()).toList(growable: false),
@@ -204,6 +241,15 @@ final class ImportedChapterRecord {
     if (rawPages is! List<Object?>) {
       throw const FormatException('pages must be a list');
     }
+    final rawComicTitle = json['comicTitle'];
+    if (rawComicTitle != null &&
+        (rawComicTitle is! String || rawComicTitle.trim().isEmpty)) {
+      throw const FormatException('comicTitle must be a non-empty string');
+    }
+    final rawSequence = json['sequence'];
+    if (rawSequence != null && rawSequence is! int) {
+      throw const FormatException('sequence must be an integer');
+    }
     return ImportedChapterRecord(
       directoryId: _requiredString(json, 'directoryId'),
       displayName: _requiredString(json, 'displayName'),
@@ -211,6 +257,9 @@ final class ImportedChapterRecord {
       comicId: _requiredString(json, 'comicId'),
       chapterId: _requiredString(json, 'chapterId'),
       sourceRevision: _requiredString(json, 'sourceRevision'),
+      comicTitle: (rawComicTitle as String?) ??
+          _requiredString(json, 'displayName'),
+      sequence: (rawSequence as int?) ?? 0,
       pages: rawPages.map((value) {
         if (value is! Map) {
           throw const FormatException('page entry must be an object');

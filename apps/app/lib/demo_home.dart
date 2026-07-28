@@ -97,6 +97,9 @@ final class _DemoHomeState extends State<DemoHome> {
   String? _selectedCategoryId;
   LibrarySortMode _sortMode = LibrarySortMode.recent;
 
+  List<LibraryComic> get _libraryComics =>
+      aggregateImportedLibrary(_libraryEntries);
+
   @override
   void initState() {
     super.initState();
@@ -150,9 +153,8 @@ final class _DemoHomeState extends State<DemoHome> {
       await _library.saveComicPreference(preference);
     }
     final readStates = <String, ChapterReadState>{};
-    for (final entry in entries) {
-      for (final state in
-          await _library.listChapterReadStates(entry.chapter.comicId)) {
+    for (final comicId in entries.map((entry) => entry.chapter.comicId).toSet()) {
+      for (final state in await _library.listChapterReadStates(comicId)) {
         readStates[state.chapterId] = state;
       }
     }
@@ -205,9 +207,9 @@ final class _DemoHomeState extends State<DemoHome> {
     super.dispose();
   }
 
-  ComicPreference _preferenceFor(ImportedLibraryEntry entry) {
-    return _preferences[entry.chapter.comicId] ??
-        ComicPreference.defaults(comicId: entry.chapter.comicId);
+  ComicPreference _preferenceForComic(LibraryComic comic) {
+    return _preferences[comic.comicId] ??
+        ComicPreference.defaults(comicId: comic.comicId);
   }
 
   Future<void> _savePreference(ComicPreference preference) async {
@@ -335,19 +337,24 @@ final class _DemoHomeState extends State<DemoHome> {
     }
   }
 
-  Future<void> _openComicDetails(ImportedLibraryEntry entry) async {
-    final preference = _preferenceFor(entry);
+  Future<void> _openComicDetails(LibraryComic comic) async {
+    final preference = _preferenceForComic(comic);
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => ComicDetailsScreen(
-          entry: entry,
+          comic: comic,
           preference: preference,
           categories: _categories,
-          readState: _chapterReadStates[entry.chapter.chapterId],
-          coverBytes: _coverLoader(entry),
+          readStates: <String, ChapterReadState>{
+            for (final chapter in comic.chapters)
+              if (_chapterReadStates.containsKey(chapter.chapter.chapterId))
+                chapter.chapter.chapterId:
+                    _chapterReadStates[chapter.chapter.chapterId]!,
+          },
+          coverBytes: _coverLoaderForComic(comic),
           onPreferenceChanged: _savePreference,
-          onReadChanged: (value) => _setChapterRead(entry, value),
-          onOpenChapter: () => _openImportedChapter(entry),
+          onReadChanged: _setChapterRead,
+          onOpenChapter: _openImportedChapter,
         ),
       ),
     );
@@ -361,8 +368,21 @@ final class _DemoHomeState extends State<DemoHome> {
         );
   }
 
-  bool _hasDetails(ImportedLibraryEntry entry) {
-    return entry.chapter.sourceId != 'local-folder';
+  Future<Uint8List> Function() _coverLoaderForComic(LibraryComic comic) {
+    return _coverLoader(comic.coverChapter);
+  }
+
+  bool _hasDetails(LibraryComic comic) {
+    return comic.hasMultipleChapters ||
+        comic.chapters.any((entry) => entry.chapter.sourceId != 'local-folder');
+  }
+
+  Future<void> _openComic(LibraryComic comic) async {
+    if (comic.hasMultipleChapters) {
+      await _openComicDetails(comic);
+      return;
+    }
+    await _openImportedChapter(comic.resumeChapter);
   }
 
   Future<void> _refreshImportedChapter(ImportedLibraryEntry entry) async {
@@ -374,10 +394,18 @@ final class _DemoHomeState extends State<DemoHome> {
     try {
       await _ensureLibraryReady();
       final folder = await widget.folderRefresher(entry.chapter);
-      final refreshed = imageFolderChapterRecord(
+      final scanned = imageFolderChapterRecord(
         folder,
         readingDirection: entry.chapter.readingDirection,
         importedAt: entry.chapter.importedAt,
+      );
+      final refreshed = entry.chapter.copyWith(
+        directoryId: scanned.directoryId,
+        displayName: scanned.displayName,
+        sourceId: scanned.sourceId,
+        sourceRevision: scanned.sourceRevision,
+        pages: scanned.pages,
+        readingDirection: scanned.readingDirection,
       );
       if (refreshed.chapterId != chapterId) {
         throw StateError('刷新结果改变了目录章节 identity');
@@ -419,6 +447,17 @@ final class _DemoHomeState extends State<DemoHome> {
     await _ensureLibraryReady();
     await _library.removeChapter(entry.chapter.chapterId);
     _coverBytes.remove(entry.chapter.pages.first.sourceId);
+    if (mounted) {
+      await _reloadLibrary();
+    }
+  }
+
+  Future<void> _removeComic(LibraryComic comic) async {
+    await _ensureLibraryReady();
+    for (final entry in comic.chapters) {
+      await _library.removeChapter(entry.chapter.chapterId);
+      _coverBytes.remove(entry.chapter.pages.first.sourceId);
+    }
     if (mounted) {
       await _reloadLibrary();
     }
@@ -492,10 +531,10 @@ final class _DemoHomeState extends State<DemoHome> {
   }
 
   Future<void> _toggleCategory(
-    ImportedLibraryEntry entry,
+    LibraryComic comic,
     String categoryId,
   ) async {
-    final preference = _preferenceFor(entry);
+    final preference = _preferenceForComic(comic);
     final categories = preference.categoryIds.toSet();
     if (!categories.add(categoryId)) {
       categories.remove(categoryId);
@@ -504,35 +543,35 @@ final class _DemoHomeState extends State<DemoHome> {
   }
 
   Future<void> _reorderCustom(int oldIndex, int newIndex) async {
-    final visible = _filteredShelfEntries().toList(growable: true);
+    final visible = _filteredShelfComics().toList(growable: true);
     if (newIndex > oldIndex) {
       newIndex--;
     }
     final moved = visible.removeAt(oldIndex);
     visible.insert(newIndex, moved);
 
-    final allShelf = _libraryEntries
-        .where((entry) => _preferenceFor(entry).inShelf)
+    final allShelf = _libraryComics
+        .where((comic) => _preferenceForComic(comic).inShelf)
         .toList(growable: true)
       ..sort(
-        (left, right) => _preferenceFor(left)
+        (left, right) => _preferenceForComic(left)
             .customOrder
-            .compareTo(_preferenceFor(right).customOrder),
+            .compareTo(_preferenceForComic(right).customOrder),
       );
     final reorderedVisible = visible.iterator;
-    final merged = <ImportedLibraryEntry>[];
-    for (final entry in allShelf) {
-      if (_matchesShelfFilter(entry)) {
+    final merged = <LibraryComic>[];
+    for (final comic in allShelf) {
+      if (_matchesShelfFilter(comic)) {
         reorderedVisible.moveNext();
         merged.add(reorderedVisible.current);
       } else {
-        merged.add(entry);
+        merged.add(comic);
       }
     }
     final now = DateTime.now().toUtc();
     for (var index = 0; index < merged.length; index++) {
-      final entry = merged[index];
-      final preference = _preferenceFor(entry).copyWith(
+      final comic = merged[index];
+      final preference = _preferenceForComic(comic).copyWith(
         customOrder: index,
         updatedAt: now.add(Duration(microseconds: index)),
       );
@@ -541,8 +580,8 @@ final class _DemoHomeState extends State<DemoHome> {
     await _reloadLibrary();
   }
 
-  bool _matchesShelfFilter(ImportedLibraryEntry entry) {
-    final preference = _preferenceFor(entry);
+  bool _matchesShelfFilter(LibraryComic comic) {
+    final preference = _preferenceForComic(comic);
     if (!preference.inShelf) {
       return false;
     }
@@ -558,39 +597,36 @@ final class _DemoHomeState extends State<DemoHome> {
     return categoryId == null || preference.categoryIds.contains(categoryId);
   }
 
-  List<ImportedLibraryEntry> _filteredShelfEntries() {
-    final entries = _libraryEntries
+  List<LibraryComic> _filteredShelfComics() {
+    final comics = _libraryComics
         .where(_matchesShelfFilter)
         .toList(growable: true);
     switch (_sortMode) {
       case LibrarySortMode.recent:
-        entries.sort(
-          (left, right) =>
-              right.chapter.importedAt.compareTo(left.chapter.importedAt),
+        comics.sort(
+          (left, right) => right.latestImportedAt.compareTo(left.latestImportedAt),
         );
         break;
       case LibrarySortMode.title:
-        entries.sort(
-          (left, right) => left.chapter.displayName
-              .toLowerCase()
-              .compareTo(right.chapter.displayName.toLowerCase()),
+        comics.sort(
+          (left, right) =>
+              left.title.toLowerCase().compareTo(right.title.toLowerCase()),
         );
         break;
       case LibrarySortMode.pageCount:
-        entries.sort(
-          (left, right) =>
-              right.chapter.pages.length.compareTo(left.chapter.pages.length),
+        comics.sort(
+          (left, right) => right.totalPages.compareTo(left.totalPages),
         );
         break;
       case LibrarySortMode.custom:
-        entries.sort(
-          (left, right) => _preferenceFor(left)
+        comics.sort(
+          (left, right) => _preferenceForComic(left)
               .customOrder
-              .compareTo(_preferenceFor(right).customOrder),
+              .compareTo(_preferenceForComic(right).customOrder),
         );
         break;
     }
-    return entries;
+    return comics;
   }
 
   Widget _buildLibraryState() {
@@ -635,13 +671,13 @@ final class _DemoHomeState extends State<DemoHome> {
   }
 
   Widget _buildHomePage() {
-    final updates = _libraryEntries.take(10).toList(growable: false);
-    final history = _libraryEntries
-        .where((entry) => entry.progress != null)
+    final updates = _libraryComics.take(10).toList(growable: false);
+    final history = _libraryComics
+        .where((comic) => comic.lastReadChapter != null)
         .toList(growable: true)
       ..sort(
-        (left, right) =>
-            right.progress!.updatedAt.compareTo(left.progress!.updatedAt),
+        (left, right) => right.lastReadChapter!.progress!.updatedAt
+            .compareTo(left.lastReadChapter!.progress!.updatedAt),
       );
     return SingleChildScrollView(
       key: homePageKey,
@@ -682,10 +718,10 @@ final class _DemoHomeState extends State<DemoHome> {
   }
 
   Widget _buildHorizontalComics(
-    List<ImportedLibraryEntry> entries, {
+    List<LibraryComic> comics, {
     bool history = false,
   }) {
-    if (entries.isEmpty) {
+    if (comics.isEmpty) {
       return const SizedBox(
         height: 92,
         child: Card(
@@ -697,23 +733,24 @@ final class _DemoHomeState extends State<DemoHome> {
       height: 226,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        itemCount: entries.length,
+        itemCount: comics.length,
         separatorBuilder: (_, __) => const SizedBox(width: 12),
         itemBuilder: (context, index) {
-          final entry = entries[index];
+          final comic = comics[index];
+          final resume = comic.resumeChapter;
           return SizedBox(
             width: 132,
             child: ComicCoverCard(
               key: history
-                  ? historyChapterEntryKey(entry.chapter.chapterId)
-                  : importedChapterEntryKey(entry.chapter.chapterId),
-              entry: entry,
-              preference: _preferenceFor(entry),
-              coverBytes: _coverLoader(entry),
-              onTap: () => _openImportedChapter(entry),
-              onLongPress: () => _hasDetails(entry)
-                  ? _openComicDetails(entry)
-                  : _openImportedChapter(entry),
+                  ? historyChapterEntryKey(resume.chapter.chapterId)
+                  : importedChapterEntryKey(resume.chapter.chapterId),
+              comic: comic,
+              preference: _preferenceForComic(comic),
+              coverBytes: _coverLoaderForComic(comic),
+              onTap: () => _openComic(comic),
+              onLongPress: () => _hasDetails(comic)
+                  ? _openComicDetails(comic)
+                  : _openImportedChapter(resume),
             ),
           );
         },
@@ -838,7 +875,7 @@ final class _DemoHomeState extends State<DemoHome> {
   }
 
   Widget _buildBookshelfPage() {
-    final entries = _filteredShelfEntries();
+    final comics = _filteredShelfComics();
     return Column(
       key: bookshelfPageKey,
       children: <Widget>[
@@ -866,18 +903,9 @@ final class _DemoHomeState extends State<DemoHome> {
               SegmentedButton<_SourceFilter>(
                 key: bookshelfSourceFilterKey,
                 segments: const <ButtonSegment<_SourceFilter>>[
-                  ButtonSegment(
-                    value: _SourceFilter.all,
-                    label: Text('全部'),
-                  ),
-                  ButtonSegment(
-                    value: _SourceFilter.local,
-                    label: Text('本地'),
-                  ),
-                  ButtonSegment(
-                    value: _SourceFilter.remote,
-                    label: Text('远程'),
-                  ),
+                  ButtonSegment(value: _SourceFilter.all, label: Text('全部')),
+                  ButtonSegment(value: _SourceFilter.local, label: Text('本地')),
+                  ButtonSegment(value: _SourceFilter.remote, label: Text('远程')),
                 ],
                 selected: <_SourceFilter>{_sourceFilter},
                 onSelectionChanged: (selection) {
@@ -935,9 +963,8 @@ final class _DemoHomeState extends State<DemoHome> {
                   onPressed: () => setState(
                     () => _selectedCategoryId = category.categoryId,
                   ),
-                  onDeleted: _manageShelf
-                      ? () => _deleteCategory(category)
-                      : null,
+                  onDeleted:
+                      _manageShelf ? () => _deleteCategory(category) : null,
                 ),
                 const SizedBox(width: 8),
               ],
@@ -951,31 +978,31 @@ final class _DemoHomeState extends State<DemoHome> {
           ),
         ),
         Expanded(
-          child: entries.isEmpty
+          child: comics.isEmpty
               ? const Center(child: Text('当前筛选下没有漫画'))
               : _sortMode == LibrarySortMode.custom
                   ? ReorderableListView.builder(
                       padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
-                      itemCount: entries.length,
+                      itemCount: comics.length,
                       onReorder: (oldIndex, newIndex) {
                         unawaited(_reorderCustom(oldIndex, newIndex));
                       },
                       itemBuilder: (context, index) {
-                        final entry = entries[index];
+                        final comic = comics[index];
                         return _ShelfListTile(
-                          key: ValueKey<String>(entry.chapter.comicId),
-                          entry: entry,
-                          preference: _preferenceFor(entry),
-                          coverBytes: _coverLoader(entry),
+                          key: ValueKey<String>(comic.comicId),
+                          comic: comic,
+                          preference: _preferenceForComic(comic),
+                          coverBytes: _coverLoaderForComic(comic),
                           manage: _manageShelf,
                           categories: _categories,
-                          onTap: () => _openImportedChapter(entry),
-                          onLongPress: () => _hasDetails(entry)
-                              ? _openComicDetails(entry)
-                              : _openImportedChapter(entry),
-                          onDelete: () => _removeImportedChapter(entry),
+                          onTap: () => _openComic(comic),
+                          onLongPress: () => _hasDetails(comic)
+                              ? _openComicDetails(comic)
+                              : _openImportedChapter(comic.resumeChapter),
+                          onDelete: () => _removeComic(comic),
                           onToggleCategory: (categoryId) =>
-                              _toggleCategory(entry, categoryId),
+                              _toggleCategory(comic, categoryId),
                         );
                       },
                     )
@@ -988,21 +1015,21 @@ final class _DemoHomeState extends State<DemoHome> {
                         crossAxisSpacing: 10,
                         mainAxisSpacing: 12,
                       ),
-                      itemCount: entries.length,
+                      itemCount: comics.length,
                       itemBuilder: (context, index) {
-                        final entry = entries[index];
+                        final comic = comics[index];
                         return Stack(
                           children: <Widget>[
                             Positioned.fill(
                               child: ComicCoverCard(
-                                key: comicCoverKey(entry.chapter.comicId),
-                                entry: entry,
-                                preference: _preferenceFor(entry),
-                                coverBytes: _coverLoader(entry),
-                                onTap: () => _openImportedChapter(entry),
-                                onLongPress: () => _hasDetails(entry)
-                                    ? _openComicDetails(entry)
-                                    : _openImportedChapter(entry),
+                                key: comicCoverKey(comic.comicId),
+                                comic: comic,
+                                preference: _preferenceForComic(comic),
+                                coverBytes: _coverLoaderForComic(comic),
+                                onTap: () => _openComic(comic),
+                                onLongPress: () => _hasDetails(comic)
+                                    ? _openComicDetails(comic)
+                                    : _openImportedChapter(comic.resumeChapter),
                               ),
                             ),
                             if (_manageShelf)
@@ -1013,22 +1040,17 @@ final class _DemoHomeState extends State<DemoHome> {
                                   mainAxisSize: MainAxisSize.min,
                                   children: <Widget>[
                                     _CategoryPopup(
-                                      key: comicCategoryKey(
-                                        entry.chapter.comicId,
-                                      ),
+                                      key: comicCategoryKey(comic.comicId),
                                       categories: _categories,
                                       selectedIds:
-                                          _preferenceFor(entry).categoryIds,
+                                          _preferenceForComic(comic).categoryIds,
                                       onToggle: (categoryId) =>
-                                          _toggleCategory(entry, categoryId),
+                                          _toggleCategory(comic, categoryId),
                                     ),
                                     IconButton.filledTonal(
-                                      key: comicDeleteKey(
-                                        entry.chapter.comicId,
-                                      ),
+                                      key: comicDeleteKey(comic.comicId),
                                       tooltip: '删除漫画',
-                                      onPressed: () =>
-                                          _removeImportedChapter(entry),
+                                      onPressed: () => _removeComic(comic),
                                       icon: const Icon(Icons.delete_outline),
                                     ),
                                   ],
@@ -1095,7 +1117,7 @@ final class ComicDownloadProgress {
 
 final class ComicCoverCard extends StatelessWidget {
   const ComicCoverCard({
-    required this.entry,
+    required this.comic,
     required this.preference,
     required this.coverBytes,
     required this.onTap,
@@ -1104,7 +1126,7 @@ final class ComicCoverCard extends StatelessWidget {
     super.key,
   });
 
-  final ImportedLibraryEntry entry;
+  final LibraryComic comic;
   final ComicPreference preference;
   final Future<Uint8List> Function() coverBytes;
   final VoidCallback onTap;
@@ -1113,10 +1135,13 @@ final class ComicCoverCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final progress = entry.progress;
+    final progress = comic.resumeChapter.progress;
+    final scope = comic.hasMultipleChapters
+        ? '${comic.chapters.length} 章 · ${comic.totalPages} 页'
+        : '${comic.totalPages} 页';
     return Semantics(
       button: true,
-      label: '${entry.chapter.displayName}，${entry.chapter.pages.length} 页',
+      label: '${comic.title}，$scope',
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: onTap,
@@ -1159,15 +1184,16 @@ final class ComicCoverCard extends StatelessWidget {
             ),
             const SizedBox(height: 7),
             Text(
-              entry.chapter.displayName,
+              comic.title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.titleSmall,
             ),
             Text(
               progress == null
-                  ? '${entry.chapter.pages.length} 页'
-                  : '上次第 ${progress.pageIndex + 1} 页',
+                  ? scope
+                  : '上次 ${comic.resumeChapter.chapter.displayName} '
+                      '第 ${progress.pageIndex + 1} 页',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.bodySmall,
@@ -1261,10 +1287,10 @@ final class _DownloadWatermark extends StatelessWidget {
 
 final class ComicDetailsScreen extends StatefulWidget {
   const ComicDetailsScreen({
-    required this.entry,
+    required this.comic,
     required this.preference,
     required this.categories,
-    required this.readState,
+    required this.readStates,
     required this.coverBytes,
     required this.onPreferenceChanged,
     required this.onReadChanged,
@@ -1272,14 +1298,15 @@ final class ComicDetailsScreen extends StatefulWidget {
     super.key,
   });
 
-  final ImportedLibraryEntry entry;
+  final LibraryComic comic;
   final ComicPreference preference;
   final List<LibraryCategory> categories;
-  final ChapterReadState? readState;
+  final Map<String, ChapterReadState> readStates;
   final Future<Uint8List> Function() coverBytes;
   final Future<void> Function(ComicPreference preference) onPreferenceChanged;
-  final Future<void> Function(bool isRead) onReadChanged;
-  final Future<void> Function() onOpenChapter;
+  final Future<void> Function(ImportedLibraryEntry chapter, bool isRead)
+      onReadChanged;
+  final Future<void> Function(ImportedLibraryEntry chapter) onOpenChapter;
 
   @override
   State<ComicDetailsScreen> createState() => _ComicDetailsScreenState();
@@ -1287,14 +1314,18 @@ final class ComicDetailsScreen extends StatefulWidget {
 
 final class _ComicDetailsScreenState extends State<ComicDetailsScreen> {
   late ComicPreference _preference;
-  late bool _isRead;
+  late Map<String, bool> _readStates;
   bool _descending = true;
 
   @override
   void initState() {
     super.initState();
     _preference = widget.preference;
-    _isRead = widget.readState?.isRead ?? false;
+    _readStates = <String, bool>{
+      for (final chapter in widget.comic.chapters)
+        chapter.chapter.chapterId:
+            widget.readStates[chapter.chapter.chapterId]?.isRead ?? false,
+    };
   }
 
   Future<void> _updatePreference(ComicPreference next) async {
@@ -1302,22 +1333,27 @@ final class _ComicDetailsScreenState extends State<ComicDetailsScreen> {
     await widget.onPreferenceChanged(next);
   }
 
-  Future<void> _markRead(bool value) async {
-    setState(() => _isRead = value);
-    await widget.onReadChanged(value);
+  Future<void> _markRead(
+    ImportedLibraryEntry chapter,
+    bool value,
+  ) async {
+    final chapterId = chapter.chapter.chapterId;
+    if (_readStates[chapterId] == value) {
+      return;
+    }
+    setState(() => _readStates = <String, bool>{
+          ..._readStates,
+          chapterId: value,
+        });
+    await widget.onReadChanged(chapter, value);
   }
 
   @override
   Widget build(BuildContext context) {
-    final entry = widget.entry;
-    final chapters = <ImportedLibraryEntry>[entry];
-    if (!_descending) {
-      chapters.sort(
-        (left, right) => left.chapter.importedAt.compareTo(
-          right.chapter.importedAt,
-        ),
-      );
-    }
+    final comic = widget.comic;
+    final chapters = comic.chapters.toList(growable: false);
+    final displayedChapters =
+        _descending ? chapters.reversed.toList(growable: false) : chapters;
     return Scaffold(
       key: comicDetailsScreenKey,
       appBar: AppBar(title: const Text('漫画详情')),
@@ -1343,14 +1379,14 @@ final class _ComicDetailsScreenState extends State<ComicDetailsScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
                         Text(
-                          entry.chapter.displayName,
+                          comic.title,
                           style: Theme.of(context).textTheme.headlineSmall,
                         ),
                         const SizedBox(height: 8),
-                        Text('${entry.chapter.pages.length} 页'),
+                        Text('${comic.chapters.length} 章 · ${comic.totalPages} 页'),
                         const SizedBox(height: 16),
                         Wrap(
-                          spacing: 4,
+                          spacing: 8,
                           children: <Widget>[
                             _PreferenceButton(
                               icon: _preference.liked
@@ -1408,8 +1444,7 @@ final class _ComicDetailsScreenState extends State<ComicDetailsScreen> {
                                     category.categoryId,
                                   ),
                                   onSelected: (_) {
-                                    final ids =
-                                        _preference.categoryIds.toSet();
+                                    final ids = _preference.categoryIds.toSet();
                                     if (!ids.add(category.categoryId)) {
                                       ids.remove(category.categoryId);
                                     }
@@ -1438,23 +1473,26 @@ final class _ComicDetailsScreenState extends State<ComicDetailsScreen> {
                 key: comicDetailsReverseKey,
                 tooltip: _descending ? '切换正序' : '切换倒序',
                 onPressed: () => setState(() => _descending = !_descending),
-                icon: Icon(
-                  _descending ? Icons.south : Icons.north,
-                ),
+                icon: Icon(_descending ? Icons.south : Icons.north),
               ),
             ),
           ),
           SliverList(
             delegate: SliverChildBuilderDelegate(
               (context, index) {
-                final chapter = chapters[index];
+                final chapter = displayedChapters[index];
+                final chapterId = chapter.chapter.chapterId;
+                final isRead = _readStates[chapterId] ?? false;
                 return Dismissible(
-                  key: ValueKey<String>(
-                    'detail-${chapter.chapter.chapterId}',
-                  ),
-                  direction: DismissDirection.startToEnd,
+                  key: chapterReadKey(chapterId),
+                  direction: isRead
+                      ? DismissDirection.startToEnd
+                      : DismissDirection.none,
+                  dismissThresholds: const <DismissDirection, double>{
+                    DismissDirection.startToEnd: 0.18,
+                  },
                   confirmDismiss: (_) async {
-                    await _markRead(false);
+                    await _markRead(chapter, false);
                     return false;
                   },
                   background: Container(
@@ -1470,12 +1508,11 @@ final class _ComicDetailsScreenState extends State<ComicDetailsScreen> {
                     ),
                   ),
                   child: AnimatedOpacity(
-                    key: chapterReadKey(chapter.chapter.chapterId),
-                    opacity: _isRead ? 0.42 : 1,
+                    opacity: isRead ? 0.42 : 1,
                     duration: const Duration(milliseconds: 180),
                     child: ListTile(
                       leading: Icon(
-                        _isRead
+                        isRead
                             ? Icons.check_circle_outline
                             : Icons.radio_button_unchecked,
                       ),
@@ -1483,14 +1520,14 @@ final class _ComicDetailsScreenState extends State<ComicDetailsScreen> {
                       subtitle: Text('${chapter.chapter.pages.length} 页'),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () async {
-                        await _markRead(true);
-                        await widget.onOpenChapter();
+                        await _markRead(chapter, true);
+                        await widget.onOpenChapter(chapter);
                       },
                     ),
                   ),
                 );
               },
-              childCount: chapters.length,
+              childCount: displayedChapters.length,
             ),
           ),
           const SliverPadding(padding: EdgeInsets.only(bottom: 32)),
@@ -1526,7 +1563,7 @@ final class _PreferenceButton extends StatelessWidget {
 
 final class _ShelfListTile extends StatelessWidget {
   const _ShelfListTile({
-    required this.entry,
+    required this.comic,
     required this.preference,
     required this.coverBytes,
     required this.manage,
@@ -1538,7 +1575,7 @@ final class _ShelfListTile extends StatelessWidget {
     super.key,
   });
 
-  final ImportedLibraryEntry entry;
+  final LibraryComic comic;
   final ComicPreference preference;
   final Future<Uint8List> Function() coverBytes;
   final bool manage;
@@ -1550,6 +1587,9 @@ final class _ShelfListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final subtitle = comic.hasMultipleChapters
+        ? '${comic.chapters.length} 章 · ${comic.totalPages} 页'
+        : '${comic.totalPages} 页';
     return Card(
       child: ListTile(
         leading: SizedBox(
@@ -1560,8 +1600,8 @@ final class _ShelfListTile extends StatelessWidget {
             child: _CoverImage(loader: coverBytes),
           ),
         ),
-        title: Text(entry.chapter.displayName),
-        subtitle: Text('${entry.chapter.pages.length} 页'),
+        title: Text(comic.title),
+        subtitle: Text(subtitle),
         onTap: onTap,
         onLongPress: onLongPress,
         trailing: manage

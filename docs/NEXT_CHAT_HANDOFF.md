@@ -2,36 +2,49 @@
 
 ## Sole baseline
 
-Continue from `zic_v0.18.3-dev.21_android-library-shell.zip`.
+Continue only from `zic_v0.19.0-dev.22_comic-aggregate.zip`.
+Do not merge or copy files from an earlier zic archive.
 
 ## Current implementation
 
-- Android SAF mixed-image folder import persists local chapters and refreshes
-  existing tree identities.
-- Local folders run through LoaderTransport, DownloadSession, promoted artifact
-  and Reader; reading page/mode are persisted.
-- Home and Bookshelf are the two primary app destinations.
-- Home has update and reading-history card rails plus retained media diagnostics.
-- Bookshelf has custom categories, local/remote filtering, management deletion,
-  recent/title/page-count/custom sorting and durable drag ordering.
-- SQLite schema version 2 stores categories, per-comic shelf/liked/collected/
-  category/custom-order preferences and explicit chapter read state.
-- Cover cards can render animated memory images and expose a reusable download
-  waterline with percent and page counts.
-- Comic details implement liked/shelf/collected actions, category membership,
-  chapter order reversal, read dimming and right-swipe restore unread.
-- Metadata-free local comics open Reader directly on tap or long press.
+- Android SAF mixed-image folder import persists and refreshes chapter identities.
+- Imported pages still use LoaderTransport, DownloadSession, promoted artifacts and Reader.
+- Home and Bookshelf project persisted chapter entries into catalog-owned `LibraryComic`
+  aggregates keyed by `comicId`.
+- `ImportedChapterRecord` persists backward-compatible `comicTitle` and `sequence` fields.
+- One comic can expose multiple chapters under one cover, shelf preference and details route.
+- Details sort chapters by sequence, retain per-chapter progress/read state, open the selected
+  chapter, and reliably restore read chapters to unread through a non-destructive right swipe.
+- Removing one grouped chapter preserves the comic preference until the last chapter is gone.
+- Local directory maintenance remains per chapter so refresh/reconciliation ownership is clear.
+- Directory refresh replaces the scanned page/source snapshot without losing aggregate title,
+  chapter sequence or comic identity.
+- Catalog and SQLite test registrations that had escaped `main()` are repaired.
 
-## Validation commands
+## Validation completed in this environment
+
+```bash
+python3 tool/check_repo.py
+# repository structure: OK
+./tool/check_native_header.sh
+# passed
+```
+
+Custom static checks also confirmed balanced Dart delimiters, valid JSON, shell syntax,
+consistent versions and that no test registration starts at top-level. This container does
+not contain `flutter`, `dart` or `cargo`. `tool/check.sh` reaches the pinned libwebp source
+check, but outbound DNS prevents fetching the checkout, so no claim is made that toolchain,
+libwebp source-build or Android build tests were executed here.
+
+## Required external validation
 
 ```bash
 flutter pub get
-flutter test packages/local_media/test/local_image_signature_test.dart
-flutter test packages/local_media/test/local_image_folder_test.dart
 flutter test packages/catalog/test/imported_library_store_test.dart
+flutter test packages/catalog/test/library_comic_test.dart
 flutter test packages/storage/test/imported_library_store_test.dart
-flutter test apps/app/test/app_smoke_test.dart
 flutter test apps/app/test/library_ui_test.dart
+flutter test apps/app/test/app_smoke_test.dart
 bash ./tool/test_dart.sh
 bash ./tool/test_flutter.sh
 bash ./tool/analyze.sh
@@ -44,11 +57,11 @@ bash ./tool/build_android.sh debug
 
 ## Next mainline work
 
-1. Introduce a comic-level aggregate that groups multiple local/remote chapters
-   under one cover and detail route.
-2. Bind authoritative DownloadSession snapshots to cover waterline progress and
-   expose per-chapter download commands.
-3. Add remote catalog/update ingestion so Home update cards and the remote shelf
-   filter use real source data.
-4. Continue Android texture lifecycle/device testing and connect native output
-   to Reader only after the safe fallback path remains intact.
+1. Bind authoritative DownloadSession snapshots to comic/chapter download projections rather
+   than passing presentation-only progress values into cover cards.
+2. Expose per-chapter download commands and aggregate comic download waterlines without giving
+   widgets ownership of sessions or artifacts.
+3. Add remote catalog/update ingestion so Home updates and the remote shelf filter use real
+   source records that naturally join the same `LibraryComic` projection.
+4. Continue Android texture lifecycle/device testing; Reader native output remains gated by the
+   existing Flutter-codec fallback contract.

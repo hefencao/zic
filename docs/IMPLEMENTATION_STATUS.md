@@ -1,3 +1,33 @@
+## Current iteration — comic-level aggregation and reliable unread restore
+
+The persisted library now exposes a catalog-owned `LibraryComic` projection that groups
+all `ImportedLibraryEntry` snapshots with the same `comicId`. `ImportedChapterRecord`
+persists a backward-compatible `comicTitle` and chapter `sequence`, allowing local and
+future remote chapters to share one cover, preference record, shelf position and details
+route without moving chapter progress or refresh ownership out of the store.
+
+Home update/history rails and Bookshelf filtering, sorting, custom ordering, category
+membership and comic deletion now operate on comic aggregates. The details route renders
+all grouped chapters in sequence order, opens the selected chapter, and keeps precise
+progress plus explicit read state per chapter. Local maintenance remains chapter-scoped so
+directory refresh and identity reconciliation are not hidden behind the aggregate.
+Refresh copies the scanned source revision and page snapshot onto the existing chapter,
+preserving its aggregate `comicId`, `comicTitle`, chapter identity and sequence.
+
+The reported restore-unread failure was a product gesture-boundary problem: the stable key
+was attached below the `Dismissible`, and the default 40% threshold made the exact test and
+real short swipes unreliable. The key now identifies the gesture owner, read chapters alone
+accept start-to-end dismissal, and a non-destructive 18% threshold invokes the persisted
+unread transition while returning `false` to retain the row.
+
+Two test files also contained registrations outside `main()`. Those compile breaks were
+repaired without changing their assertions. A nullable constructor-parameter reference found
+during delivery review was corrected to validate the normalized field. Repository structure,
+native-header, JSON, shell syntax, delimiter, test-registration-scope and version-consistency
+checks pass in this environment. Flutter, Dart and Rust toolchains are not installed here;
+the source libwebp check also cannot fetch its pinned checkout because outbound DNS is blocked.
+The full commands in `NEXT_CHAT_HANDOFF.md` remain an external validation gate.
+
 ## Current iteration — persisted directory refresh and stable page reconciliation
 
 Persisted local chapters can now be rescanned without reopening the system picker. Android

@@ -159,60 +159,108 @@ void main() {
     expect(entry?.chapter.toJson(), chapter.toJson());
     expect(entry?.progress?.toJson(), progress.toJson());
   });
+
+  test('sqlite library persists shelf preferences and chapter read state',
+      () async {
+    final store = SqliteImportedLibraryStore.memory();
+    await store.open();
+    addTearDown(store.close);
+    final chapter = ImportedChapterRecord.folder(
+      directoryId: '/library/preferences',
+      displayName: 'Preferences',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '1.png',
+          sourceId: '/library/preferences/1.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    await store.upsertChapter(chapter);
+    final now = DateTime.utc(2026, 7, 28, 9);
+    final category = LibraryCategory(
+      categoryId: 'reading',
+      name: '阅读中',
+      sortOrder: 1,
+      createdAt: now,
+    );
+    await store.upsertCategory(category);
+    final preference = ComicPreference.defaults(comicId: chapter.comicId)
+        .copyWith(
+      liked: true,
+      categoryIds: const <String>{'reading'},
+      customOrder: 7,
+      updatedAt: now,
+    );
+    await store.saveComicPreference(preference);
+    final state = ChapterReadState(
+      comicId: chapter.comicId,
+      chapterId: chapter.chapterId,
+      isRead: true,
+      updatedAt: now,
+    );
+    await store.saveChapterReadState(state);
+
+    expect((await store.listCategories()).single.toJson(), category.toJson());
+    expect(
+      (await store.getComicPreference(chapter.comicId))?.toJson(),
+      preference.toJson(),
+    );
+    expect(
+      (await store.listChapterReadStates(chapter.comicId)).single.toJson(),
+      state.toJson(),
+    );
+
+    await store.removeChapter(chapter.chapterId);
+    expect(await store.listChapterReadStates(chapter.comicId), isEmpty);
+    expect(await store.getComicPreference(chapter.comicId), isNull);
+  });
+
+  test('sqlite keeps comic preference until the last grouped chapter is removed',
+      () async {
+    final store = SqliteImportedLibraryStore.memory();
+    await store.open();
+    addTearDown(store.close);
+    final first = _groupedChapter('chapter-1', 1);
+    final second = _groupedChapter('chapter-2', 2);
+    await store.upsertChapter(first);
+    await store.upsertChapter(second);
+    final preference = ComicPreference.defaults(comicId: first.comicId).copyWith(
+      liked: true,
+      updatedAt: DateTime.utc(2026, 7, 28, 10),
+    );
+    await store.saveComicPreference(preference);
+
+    expect(aggregateImportedLibrary(await store.list()).single.chapters,
+        hasLength(2));
+
+    await store.removeChapter(first.chapterId);
+    expect(await store.getComicPreference(first.comicId), isNotNull);
+    expect(aggregateImportedLibrary(await store.list()).single.chapters,
+        hasLength(1));
+
+    await store.removeChapter(second.chapterId);
+    expect(await store.getComicPreference(first.comicId), isNull);
+  });
 }
 
-test('sqlite library persists shelf preferences and chapter read state',
-    () async {
-  final store = SqliteImportedLibraryStore.memory();
-  await store.open();
-  addTearDown(store.close);
-  final chapter = ImportedChapterRecord.folder(
-    directoryId: '/library/preferences',
-    displayName: 'Preferences',
-    pages: const <ImportedPageRecord>[
+ImportedChapterRecord _groupedChapter(String chapterId, int sequence) {
+  return ImportedChapterRecord(
+    directoryId: '/library/$chapterId',
+    displayName: '第 $sequence 话',
+    sourceId: 'local-folder',
+    comicId: 'comic-grouped',
+    comicTitle: '聚合漫画',
+    chapterId: chapterId,
+    sourceRevision: 'revision-$chapterId',
+    sequence: sequence,
+    importedAt: DateTime.utc(2026, 7, 28, sequence),
+    pages: <ImportedPageRecord>[
       ImportedPageRecord(
-        displayName: '1.png',
-        sourceId: '/library/preferences/1.png',
+        displayName: '$chapterId.png',
+        sourceId: '/library/$chapterId.png',
         contentKindHint: ContentKindHint.png,
       ),
     ],
   );
-  await store.upsertChapter(chapter);
-  final now = DateTime.utc(2026, 7, 28, 9);
-  final category = LibraryCategory(
-    categoryId: 'reading',
-    name: '阅读中',
-    sortOrder: 1,
-    createdAt: now,
-  );
-  await store.upsertCategory(category);
-  final preference = ComicPreference.defaults(comicId: chapter.comicId)
-      .copyWith(
-    liked: true,
-    categoryIds: const <String>{'reading'},
-    customOrder: 7,
-    updatedAt: now,
-  );
-  await store.saveComicPreference(preference);
-  final state = ChapterReadState(
-    comicId: chapter.comicId,
-    chapterId: chapter.chapterId,
-    isRead: true,
-    updatedAt: now,
-  );
-  await store.saveChapterReadState(state);
-
-  expect((await store.listCategories()).single.toJson(), category.toJson());
-  expect(
-    (await store.getComicPreference(chapter.comicId))?.toJson(),
-    preference.toJson(),
-  );
-  expect(
-    (await store.listChapterReadStates(chapter.comicId)).single.toJson(),
-    state.toJson(),
-  );
-
-  await store.removeChapter(chapter.chapterId);
-  expect(await store.listChapterReadStates(chapter.comicId), isEmpty);
-  expect(await store.getComicPreference(chapter.comicId), isNull);
-});
+}

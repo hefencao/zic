@@ -1,3 +1,20 @@
+## 0.19.0-dev.22 — comic-level library aggregation
+
+- Fix the catalog and SQLite library test files so all registrations remain inside
+  `main()`, restoring Dart test loading without weakening product assertions.
+- Move the chapter read/unread gesture key onto the owning `Dismissible` and use a
+  deliberate 18% non-destructive threshold, so right-swipe reliably restores unread.
+- Add persisted `comicTitle` and chapter `sequence` metadata with backward-compatible
+  JSON decoding for existing imported-library records.
+- Preserve aggregate identity, title and sequence when a local directory chapter is
+  rescanned, while replacing only the refreshed source revision and page snapshot.
+- Add `LibraryComic` as a catalog projection that groups local or remote chapters by
+  comic identity, selects cover/latest/resume chapters, and exposes aggregate page data.
+- Drive Home, Bookshelf, custom ordering, categories, deletion, cover cards and details
+  from comic aggregates while retaining per-chapter refresh, progress and read state.
+- Add catalog, SQLite and Flutter regressions for multi-chapter grouping, preference
+  lifetime, chapter selection and the repaired read-state transition.
+
 ## Unreleased — Android home, bookshelf, and comic details
 
 - Add Android-first Home and Bookshelf destinations backed by the durable local library.
