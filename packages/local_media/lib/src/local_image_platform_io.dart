@@ -35,6 +35,7 @@ Future<LocalImageDirectorySelection?> pickScopedLocalImageDirectory() async {
         format: format,
         displayName: document.displayName,
         sourceId: sourceUri,
+        byteLength: document.byteLength,
         readBytes: () => _androidBridge.readDocument(sourceUri),
       ),
     );
@@ -72,6 +73,7 @@ Future<LocalImageDirectoryScan> listLocalImageDirectory(String path) async {
           file: XFile(match.path),
           format: LocalImageFormat.values[match.formatIndex],
           sourceId: match.path,
+          byteLength: match.byteLength,
         ),
       )
       .toList(growable: false);
@@ -106,7 +108,11 @@ Future<_RawImageScan> _scanImagePaths(String path) async {
       );
       if (format != null) {
         matches.add(
-          _RawImageMatch(path: entity.path, formatIndex: format.index),
+          _RawImageMatch(
+            path: entity.path,
+            formatIndex: format.index,
+            byteLength: length,
+          ),
         );
       }
     } on FileSystemException {
@@ -144,10 +150,15 @@ final class _RawImageScan {
 }
 
 final class _RawImageMatch {
-  const _RawImageMatch({required this.path, required this.formatIndex});
+  const _RawImageMatch({
+    required this.path,
+    required this.formatIndex,
+    required this.byteLength,
+  });
 
   final String path;
   final int formatIndex;
+  final int byteLength;
 }
 
 int _naturalPathCompare(String left, String right) {

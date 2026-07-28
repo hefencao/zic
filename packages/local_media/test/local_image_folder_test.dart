@@ -65,6 +65,9 @@ void main() {
         ('$normalizedRoot/10.txt', LocalImageFormat.png),
         ('$normalizedRoot/nested/1', LocalImageFormat.jpeg),
       ]);
+      expect(scan.images[0].byteLength, greaterThan(16));
+      expect(scan.images[1].byteLength, greaterThan(16));
+      expect(scan.images[2].byteLength, 4);
       expect(scan.scannedFiles, 4);
       expect(scan.unreadableFiles, 0);
       expect(scan.unrecognizedFiles, 1);

@@ -12,6 +12,26 @@ import 'package:zic/main.dart';
 import 'package:zic/static_demo.dart';
 import 'package:zic/webp_demo.dart';
 
+
+Future<void> _pumpUntilKeyText(
+  WidgetTester tester,
+  Key key,
+  String expected, {
+  int maxFrames = 60,
+}) async {
+  for (var frame = 0; frame < maxFrames; frame++) {
+    await tester.pump();
+    final finder = find.byKey(key, skipOffstage: false);
+    if (finder.evaluate().length == 1) {
+      final widget = tester.widget<Text>(finder);
+      if (widget.data == expected) {
+        return;
+      }
+    }
+  }
+  throw TestFailure('Timed out waiting for $key to equal $expected');
+}
+
 File _nativeFixture(String name) {
   final candidates = <File>[
     File('native/media_core/testdata/$name'),
@@ -299,14 +319,22 @@ void main() {
       tester.widget<Text>(find.byKey(imageFolderPositionKey)).data,
       '1 / 2',
     );
+    final firstPlayer = find.byKey(
+      ValueKey<String>(
+        'folder-image:${_folderFixture().files.first.sourceId}:webp:0',
+      ),
+    );
     expect(
-      tester.widget<LocalImagePlayer>(find.byType(LocalImagePlayer)).sourceUri,
+      tester.widget<LocalImagePlayer>(firstPlayer).sourceUri,
       Uri.file(_nativeFixture('finite_loop.webp').path),
     );
     expect(
       tester
           .widget<ImagePreviewStateRegion>(
-            find.byKey(imageFolderPreviewStateKey),
+            find.descendant(
+              of: firstPlayer,
+              matching: find.byKey(imageFolderPreviewStateKey),
+            ),
           )
           .state
           .phase,
@@ -314,7 +342,11 @@ void main() {
     );
 
     await tester.tap(find.byKey(imageFolderNextKey));
-    await tester.pump();
+    await _pumpUntilKeyText(
+      tester,
+      imageFolderCurrentFileKey,
+      '002.bin · PNG',
+    );
 
     expect(
       tester.widget<Text>(find.byKey(imageFolderCurrentFileKey)).data,
@@ -324,14 +356,22 @@ void main() {
       tester.widget<Text>(find.byKey(imageFolderPositionKey)).data,
       '2 / 2',
     );
+    final secondPlayer = find.byKey(
+      ValueKey<String>(
+        'folder-image:${_folderFixture().files.last.sourceId}:png:1',
+      ),
+    );
     expect(
-      tester.widget<LocalImagePlayer>(find.byType(LocalImagePlayer)).sourceUri,
+      tester.widget<LocalImagePlayer>(secondPlayer).sourceUri,
       Uri.file('${_nativeFixture('finite_loop.webp').parent.path}/002.bin'),
     );
     expect(
       tester
           .widget<ImagePreviewStateRegion>(
-            find.byKey(imageFolderPreviewStateKey),
+            find.descendant(
+              of: secondPlayer,
+              matching: find.byKey(imageFolderPreviewStateKey),
+            ),
           )
           .state
           .phase,

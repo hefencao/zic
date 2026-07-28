@@ -4,4 +4,5 @@ export 'src/cache_layout.dart';
 export 'src/cache_policy.dart';
 export 'src/cache_scanner.dart';
 export 'src/crc32.dart';
+export 'src/ephemeral_workspace.dart';
 export 'src/sqlite_index.dart';

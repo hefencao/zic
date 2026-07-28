@@ -201,6 +201,19 @@ void main() {
       ),
       isNull,
     );
+    expect(
+      detectLocalImageFormat(
+        Uint8List.fromList(<int>[
+          ...'RIFF'.codeUnits,
+          0,
+          0,
+          0,
+          0,
+          ...'WEBP'.codeUnits,
+        ]),
+      ),
+      isNull,
+    );
   });
 
   test('image signature detector rejects extensions and arbitrary text', () {

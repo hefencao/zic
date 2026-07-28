@@ -230,8 +230,20 @@ Flutter codec。Reader 和文件夹切换隐藏 native 控件；只有独立预�
 
 输出不可变的 `PickedImageFolder`；每个 `PickedImage` 拥有相对 `displayName`、显式
 `sourceId`、兼容 `XFile` 和 byte-loader。Android `sourceId` 是持久授权的 content URI，
-不得再经 `Uri.file` 或 `dart:io File` 解释。文件切换复用单个可见播放器位置，旧播放器
-随 key 替换而完整释放，避免为整个目录同时创建图片 codec 或 native texture。
+不得再经 `Uri.file` 或 `dart:io File` 解释。
+
+App/catalog 边界将选择结果归一化为可序列化的 `ImportedChapterRecord`，再生成稳定的
+`ChapterManifest`。平台 byte-loader 通过 `LoaderTransport` 进入生产
+`LiveCoordinator -> DownloadSession -> promoted artifact` 链，Reader 页面只能从该
+artifact 读取。目录页不再维护独立 index；上一页、下一页和菜单跳转都提交
+`ReaderController.requestPage`，由 `ReaderView` 消费。离屏页面销毁会取消等待 artifact
+promotion 的 token 和 snapshot listener，避免切页后继续占用目录内容流。
+临时 Reader cache workspace、artifact 文件读取和递归清理由 `packages/storage`
+的 `EphemeralCacheWorkspace` 持有；`apps/app/lib` 不导入 `dart:io`，只装配 workspace、
+session 和 Widget。
+目录扫描得到的 byte length 会进入 `PageAsset`；`LoaderTransport` 的 validator
+同时包含 source revision、长度和完整内容 hash，避免同 URI、同长度内容替换后续接到
+旧 partial。
 
 非 Android：
 

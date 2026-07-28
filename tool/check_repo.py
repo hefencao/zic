@@ -216,6 +216,8 @@ def check_dart_sources() -> None:
             fail(f'tab character in {path.relative_to(ROOT)}')
         if 'MethodChannel' in source and 'packages/bridge/' in path.as_posix():
             fail('native bridge must not transport frame bytes through MethodChannel')
+        if path.parent == ROOT / 'apps/app/lib' and "import 'dart:io';" in source:
+            fail(f'app presentation/composition layer imports dart:io: {path}')
         if 'packages/reader/' in path.as_posix():
             for forbidden in ('File(', '.readAsBytes', 'HttpClient(', 'openRead('):
                 if forbidden in source:
@@ -446,10 +448,11 @@ def check_compile_regressions() -> None:
         if forbidden in decode_session:
             fail(f'DecodeSession must not use runtime cursor typing: {forbidden}')
     static_demo = (ROOT / 'apps/app/lib/static_demo.dart').read_text(encoding='utf-8')
-    if "import 'package:pipeline/pipeline.dart';" not in static_demo:
-        fail('static demo must import DecodeTarget from pipeline')
-    if 'physicalWidth: 1080' in static_demo or 'physicalHeight: 1920' in static_demo:
-        fail('static demo decode target must follow the physical viewport')
+    reader_runtime = (ROOT / 'apps/app/lib/reader_runtime.dart').read_text(encoding='utf-8')
+    if "import 'package:pipeline/pipeline.dart';" not in reader_runtime:
+        fail('Reader runtime must import DecodeTarget from pipeline')
+    if 'physicalWidth: 1080' in reader_runtime or 'physicalHeight: 1920' in reader_runtime:
+        fail('Reader runtime decode target must follow the physical viewport')
     target = (ROOT / 'packages/pipeline/lib/src/decode_target.dart').read_text(
         encoding='utf-8'
     )
@@ -582,10 +585,20 @@ def check_compile_regressions() -> None:
             fail(f'local WebP product contract is incomplete: {required}')
     if "_status = 'WebP 文件无效'" in webp_demo:
         fail('preview status must not duplicate the keyed WebP validation error')
+    media_load_token = (
+        ROOT / 'apps/app/lib/media_load_token.dart'
+    ).read_text(encoding='utf-8')
     for required in (
-        'final class WebpLoadToken',
+        'final class MediaLoadToken',
+        'Future<void> get whenCancelled',
+        'void throwIfCancelled()',
+    ):
+        if required not in media_load_token:
+            fail(f'media byte-load cancellation is incomplete: {required}')
+    for required in (
+        'typedef WebpLoadToken = MediaLoadToken',
         '_loadToken.cancel()',
-        'widget.loadBytes(_loadToken)',
+        'widget.loadBytes(token)',
         '_notifyPreviewObserver(_previewState)',
         '_scheduleObserverSnapshot()',
     ):
@@ -786,15 +799,21 @@ def check_compile_regressions() -> None:
         'MediaPipelineReaderScreen',
         'chapter_media_pipeline.json',
         'NativeWebpPlayer(',
-        'mediaPipeline: true',
-        'traceSessionId:',
-        'demandRevision:',
-        'downloadIdentity: readerPageDownloadId(chapter, asset)',
-        'DownloadId readerPageDownloadId(',
-        'sourceRevision: chapter.chapter.sourceRevision',
+        'ReaderRuntimeScreen(',
+        'traceSessionId: runtime.sessionId',
+        'demandRevision: runtime.demandRevision',
+        'downloadIdentity: readerPageDownloadId(runtime.chapter, asset)',
     ):
         if required not in static_demo:
             fail(f'Reader media pipeline route is incomplete: {required}')
+    for required in (
+        'DownloadId readerPageDownloadId(',
+        'sourceRevision: chapter.chapter.sourceRevision',
+        'final class ReaderRuntimeScreen',
+        'LoaderTransport(widget.loaderSources)',
+    ):
+        if required not in reader_runtime:
+            fail(f'Reader runtime identity/transport path is incomplete: {required}')
     asset_transport_path = ROOT / 'apps/app/lib/asset_bundle_transport.dart'
     asset_transport_test_path = (
         ROOT / 'apps/app/test/asset_bundle_transport_test.dart'
@@ -812,16 +831,69 @@ def check_compile_regressions() -> None:
     for required in (
         'LiveCoordinator(',
         'DownloadRegistry(',
-        'CacheLayout(',
-        'loadBytes: widget.mediaBytesLoader ?? _loadMediaBytes',
+        'EphemeralCacheWorkspace.readerSession(',
+        'layout: _workspace.layout',
+        '_workspace.readArtifact(',
+        'await _workspace.dispose()',
+        'widget.mediaBytesLoader ?? _loadMediaBytes',
         'addSnapshotListener(listener)',
         '_binding?.detach(',
         'AssetBundleTransport(rootBundle)',
+        'LoaderTransport(widget.loaderSources)',
     ):
-        if required not in static_demo:
+        if required not in reader_runtime:
             fail(f'Reader live artifact path is incomplete: {required}')
-    if 'FakeCoordinator(' in static_demo:
+    if 'FakeCoordinator(' in static_demo or 'FakeCoordinator(' in reader_runtime:
         fail('Reader app runtime must not use the fake coordinator')
+    imported_chapter = (
+        ROOT / 'packages/catalog/lib/src/imported_chapter.dart'
+    ).read_text(encoding='utf-8')
+    loader_transport = (
+        ROOT / 'packages/transport/lib/src/loader_transport.dart'
+    ).read_text(encoding='utf-8')
+    ephemeral_workspace = (
+        ROOT / 'packages/storage/lib/src/ephemeral_workspace.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class ImportedChapterRecord',
+        'ChapterManifest toManifest()',
+        'Map<String, Object?> toJson()',
+        'factory ImportedChapterRecord.fromJson',
+    ):
+        if required not in imported_chapter:
+            fail(f'Imported chapter catalog record is incomplete: {required}')
+    for required in (
+        'final class LoaderTransport',
+        'bool contains(Uri uri)',
+        'rangeSupported: true',
+        'validators.matches(currentValidators)',
+        '_fnv64Bytes(bytes)',
+    ):
+        if required not in loader_transport:
+            fail(f'Platform byte-loader transport is incomplete: {required}')
+    for required in (
+        'final class EphemeralCacheWorkspace',
+        'CacheLayout(rootPath)',
+        'Future<Uint8List> readArtifact',
+        'Future<void> dispose()',
+    ):
+        if required not in ephemeral_workspace:
+            fail(f'Reader storage workspace is incomplete: {required}')
+    for required in (
+        'imageFolderChapterRecord',
+        'ReaderRuntimeScreen(',
+        'LoaderTransportSource(',
+        'tokenBytesLoader:',
+        'reader.requestPage(',
+        'downloadIdentity: readerPageDownloadId(runtime.chapter, asset)',
+        'traceSessionId: runtime.sessionId',
+        'demandRevision: runtime.demandRevision',
+    ):
+        if required not in webp_demo:
+            fail(f'Folder import is not integrated with Reader: {required}')
+    if 'final class ImageFolderScreen extends StatefulWidget' in webp_demo:
+        fail('Folder import must not retain the standalone manual-index reader')
+
     app_pubspec = (ROOT / 'apps/app/pubspec.yaml').read_text(
         encoding='utf-8'
     )

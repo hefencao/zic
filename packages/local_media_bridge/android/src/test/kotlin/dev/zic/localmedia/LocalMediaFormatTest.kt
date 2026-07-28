@@ -50,4 +50,21 @@ class LocalMediaFormatTest {
         pages.sortWith(Comparator(::naturalCompare))
         assertEquals(listOf("001.webp", "2.webp", "10.webp"), pages)
     }
+
+    @Test
+    fun `truncated WebP labels are rejected`() {
+        val truncatedLabel = byteArrayOf(
+            'R'.code.toByte(), 'I'.code.toByte(), 'F'.code.toByte(), 'F'.code.toByte(),
+            0, 0, 0, 0,
+            'W'.code.toByte(), 'E'.code.toByte(), 'B'.code.toByte(),
+        )
+        val missingChunkTag = byteArrayOf(
+            'R'.code.toByte(), 'I'.code.toByte(), 'F'.code.toByte(), 'F'.code.toByte(),
+            0, 0, 0, 0,
+            'W'.code.toByte(), 'E'.code.toByte(), 'B'.code.toByte(), 'P'.code.toByte(),
+        )
+
+        assertNull(sniffImageFormat(truncatedLabel))
+        assertNull(sniffImageFormat(missingChunkTag))
+    }
 }

@@ -38,6 +38,7 @@ final class LocalImageFile {
     required this.format,
     this.displayName,
     this.sourceId,
+    this.byteLength,
     this.readBytes,
   });
 
@@ -45,6 +46,7 @@ final class LocalImageFile {
   final LocalImageFormat format;
   final String? displayName;
   final String? sourceId;
+  final int? byteLength;
   final LocalImageFileBytesLoader? readBytes;
 }
 
@@ -111,7 +113,7 @@ LocalImageFormat? detectLocalImageFormat(
       _startsWithAscii(bytes, 'GIF89a')) {
     return LocalImageFormat.gif;
   }
-  if (_asciiAt(bytes, 0, 'RIFF') && _asciiAt(bytes, 8, 'WEBP')) {
+  if (_looksLikeWebp(bytes)) {
     return LocalImageFormat.webp;
   }
   if (_startsWithAscii(bytes, 'BM')) {
@@ -148,6 +150,25 @@ LocalImageFormat? detectLocalImageFormat(
     }
   }
   return null;
+}
+
+bool _looksLikeWebp(Uint8List bytes) {
+  // A directory probe is intentionally permissive about the first chunk type,
+  // but it must still contain the complete RIFF/WEBP label and a readable
+  // four-byte chunk tag. This rejects truncated labels without requiring the
+  // first chunk to be VP8, VP8L, or VP8X.
+  if (bytes.length < 16 ||
+      !_asciiAt(bytes, 0, 'RIFF') ||
+      !_asciiAt(bytes, 8, 'WEBP')) {
+    return false;
+  }
+  for (var index = 12; index < 16; index++) {
+    final value = bytes[index];
+    if (value < 0x20 || value > 0x7e) {
+      return false;
+    }
+  }
+  return true;
 }
 
 bool _startsWith(Uint8List bytes, List<int> signature) {

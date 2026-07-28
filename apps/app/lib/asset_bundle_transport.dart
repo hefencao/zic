@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
@@ -40,8 +39,7 @@ final class AssetBundleTransport implements Transport {
     final chunk = Uint8List.sublistView(bytes, start, endExclusive);
     return ByteResponse(
       bytes: Stream<List<int>>.value(chunk),
-      statusCode:
-          canServeRange ? HttpStatus.partialContent : HttpStatus.ok,
+      statusCode: canServeRange ? 206 : 200,
       rangeStart: start,
       totalLength: bytes.length,
       validators: currentValidators,

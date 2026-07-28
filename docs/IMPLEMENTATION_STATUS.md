@@ -1,3 +1,32 @@
+## Current candidate — imported-folder Reader artifact pipeline
+
+The working folder importer now crosses the same production Reader boundary as manifest
+chapters. A selected folder is normalized into a serializable `ImportedChapterRecord` with
+stable source/comic/chapter/page identities and a revision derived from the ordered page
+sources and media hints. Content URIs and filesystem paths retain distinct canonical URI
+semantics, including Windows drive paths.
+
+`ImageFolderScreen` no longer owns a standalone page index or reads the selected file
+directly. It builds a `ChapterManifest`, registers platform byte loaders with
+`LoaderTransport`, and runs through `ReaderRuntimeScreen`, `LiveCoordinator`,
+`DownloadSession`, promoted artifacts, `ReaderBinding`, and `ReaderView`. Previous/next and
+menu navigation are explicit `ReaderController.requestPage` commands consumed by
+`ReaderView`; page disposal cancels pending artifact waits immediately.
+
+Temporary cache paths, artifact reads and recursive cleanup are owned by
+`packages/storage/EphemeralCacheWorkspace`; the App composition layer no longer imports
+`dart:io`.
+
+Directory-provided byte lengths are propagated into page/catalog metadata. `LoaderTransport`
+includes a full-byte content hash in resume validators, so replacement content with the same
+URI and length cannot be appended to a stale partial artifact.
+
+
+The WebP directory sniffer now rejects incomplete `RIFF`/`WEBP` labels and a missing first
+chunk tag while remaining permissive about unknown printable chunk types. Full validity is
+still owned by the parser/codec. The version remains `0.18.3-dev.21` pending the external
+Flutter/Android gate.
+
 ## Current candidate — local-media package boundary and deferred SAF validation
 
 Local image models, recursive filesystem enumeration and header sniffing have moved from

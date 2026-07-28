@@ -131,6 +131,7 @@ void main() {
               format: LocalImageFormat.webp,
               displayName: 'sub/001.webp',
               sourceId: 'content://provider/document/page-1',
+              byteLength: bytes.length,
               readBytes: () async {
                 reads++;
                 return bytes;
@@ -147,12 +148,52 @@ void main() {
     expect(folder!.directoryPath, 'content://provider/tree/chapter');
     expect(folder.displayName, 'chapter');
     expect(folder.files.single.displayName, 'sub/001.webp');
+    expect(folder.files.single.byteLength, bytes.length);
     expect(
       folder.files.single.sourceUri.toString(),
       'content://provider/document/page-1',
     );
     expect(await folder.files.single.readAsBytes(), bytes);
     expect(reads, 1);
+  });
+
+  test('folder import produces stable catalog and Reader identities', () {
+    final folder = PickedImageFolder(
+      directoryPath: 'content://provider/tree/chapter',
+      displayName: 'chapter',
+      files: <PickedImage>[
+        PickedImage(
+          file: XFile('content://provider/document/001'),
+          sourceId: 'content://provider/document/001',
+          displayName: '001.webp',
+          format: LocalImageFormat.webp,
+        ),
+        PickedImage(
+          file: XFile('content://provider/document/002'),
+          sourceId: 'content://provider/document/002',
+          displayName: '002.png',
+          format: LocalImageFormat.png,
+        ),
+      ],
+    );
+
+    final record = imageFolderChapterRecord(folder);
+    final manifest = record.toManifest();
+
+    expect(record.directoryId, folder.directoryPath);
+    expect(
+      record.pages.map((page) => page.displayName),
+      <String>['001.webp', '002.png'],
+    );
+    expect(manifest.pages.map((page) => page.index), <int>[0, 1]);
+    expect(manifest.pages.first.uri.toString(),
+        'content://provider/document/001');
+    expect(manifest.pages.first.contentKindHint, ContentKindHint.webp);
+    expect(manifest.pages.last.contentKindHint, ContentKindHint.png);
+    expect(
+      readerPageDownloadId(manifest, manifest.pages.first).canonicalUri,
+      manifest.pages.first.uri,
+    );
   });
 
   test('folder picker preserves cancellation as null', () async {

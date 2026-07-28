@@ -22,7 +22,6 @@ internal fun resolveImageFormat(
     return null
 }
 
-
 internal fun resolveDirectoryCandidate(
     header: ByteArray?,
     mimeType: String?,
@@ -55,7 +54,7 @@ internal fun sniffImageFormat(bytes: ByteArray): String? {
     if (bytes.asciiAt(0, "GIF87a") || bytes.asciiAt(0, "GIF89a")) {
         return "gif"
     }
-    if (bytes.asciiAt(0, "RIFF") && bytes.asciiAt(8, "WEBP")) {
+    if (bytes.looksLikeWebp()) {
         return "webp"
     }
     if (bytes.asciiAt(0, "BM")) {
@@ -119,6 +118,19 @@ internal fun imageFormatFromDisplayName(value: String?): String? {
         "heif", "heic", "hif" -> "heif"
         else -> null
     }
+}
+
+private fun ByteArray.looksLikeWebp(): Boolean {
+    if (size < 16 || !asciiAt(0, "RIFF") || !asciiAt(8, "WEBP")) {
+        return false
+    }
+    for (index in 12 until 16) {
+        val value = this[index].toInt() and 0xff
+        if (value < 0x20 || value > 0x7e) {
+            return false
+        }
+    }
+    return true
 }
 
 private fun ByteArray.startsWith(signature: ByteArray): Boolean {

@@ -35,6 +35,7 @@ final class _ReaderViewState extends State<ReaderView> {
   double _lastLogicalPosition = 0;
   int _lastMicros = 0;
   Interaction _interaction = Interaction.idle;
+  int _handledNavigationRevision = 0;
 
   @override
   void initState() {
@@ -42,6 +43,8 @@ final class _ReaderViewState extends State<ReaderView> {
     _pageController = PageController(initialPage: widget.controller.currentIndex);
     _lastLogicalPosition = widget.controller.currentIndex.toDouble();
     _lastMicros = widget.clock.nowMicros();
+    _handledNavigationRevision = widget.controller.navigationRevision;
+    widget.controller.addListener(_handleControllerCommand);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _emitObservation(_lastLogicalPosition, 0);
@@ -53,6 +56,8 @@ final class _ReaderViewState extends State<ReaderView> {
   void didUpdateWidget(covariant ReaderView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_handleControllerCommand);
+      widget.controller.addListener(_handleControllerCommand);
       _pageController.dispose();
       _pageController = PageController(
         initialPage: widget.controller.currentIndex,
@@ -60,11 +65,13 @@ final class _ReaderViewState extends State<ReaderView> {
       _lastLogicalPosition = widget.controller.currentIndex.toDouble();
       _lastMicros = widget.clock.nowMicros();
       _interaction = Interaction.idle;
+      _handledNavigationRevision = widget.controller.navigationRevision;
     }
   }
 
   @override
   void dispose() {
+    widget.controller.removeListener(_handleControllerCommand);
     _pageController.dispose();
     super.dispose();
   }
@@ -119,6 +126,31 @@ final class _ReaderViewState extends State<ReaderView> {
         );
       },
     );
+  }
+
+  void _handleControllerCommand() {
+    final controller = widget.controller;
+    final revision = controller.navigationRevision;
+    if (revision == _handledNavigationRevision) {
+      return;
+    }
+    final requested = controller.requestedIndex;
+    if (requested == null) {
+      _handledNavigationRevision = revision;
+      return;
+    }
+    if (!_pageController.hasClients) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _handleControllerCommand();
+        }
+      });
+      return;
+    }
+    _handledNavigationRevision = revision;
+    _interaction = Interaction.jumping;
+    _pageController.jumpToPage(requested);
+    controller.acknowledgePageRequest(revision);
   }
 
   bool _handleScrollNotification(ScrollNotification notification) {

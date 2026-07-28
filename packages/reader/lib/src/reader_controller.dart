@@ -27,10 +27,14 @@ final class ReaderController extends ChangeNotifier {
   int _currentIndex;
   int _stableIndex;
   ReadingDirection _direction;
+  int? _requestedIndex;
+  int _navigationRevision = 0;
 
   int get currentIndex => _currentIndex;
   int get stableIndex => _stableIndex;
   ReadingDirection get direction => _direction;
+  int? get requestedIndex => _requestedIndex;
+  int get navigationRevision => _navigationRevision;
 
   void setDirection(ReadingDirection value) {
     if (_direction == value) {
@@ -38,6 +42,34 @@ final class ReaderController extends ChangeNotifier {
     }
     _direction = value;
     notifyListeners();
+  }
+
+  void requestPage(int index) {
+    if (index < 0 || index >= chapter.pages.length) {
+      throw RangeError.range(index, 0, chapter.pages.length - 1, 'index');
+    }
+    if (_currentIndex == index) {
+      if (_requestedIndex == null) {
+        return;
+      }
+      _requestedIndex = null;
+      _navigationRevision++;
+      notifyListeners();
+      return;
+    }
+    if (_requestedIndex == index) {
+      return;
+    }
+    _requestedIndex = index;
+    _navigationRevision++;
+    notifyListeners();
+  }
+
+  void acknowledgePageRequest(int revision) {
+    if (revision != _navigationRevision || _requestedIndex == null) {
+      return;
+    }
+    _requestedIndex = null;
   }
 
   void report(ReaderObs observation) {

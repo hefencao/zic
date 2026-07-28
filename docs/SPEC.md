@@ -116,6 +116,11 @@ abstract interface class ComicSource {
   旧异步结果仍受 epoch、identity 和 cancel token 约束。
 - 等待 promotion 使用只读 snapshot observer。observer 失败不得改变下载状态、writer
   lease、artifact 或 lane 调度。
+- 本地文件夹必须先形成 `ImportedChapterRecord` 和 `ChapterManifest`；content URI、
+  文件路径、source revision 与页顺序共同构成 Reader identity。平台 loader 必须通过
+  Transport/DownloadSession 进入 promoted artifact，目录 UI 不得旁路直接读取当前页。
+- UI 请求页跳转时只提交有边界校验的 Reader command；PageView 是命令消费者，目录页
+  不得维护第二套 authoritative page index。
 
 ## 5. 数据模型
 

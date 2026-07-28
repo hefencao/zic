@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:bridge/bridge.dart';
+import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
@@ -11,10 +12,14 @@ import 'package:flutter/services.dart';
 import 'package:pipeline/pipeline.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:texture_bridge/texture_bridge.dart';
+import 'package:transport/transport.dart';
 
 import 'local_image_folder.dart';
+import 'media_load_token.dart';
+import 'reader_runtime.dart';
 
 export 'local_image_folder.dart';
+export 'media_load_token.dart' show MediaLoadToken;
 
 const _webpTypes = <XTypeGroup>[
   XTypeGroup(
@@ -31,29 +36,14 @@ typedef WebpFolderPicker = ImageFolderPicker;
 typedef LocalWebpSelector = Future<XFile?> Function();
 typedef WebpBytesLoader = Future<Uint8List> Function(WebpLoadToken token);
 typedef LocalImageBytesLoader = Future<Uint8List> Function(PickedImage image);
+typedef LocalImageTokenBytesLoader = Future<Uint8List> Function(
+  PickedImage image,
+  MediaLoadToken token,
+);
 typedef LocalImageDecodeProbe = Future<void> Function(Uint8List bytes);
 
-final class WebpLoadToken {
-  final Completer<void> _cancelled = Completer<void>();
-
-  bool get isCancelled => _cancelled.isCompleted;
-  Future<void> get whenCancelled => _cancelled.future;
-
-  void cancel() {
-    if (!isCancelled) {
-      _cancelled.complete();
-    }
-  }
-
-  void throwIfCancelled() {
-    if (isCancelled) {
-      throw const Failure(
-        code: ErrorCode.cancelled,
-        message: 'WebP byte load was cancelled',
-      );
-    }
-  }
-}
+@Deprecated('Use MediaLoadToken')
+typedef WebpLoadToken = MediaLoadToken;
 
 final class PickedImage {
   factory PickedImage({
@@ -61,8 +51,12 @@ final class PickedImage {
     required LocalImageFormat format,
     String? displayName,
     String? sourceId,
+    int? byteLength,
     LocalImageFileBytesLoader? readBytes,
   }) {
+    if (byteLength != null && byteLength < 0) {
+      throw ArgumentError.value(byteLength, 'byteLength', 'must be non-negative');
+    }
     final explicit = displayName?.trim() ?? '';
     final explicitSource = sourceId?.trim() ?? '';
     final fallbackSource = file.path.trim().isEmpty
@@ -73,6 +67,7 @@ final class PickedImage {
       format: format,
       displayName: explicit.isEmpty ? imageDisplayName(file) : explicit,
       sourceId: explicitSource.isEmpty ? fallbackSource : explicitSource,
+      byteLength: byteLength,
       bytesLoader: readBytes,
     );
   }
@@ -82,6 +77,7 @@ final class PickedImage {
     required this.format,
     required this.displayName,
     required this.sourceId,
+    required this.byteLength,
     required LocalImageFileBytesLoader? bytesLoader,
   }) : _bytesLoader = bytesLoader;
 
@@ -89,6 +85,7 @@ final class PickedImage {
   final LocalImageFormat format;
   final String displayName;
   final String sourceId;
+  final int? byteLength;
   final LocalImageFileBytesLoader? _bytesLoader;
 
   Uri get sourceUri {
@@ -352,6 +349,7 @@ PickedImageFolder _pickedImageFolderFromScan({
                   ? imageDisplayName(image.file)
                   : _relativeImageName(relativeRoot, image.file.path)),
           sourceId: image.sourceId,
+          byteLength: image.byteLength,
           readBytes: image.readBytes,
         ),
       )
@@ -602,15 +600,29 @@ final class LocalImagePlayer extends StatefulWidget {
   const LocalImagePlayer({
     required this.image,
     this.bytesLoader,
+    this.tokenBytesLoader,
     this.decodeProbe,
     this.onPreviewStateChanged,
+    this.onFirstFrame,
+    this.downloadIdentity,
+    this.traceClock,
+    this.traceSink = const NoopTraceSink(),
+    this.traceSessionId = 'local-image-preview',
+    this.demandRevision,
     super.key,
   });
 
   final PickedImage image;
   final LocalImageBytesLoader? bytesLoader;
+  final LocalImageTokenBytesLoader? tokenBytesLoader;
   final LocalImageDecodeProbe? decodeProbe;
   final ImagePreviewStateChanged? onPreviewStateChanged;
+  final VoidCallback? onFirstFrame;
+  final DownloadId? downloadIdentity;
+  final MonoClock? traceClock;
+  final TraceSink traceSink;
+  final String traceSessionId;
+  final int Function()? demandRevision;
 
   Uri get sourceUri => image.sourceUri;
 
@@ -625,11 +637,14 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   ImageStream? _imageStream;
   ImageStreamListener? _imageStreamListener;
   int _generation = 0;
+  late MediaLoadToken _loadToken;
+  bool _reportedFirstFrame = false;
 
   @override
   void initState() {
     super.initState();
     _state = ImagePreviewState.loading(widget.image.format);
+    _loadToken = MediaLoadToken();
     _scheduleObserverSnapshot();
     unawaited(_load());
   }
@@ -641,6 +656,9 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         oldWidget.image.displayName != widget.image.displayName ||
         oldWidget.image.format != widget.image.format) {
       _generation++;
+      _loadToken.cancel();
+      _loadToken = MediaLoadToken();
+      _reportedFirstFrame = false;
       _detachImageStream();
       _bytes = null;
       _imageProvider = null;
@@ -652,12 +670,17 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
 
   Future<void> _load() async {
     final generation = ++_generation;
+    final token = _loadToken;
     try {
+      final tokenLoader = widget.tokenBytesLoader;
       final loader = widget.bytesLoader;
-      final bytes = loader == null
-          ? await widget.image.readAsBytes()
-          : await loader(widget.image);
-      if (!mounted || generation != _generation) {
+      final bytes = tokenLoader != null
+          ? await tokenLoader(widget.image, token)
+          : loader == null
+              ? await widget.image.readAsBytes()
+              : await loader(widget.image);
+      token.throwIfCancelled();
+      if (!mounted || generation != _generation || token != _loadToken) {
         return;
       }
       final detected = detectLocalImageFormat(bytes, fileLength: bytes.length);
@@ -674,7 +697,11 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       final decodeProbe = widget.decodeProbe;
       if (provider != null && decodeProbe != null) {
         await decodeProbe(bytes);
-        if (!mounted || generation != _generation) {
+        token.throwIfCancelled();
+        if (!mounted ||
+            generation != _generation ||
+            token != _loadToken ||
+            token.isCancelled) {
           return;
         }
       }
@@ -690,7 +717,10 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         }
       }
     } catch (error) {
-      if (!mounted || generation != _generation) {
+      if (!mounted ||
+          generation != _generation ||
+          token != _loadToken ||
+          token.isCancelled) {
         return;
       }
       _publish(ImagePreviewState.invalid(widget.image.format, error));
@@ -700,6 +730,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   @override
   void dispose() {
     _generation++;
+    _loadToken.cancel();
     _detachImageStream();
     super.dispose();
   }
@@ -772,6 +803,22 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     }
     setState(() => _state = state);
     _notifyObserver(state);
+    if (state.phase == ImagePreviewPhase.ready &&
+        state.format != LocalImageFormat.webp) {
+      _reportFirstFrame();
+    }
+  }
+
+  void _reportFirstFrame() {
+    if (_reportedFirstFrame) {
+      return;
+    }
+    _reportedFirstFrame = true;
+    try {
+      widget.onFirstFrame?.call();
+    } on Object catch (error) {
+      debugPrint('image first-frame observer failed: $error');
+    }
   }
 
   void _scheduleError(Object error) {
@@ -828,6 +875,12 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         showStatus: false,
         initialEngine: WebpPlayerEngine.flutter,
         onPreviewStateChanged: _onWebpState,
+        onFirstFrame: _reportFirstFrame,
+        downloadIdentity: widget.downloadIdentity,
+        traceClock: widget.traceClock,
+        traceSink: widget.traceSink,
+        traceSessionId: widget.traceSessionId,
+        demandRevision: widget.demandRevision,
       );
     } else {
       content = Center(
@@ -862,7 +915,38 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   }
 }
 
-final class ImageFolderScreen extends StatefulWidget {
+ImportedChapterRecord imageFolderChapterRecord(PickedImageFolder folder) {
+  return ImportedChapterRecord.folder(
+    directoryId: folder.directoryPath,
+    displayName: folder.displayName,
+    pages: folder.files
+        .map(
+          (image) => ImportedPageRecord(
+            displayName: image.displayName,
+            sourceId: image.sourceId,
+            contentKindHint: _contentKindHint(image.format),
+            byteLength: image.byteLength,
+            animatedHint: image.format == LocalImageFormat.webp ||
+                image.format == LocalImageFormat.gif,
+          ),
+        )
+        .toList(growable: false),
+  );
+}
+
+ContentKindHint _contentKindHint(LocalImageFormat format) => switch (format) {
+      LocalImageFormat.jpeg => ContentKindHint.jpeg,
+      LocalImageFormat.png => ContentKindHint.png,
+      LocalImageFormat.gif => ContentKindHint.gif,
+      LocalImageFormat.webp => ContentKindHint.webp,
+      LocalImageFormat.avif => ContentKindHint.avif,
+      LocalImageFormat.bmp ||
+      LocalImageFormat.tiff ||
+      LocalImageFormat.ico ||
+      LocalImageFormat.heif => ContentKindHint.fallback,
+    };
+
+final class ImageFolderScreen extends StatelessWidget {
   const ImageFolderScreen({
     required this.folder,
     this.bytesLoader,
@@ -875,112 +959,114 @@ final class ImageFolderScreen extends StatefulWidget {
   final ImagePreviewStateChanged? onPreviewStateChanged;
 
   @override
-  State<ImageFolderScreen> createState() => _ImageFolderScreenState();
-}
-
-final class _ImageFolderScreenState extends State<ImageFolderScreen> {
-  int _index = 0;
-
-  PickedImage get _current => widget.folder.files[_index];
-
-  @override
-  void didUpdateWidget(covariant ImageFolderScreen oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (_index >= widget.folder.files.length) {
-      _index = widget.folder.files.length - 1;
-    }
-  }
-
-  void _select(int index) {
-    if (index == _index || index < 0 || index >= widget.folder.files.length) {
-      return;
-    }
-    setState(() => _index = index);
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final current = _current;
-    final count = widget.folder.files.length;
-    return Scaffold(
-      key: imageFolderScreenKey,
-      appBar: AppBar(
-        title: Column(
+    final record = imageFolderChapterRecord(folder);
+    final chapter = record.toManifest();
+    final sources = <Uri, LoaderTransportSource>{};
+    for (var index = 0; index < folder.files.length; index++) {
+      final image = folder.files[index];
+      sources[chapter.pages[index].uri] = LoaderTransportSource(
+        revision: '${record.sourceRevision}:$index',
+        loadBytes: () => bytesLoader == null
+            ? image.readAsBytes()
+            : bytesLoader!(image),
+      );
+    }
+
+    return ReaderRuntimeScreen(
+      key: ValueKey<Object>(
+        (record.chapterId, record.sourceRevision, bytesLoader),
+      ),
+      screenKey: imageFolderScreenKey,
+      chapter: chapter,
+      loaderSources: sources,
+      appBarTitleBuilder: (context, chapter, currentIndex) {
+        final current = folder.files[currentIndex];
+        return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text(widget.folder.displayName, key: imageFolderTitleKey),
-            Text(
-              '${current.displayName} · ${current.format.label}',
-              key: imageFolderCurrentFileKey,
-              style: Theme.of(context).textTheme.bodySmall,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-        ),
-        actions: <Widget>[
-          PopupMenuButton<int>(
-            key: imageFolderFileMenuKey,
-            tooltip: '选择图片',
-            initialValue: _index,
-            onSelected: _select,
-            itemBuilder: (context) => <PopupMenuEntry<int>>[
-              for (var index = 0; index < count; index++)
-                PopupMenuItem<int>(
-                  value: index,
+            Text(folder.displayName, key: imageFolderTitleKey),
+            Row(
+              children: <Widget>[
+                Expanded(
                   child: Text(
-                    '${widget.folder.files[index].displayName} · '
-                    '${widget.folder.files[index].format.label}',
+                    '${current.displayName} · ${current.format.label}',
+                    key: imageFolderCurrentFileKey,
+                    style: Theme.of(context).textTheme.bodySmall,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-            ],
-          ),
-        ],
-      ),
-      body: Column(
-        children: <Widget>[
-          Expanded(
-            child: LocalImagePlayer(
-              key: ValueKey<String>(
-                'folder-image:${current.sourceId}:${current.format.name}:$_index',
-              ),
-              image: current,
-              bytesLoader: widget.bytesLoader,
-              onPreviewStateChanged: widget.onPreviewStateChanged,
+                const SizedBox(width: 8),
+                Text(
+                  '${currentIndex + 1} / ${folder.files.length}',
+                  key: imageFolderPositionKey,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
             ),
-          ),
-          SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-              child: Row(
-                children: <Widget>[
-                  IconButton.filledTonal(
-                    key: imageFolderPreviousKey,
-                    tooltip: '上一张图片',
-                    onPressed: _index == 0 ? null : () => _select(_index - 1),
-                    icon: const Icon(Icons.chevron_left),
-                  ),
-                  Expanded(
-                    child: Text(
-                      '${_index + 1} / $count',
-                      key: imageFolderPositionKey,
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                  IconButton.filledTonal(
-                    key: imageFolderNextKey,
-                    tooltip: '下一张图片',
-                    onPressed:
-                        _index + 1 >= count ? null : () => _select(_index + 1),
-                    icon: const Icon(Icons.chevron_right),
-                  ),
-                ],
+          ],
+        );
+      },
+      appBarActionsBuilder: (context, reader) => <Widget>[
+        IconButton(
+          key: imageFolderPreviousKey,
+          tooltip: '上一张图片',
+          onPressed: reader.currentIndex == 0
+              ? null
+              : () => reader.requestPage(reader.currentIndex - 1),
+          icon: const Icon(Icons.chevron_left),
+        ),
+        IconButton(
+          key: imageFolderNextKey,
+          tooltip: '下一张图片',
+          onPressed: reader.currentIndex + 1 >= folder.files.length
+              ? null
+              : () => reader.requestPage(reader.currentIndex + 1),
+          icon: const Icon(Icons.chevron_right),
+        ),
+        PopupMenuButton<int>(
+          key: imageFolderFileMenuKey,
+          tooltip: '选择图片',
+          initialValue: reader.currentIndex,
+          onSelected: reader.requestPage,
+          itemBuilder: (context) => <PopupMenuEntry<int>>[
+            for (var index = 0; index < folder.files.length; index++)
+              PopupMenuItem<int>(
+                value: index,
+                child: Text(
+                  '${folder.files[index].displayName} · '
+                  '${folder.files[index].format.label}',
+                ),
               ),
+          ],
+        ),
+      ],
+      artifactPageBuilder: (
+        context,
+        asset,
+        reportFirstFrame,
+        runtime,
+      ) {
+        final image = folder.files[asset.index];
+        return ColoredBox(
+          color: Colors.black,
+          child: LocalImagePlayer(
+            key: ValueKey<String>(
+              'folder-image:${image.sourceId}:${image.format.name}:${asset.index}',
             ),
+            image: image,
+            tokenBytesLoader: (_, token) => runtime.loadBytes(token),
+            onPreviewStateChanged: onPreviewStateChanged,
+            onFirstFrame: reportFirstFrame,
+            downloadIdentity: readerPageDownloadId(runtime.chapter, asset),
+            traceClock: runtime.clock,
+            traceSink: runtime.traceSink,
+            traceSessionId: runtime.sessionId,
+            demandRevision: runtime.demandRevision,
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -1264,9 +1350,14 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
 
   Future<void> _load() async {
     final generation = ++_generation;
+    final token = _loadToken;
     try {
-      final bytes = await widget.loadBytes(_loadToken);
-      if (!mounted || generation != _generation) {
+      final bytes = await widget.loadBytes(token);
+      token.throwIfCancelled();
+      if (!mounted ||
+          generation != _generation ||
+          token != _loadToken ||
+          token.isCancelled) {
         return;
       }
       final canvas = parseWebpInfo(bytes);
@@ -1282,7 +1373,10 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         await _startNative(++_generation);
       }
     } catch (error) {
-      if (!mounted || generation != _generation) {
+      if (!mounted ||
+          generation != _generation ||
+          token != _loadToken ||
+          token.isCancelled) {
         return;
       }
       _resetNative(disposeImage: true);
@@ -1333,6 +1427,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   }
 
   Future<void> _startNative(int generation) async {
+    final token = _loadToken;
     final bytes = _encoded;
     final target = _target;
     final raster = _raster;
@@ -1408,7 +1503,11 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
           height: raster.decodeHeight,
         );
       }
-      if (!mounted || generation != _generation) {
+      token.throwIfCancelled();
+      if (!mounted ||
+          generation != _generation ||
+          token != _loadToken ||
+          token.isCancelled) {
         return;
       }
 
@@ -1435,7 +1534,10 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       }
       await _presentPrepared(first, generation);
     } catch (error) {
-      if (!mounted || generation != _generation) {
+      if (!mounted ||
+          generation != _generation ||
+          token != _loadToken ||
+          token.isCancelled) {
         return;
       }
       _recordTrace(
@@ -1661,9 +1763,14 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     Duration currentDuration,
     Stopwatch clock,
   ) async {
+    final token = _loadToken;
     try {
       final next = await _decodePrepared(generation);
-      if (!mounted || generation != _generation) {
+      token.throwIfCancelled();
+      if (!mounted ||
+          generation != _generation ||
+          token != _loadToken ||
+          token.isCancelled) {
         next?.dispose();
         return;
       }
@@ -1684,7 +1791,10 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         _schedulePending(generation);
       }
     } catch (error) {
-      if (!mounted || generation != _generation) {
+      if (!mounted ||
+          generation != _generation ||
+          token != _loadToken ||
+          token.isCancelled) {
         return;
       }
       _recordTrace(

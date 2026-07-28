@@ -3,7 +3,7 @@
 ## Sole baseline
 
 The sole input baseline for the next iteration is
-`zic_v0.18.3-dev.21_local-media-boundary_UNVERIFIED.zip`. It contains the complete
+`zic_v0.18.3-dev.21_folder-reader-artifact_UNVERIFIED.zip`. It contains the complete
 `fixed.zip` overlay lineage and all Reader artifact, mixed-image folder and texture work;
 do not reapply any older archive or patch.
 
@@ -12,6 +12,18 @@ external Flutter/Android gate passes.
 
 ## Current candidate changes
 
+- Converts selected image folders into serializable `ImportedChapterRecord` values and
+  stable `ChapterManifest`/Download identities.
+- Routes content-URI and filesystem byte loaders through `LoaderTransport`,
+  `LiveCoordinator`, `DownloadSession`, and promoted artifacts before display.
+- Replaces the standalone folder page index with `ReaderController.requestPage` commands
+  consumed by `ReaderView`, retaining LTR/RTL/vertical Reader behavior.
+- Cancels pending local-page artifact waits when pages leave the viewport or the Reader is
+  disposed.
+- Moves temporary Reader cache paths, artifact reads, and cleanup into
+  `packages/storage/EphemeralCacheWorkspace`; `apps/app/lib` has no `dart:io` imports.
+- Rejects truncated WebP labels and missing first chunk tags without reinstating strict
+  VP8/VP8L/VP8X-first scanning.
 - Moves local image models, desktop directory scanning and platform dispatch out of
   `apps/app/lib` into `packages/local_media`; the App keeps only a compatibility export.
 - Retains image MIME/name candidates when SAF header probing fails and validates them when
@@ -71,8 +83,7 @@ created.
 ## Next mainline work
 
 1. Validate SAF document-tree scanning, persisted reads and switching on multiple Android providers, plus the desktop fallback.
-2. Persist imported image folders as local chapter/catalog records and feed those
-   records into the production Reader session rather than a standalone folder screen.
+2. Persist the serializable imported chapter records in the durable local catalog and restore the last reading position.
 3. Bind promoted ingress to DecodeRegistry/UploadRegistry without automatically enabling
    unsafe texture output.
 4. Add Android lifecycle/device tests for surface loss/recreation and concurrent
