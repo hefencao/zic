@@ -23,6 +23,44 @@ final class ImportedLibraryEntry {
   }
 }
 
+
+ReadingProgress? reconcileImportedProgress({
+  required ImportedChapterRecord? previousChapter,
+  required ImportedChapterRecord refreshedChapter,
+  required ReadingProgress? progress,
+}) {
+  if (progress == null) {
+    return null;
+  }
+  var pageIndex = progress.pageIndex;
+  if (pageIndex < 0) {
+    pageIndex = 0;
+  } else if (pageIndex >= refreshedChapter.pages.length) {
+    pageIndex = refreshedChapter.pages.length - 1;
+  }
+  var preserveOffset = false;
+  if (previousChapter != null &&
+      progress.pageIndex >= 0 &&
+      progress.pageIndex < previousChapter.pages.length) {
+    final sourceId = previousChapter.pages[progress.pageIndex].sourceId;
+    final refreshedIndex = refreshedChapter.pages.indexWhere(
+      (page) => page.sourceId == sourceId,
+    );
+    if (refreshedIndex >= 0) {
+      pageIndex = refreshedIndex;
+      preserveOffset = true;
+    }
+  }
+  return ReadingProgress(
+    comicId: refreshedChapter.comicId,
+    chapterId: refreshedChapter.chapterId,
+    pageIndex: pageIndex,
+    subPageOffset: preserveOffset ? progress.subPageOffset : 0,
+    readerMode: progress.readerMode,
+    updatedAt: progress.updatedAt,
+  );
+}
+
 abstract interface class ImportedLibraryStore {
   Future<void> open();
 
@@ -87,17 +125,15 @@ final class MemoryImportedLibraryStore implements ImportedLibraryStore {
   @override
   Future<void> upsertChapter(ImportedChapterRecord chapter) async {
     _requireOpen();
+    final previous = _chapters[chapter.chapterId];
+    final progress = reconcileImportedProgress(
+      previousChapter: previous,
+      refreshedChapter: chapter,
+      progress: _progress[chapter.chapterId],
+    );
     _chapters[chapter.chapterId] = chapter;
-    final progress = _progress[chapter.chapterId];
-    if (progress != null && progress.pageIndex >= chapter.pages.length) {
-      _progress[chapter.chapterId] = ReadingProgress(
-        comicId: chapter.comicId,
-        chapterId: chapter.chapterId,
-        pageIndex: chapter.pages.length - 1,
-        subPageOffset: 0,
-        readerMode: progress.readerMode,
-        updatedAt: progress.updatedAt,
-      );
+    if (progress != null) {
+      _progress[chapter.chapterId] = progress;
     }
   }
 

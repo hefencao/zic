@@ -663,6 +663,8 @@ def check_compile_regressions() -> None:
         "selectedUri.scheme.toLowerCase() == 'content'",
         'pickScopedLocalImageDirectory',
         '_androidBridge.readDocument',
+        'refreshLocalImageDirectory',
+        '_androidBridge.scanImageDirectory',
     ):
         if required not in folder_io:
             fail(f'local image folder enumeration is incomplete: {required}')
@@ -697,6 +699,7 @@ def check_compile_regressions() -> None:
     for required in (
         'image signature detector recognizes supported raster families',
         'directory loader recognizes image headers independent of filename',
+        'directory refresh rescans an existing filesystem identity',
         'extensionless PNG reaches the generic ready state',
         'directory loader rejects a content URI instead of reporting no images',
         'image observer receives the current loading snapshot',
@@ -721,10 +724,11 @@ def check_compile_regressions() -> None:
     ).read_text(encoding='utf-8')
     for required in (
         'pickImageDirectory',
+        'scanImageDirectory',
         'readDocument',
         'LocalMediaDirectory',
         'LocalMediaDocument',
-        'localMediaBridgeProtocolVersion = 2',
+        'localMediaBridgeProtocolVersion = 3',
         './tool/clean.sh',
     ):
         if required not in local_media_dart:
@@ -738,9 +742,10 @@ def check_compile_regressions() -> None:
         'openAssetFileDescriptor',
         'resolveDirectoryCandidate',
         'readDocument(call, result)',
+        'scanImageDirectory(call, result)',
         'headerRecognizedFiles',
         'metadataRecognizedFiles',
-        'PROTOCOL_VERSION = 2',
+        'PROTOCOL_VERSION = 3',
     ):
         if required not in local_media_kotlin:
             fail(f'Android scoped document tree bridge is incomplete: {required}')
@@ -857,6 +862,8 @@ def check_compile_regressions() -> None:
         'ChapterManifest toManifest()',
         'Map<String, Object?> toJson()',
         'factory ImportedChapterRecord.fromJson',
+        'String get stablePageId',
+        'pageId: page.stablePageId',
     ):
         if required not in imported_chapter:
             fail(f'Imported chapter catalog record is incomplete: {required}')
@@ -905,6 +912,7 @@ def check_compile_regressions() -> None:
         'abstract interface class ImportedLibraryStore',
         'final class MemoryImportedLibraryStore',
         'Future<void> saveProgress(ReadingProgress progress)',
+        'reconcileImportedProgress',
     ):
         if required not in imported_library:
             fail(f'imported library contract is incomplete: {required}')
@@ -925,6 +933,7 @@ def check_compile_regressions() -> None:
             fail(f'Flutter storage path bridge is incomplete: {required}')
     for required in (
         'ImportedImageChapterScreen(',
+        'refreshPickedImageFolder',
         'initialProgress:',
         'onProgressChanged:',
         'readLocalImageSource(',
@@ -937,6 +946,8 @@ def check_compile_regressions() -> None:
         '_library.upsertChapter(record)',
         '_library.saveProgress',
         'ImportedImageChapterScreen(',
+        'importedChapterRefreshKey',
+        '_refreshImportedChapter',
     ):
         if required not in demo_home:
             fail(f'imported library UI integration is incomplete: {required}')

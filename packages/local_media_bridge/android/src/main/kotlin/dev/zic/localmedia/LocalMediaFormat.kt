@@ -121,7 +121,7 @@ internal fun imageFormatFromDisplayName(value: String?): String? {
 }
 
 private fun ByteArray.looksLikePng(): Boolean {
-    if (size < 24 ||
+    if (size < 33 ||
         !startsWith(byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) ||
         readUint32Be(8) != 13L ||
         !asciiAt(12, "IHDR")

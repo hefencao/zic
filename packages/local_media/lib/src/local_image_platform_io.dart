@@ -19,11 +19,34 @@ Future<LocalImageDirectorySelection?> pickScopedLocalImageDirectory() async {
     );
   }
   final picked = await _androidBridge.pickImageDirectory();
-  if (picked == null) {
-    return null;
+  return picked == null ? null : _selectionFromScopedDirectory(picked);
+}
+
+Future<LocalImageDirectorySelection> refreshLocalImageDirectory(
+  String directoryId,
+) async {
+  final normalized = directoryId.trim();
+  if (normalized.isEmpty) {
+    throw ArgumentError.value(directoryId, 'directoryId', 'must not be empty');
   }
+  final uri = Uri.tryParse(normalized);
+  if (Platform.isAndroid && uri?.scheme.toLowerCase() == 'content') {
+    final refreshed = await _androidBridge.scanImageDirectory(normalized);
+    return _selectionFromScopedDirectory(refreshed);
+  }
+  final scan = await listLocalImageDirectory(normalized);
+  return LocalImageDirectorySelection(
+    directoryId: normalized,
+    displayName: _directoryDisplayName(normalized),
+    scan: scan,
+  );
+}
+
+LocalImageDirectorySelection _selectionFromScopedDirectory(
+  LocalMediaDirectory directory,
+) {
   final images = <LocalImageFile>[];
-  for (final document in picked.documents) {
+  for (final document in directory.documents) {
     final format = localImageFormatByName(document.format);
     if (format == null) {
       continue;
@@ -41,18 +64,27 @@ Future<LocalImageDirectorySelection?> pickScopedLocalImageDirectory() async {
     );
   }
   return LocalImageDirectorySelection(
-    directoryId: picked.treeUri,
-    displayName: picked.displayName,
+    directoryId: directory.treeUri,
+    displayName: directory.displayName,
     scan: LocalImageDirectoryScan(
       images: images,
-      scannedFiles: picked.scannedFiles,
-      unreadableFiles: picked.unreadableFiles,
-      headerRecognizedFiles: picked.headerRecognizedFiles,
-      metadataRecognizedFiles: picked.metadataRecognizedFiles,
+      scannedFiles: directory.scannedFiles,
+      unreadableFiles: directory.unreadableFiles,
+      headerRecognizedFiles: directory.headerRecognizedFiles,
+      metadataRecognizedFiles: directory.metadataRecognizedFiles,
     ),
   );
 }
 
+String _directoryDisplayName(String path) {
+  final normalized = path.replaceAll('\\', '/');
+  final trimmed = normalized.endsWith('/')
+      ? normalized.substring(0, normalized.length - 1)
+      : normalized;
+  final slash = trimmed.lastIndexOf('/');
+  final name = slash < 0 ? trimmed : trimmed.substring(slash + 1);
+  return name.trim().isEmpty ? '本地图片文件夹' : name;
+}
 
 Future<Uint8List> readLocalImageSource(String sourceId) async {
   final uri = Uri.tryParse(sourceId);

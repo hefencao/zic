@@ -95,6 +95,31 @@ PickedImageFolder _folderFixture() {
   );
 }
 
+PickedImageFolder _refreshedFolderFixture() {
+  final first = _nativeFixture('finite_loop.webp');
+  return PickedImageFolder(
+    directoryPath: first.parent.path,
+    displayName: 'chapter',
+    files: <PickedImage>[
+      PickedImage(
+        file: XFile('${first.parent.path}/000.jpg'),
+        format: LocalImageFormat.jpeg,
+        displayName: '000.jpg',
+      ),
+      PickedImage(
+        file: XFile(first.path),
+        format: LocalImageFormat.webp,
+        displayName: '001.webp',
+      ),
+      PickedImage(
+        file: XFile('${first.parent.path}/002.bin'),
+        format: LocalImageFormat.png,
+        displayName: '002.bin',
+      ),
+    ],
+  );
+}
+
 Future<Uint8List> _folderBytes(PickedImage image) async {
   return switch (image.format) {
     LocalImageFormat.webp =>
@@ -312,6 +337,55 @@ void main() {
       ).data,
       '002.bin · PNG',
     );
+  });
+
+
+  testWidgets('library refresh preserves current page identity after insertion', (
+    tester,
+  ) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final record = imageFolderChapterRecord(_folderFixture());
+    await store.upsertChapter(record);
+    await store.saveProgress(
+      ReadingProgress(
+        comicId: record.comicId,
+        chapterId: record.chapterId,
+        pageIndex: 1,
+        subPageOffset: 0.5,
+        readerMode: ReaderMode.continuous,
+        updatedAt: DateTime.utc(2026, 7, 28),
+      ),
+    );
+    final refresh = Completer<PickedImageFolder>();
+    await tester.pumpWidget(
+      App(
+        libraryStore: store,
+        folderRefresher: (_) => refresh.future,
+      ),
+    );
+    await tester.pump();
+
+    final refreshButton = find.byKey(
+      importedChapterRefreshKey(record.chapterId),
+    );
+    await tester.ensureVisible(refreshButton);
+    await tester.tap(refreshButton);
+    await tester.pump();
+    expect(
+      find.byKey(importedChapterRefreshProgressKey(record.chapterId)),
+      findsOneWidget,
+    );
+
+    refresh.complete(_refreshedFolderFixture());
+    await tester.pump();
+    await tester.pump();
+
+    final entry = await store.get(record.chapterId);
+    expect(entry?.chapter.pages.length, 3);
+    expect(entry?.progress?.pageIndex, 2);
+    expect(entry?.progress?.subPageOffset, 0.5);
   });
 
   testWidgets('picked folder navigates to the folder reader', (tester) async {

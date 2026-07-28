@@ -17,6 +17,8 @@ final class ImportedPageRecord {
   final int? byteLength;
   final bool animatedHint;
 
+  String get stablePageId => 'page-${_stableHash(sourceId)}';
+
   Uri get uri {
     if (_looksLikeWindowsPath(sourceId)) {
       return Uri.file(sourceId, windows: true);
@@ -159,7 +161,7 @@ final class ImportedChapterRecord {
       final page = pages[index];
       assets.add(
         PageAsset(
-          pageId: 'page-${index.toString().padLeft(6, '0')}',
+          pageId: page.stablePageId,
           chapterId: chapterId,
           index: index,
           uri: page.uri,

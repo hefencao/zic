@@ -250,6 +250,9 @@ session 和 Widget。
 `packages/storage`，Flutter 应用支持目录解析位于 `packages/storage_bridge`。App 只注入
 store、展示目录库并提交进度。Reader 页变化写入 `ReadingProgress`，重新打开目录时以
 chapter/comic identity 校验后恢复页码与 paged/continuous 模式。
+目录刷新由 `local_media` 重新扫描持久化 directory identity；Android bridge 使用原 SAF tree URI，
+桌面使用原路径。`ImportedLibraryStore` 在 upsert 时按旧当前页的 source identity 迁移进度，
+避免前置页面新增或删除导致阅读对象漂移。
 
 非 Android：
 

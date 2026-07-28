@@ -269,6 +269,8 @@ Demand 必须包含：
 - 成功导入后必须持久化可序列化章节记录；重新启动后可从本地目录库重新打开。
 - Reader 当前页和 paged/continuous 模式写入 `ReadingProgress`；旧时间戳不得覆盖新进度。
 - 目录重新导入导致页数减少时，持久进度必须收敛到新的最后一页。
+- 已持久化目录必须可在不重新打开 picker 的情况下刷新；Android 复用 SAF tree URI，桌面复用目录路径。
+- 刷新时页面 identity 由 source identity 决定；当前图片仍存在时，新增/删除前置页面不得改变阅读对象。
 - PNG 文件头嗅探至少要求完整 signature、IHDR 长度/标签和非零宽高；仅有容器标签的截断数据不得成为图片候选。
 
 所有 WebP 页面默认使用 Flutter codec。Native FFI/texture 只能在用户显式选择

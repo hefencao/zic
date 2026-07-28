@@ -46,9 +46,50 @@ void main() {
     expect(second.sourceRevision, first.sourceRevision);
     final manifest = first.toManifest();
     expect(manifest.pages.map((page) => page.index), <int>[0, 1]);
+    expect(
+      manifest.pages.map((page) => page.pageId).toSet().length,
+      manifest.pages.length,
+    );
+    expect(manifest.pages.first.pageId, first.pages.first.stablePageId);
     expect(manifest.pages.first.uri.toString(),
         'content://provider/document/001');
     expect(manifest.pages.first.contentKindHint, ContentKindHint.webp);
+  });
+
+
+  test('stable page identity survives insertion before an existing page', () {
+    final original = ImportedChapterRecord.folder(
+      directoryId: '/chapter',
+      displayName: 'chapter',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '2.png',
+          sourceId: '/chapter/2.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    final refreshed = ImportedChapterRecord.folder(
+      directoryId: '/chapter',
+      displayName: 'chapter',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '1.png',
+          sourceId: '/chapter/1.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+        ImportedPageRecord(
+          displayName: '2.png',
+          sourceId: '/chapter/2.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+
+    expect(
+      refreshed.toManifest().pages[1].pageId,
+      original.toManifest().pages.single.pageId,
+    );
   });
 
   test('folder revision changes with byte length and animation hints', () {

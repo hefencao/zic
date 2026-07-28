@@ -153,7 +153,7 @@ bool _looksLikePng(Uint8List bytes, {int? fileLength}) {
   // PNG always starts with an IHDR chunk. Requiring the complete chunk label
   // and dimensions rejects a bare/truncated eight-byte signature while still
   // keeping directory probing much cheaper than full container validation.
-  if (bytes.length < 24 ||
+  if (bytes.length < 33 ||
       !_startsWith(
         bytes,
         const <int>[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
@@ -167,7 +167,7 @@ bool _looksLikePng(Uint8List bytes, {int? fileLength}) {
   if (width == 0 || height == 0) {
     return false;
   }
-  return fileLength == null || fileLength >= 33;
+  return fileLength == null || fileLength >= bytes.length;
 }
 
 int _readUint32Be(Uint8List bytes, int offset) {

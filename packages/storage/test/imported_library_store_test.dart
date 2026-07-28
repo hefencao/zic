@@ -54,6 +54,68 @@ void main() {
     expect(await store.get(chapter.chapterId), isNull);
   });
 
+
+  test('sqlite refresh follows the same page source after insertion', () async {
+    final store = SqliteImportedLibraryStore.memory();
+    await store.open();
+    addTearDown(store.close);
+
+    final first = ImportedChapterRecord.folder(
+      directoryId: '/library/refresh',
+      displayName: 'Refresh',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '2.png',
+          sourceId: '/library/refresh/2.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+        ImportedPageRecord(
+          displayName: '3.png',
+          sourceId: '/library/refresh/3.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    await store.upsertChapter(first);
+    await store.saveProgress(
+      ReadingProgress(
+        comicId: first.comicId,
+        chapterId: first.chapterId,
+        pageIndex: 1,
+        subPageOffset: 0.25,
+        readerMode: ReaderMode.continuous,
+        updatedAt: DateTime.utc(2026, 7, 28, 4),
+      ),
+    );
+
+    final refreshed = ImportedChapterRecord.folder(
+      directoryId: '/library/refresh',
+      displayName: 'Refresh',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '1.png',
+          sourceId: '/library/refresh/1.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+        ImportedPageRecord(
+          displayName: '2.png',
+          sourceId: '/library/refresh/2.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+        ImportedPageRecord(
+          displayName: '3.png',
+          sourceId: '/library/refresh/3.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    await store.upsertChapter(refreshed);
+
+    final entry = await store.get(refreshed.chapterId);
+    expect(entry?.progress?.pageIndex, 2);
+    expect(entry?.progress?.subPageOffset, 0.25);
+  });
+
   test('sqlite imported library survives close and reopen', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-imported-library-',

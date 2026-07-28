@@ -101,6 +101,20 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
     final db = _requireDb();
     db.execute('BEGIN IMMEDIATE');
     try {
+      final existingRows = db.select('''
+        SELECT c.chapter_json, p.progress_json
+        FROM imported_chapter AS c
+        LEFT JOIN reading_progress AS p ON p.chapter_id = c.chapter_id
+        WHERE c.chapter_id = ?
+        LIMIT 1
+      ''', <Object?>[chapter.chapterId]);
+      final previousChapter = existingRows.isEmpty
+          ? null
+          : _decodeChapter(existingRows.first['chapter_json']! as String);
+      final previousProgress = existingRows.isEmpty ||
+              existingRows.first['progress_json'] == null
+          ? null
+          : _decodeProgress(existingRows.first['progress_json']! as String);
       db.execute('''
         INSERT INTO imported_chapter (
           chapter_id, comic_id, imported_us, chapter_json
@@ -115,25 +129,13 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
         chapter.importedAt.microsecondsSinceEpoch,
         jsonEncode(chapter.toJson()),
       ]);
-      final progressRows = db.select(
-        'SELECT progress_json FROM reading_progress WHERE chapter_id = ?',
-        <Object?>[chapter.chapterId],
+      final reconciled = reconcileImportedProgress(
+        previousChapter: previousChapter,
+        refreshedChapter: chapter,
+        progress: previousProgress,
       );
-      if (progressRows.isNotEmpty) {
-        final progress = _decodeProgress(
-          progressRows.first['progress_json']! as String,
-        );
-        if (progress.pageIndex >= chapter.pages.length) {
-          final clamped = ReadingProgress(
-            comicId: chapter.comicId,
-            chapterId: chapter.chapterId,
-            pageIndex: chapter.pages.length - 1,
-            subPageOffset: 0,
-            readerMode: progress.readerMode,
-            updatedAt: progress.updatedAt,
-          );
-          _putProgress(db, clamped);
-        }
+      if (reconciled != null) {
+        _putProgress(db, reconciled);
       }
       db.execute('COMMIT');
     } on Object {

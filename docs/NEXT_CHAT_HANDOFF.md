@@ -12,10 +12,12 @@ archives or patches.
 - Imported folders are serialized as `ImportedChapterRecord` and persisted through
   `ImportedLibraryStore`; the production backend is SQLite in the application-support
   directory, with an in-memory implementation for tests.
-- The home page lists persisted local chapters, supports removal, and reopens them through
-  `LoaderTransport -> DownloadSession -> promoted artifact -> Reader`.
+- The home page lists persisted local chapters, supports refresh/removal, and reopens them
+  through `LoaderTransport -> DownloadSession -> promoted artifact -> Reader`. Android
+  refresh reuses the persisted SAF tree URI; desktop refresh rescans the stored path.
 - Reader page changes persist `ReadingProgress`; reopen restores the page and
-  paged/continuous mode. Stale writes are ignored and chapter shrink clamps progress.
+  paged/continuous mode. Refresh follows the same page source across insertions/removals,
+  stale writes are ignored, and a removed current page clamps to a valid index.
 - `mediaFormat` is persisted per imported page so files with missing or misleading
   extensions reopen with the original detected format.
 - PNG sniffing rejects bare/truncated container labels in both Dart and Android while full
@@ -49,9 +51,7 @@ bash ./tool/build_android.sh debug
 
 1. Bind promoted local/remote artifacts to real DecodeRegistry and UploadRegistry ownership,
    retaining the safe Flutter renderer as fallback.
-2. Add local catalog refresh: rescan a persisted SAF tree, preserve stable page identities,
-   detect additions/removals, and reconcile saved progress.
-3. Add Android lifecycle/device coverage for surface loss/recreation, overlapping Reader
+2. Add Android lifecycle/device coverage for surface loss/recreation, overlapping Reader
    pages, retained-frame redraw, resize and engine detach races.
-4. Add CBZ import through the local-media/catalog boundary without introducing filesystem
+3. Add CBZ import through the local-media/catalog boundary without introducing filesystem
    I/O into Reader or App UI code.

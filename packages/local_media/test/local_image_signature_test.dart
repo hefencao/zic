@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -6,29 +7,10 @@ import 'package:local_media/local_media.dart';
 void main() {
   test('image signature detector recognizes supported raster families', () {
     final cases = <LocalImageFormat, List<int>>{
-      LocalImageFormat.png: <int>[
-        0x89,
-        0x50,
-        0x4e,
-        0x47,
-        0x0d,
-        0x0a,
-        0x1a,
-        0x0a,
-        0,
-        0,
-        0,
-        13,
-        ...'IHDR'.codeUnits,
-        0,
-        0,
-        0,
-        1,
-        0,
-        0,
-        0,
-        1,
-      ],
+      LocalImageFormat.png: base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+        'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      ),
       LocalImageFormat.jpeg: <int>[0xff, 0xd8, 0xff, 0xe0],
       LocalImageFormat.gif: <int>[...'GIF89a'.codeUnits, 1, 0, 1, 0],
       LocalImageFormat.webp: <int>[

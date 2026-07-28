@@ -12,6 +12,8 @@ typedef LocalImageDirectoryLoader = Future<LocalImageDirectoryScan> Function(
 );
 typedef LocalImageDirectoryContentsPicker =
     Future<LocalImageDirectorySelection?> Function();
+typedef LocalImageDirectoryRefresher =
+    Future<LocalImageDirectorySelection> Function(String directoryId);
 
 Future<String?> selectLocalImageDirectory() => getDirectoryPath();
 
@@ -21,9 +23,13 @@ bool get prefersScopedLocalImageDirectoryPicker =>
 Future<LocalImageDirectorySelection?> pickScopedLocalImageDirectory() =>
     platform.pickScopedLocalImageDirectory();
 
+Future<LocalImageDirectorySelection> refreshLocalImageDirectory(
+  String directoryId,
+) =>
+    platform.refreshLocalImageDirectory(directoryId);
+
 Future<LocalImageDirectoryScan> listLocalImageDirectory(String path) =>
     platform.listLocalImageDirectory(path);
-
 
 Future<Uint8List> readLocalImageSource(String sourceId) =>
     platform.readLocalImageSource(sourceId);

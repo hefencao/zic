@@ -36,6 +36,68 @@ void main() {
     expect(entry?.progress?.pageIndex, 2);
   });
 
+
+  test('chapter refresh preserves the same current source after insertion', () async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+
+    final first = ImportedChapterRecord.folder(
+      directoryId: '/library/chapter',
+      displayName: 'Chapter',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '2.png',
+          sourceId: '/library/chapter/2.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+        ImportedPageRecord(
+          displayName: '3.png',
+          sourceId: '/library/chapter/3.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    await store.upsertChapter(first);
+    await store.saveProgress(
+      ReadingProgress(
+        comicId: first.comicId,
+        chapterId: first.chapterId,
+        pageIndex: 1,
+        subPageOffset: 0.5,
+        readerMode: ReaderMode.continuous,
+        updatedAt: DateTime.utc(2026, 7, 28),
+      ),
+    );
+
+    final refreshed = ImportedChapterRecord.folder(
+      directoryId: '/library/chapter',
+      displayName: 'Chapter',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '1.png',
+          sourceId: '/library/chapter/1.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+        ImportedPageRecord(
+          displayName: '2.png',
+          sourceId: '/library/chapter/2.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+        ImportedPageRecord(
+          displayName: '3.png',
+          sourceId: '/library/chapter/3.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    await store.upsertChapter(refreshed);
+
+    final entry = await store.get(refreshed.chapterId);
+    expect(entry?.progress?.pageIndex, 2);
+    expect(entry?.progress?.subPageOffset, 0.5);
+  });
+
   test('chapter refresh clamps progress after pages are removed', () async {
     final store = MemoryImportedLibraryStore();
     await store.open();

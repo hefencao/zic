@@ -21,12 +21,14 @@ final class App extends StatelessWidget {
   const App({
     this.picker = defaultWebpPicker,
     this.folderPicker = defaultImageFolderPicker,
+    this.folderRefresher = defaultImageFolderRefresher,
     this.libraryStore,
     super.key,
   });
 
   final WebpPicker picker;
   final ImageFolderPicker folderPicker;
+  final ImageFolderRefresher folderRefresher;
   final ImportedLibraryStore? libraryStore;
 
   @override
@@ -49,6 +51,7 @@ final class App extends StatelessWidget {
       home: DemoHome(
         picker: picker,
         folderPicker: folderPicker,
+        folderRefresher: folderRefresher,
         libraryStore: libraryStore,
       ),
     );

@@ -68,6 +68,22 @@ class LocalMediaFormatTest {
         assertNull(sniffImageFormat(missingChunkTag))
     }
 
+
+    @Test
+    fun `complete PNG IHDR prefix is recognized`() {
+        val bytes = byteArrayOf(
+            0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+            0, 0, 0, 13,
+            'I'.code.toByte(), 'H'.code.toByte(), 'D'.code.toByte(), 'R'.code.toByte(),
+            0, 0, 0, 1,
+            0, 0, 0, 1,
+            8, 6, 0, 0, 0,
+            0, 0, 0, 0,
+        )
+
+        assertEquals("png", sniffImageFormat(bytes))
+    }
+
     @Test
     fun `truncated PNG labels are rejected`() {
         val signatureOnly = byteArrayOf(

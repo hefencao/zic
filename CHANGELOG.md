@@ -1,3 +1,14 @@
+## Unreleased — persisted local-directory refresh
+
+- Add bridge protocol 3 and `scanImageDirectory` for rescanning a persisted Android SAF
+  tree without reopening the picker; desktop refresh reuses the stored directory path.
+- Derive imported Reader page IDs from stable source identities instead of page indexes.
+- Reconcile memory and SQLite reading progress to the same source when refresh inserts or
+  removes earlier pages, and clamp only when the current source disappears.
+- Add per-chapter refresh controls and added/removed page diagnostics to the local library.
+- Replace the truncated PNG directory fixture with a complete one while keeping strict
+  rejection tests for bare signature and incomplete IHDR data.
+
 ## Unreleased — durable imported directory library
 
 - Reject bare or truncated PNG container labels during Dart and Android directory sniffing.

@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 const String localMediaBridgeChannelName = 'dev.zic/local_media';
-const int localMediaBridgeProtocolVersion = 2;
+const int localMediaBridgeProtocolVersion = 3;
 
 @immutable
 final class LocalMediaDocument {
@@ -62,9 +62,40 @@ final class LocalMediaBridge {
     final response = await _channel.invokeMapMethod<String, Object?>(
       'pickImageDirectory',
     );
-    if (response == null) {
-      return null;
+    return response == null ? null : _parseDirectory(response);
+  }
+
+  Future<LocalMediaDirectory> scanImageDirectory(String treeUri) async {
+    final normalized = treeUri.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError.value(treeUri, 'treeUri', 'must not be empty');
     }
+    final response = await _channel.invokeMapMethod<String, Object?>(
+      'scanImageDirectory',
+      <String, Object?>{'treeUri': normalized},
+    );
+    if (response == null) {
+      throw StateError('Android directory rescan returned no result');
+    }
+    return _parseDirectory(response);
+  }
+
+  Future<Uint8List> readDocument(String sourceUri) async {
+    final normalized = sourceUri.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError.value(sourceUri, 'sourceUri', 'must not be empty');
+    }
+    final bytes = await _channel.invokeMethod<Uint8List>(
+      'readDocument',
+      <String, Object?>{'sourceUri': normalized},
+    );
+    if (bytes == null) {
+      throw StateError('Android document read returned no bytes');
+    }
+    return bytes;
+  }
+
+  LocalMediaDirectory _parseDirectory(Map<String, Object?> response) {
     final protocolVersion = _optionalInt(
       response,
       'protocolVersion',
@@ -134,21 +165,6 @@ final class LocalMediaBridge {
       headerRecognizedFiles: headerRecognizedFiles,
       metadataRecognizedFiles: metadataRecognizedFiles,
     );
-  }
-
-  Future<Uint8List> readDocument(String sourceUri) async {
-    final normalized = sourceUri.trim();
-    if (normalized.isEmpty) {
-      throw ArgumentError.value(sourceUri, 'sourceUri', 'must not be empty');
-    }
-    final bytes = await _channel.invokeMethod<Uint8List>(
-      'readDocument',
-      <String, Object?>{'sourceUri': normalized},
-    );
-    if (bytes == null) {
-      throw StateError('Android document read returned no bytes');
-    }
-    return bytes;
   }
 }
 

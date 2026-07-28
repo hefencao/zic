@@ -31,6 +31,9 @@ const _webpTypes = <XTypeGroup>[
 
 typedef WebpPicker = Future<PickedWebp?> Function();
 typedef ImageFolderPicker = Future<PickedImageFolder?> Function();
+typedef ImageFolderRefresher = Future<PickedImageFolder> Function(
+  ImportedChapterRecord chapter,
+);
 @Deprecated('Use ImageFolderPicker')
 typedef WebpFolderPicker = ImageFolderPicker;
 typedef LocalWebpSelector = Future<XFile?> Function();
@@ -364,6 +367,28 @@ PickedImageFolder _pickedImageFolderFromScan({
 }
 
 Future<PickedImageFolder?> defaultImageFolderPicker() => pickLocalImageFolder();
+
+Future<PickedImageFolder> refreshPickedImageFolder(
+  ImportedChapterRecord chapter, {
+  LocalImageDirectoryRefresher? refreshDirectory,
+}) async {
+  final selection = await (refreshDirectory ?? refreshLocalImageDirectory)(
+    chapter.directoryId,
+  );
+  return _pickedImageFolderFromScan(
+    directoryId: selection.directoryId,
+    displayName: selection.displayName,
+    scan: selection.scan,
+    relativeRoot: selection.directoryId.startsWith('content://')
+        ? null
+        : selection.directoryId,
+  );
+}
+
+Future<PickedImageFolder> defaultImageFolderRefresher(
+  ImportedChapterRecord chapter,
+) =>
+    refreshPickedImageFolder(chapter);
 
 @Deprecated('Use pickLocalImageFolder')
 Future<PickedImageFolder?> pickLocalWebpFolder({
@@ -915,10 +940,16 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   }
 }
 
-ImportedChapterRecord imageFolderChapterRecord(PickedImageFolder folder) {
+ImportedChapterRecord imageFolderChapterRecord(
+  PickedImageFolder folder, {
+  ReadingDirection readingDirection = ReadingDirection.ltr,
+  DateTime? importedAt,
+}) {
   return ImportedChapterRecord.folder(
     directoryId: folder.directoryPath,
     displayName: folder.displayName,
+    readingDirection: readingDirection,
+    importedAt: importedAt,
     pages: folder.files
         .map(
           (image) => ImportedPageRecord(

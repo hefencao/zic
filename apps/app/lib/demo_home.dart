@@ -24,6 +24,10 @@ const importedLibraryLoadingKey = ValueKey<String>('imported-library-loading');
 const importedLibraryErrorKey = ValueKey<String>('imported-library-error');
 Key importedChapterEntryKey(String chapterId) =>
     ValueKey<String>('imported-chapter:$chapterId');
+Key importedChapterRefreshKey(String chapterId) =>
+    ValueKey<String>('refresh-imported-chapter:$chapterId');
+Key importedChapterRefreshProgressKey(String chapterId) =>
+    ValueKey<String>('refreshing-imported-chapter:$chapterId');
 Key importedChapterRemoveKey(String chapterId) =>
     ValueKey<String>('remove-imported-chapter:$chapterId');
 @Deprecated('Use localImageFolderPickerProgressKey')
@@ -33,12 +37,14 @@ final class DemoHome extends StatefulWidget {
   const DemoHome({
     required this.picker,
     required this.folderPicker,
+    this.folderRefresher = defaultImageFolderRefresher,
     this.libraryStore,
     super.key,
   });
 
   final WebpPicker picker;
   final ImageFolderPicker folderPicker;
+  final ImageFolderRefresher folderRefresher;
   final ImportedLibraryStore? libraryStore;
 
   @override
@@ -54,6 +60,7 @@ final class _DemoHomeState extends State<DemoHome> {
   bool _libraryLoading = true;
   bool _picking = false;
   bool _pickingFolder = false;
+  final Set<String> _refreshingChapters = <String>{};
 
   @override
   void initState() {
@@ -217,6 +224,58 @@ final class _DemoHomeState extends State<DemoHome> {
     }
   }
 
+  Future<void> _refreshImportedChapter(ImportedLibraryEntry entry) async {
+    final chapterId = entry.chapter.chapterId;
+    if (_refreshingChapters.contains(chapterId)) {
+      return;
+    }
+    setState(() => _refreshingChapters.add(chapterId));
+    try {
+      await _ensureLibraryReady();
+      final folder = await widget.folderRefresher(entry.chapter);
+      final refreshed = imageFolderChapterRecord(
+        folder,
+        readingDirection: entry.chapter.readingDirection,
+        importedAt: entry.chapter.importedAt,
+      );
+      if (refreshed.chapterId != chapterId) {
+        throw StateError('刷新结果改变了目录章节 identity');
+      }
+      final previousSources = entry.chapter.pages
+          .map((page) => page.sourceId)
+          .toSet();
+      final refreshedSources = refreshed.pages
+          .map((page) => page.sourceId)
+          .toSet();
+      final added = refreshedSources.difference(previousSources).length;
+      final removed = previousSources.difference(refreshedSources).length;
+      await _library.upsertChapter(refreshed);
+      await _reloadLibrary();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '目录已刷新：${refreshed.pages.length} 页'
+            '（新增 $added，移除 $removed）',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('刷新图片文件夹失败：$error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _refreshingChapters.remove(chapterId));
+      }
+    }
+  }
+
   Future<void> _removeImportedChapter(ImportedLibraryEntry entry) async {
     await _ensureLibraryReady();
     await _library.removeChapter(entry.chapter.chapterId);
@@ -269,11 +328,35 @@ final class _DemoHomeState extends State<DemoHome> {
                   : '${entry.chapter.pages.length} 页 · '
                       '上次第 ${entry.progress!.pageIndex + 1} 页',
             ),
-            trailing: IconButton(
-              key: importedChapterRemoveKey(entry.chapter.chapterId),
-              tooltip: '移除目录记录',
-              onPressed: () => _removeImportedChapter(entry),
-              icon: const Icon(Icons.delete_outline),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                if (_refreshingChapters.contains(entry.chapter.chapterId))
+                  SizedBox.square(
+                    key: importedChapterRefreshProgressKey(
+                      entry.chapter.chapterId,
+                    ),
+                    dimension: 24,
+                    child: const CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  IconButton(
+                    key: importedChapterRefreshKey(entry.chapter.chapterId),
+                    tooltip: '重新扫描目录',
+                    onPressed: () => _refreshImportedChapter(entry),
+                    icon: const Icon(Icons.refresh),
+                  ),
+                IconButton(
+                  key: importedChapterRemoveKey(entry.chapter.chapterId),
+                  tooltip: '移除目录记录',
+                  onPressed: _refreshingChapters.contains(
+                    entry.chapter.chapterId,
+                  )
+                      ? null
+                      : () => _removeImportedChapter(entry),
+                  icon: const Icon(Icons.delete_outline),
+                ),
+              ],
             ),
             onTap: () => _openImportedChapter(entry),
           ),

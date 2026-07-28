@@ -11,29 +11,12 @@ void main() {
       final root = await Directory.systemTemp.createTemp('zic-image-folder-');
       addTearDown(() => root.delete(recursive: true));
 
-      await File('${root.path}/10.txt').writeAsBytes(<int>[
-        0x89,
-        0x50,
-        0x4e,
-        0x47,
-        0x0d,
-        0x0a,
-        0x1a,
-        0x0a,
-        0,
-        0,
-        0,
-        13,
-        ...'IHDR'.codeUnits,
-        0,
-        0,
-        0,
-        1,
-        0,
-        0,
-        0,
-        1,
-      ]);
+      await File('${root.path}/10.txt').writeAsBytes(
+        base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+          'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+        ),
+      );
       await File('${root.path}/2.data').writeAsBytes(
         base64Decode(
           'UklGRoQAAABXRUJQVlA4WAoAAAACAAAAAQAAAQAAQU5JTQYAAAAAAAAAAgBB'
@@ -73,6 +56,38 @@ void main() {
       expect(scan.unrecognizedFiles, 1);
     },
   );
+
+
+  test('directory refresh rescans an existing filesystem identity', () async {
+    final root = await Directory.systemTemp.createTemp('zic-image-refresh-');
+    addTearDown(() => root.delete(recursive: true));
+    final first = File('${root.path}/1.png');
+    await first.writeAsBytes(
+      base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+        'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      ),
+    );
+
+    final initial = await refreshLocalImageDirectory(root.path);
+    expect(initial.directoryId, root.path);
+    expect(initial.scan.images.single.file.path, first.path);
+
+    await first.delete();
+    final second = File('${root.path}/2.webp');
+    await second.writeAsBytes(
+      base64Decode(
+        'UklGRoQAAABXRUJQVlA4WAoAAAACAAAAAQAAAQAAQU5JTQYAAAAAAAAAAgBB'
+        'Tk1GKAAAAAAAAAAAAAEAAAEAADwAAAJWUDhMDwAAAC8BQAAABxD9j/4HIqL/'
+        'AQBBTk1GKAAAAAAAAAAAAAEAAAEAAFoAAABWUDhMDwAAAC8BQAAAB9D/iP4H'
+        'IqL/AQA=',
+      ),
+    );
+
+    final refreshed = await refreshLocalImageDirectory(root.path);
+    expect(refreshed.scan.images.single.file.path, second.path);
+    expect(refreshed.scan.images.single.format, LocalImageFormat.webp);
+  });
 
   test('directory loader does not trust an image-looking extension', () async {
     final root = await Directory.systemTemp.createTemp('zic-image-empty-');

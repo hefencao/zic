@@ -84,6 +84,7 @@ class LocalMediaBridgePlugin :
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "pickImageDirectory" -> pickImageDirectory(result)
+            "scanImageDirectory" -> scanImageDirectory(call, result)
             "readDocument" -> readDocument(call, result)
             else -> result.notImplemented()
         }
@@ -141,6 +142,28 @@ class LocalMediaBridgePlugin :
             scanDirectory(treeUri).toMap()
         }
         return true
+    }
+
+
+    private fun scanImageDirectory(call: MethodCall, result: MethodChannel.Result) {
+        val raw = call.argument<String>("treeUri")?.trim()
+        if (raw.isNullOrEmpty()) {
+            result.error("invalid_uri", "treeUri is required", null)
+            return
+        }
+        val treeUri = try {
+            Uri.parse(raw)
+        } catch (error: Throwable) {
+            result.error("invalid_uri", error.message ?: error.toString(), null)
+            return
+        }
+        if (treeUri.scheme != ContentResolver.SCHEME_CONTENT) {
+            result.error("invalid_uri", "a content document-tree URI is required", null)
+            return
+        }
+        execute(result) {
+            scanDirectory(treeUri).toMap()
+        }
     }
 
     private fun readDocument(call: MethodCall, result: MethodChannel.Result) {
@@ -455,7 +478,7 @@ class LocalMediaBridgePlugin :
 
     companion object {
         private const val CHANNEL_NAME = "dev.zic/local_media"
-        private const val PROTOCOL_VERSION = 2
+        private const val PROTOCOL_VERSION = 3
         private const val PICK_DIRECTORY_REQUEST = 0x5A31
         private const val HEADER_PROBE_BYTES = 64
         private const val MIN_MEDIA_BYTES = 4

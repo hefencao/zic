@@ -1,3 +1,22 @@
+## Current iteration — persisted directory refresh and stable page reconciliation
+
+Persisted local chapters can now be rescanned without reopening the system picker. Android
+reuses the stored SAF tree URI through `scanImageDirectory`; desktop platforms rescan the
+stored filesystem directory outside the UI isolate. The bridge protocol is version 3 so a
+Dart refresh request cannot silently target older native code that only supports initial
+selection.
+
+Imported page IDs are derived from stable source identities rather than list positions.
+When refresh inserts or removes files before the current page, both memory and SQLite
+stores reconcile `ReadingProgress` to the same source when it still exists; only a removed
+current source falls back to a clamped valid page. The home library exposes per-chapter
+refresh progress and reports added/removed page counts while leaving the previous chapter
+untouched when scanning fails.
+
+The directory test fixture now uses a complete decodable PNG. A 24-byte signature/IHDR
+prefix is correctly rejected by the production sniffer because it cannot satisfy the
+minimum 33-byte PNG header contract.
+
 ## Current candidate — durable imported library and progress restore
 
 Imported image folders now become durable catalog entries rather than route-local values.

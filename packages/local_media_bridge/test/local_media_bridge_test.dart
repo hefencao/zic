@@ -56,6 +56,43 @@ void main() {
     expect(directory.documents.single.byteLength, 42);
   });
 
+
+  test('persisted document tree can be rescanned without reopening picker', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'scanImageDirectory');
+      expect(
+        call.arguments,
+        <String, Object?>{
+          'treeUri': 'content://provider/tree/chapter',
+        },
+      );
+      return <String, Object?>{
+        'protocolVersion': localMediaBridgeProtocolVersion,
+        'treeUri': 'content://provider/tree/chapter',
+        'displayName': 'chapter',
+        'scannedFiles': 1,
+        'unreadableFiles': 0,
+        'headerRecognizedFiles': 1,
+        'metadataRecognizedFiles': 0,
+        'documents': <Object?>[
+          <String, Object?>{
+            'sourceUri': 'content://provider/document/page-2',
+            'displayName': '002.png',
+            'format': 'png',
+            'recognition': 'header',
+            'byteLength': 68,
+          },
+        ],
+      };
+    });
+
+    final directory = await bridge.scanImageDirectory(
+      'content://provider/tree/chapter',
+    );
+    expect(directory.documents.single.displayName, '002.png');
+  });
+
   test('directory cancellation remains null', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (_) async => null);
