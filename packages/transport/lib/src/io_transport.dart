@@ -40,9 +40,19 @@ final class IoTransport implements Transport {
 }
 
 final class HttpTransport implements Transport {
-  HttpTransport({HttpClient? client})
-      : _client = client ?? HttpClient(),
-        _ownsClient = client == null;
+  HttpTransport({
+    HttpClient? client,
+    Duration connectionTimeout = const Duration(seconds: 15),
+    String? userAgent,
+  })  : _client = client ?? HttpClient(),
+        _ownsClient = client == null {
+    if (_ownsClient) {
+      _client.connectionTimeout = connectionTimeout;
+    }
+    if (userAgent != null && userAgent.trim().isNotEmpty) {
+      _client.userAgent = userAgent.trim();
+    }
+  }
 
   final HttpClient _client;
   final bool _ownsClient;
@@ -58,9 +68,13 @@ final class HttpTransport implements Transport {
     } on Failure {
       rethrow;
     } on SocketException catch (error) {
+      final osError = error.osError;
+      final osDetails = osError == null
+          ? ''
+          : ' (${osError.message}, errno ${osError.errorCode})';
       throw Failure(
         code: ErrorCode.network,
-        message: 'socket failure for $uri: ${error.message}',
+        message: 'socket failure for $uri: ${error.message}$osDetails',
         cause: error,
       );
     } on HttpException catch (error) {

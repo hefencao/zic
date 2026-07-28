@@ -2,52 +2,66 @@
 
 ## Sole baseline
 
-Continue only from `zic_v0.21.0-dev.24_remote-sources.zip`.
+Continue only from `zic_v0.21.1-dev.25_source-network-fix.zip`.
 Do not merge or copy files from an earlier zic archive.
 
 ## Current implementation
 
-- Home, Bookshelf and Comic Sources are the three primary destinations; the remote page is created only after first entry.
-- Comic Sources exposes a top management action and a bottom enabled-source switcher.
-- Source management persists enablement and order in SQLite schema version 3; schema version 2 is
-  migrated by adding `comic_source_preference`.
-- `BrowsableComicSource` owns paged/searchable discovery and metadata resource loading. App tests can
-  inject fixture sources without network access.
-- `MangaDexSource` is the first built-in remote source. It browses/searches titles, loads details and
-  translated chapter feeds, resolves MangaDex@Home page manifests, and defaults to English
-  safe/suggestive results.
-- Saving/opening a remote chapter converts it to `ImportedChapterRecord`, persists the remote source
-  kind and continues through the existing Reader DownloadSession/promoted-artifact path.
-- Remote source page IDs are persisted independently of mutable delivery URLs. Reopening refreshes
-  the manifest and reconciles progress by stable page identity.
-- No Mihon extension runtime, login, cookie import, challenge solving or anti-bot bypass is included.
-- Existing Home/Bookshelf management and immersive Reader controls from `0.20.0-dev.23` remain.
+- Home, Bookshelf and Comic Sources are the three primary destinations; remote browsing remains lazy.
+- MangaDex browse/detail/feed/@Home requests use the catalog source boundary and existing Reader
+  artifact path.
+- Generated Android hosts are configured by `tool/configure_platforms.py`, which idempotently adds
+  `android.permission.INTERNET` to the main application manifest.
+- Bootstrap, Android build and `tool/run_android.sh` all enforce the host configuration.
+- Source failures retain `Failure.cause` and stack traces and render complete selectable/copyable
+  diagnostics. `Failed host lookup` receives a focused permission/system-DNS explanation.
+- `HttpTransport` reports OS errno and uses a 15-second connection timeout. MangaDex metadata and
+  artwork retry one transient network failure only.
+- Reader double-tap regression uses two timed taps supported by the current Flutter test API.
+- No IP pinning, certificate bypass, challenge solving, login/cookie import or anti-bot bypass exists.
+
+## First local repair after updating an existing checkout
+
+From the repository root:
+
+```bash
+python3 tool/configure_platforms.py
+cd apps/app
+flutter clean
+flutter pub get
+flutter run -d android
+```
+
+Or use the configured runner:
+
+```bash
+./tool/run_android.sh
+```
+
+Uninstall an already installed release APK before retesting if its manifest was built without the
+Internet permission.
 
 ## Validation completed in this environment
 
 ```bash
 python3 tool/check_repo.py
-# repository structure: OK
-# demo pages: 100
-# demo Animated WebP assets: 3
+python3 tool/configure_platforms.py --app <temporary fixture app>  # twice; one permission only
+bash -n tool/*.sh
+python3 -m py_compile tool/*.py
 ```
 
-Additional delivery checks validate Dart delimiter balance, test registration scope, JSON/YAML
-parsing, shell syntax, package versions, archive cleanliness and a clean re-extraction of the final
-archive. This container does not contain Flutter, Dart, Cargo, Android SDK or Android NDK, so no
-claim is made that their tests or builds ran here.
+Additional delivery checks validate Dart delimiter balance, test registration scope, JSON/YAML/TOML
+parsing, package versions, archive cleanliness and a clean re-extraction. This container does not
+contain Flutter, Dart, Cargo, Android SDK or Android NDK, so no claim is made that their tests or
+builds ran here.
 
 ## Required external validation
 
 ```bash
 flutter pub get
+flutter test packages/reader/test/reader_navigation_test.dart
 flutter test packages/catalog/test/mangadex_source_test.dart
-flutter test packages/catalog/test/imported_library_store_test.dart
-flutter test packages/storage/test/imported_library_store_test.dart
 flutter test apps/app/test/source_browser_test.dart
-flutter test apps/app/test/library_ui_test.dart
-flutter test apps/app/test/reader_controls_test.dart
-flutter test apps/app/test/app_smoke_test.dart
 bash ./tool/test_dart.sh
 bash ./tool/test_flutter.sh
 bash ./tool/analyze.sh
@@ -55,18 +69,19 @@ bash ./tool/check_native_header.sh
 bash ./tool/check_webp.sh
 bash ./tool/test_rust.sh
 bash ./tool/build_android_native.sh release
-bash ./tool/build_android.sh debug
+bash ./tool/build_android.sh release
+```
+
+After building, verify the merged release manifest contains:
+
+```xml
+<uses-permission android:name="android.permission.INTERNET" />
 ```
 
 ## Next mainline work
 
-1. Add source update ingestion and update timestamps so Home updates use actual remote feed changes,
-   without making source pages a second catalog database.
-2. Add durable per-chapter offline downloads, authoritative progress/waterline projection and
-   cancel/retry actions on details and covers.
-3. Add source-specific settings such as translation language and data-saver mode through typed source
-   configuration, not Widget conditionals.
-4. Define a sandboxed external-source ABI and permission/lifecycle model before evaluating a
-   Mihon/Keiyoushi adapter.
-5. Run Android device tests for source navigation, remote Reader URLs, zoom/page gesture arbitration,
-   immersive UI restoration and native texture lifecycle.
+1. Add source-specific typed settings for translation languages and data-saver mode.
+2. Add source update ingestion and timestamps so Home updates derive from actual remote changes.
+3. Add durable per-chapter offline downloads with cancel/retry and authoritative cover waterlines.
+4. Evaluate native platform HTTP adapters for proxy/VPN parity without bypassing TLS or source policy.
+5. Define a sandboxed Mihon/Keiyoushi adapter ABI, permissions and lifecycle before loading extensions.

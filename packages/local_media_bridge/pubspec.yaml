@@ -1,6 +1,6 @@
 name: local_media_bridge
 description: Scoped-storage document tree access for local zic media imports.
-version: 0.21.0
+version: 0.21.1
 publish_to: none
 resolution: workspace
 

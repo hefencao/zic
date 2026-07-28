@@ -825,3 +825,15 @@ migrates version 2 without changing chapter/progress ownership.
 This contract is intentionally smaller than a Mihon extension runtime. External extension support
 must be an isolated adapter with explicit lifecycle, permissions, version compatibility and failure
 boundaries; it cannot inject navigation or read Reader state directly.
+
+## 3.12 Generated host network capability
+
+The repository does not make generated Flutter Android/iOS directories architectural authorities.
+After host generation, `tool/configure_platforms.py` applies the small product-owned Android overlay
+by ensuring the main manifest declares `android.permission.INTERNET`. Bootstrap, build and run scripts
+invoke the same idempotent operation. Generated host files remain disposable, while the required
+capability is reviewable and reproducible from repository source.
+
+This host preparation is separate from `Transport`. `HttpTransport` continues to own request/response
+semantics, range validators and socket failures. Source presentation receives structured failures and
+may format/copy diagnostics, but it does not resolve DNS, open sockets or alter TLS policy.

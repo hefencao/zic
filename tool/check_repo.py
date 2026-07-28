@@ -1183,6 +1183,8 @@ def check_compile_regressions() -> None:
         "'/at-home/server/$chapterId'",
         'translatedLanguage[]',
         'contentRating[]',
+        'maxNetworkAttempts',
+        'connectionTimeout: const Duration(seconds: 15)',
     ):
         if required not in mangadex:
             fail(f'MangaDex test source is incomplete: {required}')
@@ -1196,9 +1198,34 @@ def check_compile_regressions() -> None:
         'comicSourceSwitcherKey',
         'ReorderableListView.builder',
         'ChoiceChip(',
+        'SelectableText(',
+        'comicSourceCopyErrorKey',
+        'Clipboard.setData',
+        "lower.contains('failed host lookup')",
     ):
         if required not in source_ui:
             fail(f'comic source UI is incomplete: {required}')
+    configure_platforms = ROOT / 'tool/configure_platforms.py'
+    configure_platforms_test = ROOT / 'tool/test_configure_platforms.py'
+    run_android = ROOT / 'tool/run_android.sh'
+    if not all(
+        path.is_file()
+        for path in (configure_platforms, configure_platforms_test, run_android)
+    ):
+        fail('generated Flutter host configuration scripts are missing')
+    configure_text = configure_platforms.read_text(encoding='utf-8')
+    for required in (
+        'android.permission.INTERNET',
+        'AndroidManifest.xml',
+        'already configured',
+    ):
+        if required not in configure_text:
+            fail(f'Android host configuration is incomplete: {required}')
+    for script_name in ('bootstrap_platforms.sh', 'build_android.sh', 'run_android.sh'):
+        script = (ROOT / 'tool' / script_name).read_text(encoding='utf-8')
+        if 'configure_platforms.py' not in script:
+            fail(f'{script_name} must configure the generated Android host')
+
     home = (ROOT / 'apps/app/lib/demo_home.dart').read_text(encoding='utf-8')
     for required in (
         'homeUpdatesSectionKey',

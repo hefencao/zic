@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zic/demo_home.dart';
 import 'package:zic/main.dart';
@@ -83,6 +84,64 @@ void main() {
     expect(find.byKey(comicSourceChoiceKey('fixture-a')), findsOneWidget);
   });
 
+  testWidgets('source network failure exposes selectable copyable details',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final clipboardWrites = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          final arguments = Map<String, Object?>.from(call.arguments as Map);
+          clipboardWrites.add(arguments['text']! as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      );
+    });
+    final failure = Failure(
+      code: ErrorCode.network,
+      message: 'socket failure for '
+          'https://api.mangadex.org/manga?limit=24: Failed host lookup '
+          '(No address associated with hostname, errno 7)',
+      cause: StateError('Failed host lookup: api.mangadex.org'),
+    );
+    final source = _FixtureSource(
+      'fixture-network',
+      '网络故障源',
+      browseError: failure,
+    );
+
+    await tester.pumpWidget(
+      App(
+        libraryStore: store,
+        comicSources: <BrowsableComicSource>[source],
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.public_outlined));
+    await _pumpUntilFound(tester, find.byKey(comicSourceErrorKey));
+
+    expect(find.text('无法解析 api.mangadex.org'), findsOneWidget);
+    final details = tester.widget<SelectableText>(
+      find.byKey(comicSourceErrorDetailsKey),
+    );
+    expect(details.data, contains('https://api.mangadex.org/manga?limit=24'));
+    expect(details.data, contains('Cause: Bad state: Failed host lookup'));
+
+    await tester.tap(find.byKey(comicSourceCopyErrorKey));
+    await tester.pump();
+    expect(clipboardWrites, hasLength(1));
+    expect(clipboardWrites.single, details.data);
+  });
+
   testWidgets('source chapter enters the durable library model', (tester) async {
     final store = MemoryImportedLibraryStore();
     await store.open();
@@ -156,12 +215,14 @@ final class _FixtureSource implements BrowsableComicSource {
     this.sourceId,
     this.name, {
     this.failFirstComicLoad = false,
+    this.browseError,
   });
 
   @override
   final String sourceId;
   final String name;
   final bool failFirstComicLoad;
+  final Object? browseError;
   int _comicLoads = 0;
   int browseCalls = 0;
 
@@ -201,6 +262,10 @@ final class _FixtureSource implements BrowsableComicSource {
     int limit = 24,
   }) async {
     browseCalls++;
+    final error = browseError;
+    if (error != null) {
+      throw error;
+    }
     final summary = SourceComicSummary(
       sourceId: sourceId,
       comicId: _comicId,

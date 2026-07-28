@@ -97,7 +97,9 @@ void main() {
       of: rotation,
       matching: find.byType(InteractiveViewer),
     );
-    await tester.doubleTap(viewer);
+    await tester.tap(viewer);
+    await tester.pump(const Duration(milliseconds: 80));
+    await tester.tap(viewer);
     await tester.pump();
     final interactive = tester.widget<InteractiveViewer>(viewer);
     expect(

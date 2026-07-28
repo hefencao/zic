@@ -452,3 +452,14 @@
 6. Add source account/auth settings, update polling and durable offline download state. **Next.**
 7. Evaluate a sandboxed Mihon/Keiyoushi adapter after defining plugin ABI, permissions, lifecycle and
    compatibility policy. **Later; do not embed extension code in Widgets.**
+
+## Android remote-source reliability patch
+
+1. Make generated Android Internet permission reproducible across bootstrap, run and release build.
+   **Implemented in 0.21.1-dev.25.**
+2. Preserve complete source URI/cause/stack details and expose selectable/copyable diagnostics.
+   **Implemented.**
+3. Bound connection wait and retry one transient MangaDex network failure without unbounded loops.
+   **Implemented.**
+4. Validate native platform HTTP adapters for proxy/VPN parity before changing the core streaming
+   transport. **Next; no TLS or hostname bypass is permitted.**

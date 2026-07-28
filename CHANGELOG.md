@@ -1,3 +1,18 @@
+## 0.21.1-dev.25 — Android source networking and copyable diagnostics
+
+- Repair generated Android hosts by idempotently adding `android.permission.INTERNET` to the main
+  manifest after `flutter create`, before Android builds, and before the repository Android runner.
+- Add `tool/run_android.sh` so local runs use the same host preparation path as APK builds.
+- Add a bounded HTTP connection timeout, source user agent, complete socket OS-error details and one
+  short retry for transient MangaDex network failures.
+- Replace truncated source errors with a clean diagnostic card containing a focused summary,
+  actionable guidance, scrollable `SelectableText`, long-press selection and one-tap full copying.
+- Add copy actions to secondary source failures without weakening retry or source-state behavior.
+- Replace the unavailable `WidgetTester.doubleTap` call with two real timed taps while preserving the
+  Reader zoom assertion and product gesture path.
+- Add regressions for DNS failure presentation/copying, MangaDex transient retry and generated-host
+  permission idempotence.
+
 ## 0.21.0-dev.24 — remote comic source browser
 
 - Add a third `漫画源` application destination with a top source-management action and a bottom

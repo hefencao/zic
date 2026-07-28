@@ -807,3 +807,20 @@ waterline supports percent and completed/total page count. Details UI implements
 preference toggles, chapter order reversal, read dimming and right-swipe restore
 unread. Local imports without metadata continue to open Reader directly on long
 press.
+
+## 3.12 Android source networking and copyable diagnostics
+
+Flutter platform hosts remain generated artifacts, but their product capabilities are now configured
+by repository-owned tooling. `tool/configure_platforms.py` idempotently inserts the Android Internet
+permission into the generated main manifest. Bootstrap, Android build and the repository Android run
+entry all invoke this step, so release networking does not depend on Flutter's development manifest.
+
+`HttpTransport` still owns ordinary HTTP byte ingress and does not move networking into Widgets. Its
+default client can now use an explicit connection timeout and user agent, and socket failures include
+OS error text and errno. `MangaDexSource` applies one bounded retry only to `ErrorCode.network`; source,
+format and size failures are never retried as network transients.
+
+The source UI captures the original error, `Failure.cause` and stack trace. Primary failures use a
+bounded `SelectableText` diagnostics surface with long-press selection and explicit clipboard copy.
+A failed host lookup is described as either missing Android application permission or a system DNS /
+proxy / VPN path difference; browser reachability is not treated as proof that the App resolver works.

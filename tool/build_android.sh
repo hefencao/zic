@@ -17,6 +17,8 @@ esac
 
 if [[ ! -d "$APP/android" ]]; then
   "$ROOT/tool/bootstrap_platforms.sh"
+else
+  python3 "$ROOT/tool/configure_platforms.py" --app "$APP"
 fi
 
 if [[ "$NATIVE" == 1 ]]; then

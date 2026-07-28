@@ -70,9 +70,20 @@ void main() {
     expect(restored.toManifest().pages.first.uri, manifest.pages.first.uri);
   });
 
-  test('MangaDex metadata rejects an oversized response before decoding',
+  test('MangaDex retries one transient network failure', () async {
+    final transport = _TransientNetworkTransport();
+    final source = MangaDexSource(transport: transport);
+
+    final page = await source.browse(limit: 20);
+
+    expect(page.items, hasLength(1));
+    expect(transport.openCalls, 2);
+  });
+
+  test('MangaDex metadata rejects an oversized response without retrying',
       () async {
-    final source = MangaDexSource(transport: const _OversizedTransport());
+    final transport = _OversizedTransport();
+    final source = MangaDexSource(transport: transport);
 
     await expectLater(
       source.browse(),
@@ -81,11 +92,12 @@ void main() {
             .having((failure) => failure.code, 'code', ErrorCode.source),
       ),
     );
+    expect(transport.openCalls, 1);
   });
 }
 
-final class _OversizedTransport implements Transport {
-  const _OversizedTransport();
+final class _TransientNetworkTransport implements Transport {
+  int openCalls = 0;
 
   @override
   Future<ByteResponse> open(
@@ -93,6 +105,33 @@ final class _OversizedTransport implements Transport {
     ByteRange? range,
     Validators? validators,
   }) async {
+    openCalls++;
+    if (openCalls == 1) {
+      throw const Failure(
+        code: ErrorCode.network,
+        message: 'transient DNS failure',
+      );
+    }
+    final bytes = Uint8List.fromList(utf8.encode(jsonEncode(_browse)));
+    return ByteResponse(
+      bytes: Stream<List<int>>.value(bytes),
+      statusCode: 200,
+      rangeStart: 0,
+      totalLength: bytes.length,
+    );
+  }
+}
+
+final class _OversizedTransport implements Transport {
+  int openCalls = 0;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async {
+    openCalls++;
     return ByteResponse(
       bytes: const Stream<List<int>>.empty(),
       statusCode: 200,

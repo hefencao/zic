@@ -1,6 +1,6 @@
 name: local_media
 description: Platform-neutral local image folder import and file-header sniffing for zic.
-version: 0.21.0
+version: 0.21.1
 publish_to: none
 resolution: workspace
 

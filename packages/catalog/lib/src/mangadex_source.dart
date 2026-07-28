@@ -12,8 +12,16 @@ final class MangaDexSource implements BrowsableComicSource {
     Transport? transport,
     this.translatedLanguage = 'en',
     this.useDataSaver = false,
+    this.maxNetworkAttempts = 2,
   })  : assert(translatedLanguage != ''),
-        _transport = transport ?? IoTransport();
+        assert(maxNetworkAttempts > 0 && maxNetworkAttempts <= 3),
+        _transport = transport ??
+            IoTransport(
+              http: HttpTransport(
+                connectionTimeout: const Duration(seconds: 15),
+                userAgent: 'zic-comic-source/1',
+              ),
+            );
 
   static final Uri _apiRoot = Uri.https('api.mangadex.org', '/');
   static final Uri _uploadsRoot = Uri.https('uploads.mangadex.org', '/');
@@ -33,6 +41,7 @@ final class MangaDexSource implements BrowsableComicSource {
 
   final String translatedLanguage;
   final bool useDataSaver;
+  final int maxNetworkAttempts;
   final Transport _transport;
   final Map<String, Comic> _comicCache = <String, Comic>{};
 
@@ -195,26 +204,37 @@ final class MangaDexSource implements BrowsableComicSource {
     Uri uri, {
     required int maxBytes,
   }) async {
-    final response = await _transport.open(uri);
-    final declaredLength = response.totalLength;
-    if (declaredLength != null && declaredLength > maxBytes) {
-      await response.discard();
-      throw Failure(
-        code: ErrorCode.source,
-        message: 'source response exceeds $maxBytes bytes: $uri',
-      );
-    }
-    final builder = BytesBuilder(copy: false);
-    await for (final chunk in response.bytes) {
-      if (builder.length + chunk.length > maxBytes) {
-        throw Failure(
-          code: ErrorCode.source,
-          message: 'source response exceeds $maxBytes bytes: $uri',
-        );
+    for (var attempt = 1; attempt <= maxNetworkAttempts; attempt++) {
+      try {
+        final response = await _transport.open(uri);
+        final declaredLength = response.totalLength;
+        if (declaredLength != null && declaredLength > maxBytes) {
+          await response.discard();
+          throw Failure(
+            code: ErrorCode.source,
+            message: 'source response exceeds $maxBytes bytes: $uri',
+          );
+        }
+        final builder = BytesBuilder(copy: false);
+        await for (final chunk in response.bytes) {
+          if (builder.length + chunk.length > maxBytes) {
+            throw Failure(
+              code: ErrorCode.source,
+              message: 'source response exceeds $maxBytes bytes: $uri',
+            );
+          }
+          builder.add(chunk);
+        }
+        return builder.takeBytes();
+      } on Failure catch (failure) {
+        if (failure.code != ErrorCode.network ||
+            attempt >= maxNetworkAttempts) {
+          rethrow;
+        }
+        await Future<void>.delayed(Duration(milliseconds: 250 * attempt));
       }
-      builder.add(chunk);
     }
-    return builder.takeBytes();
+    throw StateError('unreachable MangaDex network retry state');
   }
 
   Future<Comic> _loadComicIdentity(String comicId) async {

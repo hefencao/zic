@@ -2,7 +2,7 @@
 
 `zic` 是从零开发的高性能漫画阅读器。当前版本已完成静态 Reader、可恢复下载、
 持久化缓存恢复、容量/LRU 策略、受控清理、失败退避重试、独立资源 lane、格式感知 ingress、
-decode/upload registry、frame holder、viewport 播放门控、帧字节预算、可运行的 Animated WebP App 入口、viewport/DPR 自适应显示目标、source-aware 解码 raster、Rust 增量 Animated WebP 解码基础，以及按 `comicId` 聚合多章节的 Android Home/Bookshelf/详情闭环。`0.20.0-dev.23` 统一首页与书架封面、补齐分类与管理操作、自定义画廊拖动，并为 Reader 增加沉浸控制与缩放。`0.21.0-dev.24` 新增第三个漫画源页面、持久化源管理、底部源切换和首个可浏览的 MangaDex 远程源；远程章节继续进入现有目录库与 Reader artifact 管线。
+decode/upload registry、frame holder、viewport 播放门控、帧字节预算、可运行的 Animated WebP App 入口、viewport/DPR 自适应显示目标、source-aware 解码 raster、Rust 增量 Animated WebP 解码基础，以及按 `comicId` 聚合多章节的 Android Home/Bookshelf/详情闭环。`0.20.0-dev.23` 统一首页与书架封面、补齐分类与管理操作、自定义画廊拖动，并为 Reader 增加沉浸控制与缩放。`0.21.0-dev.24` 新增第三个漫画源页面、持久化源管理、底部源切换和首个可浏览的 MangaDex 远程源；远程章节继续进入现有目录库与 Reader artifact 管线。`0.21.1-dev.25` 修复生成 Android host 的发布联网权限，补充可选择/复制的完整漫画源错误诊断、连接超时和有界瞬时重试。
 
 ```text
 ReaderView
@@ -133,6 +133,23 @@ flutter create \
 ```
 
 不要在仓库根目录执行 `flutter create .`，否则 Android/iOS host 会生成到错误层级。
+
+平台生成脚本会继续执行：
+
+```bash
+python3 tool/configure_platforms.py
+```
+
+该步骤会幂等地向 Android 主 manifest 加入 `android.permission.INTERNET`。对于已经存在的
+Android host，更新源码后也应执行一次；发布 APK 不应依赖只在开发 host 中存在的权限。
+推荐从仓库根目录使用统一运行入口：
+
+```bash
+./tool/run_android.sh
+```
+
+它会先生成或修复 host，再执行 `flutter run -d android`。直接运行 Flutter 命令前也可以
+手动执行 `python3 tool/configure_platforms.py`。
 
 ## 测试目录
 

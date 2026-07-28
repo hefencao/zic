@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 const comicSourcesPageKey = ValueKey<String>('comic-sources-page');
 const comicSourceManageKey = ValueKey<String>('comic-source-manage');
@@ -11,6 +12,9 @@ const comicSourceSearchKey = ValueKey<String>('comic-source-search');
 const comicSourceSwitcherKey = ValueKey<String>('comic-source-switcher');
 const comicSourceLoadingKey = ValueKey<String>('comic-source-loading');
 const comicSourceErrorKey = ValueKey<String>('comic-source-error');
+const comicSourceErrorDetailsKey =
+    ValueKey<String>('comic-source-error-details');
+const comicSourceCopyErrorKey = ValueKey<String>('comic-source-copy-error');
 const comicSourceEmptyKey = ValueKey<String>('comic-source-empty');
 Key comicSourceChoiceKey(String sourceId) =>
     ValueKey<String>('comic-source-choice:$sourceId');
@@ -49,7 +53,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   bool _loadingMore = false;
   bool _hasMore = false;
   int _nextOffset = 0;
-  Object? _error;
+  _SourceFailure? _failure;
   int _generation = 0;
 
   BrowsableComicSource? get _activeSource {
@@ -119,14 +123,14 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         _loadingMore = false;
         _hasMore = false;
         _nextOffset = 0;
-        _error = null;
+        _failure = null;
       });
       return;
     }
     setState(() {
       _loading = true;
       _loadingMore = false;
-      _error = null;
+      _failure = null;
       _items = const <SourceComicSummary>[];
       _hasMore = false;
       _nextOffset = 0;
@@ -141,11 +145,13 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         _hasMore = page.hasMore;
         _nextOffset = page.offset + page.items.length;
       });
-    } on Object catch (error) {
+    } on Object catch (error, stackTrace) {
       if (!mounted || generation != _generation) {
         return;
       }
-      setState(() => _error = error);
+      setState(() {
+        _failure = _SourceFailure.capture(error, stackTrace);
+      });
     } finally {
       if (mounted && generation == _generation) {
         setState(() => _loading = false);
@@ -178,10 +184,12 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         _hasMore = page.hasMore;
         _nextOffset = page.offset + page.items.length;
       });
-    } on Object catch (error) {
+    } on Object catch (error, stackTrace) {
       if (mounted && generation == _generation) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('加载更多失败：$error')),
+        _showSourceFailureSnackBar(
+          context,
+          prefix: '加载更多失败',
+          failure: _SourceFailure.capture(error, stackTrace),
         );
       }
     } finally {
@@ -255,27 +263,13 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         child: CircularProgressIndicator(),
       );
     }
-    final error = _error;
-    if (error != null) {
-      return Center(
+    final failure = _failure;
+    if (failure != null) {
+      return _SourceFailurePanel(
         key: comicSourceErrorKey,
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              const Icon(Icons.cloud_off_outlined, size: 44),
-              const SizedBox(height: 12),
-              Text('漫画源加载失败：$error', textAlign: TextAlign.center),
-              const SizedBox(height: 12),
-              FilledButton.icon(
-                onPressed: () => unawaited(_reload()),
-                icon: const Icon(Icons.refresh),
-                label: const Text('重试'),
-              ),
-            ],
-          ),
-        ),
+        title: '漫画源加载失败',
+        failure: failure,
+        onRetry: () => unawaited(_reload()),
       );
     }
     if (_items.isEmpty) {
@@ -463,13 +457,15 @@ final class _SourceManagementScreenState
     setState(() => _preferences[source.sourceId] = next);
     try {
       await widget.onPreferenceChanged(next);
-    } on Object catch (error) {
+    } on Object catch (error, stackTrace) {
       if (!mounted) {
         return;
       }
       setState(() => _preferences[source.sourceId] = previous);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('保存漫画源设置失败：$error')),
+      _showSourceFailureSnackBar(
+        context,
+        prefix: '保存漫画源设置失败',
+        failure: _SourceFailure.capture(error, stackTrace),
       );
     }
   }
@@ -496,10 +492,12 @@ final class _SourceManagementScreenState
       for (final preference in updates) {
         await widget.onPreferenceChanged(preference);
       }
-    } on Object catch (error) {
+    } on Object catch (error, stackTrace) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('保存漫画源顺序失败：$error')),
+        _showSourceFailureSnackBar(
+          context,
+          prefix: '保存漫画源顺序失败',
+          failure: _SourceFailure.capture(error, stackTrace),
         );
       }
     }
@@ -598,10 +596,12 @@ final class _SourceComicDetailsScreenState
           SnackBar(content: Text('已将“${chapter.title}”加入书架')),
         );
       }
-    } on Object catch (error) {
+    } on Object catch (error, stackTrace) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${open ? '打开' : '加入书架'}失败：$error')),
+        _showSourceFailureSnackBar(
+          context,
+          prefix: '${open ? '打开' : '加入书架'}失败',
+          failure: _SourceFailure.capture(error, stackTrace),
         );
       }
     } finally {
@@ -622,27 +622,13 @@ final class _SourceComicDetailsScreenState
             return const Center(child: CircularProgressIndicator());
           }
           if (snapshot.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    const Icon(Icons.cloud_off_outlined, size: 44),
-                    const SizedBox(height: 12),
-                    Text(
-                      '漫画详情加载失败：${snapshot.error}',
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 12),
-                    FilledButton.icon(
-                      onPressed: _reload,
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('重试'),
-                    ),
-                  ],
-                ),
+            return _SourceFailurePanel(
+              title: '漫画详情加载失败',
+              failure: _SourceFailure.capture(
+                snapshot.error!,
+                snapshot.stackTrace,
               ),
+              onRetry: _reload,
             );
           }
           final manifest = snapshot.data!;
@@ -757,6 +743,193 @@ final class _SourceComicDetailsScreenState
       ),
     );
   }
+}
+
+final class _SourceFailure {
+  const _SourceFailure({
+    required this.summary,
+    required this.guidance,
+    required this.details,
+  });
+
+  factory _SourceFailure.capture(
+    Object error, [
+    StackTrace? stackTrace,
+  ]) {
+    final detailLines = <String>[error.toString()];
+    if (error is Failure) {
+      final cause = error.cause;
+      if (cause != null && cause.toString() != error.toString()) {
+        detailLines.add('Cause: $cause');
+      }
+    }
+    if (stackTrace != null) {
+      detailLines
+        ..add('')
+        ..add('Stack trace:')
+        ..add(stackTrace.toString().trimRight());
+    }
+    final details = detailLines.join('\n');
+    final lower = details.toLowerCase();
+    final host = _hostFromFailure(details);
+
+    if (lower.contains('failed host lookup') ||
+        lower.contains('nodename nor servname provided')) {
+      return _SourceFailure(
+        summary: host == null ? '无法解析漫画源主机' : '无法解析 $host',
+        guidance: 'Android 应用必须在主清单中声明 INTERNET 权限。若已重新构建并安装，'
+            '仍出现该错误，则设备的系统 DNS 可能与浏览器使用的安全 DNS 不同。',
+        details: details,
+      );
+    }
+    if (error is Failure && error.code == ErrorCode.network) {
+      return _SourceFailure(
+        summary: '无法连接漫画源',
+        guidance: '请检查网络、系统代理或 VPN 后重试。完整请求与底层错误可在下方选择或复制。',
+        details: details,
+      );
+    }
+    return _SourceFailure(
+      summary: '漫画源返回了错误',
+      guidance: '完整错误可在下方长按选择或一键复制。',
+      details: details,
+    );
+  }
+
+  final String summary;
+  final String guidance;
+  final String details;
+}
+
+final class _SourceFailurePanel extends StatelessWidget {
+  const _SourceFailurePanel({
+    required this.title,
+    required this.failure,
+    required this.onRetry,
+    super.key,
+  });
+
+  final String title;
+  final _SourceFailure failure;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 680),
+          child: Card(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Icon(
+                    Icons.cloud_off_outlined,
+                    size: 44,
+                    color: colors.error,
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    title,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    failure.summary,
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.bodyLarge,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(failure.guidance, textAlign: TextAlign.center),
+                  const SizedBox(height: 14),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: colors.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 220),
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(12),
+                        child: SelectableText(
+                          failure.details,
+                          key: comicSourceErrorDetailsKey,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 10,
+                    runSpacing: 8,
+                    children: <Widget>[
+                      FilledButton.icon(
+                        onPressed: onRetry,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('重试'),
+                      ),
+                      OutlinedButton.icon(
+                        key: comicSourceCopyErrorKey,
+                        onPressed: () => unawaited(
+                          _copySourceFailure(context, failure),
+                        ),
+                        icon: const Icon(Icons.copy_outlined),
+                        label: const Text('复制完整错误'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+Future<void> _copySourceFailure(
+  BuildContext context,
+  _SourceFailure failure,
+) async {
+  await Clipboard.setData(ClipboardData(text: failure.details));
+  if (!context.mounted) {
+    return;
+  }
+  ScaffoldMessenger.of(context).showSnackBar(
+    const SnackBar(content: Text('已复制完整错误')),
+  );
+}
+
+void _showSourceFailureSnackBar(
+  BuildContext context, {
+  required String prefix,
+  required _SourceFailure failure,
+}) {
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text('$prefix：${failure.summary}'),
+      action: SnackBarAction(
+        label: '复制',
+        onPressed: () {
+          unawaited(_copySourceFailure(context, failure));
+        },
+      ),
+    ),
+  );
+}
+
+String? _hostFromFailure(String details) {
+  final match = RegExp(r'https?://([^/\s?#]+)').firstMatch(details);
+  return match?.group(1);
 }
 
 final class _RemoteImage extends StatefulWidget {

@@ -20,6 +20,8 @@ flutter create \
   --platforms=android,ios \
   .
 
-printf 'Platform scaffolding generated in %s\n' "$APP"
+python3 "$ROOT/tool/configure_platforms.py" --app "$APP"
+
+printf 'Platform scaffolding generated and configured in %s\n' "$APP"
 printf '%s\n' 'Run app tests from apps/app: flutter test test'
 printf '%s\n' 'Run reader tests from packages/reader: flutter test test'
