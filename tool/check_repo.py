@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_DEPENDENCIES = {
     'domain': set(),
-    'catalog': {'domain'},
+    'catalog': {'domain', 'transport'},
     'telemetry': set(),
     'reader': {'domain', 'telemetry'},
     'pipeline': {'domain', 'telemetry'},
@@ -1142,6 +1142,7 @@ def check_compile_regressions() -> None:
         'final class LibraryCategory',
         'final class ComicPreference',
         'final class ChapterReadState',
+        'final class ComicSourcePreference',
     ):
         if required not in preferences:
             fail(f'library preference contract is incomplete: {required}')
@@ -1149,17 +1150,55 @@ def check_compile_regressions() -> None:
         ROOT / 'packages/storage/lib/src/sqlite_imported_library_store.dart'
     ).read_text(encoding='utf-8')
     for required in (
-        'PRAGMA user_version = 2',
+        'PRAGMA user_version = 3',
         'library_category',
         'comic_preference',
         'chapter_read_state',
+        'comic_source_preference',
         'saveComicPreference',
         'saveChapterReadState',
+        'saveSourcePreference',
     ):
         if required not in store:
             fail(f'durable bookshelf storage is incomplete: {required}')
     if store.count("'SELECT preference_json FROM comic_preference',") != 2:
         fail('comic preference queries contain a duplicate or missing SQL argument')
+    source_contract = (
+        ROOT / 'packages/catalog/lib/src/source_catalog.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'abstract interface class BrowsableComicSource',
+        'Future<SourceBrowsePage> browse',
+        'Future<Uint8List> loadResource',
+        'final class ComicSourceDescriptor',
+    ):
+        if required not in source_contract:
+            fail(f'comic source browsing contract is incomplete: {required}')
+    mangadex = (
+        ROOT / 'packages/catalog/lib/src/mangadex_source.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class MangaDexSource',
+        "Uri.https('api.mangadex.org'",
+        "'/at-home/server/$chapterId'",
+        'translatedLanguage[]',
+        'contentRating[]',
+    ):
+        if required not in mangadex:
+            fail(f'MangaDex test source is incomplete: {required}')
+    source_ui = (ROOT / 'apps/app/lib/source_browser.dart').read_text(
+        encoding='utf-8',
+    )
+    for required in (
+        'final class ComicSourcesPage',
+        'final class SourceManagementScreen',
+        'final class SourceComicDetailsScreen',
+        'comicSourceSwitcherKey',
+        'ReorderableListView.builder',
+        'ChoiceChip(',
+    ):
+        if required not in source_ui:
+            fail(f'comic source UI is incomplete: {required}')
     home = (ROOT / 'apps/app/lib/demo_home.dart').read_text(encoding='utf-8')
     for required in (
         'homeUpdatesSectionKey',
@@ -1183,6 +1222,10 @@ def check_compile_regressions() -> None:
         'key: chapterReadKey(chapterId)',
         'dismissThresholds:',
         'DismissDirection.startToEnd',
+        '_sourcePageVisited',
+        'ComicSourcesPage(',
+        'comicSourceManageKey',
+        "label: '漫画源'",
     ):
         if required not in home:
             fail(f'Android library UI slice is incomplete: {required}')

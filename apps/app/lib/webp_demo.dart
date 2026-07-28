@@ -1294,11 +1294,14 @@ final class ImportedImageChapterScreen extends StatelessWidget {
     final sources = <Uri, LoaderTransportSource>{};
     for (var index = 0; index < record.pages.length; index++) {
       final page = record.pages[index];
-      sources[chapter.pages[index].uri] = LoaderTransportSource(
-        revision: '${record.sourceRevision}:$index',
-        loadBytes: byteLoaders[page.sourceId] ??
-            () => readLocalImageSource(page.sourceId),
-      );
+      final uri = chapter.pages[index].uri;
+      final loader = byteLoaders[page.sourceId];
+      if (loader != null || !_isRemoteMediaUri(uri)) {
+        sources[uri] = LoaderTransportSource(
+          revision: '${record.sourceRevision}:$index',
+          loadBytes: loader ?? () => readLocalImageSource(page.sourceId),
+        );
+      }
     }
 
     return ReaderRuntimeScreen(
@@ -1391,7 +1394,13 @@ final class ImportedImageChapterScreen extends StatelessWidget {
           sourceId: page.sourceId,
           byteLength: page.byteLength,
           readBytes: byteLoaders[page.sourceId] ??
-              () => readLocalImageSource(page.sourceId),
+              (_isRemoteMediaUri(page.uri)
+                  ? () => Future<Uint8List>.error(
+                        StateError(
+                          'remote page bytes are owned by the Reader artifact',
+                        ),
+                      )
+                  : () => readLocalImageSource(page.sourceId)),
         );
         return ColoredBox(
           color: Colors.black,
@@ -1415,6 +1424,10 @@ final class ImportedImageChapterScreen extends StatelessWidget {
     );
   }
 }
+
+
+bool _isRemoteMediaUri(Uri uri) =>
+    uri.scheme == 'http' || uri.scheme == 'https';
 
 LocalImageFormat _importedPageFormat(ImportedPageRecord page) {
   final stored = localImageFormatByName(page.mediaFormat ?? '');

@@ -436,3 +436,19 @@
 6. Add page-local pinch/double-tap zoom with PageView gesture arbitration and navigation reset.
    **Implemented.**
 7. Move Reader chapter cache to durable storage and bind authoritative aggregate progress. **Next.**
+
+
+## Remote comic source browser slice
+
+1. Add a third primary Comic Sources destination with a top management entry and bottom enabled-source
+   switcher. **Implemented.**
+2. Define catalog-owned browse/resource contracts and inject source implementations into App
+   composition. **Implemented.**
+3. Persist source enablement/order with a schema 2 to 3 migration. **Implemented.**
+4. Implement one real remote source and map browse/detail/chapter manifests into the durable library
+   plus existing Reader artifact ingress. **Implemented with MangaDex.**
+5. Persist page identity independently of mutable remote delivery URLs and reconcile progress across
+   refresh. **Implemented.**
+6. Add source account/auth settings, update polling and durable offline download state. **Next.**
+7. Evaluate a sandboxed Mihon/Keiyoushi adapter after defining plugin ABI, permissions, lifecycle and
+   compatibility policy. **Later; do not embed extension code in Widgets.**

@@ -23,6 +23,7 @@ final class App extends StatelessWidget {
     this.folderPicker = defaultImageFolderPicker,
     this.folderRefresher = defaultImageFolderRefresher,
     this.libraryStore,
+    this.comicSources,
     super.key,
   });
 
@@ -30,6 +31,7 @@ final class App extends StatelessWidget {
   final ImageFolderPicker folderPicker;
   final ImageFolderRefresher folderRefresher;
   final ImportedLibraryStore? libraryStore;
+  final List<BrowsableComicSource>? comicSources;
 
   @override
   Widget build(BuildContext context) {
@@ -53,6 +55,7 @@ final class App extends StatelessWidget {
         folderPicker: folderPicker,
         folderRefresher: folderRefresher,
         libraryStore: libraryStore,
+        comicSources: comicSources,
       ),
     );
   }

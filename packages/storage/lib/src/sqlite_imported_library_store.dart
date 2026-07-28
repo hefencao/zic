@@ -36,7 +36,8 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
         try {
           _createImportedLibraryTables(db);
           _createLibraryPreferenceTables(db);
-          db.execute('PRAGMA user_version = 2');
+          _createSourcePreferenceTables(db);
+          db.execute('PRAGMA user_version = 3');
           db.execute('COMMIT');
         } on Object {
           db.execute('ROLLBACK');
@@ -46,13 +47,24 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
         db.execute('BEGIN IMMEDIATE');
         try {
           _createLibraryPreferenceTables(db);
-          db.execute('PRAGMA user_version = 2');
+          _createSourcePreferenceTables(db);
+          db.execute('PRAGMA user_version = 3');
           db.execute('COMMIT');
         } on Object {
           db.execute('ROLLBACK');
           rethrow;
         }
-      } else if (version != 2) {
+      } else if (version == 2) {
+        db.execute('BEGIN IMMEDIATE');
+        try {
+          _createSourcePreferenceTables(db);
+          db.execute('PRAGMA user_version = 3');
+          db.execute('COMMIT');
+        } on Object {
+          db.execute('ROLLBACK');
+          rethrow;
+        }
+      } else if (version != 3) {
         throw StateError(
           'unsupported imported library schema version: $version',
         );
@@ -338,6 +350,53 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
   }
 
   @override
+  Future<List<ComicSourcePreference>> listSourcePreferences() async {
+    final rows = _requireDb().select('''
+      SELECT preference_json
+      FROM comic_source_preference
+      ORDER BY sort_order, source_id
+    ''');
+    return rows
+        .map((row) => _decodeSourcePreference(
+              row['preference_json']! as String,
+            ))
+        .toList(growable: false);
+  }
+
+  @override
+  Future<void> saveSourcePreference(
+    ComicSourcePreference preference,
+  ) async {
+    final db = _requireDb();
+    final rows = db.select(
+      'SELECT updated_us FROM comic_source_preference '
+      'WHERE source_id = ? LIMIT 1',
+      <Object?>[preference.sourceId],
+    );
+    if (rows.isNotEmpty &&
+        (rows.first['updated_us']! as int) >
+            preference.updatedAt.toUtc().microsecondsSinceEpoch) {
+      return;
+    }
+    db.execute('''
+      INSERT INTO comic_source_preference (
+        source_id, enabled, sort_order, updated_us, preference_json
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(source_id) DO UPDATE SET
+        enabled = excluded.enabled,
+        sort_order = excluded.sort_order,
+        updated_us = excluded.updated_us,
+        preference_json = excluded.preference_json
+    ''', <Object?>[
+      preference.sourceId,
+      preference.enabled ? 1 : 0,
+      preference.sortOrder,
+      preference.updatedAt.toUtc().microsecondsSinceEpoch,
+      jsonEncode(preference.toJson()),
+    ]);
+  }
+
+  @override
   Future<void> close() async {
     _db?.dispose();
     _db = null;
@@ -415,6 +474,16 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
     return ComicPreference.fromJson(Map<String, Object?>.from(value));
   }
 
+  ComicSourcePreference _decodeSourcePreference(String source) {
+    final value = jsonDecode(source);
+    if (value is! Map) {
+      throw const FormatException('stored source preference must be an object');
+    }
+    return ComicSourcePreference.fromJson(
+      Map<String, Object?>.from(value),
+    );
+  }
+
   ChapterReadState _decodeReadState(String source) {
     final value = jsonDecode(source);
     if (value is! Map) {
@@ -485,5 +554,22 @@ void _createLibraryPreferenceTables(sql.Database db) {
   db.execute(
     'CREATE INDEX IF NOT EXISTS chapter_read_state_comic '
     'ON chapter_read_state(comic_id, chapter_id)',
+  );
+}
+
+
+void _createSourcePreferenceTables(sql.Database db) {
+  db.execute('''
+    CREATE TABLE IF NOT EXISTS comic_source_preference (
+      source_id TEXT NOT NULL PRIMARY KEY,
+      enabled INTEGER NOT NULL,
+      sort_order INTEGER NOT NULL,
+      updated_us INTEGER NOT NULL,
+      preference_json TEXT NOT NULL
+    )
+  ''');
+  db.execute(
+    'CREATE INDEX IF NOT EXISTS comic_source_preference_order '
+    'ON comic_source_preference(sort_order, source_id)',
   );
 }

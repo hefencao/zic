@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:storage/storage.dart';
+import 'package:sqlite3/sqlite3.dart' as sql;
 import 'package:test/test.dart';
 
 void main() {
@@ -214,6 +215,57 @@ void main() {
     await store.removeChapter(chapter.chapterId);
     expect(await store.listChapterReadStates(chapter.comicId), isEmpty);
     expect(await store.getComicPreference(chapter.comicId), isNull);
+  });
+
+  test('sqlite migrates schema 2 source preferences', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-source-preference-migration-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final path = '${directory.path}/library.sqlite3';
+    final legacy = sql.sqlite3.open(path);
+    legacy.execute('PRAGMA user_version = 2');
+    legacy.dispose();
+
+    final store = SqliteImportedLibraryStore(path);
+    await store.open();
+    addTearDown(store.close);
+    await store.saveSourcePreference(
+      ComicSourcePreference(
+        sourceId: 'mangadex',
+        enabled: true,
+        sortOrder: 0,
+        updatedAt: DateTime.utc(2026, 7, 28, 11),
+      ),
+    );
+
+    expect((await store.listSourcePreferences()).single.sourceId, 'mangadex');
+  });
+
+  test('sqlite persists comic source enablement and order', () async {
+    final store = SqliteImportedLibraryStore.memory();
+    await store.open();
+    addTearDown(store.close);
+    final first = ComicSourcePreference(
+      sourceId: 'mangadex',
+      enabled: true,
+      sortOrder: 1,
+      updatedAt: DateTime.utc(2026, 7, 28, 11),
+    );
+    final second = ComicSourcePreference(
+      sourceId: 'fixture',
+      enabled: false,
+      sortOrder: 0,
+      updatedAt: DateTime.utc(2026, 7, 28, 12),
+    );
+
+    await store.saveSourcePreference(first);
+    await store.saveSourcePreference(second);
+
+    final values = await store.listSourcePreferences();
+    expect(values.map((item) => item.sourceId), <String>['fixture', 'mangadex']);
+    expect(values.first.enabled, isFalse);
+    expect(values.last.toJson(), first.toJson());
   });
 
   test('sqlite keeps comic preference until the last grouped chapter is removed',

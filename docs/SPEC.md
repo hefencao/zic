@@ -50,6 +50,29 @@
 - 默认使用确定性策略；积累足够数据后启用端侧个性化。
 - 用户可重置模型。
 
+
+
+## 2.6 Comic source destination
+
+- The third primary destination displays remote comic sources.
+- A top app-bar action opens source management; management persists enabled state and order.
+- The bottom source strip switches among enabled sources without duplicating application navigation.
+- A source page supports refresh, title search, paging, comic details and chapter actions.
+- Saving/opening a source chapter must first create a catalog chapter record; direct source-to-Reader
+  byte ownership is forbidden.
+- If no source is enabled, the page stays usable and points to the management entry.
+- Upstream/network failures are explicit and retryable. The application must not silently add
+  cookie theft, challenge solving or anti-bot bypass.
+
+## 4.2 Remote source contract
+
+A remote source exposes stable source/comic/chapter/page identities, discovery summaries, details,
+chapter manifests and resource loading. Source enablement/order is durable application preference,
+not source-owned state. Source-provided page identity must be persisted independently from current
+delivery URI so a refreshed at-home/CDN URL does not move Reader progress. Remote chapter bytes
+continue through Reader demand, transport, promoted artifact and decode ownership.
+
+
 ## 3. Reader 行为规格
 
 ### 3.1 当前页优先
@@ -577,7 +600,7 @@ Coordinator 验证安全条件。结果：
 
 ## 2.5 Android Home, Bookshelf and comic details
 
-The Android primary navigation contains Home and Bookshelf. Home displays update and
+The Android primary navigation contains Home, Bookshelf and Comic Sources. Home displays update and
 reading-history rails using the same fixed-size cover-card contract as the Bookshelf gallery.
 Local-folder import is visible; directory maintenance is not part of the Home product surface.
 Diagnostics remain collapsed and secondary.

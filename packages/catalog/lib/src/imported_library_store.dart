@@ -43,10 +43,21 @@ ReadingProgress? reconcileImportedProgress({
   if (previousChapter != null &&
       progress.pageIndex >= 0 &&
       progress.pageIndex < previousChapter.pages.length) {
-    final sourceId = previousChapter.pages[progress.pageIndex].sourceId;
-    final refreshedIndex = refreshedChapter.pages.indexWhere(
-      (page) => page.sourceId == sourceId,
+    final previousPage = previousChapter.pages[progress.pageIndex];
+    var refreshedIndex = refreshedChapter.pages.indexWhere(
+      (page) => page.stablePageId == previousPage.stablePageId,
     );
+    if (refreshedIndex < 0 && previousPage.pageId == null) {
+      final displayMatches = <int>[
+        for (var index = 0; index < refreshedChapter.pages.length; index++)
+          if (refreshedChapter.pages[index].displayName ==
+              previousPage.displayName)
+            index,
+      ];
+      if (displayMatches.length == 1) {
+        refreshedIndex = displayMatches.single;
+      }
+    }
     if (refreshedIndex >= 0) {
       pageIndex = refreshedIndex;
       preserveOffset = true;
@@ -91,6 +102,10 @@ abstract interface class ImportedLibraryStore {
 
   Future<void> saveChapterReadState(ChapterReadState state);
 
+  Future<List<ComicSourcePreference>> listSourcePreferences();
+
+  Future<void> saveSourcePreference(ComicSourcePreference preference);
+
   Future<void> close();
 }
 
@@ -104,6 +119,8 @@ final class MemoryImportedLibraryStore implements ImportedLibraryStore {
       <String, ComicPreference>{};
   final Map<String, ChapterReadState> _readStates =
       <String, ChapterReadState>{};
+  final Map<String, ComicSourcePreference> _sourcePreferences =
+      <String, ComicSourcePreference>{};
   bool _open = false;
 
   @override
@@ -267,6 +284,26 @@ final class MemoryImportedLibraryStore implements ImportedLibraryStore {
     final current = _readStates[state.chapterId];
     if (current == null || !state.updatedAt.isBefore(current.updatedAt)) {
       _readStates[state.chapterId] = state;
+    }
+  }
+
+  @override
+  Future<List<ComicSourcePreference>> listSourcePreferences() async {
+    _requireOpen();
+    final values = _sourcePreferences.values.toList(growable: false)
+      ..sort((left, right) {
+        final order = left.sortOrder.compareTo(right.sortOrder);
+        return order != 0 ? order : left.sourceId.compareTo(right.sourceId);
+      });
+    return values;
+  }
+
+  @override
+  Future<void> saveSourcePreference(ComicSourcePreference preference) async {
+    _requireOpen();
+    final current = _sourcePreferences[preference.sourceId];
+    if (current == null || !preference.updatedAt.isBefore(current.updatedAt)) {
+      _sourcePreferences[preference.sourceId] = preference;
     }
   }
 

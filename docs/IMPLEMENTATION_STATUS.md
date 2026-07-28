@@ -1,3 +1,35 @@
+## Current iteration — remote comic source browser
+
+The Android shell now has a lazy-created third `漫画源` destination, so startup does not browse the network. The top app-bar action opens a reorderable
+source manager; the source page keeps a compact bottom switcher for enabled sources. Search, refresh,
+paging, retry, comic details and chapter add/open actions are implemented without creating a second
+Reader or library model.
+
+`catalog` now owns `BrowsableComicSource`, descriptors and browse summaries. The first built-in
+implementation is `MangaDexSource`, using injected `Transport` for API/cover requests and resolving
+chapter pages through MangaDex@Home. The production default requests English safe/suggestive
+content. Fixture transport tests cover browse, metadata, chapters, covers and imported records; App
+widget tests use injected sources to cover the third destination, switching, management and the
+remote-to-library path without external network access.
+
+The browser is network-lazy: fixture regressions assert that no source browse occurs before the
+third destination is opened. Metadata and cover/resource responses are bounded before buffering,
+and a transient detail error exposes an in-place retry instead of requiring route recreation.
+
+Remote chapters are converted to `ImportedChapterRecord` and then use the existing durable library
+and Reader DownloadSession/promoted-artifact ingress. `ImportedPageRecord` now persists optional
+source page IDs. Progress reconciliation uses that ID across rotating delivery URLs and retains a
+legacy display-name fallback. SQLite schema version 3 persists `ComicSourcePreference`; version 2
+migrates by adding only the new source preference table.
+
+Mihon/Keiyoushi extension loading is not embedded in this iteration. Those extensions use a separate
+Android/Kotlin runtime and require an isolated adapter, compatibility and permission model. No login,
+Cookie, challenge-solving or anti-bot bypass was added.
+
+`python3 tool/check_repo.py` and static repository checks pass in this environment. Flutter, Dart,
+Cargo, Android SDK and Android NDK are unavailable, so analyzer, Flutter tests, Rust tests and APK
+builds remain explicit external gates.
+
 ## Current iteration — library management and immersive Reader controls
 
 The Home product surface no longer exposes per-directory refresh/removal maintenance. Folder
@@ -764,7 +796,7 @@ filters, management deletion, recent/title/page-count/custom sorting and durable
 custom reordering. Existing static/WebP/native diagnostics remain available
 below the product sections for regression work.
 
-SQLite schema version 2 persists custom categories, shelf/liked/collected flags,
+SQLite schema version 3 persists custom categories, shelf/liked/collected flags,
 category membership, source kind, custom order and explicit chapter read state.
 The in-memory store implements the same contract. Existing version-1 databases
 migrate in place.

@@ -5,6 +5,7 @@ final class ImportedPageRecord {
     required this.displayName,
     required this.sourceId,
     required this.contentKindHint,
+    this.pageId,
     this.mediaFormat,
     this.byteLength,
     this.animatedHint = false,
@@ -13,11 +14,12 @@ final class ImportedPageRecord {
   final String displayName;
   final String sourceId;
   final ContentKindHint contentKindHint;
+  final String? pageId;
   final String? mediaFormat;
   final int? byteLength;
   final bool animatedHint;
 
-  String get stablePageId => 'page-${_stableHash(sourceId)}';
+  String get stablePageId => pageId ?? 'page-${_stableHash(sourceId)}';
 
   Uri get uri {
     if (_looksLikeWindowsPath(sourceId)) {
@@ -37,6 +39,7 @@ final class ImportedPageRecord {
         'displayName': displayName,
         'sourceId': sourceId,
         'contentKindHint': contentKindHint.name,
+        if (pageId != null) 'pageId': pageId,
         if (mediaFormat != null) 'mediaFormat': mediaFormat,
         if (byteLength != null) 'byteLength': byteLength,
         'animatedHint': animatedHint,
@@ -46,6 +49,11 @@ final class ImportedPageRecord {
     final displayName = _requiredString(json, 'displayName');
     final sourceId = _requiredString(json, 'sourceId');
     final kindName = _requiredString(json, 'contentKindHint');
+    final rawPageId = json['pageId'];
+    if (rawPageId != null &&
+        (rawPageId is! String || rawPageId.trim().isEmpty)) {
+      throw const FormatException('pageId must be a non-empty string');
+    }
     final byteLength = json['byteLength'];
     if (byteLength != null && (byteLength is! int || byteLength < 0)) {
       throw const FormatException(
@@ -56,6 +64,7 @@ final class ImportedPageRecord {
       displayName: displayName,
       sourceId: sourceId,
       contentKindHint: ContentKindHint.values.byName(kindName),
+      pageId: rawPageId as String?,
       mediaFormat: json['mediaFormat'] as String?,
       byteLength: byteLength as int?,
       animatedHint: (json['animatedHint'] as bool?) ?? false,
@@ -73,6 +82,7 @@ final class ImportedChapterRecord {
     required this.sourceRevision,
     required List<ImportedPageRecord> pages,
     String? comicTitle,
+    this.coverSourceId,
     this.sequence = 0,
     this.readingDirection = ReadingDirection.ltr,
     DateTime? importedAt,
@@ -92,9 +102,18 @@ final class ImportedChapterRecord {
       throw ArgumentError.value(pages, 'pages', 'must not be empty');
     }
     final sources = <String>{};
+    final pageIds = <String>{};
     for (final page in pages) {
       if (page.displayName.trim().isEmpty || page.sourceId.trim().isEmpty) {
         throw ArgumentError('imported page identity must be non-empty');
+      }
+      if (page.pageId != null &&
+          (page.pageId!.trim().isEmpty || !pageIds.add(page.pageId!))) {
+        throw ArgumentError.value(
+          page.pageId,
+          'pages',
+          'contains an empty or duplicate stable page identity',
+        );
       }
       if (page.byteLength != null && page.byteLength! < 0) {
         throw ArgumentError.value(
@@ -113,6 +132,45 @@ final class ImportedChapterRecord {
     }
   }
 
+
+  factory ImportedChapterRecord.remote({
+    required Comic comic,
+    required ChapterManifest manifest,
+    DateTime? importedAt,
+  }) {
+    if (comic.comicId != manifest.comicId ||
+        manifest.chapter.comicId != manifest.comicId ||
+        comic.sourceId != manifest.sourceId) {
+      throw ArgumentError('remote comic and chapter identities must match');
+    }
+    return ImportedChapterRecord(
+      directoryId: '${manifest.sourceId}:${manifest.comicId}',
+      displayName: manifest.chapter.title,
+      sourceId: manifest.sourceId,
+      comicId: manifest.comicId,
+      comicTitle: comic.title,
+      coverSourceId: comic.coverUri?.toString(),
+      chapterId: manifest.chapter.chapterId,
+      sourceRevision: manifest.chapter.sourceRevision,
+      sequence: manifest.chapter.sequence,
+      readingDirection: manifest.readingDirection,
+      importedAt: importedAt,
+      pages: manifest.pages
+          .map(
+            (page) => ImportedPageRecord(
+              displayName: _remoteDisplayName(page),
+              sourceId: page.uri.toString(),
+              contentKindHint: page.contentKindHint,
+              pageId: page.pageId,
+              mediaFormat: page.contentKindHint.name,
+              byteLength: page.byteLength,
+              animatedHint: page.animatedHint,
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
   factory ImportedChapterRecord.folder({
     required String directoryId,
     required String displayName,
@@ -129,7 +187,8 @@ final class ImportedChapterRecord {
     final revisionHash = _stableHash(
       pages
           .map(
-            (page) => '${page.sourceId}\u0000${page.contentKindHint.name}'
+            (page) => '${page.pageId ?? ''}\u0000${page.sourceId}'
+                '\u0000${page.contentKindHint.name}'
                 '\u0000${page.mediaFormat ?? ''}'
                 '\u0000${page.byteLength ?? -1}'
                 '\u0000${page.animatedHint}',
@@ -157,6 +216,7 @@ final class ImportedChapterRecord {
   final String chapterId;
   final String sourceRevision;
   final String comicTitle;
+  final String? coverSourceId;
   final int sequence;
   final List<ImportedPageRecord> pages;
   final ReadingDirection readingDirection;
@@ -168,6 +228,8 @@ final class ImportedChapterRecord {
     String? sourceId,
     String? comicId,
     String? comicTitle,
+    String? coverSourceId,
+    bool clearCoverSourceId = false,
     String? chapterId,
     String? sourceRevision,
     int? sequence,
@@ -181,6 +243,8 @@ final class ImportedChapterRecord {
       sourceId: sourceId ?? this.sourceId,
       comicId: comicId ?? this.comicId,
       comicTitle: comicTitle ?? this.comicTitle,
+      coverSourceId:
+          clearCoverSourceId ? null : (coverSourceId ?? this.coverSourceId),
       chapterId: chapterId ?? this.chapterId,
       sourceRevision: sourceRevision ?? this.sourceRevision,
       sequence: sequence ?? this.sequence,
@@ -230,6 +294,7 @@ final class ImportedChapterRecord {
         'chapterId': chapterId,
         'sourceRevision': sourceRevision,
         'comicTitle': comicTitle,
+        if (coverSourceId != null) 'coverSourceId': coverSourceId,
         'sequence': sequence,
         'readingDirection': readingDirection.name,
         'importedAt': importedAt.toIso8601String(),
@@ -246,6 +311,13 @@ final class ImportedChapterRecord {
         (rawComicTitle is! String || rawComicTitle.trim().isEmpty)) {
       throw const FormatException('comicTitle must be a non-empty string');
     }
+    final rawCoverSourceId = json['coverSourceId'];
+    if (rawCoverSourceId != null &&
+        (rawCoverSourceId is! String || rawCoverSourceId.trim().isEmpty)) {
+      throw const FormatException(
+        'coverSourceId must be a non-empty string',
+      );
+    }
     final rawSequence = json['sequence'];
     if (rawSequence != null && rawSequence is! int) {
       throw const FormatException('sequence must be an integer');
@@ -259,6 +331,7 @@ final class ImportedChapterRecord {
       sourceRevision: _requiredString(json, 'sourceRevision'),
       comicTitle: (rawComicTitle as String?) ??
           _requiredString(json, 'displayName'),
+      coverSourceId: rawCoverSourceId as String?,
       sequence: (rawSequence as int?) ?? 0,
       pages: rawPages.map((value) {
         if (value is! Map) {
@@ -272,6 +345,14 @@ final class ImportedChapterRecord {
       importedAt: DateTime.parse(_requiredString(json, 'importedAt')),
     );
   }
+}
+
+
+String _remoteDisplayName(PageAsset page) {
+  final segment = page.uri.pathSegments.isEmpty
+      ? ''
+      : page.uri.pathSegments.last.trim();
+  return segment.isEmpty ? 'page-${page.index + 1}' : segment;
 }
 
 bool _looksLikeWindowsPath(String value) {

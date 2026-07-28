@@ -2,6 +2,57 @@ enum ComicSourceKind { local, remote }
 
 enum LibrarySortMode { recent, title, pageCount, custom }
 
+
+final class ComicSourcePreference {
+  const ComicSourcePreference({
+    required this.sourceId,
+    required this.enabled,
+    required this.sortOrder,
+    required this.updatedAt,
+  });
+
+  factory ComicSourcePreference.defaults({
+    required String sourceId,
+    int sortOrder = 0,
+  }) => ComicSourcePreference(
+        sourceId: sourceId,
+        enabled: true,
+        sortOrder: sortOrder,
+        updatedAt: DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
+      );
+
+  final String sourceId;
+  final bool enabled;
+  final int sortOrder;
+  final DateTime updatedAt;
+
+  ComicSourcePreference copyWith({
+    bool? enabled,
+    int? sortOrder,
+    DateTime? updatedAt,
+  }) => ComicSourcePreference(
+        sourceId: sourceId,
+        enabled: enabled ?? this.enabled,
+        sortOrder: sortOrder ?? this.sortOrder,
+        updatedAt: (updatedAt ?? this.updatedAt).toUtc(),
+      );
+
+  Map<String, Object> toJson() => <String, Object>{
+        'sourceId': sourceId,
+        'enabled': enabled,
+        'sortOrder': sortOrder,
+        'updatedAt': updatedAt.toUtc().toIso8601String(),
+      };
+
+  factory ComicSourcePreference.fromJson(Map<String, Object?> json) =>
+      ComicSourcePreference(
+        sourceId: _requiredString(json, 'sourceId'),
+        enabled: _requiredBool(json, 'enabled'),
+        sortOrder: _requiredInt(json, 'sortOrder'),
+        updatedAt: DateTime.parse(_requiredString(json, 'updatedAt')),
+      );
+}
+
 final class LibraryCategory {
   const LibraryCategory({
     required this.categoryId,

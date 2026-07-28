@@ -169,6 +169,53 @@ void main() {
       isEmpty,
     );
   });
+  test('remote refresh keeps progress by stable page identity', () async {
+    final previous = _remoteChapter(
+      urls: const <String>[
+        'https://old.example/chapter/a.jpg',
+        'https://old.example/chapter/b.jpg',
+      ],
+    );
+    final refreshed = _remoteChapter(
+      urls: const <String>[
+        'https://new.example/chapter/a.jpg',
+        'https://new.example/chapter/b.jpg',
+      ],
+    );
+    final progress = ReadingProgress(
+      comicId: previous.comicId,
+      chapterId: previous.chapterId,
+      pageIndex: 1,
+      subPageOffset: 0.4,
+      readerMode: ReaderMode.continuous,
+      updatedAt: DateTime.utc(2026, 7, 28, 10),
+    );
+
+    final reconciled = reconcileImportedProgress(
+      previousChapter: previous,
+      refreshedChapter: refreshed,
+      progress: progress,
+    );
+
+    expect(reconciled?.pageIndex, 1);
+    expect(reconciled?.subPageOffset, 0.4);
+  });
+
+  test('memory library persists comic source preferences', () async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    final preference = ComicSourcePreference(
+      sourceId: 'mangadex',
+      enabled: false,
+      sortOrder: 3,
+      updatedAt: DateTime.utc(2026, 7, 28),
+    );
+
+    await store.saveSourcePreference(preference);
+
+    expect(await store.listSourcePreferences(), <ComicSourcePreference>[preference]);
+    await store.close();
+  });
 }
 
 ImportedChapterRecord _chapter({required int pageCount}) {
@@ -184,6 +231,28 @@ ImportedChapterRecord _chapter({required int pageCount}) {
           contentKindHint: ContentKindHint.png,
           mediaFormat: 'png',
           byteLength: 32 + index,
+        ),
+    ],
+  );
+}
+
+
+ImportedChapterRecord _remoteChapter({required List<String> urls}) {
+  return ImportedChapterRecord(
+    directoryId: 'mangadex:comic-1',
+    displayName: 'Chapter 1',
+    sourceId: 'mangadex',
+    comicId: 'comic-1',
+    comicTitle: 'Remote comic',
+    chapterId: 'remote-chapter-1',
+    sourceRevision: urls.first,
+    pages: <ImportedPageRecord>[
+      for (var index = 0; index < urls.length; index++)
+        ImportedPageRecord(
+          displayName: '${index + 1}.jpg',
+          sourceId: urls[index],
+          pageId: 'remote-page-${index + 1}',
+          contentKindHint: ContentKindHint.jpeg,
         ),
     ],
   );

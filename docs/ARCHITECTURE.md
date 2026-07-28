@@ -764,13 +764,13 @@ enum DemandProfile {
 
 ## 3.9 Android library application shell
 
-The Android-first application shell has two primary destinations: Home and
-Bookshelf. Home derives update cards from catalog update/import timestamps and
+The Android-first application shell has three primary destinations: Home,
+Bookshelf and Comic Sources. Home derives update cards from catalog update/import timestamps and
 history cards from persisted `ReadingProgress`. Bookshelf derives all views from
 persisted chapter records plus `ComicPreference`; source/category filters and
 sort modes do not create parallel copies of catalog data.
 
-`ImportedLibraryStore` schema version 2 additionally owns `LibraryCategory`,
+`ImportedLibraryStore` schema version 3 owns `LibraryCategory`,
 `ComicPreference` and `ChapterReadState`. Preferences include shelf membership,
 liked/collected flags, category membership, source kind and custom order. Read
 state is intentionally distinct from precise Reader progress so restoring a
@@ -800,3 +800,28 @@ Zoom is owned by each current page through `InteractiveViewer`. The parent only 
 zoom state to suspend PageView physics. Navigation changes the zoom-page identity so stale transforms
 cannot reappear with page scrolling re-enabled. Rotation wraps the page presentation and leaves all
 content/download identities unchanged.
+
+
+## 3.11 Remote comic source browser
+
+`BrowsableComicSource` is a catalog boundary, not a Widget plugin. It extends `ComicSource` with a
+paged/searchable discovery method, a descriptor and resource loading for source-browser artwork.
+The App receives source instances through composition, derives the enabled/order list from
+`ComicSourcePreference`, and presents them in the third primary destination. The top app bar opens
+management; a bottom strip switches only among enabled sources.
+
+`MangaDexSource` is the first implementation. Browse/detail/feed requests produce `Comic`,
+`Chapter` and `ChapterManifest` values. Saving or opening converts the manifest to
+`ImportedChapterRecord`; no source creates Reader controllers, DownloadSessions or artifacts.
+Source-browser cover requests use `loadResource`, while chapter pages are downloaded by the existing
+Reader transport and promoted-artifact path.
+
+Remote delivery URLs are mutable. `ImportedPageRecord.pageId` stores the source-provided stable page
+identity separately from `sourceId`/URI. A remote chapter resolves a fresh manifest before opening,
+and store reconciliation follows `stablePageId`; a unique display-name fallback only supports
+records written before page IDs existed. SQLite schema version 3 adds `comic_source_preference` and
+migrates version 2 without changing chapter/progress ownership.
+
+This contract is intentionally smaller than a Mihon extension runtime. External extension support
+must be an isolated adapter with explicit lifecycle, permissions, version compatibility and failure
+boundaries; it cannot inject navigation or read Reader state directly.

@@ -2,7 +2,7 @@
 
 `zic` 是从零开发的高性能漫画阅读器。当前版本已完成静态 Reader、可恢复下载、
 持久化缓存恢复、容量/LRU 策略、受控清理、失败退避重试、独立资源 lane、格式感知 ingress、
-decode/upload registry、frame holder、viewport 播放门控、帧字节预算、可运行的 Animated WebP App 入口、viewport/DPR 自适应显示目标、source-aware 解码 raster、Rust 增量 Animated WebP 解码基础，以及按 `comicId` 聚合多章节的 Android Home/Bookshelf/详情闭环。`0.20.0-dev.23` 进一步统一首页与书架封面、补齐分类与管理操作、自定义画廊拖动，并为 Reader 增加默认沉浸、页码滑杆、暂停/倍速、旋转、收藏、章节缓存和缩放手势。
+decode/upload registry、frame holder、viewport 播放门控、帧字节预算、可运行的 Animated WebP App 入口、viewport/DPR 自适应显示目标、source-aware 解码 raster、Rust 增量 Animated WebP 解码基础，以及按 `comicId` 聚合多章节的 Android Home/Bookshelf/详情闭环。`0.20.0-dev.23` 统一首页与书架封面、补齐分类与管理操作、自定义画廊拖动，并为 Reader 增加沉浸控制与缩放。`0.21.0-dev.24` 新增第三个漫画源页面、持久化源管理、底部源切换和首个可浏览的 MangaDex 远程源；远程章节继续进入现有目录库与 Reader artifact 管线。
 
 ```text
 ReaderView
@@ -66,6 +66,12 @@ apps/app/assets/demo/animated/
 cd apps/app
 flutter run -d android
 ```
+
+## 漫画源
+
+主导航第三页为漫画源浏览，首次进入时才创建远程浏览页。顶部入口管理源的启用状态与顺序，页面底部在已启用源之间切换。当前内置 `MangaDexSource`，支持分页发现、标题搜索、详情、章节列表以及加入书架或直接打开。源层只产生 catalog manifest；远程章节写入 `ImportedLibraryStore` 后仍由 `ReaderRuntimeScreen -> DownloadSession -> promoted artifact` 读取。
+
+远程图片交付 URI 可能变化，因此 `ImportedPageRecord` 单独保存源提供的稳定 page ID。每次打开远程章节会重新解析当前 manifest，再按稳定 page ID 迁移阅读位置。当前内置源只请求英文 safe/suggestive 内容，不包含账户登录、Cookie、反爬挑战或站点绕过。
 
 所有 WebP 入口默认使用确定性的 `Flutter codec`，打开文件不会自动进入
 FFI/texture。Reader 与文件夹切换页固定使用安全 codec；独立预览中的

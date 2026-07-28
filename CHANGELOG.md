@@ -1,3 +1,23 @@
+## 0.21.0-dev.24 — remote comic source browser
+
+- Add a third `漫画源` application destination with a top source-management action and a bottom
+  enabled-source switcher.
+- Add catalog-owned remote browsing contracts, searchable/paged source UI, source details and
+  chapter actions.
+- Add a first-party MangaDex source using its API and MangaDex@Home page manifests, restricted by
+  default to English safe/suggestive results.
+- Route saved/opened remote chapters through `ImportedChapterRecord`, the durable library and the
+  existing Reader DownloadSession/artifact pipeline.
+- Persist source enablement and order in SQLite schema version 3, including schema 2 migration.
+- Persist source-provided page IDs independently of rotating remote delivery URLs so refresh keeps
+  the same reading page and sub-page offset.
+- Retry transient comic-detail failures in place and bound remote metadata/cover response bodies
+  before buffering them in memory.
+- Add fixture transport tests, source-page widget tests, source preference persistence/migration
+  tests and remote URL-rotation reconciliation coverage.
+- Keep Mihon-compatible plugin runtime support as a later isolated adapter rather than embedding
+  Android extension code into the Flutter UI process.
+
 ## 0.20.0-dev.23 — library management and immersive Reader controls
 
 - Remove the Home local-directory maintenance panel while retaining folder import and the

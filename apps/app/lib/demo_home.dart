@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
+import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:local_media/local_media.dart';
 
+import 'source_browser.dart';
 import 'static_demo.dart';
 import 'webp_demo.dart';
 
@@ -63,6 +65,7 @@ final class DemoHome extends StatefulWidget {
     required this.folderPicker,
     this.folderRefresher = defaultImageFolderRefresher,
     this.libraryStore,
+    this.comicSources,
     super.key,
   });
 
@@ -70,6 +73,7 @@ final class DemoHome extends StatefulWidget {
   final ImageFolderPicker folderPicker;
   final ImageFolderRefresher folderRefresher;
   final ImportedLibraryStore? libraryStore;
+  final List<BrowsableComicSource>? comicSources;
 
   @override
   State<DemoHome> createState() => _DemoHomeState();
@@ -81,6 +85,7 @@ final class _DemoHomeState extends State<DemoHome> {
   late final Future<void> _libraryReady;
   final Map<String, Future<Uint8List>> _coverBytes =
       <String, Future<Uint8List>>{};
+  late final List<BrowsableComicSource> _sources;
 
   List<ImportedLibraryEntry> _libraryEntries = const <ImportedLibraryEntry>[];
   List<LibraryCategory> _categories = const <LibraryCategory>[];
@@ -88,6 +93,8 @@ final class _DemoHomeState extends State<DemoHome> {
       const <String, ComicPreference>{};
   Map<String, ChapterReadState> _chapterReadStates =
       const <String, ChapterReadState>{};
+  Map<String, ComicSourcePreference> _sourcePreferences =
+      const <String, ComicSourcePreference>{};
   Object? _libraryError;
   bool _libraryLoading = true;
   bool _picking = false;
@@ -95,6 +102,8 @@ final class _DemoHomeState extends State<DemoHome> {
   bool _manageShelf = false;
   String? _managedComicId;
   int _navigationIndex = 0;
+  bool _sourcePageVisited = false;
+  String? _activeSourceId;
   _SourceFilter _sourceFilter = _SourceFilter.all;
   String? _selectedCategoryId;
   LibrarySortMode _sortMode = LibrarySortMode.recent;
@@ -106,6 +115,9 @@ final class _DemoHomeState extends State<DemoHome> {
   @override
   void initState() {
     super.initState();
+    _sources = List<BrowsableComicSource>.unmodifiable(
+      widget.comicSources ?? <BrowsableComicSource>[MangaDexSource()],
+    );
     _ownsLibrary = widget.libraryStore == null;
     _library = widget.libraryStore ?? MemoryImportedLibraryStore();
     _libraryReady = _initializeLibrary();
@@ -133,6 +145,33 @@ final class _DemoHomeState extends State<DemoHome> {
     final entries = await _library.list();
     final categories = await _library.listCategories();
     final storedPreferences = await _library.listComicPreferences();
+    final storedSourcePreferences = await _library.listSourcePreferences();
+    final sourcePreferences = <String, ComicSourcePreference>{
+      for (final preference in storedSourcePreferences)
+        preference.sourceId: preference,
+    };
+    for (var index = 0; index < _sources.length; index++) {
+      final source = _sources[index];
+      if (sourcePreferences.containsKey(source.sourceId)) {
+        continue;
+      }
+      final preference = ComicSourcePreference.defaults(
+        sourceId: source.sourceId,
+        sortOrder: index,
+      ).copyWith(updatedAt: DateTime.now().toUtc());
+      sourcePreferences[source.sourceId] = preference;
+      await _library.saveSourcePreference(preference);
+    }
+    final enabledSourceIds = _sources
+        .where((source) => sourcePreferences[source.sourceId]?.enabled ?? true)
+        .toList(growable: false)
+      ..sort((left, right) => (sourcePreferences[left.sourceId]?.sortOrder ?? 0)
+          .compareTo(sourcePreferences[right.sourceId]?.sortOrder ?? 0));
+    final nextActiveSourceId = enabledSourceIds.any(
+      (source) => source.sourceId == _activeSourceId,
+    )
+        ? _activeSourceId
+        : (enabledSourceIds.isEmpty ? null : enabledSourceIds.first.sourceId);
     final preferences = <String, ComicPreference>{
       for (final preference in storedPreferences)
         preference.comicId: preference,
@@ -150,6 +189,9 @@ final class _DemoHomeState extends State<DemoHome> {
       }
       final preference = ComicPreference.defaults(
         comicId: entry.chapter.comicId,
+        sourceKind: entry.chapter.sourceId == 'local-folder'
+            ? ComicSourceKind.local
+            : ComicSourceKind.remote,
         customOrder: nextOrder++,
       ).copyWith(updatedAt: DateTime.now().toUtc());
       preferences[preference.comicId] = preference;
@@ -170,6 +212,9 @@ final class _DemoHomeState extends State<DemoHome> {
       _preferences = Map<String, ComicPreference>.unmodifiable(preferences);
       _chapterReadStates =
           Map<String, ChapterReadState>.unmodifiable(readStates);
+      _sourcePreferences =
+          Map<String, ComicSourcePreference>.unmodifiable(sourcePreferences);
+      _activeSourceId = nextActiveSourceId;
       _libraryError = null;
       _libraryLoading = false;
     });
@@ -208,6 +253,149 @@ final class _DemoHomeState extends State<DemoHome> {
       unawaited(_library.close());
     }
     super.dispose();
+  }
+
+  BrowsableComicSource? _sourceForId(String sourceId) {
+    for (final source in _sources) {
+      if (source.sourceId == sourceId) {
+        return source;
+      }
+    }
+    return null;
+  }
+
+  List<BrowsableComicSource> get _enabledSources {
+    final result = _sources
+        .where(
+          (source) => _sourcePreferences[source.sourceId]?.enabled ?? true,
+        )
+        .toList(growable: false)
+      ..sort((left, right) =>
+          (_sourcePreferences[left.sourceId]?.sortOrder ?? 0).compareTo(
+            _sourcePreferences[right.sourceId]?.sortOrder ?? 0,
+          ));
+    return result;
+  }
+
+  Future<void> _saveSourcePreference(
+    ComicSourcePreference preference,
+  ) async {
+    final updated = preference.copyWith(updatedAt: DateTime.now().toUtc());
+    await _library.saveSourcePreference(updated);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _sourcePreferences = <String, ComicSourcePreference>{
+        ..._sourcePreferences,
+        updated.sourceId: updated,
+      };
+      final enabled = _enabledSources;
+      if (!enabled.any((source) => source.sourceId == _activeSourceId)) {
+        _activeSourceId = enabled.isEmpty ? null : enabled.first.sourceId;
+      }
+    });
+  }
+
+  Future<void> _openSourceManagement() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SourceManagementScreen(
+          sources: _sources,
+          preferences: _sourcePreferences,
+          onPreferenceChanged: _saveSourcePreference,
+        ),
+      ),
+    );
+    if (mounted) {
+      await _reloadLibrary();
+    }
+  }
+
+  Future<void> _openSourceComic(
+    BrowsableComicSource source,
+    SourceComicSummary comic,
+  ) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SourceComicDetailsScreen(
+          source: source,
+          summary: comic,
+          onChapterAction: _handleSourceChapter,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleSourceChapter(
+    BrowsableComicSource source,
+    Comic comic,
+    Chapter chapter, {
+    required bool open,
+  }) async {
+    await _ensureLibraryReady();
+    final manifest = await source.loadChapter(chapter.chapterId);
+    final record = ImportedChapterRecord.remote(
+      comic: comic,
+      manifest: manifest,
+    );
+    await _library.upsertChapter(record);
+    final existing = await _library.getComicPreference(record.comicId);
+    final customOrder = _preferences.values.fold<int>(
+      0,
+      (value, preference) => preference.customOrder >= value
+          ? preference.customOrder + 1
+          : value,
+    );
+    await _library.saveComicPreference(
+      (existing ??
+              ComicPreference.defaults(
+                comicId: record.comicId,
+                sourceKind: ComicSourceKind.remote,
+                customOrder: customOrder,
+              ))
+          .copyWith(
+        sourceKind: ComicSourceKind.remote,
+        inShelf: true,
+        updatedAt: DateTime.now().toUtc(),
+      ),
+    );
+    final entry = await _library.get(record.chapterId);
+    await _reloadLibrary();
+    if (open && mounted && entry != null) {
+      await _openImportedChapter(entry, refreshRemote: false);
+    }
+  }
+
+  Future<ImportedLibraryEntry> _refreshRemoteEntry(
+    ImportedLibraryEntry entry,
+  ) async {
+    if (entry.chapter.sourceId == 'local-folder') {
+      return entry;
+    }
+    final source = _sourceForId(entry.chapter.sourceId);
+    if (source == null) {
+      throw StateError('漫画源 ${entry.chapter.sourceId} 当前不可用');
+    }
+    final manifest = await source.loadChapter(entry.chapter.chapterId);
+    final comic = Comic(
+      comicId: entry.chapter.comicId,
+      sourceId: entry.chapter.sourceId,
+      title: entry.chapter.comicTitle,
+      authors: const <String>[],
+      coverUri: entry.chapter.coverSourceId == null
+          ? null
+          : Uri.tryParse(entry.chapter.coverSourceId!),
+      readingDirection: entry.chapter.readingDirection,
+    );
+    final refreshed = ImportedChapterRecord.remote(
+      comic: comic,
+      manifest: manifest,
+      importedAt: entry.chapter.importedAt,
+    );
+    await _library.upsertChapter(refreshed);
+    return await _library.get(refreshed.chapterId) ??
+        ImportedLibraryEntry(chapter: refreshed, progress: entry.progress);
   }
 
   ComicPreference _preferenceForComic(LibraryComic comic) {
@@ -321,25 +509,31 @@ final class _DemoHomeState extends State<DemoHome> {
     }
   }
 
-  Future<void> _openImportedChapter(ImportedLibraryEntry entry) async {
-    await _setChapterRead(entry, true);
+  Future<void> _openImportedChapter(
+    ImportedLibraryEntry entry, {
+    bool refreshRemote = true,
+  }) async {
+    final current = refreshRemote ? await _refreshRemoteEntry(entry) : entry;
+    await _setChapterRead(current, true);
     if (!mounted) {
       return;
     }
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) {
-          final preference = _preferences[entry.chapter.comicId] ??
-              ComicPreference.defaults(comicId: entry.chapter.comicId);
+          final preference = _preferences[current.chapter.comicId] ??
+              ComicPreference.defaults(comicId: current.chapter.comicId);
           return ImportedImageChapterScreen(
-            record: entry.chapter,
-            initialProgress: entry.progress,
+            record: current.chapter,
+            initialProgress: current.progress,
             onProgressChanged: _library.saveProgress,
             initialFavorite: preference.collected,
             onFavoriteChanged: (favorite) {
-              final current = _preferences[entry.chapter.comicId] ??
-                  ComicPreference.defaults(comicId: entry.chapter.comicId);
-              return _savePreference(current.copyWith(collected: favorite));
+              final preference = _preferences[current.chapter.comicId] ??
+                  ComicPreference.defaults(comicId: current.chapter.comicId);
+              return _savePreference(
+                preference.copyWith(collected: favorite),
+              );
             },
           );
         },
@@ -374,11 +568,18 @@ final class _DemoHomeState extends State<DemoHome> {
   }
 
   Future<Uint8List> Function() _coverLoader(ImportedLibraryEntry entry) {
-    final page = entry.chapter.pages.first;
-    return () => _coverBytes.putIfAbsent(
-          page.sourceId,
-          () => readLocalImageSource(page.sourceId),
-        );
+    final sourceId =
+        entry.chapter.coverSourceId ?? entry.chapter.pages.first.sourceId;
+    return () => _coverBytes.putIfAbsent(sourceId, () {
+          final source = _sourceForId(entry.chapter.sourceId);
+          final uri = Uri.tryParse(sourceId);
+          if (source != null &&
+              uri != null &&
+              (uri.scheme == 'http' || uri.scheme == 'https')) {
+            return source.loadResource(uri);
+          }
+          return readLocalImageSource(sourceId);
+        });
   }
 
   Future<Uint8List> Function() _coverLoaderForComic(LibraryComic comic) {
@@ -403,6 +604,10 @@ final class _DemoHomeState extends State<DemoHome> {
     for (final entry in comic.chapters) {
       await _library.removeChapter(entry.chapter.chapterId);
       _coverBytes.remove(entry.chapter.pages.first.sourceId);
+      final coverSourceId = entry.chapter.coverSourceId;
+      if (coverSourceId != null) {
+        _coverBytes.remove(coverSourceId);
+      }
     }
     if (mounted) {
       await _reloadLibrary();
@@ -612,6 +817,16 @@ final class _DemoHomeState extends State<DemoHome> {
       children: <Widget>[
         _buildHomePage(),
         _buildBookshelfPage(),
+        _sourcePageVisited
+            ? ComicSourcesPage(
+                sources: _enabledSources,
+                activeSourceId: _activeSourceId,
+                onSourceSelected: (sourceId) {
+                  setState(() => _activeSourceId = sourceId);
+                },
+                onOpenComic: _openSourceComic,
+              )
+            : const SizedBox.shrink(),
       ],
     );
   }
@@ -1323,13 +1538,27 @@ final class _DemoHomeState extends State<DemoHome> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_navigationIndex == 0 ? 'zic' : '书架'),
+        title: Text(
+          switch (_navigationIndex) {
+            0 => 'zic',
+            1 => '书架',
+            _ => '漫画源',
+          },
+        ),
         actions: <Widget>[
-          IconButton(
-            tooltip: '导入漫画文件夹',
-            onPressed: _picking || _pickingFolder ? null : _importImageFolder,
-            icon: const Icon(Icons.create_new_folder_outlined),
-          ),
+          if (_navigationIndex == 2)
+            IconButton(
+              key: comicSourceManageKey,
+              tooltip: '漫画源管理',
+              onPressed: _openSourceManagement,
+              icon: const Icon(Icons.tune),
+            )
+          else
+            IconButton(
+              tooltip: '导入漫画文件夹',
+              onPressed: _picking || _pickingFolder ? null : _importImageFolder,
+              icon: const Icon(Icons.create_new_folder_outlined),
+            ),
         ],
       ),
       body: _buildLibraryState(),
@@ -1346,9 +1575,19 @@ final class _DemoHomeState extends State<DemoHome> {
             selectedIcon: Icon(Icons.collections_bookmark),
             label: '书架',
           ),
+          NavigationDestination(
+            icon: Icon(Icons.public_outlined),
+            selectedIcon: Icon(Icons.public),
+            label: '漫画源',
+          ),
         ],
         onDestinationSelected: (index) {
-          setState(() => _navigationIndex = index);
+          setState(() {
+            _navigationIndex = index;
+            if (index == 2) {
+              _sourcePageVisited = true;
+            }
+          });
         },
       ),
     );
