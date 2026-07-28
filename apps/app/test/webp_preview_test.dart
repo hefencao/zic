@@ -109,6 +109,60 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets('WebP opens on the deterministic Flutter codec by default', (
+    tester,
+  ) async {
+    final bytes = _nativeFixture('finite_loop.webp').readAsBytesSync();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: WebpPlayerScreen.bytes(
+          displayName: 'safe-default.webp',
+          bytes: bytes,
+        ),
+      ),
+    );
+    await _pumpUntilPhase(tester, WebpPreviewPhase.ready);
+    await _pumpUntilFound(tester, find.byKey(webpFlutterPreviewKey));
+
+    final control = tester.widget<SegmentedButton<WebpPlayerEngine>>(
+      find.byKey(webpEngineControlKey),
+    );
+    expect(control.selected, <WebpPlayerEngine>{WebpPlayerEngine.flutter});
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('native pipeline requires explicit confirmation', (
+    tester,
+  ) async {
+    final bytes = _nativeFixture('finite_loop.webp').readAsBytesSync();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: WebpPlayerScreen.bytes(
+          displayName: 'native-confirmation.webp',
+          bytes: bytes,
+        ),
+      ),
+    );
+    await _pumpUntilPhase(tester, WebpPreviewPhase.ready);
+
+    await tester.tap(find.byKey(webpNativeEngineOptionKey));
+    await tester.pump();
+
+    expect(find.byKey(webpNativeConfirmDialogKey), findsOneWidget);
+    await tester.tap(find.byKey(webpNativeCancelKey));
+    await tester.pump();
+
+    final control = tester.widget<SegmentedButton<WebpPlayerEngine>>(
+      find.byKey(webpEngineControlKey),
+    );
+    expect(control.selected, <WebpPlayerEngine>{WebpPlayerEngine.flutter});
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
   testWidgets('tiny partial-frame WebP is not upscaled by Flutter codec', (
     tester,
   ) async {
@@ -128,7 +182,6 @@ void main() {
       ),
     );
     await _pumpUntilPhase(tester, WebpPreviewPhase.ready);
-    await tester.tap(find.byKey(webpFlutterEngineOptionKey));
     await _pumpUntilFound(tester, find.byKey(webpFlutterPreviewKey));
 
     final image = tester.widget<Image>(find.byKey(webpFlutterPreviewKey));

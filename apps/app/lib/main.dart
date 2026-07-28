@@ -9,9 +9,14 @@ void main() {
 }
 
 final class App extends StatelessWidget {
-  const App({this.picker = defaultWebpPicker, super.key});
+  const App({
+    this.picker = defaultWebpPicker,
+    this.folderPicker = defaultWebpFolderPicker,
+    super.key,
+  });
 
   final WebpPicker picker;
+  final WebpFolderPicker folderPicker;
 
   @override
   Widget build(BuildContext context) {
@@ -30,7 +35,7 @@ final class App extends StatelessWidget {
         useMaterial3: true,
       ),
       themeMode: ThemeMode.dark,
-      home: DemoHome(picker: picker),
+      home: DemoHome(picker: picker, folderPicker: folderPicker),
     );
   }
 }

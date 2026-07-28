@@ -2,7 +2,6 @@ use std::os::raw::{c_int, c_void};
 use std::ptr;
 
 const WEBP_DEMUX_ABI_VERSION: c_int = 0x0107;
-const WEBP_DEMUX_PARSE_ERROR: c_int = -1;
 const WEBP_DEMUX_PARSING_HEADER: c_int = 0;
 const WEBP_DEMUX_DONE: c_int = 2;
 
@@ -73,7 +72,6 @@ extern "C" {
         output_stride: c_int,
     ) -> *mut u8;
 }
-
 
 pub(crate) fn decoder_version() -> u32 {
     unsafe { WebPGetDecoderVersion() as u32 }
@@ -168,19 +166,17 @@ impl Decoder {
             size: bytes.len(),
         };
         let mut demux_state = WEBP_DEMUX_PARSING_HEADER;
-        let demux_ptr = unsafe {
-            WebPDemuxInternal(
-                &data,
-                1,
-                &mut demux_state,
-                WEBP_DEMUX_ABI_VERSION,
-            )
-        };
+        let demux_ptr =
+            unsafe { WebPDemuxInternal(&data, 1, &mut demux_state, WEBP_DEMUX_ABI_VERSION) };
         if demux_ptr.is_null() {
-            return Err(if !sealed && demux_state != WEBP_DEMUX_PARSE_ERROR {
-                DecodeError::NeedMoreData
-            } else {
+            // libwebp may report a parse error for a valid, still-incomplete
+            // RIFF/WebP prefix. Until the source is sealed, the caller must
+            // be able to append more bytes rather than treating it as a
+            // terminal decoder failure.
+            return Err(if sealed {
                 DecodeError::Failed
+            } else {
+                DecodeError::NeedMoreData
             });
         }
         let demux = Demux(demux_ptr);
@@ -199,12 +195,9 @@ impl Decoder {
                 DecodeError::NeedMoreData
             });
         }
-        self.ensure_canvas(demux.0, source_width, source_height)?;
-
         let mut raw_iter = unsafe { std::mem::zeroed::<WebPIterator>() };
-        let found = unsafe {
-            WebPDemuxGetFrame(demux.0, self.next_frame_number, &mut raw_iter)
-        } != 0;
+        let found =
+            unsafe { WebPDemuxGetFrame(demux.0, self.next_frame_number, &mut raw_iter) } != 0;
         if !found {
             if sealed || demux_state == WEBP_DEMUX_DONE {
                 self.ended = true;
@@ -220,11 +213,7 @@ impl Decoder {
                 DecodeError::NeedMoreData
             });
         }
-        if iter.0.width <= 0
-            || iter.0.height <= 0
-            || iter.0.x_offset < 0
-            || iter.0.y_offset < 0
-        {
+        if iter.0.width <= 0 || iter.0.height <= 0 || iter.0.x_offset < 0 || iter.0.y_offset < 0 {
             return Err(DecodeError::Failed);
         }
 
@@ -246,6 +235,10 @@ impl Decoder {
             self.target_width,
             self.target_height,
         )?;
+        // Partial demux metadata can report provisional canvas dimensions.
+        // Wait until a complete frame is available before committing decoder
+        // state, so later bytes can refine the container header safely.
+        self.ensure_canvas(demux.0, source_width, source_height)?;
 
         let fragment_len = rgba_len(source_rect.width, source_rect.height)?;
         if fragment_len > MAX_WORKING_BYTES
@@ -442,9 +435,7 @@ fn scale_rgba(
     target_height: usize,
 ) -> Result<Vec<u8>, DecodeError> {
     let target_len = rgba_len(target_width, target_height)?;
-    if source.len() != rgba_len(source_width, source_height)?
-        || target_len > MAX_WORKING_BYTES
-    {
+    if source.len() != rgba_len(source_width, source_height)? || target_len > MAX_WORKING_BYTES {
         return Err(DecodeError::Failed);
     }
     if source_width == target_width && source_height == target_height {
@@ -453,16 +444,14 @@ fn scale_rgba(
 
     let mut target = vec![0u8; target_len];
     for target_y in 0..target_height {
-        let source_y = ((target_y as f64 + 0.5) * source_height as f64
-            / target_height as f64
+        let source_y = ((target_y as f64 + 0.5) * source_height as f64 / target_height as f64
             - 0.5)
             .clamp(0.0, (source_height - 1) as f64);
         let y0 = source_y.floor() as usize;
         let y1 = (y0 + 1).min(source_height - 1);
         let fy = source_y - y0 as f64;
         for target_x in 0..target_width {
-            let source_x = ((target_x as f64 + 0.5) * source_width as f64
-                / target_width as f64
+            let source_x = ((target_x as f64 + 0.5) * source_width as f64 / target_width as f64
                 - 0.5)
                 .clamp(0.0, (source_width - 1) as f64);
             let x0 = source_x.floor() as usize;
@@ -480,8 +469,7 @@ fn scale_rgba(
                 let sample_alpha = sample[3] as f64;
                 alpha += sample_alpha * weight;
                 for channel in 0..3 {
-                    premultiplied[channel] +=
-                        sample[channel] as f64 * sample_alpha * weight;
+                    premultiplied[channel] += sample[channel] as f64 * sample_alpha * weight;
                 }
             }
             let offset = (target_y * target_width + target_x) * BYTES_PER_PIXEL;
@@ -489,8 +477,7 @@ fn scale_rgba(
             if alpha > 0.0 {
                 for channel in 0..3 {
                     target[offset + channel] =
-                        (premultiplied[channel] / alpha).round().clamp(0.0, 255.0)
-                            as u8;
+                        (premultiplied[channel] / alpha).round().clamp(0.0, 255.0) as u8;
                 }
             }
         }
@@ -542,8 +529,7 @@ fn composite(
     for y in 0..rect.height {
         for x in 0..rect.width {
             let source_offset = (y * rect.width + x) * BYTES_PER_PIXEL;
-            let target_offset =
-                ((rect.y + y) * canvas_width + rect.x + x) * BYTES_PER_PIXEL;
+            let target_offset = ((rect.y + y) * canvas_width + rect.x + x) * BYTES_PER_PIXEL;
             let source = &frame[source_offset..source_offset + BYTES_PER_PIXEL];
             let target = &mut canvas[target_offset..target_offset + BYTES_PER_PIXEL];
             if blend {

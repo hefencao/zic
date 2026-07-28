@@ -9,6 +9,8 @@ import 'package:telemetry/telemetry.dart';
 
 import 'webp_demo.dart';
 
+const staticDemoScreenKey = ValueKey<String>('static-demo-screen');
+
 final class StaticDemoScreen extends StatefulWidget {
   const StaticDemoScreen({super.key});
 
@@ -37,30 +39,39 @@ final class _StaticDemoScreenState extends State<StaticDemoScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<ChapterManifest>(
-      future: _chapter,
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Scaffold(
-            appBar: AppBar(title: const Text('100 页静态章节')),
-            body: Center(child: Text('加载演示失败：${snapshot.error}')),
-          );
-        }
-        if (!snapshot.hasData) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
-        return _ReaderRuntime(chapter: snapshot.requireData);
-      },
+    return KeyedSubtree(
+      key: staticDemoScreenKey,
+      child: FutureBuilder<ChapterManifest>(
+        future: _chapter,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Scaffold(
+              appBar: AppBar(title: const Text('100 页静态章节')),
+              body: Center(child: Text('加载演示失败：${snapshot.error}')),
+            );
+          }
+          if (!snapshot.hasData) {
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
+          return _ReaderRuntime(chapter: snapshot.requireData);
+        },
+      ),
     );
   }
 }
 
+const mediaPipelineReaderScreenKey =
+    ValueKey<String>('media-pipeline-reader-screen');
 const readerMediaWebpPageKey = ValueKey<String>('reader-media-webp-page');
 
+typedef ChapterManifestLoader = Future<ChapterManifest> Function();
+
 final class MediaPipelineReaderScreen extends StatefulWidget {
-  const MediaPipelineReaderScreen({super.key});
+  const MediaPipelineReaderScreen({this.chapterLoader, super.key});
+
+  final ChapterManifestLoader? chapterLoader;
 
   @override
   State<MediaPipelineReaderScreen> createState() =>
@@ -74,6 +85,11 @@ final class _MediaPipelineReaderScreenState
   @override
   void initState() {
     super.initState();
+    final provided = widget.chapterLoader;
+    if (provided != null) {
+      _chapter = provided();
+      return;
+    }
     final source = LocalManifestSource(
       sourceId: 'local-demo',
       loader: rootBundle.loadString,
@@ -90,25 +106,28 @@ final class _MediaPipelineReaderScreenState
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<ChapterManifest>(
-      future: _chapter,
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Scaffold(
-            appBar: AppBar(title: const Text('Reader Media Pipeline')),
-            body: Center(child: Text('加载演示失败：${snapshot.error}')),
+    return KeyedSubtree(
+      key: mediaPipelineReaderScreenKey,
+      child: FutureBuilder<ChapterManifest>(
+        future: _chapter,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) {
+            return Scaffold(
+              appBar: AppBar(title: const Text('Reader Media Pipeline')),
+              body: Center(child: Text('加载演示失败：${snapshot.error}')),
+            );
+          }
+          if (!snapshot.hasData) {
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
+          return _ReaderRuntime(
+            chapter: snapshot.requireData,
+            mediaPipeline: true,
           );
-        }
-        if (!snapshot.hasData) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
-        return _ReaderRuntime(
-          chapter: snapshot.requireData,
-          mediaPipeline: true,
-        );
-      },
+        },
+      ),
     );
   }
 }
@@ -165,6 +184,7 @@ Widget? _buildMediaReaderPage(
       },
       showEngineControls: false,
       showStatus: false,
+      initialEngine: WebpPlayerEngine.flutter,
       onFirstFrame: reportFirstFrame,
       traceClock: clock,
       traceSink: traceSink,

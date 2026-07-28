@@ -213,6 +213,16 @@ Reader 媒体页将 native decode、frame preparation、texture upload、present
 fallback 写入同一 monotonic trace。`ReaderBinding.revision` 是输出层只读的
 需求版本来源，播放器不得自行生成与 PipelineController 无关的 revision。
 
+WebP 打开与 native 实验启动是两个不同状态：页面先完成 Dart 容器校验并使用
+Flutter codec。Reader 和文件夹切换隐藏 native 控件；只有独立预览中显式选择且
+确认后才建立 FFI source/cursor 和 Android texture。这使普通阅读与批量切换共享
+安全路径，同时保留可观测的 native 诊断入口。
+
+本地文件夹导入位于 App/catalog 边界，不进入 `reader` package。目录枚举在后台
+isolate 中递归执行，输出不可变的 `PickedWebpFolder`，每个 `PickedWebp` 自己拥有
+相对 `displayName` 和 `XFile`。文件切换复用单个可见播放器位置，旧播放器随 key
+替换而完整释放，避免为整个目录同时创建动画 codec 或 native texture。
+
 非 Android：
 
 - Flutter `ui.Image` renderer；

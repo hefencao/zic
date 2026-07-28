@@ -97,13 +97,29 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
         val producer = textures.createSurfaceProducer()
         producer.setSize(width, height)
-        val output = Output(
+        lateinit var output: Output
+        output = Output(
             producer = producer,
             width = width,
             height = height,
             canPresent = { !detached.get() },
-            scheduleFrame = { scheduleProducerFrame(producer) },
+            scheduleFrame = {
+                scheduleProducerFrame(producer) { !output.isReleased }
+            },
             scheduleRedraw = { target -> scheduleRedraw(lane, target) },
+            resizeProducer = { nextWidth, nextHeight ->
+                mainHandler.post {
+                    if (!output.isReleased && !detached.get()) {
+                        producer.setSize(nextWidth, nextHeight)
+                    }
+                }
+            },
+            releaseProducer = {
+                mainHandler.post {
+                    producer.setCallback(null)
+                    producer.release()
+                }
+            },
         )
         synchronized(outputs) { outputs[producer.id()] = output }
         result.success(mapOf("textureId" to producer.id()))
@@ -244,11 +260,18 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     private fun scheduleProducerFrame(
         producer: TextureRegistry.SurfaceProducer,
+        canSchedule: () -> Boolean,
     ): Boolean = synchronized(lifecycleLock) {
-        if (detached.get()) {
+        if (detached.get() || !canSchedule()) {
             false
         } else {
-            producer.scheduleFrame()
+            mainHandler.post {
+                synchronized(lifecycleLock) {
+                    if (!detached.get() && canSchedule()) {
+                        producer.scheduleFrame()
+                    }
+                }
+            }
             true
         }
     }
@@ -277,6 +300,8 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         private val canPresent: () -> Boolean,
         private val scheduleFrame: () -> Boolean,
         private val scheduleRedraw: (Output) -> Unit,
+        private val resizeProducer: (Int, Int) -> Unit,
+        private val releaseProducer: () -> Unit,
     ) {
         @Volatile
         private var surfaceAvailable = true
@@ -295,12 +320,15 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                         scheduleRedraw(this@Output)
                     }
 
-                    override fun onSurfaceDestroyed() {
+                    override fun onSurfaceCleanup() {
                         surfaceAvailable = false
                     }
                 },
             )
         }
+
+        val isReleased: Boolean
+            get() = released
 
         val textureBytes: Long
             get() = width.toLong() * height.toLong() * 4L
@@ -346,7 +374,7 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             check(!released) { "texture output is released" }
             if (this.width == width && this.height == height) return
             clearCurrentFrame()
-            producer.setSize(width, height)
+            resizeProducer(width, height)
             this.width = width
             this.height = height
         }
@@ -357,9 +385,8 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             }
             released = true
             surfaceAvailable = false
-            producer.setCallback(null)
             clearCurrentFrame()
-            producer.release()
+            releaseProducer()
         }
 
         private fun surface(): Surface {

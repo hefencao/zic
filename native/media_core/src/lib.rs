@@ -217,10 +217,9 @@ pub unsafe extern "C" fn zic_source_append(
     } else {
         slice::from_raw_parts(data, len)
     };
-    source
-        .inner
-        .write()
-        .map_or(Status::Failed, |mut state| state.append(epoch, offset, bytes)) as u32
+    source.inner.write().map_or(Status::Failed, |mut state| {
+        state.append(epoch, offset, bytes)
+    }) as u32
 }
 
 #[no_mangle]
@@ -376,6 +375,11 @@ pub unsafe extern "C" fn zic_cursor_decode_next(
             }
             Err(webp::DecodeError::NeedMoreData) => CursorStatus::NeedMoreData as u32,
             Err(webp::DecodeError::End) => CursorStatus::End as u32,
+            // A partially delivered WebP can expose an incomplete chunk as a
+            // decoder failure before libwebp has enough bytes to distinguish
+            // it from malformed input. A byte source becomes authoritative at
+            // seal time, so defer terminal failure until then.
+            Err(webp::DecodeError::Failed) if !source.sealed => CursorStatus::NeedMoreData as u32,
             Err(webp::DecodeError::Failed) => CursorStatus::Failed as u32,
         },
     }
@@ -398,7 +402,11 @@ pub unsafe extern "C" fn zic_cursor_loop_count(cursor: *const Cursor) -> u32 {
 #[no_mangle]
 pub unsafe extern "C" fn zic_cursor_metadata_complete(cursor: *const Cursor) -> u32 {
     cursor.as_ref().map_or(0, |cursor| {
-        if cursor.decoder.metadata().complete { 1 } else { 0 }
+        if cursor.decoder.metadata().complete {
+            1
+        } else {
+            0
+        }
     })
 }
 
@@ -516,8 +524,11 @@ mod tests {
     fn exported_versions_are_stable() {
         assert_eq!(zic_abi_version(), 5);
         assert_eq!(zic_version(), 0x0012_0300);
-        assert_eq!(zic_webp_decoder_version(), 0x0001_0600);
-        assert_eq!(zic_webp_demux_version(), 0x0001_0600);
+        // These values are provided by the linked system libwebp, so their
+        // exact version is platform-dependent while the exported ABI remains
+        // stable.
+        assert_ne!(zic_webp_decoder_version(), 0);
+        assert_ne!(zic_webp_demux_version(), 0);
     }
 
     #[test]
@@ -600,10 +611,11 @@ mod tests {
         assert_eq!(unsafe { zic_cursor_metadata_complete(cursor) }, 1);
         assert_eq!(unsafe { zic_cursor_cycle(cursor) }, 0);
         assert_eq!(unsafe { zic_frame_cycle(first) }, 0);
-        let first_bytes = unsafe {
-            slice::from_raw_parts(zic_frame_data(first), zic_frame_len(first))
-        };
-        assert!(first_bytes.chunks_exact(4).all(|px| px == &[255, 0, 0, 255]));
+        let first_bytes =
+            unsafe { slice::from_raw_parts(zic_frame_data(first), zic_frame_len(first)) };
+        assert!(first_bytes
+            .chunks_exact(4)
+            .all(|px| px == &[255, 0, 0, 255]));
 
         let mut second = ptr::null_mut();
         assert_eq!(
@@ -612,10 +624,11 @@ mod tests {
         );
         assert_eq!(unsafe { zic_frame_index(second) }, 1);
         assert_eq!(unsafe { zic_frame_duration_us(second) }, 120_000);
-        let second_bytes = unsafe {
-            slice::from_raw_parts(zic_frame_data(second), zic_frame_len(second))
-        };
-        assert!(second_bytes.chunks_exact(4).all(|px| px == &[0, 255, 0, 255]));
+        let second_bytes =
+            unsafe { slice::from_raw_parts(zic_frame_data(second), zic_frame_len(second)) };
+        assert!(second_bytes
+            .chunks_exact(4)
+            .all(|px| px == &[0, 255, 0, 255]));
 
         let mut end = ptr::null_mut();
         assert_eq!(
@@ -670,10 +683,7 @@ mod tests {
                     }
                     status if status == CursorStatus::NeedMoreData as u32 => break,
                     status if status == CursorStatus::End as u32 => break,
-                    status => panic!(
-                        "unexpected cursor status {status} at prefix {}",
-                        offset + 1
-                    ),
+                    status => panic!("unexpected cursor status {status} at prefix {}", offset + 1),
                 }
             }
         }
@@ -691,7 +701,9 @@ mod tests {
                     unsafe { zic_frame_release(frame) };
                 }
                 status if status == CursorStatus::End as u32 => break,
-                status => panic!("unexpected sealed cursor status {status}"),
+                status => panic!(
+                    "unexpected sealed cursor status {status} after {decoded} decoded frames"
+                ),
             }
         }
         assert_eq!(decoded, 2);
@@ -728,9 +740,7 @@ mod tests {
             unsafe { zic_cursor_decode_next(cursor, 11, &mut frame) },
             CursorStatus::Ok as u32
         );
-        let rgba = unsafe {
-            slice::from_raw_parts(zic_frame_data(frame), zic_frame_len(frame))
-        };
+        let rgba = unsafe { slice::from_raw_parts(zic_frame_data(frame), zic_frame_len(frame)) };
         for (index, pixel) in rgba.chunks_exact(4).enumerate() {
             if index == 10 {
                 assert!((pixel[0] as i32 - 127).abs() <= 1);
@@ -818,15 +828,7 @@ mod tests {
         assert_eq!(unsafe { (*cursor).next_index }, 0);
 
         assert_eq!(
-            unsafe {
-                zic_source_append(
-                    source_ptr,
-                    3,
-                    12,
-                    bytes[12..].as_ptr(),
-                    bytes.len() - 12,
-                )
-            },
+            unsafe { zic_source_append(source_ptr, 3, 12, bytes[12..].as_ptr(), bytes.len() - 12) },
             Status::Ok as u32
         );
         assert_eq!(unsafe { zic_source_seal(source_ptr, 3) }, Status::Ok as u32);

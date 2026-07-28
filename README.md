@@ -40,12 +40,14 @@ Rust media_core
 
 ## App 演示入口
 
-App 不再启动后直接进入静态章节。首页提供三个明确入口：
+App 不再启动后直接进入静态章节。首页提供五个明确入口：
 
 ```text
 100 页静态章节
+Reader 媒体管线
 内置动图 WebP
 导入本地 WebP
+导入 WebP 文件夹
 ```
 
 内置动图来自 `native/media_core/testdata/` 的真实 decoder fixtures，并同步到：
@@ -65,10 +67,15 @@ cd apps/app
 flutter run -d android
 ```
 
-在“内置动图 WebP”中可以切换 `Native pipeline` 与 `Flutter codec`。Native
-路径会验证 ABI 和锁定的 libwebp 1.6.0 运行时，使用 source/cursor/frame ABI
-解码真实 RGBA 帧；原生库未打包或版本不匹配时会自动回退 Flutter codec。
-“导入本地 WebP”通过系统文件选择器读取单个 `.webp`，不要求先编写 manifest。
+所有 WebP 入口默认使用确定性的 `Flutter codec`，打开文件不会自动进入
+FFI/texture。Reader 与文件夹切换页固定使用安全 codec；独立预览中的
+`Native（实验）` 必须由用户显式选择并在确认对话框中再次确认；
+初始化、上传或生命周期操作失败时回退 Flutter codec。Native 路径会验证 ABI
+和锁定的 libwebp 1.6.0 运行时，并使用 source/cursor/frame ABI 解码真实 RGBA 帧。
+
+“导入本地 WebP”读取单个 `.webp`。“导入 WebP 文件夹”通过系统目录选择器取得
+目录路径，在后台 isolate 中递归枚举 `.webp`，按自然路径顺序生成显式相对显示名，
+并在只保留一个当前播放器的页面中提供上一项、下一项和文件菜单切换。
 
 Native 与 Flutter codec 使用同一个自适应物理显示目标：目标取实际预览区域的逻辑尺寸乘以设备 DPR，保持源图比例并按 8 个物理像素对齐。`RasterPlan` 再决定实际 decode raster：大图按目标下采样，小图保持原始画布，避免 animated codec 在合成局部子帧前先放大插值。极小素材显示时使用 nearest-neighbour，正常漫画页面继续使用平滑滤镜。Native 路径还会提前准备下一帧，并从帧时长中扣除准备耗时，避免解码时间把动画总时长拉长。
 

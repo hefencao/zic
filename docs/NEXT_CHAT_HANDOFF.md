@@ -10,24 +10,20 @@ Flutter/Android-equipped environment.
 
 ## Candidate changes
 
-- The external Flutter compile failures are repaired: `_DemoCard` forwards
-  `super.key`, and the WebP validation test imports `parseWebpInfo` directly from
-  `bridge` instead of relying on a transitive import.
-- Picker, route navigation, WebP container validation, and preview page state are
-  independent test boundaries.
-- `PickedWebp(displayName, file)` remains the explicit product contract.
-- Tests use semantic keys or `WebpPreviewState`, not helper text identity,
-  fixed-duration pumping, or `XFile.fromData` name behavior.
-- Android `SurfaceProducer` output, one serial blit lane, JNI frame retain/blit/
-  release, current-frame redraw ownership, and detach-safe frame scheduling are
-  implemented.
-- Texture telemetry covers queue, upload, relative deadline miss, frame bytes,
-  texture bytes, in-flight bytes, and fallback. Decode/upload/present/fallback
-  traces carry Reader session, decode identity, demand revision, and native epoch;
-  Reader identity is derived from the chapter manifest rather than preview
-  placeholders.
-- Animated WebP is connected to a real `ReaderView` page through
-  `ReaderPageBuilder`; the standalone preview remains a diagnostic entry.
+- The route timeout is repaired at the test boundary: route tests assert keyed
+  destinations with `skipOffstage: false`; Reader media content is tested directly
+  with an injected chapter and explicit `WebpPreviewState`.
+- Static and bundled catalog tests use stable semantic keys rather than page copy.
+- All WebP entry points default to Flutter codec. Reader/folder workflows hide native
+  controls; standalone native startup requires selecting `Native（实验）` and confirming.
+- Android frame scheduling is posted to the main handler; serial blit ownership,
+  retained-current-frame redraw, release and telemetry contracts remain intact.
+- The home screen now supports recursive local WebP folder import. Enumeration runs
+  in a background isolate, filenames use explicit relative-path ownership, natural
+  sorting is deterministic, and the folder screen creates only the current player
+  while supporting previous/next/menu switching.
+- Picker cancel, folder cancel, valid/malformed validation, preview state, Reader
+  content, folder enumeration and WebP switching remain separate tests.
 
 ## Mandatory validation gate
 
@@ -38,6 +34,7 @@ flutter pub get
 flutter test apps/app/test/app_smoke_test.dart
 flutter test apps/app/test/webp_preview_test.dart
 flutter test apps/app/test/webp_demo_test.dart
+flutter test apps/app/test/local_webp_folder_test.dart
 bash ./tool/test_dart.sh
 bash ./tool/test_flutter.sh
 bash ./tool/analyze.sh
@@ -61,5 +58,5 @@ and a new stable source archive be produced.
    decode/upload/present session path used by Reader demands.
 3. Add Android device tests for surface loss/recreation and concurrent PageView
    overlap, including retained-frame redraw and detach races.
-4. Extend the real Reader media path to local chapter/CBZ import and persisted
-   catalog entries.
+4. Promote `PickedWebpFolder` into a persisted local chapter/catalog source, then
+   add CBZ import without moving filesystem I/O into the Reader package.

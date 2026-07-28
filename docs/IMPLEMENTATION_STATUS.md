@@ -1,62 +1,48 @@
 # Implementation Status
 
-## Unreleased candidate from 0.18.3-dev.21 — compile repair and attributed Reader texture telemetry
+## Unreleased candidate from 0.18.3-dev.21 — crash-safe WebP entry and local folder switching
 
-### Flutter compile repair
+### Reader smoke timeout repair
 
-The first external Flutter run exposed two candidate-only compile regressions.
-`_DemoCard` accepted semantic keys at its call sites but did not forward `key` to
-`StatelessWidget`, and `webp_demo_test.dart` relied on a transitive import for
-`parseWebpInfo`. `_DemoCard` now accepts `super.key`; the validation test imports
-the parser directly from the public `bridge` package contract. Repository gates
-now preserve both compile contracts.
+The failing helper repeatedly issued zero-elapsed pumps while waiting for a widget
+inside a route transition. Elapsed transition time never advanced, so the keyed
+Reader media page remained offstage even though the destination route had been
+pushed. Navigation coverage now stops at the keyed destination route with
+`skipOffstage: false`. Reader media content is a separate test that injects a
+one-page chapter manifest directly and synchronizes on `WebpPreviewState.ready`.
+Catalog and static routes likewise use stable screen/entry keys rather than copy.
 
-### Test architecture
+### Crash-safe WebP activation
 
-The prior malformed-file smoke coverage mixed picker completion, navigation,
-filename derivation, byte loading, container validation, codec startup, and
-page text matching. The candidate separates those boundaries:
+Reader media, bundled WebP, local single-file import, and local-folder import all
+start on `WebpPlayerEngine.flutter`. Reader and folder switching keep engine controls
+hidden so their normal workflows cannot start FFI/texture. In standalone previews,
+selecting `Native（实验）` opens an explicit confirmation dialog; cancellation leaves the
+Flutter engine selected without native work. Native initialization and present
+failures still emit attributed fallback telemetry and return to Flutter codec.
 
-- picker and `PickedWebp(displayName, file)` contract;
-- route identity and owned display name;
-- pure valid/malformed WebP container validation;
-- preview `loading`/`ready`/`invalid` state through explicit state objects and keys.
+Android `SurfaceProducer.scheduleFrame()` is posted to the main handler rather
+than called from the serial blit worker. Surface callbacks use
+`onSurfaceAvailable`/`onSurfaceCleanup`; the blit lane retains the current frame
+for redraw and releases it on replacement, resize, output release, or detach.
 
-The three target tests reject fixed-duration pumping, `find.textContaining` as
-component identity, and `XFile.fromData` metadata assumptions.
+### Local WebP folder import
 
-### Android texture and Reader integration
-
-A new Flutter plugin creates Android `SurfaceProducer` outputs and serializes
-blit, resize, redraw, and release work. Native frames cross Dart and Kotlin with
-explicit retain/release ownership. The platform retains the currently presented
-frame for surface recreation and releases it on replacement, resize, output
-release, or engine detach. Lifecycle locking prevents `scheduleFrame` from
-racing detach.
-
-Present telemetry reports queue, upload, deadline miss, frame, texture, and
-in-flight memory values. Every decode, texture upload, present, and fallback
-trace is now attributed to the Reader session, decode identity, demand revision,
-and native epoch. Reader decode identity is derived from the actual chapter
-manifest instead of the standalone-preview placeholder identity. Decode and
-image-preparation durations are recorded separately.
-Platform failures emit fallback traces and return to the Flutter codec.
-`ReaderView` accepts a media page builder, and the demo chapter uses the same
-Animated WebP player inside the Reader rather than only on a standalone preview
-route.
+The app adds a directory picker contract and `PickedWebpFolder`. Directory contents
+are recursively enumerated in a background isolate, filtered case-insensitively
+for `.webp`, naturally path-sorted, and converted to explicit relative display
+names independent of `XFile.name`. The folder screen keeps one current player and
+provides previous, next, and lazy-on-open file selection controls. Cancellation,
+empty folders, recursive ordering, route ownership, and file switching have
+independent tests.
 
 ### Validation status
 
-The external Flutter report reached compilation and identified the two issues
-above; the updated candidate has not yet been rerun in that Flutter-equipped
-environment. The repository structure check, C header syntax check, shell syntax
-check, Python compilation, and Kotlin source compilation against minimal API
-stubs pass in the current environment. This sandbox does not contain Flutter,
-Dart, Rust/Cargo, Android SDK, or Android NDK, so the required target tests,
-analyzer, Rust tests, and Android build remain environment-blocked here.
-
-The version therefore remains `0.18.3-dev.21`. This working tree is a validation
-candidate, not a stable baseline.
+Repository constraints and available syntax/native stub checks pass in this
+sandbox. Flutter, Dart, Rust/Cargo, Android SDK, and Android NDK are not installed
+here, so the target Flutter tests and device/native gates must still be run in the
+external toolchain environment. Version remains `0.18.3-dev.21`; this is an
+unverified validation candidate, not a stable baseline.
 
 ## 0.18.3-dev.21 — unambiguous malformed-WebP error state
 

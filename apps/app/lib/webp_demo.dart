@@ -12,6 +12,8 @@ import 'package:pipeline/pipeline.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:texture_bridge/texture_bridge.dart';
 
+import 'local_webp_folder.dart';
+
 const _webpTypes = <XTypeGroup>[
   XTypeGroup(
     label: 'Animated WebP',
@@ -21,7 +23,38 @@ const _webpTypes = <XTypeGroup>[
 ];
 
 typedef WebpPicker = Future<PickedWebp?> Function();
+typedef WebpFolderPicker = Future<PickedWebpFolder?> Function();
 typedef LocalWebpSelector = Future<XFile?> Function();
+
+final class PickedWebpFolder {
+  factory PickedWebpFolder({
+    required String directoryPath,
+    required List<PickedWebp> files,
+    String? displayName,
+  }) {
+    if (files.isEmpty) {
+      throw ArgumentError.value(
+          files, 'files', 'must contain at least one WebP');
+    }
+    final explicit = displayName?.trim() ?? '';
+    return PickedWebpFolder._(
+      directoryPath: directoryPath,
+      displayName:
+          explicit.isEmpty ? webpDirectoryDisplayName(directoryPath) : explicit,
+      files: List<PickedWebp>.unmodifiable(files),
+    );
+  }
+
+  const PickedWebpFolder._({
+    required this.directoryPath,
+    required this.displayName,
+    required this.files,
+  });
+
+  final String directoryPath;
+  final String displayName;
+  final List<PickedWebp> files;
+}
 
 final class PickedWebp {
   factory PickedWebp({
@@ -63,6 +96,7 @@ String webpDisplayName(XFile file) {
   return '本地 WebP';
 }
 
+const webpCatalogScreenKey = ValueKey<String>('webp-catalog-screen');
 const webpPreviewScreenKey = ValueKey<String>('webp-preview-screen');
 const webpPreviewTitleKey = ValueKey<String>('webp-preview-title');
 const webpPreviewStateKey = ValueKey<String>('webp-preview-state');
@@ -70,17 +104,91 @@ const webpPreviewLoadingKey = ValueKey<String>('webp-preview-loading');
 const webpPreviewReadyKey = ValueKey<String>('webp-preview-ready');
 const webpPreviewErrorKey = ValueKey<String>('webp-preview-error');
 const webpEngineControlKey = ValueKey<String>('webp-engine-control');
+const webpNativeEngineOptionKey = ValueKey<String>('webp-engine-native-option');
 const webpFlutterEngineOptionKey =
     ValueKey<String>('webp-engine-flutter-option');
+const webpNativeConfirmDialogKey =
+    ValueKey<String>('webp-native-confirm-dialog');
+const webpNativeConfirmKey = ValueKey<String>('webp-native-confirm');
+const webpNativeCancelKey = ValueKey<String>('webp-native-cancel');
 const webpFlutterPreviewKey = ValueKey<String>('webp-flutter-preview');
+const webpFolderScreenKey = ValueKey<String>('webp-folder-screen');
+const webpFolderTitleKey = ValueKey<String>('webp-folder-title');
+const webpFolderCurrentFileKey = ValueKey<String>('webp-folder-current-file');
+const webpFolderPositionKey = ValueKey<String>('webp-folder-position');
+const webpFolderPreviousKey = ValueKey<String>('webp-folder-previous');
+const webpFolderNextKey = ValueKey<String>('webp-folder-next');
+const webpFolderFileMenuKey = ValueKey<String>('webp-folder-file-menu');
+
+Key webpCatalogEntryKey(String id) => ValueKey<String>('webp-catalog:$id');
 
 Future<PickedWebp?> pickLocalWebp({LocalWebpSelector? selectFile}) async {
-  final file = await (selectFile ??
-      () => openFile(acceptedTypeGroups: _webpTypes))();
+  final file =
+      await (selectFile ?? () => openFile(acceptedTypeGroups: _webpTypes))();
   return file == null ? null : PickedWebp.fromFile(file);
 }
 
 Future<PickedWebp?> defaultWebpPicker() => pickLocalWebp();
+
+Future<PickedWebpFolder?> pickLocalWebpFolder({
+  LocalWebpDirectorySelector? selectDirectory,
+  LocalWebpDirectoryLoader? listFiles,
+}) async {
+  final directoryPath = await (selectDirectory ?? selectLocalWebpDirectory)();
+  if (directoryPath == null) {
+    return null;
+  }
+  final normalizedDirectory = directoryPath.trim();
+  if (normalizedDirectory.isEmpty) {
+    throw const FormatException('文件夹路径不能为空');
+  }
+  final selected = await (listFiles ?? listLocalWebpDirectory)(
+    normalizedDirectory,
+  );
+  if (selected.isEmpty) {
+    throw const FormatException('所选文件夹中没有 WebP 文件');
+  }
+  final files = selected
+      .map(
+        (file) => PickedWebp(
+          file: file,
+          displayName: _relativeWebpName(normalizedDirectory, file.path),
+        ),
+      )
+      .toList(growable: false);
+  return PickedWebpFolder(
+    directoryPath: normalizedDirectory,
+    files: files,
+  );
+}
+
+Future<PickedWebpFolder?> defaultWebpFolderPicker() => pickLocalWebpFolder();
+
+String webpDirectoryDisplayName(String path) {
+  final normalized = path.trim().replaceAll('\\', '/');
+  if (normalized.isEmpty) {
+    return '本地 WebP 文件夹';
+  }
+  final withoutTrailing = normalized.endsWith('/')
+      ? normalized.substring(0, normalized.length - 1)
+      : normalized;
+  final slash = withoutTrailing.lastIndexOf('/');
+  final name =
+      slash < 0 ? withoutTrailing : withoutTrailing.substring(slash + 1);
+  return name.isEmpty ? '本地 WebP 文件夹' : name;
+}
+
+String _relativeWebpName(String directoryPath, String filePath) {
+  final root = directoryPath.replaceAll('\\', '/');
+  final path = filePath.replaceAll('\\', '/');
+  final prefix = root.endsWith('/') ? root : '$root/';
+  if (path.toLowerCase().startsWith(prefix.toLowerCase()) &&
+      path.length > prefix.length) {
+    return path.substring(prefix.length);
+  }
+  final slash = path.lastIndexOf('/');
+  return slash < 0 ? path : path.substring(slash + 1);
+}
 
 enum WebpPreviewPhase { loading, ready, invalid }
 
@@ -88,8 +196,7 @@ enum WebpPreviewPhase { loading, ready, invalid }
 final class WebpPreviewState {
   const WebpPreviewState._({required this.phase, this.info, this.error});
 
-  const WebpPreviewState.loading()
-      : this._(phase: WebpPreviewPhase.loading);
+  const WebpPreviewState.loading() : this._(phase: WebpPreviewPhase.loading);
 
   const WebpPreviewState.ready(WebpInfo info)
       : this._(phase: WebpPreviewPhase.ready, info: info);
@@ -163,14 +270,20 @@ Future<List<WebpDemoEntry>> loadWebpDemoEntries() async {
 }
 
 final class WebpCatalogScreen extends StatelessWidget {
-  const WebpCatalogScreen({super.key});
+  const WebpCatalogScreen({
+    this.entriesLoader = loadWebpDemoEntries,
+    super.key,
+  });
+
+  final Future<List<WebpDemoEntry>> Function() entriesLoader;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      key: webpCatalogScreenKey,
       appBar: AppBar(title: const Text('内置动图 WebP')),
       body: FutureBuilder<List<WebpDemoEntry>>(
-        future: loadWebpDemoEntries(),
+        future: entriesLoader(),
         builder: (context, snapshot) {
           if (snapshot.hasError) {
             return Center(child: Text('加载动图清单失败：${snapshot.error}'));
@@ -185,6 +298,7 @@ final class WebpCatalogScreen extends StatelessWidget {
             itemBuilder: (context, index) {
               final entry = snapshot.requireData[index];
               return Card(
+                key: webpCatalogEntryKey(entry.id),
                 clipBehavior: Clip.antiAlias,
                 child: ListTile(
                   leading: SizedBox.square(
@@ -212,6 +326,123 @@ final class WebpCatalogScreen extends StatelessWidget {
             },
           );
         },
+      ),
+    );
+  }
+}
+
+final class WebpFolderScreen extends StatefulWidget {
+  const WebpFolderScreen({required this.folder, super.key});
+
+  final PickedWebpFolder folder;
+
+  @override
+  State<WebpFolderScreen> createState() => _WebpFolderScreenState();
+}
+
+final class _WebpFolderScreenState extends State<WebpFolderScreen> {
+  int _index = 0;
+
+  PickedWebp get _current => widget.folder.files[_index];
+
+  @override
+  void didUpdateWidget(covariant WebpFolderScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_index >= widget.folder.files.length) {
+      _index = widget.folder.files.length - 1;
+    }
+  }
+
+  void _select(int index) {
+    if (index == _index || index < 0 || index >= widget.folder.files.length) {
+      return;
+    }
+    setState(() => _index = index);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final current = _current;
+    final count = widget.folder.files.length;
+    return Scaffold(
+      key: webpFolderScreenKey,
+      appBar: AppBar(
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(widget.folder.displayName, key: webpFolderTitleKey),
+            Text(
+              current.displayName,
+              key: webpFolderCurrentFileKey,
+              style: Theme.of(context).textTheme.bodySmall,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+        actions: <Widget>[
+          PopupMenuButton<int>(
+            key: webpFolderFileMenuKey,
+            tooltip: '选择 WebP',
+            initialValue: _index,
+            onSelected: _select,
+            itemBuilder: (context) => <PopupMenuEntry<int>>[
+              for (var index = 0; index < count; index++)
+                PopupMenuItem<int>(
+                  value: index,
+                  child: Text(widget.folder.files[index].displayName),
+                ),
+            ],
+          ),
+        ],
+      ),
+      body: Column(
+        children: <Widget>[
+          Expanded(
+            child: NativeWebpPlayer(
+              key: ValueKey<String>(
+                'folder-webp:${current.file.path}:$_index',
+              ),
+              title: current.displayName,
+              sourceUri: current.file.path.isEmpty
+                  ? Uri(scheme: 'memory', path: current.displayName)
+                  : Uri.file(current.file.path),
+              loadBytes: current.file.readAsBytes,
+              showEngineControls: false,
+              initialEngine: WebpPlayerEngine.flutter,
+            ),
+          ),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+              child: Row(
+                children: <Widget>[
+                  IconButton.filledTonal(
+                    key: webpFolderPreviousKey,
+                    tooltip: '上一个 WebP',
+                    onPressed: _index == 0 ? null : () => _select(_index - 1),
+                    icon: const Icon(Icons.chevron_left),
+                  ),
+                  Expanded(
+                    child: Text(
+                      '${_index + 1} / $count',
+                      key: webpFolderPositionKey,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                  IconButton.filledTonal(
+                    key: webpFolderNextKey,
+                    tooltip: '下一个 WebP',
+                    onPressed:
+                        _index + 1 >= count ? null : () => _select(_index + 1),
+                    icon: const Icon(Icons.chevron_right),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -250,8 +481,7 @@ final class WebpPlayerScreen extends StatelessWidget {
     );
   }
 
-  factory WebpPlayerScreen.picked(PickedWebp picked) =>
-      WebpPlayerScreen.file(
+  factory WebpPlayerScreen.picked(PickedWebp picked) => WebpPlayerScreen.file(
         picked.file,
         displayName: picked.displayName,
       );
@@ -290,7 +520,7 @@ final class WebpPlayerScreen extends StatelessWidget {
   }
 }
 
-enum _PlayerEngine { native, flutter }
+enum WebpPlayerEngine { native, flutter }
 
 final class NativeWebpPlayer extends StatefulWidget {
   const NativeWebpPlayer({
@@ -305,6 +535,7 @@ final class NativeWebpPlayer extends StatefulWidget {
     this.traceSessionId = 'webp-preview',
     this.demandRevision,
     this.downloadIdentity,
+    this.initialEngine = WebpPlayerEngine.flutter,
     super.key,
   });
 
@@ -319,6 +550,7 @@ final class NativeWebpPlayer extends StatefulWidget {
   final String traceSessionId;
   final int Function()? demandRevision;
   final DownloadId? downloadIdentity;
+  final WebpPlayerEngine initialEngine;
 
   @override
   State<NativeWebpPlayer> createState() => _NativeWebpPlayerState();
@@ -327,7 +559,7 @@ final class NativeWebpPlayer extends StatefulWidget {
 final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   static const _textureUploadBudget = Duration(microseconds: 16667);
 
-  _PlayerEngine _engine = _PlayerEngine.native;
+  late WebpPlayerEngine _engine;
   Uint8List? _encoded;
   WebpInfo? _sourceCanvas;
   DecodeTarget? _target;
@@ -365,6 +597,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   @override
   void initState() {
     super.initState();
+    _engine = widget.initialEngine;
     _traceClock = widget.traceClock ?? SystemClock();
     _texturePresenter = AndroidTexturePresenter(
       telemetrySink: _recordTextureTelemetry,
@@ -464,7 +697,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         _status = '已读取 ${bytes.length} B，等待 viewport';
       });
       final target = _target;
-      if (target != null && _engine == _PlayerEngine.native) {
+      if (target != null && _engine == WebpPlayerEngine.native) {
         await _startNative(++_generation);
       }
     } catch (error) {
@@ -478,7 +711,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         _loadError = error;
         _previewState = WebpPreviewState.invalid(error);
         _nativeError = null;
-        _engine = _PlayerEngine.flutter;
+        _engine = WebpPlayerEngine.flutter;
         _status = '加载失败';
       });
     }
@@ -504,7 +737,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       setState(() {
         _target = target;
         _raster = raster;
-        _status = _engine == _PlayerEngine.native
+        _status = _engine == WebpPlayerEngine.native
             ? decodeChanged
                 ? '重建 native decode target'
                 : 'native display target 已更新'
@@ -512,7 +745,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       });
       if (decodeChanged &&
           _encoded != null &&
-          _engine == _PlayerEngine.native) {
+          _engine == WebpPlayerEngine.native) {
         unawaited(_startNative(++_generation));
       }
     });
@@ -527,7 +760,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         bytes == null ||
         target == null ||
         raster == null ||
-        _engine != _PlayerEngine.native) {
+        _engine != WebpPlayerEngine.native) {
       return;
     }
     _resetNative(disposeImage: true);
@@ -638,7 +871,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       _resetNative(disposeImage: true);
       setState(() {
         _nativeError = error;
-        _engine = _PlayerEngine.flutter;
+        _engine = WebpPlayerEngine.flutter;
         _status = 'native 不可用，已回退 Flutter codec';
       });
     } finally {
@@ -886,7 +1119,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       oldImage?.dispose();
       setState(() {
         _nativeError = error;
-        _engine = _PlayerEngine.flutter;
+        _engine = WebpPlayerEngine.flutter;
         _status = 'native 解码失败，已回退 Flutter codec';
       });
       _resetNative(disposeImage: false);
@@ -916,7 +1149,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     oldImage?.dispose();
     setState(() {
       _nativeError = error;
-      _engine = _PlayerEngine.flutter;
+      _engine = WebpPlayerEngine.flutter;
       _status = 'native present 失败，已回退 Flutter codec';
     });
     _resetNative(disposeImage: false);
@@ -938,7 +1171,8 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       _pendingDelay = Duration.zero;
       if (next != null) {
         unawaited(
-          _presentPrepared(next, generation).catchError((Object error, StackTrace stackTrace) {
+          _presentPrepared(next, generation)
+              .catchError((Object error, StackTrace stackTrace) {
             _fallbackFromNative(error, generation);
           }),
         );
@@ -1001,7 +1235,42 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     widget.onFirstFrame?.call();
   }
 
-  void _setEngine(_PlayerEngine engine) {
+  Future<void> _requestEngine(Set<WebpPlayerEngine> selection) async {
+    final engine = selection.single;
+    if (engine != WebpPlayerEngine.native) {
+      _setEngine(engine);
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        key: webpNativeConfirmDialogKey,
+        title: const Text('启用实验 native 管线？'),
+        content: const Text(
+          '普通预览默认使用 Flutter codec。native texture 仅用于显式诊断，'
+          '可能因设备、ABI 或本地库状态回退。',
+        ),
+        actions: <Widget>[
+          TextButton(
+            key: webpNativeCancelKey,
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: webpNativeConfirmKey,
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('继续实验'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || confirmed != true) {
+      return;
+    }
+    _setEngine(WebpPlayerEngine.native);
+  }
+
+  void _setEngine(WebpPlayerEngine engine) {
     if (engine == _engine) {
       return;
     }
@@ -1014,20 +1283,20 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       _lastTextureFallback = null;
       _nativeError = null;
       final target = _target;
-      _status = engine == _PlayerEngine.native
+      _status = engine == WebpPlayerEngine.native
           ? '启动 native'
           : target == null
               ? 'Flutter codec'
               : 'Flutter codec · '
                   '${target.physicalWidth}×${target.physicalHeight}';
     });
-    if (engine == _PlayerEngine.native) {
+    if (engine == WebpPlayerEngine.native) {
       unawaited(_startNative(generation));
     }
   }
 
   void _togglePause() {
-    if (_engine != _PlayerEngine.native) {
+    if (_engine != WebpPlayerEngine.native) {
       return;
     }
     final pausing = !_paused;
@@ -1066,16 +1335,19 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
           if (widget.showEngineControls)
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: SegmentedButton<_PlayerEngine>(
+              child: SegmentedButton<WebpPlayerEngine>(
                 key: webpEngineControlKey,
-                segments: const <ButtonSegment<_PlayerEngine>>[
+                segments: const <ButtonSegment<WebpPlayerEngine>>[
                   ButtonSegment(
-                    value: _PlayerEngine.native,
+                    value: WebpPlayerEngine.native,
                     icon: Icon(Icons.memory),
-                    label: Text('Native pipeline'),
+                    label: Text(
+                      'Native（实验）',
+                      key: webpNativeEngineOptionKey,
+                    ),
                   ),
                   ButtonSegment(
-                    value: _PlayerEngine.flutter,
+                    value: WebpPlayerEngine.flutter,
                     icon: Icon(Icons.image),
                     label: Text(
                       'Flutter codec',
@@ -1083,9 +1355,8 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
                     ),
                   ),
                 ],
-                selected: <_PlayerEngine>{_engine},
-                onSelectionChanged: (selection) =>
-                    _setEngine(selection.single),
+                selected: <WebpPlayerEngine>{_engine},
+                onSelectionChanged: _requestEngine,
               ),
             ),
           Expanded(
@@ -1106,8 +1377,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
                       sourceHeight: source.height,
                       logicalWidth: constraints.maxWidth,
                       logicalHeight: constraints.maxHeight,
-                      devicePixelRatio:
-                          MediaQuery.of(context).devicePixelRatio,
+                      devicePixelRatio: MediaQuery.of(context).devicePixelRatio,
                     );
                     raster = RasterPlan.fit(
                       sourceWidth: source.width,
@@ -1131,15 +1401,14 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
                     );
                   }
                   final nearest = raster?.prefersNearestNeighbor ?? false;
-                  final quality = nearest
-                      ? FilterQuality.none
-                      : FilterQuality.medium;
+                  final quality =
+                      nearest ? FilterQuality.none : FilterQuality.medium;
                   return SizedBox.expand(
                     key: _previewState.phase == WebpPreviewPhase.ready
                         ? webpPreviewReadyKey
                         : webpPreviewLoadingKey,
                     child: switch (_engine) {
-                      _PlayerEngine.native => _textureId != null
+                      WebpPlayerEngine.native => _textureId != null
                           ? Texture(
                               textureId: _textureId!,
                               filterQuality: quality,
@@ -1154,7 +1423,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
                                   filterQuality: quality,
                                   isAntiAlias: !nearest,
                                 ),
-                      _PlayerEngine.flutter =>
+                      WebpPlayerEngine.flutter =>
                         encoded == null || target == null || raster == null
                             ? const Center(
                                 child: CircularProgressIndicator(),
@@ -1225,7 +1494,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
                               'decode=${_raster!.decodeWidth}×'
                               '${_raster!.decodeHeight} px',
                             ),
-                          if (_engine == _PlayerEngine.native)
+                          if (_engine == WebpPlayerEngine.native)
                             Text('frame=$_frameIndex · cycle=$_cycle'),
                           if (_lastTexturePresent case final sample?)
                             Text(
@@ -1256,7 +1525,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
                     ),
                     IconButton.filledTonal(
                       tooltip: _paused ? '继续' : '暂停',
-                      onPressed: _engine == _PlayerEngine.native
+                      onPressed: _engine == WebpPlayerEngine.native
                           ? _togglePause
                           : null,
                       icon: Icon(_paused ? Icons.play_arrow : Icons.pause),
@@ -1367,4 +1636,3 @@ void _premultiplyRgbaInPlace(Uint8List bytes) {
     bytes[i + 2] = (bytes[i + 2] * alpha + 127) ~/ 255;
   }
 }
-

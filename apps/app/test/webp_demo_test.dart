@@ -110,6 +110,47 @@ void main() {
     expect(player.downloadIdentity, same(download));
   });
 
+  test('folder picker preserves cancellation as null', () async {
+    final picked = await pickLocalWebpFolder(
+      selectDirectory: () async => null,
+      listFiles: (_) async => throw StateError('must not enumerate'),
+    );
+
+    expect(picked, isNull);
+  });
+
+  test(
+    'folder picker owns relative display names independently of XFile.name',
+    () async {
+      final first = XFile('/library/chapter/001.webp');
+      final nested = XFile('/library/chapter/sub/002.webp');
+
+      final folder = await pickLocalWebpFolder(
+        selectDirectory: () async => '/library/chapter',
+        listFiles: (_) async => <XFile>[first, nested],
+      );
+
+      expect(folder, isNotNull);
+      expect(folder!.displayName, 'chapter');
+      expect(folder.files.map((file) => file.displayName), <String>[
+        '001.webp',
+        'sub/002.webp',
+      ]);
+      expect(folder.files[0].file, same(first));
+      expect(folder.files[1].file, same(nested));
+    },
+  );
+
+  test('folder picker rejects a directory without WebP files', () async {
+    await expectLater(
+      pickLocalWebpFolder(
+        selectDirectory: () async => '/library/empty',
+        listFiles: (_) async => <XFile>[],
+      ),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
   test('system picker preserves cancellation as null', () async {
     final picked = await pickLocalWebp(selectFile: () async => null);
 

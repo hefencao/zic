@@ -169,6 +169,7 @@ def check_animated_demo() -> None:
         'Reader 媒体管线',
         '内置动图 WebP',
         '导入本地 WebP',
+        '导入 WebP 文件夹',
     ):
         if label not in home:
             fail(f'app demo entry is missing: {label}')
@@ -478,13 +479,18 @@ def check_compile_regressions() -> None:
 
     for required in (
         'staticDemoEntryKey',
+        'staticDemoScreenKey',
         'mediaPipelineReaderEntryKey',
         'bundledWebpEntryKey',
         'localWebpImportKey',
         'webpPreviewScreenKey',
         'webpPreviewTitleKey',
         'cancelled picker stays on home',
-        'Reader route hosts the real WebP media pipeline',
+        'Reader entry pushes the media pipeline route',
+        'Reader screen hosts the real WebP media component',
+        'localWebpFolderImportKey',
+        'folder reader switches WebP files by explicit identity',
+        'bundled catalog exposes entries by stable identity',
     ):
         if required not in smoke:
             fail(f'smoke navigation boundary is incomplete: {required}')
@@ -508,6 +514,7 @@ def check_compile_regressions() -> None:
         'WebpPreviewPhase.invalid',
         'webpPreviewReadyKey',
         'webpPreviewErrorKey',
+        'native pipeline requires explicit confirmation',
         'valid local WebP reaches an explicit ready state',
         'malformed local WebP reaches a controlled invalid state',
     ):
@@ -528,6 +535,30 @@ def check_compile_regressions() -> None:
             fail(f'local WebP product contract is incomplete: {required}')
     if "_status = 'WebP 文件无效'" in webp_demo:
         fail('preview status must not duplicate the keyed WebP validation error')
+    if 'this.initialEngine = WebpPlayerEngine.flutter' not in webp_demo:
+        fail('WebP pages must use the deterministic Flutter codec until native is explicit')
+    for required in (
+        'webpNativeConfirmDialogKey',
+        'Future<void> _requestEngine(',
+        '_setEngine(WebpPlayerEngine.native)',
+    ):
+        if required not in webp_demo:
+            fail(f'native WebP activation is not explicitly quarantined: {required}')
+    for required in (
+        'final class PickedWebpFolder',
+        'pickLocalWebpFolder(',
+        'final class WebpFolderScreen',
+        'webpFolderCurrentFileKey',
+        'webpFolderNextKey',
+    ):
+        if required not in webp_demo:
+            fail(f'local WebP folder contract is incomplete: {required}')
+    folder_io = (ROOT / 'apps/app/lib/local_webp_folder_io.dart').read_text(
+        encoding='utf-8'
+    )
+    for required in ('recursive: true', "endsWith('.webp')", '_naturalPathCompare'):
+        if required not in folder_io:
+            fail(f'local WebP folder enumeration is incomplete: {required}')
     demo_home = (ROOT / 'apps/app/lib/demo_home.dart').read_text(encoding='utf-8')
     if 'super.key,' not in demo_home:
         fail('_DemoCard must accept and forward stable semantic keys')
@@ -615,11 +646,16 @@ def check_compile_regressions() -> None:
         'NativeBlitter.blit',
         'NativeBlitter.release',
         'onSurfaceAvailable',
-        'onSurfaceDestroyed',
+        'onSurfaceCleanup',
         'scheduleRedraw',
         'producer.scheduleFrame()',
         'synchronized(lifecycleLock)',
         'scheduleProducerFrame',
+        'mainHandler.post',
+        'canSchedule: () -> Boolean',
+        'val isReleased: Boolean',
+        'resizeProducer',
+        'releaseProducer',
         'retainedFrameBytes',
         'queueMicros',
         'uploadMicros',

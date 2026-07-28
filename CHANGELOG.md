@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased candidate from 0.18.3-dev.21
+
+- Split Reader route navigation from direct WebP media-state testing, eliminating
+  the zero-elapsed route-transition timeout.
+- Defaulted all WebP entry points to Flutter codec and added explicit confirmation
+  before native FFI/texture startup.
+- Posted Android `SurfaceProducer.scheduleFrame` work to the main handler.
+- Added recursive local WebP folder import with natural sorting, explicit relative
+  display names, single-player previous/next/menu switching, and independent tests.
+
+
 ## 0.18.3-dev.21
 
 - Fixed the malformed-local-WebP smoke test by giving the primary validation message a stable `webpPreviewErrorKey`.

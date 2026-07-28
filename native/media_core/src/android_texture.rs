@@ -74,8 +74,7 @@ mod android {
     }
 
     extern "C" {
-        fn ANativeWindow_fromSurface(env: *mut c_void, surface: *mut c_void)
-            -> *mut ANativeWindow;
+        fn ANativeWindow_fromSurface(env: *mut c_void, surface: *mut c_void) -> *mut ANativeWindow;
         fn ANativeWindow_release(window: *mut ANativeWindow);
         fn ANativeWindow_setBuffersGeometry(
             window: *mut ANativeWindow,
@@ -148,7 +147,9 @@ mod android {
         }
         let width = frame.data.width as usize;
         let height = frame.data.height as usize;
-        let Some(expected) = width.checked_mul(height).and_then(|value| value.checked_mul(4))
+        let Some(expected) = width
+            .checked_mul(height)
+            .and_then(|value| value.checked_mul(4))
         else {
             return BLIT_INVALID_FRAME;
         };
@@ -224,13 +225,7 @@ mod tests {
         let source = [255, 64, 0, 128, 10, 20, 30, 255];
         let mut destination = [7u8; 16];
 
-        assert!(copy_premultiplied_rgba(
-            &source,
-            2,
-            1,
-            &mut destination,
-            4,
-        ));
+        assert!(copy_premultiplied_rgba(&source, 2, 1, &mut destination, 4,));
         assert_eq!(&destination[..8], &[128, 32, 0, 128, 10, 20, 30, 255]);
         assert_eq!(&destination[8..], &[7; 8]);
     }

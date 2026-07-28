@@ -234,6 +234,18 @@ Demand 必须包含：
 - 错误区域、页面、标题和 renderer 控件使用稳定语义 key；
 - 新增辅助文案、状态栏或布局不应破坏业务测试。
 
+目录选择返回 `PickedWebpFolder(directoryPath, displayName, files)`：
+
+- 用户取消返回 `null`，不得枚举目录或创建路由；
+- 目录枚举递归过滤大小写不敏感的 `.webp`，并在 UI isolate 之外执行；
+- 每个文件的相对 `displayName` 由导入边界显式拥有，不依赖 `XFile.name`；
+- 顺序使用确定性的自然路径排序；
+- 切换时只保留一个当前播放器，不得同时启动整个目录的动画 codec/texture；
+- 上一项、下一项和文件选择使用稳定语义 key，必须测试真实 source 切换。
+
+所有 WebP 页面默认使用 Flutter codec。Native FFI/texture 只能在用户显式选择
+实验 renderer 并确认后启动；取消确认不得创建 source、cursor 或 texture。
+
 ### 6.5 Android Texture Present
 
 一次 present 的所有权顺序：
@@ -246,7 +258,10 @@ Demand 必须包含：
 6. 下一帧、resize、texture release 或 engine detach release 平台 owner。
 
 平台必须串行执行 blit、resize 和 release。任何失败路径都必须完成调用并释放
-临时 owner。engine detach 后禁止调用 `scheduleFrame`。
+临时 owner。`SurfaceProducer` 的 callback、setSize、release 和 scheduleFrame 由
+平台主线程拥有；blit lane 只执行 native surface 写入和 frame owner 变更。
+已排队的 scheduleFrame 必须同时检查 engine attachment 与 output 存活状态。
+engine detach 或 output release 后禁止调用 `scheduleFrame`。
 
 present telemetry 至少包含：
 
@@ -459,7 +474,7 @@ Coordinator 验证安全条件。结果：
 
 - 当前页失败显示可重试占位；
 - 邻页失败静默降级并记录；
-- Animated WebP native 失败可在完整文件后尝试 fallback；
+- 普通 Animated WebP 打开不得自动启动 native；显式 native 失败后必须 fallback；
 - 模型错误不可阻止阅读。
 
 ## 12. 测试规格

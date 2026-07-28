@@ -8,13 +8,22 @@ const mediaPipelineReaderEntryKey =
     ValueKey<String>('demo-entry-media-pipeline-reader');
 const bundledWebpEntryKey = ValueKey<String>('demo-entry-bundled-webp');
 const localWebpImportKey = ValueKey<String>('demo-entry-local-webp');
+const localWebpFolderImportKey =
+    ValueKey<String>('demo-entry-local-webp-folder');
 const localWebpPickerProgressKey =
     ValueKey<String>('local-webp-picker-progress');
+const localWebpFolderPickerProgressKey =
+    ValueKey<String>('local-webp-folder-picker-progress');
 
 final class DemoHome extends StatefulWidget {
-  const DemoHome({required this.picker, super.key});
+  const DemoHome({
+    required this.picker,
+    required this.folderPicker,
+    super.key,
+  });
 
   final WebpPicker picker;
+  final WebpFolderPicker folderPicker;
 
   @override
   State<DemoHome> createState() => _DemoHomeState();
@@ -22,9 +31,10 @@ final class DemoHome extends StatefulWidget {
 
 final class _DemoHomeState extends State<DemoHome> {
   bool _picking = false;
+  bool _pickingFolder = false;
 
   Future<void> _importWebp() async {
-    if (_picking) {
+    if (_picking || _pickingFolder) {
       return;
     }
     setState(() => _picking = true);
@@ -48,6 +58,35 @@ final class _DemoHomeState extends State<DemoHome> {
     } finally {
       if (mounted) {
         setState(() => _picking = false);
+      }
+    }
+  }
+
+  Future<void> _importWebpFolder() async {
+    if (_picking || _pickingFolder) {
+      return;
+    }
+    setState(() => _pickingFolder = true);
+    try {
+      final PickedWebpFolder? folder = await widget.folderPicker();
+      if (!mounted || folder == null) {
+        return;
+      }
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => WebpFolderScreen(folder: folder),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('导入 WebP 文件夹失败：$error')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _pickingFolder = false);
       }
     }
   }
@@ -83,7 +122,8 @@ final class _DemoHomeState extends State<DemoHome> {
             key: mediaPipelineReaderEntryKey,
             icon: Icons.texture,
             title: 'Reader 媒体管线',
-            subtitle: 'Reader 页面直接使用 Animated WebP native texture 管线。',
+            subtitle: 'Reader 页面使用同一媒体管线并固定安全 codec；'
+                'native 在独立预览中显式诊断。',
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute<void>(
                 builder: (_) => const MediaPipelineReaderScreen(),
@@ -106,7 +146,7 @@ final class _DemoHomeState extends State<DemoHome> {
             icon: Icons.file_open,
             title: '导入本地 WebP',
             subtitle: '通过系统文件选择器读取本地 .webp；'
-                'native 不可用时自动回退。',
+                '默认使用 Flutter codec，native 需显式切换。',
             trailing: _picking
                 ? const SizedBox.square(
                     key: localWebpPickerProgressKey,
@@ -114,7 +154,22 @@ final class _DemoHomeState extends State<DemoHome> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : null,
-            onTap: _picking ? null : _importWebp,
+            onTap: _picking || _pickingFolder ? null : _importWebp,
+          ),
+          const SizedBox(height: 12),
+          _DemoCard(
+            key: localWebpFolderImportKey,
+            icon: Icons.folder_open,
+            title: '导入 WebP 文件夹',
+            subtitle: '递归读取文件夹中的 .webp，并在同一阅读页中切换。',
+            trailing: _pickingFolder
+                ? const SizedBox.square(
+                    key: localWebpFolderPickerProgressKey,
+                    dimension: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : null,
+            onTap: _picking || _pickingFolder ? null : _importWebpFolder,
           ),
         ],
       ),
