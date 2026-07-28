@@ -204,6 +204,41 @@ void main() {
     expect(
       detectLocalImageFormat(
         Uint8List.fromList(<int>[
+          0x89,
+          0x50,
+          0x4e,
+          0x47,
+          0x0d,
+          0x0a,
+          0x1a,
+          0x0a,
+        ]),
+      ),
+      isNull,
+    );
+    expect(
+      detectLocalImageFormat(
+        Uint8List.fromList(<int>[
+          0x89,
+          0x50,
+          0x4e,
+          0x47,
+          0x0d,
+          0x0a,
+          0x1a,
+          0x0a,
+          0,
+          0,
+          0,
+          13,
+          ...'IHD'.codeUnits,
+        ]),
+      ),
+      isNull,
+    );
+    expect(
+      detectLocalImageFormat(
+        Uint8List.fromList(<int>[
           ...'RIFF'.codeUnits,
           0,
           0,

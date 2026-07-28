@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
@@ -273,6 +274,46 @@ void main() {
     expect(find.byKey(localWebpPickerProgressKey), findsNothing);
   });
 
+  testWidgets('imported library reopens at the last reading page', (
+    tester,
+  ) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final folder = _folderFixture();
+    final record = imageFolderChapterRecord(folder);
+    await store.upsertChapter(record);
+    await store.saveProgress(
+      ReadingProgress(
+        comicId: record.comicId,
+        chapterId: record.chapterId,
+        pageIndex: 1,
+        subPageOffset: 0,
+        readerMode: ReaderMode.paged,
+        updatedAt: DateTime.utc(2026, 7, 28),
+      ),
+    );
+
+    await tester.pumpWidget(App(libraryStore: store));
+    await tester.pump();
+
+    final entry = find.byKey(importedChapterEntryKey(record.chapterId));
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
+    await tester.pump();
+
+    expect(
+      find.byKey(imageFolderScreenKey, skipOffstage: false),
+      findsOneWidget,
+    );
+    expect(
+      tester.widget<Text>(
+        find.byKey(imageFolderCurrentFileKey, skipOffstage: false),
+      ).data,
+      '002.bin · PNG',
+    );
+  });
+
   testWidgets('picked folder navigates to the folder reader', (tester) async {
     final result = Completer<PickedImageFolder?>();
     final folder = _folderFixture();
@@ -298,6 +339,7 @@ void main() {
   testWidgets('folder reader switches mixed image files by explicit identity', (
     tester,
   ) async {
+    final progress = <ReadingProgress>[];
     final pending = <String, Completer<Uint8List>>{
       '001.webp': Completer<Uint8List>(),
       '002.bin': Completer<Uint8List>(),
@@ -307,6 +349,7 @@ void main() {
         home: ImageFolderScreen(
           folder: _folderFixture(),
           bytesLoader: (image) => pending[image.displayName]!.future,
+          onProgressChanged: progress.add,
         ),
       ),
     );
@@ -356,6 +399,8 @@ void main() {
       tester.widget<Text>(find.byKey(imageFolderPositionKey)).data,
       '2 / 2',
     );
+    expect(progress.last.pageIndex, 1);
+    expect(progress.last.readerMode, ReaderMode.paged);
     final secondPlayer = find.byKey(
       ValueKey<String>(
         'folder-image:${_folderFixture().files.last.sourceId}:png:1',

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:file_selector/file_selector.dart';
 
 import 'local_image_model.dart';
@@ -21,3 +23,7 @@ Future<LocalImageDirectorySelection?> pickScopedLocalImageDirectory() =>
 
 Future<LocalImageDirectoryScan> listLocalImageDirectory(String path) =>
     platform.listLocalImageDirectory(path);
+
+
+Future<Uint8List> readLocalImageSource(String sourceId) =>
+    platform.readLocalImageSource(sourceId);

@@ -1,3 +1,14 @@
+## Unreleased — durable imported directory library
+
+- Reject bare or truncated PNG container labels during Dart and Android directory sniffing.
+- Persist imported folder chapters and per-page detected media formats in a local catalog.
+- Add SQLite storage plus Flutter application-support path composition for the catalog.
+- Restore the last Reader page and paged/continuous mode when reopening an imported chapter.
+- Route reopened content URI and filesystem pages through LoaderTransport, DownloadSession,
+  promoted artifacts, and the same Reader runtime as freshly imported folders.
+- Clamp saved progress when a refreshed chapter loses pages, ignore stale progress writes,
+  and cascade-delete progress when a chapter is removed.
+
 ## Unreleased — local-media boundary and Android folder import repair
 
 - Move local image models, recursive filesystem scanning and format sniffing from the App
@@ -5,7 +16,7 @@
 - Keep Android SAF documents as MIME/name candidates when a header probe is unavailable,
   and read them through ordinary, asset or typed-asset content resolver streams.
 - Add local-media bridge protocol version 2 to detect stale native plugin caches.
-- Add `tool/clean.sh` and enforce executable permissions for every `tool/*.sh` command.
+- Add `tool/clean.sh` for project-wide Flutter/Dart, Gradle, Rust, CMake and JNI cache cleanup.
 
 # Changelog
 

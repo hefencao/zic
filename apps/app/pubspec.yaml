@@ -29,6 +29,8 @@ dependencies:
     path: ../../packages/sessions
   storage:
     path: ../../packages/storage
+  storage_bridge:
+    path: ../../packages/storage_bridge
   telemetry:
     path: ../../packages/telemetry
   transport:

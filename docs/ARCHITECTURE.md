@@ -47,7 +47,8 @@ zic/
     pipeline/                policy/window/ranker/demand
     sessions/                download/decode/display session
     transport/               网络、本地文件、resume
-    storage/                 artifact、cache index、SQLite
+    storage/                 artifact、cache index、SQLite 与持久目录库
+    storage_bridge/          Flutter 应用支持目录与 storage 后端装配
     telemetry/               指标、事件、trace、设备状态
     bridge/                  FFI、native source/cursor/frame handle
     texture_bridge/          Flutter texture 契约与 Android 插件
@@ -244,6 +245,11 @@ session 和 Widget。
 目录扫描得到的 byte length 会进入 `PageAsset`；`LoaderTransport` 的 validator
 同时包含 source revision、长度和完整内容 hash，避免同 URI、同长度内容替换后续接到
 旧 partial。
+
+导入目录的可序列化记录由 `catalog/ImportedLibraryStore` 持有；SQLite 实现位于
+`packages/storage`，Flutter 应用支持目录解析位于 `packages/storage_bridge`。App 只注入
+store、展示目录库并提交进度。Reader 页变化写入 `ReadingProgress`，重新打开目录时以
+chapter/comic identity 校验后恢复页码与 paged/continuous 模式。
 
 非 Android：
 

@@ -82,6 +82,25 @@ void main() {
     );
   });
 
+
+  test('folder revision preserves exact imported media format', () {
+    ImportedChapterRecord record(String mediaFormat) =>
+        ImportedChapterRecord.folder(
+          directoryId: '/chapter',
+          displayName: 'chapter',
+          pages: <ImportedPageRecord>[
+            ImportedPageRecord(
+              displayName: '1.data',
+              sourceId: '/chapter/1.data',
+              contentKindHint: ContentKindHint.fallback,
+              mediaFormat: mediaFormat,
+            ),
+          ],
+        );
+
+    expect(record('bmp').sourceRevision, isNot(record('tiff').sourceRevision));
+  });
+
   test('record JSON round trip preserves import metadata', () {
     final record = ImportedChapterRecord.folder(
       directoryId: '/books/chapter',
@@ -92,6 +111,7 @@ void main() {
           displayName: '1.jpg',
           sourceId: '/books/chapter/1.jpg',
           contentKindHint: ContentKindHint.jpeg,
+          mediaFormat: 'jpeg',
           byteLength: 42,
         ),
       ],

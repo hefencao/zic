@@ -53,6 +53,22 @@ Future<LocalImageDirectorySelection?> pickScopedLocalImageDirectory() async {
   );
 }
 
+
+Future<Uint8List> readLocalImageSource(String sourceId) async {
+  final uri = Uri.tryParse(sourceId);
+  final scheme = uri?.scheme.toLowerCase() ?? '';
+  if (Platform.isAndroid && scheme == 'content') {
+    return _androidBridge.readDocument(sourceId);
+  }
+  if (scheme == 'file') {
+    return File.fromUri(uri!).readAsBytes();
+  }
+  if (scheme.isNotEmpty) {
+    throw FileSystemException('不支持的本地图片来源协议', sourceId);
+  }
+  return File(sourceId).readAsBytes();
+}
+
 Future<LocalImageDirectoryScan> listLocalImageDirectory(String path) async {
   final selectedUri = Uri.tryParse(path);
   if (selectedUri != null && selectedUri.scheme.toLowerCase() == 'content') {

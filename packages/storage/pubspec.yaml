@@ -8,6 +8,8 @@ environment:
   sdk: '>=3.6.0 <4.0.0'
 
 dependencies:
+  catalog:
+    path: ../catalog
   domain:
     path: ../domain
   sqlite3: '>=2.9.4 <4.0.0'

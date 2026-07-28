@@ -1,0 +1,21 @@
+name: storage_bridge
+description: Flutter platform paths for zic storage backends.
+version: 0.18.3
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  catalog:
+    path: ../catalog
+  path_provider: ^2.1.5
+  storage:
+    path: ../storage
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

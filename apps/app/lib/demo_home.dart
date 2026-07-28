@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:catalog/catalog.dart';
 import 'package:flutter/material.dart';
 
 import 'static_demo.dart';
@@ -16,6 +19,13 @@ const localWebpPickerProgressKey =
     ValueKey<String>('local-webp-picker-progress');
 const localImageFolderPickerProgressKey =
     ValueKey<String>('local-image-folder-picker-progress');
+const importedLibrarySectionKey = ValueKey<String>('imported-library-section');
+const importedLibraryLoadingKey = ValueKey<String>('imported-library-loading');
+const importedLibraryErrorKey = ValueKey<String>('imported-library-error');
+Key importedChapterEntryKey(String chapterId) =>
+    ValueKey<String>('imported-chapter:$chapterId');
+Key importedChapterRemoveKey(String chapterId) =>
+    ValueKey<String>('remove-imported-chapter:$chapterId');
 @Deprecated('Use localImageFolderPickerProgressKey')
 const localWebpFolderPickerProgressKey = localImageFolderPickerProgressKey;
 
@@ -23,19 +33,98 @@ final class DemoHome extends StatefulWidget {
   const DemoHome({
     required this.picker,
     required this.folderPicker,
+    this.libraryStore,
     super.key,
   });
 
   final WebpPicker picker;
   final ImageFolderPicker folderPicker;
+  final ImportedLibraryStore? libraryStore;
 
   @override
   State<DemoHome> createState() => _DemoHomeState();
 }
 
 final class _DemoHomeState extends State<DemoHome> {
+  late final ImportedLibraryStore _library;
+  late final bool _ownsLibrary;
+  late final Future<void> _libraryReady;
+  List<ImportedLibraryEntry> _libraryEntries = const <ImportedLibraryEntry>[];
+  Object? _libraryError;
+  bool _libraryLoading = true;
   bool _picking = false;
   bool _pickingFolder = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _ownsLibrary = widget.libraryStore == null;
+    _library = widget.libraryStore ?? MemoryImportedLibraryStore();
+    _libraryReady = _initializeLibrary();
+  }
+
+  Future<void> _initializeLibrary() async {
+    try {
+      await _library.open();
+      await _reloadLibrary(waitForOpen: false);
+    } on Object catch (error) {
+      if (mounted) {
+        setState(() {
+          _libraryError = error;
+          _libraryLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _reloadLibrary({bool waitForOpen = true}) async {
+    if (waitForOpen) {
+      await _libraryReady;
+    }
+    final entries = await _library.list();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _libraryEntries = entries;
+      _libraryError = null;
+      _libraryLoading = false;
+    });
+  }
+
+  Future<void> _ensureLibraryReady() async {
+    await _libraryReady;
+    if (_libraryError == null) {
+      return;
+    }
+    await _library.open();
+    await _reloadLibrary(waitForOpen: false);
+  }
+
+  Future<void> _retryLibrary() async {
+    if (mounted) {
+      setState(() => _libraryLoading = true);
+    }
+    try {
+      await _library.open();
+      await _reloadLibrary(waitForOpen: false);
+    } on Object catch (error) {
+      if (mounted) {
+        setState(() {
+          _libraryError = error;
+          _libraryLoading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_ownsLibrary) {
+      unawaited(_library.close());
+    }
+    super.dispose();
+  }
 
   Future<void> _importWebp() async {
     if (_picking || _pickingFolder) {
@@ -76,11 +165,29 @@ final class _DemoHomeState extends State<DemoHome> {
       if (!mounted || folder == null) {
         return;
       }
+      await _ensureLibraryReady();
+      final record = imageFolderChapterRecord(folder);
+      await _library.upsertChapter(record);
+      final entry = await _library.get(record.chapterId);
+      if (!mounted) {
+        return;
+      }
+      await _reloadLibrary();
+      if (!mounted) {
+        return;
+      }
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => ImageFolderScreen(folder: folder),
+          builder: (_) => ImageFolderScreen(
+            folder: folder,
+            initialProgress: entry?.progress,
+            onProgressChanged: _library.saveProgress,
+          ),
         ),
       );
+      if (mounted) {
+        await _reloadLibrary();
+      }
     } catch (error) {
       if (!mounted) {
         return;
@@ -93,6 +200,85 @@ final class _DemoHomeState extends State<DemoHome> {
         setState(() => _pickingFolder = false);
       }
     }
+  }
+
+  Future<void> _openImportedChapter(ImportedLibraryEntry entry) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ImportedImageChapterScreen(
+          record: entry.chapter,
+          initialProgress: entry.progress,
+          onProgressChanged: _library.saveProgress,
+        ),
+      ),
+    );
+    if (mounted) {
+      await _reloadLibrary();
+    }
+  }
+
+  Future<void> _removeImportedChapter(ImportedLibraryEntry entry) async {
+    await _ensureLibraryReady();
+    await _library.removeChapter(entry.chapter.chapterId);
+    if (mounted) {
+      await _reloadLibrary();
+    }
+  }
+
+  Widget _buildImportedLibrary(BuildContext context) {
+    if (_libraryLoading) {
+      return const Center(
+        key: importedLibraryLoadingKey,
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+    final error = _libraryError;
+    if (error != null) {
+      return ListTile(
+        key: importedLibraryErrorKey,
+        leading: const Icon(Icons.error_outline),
+        title: const Text('本地目录库加载失败'),
+        subtitle: Text('$error'),
+        trailing: IconButton(
+          tooltip: '重试',
+          onPressed: _retryLibrary,
+          icon: const Icon(Icons.refresh),
+        ),
+      );
+    }
+    if (_libraryEntries.isEmpty) {
+      return const ListTile(
+        leading: Icon(Icons.library_books_outlined),
+        title: Text('尚未导入本地章节'),
+        subtitle: Text('导入图片文件夹后会保留章节记录和最后阅读页。'),
+      );
+    }
+    return Column(
+      children: <Widget>[
+        for (final entry in _libraryEntries)
+          ListTile(
+            key: importedChapterEntryKey(entry.chapter.chapterId),
+            leading: const Icon(Icons.collections_bookmark_outlined),
+            title: Text(entry.chapter.displayName),
+            subtitle: Text(
+              entry.progress == null
+                  ? '${entry.chapter.pages.length} 页 · 未开始'
+                  : '${entry.chapter.pages.length} 页 · '
+                      '上次第 ${entry.progress!.pageIndex + 1} 页',
+            ),
+            trailing: IconButton(
+              key: importedChapterRemoveKey(entry.chapter.chapterId),
+              tooltip: '移除目录记录',
+              onPressed: () => _removeImportedChapter(entry),
+              icon: const Icon(Icons.delete_outline),
+            ),
+            onTap: () => _openImportedChapter(entry),
+          ),
+      ],
+    );
   }
 
   @override
@@ -175,6 +361,14 @@ final class _DemoHomeState extends State<DemoHome> {
                 : null,
             onTap: _picking || _pickingFolder ? null : _importImageFolder,
           ),
+          const SizedBox(height: 24),
+          Text(
+            '本地目录库',
+            key: importedLibrarySectionKey,
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 8),
+          Card(child: _buildImportedLibrary(context)),
         ],
       ),
     );

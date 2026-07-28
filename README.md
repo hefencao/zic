@@ -73,11 +73,12 @@ FFI/texture。Reader 与文件夹切换页固定使用安全 codec；独立预�
 初始化、上传或生命周期操作失败时回退 Flutter codec。Native 路径会验证 ABI
 和锁定的 libwebp 1.6.0 运行时，并使用 source/cursor/frame ABI 解码真实 RGBA 帧。
 
-“导入本地 WebP”读取单个 `.webp`。“导入图片文件夹”通过系统目录选择器取得
-目录路径，在后台 isolate 中递归枚举所有普通文件，只读取文件头识别 PNG、JPEG、
-GIF、WebP、BMP、TIFF、ICO、AVIF 和 HEIF，不信任扩展名或大小写。识别结果按
-自然路径顺序生成显式相对显示名，并在只保留一个当前播放器的页面中提供上一项、
-下一项和文件菜单切换；完全没有可识别图片时才报告空目录诊断。
+“导入本地 WebP”读取单个 `.webp`。“导入图片文件夹”在 Android 使用持久化
+SAF document-tree 授权，在桌面使用后台 isolate 递归枚举普通文件；两条路径都以
+文件头优先识别 PNG、JPEG、GIF、WebP、BMP、TIFF、ICO、AVIF 和 HEIF，不信任
+扩展名或大小写。导入结果转换为本地章节并通过 DownloadSession/promoted artifact
+进入统一 Reader。章节记录和最后阅读页保存在本地 SQLite 目录库，应用重启后可从
+首页重新打开；完全没有图片时才报告带扫描计数的空目录诊断。
 
 Reader 媒体入口已使用真实 `LiveCoordinator` 和 `DownloadRegistry`。页面需求从
 manifest identity 生成 `DownloadId`，经 AssetBundle/file/http transport 下载到

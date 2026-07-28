@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'local_image_model.dart';
 
 bool get prefersScopedLocalImageDirectoryPicker => false;
@@ -8,4 +10,8 @@ Future<LocalImageDirectorySelection?> pickScopedLocalImageDirectory() {
 
 Future<LocalImageDirectoryScan> listLocalImageDirectory(String path) {
   throw UnsupportedError('当前平台不支持本地图片文件夹枚举：$path');
+}
+
+Future<Uint8List> readLocalImageSource(String sourceId) {
+  throw UnsupportedError('当前平台不支持读取本地图片来源：$sourceId');
 }

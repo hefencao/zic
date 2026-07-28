@@ -45,7 +45,7 @@ internal data class ImageFormatResolution(
 )
 
 internal fun sniffImageFormat(bytes: ByteArray): String? {
-    if (bytes.startsWith(byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a))) {
+    if (bytes.looksLikePng()) {
         return "png"
     }
     if (bytes.startsWith(byteArrayOf(0xff.toByte(), 0xd8.toByte(), 0xff.toByte()))) {
@@ -118,6 +118,24 @@ internal fun imageFormatFromDisplayName(value: String?): String? {
         "heif", "heic", "hif" -> "heif"
         else -> null
     }
+}
+
+private fun ByteArray.looksLikePng(): Boolean {
+    if (size < 24 ||
+        !startsWith(byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) ||
+        readUint32Be(8) != 13L ||
+        !asciiAt(12, "IHDR")
+    ) {
+        return false
+    }
+    return readUint32Be(16) > 0 && readUint32Be(20) > 0
+}
+
+private fun ByteArray.readUint32Be(offset: Int): Long {
+    return ((this[offset].toLong() and 0xffL) shl 24) or
+        ((this[offset + 1].toLong() and 0xffL) shl 16) or
+        ((this[offset + 2].toLong() and 0xffL) shl 8) or
+        (this[offset + 3].toLong() and 0xffL)
 }
 
 private fun ByteArray.looksLikeWebp(): Boolean {

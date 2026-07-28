@@ -54,6 +54,9 @@ typedef ReaderAppBarActionsBuilder = List<Widget> Function(
   BuildContext context,
   ReaderController controller,
 );
+typedef ReaderProgressWriter = FutureOr<void> Function(
+  ReadingProgress progress,
+);
 
 DownloadId readerPageDownloadId(
   ChapterManifest chapter,
@@ -86,6 +89,8 @@ final class ReaderRuntimeScreen extends StatefulWidget {
     this.loaderSources = const <Uri, LoaderTransportSource>{},
     this.appBarTitleBuilder,
     this.appBarActionsBuilder,
+    this.initialProgress,
+    this.onProgressChanged,
     this.screenKey,
     super.key,
   });
@@ -96,6 +101,8 @@ final class ReaderRuntimeScreen extends StatefulWidget {
   final Map<Uri, LoaderTransportSource> loaderSources;
   final ReaderAppBarTitleBuilder? appBarTitleBuilder;
   final ReaderAppBarActionsBuilder? appBarActionsBuilder;
+  final ReadingProgress? initialProgress;
+  final ReaderProgressWriter? onProgressChanged;
   final Key? screenKey;
 
   @override
@@ -118,6 +125,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   ReaderBinding? _binding;
   ReaderController? _reader;
   DecodeTarget? _target;
+  int? _lastProgressPage;
+  ReaderMode? _lastProgressMode;
 
   @override
   void initState() {
@@ -175,9 +184,17 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       return;
     }
     final previous = _reader;
-    final currentIndex = previous?.currentIndex ?? 0;
-    final direction = previous?.direction ?? widget.chapter.readingDirection;
+    final initialProgress = _matchingInitialProgress();
+    final currentIndex = previous?.currentIndex ??
+        (initialProgress?.pageIndex ?? 0)
+            .clamp(0, widget.chapter.pages.length - 1)
+            .toInt();
+    final direction = previous?.direction ??
+        (initialProgress?.readerMode == ReaderMode.continuous
+            ? ReadingDirection.vertical
+            : widget.chapter.readingDirection);
     if (previous != null) {
+      previous.removeListener(_handleReaderProgress);
       _binding?.detach(previous.sessionId);
       previous.dispose();
     }
@@ -199,10 +216,55 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       traceSink: _trace,
     );
     reader.setDirection(direction);
+    reader.addListener(_handleReaderProgress);
     _binding = binding;
     _target = target;
     _reader = reader;
+    _lastProgressPage = reader.currentIndex;
+    _lastProgressMode = _readerMode(reader.direction);
   }
+
+  ReadingProgress? _matchingInitialProgress() {
+    final progress = widget.initialProgress;
+    if (progress == null ||
+        progress.comicId != widget.chapter.comicId ||
+        progress.chapterId != widget.chapter.chapter.chapterId) {
+      return null;
+    }
+    return progress;
+  }
+
+  void _handleReaderProgress() {
+    final reader = _reader;
+    final writer = widget.onProgressChanged;
+    if (reader == null || writer == null) {
+      return;
+    }
+    final mode = _readerMode(reader.direction);
+    if (_lastProgressPage == reader.currentIndex && _lastProgressMode == mode) {
+      return;
+    }
+    _lastProgressPage = reader.currentIndex;
+    _lastProgressMode = mode;
+    final progress = ReadingProgress(
+      comicId: widget.chapter.comicId,
+      chapterId: widget.chapter.chapter.chapterId,
+      pageIndex: reader.currentIndex,
+      subPageOffset: 0,
+      readerMode: mode,
+      updatedAt: DateTime.now().toUtc(),
+    );
+    Future<void>.sync(() => writer(progress)).catchError(
+      (Object error, StackTrace stackTrace) {
+        debugPrint('reader progress write failed: $error');
+      },
+    );
+  }
+
+  ReaderMode _readerMode(ReadingDirection direction) =>
+      direction == ReadingDirection.vertical
+          ? ReaderMode.continuous
+          : ReaderMode.paged;
 
   Transport _transportFor(Uri uri) {
     if (_loaderTransport.contains(uri)) {
@@ -279,6 +341,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   void dispose() {
     final reader = _reader;
     if (reader != null) {
+      reader.removeListener(_handleReaderProgress);
       _binding?.detach(reader.sessionId);
       reader.dispose();
     }

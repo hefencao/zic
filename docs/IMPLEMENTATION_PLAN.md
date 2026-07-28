@@ -18,10 +18,8 @@
 - Reader app 使用 `LiveCoordinator + DownloadRegistry`，播放器只读取 promoted
   artifact；viewport 重建或销毁前必须 detach 旧 demand plan。
 - 导入文件夹必须归一化为 catalog chapter record，并通过 loader transport 和
-  DownloadSession 进入 Reader；禁止保留独立目录浏览器的直接文件读取权威。
+  DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
-- 在 Flutter/Android 环境完成目标测试、全量 Dart/Flutter/analyze、native build
-  和真机 lifecycle 测试之前，不升级版本、不标记稳定。
 
 ## 2. 阶段划分
 

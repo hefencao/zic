@@ -925,6 +925,7 @@ ImportedChapterRecord imageFolderChapterRecord(PickedImageFolder folder) {
             displayName: image.displayName,
             sourceId: image.sourceId,
             contentKindHint: _contentKindHint(image.format),
+            mediaFormat: image.format.name,
             byteLength: image.byteLength,
             animatedHint: image.format == LocalImageFormat.webp ||
                 image.format == LocalImageFormat.gif,
@@ -951,46 +952,85 @@ final class ImageFolderScreen extends StatelessWidget {
     required this.folder,
     this.bytesLoader,
     this.onPreviewStateChanged,
+    this.initialProgress,
+    this.onProgressChanged,
     super.key,
   });
 
   final PickedImageFolder folder;
   final LocalImageBytesLoader? bytesLoader;
   final ImagePreviewStateChanged? onPreviewStateChanged;
+  final ReadingProgress? initialProgress;
+  final ReaderProgressWriter? onProgressChanged;
 
   @override
   Widget build(BuildContext context) {
     final record = imageFolderChapterRecord(folder);
+    return ImportedImageChapterScreen(
+      record: record,
+      byteLoaders: <String, LocalImageFileBytesLoader>{
+        for (final image in folder.files)
+          image.sourceId: () => bytesLoader == null
+              ? image.readAsBytes()
+              : bytesLoader!(image),
+      },
+      onPreviewStateChanged: onPreviewStateChanged,
+      initialProgress: initialProgress,
+      onProgressChanged: onProgressChanged,
+    );
+  }
+}
+
+final class ImportedImageChapterScreen extends StatelessWidget {
+  const ImportedImageChapterScreen({
+    required this.record,
+    this.byteLoaders = const <String, LocalImageFileBytesLoader>{},
+    this.onPreviewStateChanged,
+    this.initialProgress,
+    this.onProgressChanged,
+    super.key,
+  });
+
+  final ImportedChapterRecord record;
+  final Map<String, LocalImageFileBytesLoader> byteLoaders;
+  final ImagePreviewStateChanged? onPreviewStateChanged;
+  final ReadingProgress? initialProgress;
+  final ReaderProgressWriter? onProgressChanged;
+
+  @override
+  Widget build(BuildContext context) {
     final chapter = record.toManifest();
     final sources = <Uri, LoaderTransportSource>{};
-    for (var index = 0; index < folder.files.length; index++) {
-      final image = folder.files[index];
+    for (var index = 0; index < record.pages.length; index++) {
+      final page = record.pages[index];
       sources[chapter.pages[index].uri] = LoaderTransportSource(
         revision: '${record.sourceRevision}:$index',
-        loadBytes: () => bytesLoader == null
-            ? image.readAsBytes()
-            : bytesLoader!(image),
+        loadBytes: byteLoaders[page.sourceId] ??
+            () => readLocalImageSource(page.sourceId),
       );
     }
 
     return ReaderRuntimeScreen(
       key: ValueKey<Object>(
-        (record.chapterId, record.sourceRevision, bytesLoader),
+        (record.chapterId, record.sourceRevision, byteLoaders.length),
       ),
       screenKey: imageFolderScreenKey,
       chapter: chapter,
       loaderSources: sources,
+      initialProgress: initialProgress,
+      onProgressChanged: onProgressChanged,
       appBarTitleBuilder: (context, chapter, currentIndex) {
-        final current = folder.files[currentIndex];
+        final current = record.pages[currentIndex];
+        final format = _importedPageFormat(current);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text(folder.displayName, key: imageFolderTitleKey),
+            Text(record.displayName, key: imageFolderTitleKey),
             Row(
               children: <Widget>[
                 Expanded(
                   child: Text(
-                    '${current.displayName} · ${current.format.label}',
+                    '${current.displayName} · ${format.label}',
                     key: imageFolderCurrentFileKey,
                     style: Theme.of(context).textTheme.bodySmall,
                     maxLines: 1,
@@ -999,7 +1039,7 @@ final class ImageFolderScreen extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  '${currentIndex + 1} / ${folder.files.length}',
+                  '${currentIndex + 1} / ${record.pages.length}',
                   key: imageFolderPositionKey,
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
@@ -1020,7 +1060,7 @@ final class ImageFolderScreen extends StatelessWidget {
         IconButton(
           key: imageFolderNextKey,
           tooltip: '下一张图片',
-          onPressed: reader.currentIndex + 1 >= folder.files.length
+          onPressed: reader.currentIndex + 1 >= record.pages.length
               ? null
               : () => reader.requestPage(reader.currentIndex + 1),
           icon: const Icon(Icons.chevron_right),
@@ -1031,12 +1071,12 @@ final class ImageFolderScreen extends StatelessWidget {
           initialValue: reader.currentIndex,
           onSelected: reader.requestPage,
           itemBuilder: (context) => <PopupMenuEntry<int>>[
-            for (var index = 0; index < folder.files.length; index++)
+            for (var index = 0; index < record.pages.length; index++)
               PopupMenuItem<int>(
                 value: index,
                 child: Text(
-                  '${folder.files[index].displayName} · '
-                  '${folder.files[index].format.label}',
+                  '${record.pages[index].displayName} · '
+                  '${_importedPageFormat(record.pages[index]).label}',
                 ),
               ),
           ],
@@ -1048,12 +1088,22 @@ final class ImageFolderScreen extends StatelessWidget {
         reportFirstFrame,
         runtime,
       ) {
-        final image = folder.files[asset.index];
+        final page = record.pages[asset.index];
+        final format = _importedPageFormat(page);
+        final image = PickedImage(
+          file: XFile(page.sourceId),
+          format: format,
+          displayName: page.displayName,
+          sourceId: page.sourceId,
+          byteLength: page.byteLength,
+          readBytes: byteLoaders[page.sourceId] ??
+              () => readLocalImageSource(page.sourceId),
+        );
         return ColoredBox(
           color: Colors.black,
           child: LocalImagePlayer(
             key: ValueKey<String>(
-              'folder-image:${image.sourceId}:${image.format.name}:${asset.index}',
+              'folder-image:${page.sourceId}:${format.name}:${asset.index}',
             ),
             image: image,
             tokenBytesLoader: (_, token) => runtime.loadBytes(token),
@@ -1071,24 +1121,65 @@ final class ImageFolderScreen extends StatelessWidget {
   }
 }
 
+LocalImageFormat _importedPageFormat(ImportedPageRecord page) {
+  final stored = localImageFormatByName(page.mediaFormat ?? '');
+  if (stored != null) {
+    return stored;
+  }
+  return switch (page.contentKindHint) {
+    ContentKindHint.jpeg => LocalImageFormat.jpeg,
+    ContentKindHint.png => LocalImageFormat.png,
+    ContentKindHint.gif => LocalImageFormat.gif,
+    ContentKindHint.webp => LocalImageFormat.webp,
+    ContentKindHint.avif => LocalImageFormat.avif,
+    ContentKindHint.unknown || ContentKindHint.fallback =>
+      _formatFromSourceName(page.sourceId),
+  };
+}
+
+LocalImageFormat _formatFromSourceName(String sourceId) {
+  final path = (Uri.tryParse(sourceId)?.path ?? sourceId).toLowerCase();
+  if (path.endsWith('.bmp') || path.endsWith('.dib')) {
+    return LocalImageFormat.bmp;
+  }
+  if (path.endsWith('.tif') || path.endsWith('.tiff')) {
+    return LocalImageFormat.tiff;
+  }
+  if (path.endsWith('.ico')) {
+    return LocalImageFormat.ico;
+  }
+  if (path.endsWith('.heif') ||
+      path.endsWith('.heic') ||
+      path.endsWith('.hif')) {
+    return LocalImageFormat.heif;
+  }
+  return LocalImageFormat.jpeg;
+}
+
 @Deprecated('Use ImageFolderScreen')
 final class WebpFolderScreen extends StatelessWidget {
   const WebpFolderScreen({
     required this.folder,
     this.bytesLoader,
     this.onPreviewStateChanged,
+    this.initialProgress,
+    this.onProgressChanged,
     super.key,
   });
 
   final PickedImageFolder folder;
   final LocalImageBytesLoader? bytesLoader;
   final ImagePreviewStateChanged? onPreviewStateChanged;
+  final ReadingProgress? initialProgress;
+  final ReaderProgressWriter? onProgressChanged;
 
   @override
   Widget build(BuildContext context) => ImageFolderScreen(
         folder: folder,
         bytesLoader: bytesLoader,
         onPreviewStateChanged: onPreviewStateChanged,
+        initialProgress: initialProgress,
+        onProgressChanged: onProgressChanged,
       );
 }
 

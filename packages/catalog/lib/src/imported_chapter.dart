@@ -5,6 +5,7 @@ final class ImportedPageRecord {
     required this.displayName,
     required this.sourceId,
     required this.contentKindHint,
+    this.mediaFormat,
     this.byteLength,
     this.animatedHint = false,
   });
@@ -12,6 +13,7 @@ final class ImportedPageRecord {
   final String displayName;
   final String sourceId;
   final ContentKindHint contentKindHint;
+  final String? mediaFormat;
   final int? byteLength;
   final bool animatedHint;
 
@@ -33,6 +35,7 @@ final class ImportedPageRecord {
         'displayName': displayName,
         'sourceId': sourceId,
         'contentKindHint': contentKindHint.name,
+        if (mediaFormat != null) 'mediaFormat': mediaFormat,
         if (byteLength != null) 'byteLength': byteLength,
         'animatedHint': animatedHint,
       };
@@ -51,6 +54,7 @@ final class ImportedPageRecord {
       displayName: displayName,
       sourceId: sourceId,
       contentKindHint: ContentKindHint.values.byName(kindName),
+      mediaFormat: json['mediaFormat'] as String?,
       byteLength: byteLength as int?,
       animatedHint: (json['animatedHint'] as bool?) ?? false,
     );
@@ -120,6 +124,7 @@ final class ImportedChapterRecord {
       pages
           .map(
             (page) => '${page.sourceId}\u0000${page.contentKindHint.name}'
+                '\u0000${page.mediaFormat ?? ''}'
                 '\u0000${page.byteLength ?? -1}'
                 '\u0000${page.animatedHint}',
           )

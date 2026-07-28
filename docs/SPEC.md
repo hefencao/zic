@@ -266,6 +266,10 @@ Demand 必须包含：
 - 切换时只保留一个当前播放器，不得同时启动整个目录的 codec/texture；
 - 完全没有可识别图片时才提示空目录，并附带扫描与不可读文件计数；
 - 上一项、下一项和文件选择使用稳定语义 key，必须测试真实 source 与格式切换。
+- 成功导入后必须持久化可序列化章节记录；重新启动后可从本地目录库重新打开。
+- Reader 当前页和 paged/continuous 模式写入 `ReadingProgress`；旧时间戳不得覆盖新进度。
+- 目录重新导入导致页数减少时，持久进度必须收敛到新的最后一页。
+- PNG 文件头嗅探至少要求完整 signature、IHDR 长度/标签和非零宽高；仅有容器标签的截断数据不得成为图片候选。
 
 所有 WebP 页面默认使用 Flutter codec。Native FFI/texture 只能在用户显式选择
 实验 renderer 并确认后启动；取消确认不得创建 source、cursor 或 texture。

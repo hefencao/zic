@@ -67,4 +67,17 @@ class LocalMediaFormatTest {
         assertNull(sniffImageFormat(truncatedLabel))
         assertNull(sniffImageFormat(missingChunkTag))
     }
+
+    @Test
+    fun `truncated PNG labels are rejected`() {
+        val signatureOnly = byteArrayOf(
+            0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+        )
+        val incompleteIhdr = signatureOnly + byteArrayOf(
+            0, 0, 0, 13, 'I'.code.toByte(), 'H'.code.toByte(), 'D'.code.toByte(),
+        )
+        assertNull(sniffImageFormat(signatureOnly))
+        assertNull(sniffImageFormat(incompleteIhdr))
+    }
+
 }

@@ -1,3 +1,20 @@
+## Current candidate — durable imported library and progress restore
+
+Imported image folders now become durable catalog entries rather than route-local values.
+`catalog` owns the `ImportedLibraryStore` contract and in-memory reference implementation;
+`storage` provides a transactional SQLite implementation, while `storage_bridge` resolves
+the Flutter application-support path. The App lists stored chapters, removes entries,
+reopens content-URI or filesystem pages through the same LoaderTransport/DownloadSession
+artifact ingress, and restores the last page plus paged/continuous mode.
+
+Progress writes are monotonic by `updatedAt`, chapter refresh clamps an out-of-range page,
+and SQLite delete uses foreign-key cascade. Reader viewport reconstruction preserves the
+current page and direction while detaching the previous demand plan before disposal.
+
+PNG directory sniffing now rejects a bare signature or incomplete IHDR label. Both Dart and
+Android require a complete signature, IHDR length/type and non-zero dimensions before
+returning PNG; full codec validation remains authoritative after admission.
+
 ## Current candidate — imported-folder Reader artifact pipeline
 
 The working folder importer now crosses the same production Reader boundary as manifest
@@ -39,9 +56,7 @@ protocol-version handshake detects stale cached native plugin code and instructs
 build instead of reporting its old empty-directory result as current behavior.
 
 `tool/clean.sh` removes project Flutter/Dart, Gradle, Rust, CMake/libwebp and generated JNI
-build caches while preserving lock files and pinned source. All `tool/*.sh` scripts are
-required to be executable. The version remains `0.18.3-dev.21` pending Flutter/Android
-device validation.
+build caches while preserving lock files and pinned source.
 
 # Implementation Status
 

@@ -6,3 +6,4 @@ export 'src/cache_scanner.dart';
 export 'src/crc32.dart';
 export 'src/ephemeral_workspace.dart';
 export 'src/sqlite_index.dart';
+export 'src/sqlite_imported_library_store.dart';

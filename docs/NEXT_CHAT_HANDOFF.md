@@ -2,69 +2,39 @@
 
 ## Sole baseline
 
-The sole input baseline for the next iteration is
-`zic_v0.18.3-dev.21_folder-reader-artifact_UNVERIFIED.zip`. It contains the complete
-`fixed.zip` overlay lineage and all Reader artifact, mixed-image folder and texture work;
-do not reapply any older archive or patch.
+Continue only from `zic_v0.18.3-dev.21_local-library-progress.zip`; do not reapply older
+archives or patches.
 
-Version remains `0.18.3-dev.21` / `0.18.3+21` and must not be called stable until the
-external Flutter/Android gate passes.
+## Current implementation
 
-## Current candidate changes
+- Android SAF directory import and mixed-image switching run through `local_media` and
+  `local_media_bridge` rather than App-owned file I/O.
+- Imported folders are serialized as `ImportedChapterRecord` and persisted through
+  `ImportedLibraryStore`; the production backend is SQLite in the application-support
+  directory, with an in-memory implementation for tests.
+- The home page lists persisted local chapters, supports removal, and reopens them through
+  `LoaderTransport -> DownloadSession -> promoted artifact -> Reader`.
+- Reader page changes persist `ReadingProgress`; reopen restores the page and
+  paged/continuous mode. Stale writes are ignored and chapter shrink clamps progress.
+- `mediaFormat` is persisted per imported page so files with missing or misleading
+  extensions reopen with the original detected format.
+- PNG sniffing rejects bare/truncated container labels in both Dart and Android while full
+  parser/codec validation remains authoritative.
+- Reader artifact workspace and SQLite filesystem ownership remain below the App layer in
+  `storage`/`storage_bridge`.
 
-- Converts selected image folders into serializable `ImportedChapterRecord` values and
-  stable `ChapterManifest`/Download identities.
-- Routes content-URI and filesystem byte loaders through `LoaderTransport`,
-  `LiveCoordinator`, `DownloadSession`, and promoted artifacts before display.
-- Replaces the standalone folder page index with `ReaderController.requestPage` commands
-  consumed by `ReaderView`, retaining LTR/RTL/vertical Reader behavior.
-- Cancels pending local-page artifact waits when pages leave the viewport or the Reader is
-  disposed.
-- Moves temporary Reader cache paths, artifact reads, and cleanup into
-  `packages/storage/EphemeralCacheWorkspace`; `apps/app/lib` has no `dart:io` imports.
-- Rejects truncated WebP labels and missing first chunk tags without reinstating strict
-  VP8/VP8L/VP8X-first scanning.
-- Moves local image models, desktop directory scanning and platform dispatch out of
-  `apps/app/lib` into `packages/local_media`; the App keeps only a compatibility export.
-- Retains image MIME/name candidates when SAF header probing fails and validates them when
-  opened; document reads try ordinary, asset and typed-asset resolver streams.
-- Adds Android bridge protocol version 2 so a stale cached plugin fails with a clean-build
-  instruction instead of returning an old empty-directory result.
-- Adds `./tool/clean.sh`; all `tool/*.sh` files are executable and the clean target removes
-  project Flutter/Dart, Gradle, Rust, CMake/libwebp and generated JNI caches.
-- Replaces Android raw-path directory scanning with a dedicated SAF document-tree bridge.
-- Recursively enumerates `DocumentsContract` children and reads both headers and selected
-  pages through the persisted `content://` grant.
-- Keeps each folder page's content URI as its explicit source identity and byte-loader
-  contract, while retaining `XFile` only for compatibility.
-- Uses magic-byte sniffing first, then provider MIME and filename only as candidate fallbacks;
-  full validity remains owned by the real codec.
-- Reports header-recognized and metadata-fallback counts from Android document-tree scans.
-- Keeps the isolate-backed recursive filesystem scanner for desktop/other IO platforms.
-- Fixes the empty-folder diagnostic wording expected by the product contract.
-- Fixes native Android texture stretching with a source-ratio contain viewport; texture
-  dimensions and telemetry are no longer treated as proof of correct visual geometry.
-- Changes WebP folder recognition from strict first-chunk/container validation to a
-  permissive RIFF/WEBP signature sniff, while retaining parser/codec validation at open.
-- Recognizes real playable WebP bytes regardless of filename and tolerates metadata or
-  unknown leading chunks.
-- Reports scanned, signature-unrecognized and unreadable file counts independently.
-- Drives generic-image ready/invalid state through the displayed `MemoryImage` stream;
-  deterministic tests can inject a decode probe without weakening production behavior.
-- Retains LiveCoordinator promoted-artifact Reader ingress and explicit native activation.
+## Validation commands
 
-## Mandatory validation gate
-
-Run from the repository root in the Flutter-equipped environment:
+Run from the repository root in a Flutter/Android-equipped environment:
 
 ```bash
 flutter pub get
+flutter test packages/local_media/test/local_image_signature_test.dart
+flutter test packages/catalog/test/imported_library_store_test.dart
+flutter test packages/storage/test/imported_library_store_test.dart
 flutter test apps/app/test/app_smoke_test.dart
 flutter test apps/app/test/webp_preview_test.dart
 flutter test apps/app/test/webp_demo_test.dart
-flutter test packages/local_media/test/local_image_folder_test.dart
-flutter test packages/local_media/test/local_image_signature_test.dart
-flutter test apps/app/test/local_image_preview_test.dart
 bash ./tool/test_dart.sh
 bash ./tool/test_flutter.sh
 bash ./tool/analyze.sh
@@ -75,26 +45,13 @@ bash ./tool/build_android_native.sh release
 bash ./tool/build_android.sh debug
 ```
 
-Also run Android device coverage for background/foreground surface recreation,
-overlapping Reader pages, texture replacement, resize and engine detach. Only after
-all applicable checks pass should the version be incremented and a stable archive be
-created.
-
 ## Next mainline work
 
-1. Validate SAF document-tree scanning, persisted reads and switching on multiple Android providers, plus the desktop fallback.
-2. Persist the serializable imported chapter records in the durable local catalog and restore the last reading position.
-3. Bind promoted ingress to DecodeRegistry/UploadRegistry without automatically enabling
-   unsafe texture output.
-4. Add Android lifecycle/device tests for surface loss/recreation and concurrent
-   PageView overlap, including retained-frame redraw and detach races.
-5. Add CBZ import without moving filesystem I/O into the Reader package.
-
-
-Before validating Android plugin changes, run:
-
-```bash
-./tool/clean.sh
-flutter pub get
-./tool/build_android.sh debug
-```
+1. Bind promoted local/remote artifacts to real DecodeRegistry and UploadRegistry ownership,
+   retaining the safe Flutter renderer as fallback.
+2. Add local catalog refresh: rescan a persisted SAF tree, preserve stable page identities,
+   detect additions/removals, and reconcile saved progress.
+3. Add Android lifecycle/device coverage for surface loss/recreation, overlapping Reader
+   pages, retained-frame redraw, resize and engine detach races.
+4. Add CBZ import through the local-media/catalog boundary without introducing filesystem
+   I/O into Reader or App UI code.

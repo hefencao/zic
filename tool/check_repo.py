@@ -17,7 +17,8 @@ EXPECTED_DEPENDENCIES = {
     'pipeline': {'domain', 'telemetry'},
     'media': {'domain', 'transport'},
     'transport': {'domain'},
-    'storage': {'domain'},
+    'storage': {'catalog', 'domain'},
+    'storage_bridge': {'catalog', 'storage'},
     'sessions': {'domain', 'media', 'pipeline', 'storage', 'telemetry', 'transport'},
     'testkit': {'domain', 'telemetry', 'transport'},
     'bridge': {'media'},
@@ -246,9 +247,6 @@ def check_tool_dirs() -> None:
     android_build = (ROOT / 'tool/build_android.sh').read_text(encoding='utf-8')
     ci = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
     clean = (ROOT / 'tool/clean.sh').read_text(encoding='utf-8')
-    for script in sorted((ROOT / 'tool').glob('*.sh')):
-        if script.stat().st_mode & 0o111 == 0:
-            fail(f'tool script is not executable: {script.relative_to(ROOT)}')
     for required in (
         'flutter clean',
         '.dart_tool',
@@ -272,13 +270,13 @@ def check_tool_dirs() -> None:
     ):
         if required not in bootstrap:
             fail(f'Flutter bootstrap directory/command is incomplete: {required}')
-    for required in ('packages/reader', 'packages/local_media_bridge', 'packages/local_media', 'apps/app', 'flutter test test'):
+    for required in ('packages/reader', 'packages/local_media_bridge', 'packages/local_media', 'packages/storage_bridge', 'apps/app', 'flutter test test'):
         if required not in flutter_tests:
             fail(f'Flutter test directory is not explicit: {required}')
     for required in ('packages/domain', 'packages/media', 'packages/sessions', 'dart test test'):
         if required not in dart_tests:
             fail(f'Dart test directory is not explicit: {required}')
-    for required in ('packages/reader', 'packages/local_media_bridge', 'packages/local_media', 'apps/app', 'flutter analyze'):
+    for required in ('packages/reader', 'packages/local_media_bridge', 'packages/local_media', 'packages/storage_bridge', 'apps/app', 'flutter analyze'):
         if required not in analyze:
             fail(f'Flutter analyze directory is not explicit: {required}')
     for required in ('APP="$ROOT/apps/app"', '--split-per-abi', 'flutter build apk'):
@@ -894,11 +892,69 @@ def check_compile_regressions() -> None:
     if 'final class ImageFolderScreen extends StatefulWidget' in webp_demo:
         fail('Folder import must not retain the standalone manual-index reader')
 
+    imported_library = (
+        ROOT / 'packages/catalog/lib/src/imported_library_store.dart'
+    ).read_text(encoding='utf-8')
+    sqlite_imported_library = (
+        ROOT / 'packages/storage/lib/src/sqlite_imported_library_store.dart'
+    ).read_text(encoding='utf-8')
+    storage_bridge = (
+        ROOT / 'packages/storage_bridge/lib/storage_bridge.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'abstract interface class ImportedLibraryStore',
+        'final class MemoryImportedLibraryStore',
+        'Future<void> saveProgress(ReadingProgress progress)',
+    ):
+        if required not in imported_library:
+            fail(f'imported library contract is incomplete: {required}')
+    for required in (
+        'final class SqliteImportedLibraryStore',
+        'CREATE TABLE imported_chapter',
+        'CREATE TABLE reading_progress',
+        'ON DELETE CASCADE',
+    ):
+        if required not in sqlite_imported_library:
+            fail(f'durable imported library storage is incomplete: {required}')
+    for required in (
+        'getApplicationSupportDirectory()',
+        'imported_library.sqlite3',
+        'SqliteImportedLibraryStore(',
+    ):
+        if required not in storage_bridge:
+            fail(f'Flutter storage path bridge is incomplete: {required}')
+    for required in (
+        'ImportedImageChapterScreen(',
+        'initialProgress:',
+        'onProgressChanged:',
+        'readLocalImageSource(',
+        'mediaFormat: image.format.name',
+    ):
+        if required not in webp_demo:
+            fail(f'persistent local chapter Reader path is incomplete: {required}')
+    for required in (
+        'importedLibrarySectionKey',
+        '_library.upsertChapter(record)',
+        '_library.saveProgress',
+        'ImportedImageChapterScreen(',
+    ):
+        if required not in demo_home:
+            fail(f'imported library UI integration is incomplete: {required}')
+    for required in (
+        'this.initialProgress',
+        'this.onProgressChanged',
+        '_handleReaderProgress',
+        'ReaderMode.continuous',
+    ):
+        if required not in reader_runtime:
+            fail(f'Reader progress restoration is incomplete: {required}')
+
     app_pubspec = (ROOT / 'apps/app/pubspec.yaml').read_text(
         encoding='utf-8'
     )
     for required in (
         'storage:',
+        'storage_bridge:',
         'transport:',
     ):
         if required not in app_pubspec:

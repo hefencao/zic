@@ -100,10 +100,7 @@ LocalImageFormat? detectLocalImageFormat(
   // This is deliberately a signature sniffer rather than a container parser.
   // Directory import must admit the same byte streams that the full Flutter or
   // native decoder can validate after selection, without trusting filenames.
-  if (_startsWith(
-    bytes,
-    const <int>[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
-  )) {
+  if (_looksLikePng(bytes, fileLength: fileLength)) {
     return LocalImageFormat.png;
   }
   if (_startsWith(bytes, const <int>[0xff, 0xd8, 0xff])) {
@@ -150,6 +147,34 @@ LocalImageFormat? detectLocalImageFormat(
     }
   }
   return null;
+}
+
+bool _looksLikePng(Uint8List bytes, {int? fileLength}) {
+  // PNG always starts with an IHDR chunk. Requiring the complete chunk label
+  // and dimensions rejects a bare/truncated eight-byte signature while still
+  // keeping directory probing much cheaper than full container validation.
+  if (bytes.length < 24 ||
+      !_startsWith(
+        bytes,
+        const <int>[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
+      ) ||
+      _readUint32Be(bytes, 8) != 13 ||
+      !_asciiAt(bytes, 12, 'IHDR')) {
+    return false;
+  }
+  final width = _readUint32Be(bytes, 16);
+  final height = _readUint32Be(bytes, 20);
+  if (width == 0 || height == 0) {
+    return false;
+  }
+  return fileLength == null || fileLength >= 33;
+}
+
+int _readUint32Be(Uint8List bytes, int offset) {
+  return (bytes[offset] << 24) |
+      (bytes[offset + 1] << 16) |
+      (bytes[offset + 2] << 8) |
+      bytes[offset + 3];
 }
 
 bool _looksLikeWebp(Uint8List bytes) {
