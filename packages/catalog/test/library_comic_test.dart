@@ -77,6 +77,62 @@ void main() {
     expect(comics.last.comicId, 'comic-2');
   });
 
+  test('aggregate selects and combines persisted remote metadata', () {
+    final first = ImportedLibraryEntry(
+      chapter: _chapter(
+        chapterId: 'chapter-meta-1',
+        title: '第 1 话',
+        sequence: 1,
+        importedAt: DateTime.utc(2026, 7, 27),
+      ).copyWith(
+        comicAuthors: const <String>['作者 A'],
+      ),
+    );
+    final second = ImportedLibraryEntry(
+      chapter: _chapter(
+        chapterId: 'chapter-meta-2',
+        title: '第 2 话',
+        sequence: 2,
+        importedAt: DateTime.utc(2026, 7, 28),
+      ).copyWith(
+        comicAuthors: const <String>['作者 B'],
+        comicDescription: '远程简介',
+        coverSourceId: 'https://example.invalid/cover.jpg',
+      ),
+    );
+
+    final comic = LibraryComic.fromEntries(<ImportedLibraryEntry>[first, second]);
+
+    expect(comic.authors, containsAll(<String>['作者 A', '作者 B']));
+    expect(comic.description, '远程简介');
+    expect(comic.coverChapter.chapter.chapterId, 'chapter-meta-2');
+  });
+
+  test('same native comic id from different sources stays separated', () {
+    final local = ImportedLibraryEntry(
+      chapter: _chapter(
+        chapterId: 'chapter-local',
+        title: '本地章节',
+        sequence: 1,
+        importedAt: DateTime.utc(2026, 7, 27),
+      ),
+    );
+    final remote = ImportedLibraryEntry(
+      chapter: _chapter(
+        chapterId: 'chapter-remote',
+        title: '远程章节',
+        sequence: 1,
+        importedAt: DateTime.utc(2026, 7, 28),
+      ).copyWith(sourceId: 'remote-fixture'),
+    );
+
+    final comics = aggregateImportedLibrary(<ImportedLibraryEntry>[local, remote]);
+
+    expect(comics, hasLength(2));
+    expect(comics.map((comic) => comic.sourceId),
+        containsAll(<String>['local-folder', 'remote-fixture']));
+  });
+
   test('chapter JSON remains compatible while persisting aggregate metadata', () {
     final chapter = _chapter(
       chapterId: 'chapter-7',
@@ -93,9 +149,13 @@ void main() {
 
     final legacy = Map<String, Object?>.from(chapter.toJson())
       ..remove('comicTitle')
+      ..remove('comicAuthors')
+      ..remove('comicDescription')
       ..remove('sequence');
     final legacyRestored = ImportedChapterRecord.fromJson(legacy);
     expect(legacyRestored.comicTitle, chapter.displayName);
+    expect(legacyRestored.comicAuthors, isEmpty);
+    expect(legacyRestored.comicDescription, isNull);
     expect(legacyRestored.sequence, 0);
   });
 

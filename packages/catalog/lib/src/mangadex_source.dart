@@ -258,6 +258,10 @@ final class MangaDexSource implements BrowsableComicSource {
       title: _localizedText(attributes['title'], translatedLanguage) ?? comicId,
       authors: _relationshipNames(data),
       coverUri: _coverUri(data, comicId),
+      description: _localizedText(
+        attributes['description'],
+        translatedLanguage,
+      ),
       readingDirection:
           originalLanguage == 'ja' ? ReadingDirection.rtl : ReadingDirection.ltr,
       createdAt: _optionalDateTime(attributes['createdAt']),

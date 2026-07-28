@@ -1,3 +1,22 @@
+## 0.22.0-dev.26 — unified source-aware comic details and pull refresh
+
+- Replace the separate remote details presentation with one `UnifiedComicDetailsScreen` used by
+  Comic Sources, Home updates, reading history and Bookshelf routes.
+- Merge the complete upstream source chapter catalog with persisted library entries by
+  `sourceId + chapterId`; retain saved chapters that temporarily disappear upstream and never
+  import newly discovered chapters until the user opens or explicitly adds them.
+- Add pull-to-refresh and an app-bar refresh command. Source manifests and local-folder snapshots
+  refresh through their owning boundaries, then reconcile into the same aggregate projection.
+- Persist remote comic authors and description in backward-compatible chapter JSON so a Home/history
+  details route retains the same metadata and cover as the source route before its network refresh.
+- Keep read/dimming, restore-unread swipe, shelf/like/favorite/category actions, source filtering,
+  chapter ordering, selectable diagnostics and Reader opening behavior identical across entry routes.
+- Fix the missing domain model import that caused `Comic`/`Chapter` compilation failures in the App.
+- Drain the Flutter double-tap recognizer timer after the real two-tap Reader zoom regression instead
+  of weakening or removing the product gesture assertion.
+- Add regressions for shared source/Home details, non-persisting pull refresh, metadata persistence,
+  source-aware chapter state and legacy JSON compatibility.
+
 ## 0.21.1-dev.25 — Android source networking and copyable diagnostics
 
 - Repair generated Android hosts by idempotently adding `android.permission.INTERNET` to the main

@@ -1,4 +1,5 @@
 import 'imported_library_store.dart';
+import 'imported_chapter.dart';
 
 /// Comic-level projection over one or more persisted chapter entries.
 ///
@@ -7,24 +8,31 @@ import 'imported_library_store.dart';
 /// refresh/progress remain authoritative in [ImportedLibraryStore].
 final class LibraryComic {
   LibraryComic({
+    required this.sourceId,
     required this.comicId,
     required this.title,
+    required Iterable<String> authors,
+    required this.description,
     required Iterable<ImportedLibraryEntry> chapters,
-  }) : chapters = List<ImportedLibraryEntry>.unmodifiable(
+  })  : authors = List<String>.unmodifiable(authors),
+        chapters = List<ImportedLibraryEntry>.unmodifiable(
           chapters.toList(growable: false)..sort(_compareChapters),
         ) {
-    if (comicId.trim().isEmpty || title.trim().isEmpty) {
-      throw ArgumentError('comic identity and title must be non-empty');
+    if (sourceId.trim().isEmpty ||
+        comicId.trim().isEmpty ||
+        title.trim().isEmpty) {
+      throw ArgumentError('source, comic identity and title must be non-empty');
     }
     if (this.chapters.isEmpty) {
       throw ArgumentError.value(chapters, 'chapters', 'must not be empty');
     }
     for (final entry in this.chapters) {
-      if (entry.chapter.comicId != comicId) {
+      if (entry.chapter.sourceId != sourceId ||
+          entry.chapter.comicId != comicId) {
         throw ArgumentError.value(
-          entry.chapter.comicId,
+          '${entry.chapter.sourceId}:${entry.chapter.comicId}',
           'chapters',
-          'contains a different comic identity',
+          'contains a different source or comic identity',
         );
       }
     }
@@ -35,21 +43,45 @@ final class LibraryComic {
     if (chapters.isEmpty) {
       throw ArgumentError.value(entries, 'entries', 'must not be empty');
     }
+    final sourceId = chapters.first.chapter.sourceId;
     final comicId = chapters.first.chapter.comicId;
     final newest = chapters.reduce(
       (left, right) => right.chapter.importedAt.isAfter(left.chapter.importedAt)
           ? right
           : left,
     );
+    final metadata = chapters.fold<ImportedLibraryEntry>(
+      newest,
+      (selected, entry) {
+        final selectedScore = _metadataScore(selected.chapter);
+        final entryScore = _metadataScore(entry.chapter);
+        if (entryScore != selectedScore) {
+          return entryScore > selectedScore ? entry : selected;
+        }
+        return entry.chapter.importedAt.isAfter(selected.chapter.importedAt)
+            ? entry
+            : selected;
+      },
+    );
+    final authors = <String>{};
+    for (final entry in chapters) {
+      authors.addAll(entry.chapter.comicAuthors);
+    }
     return LibraryComic(
+      sourceId: sourceId,
       comicId: comicId,
-      title: newest.chapter.comicTitle,
+      title: metadata.chapter.comicTitle,
+      authors: authors,
+      description: metadata.chapter.comicDescription,
       chapters: chapters,
     );
   }
 
+  final String sourceId;
   final String comicId;
   final String title;
+  final List<String> authors;
+  final String? description;
   final List<ImportedLibraryEntry> chapters;
 
   bool get hasMultipleChapters => chapters.length > 1;
@@ -59,11 +91,16 @@ final class LibraryComic {
         (total, entry) => total + entry.chapter.pages.length,
       );
 
-  Set<String> get sourceIds => Set<String>.unmodifiable(
-        chapters.map((entry) => entry.chapter.sourceId),
-      );
+  Set<String> get sourceIds => Set<String>.unmodifiable(<String>{sourceId});
 
-  ImportedLibraryEntry get coverChapter => chapters.first;
+  ImportedLibraryEntry get coverChapter {
+    for (final chapter in chapters.reversed) {
+      if (chapter.chapter.coverSourceId != null) {
+        return chapter;
+      }
+    }
+    return chapters.first;
+  }
 
   ImportedLibraryEntry get latestChapter => chapters.reduce(
         (left, right) => _compareLatest(left, right) >= 0 ? left : right,
@@ -114,8 +151,8 @@ List<LibraryComic> aggregateImportedLibrary(
 ) {
   final grouped = <String, List<ImportedLibraryEntry>>{};
   for (final entry in entries) {
-    grouped.putIfAbsent(entry.chapter.comicId, () => <ImportedLibraryEntry>[])
-      ..add(entry);
+    final identity = '${entry.chapter.sourceId}\u0000${entry.chapter.comicId}';
+    grouped.putIfAbsent(identity, () => <ImportedLibraryEntry>[])..add(entry);
   }
   final comics = grouped.values
       .map(LibraryComic.fromEntries)
@@ -155,4 +192,18 @@ int _compareLatest(
     return sequence;
   }
   return left.chapter.chapterId.compareTo(right.chapter.chapterId);
+}
+
+int _metadataScore(ImportedChapterRecord chapter) {
+  var score = 0;
+  if (chapter.comicAuthors.isNotEmpty) {
+    score += 1;
+  }
+  if (chapter.comicDescription != null) {
+    score += 2;
+  }
+  if (chapter.coverSourceId != null) {
+    score += 1;
+  }
+  return score;
 }

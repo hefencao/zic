@@ -176,6 +176,113 @@ void main() {
     );
   });
 
+  testWidgets('source and home cards reuse the unified aggregated details',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final source = _FixtureSource(
+      'fixture-unified',
+      '统一详情源',
+      includeSecondChapter: true,
+    );
+
+    await tester.pumpWidget(
+      App(
+        libraryStore: store,
+        comicSources: <BrowsableComicSource>[source],
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.public_outlined));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceComicCardKey('fixture-unified-comic')),
+    );
+    await tester.tap(
+      find.byKey(sourceComicCardKey('fixture-unified-comic')),
+    );
+    await _pumpUntilFound(tester, find.byKey(comicDetailsScreenKey));
+    expect(find.byKey(sourceChapterKey('fixture-unified-chapter')), findsOneWidget);
+    expect(
+      find.byKey(sourceChapterKey('fixture-unified-chapter-2')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byTooltip('加入书架').first);
+    await tester.pumpAndSettle();
+    expect(await store.get('fixture-unified-chapter'), isNotNull);
+    expect(await store.get('fixture-unified-chapter-2'), isNull);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.home_outlined));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(importedChapterEntryKey('fixture-unified-chapter')),
+    );
+    await tester.tap(
+      find.byKey(importedChapterEntryKey('fixture-unified-chapter')),
+    );
+    await _pumpUntilFound(tester, find.byKey(comicDetailsScreenKey));
+
+    expect(find.text('统一详情源 漫画'), findsOneWidget);
+    expect(find.text('2 章 · 2 页'), findsOneWidget);
+    expect(
+      find.byKey(sourceChapterKey('fixture-unified-chapter-2')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('pull refresh expands source chapters without importing them',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final source = _FixtureSource(
+      'fixture-refresh',
+      '下拉更新源',
+      revealSecondChapterOnRefresh: true,
+    );
+
+    await tester.pumpWidget(
+      App(
+        libraryStore: store,
+        comicSources: <BrowsableComicSource>[source],
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.public_outlined));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceComicCardKey('fixture-refresh-comic')),
+    );
+    await tester.tap(
+      find.byKey(sourceComicCardKey('fixture-refresh-comic')),
+    );
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceChapterKey('fixture-refresh-chapter')),
+    );
+    expect(
+      find.byKey(sourceChapterKey('fixture-refresh-chapter-2')),
+      findsNothing,
+    );
+
+    await tester.drag(
+      find.byType(CustomScrollView),
+      const Offset(0, 360),
+    );
+    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceChapterKey('fixture-refresh-chapter-2')),
+    );
+
+    expect(source.comicLoads, 2);
+    expect(await store.get('fixture-refresh-chapter-2'), isNull);
+  });
+
   testWidgets('source comic details retries a transient source failure',
       (tester) async {
     final store = MemoryImportedLibraryStore();
@@ -216,6 +323,8 @@ final class _FixtureSource implements BrowsableComicSource {
     this.name, {
     this.failFirstComicLoad = false,
     this.browseError,
+    this.includeSecondChapter = false,
+    this.revealSecondChapterOnRefresh = false,
   });
 
   @override
@@ -223,11 +332,16 @@ final class _FixtureSource implements BrowsableComicSource {
   final String name;
   final bool failFirstComicLoad;
   final Object? browseError;
+  final bool includeSecondChapter;
+  final bool revealSecondChapterOnRefresh;
   int _comicLoads = 0;
   int browseCalls = 0;
 
+  int get comicLoads => _comicLoads;
+
   String get _comicId => '$sourceId-comic';
   String get _chapterId => '$sourceId-chapter';
+  String get _secondChapterId => '$sourceId-chapter-2';
 
   @override
   ComicSourceDescriptor get descriptor => ComicSourceDescriptor(
@@ -246,13 +360,17 @@ final class _FixtureSource implements BrowsableComicSource {
         readingDirection: ReadingDirection.ltr,
       );
 
-  Chapter get _chapter => Chapter(
-        chapterId: _chapterId,
+  Chapter get _chapter => _chapterAt(1);
+
+  Chapter get _secondChapter => _chapterAt(2);
+
+  Chapter _chapterAt(int sequence) => Chapter(
+        chapterId: sequence == 1 ? _chapterId : _secondChapterId,
         comicId: _comicId,
-        title: '第 1 话',
-        sequence: 1,
+        title: '第 $sequence 话',
+        sequence: sequence,
         pageCount: 1,
-        sourceRevision: 'fixture-r1',
+        sourceRevision: 'fixture-r$sequence',
       );
 
   @override
@@ -285,25 +403,37 @@ final class _FixtureSource implements BrowsableComicSource {
   @override
   Future<ComicManifest> loadComic(String comicId) async {
     expect(comicId, _comicId);
-    if (failFirstComicLoad && _comicLoads++ == 0) {
+    final loadIndex = _comicLoads++;
+    if (failFirstComicLoad && loadIndex == 0) {
       throw StateError('transient source failure');
     }
-    return ComicManifest(comic: _comic, chapters: <Chapter>[_chapter]);
+    final showSecond = includeSecondChapter ||
+        (revealSecondChapterOnRefresh && loadIndex > 0);
+    return ComicManifest(
+      comic: _comic,
+      chapters: <Chapter>[
+        _chapter,
+        if (showSecond) _secondChapter,
+      ],
+    );
   }
 
   @override
   Future<ChapterManifest> loadChapter(String chapterId) async {
-    expect(chapterId, _chapterId);
+    expect(chapterId, anyOf(_chapterId, _secondChapterId));
+    final chapter = chapterId == _chapterId ? _chapter : _secondChapter;
     return ChapterManifest(
       sourceId: sourceId,
       comicId: _comicId,
-      chapter: _chapter,
+      chapter: chapter,
       pages: <PageAsset>[
         PageAsset(
-          pageId: '$sourceId-page-1',
-          chapterId: _chapterId,
+          pageId: chapterId == _chapterId
+              ? '$sourceId-page-1'
+              : '$sourceId-page-2',
+          chapterId: chapterId,
           index: 0,
-          uri: Uri.https('example.invalid', '/$sourceId/page-1.png'),
+          uri: Uri.https('example.invalid', '/$sourceId/$chapterId/page-1.png'),
           contentKindHint: ContentKindHint.png,
         ),
       ],

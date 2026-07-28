@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:local_media/local_media.dart';
 
+import 'comic_details.dart' as details;
 import 'source_browser.dart';
 import 'static_demo.dart';
 import 'webp_demo.dart';
@@ -316,23 +317,62 @@ final class _DemoHomeState extends State<DemoHome> {
     BrowsableComicSource source,
     SourceComicSummary comic,
   ) async {
+    final preference = _preferences[comic.comicId] ??
+        ComicPreference.defaults(
+          comicId: comic.comicId,
+          sourceKind: ComicSourceKind.remote,
+          customOrder: _nextCustomOrder,
+        ).copyWith(inShelf: false);
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => SourceComicDetailsScreen(
+          initialLibrary: _detailsSnapshotForComic(
+            source.sourceId,
+            comic.comicId,
+            preference: preference,
+          ),
           source: source,
           summary: comic,
-          onChapterAction: _handleSourceChapter,
+          categories: _categories,
+          loadCover: _loadDetailsCover,
+          reloadLibrary: ({required bool refreshContent}) =>
+              _reloadDetailsSnapshot(
+            source.sourceId,
+            comic.comicId,
+            refreshContent: refreshContent,
+            fallbackPreference: preference,
+          ),
+          ensureSourceChapter: _ensureSourceChapter,
+          onPreferenceChanged: _savePreference,
+          onReadChanged: _setChapterRead,
+          onOpenChapter: (
+            chapter, {
+            required bool refreshRemote,
+          }) =>
+              _openImportedChapter(
+            chapter,
+            refreshRemote: refreshRemote,
+          ),
         ),
       ),
     );
+    if (mounted) {
+      await _reloadLibrary();
+    }
   }
 
-  Future<void> _handleSourceChapter(
+  int get _nextCustomOrder => _preferences.values.fold<int>(
+        0,
+        (value, preference) => preference.customOrder >= value
+            ? preference.customOrder + 1
+            : value,
+      );
+
+  Future<ImportedLibraryEntry> _ensureSourceChapter(
     BrowsableComicSource source,
     Comic comic,
-    Chapter chapter, {
-    required bool open,
-  }) async {
+    Chapter chapter,
+  ) async {
     await _ensureLibraryReady();
     final manifest = await source.loadChapter(chapter.chapterId);
     final record = ImportedChapterRecord.remote(
@@ -340,31 +380,12 @@ final class _DemoHomeState extends State<DemoHome> {
       manifest: manifest,
     );
     await _library.upsertChapter(record);
-    final existing = await _library.getComicPreference(record.comicId);
-    final customOrder = _preferences.values.fold<int>(
-      0,
-      (value, preference) => preference.customOrder >= value
-          ? preference.customOrder + 1
-          : value,
-    );
-    await _library.saveComicPreference(
-      (existing ??
-              ComicPreference.defaults(
-                comicId: record.comicId,
-                sourceKind: ComicSourceKind.remote,
-                customOrder: customOrder,
-              ))
-          .copyWith(
-        sourceKind: ComicSourceKind.remote,
-        inShelf: true,
-        updatedAt: DateTime.now().toUtc(),
-      ),
-    );
     final entry = await _library.get(record.chapterId);
-    await _reloadLibrary();
-    if (open && mounted && entry != null) {
-      await _openImportedChapter(entry, refreshRemote: false);
+    if (entry == null) {
+      throw StateError('漫画章节写入后无法重新读取：${record.chapterId}');
     }
+    await _reloadLibrary();
+    return entry;
   }
 
   Future<ImportedLibraryEntry> _refreshRemoteEntry(
@@ -382,10 +403,11 @@ final class _DemoHomeState extends State<DemoHome> {
       comicId: entry.chapter.comicId,
       sourceId: entry.chapter.sourceId,
       title: entry.chapter.comicTitle,
-      authors: const <String>[],
+      authors: entry.chapter.comicAuthors,
       coverUri: entry.chapter.coverSourceId == null
           ? null
           : Uri.tryParse(entry.chapter.coverSourceId!),
+      description: entry.chapter.comicDescription,
       readingDirection: entry.chapter.readingDirection,
     );
     final refreshed = ImportedChapterRecord.remote(
@@ -545,41 +567,166 @@ final class _DemoHomeState extends State<DemoHome> {
   }
 
   Future<void> _openComicDetails(LibraryComic comic) async {
-    final preference = _preferenceForComic(comic);
+    final sourceBindings = <details.ComicDetailsSourceBinding>[];
+    for (final sourceId in comic.sourceIds) {
+      final source = _sourceForId(sourceId);
+      if (source == null) {
+        continue;
+      }
+      final chapter = comic.chapters.firstWhere(
+        (entry) => entry.chapter.sourceId == sourceId,
+      );
+      sourceBindings.add(
+        details.ComicDetailsSourceBinding(
+          source: source,
+          comicId: comic.comicId,
+          summary: SourceComicSummary(
+            sourceId: sourceId,
+            comicId: comic.comicId,
+            title: chapter.chapter.comicTitle,
+            authors: chapter.chapter.comicAuthors,
+            coverUri: chapter.chapter.coverSourceId == null
+                ? null
+                : Uri.tryParse(chapter.chapter.coverSourceId!),
+            description: chapter.chapter.comicDescription,
+          ),
+        ),
+      );
+    }
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => ComicDetailsScreen(
-          comic: comic,
-          preference: preference,
+        builder: (_) => details.UnifiedComicDetailsScreen(
+          initialLibrary: _detailsSnapshotForComic(
+            comic.sourceId,
+            comic.comicId,
+          ),
+          sources: sourceBindings,
+          initialSourceId:
+              comic.sourceIds.length == 1 ? comic.sourceIds.single : null,
           categories: _categories,
-          readStates: <String, ChapterReadState>{
-            for (final chapter in comic.chapters)
-              if (_chapterReadStates.containsKey(chapter.chapter.chapterId))
-                chapter.chapter.chapterId:
-                    _chapterReadStates[chapter.chapter.chapterId]!,
-          },
-          coverBytes: _coverLoaderForComic(comic),
+          loadCover: _loadDetailsCover,
+          reloadLibrary: ({required bool refreshContent}) =>
+              _reloadDetailsSnapshot(
+            comic.sourceId,
+            comic.comicId,
+            refreshContent: refreshContent,
+          ),
+          ensureSourceChapter: _ensureSourceChapter,
           onPreferenceChanged: _savePreference,
           onReadChanged: _setChapterRead,
-          onOpenChapter: _openImportedChapter,
+          onOpenChapter: (
+            chapter, {
+            required bool refreshRemote,
+          }) =>
+              _openImportedChapter(
+            chapter,
+            refreshRemote: refreshRemote,
+          ),
         ),
       ),
     );
+    if (mounted) {
+      await _reloadLibrary();
+    }
+  }
+
+  details.ComicDetailsLibrarySnapshot _detailsSnapshotForComic(
+    String sourceId,
+    String comicId, {
+    ComicPreference? preference,
+  }) {
+    final chapters = _libraryEntries
+        .where(
+          (entry) =>
+              entry.chapter.sourceId == sourceId &&
+              entry.chapter.comicId == comicId,
+        )
+        .toList(growable: false);
+    return details.ComicDetailsLibrarySnapshot(
+      chapters: chapters,
+      readStates: <String, ChapterReadState>{
+        for (final chapter in chapters)
+          if (_chapterReadStates.containsKey(chapter.chapter.chapterId))
+            details.comicDetailsChapterIdentity(
+              chapter.chapter.sourceId,
+              chapter.chapter.chapterId,
+            ): _chapterReadStates[chapter.chapter.chapterId]!,
+      },
+      preference: _preferences[comicId] ??
+          preference ??
+          ComicPreference.defaults(comicId: comicId),
+    );
+  }
+
+  Future<details.ComicDetailsLibrarySnapshot> _reloadDetailsSnapshot(
+    String sourceId,
+    String comicId, {
+    required bool refreshContent,
+    ComicPreference? fallbackPreference,
+  }) async {
+    if (refreshContent) {
+      final entries = _libraryEntries
+          .where(
+            (entry) =>
+                entry.chapter.sourceId == sourceId &&
+                entry.chapter.comicId == comicId &&
+                entry.chapter.sourceId == 'local-folder',
+          )
+          .toList(growable: false);
+      for (final entry in entries) {
+        final folder = await widget.folderRefresher(entry.chapter);
+        final refreshed = imageFolderChapterRecord(folder).copyWith(
+          comicId: entry.chapter.comicId,
+          comicTitle: entry.chapter.comicTitle,
+          comicAuthors: entry.chapter.comicAuthors,
+          comicDescription: entry.chapter.comicDescription,
+          coverSourceId: entry.chapter.coverSourceId,
+          sequence: entry.chapter.sequence,
+          importedAt: entry.chapter.importedAt,
+        );
+        await _library.upsertChapter(refreshed);
+      }
+    }
+    await _reloadLibrary();
+    return _detailsSnapshotForComic(
+      sourceId,
+      comicId,
+      preference: fallbackPreference,
+    );
+  }
+
+  Future<Uint8List> _loadDetailsCover({
+    required String sourceId,
+    required Uri? coverUri,
+    required ImportedLibraryEntry? fallbackChapter,
+  }) {
+    final fallback = fallbackChapter;
+    final sourceValue = coverUri?.toString() ??
+        fallback?.chapter.coverSourceId ??
+        fallback?.chapter.pages.first.sourceId;
+    if (sourceValue == null) {
+      throw StateError('漫画详情没有可用封面');
+    }
+    return _coverBytes.putIfAbsent(sourceValue, () {
+      final source = _sourceForId(sourceId);
+      final uri = Uri.tryParse(sourceValue);
+      if (source != null &&
+          uri != null &&
+          (uri.scheme == 'http' || uri.scheme == 'https')) {
+        return source.loadResource(uri);
+      }
+      return readLocalImageSource(sourceValue);
+    });
   }
 
   Future<Uint8List> Function() _coverLoader(ImportedLibraryEntry entry) {
-    final sourceId =
-        entry.chapter.coverSourceId ?? entry.chapter.pages.first.sourceId;
-    return () => _coverBytes.putIfAbsent(sourceId, () {
-          final source = _sourceForId(entry.chapter.sourceId);
-          final uri = Uri.tryParse(sourceId);
-          if (source != null &&
-              uri != null &&
-              (uri.scheme == 'http' || uri.scheme == 'https')) {
-            return source.loadResource(uri);
-          }
-          return readLocalImageSource(sourceId);
-        });
+    return () => _loadDetailsCover(
+          sourceId: entry.chapter.sourceId,
+          coverUri: entry.chapter.coverSourceId == null
+              ? null
+              : Uri.tryParse(entry.chapter.coverSourceId!),
+          fallbackChapter: entry,
+        );
   }
 
   Future<Uint8List> Function() _coverLoaderForComic(LibraryComic comic) {
@@ -1826,249 +1973,57 @@ final class ComicDetailsScreen extends StatefulWidget {
 
 final class _ComicDetailsScreenState extends State<ComicDetailsScreen> {
   late ComicPreference _preference;
-  late Map<String, bool> _readStates;
-  bool _descending = true;
+  late Map<String, ChapterReadState> _readStates;
 
   @override
   void initState() {
     super.initState();
     _preference = widget.preference;
-    _readStates = <String, bool>{
-      for (final chapter in widget.comic.chapters)
-        chapter.chapter.chapterId:
-            widget.readStates[chapter.chapter.chapterId]?.isRead ?? false,
-    };
+    _readStates = Map<String, ChapterReadState>.from(widget.readStates);
   }
 
-  Future<void> _updatePreference(ComicPreference next) async {
-    setState(() => _preference = next);
-    await widget.onPreferenceChanged(next);
-  }
-
-  Future<void> _markRead(
-    ImportedLibraryEntry chapter,
-    bool value,
-  ) async {
-    final chapterId = chapter.chapter.chapterId;
-    if (_readStates[chapterId] == value) {
-      return;
-    }
-    setState(() => _readStates = <String, bool>{
-          ..._readStates,
-          chapterId: value,
-        });
-    await widget.onReadChanged(chapter, value);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final comic = widget.comic;
-    final chapters = comic.chapters.toList(growable: false);
-    final displayedChapters =
-        _descending ? chapters.reversed.toList(growable: false) : chapters;
-    return Scaffold(
-      key: comicDetailsScreenKey,
-      appBar: AppBar(title: const Text('漫画详情')),
-      body: CustomScrollView(
-        slivers: <Widget>[
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  SizedBox(
-                    width: 128,
-                    height: 180,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: _CoverImage(loader: widget.coverBytes),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        Text(
-                          comic.title,
-                          style: Theme.of(context).textTheme.headlineSmall,
-                        ),
-                        const SizedBox(height: 8),
-                        Text('${comic.chapters.length} 章 · ${comic.totalPages} 页'),
-                        const SizedBox(height: 16),
-                        Wrap(
-                          spacing: 8,
-                          children: <Widget>[
-                            _PreferenceButton(
-                              icon: _preference.liked
-                                  ? Icons.favorite
-                                  : Icons.favorite_border,
-                              label: '喜欢',
-                              selected: _preference.liked,
-                              onPressed: () => _updatePreference(
-                                _preference.copyWith(
-                                  liked: !_preference.liked,
-                                ),
-                              ),
-                            ),
-                            _PreferenceButton(
-                              icon: _preference.inShelf
-                                  ? Icons.collections_bookmark
-                                  : Icons.collections_bookmark_outlined,
-                              label: '书架',
-                              selected: _preference.inShelf,
-                              onPressed: () => _updatePreference(
-                                _preference.copyWith(
-                                  inShelf: !_preference.inShelf,
-                                ),
-                              ),
-                            ),
-                            _PreferenceButton(
-                              icon: _preference.collected
-                                  ? Icons.bookmark
-                                  : Icons.bookmark_border,
-                              label: '收藏',
-                              selected: _preference.collected,
-                              onPressed: () => _updatePreference(
-                                _preference.copyWith(
-                                  collected: !_preference.collected,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        if (widget.categories.isNotEmpty) ...<Widget>[
-                          const SizedBox(height: 12),
-                          Text(
-                            '分类',
-                            style: Theme.of(context).textTheme.labelLarge,
-                          ),
-                          const SizedBox(height: 6),
-                          Wrap(
-                            spacing: 6,
-                            runSpacing: 4,
-                            children: <Widget>[
-                              for (final category in widget.categories)
-                                FilterChip(
-                                  label: Text(category.name),
-                                  selected: _preference.categoryIds.contains(
-                                    category.categoryId,
-                                  ),
-                                  onSelected: (_) {
-                                    final ids = _preference.categoryIds.toSet();
-                                    if (!ids.add(category.categoryId)) {
-                                      ids.remove(category.categoryId);
-                                    }
-                                    unawaited(
-                                      _updatePreference(
-                                        _preference.copyWith(categoryIds: ids),
-                                      ),
-                                    );
-                                  },
-                                ),
-                            ],
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          SliverToBoxAdapter(
-            child: ListTile(
-              title: const Text('漫画章节'),
-              subtitle: const Text('已阅读章节会黯淡；向右拖动可恢复未读'),
-              trailing: IconButton(
-                key: comicDetailsReverseKey,
-                tooltip: _descending ? '切换正序' : '切换倒序',
-                onPressed: () => setState(() => _descending = !_descending),
-                icon: Icon(_descending ? Icons.south : Icons.north),
-              ),
-            ),
-          ),
-          SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (context, index) {
-                final chapter = displayedChapters[index];
-                final chapterId = chapter.chapter.chapterId;
-                final isRead = _readStates[chapterId] ?? false;
-                return Dismissible(
-                  key: chapterReadKey(chapterId),
-                  direction: isRead
-                      ? DismissDirection.startToEnd
-                      : DismissDirection.none,
-                  dismissThresholds: const <DismissDirection, double>{
-                    DismissDirection.startToEnd: 0.18,
-                  },
-                  confirmDismiss: (_) async {
-                    await _markRead(chapter, false);
-                    return false;
-                  },
-                  background: Container(
-                    color: Theme.of(context).colorScheme.primaryContainer,
-                    alignment: Alignment.centerLeft,
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
-                    child: const Row(
-                      children: <Widget>[
-                        Icon(Icons.mark_chat_unread_outlined),
-                        SizedBox(width: 8),
-                        Text('恢复未读'),
-                      ],
-                    ),
-                  ),
-                  child: AnimatedOpacity(
-                    opacity: isRead ? 0.42 : 1,
-                    duration: const Duration(milliseconds: 180),
-                    child: ListTile(
-                      leading: Icon(
-                        isRead
-                            ? Icons.check_circle_outline
-                            : Icons.radio_button_unchecked,
-                      ),
-                      title: Text(chapter.chapter.displayName),
-                      subtitle: Text('${chapter.chapter.pages.length} 页'),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () async {
-                        await _markRead(chapter, true);
-                        await widget.onOpenChapter(chapter);
-                      },
-                    ),
-                  ),
-                );
-              },
-              childCount: displayedChapters.length,
-            ),
-          ),
-          const SliverPadding(padding: EdgeInsets.only(bottom: 32)),
-        ],
-      ),
+  details.ComicDetailsLibrarySnapshot _snapshot() {
+    return details.ComicDetailsLibrarySnapshot(
+      chapters: widget.comic.chapters,
+      readStates: _readStates,
+      preference: _preference,
     );
   }
-}
-
-final class _PreferenceButton extends StatelessWidget {
-  const _PreferenceButton({
-    required this.icon,
-    required this.label,
-    required this.selected,
-    required this.onPressed,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
-    return IconButton.filledTonal(
-      tooltip: label,
-      isSelected: selected,
-      onPressed: onPressed,
-      icon: Icon(icon),
+    return details.UnifiedComicDetailsScreen(
+      initialLibrary: _snapshot(),
+      sources: const <details.ComicDetailsSourceBinding>[],
+      categories: widget.categories,
+      loadCover: ({
+        required String sourceId,
+        required Uri? coverUri,
+        required ImportedLibraryEntry? fallbackChapter,
+      }) =>
+          widget.coverBytes(),
+      reloadLibrary: ({required bool refreshContent}) async => _snapshot(),
+      ensureSourceChapter: (_, __, ___) =>
+          throw StateError('本地详情没有远程章节'),
+      onPreferenceChanged: (preference) async {
+        _preference = preference;
+        await widget.onPreferenceChanged(preference);
+      },
+      onReadChanged: (chapter, isRead) async {
+        final state = ChapterReadState(
+          comicId: chapter.chapter.comicId,
+          chapterId: chapter.chapter.chapterId,
+          isRead: isRead,
+          updatedAt: DateTime.now().toUtc(),
+        );
+        _readStates = <String, ChapterReadState>{
+          ..._readStates,
+          state.chapterId: state,
+        };
+        await widget.onReadChanged(chapter, isRead);
+      },
+      onOpenChapter: (chapter, {required bool refreshRemote}) =>
+          widget.onOpenChapter(chapter),
     );
   }
 }

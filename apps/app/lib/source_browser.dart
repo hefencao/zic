@@ -6,6 +6,8 @@ import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'comic_details.dart' as details;
+
 const comicSourcesPageKey = ValueKey<String>('comic-sources-page');
 const comicSourceManageKey = ValueKey<String>('comic-source-manage');
 const comicSourceSearchKey = ValueKey<String>('comic-source-search');
@@ -534,213 +536,52 @@ final class _SourceManagementScreenState
   }
 }
 
-typedef SourceChapterAction = Future<void> Function(
-  BrowsableComicSource source,
-  Comic comic,
-  Chapter chapter, {
-  required bool open,
-});
-
-final class SourceComicDetailsScreen extends StatefulWidget {
+final class SourceComicDetailsScreen extends StatelessWidget {
   const SourceComicDetailsScreen({
+    required this.initialLibrary,
     required this.source,
     required this.summary,
-    required this.onChapterAction,
+    required this.categories,
+    required this.loadCover,
+    required this.reloadLibrary,
+    required this.ensureSourceChapter,
+    required this.onPreferenceChanged,
+    required this.onReadChanged,
+    required this.onOpenChapter,
     super.key,
   });
 
+  final details.ComicDetailsLibrarySnapshot initialLibrary;
   final BrowsableComicSource source;
   final SourceComicSummary summary;
-  final SourceChapterAction onChapterAction;
-
-  @override
-  State<SourceComicDetailsScreen> createState() =>
-      _SourceComicDetailsScreenState();
-}
-
-final class _SourceComicDetailsScreenState
-    extends State<SourceComicDetailsScreen> {
-  late Future<ComicManifest> _manifest;
-  final Set<String> _working = <String>{};
-
-  @override
-  void initState() {
-    super.initState();
-    _manifest = widget.source.loadComic(widget.summary.comicId);
-  }
-
-  void _reload() {
-    setState(() {
-      _manifest = widget.source.loadComic(widget.summary.comicId);
-    });
-  }
-
-  Future<void> _run(
-    Comic comic,
-    Chapter chapter, {
-    required bool open,
-  }) async {
-    if (!_working.add(chapter.chapterId)) {
-      return;
-    }
-    setState(() {});
-    try {
-      await widget.onChapterAction(
-        widget.source,
-        comic,
-        chapter,
-        open: open,
-      );
-      if (mounted && !open) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已将“${chapter.title}”加入书架')),
-        );
-      }
-    } on Object catch (error, stackTrace) {
-      if (mounted) {
-        _showSourceFailureSnackBar(
-          context,
-          prefix: '${open ? '打开' : '加入书架'}失败',
-          failure: _SourceFailure.capture(error, stackTrace),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _working.remove(chapter.chapterId));
-      }
-    }
-  }
+  final List<LibraryCategory> categories;
+  final details.ComicDetailsCoverLoader loadCover;
+  final details.ComicDetailsLibraryReloader reloadLibrary;
+  final details.ComicDetailsChapterEnsurer ensureSourceChapter;
+  final Future<void> Function(ComicPreference preference) onPreferenceChanged;
+  final Future<void> Function(ImportedLibraryEntry chapter, bool isRead)
+      onReadChanged;
+  final details.ComicDetailsChapterOpener onOpenChapter;
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text(widget.summary.title)),
-      body: FutureBuilder<ComicManifest>(
-        future: _manifest,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState != ConnectionState.done) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return _SourceFailurePanel(
-              title: '漫画详情加载失败',
-              failure: _SourceFailure.capture(
-                snapshot.error!,
-                snapshot.stackTrace,
-              ),
-              onRetry: _reload,
-            );
-          }
-          final manifest = snapshot.data!;
-          final chapters = manifest.chapters.reversed.toList(growable: false);
-          return CustomScrollView(
-            slivers: <Widget>[
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      SizedBox(
-                        width: 112,
-                        height: 150,
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: _RemoteImage(
-                            uri: manifest.comic.coverUri,
-                            loadBytes: widget.source.loadResource,
-                            reloadToken: 0,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: <Widget>[
-                            Text(
-                              manifest.comic.title,
-                              style: Theme.of(context).textTheme.titleLarge,
-                            ),
-                            if (manifest.comic.authors.isNotEmpty) ...<Widget>[
-                              const SizedBox(height: 6),
-                              Text(manifest.comic.authors.join('、')),
-                            ],
-                            const SizedBox(height: 8),
-                            Text('${chapters.length} 章'),
-                            if (widget.summary.description != null) ...<Widget>[
-                              const SizedBox(height: 10),
-                              Text(
-                                widget.summary.description!,
-                                maxLines: 5,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              if (chapters.isEmpty)
-                const SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: Center(child: Text('当前语言下没有可读章节')),
-                )
-              else
-                SliverList(
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) {
-                      final chapter = chapters[index];
-                      final working = _working.contains(chapter.chapterId);
-                      return ListTile(
-                        key: sourceChapterKey(chapter.chapterId),
-                        title: Text(chapter.title),
-                        subtitle: chapter.publishedAt == null
-                            ? Text('${chapter.pageCount} 页')
-                            : Text(
-                                '${chapter.pageCount} 页 · '
-                                '${chapter.publishedAt!.toLocal().toString().split(' ').first}',
-                              ),
-                        onTap: working
-                            ? null
-                            : () => unawaited(
-                                  _run(
-                                    manifest.comic,
-                                    chapter,
-                                    open: true,
-                                  ),
-                                ),
-                        trailing: working
-                            ? const SizedBox.square(
-                                dimension: 22,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : IconButton(
-                                tooltip: '加入书架',
-                                onPressed: () => unawaited(
-                                  _run(
-                                    manifest.comic,
-                                    chapter,
-                                    open: false,
-                                  ),
-                                ),
-                                icon: const Icon(
-                                  Icons.bookmark_add_outlined,
-                                ),
-                              ),
-                      );
-                    },
-                    childCount: chapters.length,
-                  ),
-                ),
-            ],
-          );
-        },
-      ),
+    return details.UnifiedComicDetailsScreen(
+      initialLibrary: initialLibrary,
+      sources: <details.ComicDetailsSourceBinding>[
+        details.ComicDetailsSourceBinding(
+          source: source,
+          comicId: summary.comicId,
+          summary: summary,
+        ),
+      ],
+      initialSourceId: source.sourceId,
+      categories: categories,
+      loadCover: loadCover,
+      reloadLibrary: reloadLibrary,
+      ensureSourceChapter: ensureSourceChapter,
+      onPreferenceChanged: onPreferenceChanged,
+      onReadChanged: onReadChanged,
+      onOpenChapter: onOpenChapter,
     );
   }
 }

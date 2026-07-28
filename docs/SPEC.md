@@ -159,6 +159,7 @@ abstract interface class ComicSource {
 - title
 - authors
 - coverAsset
+- description optional
 - readingDirection
 - createdAt/updatedAt
 
@@ -182,8 +183,10 @@ abstract interface class ComicSource {
 - aggregate page count
 - latest import/activity timestamps
 
-该投影只组合持久化章节快照；chapter progress、read state、download session 和
-artifact ownership 仍保持逐章节/逐资源权威。
+该投影组合持久化章节快照；统一详情可额外投影当前来源返回的完整章节目录。
+合并身份为 `sourceId + chapterId`：未持久化的上游章节只用于浏览，用户打开或明确加入后
+才写入目录库；已持久化但上游暂时缺失的章节不得被刷新删除。chapter progress、read state、
+download session 和 artifact ownership 仍保持逐章节/逐资源权威。
 
 ### PageAsset
 

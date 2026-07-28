@@ -100,7 +100,7 @@ void main() {
     await tester.tap(viewer);
     await tester.pump(const Duration(milliseconds: 80));
     await tester.tap(viewer);
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
     final interactive = tester.widget<InteractiveViewer>(viewer);
     expect(
       interactive.transformationController!.value.getMaxScaleOnAxis(),
@@ -123,6 +123,9 @@ void main() {
           .getMaxScaleOnAxis(),
       1,
     );
+    // Let the framework's double-tap recognizer finish its countdown so the
+    // test closes with the same gesture lifecycle as a real event loop.
+    await tester.pump(const Duration(milliseconds: 400));
   });
 
   test('rotation cycles and can reset', () {

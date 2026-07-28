@@ -12,6 +12,7 @@ final class Comic {
     required this.authors,
     required this.readingDirection,
     this.coverUri,
+    this.description,
     this.createdAt,
     this.updatedAt,
   });
@@ -21,6 +22,7 @@ final class Comic {
   final String title;
   final List<String> authors;
   final Uri? coverUri;
+  final String? description;
   final ReadingDirection readingDirection;
   final DateTime? createdAt;
   final DateTime? updatedAt;

@@ -60,6 +60,8 @@ void main() {
 
     expect(record.sourceId, 'mangadex');
     expect(record.comicTitle, 'Fixture Manga');
+    expect(record.comicAuthors, <String>['Fixture Author']);
+    expect(record.comicDescription, 'Fixture description');
     expect(
       record.coverSourceId,
       'https://uploads.mangadex.org/covers/manga-1/cover.jpg.256.jpg',
@@ -67,6 +69,8 @@ void main() {
     expect(record.pages.first.stablePageId, 'page-1');
     final restored = ImportedChapterRecord.fromJson(record.toJson());
     expect(restored.pages.first.stablePageId, 'page-1');
+    expect(restored.comicAuthors, record.comicAuthors);
+    expect(restored.comicDescription, record.comicDescription);
     expect(restored.toManifest().pages.first.uri, manifest.pages.first.uri);
   });
 

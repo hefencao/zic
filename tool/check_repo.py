@@ -578,6 +578,9 @@ def check_compile_regressions() -> None:
     ).read_text(encoding='utf-8')
     for required in (
         'final class LibraryComic',
+        'required this.sourceId',
+        "entry.chapter.sourceId != sourceId",
+        r"'${entry.chapter.sourceId}\u0000${entry.chapter.comicId}'",
         'aggregateImportedLibrary',
         'resumeChapter',
         'hasMultipleChapters',
@@ -592,6 +595,9 @@ def check_compile_regressions() -> None:
         'final int sequence',
         "'comicTitle': comicTitle",
         "'sequence': sequence",
+        'final List<String> comicAuthors',
+        'final String? comicDescription',
+        "'comicAuthors': comicAuthors",
     ):
         if required not in imported_chapter:
             fail(f'chapter aggregate metadata is incomplete: {required}')
@@ -1226,6 +1232,40 @@ def check_compile_regressions() -> None:
         if 'configure_platforms.py' not in script:
             fail(f'{script_name} must configure the generated Android host')
 
+    details_ui = (ROOT / 'apps/app/lib/comic_details.dart').read_text(
+        encoding='utf-8',
+    )
+    demo_home = (ROOT / 'apps/app/lib/demo_home.dart').read_text(
+        encoding='utf-8',
+    )
+    reader_navigation_test = (
+        ROOT / 'packages/reader/test/reader_navigation_test.dart'
+    ).read_text(encoding='utf-8')
+    if "import 'package:domain/domain.dart';" not in demo_home:
+        fail('demo_home.dart must import Comic and Chapter from domain')
+    if 'tester.doubleTap(' in reader_navigation_test:
+        fail('Reader gesture test must use SDK-compatible real tap events')
+    if 'Duration(milliseconds: 400)' not in reader_navigation_test:
+        fail('Reader double-tap test must drain the framework recognizer timer')
+    for required in (
+        'final class UnifiedComicDetailsScreen',
+        'final class ComicDetailsSourceBinding',
+        'final class ComicDetailsLibrarySnapshot',
+        'RefreshIndicator(',
+        'AlwaysScrollableScrollPhysics',
+        '_projectedChapters',
+        'upstreamAvailable',
+        'comicDetailsSourceFilterKey',
+        'comicDetailsReadKey(',
+        'dismissThresholds:',
+        'DismissDirection.startToEnd',
+        'ensureSourceChapter',
+        'reloadLibrary(refreshContent:',
+        'SelectableText(failure.details)',
+    ):
+        if required not in details_ui:
+            fail(f'unified comic details UI is incomplete: {required}')
+
     home = (ROOT / 'apps/app/lib/demo_home.dart').read_text(encoding='utf-8')
     for required in (
         'homeUpdatesSectionKey',
@@ -1243,12 +1283,8 @@ def check_compile_regressions() -> None:
         '_moveComicToCategory',
         'bookshelfManagementBarKey',
         'ComicDownloadProgress',
-        'ComicDetailsScreen',
         'aggregateImportedLibrary(_libraryEntries)',
         'final LibraryComic comic',
-        'key: chapterReadKey(chapterId)',
-        'dismissThresholds:',
-        'DismissDirection.startToEnd',
         '_sourcePageVisited',
         'ComicSourcesPage(',
         'comicSourceManageKey',

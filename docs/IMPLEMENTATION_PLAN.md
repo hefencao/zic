@@ -463,3 +463,19 @@
    **Implemented.**
 4. Validate native platform HTTP adapters for proxy/VPN parity before changing the core streaming
    transport. **Next; no TLS or hostname bypass is permitted.**
+
+## Unified comic-details and refresh slice
+
+1. Route source browse, Home updates, reading history and Bookshelf through one details component.
+   **Implemented in 0.22.0-dev.26.**
+2. Merge complete upstream manifests with persisted chapters by source-aware chapter identity.
+   **Implemented; refresh never auto-imports a newly discovered chapter.**
+3. Preserve persisted chapters that disappear temporarily from a successful source response.
+   **Implemented as local-retained rows.**
+4. Persist source authors/description/cover metadata with backward-compatible JSON decoding.
+   **Implemented.**
+5. Add pull-to-refresh while retaining source/store/Reader ownership boundaries.
+   **Implemented for remote manifests and local-folder rescan.**
+6. Add durable source update timestamps and update ingestion for the Home update rail.
+   **Next.**
+

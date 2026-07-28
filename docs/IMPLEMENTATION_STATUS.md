@@ -1,3 +1,29 @@
+## Current iteration — unified source-aware details and pull refresh
+
+Comic Sources, Home updates, reading history and Bookshelf now route through one
+`UnifiedComicDetailsScreen`. The screen renders the same cover, metadata, preferences, categories,
+source filters, order control, read dimming, restore-unread gesture and chapter actions regardless of
+entry point. The former remote-only details widget is now only a thin adapter into this common state
+model.
+
+The projection deliberately separates two layers. A source manifest is the complete current upstream
+chapter catalog; `ImportedLibraryEntry` is the subset the user has opened or explicitly saved. They
+merge by `sourceId + chapterId`, so refresh can reveal new chapters without silently adding them to the
+library, while persisted chapters missing from a successful upstream response remain visible as local
+retained entries. Source filters keep identities separate when an aggregate exposes more than one
+source. Read and in-flight state also use the composite source/chapter identity inside the details UI.
+
+Pull-to-refresh and the app-bar refresh command call each owner rather than bypassing it: remote
+catalogs refresh through `BrowsableComicSource.loadComic`, local folders through the injected folder
+refresher, and persisted state through `ImportedLibraryStore`. Reader/DownloadSession ownership is
+unchanged. Remote author/description/cover metadata is persisted on chapter records with legacy JSON
+fallbacks so Home/history can render the same details before the next network response.
+
+The App now imports the domain models used by its source-to-library adapter, repairing the reported
+`Comic`/`Chapter` compile failure. The Reader double-tap test retains two real taps and the zoom
+assertion, then advances beyond the recognizer countdown so no timer remains after disposal.
+Repository structural checks pass here; Flutter/Dart/Cargo/Android toolchains remain external gates.
+
 ## Current iteration — remote comic source browser
 
 The Android shell now has a lazy-created third `漫画源` destination, so startup does not browse the network. The top app-bar action opens a reorderable
@@ -66,7 +92,7 @@ external validation gates rather than claimed results.
 ## Current iteration — comic-level aggregation and reliable unread restore
 
 The persisted library now exposes a catalog-owned `LibraryComic` projection that groups
-all `ImportedLibraryEntry` snapshots with the same `comicId`. `ImportedChapterRecord`
+all `ImportedLibraryEntry` snapshots with the same `sourceId` and `comicId`. `ImportedChapterRecord`
 persists a backward-compatible `comicTitle` and chapter `sequence`, allowing local and
 future remote chapters to share one cover, preference record, shelf position and details
 route without moving chapter progress or refresh ownership out of the store.
