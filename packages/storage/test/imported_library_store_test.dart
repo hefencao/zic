@@ -160,3 +160,59 @@ void main() {
     expect(entry?.progress?.toJson(), progress.toJson());
   });
 }
+
+test('sqlite library persists shelf preferences and chapter read state',
+    () async {
+  final store = SqliteImportedLibraryStore.memory();
+  await store.open();
+  addTearDown(store.close);
+  final chapter = ImportedChapterRecord.folder(
+    directoryId: '/library/preferences',
+    displayName: 'Preferences',
+    pages: const <ImportedPageRecord>[
+      ImportedPageRecord(
+        displayName: '1.png',
+        sourceId: '/library/preferences/1.png',
+        contentKindHint: ContentKindHint.png,
+      ),
+    ],
+  );
+  await store.upsertChapter(chapter);
+  final now = DateTime.utc(2026, 7, 28, 9);
+  final category = LibraryCategory(
+    categoryId: 'reading',
+    name: '阅读中',
+    sortOrder: 1,
+    createdAt: now,
+  );
+  await store.upsertCategory(category);
+  final preference = ComicPreference.defaults(comicId: chapter.comicId)
+      .copyWith(
+    liked: true,
+    categoryIds: const <String>{'reading'},
+    customOrder: 7,
+    updatedAt: now,
+  );
+  await store.saveComicPreference(preference);
+  final state = ChapterReadState(
+    comicId: chapter.comicId,
+    chapterId: chapter.chapterId,
+    isRead: true,
+    updatedAt: now,
+  );
+  await store.saveChapterReadState(state);
+
+  expect((await store.listCategories()).single.toJson(), category.toJson());
+  expect(
+    (await store.getComicPreference(chapter.comicId))?.toJson(),
+    preference.toJson(),
+  );
+  expect(
+    (await store.listChapterReadStates(chapter.comicId)).single.toJson(),
+    state.toJson(),
+  );
+
+  await store.removeChapter(chapter.chapterId);
+  expect(await store.listChapterReadStates(chapter.comicId), isEmpty);
+  expect(await store.getComicPreference(chapter.comicId), isNull);
+});

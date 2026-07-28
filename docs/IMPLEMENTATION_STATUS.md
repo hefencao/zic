@@ -690,3 +690,23 @@ identical viewport observations.
 2. Add decoded/output byte budgets with a reserved current-page allocation.
 3. Implement native cursor/frame ABI and frame-handle ownership.
 4. Add Android `SurfaceProducer` texture registry and serial blit worker.
+
+## Android library shell and persistent shelf state
+
+The app now exposes Home and Bookshelf as primary destinations. Home contains
+update and reading-history card rails; Bookshelf contains source/category
+filters, management deletion, recent/title/page-count/custom sorting and durable
+custom reordering. Existing static/WebP/native diagnostics remain available
+below the product sections for regression work.
+
+SQLite schema version 2 persists custom categories, shelf/liked/collected flags,
+category membership, source kind, custom order and explicit chapter read state.
+The in-memory store implements the same contract. Existing version-1 databases
+migrate in place.
+
+Cover cards load their first page through the local-media byte boundary and use
+`Image.memory`, so animated WebP/GIF covers can animate. A reusable download
+waterline supports percent and completed/total page count. Details UI implements
+preference toggles, chapter order reversal, read dimming and right-swipe restore
+unread. Local imports without metadata continue to open Reader directly on long
+press.

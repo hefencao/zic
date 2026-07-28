@@ -556,3 +556,21 @@ Coordinator 验证安全条件。结果：
 - 模型关闭时功能完整；
 - cache clear 和进程恢复通过破坏性测试；
 - 隐私检查通过。
+
+## 2.5 Android Home, Bookshelf and comic details
+
+The Android primary navigation contains Home and Bookshelf.
+
+Home displays update cards and reading-history cards. Bookshelf supports custom
+categories, local/remote source filtering, management deletion, recent/title/
+page-count/custom sorting, and drag reordering in custom mode.
+
+Cover cards support animated thumbnails. While a remote comic is downloading,
+the cover is dimmed and overlaid with a bottom-up completion waterline, percent,
+and completed/total page count. Tap opens Reader. Long press opens details only
+when the source has rich metadata; metadata-free local imports open Reader.
+
+Comic details display cover, title, liked, shelf and collected state, category
+membership and chapters. Chapter order can be reversed. Read chapters are
+dimmed; a start-to-end swipe restores unread state without deleting Reader
+progress.

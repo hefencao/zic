@@ -1,3 +1,13 @@
+## Unreleased — Android home, bookshelf, and comic details
+
+- Add Android-first Home and Bookshelf destinations backed by the durable local library.
+- Add update and reading-history cover rails, animated cover bytes, and download waterline progress presentation.
+- Add local/remote and custom-category filters, management deletion, standard sort modes, and persisted custom drag ordering.
+- Add persistent liked, in-shelf, collected, category, and chapter-read state with SQLite schema v2 migration.
+- Add comic details with chapter order reversal, dimmed read state, and swipe-right restore-to-unread behavior.
+- Keep local folders without metadata on the direct Reader path while retaining a details route for metadata-capable sources.
+- Replace stale App-level PNG fixtures with complete PNG data and stabilize keyed smoke-test discovery.
+
 ## Unreleased — persisted local-directory refresh
 
 - Add bridge protocol 3 and `scanImageDirectory` for rescanning a persisted Android SAF

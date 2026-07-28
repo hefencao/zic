@@ -756,3 +756,22 @@ enum DemandProfile {
 读取。App 中的 `local_image_folder.dart` 仅为兼容导出。Android 文件头探测
 失败时，MIME/文件名图片候选不会被提前丢弃，最终有效性由打开页面时的
 完整 parser/codec 判定。
+
+## 3.9 Android library application shell
+
+The Android-first application shell has two primary destinations: Home and
+Bookshelf. Home derives update cards from catalog update/import timestamps and
+history cards from persisted `ReadingProgress`. Bookshelf derives all views from
+persisted chapter records plus `ComicPreference`; source/category filters and
+sort modes do not create parallel copies of catalog data.
+
+`ImportedLibraryStore` schema version 2 additionally owns `LibraryCategory`,
+`ComicPreference` and `ChapterReadState`. Preferences include shelf membership,
+liked/collected flags, category membership, source kind and custom order. Read
+state is intentionally distinct from precise Reader progress so restoring a
+chapter to unread does not erase the last page.
+
+Cover widgets only receive byte-loader and progress value objects. Animated
+thumbnail decoding uses Flutter `Image.memory`; download waterline presentation
+does not own a DownloadSession. Reader navigation continues through the existing
+promoted-artifact path.

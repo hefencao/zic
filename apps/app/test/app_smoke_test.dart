@@ -14,6 +14,21 @@ import 'package:zic/static_demo.dart';
 import 'package:zic/webp_demo.dart';
 
 
+
+Future<void> _pumpUntilFound(
+  WidgetTester tester,
+  Finder finder, {
+  int maxFrames = 80,
+}) async {
+  for (var frame = 0; frame < maxFrames; frame++) {
+    await tester.pump();
+    if (finder.evaluate().isNotEmpty) {
+      return;
+    }
+  }
+  throw TestFailure('Timed out waiting for $finder');
+}
+
 Future<void> _pumpUntilKeyText(
   WidgetTester tester,
   Key key,
@@ -164,7 +179,7 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(const App());
-    await tester.pump();
+    await _pumpUntilFound(tester, find.byKey(localImageFolderImportKey));
 
     expect(find.byKey(staticDemoEntryKey), findsOneWidget);
     expect(find.byKey(mediaPipelineReaderEntryKey), findsOneWidget);
@@ -175,7 +190,10 @@ void main() {
 
   testWidgets('static entry pushes its keyed route', (tester) async {
     await tester.pumpWidget(const App());
-    await tester.tap(find.byKey(staticDemoEntryKey));
+    final entry = find.byKey(staticDemoEntryKey);
+    await _pumpUntilFound(tester, entry);
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
     await tester.pump();
 
     expect(
@@ -186,7 +204,10 @@ void main() {
 
   testWidgets('Reader entry pushes the media pipeline route', (tester) async {
     await tester.pumpWidget(const App());
-    await tester.tap(find.byKey(mediaPipelineReaderEntryKey));
+    final entry = find.byKey(mediaPipelineReaderEntryKey);
+    await _pumpUntilFound(tester, entry);
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
     await tester.pump();
 
     expect(
@@ -228,7 +249,10 @@ void main() {
 
   testWidgets('bundled WebP entry pushes the catalog route', (tester) async {
     await tester.pumpWidget(const App());
-    await tester.tap(find.byKey(bundledWebpEntryKey));
+    final entry = find.byKey(bundledWebpEntryKey);
+    await _pumpUntilFound(tester, entry);
+    await tester.ensureVisible(entry);
+    await tester.tap(entry);
     await tester.pump();
 
     expect(
@@ -268,7 +292,10 @@ void main() {
     );
     await tester.pumpWidget(App(picker: () => result.future));
 
-    await tester.tap(find.byKey(localWebpImportKey));
+    final importEntry = find.byKey(localWebpImportKey);
+    await _pumpUntilFound(tester, importEntry);
+    await tester.ensureVisible(importEntry);
+    await tester.tap(importEntry);
     await tester.pump();
     expect(find.byKey(localWebpPickerProgressKey), findsOneWidget);
 
@@ -287,7 +314,10 @@ void main() {
     final result = Completer<PickedWebp?>();
     await tester.pumpWidget(App(picker: () => result.future));
 
-    await tester.tap(find.byKey(localWebpImportKey));
+    final importEntry = find.byKey(localWebpImportKey);
+    await _pumpUntilFound(tester, importEntry);
+    await tester.ensureVisible(importEntry);
+    await tester.tap(importEntry);
     await tester.pump();
     expect(find.byKey(localWebpPickerProgressKey), findsOneWidget);
 
@@ -323,9 +353,13 @@ void main() {
     await tester.pump();
 
     final entry = find.byKey(importedChapterEntryKey(record.chapterId));
+    await _pumpUntilFound(tester, entry);
     await tester.ensureVisible(entry);
     await tester.tap(entry);
-    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.byKey(imageFolderScreenKey, skipOffstage: false),
+    );
 
     expect(
       find.byKey(imageFolderScreenKey, skipOffstage: false),
@@ -370,6 +404,7 @@ void main() {
     final refreshButton = find.byKey(
       importedChapterRefreshKey(record.chapterId),
     );
+    await _pumpUntilFound(tester, refreshButton);
     await tester.ensureVisible(refreshButton);
     await tester.tap(refreshButton);
     await tester.pump();
@@ -394,6 +429,7 @@ void main() {
     await tester.pumpWidget(App(folderPicker: () => result.future));
 
     final folderEntry = find.byKey(localImageFolderImportKey);
+    await _pumpUntilFound(tester, folderEntry);
     await tester.ensureVisible(folderEntry);
     await tester.pumpAndSettle();
     await tester.tap(folderEntry);
@@ -401,8 +437,10 @@ void main() {
     expect(find.byKey(localImageFolderPickerProgressKey), findsOneWidget);
 
     result.complete(folder);
-    await tester.pump();
-    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.byKey(imageFolderScreenKey, skipOffstage: false),
+    );
 
     expect(
       find.byKey(imageFolderScreenKey, skipOffstage: false),
@@ -508,6 +546,7 @@ void main() {
     await tester.pumpWidget(App(folderPicker: () => result.future));
 
     final folderEntry = find.byKey(localImageFolderImportKey);
+    await _pumpUntilFound(tester, folderEntry);
     await tester.ensureVisible(folderEntry);
     await tester.pumpAndSettle();
     await tester.tap(folderEntry);

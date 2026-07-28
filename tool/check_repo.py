@@ -1058,6 +1058,46 @@ def check_compile_regressions() -> None:
     if 'int get handleAddress' not in cursor:
         fail('NativeFrame must expose an opaque retained handle to presenters')
 
+    preferences = (
+        ROOT / 'packages/catalog/lib/src/library_preferences.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'enum ComicSourceKind',
+        'enum LibrarySortMode',
+        'final class LibraryCategory',
+        'final class ComicPreference',
+        'final class ChapterReadState',
+    ):
+        if required not in preferences:
+            fail(f'library preference contract is incomplete: {required}')
+    store = (
+        ROOT / 'packages/storage/lib/src/sqlite_imported_library_store.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'PRAGMA user_version = 2',
+        'library_category',
+        'comic_preference',
+        'chapter_read_state',
+        'saveComicPreference',
+        'saveChapterReadState',
+    ):
+        if required not in store:
+            fail(f'durable bookshelf storage is incomplete: {required}')
+    if store.count("'SELECT preference_json FROM comic_preference',") != 2:
+        fail('comic preference queries contain a duplicate or missing SQL argument')
+    home = (ROOT / 'apps/app/lib/demo_home.dart').read_text(encoding='utf-8')
+    for required in (
+        'homeUpdatesSectionKey',
+        'homeHistorySectionKey',
+        'NavigationBar(',
+        'SegmentedButton<_SourceFilter>',
+        'ReorderableListView.builder',
+        'ComicDownloadProgress',
+        'ComicDetailsScreen',
+        'DismissDirection.startToEnd',
+    ):
+        if required not in home:
+            fail(f'Android library UI slice is incomplete: {required}')
 
 
 def check_native_abi() -> None:

@@ -1,6 +1,7 @@
 import 'package:domain/domain.dart';
 
 import 'imported_chapter.dart';
+import 'library_preferences.dart';
 
 final class ImportedLibraryEntry {
   const ImportedLibraryEntry({
@@ -74,6 +75,22 @@ abstract interface class ImportedLibraryStore {
 
   Future<void> removeChapter(String chapterId);
 
+  Future<List<LibraryCategory>> listCategories();
+
+  Future<void> upsertCategory(LibraryCategory category);
+
+  Future<void> removeCategory(String categoryId);
+
+  Future<List<ComicPreference>> listComicPreferences();
+
+  Future<ComicPreference?> getComicPreference(String comicId);
+
+  Future<void> saveComicPreference(ComicPreference preference);
+
+  Future<List<ChapterReadState>> listChapterReadStates(String comicId);
+
+  Future<void> saveChapterReadState(ChapterReadState state);
+
   Future<void> close();
 }
 
@@ -81,6 +98,12 @@ final class MemoryImportedLibraryStore implements ImportedLibraryStore {
   final Map<String, ImportedChapterRecord> _chapters =
       <String, ImportedChapterRecord>{};
   final Map<String, ReadingProgress> _progress = <String, ReadingProgress>{};
+  final Map<String, LibraryCategory> _categories =
+      <String, LibraryCategory>{};
+  final Map<String, ComicPreference> _preferences =
+      <String, ComicPreference>{};
+  final Map<String, ChapterReadState> _readStates =
+      <String, ChapterReadState>{};
   bool _open = false;
 
   @override
@@ -164,8 +187,87 @@ final class MemoryImportedLibraryStore implements ImportedLibraryStore {
   @override
   Future<void> removeChapter(String chapterId) async {
     _requireOpen();
-    _chapters.remove(chapterId);
+    final chapter = _chapters.remove(chapterId);
     _progress.remove(chapterId);
+    _readStates.remove(chapterId);
+    if (chapter != null &&
+        !_chapters.values.any((item) => item.comicId == chapter.comicId)) {
+      _preferences.remove(chapter.comicId);
+    }
+  }
+
+
+  @override
+  Future<List<LibraryCategory>> listCategories() async {
+    _requireOpen();
+    final values = _categories.values.toList(growable: false)
+      ..sort((left, right) {
+        final order = left.sortOrder.compareTo(right.sortOrder);
+        return order != 0 ? order : left.name.compareTo(right.name);
+      });
+    return values;
+  }
+
+  @override
+  Future<void> upsertCategory(LibraryCategory category) async {
+    _requireOpen();
+    _categories[category.categoryId] = category;
+  }
+
+  @override
+  Future<void> removeCategory(String categoryId) async {
+    _requireOpen();
+    _categories.remove(categoryId);
+    for (final entry in _preferences.entries.toList(growable: false)) {
+      final preference = entry.value;
+      if (!preference.categoryIds.contains(categoryId)) {
+        continue;
+      }
+      _preferences[entry.key] = preference.copyWith(
+        categoryIds: preference.categoryIds.where((id) => id != categoryId),
+        updatedAt: DateTime.now().toUtc(),
+      );
+    }
+  }
+
+  @override
+  Future<List<ComicPreference>> listComicPreferences() async {
+    _requireOpen();
+    return _preferences.values.toList(growable: false);
+  }
+
+  @override
+  Future<ComicPreference?> getComicPreference(String comicId) async {
+    _requireOpen();
+    return _preferences[comicId];
+  }
+
+  @override
+  Future<void> saveComicPreference(ComicPreference preference) async {
+    _requireOpen();
+    final current = _preferences[preference.comicId];
+    if (current == null || !preference.updatedAt.isBefore(current.updatedAt)) {
+      _preferences[preference.comicId] = preference;
+    }
+  }
+
+  @override
+  Future<List<ChapterReadState>> listChapterReadStates(String comicId) async {
+    _requireOpen();
+    final values = _readStates.values
+        .where((state) => state.comicId == comicId)
+        .toList(growable: false)
+      ..sort((left, right) => left.chapterId.compareTo(right.chapterId));
+    return values;
+  }
+
+  @override
+  Future<void> saveChapterReadState(ChapterReadState state) async {
+    _requireOpen();
+    final current = _readStates[state.chapterId];
+    if (current == null || !state.updatedAt.isBefore(current.updatedAt)) {
+      _readStates[state.chapterId] = state;
+    }
   }
 
   @override

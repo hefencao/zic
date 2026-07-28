@@ -34,34 +34,25 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
       if (version == 0) {
         db.execute('BEGIN IMMEDIATE');
         try {
-          db.execute('''
-            CREATE TABLE imported_chapter (
-              chapter_id TEXT NOT NULL PRIMARY KEY,
-              comic_id TEXT NOT NULL,
-              imported_us INTEGER NOT NULL,
-              chapter_json TEXT NOT NULL
-            )
-          ''');
-          db.execute('''
-            CREATE TABLE reading_progress (
-              chapter_id TEXT NOT NULL PRIMARY KEY,
-              updated_us INTEGER NOT NULL,
-              progress_json TEXT NOT NULL,
-              FOREIGN KEY(chapter_id) REFERENCES imported_chapter(chapter_id)
-                ON DELETE CASCADE
-            )
-          ''');
-          db.execute(
-            'CREATE INDEX imported_chapter_recent '
-            'ON imported_chapter(imported_us DESC, chapter_id)',
-          );
-          db.execute('PRAGMA user_version = 1');
+          _createImportedLibraryTables(db);
+          _createLibraryPreferenceTables(db);
+          db.execute('PRAGMA user_version = 2');
           db.execute('COMMIT');
         } on Object {
           db.execute('ROLLBACK');
           rethrow;
         }
-      } else if (version != 1) {
+      } else if (version == 1) {
+        db.execute('BEGIN IMMEDIATE');
+        try {
+          _createLibraryPreferenceTables(db);
+          db.execute('PRAGMA user_version = 2');
+          db.execute('COMMIT');
+        } on Object {
+          db.execute('ROLLBACK');
+          rethrow;
+        }
+      } else if (version != 2) {
         throw StateError(
           'unsupported imported library schema version: $version',
         );
@@ -181,10 +172,169 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
 
   @override
   Future<void> removeChapter(String chapterId) async {
-    _requireDb().execute(
+    final db = _requireDb();
+    final rows = db.select(
+      'SELECT comic_id FROM imported_chapter WHERE chapter_id = ? LIMIT 1',
+      <Object?>[chapterId],
+    );
+    if (rows.isEmpty) {
+      return;
+    }
+    final comicId = rows.first['comic_id']! as String;
+    db.execute(
       'DELETE FROM imported_chapter WHERE chapter_id = ?',
       <Object?>[chapterId],
     );
+    final remaining = db.select(
+      'SELECT 1 FROM imported_chapter WHERE comic_id = ? LIMIT 1',
+      <Object?>[comicId],
+    );
+    if (remaining.isEmpty) {
+      db.execute(
+        'DELETE FROM comic_preference WHERE comic_id = ?',
+        <Object?>[comicId],
+      );
+    }
+  }
+
+  @override
+  Future<List<LibraryCategory>> listCategories() async {
+    final rows = _requireDb().select('''
+      SELECT category_json
+      FROM library_category
+      ORDER BY sort_order, name COLLATE NOCASE, category_id
+    ''');
+    return rows
+        .map((row) => _decodeCategory(row['category_json']! as String))
+        .toList(growable: false);
+  }
+
+  @override
+  Future<void> upsertCategory(LibraryCategory category) async {
+    _requireDb().execute('''
+      INSERT INTO library_category (
+        category_id, name, sort_order, category_json
+      ) VALUES (?, ?, ?, ?)
+      ON CONFLICT(category_id) DO UPDATE SET
+        name = excluded.name,
+        sort_order = excluded.sort_order,
+        category_json = excluded.category_json
+    ''', <Object?>[
+      category.categoryId,
+      category.name,
+      category.sortOrder,
+      jsonEncode(category.toJson()),
+    ]);
+  }
+
+  @override
+  Future<void> removeCategory(String categoryId) async {
+    final db = _requireDb();
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      db.execute(
+        'DELETE FROM library_category WHERE category_id = ?',
+        <Object?>[categoryId],
+      );
+      final rows = db.select(
+        'SELECT preference_json FROM comic_preference',
+      );
+      for (final row in rows) {
+        final preference =
+            _decodePreference(row['preference_json']! as String);
+        if (!preference.categoryIds.contains(categoryId)) {
+          continue;
+        }
+        final updated = preference.copyWith(
+          categoryIds: preference.categoryIds.where((id) => id != categoryId),
+          updatedAt: DateTime.now().toUtc(),
+        );
+        _putComicPreference(db, updated);
+      }
+      db.execute('COMMIT');
+    } on Object {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<List<ComicPreference>> listComicPreferences() async {
+    final rows = _requireDb().select(
+      'SELECT preference_json FROM comic_preference',
+    );
+    return rows
+        .map((row) => _decodePreference(row['preference_json']! as String))
+        .toList(growable: false);
+  }
+
+  @override
+  Future<ComicPreference?> getComicPreference(String comicId) async {
+    final rows = _requireDb().select(
+      'SELECT preference_json FROM comic_preference '
+      'WHERE comic_id = ? LIMIT 1',
+      <Object?>[comicId],
+    );
+    return rows.isEmpty
+        ? null
+        : _decodePreference(rows.first['preference_json']! as String);
+  }
+
+  @override
+  Future<void> saveComicPreference(ComicPreference preference) async {
+    final db = _requireDb();
+    final rows = db.select(
+      'SELECT updated_us FROM comic_preference WHERE comic_id = ? LIMIT 1',
+      <Object?>[preference.comicId],
+    );
+    if (rows.isNotEmpty &&
+        (rows.first['updated_us']! as int) >
+            preference.updatedAt.toUtc().microsecondsSinceEpoch) {
+      return;
+    }
+    _putComicPreference(db, preference);
+  }
+
+  @override
+  Future<List<ChapterReadState>> listChapterReadStates(String comicId) async {
+    final rows = _requireDb().select('''
+      SELECT read_json
+      FROM chapter_read_state
+      WHERE comic_id = ?
+      ORDER BY chapter_id
+    ''', <Object?>[comicId]);
+    return rows
+        .map((row) => _decodeReadState(row['read_json']! as String))
+        .toList(growable: false);
+  }
+
+  @override
+  Future<void> saveChapterReadState(ChapterReadState state) async {
+    final db = _requireDb();
+    final rows = db.select(
+      'SELECT updated_us FROM chapter_read_state '
+      'WHERE chapter_id = ? LIMIT 1',
+      <Object?>[state.chapterId],
+    );
+    if (rows.isNotEmpty &&
+        (rows.first['updated_us']! as int) >
+            state.updatedAt.toUtc().microsecondsSinceEpoch) {
+      return;
+    }
+    db.execute('''
+      INSERT INTO chapter_read_state (
+        chapter_id, comic_id, updated_us, read_json
+      ) VALUES (?, ?, ?, ?)
+      ON CONFLICT(chapter_id) DO UPDATE SET
+        comic_id = excluded.comic_id,
+        updated_us = excluded.updated_us,
+        read_json = excluded.read_json
+    ''', <Object?>[
+      state.chapterId,
+      state.comicId,
+      state.updatedAt.toUtc().microsecondsSinceEpoch,
+      jsonEncode(state.toJson()),
+    ]);
   }
 
   @override
@@ -204,6 +354,23 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
       progress.chapterId,
       progress.updatedAt.toUtc().microsecondsSinceEpoch,
       jsonEncode(progress.toJson()),
+    ]);
+  }
+
+  void _putComicPreference(
+    sql.Database db,
+    ComicPreference preference,
+  ) {
+    db.execute('''
+      INSERT INTO comic_preference (comic_id, updated_us, preference_json)
+      VALUES (?, ?, ?)
+      ON CONFLICT(comic_id) DO UPDATE SET
+        updated_us = excluded.updated_us,
+        preference_json = excluded.preference_json
+    ''', <Object?>[
+      preference.comicId,
+      preference.updatedAt.toUtc().microsecondsSinceEpoch,
+      jsonEncode(preference.toJson()),
     ]);
   }
 
@@ -232,6 +399,30 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
     return ReadingProgress.fromJson(Map<String, Object?>.from(value));
   }
 
+  LibraryCategory _decodeCategory(String source) {
+    final value = jsonDecode(source);
+    if (value is! Map) {
+      throw const FormatException('stored category must be an object');
+    }
+    return LibraryCategory.fromJson(Map<String, Object?>.from(value));
+  }
+
+  ComicPreference _decodePreference(String source) {
+    final value = jsonDecode(source);
+    if (value is! Map) {
+      throw const FormatException('stored preference must be an object');
+    }
+    return ComicPreference.fromJson(Map<String, Object?>.from(value));
+  }
+
+  ChapterReadState _decodeReadState(String source) {
+    final value = jsonDecode(source);
+    if (value is! Map) {
+      throw const FormatException('stored read state must be an object');
+    }
+    return ChapterReadState.fromJson(Map<String, Object?>.from(value));
+  }
+
   sql.Database _requireDb() {
     final db = _db;
     if (db == null) {
@@ -239,4 +430,60 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
     }
     return db;
   }
+}
+
+void _createImportedLibraryTables(sql.Database db) {
+  db.execute('''
+    CREATE TABLE imported_chapter (
+      chapter_id TEXT NOT NULL PRIMARY KEY,
+      comic_id TEXT NOT NULL,
+      imported_us INTEGER NOT NULL,
+      chapter_json TEXT NOT NULL
+    )
+  ''');
+  db.execute('''
+    CREATE TABLE reading_progress (
+      chapter_id TEXT NOT NULL PRIMARY KEY,
+      updated_us INTEGER NOT NULL,
+      progress_json TEXT NOT NULL,
+      FOREIGN KEY(chapter_id) REFERENCES imported_chapter(chapter_id)
+        ON DELETE CASCADE
+    )
+  ''');
+  db.execute(
+    'CREATE INDEX imported_chapter_recent '
+    'ON imported_chapter(imported_us DESC, chapter_id)',
+  );
+}
+
+void _createLibraryPreferenceTables(sql.Database db) {
+  db.execute('''
+    CREATE TABLE IF NOT EXISTS library_category (
+      category_id TEXT NOT NULL PRIMARY KEY,
+      name TEXT NOT NULL,
+      sort_order INTEGER NOT NULL,
+      category_json TEXT NOT NULL
+    )
+  ''');
+  db.execute('''
+    CREATE TABLE IF NOT EXISTS comic_preference (
+      comic_id TEXT NOT NULL PRIMARY KEY,
+      updated_us INTEGER NOT NULL,
+      preference_json TEXT NOT NULL
+    )
+  ''');
+  db.execute('''
+    CREATE TABLE IF NOT EXISTS chapter_read_state (
+      chapter_id TEXT NOT NULL PRIMARY KEY,
+      comic_id TEXT NOT NULL,
+      updated_us INTEGER NOT NULL,
+      read_json TEXT NOT NULL,
+      FOREIGN KEY(chapter_id) REFERENCES imported_chapter(chapter_id)
+        ON DELETE CASCADE
+    )
+  ''');
+  db.execute(
+    'CREATE INDEX IF NOT EXISTS chapter_read_state_comic '
+    'ON chapter_read_state(comic_id, chapter_id)',
+  );
 }
