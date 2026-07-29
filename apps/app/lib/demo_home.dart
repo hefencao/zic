@@ -14,6 +14,7 @@ import 'library_diagnostics.dart';
 import 'source_browser.dart';
 import 'static_demo.dart';
 import 'webp_demo.dart';
+import 'whole_comic_downloads.dart';
 
 const homePageKey = ValueKey<String>('home-page');
 const bookshelfPageKey = ValueKey<String>('bookshelf-page');
@@ -94,6 +95,13 @@ final class _PreparedChapterMigration {
 
 enum _ShelfViewMode { gallery, list }
 
+String _librarySortLabel(LibrarySortMode mode) => switch (mode) {
+      LibrarySortMode.recent => '最近更新',
+      LibrarySortMode.title => '标题',
+      LibrarySortMode.pageCount => '页数',
+      LibrarySortMode.custom => '自定义排序',
+    };
+
 final class DemoHome extends StatefulWidget {
   const DemoHome({
     required this.picker,
@@ -101,15 +109,20 @@ final class DemoHome extends StatefulWidget {
     this.folderRefresher = defaultImageFolderRefresher,
     this.libraryStore,
     this.chapterDownloads,
+    this.wholeComicDownloads,
     this.comicSources,
     super.key,
-  });
+  }) : assert(
+          wholeComicDownloads == null || chapterDownloads != null,
+          'a supplied whole-comic queue must share the supplied chapter service',
+        );
 
   final WebpPicker picker;
   final ImageFolderPicker folderPicker;
   final ImageFolderRefresher folderRefresher;
   final ImportedLibraryStore? libraryStore;
   final ChapterDownloadService? chapterDownloads;
+  final WholeComicDownloadQueue? wholeComicDownloads;
   final List<BrowsableComicSource>? comicSources;
 
   @override
@@ -123,6 +136,10 @@ final class _DemoHomeState extends State<DemoHome> {
   late final ChapterDownloadService _chapterDownloads;
   late final bool _ownsChapterDownloads;
   late final StreamSubscription<ChapterDownloadSnapshot> _downloadSubscription;
+  late final WholeComicDownloadQueue _wholeComicDownloads;
+  late final bool _ownsWholeComicDownloads;
+  late final StreamSubscription<WholeComicQueueSnapshot>
+      _wholeComicDownloadSubscription;
   final Map<String, Future<Uint8List>> _coverBytes =
       <String, Future<Uint8List>>{};
   late final List<BrowsableComicSource> _sources;
@@ -146,7 +163,12 @@ final class _DemoHomeState extends State<DemoHome> {
   bool _batchManagement = false;
   final Set<String> _managedComicIdentities = <String>{};
   final Set<String> _openingComicIdentities = <String>{};
-  final Set<String> _wholeComicDownloads = <String>{};
+  WholeComicQueueSnapshot _wholeComicQueueSnapshot =
+      const WholeComicQueueSnapshot(
+        policy: WholeComicQueuePolicy(),
+        environment: WholeComicQueueEnvironment.assumedAvailable(),
+        jobs: <WholeComicQueueJobSnapshot>[],
+      );
   int _navigationIndex = 0;
   bool _sourcePageVisited = false;
   String? _activeSourceId;
@@ -174,6 +196,23 @@ final class _DemoHomeState extends State<DemoHome> {
     _downloadSubscription = _chapterDownloads.changes.listen(
       _acceptDownloadSnapshot,
     );
+    _ownsWholeComicDownloads = widget.wholeComicDownloads == null;
+    _wholeComicDownloads = widget.wholeComicDownloads ??
+        WholeComicDownloadQueue(downloads: _chapterDownloads);
+    _wholeComicQueueSnapshot = _wholeComicDownloads.snapshot;
+    _wholeComicDownloadSubscription = _wholeComicDownloads.changes.listen(
+      (snapshot) {
+        if (mounted) {
+          setState(() => _wholeComicQueueSnapshot = snapshot);
+        }
+      },
+    );
+    scheduleMicrotask(() async {
+      await _wholeComicDownloads.ready;
+      if (mounted) {
+        setState(() => _wholeComicQueueSnapshot = _wholeComicDownloads.snapshot);
+      }
+    });
     _libraryReady = _initializeLibrary();
   }
 
@@ -342,10 +381,19 @@ final class _DemoHomeState extends State<DemoHome> {
   @override
   void dispose() {
     unawaited(_downloadSubscription.cancel());
+    unawaited(_wholeComicDownloadSubscription.cancel());
     if (_ownsLibrary) {
       unawaited(_library.close());
     }
-    if (_ownsChapterDownloads) {
+    if (_ownsWholeComicDownloads) {
+      unawaited(
+        _wholeComicDownloads.close().whenComplete(() {
+          if (_ownsChapterDownloads) {
+            return _chapterDownloads.close();
+          }
+        }),
+      );
+    } else if (_ownsChapterDownloads) {
       unawaited(_chapterDownloads.close());
     }
     super.dispose();
@@ -550,6 +598,7 @@ final class _DemoHomeState extends State<DemoHome> {
         builder: (_) => DownloadManagerScreen(
           entries: List<ImportedLibraryEntry>.unmodifiable(_libraryEntries),
           downloads: _chapterDownloads,
+          wholeComicDownloads: _wholeComicDownloads,
         ),
       ),
     );
@@ -590,7 +639,11 @@ final class _DemoHomeState extends State<DemoHome> {
     }
     final active = snapshots.where((snapshot) => snapshot.isActive).toList();
     final completed = snapshots.where((snapshot) => snapshot.isComplete).toList();
-    final wholeComicActive = _wholeComicDownloads.contains(comic.identity);
+    final wholeJob = _wholeComicQueueSnapshot.jobFor(
+      comic.sourceId,
+      comic.comicId,
+    );
+    final wholeComicActive = wholeJob?.isActive ?? false;
 
     if (wholeComicActive) {
       final entries = _libraryEntries.where(
@@ -664,34 +717,22 @@ final class _DemoHomeState extends State<DemoHome> {
     String comicIdentity,
     Iterable<ImportedLibraryEntry> entries,
   ) async {
-    if (!_wholeComicDownloads.add(comicIdentity)) {
-      return;
+    final chapters = entries.toList(growable: false);
+    if (chapters.isEmpty) {
+      throw StateError('没有可下载的章节');
     }
+    final first = chapters.first.chapter;
+    if (comicIdentity != comicLibraryIdentity(first.sourceId, first.comicId)) {
+      throw StateError('整本下载身份与章节所有者不一致');
+    }
+    await _wholeComicDownloads.enqueue(
+      sourceId: first.sourceId,
+      comicId: first.comicId,
+      comicTitle: first.comicTitle,
+      chapters: chapters,
+    );
     if (mounted) {
-      setState(() {});
-    }
-    try {
-      for (final entry in entries) {
-        final current = await _chapterDownloads.inspect(entry);
-        _acceptDownloadSnapshot(current);
-        if (current.isComplete) {
-          continue;
-        }
-        await _chapterDownloads.download(entry);
-        final next = await _chapterDownloads.inspect(entry);
-        _acceptDownloadSnapshot(next);
-        if (next.phase == ChapterDownloadPhase.cancelled) {
-          break;
-        }
-        if (next.phase == ChapterDownloadPhase.failed) {
-          throw StateError(next.failure ?? '章节下载失败');
-        }
-      }
-    } finally {
-      _wholeComicDownloads.remove(comicIdentity);
-      if (mounted) {
-        setState(() {});
-      }
+      setState(() => _wholeComicQueueSnapshot = _wholeComicDownloads.snapshot);
     }
   }
 

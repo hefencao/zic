@@ -473,7 +473,7 @@ final class _LocalComicDetailsScreenState
       await _loadDownloadStatuses(entries);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('“${widget.comic.title}”整本下载完成')),
+          SnackBar(content: Text('“${widget.comic.title}”已加入整本下载队列')),
         );
       }
     } on Object catch (error, stackTrace) {
@@ -975,7 +975,7 @@ final class _RemoteComicDetailsScreenState
       await _loadDownloadStatuses(entries);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('“${_comic.title}”整本下载完成')),
+          SnackBar(content: Text('“${_comic.title}”已加入整本下载队列')),
         );
       }
     } on Object catch (error, stackTrace) {

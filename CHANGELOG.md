@@ -1,3 +1,32 @@
+## 0.28.0-dev.32 test-harness correction — no product behavior change
+
+- Advance simulated frame time while waiting for popup routes, route transitions, enabled buttons and refresh results instead of looping with zero-duration pumps.
+- Wait for the Reader speed option to become hit-testable without changing the Reader speed UI again.
+- Make paused whole-comic queue persistence assertions tolerant of an already-returning page while still proving that a restored paused job starts no new chapter.
+- Release blocked test page loaders during teardown so a failed assertion cannot leave download services and Flutter test channels waiting indefinitely.
+- Product code and package versions remain unchanged from `0.28.0-dev.32`.
+
+## 0.28.0-dev.32 — durable whole-comic queue and runtime policy signals
+
+- Replace the route-owned sequential whole-comic loop with `WholeComicDownloadQueue`, a durable JSON-backed
+  scheduler keyed by exact `sourceId + comicId`. Restored jobs keep their chapter catalog and completed set;
+  a process interruption converts an in-flight job back to queued work without taking ownership away from
+  the existing per-chapter download service.
+- Add global chapter concurrency limits, pause/resume, cancel/retry and queue-record removal. Duplicate enqueue
+  requests coalesce while a job is active, and terminal chapter artifacts are re-inspected before scheduling.
+- Add network and power gates. The queue can require an unmetered connection or charging, suspends active
+  chapters when a condition becomes false, and resumes through the same `ChapterDownloadService` when the
+  condition becomes valid again.
+- Add the `runtime_bridge` Flutter/Android plugin. It reports validated network availability, Android metered
+  state and battery charging state through versioned method/event channels; unsupported hosts retain the
+  explicit injectable fallback instead of becoming another download owner.
+- Extend Download Manager with a durable whole-comic queue section, queue policy configuration and per-job
+  pause/resume/cancel/retry/remove actions while retaining the existing authoritative chapter task section.
+- Restore the missing exhaustive bookshelf sort label that blocked App compilation, and replace the clipped
+  Reader speed popup with a centered bounded dialog whose five options remain hit-testable on small windows.
+- Add deterministic queue regressions for concurrency, policy waiting, policy loss during an active chapter,
+  paused-job restoration, JSON restoration and Download Manager queue controls.
+
 ## 0.27.0-dev.31 — cover management and whole-comic downloads
 
 - Restore management actions to each cover: delete at the upper-right and category migration through a

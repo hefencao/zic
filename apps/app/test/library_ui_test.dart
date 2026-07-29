@@ -38,7 +38,7 @@ Future<void> _pumpUntilFound(
   int maxFrames = 80,
 }) async {
   for (var frame = 0; frame < maxFrames; frame++) {
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
     if (finder.evaluate().isNotEmpty) {
       return;
     }
@@ -62,7 +62,7 @@ Future<void> _tapVisible(
   }
   await tester.ensureVisible(finder);
   for (var frame = 0; frame < maxFrames; frame++) {
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
     final hitTestable = finder.hitTestable();
     if (hitTestable.evaluate().isNotEmpty) {
       await tester.tap(hitTestable.first);
@@ -207,6 +207,7 @@ void main() {
 
     await _tapVisible(tester, find.byKey(bookshelfSortKey));
     await _pumpUntilFound(tester, find.byKey(bookshelfSortCustomKey));
+    await tester.pump(const Duration(milliseconds: 250));
     await _tapVisible(tester, find.byKey(bookshelfSortCustomKey));
     await tester.pump(const Duration(milliseconds: 320));
     await tester.tap(find.byKey(bookshelfManageKey));
@@ -328,6 +329,7 @@ void main() {
       tester,
       find.byKey(bookshelfMoveToCategoryKey(secondCategoryId)),
     );
+    await tester.pump(const Duration(milliseconds: 250));
     await _tapVisible(
       tester,
       find.byKey(bookshelfMoveToCategoryKey(secondCategoryId)),
@@ -379,8 +381,7 @@ void main() {
       180,
       scrollable: find.byType(Scrollable).first,
     );
-    await tester.tap(find.byKey(libraryDiagnosticsEntryKey));
-    await tester.pump();
+    await _tapVisible(tester, find.byKey(libraryDiagnosticsEntryKey));
     await _pumpUntilFound(tester, find.byKey(libraryDiagnosticsScreenKey));
     await _pumpUntilFound(tester, find.byKey(libraryDiagnosticsIssueKey(7)));
 

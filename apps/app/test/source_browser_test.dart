@@ -24,7 +24,7 @@ Future<void> _pumpUntilFound(
   int maxFrames = 80,
 }) async {
   for (var frame = 0; frame < maxFrames; frame++) {
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
     if (finder.evaluate().isNotEmpty) {
       return;
     }
@@ -48,7 +48,7 @@ Future<void> _tapVisible(
   }
   await tester.ensureVisible(finder);
   for (var frame = 0; frame < maxFrames; frame++) {
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 16));
     final hitTestable = finder.hitTestable();
     if (hitTestable.evaluate().isNotEmpty) {
       final widget = tester.widget(hitTestable.first);
@@ -343,6 +343,11 @@ void main() {
       },
     );
     addTearDown(downloads.close);
+    addTearDown(() {
+      if (!pageGate.isCompleted) {
+        pageGate.complete();
+      }
+    });
 
     await tester.pumpWidget(
       App(

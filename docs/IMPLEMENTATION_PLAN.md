@@ -517,4 +517,5 @@
    **Implemented.**
 6. Remove cover metadata rows, overlay title, keep reading progress in details, and coalesce rapid route taps.
    **Implemented.**
-7. Add durable queue scheduling, concurrency limits and pause/resume policy for whole-comic downloads. **Next.**
+7. Add durable queue scheduling, concurrency limits, pause/resume and network/power policy for whole-comic downloads. **Implemented in 0.28.0-dev.32.**
+8. Add side-by-side target-source migration candidate comparison before confirmation. **Next.**

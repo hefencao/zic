@@ -2,28 +2,30 @@
 
 ## Sole baseline
 
-Continue only from `zic_v0.27.0-dev.31_cover-management-whole-download.zip`.
+Continue only from `zic_v0.28.0-dev.32_test-harness-fix.zip`.
 Do not merge or copy files from an earlier zic archive.
 
 ## Current implementation
 
-- Home, Bookshelf and Comic Sources remain the three primary destinations; source browsing is lazy.
-- Local and remote details remain separate state owners with shared presentation and exact `sourceId + comicId` routing.
-- Management-mode gallery covers own single-item actions: isolated delete at the upper-right and category
-  migration popup at the lower-right. Long press starts source-composite multi-selection; the batch bar only
-  owns batch move/copy/clear/delete. A dedicated custom-order handle keeps reordering separate from long press.
-- Details inspect and subscribe to `ChapterDownloadSnapshot`, so active and complete chapter state survives
-  route exit/re-entry. Chapter task labels and cover denominators use that chapter only.
-- The shared details header can download the whole comic. Known incomplete chapters are resolved and downloaded
-  sequentially through the existing `ChapterDownloadService`; cancellation stops the sequence and individual
-  Download Manager entries remain authoritative.
-- Covers show a bottom-up waterline only for active work. A chapter task shows its chapter name and own pages;
-  a whole-comic operation aggregates the catalog. Complete work shows only a compact offline badge.
-- Download Manager uses chapter names as primary labels and omits progress bars for completed tasks.
-- Home, History and Bookshelf reuse the same cover with the title overlaid lower-left and no source/progress rows
-  below it. Reading progress is rendered in details. Exact source-composite route locks coalesce rapid taps.
+- The product tree remains identical to `0.28.0-dev.32`; the follow-up archive only corrects widget/unit test timing, teardown gates and a race-sensitive queue assertion.
+- Home, Bookshelf and Comic Sources remain the three primary destinations. Local and remote details retain
+  separate state ownership while composing shared presentation and using exact `sourceId + comicId` routing.
+- Management-mode covers own single-item delete/category migration. Long press enters source-composite batch
+  selection; the batch surface owns batch move/copy/clear/delete and custom ordering uses a separate handle.
+- Chapter tasks remain authoritative through `ChapterDownloadService`, `DownloadSession` and promoted artifacts.
+  Covers and details subscribe to those snapshots, distinguish chapter and whole-comic projections, and clear
+  active waterlines at terminal completion.
+- `WholeComicDownloadQueue` now persists whole-comic jobs and policy to `whole_comic_queue.json`. It re-inspects
+  chapter artifacts on restore, enforces global concurrency, coalesces active duplicate enqueue, and supports
+  pause/resume/cancel/retry/remove without creating a second byte owner.
+- Queue policy can require an unmetered network or charging. A policy loss cancels active chapter work through
+  the existing chapter service, leaves resumable artifacts intact and moves the job to `waitingForPolicy`.
+- The new `runtime_bridge` Android plugin reports validated connectivity, metered status and charging through
+  versioned method/event channels. Unsupported hosts retain an explicit injectable fallback.
+- Download Manager shows durable whole-comic jobs above per-chapter task/artifact state and exposes queue policy.
+- Reader speed uses a centered bounded dialog. The exhaustive bookshelf sort label is restored, fixing the
+  compilation failure reported against dev.31.
 - SQLite remains schema 6 with source-composite library identity and retained/acknowledgeable migration evidence.
-- Reader controls use a bounded speed popup; chapter rows provide their own Material surface for visible ink.
 
 ## Validation completed in this environment
 
@@ -35,19 +37,16 @@ python3 -m py_compile tool/*.py
 bash ./tool/check_native_header.sh
 ```
 
-Additional delivery checks validate package versions, JSON/YAML/TOML syntax, archive cleanliness,
-source-baseline patch reproducibility and a clean re-extraction. This container does not contain
-Flutter, Dart, Cargo, Android SDK or Android NDK, so no claim is made that their tests or builds ran.
+Additional delivery checks validate package versions, JSON/YAML/TOML syntax, Android plugin declarations,
+archive cleanliness, source-baseline patch reproducibility and a clean re-extraction. This container does not
+contain Flutter, Dart, Cargo, Gradle, Android SDK or Android NDK, so no claim is made that their builds/tests ran.
 
 ## Required external validation
 
 ```bash
 flutter pub get
-flutter test packages/domain/test/reading_progress_test.dart
-flutter test packages/catalog/test/library_comic_test.dart
-flutter test packages/catalog/test/imported_library_store_test.dart
-flutter test packages/storage/test/imported_library_store_test.dart
-flutter test packages/reader/test/reader_navigation_test.dart
+flutter test packages/runtime_bridge/test/runtime_bridge_test.dart
+flutter test apps/app/test/whole_comic_downloads_test.dart
 flutter test apps/app/test/chapter_downloads_test.dart
 flutter test apps/app/test/library_ui_test.dart
 flutter test apps/app/test/source_browser_test.dart
@@ -65,10 +64,9 @@ bash ./tool/build_android.sh release
 
 ## Next mainline work
 
-1. Add a durable whole-comic queue with configurable concurrency, pause/resume and network/power policy while
-   retaining per-chapter DownloadSession ownership.
-2. Add side-by-side source-migration candidate comparison before confirmation.
-3. Add source update ingestion and durable timestamps so Home updates reflect actual upstream changes.
-4. Add source-specific typed settings for translation languages and data-saver mode.
-5. Discover/manage orphaned offline artifacts without weakening ownership rules.
-6. Define a sandboxed Mihon/Keiyoushi adapter ABI, permissions and lifecycle before loading extensions.
+1. Add side-by-side source-migration candidate comparison before confirmation, including cover, authors,
+   chapter samples and explicit identity/risk differences.
+2. Add source update ingestion and durable timestamps so Home updates reflect actual upstream changes.
+3. Add source-specific typed settings for translation languages and data-saver mode.
+4. Discover/manage orphaned offline artifacts without weakening DownloadSession ownership rules.
+5. Define a sandboxed Mihon/Keiyoushi adapter ABI, permissions and lifecycle before loading extensions.

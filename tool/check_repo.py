@@ -27,6 +27,7 @@ EXPECTED_DEPENDENCIES = {
     'texture_bridge': {'bridge'},
     'local_media_bridge': set(),
     'local_media': {'local_media_bridge'},
+    'runtime_bridge': set(),
 }
 
 
@@ -1477,9 +1478,60 @@ def check_compile_regressions() -> None:
         'snapshot.title',
         'snapshot.phase != ChapterDownloadPhase.complete',
         'LinearProgressIndicator(',
+        'WholeComicDownloadQueue',
+        'downloadQueuePolicyKey',
+        'wholeComicQueuePauseKey',
+        'wholeComicQueueResumeKey',
+        'WholeComicNetworkPolicy.unmetered',
+        'WholeComicPowerPolicy.charging',
     ):
         if required not in download_manager:
             fail(f'download manager presentation is incomplete: {required}')
+
+    whole_queue = (ROOT / 'apps/app/lib/whole_comic_downloads.dart').read_text(
+        encoding='utf-8'
+    )
+    for required in (
+        'final class WholeComicDownloadQueue',
+        'WholeComicQueuePhase.waitingForPolicy',
+        'final class JsonWholeComicQueueStore',
+        'completedChapterIdentities',
+        '_policyAllowsWork()',
+        '_cancelActiveForJob',
+        'WholeComicQueuePolicy',
+        'ChapterDownloadService',
+    ):
+        if required not in whole_queue:
+            fail(f'durable whole-comic queue is incomplete: {required}')
+
+    runtime_bridge = (
+        ROOT / 'packages/runtime_bridge/lib/src/runtime_bridge.dart'
+    ).read_text(encoding='utf-8')
+    runtime_plugin = (
+        ROOT
+        / 'packages/runtime_bridge/android/src/main/kotlin/dev/zic/runtime/RuntimeBridgePlugin.kt'
+    ).read_text(encoding='utf-8')
+    runtime_manifest = (
+        ROOT / 'packages/runtime_bridge/android/src/main/AndroidManifest.xml'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'runtimeBridgeProtocolVersion',
+        'RuntimeEnvironmentSnapshot',
+        'currentEnvironment',
+        'receiveBroadcastStream()',
+    ):
+        if required not in runtime_bridge:
+            fail(f'runtime environment Dart bridge is incomplete: {required}')
+    for required in (
+        'registerDefaultNetworkCallback',
+        'isActiveNetworkMetered',
+        'BatteryManager.EXTRA_STATUS',
+        'PROTOCOL_VERSION',
+    ):
+        if required not in runtime_plugin:
+            fail(f'runtime environment Android bridge is incomplete: {required}')
+    if 'android.permission.ACCESS_NETWORK_STATE' not in runtime_manifest:
+        fail('runtime environment Android bridge lacks network-state permission')
 
     reader_runtime = (ROOT / 'apps/app/lib/reader_runtime.dart').read_text(
         encoding='utf-8'
@@ -1488,7 +1540,9 @@ def check_compile_regressions() -> None:
         'void _togglePlaybackPaused()',
         'onPressed: _togglePlaybackPaused',
         'ValueListenableBuilder<ReaderPlaybackState>',
-        'PopupMenuPosition.over',
+        'Future<void> _choosePlaybackSpeed()',
+        'SimpleDialog(',
+        'SimpleDialogOption(',
         'readerSpeedOptionKey',
     ):
         if required not in reader_runtime:
@@ -1501,9 +1555,23 @@ def check_compile_regressions() -> None:
         'memory download publishes progress and delete returns to idle',
         'memory download cancellation keeps partial progress and retry completes',
         'download manager exposes completed task and durable delete',
+        'download manager pauses and resumes a whole-comic queue job',
     ):
         if required not in chapter_download_tests:
             fail(f'download lifecycle regression coverage is incomplete: {required}')
+
+    whole_queue_tests = (
+        ROOT / 'apps/app/test/whole_comic_downloads_test.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'whole-comic queue enforces configured chapter concurrency',
+        'whole-comic queue waits for policy and resumes on environment change',
+        'policy loss suspends an active chapter and resumes it later',
+        'paused whole-comic job survives queue recreation',
+        'JSON queue store restores policy and pending chapters',
+    ):
+        if required not in whole_queue_tests:
+            fail(f'whole-comic queue regression coverage is incomplete: {required}')
 
 
 def check_native_abi() -> None:

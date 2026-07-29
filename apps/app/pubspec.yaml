@@ -1,7 +1,7 @@
 name: zic
 description: zic Flutter application.
 publish_to: none
-version: 0.27.0+31
+version: 0.28.0+32
 resolution: workspace
 
 environment:
@@ -20,6 +20,8 @@ dependencies:
     path: ../../packages/texture_bridge
   local_media:
     path: ../../packages/local_media
+  runtime_bridge:
+    path: ../../packages/runtime_bridge
   file_selector: ^1.0.3
   pipeline:
     path: ../../packages/pipeline

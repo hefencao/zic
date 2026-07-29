@@ -1,4 +1,26 @@
-## Current iteration — cover-owned management and authoritative whole-comic downloads
+## Current iteration — durable whole-comic queue and runtime policy signals
+
+The whole-comic operation is now a durable scheduler rather than a route-local loop. `WholeComicDownloadQueue`
+persists exact source-composite comic ownership, the chapter catalog, completed chapter identities, policy,
+phase and failure state to JSON. A restored `running` job becomes `queued`; every chapter is re-inspected against
+the authoritative `ChapterDownloadService` before work starts, so promoted artifacts remain the source of truth.
+
+The scheduler enforces a global chapter concurrency limit and exposes pause, resume, cancel, retry and record
+removal. An active duplicate enqueue is coalesced instead of replacing the live job. Network/power policy can
+require unmetered connectivity or charging. If a condition becomes false during an active chapter, the queue
+moves the job to `waitingForPolicy`, cancels that chapter through the existing service, and resumes later through
+the same partial-artifact/session boundary.
+
+`runtime_bridge` is a narrow Android signal plugin, not a downloader. Its versioned method/event channels expose
+validated network availability, Android metered state and charging state. Download Manager renders durable queue
+jobs and edits policy while continuing to show per-chapter tasks separately. Unsupported hosts use the explicit
+injectable environment fallback.
+
+The missing `_librarySortLabel` implementation that blocked the App test kernel is restored as an exhaustive
+mapping. Reader playback speed now uses a centered bounded dialog, keeping all five choices reachable on small
+viewports. Queue concurrency, policy waiting/loss, persistence and manager controls have dedicated regressions.
+
+## Previous iteration — cover-owned management and authoritative whole-comic downloads
 
 Bookshelf management again keeps single-comic actions on the cover: delete is isolated at the upper-right
 and category migration remains a lower-right popup. A long press is the only entry into source-composite

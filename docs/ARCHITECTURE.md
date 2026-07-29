@@ -54,6 +54,7 @@ zic/
     texture_bridge/          Flutter texture 契约与 Android 插件
     local_media/             本地图片模型、格式嗅探、桌面目录枚举和平台 facade
     local_media_bridge/      Android SAF document tree/content URI 插件
+    runtime_bridge/          Android 网络计费与供电状态信号插件
     testkit/                 fake clock/source/decoder/trace
 
   native/
@@ -872,3 +873,27 @@ records, but it must not delete source-ambiguous rows or reinterpret the migrati
 `LibraryDiagnosticsScreen` depends only on `ImportedLibraryStore`. It does not inspect SQLite directly
 and it does not become a second migration engine. This keeps schema upgrade decisions in storage while
 the App owns discoverability and presentation.
+
+
+## 3.15 Durable whole-comic scheduling
+
+`WholeComicDownloadQueue` is an application scheduler, not a byte owner. It persists the comic identity,
+chapter catalog, completed chapter identities and policy, then delegates every chapter to the existing
+`ChapterDownloadService`:
+
+```text
+WholeComicDownloadQueue
+        | schedule / pause / resume / policy
+        v
+ChapterDownloadService
+        v
+DownloadRegistry -> DownloadSession -> Artifact
+```
+
+The queue may run a configurable number of chapters concurrently. On restart, an in-flight queue phase is
+normalized to queued work and each chapter is inspected before scheduling. Pausing, cancellation and a policy
+transition call the chapter service rather than deleting partial artifacts directly.
+
+`runtime_bridge` only supplies versioned environment signals: validated network availability, Android metered
+state and charging state. It has no transport, artifact or queue mutation authority. Platform-channel failure
+keeps the last trusted environment snapshot; unsupported hosts use an explicit injectable fallback.

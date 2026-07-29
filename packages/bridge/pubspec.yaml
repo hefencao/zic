@@ -1,6 +1,6 @@
 name: bridge
 description: Stable Dart FFI entry points for the zic Rust media core.
-version: 0.27.0
+version: 0.28.0
 publish_to: none
 resolution: workspace
 

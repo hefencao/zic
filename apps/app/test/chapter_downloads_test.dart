@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zic/chapter_downloads.dart';
 import 'package:zic/download_manager.dart';
+import 'package:zic/whole_comic_downloads.dart';
 
 void main() {
   test('memory chapter download owns bytes before reporting completion', () async {
@@ -176,6 +177,11 @@ void main() {
       },
     );
     addTearDown(service.close);
+    addTearDown(() {
+      if (!secondPageGate.isCompleted) {
+        secondPageGate.complete();
+      }
+    });
     final subscription = service.changes.listen((snapshot) {
       if (snapshot.phase == ChapterDownloadPhase.downloading &&
           snapshot.completedPages == 1 &&
@@ -232,12 +238,16 @@ void main() {
     );
     addTearDown(service.close);
     await service.download(entry);
+    final queue = WholeComicDownloadQueue(downloads: service);
+    addTearDown(queue.close);
+    await queue.ready;
 
     await tester.pumpWidget(
       MaterialApp(
         home: DownloadManagerScreen(
           entries: <ImportedLibraryEntry>[entry],
           downloads: service,
+          wholeComicDownloads: queue,
         ),
       ),
     );
@@ -261,5 +271,86 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(await service.isDownloaded(entry), isFalse);
+  });
+
+  testWidgets('download manager pauses and resumes a whole-comic queue job',
+      (tester) async {
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:whole-manager',
+        displayName: '队列章节',
+        sourceId: 'whole-manager-source',
+        comicId: 'whole-manager-comic',
+        comicTitle: '整本队列漫画',
+        chapterId: 'whole-manager-chapter',
+        sourceRevision: 'whole-manager-r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '1.bin',
+            sourceId: 'memory://whole-manager-1',
+            pageId: 'whole-manager-page-1',
+            contentKindHint: ContentKindHint.unknown,
+            byteLength: 4,
+          ),
+        ],
+      ),
+    );
+    final service = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(4),
+    );
+    addTearDown(service.close);
+    final environment = MutableWholeComicQueueEnvironment(
+      const WholeComicQueueEnvironment(
+        networkAvailable: true,
+        unmetered: false,
+        charging: true,
+      ),
+    );
+    addTearDown(environment.close);
+    final queue = WholeComicDownloadQueue(
+      downloads: service,
+      environment: environment,
+    );
+    addTearDown(queue.close);
+    await queue.ready;
+    await queue.updatePolicy(
+      const WholeComicQueuePolicy(
+        network: WholeComicNetworkPolicy.unmetered,
+      ),
+    );
+    await queue.enqueue(
+      sourceId: entry.chapter.sourceId,
+      comicId: entry.chapter.comicId,
+      comicTitle: entry.chapter.comicTitle,
+      chapters: <ImportedLibraryEntry>[entry],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DownloadManagerScreen(
+          entries: <ImportedLibraryEntry>[entry],
+          downloads: service,
+          wholeComicDownloads: queue,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    final jobId = comicLibraryIdentity(
+      entry.chapter.sourceId,
+      entry.chapter.comicId,
+    );
+    expect(find.byKey(wholeComicQueueJobKey(jobId)), findsOneWidget);
+    expect(find.textContaining('等待策略条件'), findsOneWidget);
+    expect(find.byKey(downloadQueuePolicyKey), findsOneWidget);
+
+    await tester.tap(find.byKey(wholeComicQueuePauseKey(jobId)));
+    await tester.pump();
+    expect(find.byKey(wholeComicQueueResumeKey(jobId)), findsOneWidget);
+
+    await tester.tap(find.byKey(wholeComicQueueResumeKey(jobId)));
+    await tester.pump();
+    expect(find.textContaining('等待策略条件'), findsOneWidget);
   });
 }

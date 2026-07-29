@@ -342,6 +342,37 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     return '${speed.toStringAsFixed(digits)}×';
   }
 
+  Future<void> _choosePlaybackSpeed() async {
+    final selected = await showDialog<double>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('播放速度'),
+        children: <Widget>[
+          for (final speed in const <double>[0.5, 0.75, 1, 1.5, 2])
+            SimpleDialogOption(
+              key: readerSpeedOptionKey(speed),
+              onPressed: () => Navigator.pop(context, speed),
+              child: Row(
+                children: <Widget>[
+                  SizedBox(
+                    width: 28,
+                    child: speed == _playback.value.speed
+                        ? const Icon(Icons.check, size: 20)
+                        : null,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(_playbackSpeedLabel(speed)),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+    if (selected != null && mounted) {
+      _playback.setSpeed(selected);
+    }
+  }
+
   Transport _transportFor(Uri uri) {
     if (_loaderTransport.contains(uri)) {
       return _loaderTransport;
@@ -685,47 +716,13 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                             playback.paused ? Icons.play_arrow : Icons.pause,
                           ),
                         ),
-                        PopupMenuButton<double>(
+                        TextButton(
                           key: readerSpeedKey,
-                          position: PopupMenuPosition.over,
-                          constraints: const BoxConstraints(maxHeight: 260),
-                          tooltip: '播放速度',
-                          initialValue: playback.speed,
-                          onSelected: _playback.setSpeed,
-                          itemBuilder: (context) =>
-                              <PopupMenuEntry<double>>[
-                            PopupMenuItem(
-                              key: readerSpeedOptionKey(0.5),
-                              value: 0.5,
-                              child: const Text('0.5×'),
-                            ),
-                            PopupMenuItem(
-                              key: readerSpeedOptionKey(0.75),
-                              value: 0.75,
-                              child: const Text('0.75×'),
-                            ),
-                            PopupMenuItem(
-                              key: readerSpeedOptionKey(1),
-                              value: 1,
-                              child: const Text('1×'),
-                            ),
-                            PopupMenuItem(
-                              key: readerSpeedOptionKey(1.5),
-                              value: 1.5,
-                              child: const Text('1.5×'),
-                            ),
-                            PopupMenuItem(
-                              key: readerSpeedOptionKey(2),
-                              value: 2,
-                              child: const Text('2×'),
-                            ),
-                          ],
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            child: Text(
-                              _playbackSpeedLabel(playback.speed),
-                            ),
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.white,
                           ),
+                          onPressed: () => unawaited(_choosePlaybackSpeed()),
+                          child: Text(_playbackSpeedLabel(playback.speed)),
                         ),
                         IconButton(
                           key: readerRotateKey,
