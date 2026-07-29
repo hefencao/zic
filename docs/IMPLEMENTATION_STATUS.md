@@ -1,3 +1,15 @@
+## 0.31.0-dev.47：隔离 runtime worker、协作取消与平台 backend channel
+
+- 已实现生态无关的 `ExternalPluginRuntimeWorker`，作为 Mihon/Venera 隔离后端的服务端协议 owner。
+- worker 在隔离边界内重解析请求，拒绝未知 source 与重复活动 request ID，并将后端异常净化为协议错误。
+- raw channel 支持可选 cooperative cancellation；调用超时会发送 request-level cancel，但 host 并发许可继续由真实 backend Future 持有。
+- worker close 可加入，先取消活动请求并关闭 driver，再等待真实调用完成。
+- Mihon/Venera execution request 可序列化 exact immutable payload、批准能力和资源限制。
+- Android host adapter 已实现 activation/invoke/cancel/close 的 MethodChannel 编排；native 侧在专用执行服务未安装时明确拒绝激活。
+- 已增加两个生态共享的 worker conformance、取消/并发/关闭及平台 envelope 回归。
+- Home startup trace、本地静态图片单 stream 和 promoted artifact active-run priming 保持不变。
+- Mihon APK class-loader driver 与 Venera JavaScript sandbox driver 尚未实现。
+
 ## Current iteration — single image-stream ownership, active-run artifact priming and raw runtime channel
 
 Report 30 showed two separate shutdown symptoms: animated first-frame regressions remained in loading, and the later plain-file provider test did not complete before the Flutter test platform was manually stopped. Static file presentation had two listeners on the same provider: the product manually resolved a `FileImage` for readiness while the `Image` widget resolved it again for rendering. The manual stream is removed. Static ready is now published only by the renderer-owned `frameBuilder`; the routing regression verifies `FileImage` and zero Dart byte loading without waiting on platform decoding, then unmounts it. Animated tests and the cold-artifact test yield the real event queue for host codec/file work and explicitly tear down players so codec timers cannot leak into later tests.

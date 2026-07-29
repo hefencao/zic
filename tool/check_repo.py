@@ -2251,6 +2251,70 @@ def check_current_iteration() -> None:
             fail(f'Mihon inspection must not load extension code: {forbidden}')
 
 
+    runtime_worker = (
+        ROOT / 'packages/plugin_host/lib/src/runtime_worker.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class ExternalPluginRuntimeWorker',
+        'abstract interface class ExternalPluginRuntimeDriver',
+        'final class ExternalPluginRuntimeCancellationToken',
+        "code: 'duplicate-request'",
+        "code: 'unknown-source'",
+        'invocation.cancellation._cancel()',
+        'await _driver.close()',
+        'WorkerBackedExternalPluginRuntimeMessageChannel',
+    ):
+        if required not in runtime_worker:
+            fail(f'dev.47 isolated runtime worker is incomplete: {required}')
+
+    runtime_channel = (
+        ROOT / 'packages/plugin_host/lib/src/runtime_channel.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'CancellableExternalPluginRuntimeMessageChannel',
+        'implements CancellableExternalPluginRuntimeConnection',
+        'return channel.cancel(requestId)',
+    ):
+        if required not in runtime_channel:
+            fail(f'dev.47 runtime cancellation channel is incomplete: {required}')
+
+    runtime_platform = (
+        ROOT / 'packages/plugin_host_bridge/lib/src/method_channel_runtime_backends.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'AndroidMihonIsolatedRuntimeBackend',
+        'AndroidVeneraSandboxRuntimeBackend',
+        "'activateMihonRuntime'",
+        "'activateVeneraRuntime'",
+        "'invokeExternalRuntime'",
+        "'cancelExternalRuntime'",
+        "'closeExternalRuntime'",
+    ):
+        if required not in runtime_platform:
+            fail(f'dev.47 platform runtime channel is incomplete: {required}')
+
+    for source, label in (
+        (runtime_worker, 'runtime worker'),
+        (runtime_platform, 'platform runtime channel'),
+    ):
+        for forbidden_import in (
+            'package:reader/',
+            'package:downloads/',
+            'package:sessions/',
+            'package:pipeline/',
+        ):
+            if forbidden_import in source:
+                fail(f'dev.47 {label} leaks {forbidden_import}')
+
+    for required in (
+        'RUNTIME_CHANNEL_NAME',
+        'runtime-backend-unavailable',
+        'runtime-session-missing',
+    ):
+        if required not in bridge:
+            fail(f'dev.47 Android runtime bridge is incomplete: {required}')
+
+
 def main() -> None:
     try:
         dart_files, dart_tests = check_repository(ROOT)

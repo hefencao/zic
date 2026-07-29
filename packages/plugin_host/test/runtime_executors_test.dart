@@ -101,6 +101,59 @@ void main() {
     expect(backend.request, isNull);
   });
 
+  test('runtime limit wire representation round-trips exactly', () {
+    const limits = ExternalPluginRuntimeLimits(
+      invocationTimeout: Duration(milliseconds: 250),
+      maxResponseBytes: 4096,
+      maxConcurrentInvocations: 2,
+      maxRuntimeHeapBytes: 8192,
+    );
+
+    final restored = ExternalPluginRuntimeLimits.fromMessage(
+      limits.toMessage(),
+    );
+
+    expect(restored.invocationTimeout, limits.invocationTimeout);
+    expect(restored.maxResponseBytes, limits.maxResponseBytes);
+    expect(
+      restored.maxConcurrentInvocations,
+      limits.maxConcurrentInvocations,
+    );
+    expect(restored.maxRuntimeHeapBytes, limits.maxRuntimeHeapBytes);
+  });
+
+
+  test('execution request constructors reject cross-format payloads', () {
+    expect(
+      () => MihonExecutionRequest(
+        plugin: _plugin(ExternalComicPluginFormat.veneraJavaScript),
+        payloadPath: '/cache/extension.apk',
+        payloadByteLength: 1,
+        payloadSha256: 'aa',
+        packageName: 'org.example.extension',
+        signerSha256: 'bb',
+        versionCode: 1,
+        extensionLib: '1.6',
+        entryClasses: const <String>['org.example.Extension'],
+        capabilities: const <ExternalPluginCapability>{},
+        limits: const ExternalPluginRuntimeLimits(),
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => VeneraExecutionRequest(
+        plugin: _plugin(ExternalComicPluginFormat.mihonExtension),
+        payloadPath: '/cache/source.js',
+        payloadByteLength: 1,
+        payloadSha256: 'cc',
+        sourceKey: 'example',
+        capabilities: const <ExternalPluginCapability>{},
+        limits: const ExternalPluginRuntimeLimits(),
+      ),
+      throwsArgumentError,
+    );
+  });
+
   test('executor rejects a plugin whose format does not match the request',
       () async {
     final backend = _MihonBackend();

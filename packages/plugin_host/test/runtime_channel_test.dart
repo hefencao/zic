@@ -104,6 +104,28 @@ void main() {
     );
   });
 
+
+  test('cancellation is forwarded only when the raw channel supports it',
+      () async {
+    final channel = _CancellableRecordingMessageChannel(
+      (_) => ExternalPluginRuntimeResponse.success(
+        requestId: 'request-1',
+        payload: const <String, Object?>{},
+      ).toMessage(),
+    );
+    final connection = MessageChannelExternalPluginRuntimeConnection(
+      handshake: ExternalPluginRuntimeHandshake(
+        runtimeId: 'runtime-1',
+        sources: <ExternalPluginRuntimeSourceDescriptor>[descriptor],
+      ),
+      channel: channel,
+    );
+
+    await connection.cancel('request-1');
+
+    expect(channel.cancelled, <String>['request-1']);
+  });
+
   test('close is joinable and rejects new messages immediately', () async {
     final closeGate = Completer<void>();
     final channel = _RecordingMessageChannel(
@@ -191,5 +213,19 @@ final class _RecordingMessageChannel
   Future<void> close() {
     closeCalls++;
     return _closeFuture;
+  }
+}
+
+
+final class _CancellableRecordingMessageChannel
+    extends _RecordingMessageChannel
+    implements CancellableExternalPluginRuntimeMessageChannel {
+  _CancellableRecordingMessageChannel(super.handler);
+
+  final List<String> cancelled = <String>[];
+
+  @override
+  Future<void> cancel(String requestId) async {
+    cancelled.add(requestId);
   }
 }

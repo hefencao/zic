@@ -14,6 +14,15 @@ abstract interface class ExternalPluginRuntimeMessageChannel {
   Future<void> close();
 }
 
+/// Optional channel capability for cooperative cancellation of one request.
+///
+/// Cancellation is best-effort: the host still retains its concurrency permit
+/// until the original [send] Future exits.
+abstract interface class CancellableExternalPluginRuntimeMessageChannel
+    implements ExternalPluginRuntimeMessageChannel {
+  Future<void> cancel(String requestId);
+}
+
 /// Versioned startup message produced by an isolated runtime after payload
 /// validation and source discovery, before any catalog operation is accepted.
 final class ExternalPluginRuntimeHandshake {
@@ -84,7 +93,7 @@ final class ExternalPluginRuntimeHandshake {
 /// wire representation. Close is joinable and new calls are rejected once
 /// teardown begins.
 final class MessageChannelExternalPluginRuntimeConnection
-    implements ExternalPluginRuntimeConnection {
+    implements CancellableExternalPluginRuntimeConnection {
   MessageChannelExternalPluginRuntimeConnection({
     required ExternalPluginRuntimeHandshake handshake,
     required ExternalPluginRuntimeMessageChannel channel,
@@ -126,6 +135,18 @@ final class MessageChannelExternalPluginRuntimeConnection
       );
     }
     return response;
+  }
+
+  @override
+  Future<void> cancel(String requestId) {
+    if (requestId.trim().isEmpty) {
+      throw ArgumentError.value(requestId, 'requestId');
+    }
+    final channel = _channel;
+    if (channel is CancellableExternalPluginRuntimeMessageChannel) {
+      return channel.cancel(requestId);
+    }
+    return Future<void>.value();
   }
 
   @override

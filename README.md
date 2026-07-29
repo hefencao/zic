@@ -11,7 +11,7 @@ decode/upload registry、frame holder、viewport 播放门控、帧字节预算�
 `0.31.0-dev.43` 在该文件型路径上继续收敛启动 I/O：持久封面以一次加载的 compact manifest 建立 warm-hit 索引，逐项 JSON 仅保留为崩溃恢复日志；Home 记录 bootstrap、服务打开、封面来源与首帧的同一时间线。Android Mihon bridge 已通过后台 `PackageManager` 读取未安装 APK 的包名、当前签名、版本和 extension ABI，Venera inspector 则从同一份有界字节快照完成 UTF-8 metadata 与 SHA-256 检查，仍不执行插件代码。
 `0.31.0-dev.44` 保留该 Home trace，但不为当前未复现的冷启动问题增加额外工作；资源文件缓存改用显式复合能力，WebP ready 收敛到真实首帧，promoted artifact 在权威 session 排队时启动唯一共享读取。Mihon inspection 进一步读取入口类元数据，Mihon 与 Venera 分别获得不可变 payload 和资源上限执行请求契约，具体 class loader/JavaScript 引擎仍必须位于隔离 adapter。
 `0.31.0-dev.45` 修复插件资源上限值对象的 const 求值阻断，并定义 Mihon/Venera 共用的版本化运行时协议。隔离 backend 只暴露 source descriptor 与 browse/detail/chapter/resource 请求，统一适配层再生成普通 `BrowsableComicSource`；请求超时、响应字节和真实并发由 host 二次约束，Reader、下载会话和 artifact 权限不会跨入插件运行时。
-`0.31.0-dev.46` 收敛本地图片与测试异步生命周期：普通文件图片只由 Flutter `Image` 持有一个 `FileImage` 流，首帧状态来自实际 `frameBuilder`，不再额外手动 resolve；动画和冷 artifact 回归显式让出真实事件队列并卸载播放器。promoted 页面读取在权威 `beginRun` 时即可启动，页面仍只加入同一读取。插件兼容层新增原始 message-channel/handshake 边界，未来 Mihon 隔离进程与 Venera 沙箱必须通过同一协议序列化。
+`0.31.0-dev.47` 在现有 protocol/message-channel 之内补齐共享隔离 runtime worker：Mihon 与 Venera 的后端请求在隔离边界内再次解析，未知 source、重复活动 request ID、异常净化、协作取消和关闭排空使用同一实现。host 超时会发送 request-level cancel，但真实后端退出前不会释放并发额度。Android 侧已具备 activation/invoke/cancel/close 的平台通道和不可变执行 envelope；未安装专用执行服务时保持 fail-closed。Home trace 与 dev.46 的本地图片/冷 artifact 路径保持不变。
 
 ```text
 ReaderView

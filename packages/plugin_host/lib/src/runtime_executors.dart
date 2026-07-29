@@ -20,7 +20,21 @@ final class MihonExecutionRequest {
     required this.limits,
   })  : entryClasses = List<String>.unmodifiable(entryClasses),
         capabilities =
-            Set<ExternalPluginCapability>.unmodifiable(capabilities);
+            Set<ExternalPluginCapability>.unmodifiable(capabilities) {
+    if (plugin.format != ExternalComicPluginFormat.mihonExtension ||
+        payloadPath.trim().isEmpty ||
+        payloadByteLength <= 0 ||
+        payloadSha256.trim().isEmpty ||
+        packageName.trim().isEmpty ||
+        signerSha256.trim().isEmpty ||
+        versionCode < 0 ||
+        extensionLib.trim().isEmpty ||
+        this.entryClasses.isEmpty ||
+        this.entryClasses.any((value) => value.trim().isEmpty)) {
+      throw ArgumentError('Mihon execution request is incomplete');
+    }
+    limits.validate();
+  }
 
   final ExternalComicPluginCatalogEntry plugin;
   final String payloadPath;
@@ -33,6 +47,27 @@ final class MihonExecutionRequest {
   final List<String> entryClasses;
   final Set<ExternalPluginCapability> capabilities;
   final ExternalPluginRuntimeLimits limits;
+
+  Map<String, Object?> toMessage() {
+    final capabilityNames = capabilities.map((value) => value.name).toList()
+      ..sort();
+    return <String, Object?>{
+      'schemaVersion': 1,
+      'format': plugin.format.name,
+      'pluginId': plugin.pluginId,
+      'pluginVersion': plugin.version,
+      'payloadPath': payloadPath,
+      'payloadByteLength': payloadByteLength,
+      'payloadSha256': payloadSha256,
+      'packageName': packageName,
+      'signerSha256': signerSha256,
+      'versionCode': versionCode,
+      'extensionLib': extensionLib,
+      'entryClasses': entryClasses,
+      'capabilities': capabilityNames,
+      'limits': limits.toMessage(),
+    };
+  }
 }
 
 /// Android implementation must isolate class loading from the app class path
@@ -130,7 +165,16 @@ final class VeneraExecutionRequest {
     required Iterable<ExternalPluginCapability> capabilities,
     required this.limits,
   }) : capabilities =
-            Set<ExternalPluginCapability>.unmodifiable(capabilities);
+            Set<ExternalPluginCapability>.unmodifiable(capabilities) {
+    if (plugin.format != ExternalComicPluginFormat.veneraJavaScript ||
+        payloadPath.trim().isEmpty ||
+        payloadByteLength <= 0 ||
+        payloadSha256.trim().isEmpty ||
+        sourceKey.trim().isEmpty) {
+      throw ArgumentError('Venera execution request is incomplete');
+    }
+    limits.validate();
+  }
 
   final ExternalComicPluginCatalogEntry plugin;
   final String payloadPath;
@@ -139,6 +183,23 @@ final class VeneraExecutionRequest {
   final String sourceKey;
   final Set<ExternalPluginCapability> capabilities;
   final ExternalPluginRuntimeLimits limits;
+
+  Map<String, Object?> toMessage() {
+    final capabilityNames = capabilities.map((value) => value.name).toList()
+      ..sort();
+    return <String, Object?>{
+      'schemaVersion': 1,
+      'format': plugin.format.name,
+      'pluginId': plugin.pluginId,
+      'pluginVersion': plugin.version,
+      'payloadPath': payloadPath,
+      'payloadByteLength': payloadByteLength,
+      'payloadSha256': payloadSha256,
+      'sourceKey': sourceKey,
+      'capabilities': capabilityNames,
+      'limits': limits.toMessage(),
+    };
+  }
 }
 
 /// Backend for a bounded JavaScript runtime. Network, cookie and storage access

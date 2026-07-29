@@ -78,6 +78,7 @@ final class ExternalPluginRuntimeSession
     try {
       response = await _gate.run(() => _connection.invoke(request));
     } on TimeoutException catch (error) {
+      unawaited(_cancelInvocation(request.requestId));
       throw Failure(
         code: ErrorCode.source,
         message: 'external plugin invocation timed out',
@@ -114,6 +115,19 @@ final class ExternalPluginRuntimeSession
       );
     }
     return payload;
+  }
+
+  Future<void> _cancelInvocation(String requestId) async {
+    final connection = _connection;
+    if (connection is! CancellableExternalPluginRuntimeConnection) {
+      return;
+    }
+    try {
+      await connection.cancel(requestId);
+    } on Object {
+      // Cancellation is advisory. The original invocation Future remains the
+      // authoritative owner and retains its concurrency permit until exit.
+    }
   }
 
   @override

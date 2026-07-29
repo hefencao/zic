@@ -17,6 +17,7 @@ import java.util.concurrent.Executors
 class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private lateinit var context: Context
     private lateinit var channel: MethodChannel
+    private lateinit var runtimeChannel: MethodChannel
     private val mainHandler = Handler(Looper.getMainLooper())
     private var inspector: ExecutorService? = null
 
@@ -27,10 +28,13 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
         channel = MethodChannel(binding.binaryMessenger, CHANNEL_NAME)
         channel.setMethodCallHandler(this)
+        runtimeChannel = MethodChannel(binding.binaryMessenger, RUNTIME_CHANNEL_NAME)
+        runtimeChannel.setMethodCallHandler(this)
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
+        runtimeChannel.setMethodCallHandler(null)
         inspector?.shutdownNow()
         inspector = null
     }
@@ -38,6 +42,19 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "readMihonApkMetadata" -> readMihonApkMetadata(call, result)
+            "activateMihonRuntime",
+            "activateVeneraRuntime" -> result.error(
+                "runtime-backend-unavailable",
+                "The isolated plugin runtime service is not installed",
+                null,
+            )
+            "invokeExternalRuntime",
+            "cancelExternalRuntime",
+            "closeExternalRuntime" -> result.error(
+                "runtime-session-missing",
+                "No isolated plugin runtime session is active",
+                null,
+            )
             else -> result.notImplemented()
         }
     }
@@ -164,6 +181,8 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     companion object {
         private const val CHANNEL_NAME = "dev.zic/plugin_host_bridge"
+        private const val RUNTIME_CHANNEL_NAME =
+            "dev.zic/plugin_host_runtime_bridge"
         private val CLASS_NAME = Regex(
             "[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)+",
         )

@@ -1,3 +1,11 @@
+## 0.31.0-dev.47 — isolated runtime worker, cooperative cancellation and platform backend channels
+
+- Add one server-side `ExternalPluginRuntimeWorker` shared by Mihon and Venera isolated backends. It reparses protocol-v1 requests inside the isolation boundary, rejects unknown sources and duplicate active request IDs, sanitizes backend failures, tracks real work and owns deterministic teardown.
+- Add cooperative request cancellation across raw runtime channels. A caller timeout sends best-effort cancellation when supported, while the host concurrency permit remains occupied until the underlying backend Future actually exits.
+- Serialize immutable Mihon/Venera activation envelopes, approved capabilities and exact runtime limits across the platform boundary. Add Android host-side method-channel backends for activation, invoke, cancellation and close; the native bridge remains fail-closed until a dedicated APK/JavaScript service is installed.
+- Add conformance regressions shared by both ecosystems for browse/comic/chapter/resource operations, unknown and duplicate identities, timeout cancellation, retained concurrency, joinable close and platform-channel serialization.
+- Preserve the existing Home startup trace and the dev.46 local-image/cold-artifact lifecycle fixes unchanged. Record ADR 0031; concrete Mihon class loading and Venera JavaScript evaluation remain separate isolated-driver work.
+
 ## 0.31.0-dev.46 — single image-stream ownership, active-run artifact priming and raw runtime channel
 
 - Close report-30's local-image test stall by removing the second manually resolved `FileImage` stream. Static image readiness now comes only from the renderer-owned `Image.frameBuilder`; the zero-copy file-routing regression verifies `FileImage` without waiting for a host codec and explicitly unmounts the provider.

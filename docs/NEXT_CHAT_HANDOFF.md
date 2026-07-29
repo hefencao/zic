@@ -2,18 +2,19 @@
 
 ## Sole baseline
 
-Continue only from `zic_v0.31.0-dev.46_single-image-stream-active-run-artifact-prime-runtime-channel.zip`.
+Continue only from `zic_v0.31.0-dev.47_runtime-worker-cancellation-platform-backend-channel.zip`.
 Do not merge or copy files from an earlier zic archive.
 
 ## Current ownership and completed work
 
 - Keep the existing `home-startup` trace unchanged. The prior Home delay is not currently reproduced; no eager scan, prewarm or verbose release logging was added.
-- Ordinary local static files use one renderer-owned `FileImage` stream. `LocalImagePlayer` does not manually resolve a second stream; actual `Image.frameBuilder` presentation publishes ready. WebP/GIF controlled players retain their separate codec ownership.
-- Widget regressions that depend on host codec/file work yield the real event queue without a guessed fixed delay and explicitly unmount codecs/providers. The plain-file routing test verifies zero Dart byte loading and does not conflate that contract with platform decoder completion.
-- Promoted page artifact reads start at authoritative `DownloadSession.beginRun`, before ephemeral workspace restore. Page media remains join-only and never creates an independent cache/network demand; immediate snapshot delivery covers late observers.
-- Mihon and Venera share protocol v1, one source adapter and now `ExternalPluginRuntimeMessageChannel` plus a versioned handshake. Raw responses are parsed and matched to the request ID; duplicate runtime source identities are rejected; close is joinable.
-- Runtime messages contain only protocol-safe primitives, maps/lists and `Uint8List`. Reader, navigation, demand, `DownloadSession`, cache maintenance and artifact objects do not cross the boundary.
-- Concrete Mihon class loading and Venera JavaScript execution remain unimplemented and unclaimed.
+- dev.46 local-image and cold-artifact behavior remains: one renderer-owned `FileImage` stream, actual frame readiness, explicit widget teardown, and promoted artifact priming at authoritative `DownloadSession.beginRun`.
+- Mihon and Venera share protocol v1, one `ExternalPluginRuntimeSession` source adapter, raw message-channel/handshake transport and now one isolated-side `ExternalPluginRuntimeWorker`.
+- The worker reparses requests inside the isolation boundary, rejects unknown sources and duplicate active request IDs, sanitizes driver errors, owns cooperative cancellation and drains real work on close.
+- Host timeout may send request-level cancellation, but the invocation permit remains held until the underlying channel Future exits.
+- Execution activation messages carry the exact inspected payload path/length/hash, approved capabilities and complete limits. Android host adapters expose activation/invoke/cancel/close through one platform channel.
+- Android native activation currently fails closed because the dedicated isolated APK/JavaScript service is not implemented. It must not fall back to main-process class loading or unrestricted JavaScript.
+- Runtime messages contain only protocol-safe primitives, maps/lists and `Uint8List`; Reader, navigation, demand, `DownloadSession`, cache maintenance and artifact objects do not cross the boundary.
 
 ## Validation commands
 
@@ -40,8 +41,8 @@ bash ./tool/build_android.sh release
 
 ## Next mainline work
 
-1. Re-run the focused local-image and cold-artifact tests first. If a host codec still fails, capture the first `decodeStarted/frameDecoded/framePresented` sequence rather than adding fixed pump durations.
-2. Implement the Android Mihon isolated backend behind `MihonIsolatedRuntimeBackend` and `ExternalPluginRuntimeMessageChannel`: revalidate the exact payload at process entry, load only approved entry classes, distinguish Source/SourceFactory after loading and translate calls to protocol v1.
-3. Implement the Venera sandbox backend behind `VeneraSandboxRuntimeBackend` and the same raw channel contract, with approved network/cookie/credential/storage bridges and deterministic teardown.
-4. Add protocol conformance fixtures shared by both backends, including malformed handshakes, duplicate source identities, mismatched request IDs, large binary resources, cancellation and close.
+1. Run plugin-host and bridge suites first, including worker conformance, cancellation, joinable close and method-channel envelope tests.
+2. Implement a dedicated-process Android Mihon service behind the existing activation/channel contract. Revalidate exact payload identity at process entry, create the class loader only there, discover approved `Source`/`SourceFactory` entry classes and adapt calls through `ExternalPluginRuntimeDriver` plus the shared worker.
+3. Implement a bounded Venera JavaScript service behind the same contract, with explicit network/cookie/credential/storage bridges, cooperative cancellation checkpoints and deterministic driver close.
+4. Add native end-to-end conformance for malformed handshake/response, duplicate runtime source identity, large binary resource, cancellation races, process death and service restart.
 5. Keep Home startup telemetry available but do not expand it unless the device issue returns with a captured trace.

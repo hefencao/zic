@@ -21,7 +21,13 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.46）
+## 当前应用主线（0.31.0-dev.47）
+
+- 将 protocol-v1 的服务端所有权收敛为 `ExternalPluginRuntimeWorker`：隔离边界内再次解析请求、验证 source/request identity、净化错误、跟踪真实调用并确定性关闭。
+- 为 raw runtime channel 增加可选的 request-level cooperative cancellation；timeout 只结束调用者等待，底层 Future 退出前 host permit 不释放。
+- Mihon/Venera activation envelope 传递 exact payload path/length/hash、approved capabilities 和 runtime limits；Android host adapter 统一 activation/invoke/cancel/close。
+- Android native bridge 在隔离执行服务未安装时明确 fail-closed；不得退回主进程 class loading 或无约束 JavaScript 执行。
+- 下一阶段分别实现 Mihon dedicated-process driver 与 Venera sandbox driver，它们必须复用 worker 和 protocol conformance fixture。
 
 - 保留 Home/Bookshelf 的 Presentation 拆分，但禁止在 `apps/app/lib` 定义资源缓存、章节下载、页面保活或整本调度算法。
 - `resource_cache` 继续统一管理封面/图片响应、漫画详情、章节元数据和搜索结果。只有完整 `imageBytes` 可通过注入的 byte store 持久化；章节页面仍不进入该平面。

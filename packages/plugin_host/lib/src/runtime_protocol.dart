@@ -324,6 +324,12 @@ abstract interface class ExternalPluginRuntimeConnection {
   Future<void> close();
 }
 
+/// Optional connection capability for cooperative cancellation.
+abstract interface class CancellableExternalPluginRuntimeConnection
+    implements ExternalPluginRuntimeConnection {
+  Future<void> cancel(String requestId);
+}
+
 void _validateArguments(
   ExternalPluginRuntimeOperation operation,
   Map<String, Object?> arguments,

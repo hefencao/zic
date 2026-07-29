@@ -100,6 +100,10 @@ continue through Reader demand, transport, promoted artifact and decode ownershi
 - session close 必须拒绝排队调用、通知隔离 backend 终止活动调用并等待实际工作排空；并发 close 必须加入同一关闭过程。
 - 二进制资源使用有界 `Uint8List` wire payload，不允许 base64 扩张或把 Reader artifact authority 交给插件。
 - 隔离 backend 的原始传输必须实现版本化 handshake/message-channel 边界。handshake 需要非空 runtime ID、唯一 source ID；每个 response 的 requestId 必须与调用匹配。传输不得依赖进程内 Dart domain/session 对象。
+- 隔离侧必须由共享 worker 再次解析 request，拒绝未知 source 和重复活动 request ID，并将任意生态后端异常净化为有界协议错误。
+- 可取消 channel 应支持 request-level cooperative cancellation；timeout 可以发送 cancel，但底层 Future 真正结束前 host 不得释放并发额度。
+- worker/session close 必须可加入：停止接收新请求，取消活动 token，通知 driver/channel 关闭并等待实际调用排空。
+- 平台 activation 必须传递同一个已检查 payload 的 path/length/hash、批准能力和完整 limits。专用隔离服务不可用时必须拒绝激活，不得退回 App 主进程执行。
 
 ## 3. Reader 行为规格
 

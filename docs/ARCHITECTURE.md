@@ -900,6 +900,12 @@ this boundary.
 
 Before reaching `ExternalPluginRuntimeSession`, an isolated backend is wrapped by `ExternalPluginRuntimeMessageChannel`. A schema-versioned handshake carries a non-empty runtime identity and unique source descriptors. Every invocation serializes protocol-v1 values across the raw channel, reparses the response and verifies its request ID; only primitives, maps/lists and bounded `Uint8List` cross. The channel close is joinable and rejects new sends once teardown begins.
 
+Inside the isolated boundary, both ecosystems use `ExternalPluginRuntimeWorker` as the server-side protocol owner. The worker reparses the raw request, verifies that the advertised source is active, rejects duplicate in-flight request identities, sanitizes driver failures and tracks the real driver Future until exit. Ecosystem drivers receive only a protocol request plus a cooperative cancellation token.
+
+A caller timeout may send request-level cancellation through `CancellableExternalPluginRuntimeMessageChannel`, but cancellation is advisory. The host invocation gate retains its permit until the original channel Future completes, so a non-cooperative APK or script cannot exceed the declared concurrency limit by timing out. Worker/session close is joinable, stops admission, signals cancellation/driver close and drains actual work.
+
+Android host adapters serialize the exact inspected execution envelope and limits for Mihon and Venera, then expose invoke/cancel/close through one platform channel. The native bridge is deliberately fail-closed until a dedicated isolated APK or JavaScript service is installed; loading in the application process is not an allowed fallback.
+
 Concrete APK class loading and JavaScript evaluation remain separate isolated backend implementations. They must
 reuse the exact inspected payload and cannot bypass trust, capability, resource-limit or session teardown gates.
 
