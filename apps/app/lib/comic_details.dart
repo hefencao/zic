@@ -25,18 +25,14 @@ const comicDetailsMigrateKey = ValueKey<String>('comic-details-migrate');
 String comicDetailsChapterIdentity(String sourceId, String chapterId) =>
     '$sourceId\u0000$chapterId';
 
-Key comicDetailsChapterKey(String sourceId, String chapterId, bool composite) =>
-    ValueKey<String>(
-      'source-chapter:${composite ? '$sourceId:' : ''}$chapterId',
-    );
+Key comicDetailsChapterKey(String sourceId, String chapterId) =>
+    ValueKey<String>('source-chapter:$sourceId\u0000$chapterId');
 
-Key comicDetailsReadKey(String sourceId, String chapterId, bool composite) =>
-    ValueKey<String>(
-      'chapter-read:${composite ? '$sourceId:' : ''}$chapterId',
-    );
+Key comicDetailsReadKey(String sourceId, String chapterId) =>
+    ValueKey<String>('chapter-read:$sourceId\u0000$chapterId');
 
 Key comicDetailsDownloadKey(String sourceId, String chapterId) =>
-    ValueKey<String>('chapter-download:$sourceId:$chapterId');
+    ValueKey<String>('chapter-download:$sourceId\u0000$chapterId');
 
 enum ComicDetailsRouteKind { local, remote }
 
@@ -295,6 +291,7 @@ final class _LocalComicDetailsScreenState
     final next = <String, ChapterReadState>{
       ...previous,
       identity: ChapterReadState(
+        sourceId: entry.chapter.sourceId,
         comicId: entry.chapter.comicId,
         chapterId: entry.chapter.chapterId,
         isRead: isRead,
@@ -1106,7 +1103,6 @@ final class _ComicChapterList extends StatelessWidget {
           key: comicDetailsReadKey(
             chapter.sourceId,
             chapter.chapterId,
-            false,
           ),
           direction: chapter.isRead
               ? DismissDirection.startToEnd
@@ -1137,7 +1133,6 @@ final class _ComicChapterList extends StatelessWidget {
               key: comicDetailsChapterKey(
                 chapter.sourceId,
                 chapter.chapterId,
-                false,
               ),
               leading: Icon(
                 chapter.isRead

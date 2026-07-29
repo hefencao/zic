@@ -1,8 +1,15 @@
 import 'package:domain/domain.dart';
 
 import 'imported_chapter.dart';
+import 'library_migration_issue.dart';
 import 'library_preferences.dart';
 import 'saved_comic.dart';
+
+String comicLibraryIdentity(String sourceId, String comicId) =>
+    '$sourceId\u0000$comicId';
+
+String chapterLibraryIdentity(String sourceId, String chapterId) =>
+    '$sourceId\u0000$chapterId';
 
 final class ImportedLibraryEntry {
   const ImportedLibraryEntry({
@@ -12,6 +19,9 @@ final class ImportedLibraryEntry {
 
   final ImportedChapterRecord chapter;
   final ReadingProgress? progress;
+
+  String get identity =>
+      chapterLibraryIdentity(chapter.sourceId, chapter.chapterId);
 
   ImportedLibraryEntry copyWith({
     ImportedChapterRecord? chapter,
@@ -24,7 +34,6 @@ final class ImportedLibraryEntry {
     );
   }
 }
-
 
 ReadingProgress? reconcileImportedProgress({
   required ImportedChapterRecord? previousChapter,
@@ -65,6 +74,7 @@ ReadingProgress? reconcileImportedProgress({
     }
   }
   return ReadingProgress(
+    sourceId: refreshedChapter.sourceId,
     comicId: refreshedChapter.comicId,
     chapterId: refreshedChapter.chapterId,
     pageIndex: pageIndex,
@@ -79,13 +89,13 @@ abstract interface class ImportedLibraryStore {
 
   Future<List<ImportedLibraryEntry>> list();
 
-  Future<ImportedLibraryEntry?> get(String chapterId);
+  Future<ImportedLibraryEntry?> get(String sourceId, String chapterId);
 
   Future<void> upsertChapter(ImportedChapterRecord chapter);
 
   Future<void> saveProgress(ReadingProgress progress);
 
-  Future<void> removeChapter(String chapterId);
+  Future<void> removeChapter(String sourceId, String chapterId);
 
   Future<List<SavedComicRecord>> listSavedComics();
 
@@ -103,17 +113,25 @@ abstract interface class ImportedLibraryStore {
 
   Future<List<ComicPreference>> listComicPreferences();
 
-  Future<ComicPreference?> getComicPreference(String comicId);
+  Future<ComicPreference?> getComicPreference(
+    String sourceId,
+    String comicId,
+  );
 
   Future<void> saveComicPreference(ComicPreference preference);
 
-  Future<List<ChapterReadState>> listChapterReadStates(String comicId);
+  Future<List<ChapterReadState>> listChapterReadStates(
+    String sourceId,
+    String comicId,
+  );
 
   Future<void> saveChapterReadState(ChapterReadState state);
 
   Future<List<ComicSourcePreference>> listSourcePreferences();
 
   Future<void> saveSourcePreference(ComicSourcePreference preference);
+
+  Future<List<LibraryMigrationIssue>> listMigrationIssues();
 
   Future<void> close();
 }
@@ -148,55 +166,67 @@ final class MemoryImportedLibraryStore implements ImportedLibraryStore {
         if (imported != 0) {
           return imported;
         }
-        return left.chapterId.compareTo(right.chapterId);
+        final source = left.sourceId.compareTo(right.sourceId);
+        return source != 0
+            ? source
+            : left.chapterId.compareTo(right.chapterId);
       });
     return values
         .map(
           (chapter) => ImportedLibraryEntry(
             chapter: chapter,
-            progress: _progress[chapter.chapterId],
+            progress: _progress[
+              chapterLibraryIdentity(chapter.sourceId, chapter.chapterId)
+            ],
           ),
         )
         .toList(growable: false);
   }
 
   @override
-  Future<ImportedLibraryEntry?> get(String chapterId) async {
+  Future<ImportedLibraryEntry?> get(
+    String sourceId,
+    String chapterId,
+  ) async {
     _requireOpen();
-    final chapter = _chapters[chapterId];
+    final identity = chapterLibraryIdentity(sourceId, chapterId);
+    final chapter = _chapters[identity];
     if (chapter == null) {
       return null;
     }
     return ImportedLibraryEntry(
       chapter: chapter,
-      progress: _progress[chapterId],
+      progress: _progress[identity],
     );
   }
 
   @override
   Future<void> upsertChapter(ImportedChapterRecord chapter) async {
     _requireOpen();
-    final previous = _chapters[chapter.chapterId];
+    final identity = chapterLibraryIdentity(chapter.sourceId, chapter.chapterId);
+    final previous = _chapters[identity];
     final progress = reconcileImportedProgress(
       previousChapter: previous,
       refreshedChapter: chapter,
-      progress: _progress[chapter.chapterId],
+      progress: _progress[identity],
     );
-    _chapters[chapter.chapterId] = chapter;
+    _chapters[identity] = chapter;
     if (progress != null) {
-      _progress[chapter.chapterId] = progress;
+      _progress[identity] = progress;
     }
   }
 
   @override
   Future<void> saveProgress(ReadingProgress progress) async {
     _requireOpen();
-    final chapter = _chapters[progress.chapterId];
+    final identity = progress.identity;
+    final chapter = _chapters[identity];
     if (chapter == null) {
       throw StateError('cannot save progress for an unknown chapter');
     }
-    if (progress.comicId != chapter.comicId) {
-      throw StateError('progress comic identity does not match the chapter');
+    if (progress.comicId != chapter.comicId ||
+        progress.sourceId != chapter.sourceId) {
+      throw StateError('progress identity does not match the chapter');
     }
     if (progress.pageIndex < 0 || progress.pageIndex >= chapter.pages.length) {
       throw RangeError.range(
@@ -206,22 +236,31 @@ final class MemoryImportedLibraryStore implements ImportedLibraryStore {
         'progress.pageIndex',
       );
     }
-    final current = _progress[progress.chapterId];
+    final current = _progress[identity];
     if (current == null || !progress.updatedAt.isBefore(current.updatedAt)) {
-      _progress[progress.chapterId] = progress;
+      _progress[identity] = progress;
     }
   }
 
   @override
-  Future<void> removeChapter(String chapterId) async {
+  Future<void> removeChapter(String sourceId, String chapterId) async {
     _requireOpen();
-    final chapter = _chapters.remove(chapterId);
-    _progress.remove(chapterId);
-    _readStates.remove(chapterId);
+    final identity = chapterLibraryIdentity(sourceId, chapterId);
+    final chapter = _chapters.remove(identity);
+    _progress.remove(identity);
+    _readStates.remove(identity);
     if (chapter != null &&
-        !_chapters.values.any((item) => item.comicId == chapter.comicId) &&
-        !_savedComics.values.any((item) => item.comicId == chapter.comicId)) {
-      _preferences.remove(chapter.comicId);
+        !_chapters.values.any(
+          (item) =>
+              item.sourceId == chapter.sourceId &&
+              item.comicId == chapter.comicId,
+        ) &&
+        !_savedComics.containsKey(
+          comicLibraryIdentity(chapter.sourceId, chapter.comicId),
+        )) {
+      _preferences.remove(
+        comicLibraryIdentity(chapter.sourceId, chapter.comicId),
+      );
     }
   }
 
@@ -231,10 +270,9 @@ final class MemoryImportedLibraryStore implements ImportedLibraryStore {
     final values = _savedComics.values.toList(growable: false)
       ..sort((left, right) {
         final updated = right.updatedAt.compareTo(left.updatedAt);
-        if (updated != 0) {
-          return updated;
-        }
-        return left.identity.compareTo(right.identity);
+        return updated != 0
+            ? updated
+            : left.identity.compareTo(right.identity);
       });
     return values;
   }
@@ -245,7 +283,7 @@ final class MemoryImportedLibraryStore implements ImportedLibraryStore {
     String comicId,
   ) async {
     _requireOpen();
-    return _savedComics[_savedComicIdentity(sourceId, comicId)];
+    return _savedComics[comicLibraryIdentity(sourceId, comicId)];
   }
 
   @override
@@ -260,9 +298,13 @@ final class MemoryImportedLibraryStore implements ImportedLibraryStore {
   @override
   Future<void> removeSavedComic(String sourceId, String comicId) async {
     _requireOpen();
-    _savedComics.remove(_savedComicIdentity(sourceId, comicId));
-    if (!_chapters.values.any((chapter) => chapter.comicId == comicId)) {
-      _preferences.remove(comicId);
+    final identity = comicLibraryIdentity(sourceId, comicId);
+    _savedComics.remove(identity);
+    if (!_chapters.values.any(
+      (chapter) =>
+          chapter.sourceId == sourceId && chapter.comicId == comicId,
+    )) {
+      _preferences.remove(identity);
     }
   }
 
@@ -306,25 +348,34 @@ final class MemoryImportedLibraryStore implements ImportedLibraryStore {
   }
 
   @override
-  Future<ComicPreference?> getComicPreference(String comicId) async {
+  Future<ComicPreference?> getComicPreference(
+    String sourceId,
+    String comicId,
+  ) async {
     _requireOpen();
-    return _preferences[comicId];
+    return _preferences[comicLibraryIdentity(sourceId, comicId)];
   }
 
   @override
   Future<void> saveComicPreference(ComicPreference preference) async {
     _requireOpen();
-    final current = _preferences[preference.comicId];
+    final current = _preferences[preference.identity];
     if (current == null || !preference.updatedAt.isBefore(current.updatedAt)) {
-      _preferences[preference.comicId] = preference;
+      _preferences[preference.identity] = preference;
     }
   }
 
   @override
-  Future<List<ChapterReadState>> listChapterReadStates(String comicId) async {
+  Future<List<ChapterReadState>> listChapterReadStates(
+    String sourceId,
+    String comicId,
+  ) async {
     _requireOpen();
     final values = _readStates.values
-        .where((state) => state.comicId == comicId)
+        .where(
+          (state) =>
+              state.sourceId == sourceId && state.comicId == comicId,
+        )
         .toList(growable: false)
       ..sort((left, right) => left.chapterId.compareTo(right.chapterId));
     return values;
@@ -333,9 +384,9 @@ final class MemoryImportedLibraryStore implements ImportedLibraryStore {
   @override
   Future<void> saveChapterReadState(ChapterReadState state) async {
     _requireOpen();
-    final current = _readStates[state.chapterId];
+    final current = _readStates[state.identity];
     if (current == null || !state.updatedAt.isBefore(current.updatedAt)) {
-      _readStates[state.chapterId] = state;
+      _readStates[state.identity] = state;
     }
   }
 
@@ -360,6 +411,12 @@ final class MemoryImportedLibraryStore implements ImportedLibraryStore {
   }
 
   @override
+  Future<List<LibraryMigrationIssue>> listMigrationIssues() async {
+    _requireOpen();
+    return const <LibraryMigrationIssue>[];
+  }
+
+  @override
   Future<void> close() async {
     _open = false;
   }
@@ -370,6 +427,3 @@ final class MemoryImportedLibraryStore implements ImportedLibraryStore {
     }
   }
 }
-
-String _savedComicIdentity(String sourceId, String comicId) =>
-    '$sourceId\u0000$comicId';

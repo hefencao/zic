@@ -105,7 +105,7 @@ final class PersistentChapterDownloadService
       registry: registry,
       index: index,
       transport: IoTransport(
-        http: HttpTransport(userAgent: 'zic/0.23.0'),
+        http: HttpTransport(userAgent: 'zic/0.24.0'),
       ),
     );
   }

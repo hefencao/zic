@@ -289,6 +289,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   ReadingProgress? _matchingInitialProgress() {
     final progress = widget.initialProgress;
     if (progress == null ||
+        progress.sourceId != widget.chapter.sourceId ||
         progress.comicId != widget.chapter.comicId ||
         progress.chapterId != widget.chapter.chapter.chapterId) {
       return null;
@@ -309,6 +310,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     _lastProgressPage = reader.currentIndex;
     _lastProgressMode = mode;
     final progress = ReadingProgress(
+      sourceId: widget.chapter.sourceId,
       comicId: widget.chapter.comicId,
       chapterId: widget.chapter.chapter.chapterId,
       pageIndex: reader.currentIndex,

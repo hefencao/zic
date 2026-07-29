@@ -20,10 +20,10 @@ const comicSourceCopyErrorKey = ValueKey<String>('comic-source-copy-error');
 const comicSourceEmptyKey = ValueKey<String>('comic-source-empty');
 Key comicSourceChoiceKey(String sourceId) =>
     ValueKey<String>('comic-source-choice:$sourceId');
-Key sourceComicCardKey(String comicId) =>
-    ValueKey<String>('source-comic:$comicId');
-Key sourceChapterKey(String chapterId) =>
-    ValueKey<String>('source-chapter:$chapterId');
+Key sourceComicCardKey(String sourceId, String comicId) =>
+    ValueKey<String>('source-comic:$sourceId\u0000$comicId');
+Key sourceChapterKey(String sourceId, String chapterId) =>
+    ValueKey<String>('source-chapter:$sourceId\u0000$chapterId');
 
 final class ComicSourcesPage extends StatefulWidget {
   const ComicSourcesPage({
@@ -306,7 +306,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
             }
             final comic = _items[index];
             return _SourceComicCard(
-              key: sourceComicCardKey(comic.comicId),
+              key: sourceComicCardKey(source.sourceId, comic.comicId),
               source: source,
               comic: comic,
               reloadToken: _generation,

@@ -78,6 +78,7 @@ final class PageAsset {
 
 final class ReadingProgress {
   const ReadingProgress({
+    required this.sourceId,
     required this.comicId,
     required this.chapterId,
     required this.pageIndex,
@@ -86,6 +87,7 @@ final class ReadingProgress {
     required this.updatedAt,
   });
 
+  final String sourceId;
   final String comicId;
   final String chapterId;
   final int pageIndex;
@@ -93,7 +95,10 @@ final class ReadingProgress {
   final ReaderMode readerMode;
   final DateTime updatedAt;
 
+  String get identity => '$sourceId\u0000$chapterId';
+
   Map<String, Object> toJson() => <String, Object>{
+        'sourceId': sourceId,
         'comicId': comicId,
         'chapterId': chapterId,
         'pageIndex': pageIndex,
@@ -102,8 +107,16 @@ final class ReadingProgress {
         'updatedAt': updatedAt.toUtc().toIso8601String(),
       };
 
-  factory ReadingProgress.fromJson(Map<String, Object?> json) {
+  factory ReadingProgress.fromJson(
+    Map<String, Object?> json, {
+    String? fallbackSourceId,
+  }) {
+    final sourceId = (json['sourceId'] as String?) ?? fallbackSourceId;
+    if (sourceId == null || sourceId.trim().isEmpty) {
+      throw const FormatException('sourceId must be a non-empty string');
+    }
     return ReadingProgress(
+      sourceId: sourceId,
       comicId: json['comicId']! as String,
       chapterId: json['chapterId']! as String,
       pageIndex: json['pageIndex']! as int,

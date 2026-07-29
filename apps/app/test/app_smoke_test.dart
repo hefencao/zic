@@ -345,6 +345,7 @@ void main() {
     await store.upsertChapter(record);
     await store.saveProgress(
       ReadingProgress(
+        sourceId: record.sourceId,
         comicId: record.comicId,
         chapterId: record.chapterId,
         pageIndex: 1,
@@ -357,7 +358,7 @@ void main() {
     await tester.pumpWidget(App(libraryStore: store));
     await tester.pump();
 
-    final entry = find.byKey(importedChapterEntryKey(record.chapterId));
+    final entry = find.byKey(importedChapterEntryKey(record.sourceId, record.chapterId));
     await _pumpUntilFound(tester, entry);
     await tester.ensureVisible(entry);
     await tester.tap(entry);
@@ -391,7 +392,7 @@ void main() {
     await tester.pumpWidget(App(libraryStore: store));
     await _pumpUntilFound(
       tester,
-      find.byKey(importedChapterEntryKey(record.chapterId)),
+      find.byKey(importedChapterEntryKey(record.sourceId, record.chapterId)),
     );
 
     expect(find.text('本地目录维护'), findsNothing);

@@ -81,6 +81,7 @@ final class ComicSourceMigrationPlan {
     required int targetCustomOrder,
   }) =>
       ComicPreference(
+        sourceId: target.comic.sourceId,
         comicId: target.comic.comicId,
         sourceKind: ComicSourceKind.remote,
         inShelf: preference.inShelf,
@@ -90,6 +91,35 @@ final class ComicSourceMigrationPlan {
         customOrder: targetCustomOrder,
         updatedAt: DateTime.now().toUtc(),
       );
+
+  /// Copy source preferences without erasing state that already belongs to
+  /// the target source. Migration fills target state; it does not roll it
+  /// back to the source snapshot.
+  ComicPreference mergePreference(
+    ComicPreference sourcePreference, {
+    ComicPreference? existingTarget,
+    required int targetCustomOrder,
+    DateTime? updatedAt,
+  }) {
+    final migrated = migratePreference(
+      sourcePreference,
+      targetCustomOrder: existingTarget?.customOrder ?? targetCustomOrder,
+    );
+    return ComicPreference(
+      sourceId: migrated.sourceId,
+      comicId: migrated.comicId,
+      sourceKind: ComicSourceKind.remote,
+      inShelf: migrated.inShelf || (existingTarget?.inShelf ?? false),
+      liked: migrated.liked || (existingTarget?.liked ?? false),
+      collected: migrated.collected || (existingTarget?.collected ?? false),
+      categoryIds: <String>{
+        ...migrated.categoryIds,
+        ...?existingTarget?.categoryIds,
+      },
+      customOrder: existingTarget?.customOrder ?? migrated.customOrder,
+      updatedAt: (updatedAt ?? DateTime.now()).toUtc(),
+    );
+  }
 }
 
 enum ChapterMigrationConfidence { exact, sequenceOnly }

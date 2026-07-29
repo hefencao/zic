@@ -44,22 +44,38 @@ const localImageFolderPickerProgressKey =
     ValueKey<String>('local-image-folder-picker-progress');
 const importedLibraryLoadingKey = ValueKey<String>('imported-library-loading');
 const importedLibraryErrorKey = ValueKey<String>('imported-library-error');
-Key importedChapterEntryKey(String chapterId) =>
-    ValueKey<String>('imported-chapter:$chapterId');
-Key historyChapterEntryKey(String chapterId) =>
-    ValueKey<String>('history-chapter:$chapterId');
+Key importedChapterEntryKey(String sourceId, String chapterId) =>
+    ValueKey<String>('imported-chapter:$sourceId\u0000$chapterId');
+Key historyChapterEntryKey(String sourceId, String chapterId) =>
+    ValueKey<String>('history-chapter:$sourceId\u0000$chapterId');
 Key comicCoverKey(String sourceId, String comicId) =>
     ValueKey<String>('comic-cover:$sourceId\u0000$comicId');
 Key comicDeleteKey(String sourceId, String comicId) =>
     ValueKey<String>('comic-delete:$sourceId\u0000$comicId');
 Key comicCategoryKey(String sourceId, String comicId) =>
     ValueKey<String>('comic-category:$sourceId\u0000$comicId');
-Key chapterReadKey(String chapterId) =>
-    ValueKey<String>('chapter-read:$chapterId');
+Key chapterReadKey(String sourceId, String chapterId) =>
+    ValueKey<String>('chapter-read:$sourceId\u0000$chapterId');
 @Deprecated('Use localImageFolderPickerProgressKey')
 const localWebpFolderPickerProgressKey = localImageFolderPickerProgressKey;
 
 enum _SourceFilter { all, local, remote }
+
+final class _PreparedChapterMigration {
+  const _PreparedChapterMigration({
+    required this.targetRecord,
+    required this.sourceProgress,
+    required this.sourceReadState,
+    required this.targetProgress,
+    required this.targetReadState,
+  });
+
+  final ImportedChapterRecord targetRecord;
+  final ReadingProgress? sourceProgress;
+  final ChapterReadState? sourceReadState;
+  final ReadingProgress? targetProgress;
+  final ChapterReadState? targetReadState;
+}
 
 enum _ShelfViewMode { gallery, list }
 
@@ -189,7 +205,7 @@ final class _DemoHomeState extends State<DemoHome> {
         : (enabledSourceIds.isEmpty ? null : enabledSourceIds.first.sourceId);
     final preferences = <String, ComicPreference>{
       for (final preference in storedPreferences)
-        preference.comicId: preference,
+        preference.identity: preference,
     };
     var nextOrder = preferences.values.fold<int>(
           0,
@@ -198,22 +214,35 @@ final class _DemoHomeState extends State<DemoHome> {
                   ? preference.customOrder + 1
                   : value,
         );
-    final comicSeeds = <({String comicId, ComicSourceKind sourceKind})>[
+    final comicSeeds = <({
+      String sourceId,
+      String comicId,
+      ComicSourceKind sourceKind,
+    })>[
       for (final entry in entries)
         (
+          sourceId: entry.chapter.sourceId,
           comicId: entry.chapter.comicId,
           sourceKind: entry.chapter.sourceId == 'local-folder'
               ? ComicSourceKind.local
               : ComicSourceKind.remote,
         ),
       for (final comic in savedComics)
-        (comicId: comic.comicId, sourceKind: ComicSourceKind.remote),
+        (
+          sourceId: comic.sourceId,
+          comicId: comic.comicId,
+          sourceKind: comic.sourceId == 'local-folder'
+              ? ComicSourceKind.local
+              : ComicSourceKind.remote,
+        ),
     ];
     for (final seed in comicSeeds) {
-      if (preferences.containsKey(seed.comicId)) {
+      final identity = comicLibraryIdentity(seed.sourceId, seed.comicId);
+      if (preferences.containsKey(identity)) {
         continue;
       }
       final preference = ComicPreference.defaults(
+        sourceId: seed.sourceId,
         comicId: seed.comicId,
         sourceKind: seed.sourceKind,
         customOrder: nextOrder++,
@@ -221,13 +250,23 @@ final class _DemoHomeState extends State<DemoHome> {
         inShelf: seed.sourceKind == ComicSourceKind.local,
         updatedAt: DateTime.now().toUtc(),
       );
-      preferences[preference.comicId] = preference;
+      preferences[preference.identity] = preference;
       await _library.saveComicPreference(preference);
     }
     final readStates = <String, ChapterReadState>{};
-    for (final comicId in entries.map((entry) => entry.chapter.comicId).toSet()) {
-      for (final state in await _library.listChapterReadStates(comicId)) {
-        readStates[state.chapterId] = state;
+    final comicIdentities = <({String sourceId, String comicId})>{
+      for (final entry in entries)
+        (
+          sourceId: entry.chapter.sourceId,
+          comicId: entry.chapter.comicId,
+        ),
+    };
+    for (final comic in comicIdentities) {
+      for (final state in await _library.listChapterReadStates(
+        comic.sourceId,
+        comic.comicId,
+      )) {
+        readStates[state.identity] = state;
       }
     }
     if (!mounted) {
@@ -360,8 +399,11 @@ final class _DemoHomeState extends State<DemoHome> {
       await _openComicDetails(local);
       return;
     }
-    final preference = _preferences[comic.comicId] ??
+    final preference = _preferences[
+          comicLibraryIdentity(source.sourceId, comic.comicId)
+        ] ??
         ComicPreference.defaults(
+          sourceId: source.sourceId,
           comicId: comic.comicId,
           sourceKind: ComicSourceKind.remote,
           customOrder: _nextCustomOrder,
@@ -472,7 +514,7 @@ final class _DemoHomeState extends State<DemoHome> {
       manifest: manifest,
     );
     await _library.upsertChapter(record);
-    final entry = await _library.get(record.chapterId);
+    final entry = await _library.get(record.sourceId, record.chapterId);
     if (entry == null) {
       throw StateError('漫画章节写入后无法重新读取：${record.chapterId}');
     }
@@ -508,13 +550,22 @@ final class _DemoHomeState extends State<DemoHome> {
       importedAt: entry.chapter.importedAt,
     );
     await _library.upsertChapter(refreshed);
-    return await _library.get(refreshed.chapterId) ??
+    return await _library.get(
+          refreshed.sourceId,
+          refreshed.chapterId,
+        ) ??
         ImportedLibraryEntry(chapter: refreshed, progress: entry.progress);
   }
 
   ComicPreference _preferenceForComic(LibraryComic comic) {
-    return _preferences[comic.comicId] ??
-        ComicPreference.defaults(comicId: comic.comicId);
+    return _preferences[comic.identity] ??
+        ComicPreference.defaults(
+          sourceId: comic.sourceId,
+          comicId: comic.comicId,
+          sourceKind: comic.sourceId == 'local-folder'
+              ? ComicSourceKind.local
+              : ComicSourceKind.remote,
+        );
   }
 
   Future<void> _savePreference(ComicPreference preference) async {
@@ -526,7 +577,7 @@ final class _DemoHomeState extends State<DemoHome> {
     setState(() {
       _preferences = <String, ComicPreference>{
         ..._preferences,
-        updated.comicId: updated,
+        updated.identity: updated,
       };
     });
   }
@@ -536,6 +587,7 @@ final class _DemoHomeState extends State<DemoHome> {
     bool isRead,
   ) async {
     final state = ChapterReadState(
+      sourceId: entry.chapter.sourceId,
       comicId: entry.chapter.comicId,
       chapterId: entry.chapter.chapterId,
       isRead: isRead,
@@ -548,7 +600,7 @@ final class _DemoHomeState extends State<DemoHome> {
     setState(() {
       _chapterReadStates = <String, ChapterReadState>{
         ..._chapterReadStates,
-        state.chapterId: state,
+        state.identity: state,
       };
     });
   }
@@ -595,16 +647,20 @@ final class _DemoHomeState extends State<DemoHome> {
       final record = imageFolderChapterRecord(folder);
       await _library.upsertChapter(record);
       final existingPreference =
-          await _library.getComicPreference(record.comicId);
+          await _library.getComicPreference(
+        record.sourceId,
+        record.comicId,
+      );
       if (existingPreference == null) {
         await _library.saveComicPreference(
           ComicPreference.defaults(
+            sourceId: record.sourceId,
             comicId: record.comicId,
             customOrder: _preferences.length,
           ).copyWith(updatedAt: DateTime.now().toUtc()),
         );
       }
-      final entry = await _library.get(record.chapterId);
+      final entry = await _library.get(record.sourceId, record.chapterId);
       await _reloadLibrary();
       if (!mounted || entry == null) {
         return;
@@ -647,8 +703,16 @@ final class _DemoHomeState extends State<DemoHome> {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) {
-          final preference = _preferences[current.chapter.comicId] ??
-              ComicPreference.defaults(comicId: current.chapter.comicId);
+          final preference = _preferences[
+                comicLibraryIdentity(
+                  current.chapter.sourceId,
+                  current.chapter.comicId,
+                )
+              ] ??
+              ComicPreference.defaults(
+                sourceId: current.chapter.sourceId,
+                comicId: current.chapter.comicId,
+              );
           return ImportedImageChapterScreen(
             record: current.chapter,
             byteLoaders: byteLoaders,
@@ -657,8 +721,16 @@ final class _DemoHomeState extends State<DemoHome> {
             onDownloadRequested: () => _downloadChapter(current),
             initialFavorite: preference.collected,
             onFavoriteChanged: (favorite) {
-              final preference = _preferences[current.chapter.comicId] ??
-                  ComicPreference.defaults(comicId: current.chapter.comicId);
+              final preference = _preferences[
+                    comicLibraryIdentity(
+                      current.chapter.sourceId,
+                      current.chapter.comicId,
+                    )
+                  ] ??
+                  ComicPreference.defaults(
+                    sourceId: current.chapter.sourceId,
+                    comicId: current.chapter.comicId,
+                  );
               return _savePreference(
                 preference.copyWith(collected: favorite),
               );
@@ -924,14 +996,20 @@ final class _DemoHomeState extends State<DemoHome> {
         source: comic,
         target: manifest,
       );
+      final exactMatchCount = plan.chapterMatches
+          .where(
+            (match) => match.confidence == ChapterMigrationConfidence.exact,
+          )
+          .length;
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
           title: Text('迁移到 ${manifest.comic.title}'),
           content: Text(
-            '可匹配 ${plan.chapterMatches.length}/${comic.chapters.length} 个已保存章节。'
+            '可精确匹配 $exactMatchCount/${comic.chapters.length} 个已保存章节。'
             '本次复制整部漫画偏好；标题与序号同时匹配的章节会重新从目标源获取元数据，'
-            '并迁移可验证的阅读位置和已读状态。源专属 URL、离线字节和原来源均保留。',
+            '并迁移可验证的阅读位置和已读状态。目标源已有状态优先保留；'
+            '源专属 URL、离线字节和原来源均保留。',
           ),
           actions: <Widget>[
             TextButton(
@@ -948,38 +1026,20 @@ final class _DemoHomeState extends State<DemoHome> {
       if (confirmed != true) {
         return;
       }
-      final preferenceIdentityConflict = _libraryComics.any(
-        (item) =>
-            item.comicId == manifest.comic.comicId &&
-            item.sourceId != manifest.comic.sourceId,
-      );
-      if (preferenceIdentityConflict) {
-        throw StateError(
-          '目标漫画 ID 与另一来源的本地漫画重复；当前偏好存储仍以原生漫画 ID 为键，'
-          '为避免覆盖，已中止迁移',
-        );
-      }
-      await _library.upsertSavedComic(
-        SavedComicRecord.fromManifest(manifest),
-      );
-      await _library.saveComicPreference(
-        plan.migratePreference(
-          _preferenceForComic(comic),
-          targetCustomOrder: _nextCustomOrder,
-        ),
-      );
-      var migratedChapters = 0;
-      var migratedProgress = 0;
-      var migratedReadStates = 0;
-      var skippedIdentityConflicts = 0;
+
+      // Resolve and validate every target chapter before the first durable
+      // write. A late source identity error must not leave a half-created
+      // target comic or preference behind.
+      final targetReadStates = <String, ChapterReadState>{
+        for (final state in await _library.listChapterReadStates(
+          manifest.comic.sourceId,
+          manifest.comic.comicId,
+        ))
+          state.identity: state,
+      };
+      final prepared = <_PreparedChapterMigration>[];
       for (final match in plan.chapterMatches) {
         if (match.confidence != ChapterMigrationConfidence.exact) {
-          continue;
-        }
-        final existing = await _library.get(match.target.chapterId);
-        if (existing != null &&
-            existing.chapter.sourceId != manifest.comic.sourceId) {
-          skippedIdentityConflicts++;
           continue;
         }
         final targetManifest =
@@ -993,16 +1053,71 @@ final class _DemoHomeState extends State<DemoHome> {
           comic: manifest.comic,
           manifest: targetManifest,
         );
+        final targetEntry = await _library.get(
+          targetRecord.sourceId,
+          targetRecord.chapterId,
+        );
+        prepared.add(
+          _PreparedChapterMigration(
+            targetRecord: targetRecord,
+            sourceProgress: match.source.progress,
+            sourceReadState: _chapterReadStates[chapterLibraryIdentity(
+              match.source.chapter.sourceId,
+              match.source.chapter.chapterId,
+            )],
+            targetProgress: targetEntry?.progress,
+            targetReadState: targetReadStates[chapterLibraryIdentity(
+              targetRecord.sourceId,
+              targetRecord.chapterId,
+            )],
+          ),
+        );
+      }
+
+      final migrationTime = DateTime.now().toUtc();
+      final existingSaved = await _library.getSavedComic(
+        manifest.comic.sourceId,
+        manifest.comic.comicId,
+      );
+      final existingPreference = await _library.getComicPreference(
+        manifest.comic.sourceId,
+        manifest.comic.comicId,
+      );
+      final mergedPreference = plan.mergePreference(
+        _preferenceForComic(comic),
+        existingTarget: existingPreference,
+        targetCustomOrder: _nextCustomOrder,
+        updatedAt: migrationTime,
+      );
+
+      await _library.upsertSavedComic(
+        SavedComicRecord.fromManifest(
+          manifest,
+          savedAt: existingSaved?.savedAt,
+          updatedAt: migrationTime,
+        ),
+      );
+      await _library.saveComicPreference(mergedPreference);
+
+      var migratedChapters = 0;
+      var migratedProgress = 0;
+      var migratedReadStates = 0;
+      var preservedTargetStates = 0;
+      for (final item in prepared) {
+        final targetRecord = item.targetRecord;
         await _library.upsertChapter(targetRecord);
         migratedChapters++;
 
-        final sourceProgress = match.source.progress;
-        if (sourceProgress != null) {
+        final sourceProgress = item.sourceProgress;
+        if (item.targetProgress != null) {
+          preservedTargetStates++;
+        } else if (sourceProgress != null) {
           final pageIndex = sourceProgress.pageIndex
               .clamp(0, targetRecord.pages.length - 1)
               .toInt();
           await _library.saveProgress(
             ReadingProgress(
+              sourceId: targetRecord.sourceId,
               comicId: targetRecord.comicId,
               chapterId: targetRecord.chapterId,
               pageIndex: pageIndex,
@@ -1010,20 +1125,23 @@ final class _DemoHomeState extends State<DemoHome> {
                   ? sourceProgress.subPageOffset
                   : 0,
               readerMode: sourceProgress.readerMode,
-              updatedAt: DateTime.now().toUtc(),
+              updatedAt: migrationTime,
             ),
           );
           migratedProgress++;
         }
-        final sourceRead =
-            _chapterReadStates[match.source.chapter.chapterId];
-        if (sourceRead != null) {
+
+        final sourceRead = item.sourceReadState;
+        if (item.targetReadState != null) {
+          preservedTargetStates++;
+        } else if (sourceRead != null) {
           await _library.saveChapterReadState(
             ChapterReadState(
+              sourceId: targetRecord.sourceId,
               comicId: targetRecord.comicId,
               chapterId: targetRecord.chapterId,
               isRead: sourceRead.isRead,
-              updatedAt: DateTime.now().toUtc(),
+              updatedAt: migrationTime,
             ),
           );
           migratedReadStates++;
@@ -1031,17 +1149,17 @@ final class _DemoHomeState extends State<DemoHome> {
       }
       await _reloadLibrary();
       if (mounted) {
-        final details = <String>[
-          '漫画偏好已复制',
+        final messages = <String>[
+          '漫画偏好已合并',
           if (migratedChapters > 0) '迁移 $migratedChapters 个已验证章节',
           if (migratedProgress > 0) '$migratedProgress 个阅读位置',
           if (migratedReadStates > 0) '$migratedReadStates 个已读状态',
-          if (skippedIdentityConflicts > 0)
-            '跳过 $skippedIdentityConflicts 个章节 ID 冲突',
+          if (preservedTargetStates > 0)
+            '保留 $preservedTargetStates 项目标源已有状态',
           '原来源与离线文件保留',
         ];
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(details.join(' · '))),
+          SnackBar(content: Text(messages.join(' · '))),
         );
       }
     } on Object catch (error) {
@@ -1076,15 +1194,18 @@ final class _DemoHomeState extends State<DemoHome> {
               .map((chapter) => chapter.toChapter(comicId)),
       readStates: <String, ChapterReadState>{
         for (final chapter in chapters)
-          if (_chapterReadStates.containsKey(chapter.chapter.chapterId))
+          if (_chapterReadStates.containsKey(chapter.identity))
             details.comicDetailsChapterIdentity(
               chapter.chapter.sourceId,
               chapter.chapter.chapterId,
-            ): _chapterReadStates[chapter.chapter.chapterId]!,
+            ): _chapterReadStates[chapter.identity]!,
       },
-      preference: _preferences[comicId] ??
+      preference: _preferences[comicLibraryIdentity(sourceId, comicId)] ??
           preference ??
-          ComicPreference.defaults(comicId: comicId),
+          ComicPreference.defaults(
+            sourceId: sourceId,
+            comicId: comicId,
+          ),
     );
   }
 
@@ -1202,7 +1323,10 @@ final class _DemoHomeState extends State<DemoHome> {
   Future<void> _removeComic(LibraryComic comic) async {
     await _ensureLibraryReady();
     for (final entry in comic.chapters) {
-      await _library.removeChapter(entry.chapter.chapterId);
+      await _library.removeChapter(
+        entry.chapter.sourceId,
+        entry.chapter.chapterId,
+      );
       _coverBytes.remove(entry.chapter.pages.first.sourceId);
       final coverSourceId = entry.chapter.coverSourceId;
       if (coverSourceId != null) {
@@ -1515,16 +1639,25 @@ final class _DemoHomeState extends State<DemoHome> {
               key: resume == null
                   ? ValueKey<String>('comic-entry:${comic.identity}')
                   : history
-                      ? historyChapterEntryKey(resume.chapter.chapterId)
-                      : importedChapterEntryKey(resume.chapter.chapterId),
+                      ? historyChapterEntryKey(
+                          resume.chapter.sourceId,
+                          resume.chapter.chapterId,
+                        )
+                      : importedChapterEntryKey(
+                          resume.chapter.sourceId,
+                          resume.chapter.chapterId,
+                        ),
               comic: comic,
               preference: _preferenceForComic(comic),
               coverBytes: _coverLoaderForComic(comic),
               onTap: () => _openComic(comic),
-              onLongPress: () =>
-                  resume == null || _hasDetails(comic)
-                      ? _openComicDetails(comic)
-                      : _openImportedChapter(resume),
+              onLongPress: () {
+                if (resume == null || _hasDetails(comic)) {
+                  unawaited(_openComicDetails(comic));
+                } else {
+                  unawaited(_openImportedChapter(resume));
+                }
+              },
             ),
           );
         },
@@ -1853,9 +1986,11 @@ final class _DemoHomeState extends State<DemoHome> {
           ? null
           : () {
               final resume = comic.resumeChapter;
-              return resume == null || _hasDetails(comic)
-                  ? _openComicDetails(comic)
-                  : _openImportedChapter(resume);
+              if (resume == null || _hasDetails(comic)) {
+                unawaited(_openComicDetails(comic));
+              } else {
+                unawaited(_openImportedChapter(resume));
+              }
             },
     );
     if (!_manageShelf || _sortMode != LibrarySortMode.custom) {
@@ -1940,9 +2075,11 @@ final class _DemoHomeState extends State<DemoHome> {
               ? null
               : () {
                   final resume = comic.resumeChapter;
-                  return resume == null || _hasDetails(comic)
-                      ? _openComicDetails(comic)
-                      : _openImportedChapter(resume);
+                  if (resume == null || _hasDetails(comic)) {
+                    unawaited(_openComicDetails(comic));
+                  } else {
+                    unawaited(_openImportedChapter(resume));
+                  }
                 },
         );
     if (_manageShelf && _sortMode == LibrarySortMode.custom) {
@@ -2486,6 +2623,7 @@ final class _ComicDetailsScreenState extends State<ComicDetailsScreen> {
       },
       onReadChanged: (chapter, isRead) async {
         final state = ChapterReadState(
+          sourceId: chapter.chapter.sourceId,
           comicId: chapter.chapter.comicId,
           chapterId: chapter.chapter.chapterId,
           isRead: isRead,
@@ -2493,7 +2631,7 @@ final class _ComicDetailsScreenState extends State<ComicDetailsScreen> {
         );
         _readStates = <String, ChapterReadState>{
           ..._readStates,
-          state.chapterId: state,
+          state.identity: state,
         };
         await widget.onReadChanged(chapter, isRead);
       },

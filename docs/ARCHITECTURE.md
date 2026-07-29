@@ -774,11 +774,11 @@ history cards from persisted `ReadingProgress`. Bookshelf derives all views from
 persisted chapter records plus `ComicPreference`; source/category filters and
 sort modes do not create parallel copies of catalog data.
 
-`ImportedLibraryStore` schema version 4 owns source-aware `SavedComicRecord` plus `LibraryCategory`,
-`ComicPreference` and `ChapterReadState`. Preferences include shelf membership,
-liked/collected flags, category membership, source kind and custom order. Read
-state is intentionally distinct from precise Reader progress so restoring a
-chapter to unread does not erase the last page.
+`ImportedLibraryStore` schema version 5 owns source-aware `SavedComicRecord` plus `LibraryCategory`,
+`ComicPreference` and `ChapterReadState`. Imported chapters, progress, preferences and read state all
+use source-composite durable identities. Preferences include shelf membership, liked/collected flags,
+category membership, source kind and custom order. Read state is intentionally distinct from precise
+Reader progress so restoring a chapter to unread does not erase the last page.
 
 Cover widgets only receive byte-loader and progress value objects. Animated
 thumbnail decoding uses Flutter `Image.memory`; download waterline presentation
@@ -824,7 +824,9 @@ promoted-artifact path.
 Remote delivery URLs are mutable. `ImportedPageRecord.pageId` stores the source-provided stable page
 identity separately from `sourceId`/URI. A remote chapter resolves a fresh manifest before opening,
 and store reconciliation follows `stablePageId`; a unique display-name fallback only supports
-records written before page IDs existed. SQLite schema version 3 added `comic_source_preference`; version 4 adds `saved_comic` with a composite `(source_id, comic_id)` key without changing legacy chapter/progress ownership.
+records written before page IDs existed. SQLite schema version 3 added `comic_source_preference`;
+version 4 added source-composite `saved_comic`; version 5 makes imported chapter, progress, comic
+preference and read-state ownership source-composite as well.
 
 This contract is intentionally smaller than a Mihon extension runtime. External extension support
 must be an isolated adapter with explicit lifecycle, permissions, version compatibility and failure
@@ -856,6 +858,6 @@ and display status.
 
 Cross-source migration creates a target comic copy rather than mutating source identity. Exact
 normalized-title plus sequence matches can rehydrate target chapter metadata and copy bounded progress
-and read state. Source URLs, caches and original records are never transferred or deleted. Until schema
-version 5 makes all preference/chapter/progress/read keys source-composite, native-ID collisions are
-explicitly rejected or skipped.
+and read state. Source URLs, caches and original records are never transferred or deleted. Schema version 5 makes
+all preference/chapter/progress/read keys source-composite, so an equal native ID under another source
+is a distinct durable record rather than a migration conflict.

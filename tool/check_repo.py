@@ -1158,7 +1158,12 @@ def check_compile_regressions() -> None:
         ROOT / 'packages/storage/lib/src/sqlite_imported_library_store.dart'
     ).read_text(encoding='utf-8')
     for required in (
-        'PRAGMA user_version = 4',
+        'const _schemaVersion = 5',
+        'PRAGMA user_version = $_schemaVersion',
+        'PRIMARY KEY(source_id, chapter_id)',
+        'PRIMARY KEY(source_id, comic_id)',
+        'library_migration_issue',
+        'listMigrationIssues',
         'saved_comic',
         'upsertSavedComic',
         'library_category',
@@ -1171,8 +1176,36 @@ def check_compile_regressions() -> None:
     ):
         if required not in store:
             fail(f'durable bookshelf storage is incomplete: {required}')
-    if store.count("'SELECT preference_json FROM comic_preference',") != 2:
-        fail('comic preference queries contain a duplicate or missing SQL argument')
+    for required in (
+        'WHERE source_id = ? AND comic_id = ?',
+        'WHERE source_id = ? AND chapter_id = ?',
+        'ON p.source_id = c.source_id AND p.chapter_id = c.chapter_id',
+        'schemaFrom: fromVersion',
+        'PRAGMA foreign_key_check',
+    ):
+        if required not in store:
+            fail(f'source-composite library storage is incomplete: {required}')
+    migration = (
+        ROOT / 'packages/catalog/lib/src/comic_source_migration.dart'
+    ).read_text(encoding='utf-8')
+    app_home = (ROOT / 'apps/app/lib/demo_home.dart').read_text(encoding='utf-8')
+    for required in (
+        'ComicPreference mergePreference',
+        'existingTarget?.customOrder',
+        '...migrated.categoryIds',
+        '...?existingTarget?.categoryIds',
+    ):
+        if required not in migration:
+            fail(f'cross-source preference merge is incomplete: {required}')
+    for required in (
+        'final prepared = <_PreparedChapterMigration>[]',
+        'targetProgress: targetEntry?.progress',
+        'targetReadState: targetReadStates',
+        'final mergedPreference = plan.mergePreference',
+    ):
+        if required not in app_home:
+            fail(f'cross-source migration preflight is incomplete: {required}')
+
     source_contract = (
         ROOT / 'packages/catalog/lib/src/source_catalog.dart'
     ).read_text(encoding='utf-8')

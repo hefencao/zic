@@ -1,4 +1,29 @@
-## Current iteration — two detail owners, whole-comic persistence and chapter downloads
+## Current iteration — source-composite durable library identity
+
+SQLite schema version 5 now keys imported chapters, reading progress, comic preferences and chapter
+read state by `sourceId + nativeId`. `ReadingProgress`, `ComicPreference` and `ChapterReadState` carry
+and serialize the source identity; Store point queries/removals and App maps use the same composite
+identity. Different sources can therefore retain identical native comic/chapter IDs with independent
+progress, preference, read state and deletion lifecycles.
+
+Schemas 1–4 migrate transactionally. Legacy chapter-owned progress/read state inherits its imported
+chapter source. A remote preference with multiple possible owners is assigned by deterministic
+saved/import recency and every ambiguity/orphan is persisted to `library_migration_issue` rather than
+silently overwritten or discarded. A foreign-key check must pass before the migrated schema version
+is committed. Legacy JSON remains readable through explicit owning-source fallbacks; all new writes
+include the source.
+
+Cross-source copy no longer rejects an otherwise valid target only because another source uses the
+same native ID. Every exact target chapter is freshly resolved and identity-validated before the first
+durable write; target preferences are merged and existing target progress/read state is preserved.
+Home/history/source cards and details chapter/read/download Widget keys are also source-composite,
+preventing Flutter element state from leaking between sources.
+
+The reported `void` callback branch returns and `SavedComicRecord.fromJson` list promotion failures are
+fixed. Schema isolation, schema 4→5 ambiguity reporting and legacy JSON compatibility have dedicated
+regressions.
+
+## Previous iteration — two detail owners, whole-comic persistence and chapter downloads
 
 `RemoteComicDetailsScreen` and `LocalComicDetailsScreen` now own different lifecycles while composing
 the same header, preference/category controls, chapter rows, error presentation and pull-to-refresh
@@ -19,9 +44,9 @@ Cross-source migration is explicit and copy-based. It searches the selected targ
 current title, lets the user confirm a candidate (or provide a manual native ID), copies whole-comic
 preferences, fetches target chapter manifests, and migrates progress/read state only for
 normalized-title plus sequence matches.
-It never copies source URLs or offline bytes and never deletes the original source. Because legacy
-preference/chapter/read tables are still keyed by native IDs, collision guards stop or skip unsafe
-writes. UI selection, category insertion, drag targets and keys already use source-composite identities.
+It never copies source URLs or offline bytes and never deletes the original source. At that release,
+legacy preference/chapter/read tables were still keyed by native IDs, so collision guards stopped or
+skipped unsafe writes; schema version 5 supersedes those guards with durable composite identity.
 
 The reported missing `ImportedChapterRecord` type import is fixed in `library_comic.dart`. Reader zoom
 uses an app-owned two-tap window whose timer is canceled on disposal, and App tests wait for explicit

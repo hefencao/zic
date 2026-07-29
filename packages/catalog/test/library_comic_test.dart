@@ -12,6 +12,7 @@ void main() {
         importedAt: DateTime.utc(2026, 7, 26),
       ),
       progress: ReadingProgress(
+        sourceId: 'local-folder',
         comicId: 'comic-1',
         chapterId: 'chapter-1',
         pageIndex: 1,
@@ -168,6 +169,7 @@ void main() {
         importedAt: DateTime.utc(2026, 7, 28),
       ).copyWith(sourceId: 'source-a'),
       progress: ReadingProgress(
+        sourceId: 'source-a',
         comicId: 'comic-1',
         chapterId: 'source-chapter-1',
         pageIndex: 1,
@@ -194,18 +196,77 @@ void main() {
       ChapterMigrationConfidence.exact,
     );
     final migrated = plan.migratePreference(
-      ComicPreference.defaults(comicId: source.comicId).copyWith(
+      ComicPreference.defaults(sourceId: source.sourceId, comicId: source.comicId).copyWith(
         liked: true,
         collected: true,
         categoryIds: const <String>{'reading'},
       ),
       targetCustomOrder: 9,
     );
+    expect(migrated.sourceId, 'source-b');
     expect(migrated.comicId, 'target-comic');
     expect(migrated.liked, isTrue);
     expect(migrated.collected, isTrue);
     expect(migrated.categoryIds, contains('reading'));
     expect(migrated.customOrder, 9);
+  });
+
+  test('source migration merges instead of erasing target preferences', () {
+    final source = LibraryComic.fromEntries(<ImportedLibraryEntry>[
+      ImportedLibraryEntry(
+        chapter: _chapter(
+          chapterId: 'source-chapter-1',
+          title: '第 1 话',
+          sequence: 1,
+          importedAt: DateTime.utc(2026, 7, 28),
+        ).copyWith(sourceId: 'source-a'),
+      ),
+    ]);
+    final plan = ComicSourceMigrationPlan.build(
+      source: source,
+      target: _remoteManifest(
+        sourceId: 'source-b',
+        comicId: 'target-comic',
+        chapterTitles: const <String>['第 1 话'],
+      ),
+    );
+    final sourcePreference = ComicPreference.defaults(
+      sourceId: source.sourceId,
+      comicId: source.comicId,
+    ).copyWith(
+      inShelf: false,
+      liked: true,
+      categoryIds: const <String>{'source-category'},
+    );
+    final targetPreference = ComicPreference.defaults(
+      sourceId: 'source-b',
+      comicId: 'target-comic',
+      sourceKind: ComicSourceKind.remote,
+      customOrder: 4,
+    ).copyWith(
+      collected: true,
+      categoryIds: const <String>{'target-category'},
+    );
+    final updatedAt = DateTime.utc(2026, 7, 28, 3);
+
+    final merged = plan.mergePreference(
+      sourcePreference,
+      existingTarget: targetPreference,
+      targetCustomOrder: 99,
+      updatedAt: updatedAt,
+    );
+
+    expect(merged.sourceId, 'source-b');
+    expect(merged.comicId, 'target-comic');
+    expect(merged.inShelf, isTrue);
+    expect(merged.liked, isTrue);
+    expect(merged.collected, isTrue);
+    expect(
+      merged.categoryIds,
+      const <String>{'source-category', 'target-category'},
+    );
+    expect(merged.customOrder, 4);
+    expect(merged.updatedAt, updatedAt);
   });
 
   test('saved comic JSON keeps a lightweight chapter catalog', () {

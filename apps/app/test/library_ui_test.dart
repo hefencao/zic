@@ -54,6 +54,7 @@ void main() {
     await store.upsertChapter(chapter);
     await store.saveProgress(
       ReadingProgress(
+        sourceId: chapter.sourceId,
         comicId: chapter.comicId,
         chapterId: chapter.chapterId,
         pageIndex: 0,
@@ -68,7 +69,7 @@ void main() {
 
     expect(find.byKey(homeUpdatesSectionKey), findsOneWidget);
     expect(find.byKey(homeHistorySectionKey), findsOneWidget);
-    final homeCover = find.byKey(importedChapterEntryKey(chapter.chapterId));
+    final homeCover = find.byKey(importedChapterEntryKey(chapter.sourceId, chapter.chapterId));
     expect(homeCover, findsOneWidget);
     final homeCoverSize = tester.getSize(homeCover);
 
@@ -111,7 +112,7 @@ void main() {
       ),
     );
     await store.saveComicPreference(
-      ComicPreference.defaults(comicId: comicId).copyWith(inShelf: true),
+      ComicPreference.defaults(sourceId: 'local-folder', comicId: comicId).copyWith(inShelf: true),
     );
 
     await tester.pumpWidget(App(libraryStore: store));
@@ -167,8 +168,8 @@ void main() {
     await gesture.up();
     await tester.pump(const Duration(milliseconds: 320));
 
-    final firstPreference = await store.getComicPreference(first.comicId);
-    final secondPreference = await store.getComicPreference(second.comicId);
+    final firstPreference = await store.getComicPreference(first.sourceId, first.comicId);
+    final secondPreference = await store.getComicPreference(second.sourceId, second.comicId);
     expect(firstPreference, isNotNull);
     expect(secondPreference, isNotNull);
     expect(firstPreference!.customOrder, greaterThan(secondPreference!.customOrder));
@@ -211,7 +212,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 320));
 
     final categories = await store.listCategories();
-    final preference = await store.getComicPreference(chapter.comicId);
+    final preference = await store.getComicPreference(chapter.sourceId, chapter.comicId);
     expect(categories, hasLength(1));
     expect(preference?.categoryIds, contains(categories.single.categoryId));
     expect(find.byKey(comicCoverKey(chapter.sourceId, chapter.comicId)), findsOneWidget);
@@ -264,7 +265,7 @@ void main() {
     await tester.tap(find.text('移动到 分类二'));
     await tester.pump(const Duration(milliseconds: 320));
 
-    final preference = await store.getComicPreference(chapter.comicId);
+    final preference = await store.getComicPreference(chapter.sourceId, chapter.comicId);
     expect(preference?.categoryIds, contains(secondCategoryId));
     expect(preference?.categoryIds, isNot(contains(firstCategoryId)));
   });
@@ -282,6 +283,7 @@ void main() {
             child: ComicCoverCard(
               comic: LibraryComic.fromEntries(<ImportedLibraryEntry>[entry]),
               preference: ComicPreference.defaults(
+                sourceId: chapter.sourceId,
                 comicId: chapter.comicId,
                 sourceKind: ComicSourceKind.remote,
               ),
@@ -313,7 +315,10 @@ void main() {
       MaterialApp(
         home: ComicDetailsScreen(
           comic: LibraryComic.fromEntries(<ImportedLibraryEntry>[entry]),
-          preference: ComicPreference.defaults(comicId: chapter.comicId),
+          preference: ComicPreference.defaults(
+            sourceId: chapter.sourceId,
+            comicId: chapter.comicId,
+          ),
           categories: const <LibraryCategory>[],
           readStates: const <String, ChapterReadState>{},
           coverBytes: () async => _tinyPng(),
@@ -329,13 +334,13 @@ void main() {
     await tester.pump();
     expect(saved?.liked, isTrue);
 
-    await tester.tap(find.byKey(chapterReadKey(chapter.chapterId)));
+    await tester.tap(find.byKey(chapterReadKey(chapter.sourceId, chapter.chapterId)));
     await tester.pump();
     expect(read, isTrue);
     expect(opened, isTrue);
 
     await tester.drag(
-      find.byKey(chapterReadKey(chapter.chapterId)),
+      find.byKey(chapterReadKey(chapter.sourceId, chapter.chapterId)),
       const Offset(320, 0),
     );
     await tester.pump(const Duration(milliseconds: 320));
@@ -362,7 +367,7 @@ void main() {
             ImportedLibraryEntry(chapter: second),
             ImportedLibraryEntry(chapter: first),
           ]),
-          preference: ComicPreference.defaults(comicId: first.comicId),
+          preference: ComicPreference.defaults(sourceId: first.sourceId, comicId: first.comicId),
           categories: const <LibraryCategory>[],
           readStates: const <String, ChapterReadState>{},
           coverBytes: () async => _tinyPng(),
@@ -381,7 +386,7 @@ void main() {
     expect(find.text('第 2 话'), findsOneWidget);
     expect(find.text('2 章 · 2 页'), findsOneWidget);
 
-    await tester.tap(find.byKey(chapterReadKey('chapter-2')));
+    await tester.tap(find.byKey(chapterReadKey('local-folder', 'chapter-2')));
     await tester.pump();
     expect(openedChapterId, 'chapter-2');
   });

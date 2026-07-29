@@ -490,8 +490,10 @@
    a durable download. **Implemented.**
 4. Reuse complete persistent chapter artifacts in Reader after restart. **Implemented.**
 5. Copy cross-source preferences and only exact chapter/progress/read matches after resolving target
-   manifests; retain original source and bytes. **Implemented with native-ID collision guards.**
-6. Migrate all legacy keys to source-composite schema 5 and add download management/cancel/retry.
-   **Next.**
-7. Add target-source search and candidate comparison before migration instead of requiring a manual ID.
-   **Next.**
+   manifests; retain original source and bytes. **Implemented in 0.23.0-dev.27; schema 5 later removed
+   the native-ID-only storage restriction.**
+6. Migrate all legacy keys to source-composite schema 5. **Implemented in 0.24.0-dev.28 with
+   compatibility decoding and auditable ambiguity reporting.**
+7. Add download management/cancel/retry and authoritative aggregate progress. **Next.**
+8. Add target-source side-by-side candidate comparison before migration. Search and manual-ID selection
+   already exist; cover/author/chapter-sample comparison remains next.

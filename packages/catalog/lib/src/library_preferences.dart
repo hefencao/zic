@@ -2,7 +2,6 @@ enum ComicSourceKind { local, remote }
 
 enum LibrarySortMode { recent, title, pageCount, custom }
 
-
 final class ComicSourcePreference {
   const ComicSourcePreference({
     required this.sourceId,
@@ -97,6 +96,7 @@ final class LibraryCategory {
 
 final class ComicPreference {
   ComicPreference({
+    required this.sourceId,
     required this.comicId,
     required this.sourceKind,
     required this.inShelf,
@@ -105,14 +105,20 @@ final class ComicPreference {
     required Iterable<String> categoryIds,
     required this.customOrder,
     required this.updatedAt,
-  }) : categoryIds = Set<String>.unmodifiable(categoryIds);
+  }) : categoryIds = Set<String>.unmodifiable(categoryIds) {
+    if (sourceId.trim().isEmpty || comicId.trim().isEmpty) {
+      throw ArgumentError('comic preference identity must be non-empty');
+    }
+  }
 
   factory ComicPreference.defaults({
+    required String sourceId,
     required String comicId,
     ComicSourceKind sourceKind = ComicSourceKind.local,
     int customOrder = 0,
   }) {
     return ComicPreference(
+      sourceId: sourceId,
       comicId: comicId,
       sourceKind: sourceKind,
       inShelf: true,
@@ -124,6 +130,7 @@ final class ComicPreference {
     );
   }
 
+  final String sourceId;
   final String comicId;
   final ComicSourceKind sourceKind;
   final bool inShelf;
@@ -132,6 +139,8 @@ final class ComicPreference {
   final Set<String> categoryIds;
   final int customOrder;
   final DateTime updatedAt;
+
+  String get identity => '$sourceId\u0000$comicId';
 
   ComicPreference copyWith({
     ComicSourceKind? sourceKind,
@@ -143,6 +152,7 @@ final class ComicPreference {
     DateTime? updatedAt,
   }) {
     return ComicPreference(
+      sourceId: sourceId,
       comicId: comicId,
       sourceKind: sourceKind ?? this.sourceKind,
       inShelf: inShelf ?? this.inShelf,
@@ -155,6 +165,7 @@ final class ComicPreference {
   }
 
   Map<String, Object> toJson() => <String, Object>{
+        'sourceId': sourceId,
         'comicId': comicId,
         'sourceKind': sourceKind.name,
         'inShelf': inShelf,
@@ -165,13 +176,21 @@ final class ComicPreference {
         'updatedAt': updatedAt.toUtc().toIso8601String(),
       };
 
-  factory ComicPreference.fromJson(Map<String, Object?> json) {
+  factory ComicPreference.fromJson(
+    Map<String, Object?> json, {
+    String? fallbackSourceId,
+  }) {
     final rawCategoryIds = json['categoryIds'];
     if (rawCategoryIds is! List<Object?> ||
         rawCategoryIds.any((value) => value is! String)) {
       throw const FormatException('categoryIds must be a string list');
     }
+    final sourceId = (json['sourceId'] as String?) ?? fallbackSourceId;
+    if (sourceId == null || sourceId.trim().isEmpty) {
+      throw const FormatException('sourceId must be a non-empty string');
+    }
     return ComicPreference(
+      sourceId: sourceId,
       comicId: _requiredString(json, 'comicId'),
       sourceKind: ComicSourceKind.values.byName(
         _requiredString(json, 'sourceKind'),
@@ -188,26 +207,39 @@ final class ComicPreference {
 
 final class ChapterReadState {
   const ChapterReadState({
+    required this.sourceId,
     required this.comicId,
     required this.chapterId,
     required this.isRead,
     required this.updatedAt,
   });
 
+  final String sourceId;
   final String comicId;
   final String chapterId;
   final bool isRead;
   final DateTime updatedAt;
 
+  String get identity => '$sourceId\u0000$chapterId';
+
   Map<String, Object> toJson() => <String, Object>{
+        'sourceId': sourceId,
         'comicId': comicId,
         'chapterId': chapterId,
         'isRead': isRead,
         'updatedAt': updatedAt.toUtc().toIso8601String(),
       };
 
-  factory ChapterReadState.fromJson(Map<String, Object?> json) {
+  factory ChapterReadState.fromJson(
+    Map<String, Object?> json, {
+    String? fallbackSourceId,
+  }) {
+    final sourceId = (json['sourceId'] as String?) ?? fallbackSourceId;
+    if (sourceId == null || sourceId.trim().isEmpty) {
+      throw const FormatException('sourceId must be a non-empty string');
+    }
     return ChapterReadState(
+      sourceId: sourceId,
       comicId: _requiredString(json, 'comicId'),
       chapterId: _requiredString(json, 'chapterId'),
       isRead: _requiredBool(json, 'isRead'),

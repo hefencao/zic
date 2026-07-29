@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:catalog/catalog.dart';
@@ -37,6 +38,7 @@ void main() {
     );
     await store.upsertChapter(chapter);
     final progress = ReadingProgress(
+      sourceId: chapter.sourceId,
       comicId: chapter.comicId,
       chapterId: chapter.chapterId,
       pageIndex: 1,
@@ -46,13 +48,13 @@ void main() {
     );
     await store.saveProgress(progress);
 
-    final entry = await store.get(chapter.chapterId);
+    final entry = await store.get(chapter.sourceId, chapter.chapterId);
     expect(entry?.chapter.toJson(), chapter.toJson());
     expect(entry?.progress?.toJson(), progress.toJson());
     expect((await store.list()).single.chapter.chapterId, chapter.chapterId);
 
-    await store.removeChapter(chapter.chapterId);
-    expect(await store.get(chapter.chapterId), isNull);
+    await store.removeChapter(chapter.sourceId, chapter.chapterId);
+    expect(await store.get(chapter.sourceId, chapter.chapterId), isNull);
   });
 
 
@@ -80,6 +82,7 @@ void main() {
     await store.upsertChapter(first);
     await store.saveProgress(
       ReadingProgress(
+        sourceId: first.sourceId,
         comicId: first.comicId,
         chapterId: first.chapterId,
         pageIndex: 1,
@@ -112,7 +115,7 @@ void main() {
     );
     await store.upsertChapter(refreshed);
 
-    final entry = await store.get(refreshed.chapterId);
+    final entry = await store.get(refreshed.sourceId, refreshed.chapterId);
     expect(entry?.progress?.pageIndex, 2);
     expect(entry?.progress?.subPageOffset, 0.25);
   });
@@ -139,6 +142,7 @@ void main() {
       ],
     );
     final progress = ReadingProgress(
+      sourceId: chapter.sourceId,
       comicId: chapter.comicId,
       chapterId: chapter.chapterId,
       pageIndex: 0,
@@ -156,7 +160,7 @@ void main() {
     final reopened = SqliteImportedLibraryStore(path);
     await reopened.open();
     addTearDown(reopened.close);
-    final entry = await reopened.get(chapter.chapterId);
+    final entry = await reopened.get(chapter.sourceId, chapter.chapterId);
     expect(entry?.chapter.toJson(), chapter.toJson());
     expect(entry?.progress?.toJson(), progress.toJson());
   });
@@ -186,8 +190,10 @@ void main() {
       createdAt: now,
     );
     await store.upsertCategory(category);
-    final preference = ComicPreference.defaults(comicId: chapter.comicId)
-        .copyWith(
+    final preference = ComicPreference.defaults(
+      sourceId: chapter.sourceId,
+      comicId: chapter.comicId,
+    ).copyWith(
       liked: true,
       categoryIds: const <String>{'reading'},
       customOrder: 7,
@@ -195,6 +201,7 @@ void main() {
     );
     await store.saveComicPreference(preference);
     final state = ChapterReadState(
+      sourceId: chapter.sourceId,
       comicId: chapter.comicId,
       chapterId: chapter.chapterId,
       isRead: true,
@@ -204,17 +211,17 @@ void main() {
 
     expect((await store.listCategories()).single.toJson(), category.toJson());
     expect(
-      (await store.getComicPreference(chapter.comicId))?.toJson(),
+      (await store.getComicPreference(chapter.sourceId, chapter.comicId))?.toJson(),
       preference.toJson(),
     );
     expect(
-      (await store.listChapterReadStates(chapter.comicId)).single.toJson(),
+      (await store.listChapterReadStates(chapter.sourceId, chapter.comicId)).single.toJson(),
       state.toJson(),
     );
 
-    await store.removeChapter(chapter.chapterId);
-    expect(await store.listChapterReadStates(chapter.comicId), isEmpty);
-    expect(await store.getComicPreference(chapter.comicId), isNull);
+    await store.removeChapter(chapter.sourceId, chapter.chapterId);
+    expect(await store.listChapterReadStates(chapter.sourceId, chapter.comicId), isEmpty);
+    expect(await store.getComicPreference(chapter.sourceId, chapter.comicId), isNull);
   });
 
   test('sqlite migrates schema 2 source preferences', () async {
@@ -275,6 +282,7 @@ void main() {
     addTearDown(store.close);
     final saved = _savedComic();
     final preference = ComicPreference.defaults(
+      sourceId: saved.sourceId,
       comicId: saved.comicId,
       sourceKind: ComicSourceKind.remote,
     ).copyWith(
@@ -295,10 +303,10 @@ void main() {
 
     await store.removeSavedComic(saved.sourceId, saved.comicId);
     expect(await store.listSavedComics(), isEmpty);
-    expect(await store.getComicPreference(saved.comicId), isNull);
+    expect(await store.getComicPreference(saved.sourceId, saved.comicId), isNull);
   });
 
-  test('sqlite migrates schema 3 to saved comic schema 4', () async {
+  test('sqlite migrates schema 3 through composite schema 5', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-saved-comic-migration-',
     );
@@ -320,7 +328,7 @@ void main() {
     );
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
-    expect(db.select('PRAGMA user_version').single.values.single, 4);
+    expect(db.select('PRAGMA user_version').single.values.single, 5);
   });
 
   test('sqlite keeps comic preference until the last grouped chapter is removed',
@@ -332,7 +340,10 @@ void main() {
     final second = _groupedChapter('chapter-2', 2);
     await store.upsertChapter(first);
     await store.upsertChapter(second);
-    final preference = ComicPreference.defaults(comicId: first.comicId).copyWith(
+    final preference = ComicPreference.defaults(
+      sourceId: first.sourceId,
+      comicId: first.comicId,
+    ).copyWith(
       liked: true,
       updatedAt: DateTime.utc(2026, 7, 28, 10),
     );
@@ -341,14 +352,248 @@ void main() {
     expect(aggregateImportedLibrary(await store.list()).single.chapters,
         hasLength(2));
 
-    await store.removeChapter(first.chapterId);
-    expect(await store.getComicPreference(first.comicId), isNotNull);
+    await store.removeChapter(first.sourceId, first.chapterId);
+    expect(await store.getComicPreference(first.sourceId, first.comicId), isNotNull);
     expect(aggregateImportedLibrary(await store.list()).single.chapters,
         hasLength(1));
 
-    await store.removeChapter(second.chapterId);
-    expect(await store.getComicPreference(first.comicId), isNull);
+    await store.removeChapter(second.sourceId, second.chapterId);
+    expect(await store.getComicPreference(first.sourceId, first.comicId), isNull);
   });
+
+  test('schema 5 isolates identical native ids across sources', () async {
+    final store = SqliteImportedLibraryStore.memory();
+    await store.open();
+    addTearDown(store.close);
+
+    final first = _sourceChapter('source-a');
+    final second = _sourceChapter('source-b');
+    await store.upsertChapter(first);
+    await store.upsertChapter(second);
+    await store.saveProgress(
+      _progressFor(first, pageIndex: 0, minute: 1),
+    );
+    await store.saveProgress(
+      _progressFor(second, pageIndex: 1, minute: 2),
+    );
+    await store.saveComicPreference(
+      ComicPreference.defaults(
+        sourceId: first.sourceId,
+        comicId: first.comicId,
+        sourceKind: ComicSourceKind.remote,
+      ).copyWith(liked: true, updatedAt: DateTime.utc(2026, 7, 28, 13, 1)),
+    );
+    await store.saveComicPreference(
+      ComicPreference.defaults(
+        sourceId: second.sourceId,
+        comicId: second.comicId,
+        sourceKind: ComicSourceKind.remote,
+      ).copyWith(collected: true, updatedAt: DateTime.utc(2026, 7, 28, 13, 2)),
+    );
+    await store.saveChapterReadState(
+      ChapterReadState(
+        sourceId: first.sourceId,
+        comicId: first.comicId,
+        chapterId: first.chapterId,
+        isRead: true,
+        updatedAt: DateTime.utc(2026, 7, 28, 13, 3),
+      ),
+    );
+    await store.saveChapterReadState(
+      ChapterReadState(
+        sourceId: second.sourceId,
+        comicId: second.comicId,
+        chapterId: second.chapterId,
+        isRead: false,
+        updatedAt: DateTime.utc(2026, 7, 28, 13, 4),
+      ),
+    );
+
+    expect((await store.list()), hasLength(2));
+    expect((await store.get(first.sourceId, first.chapterId))?.progress?.pageIndex, 0);
+    expect((await store.get(second.sourceId, second.chapterId))?.progress?.pageIndex, 1);
+    expect(
+      (await store.getComicPreference(first.sourceId, first.comicId))?.liked,
+      isTrue,
+    );
+    expect(
+      (await store.getComicPreference(second.sourceId, second.comicId))
+          ?.collected,
+      isTrue,
+    );
+    expect(
+      (await store.listChapterReadStates(first.sourceId, first.comicId))
+          .single
+          .isRead,
+      isTrue,
+    );
+    expect(
+      (await store.listChapterReadStates(second.sourceId, second.comicId))
+          .single
+          .isRead,
+      isFalse,
+    );
+
+    await store.removeChapter(first.sourceId, first.chapterId);
+    expect(await store.get(first.sourceId, first.chapterId), isNull);
+    expect(await store.get(second.sourceId, second.chapterId), isNotNull);
+  });
+
+  test('schema 4 migration resolves ambiguous preference and reports it',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-composite-schema-migration-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final path = '${directory.path}/library.sqlite3';
+    final legacy = sql.sqlite3.open(path);
+    final chapter = _sourceChapter('source-a');
+    final progress = _progressFor(chapter, pageIndex: 1, minute: 5);
+    final readState = ChapterReadState(
+      sourceId: chapter.sourceId,
+      comicId: chapter.comicId,
+      chapterId: chapter.chapterId,
+      isRead: true,
+      updatedAt: DateTime.utc(2026, 7, 28, 14, 6),
+    );
+    final preference = ComicPreference.defaults(
+      sourceId: chapter.sourceId,
+      comicId: chapter.comicId,
+      sourceKind: ComicSourceKind.remote,
+    ).copyWith(liked: true, updatedAt: DateTime.utc(2026, 7, 28, 14, 7));
+    final legacyPreference = Map<String, Object?>.from(preference.toJson())
+      ..remove('sourceId');
+    final legacyProgress = Map<String, Object?>.from(progress.toJson())
+      ..remove('sourceId');
+    final legacyReadState = Map<String, Object?>.from(readState.toJson())
+      ..remove('sourceId');
+    final sourceAComic = _savedComicFor(
+      sourceId: 'source-a',
+      updatedAt: DateTime.utc(2026, 7, 28, 14, 1),
+    );
+    final sourceBComic = _savedComicFor(
+      sourceId: 'source-b',
+      updatedAt: DateTime.utc(2026, 7, 28, 14, 2),
+    );
+
+    legacy.execute('PRAGMA foreign_keys = ON');
+    legacy.execute('''
+      CREATE TABLE imported_chapter (
+        chapter_id TEXT NOT NULL PRIMARY KEY,
+        comic_id TEXT NOT NULL,
+        imported_us INTEGER NOT NULL,
+        chapter_json TEXT NOT NULL
+      )
+    ''');
+    legacy.execute('''
+      CREATE TABLE reading_progress (
+        chapter_id TEXT NOT NULL PRIMARY KEY,
+        updated_us INTEGER NOT NULL,
+        progress_json TEXT NOT NULL
+      )
+    ''');
+    legacy.execute('''
+      CREATE TABLE comic_preference (
+        comic_id TEXT NOT NULL PRIMARY KEY,
+        updated_us INTEGER NOT NULL,
+        preference_json TEXT NOT NULL
+      )
+    ''');
+    legacy.execute('''
+      CREATE TABLE chapter_read_state (
+        chapter_id TEXT NOT NULL PRIMARY KEY,
+        comic_id TEXT NOT NULL,
+        updated_us INTEGER NOT NULL,
+        read_json TEXT NOT NULL
+      )
+    ''');
+    legacy.execute('''
+      CREATE TABLE saved_comic (
+        source_id TEXT NOT NULL,
+        comic_id TEXT NOT NULL,
+        saved_us INTEGER NOT NULL,
+        updated_us INTEGER NOT NULL,
+        comic_json TEXT NOT NULL,
+        PRIMARY KEY(source_id, comic_id)
+      )
+    ''');
+    legacy.execute(
+      'INSERT INTO imported_chapter VALUES (?, ?, ?, ?)',
+      <Object?>[
+        chapter.chapterId,
+        chapter.comicId,
+        chapter.importedAt.microsecondsSinceEpoch,
+        jsonEncode(chapter.toJson()),
+      ],
+    );
+    legacy.execute(
+      'INSERT INTO reading_progress VALUES (?, ?, ?)',
+      <Object?>[
+        progress.chapterId,
+        progress.updatedAt.microsecondsSinceEpoch,
+        jsonEncode(legacyProgress),
+      ],
+    );
+    legacy.execute(
+      'INSERT INTO comic_preference VALUES (?, ?, ?)',
+      <Object?>[
+        preference.comicId,
+        preference.updatedAt.microsecondsSinceEpoch,
+        jsonEncode(legacyPreference),
+      ],
+    );
+    legacy.execute(
+      'INSERT INTO chapter_read_state VALUES (?, ?, ?, ?)',
+      <Object?>[
+        readState.chapterId,
+        readState.comicId,
+        readState.updatedAt.microsecondsSinceEpoch,
+        jsonEncode(legacyReadState),
+      ],
+    );
+    for (final saved in <SavedComicRecord>[sourceAComic, sourceBComic]) {
+      legacy.execute(
+        'INSERT INTO saved_comic VALUES (?, ?, ?, ?, ?)',
+        <Object?>[
+          saved.sourceId,
+          saved.comicId,
+          saved.savedAt.microsecondsSinceEpoch,
+          saved.updatedAt.microsecondsSinceEpoch,
+          jsonEncode(saved.toJson()),
+        ],
+      );
+    }
+    legacy.execute('PRAGMA user_version = 4');
+    legacy.dispose();
+
+    final store = SqliteImportedLibraryStore(path);
+    await store.open();
+    addTearDown(store.close);
+
+    expect((await store.get('source-a', chapter.chapterId))?.progress?.pageIndex, 1);
+    expect(
+      (await store.listChapterReadStates('source-a', chapter.comicId))
+          .single
+          .isRead,
+      isTrue,
+    );
+    expect(await store.getComicPreference('source-a', chapter.comicId), isNull);
+    expect(
+      (await store.getComicPreference('source-b', chapter.comicId))?.liked,
+      isTrue,
+    );
+    final issues = await store.listMigrationIssues();
+    expect(issues, hasLength(1));
+    expect(issues.single.schemaFrom, 4);
+    expect(issues.single.entityKind, 'comic_preference');
+    expect(issues.single.legacyKey, chapter.comicId);
+    expect(issues.single.resolvedSourceId, 'source-b');
+    expect(
+      issues.single.details['reason'],
+      'remote preference had multiple source owners',
+    );
+  });
+
 }
 
 ImportedChapterRecord _groupedChapter(String chapterId, int sequence) {
@@ -371,6 +616,67 @@ ImportedChapterRecord _groupedChapter(String chapterId, int sequence) {
     ],
   );
 }
+
+
+ImportedChapterRecord _sourceChapter(String sourceId) => ImportedChapterRecord(
+      directoryId: '$sourceId:shared-comic',
+      displayName: '第 1 话',
+      sourceId: sourceId,
+      comicId: 'shared-comic',
+      comicTitle: '跨源漫画',
+      chapterId: 'shared-chapter',
+      sourceRevision: '$sourceId-r1',
+      sequence: 1,
+      importedAt: DateTime.utc(2026, 7, 28, 13),
+      pages: <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '1.png',
+          sourceId: 'https://example.invalid/$sourceId/1.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+        ImportedPageRecord(
+          displayName: '2.png',
+          sourceId: 'https://example.invalid/$sourceId/2.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+
+ReadingProgress _progressFor(
+  ImportedChapterRecord chapter, {
+  required int pageIndex,
+  required int minute,
+}) =>
+    ReadingProgress(
+      sourceId: chapter.sourceId,
+      comicId: chapter.comicId,
+      chapterId: chapter.chapterId,
+      pageIndex: pageIndex,
+      subPageOffset: 0,
+      readerMode: ReaderMode.paged,
+      updatedAt: DateTime.utc(2026, 7, 28, 13, minute),
+    );
+
+SavedComicRecord _savedComicFor({
+  required String sourceId,
+  required DateTime updatedAt,
+}) =>
+    SavedComicRecord(
+      sourceId: sourceId,
+      comicId: 'shared-comic',
+      title: '跨源漫画',
+      chapters: const <SavedChapterRecord>[
+        SavedChapterRecord(
+          chapterId: 'shared-chapter',
+          title: '第 1 话',
+          sequence: 1,
+          pageCount: 2,
+          sourceRevision: 'r1',
+        ),
+      ],
+      savedAt: DateTime.utc(2026, 7, 28, 14),
+      updatedAt: updatedAt,
+    );
 
 
 SavedComicRecord _savedComic() => SavedComicRecord(

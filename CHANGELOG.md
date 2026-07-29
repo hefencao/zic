@@ -1,3 +1,26 @@
+## 0.24.0-dev.28 — source-composite durable library schema
+
+- Migrate SQLite to schema version 5 so imported chapters, reading progress, comic preferences and
+  chapter read state use source-composite primary keys rather than source-agnostic native IDs.
+- Carry `sourceId` through `ReadingProgress`, `ComicPreference` and `ChapterReadState`, with explicit
+  fallback decoding for legacy JSON and source-aware Store point queries/removals.
+- Upgrade schemas 1–4 transactionally. Resolve legacy chapter-owned data from its imported chapter;
+  resolve ambiguous remote preferences deterministically and persist an auditable
+  `library_migration_issue` record instead of overwriting or silently dropping state.
+- Remove cross-source native-ID conflict guards now made obsolete by composite storage. Two sources
+  can retain the same comic and chapter IDs with independent progress, preferences and read state.
+- Preflight every exact cross-source chapter match before the first durable write; merge target comic
+  preferences and preserve existing target progress/read state instead of overwriting it with source state.
+- Run `PRAGMA foreign_key_check` before committing a legacy schema upgrade so an invalid composite
+  ownership graph rolls back rather than becoming the active library.
+- Make Home/history/source cards and details chapter/read/download Widget keys source-composite so
+  Flutter state cannot be reused across equal native IDs from different sources.
+- Fix the reported `void` callback conditional returns and type-safe legacy `SavedComicRecord` list
+  decoding without weakening product tests.
+- Add schema 4→5 ambiguity-reporting, duplicate-native-ID isolation and legacy JSON fallback
+  regressions; make legacy schema preparation recover development databases whose version marker was
+  written before every table existed.
+
 ## 0.23.0-dev.27 — two detail owners, whole-comic shelf, durable chapter downloads
 
 - Replace the single stateful details owner with `RemoteComicDetailsScreen` and

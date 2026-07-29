@@ -53,7 +53,7 @@ void main() {
     await _pumpUntilFound(tester, find.byKey(comicSourcesPageKey));
     await _pumpUntilFound(
       tester,
-      find.byKey(sourceComicCardKey('fixture-a-comic')),
+      find.byKey(sourceComicCardKey('fixture-a', 'fixture-a-comic')),
     );
 
     expect(first.browseCalls, 1);
@@ -63,7 +63,7 @@ void main() {
     await tester.tap(find.byKey(comicSourceChoiceKey('fixture-b')));
     await _pumpUntilFound(
       tester,
-      find.byKey(sourceComicCardKey('fixture-b-comic')),
+      find.byKey(sourceComicCardKey('fixture-b', 'fixture-b-comic')),
     );
 
     await tester.tap(find.byKey(comicSourceManageKey));
@@ -163,9 +163,9 @@ void main() {
     await tester.tap(find.byIcon(Icons.public_outlined));
     await _pumpUntilFound(
       tester,
-      find.byKey(sourceComicCardKey('fixture-comic')),
+      find.byKey(sourceComicCardKey('fixture', 'fixture-comic')),
     );
-    await tester.tap(find.byKey(sourceComicCardKey('fixture-comic')));
+    await tester.tap(find.byKey(sourceComicCardKey('fixture', 'fixture-comic')));
     await _pumpUntilFound(tester, find.byKey(details.remoteComicDetailsScreenKey));
 
     final shelf = find.byKey(details.comicDetailsShelfKey);
@@ -174,9 +174,9 @@ void main() {
     await tester.pump();
 
     expect(await store.getSavedComic('fixture', 'fixture-comic'), isNotNull);
-    expect(await store.get('fixture-chapter'), isNull);
+    expect(await store.get('fixture', 'fixture-chapter'), isNull);
     expect(
-      (await store.getComicPreference('fixture-comic'))?.inShelf,
+      (await store.getComicPreference('fixture', 'fixture-comic'))?.inShelf,
       isTrue,
     );
 
@@ -185,7 +185,7 @@ void main() {
     await tester.tap(find.byKey(download));
     await _pumpUntilFound(tester, find.textContaining('已下载'));
 
-    final entry = await store.get('fixture-chapter');
+    final entry = await store.get('fixture', 'fixture-chapter');
     expect(entry, isNotNull);
     expect(entry!.chapter.sourceId, 'fixture');
     expect(entry.chapter.pages.single.stablePageId, 'fixture-page-1');
@@ -212,9 +212,9 @@ void main() {
     await tester.tap(find.byIcon(Icons.public_outlined));
     await _pumpUntilFound(
       tester,
-      find.byKey(sourceComicCardKey('fixture-route-comic')),
+      find.byKey(sourceComicCardKey('fixture-route', 'fixture-route-comic')),
     );
-    await tester.tap(find.byKey(sourceComicCardKey('fixture-route-comic')));
+    await tester.tap(find.byKey(sourceComicCardKey('fixture-route', 'fixture-route-comic')));
     await _pumpUntilFound(tester, find.byKey(details.remoteComicDetailsScreenKey));
     expect(find.byKey(details.localComicDetailsScreenKey), findsNothing);
 
@@ -222,7 +222,7 @@ void main() {
     await tester.ensureVisible(collect);
     await tester.tap(collect);
     await tester.pump();
-    expect(await store.get('fixture-route-chapter'), isNull);
+    expect(await store.get('fixture-route', 'fixture-route-chapter'), isNull);
     expect(
       (await store.getSavedComic('fixture-route', 'fixture-route-comic'))
           ?.chapters,
@@ -231,12 +231,12 @@ void main() {
 
     await tester.pageBack();
     await tester.pump();
-    await tester.tap(find.byKey(sourceComicCardKey('fixture-route-comic')));
+    await tester.tap(find.byKey(sourceComicCardKey('fixture-route', 'fixture-route-comic')));
     await _pumpUntilFound(tester, find.byKey(details.localComicDetailsScreenKey));
     expect(find.byKey(details.remoteComicDetailsScreenKey), findsNothing);
-    expect(find.byKey(sourceChapterKey('fixture-route-chapter')), findsOneWidget);
+    expect(find.byKey(sourceChapterKey('fixture-route', 'fixture-route-chapter')), findsOneWidget);
     expect(
-      find.byKey(sourceChapterKey('fixture-route-chapter-2')),
+      find.byKey(sourceChapterKey('fixture-route', 'fixture-route-chapter-2')),
       findsOneWidget,
     );
 
@@ -247,8 +247,8 @@ void main() {
     await tester.ensureVisible(find.byKey(secondDownload));
     await tester.tap(find.byKey(secondDownload));
     await _pumpUntilFound(tester, find.textContaining('已下载'));
-    expect(await store.get('fixture-route-chapter'), isNull);
-    expect(await store.get('fixture-route-chapter-2'), isNotNull);
+    expect(await store.get('fixture-route', 'fixture-route-chapter'), isNull);
+    expect(await store.get('fixture-route', 'fixture-route-chapter-2'), isNotNull);
   });
 
   testWidgets('pull refresh expands remote catalog without downloading chapters',
@@ -272,15 +272,15 @@ void main() {
     await tester.tap(find.byIcon(Icons.public_outlined));
     await _pumpUntilFound(
       tester,
-      find.byKey(sourceComicCardKey('fixture-refresh-comic')),
+      find.byKey(sourceComicCardKey('fixture-refresh', 'fixture-refresh-comic')),
     );
-    await tester.tap(find.byKey(sourceComicCardKey('fixture-refresh-comic')));
+    await tester.tap(find.byKey(sourceComicCardKey('fixture-refresh', 'fixture-refresh-comic')));
     await _pumpUntilFound(
       tester,
-      find.byKey(sourceChapterKey('fixture-refresh-chapter')),
+      find.byKey(sourceChapterKey('fixture-refresh', 'fixture-refresh-chapter')),
     );
     expect(
-      find.byKey(sourceChapterKey('fixture-refresh-chapter-2')),
+      find.byKey(sourceChapterKey('fixture-refresh', 'fixture-refresh-chapter-2')),
       findsNothing,
     );
 
@@ -291,11 +291,11 @@ void main() {
     await tester.pump();
     await _pumpUntilFound(
       tester,
-      find.byKey(sourceChapterKey('fixture-refresh-chapter-2')),
+      find.byKey(sourceChapterKey('fixture-refresh', 'fixture-refresh-chapter-2')),
     );
 
     expect(source.comicLoads, 2);
-    expect(await store.get('fixture-refresh-chapter-2'), isNull);
+    expect(await store.get('fixture-refresh', 'fixture-refresh-chapter-2'), isNull);
     expect(
       await store.getSavedComic('fixture-refresh', 'fixture-refresh-comic'),
       isNull,
@@ -323,9 +323,9 @@ void main() {
     await tester.tap(find.byIcon(Icons.public_outlined));
     await _pumpUntilFound(
       tester,
-      find.byKey(sourceComicCardKey('fixture-retry-comic')),
+      find.byKey(sourceComicCardKey('fixture-retry', 'fixture-retry-comic')),
     );
-    await tester.tap(find.byKey(sourceComicCardKey('fixture-retry-comic')));
+    await tester.tap(find.byKey(sourceComicCardKey('fixture-retry', 'fixture-retry-comic')));
     await _pumpUntilFound(tester, find.textContaining('漫画详情加载失败'));
 
     final retry = find.widgetWithText(FilledButton, '重试');
@@ -333,7 +333,7 @@ void main() {
     await tester.tap(retry);
     await _pumpUntilFound(
       tester,
-      find.byKey(sourceChapterKey('fixture-retry-chapter')),
+      find.byKey(sourceChapterKey('fixture-retry', 'fixture-retry-chapter')),
     );
   });
 }

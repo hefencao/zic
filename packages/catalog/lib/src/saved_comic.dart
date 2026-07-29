@@ -207,37 +207,41 @@ final class SavedComicRecord {
 
   factory SavedComicRecord.fromJson(Map<String, Object?> json) {
     final rawAuthors = json['authors'];
-    final rawChapters = json['chapters'];
     if (rawAuthors != null &&
         (rawAuthors is! List<Object?> ||
             rawAuthors.any((author) => author is! String))) {
       throw const FormatException('authors must be a string list');
     }
+    final authors = rawAuthors == null
+        ? const <String>[]
+        : (rawAuthors as List<Object?>).cast<String>();
+
+    final rawChapters = json['chapters'];
     if (rawChapters != null && rawChapters is! List<Object?>) {
       throw const FormatException('chapters must be a list');
     }
+    final chapterValues = rawChapters == null
+        ? const <Object?>[]
+        : rawChapters as List<Object?>;
+
     return SavedComicRecord(
       sourceId: _requiredString(json, 'sourceId'),
       comicId: _requiredString(json, 'comicId'),
       title: _requiredString(json, 'title'),
-      authors: rawAuthors == null
-          ? const <String>[]
-          : rawAuthors.cast<String>(),
+      authors: authors,
       description: json['description'] as String?,
       coverSourceId: json['coverSourceId'] as String?,
       readingDirection: ReadingDirection.values.byName(
         (json['readingDirection'] as String?) ?? ReadingDirection.ltr.name,
       ),
-      chapters: rawChapters == null
-          ? const <SavedChapterRecord>[]
-          : rawChapters.map((value) {
-              if (value is! Map) {
-                throw const FormatException('chapter must be an object');
-              }
-              return SavedChapterRecord.fromJson(
-                Map<String, Object?>.from(value),
-              );
-            }),
+      chapters: chapterValues.map((value) {
+        if (value is! Map) {
+          throw const FormatException('chapter must be an object');
+        }
+        return SavedChapterRecord.fromJson(
+          Map<String, Object?>.from(value),
+        );
+      }),
       savedAt: DateTime.parse(_requiredString(json, 'savedAt')),
       updatedAt: DateTime.parse(_requiredString(json, 'updatedAt')),
     );
