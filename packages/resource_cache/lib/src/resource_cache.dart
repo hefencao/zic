@@ -169,6 +169,15 @@ abstract interface class ResourceCacheByteStoreFileAccess {
   Future<PersistedResourceFile?> locate(ResourceCacheKey key);
 }
 
+/// Durable byte store whose entries can also be opened as stable files.
+///
+/// Dart cannot promote one nullable object to the intersection of two
+/// unrelated interfaces after an `is` check. This explicit composition keeps
+/// the capability honest and lets consumers use both read/write invalidation
+/// and file-location operations without casts.
+abstract interface class ResourceCacheFileByteStore
+    implements ResourceCacheByteStore, ResourceCacheByteStoreFileAccess {}
+
 /// Optional durable backing for byte-valued resource-cache entries.
 ///
 /// Implementations must preserve the full [ResourceCacheKey], including its
@@ -812,16 +821,14 @@ final class ResourceCacheManager {
     ResourceCacheKey key,
   ) async {
     final store = byteStore;
-    if (store is! ResourceCacheByteStoreFileAccess) {
+    if (store is! ResourceCacheFileByteStore) {
       return null;
     }
-    final ResourceCacheByteStore persistentStore = store!;
-    final ResourceCacheByteStoreFileAccess fileStore = store as ResourceCacheByteStoreFileAccess;
     final generation = _generationOf(key);
     final epoch = _epoch;
     await _persistenceTail;
     try {
-      final file = await fileStore.locate(key);
+      final file = await store.locate(key);
       if (file == null ||
           _closed ||
           epoch != _epoch ||
@@ -830,7 +837,7 @@ final class ResourceCacheManager {
       }
       if (!file.expiresAt.isAfter(_now())) {
         _expirations++;
-        _queuePersistenceMutation(() => persistentStore.remove(key));
+        _queuePersistenceMutation(() => store.remove(key));
         return null;
       }
       return file;

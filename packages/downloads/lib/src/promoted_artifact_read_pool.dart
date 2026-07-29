@@ -57,7 +57,7 @@ final class PromotedArtifactReadPool {
     return tracked;
   }
 
-  /// Joins a read only after the authoritative session transport starts it.
+  /// Joins a read only after the authoritative session enters active work.
   ///
   /// Calling this method never accesses cache storage and therefore does not
   /// turn PageView construction into an independent download/cache demand.
@@ -97,9 +97,12 @@ final class PromotedArtifactReadPool {
           _terminal.add(session.id);
           release(session.id);
           break;
-        case DownloadState.idle:
         case DownloadState.queued:
         case DownloadState.receiving:
+          _terminal.remove(session.id);
+          _prime(session.id);
+          break;
+        case DownloadState.idle:
         case DownloadState.sealed:
           _terminal.remove(session.id);
           break;
@@ -108,6 +111,20 @@ final class PromotedArtifactReadPool {
 
     _listeners[session] = listener;
     session.addSnapshotListener(listener);
+  }
+
+  void _prime(DownloadId id) {
+    final pending = read(id);
+    // The session transport or page consumer will normally await the same
+    // Future. This
+    // listener only prevents an unhandled asynchronous error if the session is
+    // cancelled before either consumer attaches.
+    unawaited(
+      pending.then<void>(
+        (_) {},
+        onError: (Object _, StackTrace __) {},
+      ),
+    );
   }
 
   void close() {

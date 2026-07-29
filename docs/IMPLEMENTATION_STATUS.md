@@ -1,3 +1,11 @@
+## Current iteration — visible-frame readiness, authoritative artifact reads and executable plugin requests
+
+Home cold-start telemetry is retained unchanged because the reported delay is not currently reproducible. No new startup scan or eager diagnostic work is added.
+
+The report-28 resource-cache failure is closed with `ResourceCacheFileByteStore`, an explicit composition of durable byte ownership and stable-file lookup. Local WebP `ready` now follows the renderer's first presented frame rather than container parsing. Promoted page bytes are primed only after the authoritative replacement session enters queued/receiving state; page media joins the same immutable read, and promotion waiting closes listener-attachment transition windows.
+
+Mihon archive inspection now includes normalized entry classes without class loading. Separate `MihonIsolatedExecutor` and `VeneraSandboxExecutor` contracts pass the exact trusted payload plus bounded runtime limits to ecosystem-specific backends. These are execution boundaries, not engines: APK class loading and JavaScript evaluation remain unimplemented until isolated adapters satisfy the contracts.
+
 ## Current iteration — compact cover manifest, attributable Home startup and Android Mihon metadata
 
 The dev.42 external compile report is closed in product types rather than tests. Memory encoded sources are no longer const-initialized from runtime bytes, optional durable-store capabilities are explicitly narrowed, nullable async index fallback is parenthesized, and byte-owned animation players cannot receive nullable data.

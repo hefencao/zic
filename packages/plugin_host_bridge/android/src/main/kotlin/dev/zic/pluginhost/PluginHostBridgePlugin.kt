@@ -86,6 +86,27 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             .firstNotNullOfOrNull { key -> metadata?.getString(key)?.trim() }
             ?.takeIf { it.isNotEmpty() }
             ?: throw IllegalArgumentException("Mihon extension ABI metadata is missing")
+        val rawEntryClasses = ENTRY_CLASS_KEYS
+            .firstNotNullOfOrNull { key -> metadata?.getString(key)?.trim() }
+            ?.takeIf { it.isNotEmpty() }
+            ?: throw IllegalArgumentException("Mihon extension entry metadata is missing")
+        val entryClasses = rawEntryClasses
+            .split(';')
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .map { value ->
+                val expanded = if (value.startsWith('.')) {
+                    info.packageName + value
+                } else {
+                    value
+                }
+                require(CLASS_NAME.matches(expanded)) {
+                    "Mihon extension entry class is invalid"
+                }
+                expanded
+            }
+            .distinct()
+        require(entryClasses.isNotEmpty()) { "Mihon extension entry metadata is empty" }
         val signer = signingCertificates(info).singleOrNull()
             ?: throw IllegalArgumentException("APK must have exactly one current signer")
         return mapOf(
@@ -93,6 +114,7 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             "signerSha256" to sha256(signer.toByteArray()),
             "versionCode" to versionCode(info),
             "extensionLib" to extensionLib,
+            "entryClasses" to entryClasses,
         )
     }
 
@@ -142,10 +164,17 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     companion object {
         private const val CHANNEL_NAME = "dev.zic/plugin_host_bridge"
+        private val CLASS_NAME = Regex(
+            "[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)+",
+        )
         private val EXTENSION_LIB_KEYS = listOf(
             "tachiyomix.extensionLib",
             "tachiyomi.extensionLib",
             "tachiyomi.extension.lib",
+        )
+        private val ENTRY_CLASS_KEYS = listOf(
+            "tachiyomix.extension.class",
+            "tachiyomi.extension.class",
         )
     }
 }

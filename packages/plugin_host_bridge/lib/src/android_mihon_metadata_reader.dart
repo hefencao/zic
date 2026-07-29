@@ -26,6 +26,12 @@ final class AndroidMihonApkMetadataReader implements MihonApkMetadataReader {
     final signerSha256 = value['signerSha256'];
     final versionCode = value['versionCode'];
     final extensionLib = value['extensionLib'];
+    final rawEntryClasses = value['entryClasses'];
+    if (rawEntryClasses is! List<Object?>) {
+      throw const FormatException('Android APK entry metadata is invalid');
+    }
+    final entryClasses =
+        rawEntryClasses.whereType<String>().toList(growable: false);
     if (packageName is! String ||
         packageName.trim().isEmpty ||
         signerSha256 is! String ||
@@ -33,7 +39,10 @@ final class AndroidMihonApkMetadataReader implements MihonApkMetadataReader {
         versionCode is! int ||
         versionCode < 0 ||
         extensionLib is! String ||
-        extensionLib.trim().isEmpty) {
+        extensionLib.trim().isEmpty ||
+        entryClasses.isEmpty ||
+        entryClasses.any((value) => value.trim().isEmpty) ||
+        entryClasses.length != rawEntryClasses.length) {
       throw const FormatException('Android APK metadata response is invalid');
     }
     return MihonApkMetadata(
@@ -41,6 +50,7 @@ final class AndroidMihonApkMetadataReader implements MihonApkMetadataReader {
       signerSha256: signerSha256,
       versionCode: versionCode,
       extensionLib: extensionLib,
+      entryClasses: entryClasses,
     );
   }
 }

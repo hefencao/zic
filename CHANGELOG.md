@@ -1,3 +1,12 @@
+## 0.31.0-dev.44 — visible-frame readiness, authoritative artifact priming and plugin execution contracts
+
+- Close the report-28 compile blocker with the explicit `ResourceCacheFileByteStore` composition capability. File lookup and durable invalidation now share one statically valid owner instead of relying on promotion to the intersection of unrelated nullable interfaces.
+- Make local WebP readiness mean an actually presented first frame rather than container validation. Cold-codec and target-rebuild regressions use the packaged animation fixture and retain strict visible-frame/no-black-gap assertions.
+- Prime promoted-artifact reads when the authoritative replacement `DownloadSession` enters queued/receiving state. Page consumers still only join that single read; they do not create cache or network demand. Promotion waiting now checks session state before and after listener attachment.
+- Extend Android Mihon pre-load inspection with normalized extension entry classes, while continuing to forbid class loading during inspection. The trust gate rejects executable activation metadata that lacks an entry class.
+- Add separate immutable-payload execution request contracts for an isolated Mihon backend and a bounded Venera JavaScript backend, including invocation, response, concurrency and runtime-heap limits. Concrete engines remain downstream adapters and cannot bypass inspection, trust or session identity validation.
+- Preserve the existing Home startup trace without adding new cold-start work, add queued-read and runtime-request regressions, and record ADR 0028.
+
 ## 0.31.0-dev.43 — compact cover manifest, attributable Home startup and Android Mihon metadata
 
 - Close the external dev.42 compile blockers in product code: encoded memory sources no longer use a runtime value in a const initializer; durable file-store capabilities are explicitly narrowed; chapter bulk projection parenthesizes nullable async fallback correctly; and local animation branches require non-null encoded bytes before constructing byte-owned players.

@@ -457,57 +457,72 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
           );
         }
       }
-      final ready = Completer<DownloadSnapshot>();
-      late final DownloadSnapshotListener listener;
-      listener = (snapshot) {
-        if (ready.isCompleted) {
-          return;
-        }
-        switch (snapshot.state) {
-          case DownloadState.promoted:
-            ready.complete(snapshot);
-            break;
-          case DownloadState.failed:
-            ready.completeError(
-              snapshot.failure ??
-                  const Failure(
-                    code: ErrorCode.network,
-                    message: 'reader media download failed',
-                  ),
-            );
-            break;
-          case DownloadState.disposed:
-            ready.completeError(
-              const Failure(
-                code: ErrorCode.cancelled,
-                message: 'reader media download was disposed',
-              ),
-            );
-            break;
-          case DownloadState.idle:
-          case DownloadState.queued:
-          case DownloadState.receiving:
-          case DownloadState.sealed:
-            break;
-        }
-      };
-      session.addSnapshotListener(listener);
-      try {
-        await Future.any<DownloadSnapshot>(<Future<DownloadSnapshot>>[
-          ready.future,
-          token.whenCancelled.then<DownloadSnapshot>((_) {
-            token.throwIfCancelled();
-            throw StateError('unreachable cancellation path');
-          }),
-        ]);
-      } finally {
-        session.removeSnapshotListener(listener);
-      }
+      await _waitForMediaPromotion(session, token);
     }
     token.throwIfCancelled();
     final bytes = await _workspace.readArtifact(session.artifact);
     token.throwIfCancelled();
     return bytes;
+  }
+
+  Future<void> _waitForMediaPromotion(
+    DownloadSession session,
+    MediaLoadToken token,
+  ) async {
+    token.throwIfCancelled();
+    final ready = Completer<void>();
+
+    void accept(DownloadSnapshot snapshot) {
+      if (ready.isCompleted) {
+        return;
+      }
+      switch (snapshot.state) {
+        case DownloadState.promoted:
+          ready.complete();
+          break;
+        case DownloadState.failed:
+          ready.completeError(
+            snapshot.failure ??
+                const Failure(
+                  code: ErrorCode.network,
+                  message: 'reader media download failed',
+                ),
+          );
+          break;
+        case DownloadState.disposed:
+          ready.completeError(
+            const Failure(
+              code: ErrorCode.cancelled,
+              message: 'reader media download was disposed',
+            ),
+          );
+          break;
+        case DownloadState.idle:
+        case DownloadState.queued:
+        case DownloadState.receiving:
+        case DownloadState.sealed:
+          break;
+      }
+    }
+
+    // DownloadSession fires the current snapshot on attachment. The explicit
+    // snapshot checks on both sides of registration also document and close
+    // the transition window for alternative session implementations.
+    accept(session.snapshot);
+    if (ready.isCompleted) {
+      await ready.future;
+      return;
+    }
+    session.addSnapshotListener(accept, fireImmediately: false);
+    try {
+      accept(session.snapshot);
+      await Future.any<void>(<Future<void>>[
+        ready.future,
+        token.whenCancelled.then<void>((_) => token.throwIfCancelled()),
+      ]);
+    } finally {
+      session.removeSnapshotListener(accept);
+    }
   }
 
   @override

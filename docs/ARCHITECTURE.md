@@ -886,7 +886,10 @@ validate trust/version/permissions, and return an explicitly closable `ExternalC
 `PermissionedExternalComicPluginHost` separates metadata inspection from ecosystem-specific execution, applies
 repository/payload/package/signer/version/ABI/capability policy, quarantines failed activations and validates runtime
 source identity before returning a session. `ExternalPluginRuntimeRegistry` owns active sessions and prevents two
-plugins from registering the same namespaced source ID. It still contains no APK class loader or JavaScript engine.
+plugins from registering the same namespaced source ID. Android metadata inspection also resolves normalized extension
+entry classes without loading them. `MihonIsolatedExecutor` and
+`VeneraSandboxExecutor` then create exact immutable-payload requests with response/concurrency/time/heap limits for
+separate backends. The package still contains no APK class loader or JavaScript engine.
 
 ordinary `BrowsableComicSource` adapters. A plugin cannot inject navigation, read Reader state, own
 demand or mutate artifacts directly.

@@ -27,6 +27,7 @@ enum ExternalPluginDenial {
   hostUnavailable,
   inspectionFailed,
   activationFailed,
+  runtimeMetadataMissing,
 }
 
 final class ExternalPluginInspection {
@@ -41,9 +42,11 @@ final class ExternalPluginInspection {
     this.signerSha256,
     this.versionCode,
     this.extensionLib,
+    Iterable<String> mihonEntryClasses = const <String>[],
     this.sourceKey,
-  }) : requestedCapabilities =
-            Set<ExternalPluginCapability>.unmodifiable(requestedCapabilities) {
+  })  : requestedCapabilities =
+            Set<ExternalPluginCapability>.unmodifiable(requestedCapabilities),
+        mihonEntryClasses = List<String>.unmodifiable(mihonEntryClasses) {
     if (payloadSha256.trim().isEmpty) {
       throw ArgumentError.value(
         payloadSha256,
@@ -74,6 +77,7 @@ final class ExternalPluginInspection {
   final String? signerSha256;
   final int? versionCode;
   final String? extensionLib;
+  final List<String> mihonEntryClasses;
 
   /// Venera-compatible source key obtained from repository metadata or a
   /// constrained metadata-only script inspection.

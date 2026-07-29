@@ -9,8 +9,8 @@ import 'package:resource_cache/resource_cache.dart';
 /// Warm file hits use one compact storage-owned manifest. Per-entry metadata is
 /// retained only as a crash-recovery/migration journal, so a visible shelf does
 /// not parse one JSON file per cover before handing stable files to the engine.
-final class FileResourceCacheByteStore implements ResourceCacheByteStore,
-    ResourceCacheByteStoreFileAccess, ResourceCacheByteStoreMaintenance {
+final class FileResourceCacheByteStore implements ResourceCacheFileByteStore,
+    ResourceCacheByteStoreMaintenance {
   FileResourceCacheByteStore(
     String rootPath, {
     this.maxEntries = 96,

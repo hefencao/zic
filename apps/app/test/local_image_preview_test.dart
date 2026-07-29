@@ -178,6 +178,13 @@ void main() {
     final trace = MemoryTraceSink();
     final playback = ReaderPlaybackController();
     addTearDown(playback.dispose);
+    final fixture = await rootBundle.load(
+      'assets/demo/animated/finite_loop.webp',
+    );
+    final fixtureBytes = fixture.buffer.asUint8List(
+      fixture.offsetInBytes,
+      fixture.lengthInBytes,
+    );
     final image = PickedImage(
       file: XFile(identity.canonicalUri.toString()),
       sourceId: identity.canonicalUri.toString(),
@@ -189,7 +196,7 @@ void main() {
       MaterialApp(
         home: LocalImagePlayer(
           image: image,
-          tokenBytesLoader: (_, __) async => _tinyWebp(),
+          tokenBytesLoader: (_, __) async => fixtureBytes,
           downloadIdentity: identity,
           traceClock: _FakeClock(),
           traceSink: trace,
@@ -210,6 +217,12 @@ void main() {
       await tester.pump();
     }
 
+    expect(
+      trace.events.where(
+        (event) => event.kind == TraceEventKind.framePresented,
+      ),
+      isNotEmpty,
+    );
     final decodeStarted = trace.events.firstWhere(
       (event) => event.kind == TraceEventKind.decodeStarted,
     );

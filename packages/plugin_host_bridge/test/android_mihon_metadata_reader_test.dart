@@ -21,6 +21,9 @@ void main() {
         'signerSha256': 'aabb',
         'versionCode': 42,
         'extensionLib': '1.6',
+        'entryClasses': <String>[
+          'eu.kanade.tachiyomi.extension.en.example.ExampleFactory',
+        ],
       };
     });
 
@@ -36,6 +39,10 @@ void main() {
     expect(metadata.signerSha256, 'aabb');
     expect(metadata.versionCode, 42);
     expect(metadata.extensionLib, '1.6');
+    expect(
+      metadata.entryClasses,
+      <String>['eu.kanade.tachiyomi.extension.en.example.ExampleFactory'],
+    );
   });
 
   test('rejects incomplete platform metadata', () async {
@@ -45,6 +52,7 @@ void main() {
               'signerSha256': '',
               'versionCode': 1,
               'extensionLib': '1.6',
+              'entryClasses': <String>['example.Source'],
             });
 
     expect(

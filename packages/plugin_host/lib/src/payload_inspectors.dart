@@ -43,17 +43,19 @@ final class CallbackExternalPluginPayloadLoader
 }
 
 final class MihonApkMetadata {
-  const MihonApkMetadata({
+  MihonApkMetadata({
     required this.packageName,
     required this.signerSha256,
     required this.versionCode,
     required this.extensionLib,
-  });
+    required Iterable<String> entryClasses,
+  }) : entryClasses = List<String>.unmodifiable(entryClasses);
 
   final String packageName;
   final String signerSha256;
   final int versionCode;
   final String extensionLib;
+  final List<String> entryClasses;
 }
 
 /// Android-specific metadata adapter.
@@ -96,6 +98,7 @@ final class MihonApkInspector implements ExternalPluginInspector {
       signerSha256: apk.signerSha256,
       versionCode: apk.versionCode,
       extensionLib: apk.extensionLib,
+      mihonEntryClasses: apk.entryClasses,
       requestedCapabilities: const <ExternalPluginCapability>{
         ExternalPluginCapability.network,
         ExternalPluginCapability.cookies,

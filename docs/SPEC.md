@@ -672,4 +672,8 @@ External plugin repository metadata may be parsed for Mihon extension packages a
 indexes accept both `filename` and deployed `fileName`, and a declared `key` becomes stable `venera:<key>` identity.
 Executable compatibility requires format-specific, permissioned hosts with explicit teardown that adapt sources to
 `BrowsableComicSource`; plugins receive no direct navigation, Reader demand, session or artifact authority. A Mihon
-host must validate APK signature/version and extension ABI metadata before loading code.
+host must validate APK signature/version, extension ABI and normalized entry classes before loading code. The
+isolated backend may determine whether an approved loaded entry is a single Source or SourceFactory; metadata inspection
+must not instantiate it. Mihon and Venera backends must receive the exact inspected payload path/length and enforce declared
+invocation timeout, response-byte, concurrency and runtime-heap limits; inability to enforce a limit is activation
+failure, not permission to run unrestricted code.

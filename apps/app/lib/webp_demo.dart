@@ -888,7 +888,9 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       case WebpPreviewPhase.loading:
         break;
       case WebpPreviewPhase.ready:
-        _publish(ImagePreviewState.ready(LocalImageFormat.webp));
+        // Container validation is not presentation readiness. The outer local
+        // image state becomes ready only after the Flutter/native renderer
+        // reports an actually presented first frame.
         break;
       case WebpPreviewPhase.invalid:
         _publish(
@@ -899,6 +901,11 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         );
         break;
     }
+  }
+
+  void _onWebpFirstFrame() {
+    _publish(ImagePreviewState.ready(LocalImageFormat.webp));
+    _reportFirstFrame();
   }
 
   void _onControlledReady() {
@@ -939,7 +946,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           showStatus: false,
           initialEngine: WebpPlayerEngine.flutter,
           onPreviewStateChanged: _onWebpState,
-          onFirstFrame: _reportFirstFrame,
+          onFirstFrame: _onWebpFirstFrame,
           downloadIdentity: widget.downloadIdentity,
           traceClock: widget.traceClock,
           traceSink: widget.traceSink,

@@ -128,6 +128,7 @@ throw new Error("must never execute during inspection");
     expect(result.packageName, 'org.example.extension');
     expect(result.versionCode, 12);
     expect(result.extensionLib, 'tachiyomix-1.6');
+    expect(result.mihonEntryClasses, <String>['org.example.extension.Source']);
     expect(result.payloadSha256, hasLength(64));
     expect(
       result.requestedCapabilities,
@@ -150,11 +151,12 @@ final class _MihonMetadataReader implements MihonApkMetadataReader {
   @override
   Future<MihonApkMetadata> readMetadata(String apkPath) async {
     paths.add(apkPath);
-    return const MihonApkMetadata(
+    return MihonApkMetadata(
       packageName: 'org.example.extension',
       signerSha256: 'aa',
       versionCode: 12,
       extensionLib: 'tachiyomix-1.6',
+      entryClasses: <String>['org.example.extension.Source'],
     );
   }
 }

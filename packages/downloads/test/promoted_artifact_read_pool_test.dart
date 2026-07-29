@@ -49,6 +49,34 @@ void main() {
     expect(source.payload['readMicros'], isA<int>());
   });
 
+  test('authoritative queued session primes a waiting page join', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-promoted-read-prime-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final id = _downloadId(Uri.parse('memory://queued-cache-read'));
+    final bytes = Uint8List.fromList(<int>[9, 8, 7]);
+    final store = _MutableArtifactStore(bytes);
+    final pool = PromotedArtifactReadPool(cache: store);
+    final registry = DownloadRegistry(
+      layout: CacheLayout(directory.path),
+      clock: SystemClock(),
+      onSessionCreated: pool.observe,
+    );
+    addTearDown(() async {
+      pool.close();
+      await registry.dispose();
+    });
+    final session = registry.get(id);
+    final joined = pool.join(id);
+
+    expect(store.reads, 0);
+    session.queue();
+
+    expect(await joined, same(bytes));
+    expect(store.reads, 1);
+  });
+
   test('joining does not initiate a cache read', () async {
     final id = _downloadId(Uri.parse('memory://join-without-demand'));
     final store = _DeferredArtifactStore();

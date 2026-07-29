@@ -1648,7 +1648,8 @@ def check_compile_regressions() -> None:
     ).read_text(encoding='utf-8')
     for required in (
         'final class FileResourceCacheByteStore',
-        'ResourceCacheByteStoreFileAccess, ResourceCacheByteStoreMaintenance',
+        'ResourceCacheFileByteStore,',
+        'ResourceCacheByteStoreMaintenance',
         'Future<ResourceCacheByteStoreUsage> inspect()',
         'Future<ResourceCacheByteStoreTrimReport> trimTo(',
         'contentHash',
@@ -1658,6 +1659,23 @@ def check_compile_regressions() -> None:
     ):
         if required not in durable_response_store:
             fail(f'durable response byte store is incomplete: {required}')
+
+    runtime_executors = (
+        ROOT / 'packages/plugin_host/lib/src/runtime_executors.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class ExternalPluginRuntimeLimits',
+        'final class MihonExecutionRequest',
+        'abstract interface class MihonIsolatedRuntimeBackend',
+        'final class MihonIsolatedExecutor',
+        'final class VeneraExecutionRequest',
+        'abstract interface class VeneraSandboxRuntimeBackend',
+        'final class VeneraSandboxExecutor',
+        'payloadSha256',
+        'supportsLimits',
+    ):
+        if required not in runtime_executors:
+            fail(f'external plugin execution contract is incomplete: {required}')
 
     payload_inspectors = (
         ROOT / 'packages/plugin_host/lib/src/payload_inspectors.dart'
@@ -2119,9 +2137,16 @@ def check_current_iteration() -> None:
         / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/PluginHostBridgePlugin.kt'
     ).read_text(encoding='utf-8')
     for required in (
+        'ENTRY_CLASS_KEYS',
+        'entryClasses',
+        'tachiyomi.extension.class',
+    ):
+        if required not in bridge:
+            fail(f'Mihon APK entry metadata bridge is incomplete: {required}')
+    for required in (
         'enum EncodedResourceOrigin',
-        'final ResourceCacheByteStore persistentStore = store;',
-        'final ResourceCacheByteStoreFileAccess fileStore = store;',
+        'abstract interface class ResourceCacheFileByteStore',
+        'if (store is! ResourceCacheFileByteStore)',
     ):
         if required not in resource_cache:
             fail(f'dev.43 encoded-resource compile closure is incomplete: {required}')

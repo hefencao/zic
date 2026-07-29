@@ -176,6 +176,9 @@ final class ExternalPluginTrustPolicy {
         !allowedMihonExtensionLibs.contains(extensionLib)) {
       denials.add(ExternalPluginDenial.unsupportedAbi);
     }
+    if (inspection.mihonEntryClasses.isEmpty) {
+      denials.add(ExternalPluginDenial.runtimeMetadataMissing);
+    }
     final unexpectedCapabilities =
         inspection.requestedCapabilities.difference(allowedMihonCapabilities);
     if (unexpectedCapabilities.isNotEmpty) {

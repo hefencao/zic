@@ -17,6 +17,9 @@ void main() {
         signerSha256: 'bb',
         versionCode: 4,
         extensionLib: 'tachiyomix-v1.6',
+        mihonEntryClasses: const <String>[
+          'eu.kanade.tachiyomi.extension.en.fixture.FixtureFactory',
+        ],
         requestedCapabilities: const <ExternalPluginCapability>{
           ExternalPluginCapability.network,
           ExternalPluginCapability.nativeCode,
@@ -48,7 +51,10 @@ void main() {
           signerSha256: 'untrusted',
           versionCode: 4,
           extensionLib: 'unknown-abi',
-        ),
+          mihonEntryClasses: const <String>[
+            'eu.kanade.tachiyomi.extension.en.fixture.FixtureFactory',
+          ],
+          ),
       ),
       executor: executor,
       policy: _mihonPolicy(),

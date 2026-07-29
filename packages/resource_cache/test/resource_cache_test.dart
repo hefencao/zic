@@ -486,9 +486,7 @@ void main() {
   );
 }
 
-
-final class _FileResourceByteStore
-    implements ResourceCacheByteStore, ResourceCacheByteStoreFileAccess {
+final class _FileResourceByteStore implements ResourceCacheFileByteStore {
   _FileResourceByteStore({this.file});
 
   PersistedResourceFile? file;
