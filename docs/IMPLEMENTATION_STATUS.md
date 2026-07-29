@@ -1,3 +1,24 @@
+## Current iteration — cover-owned management and authoritative whole-comic downloads
+
+Bookshelf management again keeps single-comic actions on the cover: delete is isolated at the upper-right
+and category migration remains a lower-right popup. A long press is the only entry into source-composite
+multi-selection; the batch surface owns only batch move, copy, clear and confirmed delete. Custom-order
+dragging uses a dedicated handle so it does not steal the multi-select gesture.
+
+Local and remote details subscribe to the authoritative chapter-download stream and inspect durable state
+on entry. Chapter rows therefore retain active/complete state across route recreation. A single chapter
+uses its own title and page denominator on the cover, while an explicit whole-comic operation aggregates
+all known chapters and downloads incomplete entries sequentially through `ChapterDownloadService`.
+Cancellation stops the sequence; completion returns the cover to normal brightness and leaves only a compact
+offline marker. Download Manager omits progress bars for complete tasks and uses the chapter name as the
+primary label.
+
+Home, History and Bookshelf keep the same cover geometry with no metadata rows below it. The comic title is
+overlaid at the lower-left; reading progress is shown only in details. Exact source-composite route locks
+coalesce rapid taps from local and source cards. Reader speed choices use a bounded overlaid popup and chapter
+rows own a Material surface, repairing the reported small-screen and ink assertions without bypassing the
+underlying interactions.
+
 ## Current iteration — migration diagnostics and interaction reliability
 
 SQLite schema version 6 retains the source-composite library tables and adds `acknowledged_us` to

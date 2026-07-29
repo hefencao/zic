@@ -23,6 +23,8 @@ const readerSpeedKey = ValueKey<String>('reader-speed');
 const readerRotateKey = ValueKey<String>('reader-rotate');
 const readerFavoriteKey = ValueKey<String>('reader-favorite');
 const readerDownloadKey = ValueKey<String>('reader-download');
+Key readerSpeedOptionKey(double speed) =>
+    ValueKey<String>('reader-speed-option:$speed');
 
 typedef ReaderArtifactBytesLoader = Future<Uint8List> Function(
   PageAsset asset,
@@ -685,16 +687,38 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                         ),
                         PopupMenuButton<double>(
                           key: readerSpeedKey,
+                          position: PopupMenuPosition.over,
+                          constraints: const BoxConstraints(maxHeight: 260),
                           tooltip: '播放速度',
                           initialValue: playback.speed,
                           onSelected: _playback.setSpeed,
                           itemBuilder: (context) =>
-                              const <PopupMenuEntry<double>>[
-                            PopupMenuItem(value: 0.5, child: Text('0.5×')),
-                            PopupMenuItem(value: 0.75, child: Text('0.75×')),
-                            PopupMenuItem(value: 1, child: Text('1×')),
-                            PopupMenuItem(value: 1.5, child: Text('1.5×')),
-                            PopupMenuItem(value: 2, child: Text('2×')),
+                              <PopupMenuEntry<double>>[
+                            PopupMenuItem(
+                              key: readerSpeedOptionKey(0.5),
+                              value: 0.5,
+                              child: const Text('0.5×'),
+                            ),
+                            PopupMenuItem(
+                              key: readerSpeedOptionKey(0.75),
+                              value: 0.75,
+                              child: const Text('0.75×'),
+                            ),
+                            PopupMenuItem(
+                              key: readerSpeedOptionKey(1),
+                              value: 1,
+                              child: const Text('1×'),
+                            ),
+                            PopupMenuItem(
+                              key: readerSpeedOptionKey(1.5),
+                              value: 1.5,
+                              child: const Text('1.5×'),
+                            ),
+                            PopupMenuItem(
+                              key: readerSpeedOptionKey(2),
+                              value: 2,
+                              child: const Text('2×'),
+                            ),
                           ],
                           child: Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 12),

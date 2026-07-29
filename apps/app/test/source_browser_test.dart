@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -6,6 +7,7 @@ import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zic/chapter_downloads.dart';
 import 'package:zic/comic_details.dart' as details;
 import 'package:zic/demo_home.dart';
 import 'package:zic/main.dart';
@@ -306,8 +308,9 @@ void main() {
       findsNothing,
     );
 
-    final pullRefresh = find.byKey(details.comicDetailsPullRefreshKey);
-    await tester.drag(pullRefresh, const Offset(0, 520));
+    final detailsScroll =
+        find.byKey(details.remoteComicDetailsScreenKey);
+    await tester.drag(detailsScroll, const Offset(0, 520));
     await tester.pump(const Duration(milliseconds: 900));
     await _pumpUntilFound(
       tester,
@@ -320,6 +323,153 @@ void main() {
       await store.getSavedComic('fixture-refresh', 'fixture-refresh-comic'),
       isNull,
     );
+  });
+
+  testWidgets('active chapter download survives details route re-entry',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final source = _FixtureSource('fixture-active', '进行中下载源');
+    final pageGate = Completer<void>();
+    final pageStarted = Completer<void>();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (entry, pageIndex) async {
+        if (!pageStarted.isCompleted) {
+          pageStarted.complete();
+        }
+        await pageGate.future;
+        return _tinyPng();
+      },
+    );
+    addTearDown(downloads.close);
+
+    await tester.pumpWidget(
+      App(
+        libraryStore: store,
+        chapterDownloads: downloads,
+        comicSources: <BrowsableComicSource>[source],
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.public_outlined));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(
+        sourceComicCardKey('fixture-active', 'fixture-active-comic'),
+      ),
+    );
+    await tester.tap(
+      find.byKey(
+        sourceComicCardKey('fixture-active', 'fixture-active-comic'),
+      ),
+    );
+    await _pumpUntilFound(
+      tester,
+      find.byKey(details.remoteComicDetailsScreenKey),
+    );
+
+    final downloadKey = details.comicDetailsDownloadKey(
+      'fixture-active',
+      'fixture-active-chapter',
+    );
+    await _tapVisible(tester, find.byKey(downloadKey));
+    for (var frame = 0; frame < 80 && !pageStarted.isCompleted; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(pageStarted.isCompleted, isTrue);
+    await tester.pump();
+    expect(
+      find.descendant(
+        of: find.byKey(downloadKey),
+        matching: find.byType(CircularProgressIndicator),
+      ),
+      findsOneWidget,
+    );
+
+    await tester.pageBack();
+    await tester.pump();
+    await tester.tap(
+      find.byKey(
+        sourceComicCardKey('fixture-active', 'fixture-active-comic'),
+      ),
+    );
+    await _pumpUntilFound(
+      tester,
+      find.byKey(details.localComicDetailsScreenKey),
+    );
+    await _pumpUntilFound(
+      tester,
+      find.descendant(
+        of: find.byKey(downloadKey),
+        matching: find.byType(CircularProgressIndicator),
+      ),
+    );
+
+    pageGate.complete();
+    await _pumpUntilFound(
+      tester,
+      find.descendant(
+        of: find.byKey(downloadKey),
+        matching: find.byIcon(Icons.download_done),
+      ),
+    );
+  });
+
+  testWidgets('download whole comic persists and downloads every chapter',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final source = _FixtureSource(
+      'fixture-whole',
+      '整本下载源',
+      includeSecondChapter: true,
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (entry, pageIndex) async => _tinyPng(),
+    );
+    addTearDown(downloads.close);
+
+    await tester.pumpWidget(
+      App(
+        libraryStore: store,
+        chapterDownloads: downloads,
+        comicSources: <BrowsableComicSource>[source],
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.public_outlined));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceComicCardKey('fixture-whole', 'fixture-whole-comic')),
+    );
+    await tester.tap(
+      find.byKey(sourceComicCardKey('fixture-whole', 'fixture-whole-comic')),
+    );
+    await _pumpUntilFound(
+      tester,
+      find.byKey(details.comicDetailsDownloadAllKey),
+    );
+    await _tapVisible(tester, find.byKey(details.comicDetailsDownloadAllKey));
+
+    ImportedLibraryEntry? first;
+    ImportedLibraryEntry? second;
+    for (var frame = 0; frame < 120; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      first = await store.get('fixture-whole', 'fixture-whole-chapter');
+      second = await store.get('fixture-whole', 'fixture-whole-chapter-2');
+      if (first != null &&
+          second != null &&
+          await downloads.isDownloaded(first) &&
+          await downloads.isDownloaded(second)) {
+        break;
+      }
+    }
+    expect(first, isNotNull);
+    expect(second, isNotNull);
+    expect(await downloads.isDownloaded(first!), isTrue);
+    expect(await downloads.isDownloaded(second!), isTrue);
   });
 
   testWidgets('source comic details retries a transient source failure',
@@ -348,7 +498,7 @@ void main() {
     await tester.tap(find.byKey(sourceComicCardKey('fixture-retry', 'fixture-retry-comic')));
     await _pumpUntilFound(tester, find.textContaining('漫画详情加载失败'));
 
-    final retry = find.byKey(details.comicDetailsRetryKey);
+    final retry = find.byKey(details.comicDetailsRetryBodyKey);
     await _tapVisible(tester, retry);
     await _pumpUntilFound(
       tester,

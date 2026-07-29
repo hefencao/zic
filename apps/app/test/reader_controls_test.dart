@@ -134,13 +134,14 @@ void main() {
     await _pumpUntilFound(tester, playIcon);
     expect(playIcon, findsOneWidget);
 
-    await tester.tap(find.byKey(readerSpeedKey));
-    await _pumpUntilFound(tester, find.text('2×'));
-    await tester.tap(find.text('2×').last);
+    await tester.tap(find.byKey(readerSpeedKey).hitTestable());
+    await _pumpUntilFound(tester, find.byKey(readerSpeedOptionKey(2)));
+    await tester.tap(find.byKey(readerSpeedOptionKey(2)).hitTestable());
     await _pumpUntilFound(tester, find.byKey(readerSpeedKey));
     expect(find.text('2×'), findsOneWidget);
 
-    await tester.tap(find.byKey(readerRotateKey));
+    await _pumpUntilFound(tester, find.byKey(readerRotateKey).hitTestable());
+    await tester.tap(find.byKey(readerRotateKey).hitTestable());
     await tester.pump();
     expect(
       tester

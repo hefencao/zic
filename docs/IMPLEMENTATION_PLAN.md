@@ -503,3 +503,18 @@
    acknowledgement that never deletes the retained record. **Implemented in 0.26.0-dev.30 with schema 6.**
 9. Add target-source side-by-side candidate comparison before migration. Search and manual-ID selection
    already exist; cover/author/chapter-sample comparison remains next.
+
+## Cover management and download projection slice
+
+1. Keep single-item delete and category migration on each management-mode cover; reserve the separate
+   management surface for long-press multi-selection and batch operations. **Implemented in 0.27.0-dev.31.**
+2. Preserve category migration and sort choices as bounded popup menus; use a separate custom-order drag
+   handle so long press remains multi-select. **Implemented.**
+3. Subscribe details and covers to authoritative chapter task state across route recreation. **Implemented.**
+4. Distinguish single-chapter progress from whole-comic aggregate progress and clear the waterline at
+   terminal completion. **Implemented.**
+5. Add whole-comic download while retaining per-chapter DownloadSession/artifact ownership and cancellation.
+   **Implemented.**
+6. Remove cover metadata rows, overlay title, keep reading progress in details, and coalesce rapid route taps.
+   **Implemented.**
+7. Add durable queue scheduling, concurrency limits and pause/resume policy for whole-comic downloads. **Next.**

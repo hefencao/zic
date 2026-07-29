@@ -2,42 +2,28 @@
 
 ## Sole baseline
 
-Continue only from `zic_v0.26.0-dev.30_migration-diagnostics-ui-reliability.zip`.
+Continue only from `zic_v0.27.0-dev.31_cover-management-whole-download.zip`.
 Do not merge or copy files from an earlier zic archive.
 
 ## Current implementation
 
-- Home, Bookshelf and Comic Sources are the three primary destinations; remote browsing remains lazy.
-- Details retain separate state owners with shared presentation components:
-  - `RemoteComicDetailsScreen` owns live source catalogs and transient source failures.
-  - `LocalComicDetailsScreen` owns saved comic metadata, persisted chapters/read state and offline state.
-- `resolveComicDetailsRoute` uses exact `sourceId + comicId` durability. Whole-comic shelf/liked/
-  collected/category actions persist `SavedComicRecord` and `ComicPreference`; chapter click reads and
-  the chapter trailing action downloads.
-- `ChapterDownloadService` publishes `ChapterDownloadSnapshot` task state with source-composite
-  identity, page and byte progress, terminal phase and failure details.
-- `PersistentChapterDownloadService` derives task state from the existing
-  `DownloadRegistry -> DownloadSession -> promoted artifact` pipeline. It supports cancel, retry and
-  offline artifact deletion; partial artifacts remain resumable and terminal state cannot be replaced
-  by a late progress callback.
-- Home, reading history and Bookshelf reuse `ComicCoverCard`. Incomplete downloads show a dimmed
-  bottom-up waterline, percent and completed/total pages; complete comics show an unobtrusive offline
-  badge. The Download Manager exposes per-chapter cancel/retry/delete and copyable errors.
-- Offline deletion does not remove saved comics, imported chapter metadata, reading progress or read
-  state.
-- Cross-source migration remains explicit copy. It searches/selects a target, preflights every exact
-  title+sequence chapter against a fresh target manifest before the first durable write, merges rather
-  than overwrites target preferences, and only fills missing target progress/read state. Source URLs,
-  offline bytes, existing target state and the original source are retained.
-- SQLite schema version 6 keeps the source-composite library tables and adds durable acknowledgement
-  timestamps to `library_migration_issue`. Schemas 1–4 upgrade transactionally, schema 5 upgrades in
-  place, and acknowledgement never deletes or rewrites migration evidence.
-- Missing cover data renders a stable placeholder rather than throwing during Widget build. Source and
-  details errors remain selectable/copyable, and Android hosts receive `android.permission.INTERNET`
-  through repository tooling.
-- Bookshelf Migration Diagnostics lists pending or retained schema issues, exports JSON to the clipboard
-  and supports individual/bulk acknowledgement. Reader controls fade at their final positions; local and
-  remote chapter open/download work is isolated while the same manifest ensure is coalesced.
+- Home, Bookshelf and Comic Sources remain the three primary destinations; source browsing is lazy.
+- Local and remote details remain separate state owners with shared presentation and exact `sourceId + comicId` routing.
+- Management-mode gallery covers own single-item actions: isolated delete at the upper-right and category
+  migration popup at the lower-right. Long press starts source-composite multi-selection; the batch bar only
+  owns batch move/copy/clear/delete. A dedicated custom-order handle keeps reordering separate from long press.
+- Details inspect and subscribe to `ChapterDownloadSnapshot`, so active and complete chapter state survives
+  route exit/re-entry. Chapter task labels and cover denominators use that chapter only.
+- The shared details header can download the whole comic. Known incomplete chapters are resolved and downloaded
+  sequentially through the existing `ChapterDownloadService`; cancellation stops the sequence and individual
+  Download Manager entries remain authoritative.
+- Covers show a bottom-up waterline only for active work. A chapter task shows its chapter name and own pages;
+  a whole-comic operation aggregates the catalog. Complete work shows only a compact offline badge.
+- Download Manager uses chapter names as primary labels and omits progress bars for completed tasks.
+- Home, History and Bookshelf reuse the same cover with the title overlaid lower-left and no source/progress rows
+  below it. Reading progress is rendered in details. Exact source-composite route locks coalesce rapid taps.
+- SQLite remains schema 6 with source-composite library identity and retained/acknowledgeable migration evidence.
+- Reader controls use a bounded speed popup; chapter rows provide their own Material surface for visible ink.
 
 ## Validation completed in this environment
 
@@ -79,10 +65,10 @@ bash ./tool/build_android.sh release
 
 ## Next mainline work
 
-1. Add side-by-side migration candidate comparison (cover, authors, chapter counts and sampled titles)
-   before confirmation; retain search/manual-ID selection and conservative chapter mapping.
-2. Add source update ingestion and durable timestamps so Home updates reflect actual upstream changes.
-3. Add source-specific typed settings for translation languages and data-saver mode.
-4. Discover and manage orphaned offline artifacts whose chapter metadata was intentionally removed,
-   without weakening DownloadSession ownership rules.
-5. Define a sandboxed Mihon/Keiyoushi adapter ABI, permissions and lifecycle before loading extensions.
+1. Add a durable whole-comic queue with configurable concurrency, pause/resume and network/power policy while
+   retaining per-chapter DownloadSession ownership.
+2. Add side-by-side source-migration candidate comparison before confirmation.
+3. Add source update ingestion and durable timestamps so Home updates reflect actual upstream changes.
+4. Add source-specific typed settings for translation languages and data-saver mode.
+5. Discover/manage orphaned offline artifacts without weakening ownership rules.
+6. Define a sandboxed Mihon/Keiyoushi adapter ABI, permissions and lifecycle before loading extensions.

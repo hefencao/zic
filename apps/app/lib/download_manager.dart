@@ -260,13 +260,13 @@ final class _DownloadTaskTile extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     Text(
-                      snapshot.comicTitle,
+                      snapshot.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                     Text(
-                      '${snapshot.title} · ${snapshot.sourceId}'
+                      '${snapshot.comicTitle} · ${snapshot.sourceId}'
                       ' · ${_phaseLabel(snapshot.phase)}',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
@@ -298,15 +298,18 @@ final class _DownloadTaskTile extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          LinearProgressIndicator(
-            value: snapshot.phase == ChapterDownloadPhase.downloading &&
-                    snapshot.totalBytes == null &&
-                    snapshot.completedPages == 0
-                ? null
-                : snapshot.fraction,
-          ),
-          const SizedBox(height: 6),
+          if (snapshot.phase != ChapterDownloadPhase.complete) ...<Widget>[
+            const SizedBox(height: 8),
+            LinearProgressIndicator(
+              value: snapshot.phase == ChapterDownloadPhase.downloading &&
+                      snapshot.totalBytes == null &&
+                      snapshot.completedPages == 0
+                  ? null
+                  : snapshot.fraction,
+            ),
+            const SizedBox(height: 6),
+          ] else
+            const SizedBox(height: 4),
           Text(
             '${snapshot.completedPages}/${snapshot.totalPages} 页'
             ' · ${_formatBytes(snapshot.receivedBytes)}'

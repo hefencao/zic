@@ -250,8 +250,10 @@ void main() {
       entry.chapter.sourceRevision,
     );
     expect(find.byKey(downloadManagerTaskKey(identity)), findsOneWidget);
-    expect(find.text('下载管理漫画'), findsOneWidget);
+    expect(find.text('下载管理章节'), findsOneWidget);
+    expect(find.textContaining('下载管理漫画'), findsOneWidget);
     expect(find.textContaining('1/1 页'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
 
     await tester.tap(find.byKey(downloadManagerDeleteKey(identity)));
     await tester.pump();

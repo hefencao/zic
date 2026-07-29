@@ -6,6 +6,7 @@ import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'chapter_downloads.dart';
 import 'comic_details.dart' as details;
 
 const comicSourcesPageKey = ValueKey<String>('comic-sources-page');
@@ -553,7 +554,9 @@ final class SourceComicDetailsScreen extends StatelessWidget {
     required this.onReadChanged,
     required this.onOpenChapter,
     required this.onDownloadChapter,
-    required this.isChapterDownloaded,
+    required this.inspectChapterDownload,
+    required this.downloadChanges,
+    required this.onDownloadComic,
     super.key,
   });
 
@@ -570,7 +573,9 @@ final class SourceComicDetailsScreen extends StatelessWidget {
       onReadChanged;
   final details.ComicDetailsChapterOpener onOpenChapter;
   final details.ComicDetailsChapterDownloader onDownloadChapter;
-  final details.ComicDetailsChapterDownloadStatus isChapterDownloaded;
+  final details.ComicDetailsChapterDownloadInspector inspectChapterDownload;
+  final Stream<ChapterDownloadSnapshot> downloadChanges;
+  final details.ComicDetailsComicDownloader onDownloadComic;
 
   @override
   Widget build(BuildContext context) {
@@ -587,7 +592,9 @@ final class SourceComicDetailsScreen extends StatelessWidget {
       onReadChanged: onReadChanged,
       onOpenChapter: onOpenChapter,
       onDownloadChapter: onDownloadChapter,
-      isChapterDownloaded: isChapterDownloaded,
+      inspectChapterDownload: inspectChapterDownload,
+      downloadChanges: downloadChanges,
+      onDownloadComic: onDownloadComic,
     );
   }
 }

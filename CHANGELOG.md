@@ -1,3 +1,27 @@
+## 0.27.0-dev.31 — cover management and whole-comic downloads
+
+- Restore management actions to each cover: delete at the upper-right and category migration through a
+  popup at the lower-right. Remove the duplicate single-selection action surface; long-press starts
+  source-composite multi-selection and the separate batch bar only owns batch move/copy/clear/delete.
+- Preserve custom gallery ordering with a dedicated drag handle so reordering does not compete with the
+  long-press multi-select gesture. Keep sort and category migration as bounded popup menus rather than
+  bottom sheets.
+- Make details subscribe to authoritative `ChapterDownloadSnapshot` state. A chapter keeps its spinner
+  after route recreation, uses its own title and page denominator, and leaves the cover waterline
+  immediately on completion.
+- Add whole-comic download to the shared local/remote details header. It resolves the catalog once,
+  downloads incomplete chapters sequentially through the existing chapter service, stops after
+  cancellation, and preserves per-chapter task ownership in Download Manager.
+- Project an active chapter or whole-comic task onto the shared cover; completed tasks use only a compact
+  offline badge. Download Manager promotes the chapter name and omits the progress bar for completed
+  tasks.
+- Remove source/progress rows below covers, overlay the comic title at the lower-left, and keep reading
+  progress in details. Coalesce rapid Home/History/Bookshelf/Source cover taps by exact source-composite
+  route identity.
+- Repair small-screen Reader speed-menu reachability, restore-unread ListTile material ownership, remote
+  retry/pull-refresh controls and stable management interactions without changing product semantics only
+  for tests.
+
 ## 0.26.0-dev.30 — migration diagnostics and interaction reliability
 
 - Upgrade SQLite to schema version 6 by adding durable acknowledgement timestamps to

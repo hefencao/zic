@@ -6,6 +6,8 @@ import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'chapter_downloads.dart';
+
 const comicDetailsScreenKey = ValueKey<String>('comic-details-screen');
 const localComicDetailsScreenKey =
     ValueKey<String>('local-comic-details-screen');
@@ -21,6 +23,8 @@ const comicDetailsCollectedKey =
     ValueKey<String>('comic-details-collected');
 const comicDetailsLikedKey = ValueKey<String>('comic-details-liked');
 const comicDetailsMigrateKey = ValueKey<String>('comic-details-migrate');
+const comicDetailsDownloadAllKey =
+    ValueKey<String>('comic-details-download-all');
 const comicDetailsRetryKey = ValueKey<String>('comic-details-retry');
 const comicDetailsRetryBodyKey =
     ValueKey<String>('comic-details-retry-body');
@@ -110,8 +114,11 @@ typedef ComicDetailsChapterDownloader = Future<void> Function(
   ImportedLibraryEntry chapter,
 );
 
-typedef ComicDetailsChapterDownloadStatus = Future<bool> Function(
-  ImportedLibraryEntry chapter,
+typedef ComicDetailsChapterDownloadInspector =
+    Future<ChapterDownloadSnapshot> Function(ImportedLibraryEntry chapter);
+
+typedef ComicDetailsComicDownloader = Future<void> Function(
+  Iterable<ImportedLibraryEntry> chapters,
 );
 
 typedef ComicDetailsComicPersister = Future<void> Function(
@@ -134,7 +141,9 @@ final class LocalComicDetailsScreen extends StatefulWidget {
     required this.onReadChanged,
     required this.onOpenChapter,
     required this.onDownloadChapter,
-    required this.isChapterDownloaded,
+    required this.inspectChapterDownload,
+    required this.downloadChanges,
+    required this.onDownloadComic,
     this.source,
     this.ensureSourceChapter,
     this.onMigrateSource,
@@ -151,7 +160,9 @@ final class LocalComicDetailsScreen extends StatefulWidget {
       onReadChanged;
   final ComicDetailsChapterOpener onOpenChapter;
   final ComicDetailsChapterDownloader onDownloadChapter;
-  final ComicDetailsChapterDownloadStatus isChapterDownloaded;
+  final ComicDetailsChapterDownloadInspector inspectChapterDownload;
+  final Stream<ChapterDownloadSnapshot> downloadChanges;
+  final ComicDetailsComicDownloader onDownloadComic;
   final BrowsableComicSource? source;
   final ComicDetailsChapterEnsurer? ensureSourceChapter;
   final ComicDetailsMigrationOpener? onMigrateSource;
@@ -168,7 +179,10 @@ final class _LocalComicDetailsScreenState
   bool _refreshing = false;
   final Set<String> _opening = <String>{};
   final Set<String> _workingDownloads = <String>{};
-  final Set<String> _downloaded = <String>{};
+  final Map<String, ChapterDownloadSnapshot> _downloadSnapshots =
+      <String, ChapterDownloadSnapshot>{};
+  StreamSubscription<ChapterDownloadSnapshot>? _downloadSubscription;
+  bool _downloadingComic = false;
   final Map<String, Future<ImportedLibraryEntry>> _ensureInFlight =
       <String, Future<ImportedLibraryEntry>>{};
 
@@ -176,27 +190,50 @@ final class _LocalComicDetailsScreenState
   void initState() {
     super.initState();
     _library = widget.initialLibrary;
+    _downloadSubscription =
+        widget.downloadChanges.listen(_acceptDownloadSnapshot);
     scheduleMicrotask(
       () => unawaited(_loadDownloadStatuses(_library.chapters)),
     );
   }
 
+  @override
+  void dispose() {
+    unawaited(_downloadSubscription?.cancel());
+    super.dispose();
+  }
+
+  void _acceptDownloadSnapshot(ChapterDownloadSnapshot snapshot) {
+    if (!mounted ||
+        snapshot.sourceId != widget.comic.sourceId ||
+        snapshot.comicId != widget.comic.comicId) {
+      return;
+    }
+    setState(() {
+      _downloadSnapshots[comicDetailsChapterIdentity(
+        snapshot.sourceId,
+        snapshot.chapterId,
+      )] = snapshot;
+    });
+  }
+
   Future<void> _loadDownloadStatuses(
     Iterable<ImportedLibraryEntry> entries,
   ) async {
-    final downloaded = <String>{};
+    final snapshots = <String, ChapterDownloadSnapshot>{};
     for (final entry in entries) {
-      if (await widget.isChapterDownloaded(entry)) {
-        downloaded.add(
-          comicDetailsChapterIdentity(
-            entry.chapter.sourceId,
-            entry.chapter.chapterId,
-          ),
-        );
+      try {
+        final snapshot = await widget.inspectChapterDownload(entry);
+        snapshots[comicDetailsChapterIdentity(
+          snapshot.sourceId,
+          snapshot.chapterId,
+        )] = snapshot;
+      } on Object {
+        // A stale download record must not prevent the details page opening.
       }
     }
-    if (mounted && downloaded.isNotEmpty) {
-      setState(() => _downloaded.addAll(downloaded));
+    if (mounted && snapshots.isNotEmpty) {
+      setState(() => _downloadSnapshots.addAll(snapshots));
     }
   }
 
@@ -304,6 +341,7 @@ final class _LocalComicDetailsScreenState
           chapters: <ImportedLibraryEntry>[..._library.chapters, entry],
         );
       });
+      unawaited(_loadDownloadStatuses(<ImportedLibraryEntry>[entry]));
     }
     return entry;
   }
@@ -376,17 +414,21 @@ final class _LocalComicDetailsScreenState
       chapter.sourceId,
       chapter.chapterId,
     );
-    if (_workingDownloads.contains(identity) || _downloaded.contains(identity)) {
+    final current = _downloadSnapshots[identity];
+    if (_workingDownloads.contains(identity) ||
+        current?.isActive == true ||
+        current?.isComplete == true) {
       return;
     }
     setState(() => _workingDownloads.add(identity));
     try {
       final entry = chapter.entry ?? await _ensure(chapter.sourceChapter!);
       await widget.onDownloadChapter(entry);
+      final snapshot = await widget.inspectChapterDownload(entry);
       if (mounted) {
-        setState(() => _downloaded.add(identity));
+        _acceptDownloadSnapshot(snapshot);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('“${chapter.title}”已下载')),
+          SnackBar(content: Text('章节“${chapter.title}”已下载')),
         );
       }
     } on Object catch (error, stackTrace) {
@@ -401,6 +443,49 @@ final class _LocalComicDetailsScreenState
         setState(() {
           _workingDownloads.remove(identity);
         });
+      }
+    }
+  }
+
+  Future<void> _downloadComic() async {
+    if (_downloadingComic) {
+      return;
+    }
+    setState(() => _downloadingComic = true);
+    try {
+      final entries = <ImportedLibraryEntry>[];
+      final seen = <String>{};
+      for (final chapter in _library.sourceChapters) {
+        final entry = await _ensure(chapter);
+        if (seen.add(entry.identity)) {
+          entries.add(entry);
+        }
+      }
+      for (final entry in _library.chapters) {
+        if (seen.add(entry.identity)) {
+          entries.add(entry);
+        }
+      }
+      if (entries.isEmpty) {
+        throw StateError('没有可下载的章节');
+      }
+      await widget.onDownloadComic(entries);
+      await _loadDownloadStatuses(entries);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('“${widget.comic.title}”整本下载完成')),
+        );
+      }
+    } on Object catch (error, stackTrace) {
+      if (mounted) {
+        _showFailureSnackBar(
+          context,
+          _DetailFailure.capture(error, stackTrace),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _downloadingComic = false);
       }
     }
   }
@@ -429,8 +514,9 @@ final class _LocalComicDetailsScreenState
           isRead: entry == null ? false : _isRead(_library.readStates, entry),
           canDownload: widget.comic.sourceId != 'local-folder',
           opening: _opening.contains(identity),
-          downloading: _workingDownloads.contains(identity),
-          downloaded: _downloaded.contains(identity),
+          downloading: _workingDownloads.contains(identity) ||
+              _downloadSnapshots[identity]?.isActive == true,
+          downloaded: _downloadSnapshots[identity]?.isComplete == true,
         ),
       );
     }
@@ -454,8 +540,9 @@ final class _LocalComicDetailsScreenState
           isRead: _isRead(_library.readStates, entry),
           canDownload: entry.chapter.sourceId != 'local-folder',
           opening: _opening.contains(identity),
-          downloading: _workingDownloads.contains(identity),
-          downloaded: _downloaded.contains(identity),
+          downloading: _workingDownloads.contains(identity) ||
+              _downloadSnapshots[identity]?.isActive == true,
+          downloaded: _downloadSnapshots[identity]?.isComplete == true,
         ),
       );
     }
@@ -488,6 +575,10 @@ final class _LocalComicDetailsScreenState
       descending: _descending,
       onRefresh: () => _refresh(announce: true),
       onPreferenceChanged: _savePreference,
+      progressLabel: _readingProgressLabel(_library.chapters),
+      downloadingComic: _downloadingComic,
+      onDownloadComic:
+          comic.sourceId == 'local-folder' ? null : _downloadComic,
       onReverse: () => setState(() => _descending = !_descending),
       onMigrateSource: widget.onMigrateSource == null
           ? null
@@ -521,7 +612,9 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
     required this.onReadChanged,
     required this.onOpenChapter,
     required this.onDownloadChapter,
-    required this.isChapterDownloaded,
+    required this.inspectChapterDownload,
+    required this.downloadChanges,
+    required this.onDownloadComic,
     super.key,
   });
 
@@ -538,7 +631,9 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
       onReadChanged;
   final ComicDetailsChapterOpener onOpenChapter;
   final ComicDetailsChapterDownloader onDownloadChapter;
-  final ComicDetailsChapterDownloadStatus isChapterDownloaded;
+  final ComicDetailsChapterDownloadInspector inspectChapterDownload;
+  final Stream<ChapterDownloadSnapshot> downloadChanges;
+  final ComicDetailsComicDownloader onDownloadComic;
 
   @override
   State<RemoteComicDetailsScreen> createState() =>
@@ -554,7 +649,10 @@ final class _RemoteComicDetailsScreenState
   bool _descending = true;
   final Set<String> _opening = <String>{};
   final Set<String> _workingDownloads = <String>{};
-  final Set<String> _downloaded = <String>{};
+  final Map<String, ChapterDownloadSnapshot> _downloadSnapshots =
+      <String, ChapterDownloadSnapshot>{};
+  StreamSubscription<ChapterDownloadSnapshot>? _downloadSubscription;
+  bool _downloadingComic = false;
   final Map<String, Future<ImportedLibraryEntry>> _ensureInFlight =
       <String, Future<ImportedLibraryEntry>>{};
 
@@ -562,10 +660,32 @@ final class _RemoteComicDetailsScreenState
   void initState() {
     super.initState();
     _library = widget.initialLibrary;
+    _downloadSubscription =
+        widget.downloadChanges.listen(_acceptDownloadSnapshot);
     scheduleMicrotask(
       () => unawaited(_loadDownloadStatuses(_library.chapters)),
     );
     scheduleMicrotask(() => unawaited(_refresh(announce: false)));
+  }
+
+  @override
+  void dispose() {
+    unawaited(_downloadSubscription?.cancel());
+    super.dispose();
+  }
+
+  void _acceptDownloadSnapshot(ChapterDownloadSnapshot snapshot) {
+    if (!mounted ||
+        snapshot.sourceId != widget.source.sourceId ||
+        snapshot.comicId != widget.summary.comicId) {
+      return;
+    }
+    setState(() {
+      _downloadSnapshots[comicDetailsChapterIdentity(
+        snapshot.sourceId,
+        snapshot.chapterId,
+      )] = snapshot;
+    });
   }
 
   Comic get _comic => _manifest?.comic ?? Comic(
@@ -581,19 +701,20 @@ final class _RemoteComicDetailsScreenState
   Future<void> _loadDownloadStatuses(
     Iterable<ImportedLibraryEntry> entries,
   ) async {
-    final downloaded = <String>{};
+    final snapshots = <String, ChapterDownloadSnapshot>{};
     for (final entry in entries) {
-      if (await widget.isChapterDownloaded(entry)) {
-        downloaded.add(
-          comicDetailsChapterIdentity(
-            entry.chapter.sourceId,
-            entry.chapter.chapterId,
-          ),
-        );
+      try {
+        final snapshot = await widget.inspectChapterDownload(entry);
+        snapshots[comicDetailsChapterIdentity(
+          snapshot.sourceId,
+          snapshot.chapterId,
+        )] = snapshot;
+      } on Object {
+        // A stale download record must not prevent the details page opening.
       }
     }
-    if (mounted && downloaded.isNotEmpty) {
-      setState(() => _downloaded.addAll(downloaded));
+    if (mounted && snapshots.isNotEmpty) {
+      setState(() => _downloadSnapshots.addAll(snapshots));
     }
   }
 
@@ -726,6 +847,7 @@ final class _RemoteComicDetailsScreenState
           chapters: <ImportedLibraryEntry>[..._library.chapters, entry],
         );
       });
+      unawaited(_loadDownloadStatuses(<ImportedLibraryEntry>[entry]));
     }
     return entry;
   }
@@ -797,7 +919,10 @@ final class _RemoteComicDetailsScreenState
       widget.source.sourceId,
       chapter.chapterId,
     );
-    if (_downloaded.contains(identity) || !_workingDownloads.add(identity)) {
+    final current = _downloadSnapshots[identity];
+    if (current?.isActive == true ||
+        current?.isComplete == true ||
+        !_workingDownloads.add(identity)) {
       return;
     }
     if (mounted) {
@@ -806,10 +931,11 @@ final class _RemoteComicDetailsScreenState
     try {
       final entry = await _ensure(chapter);
       await widget.onDownloadChapter(entry);
+      final snapshot = await widget.inspectChapterDownload(entry);
       if (mounted) {
-        setState(() => _downloaded.add(identity));
+        _acceptDownloadSnapshot(snapshot);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('“${chapter.title}”已下载')),
+          SnackBar(content: Text('章节“${chapter.title}”已下载')),
         );
       }
     } on Object catch (error, stackTrace) {
@@ -824,6 +950,44 @@ final class _RemoteComicDetailsScreenState
         setState(() {
           _workingDownloads.remove(identity);
         });
+      }
+    }
+  }
+
+  Future<void> _downloadComic() async {
+    if (_downloadingComic) {
+      return;
+    }
+    final manifest = _manifest;
+    if (manifest == null) {
+      return;
+    }
+    setState(() => _downloadingComic = true);
+    try {
+      final entries = <ImportedLibraryEntry>[];
+      for (final chapter in manifest.chapters) {
+        entries.add(await _ensure(chapter));
+      }
+      if (entries.isEmpty) {
+        throw StateError('没有可下载的章节');
+      }
+      await widget.onDownloadComic(entries);
+      await _loadDownloadStatuses(entries);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('“${_comic.title}”整本下载完成')),
+        );
+      }
+    } on Object catch (error, stackTrace) {
+      if (mounted) {
+        _showFailureSnackBar(
+          context,
+          _DetailFailure.capture(error, stackTrace),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _downloadingComic = false);
       }
     }
   }
@@ -886,6 +1050,9 @@ final class _RemoteComicDetailsScreenState
       descending: _descending,
       onRefresh: () => _refresh(announce: true),
       onPreferenceChanged: _savePreference,
+      progressLabel: _readingProgressLabel(_library.chapters),
+      downloadingComic: _downloadingComic,
+      onDownloadComic: _downloadComic,
       onReverse: () => setState(() => _descending = !_descending),
       chapterCount: ordered.length,
       pageCount: ordered.fold<int>(0, (sum, chapter) => sum + chapter.pageCount),
@@ -913,17 +1080,21 @@ final class _RemoteComicDetailsScreenState
                 ),
               ),
               downloading: _workingDownloads.contains(
-                comicDetailsChapterIdentity(
-                  widget.source.sourceId,
-                  chapter.chapterId,
-                ),
-              ),
-              downloaded: _downloaded.contains(
-                comicDetailsChapterIdentity(
-                  widget.source.sourceId,
-                  chapter.chapterId,
-                ),
-              ),
+                    comicDetailsChapterIdentity(
+                      widget.source.sourceId,
+                      chapter.chapterId,
+                    ),
+                  ) ||
+                  _downloadSnapshots[comicDetailsChapterIdentity(
+                        widget.source.sourceId,
+                        chapter.chapterId,
+                      )]?.isActive ==
+                      true,
+              downloaded: _downloadSnapshots[comicDetailsChapterIdentity(
+                    widget.source.sourceId,
+                    chapter.chapterId,
+                  )]?.isComplete ==
+                  true,
               sourceChapter: chapter,
             ),
         ],
@@ -954,6 +1125,9 @@ final class _ComicDetailsScaffold extends StatelessWidget {
     required this.descending,
     required this.onRefresh,
     required this.onPreferenceChanged,
+    required this.progressLabel,
+    required this.downloadingComic,
+    required this.onDownloadComic,
     required this.onReverse,
     required this.chapterCount,
     required this.pageCount,
@@ -973,6 +1147,9 @@ final class _ComicDetailsScaffold extends StatelessWidget {
   final bool descending;
   final Future<void> Function() onRefresh;
   final Future<void> Function(ComicPreference preference) onPreferenceChanged;
+  final String? progressLabel;
+  final bool downloadingComic;
+  final Future<void> Function()? onDownloadComic;
   final VoidCallback onReverse;
   final int chapterCount;
   final int pageCount;
@@ -1026,6 +1203,9 @@ final class _ComicDetailsScaffold extends StatelessWidget {
                   preference: preference,
                   categories: categories,
                   onPreferenceChanged: onPreferenceChanged,
+                  progressLabel: progressLabel,
+                  downloadingComic: downloadingComic,
+                  onDownloadComic: onDownloadComic,
                 ),
               ),
             ),
@@ -1073,6 +1253,9 @@ final class _ComicDetailsHeader extends StatelessWidget {
     required this.preference,
     required this.categories,
     required this.onPreferenceChanged,
+    required this.progressLabel,
+    required this.downloadingComic,
+    required this.onDownloadComic,
   });
 
   final String title;
@@ -1083,6 +1266,9 @@ final class _ComicDetailsHeader extends StatelessWidget {
   final ComicPreference preference;
   final List<LibraryCategory> categories;
   final Future<void> Function(ComicPreference preference) onPreferenceChanged;
+  final String? progressLabel;
+  final bool downloadingComic;
+  final Future<void> Function()? onDownloadComic;
 
   @override
   Widget build(BuildContext context) {
@@ -1154,6 +1340,24 @@ final class _ComicDetailsHeader extends StatelessWidget {
                           ),
                         ),
                       ),
+                      if (onDownloadComic != null)
+                        FilledButton.tonalIcon(
+                          key: comicDetailsDownloadAllKey,
+                          onPressed: downloadingComic
+                              ? null
+                              : () => unawaited(onDownloadComic!()),
+                          icon: downloadingComic
+                              ? const SizedBox.square(
+                                  dimension: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons.download_for_offline_outlined,
+                                ),
+                          label: const Text('下载整本'),
+                        ),
                     ],
                   ),
                 ],
@@ -1161,6 +1365,16 @@ final class _ComicDetailsHeader extends StatelessWidget {
             ),
           ],
         ),
+        if (progressLabel != null) ...<Widget>[
+          const SizedBox(height: 12),
+          Row(
+            children: <Widget>[
+              const Icon(Icons.history, size: 18),
+              const SizedBox(width: 6),
+              Expanded(child: Text(progressLabel!)),
+            ],
+          ),
+        ],
         if (description != null && description!.trim().isNotEmpty) ...<Widget>[
           const SizedBox(height: 14),
           Text(description!.trim()),
@@ -1258,7 +1472,7 @@ final class _ComicChapterList extends StatelessWidget {
                         chapter.sourceId,
                         chapter.chapterId,
                       ),
-                      tooltip: chapter.downloaded ? '章节已下载' : '下载章节',
+                      tooltip: chapter.downloaded ? '${chapter.title} 已下载' : '下载 ${chapter.title}',
                       onPressed: chapter.downloading || chapter.downloaded
                           ? null
                           : () => unawaited(onDownload(chapter)),
@@ -1428,7 +1642,7 @@ final class _ReadSwipeActionState extends State<_ReadSwipeAction> {
                     : const Duration(milliseconds: 180),
                 curve: Curves.easeOutCubic,
                 transform: Matrix4.translationValues(_offset, 0, 0),
-                child: ColoredBox(
+                child: Material(
                   color: Theme.of(context).colorScheme.surface,
                   child: widget.child,
                 ),
@@ -1439,6 +1653,26 @@ final class _ReadSwipeActionState extends State<_ReadSwipeAction> {
       },
     );
   }
+}
+
+String? _readingProgressLabel(Iterable<ImportedLibraryEntry> entries) {
+  ImportedLibraryEntry? latest;
+  for (final entry in entries) {
+    final progress = entry.progress;
+    if (progress == null) {
+      continue;
+    }
+    final current = latest?.progress;
+    if (current == null || progress.updatedAt.isAfter(current.updatedAt)) {
+      latest = entry;
+    }
+  }
+  final entry = latest;
+  final progress = entry?.progress;
+  if (entry == null || progress == null) {
+    return null;
+  }
+  return '阅读到 ${entry.chapter.displayName} · 第 ${progress.pageIndex + 1} 页';
 }
 
 final class _PreferenceButton extends StatelessWidget {

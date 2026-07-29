@@ -162,11 +162,18 @@ void main() {
 
     await tester.tap(find.byKey(bookshelfManageKey));
     await tester.pump(const Duration(milliseconds: 320));
-    await tester.tap(first);
+    await tester.longPress(first);
     await tester.pump(const Duration(milliseconds: 320));
 
+    expect(find.byKey(bookshelfBatchBarKey), findsOneWidget);
     expect(tester.widget<ComicCoverCard>(first).selected, isTrue);
     expect(tester.widget<ComicCoverCard>(second).selected, isFalse);
+
+    await tester.tap(second);
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(tester.widget<ComicCoverCard>(first).selected, isTrue);
+    expect(tester.widget<ComicCoverCard>(second).selected, isTrue);
+    expect(find.text('已选择 2 部'), findsOneWidget);
   });
 
   testWidgets('download manager entry opens the task surface', (tester) async {
@@ -183,7 +190,7 @@ void main() {
     expect(find.text('暂无下载任务或离线章节'), findsOneWidget);
   });
 
-  testWidgets('custom sort keeps gallery view and long-press drag order',
+  testWidgets('custom sort keeps gallery view and drag-handle order',
       (tester) async {
     final store = MemoryImportedLibraryStore();
     await store.open();
@@ -205,13 +212,15 @@ void main() {
     await tester.tap(find.byKey(bookshelfManageKey));
     await tester.pump(const Duration(milliseconds: 320));
 
-    expect(find.byType(LongPressDraggable<String>), findsNWidgets(2));
+    expect(find.byKey(comicReorderKey(first.sourceId, first.comicId)), findsOneWidget);
+    expect(find.byKey(comicReorderKey(second.sourceId, second.comicId)), findsOneWidget);
     expect(find.byType(GridView), findsOneWidget);
 
-    final firstCover = find.byKey(comicCoverKey(first.sourceId, first.comicId));
+    final firstHandle =
+        find.byKey(comicReorderKey(first.sourceId, first.comicId));
     final secondCover = find.byKey(comicCoverKey(second.sourceId, second.comicId));
-    final gesture = await tester.startGesture(tester.getCenter(firstCover));
-    await tester.pump(const Duration(milliseconds: 700));
+    final gesture = await tester.startGesture(tester.getCenter(firstHandle));
+    await tester.pump(const Duration(milliseconds: 120));
     await gesture.moveTo(tester.getCenter(secondCover));
     await tester.pump(const Duration(milliseconds: 100));
     await gesture.up();
@@ -300,16 +309,21 @@ void main() {
     await tester.pump(const Duration(milliseconds: 320));
     await tester.tap(find.byKey(bookshelfManageKey));
     await tester.pump(const Duration(milliseconds: 320));
-    await tester.tap(find.byKey(comicCoverKey(chapter.sourceId, chapter.comicId)));
-    await tester.pump(const Duration(milliseconds: 320));
 
-    expect(find.byKey(bookshelfManagementBarKey), findsOneWidget);
-    expect(find.byTooltip('移动到其他分类'), findsOneWidget);
-    expect(find.byTooltip('复制漫画信息'), findsOneWidget);
+    final cover = find.byKey(comicCoverKey(chapter.sourceId, chapter.comicId));
     expect(find.byKey(comicDeleteKey(chapter.sourceId, chapter.comicId)), findsOneWidget);
+    expect(find.byKey(comicMoveKey(chapter.sourceId, chapter.comicId)), findsOneWidget);
+    expect(find.byKey(bookshelfBatchBarKey), findsNothing);
     expect(find.byKey(comicDetailsScreenKey), findsNothing);
 
-    await _tapVisible(tester, find.byKey(bookshelfMoveKey));
+    await tester.tap(cover);
+    await tester.pump(const Duration(milliseconds: 120));
+    expect(find.byKey(bookshelfBatchBarKey), findsNothing);
+
+    await _tapVisible(
+      tester,
+      find.byKey(comicMoveKey(chapter.sourceId, chapter.comicId)),
+    );
     await _pumpUntilFound(
       tester,
       find.byKey(bookshelfMoveToCategoryKey(secondCategoryId)),
@@ -320,9 +334,20 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 320));
 
-    final preference = await store.getComicPreference(chapter.sourceId, chapter.comicId);
+    final preference = await store.getComicPreference(
+      chapter.sourceId,
+      chapter.comicId,
+    );
     expect(preference?.categoryIds, contains(secondCategoryId));
     expect(preference?.categoryIds, isNot(contains(firstCategoryId)));
+
+    await tester.longPress(cover);
+    await tester.pump(const Duration(milliseconds: 320));
+    expect(find.byKey(bookshelfBatchBarKey), findsOneWidget);
+    expect(find.byKey(bookshelfBatchMoveKey), findsOneWidget);
+    expect(find.byKey(bookshelfBatchDeleteKey), findsOneWidget);
+    expect(find.byKey(comicMoveKey(chapter.sourceId, chapter.comicId)), findsNothing);
+    expect(find.byKey(comicDeleteKey(chapter.sourceId, chapter.comicId)), findsNothing);
   });
 
   testWidgets('library diagnostics acknowledges without deleting migration issues',
@@ -349,7 +374,13 @@ void main() {
     await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
     await _tapVisible(tester, find.byKey(homeDiagnosticsKey));
     await _pumpUntilFound(tester, find.byKey(libraryDiagnosticsEntryKey));
-    await _tapVisible(tester, find.byKey(libraryDiagnosticsEntryKey));
+    await tester.scrollUntilVisible(
+      find.byKey(libraryDiagnosticsEntryKey),
+      180,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.byKey(libraryDiagnosticsEntryKey));
+    await tester.pump();
     await _pumpUntilFound(tester, find.byKey(libraryDiagnosticsScreenKey));
     await _pumpUntilFound(tester, find.byKey(libraryDiagnosticsIssueKey(7)));
 
@@ -390,8 +421,9 @@ void main() {
                 sourceKind: ComicSourceKind.remote,
               ),
               coverBytes: () async => _tinyPng(),
-              downloadProgress: const ComicDownloadProgress(
-                completedPages: 4,
+              downloadProgress: const ComicDownloadProgress.active(
+                label: '第 4 话',
+                completedPageUnits: 4,
                 totalPages: 10,
               ),
               onTap: () {},
@@ -403,7 +435,9 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('40%\n4/10 页'), findsOneWidget);
+    expect(find.text('第 4 话\n40% · 4/10 页'), findsOneWidget);
+    expect(find.text('远程漫画'), findsOneWidget);
+    expect(find.textContaining('上次'), findsNothing);
   });
 
   testWidgets('details persists preference and chapter read transitions',

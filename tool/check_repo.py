@@ -1403,17 +1403,24 @@ def check_compile_regressions() -> None:
         'showCheckmark: false',
         '_ShelfViewMode',
         'bookshelfViewKey',
-        'LongPressDraggable<String>',
+        'Draggable<String>',
         'DragTarget<String>',
         'ReorderableListView.builder',
         '_addComicsToSelectedCategory',
         '_moveComicToCategory',
-        'bookshelfManagementBarKey',
-        'ComicDownloadProgress',
+        'bookshelfBatchBarKey',
+        'bookshelfBatchMoveKey',
+        'comicMoveKey(String sourceId, String comicId)',
+        'comicReorderKey(String sourceId, String comicId)',
+        '_managedComicIdentities',
+        '_startBatchSelection',
+        '_comicMovePopup',
+        'if (_manageShelf && !_batchManagement)',
+        'ComicDownloadProgress.active',
+        'ComicDownloadProgress.offline',
         'aggregateImportedLibrary(',
         'savedComics: _savedComics',
         'comicCoverKey(String sourceId, String comicId)',
-        '_managedComicIdentity',
         'comic.identity',
         'final LibraryComic comic',
         '_sourcePageVisited',
@@ -1424,6 +1431,10 @@ def check_compile_regressions() -> None:
         'DownloadManagerScreen(',
         '_downloadProgressForComic',
         '_DownloadWatermark',
+        '_wholeComicDownloads',
+        '_downloadComicEntries',
+        '_openingComicIdentities',
+        '_CoverTitleGradient',
         'Future<Uint8List>.sync(loader)',
         '_selectSourceMigrationTarget',
         "label: const Text('搜索同名作品')",
@@ -1434,6 +1445,42 @@ def check_compile_regressions() -> None:
         if required not in home:
             fail(f'Android library UI slice is incomplete: {required}')
 
+    for forbidden in (
+        '_buildManagementBar(',
+        '_openMoveComicSheet(',
+        'bookshelfManagementBarKey',
+        '_managedComicIdentity',
+        '_CategoryPopup(',
+    ):
+        if forbidden in home:
+            fail(f'obsolete single-comic management UI remains: {forbidden}')
+
+    details = (ROOT / 'apps/app/lib/comic_details.dart').read_text(
+        encoding='utf-8'
+    )
+    for required in (
+        'comicDetailsDownloadAllKey',
+        'ComicDetailsChapterDownloadInspector',
+        'downloadChanges.listen',
+        'ChapterDownloadSnapshot',
+        'color: Theme.of(context).colorScheme.surface',
+        "label: const Text('下载整本')",
+        '_readingProgressLabel',
+    ):
+        if required not in details:
+            fail(f'comic details download/status contract is incomplete: {required}')
+
+    download_manager = (ROOT / 'apps/app/lib/download_manager.dart').read_text(
+        encoding='utf-8'
+    )
+    for required in (
+        'snapshot.title',
+        'snapshot.phase != ChapterDownloadPhase.complete',
+        'LinearProgressIndicator(',
+    ):
+        if required not in download_manager:
+            fail(f'download manager presentation is incomplete: {required}')
+
     reader_runtime = (ROOT / 'apps/app/lib/reader_runtime.dart').read_text(
         encoding='utf-8'
     )
@@ -1441,6 +1488,8 @@ def check_compile_regressions() -> None:
         'void _togglePlaybackPaused()',
         'onPressed: _togglePlaybackPaused',
         'ValueListenableBuilder<ReaderPlaybackState>',
+        'PopupMenuPosition.over',
+        'readerSpeedOptionKey',
     ):
         if required not in reader_runtime:
             fail(f'Reader playback controls are incomplete: {required}')
