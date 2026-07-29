@@ -627,6 +627,11 @@ Cover cards support animated thumbnails. While a remote comic is downloading, th
 dimmed and overlaid with a bottom-up completion waterline, percent and completed/total page count.
 The presentation receives progress values but does not own DownloadSession.
 
+Complete cover/source image bytes use the shared response cache and may be restored from a bounded durable byte store
+after process restart. The durable key includes source/comic namespace and available source revision; explicit refresh,
+TTL expiry, corruption or capacity eviction produce a normal source reload. Reader page bytes never enter this cover
+response store.
+
 Comic details display cover, title, liked, shelf and collected state, category membership and
 chapters. Chapter order can be reversed. Read chapters are dimmed; a start-to-end swipe restores
 unread state without deleting Reader progress.
@@ -634,4 +639,12 @@ unread state without deleting Reader progress.
 Reader starts with system and app controls hidden. A page tap toggles top/bottom overlays. Page
 slider input submits a bounded Reader command. Pause/speed state is injected into animated media
 players; rotation changes presentation only. Pinch/pan and double-tap zoom are page-local, block
-PageView scrolling while active and reset after navigation.
+PageView scrolling while active and reset after navigation. Crossing the PageView midpoint must not
+replace a page host whose asset identity is unchanged or return already presented neighboring media to
+a loading/black placeholder.
+
+External plugin repository metadata may be parsed for Mihon extension packages and Venera JavaScript sources. Venera
+indexes accept both `filename` and deployed `fileName`, and a declared `key` becomes stable `venera:<key>` identity.
+Executable compatibility requires format-specific, permissioned hosts with explicit teardown that adapt sources to
+`BrowsableComicSource`; plugins receive no direct navigation, Reader demand, session or artifact authority. A Mihon
+host must validate APK signature/version and extension ABI metadata before loading code.

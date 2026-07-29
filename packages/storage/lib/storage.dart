@@ -7,3 +7,4 @@ export 'src/crc32.dart';
 export 'src/ephemeral_workspace.dart';
 export 'src/sqlite_index.dart';
 export 'src/sqlite_imported_library_store.dart';
+export 'src/file_resource_cache_byte_store.dart';

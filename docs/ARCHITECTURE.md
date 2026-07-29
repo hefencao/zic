@@ -605,7 +605,7 @@ FrameHolder：
 `ResourceCacheCoordinator` 是应用装配和缓存管理命令的唯一入口，但不把所有物理资源改成一个所有者。
 它协调两个已有边界清晰的平面：
 
-1. **Source response plane**（`resource_cache`）：显式封面/来源图片响应、漫画详情、章节元数据、搜索结果；共享全局与分类型预算、TTL、并发请求合并、LRU 和来源复合失效命名空间。章节页面 URI 不属于该平面。
+1. **Source response plane**（`resource_cache`）：显式封面/来源图片响应、漫画详情、章节元数据、搜索结果；共享全局与分类型预算、TTL、并发请求合并、LRU 和来源复合失效命名空间。只有完整 `imageBytes` 可通过注入的 `ResourceCacheByteStore` 持久化，章节页面 URI 不属于该平面。
 2. **Media pipeline plane**：
    - Disk Artifact Cache：每个页面独立的 partial/final 编码字节；
    - Encoded Memory Cache：由 pipeline/session 按 demand 保留的压缩字节或 mmap view；
@@ -613,7 +613,9 @@ FrameHolder：
    - Renderer Texture Cache：可见和 transition 页面。
 
 不完整章节不是一个全有或全无的“章节缓存”：它由可复用的章节元数据与任意子集的页面 partial/final artifact 组成。
-`ResourceCacheCoordinator` 只能通过 `ArtifactCacheMaintenance -> CacheOps -> DownloadRegistry/DownloadSession` 请求统计和安全驱逐，不能直接删除文件或取代 pipeline demand。
+`ResourceCacheCoordinator` 分别统计进程内响应、持久响应字节和页面 artifact。持久响应通过可选
+`ResourceCacheByteStoreMaintenance` 执行 LRU 整理；页面只能通过
+`ArtifactCacheMaintenance -> CacheOps -> DownloadRegistry/DownloadSession` 请求统计和安全驱逐，协调器不能直接删除页面文件或取代 pipeline demand。
 
 ### 11.2 设备预算
 
@@ -812,10 +814,10 @@ external callback or the existing DownloadRegistry. `ReaderPlaybackController` i
 ValueNotifier passed through `ReaderPageRuntime` to animated renderers. It does not own encoded
 bytes, decode sessions, frames or textures.
 
-Zoom is owned by each current page through `InteractiveViewer`. The parent only receives a boolean
-zoom state to suspend PageView physics. Navigation changes the zoom-page identity so stale transforms
-cannot reappear with page scrolling re-enabled. Rotation wraps the page presentation and leaves all
-content/download identities unchanged.
+Zoom is owned by each page through `InteractiveViewer`. The parent only receives a boolean zoom
+state to suspend PageView physics. Page and zoom hosts keep the stable asset identity while the current
+role changes; `didUpdateWidget` resets a stale transform in place instead of remounting the media child.
+Rotation wraps the page presentation and leaves all content/download identities unchanged.
 
 
 ## 3.11 Remote comic source browser
@@ -840,9 +842,14 @@ records written before page IDs existed. SQLite schema version 3 added `comic_so
 version 4 added source-composite `saved_comic`; version 5 makes imported chapter, progress, comic
 preference and read-state ownership source-composite as well.
 
-This contract is intentionally smaller than a Mihon extension runtime. External extension support
-must be an isolated adapter with explicit lifecycle, permissions, version compatibility and failure
-boundaries; it cannot inject navigation or read Reader state directly.
+This contract is intentionally smaller than an external extension runtime. `external_plugin_catalog.dart`
+parses Mihon extension repository metadata and Venera JavaScript source indexes into format-neutral,
+untrusted catalog entries. Venera accepts both `filename` and deployed `fileName`, preserving a declared
+`key` immediately and deferring discovery only when absent. It preserves native package/source identities
+but downloads or executes nothing. `ExternalComicPluginHost` implementations must isolate APK/Kotlin and JavaScript runtimes,
+validate trust/version/permissions, and return an explicitly closable `ExternalComicPluginSession` of
+ordinary `BrowsableComicSource` adapters. A plugin cannot inject navigation, read Reader state, own
+demand or mutate artifacts directly.
 
 ## 3.12 Generated host network capability
 
@@ -945,7 +952,7 @@ Catalog UI / details / search
 CachedBrowsableComicSource
         v
 ResourceCacheManager
-  - imageBytes
+  - imageBytes -> optional durable ResourceCacheByteStore
   - comicDetails
   - chapterMetadata
   - searchResults
@@ -957,7 +964,11 @@ ResourceCacheManager
 A cache namespace groups cover, detail and chapter-metadata responses for one exact `sourceId + comicId`. Explicit
 refresh invalidates that namespace or the source search namespace. Clear/refresh increments cache generations, so a
 request started before invalidation may still return to its original caller but cannot repopulate the cache afterward.
-The manager stores encoded response values only; it never owns decoded frames or textures.
+The manager stores encoded response values only; it never owns decoded frames or textures. Complete
+`imageBytes` may be written to a bounded file store using the full key, expiry and content verification.
+The standard image TTL is seven days. Successful loads await that write, and cache close drains active
+loads plus queued persistence before closing the store. A source revision distinguishes changed cover
+content while explicit namespace refresh removes both memory and durable records.
 
 Chapter page bytes are intentionally excluded from `ResourceCacheKind`. `BrowsableComicSource.loadResource` remains a
 raw transport entry for Reader/download work:
@@ -970,8 +981,9 @@ ReaderView -> ReaderObs -> ReaderBinding -> PipelineController
 ```
 
 Presentation must not warm current/next/previous pages directly, retain adjacent `PageView` children as a resource
-policy, or create a private page-byte LRU. Page role changes may remount the zoom owner so stale transforms reset; byte,
-decode and presentation reuse is determined by demand/session identities rather than Widget identity.
+policy, or create a private page-byte LRU. Page and zoom hosts use stable asset keys; a current-role change resets
+page-local zoom through an ordinary Widget update without remounting the loaded media child. Byte, decode and texture
+reuse is still determined by demand/session/media identities rather than Presentation cache policy.
 
 A Reader session still downloads into an isolated ephemeral workspace. `PromotedArtifactCacheHandoff` in `downloads`
 observes sessions created by that registry and submits only final `promoted` bytes to `ArtifactCacheStore` before the

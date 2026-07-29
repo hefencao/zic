@@ -1303,18 +1303,25 @@ final class _DemoHomeState extends State<DemoHome> {
     if (sourceValue == null || sourceValue.trim().isEmpty) {
       throw StateError('漫画详情没有可用封面');
     }
+    final revision = fallback?.chapter.sourceRevision ?? '';
     final source = _sourceForId(sourceId);
     final uri = Uri.tryParse(sourceValue);
     if (source != null &&
         uri != null &&
         (uri.scheme == 'http' || uri.scheme == 'https')) {
-      return loadCachedSourceImage(source, uri, comicId: comicId);
+      return loadCachedSourceImage(
+        source,
+        uri,
+        comicId: comicId,
+        revision: revision,
+      );
     }
     return loadCachedComicImage(
       cache: _cacheCoordinator.responses,
       sourceId: sourceId,
       comicId: comicId,
       imageIdentity: sourceValue,
+      revision: revision,
       loader: () => readLocalImageSource(sourceValue),
     );
   }

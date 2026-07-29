@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 /// Logical resource families sharing one cache manager and global budget.
 ///
@@ -45,6 +46,81 @@ final class ResourceCacheKey {
       '${kind.name}:$identity@$revision${namespace.isEmpty ? '' : ' [$namespace]'}';
 }
 
+/// Durable byte response restored before a source loader is invoked.
+///
+/// Only immutable encoded response bytes belong here. Reader page artifacts,
+/// decoded frames and textures keep their existing owners.
+final class PersistedResourceBytes {
+  const PersistedResourceBytes({
+    required this.bytes,
+    required this.expiresAt,
+  });
+
+  final Uint8List bytes;
+  final DateTime expiresAt;
+}
+
+/// Physical usage reported by an inspectable durable response-byte store.
+final class ResourceCacheByteStoreUsage {
+  const ResourceCacheByteStoreUsage({
+    required this.bytes,
+    required this.entries,
+  })  : assert(bytes >= 0),
+        assert(entries >= 0);
+
+  final int bytes;
+  final int entries;
+}
+
+final class ResourceCacheByteStoreTrimReport {
+  const ResourceCacheByteStoreTrimReport({
+    required this.beforeBytes,
+    required this.releasedBytes,
+    required this.remainingBytes,
+    required this.evictedEntries,
+  });
+
+  final int beforeBytes;
+  final int releasedBytes;
+  final int remainingBytes;
+  final int evictedEntries;
+}
+
+/// Optional maintenance projection for durable response-byte stores.
+///
+/// The base store remains dependency-light; coordinators inspect and trim only
+/// implementations that explicitly expose this capability.
+abstract interface class ResourceCacheByteStoreMaintenance {
+  Future<ResourceCacheByteStoreUsage> inspect();
+
+  Future<ResourceCacheByteStoreTrimReport> trimTo({
+    required int targetBytes,
+  });
+}
+
+/// Optional durable backing for byte-valued resource-cache entries.
+///
+/// Implementations must preserve the full [ResourceCacheKey], including its
+/// namespace and revision, so invalidation has the same semantics before and
+/// after an application restart.
+abstract interface class ResourceCacheByteStore {
+  Future<PersistedResourceBytes?> read(ResourceCacheKey key);
+
+  Future<void> write({
+    required ResourceCacheKey key,
+    required Uint8List bytes,
+    required DateTime expiresAt,
+  });
+
+  Future<void> remove(ResourceCacheKey key);
+
+  Future<void> removeWhere(bool Function(ResourceCacheKey key) predicate);
+
+  Future<void> clear();
+
+  Future<void> close();
+}
+
 final class ResourceCachePolicy {
   const ResourceCachePolicy({
     required this.maxEntries,
@@ -79,6 +155,8 @@ final class ResourceCacheStats {
     required this.misses,
     required this.evictions,
     required this.expirations,
+    required this.persistentHits,
+    required this.persistentMisses,
     required Map<ResourceCacheKind, ResourceCacheKindStats> byKind,
   }) : byKind = Map<ResourceCacheKind, ResourceCacheKindStats>.unmodifiable(
           byKind,
@@ -91,6 +169,8 @@ final class ResourceCacheStats {
   final int misses;
   final int evictions;
   final int expirations;
+  final int persistentHits;
+  final int persistentMisses;
   final Map<ResourceCacheKind, ResourceCacheKindStats> byKind;
 
   ResourceCacheKindStats forKind(ResourceCacheKind kind) =>
@@ -110,6 +190,8 @@ final class ResourceCacheManager {
     Map<ResourceCacheKind, ResourceCachePolicy>? policies,
     this.globalMaxWeight = 64 * 1024 * 1024,
     DateTime Function()? now,
+    this.byteStore,
+    this.onPersistenceError,
   })  : assert(globalMaxWeight > 0),
         _policies = Map<ResourceCacheKind, ResourceCachePolicy>.unmodifiable(
           policies ?? standardPolicies,
@@ -127,7 +209,7 @@ final class ResourceCacheManager {
     ResourceCacheKind.imageBytes: ResourceCachePolicy(
       maxEntries: 96,
       maxWeight: 32 * 1024 * 1024,
-      ttl: Duration(minutes: 30),
+      ttl: Duration(days: 7),
     ),
     ResourceCacheKind.comicDetails: ResourceCachePolicy(
       maxEntries: 64,
@@ -148,6 +230,8 @@ final class ResourceCacheManager {
 
   final Map<ResourceCacheKind, ResourceCachePolicy> _policies;
   final int globalMaxWeight;
+  final ResourceCacheByteStore? byteStore;
+  final void Function(Object error, StackTrace stackTrace)? onPersistenceError;
   final DateTime Function() _now;
   final Map<ResourceCacheKey, _ResourceCacheEntry> _entries =
       <ResourceCacheKey, _ResourceCacheEntry>{};
@@ -163,6 +247,10 @@ final class ResourceCacheManager {
   var _misses = 0;
   var _evictions = 0;
   var _expirations = 0;
+  var _persistentHits = 0;
+  var _persistentMisses = 0;
+  Future<void> _persistenceTail = Future<void>.value();
+  Future<void>? _closeFuture;
   bool _closed = false;
 
   ResourceCacheStats get stats {
@@ -185,6 +273,8 @@ final class ResourceCacheManager {
       misses: _misses,
       evictions: _evictions,
       expirations: _expirations,
+      persistentHits: _persistentHits,
+      persistentMisses: _persistentMisses,
       byKind: byKind,
     );
   }
@@ -215,20 +305,14 @@ final class ResourceCacheManager {
     final generation = _generationOf(key);
     final epoch = _epoch;
     _activeLoads[key] = (_activeLoads[key] ?? 0) + 1;
-    final future = Future<T>.sync(loader).then((value) {
-      if (_closed || epoch != _epoch || generation != _generationOf(key)) {
-        return value;
-      }
-      final weight = weightOf(value);
-      if (weight < 0) {
-        throw StateError('cache weight must not be negative for $key');
-      }
-      final policy = _policies[key.kind]!;
-      if (weight <= policy.maxWeight && weight <= globalMaxWeight) {
-        _store(key, value, weight, policy.ttl);
-      }
-      return value;
-    });
+    final future = _resolveLoad<T>(
+      key: key,
+      loader: loader,
+      weightOf: weightOf,
+      generation: generation,
+      epoch: epoch,
+      allowPersistentRead: !forceRefresh,
+    );
     final Future<Object> shared = future;
     _inFlight[key] = shared;
     return future.whenComplete(() {
@@ -239,36 +323,112 @@ final class ResourceCacheManager {
     });
   }
 
+  Future<T> _resolveLoad<T extends Object>({
+    required ResourceCacheKey key,
+    required Future<T> Function() loader,
+    required ResourceCacheWeight<T> weightOf,
+    required int generation,
+    required int epoch,
+    required bool allowPersistentRead,
+  }) async {
+    if (allowPersistentRead &&
+        byteStore != null &&
+        key.kind == ResourceCacheKind.imageBytes) {
+      final persisted = await _readPersistent(key);
+      if (persisted != null &&
+          !_closed &&
+          epoch == _epoch &&
+          generation == _generationOf(key)) {
+        final bytes = persisted.bytes;
+        if (bytes is T) {
+          final weight = weightOf(bytes);
+          final policy = _policies[key.kind]!;
+          if (weight >= 0 &&
+              weight <= policy.maxWeight &&
+              weight <= globalMaxWeight) {
+            _storeWithExpiry(key, bytes, weight, persisted.expiresAt);
+          }
+          _hits++;
+          _persistentHits++;
+          return bytes;
+        }
+      }
+      _persistentMisses++;
+    }
+
+    final value = await Future<T>.sync(loader);
+    if (_closed || epoch != _epoch || generation != _generationOf(key)) {
+      return value;
+    }
+    final weight = weightOf(value);
+    if (weight < 0) {
+      throw StateError('cache weight must not be negative for $key');
+    }
+    final policy = _policies[key.kind]!;
+    if (weight <= policy.maxWeight && weight <= globalMaxWeight) {
+      final expiresAt = _now().add(policy.ttl);
+      _storeWithExpiry(key, value, weight, expiresAt);
+      if (key.kind == ResourceCacheKind.imageBytes && value is Uint8List) {
+        await _writePersistent(key, value, expiresAt);
+      }
+    }
+    return value;
+  }
+
   T? peek<T extends Object>(ResourceCacheKey key) {
     _requireOpen();
     return _read<T>(key);
   }
 
   void invalidate(ResourceCacheKey key) {
-    _generations[key] = _generationOf(key) + 1;
-    _inFlight.remove(key);
-    _removeEntry(key);
+    _requireOpen();
+    _invalidateLocal(key);
+    _queuePersistenceMutation(() async {
+      await byteStore?.remove(key);
+    });
   }
 
   void invalidateKind(ResourceCacheKind kind) {
-    invalidateWhere((key) => key.kind == kind);
+    _requireOpen();
+    _invalidateWhereLocal((key) => key.kind == kind);
+    _queuePersistenceMutation(() async {
+      await byteStore?.removeWhere((key) => key.kind == kind);
+    });
   }
 
   void invalidateNamespace(String namespace) {
+    _requireOpen();
     if (namespace.isEmpty) {
       return;
     }
-    invalidateWhere((key) => key.namespace == namespace);
+    _invalidateWhereLocal((key) => key.namespace == namespace);
+    _queuePersistenceMutation(() async {
+      await byteStore?.removeWhere((key) => key.namespace == namespace);
+    });
   }
 
   void invalidateWhere(bool Function(ResourceCacheKey key) predicate) {
+    _requireOpen();
+    _invalidateWhereLocal(predicate);
+    _queuePersistenceMutation(() async {
+      await byteStore?.removeWhere(predicate);
+    });
+  }
+
+  void _invalidateWhereLocal(bool Function(ResourceCacheKey key) predicate) {
     final keys = <ResourceCacheKey>{
       ..._entries.keys,
       ..._inFlight.keys,
     }.where(predicate).toList(growable: false);
     for (final key in keys) {
-      invalidate(key);
+      _invalidateLocal(key);
     }
+  }
+
+  void _invalidateLocal(ResourceCacheKey key) {
+    _generations[key] = _generationOf(key) + 1;
+    _inFlight.remove(key);
+    _removeEntry(key);
   }
 
   int trimTo({required int targetWeight}) {
@@ -290,25 +450,63 @@ final class ResourceCacheManager {
   }
 
   void clear() {
+    _requireOpen();
     _epoch++;
     _entries.clear();
     _inFlight.clear();
     _generations.clear();
     _weight = 0;
+    _queuePersistenceMutation(() async {
+      await byteStore?.clear();
+    });
   }
 
-  Future<void> close() async {
-    if (_closed) {
-      return;
+  Future<ResourceCacheByteStoreUsage?> inspectPersistentBytes() async {
+    _requireOpen();
+    await _persistenceTail;
+    final store = byteStore;
+    if (store is! ResourceCacheByteStoreMaintenance) {
+      return null;
     }
-    _closed = true;
+    try {
+      return await store.inspect();
+    } on Object catch (error, stackTrace) {
+      _reportPersistenceError(error, stackTrace);
+      return null;
+    }
+  }
+
+  Future<ResourceCacheByteStoreTrimReport?> trimPersistentBytesTo({
+    required int targetBytes,
+  }) async {
+    _requireOpen();
+    if (targetBytes < 0) {
+      throw ArgumentError.value(targetBytes, 'targetBytes');
+    }
+    await _persistenceTail;
+    final store = byteStore;
+    if (store is! ResourceCacheByteStoreMaintenance) {
+      return null;
+    }
+    try {
+      return await store.trimTo(targetBytes: targetBytes);
+    } on Object catch (error, stackTrace) {
+      _reportPersistenceError(error, stackTrace);
+      return null;
+    }
+  }
+
+  Future<void> drainPersistence() {
+    _requireOpen();
+    return _persistenceTail;
+  }
+
+  Future<void> close() => _closeFuture ??= _performClose();
+
+  Future<void> _performClose() async {
+    // Stop accepting new work, but let already-owned requests reach their
+    // normal cache/store commit point before closing the durable store.
     final pending = _inFlight.values.toList(growable: false);
-    _epoch++;
-    _entries.clear();
-    _inFlight.clear();
-    _generations.clear();
-    _activeLoads.clear();
-    _weight = 0;
     if (pending.isNotEmpty) {
       await Future.wait<void>(
         pending.map((future) async {
@@ -319,6 +517,20 @@ final class ResourceCacheManager {
           }
         }),
       );
+    }
+    await _persistenceTail;
+    try {
+      await byteStore?.close();
+    } on Object catch (error, stackTrace) {
+      _reportPersistenceError(error, stackTrace);
+    } finally {
+      _closed = true;
+      _epoch++;
+      _entries.clear();
+      _inFlight.clear();
+      _generations.clear();
+      _activeLoads.clear();
+      _weight = 0;
     }
   }
 
@@ -341,21 +553,86 @@ final class ResourceCacheManager {
     return value;
   }
 
-  void _store(
+  void _storeWithExpiry(
     ResourceCacheKey key,
     Object value,
     int weight,
-    Duration ttl,
+    DateTime expiresAt,
   ) {
     _removeEntry(key);
     _entries[key] = _ResourceCacheEntry(
       value: value,
       weight: weight,
       touched: ++_clock,
-      expiresAt: _now().add(ttl),
+      expiresAt: expiresAt,
     );
     _weight += weight;
     _enforceBudgets(key.kind, protectedKey: key);
+  }
+
+  Future<PersistedResourceBytes?> _readPersistent(
+    ResourceCacheKey key,
+  ) async {
+    final store = byteStore;
+    if (store == null) {
+      return null;
+    }
+    await _persistenceTail;
+    try {
+      final persisted = await store.read(key);
+      if (persisted == null) {
+        return null;
+      }
+      if (!persisted.expiresAt.isAfter(_now())) {
+        _expirations++;
+        _queuePersistenceMutation(() => store.remove(key));
+        return null;
+      }
+      return persisted;
+    } on Object catch (error, stackTrace) {
+      _reportPersistenceError(error, stackTrace);
+      return null;
+    }
+  }
+
+  Future<void> _writePersistent(
+    ResourceCacheKey key,
+    Uint8List bytes,
+    DateTime expiresAt,
+  ) =>
+      _queuePersistenceMutation(
+        () async {
+          await byteStore?.write(
+            key: key,
+            bytes: bytes,
+            expiresAt: expiresAt,
+          );
+        },
+      );
+
+  Future<void> _queuePersistenceMutation(
+    Future<void> Function() mutation,
+  ) {
+    if (byteStore == null) {
+      return Future<void>.value();
+    }
+    final next = _persistenceTail.then((_) async {
+      try {
+        await mutation();
+      } on Object catch (error, stackTrace) {
+        _reportPersistenceError(error, stackTrace);
+      }
+    });
+    _persistenceTail = next;
+    return next;
+  }
+
+  void _reportPersistenceError(Object error, StackTrace stackTrace) {
+    try {
+      onPersistenceError?.call(error, stackTrace);
+    } on Object {
+      // Cache diagnostics must not make a source response fail.
+    }
   }
 
   void _enforceBudgets(
@@ -429,7 +706,7 @@ final class ResourceCacheManager {
       .fold<int>(0, (sum, entry) => sum + entry.value.weight);
 
   void _requireOpen() {
-    if (_closed) {
+    if (_closed || _closeFuture != null) {
       throw StateError('resource cache is closed');
     }
   }

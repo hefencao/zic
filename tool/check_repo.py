@@ -25,7 +25,7 @@ EXPECTED_DEPENDENCIES = {
     'pipeline': {'domain', 'telemetry'},
     'media': {'domain', 'transport'},
     'transport': {'domain'},
-    'storage': {'catalog', 'domain'},
+    'storage': {'catalog', 'domain', 'resource_cache'},
     'storage_bridge': {'catalog', 'storage'},
     'sessions': {'domain', 'media', 'pipeline', 'storage', 'telemetry', 'transport'},
     'testkit': {'domain', 'telemetry', 'transport'},
@@ -1453,6 +1453,11 @@ def check_compile_regressions() -> None:
         '_epoch',
         'invalidateNamespace(',
         '_enforceBudgets(',
+        'abstract interface class ResourceCacheByteStore',
+        'ResourceCacheByteStoreMaintenance',
+        '_readPersistent(',
+        '_writePersistent(',
+        'inspectPersistentBytes()',
     ):
         if required not in resource_cache:
             fail(f'unified resource cache contract is incomplete: {required}')
@@ -1471,6 +1476,35 @@ def check_compile_regressions() -> None:
     ):
         if required not in cached_source:
             fail(f'catalog cache adapter is incomplete: {required}')
+    durable_response_store = (
+        ROOT / 'packages/storage/lib/src/file_resource_cache_byte_store.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class FileResourceCacheByteStore',
+        'implements ResourceCacheByteStore, ResourceCacheByteStoreMaintenance',
+        'Future<ResourceCacheByteStoreUsage> inspect()',
+        'Future<ResourceCacheByteStoreTrimReport> trimTo(',
+        'contentHash',
+        'lastAccessedAt',
+    ):
+        if required not in durable_response_store:
+            fail(f'durable response byte store is incomplete: {required}')
+
+    external_plugin_catalog = (
+        ROOT / 'packages/catalog/lib/src/external_plugin_catalog.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'parseMihonExtensionIndex(',
+        'parseVeneraSourceIndex(',
+        "json['fileName']",
+        "json['key']",
+        "sourceId: 'venera:$externalKey'",
+        'abstract interface class ExternalComicPluginHost',
+        'abstract interface class ExternalComicPluginSession',
+    ):
+        if required not in external_plugin_catalog:
+            fail(f'external plugin catalog boundary is incomplete: {required}')
+
     cache_maintenance = (
         ROOT / 'packages/resource_cache/lib/src/resource_cache_maintenance.dart'
     ).read_text(encoding='utf-8')
@@ -1499,6 +1533,13 @@ def check_compile_regressions() -> None:
         if required not in chapter_downloads:
             fail(f'artifact cache maintenance contract is incomplete: {required}')
     reader_view = (ROOT / 'packages/reader/lib/src/reader_view.dart').read_text(encoding='utf-8')
+    for required in (
+        "'zoom:${chapter.pages[index].assetKey}'",
+        "'reader-page-host:${chapter.pages[index].assetKey}'",
+        'void didUpdateWidget(covariant _ZoomableReaderPage oldWidget)',
+    ):
+        if required not in reader_view:
+            fail(f'Reader stable page-host contract is incomplete: {required}')
     for forbidden in (
         'ReaderPageBytesCache',
         '_schedulePageWarmup(',

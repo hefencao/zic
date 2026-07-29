@@ -21,15 +21,15 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.37）
+## 当前应用主线（0.31.0-dev.38）
 
-- 保留 Home/Bookshelf 的 Presentation 拆分，但禁止在 `apps/app/lib` 定义资源缓存、章节下载或整本调度算法。
-- `resource_cache` 通过 `ResourceCacheCoordinator` 统一管理封面/图片响应、漫画详情、章节元数据和搜索结果，并协调页面 artifact 维护；共享全局/分类预算、TTL、并发请求合并、LRU、命名空间失效和迟到响应抑制，容量阈值不得回流到 Presentation。
-- `catalog` 只通过 `CachedBrowsableComicSource` 使用响应缓存。章节页面字节必须绕过该缓存，继续由 `PipelineController` 的 demand 和 session/artifact 生命周期决定。
-- `downloads` 管理独立页面 artifact 下载及整本队列；`downloads_bridge` 只适配平台网络/供电和持久 JSON。App 只装配实现和展示命令结果。
-- 不完整章节由“章节元数据 + 若干独立页面 artifact”自然表示，禁止增加整章二进制缓存或 Reader 私有页字节 LRU。
-- Reader 临时 session 只在页面 artifact `promoted` 后通过 `downloads` 的 handoff 提交到持久 artifact tier；新 session 通过只读 cache transport 精确命中，未命中仍由原 transport 与 demand 执行。App 不维护提交队列、文件复制或缓存淘汰算法。
-- 下一阶段先建立 transition/decode/present telemetry 与可重放基准，再在 pipeline/session/media 层优化 encoded memory、decoded frame 和 texture retention；不得由 Presentation 猜测预热窗口。
+- 保留 Home/Bookshelf 的 Presentation 拆分，但禁止在 `apps/app/lib` 定义资源缓存、章节下载、页面保活或整本调度算法。
+- `resource_cache` 继续统一管理封面/图片响应、漫画详情、章节元数据和搜索结果。只有完整 `imageBytes` 可通过注入的 byte store 持久化；章节页面仍不进入该平面。
+- 封面持久键必须包含完整 `ResourceCacheKey` 与可用 `sourceRevision`，保留命名空间失效、TTL、容量限制和显式刷新。关闭缓存时先停止接收新工作，再排空已有请求及持久提交；统一维护需分别展示/整理内存响应、持久响应和页面 artifact。
+- Reader 的页面/缩放 host 按稳定 asset identity 建立。翻页中点改变 current role 只能触发状态更新和缩放重置，不得销毁已加载媒体子树；Presentation 仍不得通过 keep-alive、私有 LRU 或相邻页预热竞争 pipeline policy。
+- `downloads` 管理独立页面 artifact 下载、promoted handoff 及整本队列；不完整章节继续由“章节元数据 + 任意页面 artifact 子集”表示。
+- `catalog` 新增 Mihon repository 与 Venera source index 的纯元数据兼容层。Venera 同时兼容 `filename`/`fileName` 并优先保留仓库 `key`；Mihon host 后续必须检查 `tachiyomix.extensionLib` 等 APK ABI 元数据。外部 APK/Kotlin 与 JavaScript 执行必须分别位于受限 host，返回有显式 `close()` 生命周期的普通 `BrowsableComicSource`，不得获得导航、Reader、demand 或 artifact 权限。
+- 下一阶段先实现外部插件 host 的信任/权限/版本门禁与 transition/decode/present telemetry，再依据可重放基准在 pipeline/session/media 层优化 encoded memory、decoded frame 和 texture retention。
 
 ## 2. 阶段划分
 
@@ -463,8 +463,9 @@
    refresh. **Implemented.**
 6. Add source account/auth settings and update polling. Durable chapter offline state is implemented
    in 0.23.0-dev.27 and management/cancel/retry/delete UI in 0.25.0-dev.29; source update polling remains next.
-7. Evaluate a sandboxed Mihon/Keiyoushi adapter after defining plugin ABI, permissions, lifecycle and
-   compatibility policy. **Later; do not embed extension code in Widgets.**
+7. Define Mihon/Venera repository metadata compatibility and the isolated host/session ABI before
+   executable integration. **Metadata parsers and explicit host/session lifecycle are implemented in
+   0.31.0-dev.38; Android APK/Kotlin and JavaScript sandbox hosts remain next.**
 
 ## Android remote-source reliability patch
 

@@ -1,6 +1,7 @@
 import 'package:catalog/catalog.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:storage/storage.dart';
 import 'package:storage_bridge/storage_bridge.dart';
 import 'package:resource_cache/resource_cache.dart';
 
@@ -14,10 +15,22 @@ Future<void> main() async {
   ImportedLibraryStore? libraryStore;
   ChapterDownloadService? chapterDownloads;
   WholeComicDownloadQueue? wholeComicDownloads;
+  ResourceCacheCoordinator? cacheCoordinator;
   try {
     final root = await getDefaultZicStorageRoot();
     libraryStore = await openDefaultImportedLibraryStore();
     chapterDownloads = await PersistentChapterDownloadService.open(root);
+    cacheCoordinator = ResourceCacheCoordinator(
+      responses: ResourceCacheManager(
+        byteStore: FileResourceCacheByteStore(
+          '$root/resource_cache/responses',
+        ),
+        onPersistenceError: (error, stackTrace) {
+          debugPrint('durable response cache failed: $error');
+        },
+      ),
+      artifacts: chapterDownloads,
+    );
     WholeComicQueueEnvironmentSource queueEnvironment =
         const StaticWholeComicQueueEnvironment();
     PlatformWholeComicQueueEnvironment? platformEnvironment;
@@ -46,6 +59,7 @@ Future<void> main() async {
       libraryStore: libraryStore,
       chapterDownloads: chapterDownloads,
       wholeComicDownloads: wholeComicDownloads,
+      cacheCoordinator: cacheCoordinator,
     ),
   );
 }

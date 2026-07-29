@@ -95,12 +95,14 @@ final class CachedBrowsableComicSource implements BrowsableComicSource {
   Future<Uint8List> loadImage(
     Uri uri, {
     String? comicId,
+    String revision = '',
   }) =>
       loadCachedComicImage(
         cache: cache,
         sourceId: sourceId,
         comicId: comicId,
         imageIdentity: uri.toString(),
+        revision: revision,
         loader: () => source.loadResource(uri),
       );
 
@@ -145,13 +147,13 @@ final class CachedBrowsableComicSource implements BrowsableComicSource {
   }
 }
 
-
 Future<Uint8List> loadCachedComicImage({
   required ResourceCacheManager cache,
   required String sourceId,
   required String imageIdentity,
   required Future<Uint8List> Function() loader,
   String? comicId,
+  String revision = '',
 }) =>
     cache.getOrLoad<Uint8List>(
       key: ResourceCacheKey(
@@ -160,6 +162,7 @@ Future<Uint8List> loadCachedComicImage({
         namespace: comicId == null
             ? _sourceNamespace(sourceId)
             : comicResourceCacheNamespace(sourceId, comicId),
+        revision: revision,
       ),
       loader: loader,
       weightOf: (bytes) => bytes.lengthInBytes,
@@ -178,9 +181,14 @@ Future<Uint8List> loadCachedSourceImage(
   BrowsableComicSource source,
   Uri uri, {
   String? comicId,
+  String revision = '',
 }) {
   if (source is CachedBrowsableComicSource) {
-    return source.loadImage(uri, comicId: comicId);
+    return source.loadImage(
+      uri,
+      comicId: comicId,
+      revision: revision,
+    );
   }
   return source.loadResource(uri);
 }

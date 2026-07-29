@@ -59,6 +59,63 @@ void main() {
     expect(controller.requestedIndex, isNull);
   });
 
+
+  testWidgets(
+    'crossing the page midpoint preserves loaded page hosts',
+    (tester) async {
+      final chapter = _chapter(pageCount: 3);
+      final controller = ReaderController(
+        sessionId: 'reader-midpoint-test',
+        chapter: chapter,
+        onObservation: (_) {},
+        clock: FakeClock(),
+      );
+      addTearDown(controller.dispose);
+      final lifecycle = _PageLifecycle();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ReaderView(
+            controller: controller,
+            clock: FakeClock(),
+            pageBuilder: (context, asset, reportFirstFrame) =>
+                _LifecyclePage(
+              pageId: asset.pageId,
+              lifecycle: lifecycle,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(lifecycle.created['page-0'], 1);
+
+      final pageView = find.byType(PageView);
+      final gesture = await tester.startGesture(tester.getCenter(pageView));
+      await gesture.moveBy(const Offset(-300, 0));
+      await tester.pump();
+
+      expect(controller.currentIndex, 0);
+      expect(lifecycle.created['page-0'], 1);
+      expect(lifecycle.created['page-1'], 1);
+      expect(lifecycle.disposed['page-0'] ?? 0, 0);
+      expect(lifecycle.disposed['page-1'] ?? 0, 0);
+
+      await gesture.moveBy(const Offset(-220, 0));
+      await tester.pump();
+
+      expect(controller.currentIndex, 1);
+      expect(lifecycle.created['page-0'], 1);
+      expect(lifecycle.created['page-1'], 1);
+      expect(lifecycle.disposed['page-0'] ?? 0, 0);
+      expect(lifecycle.disposed['page-1'] ?? 0, 0);
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(lifecycle.created['page-1'], 1);
+    },
+  );
+
   testWidgets('ReaderView rotates pages and supports double-tap zoom',
       (tester) async {
     final chapter = _chapter(pageCount: 2);
@@ -196,6 +253,52 @@ void main() {
 
     expect(() => controller.requestPage(1), throwsRangeError);
   });
+}
+
+final class _PageLifecycle {
+  final Map<String, int> created = <String, int>{};
+  final Map<String, int> disposed = <String, int>{};
+}
+
+final class _LifecyclePage extends StatefulWidget {
+  const _LifecyclePage({
+    required this.pageId,
+    required this.lifecycle,
+  });
+
+  final String pageId;
+  final _PageLifecycle lifecycle;
+
+  @override
+  State<_LifecyclePage> createState() => _LifecyclePageState();
+}
+
+final class _LifecyclePageState extends State<_LifecyclePage> {
+  @override
+  void initState() {
+    super.initState();
+    widget.lifecycle.created.update(
+      widget.pageId,
+      (count) => count + 1,
+      ifAbsent: () => 1,
+    );
+  }
+
+  @override
+  void dispose() {
+    widget.lifecycle.disposed.update(
+      widget.pageId,
+      (count) => count + 1,
+      ifAbsent: () => 1,
+    );
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => ColoredBox(
+        key: ValueKey<String>('lifecycle:${widget.pageId}'),
+        color: Colors.black,
+      );
 }
 
 ChapterManifest _chapter({required int pageCount}) {

@@ -41,5 +41,6 @@ the source resolves a fresh chapter manifest; progress reconciliation follows th
   owning application navigation or Reader state.
 - A source may fail because of network, upstream API or regional availability; the UI surfaces a
   retryable source error rather than silently falling back to direct site scraping.
-- Mihon/Keiyoushi extension compatibility remains future work and requires an explicit isolated
-  adapter/runtime, versioning and permission model.
+- ADR 0021 later adds Mihon/Venera repository metadata compatibility and an explicit isolated
+  host/session ABI; executable APK/Kotlin and JavaScript runtimes still require versioning,
+  trust, permission and sandbox policies.

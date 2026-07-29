@@ -1,3 +1,23 @@
+## 0.31.0-dev.38 — durable cover cache, stable Reader hosts and plugin catalog seam
+
+- Persist complete `imageBytes` responses through an injected `ResourceCacheByteStore`. The file implementation stores
+  the full cache key, expiry, content length and hash under the durable app root, applies bounded LRU trimming and
+  restores covers before invoking a source loader after process restart.
+- Extend the standard image-response TTL to seven days while preserving exact namespace invalidation, revision-aware
+  identities and explicit refresh. Graceful cache shutdown now rejects new work but drains already-owned requests and
+  persistence writes instead of invalidating a cover that completes during exit.
+- Keep Reader page and zoom hosts keyed by stable asset identity. Crossing the PageView midpoint updates the current
+  role and resets page-local zoom without disposing/recreating the loaded media child, eliminating the observed
+  neighbor-page return to black/loading caused by role-key remounts.
+- Add format-neutral Mihon extension and Venera JavaScript repository catalog models, strict index parsers, namespaced
+  external source identities and an explicit plugin-session lifecycle boundary. Venera parsing accepts both the
+  documented `filename` spelling and the current repository's `fileName` plus declared `key`; APK/Kotlin and JavaScript
+  execution remain separate future sandbox hosts rather than entering catalog, Reader or download ownership.
+- Include durable response bytes in unified cache inspect/trim/clear reporting and Download Manager presentation without
+  bypassing page-artifact busy/ownership rules.
+- Add regressions for process-reopened cover reuse, close-time persistence draining, source-revision separation,
+  durable store expiry/invalidation/LRU maintenance, midpoint page-host preservation and external plugin identity parsing.
+
 ## 0.31.0-dev.37 — promoted Reader artifact cache handoff
 
 - Persist exact Reader page bytes only after the authoritative `DownloadSession` reaches `promoted`. A package-owned

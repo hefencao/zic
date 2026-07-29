@@ -12,6 +12,8 @@ dependencies:
     path: ../catalog
   domain:
     path: ../domain
+  resource_cache:
+    path: ../resource_cache
   sqlite3: '>=2.9.4 <4.0.0'
 
 dev_dependencies:

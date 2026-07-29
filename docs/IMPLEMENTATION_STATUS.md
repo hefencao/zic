@@ -1,3 +1,31 @@
+## Current iteration — durable cover cache, stable Reader hosts and plugin catalog seam
+
+Cover/image response caching now survives application restart. `ResourceCacheManager` accepts a dependency-light
+`ResourceCacheByteStore`; App composition supplies `FileResourceCacheByteStore` under the durable storage root. Only
+complete `imageBytes` values are persisted, with the full identity/namespace/revision key, expiry, content length and
+content hash. The standard image TTL is seven days, source-composite invalidation also removes records not currently in
+memory, and a changed source revision separates new cover content from an older URI/path identity.
+
+The unified cache maintenance projection now reports process-memory responses, durable response bytes and page
+artifacts as distinct tiers. Trim and clear wait for pending durable mutations, use the store's bounded LRU maintenance,
+and continue to delegate page-artifact eviction through the existing busy-safe maintenance adapter.
+
+Cache shutdown no longer increments the epoch before active loads finish. It rejects new public requests, drains the
+already-owned futures and the serialized persistence queue, then closes the store. A cover that finishes while the app
+is closing can therefore reach durable storage instead of being discarded by shutdown ordering.
+
+Reader page presentation no longer keys `_ZoomableReaderPage` by current/non-current role. The zoom and media hosts use
+the stable page asset key; crossing the PageView midpoint updates `active` and resets page-local zoom in place without
+recreating the media child. This removes the observed second loading/black frame caused by role-key remounts without
+adding Presentation keep-alive or prefetch policy.
+
+`catalog` also defines a format-neutral external plugin catalog seam. Mihon extension indexes preserve package/source
+identities. Venera indexes accept both `filename` and the current repository's `fileName`, preserve a declared `key` as
+`venera:<key>`, and defer runtime source discovery only for keyless entries. Executable APK/Kotlin and JavaScript
+integration must remain separate `ExternalComicPluginHost` implementations and return explicitly closable sessions of
+ordinary `BrowsableComicSource` adapters. This iteration parses and validates repository metadata; it does not claim
+executable plugin support.
+
 ## Current iteration — promoted Reader artifact cache handoff
 
 Reader sessions still use an isolated `EphemeralCacheWorkspace`, but promoted pages no longer disappear with it. The
@@ -226,9 +254,10 @@ source page IDs. Progress reconciliation uses that ID across rotating delivery U
 legacy display-name fallback. SQLite schema version 3 persists `ComicSourcePreference`; version 2
 migrates by adding only the new source preference table.
 
-Mihon/Keiyoushi extension loading is not embedded in this iteration. Those extensions use a separate
-Android/Kotlin runtime and require an isolated adapter, compatibility and permission model. No login,
-Cookie, challenge-solving or anti-bot bypass was added.
+Mihon/Venera executable loading is not embedded in the built-in source iteration. `0.31.0-dev.38`
+adds strict repository metadata parsers and an isolated host/session ABI, but Android APK/Kotlin and
+JavaScript runtimes still require separate compatibility, trust, permission and sandbox implementations.
+No login, Cookie, challenge-solving or anti-bot bypass was added.
 
 `python3 tool/check_repo.py` and static repository checks pass in this environment. Flutter, Dart,
 Cargo, Android SDK and Android NDK are unavailable, so analyzer, Flutter tests, Rust tests and APK

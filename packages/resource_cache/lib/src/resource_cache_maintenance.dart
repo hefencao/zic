@@ -44,14 +44,17 @@ abstract interface class ArtifactCacheMaintenance {
 final class ResourceCacheMaintenancePolicy {
   const ResourceCacheMaintenancePolicy({
     this.responseTargetWeight = 24 * 1024 * 1024,
+    this.persistentResponseTargetWeight = 24 * 1024 * 1024,
     this.artifactMaxWeight = 512 * 1024 * 1024,
     this.artifactTargetWeight = 384 * 1024 * 1024,
   })  : assert(responseTargetWeight >= 0),
+        assert(persistentResponseTargetWeight >= 0),
         assert(artifactMaxWeight >= 0),
         assert(artifactTargetWeight >= 0),
         assert(artifactTargetWeight <= artifactMaxWeight);
 
   final int responseTargetWeight;
+  final int persistentResponseTargetWeight;
   final int artifactMaxWeight;
   final int artifactTargetWeight;
 }
@@ -59,29 +62,43 @@ final class ResourceCacheMaintenancePolicy {
 final class ResourceCacheUsage {
   const ResourceCacheUsage({
     required this.responses,
+    this.persistentResponses,
     this.artifacts,
   });
 
   final ResourceCacheStats responses;
+  final ResourceCacheByteStoreUsage? persistentResponses;
   final ArtifactCacheUsage? artifacts;
 
-  int get totalBytes => responses.weight + (artifacts?.bytes ?? 0);
-  int get totalEntries => responses.entries + (artifacts?.entries ?? 0);
+  int get totalBytes =>
+      responses.weight +
+      (persistentResponses?.bytes ?? 0) +
+      (artifacts?.bytes ?? 0);
+  int get totalEntries =>
+      responses.entries +
+      (persistentResponses?.entries ?? 0) +
+      (artifacts?.entries ?? 0);
 }
 
 final class ResourceCacheMaintenanceReport {
   const ResourceCacheMaintenanceReport({
     required this.responseReleasedBytes,
+    required this.persistentResponseReleasedBytes,
     required this.responses,
+    this.persistentResponses,
     this.artifacts,
   });
 
   final int responseReleasedBytes;
+  final int persistentResponseReleasedBytes;
   final ResourceCacheStats responses;
+  final ResourceCacheByteStoreUsage? persistentResponses;
   final ArtifactCacheReport? artifacts;
 
   int get totalReleasedBytes =>
-      responseReleasedBytes + (artifacts?.releasedBytes ?? 0);
+      responseReleasedBytes +
+      persistentResponseReleasedBytes +
+      (artifacts?.releasedBytes ?? 0);
 }
 
 /// One cache-policy coordination point spanning reusable source responses and
@@ -106,6 +123,7 @@ final class ResourceCacheCoordinator {
     final artifactMaintenance = artifacts;
     return ResourceCacheUsage(
       responses: responses.stats,
+      persistentResponses: await responses.inspectPersistentBytes(),
       artifacts: artifactMaintenance == null
           ? null
           : await artifactMaintenance.inspectArtifacts(),
@@ -115,6 +133,9 @@ final class ResourceCacheCoordinator {
   Future<ResourceCacheMaintenanceReport> trim() async {
     final beforeResponses = responses.stats.weight;
     responses.trimTo(targetWeight: maintenancePolicy.responseTargetWeight);
+    final persistentReport = await responses.trimPersistentBytesTo(
+      targetBytes: maintenancePolicy.persistentResponseTargetWeight,
+    );
     final artifactMaintenance = artifacts;
     final artifactReport = artifactMaintenance == null
         ? null
@@ -122,23 +143,34 @@ final class ResourceCacheCoordinator {
             maxBytes: maintenancePolicy.artifactMaxWeight,
             targetBytes: maintenancePolicy.artifactTargetWeight,
           );
+    final persistentUsage = persistentReport == null
+        ? null
+        : await responses.inspectPersistentBytes();
     return ResourceCacheMaintenanceReport(
       responseReleasedBytes: beforeResponses - responses.stats.weight,
+      persistentResponseReleasedBytes: persistentReport?.releasedBytes ?? 0,
       responses: responses.stats,
+      persistentResponses: persistentUsage,
       artifacts: artifactReport,
     );
   }
 
   Future<ResourceCacheMaintenanceReport> clear() async {
     final responseReleasedBytes = responses.stats.weight;
+    final persistentBefore = await responses.inspectPersistentBytes();
     responses.clear();
+    await responses.drainPersistence();
     final artifactMaintenance = artifacts;
     final artifactReport = artifactMaintenance == null
         ? null
         : await artifactMaintenance.clearArtifacts();
     return ResourceCacheMaintenanceReport(
       responseReleasedBytes: responseReleasedBytes,
+      persistentResponseReleasedBytes: persistentBefore?.bytes ?? 0,
       responses: responses.stats,
+      persistentResponses: persistentBefore == null
+          ? null
+          : const ResourceCacheByteStoreUsage(bytes: 0, entries: 0),
       artifacts: artifactReport,
     );
   }

@@ -560,8 +560,9 @@ final class _DownloadCacheSummary extends StatelessWidget {
                 ),
                 Text(
                   current == null
-                      ? '统一统计资源响应内存缓存与页面 artifact。'
+                      ? '统一统计资源响应内存、持久响应与页面 artifact。'
                       : '内存 ${_formatBytes(current.responses.weight)} · '
+                          '持久响应 ${_formatBytes(current.persistentResponses?.bytes ?? 0)} · '
                           'artifact ${_formatBytes(current.artifacts?.bytes ?? 0)}；'
                           '活动需求与写入不会被清理。',
                   style: Theme.of(context).textTheme.bodySmall,

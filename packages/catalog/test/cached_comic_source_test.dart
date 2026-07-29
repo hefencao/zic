@@ -106,6 +106,21 @@ void main() {
     expect(loads, 2);
   });
 
+  test('image revision separates changed cover bytes', () async {
+    final raw = _CountingSource();
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final source = CachedBrowsableComicSource(source: raw, cache: cache);
+    final cover = Uri.parse('https://example.invalid/revisioned-cover');
+
+    await source.loadImage(cover, comicId: 'comic', revision: 'r1');
+    await source.loadImage(cover, comicId: 'comic', revision: 'r1');
+    await source.loadImage(cover, comicId: 'comic', revision: 'r2');
+
+    expect(raw.resourceLoads, 2);
+    expect(cache.stats.forKind(ResourceCacheKind.imageBytes).entries, 2);
+  });
+
   test('raw page resources bypass response cache for pipeline ownership',
       () async {
     final raw = _CountingSource();

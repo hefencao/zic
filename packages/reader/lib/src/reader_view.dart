@@ -106,9 +106,9 @@ final class _ReaderViewState extends State<ReaderView> {
               quarterTurns: widget.controller.rotationQuarterTurns,
               child: _ZoomableReaderPage(
                 key: ValueKey<String>(
-                  'zoom:${chapter.pages[index].assetKey}:'
-                  '${index == widget.controller.currentIndex}',
+                  'zoom:${chapter.pages[index].assetKey}',
                 ),
+                active: index == widget.controller.currentIndex,
                 onTap: widget.onTap,
                 onZoomChanged: (zoomed) {
                   final next = zoomed ? index : null;
@@ -118,6 +118,9 @@ final class _ReaderViewState extends State<ReaderView> {
                   setState(() => _zoomedPage = next);
                 },
                 child: _ReaderPageHost(
+                  key: ValueKey<String>(
+                    'reader-page-host:${chapter.pages[index].assetKey}',
+                  ),
                   asset: chapter.pages[index],
                   sessionId: widget.controller.sessionId,
                   clock: widget.clock,
@@ -258,12 +261,14 @@ final class _ReaderViewState extends State<ReaderView> {
 final class _ZoomableReaderPage extends StatefulWidget {
   const _ZoomableReaderPage({
     required this.child,
+    required this.active,
     required this.onZoomChanged,
     this.onTap,
     super.key,
   });
 
   final Widget child;
+  final bool active;
   final ValueChanged<bool> onZoomChanged;
   final VoidCallback? onTap;
 
@@ -285,6 +290,19 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage> {
   void initState() {
     super.initState();
     _transformation = TransformationController();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ZoomableReaderPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.active != widget.active && _zoomed) {
+      _singleTapTimer?.cancel();
+      _singleTapTimer = null;
+      _lastTapAt = null;
+      _lastTapPosition = null;
+      _transformation.value = Matrix4.identity();
+      _zoomed = false;
+    }
   }
 
   @override

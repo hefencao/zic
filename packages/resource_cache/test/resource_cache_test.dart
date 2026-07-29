@@ -62,6 +62,125 @@ void main() {
     expect(cache.stats.inFlight, 0);
   });
 
+  test('restores durable image bytes before invoking the source', () async {
+    final store = _MemoryResourceByteStore();
+    const key = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'source/cover-persistent',
+      namespace: 'comic:source\u0000comic',
+    );
+    var sourceLoads = 0;
+
+    final first = ResourceCacheManager(byteStore: store);
+    expect(
+      await first.getOrLoad<Uint8List>(
+        key: key,
+        loader: () async {
+          sourceLoads++;
+          return Uint8List.fromList(<int>[7, 8, 9]);
+        },
+        weightOf: (bytes) => bytes.lengthInBytes,
+      ),
+      <int>[7, 8, 9],
+    );
+    await first.close();
+
+    final reopened = ResourceCacheManager(byteStore: store);
+    addTearDown(reopened.close);
+    final restored = await reopened.getOrLoad<Uint8List>(
+      key: key,
+      loader: () async {
+        sourceLoads++;
+        return Uint8List.fromList(<int>[1]);
+      },
+      weightOf: (bytes) => bytes.lengthInBytes,
+    );
+
+    expect(restored, <int>[7, 8, 9]);
+    expect(sourceLoads, 1);
+    expect(reopened.stats.persistentHits, 1);
+  });
+
+  test('close drains active image persistence before store shutdown', () async {
+    final store = _MemoryResourceByteStore();
+    final cache = ResourceCacheManager(byteStore: store);
+    final started = Completer<void>();
+    final gate = Completer<void>();
+    const key = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'source/cover-close-drain',
+    );
+
+    final request = cache.getOrLoad<Uint8List>(
+      key: key,
+      loader: () async {
+        started.complete();
+        await gate.future;
+        return Uint8List.fromList(<int>[2, 4, 6]);
+      },
+      weightOf: (bytes) => bytes.lengthInBytes,
+    );
+    await started.future;
+    final closing = cache.close();
+    expect(
+      () => cache.peek<Uint8List>(key),
+      throwsA(isA<StateError>()),
+    );
+    expect(cache.clear, throwsA(isA<StateError>()));
+    gate.complete();
+    expect(await request, <int>[2, 4, 6]);
+    await closing;
+
+    final reopened = ResourceCacheManager(byteStore: store);
+    addTearDown(reopened.close);
+    var sourceLoads = 0;
+    expect(
+      await reopened.getOrLoad<Uint8List>(
+        key: key,
+        loader: () async {
+          sourceLoads++;
+          return Uint8List.fromList(<int>[9]);
+        },
+        weightOf: (bytes) => bytes.lengthInBytes,
+      ),
+      <int>[2, 4, 6],
+    );
+    expect(sourceLoads, 0);
+  });
+
+  test('namespace invalidation also removes unseen durable images', () async {
+    final store = _MemoryResourceByteStore();
+    const namespace = 'comic:source\u0000comic';
+    const key = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'source/cover-invalidate',
+      namespace: namespace,
+    );
+    final first = ResourceCacheManager(byteStore: store);
+    await first.getOrLoad<Uint8List>(
+      key: key,
+      loader: () async => Uint8List.fromList(<int>[4, 5, 6]),
+      weightOf: (bytes) => bytes.lengthInBytes,
+    );
+    await first.close();
+
+    final reopened = ResourceCacheManager(byteStore: store);
+    addTearDown(reopened.close);
+    reopened.invalidateNamespace(namespace);
+    var sourceLoads = 0;
+    final value = await reopened.getOrLoad<Uint8List>(
+      key: key,
+      loader: () async {
+        sourceLoads++;
+        return Uint8List.fromList(<int>[9]);
+      },
+      weightOf: (bytes) => bytes.lengthInBytes,
+    );
+
+    expect(value, <int>[9]);
+    expect(sourceLoads, 1);
+  });
+
   test('applies TTL and reloads expired metadata', () async {
     var now = DateTime.utc(2026, 1, 1);
     final cache = ResourceCacheManager(
@@ -214,36 +333,139 @@ void main() {
     expect(cache.peek<String>(key), 'new');
   });
 
-  test(
-    'coordinator reports response and artifact planes without taking ownership',
-    () async {
-    final responses = ResourceCacheManager();
-    final artifacts = _FakeArtifactMaintenance();
-    final coordinator = ResourceCacheCoordinator(
-      responses: responses,
-      artifacts: artifacts,
-    );
+  test('coordinator counts and clears durable response bytes', () async {
+    final store = _MemoryResourceByteStore();
+    final responses = ResourceCacheManager(byteStore: store);
+    final coordinator = ResourceCacheCoordinator(responses: responses);
     addTearDown(coordinator.close);
+    const key = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'source/durable-cover',
+      namespace: 'comic:source\u0000comic',
+    );
 
-    await responses.getOrLoad<String>(
-      key: const ResourceCacheKey(
-        kind: ResourceCacheKind.searchResults,
-        identity: 'source/search',
-      ),
-      loader: () async => 'cached',
-      weightOf: (value) => value.length,
+    await responses.getOrLoad<Uint8List>(
+      key: key,
+      loader: () async => Uint8List.fromList(<int>[1, 2, 3]),
+      weightOf: (bytes) => bytes.lengthInBytes,
     );
 
     final usage = await coordinator.inspect();
-    expect(usage.responses.entries, 1);
-    expect(usage.artifacts?.entries, 2);
-    expect(usage.totalBytes, 'cached'.length + 12);
+    expect(usage.responses.weight, 3);
+    expect(usage.persistentResponses?.bytes, 3);
+    expect(usage.persistentResponses?.entries, 1);
+    expect(usage.totalBytes, 6);
 
-    final clearReport = await coordinator.clear();
-    expect(responses.stats.entries, 0);
-    expect(clearReport.totalReleasedBytes, 'cached'.length + 12);
-    expect(artifacts.clearCalls, 1);
+    final report = await coordinator.clear();
+    expect(report.responseReleasedBytes, 3);
+    expect(report.persistentResponseReleasedBytes, 3);
+    expect(report.persistentResponses?.bytes, 0);
+    expect(store.values, isEmpty);
   });
+
+  test(
+    'coordinator reports response and artifact planes without taking ownership',
+    () async {
+      final responses = ResourceCacheManager();
+      final artifacts = _FakeArtifactMaintenance();
+      final coordinator = ResourceCacheCoordinator(
+        responses: responses,
+        artifacts: artifacts,
+      );
+      addTearDown(coordinator.close);
+
+      await responses.getOrLoad<String>(
+        key: const ResourceCacheKey(
+          kind: ResourceCacheKind.searchResults,
+          identity: 'source/search',
+        ),
+        loader: () async => 'cached',
+        weightOf: (value) => value.length,
+      );
+
+      final usage = await coordinator.inspect();
+      expect(usage.responses.entries, 1);
+      expect(usage.artifacts?.entries, 2);
+      expect(usage.totalBytes, 'cached'.length + 12);
+
+      final clearReport = await coordinator.clear();
+      expect(responses.stats.entries, 0);
+      expect(clearReport.totalReleasedBytes, 'cached'.length + 12);
+      expect(artifacts.clearCalls, 1);
+    },
+  );
+}
+
+final class _MemoryResourceByteStore
+    implements ResourceCacheByteStore, ResourceCacheByteStoreMaintenance {
+  final Map<ResourceCacheKey, PersistedResourceBytes> values =
+      <ResourceCacheKey, PersistedResourceBytes>{};
+
+  @override
+  Future<PersistedResourceBytes?> read(ResourceCacheKey key) async =>
+      values[key];
+
+  @override
+  Future<void> write({
+    required ResourceCacheKey key,
+    required Uint8List bytes,
+    required DateTime expiresAt,
+  }) async {
+    values[key] = PersistedResourceBytes(
+      bytes: Uint8List.fromList(bytes),
+      expiresAt: expiresAt,
+    );
+  }
+
+  @override
+  Future<void> remove(ResourceCacheKey key) async {
+    values.remove(key);
+  }
+
+  @override
+  Future<void> removeWhere(
+    bool Function(ResourceCacheKey key) predicate,
+  ) async {
+    values.removeWhere((key, value) => predicate(key));
+  }
+
+  @override
+  Future<void> clear() async => values.clear();
+
+  @override
+  Future<ResourceCacheByteStoreUsage> inspect() async =>
+      ResourceCacheByteStoreUsage(
+        bytes: values.values.fold<int>(
+          0,
+          (sum, value) => sum + value.bytes.lengthInBytes,
+        ),
+        entries: values.length,
+      );
+
+  @override
+  Future<ResourceCacheByteStoreTrimReport> trimTo({
+    required int targetBytes,
+  }) async {
+    final before = (await inspect()).bytes;
+    var remaining = before;
+    var evicted = 0;
+    for (final key in values.keys.toList(growable: false)) {
+      if (remaining <= targetBytes) {
+        break;
+      }
+      remaining -= values.remove(key)!.bytes.lengthInBytes;
+      evicted++;
+    }
+    return ResourceCacheByteStoreTrimReport(
+      beforeBytes: before,
+      releasedBytes: before - remaining,
+      remainingBytes: remaining,
+      evictedEntries: evicted,
+    );
+  }
+
+  @override
+  Future<void> close() async {}
 }
 
 final class _FakeArtifactMaintenance implements ArtifactCacheMaintenance {
