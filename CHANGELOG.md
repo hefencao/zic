@@ -1,3 +1,15 @@
+## 0.31.0-dev.36 — unified resource cache and restored pipeline ownership
+
+- Correct the `0.30.0-dev.35` cache boundary. Remove the App-owned `CoverMemoryCache` and competing `ReaderPageBytesCache`; Reader presentation no longer warms current/adjacent page bytes or enables implicit page retention outside pipeline policy.
+- Add the workspace-level `resource_cache` package. Cover/image responses, comic details, chapter metadata and search results share one global/per-kind budget, TTL, in-flight coalescing, LRU eviction, exact source-composite namespaces and stale-response suppression after refresh/clear.
+- Add `CachedBrowsableComicSource` in catalog. Explicit source refresh invalidates the relevant search or comic namespace; chapter page `loadResource` remains a raw pass-through so encoded pages continue through demand/session/artifact ownership.
+- Move chapter artifact downloads and durable whole-comic scheduling out of `apps/app/lib` into `downloads`. Move runtime network/power and JSON persistence adapters into `downloads_bridge`; the queue now explicitly closes owned environment adapters after draining work. Download Manager stays a presentation/command surface over package interfaces.
+- Model partial offline chapters as independent page artifacts plus separately cached chapter metadata. `ResourceCacheCoordinator` owns shared maintenance policy and reports both planes without turning a chapter into an all-or-nothing cache entry or leaving capacity thresholds in Presentation.
+- Make the memory fallback mirror production artifact semantics: each completed page is retained immediately, cancellation/failure preserves the downloaded subset, retry skips retained pages, and trim/clear evicts page records rather than whole chapters. Folder imports persist their first page as explicit cover metadata; a missing remote cover no longer silently routes a chapter page through the response cache.
+- Keep cache identity construction in package adapters. App composition injects an existing coordinator unchanged, and does not construct `ResourceCacheKey` values or replace an injected maintenance policy.
+- Restore Reader page-role remount semantics required to reset stale zoom and remove the invalid stable-page-identity regression. Fix the reported cache-maintenance type promotion and invalid imported-page cover field.
+- Add regressions for cache namespaces, per-kind statistics, refresh supersession, clear-during-in-flight behavior, catalog cache/raw-page boundaries and platform queue persistence.
+
 ## 0.30.0-dev.35 — home decomposition and bounded media caches
 
 - Split the 3300+ line Home shell into durable `HomeLibrarySession`, Home/Bookshelf view composition, reusable cover/shelf Widgets and a smaller navigation/use-case coordinator. Enforce a first-stage line budget on `demo_home.dart`.

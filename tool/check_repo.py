@@ -13,7 +13,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_DEPENDENCIES = {
     'domain': set(),
-    'catalog': {'domain', 'transport'},
+    'downloads': {
+        'catalog', 'domain', 'resource_cache', 'sessions', 'storage',
+        'telemetry', 'transport',
+    },
+    'downloads_bridge': {'downloads', 'runtime_bridge', 'storage_bridge'},
+    'catalog': {'domain', 'resource_cache', 'transport'},
+    'resource_cache': set(),
     'telemetry': set(),
     'reader': {'domain', 'telemetry'},
     'pipeline': {'domain', 'telemetry'},
@@ -931,9 +937,6 @@ def check_compile_regressions() -> None:
         'layout: _workspace.layout',
         '_workspace.readArtifact(',
         'await _workspace.dispose()',
-        'ReaderPageBytesCache',
-        '_loadMediaBytesCached(',
-        '_schedulePageWarmup(',
         'addSnapshotListener(listener)',
         '_binding?.detach(',
         'AssetBundleTransport(rootBundle)',
@@ -1356,7 +1359,7 @@ def check_compile_regressions() -> None:
     ):
         if required not in saved_comic:
             fail(f'comic-level durable metadata is incomplete: {required}')
-    downloads = (ROOT / 'apps/app/lib/chapter_downloads.dart').read_text(
+    downloads = (ROOT / 'packages/downloads/lib/src/chapter_downloads.dart').read_text(
         encoding='utf-8',
     )
     for required in (
@@ -1415,7 +1418,6 @@ def check_compile_regressions() -> None:
             ROOT / 'apps/app/lib/demo_home_views.dart',
             ROOT / 'apps/app/lib/home_widgets.dart',
             ROOT / 'apps/app/lib/home_library_session.dart',
-            ROOT / 'apps/app/lib/cover_cache.dart',
         )
     )
     if len(home_path.read_text(encoding='utf-8').splitlines()) > 1800:
@@ -1423,25 +1425,96 @@ def check_compile_regressions() -> None:
     for required in (
         "part 'demo_home_views.dart';",
         'HomeLibrarySession(',
-        'CoverMemoryCache()',
+        'ResourceCacheCoordinator',
+        'CachedBrowsableComicSource',
     ):
         if required not in home:
-            fail(f'home decomposition/cache contract is incomplete: {required}')
-    cover_cache = (ROOT / 'apps/app/lib/cover_cache.dart').read_text(encoding='utf-8')
-    for required in ('maxBytes', 'maxEntries', '_evict(', 'Future<Uint8List> load('):
-        if required not in cover_cache:
-            fail(f'cover cache must remain bounded and coalescing: {required}')
-    page_cache = (ROOT / 'apps/app/lib/reader_page_cache.dart').read_text(encoding='utf-8')
-    for required in ('maxBytes', 'maxEntries', 'retainWarmKeys(', 'Future<void> warm('):
-        if required not in page_cache:
-            fail(f'Reader page cache contract is incomplete: {required}')
-    chapter_downloads = (ROOT / 'apps/app/lib/chapter_downloads.dart').read_text(encoding='utf-8')
-    for required in ('ChapterCacheMaintenance', 'CacheOps(', 'inspectCacheUsage()'):
+            fail(f'home composition contract is incomplete: {required}')
+    for forbidden_path in (
+        ROOT / 'apps/app/lib/cover_cache.dart',
+        ROOT / 'apps/app/lib/reader_page_cache.dart',
+        ROOT / 'apps/app/lib/chapter_downloads.dart',
+        ROOT / 'apps/app/lib/whole_comic_downloads.dart',
+    ):
+        if forbidden_path.exists():
+            fail(f'cache policy must not live in app composition: {forbidden_path.name}')
+    resource_cache = (
+        ROOT / 'packages/resource_cache/lib/src/resource_cache.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class ResourceCacheManager',
+        'ResourceCacheKind.imageBytes',
+        'ResourceCacheKind.comicDetails',
+        'ResourceCacheKind.chapterMetadata',
+        'ResourceCacheKind.searchResults',
+        'namespace',
+        'globalMaxWeight',
+        '_generations',
+        '_epoch',
+        'invalidateNamespace(',
+        '_enforceBudgets(',
+    ):
+        if required not in resource_cache:
+            fail(f'unified resource cache contract is incomplete: {required}')
+    cached_source = (
+        ROOT / 'packages/catalog/lib/src/cached_comic_source.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class CachedBrowsableComicSource',
+        'loadCachedSourceImage(',
+        'loadCachedComicImage(',
+        'invalidateComicResourceCache(',
+        'ResourceCacheKind.searchResults',
+        'ResourceCacheKind.comicDetails',
+        'ResourceCacheKind.chapterMetadata',
+        'Future<Uint8List> loadResource(Uri uri) => source.loadResource(uri)',
+    ):
+        if required not in cached_source:
+            fail(f'catalog cache adapter is incomplete: {required}')
+    cache_maintenance = (
+        ROOT / 'packages/resource_cache/lib/src/resource_cache_maintenance.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class ResourceCacheCoordinator',
+        'final ResourceCacheManager responses',
+        'final ArtifactCacheMaintenance? artifacts',
+        'Future<ResourceCacheUsage> inspect()',
+        'ResourceCacheMaintenancePolicy',
+        'Future<ResourceCacheMaintenanceReport> trim()',
+        'Future<ResourceCacheMaintenanceReport> clear()',
+    ):
+        if required not in cache_maintenance:
+            fail(f'unified cache coordinator contract is incomplete: {required}')
+
+    chapter_downloads = (ROOT / 'packages/downloads/lib/src/chapter_downloads.dart').read_text(encoding='utf-8')
+    for required in (
+        'ArtifactCacheMaintenance',
+        'CacheOps(',
+        'inspectArtifacts()',
+        'Map<String, List<Uint8List?>> _chapters',
+        'pages[index] = bytes',
+        '_storedPageCount(',
+        '_storedPageBytes(',
+    ):
         if required not in chapter_downloads:
-            fail(f'persistent cache maintenance contract is incomplete: {required}')
+            fail(f'artifact cache maintenance contract is incomplete: {required}')
     reader_view = (ROOT / 'packages/reader/lib/src/reader_view.dart').read_text(encoding='utf-8')
-    if "'zoom:${chapter.pages[index].assetKey}'" not in reader_view:
-        fail('Reader page identity must not depend on current/near role')
+    for forbidden in (
+        'ReaderPageBytesCache',
+        '_schedulePageWarmup(',
+        'allowImplicitScrolling: true',
+    ):
+        if forbidden in reader_runtime or forbidden in reader_view:
+            fail(f'Reader must not bypass pipeline demand with UI prefetch: {forbidden}')
+    if "package:resource_cache/resource_cache.dart" in reader_runtime or \
+            "package:resource_cache/resource_cache.dart" in reader_view:
+        fail('Reader presentation must not depend on response-cache policy')
+    app_lib = '\n'.join(
+        path.read_text(encoding='utf-8')
+        for path in (ROOT / 'apps/app/lib').glob('*.dart')
+    )
+    if 'ResourceCacheKey(' in app_lib:
+        fail('Presentation must request cached catalog resources through package adapters')
     if 'String? _managedComicId;' in home:
         fail('bookshelf management selection must use source-aware comic identity')
 
@@ -1486,7 +1559,7 @@ def check_compile_regressions() -> None:
         '_downloadComicEntries',
         '_openingComicIdentities',
         '_CoverTitleGradient',
-        'Future<Uint8List>.sync(loader)',
+        'Future<Uint8List>.sync(widget.loader)',
         '_selectSourceMigrationTarget',
         "label: const Text('搜索同名作品')",
         "throw StateError('目标漫画源返回了不匹配的漫画或章节身份')",
@@ -1538,13 +1611,12 @@ def check_compile_regressions() -> None:
         if required not in download_manager:
             fail(f'download manager presentation is incomplete: {required}')
 
-    whole_queue = (ROOT / 'apps/app/lib/whole_comic_downloads.dart').read_text(
+    whole_queue = (ROOT / 'packages/downloads/lib/src/whole_comic_downloads.dart').read_text(
         encoding='utf-8'
     )
     for required in (
         'final class WholeComicDownloadQueue',
         'WholeComicQueuePhase.waitingForPolicy',
-        'final class JsonWholeComicQueueStore',
         'completedChapterIdentities',
         '_policyAllowsWork()',
         '_cancelActiveForJob',
@@ -1553,6 +1625,19 @@ def check_compile_regressions() -> None:
     ):
         if required not in whole_queue:
             fail(f'durable whole-comic queue is incomplete: {required}')
+
+    downloads_bridge = (
+        ROOT / 'packages/downloads_bridge/lib/src/downloads_bridge.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class PlatformWholeComicQueueEnvironment',
+        'final class JsonWholeComicQueueStore',
+        'openPersistentWholeComicDownloadQueue',
+        'RuntimeEnvironmentBridge',
+        'readJsonObjectFile',
+    ):
+        if required not in downloads_bridge:
+            fail(f'download platform adapter is incomplete: {required}')
 
     runtime_bridge = (
         ROOT / 'packages/runtime_bridge/lib/src/runtime_bridge.dart'
@@ -1598,9 +1683,13 @@ def check_compile_regressions() -> None:
         if required not in reader_runtime:
             fail(f'Reader playback controls are incomplete: {required}')
 
-    chapter_download_tests = (
-        ROOT / 'apps/app/test/chapter_downloads_test.dart'
-    ).read_text(encoding='utf-8')
+    chapter_download_tests = '\n'.join(
+        path.read_text(encoding='utf-8')
+        for path in (
+            ROOT / 'packages/downloads/test/chapter_downloads_test.dart',
+            ROOT / 'apps/app/test/chapter_downloads_test.dart',
+        )
+    )
     for required in (
         'memory download publishes progress and delete returns to idle',
         'memory download cancellation keeps partial progress and retry completes',
@@ -1610,15 +1699,19 @@ def check_compile_regressions() -> None:
         if required not in chapter_download_tests:
             fail(f'download lifecycle regression coverage is incomplete: {required}')
 
-    whole_queue_tests = (
-        ROOT / 'apps/app/test/whole_comic_downloads_test.dart'
-    ).read_text(encoding='utf-8')
+    whole_queue_tests = '\n'.join(
+        path.read_text(encoding='utf-8')
+        for path in (
+            ROOT / 'packages/downloads/test/whole_comic_downloads_test.dart',
+            ROOT / 'packages/downloads_bridge/test/downloads_bridge_test.dart',
+        )
+    )
     for required in (
         'whole-comic queue enforces configured chapter concurrency',
         'whole-comic queue waits for policy and resumes on environment change',
         'policy loss suspends an active chapter and resumes it later',
         'paused whole-comic job survives queue recreation',
-        'JSON queue store restores policy and pending chapters',
+        'JSON queue adapter restores policy and pending chapters',
     ):
         if required not in whole_queue_tests:
             fail(f'whole-comic queue regression coverage is incomplete: {required}')

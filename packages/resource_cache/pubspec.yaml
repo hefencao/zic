@@ -1,0 +1,11 @@
+name: resource_cache
+description: Unified bounded cache policies and network resource coalescing for zic.
+version: 0.31.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+
+dev_dependencies:
+  test: ^1.25.0

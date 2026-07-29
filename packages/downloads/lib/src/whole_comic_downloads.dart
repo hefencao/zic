@@ -2,8 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:catalog/catalog.dart';
-import 'package:runtime_bridge/runtime_bridge.dart';
-import 'package:storage_bridge/storage_bridge.dart';
 
 import 'chapter_downloads.dart';
 
@@ -89,6 +87,7 @@ final class WholeComicQueueEnvironment {
 abstract interface class WholeComicQueueEnvironmentSource {
   WholeComicQueueEnvironment get current;
   Stream<WholeComicQueueEnvironment> get changes;
+  Future<void> close();
 }
 
 final class StaticWholeComicQueueEnvironment
@@ -103,6 +102,9 @@ final class StaticWholeComicQueueEnvironment
   @override
   Stream<WholeComicQueueEnvironment> get changes =>
       const Stream<WholeComicQueueEnvironment>.empty();
+
+  @override
+  Future<void> close() async {}
 }
 
 final class MutableWholeComicQueueEnvironment
@@ -126,53 +128,9 @@ final class MutableWholeComicQueueEnvironment
     }
   }
 
-  Future<void> close() => _changes.close();
-}
-
-final class PlatformWholeComicQueueEnvironment
-    implements WholeComicQueueEnvironmentSource {
-  PlatformWholeComicQueueEnvironment({
-    RuntimeEnvironmentBridge bridge = const RuntimeEnvironmentBridge(),
-  }) : _bridge = bridge;
-
-  final RuntimeEnvironmentBridge _bridge;
-  final StreamController<WholeComicQueueEnvironment> _changes =
-      StreamController<WholeComicQueueEnvironment>.broadcast(sync: true);
-  WholeComicQueueEnvironment _current =
-      const WholeComicQueueEnvironment.assumedAvailable();
-  StreamSubscription<RuntimeEnvironmentSnapshot>? _subscription;
-
   @override
-  WholeComicQueueEnvironment get current => _current;
-
-  @override
-  Stream<WholeComicQueueEnvironment> get changes => _changes.stream;
-
-  Future<void> initialize() async {
-    _accept(await _bridge.current());
-    _subscription ??= _bridge.changes.listen(
-      _accept,
-      onError: _changes.addError,
-    );
-  }
-
-  Future<void> close() async {
-    await _subscription?.cancel();
-    _subscription = null;
-    await _changes.close();
-  }
-
-  void _accept(RuntimeEnvironmentSnapshot snapshot) {
-    final next = WholeComicQueueEnvironment(
-      networkAvailable: snapshot.networkAvailable,
-      unmetered: snapshot.unmetered,
-      charging: snapshot.charging,
-    );
-    _current = next;
-    if (!_changes.isClosed) {
-      _changes.add(next);
-    }
-  }
+  Future<void> close() =>
+      _changes.isClosed ? Future<void>.value() : _changes.close();
 }
 
 final class WholeComicQueueJobSnapshot {
@@ -265,33 +223,16 @@ final class MemoryWholeComicQueueStore implements WholeComicQueueStore {
   Future<void> close() async {}
 }
 
-final class JsonWholeComicQueueStore implements WholeComicQueueStore {
-  JsonWholeComicQueueStore(this.path);
-
-  final String path;
-
-  @override
-  Future<Map<String, Object?>?> load() async {
-    return readJsonObjectFile(path);
-  }
-
-  @override
-  Future<void> save(Map<String, Object?> data) async {
-    await writeJsonObjectFile(path, data);
-  }
-
-  @override
-  Future<void> close() async {}
-}
-
 final class WholeComicDownloadQueue {
   WholeComicDownloadQueue({
     required ChapterDownloadService downloads,
     WholeComicQueueStore? store,
     WholeComicQueueEnvironmentSource? environment,
+    bool ownsEnvironment = false,
   })  : _downloads = downloads,
         _store = store ?? MemoryWholeComicQueueStore(),
-        _environment = environment ?? const StaticWholeComicQueueEnvironment() {
+        _environment = environment ?? const StaticWholeComicQueueEnvironment(),
+        _ownsEnvironment = environment == null || ownsEnvironment {
     _ready = _restore();
     _environmentSubscription = _environment.changes.listen(
       (_) {
@@ -305,23 +246,12 @@ final class WholeComicDownloadQueue {
     );
   }
 
-  static Future<WholeComicDownloadQueue> open({
-    required String path,
-    required ChapterDownloadService downloads,
-    WholeComicQueueEnvironmentSource? environment,
-  }) async {
-    final queue = WholeComicDownloadQueue(
-      downloads: downloads,
-      store: JsonWholeComicQueueStore(path),
-      environment: environment,
-    );
-    await queue.ready;
-    return queue;
-  }
+
 
   final ChapterDownloadService _downloads;
   final WholeComicQueueStore _store;
   final WholeComicQueueEnvironmentSource _environment;
+  final bool _ownsEnvironment;
   final StreamController<WholeComicQueueSnapshot> _changes =
       StreamController<WholeComicQueueSnapshot>.broadcast(sync: true);
   final Map<String, _WholeComicQueueJob> _jobs =
@@ -506,6 +436,9 @@ final class WholeComicDownloadQueue {
     await _cancelAllActive();
     await _publish();
     await _environmentSubscription.cancel();
+    if (_ownsEnvironment) {
+      await _environment.close();
+    }
     await _store.close();
     _closed = true;
     _closing = false;

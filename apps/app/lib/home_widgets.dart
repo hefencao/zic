@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'package:catalog/catalog.dart';
 import 'package:flutter/material.dart';
 
-import 'chapter_downloads.dart';
+import 'package:downloads/downloads.dart';
 import 'comic_details.dart' as details;
 
 enum ComicDownloadProgressKind { active, offline }
@@ -43,12 +43,14 @@ final class ComicDownloadProgress {
 }
 
 
-String _coverCacheIdentity(LibraryComic comic) {
+String _coverRequestIdentity(LibraryComic comic) {
   final sourceValue = comic.coverSourceId ??
       comic.coverChapter?.chapter.coverSourceId ??
-      (comic.chapters.isEmpty || comic.chapters.first.chapter.pages.isEmpty
+      (comic.sourceId != 'local-folder' ||
+              comic.chapters.isEmpty ||
+              comic.chapters.first.chapter.pages.isEmpty
           ? null
-          : comic.chapters.first.chapter.pages.first.source);
+          : comic.chapters.first.chapter.pages.first.sourceId);
   return '${comic.identity}\u0000${sourceValue ?? ''}';
 }
 
@@ -105,7 +107,7 @@ final class ComicCoverCard extends StatelessWidget {
                 fit: StackFit.expand,
                 children: <Widget>[
                   _CoverImage(
-                    cacheIdentity: _coverCacheIdentity(comic),
+                    cacheIdentity: _coverRequestIdentity(comic),
                     loader: coverBytes,
                   ),
                   if (downloadProgress != null)
@@ -406,6 +408,7 @@ final class _ComicDetailsScreenState extends State<ComicDetailsScreen> {
       categories: widget.categories,
       loadCover: ({
         required String sourceId,
+        required String comicId,
         required Uri? coverUri,
         required ImportedLibraryEntry? fallbackChapter,
       }) =>
@@ -507,7 +510,7 @@ final class ShelfListTile extends StatelessWidget {
                 fit: StackFit.expand,
                 children: <Widget>[
                   _CoverImage(
-                    cacheIdentity: _coverCacheIdentity(comic),
+                    cacheIdentity: _coverRequestIdentity(comic),
                     loader: coverBytes,
                   ),
                   if (downloadProgress != null)

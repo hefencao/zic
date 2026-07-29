@@ -221,6 +221,7 @@ final class ImportedChapterRecord {
       sourceRevision: 'folder-$revisionHash',
       pages: pages,
       comicTitle: normalizedName,
+      coverSourceId: pages.first.sourceId,
       readingDirection: readingDirection,
       importedAt: importedAt,
     );

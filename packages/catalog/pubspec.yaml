@@ -1,6 +1,6 @@
 name: catalog
 description: Comic source abstractions and manifest loaders for zic.
-version: 0.30.0
+version: 0.31.0
 publish_to: none
 resolution: workspace
 
@@ -8,6 +8,8 @@ environment:
   sdk: '>=3.6.0 <4.0.0'
 
 dependencies:
+  resource_cache:
+    path: ../resource_cache
   domain:
     path: ../domain
   transport:

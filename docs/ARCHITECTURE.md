@@ -42,7 +42,10 @@ zic/
 
   packages/
     domain/                  领域实体、identity、值对象
-    catalog/                 书架、章节、来源抽象
+    catalog/                 书架、章节、来源抽象与缓存装饰器
+    resource_cache/          统一响应缓存预算、TTL、合并与失效
+    downloads/               页面 artifact 下载与整本队列核心
+    downloads_bridge/        网络/供电与队列持久化平台适配
     reader/                  Reader UI、viewport、交互报告
     pipeline/                policy/window/ranker/demand
     sessions/                download/decode/display session
@@ -597,12 +600,20 @@ FrameHolder：
 
 ## 11. 缓存架构
 
-### 11.1 层级
+### 11.1 两个缓存平面与一个协调入口
 
-1. Disk Artifact Cache：partial/final 编码字节。
-2. Encoded Memory Cache：章节附近压缩字节或 mmap view。
-3. Decoded Frame Cache：静态图或动画帧。
-4. Renderer Texture Cache：可见和 transition 页面。
+`ResourceCacheCoordinator` 是应用装配和缓存管理命令的唯一入口，但不把所有物理资源改成一个所有者。
+它协调两个已有边界清晰的平面：
+
+1. **Source response plane**（`resource_cache`）：显式封面/来源图片响应、漫画详情、章节元数据、搜索结果；共享全局与分类型预算、TTL、并发请求合并、LRU 和来源复合失效命名空间。章节页面 URI 不属于该平面。
+2. **Media pipeline plane**：
+   - Disk Artifact Cache：每个页面独立的 partial/final 编码字节；
+   - Encoded Memory Cache：由 pipeline/session 按 demand 保留的压缩字节或 mmap view；
+   - Decoded Frame Cache：静态图或动画帧；
+   - Renderer Texture Cache：可见和 transition 页面。
+
+不完整章节不是一个全有或全无的“章节缓存”：它由可复用的章节元数据与任意子集的页面 partial/final artifact 组成。
+`ResourceCacheCoordinator` 只能通过 `ArtifactCacheMaintenance -> CacheOps -> DownloadRegistry/DownloadSession` 请求统计和安全驱逐，不能直接删除文件或取代 pipeline demand。
 
 ### 11.2 设备预算
 
@@ -912,9 +923,9 @@ keeps the last trusted environment snapshot; unsupported hosts use an explicit i
 只有精确匹配章节会进入后续阅读位置与已读状态迁移。仅序号匹配只作为风险证据展示，不会因用户确认而
 自动升级为可迁移状态。目标源已有偏好和阅读状态继续优先保留，来源 URL、离线 artifact 和原来源记录不复制、不删除。
 
-## 12. App composition and bounded read caches
+## 12. App composition, unified response cache and Reader ownership
 
-The Home shell is divided by ownership rather than by arbitrary file size:
+The Home shell remains divided by ownership rather than by arbitrary file size:
 
 ```text
 DemoHome                      navigation / dialogs / use cases
@@ -923,21 +934,56 @@ DemoHome                      navigation / dialogs / use cases
   -> home_widgets.dart        reusable cover/shelf/action presentation
 ```
 
-`HomeLibrarySession` depends on Store and download interfaces and publishes immutable projections. It does not own
-Navigator state, dialogs or selection gestures. View extensions may read the coordinator state but cannot open the
-database or create DownloadSessions. This keeps source, storage and Reader lifecycles outside large Widget build
-methods.
+These files are Presentation/Application composition only. They may request a resource through an injected interface,
+but they do not define cache policy, prefetch windows, download state machines or artifact lifetime.
 
-Two bounded encoded-byte caches serve different lifetimes. `CoverMemoryCache` is an App-session LRU keyed by exact
-source-composite cover identity. It coalesces concurrent requests and is cleared with the Home owner.
-`ReaderPageBytesCache` is per Reader session, retains a small current/adjacent working set and cancels obsolete warmups.
-Neither cache stores decoded animation frames or GPU textures. Native decode/frame holders, texture producers and
-promoted artifact ownership remain in their existing media/storage layers.
+Reusable source responses share one package-level manager:
 
-Reader page Widget keys are derived from stable `PageAsset.assetKey`, not current-page status. `PageView` may retain
-adjacent pages implicitly, while current/next/previous encoded bytes warm in the bounded Reader cache. A role change
-therefore updates demand and presentation without forcing an identical media subtree to be destroyed and recreated.
+```text
+Catalog UI / details / search
+        v
+CachedBrowsableComicSource
+        v
+ResourceCacheManager
+  - imageBytes
+  - comicDetails
+  - chapterMetadata
+  - searchResults
+  - global + per-kind budgets
+  - TTL + in-flight coalescing + LRU
+  - source/comic namespace invalidation
+```
 
-Persistent offline cache maintenance is exposed by `ChapterCacheMaintenance`, implemented through the existing cache
-index and `CacheOps`. Download Manager submits usage/trim/clear commands; it never mutates library metadata, reading
-progress, read state or source catalogs.
+A cache namespace groups cover, detail and chapter-metadata responses for one exact `sourceId + comicId`. Explicit
+refresh invalidates that namespace or the source search namespace. Clear/refresh increments cache generations, so a
+request started before invalidation may still return to its original caller but cannot repopulate the cache afterward.
+The manager stores encoded response values only; it never owns decoded frames or textures.
+
+Chapter page bytes are intentionally excluded from `ResourceCacheKind`. `BrowsableComicSource.loadResource` remains a
+raw transport entry for Reader/download work:
+
+```text
+ReaderView -> ReaderObs -> ReaderBinding -> PipelineController
+           -> DemandPlan -> LiveCoordinator
+           -> DownloadSession -> partial/final page Artifact
+           -> DecodeSession -> FrameHolder -> Texture
+```
+
+Presentation must not warm current/next/previous pages directly, retain adjacent `PageView` children as a resource
+policy, or create a private page-byte LRU. Page role changes may remount the zoom owner so stale transforms reset; byte,
+decode and presentation reuse is determined by demand/session identities rather than Widget identity.
+
+Offline content is not a whole-chapter cache object. Chapter metadata is a catalog response; every downloaded page image is
+an independent partial/final artifact with its own busy and eviction state. Therefore an incomplete chapter is naturally
+represented as chapter metadata plus any subset of promoted or partial page artifacts. The memory fallback follows the
+same page-granular contract and does not reload retained pages after cancellation. `ArtifactCacheMaintenance` submits
+inspect/trim/clear through the existing index and `CacheOps`. A single
+`ResourceCacheCoordinator` exposes the response plane and coordinates artifact maintenance without taking physical
+ownership. Its maintenance policy owns response/artifact thresholds; App code receives the coordinator unchanged, does not
+assemble cache budgets ad hoc inside a page, and does not construct response-cache keys.
+
+`downloads` owns `ChapterDownloadService`, the persistent page-artifact implementation and
+`WholeComicDownloadQueue`. `downloads_bridge` adapts runtime network/power signals and JSON persistence. Download
+Manager is a presentation/command surface over those interfaces; it cannot open the index, delete files directly or
+mutate library metadata.
+

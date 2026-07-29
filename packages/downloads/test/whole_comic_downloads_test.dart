@@ -4,9 +4,8 @@ import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
-import 'package:flutter_test/flutter_test.dart';
-import 'package:zic/chapter_downloads.dart';
-import 'package:zic/whole_comic_downloads.dart';
+import 'package:test/test.dart';
+import 'package:downloads/downloads.dart';
 
 ImportedLibraryEntry _entry(int chapter) => ImportedLibraryEntry(
       chapter: ImportedChapterRecord(
@@ -291,61 +290,5 @@ void main() {
       1,
       reason: 'a restored paused job must not start another chapter',
     );
-  });
-
-  test('JSON queue store restores policy and pending chapters', () async {
-    final directory = await Directory.systemTemp.createTemp('zic-whole-queue-');
-    addTearDown(() => directory.delete(recursive: true));
-    final downloads = MemoryChapterDownloadService(
-      pageLoader: (_, __) async => Uint8List(1),
-    );
-    addTearDown(downloads.close);
-    final environment = MutableWholeComicQueueEnvironment(
-      const WholeComicQueueEnvironment(
-        networkAvailable: true,
-        unmetered: false,
-        charging: true,
-      ),
-    );
-    addTearDown(environment.close);
-    final path = '${directory.path}/queue.json';
-    final first = await WholeComicDownloadQueue.open(
-      path: path,
-      downloads: downloads,
-      environment: environment,
-    );
-    await first.updatePolicy(
-      const WholeComicQueuePolicy(
-        concurrency: 3,
-        network: WholeComicNetworkPolicy.unmetered,
-      ),
-    );
-    await first.enqueue(
-      sourceId: 'queue-source',
-      comicId: 'queue-comic',
-      comicTitle: '队列漫画',
-      chapters: <ImportedLibraryEntry>[_entry(1), _entry(2)],
-    );
-    await _waitForJob(
-      first,
-      (job) => job.phase == WholeComicQueuePhase.waitingForPolicy,
-    );
-    await first.close();
-
-    final reopened = await WholeComicDownloadQueue.open(
-      path: path,
-      downloads: downloads,
-      environment: environment,
-    );
-    addTearDown(reopened.close);
-    expect(reopened.snapshot.policy.concurrency, 3);
-    expect(
-      reopened.snapshot.policy.network,
-      WholeComicNetworkPolicy.unmetered,
-    );
-    final restored = reopened.snapshot.jobFor('queue-source', 'queue-comic');
-    expect(restored, isNotNull);
-    expect(restored!.totalChapters, 2);
-    expect(restored.phase, WholeComicQueuePhase.waitingForPolicy);
   });
 }

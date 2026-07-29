@@ -10,7 +10,9 @@ fi
 
 for rel in \
   packages/domain \
+  packages/resource_cache \
   packages/catalog \
+  packages/downloads \
   packages/telemetry \
   packages/transport \
   packages/storage \
@@ -23,7 +25,7 @@ for rel in \
   (cd "$ROOT/$rel" && dart analyze)
 done
 
-for rel in packages/reader packages/texture_bridge packages/local_media_bridge packages/local_media packages/storage_bridge apps/app; do
+for rel in packages/reader packages/texture_bridge packages/local_media_bridge packages/local_media packages/runtime_bridge packages/storage_bridge packages/downloads_bridge apps/app; do
   echo "FLUTTER ANALYZE: $rel"
   (cd "$ROOT/$rel" && flutter analyze)
 done

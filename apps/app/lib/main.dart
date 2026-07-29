@@ -2,10 +2,11 @@ import 'package:catalog/catalog.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:storage_bridge/storage_bridge.dart';
+import 'package:resource_cache/resource_cache.dart';
 
-import 'chapter_downloads.dart';
+import 'package:downloads/downloads.dart';
+import 'package:downloads_bridge/downloads_bridge.dart';
 import 'demo_home.dart';
-import 'whole_comic_downloads.dart';
 import 'webp_demo.dart';
 
 Future<void> main() async {
@@ -31,10 +32,11 @@ Future<void> main() async {
       }
       debugPrint('runtime download policy signals unavailable: $error');
     }
-    wholeComicDownloads = await WholeComicDownloadQueue.open(
+    wholeComicDownloads = await openPersistentWholeComicDownloadQueue(
       path: '$root/whole_comic_queue.json',
       downloads: chapterDownloads,
       environment: queueEnvironment,
+      ownsEnvironment: platformEnvironment != null,
     );
   } on Object catch (error) {
     debugPrint('durable application storage unavailable: $error');
@@ -57,6 +59,7 @@ final class App extends StatelessWidget {
     this.chapterDownloads,
     this.wholeComicDownloads,
     this.comicSources,
+    this.cacheCoordinator,
     super.key,
   }) : assert(
           wholeComicDownloads == null || chapterDownloads != null,
@@ -70,6 +73,7 @@ final class App extends StatelessWidget {
   final ChapterDownloadService? chapterDownloads;
   final WholeComicDownloadQueue? wholeComicDownloads;
   final List<BrowsableComicSource>? comicSources;
+  final ResourceCacheCoordinator? cacheCoordinator;
 
   @override
   Widget build(BuildContext context) {
@@ -96,6 +100,7 @@ final class App extends StatelessWidget {
         chapterDownloads: chapterDownloads,
         wholeComicDownloads: wholeComicDownloads,
         comicSources: comicSources,
+        cacheCoordinator: cacheCoordinator,
       ),
     );
   }

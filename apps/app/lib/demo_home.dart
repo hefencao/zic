@@ -6,9 +6,9 @@ import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:local_media/local_media.dart';
+import 'package:resource_cache/resource_cache.dart';
 
-import 'chapter_downloads.dart';
-import 'cover_cache.dart';
+import 'package:downloads/downloads.dart';
 import 'comic_details.dart' as details;
 import 'download_manager.dart';
 import 'library_diagnostics.dart';
@@ -16,7 +16,6 @@ import 'source_browser.dart';
 import 'source_migration_compare.dart';
 import 'static_demo.dart';
 import 'webp_demo.dart';
-import 'whole_comic_downloads.dart';
 import 'home_library_session.dart';
 import 'home_widgets.dart';
 
@@ -119,6 +118,7 @@ final class DemoHome extends StatefulWidget {
     this.chapterDownloads,
     this.wholeComicDownloads,
     this.comicSources,
+    this.cacheCoordinator,
     super.key,
   }) : assert(
           wholeComicDownloads == null || chapterDownloads != null,
@@ -132,6 +132,7 @@ final class DemoHome extends StatefulWidget {
   final ChapterDownloadService? chapterDownloads;
   final WholeComicDownloadQueue? wholeComicDownloads;
   final List<BrowsableComicSource>? comicSources;
+  final ResourceCacheCoordinator? cacheCoordinator;
 
   @override
   State<DemoHome> createState() => _DemoHomeState();
@@ -143,7 +144,8 @@ final class _DemoHomeState extends State<DemoHome> {
   late final WholeComicDownloadQueue _wholeComicDownloads;
   late final List<BrowsableComicSource> _sources;
   late final HomeLibrarySession _librarySession;
-  final CoverMemoryCache _coverCache = CoverMemoryCache();
+  late final ResourceCacheCoordinator _cacheCoordinator;
+  late final bool _ownsCacheCoordinator;
 
   bool _picking = false;
   bool _pickingFolder = false;
@@ -185,14 +187,31 @@ final class _DemoHomeState extends State<DemoHome> {
   @override
   void initState() {
     super.initState();
-    _sources = List<BrowsableComicSource>.unmodifiable(
-      widget.comicSources ?? <BrowsableComicSource>[MangaDexSource()],
-    );
     final ownsLibrary = widget.libraryStore == null;
     _library = widget.libraryStore ?? MemoryImportedLibraryStore();
     final ownsChapterDownloads = widget.chapterDownloads == null;
     _chapterDownloads = widget.chapterDownloads ??
         MemoryChapterDownloadService(pageLoader: _loadChapterPageBytes);
+    final suppliedCache = widget.cacheCoordinator;
+    _ownsCacheCoordinator = suppliedCache == null;
+    _cacheCoordinator = suppliedCache ??
+        ResourceCacheCoordinator(
+          artifacts: _chapterDownloads is ArtifactCacheMaintenance
+              ? _chapterDownloads as ArtifactCacheMaintenance
+              : null,
+        );
+    final rawSources =
+        widget.comicSources ?? <BrowsableComicSource>[MangaDexSource()];
+    _sources = List<BrowsableComicSource>.unmodifiable(
+      rawSources.map(
+        (source) => source is CachedBrowsableComicSource
+            ? source
+            : CachedBrowsableComicSource(
+                source: source,
+                cache: _cacheCoordinator.responses,
+              ),
+      ),
+    );
     final ownsWholeComicDownloads = widget.wholeComicDownloads == null;
     _wholeComicDownloads = widget.wholeComicDownloads ??
         WholeComicDownloadQueue(downloads: _chapterDownloads);
@@ -231,7 +250,9 @@ final class _DemoHomeState extends State<DemoHome> {
   @override
   void dispose() {
     _librarySession.removeListener(_handleLibrarySessionChanged);
-    _coverCache.clear();
+    if (_ownsCacheCoordinator) {
+      unawaited(_cacheCoordinator.close());
+    }
     unawaited(_librarySession.close());
     _librarySession.dispose();
     super.dispose();
@@ -380,6 +401,7 @@ final class _DemoHomeState extends State<DemoHome> {
           entries: List<ImportedLibraryEntry>.unmodifiable(_libraryEntries),
           downloads: _chapterDownloads,
           wholeComicDownloads: _wholeComicDownloads,
+          cacheCoordinator: _cacheCoordinator,
         ),
       ),
     );
@@ -1016,7 +1038,11 @@ final class _DemoHomeState extends State<DemoHome> {
             : _coverLoaderForComic(comic),
         loadTargetCover: manifest.comic.coverUri == null
             ? null
-            : () => request.source.loadResource(manifest.comic.coverUri!),
+            : () => loadCachedSourceImage(
+                  request.source,
+                  manifest.comic.coverUri!,
+                  comicId: manifest.comic.comicId,
+                ),
       );
       if (!confirmed) {
         return;
@@ -1258,11 +1284,14 @@ final class _DemoHomeState extends State<DemoHome> {
 
   Future<Uint8List> _loadDetailsCover({
     required String sourceId,
+    required String comicId,
     required Uri? coverUri,
     required ImportedLibraryEntry? fallbackChapter,
   }) async {
     final fallback = fallbackChapter;
-    final fallbackPage = fallback == null || fallback.chapter.pages.isEmpty
+    final fallbackPage = sourceId != 'local-folder' ||
+            fallback == null ||
+            fallback.chapter.pages.isEmpty
         ? null
         : fallback.chapter.pages.first.sourceId;
     final sourceValue = coverUri?.toString() ??
@@ -1271,22 +1300,26 @@ final class _DemoHomeState extends State<DemoHome> {
     if (sourceValue == null || sourceValue.trim().isEmpty) {
       throw StateError('漫画详情没有可用封面');
     }
-    final cacheKey = '$sourceId\u0000$sourceValue';
-    return _coverCache.load(cacheKey, () {
-      final source = _sourceForId(sourceId);
-      final uri = Uri.tryParse(sourceValue);
-      if (source != null &&
-          uri != null &&
-          (uri.scheme == 'http' || uri.scheme == 'https')) {
-        return source.loadResource(uri);
-      }
-      return readLocalImageSource(sourceValue);
-    });
+    final source = _sourceForId(sourceId);
+    final uri = Uri.tryParse(sourceValue);
+    if (source != null &&
+        uri != null &&
+        (uri.scheme == 'http' || uri.scheme == 'https')) {
+      return loadCachedSourceImage(source, uri, comicId: comicId);
+    }
+    return loadCachedComicImage(
+      cache: _cacheCoordinator.responses,
+      sourceId: sourceId,
+      comicId: comicId,
+      imageIdentity: sourceValue,
+      loader: () => readLocalImageSource(sourceValue),
+    );
   }
 
   Future<Uint8List> Function() _coverLoader(ImportedLibraryEntry entry) {
     return () => _loadDetailsCover(
           sourceId: entry.chapter.sourceId,
+          comicId: entry.chapter.comicId,
           coverUri: entry.chapter.coverSourceId == null
               ? null
               : Uri.tryParse(entry.chapter.coverSourceId!),
@@ -1297,6 +1330,7 @@ final class _DemoHomeState extends State<DemoHome> {
   Future<Uint8List> Function() _coverLoaderForComic(LibraryComic comic) {
     return () => _loadDetailsCover(
           sourceId: comic.sourceId,
+          comicId: comic.comicId,
           coverUri: comic.coverSourceId == null
               ? null
               : Uri.tryParse(comic.coverSourceId!),
@@ -1348,19 +1382,17 @@ final class _DemoHomeState extends State<DemoHome> {
         entry.chapter.sourceId,
         entry.chapter.chapterId,
       );
-      if (entry.chapter.pages.isNotEmpty) {
-        _coverCache.invalidate(
-          '${entry.chapter.sourceId}\u0000${entry.chapter.pages.first.sourceId}',
-        );
-      }
-      final coverSourceId = entry.chapter.coverSourceId;
-      if (coverSourceId != null) {
-        _coverCache.invalidate(
-          '${entry.chapter.sourceId}\u0000$coverSourceId',
-        );
-      }
     }
     await _library.removeSavedComic(comic.sourceId, comic.comicId);
+    final source = _sourceForId(comic.sourceId);
+    if (source != null) {
+      invalidateCachedComic(source, comic.comicId);
+    }
+    invalidateComicResourceCache(
+      _cacheCoordinator.responses,
+      sourceId: comic.sourceId,
+      comicId: comic.comicId,
+    );
     if (mounted) {
       await _reloadLibrary();
     }

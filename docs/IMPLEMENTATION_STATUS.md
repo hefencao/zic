@@ -1,21 +1,28 @@
-## Current iteration — home decomposition and bounded cache ownership
+## Current iteration — unified resource cache and restored pipeline ownership
 
-The App Home shell is no longer a single 3300+ line state owner. `HomeLibrarySession` owns durable library/source
-projection and download subscriptions; `demo_home_views.dart` owns Home/Bookshelf composition; `home_widgets.dart`
-owns reusable cover, shelf and action surfaces; `DemoHome` retains navigation, dialogs and cross-feature use cases.
-A repository gate keeps the coordinator below the first-stage 1800-line budget.
+The first Home decomposition remains: `DemoHome` coordinates routes and cross-feature use cases, while
+`demo_home_views.dart`, `home_widgets.dart` and `HomeLibrarySession` separate presentation composition and durable
+projection. The resource-policy part of `0.30.0-dev.35` is superseded. App-owned cover/page caches and direct Reader
+adjacent-page warmup have been removed.
 
-Cover bytes now use `CoverMemoryCache`, a byte- and entry-bounded LRU that coalesces concurrent requests and removes
-failed loads. Cover decode width follows the actual rendered width and device pixel ratio, and image replacement keeps
-the previous frame rather than flashing an empty surface. Reader uses `ReaderPageBytesCache` for bounded encoded-byte
-warmup of the current/next/previous pages. Shared loads survive one Widget caller leaving, obsolete background warmups
-are cancelled, adjacent pages are retained implicitly, and page keys no longer change when current-page role changes.
-Decoded frames, textures, DownloadSessions and promoted artifacts keep their existing owners.
+`resource_cache` is now a workspace package shared through composition. One `ResourceCacheManager` owns cover/image
+responses, comic details, chapter metadata and search results with a global budget, per-kind budgets, TTL, in-flight
+request coalescing, LRU eviction and exact source-composite namespaces. Invalidation also supersedes older in-flight
+responses, so refresh or clear cannot be repopulated by a late stale request. Download Manager reports each response
+kind together with the persistent artifact tier.
 
-`ChapterCacheMaintenance` exposes usage, trim and clear through the existing storage index/`CacheOps` boundary.
-Download Manager presents those commands but does not delete library metadata, progress or read state. New deterministic
-regressions cover cover/page cache coalescing and eviction, Home session projection, persistent cache maintenance and
-stable Reader page identity.
+`CachedBrowsableComicSource` is the catalog adapter. Browse/detail/chapter metadata and source artwork use the shared
+manager. Raw chapter-page `loadResource` calls deliberately bypass it and continue through
+`ReaderBinding -> PipelineController -> DemandPlan -> LiveCoordinator -> DownloadSession/artifact`. The competing
+`ReaderPageBytesCache`, current/adjacent warmup and implicit retention were removed; page-role changes again reset
+per-page zoom rather than preserving stale transforms.
+
+`ChapterDownloadService`, persistent page-artifact maintenance and `WholeComicDownloadQueue` now live in the pure
+`downloads` application-service package. `downloads_bridge` owns only runtime network/power and JSON persistence
+adapters. A partially downloaded chapter is represented by its independent page artifact records while chapter
+metadata remains a separate cached response; no chapter-sized all-or-nothing cache object is introduced. The in-memory
+fallback now retains and evicts individual pages too, so cancellation and retry exercise the same partial-chapter
+contract as production. Cache identities for local/remote cover resources are created by catalog adapters, not App UI.
 
 ## Current iteration — source migration candidate comparison
 

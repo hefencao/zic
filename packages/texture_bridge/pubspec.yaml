@@ -1,6 +1,6 @@
 name: texture_bridge
 description: Flutter texture presentation for retained zic native frames.
-version: 0.30.0
+version: 0.31.0
 publish_to: none
 resolution: workspace
 

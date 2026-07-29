@@ -95,7 +95,6 @@ final class _ReaderViewState extends State<ReaderView> {
           child: PageView.builder(
             controller: _pageController,
             itemCount: chapter.pages.length,
-            allowImplicitScrolling: true,
             reverse: direction == ReadingDirection.rtl,
             scrollDirection: isVertical ? Axis.vertical : Axis.horizontal,
             physics: _zoomedPage == null
@@ -107,7 +106,8 @@ final class _ReaderViewState extends State<ReaderView> {
               quarterTurns: widget.controller.rotationQuarterTurns,
               child: _ZoomableReaderPage(
                 key: ValueKey<String>(
-                  'zoom:${chapter.pages[index].assetKey}',
+                  'zoom:${chapter.pages[index].assetKey}:'
+                  '${index == widget.controller.currentIndex}',
                 ),
                 onTap: widget.onTap,
                 onZoomChanged: (zoomed) {
@@ -498,7 +498,6 @@ final class _StaticReaderPage extends StatelessWidget {
         child: Image.asset(
           asset.uri.toString(),
           fit: BoxFit.contain,
-          gaplessPlayback: true,
           filterQuality: FilterQuality.low,
           frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
             if (frame != null || wasSynchronouslyLoaded) {

@@ -3,17 +3,15 @@ import 'dart:async';
 import 'package:catalog/catalog.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:resource_cache/resource_cache.dart';
 
-import 'chapter_downloads.dart';
-import 'whole_comic_downloads.dart';
+import 'package:downloads/downloads.dart';
 
 const downloadManagerScreenKey = ValueKey<String>('download-manager-screen');
 const downloadManagerRefreshKey = ValueKey<String>('download-manager-refresh');
 const downloadQueuePolicyKey = ValueKey<String>('download-queue-policy');
 const downloadCacheTrimKey = ValueKey<String>('download-cache-trim');
 const downloadCacheClearKey = ValueKey<String>('download-cache-clear');
-const _defaultCacheMaxBytes = 512 * 1024 * 1024;
-const _defaultCacheTargetBytes = 384 * 1024 * 1024;
 
 Key downloadManagerTaskKey(String identity) =>
     ValueKey<String>('download-task:$identity');
@@ -43,12 +41,14 @@ final class DownloadManagerScreen extends StatefulWidget {
     required this.entries,
     required this.downloads,
     required this.wholeComicDownloads,
+    this.cacheCoordinator,
     super.key,
   });
 
   final List<ImportedLibraryEntry> entries;
   final ChapterDownloadService downloads;
   final WholeComicDownloadQueue wholeComicDownloads;
+  final ResourceCacheCoordinator? cacheCoordinator;
 
   @override
   State<DownloadManagerScreen> createState() => _DownloadManagerScreenState();
@@ -64,12 +64,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   late WholeComicQueueSnapshot _wholeComicSnapshot;
   bool _loading = true;
   bool _cacheBusy = false;
-  ChapterCacheUsage? _cacheUsage;
-
-  ChapterCacheMaintenance? get _cacheMaintenance {
-    final downloads = widget.downloads;
-    return downloads is ChapterCacheMaintenance ? downloads : null;
-  }
+  ResourceCacheUsage? _cacheUsage;
 
   @override
   void initState() {
@@ -116,8 +111,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       setState(() => _loading = true);
     }
     try {
-      final maintenance = _cacheMaintenance;
-      final usageFuture = maintenance?.inspectCacheUsage();
+      final usageFuture = widget.cacheCoordinator?.inspect();
       final snapshots = await Future.wait<ChapterDownloadSnapshot>(
         _entries.values.map(widget.downloads.inspect),
       );
@@ -225,26 +219,23 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   }
 
   Future<void> _trimCache() async {
-    final maintenance = _cacheMaintenance;
+    final maintenance = widget.cacheCoordinator;
     if (maintenance == null || _cacheBusy) {
       return;
     }
     setState(() => _cacheBusy = true);
     try {
-      final report = await maintenance.trimCache(
-        maxBytes: _defaultCacheMaxBytes,
-        targetBytes: _defaultCacheTargetBytes,
-      );
+      final report = await maintenance.trim();
       if (!mounted) {
         return;
       }
+      final artifactReport = report.artifacts;
+      final message = artifactReport == null
+          ? '响应缓存整理完成：释放 ${_formatBytes(report.totalReleasedBytes)}'
+          : '缓存整理完成：释放 ${_formatBytes(report.totalReleasedBytes)}，'
+              'artifact 剩余 ${_formatBytes(artifactReport.remainingBytes)}';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '缓存整理完成：释放 ${_formatBytes(report.releasedBytes)}，'
-            '剩余 ${_formatBytes(report.remainingBytes)}',
-          ),
-        ),
+        SnackBar(content: Text(message)),
       );
       await _reload();
     } on Object catch (error) {
@@ -259,7 +250,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   }
 
   Future<void> _clearCache() async {
-    final maintenance = _cacheMaintenance;
+    final maintenance = widget.cacheCoordinator;
     if (maintenance == null || _cacheBusy) {
       return;
     }
@@ -288,17 +279,17 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     }
     setState(() => _cacheBusy = true);
     try {
-      final report = await maintenance.clearCache();
+      final report = await maintenance.clear();
       if (!mounted) {
         return;
       }
+      final artifactReport = report.artifacts;
+      final message = artifactReport == null
+          ? '网络响应缓存已清空，释放 ${_formatBytes(report.totalReleasedBytes)}'
+          : '已释放 ${_formatBytes(report.totalReleasedBytes)}，'
+              '${artifactReport.skippedBusy} 个活动 artifact 被保留';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '已释放 ${_formatBytes(report.releasedBytes)}，'
-            '${report.skippedBusy} 个活动文件被保留',
-          ),
-        ),
+        SnackBar(content: Text(message)),
       );
       await _reload();
     } on Object catch (error) {
@@ -453,7 +444,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
         onRefresh: _reload,
         child: snapshots.isEmpty &&
                 _wholeComicSnapshot.jobs.isEmpty &&
-                _cacheMaintenance == null
+                widget.cacheCoordinator == null
             ? ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
                 children: const <Widget>[
@@ -467,7 +458,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 children: <Widget>[
-                  if (_cacheMaintenance != null) ...<Widget>[
+                  if (widget.cacheCoordinator != null) ...<Widget>[
                     _DownloadCacheSummary(
                       usage: _cacheUsage,
                       busy: _cacheBusy,
@@ -501,7 +492,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
                     const Divider(height: 24),
                   ],
                   if (snapshots.isNotEmpty) ...<Widget>[
-                    const _DownloadSectionHeader(title: '章节任务与离线文件'),
+                    const _DownloadSectionHeader(title: '下载任务与页面 artifact'),
                     for (var index = 0;
                         index < snapshots.length;
                         index++) ...<Widget>[
@@ -536,7 +527,7 @@ final class _DownloadCacheSummary extends StatelessWidget {
     required this.onClear,
   });
 
-  final ChapterCacheUsage? usage;
+  final ResourceCacheUsage? usage;
   final bool busy;
   final VoidCallback onTrim;
   final VoidCallback onClear;
@@ -552,17 +543,26 @@ final class _DownloadCacheSummary extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Text('离线缓存', style: Theme.of(context).textTheme.titleMedium),
+                Text('资源缓存', style: Theme.of(context).textTheme.titleMedium),
                 Text(
                   current == null
                       ? '正在统计缓存…'
-                      : '${_formatBytes(current.bytes)} · ${current.entries} 个页面文件',
+                      : '${_formatBytes(current.totalBytes)} · ${current.totalEntries} 个缓存记录',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 Text(
-                  '超过 512 MiB 时可整理到 384 MiB；活动下载不会被清理。',
+                  current == null
+                      ? '统一统计资源响应内存缓存与页面 artifact。'
+                      : '内存 ${_formatBytes(current.responses.weight)} · '
+                          'artifact ${_formatBytes(current.artifacts?.bytes ?? 0)}；'
+                          '活动需求与写入不会被清理。',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
+                if (current != null)
+                  Text(
+                    _memoryKindSummary(current.responses),
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
               ],
             ),
           ),
@@ -866,6 +866,20 @@ String _wholeQueuePhaseLabel(WholeComicQueuePhase phase) => switch (phase) {
       WholeComicQueuePhase.failed => '失败',
       WholeComicQueuePhase.cancelled => '已取消',
     };
+
+String _memoryKindSummary(ResourceCacheStats stats) {
+  String item(ResourceCacheKind kind, String label) {
+    final value = stats.forKind(kind);
+    return '$label ${value.entries}/${_formatBytes(value.weight)}';
+  }
+
+  return <String>[
+    item(ResourceCacheKind.imageBytes, '图片'),
+    item(ResourceCacheKind.comicDetails, '详情'),
+    item(ResourceCacheKind.chapterMetadata, '章节元数据'),
+    item(ResourceCacheKind.searchResults, '搜索'),
+  ].join(' · ');
+}
 
 String _formatBytes(int bytes) {
   if (bytes < 1024) {

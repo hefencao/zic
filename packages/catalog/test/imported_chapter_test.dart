@@ -44,6 +44,7 @@ void main() {
     expect(second.comicId, first.comicId);
     expect(second.chapterId, first.chapterId);
     expect(second.sourceRevision, first.sourceRevision);
+    expect(first.coverSourceId, 'content://provider/document/001');
     final manifest = first.toManifest();
     expect(manifest.pages.map((page) => page.index), <int>[0, 1]);
     expect(
@@ -55,7 +56,6 @@ void main() {
         'content://provider/document/001');
     expect(manifest.pages.first.contentKindHint, ContentKindHint.webp);
   });
-
 
   test('stable page identity survives insertion before an existing page', () {
     final original = ImportedChapterRecord.folder(

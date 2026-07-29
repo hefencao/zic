@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
+import 'package:resource_cache/resource_cache.dart';
 import 'package:sessions/sessions.dart';
 import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
@@ -110,63 +111,26 @@ abstract interface class ChapterDownloadService {
   Future<void> close();
 }
 
-final class ChapterCacheUsage {
-  const ChapterCacheUsage({
-    required this.bytes,
-    required this.entries,
-  })  : assert(bytes >= 0),
-        assert(entries >= 0);
-
-  final int bytes;
-  final int entries;
-}
-
-final class ChapterCacheMaintenanceReport {
-  const ChapterCacheMaintenanceReport({
-    required this.beforeBytes,
-    required this.releasedBytes,
-    required this.remainingBytes,
-    required this.evictedEntries,
-    required this.skippedBusy,
-  });
-
-  final int beforeBytes;
-  final int releasedBytes;
-  final int remainingBytes;
-  final int evictedEntries;
-  final int skippedBusy;
-}
-
-abstract interface class ChapterCacheMaintenance {
-  Future<ChapterCacheUsage> inspectCacheUsage();
-
-  Future<ChapterCacheMaintenanceReport> trimCache({
-    required int maxBytes,
-    required int targetBytes,
-  });
-
-  Future<ChapterCacheMaintenanceReport> clearCache();
-}
-
 typedef ChapterPageLoader = Future<Uint8List> Function(
   ImportedLibraryEntry entry,
   int pageIndex,
 );
 
 /// Deterministic in-memory implementation used when the application has no
-/// durable platform store (for example widget tests). It owns complete page
-/// bytes before publishing completion and exposes the same task lifecycle as
-/// the persistent implementation.
+/// durable platform store (for example widget tests). It owns each completed
+/// page before publishing that page's progress, preserves partial pages across
+/// cancellation/failure, and exposes the same task lifecycle as the artifact
+/// implementation.
 final class MemoryChapterDownloadService
-    implements ChapterDownloadService, ChapterCacheMaintenance {
+    implements ChapterDownloadService, ArtifactCacheMaintenance {
   MemoryChapterDownloadService({required ChapterPageLoader pageLoader})
       : _pageLoader = pageLoader;
 
   final ChapterPageLoader _pageLoader;
   final StreamController<ChapterDownloadSnapshot> _changes =
       StreamController<ChapterDownloadSnapshot>.broadcast(sync: true);
-  final Map<String, List<Uint8List>> _chapters =
-      <String, List<Uint8List>>{};
+  final Map<String, List<Uint8List?>> _chapters =
+      <String, List<Uint8List?>>{};
   final Map<String, ChapterDownloadSnapshot> _snapshots =
       <String, ChapterDownloadSnapshot>{};
   final Map<String, Future<void>> _runs = <String, Future<void>>{};
@@ -194,8 +158,16 @@ final class MemoryChapterDownloadService
   Future<void> _runDownload(ImportedLibraryEntry entry) async {
     final identity = _identity(entry);
     _cancelled.remove(identity);
-    final pages = <Uint8List>[];
-    var receivedBytes = 0;
+    final pages = _chapters.putIfAbsent(
+      identity,
+      () => List<Uint8List?>.filled(
+        entry.chapter.pages.length,
+        null,
+        growable: false,
+      ),
+    );
+    var completedPages = _storedPageCount(pages);
+    var receivedBytes = _storedPageBytes(pages);
     _emit(
       ChapterDownloadSnapshot(
         sourceId: entry.chapter.sourceId,
@@ -204,27 +176,31 @@ final class MemoryChapterDownloadService
         chapterId: entry.chapter.chapterId,
         sourceRevision: entry.chapter.sourceRevision,
         title: entry.chapter.displayName,
-        completedPages: 0,
+        completedPages: completedPages,
         totalPages: entry.chapter.pages.length,
-        receivedBytes: 0,
+        receivedBytes: receivedBytes,
         totalBytes: _declaredTotalBytes(entry),
         phase: ChapterDownloadPhase.downloading,
       ),
     );
     try {
       for (var index = 0; index < entry.chapter.pages.length; index++) {
+        if (pages[index] != null) {
+          continue;
+        }
         if (_cancelled.contains(identity)) {
-          _emitCancelled(entry, pages.length, receivedBytes);
+          _emitCancelled(entry, completedPages, receivedBytes);
           return;
         }
         final bytes = Uint8List.fromList(await _pageLoader(entry, index));
         if (_cancelled.contains(identity)) {
-          _emitCancelled(entry, pages.length, receivedBytes);
+          _emitCancelled(entry, completedPages, receivedBytes);
           return;
         }
-        pages.add(bytes);
+        pages[index] = bytes;
+        completedPages++;
         receivedBytes += bytes.length;
-        if (pages.length < entry.chapter.pages.length) {
+        if (completedPages < entry.chapter.pages.length) {
           _emit(
             ChapterDownloadSnapshot(
               sourceId: entry.chapter.sourceId,
@@ -233,7 +209,7 @@ final class MemoryChapterDownloadService
               chapterId: entry.chapter.chapterId,
               sourceRevision: entry.chapter.sourceRevision,
               title: entry.chapter.displayName,
-              completedPages: pages.length,
+              completedPages: completedPages,
               totalPages: entry.chapter.pages.length,
               receivedBytes: receivedBytes,
               totalBytes: _declaredTotalBytes(entry),
@@ -242,7 +218,6 @@ final class MemoryChapterDownloadService
           );
         }
       }
-      _chapters[identity] = List<Uint8List>.unmodifiable(pages);
       _emit(
         ChapterDownloadSnapshot(
           sourceId: entry.chapter.sourceId,
@@ -251,7 +226,7 @@ final class MemoryChapterDownloadService
           chapterId: entry.chapter.chapterId,
           sourceRevision: entry.chapter.sourceRevision,
           title: entry.chapter.displayName,
-          completedPages: pages.length,
+          completedPages: completedPages,
           totalPages: entry.chapter.pages.length,
           receivedBytes: receivedBytes,
           totalBytes: _declaredTotalBytes(entry) ?? receivedBytes,
@@ -267,7 +242,7 @@ final class MemoryChapterDownloadService
           chapterId: entry.chapter.chapterId,
           sourceRevision: entry.chapter.sourceRevision,
           title: entry.chapter.displayName,
-          completedPages: pages.length,
+          completedPages: completedPages,
           totalPages: entry.chapter.pages.length,
           receivedBytes: receivedBytes,
           totalBytes: _declaredTotalBytes(entry),
@@ -342,25 +317,29 @@ final class MemoryChapterDownloadService
       return current;
     }
     final pages = _chapters[identity];
-    if (pages != null && pages.length == entry.chapter.pages.length) {
-      final received = pages.fold<int>(0, (sum, page) => sum + page.length);
-      final snapshot = ChapterDownloadSnapshot(
-        sourceId: entry.chapter.sourceId,
-        comicId: entry.chapter.comicId,
-        comicTitle: entry.chapter.comicTitle,
-        chapterId: entry.chapter.chapterId,
-        sourceRevision: entry.chapter.sourceRevision,
-        title: entry.chapter.displayName,
-        completedPages: pages.length,
-        totalPages: entry.chapter.pages.length,
-        receivedBytes: received,
-        totalBytes: _declaredTotalBytes(entry) ?? received,
-        phase: ChapterDownloadPhase.complete,
-      );
-      _snapshots[identity] = snapshot;
-      return snapshot;
+    if (pages == null || pages.length != entry.chapter.pages.length) {
+      return ChapterDownloadSnapshot.idle(entry);
     }
-    return ChapterDownloadSnapshot.idle(entry);
+    final completedPages = _storedPageCount(pages);
+    final receivedBytes = _storedPageBytes(pages);
+    final snapshot = ChapterDownloadSnapshot(
+      sourceId: entry.chapter.sourceId,
+      comicId: entry.chapter.comicId,
+      comicTitle: entry.chapter.comicTitle,
+      chapterId: entry.chapter.chapterId,
+      sourceRevision: entry.chapter.sourceRevision,
+      title: entry.chapter.displayName,
+      completedPages: completedPages,
+      totalPages: entry.chapter.pages.length,
+      receivedBytes: receivedBytes,
+      totalBytes: _declaredTotalBytes(entry) ??
+          (completedPages == entry.chapter.pages.length ? receivedBytes : null),
+      phase: completedPages == entry.chapter.pages.length
+          ? ChapterDownloadPhase.complete
+          : ChapterDownloadPhase.idle,
+    );
+    _snapshots[identity] = snapshot;
+    return snapshot;
   }
 
   @override
@@ -380,30 +359,37 @@ final class MemoryChapterDownloadService
     if (pageIndex < 0 || pageIndex >= pages.length) {
       throw RangeError.index(pageIndex, pages, 'pageIndex');
     }
-    return Uint8List.fromList(pages[pageIndex]);
+    final page = pages[pageIndex];
+    if (page == null) {
+      throw StateError('requested page is not downloaded');
+    }
+    return Uint8List.fromList(page);
   }
 
   @override
-  Future<ChapterCacheUsage> inspectCacheUsage() async {
+  Future<ArtifactCacheUsage> inspectArtifacts() async {
     _requireOpen();
-    return ChapterCacheUsage(
+    return ArtifactCacheUsage(
       bytes: _memoryCacheBytes,
-      entries: _chapters.length,
+      entries: _chapters.values.fold<int>(
+        0,
+        (sum, pages) => sum + _storedPageCount(pages),
+      ),
     );
   }
 
   @override
-  Future<ChapterCacheMaintenanceReport> trimCache({
+  Future<ArtifactCacheReport> trimArtifacts({
     required int maxBytes,
     required int targetBytes,
   }) async {
     _requireOpen();
     if (maxBytes < 0 || targetBytes < 0 || targetBytes > maxBytes) {
-      throw ArgumentError('invalid chapter cache limits');
+      throw ArgumentError('invalid resource cache limits');
     }
     final before = _memoryCacheBytes;
     if (before <= maxBytes) {
-      return ChapterCacheMaintenanceReport(
+      return ArtifactCacheReport(
         beforeBytes: before,
         releasedBytes: 0,
         remainingBytes: before,
@@ -415,7 +401,7 @@ final class MemoryChapterDownloadService
   }
 
   @override
-  Future<ChapterCacheMaintenanceReport> clearCache() async {
+  Future<ArtifactCacheReport> clearArtifacts() async {
     _requireOpen();
     return _trimMemoryCache(
       beforeBytes: _memoryCacheBytes,
@@ -423,7 +409,7 @@ final class MemoryChapterDownloadService
     );
   }
 
-  ChapterCacheMaintenanceReport _trimMemoryCache({
+  ArtifactCacheReport _trimMemoryCache({
     required int beforeBytes,
     required int targetBytes,
   }) {
@@ -434,22 +420,36 @@ final class MemoryChapterDownloadService
       if (remaining <= targetBytes) {
         break;
       }
-      if (_runs.containsKey(identity)) {
-        skippedBusy++;
-        continue;
-      }
-      final pages = _chapters.remove(identity);
+      final pages = _chapters[identity];
       if (pages == null) {
         continue;
       }
-      remaining -= pages.fold<int>(0, (sum, page) => sum + page.lengthInBytes);
-      final snapshot = _snapshots[identity];
-      if (snapshot?.phase == ChapterDownloadPhase.complete) {
+      if (_runs.containsKey(identity)) {
+        skippedBusy += _storedPageCount(pages);
+        continue;
+      }
+      var changed = false;
+      for (var index = 0; index < pages.length; index++) {
+        if (remaining <= targetBytes) {
+          break;
+        }
+        final page = pages[index];
+        if (page == null) {
+          continue;
+        }
+        pages[index] = null;
+        remaining -= page.lengthInBytes;
+        evicted++;
+        changed = true;
+      }
+      if (changed) {
         _snapshots.remove(identity);
       }
-      evicted++;
+      if (pages.every((page) => page == null)) {
+        _chapters.remove(identity);
+      }
     }
-    return ChapterCacheMaintenanceReport(
+    return ArtifactCacheReport(
       beforeBytes: beforeBytes,
       releasedBytes: beforeBytes - remaining,
       remainingBytes: remaining,
@@ -460,9 +460,15 @@ final class MemoryChapterDownloadService
 
   int get _memoryCacheBytes => _chapters.values.fold<int>(
         0,
-        (sum, pages) => sum +
-            pages.fold<int>(0, (pageSum, page) => pageSum + page.lengthInBytes),
+        (sum, pages) => sum + _storedPageBytes(pages),
       );
+
+  int _storedPageCount(List<Uint8List?> pages) =>
+      pages.whereType<Uint8List>().length;
+
+  int _storedPageBytes(List<Uint8List?> pages) => pages
+      .whereType<Uint8List>()
+      .fold<int>(0, (sum, page) => sum + page.lengthInBytes);
 
   @override
   Future<void> close() async {
@@ -498,7 +504,7 @@ final class MemoryChapterDownloadService
 }
 
 final class PersistentChapterDownloadService
-    implements ChapterDownloadService, ChapterCacheMaintenance {
+    implements ChapterDownloadService, ArtifactCacheMaintenance {
   PersistentChapterDownloadService._({
     required DownloadRegistry registry,
     required SqliteIndex index,
@@ -525,7 +531,7 @@ final class PersistentChapterDownloadService
       index: index,
       cacheOps: CacheOps(index: index, registry: registry, clock: clock),
       transport: IoTransport(
-        http: HttpTransport(userAgent: 'zic/0.30.0'),
+        http: HttpTransport(userAgent: 'zic/0.31.0'),
       ),
     );
   }
@@ -776,17 +782,17 @@ final class PersistentChapterDownloadService
   }
 
   @override
-  Future<ChapterCacheUsage> inspectCacheUsage() async {
+  Future<ArtifactCacheUsage> inspectArtifacts() async {
     _requireOpen();
     final records = await _index.list();
-    return ChapterCacheUsage(
+    return ArtifactCacheUsage(
       bytes: records.fold<int>(0, (sum, record) => sum + record.bytes),
       entries: records.length,
     );
   }
 
   @override
-  Future<ChapterCacheMaintenanceReport> trimCache({
+  Future<ArtifactCacheReport> trimArtifacts({
     required int maxBytes,
     required int targetBytes,
   }) async {
@@ -796,7 +802,7 @@ final class PersistentChapterDownloadService
       CacheLimits(maxBytes: maxBytes, targetBytes: targetBytes),
     );
     _forgetDerivedCompletePhases();
-    return ChapterCacheMaintenanceReport(
+    return ArtifactCacheReport(
       beforeBytes: before,
       releasedBytes: report.releasedBytes,
       remainingBytes: report.remainingBytes,
@@ -806,12 +812,12 @@ final class PersistentChapterDownloadService
   }
 
   @override
-  Future<ChapterCacheMaintenanceReport> clearCache() async {
+  Future<ArtifactCacheReport> clearArtifacts() async {
     _requireOpen();
     final before = await _index.totalBytes();
     final report = await _cacheOps.clear();
     _forgetDerivedCompletePhases();
-    return ChapterCacheMaintenanceReport(
+    return ArtifactCacheReport(
       beforeBytes: before,
       releasedBytes: report.releasedBytes,
       remainingBytes: report.remainingBytes,

@@ -1,3 +1,4 @@
+export 'src/cached_comic_source.dart';
 export 'src/comic_source_migration.dart';
 
 export 'src/comic_source.dart';

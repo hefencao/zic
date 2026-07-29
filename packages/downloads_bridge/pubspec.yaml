@@ -1,0 +1,24 @@
+name: downloads_bridge
+description: Platform persistence and runtime policy adapters for zic downloads.
+version: 0.31.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+  flutter: '>=3.27.0'
+
+dependencies:
+  downloads:
+    path: ../downloads
+  runtime_bridge:
+    path: ../runtime_bridge
+  storage_bridge:
+    path: ../storage_bridge
+
+dev_dependencies:
+  catalog:
+    path: ../catalog
+  domain:
+    path: ../domain
+  test: ^1.25.0

@@ -10,7 +10,9 @@ fi
 
 for rel in \
   packages/domain \
+  packages/resource_cache \
   packages/catalog \
+  packages/downloads \
   packages/telemetry \
   packages/transport \
   packages/storage \

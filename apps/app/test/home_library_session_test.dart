@@ -2,9 +2,8 @@ import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zic/chapter_downloads.dart';
+import 'package:downloads/downloads.dart';
 import 'package:zic/home_library_session.dart';
-import 'package:zic/whole_comic_downloads.dart';
 
 void main() {
   test('home session owns durable projection outside DemoHome state', () async {

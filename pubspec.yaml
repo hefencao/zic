@@ -1,13 +1,16 @@
 name: workspace
 publish_to: none
-version: 0.30.0
+version: 0.31.0
 environment:
   sdk: '>=3.6.0 <4.0.0'
 
 workspace:
   - apps/app
   - packages/domain
+  - packages/downloads
+  - packages/downloads_bridge
   - packages/catalog
+  - packages/resource_cache
   - packages/reader
   - packages/pipeline
   - packages/media

@@ -1,0 +1,27 @@
+name: downloads
+description: Chapter artifact downloads and durable whole-comic scheduling for zic.
+version: 0.31.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+
+dependencies:
+  catalog:
+    path: ../catalog
+  domain:
+    path: ../domain
+  resource_cache:
+    path: ../resource_cache
+  sessions:
+    path: ../sessions
+  storage:
+    path: ../storage
+  telemetry:
+    path: ../telemetry
+  transport:
+    path: ../transport
+
+dev_dependencies:
+  test: ^1.25.0

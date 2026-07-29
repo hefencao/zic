@@ -1,7 +1,7 @@
 name: zic
 description: zic Flutter application.
 publish_to: none
-version: 0.30.0+35
+version: 0.31.0+36
 resolution: workspace
 
 environment:
@@ -12,6 +12,10 @@ dependencies:
     sdk: flutter
   domain:
     path: ../../packages/domain
+  downloads:
+    path: ../../packages/downloads
+  downloads_bridge:
+    path: ../../packages/downloads_bridge
   catalog:
     path: ../../packages/catalog
   bridge:
@@ -25,6 +29,8 @@ dependencies:
   file_selector: ^1.0.3
   pipeline:
     path: ../../packages/pipeline
+  resource_cache:
+    path: ../../packages/resource_cache
   reader:
     path: ../../packages/reader
   sessions:

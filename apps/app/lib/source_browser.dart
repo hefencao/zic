@@ -6,7 +6,7 @@ import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'chapter_downloads.dart';
+import 'package:downloads/downloads.dart';
 import 'comic_details.dart' as details;
 
 const comicSourcesPageKey = ValueKey<String>('comic-sources-page');
@@ -112,7 +112,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     unawaited(_loadMore());
   }
 
-  Future<void> _reload() async {
+  Future<void> _reload({bool forceRefresh = false}) async {
     if (!mounted) {
       return;
     }
@@ -131,6 +131,9 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         _failure = null;
       });
       return;
+    }
+    if (forceRefresh) {
+      invalidateCachedSearch(source);
     }
     setState(() {
       _loading = true;
@@ -237,7 +240,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                 tooltip: '刷新',
                 onPressed: source == null || _loading
                     ? null
-                    : () => unawaited(_reload()),
+                    : () => unawaited(_reload(forceRefresh: true)),
                 icon: const Icon(Icons.refresh),
               ),
             ],
@@ -274,7 +277,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         key: comicSourceErrorKey,
         title: '漫画源加载失败',
         failure: failure,
-        onRetry: () => unawaited(_reload()),
+        onRetry: () => unawaited(_reload(forceRefresh: true)),
       );
     }
     if (_items.isEmpty) {
@@ -398,7 +401,11 @@ final class _SourceComicCard extends StatelessWidget {
               borderRadius: BorderRadius.circular(10),
               child: _RemoteImage(
                 uri: comic.coverUri,
-                loadBytes: source.loadResource,
+                loadBytes: (uri) => loadCachedSourceImage(
+                  source,
+                  uri,
+                  comicId: comic.comicId,
+                ),
                 reloadToken: reloadToken,
               ),
             ),
@@ -814,7 +821,6 @@ final class _RemoteImageState extends State<_RemoteImage> {
   void didUpdateWidget(covariant _RemoteImage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.uri != widget.uri ||
-        oldWidget.loadBytes != widget.loadBytes ||
         oldWidget.reloadToken != widget.reloadToken) {
       _load();
     }

@@ -3,8 +3,7 @@ import 'dart:async';
 import 'package:catalog/catalog.dart';
 import 'package:flutter/foundation.dart';
 
-import 'chapter_downloads.dart';
-import 'whole_comic_downloads.dart';
+import 'package:downloads/downloads.dart';
 
 /// Owns the durable library projection and background download subscriptions
 /// used by the home shell. Navigation, dialogs and transient UI selection stay

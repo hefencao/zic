@@ -6,7 +6,7 @@ import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'chapter_downloads.dart';
+import 'package:downloads/downloads.dart';
 
 const comicDetailsScreenKey = ValueKey<String>('comic-details-screen');
 const localComicDetailsScreenKey =
@@ -92,6 +92,7 @@ final class ComicDetailsLibrarySnapshot {
 
 typedef ComicDetailsCoverLoader = Future<Uint8List> Function({
   required String sourceId,
+  required String comicId,
   required Uri? coverUri,
   required ImportedLibraryEntry? fallbackChapter,
 });
@@ -563,6 +564,7 @@ final class _LocalComicDetailsScreenState
       description: comic.description,
       cover: _ComicDetailCover(
         sourceId: comic.sourceId,
+        comicId: comic.comicId,
         coverUri: comic.coverSourceId == null
             ? null
             : Uri.tryParse(comic.coverSourceId!),
@@ -718,7 +720,10 @@ final class _RemoteComicDetailsScreenState
     }
   }
 
-  Future<void> _refresh({required bool announce}) async {
+  Future<void> _refresh({
+    required bool announce,
+    bool forceRefresh = false,
+  }) async {
     if (_refreshing) {
       return;
     }
@@ -727,6 +732,9 @@ final class _RemoteComicDetailsScreenState
       _failure = null;
     });
     try {
+      if (forceRefresh) {
+        invalidateCachedComic(widget.source, widget.summary.comicId);
+      }
       final results = await Future.wait<Object>(<Future<Object>>[
         widget.source.loadComic(widget.summary.comicId),
         widget.reloadLibrary(refreshContent: false),
@@ -1006,7 +1014,9 @@ final class _RemoteComicDetailsScreenState
               tooltip: '重试加载漫画详情',
               onPressed: _refreshing
                   ? null
-                  : () => unawaited(_refresh(announce: false)),
+                  : () => unawaited(
+                        _refresh(announce: false, forceRefresh: true),
+                      ),
               icon: _refreshing
                   ? const SizedBox.square(
                       dimension: 20,
@@ -1018,7 +1028,9 @@ final class _RemoteComicDetailsScreenState
         ),
         body: _DetailFailurePanel(
           failure: failure,
-          onRetry: () => unawaited(_refresh(announce: false)),
+          onRetry: () => unawaited(
+            _refresh(announce: false, forceRefresh: true),
+          ),
         ),
       );
     }
@@ -1039,6 +1051,7 @@ final class _RemoteComicDetailsScreenState
       description: comic.description,
       cover: _ComicDetailCover(
         sourceId: widget.source.sourceId,
+        comicId: comic.comicId,
         coverUri: comic.coverUri,
         fallbackChapter:
             _library.chapters.isEmpty ? null : _library.chapters.first,
@@ -1048,7 +1061,7 @@ final class _RemoteComicDetailsScreenState
       categories: widget.categories,
       refreshing: _refreshing,
       descending: _descending,
-      onRefresh: () => _refresh(announce: true),
+      onRefresh: () => _refresh(announce: true, forceRefresh: true),
       onPreferenceChanged: _savePreference,
       progressLabel: _readingProgressLabel(_library.chapters),
       downloadingComic: _downloadingComic,
@@ -1703,12 +1716,14 @@ final class _PreferenceButton extends StatelessWidget {
 final class _ComicDetailCover extends StatefulWidget {
   const _ComicDetailCover({
     required this.sourceId,
+    required this.comicId,
     required this.coverUri,
     required this.fallbackChapter,
     required this.loader,
   });
 
   final String sourceId;
+  final String comicId;
   final Uri? coverUri;
   final ImportedLibraryEntry? fallbackChapter;
   final ComicDetailsCoverLoader loader;
@@ -1730,6 +1745,7 @@ final class _ComicDetailCoverState extends State<_ComicDetailCover> {
   void didUpdateWidget(covariant _ComicDetailCover oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.sourceId != widget.sourceId ||
+        oldWidget.comicId != widget.comicId ||
         oldWidget.coverUri != widget.coverUri ||
         oldWidget.fallbackChapter?.chapter.chapterId !=
             widget.fallbackChapter?.chapter.chapterId) {
@@ -1740,6 +1756,7 @@ final class _ComicDetailCoverState extends State<_ComicDetailCover> {
   Future<Uint8List> _load() => Future<Uint8List>.sync(
         () => widget.loader(
           sourceId: widget.sourceId,
+          comicId: widget.comicId,
           coverUri: widget.coverUri,
           fallbackChapter: widget.fallbackChapter,
         ),
