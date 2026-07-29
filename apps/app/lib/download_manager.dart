@@ -467,6 +467,14 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
                     ),
                     const Divider(height: 24),
                   ],
+                  if (snapshots.isEmpty &&
+                      _wholeComicSnapshot.jobs.isEmpty) ...<Widget>[
+                    const SizedBox(height: 72),
+                    const Icon(Icons.download_done_outlined, size: 48),
+                    const SizedBox(height: 12),
+                    const Center(child: Text('暂无下载任务或离线章节')),
+                    const SizedBox(height: 72),
+                  ],
                   if (_wholeComicSnapshot.jobs.isNotEmpty) ...<Widget>[
                     const _DownloadSectionHeader(title: '整本下载队列'),
                     for (final job in _wholeComicSnapshot.jobs)

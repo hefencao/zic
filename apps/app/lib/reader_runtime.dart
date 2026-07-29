@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
+import 'package:downloads/downloads.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:pipeline/pipeline.dart';
@@ -133,6 +134,7 @@ final class ReaderRuntimeScreen extends StatefulWidget {
     required this.chapter,
     this.artifactPageBuilder,
     this.mediaBytesLoader,
+    this.artifactCache,
     this.loaderSources = const <Uri, LoaderTransportSource>{},
     this.appBarTitleBuilder,
     this.appBarActionsBuilder,
@@ -148,6 +150,7 @@ final class ReaderRuntimeScreen extends StatefulWidget {
   final ChapterManifest chapter;
   final ReaderArtifactPageBuilder? artifactPageBuilder;
   final ReaderArtifactBytesLoader? mediaBytesLoader;
+  final ArtifactCacheStore? artifactCache;
   final Map<Uri, LoaderTransportSource> loaderSources;
   final ReaderAppBarTitleBuilder? appBarTitleBuilder;
   final ReaderAppBarActionsBuilder? appBarActionsBuilder;
@@ -173,7 +176,9 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   late final AssetBundleTransport _assetTransport;
   late final IoTransport _ioTransport;
   late final LoaderTransport _loaderTransport;
+  ArtifactCacheTransport? _artifactCacheTransport;
   late final DownloadRegistry _downloads;
+  PromotedArtifactCacheHandoff? _artifactCacheHandoff;
   late final LiveCoordinator _coordinator;
   ReaderBinding? _binding;
   ReaderController? _reader;
@@ -203,10 +208,31 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     _assetTransport = AssetBundleTransport(rootBundle);
     _ioTransport = IoTransport();
     _loaderTransport = LoaderTransport(widget.loaderSources);
+    final identities = widget.chapter.pages.map(
+      (asset) => MapEntry<Uri, DownloadId>(
+        asset.uri,
+        readerPageDownloadId(widget.chapter, asset),
+      ),
+    );
+    final cache = widget.artifactCache;
+    if (cache != null) {
+      _artifactCacheTransport = ArtifactCacheTransport(
+        cache: cache,
+        identities: identities,
+        fallbackFor: _baseTransportFor,
+      );
+      _artifactCacheHandoff = PromotedArtifactCacheHandoff(
+        cache: cache,
+        onError: (error, stackTrace) {
+          debugPrint('reader artifact cache handoff failed: $error');
+        },
+      );
+    }
     _downloads = DownloadRegistry(
       layout: _workspace.layout,
       clock: _clock,
       traceSink: _trace,
+      onSessionCreated: _artifactCacheHandoff?.observe,
     );
     _coordinator = LiveCoordinator(
       registry: _downloads,
@@ -223,14 +249,15 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       _favorite = widget.initialFavorite;
     }
     if (!_sameChapterSession(oldWidget.chapter, widget.chapter) ||
+        !identical(oldWidget.artifactCache, widget.artifactCache) ||
         !_sameLoaderSources(
           oldWidget.loaderSources,
           widget.loaderSources,
         )) {
       throw StateError(
-        'ReaderRuntimeScreen chapter and loader source identities are '
-        'immutable for a mounted session; replace the widget key to open '
-        'another chapter or source revision',
+        'ReaderRuntimeScreen chapter, artifact cache and loader source '
+        'identities are immutable for a mounted session; replace the widget '
+        'key to open another chapter or source revision',
       );
     }
   }
@@ -373,7 +400,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     }
   }
 
-  Transport _transportFor(Uri uri) {
+  Transport _baseTransportFor(Uri uri) {
     if (_loaderTransport.contains(uri)) {
       return _loaderTransport;
     }
@@ -382,6 +409,9 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     }
     return _ioTransport;
   }
+
+  Transport _transportFor(Uri uri) =>
+      _artifactCacheTransport ?? _baseTransportFor(uri);
 
   Future<Uint8List> _loadMediaBytes(
     PageAsset asset,
@@ -464,6 +494,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
 
   Future<void> _disposeRuntime() async {
     await _coordinator.dispose();
+    await _artifactCacheHandoff?.drain(_downloads.sessions);
+    _artifactCacheHandoff?.detach();
     await _downloads.dispose();
     _ioTransport.close(force: true);
     await _workspace.dispose();

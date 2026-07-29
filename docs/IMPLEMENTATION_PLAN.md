@@ -21,13 +21,14 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.36）
+## 当前应用主线（0.31.0-dev.37）
 
 - 保留 Home/Bookshelf 的 Presentation 拆分，但禁止在 `apps/app/lib` 定义资源缓存、章节下载或整本调度算法。
 - `resource_cache` 通过 `ResourceCacheCoordinator` 统一管理封面/图片响应、漫画详情、章节元数据和搜索结果，并协调页面 artifact 维护；共享全局/分类预算、TTL、并发请求合并、LRU、命名空间失效和迟到响应抑制，容量阈值不得回流到 Presentation。
 - `catalog` 只通过 `CachedBrowsableComicSource` 使用响应缓存。章节页面字节必须绕过该缓存，继续由 `PipelineController` 的 demand 和 session/artifact 生命周期决定。
 - `downloads` 管理独立页面 artifact 下载及整本队列；`downloads_bridge` 只适配平台网络/供电和持久 JSON。App 只装配实现和展示命令结果。
 - 不完整章节由“章节元数据 + 若干独立页面 artifact”自然表示，禁止增加整章二进制缓存或 Reader 私有页字节 LRU。
+- Reader 临时 session 只在页面 artifact `promoted` 后通过 `downloads` 的 handoff 提交到持久 artifact tier；新 session 通过只读 cache transport 精确命中，未命中仍由原 transport 与 demand 执行。App 不维护提交队列、文件复制或缓存淘汰算法。
 - 下一阶段先建立 transition/decode/present telemetry 与可重放基准，再在 pipeline/session/media 层优化 encoded memory、decoded frame 和 texture retention；不得由 Presentation 猜测预热窗口。
 
 ## 2. 阶段划分

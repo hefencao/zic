@@ -12,6 +12,7 @@ final class DownloadRegistry {
     this.index,
     this.traceSink = const NoopTraceSink(),
     this.sources,
+    this.onSessionCreated,
   });
 
   final CacheLayout layout;
@@ -19,6 +20,7 @@ final class DownloadRegistry {
   final CacheIndex? index;
   final TraceSink traceSink;
   final SourcePool? sources;
+  final void Function(DownloadSession session)? onSessionCreated;
 
   final Map<DownloadId, DownloadSession> _sessions =
       <DownloadId, DownloadSession>{};
@@ -26,9 +28,8 @@ final class DownloadRegistry {
   Iterable<DownloadSession> get sessions => _sessions.values;
 
   DownloadSession get(DownloadId id) {
-    return _sessions.putIfAbsent(
-      id,
-      () => DownloadSession(
+    return _sessions.putIfAbsent(id, () {
+      final session = DownloadSession(
         id: id,
         artifact: layout.artifactFor(id),
         clock: clock,
@@ -36,8 +37,14 @@ final class DownloadRegistry {
         sessionId: 'download:${layout.tokenFor(id)}',
         index: index,
         ingress: sources?.get(id),
-      ),
-    );
+      );
+      try {
+        onSessionCreated?.call(session);
+      } on Object {
+        // Lifecycle observers must not break authoritative session creation.
+      }
+      return session;
+    });
   }
 
   DownloadSession? find(DownloadId id) => _sessions[id];

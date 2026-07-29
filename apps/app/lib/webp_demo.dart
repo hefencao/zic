@@ -7,6 +7,7 @@ import 'dart:ui' as ui;
 import 'package:bridge/bridge.dart';
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
+import 'package:downloads/downloads.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -1276,6 +1277,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
     this.initialFavorite = false,
     this.onFavoriteChanged,
     this.onDownloadRequested,
+    this.artifactCache,
     super.key,
   });
 
@@ -1287,6 +1289,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
   final bool initialFavorite;
   final FutureOr<void> Function(bool favorite)? onFavoriteChanged;
   final FutureOr<void> Function()? onDownloadRequested;
+  final ArtifactCacheStore? artifactCache;
 
   @override
   Widget build(BuildContext context) {
@@ -1311,6 +1314,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
       screenKey: imageFolderScreenKey,
       chapter: chapter,
       loaderSources: sources,
+      artifactCache: artifactCache,
       initialProgress: initialProgress,
       onProgressChanged: onProgressChanged,
       initialFavorite: initialFavorite,

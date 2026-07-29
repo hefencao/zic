@@ -41,6 +41,42 @@ void main() {
     expect(await service.readPage(entry, 0), bytes);
   });
 
+  test('memory artifact store retains exact promoted reader pages', () async {
+    final service = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(0),
+    );
+    addTearDown(service.close);
+    final id = _readerArtifactId('memory-cache-page');
+    final bytes = Uint8List.fromList(<int>[4, 5, 6]);
+
+    expect(await service.readArtifact(id), isNull);
+    await service.storePromotedArtifact(id: id, bytes: bytes);
+    expect(await service.readArtifact(id), bytes);
+
+    final report = await service.clearArtifacts();
+    expect(report.evictedEntries, 1);
+    expect(await service.readArtifact(id), isNull);
+  });
+
+  test('persistent artifact store survives Reader service reopen', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-reader-artifact-cache-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final id = _readerArtifactId('persistent-cache-page');
+    final bytes = Uint8List.fromList(<int>[11, 12, 13, 14]);
+
+    final first = await PersistentChapterDownloadService.open(directory.path);
+    await first.storePromotedArtifact(id: id, bytes: bytes);
+    expect(await first.readArtifact(id), bytes);
+    await first.close();
+
+    final reopened =
+        await PersistentChapterDownloadService.open(directory.path);
+    addTearDown(reopened.close);
+    expect(await reopened.readArtifact(id), bytes);
+  });
+
   test('persistent chapter download survives reopen and serves page bytes',
       () async {
     final directory = await Directory.systemTemp.createTemp(
@@ -218,3 +254,14 @@ void main() {
     expect(loadedPages.where((index) => index == 1).length, 2);
   });
 }
+
+DownloadId _readerArtifactId(String pageId) => DownloadId(
+      content: ContentId(
+        sourceId: 'reader-cache-source',
+        comicId: 'reader-cache-comic',
+        chapterId: 'reader-cache-chapter',
+        pageId: pageId,
+      ),
+      sourceRevision: 'reader-cache-r1',
+      canonicalUri: Uri.parse('https://example.invalid/$pageId.bin'),
+    );

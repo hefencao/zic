@@ -1,3 +1,22 @@
+## 0.31.0-dev.37 — promoted Reader artifact cache handoff
+
+- Persist exact Reader page bytes only after the authoritative `DownloadSession` reaches `promoted`. A package-owned
+  `PromotedArtifactCacheHandoff` observes session state and drains commits before the ephemeral Reader workspace is
+  removed; Presentation does not choose pages, start downloads or own a private byte cache.
+- Add `ArtifactCacheStore` and `ArtifactCacheTransport` in `downloads`. A new Reader session first checks the durable
+  page-artifact tier and falls back to the transport selected by `LiveCoordinator`; duplicate URI identities bypass the
+  cache and range reuse requires a content-derived validator.
+- Make persistent and memory chapter services expose page-granular artifact read/commit operations. Durable handoff
+  writes still pass through `DownloadJob -> DownloadSession -> seal -> promote` and the existing index/`CacheOps`
+  maintenance path instead of copying files or mutating the index from App code.
+- Keep `resource_cache` dependency-light. It continues to own reusable source-response policy and artifact maintenance
+  coordination, while `DownloadId`-specific storage remains in `downloads`.
+- Remove the requested negative-TTL assertion from `ResourceCachePolicy`. Repair failed in-flight request coalescing so
+  one source failure is delivered only through the caller-owned futures rather than an extra unobserved derived future.
+- Restore the Download Manager empty state when cache statistics are present but no chapter/whole-comic tasks exist.
+- Add regressions for failed request coalescing, exact cache hits, range validators, ambiguous URI fallback, promoted
+  handoff, in-memory artifact clearing and persistent reuse after service reopen.
+
 ## 0.31.0-dev.36 — unified resource cache and restored pipeline ownership
 
 - Correct the `0.30.0-dev.35` cache boundary. Remove the App-owned `CoverMemoryCache` and competing `ReaderPageBytesCache`; Reader presentation no longer warms current/adjacent page bytes or enables implicit page retention outside pipeline policy.

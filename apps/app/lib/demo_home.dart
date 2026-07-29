@@ -745,6 +745,9 @@ final class _DemoHomeState extends State<DemoHome> {
             initialProgress: current.progress,
             onProgressChanged: _library.saveProgress,
             onDownloadRequested: () => _downloadChapter(current),
+            artifactCache: _chapterDownloads is ArtifactCacheStore
+                ? _chapterDownloads as ArtifactCacheStore
+                : null,
             initialFavorite: preference.collected,
             onFavoriteChanged: (favorite) {
               final preference = _preferences[

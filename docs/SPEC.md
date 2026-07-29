@@ -140,6 +140,11 @@ abstract interface class ComicSource {
   `DownloadId`；显示层不得为同一页面重新发明另一套下载身份。
 - Reader 媒体字节只从 promoted artifact 读取。asset bundle、file 和 http(s) 可以
   使用不同 transport，但必须经过同一 DownloadJob/DownloadSession 状态机。
+- Reader session 的 final artifact 只有在 `DownloadState.promoted` 后才可提交到持久页面缓存；退出前必须
+  drain 已开始的提交，再删除临时 workspace。新 session 的缓存命中仍需重新经过自己的
+  DownloadJob/DownloadSession，禁止直接把缓存 bytes 交给播放器。
+- cache transport 只接受精确 `DownloadId` 身份。一个 URI 若在同一 manifest 中对应多个页面身份必须绕过
+  缓存；range 命中必须验证内容派生 validator，失败时回退到原 source transport。
 - viewport target 或 Reader session 被替换时，旧 binding 必须先 reconcile 到 empty；
   旧异步结果仍受 epoch、identity 和 cancel token 约束。
 - 等待 promotion 使用只读 snapshot observer。observer 失败不得改变下载状态、writer

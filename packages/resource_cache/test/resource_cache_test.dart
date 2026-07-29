@@ -27,6 +27,41 @@ void main() {
     expect(values[0], same(values[1]));
   });
 
+  test('coalesced loader failures stay owned by awaiting callers', () async {
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final gate = Completer<void>();
+    var loads = 0;
+    const key = ResourceCacheKey(
+      kind: ResourceCacheKind.comicDetails,
+      identity: 'source/failing-comic',
+    );
+
+    Future<String> loader() async {
+      loads++;
+      await gate.future;
+      throw StateError('transient source failure');
+    }
+
+    final first = cache.getOrLoad<String>(
+      key: key,
+      loader: loader,
+      weightOf: (value) => value.length,
+    );
+    final second = cache.getOrLoad<String>(
+      key: key,
+      loader: loader,
+      weightOf: (value) => value.length,
+    );
+    final firstFailure = expectLater(first, throwsStateError);
+    final secondFailure = expectLater(second, throwsStateError);
+    gate.complete();
+
+    await Future.wait<void>(<Future<void>>[firstFailure, secondFailure]);
+    expect(loads, 1);
+    expect(cache.stats.inFlight, 0);
+  });
+
   test('applies TTL and reloads expired metadata', () async {
     var now = DateTime.utc(2026, 1, 1);
     final cache = ResourceCacheManager(

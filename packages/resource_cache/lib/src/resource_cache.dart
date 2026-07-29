@@ -229,7 +229,7 @@ final class ResourceCacheManager {
       }
       return value;
     });
-    final shared = future.then<Object>((value) => value);
+    final Future<Object> shared = future;
     _inFlight[key] = shared;
     return future.whenComplete(() {
       if (identical(_inFlight[key], shared)) {

@@ -2,40 +2,35 @@
 
 ## Sole baseline
 
-Continue only from `zic_v0.31.0-dev.36_unified-resource-cache-pipeline-ownership.zip`.
+Continue only from `zic_v0.31.0-dev.37_promoted-reader-artifact-cache-handoff.zip`.
 Do not merge or copy files from an earlier zic archive.
 
-## Architectural correction completed
+## Mainline ownership now established
 
-- The Home/Bookshelf Presentation split remains, but cache/download algorithms no longer live in `apps/app/lib`.
-- `resource_cache` owns one bounded response-memory manager for image bytes, comic details, chapter metadata and search
-  results. It provides global/per-kind budgets, TTL, concurrent request coalescing, LRU, per-kind statistics,
-  source-composite namespace invalidation and stale in-flight suppression after refresh/clear.
-- `CachedBrowsableComicSource` is the catalog adapter. Search/detail/chapter metadata and explicit cover/source artwork
-  use the shared manager. App code does not build `ResourceCacheKey` values. Raw chapter-page `loadResource`
-  deliberately bypasses it; missing remote covers use the placeholder instead of caching page 1 as artwork.
-- Reader direct page-byte warmup and `ReaderPageBytesCache` were removed. Reader resources again flow only through
-  `ReaderBinding -> PipelineController -> DemandPlan -> LiveCoordinator -> DownloadSession/artifact`.
-- Page-role Widget identity again resets stale zoom. Do not reintroduce role-independent keys or
-  `allowImplicitScrolling` as a resource policy.
-- `downloads` owns chapter page-artifact services, persistent artifact maintenance and the durable whole-comic queue.
-- `downloads_bridge` owns only runtime network/power and JSON queue-persistence adapters.
-- Download Manager receives one injected `ResourceCacheCoordinator`; response/artifact thresholds and trim/clear
-  orchestration live in `ResourceCacheMaintenancePolicy`, while the screen remains a presentation/command surface.
-- Partial chapters are represented by chapter metadata plus any subset of independent partial/promoted page artifacts.
-  There is no all-or-nothing chapter cache object. The memory service also stores pages independently and retry skips
-  the retained subset.
-- A supplied `ResourceCacheCoordinator` is used unchanged. App composition must not rewrap it, replace its maintenance
-  policy or inject new cache thresholds.
-- ADR 0017 is superseded by ADR 0018.
+- `resource_cache` remains dependency-light and owns reusable source-response budgets, TTL, coalescing, LRU,
+  invalidation and response/artifact maintenance coordination. It does not import `DownloadId` or own Reader pages.
+- `catalog` uses `CachedBrowsableComicSource` for search, details, chapter metadata and explicit cover/artwork responses.
+  Raw chapter page resources still bypass the response cache.
+- Reader demand remains `ReaderBinding -> PipelineController -> DemandPlan -> LiveCoordinator -> DownloadSession`.
+  Presentation does not warm adjacent bytes, own a page LRU or choose a cache window.
+- `downloads` owns `ArtifactCacheStore`, `ArtifactCacheTransport` and `PromotedArtifactCacheHandoff`. The handoff observes
+  authoritative sessions, submits only `promoted` final bytes, retries one failed drain pass, and completes before the
+  ephemeral Reader workspace is deleted.
+- A new Reader session checks one exact `DownloadId` in the durable page-artifact tier and otherwise delegates to the
+  original transport. Duplicate URI identities bypass cache; range reuse requires a content-derived validator.
+- Persistent handoff writes use the existing `DownloadJob -> DownloadSession -> artifact -> SQLite index` path.
+  `ResourceCacheCoordinator` still reaches physical artifacts only through `ArtifactCacheMaintenance -> CacheOps`.
+- Partial chapters remain chapter metadata plus any subset of independent partial/promoted page artifacts. No
+  all-or-nothing chapter binary object was added.
 
-## Reported failures corrected
+## Reported failures addressed
 
-- `download_manager.dart` no longer attempts to return `ChapterDownloadService?` as an artifact maintenance interface;
-  composition passes one `ResourceCacheCoordinator` explicitly.
-- Cover fallback uses `ImportedPageRecord.sourceId`, not the nonexistent `source` getter.
-- The invalid page-identity retention regression was removed with the competing Reader cache.
-- Navigating away and back resets the old page zoom instead of retaining a `2.25` transform.
+- `resource_cache.dart:55` negative-TTL assertion was removed as requested.
+- Failed coalesced source requests no longer create an extra unobserved Future; browse/detail error and retry state can
+  handle the single authoritative failure.
+- Download Manager shows `暂无下载任务或离线章节` even when cache usage/maintenance controls are visible.
+- Exiting Reader drains promoted page handoffs before deleting its temporary workspace; reopening can reuse the durable
+  page bytes rather than downloading them again from the source.
 
 ## Validation completed in this environment
 
@@ -62,8 +57,7 @@ cd ../catalog && dart test test/cached_comic_source_test.dart
 cd ../downloads && dart test test
 cd ../downloads_bridge && flutter test test
 cd ../reader && flutter test test/reader_navigation_test.dart
-cd ../../apps/app && flutter test test/chapter_downloads_test.dart
-flutter test test/home_library_session_test.dart
+cd ../../apps/app && flutter test test/library_ui_test.dart
 flutter test test/source_browser_test.dart
 flutter test test/reader_controls_test.dart
 flutter test test/app_smoke_test.dart
@@ -81,11 +75,13 @@ bash ./tool/build_android.sh release
 
 ## Next mainline work
 
-1. Add transition/decode/present telemetry that attributes blank frames, first-frame delay, decode queue time and texture
-   readiness to one demand revision.
-2. Build deterministic replay and benchmark cases for current-to-target transitions before changing cache windows.
+1. Add transition/decode/present telemetry that attributes blank frames, first-frame delay, decode queue time, cache
+   source and texture readiness to one demand revision.
+2. Build deterministic replay and benchmark cases for current-to-target transitions and warm/cold artifact paths before
+   changing retention windows.
 3. Implement/tune encoded-memory, decoded-frame and texture retention only in pipeline/session/media owners, including
    memory-pressure shrink and safe eviction handshakes.
 4. Continue state-owner decomposition of details/source-browser orchestration without merging local and remote detail
    lifecycles or moving resource policy back into Presentation.
-5. Add source update ingestion and durable upstream timestamps after transition telemetry is trustworthy.
+5. Separate explicit user-pinned offline intent from incidental reusable page artifacts if product UI later needs to
+   distinguish them, without changing the shared page identity or physical artifact owner.

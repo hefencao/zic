@@ -9,6 +9,8 @@ import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
+import 'artifact_cache_store.dart';
+
 enum ChapterDownloadPhase {
   idle,
   downloading,
@@ -122,7 +124,10 @@ typedef ChapterPageLoader = Future<Uint8List> Function(
 /// cancellation/failure, and exposes the same task lifecycle as the artifact
 /// implementation.
 final class MemoryChapterDownloadService
-    implements ChapterDownloadService, ArtifactCacheMaintenance {
+    implements
+        ChapterDownloadService,
+        ArtifactCacheMaintenance,
+        ArtifactCacheStore {
   MemoryChapterDownloadService({required ChapterPageLoader pageLoader})
       : _pageLoader = pageLoader;
 
@@ -133,6 +138,8 @@ final class MemoryChapterDownloadService
       <String, List<Uint8List?>>{};
   final Map<String, ChapterDownloadSnapshot> _snapshots =
       <String, ChapterDownloadSnapshot>{};
+  final Map<DownloadId, Uint8List> _readerArtifacts =
+      <DownloadId, Uint8List>{};
   final Map<String, Future<void>> _runs = <String, Future<void>>{};
   final Set<String> _cancelled = <String>{};
   bool _closed = false;
@@ -367,14 +374,31 @@ final class MemoryChapterDownloadService
   }
 
   @override
+  Future<Uint8List?> readArtifact(DownloadId id) async {
+    _requireOpen();
+    final bytes = _readerArtifacts[id];
+    return bytes == null ? null : Uint8List.fromList(bytes);
+  }
+
+  @override
+  Future<void> storePromotedArtifact({
+    required DownloadId id,
+    required Uint8List bytes,
+  }) async {
+    _requireOpen();
+    _readerArtifacts.putIfAbsent(id, () => Uint8List.fromList(bytes));
+  }
+
+  @override
   Future<ArtifactCacheUsage> inspectArtifacts() async {
     _requireOpen();
     return ArtifactCacheUsage(
       bytes: _memoryCacheBytes,
       entries: _chapters.values.fold<int>(
-        0,
-        (sum, pages) => sum + _storedPageCount(pages),
-      ),
+            0,
+            (sum, pages) => sum + _storedPageCount(pages),
+          ) +
+          _readerArtifacts.length,
     );
   }
 
@@ -449,6 +473,16 @@ final class MemoryChapterDownloadService
         _chapters.remove(identity);
       }
     }
+    for (final id in _readerArtifacts.keys.toList(growable: false)) {
+      if (remaining <= targetBytes) {
+        break;
+      }
+      final page = _readerArtifacts.remove(id);
+      if (page != null) {
+        remaining -= page.lengthInBytes;
+        evicted++;
+      }
+    }
     return ArtifactCacheReport(
       beforeBytes: beforeBytes,
       releasedBytes: beforeBytes - remaining,
@@ -458,9 +492,14 @@ final class MemoryChapterDownloadService
     );
   }
 
-  int get _memoryCacheBytes => _chapters.values.fold<int>(
+  int get _memoryCacheBytes =>
+      _chapters.values.fold<int>(
         0,
         (sum, pages) => sum + _storedPageBytes(pages),
+      ) +
+      _readerArtifacts.values.fold<int>(
+        0,
+        (sum, page) => sum + page.lengthInBytes,
       );
 
   int _storedPageCount(List<Uint8List?> pages) =>
@@ -485,6 +524,7 @@ final class MemoryChapterDownloadService
       }
     }
     _chapters.clear();
+    _readerArtifacts.clear();
     _snapshots.clear();
     await _changes.close();
   }
@@ -504,7 +544,10 @@ final class MemoryChapterDownloadService
 }
 
 final class PersistentChapterDownloadService
-    implements ChapterDownloadService, ArtifactCacheMaintenance {
+    implements
+        ChapterDownloadService,
+        ArtifactCacheMaintenance,
+        ArtifactCacheStore {
   PersistentChapterDownloadService._({
     required DownloadRegistry registry,
     required SqliteIndex index,
@@ -547,6 +590,8 @@ final class PersistentChapterDownloadService
   final Set<String> _cancelled = <String>{};
   final Map<String, ChapterDownloadPhase> _terminalPhases =
       <String, ChapterDownloadPhase>{};
+  final Map<DownloadId, Future<void>> _artifactWrites =
+      <DownloadId, Future<void>>{};
   bool _closed = false;
 
   @override
@@ -782,6 +827,67 @@ final class PersistentChapterDownloadService
   }
 
   @override
+  Future<Uint8List?> readArtifact(DownloadId id) async {
+    _requireOpen();
+    final session = _registry.get(id);
+    if (session.activeRun || session.hasWriter) {
+      return null;
+    }
+    await session.restore();
+    if (session.state != DownloadState.promoted) {
+      return null;
+    }
+    final builder = BytesBuilder(copy: false);
+    await for (final chunk in session.artifact.readChunks()) {
+      builder.add(chunk);
+    }
+    return builder.takeBytes();
+  }
+
+  @override
+  Future<void> storePromotedArtifact({
+    required DownloadId id,
+    required Uint8List bytes,
+  }) {
+    _requireOpen();
+    final active = _artifactWrites[id];
+    if (active != null) {
+      return active;
+    }
+    final run = _storePromotedArtifact(id, Uint8List.fromList(bytes));
+    _artifactWrites[id] = run;
+    return run.whenComplete(() {
+      if (identical(_artifactWrites[id], run)) {
+        _artifactWrites.remove(id);
+      }
+    });
+  }
+
+  Future<void> _storePromotedArtifact(
+    DownloadId id,
+    Uint8List bytes,
+  ) async {
+    final session = _registry.get(id);
+    if (session.activeRun || session.hasWriter) {
+      throw const Failure(
+        code: ErrorCode.sessionBusy,
+        message: 'artifact cache destination is busy',
+      );
+    }
+    await session.restore();
+    if (session.state == DownloadState.promoted) {
+      return;
+    }
+    final transport = LoaderTransport(<Uri, LoaderTransportSource>{
+      id.canonicalUri: LoaderTransportSource(
+        revision: 'reader-cache:${id.sourceRevision}',
+        loadBytes: () async => bytes,
+      ),
+    });
+    await DownloadJob(transport: transport, session: session).run();
+  }
+
+  @override
   Future<ArtifactCacheUsage> inspectArtifacts() async {
     _requireOpen();
     final records = await _index.list();
@@ -846,6 +952,13 @@ final class PersistentChapterDownloadService
         await run;
       } on Object {
         // Closing discards task failures after cancellation.
+      }
+    }
+    for (final write in _artifactWrites.values.toList(growable: false)) {
+      try {
+        await write;
+      } on Object {
+        // Cache handoff failures are already reported to their caller.
       }
     }
     await _registry.dispose();

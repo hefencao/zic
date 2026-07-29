@@ -1,3 +1,21 @@
+## Current iteration — promoted Reader artifact cache handoff
+
+Reader sessions still use an isolated `EphemeralCacheWorkspace`, but promoted pages no longer disappear with it. The
+`downloads` package now owns `ArtifactCacheStore`, a read-through `ArtifactCacheTransport`, and
+`PromotedArtifactCacheHandoff`. The handoff observes authoritative `DownloadSession` snapshots, commits only final
+promoted bytes, and drains before Reader workspace deletion. It does not create demand, choose a prefetch window or
+retain decoded/presented resources.
+
+`PersistentChapterDownloadService` stores the committed page through its existing registry, `DownloadJob`, artifact,
+SQLite index and `CacheOps` path; the memory fallback provides the same exact-page contract. A later Reader session can
+serve those bytes through the cache transport and then reconstruct its own session artifact without repeating source
+network transport. Ambiguous URI mappings are not cached, and range reuse uses a content-derived validator.
+
+`resource_cache` remains dependency-light and does not import `DownloadId`. Failed source-response coalescing no longer
+creates an unobserved derived Future, so retryable browse/detail failures remain owned by the screen's existing error
+state. Download Manager also renders its empty task state alongside cache usage instead of showing only maintenance
+statistics.
+
 ## Current iteration — unified resource cache and restored pipeline ownership
 
 The first Home decomposition remains: `DemoHome` coordinates routes and cross-feature use cases, while

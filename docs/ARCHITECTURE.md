@@ -973,6 +973,13 @@ Presentation must not warm current/next/previous pages directly, retain adjacent
 policy, or create a private page-byte LRU. Page role changes may remount the zoom owner so stale transforms reset; byte,
 decode and presentation reuse is determined by demand/session identities rather than Widget identity.
 
+A Reader session still downloads into an isolated ephemeral workspace. `PromotedArtifactCacheHandoff` in `downloads`
+observes sessions created by that registry and submits only final `promoted` bytes to `ArtifactCacheStore` before the
+workspace is removed. A later session composes `ArtifactCacheTransport` ahead of its normal source transport: an exact
+`DownloadId` hit is copied through the same `DownloadJob/DownloadSession` state machine into the new session artifact;
+a miss, validator mismatch or ambiguous duplicate URI delegates unchanged to the transport chosen by
+`LiveCoordinator`. The handoff has no demand, rank, prefetch or eviction authority.
+
 Offline content is not a whole-chapter cache object. Chapter metadata is a catalog response; every downloaded page image is
 an independent partial/final artifact with its own busy and eviction state. Therefore an incomplete chapter is naturally
 represented as chapter metadata plus any subset of promoted or partial page artifacts. The memory fallback follows the
