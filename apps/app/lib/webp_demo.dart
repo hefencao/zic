@@ -12,6 +12,8 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:pipeline/pipeline.dart';
+import 'package:resource_cache/resource_cache.dart';
+import 'package:storage_bridge/storage_bridge.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:texture_bridge/texture_bridge.dart';
 import 'package:transport/transport.dart';
@@ -662,7 +664,7 @@ final class LocalImagePlayer extends StatefulWidget {
 final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   late ImagePreviewState _state;
   Uint8List? _bytes;
-  MemoryImage? _imageProvider;
+  ImageProvider<Object>? _imageProvider;
   ImageStream? _imageStream;
   ImageStreamListener? _imageStreamListener;
   int _generation = 0;
@@ -703,6 +705,28 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     try {
       final tokenLoader = widget.tokenBytesLoader;
       final loader = widget.bytesLoader;
+      final directPath = tokenLoader == null &&
+              loader == null &&
+              widget.decodeProbe == null &&
+              !widget.image.format.isWebp &&
+              !(widget.playback != null &&
+                  widget.image.format == LocalImageFormat.gif)
+          ? localImageFilePath(widget.image.sourceId)
+          : null;
+      if (directPath != null) {
+        final provider = encodedResourceImageProvider(
+          FileEncodedResourceSource(
+            path: directPath,
+            lengthInBytes: widget.image.byteLength,
+          ),
+        );
+        if (!mounted || generation != _generation || token != _loadToken) {
+          return;
+        }
+        setState(() => _imageProvider = provider);
+        _listenForImage(provider, generation, widget.image.format);
+        return;
+      }
       final bytes = tokenLoader != null
           ? await tokenLoader(widget.image, token)
           : loader == null
@@ -765,7 +789,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   }
 
   void _listenForImage(
-    MemoryImage provider,
+    ImageProvider<Object> provider,
     int generation,
     LocalImageFormat format,
   ) {
@@ -900,7 +924,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           ),
         ),
       );
-    } else if (bytes == null) {
+    } else if (bytes == null && imageProvider == null) {
       content = const Center(
         child: CircularProgressIndicator(),
       );
@@ -966,7 +990,6 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     );
   }
 }
-
 
 final class _ControlledAnimatedImage extends StatefulWidget {
   const _ControlledAnimatedImage({
@@ -1155,10 +1178,10 @@ final class _ControlledAnimatedImageState
             'frameIndex': presentedFrameIndex,
           },
         );
+        if (presentedFrameIndex == 0) {
+          widget.onReady();
+        }
       });
-      if (_framesPresented == 1) {
-        widget.onReady();
-      }
       if (previous != null) {
         WidgetsBinding.instance.addPostFrameCallback((_) => previous.dispose());
       }

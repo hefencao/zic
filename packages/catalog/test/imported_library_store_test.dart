@@ -166,6 +166,10 @@ void main() {
       (await store.listChapterReadStates('source-1', 'comic-1')).single.toJson(),
       readState.toJson(),
     );
+    expect(
+      (await store.listAllChapterReadStates()).single.toJson(),
+      readState.toJson(),
+    );
 
     await store.removeCategory('favorites');
     expect(await store.listCategories(), isEmpty);

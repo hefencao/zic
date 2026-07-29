@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -87,6 +88,56 @@ void main() {
     expect(bytes, <int>[8, 6, 4, 2]);
     expect(loads, 1);
     expect(reopened.stats.persistentHits, 1);
+  });
+
+  test('file location avoids byte reads and batches LRU metadata touches',
+      () async {
+    var now = DateTime.utc(2026, 7, 29, 10);
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-resource-file-location-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    const key = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'cover-file-location',
+      revision: 'r1',
+    );
+    final store = FileResourceCacheByteStore(
+      directory.path,
+      now: () => now,
+    );
+    final expiresAt = now.add(const Duration(hours: 1));
+    await store.write(
+      key: key,
+      bytes: Uint8List.fromList(<int>[1, 3, 5, 7]),
+      expiresAt: expiresAt,
+    );
+    final metadata = await directory
+        .list(recursive: true)
+        .where((entity) => entity is File && entity.path.endsWith('.json'))
+        .cast<File>()
+        .single;
+    final beforeTouch = await metadata.readAsString();
+
+    now = now.add(const Duration(minutes: 5));
+    final located = await store.locate(key);
+
+    expect(located, isNotNull);
+    expect(located!.byteLength, 4);
+    expect(await File(located.path).readAsBytes(), <int>[1, 3, 5, 7]);
+    expect(await metadata.readAsString(), beforeTouch);
+
+    await store.close();
+    final afterClose = jsonDecode(await metadata.readAsString())
+        as Map<String, Object?>;
+    expect(
+      DateTime.parse(afterClose['lastAccessedAt']! as String).toUtc(),
+      now,
+    );
   });
 
   test('expired response bytes are rejected', () async {

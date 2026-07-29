@@ -33,7 +33,24 @@ Transport  DecodeSession TextureRegistry
 Artifact   Rust Media Core
 ```
 
-## 1.1 冷启动 Reader promoted-artifact 路径
+## 1.1 首页冷启动与文件型封面路径
+
+```text
+runApp(_BootstrapApp)
+  -> Flutter startup surface
+  -> open library/index/cache services
+       -> one bulk read-state query
+       -> one index-only download-status projection
+       -> no eager DownloadSession restore / page-file stat
+  -> Home visible cards
+       -> local plain file ---------> FileImage
+       -> durable cover locate ------> FileImage
+       -> source miss -> bytes -> atomic cache file -> FileImage
+```
+
+`ResourceCacheByteStoreFileAccess` 只暴露经过完整 key、TTL 和长度校验的只读文件引用。它避免 warm cover 进入 Dart heap，但不宣称平台 decoder 内部无复制。`content://`、动画与 Reader demand 仍走各自受控 adapter。书架 read-state 使用单次批量查询；离线徽标使用一次 SQLite index projection，不创建 session、不读取或 stat 页面文件。精确页面命令才 materialize/restore 对应 session。
+
+## 1.2 冷启动 Reader promoted-artifact 路径
 
 ```text
 ArtifactCacheStore.read(exact DownloadId)

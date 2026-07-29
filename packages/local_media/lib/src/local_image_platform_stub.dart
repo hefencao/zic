@@ -21,3 +21,5 @@ Future<LocalImageDirectoryScan> listLocalImageDirectory(String path) {
 Future<Uint8List> readLocalImageSource(String sourceId) {
   throw UnsupportedError('当前平台不支持读取本地图片来源：$sourceId');
 }
+
+String? localImageFilePath(String sourceId) => null;

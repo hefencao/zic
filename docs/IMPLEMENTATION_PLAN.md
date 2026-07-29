@@ -21,7 +21,7 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.41）
+## 当前应用主线（0.31.0-dev.42）
 
 - 保留 Home/Bookshelf 的 Presentation 拆分，但禁止在 `apps/app/lib` 定义资源缓存、章节下载、页面保活或整本调度算法。
 - `resource_cache` 继续统一管理封面/图片响应、漫画详情、章节元数据和搜索结果。只有完整 `imageBytes` 可通过注入的 byte store 持久化；章节页面仍不进入该平面。
@@ -29,11 +29,14 @@
 - Reader 的页面/缩放 host 按稳定 asset identity 建立。翻页中点改变 current role 只能触发状态更新和缩放重置，不得销毁已加载媒体子树；Presentation 仍不得通过 keep-alive、私有 LRU 或相邻页预热竞争 pipeline policy。
 - `downloads` 管理独立页面 artifact 下载、promoted handoff 及整本队列；不完整章节继续由“章节元数据 + 任意页面 artifact 子集”表示。
 - `catalog` 新增 Mihon repository 与 Venera source index 的纯元数据兼容层。Venera 同时兼容 `filename`/`fileName` 并优先保留仓库 `key`；Mihon host 后续必须检查 `tachiyomix.extensionLib` 等 APK ABI 元数据。外部 APK/Kotlin 与 JavaScript 执行必须分别位于受限 host，返回有显式 `close()` 生命周期的普通 `BrowsableComicSource`，不得获得导航、Reader、demand 或 artifact 权限。
-- 外部插件的共享信任/权限/版本/ABI/隔离/session 门禁与 transition/artifact/decode/upload/first-frame telemetry 已实现；下一阶段分别实现 Mihon Android inspector/executor 与 Venera 受限 JavaScript inspector/executor。
+- 外部插件的共享信任/权限/版本/ABI/隔离/session 门禁及 immutable-payload inspector 已实现；下一阶段实现 Mihon Android `MihonApkMetadataReader`/isolated executor 与 Venera 受限 JavaScript executor。
 - Reader 快速切页 trace 已有确定性回放分析：由 `downloads` 生成精确 page/DownloadId identity，分别记录 transition revision 与实际产出呈现帧的 work revision，还原 artifact 来源、decode/upload 排队与执行、present、first frame 和 host remount；中点前已呈现的邻页计为零 transition wait。任何 retention 调整必须先由该分析定位 owner，再在 pipeline/session/media 层实施。
 - App durable composition 只接受显式 `ManagedChapterDownloadService` 作为页面 artifact store/maintenance；普通 `ChapterDownloadService` 保持较窄契约，避免把缓存维护强加给仅提供下载命令的适配器。
 - 冷启动 Reader 命中已 promoted 页面 artifact 时，页面消费者与替代 session transport 必须共享同一次精确读取；页面可立即开始 decode，但替代 session 仍需完成 receive/seal/promote。禁止因此新增 Presentation 私有缓存或绕过 demand。
 - Flutter 动图仅因 decode target 改变而重建 codec 时必须保留最后呈现帧，直到替代帧真正呈现；encoded identity 改变时才立即清空。trace 必须分别记录 artifact read、decode 和 present。
+- 首页冷启动必须先挂载 Flutter bootstrap surface，再异步打开持久服务；禁止在 `runApp` 前遍历恢复所有离线页面。read-state 使用单次批量查询，首页下载状态使用一次 index-only bulk projection，不得为徽标创建 session 或触碰页面文件；精确页面命令才 materialize/restore session。
+- 完整封面 warm hit 和普通本地静态图片优先传递不可变文件引用到 engine-facing ImageProvider，避免整文件进入 Dart heap。`content://`、动画和 Reader 页面继续使用各自受控字节/session 边界；不得把“避免 Dart copy”夸大为平台解码绝对 zero-copy。
+- Mihon/Venera inspector 必须针对同一不可变本地 payload 做实际长度和流式 SHA-256 检查。Mihon 元数据读取不得 class-load APK；Venera source key 发现不得执行 JavaScript，仓库 key 与脚本 metadata 必须一致。
 
 ## 2. 阶段划分
 

@@ -74,6 +74,37 @@ void main() {
     expect(await service.readArtifact(id), isNull);
   });
 
+  test('persistent service opens without eagerly restoring indexed pages',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-lazy-artifact-restore-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final id = _readerArtifactId('lazy-cache-page');
+    final first = await PersistentChapterDownloadService.open(directory.path);
+    await first.storePromotedArtifact(
+      id: id,
+      bytes: Uint8List.fromList(<int>[2, 4, 6, 8]),
+    );
+    await first.close();
+
+    final reopened =
+        await PersistentChapterDownloadService.open(directory.path);
+    addTearDown(reopened.close);
+
+    expect(reopened.materializedSessionCount, 0);
+    final entry = _entryForArtifact(id, byteLength: 4);
+    final projected = (await reopened.inspectMany(<ImportedLibraryEntry>[
+      entry,
+    ])).single;
+    expect(projected.completedPages, 1);
+    expect(projected.receivedBytes, 4);
+    expect(reopened.materializedSessionCount, 0);
+
+    expect(await reopened.readArtifact(id), <int>[2, 4, 6, 8]);
+    expect(reopened.materializedSessionCount, 1);
+  });
+
   test('persistent artifact store survives Reader service reopen', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-reader-artifact-cache-',
@@ -270,6 +301,32 @@ void main() {
     expect(loadedPages.where((index) => index == 1).length, 2);
   });
 }
+
+
+ImportedLibraryEntry _entryForArtifact(
+  DownloadId id, {
+  required int byteLength,
+}) =>
+    ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:${id.content.comicId}',
+        displayName: '缓存章节',
+        sourceId: id.content.sourceId,
+        comicId: id.content.comicId,
+        comicTitle: '缓存漫画',
+        chapterId: id.content.chapterId,
+        sourceRevision: id.sourceRevision,
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '${id.content.pageId}.bin',
+            sourceId: id.canonicalUri.toString(),
+            pageId: id.content.pageId,
+            contentKindHint: ContentKindHint.unknown,
+            byteLength: byteLength,
+          ),
+        ],
+      ),
+    );
 
 DownloadId _readerArtifactId(String pageId) => DownloadId(
       content: ContentId(

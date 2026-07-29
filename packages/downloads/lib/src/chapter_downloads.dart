@@ -106,6 +106,11 @@ abstract interface class ChapterDownloadService {
 
   Future<ChapterDownloadSnapshot> inspect(ImportedLibraryEntry entry);
 
+  /// Bulk projection used by Home without one storage query per chapter/page.
+  Future<List<ChapterDownloadSnapshot>> inspectMany(
+    Iterable<ImportedLibraryEntry> entries,
+  );
+
   Future<bool> isDownloaded(ImportedLibraryEntry entry);
 
   Future<Uint8List> readPage(ImportedLibraryEntry entry, int pageIndex);
@@ -358,6 +363,18 @@ final class MemoryChapterDownloadService
   }
 
   @override
+  Future<List<ChapterDownloadSnapshot>> inspectMany(
+    Iterable<ImportedLibraryEntry> entries,
+  ) async {
+    _requireOpen();
+    final snapshots = <ChapterDownloadSnapshot>[];
+    for (final entry in entries) {
+      snapshots.add(await inspect(entry));
+    }
+    return List<ChapterDownloadSnapshot>.unmodifiable(snapshots);
+  }
+
+  @override
   Future<bool> isDownloaded(ImportedLibraryEntry entry) async =>
       (await inspect(entry)).isComplete;
 
@@ -573,7 +590,10 @@ final class PersistentChapterDownloadService
       clock: clock,
       index: index,
     );
-    await registry.restoreIndexed();
+    // Do not restore every indexed page before the Flutter root is mounted.
+    // Large offline libraries otherwise perform one file stat/prefix read and
+    // one index synchronization per page on the cold-start critical path.
+    // Every command below already restores the exact session it consumes.
     return PersistentChapterDownloadService._(
       registry: registry,
       index: index,
@@ -598,6 +618,11 @@ final class PersistentChapterDownloadService
   final Map<DownloadId, Future<void>> _artifactWrites =
       <DownloadId, Future<void>>{};
   bool _closed = false;
+
+  /// Sessions are materialized only for exact pages touched after startup.
+  /// This metric is intentionally read-only so diagnostics can verify that
+  /// opening a large offline library does not eagerly restore every artifact.
+  int get materializedSessionCount => _registry.sessions.length;
 
   @override
   Stream<ChapterDownloadSnapshot> get changes => _changes.stream;
@@ -726,10 +751,32 @@ final class PersistentChapterDownloadService
     return _buildSnapshot(entry);
   }
 
+  @override
+  Future<List<ChapterDownloadSnapshot>> inspectMany(
+    Iterable<ImportedLibraryEntry> entries,
+  ) async {
+    _requireOpen();
+    final requested = entries.toList(growable: false);
+    if (requested.isEmpty) {
+      return const <ChapterDownloadSnapshot>[];
+    }
+    final indexed = <String, CacheRec>{
+      for (final record in await _index.list()) record.key: record,
+    };
+    final snapshots = <ChapterDownloadSnapshot>[];
+    for (final entry in requested) {
+      snapshots.add(
+        await _buildSnapshot(entry, indexedRecords: indexed),
+      );
+    }
+    return List<ChapterDownloadSnapshot>.unmodifiable(snapshots);
+  }
+
   Future<ChapterDownloadSnapshot> _buildSnapshot(
     ImportedLibraryEntry entry, {
     ChapterDownloadPhase? phase,
     String? failure,
+    Map<String, CacheRec>? indexedRecords,
   }) async {
     final manifest = entry.chapter.toManifest();
     var completedPages = 0;
@@ -740,25 +787,36 @@ final class PersistentChapterDownloadService
     var hasFailedSession = false;
     for (var index = 0; index < manifest.pages.length; index++) {
       final page = manifest.pages[index];
-      final session = _registry.get(_downloadId(manifest, page));
-      if (!session.activeRun && !session.hasWriter) {
-        await session.restore();
-      }
-      final snapshot = session.snapshot;
-      receivedBytes += snapshot.committedLength;
-      if (snapshot.state == DownloadState.promoted) {
+      final id = _downloadId(manifest, page);
+      final sessionSnapshot = _registry.find(id)?.snapshot;
+      final snapshot = sessionSnapshot != null &&
+              (sessionSnapshot.state != DownloadState.idle ||
+                  sessionSnapshot.activeRun ||
+                  sessionSnapshot.hasWriter)
+          ? sessionSnapshot
+          : null;
+      final indexed = snapshot == null
+          ? indexedRecords?[id.key] ?? await _index.get(id.key)
+          : null;
+      final exactIndexed = indexed?.id == id ? indexed : null;
+      final committedLength = snapshot?.committedLength ?? exactIndexed?.bytes ?? 0;
+      receivedBytes += committedLength;
+      final promoted = snapshot?.state == DownloadState.promoted ||
+          exactIndexed?.state == CacheState.ready;
+      if (promoted) {
         completedPages++;
       }
-      final knownLength = snapshot.totalLength ??
-          entry.chapter.pages[index].byteLength;
+      final knownLength = snapshot?.totalLength ??
+          entry.chapter.pages[index].byteLength ??
+          exactIndexed?.bytes;
       if (knownLength == null) {
         knowsTotalBytes = false;
       } else {
         totalBytes += knownLength;
       }
-      if (snapshot.state == DownloadState.failed) {
+      if (snapshot?.state == DownloadState.failed) {
         hasFailedSession = true;
-        sessionFailure ??= snapshot.failure?.toString();
+        sessionFailure ??= snapshot?.failure?.toString();
       }
     }
     final identity = _identity(entry);

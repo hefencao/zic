@@ -1326,6 +1326,54 @@ final class _DemoHomeState extends State<DemoHome> {
     );
   }
 
+  Future<EncodedResourceSource> _loadCoverSource({
+    required String sourceId,
+    required String comicId,
+    required Uri? coverUri,
+    required ImportedLibraryEntry? fallbackChapter,
+  }) async {
+    final fallback = fallbackChapter;
+    final fallbackPage = sourceId != 'local-folder' ||
+            fallback == null ||
+            fallback.chapter.pages.isEmpty
+        ? null
+        : fallback.chapter.pages.first.sourceId;
+    final sourceValue = coverUri?.toString() ??
+        fallback?.chapter.coverSourceId ??
+        fallbackPage;
+    if (sourceValue == null || sourceValue.trim().isEmpty) {
+      throw StateError('漫画详情没有可用封面');
+    }
+    final directPath = localImageFilePath(sourceValue);
+    if (directPath != null) {
+      return FileEncodedResourceSource(path: directPath);
+    }
+    final revision = fallback?.chapter.sourceRevision ?? '';
+    final source = _sourceForId(sourceId);
+    final uri = Uri.tryParse(sourceValue);
+    if (source != null &&
+        uri != null &&
+        (uri.scheme == 'http' || uri.scheme == 'https')) {
+      return loadCachedSourceImageSource(
+        source,
+        uri,
+        comicId: comicId,
+        revision: revision,
+      );
+    }
+    // Android content URIs cannot be opened by FileImage. Copy them once into
+    // the durable response cache, then use that immutable file on later
+    // launches instead of crossing MethodChannel for every cover build.
+    return loadCachedComicImageSource(
+      cache: _cacheCoordinator.responses,
+      sourceId: sourceId,
+      comicId: comicId,
+      imageIdentity: sourceValue,
+      revision: revision,
+      loader: () => readLocalImageSource(sourceValue),
+    );
+  }
+
   Future<Uint8List> Function() _coverLoader(ImportedLibraryEntry entry) {
     return () => _loadDetailsCover(
           sourceId: entry.chapter.sourceId,
@@ -1339,6 +1387,19 @@ final class _DemoHomeState extends State<DemoHome> {
 
   Future<Uint8List> Function() _coverLoaderForComic(LibraryComic comic) {
     return () => _loadDetailsCover(
+          sourceId: comic.sourceId,
+          comicId: comic.comicId,
+          coverUri: comic.coverSourceId == null
+              ? null
+              : Uri.tryParse(comic.coverSourceId!),
+          fallbackChapter: comic.coverChapter,
+        );
+  }
+
+  Future<EncodedResourceSource> Function() _coverSourceLoaderForComic(
+    LibraryComic comic,
+  ) {
+    return () => _loadCoverSource(
           sourceId: comic.sourceId,
           comicId: comic.comicId,
           coverUri: comic.coverSourceId == null

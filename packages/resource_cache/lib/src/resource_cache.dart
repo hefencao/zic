@@ -60,6 +60,52 @@ final class PersistedResourceBytes {
   final DateTime expiresAt;
 }
 
+/// Immutable encoded resource presented either from Dart memory or from an
+/// already-durable file.
+///
+/// File-backed values let Flutter/native decoders open the cache artifact
+/// directly instead of forcing every warm-start cover through
+/// `File.readAsBytes`, a Dart-heap copy, and then another codec input copy.
+sealed class EncodedResourceSource {
+  const EncodedResourceSource({this.lengthInBytes});
+
+  final int? lengthInBytes;
+}
+
+final class MemoryEncodedResourceSource extends EncodedResourceSource {
+  const MemoryEncodedResourceSource(this.bytes)
+      : super(lengthInBytes: bytes.lengthInBytes);
+
+  final Uint8List bytes;
+}
+
+final class FileEncodedResourceSource extends EncodedResourceSource {
+  const FileEncodedResourceSource({
+    required this.path,
+    super.lengthInBytes,
+  }) : assert(path != '');
+
+  final String path;
+}
+
+/// Exact durable file location for one immutable response-cache entry.
+///
+/// The store has already validated the full cache key, expiry and file length.
+/// Consumers must treat the path as read-only and must not retain it after the
+/// owning cache entry is invalidated.
+final class PersistedResourceFile {
+  const PersistedResourceFile({
+    required this.path,
+    required this.byteLength,
+    required this.expiresAt,
+  })  : assert(path != ''),
+        assert(byteLength >= 0);
+
+  final String path;
+  final int byteLength;
+  final DateTime expiresAt;
+}
+
 /// Physical usage reported by an inspectable durable response-byte store.
 final class ResourceCacheByteStoreUsage {
   const ResourceCacheByteStoreUsage({
@@ -96,6 +142,16 @@ abstract interface class ResourceCacheByteStoreMaintenance {
   Future<ResourceCacheByteStoreTrimReport> trimTo({
     required int targetBytes,
   });
+}
+
+/// Optional fast path for stores whose encoded bytes already live in a stable
+/// immutable file.
+///
+/// This capability deliberately sits beside [ResourceCacheByteStore] rather
+/// than changing its byte API. Existing non-file stores remain valid, while
+/// image presentation can avoid materializing warm entries in the Dart heap.
+abstract interface class ResourceCacheByteStoreFileAccess {
+  Future<PersistedResourceFile?> locate(ResourceCacheKey key);
 }
 
 /// Optional durable backing for byte-valued resource-cache entries.
@@ -235,6 +291,8 @@ final class ResourceCacheManager {
   final DateTime Function() _now;
   final Map<ResourceCacheKey, _ResourceCacheEntry> _entries =
       <ResourceCacheKey, _ResourceCacheEntry>{};
+  final Map<ResourceCacheKey, _FileResourceEntry> _fileEntries =
+      <ResourceCacheKey, _FileResourceEntry>{};
   final Map<ResourceCacheKey, Future<Object>> _inFlight =
       <ResourceCacheKey, Future<Object>>{};
   final Map<ResourceCacheKey, int> _generations = <ResourceCacheKey, int>{};
@@ -284,6 +342,105 @@ final class ResourceCacheManager {
     required Future<T> Function() loader,
     required ResourceCacheWeight<T> weightOf,
     bool forceRefresh = false,
+  }) =>
+      _getOrLoad<T>(
+        key: key,
+        loader: loader,
+        weightOf: weightOf,
+        forceRefresh: forceRefresh,
+        allowPersistentRead: true,
+      );
+
+  /// Resolves immutable image bytes without forcing a durable file hit through
+  /// `readAsBytes` when the backing store exposes file access.
+  Future<EncodedResourceSource> getOrLoadEncodedImage({
+    required ResourceCacheKey key,
+    required Future<Uint8List> Function() loader,
+    bool forceRefresh = false,
+  }) async {
+    _requireOpen();
+    if (key.kind != ResourceCacheKind.imageBytes) {
+      throw ArgumentError.value(
+        key.kind,
+        'key.kind',
+        'file-backed encoded resources are only valid for image bytes',
+      );
+    }
+    if (forceRefresh) {
+      invalidate(key);
+    } else {
+      final warmFile = _readFileSource(key);
+      if (warmFile != null) {
+        _hits++;
+        return warmFile;
+      }
+      final memory = _read<Uint8List>(key);
+      if (memory != null) {
+        _hits++;
+        return MemoryEncodedResourceSource(memory);
+      }
+      final pending = _inFlight[key];
+      if (pending != null) {
+        _hits++;
+        final value = await pending;
+        if (value is Uint8List) {
+          final file = await _locatePersistentFile(key);
+          if (file != null) {
+            final source = FileEncodedResourceSource(
+              path: file.path,
+              lengthInBytes: file.byteLength,
+            );
+            _removeEntry(key);
+            _storeFileSource(key, source, file.expiresAt);
+            return source;
+          }
+          return MemoryEncodedResourceSource(value);
+        }
+      }
+      final file = await _locatePersistentFile(key);
+      if (file != null) {
+        _hits++;
+        _persistentHits++;
+        final source = FileEncodedResourceSource(
+          path: file.path,
+          lengthInBytes: file.byteLength,
+        );
+        _storeFileSource(key, source, file.expiresAt);
+        return source;
+      }
+      if (byteStore is ResourceCacheByteStoreFileAccess) {
+        _persistentMisses++;
+      }
+    }
+
+    final bytes = await _getOrLoad<Uint8List>(
+      key: key,
+      loader: loader,
+      weightOf: (value) => value.lengthInBytes,
+      forceRefresh: false,
+      // A file-capable store has already been checked without copying. Do not
+      // immediately fall back to its legacy full-byte read path on a miss.
+      allowPersistentRead: byteStore is! ResourceCacheByteStoreFileAccess,
+    );
+    final file = await _locatePersistentFile(key);
+    if (file != null) {
+      final source = FileEncodedResourceSource(
+        path: file.path,
+        lengthInBytes: file.byteLength,
+      );
+      _removeEntry(key);
+      _storeFileSource(key, source, file.expiresAt);
+      return source;
+    }
+    return MemoryEncodedResourceSource(bytes);
+  }
+
+  Future<T> _getOrLoad<T extends Object>({
+    required ResourceCacheKey key,
+    required Future<T> Function() loader,
+    required ResourceCacheWeight<T> weightOf,
+    required bool forceRefresh,
+    required bool allowPersistentRead,
   }) {
     _requireOpen();
     if (!forceRefresh) {
@@ -311,7 +468,7 @@ final class ResourceCacheManager {
       weightOf: weightOf,
       generation: generation,
       epoch: epoch,
-      allowPersistentRead: !forceRefresh,
+      allowPersistentRead: !forceRefresh && allowPersistentRead,
     );
     final Future<Object> shared = future;
     _inFlight[key] = shared;
@@ -419,6 +576,7 @@ final class ResourceCacheManager {
   void _invalidateWhereLocal(bool Function(ResourceCacheKey key) predicate) {
     final keys = <ResourceCacheKey>{
       ..._entries.keys,
+      ..._fileEntries.keys,
       ..._inFlight.keys,
     }.where(predicate).toList(growable: false);
     for (final key in keys) {
@@ -429,6 +587,7 @@ final class ResourceCacheManager {
   void _invalidateLocal(ResourceCacheKey key) {
     _generations[key] = _generationOf(key) + 1;
     _inFlight.remove(key);
+    _fileEntries.remove(key);
     _removeEntry(key);
   }
 
@@ -454,6 +613,7 @@ final class ResourceCacheManager {
     _requireOpen();
     _epoch++;
     _entries.clear();
+    _fileEntries.clear();
     _inFlight.clear();
     _generations.clear();
     _weight = 0;
@@ -530,6 +690,7 @@ final class ResourceCacheManager {
       _closed = true;
       _epoch++;
       _entries.clear();
+      _fileEntries.clear();
       _inFlight.clear();
       _generations.clear();
       _activeLoads.clear();
@@ -573,6 +734,40 @@ final class ResourceCacheManager {
     _enforceBudgets(key.kind, protectedKey: key);
   }
 
+  FileEncodedResourceSource? _readFileSource(ResourceCacheKey key) {
+    final entry = _fileEntries[key];
+    if (entry == null) {
+      return null;
+    }
+    if (!entry.expiresAt.isAfter(_now())) {
+      _fileEntries.remove(key);
+      _expirations++;
+      return null;
+    }
+    entry.touched = ++_clock;
+    return entry.source;
+  }
+
+  void _storeFileSource(
+    ResourceCacheKey key,
+    FileEncodedResourceSource source,
+    DateTime expiresAt,
+  ) {
+    _fileEntries[key] = _FileResourceEntry(
+      source: source,
+      touched: ++_clock,
+      expiresAt: expiresAt,
+    );
+    final limit = _policies[ResourceCacheKind.imageBytes]!.maxEntries;
+    while (_fileEntries.length > limit) {
+      final victim = _fileEntries.entries.reduce(
+        (left, right) =>
+            left.value.touched <= right.value.touched ? left : right,
+      );
+      _fileEntries.remove(victim.key);
+    }
+  }
+
   Future<PersistedResourceBytes?> _readPersistent(
     ResourceCacheKey key,
   ) async {
@@ -592,6 +787,36 @@ final class ResourceCacheManager {
         return null;
       }
       return persisted;
+    } on Object catch (error, stackTrace) {
+      _reportPersistenceError(error, stackTrace);
+      return null;
+    }
+  }
+
+  Future<PersistedResourceFile?> _locatePersistentFile(
+    ResourceCacheKey key,
+  ) async {
+    final store = byteStore;
+    if (store is! ResourceCacheByteStoreFileAccess) {
+      return null;
+    }
+    final generation = _generationOf(key);
+    final epoch = _epoch;
+    await _persistenceTail;
+    try {
+      final file = await store.locate(key);
+      if (file == null ||
+          _closed ||
+          epoch != _epoch ||
+          generation != _generationOf(key)) {
+        return null;
+      }
+      if (!file.expiresAt.isAfter(_now())) {
+        _expirations++;
+        _queuePersistenceMutation(() => byteStore?.remove(key));
+        return null;
+      }
+      return file;
     } on Object catch (error, stackTrace) {
       _reportPersistenceError(error, stackTrace);
       return null;
@@ -668,6 +893,12 @@ final class ResourceCacheManager {
 
   void _expireEntries() {
     final now = _now();
+    for (final entry in _fileEntries.entries.toList(growable: false)) {
+      if (!entry.value.expiresAt.isAfter(now)) {
+        _fileEntries.remove(entry.key);
+        _expirations++;
+      }
+    }
     for (final entry in _entries.entries.toList(growable: false)) {
       if (!entry.value.expiresAt.isAfter(now)) {
         _removeEntry(entry.key);
@@ -713,6 +944,18 @@ final class ResourceCacheManager {
       throw StateError('resource cache is closed');
     }
   }
+}
+
+final class _FileResourceEntry {
+  _FileResourceEntry({
+    required this.source,
+    required this.touched,
+    required this.expiresAt,
+  });
+
+  final FileEncodedResourceSource source;
+  int touched;
+  final DateTime expiresAt;
 }
 
 final class _ResourceCacheEntry {

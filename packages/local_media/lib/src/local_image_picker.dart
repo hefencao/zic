@@ -33,3 +33,13 @@ Future<LocalImageDirectoryScan> listLocalImageDirectory(String path) =>
 
 Future<Uint8List> readLocalImageSource(String sourceId) =>
     platform.readLocalImageSource(sourceId);
+
+/// Returns a directly decodable local file path when [sourceId] is not a
+/// platform document URI.
+///
+/// Callers can hand this path to a file-backed image provider instead of
+/// copying the entire encoded image through a Dart [Uint8List]. Android
+/// `content://` sources intentionally return null because their descriptor is
+/// owned by the platform bridge.
+String? localImageFilePath(String sourceId) =>
+    platform.localImageFilePath(sourceId);

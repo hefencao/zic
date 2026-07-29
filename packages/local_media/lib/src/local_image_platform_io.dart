@@ -101,6 +101,21 @@ Future<Uint8List> readLocalImageSource(String sourceId) async {
   return File(sourceId).readAsBytes();
 }
 
+String? localImageFilePath(String sourceId) {
+  final uri = Uri.tryParse(sourceId);
+  final scheme = uri?.scheme.toLowerCase() ?? '';
+  if (scheme == 'content') {
+    return null;
+  }
+  if (scheme == 'file') {
+    return File.fromUri(uri!).path;
+  }
+  if (scheme.isEmpty) {
+    return sourceId;
+  }
+  return null;
+}
+
 Future<LocalImageDirectoryScan> listLocalImageDirectory(String path) async {
   final selectedUri = Uri.tryParse(path);
   if (selectedUri != null && selectedUri.scheme.toLowerCase() == 'content') {

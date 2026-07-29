@@ -4,6 +4,8 @@ import 'package:catalog/catalog.dart';
 import 'package:flutter/material.dart';
 
 import 'package:downloads/downloads.dart';
+import 'package:resource_cache/resource_cache.dart';
+import 'package:storage_bridge/storage_bridge.dart';
 import 'comic_details.dart' as details;
 
 enum ComicDownloadProgressKind { active, offline }
@@ -42,7 +44,6 @@ final class ComicDownloadProgress {
       : 1;
 }
 
-
 String _coverRequestIdentity(LibraryComic comic) {
   final sourceValue = comic.coverSourceId ??
       comic.coverChapter?.chapter.coverSourceId ??
@@ -58,7 +59,7 @@ final class ComicCoverCard extends StatelessWidget {
   const ComicCoverCard({
     required this.comic,
     required this.preference,
-    required this.coverBytes,
+    required this.coverSource,
     required this.onTap,
     this.onLongPress,
     this.downloadProgress,
@@ -72,7 +73,7 @@ final class ComicCoverCard extends StatelessWidget {
 
   final LibraryComic comic;
   final ComicPreference preference;
-  final Future<Uint8List> Function() coverBytes;
+  final Future<EncodedResourceSource> Function() coverSource;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
   final ComicDownloadProgress? downloadProgress;
@@ -108,7 +109,7 @@ final class ComicCoverCard extends StatelessWidget {
                 children: <Widget>[
                   _CoverImage(
                     cacheIdentity: _coverRequestIdentity(comic),
-                    loader: coverBytes,
+                    loader: coverSource,
                   ),
                   if (downloadProgress != null)
                     _DownloadWatermark(progress: downloadProgress!),
@@ -198,26 +199,26 @@ final class _CoverImage extends StatefulWidget {
   });
 
   final String cacheIdentity;
-  final Future<Uint8List> Function() loader;
+  final Future<EncodedResourceSource> Function() loader;
 
   @override
   State<_CoverImage> createState() => _CoverImageState();
 }
 
 final class _CoverImageState extends State<_CoverImage> {
-  late Future<Uint8List> _bytes;
+  late Future<EncodedResourceSource> _source;
 
   @override
   void initState() {
     super.initState();
-    _bytes = Future<Uint8List>.sync(widget.loader);
+    _source = Future<EncodedResourceSource>.sync(widget.loader);
   }
 
   @override
   void didUpdateWidget(covariant _CoverImage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.cacheIdentity != widget.cacheIdentity) {
-      _bytes = Future<Uint8List>.sync(widget.loader);
+      _source = Future<EncodedResourceSource>.sync(widget.loader);
     }
   }
 
@@ -233,15 +234,19 @@ final class _CoverImageState extends State<_CoverImage> {
             .ceil()
             .clamp(64, 512)
             .toInt();
-        return FutureBuilder<Uint8List>(
-          future: _bytes,
+        return FutureBuilder<EncodedResourceSource>(
+          future: _source,
           builder: (context, snapshot) {
-            final bytes = snapshot.data;
-            if (bytes != null) {
-              return Image.memory(
-                bytes,
+            final source = snapshot.data;
+            if (source != null) {
+              final provider = encodedResourceImageProvider(source);
+              return Image(
+                image: ResizeImage.resizeIfNeeded(
+                  cacheWidth,
+                  null,
+                  provider,
+                ),
                 fit: BoxFit.cover,
-                cacheWidth: cacheWidth,
                 gaplessPlayback: true,
                 filterQuality: FilterQuality.medium,
                 frameBuilder: (context, child, frame, synchronous) =>
@@ -474,7 +479,7 @@ final class ShelfListTile extends StatelessWidget {
   const ShelfListTile({
     required this.comic,
     required this.preference,
-    required this.coverBytes,
+    required this.coverSource,
     required this.downloadProgress,
     required this.selected,
     required this.onTap,
@@ -485,7 +490,7 @@ final class ShelfListTile extends StatelessWidget {
 
   final LibraryComic comic;
   final ComicPreference preference;
-  final Future<Uint8List> Function() coverBytes;
+  final Future<EncodedResourceSource> Function() coverSource;
   final ComicDownloadProgress? downloadProgress;
   final bool selected;
   final VoidCallback onTap;
@@ -511,7 +516,7 @@ final class ShelfListTile extends StatelessWidget {
                 children: <Widget>[
                   _CoverImage(
                     cacheIdentity: _coverRequestIdentity(comic),
-                    loader: coverBytes,
+                    loader: coverSource,
                   ),
                   if (downloadProgress != null)
                     _DownloadWatermark(progress: downloadProgress!),

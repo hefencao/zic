@@ -73,6 +73,21 @@ delivery URI so a refreshed at-home/CDN URL does not move Reader progress. Remot
 continue through Reader demand, transport, promoted artifact and decode ownership.
 
 
+## 2.7 首页冷启动与本地图片 I/O
+
+- Flutter 首个可见 surface 不得等待 SQLite、缓存索引或离线页面恢复。书架恢复后，read-state 必须用批量查询，下载徽标必须用 index-only bulk projection；两者不得为每部漫画/每页执行 N+1 查询或 materialize `DownloadSession`。
+- 持久封面命中应优先返回完整不可变文件引用，不得在每次首页进入时读取整文件到 Dart heap、重算完整 hash 并同步 flush LRU 元数据。
+- 普通本地静态图片在没有 pipeline/session loader 时应由文件型 ImageProvider 打开。Android SAF `content://` 可复制一次到应用私有持久缓存；后续命中使用该文件。
+- Animated WebP/GIF、Reader 页面和远程首次下载继续由其既有 decoder、demand 和 artifact owner 管理。
+- “zero copy”验收指消除可避免的 Dart 层完整 encoded-file copy；不对平台 decoder 内部 mmap/copy 作不可验证承诺。
+
+## 2.8 外部插件 payload 检查
+
+- Mihon/Venera payload 必须先原子落到稳定本地文件，并在执行前校验实际长度和 SHA-256。
+- Mihon inspection 只读取 package、signer、versionCode 与 extension ABI metadata，不得创建 class loader。
+- Venera inspection 只做有界 metadata 解析，不执行 JavaScript；仓库 key 与脚本 key 冲突必须拒绝。
+- 检查通过后 executor 必须使用同一 payload identity，并继续经过信任、权限、隔离和 session teardown 门禁。
+
 ## 3. Reader 行为规格
 
 ### 3.1 当前页优先

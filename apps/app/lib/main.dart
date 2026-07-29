@@ -1,23 +1,163 @@
-import 'package:catalog/catalog.dart';
-import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
-import 'package:storage_bridge/storage_bridge.dart';
-import 'package:resource_cache/resource_cache.dart';
+import 'dart:async';
 
+import 'package:catalog/catalog.dart';
 import 'package:downloads/downloads.dart';
 import 'package:downloads_bridge/downloads_bridge.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:resource_cache/resource_cache.dart';
+import 'package:storage_bridge/storage_bridge.dart';
+
 import 'demo_home.dart';
 import 'webp_demo.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  runApp(const _BootstrapApp());
+}
+
+final class _BootstrapApp extends StatefulWidget {
+  const _BootstrapApp();
+
+  @override
+  State<_BootstrapApp> createState() => _BootstrapAppState();
+}
+
+final class _BootstrapAppState extends State<_BootstrapApp> {
+  late final Future<_AppServices> _servicesFuture;
+  _AppServices? _services;
+  bool _disposed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _servicesFuture = _openServices().then((services) {
+      if (_disposed) {
+        unawaited(services.close());
+      } else {
+        _services = services;
+      }
+      return services;
+    });
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    final services = _services;
+    if (services != null) {
+      unawaited(services.close());
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<_AppServices>(
+      future: _servicesFuture,
+      builder: (context, snapshot) {
+        final services = snapshot.data;
+        if (services == null) {
+          return const _StartupApp();
+        }
+        return App(
+          libraryStore: services.libraryStore,
+          chapterDownloads: services.chapterDownloads,
+          wholeComicDownloads: services.wholeComicDownloads,
+          cacheCoordinator: services.cacheCoordinator,
+        );
+      },
+    );
+  }
+}
+
+final class _StartupApp extends StatelessWidget {
+  const _StartupApp();
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'zic',
+      debugShowCheckedModeBanner: false,
+      themeMode: ThemeMode.dark,
+      darkTheme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.indigo,
+          brightness: Brightness.dark,
+        ),
+        useMaterial3: true,
+      ),
+      home: const Scaffold(
+        body: SafeArea(
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Icon(Icons.auto_stories_outlined, size: 52),
+                SizedBox(height: 18),
+                Text('正在恢复书架'),
+                SizedBox(height: 14),
+                SizedBox.square(
+                  dimension: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+final class _AppServices {
+  _AppServices({
+    this.libraryStore,
+    this.chapterDownloads,
+    this.wholeComicDownloads,
+    this.cacheCoordinator,
+  });
+
+  final ImportedLibraryStore? libraryStore;
+  final ManagedChapterDownloadService? chapterDownloads;
+  final WholeComicDownloadQueue? wholeComicDownloads;
+  final ResourceCacheCoordinator? cacheCoordinator;
+  bool _closed = false;
+
+  Future<void> close() async {
+    if (_closed) {
+      return;
+    }
+    _closed = true;
+    Object? firstError;
+    StackTrace? firstStackTrace;
+    for (final close in <Future<void> Function()>[
+      if (wholeComicDownloads != null) wholeComicDownloads!.close,
+      if (cacheCoordinator != null) cacheCoordinator!.close,
+      if (chapterDownloads != null) chapterDownloads!.close,
+      if (libraryStore != null) libraryStore!.close,
+    ]) {
+      try {
+        await close();
+      } on Object catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
+    if (firstError != null) {
+      Error.throwWithStackTrace(firstError, firstStackTrace!);
+    }
+  }
+}
+
+Future<_AppServices> _openServices() async {
   ImportedLibraryStore? libraryStore;
   ManagedChapterDownloadService? chapterDownloads;
   WholeComicDownloadQueue? wholeComicDownloads;
   ResourceCacheCoordinator? cacheCoordinator;
   try {
     final root = await getDefaultZicStorageRoot();
-    libraryStore = await openDefaultImportedLibraryStore();
+    libraryStore = await openImportedLibraryStore(root);
     chapterDownloads = await PersistentChapterDownloadService.open(root);
     cacheCoordinator = createAppResourceCache(
       storageRoot: root,
@@ -46,17 +186,20 @@ Future<void> main() async {
       environment: queueEnvironment,
       ownsEnvironment: platformEnvironment != null,
     );
-  } on Object catch (error) {
-    debugPrint('durable application storage unavailable: $error');
-  }
-  runApp(
-    App(
+    return _AppServices(
       libraryStore: libraryStore,
       chapterDownloads: chapterDownloads,
       wholeComicDownloads: wholeComicDownloads,
       cacheCoordinator: cacheCoordinator,
-    ),
-  );
+    );
+  } on Object catch (error) {
+    debugPrint('durable application storage unavailable: $error');
+    await wholeComicDownloads?.close();
+    await cacheCoordinator?.close();
+    await chapterDownloads?.close();
+    await libraryStore?.close();
+    return _AppServices();
+  }
 }
 
 final class App extends StatelessWidget {

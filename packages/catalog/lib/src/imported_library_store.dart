@@ -125,6 +125,9 @@ abstract interface class ImportedLibraryStore {
     String comicId,
   );
 
+  /// Bulk startup projection avoiding one storage query per comic.
+  Future<List<ChapterReadState>> listAllChapterReadStates();
+
   Future<void> saveChapterReadState(ChapterReadState state);
 
   Future<List<ComicSourcePreference>> listSourcePreferences();
@@ -393,6 +396,20 @@ final class MemoryImportedLibraryStore implements ImportedLibraryStore {
         )
         .toList(growable: false)
       ..sort((left, right) => left.chapterId.compareTo(right.chapterId));
+    return values;
+  }
+
+  @override
+  Future<List<ChapterReadState>> listAllChapterReadStates() async {
+    _requireOpen();
+    final values = _readStates.values.toList(growable: false)
+      ..sort((left, right) {
+        final sourceOrder = left.sourceId.compareTo(right.sourceId);
+        if (sourceOrder != 0) {
+          return sourceOrder;
+        }
+        return left.chapterId.compareTo(right.chapterId);
+      });
     return values;
   }
 

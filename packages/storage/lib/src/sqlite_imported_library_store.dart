@@ -437,6 +437,23 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
   }
 
   @override
+  Future<List<ChapterReadState>> listAllChapterReadStates() async {
+    final rows = _requireDb().select('''
+      SELECT source_id, read_json
+      FROM chapter_read_state
+      ORDER BY source_id, chapter_id
+    ''');
+    return rows
+        .map(
+          (row) => _decodeReadState(
+            row['read_json']! as String,
+            fallbackSourceId: row['source_id']! as String,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  @override
   Future<void> saveChapterReadState(ChapterReadState state) async {
     final db = _requireDb();
     final rows = db.select('''

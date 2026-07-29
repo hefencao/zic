@@ -1,3 +1,11 @@
+## Current iteration — file-backed Home startup and immutable plugin inspection
+
+The reported multi-second black interval is treated as a Home cold-start and local-file I/O problem, not a Reader playback problem. Flutter now mounts a startup surface before durable services open. Library read-state uses one bulk query; Home download badges use one index-only bulk projection. The persistent chapter service no longer restores every indexed page during `open` or creates sessions/stats page files for Home projection; exact commands materialize one session lazily. Warm durable covers resolve to validated immutable files and use an engine-facing file provider, while access recency is batched rather than flushed per hit. Plain local static images take the same path when no Reader/pipeline loader owns them. Network misses and Android content URIs still copy once into the durable response store, and animations/Reader pages retain their explicit owners. This removes avoidable whole-file Dart-heap copies but does not claim the platform decoder performs no internal copy.
+
+The plugin runtime now includes concrete pre-execution inspectors. Both formats consume one immutable local payload, verify actual length and stream SHA-256. Mihon delegates package/signer/version/extensionLib extraction to a no-class-load Android metadata boundary. Venera performs bounded metadata-only source-key discovery and rejects repository/script disagreement without evaluating JavaScript. Trust/capability policy and separate executors remain authoritative.
+
+The Flutter controlled-codec ready state now follows actual first-frame presentation, and the affected regressions retain strict product assertions while using valid packaged media and state-driven waits.
+
 ## Current iteration — direct promoted reads and gapless cold decode
 
 A process-reopened Reader now shares one exact read of an already-promoted page artifact between the media consumer and the replacement session transport. Decode can start from the durable promoted bytes immediately; the new session still receives, seals and promotes in the background, and the shared read is released at the session terminal state. Cache handoff is bounded-chunk and cache read errors fail open to the normal source path.

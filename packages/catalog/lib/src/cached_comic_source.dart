@@ -106,6 +106,24 @@ final class CachedBrowsableComicSource implements BrowsableComicSource {
         loader: () => source.loadResource(uri),
       );
 
+  /// File-backed artwork path when the durable response store supports it.
+  ///
+  /// The first network load may still arrive as bytes, but subsequent process
+  /// starts can hand the immutable cache file directly to the image decoder.
+  Future<EncodedResourceSource> loadImageSource(
+    Uri uri, {
+    String? comicId,
+    String revision = '',
+  }) =>
+      loadCachedComicImageSource(
+        cache: cache,
+        sourceId: sourceId,
+        comicId: comicId,
+        imageIdentity: uri.toString(),
+        revision: revision,
+        loader: () => source.loadResource(uri),
+      );
+
   void invalidateComic(String comicId) {
     final cached = cache.peek<ComicManifest>(_comicKey(sourceId, comicId));
     if (cached != null) {
@@ -168,6 +186,26 @@ Future<Uint8List> loadCachedComicImage({
       weightOf: (bytes) => bytes.lengthInBytes,
     );
 
+Future<EncodedResourceSource> loadCachedComicImageSource({
+  required ResourceCacheManager cache,
+  required String sourceId,
+  required String imageIdentity,
+  required Future<Uint8List> Function() loader,
+  String? comicId,
+  String revision = '',
+}) =>
+    cache.getOrLoadEncodedImage(
+      key: ResourceCacheKey(
+        kind: ResourceCacheKind.imageBytes,
+        identity: '$sourceId\u0000$imageIdentity',
+        namespace: comicId == null
+            ? _sourceNamespace(sourceId)
+            : comicResourceCacheNamespace(sourceId, comicId),
+        revision: revision,
+      ),
+      loader: loader,
+    );
+
 void invalidateComicResourceCache(
   ResourceCacheManager cache, {
   required String sourceId,
@@ -191,6 +229,24 @@ Future<Uint8List> loadCachedSourceImage(
     );
   }
   return source.loadResource(uri);
+}
+
+Future<EncodedResourceSource> loadCachedSourceImageSource(
+  BrowsableComicSource source,
+  Uri uri, {
+  String? comicId,
+  String revision = '',
+}) {
+  if (source is CachedBrowsableComicSource) {
+    return source.loadImageSource(
+      uri,
+      comicId: comicId,
+      revision: revision,
+    );
+  }
+  return source
+      .loadResource(uri)
+      .then<EncodedResourceSource>(MemoryEncodedResourceSource.new);
 }
 
 int _browseWeight(SourceBrowsePage page) =>

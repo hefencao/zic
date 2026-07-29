@@ -8,6 +8,8 @@ decode/upload registry、frame holder、viewport 播放门控、帧字节预算�
 `promoted` 后将 Reader 临时 artifact 提交到持久层；`0.31.0-dev.38` 进一步持久化完整封面响应、保持翻页
 中点前后稳定的媒体 Widget identity，并建立 Mihon/Venera 仓库元数据与隔离执行 host 的兼容边界。
 
+`0.31.0-dev.42` 将冷启动问题收敛到首页和本地文件路径：Flutter 根界面先于持久服务恢复挂载，离线页面索引按精确 identity 延迟恢复；持久封面与普通本地静态图使用文件型 ImageProvider，避免 warm hit 逐图读入 Dart 堆、整文件复核哈希和同步刷新访问元数据。Mihon APK 与 Venera JavaScript 现在具有不执行代码的真实 payload inspector，复用同一不可变本地 payload 做长度、SHA-256、包/签名/ABI或 source key 检查。
+
 ```text
 ReaderView
   -> ReaderObs

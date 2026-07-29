@@ -10,6 +10,7 @@ environment:
 dependencies:
   catalog:
     path: ../catalog
+  crypto: ^3.0.6
 
 dev_dependencies:
   domain:

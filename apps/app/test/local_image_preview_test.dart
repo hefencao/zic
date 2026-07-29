@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:zic/reader_runtime.dart';
@@ -13,14 +15,6 @@ import 'package:zic/webp_demo.dart';
 Uint8List _tinyPng() => base64Decode(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
       'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-    );
-
-
-Uint8List _largeAnimatedWebp() => base64Decode(
-      'UklGRqQAAABXRUJQVlA4WAoAAAACAAAA/wEA/wEAQU5JTQYAAAAAAAAAAABBTk1G'
-      'OAAAAAAAAAAAAP8BAP8BAMgAAAJWUDhMIAAAAC//wX8ABxD9j/4HBALJ/t4zFNH/'
-      'jP/85z//+c9//vN/QU5NRjgAAAAAAAAAAAD/AQD/AQDIAAAAVlA4TCAAAAAv/8F/'
-      'AAcQ0f/+BwQCyf7eMxTR/4z//Oc///nPf/7zfw=='
     );
 
 Uint8List _tinyWebp() => base64Decode(
@@ -239,6 +233,13 @@ void main() {
   ) async {
     final playback = ReaderPlaybackController();
     addTearDown(playback.dispose);
+    final fixture = await rootBundle.load(
+      'assets/demo/animated/finite_loop.webp',
+    );
+    final fixtureBytes = fixture.buffer.asUint8List(
+      fixture.offsetInBytes,
+      fixture.lengthInBytes,
+    );
     var width = 320.0;
     late StateSetter updateHost;
 
@@ -254,7 +255,7 @@ void main() {
                 child: NativeWebpPlayer(
                   title: 'gapless.webp',
                   sourceUri: Uri.parse('memory://gapless.webp'),
-                  loadBytes: (_) async => _largeAnimatedWebp(),
+                  loadBytes: (_) async => fixtureBytes,
                   showEngineControls: false,
                   showStatus: false,
                   playback: playback,
@@ -279,6 +280,43 @@ void main() {
 
     expect(find.byType(RawImage), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
+  testWidgets('plain local image uses a file provider without byte loading',
+      (tester) async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-local-image-file-provider-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    final file = File('${directory.path}/cover.png');
+    await file.writeAsBytes(_tinyPng(), flush: true);
+    var byteLoads = 0;
+    final image = PickedImage(
+      file: XFile(file.path),
+      format: LocalImageFormat.png,
+      displayName: 'cover.png',
+      byteLength: await file.length(),
+      readBytes: () async {
+        byteLoads++;
+        throw StateError('direct file image must not materialize bytes');
+      },
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: LocalImagePlayer(image: image)),
+    );
+    final state = await _pumpUntilPhase(tester, ImagePreviewPhase.ready);
+
+    expect(state.format, LocalImageFormat.png);
+    expect(byteLoads, 0);
+    final imageWidget = tester.widget<Image>(
+      find.byKey(imageFolderFlutterPreviewKey),
+    );
+    expect(imageWidget.image, isA<FileImage>());
   });
 
   testWidgets('extensionless PNG reaches the generic ready state', (

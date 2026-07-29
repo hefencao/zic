@@ -1,3 +1,12 @@
+## 0.31.0-dev.42 — file-backed Home covers, lazy startup and concrete plugin inspection
+
+- Correct the cold-start diagnosis: mount Flutter immediately with a startup surface, remove eager restoration of every indexed offline page, avoid a duplicate application-support path lookup, bulk-load read-state projection in one query, and project Home download badges from one SQLite index scan without materializing sessions or statting page files. Exact page commands alone restore artifacts.
+- Add a file-backed encoded-image contract. Durable cover hits validate the exact key, expiry and length, then pass the immutable cache file to `FileImage` without whole-file `readAsBytes`, startup hash recalculation or per-hit metadata flush. Access recency is batched until store close, and in-process file locations are reused.
+- Let ordinary local static images use the same file-provider path when no Reader/pipeline loader owns the request. Android content URIs, animations and Reader pages retain controlled byte/session fallbacks. The implementation avoids Dart-heap copies but does not claim absolute storage-to-texture zero copy inside platform decoders.
+- Publish Flutter animated `ready` only after the first frame has actually been presented, retain the gapless target-rebuild invariant with a real packaged WebP fixture, and keep the cold promoted-artifact regression state-driven.
+- Add concrete Mihon APK and Venera JavaScript payload inspectors over one immutable local payload: streaming SHA-256, exact-length checks, metadata-only APK parsing boundary, bounded non-executing Venera key discovery, and repository/script key agreement. Executors remain separately sandboxed adapters.
+- Add file-backed cache, batched-touch, direct local-file provider, lazy artifact restore and plugin-inspection regressions, plus ADRs 0025 and 0026.
+
 ## 0.31.0-dev.41 — direct promoted reads and gapless cold decode
 
 - Fix the reported `static_demo.dart` compile failure by importing the downloads-owned Reader page identity adapter rather than relying on a re-export side effect.

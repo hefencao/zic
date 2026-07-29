@@ -195,22 +195,10 @@ final class HomeLibrarySession extends ChangeNotifier {
       await library.saveComicPreference(preference);
     }
 
-    final readStates = <String, ChapterReadState>{};
-    final comicIdentities = <({String sourceId, String comicId})>{
-      for (final entry in entries)
-        (
-          sourceId: entry.chapter.sourceId,
-          comicId: entry.chapter.comicId,
-        ),
+    final readStates = <String, ChapterReadState>{
+      for (final state in await library.listAllChapterReadStates())
+        state.identity: state,
     };
-    for (final comic in comicIdentities) {
-      for (final state in await library.listChapterReadStates(
-        comic.sourceId,
-        comic.comicId,
-      )) {
-        readStates[state.identity] = state;
-      }
-    }
 
     _entries = List<ImportedLibraryEntry>.unmodifiable(entries);
     _savedComics = List<SavedComicRecord>.unmodifiable(savedComics);
@@ -292,13 +280,22 @@ final class HomeLibrarySession extends ChangeNotifier {
   Future<void> refreshDownloadSnapshots(
     Iterable<ImportedLibraryEntry> entries,
   ) async {
+    final requested = entries.toList(growable: false);
     final snapshots = <String, ChapterDownloadSnapshot>{};
-    for (final entry in entries) {
-      try {
-        final snapshot = await chapterDownloads.inspect(entry);
+    try {
+      for (final snapshot in await chapterDownloads.inspectMany(requested)) {
         snapshots[snapshot.identity] = snapshot;
-      } on Object {
-        // A stale diagnostic record must not block the durable library.
+      }
+    } on Object {
+      // Preserve per-entry recovery for a single stale diagnostic record while
+      // keeping the normal startup path to one bulk index projection.
+      for (final entry in requested) {
+        try {
+          final snapshot = await chapterDownloads.inspect(entry);
+          snapshots[snapshot.identity] = snapshot;
+        } on Object {
+          // A stale diagnostic record must not block the durable library.
+        }
       }
     }
     if (_closed) {

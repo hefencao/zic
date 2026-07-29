@@ -9,8 +9,8 @@ import 'package:resource_cache/resource_cache.dart';
 /// The full cache key is persisted and verified on every read. Hashes are only
 /// path selectors; a collision is treated as a miss rather than returning the
 /// wrong response.
-final class FileResourceCacheByteStore
-    implements ResourceCacheByteStore, ResourceCacheByteStoreMaintenance {
+final class FileResourceCacheByteStore implements ResourceCacheByteStore,
+    ResourceCacheByteStoreFileAccess, ResourceCacheByteStoreMaintenance {
   FileResourceCacheByteStore(
     String rootPath, {
     this.maxEntries = 96,
@@ -27,43 +27,45 @@ final class FileResourceCacheByteStore
   final int maxEntries;
   final int maxBytes;
   final DateTime Function() _now;
+  final Map<String, _FileResourceRecord> _pendingTouches =
+      <String, _FileResourceRecord>{};
   bool _closed = false;
+
+  @override
+  Future<PersistedResourceFile?> locate(ResourceCacheKey key) async {
+    _requireOpen();
+    final paths = _paths(key);
+    final record = await _validatedRecord(paths, key: key);
+    if (record == null) {
+      return null;
+    }
+    _pendingTouches[paths.metadata.path] = record.copyWith(
+      lastAccessedAt: _now(),
+    );
+    return PersistedResourceFile(
+      path: paths.bytes.path,
+      byteLength: record.byteLength,
+      expiresAt: record.expiresAt,
+    );
+  }
 
   @override
   Future<PersistedResourceBytes?> read(ResourceCacheKey key) async {
     _requireOpen();
     final paths = _paths(key);
-    final metadataExists = await paths.metadata.exists();
-    final bytesExist = await paths.bytes.exists();
-    if (!metadataExists || !bytesExist) {
-      if (metadataExists || bytesExist) {
-        await _deletePaths(paths);
-      }
+    final record = await _validatedRecord(paths, key: key);
+    if (record == null) {
       return null;
     }
     try {
-      final record = await _readRecord(paths.metadata);
-      if (record == null) {
-        await _deletePaths(paths);
-        return null;
-      }
-      if (record.key != key) {
-        return null;
-      }
-      final now = _now();
-      if (!record.expiresAt.isAfter(now)) {
-        await _deletePaths(paths);
-        return null;
-      }
       final bytes = await paths.bytes.readAsBytes();
       if (bytes.lengthInBytes != record.byteLength ||
           _contentHash(bytes) != record.contentHash) {
         await _deletePaths(paths);
         return null;
       }
-      await _writeMetadata(
-        paths.metadata,
-        record.copyWith(lastAccessedAt: now),
+      _pendingTouches[paths.metadata.path] = record.copyWith(
+        lastAccessedAt: _now(),
       );
       return PersistedResourceBytes(
         bytes: bytes,
@@ -90,6 +92,7 @@ final class FileResourceCacheByteStore
     }
     await _root.create(recursive: true);
     final paths = _paths(key);
+    _pendingTouches.remove(paths.metadata.path);
     await paths.bytes.parent.create(recursive: true);
     final now = _now();
     final record = _FileResourceRecord(
@@ -114,7 +117,9 @@ final class FileResourceCacheByteStore
   @override
   Future<void> remove(ResourceCacheKey key) async {
     _requireOpen();
-    await _deletePaths(_paths(key));
+    final paths = _paths(key);
+    _pendingTouches.remove(paths.metadata.path);
+    await _deletePaths(paths);
   }
 
   @override
@@ -131,7 +136,9 @@ final class FileResourceCacheByteStore
       }
       final record = await _readRecord(entity);
       if (record != null && predicate(record.key)) {
-        await _deletePaths(_pathsForMetadata(entity));
+        final paths = _pathsForMetadata(entity);
+        _pendingTouches.remove(paths.metadata.path);
+        await _deletePaths(paths);
       }
     }
   }
@@ -163,6 +170,7 @@ final class FileResourceCacheByteStore
         break;
       }
       await _deletePaths(candidate.paths);
+      _pendingTouches.remove(candidate.paths.metadata.path);
       remainingBytes -= candidate.record.byteLength;
       evictedEntries++;
     }
@@ -180,10 +188,15 @@ final class FileResourceCacheByteStore
     if (await _root.exists()) {
       await _root.delete(recursive: true);
     }
+    _pendingTouches.clear();
   }
 
   @override
   Future<void> close() async {
+    if (_closed) {
+      return;
+    }
+    await _flushTouches();
     _closed = true;
   }
 
@@ -196,6 +209,7 @@ final class FileResourceCacheByteStore
         break;
       }
       await _deletePaths(candidate.paths);
+      _pendingTouches.remove(candidate.paths.metadata.path);
       entries--;
       totalBytes -= candidate.record.byteLength;
     }
@@ -215,8 +229,11 @@ final class FileResourceCacheByteStore
       if (entity is! File || !entity.path.endsWith('.json')) {
         continue;
       }
-      final record = await _readRecord(entity);
+      final stored = await _readRecord(entity);
       final paths = _pathsForMetadata(entity);
+      final record = stored == null
+          ? null
+          : (_pendingTouches[entity.path] ?? stored);
       if (record == null ||
           !record.expiresAt.isAfter(now) ||
           !await paths.bytes.exists()) {
@@ -261,6 +278,68 @@ final class FileResourceCacheByteStore
     }
   }
 
+  Future<_FileResourceRecord?> _validatedRecord(
+    _FileResourcePaths paths, {
+    required ResourceCacheKey key,
+  }) async {
+    final metadataExists = await paths.metadata.exists();
+    final bytesExists = await paths.bytes.exists();
+    if (!metadataExists || !bytesExists) {
+      if (metadataExists || bytesExists) {
+        await _deletePaths(paths);
+      }
+      _pendingTouches.remove(paths.metadata.path);
+      return null;
+    }
+    final stored = await _readRecord(paths.metadata);
+    if (stored == null) {
+      _pendingTouches.remove(paths.metadata.path);
+      await _deletePaths(paths);
+      return null;
+    }
+    final record = _pendingTouches[paths.metadata.path] ?? stored;
+    if (record.key != key) {
+      return null;
+    }
+    if (!record.expiresAt.isAfter(_now())) {
+      _pendingTouches.remove(paths.metadata.path);
+      await _deletePaths(paths);
+      return null;
+    }
+    final actualLength = await paths.bytes.length();
+    if (actualLength != record.byteLength) {
+      _pendingTouches.remove(paths.metadata.path);
+      await _deletePaths(paths);
+      return null;
+    }
+    return record;
+  }
+
+  Future<void> _flushTouches() async {
+    if (_pendingTouches.isEmpty) {
+      return;
+    }
+    final pending = Map<String, _FileResourceRecord>.from(_pendingTouches);
+    _pendingTouches.clear();
+    for (final entry in pending.entries) {
+      final metadata = File(entry.key);
+      final paths = _pathsForMetadata(metadata);
+      if (!await metadata.exists() || !await paths.bytes.exists()) {
+        continue;
+      }
+      final stored = await _readRecord(metadata);
+      if (stored == null || stored.key != entry.value.key) {
+        continue;
+      }
+      try {
+        await _writeMetadata(metadata, entry.value);
+      } on FileSystemException {
+        // Access recency is advisory. Cache bytes remain valid when a touch
+        // cannot be persisted during shutdown.
+      }
+    }
+  }
+
   Future<void> _writeMetadata(
     File metadata,
     _FileResourceRecord record,
@@ -278,6 +357,7 @@ final class FileResourceCacheByteStore
   }
 
   Future<void> _deletePaths(_FileResourcePaths paths) async {
+    _pendingTouches.remove(paths.metadata.path);
     for (final file in <File>[
       paths.metadata,
       paths.bytes,

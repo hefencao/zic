@@ -2,15 +2,29 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:catalog/catalog.dart';
+import 'package:flutter/painting.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:storage/storage.dart';
+
+/// Builds the engine-facing provider for immutable encoded image content.
+///
+/// File-backed sources avoid materializing the whole encoded file in the Dart
+/// heap on a warm start. The engine remains free to mmap or copy internally as
+/// required by the platform decoder, so this is intentionally not advertised
+/// as an absolute storage-to-texture zero-copy guarantee.
+ImageProvider<Object> encodedResourceImageProvider(
+  EncodedResourceSource source,
+) =>
+    switch (source) {
+      MemoryEncodedResourceSource(:final bytes) => MemoryImage(bytes),
+      FileEncodedResourceSource(:final path) => FileImage(File(path)),
+    };
 
 Future<String> getDefaultZicStorageRoot() async {
   final support = await getApplicationSupportDirectory();
   return '${support.path}/zic';
 }
-
 
 ResourceCacheCoordinator createAppResourceCache({
   required String storageRoot,
@@ -30,8 +44,12 @@ ResourceCacheCoordinator createAppResourceCache({
 
 Future<ImportedLibraryStore> openDefaultImportedLibraryStore() async {
   final root = await getDefaultZicStorageRoot();
+  return openImportedLibraryStore(root);
+}
+
+Future<ImportedLibraryStore> openImportedLibraryStore(String storageRoot) async {
   final store = SqliteImportedLibraryStore(
-    '$root/imported_library.sqlite3',
+    '$storageRoot/imported_library.sqlite3',
   );
   await store.open();
   return store;

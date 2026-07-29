@@ -35,6 +35,8 @@ final class ExternalPluginInspection {
     required this.payloadSha256,
     Iterable<ExternalPluginCapability> requestedCapabilities =
         const <ExternalPluginCapability>{},
+    this.payloadPath,
+    this.payloadByteLength,
     this.packageName,
     this.signerSha256,
     this.versionCode,
@@ -49,11 +51,23 @@ final class ExternalPluginInspection {
         'must not be empty',
       );
     }
+    if ((payloadPath == null) != (payloadByteLength == null) ||
+        (payloadPath != null && payloadPath!.trim().isEmpty) ||
+        (payloadByteLength != null && payloadByteLength! < 0)) {
+      throw ArgumentError(
+        'payloadPath and payloadByteLength must describe one valid file',
+      );
+    }
   }
 
   final ExternalComicPluginFormat format;
   final String payloadSha256;
   final Set<ExternalPluginCapability> requestedCapabilities;
+
+  /// Stable immutable payload acquired by the inspector. Executors may open
+  /// this exact file after policy approval instead of downloading it again.
+  final String? payloadPath;
+  final int? payloadByteLength;
 
   /// Mihon-compatible APK metadata obtained before class loading.
   final String? packageName;

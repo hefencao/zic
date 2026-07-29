@@ -1560,6 +1560,9 @@ def check_compile_regressions() -> None:
         '_readPersistent(',
         '_writePersistent(',
         'inspectPersistentBytes()',
+        'abstract interface class ResourceCacheByteStoreFileAccess',
+        'getOrLoadEncodedImage(',
+        'FileEncodedResourceSource',
     ):
         if required not in resource_cache:
             fail(f'unified resource cache contract is incomplete: {required}')
@@ -1644,14 +1647,65 @@ def check_compile_regressions() -> None:
     ).read_text(encoding='utf-8')
     for required in (
         'final class FileResourceCacheByteStore',
-        'implements ResourceCacheByteStore, ResourceCacheByteStoreMaintenance',
+        'ResourceCacheByteStoreFileAccess, ResourceCacheByteStoreMaintenance',
         'Future<ResourceCacheByteStoreUsage> inspect()',
         'Future<ResourceCacheByteStoreTrimReport> trimTo(',
         'contentHash',
         'lastAccessedAt',
+        'Future<PersistedResourceFile?> locate(',
+        '_pendingTouches',
     ):
         if required not in durable_response_store:
             fail(f'durable response byte store is incomplete: {required}')
+
+    payload_inspectors = (
+        ROOT / 'packages/plugin_host/lib/src/payload_inspectors.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class MihonApkInspector',
+        'abstract interface class MihonApkMetadataReader',
+        'final class VeneraJavaScriptInspector',
+        'sha256.bind(file.openRead())',
+        'Venera repository key does not match script metadata',
+    ):
+        if required not in payload_inspectors:
+            fail(f'external plugin payload inspection is incomplete: {required}')
+
+    app_main = (ROOT / 'apps/app/lib/main.dart').read_text(encoding='utf-8')
+    for required in (
+        'runApp(const _BootstrapApp())',
+        "const _StartupApp()",
+        'openImportedLibraryStore(root)',
+    ):
+        if required not in app_main:
+            fail(f'cold-start composition is incomplete: {required}')
+    chapter_downloads = (
+        ROOT / 'packages/downloads/lib/src/chapter_downloads.dart'
+    ).read_text(encoding='utf-8')
+    open_body = chapter_downloads.split(
+        'static Future<PersistentChapterDownloadService> open', 1
+    )[1].split('final DownloadRegistry _registry', 1)[0]
+    if 'restoreIndexed()' in open_body:
+        fail('persistent chapter service eagerly restores every artifact at startup')
+    if 'materializedSessionCount' not in chapter_downloads:
+        fail('persistent chapter service lacks lazy-restore diagnostics')
+    for required in (
+        'Future<List<ChapterDownloadSnapshot>> inspectMany(',
+        'for (final record in await _index.list()) record.key: record',
+        'indexedRecords: indexed',
+    ):
+        if required not in chapter_downloads:
+            fail(f'bulk index-only download projection is incomplete: {required}')
+
+    home_library_session = (
+        ROOT / 'apps/app/lib/home_library_session.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'library.listAllChapterReadStates()',
+        'chapterDownloads.inspectMany(requested)',
+    ):
+        if required not in home_library_session:
+            fail(f'Home startup bulk projection is incomplete: {required}')
 
     external_plugin_catalog = (
         ROOT / 'packages/catalog/lib/src/external_plugin_catalog.dart'
@@ -1782,7 +1836,8 @@ def check_compile_regressions() -> None:
         '_downloadComicEntries',
         '_openingComicIdentities',
         '_CoverTitleGradient',
-        'Future<Uint8List>.sync(widget.loader)',
+        'Future<EncodedResourceSource>.sync(widget.loader)',
+        'encodedResourceImageProvider(source)',
         '_selectSourceMigrationTarget',
         "label: const Text('搜索同名作品')",
         "throw StateError('目标漫画源返回了不匹配的漫画或章节身份')",

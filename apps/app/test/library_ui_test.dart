@@ -5,6 +5,7 @@ import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:resource_cache/resource_cache.dart';
 import 'package:zic/demo_home.dart';
 import 'package:zic/download_manager.dart';
 import 'package:zic/library_diagnostics.dart';
@@ -477,7 +478,7 @@ void main() {
                 comicId: chapter.comicId,
                 sourceKind: ComicSourceKind.remote,
               ),
-              coverBytes: () async => _tinyPng(),
+              coverSource: () async => MemoryEncodedResourceSource(_tinyPng()),
               downloadProgress: const ComicDownloadProgress.active(
                 label: '第 4 话',
                 completedPageUnits: 4,

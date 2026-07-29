@@ -218,6 +218,10 @@ void main() {
       (await store.listChapterReadStates(chapter.sourceId, chapter.comicId)).single.toJson(),
       state.toJson(),
     );
+    expect(
+      (await store.listAllChapterReadStates()).single.toJson(),
+      state.toJson(),
+    );
 
     await store.removeChapter(chapter.sourceId, chapter.chapterId);
     expect(await store.listChapterReadStates(chapter.sourceId, chapter.comicId), isEmpty);

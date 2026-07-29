@@ -2,39 +2,29 @@
 
 ## Sole baseline
 
-Continue only from `zic_v0.31.0-dev.41_direct-promoted-artifact-read-gapless-cold-decode.zip`.
+Continue only from `zic_v0.31.0-dev.42_file-backed-home-covers-lazy-start-plugin-inspectors.zip`.
 Do not merge or copy files from an earlier zic archive.
 
-## Current ownership
+## Current ownership and completed work
 
-- `resource_cache` owns reusable source responses and durable complete image responses.
-- `downloads/sessions/storage` own Reader encoded page artifacts, promotion, maintenance and exact page identity.
-- `PromotedArtifactReadPool` starts one immutable read of an already-promoted `DownloadId` from the replacement session transport; the Reader media consumer may join it but cannot initiate it. It creates no demand and releases the read when that session is promoted, failed or disposed.
-- A reopened Reader may start decode directly from the durable promoted read. The replacement `DownloadSession` still runs receive/seal/promote in the background; Presentation does not gain a page LRU, keep-alive or adjacent-page warmup policy.
-- `ArtifactCacheTransport` transfers durable bytes in 64 KiB chunks and uses exact DownloadId plus length for resume identity. Original promotion/storage owns integrity validation. Cache read failure falls back to origin and is traced.
-- Flutter animated target-only codec rebuilds retain the last presented frame until a replacement frame is presented. Encoded-byte changes clear the old frame.
-- `ReaderTransitionTraceAnalyzer` reports artifact source, durable storage-read time, Reader join time, direct/session-copy consumer, decode/upload/presentation phases, transition/work revisions and host remount evidence.
-- `ManagedChapterDownloadService` remains the explicit App-root aggregate for chapter commands, promoted artifact storage and maintenance.
-- `plugin_host` still contains shared Mihon/Venera trust, capability, quarantine and session gates only; concrete APK/Kotlin and JavaScript executors remain unimplemented.
+- Flutter mounts `_BootstrapApp` immediately. Durable services open after first Flutter composition; library read-state is loaded in one bulk query and storage failure falls back to the existing memory composition.
+- `PersistentChapterDownloadService.open` does not call `restoreIndexed`. Home uses `inspectMany` to project all download badges from one SQLite index list without materializing sessions/page-file checks; exact page commands restore one `DownloadSession`. `materializedSessionCount` exists for diagnostics/regression only.
+- `resource_cache` exposes `EncodedResourceSource`. A file-capable durable store returns validated `FileEncodedResourceSource` values and reuses their location within the process. Legacy byte reads remain available for explicit byte consumers.
+- `FileResourceCacheByteStore.locate` validates exact key, expiry and byte length without whole-file `readAsBytes`/hash. LRU touches are batched and flushed on close. Atomic write/promotion is the integrity boundary.
+- Home covers and ordinary local static images use an engine-facing file provider. Network misses and Android `content://` copy once to durable storage. Animated formats and Reader pages keep controlled byte/session ownership.
+- “Zero copy” means avoiding an avoidable full encoded-file copy into Dart memory; platform decoder internals are not claimed to be copy-free.
+- Controlled Flutter animation publishes ready only after first-frame presentation and keeps the previous frame during target-only rebuild.
+- `plugin_host` now has real immutable-payload inspectors: streaming SHA-256, exact length, Mihon no-class-load metadata boundary and bounded non-executing Venera source-key discovery. Kotlin/APK and sandboxed JavaScript executors remain unimplemented.
 
-## Reported dev.40 failures closed
+## Report 26 closure
 
-- `static_demo.dart` explicitly imports the downloads-owned `readerPageDownloadId` adapter; it no longer relies on a re-export to compile.
-- The midpoint regression asserts zero loaded-host disposal before gesture release and through the role transition. After settling, normal old-page eviction is allowed, but the two loaded pages must have exactly two mount events total, so a remount is still rejected.
+- Cold codec phase regression now observes `ready` only after `framePresented` is recorded.
+- Gapless target-rebuild regression uses the packaged valid `finite_loop.webp` fixture and still requires a visible `RawImage` before and after target change.
+- Cold promoted-artifact regression keeps the direct-cache/origin assertions and advances through actual frames rather than a zero-time loop.
 
-## Cold-open changes
+## Validation in the delivery container
 
-- Page decode no longer waits for durable bytes to be copied into and read back from the ephemeral session artifact.
-- Page consumer and cache transport coalesce one persistent read.
-- Background cache-to-session transfer is chunked instead of one giant stream chunk.
-- The cache validator no longer performs a second full-page hash on the UI isolate.
-- Cache read errors fail open through the normal session/origin path.
-- Flutter codec emits instantiate/decode/present events with stable DownloadId-derived identity.
-- Target-size re-decode is gapless when the encoded artifact is unchanged.
-
-Decoded frames are not persisted across process death. A true cold process must still decode the encoded image; use trace `artifactReadMicros`, decode work and presentation time to determine any remaining delay.
-
-## Validation completed in the delivery container
+Run and record:
 
 ```bash
 python3 tool/check_repo.py
@@ -45,26 +35,19 @@ python3 -m py_compile tool/*.py
 bash ./tool/check_native_header.sh
 ```
 
-The container has no Flutter, Dart, Cargo, Gradle, Android SDK or Android NDK, so their test/build success is not claimed. Run externally:
+The delivery container has no Flutter, Dart, Cargo, Gradle, Android SDK or Android NDK. Do not claim their tests/builds without running them externally:
 
 ```bash
 flutter pub get
-
-cd packages/downloads
-dart test test/artifact_cache_transport_test.dart test/promoted_artifact_read_pool_test.dart test/promoted_artifact_cache_handoff_test.dart
-cd ../telemetry
-dart test test/reader_transition_analysis_test.dart
-cd ../reader
-flutter test test/reader_navigation_test.dart test/reader_controller_test.dart
-cd ../../apps/app
-flutter test test/reader_artifact_cold_open_test.dart test/local_image_preview_test.dart test/reader_controls_test.dart test/app_smoke_test.dart
-
+cd packages/resource_cache && dart test
+cd ../storage && dart test test/file_resource_cache_byte_store_test.dart
+cd ../downloads && dart test test/chapter_downloads_test.dart test/promoted_artifact_read_pool_test.dart
+cd ../plugin_host && dart test
+cd ../../apps/app && flutter test test/library_ui_test.dart test/local_image_preview_test.dart test/reader_artifact_cold_open_test.dart
 cd ../../
 bash ./tool/test_dart.sh
 bash ./tool/test_flutter.sh
 bash ./tool/analyze.sh
-bash ./tool/check_native_header.sh
-bash ./tool/check_webp.sh
 bash ./tool/test_rust.sh
 bash ./tool/build_android_native.sh release
 bash ./tool/build_android.sh release
@@ -72,7 +55,7 @@ bash ./tool/build_android.sh release
 
 ## Next mainline work
 
-1. Capture a real cold-process Reader trace on the problematic large page and run transition replay. Separate durable artifact read, Flutter/native decode, upload and presentation before changing retention.
-2. If decode remains dominant, add a cache-owned page preview artifact/first-frame placeholder contract in downloads/storage, not a Widget-owned thumbnail cache. Define revision, dimensions, invalidation and budget before implementation.
-3. Implement memory-pressure shrink/eviction handshakes in pipeline/session/media owners.
-4. Continue Mihon Android metadata inspector/signature verification and Venera constrained JavaScript inspection/runtime as separate plugin-host adapters.
+1. Capture a real Home cold-start trace on the affected device: bootstrap service-open duration, visible-cover source (`local-file`, `durable-file`, `network/content-copy`), engine image-cache hit and first decoded frame. Do not redirect this work to Reader trace.
+2. If metadata lookup remains dominant with a large visible shelf, add a storage-owned compact response manifest/index loaded once after first paint; do not create a Home-owned cover map.
+3. Implement the Android `MihonApkMetadataReader`, then a separately isolated class-loader/executor with signer and ABI tests.
+4. Implement a bounded Venera JavaScript sandbox executor with explicit network/cookie/storage capability bridges and per-session teardown.
