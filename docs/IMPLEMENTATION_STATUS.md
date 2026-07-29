@@ -1,3 +1,11 @@
+## Current iteration — versioned external runtime protocol and shared source adaptation
+
+The report-29 compile failure came from invoking `Duration.>` in a const initializer. `ExternalPluginRuntimeLimits` remains a const value object, while duration validation now runs at executor and session activation. Invalid limits still fail before any backend receives the inspected payload.
+
+Mihon and Venera isolated backends now return an ecosystem-neutral `ExternalPluginRuntimeConnection`, not arbitrary zic sessions. A versioned request/response schema covers browse, comic detail, chapter manifest and binary resource operations. One host adapter validates source and content identities, constructs namespaced `BrowsableComicSource` values and enforces timeout, response size and concurrency independently of backend claims. Timed-out calls retain their permit until the real backend Future finishes; close signals the isolated connection, rejects queued work and drains actual operations. No Reader, navigation, demand, download-session or artifact authority crosses the protocol.
+
+Home startup telemetry is retained unchanged. Concrete Mihon APK class loading and Venera JavaScript evaluation are still unimplemented isolated backends rather than implied by the shared protocol.
+
 ## Current iteration — visible-frame readiness, authoritative artifact reads and executable plugin requests
 
 Home cold-start telemetry is retained unchanged because the reported delay is not currently reproducible. No new startup scan or eager diagnostic work is added.

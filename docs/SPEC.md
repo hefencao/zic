@@ -89,6 +89,15 @@ continue through Reader demand, transport, promoted artifact and decode ownershi
 - Venera inspection 只做有界 metadata 解析，不执行 JavaScript；仓库 key 与脚本 key 冲突必须拒绝。
 - 检查通过后 executor 必须使用同一 payload identity，并继续经过信任、权限、隔离和 session teardown 门禁。
 
+## 2.9 外部插件运行时协议
+
+- Mihon 与 Venera backend 必须实现同一版本化协议；版本不匹配、未知 operation、额外字段或非法 wire type 必须拒绝。
+- 协议只允许 source descriptor、browse、comic、chapter 和 binary resource 数据，不得传递 Widget、Reader、导航、demand、`DownloadSession`、缓存维护或 artifact 句柄。
+- runtime source ID 必须由 host 添加 `mihon:`/`venera:` 命名空间，并与 repository/inspection identity 一致；comic/chapter/page 返回值必须保持请求身份和父子关系。
+- host 必须独立执行 timeout、响应字节和真实并发上限。调用方 timeout 后，底层操作真正结束前不得释放并发令牌。
+- session close 必须拒绝排队调用、通知隔离 backend 终止活动调用并等待实际工作排空；并发 close 必须加入同一关闭过程。
+- 二进制资源使用有界 `Uint8List` wire payload，不允许 base64 扩张或把 Reader artifact authority 交给插件。
+
 ## 3. Reader 行为规格
 
 ### 3.1 当前页优先
@@ -676,4 +685,7 @@ host must validate APK signature/version, extension ABI and normalized entry cla
 isolated backend may determine whether an approved loaded entry is a single Source or SourceFactory; metadata inspection
 must not instantiate it. Mihon and Venera backends must receive the exact inspected payload path/length and enforce declared
 invocation timeout, response-byte, concurrency and runtime-heap limits; inability to enforce a limit is activation
-failure, not permission to run unrestricted code.
+failure, not permission to run unrestricted code. Both ecosystems use the same versioned catalog-operation protocol,
+and only the host adapter may turn runtime descriptors/results into zic `BrowsableComicSource` and domain values.
+Timeout does not imply backend cancellation or release of an in-flight permit; teardown must signal the isolated
+connection and drain the actual operation lifecycle.

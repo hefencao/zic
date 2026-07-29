@@ -19,7 +19,7 @@ EXPECTED_DEPENDENCIES = {
     },
     'downloads_bridge': {'downloads', 'runtime_bridge', 'storage_bridge'},
     'catalog': {'domain', 'resource_cache', 'transport'},
-    'plugin_host': {'catalog'},
+    'plugin_host': {'catalog', 'domain'},
     'plugin_host_bridge': {'plugin_host'},
     'resource_cache': set(),
     'telemetry': set(),
@@ -1660,17 +1660,67 @@ def check_compile_regressions() -> None:
         if required not in durable_response_store:
             fail(f'durable response byte store is incomplete: {required}')
 
+    runtime_limits = (
+        ROOT / 'packages/plugin_host/lib/src/runtime_limits.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class ExternalPluginRuntimeLimits',
+        'void validate()',
+        'invocationTimeout <= Duration.zero',
+    ):
+        if required not in runtime_limits:
+            fail(f'external plugin runtime limits are incomplete: {required}')
+
+    runtime_protocol = (
+        ROOT / 'packages/plugin_host/lib/src/runtime_protocol.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'enum ExternalPluginRuntimeOperation',
+        'final class ExternalPluginRuntimeRequest',
+        'final class ExternalPluginRuntimeResponse',
+        'final class ExternalPluginRuntimeSourceDescriptor',
+        'abstract interface class ExternalPluginRuntimeConnection',
+        'static const int schemaVersion = 1',
+        'Uint8List',
+    ):
+        if required not in runtime_protocol:
+            fail(f'external plugin runtime protocol is incomplete: {required}')
+    for forbidden_import in (
+        "package:reader/",
+        "package:downloads/",
+        "package:sessions/",
+        "package:pipeline/",
+    ):
+        if forbidden_import in runtime_protocol:
+            fail(f'external plugin runtime protocol leaks {forbidden_import}')
+
+    runtime_adapter = (
+        ROOT / 'packages/plugin_host/lib/src/runtime_source_adapter.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class ExternalPluginRuntimeSession',
+        'implements ExternalComicPluginSession',
+        'implements BrowsableComicSource',
+        'maxConcurrentInvocations',
+        'maxResponseBytes',
+        'operation.timeout(limits.invocationTimeout)',
+        'Future<Uint8List> loadResource(Uri uri)',
+    ):
+        if required not in runtime_adapter:
+            fail(f'external plugin runtime adapter is incomplete: {required}')
+
     runtime_executors = (
         ROOT / 'packages/plugin_host/lib/src/runtime_executors.dart'
     ).read_text(encoding='utf-8')
     for required in (
-        'final class ExternalPluginRuntimeLimits',
         'final class MihonExecutionRequest',
         'abstract interface class MihonIsolatedRuntimeBackend',
+        'Future<ExternalPluginRuntimeConnection> activate(',
         'final class MihonIsolatedExecutor',
         'final class VeneraExecutionRequest',
         'abstract interface class VeneraSandboxRuntimeBackend',
         'final class VeneraSandboxExecutor',
+        'ExternalPluginRuntimeSession(',
         'payloadSha256',
         'supportsLimits',
     ):

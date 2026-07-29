@@ -880,19 +880,25 @@ This contract is intentionally smaller than an external extension runtime. `exte
 parses Mihon extension repository metadata and Venera JavaScript source indexes into format-neutral,
 untrusted catalog entries. Venera accepts both `filename` and deployed `fileName`, preserving a declared
 `key` immediately and deferring discovery only when absent. It preserves native package/source identities
-but downloads or executes nothing. `ExternalComicPluginHost` implementations must isolate APK/Kotlin and JavaScript runtimes,
-validate trust/version/permissions, and return an explicitly closable `ExternalComicPluginSession` of
-`packages/plugin_host` implements the pre-execution ownership boundary. A
-`PermissionedExternalComicPluginHost` separates metadata inspection from ecosystem-specific execution, applies
-repository/payload/package/signer/version/ABI/capability policy, quarantines failed activations and validates runtime
-source identity before returning a session. `ExternalPluginRuntimeRegistry` owns active sessions and prevents two
-plugins from registering the same namespaced source ID. Android metadata inspection also resolves normalized extension
-entry classes without loading them. `MihonIsolatedExecutor` and
-`VeneraSandboxExecutor` then create exact immutable-payload requests with response/concurrency/time/heap limits for
-separate backends. The package still contains no APK class loader or JavaScript engine.
+but downloads or executes nothing.
 
-ordinary `BrowsableComicSource` adapters. A plugin cannot inject navigation, read Reader state, own
-demand or mutate artifacts directly.
+`packages/plugin_host` is the pre-execution and runtime-adaptation boundary. A
+`PermissionedExternalComicPluginHost` separates immutable-payload inspection from ecosystem-specific execution,
+applies repository/payload/package/signer/version/ABI/capability policy, quarantines failed activations and
+validates runtime source identities. `ExternalPluginRuntimeRegistry` owns active sessions and prevents source-ID
+collisions. Android metadata inspection resolves normalized Mihon entry classes without loading them.
+
+After approval, Mihon and Venera backends activate an `ExternalPluginRuntimeConnection`. Both ecosystems use one
+versioned wire protocol for source descriptors, browse, comic detail, chapter manifest and binary resource calls.
+`ExternalPluginRuntimeSession` is the sole adapter from that protocol to ordinary namespaced
+`BrowsableComicSource` instances. It revalidates request IDs, payload shape, content identities, timeout, response
+bytes and actual in-flight concurrency. A timed-out caller stops waiting, but its permit remains held until the
+isolated operation really exits. Closing first signals the isolated connection, rejects queued calls and then
+drains real work. Reader, navigation, demand, `DownloadSession`, cache-maintenance and artifact APIs never cross
+this boundary.
+
+Concrete APK class loading and JavaScript evaluation remain separate isolated backend implementations. They must
+reuse the exact inspected payload and cannot bypass trust, capability, resource-limit or session teardown gates.
 
 ## 3.12 Generated host network capability
 

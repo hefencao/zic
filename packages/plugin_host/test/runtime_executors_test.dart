@@ -31,7 +31,9 @@ void main() {
       backend.request?.entryClasses,
       <String>['org.example.extension.ExampleFactory'],
     );
-    expect(session, same(backend.session));
+    expect(session.sources.single.sourceId, 'mihon:123');
+    await session.close();
+    expect(backend.connection.closed, isTrue);
   });
 
   test('Venera executor forwards limits and one inspected source key', () async {
@@ -45,7 +47,7 @@ void main() {
     final executor = VeneraSandboxExecutor(backend: backend, limits: limits);
     final plugin = _plugin(ExternalComicPluginFormat.veneraJavaScript);
 
-    await executor.activate(
+    final session = await executor.activate(
       plugin,
       ExternalPluginInspection(
         format: ExternalComicPluginFormat.veneraJavaScript,
@@ -60,66 +62,67 @@ void main() {
     expect(backend.request?.sourceKey, 'example');
     expect(backend.request?.payloadSha256, 'cc');
     expect(backend.request?.limits, same(limits));
+    expect(session.sources.single.sourceId, 'venera:example');
+    await session.close();
   });
 
-  test('executor rejects a backend that cannot enforce limits', () {
+  test('executor rejects a backend that cannot enforce limits', () async {
     final backend = _MihonBackend(supports: false);
     final executor = MihonIsolatedExecutor(backend: backend);
 
-    expect(
-      () => executor.activate(
+    await expectLater(
+      executor.activate(
         _plugin(ExternalComicPluginFormat.mihonExtension),
-        ExternalPluginInspection(
-          format: ExternalComicPluginFormat.mihonExtension,
-          payloadSha256: 'aa',
-          payloadPath: '/cache/extension.apk',
-          payloadByteLength: 123,
-          packageName: 'org.example.extension',
-          signerSha256: 'bb',
-          versionCode: 7,
-          extensionLib: 'tachiyomix-1.6',
-          mihonEntryClasses: const <String>[
-            'org.example.extension.ExampleFactory',
-          ],
-        ),
+        _mihonInspection(),
       ),
       throwsStateError,
     );
     expect(backend.request, isNull);
   });
 
-  test('executor rejects a plugin whose format does not match the request', () {
+  test('runtime duration is validated at activation, not const evaluation',
+      () async {
+    final backend = _MihonBackend();
+    const limits = ExternalPluginRuntimeLimits(
+      invocationTimeout: Duration.zero,
+    );
+    final executor = MihonIsolatedExecutor(
+      backend: backend,
+      limits: limits,
+    );
+
+    await expectLater(
+      executor.activate(
+        _plugin(ExternalComicPluginFormat.mihonExtension),
+        _mihonInspection(),
+      ),
+      throwsArgumentError,
+    );
+    expect(backend.request, isNull);
+  });
+
+  test('executor rejects a plugin whose format does not match the request',
+      () async {
     final backend = _MihonBackend();
     final executor = MihonIsolatedExecutor(backend: backend);
 
-    expect(
-      () => executor.activate(
+    await expectLater(
+      executor.activate(
         _plugin(ExternalComicPluginFormat.veneraJavaScript),
-        ExternalPluginInspection(
-          format: ExternalComicPluginFormat.mihonExtension,
-          payloadSha256: 'aa',
-          payloadPath: '/cache/extension.apk',
-          payloadByteLength: 123,
-          packageName: 'org.example.extension',
-          signerSha256: 'bb',
-          versionCode: 7,
-          extensionLib: 'tachiyomix-1.6',
-          mihonEntryClasses: const <String>[
-            'org.example.extension.ExampleFactory',
-          ],
-        ),
+        _mihonInspection(),
       ),
       throwsStateError,
     );
     expect(backend.request, isNull);
   });
 
-  test('executors reject incomplete inspection before backend activation', () {
+  test('executors reject incomplete inspection before backend activation',
+      () async {
     final backend = _MihonBackend();
     final executor = MihonIsolatedExecutor(backend: backend);
 
-    expect(
-      () => executor.activate(
+    await expectLater(
+      executor.activate(
         _plugin(ExternalComicPluginFormat.mihonExtension),
         ExternalPluginInspection(
           format: ExternalComicPluginFormat.mihonExtension,
@@ -129,8 +132,43 @@ void main() {
       throwsStateError,
     );
     expect(backend.request, isNull);
+  });
+
+  test('invalid runtime source handshake closes the backend connection',
+      () async {
+    final connection = _Connection(
+      descriptors: <ExternalPluginRuntimeSourceDescriptor>[
+        _descriptor('duplicate'),
+        _descriptor('duplicate'),
+      ],
+    );
+    final backend = _MihonBackend(connection: connection);
+    final executor = MihonIsolatedExecutor(backend: backend);
+
+    await expectLater(
+      executor.activate(
+        _plugin(ExternalComicPluginFormat.mihonExtension),
+        _mihonInspection(),
+      ),
+      throwsStateError,
+    );
+    expect(connection.closed, isTrue);
   });
 }
+
+ExternalPluginInspection _mihonInspection() => ExternalPluginInspection(
+      format: ExternalComicPluginFormat.mihonExtension,
+      payloadSha256: 'aa',
+      payloadPath: '/cache/extension.apk',
+      payloadByteLength: 123,
+      packageName: 'org.example.extension',
+      signerSha256: 'bb',
+      versionCode: 7,
+      extensionLib: 'tachiyomix-1.6',
+      mihonEntryClasses: const <String>[
+        'org.example.extension.ExampleFactory',
+      ],
+    );
 
 ExternalComicPluginCatalogEntry _plugin(ExternalComicPluginFormat format) =>
     ExternalComicPluginCatalogEntry(
@@ -148,48 +186,84 @@ ExternalComicPluginCatalogEntry _plugin(ExternalComicPluginFormat format) =>
       sources: const <ExternalComicPluginSource>[],
     );
 
+ExternalPluginRuntimeSourceDescriptor _descriptor(String externalId) =>
+    ExternalPluginRuntimeSourceDescriptor(
+      externalId: externalId,
+      name: 'Example',
+      language: 'en',
+      website: Uri.parse('https://example.invalid'),
+    );
+
 final class _MihonBackend implements MihonIsolatedRuntimeBackend {
-  _MihonBackend({this.supports = true});
+  _MihonBackend({this.supports = true, _Connection? connection})
+      : connection = connection ??
+            _Connection(
+              descriptors: <ExternalPluginRuntimeSourceDescriptor>[
+                _descriptor('123'),
+              ],
+            );
 
   final bool supports;
   MihonExecutionRequest? request;
-  final _Session session = _Session();
+  final _Connection connection;
 
   @override
   bool supportsLimits(ExternalPluginRuntimeLimits limits) => supports;
 
   @override
-  Future<ExternalComicPluginSession> activate(
+  Future<ExternalPluginRuntimeConnection> activate(
     MihonExecutionRequest value,
   ) async {
     request = value;
-    return session;
+    return connection;
   }
 }
 
 final class _VeneraBackend implements VeneraSandboxRuntimeBackend {
   VeneraExecutionRequest? request;
+  final _Connection connection = _Connection(
+    descriptors: <ExternalPluginRuntimeSourceDescriptor>[
+      _descriptor('example'),
+    ],
+  );
 
   @override
   bool supportsLimits(ExternalPluginRuntimeLimits limits) => true;
 
   @override
-  Future<ExternalComicPluginSession> activate(
+  Future<ExternalPluginRuntimeConnection> activate(
     VeneraExecutionRequest value,
   ) async {
     request = value;
-    return _Session();
+    return connection;
   }
 }
 
-final class _Session implements ExternalComicPluginSession {
-  @override
-  ExternalComicPluginCatalogEntry get plugin =>
-      _plugin(ExternalComicPluginFormat.veneraJavaScript);
+final class _Connection implements ExternalPluginRuntimeConnection {
+  _Connection({required List<ExternalPluginRuntimeSourceDescriptor> descriptors})
+      : sources = List<ExternalPluginRuntimeSourceDescriptor>.unmodifiable(
+          descriptors,
+        );
 
   @override
-  List<BrowsableComicSource> get sources => const <BrowsableComicSource>[];
+  final List<ExternalPluginRuntimeSourceDescriptor> sources;
+
+  bool closed = false;
 
   @override
-  Future<void> close() async {}
+  Future<ExternalPluginRuntimeResponse> invoke(
+    ExternalPluginRuntimeRequest request,
+  ) async =>
+      ExternalPluginRuntimeResponse.failure(
+        requestId: request.requestId,
+        error: ExternalPluginRuntimeError(
+          code: 'not-used',
+          message: 'not used by executor tests',
+        ),
+      );
+
+  @override
+  Future<void> close() async {
+    closed = true;
+  }
 }

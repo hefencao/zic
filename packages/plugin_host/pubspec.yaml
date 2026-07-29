@@ -10,9 +10,9 @@ environment:
 dependencies:
   catalog:
     path: ../catalog
+  domain:
+    path: ../domain
   crypto: ^3.0.6
 
 dev_dependencies:
-  domain:
-    path: ../domain
   test: ^1.25.0

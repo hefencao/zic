@@ -1,28 +1,9 @@
 import 'package:catalog/catalog.dart';
 
 import 'plugin_contract.dart';
-
-/// Resource envelope that every ecosystem-specific runtime must enforce.
-///
-/// The pure-Dart gate cannot enforce native heap or JavaScript CPU limits by
-/// itself. It passes these limits to the isolated backend, which must reject an
-/// invocation it cannot bound rather than silently running unrestricted code.
-final class ExternalPluginRuntimeLimits {
-  const ExternalPluginRuntimeLimits({
-    this.invocationTimeout = const Duration(seconds: 15),
-    this.maxResponseBytes = 16 * 1024 * 1024,
-    this.maxConcurrentInvocations = 4,
-    this.maxRuntimeHeapBytes = 64 * 1024 * 1024,
-  })  : assert(invocationTimeout > Duration.zero),
-        assert(maxResponseBytes > 0),
-        assert(maxConcurrentInvocations > 0),
-        assert(maxRuntimeHeapBytes > 0);
-
-  final Duration invocationTimeout;
-  final int maxResponseBytes;
-  final int maxConcurrentInvocations;
-  final int maxRuntimeHeapBytes;
-}
+import 'runtime_limits.dart';
+import 'runtime_protocol.dart';
+import 'runtime_source_adapter.dart';
 
 final class MihonExecutionRequest {
   MihonExecutionRequest({
@@ -59,7 +40,9 @@ final class MihonExecutionRequest {
 abstract interface class MihonIsolatedRuntimeBackend {
   bool supportsLimits(ExternalPluginRuntimeLimits limits);
 
-  Future<ExternalComicPluginSession> activate(MihonExecutionRequest request);
+  Future<ExternalPluginRuntimeConnection> activate(
+    MihonExecutionRequest request,
+  );
 }
 
 final class MihonIsolatedExecutor implements ExternalPluginExecutor {
@@ -79,7 +62,8 @@ final class MihonIsolatedExecutor implements ExternalPluginExecutor {
   Future<ExternalComicPluginSession> activate(
     ExternalComicPluginCatalogEntry plugin,
     ExternalPluginInspection inspection,
-  ) {
+  ) async {
+    limits.validate();
     final path = inspection.payloadPath;
     final length = inspection.payloadByteLength;
     final packageName = inspection.packageName;
@@ -108,7 +92,7 @@ final class MihonIsolatedExecutor implements ExternalPluginExecutor {
     if (!backend.supportsLimits(limits)) {
       throw StateError('Mihon runtime cannot enforce requested limits');
     }
-    return backend.activate(
+    final connection = await backend.activate(
       MihonExecutionRequest(
         plugin: plugin,
         payloadPath: path,
@@ -123,6 +107,16 @@ final class MihonIsolatedExecutor implements ExternalPluginExecutor {
         limits: limits,
       ),
     );
+    try {
+      return ExternalPluginRuntimeSession(
+        plugin: plugin,
+        connection: connection,
+        limits: limits,
+      );
+    } on Object {
+      await connection.close();
+      rethrow;
+    }
   }
 }
 
@@ -152,7 +146,9 @@ final class VeneraExecutionRequest {
 abstract interface class VeneraSandboxRuntimeBackend {
   bool supportsLimits(ExternalPluginRuntimeLimits limits);
 
-  Future<ExternalComicPluginSession> activate(VeneraExecutionRequest request);
+  Future<ExternalPluginRuntimeConnection> activate(
+    VeneraExecutionRequest request,
+  );
 }
 
 final class VeneraSandboxExecutor implements ExternalPluginExecutor {
@@ -177,7 +173,8 @@ final class VeneraSandboxExecutor implements ExternalPluginExecutor {
   Future<ExternalComicPluginSession> activate(
     ExternalComicPluginCatalogEntry plugin,
     ExternalPluginInspection inspection,
-  ) {
+  ) async {
+    limits.validate();
     final path = inspection.payloadPath;
     final length = inspection.payloadByteLength;
     final sourceKey = inspection.sourceKey;
@@ -194,7 +191,7 @@ final class VeneraSandboxExecutor implements ExternalPluginExecutor {
     if (!backend.supportsLimits(limits)) {
       throw StateError('Venera runtime cannot enforce requested limits');
     }
-    return backend.activate(
+    final connection = await backend.activate(
       VeneraExecutionRequest(
         plugin: plugin,
         payloadPath: path,
@@ -205,5 +202,15 @@ final class VeneraSandboxExecutor implements ExternalPluginExecutor {
         limits: limits,
       ),
     );
+    try {
+      return ExternalPluginRuntimeSession(
+        plugin: plugin,
+        connection: connection,
+        limits: limits,
+      );
+    } on Object {
+      await connection.close();
+      rethrow;
+    }
   }
 }

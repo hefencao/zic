@@ -1,3 +1,12 @@
+## 0.31.0-dev.45 — versioned external runtime protocol and shared source adapter
+
+- Close report-29's constant-evaluation blocker by keeping `ExternalPluginRuntimeLimits` const-capable while validating `Duration` positivity at executor/session activation instead of invoking relational operators in a const initializer.
+- Add one versioned, ecosystem-neutral request/response protocol for browse, comic, chapter and binary resource operations. The wire schema accepts only bounded method-channel-safe values and never exposes Reader, demand, `DownloadSession` or artifact APIs.
+- Adapt isolated Mihon and Venera runtime connections through one `ExternalPluginRuntimeSession` into ordinary namespaced `BrowsableComicSource` instances, with strict source/comic/chapter/page identity validation.
+- Enforce invocation timeout, response bytes and concurrency again at the host boundary. A timeout no longer releases its permit until the underlying isolated call actually exits; queued calls cannot steal or overbook transferred permits.
+- Make concurrent session close calls join one shutdown, signal the isolated connection before draining real work, reject queued work deterministically and close failed handshakes.
+- Preserve the existing Home startup trace unchanged, add protocol/runtime lifecycle regressions, and record ADR 0029. Concrete Mihon class loading and Venera JavaScript evaluation remain isolated backend work.
+
 ## 0.31.0-dev.44 — visible-frame readiness, authoritative artifact priming and plugin execution contracts
 
 - Close the report-28 compile blocker with the explicit `ResourceCacheFileByteStore` composition capability. File lookup and durable invalidation now share one statically valid owner instead of relying on promotion to the intersection of unrelated nullable interfaces.

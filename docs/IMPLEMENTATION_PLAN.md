@@ -21,7 +21,7 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.44）
+## 当前应用主线（0.31.0-dev.45）
 
 - 保留 Home/Bookshelf 的 Presentation 拆分，但禁止在 `apps/app/lib` 定义资源缓存、章节下载、页面保活或整本调度算法。
 - `resource_cache` 继续统一管理封面/图片响应、漫画详情、章节元数据和搜索结果。只有完整 `imageBytes` 可通过注入的 byte store 持久化；章节页面仍不进入该平面。
@@ -29,7 +29,7 @@
 - Reader 的页面/缩放 host 按稳定 asset identity 建立。翻页中点改变 current role 只能触发状态更新和缩放重置，不得销毁已加载媒体子树；Presentation 仍不得通过 keep-alive、私有 LRU 或相邻页预热竞争 pipeline policy。
 - `downloads` 管理独立页面 artifact 下载、promoted handoff 及整本队列；不完整章节继续由“章节元数据 + 任意页面 artifact 子集”表示。
 - `catalog` 新增 Mihon repository 与 Venera source index 的纯元数据兼容层。Venera 同时兼容 `filename`/`fileName` 并优先保留仓库 `key`；Mihon host 后续必须检查 `tachiyomix.extensionLib` 等 APK ABI 元数据。外部 APK/Kotlin 与 JavaScript 执行必须分别位于受限 host，返回有显式 `close()` 生命周期的普通 `BrowsableComicSource`，不得获得导航、Reader、demand 或 artifact 权限。
-- 外部插件的共享信任/权限/版本/ABI/隔离/session 门禁及 immutable-payload inspector 已实现；Android `MihonApkMetadataReader` 现同时返回入口类元数据。Mihon/Venera 已有分离的 immutable-payload execution request 与资源上限契约；下一阶段只在对应 isolated backend 内实现 class loader 或 JavaScript engine。
+- 外部插件的共享信任/权限/版本/ABI/隔离/session 门禁及 immutable-payload inspector 已实现；Android `MihonApkMetadataReader` 同时返回入口类元数据。Mihon/Venera 现共享版本化 browse/detail/chapter/resource wire protocol 和统一 `BrowsableComicSource` 适配层；host 对 timeout、响应字节和真实并发二次限流。下一阶段只在对应 isolated backend 内实现 class loader 或 JavaScript engine，不得复制 catalog/domain 映射或泄漏 Reader/download/artifact API。
 - Reader 快速切页 trace 已有确定性回放分析：由 `downloads` 生成精确 page/DownloadId identity，分别记录 transition revision 与实际产出呈现帧的 work revision，还原 artifact 来源、decode/upload 排队与执行、present、first frame 和 host remount；中点前已呈现的邻页计为零 transition wait。任何 retention 调整必须先由该分析定位 owner，再在 pipeline/session/media 层实施。
 - App durable composition 只接受显式 `ManagedChapterDownloadService` 作为页面 artifact store/maintenance；普通 `ChapterDownloadService` 保持较窄契约，避免把缓存维护强加给仅提供下载命令的适配器。
 - 冷启动 Reader 命中已 promoted 页面 artifact 时，权威替代 session 进入 queued/receiving 即启动唯一精确读取；页面消费者只加入该读取并可立即 decode，替代 session 仍需完成 receive/seal/promote。禁止页面自行创建缓存/网络 demand 或新增 Presentation 私有缓存。
