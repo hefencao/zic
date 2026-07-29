@@ -125,15 +125,13 @@ void main() {
     expect(find.byKey(readerFavoriteKey), findsOneWidget);
     expect(find.byKey(readerDownloadKey), findsOneWidget);
 
-    await tester.tap(find.byKey(readerPauseKey));
-    await tester.pump();
-    expect(
-      find.descendant(
-        of: find.byKey(readerPauseKey),
-        matching: find.byIcon(Icons.play_arrow),
-      ),
-      findsOneWidget,
+    await tester.tap(find.byKey(readerPauseKey).hitTestable());
+    final playIcon = find.descendant(
+      of: find.byKey(readerPauseKey),
+      matching: find.byIcon(Icons.play_arrow),
     );
+    await _pumpUntilFound(tester, playIcon);
+    expect(playIcon, findsOneWidget);
 
     await tester.tap(find.byKey(readerSpeedKey));
     await _pumpUntilFound(tester, find.text('2×'));

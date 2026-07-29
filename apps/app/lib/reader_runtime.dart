@@ -445,6 +445,13 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     );
   }
 
+  void _togglePlaybackPaused() {
+    _playback.togglePaused();
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   Future<void> _toggleFavorite() async {
     final callback = widget.onFavoriteChanged;
     if (callback == null) {
@@ -671,7 +678,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                         IconButton(
                           key: readerPauseKey,
                           tooltip: playback.paused ? '继续播放' : '暂停动画',
-                          onPressed: _playback.togglePaused,
+                          onPressed: _togglePlaybackPaused,
                           icon: Icon(
                             playback.paused ? Icons.play_arrow : Icons.pause,
                           ),

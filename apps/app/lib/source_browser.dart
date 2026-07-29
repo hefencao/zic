@@ -10,6 +10,8 @@ import 'comic_details.dart' as details;
 
 const comicSourcesPageKey = ValueKey<String>('comic-sources-page');
 const comicSourceManageKey = ValueKey<String>('comic-source-manage');
+const sourceManagementScreenKey =
+    ValueKey<String>('source-management-screen');
 const comicSourceSearchKey = ValueKey<String>('comic-source-search');
 const comicSourceSwitcherKey = ValueKey<String>('comic-source-switcher');
 const comicSourceLoadingKey = ValueKey<String>('comic-source-loading');
@@ -508,6 +510,7 @@ final class _SourceManagementScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      key: sourceManagementScreenKey,
       appBar: AppBar(title: const Text('漫画源管理')),
       body: ReorderableListView.builder(
         padding: const EdgeInsets.symmetric(vertical: 8),

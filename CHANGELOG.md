@@ -1,3 +1,25 @@
+## 0.25.0-dev.29 — authoritative download management and UI regression repair
+
+- Add `ChapterDownloadSnapshot` and a common task lifecycle (`idle`, `downloading`, `complete`,
+  `failed`, `cancelled`) to the chapter download boundary, including exact source-composite identity,
+  comic/chapter labels, completed/total pages, received/total bytes and copyable failure details.
+- Derive persistent progress from the existing `DownloadRegistry`, `DownloadSession` and promoted
+  artifacts. Keep terminal phases authoritative while late progress callbacks drain, and preserve
+  partial artifacts for retry/resume.
+- Add a Download Manager reachable from Home and Bookshelf with per-chapter cancel, retry and
+  confirmed offline-file deletion. Deleting bytes deliberately retains saved comics, chapter
+  metadata, reading progress and read state.
+- Project aggregate chapter progress onto the shared Home/History/Bookshelf cover component. Show a
+  dimmed bottom-up waterline only while incomplete; restore the cover and show a compact offline badge
+  when all known pages are durable.
+- Fix missing-cover records so a failed/absent cover becomes a stable placeholder rather than a
+  synchronous Widget-build exception.
+- Mark a chapter read before opening Reader, remove the duplicate details title, make source
+  management visibly reachable, and give sort/category/retry controls stable interaction identities.
+- Make Reader pause/continue rebuild from its playback notifier and keep the existing media pipeline.
+- Add deterministic cancel/retry/delete and Download Manager regressions, plus stronger Dart structure
+  checks for nested duplicate named arguments and product contracts.
+
 ## 0.24.0-dev.28 — source-composite durable library schema
 
 - Migrate SQLite to schema version 5 so imported chapters, reading progress, comic preferences and

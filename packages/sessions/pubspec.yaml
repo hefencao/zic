@@ -1,6 +1,6 @@
 name: sessions
 description: Demand coordination and encoded-byte download sessions.
-version: 0.24.0
+version: 0.25.0
 publish_to: none
 resolution: workspace
 

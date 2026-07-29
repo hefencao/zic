@@ -904,3 +904,27 @@ The source UI captures the original error, `Failure.cause` and stack trace. Prim
 bounded `SelectableText` diagnostics surface with long-press selection and explicit clipboard copy.
 A failed host lookup is described as either missing Android application permission or a system DNS /
 proxy / VPN path difference; browser reachability is not treated as proof that the App resolver works.
+
+
+## 3.13 Authoritative chapter-download management
+
+`ChapterDownloadService` now exposes a task stream rather than only a blocking command. Each
+`ChapterDownloadSnapshot` carries source-composite chapter identity, comic/chapter labels,
+completed/total pages, received/total bytes, a bounded phase and copyable failure text. The
+persistent implementation computes this projection from the existing `DownloadRegistry`,
+`DownloadSession` and promoted artifacts; it does not create a parallel downloader or progress
+store. Terminal phases remain authoritative while late session callbacks drain.
+
+Home, reading history and Bookshelf reuse the same `ComicCoverCard` and aggregate snapshots by exact
+`sourceId + comicId`. Incomplete work dims the cover and displays a bottom-up completion waterline,
+percent and completed/total pages. Complete coverage restores the original cover and shows only a
+compact offline badge. A top-level Download Manager exposes per-chapter cancel, retry and confirmed
+offline artifact deletion, with page/byte progress and selectable/copyable failure details. Offline
+artifact deletion deliberately retains the saved comic, imported chapter metadata, reading progress
+and explicit read state.
+
+The memory fallback implements the same lifecycle and owns full page bytes before completion. Tests
+cover progress publication, cancellation with retained partial progress, retry to completion and
+manager deletion. Missing covers now fail asynchronously into a placeholder instead of throwing from
+a Widget build; details mark chapters read before opening Reader, avoid duplicate titles, and expose
+stable source-management, sorting, category-move and retry controls.

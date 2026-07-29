@@ -9,6 +9,7 @@ import 'package:local_media/local_media.dart';
 
 import 'chapter_downloads.dart';
 import 'comic_details.dart' as details;
+import 'download_manager.dart';
 import 'source_browser.dart';
 import 'static_demo.dart';
 import 'webp_demo.dart';
@@ -21,12 +22,14 @@ const homeDiagnosticsKey = ValueKey<String>('home-diagnostics');
 const bookshelfManageKey = ValueKey<String>('bookshelf-manage');
 const bookshelfSourceFilterKey = ValueKey<String>('bookshelf-source-filter');
 const bookshelfSortKey = ValueKey<String>('bookshelf-sort');
+const bookshelfSortCustomKey = ValueKey<String>('bookshelf-sort-custom');
 const bookshelfViewKey = ValueKey<String>('bookshelf-view');
 const bookshelfAddCategoryKey = ValueKey<String>('bookshelf-add-category');
 const bookshelfAddComicToCategoryKey =
     ValueKey<String>('bookshelf-add-comic-to-category');
 const bookshelfManagementBarKey =
     ValueKey<String>('bookshelf-management-bar');
+const downloadManagerEntryKey = ValueKey<String>('download-manager-entry');
 const comicDetailsScreenKey = ValueKey<String>('comic-details-screen');
 const comicDetailsReverseKey = ValueKey<String>('comic-details-reverse');
 const staticDemoEntryKey = ValueKey<String>('demo-entry-static');
@@ -54,6 +57,8 @@ Key comicDeleteKey(String sourceId, String comicId) =>
     ValueKey<String>('comic-delete:$sourceId\u0000$comicId');
 Key comicCategoryKey(String sourceId, String comicId) =>
     ValueKey<String>('comic-category:$sourceId\u0000$comicId');
+Key bookshelfMoveToCategoryKey(String categoryId) =>
+    ValueKey<String>('bookshelf-move-to:$categoryId');
 Key chapterReadKey(String sourceId, String chapterId) =>
     ValueKey<String>('chapter-read:$sourceId\u0000$chapterId');
 @Deprecated('Use localImageFolderPickerProgressKey')
@@ -107,6 +112,7 @@ final class _DemoHomeState extends State<DemoHome> {
   late final Future<void> _libraryReady;
   late final ChapterDownloadService _chapterDownloads;
   late final bool _ownsChapterDownloads;
+  late final StreamSubscription<ChapterDownloadSnapshot> _downloadSubscription;
   final Map<String, Future<Uint8List>> _coverBytes =
       <String, Future<Uint8List>>{};
   late final List<BrowsableComicSource> _sources;
@@ -120,6 +126,8 @@ final class _DemoHomeState extends State<DemoHome> {
       const <String, ChapterReadState>{};
   Map<String, ComicSourcePreference> _sourcePreferences =
       const <String, ComicSourcePreference>{};
+  Map<String, ChapterDownloadSnapshot> _downloadSnapshots =
+      const <String, ChapterDownloadSnapshot>{};
   Object? _libraryError;
   bool _libraryLoading = true;
   bool _picking = false;
@@ -150,6 +158,9 @@ final class _DemoHomeState extends State<DemoHome> {
     _ownsChapterDownloads = widget.chapterDownloads == null;
     _chapterDownloads = widget.chapterDownloads ??
         MemoryChapterDownloadService(pageLoader: _loadChapterPageBytes);
+    _downloadSubscription = _chapterDownloads.changes.listen(
+      _acceptDownloadSnapshot,
+    );
     _libraryReady = _initializeLibrary();
   }
 
@@ -285,6 +296,7 @@ final class _DemoHomeState extends State<DemoHome> {
       _libraryError = null;
       _libraryLoading = false;
     });
+    unawaited(_refreshDownloadSnapshots(entries));
   }
 
   Future<void> _ensureLibraryReady() async {
@@ -316,6 +328,7 @@ final class _DemoHomeState extends State<DemoHome> {
 
   @override
   void dispose() {
+    unawaited(_downloadSubscription.cancel());
     if (_ownsLibrary) {
       unawaited(_library.close());
     }
@@ -474,6 +487,102 @@ final class _DemoHomeState extends State<DemoHome> {
     );
   }
 
+  void _acceptDownloadSnapshot(ChapterDownloadSnapshot snapshot) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _downloadSnapshots = <String, ChapterDownloadSnapshot>{
+        ..._downloadSnapshots,
+        snapshot.identity: snapshot,
+      };
+    });
+  }
+
+  Future<void> _refreshDownloadSnapshots(
+    Iterable<ImportedLibraryEntry> entries,
+  ) async {
+    final snapshots = <String, ChapterDownloadSnapshot>{};
+    for (final entry in entries) {
+      try {
+        final snapshot = await _chapterDownloads.inspect(entry);
+        snapshots[snapshot.identity] = snapshot;
+      } on Object {
+        // Download diagnostics remain available from the manager if a single
+        // stale record cannot be inspected. Library loading must still finish.
+      }
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _downloadSnapshots = Map<String, ChapterDownloadSnapshot>.unmodifiable(
+        snapshots,
+      );
+    });
+  }
+
+  Future<void> _openDownloadManager() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => DownloadManagerScreen(
+          entries: List<ImportedLibraryEntry>.unmodifiable(_libraryEntries),
+          downloads: _chapterDownloads,
+        ),
+      ),
+    );
+    if (mounted) {
+      await _refreshDownloadSnapshots(_libraryEntries);
+    }
+  }
+
+  ComicDownloadProgress? _downloadProgressForComic(LibraryComic comic) {
+    var completedPageUnits = 0.0;
+    var relevant = false;
+    var knownEntryPages = 0;
+    for (final entry in _libraryEntries) {
+      if (entry.chapter.sourceId != comic.sourceId ||
+          entry.chapter.comicId != comic.comicId) {
+        continue;
+      }
+      knownEntryPages += entry.chapter.pages.length;
+      final snapshot = _downloadSnapshots[chapterDownloadIdentity(
+        entry.chapter.sourceId,
+        entry.chapter.chapterId,
+        entry.chapter.sourceRevision,
+      )];
+      if (snapshot == null) {
+        continue;
+      }
+      if (snapshot.isActive || snapshot.hasDurableBytes) {
+        relevant = true;
+        completedPageUnits += snapshot.completedPageUnits;
+      }
+    }
+    if (!relevant) {
+      return null;
+    }
+    final catalogPages = comic.sourceChapters.isEmpty
+        ? comic.totalPages
+        : comic.sourceChapters.fold<int>(
+            0,
+            (sum, chapter) => sum + chapter.pageCount,
+          );
+    final totalPages = catalogPages < knownEntryPages
+        ? knownEntryPages
+        : catalogPages;
+    if (totalPages <= 0) {
+      return null;
+    }
+    final bounded = completedPageUnits.clamp(0, totalPages).toDouble();
+    final completedPages = bounded.floor();
+    return ComicDownloadProgress(
+      completedPages: completedPages,
+      partialPageUnits: bounded - completedPages,
+      totalPages: totalPages,
+    );
+  }
+
   Future<Uint8List> _loadChapterPageBytes(
     ImportedLibraryEntry entry,
     int pageIndex,
@@ -493,6 +602,7 @@ final class _DemoHomeState extends State<DemoHome> {
 
   Future<void> _downloadChapter(ImportedLibraryEntry entry) async {
     await _chapterDownloads.download(entry);
+    _acceptDownloadSnapshot(await _chapterDownloads.inspect(entry));
   }
 
   int get _nextCustomOrder => _preferences.values.fold<int>(
@@ -1265,12 +1375,15 @@ final class _DemoHomeState extends State<DemoHome> {
     required String sourceId,
     required Uri? coverUri,
     required ImportedLibraryEntry? fallbackChapter,
-  }) {
+  }) async {
     final fallback = fallbackChapter;
+    final fallbackPage = fallback == null || fallback.chapter.pages.isEmpty
+        ? null
+        : fallback.chapter.pages.first.sourceId;
     final sourceValue = coverUri?.toString() ??
         fallback?.chapter.coverSourceId ??
-        fallback?.chapter.pages.first.sourceId;
-    if (sourceValue == null) {
+        fallbackPage;
+    if (sourceValue == null || sourceValue.trim().isEmpty) {
       throw StateError('漫画详情没有可用封面');
     }
     return _coverBytes.putIfAbsent(sourceValue, () {
@@ -1650,6 +1763,7 @@ final class _DemoHomeState extends State<DemoHome> {
               comic: comic,
               preference: _preferenceForComic(comic),
               coverBytes: _coverLoaderForComic(comic),
+              downloadProgress: _downloadProgressForComic(comic),
               onTap: () => _openComic(comic),
               onLongPress: () {
                 if (resume == null || _hasDetails(comic)) {
@@ -1938,6 +2052,7 @@ final class _DemoHomeState extends State<DemoHome> {
                   ),
                 for (final category in moveTargets)
                   PopupMenuItem<String>(
+                    key: bookshelfMoveToCategoryKey(category.categoryId),
                     value: category.categoryId,
                     child: Text('移动到 ${category.name}'),
                   ),
@@ -1980,6 +2095,7 @@ final class _DemoHomeState extends State<DemoHome> {
       comic: comic,
       preference: _preferenceForComic(comic),
       coverBytes: _coverLoaderForComic(comic),
+      downloadProgress: _downloadProgressForComic(comic),
       selected: selected,
       onTap: () => _handleShelfTap(comic),
       onLongPress: _manageShelf
@@ -2027,6 +2143,7 @@ final class _DemoHomeState extends State<DemoHome> {
             comic: comic,
             preference: _preferenceForComic(comic),
             coverBytes: _coverLoaderForComic(comic),
+            downloadProgress: _downloadProgressForComic(comic),
             onTap: () {},
           ),
         ),
@@ -2069,6 +2186,7 @@ final class _DemoHomeState extends State<DemoHome> {
           comic: comic,
           preference: _preferenceForComic(comic),
           coverBytes: _coverLoaderForComic(comic),
+          downloadProgress: _downloadProgressForComic(comic),
           selected: _managedComicIdentity == comic.identity,
           onTap: () => _handleShelfTap(comic),
           onLongPress: _manageShelf
@@ -2200,6 +2318,7 @@ final class _DemoHomeState extends State<DemoHome> {
                         child: Text('页数'),
                       ),
                       PopupMenuItem(
+                        key: bookshelfSortCustomKey,
                         value: LibrarySortMode.custom,
                         child: Text('自定义排序'),
                       ),
@@ -2295,13 +2414,20 @@ final class _DemoHomeState extends State<DemoHome> {
         ),
         actions: <Widget>[
           if (_navigationIndex == 2)
-            IconButton(
+            TextButton.icon(
               key: comicSourceManageKey,
-              tooltip: '漫画源管理',
               onPressed: _openSourceManagement,
               icon: const Icon(Icons.tune),
-            )
-          else
+              label: const Text('漫画源管理'),
+            ),
+          if (_navigationIndex != 2)
+            IconButton(
+              key: downloadManagerEntryKey,
+              tooltip: '下载管理',
+              onPressed: _openDownloadManager,
+              icon: const Icon(Icons.download_for_offline_outlined),
+            ),
+          if (_navigationIndex != 2)
             IconButton(
               tooltip: '导入漫画文件夹',
               onPressed: _picking || _pickingFolder ? null : _importImageFolder,
@@ -2346,14 +2472,21 @@ final class ComicDownloadProgress {
   const ComicDownloadProgress({
     required this.completedPages,
     required this.totalPages,
+    this.partialPageUnits = 0,
   })  : assert(completedPages >= 0),
         assert(totalPages > 0),
-        assert(completedPages <= totalPages);
+        assert(completedPages <= totalPages),
+        assert(partialPageUnits >= 0),
+        assert(completedPages + partialPageUnits <= totalPages);
 
   final int completedPages;
   final int totalPages;
+  final double partialPageUnits;
 
-  double get fraction => completedPages / totalPages;
+  double get fraction =>
+      ((completedPages + partialPageUnits) / totalPages).clamp(0, 1).toDouble();
+
+  bool get isComplete => completedPages == totalPages && partialPageUnits == 0;
 }
 
 final class ComicCoverCard extends StatelessWidget {
@@ -2483,7 +2616,7 @@ final class _CoverImage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<Uint8List>(
-      future: loader(),
+      future: Future<Uint8List>.sync(loader),
       builder: (context, snapshot) {
         final bytes = snapshot.data;
         if (bytes != null) {
@@ -2517,40 +2650,84 @@ final class _DownloadWatermark extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final percent = (progress.fraction * 100).round();
-    return Stack(
-      fit: StackFit.expand,
-      children: <Widget>[
-        ColoredBox(color: Colors.black.withValues(alpha: 0.45)),
-        Align(
-          alignment: Alignment.bottomCenter,
-          child: FractionallySizedBox(
-            heightFactor: progress.fraction,
-            widthFactor: 1,
-            child: ColoredBox(
-              color: Theme.of(context)
-                  .colorScheme
-                  .primary
-                  .withValues(alpha: 0.44),
-            ),
-          ),
-        ),
-        Center(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.62),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-              child: Text(
-                '$percent%\n${progress.completedPages}/${progress.totalPages} 页',
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontWeight: FontWeight.w700),
+    if (progress.isComplete) {
+      return Semantics(
+        label: '已下载 ${progress.totalPages} 页',
+        child: Align(
+          alignment: Alignment.bottomRight,
+          child: Padding(
+            padding: const EdgeInsets.all(6),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.72),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    const Icon(Icons.download_done, size: 15, color: Colors.white),
+                    const SizedBox(width: 4),
+                    Text(
+                      '${progress.totalPages} 页',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
         ),
-      ],
+      );
+    }
+    return Semantics(
+      label: '下载进度 $percent%，${progress.completedPages}/${progress.totalPages} 页',
+      child: Stack(
+        fit: StackFit.expand,
+        children: <Widget>[
+          ColoredBox(color: Colors.black.withValues(alpha: 0.45)),
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: FractionallySizedBox(
+              heightFactor: progress.fraction,
+              widthFactor: 1,
+              child: ColoredBox(
+                color: Theme.of(context)
+                    .colorScheme
+                    .primary
+                    .withValues(alpha: 0.44),
+              ),
+            ),
+          ),
+          Center(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.62),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                child: Text(
+                  '$percent%\n${progress.completedPages}/${progress.totalPages} 页',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    shadows: <Shadow>[
+                      Shadow(blurRadius: 2, color: Colors.black),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -2648,6 +2825,7 @@ final class _ShelfListTile extends StatelessWidget {
     required this.comic,
     required this.preference,
     required this.coverBytes,
+    required this.downloadProgress,
     required this.selected,
     required this.onTap,
     this.onLongPress,
@@ -2657,6 +2835,7 @@ final class _ShelfListTile extends StatelessWidget {
   final LibraryComic comic;
   final ComicPreference preference;
   final Future<Uint8List> Function() coverBytes;
+  final ComicDownloadProgress? downloadProgress;
   final bool selected;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
@@ -2675,7 +2854,14 @@ final class _ShelfListTile extends StatelessWidget {
             aspectRatio: ComicCoverCard.coverAspectRatio,
             child: ClipRRect(
               borderRadius: BorderRadius.circular(6),
-              child: _CoverImage(loader: coverBytes),
+              child: Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  _CoverImage(loader: coverBytes),
+                  if (downloadProgress != null)
+                    _DownloadWatermark(progress: downloadProgress!),
+                ],
+              ),
             ),
           ),
         ),

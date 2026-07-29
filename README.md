@@ -2,7 +2,7 @@
 
 `zic` 是从零开发的高性能漫画阅读器。当前版本已完成静态 Reader、可恢复下载、
 持久化缓存恢复、容量/LRU 策略、受控清理、失败退避重试、独立资源 lane、格式感知 ingress、
-decode/upload registry、frame holder、viewport 播放门控、帧字节预算、可运行的 Animated WebP App 入口、viewport/DPR 自适应显示目标、source-aware 解码 raster、Rust 增量 Animated WebP 解码基础，以及按 `sourceId + comicId` 聚合多章节的 Android Home/Bookshelf/详情闭环。`0.20.0-dev.23` 统一首页与书架封面、补齐分类与管理操作、自定义画廊拖动，并为 Reader 增加沉浸控制与缩放。`0.21.0-dev.24` 新增第三个漫画源页面、持久化源管理、底部源切换和首个可浏览的 MangaDex 远程源；远程章节继续进入现有目录库与 Reader artifact 管线。`0.21.1-dev.25` 修复生成 Android host 的发布联网权限，补充可选择/复制的完整漫画源错误诊断、连接超时和有界瞬时重试。`0.22.0-dev.26` 验证了来源感知目录合并和下拉更新；`0.23.0-dev.27` 将状态所有权收敛为远程/本地两套详情页、共享稳定组件与集中路由，并补充整部漫画收藏/入架、章节持久下载及保守的跨源迁移。 `0.24.0-dev.28` 将章节、进度、漫画偏好和已读状态统一迁移到 `sourceId + nativeId` 持久身份，允许不同漫画源安全复用相同原生 ID，并记录旧数据的歧义迁移。
+decode/upload registry、frame holder、viewport 播放门控、帧字节预算、可运行的 Animated WebP App 入口、viewport/DPR 自适应显示目标、source-aware 解码 raster、Rust 增量 Animated WebP 解码基础，以及按 `sourceId + comicId` 聚合多章节的 Android Home/Bookshelf/详情闭环。`0.20.0-dev.23` 统一首页与书架封面、补齐分类与管理操作、自定义画廊拖动，并为 Reader 增加沉浸控制与缩放。`0.21.0-dev.24` 新增第三个漫画源页面、持久化源管理、底部源切换和首个可浏览的 MangaDex 远程源；远程章节继续进入现有目录库与 Reader artifact 管线。`0.21.1-dev.25` 修复生成 Android host 的发布联网权限，补充可选择/复制的完整漫画源错误诊断、连接超时和有界瞬时重试。`0.22.0-dev.26` 验证了来源感知目录合并和下拉更新；`0.23.0-dev.27` 将状态所有权收敛为远程/本地两套详情页、共享稳定组件与集中路由，并补充整部漫画收藏/入架、章节持久下载及保守的跨源迁移。 `0.24.0-dev.28` 将章节、进度、漫画偏好和已读状态统一迁移到 `sourceId + nativeId` 持久身份，允许不同漫画源安全复用相同原生 ID，并记录旧数据的歧义迁移。`0.25.0-dev.29` 在既有 DownloadSession/artifact 管线上增加权威任务快照、下载管理、取消/重试/删除、页数与字节进度，以及首页/书架共享封面的下载水位投影。
 
 ```text
 ReaderView
@@ -104,8 +104,10 @@ Reader 默认以 `immersiveSticky` 进入并隐藏顶部、底部控制栏，轻
 暂停 PageView 翻页，跳到其他页后重置旧页缩放。暂停和倍速继续复用原 `NativeWebpPlayer`
 与 Flutter codec 路径，不旁路 download identity、telemetry 或 raster 下采样。Reader 的
 章节下载命令现在委托 `ChapterDownloadService`：完整章节写入持久离线根并由索引验证，
-重启后可直接读取；未完成下载仍由原 DownloadSession 恢复语义处理。下载管理页、取消/重试
-入口和封面权威水位仍是后续 UI 工作。
+重启后可直接读取；未完成下载仍由原 DownloadSession 恢复语义处理。下载任务通过
+`ChapterDownloadSnapshot` 暴露权威页数、字节和终态；首页与书架复用的封面在下载中显示
+自下而上的水位、百分比及完成/总页数，完成后恢复原封面并显示紧凑离线标记。顶部下载管理
+入口支持逐章节取消、重试和删除离线文件，删除不会清除漫画、章节元数据或阅读记录。
 
 Native 与 Flutter codec 使用同一个自适应物理显示目标：目标取实际预览区域的逻辑尺寸乘以设备 DPR，保持源图比例并按 8 个物理像素对齐。`RasterPlan` 再决定实际 decode raster：大图按目标下采样，小图保持原始画布，避免 animated codec 在合成局部子帧前先放大插值。极小素材显示时使用 nearest-neighbour，正常漫画页面继续使用平滑滤镜。Native 路径还会提前准备下一帧，并从帧时长中扣除准备耗时，避免解码时间把动画总时长拉长。
 

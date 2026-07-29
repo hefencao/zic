@@ -30,6 +30,28 @@ Future<void> _pumpUntilFound(
   throw TestFailure('Timed out waiting for $finder');
 }
 
+Future<void> _tapVisible(
+  WidgetTester tester,
+  Finder finder, {
+  int maxFrames = 80,
+}) async {
+  await tester.ensureVisible(finder);
+  for (var frame = 0; frame < maxFrames; frame++) {
+    await tester.pump();
+    final hitTestable = finder.hitTestable();
+    if (hitTestable.evaluate().isNotEmpty) {
+      final widget = tester.widget(hitTestable.first);
+      if (widget is IconButton && widget.onPressed == null) {
+        continue;
+      }
+      await tester.tap(hitTestable.first);
+      await tester.pump();
+      return;
+    }
+  }
+  throw TestFailure('Timed out waiting to tap $finder');
+}
+
 void main() {
   testWidgets('third page switches and manages enabled comic sources',
       (tester) async {
@@ -66,9 +88,9 @@ void main() {
       find.byKey(sourceComicCardKey('fixture-b', 'fixture-b-comic')),
     );
 
-    await tester.tap(find.byKey(comicSourceManageKey));
-    await tester.pump();
-    expect(find.text('漫画源管理'), findsOneWidget);
+    await _tapVisible(tester, find.byKey(comicSourceManageKey));
+    await _pumpUntilFound(tester, find.byKey(sourceManagementScreenKey));
+    expect(find.byKey(sourceManagementScreenKey), findsOneWidget);
     expect(find.byType(SwitchListTile), findsNWidgets(2));
 
     await tester.tap(find.byType(SwitchListTile).at(1));
@@ -138,10 +160,7 @@ void main() {
     expect(detailsText.data, contains('Cause: Bad state: Failed host lookup'));
 
     final copy = find.byKey(comicSourceCopyErrorKey);
-    await tester.ensureVisible(copy);
-    await tester.pump();
-    await tester.tap(copy);
-    await tester.pump();
+    await _tapVisible(tester, copy);
     expect(clipboardWrites, hasLength(1));
     expect(clipboardWrites.single, detailsText.data);
   });
@@ -169,9 +188,7 @@ void main() {
     await _pumpUntilFound(tester, find.byKey(details.remoteComicDetailsScreenKey));
 
     final shelf = find.byKey(details.comicDetailsShelfKey);
-    await tester.ensureVisible(shelf);
-    await tester.tap(shelf);
-    await tester.pump();
+    await _tapVisible(tester, shelf);
 
     expect(await store.getSavedComic('fixture', 'fixture-comic'), isNotNull);
     expect(await store.get('fixture', 'fixture-chapter'), isNull);
@@ -181,8 +198,7 @@ void main() {
     );
 
     final download = details.comicDetailsDownloadKey('fixture', 'fixture-chapter');
-    await tester.ensureVisible(find.byKey(download));
-    await tester.tap(find.byKey(download));
+    await _tapVisible(tester, find.byKey(download));
     await _pumpUntilFound(tester, find.textContaining('已下载'));
 
     final entry = await store.get('fixture', 'fixture-chapter');
@@ -219,9 +235,7 @@ void main() {
     expect(find.byKey(details.localComicDetailsScreenKey), findsNothing);
 
     final collect = find.byKey(details.comicDetailsCollectedKey);
-    await tester.ensureVisible(collect);
-    await tester.tap(collect);
-    await tester.pump();
+    await _tapVisible(tester, collect);
     expect(await store.get('fixture-route', 'fixture-route-chapter'), isNull);
     expect(
       (await store.getSavedComic('fixture-route', 'fixture-route-comic'))
@@ -244,8 +258,7 @@ void main() {
       'fixture-route',
       'fixture-route-chapter-2',
     );
-    await tester.ensureVisible(find.byKey(secondDownload));
-    await tester.tap(find.byKey(secondDownload));
+    await _tapVisible(tester, find.byKey(secondDownload));
     await _pumpUntilFound(tester, find.textContaining('已下载'));
     expect(await store.get('fixture-route', 'fixture-route-chapter'), isNull);
     expect(await store.get('fixture-route', 'fixture-route-chapter-2'), isNotNull);
@@ -284,10 +297,8 @@ void main() {
       findsNothing,
     );
 
-    await tester.drag(
-      find.byKey(details.remoteComicDetailsScreenKey),
-      const Offset(0, 360),
-    );
+    final remoteDetails = find.byKey(details.remoteComicDetailsScreenKey);
+    await tester.drag(remoteDetails, const Offset(0, 480));
     await tester.pump();
     await _pumpUntilFound(
       tester,
@@ -328,9 +339,8 @@ void main() {
     await tester.tap(find.byKey(sourceComicCardKey('fixture-retry', 'fixture-retry-comic')));
     await _pumpUntilFound(tester, find.textContaining('漫画详情加载失败'));
 
-    final retry = find.widgetWithText(FilledButton, '重试');
-    await tester.ensureVisible(retry);
-    await tester.tap(retry);
+    final retry = find.byKey(details.comicDetailsRetryKey);
+    await _tapVisible(tester, retry);
     await _pumpUntilFound(
       tester,
       find.byKey(sourceChapterKey('fixture-retry', 'fixture-retry-chapter')),

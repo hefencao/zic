@@ -6,6 +6,7 @@ import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zic/demo_home.dart';
+import 'package:zic/download_manager.dart';
 import 'package:zic/main.dart';
 
 Uint8List _tinyPng() => base64Decode(
@@ -44,6 +45,24 @@ Future<void> _pumpUntilFound(
   throw TestFailure('Timed out waiting for $finder');
 }
 
+Future<void> _tapVisible(
+  WidgetTester tester,
+  Finder finder, {
+  int maxFrames = 80,
+}) async {
+  await tester.ensureVisible(finder);
+  for (var frame = 0; frame < maxFrames; frame++) {
+    await tester.pump();
+    final hitTestable = finder.hitTestable();
+    if (hitTestable.evaluate().isNotEmpty) {
+      await tester.tap(hitTestable.first);
+      await tester.pump();
+      return;
+    }
+  }
+  throw TestFailure('Timed out waiting to tap $finder');
+}
+
 void main() {
   testWidgets('home and bookshelf share the persisted local library',
       (tester) async {
@@ -80,6 +99,7 @@ void main() {
     expect(find.byKey(bookshelfSourceFilterKey), findsOneWidget);
     expect(find.byKey(bookshelfSortKey), findsOneWidget);
     expect(find.byKey(bookshelfViewKey), findsOneWidget);
+    expect(find.byKey(downloadManagerEntryKey), findsOneWidget);
     final shelfCover = find.byKey(comicCoverKey(chapter.sourceId, chapter.comicId));
     expect(shelfCover, findsOneWidget);
     expect(tester.getSize(shelfCover), homeCoverSize);
@@ -134,6 +154,19 @@ void main() {
     expect(tester.widget<ComicCoverCard>(second).selected, isFalse);
   });
 
+  testWidgets('download manager entry opens the task surface', (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+
+    await tester.pumpWidget(App(libraryStore: store));
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await _tapVisible(tester, find.byKey(downloadManagerEntryKey));
+
+    expect(find.byKey(downloadManagerScreenKey), findsOneWidget);
+    expect(find.text('暂无下载任务或离线章节'), findsOneWidget);
+  });
+
   testWidgets('custom sort keeps gallery view and long-press drag order',
       (tester) async {
     final store = MemoryImportedLibraryStore();
@@ -149,9 +182,8 @@ void main() {
     await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
     await tester.pump(const Duration(milliseconds: 320));
 
-    await tester.tap(find.byKey(bookshelfSortKey));
-    await tester.pump(const Duration(milliseconds: 320));
-    await tester.tap(find.text('自定义排序'));
+    await _tapVisible(tester, find.byKey(bookshelfSortKey));
+    await _tapVisible(tester, find.byKey(bookshelfSortCustomKey));
     await tester.pump(const Duration(milliseconds: 320));
     await tester.tap(find.byKey(bookshelfManageKey));
     await tester.pump(const Duration(milliseconds: 320));
@@ -260,9 +292,11 @@ void main() {
     expect(find.byKey(comicDeleteKey(chapter.sourceId, chapter.comicId)), findsOneWidget);
     expect(find.byKey(comicDetailsScreenKey), findsNothing);
 
-    await tester.tap(find.byTooltip('移动到其他分类'));
-    await tester.pump(const Duration(milliseconds: 320));
-    await tester.tap(find.text('移动到 分类二'));
+    await _tapVisible(tester, find.byTooltip('移动到其他分类'));
+    await _tapVisible(
+      tester,
+      find.byKey(bookshelfMoveToCategoryKey(secondCategoryId)),
+    );
     await tester.pump(const Duration(milliseconds: 320));
 
     final preference = await store.getComicPreference(chapter.sourceId, chapter.comicId);

@@ -5,6 +5,8 @@ import json
 import re
 import struct
 import sys
+
+from check_dart_structure import DartStructureError, check_repository
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1238,6 +1240,7 @@ def check_compile_regressions() -> None:
         'final class ComicSourcesPage',
         'final class SourceManagementScreen',
         'final class SourceComicDetailsScreen',
+        'sourceManagementScreenKey',
         'comicSourceSwitcherKey',
         'ReorderableListView.builder',
         'ChoiceChip(',
@@ -1301,6 +1304,9 @@ def check_compile_regressions() -> None:
         'persistComic',
         'reloadLibrary(refreshContent:',
         'SelectableText(failure.details)',
+        'comicDetailsRetryKey',
+        'await _setRead(entry, true)',
+        'Future<Uint8List>.sync',
     ):
         if required not in details_ui:
             fail(f'local/remote comic details UI is incomplete: {required}')
@@ -1319,7 +1325,14 @@ def check_compile_regressions() -> None:
         encoding='utf-8',
     )
     for required in (
+        'enum ChapterDownloadPhase',
+        'final class ChapterDownloadSnapshot',
         'abstract interface class ChapterDownloadService',
+        'Stream<ChapterDownloadSnapshot> get changes',
+        'Future<void> retry(',
+        'Future<void> cancel(',
+        'Future<void> delete(',
+        'Future<ChapterDownloadSnapshot> inspect(',
         'final class MemoryChapterDownloadService',
         'final class PersistentChapterDownloadService',
         'ChapterPageLoader',
@@ -1327,9 +1340,27 @@ def check_compile_regressions() -> None:
         'DownloadJob(',
         'DownloadState.promoted',
         'offline_chapters',
+        '_terminalPhases',
     ):
         if required not in downloads:
             fail(f'durable chapter download service is incomplete: {required}')
+    download_manager_path = ROOT / 'apps/app/lib/download_manager.dart'
+    if not download_manager_path.is_file():
+        fail('download management surface is missing')
+    download_manager = download_manager_path.read_text(encoding='utf-8')
+    for required in (
+        'final class DownloadManagerScreen',
+        'downloadManagerCancelKey',
+        'downloadManagerRetryKey',
+        'downloadManagerDeleteKey',
+        'LinearProgressIndicator(',
+        'snapshot.receivedBytes',
+        'snapshot.totalBytes',
+        'SelectableText(',
+        'Clipboard.setData',
+    ):
+        if required not in download_manager:
+            fail(f'download management surface is incomplete: {required}')
     migration = (
         ROOT / 'packages/catalog/lib/src/comic_source_migration.dart'
     ).read_text(encoding='utf-8')
@@ -1370,6 +1401,12 @@ def check_compile_regressions() -> None:
         '_sourcePageVisited',
         'ComicSourcesPage(',
         'comicSourceManageKey',
+        "label: const Text('漫画源管理')",
+        'downloadManagerEntryKey',
+        'DownloadManagerScreen(',
+        '_downloadProgressForComic',
+        '_DownloadWatermark',
+        'Future<Uint8List>.sync(loader)',
         '_selectSourceMigrationTarget',
         "label: const Text('搜索同名作品')",
         "throw StateError('目标漫画源返回了不匹配的漫画或章节身份')",
@@ -1378,6 +1415,28 @@ def check_compile_regressions() -> None:
     ):
         if required not in home:
             fail(f'Android library UI slice is incomplete: {required}')
+
+    reader_runtime = (ROOT / 'apps/app/lib/reader_runtime.dart').read_text(
+        encoding='utf-8'
+    )
+    for required in (
+        'void _togglePlaybackPaused()',
+        'onPressed: _togglePlaybackPaused',
+        'ValueListenableBuilder<ReaderPlaybackState>',
+    ):
+        if required not in reader_runtime:
+            fail(f'Reader playback controls are incomplete: {required}')
+
+    chapter_download_tests = (
+        ROOT / 'apps/app/test/chapter_downloads_test.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'memory download publishes progress and delete returns to idle',
+        'memory download cancellation keeps partial progress and retry completes',
+        'download manager exposes completed task and durable delete',
+    ):
+        if required not in chapter_download_tests:
+            fail(f'download lifecycle regression coverage is incomplete: {required}')
 
 
 def check_native_abi() -> None:
@@ -1488,6 +1547,10 @@ def check_native_abi() -> None:
 
 
 def main() -> None:
+    try:
+        dart_files, dart_tests = check_repository(ROOT)
+    except DartStructureError as error:
+        fail(str(error))
     check_workspace()
     check_manifest()
     check_animated_demo()
@@ -1497,6 +1560,7 @@ def main() -> None:
     check_compile_regressions()
     check_native_abi()
     print('repository structure: OK')
+    print(f'Dart structure: {dart_files} files, {dart_tests} test files')
     print('demo pages: 100')
     print('demo Animated WebP assets: 3')
     print('packages:', ', '.join(EXPECTED_DEPENDENCIES))

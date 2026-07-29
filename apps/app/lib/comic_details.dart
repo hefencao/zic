@@ -21,6 +21,7 @@ const comicDetailsCollectedKey =
     ValueKey<String>('comic-details-collected');
 const comicDetailsLikedKey = ValueKey<String>('comic-details-liked');
 const comicDetailsMigrateKey = ValueKey<String>('comic-details-migrate');
+const comicDetailsRetryKey = ValueKey<String>('comic-details-retry');
 
 String comicDetailsChapterIdentity(String sourceId, String chapterId) =>
     '$sourceId\u0000$chapterId';
@@ -315,6 +316,9 @@ final class _LocalComicDetailsScreenState
   Future<void> _open(_ChapterViewModel chapter) async {
     try {
       final entry = chapter.entry ?? await _ensure(chapter.sourceChapter!);
+      if (!_isRead(_library.readStates, entry)) {
+        await _setRead(entry, true);
+      }
       await widget.onOpenChapter(entry, refreshRemote: false);
     } on Object catch (error, stackTrace) {
       if (mounted) {
@@ -660,6 +664,35 @@ final class _RemoteComicDetailsScreenState
     return entry;
   }
 
+  Future<void> _setRead(ImportedLibraryEntry entry, bool isRead) async {
+    final identity = comicDetailsChapterIdentity(
+      entry.chapter.sourceId,
+      entry.chapter.chapterId,
+    );
+    final previous = _library.readStates;
+    final next = <String, ChapterReadState>{
+      ...previous,
+      identity: ChapterReadState(
+        sourceId: entry.chapter.sourceId,
+        comicId: entry.chapter.comicId,
+        chapterId: entry.chapter.chapterId,
+        isRead: isRead,
+        updatedAt: DateTime.now().toUtc(),
+      ),
+    };
+    if (mounted) {
+      setState(() => _library = _library.copyWith(readStates: next));
+    }
+    try {
+      await widget.onReadChanged(entry, isRead);
+    } on Object {
+      if (mounted) {
+        setState(() => _library = _library.copyWith(readStates: previous));
+      }
+      rethrow;
+    }
+  }
+
   Future<void> _open(Chapter chapter) async {
     final identity = comicDetailsChapterIdentity(
       widget.source.sourceId,
@@ -673,6 +706,9 @@ final class _RemoteComicDetailsScreenState
     }
     try {
       final entry = await _ensure(chapter);
+      if (!_isRead(_library.readStates, entry)) {
+        await _setRead(entry, true);
+      }
       await widget.onOpenChapter(entry, refreshRemote: false);
     } on Object catch (error, stackTrace) {
       if (mounted) {
@@ -728,7 +764,7 @@ final class _RemoteComicDetailsScreenState
     if (failure != null && _manifest == null) {
       return Scaffold(
         key: comicDetailsScreenKey,
-        appBar: AppBar(title: Text(widget.summary.title)),
+        appBar: AppBar(title: Text(widget.source.descriptor.name)),
         body: _DetailFailurePanel(
           failure: failure,
           onRetry: () => unawaited(_refresh(announce: false)),
@@ -803,7 +839,7 @@ final class _RemoteComicDetailsScreenState
         onRestoreUnread: (chapter) async {
           final entry = chapter.entry;
           if (entry != null) {
-            await widget.onReadChanged(entry, false);
+            await _setRead(entry, false);
           }
         },
       ),
@@ -855,7 +891,7 @@ final class _ComicDetailsScaffold extends StatelessWidget {
     return Scaffold(
       key: comicDetailsScreenKey,
       appBar: AppBar(
-        title: Text(title),
+        title: Text(sourceLabel),
         actions: <Widget>[
           if (onMigrateSource != null)
             IconButton(
@@ -1266,10 +1302,12 @@ final class _ComicDetailCoverState extends State<_ComicDetailCover> {
     }
   }
 
-  Future<Uint8List> _load() => widget.loader(
-        sourceId: widget.sourceId,
-        coverUri: widget.coverUri,
-        fallbackChapter: widget.fallbackChapter,
+  Future<Uint8List> _load() => Future<Uint8List>.sync(
+        () => widget.loader(
+          sourceId: widget.sourceId,
+          coverUri: widget.coverUri,
+          fallbackChapter: widget.fallbackChapter,
+        ),
       );
 
   @override
@@ -1371,6 +1409,7 @@ final class _DetailFailurePanel extends StatelessWidget {
               label: const Text('复制完整错误'),
             ),
             FilledButton.icon(
+              key: comicDetailsRetryKey,
               onPressed: onRetry,
               icon: const Icon(Icons.refresh),
               label: const Text('重试'),

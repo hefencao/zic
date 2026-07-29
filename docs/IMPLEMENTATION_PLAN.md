@@ -413,13 +413,14 @@
 2. Replace the demo-only home with Home/Bookshelf primary navigation while
    retaining diagnostic routes. **Implemented.**
 3. Add animated cover cards and reusable download waterline presentation.
-   **Implemented; remote session binding remains next.**
+   **Implemented; 0.25.0-dev.29 binds the shared cover to authoritative persistent task snapshots.**
 4. Add details preferences, chapter reverse order, read dimming and restore-
    unread swipe. **Implemented for grouped persisted chapters.**
 5. Group local/remote chapter records into comic-level detail models.
    **Implemented for persisted chapter records.**
 6. Bind per-chapter durable download commands to the comic-level projection.
-   **Implemented in 0.23.0-dev.27; authoritative cover progress/cancel/retry UI remains next.**
+   **Implemented in 0.23.0-dev.27; authoritative cover progress and cancel/retry/delete management
+   are implemented in 0.25.0-dev.29.**
 
 
 ## Android library management and Reader controls slice
@@ -435,7 +436,8 @@
    **Implemented; 0.23.0-dev.27 supplies the durable chapter-download callback.**
 6. Add page-local pinch/double-tap zoom with PageView gesture arbitration and navigation reset.
    **Implemented.**
-7. Move Reader chapter cache to durable storage. **Implemented in 0.23.0-dev.27; authoritative aggregate progress and download management remain next.**
+7. Move Reader chapter cache to durable storage. **Implemented in 0.23.0-dev.27; authoritative
+   aggregate progress and download management are implemented in 0.25.0-dev.29.**
 
 
 ## Remote comic source browser slice
@@ -449,7 +451,8 @@
    plus existing Reader artifact ingress. **Implemented with MangaDex.**
 5. Persist page identity independently of mutable remote delivery URLs and reconcile progress across
    refresh. **Implemented.**
-6. Add source account/auth settings and update polling. Durable chapter offline state is implemented in 0.23.0-dev.27; management/cancel/retry UI remains next.
+6. Add source account/auth settings and update polling. Durable chapter offline state is implemented
+   in 0.23.0-dev.27 and management/cancel/retry/delete UI in 0.25.0-dev.29; source update polling remains next.
 7. Evaluate a sandboxed Mihon/Keiyoushi adapter after defining plugin ABI, permissions, lifecycle and
    compatibility policy. **Later; do not embed extension code in Widgets.**
 
@@ -494,6 +497,7 @@
    the native-ID-only storage restriction.**
 6. Migrate all legacy keys to source-composite schema 5. **Implemented in 0.24.0-dev.28 with
    compatibility decoding and auditable ambiguity reporting.**
-7. Add download management/cancel/retry and authoritative aggregate progress. **Next.**
+7. Add download management/cancel/retry/delete and authoritative aggregate progress.
+   **Implemented in 0.25.0-dev.29 using the existing DownloadSession/artifact authority.**
 8. Add target-source side-by-side candidate comparison before migration. Search and manual-ID selection
    already exist; cover/author/chapter-sample comparison remains next.
