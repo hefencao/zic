@@ -10,6 +10,10 @@ import 'whole_comic_downloads.dart';
 const downloadManagerScreenKey = ValueKey<String>('download-manager-screen');
 const downloadManagerRefreshKey = ValueKey<String>('download-manager-refresh');
 const downloadQueuePolicyKey = ValueKey<String>('download-queue-policy');
+const downloadCacheTrimKey = ValueKey<String>('download-cache-trim');
+const downloadCacheClearKey = ValueKey<String>('download-cache-clear');
+const _defaultCacheMaxBytes = 512 * 1024 * 1024;
+const _defaultCacheTargetBytes = 384 * 1024 * 1024;
 
 Key downloadManagerTaskKey(String identity) =>
     ValueKey<String>('download-task:$identity');
@@ -59,6 +63,13 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   StreamSubscription<WholeComicQueueSnapshot>? _wholeComicSubscription;
   late WholeComicQueueSnapshot _wholeComicSnapshot;
   bool _loading = true;
+  bool _cacheBusy = false;
+  ChapterCacheUsage? _cacheUsage;
+
+  ChapterCacheMaintenance? get _cacheMaintenance {
+    final downloads = widget.downloads;
+    return downloads is ChapterCacheMaintenance ? downloads : null;
+  }
 
   @override
   void initState() {
@@ -105,9 +116,12 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       setState(() => _loading = true);
     }
     try {
+      final maintenance = _cacheMaintenance;
+      final usageFuture = maintenance?.inspectCacheUsage();
       final snapshots = await Future.wait<ChapterDownloadSnapshot>(
         _entries.values.map(widget.downloads.inspect),
       );
+      final usage = usageFuture == null ? null : await usageFuture;
       if (!mounted) {
         return;
       }
@@ -115,6 +129,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
         for (final snapshot in snapshots) {
           _snapshots[snapshot.identity] = snapshot;
         }
+        _cacheUsage = usage;
       });
     } on Object catch (error) {
       if (mounted) {
@@ -207,6 +222,94 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _trimCache() async {
+    final maintenance = _cacheMaintenance;
+    if (maintenance == null || _cacheBusy) {
+      return;
+    }
+    setState(() => _cacheBusy = true);
+    try {
+      final report = await maintenance.trimCache(
+        maxBytes: _defaultCacheMaxBytes,
+        targetBytes: _defaultCacheTargetBytes,
+      );
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '缓存整理完成：释放 ${_formatBytes(report.releasedBytes)}，'
+            '剩余 ${_formatBytes(report.remainingBytes)}',
+          ),
+        ),
+      );
+      await _reload();
+    } on Object catch (error) {
+      if (mounted) {
+        _showError(error);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _cacheBusy = false);
+      }
+    }
+  }
+
+  Future<void> _clearCache() async {
+    final maintenance = _cacheMaintenance;
+    if (maintenance == null || _cacheBusy) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('清除离线缓存？'),
+        content: const Text(
+          '将删除当前未被下载任务占用的离线页面。漫画、章节、阅读进度和已读状态不会删除。',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            key: downloadCacheClearKey,
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('清除缓存'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+    setState(() => _cacheBusy = true);
+    try {
+      final report = await maintenance.clearCache();
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '已释放 ${_formatBytes(report.releasedBytes)}，'
+            '${report.skippedBusy} 个活动文件被保留',
+          ),
+        ),
+      );
+      await _reload();
+    } on Object catch (error) {
+      if (mounted) {
+        _showError(error);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _cacheBusy = false);
+      }
+    }
   }
 
   Future<void> _editQueuePolicy() async {
@@ -348,7 +451,9 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       ),
       body: RefreshIndicator(
         onRefresh: _reload,
-        child: snapshots.isEmpty && _wholeComicSnapshot.jobs.isEmpty
+        child: snapshots.isEmpty &&
+                _wholeComicSnapshot.jobs.isEmpty &&
+                _cacheMaintenance == null
             ? ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
                 children: const <Widget>[
@@ -362,6 +467,15 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.symmetric(vertical: 8),
                 children: <Widget>[
+                  if (_cacheMaintenance != null) ...<Widget>[
+                    _DownloadCacheSummary(
+                      usage: _cacheUsage,
+                      busy: _cacheBusy,
+                      onTrim: _trimCache,
+                      onClear: _clearCache,
+                    ),
+                    const Divider(height: 24),
+                  ],
                   if (_wholeComicSnapshot.jobs.isNotEmpty) ...<Widget>[
                     const _DownloadSectionHeader(title: '整本下载队列'),
                     for (final job in _wholeComicSnapshot.jobs)
@@ -409,6 +523,71 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
                   ],
                 ],
               ),
+      ),
+    );
+  }
+}
+
+final class _DownloadCacheSummary extends StatelessWidget {
+  const _DownloadCacheSummary({
+    required this.usage,
+    required this.busy,
+    required this.onTrim,
+    required this.onClear,
+  });
+
+  final ChapterCacheUsage? usage;
+  final bool busy;
+  final VoidCallback onTrim;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = usage;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 8, 8),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text('离线缓存', style: Theme.of(context).textTheme.titleMedium),
+                Text(
+                  current == null
+                      ? '正在统计缓存…'
+                      : '${_formatBytes(current.bytes)} · ${current.entries} 个页面文件',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                Text(
+                  '超过 512 MiB 时可整理到 384 MiB；活动下载不会被清理。',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+          if (busy)
+            const Padding(
+              padding: EdgeInsets.all(12),
+              child: SizedBox.square(
+                dimension: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          else ...<Widget>[
+            IconButton(
+              key: downloadCacheTrimKey,
+              tooltip: '整理离线缓存',
+              onPressed: onTrim,
+              icon: const Icon(Icons.auto_delete_outlined),
+            ),
+            IconButton(
+              tooltip: '清除可回收缓存',
+              onPressed: onClear,
+              icon: const Icon(Icons.delete_sweep_outlined),
+            ),
+          ],
+        ],
       ),
     );
   }

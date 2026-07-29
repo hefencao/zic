@@ -110,6 +110,44 @@ abstract interface class ChapterDownloadService {
   Future<void> close();
 }
 
+final class ChapterCacheUsage {
+  const ChapterCacheUsage({
+    required this.bytes,
+    required this.entries,
+  })  : assert(bytes >= 0),
+        assert(entries >= 0);
+
+  final int bytes;
+  final int entries;
+}
+
+final class ChapterCacheMaintenanceReport {
+  const ChapterCacheMaintenanceReport({
+    required this.beforeBytes,
+    required this.releasedBytes,
+    required this.remainingBytes,
+    required this.evictedEntries,
+    required this.skippedBusy,
+  });
+
+  final int beforeBytes;
+  final int releasedBytes;
+  final int remainingBytes;
+  final int evictedEntries;
+  final int skippedBusy;
+}
+
+abstract interface class ChapterCacheMaintenance {
+  Future<ChapterCacheUsage> inspectCacheUsage();
+
+  Future<ChapterCacheMaintenanceReport> trimCache({
+    required int maxBytes,
+    required int targetBytes,
+  });
+
+  Future<ChapterCacheMaintenanceReport> clearCache();
+}
+
 typedef ChapterPageLoader = Future<Uint8List> Function(
   ImportedLibraryEntry entry,
   int pageIndex,
@@ -119,7 +157,8 @@ typedef ChapterPageLoader = Future<Uint8List> Function(
 /// durable platform store (for example widget tests). It owns complete page
 /// bytes before publishing completion and exposes the same task lifecycle as
 /// the persistent implementation.
-final class MemoryChapterDownloadService implements ChapterDownloadService {
+final class MemoryChapterDownloadService
+    implements ChapterDownloadService, ChapterCacheMaintenance {
   MemoryChapterDownloadService({required ChapterPageLoader pageLoader})
       : _pageLoader = pageLoader;
 
@@ -345,6 +384,87 @@ final class MemoryChapterDownloadService implements ChapterDownloadService {
   }
 
   @override
+  Future<ChapterCacheUsage> inspectCacheUsage() async {
+    _requireOpen();
+    return ChapterCacheUsage(
+      bytes: _memoryCacheBytes,
+      entries: _chapters.length,
+    );
+  }
+
+  @override
+  Future<ChapterCacheMaintenanceReport> trimCache({
+    required int maxBytes,
+    required int targetBytes,
+  }) async {
+    _requireOpen();
+    if (maxBytes < 0 || targetBytes < 0 || targetBytes > maxBytes) {
+      throw ArgumentError('invalid chapter cache limits');
+    }
+    final before = _memoryCacheBytes;
+    if (before <= maxBytes) {
+      return ChapterCacheMaintenanceReport(
+        beforeBytes: before,
+        releasedBytes: 0,
+        remainingBytes: before,
+        evictedEntries: 0,
+        skippedBusy: 0,
+      );
+    }
+    return _trimMemoryCache(beforeBytes: before, targetBytes: targetBytes);
+  }
+
+  @override
+  Future<ChapterCacheMaintenanceReport> clearCache() async {
+    _requireOpen();
+    return _trimMemoryCache(
+      beforeBytes: _memoryCacheBytes,
+      targetBytes: 0,
+    );
+  }
+
+  ChapterCacheMaintenanceReport _trimMemoryCache({
+    required int beforeBytes,
+    required int targetBytes,
+  }) {
+    var remaining = beforeBytes;
+    var evicted = 0;
+    var skippedBusy = 0;
+    for (final identity in _chapters.keys.toList(growable: false)) {
+      if (remaining <= targetBytes) {
+        break;
+      }
+      if (_runs.containsKey(identity)) {
+        skippedBusy++;
+        continue;
+      }
+      final pages = _chapters.remove(identity);
+      if (pages == null) {
+        continue;
+      }
+      remaining -= pages.fold<int>(0, (sum, page) => sum + page.lengthInBytes);
+      final snapshot = _snapshots[identity];
+      if (snapshot?.phase == ChapterDownloadPhase.complete) {
+        _snapshots.remove(identity);
+      }
+      evicted++;
+    }
+    return ChapterCacheMaintenanceReport(
+      beforeBytes: beforeBytes,
+      releasedBytes: beforeBytes - remaining,
+      remainingBytes: remaining,
+      evictedEntries: evicted,
+      skippedBusy: skippedBusy,
+    );
+  }
+
+  int get _memoryCacheBytes => _chapters.values.fold<int>(
+        0,
+        (sum, pages) => sum +
+            pages.fold<int>(0, (pageSum, page) => pageSum + page.lengthInBytes),
+      );
+
+  @override
   Future<void> close() async {
     if (_closed) {
       return;
@@ -378,30 +498,34 @@ final class MemoryChapterDownloadService implements ChapterDownloadService {
 }
 
 final class PersistentChapterDownloadService
-    implements ChapterDownloadService {
+    implements ChapterDownloadService, ChapterCacheMaintenance {
   PersistentChapterDownloadService._({
     required DownloadRegistry registry,
     required SqliteIndex index,
     required IoTransport transport,
+    required CacheOps cacheOps,
   })  : _registry = registry,
         _index = index,
-        _transport = transport;
+        _transport = transport,
+        _cacheOps = cacheOps;
 
   static Future<PersistentChapterDownloadService> open(String root) async {
     final layout = CacheLayout('$root/offline_chapters');
     final index = SqliteIndex(layout.dbPath);
     await index.open();
+    final clock = SystemClock();
     final registry = DownloadRegistry(
       layout: layout,
-      clock: SystemClock(),
+      clock: clock,
       index: index,
     );
     await registry.restoreIndexed();
     return PersistentChapterDownloadService._(
       registry: registry,
       index: index,
+      cacheOps: CacheOps(index: index, registry: registry, clock: clock),
       transport: IoTransport(
-        http: HttpTransport(userAgent: 'zic/0.29.0'),
+        http: HttpTransport(userAgent: 'zic/0.30.0'),
       ),
     );
   }
@@ -409,6 +533,7 @@ final class PersistentChapterDownloadService
   final DownloadRegistry _registry;
   final SqliteIndex _index;
   final IoTransport _transport;
+  final CacheOps _cacheOps;
   final StreamController<ChapterDownloadSnapshot> _changes =
       StreamController<ChapterDownloadSnapshot>.broadcast(sync: true);
   final Map<String, CancelToken> _tokens = <String, CancelToken>{};
@@ -648,6 +773,57 @@ final class PersistentChapterDownloadService
       builder.add(chunk);
     }
     return builder.takeBytes();
+  }
+
+  @override
+  Future<ChapterCacheUsage> inspectCacheUsage() async {
+    _requireOpen();
+    final records = await _index.list();
+    return ChapterCacheUsage(
+      bytes: records.fold<int>(0, (sum, record) => sum + record.bytes),
+      entries: records.length,
+    );
+  }
+
+  @override
+  Future<ChapterCacheMaintenanceReport> trimCache({
+    required int maxBytes,
+    required int targetBytes,
+  }) async {
+    _requireOpen();
+    final before = await _index.totalBytes();
+    final report = await _cacheOps.trim(
+      CacheLimits(maxBytes: maxBytes, targetBytes: targetBytes),
+    );
+    _forgetDerivedCompletePhases();
+    return ChapterCacheMaintenanceReport(
+      beforeBytes: before,
+      releasedBytes: report.releasedBytes,
+      remainingBytes: report.remainingBytes,
+      evictedEntries: report.evicted,
+      skippedBusy: report.skippedBusy,
+    );
+  }
+
+  @override
+  Future<ChapterCacheMaintenanceReport> clearCache() async {
+    _requireOpen();
+    final before = await _index.totalBytes();
+    final report = await _cacheOps.clear();
+    _forgetDerivedCompletePhases();
+    return ChapterCacheMaintenanceReport(
+      beforeBytes: before,
+      releasedBytes: report.releasedBytes,
+      remainingBytes: report.remainingBytes,
+      evictedEntries: report.evicted,
+      skippedBusy: report.skippedBusy,
+    );
+  }
+
+  void _forgetDerivedCompletePhases() {
+    _terminalPhases.removeWhere(
+      (_, phase) => phase == ChapterDownloadPhase.complete,
+    );
   }
 
   @override

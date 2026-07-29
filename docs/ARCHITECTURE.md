@@ -911,3 +911,33 @@ keeps the last trusted environment snapshot; unsupported hosts use an explicit i
 
 只有精确匹配章节会进入后续阅读位置与已读状态迁移。仅序号匹配只作为风险证据展示，不会因用户确认而
 自动升级为可迁移状态。目标源已有偏好和阅读状态继续优先保留，来源 URL、离线 artifact 和原来源记录不复制、不删除。
+
+## 12. App composition and bounded read caches
+
+The Home shell is divided by ownership rather than by arbitrary file size:
+
+```text
+DemoHome                      navigation / dialogs / use cases
+  -> HomeLibrarySession       durable library projection + subscriptions
+  -> demo_home_views.dart     Home and Bookshelf composition
+  -> home_widgets.dart        reusable cover/shelf/action presentation
+```
+
+`HomeLibrarySession` depends on Store and download interfaces and publishes immutable projections. It does not own
+Navigator state, dialogs or selection gestures. View extensions may read the coordinator state but cannot open the
+database or create DownloadSessions. This keeps source, storage and Reader lifecycles outside large Widget build
+methods.
+
+Two bounded encoded-byte caches serve different lifetimes. `CoverMemoryCache` is an App-session LRU keyed by exact
+source-composite cover identity. It coalesces concurrent requests and is cleared with the Home owner.
+`ReaderPageBytesCache` is per Reader session, retains a small current/adjacent working set and cancels obsolete warmups.
+Neither cache stores decoded animation frames or GPU textures. Native decode/frame holders, texture producers and
+promoted artifact ownership remain in their existing media/storage layers.
+
+Reader page Widget keys are derived from stable `PageAsset.assetKey`, not current-page status. `PageView` may retain
+adjacent pages implicitly, while current/next/previous encoded bytes warm in the bounded Reader cache. A role change
+therefore updates demand and presentation without forcing an identical media subtree to be destroyed and recreated.
+
+Persistent offline cache maintenance is exposed by `ChapterCacheMaintenance`, implemented through the existing cache
+index and `CacheOps`. Download Manager submits usage/trim/clear commands; it never mutates library metadata, reading
+progress, read state or source catalogs.

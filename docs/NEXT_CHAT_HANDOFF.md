@@ -2,26 +2,26 @@
 
 ## Sole baseline
 
-Continue only from `zic_v0.29.0-dev.34_source-migration-comparison.zip`.
+Continue only from `zic_v0.30.0-dev.35_architecture-cache-reader-retention.zip`.
 Do not merge or copy files from an earlier zic archive.
 
 ## Current implementation
 
-- `0.29.0-dev.34` adds a read-only, side-by-side source migration comparison before any durable target write.
-- Current and target works show cover, authors, source/native identity, chapter count and reading direction.
-- Catalog-owned evidence reports normalized title/author overlap, exact and sequence-only matches, unmatched
-  source/target counts, bounded chapter samples and explicit risk flags.
-- The migration copy action remains disabled until the target identity and risks are explicitly acknowledged.
-- Comparison cover futures are cached for the dialog lifetime; acknowledgement rebuilds do not repeat cover loads.
-- The existing conservative migration remains intact: only exact chapter matches can transfer progress/read state,
-  target state wins, source URLs/offline artifacts are not copied and the original source is retained.
-- Download Manager's chapter-list loop advances correctly, and `WholeComicDownloadQueue.close()` drains active
-  chapter work before final persistence and shutdown.
-- Whole-comic downloads remain a durable policy-aware scheduler over the existing chapter service and promoted
-  artifacts; Android runtime signals provide metered-network and charging gates.
-- Home, Bookshelf and Comic Sources remain the three primary destinations. Local and remote details retain
-  separate state ownership while composing shared presentation and using exact `sourceId + comicId` routing.
-- SQLite remains schema 6 with source-composite library identity and retained/acknowledgeable migration evidence.
+- `0.30.0-dev.35` begins the structural App refactor required for performance work.
+- `demo_home.dart` is reduced from more than 3300 lines to an orchestration-sized coordinator under an enforced
+  first-stage 1800-line budget.
+- `HomeLibrarySession` owns durable library/source projection, errors, loading and download subscriptions.
+- `demo_home_views.dart` owns Home/Bookshelf composition and management interaction; `home_widgets.dart` owns reusable
+  cover/shelf/action components.
+- `CoverMemoryCache` coalesces concurrent loads and enforces entry/byte LRU limits. Cover decode width follows rendered
+  size/DPR and replacement uses gapless frame retention.
+- `ReaderPageBytesCache` keeps a bounded encoded-byte current/next/previous working set, shares in-flight loads and
+  cancels obsolete warmups. Stable page keys and implicit adjacent retention avoid remounting media on role changes.
+- Decoded frame, texture, DownloadSession and promoted artifact ownership remains unchanged.
+- `ChapterCacheMaintenance` exposes persistent offline usage, trim and clear through the existing storage index and
+  `CacheOps`; Download Manager is presentation/command only.
+- Source migration comparison, source-composite schema 6, durable whole-comic scheduling and Android policy signals
+  remain intact.
 
 ## Validation completed in this environment
 
@@ -33,20 +33,19 @@ python3 -m py_compile tool/*.py
 bash ./tool/check_native_header.sh
 ```
 
-Additional delivery checks validate package versions, JSON/YAML/TOML syntax, archive cleanliness, baseline patch
-reproducibility and a clean re-extraction. This container does not contain Flutter, Dart, Cargo, Gradle, Android SDK
-or Android NDK, so no claim is made that their builds/tests ran.
+Additional delivery checks validate versions, JSON/YAML/TOML syntax, archive cleanliness, baseline patch
+reproducibility and clean re-extraction. This container does not contain Flutter, Dart, Cargo, Gradle, Android SDK or
+Android NDK, so no claim is made that their builds/tests ran.
 
 ## Required external validation
 
 ```bash
 flutter pub get
-flutter test packages/catalog/test/library_comic_test.dart
-flutter test apps/app/test/source_migration_compare_test.dart
-flutter test apps/app/test/whole_comic_downloads_test.dart
-flutter test apps/app/test/chapter_downloads_test.dart
-flutter test apps/app/test/library_ui_test.dart
-flutter test apps/app/test/source_browser_test.dart
+flutter test apps/app/test/cover_cache_test.dart
+flutter test apps/app/test/reader_page_cache_test.dart
+flutter test apps/app/test/home_library_session_test.dart
+flutter test apps/app/test/chapter_cache_maintenance_test.dart
+flutter test packages/reader/test/reader_navigation_test.dart
 flutter test apps/app/test/reader_controls_test.dart
 flutter test apps/app/test/app_smoke_test.dart
 bash ./tool/test_dart.sh
@@ -61,9 +60,10 @@ bash ./tool/build_android.sh release
 
 ## Next mainline work
 
-1. Add source update ingestion and durable upstream timestamps so Home updates reflect actual source changes.
-2. Add source-specific typed settings for translation languages and data-saver mode.
-3. Discover/manage orphaned offline artifacts without weakening DownloadSession ownership rules.
-4. Define a sandboxed Mihon/Keiyoushi adapter ABI, permissions and lifecycle before loading extensions.
-5. Revisit Reader playback-control presentation as one coherent design rather than changing it in response to
-   isolated Widget-test timing failures.
+1. Continue decomposition: extract local/remote details and source-browser orchestration from App route files without
+   merging their distinct state owners.
+2. Add decode/present telemetry budgets around page transitions, then use measurements to tune native decoded-frame
+   and texture retention rather than adding another App-owned decoded cache.
+3. Add source update ingestion and durable upstream timestamps so Home updates reflect actual source changes.
+4. Add source-specific typed settings for translation languages and data-saver mode.
+5. Discover/manage orphaned offline artifacts without weakening DownloadSession ownership rules.

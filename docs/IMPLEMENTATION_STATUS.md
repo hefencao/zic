@@ -1,3 +1,22 @@
+## Current iteration — home decomposition and bounded cache ownership
+
+The App Home shell is no longer a single 3300+ line state owner. `HomeLibrarySession` owns durable library/source
+projection and download subscriptions; `demo_home_views.dart` owns Home/Bookshelf composition; `home_widgets.dart`
+owns reusable cover, shelf and action surfaces; `DemoHome` retains navigation, dialogs and cross-feature use cases.
+A repository gate keeps the coordinator below the first-stage 1800-line budget.
+
+Cover bytes now use `CoverMemoryCache`, a byte- and entry-bounded LRU that coalesces concurrent requests and removes
+failed loads. Cover decode width follows the actual rendered width and device pixel ratio, and image replacement keeps
+the previous frame rather than flashing an empty surface. Reader uses `ReaderPageBytesCache` for bounded encoded-byte
+warmup of the current/next/previous pages. Shared loads survive one Widget caller leaving, obsolete background warmups
+are cancelled, adjacent pages are retained implicitly, and page keys no longer change when current-page role changes.
+Decoded frames, textures, DownloadSessions and promoted artifacts keep their existing owners.
+
+`ChapterCacheMaintenance` exposes usage, trim and clear through the existing storage index/`CacheOps` boundary.
+Download Manager presents those commands but does not delete library metadata, progress or read state. New deterministic
+regressions cover cover/page cache coalescing and eviction, Home session projection, persistent cache maintenance and
+stable Reader page identity.
+
 ## Current iteration — source migration candidate comparison
 
 Cross-source migration now stops at a read-only evidence boundary before any target comic, preference, chapter,

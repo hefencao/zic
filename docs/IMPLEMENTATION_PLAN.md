@@ -21,12 +21,13 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.29.0-dev.34）
+## 当前应用主线（0.30.0-dev.35）
 
-- 跨源迁移在任何持久写入前展示来源与目标作品的并排证据。
-- 比较层只读，不拥有 Store；原生身份、标题/作者、阅读方向、章节匹配样本与风险必须显式展示。
-- 仅精确章节匹配可迁移阅读状态，目标源已有状态优先，来源 URL 与离线 artifact 不复制。
-- 下一主线是漫画源更新摄取与持久上游时间戳，使首页“更新漫画”基于真实来源变化而不是本地访问时间。
+- 第一阶段重构将 `DemoHome` 拆为应用编排、持久书架会话、Home/Bookshelf 视图和复用 Widget。
+- 封面与 Reader 编码页字节必须使用有界缓存、并发加载合并和明确淘汰；解码帧/纹理仍由 media runtime 持有。
+- Reader 当前页及相邻页进行有界预热，页面 Widget 身份不得因 current/near 角色变化而改变。
+- 持久离线缓存整理继续经过 storage index 与 `CacheOps`，UI 不直接删除 artifact。
+- 下一阶段继续拆分详情/来源浏览组合层，并基于 telemetry 修正 native decode、frame deadline 与 texture 保留策略。
 
 ## 2. 阶段划分
 

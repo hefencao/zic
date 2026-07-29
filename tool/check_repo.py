@@ -173,7 +173,10 @@ def check_animated_demo() -> None:
         fail('app must depend on the local_media source package')
     if '- assets/demo/animated/' not in pubspec:
         fail('Animated WebP assets are not declared in the app pubspec')
-    home = (app / 'lib' / 'demo_home.dart').read_text(encoding='utf-8')
+    home = '\n'.join(
+        (app / 'lib' / name).read_text(encoding='utf-8')
+        for name in ('demo_home.dart', 'demo_home_views.dart')
+    )
     for label in (
         '100 页静态章节',
         'Reader 媒体管线',
@@ -605,7 +608,10 @@ def check_compile_regressions() -> None:
         if required not in imported_chapter:
             fail(f'chapter aggregate metadata is incomplete: {required}')
 
-    home = (ROOT / 'apps/app/lib/demo_home.dart').read_text(encoding='utf-8')
+    home = '\n'.join(
+        (ROOT / 'apps/app/lib' / name).read_text(encoding='utf-8')
+        for name in ('demo_home.dart', 'demo_home_views.dart', 'home_widgets.dart')
+    )
     for required in (
         'typedef WebpPicker = Future<PickedWebp?> Function()',
         'final class PickedWebp',
@@ -796,7 +802,15 @@ def check_compile_regressions() -> None:
     if 'getDirectoryPath' in local_media_kotlin or 'FileUtils.getPathFromUri' in local_media_kotlin:
         fail('Android scoped document tree bridge must not reconstruct raw filesystem paths')
 
-    demo_home = (ROOT / 'apps/app/lib/demo_home.dart').read_text(encoding='utf-8')
+    demo_home = '\n'.join(
+        (ROOT / 'apps/app/lib' / name).read_text(encoding='utf-8')
+        for name in (
+            'demo_home.dart',
+            'demo_home_views.dart',
+            'home_widgets.dart',
+            'home_library_session.dart',
+        )
+    )
     if 'super.key,' not in demo_home:
         fail('_DemoCard must accept and forward stable semantic keys')
     if "import 'package:bridge/bridge.dart' show parseWebpInfo;" not in contract_test:
@@ -917,7 +931,9 @@ def check_compile_regressions() -> None:
         'layout: _workspace.layout',
         '_workspace.readArtifact(',
         'await _workspace.dispose()',
-        'widget.mediaBytesLoader ?? _loadMediaBytes',
+        'ReaderPageBytesCache',
+        '_loadMediaBytesCached(',
+        '_schedulePageWarmup(',
         'addSnapshotListener(listener)',
         '_binding?.detach(',
         'AssetBundleTransport(rootBundle)',
@@ -1391,7 +1407,41 @@ def check_compile_regressions() -> None:
         if required not in migration:
             fail(f'comic source migration contract is incomplete: {required}')
 
-    home = (ROOT / 'apps/app/lib/demo_home.dart').read_text(encoding='utf-8')
+    home_path = ROOT / 'apps/app/lib/demo_home.dart'
+    home = '\n'.join(
+        path.read_text(encoding='utf-8')
+        for path in (
+            home_path,
+            ROOT / 'apps/app/lib/demo_home_views.dart',
+            ROOT / 'apps/app/lib/home_widgets.dart',
+            ROOT / 'apps/app/lib/home_library_session.dart',
+            ROOT / 'apps/app/lib/cover_cache.dart',
+        )
+    )
+    if len(home_path.read_text(encoding='utf-8').splitlines()) > 1800:
+        fail('demo_home.dart exceeded the first-stage decomposition budget')
+    for required in (
+        "part 'demo_home_views.dart';",
+        'HomeLibrarySession(',
+        'CoverMemoryCache()',
+    ):
+        if required not in home:
+            fail(f'home decomposition/cache contract is incomplete: {required}')
+    cover_cache = (ROOT / 'apps/app/lib/cover_cache.dart').read_text(encoding='utf-8')
+    for required in ('maxBytes', 'maxEntries', '_evict(', 'Future<Uint8List> load('):
+        if required not in cover_cache:
+            fail(f'cover cache must remain bounded and coalescing: {required}')
+    page_cache = (ROOT / 'apps/app/lib/reader_page_cache.dart').read_text(encoding='utf-8')
+    for required in ('maxBytes', 'maxEntries', 'retainWarmKeys(', 'Future<void> warm('):
+        if required not in page_cache:
+            fail(f'Reader page cache contract is incomplete: {required}')
+    chapter_downloads = (ROOT / 'apps/app/lib/chapter_downloads.dart').read_text(encoding='utf-8')
+    for required in ('ChapterCacheMaintenance', 'CacheOps(', 'inspectCacheUsage()'):
+        if required not in chapter_downloads:
+            fail(f'persistent cache maintenance contract is incomplete: {required}')
+    reader_view = (ROOT / 'packages/reader/lib/src/reader_view.dart').read_text(encoding='utf-8')
+    if "'zoom:${chapter.pages[index].assetKey}'" not in reader_view:
+        fail('Reader page identity must not depend on current/near role')
     if 'String? _managedComicId;' in home:
         fail('bookshelf management selection must use source-aware comic identity')
 

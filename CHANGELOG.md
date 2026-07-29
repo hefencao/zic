@@ -1,3 +1,11 @@
+## 0.30.0-dev.35 — home decomposition and bounded media caches
+
+- Split the 3300+ line Home shell into durable `HomeLibrarySession`, Home/Bookshelf view composition, reusable cover/shelf Widgets and a smaller navigation/use-case coordinator. Enforce a first-stage line budget on `demo_home.dart`.
+- Add bounded, concurrent-load-coalescing LRU cover bytes instead of the previous unbounded process-lifetime map. Cover Widget decode targets now follow rendered size/DPR and retain the previous frame during replacement.
+- Add a bounded Reader encoded-page cache with current/next/previous warmup, shared in-flight loads and obsolete-warmup cancellation. Stable page keys and implicit adjacent retention avoid remounting media solely on page-role changes.
+- Expose persistent chapter-cache usage, trim and clear through Download Manager while keeping artifact/index ownership in storage and `ChapterDownloadService`. Completed/download/Reader state is not owned by the cache UI.
+- Add deterministic cache, eviction, warmup, session projection, cache-maintenance and page-identity regressions. This iteration does not move native decode/frame/texture ownership into the App.
+
 ## 0.29.0-dev.34 — source migration candidate comparison
 
 - Add an authoritative pre-write comparison for cross-source comic migration. The current and target works are shown side by side with cover, authors, source/native identity, reading direction and chapter counts.

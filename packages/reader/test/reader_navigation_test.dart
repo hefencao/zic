@@ -59,6 +59,41 @@ void main() {
     expect(controller.requestedIndex, isNull);
   });
 
+  testWidgets('page identity stays mounted when current page changes', (
+    tester,
+  ) async {
+    final chapter = _chapter(pageCount: 2);
+    final controller = ReaderController(
+      sessionId: 'reader-retention-test',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: FakeClock(),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderView(
+          controller: controller,
+          clock: FakeClock(),
+          pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
+            color: Colors.black,
+            child: Text(asset.pageId),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    const pageZeroKey = ValueKey<String>('zoom:chapter/page-0');
+    final before = tester.element(find.byKey(pageZeroKey));
+    controller.requestPage(1);
+    await tester.pump();
+    final after = tester.element(find.byKey(pageZeroKey));
+
+    expect(identical(before, after), isTrue);
+  });
+
   testWidgets('ReaderView rotates pages and supports double-tap zoom',
       (tester) async {
     final chapter = _chapter(pageCount: 2);

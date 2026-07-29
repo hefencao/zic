@@ -14,6 +14,7 @@ import 'package:transport/transport.dart';
 
 import 'asset_bundle_transport.dart';
 import 'media_load_token.dart';
+import 'reader_page_cache.dart';
 
 const readerTopControlsKey = ValueKey<String>('reader-top-controls');
 const readerBottomControlsKey = ValueKey<String>('reader-bottom-controls');
@@ -175,6 +176,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   late final LoaderTransport _loaderTransport;
   late final DownloadRegistry _downloads;
   late final LiveCoordinator _coordinator;
+  late final ReaderPageBytesCache _pageBytesCache;
   ReaderBinding? _binding;
   ReaderController? _reader;
   DecodeTarget? _target;
@@ -185,6 +187,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   bool _controlsVisible = false;
   bool _downloading = false;
   bool _downloaded = false;
+  int? _lastWarmIndex;
 
   @override
   void initState() {
@@ -208,6 +211,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       clock: _clock,
       traceSink: _trace,
     );
+    _pageBytesCache = ReaderPageBytesCache();
     _coordinator = LiveCoordinator(
       registry: _downloads,
       transportFor: _transportFor,
@@ -286,6 +290,11 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     _reader = reader;
     _lastProgressPage = reader.currentIndex;
     _lastProgressMode = _readerMode(reader.direction);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && identical(_reader, reader)) {
+        _schedulePageWarmup(reader.currentIndex);
+      }
+    });
   }
 
   ReadingProgress? _matchingInitialProgress() {
@@ -301,8 +310,12 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
 
   void _handleReaderProgress() {
     final reader = _reader;
+    if (reader == null) {
+      return;
+    }
+    _schedulePageWarmup(reader.currentIndex);
     final writer = widget.onProgressChanged;
-    if (reader == null || writer == null) {
+    if (writer == null) {
       return;
     }
     final mode = _readerMode(reader.direction);
@@ -383,7 +396,51 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     return _ioTransport;
   }
 
-  Future<Uint8List> _loadMediaBytes(
+  Future<Uint8List> _loadMediaBytesCached(
+    PageAsset asset,
+    MediaLoadToken token,
+  ) {
+    return _pageBytesCache.load(
+      asset.assetKey,
+      token,
+      (internalToken) =>
+          (widget.mediaBytesLoader ?? _loadMediaBytesUncached)(
+        asset,
+        internalToken,
+      ),
+    );
+  }
+
+  void _schedulePageWarmup(int currentIndex) {
+    if (_lastWarmIndex == currentIndex || widget.chapter.pages.isEmpty) {
+      return;
+    }
+    _lastWarmIndex = currentIndex;
+    final indices = <int>{
+      currentIndex,
+      if (currentIndex + 1 < widget.chapter.pages.length) currentIndex + 1,
+      if (currentIndex > 0) currentIndex - 1,
+    };
+    final assets = <PageAsset>[
+      for (final index in indices) widget.chapter.pages[index],
+    ];
+    _pageBytesCache.retainWarmKeys(
+      assets.map((asset) => asset.assetKey).toSet(),
+    );
+    for (final asset in assets) {
+      unawaited(
+        _pageBytesCache.warm(
+          asset.assetKey,
+          (token) => (widget.mediaBytesLoader ?? _loadMediaBytesUncached)(
+            asset,
+            token,
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<Uint8List> _loadMediaBytesUncached(
     PageAsset asset,
     MediaLoadToken token,
   ) async {
@@ -463,6 +520,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   }
 
   Future<void> _disposeRuntime() async {
+    await _pageBytesCache.close();
     await _coordinator.dispose();
     await _downloads.dispose();
     _ioTransport.close(force: true);
@@ -789,8 +847,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                 traceSink: _trace,
                 sessionId: reader.sessionId,
                 demandRevision: () => _binding?.revision ?? 0,
-                loadBytes: (token) =>
-                    (widget.mediaBytesLoader ?? _loadMediaBytes)(asset, token),
+                loadBytes: (token) => _loadMediaBytesCached(asset, token),
                 playback: _playback,
               ),
             );
