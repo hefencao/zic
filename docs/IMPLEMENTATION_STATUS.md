@@ -1,3 +1,11 @@
+## Current iteration — single image-stream ownership, active-run artifact priming and raw runtime channel
+
+Report 30 showed two separate shutdown symptoms: animated first-frame regressions remained in loading, and the later plain-file provider test did not complete before the Flutter test platform was manually stopped. Static file presentation had two listeners on the same provider: the product manually resolved a `FileImage` for readiness while the `Image` widget resolved it again for rendering. The manual stream is removed. Static ready is now published only by the renderer-owned `frameBuilder`; the routing regression verifies `FileImage` and zero Dart byte loading without waiting on platform decoding, then unmounts it. Animated tests and the cold-artifact test yield the real event queue for host codec/file work and explicitly tear down players so codec timers cannot leak into later tests.
+
+The promoted-artifact pool now treats `DownloadSession.beginRun` as the earliest authoritative cache-read signal. This starts the one exact persistent read while the replacement session restores its ephemeral workspace. Page media still only joins that read, and immediate snapshot delivery covers observers attached after the run began.
+
+The external plugin runtime now has a raw message boundary in addition to protocol v1 and the source adapter. `ExternalPluginRuntimeHandshake` validates schema, runtime identity and unique source identities. `MessageChannelExternalPluginRuntimeConnection` serializes every request, parses every response, checks request identity and provides joinable close. Future Mihon process/Binder or method-channel implementations and Venera isolate/native-engine ports must implement this boundary; concrete APK class loading and JavaScript evaluation remain unimplemented. Home startup telemetry is unchanged.
+
 ## Current iteration — versioned external runtime protocol and shared source adaptation
 
 The report-29 compile failure came from invoking `Duration.>` in a const initializer. `ExternalPluginRuntimeLimits` remains a const value object, while duration validation now runs at executor and session activation. Invalid limits still fail before any backend receives the inspected payload.

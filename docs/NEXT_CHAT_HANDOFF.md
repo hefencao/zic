@@ -2,19 +2,17 @@
 
 ## Sole baseline
 
-Continue only from `zic_v0.31.0-dev.45_versioned-runtime-protocol-source-adapter.zip`.
+Continue only from `zic_v0.31.0-dev.46_single-image-stream-active-run-artifact-prime-runtime-channel.zip`.
 Do not merge or copy files from an earlier zic archive.
 
 ## Current ownership and completed work
 
 - Keep the existing `home-startup` trace unchanged. The prior Home delay is not currently reproduced; no eager scan, prewarm or verbose release logging was added.
-- File-backed cover/local-image and authoritative promoted-artifact ownership from dev.44 remain unchanged.
-- `ExternalPluginRuntimeLimits` is const-capable; duration positivity is validated at activation because `Duration` relational operators are not const expressions on the supported Dart SDK range.
-- Mihon and Venera executors receive the exact inspected immutable payload and activate an `ExternalPluginRuntimeConnection`.
-- The shared protocol is schema version 1 and exposes only source discovery, browse, comic detail, chapter manifest and binary resource operations. Reader, navigation, demand, `DownloadSession`, cache maintenance and artifact APIs do not cross it.
-- `ExternalPluginRuntimeSession` adapts runtime descriptors to ordinary `mihon:`/`venera:` `BrowsableComicSource` identities and validates request IDs, response shape, source/comic/chapter/page identity and bounded response size.
-- Host timeout and concurrency limits are independent of backend promises. A timeout does not release a permit until the underlying backend call actually exits; queued permits are transferred FIFO without overcommit.
-- Session close is joinable, rejects queued calls, signals the isolated connection before draining actual work and closes invalid runtime handshakes.
+- Ordinary local static files use one renderer-owned `FileImage` stream. `LocalImagePlayer` does not manually resolve a second stream; actual `Image.frameBuilder` presentation publishes ready. WebP/GIF controlled players retain their separate codec ownership.
+- Widget regressions that depend on host codec/file work yield the real event queue without a guessed fixed delay and explicitly unmount codecs/providers. The plain-file routing test verifies zero Dart byte loading and does not conflate that contract with platform decoder completion.
+- Promoted page artifact reads start at authoritative `DownloadSession.beginRun`, before ephemeral workspace restore. Page media remains join-only and never creates an independent cache/network demand; immediate snapshot delivery covers late observers.
+- Mihon and Venera share protocol v1, one source adapter and now `ExternalPluginRuntimeMessageChannel` plus a versioned handshake. Raw responses are parsed and matched to the request ID; duplicate runtime source identities are rejected; close is joinable.
+- Runtime messages contain only protocol-safe primitives, maps/lists and `Uint8List`. Reader, navigation, demand, `DownloadSession`, cache maintenance and artifact objects do not cross the boundary.
 - Concrete Mihon class loading and Venera JavaScript execution remain unimplemented and unclaimed.
 
 ## Validation commands
@@ -27,9 +25,11 @@ bash -n tool/*.sh
 python3 -m py_compile tool/*.py
 bash ./tool/check_native_header.sh
 flutter pub get
-cd packages/plugin_host && dart test
+cd packages/downloads && dart test test/promoted_artifact_read_pool_test.dart
+cd ../plugin_host && dart test
 cd ../plugin_host_bridge && flutter test
-cd ../../
+cd ../../apps/app && flutter test test/local_image_preview_test.dart test/reader_artifact_cold_open_test.dart
+cd ../..
 bash ./tool/test_dart.sh
 bash ./tool/test_flutter.sh
 bash ./tool/analyze.sh
@@ -40,7 +40,8 @@ bash ./tool/build_android.sh release
 
 ## Next mainline work
 
-1. Implement the Android Mihon isolated backend behind `MihonIsolatedRuntimeBackend`: revalidate the exact payload hash, signer, package, version and ABI at process entry; load only normalized approved entry classes; identify Source versus SourceFactory after loading; translate extension calls to protocol version 1; and deterministically terminate the dedicated process/session.
-2. Implement the Venera backend behind `VeneraSandboxRuntimeBackend`: evaluate only the inspected script in a bounded engine; expose network/cookie/credential/storage through approved bridges; translate source calls to protocol version 1; and enforce timeout, heap, concurrency, response and teardown limits.
-3. Add protocol conformance fixtures shared by the future Mihon and Venera backends, including malformed wire payloads, cancellation/close, large binary resources and multi-source handshakes.
-4. Keep Home startup telemetry available but do not expand it unless the device issue returns with a captured trace.
+1. Re-run the focused local-image and cold-artifact tests first. If a host codec still fails, capture the first `decodeStarted/frameDecoded/framePresented` sequence rather than adding fixed pump durations.
+2. Implement the Android Mihon isolated backend behind `MihonIsolatedRuntimeBackend` and `ExternalPluginRuntimeMessageChannel`: revalidate the exact payload at process entry, load only approved entry classes, distinguish Source/SourceFactory after loading and translate calls to protocol v1.
+3. Implement the Venera sandbox backend behind `VeneraSandboxRuntimeBackend` and the same raw channel contract, with approved network/cookie/credential/storage bridges and deterministic teardown.
+4. Add protocol conformance fixtures shared by both backends, including malformed handshakes, duplicate source identities, mismatched request IDs, large binary resources, cancellation and close.
+5. Keep Home startup telemetry available but do not expand it unless the device issue returns with a captured trace.

@@ -96,16 +96,24 @@ final class PromotedArtifactReadPool {
         case DownloadState.disposed:
           _terminal.add(session.id);
           release(session.id);
-          break;
+          return;
+        case DownloadState.idle:
         case DownloadState.queued:
         case DownloadState.receiving:
-          _terminal.remove(session.id);
-          _prime(session.id);
-          break;
-        case DownloadState.idle:
         case DownloadState.sealed:
           _terminal.remove(session.id);
           break;
+      }
+
+      // beginRun() is the earliest authoritative ownership signal. Priming on
+      // activeRun lets a page join the persistent artifact while the session
+      // is still restoring its ephemeral workspace, instead of blocking first
+      // frame on file-system setup. queued/receiving remain explicit signals
+      // for alternative coordinators that do not expose the run transition.
+      if (snapshot.activeRun ||
+          snapshot.state == DownloadState.queued ||
+          snapshot.state == DownloadState.receiving) {
+        _prime(session.id);
       }
     }
 
@@ -116,9 +124,8 @@ final class PromotedArtifactReadPool {
   void _prime(DownloadId id) {
     final pending = read(id);
     // The session transport or page consumer will normally await the same
-    // Future. This
-    // listener only prevents an unhandled asynchronous error if the session is
-    // cancelled before either consumer attaches.
+    // Future. This listener only prevents an unhandled asynchronous error if
+    // the session is cancelled before either consumer attaches.
     unawaited(
       pending.then<void>(
         (_) {},

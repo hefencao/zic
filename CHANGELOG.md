@@ -1,3 +1,11 @@
+## 0.31.0-dev.46 — single image-stream ownership, active-run artifact priming and raw runtime channel
+
+- Close report-30's local-image test stall by removing the second manually resolved `FileImage` stream. Static image readiness now comes only from the renderer-owned `Image.frameBuilder`; the zero-copy file-routing regression verifies `FileImage` without waiting for a host codec and explicitly unmounts the provider.
+- Yield the real event queue for host codec work in animation and cold-artifact widget regressions, then explicitly unmount animated players so codecs/timers do not leak into later tests or suite shutdown. Product ready still means a frame was actually presented.
+- Prime promoted page artifacts at authoritative `DownloadSession.beginRun`, before ephemeral workspace restore, while keeping pages join-only. Add coverage for observers attached after a run already became active.
+- Add a raw, versioned external-plugin runtime message channel and handshake around protocol v1. Every call serializes across the boundary, validates response/request identity, rejects duplicate source identities and exposes joinable close without leaking Reader/download/artifact objects.
+- Preserve the existing Home startup trace unchanged, add regressions and ADR 0030. Concrete Mihon class loading and Venera JavaScript evaluation remain isolated backend work.
+
 ## 0.31.0-dev.45 — versioned external runtime protocol and shared source adapter
 
 - Close report-29's constant-evaluation blocker by keeping `ExternalPluginRuntimeLimits` const-capable while validating `Duration` positivity at executor/session activation instead of invoking relational operators in a const initializer.

@@ -21,7 +21,7 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.45）
+## 当前应用主线（0.31.0-dev.46）
 
 - 保留 Home/Bookshelf 的 Presentation 拆分，但禁止在 `apps/app/lib` 定义资源缓存、章节下载、页面保活或整本调度算法。
 - `resource_cache` 继续统一管理封面/图片响应、漫画详情、章节元数据和搜索结果。只有完整 `imageBytes` 可通过注入的 byte store 持久化；章节页面仍不进入该平面。
@@ -37,6 +37,9 @@
 - 首页冷启动必须先挂载 Flutter bootstrap surface，再异步打开持久服务；禁止在 `runApp` 前遍历恢复所有离线页面。read-state 使用单次批量查询，首页下载状态使用一次 index-only bulk projection，不得为徽标创建 session 或触碰页面文件；精确页面命令才 materialize/restore session。
 - 完整封面 warm hit 和普通本地静态图片优先传递不可变文件引用到 engine-facing ImageProvider，避免整文件进入 Dart heap。`content://`、动画和 Reader 页面继续使用各自受控字节/session 边界；不得把“避免 Dart copy”夸大为平台解码绝对 zero-copy。
 - Mihon/Venera inspector 必须针对同一不可变本地 payload 做实际长度和流式 SHA-256 检查。Mihon 元数据读取不得 class-load APK；Venera source key 发现不得执行 JavaScript，仓库 key 与脚本 metadata 必须一致。
+- 普通本地静态图片只能由 engine-facing `Image` 持有一个 `ImageStream`；不得为了观察 ready 再手动 `resolve` 同一 provider。ready 由 `frameBuilder` 的实际帧发布，文件路由测试只验证不进入 Dart 整文件字节路径并必须显式卸载。
+- promoted artifact 共享读取以权威 `DownloadSession.beginRun` 为最早启动信号，允许在临时 workspace restore 期间读取持久 artifact；页面仍只能 join，不能自行触发 cache/network demand。
+- Mihon/Venera isolated backend 必须通过 `ExternalPluginRuntimeMessageChannel` 交换 protocol-v1 基础值/`Uint8List` 消息。handshake source identity、schema 和每次 response requestId 在跨边界处验证；不得返回进程内 zic domain/session 对象。
 
 ## 2. 阶段划分
 

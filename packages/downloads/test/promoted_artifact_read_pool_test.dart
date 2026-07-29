@@ -49,6 +49,63 @@ void main() {
     expect(source.payload['readMicros'], isA<int>());
   });
 
+  test('authoritative active run primes before workspace restore completes',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-promoted-read-active-run-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final id = _downloadId(Uri.parse('memory://active-run-cache-read'));
+    final bytes = Uint8List.fromList(<int>[4, 5, 6]);
+    final store = _MutableArtifactStore(bytes);
+    final pool = PromotedArtifactReadPool(cache: store);
+    final registry = DownloadRegistry(
+      layout: CacheLayout(directory.path),
+      clock: SystemClock(),
+      onSessionCreated: pool.observe,
+    );
+    addTearDown(() async {
+      pool.close();
+      await registry.dispose();
+    });
+    final session = registry.get(id);
+    final joined = pool.join(id);
+
+    expect(store.reads, 0);
+    final run = session.beginRun();
+
+    expect(await joined, same(bytes));
+    expect(store.reads, 1);
+    session.endRun(run);
+  });
+
+  test('observing an already active run primes immediately', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-promoted-read-late-observer-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final id = _downloadId(Uri.parse('memory://late-observer-cache-read'));
+    final bytes = Uint8List.fromList(<int>[7, 7, 1]);
+    final store = _MutableArtifactStore(bytes);
+    final pool = PromotedArtifactReadPool(cache: store);
+    final registry = DownloadRegistry(
+      layout: CacheLayout(directory.path),
+      clock: SystemClock(),
+    );
+    addTearDown(() async {
+      pool.close();
+      await registry.dispose();
+    });
+    final session = registry.get(id);
+    final run = session.beginRun();
+
+    pool.observe(session);
+
+    expect(await pool.join(id), same(bytes));
+    expect(store.reads, 1);
+    session.endRun(run);
+  });
+
   test('authoritative queued session primes a waiting page join', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-promoted-read-prime-',

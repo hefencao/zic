@@ -665,9 +665,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   late ImagePreviewState _state;
   Uint8List? _bytes;
   ImageProvider<Object>? _imageProvider;
-  ImageStream? _imageStream;
-  ImageStreamListener? _imageStreamListener;
   int _generation = 0;
+  int _scheduledStaticFrameGeneration = -1;
   late MediaLoadToken _loadToken;
   bool _reportedFirstFrame = false;
 
@@ -690,7 +689,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       _loadToken.cancel();
       _loadToken = MediaLoadToken();
       _reportedFirstFrame = false;
-      _detachImageStream();
+      _scheduledStaticFrameGeneration = -1;
       _bytes = null;
       _imageProvider = null;
       _state = ImagePreviewState.loading(widget.image.format);
@@ -725,7 +724,6 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           return;
         }
         setState(() => _imageProvider = provider);
-        _listenForImage(provider, generation, widget.image.format);
         return;
       }
       final bytes = tokenLoader != null
@@ -763,12 +761,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         _bytes = bytes;
         _imageProvider = provider;
       });
-      if (provider != null) {
-        if (decodeProbe != null) {
-          _publish(ImagePreviewState.ready(detected));
-        } else {
-          _listenForImage(provider, generation, detected);
-        }
+      if (provider != null && decodeProbe != null) {
+        _publish(ImagePreviewState.ready(detected));
       }
     } catch (error) {
       if (!mounted ||
@@ -785,51 +779,24 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   void dispose() {
     _generation++;
     _loadToken.cancel();
-    _detachImageStream();
     super.dispose();
   }
 
-  void _listenForImage(
-    ImageProvider<Object> provider,
+  void _scheduleStaticFramePresented(
     int generation,
     LocalImageFormat format,
   ) {
-    _detachImageStream();
-    final stream = provider.resolve(createLocalImageConfiguration(context));
-    late final ImageStreamListener listener;
-    listener = ImageStreamListener(
-      (_, __) {
-        if (!mounted || generation != _generation) {
-          return;
-        }
-        _publish(ImagePreviewState.ready(format));
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && generation == _generation) {
-            _detachImageStream();
-          }
-        });
-      },
-      onError: (Object error, StackTrace? stackTrace) {
-        if (!mounted || generation != _generation) {
-          return;
-        }
-        _publish(ImagePreviewState.invalid(format, error));
-        _detachImageStream();
-      },
-    );
-    _imageStream = stream;
-    _imageStreamListener = listener;
-    stream.addListener(listener);
-  }
-
-  void _detachImageStream() {
-    final stream = _imageStream;
-    final listener = _imageStreamListener;
-    _imageStream = null;
-    _imageStreamListener = null;
-    if (stream != null && listener != null) {
-      stream.removeListener(listener);
+    if (_state.phase == ImagePreviewPhase.ready ||
+        _scheduledStaticFrameGeneration == generation) {
+      return;
     }
+    _scheduledStaticFrameGeneration = generation;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || generation != _generation || _imageProvider == null) {
+        return;
+      }
+      _publish(ImagePreviewState.ready(format));
+    });
   }
 
   void _scheduleObserverSnapshot() {
@@ -985,6 +952,15 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           key: imageFolderFlutterPreviewKey,
           fit: BoxFit.contain,
           filterQuality: FilterQuality.medium,
+          frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+            if (frame != null || wasSynchronouslyLoaded) {
+              _scheduleStaticFramePresented(
+                _generation,
+                widget.image.format,
+              );
+            }
+            return child;
+          },
           errorBuilder: (context, error, stackTrace) {
             _scheduleError(error);
             return const SizedBox.shrink();

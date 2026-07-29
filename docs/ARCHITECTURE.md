@@ -51,6 +51,7 @@ runApp(_BootstrapApp)
 持久响应 store 首次命中时读取一个 `response-manifest-v1.json`，之后按完整 key 在内存索引中定位；逐项 JSON 只用于崩溃恢复和旧布局迁移。LRU touch 聚合后批量写回。
 
 `ResourceCacheByteStoreFileAccess` 只暴露经过完整 key、TTL 和长度校验的只读文件引用。它避免 warm cover 进入 Dart heap，但不宣称平台 decoder 内部无复制。`content://`、动画与 Reader demand 仍走各自受控 adapter。书架 read-state 使用单次批量查询；离线徽标使用一次 SQLite index projection，不创建 session、不读取或 stat 页面文件。精确页面命令才 materialize/restore 对应 session。
+普通本地静态图片的 engine-facing owner 只有 Flutter `Image` 本身。`LocalImagePlayer` 不再额外 `resolve` 同一 `FileImage` 来观察 ready；实际 `frameBuilder` 是唯一首帧通知。这样文件路径只建立一个 `ImageStream`，测试可独立验证“不进入 Dart 整文件字节路径”，而平台 decoder 呈现由单独用例负责。
 
 ## 1.2 冷启动 Reader promoted-artifact 路径
 
@@ -62,7 +63,7 @@ ArtifactCacheStore.read(exact DownloadId)
                                                        -> seal -> promote
 ```
 
-`PromotedArtifactReadPool` 属于 `downloads`，只在权威 session transport 已开始读取后允许页面加入同一精确读取，不产生 demand、不选择页面、不保留 decoded/texture 状态。缓存读取失败时 transport 回退 source，页面等待该 session。Flutter animated target-only re-decode 保留最后呈现帧，直到替代帧 present。
+`PromotedArtifactReadPool` 属于 `downloads`。权威 `DownloadSession.beginRun` 是最早的读取启动信号，因此持久 artifact 可在替代 session 恢复临时 workspace 时并行读取；页面只能加入同一精确 Future，不产生 demand、不选择页面、不保留 decoded/texture 状态。观察者注册会立即接收当前 snapshot，避免已开始 run 的转换丢失。缓存读取失败时 transport 回退 source，页面等待该 session。Flutter animated target-only re-decode 保留最后呈现帧，直到替代帧 present。
 
 ## 2. 仓库结构
 
@@ -896,6 +897,8 @@ bytes and actual in-flight concurrency. A timed-out caller stops waiting, but it
 isolated operation really exits. Closing first signals the isolated connection, rejects queued calls and then
 drains real work. Reader, navigation, demand, `DownloadSession`, cache-maintenance and artifact APIs never cross
 this boundary.
+
+Before reaching `ExternalPluginRuntimeSession`, an isolated backend is wrapped by `ExternalPluginRuntimeMessageChannel`. A schema-versioned handshake carries a non-empty runtime identity and unique source descriptors. Every invocation serializes protocol-v1 values across the raw channel, reparses the response and verifies its request ID; only primitives, maps/lists and bounded `Uint8List` cross. The channel close is joinable and rejects new sends once teardown begins.
 
 Concrete APK class loading and JavaScript evaluation remain separate isolated backend implementations. They must
 reuse the exact inspected payload and cannot bypass trust, capability, resource-limit or session teardown gates.

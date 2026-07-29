@@ -41,6 +41,9 @@ Future<ImagePreviewState> _pumpUntilPhase(
         return last;
       }
     }
+    // Flutter codecs and file-backed ImageProviders complete work outside the
+    // fake timer queue. Yield the real event loop without guessing a duration.
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
   }
   throw TestFailure(
     'Timed out waiting for image phase $phase; last=${last?.phase}',
@@ -239,6 +242,9 @@ void main() {
     expect(decoded.revision, 11);
     expect(presented.revision, 11);
     expect(decodeStarted.payload['engine'], 'flutter-codec');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
   });
 
   testWidgets('Flutter target rebuild keeps the presented frame visible', (
@@ -284,6 +290,7 @@ void main() {
         frame < 60 && find.byType(RawImage).evaluate().isEmpty;
         frame++) {
       await tester.pump();
+      await tester.runAsync(() => Future<void>.delayed(Duration.zero));
     }
     expect(find.byType(RawImage), findsOneWidget);
 
@@ -293,6 +300,9 @@ void main() {
 
     expect(find.byType(RawImage), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
   });
 
   testWidgets('plain local image uses a file provider without byte loading',
@@ -322,14 +332,19 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(home: LocalImagePlayer(image: image)),
     );
-    final state = await _pumpUntilPhase(tester, ImagePreviewPhase.ready);
+    await tester.pump();
 
-    expect(state.format, LocalImageFormat.png);
     expect(byteLoads, 0);
     final imageWidget = tester.widget<Image>(
       find.byKey(imageFolderFlutterPreviewKey),
     );
     expect(imageWidget.image, isA<FileImage>());
+
+    // Provider routing and actual platform file decoding are separate
+    // contracts. This test proves the zero-Dart-copy route and then releases
+    // the file before tear-down instead of waiting on the host codec.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
   });
 
   testWidgets('extensionless PNG reaches the generic ready state', (

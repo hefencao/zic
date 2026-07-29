@@ -51,7 +51,8 @@ void main() {
       for (var frame = 0;
           frame < 120 && find.byKey(_readyKey).evaluate().isEmpty;
           frame++) {
-        await tester.pump(const Duration(milliseconds: 16));
+        await tester.pump();
+        await tester.runAsync(() => Future<void>.delayed(Duration.zero));
       }
 
       expect(find.byKey(_readyKey), findsOneWidget);

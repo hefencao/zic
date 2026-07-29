@@ -79,7 +79,9 @@ continue through Reader demand, transport, promoted artifact and decode ownershi
 - 持久封面命中应优先返回完整不可变文件引用，不得在每次首页进入时读取整文件到 Dart heap、重算完整 hash 并同步 flush LRU 元数据。
 - 持久封面索引应以一个版本化 compact manifest 在进程内一次恢复；逐项 metadata 只作为崩溃恢复日志。首页性能诊断必须记录 bootstrap、服务打开、封面来源和首帧的单调时间线。
 - 普通本地静态图片在没有 pipeline/session loader 时应由文件型 ImageProvider 打开。Android SAF `content://` 可复制一次到应用私有持久缓存；后续命中使用该文件。
+- 一个普通静态文件只能由渲染用 `Image` 持有一个 provider stream；不得再次手动 `resolve` 同一 provider 观察 ready。ready 必须来自实际 frame 回调。文件路由测试不得等待宿主 decoder 才证明 zero-copy，并应在结束前卸载 provider。
 - Animated WebP/GIF、Reader 页面和远程首次下载继续由其既有 decoder、demand 和 artifact owner 管理。
+- promoted 页面共享读取可以在权威 `DownloadSession.beginRun` 后启动，以便与临时 workspace restore 并行；页面只能 join。观察者晚于 beginRun 注册时必须通过当前 snapshot 立即补齐状态。
 - “zero copy”验收指消除可避免的 Dart 层完整 encoded-file copy；不对平台 decoder 内部 mmap/copy 作不可验证承诺。
 
 ## 2.8 外部插件 payload 检查
@@ -97,6 +99,7 @@ continue through Reader demand, transport, promoted artifact and decode ownershi
 - host 必须独立执行 timeout、响应字节和真实并发上限。调用方 timeout 后，底层操作真正结束前不得释放并发令牌。
 - session close 必须拒绝排队调用、通知隔离 backend 终止活动调用并等待实际工作排空；并发 close 必须加入同一关闭过程。
 - 二进制资源使用有界 `Uint8List` wire payload，不允许 base64 扩张或把 Reader artifact authority 交给插件。
+- 隔离 backend 的原始传输必须实现版本化 handshake/message-channel 边界。handshake 需要非空 runtime ID、唯一 source ID；每个 response 的 requestId 必须与调用匹配。传输不得依赖进程内 Dart domain/session 对象。
 
 ## 3. Reader 行为规格
 

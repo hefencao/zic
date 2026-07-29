@@ -708,13 +708,15 @@ def check_compile_regressions() -> None:
         'imageFolderNextKey',
         'ImagePreviewStateRegion',
         'MemoryImage(bytes)',
-        'ImageStreamListener(',
+        'frameBuilder: (context, child, frame, wasSynchronouslyLoaded)',
         'final LocalImageDecodeProbe? decodeProbe',
         'final String sourceId',
         'Future<Uint8List> readAsBytes()',
     ):
         if required not in webp_demo:
             fail(f'local image folder contract is incomplete: {required}')
+    if 'provider.resolve(createLocalImageConfiguration(context))' in webp_demo:
+        fail('local static images must not resolve a second ImageStream')
     folder_io = (
         ROOT / 'packages/local_media/lib/src/local_image_platform_io.dart'
     ).read_text(encoding='utf-8')
@@ -1693,6 +1695,28 @@ def check_compile_regressions() -> None:
     ):
         if forbidden_import in runtime_protocol:
             fail(f'external plugin runtime protocol leaks {forbidden_import}')
+
+    runtime_channel = (
+        ROOT / 'packages/plugin_host/lib/src/runtime_channel.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'abstract interface class ExternalPluginRuntimeMessageChannel',
+        'final class ExternalPluginRuntimeHandshake',
+        'final class MessageChannelExternalPluginRuntimeConnection',
+        'request.toMessage()',
+        'ExternalPluginRuntimeResponse.fromMessage(raw)',
+        'Future<void>? _closeFuture',
+    ):
+        if required not in runtime_channel:
+            fail(f'external plugin runtime channel is incomplete: {required}')
+    for forbidden_import in (
+        "package:reader/",
+        "package:downloads/",
+        "package:sessions/",
+        "package:pipeline/",
+    ):
+        if forbidden_import in runtime_channel:
+            fail(f'external plugin runtime channel leaks {forbidden_import}')
 
     runtime_adapter = (
         ROOT / 'packages/plugin_host/lib/src/runtime_source_adapter.dart'
