@@ -11,7 +11,8 @@ import 'package:zic/download_manager.dart';
 import 'package:zic/whole_comic_downloads.dart';
 
 void main() {
-  test('memory chapter download owns bytes before reporting completion', () async {
+  test('memory chapter download owns bytes before reporting completion',
+      () async {
     final bytes = Uint8List.fromList(<int>[7, 8, 9]);
     final entry = ImportedLibraryEntry(
       chapter: ImportedChapterRecord(
@@ -87,7 +88,8 @@ void main() {
     expect(await reopened.readPage(entry, 0), bytes);
   });
 
-  test('memory download publishes progress and delete returns to idle', () async {
+  test('memory download publishes progress and delete returns to idle',
+      () async {
     final entry = ImportedLibraryEntry(
       chapter: ImportedChapterRecord(
         directoryId: 'fixture:progress-comic',
@@ -137,7 +139,8 @@ void main() {
     expect(await service.isDownloaded(entry), isFalse);
   });
 
-  test('memory download cancellation keeps partial progress and retry completes',
+  test(
+      'memory download cancellation keeps partial progress and retry completes',
       () async {
     final entry = ImportedLibraryEntry(
       chapter: ImportedChapterRecord(
@@ -236,10 +239,8 @@ void main() {
     final service = MemoryChapterDownloadService(
       pageLoader: (_, __) async => Uint8List(4),
     );
-    addTearDown(service.close);
     await service.download(entry);
     final queue = WholeComicDownloadQueue(downloads: service);
-    addTearDown(queue.close);
     await queue.ready;
 
     await tester.pumpWidget(
@@ -251,8 +252,8 @@ void main() {
         ),
       ),
     );
-    await tester.pump();
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pump(const Duration(milliseconds: 20));
 
     final identity = chapterDownloadIdentity(
       entry.chapter.sourceId,
@@ -266,11 +267,18 @@ void main() {
     expect(find.byType(LinearProgressIndicator), findsNothing);
 
     await tester.tap(find.byKey(downloadManagerDeleteKey(identity)));
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
     await tester.tap(find.widgetWithText(FilledButton, '删除'));
-    await tester.pump();
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(await service.isDownloaded(entry), isFalse);
+    final task = find.byKey(downloadManagerTaskKey(identity));
+    for (var frame = 0; frame < 40 && task.evaluate().isNotEmpty; frame++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    expect(task, findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    unawaited(queue.close());
+    unawaited(service.close());
   });
 
   testWidgets('download manager pauses and resumes a whole-comic queue job',
@@ -298,7 +306,6 @@ void main() {
     final service = MemoryChapterDownloadService(
       pageLoader: (_, __) async => Uint8List(4),
     );
-    addTearDown(service.close);
     final environment = MutableWholeComicQueueEnvironment(
       const WholeComicQueueEnvironment(
         networkAvailable: true,
@@ -306,12 +313,10 @@ void main() {
         charging: true,
       ),
     );
-    addTearDown(environment.close);
     final queue = WholeComicDownloadQueue(
       downloads: service,
       environment: environment,
     );
-    addTearDown(queue.close);
     await queue.ready;
     await queue.updatePolicy(
       const WholeComicQueuePolicy(
@@ -334,8 +339,8 @@ void main() {
         ),
       ),
     );
-    await tester.pump();
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pump(const Duration(milliseconds: 20));
 
     final jobId = comicLibraryIdentity(
       entry.chapter.sourceId,
@@ -346,11 +351,15 @@ void main() {
     expect(find.byKey(downloadQueuePolicyKey), findsOneWidget);
 
     await tester.tap(find.byKey(wholeComicQueuePauseKey(jobId)));
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
     expect(find.byKey(wholeComicQueueResumeKey(jobId)), findsOneWidget);
 
     await tester.tap(find.byKey(wholeComicQueueResumeKey(jobId)));
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
     expect(find.textContaining('等待策略条件'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    unawaited(queue.close());
+    unawaited(environment.close());
+    unawaited(service.close());
   });
 }

@@ -141,6 +141,40 @@ def _top_level_segments(body: str, *, track_angles: bool = True) -> list[str]:
     return segments
 
 
+def _top_level_split(body: str, delimiter: str) -> list[str]:
+    depth = 0
+    start = 0
+    segments: list[str] = []
+    for offset, char in enumerate(body):
+        if char in '([{':
+            depth += 1
+        elif char in ')]}':
+            depth = max(0, depth - 1)
+        elif char == delimiter and depth == 0:
+            segments.append(body[start:offset])
+            start = offset + 1
+    segments.append(body[start:])
+    return segments
+
+
+def _check_c_style_for_updates(path: Path, source: str) -> None:
+    ranges = {start: end for start, end in _parenthesis_ranges(source)}
+    for match in re.finditer(r'\bfor\s*\(', source):
+        start = source.find('(', match.start(), match.end())
+        end = ranges.get(start)
+        if end is None:
+            continue
+        parts = _top_level_split(source[start + 1:end], ';')
+        if len(parts) != 3:
+            continue
+        _, condition, update = (part.strip() for part in parts)
+        if condition and not update:
+            raise DartStructureError(
+                f'{path.relative_to(ROOT)}:{_line(source, match.start())} has '
+                'a conditional C-style for loop without an update clause'
+            )
+
+
 def _check_duplicate_named_arguments(path: Path, source: str) -> None:
     for start, end in _parenthesis_ranges(source):
         body = source[start + 1:end]
@@ -218,6 +252,7 @@ def check_repository(root: Path = ROOT) -> tuple[int, int]:
         stripped = _strip_comments_and_strings(original)
         _check_delimiters(path, stripped)
         _check_duplicate_named_arguments(path, stripped)
+        _check_c_style_for_updates(path, stripped)
         _check_duplicate_parameters(path, stripped)
         _check_relative_imports(path, original)
         if path.name.endswith('_test.dart'):

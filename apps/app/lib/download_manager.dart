@@ -251,7 +251,8 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
                   ],
                   onChanged: (value) {
                     if (value != null) {
-                      setDialogState(() => next = next.copyWith(network: value));
+                      setDialogState(
+                          () => next = next.copyWith(network: value));
                     }
                   },
                 ),
@@ -387,7 +388,9 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
                   ],
                   if (snapshots.isNotEmpty) ...<Widget>[
                     const _DownloadSectionHeader(title: '章节任务与离线文件'),
-                    for (var index = 0; index < snapshots.length; index) ...<Widget>[
+                    for (var index = 0;
+                        index < snapshots.length;
+                        index++) ...<Widget>[
                       if (index > 0) const Divider(height: 1),
                       _DownloadTaskTile(
                         key: downloadManagerTaskKey(snapshots[index].identity),

@@ -2,12 +2,15 @@
 
 ## Sole baseline
 
-Continue only from `zic_v0.28.0-dev.32_test-harness-fix.zip`.
+Continue only from `zic_v0.28.1-dev.33_download-loop-queue-close-fix.zip`.
 Do not merge or copy files from an earlier zic archive.
 
 ## Current implementation
 
-- The product tree remains identical to `0.28.0-dev.32`; the follow-up archive only corrects widget/unit test timing, teardown gates and a race-sensitive queue assertion.
+- `0.28.1-dev.33` restores the Download Manager chapter-list loop update, preventing an infinite build/OOM when chapter snapshots are present.
+- `WholeComicDownloadQueue.close()` drains active chapter work before its final durable publish and store shutdown.
+- The five `apps.zip` files replace their existing paths exactly; chapter/library/source tests use bounded waits and explicit teardown without changing product interaction solely for tests.
+- The Dart structure gate rejects conditional C-style `for` loops without an update clause.
 - Home, Bookshelf and Comic Sources remain the three primary destinations. Local and remote details retain
   separate state ownership while composing shared presentation and using exact `sourceId + comicId` routing.
 - Management-mode covers own single-item delete/category migration. Long press enters source-composite batch
@@ -38,8 +41,8 @@ bash ./tool/check_native_header.sh
 ```
 
 Additional delivery checks validate package versions, JSON/YAML/TOML syntax, Android plugin declarations,
-archive cleanliness, source-baseline patch reproducibility and a clean re-extraction. This container does not
-contain Flutter, Dart, Cargo, Gradle, Android SDK or Android NDK, so no claim is made that their builds/tests ran.
+archive cleanliness, exact overlay replacement, source-baseline patch reproducibility and a clean re-extraction.
+This container does not contain Flutter, Dart, Cargo, Gradle, Android SDK or Android NDK, so no claim is made that their builds/tests ran.
 
 ## Required external validation
 

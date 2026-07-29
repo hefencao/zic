@@ -1,6 +1,6 @@
 name: storage
 description: Partial artifacts, checksums, sealing, and atomic promotion.
-version: 0.28.0
+version: 0.28.1
 publish_to: none
 resolution: workspace
 

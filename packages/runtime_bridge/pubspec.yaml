@@ -1,6 +1,6 @@
 name: runtime_bridge
 description: Runtime network and power environment signals for zic scheduling.
-version: 0.28.0
+version: 0.28.1
 publish_to: none
 resolution: workspace
 

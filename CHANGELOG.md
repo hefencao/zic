@@ -1,3 +1,10 @@
+## 0.28.1-dev.33 — download manager OOM and queue shutdown repair
+
+- Restore the missing `index++` in Download Manager's chapter-task list expansion. The old loop never advanced once at least one chapter snapshot existed, causing unbounded Widget construction and eventual process/WSL OOM.
+- Close `WholeComicDownloadQueue` by first cancelling and draining active chapter work, then publishing the resumable final queue state, cancelling environment signals and closing the queue store/stream.
+- Replace the affected chapter-download, library and source-browser tests with bounded frame waits and explicit route/widget teardown supplied in `apps.zip`; no product interaction is changed to satisfy those tests.
+- Add a Dart structure gate that rejects conditional C-style `for` loops with an empty update clause, catching this OOM class before Flutter execution.
+
 ## 0.28.0-dev.32 test-harness correction — no product behavior change
 
 - Advance simulated frame time while waiting for popup routes, route transitions, enabled buttons and refresh results instead of looping with zero-duration pumps.

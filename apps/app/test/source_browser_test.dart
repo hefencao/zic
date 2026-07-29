@@ -113,7 +113,7 @@ void main() {
     );
 
     await tester.pageBack();
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
     expect(find.byKey(comicSourceChoiceKey('fixture-b')), findsNothing);
     expect(find.byKey(comicSourceChoiceKey('fixture-a')), findsOneWidget);
   });
@@ -167,7 +167,8 @@ void main() {
     final detailsText = tester.widget<SelectableText>(
       find.byKey(comicSourceErrorDetailsKey),
     );
-    expect(detailsText.data, contains('https://api.mangadex.org/manga?limit=24'));
+    expect(
+        detailsText.data, contains('https://api.mangadex.org/manga?limit=24'));
     expect(detailsText.data, contains('Cause: Bad state: Failed host lookup'));
 
     final copy = find.byKey(comicSourceCopyErrorKey);
@@ -195,8 +196,10 @@ void main() {
       tester,
       find.byKey(sourceComicCardKey('fixture', 'fixture-comic')),
     );
-    await tester.tap(find.byKey(sourceComicCardKey('fixture', 'fixture-comic')));
-    await _pumpUntilFound(tester, find.byKey(details.remoteComicDetailsScreenKey));
+    await tester
+        .tap(find.byKey(sourceComicCardKey('fixture', 'fixture-comic')));
+    await _pumpUntilFound(
+        tester, find.byKey(details.remoteComicDetailsScreenKey));
 
     final shelf = find.byKey(details.comicDetailsShelfKey);
     await _tapVisible(tester, shelf);
@@ -208,7 +211,8 @@ void main() {
       isTrue,
     );
 
-    final download = details.comicDetailsDownloadKey('fixture', 'fixture-chapter');
+    final download =
+        details.comicDetailsDownloadKey('fixture', 'fixture-chapter');
     await _tapVisible(tester, find.byKey(download));
     await _pumpUntilFound(tester, find.textContaining('已下载'));
 
@@ -218,7 +222,8 @@ void main() {
     expect(entry.chapter.pages.single.stablePageId, 'fixture-page-1');
   });
 
-  testWidgets('central route opens remote then local details for the same source',
+  testWidgets(
+      'central route opens remote then local details for the same source',
       (tester) async {
     final store = MemoryImportedLibraryStore();
     await store.open();
@@ -241,8 +246,10 @@ void main() {
       tester,
       find.byKey(sourceComicCardKey('fixture-route', 'fixture-route-comic')),
     );
-    await tester.tap(find.byKey(sourceComicCardKey('fixture-route', 'fixture-route-comic')));
-    await _pumpUntilFound(tester, find.byKey(details.remoteComicDetailsScreenKey));
+    await tester.tap(
+        find.byKey(sourceComicCardKey('fixture-route', 'fixture-route-comic')));
+    await _pumpUntilFound(
+        tester, find.byKey(details.remoteComicDetailsScreenKey));
     expect(find.byKey(details.localComicDetailsScreenKey), findsNothing);
 
     final collect = find.byKey(details.comicDetailsCollectedKey);
@@ -255,11 +262,20 @@ void main() {
     );
 
     await tester.pageBack();
-    await tester.pump();
-    await tester.tap(find.byKey(sourceComicCardKey('fixture-route', 'fixture-route-comic')));
-    await _pumpUntilFound(tester, find.byKey(details.localComicDetailsScreenKey));
+    await tester.pump(const Duration(milliseconds: 400));
+    await _tapVisible(
+      tester,
+      find.byKey(
+        sourceComicCardKey('fixture-route', 'fixture-route-comic'),
+      ),
+    );
+    await _pumpUntilFound(
+        tester, find.byKey(details.localComicDetailsScreenKey));
+    await tester.pump(const Duration(milliseconds: 400));
     expect(find.byKey(details.remoteComicDetailsScreenKey), findsNothing);
-    expect(find.byKey(sourceChapterKey('fixture-route', 'fixture-route-chapter')), findsOneWidget);
+    expect(
+        find.byKey(sourceChapterKey('fixture-route', 'fixture-route-chapter')),
+        findsOneWidget);
     expect(
       find.byKey(sourceChapterKey('fixture-route', 'fixture-route-chapter-2')),
       findsOneWidget,
@@ -272,10 +288,12 @@ void main() {
     await _tapVisible(tester, find.byKey(secondDownload));
     await _pumpUntilFound(tester, find.textContaining('已下载'));
     expect(await store.get('fixture-route', 'fixture-route-chapter'), isNull);
-    expect(await store.get('fixture-route', 'fixture-route-chapter-2'), isNotNull);
+    expect(
+        await store.get('fixture-route', 'fixture-route-chapter-2'), isNotNull);
   });
 
-  testWidgets('pull refresh expands remote catalog without downloading chapters',
+  testWidgets(
+      'pull refresh expands remote catalog without downloading chapters',
       (tester) async {
     final store = MemoryImportedLibraryStore();
     await store.open();
@@ -296,29 +314,34 @@ void main() {
     await tester.tap(find.byIcon(Icons.public_outlined));
     await _pumpUntilFound(
       tester,
-      find.byKey(sourceComicCardKey('fixture-refresh', 'fixture-refresh-comic')),
+      find.byKey(
+          sourceComicCardKey('fixture-refresh', 'fixture-refresh-comic')),
     );
-    await tester.tap(find.byKey(sourceComicCardKey('fixture-refresh', 'fixture-refresh-comic')));
+    await tester.tap(find
+        .byKey(sourceComicCardKey('fixture-refresh', 'fixture-refresh-comic')));
     await _pumpUntilFound(
       tester,
-      find.byKey(sourceChapterKey('fixture-refresh', 'fixture-refresh-chapter')),
+      find.byKey(
+          sourceChapterKey('fixture-refresh', 'fixture-refresh-chapter')),
     );
     expect(
-      find.byKey(sourceChapterKey('fixture-refresh', 'fixture-refresh-chapter-2')),
+      find.byKey(
+          sourceChapterKey('fixture-refresh', 'fixture-refresh-chapter-2')),
       findsNothing,
     );
 
-    final detailsScroll =
-        find.byKey(details.remoteComicDetailsScreenKey);
+    final detailsScroll = find.byKey(details.remoteComicDetailsScreenKey);
     await tester.drag(detailsScroll, const Offset(0, 520));
     await tester.pump(const Duration(milliseconds: 900));
     await _pumpUntilFound(
       tester,
-      find.byKey(sourceChapterKey('fixture-refresh', 'fixture-refresh-chapter-2')),
+      find.byKey(
+          sourceChapterKey('fixture-refresh', 'fixture-refresh-chapter-2')),
     );
 
     expect(source.comicLoads, 2);
-    expect(await store.get('fixture-refresh', 'fixture-refresh-chapter-2'), isNull);
+    expect(await store.get('fixture-refresh', 'fixture-refresh-chapter-2'),
+        isNull);
     expect(
       await store.getSavedComic('fixture-refresh', 'fixture-refresh-comic'),
       isNull,
@@ -393,8 +416,9 @@ void main() {
     );
 
     await tester.pageBack();
-    await tester.pump();
-    await tester.tap(
+    await tester.pump(const Duration(milliseconds: 400));
+    await _tapVisible(
+      tester,
       find.byKey(
         sourceComicCardKey('fixture-active', 'fixture-active-comic'),
       ),
@@ -500,10 +524,11 @@ void main() {
       tester,
       find.byKey(sourceComicCardKey('fixture-retry', 'fixture-retry-comic')),
     );
-    await tester.tap(find.byKey(sourceComicCardKey('fixture-retry', 'fixture-retry-comic')));
+    await tester.tap(
+        find.byKey(sourceComicCardKey('fixture-retry', 'fixture-retry-comic')));
     await _pumpUntilFound(tester, find.textContaining('漫画详情加载失败'));
 
-    final retry = find.byKey(details.comicDetailsRetryBodyKey);
+    final retry = find.byKey(details.comicDetailsRetryKey);
     await _tapVisible(tester, retry);
     await _pumpUntilFound(
       tester,
@@ -602,8 +627,8 @@ final class _FixtureSource implements BrowsableComicSource {
     if (failFirstComicLoad && loadIndex == 0) {
       throw StateError('transient source failure');
     }
-    final showSecond = includeSecondChapter ||
-        (revealSecondChapterOnRefresh && loadIndex > 0);
+    final showSecond =
+        includeSecondChapter || (revealSecondChapterOnRefresh && loadIndex > 0);
     return ComicManifest(
       comic: _comic,
       chapters: <Chapter>[
@@ -623,9 +648,8 @@ final class _FixtureSource implements BrowsableComicSource {
       chapter: chapter,
       pages: <PageAsset>[
         PageAsset(
-          pageId: chapterId == _chapterId
-              ? '$sourceId-page-1'
-              : '$sourceId-page-2',
+          pageId:
+              chapterId == _chapterId ? '$sourceId-page-1' : '$sourceId-page-2',
           chapterId: chapterId,
           index: 0,
           uri: Uri.https('example.invalid', '/$sourceId/$chapterId/page-1.png'),

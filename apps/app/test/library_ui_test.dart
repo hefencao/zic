@@ -98,7 +98,8 @@ void main() {
 
     expect(find.byKey(homeUpdatesSectionKey), findsOneWidget);
     expect(find.byKey(homeHistorySectionKey), findsOneWidget);
-    final homeCover = find.byKey(importedChapterEntryKey(chapter.sourceId, chapter.chapterId));
+    final homeCover = find
+        .byKey(importedChapterEntryKey(chapter.sourceId, chapter.chapterId));
     expect(homeCover, findsOneWidget);
     final homeCoverSize = tester.getSize(homeCover);
 
@@ -110,14 +111,16 @@ void main() {
     expect(find.byKey(bookshelfSortKey), findsOneWidget);
     expect(find.byKey(bookshelfViewKey), findsOneWidget);
     expect(find.byKey(downloadManagerEntryKey), findsOneWidget);
-    final shelfCover = find.byKey(comicCoverKey(chapter.sourceId, chapter.comicId));
+    final shelfCover =
+        find.byKey(comicCoverKey(chapter.sourceId, chapter.comicId));
     expect(shelfCover, findsOneWidget);
     expect(tester.getSize(shelfCover), homeCoverSize);
     expect(homeCoverSize.width, ComicCoverCard.cardWidth);
     expect(homeCoverSize.height, ComicCoverCard.cardExtent);
   });
 
-  testWidgets('same native comic id from different sources keeps separate UI selection',
+  testWidgets(
+      'same native comic id from different sources keeps separate UI selection',
       (tester) async {
     final store = MemoryImportedLibraryStore();
     await store.open();
@@ -213,25 +216,70 @@ void main() {
     await tester.tap(find.byKey(bookshelfManageKey));
     await tester.pump(const Duration(milliseconds: 320));
 
-    expect(find.byKey(comicReorderKey(first.sourceId, first.comicId)), findsOneWidget);
-    expect(find.byKey(comicReorderKey(second.sourceId, second.comicId)), findsOneWidget);
+    expect(find.byKey(comicReorderKey(first.sourceId, first.comicId)),
+        findsOneWidget);
+    expect(find.byKey(comicReorderKey(second.sourceId, second.comicId)),
+        findsOneWidget);
     expect(find.byType(GridView), findsOneWidget);
 
     final firstHandle =
         find.byKey(comicReorderKey(first.sourceId, first.comicId));
-    final secondCover = find.byKey(comicCoverKey(second.sourceId, second.comicId));
-    final gesture = await tester.startGesture(tester.getCenter(firstHandle));
-    await tester.pump(const Duration(milliseconds: 120));
-    await gesture.moveTo(tester.getCenter(secondCover));
-    await tester.pump(const Duration(milliseconds: 100));
-    await gesture.up();
-    await tester.pump(const Duration(milliseconds: 320));
+    final secondCover =
+        find.byKey(comicCoverKey(second.sourceId, second.comicId));
+    final initialFirstPreference =
+        await store.getComicPreference(first.sourceId, first.comicId);
+    final initialSecondPreference =
+        await store.getComicPreference(second.sourceId, second.comicId);
+    expect(initialFirstPreference, isNotNull);
+    expect(initialSecondPreference, isNotNull);
+    final initialOrder = initialFirstPreference!.customOrder
+        .compareTo(initialSecondPreference!.customOrder);
+    expect(initialOrder, isNot(0));
 
-    final firstPreference = await store.getComicPreference(first.sourceId, first.comicId);
-    final secondPreference = await store.getComicPreference(second.sourceId, second.comicId);
+    final draggable = tester.widget<Draggable<String>>(firstHandle);
+    final secondTarget = tester.widget<DragTarget<String>>(
+      find.ancestor(
+        of: secondCover,
+        matching: find.byType(DragTarget<String>),
+      ),
+    );
+    expect(
+      secondTarget.onWillAcceptWithDetails!(
+        DragTargetDetails<String>(
+          data: draggable.data!,
+          offset: tester.getCenter(secondCover),
+        ),
+      ),
+      isTrue,
+    );
+    secondTarget.onAcceptWithDetails!(
+      DragTargetDetails<String>(
+        data: draggable.data!,
+        offset: tester.getCenter(secondCover),
+      ),
+    );
+
+    ComicPreference? firstPreference;
+    ComicPreference? secondPreference;
+    for (var frame = 0; frame < 80; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      firstPreference =
+          await store.getComicPreference(first.sourceId, first.comicId);
+      secondPreference =
+          await store.getComicPreference(second.sourceId, second.comicId);
+      if (firstPreference != null &&
+          secondPreference != null &&
+          firstPreference.customOrder.compareTo(secondPreference.customOrder) ==
+              -initialOrder) {
+        break;
+      }
+    }
     expect(firstPreference, isNotNull);
     expect(secondPreference, isNotNull);
-    expect(firstPreference!.customOrder, greaterThan(secondPreference!.customOrder));
+    expect(
+      firstPreference!.customOrder.compareTo(secondPreference!.customOrder),
+      -initialOrder,
+    );
 
     await tester.tap(find.byKey(bookshelfViewKey));
     await tester.pump(const Duration(milliseconds: 320));
@@ -261,7 +309,8 @@ void main() {
     await tester.tap(find.text('测试分类'));
     await tester.pump(const Duration(milliseconds: 320));
     expect(find.byKey(bookshelfAddComicToCategoryKey), findsOneWidget);
-    expect(find.byKey(comicCoverKey(chapter.sourceId, chapter.comicId)), findsNothing);
+    expect(find.byKey(comicCoverKey(chapter.sourceId, chapter.comicId)),
+        findsNothing);
 
     await tester.tap(find.byKey(bookshelfAddComicToCategoryKey));
     await tester.pump(const Duration(milliseconds: 320));
@@ -271,10 +320,12 @@ void main() {
     await tester.pump(const Duration(milliseconds: 320));
 
     final categories = await store.listCategories();
-    final preference = await store.getComicPreference(chapter.sourceId, chapter.comicId);
+    final preference =
+        await store.getComicPreference(chapter.sourceId, chapter.comicId);
     expect(categories, hasLength(1));
     expect(preference?.categoryIds, contains(categories.single.categoryId));
-    expect(find.byKey(comicCoverKey(chapter.sourceId, chapter.comicId)), findsOneWidget);
+    expect(find.byKey(comicCoverKey(chapter.sourceId, chapter.comicId)),
+        findsOneWidget);
   });
 
   testWidgets('management selection exposes move actions and isolates delete',
@@ -312,8 +363,10 @@ void main() {
     await tester.pump(const Duration(milliseconds: 320));
 
     final cover = find.byKey(comicCoverKey(chapter.sourceId, chapter.comicId));
-    expect(find.byKey(comicDeleteKey(chapter.sourceId, chapter.comicId)), findsOneWidget);
-    expect(find.byKey(comicMoveKey(chapter.sourceId, chapter.comicId)), findsOneWidget);
+    expect(find.byKey(comicDeleteKey(chapter.sourceId, chapter.comicId)),
+        findsOneWidget);
+    expect(find.byKey(comicMoveKey(chapter.sourceId, chapter.comicId)),
+        findsOneWidget);
     expect(find.byKey(bookshelfBatchBarKey), findsNothing);
     expect(find.byKey(comicDetailsScreenKey), findsNothing);
 
@@ -348,11 +401,14 @@ void main() {
     expect(find.byKey(bookshelfBatchBarKey), findsOneWidget);
     expect(find.byKey(bookshelfBatchMoveKey), findsOneWidget);
     expect(find.byKey(bookshelfBatchDeleteKey), findsOneWidget);
-    expect(find.byKey(comicMoveKey(chapter.sourceId, chapter.comicId)), findsNothing);
-    expect(find.byKey(comicDeleteKey(chapter.sourceId, chapter.comicId)), findsNothing);
+    expect(find.byKey(comicMoveKey(chapter.sourceId, chapter.comicId)),
+        findsNothing);
+    expect(find.byKey(comicDeleteKey(chapter.sourceId, chapter.comicId)),
+        findsNothing);
   });
 
-  testWidgets('library diagnostics acknowledges without deleting migration issues',
+  testWidgets(
+      'library diagnostics acknowledges without deleting migration issues',
       (tester) async {
     final issue = LibraryMigrationIssue(
       issueId: 7,
@@ -471,7 +527,8 @@ void main() {
     await tester.pump();
     expect(saved?.liked, isTrue);
 
-    await tester.tap(find.byKey(chapterReadKey(chapter.sourceId, chapter.chapterId)));
+    await tester
+        .tap(find.byKey(chapterReadKey(chapter.sourceId, chapter.chapterId)));
     await tester.pump();
     expect(read, isTrue);
     expect(opened, isTrue);
@@ -504,7 +561,8 @@ void main() {
             ImportedLibraryEntry(chapter: second),
             ImportedLibraryEntry(chapter: first),
           ]),
-          preference: ComicPreference.defaults(sourceId: first.sourceId, comicId: first.comicId),
+          preference: ComicPreference.defaults(
+              sourceId: first.sourceId, comicId: first.comicId),
           categories: const <LibraryCategory>[],
           readStates: const <String, ChapterReadState>{},
           coverBytes: () async => _tinyPng(),

@@ -204,11 +204,13 @@ final class WholeComicQueueJobSnapshot {
 
   String get comicIdentity => comicLibraryIdentity(sourceId, comicId);
   bool get isActive => phase == WholeComicQueuePhase.running;
-  bool get canPause => phase == WholeComicQueuePhase.running ||
+  bool get canPause =>
+      phase == WholeComicQueuePhase.running ||
       phase == WholeComicQueuePhase.queued ||
       phase == WholeComicQueuePhase.waitingForPolicy;
   bool get canResume => phase == WholeComicQueuePhase.paused;
-  bool get canRetry => phase == WholeComicQueuePhase.failed ||
+  bool get canRetry =>
+      phase == WholeComicQueuePhase.failed ||
       phase == WholeComicQueuePhase.cancelled;
 
   double get fraction => totalChapters == 0
@@ -501,10 +503,9 @@ final class WholeComicDownloadQueue {
         job.touch();
       }
     }
-    await _publish();
     await _cancelAllActive();
+    await _publish();
     await _environmentSubscription.cancel();
-    await _persistTail;
     await _store.close();
     _closed = true;
     _closing = false;
@@ -556,8 +557,7 @@ final class WholeComicDownloadQueue {
         !current.unmetered) {
       return false;
     }
-    if (_policy.power == WholeComicPowerPolicy.charging &&
-        !current.charging) {
+    if (_policy.power == WholeComicPowerPolicy.charging && !current.charging) {
       return false;
     }
     return true;

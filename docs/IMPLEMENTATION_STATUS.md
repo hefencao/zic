@@ -1,4 +1,10 @@
-## Current iteration — durable whole-comic queue and runtime policy signals
+## Current iteration — download manager OOM and queue shutdown repair
+
+Download Manager's per-chapter task expansion now advances its explicit index. A non-empty task list can no longer enter an infinite synchronous Widget-construction loop and exhaust the host process or WSL memory. The Dart structure gate also rejects conditional C-style `for` loops whose update clause is empty, so this failure class is detected without launching Flutter.
+
+`WholeComicDownloadQueue.close()` now marks running jobs resumable, cancels and drains active chapter work, publishes the resulting durable state, then detaches runtime-environment signals and closes the store and change stream. The supplied chapter-download, library and source-browser test files use bounded frame advancement and explicit Widget-tree teardown; product interaction semantics are unchanged.
+
+## Previous iteration — durable whole-comic queue and runtime policy signals
 
 The whole-comic operation is now a durable scheduler rather than a route-local loop. `WholeComicDownloadQueue`
 persists exact source-composite comic ownership, the chapter catalog, completed chapter identities, policy,
