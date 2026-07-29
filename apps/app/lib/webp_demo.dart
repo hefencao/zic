@@ -928,6 +928,11 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         playback: widget.playback!,
         onReady: _onControlledReady,
         onError: _onControlledError,
+        downloadIdentity: widget.downloadIdentity,
+        traceClock: widget.traceClock,
+        traceSink: widget.traceSink,
+        traceSessionId: widget.traceSessionId,
+        demandRevision: widget.demandRevision,
       );
     } else {
       content = Center(
@@ -971,6 +976,11 @@ final class _ControlledAnimatedImage extends StatefulWidget {
     required this.onError,
     this.targetWidth,
     this.targetHeight,
+    this.downloadIdentity,
+    this.traceClock,
+    this.traceSink = const NoopTraceSink(),
+    this.traceSessionId = 'flutter-animated-image',
+    this.demandRevision,
     super.key,
   });
 
@@ -978,6 +988,11 @@ final class _ControlledAnimatedImage extends StatefulWidget {
   final ReaderPlaybackController playback;
   final int? targetWidth;
   final int? targetHeight;
+  final DownloadId? downloadIdentity;
+  final MonoClock? traceClock;
+  final TraceSink traceSink;
+  final String traceSessionId;
+  final int Function()? demandRevision;
   final VoidCallback onReady;
   final ValueChanged<Object> onError;
 
@@ -997,6 +1012,8 @@ final class _ControlledAnimatedImageState
   int _framesPresented = 0;
   late double _playbackSpeed;
   late bool _paused;
+  late final MonoClock _traceClock;
+  int? _workRevision;
   int _generation = 0;
 
   @override
@@ -1005,6 +1022,7 @@ final class _ControlledAnimatedImageState
     final playback = widget.playback.value;
     _playbackSpeed = playback.speed;
     _paused = playback.paused;
+    _traceClock = widget.traceClock ?? SystemClock();
     widget.playback.addListener(_handlePlaybackChanged);
     unawaited(_load());
   }
@@ -1022,11 +1040,15 @@ final class _ControlledAnimatedImageState
     if (!identical(oldWidget.bytes, widget.bytes) ||
         oldWidget.targetWidth != widget.targetWidth ||
         oldWidget.targetHeight != widget.targetHeight) {
-      unawaited(_reload());
+      unawaited(
+        _reload(
+          preservePresentedFrame: identical(oldWidget.bytes, widget.bytes),
+        ),
+      );
     }
   }
 
-  Future<void> _reload() async {
+  Future<void> _reload({required bool preservePresentedFrame}) async {
     _generation++;
     _timer?.cancel();
     _timer = null;
@@ -1034,14 +1056,16 @@ final class _ControlledAnimatedImageState
     final oldCodec = _codec;
     _codec = null;
     oldCodec?.dispose();
-    final oldImage = _image;
-    if (mounted) {
-      setState(() => _image = null);
-    } else {
-      _image = null;
-    }
-    if (oldImage != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => oldImage.dispose());
+    if (!preservePresentedFrame) {
+      final oldImage = _image;
+      if (mounted) {
+        setState(() => _image = null);
+      } else {
+        _image = null;
+      }
+      if (oldImage != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => oldImage.dispose());
+      }
     }
     _framesPresented = 0;
     await _load();
@@ -1049,6 +1073,18 @@ final class _ControlledAnimatedImageState
 
   Future<void> _load() async {
     final generation = ++_generation;
+    final workRevision = widget.demandRevision?.call();
+    _workRevision = workRevision;
+    _recordTrace(
+      TraceEventKind.decodeStarted,
+      revision: workRevision,
+      payload: <String, Object?>{
+        'engine': 'flutter-codec',
+        'stage': 'instantiate',
+        if (widget.targetWidth != null) 'targetWidth': widget.targetWidth,
+        if (widget.targetHeight != null) 'targetHeight': widget.targetHeight,
+      },
+    );
     try {
       final codec = await ui.instantiateImageCodec(
         widget.bytes,
@@ -1061,7 +1097,7 @@ final class _ControlledAnimatedImageState
         return;
       }
       _codec = codec;
-      await _presentNext(generation);
+      await _presentNext(generation, workRevision);
     } on Object catch (error) {
       if (mounted && generation == _generation) {
         widget.onError(error);
@@ -1069,7 +1105,7 @@ final class _ControlledAnimatedImageState
     }
   }
 
-  Future<void> _presentNext(int generation) async {
+  Future<void> _presentNext(int generation, [int? workRevision]) async {
     final codec = _codec;
     if (codec == null || !mounted || generation != _generation) {
       return;
@@ -1086,6 +1122,17 @@ final class _ControlledAnimatedImageState
         frame.image.dispose();
         return;
       }
+      final revision = workRevision ?? _workRevision;
+      _recordTrace(
+        TraceEventKind.frameDecoded,
+        revision: revision,
+        image: frame.image,
+        payload: <String, Object?>{
+          'engine': 'flutter-codec',
+          'frameIndex': _framesPresented,
+          'frameDurationMicros': frame.duration.inMicroseconds,
+        },
+      );
       final previous = _image;
       _sourceDuration = frame.duration <= Duration.zero
           ? const Duration(milliseconds: 100)
@@ -1093,6 +1140,22 @@ final class _ControlledAnimatedImageState
       _remaining = _scaledDuration(_sourceDuration);
       setState(() => _image = frame.image);
       _framesPresented++;
+      final presentedFrameIndex = _framesPresented - 1;
+      final presentedIdentity = _traceIdentity(frame.image);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || generation != _generation) {
+          return;
+        }
+        _recordTrace(
+          TraceEventKind.framePresented,
+          revision: revision,
+          identityHash: presentedIdentity,
+          payload: <String, Object?>{
+            'engine': 'flutter-codec',
+            'frameIndex': presentedFrameIndex,
+          },
+        );
+      });
       if (_framesPresented == 1) {
         widget.onReady();
       }
@@ -1107,6 +1170,45 @@ final class _ControlledAnimatedImageState
         widget.onError(error);
       }
     }
+  }
+
+  String? _traceIdentity(ui.Image? image) {
+    final download = widget.downloadIdentity;
+    if (download == null) {
+      return null;
+    }
+    final width = image?.width ?? widget.targetWidth ?? 1;
+    final height = image?.height ?? widget.targetHeight ?? 1;
+    return DecodeId(
+      download: download,
+      physicalWidth: width,
+      physicalHeight: height,
+      pixelFormat: PixelFormat.rgba8888,
+      renderer: RendererKind.flutterImage,
+    ).key;
+  }
+
+  void _recordTrace(
+    TraceEventKind kind, {
+    int? revision,
+    ui.Image? image,
+    String? identityHash,
+    Map<String, Object?> payload = const <String, Object?>{},
+  }) {
+    final identity = identityHash ?? _traceIdentity(image);
+    if (identity == null) {
+      return;
+    }
+    widget.traceSink.record(
+      traceEvent(
+        clock: _traceClock,
+        sessionId: widget.traceSessionId,
+        kind: kind,
+        identityHash: identity,
+        revision: revision,
+        payload: payload,
+      ),
+    );
   }
 
   Duration _scaledDuration(Duration source) {
@@ -1124,7 +1226,7 @@ final class _ControlledAnimatedImageState
     _timer = Timer(delay, () {
       _timer = null;
       _timerClock = null;
-      unawaited(_presentNext(generation));
+      unawaited(_presentNext(generation, _workRevision));
     });
   }
 
@@ -2662,6 +2764,11 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
                                         });
                                       }
                                     },
+                                    downloadIdentity: widget.downloadIdentity,
+                                    traceClock: widget.traceClock,
+                                    traceSink: widget.traceSink,
+                                    traceSessionId: widget.traceSessionId,
+                                    demandRevision: widget.demandRevision,
                                   ),
                     },
                   );

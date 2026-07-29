@@ -154,6 +154,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   late final IoTransport _ioTransport;
   late final LoaderTransport _loaderTransport;
   ArtifactCacheTransport? _artifactCacheTransport;
+  PromotedArtifactReadPool? _artifactReads;
   late final DownloadRegistry _downloads;
   PromotedArtifactCacheHandoff? _artifactCacheHandoff;
   late final LiveCoordinator _coordinator;
@@ -193,10 +194,13 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     );
     final cache = widget.artifactCache;
     if (cache != null) {
+      final reads = PromotedArtifactReadPool(cache: cache);
+      _artifactReads = reads;
       _artifactCacheTransport = ArtifactCacheTransport(
         cache: cache,
         identities: identities,
         fallbackFor: _baseTransportFor,
+        readPool: reads,
         clock: _clock,
         traceSink: _trace,
         sessionId: _sessionId,
@@ -213,7 +217,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       layout: _workspace.layout,
       clock: _clock,
       traceSink: _trace,
-      onSessionCreated: _artifactCacheHandoff?.observe,
+      onSessionCreated: _observeDownloadSession,
     );
     _coordinator = LiveCoordinator(
       registry: _downloads,
@@ -394,6 +398,11 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   Transport _transportFor(Uri uri) =>
       _artifactCacheTransport ?? _baseTransportFor(uri);
 
+  void _observeDownloadSession(DownloadSession session) {
+    _artifactReads?.observe(session);
+    _artifactCacheHandoff?.observe(session);
+  }
+
   Future<Uint8List> _loadMediaBytes(
     PageAsset asset,
     MediaLoadToken token,
@@ -402,6 +411,52 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     final id = readerPageDownloadId(widget.chapter, asset);
     final session = _downloads.get(id);
     if (session.state != DownloadState.promoted) {
+      final reads = _artifactReads;
+      if (reads != null) {
+        final readStarted = _clock.nowMicros();
+        final readRevision = _binding?.revision ?? 0;
+        try {
+          final cached = await reads.join(id);
+          token.throwIfCancelled();
+          if (cached != null) {
+            _trace.record(
+              traceEvent(
+                clock: _clock,
+                sessionId: _sessionId,
+                kind: TraceEventKind.artifactSource,
+                identityHash: id.key,
+                revision: readRevision,
+                payload: <String, Object?>{
+                  'source': 'artifact-cache',
+                  'consumer': 'reader-direct',
+                  'bytes': cached.lengthInBytes,
+                  'joinMicros': _clock.nowMicros() - readStarted,
+                  'sessionState': session.state.name,
+                },
+              ),
+            );
+            return cached;
+          }
+        } on Object catch (error) {
+          token.throwIfCancelled();
+          _trace.record(
+            traceEvent(
+              clock: _clock,
+              sessionId: _sessionId,
+              kind: TraceEventKind.taskFailed,
+              identityHash: id.key,
+              revision: readRevision,
+              payload: <String, Object?>{
+                'lane': 'artifact-cache-read',
+                'consumer': 'reader-direct',
+                'reason': error.toString(),
+                'joinMicros': _clock.nowMicros() - readStarted,
+                'fallback': 'session',
+              },
+            ),
+          );
+        }
+      }
       final ready = Completer<DownloadSnapshot>();
       late final DownloadSnapshotListener listener;
       listener = (snapshot) {
@@ -477,6 +532,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     await _coordinator.dispose();
     await _artifactCacheHandoff?.drain(_downloads.sessions);
     _artifactCacheHandoff?.detach();
+    _artifactReads?.close();
     await _downloads.dispose();
     _ioTransport.close(force: true);
     await _workspace.dispose();

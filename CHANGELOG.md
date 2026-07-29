@@ -1,3 +1,12 @@
+## 0.31.0-dev.41 — direct promoted reads and gapless cold decode
+
+- Fix the reported `static_demo.dart` compile failure by importing the downloads-owned Reader page identity adapter rather than relying on a re-export side effect.
+- Let a reopened Reader consume one exact immutable read of an already-promoted page artifact while the replacement `DownloadSession` continues its normal seal/promote path in the background. The page and cache transport share that read through a downloads-owned pool, removing cache-to-ephemeral-copy and re-read from first-frame latency.
+- Stream background cache handoff in 64 KiB chunks and use the exact DownloadId/length as the resume validator, avoiding a second whole-page hash and giant single-chunk copy on the UI isolate. Cache read failures now fall back through the normal session/origin path with trace evidence.
+- Keep the currently presented Flutter animated frame during target-only codec rebuilds and replace it only after the new frame is presented, eliminating the black gap caused by eager frame disposal. Encoded-byte changes still invalidate the frame.
+- Extend transition replay with durable artifact read duration and consumer attribution, preferring the Reader-direct event when both direct consumption and session-copy events exist.
+- Preserve the strict midpoint invariant before gesture release while allowing the old page to be evicted after settling; the regression still forbids a loaded page remount. Add cold-open, coalesced-read, chunking, fail-open cache, Flutter codec phase and gapless-target regressions, plus ADR 0024.
+
 ## 0.31.0-dev.40 — managed artifact capability and deterministic transition replay
 
 - Close the reported App compilation failure without widening every chapter-download implementation: add the explicit

@@ -33,6 +33,18 @@ Transport  DecodeSession TextureRegistry
 Artifact   Rust Media Core
 ```
 
+## 1.1 冷启动 Reader promoted-artifact 路径
+
+```text
+ArtifactCacheStore.read(exact DownloadId)
+              | shared immutable Future
+              +--> Reader media decode (first-frame critical path)
+              +--> ArtifactCacheTransport --64 KiB chunks--> replacement DownloadSession
+                                                       -> seal -> promote
+```
+
+`PromotedArtifactReadPool` 属于 `downloads`，只在权威 session transport 已开始读取后允许页面加入同一精确读取，不产生 demand、不选择页面、不保留 decoded/texture 状态。缓存读取失败时 transport 回退 source，页面等待该 session。Flutter animated target-only re-decode 保留最后呈现帧，直到替代帧 present。
+
 ## 2. 仓库结构
 
 ```text

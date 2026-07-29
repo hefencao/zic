@@ -2,9 +2,10 @@ import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
+import 'package:downloads/downloads.dart'
+    show readerPageDownloadId, readerPageTraceIdentity;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:downloads/downloads.dart';
 
 import 'media_load_token.dart';
 import 'reader_runtime.dart';

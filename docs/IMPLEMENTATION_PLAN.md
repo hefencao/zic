@@ -21,7 +21,7 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.40）
+## 当前应用主线（0.31.0-dev.41）
 
 - 保留 Home/Bookshelf 的 Presentation 拆分，但禁止在 `apps/app/lib` 定义资源缓存、章节下载、页面保活或整本调度算法。
 - `resource_cache` 继续统一管理封面/图片响应、漫画详情、章节元数据和搜索结果。只有完整 `imageBytes` 可通过注入的 byte store 持久化；章节页面仍不进入该平面。
@@ -32,6 +32,8 @@
 - 外部插件的共享信任/权限/版本/ABI/隔离/session 门禁与 transition/artifact/decode/upload/first-frame telemetry 已实现；下一阶段分别实现 Mihon Android inspector/executor 与 Venera 受限 JavaScript inspector/executor。
 - Reader 快速切页 trace 已有确定性回放分析：由 `downloads` 生成精确 page/DownloadId identity，分别记录 transition revision 与实际产出呈现帧的 work revision，还原 artifact 来源、decode/upload 排队与执行、present、first frame 和 host remount；中点前已呈现的邻页计为零 transition wait。任何 retention 调整必须先由该分析定位 owner，再在 pipeline/session/media 层实施。
 - App durable composition 只接受显式 `ManagedChapterDownloadService` 作为页面 artifact store/maintenance；普通 `ChapterDownloadService` 保持较窄契约，避免把缓存维护强加给仅提供下载命令的适配器。
+- 冷启动 Reader 命中已 promoted 页面 artifact 时，页面消费者与替代 session transport 必须共享同一次精确读取；页面可立即开始 decode，但替代 session 仍需完成 receive/seal/promote。禁止因此新增 Presentation 私有缓存或绕过 demand。
+- Flutter 动图仅因 decode target 改变而重建 codec 时必须保留最后呈现帧，直到替代帧真正呈现；encoded identity 改变时才立即清空。trace 必须分别记录 artifact read、decode 和 present。
 
 ## 2. 阶段划分
 

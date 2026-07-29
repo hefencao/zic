@@ -123,10 +123,21 @@ void main() {
       expect(lifecycle.created['page-1'], 1);
       expect(lifecycle.disposed['page-0'] ?? 0, 0);
       expect(lifecycle.disposed['page-1'] ?? 0, 0);
+      expect(
+        trace.events.where(
+          (event) =>
+              event.kind == TraceEventKind.pageHostDisposed &&
+              (event.identityHash == chapter.pages[0].assetKey ||
+                  event.identityHash == chapter.pages[1].assetKey),
+        ),
+        isEmpty,
+        reason: 'crossing the role midpoint must not remount either loaded page',
+      );
 
       await gesture.up();
       await tester.pumpAndSettle();
       expect(lifecycle.created['page-1'], 1);
+      expect(lifecycle.disposed['page-1'] ?? 0, 0);
       expect(
         trace.events.where(
           (event) => event.kind == TraceEventKind.pageTransition,
@@ -142,11 +153,12 @@ void main() {
       expect(
         trace.events.where(
           (event) =>
-              event.kind == TraceEventKind.pageHostDisposed &&
+              event.kind == TraceEventKind.pageHostMounted &&
               (event.identityHash == chapter.pages[0].assetKey ||
                   event.identityHash == chapter.pages[1].assetKey),
-        ),
-        isEmpty,
+        ).length,
+        2,
+        reason: 'settling may evict the old page, but must not remount it',
       );
     },
   );

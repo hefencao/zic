@@ -42,6 +42,9 @@ final class ReaderTransitionAnalysis {
     required this.identity,
     required this.transitionAtMicros,
     required this.artifactSource,
+    required this.artifactRead,
+    required this.artifactJoin,
+    required this.artifactConsumer,
     required this.hostDisposedAfterTransition,
     required this.hostRemountedAfterTransition,
     required this.firstFrameReadyBeforeTransition,
@@ -62,6 +65,9 @@ final class ReaderTransitionAnalysis {
   final ReaderTraceIdentity identity;
   final int transitionAtMicros;
   final ReaderArtifactSource artifactSource;
+  final Duration? artifactRead;
+  final Duration? artifactJoin;
+  final String? artifactConsumer;
   final bool hostDisposedAfterTransition;
   final bool hostRemountedAfterTransition;
   final bool firstFrameReadyBeforeTransition;
@@ -88,6 +94,11 @@ final class ReaderTransitionAnalysis {
         'resourceKeyPrefix': identity.resourceKeyPrefix,
         'transitionAtMicros': transitionAtMicros,
         'artifactSource': artifactSource.name,
+        if (artifactRead != null)
+          'artifactReadMicros': artifactRead!.inMicroseconds,
+        if (artifactJoin != null)
+          'artifactJoinMicros': artifactJoin!.inMicroseconds,
+        if (artifactConsumer != null) 'artifactConsumer': artifactConsumer,
         'hostDisposedAfterTransition': hostDisposedAfterTransition,
         'hostRemountedAfterTransition': hostRemountedAfterTransition,
         'firstFrameReadyBeforeTransition': firstFrameReadyBeforeTransition,
@@ -301,10 +312,16 @@ final class ReaderTransitionTraceAnalyzer {
     final workRevision = presentedForFirstFrame?.revision ??
         firstFrame?.revision ??
         revision;
-    final artifact = _first(
+    final artifact = _preferredArtifact(
       ordered,
-      kind: TraceEventKind.artifactSource,
       revision: workRevision,
+      matches: identity.matchesResource,
+      notAfterMicros: horizon,
+    );
+    final sessionCopyArtifact = _artifactForConsumer(
+      ordered,
+      revision: workRevision,
+      consumer: 'session-copy',
       matches: identity.matchesResource,
       notAfterMicros: horizon,
     );
@@ -377,6 +394,12 @@ final class ReaderTransitionTraceAnalyzer {
       identity: identity,
       transitionAtMicros: transition.monotonicMicros,
       artifactSource: _artifactSource(artifact),
+      artifactRead: _payloadDuration(
+        sessionCopyArtifact ?? artifact,
+        'readMicros',
+      ),
+      artifactJoin: _payloadDuration(artifact, 'joinMicros'),
+      artifactConsumer: _payloadString(artifact, 'consumer'),
       hostDisposedAfterTransition: disposed != null,
       hostRemountedAfterTransition: disposed != null && remounted != null,
       firstFrameReadyBeforeTransition: readyBeforeTransition != null,
@@ -394,6 +417,49 @@ final class ReaderTransitionTraceAnalyzer {
       missingEvents: missing,
     );
   }
+}
+
+
+TraceEvent? _artifactForConsumer(
+  Iterable<TraceEvent> events, {
+  required int revision,
+  required String consumer,
+  required bool Function(TraceEvent event) matches,
+  int? notAfterMicros,
+}) {
+  for (final event in events) {
+    if (event.kind != TraceEventKind.artifactSource ||
+        event.revision != revision ||
+        event.payload['consumer'] != consumer ||
+        !matches(event) ||
+        (notAfterMicros != null && event.monotonicMicros > notAfterMicros)) {
+      continue;
+    }
+    return event;
+  }
+  return null;
+}
+
+TraceEvent? _preferredArtifact(
+  Iterable<TraceEvent> events, {
+  required int revision,
+  required bool Function(TraceEvent event) matches,
+  int? notAfterMicros,
+}) {
+  TraceEvent? first;
+  for (final event in events) {
+    if (event.kind != TraceEventKind.artifactSource ||
+        event.revision != revision ||
+        !matches(event) ||
+        (notAfterMicros != null && event.monotonicMicros > notAfterMicros)) {
+      continue;
+    }
+    first ??= event;
+    if (event.payload['consumer'] == 'reader-direct') {
+      return event;
+    }
+  }
+  return first;
 }
 
 TraceEvent? _first(
@@ -456,4 +522,17 @@ ReaderArtifactSource _artifactSource(TraceEvent? event) {
     'origin' => ReaderArtifactSource.origin,
     _ => ReaderArtifactSource.unknown,
   };
+}
+
+Duration? _payloadDuration(TraceEvent? event, String key) {
+  final value = event?.payload[key];
+  if (value is! int || value < 0) {
+    return null;
+  }
+  return Duration(microseconds: value);
+}
+
+String? _payloadString(TraceEvent? event, String key) {
+  final value = event?.payload[key];
+  return value is String && value.isNotEmpty ? value : null;
 }

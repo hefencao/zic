@@ -6,6 +6,7 @@ import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
 import 'artifact_cache_store.dart';
+import 'promoted_artifact_read_pool.dart';
 
 /// Read-through transport for already-promoted page artifacts.
 ///
@@ -18,6 +19,7 @@ final class ArtifactCacheTransport implements Transport {
     required ArtifactCacheStore cache,
     required Iterable<MapEntry<Uri, DownloadId>> identities,
     required Transport Function(Uri uri) fallbackFor,
+    PromotedArtifactReadPool? readPool,
     MonoClock? clock,
     TraceSink traceSink = const NoopTraceSink(),
     String sessionId = 'artifact-cache',
@@ -25,14 +27,24 @@ final class ArtifactCacheTransport implements Transport {
   })  : _cache = cache,
         _identities = _uniqueIdentities(identities),
         _fallbackFor = fallbackFor,
+        _readPool = readPool,
         _clock = clock,
         _traceSink = traceSink,
         _sessionId = sessionId,
-        _demandRevision = demandRevision;
+        _demandRevision = demandRevision {
+    if (readPool != null && !identical(readPool.cache, cache)) {
+      throw ArgumentError.value(
+        readPool,
+        'readPool',
+        'must read from the same artifact cache',
+      );
+    }
+  }
 
   final ArtifactCacheStore _cache;
   final Map<String, DownloadId> _identities;
   final Transport Function(Uri uri) _fallbackFor;
+  final PromotedArtifactReadPool? _readPool;
   final MonoClock? _clock;
   final TraceSink _traceSink;
   final String _sessionId;
@@ -48,25 +60,40 @@ final class ArtifactCacheTransport implements Transport {
     range?.validate();
     final id = _identities[uri.toString()];
     if (id != null) {
-      final bytes = await _cache.readArtifact(id);
-      if (bytes != null) {
-        final response = _cachedResponse(
-          id: id,
-          bytes: bytes,
-          range: range,
-          validators: validators,
-        );
-        if (response != null) {
-          _recordSource(
-            source: 'artifact-cache',
+      final readStarted = _clock?.nowMicros();
+      try {
+        final bytes = await (_readPool?.read(id) ?? _cache.readArtifact(id));
+        final readMicros = readStarted == null
+            ? null
+            : (_clock!.nowMicros() - readStarted).clamp(0, 1 << 62).toInt();
+        if (bytes != null) {
+          final response = _cachedResponse(
             id: id,
-            uri: uri,
-            bytes: bytes.lengthInBytes,
+            bytes: bytes,
             range: range,
-            revision: revision,
+            validators: validators,
           );
-          return response;
+          if (response != null) {
+            _recordSource(
+              source: 'artifact-cache',
+              id: id,
+              uri: uri,
+              bytes: bytes.lengthInBytes,
+              range: range,
+              revision: revision,
+              readMicros: readMicros,
+            );
+            return response;
+          }
         }
+      } on Object catch (error) {
+        _recordCacheFailure(
+          id: id,
+          uri: uri,
+          revision: revision,
+          error: error,
+          readStarted: readStarted,
+        );
       }
     }
     _recordSource(
@@ -83,6 +110,37 @@ final class ArtifactCacheTransport implements Transport {
     );
   }
 
+  void _recordCacheFailure({
+    required DownloadId id,
+    required Uri uri,
+    required int? revision,
+    required Object error,
+    required int? readStarted,
+  }) {
+    final clock = _clock;
+    if (clock == null) {
+      return;
+    }
+    _traceSink.record(
+      traceEvent(
+        clock: clock,
+        sessionId: _sessionId,
+        kind: TraceEventKind.taskFailed,
+        identityHash: id.key,
+        revision: revision,
+        payload: <String, Object?>{
+          'lane': 'artifact-cache-read',
+          'uri': uri.toString(),
+          'reason': error.toString(),
+          if (readStarted != null)
+            'readMicros':
+                (clock.nowMicros() - readStarted).clamp(0, 1 << 62).toInt(),
+          'fallback': 'origin',
+        },
+      ),
+    );
+  }
+
   void _recordSource({
     required String source,
     required DownloadId? id,
@@ -90,6 +148,7 @@ final class ArtifactCacheTransport implements Transport {
     required ByteRange? range,
     int? bytes,
     int? revision,
+    int? readMicros,
   }) {
     final clock = _clock;
     if (clock == null) {
@@ -108,6 +167,8 @@ final class ArtifactCacheTransport implements Transport {
           if (bytes != null) 'bytes': bytes,
           if (range != null) 'rangeStart': range.start,
           if (range?.end != null) 'rangeEnd': range!.end,
+          if (readMicros != null) 'readMicros': readMicros,
+          'consumer': 'session-copy',
         },
       ),
     );
@@ -140,8 +201,8 @@ ByteResponse? _cachedResponse({
   required Validators? validators,
 }) {
   final currentValidators = Validators(
-    etag: '"zic-artifact-${id.sourceRevision}-'
-        '${bytes.lengthInBytes}-${_fnv64Bytes(bytes)}"',
+    etag: '"zic-artifact-${bytes.lengthInBytes}-'
+        '${_fnv64String(id.key)}"',
   );
   final canServeRange = range != null &&
       range.start < bytes.lengthInBytes &&
@@ -158,7 +219,7 @@ ByteResponse? _cachedResponse({
       : (requestedEnd + 1).clamp(start, bytes.lengthInBytes).toInt();
   final body = Uint8List.sublistView(bytes, start, endExclusive);
   return ByteResponse(
-    bytes: Stream<List<int>>.value(body),
+    bytes: _chunkedBytes(body),
     statusCode: canServeRange ? 206 : 200,
     rangeStart: start,
     totalLength: bytes.lengthInBytes,
@@ -167,10 +228,18 @@ ByteResponse? _cachedResponse({
   );
 }
 
-String _fnv64Bytes(Uint8List bytes) {
+Stream<List<int>> _chunkedBytes(Uint8List bytes) async* {
+  const chunkSize = 64 * 1024;
+  for (var offset = 0; offset < bytes.lengthInBytes; offset += chunkSize) {
+    final end = (offset + chunkSize).clamp(0, bytes.lengthInBytes).toInt();
+    yield Uint8List.sublistView(bytes, offset, end);
+  }
+}
+
+String _fnv64String(String value) {
   var hash = 0xcbf29ce484222325;
-  for (final byte in bytes) {
-    hash ^= byte;
+  for (final codeUnit in value.codeUnits) {
+    hash ^= codeUnit;
     hash = (hash * 0x100000001b3) & 0xffffffffffffffff;
   }
   return hash.toRadixString(16).padLeft(16, '0');

@@ -887,6 +887,9 @@ def check_compile_regressions() -> None:
     ):
         if required not in static_demo:
             fail(f'Reader media pipeline route is incomplete: {required}')
+    if "import 'package:downloads/downloads.dart'" not in static_demo:
+        fail('static_demo.dart must import the Reader page identity adapter')
+
     for required in (
         'DownloadId readerPageDownloadId(',
         'ReaderTraceIdentity readerPageTraceIdentity(',
@@ -895,6 +898,54 @@ def check_compile_regressions() -> None:
     ):
         if required not in reader_page_identity:
             fail(f'Reader page identity adapter is incomplete: {required}')
+    artifact_cache_transport = (
+        ROOT / 'packages/downloads/lib/src/artifact_cache_transport.dart'
+    ).read_text(encoding='utf-8')
+    promoted_read_pool = (
+        ROOT / 'packages/downloads/lib/src/promoted_artifact_read_pool.dart'
+    ).read_text(encoding='utf-8')
+    promoted_read_pool_test = (
+        ROOT / 'packages/downloads/test/promoted_artifact_read_pool_test.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class PromotedArtifactReadPool',
+        'Future<Uint8List?> read(DownloadId id)',
+        'Future<Uint8List?> join(DownloadId id)',
+        'void observe(DownloadSession session)',
+        'void release(DownloadId id)',
+    ):
+        if required not in promoted_read_pool:
+            fail(f'promoted artifact read coalescing is incomplete: {required}')
+    for required in (
+        'readPool.cache',
+        "'consumer': 'session-copy'",
+        '_chunkedBytes(body)',
+        '_fnv64String(id.key)',
+        "'fallback': 'origin'",
+    ):
+        if required not in artifact_cache_transport:
+            fail(f'artifact cache transport cold-open path is incomplete: {required}')
+    for required in (
+        'page consumer and session transport share one promoted read',
+        'terminal replacement session releases the shared encoded read',
+        'failed cache reads are not retained',
+        'joining does not initiate a cache read',
+    ):
+        if required not in promoted_read_pool_test:
+            fail(f'promoted read pool regression is incomplete: {required}')
+
+    cold_open_test_path = ROOT / 'apps/app/test/reader_artifact_cold_open_test.dart'
+    if not cold_open_test_path.is_file():
+        fail('Reader cold promoted-artifact regression is missing')
+    cold_open_test = cold_open_test_path.read_text(encoding='utf-8')
+    for required in (
+        'cold Reader consumes promoted bytes before replacement session staging',
+        'expect(store.reads, 1)',
+        'expect(originLoads, 0)',
+    ):
+        if required not in cold_open_test:
+            fail(f'Reader cold promoted-artifact regression is incomplete: {required}')
+
     chapter_downloads = (
         ROOT / 'packages/downloads/lib/src/chapter_downloads.dart'
     ).read_text(encoding='utf-8')
@@ -924,6 +975,9 @@ def check_compile_regressions() -> None:
         'IconThemeData(color: Colors.white)',
         'DefaultTextStyle.merge',
         'Future<void> _downloadChapter()',
+        "'consumer': 'reader-direct'",
+        'PromotedArtifactReadPool',
+        "'fallback': 'session'",
     ):
         if required not in reader_runtime:
             fail(f'Reader runtime identity/transport path is incomplete: {required}')
@@ -947,9 +1001,23 @@ def check_compile_regressions() -> None:
         'targetWidth: raster.isDownsampled',
         'targetHeight: raster.isDownsampled',
         'allowUpscaling: false',
+        'preservePresentedFrame: identical(oldWidget.bytes, widget.bytes)',
+        'TraceEventKind.decodeStarted',
+        'TraceEventKind.frameDecoded',
+        'TraceEventKind.framePresented',
     ):
         if required not in webp_demo:
             fail(f'controlled animated playback regressed: {required}')
+    local_image_preview_test = (
+        ROOT / 'apps/app/test/local_image_preview_test.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'Flutter animated codec exposes cold first-frame phases',
+        'Flutter target rebuild keeps the presented frame visible',
+        'expect(find.byType(RawImage), findsOneWidget)',
+    ):
+        if required not in local_image_preview_test:
+            fail(f'Flutter cold-decode regression is incomplete: {required}')
     asset_transport_path = ROOT / 'apps/app/lib/asset_bundle_transport.dart'
     asset_transport_test_path = (
         ROOT / 'apps/app/test/asset_bundle_transport_test.dart'
@@ -1516,6 +1584,10 @@ def check_compile_regressions() -> None:
         'hostRemountedAfterTransition',
         'dominantMeasuredPhase',
         'presentedForFirstFrame',
+        'final Duration? artifactRead;',
+        'final Duration? artifactJoin;',
+        'final String? artifactConsumer;',
+        "event.payload['consumer'] == 'reader-direct'",
     ):
         if required not in transition_analysis:
             fail(f'Reader transition replay is incomplete: {required}')
@@ -1525,6 +1597,9 @@ def check_compile_regressions() -> None:
         'reports origin fallback and host remount evidence',
         'analyzeAll separates rapid-swipe revisions and pages',
         "expect(analysis.workRevision, 3)",
+        "expect(analysis.artifactConsumer, 'reader-direct')",
+        "expect(analysis.toJson()['artifactReadMicros'], 30)",
+        "expect(analysis.toJson()['artifactJoinMicros'], 7)",
     ):
         if required not in transition_analysis_test:
             fail(f'Reader transition replay regression is incomplete: {required}')

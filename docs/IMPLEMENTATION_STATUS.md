@@ -1,3 +1,9 @@
+## Current iteration — direct promoted reads and gapless cold decode
+
+A process-reopened Reader now shares one exact read of an already-promoted page artifact between the media consumer and the replacement session transport. Decode can start from the durable promoted bytes immediately; the new session still receives, seals and promotes in the background, and the shared read is released at the session terminal state. Cache handoff is bounded-chunk and cache read errors fail open to the normal source path.
+
+Flutter animated target changes retain the last presented frame until the replacement codec presents a frame. Transition replay now reports artifact storage-read time, Reader join time and whether the measured event was `reader-direct` or `session-copy`, allowing cold-start traces to separate storage, decode and presentation costs. The reported static demo import failure is closed with an explicit downloads import, and the Reader midpoint regression keeps its no-dispose invariant during the transition window while permitting normal old-page eviction after settling.
+
 ## Current iteration — explicit artifact capability and evidence-driven Reader replay
 
 The external dev.39 compile report exposed an invalid composition assumption: the App stored a persistent implementation

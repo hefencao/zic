@@ -42,6 +42,42 @@ void main() {
     expect(source.payload['bytes'], 4);
   });
 
+  test('streams a large promoted artifact in cooperative chunks', () async {
+    final uri = Uri.parse('https://example.invalid/large-page.bin');
+    final id = _downloadId(uri, 'page-large');
+    final bytes = Uint8List(160 * 1024);
+    final cache = _MemoryArtifactStore(<DownloadId, Uint8List>{id: bytes});
+    final transport = ArtifactCacheTransport(
+      cache: cache,
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => _RecordingTransport(Uint8List(0)),
+    );
+
+    final response = await transport.open(uri);
+    final chunks = await response.bytes.map((chunk) => chunk.length).toList();
+
+    expect(chunks, <int>[64 * 1024, 64 * 1024, 32 * 1024]);
+  });
+
+  test('rejects a read pool backed by another cache', () {
+    final uri = Uri.parse('https://example.invalid/pool-mismatch.bin');
+    final id = _downloadId(uri, 'page-pool-mismatch');
+    final cache = _MemoryArtifactStore(<DownloadId, Uint8List>{});
+    final other = _MemoryArtifactStore(<DownloadId, Uint8List>{});
+    final pool = PromotedArtifactReadPool(cache: other);
+    addTearDown(pool.close);
+
+    expect(
+      () => ArtifactCacheTransport(
+        cache: cache,
+        readPool: pool,
+        identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+        fallbackFor: (_) => _RecordingTransport(Uint8List(0)),
+      ),
+      throwsArgumentError,
+    );
+  });
+
   test('serves resumable ranges only for matching cache validators',
       () async {
     final uri = Uri.parse('https://example.invalid/range.bin');
@@ -100,6 +136,35 @@ void main() {
     );
     expect(source.revision, 9);
     expect(source.payload['source'], 'origin');
+  });
+
+  test('cache read failure falls back to the source transport', () async {
+    final uri = Uri.parse('https://example.invalid/cache-error.bin');
+    final id = _downloadId(uri, 'page-cache-error');
+    final cache = _ThrowingArtifactStore();
+    final fallback = _RecordingTransport(Uint8List.fromList(<int>[7, 8]));
+    final trace = MemoryTraceSink();
+    final transport = ArtifactCacheTransport(
+      cache: cache,
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => fallback,
+      clock: _Clock(),
+      traceSink: trace,
+    );
+
+    final response = await transport.open(uri);
+
+    expect(await _collect(response), <int>[7, 8]);
+    expect(fallback.opens, 1);
+    expect(
+      trace.events.any(
+        (event) =>
+            event.kind == TraceEventKind.taskFailed &&
+            event.payload['lane'] == 'artifact-cache-read' &&
+            event.payload['fallback'] == 'origin',
+      ),
+      isTrue,
+    );
   });
 
   test('ambiguous URI identities bypass the artifact cache', () async {
@@ -173,6 +238,19 @@ final class _MemoryArtifactStore implements ArtifactCacheStore {
   }) async {
     values[id] = Uint8List.fromList(bytes);
   }
+}
+
+final class _ThrowingArtifactStore implements ArtifactCacheStore {
+  @override
+  Future<Uint8List?> readArtifact(DownloadId id) async {
+    throw StateError('corrupt promoted artifact');
+  }
+
+  @override
+  Future<void> storePromotedArtifact({
+    required DownloadId id,
+    required Uint8List bytes,
+  }) async {}
 }
 
 final class _RecordingTransport implements Transport {

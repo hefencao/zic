@@ -10,10 +10,22 @@ void main() {
 
   test('derives deterministic transition phase durations', () {
     final events = <TraceEvent>[
+      _event(9, TraceEventKind.artifactSource,
+          identity: identity.resourceKeyPrefix,
+          revision: 4,
+          payload: const <String, Object?>{
+            'source': 'artifact-cache',
+            'consumer': 'session-copy',
+            'readMicros': 30,
+          }),
       _event(10, TraceEventKind.artifactSource,
           identity: identity.resourceKeyPrefix,
           revision: 4,
-          payload: const <String, Object?>{'source': 'artifact-cache'}),
+          payload: const <String, Object?>{
+            'source': 'artifact-cache',
+            'consumer': 'reader-direct',
+            'joinMicros': 7,
+          }),
       _event(20, TraceEventKind.decodeDemand,
           identity: '${identity.resourceKeyPrefix}|decode', revision: 4),
       _event(35, TraceEventKind.decodeStarted,
@@ -44,6 +56,11 @@ void main() {
     );
 
     expect(analysis.artifactSource, ReaderArtifactSource.artifactCache);
+    expect(analysis.artifactRead, const Duration(microseconds: 30));
+    expect(analysis.artifactJoin, const Duration(microseconds: 7));
+    expect(analysis.artifactConsumer, 'reader-direct');
+    expect(analysis.toJson()['artifactReadMicros'], 30);
+    expect(analysis.toJson()['artifactJoinMicros'], 7);
     expect(analysis.workRevision, 4);
     expect(analysis.transitionToFirstFrame, const Duration(microseconds: 12));
     expect(analysis.toJson()['transitionToFirstFrameMicros'], 12);

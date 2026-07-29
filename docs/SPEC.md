@@ -142,9 +142,15 @@ abstract interface class ComicSource {
   使用不同 transport，但必须经过同一 DownloadJob/DownloadSession 状态机。
 - Reader session 的 final artifact 只有在 `DownloadState.promoted` 后才可提交到持久页面缓存；退出前必须
   drain 已开始的提交，再删除临时 workspace。新 session 的缓存命中仍需重新经过自己的
-  DownloadJob/DownloadSession，禁止直接把缓存 bytes 交给播放器。
+  DownloadJob/DownloadSession。已持久化且已 promoted 的精确 immutable bytes 只能由该替代 session transport 发起读取，页面消费者可加入
+  同一次读取，使 decode 不等待重复 staging；这不赋予 Presentation demand 或 retention 权限。
 - cache transport 只接受精确 `DownloadId` 身份。一个 URI 若在同一 manifest 中对应多个页面身份必须绕过
-  缓存；range 命中必须验证内容派生 validator，失败时回退到原 source transport。
+  缓存；range 命中必须验证由精确 DownloadId 与长度派生的 validator，失败时回退到原 source transport。
+  持久 artifact 的内容完整性在最初 promotion/storage 时校验，不得在 UI isolate 再做整页哈希。
+- cache read 失败必须 fail-open：transport 回退 origin，页面等待正常 session，并记录可归因错误。大 artifact
+  回填必须分块，不得以单一巨型 chunk 阻塞 UI isolate。
+- Flutter 动图仅 decode target 改变时，旧呈现帧必须保留到替代 codec 首帧呈现；encoded bytes 改变时才
+  清空旧帧。进程重启后 decoded frame 不持久化，剩余首帧时间必须拆分为 artifact read/decode/present。
 - viewport target 或 Reader session 被替换时，旧 binding 必须先 reconcile 到 empty；
   旧异步结果仍受 epoch、identity 和 cancel token 约束。
 - 等待 promotion 使用只读 snapshot observer。observer 失败不得改变下载状态、writer

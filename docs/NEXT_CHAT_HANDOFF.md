@@ -2,50 +2,39 @@
 
 ## Sole baseline
 
-Continue only from `zic_v0.31.0-dev.40_managed-artifact-capability-transition-replay.zip`.
+Continue only from `zic_v0.31.0-dev.41_direct-promoted-artifact-read-gapless-cold-decode.zip`.
 Do not merge or copy files from an earlier zic archive.
 
 ## Current ownership
 
-- `resource_cache` owns reusable source-response policy and optional durable complete `imageBytes`; Reader page artifacts
-  remain in downloads/sessions/storage.
-- `ManagedChapterDownloadService` is the explicit aggregate capability used only where App composition needs chapter
-  commands, promoted artifact storage and busy-safe artifact maintenance together. Plain `ChapterDownloadService` stays
-  valid for integrations that do not own the artifact plane.
-- `storage_bridge.createAppResourceCache` is the production path/composition factory for the one response coordinator.
-  App Widgets do not derive cache paths or instantiate cache policy.
-- `downloads` owns promoted page-artifact handoff and read-through artifact transport. Artifact hits and origin fallback
-  still enter normal `DownloadSession -> seal -> promote` work.
-- `ReaderView` keeps stable page/media identities. Midpoint verification is driven by observed host creation/current-page
-  state, not a fixed drag distance. Presentation does not add keep-alive, page-byte LRU or adjacent warmup.
-- `LiveCoordinator` owns decode/upload scheduling. Demand revisions are retained while work waits in lanes/source
-  readiness and are emitted at demand/start/frame state changes.
-- `telemetry.ReaderTransitionTraceAnalyzer` reads the existing trace chain and reports artifact source, host remount,
-  measured phase durations and missing events. It has no policy or retention authority.
-- `catalog` owns only Mihon/Venera repository metadata and ordinary `BrowsableComicSource` contracts.
-- `plugin_host` owns common pre-execution inspection/policy/quarantine/session/runtime-registry rules. Concrete Mihon
-  APK/Kotlin and Venera JavaScript executors remain separate and are not implemented.
+- `resource_cache` owns reusable source responses and durable complete image responses.
+- `downloads/sessions/storage` own Reader encoded page artifacts, promotion, maintenance and exact page identity.
+- `PromotedArtifactReadPool` starts one immutable read of an already-promoted `DownloadId` from the replacement session transport; the Reader media consumer may join it but cannot initiate it. It creates no demand and releases the read when that session is promoted, failed or disposed.
+- A reopened Reader may start decode directly from the durable promoted read. The replacement `DownloadSession` still runs receive/seal/promote in the background; Presentation does not gain a page LRU, keep-alive or adjacent-page warmup policy.
+- `ArtifactCacheTransport` transfers durable bytes in 64 KiB chunks and uses exact DownloadId plus length for resume identity. Original promotion/storage owns integrity validation. Cache read failure falls back to origin and is traced.
+- Flutter animated target-only codec rebuilds retain the last presented frame until a replacement frame is presented. Encoded-byte changes clear the old frame.
+- `ReaderTransitionTraceAnalyzer` reports artifact source, durable storage-read time, Reader join time, direct/session-copy consumer, decode/upload/presentation phases, transition/work revisions and host remount evidence.
+- `ManagedChapterDownloadService` remains the explicit App-root aggregate for chapter commands, promoted artifact storage and maintenance.
+- `plugin_host` still contains shared Mihon/Venera trust, capability, quarantine and session gates only; concrete APK/Kotlin and JavaScript executors remain unimplemented.
 
-## Reported dev.39 failures closed
+## Reported dev.40 failures closed
 
-- App durable composition now stores the opened persistent service as `ManagedChapterDownloadService`, so it satisfies
-  the artifact-maintenance parameter statically without a cast or widening all chapter adapters.
-- The Reader midpoint regression no longer expects a target page after an arbitrary 300-pixel drag. It observes target
-  host creation while page 0 remains current, then observes the actual midpoint transition and preserves strict one-create,
-  zero-dispose expectations for both loaded hosts.
+- `static_demo.dart` explicitly imports the downloads-owned `readerPageDownloadId` adapter; it no longer relies on a re-export to compile.
+- The midpoint regression asserts zero loaded-host disposal before gesture release and through the role transition. After settling, normal old-page eviction is allowed, but the two loaded pages must have exactly two mount events total, so a remount is still rejected.
 
-## New regression coverage
+## Cold-open changes
 
-- Managed memory chapter services are accepted directly by `ResourceCacheCoordinator` and expose zero-entry artifact
-  usage before work.
-- `downloads.readerPageTraceIdentity` derives the exact page key and DownloadId prefix used by deterministic replay; App
-  code does not reconstruct resource identities.
-- Deterministic replay derives cache/origin selection, decode and upload queue/work times, presentation delay,
-  transition-to-first-frame time, transition/work revisions, dominant measured phase, JSON-ready output, missing evidence
-  and host-remount evidence. A neighbor ready before the midpoint has zero transition wait.
-- Rapid-swipe replay separates page/revision transitions and deduplicates repeated transition observations.
+- Page decode no longer waits for durable bytes to be copied into and read back from the ephemeral session artifact.
+- Page consumer and cache transport coalesce one persistent read.
+- Background cache-to-session transfer is chunked instead of one giant stream chunk.
+- The cache validator no longer performs a second full-page hash on the UI isolate.
+- Cache read errors fail open through the normal session/origin path.
+- Flutter codec emits instantiate/decode/present events with stable DownloadId-derived identity.
+- Target-size re-decode is gapless when the encoded artifact is unchanged.
 
-## Validation completed here
+Decoded frames are not persisted across process death. A true cold process must still decode the encoded image; use trace `artifactReadMicros`, decode work and presentation time to determine any remaining delay.
+
+## Validation completed in the delivery container
 
 ```bash
 python3 tool/check_repo.py
@@ -56,22 +45,19 @@ python3 -m py_compile tool/*.py
 bash ./tool/check_native_header.sh
 ```
 
-The container has no Flutter, Dart, Cargo, Gradle, Android SDK or Android NDK, so their test/build success is not
-claimed. Run the following externally:
+The container has no Flutter, Dart, Cargo, Gradle, Android SDK or Android NDK, so their test/build success is not claimed. Run externally:
 
 ```bash
 flutter pub get
 
-cd packages/telemetry && dart test test/reader_transition_analysis_test.dart
-cd ../downloads && dart test test/chapter_downloads_test.dart test/resource_cache_maintenance_test.dart test/reader_page_identity_test.dart
-cd ../resource_cache && dart test test
-cd ../storage && dart test test/file_resource_cache_byte_store_test.dart
-cd ../catalog && dart test test/external_plugin_catalog_test.dart
-cd ../plugin_host && dart test test
-cd ../sessions && dart test test/live_coordinator_test.dart
-cd ../reader && flutter test test/reader_navigation_test.dart test/reader_controller_test.dart
-cd ../../apps/app && flutter test test/resource_cache_restart_test.dart
-flutter test test/library_ui_test.dart test/source_browser_test.dart test/reader_controls_test.dart test/app_smoke_test.dart
+cd packages/downloads
+dart test test/artifact_cache_transport_test.dart test/promoted_artifact_read_pool_test.dart test/promoted_artifact_cache_handoff_test.dart
+cd ../telemetry
+dart test test/reader_transition_analysis_test.dart
+cd ../reader
+flutter test test/reader_navigation_test.dart test/reader_controller_test.dart
+cd ../../apps/app
+flutter test test/reader_artifact_cold_open_test.dart test/local_image_preview_test.dart test/reader_controls_test.dart test/app_smoke_test.dart
 
 cd ../../
 bash ./tool/test_dart.sh
@@ -86,12 +72,7 @@ bash ./tool/build_android.sh release
 
 ## Next mainline work
 
-1. Run the dev.40 telemetry replay against real rapid-swipe traces and retain the trace plus analysis result; change
-   encoded/decoded/texture retention only when the measured owner is identified.
-2. Implement memory-pressure shrink/eviction handshakes in pipeline/session/media owners, not Presentation.
-3. Implement a Mihon Android inspector that verifies downloaded APK hash/signature/package/version and reads extension
-   ABI metadata without class loading; then add a separately permissioned executor bridge.
-4. Implement a Venera metadata-only JavaScript inspection phase and a constrained runtime exposing explicit network,
-   cookie, storage and credential capabilities with cancellation and resource limits.
-5. Persist repository trust, quarantine and plugin version state; define signed update and rollback behavior before any
-   installation UI.
+1. Capture a real cold-process Reader trace on the problematic large page and run transition replay. Separate durable artifact read, Flutter/native decode, upload and presentation before changing retention.
+2. If decode remains dominant, add a cache-owned page preview artifact/first-frame placeholder contract in downloads/storage, not a Widget-owned thumbnail cache. Define revision, dimensions, invalidation and budget before implementation.
+3. Implement memory-pressure shrink/eviction handshakes in pipeline/session/media owners.
+4. Continue Mihon Android metadata inspector/signature verification and Venera constrained JavaScript inspection/runtime as separate plugin-host adapters.
