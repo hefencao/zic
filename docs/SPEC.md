@@ -641,7 +641,10 @@ slider input submits a bounded Reader command. Pause/speed state is injected int
 players; rotation changes presentation only. Pinch/pan and double-tap zoom are page-local, block
 PageView scrolling while active and reset after navigation. Crossing the PageView midpoint must not
 replace a page host whose asset identity is unchanged or return already presented neighboring media to
-a loading/black placeholder.
+a loading/black placeholder. Regression playback must advance by observed host/current-page state rather
+than assuming a fixed pixel distance represents the midpoint on every viewport. Rapid-swipe diagnosis must
+correlate stable page identity, resource identity prefix and demand revision before attributing the gap to
+artifact lookup, decode, upload, presentation or host lifetime.
 
 External plugin repository metadata may be parsed for Mihon extension packages and Venera JavaScript sources. Venera
 indexes accept both `filename` and deployed `fileName`, and a declared `key` becomes stable `venera:<key>` identity.

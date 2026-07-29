@@ -95,8 +95,14 @@ void main() {
 
       final pageView = find.byType(PageView);
       final gesture = await tester.startGesture(tester.getCenter(pageView));
-      await gesture.moveBy(const Offset(-300, 0));
-      await tester.pump();
+      final dragStep = Offset(-tester.getSize(pageView).width / 32, 0);
+      await _moveGestureUntil(
+        tester: tester,
+        gesture: gesture,
+        delta: dragStep,
+        condition: () => lifecycle.created['page-1'] == 1,
+        failure: 'target page host never entered the render tree',
+      );
 
       expect(controller.currentIndex, 0);
       expect(lifecycle.created['page-0'], 1);
@@ -104,8 +110,13 @@ void main() {
       expect(lifecycle.disposed['page-0'] ?? 0, 0);
       expect(lifecycle.disposed['page-1'] ?? 0, 0);
 
-      await gesture.moveBy(const Offset(-220, 0));
-      await tester.pump();
+      await _moveGestureUntil(
+        tester: tester,
+        gesture: gesture,
+        delta: dragStep,
+        condition: () => controller.currentIndex == 1,
+        failure: 'gesture never crossed the page midpoint',
+      );
 
       expect(controller.currentIndex, 1);
       expect(lifecycle.created['page-0'], 1);
@@ -277,6 +288,22 @@ void main() {
 
     expect(() => controller.requestPage(1), throwsRangeError);
   });
+}
+
+Future<void> _moveGestureUntil({
+  required WidgetTester tester,
+  required TestGesture gesture,
+  required Offset delta,
+  required bool Function() condition,
+  required String failure,
+}) async {
+  for (var step = 0; step < 40 && !condition(); step++) {
+    await gesture.moveBy(delta);
+    await tester.pump();
+  }
+  if (!condition()) {
+    fail(failure);
+  }
 }
 
 final class _PageLifecycle {

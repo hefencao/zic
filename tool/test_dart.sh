@@ -12,6 +12,7 @@ for rel in \
   packages/domain \
   packages/resource_cache \
   packages/catalog \
+  packages/plugin_host \
   packages/downloads \
   packages/telemetry \
   packages/transport \

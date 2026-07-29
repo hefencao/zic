@@ -12,7 +12,7 @@ import 'webp_demo.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   ImportedLibraryStore? libraryStore;
-  ChapterDownloadService? chapterDownloads;
+  ManagedChapterDownloadService? chapterDownloads;
   WholeComicDownloadQueue? wholeComicDownloads;
   ResourceCacheCoordinator? cacheCoordinator;
   try {

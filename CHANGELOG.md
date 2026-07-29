@@ -1,3 +1,21 @@
+## 0.31.0-dev.40 — managed artifact capability and deterministic transition replay
+
+- Close the reported App compilation failure without widening every chapter-download implementation: add the explicit
+  `ManagedChapterDownloadService` composition capability, implemented by the memory and persistent services, and use it
+  at the durable App root where artifact maintenance is required. The narrower `ChapterDownloadService` remains valid
+  for UI/test adapters that do not own promoted artifacts.
+- Replace the Reader midpoint regression's fixed-pixel assumption with state-driven gesture progression. The test first
+  proves the target host entered the render tree while the original page is still current, then crosses the actual
+  midpoint and verifies neither loaded host was disposed or recreated. Product keys and ownership are not weakened.
+- Add deterministic `ReaderTransitionTraceAnalyzer` replay over the existing transition/artifact/decode/upload/present/
+  first-frame/host-lifecycle trace chain. It reports cache versus origin selection, host-remount evidence, phase durations,
+  missing evidence and the dominant measured phase without changing demand, retention, cache or eviction policy. The
+  replay distinguishes transition revision from the revision that produced the presented frame and emits a JSON-ready
+  report, so a preloaded neighbor is measured as zero transition wait instead of being attributed to later swipe work.
+- Move Reader page DownloadId/trace identity construction into `downloads`, add rapid-swipe, incomplete-trace,
+  host-remount and managed-capability regressions, plus ADR 0023 and updated handoff
+  rules for evidence-driven retention work.
+
 ## 0.31.0-dev.39 — compile closure, transition attribution and permissioned plugin hosts
 
 - Close the reported dev.38 Dart compilation regressions: durable `Uint8List` restoration is explicitly narrowed back

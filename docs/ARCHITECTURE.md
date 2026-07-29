@@ -53,7 +53,7 @@ zic/
     transport/               网络、本地文件、resume
     storage/                 artifact、cache index、SQLite 与持久目录库
     storage_bridge/          Flutter 应用支持目录与 storage 后端装配
-    telemetry/               指标、事件、trace、设备状态
+    telemetry/               指标、事件、trace、设备状态与确定性切页回放分析
     bridge/                  FFI、native source/cursor/frame handle
     texture_bridge/          Flutter texture 契约与 Android 插件
     local_media/             本地图片模型、格式嗅探、桌面目录枚举和平台 facade
@@ -219,7 +219,9 @@ Dart presenter 输出：
 - platform failure 的 fallback telemetry。
 
 Reader 媒体页将 native decode、frame preparation、texture upload、present 与
-fallback 写入同一 monotonic trace。`ReaderBinding.revision` 是输出层只读的
+fallback 写入同一 monotonic trace。`ReaderTransitionTraceAnalyzer` 只读重放 page transition、
+artifact source、decode/upload、present、first-frame 与 host lifecycle，输出可测阶段耗时和缺失证据；
+它不得创建 demand、保活页面或调整缓存。`ReaderBinding.revision` 是输出层只读的
 需求版本来源，播放器不得自行生成与 PipelineController 无关的 revision。
 
 WebP 打开与 native 实验启动是两个不同状态：页面先完成 Dart 容器校验并使用
@@ -1021,3 +1023,6 @@ assemble cache budgets ad hoc inside a page, and does not construct response-cac
 Manager is a presentation/command surface over those interfaces; it cannot open the index, delete files directly or
 mutate library metadata.
 
+
+Reader transition replay is owned by `telemetry`, while exact page/DownloadId identity construction is owned by
+`downloads`. Replay separates transition revision from the frame-producing work revision and is observational only.

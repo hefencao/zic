@@ -113,6 +113,17 @@ abstract interface class ChapterDownloadService {
   Future<void> close();
 }
 
+/// Chapter service variant that also owns the promoted page-artifact store and
+/// exposes its existing busy-safe maintenance surface.
+///
+/// App composition may require this capability, while UI/test integrations can
+/// still depend on the narrower [ChapterDownloadService] contract.
+abstract interface class ManagedChapterDownloadService
+    implements
+        ChapterDownloadService,
+        ArtifactCacheMaintenance,
+        ArtifactCacheStore {}
+
 typedef ChapterPageLoader = Future<Uint8List> Function(
   ImportedLibraryEntry entry,
   int pageIndex,
@@ -124,10 +135,7 @@ typedef ChapterPageLoader = Future<Uint8List> Function(
 /// cancellation/failure, and exposes the same task lifecycle as the artifact
 /// implementation.
 final class MemoryChapterDownloadService
-    implements
-        ChapterDownloadService,
-        ArtifactCacheMaintenance,
-        ArtifactCacheStore {
+    implements ManagedChapterDownloadService {
   MemoryChapterDownloadService({required ChapterPageLoader pageLoader})
       : _pageLoader = pageLoader;
 
@@ -544,10 +552,7 @@ final class MemoryChapterDownloadService
 }
 
 final class PersistentChapterDownloadService
-    implements
-        ChapterDownloadService,
-        ArtifactCacheMaintenance,
-        ArtifactCacheStore {
+    implements ManagedChapterDownloadService {
   PersistentChapterDownloadService._({
     required DownloadRegistry registry,
     required SqliteIndex index,

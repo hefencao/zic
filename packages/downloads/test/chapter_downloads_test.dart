@@ -4,10 +4,26 @@ import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
-import 'package:test/test.dart';
 import 'package:downloads/downloads.dart';
+import 'package:resource_cache/resource_cache.dart';
+import 'package:test/test.dart';
 
 void main() {
+  test('managed chapter service is a cache-maintenance capability', () async {
+    final ManagedChapterDownloadService service =
+        MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(0),
+    );
+    addTearDown(service.close);
+
+    final coordinator = ResourceCacheCoordinator(artifacts: service);
+    addTearDown(coordinator.close);
+    final usage = await coordinator.inspect();
+
+    expect(usage.artifacts, isNotNull);
+    expect(usage.artifacts!.entries, 0);
+  });
+
   test('memory chapter download owns bytes before reporting completion',
       () async {
     final bytes = Uint8List.fromList(<int>[7, 8, 9]);

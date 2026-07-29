@@ -1,3 +1,23 @@
+## Current iteration — explicit artifact capability and evidence-driven Reader replay
+
+The external dev.39 compile report exposed an invalid composition assumption: the App stored a persistent implementation
+in a variable typed only as `ChapterDownloadService`, then passed it where `ArtifactCacheMaintenance` was required.
+`ManagedChapterDownloadService` now expresses the actual aggregate capability (`ChapterDownloadService` + promoted
+artifact store + busy-safe artifact maintenance). Memory and persistent owners implement it; narrower command-only adapters
+remain legal. App root composition uses the aggregate type and no runtime cast or cache ownership is moved into Widgets.
+
+The Reader midpoint test no longer assumes a fixed 300-pixel drag means the target page has been built. It advances the
+gesture until target-host creation is observed while the source page remains current, then advances until the controller
+reports the actual midpoint crossing. It still proves both loaded hosts have one creation and zero disposal events, so it
+does not hide a product remount behind a weaker finder or end-state-only assertion.
+
+`telemetry` now provides deterministic transition replay. Given a stable page asset key and the corresponding DownloadId
+identity prefix, it correlates artifact source, decode/upload demand and start, decoded/uploaded/presented frame, first
+Reader frame and page-host lifetime around one transition. Exact page/DownloadId identity construction now lives in
+`downloads`, not App. The result separates transition revision from the revision that produced the presented frame,
+reports preloaded neighbors as zero transition wait, exports JSON-ready measurements, missing events and host-remount
+evidence. It is deliberately observational and cannot create demand, retain pages, or mutate cache policy.
+
 ## Current iteration — compile closure, attributable transitions and permissioned plugin runtime ownership
 
 The dev.38 compile blockers reported by external Flutter/Dart validation are closed in product code. Persistent image

@@ -471,6 +471,9 @@ def check_compile_regressions() -> None:
             fail(f'DecodeSession must not use runtime cursor typing: {forbidden}')
     static_demo = (ROOT / 'apps/app/lib/static_demo.dart').read_text(encoding='utf-8')
     reader_runtime = (ROOT / 'apps/app/lib/reader_runtime.dart').read_text(encoding='utf-8')
+    reader_page_identity = (
+        ROOT / 'packages/downloads/lib/src/reader_page_identity.dart'
+    ).read_text(encoding='utf-8')
     if "import 'package:pipeline/pipeline.dart';" not in reader_runtime:
         fail('Reader runtime must import DecodeTarget from pipeline')
     if 'physicalWidth: 1080' in reader_runtime or 'physicalHeight: 1920' in reader_runtime:
@@ -886,7 +889,26 @@ def check_compile_regressions() -> None:
             fail(f'Reader media pipeline route is incomplete: {required}')
     for required in (
         'DownloadId readerPageDownloadId(',
+        'ReaderTraceIdentity readerPageTraceIdentity(',
         'sourceRevision: chapter.chapter.sourceRevision',
+        'resourceKeyPrefix: download.key',
+    ):
+        if required not in reader_page_identity:
+            fail(f'Reader page identity adapter is incomplete: {required}')
+    chapter_downloads = (
+        ROOT / 'packages/downloads/lib/src/chapter_downloads.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'abstract interface class ManagedChapterDownloadService',
+        'ChapterDownloadService,',
+        'ArtifactCacheMaintenance,',
+        'ArtifactCacheStore {}',
+        'implements ManagedChapterDownloadService',
+    ):
+        if required not in chapter_downloads:
+            fail(f'Managed chapter artifact capability is incomplete: {required}')
+
+    for required in (
         'final class ReaderRuntimeScreen',
         'LoaderTransport(widget.loaderSources)',
         'SystemUiMode.immersiveSticky',
@@ -1479,6 +1501,33 @@ def check_compile_regressions() -> None:
     ):
         if required not in resource_cache:
             fail(f'dev.38 resource cache compile closure is missing: {required}')
+
+    transition_analysis = (
+        ROOT / 'packages/telemetry/lib/src/reader_transition_analysis.dart'
+    ).read_text(encoding='utf-8')
+    transition_analysis_test = (
+        ROOT / 'packages/telemetry/test/reader_transition_analysis_test.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class ReaderTransitionTraceAnalyzer',
+        'final int workRevision;',
+        "'transitionRevision': revision",
+        'firstFrameReadyBeforeTransition',
+        'hostRemountedAfterTransition',
+        'dominantMeasuredPhase',
+        'presentedForFirstFrame',
+    ):
+        if required not in transition_analysis:
+            fail(f'Reader transition replay is incomplete: {required}')
+    for required in (
+        'derives deterministic transition phase durations',
+        'recognizes a neighboring page ready before the midpoint',
+        'reports origin fallback and host remount evidence',
+        'analyzeAll separates rapid-swipe revisions and pages',
+        "expect(analysis.workRevision, 3)",
+    ):
+        if required not in transition_analysis_test:
+            fail(f'Reader transition replay regression is incomplete: {required}')
 
     reader_view = (
         ROOT / 'packages/reader/lib/src/reader_view.dart'
