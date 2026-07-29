@@ -1160,12 +1160,14 @@ def check_compile_regressions() -> None:
         ROOT / 'packages/storage/lib/src/sqlite_imported_library_store.dart'
     ).read_text(encoding='utf-8')
     for required in (
-        'const _schemaVersion = 5',
+        'const _schemaVersion = 6',
         'PRAGMA user_version = $_schemaVersion',
         'PRIMARY KEY(source_id, chapter_id)',
         'PRIMARY KEY(source_id, comic_id)',
         'library_migration_issue',
         'listMigrationIssues',
+        'acknowledgeMigrationIssues',
+        'acknowledged_us',
         'saved_comic',
         'upsertSavedComic',
         'library_category',
@@ -1178,6 +1180,20 @@ def check_compile_regressions() -> None:
     ):
         if required not in store:
             fail(f'durable bookshelf storage is incomplete: {required}')
+    diagnostics = (
+        ROOT / 'apps/app/lib/library_diagnostics.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class LibraryDiagnosticsScreen',
+        'libraryDiagnosticsEntryKey',
+        'libraryDiagnosticsCopyKey',
+        'libraryDiagnosticsAcknowledgeAllKey',
+        'includeAcknowledged: _includeAcknowledged',
+        'acknowledgeMigrationIssues',
+    ):
+        if required not in diagnostics:
+            fail(f'library migration diagnostics are incomplete: {required}')
+
     for required in (
         'WHERE source_id = ? AND comic_id = ?',
         'WHERE source_id = ? AND chapter_id = ?',
@@ -1299,7 +1315,9 @@ def check_compile_regressions() -> None:
         'AlwaysScrollableScrollPhysics',
         'comicDetailsReadKey(',
         'comicDetailsDownloadKey(',
-        'DismissDirection.startToEnd',
+        'final class _ReadSwipeAction',
+        'onHorizontalDragEnd:',
+        '恢复未读',
         'ensureSourceChapter',
         'persistComic',
         'reloadLibrary(refreshContent:',

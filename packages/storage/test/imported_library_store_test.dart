@@ -306,7 +306,7 @@ void main() {
     expect(await store.getComicPreference(saved.sourceId, saved.comicId), isNull);
   });
 
-  test('sqlite migrates schema 3 through composite schema 5', () async {
+  test('sqlite migrates schema 3 through composite schema 6', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-saved-comic-migration-',
     );
@@ -328,7 +328,67 @@ void main() {
     );
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
-    expect(db.select('PRAGMA user_version').single.values.single, 5);
+    expect(db.select('PRAGMA user_version').single.values.single, 6);
+  });
+
+  test('sqlite schema 5 adds durable migration issue acknowledgement',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-migration-issue-ack-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final path = '${directory.path}/library.sqlite3';
+    final legacy = sql.sqlite3.open(path);
+    legacy.execute('''
+      CREATE TABLE library_migration_issue (
+        issue_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        schema_from INTEGER NOT NULL,
+        entity_kind TEXT NOT NULL,
+        legacy_key TEXT NOT NULL,
+        resolved_source_id TEXT,
+        detail_json TEXT NOT NULL,
+        created_us INTEGER NOT NULL
+      )
+    ''');
+    legacy.execute(
+      'INSERT INTO library_migration_issue VALUES (?, ?, ?, ?, ?, ?, ?)',
+      <Object?>[
+        1,
+        4,
+        'comic_preference',
+        'legacy-comic',
+        'source-a',
+        jsonEncode(<String, Object?>{'reason': 'ambiguous owner'}),
+        DateTime.utc(2026, 7, 29).microsecondsSinceEpoch,
+      ],
+    );
+    legacy.execute('PRAGMA user_version = 5');
+    legacy.dispose();
+
+    final store = SqliteImportedLibraryStore(path);
+    await store.open();
+    addTearDown(store.close);
+    expect((await store.listMigrationIssues()).single.issueId, 1);
+
+    final acknowledgedAt = DateTime.utc(2026, 7, 29, 1);
+    await store.acknowledgeMigrationIssues(
+      const <int>[1],
+      acknowledgedAt: acknowledgedAt,
+    );
+    expect(await store.listMigrationIssues(), isEmpty);
+    final retained = await store.listMigrationIssues(includeAcknowledged: true);
+    expect(retained, hasLength(1));
+    expect(retained.single.acknowledgedAt, acknowledgedAt);
+
+    final db = sql.sqlite3.open(path);
+    addTearDown(db.dispose);
+    expect(db.select('PRAGMA user_version').single.values.single, 6);
+    expect(
+      db.select('PRAGMA table_info(library_migration_issue)')
+          .map((row) => row['name'])
+          .toSet(),
+      contains('acknowledged_us'),
+    );
   });
 
   test('sqlite keeps comic preference until the last grouped chapter is removed',
@@ -591,6 +651,17 @@ void main() {
     expect(
       issues.single.details['reason'],
       'remote preference had multiple source owners',
+    );
+    await store.acknowledgeMigrationIssues(
+      <int>[issues.single.issueId],
+      acknowledgedAt: DateTime.utc(2026, 7, 29),
+    );
+    expect(await store.listMigrationIssues(), isEmpty);
+    expect(
+      (await store.listMigrationIssues(includeAcknowledged: true))
+          .single
+          .acknowledged,
+      isTrue,
     );
   });
 

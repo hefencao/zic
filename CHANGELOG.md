@@ -1,3 +1,21 @@
+## 0.26.0-dev.30 — migration diagnostics and interaction reliability
+
+- Upgrade SQLite to schema version 6 by adding durable acknowledgement timestamps to
+  `library_migration_issue`; pending and acknowledged records remain queryable without deleting or
+  rewriting ambiguous legacy state.
+- Add a Bookshelf Migration Diagnostics surface with refresh, selectable details, JSON clipboard
+  export, pending/all filtering and individual or bulk acknowledgement.
+- Keep the separate local/remote details owners while splitting chapter open and download locks;
+  coalesce concurrent manifest persistence for the same source-composite chapter.
+- Replace the restore-unread `Dismissible` lifecycle with a non-destructive right-swipe action so the
+  row never leaves the chapter list while read state is persisted.
+- Keep Reader controls at their final overlay positions while fading, making pause/speed/rotation and
+  other controls hit-testable as soon as they are shown.
+- Replace fragile bookshelf sort and category-move popup menus with explicit bottom-sheet choices and
+  stable interaction identities; open Download Manager synchronously before refreshing snapshots.
+- Repair reported cover/shelf fixtures, download/open ownership regressions, remote pull-refresh/retry
+  interaction paths and schema-6 acknowledgement migrations without weakening product assertions.
+
 ## 0.25.0-dev.29 — authoritative download management and UI regression repair
 
 - Add `ChapterDownloadSnapshot` and a common task lifecycle (`idle`, `downloading`, `complete`,

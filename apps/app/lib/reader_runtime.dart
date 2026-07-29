@@ -788,14 +788,13 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
               pageBuilder: pageBuilder,
               onTap: _toggleControls,
             ),
-            AnimatedSlide(
-              offset: _controlsVisible ? Offset.zero : const Offset(0, -1),
-              duration: const Duration(milliseconds: 180),
-              child: AnimatedOpacity(
-                opacity: _controlsVisible ? 1 : 0,
-                duration: const Duration(milliseconds: 140),
-                child: IgnorePointer(
-                  ignoring: !_controlsVisible,
+            AnimatedOpacity(
+              opacity: _controlsVisible ? 1 : 0,
+              duration: const Duration(milliseconds: 140),
+              child: IgnorePointer(
+                ignoring: !_controlsVisible,
+                child: ExcludeSemantics(
+                  excluding: !_controlsVisible,
                   child: Align(
                     alignment: Alignment.topCenter,
                     child: _topControls(context, reader),
@@ -803,14 +802,13 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                 ),
               ),
             ),
-            AnimatedSlide(
-              offset: _controlsVisible ? Offset.zero : const Offset(0, 1),
-              duration: const Duration(milliseconds: 180),
-              child: AnimatedOpacity(
-                opacity: _controlsVisible ? 1 : 0,
-                duration: const Duration(milliseconds: 140),
-                child: IgnorePointer(
-                  ignoring: !_controlsVisible,
+            AnimatedOpacity(
+              opacity: _controlsVisible ? 1 : 0,
+              duration: const Duration(milliseconds: 140),
+              child: IgnorePointer(
+                ignoring: !_controlsVisible,
+                child: ExcludeSemantics(
+                  excluding: !_controlsVisible,
                   child: Align(
                     alignment: Alignment.bottomCenter,
                     child: _bottomControls(context, reader),

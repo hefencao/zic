@@ -774,7 +774,7 @@ history cards from persisted `ReadingProgress`. Bookshelf derives all views from
 persisted chapter records plus `ComicPreference`; source/category filters and
 sort modes do not create parallel copies of catalog data.
 
-`ImportedLibraryStore` schema version 5 owns source-aware `SavedComicRecord` plus `LibraryCategory`,
+`ImportedLibraryStore` schema version 6 owns source-aware `SavedComicRecord` plus `LibraryCategory`,
 `ComicPreference` and `ChapterReadState`. Imported chapters, progress, preferences and read state all
 use source-composite durable identities. Preferences include shelf membership, liked/collected flags,
 category membership, source kind and custom order. Read state is intentionally distinct from precise
@@ -858,6 +858,17 @@ and display status.
 
 Cross-source migration creates a target comic copy rather than mutating source identity. Exact
 normalized-title plus sequence matches can rehydrate target chapter metadata and copy bounded progress
-and read state. Source URLs, caches and original records are never transferred or deleted. Schema version 5 makes
-all preference/chapter/progress/read keys source-composite, so an equal native ID under another source
+and read state. Source URLs, caches and original records are never transferred or deleted. Schema version 6 retains
+all preference/chapter/progress/read keys as source-composite, so an equal native ID under another source
 is a distinct durable record rather than a migration conflict.
+
+## 3.14 Library migration diagnostics
+
+`library_migration_issue` is an audit table, not a queue that owns library mutation. Schema version 6
+adds an optional acknowledgement timestamp. Store queries can project pending records or all retained
+records; acknowledgement only changes that timestamp. The UI may copy, filter or acknowledge the
+records, but it must not delete source-ambiguous rows or reinterpret the migration decision.
+
+`LibraryDiagnosticsScreen` depends only on `ImportedLibraryStore`. It does not inspect SQLite directly
+and it does not become a second migration engine. This keeps schema upgrade decisions in storage while
+the App owns discoverability and presentation.

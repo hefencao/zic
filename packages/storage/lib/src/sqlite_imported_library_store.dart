@@ -5,7 +5,7 @@ import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:sqlite3/sqlite3.dart' as sql;
 
-const _schemaVersion = 5;
+const _schemaVersion = 6;
 
 final class SqliteImportedLibraryStore implements ImportedLibraryStore {
   SqliteImportedLibraryStore(this.path);
@@ -50,6 +50,8 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
       } else if (version >= 1 && version <= 4) {
         _prepareLegacySchemaForMigration(db);
         _migrateToCompositeSchema(db, fromVersion: version);
+      } else if (version == 5) {
+        _migrateMigrationIssueAcknowledgement(db);
       } else if (version != _schemaVersion) {
         throw StateError(
           'unsupported imported library schema version: $version',
@@ -516,11 +518,14 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
   }
 
   @override
-  Future<List<LibraryMigrationIssue>> listMigrationIssues() async {
+  Future<List<LibraryMigrationIssue>> listMigrationIssues({
+    bool includeAcknowledged = false,
+  }) async {
     final rows = _requireDb().select('''
       SELECT issue_id, schema_from, entity_kind, legacy_key,
-             resolved_source_id, detail_json, created_us
+             resolved_source_id, detail_json, created_us, acknowledged_us
       FROM library_migration_issue
+      ${includeAcknowledged ? '' : 'WHERE acknowledged_us IS NULL'}
       ORDER BY issue_id
     ''');
     return rows.map((row) {
@@ -539,8 +544,43 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
           row['created_us']! as int,
           isUtc: true,
         ),
+        acknowledgedAt: row['acknowledged_us'] == null
+            ? null
+            : DateTime.fromMicrosecondsSinceEpoch(
+                row['acknowledged_us']! as int,
+                isUtc: true,
+              ),
       );
     }).toList(growable: false);
+  }
+
+  @override
+  Future<void> acknowledgeMigrationIssues(
+    Iterable<int> issueIds, {
+    required DateTime acknowledgedAt,
+  }) async {
+    final ids = issueIds.toSet().toList(growable: false);
+    if (ids.isEmpty) {
+      return;
+    }
+    final db = _requireDb();
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      for (final issueId in ids) {
+        db.execute('''
+          UPDATE library_migration_issue
+          SET acknowledged_us = COALESCE(acknowledged_us, ?)
+          WHERE issue_id = ?
+        ''', <Object?>[
+          acknowledgedAt.toUtc().microsecondsSinceEpoch,
+          issueId,
+        ]);
+      }
+      db.execute('COMMIT');
+    } on Object {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
   }
 
   @override
@@ -695,6 +735,32 @@ void _prepareLegacySchemaForMigration(sql.Database db) {
     _createSourcePreferenceTables(db);
     _createSavedComicTables(db);
     _createMigrationIssueTable(db);
+    db.execute('COMMIT');
+  } on Object {
+    db.execute('ROLLBACK');
+    rethrow;
+  }
+}
+
+void _migrateMigrationIssueAcknowledgement(sql.Database db) {
+  db.execute('BEGIN IMMEDIATE');
+  try {
+    _createMigrationIssueTable(db);
+    final columns = db
+        .select('PRAGMA table_info(library_migration_issue)')
+        .map((row) => row['name'] as String)
+        .toSet();
+    if (!columns.contains('acknowledged_us')) {
+      db.execute('''
+        ALTER TABLE library_migration_issue
+        ADD COLUMN acknowledged_us INTEGER
+      ''');
+    }
+    db.execute('''
+      CREATE INDEX IF NOT EXISTS library_migration_issue_pending
+      ON library_migration_issue(acknowledged_us, issue_id)
+    ''');
+    db.execute('PRAGMA user_version = $_schemaVersion');
     db.execute('COMMIT');
   } on Object {
     db.execute('ROLLBACK');
@@ -1310,7 +1376,18 @@ void _createMigrationIssueTable(sql.Database db) {
       legacy_key TEXT NOT NULL,
       resolved_source_id TEXT,
       detail_json TEXT NOT NULL,
-      created_us INTEGER NOT NULL
+      created_us INTEGER NOT NULL,
+      acknowledged_us INTEGER
     )
   ''');
+  final columns = db
+      .select('PRAGMA table_info(library_migration_issue)')
+      .map((row) => row['name'] as String)
+      .toSet();
+  if (columns.contains('acknowledged_us')) {
+    db.execute('''
+      CREATE INDEX IF NOT EXISTS library_migration_issue_pending
+      ON library_migration_issue(acknowledged_us, issue_id)
+    ''');
+  }
 }

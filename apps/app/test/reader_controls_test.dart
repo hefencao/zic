@@ -125,6 +125,7 @@ void main() {
     expect(find.byKey(readerFavoriteKey), findsOneWidget);
     expect(find.byKey(readerDownloadKey), findsOneWidget);
 
+    await _pumpUntilFound(tester, find.byKey(readerPauseKey).hitTestable());
     await tester.tap(find.byKey(readerPauseKey).hitTestable());
     final playIcon = find.descendant(
       of: find.byKey(readerPauseKey),

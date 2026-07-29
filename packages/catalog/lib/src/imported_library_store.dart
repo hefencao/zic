@@ -131,12 +131,26 @@ abstract interface class ImportedLibraryStore {
 
   Future<void> saveSourcePreference(ComicSourcePreference preference);
 
-  Future<List<LibraryMigrationIssue>> listMigrationIssues();
+  Future<List<LibraryMigrationIssue>> listMigrationIssues({
+    bool includeAcknowledged = false,
+  });
+
+  Future<void> acknowledgeMigrationIssues(
+    Iterable<int> issueIds, {
+    required DateTime acknowledgedAt,
+  });
 
   Future<void> close();
 }
 
 final class MemoryImportedLibraryStore implements ImportedLibraryStore {
+  MemoryImportedLibraryStore({
+    Iterable<LibraryMigrationIssue> migrationIssues =
+        const <LibraryMigrationIssue>[],
+  }) : _migrationIssues = <int, LibraryMigrationIssue>{
+          for (final issue in migrationIssues) issue.issueId: issue,
+        };
+
   final Map<String, ImportedChapterRecord> _chapters =
       <String, ImportedChapterRecord>{};
   final Map<String, ReadingProgress> _progress = <String, ReadingProgress>{};
@@ -150,6 +164,7 @@ final class MemoryImportedLibraryStore implements ImportedLibraryStore {
       <String, ChapterReadState>{};
   final Map<String, ComicSourcePreference> _sourcePreferences =
       <String, ComicSourcePreference>{};
+  final Map<int, LibraryMigrationIssue> _migrationIssues;
   bool _open = false;
 
   @override
@@ -411,9 +426,31 @@ final class MemoryImportedLibraryStore implements ImportedLibraryStore {
   }
 
   @override
-  Future<List<LibraryMigrationIssue>> listMigrationIssues() async {
+  Future<List<LibraryMigrationIssue>> listMigrationIssues({
+    bool includeAcknowledged = false,
+  }) async {
     _requireOpen();
-    return const <LibraryMigrationIssue>[];
+    final issues = _migrationIssues.values
+        .where((issue) => includeAcknowledged || !issue.acknowledged)
+        .toList(growable: false)
+      ..sort((left, right) => left.issueId.compareTo(right.issueId));
+    return issues;
+  }
+
+  @override
+  Future<void> acknowledgeMigrationIssues(
+    Iterable<int> issueIds, {
+    required DateTime acknowledgedAt,
+  }) async {
+    _requireOpen();
+    for (final issueId in issueIds.toSet()) {
+      final issue = _migrationIssues[issueId];
+      if (issue != null) {
+        _migrationIssues[issueId] = issue.copyWith(
+          acknowledgedAt: acknowledgedAt.toUtc(),
+        );
+      }
+    }
   }
 
   @override

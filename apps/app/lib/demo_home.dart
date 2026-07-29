@@ -10,6 +10,7 @@ import 'package:local_media/local_media.dart';
 import 'chapter_downloads.dart';
 import 'comic_details.dart' as details;
 import 'download_manager.dart';
+import 'library_diagnostics.dart';
 import 'source_browser.dart';
 import 'static_demo.dart';
 import 'webp_demo.dart';
@@ -23,12 +24,16 @@ const bookshelfManageKey = ValueKey<String>('bookshelf-manage');
 const bookshelfSourceFilterKey = ValueKey<String>('bookshelf-source-filter');
 const bookshelfSortKey = ValueKey<String>('bookshelf-sort');
 const bookshelfSortCustomKey = ValueKey<String>('bookshelf-sort-custom');
+const bookshelfSortRecentKey = ValueKey<String>('bookshelf-sort-recent');
+const bookshelfSortTitleKey = ValueKey<String>('bookshelf-sort-title');
+const bookshelfSortPageCountKey = ValueKey<String>('bookshelf-sort-page-count');
 const bookshelfViewKey = ValueKey<String>('bookshelf-view');
 const bookshelfAddCategoryKey = ValueKey<String>('bookshelf-add-category');
 const bookshelfAddComicToCategoryKey =
     ValueKey<String>('bookshelf-add-comic-to-category');
 const bookshelfManagementBarKey =
     ValueKey<String>('bookshelf-management-bar');
+const bookshelfMoveKey = ValueKey<String>('bookshelf-move');
 const downloadManagerEntryKey = ValueKey<String>('download-manager-entry');
 const comicDetailsScreenKey = ValueKey<String>('comic-details-screen');
 const comicDetailsReverseKey = ValueKey<String>('comic-details-reverse');
@@ -522,8 +527,8 @@ final class _DemoHomeState extends State<DemoHome> {
     });
   }
 
-  Future<void> _openDownloadManager() async {
-    await Navigator.of(context).push(
+  void _openDownloadManager() {
+    final route = Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => DownloadManagerScreen(
           entries: List<ImportedLibraryEntry>.unmodifiable(_libraryEntries),
@@ -531,9 +536,23 @@ final class _DemoHomeState extends State<DemoHome> {
         ),
       ),
     );
-    if (mounted) {
-      await _refreshDownloadSnapshots(_libraryEntries);
-    }
+    unawaited(
+      route.then((_) async {
+        if (mounted) {
+          await _refreshDownloadSnapshots(_libraryEntries);
+        }
+      }),
+    );
+  }
+
+  void _openLibraryDiagnostics() {
+    unawaited(
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => LibraryDiagnosticsScreen(store: _library),
+        ),
+      ),
+    );
   }
 
   ComicDownloadProgress? _downloadProgressForComic(LibraryComic comic) {
@@ -1783,6 +1802,14 @@ final class _DemoHomeState extends State<DemoHome> {
     return Column(
       children: <Widget>[
         _DemoCard(
+          key: libraryDiagnosticsEntryKey,
+          icon: Icons.rule_folder_outlined,
+          title: '书架迁移诊断',
+          subtitle: '查看、复制并明确确认旧数据库来源归属；不会删除记录。',
+          onTap: _openLibraryDiagnostics,
+        ),
+        const SizedBox(height: 10),
+        _DemoCard(
           key: localWebpImportKey,
           icon: Icons.file_open,
           title: '导入本地 WebP',
@@ -1895,6 +1922,100 @@ final class _DemoHomeState extends State<DemoHome> {
       ids.add(targetCategoryId);
     }
     await _savePreference(preference.copyWith(categoryIds: ids));
+  }
+
+  Future<void> _openMoveComicSheet(LibraryComic comic) async {
+    final currentCategoryId = _selectedCategoryId;
+    final moveTargets = _categories
+        .where((category) => category.categoryId != currentCategoryId)
+        .toList(growable: false);
+    final target = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.only(bottom: 12),
+          children: <Widget>[
+            const ListTile(
+              title: Text('移动漫画'),
+              subtitle: Text('从当前分类移出，并加入所选分类'),
+            ),
+            if (currentCategoryId != null)
+              ListTile(
+                key: bookshelfMoveToCategoryKey('__uncategorized__'),
+                leading: const Icon(Icons.label_off_outlined),
+                title: const Text('移出当前分类'),
+                onTap: () => Navigator.of(context).pop('__uncategorized__'),
+              ),
+            for (final category in moveTargets)
+              ListTile(
+                key: bookshelfMoveToCategoryKey(category.categoryId),
+                leading: const Icon(Icons.label_outline),
+                title: Text('移动到 ${category.name}'),
+                onTap: () => Navigator.of(context).pop(category.categoryId),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (target == null) {
+      return;
+    }
+    await _moveComicToCategory(
+      comic,
+      target == '__uncategorized__' ? null : target,
+    );
+  }
+
+  Future<void> _openSortSheet() async {
+    final selected = await showModalBottomSheet<LibrarySortMode>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.only(bottom: 12),
+          children: <Widget>[
+            const ListTile(
+              title: Text('排序方式'),
+              subtitle: Text('视图类型与排序方式相互独立'),
+            ),
+            _SortChoiceTile(
+              tileKey: bookshelfSortRecentKey,
+              mode: LibrarySortMode.recent,
+              selected: _sortMode == LibrarySortMode.recent,
+              label: '最近更新',
+            ),
+            _SortChoiceTile(
+              tileKey: bookshelfSortTitleKey,
+              mode: LibrarySortMode.title,
+              selected: _sortMode == LibrarySortMode.title,
+              label: '标题',
+            ),
+            _SortChoiceTile(
+              tileKey: bookshelfSortPageCountKey,
+              mode: LibrarySortMode.pageCount,
+              selected: _sortMode == LibrarySortMode.pageCount,
+              label: '页数',
+            ),
+            _SortChoiceTile(
+              tileKey: bookshelfSortCustomKey,
+              mode: LibrarySortMode.custom,
+              selected: _sortMode == LibrarySortMode.custom,
+              label: '自定义排序',
+            ),
+          ],
+        ),
+      ),
+    );
+    if (selected == null || !mounted) {
+      return;
+    }
+    setState(() {
+      _sortMode = selected;
+      _managedComicIdentity = null;
+    });
   }
 
   Future<void> _addComicsToSelectedCategory() async {
@@ -2037,26 +2158,12 @@ final class _DemoHomeState extends State<DemoHome> {
                 style: Theme.of(context).textTheme.labelLarge,
               ),
             ),
-            PopupMenuButton<String>(
+            IconButton(
+              key: bookshelfMoveKey,
               tooltip: '移动到其他分类',
-              enabled: moveTargets.isNotEmpty || currentCategoryId != null,
-              onSelected: (value) => _moveComicToCategory(
-                comic,
-                value == '__uncategorized__' ? null : value,
-              ),
-              itemBuilder: (context) => <PopupMenuEntry<String>>[
-                if (currentCategoryId != null)
-                  const PopupMenuItem<String>(
-                    value: '__uncategorized__',
-                    child: Text('移出当前分类'),
-                  ),
-                for (final category in moveTargets)
-                  PopupMenuItem<String>(
-                    key: bookshelfMoveToCategoryKey(category.categoryId),
-                    value: category.categoryId,
-                    child: Text('移动到 ${category.name}'),
-                  ),
-              ],
+              onPressed: moveTargets.isEmpty && currentCategoryId == null
+                  ? null
+                  : () => unawaited(_openMoveComicSheet(comic)),
               icon: const Icon(Icons.drive_file_move_outline),
             ),
             _CategoryPopup(
@@ -2295,35 +2402,11 @@ final class _DemoHomeState extends State<DemoHome> {
                           : Icons.grid_view_outlined,
                     ),
                   ),
-                  PopupMenuButton<LibrarySortMode>(
+                  TextButton.icon(
                     key: bookshelfSortKey,
-                    tooltip: '排序方式',
-                    initialValue: _sortMode,
-                    onSelected: (value) => setState(() {
-                      _sortMode = value;
-                      _managedComicIdentity = null;
-                    }),
-                    itemBuilder: (context) =>
-                        const <PopupMenuEntry<LibrarySortMode>>[
-                      PopupMenuItem(
-                        value: LibrarySortMode.recent,
-                        child: Text('最近更新'),
-                      ),
-                      PopupMenuItem(
-                        value: LibrarySortMode.title,
-                        child: Text('标题'),
-                      ),
-                      PopupMenuItem(
-                        value: LibrarySortMode.pageCount,
-                        child: Text('页数'),
-                      ),
-                      PopupMenuItem(
-                        key: bookshelfSortCustomKey,
-                        value: LibrarySortMode.custom,
-                        child: Text('自定义排序'),
-                      ),
-                    ],
+                    onPressed: () => unawaited(_openSortSheet()),
                     icon: const Icon(Icons.sort),
+                    label: Text(_librarySortLabel(_sortMode)),
                   ),
                 ],
               ),
@@ -2880,6 +2963,33 @@ final class _ShelfListTile extends StatelessWidget {
   }
 }
 
+final class _SortChoiceTile extends StatelessWidget {
+  const _SortChoiceTile({
+    required this.tileKey,
+    required this.mode,
+    required this.selected,
+    required this.label,
+  });
+
+  final Key tileKey;
+  final LibrarySortMode mode;
+  final bool selected;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      key: tileKey,
+      leading: Icon(
+        selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+      ),
+      title: Text(label),
+      selected: selected,
+      onTap: () => Navigator.of(context).pop(mode),
+    );
+  }
+}
+
 final class _CategoryPopup extends StatelessWidget {
   const _CategoryPopup({
     required this.categories,
@@ -2910,6 +3020,13 @@ final class _CategoryPopup extends StatelessWidget {
     );
   }
 }
+
+String _librarySortLabel(LibrarySortMode mode) => switch (mode) {
+      LibrarySortMode.recent => '最近更新',
+      LibrarySortMode.title => '标题',
+      LibrarySortMode.pageCount => '页数',
+      LibrarySortMode.custom => '自定义',
+    };
 
 final class _SectionTitle extends StatelessWidget {
   const _SectionTitle({required this.title, this.subtitle, super.key});

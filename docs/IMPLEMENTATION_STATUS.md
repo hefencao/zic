@@ -1,4 +1,21 @@
-## Current iteration — source-composite durable library identity
+## Current iteration — migration diagnostics and interaction reliability
+
+SQLite schema version 6 retains the source-composite library tables and adds `acknowledged_us` to
+`library_migration_issue`. The Store can list only pending diagnostics or all retained diagnostics and
+can acknowledge issue IDs transactionally. Acknowledgement is presentation state: it never deletes,
+reassigns or rewrites the ambiguous legacy record.
+
+`LibraryDiagnosticsScreen` exposes the migration evidence through selectable detail JSON, full JSON
+clipboard export, refresh, pending/all filtering and individual or bulk acknowledgement. It is reachable
+from the existing diagnostics area without adding another persistent catalog or migration owner.
+
+Reader controls remain at their final overlay positions while opacity changes, so the control is
+hit-testable as soon as the visible state changes. Local and remote details keep separate state owners,
+but chapter opening and downloading now have independent work locks and share one in-flight manifest
+ensure operation. The read-state row uses a non-destructive right-swipe action instead of a dismiss
+lifecycle. Bookshelf sort and move actions use explicit bottom sheets with stable identities.
+
+## Previous iteration — source-composite durable library identity
 
 SQLite schema version 5 now keys imported chapters, reading progress, comic preferences and chapter
 read state by `sourceId + nativeId`. `ReadingProgress`, `ComicPreference` and `ChapterReadState` carry

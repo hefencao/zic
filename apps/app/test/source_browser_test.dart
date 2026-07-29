@@ -35,6 +35,15 @@ Future<void> _tapVisible(
   Finder finder, {
   int maxFrames = 80,
 }) async {
+  for (var frame = 0; frame < maxFrames; frame++) {
+    if (finder.evaluate().isNotEmpty) {
+      break;
+    }
+    await tester.pump(const Duration(milliseconds: 16));
+  }
+  if (finder.evaluate().isEmpty) {
+    throw TestFailure('Timed out waiting to find $finder');
+  }
   await tester.ensureVisible(finder);
   for (var frame = 0; frame < maxFrames; frame++) {
     await tester.pump();
@@ -297,9 +306,9 @@ void main() {
       findsNothing,
     );
 
-    final remoteDetails = find.byKey(details.remoteComicDetailsScreenKey);
-    await tester.drag(remoteDetails, const Offset(0, 480));
-    await tester.pump();
+    final pullRefresh = find.byKey(details.comicDetailsPullRefreshKey);
+    await tester.drag(pullRefresh, const Offset(0, 520));
+    await tester.pump(const Duration(milliseconds: 900));
     await _pumpUntilFound(
       tester,
       find.byKey(sourceChapterKey('fixture-refresh', 'fixture-refresh-chapter-2')),

@@ -2,7 +2,7 @@
 
 ## Sole baseline
 
-Continue only from `zic_v0.25.0-dev.29_download-management-regressions.zip`.
+Continue only from `zic_v0.26.0-dev.30_migration-diagnostics-ui-reliability.zip`.
 Do not merge or copy files from an earlier zic archive.
 
 ## Current implementation
@@ -29,12 +29,15 @@ Do not merge or copy files from an earlier zic archive.
   title+sequence chapter against a fresh target manifest before the first durable write, merges rather
   than overwrites target preferences, and only fills missing target progress/read state. Source URLs,
   offline bytes, existing target state and the original source are retained.
-- SQLite schema version 5 makes `imported_chapter`, `reading_progress`, `comic_preference` and
-  `chapter_read_state` source-composite. Schemas 1–4 upgrade transactionally; ambiguity/orphan records
-  are written to `library_migration_issue` and a foreign-key check must pass before commit.
+- SQLite schema version 6 keeps the source-composite library tables and adds durable acknowledgement
+  timestamps to `library_migration_issue`. Schemas 1–4 upgrade transactionally, schema 5 upgrades in
+  place, and acknowledgement never deletes or rewrites migration evidence.
 - Missing cover data renders a stable placeholder rather than throwing during Widget build. Source and
   details errors remain selectable/copyable, and Android hosts receive `android.permission.INTERNET`
   through repository tooling.
+- Bookshelf Migration Diagnostics lists pending or retained schema issues, exports JSON to the clipboard
+  and supports individual/bulk acknowledgement. Reader controls fade at their final positions; local and
+  remote chapter open/download work is isolated while the same manifest ensure is coalesced.
 
 ## Validation completed in this environment
 
@@ -76,12 +79,10 @@ bash ./tool/build_android.sh release
 
 ## Next mainline work
 
-1. Surface `library_migration_issue` in a non-intrusive library diagnostics view with copy/export and
-   explicit acknowledgement; never auto-delete ambiguous source records.
-2. Add side-by-side migration candidate comparison (cover, authors, chapter counts and sampled titles)
+1. Add side-by-side migration candidate comparison (cover, authors, chapter counts and sampled titles)
    before confirmation; retain search/manual-ID selection and conservative chapter mapping.
-3. Add source update ingestion and durable timestamps so Home updates reflect actual upstream changes.
-4. Add source-specific typed settings for translation languages and data-saver mode.
-5. Discover and manage orphaned offline artifacts whose chapter metadata was intentionally removed,
+2. Add source update ingestion and durable timestamps so Home updates reflect actual upstream changes.
+3. Add source-specific typed settings for translation languages and data-saver mode.
+4. Discover and manage orphaned offline artifacts whose chapter metadata was intentionally removed,
    without weakening DownloadSession ownership rules.
-6. Define a sandboxed Mihon/Keiyoushi adapter ABI, permissions and lifecycle before loading extensions.
+5. Define a sandboxed Mihon/Keiyoushi adapter ABI, permissions and lifecycle before loading extensions.

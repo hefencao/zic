@@ -499,5 +499,7 @@
    compatibility decoding and auditable ambiguity reporting.**
 7. Add download management/cancel/retry/delete and authoritative aggregate progress.
    **Implemented in 0.25.0-dev.29 using the existing DownloadSession/artifact authority.**
-8. Add target-source side-by-side candidate comparison before migration. Search and manual-ID selection
+8. Surface auditable legacy migration issues with copy/export, pending/all filtering and explicit
+   acknowledgement that never deletes the retained record. **Implemented in 0.26.0-dev.30 with schema 6.**
+9. Add target-source side-by-side candidate comparison before migration. Search and manual-ID selection
    already exist; cover/author/chapter-sample comparison remains next.

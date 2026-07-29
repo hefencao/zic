@@ -22,6 +22,10 @@ const comicDetailsCollectedKey =
 const comicDetailsLikedKey = ValueKey<String>('comic-details-liked');
 const comicDetailsMigrateKey = ValueKey<String>('comic-details-migrate');
 const comicDetailsRetryKey = ValueKey<String>('comic-details-retry');
+const comicDetailsRetryBodyKey =
+    ValueKey<String>('comic-details-retry-body');
+const comicDetailsPullRefreshKey =
+    ValueKey<String>('comic-details-pull-refresh');
 
 String comicDetailsChapterIdentity(String sourceId, String chapterId) =>
     '$sourceId\u0000$chapterId';
@@ -162,8 +166,11 @@ final class _LocalComicDetailsScreenState
   late ComicDetailsLibrarySnapshot _library;
   bool _descending = true;
   bool _refreshing = false;
+  final Set<String> _opening = <String>{};
   final Set<String> _workingDownloads = <String>{};
   final Set<String> _downloaded = <String>{};
+  final Map<String, Future<ImportedLibraryEntry>> _ensureInFlight =
+      <String, Future<ImportedLibraryEntry>>{};
 
   @override
   void initState() {
@@ -256,6 +263,24 @@ final class _LocalComicDetailsScreenState
     if (existing != null) {
       return existing;
     }
+    final identity = comicDetailsChapterIdentity(
+      widget.comic.sourceId,
+      chapter.chapterId,
+    );
+    final inFlight = _ensureInFlight[identity];
+    if (inFlight != null) {
+      return inFlight;
+    }
+    final future = _ensureFresh(chapter);
+    _ensureInFlight[identity] = future;
+    try {
+      return await future;
+    } finally {
+      _ensureInFlight.remove(identity);
+    }
+  }
+
+  Future<ImportedLibraryEntry> _ensureFresh(Chapter chapter) async {
     final source = widget.source;
     final ensure = widget.ensureSourceChapter;
     if (source == null || ensure == null) {
@@ -314,6 +339,16 @@ final class _LocalComicDetailsScreenState
   }
 
   Future<void> _open(_ChapterViewModel chapter) async {
+    final identity = comicDetailsChapterIdentity(
+      chapter.sourceId,
+      chapter.chapterId,
+    );
+    if (!_opening.add(identity)) {
+      return;
+    }
+    if (mounted) {
+      setState(() {});
+    }
     try {
       final entry = chapter.entry ?? await _ensure(chapter.sourceChapter!);
       if (!_isRead(_library.readStates, entry)) {
@@ -326,6 +361,12 @@ final class _LocalComicDetailsScreenState
           context,
           _DetailFailure.capture(error, stackTrace),
         );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _opening.remove(identity);
+        });
       }
     }
   }
@@ -357,7 +398,9 @@ final class _LocalComicDetailsScreenState
       }
     } finally {
       if (mounted) {
-        setState(() => _workingDownloads.remove(identity));
+        setState(() {
+          _workingDownloads.remove(identity);
+        });
       }
     }
   }
@@ -385,6 +428,7 @@ final class _LocalComicDetailsScreenState
           sourceChapter: chapter,
           isRead: entry == null ? false : _isRead(_library.readStates, entry),
           canDownload: widget.comic.sourceId != 'local-folder',
+          opening: _opening.contains(identity),
           downloading: _workingDownloads.contains(identity),
           downloaded: _downloaded.contains(identity),
         ),
@@ -409,6 +453,7 @@ final class _LocalComicDetailsScreenState
           entry: entry,
           isRead: _isRead(_library.readStates, entry),
           canDownload: entry.chapter.sourceId != 'local-folder',
+          opening: _opening.contains(identity),
           downloading: _workingDownloads.contains(identity),
           downloaded: _downloaded.contains(identity),
         ),
@@ -507,8 +552,11 @@ final class _RemoteComicDetailsScreenState
   _DetailFailure? _failure;
   bool _refreshing = false;
   bool _descending = true;
-  final Set<String> _working = <String>{};
+  final Set<String> _opening = <String>{};
+  final Set<String> _workingDownloads = <String>{};
   final Set<String> _downloaded = <String>{};
+  final Map<String, Future<ImportedLibraryEntry>> _ensureInFlight =
+      <String, Future<ImportedLibraryEntry>>{};
 
   @override
   void initState() {
@@ -645,6 +693,24 @@ final class _RemoteComicDetailsScreenState
     if (existing != null) {
       return existing;
     }
+    final identity = comicDetailsChapterIdentity(
+      widget.source.sourceId,
+      chapter.chapterId,
+    );
+    final inFlight = _ensureInFlight[identity];
+    if (inFlight != null) {
+      return inFlight;
+    }
+    final future = _ensureFresh(chapter);
+    _ensureInFlight[identity] = future;
+    try {
+      return await future;
+    } finally {
+      _ensureInFlight.remove(identity);
+    }
+  }
+
+  Future<ImportedLibraryEntry> _ensureFresh(Chapter chapter) async {
     final manifest = _manifest;
     if (manifest != null) {
       await widget.persistComic(manifest, true);
@@ -698,7 +764,7 @@ final class _RemoteComicDetailsScreenState
       widget.source.sourceId,
       chapter.chapterId,
     );
-    if (!_working.add(identity)) {
+    if (!_opening.add(identity)) {
       return;
     }
     if (mounted) {
@@ -719,7 +785,9 @@ final class _RemoteComicDetailsScreenState
       }
     } finally {
       if (mounted) {
-        setState(() => _working.remove(identity));
+        setState(() {
+          _opening.remove(identity);
+        });
       }
     }
   }
@@ -729,7 +797,7 @@ final class _RemoteComicDetailsScreenState
       widget.source.sourceId,
       chapter.chapterId,
     );
-    if (!_working.add(identity) || _downloaded.contains(identity)) {
+    if (_downloaded.contains(identity) || !_workingDownloads.add(identity)) {
       return;
     }
     if (mounted) {
@@ -753,7 +821,9 @@ final class _RemoteComicDetailsScreenState
       }
     } finally {
       if (mounted) {
-        setState(() => _working.remove(identity));
+        setState(() {
+          _workingDownloads.remove(identity);
+        });
       }
     }
   }
@@ -764,7 +834,24 @@ final class _RemoteComicDetailsScreenState
     if (failure != null && _manifest == null) {
       return Scaffold(
         key: comicDetailsScreenKey,
-        appBar: AppBar(title: Text(widget.source.descriptor.name)),
+        appBar: AppBar(
+          title: Text(widget.source.descriptor.name),
+          actions: <Widget>[
+            IconButton(
+              key: comicDetailsRetryKey,
+              tooltip: '重试加载漫画详情',
+              onPressed: _refreshing
+                  ? null
+                  : () => unawaited(_refresh(announce: false)),
+              icon: _refreshing
+                  ? const SizedBox.square(
+                      dimension: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh),
+            ),
+          ],
+        ),
         body: _DetailFailurePanel(
           failure: failure,
           onRetry: () => unawaited(_refresh(announce: false)),
@@ -819,7 +906,13 @@ final class _RemoteComicDetailsScreenState
                 chapter.chapterId,
               ),
               canDownload: true,
-              downloading: _working.contains(
+              opening: _opening.contains(
+                comicDetailsChapterIdentity(
+                  widget.source.sourceId,
+                  chapter.chapterId,
+                ),
+              ),
+              downloading: _workingDownloads.contains(
                 comicDetailsChapterIdentity(
                   widget.source.sourceId,
                   chapter.chapterId,
@@ -914,6 +1007,8 @@ final class _ComicDetailsScaffold extends StatelessWidget {
         ],
       ),
       body: RefreshIndicator(
+        key: comicDetailsPullRefreshKey,
+        triggerMode: RefreshIndicatorTriggerMode.anywhere,
         onRefresh: onRefresh,
         child: CustomScrollView(
           key: screenKey,
@@ -1135,33 +1230,10 @@ final class _ComicChapterList extends StatelessWidget {
           if (chapter.publishedAt != null)
             chapter.publishedAt!.toLocal().toString().split(' ').first,
         ].join(' · ');
-        return Dismissible(
-          key: comicDetailsReadKey(
-            chapter.sourceId,
-            chapter.chapterId,
-          ),
-          direction: chapter.isRead
-              ? DismissDirection.startToEnd
-              : DismissDirection.none,
-          dismissThresholds: const <DismissDirection, double>{
-            DismissDirection.startToEnd: 0.18,
-          },
-          confirmDismiss: (_) async {
-            await onRestoreUnread(chapter);
-            return false;
-          },
-          background: Container(
-            color: Theme.of(context).colorScheme.primaryContainer,
-            alignment: Alignment.centerLeft,
-            padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: const Row(
-              children: <Widget>[
-                Icon(Icons.mark_chat_unread_outlined),
-                SizedBox(width: 8),
-                Text('恢复未读'),
-              ],
-            ),
-          ),
+        return _ReadSwipeAction(
+          key: comicDetailsReadKey(chapter.sourceId, chapter.chapterId),
+          enabled: chapter.isRead,
+          onTriggered: () => onRestoreUnread(chapter),
           child: AnimatedOpacity(
             opacity: chapter.isRead ? 0.42 : 1,
             duration: const Duration(milliseconds: 180),
@@ -1177,7 +1249,7 @@ final class _ComicChapterList extends StatelessWidget {
               ),
               title: Text(chapter.title),
               subtitle: Text(subtitle),
-              onTap: chapter.downloading
+              onTap: chapter.opening
                   ? null
                   : () => unawaited(onOpen(chapter)),
               trailing: chapter.canDownload
@@ -1221,6 +1293,7 @@ final class _ChapterViewModel {
     required this.entry,
     required this.isRead,
     required this.canDownload,
+    required this.opening,
     required this.downloading,
     required this.downloaded,
     this.sourceChapter,
@@ -1235,9 +1308,137 @@ final class _ChapterViewModel {
   final ImportedLibraryEntry? entry;
   final bool isRead;
   final bool canDownload;
+  final bool opening;
   final bool downloading;
   final bool downloaded;
   final Chapter? sourceChapter;
+}
+
+final class _ReadSwipeAction extends StatefulWidget {
+  const _ReadSwipeAction({
+    required this.enabled,
+    required this.onTriggered,
+    required this.child,
+    super.key,
+  });
+
+  final bool enabled;
+  final Future<void> Function() onTriggered;
+  final Widget child;
+
+  @override
+  State<_ReadSwipeAction> createState() => _ReadSwipeActionState();
+}
+
+final class _ReadSwipeActionState extends State<_ReadSwipeAction> {
+  double _offset = 0;
+  bool _dragging = false;
+  bool _triggering = false;
+
+  @override
+  void didUpdateWidget(covariant _ReadSwipeAction oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.enabled && oldWidget.enabled) {
+      _offset = 0;
+      _dragging = false;
+    }
+  }
+
+  void _update(DragUpdateDetails details, double maxOffset) {
+    if (!widget.enabled || _triggering) {
+      return;
+    }
+    final next = (_offset + details.delta.dx).clamp(0, maxOffset).toDouble();
+    if (next == _offset) {
+      return;
+    }
+    setState(() {
+      _dragging = true;
+      _offset = next;
+    });
+  }
+
+  Future<void> _end(double threshold) async {
+    if (!widget.enabled || _triggering) {
+      return;
+    }
+    final shouldTrigger = _offset >= threshold;
+    setState(() {
+      _dragging = false;
+      _offset = 0;
+      _triggering = shouldTrigger;
+    });
+    if (!shouldTrigger) {
+      return;
+    }
+    try {
+      await widget.onTriggered();
+    } finally {
+      if (mounted) {
+        setState(() => _triggering = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final threshold = (constraints.maxWidth * 0.18).clamp(56, 96).toDouble();
+        final maxOffset = (constraints.maxWidth * 0.36).clamp(96, 160).toDouble();
+        return Stack(
+          children: <Widget>[
+            Positioned.fill(
+              child: ColoredBox(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                child: const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 24),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        Icon(Icons.mark_chat_unread_outlined),
+                        SizedBox(width: 8),
+                        Text('恢复未读'),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onHorizontalDragUpdate: widget.enabled
+                  ? (details) => _update(details, maxOffset)
+                  : null,
+              onHorizontalDragEnd:
+                  widget.enabled ? (_) => unawaited(_end(threshold)) : null,
+              onHorizontalDragCancel: widget.enabled
+                  ? () {
+                      setState(() {
+                        _dragging = false;
+                        _offset = 0;
+                      });
+                    }
+                  : null,
+              child: AnimatedContainer(
+                duration: _dragging
+                    ? Duration.zero
+                    : const Duration(milliseconds: 180),
+                curve: Curves.easeOutCubic,
+                transform: Matrix4.translationValues(_offset, 0, 0),
+                child: ColoredBox(
+                  color: Theme.of(context).colorScheme.surface,
+                  child: widget.child,
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
 }
 
 final class _PreferenceButton extends StatelessWidget {
@@ -1409,7 +1610,7 @@ final class _DetailFailurePanel extends StatelessWidget {
               label: const Text('复制完整错误'),
             ),
             FilledButton.icon(
-              key: comicDetailsRetryKey,
+              key: comicDetailsRetryBodyKey,
               onPressed: onRetry,
               icon: const Icon(Icons.refresh),
               label: const Text('重试'),

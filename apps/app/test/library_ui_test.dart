@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zic/demo_home.dart';
 import 'package:zic/download_manager.dart';
+import 'package:zic/library_diagnostics.dart';
 import 'package:zic/main.dart';
 
 Uint8List _tinyPng() => base64Decode(
@@ -50,6 +51,15 @@ Future<void> _tapVisible(
   Finder finder, {
   int maxFrames = 80,
 }) async {
+  for (var frame = 0; frame < maxFrames; frame++) {
+    if (finder.evaluate().isNotEmpty) {
+      break;
+    }
+    await tester.pump(const Duration(milliseconds: 16));
+  }
+  if (finder.evaluate().isEmpty) {
+    throw TestFailure('Timed out waiting to find $finder');
+  }
   await tester.ensureVisible(finder);
   for (var frame = 0; frame < maxFrames; frame++) {
     await tester.pump();
@@ -132,7 +142,12 @@ void main() {
       ),
     );
     await store.saveComicPreference(
-      ComicPreference.defaults(sourceId: 'local-folder', comicId: comicId).copyWith(inShelf: true),
+      ComicPreference.defaults(sourceId: 'source-a', comicId: comicId)
+          .copyWith(inShelf: true),
+    );
+    await store.saveComicPreference(
+      ComicPreference.defaults(sourceId: 'source-b', comicId: comicId)
+          .copyWith(inShelf: true),
     );
 
     await tester.pumpWidget(App(libraryStore: store));
@@ -162,6 +177,7 @@ void main() {
     await tester.pumpWidget(App(libraryStore: store));
     await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
     await _tapVisible(tester, find.byKey(downloadManagerEntryKey));
+    await _pumpUntilFound(tester, find.byKey(downloadManagerScreenKey));
 
     expect(find.byKey(downloadManagerScreenKey), findsOneWidget);
     expect(find.text('暂无下载任务或离线章节'), findsOneWidget);
@@ -183,6 +199,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 320));
 
     await _tapVisible(tester, find.byKey(bookshelfSortKey));
+    await _pumpUntilFound(tester, find.byKey(bookshelfSortCustomKey));
     await _tapVisible(tester, find.byKey(bookshelfSortCustomKey));
     await tester.pump(const Duration(milliseconds: 320));
     await tester.tap(find.byKey(bookshelfManageKey));
@@ -292,7 +309,11 @@ void main() {
     expect(find.byKey(comicDeleteKey(chapter.sourceId, chapter.comicId)), findsOneWidget);
     expect(find.byKey(comicDetailsScreenKey), findsNothing);
 
-    await _tapVisible(tester, find.byTooltip('移动到其他分类'));
+    await _tapVisible(tester, find.byKey(bookshelfMoveKey));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(bookshelfMoveToCategoryKey(secondCategoryId)),
+    );
     await _tapVisible(
       tester,
       find.byKey(bookshelfMoveToCategoryKey(secondCategoryId)),
@@ -302,6 +323,53 @@ void main() {
     final preference = await store.getComicPreference(chapter.sourceId, chapter.comicId);
     expect(preference?.categoryIds, contains(secondCategoryId));
     expect(preference?.categoryIds, isNot(contains(firstCategoryId)));
+  });
+
+  testWidgets('library diagnostics acknowledges without deleting migration issues',
+      (tester) async {
+    final issue = LibraryMigrationIssue(
+      issueId: 7,
+      schemaFrom: 4,
+      entityKind: 'comic_preference',
+      legacyKey: 'legacy-comic',
+      resolvedSourceId: 'source-a',
+      details: const <String, Object?>{
+        'reason': 'multiple candidate sources',
+        'action': 'most recent source retained',
+      },
+      createdAt: DateTime.utc(2026, 7, 29),
+    );
+    final store = MemoryImportedLibraryStore(
+      migrationIssues: <LibraryMigrationIssue>[issue],
+    );
+    await store.open();
+    addTearDown(store.close);
+
+    await tester.pumpWidget(App(libraryStore: store));
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await _tapVisible(tester, find.byKey(homeDiagnosticsKey));
+    await _pumpUntilFound(tester, find.byKey(libraryDiagnosticsEntryKey));
+    await _tapVisible(tester, find.byKey(libraryDiagnosticsEntryKey));
+    await _pumpUntilFound(tester, find.byKey(libraryDiagnosticsScreenKey));
+    await _pumpUntilFound(tester, find.byKey(libraryDiagnosticsIssueKey(7)));
+
+    expect(find.textContaining('comic_preference'), findsOneWidget);
+    expect(find.byKey(libraryDiagnosticsCopyKey), findsOneWidget);
+    await _tapVisible(
+      tester,
+      find.byKey(libraryDiagnosticsAcknowledgeKey(7)),
+    );
+    for (var frame = 0; frame < 40; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      if (find.byKey(libraryDiagnosticsIssueKey(7)).evaluate().isEmpty) {
+        break;
+      }
+    }
+
+    expect(await store.listMigrationIssues(), isEmpty);
+    final retained = await store.listMigrationIssues(includeAcknowledged: true);
+    expect(retained, hasLength(1));
+    expect(retained.single.acknowledged, isTrue);
   });
 
   testWidgets('cover download overlay reports waterline and page progress',
