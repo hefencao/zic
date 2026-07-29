@@ -90,8 +90,50 @@ void main() {
     expect(reopened.stats.persistentHits, 1);
   });
 
-  test('file location avoids byte reads and batches LRU metadata touches',
+  test('encoded image reopen returns durable file origin without source load',
       () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-encoded-source-reopen-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    const key = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'encoded-source-cover',
+      revision: 'r1',
+    );
+    final first = ResourceCacheManager(
+      byteStore: FileResourceCacheByteStore(directory.path),
+    );
+    await first.getOrLoadEncodedImage(
+      key: key,
+      loader: () async => Uint8List.fromList(<int>[5, 4, 3, 2, 1]),
+    );
+    await first.close();
+
+    var sourceLoads = 0;
+    final reopened = ResourceCacheManager(
+      byteStore: FileResourceCacheByteStore(directory.path),
+    );
+    addTearDown(reopened.close);
+    final source = await reopened.getOrLoadEncodedImage(
+      key: key,
+      loader: () async {
+        sourceLoads++;
+        return Uint8List.fromList(<int>[9]);
+      },
+    );
+
+    expect(source, isA<FileEncodedResourceSource>());
+    expect(source.origin, EncodedResourceOrigin.durableCacheFile);
+    expect(source.lengthInBytes, 5);
+    expect(sourceLoads, 0);
+  });
+
+  test('file location uses one manifest and batches LRU touches', () async {
     var now = DateTime.utc(2026, 7, 29, 10);
     final directory = await Directory.systemTemp.createTemp(
       'zic-resource-file-location-',
@@ -116,12 +158,10 @@ void main() {
       bytes: Uint8List.fromList(<int>[1, 3, 5, 7]),
       expiresAt: expiresAt,
     );
-    final metadata = await directory
-        .list(recursive: true)
-        .where((entity) => entity is File && entity.path.endsWith('.json'))
-        .cast<File>()
-        .single;
-    final beforeTouch = await metadata.readAsString();
+    final manifest = File(
+      '${directory.path}/response-manifest-v1.json',
+    );
+    final beforeTouch = await manifest.readAsString();
 
     now = now.add(const Duration(minutes: 5));
     final located = await store.locate(key);
@@ -129,15 +169,135 @@ void main() {
     expect(located, isNotNull);
     expect(located!.byteLength, 4);
     expect(await File(located.path).readAsBytes(), <int>[1, 3, 5, 7]);
-    expect(await metadata.readAsString(), beforeTouch);
+    expect(await manifest.readAsString(), beforeTouch);
 
     await store.close();
-    final afterClose = jsonDecode(await metadata.readAsString())
+    final afterClose = jsonDecode(await manifest.readAsString())
         as Map<String, Object?>;
+    final records = afterClose['records']! as List<Object?>;
+    final record = (records.single as Map<Object?, Object?>)
+        .cast<String, Object?>();
     expect(
-      DateTime.parse(afterClose['lastAccessedAt']! as String).toUtc(),
+      DateTime.parse(record['lastAccessedAt']! as String).toUtc(),
       now,
     );
+  });
+
+  test('reopen locates warm covers without per-entry metadata reads', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-resource-manifest-reopen-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    const key = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'manifest-cover',
+      revision: 'r1',
+    );
+    final first = FileResourceCacheByteStore(directory.path);
+    await first.write(
+      key: key,
+      bytes: Uint8List.fromList(<int>[2, 4, 6, 8]),
+      expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+    );
+    await first.close();
+
+    final entryMetadata = await directory
+        .list(recursive: true)
+        .where(
+          (entity) =>
+              entity is File &&
+              entity.path.endsWith('.json') &&
+              !entity.path.endsWith('response-manifest-v1.json'),
+        )
+        .cast<File>()
+        .single;
+    await entryMetadata.delete();
+
+    final reopened = FileResourceCacheByteStore(directory.path);
+    addTearDown(reopened.close);
+    final located = await reopened.locate(key);
+
+    expect(located, isNotNull);
+    expect(await File(located!.path).readAsBytes(), <int>[2, 4, 6, 8]);
+  });
+
+  test('missing manifest migrates the legacy per-entry journal once', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-resource-manifest-migration-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    const key = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'legacy-cover',
+      revision: 'r1',
+    );
+    final first = FileResourceCacheByteStore(directory.path);
+    await first.write(
+      key: key,
+      bytes: Uint8List.fromList(<int>[9, 7, 5]),
+      expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+    );
+    await first.close();
+    final manifest = File(
+      '${directory.path}/response-manifest-v1.json',
+    );
+    await manifest.delete();
+
+    final migrated = FileResourceCacheByteStore(directory.path);
+    addTearDown(migrated.close);
+    expect(await migrated.locate(key), isNotNull);
+    expect(await manifest.exists(), isTrue);
+  });
+
+  test('manifest recovery removes encoded bytes with no journal', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-resource-orphan-recovery-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    const key = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'orphan-cover',
+    );
+    final first = FileResourceCacheByteStore(directory.path);
+    await first.write(
+      key: key,
+      bytes: Uint8List.fromList(<int>[1, 4, 9]),
+      expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+    );
+    await first.close();
+    final files = await directory
+        .list(recursive: true)
+        .where((entity) => entity is File)
+        .cast<File>()
+        .toList();
+    await files
+        .singleWhere((file) => file.path.endsWith('response-manifest-v1.json'))
+        .delete();
+    await files
+        .singleWhere(
+          (file) =>
+              file.path.endsWith('.json') &&
+              !file.path.endsWith('response-manifest-v1.json'),
+        )
+        .delete();
+    final bytes = files.singleWhere((file) => file.path.endsWith('.bin'));
+
+    final recovered = FileResourceCacheByteStore(directory.path);
+    addTearDown(recovered.close);
+    expect(await recovered.locate(key), isNull);
+    expect(await bytes.exists(), isFalse);
   });
 
   test('expired response bytes are rejected', () async {
@@ -183,24 +343,33 @@ void main() {
       kind: ResourceCacheKind.imageBytes,
       identity: 'cover-corrupt',
     );
-    final store = FileResourceCacheByteStore(directory.path);
-    addTearDown(store.close);
-
-    await store.write(
+    final first = FileResourceCacheByteStore(directory.path);
+    await first.write(
       key: key,
       bytes: Uint8List.fromList(<int>[3, 1, 4]),
       expiresAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
     );
+    await first.close();
     final files = await directory
         .list(recursive: true)
         .where((entity) => entity is File)
         .cast<File>()
         .toList();
-    final metadata = files.singleWhere((file) => file.path.endsWith('.json'));
+    final manifest = files.singleWhere(
+      (file) => file.path.endsWith('response-manifest-v1.json'),
+    );
+    final metadata = files.singleWhere(
+      (file) =>
+          file.path.endsWith('.json') &&
+          !file.path.endsWith('response-manifest-v1.json'),
+    );
     final bytes = files.singleWhere((file) => file.path.endsWith('.bin'));
+    await manifest.delete();
     await metadata.writeAsString('{', flush: true);
 
-    expect(await store.read(key), isNull);
+    final reopened = FileResourceCacheByteStore(directory.path);
+    addTearDown(reopened.close);
+    expect(await reopened.read(key), isNull);
     expect(await metadata.exists(), isFalse);
     expect(await bytes.exists(), isFalse);
   });

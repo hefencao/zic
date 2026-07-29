@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:downloads/downloads.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
+import 'package:telemetry/telemetry.dart';
 import 'comic_details.dart' as details;
 
 enum ComicDownloadProgressKind { active, offline }
@@ -63,6 +64,7 @@ final class ComicCoverCard extends StatelessWidget {
     required this.onTap,
     this.onLongPress,
     this.downloadProgress,
+    this.startupTelemetry,
     this.selected = false,
     super.key,
   });
@@ -77,6 +79,7 @@ final class ComicCoverCard extends StatelessWidget {
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
   final ComicDownloadProgress? downloadProgress;
+  final HomeStartupTelemetry? startupTelemetry;
   final bool selected;
 
   @override
@@ -110,6 +113,7 @@ final class ComicCoverCard extends StatelessWidget {
                   _CoverImage(
                     cacheIdentity: _coverRequestIdentity(comic),
                     loader: coverSource,
+                    startupTelemetry: startupTelemetry,
                   ),
                   if (downloadProgress != null)
                     _DownloadWatermark(progress: downloadProgress!),
@@ -196,10 +200,12 @@ final class _CoverImage extends StatefulWidget {
   const _CoverImage({
     required this.cacheIdentity,
     required this.loader,
+    this.startupTelemetry,
   });
 
   final String cacheIdentity;
   final Future<EncodedResourceSource> Function() loader;
+  final HomeStartupTelemetry? startupTelemetry;
 
   @override
   State<_CoverImage> createState() => _CoverImageState();
@@ -207,18 +213,40 @@ final class _CoverImage extends StatefulWidget {
 
 final class _CoverImageState extends State<_CoverImage> {
   late Future<EncodedResourceSource> _source;
+  bool _reportedFirstFrame = false;
 
   @override
   void initState() {
     super.initState();
-    _source = Future<EncodedResourceSource>.sync(widget.loader);
+    _startLoad();
+  }
+
+  void _startLoad() {
+    _reportedFirstFrame = false;
+    widget.startupTelemetry?.coverRequested(widget.cacheIdentity);
+    _source = Future<EncodedResourceSource>.sync(widget.loader).then((source) {
+      widget.startupTelemetry?.coverSourceReady(
+        widget.cacheIdentity,
+        source: source.origin.name,
+        byteLength: source.lengthInBytes,
+      );
+      return source;
+    });
+  }
+
+  void _reportFirstFrame() {
+    if (_reportedFirstFrame) {
+      return;
+    }
+    _reportedFirstFrame = true;
+    widget.startupTelemetry?.coverFirstFrame(widget.cacheIdentity);
   }
 
   @override
   void didUpdateWidget(covariant _CoverImage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.cacheIdentity != widget.cacheIdentity) {
-      _source = Future<EncodedResourceSource>.sync(widget.loader);
+      _startLoad();
     }
   }
 
@@ -249,12 +277,17 @@ final class _CoverImageState extends State<_CoverImage> {
                 fit: BoxFit.cover,
                 gaplessPlayback: true,
                 filterQuality: FilterQuality.medium,
-                frameBuilder: (context, child, frame, synchronous) =>
-                    AnimatedOpacity(
-                  opacity: frame != null || synchronous ? 1 : 0,
-                  duration: const Duration(milliseconds: 90),
-                  child: child,
-                ),
+                frameBuilder: (context, child, frame, synchronous) {
+                  final ready = frame != null || synchronous;
+                  if (ready) {
+                    _reportFirstFrame();
+                  }
+                  return AnimatedOpacity(
+                    opacity: ready ? 1 : 0,
+                    duration: const Duration(milliseconds: 90),
+                    child: child,
+                  );
+                },
               );
             }
             if (snapshot.hasError) {
@@ -483,6 +516,7 @@ final class ShelfListTile extends StatelessWidget {
     required this.downloadProgress,
     required this.selected,
     required this.onTap,
+    this.startupTelemetry,
     this.onLongPress,
     this.trailing,
     super.key,
@@ -494,6 +528,7 @@ final class ShelfListTile extends StatelessWidget {
   final ComicDownloadProgress? downloadProgress;
   final bool selected;
   final VoidCallback onTap;
+  final HomeStartupTelemetry? startupTelemetry;
   final VoidCallback? onLongPress;
   final Widget? trailing;
 
@@ -517,6 +552,7 @@ final class ShelfListTile extends StatelessWidget {
                   _CoverImage(
                     cacheIdentity: _coverRequestIdentity(comic),
                     loader: coverSource,
+                    startupTelemetry: startupTelemetry,
                   ),
                   if (downloadProgress != null)
                     _DownloadWatermark(progress: downloadProgress!),

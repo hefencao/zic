@@ -75,6 +75,31 @@ throw new Error("must never execute during inspection");
     );
   });
 
+  test('Venera inspector rejects invalid UTF-8 without executing payload',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-venera-invalid-utf8-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final script = File('${directory.path}/source.js');
+    await script.writeAsBytes(<int>[0xff, 0xfe, 0xfd]);
+    final plugin = ExternalComicPluginCatalogEntry(
+      format: ExternalComicPluginFormat.veneraJavaScript,
+      pluginId: 'venera:https://example.invalid/source.js',
+      name: 'Invalid',
+      version: '1.0.0',
+      entrypoint: Uri.parse('https://example.invalid/source.js'),
+      sources: const <ExternalComicPluginSource>[],
+      requiresRuntimeDiscovery: true,
+    );
+
+    await expectLater(
+      VeneraJavaScriptInspector(payloads: _payloadLoader(script))
+          .inspect(plugin),
+      throwsFormatException,
+    );
+  });
+
   test('Mihon inspector streams APK digest and reads metadata without loading',
       () async {
     final directory = await Directory.systemTemp.createTemp(

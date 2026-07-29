@@ -20,6 +20,7 @@ EXPECTED_DEPENDENCIES = {
     'downloads_bridge': {'downloads', 'runtime_bridge', 'storage_bridge'},
     'catalog': {'domain', 'resource_cache', 'transport'},
     'plugin_host': {'catalog'},
+    'plugin_host_bridge': {'plugin_host'},
     'resource_cache': set(),
     'telemetry': set(),
     'reader': {'domain', 'telemetry'},
@@ -2102,6 +2103,55 @@ def check_native_abi() -> None:
             fail(f'native Dart cursor/frame wrapper is incomplete: {required}')
 
 
+def check_current_iteration() -> None:
+    resource_cache = (
+        ROOT / 'packages/resource_cache/lib/src/resource_cache.dart'
+    ).read_text(encoding='utf-8')
+    response_store = (
+        ROOT / 'packages/storage/lib/src/file_resource_cache_byte_store.dart'
+    ).read_text(encoding='utf-8')
+    home = (ROOT / 'apps/app/lib/home_widgets.dart').read_text(encoding='utf-8')
+    telemetry = (
+        ROOT / 'packages/telemetry/lib/src/home_startup.dart'
+    ).read_text(encoding='utf-8')
+    bridge = (
+        ROOT
+        / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/PluginHostBridgePlugin.kt'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'enum EncodedResourceOrigin',
+        'final ResourceCacheByteStore persistentStore = store;',
+        'final ResourceCacheByteStoreFileAccess fileStore = store;',
+    ):
+        if required not in resource_cache:
+            fail(f'dev.43 encoded-resource compile closure is incomplete: {required}')
+    for required in (
+        "response-manifest-v1.json",
+        '_pendingTouches',
+        'FileSystemEntityType.file',
+    ):
+        if required not in response_store:
+            fail(f'dev.43 durable response manifest is incomplete: {required}')
+    for required in (
+        'HomeStartupTelemetry',
+        'coverSourceReady',
+        'coverFirstFrame',
+    ):
+        if required not in home or required not in telemetry:
+            fail(f'dev.43 Home startup attribution is incomplete: {required}')
+    for required in (
+        'Executors.newSingleThreadExecutor',
+        'getPackageArchiveInfo',
+        'apkContentsSigners',
+        'tachiyomix.extensionLib',
+    ):
+        if required not in bridge:
+            fail(f'dev.43 Mihon Android metadata bridge is incomplete: {required}')
+    for forbidden in ('DexClassLoader', 'PathClassLoader', 'Class.forName'):
+        if forbidden in bridge:
+            fail(f'Mihon inspection must not load extension code: {forbidden}')
+
+
 def main() -> None:
     try:
         dart_files, dart_tests = check_repository(ROOT)
@@ -2114,6 +2164,7 @@ def main() -> None:
     check_dart_sources()
     check_tool_dirs()
     check_compile_regressions()
+    check_current_iteration()
     check_native_abi()
     print('repository structure: OK')
     print(f'Dart structure: {dart_files} files, {dart_tests} test files')

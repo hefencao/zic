@@ -11,6 +11,7 @@ workspace:
   - packages/downloads_bridge
   - packages/catalog
   - packages/plugin_host
+  - packages/plugin_host_bridge
   - packages/resource_cache
   - packages/reader
   - packages/pipeline

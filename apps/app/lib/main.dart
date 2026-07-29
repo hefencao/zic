@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
+import 'package:telemetry/telemetry.dart';
 
 import 'demo_home.dart';
 import 'webp_demo.dart';
@@ -24,6 +25,7 @@ final class _BootstrapApp extends StatefulWidget {
 }
 
 final class _BootstrapAppState extends State<_BootstrapApp> {
+  late final HomeStartupTelemetry _startupTelemetry;
   late final Future<_AppServices> _servicesFuture;
   _AppServices? _services;
   bool _disposed = false;
@@ -31,7 +33,19 @@ final class _BootstrapAppState extends State<_BootstrapApp> {
   @override
   void initState() {
     super.initState();
-    _servicesFuture = _openServices().then((services) {
+    _startupTelemetry = HomeStartupTelemetry(
+      clock: SystemClock(),
+      sink: kDebugMode
+          ? CallbackTraceSink((event) => debugPrint(event.toJsonLine()))
+          : const NoopTraceSink(),
+    );
+    _startupTelemetry.servicesOpenStarted();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_disposed) {
+        _startupTelemetry.bootstrapPresented();
+      }
+    });
+    _servicesFuture = _openServices(_startupTelemetry).then((services) {
       if (_disposed) {
         unawaited(services.close());
       } else {
@@ -65,6 +79,7 @@ final class _BootstrapAppState extends State<_BootstrapApp> {
           chapterDownloads: services.chapterDownloads,
           wholeComicDownloads: services.wholeComicDownloads,
           cacheCoordinator: services.cacheCoordinator,
+          startupTelemetry: _startupTelemetry,
         );
       },
     );
@@ -150,15 +165,23 @@ final class _AppServices {
   }
 }
 
-Future<_AppServices> _openServices() async {
+Future<_AppServices> _openServices(HomeStartupTelemetry telemetry) async {
   ImportedLibraryStore? libraryStore;
   ManagedChapterDownloadService? chapterDownloads;
   WholeComicDownloadQueue? wholeComicDownloads;
   ResourceCacheCoordinator? cacheCoordinator;
   try {
+    final openedAt = telemetry.nowMicros();
+    var stageStarted = telemetry.nowMicros();
     final root = await getDefaultZicStorageRoot();
+    telemetry.serviceReady('storage-root', startedAtMicros: stageStarted);
+    stageStarted = telemetry.nowMicros();
     libraryStore = await openImportedLibraryStore(root);
+    telemetry.serviceReady('library-store', startedAtMicros: stageStarted);
+    stageStarted = telemetry.nowMicros();
     chapterDownloads = await PersistentChapterDownloadService.open(root);
+    telemetry.serviceReady('chapter-downloads', startedAtMicros: stageStarted);
+    stageStarted = telemetry.nowMicros();
     cacheCoordinator = createAppResourceCache(
       storageRoot: root,
       artifacts: chapterDownloads,
@@ -166,6 +189,7 @@ Future<_AppServices> _openServices() async {
         debugPrint('durable response cache failed: $error');
       },
     );
+    telemetry.serviceReady('resource-cache', startedAtMicros: stageStarted);
     WholeComicQueueEnvironmentSource queueEnvironment =
         const StaticWholeComicQueueEnvironment();
     PlatformWholeComicQueueEnvironment? platformEnvironment;
@@ -180,12 +204,15 @@ Future<_AppServices> _openServices() async {
       }
       debugPrint('runtime download policy signals unavailable: $error');
     }
+    stageStarted = telemetry.nowMicros();
     wholeComicDownloads = await openPersistentWholeComicDownloadQueue(
       path: '$root/whole_comic_queue.json',
       downloads: chapterDownloads,
       environment: queueEnvironment,
       ownsEnvironment: platformEnvironment != null,
     );
+    telemetry.serviceReady('whole-comic-queue', startedAtMicros: stageStarted);
+    telemetry.servicesReady(startedAtMicros: openedAt);
     return _AppServices(
       libraryStore: libraryStore,
       chapterDownloads: chapterDownloads,
@@ -212,6 +239,7 @@ final class App extends StatelessWidget {
     this.wholeComicDownloads,
     this.comicSources,
     this.cacheCoordinator,
+    this.startupTelemetry,
     super.key,
   }) : assert(
           wholeComicDownloads == null || chapterDownloads != null,
@@ -226,6 +254,7 @@ final class App extends StatelessWidget {
   final WholeComicDownloadQueue? wholeComicDownloads;
   final List<BrowsableComicSource>? comicSources;
   final ResourceCacheCoordinator? cacheCoordinator;
+  final HomeStartupTelemetry? startupTelemetry;
 
   @override
   Widget build(BuildContext context) {
@@ -253,6 +282,7 @@ final class App extends StatelessWidget {
         wholeComicDownloads: wholeComicDownloads,
         comicSources: comicSources,
         cacheCoordinator: cacheCoordinator,
+        startupTelemetry: startupTelemetry,
       ),
     );
   }

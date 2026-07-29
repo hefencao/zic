@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:local_media/local_media.dart';
 import 'package:resource_cache/resource_cache.dart';
+import 'package:telemetry/telemetry.dart';
 
 import 'package:downloads/downloads.dart';
 import 'comic_details.dart' as details;
@@ -119,6 +120,7 @@ final class DemoHome extends StatefulWidget {
     this.wholeComicDownloads,
     this.comicSources,
     this.cacheCoordinator,
+    this.startupTelemetry,
     super.key,
   }) : assert(
           wholeComicDownloads == null || chapterDownloads != null,
@@ -133,6 +135,7 @@ final class DemoHome extends StatefulWidget {
   final WholeComicDownloadQueue? wholeComicDownloads;
   final List<BrowsableComicSource>? comicSources;
   final ResourceCacheCoordinator? cacheCoordinator;
+  final HomeStartupTelemetry? startupTelemetry;
 
   @override
   State<DemoHome> createState() => _DemoHomeState();
@@ -1346,7 +1349,10 @@ final class _DemoHomeState extends State<DemoHome> {
     }
     final directPath = localImageFilePath(sourceValue);
     if (directPath != null) {
-      return FileEncodedResourceSource(path: directPath);
+      return FileEncodedResourceSource(
+        path: directPath,
+        origin: EncodedResourceOrigin.localFile,
+      );
     }
     final revision = fallback?.chapter.sourceRevision ?? '';
     final source = _sourceForId(sourceId);

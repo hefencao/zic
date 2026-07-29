@@ -48,6 +48,8 @@ runApp(_BootstrapApp)
        -> source miss -> bytes -> atomic cache file -> FileImage
 ```
 
+持久响应 store 首次命中时读取一个 `response-manifest-v1.json`，之后按完整 key 在内存索引中定位；逐项 JSON 只用于崩溃恢复和旧布局迁移。LRU touch 聚合后批量写回。
+
 `ResourceCacheByteStoreFileAccess` 只暴露经过完整 key、TTL 和长度校验的只读文件引用。它避免 warm cover 进入 Dart heap，但不宣称平台 decoder 内部无复制。`content://`、动画与 Reader demand 仍走各自受控 adapter。书架 read-state 使用单次批量查询；离线徽标使用一次 SQLite index projection，不创建 session、不读取或 stat 页面文件。精确页面命令才 materialize/restore 对应 session。
 
 ## 1.2 冷启动 Reader promoted-artifact 路径

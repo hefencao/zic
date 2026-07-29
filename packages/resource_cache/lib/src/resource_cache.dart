@@ -66,15 +66,28 @@ final class PersistedResourceBytes {
 /// File-backed values let Flutter/native decoders open the cache artifact
 /// directly instead of forcing every warm-start cover through
 /// `File.readAsBytes`, a Dart-heap copy, and then another codec input copy.
-sealed class EncodedResourceSource {
-  const EncodedResourceSource({this.lengthInBytes});
+enum EncodedResourceOrigin {
+  memory,
+  localFile,
+  durableCacheFile,
+}
 
+sealed class EncodedResourceSource {
+  const EncodedResourceSource({
+    required this.origin,
+    this.lengthInBytes,
+  });
+
+  final EncodedResourceOrigin origin;
   final int? lengthInBytes;
 }
 
 final class MemoryEncodedResourceSource extends EncodedResourceSource {
-  const MemoryEncodedResourceSource(this.bytes)
-      : super(lengthInBytes: bytes.lengthInBytes);
+  MemoryEncodedResourceSource(this.bytes)
+      : super(
+          origin: EncodedResourceOrigin.memory,
+          lengthInBytes: bytes.lengthInBytes,
+        );
 
   final Uint8List bytes;
 }
@@ -82,8 +95,10 @@ final class MemoryEncodedResourceSource extends EncodedResourceSource {
 final class FileEncodedResourceSource extends EncodedResourceSource {
   const FileEncodedResourceSource({
     required this.path,
+    EncodedResourceOrigin origin = EncodedResourceOrigin.durableCacheFile,
     super.lengthInBytes,
-  }) : assert(path != '');
+  })  : assert(path != ''),
+        super(origin: origin);
 
   final String path;
 }
@@ -800,11 +815,13 @@ final class ResourceCacheManager {
     if (store is! ResourceCacheByteStoreFileAccess) {
       return null;
     }
+    final ResourceCacheByteStore persistentStore = store!;
+    final ResourceCacheByteStoreFileAccess fileStore = store as ResourceCacheByteStoreFileAccess;
     final generation = _generationOf(key);
     final epoch = _epoch;
     await _persistenceTail;
     try {
-      final file = await store.locate(key);
+      final file = await fileStore.locate(key);
       if (file == null ||
           _closed ||
           epoch != _epoch ||
@@ -813,7 +830,7 @@ final class ResourceCacheManager {
       }
       if (!file.expiresAt.isAfter(_now())) {
         _expirations++;
-        _queuePersistenceMutation(() => byteStore?.remove(key));
+        _queuePersistenceMutation(() => persistentStore.remove(key));
         return null;
       }
       return file;

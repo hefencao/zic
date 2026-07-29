@@ -25,7 +25,7 @@ for rel in \
   (cd "$ROOT/$rel" && dart analyze)
 done
 
-for rel in packages/reader packages/texture_bridge packages/local_media_bridge packages/local_media packages/runtime_bridge packages/storage_bridge packages/downloads_bridge apps/app; do
+for rel in packages/reader packages/plugin_host_bridge packages/texture_bridge packages/local_media_bridge packages/local_media packages/runtime_bridge packages/storage_bridge packages/downloads_bridge apps/app; do
   echo "FLUTTER ANALYZE: $rel"
   (cd "$ROOT/$rel" && flutter analyze)
 done

@@ -796,7 +796,7 @@ final class PersistentChapterDownloadService
           ? sessionSnapshot
           : null;
       final indexed = snapshot == null
-          ? indexedRecords?[id.key] ?? await _index.get(id.key)
+          ? (indexedRecords?[id.key] ?? await _index.get(id.key))
           : null;
       final exactIndexed = indexed?.id == id ? indexed : null;
       final committedLength = snapshot?.committedLength ?? exactIndexed?.bytes ?? 0;

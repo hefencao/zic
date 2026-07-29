@@ -717,6 +717,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         final provider = encodedResourceImageProvider(
           FileEncodedResourceSource(
             path: directPath,
+            origin: EncodedResourceOrigin.localFile,
             lengthInBytes: widget.image.byteLength,
           ),
         );
@@ -924,44 +925,56 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           ),
         ),
       );
-    } else if (bytes == null && imageProvider == null) {
-      content = const Center(
-        child: CircularProgressIndicator(),
-      );
     } else if (widget.image.format.isWebp) {
-      content = NativeWebpPlayer(
-        title: widget.image.displayName,
-        sourceUri: widget.sourceUri,
-        loadBytes: (_) async => bytes,
-        showEngineControls: false,
-        showStatus: false,
-        initialEngine: WebpPlayerEngine.flutter,
-        onPreviewStateChanged: _onWebpState,
-        onFirstFrame: _reportFirstFrame,
-        downloadIdentity: widget.downloadIdentity,
-        traceClock: widget.traceClock,
-        traceSink: widget.traceSink,
-        traceSessionId: widget.traceSessionId,
-        demandRevision: widget.demandRevision,
-        playback: widget.playback,
-      );
+      if (bytes == null) {
+        content = const Center(
+          child: CircularProgressIndicator(),
+        );
+      } else {
+        content = NativeWebpPlayer(
+          title: widget.image.displayName,
+          sourceUri: widget.sourceUri,
+          loadBytes: (_) async => bytes,
+          showEngineControls: false,
+          showStatus: false,
+          initialEngine: WebpPlayerEngine.flutter,
+          onPreviewStateChanged: _onWebpState,
+          onFirstFrame: _reportFirstFrame,
+          downloadIdentity: widget.downloadIdentity,
+          traceClock: widget.traceClock,
+          traceSink: widget.traceSink,
+          traceSessionId: widget.traceSessionId,
+          demandRevision: widget.demandRevision,
+          playback: widget.playback,
+        );
+      }
     } else if (widget.playback != null &&
         widget.image.format == LocalImageFormat.gif) {
-      content = _ControlledAnimatedImage(
-        bytes: bytes,
-        playback: widget.playback!,
-        onReady: _onControlledReady,
-        onError: _onControlledError,
-        downloadIdentity: widget.downloadIdentity,
-        traceClock: widget.traceClock,
-        traceSink: widget.traceSink,
-        traceSessionId: widget.traceSessionId,
-        demandRevision: widget.demandRevision,
+      if (bytes == null) {
+        content = const Center(
+          child: CircularProgressIndicator(),
+        );
+      } else {
+        content = _ControlledAnimatedImage(
+          bytes: bytes,
+          playback: widget.playback!,
+          onReady: _onControlledReady,
+          onError: _onControlledError,
+          downloadIdentity: widget.downloadIdentity,
+          traceClock: widget.traceClock,
+          traceSink: widget.traceSink,
+          traceSessionId: widget.traceSessionId,
+          demandRevision: widget.demandRevision,
+        );
+      }
+    } else if (imageProvider == null) {
+      content = const Center(
+        child: CircularProgressIndicator(),
       );
     } else {
       content = Center(
         child: Image(
-          image: imageProvider!,
+          image: imageProvider,
           key: imageFolderFlutterPreviewKey,
           fit: BoxFit.contain,
           filterQuality: FilterQuality.medium,

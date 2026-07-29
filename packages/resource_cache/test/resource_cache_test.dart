@@ -5,6 +5,27 @@ import 'package:resource_cache/resource_cache.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('encoded sources preserve memory and file origin without copying', () {
+    final bytes = Uint8List.fromList(<int>[1, 2, 3]);
+    final memory = MemoryEncodedResourceSource(bytes);
+    const local = FileEncodedResourceSource(
+      path: '/tmp/local-cover.webp',
+      origin: EncodedResourceOrigin.localFile,
+      lengthInBytes: 42,
+    );
+    const durable = FileEncodedResourceSource(
+      path: '/tmp/cache-cover.webp',
+      lengthInBytes: 84,
+    );
+
+    expect(memory.bytes, same(bytes));
+    expect(memory.origin, EncodedResourceOrigin.memory);
+    expect(memory.lengthInBytes, 3);
+    expect(local.origin, EncodedResourceOrigin.localFile);
+    expect(local.lengthInBytes, 42);
+    expect(durable.origin, EncodedResourceOrigin.durableCacheFile);
+  });
+
   test('coalesces concurrent loads across one resource identity', () async {
     final cache = ResourceCacheManager();
     addTearDown(cache.close);

@@ -1,3 +1,12 @@
+## 0.31.0-dev.43 — compact cover manifest, attributable Home startup and Android Mihon metadata
+
+- Close the external dev.42 compile blockers in product code: encoded memory sources no longer use a runtime value in a const initializer; durable file-store capabilities are explicitly narrowed; chapter bulk projection parenthesizes nullable async fallback correctly; and local animation branches require non-null encoded bytes before constructing byte-owned players.
+- Replace per-cover warm metadata reads with one storage-owned `response-manifest-v1.json`. Per-entry journals remain for atomic crash recovery/migration, target file length is still verified, LRU touches are batched, and warm hits continue to return immutable file references without whole-file Dart copies.
+- Add a monotonic Home startup trace covering Flutter bootstrap presentation, service-open phases, cover request, encoded source origin/length and first decoded frame. Encoded sources now distinguish memory, ordinary local files and durable cache files explicitly.
+- Add the Android `plugin_host_bridge`: Mihon APK archive inspection runs off the platform thread and reads package, current signer SHA-256, version code and supported extension ABI metadata through `PackageManager` without class loading.
+- Make bounded Venera inspection derive UTF-8 metadata and SHA-256 from one immutable byte snapshot, preserving repository/script key agreement and non-execution.
+- Add manifest reopen/migration, encoded-origin, Home telemetry, Venera invalid-payload and Android bridge regressions, plus ADR 0027.
+
 ## 0.31.0-dev.42 — file-backed Home covers, lazy startup and concrete plugin inspection
 
 - Correct the cold-start diagnosis: mount Flutter immediately with a startup surface, remove eager restoration of every indexed offline page, avoid a duplicate application-support path lookup, bulk-load read-state projection in one query, and project Home download badges from one SQLite index scan without materializing sessions or statting page files. Exact page commands alone restore artifacts.

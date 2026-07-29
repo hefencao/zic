@@ -133,8 +133,8 @@ final class VeneraJavaScriptInspector implements ExternalPluginInspector {
   ) async {
     _requireFormat(plugin, format);
     final payload = await payloads.acquire(plugin);
-    await _validatePayload(payload, maxPayloadBytes);
-    final script = await File(payload.path).readAsString(encoding: utf8);
+    final veneraPayload = await _readVeneraPayload(payload, maxPayloadBytes);
+    final script = veneraPayload.script;
     final declaredKeys = plugin.sources
         .map((source) => source.externalId.trim())
         .where((value) => value.isNotEmpty)
@@ -158,13 +158,47 @@ final class VeneraJavaScriptInspector implements ExternalPluginInspector {
         : lexicalKey;
     return ExternalPluginInspection(
       format: format,
-      payloadSha256: await _sha256File(payload),
+      payloadSha256: veneraPayload.sha256,
       payloadPath: payload.path,
       payloadByteLength: payload.byteLength,
       sourceKey: sourceKey,
       requestedCapabilities: requestedCapabilities,
     );
   }
+}
+
+final class _VeneraPayload {
+  const _VeneraPayload({
+    required this.script,
+    required this.sha256,
+  });
+
+  final String script;
+  final String sha256;
+}
+
+Future<_VeneraPayload> _readVeneraPayload(
+  ExternalPluginPayloadFile payload,
+  int maxBytes,
+) async {
+  final file = File(payload.path);
+  final actualLength = await file.length();
+  if (actualLength != payload.byteLength) {
+    throw const FormatException('external plugin payload length changed');
+  }
+  if (actualLength > maxBytes) {
+    throw FormatException(
+      'external plugin payload exceeds limit: $actualLength > $maxBytes',
+    );
+  }
+  final bytes = await file.readAsBytes();
+  if (bytes.lengthInBytes != actualLength) {
+    throw const FormatException('external plugin payload changed while reading');
+  }
+  return _VeneraPayload(
+    script: utf8.decode(bytes),
+    sha256: sha256.convert(bytes).toString(),
+  );
 }
 
 void _requireFormat(

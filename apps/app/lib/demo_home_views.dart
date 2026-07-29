@@ -199,6 +199,7 @@ extension _DemoHomeViews on _DemoHomeState {
               comic: comic,
               preference: _preferenceForComic(comic),
               coverSource: _coverSourceLoaderForComic(comic),
+              startupTelemetry: widget.startupTelemetry,
               downloadProgress: _downloadProgressForComic(comic),
               onTap: () => unawaited(_openComic(comic)),
               onLongPress: () {
@@ -635,6 +636,7 @@ extension _DemoHomeViews on _DemoHomeState {
       comic: comic,
       preference: _preferenceForComic(comic),
       coverSource: _coverSourceLoaderForComic(comic),
+      startupTelemetry: widget.startupTelemetry,
       downloadProgress: _downloadProgressForComic(comic),
       selected: selected,
       onTap: () => _handleShelfTap(comic),
@@ -761,6 +763,7 @@ extension _DemoHomeViews on _DemoHomeState {
           comic: comic,
           preference: _preferenceForComic(comic),
           coverSource: _coverSourceLoaderForComic(comic),
+          startupTelemetry: widget.startupTelemetry,
           downloadProgress: _downloadProgressForComic(comic),
           selected: _managedComicIdentities.contains(comic.identity),
           onTap: () => _handleShelfTap(comic),

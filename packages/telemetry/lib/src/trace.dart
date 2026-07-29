@@ -3,6 +3,13 @@ import 'dart:convert';
 import 'clock.dart';
 
 enum TraceEventKind {
+  homeBootstrapPresented,
+  homeServicesOpenStarted,
+  homeServiceReady,
+  homeServicesReady,
+  homeCoverRequested,
+  homeCoverSourceReady,
+  homeCoverFirstFrame,
   readerObservation,
   pageTransition,
   pageCurrent,

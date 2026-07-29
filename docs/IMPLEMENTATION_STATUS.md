@@ -1,3 +1,11 @@
+## Current iteration — compact cover manifest, attributable Home startup and Android Mihon metadata
+
+The dev.42 external compile report is closed in product types rather than tests. Memory encoded sources are no longer const-initialized from runtime bytes, optional durable-store capabilities are explicitly narrowed, nullable async index fallback is parenthesized, and byte-owned animation players cannot receive nullable data.
+
+Warm durable cover lookup now loads one versioned compact manifest per process. Per-entry JSON remains an atomic recovery journal, target payload length is verified, touches are batched, and the normal path returns immutable files without materializing their bytes in Dart. Home emits one monotonic trace for bootstrap presentation, durable-service phases, cover request, source origin/length and first frame.
+
+`plugin_host_bridge` implements the Android Mihon metadata boundary with background PackageManager archive parsing and no class loader. It returns package, current signer digest, version code and extension ABI to the existing trust gate. Venera inspection consumes one bounded immutable byte snapshot for both UTF-8 metadata discovery and SHA-256; JavaScript execution remains unimplemented and separately sandboxed.
+
 ## Current iteration — file-backed Home startup and immutable plugin inspection
 
 The reported multi-second black interval is treated as a Home cold-start and local-file I/O problem, not a Reader playback problem. Flutter now mounts a startup surface before durable services open. Library read-state uses one bulk query; Home download badges use one index-only bulk projection. The persistent chapter service no longer restores every indexed page during `open` or creates sessions/stats page files for Home projection; exact commands materialize one session lazily. Warm durable covers resolve to validated immutable files and use an engine-facing file provider, while access recency is batched rather than flushed per hit. Plain local static images take the same path when no Reader/pipeline loader owns them. Network misses and Android content URIs still copy once into the durable response store, and animations/Reader pages retain their explicit owners. This removes avoidable whole-file Dart-heap copies but does not claim the platform decoder performs no internal copy.

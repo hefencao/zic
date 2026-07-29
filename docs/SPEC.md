@@ -77,6 +77,7 @@ continue through Reader demand, transport, promoted artifact and decode ownershi
 
 - Flutter 首个可见 surface 不得等待 SQLite、缓存索引或离线页面恢复。书架恢复后，read-state 必须用批量查询，下载徽标必须用 index-only bulk projection；两者不得为每部漫画/每页执行 N+1 查询或 materialize `DownloadSession`。
 - 持久封面命中应优先返回完整不可变文件引用，不得在每次首页进入时读取整文件到 Dart heap、重算完整 hash 并同步 flush LRU 元数据。
+- 持久封面索引应以一个版本化 compact manifest 在进程内一次恢复；逐项 metadata 只作为崩溃恢复日志。首页性能诊断必须记录 bootstrap、服务打开、封面来源和首帧的单调时间线。
 - 普通本地静态图片在没有 pipeline/session loader 时应由文件型 ImageProvider 打开。Android SAF `content://` 可复制一次到应用私有持久缓存；后续命中使用该文件。
 - Animated WebP/GIF、Reader 页面和远程首次下载继续由其既有 decoder、demand 和 artifact owner 管理。
 - “zero copy”验收指消除可避免的 Dart 层完整 encoded-file copy；不对平台 decoder 内部 mmap/copy 作不可验证承诺。
