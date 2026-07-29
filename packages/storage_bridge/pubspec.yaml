@@ -1,6 +1,6 @@
 name: storage_bridge
 description: Flutter platform paths for zic storage backends.
-version: 0.28.1
+version: 0.29.0
 publish_to: none
 resolution: workspace
 

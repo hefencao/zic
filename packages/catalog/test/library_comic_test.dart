@@ -211,6 +211,90 @@ void main() {
     expect(migrated.customOrder, 9);
   });
 
+  test('source migration comparison normalizes title and author evidence', () {
+    final source = LibraryComic.fromEntries(<ImportedLibraryEntry>[
+      ImportedLibraryEntry(
+        chapter: _chapter(
+          chapterId: 'source-normalized',
+          title: '第 1 话',
+          sequence: 1,
+          importedAt: DateTime.utc(2026, 7, 28),
+        ).copyWith(
+          sourceId: 'source-a',
+          comicAuthors: const <String>['作者 A'],
+        ),
+      ),
+    ]);
+    final plan = ComicSourceMigrationPlan.build(
+      source: source,
+      target: _remoteManifest(
+        sourceId: 'source-b',
+        comicId: 'target-normalized',
+        chapterTitles: const <String>['第 1 话'],
+        title: '聚合 漫画',
+        authors: const <String>['作者-A'],
+      ),
+    );
+
+    final comparison = plan.comparison();
+
+    expect(comparison.titleMatches, isTrue);
+    expect(comparison.sharedAuthors, const <String>['作者 A']);
+    expect(comparison.exactChapterMatches, 1);
+    expect(comparison.risks, isEmpty);
+  });
+
+  test('source migration comparison exposes identity and risk evidence', () {
+    final source = LibraryComic.fromEntries(<ImportedLibraryEntry>[
+      for (var index = 0; index < 3; index++)
+        ImportedLibraryEntry(
+          chapter: _chapter(
+            chapterId: 'source-compare-${index + 1}',
+            title: '第 ${index + 1} 话',
+            sequence: index + 1,
+            importedAt: DateTime.utc(2026, 7, 28, index),
+          ).copyWith(
+            sourceId: 'source-a',
+            comicAuthors: const <String>['源作者'],
+          ),
+        ),
+    ]);
+    final plan = ComicSourceMigrationPlan.build(
+      source: source,
+      target: _remoteManifest(
+        sourceId: 'source-b',
+        comicId: 'target-comic',
+        chapterTitles: const <String>['目标第一章', '目标第二章'],
+        title: '另一个标题',
+        authors: const <String>['目标作者'],
+        readingDirection: ReadingDirection.rtl,
+      ),
+    );
+
+    final comparison = plan.comparison(sampleLimit: 3);
+
+    expect(comparison.sourceIdentity, 'source-a:comic-1');
+    expect(comparison.targetIdentity, 'source-b:target-comic');
+    expect(comparison.titleMatches, isFalse);
+    expect(comparison.sharedAuthors, isEmpty);
+    expect(comparison.readingDirectionDiffers, isTrue);
+    expect(comparison.exactChapterMatches, 0);
+    expect(comparison.sequenceOnlyChapterMatches, 2);
+    expect(comparison.unmatchedSourceChapters, 1);
+    expect(
+      comparison.risks,
+      containsAll(<ComicSourceMigrationRisk>[
+        ComicSourceMigrationRisk.titleDiffers,
+        ComicSourceMigrationRisk.noSharedAuthors,
+        ComicSourceMigrationRisk.readingDirectionDiffers,
+        ComicSourceMigrationRisk.sequenceOnlyMatches,
+        ComicSourceMigrationRisk.unmatchedSourceChapters,
+      ]),
+    );
+    expect(comparison.chapterSamples, hasLength(3));
+    expect(comparison.chapterSamples.last.matched, isFalse);
+  });
+
   test('source migration merges instead of erasing target preferences', () {
     final source = LibraryComic.fromEntries(<ImportedLibraryEntry>[
       ImportedLibraryEntry(
@@ -400,16 +484,19 @@ ComicManifest _remoteManifest({
   required String sourceId,
   required String comicId,
   required List<String> chapterTitles,
+  String title = '远程漫画',
+  List<String> authors = const <String>['作者'],
+  ReadingDirection readingDirection = ReadingDirection.ltr,
 }) =>
     ComicManifest(
       comic: Comic(
         comicId: comicId,
         sourceId: sourceId,
-        title: '远程漫画',
-        authors: const <String>['作者'],
+        title: title,
+        authors: authors,
         coverUri: Uri.https('example.invalid', '/cover.png'),
         description: '简介',
-        readingDirection: ReadingDirection.ltr,
+        readingDirection: readingDirection,
       ),
       chapters: <Chapter>[
         for (var index = 0; index < chapterTitles.length; index++)

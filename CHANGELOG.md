@@ -1,3 +1,11 @@
+## 0.29.0-dev.34 — source migration candidate comparison
+
+- Add an authoritative pre-write comparison for cross-source comic migration. The current and target works are shown side by side with cover, authors, source/native identity, reading direction and chapter counts.
+- Add catalog-owned migration evidence: normalized title/author overlap, exact and sequence-only chapter counts, unmatched source/target chapters, chapter-pair samples and explicit risk flags.
+- Require an explicit identity/risk acknowledgement before the existing conservative copy flow can continue. The comparison performs no durable writes and does not weaken target chapter identity verification.
+- Cache each comparison cover load for the dialog lifetime so checking the acknowledgement box cannot repeat a remote cover request.
+- Add catalog and Widget regressions for risk evidence, chapter samples, source/target identities and the disabled-before-acknowledgement confirmation action.
+
 ## 0.28.1-dev.33 — download manager OOM and queue shutdown repair
 
 - Restore the missing `index++` in Download Manager's chapter-task list expansion. The old loop never advanced once at least one chapter snapshot existed, causing unbounded Widget construction and eventual process/WSL OOM.

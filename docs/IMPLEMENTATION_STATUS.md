@@ -1,3 +1,17 @@
+## Current iteration — source migration candidate comparison
+
+Cross-source migration now stops at a read-only evidence boundary before any target comic, preference, chapter,
+progress or read-state write. `ComicSourceMigrationComparison` is derived from the existing conservative plan and
+reports both source-composite identities, normalized title and author evidence, reading-direction differences,
+exact versus sequence-only matches, unmatched source/target counts and bounded chapter-pair samples.
+
+The App presents current and target works side by side with cover, authors, source name, native ID, chapter count
+and reading direction. Explicit risk rows explain title/author/direction differences, sequence-only candidates and
+unmatched saved chapters. The final copy action remains disabled until the user acknowledges the target identity
+and risks. Comparison cover futures are cached for the dialog lifetime; rebuilding the acknowledgement state does
+not re-fetch remote covers. The existing pre-write target manifest validation and exact-only reading-state transfer
+remain unchanged.
+
 ## Current iteration — download manager OOM and queue shutdown repair
 
 Download Manager's per-chapter task expansion now advances its explicit index. A non-empty task list can no longer enter an infinite synchronous Widget-construction loop and exhaust the host process or WSL memory. The Dart structure gate also rejects conditional C-style `for` loops whose update clause is empty, so this failure class is detected without launching Flutter.

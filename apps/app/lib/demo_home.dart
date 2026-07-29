@@ -12,6 +12,7 @@ import 'comic_details.dart' as details;
 import 'download_manager.dart';
 import 'library_diagnostics.dart';
 import 'source_browser.dart';
+import 'source_migration_compare.dart';
 import 'static_demo.dart';
 import 'webp_demo.dart';
 import 'whole_comic_downloads.dart';
@@ -1242,34 +1243,20 @@ final class _DemoHomeState extends State<DemoHome> {
         source: comic,
         target: manifest,
       );
-      final exactMatchCount = plan.chapterMatches
-          .where(
-            (match) => match.confidence == ChapterMigrationConfidence.exact,
-          )
-          .length;
-      final confirmed = await showDialog<bool>(
+      final sourceDescriptor = _sourceForId(comic.sourceId)?.descriptor;
+      final confirmed = await showSourceMigrationComparison(
         context: context,
-        builder: (context) => AlertDialog(
-          title: Text('迁移到 ${manifest.comic.title}'),
-          content: Text(
-            '可精确匹配 $exactMatchCount/${comic.chapters.length} 个已保存章节。'
-            '本次复制整部漫画偏好；标题与序号同时匹配的章节会重新从目标源获取元数据，'
-            '并迁移可验证的阅读位置和已读状态。目标源已有状态优先保留；'
-            '源专属 URL、离线字节和原来源均保留。',
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('复制到目标源'),
-            ),
-          ],
-        ),
+        plan: plan,
+        sourceName: sourceDescriptor?.name ?? comic.sourceId,
+        targetName: request.source.descriptor.name,
+        loadSourceCover: comic.coverSourceId == null && comic.coverChapter == null
+            ? null
+            : _coverLoaderForComic(comic),
+        loadTargetCover: manifest.comic.coverUri == null
+            ? null
+            : () => request.source.loadResource(manifest.comic.coverUri!),
       );
-      if (confirmed != true) {
+      if (!confirmed) {
         return;
       }
 

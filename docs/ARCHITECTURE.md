@@ -897,3 +897,17 @@ transition call the chapter service rather than deleting partial artifacts direc
 `runtime_bridge` only supplies versioned environment signals: validated network availability, Android metered
 state and charging state. It has no transport, artifact or queue mutation authority. Platform-channel failure
 keeps the last trusted environment snapshot; unsupported hosts use an explicit injectable fallback.
+## 9. 跨漫画源迁移证据边界
+
+跨源迁移分为三个明确阶段：
+
+1. 目标源搜索和目标 manifest 加载；
+2. 只读比较与用户确认；
+3. 逐章节目标身份验证后才开始持久写入。
+
+`ComicSourceMigrationPlan` 继续拥有保守章节匹配和偏好合并规则。`ComicSourceMigrationComparison` 只从该
+计划派生展示证据：来源复合身份、标题/作者重合、阅读方向、精确/仅序号匹配、未匹配数量和有限章节样本。
+它不能访问 Store，也不能执行迁移。UI 仅负责加载两侧封面并展示证据；勾选确认不会重新加载封面。
+
+只有精确匹配章节会进入后续阅读位置与已读状态迁移。仅序号匹配只作为风险证据展示，不会因用户确认而
+自动升级为可迁移状态。目标源已有偏好和阅读状态继续优先保留，来源 URL、离线 artifact 和原来源记录不复制、不删除。

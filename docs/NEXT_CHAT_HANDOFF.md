@@ -2,32 +2,25 @@
 
 ## Sole baseline
 
-Continue only from `zic_v0.28.1-dev.33_download-loop-queue-close-fix.zip`.
+Continue only from `zic_v0.29.0-dev.34_source-migration-comparison.zip`.
 Do not merge or copy files from an earlier zic archive.
 
 ## Current implementation
 
-- `0.28.1-dev.33` restores the Download Manager chapter-list loop update, preventing an infinite build/OOM when chapter snapshots are present.
-- `WholeComicDownloadQueue.close()` drains active chapter work before its final durable publish and store shutdown.
-- The five `apps.zip` files replace their existing paths exactly; chapter/library/source tests use bounded waits and explicit teardown without changing product interaction solely for tests.
-- The Dart structure gate rejects conditional C-style `for` loops without an update clause.
+- `0.29.0-dev.34` adds a read-only, side-by-side source migration comparison before any durable target write.
+- Current and target works show cover, authors, source/native identity, chapter count and reading direction.
+- Catalog-owned evidence reports normalized title/author overlap, exact and sequence-only matches, unmatched
+  source/target counts, bounded chapter samples and explicit risk flags.
+- The migration copy action remains disabled until the target identity and risks are explicitly acknowledged.
+- Comparison cover futures are cached for the dialog lifetime; acknowledgement rebuilds do not repeat cover loads.
+- The existing conservative migration remains intact: only exact chapter matches can transfer progress/read state,
+  target state wins, source URLs/offline artifacts are not copied and the original source is retained.
+- Download Manager's chapter-list loop advances correctly, and `WholeComicDownloadQueue.close()` drains active
+  chapter work before final persistence and shutdown.
+- Whole-comic downloads remain a durable policy-aware scheduler over the existing chapter service and promoted
+  artifacts; Android runtime signals provide metered-network and charging gates.
 - Home, Bookshelf and Comic Sources remain the three primary destinations. Local and remote details retain
   separate state ownership while composing shared presentation and using exact `sourceId + comicId` routing.
-- Management-mode covers own single-item delete/category migration. Long press enters source-composite batch
-  selection; the batch surface owns batch move/copy/clear/delete and custom ordering uses a separate handle.
-- Chapter tasks remain authoritative through `ChapterDownloadService`, `DownloadSession` and promoted artifacts.
-  Covers and details subscribe to those snapshots, distinguish chapter and whole-comic projections, and clear
-  active waterlines at terminal completion.
-- `WholeComicDownloadQueue` now persists whole-comic jobs and policy to `whole_comic_queue.json`. It re-inspects
-  chapter artifacts on restore, enforces global concurrency, coalesces active duplicate enqueue, and supports
-  pause/resume/cancel/retry/remove without creating a second byte owner.
-- Queue policy can require an unmetered network or charging. A policy loss cancels active chapter work through
-  the existing chapter service, leaves resumable artifacts intact and moves the job to `waitingForPolicy`.
-- The new `runtime_bridge` Android plugin reports validated connectivity, metered status and charging through
-  versioned method/event channels. Unsupported hosts retain an explicit injectable fallback.
-- Download Manager shows durable whole-comic jobs above per-chapter task/artifact state and exposes queue policy.
-- Reader speed uses a centered bounded dialog. The exhaustive bookshelf sort label is restored, fixing the
-  compilation failure reported against dev.31.
 - SQLite remains schema 6 with source-composite library identity and retained/acknowledgeable migration evidence.
 
 ## Validation completed in this environment
@@ -40,15 +33,16 @@ python3 -m py_compile tool/*.py
 bash ./tool/check_native_header.sh
 ```
 
-Additional delivery checks validate package versions, JSON/YAML/TOML syntax, Android plugin declarations,
-archive cleanliness, exact overlay replacement, source-baseline patch reproducibility and a clean re-extraction.
-This container does not contain Flutter, Dart, Cargo, Gradle, Android SDK or Android NDK, so no claim is made that their builds/tests ran.
+Additional delivery checks validate package versions, JSON/YAML/TOML syntax, archive cleanliness, baseline patch
+reproducibility and a clean re-extraction. This container does not contain Flutter, Dart, Cargo, Gradle, Android SDK
+or Android NDK, so no claim is made that their builds/tests ran.
 
 ## Required external validation
 
 ```bash
 flutter pub get
-flutter test packages/runtime_bridge/test/runtime_bridge_test.dart
+flutter test packages/catalog/test/library_comic_test.dart
+flutter test apps/app/test/source_migration_compare_test.dart
 flutter test apps/app/test/whole_comic_downloads_test.dart
 flutter test apps/app/test/chapter_downloads_test.dart
 flutter test apps/app/test/library_ui_test.dart
@@ -67,9 +61,9 @@ bash ./tool/build_android.sh release
 
 ## Next mainline work
 
-1. Add side-by-side source-migration candidate comparison before confirmation, including cover, authors,
-   chapter samples and explicit identity/risk differences.
-2. Add source update ingestion and durable timestamps so Home updates reflect actual upstream changes.
-3. Add source-specific typed settings for translation languages and data-saver mode.
-4. Discover/manage orphaned offline artifacts without weakening DownloadSession ownership rules.
-5. Define a sandboxed Mihon/Keiyoushi adapter ABI, permissions and lifecycle before loading extensions.
+1. Add source update ingestion and durable upstream timestamps so Home updates reflect actual source changes.
+2. Add source-specific typed settings for translation languages and data-saver mode.
+3. Discover/manage orphaned offline artifacts without weakening DownloadSession ownership rules.
+4. Define a sandboxed Mihon/Keiyoushi adapter ABI, permissions and lifecycle before loading extensions.
+5. Revisit Reader playback-control presentation as one coherent design rather than changing it in response to
+   isolated Widget-test timing failures.
