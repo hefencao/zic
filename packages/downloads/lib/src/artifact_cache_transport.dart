@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
+import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
 import 'artifact_cache_store.dart';
@@ -17,13 +18,25 @@ final class ArtifactCacheTransport implements Transport {
     required ArtifactCacheStore cache,
     required Iterable<MapEntry<Uri, DownloadId>> identities,
     required Transport Function(Uri uri) fallbackFor,
+    MonoClock? clock,
+    TraceSink traceSink = const NoopTraceSink(),
+    String sessionId = 'artifact-cache',
+    int Function()? demandRevision,
   })  : _cache = cache,
         _identities = _uniqueIdentities(identities),
-        _fallbackFor = fallbackFor;
+        _fallbackFor = fallbackFor,
+        _clock = clock,
+        _traceSink = traceSink,
+        _sessionId = sessionId,
+        _demandRevision = demandRevision;
 
   final ArtifactCacheStore _cache;
   final Map<String, DownloadId> _identities;
   final Transport Function(Uri uri) _fallbackFor;
+  final MonoClock? _clock;
+  final TraceSink _traceSink;
+  final String _sessionId;
+  final int Function()? _demandRevision;
 
   @override
   Future<ByteResponse> open(
@@ -31,6 +44,7 @@ final class ArtifactCacheTransport implements Transport {
     ByteRange? range,
     Validators? validators,
   }) async {
+    final revision = _demandRevision?.call();
     range?.validate();
     final id = _identities[uri.toString()];
     if (id != null) {
@@ -43,14 +57,59 @@ final class ArtifactCacheTransport implements Transport {
           validators: validators,
         );
         if (response != null) {
+          _recordSource(
+            source: 'artifact-cache',
+            id: id,
+            uri: uri,
+            bytes: bytes.lengthInBytes,
+            range: range,
+            revision: revision,
+          );
           return response;
         }
       }
     }
+    _recordSource(
+      source: 'origin',
+      id: id,
+      uri: uri,
+      range: range,
+      revision: revision,
+    );
     return _fallbackFor(uri).open(
       uri,
       range: range,
       validators: validators,
+    );
+  }
+
+  void _recordSource({
+    required String source,
+    required DownloadId? id,
+    required Uri uri,
+    required ByteRange? range,
+    int? bytes,
+    int? revision,
+  }) {
+    final clock = _clock;
+    if (clock == null) {
+      return;
+    }
+    _traceSink.record(
+      traceEvent(
+        clock: clock,
+        sessionId: _sessionId,
+        kind: TraceEventKind.artifactSource,
+        identityHash: id?.key,
+        revision: revision,
+        payload: <String, Object?>{
+          'source': source,
+          'uri': uri.toString(),
+          if (bytes != null) 'bytes': bytes,
+          if (range != null) 'rangeStart': range.start,
+          if (range?.end != null) 'rangeEnd': range!.end,
+        },
+      ),
     );
   }
 }

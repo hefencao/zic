@@ -19,6 +19,7 @@ final class ReaderView extends StatefulWidget {
     required this.clock,
     this.traceSink = const NoopTraceSink(),
     this.pageBuilder,
+    this.demandRevision,
     this.onTap,
     super.key,
   });
@@ -27,6 +28,7 @@ final class ReaderView extends StatefulWidget {
   final MonoClock clock;
   final TraceSink traceSink;
   final ReaderPageBuilder? pageBuilder;
+  final int Function()? demandRevision;
   final VoidCallback? onTap;
 
   @override
@@ -126,6 +128,7 @@ final class _ReaderViewState extends State<ReaderView> {
                   clock: widget.clock,
                   traceSink: widget.traceSink,
                   pageBuilder: widget.pageBuilder,
+                  demandRevision: widget.demandRevision,
                 ),
               ),
             ),
@@ -201,6 +204,8 @@ final class _ReaderViewState extends State<ReaderView> {
         clock: widget.clock,
         sessionId: widget.controller.sessionId,
         kind: TraceEventKind.pageCurrent,
+        identityHash: widget.controller.chapter.pages[index].assetKey,
+        revision: widget.demandRevision?.call(),
         payload: <String, Object?>{'pageIndex': index},
       ),
     );
@@ -255,6 +260,26 @@ final class _ReaderViewState extends State<ReaderView> {
       monotonicMicros: widget.clock.nowMicros(),
     );
     widget.controller.report(observation);
+    if (targetIndex != null) {
+      widget.traceSink.record(
+        traceEvent(
+          clock: widget.clock,
+          sessionId: widget.controller.sessionId,
+          kind: TraceEventKind.pageTransition,
+          identityHash: pages[targetIndex].assetKey,
+          revision: widget.demandRevision?.call(),
+          payload: <String, Object?>{
+            'currentIndex': boundedStable,
+            'targetIndex': targetIndex,
+            'logicalPosition': logicalPosition,
+            'velocity': velocity,
+            'interaction': _interaction.name,
+            'currentCoverage': currentFraction,
+            'targetCoverage': distance,
+          },
+        ),
+      );
+    }
   }
 }
 
@@ -436,6 +461,8 @@ final class _ReaderPageHost extends StatefulWidget {
     required this.clock,
     required this.traceSink,
     required this.pageBuilder,
+    required this.demandRevision,
+    super.key,
   });
 
   final PageAsset asset;
@@ -443,6 +470,7 @@ final class _ReaderPageHost extends StatefulWidget {
   final MonoClock clock;
   final TraceSink traceSink;
   final ReaderPageBuilder? pageBuilder;
+  final int Function()? demandRevision;
 
   @override
   State<_ReaderPageHost> createState() => _ReaderPageHostState();
@@ -450,13 +478,66 @@ final class _ReaderPageHost extends StatefulWidget {
 
 final class _ReaderPageHostState extends State<_ReaderPageHost> {
   bool _reportedFirstFrame = false;
+  late int _mountedAtMicros;
+  int? _mountedRevision;
+
+  @override
+  void initState() {
+    super.initState();
+    _mountedAtMicros = widget.clock.nowMicros();
+    _mountedRevision = widget.demandRevision?.call();
+    _recordLifecycle(
+      TraceEventKind.pageHostMounted,
+      revision: _mountedRevision,
+    );
+  }
 
   @override
   void didUpdateWidget(covariant _ReaderPageHost oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.asset.assetKey != widget.asset.assetKey) {
       _reportedFirstFrame = false;
+      _mountedAtMicros = widget.clock.nowMicros();
+      _mountedRevision = widget.demandRevision?.call();
+      _recordLifecycle(
+        TraceEventKind.pageHostMounted,
+        revision: _mountedRevision,
+      );
     }
+  }
+
+  @override
+  void dispose() {
+    _recordLifecycle(
+      TraceEventKind.pageHostDisposed,
+      revision: widget.demandRevision?.call(),
+      payload: <String, Object?>{
+        'mountedRevision': _mountedRevision,
+        'firstFrameReady': _reportedFirstFrame,
+        'lifetimeMicros': widget.clock.nowMicros() - _mountedAtMicros,
+      },
+    );
+    super.dispose();
+  }
+
+  void _recordLifecycle(
+    TraceEventKind kind, {
+    int? revision,
+    Map<String, Object?> payload = const <String, Object?>{},
+  }) {
+    widget.traceSink.record(
+      traceEvent(
+        clock: widget.clock,
+        sessionId: widget.sessionId,
+        kind: kind,
+        identityHash: widget.asset.assetKey,
+        revision: revision,
+        payload: <String, Object?>{
+          'pageIndex': widget.asset.index,
+          ...payload,
+        },
+      ),
+    );
   }
 
   void _reportFirstFrame() {
@@ -468,6 +549,9 @@ final class _ReaderPageHostState extends State<_ReaderPageHost> {
     final clock = widget.clock;
     final sessionId = widget.sessionId;
     final traceSink = widget.traceSink;
+    final mountedAtMicros = _mountedAtMicros;
+    final firstFrameRevision = widget.demandRevision?.call();
+    final mountedRevision = _mountedRevision;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || widget.asset.assetKey != asset.assetKey) {
         return;
@@ -478,7 +562,12 @@ final class _ReaderPageHostState extends State<_ReaderPageHost> {
           sessionId: sessionId,
           kind: TraceEventKind.firstFrameReady,
           identityHash: asset.assetKey,
-          payload: <String, Object?>{'pageIndex': asset.index},
+          revision: firstFrameRevision,
+          payload: <String, Object?>{
+            'pageIndex': asset.index,
+            'mountedRevision': mountedRevision,
+            'mountToFirstFrameMicros': clock.nowMicros() - mountedAtMicros,
+          },
         ),
       );
     });

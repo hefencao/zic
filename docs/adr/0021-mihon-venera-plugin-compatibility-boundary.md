@@ -2,8 +2,9 @@
 
 ## Status
 
-Accepted as the compatibility boundary in `0.31.0-dev.38`; executable hosts are
-not yet implemented.
+Accepted as the compatibility boundary in `0.31.0-dev.38`. The shared
+pre-execution trust/permission/session gate is implemented in `0.31.0-dev.39`;
+ecosystem-specific APK/Kotlin and JavaScript executors are not yet implemented.
 
 ## Context
 
@@ -47,6 +48,7 @@ external source packages while preserving each ecosystem's native identities.
 
 - Repository/index compatibility can advance without coupling zic core to an
   APK or JavaScript engine.
+- Shared inspection, trust, permission, quarantine and active-session ownership are implemented without executing plugin code.
 - Full plugin execution is deliberately not claimed by this iteration.
 - A future Android Mihon host and cross-platform Venera JavaScript host can be
   tested and permissioned independently while producing the same zic catalog

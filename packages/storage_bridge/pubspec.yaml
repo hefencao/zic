@@ -13,6 +13,8 @@ dependencies:
   catalog:
     path: ../catalog
   path_provider: ^2.1.5
+  resource_cache:
+    path: ../resource_cache
   storage:
     path: ../storage
 

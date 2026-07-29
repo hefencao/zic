@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
+import 'package:telemetry/telemetry.dart';
 import 'package:test/test.dart';
 import 'package:transport/transport.dart';
 
@@ -15,10 +16,15 @@ void main() {
       id: Uint8List.fromList(<int>[1, 2, 3, 4]),
     });
     final fallback = _RecordingTransport(Uint8List.fromList(<int>[9]));
+    final trace = MemoryTraceSink();
     final transport = ArtifactCacheTransport(
       cache: cache,
       identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
       fallbackFor: (_) => fallback,
+      clock: _Clock(),
+      traceSink: trace,
+      sessionId: 'reader-cache-test',
+      demandRevision: () => 7,
     );
 
     final response = await transport.open(uri);
@@ -27,6 +33,13 @@ void main() {
     expect(response.statusCode, 200);
     expect(response.totalLength, 4);
     expect(fallback.opens, 0);
+    final source = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.artifactSource,
+    );
+    expect(source.identityHash, id.key);
+    expect(source.revision, 7);
+    expect(source.payload['source'], 'artifact-cache');
+    expect(source.payload['bytes'], 4);
   });
 
   test('serves resumable ranges only for matching cache validators',
@@ -64,10 +77,14 @@ void main() {
       id: Uint8List.fromList(<int>[1, 2, 3]),
     });
     final fallback = _RecordingTransport(Uint8List.fromList(<int>[8, 9]));
+    final trace = MemoryTraceSink();
     final transport = ArtifactCacheTransport(
       cache: cache,
       identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
       fallbackFor: (_) => fallback,
+      clock: _Clock(),
+      traceSink: trace,
+      demandRevision: () => 9,
     );
 
     final response = await transport.open(
@@ -78,6 +95,11 @@ void main() {
 
     expect(await _collect(response), <int>[8, 9]);
     expect(fallback.opens, 1);
+    final source = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.artifactSource,
+    );
+    expect(source.revision, 9);
+    expect(source.payload['source'], 'origin');
   });
 
   test('ambiguous URI identities bypass the artifact cache', () async {
@@ -123,6 +145,13 @@ Future<List<int>> _collect(ByteResponse response) async {
     bytes.addAll(chunk);
   }
   return bytes;
+}
+
+final class _Clock implements MonoClock {
+  int _value = 0;
+
+  @override
+  int nowMicros() => _value++;
 }
 
 final class _MemoryArtifactStore implements ArtifactCacheStore {

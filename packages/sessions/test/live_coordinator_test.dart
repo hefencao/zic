@@ -169,6 +169,7 @@ void main() {
       renderer: RendererKind.flutterImage,
     );
     final clock = _Clock();
+    final trace = MemoryTraceSink();
     final sources = SourcePool(
       factory: _TestSourceFactory(),
       budgetFor: (_) => 1024,
@@ -177,22 +178,26 @@ void main() {
       layout: CacheLayout('${temp.path}/cache'),
       clock: clock,
       sources: sources,
+      traceSink: trace,
     );
     final decodes = DecodeRegistry(
       downloads: downloads,
       cursors: _TestCursorFactory(),
       clock: clock,
+      traceSink: trace,
     );
     final uploader = _TestUploader();
     final uploads = UploadRegistry(
       decodes: decodes,
       uploader: uploader,
       clock: clock,
+      traceSink: trace,
     );
     final coordinator = LiveCoordinator(
       registry: downloads,
       transportFor: (_) => const FileTransport(),
       clock: clock,
+      traceSink: trace,
       decodes: decodes,
       uploads: uploads,
       net: NetLane(maxActive: 1),
@@ -247,6 +252,31 @@ void main() {
     expect(decodes.find(decodeId)?.state, DecodeState.ready);
     expect(uploads.find(decodeId)?.state, UploadState.ready);
     expect(uploader.outputs, hasLength(1));
+    final decodeDemand = trace.events.firstWhere(
+      (event) => event.kind == TraceEventKind.decodeDemand,
+    );
+    final decodeStarted = trace.events.firstWhere(
+      (event) => event.kind == TraceEventKind.decodeStarted,
+    );
+    final frameDecoded = trace.events.firstWhere(
+      (event) => event.kind == TraceEventKind.frameDecoded,
+    );
+    final uploadDemand = trace.events.firstWhere(
+      (event) => event.kind == TraceEventKind.uploadDemand,
+    );
+    final uploadStarted = trace.events.firstWhere(
+      (event) => event.kind == TraceEventKind.uploadStarted,
+    );
+    expect(decodeDemand.revision, 1);
+    expect(decodeStarted.revision, 1);
+    expect(frameDecoded.revision, 1);
+    expect(uploadDemand.revision, 1);
+    expect(uploadStarted.revision, 1);
+    expect(decodeDemand.identityHash, decodeId.key);
+    expect(uploadDemand.identityHash, decodeId.key);
+    expect(decodeDemand.monotonicMicros, lessThan(decodeStarted.monotonicMicros));
+    expect(decodeStarted.monotonicMicros, lessThan(frameDecoded.monotonicMicros));
+
 
     final claim = uploads.find(decodeId)?.claimPresent();
     expect(claim, isNotNull);

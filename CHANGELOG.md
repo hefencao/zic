@@ -1,3 +1,24 @@
+## 0.31.0-dev.39 — compile closure, transition attribution and permissioned plugin hosts
+
+- Close the reported dev.38 Dart compilation regressions: durable `Uint8List` restoration is explicitly narrowed back
+  to the caller's generic type, byte-store maintenance uses its promoted capability interface, and the stable Reader
+  page host constructor accepts the `key` supplied by `PageView`.
+- Move the production durable response-cache composition into one reusable storage-bridge factory and add an app-level
+  two-start regression that restores both source-card and comic-detail covers through the real file-backed cache without
+  invoking the raw source after restart.
+- Add revision-correlated Reader/pipeline telemetry for page transition coverage, page-host mount/dispose, first-frame
+  delay, artifact-cache versus origin bytes, decode demand/start and upload demand/start. Demand revisions are captured
+  when work is created so a later plan cannot relabel queued work.
+- Add the dependency-light `plugin_host` package. It gates Mihon-compatible APKs by repository, payload, package,
+  signer, version and extension ABI metadata, and gates Venera-compatible JavaScript by repository, payload, stable
+  source key and explicitly allowed capabilities before any executor receives code.
+- Add plugin failure quarantine and a runtime registry that owns activated sessions, deactivation and shutdown while
+  rejecting source identities already registered by another plugin. APK/Kotlin and JavaScript execution remain separate
+  executor interfaces and are not claimed by this iteration.
+- Add regressions for real cache restart, artifact-origin attribution, midpoint host preservation, demand/start/frame
+  revision ordering, plugin gate rejection before execution, quarantine, runtime source validation and cross-plugin
+  identity collision cleanup.
+
 ## 0.31.0-dev.38 — durable cover cache, stable Reader hosts and plugin catalog seam
 
 - Persist complete `imageBytes` responses through an injected `ResourceCacheByteStore`. The file implementation stores

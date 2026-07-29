@@ -1,0 +1,17 @@
+name: plugin_host
+description: Trust, permission and lifecycle gates for external comic plugin runtimes.
+version: 0.31.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+
+dependencies:
+  catalog:
+    path: ../catalog
+
+dev_dependencies:
+  domain:
+    path: ../domain
+  test: ^1.25.0

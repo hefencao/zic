@@ -4,7 +4,10 @@ import 'clock.dart';
 
 enum TraceEventKind {
   readerObservation,
+  pageTransition,
   pageCurrent,
+  pageHostMounted,
+  pageHostDisposed,
   firstFrameReady,
   policyDecision,
   demandApplied,
@@ -21,7 +24,9 @@ enum TraceEventKind {
   cacheScan,
   cacheTrim,
   retryScheduled,
+  artifactSource,
   decodeDemand,
+  decodeStarted,
   decodeState,
   frameDecoded,
   animationLoop,
@@ -31,6 +36,7 @@ enum TraceEventKind {
   sourceReady,
   sourceDisabled,
   uploadDemand,
+  uploadStarted,
   frameBudget,
 }
 

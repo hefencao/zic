@@ -86,7 +86,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final Map<DownloadId, DownloadDemand> _downloads =
       <DownloadId, DownloadDemand>{};
   final Map<DecodeId, DecodeDemand> _decodes = <DecodeId, DecodeDemand>{};
+  final Map<DecodeId, int> _decodeDemandRevisions = <DecodeId, int>{};
   final Map<DecodeId, UploadDemand> _uploads = <DecodeId, UploadDemand>{};
+  final Map<DecodeId, int> _uploadDemandRevisions = <DecodeId, int>{};
   final Map<DownloadId, SourceListener> _sourceListeners =
       <DownloadId, SourceListener>{};
   final PlaybackGate _playbackGate = PlaybackGate();
@@ -213,7 +215,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     }
     _downloads.clear();
     _decodes.clear();
+    _decodeDemandRevisions.clear();
     _uploads.clear();
+    _uploadDemandRevisions.clear();
     await idle();
   }
 
@@ -330,6 +334,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   ) {
     for (final id in diff.removed) {
       _decodes.remove(id);
+      _decodeDemandRevisions.remove(id);
       decode.cancel(id.key);
       decodes?.detach(id);
     }
@@ -338,15 +343,18 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       ...diff.changed.entries,
     ]) {
       _decodes[entry.key] = entry.value;
+      final demandRevision = _revision;
+      _decodeDemandRevisions[entry.key] = demandRevision;
+      _resourceTrace(
+        sessionId,
+        TraceEventKind.decodeDemand,
+        entry.key.key,
+        entry.value.priority,
+        revision: demandRevision,
+      );
       final work = onDecode;
       final registry = decodes;
       if (work == null && registry == null) {
-        _resourceTrace(
-          sessionId,
-          TraceEventKind.decodeDemand,
-          entry.key.key,
-          entry.value.priority,
-        );
         continue;
       }
       final decodeWork = work;
@@ -362,6 +370,13 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           if (current == null || current.expirationRevision < _revision) {
             return;
           }
+          _resourceTrace(
+            sessionId,
+            TraceEventKind.decodeStarted,
+            entry.key.key,
+            current.priority,
+            revision: demandRevision,
+          );
           try {
             if (decodeWork != null) {
               await decodeWork(entry.key, current, token);
@@ -370,7 +385,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
                 entry.key,
                 current,
                 token,
-                revision: _revision,
+                revision: demandRevision,
                 preparedDepth: uploads?.preparedDepth(entry.key) ?? 0,
               );
             }
@@ -393,6 +408,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       }
       final id = entry.key;
       final demand = entry.value;
+      final demandRevision = _decodeDemandRevisions[id] ?? _revision;
       decode.follow(
         key: id.key,
         priority: demand.priority,
@@ -401,6 +417,13 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           if (current == null || current.expirationRevision < _revision) {
             return;
           }
+          _resourceTrace(
+            sessionId,
+            TraceEventKind.decodeStarted,
+            id.key,
+            current.priority,
+            revision: demandRevision,
+          );
           try {
             final work = onDecode;
             if (work != null) {
@@ -412,7 +435,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
                   id,
                   current,
                   token,
-                  revision: _revision,
+                  revision: demandRevision,
                   preparedDepth: uploads?.preparedDepth(id) ?? 0,
                 );
               }
@@ -435,6 +458,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   ) {
     for (final id in diff.removed) {
       _uploads.remove(id);
+      _uploadDemandRevisions.remove(id);
       upload.cancel(id.key);
       uploads?.detach(id);
     }
@@ -443,13 +467,16 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       ...diff.changed.entries,
     ]) {
       _uploads[entry.key] = entry.value;
+      final demandRevision = _revision;
+      _uploadDemandRevisions[entry.key] = demandRevision;
+      _resourceTrace(
+        sessionId,
+        TraceEventKind.uploadDemand,
+        entry.key.key,
+        entry.value.priority,
+        revision: demandRevision,
+      );
       if (onUpload == null && uploads == null) {
-        _resourceTrace(
-          sessionId,
-          TraceEventKind.uploadDemand,
-          entry.key.key,
-          entry.value.priority,
-        );
         continue;
       }
       _submitUpload(
@@ -457,6 +484,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         entry.key,
         entry.value,
         replace: diff.changed.containsKey(entry.key),
+        demandRevision: demandRevision,
       );
     }
   }
@@ -466,7 +494,13 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     if (demand == null || (onUpload == null && uploads == null)) {
       return;
     }
-    _submitUpload(sessionId, id, demand, follow: true);
+    _submitUpload(
+      sessionId,
+      id,
+      demand,
+      follow: true,
+      demandRevision: _uploadDemandRevisions[id] ?? _revision,
+    );
   }
 
   void _submitUpload(
@@ -475,6 +509,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     UploadDemand demand, {
     bool replace = false,
     bool follow = false,
+    required int demandRevision,
   }) {
     final submit = replace
         ? upload.replace
@@ -489,6 +524,13 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         if (current == null || current.expirationRevision < _revision) {
           return;
         }
+        _resourceTrace(
+          sessionId,
+          TraceEventKind.uploadStarted,
+          id.key,
+          current.priority,
+          revision: demandRevision,
+        );
         try {
           final work = onUpload;
           if (work != null) {
@@ -500,7 +542,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
                 id,
                 current,
                 token,
-                revision: _revision,
+                revision: demandRevision,
               );
             }
           }
@@ -550,15 +592,16 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     String sessionId,
     TraceEventKind kind,
     String key,
-    int priority,
-  ) {
+    int priority, {
+    int? revision,
+  }) {
     traceSink.record(
       traceEvent(
         clock: clock,
         sessionId: sessionId,
         kind: kind,
         identityHash: key,
-        revision: _revision,
+        revision: revision ?? _revision,
         payload: <String, Object?>{'priority': priority},
       ),
     );

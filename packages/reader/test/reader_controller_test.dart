@@ -133,6 +133,7 @@ void main() {
           controller: controller,
           clock: _Clock(),
           traceSink: trace,
+          demandRevision: () => 11,
           pageBuilder: (context, asset, reportFirstFrame) {
             reportFirstFrame();
             reportFirstFrame();
@@ -154,6 +155,11 @@ void main() {
         .toList();
     expect(firstFrames, hasLength(1));
     expect(firstFrames.single.identityHash, chapter.pages.single.assetKey);
+    expect(firstFrames.single.revision, 11);
+    expect(
+      firstFrames.single.payload['mountToFirstFrameMicros'],
+      greaterThanOrEqualTo(0),
+    );
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();

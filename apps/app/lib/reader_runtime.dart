@@ -220,6 +220,10 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
         cache: cache,
         identities: identities,
         fallbackFor: _baseTransportFor,
+        clock: _clock,
+        traceSink: _trace,
+        sessionId: _sessionId,
+        demandRevision: () => _binding?.revision ?? 0,
       );
       _artifactCacheHandoff = PromotedArtifactCacheHandoff(
         cache: cache,
@@ -839,6 +843,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
               clock: _clock,
               traceSink: _trace,
               pageBuilder: pageBuilder,
+              demandRevision: () => _binding?.revision ?? 0,
               onTap: _toggleControls,
             ),
             AnimatedOpacity(

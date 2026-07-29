@@ -21,7 +21,7 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.38）
+## 当前应用主线（0.31.0-dev.39）
 
 - 保留 Home/Bookshelf 的 Presentation 拆分，但禁止在 `apps/app/lib` 定义资源缓存、章节下载、页面保活或整本调度算法。
 - `resource_cache` 继续统一管理封面/图片响应、漫画详情、章节元数据和搜索结果。只有完整 `imageBytes` 可通过注入的 byte store 持久化；章节页面仍不进入该平面。
@@ -29,7 +29,7 @@
 - Reader 的页面/缩放 host 按稳定 asset identity 建立。翻页中点改变 current role 只能触发状态更新和缩放重置，不得销毁已加载媒体子树；Presentation 仍不得通过 keep-alive、私有 LRU 或相邻页预热竞争 pipeline policy。
 - `downloads` 管理独立页面 artifact 下载、promoted handoff 及整本队列；不完整章节继续由“章节元数据 + 任意页面 artifact 子集”表示。
 - `catalog` 新增 Mihon repository 与 Venera source index 的纯元数据兼容层。Venera 同时兼容 `filename`/`fileName` 并优先保留仓库 `key`；Mihon host 后续必须检查 `tachiyomix.extensionLib` 等 APK ABI 元数据。外部 APK/Kotlin 与 JavaScript 执行必须分别位于受限 host，返回有显式 `close()` 生命周期的普通 `BrowsableComicSource`，不得获得导航、Reader、demand 或 artifact 权限。
-- 下一阶段先实现外部插件 host 的信任/权限/版本门禁与 transition/decode/present telemetry，再依据可重放基准在 pipeline/session/media 层优化 encoded memory、decoded frame 和 texture retention。
+- 外部插件的共享信任/权限/版本/ABI/隔离/session 门禁与 transition/artifact/decode/upload/first-frame telemetry 已实现；下一阶段分别实现 Mihon Android inspector/executor 与 Venera 受限 JavaScript inspector/executor，并先用可重放 trace 验证，再依据证据在 pipeline/session/media 层优化 encoded memory、decoded frame 和 texture retention。
 
 ## 2. 阶段划分
 
@@ -465,7 +465,8 @@
    in 0.23.0-dev.27 and management/cancel/retry/delete UI in 0.25.0-dev.29; source update polling remains next.
 7. Define Mihon/Venera repository metadata compatibility and the isolated host/session ABI before
    executable integration. **Metadata parsers and explicit host/session lifecycle are implemented in
-   0.31.0-dev.38; Android APK/Kotlin and JavaScript sandbox hosts remain next.**
+   0.31.0-dev.38; shared trust/capability/quarantine/runtime-registry gates are implemented in
+   0.31.0-dev.39; Android APK/Kotlin and JavaScript sandbox executors remain next.**
 
 ## Android remote-source reliability patch
 

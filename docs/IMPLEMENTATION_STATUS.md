@@ -1,3 +1,28 @@
+## Current iteration — compile closure, attributable transitions and permissioned plugin runtime ownership
+
+The dev.38 compile blockers reported by external Flutter/Dart validation are closed in product code. Persistent image
+bytes are explicitly narrowed from the byte-store representation to the generic request type, maintenance calls use the
+promoted maintenance capability, and `_ReaderPageHost` again accepts the stable key supplied by Reader composition.
+No test expectation or finder was weakened to bypass these failures.
+
+The real App cache composition is now a reusable `storage_bridge.createAppResourceCache` factory. An app-level restart
+fixture opens that exact file-backed composition twice, restores both a source-card cover and a comic-detail cover, and
+fails if the raw source is invoked after reopening. This complements package-level byte-store tests and prevents the
+production root/path wiring from silently diverging.
+
+Reader and session traces now attribute transition coverage, page-host lifetime, mount-to-first-frame delay, artifact
+cache/origin selection, decode demand/start and upload demand/start to stable resource identity and demand revision.
+Decode/upload revisions are retained with their demand while work waits in lanes or for source readiness, so a newer
+pipeline plan does not relabel old queued work. This is observation only; no Presentation cache, keep-alive window or
+parallel loading policy was introduced.
+
+A new pure-Dart `plugin_host` package implements the common pre-execution boundary for Mihon and Venera compatibility.
+Inspection is separate from execution. Policy can require HTTPS repository origin, payload digest, Mihon package,
+signer, version floor and extension ABI, or restrict Venera capabilities and stable source-key discovery. Activation
+failure quarantine prevents automatic retry loops. `ExternalPluginRuntimeRegistry` owns activated sessions, unload and
+shutdown, and closes a new session before rejecting a source identity collision. Concrete APK/Kotlin and JavaScript
+executors remain unimplemented and unclaimed.
+
 ## Current iteration — durable cover cache, stable Reader hosts and plugin catalog seam
 
 Cover/image response caching now survives application restart. `ResourceCacheManager` accepts a dependency-light

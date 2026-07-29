@@ -72,12 +72,15 @@ void main() {
       );
       addTearDown(controller.dispose);
       final lifecycle = _PageLifecycle();
+      final trace = MemoryTraceSink();
 
       await tester.pumpWidget(
         MaterialApp(
           home: ReaderView(
             controller: controller,
             clock: FakeClock(),
+            traceSink: trace,
+            demandRevision: () => 7,
             pageBuilder: (context, asset, reportFirstFrame) =>
                 _LifecyclePage(
               pageId: asset.pageId,
@@ -113,6 +116,27 @@ void main() {
       await gesture.up();
       await tester.pumpAndSettle();
       expect(lifecycle.created['page-1'], 1);
+      expect(
+        trace.events.where(
+          (event) => event.kind == TraceEventKind.pageTransition,
+        ),
+        isNotEmpty,
+      );
+      expect(
+        trace.events
+            .where((event) => event.kind == TraceEventKind.pageTransition)
+            .every((event) => event.revision == 7),
+        isTrue,
+      );
+      expect(
+        trace.events.where(
+          (event) =>
+              event.kind == TraceEventKind.pageHostDisposed &&
+              (event.identityHash == chapter.pages[0].assetKey ||
+                  event.identityHash == chapter.pages[1].assetKey),
+        ),
+        isEmpty,
+      );
     },
   );
 

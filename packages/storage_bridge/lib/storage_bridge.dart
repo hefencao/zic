@@ -3,11 +3,29 @@ import 'dart:io';
 
 import 'package:catalog/catalog.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:resource_cache/resource_cache.dart';
 import 'package:storage/storage.dart';
 
 Future<String> getDefaultZicStorageRoot() async {
   final support = await getApplicationSupportDirectory();
   return '${support.path}/zic';
+}
+
+
+ResourceCacheCoordinator createAppResourceCache({
+  required String storageRoot,
+  ArtifactCacheMaintenance? artifacts,
+  void Function(Object error, StackTrace stackTrace)? onPersistenceError,
+}) {
+  return ResourceCacheCoordinator(
+    responses: ResourceCacheManager(
+      byteStore: FileResourceCacheByteStore(
+        '$storageRoot/resource_cache/responses',
+      ),
+      onPersistenceError: onPersistenceError,
+    ),
+    artifacts: artifacts,
+  );
 }
 
 Future<ImportedLibraryStore> openDefaultImportedLibraryStore() async {

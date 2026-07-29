@@ -19,6 +19,7 @@ EXPECTED_DEPENDENCIES = {
     },
     'downloads_bridge': {'downloads', 'runtime_bridge', 'storage_bridge'},
     'catalog': {'domain', 'resource_cache', 'transport'},
+    'plugin_host': {'catalog'},
     'resource_cache': set(),
     'telemetry': set(),
     'reader': {'domain', 'telemetry'},
@@ -26,7 +27,7 @@ EXPECTED_DEPENDENCIES = {
     'media': {'domain', 'transport'},
     'transport': {'domain'},
     'storage': {'catalog', 'domain', 'resource_cache'},
-    'storage_bridge': {'catalog', 'storage'},
+    'storage_bridge': {'catalog', 'resource_cache', 'storage'},
     'sessions': {'domain', 'media', 'pipeline', 'storage', 'telemetry', 'transport'},
     'testkit': {'domain', 'telemetry', 'transport'},
     'bridge': {'media'},
@@ -377,7 +378,18 @@ def check_compile_regressions() -> None:
         fail('ready uploaded output must contribute to the decode watermark')
     if 'decode.follow(' not in live:
         fail('source wake-up must queue a decode successor without cancelling active work')
-    if '_submitUpload(sessionId, id, demand, follow: true);' not in live:
+    for required in (
+        '_decodeDemandRevisions',
+        '_uploadDemandRevisions',
+        'TraceEventKind.decodeStarted',
+        'TraceEventKind.uploadStarted',
+    ):
+        if required not in live:
+            fail(f'queued work revision attribution is incomplete: {required}')
+    if (
+        'follow: true,' not in live
+        or 'demandRevision: _uploadDemandRevisions[id] ?? _revision' not in live
+    ):
         fail('decode wake-up must coalesce upload work without replacing active upload')
     lane = (ROOT / 'packages/sessions/lib/src/net_lane.dart').read_text(
         encoding='utf-8'
@@ -1461,6 +1473,33 @@ def check_compile_regressions() -> None:
     ):
         if required not in resource_cache:
             fail(f'unified resource cache contract is incomplete: {required}')
+    for required in (
+        'final value = bytes as T;',
+        'final maintenance = store as ResourceCacheByteStoreMaintenance;',
+    ):
+        if required not in resource_cache:
+            fail(f'dev.38 resource cache compile closure is missing: {required}')
+
+    reader_view = (
+        ROOT / 'packages/reader/lib/src/reader_view.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        "'reader-page-host:${chapter.pages[index].assetKey}'",
+        'required this.demandRevision',
+        'TraceEventKind.pageTransition',
+        'TraceEventKind.pageHostMounted',
+        'TraceEventKind.pageHostDisposed',
+        'super.key,',
+    ):
+        if required not in reader_view:
+            fail(f'stable Reader host attribution is incomplete: {required}')
+
+    storage_bridge = (
+        ROOT / 'packages/storage_bridge/lib/storage_bridge.dart'
+    ).read_text(encoding='utf-8')
+    if 'ResourceCacheCoordinator createAppResourceCache(' not in storage_bridge:
+        fail('production durable response cache composition is not centralized')
+
     cached_source = (
         ROOT / 'packages/catalog/lib/src/cached_comic_source.dart'
     ).read_text(encoding='utf-8')
@@ -1504,6 +1543,25 @@ def check_compile_regressions() -> None:
     ):
         if required not in external_plugin_catalog:
             fail(f'external plugin catalog boundary is incomplete: {required}')
+
+    plugin_gate = '\n'.join(
+        path.read_text(encoding='utf-8')
+        for path in sorted((ROOT / 'packages/plugin_host/lib/src').glob('*.dart'))
+    )
+    for required in (
+        'final class PermissionedExternalComicPluginHost',
+        'abstract interface class ExternalPluginInspector',
+        'abstract interface class ExternalPluginExecutor',
+        'ExternalPluginDenial.signerNotTrusted',
+        'ExternalPluginDenial.unsupportedAbi',
+        'ExternalPluginDenial.capabilityDenied',
+        'MemoryExternalPluginQuarantine',
+        'final class ExternalPluginRuntimeRegistry',
+        'ExternalPluginDenial.sourceIdentityCollision',
+        '_validateSession(',
+    ):
+        if required not in plugin_gate:
+            fail(f'external plugin host gate is incomplete: {required}')
 
     cache_maintenance = (
         ROOT / 'packages/resource_cache/lib/src/resource_cache_maintenance.dart'

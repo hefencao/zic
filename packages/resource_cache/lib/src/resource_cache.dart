@@ -341,16 +341,17 @@ final class ResourceCacheManager {
           generation == _generationOf(key)) {
         final bytes = persisted.bytes;
         if (bytes is T) {
-          final weight = weightOf(bytes);
+          final value = bytes as T;
+          final weight = weightOf(value);
           final policy = _policies[key.kind]!;
           if (weight >= 0 &&
               weight <= policy.maxWeight &&
               weight <= globalMaxWeight) {
-            _storeWithExpiry(key, bytes, weight, persisted.expiresAt);
+            _storeWithExpiry(key, value, weight, persisted.expiresAt);
           }
           _hits++;
           _persistentHits++;
-          return bytes;
+          return value;
         }
       }
       _persistentMisses++;
@@ -468,8 +469,9 @@ final class ResourceCacheManager {
     if (store is! ResourceCacheByteStoreMaintenance) {
       return null;
     }
+    final maintenance = store as ResourceCacheByteStoreMaintenance;
     try {
-      return await store.inspect();
+      return await maintenance.inspect();
     } on Object catch (error, stackTrace) {
       _reportPersistenceError(error, stackTrace);
       return null;
@@ -488,8 +490,9 @@ final class ResourceCacheManager {
     if (store is! ResourceCacheByteStoreMaintenance) {
       return null;
     }
+    final maintenance = store as ResourceCacheByteStoreMaintenance;
     try {
-      return await store.trimTo(targetBytes: targetBytes);
+      return await maintenance.trimTo(targetBytes: targetBytes);
     } on Object catch (error, stackTrace) {
       _reportPersistenceError(error, stackTrace);
       return null;

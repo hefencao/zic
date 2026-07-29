@@ -43,6 +43,7 @@ zic/
   packages/
     domain/                  领域实体、identity、值对象
     catalog/                 书架、章节、来源抽象与缓存装饰器
+    plugin_host/             外部来源信任、权限、隔离与 session 生命周期门禁
     resource_cache/          统一响应缓存预算、TTL、合并与失效
     downloads/               页面 artifact 下载与整本队列核心
     downloads_bridge/        网络/供电与队列持久化平台适配
@@ -848,6 +849,12 @@ untrusted catalog entries. Venera accepts both `filename` and deployed `fileName
 `key` immediately and deferring discovery only when absent. It preserves native package/source identities
 but downloads or executes nothing. `ExternalComicPluginHost` implementations must isolate APK/Kotlin and JavaScript runtimes,
 validate trust/version/permissions, and return an explicitly closable `ExternalComicPluginSession` of
+`packages/plugin_host` implements the pre-execution ownership boundary. A
+`PermissionedExternalComicPluginHost` separates metadata inspection from ecosystem-specific execution, applies
+repository/payload/package/signer/version/ABI/capability policy, quarantines failed activations and validates runtime
+source identity before returning a session. `ExternalPluginRuntimeRegistry` owns active sessions and prevents two
+plugins from registering the same namespaced source ID. It still contains no APK class loader or JavaScript engine.
+
 ordinary `BrowsableComicSource` adapters. A plugin cannot inject navigation, read Reader state, own
 demand or mutate artifacts directly.
 
@@ -968,7 +975,10 @@ The manager stores encoded response values only; it never owns decoded frames or
 `imageBytes` may be written to a bounded file store using the full key, expiry and content verification.
 The standard image TTL is seven days. Successful loads await that write, and cache close drains active
 loads plus queued persistence before closing the store. A source revision distinguishes changed cover
-content while explicit namespace refresh removes both memory and durable records.
+content while explicit namespace refresh removes both memory and durable records. Production path composition is
+centralized by `storage_bridge.createAppResourceCache`; UI Widgets receive the coordinator and never derive durable
+paths or instantiate a second response manager. A two-start integration fixture uses this same factory and a real file
+store to prove both source-card and detail-cover reuse.
 
 Chapter page bytes are intentionally excluded from `ResourceCacheKind`. `BrowsableComicSource.loadResource` remains a
 raw transport entry for Reader/download work:
@@ -979,6 +989,11 @@ ReaderView -> ReaderObs -> ReaderBinding -> PipelineController
            -> DownloadSession -> partial/final page Artifact
            -> DecodeSession -> FrameHolder -> Texture
 ```
+
+The trace schema correlates `pageTransition`, `artifactSource`, `decodeDemand/decodeStarted`,
+`uploadDemand/uploadStarted`, `firstFrameReady` and page-host lifecycle events by stable identity and demand revision.
+Queued work keeps the revision that created its demand rather than reading a later global revision at execution time.
+This instrumentation observes ownership; it does not choose a window, retain a frame or start extra work.
 
 Presentation must not warm current/next/previous pages directly, retain adjacent `PageView` children as a resource
 policy, or create a private page-byte LRU. Page and zoom hosts use stable asset keys; a current-role change resets
