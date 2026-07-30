@@ -1,3 +1,11 @@
+## 0.31.0-dev.50：编译闭环与 runtime service process-generation 所有权
+
+- 修复 process activation 的三处编译阻断：流式 SHA-256 输出使用 `Sink<Digest>`；activation 显式依赖 handshake 所在 channel；测试从 `dart:async` 与 `domain` 引入各自拥有的 `Completer`/`Failure`。
+- 新增 `ExternalPluginRuntimeServiceEndpoint`，统一处理 Mihon/Venera activate、invoke、cancel、session close 与 process close。平台 transport 不再拥有 activation/session policy。
+- activation 返回新的 `processId`；后续请求必须同时匹配 process/session。服务死亡或重启后，即使 session ID 重复，旧连接也会以 `runtime-process-mismatch` 失败且不重放请求。
+- `plugin_host_bridge` 新增 Dart MethodChannel service handler，将稳定错误映射到平台，同时把 payload 重验、私有 staging、driver 创建、session registry 和 shutdown 委托给 process host。
+- Home trace、Reader demand/artifact、图片 codec 生命周期保持不变。Mihon `Source`/`SourceFactory` class loader 与 Venera JavaScript engine 仍未实现。
+
 ## 0.31.0-dev.49：有效 decode target 回归与隔离进程 payload 所有权
 
 - `Flutter target rebuild keeps the presented frame visible` 不再把任意容器宽度变化当作 codec 必然重建。fixture 通过 VP8X 头声明 2048×2048 画布，测试先证明生成了两个不同 downsample target，再验证替代 codec 完成前旧 `RawImage` 持续可见。

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -7,6 +6,7 @@ import 'package:catalog/catalog.dart';
 import 'package:crypto/crypto.dart';
 
 import 'plugin_contract.dart';
+import 'runtime_channel.dart';
 import 'runtime_limits.dart';
 import 'runtime_worker.dart';
 
@@ -313,12 +313,8 @@ final class FileExternalPluginRuntimePayloadVerifier
       }
 
       var copied = 0;
-      Digest? digest;
-      final digestInput = sha256.startChunkedConversion(
-        ByteConversionSink.withCallback((bytes) {
-          digest = Digest(bytes);
-        }),
-      );
+      final digestSink = _SingleDigestSink();
+      final digestInput = sha256.startChunkedConversion(digestSink);
       output = await temporary.open(mode: FileMode.write);
       await for (final chunk in source.openRead()) {
         copied += chunk.length;
@@ -342,7 +338,7 @@ final class FileExternalPluginRuntimePayloadVerifier
           message: 'plugin payload length changed while being staged',
         );
       }
-      final actualDigest = digest?.toString().toLowerCase();
+      final actualDigest = digestSink.single.toString().toLowerCase();
       if (actualDigest != activation.payloadSha256) {
         throw const ExternalPluginRuntimeProcessException(
           code: 'payload-identity-mismatch',
@@ -353,7 +349,7 @@ final class FileExternalPluginRuntimePayloadVerifier
       return ExternalPluginRuntimeVerifiedPayload(
         path: promoted.path,
         byteLength: copied,
-        sha256: actualDigest!,
+        sha256: actualDigest,
       );
     } on ExternalPluginRuntimeProcessException {
       rethrow;
@@ -752,6 +748,35 @@ Map<ExternalComicPluginFormat, ExternalPluginRuntimeDriverFactory>
 
 String _newSessionId(ExternalPluginRuntimeActivationEnvelope activation) =>
     '${activation.format.name}-${_randomToken()}';
+
+final class _SingleDigestSink implements Sink<Digest> {
+  Digest? _value;
+  bool _closed = false;
+
+  Digest get single {
+    final value = _value;
+    if (!_closed || value == null) {
+      throw StateError('plugin payload digest was not finalized');
+    }
+    return value;
+  }
+
+  @override
+  void add(Digest data) {
+    if (_closed) {
+      throw StateError('plugin payload digest sink is closed');
+    }
+    if (_value != null) {
+      throw StateError('plugin payload digest emitted more than once');
+    }
+    _value = data;
+  }
+
+  @override
+  void close() {
+    _closed = true;
+  }
+}
 
 String _randomToken() {
   final random = Random.secure();

@@ -23,16 +23,18 @@ void main() {
         .setMockMethodCallHandler(channel, (call) async {
       calls.add(call);
       return switch (call.method) {
-        'activateMihonRuntime' => <String, Object?>{
+        ExternalPluginRuntimeServiceMethods.activateMihon => <String, Object?>{
+            'processId': 'process-1',
             'sessionId': 'mihon-session-1',
             'handshake': _handshake('mihon-runtime'),
           },
-        'invokeExternalRuntime' => ExternalPluginRuntimeResponse.success(
+        ExternalPluginRuntimeServiceMethods.invoke =>
+          ExternalPluginRuntimeResponse.success(
             requestId: 'request-1',
             payload: Uint8List.fromList(<int>[1, 2, 3]),
           ).toMessage(),
-        'cancelExternalRuntime' => null,
-        'closeExternalRuntime' => null,
+        ExternalPluginRuntimeServiceMethods.cancel => null,
+        ExternalPluginRuntimeServiceMethods.closeSession => null,
         _ => throw MissingPluginException(call.method),
       };
     });
@@ -55,10 +57,10 @@ void main() {
 
     expect(response.payload, <int>[1, 2, 3]);
     expect(calls.map((call) => call.method), <String>[
-      'activateMihonRuntime',
-      'invokeExternalRuntime',
-      'cancelExternalRuntime',
-      'closeExternalRuntime',
+      ExternalPluginRuntimeServiceMethods.activateMihon,
+      ExternalPluginRuntimeServiceMethods.invoke,
+      ExternalPluginRuntimeServiceMethods.cancel,
+      ExternalPluginRuntimeServiceMethods.closeSession,
     ]);
     final activation = calls.first.arguments! as Map<Object?, Object?>;
     expect(activation['payloadPath'], '/cache/fixture.apk');
@@ -70,8 +72,13 @@ void main() {
       2,
     );
     final invoke = calls[1].arguments! as Map<Object?, Object?>;
+    expect(invoke['processId'], 'process-1');
     expect(invoke['sessionId'], 'mihon-session-1');
     expect(invoke['request'], isA<Map<Object?, Object?>>());
+    final cancel = calls[2].arguments! as Map<Object?, Object?>;
+    final close = calls[3].arguments! as Map<Object?, Object?>;
+    expect(cancel['processId'], 'process-1');
+    expect(close['processId'], 'process-1');
   });
 
   test('Venera backend uses the same raw runtime channel contract', () async {
@@ -80,11 +87,12 @@ void main() {
         .setMockMethodCallHandler(channel, (call) async {
       calls.add(call);
       return switch (call.method) {
-        'activateVeneraRuntime' => <String, Object?>{
+        ExternalPluginRuntimeServiceMethods.activateVenera => <String, Object?>{
+            'processId': 'process-2',
             'sessionId': 'venera-session-1',
             'handshake': _handshake('venera-runtime'),
           },
-        'closeExternalRuntime' => null,
+        ExternalPluginRuntimeServiceMethods.closeSession => null,
         _ => throw MissingPluginException(call.method),
       };
     });
@@ -94,12 +102,62 @@ void main() {
     await connection.close();
 
     expect(calls.map((call) => call.method), <String>[
-      'activateVeneraRuntime',
-      'closeExternalRuntime',
+      ExternalPluginRuntimeServiceMethods.activateVenera,
+      ExternalPluginRuntimeServiceMethods.closeSession,
     ]);
     final activation = calls.first.arguments! as Map<Object?, Object?>;
     expect(activation['sourceKey'], 'fixture');
     expect(activation['payloadPath'], '/cache/fixture.js');
+  });
+
+  test('stale process failure is surfaced without automatic replay', () async {
+    final calls = <MethodCall>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return switch (call.method) {
+        ExternalPluginRuntimeServiceMethods.activateMihon =>
+          <String, Object?>{
+            'processId': 'dead-process',
+            'sessionId': 'stale-session',
+            'handshake': _handshake('mihon-runtime'),
+          },
+        ExternalPluginRuntimeServiceMethods.invoke => throw PlatformException(
+            code: 'runtime-process-mismatch',
+            message: 'runtime service restarted',
+          ),
+        _ => null,
+      };
+    });
+
+    final backend = AndroidMihonIsolatedRuntimeBackend(channel: channel);
+    final connection = await backend.activate(_mihonRequest());
+    await expectLater(
+      connection.invoke(
+        ExternalPluginRuntimeRequest.browse(
+          requestId: 'not-replayed',
+          externalSourceId: 'fixture',
+          query: '',
+          offset: 0,
+          limit: 24,
+        ),
+      ),
+      throwsA(
+        isA<PlatformException>().having(
+          (error) => error.code,
+          'code',
+          'runtime-process-mismatch',
+        ),
+      ),
+    );
+
+    expect(
+      calls.map((call) => call.method),
+      <String>[
+        ExternalPluginRuntimeServiceMethods.activateMihon,
+        ExternalPluginRuntimeServiceMethods.invoke,
+      ],
+    );
   });
 
   test('platform support rejects an unenforceable runtime envelope', () {

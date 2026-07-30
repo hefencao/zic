@@ -1078,3 +1078,10 @@ mutate library metadata.
 
 Reader transition replay is owned by `telemetry`, while exact page/DownloadId identity construction is owned by
 `downloads`. Replay separates transition revision from the frame-producing work revision and is observational only.
+
+
+## External plugin dedicated-service ownership
+
+The Android host bridge and the dedicated runtime service share `ExternalPluginRuntimeServiceMethods`, but the platform transport owns no plugin session policy. A service-side `AndroidExternalPluginRuntimeServiceHandler` forwards raw method calls into `ExternalPluginRuntimeServiceEndpoint`, which delegates to `ExternalPluginRuntimeProcessHost` for activation parsing, immutable payload staging, driver creation, request routing, cancellation and deterministic shutdown.
+
+Every service process has a new `processId`. Activation returns `{processId, sessionId, handshake}` and every later invoke/cancel/close carries both identities. After service death or restart, a stale process generation is rejected before session lookup even if a session identifier is reused; failed operations are never transparently replayed or reactivated.

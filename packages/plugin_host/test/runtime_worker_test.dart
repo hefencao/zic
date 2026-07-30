@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
+import 'package:domain/domain.dart';
 import 'package:plugin_host/plugin_host.dart';
 import 'package:test/test.dart';
 

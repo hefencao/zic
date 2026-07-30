@@ -60,7 +60,10 @@ final class AndroidMihonIsolatedRuntimeBackend
   Future<ExternalPluginRuntimeConnection> activate(
     MihonExecutionRequest request,
   ) =>
-      _activate('activateMihonRuntime', request.toMessage());
+      _activate(
+        ExternalPluginRuntimeServiceMethods.activateMihon,
+        request.toMessage(),
+      );
 
   Future<ExternalPluginRuntimeConnection> _activate(
     String method,
@@ -73,15 +76,21 @@ final class AndroidMihonIsolatedRuntimeBackend
     if (response == null) {
       throw const FormatException('platform runtime activation is empty');
     }
+    final processId = response['processId'];
     final sessionId = response['sessionId'];
     final handshake = response['handshake'];
-    if (sessionId is! String || sessionId.trim().isEmpty || handshake == null) {
+    if (processId is! String ||
+        processId.trim().isEmpty ||
+        sessionId is! String ||
+        sessionId.trim().isEmpty ||
+        handshake == null) {
       throw const FormatException('platform runtime activation is invalid');
     }
     return MessageChannelExternalPluginRuntimeConnection.fromHandshakeMessage(
       handshakeMessage: handshake,
       channel: _PlatformExternalPluginRuntimeMessageChannel(
         channel: _channel,
+        processId: processId,
         sessionId: sessionId,
       ),
     );
@@ -111,21 +120,27 @@ final class AndroidVeneraSandboxRuntimeBackend
     VeneraExecutionRequest request,
   ) async {
     final response = await _channel.invokeMapMethod<String, Object?>(
-      'activateVeneraRuntime',
+      ExternalPluginRuntimeServiceMethods.activateVenera,
       request.toMessage(),
     );
     if (response == null) {
       throw const FormatException('platform runtime activation is empty');
     }
+    final processId = response['processId'];
     final sessionId = response['sessionId'];
     final handshake = response['handshake'];
-    if (sessionId is! String || sessionId.trim().isEmpty || handshake == null) {
+    if (processId is! String ||
+        processId.trim().isEmpty ||
+        sessionId is! String ||
+        sessionId.trim().isEmpty ||
+        handshake == null) {
       throw const FormatException('platform runtime activation is invalid');
     }
     return MessageChannelExternalPluginRuntimeConnection.fromHandshakeMessage(
       handshakeMessage: handshake,
       channel: _PlatformExternalPluginRuntimeMessageChannel(
         channel: _channel,
+        processId: processId,
         sessionId: sessionId,
       ),
     );
@@ -136,10 +151,12 @@ final class _PlatformExternalPluginRuntimeMessageChannel
     implements CancellableExternalPluginRuntimeMessageChannel {
   _PlatformExternalPluginRuntimeMessageChannel({
     required MethodChannel channel,
+    required this.processId,
     required this.sessionId,
   }) : _channel = channel;
 
   final MethodChannel _channel;
+  final String processId;
   final String sessionId;
   bool _closing = false;
   Future<void>? _closeFuture;
@@ -150,8 +167,9 @@ final class _PlatformExternalPluginRuntimeMessageChannel
       throw StateError('platform external runtime channel is closing');
     }
     return _channel.invokeMethod<Object?>(
-      'invokeExternalRuntime',
+      ExternalPluginRuntimeServiceMethods.invoke,
       <String, Object?>{
+        'processId': processId,
         'sessionId': sessionId,
         'request': requestMessage,
       },
@@ -167,8 +185,9 @@ final class _PlatformExternalPluginRuntimeMessageChannel
       return Future<void>.value();
     }
     return _channel.invokeMethod<void>(
-      'cancelExternalRuntime',
+      ExternalPluginRuntimeServiceMethods.cancel,
       <String, Object?>{
+        'processId': processId,
         'sessionId': sessionId,
         'requestId': requestId,
       },
@@ -183,8 +202,11 @@ final class _PlatformExternalPluginRuntimeMessageChannel
     }
     _closing = true;
     final closing = _channel.invokeMethod<void>(
-      'closeExternalRuntime',
-      <String, Object?>{'sessionId': sessionId},
+      ExternalPluginRuntimeServiceMethods.closeSession,
+      <String, Object?>{
+        'processId': processId,
+        'sessionId': sessionId,
+      },
     );
     _closeFuture = closing;
     return closing;

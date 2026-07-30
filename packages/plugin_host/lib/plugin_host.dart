@@ -4,5 +4,6 @@ export 'src/runtime_channel.dart';
 export 'src/runtime_activation.dart';
 export 'src/runtime_limits.dart';
 export 'src/runtime_protocol.dart';
+export 'src/runtime_service.dart';
 export 'src/runtime_source_adapter.dart';
 export 'src/runtime_worker.dart';

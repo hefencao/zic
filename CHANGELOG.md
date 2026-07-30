@@ -1,3 +1,11 @@
+## 0.31.0-dev.50 — compile closure and process-generation runtime service ownership
+
+- Close report-32 compile blockers in product and test dependencies: stream SHA-256 now uses a real `Sink<Digest>`, runtime activation imports the handshake boundary explicitly, and affected tests import `dart:async`/domain `Failure` from their owning libraries.
+- Add `ExternalPluginRuntimeServiceEndpoint` as the single dedicated-process dispatcher for Mihon/Venera activation, invoke, cancel, session close and process close. Exact method fields and plugin-format/method agreement are validated before the process host is called.
+- Add an unforgeable runtime `processId` generation to every activation. Invoke/cancel/close must carry the same generation, so a service restart rejects stale sessions even when a session ID is reused and never auto-reactivates or replays the failed request.
+- Add a Dart-side Android MethodChannel service handler that maps stable service/process errors while delegating all activation parsing, payload staging, session registry and teardown policy to the shared process host instead of duplicating it in Kotlin.
+- Add process-service, stale-generation, joinable close, platform-channel and handler conformance tests plus ADR 0034. Concrete Mihon class loading and Venera JavaScript evaluation remain fail-closed driver work.
+
 ## 0.31.0-dev.49 — meaningful decode-target regression and process-entry payload ownership
 
 - Fix the reported target-rebuild timeout by using a deterministic 2048×2048 VP8X canvas fixture. The regression now proves that the viewport change produced distinct downsample targets before asserting gapless replacement; a tiny 2×2 source correctly remains a no-op.

@@ -98,6 +98,8 @@ continue through Reader demand, transport, promoted artifact and decode ownershi
 - runtime source ID 必须由 host 添加 `mihon:`/`venera:` 命名空间，并与 repository/inspection identity 一致；comic/chapter/page 返回值必须保持请求身份和父子关系。
 - host 必须独立执行 timeout、响应字节和真实并发上限。调用方 timeout 后，底层操作真正结束前不得释放并发令牌。
 - session close 必须拒绝排队调用、通知隔离 backend 终止活动调用并等待实际工作排空；并发 close 必须加入同一关闭过程。
+- Android dedicated-service transport 只能转发版本化基础值消息；process-side Dart endpoint 必须拥有 activation 解析、payload staging、session registry 和错误净化，平台层不得复制这些状态机。
+- activation 必须返回 process generation。所有 invoke/cancel/close 都必须携带 generation 与 session ID；服务重启后旧 generation 不得命中复用 session ID，也不得自动重放或重新激活。
 - 二进制资源使用有界 `Uint8List` wire payload，不允许 base64 扩张或把 Reader artifact authority 交给插件。
 - 隔离 backend 的原始传输必须实现版本化 handshake/message-channel 边界。handshake 需要非空 runtime ID、唯一 source ID；每个 response 的 requestId 必须与调用匹配。传输不得依赖进程内 Dart domain/session 对象。
 - 隔离侧必须由共享 worker 再次解析 request，拒绝未知 source 和重复活动 request ID，并将任意生态后端异常净化为有界协议错误。

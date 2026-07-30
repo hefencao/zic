@@ -2284,11 +2284,12 @@ def check_current_iteration() -> None:
     for required in (
         'AndroidMihonIsolatedRuntimeBackend',
         'AndroidVeneraSandboxRuntimeBackend',
-        "'activateMihonRuntime'",
-        "'activateVeneraRuntime'",
-        "'invokeExternalRuntime'",
-        "'cancelExternalRuntime'",
-        "'closeExternalRuntime'",
+        'ExternalPluginRuntimeServiceMethods.activateMihon',
+        'ExternalPluginRuntimeServiceMethods.activateVenera',
+        'ExternalPluginRuntimeServiceMethods.invoke',
+        'ExternalPluginRuntimeServiceMethods.cancel',
+        'ExternalPluginRuntimeServiceMethods.closeSession',
+        "'processId': processId",
     ):
         if required not in runtime_platform:
             fail(f'dev.47 platform runtime channel is incomplete: {required}')
@@ -2376,6 +2377,66 @@ def check_current_iteration() -> None:
     ):
         if required not in runtime_activation_test:
             fail(f'dev.49 runtime activation regression is incomplete: {required}')
+
+    runtime_service = (
+        ROOT / 'packages/plugin_host/lib/src/runtime_service.dart'
+    ).read_text(encoding='utf-8')
+    runtime_service_test = (
+        ROOT / 'packages/plugin_host/test/runtime_service_test.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class ExternalPluginRuntimeServiceEndpoint',
+        'abstract final class ExternalPluginRuntimeServiceMethods',
+        "'processId': processId",
+        "code: 'runtime-process-mismatch'",
+        'ExternalPluginRuntimeActivationEnvelope.fromMessage',
+        '_processHost.closeSession',
+        '_processHost.cancel',
+    ):
+        if required not in runtime_service:
+            fail(f'dev.50 runtime service endpoint is incomplete: {required}')
+    for required in (
+        'service endpoint owns activation invoke cancel and close routing',
+        'Venera activation uses the same service endpoint contract',
+        'new service process rejects an old process generation',
+        'activation method must match the payload ecosystem',
+        'process close is joinable and rejects later activation',
+    ):
+        if required not in runtime_service_test:
+            fail(f'dev.50 runtime service regression is incomplete: {required}')
+    for forbidden_import in (
+        'package:reader/',
+        'package:downloads/',
+        'package:sessions/',
+        'package:pipeline/',
+    ):
+        if forbidden_import in runtime_service:
+            fail(f'dev.50 runtime service leaks {forbidden_import}')
+
+    runtime_service_handler = (
+        ROOT / 'packages/plugin_host_bridge/lib/src/runtime_service_handler.dart'
+    ).read_text(encoding='utf-8')
+    runtime_service_handler_test = (
+        ROOT / 'packages/plugin_host_bridge/test/runtime_service_handler_test.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class AndroidExternalPluginRuntimeServiceHandler',
+        '_channel.setMethodCallHandler(dispatch)',
+        'await _endpoint.handle(call.method, call.arguments)',
+        'on ExternalPluginRuntimeServiceException',
+        'on ExternalPluginRuntimeProcessException',
+        'await _endpoint.close()',
+    ):
+        if required not in runtime_service_handler:
+            fail(f'dev.50 Android runtime service handler is incomplete: {required}')
+    for required in (
+        'handler delegates raw methods to the process endpoint',
+        'handler maps stale generations to a stable platform error',
+        'detach closes the process and is joinable',
+    ):
+        if required not in runtime_service_handler_test:
+            fail(f'dev.50 runtime service handler regression is incomplete: {required}')
+
     for required in (
         'Uint8List _largeCanvasWebp()',
         'decodeTargets',
