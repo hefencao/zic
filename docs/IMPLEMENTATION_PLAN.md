@@ -21,8 +21,12 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.47）
+## 当前应用主线（0.31.0-dev.48）
 
+- 普通本地静态图片的文件路由必须是可独立验证的纯映射；zero-Dart-copy 测试不得启动宿主平台 codec 或依赖测试 runner 的图片流收尾。
+- 受控 GIF/WebP 状态机只依赖 `FlutterAnimatedCodec` 契约。生产 adapter 使用 `ui.instantiateImageCodec`，测试 adapter 必须确定性返回帧；不得让不可取消的 engine Future 成为状态机单元测试前提。
+- 动画首帧 ready 必须等待真实 `endOfFrame`。替代 decode target 未呈现前保留旧帧；generation 失效或 dispose 时必须释放新旧 frame、codec 和 Timer，失败断言也必须执行同一 teardown。
+- `local_image_preview_test.dart` 和冷 Reader artifact 测试使用有真实时间上限的事件循环轮询，而非固定帧数推断外部 I/O/codec 已完成。
 - 将 protocol-v1 的服务端所有权收敛为 `ExternalPluginRuntimeWorker`：隔离边界内再次解析请求、验证 source/request identity、净化错误、跟踪真实调用并确定性关闭。
 - 为 raw runtime channel 增加可选的 request-level cooperative cancellation；timeout 只结束调用者等待，底层 Future 退出前 host permit 不释放。
 - Mihon/Venera activation envelope 传递 exact payload path/length/hash、approved capabilities 和 runtime limits；Android host adapter 统一 activation/invoke/cancel/close。

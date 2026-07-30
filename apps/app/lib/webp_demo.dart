@@ -625,6 +625,95 @@ final class WebpCatalogScreen extends StatelessWidget {
   }
 }
 
+/// One decoded frame owned by the controlled Flutter animation renderer.
+final class FlutterAnimatedFrame {
+  const FlutterAnimatedFrame({
+    required this.image,
+    required this.duration,
+  });
+
+  final ui.Image image;
+  final Duration duration;
+}
+
+/// Minimal codec contract used by the controlled animation state machine.
+///
+/// Keeping the state machine behind this adapter makes lifecycle, pacing and
+/// presentation tests deterministic without replacing the production codec.
+abstract interface class FlutterAnimatedCodec {
+  int get frameCount;
+
+  int get repetitionCount;
+
+  Future<FlutterAnimatedFrame> getNextFrame();
+
+  void dispose();
+}
+
+typedef FlutterAnimatedCodecFactory = Future<FlutterAnimatedCodec> Function(
+  Uint8List bytes, {
+  int? targetWidth,
+  int? targetHeight,
+});
+
+Future<FlutterAnimatedCodec> instantiateFlutterAnimatedCodec(
+  Uint8List bytes, {
+  int? targetWidth,
+  int? targetHeight,
+}) async {
+  final codec = await ui.instantiateImageCodec(
+    bytes,
+    targetWidth: targetWidth,
+    targetHeight: targetHeight,
+    allowUpscaling: false,
+  );
+  return _UiFlutterAnimatedCodec(codec);
+}
+
+final class _UiFlutterAnimatedCodec implements FlutterAnimatedCodec {
+  const _UiFlutterAnimatedCodec(this._codec);
+
+  final ui.Codec _codec;
+
+  @override
+  int get frameCount => _codec.frameCount;
+
+  @override
+  int get repetitionCount => _codec.repetitionCount;
+
+  @override
+  Future<FlutterAnimatedFrame> getNextFrame() async {
+    final frame = await _codec.getNextFrame();
+    return FlutterAnimatedFrame(
+      image: frame.image,
+      duration: frame.duration,
+    );
+  }
+
+  @override
+  void dispose() => _codec.dispose();
+}
+
+/// Returns the renderer-owned provider for a directly addressable local image.
+///
+/// This route deliberately does not call [PickedImage.readAsBytes]. It keeps the
+/// encoded file outside the Dart heap and lets Flutter own the single image
+/// stream used for decoding and presentation. Android content URIs and other
+/// non-file sources return null and continue through the controlled byte path.
+ImageProvider<Object>? localImageDirectFileProvider(PickedImage image) {
+  final path = localImageFilePath(image.sourceId);
+  if (path == null) {
+    return null;
+  }
+  return encodedResourceImageProvider(
+    FileEncodedResourceSource(
+      path: path,
+      origin: EncodedResourceOrigin.localFile,
+      lengthInBytes: image.byteLength,
+    ),
+  );
+}
+
 final class LocalImagePlayer extends StatefulWidget {
   const LocalImagePlayer({
     required this.image,
@@ -639,6 +728,7 @@ final class LocalImagePlayer extends StatefulWidget {
     this.traceSessionId = 'local-image-preview',
     this.demandRevision,
     this.playback,
+    this.flutterAnimatedCodecFactory = instantiateFlutterAnimatedCodec,
     super.key,
   });
 
@@ -654,6 +744,7 @@ final class LocalImagePlayer extends StatefulWidget {
   final String traceSessionId;
   final int Function()? demandRevision;
   final ReaderPlaybackController? playback;
+  final FlutterAnimatedCodecFactory flutterAnimatedCodecFactory;
 
   Uri get sourceUri => image.sourceUri;
 
@@ -713,13 +804,10 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           ? localImageFilePath(widget.image.sourceId)
           : null;
       if (directPath != null) {
-        final provider = encodedResourceImageProvider(
-          FileEncodedResourceSource(
-            path: directPath,
-            origin: EncodedResourceOrigin.localFile,
-            lengthInBytes: widget.image.byteLength,
-          ),
-        );
+        final provider = localImageDirectFileProvider(widget.image);
+        if (provider == null) {
+          throw StateError('local file provider is unavailable');
+        }
         if (!mounted || generation != _generation || token != _loadToken) {
           return;
         }
@@ -920,6 +1008,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           traceSessionId: widget.traceSessionId,
           demandRevision: widget.demandRevision,
           playback: widget.playback,
+          flutterAnimatedCodecFactory: widget.flutterAnimatedCodecFactory,
         );
       }
     } else if (widget.playback != null &&
@@ -934,6 +1023,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           playback: widget.playback!,
           onReady: _onControlledReady,
           onError: _onControlledError,
+          codecFactory: widget.flutterAnimatedCodecFactory,
           downloadIdentity: widget.downloadIdentity,
           traceClock: widget.traceClock,
           traceSink: widget.traceSink,
@@ -993,6 +1083,7 @@ final class _ControlledAnimatedImage extends StatefulWidget {
     required this.playback,
     required this.onReady,
     required this.onError,
+    required this.codecFactory,
     this.targetWidth,
     this.targetHeight,
     this.downloadIdentity,
@@ -1014,6 +1105,7 @@ final class _ControlledAnimatedImage extends StatefulWidget {
   final int Function()? demandRevision;
   final VoidCallback onReady;
   final ValueChanged<Object> onError;
+  final FlutterAnimatedCodecFactory codecFactory;
 
   @override
   State<_ControlledAnimatedImage> createState() =>
@@ -1022,7 +1114,7 @@ final class _ControlledAnimatedImage extends StatefulWidget {
 
 final class _ControlledAnimatedImageState
     extends State<_ControlledAnimatedImage> {
-  ui.Codec? _codec;
+  FlutterAnimatedCodec? _codec;
   ui.Image? _image;
   Timer? _timer;
   Duration _remaining = Duration.zero;
@@ -1058,7 +1150,8 @@ final class _ControlledAnimatedImageState
     }
     if (!identical(oldWidget.bytes, widget.bytes) ||
         oldWidget.targetWidth != widget.targetWidth ||
-        oldWidget.targetHeight != widget.targetHeight) {
+        oldWidget.targetHeight != widget.targetHeight ||
+        oldWidget.codecFactory != widget.codecFactory) {
       unawaited(
         _reload(
           preservePresentedFrame: identical(oldWidget.bytes, widget.bytes),
@@ -1105,11 +1198,10 @@ final class _ControlledAnimatedImageState
       },
     );
     try {
-      final codec = await ui.instantiateImageCodec(
+      final codec = await widget.codecFactory(
         widget.bytes,
         targetWidth: widget.targetWidth,
         targetHeight: widget.targetHeight,
-        allowUpscaling: false,
       );
       if (!mounted || generation != _generation) {
         codec.dispose();
@@ -1161,26 +1253,30 @@ final class _ControlledAnimatedImageState
       _framesPresented++;
       final presentedFrameIndex = _framesPresented - 1;
       final presentedIdentity = _traceIdentity(frame.image);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || generation != _generation) {
-          return;
-        }
-        _recordTrace(
-          TraceEventKind.framePresented,
-          revision: revision,
-          identityHash: presentedIdentity,
-          payload: <String, Object?>{
-            'engine': 'flutter-codec',
-            'frameIndex': presentedFrameIndex,
-          },
-        );
-        if (presentedFrameIndex == 0) {
-          widget.onReady();
-        }
-      });
-      if (previous != null) {
-        WidgetsBinding.instance.addPostFrameCallback((_) => previous.dispose());
+
+      // Presentation readiness belongs to the frame that Flutter actually
+      // completed, not merely to codec output. Awaiting endOfFrame also keeps
+      // the old image alive until its replacement is visible and gives dispose
+      // a generation boundary that prevents late callbacks from leaking into
+      // the next widget test or Reader page.
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted || generation != _generation) {
+        previous?.dispose();
+        return;
       }
+      _recordTrace(
+        TraceEventKind.framePresented,
+        revision: revision,
+        identityHash: presentedIdentity,
+        payload: <String, Object?>{
+          'engine': 'flutter-codec',
+          'frameIndex': presentedFrameIndex,
+        },
+      );
+      if (presentedFrameIndex == 0) {
+        widget.onReady();
+      }
+      previous?.dispose();
       if (codec.frameCount > 1 && !_paused) {
         _schedule(generation, _remaining);
       }
@@ -1706,6 +1802,7 @@ final class NativeWebpPlayer extends StatefulWidget {
     this.initialEngine = WebpPlayerEngine.flutter,
     this.onPreviewStateChanged,
     this.playback,
+    this.flutterAnimatedCodecFactory = instantiateFlutterAnimatedCodec,
     super.key,
   });
 
@@ -1723,6 +1820,7 @@ final class NativeWebpPlayer extends StatefulWidget {
   final WebpPlayerEngine initialEngine;
   final WebpPreviewStateChanged? onPreviewStateChanged;
   final ReaderPlaybackController? playback;
+  final FlutterAnimatedCodecFactory flutterAnimatedCodecFactory;
 
   @override
   State<NativeWebpPlayer> createState() => _NativeWebpPlayerState();
@@ -2774,6 +2872,8 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
                                         ? raster.decodeHeight
                                         : null,
                                     onReady: _reportFirstFrame,
+                                    codecFactory:
+                                        widget.flutterAnimatedCodecFactory,
                                     onError: (error) {
                                       if (mounted) {
                                         setState(() {

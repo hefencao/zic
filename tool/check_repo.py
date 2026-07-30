@@ -2314,6 +2314,33 @@ def check_current_iteration() -> None:
         if required not in bridge:
             fail(f'dev.47 Android runtime bridge is incomplete: {required}')
 
+    image_player = (ROOT / 'apps/app/lib/webp_demo.dart').read_text(
+        encoding='utf-8'
+    )
+    image_test = (
+        ROOT / 'apps/app/test/local_image_preview_test.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'abstract interface class FlutterAnimatedCodec',
+        'typedef FlutterAnimatedCodecFactory',
+        'instantiateFlutterAnimatedCodec',
+        'localImageDirectFileProvider',
+        'WidgetsBinding.instance.endOfFrame',
+        'oldWidget.codecFactory != widget.codecFactory',
+    ):
+        if required not in image_player:
+            fail(f'dev.48 image lifecycle seam is incomplete: {required}')
+    for required in (
+        "test('plain local image uses a file provider without byte loading'",
+        'final class _TestFlutterAnimatedCodec',
+        'await _unmountAsyncImage(tester)',
+        'finally {',
+    ):
+        if required not in image_test:
+            fail(f'dev.48 image regression cleanup is incomplete: {required}')
+    if 'rootBundle.load' in image_test:
+        fail('dev.48 controlled-codec tests must not depend on engine WebP decode')
+
 
 def main() -> None:
     try:

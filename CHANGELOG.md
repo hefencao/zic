@@ -1,3 +1,11 @@
+## 0.31.0-dev.48 — deterministic controlled-codec tests and drain-safe image teardown
+
+- Close the repeated `local_image_preview_test.dart` shutdown stall at its lifecycle boundary. The plain-file zero-copy assertion is now a pure provider-routing test and never starts a platform `FileImage` decode.
+- Extract `FlutterAnimatedCodec`/`FlutterAnimatedCodecFactory` from the controlled animation state machine. Production still uses `ui.instantiateImageCodec`; widget tests inject a deterministic codec so engine-thread WebP completion cannot strand the test platform.
+- Publish controlled-animation readiness only after `WidgetsBinding.endOfFrame`, retain the previous frame until its replacement is visible, and dispose the retained frame when a generation is invalidated during presentation.
+- Put every async image regression behind unconditional widget teardown. Failed assertions now cancel timers, dispose codecs/images and yield the event loop before the next test; cold Reader artifact polling uses the same bounded real-event deadline.
+- Preserve Home startup trace and the dev.47 Mihon/Venera worker/platform-channel boundaries unchanged. Record ADR 0032; concrete isolated APK and JavaScript drivers remain downstream work.
+
 ## 0.31.0-dev.47 — isolated runtime worker, cooperative cancellation and platform backend channels
 
 - Add one server-side `ExternalPluginRuntimeWorker` shared by Mihon and Venera isolated backends. It reparses protocol-v1 requests inside the isolation boundary, rejects unknown sources and duplicate active request IDs, sanitizes backend failures, tracks real work and owns deterministic teardown.

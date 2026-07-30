@@ -1,3 +1,12 @@
+## 0.31.0-dev.48：确定性动画 codec seam 与可排空图片测试生命周期
+
+- 普通本地文件的 zero-copy 回归已改为纯 `localImageDirectFileProvider` 测试，不创建 Widget、不启动平台 `FileImage` 解码。
+- 新增 `FlutterAnimatedCodec`、`FlutterAnimatedFrame` 与 `FlutterAnimatedCodecFactory`。生产默认 adapter 仍调用 `ui.instantiateImageCodec`；测试可以注入确定性 codec。
+- 受控动画在 `endOfFrame` 后发布 `framePresented`/ready，并在替代帧可见前保留旧帧；generation 失效时释放 retained frame。
+- 动画、文件和冷 artifact 测试使用 bounded wall-clock event-loop polling，并在 `finally` 中强制卸载异步媒体 Widget，避免失败用例把 codec/Timer/ImageStream 泄漏到 suite shutdown。
+- Home startup trace 与 dev.47 外部插件 runtime worker、取消和 Android 平台通道保持不变。
+- Mihon isolated class-loader driver 与 Venera JavaScript sandbox driver 仍未实现。
+
 ## 0.31.0-dev.47：隔离 runtime worker、协作取消与平台 backend channel
 
 - 已实现生态无关的 `ExternalPluginRuntimeWorker`，作为 Mihon/Venera 隔离后端的服务端协议 owner。

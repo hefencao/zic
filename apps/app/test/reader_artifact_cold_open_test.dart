@@ -21,46 +21,53 @@ void main() {
       });
       var originLoads = 0;
 
-      await tester.pumpWidget(
-        MaterialApp(
-          home: ReaderRuntimeScreen(
-            chapter: chapter,
-            artifactCache: store,
-            loaderSources: <Uri, LoaderTransportSource>{
-              id.canonicalUri: LoaderTransportSource(
-                revision: 'origin-r1',
-                loadBytes: () async {
-                  originLoads++;
-                  throw StateError('promoted artifact unexpectedly missed');
-                },
+      try {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: ReaderRuntimeScreen(
+              chapter: chapter,
+              artifactCache: store,
+              loaderSources: <Uri, LoaderTransportSource>{
+                id.canonicalUri: LoaderTransportSource(
+                  revision: 'origin-r1',
+                  loadBytes: () async {
+                    originLoads++;
+                    throw StateError('promoted artifact unexpectedly missed');
+                  },
+                ),
+              },
+              artifactPageBuilder: (
+                context,
+                asset,
+                reportFirstFrame,
+                runtime,
+              ) => _ArtifactBytesPage(
+                runtime: runtime,
+                reportFirstFrame: reportFirstFrame,
               ),
-            },
-            artifactPageBuilder: (
-              context,
-              asset,
-              reportFirstFrame,
-              runtime,
-            ) => _ArtifactBytesPage(
-              runtime: runtime,
-              reportFirstFrame: reportFirstFrame,
             ),
           ),
-        ),
-      );
+        );
 
-      for (var frame = 0;
-          frame < 120 && find.byKey(_readyKey).evaluate().isEmpty;
-          frame++) {
+        final elapsed = Stopwatch()..start();
+        while (elapsed.elapsed < const Duration(seconds: 5) &&
+            find.byKey(_readyKey).evaluate().isEmpty) {
+          await tester.pump();
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 2)),
+          );
+        }
+
+        expect(find.byKey(_readyKey), findsOneWidget);
+        expect(store.reads, 1);
+        expect(originLoads, 0);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
         await tester.pump();
-        await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 2)),
+        );
       }
-
-      expect(find.byKey(_readyKey), findsOneWidget);
-      expect(store.reads, 1);
-      expect(originLoads, 0);
-
-      await tester.pumpWidget(const SizedBox.shrink());
-      await tester.pump();
     },
   );
 }

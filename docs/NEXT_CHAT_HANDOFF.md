@@ -2,19 +2,18 @@
 
 ## Sole baseline
 
-Continue only from `zic_v0.31.0-dev.47_runtime-worker-cancellation-platform-backend-channel.zip`.
+Continue only from `zic_v0.31.0-dev.48_deterministic-controlled-codec-drain-safe-image-tests.zip`.
 Do not merge or copy files from an earlier zic archive.
 
 ## Current ownership and completed work
 
-- Keep the existing `home-startup` trace unchanged. The prior Home delay is not currently reproduced; no eager scan, prewarm or verbose release logging was added.
-- dev.46 local-image and cold-artifact behavior remains: one renderer-owned `FileImage` stream, actual frame readiness, explicit widget teardown, and promoted artifact priming at authoritative `DownloadSession.beginRun`.
-- Mihon and Venera share protocol v1, one `ExternalPluginRuntimeSession` source adapter, raw message-channel/handshake transport and now one isolated-side `ExternalPluginRuntimeWorker`.
-- The worker reparses requests inside the isolation boundary, rejects unknown sources and duplicate active request IDs, sanitizes driver errors, owns cooperative cancellation and drains real work on close.
-- Host timeout may send request-level cancellation, but the invocation permit remains held until the underlying channel Future exits.
-- Execution activation messages carry the exact inspected payload path/length/hash, approved capabilities and complete limits. Android host adapters expose activation/invoke/cancel/close through one platform channel.
-- Android native activation currently fails closed because the dedicated isolated APK/JavaScript service is not implemented. It must not fall back to main-process class loading or unrestricted JavaScript.
-- Runtime messages contain only protocol-safe primitives, maps/lists and `Uint8List`; Reader, navigation, demand, `DownloadSession`, cache maintenance and artifact objects do not cross the boundary.
+- Keep the existing `home-startup` trace unchanged. The prior Home delay is not currently reproduced.
+- Ordinary local static-image routing is exposed through `localImageDirectFileProvider`; it returns the renderer-owned file provider without materializing encoded bytes in Dart.
+- Controlled GIF/WebP playback depends on `FlutterAnimatedCodec`. Production uses `instantiateFlutterAnimatedCodec`; widget tests inject a deterministic codec and do not rely on engine-thread WebP completion.
+- Controlled first-frame readiness is emitted only after `WidgetsBinding.endOfFrame`. Target rebuild retains the old frame until the replacement is visible; generation invalidation disposes retained frames.
+- Async image and cold-artifact widget tests always unmount in `finally` and yield the real event loop before completion, including failure paths.
+- Promoted artifact reads still prime at authoritative `DownloadSession.beginRun`; pages remain join-only.
+- Mihon and Venera still share protocol v1, source adapter, runtime worker, cooperative cancellation and Android activation/invoke/cancel/close channels. Android activation remains fail-closed until dedicated isolated drivers exist.
 
 ## Validation commands
 
@@ -26,10 +25,10 @@ bash -n tool/*.sh
 python3 -m py_compile tool/*.py
 bash ./tool/check_native_header.sh
 flutter pub get
-cd packages/downloads && dart test test/promoted_artifact_read_pool_test.dart
+cd apps/app && flutter test test/local_image_preview_test.dart test/reader_artifact_cold_open_test.dart
+cd ../../packages/downloads && dart test test/promoted_artifact_read_pool_test.dart
 cd ../plugin_host && dart test
 cd ../plugin_host_bridge && flutter test
-cd ../../apps/app && flutter test test/local_image_preview_test.dart test/reader_artifact_cold_open_test.dart
 cd ../..
 bash ./tool/test_dart.sh
 bash ./tool/test_flutter.sh
@@ -41,8 +40,9 @@ bash ./tool/build_android.sh release
 
 ## Next mainline work
 
-1. Run plugin-host and bridge suites first, including worker conformance, cancellation, joinable close and method-channel envelope tests.
-2. Implement a dedicated-process Android Mihon service behind the existing activation/channel contract. Revalidate exact payload identity at process entry, create the class loader only there, discover approved `Source`/`SourceFactory` entry classes and adapt calls through `ExternalPluginRuntimeDriver` plus the shared worker.
-3. Implement a bounded Venera JavaScript service behind the same contract, with explicit network/cookie/credential/storage bridges, cooperative cancellation checkpoints and deterministic driver close.
-4. Add native end-to-end conformance for malformed handshake/response, duplicate runtime source identity, large binary resource, cancellation races, process death and service restart.
-5. Keep Home startup telemetry available but do not expand it unless the device issue returns with a captured trace.
+1. Run `local_image_preview_test.dart` alone first and confirm it exits normally after the plain-file provider test; then run the full App suite to detect any unrelated async owner.
+2. Run the promoted-artifact and plugin-host suites before changing policy or ownership.
+3. Implement the dedicated-process Android Mihon driver behind the existing immutable activation envelope and worker; revalidate payload identity at process entry and load approved `Source`/`SourceFactory` classes only there.
+4. Implement the bounded Venera JavaScript driver behind the same worker with explicit network/cookie/credential/storage bridges and deterministic cancellation/close.
+5. Add native conformance for process death/service restart without replaying a failed catalog request automatically.
+6. Keep Home telemetry available but do not expand it unless the device issue returns with a captured trace.
