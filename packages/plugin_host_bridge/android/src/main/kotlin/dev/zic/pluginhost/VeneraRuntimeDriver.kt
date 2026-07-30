@@ -18,6 +18,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.Closeable
 import java.io.File
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.KeyFactory
@@ -34,6 +35,8 @@ import javax.crypto.Cipher
 import javax.crypto.Mac
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
+import java.util.zip.GZIPInputStream
+import java.util.zip.InflaterInputStream
 
 /** Venera JavaScript runtime hosted by a process-private, UI-less WebView. */
 internal class VeneraRuntimeDriver private constructor(
@@ -424,7 +427,13 @@ private class VeneraNativeBridge(
                 cookieManager.flush()
             }
             val stream = if (status >= 400) connection.errorStream else connection.inputStream
-            val bytes = stream?.use { it.readBytesBounded(maxResponseBytes) } ?: ByteArray(0)
+            val bytes = stream?.let {
+                readDecodedResponseBytes(
+                    it,
+                    connection.getHeaderField("Content-Encoding"),
+                    maxResponseBytes,
+                )
+            } ?: ByteArray(0)
             val responseHeaders = JSONObject()
             connection.headerFields.entries
                 .filter { it.key != null }
@@ -791,6 +800,27 @@ private fun java.io.InputStream.readBytesBounded(maxBytes: Int): ByteArray {
     return output.toByteArray()
 }
 
+internal fun readDecodedResponseBytes(
+    input: InputStream,
+    contentEncoding: String?,
+    maxBytes: Int,
+): ByteArray {
+    val encodings = contentEncoding.orEmpty()
+        .split(',')
+        .map { it.trim().lowercase(Locale.US) }
+        .filter { it.isNotEmpty() && it != "identity" }
+    val decoded = encodings.asReversed().fold(input) { stream, encoding ->
+        when (encoding) {
+            "gzip", "x-gzip" -> GZIPInputStream(stream)
+            "deflate" -> InflaterInputStream(stream)
+            else -> throw IllegalArgumentException(
+                "Unsupported Venera response content encoding: $encoding",
+            )
+        }
+    }
+    return decoded.use { it.readBytesBounded(maxBytes) }
+}
+
 private fun verifyVeneraPayload(file: File, expectedLength: Long, expectedSha256: String) {
     require(file.isFile) { "Venera payload is missing" }
     require(file.length() == expectedLength) { "Venera payload length changed" }
@@ -927,6 +957,9 @@ async function compute(func,...args){return (0,eval)('('+func+')')(args)}
 function __zicB64(value){return btoa(unescape(encodeURIComponent(JSON.stringify(value)))).replaceAll('+','-').replaceAll('/','_').replaceAll('=','')}
 function __zicUnb64(value){let raw=value.replaceAll('-','+').replaceAll('_','/');while(raw.length%4)raw+='=';return JSON.parse(decodeURIComponent(escape(atob(raw))))}
 function __zicDefaultOptions(source){return (source.search?.optionList||[]).map(group=>group.default??String(group.options?.[0]??'').split('-')[0])}
+function __zicLoaders(value){if(Array.isArray(value))return value;if(value instanceof Map)return Array.from(value.values());if(value&&typeof value==='object')return Object.values(value);return[]}
+function __zicExploreLoader(source){return __zicLoaders(source.explore).find(value=>typeof value?.load==='function')||null}
+function __zicCategoryTarget(source){for(const part of source.category?.parts||[]){for(const item of part.categories||[]){const target=item?.target;if(target?.page==='category'&&target.attributes?.category!==undefined)return target.attributes}}return null}
 function __zicComic(item){return {comicId:'venera:comic:'+__zicB64({id:String(item.id),title:String(item.title||''),subtitle:String(item.subtitle??item.subTitle??''),cover:String(item.cover||''),description:String(item.description||'')}),title:String(item.title||'未命名漫画'),authors:[String(item.subtitle??item.subTitle??'')].filter(Boolean),coverUri:item.cover||undefined,description:item.description||undefined,contentRating:'suggestive'}}
 function __zicFlatten(result){
  const isComic=value=>value&&typeof value==='object'&&!Array.isArray(value)&&!(value instanceof Map)&&(value.id!==undefined||value.comicId!==undefined)&&value.title!==undefined;
@@ -939,10 +972,12 @@ async function __zicOperation(request){
  const source=globalThis.__zicSource,args=request.arguments||{};
  if(request.operation==='browse'){
   const page=Math.floor(args.offset/args.limit)+1;let loaded;
-  if(String(args.query||'')){if(!source.search?.load)throw new Error('Venera source does not support search');loaded=await source.search.load(String(args.query),__zicDefaultOptions(source),page)}
-  else if(source.explore?.[0]?.load) loaded=await source.explore[0].load(page);
-  else if(source.search?.load) loaded=await source.search.load('',__zicDefaultOptions(source),page);
-  else throw new Error('Venera source exposes neither explore nor search');
+  const explore=__zicExploreLoader(source),category=__zicCategoryTarget(source);
+  if(String(args.query||'')){if(typeof source.search?.load!=='function')throw new Error('Venera source does not support search');loaded=await source.search.load(String(args.query),__zicDefaultOptions(source),page)}
+  else if(explore) loaded=await explore.load(page);
+  else if(typeof source.search?.load==='function') loaded=await source.search.load('',__zicDefaultOptions(source),page);
+  else if(category&&typeof source.categoryComics?.load==='function') loaded=await source.categoryComics.load(category.category,category.param??null,(source.categoryComics.optionList||[]).map(group=>group.default??String(group.options?.[0]??'').split('-')[0]),page);
+  else throw new Error('Venera source exposes no browse capability (keys: '+Object.keys(source).join(', ')+')');
   const all=__zicFlatten(loaded),start=args.offset%args.limit,items=all.slice(start,start+args.limit).map(__zicComic);
   const maxPage=Number(loaded?.maxPage||page);return {items,offset:args.offset,hasMore:maxPage>page||all.length>start+items.length};
  }

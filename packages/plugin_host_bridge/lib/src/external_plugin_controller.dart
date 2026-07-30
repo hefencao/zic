@@ -67,6 +67,10 @@ final class ExternalPluginController {
   );
   late final VeneraJavaScriptInspector _veneraInspector =
       VeneraJavaScriptInspector(payloads: _payloads);
+  static const AndroidMihonApkMetadataReader _androidMihonMetadata =
+      AndroidMihonApkMetadataReader();
+  List<InstalledMihonExtension> _deviceMihonExtensions =
+      const <InstalledMihonExtension>[];
   late final ExternalPluginRuntimeRegistry _registry =
       ExternalPluginRuntimeRegistry(<ExternalComicPluginHost>[
     _PinnedExternalPluginHost(
@@ -92,6 +96,11 @@ final class ExternalPluginController {
     final controller = ExternalPluginController._(storageRoot: storageRoot);
     await controller._root.create(recursive: true);
     await controller._readManifest();
+    try {
+      await controller.refreshDeviceMihonExtensions();
+    } on Object {
+      controller._deviceMihonExtensions = const <InstalledMihonExtension>[];
+    }
     await controller._activateInstalled();
     return controller;
   }
@@ -99,10 +108,22 @@ final class ExternalPluginController {
   List<InstalledExternalPlugin> get installed =>
       List<InstalledExternalPlugin>.unmodifiable(_installed.values);
 
+  List<InstalledMihonExtension> get deviceMihonExtensions =>
+      List<InstalledMihonExtension>.unmodifiable(_deviceMihonExtensions);
+
   List<BrowsableComicSource> get activeSources => _registry.activeSources;
 
   Map<String, Object> get activationFailures =>
       Map<String, Object>.unmodifiable(_activationFailures);
+
+  Future<void> refreshDeviceMihonExtensions() async {
+    _requireOpen();
+    if (!Platform.isAndroid) {
+      _deviceMihonExtensions = const <InstalledMihonExtension>[];
+      return;
+    }
+    _deviceMihonExtensions = await _androidMihonMetadata.listInstalled();
+  }
 
   Future<List<ExternalComicPluginCatalogEntry>> loadRepository({
     required ExternalComicPluginFormat format,
@@ -198,6 +219,61 @@ final class ExternalPluginController {
       );
     } on Object {
       _pendingPayloads.remove(plugin.pluginId);
+      await _deleteBestEffort(payload);
+      rethrow;
+    }
+  }
+
+  Future<ExternalPluginInstallPreview> inspectInstalledMihon(
+    InstalledMihonExtension extension,
+  ) async {
+    _requireOpen();
+    final pluginId = 'mihon:${extension.packageName}';
+    final previousPending = _pendingPayloads.remove(pluginId);
+    if (previousPending != null) {
+      await _deleteBestEffort(File(previousPending));
+    }
+    final safeId = base64Url
+        .encode(utf8.encode(pluginId))
+        .replaceAll('=', '');
+    final revision = DateTime.now().toUtc().microsecondsSinceEpoch;
+    final partial = File('${_root.path}/$safeId-$revision.apk.part');
+    final payload = File('${_root.path}/$safeId-$revision.apk');
+    try {
+      await _androidMihonMetadata.copyInstalled(
+        packageName: extension.packageName,
+        destinationPath: partial.path,
+      );
+      await partial.rename(payload.path);
+    } on Object {
+      await _deleteBestEffort(partial);
+      rethrow;
+    }
+    _pendingPayloads[pluginId] = payload.path;
+    final entrypoint = Uri.https(
+      'installed.mihon.invalid',
+      '/${Uri.encodeComponent(extension.packageName)}.apk',
+    );
+    final plugin = ExternalComicPluginCatalogEntry(
+      format: ExternalComicPluginFormat.mihonExtension,
+      pluginId: pluginId,
+      name: extension.displayName,
+      version: extension.versionName,
+      versionCode: extension.versionCode,
+      entrypoint: entrypoint,
+      sources: const <ExternalComicPluginSource>[],
+      description: '设备上已安装的 Mihon 扩展',
+      adult: true,
+    );
+    try {
+      final inspection = await _mihonInspector.inspect(plugin);
+      return ExternalPluginInstallPreview(
+        plugin: plugin,
+        inspection: inspection,
+        repository: Uri.https('installed.mihon.invalid', '/'),
+      );
+    } on Object {
+      _pendingPayloads.remove(pluginId);
       await _deleteBestEffort(payload);
       rethrow;
     }
@@ -674,8 +750,8 @@ String _string(Map<String, Object?> json, String key) {
 
 String? _optionalString(Object? value) => switch (value) {
       null => null,
-      String text when text.trim().isEmpty => null,
-      String text => text,
+      final String text when text.trim().isEmpty => null,
+      final String text => text,
       _ => throw const FormatException('external plugin optional string invalid'),
     };
 

@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.Bundle
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -46,6 +47,8 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "readMihonApkMetadata" -> readMihonApkMetadata(call, result)
+            "listInstalledMihonExtensions" -> listInstalledMihonExtensions(result)
+            "copyInstalledMihonExtension" -> copyInstalledMihonExtension(call, result)
             "activateMihonRuntime",
             "activateVeneraRuntime",
             "invokeExternalRuntime",
@@ -95,6 +98,115 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
     }
 
+    private fun listInstalledMihonExtensions(result: MethodChannel.Result) {
+        runInspection(result) {
+            installedPackages()
+                .asSequence()
+                .filter(::isMihonExtension)
+                .mapNotNull { info ->
+                    runCatching {
+                        val apkPath = requireNotNull(info.applicationInfo?.sourceDir) {
+                            "Installed extension APK path is missing"
+                        }
+                        inspectMihonPackage(info, apkPath) + mapOf(
+                            "displayName" to context.packageManager
+                                .getApplicationLabel(requireNotNull(info.applicationInfo))
+                                .toString()
+                                .ifBlank { info.packageName },
+                            "versionName" to info.versionName
+                                ?.takeIf { it.isNotBlank() }
+                                .orEmpty()
+                                .ifBlank { versionCode(info).toString() },
+                        )
+                    }.getOrNull()
+                }
+                .sortedBy { it["displayName"].toString().lowercase() }
+                .toList()
+        }
+    }
+
+    private fun copyInstalledMihonExtension(
+        call: MethodCall,
+        result: MethodChannel.Result,
+    ) {
+        val packageName = call.argument<String>("packageName")
+        val destinationPath = call.argument<String>("destinationPath")
+        if (packageName.isNullOrBlank() || destinationPath.isNullOrBlank()) {
+            result.error(
+                "invalid-argument",
+                "packageName and destinationPath are required",
+                null,
+            )
+            return
+        }
+        runInspection(result) {
+            val info = installedPackage(packageName)
+            require(isMihonExtension(info)) { "Package is not a Mihon extension" }
+            val source = File(
+                requireNotNull(info.applicationInfo?.sourceDir) {
+                    "Installed extension APK path is missing"
+                },
+            )
+            require(source.isFile) { "Installed extension APK is missing" }
+            val destination = File(destinationPath)
+            val filesRoot = context.filesDir.canonicalFile
+            val canonicalDestination = destination.canonicalFile
+            require(
+                canonicalDestination.path.startsWith(filesRoot.path + File.separator),
+            ) { "Destination must be in application files storage" }
+            require(!canonicalDestination.exists()) { "Destination already exists" }
+            canonicalDestination.parentFile?.mkdirs()
+            try {
+                source.inputStream().use { input ->
+                    canonicalDestination.outputStream().use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        var total = 0L
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            total += count
+                            require(total <= MAX_MIHON_APK_BYTES) {
+                                "Installed extension APK is too large"
+                            }
+                            output.write(buffer, 0, count)
+                        }
+                        output.flush()
+                    }
+                }
+                inspectMihonApk(canonicalDestination.path)
+            } catch (error: Throwable) {
+                canonicalDestination.delete()
+                throw error
+            }
+        }
+    }
+
+    private fun runInspection(
+        result: MethodChannel.Result,
+        operation: () -> Any,
+    ) {
+        val executor = inspector
+        if (executor == null || executor.isShutdown) {
+            result.error("bridge-closed", "plugin metadata bridge is closed", null)
+            return
+        }
+        executor.execute {
+            val response = runCatching(operation)
+            mainHandler.post {
+                response.fold(
+                    onSuccess = result::success,
+                    onFailure = { error ->
+                        result.error(
+                            "apk-metadata-failed",
+                            error.message,
+                            error.javaClass.name,
+                        )
+                    },
+                )
+            }
+        }
+    }
+
     private fun inspectMihonApk(apkPath: String): Map<String, Any> {
         val apk = File(apkPath)
         require(apk.isFile) { "APK file does not exist" }
@@ -106,13 +218,25 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             sourceDir = apkPath
             publicSourceDir = apkPath
         }
+        return inspectMihonPackage(info, apkPath)
+    }
+
+    private fun inspectMihonPackage(
+        info: PackageInfo,
+        apkPath: String,
+    ): Map<String, Any> {
+        require(File(apkPath).isFile) { "APK file does not exist" }
+        val applicationInfo = requireNotNull(info.applicationInfo) {
+            "APK application metadata is missing"
+        }
         val metadata = applicationInfo.metaData
-        val extensionLib = EXTENSION_LIB_KEYS
-            .firstNotNullOfOrNull { key -> metadata?.getString(key)?.trim() }
-            ?.takeIf { it.isNotEmpty() }
+        val extensionLib = normalizeMihonExtensionLib(
+            metadataValue(metadata, EXTENSION_LIB_KEYS),
+            info.versionName,
+        )
             ?: throw IllegalArgumentException("Mihon extension ABI metadata is missing")
         val rawEntryClasses = ENTRY_CLASS_KEYS
-            .firstNotNullOfOrNull { key -> metadata?.getString(key)?.trim() }
+            .firstNotNullOfOrNull { key -> metadata?.get(key)?.toString()?.trim() }
             ?.takeIf { it.isNotEmpty() }
             ?: throw IllegalArgumentException("Mihon extension entry metadata is missing")
         val entryClasses = rawEntryClasses
@@ -138,6 +262,7 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             "packageName" to info.packageName,
             "signerSha256" to sha256(signer.toByteArray()),
             "versionCode" to versionCode(info),
+            "apkPath" to apkPath,
             "extensionLib" to extensionLib,
             "entryClasses" to entryClasses,
         )
@@ -145,12 +270,7 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     @Suppress("DEPRECATION")
     private fun packageInfo(apkPath: String): PackageInfo? {
-        val flags = PackageManager.GET_META_DATA or
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                PackageManager.GET_SIGNING_CERTIFICATES
-            } else {
-                PackageManager.GET_SIGNATURES
-            }
+        val flags = packageInfoFlags()
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.packageManager.getPackageArchiveInfo(
                 apkPath,
@@ -159,6 +279,52 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         } else {
             context.packageManager.getPackageArchiveInfo(apkPath, flags)
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun installedPackage(packageName: String): PackageInfo {
+        val flags = packageInfoFlags() or PackageManager.GET_CONFIGURATIONS
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.packageManager.getPackageInfo(
+                packageName,
+                PackageManager.PackageInfoFlags.of(flags.toLong()),
+            )
+        } else {
+            context.packageManager.getPackageInfo(packageName, flags)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun installedPackages(): List<PackageInfo> {
+        val flags = packageInfoFlags() or PackageManager.GET_CONFIGURATIONS
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.packageManager.getInstalledPackages(
+                PackageManager.PackageInfoFlags.of(flags.toLong()),
+            )
+        } else {
+            context.packageManager.getInstalledPackages(flags)
+        }
+    }
+
+    private fun packageInfoFlags() =
+        PackageManager.GET_META_DATA or
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                PackageManager.GET_SIGNING_CERTIFICATES
+            } else {
+                @Suppress("DEPRECATION")
+                PackageManager.GET_SIGNATURES
+            }
+
+    private fun isMihonExtension(info: PackageInfo): Boolean {
+        val hasFeature = info.reqFeatures.orEmpty().any {
+            it.name == MIHON_EXTENSION_FEATURE
+        }
+        val hasKnownPackagePrefix =
+            info.packageName.startsWith(MIHON_EXTENSION_PACKAGE_PREFIX)
+        val hasEntryMetadata = ENTRY_CLASS_KEYS.any {
+            info.applicationInfo?.metaData?.containsKey(it) == true
+        }
+        return (hasFeature || hasKnownPackagePrefix) && hasEntryMetadata
     }
 
     @Suppress("DEPRECATION")
@@ -191,6 +357,10 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         private const val CHANNEL_NAME = "dev.zic/plugin_host_bridge"
         private const val RUNTIME_CHANNEL_NAME =
             "dev.zic/plugin_host_runtime_bridge"
+        private const val MIHON_EXTENSION_FEATURE = "tachiyomi.extension"
+        private const val MIHON_EXTENSION_PACKAGE_PREFIX =
+            "eu.kanade.tachiyomi.extension."
+        private const val MAX_MIHON_APK_BYTES = 128L * 1024L * 1024L
         private val CLASS_NAME = Regex(
             "[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)+",
         )
@@ -204,4 +374,18 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             "tachiyomi.extension.class",
         )
     }
+}
+
+private fun metadataValue(metadata: Bundle?, keys: List<String>): Any? =
+    keys.firstNotNullOfOrNull { key -> metadata?.get(key) }
+
+internal fun normalizeMihonExtensionLib(
+    metadataValue: Any?,
+    versionName: String?,
+): String? {
+    val declared = metadataValue?.toString()?.trim()
+    if (!declared.isNullOrEmpty()) return declared
+    val match = Regex("""^(\d+)\.(\d+)(?:\.|$)""").find(versionName.orEmpty())
+        ?: return null
+    return "${match.groupValues[1]}.${match.groupValues[2]}"
 }

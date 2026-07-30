@@ -23,4 +23,13 @@ class MihonHostAbiTest {
         assertTrue(requiredMihonHostAbiClasses.contains("androidx.preference.Preference"))
         assertTrue(requiredMihonHostAbiClasses.contains("uy.kohesive.injekt.InjektKt"))
     }
+
+    @Test
+    fun derivesCurrentExtensionAbiFromVersionNameWhenMetadataIsAbsent() {
+        assertEquals("1.6", normalizeMihonExtensionLib(null, "1.6.4"))
+        assertEquals("1.6", normalizeMihonExtensionLib("", "1.6.4"))
+        assertEquals("1.6", normalizeMihonExtensionLib("1.6", "9.9.9"))
+        assertEquals("16", normalizeMihonExtensionLib(16, "9.9.9"))
+        assertEquals(null, normalizeMihonExtensionLib(null, "invalid"))
+    }
 }

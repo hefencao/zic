@@ -61,4 +61,61 @@ void main() {
       throwsFormatException,
     );
   });
+
+  test('maps installed Mihon extensions without loading their code', () async {
+    MethodCall? received;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      received = call;
+      return <Object?>[
+        <String, Object?>{
+          'packageName': 'eu.kanade.tachiyomi.extension.all.example',
+          'displayName': 'Example',
+          'versionName': '1.6.4',
+          'versionCode': 64,
+          'signerSha256': 'aabb',
+          'extensionLib': '1.6',
+          'entryClasses': <String>[
+            'eu.kanade.tachiyomi.extension.all.example.ExtensionGenerated',
+          ],
+        },
+      ];
+    });
+
+    final installed = await const AndroidMihonApkMetadataReader(
+      channel: channel,
+    ).listInstalled();
+
+    expect(received?.method, 'listInstalledMihonExtensions');
+    expect(installed, hasLength(1));
+    expect(
+      installed.single.packageName,
+      'eu.kanade.tachiyomi.extension.all.example',
+    );
+    expect(installed.single.displayName, 'Example');
+    expect(installed.single.versionName, '1.6.4');
+    expect(installed.single.extensionLib, '1.6');
+  });
+
+  test('requests a private copy of an installed Mihon extension', () async {
+    MethodCall? received;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      received = call;
+      return <String, Object?>{
+        'packageName': 'eu.kanade.tachiyomi.extension.all.example',
+      };
+    });
+
+    await const AndroidMihonApkMetadataReader(channel: channel).copyInstalled(
+      packageName: 'eu.kanade.tachiyomi.extension.all.example',
+      destinationPath: '/data/user/0/dev.zic/files/example.apk.part',
+    );
+
+    expect(received?.method, 'copyInstalledMihonExtension');
+    expect(received?.arguments, <String, Object?>{
+      'packageName': 'eu.kanade.tachiyomi.extension.all.example',
+      'destinationPath': '/data/user/0/dev.zic/files/example.apk.part',
+    });
+  });
 }

@@ -124,6 +124,68 @@ final class _ExternalPluginRepositoryScreenState
     }
   }
 
+  Future<void> _installDeviceMihon(InstalledMihonExtension extension) async {
+    final pluginId = 'mihon:${extension.packageName}';
+    if (!_working.add(pluginId)) return;
+    setState(() {});
+    try {
+      final preview =
+          await widget.controller.inspectInstalledMihon(extension);
+      if (!mounted) {
+        await widget.controller.discardPreview(preview);
+        return;
+      }
+      final approved = await showDialog<bool>(
+            context: context,
+            builder: (context) => _TrustDialog(preview: preview),
+          ) ??
+          false;
+      if (!approved) {
+        await widget.controller.discardPreview(preview);
+        return;
+      }
+      await widget.controller.approveAndActivate(preview);
+      await widget.onSourcesChanged();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${extension.displayName} 已启用')),
+      );
+      setState(() {});
+    } on Object catch (error) {
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('无法启用 ${extension.displayName}'),
+          content: SelectableText(error.toString()),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('关闭'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      _working.remove(pluginId);
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _refreshDeviceMihon() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      await widget.controller.refreshDeviceMihonExtensions();
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = error);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final installed = <String>{
@@ -133,6 +195,52 @@ final class _ExternalPluginRepositoryScreenState
       appBar: AppBar(title: Text('$_ecosystem 仓库')),
       body: Column(
         children: <Widget>[
+          if (widget.format == ExternalComicPluginFormat.mihonExtension)
+            ExpansionTile(
+              initiallyExpanded: true,
+              leading: const Icon(Icons.phone_android_outlined),
+              title: Text(
+                '设备上的 Mihon 扩展'
+                '（${widget.controller.deviceMihonExtensions.length}）',
+              ),
+              subtitle: const Text('检测 Mihon 已安装的扩展，确认信任后复制并启用'),
+              trailing: IconButton(
+                tooltip: '重新检测',
+                onPressed: _loading
+                    ? null
+                    : () => unawaited(_refreshDeviceMihon()),
+                icon: const Icon(Icons.refresh),
+              ),
+              children: widget.controller.deviceMihonExtensions.isEmpty
+                  ? const <Widget>[
+                      ListTile(title: Text('未检测到可用的 Mihon 扩展')),
+                    ]
+                  : widget.controller.deviceMihonExtensions.map((extension) {
+                      final pluginId = 'mihon:${extension.packageName}';
+                      final active = installed.contains(pluginId);
+                      final working = _working.contains(pluginId);
+                      return ListTile(
+                        leading: const Icon(Icons.extension_outlined),
+                        title: Text(extension.displayName),
+                        subtitle: Text(
+                          '${extension.packageName}\n'
+                          'v${extension.versionName} · ABI '
+                          '${extension.extensionLib}',
+                        ),
+                        isThreeLine: true,
+                        trailing: working
+                            ? const SizedBox.square(
+                                dimension: 22,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : FilledButton.tonal(
+                                onPressed: () =>
+                                    unawaited(_installDeviceMihon(extension)),
+                                child: Text(active ? '重新导入' : '启用'),
+                              ),
+                      );
+                    }).toList(growable: false),
+            ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: Row(
