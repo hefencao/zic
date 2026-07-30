@@ -21,7 +21,7 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.53）
+## 当前应用主线（0.31.0-dev.54）
 
 - 目标重建回归必须先证明 decode target 实际变化；仅改变容器尺寸但 raster target 不变时，不得把“不重建 codec”判定为产品错误。
 - Mihon/Venera activation wire 必须在隔离进程入口再次严格解析；process-side driver 不得直接信任 host 进程中的对象或未声明字段。
@@ -39,6 +39,8 @@
 - 为 raw runtime channel 增加可选的 request-level cooperative cancellation；timeout 只结束调用者等待，底层 Future 退出前 host permit 不释放。
 - Mihon/Venera activation envelope 传递 exact payload path/length/hash、approved capabilities 和 runtime limits；Android host adapter 统一 activation/invoke/cancel/close。
 - Android native bridge 仅在 `:zic_plugin_runtime` 内加载已验证的 Mihon APK 或执行受限 Venera JavaScript；不得退回主进程 class loading 或无约束脚本执行。
+- 生成 Android host 的依赖仓库配置属于 App runtime classpath 所有者：优先 `dependencyResolutionManagement.repositories`，否则 `allprojects.repositories`。插件子工程局部 repository 不能被当作 App 解析闭环；canonical JitPack 配置必须幂等并兼容 Groovy/Kotlin DSL。
+- 持久插件 manifest 只能恢复 `external_plugins` 私有根下的普通、非链接、格式后缀匹配 payload。Mihon extraction workspace 必须按 activation `driverId` 隔离，关闭时在真实任务排空后才释放 source 和删除目录，Service 启动负责清理进程死亡遗留目录。
 - Mihon/Venera driver 必须复用现有 worker、protocol-v1、session/cancel/limit 所有权。新增生态 API 时只扩展隔离 adapter，不复制 catalog/domain 映射，也不得绕过 payload pin、签名/ABI/source-key 或用户信任。
 
 - 保留 Home/Bookshelf 的 Presentation 拆分，但禁止在 `apps/app/lib` 定义资源缓存、章节下载、页面保活或整本调度算法。

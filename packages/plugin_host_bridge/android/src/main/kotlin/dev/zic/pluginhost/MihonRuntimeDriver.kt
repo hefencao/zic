@@ -2,6 +2,7 @@ package dev.zic.pluginhost
 
 import android.content.Context
 import android.os.Build
+import android.os.Looper
 import dalvik.system.DexClassLoader
 import org.json.JSONArray
 import org.json.JSONObject
@@ -12,12 +13,14 @@ import java.net.URL
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import java.security.MessageDigest
-import java.util.Collections
+import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Future
+import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.zip.ZipFile
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.CoroutineContext
@@ -31,19 +34,27 @@ import kotlin.coroutines.EmptyCoroutineContext
  * Reader/download/cache ownership stays in Dart.
  */
 internal class MihonRuntimeDriver private constructor(
-    private val context: Context,
     override val driverId: String,
     override val runtimeId: String,
     private val executor: ExecutorService,
-    private val sourceById: Map<String, Any>,
+    private val sourceById: ConcurrentHashMap<String, Any>,
+    private val runtimeRoot: File,
     private val maxResponseBytes: Int,
     override val sources: List<Map<String, Any?>>,
 ) : NativeExternalPluginDriver {
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
     private val calls = ConcurrentHashMap<String, Any>()
     private val tasks = ConcurrentHashMap<String, Future<*>>()
+    private val completions = ConcurrentHashMap<String, CountDownLatch>()
+    private val closed = AtomicBoolean(false)
+    private val sourcesClosed = AtomicBoolean(false)
+    private val runtimeDeleted = AtomicBoolean(false)
 
     override fun invoke(request: Map<String, Any?>, result: NativeDriverResult) {
+        if (closed.get()) {
+            result.error("runtime-closing", "Mihon runtime is closing")
+            return
+        }
         val requestId = request.requireString("requestId")
         val sourceId = request.requireString("externalSourceId")
         val source = sourceById[sourceId]
@@ -51,7 +62,13 @@ internal class MihonRuntimeDriver private constructor(
             result.error("source-missing", "Mihon source is not active")
             return
         }
-        val task = executor.submit {
+        val completion = CountDownLatch(1)
+        if (completions.putIfAbsent(requestId, completion) != null) {
+            result.error("runtime-request-duplicate", "Mihon request id is already active")
+            return
+        }
+        val responded = AtomicBoolean(false)
+        val task = object : FutureTask<Unit>(Callable {
             try {
                 ensureNotCancelled(requestId)
                 val arguments = request["arguments"].stringMap("runtime request arguments")
@@ -63,25 +80,52 @@ internal class MihonRuntimeDriver private constructor(
                     else -> error("unsupported Mihon runtime operation")
                 }
                 ensureNotCancelled(requestId)
-                result.success(payload)
+                if (responded.compareAndSet(false, true)) result.success(payload)
             } catch (error: Throwable) {
                 val cause = error.rootCause()
                 val cancelledRequest = cancelled.contains(requestId) || cause is InterruptedException
-                result.error(
-                    if (cancelledRequest) "runtime-request-cancelled" else "mihon-operation-failed",
-                    if (cancelledRequest) "Mihon request was cancelled" else cause.sanitizedMessage(),
-                    retryable = !cancelledRequest && cause.isNetworkFailure(),
-                )
-            } finally {
+                if (responded.compareAndSet(false, true)) {
+                    result.error(
+                        if (cancelledRequest) "runtime-request-cancelled" else "mihon-operation-failed",
+                        if (cancelledRequest) "Mihon request was cancelled" else cause.sanitizedMessage(),
+                        retryable = !cancelledRequest && cause.isNetworkFailure(),
+                    )
+                }
+            }
+        }) {
+            override fun done() {
+                if (isCancelled && responded.compareAndSet(false, true)) {
+                    result.error("runtime-request-cancelled", "Mihon request was cancelled")
+                }
                 calls.remove(requestId)
-                tasks.remove(requestId)
+                tasks.remove(requestId, this)
                 cancelled.remove(requestId)
+                completions.remove(requestId, completion)
+                completion.countDown()
+                finalizeCloseIfIdle()
             }
         }
         tasks[requestId] = task
+        if (closed.get()) {
+            task.cancel(false)
+            return
+        }
+        try {
+            executor.execute(task)
+        } catch (error: Throwable) {
+            tasks.remove(requestId, task)
+            completions.remove(requestId, completion)
+            cancelled.remove(requestId)
+            completion.countDown()
+            if (responded.compareAndSet(false, true)) {
+                result.error("runtime-closing", error.sanitizedMessage())
+            }
+            finalizeCloseIfIdle()
+        }
     }
 
     override fun cancel(requestId: String) {
+        if (!completions.containsKey(requestId)) return
         cancelled.add(requestId)
         when (val call = calls.remove(requestId)) {
             is HttpURLConnection -> call.disconnect()
@@ -92,9 +136,29 @@ internal class MihonRuntimeDriver private constructor(
     }
 
     override fun close() {
+        if (!closed.compareAndSet(false, true)) return
         tasks.keys.toList().forEach(::cancel)
-        sourceById.values.distinctBy { System.identityHashCode(it) }.forEach { source ->
-            runCatching { source.invokeOptional("close") }
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+            completions.values.toList().forEach { completion ->
+                val remaining = deadline - System.nanoTime()
+                if (remaining <= 0) return@forEach
+                runCatching { completion.await(remaining, TimeUnit.NANOSECONDS) }
+            }
+        }
+        finalizeCloseIfIdle()
+    }
+
+    private fun finalizeCloseIfIdle() {
+        if (!closed.get() || completions.isNotEmpty()) return
+        if (sourcesClosed.compareAndSet(false, true)) {
+            sourceById.values.distinctBy { System.identityHashCode(it) }.forEach { source ->
+                runCatching { source.invokeOptional("close") }
+            }
+            sourceById.clear()
+        }
+        if (runtimeDeleted.compareAndSet(false, true)) {
+            runtimeRoot.deleteRecursively()
         }
     }
 
@@ -396,63 +460,75 @@ internal class MihonRuntimeDriver private constructor(
             verifyPayload(payload, payloadLength, payloadSha256)
             val pluginId = activation.requireString("pluginId")
             val version = activation.requireString("pluginVersion")
-            val runtimeRoot = File(context.codeCacheDir, "mihon/${safePath(pluginId)}/$version").apply {
-                deleteRecursively()
-                mkdirs()
-            }
-            val apk = File(runtimeRoot, "extension.apk")
-            payload.copyTo(apk, overwrite = true)
-            verifyPayload(apk, payloadLength, payloadSha256)
-            val nativeDir = extractNativeLibraries(apk, File(runtimeRoot, "lib"))
-            val optimized = File(runtimeRoot, "dex").apply { mkdirs() }
-            val loader = DexClassLoader(
-                apk.path,
-                optimized.path,
-                nativeDir?.path,
-                context.classLoader,
-            )
-            val limits = activation["limits"].stringMap("runtime limits")
-            val maxResponseBytes = limits.requireLong("maxResponseBytes")
-                .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-            val entries = activation["entryClasses"].asStringList("entryClasses")
-            require(entries.isNotEmpty()) { "Mihon extension declares no entry classes" }
-            val discovered = LinkedHashMap<String, Any>()
-            entries.forEach { className ->
-                val entry = instantiate(loader.loadClass(className), context)
-                val candidates = when {
-                    entry.hasMethod("createSources", 0) ->
-                        entry.invokeCompatible("createSources", emptyList()).asObjectList()
-                    else -> listOf(entry)
-                }
-                candidates.forEach { source ->
-                    val id = source.readValue("id", "getId")?.toString()
-                        ?: error("Mihon source id is missing")
-                    discovered[id] = source
-                }
-            }
-            require(discovered.isNotEmpty()) { "Mihon extension exposed no Source entries" }
-            val descriptors = discovered.map { (id, source) ->
-                val baseUrl = source.readString("baseUrl", "getBaseUrl")
-                    ?: runCatching { source.invokeOptional("getHomeUrl") as? String }.getOrNull()
-                    ?: "https://invalid.local/"
-                mapOf(
-                    "externalId" to id,
-                    "name" to (source.readString("name", "getName") ?: "Mihon source"),
-                    "language" to (source.readString("lang", "getLang") ?: "und"),
-                    "website" to normalizeWebsite(baseUrl),
-                    "supportsSearch" to true,
-                    "contentRatings" to listOf("safe", "suggestive"),
-                )
-            }
-            return MihonRuntimeDriver(
-                context = context,
+            val runtimeRoot = mihonRuntimeRoot(
+                codeCacheDir = context.codeCacheDir,
+                pluginId = pluginId,
+                version = version,
                 driverId = driverId,
-                runtimeId = "mihon:$pluginId:$version",
-                executor = executor,
-                sourceById = Collections.unmodifiableMap(discovered),
-                maxResponseBytes = maxResponseBytes,
-                sources = descriptors,
-            )
+            ).apply {
+                deleteRecursively()
+                check(mkdirs()) { "Mihon runtime directory could not be created" }
+            }
+            try {
+                val apk = File(runtimeRoot, "extension.apk")
+                payload.copyTo(apk, overwrite = true)
+                verifyPayload(apk, payloadLength, payloadSha256)
+                val nativeDir = extractNativeLibraries(apk, File(runtimeRoot, "lib"))
+                val optimized = File(runtimeRoot, "dex").apply {
+                    check(mkdirs()) { "Mihon dex directory could not be created" }
+                }
+                val loader = DexClassLoader(
+                    apk.path,
+                    optimized.path,
+                    nativeDir?.path,
+                    context.classLoader,
+                )
+                val limits = activation["limits"].stringMap("runtime limits")
+                val maxResponseBytes = limits.requireLong("maxResponseBytes")
+                    .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                val entries = activation["entryClasses"].asStringList("entryClasses")
+                require(entries.isNotEmpty()) { "Mihon extension declares no entry classes" }
+                val discovered = LinkedHashMap<String, Any>()
+                entries.forEach { className ->
+                    val entry = instantiate(loader.loadClass(className), context)
+                    val candidates = when {
+                        entry.hasMethod("createSources", 0) ->
+                            entry.invokeCompatible("createSources", emptyList()).asObjectList()
+                        else -> listOf(entry)
+                    }
+                    candidates.forEach { source ->
+                        val id = source.readValue("id", "getId")?.toString()
+                            ?: error("Mihon source id is missing")
+                        discovered[id] = source
+                    }
+                }
+                require(discovered.isNotEmpty()) { "Mihon extension exposed no Source entries" }
+                val descriptors = discovered.map { (id, source) ->
+                    val baseUrl = source.readString("baseUrl", "getBaseUrl")
+                        ?: runCatching { source.invokeOptional("getHomeUrl") as? String }.getOrNull()
+                        ?: "https://invalid.local/"
+                    mapOf(
+                        "externalId" to id,
+                        "name" to (source.readString("name", "getName") ?: "Mihon source"),
+                        "language" to (source.readString("lang", "getLang") ?: "und"),
+                        "website" to normalizeWebsite(baseUrl),
+                        "supportsSearch" to true,
+                        "contentRatings" to listOf("safe", "suggestive"),
+                    )
+                }
+                return MihonRuntimeDriver(
+                    driverId = driverId,
+                    runtimeId = "mihon:$pluginId:$version",
+                    executor = executor,
+                    sourceById = ConcurrentHashMap(discovered),
+                    runtimeRoot = runtimeRoot,
+                    maxResponseBytes = maxResponseBytes,
+                    sources = descriptors,
+                )
+            } catch (error: Throwable) {
+                runtimeRoot.deleteRecursively()
+                throw error
+            }
         }
     }
 }
@@ -768,11 +844,24 @@ private fun normalizeWebsite(value: String): String = runCatching {
     if (uri.scheme == "http" || uri.scheme == "https") value else "https://invalid.local/"
 }.getOrDefault("https://invalid.local/")
 
+internal fun cleanupStaleMihonRuntimeRoots(codeCacheDir: File) {
+    File(codeCacheDir, "mihon").deleteRecursively()
+}
+
+internal fun mihonRuntimeRoot(
+    codeCacheDir: File,
+    pluginId: String,
+    version: String,
+    driverId: String,
+): File = File(
+    codeCacheDir,
+    "mihon/${safePath(pluginId)}/${safePath(version)}/${safePath(driverId)}",
+)
+
 private fun safePath(value: String): String =
-    android.util.Base64.encodeToString(
-        value.toByteArray(Charsets.UTF_8),
-        android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING,
-    )
+    MessageDigest.getInstance("SHA-256")
+        .digest(value.toByteArray(Charsets.UTF_8))
+        .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
 
 private fun Throwable.rootCause(): Throwable {
     var current = this

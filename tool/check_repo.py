@@ -1404,10 +1404,69 @@ def check_compile_regressions() -> None:
     for required in (
         'android.permission.INTERNET',
         'AndroidManifest.xml',
+        'configure_android_dependency_repositories',
+        'dependencyResolutionManagement',
+        'allprojects',
+        'https://jitpack.io',
         'already configured',
     ):
         if required not in configure_text:
             fail(f'Android host configuration is incomplete: {required}')
+    plugin_host_android = (
+        ROOT / 'packages/plugin_host_bridge/android/build.gradle'
+    ).read_text(encoding='utf-8')
+    if 'maven { url "https://jitpack.io" }' not in plugin_host_android:
+        fail('plugin host standalone Android build must use canonical JitPack')
+    if 'https://www.jitpack.io' in plugin_host_android:
+        fail('plugin host Android build must not use the JitPack redirect host')
+    for dependency in (
+        'com.github.keiyoushi:extensions-lib:6e0c96cea8',
+        'com.github.null2264.injekt:injekt-core:4135455a2a',
+        'com.github.zhanghai.quickjs-java:quickjs-android:547f5b1597',
+    ):
+        if dependency not in plugin_host_android:
+            fail(f'plugin host Mihon runtime dependency is missing: {dependency}')
+
+    external_plugin_controller = (
+        ROOT / 'packages/plugin_host_bridge/lib/src/external_plugin_controller.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'FileSystemEntity.type(path, followLinks: false)',
+        'FileSystemEntityType.file',
+        'resolveSymbolicLinks()',
+        '_isOwnedPayloadFile(record, canonicalRoot)',
+    ):
+        if required not in external_plugin_controller:
+            fail(f'external plugin manifest restore is not path-confined: {required}')
+    controller_manifest_test = (
+        ROOT
+        / 'packages/plugin_host_bridge/test/external_plugin_controller_manifest_test.dart'
+    )
+    if not controller_manifest_test.is_file():
+        fail('external plugin manifest restore regression is missing')
+
+    mihon_runtime = (
+        ROOT
+        / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'FutureTask<Unit>',
+        'override fun done()',
+        'mihonRuntimeRoot(',
+        'driverId = driverId',
+        'cleanupStaleMihonRuntimeRoots',
+        'finalizeCloseIfIdle()',
+        'if (!completions.containsKey(requestId)) return',
+    ):
+        if required not in mihon_runtime:
+            fail(f'Mihon runtime workspace lifecycle is incomplete: {required}')
+    mihon_workspace_test = (
+        ROOT
+        / 'packages/plugin_host_bridge/android/src/test/kotlin/dev/zic/pluginhost/MihonRuntimeWorkspaceTest.kt'
+    )
+    if not mihon_workspace_test.is_file():
+        fail('Mihon runtime workspace regression is missing')
+
     for script_name in ('bootstrap_platforms.sh', 'build_android.sh', 'run_android.sh'):
         script = (ROOT / 'tool' / script_name).read_text(encoding='utf-8')
         if 'configure_platforms.py' not in script:

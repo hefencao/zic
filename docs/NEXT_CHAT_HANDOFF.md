@@ -2,7 +2,7 @@
 
 ## Sole baseline
 
-Continue only from `zic_v0.31.0-dev.53_mihon-venera-runtime-entry.zip`.
+Continue only from `zic_v0.31.0-dev.54_android-dependency-closure-runtime-cleanup.zip`.
 Do not merge or copy files from an earlier zic archive.
 
 ## Current ownership and completed work
@@ -18,6 +18,9 @@ Do not merge or copy files from an earlier zic archive.
 - The product source-management screen owns repository discovery and explicit trust/install/update/remove UX through `ExternalPluginController`; external sources remain ordinary `BrowsableComicSource` adapters.
 - Mihon repository discovery accepts the current `index.pb`/`repo.json` entry, resolves the full sibling `index.json`, and parses both current `extensionList.extensions` v2 metadata and the legacy array form; do not restore the obsolete `index.min.json` default.
 - Venera compatibility must preserve current source return shapes, including `Map`-backed comic/chapter collections, and the official `compute` contract where the evaluated function receives one arguments array.
+- Generated Android hosts must expose canonical `https://jitpack.io` from the repository owner that resolves App runtime classpaths; `configure_platforms.py` supports both centralized settings repositories and legacy `allprojects` repositories.
+- Manifest restoration accepts only regular format-matching payloads within `external_plugins`; previews, directories, links and paths outside that root are not trusted.
+- Mihon code-cache workspaces are activation-specific through `driverId`, deleted after real request drain, and stale roots are cleared when the dedicated Service starts.
 
 ## Validation commands
 
@@ -31,8 +34,8 @@ bash ./tool/check_native_header.sh
 flutter pub get
 cd apps/app && flutter test test/local_image_preview_test.dart test/reader_artifact_cold_open_test.dart
 cd ../../packages/plugin_host && dart test test/runtime_activation_test.dart test/runtime_service_test.dart test/runtime_worker_test.dart test/runtime_executors_test.dart
-cd ../plugin_host_bridge && flutter test test/method_channel_runtime_backends_test.dart test/runtime_service_handler_test.dart test/runtime_service_entrypoint_test.dart
-cd android && gradle testDebugUnitTest
+cd ../plugin_host_bridge && flutter test test/external_plugin_controller_manifest_test.dart test/method_channel_runtime_backends_test.dart test/runtime_service_handler_test.dart test/runtime_service_entrypoint_test.dart
+cd apps/app/android && ./gradlew :plugin_host_bridge:testDebugUnitTest --tests dev.zic.pluginhost.MihonRuntimeWorkspaceTest
 cd ../../..
 bash ./tool/test_dart.sh
 bash ./tool/test_flutter.sh
@@ -45,6 +48,6 @@ bash ./tool/build_android.sh release
 ## Next mainline work
 
 1. Run Flutter/Dart and Android Gradle builds in the local Android toolchain, then exercise one current Keiyoushi 1.6 extension and one official Venera 1.6 source through browse/detail/chapter/resource.
-2. Add Android instrumentation coverage for plugin install, process kill, explicit reactivation, WebView teardown and Mihon class-loader/native-library cleanup.
+2. Add Android instrumentation coverage for plugin install, process kill, explicit reactivation and WebView teardown; JVM coverage now protects Mihon workspace uniqueness and stale-root cleanup, but device verification must still prove class-loader/native-library release.
 3. Capture incompatible real-world sources as fixtures before expanding API compatibility; never silently return empty catalog data for unsupported ABI or bridge functions.
 4. Preserve the existing Home startup stages, Reader demand/artifact ownership, cache coordinator and download session boundaries.

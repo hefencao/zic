@@ -35,6 +35,10 @@ internal class NativeExternalPluginDriverHost(
     private val drivers = ConcurrentHashMap<String, NativeExternalPluginDriver>()
     @Volatile private var closed = false
 
+    init {
+        cleanupStaleMihonRuntimeRoots(context.codeCacheDir)
+    }
+
     fun handles(method: String): Boolean = method in METHODS
 
     fun handle(call: MethodCall, result: MethodChannel.Result) {

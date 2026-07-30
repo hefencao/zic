@@ -17,6 +17,7 @@ decode/upload registry、frame holder、viewport 播放门控、帧字节预算�
 `0.31.0-dev.51` 补齐 Android 专用 runtime service 的实际启动与跨进程传输：非导出 Service 在 `:zic_plugin_runtime` 进程创建不自动注册插件的 FlutterEngine，执行保留的第二 Dart 入口并挂接同一 service endpoint。主进程通过一次性 correlation request 绑定服务；服务死亡只失败当前请求，不重放。小消息以内联 Binder envelope 传递，大型二进制响应通过应用私有原子 packet 文件回传，避免 base64 与 Binder transaction 上限。服务目前仍没有 Mihon/Venera driver，因此 activation 在专用进程内明确 fail-closed。
 `0.31.0-dev.52` 进一步关闭真实 service-death 和大响应完整性边界：每次显式绑定拥有独立 generation，并通过 Binder death recipient 观察进程死亡；旧回调不能拆除后来建立的连接，绑定阶段超时也不会永久阻塞下一次显式 activation。packet 文件现在携带 SHA-256，host 在一次读取中同时验证 canonical root、长度和摘要，消费或校验失败后均删除文件。Home trace 与媒体/Reader 所有权保持不变。
 `0.31.0-dev.53` 在该边界内接通真实 Mihon/Venera 运行时和漫画源管理入口：Mihon 从已验证 APK 副本发现并调用 1.6/旧版 Source API，并解析当前仓库 `extensionList.extensions` v2 索引；Venera 在受限 WebView 中实现 1.6 网络、Cookie、存储、转换、HTML、数组/对象/`Map` 数据形态与图像处理桥。安装、信任、更新、回滚、移除和重启恢复统一由 plugin host 管理，外部源仍只以普通 `BrowsableComicSource` 进入现有缓存、下载与 Reader 管线。
+`0.31.0-dev.54` 修复外部插件 manifest 恢复的 Dart 编译阻断，并把 JitPack 配置提升到真正解析 App runtime classpath 的生成宿主仓库所有者；Groovy/Kotlin DSL 与旧 `www.jitpack.io` 地址均被幂等归一化。Mihon extraction 改为 activation 独立 workspace，请求关闭在真实任务排空后再释放 source 和代码缓存，专用 Service 启动时清理上次进程死亡遗留目录。
 
 ```text
 ReaderView

@@ -323,9 +323,10 @@ final class ExternalPluginController {
       if (records is! List<Object?>) {
         throw const FormatException('external plugin records invalid');
       }
+      final canonicalRoot = await _root.resolveSymbolicLinks();
       for (final raw in records) {
         final record = _recordFromJson(raw);
-        if (await File(record.payloadPath).exists()) {
+        if (await _isOwnedPayloadFile(record, canonicalRoot)) {
           _installed[record.plugin.pluginId] = record;
         }
       }
@@ -683,6 +684,31 @@ List<String> _stringList(Object? value) {
     throw const FormatException('external plugin string list invalid');
   }
   return List<String>.unmodifiable(value.cast<String>());
+}
+
+Future<bool> _isOwnedPayloadFile(
+  InstalledExternalPlugin record,
+  String canonicalRoot,
+) async {
+  try {
+    final path = record.payloadPath;
+    final expectedSuffix = switch (record.plugin.format) {
+      ExternalComicPluginFormat.mihonExtension => '.apk',
+      ExternalComicPluginFormat.veneraJavaScript => '.js',
+    };
+    if (!path.endsWith(expectedSuffix)) return false;
+    if (await FileSystemEntity.type(path, followLinks: false) !=
+        FileSystemEntityType.file) {
+      return false;
+    }
+    final canonicalPayload = await File(path).resolveSymbolicLinks();
+    final rootPrefix = canonicalRoot.endsWith(Platform.pathSeparator)
+        ? canonicalRoot
+        : '$canonicalRoot${Platform.pathSeparator}';
+    return canonicalPayload.startsWith(rootPrefix);
+  } on FileSystemException {
+    return false;
+  }
 }
 
 Future<void> _deleteBestEffort(File file) async {
