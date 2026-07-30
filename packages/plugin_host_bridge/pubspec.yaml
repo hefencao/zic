@@ -1,5 +1,5 @@
 name: plugin_host_bridge
-description: Android metadata and future isolated runtime bridges for external comic plugins.
+description: Android metadata, dedicated-process bootstrap, and runtime transport for external comic plugins.
 version: 0.31.0
 publish_to: none
 resolution: workspace

@@ -1,1 +1,10 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <service
+            android:name="dev.zic.pluginhost.ExternalPluginRuntimeService"
+            android:enabled="true"
+            android:exported="false"
+            android:process=":zic_plugin_runtime"
+            android:stopWithTask="true" />
+    </application>
+</manifest>

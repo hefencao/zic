@@ -1,3 +1,12 @@
+## 0.31.0-dev.51 — Android dedicated runtime service bootstrap and Binder-safe transport
+
+- Preserve the confirmed `runtime_service.dart` import fix and continue from the dev.50 process-generation endpoint without reopening that compile issue.
+- Add a non-exported Android service in the `:zic_plugin_runtime` process. It starts a FlutterEngine with automatic plugin registration disabled and executes the retained `zicExternalPluginRuntimeServiceMain` secondary Dart entrypoint.
+- Add a Dart bootstrap that attaches `AndroidExternalPluginRuntimeServiceHandler`, announces the new process generation, and remains fail-closed with no Mihon/Venera driver installed. Kotlin still does not own payload verification, session routing, cancellation or shutdown policy.
+- Replace the main-process native fail-closed stub with a lazy bound-service client. Every activation/invoke/cancel/close request is sent once with a correlation identity; service death fails the outstanding request and never replays or transparently reactivates it.
+- Add Binder-safe wire framing. Requests are capped below Binder's transaction limit; large binary responses spill to atomic app-private packet files and are decoded/deleted by the host process, avoiding base64 and oversized Binder transactions. Stale `.part`/`.packet` files are cleared on service start/destroy, and unclaimed large responses have a bounded retention timer.
+- Add bootstrap/manifest/entrypoint regressions and ADR 0035. Concrete Mihon `Source`/`SourceFactory` loading and Venera JavaScript evaluation remain unavailable drivers inside the dedicated process.
+
 ## 0.31.0-dev.50 — compile closure and process-generation runtime service ownership
 
 - Close report-32 compile blockers in product and test dependencies: stream SHA-256 now uses a real `Sink<Digest>`, runtime activation imports the handshake boundary explicitly, and affected tests import `dart:async`/domain `Failure` from their owning libraries.

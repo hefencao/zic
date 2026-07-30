@@ -20,12 +20,14 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private lateinit var runtimeChannel: MethodChannel
     private val mainHandler = Handler(Looper.getMainLooper())
     private var inspector: ExecutorService? = null
+    private var runtimeServiceClient: PluginRuntimeServiceClient? = null
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         context = binding.applicationContext
         inspector = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "zic-mihon-apk-inspector").apply { isDaemon = true }
         }
+        runtimeServiceClient = PluginRuntimeServiceClient(context)
         channel = MethodChannel(binding.binaryMessenger, CHANNEL_NAME)
         channel.setMethodCallHandler(this)
         runtimeChannel = MethodChannel(binding.binaryMessenger, RUNTIME_CHANNEL_NAME)
@@ -37,24 +39,30 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         runtimeChannel.setMethodCallHandler(null)
         inspector?.shutdownNow()
         inspector = null
+        runtimeServiceClient?.shutdown()
+        runtimeServiceClient = null
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "readMihonApkMetadata" -> readMihonApkMetadata(call, result)
             "activateMihonRuntime",
-            "activateVeneraRuntime" -> result.error(
-                "runtime-backend-unavailable",
-                "The isolated plugin runtime service is not installed",
-                null,
-            )
+            "activateVeneraRuntime",
             "invokeExternalRuntime",
             "cancelExternalRuntime",
-            "closeExternalRuntime" -> result.error(
-                "runtime-session-missing",
-                "No isolated plugin runtime session is active",
-                null,
-            )
+            "closeExternalRuntime",
+            "closeExternalRuntimeProcess" -> {
+                val client = runtimeServiceClient
+                if (client == null) {
+                    result.error(
+                        "bridge-closed",
+                        "plugin runtime bridge is closed",
+                        null,
+                    )
+                } else {
+                    client.invoke(call, result)
+                }
+            }
             else -> result.notImplemented()
         }
     }

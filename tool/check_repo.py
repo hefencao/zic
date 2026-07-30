@@ -2309,11 +2309,12 @@ def check_current_iteration() -> None:
 
     for required in (
         'RUNTIME_CHANNEL_NAME',
-        'runtime-backend-unavailable',
-        'runtime-session-missing',
+        'PluginRuntimeServiceClient(context)',
+        'client.invoke(call, result)',
+        'closeExternalRuntimeProcess',
     ):
         if required not in bridge:
-            fail(f'dev.47 Android runtime bridge is incomplete: {required}')
+            fail(f'dev.51 Android runtime bridge is incomplete: {required}')
 
     image_player = (ROOT / 'apps/app/lib/webp_demo.dart').read_text(
         encoding='utf-8'
@@ -2436,6 +2437,82 @@ def check_current_iteration() -> None:
     ):
         if required not in runtime_service_handler_test:
             fail(f'dev.50 runtime service handler regression is incomplete: {required}')
+
+
+    runtime_entrypoint = (
+        ROOT / 'packages/plugin_host_bridge/lib/runtime_service_entrypoint.dart'
+    ).read_text(encoding='utf-8')
+    runtime_entrypoint_test = (
+        ROOT / 'packages/plugin_host_bridge/test/runtime_service_entrypoint_test.dart'
+    ).read_text(encoding='utf-8')
+    runtime_android_service = (
+        ROOT / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/ExternalPluginRuntimeService.kt'
+    ).read_text(encoding='utf-8')
+    runtime_android_client = (
+        ROOT / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/PluginRuntimeServiceClient.kt'
+    ).read_text(encoding='utf-8')
+    runtime_wire = (
+        ROOT / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/RuntimeServiceWire.kt'
+    ).read_text(encoding='utf-8')
+    runtime_manifest = (
+        ROOT / 'packages/plugin_host_bridge/android/src/main/AndroidManifest.xml'
+    ).read_text(encoding='utf-8')
+    app_main = (ROOT / 'apps/app/lib/main.dart').read_text(encoding='utf-8')
+    for required in (
+        'final class AndroidExternalPluginRuntimeServiceBootstrap',
+        'zicExternalPluginRuntimeServiceMain',
+        "'runtimeServiceReady'",
+        'const <ExternalPluginRuntimeDriverFactory>[]',
+    ):
+        if required not in runtime_entrypoint:
+            fail(f'dev.51 Dart runtime service bootstrap is incomplete: {required}')
+    for required in (
+        'dedicated runtime bootstrap attaches and announces its generation',
+        "'driver-unavailable'",
+    ):
+        if required not in runtime_entrypoint_test:
+            fail(f'dev.51 runtime service bootstrap regression is incomplete: {required}')
+    for required in (
+        'class ExternalPluginRuntimeService : Service()',
+        'FlutterEngine(applicationContext, null, false)',
+        'DartExecutor.DartEntrypoint',
+        'runtimeServiceReady',
+        'MAX_QUEUED_REQUESTS',
+        'closeExternalRuntimeProcess',
+    ):
+        if required not in runtime_android_service:
+            fail(f'dev.51 Android dedicated runtime service is incomplete: {required}')
+    for required in (
+        'class PluginRuntimeServiceClient',
+        'Context.BIND_AUTO_CREATE',
+        'runtime-service-timeout',
+        'failAll(',
+        'isolated plugin runtime service disconnected',
+    ):
+        if required not in runtime_android_client:
+            fail(f'dev.51 Android runtime service client is incomplete: {required}')
+    for required in (
+        'StandardMessageCodec.INSTANCE',
+        'INLINE_RESPONSE_BYTES',
+        'zic-plugin-runtime-ipc',
+        'MAX_RESPONSE_BYTES',
+    ):
+        if required not in runtime_wire:
+            fail(f'dev.51 Binder-safe runtime wire is incomplete: {required}')
+    for required in (
+        'android:exported="false"',
+        'android:process=":zic_plugin_runtime"',
+        'ExternalPluginRuntimeService',
+    ):
+        if required not in runtime_manifest:
+            fail(f'dev.51 runtime service manifest is incomplete: {required}')
+    for required in (
+        'package:plugin_host_bridge/runtime_service_entrypoint.dart',
+        "@pragma('vm:entry-point')",
+        'zicExternalPluginRuntimeServiceMain',
+    ):
+        if required not in app_main:
+            fail(f'dev.51 app runtime entrypoint anchor is incomplete: {required}')
 
     for required in (
         'Uint8List _largeCanvasWebp()',

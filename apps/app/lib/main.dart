@@ -5,12 +5,18 @@ import 'package:downloads/downloads.dart';
 import 'package:downloads_bridge/downloads_bridge.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:plugin_host_bridge/runtime_service_entrypoint.dart'
+    as plugin_runtime_service;
 import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'demo_home.dart';
 import 'webp_demo.dart';
+
+@pragma('vm:entry-point')
+Future<void> zicExternalPluginRuntimeServiceMain() =>
+    plugin_runtime_service.zicExternalPluginRuntimeServiceMain();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

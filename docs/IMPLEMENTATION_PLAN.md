@@ -21,13 +21,15 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.50）
+## 当前应用主线（0.31.0-dev.51）
 
 - 目标重建回归必须先证明 decode target 实际变化；仅改变容器尺寸但 raster target 不变时，不得把“不重建 codec”判定为产品错误。
 - Mihon/Venera activation wire 必须在隔离进程入口再次严格解析；process-side driver 不得直接信任 host 进程中的对象或未声明字段。
 - 批准 payload 必须在隔离进程内按 length/SHA-256 流式重验并原子提升为 process-private 文件，driver 只能打开该副本；session 关闭后由 process host 删除。
 - runtime process host 必须拥有 session registry、activation 串行化、invoke/cancel/close 路由和 joinable shutdown。进程死亡/重启后不得自动重放中断的 catalog 请求。
 - dedicated Android runtime service 只允许转发 `ExternalPluginRuntimeServiceMethods` 的原始 wire message；activation、payload staging、session registry、取消和 shutdown 必须由 Dart service endpoint/process host 统一拥有，不得在 Kotlin 重复实现。
+- Android runtime Service 必须 `exported=false` 并运行在 `:zic_plugin_runtime`。FlutterEngine 禁止自动 plugin registration，只执行保留的第二 Dart entrypoint；默认无 driver 时必须在专用进程返回 `driver-unavailable`。
+- Host/Service 跨进程调用不得依赖 Binder 携带大型页面字节。请求必须保持小型且有界；大响应写入应用私有原子 packet，host 校验 root/length 后读取并删除。service death 只失败当前调用，不自动重发、重激活或复用旧 generation。
 - 每个 runtime service process 必须生成新的 `processId`。invoke/cancel/close 同时校验 process/session identity；进程重启后旧 generation 必须失败，禁止透明重激活或请求重放。
 - 普通本地静态图片的文件路由必须是可独立验证的纯映射；zero-Dart-copy 测试不得启动宿主平台 codec 或依赖测试 runner 的图片流收尾。
 - 受控 GIF/WebP 状态机只依赖 `FlutterAnimatedCodec` 契约。生产 adapter 使用 `ui.instantiateImageCodec`，测试 adapter 必须确定性返回帧；不得让不可取消的 engine Future 成为状态机单元测试前提。

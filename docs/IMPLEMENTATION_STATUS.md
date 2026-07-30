@@ -1,3 +1,12 @@
+## 0.31.0-dev.51：Android 专用 runtime service 启动与 Binder-safe transport
+
+- 保留用户已确认可编译的 `ExternalComicPluginFormat` import 修复，不再回退或重复修改该问题。
+- `plugin_host_bridge` 在 Android manifest 中声明不可导出的 `:zic_plugin_runtime` Service；Service 创建关闭自动插件注册的 FlutterEngine，并执行 App 主库中保留的第二 Dart entrypoint。
+- 第二 entrypoint 只装配 `ExternalPluginRuntimeServiceEndpoint` 与 MethodChannel handler。默认 driver 集为空，因此 Mihon/Venera activation 在专用进程中返回 `driver-unavailable`，不会回落到主进程执行。
+- 主进程 plugin bridge 使用 lazy bound-service client 转发 activate/invoke/cancel/close。每个请求只有一个 correlation identity；Binder/service 死亡会失败所有活动请求，后续请求必须重新绑定并显式 activation，不自动重放。
+- Binder request 限制为 512 KiB。大于内联阈值的 response 使用应用私有、原子提升的 packet 文件传递，host 校验目录与长度后读取并删除；二进制资源不转 base64。服务启动/销毁会清理专用 `.part`/`.packet`，未领取的大响应也有有界保留时间。
+- Home trace、图片 codec、Reader artifact 和缓存所有权保持不变。Mihon class-loader driver 与 Venera JavaScript sandbox 仍未实现。
+
 ## 0.31.0-dev.50：编译闭环与 runtime service process-generation 所有权
 
 - 修复 process activation 的三处编译阻断：流式 SHA-256 输出使用 `Sink<Digest>`；activation 显式依赖 handshake 所在 channel；测试从 `dart:async` 与 `domain` 引入各自拥有的 `Completer`/`Failure`。
