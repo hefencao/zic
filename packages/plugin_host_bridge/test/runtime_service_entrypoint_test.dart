@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:catalog/catalog.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plugin_host/plugin_host.dart';

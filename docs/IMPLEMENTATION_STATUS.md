@@ -1,3 +1,11 @@
+## 0.31.0-dev.52：Binder service-death generation 与 packet 完整性
+
+- `runtime_service.dart` 与专用 entrypoint 测试显式导入 `catalog`，bridge 测试依赖也直接声明，关闭 `ExternalComicPluginFormat` 编译遗漏。
+- Android bound-service client 使用每次绑定唯一 generation 和 Binder `linkToDeath`。旧 Service 的迟到断开/死亡回调不能影响新的显式重绑；服务死亡只失败当前 pending/queued 调用，不自动重放或重激活。
+- 如果 Service 尚未连接且全部调用已超时，当前 binding generation 会被废弃并解除绑定，下一次显式 activation 可创建新 generation；已连接进程中的单次请求超时不会拆除无关 session。
+- 大响应 packet 使用 canonical root、exact length 与 SHA-256。读取时一次完成文件复制到平台 codec 缓冲和摘要验证，之后立即删除；损坏和路径逃逸均拒绝并清理。
+- Home trace、静态/动画图片、Reader demand/artifact 与 process-side activation/session policy 不变。Mihon class-loader driver 与 Venera JavaScript sandbox 仍 fail-closed。
+
 ## 0.31.0-dev.51：Android 专用 runtime service 启动与 Binder-safe transport
 
 - 保留用户已确认可编译的 `ExternalComicPluginFormat` import 修复，不再回退或重复修改该问题。

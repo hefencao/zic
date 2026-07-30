@@ -15,6 +15,7 @@ decode/upload registry、frame holder、viewport 播放门控、帧字节预算�
 `0.31.0-dev.49` 修正了目标重建回归的错误前提：2×2 源在 320→180 视口下不需要重建 codec，测试改用声明 2048×2048 画布的确定性 VP8X fixture，并先验证两个 downsample target 确实不同。插件隔离边界新增 process-entry activation host：原始 payload 在隔离进程内按批准的长度/SHA-256 流式重验并原子复制到进程私有文件，driver 只接收该已验证副本；session registry 不在进程重启后自动重放失败请求。
 `0.31.0-dev.50` 修复 process runtime 的编译闭环，并把 Android 专用服务的协议入口收敛到 Dart `ExternalPluginRuntimeServiceEndpoint`：平台只转发原始 method/wire message，payload staging、session registry、取消和关闭仍由共享 process host 持有。每次激活返回新的 `processId`，旧服务进程的 invoke/cancel/close 在 session ID 查找前即被拒绝，不会自动重激活或重放。
 `0.31.0-dev.51` 补齐 Android 专用 runtime service 的实际启动与跨进程传输：非导出 Service 在 `:zic_plugin_runtime` 进程创建不自动注册插件的 FlutterEngine，执行保留的第二 Dart 入口并挂接同一 service endpoint。主进程通过一次性 correlation request 绑定服务；服务死亡只失败当前请求，不重放。小消息以内联 Binder envelope 传递，大型二进制响应通过应用私有原子 packet 文件回传，避免 base64 与 Binder transaction 上限。服务目前仍没有 Mihon/Venera driver，因此 activation 在专用进程内明确 fail-closed。
+`0.31.0-dev.52` 进一步关闭真实 service-death 和大响应完整性边界：每次显式绑定拥有独立 generation，并通过 Binder death recipient 观察进程死亡；旧回调不能拆除后来建立的连接，绑定阶段超时也不会永久阻塞下一次显式 activation。packet 文件现在携带 SHA-256，host 在一次读取中同时验证 canonical root、长度和摘要，消费或校验失败后均删除文件。Home trace 与媒体/Reader 所有权保持不变。
 
 ```text
 ReaderView

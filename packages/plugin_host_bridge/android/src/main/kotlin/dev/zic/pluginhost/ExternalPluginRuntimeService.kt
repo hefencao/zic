@@ -300,10 +300,6 @@ class ExternalPluginRuntimeService : Service() {
                         }
                     },
                     onFailure = {
-                        val response = Message.obtain(
-                            null,
-                            RuntimeServiceIpc.MESSAGE_RESPONSE,
-                        )
                         val fallback = RuntimeServiceWireCodec.encode(
                             mapOf(
                                 "ok" to false,
@@ -312,21 +308,21 @@ class ExternalPluginRuntimeService : Service() {
                                 "details" to null,
                             ),
                         )
-                        response.data = Bundle().apply {
-                            putLong(
+                        val fallbackPacket = runCatching {
+                            packetStore.writeResponse(fallback)
+                        }.getOrNull()
+                        if (fallbackPacket != null) {
+                            val response = Message.obtain(
+                                null,
+                                RuntimeServiceIpc.MESSAGE_RESPONSE,
+                            )
+                            fallbackPacket.putLong(
                                 RuntimeServiceIpc.KEY_REQUEST_ID,
                                 request.requestId,
                             )
-                            putByteArray(
-                                RuntimeServiceIpc.KEY_INLINE_PAYLOAD,
-                                fallback,
-                            )
-                            putLong(
-                                RuntimeServiceIpc.KEY_PAYLOAD_LENGTH,
-                                fallback.size.toLong(),
-                            )
+                            response.data = fallbackPacket
+                            runCatching { request.replyTo.send(response) }
                         }
-                        runCatching { request.replyTo.send(response) }
                     },
                 )
                 if (closeAfterReply) {

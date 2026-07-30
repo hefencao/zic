@@ -2386,6 +2386,7 @@ def check_current_iteration() -> None:
         ROOT / 'packages/plugin_host/test/runtime_service_test.dart'
     ).read_text(encoding='utf-8')
     for required in (
+        "import 'package:catalog/catalog.dart';",
         'final class ExternalPluginRuntimeServiceEndpoint',
         'abstract final class ExternalPluginRuntimeServiceMethods',
         "'processId': processId",
@@ -2467,6 +2468,7 @@ def check_current_iteration() -> None:
         if required not in runtime_entrypoint:
             fail(f'dev.51 Dart runtime service bootstrap is incomplete: {required}')
     for required in (
+        "import 'package:catalog/catalog.dart';",
         'dedicated runtime bootstrap attaches and announces its generation',
         "'driver-unavailable'",
     ):
@@ -2513,6 +2515,56 @@ def check_current_iteration() -> None:
     ):
         if required not in app_main:
             fail(f'dev.51 app runtime entrypoint anchor is incomplete: {required}')
+
+
+    runtime_connection_state = (
+        ROOT / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/RuntimeServiceConnectionState.kt'
+    ).read_text(encoding='utf-8')
+    runtime_connection_state_test = (
+        ROOT / 'packages/plugin_host_bridge/android/src/test/kotlin/dev/zic/pluginhost/RuntimeServiceConnectionStateTest.kt'
+    ).read_text(encoding='utf-8')
+    runtime_packet_test = (
+        ROOT / 'packages/plugin_host_bridge/android/src/test/kotlin/dev/zic/pluginhost/RuntimeServicePacketFilesTest.kt'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'RuntimeServiceConnectionState',
+        'beginBinding()',
+        'markConnected',
+        'markLost',
+        'connectedGeneration',
+    ):
+        if required not in runtime_connection_state:
+            fail(f'dev.52 service binding generation is incomplete: {required}')
+    for required in (
+        'staleDeathCannotInvalidateExplicitRebind',
+        'abandonedBindingAllowsExplicitRetryGeneration',
+        'closeInvalidatesLateCallbacksAndFutureBindings',
+    ):
+        if required not in runtime_connection_state_test:
+            fail(f'dev.52 service-death regression is incomplete: {required}')
+    for required in (
+        'linkToDeath',
+        'unlinkToDeath',
+        'RuntimeServiceConnectionState',
+        'abandonUnresponsiveBindingIfIdle',
+    ):
+        if required not in runtime_android_client:
+            fail(f'dev.52 Android service-death ownership is incomplete: {required}')
+    for required in (
+        'KEY_PAYLOAD_SHA256',
+        'RuntimeServicePacketReference',
+        'RuntimeServicePacketFiles',
+        'runtime IPC payload digest mismatch',
+    ):
+        if required not in runtime_wire:
+            fail(f'dev.52 runtime packet integrity is incomplete: {required}')
+    for required in (
+        'largeResponseUsesPacketAndDeletesAfterConsumption',
+        'tamperedPacketIsRejectedAndDeleted',
+        'packetPathCannotEscapeDedicatedRoot',
+    ):
+        if required not in runtime_packet_test:
+            fail(f'dev.52 runtime packet regression is incomplete: {required}')
 
     for required in (
         'Uint8List _largeCanvasWebp()',

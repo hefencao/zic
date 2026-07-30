@@ -31,42 +31,16 @@ internal class PluginRuntimeServiceClient(context: Context) {
     private val queued = ArrayDeque<OutgoingRequest>()
     private val replyMessenger = Messenger(ReplyHandler())
     private val serviceIntent = Intent(appContext, ExternalPluginRuntimeService::class.java)
+    private val bindingState = RuntimeServiceConnectionState()
 
     private var serviceMessenger: Messenger? = null
-    private var binding = false
-    private var bound = false
+    private var serviceBinder: IBinder? = null
+    private var deathRecipient: IBinder.DeathRecipient? = null
+    private var connection: ServiceConnection? = null
+    private var connectionGeneration: Long? = null
+    private var binderGeneration: Long? = null
     private var closing = false
     private var cleanedUp = false
-
-    private val connection = object : ServiceConnection {
-        override fun onServiceConnected(name: ComponentName, service: IBinder) {
-            binding = false
-            bound = true
-            serviceMessenger = Messenger(service)
-            flushQueued()
-        }
-
-        override fun onServiceDisconnected(name: ComponentName) {
-            handleServiceLoss(
-                "runtime-service-disconnected",
-                "isolated plugin runtime service disconnected",
-            )
-        }
-
-        override fun onBindingDied(name: ComponentName) {
-            handleServiceLoss(
-                "runtime-service-died",
-                "isolated plugin runtime service binding died",
-            )
-        }
-
-        override fun onNullBinding(name: ComponentName) {
-            handleServiceLoss(
-                "runtime-service-unavailable",
-                "isolated plugin runtime service returned no binding",
-            )
-        }
-    }
 
     fun invoke(call: MethodCall, result: MethodChannel.Result) {
         if (closing) {
@@ -141,49 +115,121 @@ internal class PluginRuntimeServiceClient(context: Context) {
                 "isolated plugin runtime service did not respond",
                 null,
             )
+            abandonUnresponsiveBindingIfIdle()
         }
         pending[requestId] = PendingCall(result, timeout)
         mainHandler.postDelayed(timeout, RuntimeServiceIpc.REQUEST_TIMEOUT_MILLIS)
         val request = OutgoingRequest(requestId, encoded)
         val messenger = serviceMessenger
-        if (messenger == null) {
+        val generation = bindingState.connectedGeneration
+        if (messenger == null || generation == null) {
             queued.addLast(request)
             ensureBound()
         } else {
-            send(messenger, request)
+            send(messenger, generation, request)
         }
     }
 
     private fun ensureBound() {
-        if (binding || bound || closing && pending.isEmpty()) {
+        if (closing && pending.isEmpty()) {
             return
         }
-        binding = true
+        val generation = bindingState.beginBinding() ?: return
+        val candidate = createConnection(generation)
+        connection = candidate
+        connectionGeneration = generation
         val accepted = runCatching {
             appContext.bindService(
                 serviceIntent,
-                connection,
+                candidate,
                 Context.BIND_AUTO_CREATE,
             )
         }.getOrDefault(false)
         if (!accepted) {
-            binding = false
-            failAll(
+            handleServiceLoss(
+                generation,
                 "runtime-service-unavailable",
                 "isolated plugin runtime service could not be bound",
             )
         }
     }
 
-    private fun flushQueued() {
+    private fun createConnection(generation: Long): ServiceConnection =
+        object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName, service: IBinder) {
+                if (!bindingState.markConnected(generation)) {
+                    runCatching { appContext.unbindService(this) }
+                    return
+                }
+                val recipient = IBinder.DeathRecipient {
+                    mainHandler.post {
+                        handleServiceLoss(
+                            generation,
+                            "runtime-service-died",
+                            "isolated plugin runtime service process died",
+                        )
+                    }
+                }
+                try {
+                    service.linkToDeath(recipient, 0)
+                } catch (_: RemoteException) {
+                    handleServiceLoss(
+                        generation,
+                        "runtime-service-died",
+                        "isolated plugin runtime service process died",
+                    )
+                    return
+                }
+                serviceBinder = service
+                deathRecipient = recipient
+                binderGeneration = generation
+                serviceMessenger = Messenger(service)
+                flushQueued(generation)
+            }
+
+            override fun onServiceDisconnected(name: ComponentName) {
+                handleServiceLoss(
+                    generation,
+                    "runtime-service-disconnected",
+                    "isolated plugin runtime service disconnected",
+                )
+            }
+
+            override fun onBindingDied(name: ComponentName) {
+                handleServiceLoss(
+                    generation,
+                    "runtime-service-died",
+                    "isolated plugin runtime service binding died",
+                )
+            }
+
+            override fun onNullBinding(name: ComponentName) {
+                handleServiceLoss(
+                    generation,
+                    "runtime-service-unavailable",
+                    "isolated plugin runtime service returned no binding",
+                )
+            }
+        }
+
+    private fun flushQueued(generation: Long) {
         val messenger = serviceMessenger ?: return
+        if (bindingState.connectedGeneration != generation) {
+            return
+        }
         while (queued.isNotEmpty()) {
-            send(messenger, queued.removeFirst())
+            send(messenger, generation, queued.removeFirst())
         }
     }
 
-    private fun send(messenger: Messenger, request: OutgoingRequest) {
-        if (!pending.containsKey(request.requestId)) {
+    private fun send(
+        messenger: Messenger,
+        generation: Long,
+        request: OutgoingRequest,
+    ) {
+        if (!pending.containsKey(request.requestId) ||
+            bindingState.connectedGeneration != generation
+        ) {
             return
         }
         val message = Message.obtain(null, RuntimeServiceIpc.MESSAGE_REQUEST)
@@ -199,17 +245,24 @@ internal class PluginRuntimeServiceClient(context: Context) {
         try {
             messenger.send(message)
         } catch (_: RemoteException) {
-            completeError(
-                request.requestId,
-                "runtime-service-disconnected",
-                "isolated plugin runtime service disconnected",
-                null,
-            )
             handleServiceLoss(
+                generation,
                 "runtime-service-disconnected",
                 "isolated plugin runtime service disconnected",
             )
         }
+    }
+
+    private fun abandonUnresponsiveBindingIfIdle() {
+        if (pending.isNotEmpty() || serviceMessenger != null) {
+            return
+        }
+        val generation = bindingState.activeGeneration ?: return
+        if (!bindingState.markLost(generation)) {
+            return
+        }
+        unlinkDeathRecipient(generation)
+        safeUnbind(generation)
     }
 
     private fun handleResponse(message: Message) {
@@ -285,10 +338,18 @@ internal class PluginRuntimeServiceClient(context: Context) {
         return call
     }
 
-    private fun handleServiceLoss(code: String, message: String) {
+    private fun handleServiceLoss(
+        generation: Long,
+        code: String,
+        message: String,
+    ) {
+        if (!bindingState.markLost(generation)) {
+            return
+        }
         serviceMessenger = null
-        binding = false
-        safeUnbind()
+        unlinkDeathRecipient(generation)
+        safeUnbind(generation)
+        packetStore.clear()
         failAll(code, message)
     }
 
@@ -307,21 +368,43 @@ internal class PluginRuntimeServiceClient(context: Context) {
             return
         }
         cleanedUp = true
+        bindingState.close()
         serviceMessenger = null
         queued.clear()
-        safeUnbind()
+        val generation = connectionGeneration
+        if (generation != null) {
+            unlinkDeathRecipient(generation)
+            safeUnbind(generation)
+        }
         appContext.stopService(serviceIntent)
         responseExecutor.shutdownNow()
         packetStore.clear()
     }
 
-    private fun safeUnbind() {
-        if (!bound && !binding) {
+    private fun unlinkDeathRecipient(generation: Long) {
+        if (binderGeneration != generation) {
             return
         }
-        runCatching { appContext.unbindService(connection) }
-        bound = false
-        binding = false
+        val binder = serviceBinder
+        val recipient = deathRecipient
+        if (binder != null && recipient != null) {
+            runCatching { binder.unlinkToDeath(recipient, 0) }
+        }
+        serviceBinder = null
+        deathRecipient = null
+        binderGeneration = null
+    }
+
+    private fun safeUnbind(generation: Long) {
+        if (connectionGeneration != generation) {
+            return
+        }
+        val current = connection
+        connection = null
+        connectionGeneration = null
+        if (current != null) {
+            runCatching { appContext.unbindService(current) }
+        }
     }
 
     private inner class ReplyHandler : Handler(Looper.getMainLooper()) {

@@ -1,3 +1,11 @@
+## 0.31.0-dev.52 — generation-aware Binder death and verified packet consumption
+
+- Close the reported compile gap with explicit catalog imports in `runtime_service.dart` and the dedicated-entrypoint regression; declare the bridge test dependency directly instead of relying on transitive package visibility.
+- Replace the reusable Android `ServiceConnection` flags with a generation-aware binding state. Each explicit bind gets a new generation and Binder death is observed through `linkToDeath`; stale callbacks from an older service cannot invalidate a newer explicit rebind. Service loss fails each active request once and never replays it.
+- Abandon a binding generation when all queued callers time out before the Service connects, allowing a later explicit activation to bind again instead of remaining stuck behind a permanent `binding` flag. Connected-service request timeout does not tear down unrelated sessions.
+- Split large-response packet files into a pure file owner with exact root/path/length/SHA-256 verification. The host verifies the digest while performing the one required file-to-codec read, deletes consumed or corrupt packets, and rejects path escape. Inline responses are digest-checked too.
+- Add Android JVM regressions for stale service-death callbacks, explicit retry generations, closing callbacks, large packet consumption/deletion, corruption rejection and path confinement. Preserve Home trace, image/Reader ownership, process generations and fail-closed Mihon/Venera drivers.
+
 ## 0.31.0-dev.51 — Android dedicated runtime service bootstrap and Binder-safe transport
 
 - Preserve the confirmed `runtime_service.dart` import fix and continue from the dev.50 process-generation endpoint without reopening that compile issue.
