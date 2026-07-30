@@ -277,40 +277,10 @@ internal class MihonRuntimeDriver private constructor(
         ).unwrapAsync().asObjectList()
         ensureNotCancelled(requestId)
         val pageMessages = pages.mapIndexed { index, page ->
-            var imageUrl = page.readString("imageUrl", "getImageUrl")
-            if (imageUrl.isNullOrBlank()) {
-                imageUrl = try {
-                    source.invokeFirst(
-                        listOf(
-                            Invocation("getImageUrl", listOf(page)),
-                            Invocation("fetchImageUrl", listOf(page)),
-                        ),
-                    ).unwrapAsync() as? String
-                } catch (_: NoSuchMethodException) {
-                    null
-                }
-            }
-            val fallbackUrl = page.readString("url", "getUrl")
-            val resolvedUrl = imageUrl?.takeIf { it.isNotBlank() }
-                ?: fallbackUrl?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
-                ?: error("Mihon page did not expose an image URL")
-            page.writeValue("imageUrl", resolvedUrl)
-            val imageRequest = try {
-                source.invokeHierarchyCompatible("imageRequest", listOf(page))
-            } catch (_: NoSuchMethodException) {
-                null
-            }
-            val requestUrl = imageRequest?.readValue("url", "getUrl")?.toString()
-                ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
-                ?: resolvedUrl.takeIf { it.startsWith("http://") || it.startsWith("https://") }
-                ?: error("Mihon image request did not expose an absolute URL")
-            val requestHeaders = imageRequest?.readValue("headers", "getHeaders")
-                ?: source.readValue("headers", "getHeaders")
+            val resource = mihonPageResource(source, page, index)
             val uri = encodeOpaque(
                 "resource",
-                JSONObject()
-                    .put("url", requestUrl)
-                    .put("headers", JSONObject(requestHeaders.stringHeaders())),
+                resource,
             )
             mapOf(
                 "chapterId" to chapterId,
@@ -319,9 +289,16 @@ internal class MihonRuntimeDriver private constructor(
                 "uri" to uri,
             )
         }
+        val resolvedChapter = chapterMessage(
+            chapter,
+            comicId,
+            encoded.optInt("sequence", 0),
+        ).toMutableMap().apply {
+            put("pageCount", pageMessages.size)
+        }
         return mapOf(
             "comicId" to comicId,
-            "chapter" to chapterMessage(chapter, comicId, encoded.optInt("sequence", 0)),
+            "chapter" to resolvedChapter,
             "pages" to pageMessages,
             "readingDirection" to "vertical",
         )
@@ -336,8 +313,13 @@ internal class MihonRuntimeDriver private constructor(
             }
             JSONObject().put("url", uri)
         }
-        val resourceUrl = resource.getString("url")
-        val headers = resource.optJSONObject("headers").stringMap()
+        val resolvedResource = if (resource.optBoolean("deferredPage")) {
+            resolveDeferredMihonPageResource(source, resource)
+        } else {
+            resource
+        }
+        val resourceUrl = resolvedResource.getString("url")
+        val headers = resolvedResource.optJSONObject("headers").stringMap()
             .ifEmpty { source.readValue("headers", "getHeaders").stringHeaders() }
         val client = source.readValue("client", "getClient")
         if (client == null) {
@@ -376,6 +358,61 @@ internal class MihonRuntimeDriver private constructor(
         }
     }
 
+    private fun mihonPageResource(source: Any, page: Any, index: Int): JSONObject {
+        val imageUrl = page.readString("imageUrl", "getImageUrl")
+        if (shouldDeferMihonPageImage(imageUrl)) {
+            return JSONObject()
+                .put("deferredPage", true)
+                .put("index", page.readLong("index", "getIndex")?.toInt() ?: index)
+                .put("pageUrl", page.readString("url", "getUrl").orEmpty())
+        }
+        return resolvedMihonPageResource(source, page, requireNotNull(imageUrl))
+    }
+
+    private fun resolveDeferredMihonPageResource(source: Any, resource: JSONObject): JSONObject {
+        val page = createPageModel(
+            source.javaClass.classLoader,
+            resource.optInt("index"),
+            resource.optString("pageUrl"),
+            null,
+        )
+        val imageUrl = try {
+            source.invokeFirst(
+                listOf(
+                    Invocation("getImageUrl", listOf(page)),
+                    Invocation("fetchImageUrl", listOf(page)),
+                ),
+            ).unwrapAsync() as? String
+        } catch (_: NoSuchMethodException) {
+            resource.optString("pageUrl")
+                .takeIf { it.startsWith("http://") || it.startsWith("https://") }
+        }?.takeIf { it.isNotBlank() }
+            ?: error("Mihon page did not expose an image URL")
+        page.writeValue("imageUrl", imageUrl)
+        return resolvedMihonPageResource(source, page, imageUrl)
+    }
+
+    private fun resolvedMihonPageResource(
+        source: Any,
+        page: Any,
+        imageUrl: String,
+    ): JSONObject {
+        val imageRequest = try {
+            source.invokeHierarchyCompatible("imageRequest", listOf(page))
+        } catch (_: NoSuchMethodException) {
+            null
+        }
+        val requestUrl = imageRequest?.readValue("url", "getUrl")?.toString()
+            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            ?: imageUrl.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            ?: error("Mihon image request did not expose an absolute URL")
+        val requestHeaders = imageRequest?.readValue("headers", "getHeaders")
+            ?: source.readValue("headers", "getHeaders")
+        return JSONObject()
+            .put("url", requestUrl)
+            .put("headers", JSONObject(requestHeaders.stringHeaders()))
+    }
+
     private fun loadResourceWithPlatformNetwork(
         uri: String,
         headers: Map<String, String>,
@@ -405,7 +442,7 @@ internal class MihonRuntimeDriver private constructor(
     }
 
     private fun mangaSummary(manga: Any): Map<String, Any?> {
-        val id = encodeOpaque("manga", modelJson(manga))
+        val id = encodeOpaque("manga", mihonModelJson(manga))
         val title = manga.readString("title", "getTitle")?.ifBlank { null } ?: "未命名漫画"
         val author = manga.readString("author", "getAuthor")
         val artist = manga.readString("artist", "getArtist")
@@ -443,7 +480,7 @@ internal class MihonRuntimeDriver private constructor(
         }
 
     private fun chapterMessage(chapter: Any, comicId: String, sequence: Int): Map<String, Any?> {
-        val json = modelJson(chapter).apply {
+        val json = mihonModelJson(chapter).apply {
             put("comicId", comicId)
             put("sequence", sequence)
         }
@@ -1124,6 +1161,23 @@ private fun createModel(loader: ClassLoader, className: String, json: JSONObject
     return model
 }
 
+private fun createPageModel(
+    loader: ClassLoader,
+    index: Int,
+    url: String,
+    imageUrl: String?,
+): Any {
+    val type = loader.loadClass("eu.kanade.tachiyomi.source.model.Page")
+    val constructor = type.declaredConstructors.firstOrNull {
+        it.parameterCount == 4 &&
+            it.parameterTypes[0] == Integer.TYPE &&
+            it.parameterTypes[1] == String::class.java &&
+            it.parameterTypes[2] == String::class.java
+    } ?: error("Mihon Page constructor is unavailable")
+    constructor.isAccessible = true
+    return constructor.newInstance(index, url, imageUrl, null)
+}
+
 private fun Any.writeValue(name: String, value: Any?) {
     val normalized = if (value === JSONObject.NULL) null else value
     val setter = "set" + name.split('_').joinToString("") {
@@ -1148,10 +1202,19 @@ private fun Any?.convertFor(type: Class<*>): Any? = when {
     type == java.lang.Long.TYPE || type == java.lang.Long::class.java -> (this as? Number)?.toLong()
     type == java.lang.Integer.TYPE || type == Integer::class.java -> (this as? Number)?.toInt()
     type == java.lang.Boolean.TYPE || type == java.lang.Boolean::class.java -> this as? Boolean
+    type.name == "kotlinx.serialization.json.JsonObject" && this is JSONObject ->
+        runCatching {
+            val jsonType = type.classLoader.loadClass("kotlinx.serialization.json.Json")
+            val json = jsonType.getField("Default").get(null)
+            jsonType.getMethod("parseToJsonElement", String::class.java)
+                .invoke(json, toString())
+        }.getOrNull()
     else -> this
 }
 
-private fun modelJson(model: Any): JSONObject = JSONObject().apply {
+internal fun shouldDeferMihonPageImage(imageUrl: String?): Boolean = imageUrl.isNullOrBlank()
+
+internal fun mihonModelJson(model: Any): JSONObject = JSONObject().apply {
     put("url", model.readString("url", "getUrl") ?: "")
     put("title", model.readString("title", "getTitle") ?: "")
     put("name", model.readString("name", "getName") ?: "")
@@ -1165,6 +1228,9 @@ private fun modelJson(model: Any): JSONObject = JSONObject().apply {
     put("date_upload", model.readLong("date_upload", "getDate_upload", "getDateUpload") ?: 0L)
     put("chapter_number", model.readValue("chapter_number", "getChapter_number", "getChapterNumber") ?: -1f)
     put("scanlator", model.readString("scanlator", "getScanlator") ?: "")
+    model.readValue("memo", "getMemo")?.toString()
+        ?.takeIf { it.startsWith('{') && it.endsWith('}') }
+        ?.let { memo -> runCatching { put("memo", JSONObject(memo)) } }
 }
 
 private fun encodeOpaque(kind: String, json: JSONObject): String {
@@ -1349,9 +1415,16 @@ private fun Throwable.mihonDiagnosticMessage(): String {
         if (parts.lastOrNull() != part) parts += part
         current = current.cause
     }
-    val frame = generateSequence(this as Throwable?) { it.cause }
+    val frames = generateSequence(this as Throwable?) { it.cause }
         .flatMap { it.stackTrace.asSequence() }
-        .firstOrNull { it.className.startsWith("eu.kanade.tachiyomi.extension.") }
+        .toList()
+    val frame = frames.firstOrNull {
+        it.className.startsWith("eu.kanade.tachiyomi.extension.")
+    } ?: frames.firstOrNull {
+        !it.className.startsWith("dev.zic.pluginhost.") &&
+            !it.className.startsWith("java.lang.reflect.") &&
+            !it.className.startsWith("kotlin.reflect.")
+    }
     val location = frame?.let {
         " at ${it.className}.${it.methodName}" +
             if (it.lineNumber > 0) ":${it.lineNumber}" else ""

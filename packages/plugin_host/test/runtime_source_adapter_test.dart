@@ -36,6 +36,7 @@ void main() {
     expect(chapter.readingDirection, ReadingDirection.vertical);
     expect(chapter.pages.single.uri.toString(), 'https://cdn.invalid/1.webp');
     expect(chapter.pages.single.contentKindHint, ContentKindHint.webp);
+    expect(chapter.chapter.pageCount, 1);
 
     final bytes = await source.loadResource(
       Uri.parse('https://cdn.invalid/1.webp'),
@@ -49,6 +50,34 @@ void main() {
         ExternalPluginRuntimeOperation.loadChapter,
         ExternalPluginRuntimeOperation.loadResource,
       ],
+    );
+  });
+
+  test('resolved page list replaces an unknown reported page count', () async {
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: _FixtureConnection(chapterPageCount: 0),
+      limits: const ExternalPluginRuntimeLimits(),
+    );
+    addTearDown(session.close);
+
+    final chapter = await session.sources.single.loadChapter('chapter-1');
+
+    expect(chapter.chapter.pageCount, chapter.pages.length);
+    expect(chapter.chapter.pageCount, 1);
+  });
+
+  test('adapter rejects a resolved chapter without readable pages', () async {
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: _FixtureConnection(includeChapterPage: false),
+      limits: const ExternalPluginRuntimeLimits(),
+    );
+    addTearDown(session.close);
+
+    await expectLater(
+      session.sources.single.loadChapter('chapter-1'),
+      throwsFormatException,
     );
   });
 
@@ -181,12 +210,16 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
     Uint8List? resource,
     this.block,
     this.closeBlock,
+    this.chapterPageCount = 1,
+    this.includeChapterPage = true,
   }) : resource = resource ?? Uint8List.fromList(<int>[82, 73, 70, 70]);
 
   final bool mismatchRequestId;
   final Uint8List resource;
   final Future<void>? block;
   final Future<void>? closeBlock;
+  final int chapterPageCount;
+  final bool includeChapterPage;
   final List<ExternalPluginRuntimeOperation> operations =
       <ExternalPluginRuntimeOperation>[];
   bool closed = false;
@@ -244,20 +277,22 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
             'comicId': 'comic-1',
             'chapter': _chapter(),
             'readingDirection': 'topToBottom',
-            'pages': <Object?>[
-              <String, Object?>{
-                'pageId': 'page-1',
-                'chapterId': 'chapter-1',
-                'index': 0,
-                'uri': 'https://cdn.invalid/1.webp',
-                'width': 100,
-                'height': 200,
-                'byteLength': 4,
-                'contentKindHint': 'webp',
-                'animatedHint': true,
-                'checksum': 'aa',
-              },
-            ],
+            'pages': includeChapterPage
+                ? <Object?>[
+                    <String, Object?>{
+                      'pageId': 'page-1',
+                      'chapterId': 'chapter-1',
+                      'index': 0,
+                      'uri': 'https://cdn.invalid/1.webp',
+                      'width': 100,
+                      'height': 200,
+                      'byteLength': 4,
+                      'contentKindHint': 'webp',
+                      'animatedHint': true,
+                      'checksum': 'aa',
+                    },
+                  ]
+                : <Object?>[],
           },
         ExternalPluginRuntimeOperation.loadResource => resource,
       },
@@ -269,7 +304,7 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
         'comicId': 'comic-1',
         'title': 'Chapter 1',
         'sequence': 0,
-        'pageCount': 1,
+        'pageCount': chapterPageCount,
         'sourceRevision': 'r1',
       };
 

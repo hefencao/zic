@@ -6,14 +6,19 @@
 # AndroidX Preference remains a common provider so its classes and resources
 # are merged exactly once.
 -keepattributes Signature,InnerClasses,EnclosingMethod,*Annotation*
--keep,allowoptimization class kotlin.** { *; }
--keep,allowoptimization class androidx.preference.** { *; }
--keep,allowoptimization class rx.** { *; }
--keep,allowoptimization class kotlinx.coroutines.** { *; }
--keep,allowoptimization class kotlinx.serialization.** { *; }
--keep,allowoptimization class okhttp3.** { *; }
--keep,allowoptimization class okio.** { *; }
--keep,allowoptimization class org.jsoup.** { *; }
--keep,allowoptimization class com.google.gson.** { *; }
--keep,allowoptimization class com.squareup.zstd.** { *; }
--keep,allowoptimization class com.github.zhanghai.quickjs.** { *; }
+# Do not allow whole-program optimization across this boundary. Dynamically
+# loaded extension implementations are absent from R8's program graph. If
+# optimization is allowed, R8 can devirtualize an interface call using only
+# the App's visible implementations; for example, OkHttp CookieJar was
+# specialized to NO_COOKIES and cast a valid extension ArrayList to EmptyList.
+-keep class kotlin.** { *; }
+-keep class androidx.preference.** { *; }
+-keep class rx.** { *; }
+-keep class kotlinx.coroutines.** { *; }
+-keep class kotlinx.serialization.** { *; }
+-keep class okhttp3.** { *; }
+-keep class okio.** { *; }
+-keep class org.jsoup.** { *; }
+-keep class com.google.gson.** { *; }
+-keep class com.squareup.zstd.** { *; }
+-keep class com.github.zhanghai.quickjs.** { *; }

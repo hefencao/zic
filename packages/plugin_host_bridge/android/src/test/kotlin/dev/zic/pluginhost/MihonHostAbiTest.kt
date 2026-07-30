@@ -3,6 +3,7 @@ package dev.zic.pluginhost
 import android.app.Application
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -73,5 +74,25 @@ class MihonHostAbiTest {
         assertEquals("1.6", normalizeMihonExtensionLib("1.6.0", "9.9.9"))
         assertEquals("16", normalizeMihonExtensionLib(16, "9.9.9"))
         assertEquals(null, normalizeMihonExtensionLib(null, "invalid"))
+    }
+
+    @Test
+    fun defersImageResolutionWhenTheExtensionReturnsOnlyAPageUrl() {
+        assertTrue(shouldDeferMihonPageImage(null))
+        assertTrue(shouldDeferMihonPageImage(""))
+        assertFalse(shouldDeferMihonPageImage("https://cdn.invalid/page.webp"))
+    }
+
+    @Test
+    fun preservesCurrentAbiMemoAcrossOpaqueChapterIdentity() {
+        val encoded = mihonModelJson(
+            object {
+                @Suppress("unused")
+                fun getMemo() = """{"size":42}"""
+            },
+        )
+
+        assertNotNull(encoded.optJSONObject("memo"))
+        assertEquals(42, encoded.getJSONObject("memo").getInt("size"))
     }
 }

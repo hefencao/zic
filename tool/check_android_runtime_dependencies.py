@@ -91,6 +91,11 @@ def validate_contract(gradle: str, rules: str) -> None:
     ):
         if namespace not in rules:
             raise DependencyContractError(f'minified common runtime does not retain {namespace}')
+        if namespace != 'Signature,InnerClasses,EnclosingMethod,*Annotation*':
+            if f'-keep class {namespace}' not in rules:
+                raise DependencyContractError(
+                    f'dynamic common runtime still permits whole-program optimization: {namespace}',
+                )
 
 
 def main() -> int:

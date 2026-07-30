@@ -275,8 +275,9 @@ final class _RuntimeBrowsableComicSource implements BrowsableComicSource {
     );
     final message = _map(payload, 'chapter result');
     final comicId = _string(message, 'comicId');
-    final chapter = _chapter(_map(message['chapter'], 'chapter'), comicId);
-    if (chapter.chapterId != chapterId) {
+    final reportedChapter =
+        _chapter(_map(message['chapter'], 'chapter'), comicId);
+    if (reportedChapter.chapterId != chapterId) {
       throw const FormatException('runtime chapter identity mismatch');
     }
     final pages = _list(message['pages'], 'pages').map((value) {
@@ -298,6 +299,20 @@ final class _RuntimeBrowsableComicSource implements BrowsableComicSource {
         checksum: _optionalString(page['checksum'], 'checksum'),
       );
     }).toList(growable: false);
+    if (pages.isEmpty) {
+      throw const FormatException('runtime chapter contains no readable pages');
+    }
+    final chapter = reportedChapter.pageCount == pages.length
+        ? reportedChapter
+        : Chapter(
+            chapterId: reportedChapter.chapterId,
+            comicId: reportedChapter.comicId,
+            title: reportedChapter.title,
+            sequence: reportedChapter.sequence,
+            pageCount: pages.length,
+            sourceRevision: reportedChapter.sourceRevision,
+            publishedAt: reportedChapter.publishedAt,
+          );
     return ChapterManifest(
       sourceId: sourceId,
       comicId: comicId,
