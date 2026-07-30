@@ -32,7 +32,35 @@ async function checkExploreObject(){
  const value=await __zicOperation({operation:'browse',arguments:{query:'',offset:0,limit:20}});
  if(value.items[0].title!=='Explore')throw new Error('explore object failed');
 }
-(async()=>{await checkCurrentCategory();await checkLegacyCategory();await checkExploreObject();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
+async function checkLoadNextExplore(){
+ const calls=[];
+ globalThis.__zicSource={
+   url:'https://e.invalid/source.js',
+   comic:{},
+   explore:[{title:'latest',loadNext:async next=>{calls.push(next);return next===null?{comics:[{id:'https://e.invalid/g/1',title:'Page 1A',cover:'/cover-1.jpg'},{id:'https://e.invalid/g/1b',title:'Page 1B'}],next:'page-2'}:{comics:[{id:'https://e.invalid/g/2',title:'Page 2'}],next:null}}}]
+ };
+ if(!__zicHasBrowseCapability(globalThis.__zicSource))throw new Error('loadNext capability not discovered');
+ const first=await __zicOperation({operation:'browse',arguments:{query:'',offset:0,limit:1}});
+ const second=await __zicOperation({operation:'browse',arguments:{query:'',offset:1,limit:1}});
+ const third=await __zicOperation({operation:'browse',arguments:{query:'',offset:2,limit:1}});
+ if(first.items[0].title!=='Page 1A'||first.items[0].coverUri!=='https://e.invalid/cover-1.jpg'||!first.hasMore)throw new Error('loadNext first slice failed '+JSON.stringify(first));
+ if(second.items[0].title!=='Page 1B'||!second.hasMore)throw new Error('loadNext retained slice failed '+JSON.stringify(second));
+ if(third.items[0].title!=='Page 2'||third.hasMore)throw new Error('loadNext second source page failed '+JSON.stringify(third));
+ if(JSON.stringify(calls)!==JSON.stringify([null,'page-2']))throw new Error('loadNext tokens '+JSON.stringify(calls));
+}
+async function checkDirectCoverResource(){
+ let seen=null;
+ ZicNative.request=raw=>{
+   const message=__zicDecode(JSON.parse(raw));seen=message;
+   if(message.method!=='http')throw new Error('unexpected direct cover bridge method '+message.method);
+   return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{'content-type':'image/jpeg'},body:new Uint8Array([1,2,3]).buffer})});
+ };
+ globalThis.__zicSource={comic:{}};
+ const bytes=await __zicOperation({operation:'loadResource',arguments:{uri:'https://cdn.invalid/cover.jpg'}});
+ if(!(bytes instanceof ArrayBuffer)||JSON.stringify(Array.from(new Uint8Array(bytes)))!==JSON.stringify([1,2,3]))throw new Error('direct cover bytes failed');
+ if(seen.url!=='https://cdn.invalid/cover.jpg'||seen.http_method!=='GET')throw new Error('direct cover request failed '+JSON.stringify(seen));
+}
+(async()=>{await checkCurrentCategory();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkDirectCoverResource();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
 '''
 with tempfile.TemporaryDirectory() as td:
     js=Path(td)/'test.js'; js.write_text(bootstrap+'\n'+test)

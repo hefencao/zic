@@ -13,10 +13,10 @@ void main() {
     addTearDown(() => directory.delete(recursive: true));
     final script = File('${directory.path}/source.js');
     await script.writeAsString('''
-const source = {
-  key: "reader-source",
-  name: "Reader Source",
-};
+class ReaderSource extends ComicSource {
+  key = "reader-source";
+  name = "Reader Source";
+}
 throw new Error("must never execute during inspection");
 ''');
     final plugin = ExternalComicPluginCatalogEntry(
@@ -51,7 +51,11 @@ throw new Error("must never execute during inspection");
     );
     addTearDown(() => directory.delete(recursive: true));
     final script = File('${directory.path}/source.js');
-    await script.writeAsString('const source = { key: "actual" };');
+    await script.writeAsString('''
+class ActualSource extends ComicSource {
+  key = "actual";
+}
+''');
     final plugin = ExternalComicPluginCatalogEntry(
       format: ExternalComicPluginFormat.veneraJavaScript,
       pluginId: 'venera:declared',
@@ -73,6 +77,45 @@ throw new Error("must never execute during inspection");
           .inspect(plugin),
       throwsFormatException,
     );
+  });
+
+
+  test('Venera inspector ignores method-local key variables', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-venera-local-key-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final script = File('${directory.path}/source.js');
+    await script.writeAsString('''
+class PicacgSource extends ComicSource {
+  name = "Picacg" key = "picacg" version = "1.0.5"
+  createSignature() {
+    let key = "request-signing-secret"
+    return key
+  }
+}
+''');
+    final plugin = ExternalComicPluginCatalogEntry(
+      format: ExternalComicPluginFormat.veneraJavaScript,
+      pluginId: 'venera:picacg',
+      name: 'Picacg',
+      version: '1.0.0',
+      entrypoint: Uri.parse('https://example.invalid/picacg.js'),
+      sources: const <ExternalComicPluginSource>[
+        ExternalComicPluginSource(
+          sourceId: 'venera:picacg',
+          externalId: 'picacg',
+          name: 'Picacg',
+          language: 'zh',
+        ),
+      ],
+    );
+
+    final result = await VeneraJavaScriptInspector(
+      payloads: _payloadLoader(script),
+    ).inspect(plugin);
+
+    expect(result.sourceKey, 'picacg');
   });
 
   test('Venera inspector rejects invalid UTF-8 without executing payload',

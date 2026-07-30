@@ -286,13 +286,11 @@ private data class VeneraActivation(
         append("();await Promise.resolve(__zicSource.init?.());")
         append("if(__zicCompareVersion(String(__zicSource.minAppVersion||'0'),appVersion)>0)")
         append("throw new Error('Venera source requires app '+__zicSource.minAppVersion+' or newer');")
-        append("const __browse=!!(__zicExploreLoader(__zicSource)||")
-        append("typeof __zicSource.search?.load==='function'||")
-        append("(__zicCategoryTarget(__zicSource)&&typeof __zicSource.categoryComics?.load==='function'));")
+        append("const __browse=__zicHasBrowseCapability(__zicSource);")
         append("if(!__browse)throw new Error('Venera source exposes no compatible browse capability');")
         append("ZicNative.activated(JSON.stringify({ok:true,key:String(__zicSource.key||''),")
         append("name:String(__zicSource.name||''),url:String(__zicSource.url||''),")
-        append("supportsBrowse:__browse,supportsSearch:typeof __zicSource.search?.load==='function'}));")
+        append("supportsBrowse:__browse,supportsSearch:__zicHasSearchCapability(__zicSource)}));")
         append("}catch(e){ZicNative.activated(JSON.stringify({ok:false,")
         append("message:String(e?.message||e)}));}})();")
     }
@@ -502,9 +500,9 @@ private class VeneraNativeBridge(
                 @Suppress("UNCHECKED_CAST")
                 val headerMap = responseHeaders.javaClass.methods.first {
                     it.name == "toMultimap" && it.parameterCount == 0
-                }.invoke(responseHeaders) as Map<String?, List<String>?>
+                }.invoke(responseHeaders) as Map<String, List<String>>
                 val contentEncoding = headerMap.entries.firstOrNull {
-                    it.key?.equals("content-encoding", ignoreCase = true) == true
+                    it.key.equals("content-encoding", ignoreCase = true)
                 }?.value?.joinToString(",")
                 val body = response.javaClass.methods.first {
                     it.name in setOf("body", "getBody") && it.parameterCount == 0
@@ -918,13 +916,19 @@ private fun veneraRequestHeaders(raw: JSONObject?): LinkedHashMap<String, String
 
 private fun veneraResponse(
     status: Int,
-    headers: Map<String?, List<String>?>,
+    headers: Map<*, *>,
     body: ByteArray,
     bytes: Boolean,
 ): JSONObject {
     val responseHeaders = JSONObject()
-    headers.entries.filter { it.key != null }.forEach { (name, values) ->
-        responseHeaders.put(name, values.orEmpty().joinToString(", "))
+    headers.entries.forEach { (rawName, rawValues) ->
+        val name = rawName as? String ?: return@forEach
+        val values = when (rawValues) {
+            is Iterable<*> -> rawValues.mapNotNull { it?.toString() }
+            null -> emptyList()
+            else -> listOf(rawValues.toString())
+        }
+        responseHeaders.put(name, values.joinToString(", "))
     }
     return JSONObject()
         .put("status", status)
@@ -1151,6 +1155,7 @@ const appVersion = '1.6.0';
 function __zicCompareVersion(a,b){const x=String(a).split(/[^0-9]+/).filter(Boolean).map(Number),y=String(b).split(/[^0-9]+/).filter(Boolean).map(Number);for(let i=0;i<Math.max(x.length,y.length);i++){const d=(x[i]||0)-(y[i]||0);if(d)return d>0?1:-1}return 0}
 const __zicCancelled = new Set();
 const __zicResources = new Map();
+const __zicPaging = new Map();
 let __zicResourceKey = 0;
 function __zicDecode(value) {
   if (value && value.__zicType === 'bytes') {
@@ -1272,8 +1277,11 @@ function __zicB64(value){return btoa(unescape(encodeURIComponent(JSON.stringify(
 function __zicUnb64(value){let raw=value.replaceAll('-','+').replaceAll('_','/');while(raw.length%4)raw+='=';return JSON.parse(decodeURIComponent(escape(atob(raw))))}
 function __zicOptionDefaults(config){return (config?.optionList||[]).map(group=>group.default??String(group.options?.[0]?.value??group.options?.[0]?.key??group.options?.[0]??'').split('-')[0])}
 function __zicDefaultOptions(source){return __zicOptionDefaults(source.search)}
-function __zicLoaders(value){if(Array.isArray(value))return value;if(value instanceof Map)return Array.from(value.values());if(value&&typeof value==='object'){if(typeof value.load==='function')return[value];return Object.values(value)}return[]}
-function __zicExploreLoader(source){return __zicLoaders(source.explore).find(value=>typeof value?.load==='function')||null}
+function __zicHasLoader(value){return typeof value?.load==='function'||typeof value?.loadNext==='function'}
+function __zicLoaders(value){if(Array.isArray(value))return value;if(value instanceof Map)return Array.from(value.values());if(value&&typeof value==='object'){if(__zicHasLoader(value))return[value];return Object.values(value)}return[]}
+function __zicExploreLoader(source){return __zicLoaders(source.explore).find(__zicHasLoader)||null}
+function __zicSearchLoader(source){return __zicHasLoader(source.search)?source.search:null}
+function __zicHasSearchCapability(source){return __zicSearchLoader(source)!==null}
 function __zicCategoryTarget(source){
  const category=source.category||{};for(const part of category.parts||[]){const items=Array.isArray(part?.categories)?part.categories:__zicLoaders(part?.categories),params=Array.isArray(part?.categoryParams)?part.categoryParams:[];
   for(let index=0;index<items.length;index++){const item=items[index],target=item?.target;if(target?.page==='category'&&target.attributes?.category!==undefined)return target.attributes;
@@ -1282,7 +1290,19 @@ function __zicCategoryTarget(source){
  }return null
 }
 async function __zicCategoryOptions(source,target){const config=source.categoryComics||{};if(typeof config.optionLoader==='function'){const loaded=await config.optionLoader(target.category,target.param??null),optionList=Array.isArray(loaded)?loaded:(loaded?.optionList||__zicLoaders(loaded));return __zicOptionDefaults({optionList})}return __zicOptionDefaults(config)}
-function __zicComic(item){return {comicId:'venera:comic:'+__zicB64({id:String(item.id),title:String(item.title||''),subtitle:String(item.subtitle??item.subTitle??''),cover:String(item.cover||''),description:String(item.description||'')}),title:String(item.title||'未命名漫画'),authors:[String(item.subtitle??item.subTitle??'')].filter(Boolean),coverUri:item.cover||undefined,description:item.description||undefined,contentRating:'suggestive'}}
+function __zicHasBrowseCapability(source){return !!(__zicExploreLoader(source)||__zicSearchLoader(source)||(__zicCategoryTarget(source)&&__zicHasLoader(source.categoryComics)))}
+function __zicNextToken(result){return result?.next??result?.nextPage??result?.nextToken??result?.cursor??null}
+function __zicHasNextToken(value){return value!==null&&value!==undefined&&value!==false&&String(value)!==''}
+async function __zicLoadPage(loader,prefixArgs,page,stateKey,requiredCount){
+ if(typeof loader?.load==='function')return await loader.load(...prefixArgs,page);
+ if(typeof loader?.loadNext!=='function')throw new Error('Venera loader exposes neither load nor loadNext');
+ if(page===1)__zicPaging.delete(stateKey);
+ let state=__zicPaging.get(stateKey);if(!state){state={pages:[],next:null,exhausted:false,seen:new Set()};__zicPaging.set(stateKey,state)}
+ while(__zicFlatten(state.pages).length<requiredCount&&!state.exhausted){if(state.pages.length>=32)throw new Error('Venera cursor pagination exceeded 32 source pages');const next=state.pages.length===0?null:state.next;if(state.pages.length>0&&!__zicHasNextToken(next)){state.exhausted=true;break}const token=JSON.stringify(next);if(state.seen.has(token))throw new Error('Venera cursor pagination repeated a next token');state.seen.add(token);const loaded=await loader.loadNext(...prefixArgs,next);state.pages.push(loaded);state.next=__zicNextToken(loaded);state.exhausted=!__zicHasNextToken(state.next)}
+ return {comics:__zicFlatten(state.pages),next:state.next,__zicCursor:true,exhausted:state.exhausted};
+}
+function __zicAbsoluteUrl(value,base){const text=String(value??'').trim();if(!text)return undefined;try{return new URL(text,base||globalThis.__zicSource?.url||'https://zic.runtime.invalid/').toString()}catch(_){return undefined}}
+function __zicComic(item){const rawId=String(item.id??item.comicId??'');const base=/^https?:\/\//i.test(rawId)?rawId:globalThis.__zicSource?.url;const cover=__zicAbsoluteUrl(item.cover,base);return {comicId:'venera:comic:'+__zicB64({id:rawId,title:String(item.title||''),subtitle:String(item.subtitle??item.subTitle??''),cover:String(cover||''),description:String(item.description||'')}),title:String(item.title||'未命名漫画'),authors:[String(item.subtitle??item.subTitle??'')].filter(Boolean),coverUri:cover,description:item.description||undefined,contentRating:'suggestive'}}
 function __zicFlatten(result){
  const isComic=value=>value&&typeof value==='object'&&!Array.isArray(value)&&!(value instanceof Map)&&(value.id!==undefined||value.comicId!==undefined)&&value.title!==undefined;
  const unpack=value=>{if(!value)return[];if(isComic(value))return[value];if(Array.isArray(value))return value.flatMap(unpack);if(value instanceof Map)return Array.from(value.values()).flatMap(unpack);if(typeof value==='object')return Object.values(value).flatMap(unpack);return[]};
@@ -1294,28 +1314,31 @@ async function __zicOperation(request){
  const source=globalThis.__zicSource,args=request.arguments||{};
  if(request.operation==='browse'){
   const page=Math.floor(args.offset/args.limit)+1;let loaded;
-  const explore=__zicExploreLoader(source),category=__zicCategoryTarget(source);
-  if(String(args.query||'')){if(typeof source.search?.load!=='function')throw new Error('Venera source does not support search');loaded=await source.search.load(String(args.query),__zicDefaultOptions(source),page)}
-  else if(explore) loaded=await explore.load(page);
-  else if(typeof source.search?.load==='function') loaded=await source.search.load('',__zicDefaultOptions(source),page);
-  else if(category&&typeof source.categoryComics?.load==='function') loaded=await source.categoryComics.load(category.category,category.param??null,await __zicCategoryOptions(source,category),page);
+  const query=String(args.query||''),explore=__zicExploreLoader(source),search=__zicSearchLoader(source),category=__zicCategoryTarget(source);
+  if(query){if(!search)throw new Error('Venera source does not support search');const options=__zicDefaultOptions(source);loaded=await __zicLoadPage(search,[query,options],page,'search:'+query+':'+JSON.stringify(options),args.offset+args.limit)}
+  else if(explore) loaded=await __zicLoadPage(explore,[],page,'explore:'+String(explore.title||'default'),args.offset+args.limit);
+  else if(search){const options=__zicDefaultOptions(source);loaded=await __zicLoadPage(search,['',options],page,'search::'+JSON.stringify(options),args.offset+args.limit)}
+  else if(category&&__zicHasLoader(source.categoryComics)){const options=await __zicCategoryOptions(source,category);loaded=await __zicLoadPage(source.categoryComics,[category.category,category.param??null,options],page,'category:'+String(category.category)+':'+String(category.param??'')+':'+JSON.stringify(options),args.offset+args.limit)}
   else throw new Error('Venera source exposes no browse capability (keys: '+Object.keys(source).join(', ')+')');
-  const all=__zicFlatten(loaded),start=args.offset%args.limit,items=all.slice(start,start+args.limit).map(__zicComic);
-  const maxPage=Number(loaded?.maxPage||page);return {items,offset:args.offset,hasMore:maxPage>page||all.length>start+items.length};
+  const all=__zicFlatten(loaded),cursor=loaded?.__zicCursor===true,start=cursor?args.offset:args.offset%args.limit,items=all.slice(start,start+args.limit).map(__zicComic);
+  const maxPage=Number(loaded?.maxPage),hasMore=cursor?all.length>start+items.length||!loaded.exhausted:(Number.isFinite(maxPage)&&maxPage>page)||__zicHasNextToken(__zicNextToken(loaded))||all.length>start+items.length;return {items,offset:args.offset,hasMore};
  }
  if(request.operation==='loadComic'){
   const opaque=__zicUnb64(args.comicId.slice('venera:comic:'.length));const info=await source.comic.loadInfo(opaque.id);
   const chapters=[];let index=0;for(const [epId,title] of __zicChapterEntries(info.chapters||{}))chapters.push(__zicChapterMessage(args.comicId,epId,title,index++));
-  return {comic:{comicId:args.comicId,title:String(info.title||opaque.title||'未命名漫画'),authors:[String(info.subtitle??info.subTitle??opaque.subtitle??'')].filter(Boolean),readingDirection:'topToBottom',coverUri:info.cover||opaque.cover||undefined,description:info.description||opaque.description||undefined},chapters};
+  const cover=__zicAbsoluteUrl(info.cover||opaque.cover,/^https?:\/\//i.test(String(opaque.id))?String(opaque.id):source.url);return {comic:{comicId:args.comicId,title:String(info.title||opaque.title||'未命名漫画'),authors:[String(info.subtitle??info.subTitle??opaque.subtitle??'')].filter(Boolean),readingDirection:'vertical',coverUri:cover,description:info.description||opaque.description||undefined},chapters};
  }
  if(request.operation==='loadChapter'){
   const chapter=__zicUnb64(args.chapterId.slice('venera:chapter:'.length));const loaded=await source.comic.loadEp(chapter.comicRawId,chapter.epId);const images=Array.isArray(loaded)?loaded:(loaded?.images||[]);
   const pages=[];for(let i=0;i<images.length;i++){const original=String(images[i]);const config=await Promise.resolve(source.comic.onImageLoad?.(original,chapter.comicRawId,chapter.epId)||{});const token=String(++__zicResourceKey);__zicResources.set(token,{url:config.url||original,method:config.method||'GET',headers:config.headers||{},data:config.data,onResponse:config.onResponse,onLoadFailed:config.onLoadFailed,modifyImage:config.modifyImage});pages.push({chapterId:args.chapterId,pageId:String(args.chapterId)+':'+i,index:i,uri:'venera-resource://'+token})}
-  return {comicId:chapter.comicId,chapter:__zicChapterMessage(chapter.comicId,chapter.epId,chapter.title,chapter.sequence),pages,readingDirection:'topToBottom'};
+  return {comicId:chapter.comicId,chapter:__zicChapterMessage(chapter.comicId,chapter.epId,chapter.title,chapter.sequence),pages,readingDirection:'vertical'};
  }
  if(request.operation==='loadResource'){
-  const token=String(args.uri).replace('venera-resource://','');const config=__zicResources.get(token);if(!config)throw new Error('Venera resource token expired');
-  try{let active=config;for(let attempt=0;attempt<2;attempt++){try{const response=await Network.fetchBytes(active.method,active.url,active.headers,active.data);if(response.status<200||response.status>=300)throw new Error('Venera resource HTTP '+response.status);let bytes=response.body;if(typeof active.onResponse==='function')bytes=await active.onResponse(bytes);if(typeof active.modifyImage==='string'&&active.modifyImage.trim()){const key=sendMessage({method:'image',function:'decode',data:bytes});try{const modifier=(0,eval)(String(active.modifyImage)+'\n;(typeof modifyImage===\"function\"?modifyImage:null)');if(typeof modifier!=='function')throw new Error('Venera modifyImage script defines no modifyImage function');const transformed=await Promise.resolve(modifier(new Image(key)));if(!transformed||typeof transformed.key!=='number')throw new Error('Venera modifyImage returned no Image');bytes=sendMessage({method:'image',function:'encode',key:transformed.key})}finally{sendMessage({method:'image',function:'disposeAll'})}}return bytes}catch(error){if(attempt||typeof active.onLoadFailed!=='function')throw error;const retry=await active.onLoadFailed(error);if(!retry)throw error;active={...active,...retry}}}throw new Error('Venera resource retry exhausted')}finally{__zicResources.delete(token)}
+  const uri=String(args.uri||'');const isToken=uri.startsWith('venera-resource://');let token=null,config;
+  if(isToken){token=uri.slice('venera-resource://'.length);config=__zicResources.get(token);if(!config)throw new Error('Venera resource token expired')}
+  else if(/^https?:\/\//i.test(uri)){let override={};if(typeof source.comic?.onImageLoad==='function'){try{override=await Promise.resolve(source.comic.onImageLoad(uri,null,null))||{}}catch(_){override={}}}config={url:override.url||uri,method:override.method||'GET',headers:override.headers||{},data:override.data,onResponse:override.onResponse,onLoadFailed:override.onLoadFailed,modifyImage:override.modifyImage}}
+  else throw new Error('Venera resource URI must be a runtime token or HTTP(S) URL');
+  try{let active=config;for(let attempt=0;attempt<2;attempt++){try{const response=await Network.fetchBytes(active.method||'GET',active.url,active.headers||{},active.data);if(response.status<200||response.status>=300)throw new Error('Venera resource HTTP '+response.status);let bytes=response.body;if(typeof active.onResponse==='function')bytes=await active.onResponse(bytes);if(typeof active.modifyImage==='string'&&active.modifyImage.trim()){const key=sendMessage({method:'image',function:'decode',data:bytes});try{const modifier=(0,eval)(String(active.modifyImage)+'\n;(typeof modifyImage==="function"?modifyImage:null)');if(typeof modifier!=='function')throw new Error('Venera modifyImage script defines no modifyImage function');const transformed=await Promise.resolve(modifier(new Image(key)));if(!transformed||typeof transformed.key!=='number')throw new Error('Venera modifyImage returned no Image');bytes=sendMessage({method:'image',function:'encode',key:transformed.key})}finally{sendMessage({method:'image',function:'disposeAll'})}}return bytes}catch(error){if(attempt||typeof active.onLoadFailed!=='function')throw error;const retry=await active.onLoadFailed(error);if(!retry)throw error;active={...active,...retry}}}throw new Error('Venera resource retry exhausted')}finally{if(token!==null)__zicResources.delete(token)}
  }
  throw new Error('Unsupported Venera operation');
 }

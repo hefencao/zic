@@ -296,7 +296,7 @@ internal class MihonRuntimeDriver private constructor(
             "comicId" to comicId,
             "chapter" to chapterMessage(chapter, comicId, encoded.optInt("sequence", 0)),
             "pages" to pageMessages,
-            "readingDirection" to "topToBottom",
+            "readingDirection" to "vertical",
         )
     }
 
@@ -410,7 +410,7 @@ internal class MihonRuntimeDriver private constructor(
                 manga.readString("author", "getAuthor"),
                 manga.readString("artist", "getArtist"),
             ).distinct(),
-            "readingDirection" to "topToBottom",
+            "readingDirection" to "vertical",
         ).apply {
             manga.readString("thumbnail_url", "getThumbnail_url", "getThumbnailUrl")
                 ?.takeIf { it.isNotBlank() }
@@ -481,9 +481,12 @@ internal class MihonRuntimeDriver private constructor(
                 check(mkdirs()) { "Mihon runtime directory could not be created" }
             }
             try {
-                val apk = File(runtimeRoot, "extension.apk")
-                payload.copyTo(apk, overwrite = true)
-                verifyPayload(apk, payloadLength, payloadSha256)
+                val apk = stageReadOnlyMihonApk(
+                    payload = payload,
+                    target = File(runtimeRoot, "extension.apk"),
+                    expectedLength = payloadLength,
+                    expectedSha256 = payloadSha256,
+                )
                 val nativeDir = extractNativeLibraries(apk, File(runtimeRoot, "lib"))
                 val optimized = File(runtimeRoot, "dex").apply {
                     check(mkdirs()) { "Mihon dex directory could not be created" }
@@ -946,6 +949,31 @@ private fun Any?.asStringList(label: String): List<String> {
     return list.map { value ->
         (value as? String)?.takeIf { it.isNotBlank() } ?: error("$label contains an invalid value")
     }
+}
+
+private fun stageReadOnlyMihonApk(
+    payload: File,
+    target: File,
+    expectedLength: Long,
+    expectedSha256: String,
+): File {
+    val staging = File(target.parentFile, "${target.name}.part")
+    if (staging.exists()) {
+        check(staging.delete()) { "stale Mihon staged APK could not be removed" }
+    }
+    FileOutputStream(staging).use { output ->
+        check(staging.setReadOnly()) {
+            "Mihon staged APK could not be made read-only before writing"
+        }
+        payload.inputStream().buffered().use { input -> input.copyTo(output) }
+        output.fd.sync()
+    }
+    verifyPayload(staging, expectedLength, expectedSha256)
+    if (target.exists()) check(target.delete()) { "Mihon runtime APK could not be replaced" }
+    check(staging.renameTo(target)) { "Mihon staged APK could not be promoted" }
+    check(target.setReadOnly()) { "Mihon runtime APK could not remain read-only" }
+    verifyPayload(target, expectedLength, expectedSha256)
+    return target
 }
 
 private fun verifyPayload(file: File, expectedLength: Long, expectedSha256: String) {

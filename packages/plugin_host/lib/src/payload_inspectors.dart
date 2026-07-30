@@ -142,13 +142,7 @@ final class VeneraJavaScriptInspector implements ExternalPluginInspector {
         .map((source) => source.externalId.trim())
         .where((value) => value.isNotEmpty)
         .toSet();
-    final lexicalKeys = _veneraKeys(script);
-    if (lexicalKeys.length > 1) {
-      throw const FormatException(
-        'Venera script declares conflicting source keys',
-      );
-    }
-    final lexicalKey = lexicalKeys.firstOrNull;
+    final lexicalKey = _veneraClassKey(script);
     if (declaredKeys.isNotEmpty &&
         lexicalKey != null &&
         !declaredKeys.contains(lexicalKey)) {
@@ -241,17 +235,17 @@ Future<String> _sha256File(ExternalPluginPayloadFile payload) async {
   return (await sha256.bind(file.openRead()).first).toString();
 }
 
-Set<String> _veneraKeys(String script) {
-  final matches = RegExp(
-    "(?:^|\\s|,|;|\\x7b)key\\s*[:=]\\s*[\"']([^\"']+)[\"']",
+String? _veneraClassKey(String script) {
+  final declaration = RegExp(
+    r'class\s+[A-Za-z_$][A-Za-z0-9_$]*\s+extends\s+ComicSource\s*\{',
+  ).firstMatch(script);
+  if (declaration == null) {
+    return null;
+  }
+  final match = RegExp(
+    "(?:^|[;{}\"'0-9])\\s*key\\s*=\\s*[\"']([^\"']+)[\"']",
     multiLine: true,
-  ).allMatches(script);
-  return <String>{
-    for (final match in matches)
-      if ((match.group(1)?.trim() ?? '').isNotEmpty) match.group(1)!.trim(),
-  };
-}
-
-extension<T> on Set<T> {
-  T? get firstOrNull => isEmpty ? null : first;
+  ).firstMatch(script.substring(declaration.end));
+  final value = match?.group(1)?.trim();
+  return value == null || value.isEmpty ? null : value;
 }

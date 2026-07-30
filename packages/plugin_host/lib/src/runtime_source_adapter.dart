@@ -584,10 +584,22 @@ ReadingDirection _readingDirection(Object? value) {
   if (value is! String) {
     throw const FormatException('readingDirection must be a string');
   }
-  try {
-    return ReadingDirection.values.byName(value);
-  } on ArgumentError {
-    throw FormatException('unknown reading direction: $value');
+  switch (value.trim().toLowerCase()) {
+    case 'ltr':
+    case 'lefttoright':
+    case 'left-to-right':
+      return ReadingDirection.ltr;
+    case 'rtl':
+    case 'righttoleft':
+    case 'right-to-left':
+      return ReadingDirection.rtl;
+    case 'vertical':
+    case 'toptobottom':
+    case 'top-to-bottom':
+    case 'webtoon':
+      return ReadingDirection.vertical;
+    default:
+      throw FormatException('unknown reading direction: $value');
   }
 }
 

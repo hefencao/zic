@@ -29,9 +29,11 @@ void main() {
 
     final comic = await source.loadComic('comic-1');
     expect(comic.comic.title, 'Comic');
+    expect(comic.comic.readingDirection, ReadingDirection.vertical);
     expect(comic.chapters.single.chapterId, 'chapter-1');
 
     final chapter = await source.loadChapter('chapter-1');
+    expect(chapter.readingDirection, ReadingDirection.vertical);
     expect(chapter.pages.single.uri.toString(), 'https://cdn.invalid/1.webp');
     expect(chapter.pages.single.contentKindHint, ContentKindHint.webp);
 
@@ -232,7 +234,7 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
               'authors': <Object?>['Author'],
               'coverUri': 'https://cdn.invalid/cover.jpg',
               'description': 'Description',
-              'readingDirection': 'ltr',
+              'readingDirection': 'topToBottom',
             },
             'chapters': <Object?>[
               _chapter(),
@@ -241,7 +243,7 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
         ExternalPluginRuntimeOperation.loadChapter => <String, Object?>{
             'comicId': 'comic-1',
             'chapter': _chapter(),
-            'readingDirection': 'ltr',
+            'readingDirection': 'topToBottom',
             'pages': <Object?>[
               <String, Object?>{
                 'pageId': 'page-1',

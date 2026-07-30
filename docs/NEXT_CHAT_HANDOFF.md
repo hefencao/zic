@@ -2,19 +2,19 @@
 
 ## Sole baseline
 
-Continue only from `zic_v0.31.0-dev.56_mihon-payload-context-venera-capability-dns.zip`.
-Do not merge or copy files from an earlier zic archive. The 13 files supplied in `git_latest_two_commits.zip` are already incorporated into this baseline.
+Continue only from `zic_v0.31.0-dev.57_mihon-readonly-dex-venera-loadnext-cover-direction.zip`.
+Do not merge or copy files from an earlier zic archive. The files previously supplied in `git_latest_two_commits.zip` remain incorporated.
 
 ## Current ownership and completed work
 
-- Keep the existing `home-startup` trace, Reader demand/artifact ownership, resource cache, download sessions and catalog/domain mapping unchanged.
-- Mihon/Venera share protocol v1, immutable process-private payload staging, process/session generation, cooperative cancellation and the non-exported `:zic_plugin_runtime` Service. Kotlin drivers adapt ecosystem APIs only; Dart remains the activation/session/limit owner.
-- Generated Android hosts own canonical JitPack repository configuration. `extensions-lib` remains non-transitive ABI-only; do not restore a second AndroidX Preference provider or legacy Kohesive Injekt, disable duplicate-class verification, or remove consumer R8 rules.
-- Device-installed Mihon extensions are discoverable and copied into the same immutable trust/install path as repository APKs.
-- Mihon activation revalidates the copied APK package and host ABI, then uses a payload-specific Context for package name, resources/assets, class loader, theme, LayoutInflater, isolated preferences and file/cache roots. Entry creation supports Kotlin object, static `create/newInstance/getInstance`, `Context` constructor and no-arg constructor. Preserve named entry/root-cause diagnostics.
-- Venera activation recognizes direct/array/object/Map explore loaders and current `itemType/categories/categoryParams` plus legacy category targets. `optionLoader` and `optionList` must remain normalized before calling `categoryComics.load`.
-- Venera HTTP rewrites source `Accept-Encoding` to gzip/deflate and bounded-decodes the response. When a public hostname resolves only to loopback/private addresses or fails resolution, a bounded DoH fallback may provide only safe numeric A/AAAA addresses to OkHttp custom DNS; URL hostname and TLS verification remain unchanged.
-- Do not silently return an empty source list for an unsupported source contract. Fail with a specific capability, entry class or network cause.
+- Preserve Home startup, Reader demand/artifact ownership, resource cache, download sessions and catalog/domain mapping. External plugins remain ordinary `BrowsableComicSource` adapters in the dedicated `:zic_plugin_runtime` process.
+- Mihon repository/device APKs share the immutable trust path, payload-specific Context, named entry diagnostics, single host ABI provider and consumer R8 retention introduced in dev.53-dev.56.
+- Android 14+ dex loading requires the runtime APK itself to be non-writable. Keep `stageReadOnlyMihonApk`: open a same-directory `.part` for writing, mark its path read-only before writing through that already-open descriptor, fsync, verify length/SHA-256, rename, reassert read-only state, and verify before `DexClassLoader`. Do not load the writable persistent install payload directly.
+- Venera loader discovery must accept both `load` and cursor-style `loadNext`. Cursor state is runtime-local and keyed by operation/query/options; page one resets it. Preserve `{comics,next}` and ordinary page-number contracts.
+- Venera catalog/detail covers are absolute HTTP(S) URIs and must be readable through `loadResource`; only chapter-page transformations require `venera-resource://` tokens. Both paths stay inside the approved network/cookie/response/image bridge.
+- Runtime output uses `vertical`, but the Dart protocol adapter intentionally accepts legacy `topToBottom`, `webtoon`, `leftToRight` and `rightToLeft` aliases. Unknown values remain errors.
+- Venera static source-key inspection is non-executing and class-scoped. It must not scan method-local `key` variables or weaken repository/script mismatch checks.
+- Response headers cross two Android shapes: nullable `HttpURLConnection.headerFields` and non-null OkHttp multimap. Keep the `Map<*, *>` normalizer and do not reintroduce an invariant generic signature.
 
 ## Validation commands
 
@@ -25,14 +25,16 @@ python3 tool/check_android_runtime_dependencies.py
 python3 tool/test_android_runtime_dependencies.py
 python3 tool/test_configure_platforms.py
 python3 tool/test_venera_network_policy.py
+python3 tool/test_venera_bootstrap.py
+python3 tool/test_venera_response_headers.py
 python3 tool/test_mihon_entry_instantiation.py
 python3 tool/test_mihon_payload_context.py
-python3 tool/test_venera_bootstrap.py
+python3 tool/test_mihon_read_only_payload.py
 bash -n tool/*.sh
 python3 -m py_compile tool/*.py
 bash ./tool/check_native_header.sh
 flutter pub get
-(cd packages/plugin_host && dart test test/plugin_contract_test.dart test/runtime_activation_test.dart test/runtime_service_test.dart test/runtime_worker_test.dart test/runtime_executors_test.dart)
+(cd packages/plugin_host && dart test test/payload_inspectors_test.dart test/runtime_source_adapter_test.dart test/plugin_contract_test.dart test/runtime_activation_test.dart test/runtime_service_test.dart test/runtime_worker_test.dart test/runtime_executors_test.dart)
 (cd packages/plugin_host_bridge && flutter test test/android_mihon_metadata_reader_test.dart test/external_plugin_controller_manifest_test.dart test/method_channel_runtime_backends_test.dart test/runtime_service_handler_test.dart test/runtime_service_entrypoint_test.dart)
 (cd apps/app/android && ./gradlew :plugin_host_bridge:testDebugUnitTest --tests dev.zic.pluginhost.MihonHostAbiTest --tests dev.zic.pluginhost.MihonRuntimeWorkspaceTest --tests dev.zic.pluginhost.VeneraNetworkPolicyTest --tests dev.zic.pluginhost.VeneraResponseDecodingTest)
 (cd apps/app/android && ./gradlew :app:checkReleaseDuplicateClasses :app:assembleRelease)
@@ -46,7 +48,7 @@ bash ./tool/build_android.sh release
 
 ## Next mainline work
 
-1. On an Android device, activate one repository-installed and one device-installed current Keiyoushi 1.6 extension. Record the full named activation cause if either fails; do not generalize it back to `activationFailed`.
-2. Exercise official Venera JM browse/detail/chapter/resource on a network where its domain previously resolved to `127.0.0.1`; verify DoH answers remain public and TLS still validates the original hostname.
-3. Add instrumentation for plugin install, process kill, explicit reactivation, payload Context resource lookup and WebView teardown.
-4. Capture any incompatible real APK/source as a bounded fixture before expanding the adapter. Keep source-specific behavior out of Presentation and do not change tests to conceal product failures.
+1. Build and activate the reported `eu.kanade.tachiyomi.extension.zh.jinmantiantang` APK on Android 14+; confirm the staged APK mode is non-writable and capture any subsequent named entry/root cause.
+2. Exercise official Venera e-hentai and Picacg install, activation, first/second browse pages, cover fetch, detail, chapter and page resource paths. Record the exact source result shape before adding any new normalization.
+3. Add Android instrumentation around process kill/reactivation and WebView teardown without moving session or cache ownership into Kotlin.
+4. Keep source-specific UI branches out of Presentation and never change tests to conceal a product failure.

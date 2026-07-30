@@ -704,3 +704,5 @@ and only the host adapter may turn runtime descriptors/results into zic `Browsab
 Timeout does not imply backend cancellation or release of an in-flight permit; teardown must signal the isolated
 connection and drain the actual operation lifecycle.
 Mihon Android packaging must expose each host ABI namespace from exactly one artifact. `extensions-lib` is non-transitive, old Kohesive Injekt and a second AndroidX Preference dependency are forbidden, and release shrinking must retain dynamically referenced host classes. Activation must report an incomplete host ABI before loading extension entry classes.
+
+- Mihon/Venera runtime code immutability and loader normalization: a Mihon APK must be exact-length/SHA-256 verified and non-writable before `DexClassLoader` observes it. Venera capability normalization accepts page-number `load` and cursor `loadNext`; ordinary HTTP(S) covers and transient page tokens both use the isolated resource bridge. Direction aliases are converted only at the protocol/domain boundary, and static source-key inspection is scoped to the `ComicSource` class declaration rather than method locals.
