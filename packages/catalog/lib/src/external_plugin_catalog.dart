@@ -88,17 +88,24 @@ List<ExternalComicPluginCatalogEntry> parseMihonExtensionIndex(
   Uri? repositoryBase,
 }) {
   final decoded = jsonDecode(document);
-  if (decoded is! List<Object?>) {
-    throw const FormatException('Mihon extension index must be a JSON list');
-  }
-  return List<ExternalComicPluginCatalogEntry>.unmodifiable(
-    decoded.map(
-      (value) => _parseMihonEntry(
-        _object(value, 'Mihon extension entry'),
-        repositoryBase: repositoryBase,
+  final entries = switch (decoded) {
+    List<Object?> values => values.map(
+        (value) => _parseMihonLegacyEntry(
+          _object(value, 'Mihon extension entry'),
+          repositoryBase: repositoryBase,
+        ),
       ),
-    ),
-  );
+    Map<Object?, Object?> value => _mihonV2Entries(value).map(
+        (entry) => _parseMihonV2Entry(
+          entry,
+          repositoryBase: repositoryBase,
+        ),
+      ),
+    _ => throw const FormatException(
+        'Mihon extension index must be a legacy list or v2 object',
+      ),
+  };
+  return List<ExternalComicPluginCatalogEntry>.unmodifiable(entries);
 }
 
 List<ExternalComicPluginCatalogEntry> parseVeneraSourceIndex(
@@ -119,7 +126,7 @@ List<ExternalComicPluginCatalogEntry> parseVeneraSourceIndex(
   );
 }
 
-ExternalComicPluginCatalogEntry _parseMihonEntry(
+ExternalComicPluginCatalogEntry _parseMihonLegacyEntry(
   Map<String, Object?> json, {
   required Uri? repositoryBase,
 }) {
@@ -151,6 +158,62 @@ ExternalComicPluginCatalogEntry _parseMihonEntry(
     sources: sources,
     language: _optionalString(json['lang']),
     adult: _adultFlag(json['nsfw']),
+  );
+}
+
+List<Map<String, Object?>> _mihonV2Entries(
+  Map<Object?, Object?> rawIndex,
+) {
+  final index = _object(rawIndex, 'Mihon v2 index');
+  final extensionList = _object(
+    index['extensionList'],
+    'Mihon v2 extensionList',
+  );
+  final extensions = extensionList['extensions'];
+  if (extensions is! List<Object?>) {
+    throw const FormatException(
+      'Mihon v2 extensionList.extensions must be a list',
+    );
+  }
+  return extensions
+      .map((value) => _object(value, 'Mihon v2 extension entry'))
+      .toList(growable: false);
+}
+
+ExternalComicPluginCatalogEntry _parseMihonV2Entry(
+  Map<String, Object?> json, {
+  required Uri? repositoryBase,
+}) {
+  final packageName = _string(json, 'packageName');
+  final resources = _object(json['resources'], 'Mihon v2 resources');
+  final apk = _string(resources, 'apkUrl');
+  final rawSources = json['sources'];
+  if (rawSources is! List<Object?>) {
+    throw const FormatException('Mihon v2 extension sources must be a list');
+  }
+  final sources = rawSources.map((value) {
+    final source = _object(value, 'Mihon v2 source entry');
+    final externalId = _idString(source['id'], 'Mihon source id');
+    final homeUrl = _optionalString(source['homeUrl']);
+    return ExternalComicPluginSource(
+      sourceId: 'mihon:$externalId',
+      externalId: externalId,
+      name: _string(source, 'name'),
+      language: _string(source, 'language'),
+      baseUri: homeUrl == null ? null : Uri.parse(homeUrl),
+    );
+  }).toList(growable: false);
+  final languages = sources.map((source) => source.language).toSet();
+  return ExternalComicPluginCatalogEntry(
+    format: ExternalComicPluginFormat.mihonExtension,
+    pluginId: 'mihon:$packageName',
+    name: _string(json, 'name'),
+    version: _string(json, 'versionName'),
+    versionCode: _optionalInt(json['versionCode'], 'Mihon extension versionCode'),
+    entrypoint: _resolveEntrypoint(apk, repositoryBase),
+    sources: sources,
+    language: languages.length == 1 ? languages.single : null,
+    adult: _mihonV2AdultFlag(json['contentWarning']),
   );
 }
 
@@ -254,6 +317,10 @@ int? _optionalInt(Object? value, String label) {
   if (value is int && value >= 0) {
     return value;
   }
+  if (value is String) {
+    final parsed = int.tryParse(value);
+    if (parsed != null && parsed >= 0) return parsed;
+  }
   throw FormatException('$label must be a non-negative integer');
 }
 
@@ -266,6 +333,9 @@ String _idString(Object? value, String label) {
   }
   throw FormatException('$label must be a string or integer');
 }
+
+bool _mihonV2AdultFlag(Object? value) =>
+    value == 'CONTENT_WARNING_NSFW';
 
 bool _adultFlag(Object? value) => switch (value) {
       true => true,

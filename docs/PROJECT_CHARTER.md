@@ -36,7 +36,7 @@
 - Windows、macOS、Linux。
 - 云端书架同步。
 - 远程全局模型训练与端侧个性化模型下发。
-- 可插拔漫画源和内容扩展（已建立 MangaDex、Mihon/Venera repository 元数据兼容边界；受限外部执行 host 仍在后续阶段）。
+- 可插拔漫画源和内容扩展（已建立 MangaDex 与 Mihon/Venera 仓库、信任、隔离执行及统一 source adapter 边界；后续继续扩大真实扩展兼容覆盖）。
 
 ## 4. 核心目标
 

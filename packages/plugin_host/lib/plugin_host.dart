@@ -1,3 +1,4 @@
+export 'package:catalog/catalog.dart';
 export 'src/plugin_gate.dart';
 export 'src/runtime_executors.dart';
 export 'src/runtime_channel.dart';

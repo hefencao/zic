@@ -8,6 +8,8 @@ import 'package:flutter/services.dart';
 
 import 'package:downloads/downloads.dart';
 import 'comic_details.dart' as details;
+import 'package:plugin_host_bridge/plugin_host_bridge.dart';
+import 'external_plugin_repository_screen.dart';
 
 const comicSourcesPageKey = ValueKey<String>('comic-sources-page');
 const comicSourceManageKey = ValueKey<String>('comic-source-manage');
@@ -428,6 +430,8 @@ final class SourceManagementScreen extends StatefulWidget {
     required this.sources,
     required this.preferences,
     required this.onPreferenceChanged,
+    this.externalPlugins,
+    this.onExternalSourcesChanged,
     super.key,
   });
 
@@ -435,6 +439,8 @@ final class SourceManagementScreen extends StatefulWidget {
   final Map<String, ComicSourcePreference> preferences;
   final Future<void> Function(ComicSourcePreference preference)
       onPreferenceChanged;
+  final ExternalPluginController? externalPlugins;
+  final Future<void> Function()? onExternalSourcesChanged;
 
   @override
   State<SourceManagementScreen> createState() =>
@@ -515,33 +521,154 @@ final class _SourceManagementScreenState
     }
   }
 
+  Future<void> _openExternalRepository(
+    ExternalComicPluginFormat format,
+  ) async {
+    final controller = widget.externalPlugins;
+    final changed = widget.onExternalSourcesChanged;
+    if (controller == null || changed == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ExternalPluginRepositoryScreen(
+          format: format,
+          controller: controller,
+          onSourcesChanged: changed,
+        ),
+      ),
+    );
+    if (mounted) {
+      _refreshExternalSources(controller);
+    }
+  }
+
+  void _refreshExternalSources(ExternalPluginController controller) {
+    final builtIn = _sources.where(
+      (source) =>
+          !source.sourceId.startsWith('mihon:') &&
+          !source.sourceId.startsWith('venera:'),
+    );
+    setState(() {
+      _sources = <BrowsableComicSource>[
+        ...builtIn,
+        ...controller.activeSources,
+      ]..sort((left, right) => _preference(left).sortOrder.compareTo(
+            _preference(right).sortOrder,
+          ));
+    });
+  }
+
+  Future<void> _removeExternal(String pluginId) async {
+    final controller = widget.externalPlugins;
+    final changed = widget.onExternalSourcesChanged;
+    if (controller == null || changed == null) return;
+    try {
+      await controller.remove(pluginId);
+      await changed();
+      if (mounted) {
+        _refreshExternalSources(controller);
+      }
+    } on Object catch (error, stackTrace) {
+      if (!mounted) return;
+      _showSourceFailureSnackBar(
+        context,
+        prefix: '移除外部漫画源失败',
+        failure: _SourceFailure.capture(error, stackTrace),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       key: sourceManagementScreenKey,
       appBar: AppBar(title: const Text('漫画源管理')),
-      body: ReorderableListView.builder(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        itemCount: _sources.length,
-        onReorder: (oldIndex, newIndex) {
-          unawaited(_reorder(oldIndex, newIndex));
-        },
-        itemBuilder: (context, index) {
-          final source = _sources[index];
-          final preference = _preference(source);
-          return SwitchListTile(
-            key: ValueKey<String>('source-manager:${source.sourceId}'),
-            value: preference.enabled,
-            onChanged: (value) {
-              unawaited(_toggle(source, value));
-            },
-            secondary: const Icon(Icons.public),
-            title: Text(source.descriptor.name),
-            subtitle: Text(
-              '${source.descriptor.language} · ${source.descriptor.website.host}',
+      body: Column(
+        children: <Widget>[
+          if (widget.externalPlugins != null)
+            Card(
+              margin: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+              child: Column(
+                children: <Widget>[
+                  ListTile(
+                    leading: const Icon(Icons.extension_outlined),
+                    title: const Text('Mihon 扩展'),
+                    subtitle: const Text('从兼容仓库安装 APK，并在独立进程运行'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => unawaited(_openExternalRepository(
+                      ExternalComicPluginFormat.mihonExtension,
+                    )),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.javascript_outlined),
+                    title: const Text('Venera 漫画源'),
+                    subtitle: const Text('从兼容仓库安装 JavaScript 源并受限执行'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => unawaited(_openExternalRepository(
+                      ExternalComicPluginFormat.veneraJavaScript,
+                    )),
+                  ),
+                  for (final installed in widget.externalPlugins!.installed)
+                    Builder(
+                      builder: (context) {
+                        final failure = widget.externalPlugins!
+                            .activationFailures[installed.plugin.pluginId];
+                        return ListTile(
+                          dense: true,
+                          leading: Icon(
+                            failure == null
+                                ? Icons.verified_user_outlined
+                                : Icons.error_outline,
+                          ),
+                          title: Text(installed.plugin.name),
+                          subtitle: Text(
+                            failure == null
+                                ? '${installed.plugin.format.name} · ${installed.plugin.version}'
+                                : '启动失败 · $failure',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: IconButton(
+                            tooltip: '移除',
+                            onPressed: () => unawaited(
+                              _removeExternal(installed.plugin.pluginId),
+                            ),
+                            icon: const Icon(Icons.delete_outline),
+                          ),
+                        );
+                      },
+                    ),
+                ],
+              ),
             ),
-          );
-        },
+          Expanded(
+            child: ReorderableListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              itemCount: _sources.length,
+              onReorder: (oldIndex, newIndex) {
+                unawaited(_reorder(oldIndex, newIndex));
+              },
+              itemBuilder: (context, index) {
+                final source = _sources[index];
+                final preference = _preference(source);
+                return SwitchListTile(
+                  key: ValueKey<String>(
+                    'source-manager:${source.sourceId}',
+                  ),
+                  value: preference.enabled,
+                  onChanged: (value) {
+                    unawaited(_toggle(source, value));
+                  },
+                  secondary: const Icon(Icons.public),
+                  title: Text(source.descriptor.name),
+                  subtitle: Text(
+                    '${source.descriptor.language} · '
+                    '${source.descriptor.website.host}',
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

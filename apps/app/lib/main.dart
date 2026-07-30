@@ -5,6 +5,7 @@ import 'package:downloads/downloads.dart';
 import 'package:downloads_bridge/downloads_bridge.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 import 'package:plugin_host_bridge/runtime_service_entrypoint.dart'
     as plugin_runtime_service;
 import 'package:resource_cache/resource_cache.dart';
@@ -85,6 +86,7 @@ final class _BootstrapAppState extends State<_BootstrapApp> {
           chapterDownloads: services.chapterDownloads,
           wholeComicDownloads: services.wholeComicDownloads,
           cacheCoordinator: services.cacheCoordinator,
+          externalPlugins: services.externalPlugins,
           startupTelemetry: _startupTelemetry,
         );
       },
@@ -137,12 +139,14 @@ final class _AppServices {
     this.chapterDownloads,
     this.wholeComicDownloads,
     this.cacheCoordinator,
+    this.externalPlugins,
   });
 
   final ImportedLibraryStore? libraryStore;
   final ManagedChapterDownloadService? chapterDownloads;
   final WholeComicDownloadQueue? wholeComicDownloads;
   final ResourceCacheCoordinator? cacheCoordinator;
+  final ExternalPluginController? externalPlugins;
   bool _closed = false;
 
   Future<void> close() async {
@@ -154,6 +158,7 @@ final class _AppServices {
     StackTrace? firstStackTrace;
     for (final close in <Future<void> Function()>[
       if (wholeComicDownloads != null) wholeComicDownloads!.close,
+      if (externalPlugins != null) externalPlugins!.close,
       if (cacheCoordinator != null) cacheCoordinator!.close,
       if (chapterDownloads != null) chapterDownloads!.close,
       if (libraryStore != null) libraryStore!.close,
@@ -176,6 +181,7 @@ Future<_AppServices> _openServices(HomeStartupTelemetry telemetry) async {
   ManagedChapterDownloadService? chapterDownloads;
   WholeComicDownloadQueue? wholeComicDownloads;
   ResourceCacheCoordinator? cacheCoordinator;
+  ExternalPluginController? externalPlugins;
   try {
     final openedAt = telemetry.nowMicros();
     var stageStarted = telemetry.nowMicros();
@@ -219,15 +225,22 @@ Future<_AppServices> _openServices(HomeStartupTelemetry telemetry) async {
     );
     telemetry.serviceReady('whole-comic-queue', startedAtMicros: stageStarted);
     telemetry.servicesReady(startedAtMicros: openedAt);
+    try {
+      externalPlugins = await ExternalPluginController.open(root);
+    } on Object catch (error) {
+      debugPrint('external plugin runtime unavailable: $error');
+    }
     return _AppServices(
       libraryStore: libraryStore,
       chapterDownloads: chapterDownloads,
       wholeComicDownloads: wholeComicDownloads,
       cacheCoordinator: cacheCoordinator,
+      externalPlugins: externalPlugins,
     );
   } on Object catch (error) {
     debugPrint('durable application storage unavailable: $error');
     await wholeComicDownloads?.close();
+    await externalPlugins?.close();
     await cacheCoordinator?.close();
     await chapterDownloads?.close();
     await libraryStore?.close();
@@ -245,6 +258,7 @@ final class App extends StatelessWidget {
     this.wholeComicDownloads,
     this.comicSources,
     this.cacheCoordinator,
+    this.externalPlugins,
     this.startupTelemetry,
     super.key,
   }) : assert(
@@ -260,6 +274,7 @@ final class App extends StatelessWidget {
   final WholeComicDownloadQueue? wholeComicDownloads;
   final List<BrowsableComicSource>? comicSources;
   final ResourceCacheCoordinator? cacheCoordinator;
+  final ExternalPluginController? externalPlugins;
   final HomeStartupTelemetry? startupTelemetry;
 
   @override
@@ -287,6 +302,7 @@ final class App extends StatelessWidget {
         chapterDownloads: chapterDownloads,
         wholeComicDownloads: wholeComicDownloads,
         comicSources: comicSources,
+        externalPlugins: externalPlugins,
         cacheCoordinator: cacheCoordinator,
         startupTelemetry: startupTelemetry,
       ),

@@ -21,14 +21,14 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.52）
+## 当前应用主线（0.31.0-dev.53）
 
 - 目标重建回归必须先证明 decode target 实际变化；仅改变容器尺寸但 raster target 不变时，不得把“不重建 codec”判定为产品错误。
 - Mihon/Venera activation wire 必须在隔离进程入口再次严格解析；process-side driver 不得直接信任 host 进程中的对象或未声明字段。
 - 批准 payload 必须在隔离进程内按 length/SHA-256 流式重验并原子提升为 process-private 文件，driver 只能打开该副本；session 关闭后由 process host 删除。
 - runtime process host 必须拥有 session registry、activation 串行化、invoke/cancel/close 路由和 joinable shutdown。进程死亡/重启后不得自动重放中断的 catalog 请求。
 - dedicated Android runtime service 只允许转发 `ExternalPluginRuntimeServiceMethods` 的原始 wire message；activation、payload staging、session registry、取消和 shutdown 必须由 Dart service endpoint/process host 统一拥有，不得在 Kotlin 重复实现。
-- Android runtime Service 必须 `exported=false` 并运行在 `:zic_plugin_runtime`。FlutterEngine 禁止自动 plugin registration，只执行保留的第二 Dart entrypoint；默认无 driver 时必须在专用进程返回 `driver-unavailable`。
+- Android runtime Service 必须 `exported=false` 并运行在 `:zic_plugin_runtime`。FlutterEngine 禁止自动 plugin registration，只执行保留的第二 Dart entrypoint；Mihon/Venera driver 仅在该专用进程注册，未知格式或不兼容 ABI 必须返回明确错误，禁止主进程回退。
 - Host/Service 跨进程调用不得依赖 Binder 携带大型页面字节。请求必须保持小型且有界；大响应写入应用私有原子 packet，host 校验 canonical root/exact length/SHA-256 后读取并删除。service death 只失败当前调用，不自动重发、重激活或复用旧 generation。
 - 每个 runtime service process 必须生成新的 `processId`。invoke/cancel/close 同时校验 process/session identity；进程重启后旧 generation 必须失败，禁止透明重激活或请求重放。
 - 普通本地静态图片的文件路由必须是可独立验证的纯映射；zero-Dart-copy 测试不得启动宿主平台 codec 或依赖测试 runner 的图片流收尾。
@@ -38,16 +38,16 @@
 - 将 protocol-v1 的服务端所有权收敛为 `ExternalPluginRuntimeWorker`：隔离边界内再次解析请求、验证 source/request identity、净化错误、跟踪真实调用并确定性关闭。
 - 为 raw runtime channel 增加可选的 request-level cooperative cancellation；timeout 只结束调用者等待，底层 Future 退出前 host permit 不释放。
 - Mihon/Venera activation envelope 传递 exact payload path/length/hash、approved capabilities 和 runtime limits；Android host adapter 统一 activation/invoke/cancel/close。
-- Android native bridge 在隔离执行服务未安装时明确 fail-closed；不得退回主进程 class loading 或无约束 JavaScript 执行。
-- 下一阶段分别实现 Mihon dedicated-process driver 与 Venera sandbox driver，它们必须复用 worker 和 protocol conformance fixture。
+- Android native bridge 仅在 `:zic_plugin_runtime` 内加载已验证的 Mihon APK 或执行受限 Venera JavaScript；不得退回主进程 class loading 或无约束脚本执行。
+- Mihon/Venera driver 必须复用现有 worker、protocol-v1、session/cancel/limit 所有权。新增生态 API 时只扩展隔离 adapter，不复制 catalog/domain 映射，也不得绕过 payload pin、签名/ABI/source-key 或用户信任。
 
 - 保留 Home/Bookshelf 的 Presentation 拆分，但禁止在 `apps/app/lib` 定义资源缓存、章节下载、页面保活或整本调度算法。
 - `resource_cache` 继续统一管理封面/图片响应、漫画详情、章节元数据和搜索结果。只有完整 `imageBytes` 可通过注入的 byte store 持久化；章节页面仍不进入该平面。
 - 封面持久键必须包含完整 `ResourceCacheKey` 与可用 `sourceRevision`，保留命名空间失效、TTL、容量限制和显式刷新。关闭缓存时先停止接收新工作，再排空已有请求及持久提交；统一维护需分别展示/整理内存响应、持久响应和页面 artifact。
 - Reader 的页面/缩放 host 按稳定 asset identity 建立。翻页中点改变 current role 只能触发状态更新和缩放重置，不得销毁已加载媒体子树；Presentation 仍不得通过 keep-alive、私有 LRU 或相邻页预热竞争 pipeline policy。
 - `downloads` 管理独立页面 artifact 下载、promoted handoff 及整本队列；不完整章节继续由“章节元数据 + 任意页面 artifact 子集”表示。
-- `catalog` 新增 Mihon repository 与 Venera source index 的纯元数据兼容层。Venera 同时兼容 `filename`/`fileName` 并优先保留仓库 `key`；Mihon host 后续必须检查 `tachiyomix.extensionLib` 等 APK ABI 元数据。外部 APK/Kotlin 与 JavaScript 执行必须分别位于受限 host，返回有显式 `close()` 生命周期的普通 `BrowsableComicSource`，不得获得导航、Reader、demand 或 artifact 权限。
-- 外部插件的共享信任/权限/版本/ABI/隔离/session 门禁及 immutable-payload inspector 已实现；Android `MihonApkMetadataReader` 同时返回入口类元数据。Mihon/Venera 现共享版本化 browse/detail/chapter/resource wire protocol 和统一 `BrowsableComicSource` 适配层；host 对 timeout、响应字节和真实并发二次限流。下一阶段只在对应 isolated backend 内实现 class loader 或 JavaScript engine，不得复制 catalog/domain 映射或泄漏 Reader/download/artifact API。
+- `catalog` 提供 Mihon repository 与 Venera source index 的纯元数据兼容层。Mihon 同时解析当前 `extensionList.extensions` v2 对象和旧版数组；Venera 同时兼容 `filename`/`fileName` 并优先保留仓库 `key`。host 必须检查 `tachiyomix.extensionLib` 等 APK ABI 元数据；外部 APK/Kotlin 与 JavaScript 执行分别位于受限 host，返回有显式 `close()` 生命周期的普通 `BrowsableComicSource`，不得获得导航、Reader、demand 或 artifact 权限。
+- 外部插件的共享信任/权限/版本/ABI/隔离/session 门禁及 immutable-payload inspector 已实现；Android `MihonApkMetadataReader` 同时返回入口类元数据。Mihon/Venera 现共享版本化 browse/detail/chapter/resource wire protocol 和统一 `BrowsableComicSource` 适配层；host 对 timeout、响应字节和真实并发二次限流。现已在对应 isolated backend 内实现 class loader 与 JavaScript engine；后续兼容扩展仍不得复制 catalog/domain 映射或泄漏 Reader/download/artifact API。
 - Reader 快速切页 trace 已有确定性回放分析：由 `downloads` 生成精确 page/DownloadId identity，分别记录 transition revision 与实际产出呈现帧的 work revision，还原 artifact 来源、decode/upload 排队与执行、present、first frame 和 host remount；中点前已呈现的邻页计为零 transition wait。任何 retention 调整必须先由该分析定位 owner，再在 pipeline/session/media 层实施。
 - App durable composition 只接受显式 `ManagedChapterDownloadService` 作为页面 artifact store/maintenance；普通 `ChapterDownloadService` 保持较窄契约，避免把缓存维护强加给仅提供下载命令的适配器。
 - 冷启动 Reader 命中已 promoted 页面 artifact 时，权威替代 session 进入 queued/receiving 即启动唯一精确读取；页面消费者只加入该读取并可立即 decode，替代 session 仍需完成 receive/seal/promote。禁止页面自行创建缓存/网络 demand 或新增 Presentation 私有缓存。

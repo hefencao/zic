@@ -17,7 +17,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     required this.ownsLibrary,
     required this.ownsChapterDownloads,
     required this.ownsWholeComicDownloads,
-  }) : sources = List<BrowsableComicSource>.unmodifiable(sources) {
+  }) : _sources = List<BrowsableComicSource>.unmodifiable(sources) {
     _downloadSubscription = chapterDownloads.changes.listen(
       acceptDownloadSnapshot,
     );
@@ -32,7 +32,8 @@ final class HomeLibrarySession extends ChangeNotifier {
   final ImportedLibraryStore library;
   final ChapterDownloadService chapterDownloads;
   final WholeComicDownloadQueue wholeComicDownloads;
-  final List<BrowsableComicSource> sources;
+  List<BrowsableComicSource> _sources;
+  List<BrowsableComicSource> get sources => _sources;
   final bool ownsLibrary;
   final bool ownsChapterDownloads;
   final bool ownsWholeComicDownloads;
@@ -251,6 +252,11 @@ final class HomeLibrarySession extends ChangeNotifier {
       <String, ChapterReadState>{..._readStates, state.identity: state},
     );
     _publish();
+  }
+
+  Future<void> replaceSources(List<BrowsableComicSource> sources) async {
+    _sources = List<BrowsableComicSource>.unmodifiable(sources);
+    await reload();
   }
 
   void replaceSourcePreference(ComicSourcePreference preference) {

@@ -35,10 +35,12 @@ class ExternalPluginRuntimeService : Service() {
     private var dartReady = false
     private var closing = false
     private var bootstrapFailure: String? = null
+    private lateinit var nativeDrivers: NativeExternalPluginDriverHost
 
     override fun onCreate() {
         super.onCreate()
         packetStore = RuntimeServicePacketStore(applicationContext)
+        nativeDrivers = NativeExternalPluginDriverHost(applicationContext)
         packetStore.clear()
         bootstrapEngine()
     }
@@ -60,6 +62,7 @@ class ExternalPluginRuntimeService : Service() {
             "isolated plugin runtime service terminated",
         )
         runtimeChannel?.setMethodCallHandler(null)
+        nativeDrivers.close()
         runtimeChannel = null
         engine?.destroy()
         engine = null
@@ -79,22 +82,24 @@ class ExternalPluginRuntimeService : Service() {
                 RUNTIME_CHANNEL_NAME,
             )
             channel.setMethodCallHandler { call, result ->
-                if (call.method == RUNTIME_READY_METHOD) {
-                    val message = call.arguments as? Map<*, *>
-                    val processId = message?.get("processId") as? String
-                    if (processId.isNullOrBlank()) {
-                        result.error(
-                            "runtime-request-invalid",
-                            "runtime service generation is missing",
-                            null,
-                        )
-                    } else {
-                        dartReady = true
-                        result.success(null)
-                        flushQueued()
+                when {
+                    call.method == RUNTIME_READY_METHOD -> {
+                        val message = call.arguments as? Map<*, *>
+                        val processId = message?.get("processId") as? String
+                        if (processId.isNullOrBlank()) {
+                            result.error(
+                                "runtime-request-invalid",
+                                "runtime service generation is missing",
+                                null,
+                            )
+                        } else {
+                            dartReady = true
+                            result.success(null)
+                            flushQueued()
+                        }
                     }
-                } else {
-                    result.notImplemented()
+                    nativeDrivers.handles(call.method) -> nativeDrivers.handle(call, result)
+                    else -> result.notImplemented()
                 }
             }
             val entrypoint = DartExecutor.DartEntrypoint(

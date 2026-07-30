@@ -1,0 +1,967 @@
+package dev.zic.pluginhost
+
+import android.annotation.SuppressLint
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Matrix
+import android.graphics.Rect
+import android.os.Handler
+import android.os.Looper
+import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.Closeable
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import java.security.KeyFactory
+import java.security.MessageDigest
+import java.util.Locale
+import java.nio.charset.Charset
+import java.security.spec.PKCS8EncodedKeySpec
+import java.security.spec.X509EncodedKeySpec
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import javax.crypto.Cipher
+import javax.crypto.Mac
+import javax.crypto.spec.IvParameterSpec
+import javax.crypto.spec.SecretKeySpec
+
+/** Venera JavaScript runtime hosted by a process-private, UI-less WebView. */
+internal class VeneraRuntimeDriver private constructor(
+    private val context: Context,
+    override val driverId: String,
+    override val runtimeId: String,
+    private val sourceKey: String,
+    private val webView: WebView,
+    private val bridge: VeneraNativeBridge,
+    override val sources: List<Map<String, Any?>>,
+) : NativeExternalPluginDriver {
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val pending = ConcurrentHashMap<String, NativeDriverResult>()
+    private val closed = AtomicBoolean(false)
+
+    init {
+        bridge.resultSink = resultSink@ { requestId, envelope ->
+            val result = pending.remove(requestId) ?: return@resultSink
+            val ok = envelope.optBoolean("ok", false)
+            if (!ok) {
+                result.error(
+                    envelope.optString("code", "venera-operation-failed"),
+                    envelope.optString("message", "Venera operation failed").take(300),
+                    envelope.optBoolean("retryable", false),
+                )
+            } else {
+                result.success(decodeWireValue(envelope.opt("value")) ?: emptyMap<String, Any?>())
+            }
+        }
+    }
+
+    override fun invoke(request: Map<String, Any?>, result: NativeDriverResult) {
+        if (closed.get()) {
+            result.error("runtime-closing", "Venera runtime is closing")
+            return
+        }
+        val requestId = request.requireString("requestId")
+        if (request.requireString("externalSourceId") != sourceKey) {
+            result.error("source-missing", "Venera source is not active")
+            return
+        }
+        pending[requestId] = result
+        val encoded = JSONObject(request).toString().jsQuoted()
+        mainHandler.post {
+            if (closed.get()) {
+                pending.remove(requestId)?.error("runtime-closing", "Venera runtime is closing")
+                return@post
+            }
+            webView.evaluateJavascript("__zicInvoke($encoded);", null)
+        }
+    }
+
+    override fun cancel(requestId: String) {
+        pending.remove(requestId)?.error("runtime-request-cancelled", "Venera request was cancelled")
+        mainHandler.post { webView.evaluateJavascript("__zicCancel(${requestId.jsQuoted()});", null) }
+        bridge.cancel(requestId)
+    }
+
+    override fun close() {
+        if (!closed.compareAndSet(false, true)) return
+        pending.values.forEach {
+            it.error("runtime-closing", "Venera runtime is closing")
+        }
+        pending.clear()
+        bridge.close()
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            destroyWebView()
+        } else {
+            val latch = java.util.concurrent.CountDownLatch(1)
+            mainHandler.post {
+                destroyWebView()
+                latch.countDown()
+            }
+            latch.await()
+        }
+    }
+
+    private fun destroyWebView() {
+        webView.removeJavascriptInterface(BRIDGE_NAME)
+        webView.stopLoading()
+        webView.loadUrl("about:blank")
+        webView.clearHistory()
+        webView.removeAllViews()
+        webView.destroy()
+    }
+
+    companion object {
+        private const val BRIDGE_NAME = "ZicNative"
+        private const val ACTIVATION_TIMEOUT_MILLIS = 30_000L
+
+        @SuppressLint("SetJavaScriptEnabled")
+        fun create(
+            context: Context,
+            driverId: String,
+            activation: Map<String, Any?>,
+            payloadPath: String,
+            payloadLength: Long,
+            payloadSha256: String,
+            callback: (Result<VeneraRuntimeDriver>) -> Unit,
+        ) {
+            check(Looper.myLooper() == Looper.getMainLooper())
+            val prepared = runCatching {
+                val payload = File(payloadPath)
+                verifyVeneraPayload(payload, payloadLength, payloadSha256)
+                val script = payload.readText(Charsets.UTF_8)
+                val className = Regex(
+                    "class\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s+extends\\s+ComicSource",
+                ).find(script)?.groupValues?.get(1)
+                    ?: error("Venera script does not declare a ComicSource subclass")
+                val sourceKey = activation.requireString("sourceKey")
+                val pluginId = activation.requireString("pluginId")
+                val pluginVersion = activation.requireString("pluginVersion")
+                val capabilities = activation["capabilities"].asVeneraCapabilities()
+                val limits = activation["limits"].stringMap("runtime limits")
+                val maxResponseBytes = limits.requireLong("maxResponseBytes")
+                    .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                val webView = WebView(context)
+                webView.settings.apply {
+                    javaScriptEnabled = true
+                    domStorageEnabled = false
+                    databaseEnabled = false
+                    allowFileAccess = false
+                    allowContentAccess = false
+                    javaScriptCanOpenWindowsAutomatically = false
+                    setSupportMultipleWindows(false)
+                    mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                    cacheMode = WebSettings.LOAD_NO_CACHE
+                    userAgentString = "${userAgentString.orEmpty()} zic-venera/$pluginVersion".trim()
+                }
+                val bridge = VeneraNativeBridge(
+                    context = context,
+                    sourceKey = sourceKey,
+                    capabilities = capabilities,
+                    maxResponseBytes = maxResponseBytes,
+                )
+                webView.addJavascriptInterface(bridge, BRIDGE_NAME)
+                VeneraActivation(
+                    webView = webView,
+                    bridge = bridge,
+                    script = script,
+                    className = className,
+                    sourceKey = sourceKey,
+                    pluginId = pluginId,
+                    pluginVersion = pluginVersion,
+                )
+            }
+            prepared.onFailure { callback(Result.failure(it)) }
+            val state = prepared.getOrNull() ?: return
+            val completed = AtomicBoolean(false)
+            val activationStarted = AtomicBoolean(false)
+            val mainHandler = Handler(Looper.getMainLooper())
+
+            fun finish(result: Result<VeneraRuntimeDriver>) {
+                if (!completed.compareAndSet(false, true)) return
+                state.bridge.activationSink = null
+                if (result.isFailure) {
+                    state.bridge.close()
+                    state.webView.removeJavascriptInterface(BRIDGE_NAME)
+                    state.webView.stopLoading()
+                    state.webView.destroy()
+                }
+                callback(result)
+            }
+
+            state.bridge.activationSink = { envelope ->
+                mainHandler.post {
+                    finish(
+                        runCatching {
+                            require(envelope.optBoolean("ok")) {
+                                envelope.optString("message", "Venera source init failed")
+                            }
+                            val discoveredKey = envelope.optString("key")
+                            require(discoveredKey == state.sourceKey) {
+                                "Venera source key changed during activation"
+                            }
+                            val name = envelope.optString("name").ifBlank { discoveredKey }
+                            val website = envelope.optString("url")
+                                .takeIf { it.startsWith("https://") || it.startsWith("http://") }
+                                ?: "https://zic.runtime.invalid/"
+                            val supportsSearch = envelope.optBoolean("supportsSearch", false)
+                            VeneraRuntimeDriver(
+                                context = context,
+                                driverId = driverId,
+                                runtimeId = "venera:${state.pluginId}:${state.pluginVersion}",
+                                sourceKey = discoveredKey,
+                                webView = state.webView,
+                                bridge = state.bridge,
+                                sources = listOf(
+                                    mapOf(
+                                        "externalId" to discoveredKey,
+                                        "name" to name,
+                                        "language" to "und",
+                                        "website" to website,
+                                        "supportsSearch" to supportsSearch,
+                                        "contentRatings" to listOf("safe", "suggestive"),
+                                    ),
+                                ),
+                            )
+                        },
+                    )
+                }
+            }
+            state.webView.webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView, url: String) {
+                    if (completed.get() || !activationStarted.compareAndSet(false, true)) return
+                    view.evaluateJavascript(state.activationScript(), null)
+                }
+            }
+            state.webView.loadDataWithBaseURL(
+                "https://zic.runtime.invalid/",
+                "<html><head></head><body></body></html>",
+                "text/html",
+                "utf-8",
+                null,
+            )
+            mainHandler.postDelayed(
+                {
+                    finish(Result.failure(IllegalStateException("Venera source activation timed out")))
+                },
+                ACTIVATION_TIMEOUT_MILLIS,
+            )
+        }
+    }
+
+}
+
+
+private data class VeneraActivation(
+    val webView: WebView,
+    val bridge: VeneraNativeBridge,
+    val script: String,
+    val className: String,
+    val sourceKey: String,
+    val pluginId: String,
+    val pluginVersion: String,
+) {
+    fun activationScript(): String = buildString {
+        append(VENERA_BOOTSTRAP)
+        append("\n")
+        append(script)
+        append("\n;(async()=>{try{globalThis.__zicSource=new ")
+        append(className)
+        append("();await Promise.resolve(__zicSource.init?.());")
+        append("if(__zicCompareVersion(String(__zicSource.minAppVersion||'0'),appVersion)>0)")
+        append("throw new Error('Venera source requires app '+__zicSource.minAppVersion+' or newer');")
+        append("ZicNative.activated(JSON.stringify({ok:true,key:String(__zicSource.key||''),")
+        append("name:String(__zicSource.name||''),url:String(__zicSource.url||''),")
+        append("supportsSearch:typeof __zicSource.search?.load==='function'}));")
+        append("}catch(e){ZicNative.activated(JSON.stringify({ok:false,")
+        append("message:String(e?.message||e)}));}})();")
+    }
+}
+
+private class VeneraNativeBridge(
+    context: Context,
+    private val sourceKey: String,
+    private val capabilities: Set<String>,
+    private val maxResponseBytes: Int,
+) : Closeable {
+    private val appContext = context.applicationContext
+    private val preferences = appContext.getSharedPreferences(
+        "zic_venera_${sourceKey.replace(Regex("[^A-Za-z0-9_.-]"), "_")}",
+        Context.MODE_PRIVATE,
+    )
+    private val connections = ConcurrentHashMap.newKeySet<HttpURLConnection>()
+    private val images = ConcurrentHashMap<Int, Bitmap>()
+    private val nextImageKey = AtomicInteger(1)
+    private val cookieManager = CookieManager.getInstance()
+    private val cancelled = ConcurrentHashMap.newKeySet<String>()
+    @Volatile var resultSink: ((String, JSONObject) -> Unit)? = null
+    @Volatile var activationSink: ((JSONObject) -> Unit)? = null
+
+    @JavascriptInterface
+    fun request(raw: String): String {
+        return runCatching {
+            val message = JSONObject(raw)
+            val value = when (message.getString("method")) {
+                "http" -> http(message)
+                "cookie" -> cookie(message)
+                "load_data" -> loadData(message)
+                "save_data" -> saveData(message)
+                "delete_data" -> deleteData(message)
+                "load_setting" -> loadSetting(message)
+                "convert" -> convert(message)
+                "uuid" -> UUID.randomUUID().toString()
+                "random" -> random(message)
+                "delay" -> {
+                    Thread.sleep(message.optLong("time", 0).coerceIn(0, 30_000))
+                    null
+                }
+                "getLocale" -> Locale.getDefault().toLanguageTag().replace('-', '_')
+                "getPlatform" -> "android"
+                "isLogged" -> false
+                "log" -> null
+                "image" -> image(message)
+                "UI", "setClipboard", "getClipboard", "compute" ->
+                    error("Venera capability is not available in background source runtime")
+                else -> error("unsupported Venera bridge method")
+            }
+            JSONObject().put("ok", true).put("value", encodeWireValue(value)).toString()
+        }.getOrElse { error ->
+            JSONObject()
+                .put("ok", false)
+                .put("error", error.sanitizedMessage())
+                .toString()
+        }
+    }
+
+    @JavascriptInterface
+    fun activated(rawEnvelope: String) {
+        val envelope = runCatching { JSONObject(rawEnvelope) }.getOrElse {
+            JSONObject()
+                .put("ok", false)
+                .put("message", "Venera returned an invalid activation result")
+        }
+        activationSink?.invoke(envelope)
+    }
+
+    @JavascriptInterface
+    fun complete(requestId: String, rawEnvelope: String) {
+        if (cancelled.remove(requestId)) return
+        runCatching { JSONObject(rawEnvelope) }
+            .onSuccess { resultSink?.invoke(requestId, it) }
+            .onFailure {
+                resultSink?.invoke(
+                    requestId,
+                    JSONObject()
+                        .put("ok", false)
+                        .put("code", "venera-result-invalid")
+                        .put("message", "Venera returned an invalid result"),
+                )
+            }
+    }
+
+    fun cancel(requestId: String) {
+        cancelled.add(requestId)
+    }
+
+    private fun http(message: JSONObject): Any {
+        requireCapability("network")
+        val url = message.getString("url")
+        require(url.startsWith("https://") || url.startsWith("http://")) {
+            "Venera network URL must use HTTP(S)"
+        }
+        val method = message.optString("http_method", "GET").uppercase(Locale.US)
+        val headers = message.optJSONObject("headers")
+        val connection = URL(url).openConnection() as HttpURLConnection
+        connection.instanceFollowRedirects = true
+        connection.connectTimeout = 15_000
+        connection.readTimeout = 30_000
+        connection.requestMethod = method
+        connection.useCaches = false
+        headers?.keys()?.forEach { name ->
+            connection.setRequestProperty(name, headers.optString(name))
+        }
+        if (capabilities.contains("cookies")) {
+            cookieManager.getCookie(url)?.takeIf { it.isNotBlank() }?.let { cookie ->
+                val alreadySet = headers?.keys()?.asSequence()?.any {
+                    it.equals("cookie", ignoreCase = true)
+                } == true
+                if (!alreadySet) connection.setRequestProperty("Cookie", cookie)
+            }
+        }
+        val data = decodeWireValue(message.opt("data"))
+        val bodyBytes = when (data) {
+            null -> ByteArray(0)
+            is ByteArray -> data
+            is String -> data.toByteArray(Charsets.UTF_8)
+            else -> JSONObject.wrap(data).toString().toByteArray(Charsets.UTF_8)
+        }
+        if (method !in setOf("GET", "HEAD")) {
+            connection.doOutput = true
+            if (connection.getRequestProperty("Content-Type").isNullOrBlank()) {
+                connection.setRequestProperty("Content-Type", "application/octet-stream")
+            }
+        }
+        connections.add(connection)
+        try {
+            if (connection.doOutput) {
+                connection.outputStream.use { it.write(bodyBytes) }
+            }
+            val status = connection.responseCode
+            if (capabilities.contains("cookies")) {
+                connection.headerFields.entries
+                    .filter { (name, _) -> name?.equals("set-cookie", ignoreCase = true) == true }
+                    .flatMap { it.value.orEmpty() }
+                    .forEach { cookieManager.setCookie(url, it) }
+                cookieManager.flush()
+            }
+            val stream = if (status >= 400) connection.errorStream else connection.inputStream
+            val bytes = stream?.use { it.readBytesBounded(maxResponseBytes) } ?: ByteArray(0)
+            val responseHeaders = JSONObject()
+            connection.headerFields.entries
+                .filter { it.key != null }
+                .forEach { (name, values) ->
+                    responseHeaders.put(name, values.orEmpty().joinToString(", "))
+                }
+            return JSONObject()
+                .put("status", status)
+                .put("headers", responseHeaders)
+                .put(
+                    "body",
+                    if (message.optBoolean("bytes")) encodeWireValue(bytes)
+                    else bytes.toString(Charsets.UTF_8),
+                )
+        } finally {
+            connections.remove(connection)
+            connection.disconnect()
+        }
+    }
+
+    private fun image(message: JSONObject): Any? {
+        return when (message.getString("function")) {
+            "decode" -> {
+                val bytes = decodeWireValue(message.get("data")) as? ByteArray
+                    ?: error("Venera image decode payload is invalid")
+                val options = BitmapFactory.Options().apply {
+                    inPreferredConfig = Bitmap.Config.ARGB_8888
+                    inMutable = true
+                }
+                val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+                    ?: error("Venera image decode failed")
+                requireImageSize(bitmap.width, bitmap.height)
+                retainImage(bitmap)
+            }
+            "encode" -> {
+                val bitmap = requireImage(message.getInt("key"))
+                val output = java.io.ByteArrayOutputStream()
+                require(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+                    "Venera image encode failed"
+                }
+                output.toByteArray().also {
+                    require(it.size <= maxResponseBytes) {
+                        "Venera transformed image exceeds runtime limit"
+                    }
+                }
+            }
+            "copyRange" -> {
+                val source = requireImage(message.getInt("key"))
+                val x = message.getInt("x")
+                val y = message.getInt("y")
+                val width = message.getInt("width")
+                val height = message.getInt("height")
+                require(x >= 0 && y >= 0 && width > 0 && height > 0 &&
+                    x + width <= source.width && y + height <= source.height) {
+                    "Venera image crop is out of bounds"
+                }
+                retainImage(Bitmap.createBitmap(source, x, y, width, height))
+            }
+            "copyAndRotate90" -> {
+                val source = requireImage(message.getInt("key"))
+                val matrix = Matrix().apply { postRotate(90f) }
+                retainImage(
+                    Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true),
+                )
+            }
+            "fillImageAt" -> {
+                val target = requireImage(message.getInt("key"))
+                val source = requireImage(message.getInt("image"))
+                require(target.isMutable) { "Venera target image is immutable" }
+                Canvas(target).drawBitmap(
+                    source,
+                    message.getInt("x").toFloat(),
+                    message.getInt("y").toFloat(),
+                    null,
+                )
+                null
+            }
+            "fillImageRangeAt" -> {
+                val target = requireImage(message.getInt("key"))
+                val source = requireImage(message.getInt("image"))
+                require(target.isMutable) { "Venera target image is immutable" }
+                val srcX = message.getInt("srcX")
+                val srcY = message.getInt("srcY")
+                val width = message.getInt("width")
+                val height = message.getInt("height")
+                require(srcX >= 0 && srcY >= 0 && width > 0 && height > 0 &&
+                    srcX + width <= source.width && srcY + height <= source.height) {
+                    "Venera image source range is out of bounds"
+                }
+                val x = message.getInt("x")
+                val y = message.getInt("y")
+                Canvas(target).drawBitmap(
+                    source,
+                    Rect(srcX, srcY, srcX + width, srcY + height),
+                    Rect(x, y, x + width, y + height),
+                    null,
+                )
+                null
+            }
+            "getWidth" -> requireImage(message.getInt("key")).width
+            "getHeight" -> requireImage(message.getInt("key")).height
+            "emptyImage" -> {
+                val width = message.getInt("width")
+                val height = message.getInt("height")
+                requireImageSize(width, height)
+                retainImage(Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888))
+            }
+            "disposeAll" -> {
+                releaseImages()
+                null
+            }
+            else -> error("unsupported Venera image operation")
+        }
+    }
+
+    private fun retainImage(bitmap: Bitmap): Int {
+        requireImageSize(bitmap.width, bitmap.height)
+        val key = nextImageKey.getAndIncrement()
+        require(key > 0) { "Venera image identity exhausted" }
+        images[key] = bitmap
+        return key
+    }
+
+    private fun requireImage(key: Int): Bitmap =
+        images[key] ?: error("Venera image handle is invalid")
+
+    private fun requireImageSize(width: Int, height: Int) {
+        require(width > 0 && height > 0 &&
+            width.toLong() * height.toLong() <= MAX_IMAGE_PIXELS) {
+            "Venera image dimensions exceed runtime limit"
+        }
+    }
+
+    private fun releaseImages() {
+        images.values.forEach { bitmap -> runCatching { bitmap.recycle() } }
+        images.clear()
+    }
+
+    private fun cookie(message: JSONObject): Any? {
+        requireCapability("cookies")
+        val url = message.getString("url")
+        return when (message.getString("function")) {
+            "get" -> {
+                val raw = cookieManager.getCookie(url).orEmpty()
+                JSONArray().apply {
+                    raw.split(';').map(String::trim).filter(String::isNotEmpty).forEach { item ->
+                        val separator = item.indexOf('=')
+                        if (separator > 0) {
+                            put(
+                                JSONObject()
+                                    .put("name", item.substring(0, separator))
+                                    .put("value", item.substring(separator + 1))
+                                    .put("domain", android.net.Uri.parse(url).host.orEmpty()),
+                            )
+                        }
+                    }
+                }
+            }
+            "set" -> {
+                val cookies = message.optJSONArray("cookies") ?: JSONArray()
+                repeat(cookies.length()) { index ->
+                    val cookie = cookies.getJSONObject(index)
+                    val value = buildString {
+                        append(cookie.getString("name"))
+                        append('=')
+                        append(cookie.getString("value"))
+                        cookie.optString("domain").takeIf { it.isNotBlank() }?.let {
+                            append("; Domain=")
+                            append(it)
+                        }
+                    }
+                    cookieManager.setCookie(url, value)
+                }
+                cookieManager.flush()
+                null
+            }
+            "delete" -> {
+                cookieManager.getCookie(url).orEmpty()
+                    .split(';')
+                    .map(String::trim)
+                    .mapNotNull { it.substringBefore('=').takeIf(String::isNotBlank) }
+                    .forEach { name -> cookieManager.setCookie(url, "$name=; Max-Age=0; Path=/") }
+                cookieManager.flush()
+                null
+            }
+            else -> error("unsupported Venera cookie operation")
+        }
+    }
+
+    private fun loadData(message: JSONObject): Any? {
+        requireCapability("persistentStorage")
+        val key = message.getString("data_key")
+        val raw = preferences.getString("data:$key", null) ?: return null
+        return JSONObject(raw).opt("value")
+    }
+
+    private fun saveData(message: JSONObject): Any? {
+        requireCapability("persistentStorage")
+        val key = message.getString("data_key")
+        preferences.edit().putString(
+            "data:$key",
+            JSONObject().put("value", message.opt("data")).toString(),
+        ).apply()
+        return null
+    }
+
+    private fun deleteData(message: JSONObject): Any? {
+        requireCapability("persistentStorage")
+        preferences.edit().remove("data:${message.getString("data_key")}").apply()
+        return null
+    }
+
+    private fun loadSetting(message: JSONObject): Any? {
+        requireCapability("persistentStorage")
+        return preferences.getString("setting:${message.getString("setting_key")}", null)
+    }
+
+    private fun convert(message: JSONObject): Any {
+        val type = message.getString("type").lowercase(Locale.US)
+        val encode = message.optBoolean("isEncode", true)
+        val value = decodeWireValue(message.opt("value"))
+        return when (type) {
+            "utf8", "gbk" -> {
+                val charset = if (type == "gbk") Charset.forName("GBK") else Charsets.UTF_8
+                if (encode) value.toString().toByteArray(charset)
+                else (value as ByteArray).toString(charset)
+            }
+            "base64" -> if (encode) {
+                android.util.Base64.encodeToString(value as ByteArray, android.util.Base64.NO_WRAP)
+            } else {
+                android.util.Base64.decode(value.toString(), android.util.Base64.DEFAULT)
+            }
+            "md5", "sha1", "sha256", "sha512" -> {
+                val algorithm = when (type) {
+                    "md5" -> "MD5"
+                    "sha1" -> "SHA-1"
+                    "sha256" -> "SHA-256"
+                    else -> "SHA-512"
+                }
+                MessageDigest.getInstance(algorithm).digest(value as ByteArray)
+            }
+            "hmac" -> {
+                val hash = message.optString("hash", "sha256").lowercase(Locale.US)
+                val algorithm = when (hash) {
+                    "md5" -> "HmacMD5"
+                    "sha1" -> "HmacSHA1"
+                    "sha256" -> "HmacSHA256"
+                    "sha512" -> "HmacSHA512"
+                    else -> error("unsupported Venera HMAC hash")
+                }
+                val mac = Mac.getInstance(algorithm)
+                mac.init(SecretKeySpec(decodeWireValue(message.get("key")) as ByteArray, algorithm))
+                val output = mac.doFinal(value as ByteArray)
+                if (message.optBoolean("isString")) {
+                    output.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                } else {
+                    output
+                }
+            }
+            "aes-ecb", "aes-cbc", "aes-cfb", "aes-ofb" -> {
+                require(!encode) { "Venera AES encryption is not exposed" }
+                val mode = when (type) {
+                    "aes-ecb" -> "ECB"
+                    "aes-cbc" -> "CBC"
+                    "aes-cfb" -> "CFB${message.optInt("blockSize", 128)}"
+                    else -> "OFB${message.optInt("blockSize", 128)}"
+                }
+                val padding = if (type in setOf("aes-cfb", "aes-ofb")) "NoPadding" else "PKCS5Padding"
+                val cipher = Cipher.getInstance("AES/$mode/$padding")
+                val key = SecretKeySpec(decodeWireValue(message.get("key")) as ByteArray, "AES")
+                if (type == "aes-ecb") {
+                    cipher.init(Cipher.DECRYPT_MODE, key)
+                } else {
+                    val explicitIv = decodeWireValue(message.opt("iv")) as? ByteArray
+                    val iv = explicitIv ?: ByteArray(cipher.blockSize)
+                    cipher.init(Cipher.DECRYPT_MODE, key, IvParameterSpec(iv))
+                }
+                cipher.doFinal(value as ByteArray)
+            }
+            "rsa" -> {
+                require(!encode) { "Venera RSA encryption is not exposed" }
+                val keyBytes = decodeWireValue(message.get("key")) as ByteArray
+                val keyFactory = KeyFactory.getInstance("RSA")
+                val privateKey = runCatching {
+                    keyFactory.generatePrivate(PKCS8EncodedKeySpec(keyBytes))
+                }.getOrElse {
+                    keyFactory.generatePublic(X509EncodedKeySpec(keyBytes))
+                }
+                val cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding")
+                cipher.init(Cipher.DECRYPT_MODE, privateKey)
+                cipher.doFinal(value as ByteArray)
+            }
+            else -> error("unsupported Venera conversion")
+        }
+    }
+
+    private fun random(message: JSONObject): Number {
+        val min = message.optDouble("min", 0.0)
+        val max = message.optDouble("max", 1.0)
+        require(max >= min) { "invalid random range" }
+        val value = min + Math.random() * (max - min)
+        return if (message.optString("type") == "int") value.toInt() else value
+    }
+
+    private fun requireCapability(name: String) {
+        require(capabilities.contains(name)) { "Venera capability denied: $name" }
+    }
+
+    companion object {
+        private const val MAX_IMAGE_PIXELS = 32L * 1024L * 1024L
+    }
+
+    override fun close() {
+        activationSink = null
+        resultSink = null
+        cancelled.clear()
+        connections.toList().forEach { it.disconnect() }
+        connections.clear()
+        releaseImages()
+    }
+}
+
+
+private fun Any?.asVeneraCapabilities(): Set<String> {
+    val values = this as? List<*> ?: error("capabilities must be a list")
+    return values.filterIsInstance<String>().toSet()
+}
+
+private fun encodeWireValue(value: Any?): Any? = when (value) {
+    null, JSONObject.NULL -> JSONObject.NULL
+    is ByteArray -> JSONObject()
+        .put("__zicType", "bytes")
+        .put("base64", android.util.Base64.encodeToString(value, android.util.Base64.NO_WRAP))
+    is JSONObject, is JSONArray, is String, is Boolean, is Number -> value
+    is Map<*, *> -> JSONObject(value)
+    is Iterable<*> -> JSONArray(value.toList())
+    else -> JSONObject.wrap(value)
+}
+
+private fun decodeWireValue(value: Any?): Any? = when (value) {
+    null, JSONObject.NULL -> null
+    is JSONObject -> {
+        if (value.optString("__zicType") == "bytes") {
+            android.util.Base64.decode(value.getString("base64"), android.util.Base64.DEFAULT)
+        } else {
+            value.keys().asSequence().associateWith { key -> decodeWireValue(value.opt(key)) }
+        }
+    }
+    is JSONArray -> List(value.length()) { index -> decodeWireValue(value.opt(index)) }
+    else -> value
+}
+
+private fun java.io.InputStream.readBytesBounded(maxBytes: Int): ByteArray {
+    val output = java.io.ByteArrayOutputStream(minOf(maxBytes, 64 * 1024))
+    val buffer = ByteArray(16 * 1024)
+    var total = 0
+    while (true) {
+        val count = read(buffer)
+        if (count < 0) break
+        total += count
+        require(total <= maxBytes) { "Venera response exceeds runtime limit" }
+        output.write(buffer, 0, count)
+    }
+    return output.toByteArray()
+}
+
+private fun verifyVeneraPayload(file: File, expectedLength: Long, expectedSha256: String) {
+    require(file.isFile) { "Venera payload is missing" }
+    require(file.length() == expectedLength) { "Venera payload length changed" }
+    val actual = MessageDigest.getInstance("SHA-256").digest(file.readBytes())
+        .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    require(actual.equals(expectedSha256, ignoreCase = true)) { "Venera payload digest changed" }
+}
+
+private fun String.jsQuoted(): String = JSONObject.quote(this)
+
+private const val VENERA_BOOTSTRAP = """
+'use strict';
+const appVersion = '1.6.0';
+function __zicCompareVersion(a,b){const x=String(a).split(/[^0-9]+/).filter(Boolean).map(Number),y=String(b).split(/[^0-9]+/).filter(Boolean).map(Number);for(let i=0;i<Math.max(x.length,y.length);i++){const d=(x[i]||0)-(y[i]||0);if(d)return d>0?1:-1}return 0}
+const __zicCancelled = new Set();
+const __zicResources = new Map();
+let __zicResourceKey = 0;
+function __zicDecode(value) {
+  if (value && value.__zicType === 'bytes') {
+    const raw = atob(value.base64); const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    return bytes.buffer;
+  }
+  if (Array.isArray(value)) return value.map(__zicDecode);
+  if (value && typeof value === 'object') {
+    const out = {}; for (const [k,v] of Object.entries(value)) out[k] = __zicDecode(v); return out;
+  }
+  return value;
+}
+function __zicEncode(value) {
+  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
+    const bytes = value instanceof ArrayBuffer ? new Uint8Array(value) : new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    let raw = ''; for (let i=0;i<bytes.length;i+=0x8000) raw += String.fromCharCode(...bytes.subarray(i,i+0x8000));
+    return {__zicType:'bytes', base64:btoa(raw)};
+  }
+  if (Array.isArray(value)) return value.map(__zicEncode);
+  if (value && typeof value === 'object') {
+    const out = {}; for (const [k,v] of Object.entries(value)) {
+      if (typeof v !== 'function') out[k] = __zicEncode(v);
+    } return out;
+  }
+  return value;
+}
+function sendMessage(message) {
+  const envelope = JSON.parse(ZicNative.request(JSON.stringify(__zicEncode(message))));
+  if (!envelope.ok) throw new Error(envelope.error || 'Venera bridge failed');
+  return __zicDecode(envelope.value);
+}
+function Cookie({name,value,domain}) { this.name=name; this.value=value; this.domain=domain; }
+const Convert = {
+  encodeUtf8:v=>sendMessage({method:'convert',type:'utf8',value:v,isEncode:true}),
+  decodeUtf8:v=>sendMessage({method:'convert',type:'utf8',value:v,isEncode:false}),
+  encodeGbk:v=>sendMessage({method:'convert',type:'gbk',value:v,isEncode:true}),
+  decodeGbk:v=>sendMessage({method:'convert',type:'gbk',value:v,isEncode:false}),
+  encodeBase64:v=>sendMessage({method:'convert',type:'base64',value:v,isEncode:true}),
+  decodeBase64:v=>sendMessage({method:'convert',type:'base64',value:v,isEncode:false}),
+  md5:v=>sendMessage({method:'convert',type:'md5',value:v,isEncode:true}),
+  sha1:v=>sendMessage({method:'convert',type:'sha1',value:v,isEncode:true}),
+  sha256:v=>sendMessage({method:'convert',type:'sha256',value:v,isEncode:true}),
+  sha512:v=>sendMessage({method:'convert',type:'sha512',value:v,isEncode:true}),
+  hmac:(key,value,hash)=>sendMessage({method:'convert',type:'hmac',key,value,hash,isEncode:true}),
+  hmacString:(key,value,hash)=>sendMessage({method:'convert',type:'hmac',key,value,hash,isEncode:true,isString:true}),
+  decryptAesEcb:(value,key)=>sendMessage({method:'convert',type:'aes-ecb',value,key,isEncode:false}),
+  decryptAesCbc:(value,key,iv)=>sendMessage({method:'convert',type:'aes-cbc',value,key,iv,isEncode:false}),
+  decryptAesCfb:(value,key,blockSize)=>sendMessage({method:'convert',type:'aes-cfb',value,key,blockSize,isEncode:false}),
+  decryptAesOfb:(value,key,blockSize)=>sendMessage({method:'convert',type:'aes-ofb',value,key,blockSize,isEncode:false}),
+  decryptRsa:(value,key)=>sendMessage({method:'convert',type:'rsa',value,key,isEncode:false}),
+  hexEncode:(value)=>Array.from(new Uint8Array(value)).map(v=>v.toString(16).padStart(2,'0')).join(''),
+};
+function createUuid(){ return sendMessage({method:'uuid'}); }
+function randomInt(min,max){ return sendMessage({method:'random',type:'int',min,max}); }
+function randomDouble(min,max){ return sendMessage({method:'random',type:'double',min,max}); }
+const Network = {
+  fetchBytes:async(method,url,headers,data)=>sendMessage({method:'http',http_method:method,bytes:true,url,headers:headers||{},data}),
+  sendRequest:async(method,url,headers,data)=>sendMessage({method:'http',http_method:method,url,headers:headers||{},data}),
+  get(url,headers){return this.sendRequest('GET',url,headers)}, post(url,headers,data){return this.sendRequest('POST',url,headers,data)},
+  put(url,headers,data){return this.sendRequest('PUT',url,headers,data)}, patch(url,headers,data){return this.sendRequest('PATCH',url,headers,data)},
+  delete(url,headers){return this.sendRequest('DELETE',url,headers)},
+  setCookies(url,cookies){return sendMessage({method:'cookie',function:'set',url,cookies})},
+  getCookies(url){return sendMessage({method:'cookie',function:'get',url})},
+  deleteCookies(url){return sendMessage({method:'cookie',function:'delete',url})},
+};
+async function fetch(url,options={}) {
+  const result=await Network.fetchBytes(options.method||'GET',url,options.headers||{},options.body);
+  return {ok:result.status>=200&&result.status<300,status:result.status,statusText:'',headers:result.headers,
+    arrayBuffer:async()=>result.body,text:async()=>Convert.decodeUtf8(result.body),json:async()=>JSON.parse(Convert.decodeUtf8(result.body))};
+}
+class HtmlDocument {
+  constructor(html){this.document=new DOMParser().parseFromString(html,'text/html')}
+  querySelector(q){const e=this.document.querySelector(q);return e?new HtmlElement(e):null}
+  querySelectorAll(q){return Array.from(this.document.querySelectorAll(q)).map(e=>new HtmlElement(e))}
+  getElementById(id){const e=this.document.getElementById(id);return e?new HtmlElement(e):null}
+  dispose(){this.document=null}
+}
+class HtmlElement {
+  constructor(element){this.element=element}
+  get text(){return this.element.textContent||''}
+  get attributes(){const out={};for(const a of this.element.attributes||[])out[a.name]=a.value;return out}
+  querySelector(q){const e=this.element.querySelector(q);return e?new HtmlElement(e):null}
+  querySelectorAll(q){return Array.from(this.element.querySelectorAll(q)).map(e=>new HtmlElement(e))}
+  get children(){return Array.from(this.element.children||[]).map(e=>new HtmlElement(e))}
+  get nodes(){return Array.from(this.element.childNodes||[]).map(e=>new HtmlNode(e))}
+  get innerHTML(){return this.element.innerHTML||''} get parent(){return this.element.parentElement?new HtmlElement(this.element.parentElement):null}
+  get classNames(){return Array.from(this.element.classList||[])} get id(){return this.element.id||null} get localName(){return this.element.localName||''}
+  get previousElementSibling(){return this.element.previousElementSibling?new HtmlElement(this.element.previousElementSibling):null}
+  get nextElementSibling(){return this.element.nextElementSibling?new HtmlElement(this.element.nextElementSibling):null}
+}
+class HtmlNode { constructor(node){this.node=node} get text(){return this.node.textContent||''} get type(){return this.node.nodeType===1?'element':this.node.nodeType===3?'text':this.node.nodeType===8?'comment':'unknown'} toElement(){return this.node.nodeType===1?new HtmlElement(this.node):null} }
+function Comic(v){Object.assign(this,v);this.subtitle=this.subtitle??this.subTitle}
+function ComicDetails(v){Object.assign(this,v);this.subtitle=this.subtitle??this.subTitle}
+function Comment(v){Object.assign(this,v)} function ImageLoadingConfig(v){Object.assign(this,v)}
+class Image {
+  constructor(key){this.key=key}
+  copyRange(x,y,width,height){const key=sendMessage({method:'image',function:'copyRange',key:this.key,x,y,width,height});return key==null?null:new Image(key)}
+  copyAndRotate90(){const key=sendMessage({method:'image',function:'copyAndRotate90',key:this.key});return key==null?null:new Image(key)}
+  fillImageAt(x,y,image){sendMessage({method:'image',function:'fillImageAt',key:this.key,x,y,image:image.key})}
+  fillImageRangeAt(x,y,image,srcX,srcY,width,height){sendMessage({method:'image',function:'fillImageRangeAt',key:this.key,x,y,image:image.key,srcX,srcY,width,height})}
+  get width(){return sendMessage({method:'image',function:'getWidth',key:this.key})}
+  get height(){return sendMessage({method:'image',function:'getHeight',key:this.key})}
+  static empty(width,height){return new Image(sendMessage({method:'image',function:'emptyImage',width,height}))}
+}
+class ComicSource {
+  name='';key='';version='';minAppVersion='';url='';translation={};static sources={};init(){}
+  loadData(dataKey){return sendMessage({method:'load_data',key:this.key,data_key:dataKey})}
+  saveData(dataKey,data){return sendMessage({method:'save_data',key:this.key,data_key:dataKey,data})}
+  deleteData(dataKey){return sendMessage({method:'delete_data',key:this.key,data_key:dataKey})}
+  loadSetting(key){const stored=sendMessage({method:'load_setting',key:this.key,setting_key:key});if(stored!==null&&stored!==undefined)return stored;const setting=this.settings?.[key];if(setting===null||setting===undefined)return null;if(typeof setting!=='object')return setting;if(setting.default!==undefined)return setting.default;const first=setting.options?.[0];return first&&typeof first==='object'?(first.value??first.key??null):(first??null)}
+  get isLogged(){return sendMessage({method:'isLogged',key:this.key})}
+  translate(key){return this.translation?.[APP.locale]?.[key]??key}
+}
+const APP={get version(){return appVersion},get locale(){return sendMessage({method:'getLocale'})},get platform(){return 'android'}};
+const UI={showMessage(){},showDialog:async()=>{},launchUrl(){},showLoading:()=>0,cancelLoading(){},showInputDialog:async()=>null,showSelectDialog:async()=>null};
+async function compute(func,...args){return (0,eval)('('+func+')')(args)}
+function __zicB64(value){return btoa(unescape(encodeURIComponent(JSON.stringify(value)))).replaceAll('+','-').replaceAll('/','_').replaceAll('=','')}
+function __zicUnb64(value){let raw=value.replaceAll('-','+').replaceAll('_','/');while(raw.length%4)raw+='=';return JSON.parse(decodeURIComponent(escape(atob(raw))))}
+function __zicDefaultOptions(source){return (source.search?.optionList||[]).map(group=>group.default??String(group.options?.[0]??'').split('-')[0])}
+function __zicComic(item){return {comicId:'venera:comic:'+__zicB64({id:String(item.id),title:String(item.title||''),subtitle:String(item.subtitle??item.subTitle??''),cover:String(item.cover||''),description:String(item.description||'')}),title:String(item.title||'未命名漫画'),authors:[String(item.subtitle??item.subTitle??'')].filter(Boolean),coverUri:item.cover||undefined,description:item.description||undefined,contentRating:'suggestive'}}
+function __zicFlatten(result){
+ const isComic=value=>value&&typeof value==='object'&&!Array.isArray(value)&&!(value instanceof Map)&&(value.id!==undefined||value.comicId!==undefined)&&value.title!==undefined;
+ const unpack=value=>{if(!value)return[];if(isComic(value))return[value];if(Array.isArray(value))return value.flatMap(unpack);if(value instanceof Map)return Array.from(value.values()).flatMap(unpack);if(typeof value==='object')return Object.values(value).flatMap(unpack);return[]};
+ return unpack(result)
+}
+function __zicChapterEntries(raw){const out=[];const visit=(value,fallback)=>{if(value instanceof Map){for(const [k,v] of value.entries())visit(v,k);return}if(Array.isArray(value)){value.forEach((v,i)=>visit(v,String(i)));return}if(value&&typeof value==='object'){if(value.id!==undefined||value.epId!==undefined||value.title!==undefined||value.name!==undefined){out.push([String(value.id??value.epId??fallback),String(value.title??value.name??fallback)]);return}for(const [k,v] of Object.entries(value))visit(v,k);return}out.push([String(fallback),String(value??fallback)])};visit(raw,'0');return out}
+function __zicChapterMessage(comicId,epId,title,index){return {comicId,chapterId:'venera:chapter:'+__zicB64({comicId,comicRawId:__zicUnb64(comicId.slice('venera:comic:'.length)).id,epId:String(epId),title:String(title),sequence:index}),title:String(title||('第 '+(index+1)+' 话')),sequence:index,pageCount:0,sourceRevision:String(epId)}}
+async function __zicOperation(request){
+ const source=globalThis.__zicSource,args=request.arguments||{};
+ if(request.operation==='browse'){
+  const page=Math.floor(args.offset/args.limit)+1;let loaded;
+  if(String(args.query||'')){if(!source.search?.load)throw new Error('Venera source does not support search');loaded=await source.search.load(String(args.query),__zicDefaultOptions(source),page)}
+  else if(source.explore?.[0]?.load) loaded=await source.explore[0].load(page);
+  else if(source.search?.load) loaded=await source.search.load('',__zicDefaultOptions(source),page);
+  else throw new Error('Venera source exposes neither explore nor search');
+  const all=__zicFlatten(loaded),start=args.offset%args.limit,items=all.slice(start,start+args.limit).map(__zicComic);
+  const maxPage=Number(loaded?.maxPage||page);return {items,offset:args.offset,hasMore:maxPage>page||all.length>start+items.length};
+ }
+ if(request.operation==='loadComic'){
+  const opaque=__zicUnb64(args.comicId.slice('venera:comic:'.length));const info=await source.comic.loadInfo(opaque.id);
+  const chapters=[];let index=0;for(const [epId,title] of __zicChapterEntries(info.chapters||{}))chapters.push(__zicChapterMessage(args.comicId,epId,title,index++));
+  return {comic:{comicId:args.comicId,title:String(info.title||opaque.title||'未命名漫画'),authors:[String(info.subtitle??info.subTitle??opaque.subtitle??'')].filter(Boolean),readingDirection:'topToBottom',coverUri:info.cover||opaque.cover||undefined,description:info.description||opaque.description||undefined},chapters};
+ }
+ if(request.operation==='loadChapter'){
+  const chapter=__zicUnb64(args.chapterId.slice('venera:chapter:'.length));const loaded=await source.comic.loadEp(chapter.comicRawId,chapter.epId);const images=Array.isArray(loaded)?loaded:(loaded?.images||[]);
+  const pages=[];for(let i=0;i<images.length;i++){const original=String(images[i]);const config=await Promise.resolve(source.comic.onImageLoad?.(original,chapter.comicRawId,chapter.epId)||{});const token=String(++__zicResourceKey);__zicResources.set(token,{url:config.url||original,method:config.method||'GET',headers:config.headers||{},data:config.data,onResponse:config.onResponse,onLoadFailed:config.onLoadFailed,modifyImage:config.modifyImage});pages.push({chapterId:args.chapterId,pageId:String(args.chapterId)+':'+i,index:i,uri:'venera-resource://'+token})}
+  return {comicId:chapter.comicId,chapter:__zicChapterMessage(chapter.comicId,chapter.epId,chapter.title,chapter.sequence),pages,readingDirection:'topToBottom'};
+ }
+ if(request.operation==='loadResource'){
+  const token=String(args.uri).replace('venera-resource://','');const config=__zicResources.get(token);if(!config)throw new Error('Venera resource token expired');
+  try{let active=config;for(let attempt=0;attempt<2;attempt++){try{const response=await Network.fetchBytes(active.method,active.url,active.headers,active.data);if(response.status<200||response.status>=300)throw new Error('Venera resource HTTP '+response.status);let bytes=response.body;if(typeof active.onResponse==='function')bytes=await active.onResponse(bytes);if(typeof active.modifyImage==='string'&&active.modifyImage.trim()){const key=sendMessage({method:'image',function:'decode',data:bytes});try{const modifier=(0,eval)(String(active.modifyImage)+'\n;(typeof modifyImage===\"function\"?modifyImage:null)');if(typeof modifier!=='function')throw new Error('Venera modifyImage script defines no modifyImage function');const transformed=await Promise.resolve(modifier(new Image(key)));if(!transformed||typeof transformed.key!=='number')throw new Error('Venera modifyImage returned no Image');bytes=sendMessage({method:'image',function:'encode',key:transformed.key})}finally{sendMessage({method:'image',function:'disposeAll'})}}return bytes}catch(error){if(attempt||typeof active.onLoadFailed!=='function')throw error;const retry=await active.onLoadFailed(error);if(!retry)throw error;active={...active,...retry}}}throw new Error('Venera resource retry exhausted')}finally{__zicResources.delete(token)}
+ }
+ throw new Error('Unsupported Venera operation');
+}
+async function __zicInvoke(raw){const request=typeof raw==='string'?JSON.parse(raw):raw;try{const value=await __zicOperation(request);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:true,value:__zicEncode(value)}))}catch(error){if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:false,code:'venera-operation-failed',message:String(error?.message||error),retryable:false}))}finally{__zicCancelled.delete(request.requestId)}}
+function __zicCancel(requestId){__zicCancelled.add(requestId)}
+"""

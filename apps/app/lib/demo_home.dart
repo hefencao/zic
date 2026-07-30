@@ -12,6 +12,7 @@ import 'package:telemetry/telemetry.dart';
 import 'package:downloads/downloads.dart';
 import 'comic_details.dart' as details;
 import 'download_manager.dart';
+import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 import 'library_diagnostics.dart';
 import 'source_browser.dart';
 import 'source_migration_compare.dart';
@@ -119,6 +120,7 @@ final class DemoHome extends StatefulWidget {
     this.chapterDownloads,
     this.wholeComicDownloads,
     this.comicSources,
+    this.externalPlugins,
     this.cacheCoordinator,
     this.startupTelemetry,
     super.key,
@@ -134,6 +136,7 @@ final class DemoHome extends StatefulWidget {
   final ChapterDownloadService? chapterDownloads;
   final WholeComicDownloadQueue? wholeComicDownloads;
   final List<BrowsableComicSource>? comicSources;
+  final ExternalPluginController? externalPlugins;
   final ResourceCacheCoordinator? cacheCoordinator;
   final HomeStartupTelemetry? startupTelemetry;
 
@@ -145,7 +148,7 @@ final class _DemoHomeState extends State<DemoHome> {
   late final ImportedLibraryStore _library;
   late final ChapterDownloadService _chapterDownloads;
   late final WholeComicDownloadQueue _wholeComicDownloads;
-  late final List<BrowsableComicSource> _sources;
+  late List<BrowsableComicSource> _sources;
   late final HomeLibrarySession _librarySession;
   late final ResourceCacheCoordinator _cacheCoordinator;
   late final bool _ownsCacheCoordinator;
@@ -203,8 +206,11 @@ final class _DemoHomeState extends State<DemoHome> {
               ? _chapterDownloads as ArtifactCacheMaintenance
               : null,
         );
-    final rawSources =
-        widget.comicSources ?? <BrowsableComicSource>[MangaDexSource()];
+    final rawSources = widget.comicSources ??
+        <BrowsableComicSource>[
+          MangaDexSource(),
+          ...?widget.externalPlugins?.activeSources,
+        ];
     _sources = List<BrowsableComicSource>.unmodifiable(
       rawSources.map(
         (source) => source is CachedBrowsableComicSource
@@ -281,6 +287,28 @@ final class _DemoHomeState extends State<DemoHome> {
     _librarySession.replaceSourcePreference(updated);
   }
 
+  Future<void> _replaceExternalSources() async {
+    final builtIn = _sources
+        .where((source) =>
+            !source.sourceId.startsWith('mihon:') &&
+            !source.sourceId.startsWith('venera:'))
+        .toList(growable: true);
+    final external = widget.externalPlugins?.activeSources ??
+        const <BrowsableComicSource>[];
+    _sources = List<BrowsableComicSource>.unmodifiable(
+      <BrowsableComicSource>[...builtIn, ...external].map(
+        (source) => source is CachedBrowsableComicSource
+            ? source
+            : CachedBrowsableComicSource(
+                source: source,
+                cache: _cacheCoordinator.responses,
+              ),
+      ),
+    );
+    await _librarySession.replaceSources(_sources);
+    if (mounted) setState(() {});
+  }
+
   Future<void> _openSourceManagement() async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -288,6 +316,8 @@ final class _DemoHomeState extends State<DemoHome> {
           sources: _sources,
           preferences: _sourcePreferences,
           onPreferenceChanged: _saveSourcePreference,
+          externalPlugins: widget.externalPlugins,
+          onExternalSourcesChanged: _replaceExternalSources,
         ),
       ),
     );

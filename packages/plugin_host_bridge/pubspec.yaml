@@ -15,8 +15,6 @@ dependencies:
     path: ../plugin_host
 
 dev_dependencies:
-  catalog:
-    path: ../catalog
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0

@@ -1,3 +1,12 @@
+## 0.31.0-dev.53：Mihon/Venera 真实运行时与产品入口
+
+- `plugin_host_bridge` 在既有 `:zic_plugin_runtime` 进程内注册 Mihon 与 Venera 原生 driver；Dart process host 继续拥有 payload 重验、session、取消、并发、响应上限与关闭策略，Kotlin 不复制这些所有权。
+- Mihon APK 从 process-private 已验证副本加载，解析批准的 `Source`/`SourceFactory` 入口并兼容现行 1.6 suspend API 与旧 Rx API；browse/detail/chapter/resource 被映射到共用 protocol v1。图片请求优先复用扩展自己的 client、headers 与拦截器，无 client 时才使用平台 HTTP 后备。
+- Venera JavaScript 在无 UI、禁用文件/内容访问和 DOM storage 的 process-private WebView 中运行；实现 1.6 `ComicSource`、Network/Cookie/Convert/Storage/HTML/APP/compute 兼容桥、最低宿主版本检查、数组/对象/`Map` 漫画与章节返回兼容、资源 HTTP 失败重试，以及受像素/响应上限约束的 `Image` 裁剪、旋转、拼接和输出桥。
+- 漫画源管理新增 Mihon 仓库与 Venera 源仓库入口。下载、不可变 payload 提升、SHA-256/签名/ABI/source-key 检查、显式信任、安装/更新/回滚/移除及重启恢复由 `ExternalPluginController` 统一管理；启动失败直接显示，不伪装成空源。
+- Mihon 仓库入口接受当前 `index.pb` 和 `repo.json`，发现阶段自动使用同仓库的完整 `index.json` companion；catalog 同时解析当前 `extensionList.extensions` v2 对象和旧版数组，不再默认读取仅含升级提示的旧 `index.min.json`。
+- 外部源仍只作为普通 `BrowsableComicSource` 注入既有 catalog/cache/download/Reader 管线，不获得导航、Reader demand、页面 artifact 或缓存所有权。Home startup 已有核心服务阶段保持不变，插件恢复放在核心服务 ready 之后。
+
 ## 0.31.0-dev.52：Binder service-death generation 与 packet 完整性
 
 - `runtime_service.dart` 与专用 entrypoint 测试显式导入 `catalog`，bridge 测试依赖也直接声明，关闭 `ExternalComicPluginFormat` 编译遗漏。

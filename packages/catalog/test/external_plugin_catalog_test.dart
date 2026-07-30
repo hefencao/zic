@@ -42,6 +42,52 @@ void main() {
     expect(plugin.sources.single.sourceId, 'mihon:9223372036854775808');
   });
 
+  test('parses current Mihon v2 repository object', () {
+    final entries = parseMihonExtensionIndex(
+      '''
+      {
+        "name": "Keiyoushi",
+        "extensionList": {
+          "extensions": [
+            {
+              "name": "Example",
+              "packageName": "eu.kanade.tachiyomi.extension.en.example",
+              "resources": {
+                "apkUrl": "https://cdn.invalid/example-v1.6.4.apk"
+              },
+              "extensionLib": "1.6",
+              "versionCode": "4",
+              "versionName": "1.6.4",
+              "contentWarning": "CONTENT_WARNING_NSFW",
+              "sources": [
+                {
+                  "id": "9223372036854775808",
+                  "name": "Example",
+                  "language": "en",
+                  "homeUrl": "https://example.invalid"
+                }
+              ]
+            }
+          ]
+        }
+      }
+      ''',
+    );
+
+    final plugin = entries.single;
+    expect(
+      plugin.pluginId,
+      'mihon:eu.kanade.tachiyomi.extension.en.example',
+    );
+    expect(plugin.entrypoint, Uri.parse('https://cdn.invalid/example-v1.6.4.apk'));
+    expect(plugin.version, '1.6.4');
+    expect(plugin.versionCode, 4);
+    expect(plugin.adult, isTrue);
+    expect(plugin.language, 'en');
+    expect(plugin.sources.single.externalId, '9223372036854775808');
+    expect(plugin.sources.single.baseUri, Uri.parse('https://example.invalid'));
+  });
+
   test('parses Venera repository entry and defers script key discovery', () {
     final entries = parseVeneraSourceIndex(
       '''

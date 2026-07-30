@@ -879,9 +879,10 @@ preference and read-state ownership source-composite as well.
 
 This contract is intentionally smaller than an external extension runtime. `external_plugin_catalog.dart`
 parses Mihon extension repository metadata and Venera JavaScript source indexes into format-neutral,
-untrusted catalog entries. Venera accepts both `filename` and deployed `fileName`, preserving a declared
-`key` immediately and deferring discovery only when absent. It preserves native package/source identities
-but downloads or executes nothing.
+untrusted catalog entries. Mihon accepts the current `extensionList.extensions` v2 object and the legacy
+flat array. Venera accepts both `filename` and deployed `fileName`, preserving a declared `key` immediately
+and deferring discovery only when absent. Catalog parsing preserves native package/source identities but
+downloads or executes nothing.
 
 `packages/plugin_host` is the pre-execution and runtime-adaptation boundary. A
 `PermissionedExternalComicPluginHost` separates immutable-payload inspection from ecosystem-specific execution,
@@ -904,12 +905,13 @@ Inside the isolated boundary, both ecosystems use `ExternalPluginRuntimeWorker` 
 
 A caller timeout may send request-level cancellation through `CancellableExternalPluginRuntimeMessageChannel`, but cancellation is advisory. The host invocation gate retains its permit until the original channel Future completes, so a non-cooperative APK or script cannot exceed the declared concurrency limit by timing out. Worker/session close is joinable, stops admission, signals cancellation/driver close and drains actual work.
 
-Android host adapters serialize the exact inspected execution envelope and limits for Mihon and Venera, then expose invoke/cancel/close through one platform channel. The native bridge is deliberately fail-closed until a dedicated isolated APK or JavaScript service is installed; loading in the application process is not an allowed fallback.
+Android host adapters serialize the exact inspected execution envelope and limits for Mihon and Venera, then expose invoke/cancel/close through one platform channel. The dedicated `:zic_plugin_runtime` service registers process-local Mihon and Venera drivers; unsupported ABI/capability paths fail closed. Loading in the application process is not an allowed fallback.
 
 At isolated-process entry, `ExternalPluginRuntimeActivationEnvelope` reparses the raw activation map with exact fields and format-specific identity. `FileExternalPluginRuntimePayloadVerifier` does not hand the original host path to a driver: it streams the approved bytes into a process-private partial file while recomputing SHA-256, atomically promotes the verified copy, and keeps that copy alive for exactly one process session. `ExternalPluginRuntimeProcessHost` owns the session registry and routes invoke/cancel/close to the shared worker. A new process starts with an empty registry, so interrupted requests are never replayed automatically after service death.
 Sessions remain charged to the process limit until their driver really closes. If process shutdown begins while payload verification or driver creation is in flight, activation is rejected and its private staged payload is drained instead of publishing a doomed session.
 
-Concrete APK class loading and JavaScript evaluation remain separate isolated backend implementations. They must
+Concrete APK class loading and JavaScript evaluation remain separate isolated backend implementations inside
+the dedicated process. Mihon uses a verified private APK copy and Venera uses a restricted UI-less WebView. Both
 reuse the exact inspected payload and cannot bypass trust, capability, resource-limit or session teardown gates.
 
 ## 3.12 Generated host network capability

@@ -2,7 +2,7 @@
 
 ## Sole baseline
 
-Continue only from `zic_v0.31.0-dev.52_binder-death-generation-packet-integrity.zip`.
+Continue only from `zic_v0.31.0-dev.53_mihon-venera-runtime-entry.zip`.
 Do not merge or copy files from an earlier zic archive.
 
 ## Current ownership and completed work
@@ -14,7 +14,10 @@ Do not merge or copy files from an earlier zic archive.
 - Mihon/Venera share protocol v1, source adaptation, runtime worker, cancellation, immutable process-private payload staging and process-owned session registry.
 - `ExternalPluginRuntimeServiceEndpoint` remains the single dedicated-process method dispatcher. Android has a real non-exported `:zic_plugin_runtime` Service, secondary FlutterEngine entrypoint and lazy bound-service client. Each bind has a generation/death recipient; large packets use root/length/SHA-256 verification. Kotlin still must not duplicate activation/session policy.
 - Each activation returns a process generation. Stale service sessions fail before session lookup and are never automatically replayed or reactivated.
-- Concrete Mihon class loading and Venera JavaScript execution remain fail-closed and unimplemented.
+- Mihon and Venera production drivers are installed inside `:zic_plugin_runtime`. Mihon loads only the process-private verified APK copy and maps current 1.6 suspend plus old Rx operations; Venera executes the source in a restricted WebView with explicit network/cookie/storage/convert/HTML/image bridges.
+- The product source-management screen owns repository discovery and explicit trust/install/update/remove UX through `ExternalPluginController`; external sources remain ordinary `BrowsableComicSource` adapters.
+- Mihon repository discovery accepts the current `index.pb`/`repo.json` entry, resolves the full sibling `index.json`, and parses both current `extensionList.extensions` v2 metadata and the legacy array form; do not restore the obsolete `index.min.json` default.
+- Venera compatibility must preserve current source return shapes, including `Map`-backed comic/chapter collections, and the official `compute` contract where the evaluated function receives one arguments array.
 
 ## Validation commands
 
@@ -41,9 +44,7 @@ bash ./tool/build_android.sh release
 
 ## Next mainline work
 
-1. Run the report-32 plugin_host/plugin_host_bridge tests and the full suites in the local Flutter/Dart environment.
-2. Run the Android JVM packet/binding tests and a real instrumentation service-death test: kill `:zic_plugin_runtime`, verify the outstanding request fails once, stale callbacks do not affect a new bind, and explicit reactivation returns a new process generation.
-3. Implement the Mihon process driver that loads only the process-private staged APK copy and resolves approved `Source`/`SourceFactory` entry classes.
-4. Implement the Venera sandbox driver over the same process host with explicit network, cookie, credential and storage bridges.
-5. Add a full Binder integration test above the inline threshold; the pure packet owner already verifies file routing, SHA-256, deletion, corruption rejection and path confinement.
-6. Preserve Home telemetry without expanding it unless the device issue returns with a captured trace.
+1. Run Flutter/Dart and Android Gradle builds in the local Android toolchain, then exercise one current Keiyoushi 1.6 extension and one official Venera 1.6 source through browse/detail/chapter/resource.
+2. Add Android instrumentation coverage for plugin install, process kill, explicit reactivation, WebView teardown and Mihon class-loader/native-library cleanup.
+3. Capture incompatible real-world sources as fixtures before expanding API compatibility; never silently return empty catalog data for unsupported ABI or bridge functions.
+4. Preserve the existing Home startup stages, Reader demand/artifact ownership, cache coordinator and download session boundaries.

@@ -4,15 +4,16 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:plugin_host/plugin_host.dart';
 
+import 'src/native_runtime_drivers.dart';
 import 'src/runtime_service_handler.dart';
 
 /// Creates the Dart-owned endpoint inside the dedicated Android runtime
 /// process and attaches it to the process-local MethodChannel.
 ///
-/// Production currently supplies no ecosystem drivers, so activation remains
-/// fail-closed with `driver-unavailable`. Concrete Mihon and Venera drivers can
-/// be installed here later without moving payload verification, session
-/// ownership, cancellation, or shutdown policy into Kotlin.
+/// Production installs process-local Android drivers for both supported
+/// ecosystems. Payload verification, session ownership, cancellation and
+/// shutdown policy remain in Dart; Kotlin only supplies the APIs that require
+/// DexClassLoader or WebView inside the same dedicated process.
 final class AndroidExternalPluginRuntimeServiceBootstrap {
   const AndroidExternalPluginRuntimeServiceBootstrap._();
 
@@ -63,5 +64,14 @@ AndroidExternalPluginRuntimeServiceHandler? _runtimeServiceHandler;
 @pragma('vm:entry-point')
 Future<void> zicExternalPluginRuntimeServiceMain() async {
   _runtimeServiceHandler =
-      await AndroidExternalPluginRuntimeServiceBootstrap.start();
+      await AndroidExternalPluginRuntimeServiceBootstrap.start(
+    factories: <ExternalPluginRuntimeDriverFactory>[
+      AndroidNativeExternalPluginRuntimeDriverFactory(
+        format: ExternalComicPluginFormat.mihonExtension,
+      ),
+      AndroidNativeExternalPluginRuntimeDriverFactory(
+        format: ExternalComicPluginFormat.veneraJavaScript,
+      ),
+    ],
+  );
 }
