@@ -906,6 +906,9 @@ A caller timeout may send request-level cancellation through `CancellableExterna
 
 Android host adapters serialize the exact inspected execution envelope and limits for Mihon and Venera, then expose invoke/cancel/close through one platform channel. The native bridge is deliberately fail-closed until a dedicated isolated APK or JavaScript service is installed; loading in the application process is not an allowed fallback.
 
+At isolated-process entry, `ExternalPluginRuntimeActivationEnvelope` reparses the raw activation map with exact fields and format-specific identity. `FileExternalPluginRuntimePayloadVerifier` does not hand the original host path to a driver: it streams the approved bytes into a process-private partial file while recomputing SHA-256, atomically promotes the verified copy, and keeps that copy alive for exactly one process session. `ExternalPluginRuntimeProcessHost` owns the session registry and routes invoke/cancel/close to the shared worker. A new process starts with an empty registry, so interrupted requests are never replayed automatically after service death.
+Sessions remain charged to the process limit until their driver really closes. If process shutdown begins while payload verification or driver creation is in flight, activation is rejected and its private staged payload is drained instead of publishing a doomed session.
+
 Concrete APK class loading and JavaScript evaluation remain separate isolated backend implementations. They must
 reuse the exact inspected payload and cannot bypass trust, capability, resource-limit or session teardown gates.
 

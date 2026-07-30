@@ -12,6 +12,7 @@ decode/upload registry、frame holder、viewport 播放门控、帧字节预算�
 `0.31.0-dev.44` 保留该 Home trace，但不为当前未复现的冷启动问题增加额外工作；资源文件缓存改用显式复合能力，WebP ready 收敛到真实首帧，promoted artifact 在权威 session 排队时启动唯一共享读取。Mihon inspection 进一步读取入口类元数据，Mihon 与 Venera 分别获得不可变 payload 和资源上限执行请求契约，具体 class loader/JavaScript 引擎仍必须位于隔离 adapter。
 `0.31.0-dev.45` 修复插件资源上限值对象的 const 求值阻断，并定义 Mihon/Venera 共用的版本化运行时协议。隔离 backend 只暴露 source descriptor 与 browse/detail/chapter/resource 请求，统一适配层再生成普通 `BrowsableComicSource`；请求超时、响应字节和真实并发由 host 二次约束，Reader、下载会话和 artifact 权限不会跨入插件运行时。
 `0.31.0-dev.48` 收口了重复出现的图片测试进程阻塞：普通本地文件的 zero-Dart-copy 验证改为纯 `FileImage` 路由测试，不再启动平台解码；受控动画状态机通过 `FlutterAnimatedCodecFactory` 与 `ui.Codec` 适配器解耦，生产仍使用真实 Flutter codec，测试使用确定性 codec。首帧 ready 等待真实 `endOfFrame`，失败路径也会无条件卸载 codec、Timer 和图片。Home trace 与 dev.47 的 Mihon/Venera runtime worker、取消和平台通道保持不变。
+`0.31.0-dev.49` 修正了目标重建回归的错误前提：2×2 源在 320→180 视口下不需要重建 codec，测试改用声明 2048×2048 画布的确定性 VP8X fixture，并先验证两个 downsample target 确实不同。插件隔离边界新增 process-entry activation host：原始 payload 在隔离进程内按批准的长度/SHA-256 流式重验并原子复制到进程私有文件，driver 只接收该已验证副本；session registry 不在进程重启后自动重放失败请求。
 
 ```text
 ReaderView

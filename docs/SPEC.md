@@ -104,6 +104,9 @@ continue through Reader demand, transport, promoted artifact and decode ownershi
 - 可取消 channel 应支持 request-level cooperative cancellation；timeout 可以发送 cancel，但底层 Future 真正结束前 host 不得释放并发额度。
 - worker/session close 必须可加入：停止接收新请求，取消活动 token，通知 driver/channel 关闭并等待实际调用排空。
 - 平台 activation 必须传递同一个已检查 payload 的 path/length/hash、批准能力和完整 limits。专用隔离服务不可用时必须拒绝激活，不得退回 App 主进程执行。
+- 隔离进程入口必须按 exact schema 重解析 activation，并把 host 提供的 payload 流式复制为 process-private 原子文件，同时重算 length/SHA-256；driver 不得在校验后重新打开可被 host 替换的原路径。
+- process runtime session registry 必须在进程重启后为空。中断的 browse/detail/chapter/resource 请求只能由调用者以新 session/新 request ID 显式重试，不得自动 replay。
+- driver 尚未完成 close 的 session 仍必须占用 process session limit；process close 开始后，仍在校验或创建 driver 的 activation 必须失败并清理 staged payload，不得先返回成功 session 再立即拆除。
 
 ## 3. Reader 行为规格
 

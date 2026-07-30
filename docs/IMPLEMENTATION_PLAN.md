@@ -21,8 +21,12 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.48）
+## 当前应用主线（0.31.0-dev.49）
 
+- 目标重建回归必须先证明 decode target 实际变化；仅改变容器尺寸但 raster target 不变时，不得把“不重建 codec”判定为产品错误。
+- Mihon/Venera activation wire 必须在隔离进程入口再次严格解析；process-side driver 不得直接信任 host 进程中的对象或未声明字段。
+- 批准 payload 必须在隔离进程内按 length/SHA-256 流式重验并原子提升为 process-private 文件，driver 只能打开该副本；session 关闭后由 process host 删除。
+- runtime process host 必须拥有 session registry、activation 串行化、invoke/cancel/close 路由和 joinable shutdown。进程死亡/重启后不得自动重放中断的 catalog 请求。
 - 普通本地静态图片的文件路由必须是可独立验证的纯映射；zero-Dart-copy 测试不得启动宿主平台 codec 或依赖测试 runner 的图片流收尾。
 - 受控 GIF/WebP 状态机只依赖 `FlutterAnimatedCodec` 契约。生产 adapter 使用 `ui.instantiateImageCodec`，测试 adapter 必须确定性返回帧；不得让不可取消的 engine Future 成为状态机单元测试前提。
 - 动画首帧 ready 必须等待真实 `endOfFrame`。替代 decode target 未呈现前保留旧帧；generation 失效或 dispose 时必须释放新旧 frame、codec 和 Timer，失败断言也必须执行同一 teardown。

@@ -1,3 +1,11 @@
+## 0.31.0-dev.49 — meaningful decode-target regression and process-entry payload ownership
+
+- Fix the reported target-rebuild timeout by using a deterministic 2048×2048 VP8X canvas fixture. The regression now proves that the viewport change produced distinct downsample targets before asserting gapless replacement; a tiny 2×2 source correctly remains a no-op.
+- Add strict Mihon/Venera process-entry activation parsing with exact schema fields, plugin-format identity, capabilities and runtime limits.
+- Revalidate the inspected payload inside the isolated process, stream it into a process-private atomic copy, and pass only that verified copy to the ecosystem driver. This closes the verify-then-reopen path race.
+- Add a process-owned runtime session registry with bounded activation, joinable teardown, source-key validation, cooperative cancel routing and no automatic request replay after process restart. Closing drivers continue to consume a session slot, and process shutdown cannot publish a partially activated session.
+- Add payload mutation, staged-file lifetime, Venera source identity and process-restart regressions plus ADR 0033.
+
 ## 0.31.0-dev.48 — deterministic controlled-codec tests and drain-safe image teardown
 
 - Close the repeated `local_image_preview_test.dart` shutdown stall at its lifecycle boundary. The plain-file zero-copy assertion is now a pure provider-routing test and never starts a platform `FileImage` decode.

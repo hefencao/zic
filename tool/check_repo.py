@@ -2342,6 +2342,49 @@ def check_current_iteration() -> None:
         fail('dev.48 controlled-codec tests must not depend on engine WebP decode')
 
 
+    runtime_activation = (
+        ROOT / 'packages/plugin_host/lib/src/runtime_activation.dart'
+    ).read_text(encoding='utf-8')
+    runtime_activation_test = (
+        ROOT / 'packages/plugin_host/test/runtime_activation_test.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'sealed class ExternalPluginRuntimeActivationEnvelope',
+        'FileExternalPluginRuntimePayloadVerifier',
+        'ExternalPluginRuntimeVerifiedPayload',
+        'ExternalPluginRuntimeProcessHost',
+        'payload-identity-mismatch',
+        'source-identity-mismatch',
+        'await temporary.rename(promoted.path)',
+        'await _activationTail',
+        '_closingSessions',
+    ):
+        if required not in runtime_activation:
+            fail(f'dev.49 process-entry runtime ownership is incomplete: {required}')
+    for forbidden_import in (
+        'package:reader/',
+        'package:downloads/',
+        'package:sessions/',
+        'package:pipeline/',
+    ):
+        if forbidden_import in runtime_activation:
+            fail(f'dev.49 process runtime leaks {forbidden_import}')
+    for required in (
+        'process entry stages and revalidates the exact approved payload',
+        'payload mutation is rejected before a driver is created',
+        'process restart has no sessions and never replays a request',
+    ):
+        if required not in runtime_activation_test:
+            fail(f'dev.49 runtime activation regression is incomplete: {required}')
+    for required in (
+        'Uint8List _largeCanvasWebp()',
+        'decodeTargets',
+        'target != decodeTargets.first',
+    ):
+        if required not in image_test:
+            fail(f'dev.49 meaningful target rebuild regression is incomplete: {required}')
+
+
 def main() -> None:
     try:
         dart_files, dart_tests = check_repository(ROOT)

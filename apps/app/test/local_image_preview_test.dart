@@ -23,6 +23,21 @@ Uint8List _tinyWebp() => base64Decode(
       'IqL/AQA=',
     );
 
+Uint8List _largeCanvasWebp() {
+  final bytes = Uint8List.fromList(_tinyWebp());
+  // VP8X stores canvas dimensions minus one as 24-bit little-endian values.
+  // Keep the tiny encoded frames but advertise a 2048×2048 canvas so viewport
+  // changes produce distinct downsample targets without invoking a real codec.
+  const encodedExtent = 2048 - 1;
+  bytes[24] = encodedExtent & 0xff;
+  bytes[25] = (encodedExtent >> 8) & 0xff;
+  bytes[26] = (encodedExtent >> 16) & 0xff;
+  bytes[27] = encodedExtent & 0xff;
+  bytes[28] = (encodedExtent >> 8) & 0xff;
+  bytes[29] = (encodedExtent >> 16) & 0xff;
+  return bytes;
+}
+
 Future<ui.Image> _testFrameImage() async {
   final recorder = ui.PictureRecorder();
   final canvas = ui.Canvas(recorder);
@@ -348,10 +363,11 @@ void main() {
   ) async {
     final playback = ReaderPlaybackController();
     addTearDown(playback.dispose);
-    final fixtureBytes = _tinyWebp();
+    final fixtureBytes = _largeCanvasWebp();
     var width = 320.0;
     late StateSetter updateHost;
     var codecActivations = 0;
+    final decodeTargets = <(int?, int?)>[];
     final replacementGate = Completer<void>();
     final FlutterAnimatedCodecFactory codecFactory = (
       bytes, {
@@ -359,8 +375,9 @@ void main() {
       targetHeight,
     }) async {
       codecActivations++;
+      decodeTargets.add((targetWidth, targetHeight));
       return _TestFlutterAnimatedCodec(
-        beforeFrame: codecActivations == 2 ? replacementGate.future : null,
+        beforeFrame: codecActivations >= 2 ? replacementGate.future : null,
       );
     };
 
@@ -395,6 +412,11 @@ void main() {
 
       updateHost(() => width = 180);
       await _pumpUntilCondition(tester, () => codecActivations >= 2);
+      expect(decodeTargets.length, greaterThanOrEqualTo(2));
+      expect(
+        decodeTargets.any((target) => target != decodeTargets.first),
+        isTrue,
+      );
 
       // The old frame remains visible while the replacement codec is working.
       expect(find.byType(RawImage), findsOneWidget);

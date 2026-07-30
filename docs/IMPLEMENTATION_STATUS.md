@@ -1,3 +1,13 @@
+## 0.31.0-dev.49：有效 decode target 回归与隔离进程 payload 所有权
+
+- `Flutter target rebuild keeps the presented frame visible` 不再把任意容器宽度变化当作 codec 必然重建。fixture 通过 VP8X 头声明 2048×2048 画布，测试先证明生成了两个不同 downsample target，再验证替代 codec 完成前旧 `RawImage` 持续可见。
+- 新增 `ExternalPluginRuntimeActivationEnvelope`，在隔离进程入口严格解析 Mihon/Venera activation wire、能力和资源限制，拒绝额外字段与格式/插件身份不一致。
+- 新增 process-private payload staging：按批准长度流式复制并计算 SHA-256，原子提升后 driver 只接收已验证副本；原始 host 路径后续变化不会影响活动 runtime。
+- 新增 `ExternalPluginRuntimeProcessHost`，拥有 session registry、driver factory 选择、Venera source-key 一致性、invoke/cancel/close 路由、并发 activation 串行化与 process restart 后不自动重放。
+- driver 尚未真正关闭的 session 继续占用 process session limit；process close 与 payload 校验/driver 创建竞态时，activation 会失败并清理私有副本，不会发布立即失效的 session。
+- Home startup trace、Reader demand/artifact ownership 与 dev.48 图片 codec 生命周期保持不变。
+- Mihon `Source`/`SourceFactory` class-loader driver 和 Venera JavaScript engine 仍未实现。
+
 ## 0.31.0-dev.48：确定性动画 codec seam 与可排空图片测试生命周期
 
 - 普通本地文件的 zero-copy 回归已改为纯 `localImageDirectFileProvider` 测试，不创建 Widget、不启动平台 `FileImage` 解码。
