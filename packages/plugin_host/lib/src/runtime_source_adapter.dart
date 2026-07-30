@@ -81,7 +81,8 @@ final class ExternalPluginRuntimeSession
       unawaited(_cancelInvocation(request.requestId));
       throw Failure(
         code: ErrorCode.source,
-        message: 'external plugin invocation timed out',
+        message: 'external plugin ${operation.name} invocation timed out after '
+            '${_limits.invocationTimeout.inSeconds}s',
         cause: error,
       );
     }

@@ -14,11 +14,13 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
 import java.security.MessageDigest
+import java.util.Properties
 import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
@@ -464,7 +466,7 @@ internal class MihonRuntimeDriver private constructor(
         ): MihonRuntimeDriver {
             val payload = File(payloadPath)
             verifyPayload(payload, payloadLength, payloadSha256)
-            verifyMihonHostAbi(context.classLoader)
+            verifyMihonCommonRuntimeAbi(context.classLoader)
             val pluginId = activation.requireString("pluginId")
             val version = activation.requireString("pluginVersion")
             val extensionLib = activation.requireString("extensionLib")
@@ -487,16 +489,22 @@ internal class MihonRuntimeDriver private constructor(
                     expectedLength = payloadLength,
                     expectedSha256 = payloadSha256,
                 )
+                val abi = stageReadOnlyMihonAbi(
+                    context = context,
+                    extensionLib = extensionLib,
+                    target = File(runtimeRoot, "abi.jar"),
+                )
                 val nativeDir = extractNativeLibraries(apk, File(runtimeRoot, "lib"))
                 val optimized = File(runtimeRoot, "dex").apply {
                     check(mkdirs()) { "Mihon dex directory could not be created" }
                 }
-                val loader = DexClassLoader(
-                    apk.path,
-                    optimized.path,
-                    nativeDir?.path,
-                    context.classLoader,
+                val loader = MihonExtensionClassLoader(
+                    dexPath = listOf(apk.path, abi.path).joinToString(File.pathSeparator),
+                    optimizedDirectory = optimized,
+                    librarySearchPath = nativeDir,
+                    parent = context.classLoader,
                 )
+                verifyMihonPluginAbi(loader)
                 val extensionContext = createMihonPayloadContext(
                     base = context,
                     apk = apk,
@@ -642,25 +650,116 @@ private class MihonPayloadContext(
 
 internal val supportedMihonExtensionLibs: Set<String> = setOf("1.4", "1.5", "1.6")
 
-internal val requiredMihonHostAbiClasses: List<String> = listOf(
+internal fun mihonAbiAssetVersion(extensionLib: String): String = when (extensionLib) {
+    "1.4" -> "1.4"
+    // Keiyoushi publishes separate 1.4 and 1.6 API artifacts. The transitional
+    // 1.5 metadata shape links against the compatible 1.6 API surface.
+    "1.5", "1.6" -> "1.6"
+    else -> error("Unsupported Mihon extension ABI: $extensionLib")
+}
+
+internal val requiredMihonPluginAbiClasses: List<String> = listOf(
     "eu.kanade.tachiyomi.source.Source",
     "eu.kanade.tachiyomi.source.SourceFactory",
     "eu.kanade.tachiyomi.source.model.SManga",
     "eu.kanade.tachiyomi.source.model.SChapter",
     "eu.kanade.tachiyomi.source.model.Page",
-    "androidx.preference.Preference",
-    "uy.kohesive.injekt.InjektKt",
 )
 
-internal fun missingMihonHostAbiClasses(classLoader: ClassLoader): List<String> =
-    requiredMihonHostAbiClasses.filter { className ->
-        runCatching { classLoader.loadClass(className) }.isFailure
-    }
+internal val requiredMihonCommonRuntimeClasses: List<String> = listOf(
+    "androidx.preference.Preference",
+    "uy.kohesive.injekt.InjektKt",
+    "okhttp3.OkHttpClient",
+    "okio.Buffer",
+    "rx.Observable",
+    "kotlinx.coroutines.CoroutineScope",
+    "org.jsoup.Jsoup",
+    "com.google.gson.Gson",
+)
 
-private fun verifyMihonHostAbi(classLoader: ClassLoader) {
-    val missing = missingMihonHostAbiClasses(classLoader)
+internal fun missingMihonClasses(
+    classLoader: ClassLoader,
+    required: List<String>,
+): List<String> = required.filter { className ->
+    runCatching { classLoader.loadClass(className) }.isFailure
+}
+
+private fun verifyMihonCommonRuntimeAbi(classLoader: ClassLoader) {
+    val missing = missingMihonClasses(classLoader, requiredMihonCommonRuntimeClasses)
     require(missing.isEmpty()) {
-        "Mihon host ABI is incomplete: ${missing.joinToString()}"
+        "Mihon common runtime is incomplete: ${missing.joinToString()}"
+    }
+}
+
+private fun verifyMihonPluginAbi(classLoader: ClassLoader) {
+    val missing = missingMihonClasses(classLoader, requiredMihonPluginAbiClasses)
+    require(missing.isEmpty()) {
+        "Mihon ${classLoader.javaClass.simpleName} ABI is incomplete: ${missing.joinToString()}"
+    }
+}
+
+internal fun isMihonChildFirstClass(name: String): Boolean =
+    name.startsWith("eu.kanade.tachiyomi.")
+
+private class MihonExtensionClassLoader(
+    dexPath: String,
+    optimizedDirectory: File,
+    librarySearchPath: File?,
+    parent: ClassLoader,
+) : DexClassLoader(
+    dexPath,
+    optimizedDirectory.path,
+    librarySearchPath?.path,
+    parent,
+) {
+    override fun loadClass(name: String, resolve: Boolean): Class<*> {
+        if (!isMihonChildFirstClass(name)) return super.loadClass(name, resolve)
+        synchronized(getClassLoadingLock(name)) {
+            val loaded = findLoadedClass(name) ?: findClass(name)
+            if (resolve) resolveClass(loaded)
+            return loaded
+        }
+    }
+}
+
+private data class MihonAbiAsset(
+    val path: String,
+    val length: Long,
+    val sha256: String,
+)
+
+private fun readMihonAbiAsset(context: Context, extensionLib: String): MihonAbiAsset {
+    val version = mihonAbiAssetVersion(extensionLib)
+    val properties = Properties().apply {
+        context.assets.open("mihon/abi/manifest.properties").use { input -> load(input) }
+    }
+    val prefix = "$version."
+    val path = properties.getProperty(prefix + "file")
+        ?.takeIf { it == "mihon/abi/$version/abi.jar" }
+        ?: error("Mihon ABI manifest path is invalid for $version")
+    val length = properties.getProperty(prefix + "length")?.toLongOrNull()
+        ?.takeIf { it > 0 }
+        ?: error("Mihon ABI manifest length is invalid for $version")
+    val sha256 = properties.getProperty(prefix + "sha256")
+        ?.lowercase()
+        ?.takeIf { it.matches(Regex("[0-9a-f]{64}")) }
+        ?: error("Mihon ABI manifest digest is invalid for $version")
+    return MihonAbiAsset(path, length, sha256)
+}
+
+private fun stageReadOnlyMihonAbi(
+    context: Context,
+    extensionLib: String,
+    target: File,
+): File {
+    val asset = readMihonAbiAsset(context, extensionLib)
+    return stageReadOnlyMihonCode(
+        target = target,
+        expectedLength = asset.length,
+        expectedSha256 = asset.sha256,
+        label = "Mihon ${mihonAbiAssetVersion(extensionLib)} ABI",
+    ) {
+        context.assets.open(asset.path, AssetManager.ACCESS_STREAMING)
     }
 }
 
@@ -956,29 +1055,54 @@ private fun stageReadOnlyMihonApk(
     target: File,
     expectedLength: Long,
     expectedSha256: String,
+): File = stageReadOnlyMihonCode(
+    target = target,
+    expectedLength = expectedLength,
+    expectedSha256 = expectedSha256,
+    label = "Mihon runtime APK",
+) { payload.inputStream().buffered() }
+
+private fun stageReadOnlyMihonCode(
+    target: File,
+    expectedLength: Long,
+    expectedSha256: String,
+    label: String,
+    openInput: () -> InputStream,
 ): File {
+    target.parentFile?.let { parent ->
+        check(parent.isDirectory || parent.mkdirs()) { "$label directory could not be created" }
+    }
     val staging = File(target.parentFile, "${target.name}.part")
     if (staging.exists()) {
-        check(staging.delete()) { "stale Mihon staged APK could not be removed" }
+        check(staging.delete()) { "stale $label staging file could not be removed" }
     }
     FileOutputStream(staging).use { output ->
         check(staging.setReadOnly()) {
-            "Mihon staged APK could not be made read-only before writing"
+            "$label staging file could not be made read-only before writing"
         }
-        payload.inputStream().buffered().use { input -> input.copyTo(output) }
+        openInput().use { input -> input.copyTo(output) }
         output.fd.sync()
     }
-    verifyPayload(staging, expectedLength, expectedSha256)
-    if (target.exists()) check(target.delete()) { "Mihon runtime APK could not be replaced" }
-    check(staging.renameTo(target)) { "Mihon staged APK could not be promoted" }
-    check(target.setReadOnly()) { "Mihon runtime APK could not remain read-only" }
-    verifyPayload(target, expectedLength, expectedSha256)
+    verifyCodeFile(staging, expectedLength, expectedSha256, label)
+    if (target.exists()) check(target.delete()) { "$label could not be replaced" }
+    check(staging.renameTo(target)) { "$label staging file could not be promoted" }
+    check(target.setReadOnly()) { "$label could not remain read-only" }
+    verifyCodeFile(target, expectedLength, expectedSha256, label)
     return target
 }
 
 private fun verifyPayload(file: File, expectedLength: Long, expectedSha256: String) {
-    require(file.isFile) { "plugin payload is missing" }
-    require(file.length() == expectedLength) { "plugin payload length changed" }
+    verifyCodeFile(file, expectedLength, expectedSha256, "plugin payload")
+}
+
+private fun verifyCodeFile(
+    file: File,
+    expectedLength: Long,
+    expectedSha256: String,
+    label: String,
+) {
+    require(file.isFile) { "$label is missing" }
+    require(file.length() == expectedLength) { "$label length changed" }
     val digest = MessageDigest.getInstance("SHA-256")
     file.inputStream().buffered().use { input ->
         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -989,7 +1113,7 @@ private fun verifyPayload(file: File, expectedLength: Long, expectedSha256: Stri
         }
     }
     val actual = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
-    require(actual.equals(expectedSha256, ignoreCase = true)) { "plugin payload digest changed" }
+    require(actual.equals(expectedSha256, ignoreCase = true)) { "$label digest changed" }
 }
 
 private fun extractNativeLibraries(apk: File, root: File): File? {

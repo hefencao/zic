@@ -48,6 +48,21 @@ async function checkLoadNextExplore(){
  if(third.items[0].title!=='Page 2'||third.hasMore)throw new Error('loadNext second source page failed '+JSON.stringify(third));
  if(JSON.stringify(calls)!==JSON.stringify([null,'page-2']))throw new Error('loadNext tokens '+JSON.stringify(calls));
 }
+
+async function checkLegacyGlobalScratchBinding(){
+ class LegacySource extends ComicSource {
+   key='legacy';name='Legacy';url='https://legacy.invalid/';
+   explore=[{load:async()=>[{id:'comic',title:'Legacy comic'}]}];
+   comic={loadInfo:async(id)=>{res={title:'Legacy detail',chapters:{one:'One'}};return res}};
+ }
+ globalThis.__zicSource=new LegacySource();
+ const browse=await __zicOperation({operation:'browse',arguments:{query:'',offset:0,limit:20}});
+ const detail=await __zicOperation({operation:'loadComic',arguments:{comicId:browse.items[0].comicId}});
+ if(detail.comic.title!=='Legacy detail'||detail.chapters[0].title!=='One')throw new Error('legacy res binding failed '+JSON.stringify(detail));
+ const detailMessage=__zicErrorMessage(new ReferenceError('boom'),'loadComic');
+ if(!detailMessage.startsWith('loadComic: boom'))throw new Error('operation error context failed '+detailMessage);
+}
+
 async function checkDirectCoverResource(){
  let seen=null;
  ZicNative.request=raw=>{
@@ -60,7 +75,7 @@ async function checkDirectCoverResource(){
  if(!(bytes instanceof ArrayBuffer)||JSON.stringify(Array.from(new Uint8Array(bytes)))!==JSON.stringify([1,2,3]))throw new Error('direct cover bytes failed');
  if(seen.url!=='https://cdn.invalid/cover.jpg'||seen.http_method!=='GET')throw new Error('direct cover request failed '+JSON.stringify(seen));
 }
-(async()=>{await checkCurrentCategory();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkDirectCoverResource();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
+(async()=>{await checkCurrentCategory();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
 '''
 with tempfile.TemporaryDirectory() as td:
     js=Path(td)/'test.js'; js.write_text(bootstrap+'\n'+test)

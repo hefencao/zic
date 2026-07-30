@@ -22,6 +22,24 @@ repositories {
     maven { url "https://jitpack.io" }
 }
 
+configurations {
+    // Mihon 1.4 and 1.6 expose the same package names but incompatible class
+    // shapes. Resolve them only for build-time dex asset generation; neither
+    // ABI is placed on the App runtime classpath.
+    mihonAbi14 {
+        canBeConsumed = false
+        canBeResolved = true
+        transitive = false
+    }
+    mihonAbi16 {
+        canBeConsumed = false
+        canBeResolved = true
+        transitive = false
+    }
+}
+
+def mihonAbiAssetsRoot = file("$buildDir/generated/mihonAbiAssets")
+
 android {
     namespace = "dev.zic.pluginhost"
     compileSdk = 37
@@ -29,6 +47,12 @@ android {
     defaultConfig {
         minSdk = 21
         consumerProguardFiles "consumer-rules.pro"
+    }
+
+    sourceSets {
+        main {
+            assets.srcDir mihonAbiAssetsRoot
+        }
     }
 
     compileOptions {
@@ -42,16 +66,20 @@ android {
 }
 
 dependencies {
-    // The runtime executes current Keiyoushi/Mihon 1.6 APKs in the isolated
-    // service process. Keep the extension ABI and its host-provided common
-    // libraries pinned to the revisions used by the upstream repository.
-    runtimeOnly("com.github.keiyoushi:extensions-lib:6e0c96cea8") {
-        // This published AAR is the host ABI itself. Its legacy POM also
-        // advertises old host libraries (including Kohesive Injekt), while
-        // current extensions compile against the separately pinned common
-        // bundle below. Importing both creates duplicate runtime classes.
+    // Build-time-only extension API artifacts. The generated dex assets are
+    // selected per extensionLib and loaded child-first beside the extension
+    // APK, preventing 1.4 extensions from linking against the incompatible
+    // 1.6 HttpSource class (and vice versa).
+    mihonAbi14("com.github.keiyoushi:extensions-lib:18a8e26be2") {
         transitive = false
     }
+    mihonAbi16("com.github.keiyoushi:extensions-lib:6e0c96cea8") {
+        transitive = false
+    }
+
+    // Host-provided common libraries remain on the isolated process runtime
+    // classpath. The bridge talks to extension API/model classes reflectively,
+    // so neither source ABI needs to be a Kotlin compile dependency.
     runtimeOnly "org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.4.10"
     runtimeOnly "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0"
     runtimeOnly "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0"
@@ -59,6 +87,7 @@ dependencies {
         exclude group: "uy.kohesive.injekt", module: "injekt-core"
         exclude group: "uy.kohesive.injekt", module: "injekt-api"
     }
+    runtimeOnly "androidx.preference:preference:1.2.1"
     runtimeOnly "io.reactivex:rxjava:1.3.8"
     runtimeOnly "org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.11.0"
     runtimeOnly "org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0"
@@ -70,14 +99,126 @@ dependencies {
     runtimeOnly "com.squareup.okhttp3:okhttp-zstd:5.4.0"
     runtimeOnly "com.squareup.zstd:zstd-kmp-okio:0.4.0"
     runtimeOnly "com.github.zhanghai.quickjs-java:quickjs-android:547f5b1597"
-
-    // Common extension runtime dependencies that are expected to be supplied
-    // by Mihon. They are deliberately runtime-only: the bridge talks to the
-    // extension ABI reflectively, so the baseline Kotlin compiler never needs
-    // to consume newer upstream Kotlin metadata. Do not add AndroidX
-    // preference here: the pinned extensions-lib AAR already contains that
-    // ABI and a second provider fails Android duplicate-class verification.
     runtimeOnly "com.google.code.gson:gson:2.11.0"
 
     testImplementation "junit:junit:4.13.2"
+}
+
+def sha256File = { File file ->
+    def digest = java.security.MessageDigest.getInstance("SHA-256")
+    file.withInputStream { input ->
+        byte[] buffer = new byte[16 * 1024]
+        while (true) {
+            int count = input.read(buffer)
+            if (count < 0) break
+            digest.update(buffer, 0, count)
+        }
+    }
+    digest.digest().collect { String.format("%02x", it & 0xff) }.join()
+}
+
+def generateMihonAbiAssets = tasks.register("generateMihonAbiAssets") {
+    inputs.files(configurations.mihonAbi14, configurations.mihonAbi16)
+    outputs.dir(mihonAbiAssetsRoot)
+
+    doLast {
+        delete(mihonAbiAssetsRoot)
+        def sdk = android.sdkDirectory
+        def buildToolsRoot = new File(sdk, "build-tools")
+        def candidates = (buildToolsRoot.listFiles() ?: [] as File[]).findAll {
+            it.isDirectory() && new File(it, System.getProperty("os.name").toLowerCase().contains("windows") ? "d8.bat" : "d8").isFile()
+        }.sort { left, right ->
+            def lv = left.name.tokenize('.').collect { it.isInteger() ? it.toInteger() : 0 }
+            def rv = right.name.tokenize('.').collect { it.isInteger() ? it.toInteger() : 0 }
+            for (int i = 0; i < Math.max(lv.size(), rv.size()); i++) {
+                int diff = (i < lv.size() ? lv[i] : 0) <=> (i < rv.size() ? rv[i] : 0)
+                if (diff != 0) return diff
+            }
+            return left.name <=> right.name
+        }
+        if (candidates.isEmpty()) {
+            throw new GradleException("Android d8 is unavailable under ${buildToolsRoot}")
+        }
+        def windows = System.getProperty("os.name").toLowerCase().contains("windows")
+        def d8 = new File(candidates.last(), windows ? "d8.bat" : "d8")
+        def androidJar = new File(sdk, "platforms/android-37/android.jar")
+        if (!androidJar.isFile()) {
+            throw new GradleException("Android 37 platform is unavailable: ${androidJar}")
+        }
+
+        def records = []
+        ["1.4": configurations.mihonAbi14, "1.6": configurations.mihonAbi16].each { abi, configuration ->
+            def aar = configuration.singleFile
+            def tempRoot = new File(temporaryDir, abi.replace('.', '_'))
+            delete(tempRoot)
+            tempRoot.mkdirs()
+            def classesJar = new File(tempRoot, "classes.jar")
+            def archive = new java.util.zip.ZipFile(aar)
+            try {
+                def entry = archive.getEntry("classes.jar")
+                if (entry == null) throw new GradleException("${aar.name} contains no classes.jar")
+                classesJar.withOutputStream { output ->
+                    def input = archive.getInputStream(entry)
+                    try { input.transferTo(output) } finally { input.close() }
+                }
+            } finally {
+                archive.close()
+            }
+
+            def dexDir = new File(tempRoot, "dex")
+            dexDir.mkdirs()
+            def args = [
+                d8.absolutePath,
+                "--min-api", "21",
+                "--lib", androidJar.absolutePath,
+                "--output", dexDir.absolutePath,
+                classesJar.absolutePath,
+            ]
+            def command = windows ? (["cmd", "/c"] + args) : args
+            def process = new ProcessBuilder(command.collect { it.toString() })
+                .directory(project.projectDir)
+                .inheritIO()
+                .start()
+            int exitCode = process.waitFor()
+            if (exitCode != 0) {
+                throw new GradleException("d8 failed for Mihon ABI ${abi} with exit code ${exitCode}")
+            }
+
+            def dexFiles = (dexDir.listFiles() ?: [] as File[]).findAll {
+                it.name ==~ /classes(\d*)\.dex/
+            }.sort { it.name }
+            if (dexFiles.isEmpty()) {
+                throw new GradleException("d8 produced no dex for Mihon ABI ${abi}")
+            }
+            def abiRoot = new File(mihonAbiAssetsRoot, "mihon/abi/${abi}")
+            abiRoot.mkdirs()
+            def outputJar = new File(abiRoot, "abi.jar")
+            def zip = new java.util.zip.ZipOutputStream(
+                new java.io.BufferedOutputStream(new java.io.FileOutputStream(outputJar)),
+            )
+            try {
+                dexFiles.each { dex ->
+                    def entry = new java.util.zip.ZipEntry(dex.name)
+                    entry.time = 0L
+                    zip.putNextEntry(entry)
+                    dex.withInputStream { input -> input.transferTo(zip) }
+                    zip.closeEntry()
+                }
+            } finally {
+                zip.close()
+            }
+            records.addAll([
+                "${abi}.file=mihon/abi/${abi}/abi.jar",
+                "${abi}.length=${outputJar.length()}",
+                "${abi}.sha256=${sha256File(outputJar)}",
+            ])
+        }
+        def manifest = new File(mihonAbiAssetsRoot, "mihon/abi/manifest.properties")
+        manifest.parentFile.mkdirs()
+        manifest.setText(records.join("\n") + "\n", "UTF-8")
+    }
+}
+
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn(generateMihonAbiAssets)
 }

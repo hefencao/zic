@@ -1426,7 +1426,9 @@ def check_compile_regressions() -> None:
     if 'https://www.jitpack.io' in plugin_host_android:
         fail('plugin host Android build must not use the JitPack redirect host')
     for dependency in (
+        'com.github.keiyoushi:extensions-lib:18a8e26be2',
         'com.github.keiyoushi:extensions-lib:6e0c96cea8',
+        'androidx.preference:preference:1.2.1',
         'com.github.null2264.injekt:injekt-core:4135455a2a',
         'com.github.zhanghai.quickjs-java:quickjs-android:547f5b1597',
     ):
@@ -1435,7 +1437,6 @@ def check_compile_regressions() -> None:
     if 'transitive = false' not in plugin_host_android:
         fail('Mihon extensions-lib must not import its legacy transitive host graph')
     for duplicate_provider in (
-        'androidx.preference:preference:',
         'androidx.preference:preference-ktx:',
         'uy.kohesive.injekt:injekt-core:',
         'uy.kohesive.injekt:injekt-api:',
@@ -1447,14 +1448,12 @@ def check_compile_regressions() -> None:
     plugin_host_rules = (
         ROOT / 'packages/plugin_host_bridge/android/consumer-rules.pro'
     ).read_text(encoding='utf-8')
-    for required in (
-        'eu.kanade.tachiyomi.**',
-        'androidx.preference.**',
-        'uy.kohesive.injekt.**',
-        'okhttp3.**',
-    ):
+    for forbidden in ('eu.kanade.tachiyomi.**',):
+        if forbidden in plugin_host_rules:
+            fail(f'isolated Mihon ABI leaked into parent shrinker rules: {forbidden}')
+    for required in ('androidx.preference.**', 'uy.kohesive.injekt.**', 'okhttp3.**'):
         if required not in plugin_host_rules:
-            fail(f'plugin host dynamic ABI shrinker rule is missing: {required}')
+            fail(f'plugin host dynamic common-runtime shrinker rule is missing: {required}')
 
     external_plugin_controller = (
         ROOT / 'packages/plugin_host_bridge/lib/src/external_plugin_controller.dart'
@@ -1486,12 +1485,46 @@ def check_compile_regressions() -> None:
         'cleanupStaleMihonRuntimeRoots',
         'finalizeCloseIfIdle()',
         'if (!completions.containsKey(requestId)) return',
-        'verifyMihonHostAbi(context.classLoader)',
-        'requiredMihonHostAbiClasses',
-        'missingMihonHostAbiClasses',
+        'verifyMihonCommonRuntimeAbi(context.classLoader)',
+        'stageReadOnlyMihonAbi(',
+        'MihonExtensionClassLoader(',
+        'verifyMihonPluginAbi(loader)',
+        'requiredMihonPluginAbiClasses',
+        'requiredMihonCommonRuntimeClasses',
+        'isMihonChildFirstClass',
     ):
         if required not in mihon_runtime:
             fail(f'Mihon runtime workspace lifecycle is incomplete: {required}')
+    plugin_host_gradle = (ROOT / 'packages/plugin_host_bridge/android/build.gradle').read_text(encoding='utf-8')
+    for required in (
+        'mihonAbi14("com.github.keiyoushi:extensions-lib:18a8e26be2")',
+        'mihonAbi16("com.github.keiyoushi:extensions-lib:6e0c96cea8")',
+        'generateMihonAbiAssets',
+        'mihon/abi/manifest.properties',
+    ):
+        if required not in plugin_host_gradle:
+            fail(f'Mihon versioned ABI asset pipeline is incomplete: {required}')
+
+    venera_runtime = (
+        ROOT
+        / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraRuntimeDriver.kt'
+    ).read_text(encoding='utf-8')
+    for required in (
+        "Object.defineProperty(globalThis, 'res'",
+        "__zicErrorMessage(error,operation)",
+        "message:__zicErrorMessage(e,'activation')",
+        "__zicErrorMessage(error,request.operation)",
+    ):
+        if required not in venera_runtime:
+            fail(f'Venera runtime compatibility is incomplete: {required}')
+    if "'use strict';" in venera_runtime:
+        fail('Venera runtime must not impose strict mode on appended source scripts')
+    runtime_executors = (ROOT / 'packages/plugin_host/lib/src/runtime_executors.dart').read_text(
+        encoding='utf-8',
+    )
+    if 'invocationTimeout: Duration(seconds: 55)' not in runtime_executors:
+        fail('Venera runtime default timeout is not aligned with native network bounds')
+
     mihon_host_abi_test = (
         ROOT
         / 'packages/plugin_host_bridge/android/src/test/kotlin/dev/zic/pluginhost/MihonHostAbiTest.kt'

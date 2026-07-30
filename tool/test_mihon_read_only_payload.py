@@ -11,7 +11,7 @@ source = (
     / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt'
 ).read_text()
 match = re.search(
-    r'(private fun stageReadOnlyMihonApk\(.*?\n\}\n\nprivate fun verifyPayload\(.*?\n\})\n\nprivate fun extractNativeLibraries',
+    r'(private fun stageReadOnlyMihonApk\(.*?)(?=\nprivate fun extractNativeLibraries)',
     source,
     re.S,
 )
@@ -25,6 +25,7 @@ with tempfile.TemporaryDirectory() as directory:
     smoke.write_text(
         '''import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.attribute.PosixFilePermission
 import java.security.MessageDigest

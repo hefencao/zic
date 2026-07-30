@@ -1,8 +1,10 @@
-# Mihon extension APKs are loaded after the App has been built. R8 cannot see
-# their bytecode references, so the host-provided ABI and common runtime must
-# retain binary names and callable members in minified release builds.
+# Mihon extension APKs and their versioned Source ABI are loaded from private
+# read-only dex assets after the App has been built. R8 cannot see the dynamic
+# APK references to host-provided common libraries, so retain those names and
+# callable members in minified release builds. The Tachiyomi Source API classes live in the child-first ABI asset.
+# AndroidX Preference remains a parent common provider so its classes and
+# resources are merged exactly once.
 -keepattributes Signature,InnerClasses,EnclosingMethod,*Annotation*
--keep,allowoptimization class eu.kanade.tachiyomi.** { *; }
 -keep,allowoptimization class androidx.preference.** { *; }
 -keep,allowoptimization class uy.kohesive.injekt.** { *; }
 -keep,allowoptimization class io.reactivex.** { *; }

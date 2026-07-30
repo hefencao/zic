@@ -1,5 +1,6 @@
 # ADR 0039: Mihon single-provider ABI and release retention
 
+- Superseded in part by ADR 0042
 - Status: Accepted
 - Version: `0.31.0-dev.55`
 

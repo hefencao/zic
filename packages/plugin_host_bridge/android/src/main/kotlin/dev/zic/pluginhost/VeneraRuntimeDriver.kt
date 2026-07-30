@@ -292,7 +292,7 @@ private data class VeneraActivation(
         append("name:String(__zicSource.name||''),url:String(__zicSource.url||''),")
         append("supportsBrowse:__browse,supportsSearch:__zicHasSearchCapability(__zicSource)}));")
         append("}catch(e){ZicNative.activated(JSON.stringify({ok:false,")
-        append("message:String(e?.message||e)}));}})();")
+        append("message:__zicErrorMessage(e,'activation')}));}})();")
     }
 }
 
@@ -1150,8 +1150,13 @@ private fun verifyVeneraPayload(file: File, expectedLength: Long, expectedSha256
 private fun String.jsQuoted(): String = JSONObject.quote(this)
 
 private const val VENERA_BOOTSTRAP = """
-'use strict';
+// Venera source files are ordinary scripts. Do not force strict mode over the
+// appended source: several ecosystem scripts rely on legacy global scratch
+// bindings. Predeclare `res` as a configurable global so strict class methods
+// that assign it retain the behavior of the official host.
+if (!Object.prototype.hasOwnProperty.call(globalThis, 'res')) Object.defineProperty(globalThis, 'res', {value:undefined,writable:true,configurable:true});
 const appVersion = '1.6.0';
+function __zicErrorMessage(error,operation){const message=String(error?.message||error);const stack=String(error?.stack||'').split('\n').slice(1,5).map(v=>v.trim()).filter(Boolean).join(' | ');const prefix=operation?String(operation)+': ':'';return (prefix+message+(stack?' ['+stack+']':'')).slice(0,900)}
 function __zicCompareVersion(a,b){const x=String(a).split(/[^0-9]+/).filter(Boolean).map(Number),y=String(b).split(/[^0-9]+/).filter(Boolean).map(Number);for(let i=0;i<Math.max(x.length,y.length);i++){const d=(x[i]||0)-(y[i]||0);if(d)return d>0?1:-1}return 0}
 const __zicCancelled = new Set();
 const __zicResources = new Map();
@@ -1342,6 +1347,6 @@ async function __zicOperation(request){
  }
  throw new Error('Unsupported Venera operation');
 }
-async function __zicInvoke(raw){const request=typeof raw==='string'?JSON.parse(raw):raw;try{const value=await __zicOperation(request);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:true,value:__zicEncode(value)}))}catch(error){const message=String(error?.message||error),retryable=/timeout|timed out|connect|network|dns|temporar|HTTP 5\d\d/i.test(message);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:false,code:'venera-operation-failed',message,retryable}))}finally{__zicCancelled.delete(request.requestId)}}
+async function __zicInvoke(raw){const request=typeof raw==='string'?JSON.parse(raw):raw;try{const value=await __zicOperation(request);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:true,value:__zicEncode(value)}))}catch(error){const message=__zicErrorMessage(error,request.operation),retryable=/timeout|timed out|connect|network|dns|temporar|HTTP 5\d\d/i.test(message);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:false,code:'venera-operation-failed',message,retryable}))}finally{__zicCancelled.delete(request.requestId)}}
 function __zicCancel(requestId){__zicCancelled.add(requestId)}
 """

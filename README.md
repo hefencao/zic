@@ -19,7 +19,8 @@ decode/upload registry、frame holder、viewport 播放门控、帧字节预算�
 `0.31.0-dev.53` 在该边界内接通真实 Mihon/Venera 运行时和漫画源管理入口：Mihon 从已验证 APK 副本发现并调用 1.6/旧版 Source API，并解析当前仓库 `extensionList.extensions` v2 索引；Venera 在受限 WebView 中实现 1.6 网络、Cookie、存储、转换、HTML、数组/对象/`Map` 数据形态与图像处理桥。安装、信任、更新、回滚、移除和重启恢复统一由 plugin host 管理，外部源仍只以普通 `BrowsableComicSource` 进入现有缓存、下载与 Reader 管线。
 `0.31.0-dev.54` 修复外部插件 manifest 恢复的 Dart 编译阻断，并把 JitPack 配置提升到真正解析 App runtime classpath 的生成宿主仓库所有者；Groovy/Kotlin DSL 与旧 `www.jitpack.io` 地址均被幂等归一化。Mihon extraction 改为 activation 独立 workspace，请求关闭在真实任务排空后再释放 source 和代码缓存，专用 Service 启动时清理上次进程死亡遗留目录。
 `0.31.0-dev.56` 在 dev.55 单一 Mihon ABI 基础上补齐真实运行环境：APK 使用 payload 专属 Context/资源/隔离存储并兼容 object、工厂和构造器入口；Venera 归一化当前 explore/category 契约、压缩协商，并对公共域名被异常解析到回环地址提供受限且保持 TLS hostname 的 DNS 回退。
-`0.31.0-dev.57` 关闭真机反馈中的剩余运行时缺口：Mihon APK 在 dex 加载前以同目录原子流程提升为只读文件；Venera 同时兼容 `load/loadNext`、直接 HTTP(S) 封面资源、方向别名和类级 source key，且响应头适配同时接受 Android nullable 与 OkHttp non-null multimap。
+`0.31.0-dev.57` 关闭真机反馈中的一组运行时缺口：Mihon APK 在 dex 加载前以同目录原子流程提升为只读文件；Venera 同时兼容 `load/loadNext`、直接 HTTP(S) 封面资源、方向别名和类级 source key，且响应头适配同时接受 Android nullable 与 OkHttp non-null multimap。
+`0.31.0-dev.58` 将 Mihon 1.4/1.6 Source API 从 App 父 classpath 移为按 `extensionLib` 选择的只读 dex asset，杜绝旧扩展链接到 1.6 final `HttpSource`；Venera sandbox 恢复 legacy `res` 全局语义，并将外层调用预算提升到 55 秒且保留操作名诊断。
 
 ```text
 ReaderView

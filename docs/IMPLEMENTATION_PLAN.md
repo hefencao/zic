@@ -21,8 +21,10 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.57）
+## 当前应用主线（0.31.0-dev.58）
 
+- Mihon extensionLib 1.4/1.5/1.6 必须映射到版本化 Source ABI asset；不得把任一 `extensions-lib` 放回 App runtime classpath，也不得回退为 parent-first Source API。
+- Venera 外层 invocation timeout 必须覆盖 native connect/read 上限但不超过平台上限；来源脚本不得被宿主强制 strict mode，legacy `res` 兼容只位于 sandbox bootstrap。
 - 目标重建回归必须先证明 decode target 实际变化；仅改变容器尺寸但 raster target 不变时，不得把“不重建 codec”判定为产品错误。
 - Mihon/Venera activation wire 必须在隔离进程入口再次严格解析；process-side driver 不得直接信任 host 进程中的对象或未声明字段。
 - 批准 payload 必须在隔离进程内按 length/SHA-256 流式重验并原子提升为 process-private 文件，driver 只能打开该副本；session 关闭后由 process host 删除。

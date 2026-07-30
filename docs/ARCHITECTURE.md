@@ -65,7 +65,7 @@ ArtifactCacheStore.read(exact DownloadId)
 
 `PromotedArtifactReadPool` 属于 `downloads`。权威 `DownloadSession.beginRun` 是最早的读取启动信号，因此持久 artifact 可在替代 session 恢复临时 workspace 时并行读取；页面只能加入同一精确 Future，不产生 demand、不选择页面、不保留 decoded/texture 状态。观察者注册会立即接收当前 snapshot，避免已开始 run 的转换丢失。缓存读取失败时 transport 回退 source，页面等待该 session。Flutter animated target-only re-decode 保留最后呈现帧，直到替代帧 present。
 
-- Mihon/Venera runtime code immutability and loader normalization: a Mihon APK must be exact-length/SHA-256 verified and non-writable before `DexClassLoader` observes it. Venera capability normalization accepts page-number `load` and cursor `loadNext`; ordinary HTTP(S) covers and transient page tokens both use the isolated resource bridge. Direction aliases are converted only at the protocol/domain boundary, and static source-key inspection is scoped to the `ComicSource` class declaration rather than method locals.
+- Mihon/Venera runtime compatibility: a Mihon APK and its selected 1.4/1.6 Source ABI dex asset must be exact-length/SHA-256 verified and non-writable before a child-first loader observes them. `eu.kanade.tachiyomi.*` comes only from that versioned child loader; AndroidX Preference and other common libraries remain parent-first so Android resources are merged. Venera accepts page-number `load` and cursor `loadNext`, preserves legacy global `res` script behavior, uses a 55-second bounded invocation limit, and routes ordinary HTTP(S) covers plus transient page tokens through the isolated resource bridge.
 
 ## 2. 仓库结构
 

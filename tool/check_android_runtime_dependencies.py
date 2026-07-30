@@ -14,41 +14,59 @@ class DependencyContractError(ValueError):
 
 
 def validate_contract(gradle: str, rules: str) -> None:
-    abi_block = re.search(
-        r'runtimeOnly\("com\.github\.keiyoushi:extensions-lib:6e0c96cea8"\)\s*\{(?P<body>.*?)\n\s*\}',
-        gradle,
-        re.DOTALL,
-    )
-    if abi_block is None or 'transitive = false' not in abi_block.group('body'):
-        raise DependencyContractError(
-            'extensions-lib must be an ABI-only, non-transitive dependency',
+    # Neither incompatible Source ABI may enter the App runtime classpath.
+    if 'runtimeOnly("com.github.keiyoushi:extensions-lib:' in gradle or \
+       'implementation("com.github.keiyoushi:extensions-lib:' in gradle:
+        raise DependencyContractError('Mihon Source ABI leaked onto the App runtime classpath')
+
+    for configuration, coordinate in (
+        ('mihonAbi14', 'com.github.keiyoushi:extensions-lib:18a8e26be2'),
+        ('mihonAbi16', 'com.github.keiyoushi:extensions-lib:6e0c96cea8'),
+    ):
+        declaration = re.search(
+            rf'{configuration}\("{re.escape(coordinate)}"\)\s*\{{(?P<body>.*?)\n\s*\}}',
+            gradle,
+            re.DOTALL,
         )
+        if gradle.count(configuration) < 3 or gradle.count(coordinate) != 1 or declaration is None:
+            raise DependencyContractError(
+                f'missing isolated Mihon ABI asset input: {configuration} {coordinate}',
+            )
+        if 'transitive = false' not in declaration.group('body'):
+            raise DependencyContractError(f'{configuration} must be non-transitive')
+    for required in (
+        'generateMihonAbiAssets',
+        'assets.srcDir mihonAbiAssetsRoot',
+        'mihon/abi/manifest.properties',
+        'd8',
+        'transitive = false',
+    ):
+        if required not in gradle:
+            raise DependencyContractError(f'Mihon ABI asset generation is incomplete: {required}')
 
     forbidden = (
-        'androidx.preference:preference:',
         'androidx.preference:preference-ktx:',
         'uy.kohesive.injekt:injekt-core:',
         'uy.kohesive.injekt:injekt-api:',
     )
     for coordinate in forbidden:
         if coordinate in gradle:
-            raise DependencyContractError(
-                f'duplicate host provider is declared: {coordinate}',
-            )
+            raise DependencyContractError(f'duplicate host provider is declared: {coordinate}')
 
     required = (
+        'androidx.preference:preference:1.2.1',
         'com.github.null2264.injekt:injekt-core:4135455a2a',
         'com.github.zhanghai.quickjs-java:quickjs-android:547f5b1597',
         'consumerProguardFiles "consumer-rules.pro"',
     )
     for value in required:
         if gradle.count(value) != 1:
-            raise DependencyContractError(
-                f'expected exactly one declaration of {value}',
-            )
+            raise DependencyContractError(f'expected exactly one declaration of {value}')
 
+    for absent in ('eu.kanade.tachiyomi.**',):
+        if absent in rules:
+            raise DependencyContractError(f'isolated ABI namespace must not be retained in parent: {absent}')
     for namespace in (
-        'eu.kanade.tachiyomi.**',
         'androidx.preference.**',
         'uy.kohesive.injekt.**',
         'okhttp3.**',
@@ -59,22 +77,15 @@ def validate_contract(gradle: str, rules: str) -> None:
         'Signature,InnerClasses,EnclosingMethod,*Annotation*',
     ):
         if namespace not in rules:
-            raise DependencyContractError(
-                f'minified runtime does not retain {namespace}',
-            )
+            raise DependencyContractError(f'minified common runtime does not retain {namespace}')
 
 
 def main() -> int:
     try:
-        validate_contract(
-            GRADLE.read_text(encoding='utf-8'),
-            RULES.read_text(encoding='utf-8'),
-        )
+        validate_contract(GRADLE.read_text(), RULES.read_text())
     except DependencyContractError as error:
-        raise SystemExit(
-            f'Android external-runtime dependency check failed: {error}',
-        ) from error
-    print('Android external-runtime dependency closure: OK')
+        raise SystemExit(f'Android external-runtime dependency check failed: {error}') from error
+    print('Android version-isolated external-runtime dependency closure: OK')
     return 0
 
 

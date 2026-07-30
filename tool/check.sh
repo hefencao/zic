@@ -13,6 +13,10 @@ python3 "$ROOT/tool/test_android_runtime_dependencies.py"
 python3 "$ROOT/tool/test_venera_network_policy.py"
 python3 "$ROOT/tool/test_mihon_entry_instantiation.py"
 python3 "$ROOT/tool/test_mihon_payload_context.py"
+python3 "$ROOT/tool/test_mihon_abi_routing.py"
+python3 "$ROOT/tool/test_mihon_classloader_contract.py"
+python3 "$ROOT/tool/test_mihon_read_only_payload.py"
+python3 "$ROOT/tool/test_venera_response_headers.py"
 if command -v node >/dev/null 2>&1; then
   python3 "$ROOT/tool/test_venera_bootstrap.py"
 elif [[ "$REQUIRE_TOOLCHAINS" -eq 1 ]]; then
