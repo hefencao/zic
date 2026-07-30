@@ -752,13 +752,20 @@ final class _DemoHomeState extends State<DemoHome> {
     if (!mounted) {
       return;
     }
+    final source = _sourceForId(current.chapter.sourceId);
     final byteLoaders = hasOfflineBytes
         ? <String, LocalImageFileBytesLoader>{
             for (var index = 0; index < current.chapter.pages.length; index++)
               current.chapter.pages[index].sourceId: () =>
                   _chapterDownloads.readPage(current, index),
           }
-        : const <String, LocalImageFileBytesLoader>{};
+        : source == null
+            ? const <String, LocalImageFileBytesLoader>{}
+            : <String, LocalImageFileBytesLoader>{
+                for (final page in current.chapter.pages)
+                  page.sourceId: () =>
+                      source.loadResource(Uri.parse(page.sourceId)),
+              };
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) {

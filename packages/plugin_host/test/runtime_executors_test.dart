@@ -36,9 +36,9 @@ void main() {
     expect(backend.connection.closed, isTrue);
   });
 
-  test('Venera default timeout accommodates bounded native network reads', () {
+  test('Venera default timeout bounds native network reads', () {
     final executor = VeneraSandboxExecutor(backend: _VeneraBackend());
-    expect(executor.limits.invocationTimeout, const Duration(seconds: 55));
+    expect(executor.limits.invocationTimeout, const Duration(seconds: 15));
   });
 
   test('Venera executor forwards limits and one inspected source key', () async {

@@ -1,5 +1,6 @@
 package dev.zic.pluginhost
 
+import android.app.Application
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -8,7 +9,7 @@ import org.junit.Test
 class MihonHostAbiTest {
     @Test
     fun reportsMissingClassesForTheSelectedLoaderOnly() {
-        val missing = setOf("androidx.preference.Preference", "uy.kohesive.injekt.InjektKt")
+        val missing = setOf("androidx.preference.Preference", "rx.Observable")
         val loader = object : ClassLoader(null) {
             override fun loadClass(name: String): Class<*> {
                 if (name in missing) throw ClassNotFoundException(name)
@@ -21,7 +22,7 @@ class MihonHostAbiTest {
             missingMihonClasses(loader, requiredMihonPluginAbiClasses),
         )
         assertEquals(
-            listOf("androidx.preference.Preference", "uy.kohesive.injekt.InjektKt"),
+            listOf("androidx.preference.Preference", "rx.Observable"),
             missingMihonClasses(loader, requiredMihonCommonRuntimeClasses),
         )
     }
@@ -35,12 +36,33 @@ class MihonHostAbiTest {
     }
 
     @Test
-    fun extensionAndSourceApiPackagesAreChildFirstButCommonLibrariesAreNot() {
-        assertTrue(isMihonChildFirstClass("eu.kanade.tachiyomi.extension.all.ehentai.EHFactory"))
-        assertTrue(isMihonChildFirstClass("eu.kanade.tachiyomi.source.online.HttpSource"))
-        assertFalse(isMihonChildFirstClass("androidx.preference.Preference"))
-        assertFalse(isMihonChildFirstClass("okhttp3.OkHttpClient"))
-        assertFalse(isMihonChildFirstClass("uy.kohesive.injekt.InjektKt"))
+    fun verifiesKotlinRuntimeUsedByDynamicallyLoadedExtensions() {
+        assertTrue(
+            requiredMihonCommonRuntimeClasses.contains("kotlin.jvm.internal.Intrinsics"),
+        )
+    }
+
+    @Test
+    fun injectsApplicationBeforeNetworkHelperLikeMihonAppModule() {
+        val application = Application()
+        val network = Any()
+
+        assertEquals(
+            listOf(Application::class.java, String::class.java),
+            mihonInjektSingletons(application, String::class.java, network).map { it.first },
+        )
+    }
+
+    @Test
+    fun extensionClassesAreChildFirstButAbiAndCommonLibrariesAreParentFirst() {
+        assertFalse(isMihonParentFirstClass("eu.kanade.tachiyomi.extension.all.ehentai.EHFactory"))
+        assertFalse(isMihonParentFirstClass("a"))
+        assertTrue(isMihonParentFirstClass("eu.kanade.tachiyomi.source.online.HttpSource"))
+        assertTrue(isMihonParentFirstClass("eu.kanade.tachiyomi.network.NetworkHelper"))
+        assertTrue(isMihonParentFirstClass("uy.kohesive.injekt.InjektKt"))
+        assertTrue(isMihonParentFirstClass("dev.mihon.injekt.InjektKt"))
+        assertTrue(isMihonParentFirstClass("androidx.preference.Preference"))
+        assertTrue(isMihonParentFirstClass("okhttp3.OkHttpClient"))
     }
 
     @Test

@@ -1441,7 +1441,12 @@ def check_compile_regressions() -> None:
         'uy.kohesive.injekt:injekt-core:',
         'uy.kohesive.injekt:injekt-api:',
     ):
-        if duplicate_provider in plugin_host_android:
+        parent_declarations = tuple(
+            line.strip()
+            for line in plugin_host_android.splitlines()
+            if line.strip().startswith(('api ', 'implementation ', 'runtimeOnly '))
+        )
+        if any(duplicate_provider in line for line in parent_declarations):
             fail(f'plugin host declares a duplicate Mihon ABI provider: {duplicate_provider}')
     if 'consumerProguardFiles "consumer-rules.pro"' not in plugin_host_android:
         fail('plugin host does not publish dynamic Mihon ABI shrinker rules')
@@ -1451,7 +1456,7 @@ def check_compile_regressions() -> None:
     for forbidden in ('eu.kanade.tachiyomi.**',):
         if forbidden in plugin_host_rules:
             fail(f'isolated Mihon ABI leaked into parent shrinker rules: {forbidden}')
-    for required in ('androidx.preference.**', 'uy.kohesive.injekt.**', 'okhttp3.**'):
+    for required in ('androidx.preference.**', 'kotlin.**', 'rx.**', 'okhttp3.**'):
         if required not in plugin_host_rules:
             fail(f'plugin host dynamic common-runtime shrinker rule is missing: {required}')
 
@@ -1491,7 +1496,7 @@ def check_compile_regressions() -> None:
         'verifyMihonPluginAbi(loader)',
         'requiredMihonPluginAbiClasses',
         'requiredMihonCommonRuntimeClasses',
-        'isMihonChildFirstClass',
+        'isMihonParentFirstClass',
     ):
         if required not in mihon_runtime:
             fail(f'Mihon runtime workspace lifecycle is incomplete: {required}')
@@ -1500,6 +1505,11 @@ def check_compile_regressions() -> None:
         'mihonAbi14("com.github.keiyoushi:extensions-lib:18a8e26be2")',
         'mihonAbi16("com.github.keiyoushi:extensions-lib:6e0c96cea8")',
         'generateMihonAbiAssets',
+        'mihonRuntime14Sources',
+        'mihonRuntime16Sources',
+        'mihonRuntimeCommonSources',
+        'org.jetbrains.kotlin.cli.jvm.K2JVMCompiler',
+        'entry.name in overrides',
         'mihon/abi/manifest.properties',
     ):
         if required not in plugin_host_gradle:
@@ -1522,7 +1532,7 @@ def check_compile_regressions() -> None:
     runtime_executors = (ROOT / 'packages/plugin_host/lib/src/runtime_executors.dart').read_text(
         encoding='utf-8',
     )
-    if 'invocationTimeout: Duration(seconds: 55)' not in runtime_executors:
+    if 'invocationTimeout: Duration(seconds: 15)' not in runtime_executors:
         fail('Venera runtime default timeout is not aligned with native network bounds')
 
     mihon_host_abi_test = (
@@ -2420,7 +2430,9 @@ def check_current_iteration() -> None:
         'ExternalPluginRuntimeServiceMethods.invoke',
         'ExternalPluginRuntimeServiceMethods.cancel',
         'ExternalPluginRuntimeServiceMethods.closeSession',
-        "'processId': processId",
+        "'processId': _processId",
+        "'runtime-process-mismatch'",
+        'await _recover(attemptedProcessId, attemptedSessionId)',
     ):
         if required not in runtime_platform:
             fail(f'dev.47 platform runtime channel is incomplete: {required}')
@@ -2465,6 +2477,8 @@ def check_current_iteration() -> None:
             fail(f'dev.48 image lifecycle seam is incomplete: {required}')
     for required in (
         "test('plain local image uses a file provider without byte loading'",
+        "testWidgets('content scan corrects stale JPEG metadata to PNG'",
+        "testWidgets('content scan routes stale JPEG metadata to WebP playback'",
         'final class _TestFlutterAnimatedCodec',
         'await _unmountAsyncImage(tester)',
         'finally {',

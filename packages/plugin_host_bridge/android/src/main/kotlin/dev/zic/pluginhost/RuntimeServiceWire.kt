@@ -19,7 +19,7 @@ internal object RuntimeServiceIpc {
     const val MAX_REQUEST_BYTES = 512 * 1024
     const val INLINE_RESPONSE_BYTES = 128 * 1024
     const val MAX_RESPONSE_BYTES = 32 * 1024 * 1024
-    const val REQUEST_TIMEOUT_MILLIS = 90_000L
+    const val REQUEST_TIMEOUT_MILLIS = 20_000L
 }
 
 internal object RuntimeServiceWireCodec {

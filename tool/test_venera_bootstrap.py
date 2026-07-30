@@ -49,6 +49,25 @@ async function checkLoadNextExplore(){
  if(JSON.stringify(calls)!==JSON.stringify([null,'page-2']))throw new Error('loadNext tokens '+JSON.stringify(calls));
 }
 
+async function checkSearchOptionDefaults(){
+ let seen=null;
+ globalThis.__zicSource={
+   search:{
+     optionList:[
+       {type:'multi-select',options:['0-Misc','1-Doujinshi'],default:['0','1']},
+       {type:'dropdown',options:['-None','5-Five']},
+     ],
+     loadNext:async(keyword,options,next)=>{
+       seen={keyword,options,next,category:JSON.parse(options[0])};
+       return {comics:[{id:'search-result',title:'Search result'}],next:null}
+     }
+   }
+ };
+ const value=await __zicOperation({operation:'browse',arguments:{query:'tag',offset:0,limit:20}});
+ if(value.items[0].title!=='Search result')throw new Error('search result failed');
+ if(JSON.stringify(seen)!==JSON.stringify({keyword:'tag',options:['["0","1"]',''],next:null,category:['0','1']}))throw new Error('search option defaults '+JSON.stringify(seen));
+}
+
 async function checkLegacyGlobalScratchBinding(){
  class LegacySource extends ComicSource {
    key='legacy';name='Legacy';url='https://legacy.invalid/';
@@ -75,7 +94,82 @@ async function checkDirectCoverResource(){
  if(!(bytes instanceof ArrayBuffer)||JSON.stringify(Array.from(new Uint8Array(bytes)))!==JSON.stringify([1,2,3]))throw new Error('direct cover bytes failed');
  if(seen.url!=='https://cdn.invalid/cover.jpg'||seen.http_method!=='GET')throw new Error('direct cover request failed '+JSON.stringify(seen));
 }
-(async()=>{await checkCurrentCategory();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
+
+async function checkChapterPageCount(){
+ const comicId='venera:comic:'+__zicB64({id:'comic',title:'Comic'});
+ const chapter=__zicChapterMessage(comicId,'ep-1','Episode',0);
+ globalThis.__zicSource={comic:{loadEp:async()=>['https://cdn.invalid/1.jpg','https://cdn.invalid/2.jpg']}};
+ const value=await __zicOperation({operation:'loadChapter',arguments:{chapterId:chapter.chapterId}});
+ if(value.chapter.pageCount!==2||value.pages.length!==2)throw new Error('chapter page count mismatch '+JSON.stringify(value));
+}
+
+async function checkSingleVolumeChapter(){
+  const comicId='venera:comic:'+__zicB64({id:'https://e-hentai.org/g/1/token/',title:'Gallery'});
+  let seenEpId='not-called',infoLoads=0;
+  globalThis.__zicSource={comic:{
+   loadInfo:async()=>{infoLoads++;return {title:'Gallery',maxPage:24}},
+   loadEp:async function(comicRawId,epId){seenEpId=epId;const info=await this.loadInfo(comicRawId);return Array.from({length:info.maxPage},(_,i)=>'https://cdn.invalid/'+i+'.jpg')}
+  }};
+  __zicInstallComicInfoCache(globalThis.__zicSource);
+  const detail=await __zicOperation({operation:'loadComic',arguments:{comicId}});
+  if(detail.chapters.length!==1||detail.chapters[0].title!=='正文'||detail.chapters[0].pageCount!==24)throw new Error('single-volume detail failed '+JSON.stringify(detail));
+  const rawChapter=__zicUnb64(detail.chapters[0].chapterId.slice('venera:chapter:'.length));
+  if(rawChapter.epId!==null)throw new Error('single-volume epId was stringified '+JSON.stringify(rawChapter));
+  const loaded=await __zicOperation({operation:'loadChapter',arguments:{chapterId:detail.chapters[0].chapterId}});
+  if(seenEpId!==null||loaded.pages.length!==24||infoLoads!==1)throw new Error('single-volume loadEp/cache failed '+JSON.stringify({seenEpId,infoLoads,loaded}));
+}
+
+async function checkChapterResourceCanBeReadAgain(){
+ const comicId='venera:comic:'+__zicB64({id:'retry-comic',title:'Retry'});
+ const chapter=__zicChapterMessage(comicId,'ep-retry','Retry episode',0);
+ let requests=0;
+ ZicNative.request=raw=>{
+   const message=__zicDecode(JSON.parse(raw));
+   if(message.method!=='http')throw new Error('unexpected resource bridge method '+message.method);
+   requests++;
+   return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},body:new Uint8Array([4,5,6]).buffer})});
+ };
+ globalThis.__zicSource={comic:{loadEp:async()=>({images:['https://cdn.invalid/retry.jpg']})}};
+ const loaded=await __zicOperation({operation:'loadChapter',arguments:{chapterId:chapter.chapterId}});
+ const uri=loaded.pages[0].uri;
+ await __zicOperation({operation:'loadResource',arguments:{uri}});
+ await __zicOperation({operation:'loadResource',arguments:{uri}});
+  if(requests!==2)throw new Error('chapter resource token was not reusable');
+}
+
+async function checkChapterImageConfigIsDeferred(){
+ const comicId='venera:comic:'+__zicB64({id:'deferred-comic',title:'Deferred'});
+ const chapter=__zicChapterMessage(comicId,'ep-deferred','Deferred episode',0);
+ let configs=0,requests=0;
+ ZicNative.request=raw=>{
+   const message=__zicDecode(JSON.parse(raw));
+   if(message.method!=='http')throw new Error('unexpected deferred bridge method '+message.method);
+   requests++;
+   return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},body:new Uint8Array([7,8,9]).buffer})});
+ };
+ globalThis.__zicSource={comic:{
+   loadEp:async()=>({images:['image-1','image-2']}),
+   onImageLoad:async(image,seenComicId,epId)=>{
+     configs++;
+     if(seenComicId!=='deferred-comic'||epId!=='ep-deferred')throw new Error('deferred image identity lost');
+     return {url:'https://cdn.invalid/'+image+'.jpg'};
+   }
+ }};
+ const loaded=await __zicOperation({operation:'loadChapter',arguments:{chapterId:chapter.chapterId}});
+ if(configs!==0||requests!==0||loaded.pages.length!==2)throw new Error('chapter eagerly resolved image config');
+ await __zicOperation({operation:'loadResource',arguments:{uri:loaded.pages[1].uri}});
+ if(configs!==1||requests!==1)throw new Error('resource did not lazily resolve one image config');
+}
+
+async function checkNetworkExtraAndCryptoSurface(){
+ let seen=null;
+ ZicNative.request=raw=>{seen=__zicDecode(JSON.parse(raw));return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},body:'ok'})})};
+ await Network.get('https://api.invalid/data',{'x-test':'1'},{interceptor:'value'});
+ if(seen.data!==undefined||seen.extra?.interceptor!=='value')throw new Error('Network.get extra mapping failed '+JSON.stringify(seen));
+ if(typeof Convert.encryptAesEcb!=='function'||Convert.encryptAesCfb.length!==4||Convert.decryptAesCfb.length!==4)throw new Error('Convert AES surface is incomplete');
+}
+
+(async()=>{await checkCurrentCategory();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkSingleVolumeChapter();await checkChapterResourceCanBeReadAgain();await checkChapterImageConfigIsDeferred();await checkNetworkExtraAndCryptoSurface();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
 '''
 with tempfile.TemporaryDirectory() as td:
     js=Path(td)/'test.js'; js.write_text(bootstrap+'\n'+test)

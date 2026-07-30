@@ -36,13 +36,40 @@ configurations {
         canBeResolved = true
         transitive = false
     }
+    mihonInjekt14 {
+        canBeConsumed = false
+        canBeResolved = true
+        transitive = false
+    }
+    mihonInjekt16 {
+        canBeConsumed = false
+        canBeResolved = true
+        transitive = false
+    }
+    mihonRuntimeCompiler {
+        canBeConsumed = false
+        canBeResolved = true
+    }
+    mihonRuntime14Compile {
+        canBeConsumed = false
+        canBeResolved = true
+    }
+    mihonRuntime16Compile {
+        canBeConsumed = false
+        canBeResolved = true
+    }
 }
 
 def mihonAbiAssetsRoot = file("$buildDir/generated/mihonAbiAssets")
+def mihonRuntime14Sources = file("src/mihonRuntime14/kotlin")
+def mihonRuntime16Sources = file("src/mihonRuntime16/kotlin")
+def mihonRuntimeCommonSources = file("src/mihonRuntimeCommon/kotlin")
+def mihonRuntimeCompilerVersion = "2.3.20"
+def mihonCompileSdk = 37
 
 android {
     namespace = "dev.zic.pluginhost"
-    compileSdk = 37
+    compileSdk = mihonCompileSdk
 
     defaultConfig {
         minSdk = 21
@@ -66,16 +93,35 @@ android {
 }
 
 dependencies {
-    // Build-time-only extension API artifacts. The generated dex assets are
-    // selected per extensionLib and loaded child-first beside the extension
-    // APK, preventing 1.4 extensions from linking against the incompatible
-    // 1.6 HttpSource class (and vice versa).
+    // Build-time-only extension API artifacts. The generated ABI parent dex is
+    // selected per extensionLib, while the extension APK stays in its own
+    // child loader. Throwing compile stubs are replaced below by functional
+    // compatibility sources before D8 runs.
     mihonAbi14("com.github.keiyoushi:extensions-lib:18a8e26be2") {
         transitive = false
     }
     mihonAbi16("com.github.keiyoushi:extensions-lib:6e0c96cea8") {
         transitive = false
     }
+    // Injekt has process-global state. Package the matching implementation
+    // inside each ABI asset so every extension loader owns an isolated scope.
+    mihonInjekt14 "com.github.null2264.injekt:injekt-api:4135455a2a"
+    mihonInjekt14 "com.github.null2264.injekt:injekt-core:4135455a2a"
+    mihonInjekt16 "uy.kohesive.injekt:injekt-api:1.16.1"
+    mihonInjekt16 "uy.kohesive.injekt:injekt-core:1.16.1"
+    mihonInjekt16 "com.github.mihonapp:injekt:91edab2317"
+    mihonRuntimeCompiler(
+        "org.jetbrains.kotlin:kotlin-compiler-embeddable:$mihonRuntimeCompilerVersion",
+    )
+    mihonRuntime14Compile "org.jetbrains.kotlin:kotlin-stdlib:2.1.0"
+    mihonRuntime14Compile "com.squareup.okhttp3:okhttp:5.4.0"
+    mihonRuntime14Compile "io.reactivex:rxjava:1.3.8"
+    mihonRuntime14Compile "org.jsoup:jsoup:1.22.2"
+    mihonRuntime16Compile "org.jetbrains.kotlin:kotlin-stdlib:2.1.0"
+    mihonRuntime16Compile "org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3"
+    mihonRuntime16Compile "com.squareup.okhttp3:okhttp:5.4.0"
+    mihonRuntime16Compile "io.reactivex:rxjava:1.3.8"
+    mihonRuntime16Compile "org.jsoup:jsoup:1.22.2"
 
     // Host-provided common libraries remain on the isolated process runtime
     // classpath. The bridge talks to extension API/model classes reflectively,
@@ -83,17 +129,15 @@ dependencies {
     runtimeOnly "org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.4.10"
     runtimeOnly "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0"
     runtimeOnly "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0"
-    runtimeOnly("com.github.null2264.injekt:injekt-core:4135455a2a") {
-        exclude group: "uy.kohesive.injekt", module: "injekt-core"
-        exclude group: "uy.kohesive.injekt", module: "injekt-api"
-    }
     runtimeOnly "androidx.preference:preference:1.2.1"
     runtimeOnly "io.reactivex:rxjava:1.3.8"
+    runtimeOnly "io.reactivex:rxandroid:1.2.1"
     runtimeOnly "org.jetbrains.kotlinx:kotlinx-serialization-protobuf:1.11.0"
     runtimeOnly "org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0"
     runtimeOnly "org.jetbrains.kotlinx:kotlinx-serialization-json-okio:1.11.0"
     runtimeOnly "org.jsoup:jsoup:1.22.2"
     runtimeOnly "org.jspecify:jspecify:1.0.0"
+    compileOnly "com.squareup.okhttp3:okhttp:5.4.0"
     runtimeOnly "com.squareup.okhttp3:okhttp:5.4.0"
     runtimeOnly "com.squareup.okhttp3:okhttp-brotli:5.4.0"
     runtimeOnly "com.squareup.okhttp3:okhttp-zstd:5.4.0"
@@ -102,6 +146,7 @@ dependencies {
     runtimeOnly "com.google.code.gson:gson:2.11.0"
 
     testImplementation "junit:junit:4.13.2"
+    testImplementation "org.json:json:20180813"
 }
 
 def sha256File = { File file ->
@@ -118,7 +163,18 @@ def sha256File = { File file ->
 }
 
 def generateMihonAbiAssets = tasks.register("generateMihonAbiAssets") {
-    inputs.files(configurations.mihonAbi14, configurations.mihonAbi16)
+    inputs.files(
+        configurations.mihonAbi14,
+        configurations.mihonAbi16,
+        configurations.mihonInjekt14,
+        configurations.mihonInjekt16,
+        configurations.mihonRuntimeCompiler,
+        configurations.mihonRuntime14Compile,
+        configurations.mihonRuntime16Compile,
+    )
+    inputs.dir(mihonRuntime14Sources)
+    inputs.dir(mihonRuntime16Sources)
+    inputs.dir(mihonRuntimeCommonSources)
     outputs.dir(mihonAbiAssetsRoot)
 
     doLast {
@@ -141,14 +197,162 @@ def generateMihonAbiAssets = tasks.register("generateMihonAbiAssets") {
         }
         def windows = System.getProperty("os.name").toLowerCase().contains("windows")
         def d8 = new File(candidates.last(), windows ? "d8.bat" : "d8")
-        def androidJar = new File(sdk, "platforms/android-37/android.jar")
-        if (!androidJar.isFile()) {
-            throw new GradleException("Android 37 platform is unavailable: ${androidJar}")
+        def platformsRoot = new File(sdk, "platforms")
+        def platformCandidates = (platformsRoot.listFiles() ?: [] as File[]).findAll {
+            it.isDirectory() &&
+                (it.name == "android-${mihonCompileSdk}" ||
+                    it.name.startsWith("android-${mihonCompileSdk}.")) &&
+                new File(it, "android.jar").isFile()
+        }.sort { it.name }
+        if (platformCandidates.isEmpty()) {
+            throw new GradleException(
+                "Android ${mihonCompileSdk} platform is unavailable under ${platformsRoot}",
+            )
         }
+        def androidJar = new File(platformCandidates.last(), "android.jar")
+
+        def runtimeCompileRoot = new File(temporaryDir, "runtime-compile")
+        delete(runtimeCompileRoot)
+        runtimeCompileRoot.mkdirs()
+        def javaBinary = new File(
+            System.getProperty("java.home"),
+            windows ? "bin/java.exe" : "bin/java",
+        )
+        def compileRuntime = {
+            String abi,
+            File sourceRoot,
+            Configuration abiConfiguration,
+            Configuration compileConfiguration,
+            Configuration injektConfiguration ->
+            def runtimeJar = new File(
+                temporaryDir,
+                "mihon-runtime-${abi.replace('.', '_')}.jar",
+            )
+            delete(runtimeJar)
+            def abiCompileRoot = new File(
+                runtimeCompileRoot,
+                abi.replace('.', '_'),
+            )
+            abiCompileRoot.mkdirs()
+            def runtimeCompileClasspath = [androidJar]
+            (
+                compileConfiguration.files + injektConfiguration.files
+            ).sort { it.name }.eachWithIndex { dependency, index ->
+                if (dependency.name.endsWith(".aar")) {
+                    def extracted = new File(
+                        abiCompileRoot,
+                        "${index}-${dependency.name}.jar",
+                    )
+                    def archive = new java.util.zip.ZipFile(dependency)
+                    try {
+                        def entry = archive.getEntry("classes.jar")
+                        if (entry == null) {
+                            throw new GradleException(
+                                "${dependency.name} contains no classes.jar",
+                            )
+                        }
+                        extracted.withOutputStream { output ->
+                            archive.getInputStream(entry).withCloseable { input ->
+                                input.transferTo(output)
+                            }
+                        }
+                    } finally {
+                        archive.close()
+                    }
+                    runtimeCompileClasspath += extracted
+                } else if (dependency.name.endsWith(".jar")) {
+                    runtimeCompileClasspath += dependency
+                }
+            }
+            def abiAar = abiConfiguration.singleFile
+            def stubJar = new File(abiCompileRoot, "extensions-lib.jar")
+            def abiArchive = new java.util.zip.ZipFile(abiAar)
+            try {
+                def entry = abiArchive.getEntry("classes.jar")
+                if (entry == null) {
+                    throw new GradleException("${abiAar.name} contains no classes.jar")
+                }
+                stubJar.withOutputStream { output ->
+                    abiArchive.getInputStream(entry).withCloseable { input ->
+                        input.transferTo(output)
+                    }
+                }
+            } finally {
+                abiArchive.close()
+            }
+            runtimeCompileClasspath += stubJar
+            def runtimeSources = (
+                fileTree(sourceRoot) {
+                    include "**/*.kt"
+                }.files +
+                    fileTree(mihonRuntimeCommonSources) {
+                        include "**/*.kt"
+                    }.files
+            ).sort { it.path }
+            if (runtimeSources.isEmpty()) {
+                throw new GradleException("Mihon ${abi} runtime sources are missing")
+            }
+            def compilerArgs = [
+                javaBinary.absolutePath,
+                "-Xmx512m",
+                "-cp", configurations.mihonRuntimeCompiler.asPath,
+                "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
+                "-no-stdlib",
+                "-no-reflect",
+                "-jvm-target", "17",
+                "-Xjvm-default=all",
+                "-classpath", runtimeCompileClasspath.collect { it.absolutePath }
+                    .join(File.pathSeparator),
+                "-d", runtimeJar.absolutePath,
+            ] + runtimeSources.collect { it.absolutePath }
+            def compilerProcess = new ProcessBuilder(
+                compilerArgs.collect { it.toString() },
+            )
+                .directory(project.projectDir)
+                .redirectErrorStream(true)
+                .start()
+            def compilerOutput = compilerProcess.inputStream.getText("UTF-8")
+            int compilerExitCode = compilerProcess.waitFor()
+            if (!compilerOutput.isBlank()) {
+                logger.lifecycle(compilerOutput.trim())
+            }
+            if (compilerExitCode != 0 || !runtimeJar.isFile()) {
+                throw new GradleException(
+                    "Kotlin compilation failed for Mihon ${abi} runtime with exit code " +
+                        compilerExitCode,
+                )
+            }
+            return runtimeJar
+        }
+        def runtime14Jar = compileRuntime(
+            "1.4",
+            mihonRuntime14Sources,
+            configurations.mihonAbi14,
+            configurations.mihonRuntime14Compile,
+            configurations.mihonInjekt14,
+        )
+        def runtime16Jar = compileRuntime(
+            "1.6",
+            mihonRuntime16Sources,
+            configurations.mihonAbi16,
+            configurations.mihonRuntime16Compile,
+            configurations.mihonInjekt16,
+        )
 
         def records = []
-        ["1.4": configurations.mihonAbi14, "1.6": configurations.mihonAbi16].each { abi, configuration ->
-            def aar = configuration.singleFile
+        [
+            "1.4": [
+                source: configurations.mihonAbi14,
+                injekt: configurations.mihonInjekt14,
+                runtime: runtime14Jar,
+            ],
+            "1.6": [
+                source: configurations.mihonAbi16,
+                injekt: configurations.mihonInjekt16,
+                runtime: runtime16Jar,
+            ],
+        ].each { abi, configuration ->
+            def aar = configuration.source.singleFile
             def tempRoot = new File(temporaryDir, abi.replace('.', '_'))
             delete(tempRoot)
             tempRoot.mkdirs()
@@ -165,6 +369,46 @@ def generateMihonAbiAssets = tasks.register("generateMihonAbiAssets") {
                 archive.close()
             }
 
+            if (configuration.runtime != null) {
+                def overrides = [] as Set
+                new java.util.zip.ZipFile(configuration.runtime).withCloseable { runtimeArchive ->
+                    runtimeArchive.entries().asIterator().forEachRemaining { entry ->
+                        if (!entry.isDirectory() && entry.name.endsWith(".class")) {
+                            overrides += entry.name
+                        }
+                    }
+                }
+                def filteredJar = new File(tempRoot, "filtered-classes.jar")
+                def inputArchive = new java.util.zip.ZipFile(classesJar)
+                def outputArchive = new java.util.zip.ZipOutputStream(
+                    new java.io.BufferedOutputStream(
+                        new java.io.FileOutputStream(filteredJar),
+                    ),
+                )
+                try {
+                    inputArchive.entries().asIterator().forEachRemaining { entry ->
+                        if (entry.isDirectory() ||
+                            entry.name in overrides ||
+                            entry.name.startsWith("android/") ||
+                            entry.name.startsWith("androidx/")
+                        ) {
+                            return
+                        }
+                        def copied = new java.util.zip.ZipEntry(entry.name)
+                        copied.time = 0L
+                        outputArchive.putNextEntry(copied)
+                        inputArchive.getInputStream(entry).withCloseable { input ->
+                            input.transferTo(outputArchive)
+                        }
+                        outputArchive.closeEntry()
+                    }
+                } finally {
+                    outputArchive.close()
+                    inputArchive.close()
+                }
+                classesJar = filteredJar
+            }
+
             def dexDir = new File(tempRoot, "dex")
             dexDir.mkdirs()
             def args = [
@@ -173,7 +417,9 @@ def generateMihonAbiAssets = tasks.register("generateMihonAbiAssets") {
                 "--lib", androidJar.absolutePath,
                 "--output", dexDir.absolutePath,
                 classesJar.absolutePath,
-            ]
+            ] + (
+                configuration.runtime == null ? [] : [configuration.runtime.absolutePath]
+            ) + configuration.injekt.files.sort { it.name }.collect { it.absolutePath }
             def command = windows ? (["cmd", "/c"] + args) : args
             def process = new ProcessBuilder(command.collect { it.toString() })
                 .directory(project.projectDir)
@@ -189,6 +435,25 @@ def generateMihonAbiAssets = tasks.register("generateMihonAbiAssets") {
             }.sort { it.name }
             if (dexFiles.isEmpty()) {
                 throw new GradleException("d8 produced no dex for Mihon ABI ${abi}")
+            }
+            if (configuration.runtime != null) {
+                def stubMarker = "Stub!".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+                def containsStub = dexFiles.any { dex ->
+                    def bytes = dex.bytes
+                    int lastOffset = bytes.length - stubMarker.length
+                    if (lastOffset < 0) return false
+                    (0..lastOffset).any { offset ->
+                        for (int index = 0; index < stubMarker.length; index++) {
+                            if (bytes[offset + index] != stubMarker[index]) return false
+                        }
+                        return true
+                    }
+                }
+                if (containsStub) {
+                    throw new GradleException(
+                        "Mihon ABI ${abi} still contains a throwing compile stub",
+                    )
+                }
             }
             def abiRoot = new File(mihonAbiAssetsRoot, "mihon/abi/${abi}")
             abiRoot.mkdirs()

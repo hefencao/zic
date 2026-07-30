@@ -12,6 +12,7 @@ import 'package:zic/comic_details.dart' as details;
 import 'package:zic/demo_home.dart';
 import 'package:zic/main.dart';
 import 'package:zic/source_browser.dart';
+import 'package:zic/webp_demo.dart';
 
 Uint8List _tinyPng() => base64Decode(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
@@ -220,6 +221,72 @@ void main() {
     expect(entry, isNotNull);
     expect(entry!.chapter.sourceId, 'fixture');
     expect(entry.chapter.pages.single.stablePageId, 'fixture-page-1');
+  });
+
+  testWidgets('runtime chapter URI loads bytes through its comic source',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final source = _FixtureSource(
+      'fixture-runtime-page',
+      '运行时图片源',
+      runtimePageUri: true,
+    );
+
+    await tester.pumpWidget(
+      App(
+        libraryStore: store,
+        comicSources: <BrowsableComicSource>[source],
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.public_outlined));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(
+        sourceComicCardKey(
+          'fixture-runtime-page',
+          'fixture-runtime-page-comic',
+        ),
+      ),
+    );
+    await tester.tap(
+      find.byKey(
+        sourceComicCardKey(
+          'fixture-runtime-page',
+          'fixture-runtime-page-comic',
+        ),
+      ),
+    );
+    await _pumpUntilFound(
+      tester,
+      find.byKey(details.remoteComicDetailsScreenKey),
+    );
+    await _tapVisible(
+      tester,
+      find.byKey(
+        sourceChapterKey(
+          'fixture-runtime-page',
+          'fixture-runtime-page-chapter',
+        ),
+      ),
+    );
+    await _pumpUntilFound(tester, find.byType(ImportedImageChapterScreen));
+    final screen = tester.widget<ImportedImageChapterScreen>(
+      find.byType(ImportedImageChapterScreen),
+    );
+    final runtimeUri =
+        'venera-resource://fixture-runtime-page/fixture-runtime-page-chapter';
+    expect(screen.byteLoaders, contains(runtimeUri));
+    await screen.byteLoaders[runtimeUri]!();
+    expect(
+      source.loadedResources.map((uri) => uri.toString()),
+      contains(runtimeUri),
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
   });
 
   testWidgets(
@@ -545,6 +612,7 @@ final class _FixtureSource implements BrowsableComicSource {
     this.browseError,
     this.includeSecondChapter = false,
     this.revealSecondChapterOnRefresh = false,
+    this.runtimePageUri = false,
   });
 
   @override
@@ -554,8 +622,10 @@ final class _FixtureSource implements BrowsableComicSource {
   final Object? browseError;
   final bool includeSecondChapter;
   final bool revealSecondChapterOnRefresh;
+  final bool runtimePageUri;
   int _comicLoads = 0;
   int browseCalls = 0;
+  final List<Uri> loadedResources = <Uri>[];
 
   int get comicLoads => _comicLoads;
 
@@ -652,7 +722,12 @@ final class _FixtureSource implements BrowsableComicSource {
               chapterId == _chapterId ? '$sourceId-page-1' : '$sourceId-page-2',
           chapterId: chapterId,
           index: 0,
-          uri: Uri.https('example.invalid', '/$sourceId/$chapterId/page-1.png'),
+          uri: runtimePageUri
+              ? Uri.parse('venera-resource://$sourceId/$chapterId')
+              : Uri.https(
+                  'example.invalid',
+                  '/$sourceId/$chapterId/page-1.png',
+                ),
           contentKindHint: ContentKindHint.png,
         ),
       ],
@@ -661,5 +736,8 @@ final class _FixtureSource implements BrowsableComicSource {
   }
 
   @override
-  Future<Uint8List> loadResource(Uri uri) async => _tinyPng();
+  Future<Uint8List> loadResource(Uri uri) async {
+    loadedResources.add(uri);
+    return _tinyPng();
+  }
 }

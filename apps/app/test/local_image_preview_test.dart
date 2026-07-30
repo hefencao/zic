@@ -482,6 +482,68 @@ void main() {
     }
   });
 
+  testWidgets('content scan corrects stale JPEG metadata to PNG', (
+    tester,
+  ) async {
+    final image = PickedImage(
+      file: XFile('/virtual/chapter/page-incorrect.jpg'),
+      format: LocalImageFormat.jpeg,
+      displayName: 'page-incorrect.jpg',
+    );
+
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LocalImagePlayer(
+            image: image,
+            bytesLoader: (_) async => _tinyPng(),
+            decodeProbe: (_) async {},
+          ),
+        ),
+      );
+
+      final state = await _pumpUntilPhase(tester, ImagePreviewPhase.ready);
+
+      expect(state.format, LocalImageFormat.png);
+      expect(find.byKey(imageFolderFlutterPreviewKey), findsOneWidget);
+      expect(find.byKey(imageFolderPreviewErrorKey), findsNothing);
+    } finally {
+      await _unmountAsyncImage(tester);
+    }
+  });
+
+  testWidgets('content scan routes stale JPEG metadata to WebP playback', (
+    tester,
+  ) async {
+    final image = PickedImage(
+      file: XFile('/virtual/chapter/animated-resource'),
+      format: LocalImageFormat.jpeg,
+      displayName: 'animated-resource',
+    );
+
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LocalImagePlayer(
+            image: image,
+            bytesLoader: (_) async => _tinyWebp(),
+            flutterAnimatedCodecFactory: (
+              bytes, {
+              targetWidth,
+              targetHeight,
+            }) async =>
+                _TestFlutterAnimatedCodec(),
+          ),
+        ),
+      );
+      await _pumpUntilFound(tester, find.byType(NativeWebpPlayer));
+
+      expect(find.byKey(imageFolderPreviewErrorKey), findsNothing);
+    } finally {
+      await _unmountAsyncImage(tester);
+    }
+  });
+
   testWidgets('codec probe failure reaches a controlled invalid state', (
     tester,
   ) async {

@@ -110,54 +110,67 @@ void main() {
     expect(activation['payloadPath'], '/cache/fixture.js');
   });
 
-  test('stale process failure is surfaced without automatic replay', () async {
+  test('stale process is reactivated and the invocation is replayed once',
+      () async {
     final calls = <MethodCall>[];
+    var activations = 0;
+    var invocations = 0;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
       calls.add(call);
       return switch (call.method) {
         ExternalPluginRuntimeServiceMethods.activateMihon =>
           <String, Object?>{
-            'processId': 'dead-process',
-            'sessionId': 'stale-session',
+            'processId': activations++ == 0
+                ? 'dead-process'
+                : 'recovered-process',
+            'sessionId': activations == 1
+                ? 'stale-session'
+                : 'recovered-session',
             'handshake': _handshake('mihon-runtime'),
           },
-        ExternalPluginRuntimeServiceMethods.invoke => throw PlatformException(
-            code: 'runtime-process-mismatch',
-            message: 'runtime service restarted',
-          ),
+        ExternalPluginRuntimeServiceMethods.invoke => invocations++ == 0
+            ? throw PlatformException(
+                code: 'runtime-process-mismatch',
+                message: 'runtime service restarted',
+              )
+            : ExternalPluginRuntimeResponse.success(
+                requestId: 'replayed',
+                payload: <String, Object?>{
+                  'items': <Object?>[],
+                  'offset': 0,
+                  'hasMore': false,
+                },
+              ).toMessage(),
         _ => null,
       };
     });
 
     final backend = AndroidMihonIsolatedRuntimeBackend(channel: channel);
     final connection = await backend.activate(_mihonRequest());
-    await expectLater(
-      connection.invoke(
-        ExternalPluginRuntimeRequest.browse(
-          requestId: 'not-replayed',
-          externalSourceId: 'fixture',
-          query: '',
-          offset: 0,
-          limit: 24,
-        ),
-      ),
-      throwsA(
-        isA<PlatformException>().having(
-          (error) => error.code,
-          'code',
-          'runtime-process-mismatch',
-        ),
+    final response = await connection.invoke(
+      ExternalPluginRuntimeRequest.browse(
+        requestId: 'replayed',
+        externalSourceId: 'fixture',
+        query: '',
+        offset: 0,
+        limit: 24,
       ),
     );
+    expect(response.isSuccess, isTrue);
 
     expect(
       calls.map((call) => call.method),
       <String>[
         ExternalPluginRuntimeServiceMethods.activateMihon,
         ExternalPluginRuntimeServiceMethods.invoke,
+        ExternalPluginRuntimeServiceMethods.activateMihon,
+        ExternalPluginRuntimeServiceMethods.invoke,
       ],
     );
+    final replay = calls.last.arguments! as Map<Object?, Object?>;
+    expect(replay['processId'], 'recovered-process');
+    expect(replay['sessionId'], 'recovered-session');
   });
 
   test('platform support rejects an unenforceable runtime envelope', () {

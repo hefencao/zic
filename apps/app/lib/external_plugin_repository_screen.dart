@@ -225,7 +225,15 @@ final class _ExternalPluginRepositoryScreenState
                         subtitle: Text(
                           '${extension.packageName}\n'
                           'v${extension.versionName} · ABI '
-                          '${extension.extensionLib}',
+                          '${extension.extensionLib}'
+                          '${extension.extensionLibSource == 'manifest'
+                              ? '（Manifest'
+                                  '${extension.declaredExtensionLib == null ||
+                                          extension.declaredExtensionLib ==
+                                              extension.extensionLib
+                                      ? ''
+                                      : ' ${extension.declaredExtensionLib}'}）'
+                              : '（由版本号推断）'}',
                         ),
                         isThreeLine: true,
                         trailing: working

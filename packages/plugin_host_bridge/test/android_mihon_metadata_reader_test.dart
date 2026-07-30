@@ -75,6 +75,8 @@ void main() {
           'versionCode': 64,
           'signerSha256': 'aabb',
           'extensionLib': '1.6',
+          'extensionLibSource': 'manifest',
+          'declaredExtensionLib': '1.6',
           'entryClasses': <String>[
             'eu.kanade.tachiyomi.extension.all.example.ExtensionGenerated',
           ],
@@ -95,6 +97,8 @@ void main() {
     expect(installed.single.displayName, 'Example');
     expect(installed.single.versionName, '1.6.4');
     expect(installed.single.extensionLib, '1.6');
+    expect(installed.single.extensionLibSource, 'manifest');
+    expect(installed.single.declaredExtensionLib, '1.6');
   });
 
   test('requests a private copy of an installed Mihon extension', () async {
@@ -117,5 +121,31 @@ void main() {
       'packageName': 'eu.kanade.tachiyomi.extension.all.example',
       'destinationPath': '/data/user/0/dev.zic/files/example.apk.part',
     });
+  });
+
+  test('reports when installed extension ABI came from versionName', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (_) async => <Object?>[
+              <String, Object?>{
+                'packageName': 'eu.kanade.tachiyomi.extension.all.legacy',
+                'displayName': 'Legacy',
+                'versionName': '1.4.12',
+                'versionCode': 12,
+                'signerSha256': 'aabb',
+                'extensionLib': '1.4',
+                'extensionLibSource': 'versionName',
+                'entryClasses': <String>[
+                  'eu.kanade.tachiyomi.extension.all.legacy.Legacy',
+                ],
+              },
+            ]);
+
+    final installed = await const AndroidMihonApkMetadataReader(
+      channel: channel,
+    ).listInstalled();
+
+    expect(installed.single.extensionLib, '1.4');
+    expect(installed.single.extensionLibSource, 'versionName');
+    expect(installed.single.declaredExtensionLib, isNull);
   });
 }

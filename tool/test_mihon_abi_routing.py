@@ -12,7 +12,7 @@ source = (
 parts = []
 for pattern in (
     r'internal val supportedMihonExtensionLibs:.*?\n\ninternal fun mihonAbiAssetVersion\(.*?\n\}',
-    r'internal fun isMihonChildFirstClass\(.*?\n    name\.startsWith\("eu\.kanade\.tachiyomi\."\)',
+    r'internal fun isMihonParentFirstClass\(.*?\n\}',
 ):
     match = re.search(pattern, source, re.S)
     if not match:
@@ -29,9 +29,14 @@ fun main() {
     check(mihonAbiAssetVersion("1.4") == "1.4")
     check(mihonAbiAssetVersion("1.5") == "1.6")
     check(mihonAbiAssetVersion("1.6") == "1.6")
-    check(isMihonChildFirstClass("eu.kanade.tachiyomi.extension.all.ehentai.EHFactory"))
-    check(!isMihonChildFirstClass("androidx.preference.Preference"))
-    check(!isMihonChildFirstClass("okhttp3.OkHttpClient"))
+    check(!isMihonParentFirstClass("eu.kanade.tachiyomi.extension.all.ehentai.EHFactory"))
+    check(!isMihonParentFirstClass("a"))
+    check(isMihonParentFirstClass("eu.kanade.tachiyomi.source.online.HttpSource"))
+    check(isMihonParentFirstClass("eu.kanade.tachiyomi.network.NetworkHelper"))
+    check(isMihonParentFirstClass("uy.kohesive.injekt.InjektKt"))
+    check(isMihonParentFirstClass("dev.mihon.injekt.InjektKt"))
+    check(isMihonParentFirstClass("androidx.preference.Preference"))
+    check(isMihonParentFirstClass("okhttp3.OkHttpClient"))
     println("Mihon ABI routing: OK")
 }
 '''

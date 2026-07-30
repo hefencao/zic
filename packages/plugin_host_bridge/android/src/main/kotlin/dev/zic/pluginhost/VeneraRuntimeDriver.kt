@@ -19,8 +19,12 @@ import org.json.JSONObject
 import java.io.Closeable
 import java.io.File
 import java.io.InputStream
+import java.net.ConnectException
 import java.net.HttpURLConnection
 import java.net.InetAddress
+import java.net.NoRouteToHostException
+import java.net.SocketException
+import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.UnknownHostException
 import java.lang.reflect.InvocationHandler
@@ -33,6 +37,7 @@ import java.security.spec.PKCS8EncodedKeySpec
 import java.security.spec.X509EncodedKeySpec
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import javax.crypto.Cipher
@@ -129,7 +134,7 @@ internal class VeneraRuntimeDriver private constructor(
 
     companion object {
         private const val BRIDGE_NAME = "ZicNative"
-        private const val ACTIVATION_TIMEOUT_MILLIS = 30_000L
+        private const val ACTIVATION_TIMEOUT_MILLIS = 10_000L
 
         @SuppressLint("SetJavaScriptEnabled")
         fun create(
@@ -284,6 +289,7 @@ private data class VeneraActivation(
         append("\n;(async()=>{try{globalThis.__zicSource=new ")
         append(className)
         append("();await Promise.resolve(__zicSource.init?.());")
+        append("__zicInstallComicInfoCache(__zicSource);")
         append("if(__zicCompareVersion(String(__zicSource.minAppVersion||'0'),appVersion)>0)")
         append("throw new Error('Venera source requires app '+__zicSource.minAppVersion+' or newer');")
         append("const __browse=__zicHasBrowseCapability(__zicSource);")
@@ -312,6 +318,7 @@ private class VeneraNativeBridge(
     private val nextImageKey = AtomicInteger(1)
     private val cookieManager = CookieManager.getInstance()
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
+    @Volatile private var dnsFallbackClient: ReflectiveVeneraHttpClient? = null
     @Volatile var resultSink: ((String, JSONObject) -> Unit)? = null
     @Volatile var activationSink: ((JSONObject) -> Unit)? = null
 
@@ -409,8 +416,16 @@ private class VeneraNativeBridge(
             headers["Content-Type"] = "application/octet-stream"
         }
         val target = URL(url)
-        val result = if (shouldUseVeneraDnsFallback(target)) {
-            httpWithDnsFallback(target, method, headers, bodyBytes, message.optBoolean("bytes"))
+        val result = if (shouldUseVeneraDnsFallback(target) ||
+            prefersVeneraDnsFallback(target.host)
+        ) {
+            httpWithDnsFallback(
+                target,
+                method,
+                headers,
+                bodyBytes,
+                message.optBoolean("bytes"),
+            ).also { rememberVeneraDnsFallback(target.host) }
         } else {
             runCatching {
                 httpWithUrlConnection(
@@ -421,14 +436,14 @@ private class VeneraNativeBridge(
                     message.optBoolean("bytes"),
                 )
             }.recoverCatching { error ->
-                if (!isVeneraDnsFailure(error, target)) throw error
+                if (!shouldRetryVeneraWithDnsFallback(error, target, method)) throw error
                 httpWithDnsFallback(
                     target,
                     method,
                     headers,
                     bodyBytes,
                     message.optBoolean("bytes"),
-                )
+                ).also { rememberVeneraDnsFallback(target.host) }
             }.getOrThrow()
         }
         persistResponseCookies(url, result.optJSONObject("headers"))
@@ -444,8 +459,8 @@ private class VeneraNativeBridge(
     ): JSONObject {
         val connection = target.openConnection() as HttpURLConnection
         connection.instanceFollowRedirects = true
-        connection.connectTimeout = 15_000
-        connection.readTimeout = 30_000
+        connection.connectTimeout = VENERA_HTTP_CONNECT_TIMEOUT_MILLIS
+        connection.readTimeout = VENERA_HTTP_READ_TIMEOUT_MILLIS
         connection.requestMethod = method
         connection.useCaches = false
         headers.forEach(connection::setRequestProperty)
@@ -485,7 +500,7 @@ private class VeneraNativeBridge(
         require(resolved.isNotEmpty()) {
             "Venera public DNS fallback returned no safe address for ${target.host}"
         }
-        val call = createReflectiveOkHttpCall(target, method, headers, bodyBytes, resolved)
+        val call = getDnsFallbackClient().newCall(target, method, headers, bodyBytes)
         connections.add(call)
         try {
             val response = call.execute()
@@ -524,6 +539,14 @@ private class VeneraNativeBridge(
         } finally {
             connections.remove(call)
             call.close()
+        }
+    }
+
+    private fun getDnsFallbackClient(): ReflectiveVeneraHttpClient {
+        dnsFallbackClient?.let { return it }
+        synchronized(this) {
+            dnsFallbackClient?.let { return it }
+            return createReflectiveVeneraHttpClient().also { dnsFallbackClient = it }
         }
     }
 
@@ -778,7 +801,6 @@ private class VeneraNativeBridge(
                 }
             }
             "aes-ecb", "aes-cbc", "aes-cfb", "aes-ofb" -> {
-                require(!encode) { "Venera AES encryption is not exposed" }
                 val mode = when (type) {
                     "aes-ecb" -> "ECB"
                     "aes-cbc" -> "CBC"
@@ -788,12 +810,13 @@ private class VeneraNativeBridge(
                 val padding = if (type in setOf("aes-cfb", "aes-ofb")) "NoPadding" else "PKCS5Padding"
                 val cipher = Cipher.getInstance("AES/$mode/$padding")
                 val key = SecretKeySpec(decodeWireValue(message.get("key")) as ByteArray, "AES")
+                val cipherMode = if (encode) Cipher.ENCRYPT_MODE else Cipher.DECRYPT_MODE
                 if (type == "aes-ecb") {
-                    cipher.init(Cipher.DECRYPT_MODE, key)
+                    cipher.init(cipherMode, key)
                 } else {
                     val explicitIv = decodeWireValue(message.opt("iv")) as? ByteArray
                     val iv = explicitIv ?: ByteArray(cipher.blockSize)
-                    cipher.init(Cipher.DECRYPT_MODE, key, IvParameterSpec(iv))
+                    cipher.init(cipherMode, key, IvParameterSpec(iv))
                 }
                 cipher.doFinal(value as ByteArray)
             }
@@ -842,6 +865,8 @@ private class VeneraNativeBridge(
             }
         }
         connections.clear()
+        dnsFallbackClient?.close()
+        dnsFallbackClient = null
         releaseImages()
     }
 }
@@ -938,7 +963,11 @@ private fun veneraResponse(
 
 private fun isPublicVeneraHost(host: String): Boolean {
     if (host.isBlank() || !host.contains('.') || host.equals("localhost", true)) return false
-    if (runCatching { InetAddress.getByName(host).hostAddress == host }.getOrDefault(false)) return false
+    if (looksLikeNumericAddress(host) &&
+        (host.contains(':') || host.count { it == '.' } == 3)
+    ) {
+        return false
+    }
     return !host.endsWith(".local", true) && !host.endsWith(".localhost", true)
 }
 
@@ -955,13 +984,28 @@ internal fun shouldUseVeneraDnsFallback(target: URL): Boolean {
     return addresses.isNotEmpty() && addresses.none(::isSafeVeneraPublicAddress)
 }
 
-private fun isVeneraDnsFailure(error: Throwable, target: URL): Boolean {
+internal fun shouldRetryVeneraWithDnsFallback(
+    error: Throwable,
+    target: URL,
+    method: String,
+): Boolean {
     if (!isPublicVeneraHost(target.host)) return false
+    val idempotent = method in setOf("GET", "HEAD", "OPTIONS")
     var current: Throwable? = error
     while (current != null) {
         if (current is UnknownHostException) return true
+        if (idempotent && current is ConnectException) return true
+        if (idempotent && current is NoRouteToHostException) return true
+        if (idempotent && current is SocketTimeoutException) return true
         val message = current.message.orEmpty().lowercase(Locale.US)
         if (message.contains("/127.0.0.1") || message.contains("/0:0:0:0:0:0:0:1")) return true
+        if (idempotent && current is SocketException &&
+            (message.contains("connection reset") ||
+                message.contains("network is unreachable") ||
+                message.contains("failed to connect"))
+        ) {
+            return true
+        }
         current = current.cause
     }
     return false
@@ -989,51 +1033,86 @@ private fun looksLikeNumericAddress(value: String): Boolean =
             character.lowercaseChar() in 'a'..'f'
     }
 
+private data class VeneraDnsCacheEntry(
+    val addresses: List<InetAddress>,
+    val expiresAtNanos: Long,
+)
+
+private const val VENERA_DNS_CACHE_NANOS = 5L * 60L * 1_000_000_000L
+private const val VENERA_HTTP_CONNECT_TIMEOUT_MILLIS = 5_000
+private const val VENERA_HTTP_READ_TIMEOUT_MILLIS = 10_000
+private const val VENERA_HTTP_CALL_TIMEOUT_MILLIS = 15_000L
+private const val VENERA_DOH_TIMEOUT_MILLIS = 1_500
+private val veneraDnsCache = ConcurrentHashMap<String, VeneraDnsCacheEntry>()
+private val veneraDnsFallbackPreferences = ConcurrentHashMap<String, Long>()
+
+private fun prefersVeneraDnsFallback(host: String): Boolean {
+    val cacheKey = host.lowercase(Locale.US)
+    val expiry = veneraDnsFallbackPreferences[cacheKey] ?: return false
+    if (expiry - System.nanoTime() > 0) return true
+    veneraDnsFallbackPreferences.remove(cacheKey, expiry)
+    return false
+}
+
+private fun rememberVeneraDnsFallback(host: String) {
+    veneraDnsFallbackPreferences[host.lowercase(Locale.US)] =
+        System.nanoTime() + VENERA_DNS_CACHE_NANOS
+}
+
 private fun resolveVeneraPublicAddresses(host: String): List<InetAddress> {
     require(isPublicVeneraHost(host)) { "Venera DNS fallback requires a public hostname" }
+    val cacheKey = host.lowercase(Locale.US)
+    val now = System.nanoTime()
+    veneraDnsCache[cacheKey]?.takeIf { it.expiresAtNanos - now > 0 }?.let {
+        return it.addresses
+    }
     val encodedHost = java.net.URLEncoder.encode(host, "UTF-8")
     for (recordType in listOf("A", "AAAA")) {
         val endpoints = listOf(
             "https://cloudflare-dns.com/dns-query?name=$encodedHost&type=$recordType",
             "https://dns.google/resolve?name=$encodedHost&type=$recordType",
+            "https://dns.alidns.com/resolve?name=$encodedHost&type=$recordType",
+            "https://doh.pub/dns-query?name=$encodedHost&type=$recordType",
         )
         for (endpoint in endpoints) {
             val connection = URL(endpoint).openConnection() as HttpURLConnection
-            connection.connectTimeout = 5_000
-            connection.readTimeout = 5_000
+            connection.connectTimeout = VENERA_DOH_TIMEOUT_MILLIS
+            connection.readTimeout = VENERA_DOH_TIMEOUT_MILLIS
             connection.setRequestProperty("Accept", "application/dns-json")
-            try {
-                if (connection.responseCode !in 200..299) continue
-                val addresses = parseVeneraDnsJson(
-                    connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() },
+            val addresses = runCatching {
+                if (connection.responseCode !in 200..299) {
+                    emptyList()
+                } else {
+                    parseVeneraDnsJson(
+                        connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() },
+                    )
+                }
+            }.getOrDefault(emptyList())
+            connection.disconnect()
+            if (addresses.isNotEmpty()) {
+                veneraDnsCache[cacheKey] = VeneraDnsCacheEntry(
+                    addresses = addresses,
+                    expiresAtNanos = System.nanoTime() + VENERA_DNS_CACHE_NANOS,
                 )
-                if (addresses.isNotEmpty()) return addresses
-            } finally {
-                connection.disconnect()
+                return addresses
             }
         }
     }
     return emptyList()
 }
 
-private class ReflectiveVeneraCall(
+private class ReflectiveVeneraHttpClient(
     private val client: Any,
-    private val call: Any,
 ) : Closeable {
-    fun execute(): Any = call.javaClass.methods.first {
-        it.name == "execute" && it.parameterCount == 0
-    }.invoke(call) ?: error("Venera DNS fallback returned no response")
-
-    fun cancel() {
-        runCatching {
-            call.javaClass.methods.firstOrNull {
-                it.name == "cancel" && it.parameterCount == 0
-            }?.invoke(call)
-        }
-    }
+    fun newCall(
+        target: URL,
+        method: String,
+        headers: Map<String, String>,
+        bodyBytes: ByteArray,
+    ): ReflectiveVeneraCall =
+        createReflectiveOkHttpCall(client, target, method, headers, bodyBytes)
 
     override fun close() {
-        cancel()
         runCatching {
             val pool = client.javaClass.methods.firstOrNull {
                 it.name in setOf("connectionPool", "getConnectionPool") && it.parameterCount == 0
@@ -1054,13 +1133,27 @@ private class ReflectiveVeneraCall(
     }
 }
 
-private fun createReflectiveOkHttpCall(
-    target: URL,
-    method: String,
-    headers: Map<String, String>,
-    bodyBytes: ByteArray,
-    addresses: List<InetAddress>,
-): ReflectiveVeneraCall {
+private class ReflectiveVeneraCall(
+    private val call: Any,
+) : Closeable {
+    fun execute(): Any = call.javaClass.methods.first {
+        it.name == "execute" && it.parameterCount == 0
+    }.invoke(call) ?: error("Venera DNS fallback returned no response")
+
+    fun cancel() {
+        runCatching {
+            call.javaClass.methods.firstOrNull {
+                it.name == "cancel" && it.parameterCount == 0
+            }?.invoke(call)
+        }
+    }
+
+    override fun close() {
+        cancel()
+    }
+}
+
+private fun createReflectiveVeneraHttpClient(): ReflectiveVeneraHttpClient {
     val loader = requireNotNull(VeneraRuntimeDriver::class.java.classLoader) {
         "Venera runtime class loader is unavailable"
     }
@@ -1069,10 +1162,16 @@ private fun createReflectiveOkHttpCall(
         when (invoked.name) {
             "lookup" -> {
                 val hostname = args?.firstOrNull()?.toString().orEmpty()
-                if (hostname.equals(target.host, ignoreCase = true)) addresses
-                else InetAddress.getAllByName(hostname).toList()
+                val addresses = if (isPublicVeneraHost(hostname)) {
+                    resolveVeneraPublicAddresses(hostname)
+                } else {
+                    InetAddress.getAllByName(hostname).toList()
+                }
+                addresses.ifEmpty {
+                    throw UnknownHostException("No safe Venera DNS answer for $hostname")
+                }
             }
-            "toString" -> "ZicVeneraDns(${target.host})"
+            "toString" -> "ZicVeneraDns"
             "hashCode" -> System.identityHashCode(proxy)
             "equals" -> args?.firstOrNull() === proxy
             else -> null
@@ -1082,8 +1181,44 @@ private fun createReflectiveOkHttpCall(
     val clientBuilder = clientBuilderType.getDeclaredConstructor().newInstance()
     clientBuilderType.methods.first { it.name == "dns" && it.parameterCount == 1 }
         .invoke(clientBuilder, dns)
-    val client = clientBuilderType.methods.first { it.name == "build" && it.parameterCount == 0 }
-        .invoke(clientBuilder)
+    clientBuilderType.methods.first {
+        it.name == "connectTimeout" && it.parameterCount == 2
+    }.invoke(
+        clientBuilder,
+        VENERA_HTTP_CONNECT_TIMEOUT_MILLIS.toLong(),
+        TimeUnit.MILLISECONDS,
+    )
+    clientBuilderType.methods.first {
+        it.name == "readTimeout" && it.parameterCount == 2
+    }.invoke(
+        clientBuilder,
+        VENERA_HTTP_READ_TIMEOUT_MILLIS.toLong(),
+        TimeUnit.MILLISECONDS,
+    )
+    clientBuilderType.methods.first {
+        it.name == "callTimeout" && it.parameterCount == 2
+    }.invoke(
+        clientBuilder,
+        VENERA_HTTP_CALL_TIMEOUT_MILLIS,
+        TimeUnit.MILLISECONDS,
+    )
+    val client = requireNotNull(
+        clientBuilderType.methods.first { it.name == "build" && it.parameterCount == 0 }
+            .invoke(clientBuilder),
+    ) { "Venera DNS fallback client build returned null" }
+    return ReflectiveVeneraHttpClient(client)
+}
+
+private fun createReflectiveOkHttpCall(
+    client: Any,
+    target: URL,
+    method: String,
+    headers: Map<String, String>,
+    bodyBytes: ByteArray,
+): ReflectiveVeneraCall {
+    val loader = requireNotNull(VeneraRuntimeDriver::class.java.classLoader) {
+        "Venera runtime class loader is unavailable"
+    }
     val requestBuilderType = loader.loadClass("okhttp3.Request${'$'}Builder")
     val requestBuilder = requestBuilderType.getDeclaredConstructor().newInstance()
     requestBuilderType.methods.first { it.name == "url" && it.parameterTypes.contentEquals(arrayOf(String::class.java)) }
@@ -1099,7 +1234,7 @@ private fun createReflectiveOkHttpCall(
         .invoke(requestBuilder)
     val call = client.javaClass.methods.first { it.name == "newCall" && it.parameterCount == 1 }
         .invoke(client, request)
-    return ReflectiveVeneraCall(client, call)
+    return ReflectiveVeneraCall(call)
 }
 
 private fun reflectiveRequestBody(loader: ClassLoader, bytes: ByteArray): Any {
@@ -1160,8 +1295,11 @@ function __zicErrorMessage(error,operation){const message=String(error?.message|
 function __zicCompareVersion(a,b){const x=String(a).split(/[^0-9]+/).filter(Boolean).map(Number),y=String(b).split(/[^0-9]+/).filter(Boolean).map(Number);for(let i=0;i<Math.max(x.length,y.length);i++){const d=(x[i]||0)-(y[i]||0);if(d)return d>0?1:-1}return 0}
 const __zicCancelled = new Set();
 const __zicResources = new Map();
+const __zicResourceLimit = 2048;
 const __zicPaging = new Map();
 let __zicResourceKey = 0;
+function __zicRetainResource(config){const token=String(++__zicResourceKey);__zicResources.set(token,config);while(__zicResources.size>__zicResourceLimit)__zicResources.delete(__zicResources.keys().next().value);return token}
+function __zicGetResource(token){const config=__zicResources.get(token);if(config){__zicResources.delete(token);__zicResources.set(token,config)}return config}
 function __zicDecode(value) {
   if (value && value.__zicType === 'bytes') {
     const raw = atob(value.base64); const bytes = new Uint8Array(raw.length);
@@ -1207,9 +1345,13 @@ const Convert = {
   sha512:v=>sendMessage({method:'convert',type:'sha512',value:v,isEncode:true}),
   hmac:(key,value,hash)=>sendMessage({method:'convert',type:'hmac',key,value,hash,isEncode:true}),
   hmacString:(key,value,hash)=>sendMessage({method:'convert',type:'hmac',key,value,hash,isEncode:true,isString:true}),
+  encryptAesEcb:(value,key)=>sendMessage({method:'convert',type:'aes-ecb',value,key,isEncode:true}),
   decryptAesEcb:(value,key)=>sendMessage({method:'convert',type:'aes-ecb',value,key,isEncode:false}),
+  encryptAesCbc:(value,key,iv)=>sendMessage({method:'convert',type:'aes-cbc',value,key,iv,isEncode:true}),
   decryptAesCbc:(value,key,iv)=>sendMessage({method:'convert',type:'aes-cbc',value,key,iv,isEncode:false}),
-  decryptAesCfb:(value,key,blockSize)=>sendMessage({method:'convert',type:'aes-cfb',value,key,blockSize,isEncode:false}),
+  encryptAesCfb:(value,key,iv,blockSize)=>sendMessage({method:'convert',type:'aes-cfb',value,key,iv,blockSize,isEncode:true}),
+  decryptAesCfb:(value,key,iv,blockSize)=>sendMessage({method:'convert',type:'aes-cfb',value,key,iv,blockSize,isEncode:false}),
+  encryptAesOfb:(value,key,blockSize)=>sendMessage({method:'convert',type:'aes-ofb',value,key,blockSize,isEncode:true}),
   decryptAesOfb:(value,key,blockSize)=>sendMessage({method:'convert',type:'aes-ofb',value,key,blockSize,isEncode:false}),
   decryptRsa:(value,key)=>sendMessage({method:'convert',type:'rsa',value,key,isEncode:false}),
   hexEncode:(value)=>Array.from(new Uint8Array(value)).map(v=>v.toString(16).padStart(2,'0')).join(''),
@@ -1218,11 +1360,11 @@ function createUuid(){ return sendMessage({method:'uuid'}); }
 function randomInt(min,max){ return sendMessage({method:'random',type:'int',min,max}); }
 function randomDouble(min,max){ return sendMessage({method:'random',type:'double',min,max}); }
 const Network = {
-  fetchBytes:async(method,url,headers,data)=>sendMessage({method:'http',http_method:method,bytes:true,url,headers:headers||{},data}),
-  sendRequest:async(method,url,headers,data)=>sendMessage({method:'http',http_method:method,url,headers:headers||{},data}),
-  get(url,headers){return this.sendRequest('GET',url,headers)}, post(url,headers,data){return this.sendRequest('POST',url,headers,data)},
-  put(url,headers,data){return this.sendRequest('PUT',url,headers,data)}, patch(url,headers,data){return this.sendRequest('PATCH',url,headers,data)},
-  delete(url,headers){return this.sendRequest('DELETE',url,headers)},
+  fetchBytes:async(method,url,headers,data,extra)=>sendMessage({method:'http',http_method:method,bytes:true,url,headers:headers||{},data,extra}),
+  sendRequest:async(method,url,headers,data,extra)=>sendMessage({method:'http',http_method:method,url,headers:headers||{},data,extra}),
+  get(url,headers,extra){return this.sendRequest('GET',url,headers,undefined,extra)}, post(url,headers,data,extra){return this.sendRequest('POST',url,headers,data,extra)},
+  put(url,headers,data,extra){return this.sendRequest('PUT',url,headers,data,extra)}, patch(url,headers,data,extra){return this.sendRequest('PATCH',url,headers,data,extra)},
+  delete(url,headers,extra){return this.sendRequest('DELETE',url,headers,undefined,extra)},
   setCookies(url,cookies){return sendMessage({method:'cookie',function:'set',url,cookies})},
   getCookies(url){return sendMessage({method:'cookie',function:'get',url})},
   deleteCookies(url){return sendMessage({method:'cookie',function:'delete',url})},
@@ -1280,8 +1422,8 @@ const UI={showMessage(){},showDialog:async()=>{},launchUrl(){},showLoading:()=>0
 async function compute(func,...args){return (0,eval)('('+func+')')(args)}
 function __zicB64(value){return btoa(unescape(encodeURIComponent(JSON.stringify(value)))).replaceAll('+','-').replaceAll('/','_').replaceAll('=','')}
 function __zicUnb64(value){let raw=value.replaceAll('-','+').replaceAll('_','/');while(raw.length%4)raw+='=';return JSON.parse(decodeURIComponent(escape(atob(raw))))}
-function __zicOptionDefaults(config){return (config?.optionList||[]).map(group=>group.default??String(group.options?.[0]?.value??group.options?.[0]?.key??group.options?.[0]??'').split('-')[0])}
-function __zicDefaultOptions(source){return __zicOptionDefaults(source.search)}
+function __zicOptionDefaults(config,encodeDefault=false){return (config?.optionList||[]).map(group=>group.default!=null?(encodeDefault?JSON.stringify(group.default):group.default):String(group.options?.[0]?.value??group.options?.[0]?.key??group.options?.[0]??'').split('-')[0])}
+function __zicDefaultOptions(source){return __zicOptionDefaults(source.search,true)}
 function __zicHasLoader(value){return typeof value?.load==='function'||typeof value?.loadNext==='function'}
 function __zicLoaders(value){if(Array.isArray(value))return value;if(value instanceof Map)return Array.from(value.values());if(value&&typeof value==='object'){if(__zicHasLoader(value))return[value];return Object.values(value)}return[]}
 function __zicExploreLoader(source){return __zicLoaders(source.explore).find(__zicHasLoader)||null}
@@ -1314,7 +1456,22 @@ function __zicFlatten(result){
  return unpack(result)
 }
 function __zicChapterEntries(raw){const out=[];const visit=(value,fallback)=>{if(value instanceof Map){for(const [k,v] of value.entries())visit(v,k);return}if(Array.isArray(value)){value.forEach((v,i)=>visit(v,String(i)));return}if(value&&typeof value==='object'){if(value.id!==undefined||value.epId!==undefined||value.title!==undefined||value.name!==undefined){out.push([String(value.id??value.epId??fallback),String(value.title??value.name??fallback)]);return}for(const [k,v] of Object.entries(value))visit(v,k);return}out.push([String(fallback),String(value??fallback)])};visit(raw,'0');return out}
-function __zicChapterMessage(comicId,epId,title,index){return {comicId,chapterId:'venera:chapter:'+__zicB64({comicId,comicRawId:__zicUnb64(comicId.slice('venera:comic:'.length)).id,epId:String(epId),title:String(title),sequence:index}),title:String(title||('第 '+(index+1)+' 话')),sequence:index,pageCount:0,sourceRevision:String(epId)}}
+function __zicInstallComicInfoCache(source){
+ const comic=source?.comic;if(!comic||typeof comic.loadInfo!=='function'||comic.loadInfo.__zicCached)return;
+ const original=comic.loadInfo,cache=new Map(),ttl=60000,maxEntries=32;
+ const cached=async function(...args){
+  let key;try{key=JSON.stringify(args)}catch(_){return original.apply(this,args)}
+  const now=Date.now(),existing=cache.get(key);
+  if(existing&&existing.expires>now)return existing.promise;
+  const promise=Promise.resolve().then(()=>original.apply(this,args));
+  cache.set(key,{expires:now+ttl,promise});
+  promise.catch(()=>{if(cache.get(key)?.promise===promise)cache.delete(key)});
+  while(cache.size>maxEntries)cache.delete(cache.keys().next().value);
+  return promise
+ };
+ Object.defineProperty(cached,'__zicCached',{value:true});comic.loadInfo=cached
+}
+function __zicChapterMessage(comicId,epId,title,index,pageCount=0){const revision=epId==null?'single':String(epId);return {comicId,chapterId:'venera:chapter:'+__zicB64({comicId,comicRawId:__zicUnb64(comicId.slice('venera:comic:'.length)).id,epId:epId==null?null:String(epId),title:String(title),sequence:index}),title:String(title||('第 '+(index+1)+' 话')),sequence:index,pageCount,sourceRevision:revision}}
 async function __zicOperation(request){
  const source=globalThis.__zicSource,args=request.arguments||{};
  if(request.operation==='browse'){
@@ -1331,19 +1488,21 @@ async function __zicOperation(request){
  if(request.operation==='loadComic'){
   const opaque=__zicUnb64(args.comicId.slice('venera:comic:'.length));const info=await source.comic.loadInfo(opaque.id);
   const chapters=[];let index=0;for(const [epId,title] of __zicChapterEntries(info.chapters||{}))chapters.push(__zicChapterMessage(args.comicId,epId,title,index++));
+  if(chapters.length===0&&typeof source.comic.loadEp==='function'){const maxPage=Number(info.maxPage),pageCount=Number.isFinite(maxPage)&&maxPage>0?Math.floor(maxPage):0;chapters.push(__zicChapterMessage(args.comicId,null,info.chapterTitle||'正文',0,pageCount))}
   const cover=__zicAbsoluteUrl(info.cover||opaque.cover,/^https?:\/\//i.test(String(opaque.id))?String(opaque.id):source.url);return {comic:{comicId:args.comicId,title:String(info.title||opaque.title||'未命名漫画'),authors:[String(info.subtitle??info.subTitle??opaque.subtitle??'')].filter(Boolean),readingDirection:'vertical',coverUri:cover,description:info.description||opaque.description||undefined},chapters};
  }
  if(request.operation==='loadChapter'){
   const chapter=__zicUnb64(args.chapterId.slice('venera:chapter:'.length));const loaded=await source.comic.loadEp(chapter.comicRawId,chapter.epId);const images=Array.isArray(loaded)?loaded:(loaded?.images||[]);
-  const pages=[];for(let i=0;i<images.length;i++){const original=String(images[i]);const config=await Promise.resolve(source.comic.onImageLoad?.(original,chapter.comicRawId,chapter.epId)||{});const token=String(++__zicResourceKey);__zicResources.set(token,{url:config.url||original,method:config.method||'GET',headers:config.headers||{},data:config.data,onResponse:config.onResponse,onLoadFailed:config.onLoadFailed,modifyImage:config.modifyImage});pages.push({chapterId:args.chapterId,pageId:String(args.chapterId)+':'+i,index:i,uri:'venera-resource://'+token})}
-  return {comicId:chapter.comicId,chapter:__zicChapterMessage(chapter.comicId,chapter.epId,chapter.title,chapter.sequence),pages,readingDirection:'vertical'};
+  const pages=[];for(let i=0;i<images.length;i++){const token=__zicRetainResource({image:String(images[i]),comicId:chapter.comicRawId,epId:chapter.epId,deferredImageConfig:true});pages.push({chapterId:args.chapterId,pageId:String(args.chapterId)+':'+i,index:i,uri:'venera-resource://'+token})}
+  return {comicId:chapter.comicId,chapter:__zicChapterMessage(chapter.comicId,chapter.epId,chapter.title,chapter.sequence,pages.length),pages,readingDirection:'vertical'};
  }
  if(request.operation==='loadResource'){
   const uri=String(args.uri||'');const isToken=uri.startsWith('venera-resource://');let token=null,config;
-  if(isToken){token=uri.slice('venera-resource://'.length);config=__zicResources.get(token);if(!config)throw new Error('Venera resource token expired')}
+  if(isToken){token=uri.slice('venera-resource://'.length);config=__zicGetResource(token);if(!config)throw new Error('Venera resource token expired')}
   else if(/^https?:\/\//i.test(uri)){let override={};if(typeof source.comic?.onImageLoad==='function'){try{override=await Promise.resolve(source.comic.onImageLoad(uri,null,null))||{}}catch(_){override={}}}config={url:override.url||uri,method:override.method||'GET',headers:override.headers||{},data:override.data,onResponse:override.onResponse,onLoadFailed:override.onLoadFailed,modifyImage:override.modifyImage}}
   else throw new Error('Venera resource URI must be a runtime token or HTTP(S) URL');
-  try{let active=config;for(let attempt=0;attempt<2;attempt++){try{const response=await Network.fetchBytes(active.method||'GET',active.url,active.headers||{},active.data);if(response.status<200||response.status>=300)throw new Error('Venera resource HTTP '+response.status);let bytes=response.body;if(typeof active.onResponse==='function')bytes=await active.onResponse(bytes);if(typeof active.modifyImage==='string'&&active.modifyImage.trim()){const key=sendMessage({method:'image',function:'decode',data:bytes});try{const modifier=(0,eval)(String(active.modifyImage)+'\n;(typeof modifyImage==="function"?modifyImage:null)');if(typeof modifier!=='function')throw new Error('Venera modifyImage script defines no modifyImage function');const transformed=await Promise.resolve(modifier(new Image(key)));if(!transformed||typeof transformed.key!=='number')throw new Error('Venera modifyImage returned no Image');bytes=sendMessage({method:'image',function:'encode',key:transformed.key})}finally{sendMessage({method:'image',function:'disposeAll'})}}return bytes}catch(error){if(attempt||typeof active.onLoadFailed!=='function')throw error;const retry=await active.onLoadFailed(error);if(!retry)throw error;active={...active,...retry}}}throw new Error('Venera resource retry exhausted')}finally{if(token!==null)__zicResources.delete(token)}
+  if(config.deferredImageConfig){const original=config.image;const override=await Promise.resolve(source.comic?.onImageLoad?.(original,config.comicId,config.epId)||{});config={url:override.url||original,method:override.method||'GET',headers:override.headers||{},data:override.data,onResponse:override.onResponse,onLoadFailed:override.onLoadFailed,modifyImage:override.modifyImage}}
+  let active=config;for(let attempt=0;attempt<2;attempt++){try{const response=await Network.fetchBytes(active.method||'GET',active.url,active.headers||{},active.data);if(response.status<200||response.status>=300)throw new Error('Venera resource HTTP '+response.status);let bytes=response.body;if(typeof active.onResponse==='function')bytes=await active.onResponse(bytes);if(typeof active.modifyImage==='string'&&active.modifyImage.trim()){const key=sendMessage({method:'image',function:'decode',data:bytes});try{const modifier=(0,eval)(String(active.modifyImage)+'\n;(typeof modifyImage==="function"?modifyImage:null)');if(typeof modifier!=='function')throw new Error('Venera modifyImage script defines no modifyImage function');const transformed=await Promise.resolve(modifier(new Image(key)));if(!transformed||typeof transformed.key!=='number')throw new Error('Venera modifyImage returned no Image');bytes=sendMessage({method:'image',function:'encode',key:transformed.key})}finally{sendMessage({method:'image',function:'disposeAll'})}}return bytes}catch(error){if(attempt||typeof active.onLoadFailed!=='function')throw error;const retry=await active.onLoadFailed();if(!retry)throw error;active={url:retry.url||active.url,method:retry.method||'GET',headers:retry.headers||{},data:retry.data,onResponse:retry.onResponse,onLoadFailed:retry.onLoadFailed,modifyImage:retry.modifyImage}}}throw new Error('Venera resource retry exhausted')
  }
  throw new Error('Unsupported Venera operation');
 }

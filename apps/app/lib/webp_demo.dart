@@ -754,6 +754,7 @@ final class LocalImagePlayer extends StatefulWidget {
 
 final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   late ImagePreviewState _state;
+  late LocalImageFormat _detectedFormat;
   Uint8List? _bytes;
   ImageProvider<Object>? _imageProvider;
   int _generation = 0;
@@ -764,6 +765,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   @override
   void initState() {
     super.initState();
+    _detectedFormat = widget.image.format;
     _state = ImagePreviewState.loading(widget.image.format);
     _loadToken = MediaLoadToken();
     _scheduleObserverSnapshot();
@@ -783,6 +785,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       _scheduledStaticFrameGeneration = -1;
       _bytes = null;
       _imageProvider = null;
+      _detectedFormat = widget.image.format;
       _state = ImagePreviewState.loading(widget.image.format);
       _notifyObserver(_state);
       unawaited(_load());
@@ -827,12 +830,6 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       if (detected == null) {
         throw const FormatException('文件头不是可识别的图片格式');
       }
-      if (detected != widget.image.format) {
-        throw FormatException(
-          '图片格式在扫描后发生变化：'
-          '${widget.image.format.label} → ${detected.label}',
-        );
-      }
       final provider = detected.isWebp ? null : MemoryImage(bytes);
       final decodeProbe = widget.decodeProbe;
       if (provider != null && decodeProbe != null) {
@@ -846,6 +843,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         }
       }
       setState(() {
+        _detectedFormat = detected;
         _bytes = bytes;
         _imageProvider = provider;
       });
@@ -859,7 +857,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           token.isCancelled) {
         return;
       }
-      _publish(ImagePreviewState.invalid(widget.image.format, error));
+      _publish(ImagePreviewState.invalid(_detectedFormat, error));
     }
   }
 
@@ -933,7 +931,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   void _scheduleError(Object error) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        _publish(ImagePreviewState.invalid(widget.image.format, error));
+        _publish(ImagePreviewState.invalid(_detectedFormat, error));
       }
     });
   }
@@ -964,12 +962,12 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   }
 
   void _onControlledReady() {
-    _publish(ImagePreviewState.ready(widget.image.format));
+    _publish(ImagePreviewState.ready(_detectedFormat));
     _reportFirstFrame();
   }
 
   void _onControlledError(Object error) {
-    _publish(ImagePreviewState.invalid(widget.image.format, error));
+    _publish(ImagePreviewState.invalid(_detectedFormat, error));
   }
 
   @override
@@ -987,7 +985,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           ),
         ),
       );
-    } else if (widget.image.format.isWebp) {
+    } else if (_detectedFormat.isWebp) {
       if (bytes == null) {
         content = const Center(
           child: CircularProgressIndicator(),
@@ -1012,7 +1010,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         );
       }
     } else if (widget.playback != null &&
-        widget.image.format == LocalImageFormat.gif) {
+        _detectedFormat == LocalImageFormat.gif) {
       if (bytes == null) {
         content = const Center(
           child: CircularProgressIndicator(),
@@ -1046,7 +1044,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
             if (frame != null || wasSynchronouslyLoaded) {
               _scheduleStaticFramePresented(
                 _generation,
-                widget.image.format,
+                _detectedFormat,
               );
             }
             return child;

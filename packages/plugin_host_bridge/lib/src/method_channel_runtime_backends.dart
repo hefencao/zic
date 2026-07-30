@@ -69,29 +69,23 @@ final class AndroidMihonIsolatedRuntimeBackend
     String method,
     Map<String, Object?> activation,
   ) async {
-    final response = await _channel.invokeMapMethod<String, Object?>(
+    final activationMessage = Map<String, Object?>.unmodifiable(activation);
+    final activated = await _activatePlatformRuntime(
+      _channel,
       method,
-      activation,
+      activationMessage,
     );
-    if (response == null) {
-      throw const FormatException('platform runtime activation is empty');
-    }
-    final processId = response['processId'];
-    final sessionId = response['sessionId'];
-    final handshake = response['handshake'];
-    if (processId is! String ||
-        processId.trim().isEmpty ||
-        sessionId is! String ||
-        sessionId.trim().isEmpty ||
-        handshake == null) {
-      throw const FormatException('platform runtime activation is invalid');
-    }
     return MessageChannelExternalPluginRuntimeConnection.fromHandshakeMessage(
-      handshakeMessage: handshake,
+      handshakeMessage: activated.handshake,
       channel: _PlatformExternalPluginRuntimeMessageChannel(
         channel: _channel,
-        processId: processId,
-        sessionId: sessionId,
+        processId: activated.processId,
+        sessionId: activated.sessionId,
+        reactivate: () => _activatePlatformRuntime(
+          _channel,
+          method,
+          activationMessage,
+        ),
       ),
     );
   }
@@ -119,61 +113,158 @@ final class AndroidVeneraSandboxRuntimeBackend
   Future<ExternalPluginRuntimeConnection> activate(
     VeneraExecutionRequest request,
   ) async {
-    final response = await _channel.invokeMapMethod<String, Object?>(
-      ExternalPluginRuntimeServiceMethods.activateVenera,
+    final activationMessage = Map<String, Object?>.unmodifiable(
       request.toMessage(),
     );
-    if (response == null) {
-      throw const FormatException('platform runtime activation is empty');
-    }
-    final processId = response['processId'];
-    final sessionId = response['sessionId'];
-    final handshake = response['handshake'];
-    if (processId is! String ||
-        processId.trim().isEmpty ||
-        sessionId is! String ||
-        sessionId.trim().isEmpty ||
-        handshake == null) {
-      throw const FormatException('platform runtime activation is invalid');
-    }
+    final activated = await _activatePlatformRuntime(
+      _channel,
+      ExternalPluginRuntimeServiceMethods.activateVenera,
+      activationMessage,
+    );
     return MessageChannelExternalPluginRuntimeConnection.fromHandshakeMessage(
-      handshakeMessage: handshake,
+      handshakeMessage: activated.handshake,
       channel: _PlatformExternalPluginRuntimeMessageChannel(
         channel: _channel,
-        processId: processId,
-        sessionId: sessionId,
+        processId: activated.processId,
+        sessionId: activated.sessionId,
+        reactivate: () => _activatePlatformRuntime(
+          _channel,
+          ExternalPluginRuntimeServiceMethods.activateVenera,
+          activationMessage,
+        ),
       ),
     );
   }
+}
+
+final class _PlatformRuntimeActivation {
+  const _PlatformRuntimeActivation({
+    required this.processId,
+    required this.sessionId,
+    required this.handshake,
+  });
+
+  final String processId;
+  final String sessionId;
+  final Object handshake;
+}
+
+Future<_PlatformRuntimeActivation> _activatePlatformRuntime(
+  MethodChannel channel,
+  String method,
+  Map<String, Object?> activation,
+) async {
+  final response = await channel.invokeMapMethod<String, Object?>(
+    method,
+    activation,
+  );
+  if (response == null) {
+    throw const FormatException('platform runtime activation is empty');
+  }
+  final processId = response['processId'];
+  final sessionId = response['sessionId'];
+  final handshake = response['handshake'];
+  if (processId is! String ||
+      processId.trim().isEmpty ||
+      sessionId is! String ||
+      sessionId.trim().isEmpty ||
+      handshake == null) {
+    throw const FormatException('platform runtime activation is invalid');
+  }
+  return _PlatformRuntimeActivation(
+    processId: processId,
+    sessionId: sessionId,
+    handshake: handshake,
+  );
 }
 
 final class _PlatformExternalPluginRuntimeMessageChannel
     implements CancellableExternalPluginRuntimeMessageChannel {
   _PlatformExternalPluginRuntimeMessageChannel({
     required MethodChannel channel,
-    required this.processId,
-    required this.sessionId,
-  }) : _channel = channel;
+    required String processId,
+    required String sessionId,
+    required Future<_PlatformRuntimeActivation> Function() reactivate,
+  })  : _channel = channel,
+        _processId = processId,
+        _sessionId = sessionId,
+        _reactivate = reactivate;
 
   final MethodChannel _channel;
-  final String processId;
-  final String sessionId;
+  final Future<_PlatformRuntimeActivation> Function() _reactivate;
+  String _processId;
+  String _sessionId;
   bool _closing = false;
   Future<void>? _closeFuture;
+  Future<void>? _recoveryFuture;
 
   @override
-  Future<Object?> send(Object? requestMessage) {
+  Future<Object?> send(Object? requestMessage) async {
     if (_closing) {
       throw StateError('platform external runtime channel is closing');
     }
-    return _channel.invokeMethod<Object?>(
-      ExternalPluginRuntimeServiceMethods.invoke,
-      <String, Object?>{
-        'processId': processId,
-        'sessionId': sessionId,
-        'request': requestMessage,
-      },
-    );
+    final attemptedProcessId = _processId;
+    final attemptedSessionId = _sessionId;
+    try {
+      return await _invoke(requestMessage);
+    } on PlatformException catch (error) {
+      if (_closing || !_recoverableRuntimeCodes.contains(error.code)) {
+        rethrow;
+      }
+      await _recover(attemptedProcessId, attemptedSessionId);
+      if (_closing) {
+        throw StateError('platform external runtime channel is closing');
+      }
+      return _invoke(requestMessage);
+    }
+  }
+
+  Future<Object?> _invoke(Object? requestMessage) =>
+      _channel.invokeMethod<Object?>(
+        ExternalPluginRuntimeServiceMethods.invoke,
+        <String, Object?>{
+          'processId': _processId,
+          'sessionId': _sessionId,
+          'request': requestMessage,
+        },
+      );
+
+  Future<void> _recover(
+    String attemptedProcessId,
+    String attemptedSessionId,
+  ) {
+    if (_processId != attemptedProcessId ||
+        _sessionId != attemptedSessionId) {
+      return Future<void>.value();
+    }
+    final existing = _recoveryFuture;
+    if (existing != null) {
+      return existing;
+    }
+    late final Future<void> recovery;
+    recovery = _performRecovery().whenComplete(() {
+      if (identical(_recoveryFuture, recovery)) {
+        _recoveryFuture = null;
+      }
+    });
+    _recoveryFuture = recovery;
+    return recovery;
+  }
+
+  Future<void> _performRecovery() async {
+    final activated = await _reactivate();
+    if (_closing) {
+      await _channel.invokeMethod<void>(
+        ExternalPluginRuntimeServiceMethods.closeSession,
+        <String, Object?>{
+          'processId': activated.processId,
+          'sessionId': activated.sessionId,
+        },
+      );
+      throw StateError('platform external runtime channel is closing');
+    }
+    _processId = activated.processId;
+    _sessionId = activated.sessionId;
   }
 
   @override
@@ -187,8 +278,8 @@ final class _PlatformExternalPluginRuntimeMessageChannel
     return _channel.invokeMethod<void>(
       ExternalPluginRuntimeServiceMethods.cancel,
       <String, Object?>{
-        'processId': processId,
-        'sessionId': sessionId,
+        'processId': _processId,
+        'sessionId': _sessionId,
         'requestId': requestId,
       },
     );
@@ -204,11 +295,19 @@ final class _PlatformExternalPluginRuntimeMessageChannel
     final closing = _channel.invokeMethod<void>(
       ExternalPluginRuntimeServiceMethods.closeSession,
       <String, Object?>{
-        'processId': processId,
-        'sessionId': sessionId,
+        'processId': _processId,
+        'sessionId': _sessionId,
       },
     );
     _closeFuture = closing;
     return closing;
   }
 }
+
+const Set<String> _recoverableRuntimeCodes = <String>{
+  'runtime-process-mismatch',
+  'runtime-session-missing',
+  'runtime-service-died',
+  'runtime-service-disconnected',
+  'native-driver-missing',
+};

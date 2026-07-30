@@ -1,5 +1,6 @@
 package dev.zic.pluginhost
 
+import android.app.Application
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ApplicationInfo
@@ -19,6 +20,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.lang.reflect.Method
 import java.lang.reflect.Modifier
+import java.lang.reflect.Proxy
 import java.security.MessageDigest
 import java.util.Properties
 import java.util.concurrent.Callable
@@ -95,7 +97,11 @@ internal class MihonRuntimeDriver private constructor(
                 if (responded.compareAndSet(false, true)) {
                     result.error(
                         if (cancelledRequest) "runtime-request-cancelled" else "mihon-operation-failed",
-                        if (cancelledRequest) "Mihon request was cancelled" else cause.sanitizedMessage(),
+                        if (cancelledRequest) {
+                            "Mihon request was cancelled"
+                        } else {
+                            error.mihonDiagnosticMessage()
+                        },
                         retryable = !cancelledRequest && cause.isNetworkFailure(),
                     )
                 }
@@ -218,6 +224,7 @@ internal class MihonRuntimeDriver private constructor(
             source.invokeFirst(
                 listOf(
                     Invocation("fetchMangaUpdate", listOf(manga, emptyList<Any>(), true, true)),
+                    Invocation("getMangaUpdate", listOf(manga, emptyList<Any>(), true, true)),
                 ),
             ).unwrapAsync()
         } catch (_: NoSuchMethodException) {
@@ -284,9 +291,27 @@ internal class MihonRuntimeDriver private constructor(
                 }
             }
             val fallbackUrl = page.readString("url", "getUrl")
-            val uri = imageUrl?.takeIf { it.isNotBlank() }
+            val resolvedUrl = imageUrl?.takeIf { it.isNotBlank() }
                 ?: fallbackUrl?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
                 ?: error("Mihon page did not expose an image URL")
+            page.writeValue("imageUrl", resolvedUrl)
+            val imageRequest = try {
+                source.invokeHierarchyCompatible("imageRequest", listOf(page))
+            } catch (_: NoSuchMethodException) {
+                null
+            }
+            val requestUrl = imageRequest?.readValue("url", "getUrl")?.toString()
+                ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+                ?: resolvedUrl.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+                ?: error("Mihon image request did not expose an absolute URL")
+            val requestHeaders = imageRequest?.readValue("headers", "getHeaders")
+                ?: source.readValue("headers", "getHeaders")
+            val uri = encodeOpaque(
+                "resource",
+                JSONObject()
+                    .put("url", requestUrl)
+                    .put("headers", JSONObject(requestHeaders.stringHeaders())),
+            )
             mapOf(
                 "chapterId" to chapterId,
                 "pageId" to "${chapterId}:$index",
@@ -303,26 +328,27 @@ internal class MihonRuntimeDriver private constructor(
     }
 
     private fun loadResource(source: Any, uri: String, requestId: String): ByteArray {
-        require(uri.startsWith("https://") || uri.startsWith("http://")) {
-            "Mihon resource URI must use HTTP(S)"
+        val resource = if (uri.startsWith("mihon:resource:")) {
+            decodeOpaque(uri, "resource")
+        } else {
+            require(uri.startsWith("https://") || uri.startsWith("http://")) {
+                "Mihon resource URI must use a runtime token or HTTP(S)"
+            }
+            JSONObject().put("url", uri)
         }
-        val headers = source.readValue("headers", "getHeaders")
+        val resourceUrl = resource.getString("url")
+        val headers = resource.optJSONObject("headers").stringMap()
+            .ifEmpty { source.readValue("headers", "getHeaders").stringHeaders() }
         val client = source.readValue("client", "getClient")
         if (client == null) {
-            return loadResourceWithPlatformNetwork(uri, headers, requestId)
+            return loadResourceWithPlatformNetwork(resourceUrl, headers, requestId)
         }
         val loader = source.javaClass.classLoader
         val requestBuilderType = Class.forName("okhttp3.Request\$Builder", true, loader)
         val builder = requestBuilderType.getDeclaredConstructor().newInstance()
-        builder.invokeCompatible("url", listOf(uri))
-        headers?.let { value ->
-            val names = value.invokeOptional("names") as? Set<*>
-            names?.filterIsInstance<String>()?.forEach { name ->
-                val headerValue = value.invokeOptional("get", name) as? String
-                if (headerValue != null) {
-                    builder.invokeCompatible("header", listOf(name, headerValue))
-                }
-            }
+        builder.invokeCompatible("url", listOf(resourceUrl))
+        headers.forEach { (name, value) ->
+            builder.invokeCompatible("header", listOf(name, value))
         }
         val request = builder.invokeCompatible("build", emptyList())
             ?: error("Mihon request builder returned no request")
@@ -352,22 +378,16 @@ internal class MihonRuntimeDriver private constructor(
 
     private fun loadResourceWithPlatformNetwork(
         uri: String,
-        headers: Any?,
+        headers: Map<String, String>,
         requestId: String,
     ): ByteArray {
         val connection = URL(uri).openConnection() as HttpURLConnection
         connection.instanceFollowRedirects = true
-        connection.connectTimeout = 15_000
-        connection.readTimeout = 30_000
+        connection.connectTimeout = 5_000
+        connection.readTimeout = 10_000
         connection.requestMethod = "GET"
-        headers?.let { value ->
-            val names = value.invokeOptional("names") as? Set<*>
-            names?.filterIsInstance<String>()?.forEach { name ->
-                val headerValue = value.invokeOptional("get", name) as? String
-                if (headerValue != null) {
-                    connection.setRequestProperty(name, headerValue)
-                }
-            }
+        headers.forEach { (name, value) ->
+            connection.setRequestProperty(name, value)
         }
         calls[requestId] = connection
         try {
@@ -495,14 +515,23 @@ internal class MihonRuntimeDriver private constructor(
                     target = File(runtimeRoot, "abi.jar"),
                 )
                 val nativeDir = extractNativeLibraries(apk, File(runtimeRoot, "lib"))
-                val optimized = File(runtimeRoot, "dex").apply {
-                    check(mkdirs()) { "Mihon dex directory could not be created" }
+                val abiOptimized = File(runtimeRoot, "abi-dex").apply {
+                    check(mkdirs()) { "Mihon ABI dex directory could not be created" }
+                }
+                val abiLoader = DexClassLoader(
+                    abi.path,
+                    abiOptimized.path,
+                    null,
+                    context.classLoader,
+                )
+                val extensionOptimized = File(runtimeRoot, "extension-dex").apply {
+                    check(mkdirs()) { "Mihon extension dex directory could not be created" }
                 }
                 val loader = MihonExtensionClassLoader(
-                    dexPath = listOf(apk.path, abi.path).joinToString(File.pathSeparator),
-                    optimizedDirectory = optimized,
+                    dexPath = apk.path,
+                    optimizedDirectory = extensionOptimized,
                     librarySearchPath = nativeDir,
-                    parent = context.classLoader,
+                    parent = abiLoader,
                 )
                 verifyMihonPluginAbi(loader)
                 val extensionContext = createMihonPayloadContext(
@@ -512,6 +541,14 @@ internal class MihonRuntimeDriver private constructor(
                     expectedPackageName = activation.requireString("packageName"),
                     runtimeRoot = runtimeRoot,
                 )
+                try {
+                    initializeMihonInjekt(loader, extensionContext)
+                } catch (error: Throwable) {
+                    throw IllegalStateException(
+                        "Mihon Injekt initialization failed: ${error.sanitizedMessage()}",
+                        error,
+                    )
+                }
                 val limits = activation["limits"].stringMap("runtime limits")
                 val maxResponseBytes = limits.requireLong("maxResponseBytes")
                     .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
@@ -538,7 +575,8 @@ internal class MihonRuntimeDriver private constructor(
                         }
                     } catch (error: Throwable) {
                         throw IllegalStateException(
-                            "Mihon entry activation failed: $className: ${error.rootCause().sanitizedMessage()}",
+                            "Mihon entry activation failed: $className: " +
+                                error.mihonDiagnosticMessage(),
                             error,
                         )
                     }
@@ -661,17 +699,24 @@ internal fun mihonAbiAssetVersion(extensionLib: String): String = when (extensio
 internal val requiredMihonPluginAbiClasses: List<String> = listOf(
     "eu.kanade.tachiyomi.source.Source",
     "eu.kanade.tachiyomi.source.SourceFactory",
+    "eu.kanade.tachiyomi.source.online.HttpSource",
     "eu.kanade.tachiyomi.source.model.SManga",
     "eu.kanade.tachiyomi.source.model.SChapter",
     "eu.kanade.tachiyomi.source.model.Page",
+    "eu.kanade.tachiyomi.network.NetworkHelper",
+    "eu.kanade.tachiyomi.network.RequestsKt",
+    "eu.kanade.tachiyomi.network.OkHttpExtensionsKt",
+    "uy.kohesive.injekt.InjektKt",
+    "uy.kohesive.injekt.api.TypeReference",
 )
 
 internal val requiredMihonCommonRuntimeClasses: List<String> = listOf(
     "androidx.preference.Preference",
-    "uy.kohesive.injekt.InjektKt",
+    "kotlin.jvm.internal.Intrinsics",
     "okhttp3.OkHttpClient",
     "okio.Buffer",
     "rx.Observable",
+    "rx.android.schedulers.AndroidSchedulers",
     "kotlinx.coroutines.CoroutineScope",
     "org.jsoup.Jsoup",
     "com.google.gson.Gson",
@@ -698,8 +743,74 @@ private fun verifyMihonPluginAbi(classLoader: ClassLoader) {
     }
 }
 
-internal fun isMihonChildFirstClass(name: String): Boolean =
-    name.startsWith("eu.kanade.tachiyomi.")
+private fun initializeMihonInjekt(
+    classLoader: ClassLoader,
+    context: Context,
+) {
+    runCatching { classLoader.loadClass("dev.mihon.injekt.InjektKt") }
+        .getOrNull()
+        ?.getMethod("patchInjekt")
+        ?.invoke(null)
+
+    val application = MihonPayloadApplication(context)
+    val networkType = classLoader.loadClass("eu.kanade.tachiyomi.network.NetworkHelper")
+    val network = networkType.getConstructor(Context::class.java).newInstance(application)
+    val scope = classLoader.loadClass("uy.kohesive.injekt.InjektKt")
+        .getMethod("getInjekt")
+        .invoke(null)
+    val typeReferenceType = classLoader.loadClass("uy.kohesive.injekt.api.TypeReference")
+    mihonInjektSingletons(application, networkType, network).forEach { (type, value) ->
+        val typeReference = Proxy.newProxyInstance(
+            classLoader,
+            arrayOf(typeReferenceType),
+        ) { proxy, method, arguments ->
+            when (method.name) {
+                "getType" -> type
+                "toString" -> "ZicMihonTypeReference(${type.name})"
+                "hashCode" -> System.identityHashCode(proxy)
+                "equals" -> arguments?.firstOrNull() === proxy
+                else -> error("Unsupported Mihon Injekt TypeReference method: ${method.name}")
+            }
+        }
+        scope.javaClass.methods.first {
+            it.name == "addSingleton" && it.parameterCount == 2
+        }.invoke(scope, typeReference, value)
+    }
+}
+
+private class MihonPayloadApplication(base: Context) : Application() {
+    init {
+        attachBaseContext(base)
+    }
+}
+
+internal fun mihonInjektSingletons(
+    application: Application,
+    networkType: Class<*>,
+    network: Any,
+): List<Pair<Class<*>, Any>> = listOf(
+    Application::class.java to application,
+    networkType to network,
+)
+
+internal fun isMihonParentFirstClass(name: String): Boolean {
+    if (name.startsWith("eu.kanade.tachiyomi.extension.")) return false
+    return name.startsWith("java.") ||
+        name.startsWith("javax.") ||
+        name.startsWith("android.") ||
+        name.startsWith("androidx.") ||
+        name.startsWith("kotlin.") ||
+        name.startsWith("kotlinx.") ||
+        name.startsWith("okhttp3.") ||
+        name.startsWith("okio.") ||
+        name.startsWith("rx.") ||
+        name.startsWith("org.jsoup.") ||
+        name.startsWith("org.json.") ||
+        name.startsWith("com.google.gson.") ||
+        name.startsWith("eu.kanade.tachiyomi.") ||
+        name.startsWith("uy.kohesive.injekt.") ||
+        name.startsWith("dev.mihon.injekt.")
+}
 
 private class MihonExtensionClassLoader(
     dexPath: String,
@@ -713,9 +824,13 @@ private class MihonExtensionClassLoader(
     parent,
 ) {
     override fun loadClass(name: String, resolve: Boolean): Class<*> {
-        if (!isMihonChildFirstClass(name)) return super.loadClass(name, resolve)
-        synchronized(getClassLoadingLock(name)) {
-            val loaded = findLoadedClass(name) ?: findClass(name)
+        if (isMihonParentFirstClass(name)) return super.loadClass(name, resolve)
+        synchronized(this) {
+            val loaded = findLoadedClass(name) ?: runCatching { findClass(name) }
+                .getOrElse { error ->
+                    if (error !is ClassNotFoundException) throw error
+                    super.loadClass(name, false)
+                }
             if (resolve) resolveClass(loaded)
             return loaded
         }
@@ -794,6 +909,29 @@ private fun Any.invokeCompatible(name: String, args: List<Any?>): Any? {
     } else {
         method.invoke(this, *args.toTypedArray())
     }
+}
+
+private fun Any.invokeHierarchyCompatible(name: String, args: List<Any?>): Any? {
+    var current: Class<*>? = javaClass
+    while (current != null) {
+        val method = current.declaredMethods.firstOrNull {
+            it.name == name &&
+                (it.parameterCount == args.size ||
+                    (it.parameterCount == args.size + 1 &&
+                        Continuation::class.java.isAssignableFrom(it.parameterTypes.last()))) &&
+                it.accepts(args)
+        }
+        if (method != null) {
+            method.isAccessible = true
+            return if (method.parameterCount == args.size + 1) {
+                invokeSuspend(this, method, args)
+            } else {
+                method.invoke(this, *args.toTypedArray())
+            }
+        }
+        current = current.superclass
+    }
+    throw NoSuchMethodException("${javaClass.name}.$name/${args.size}")
 }
 
 private fun Method.accepts(args: List<Any?>): Boolean {
@@ -883,6 +1021,21 @@ private fun Any.readLong(vararg names: String): Long? = when (val value = readVa
     else -> value?.toString()?.toLongOrNull()
 }
 private fun Any.readBoolean(vararg names: String): Boolean? = readValue(*names) as? Boolean
+
+private fun Any?.stringHeaders(): Map<String, String> {
+    if (this == null) return emptyMap()
+    val names = invokeOptional("names") as? Set<*> ?: return emptyMap()
+    return names.filterIsInstance<String>().mapNotNull { name ->
+        (invokeOptional("get", name) as? String)?.let { name to it }
+    }.toMap(LinkedHashMap())
+}
+
+private fun JSONObject?.stringMap(): Map<String, String> {
+    if (this == null) return emptyMap()
+    val result = LinkedHashMap<String, String>()
+    keys().forEach { key -> optString(key).takeIf { it.isNotEmpty() }?.let { result[key] = it } }
+    return result
+}
 
 private fun Any.invokeOptional(name: String, vararg args: Any?): Any? =
     runCatching { invokeCompatible(name, args.toList()) }.getOrNull()
@@ -1178,6 +1331,32 @@ private fun Throwable.rootCause(): Throwable {
     var current = this
     while (current.cause != null && current.cause !== current) current = current.cause!!
     return current
+}
+
+private fun Throwable.mihonDiagnosticMessage(): String {
+    val parts = mutableListOf<String>()
+    var current: Throwable? = this
+    val visited = java.util.Collections.newSetFromMap(
+        java.util.IdentityHashMap<Throwable, Boolean>(),
+    )
+    while (current != null && visited.add(current) && parts.size < 4) {
+        val message = current.message?.takeIf(String::isNotBlank)
+        val part = if (message == null) {
+            current.javaClass.simpleName
+        } else {
+            "${current.javaClass.simpleName}: $message"
+        }
+        if (parts.lastOrNull() != part) parts += part
+        current = current.cause
+    }
+    val frame = generateSequence(this as Throwable?) { it.cause }
+        .flatMap { it.stackTrace.asSequence() }
+        .firstOrNull { it.className.startsWith("eu.kanade.tachiyomi.extension.") }
+    val location = frame?.let {
+        " at ${it.className}.${it.methodName}" +
+            if (it.lineNumber > 0) ":${it.lineNumber}" else ""
+    }.orEmpty()
+    return (parts.joinToString(" <- ") + location).take(600)
 }
 
 private fun Throwable.isNetworkFailure(): Boolean =

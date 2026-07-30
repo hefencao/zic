@@ -9,6 +9,8 @@ final class InstalledMihonExtension {
     required this.versionCode,
     required this.signerSha256,
     required this.extensionLib,
+    required this.extensionLibSource,
+    required this.declaredExtensionLib,
     required Iterable<String> entryClasses,
   }) : entryClasses = List<String>.unmodifiable(entryClasses);
 
@@ -18,6 +20,8 @@ final class InstalledMihonExtension {
   final int versionCode;
   final String signerSha256;
   final String extensionLib;
+  final String extensionLibSource;
+  final String? declaredExtensionLib;
   final List<String> entryClasses;
 }
 
@@ -113,6 +117,8 @@ InstalledMihonExtension _installedExtension(Object? raw) {
   final versionCode = value['versionCode'];
   final signerSha256 = value['signerSha256'];
   final extensionLib = value['extensionLib'];
+  final extensionLibSource = value['extensionLibSource'];
+  final declaredExtensionLib = value['declaredExtensionLib'];
   final rawEntryClasses = value['entryClasses'];
   if (packageName is! String ||
       packageName.trim().isEmpty ||
@@ -126,6 +132,11 @@ InstalledMihonExtension _installedExtension(Object? raw) {
       signerSha256.trim().isEmpty ||
       extensionLib is! String ||
       extensionLib.trim().isEmpty ||
+      extensionLibSource is! String ||
+      !const <String>{'manifest', 'versionName'}.contains(extensionLibSource) ||
+      (declaredExtensionLib != null &&
+          (declaredExtensionLib is! String ||
+              declaredExtensionLib.trim().isEmpty)) ||
       rawEntryClasses is! List<Object?>) {
     throw const FormatException('Installed Mihon extension response is invalid');
   }
@@ -143,6 +154,8 @@ InstalledMihonExtension _installedExtension(Object? raw) {
     versionCode: versionCode,
     signerSha256: signerSha256,
     extensionLib: extensionLib,
+    extensionLibSource: extensionLibSource,
+    declaredExtensionLib: declaredExtensionLib as String?,
     entryClasses: entryClasses,
   );
 }

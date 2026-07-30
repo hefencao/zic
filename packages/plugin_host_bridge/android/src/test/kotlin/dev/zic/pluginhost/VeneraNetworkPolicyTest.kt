@@ -1,6 +1,10 @@
 package dev.zic.pluginhost
 
+import java.net.ConnectException
 import java.net.InetAddress
+import java.net.SocketException
+import java.net.SocketTimeoutException
+import java.net.URL
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -43,6 +47,44 @@ class VeneraNetworkPolicyTest {
         assertEquals(
             setOf("1.1.1.1", "2606:4700:4700:0:0:0:0:1111"),
             parseVeneraDnsJson(payload.toString()).map { it.hostAddress }.toSet(),
+        )
+    }
+
+    @Test
+    fun retriesIdempotentConnectionFailuresThroughDnsFallback() {
+        val target = URL("https://e-hentai.org/")
+        assertTrue(
+            shouldRetryVeneraWithDnsFallback(
+                ConnectException("failed to connect to e-hentai.org/2001::1"),
+                target,
+                "GET",
+            ),
+        )
+        assertTrue(
+            shouldRetryVeneraWithDnsFallback(
+                SocketTimeoutException("connect timed out"),
+                target,
+                "HEAD",
+            ),
+        )
+        assertTrue(
+            shouldRetryVeneraWithDnsFallback(
+                SocketException("Connection reset"),
+                target,
+                "GET",
+            ),
+        )
+    }
+
+    @Test
+    fun doesNotReplayNonIdempotentRequestsAfterConnectionFailures() {
+        val target = URL("https://example.com/")
+        assertFalse(
+            shouldRetryVeneraWithDnsFallback(
+                SocketException("Connection reset"),
+                target,
+                "POST",
+            ),
         )
     }
 }

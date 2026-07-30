@@ -241,5 +241,15 @@ internal fun Map<String, Any?>.requireLong(key: String): Long = when (val value 
     else -> error("$key is missing")
 }
 
-internal fun Throwable.sanitizedMessage(): String =
-    message?.takeIf { it.isNotBlank() }?.take(300) ?: javaClass.simpleName
+internal fun Throwable.sanitizedMessage(): String {
+    var current = this
+    val visited = java.util.Collections.newSetFromMap(
+        java.util.IdentityHashMap<Throwable, Boolean>(),
+    )
+    while (visited.add(current)) {
+        current.message?.takeIf { it.isNotBlank() }?.let { return it.take(300) }
+        val next = current.cause?.takeUnless { it === current } ?: break
+        current = next
+    }
+    return current.javaClass.simpleName.take(300)
+}

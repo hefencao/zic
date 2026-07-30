@@ -49,8 +49,13 @@ def validate_contract(gradle: str, rules: str) -> None:
         'uy.kohesive.injekt:injekt-core:',
         'uy.kohesive.injekt:injekt-api:',
     )
+    parent_declarations = tuple(
+        line.strip()
+        for line in gradle.splitlines()
+        if line.strip().startswith(('api ', 'implementation ', 'runtimeOnly '))
+    )
     for coordinate in forbidden:
-        if coordinate in gradle:
+        if any(coordinate in line for line in parent_declarations):
             raise DependencyContractError(f'duplicate host provider is declared: {coordinate}')
 
     required = (
@@ -62,13 +67,21 @@ def validate_contract(gradle: str, rules: str) -> None:
     for value in required:
         if gradle.count(value) != 1:
             raise DependencyContractError(f'expected exactly one declaration of {value}')
+    for value in (
+        'mihonRuntime14Sources',
+        'mihonRuntime16Sources',
+        'mihonRuntimeCommonSources',
+        'entry.name in overrides',
+        'still contains a throwing compile stub',
+    ):
+        if value not in gradle:
+            raise DependencyContractError(f'functional Mihon ABI generation is missing: {value}')
 
     for absent in ('eu.kanade.tachiyomi.**',):
         if absent in rules:
             raise DependencyContractError(f'isolated ABI namespace must not be retained in parent: {absent}')
     for namespace in (
         'androidx.preference.**',
-        'uy.kohesive.injekt.**',
         'okhttp3.**',
         'kotlinx.coroutines.**',
         'kotlinx.serialization.**',

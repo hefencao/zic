@@ -230,8 +230,12 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             "APK application metadata is missing"
         }
         val metadata = applicationInfo.metaData
+        val declaredExtensionLib = metadataValue(metadata, EXTENSION_LIB_KEYS)
+            ?.toString()
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
         val extensionLib = normalizeMihonExtensionLib(
-            metadataValue(metadata, EXTENSION_LIB_KEYS),
+            declaredExtensionLib,
             info.versionName,
         )
             ?: throw IllegalArgumentException("Mihon extension ABI metadata is missing")
@@ -258,14 +262,19 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         require(entryClasses.isNotEmpty()) { "Mihon extension entry metadata is empty" }
         val signer = signingCertificates(info).singleOrNull()
             ?: throw IllegalArgumentException("APK must have exactly one current signer")
-        return mapOf(
-            "packageName" to info.packageName,
-            "signerSha256" to sha256(signer.toByteArray()),
-            "versionCode" to versionCode(info),
-            "apkPath" to apkPath,
-            "extensionLib" to extensionLib,
-            "entryClasses" to entryClasses,
-        )
+        return buildMap {
+            put("packageName", info.packageName)
+            put("signerSha256", sha256(signer.toByteArray()))
+            put("versionCode", versionCode(info))
+            put("apkPath", apkPath)
+            put("extensionLib", extensionLib)
+            put(
+                "extensionLibSource",
+                if (declaredExtensionLib == null) "versionName" else "manifest",
+            )
+            declaredExtensionLib?.let { put("declaredExtensionLib", it) }
+            put("entryClasses", entryClasses)
+        }
     }
 
     @Suppress("DEPRECATION")
