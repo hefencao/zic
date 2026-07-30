@@ -458,6 +458,7 @@ internal class MihonRuntimeDriver private constructor(
         ): MihonRuntimeDriver {
             val payload = File(payloadPath)
             verifyPayload(payload, payloadLength, payloadSha256)
+            verifyMihonHostAbi(context.classLoader)
             val pluginId = activation.requireString("pluginId")
             val version = activation.requireString("pluginVersion")
             val runtimeRoot = mihonRuntimeRoot(
@@ -530,6 +531,28 @@ internal class MihonRuntimeDriver private constructor(
                 throw error
             }
         }
+    }
+}
+
+internal val requiredMihonHostAbiClasses: List<String> = listOf(
+    "eu.kanade.tachiyomi.source.Source",
+    "eu.kanade.tachiyomi.source.SourceFactory",
+    "eu.kanade.tachiyomi.source.model.SManga",
+    "eu.kanade.tachiyomi.source.model.SChapter",
+    "eu.kanade.tachiyomi.source.model.Page",
+    "androidx.preference.Preference",
+    "uy.kohesive.injekt.InjektKt",
+)
+
+internal fun missingMihonHostAbiClasses(classLoader: ClassLoader): List<String> =
+    requiredMihonHostAbiClasses.filter { className ->
+        runCatching { classLoader.loadClass(className) }.isFailure
+    }
+
+private fun verifyMihonHostAbi(classLoader: ClassLoader) {
+    val missing = missingMihonHostAbiClasses(classLoader)
+    require(missing.isEmpty()) {
+        "Mihon host ABI is incomplete: ${missing.joinToString()}"
     }
 }
 

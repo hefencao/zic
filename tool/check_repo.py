@@ -1412,6 +1412,12 @@ def check_compile_regressions() -> None:
     ):
         if required not in configure_text:
             fail(f'Android host configuration is incomplete: {required}')
+    dependency_contract_check = ROOT / 'tool/check_android_runtime_dependencies.py'
+    dependency_contract_test = ROOT / 'tool/test_android_runtime_dependencies.py'
+    if not (
+        dependency_contract_check.is_file() and dependency_contract_test.is_file()
+    ):
+        fail('Android external-runtime dependency closure regressions are missing')
     plugin_host_android = (
         ROOT / 'packages/plugin_host_bridge/android/build.gradle'
     ).read_text(encoding='utf-8')
@@ -1426,6 +1432,29 @@ def check_compile_regressions() -> None:
     ):
         if dependency not in plugin_host_android:
             fail(f'plugin host Mihon runtime dependency is missing: {dependency}')
+    if 'transitive = false' not in plugin_host_android:
+        fail('Mihon extensions-lib must not import its legacy transitive host graph')
+    for duplicate_provider in (
+        'androidx.preference:preference:',
+        'androidx.preference:preference-ktx:',
+        'uy.kohesive.injekt:injekt-core:',
+        'uy.kohesive.injekt:injekt-api:',
+    ):
+        if duplicate_provider in plugin_host_android:
+            fail(f'plugin host declares a duplicate Mihon ABI provider: {duplicate_provider}')
+    if 'consumerProguardFiles "consumer-rules.pro"' not in plugin_host_android:
+        fail('plugin host does not publish dynamic Mihon ABI shrinker rules')
+    plugin_host_rules = (
+        ROOT / 'packages/plugin_host_bridge/android/consumer-rules.pro'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'eu.kanade.tachiyomi.**',
+        'androidx.preference.**',
+        'uy.kohesive.injekt.**',
+        'okhttp3.**',
+    ):
+        if required not in plugin_host_rules:
+            fail(f'plugin host dynamic ABI shrinker rule is missing: {required}')
 
     external_plugin_controller = (
         ROOT / 'packages/plugin_host_bridge/lib/src/external_plugin_controller.dart'
@@ -1457,9 +1486,19 @@ def check_compile_regressions() -> None:
         'cleanupStaleMihonRuntimeRoots',
         'finalizeCloseIfIdle()',
         'if (!completions.containsKey(requestId)) return',
+        'verifyMihonHostAbi(context.classLoader)',
+        'requiredMihonHostAbiClasses',
+        'missingMihonHostAbiClasses',
     ):
         if required not in mihon_runtime:
             fail(f'Mihon runtime workspace lifecycle is incomplete: {required}')
+    mihon_host_abi_test = (
+        ROOT
+        / 'packages/plugin_host_bridge/android/src/test/kotlin/dev/zic/pluginhost/MihonHostAbiTest.kt'
+    )
+    if not mihon_host_abi_test.is_file():
+        fail('Mihon host ABI preflight regression is missing')
+
     mihon_workspace_test = (
         ROOT
         / 'packages/plugin_host_bridge/android/src/test/kotlin/dev/zic/pluginhost/MihonRuntimeWorkspaceTest.kt'

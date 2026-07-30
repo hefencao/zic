@@ -8,6 +8,8 @@ if [[ "${1:-}" == "--require-toolchains" ]]; then
 fi
 
 python3 "$ROOT/tool/check_repo.py"
+python3 "$ROOT/tool/check_android_runtime_dependencies.py"
+python3 "$ROOT/tool/test_android_runtime_dependencies.py"
 "$ROOT/tool/check_native_header.sh"
 
 SOURCE_TOOLS=(git cmake ninja)

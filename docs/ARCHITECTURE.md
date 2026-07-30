@@ -913,6 +913,7 @@ Sessions remain charged to the process limit until their driver really closes. I
 Concrete APK class loading and JavaScript evaluation remain separate isolated backend implementations inside
 the dedicated process. Mihon uses a verified private APK copy and Venera uses a restricted UI-less WebView. Both
 reuse the exact inspected payload and cannot bypass trust, capability, resource-limit or session teardown gates.
+Mihon host dependencies use one provider per binary namespace. The pinned `extensions-lib` AAR is loaded into the App only as a non-transitive ABI artifact; the current Keiyoushi common bundle supplies Injekt, coroutines, serialization, networking and parser libraries. Because dynamically loaded APK bytecode is absent from R8's static graph, the bridge publishes consumer keep rules for the host ABI and common runtime. Activation checks the core Source/model, Preference and Injekt classes before constructing the extension class loader and fails explicitly when the release package is incomplete.
 
 ## 3.12 Generated host network capability
 
@@ -1093,5 +1094,6 @@ The main-process Binder client separately assigns a binding generation to each e
 Large response packets carry an exact byte length and SHA-256 in the Binder envelope. The host accepts only canonical `.packet` files below the dedicated app-private root, verifies length and digest during the single file-to-platform-buffer read, and deletes the file on success or validation failure. Inline response envelopes use the same digest contract.
 
 Generated Flutter Android hosts must add canonical JitPack to the repository owner that resolves App runtime classpaths. `tool/configure_platforms.py` patches centralized `dependencyResolutionManagement.repositories` when present, otherwise the generated root `allprojects.repositories`; a plugin-local repository declaration is not treated as sufficient for `:app:*RuntimeClasspath`.
+Repository visibility does not authorize duplicate providers. `extensions-lib` legacy transitive metadata is disabled, AndroidX Preference is not declared a second time, and the current null2264 Injekt fork is the only Injekt runtime. The repository gate checks this topology before toolchain work; Android's own duplicate-class task remains enabled as the final artifact-level verifier.
 
 Persistent external-plugin restoration is path-confined. A manifest record is eligible only when its payload is a regular non-link file, has the ecosystem suffix, and resolves below the controller-owned `external_plugins` root. Mihon runtime extraction then uses a workspace keyed by plugin, version and activation `driverId`; activation failure or drained close removes that workspace, while dedicated-Service startup removes roots left by process death.

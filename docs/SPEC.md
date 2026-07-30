@@ -703,3 +703,4 @@ failure, not permission to run unrestricted code. Both ecosystems use the same v
 and only the host adapter may turn runtime descriptors/results into zic `BrowsableComicSource` and domain values.
 Timeout does not imply backend cancellation or release of an in-flight permit; teardown must signal the isolated
 connection and drain the actual operation lifecycle.
+Mihon Android packaging must expose each host ABI namespace from exactly one artifact. `extensions-lib` is non-transitive, old Kohesive Injekt and a second AndroidX Preference dependency are forbidden, and release shrinking must retain dynamically referenced host classes. Activation must report an incomplete host ABI before loading extension entry classes.
