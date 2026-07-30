@@ -21,7 +21,7 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.55）
+## 当前应用主线（0.31.0-dev.56）
 
 - 目标重建回归必须先证明 decode target 实际变化；仅改变容器尺寸但 raster target 不变时，不得把“不重建 codec”判定为产品错误。
 - Mihon/Venera activation wire 必须在隔离进程入口再次严格解析；process-side driver 不得直接信任 host 进程中的对象或未声明字段。
@@ -42,6 +42,8 @@
 - 生成 Android host 的依赖仓库配置属于 App runtime classpath 所有者：优先 `dependencyResolutionManagement.repositories`，否则 `allprojects.repositories`。插件子工程局部 repository 不能被当作 App 解析闭环；canonical JitPack 配置必须幂等并兼容 Groovy/Kotlin DSL。
 - Mihon `extensions-lib` 只提供动态扩展所需 ABI，必须以 `transitive = false` 接入；其旧 POM 依赖不得与当前 Keiyoushi common bundle 并存。AndroidX Preference 与 Injekt 各自只能有一个宿主提供者，禁止通过关闭 duplicate-class 检查或 packaging pickFirst 绕过。
 - 动态加载 APK 对宿主类的引用对 R8 不可见。plugin bridge 必须向 App 发布 consumer keep 规则，并在 activation 前预检核心 Source/模型、Preference 与 Injekt ABI；缺失必须明确失败，禁止延迟为空目录或模糊反射错误。
+- Mihon 扩展实例化必须使用已验证 process-private APK 的 payload Context，而不是 ZIC 应用 Context。包名、资源/assets、class loader、LayoutInflater、偏好与文件目录必须指向扩展隔离域；入口需兼容 Kotlin object、静态工厂、Context 和无参构造，并把入口类名与根因跨进程保留到 activation 诊断。
+- Venera browse 适配必须归一化当前 `explore` loader 容器和 `category.parts[].itemType/categories/categoryParams`，同时保留旧 `target.attributes`。网络桥只能协商实际可解码的 content encoding；公共域名被系统 DNS 映射到非公共地址时，回退只能接受 DoH 返回的 A/AAAA 公网地址并保持原 hostname TLS，禁止访问回环/私网或把 CNAME 当作地址解析。
 - 持久插件 manifest 只能恢复 `external_plugins` 私有根下的普通、非链接、格式后缀匹配 payload。Mihon extraction workspace 必须按 activation `driverId` 隔离，关闭时在真实任务排空后才释放 source 和删除目录，Service 启动负责清理进程死亡遗留目录。
 - Mihon/Venera driver 必须复用现有 worker、protocol-v1、session/cancel/limit 所有权。新增生态 API 时只扩展隔离 adapter，不复制 catalog/domain 映射，也不得绕过 payload pin、签名/ABI/source-key 或用户信任。
 

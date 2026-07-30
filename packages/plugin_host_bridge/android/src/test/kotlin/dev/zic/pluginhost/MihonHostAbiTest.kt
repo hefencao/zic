@@ -29,7 +29,9 @@ class MihonHostAbiTest {
         assertEquals("1.6", normalizeMihonExtensionLib(null, "1.6.4"))
         assertEquals("1.6", normalizeMihonExtensionLib("", "1.6.4"))
         assertEquals("1.6", normalizeMihonExtensionLib("1.6", "9.9.9"))
+        assertEquals("1.6", normalizeMihonExtensionLib("1.6.0", "9.9.9"))
         assertEquals("16", normalizeMihonExtensionLib(16, "9.9.9"))
         assertEquals(null, normalizeMihonExtensionLib(null, "invalid"))
+        assertEquals(setOf("1.4", "1.5", "1.6"), supportedMihonExtensionLibs)
     }
 }

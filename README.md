@@ -18,7 +18,7 @@ decode/upload registry、frame holder、viewport 播放门控、帧字节预算�
 `0.31.0-dev.52` 进一步关闭真实 service-death 和大响应完整性边界：每次显式绑定拥有独立 generation，并通过 Binder death recipient 观察进程死亡；旧回调不能拆除后来建立的连接，绑定阶段超时也不会永久阻塞下一次显式 activation。packet 文件现在携带 SHA-256，host 在一次读取中同时验证 canonical root、长度和摘要，消费或校验失败后均删除文件。Home trace 与媒体/Reader 所有权保持不变。
 `0.31.0-dev.53` 在该边界内接通真实 Mihon/Venera 运行时和漫画源管理入口：Mihon 从已验证 APK 副本发现并调用 1.6/旧版 Source API，并解析当前仓库 `extensionList.extensions` v2 索引；Venera 在受限 WebView 中实现 1.6 网络、Cookie、存储、转换、HTML、数组/对象/`Map` 数据形态与图像处理桥。安装、信任、更新、回滚、移除和重启恢复统一由 plugin host 管理，外部源仍只以普通 `BrowsableComicSource` 进入现有缓存、下载与 Reader 管线。
 `0.31.0-dev.54` 修复外部插件 manifest 恢复的 Dart 编译阻断，并把 JitPack 配置提升到真正解析 App runtime classpath 的生成宿主仓库所有者；Groovy/Kotlin DSL 与旧 `www.jitpack.io` 地址均被幂等归一化。Mihon extraction 改为 activation 独立 workspace，请求关闭在真实任务排空后再释放 source 和代码缓存，专用 Service 启动时清理上次进程死亡遗留目录。
-`0.31.0-dev.55` 收敛 Mihon Android release 依赖图：`extensions-lib` 仅作为非传递 ABI AAR，当前 Keiyoushi common bundle 是唯一运行库来源，不再同时打包旧 Kohesive Injekt 或第二份 AndroidX Preference。动态插件 ABI 通过 consumer R8 规则保留，并在 activation 前完成核心宿主类预检。
+`0.31.0-dev.56` 在 dev.55 单一 Mihon ABI 基础上补齐真实运行环境：APK 使用 payload 专属 Context/资源/隔离存储并兼容 object、工厂和构造器入口；Venera 归一化当前 explore/category 契约、压缩协商，并对公共域名被异常解析到回环地址提供受限且保持 TLS hostname 的 DNS 回退。
 
 ```text
 ReaderView

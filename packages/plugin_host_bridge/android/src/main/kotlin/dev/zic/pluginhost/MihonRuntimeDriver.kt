@@ -1,6 +1,12 @@
 package dev.zic.pluginhost
 
 import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import android.content.res.AssetManager
+import android.content.res.Resources
+import android.view.LayoutInflater
 import android.os.Build
 import android.os.Looper
 import dalvik.system.DexClassLoader
@@ -461,6 +467,10 @@ internal class MihonRuntimeDriver private constructor(
             verifyMihonHostAbi(context.classLoader)
             val pluginId = activation.requireString("pluginId")
             val version = activation.requireString("pluginVersion")
+            val extensionLib = activation.requireString("extensionLib")
+            require(extensionLib in supportedMihonExtensionLibs) {
+                "Unsupported Mihon extension ABI: $extensionLib"
+            }
             val runtimeRoot = mihonRuntimeRoot(
                 codeCacheDir = context.codeCacheDir,
                 pluginId = pluginId,
@@ -484,6 +494,13 @@ internal class MihonRuntimeDriver private constructor(
                     nativeDir?.path,
                     context.classLoader,
                 )
+                val extensionContext = createMihonPayloadContext(
+                    base = context,
+                    apk = apk,
+                    loader = loader,
+                    expectedPackageName = activation.requireString("packageName"),
+                    runtimeRoot = runtimeRoot,
+                )
                 val limits = activation["limits"].stringMap("runtime limits")
                 val maxResponseBytes = limits.requireLong("maxResponseBytes")
                     .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
@@ -491,16 +508,28 @@ internal class MihonRuntimeDriver private constructor(
                 require(entries.isNotEmpty()) { "Mihon extension declares no entry classes" }
                 val discovered = LinkedHashMap<String, Any>()
                 entries.forEach { className ->
-                    val entry = instantiate(loader.loadClass(className), context)
-                    val candidates = when {
-                        entry.hasMethod("createSources", 0) ->
-                            entry.invokeCompatible("createSources", emptyList()).asObjectList()
-                        else -> listOf(entry)
-                    }
-                    candidates.forEach { source ->
-                        val id = source.readValue("id", "getId")?.toString()
-                            ?: error("Mihon source id is missing")
-                        discovered[id] = source
+                    try {
+                        val entry = instantiateMihonEntry(loader.loadClass(className), extensionContext)
+                        val candidates = when {
+                            entry.hasMethod("createSources", 0) ->
+                                entry.invokeCompatible("createSources", emptyList()).asObjectList()
+                            else -> listOf(entry)
+                        }
+                        require(candidates.isNotEmpty()) {
+                            "Mihon entry exposed no sources"
+                        }
+                        candidates.forEach { source ->
+                            val id = source.readValue("id", "getId")?.toString()
+                                ?: error("Mihon source id is missing")
+                            require(discovered.putIfAbsent(id, source) == null) {
+                                "Mihon extension exposed duplicate source id: $id"
+                            }
+                        }
+                    } catch (error: Throwable) {
+                        throw IllegalStateException(
+                            "Mihon entry activation failed: $className: ${error.rootCause().sanitizedMessage()}",
+                            error,
+                        )
                     }
                 }
                 require(discovered.isNotEmpty()) { "Mihon extension exposed no Source entries" }
@@ -533,6 +562,82 @@ internal class MihonRuntimeDriver private constructor(
         }
     }
 }
+
+
+@Suppress("DEPRECATION")
+private fun createMihonPayloadContext(
+    base: Context,
+    apk: File,
+    loader: ClassLoader,
+    expectedPackageName: String,
+    runtimeRoot: File,
+): Context {
+    val packageInfo = base.packageManager.getPackageArchiveInfo(
+        apk.path,
+        PackageManager.GET_META_DATA,
+    ) ?: error("PackageManager rejected Mihon runtime APK")
+    require(packageInfo.packageName == expectedPackageName) {
+        "Mihon runtime package changed: ${packageInfo.packageName}"
+    }
+    val applicationInfo = requireNotNull(packageInfo.applicationInfo) {
+        "Mihon runtime application metadata is missing"
+    }.apply {
+        sourceDir = apk.path
+        publicSourceDir = apk.path
+        nativeLibraryDir = File(runtimeRoot, "lib").path
+    }
+    val resources = base.packageManager.getResourcesForApplication(applicationInfo)
+    return MihonPayloadContext(
+        base = base,
+        payloadPackageName = expectedPackageName,
+        payloadApplicationInfo = applicationInfo,
+        payloadResources = resources,
+        payloadClassLoader = loader,
+        storageRoot = File(runtimeRoot, "context").apply { mkdirs() },
+    )
+}
+
+private class MihonPayloadContext(
+    base: Context,
+    private val payloadPackageName: String,
+    private val payloadApplicationInfo: ApplicationInfo,
+    private val payloadResources: Resources,
+    private val payloadClassLoader: ClassLoader,
+    private val storageRoot: File,
+) : ContextWrapper(base) {
+    private val isolatedName = safePath(payloadPackageName).take(24)
+    private val isolatedTheme: Resources.Theme by lazy {
+        payloadResources.newTheme().apply { runCatching { setTo(baseContext.theme) } }
+    }
+
+    override fun getApplicationContext(): Context = this
+    override fun getPackageName(): String = payloadPackageName
+    override fun getPackageCodePath(): String = payloadApplicationInfo.sourceDir
+    override fun getPackageResourcePath(): String = payloadApplicationInfo.publicSourceDir
+    override fun getApplicationInfo(): ApplicationInfo = payloadApplicationInfo
+    override fun createPackageContext(packageName: String, flags: Int): Context =
+        if (packageName == payloadPackageName) this else super.createPackageContext(packageName, flags)
+    override fun getClassLoader(): ClassLoader = payloadClassLoader
+    override fun getResources(): Resources = payloadResources
+    override fun getAssets(): AssetManager = payloadResources.assets
+    override fun getTheme(): Resources.Theme = isolatedTheme
+    override fun getFilesDir(): File = File(storageRoot, "files").apply { mkdirs() }
+    override fun getCacheDir(): File = File(storageRoot, "cache").apply { mkdirs() }
+    override fun getCodeCacheDir(): File = File(storageRoot, "code-cache").apply { mkdirs() }
+    override fun getNoBackupFilesDir(): File = File(storageRoot, "no-backup").apply { mkdirs() }
+
+    override fun getSharedPreferences(name: String, mode: Int) =
+        baseContext.getSharedPreferences("zic_mihon_${isolatedName}_$name", mode)
+
+    override fun getSystemService(name: String): Any? =
+        if (name == LAYOUT_INFLATER_SERVICE) {
+            (baseContext.getSystemService(name) as? LayoutInflater)?.cloneInContext(this)
+        } else {
+            baseContext.getSystemService(name)
+        }
+}
+
+internal val supportedMihonExtensionLibs: Set<String> = setOf("1.4", "1.5", "1.6")
 
 internal val requiredMihonHostAbiClasses: List<String> = listOf(
     "eu.kanade.tachiyomi.source.Source",
@@ -683,18 +788,49 @@ private fun Any.invokeOptional(name: String, vararg args: Any?): Any? =
 private fun Any.hasMethod(name: String, parameters: Int): Boolean =
     javaClass.methods.any { it.name == name && it.parameterCount == parameters }
 
-private fun instantiate(type: Class<*>, context: Context): Any {
+internal fun instantiateMihonEntry(type: Class<*>, context: Context): Any {
     require(!type.isInterface && !Modifier.isAbstract(type.modifiers)) {
         "Mihon entry class is not concrete: ${type.name}"
     }
+    runCatching { type.getField("INSTANCE") }.getOrNull()?.let { field ->
+        if (Modifier.isStatic(field.modifiers) && type.isAssignableFrom(field.type)) {
+            return field.get(null) ?: error("Mihon Kotlin object INSTANCE is null: ${type.name}")
+        }
+    }
+    val factories = type.methods.filter { method ->
+        Modifier.isStatic(method.modifiers) &&
+            method.name in setOf("create", "newInstance", "getInstance") &&
+            type.isAssignableFrom(method.returnType)
+    }
+    factories.firstOrNull { method ->
+        method.parameterCount == 1 &&
+            method.parameterTypes[0].isAssignableFrom(context.javaClass)
+    }?.let { method ->
+        method.isAccessible = true
+        return method.invoke(null, context)
+            ?: error("Mihon entry factory returned null: ${type.name}.${method.name}")
+    }
+    factories.firstOrNull { it.parameterCount == 0 }?.let { method ->
+        method.isAccessible = true
+        return method.invoke(null)
+            ?: error("Mihon entry factory returned null: ${type.name}.${method.name}")
+    }
     type.declaredConstructors.firstOrNull { constructor ->
         constructor.parameterCount == 1 &&
-            Context::class.java.isAssignableFrom(constructor.parameterTypes[0])
+            constructor.parameterTypes[0].isAssignableFrom(context.javaClass)
     }?.let { constructor ->
         constructor.isAccessible = true
         return constructor.newInstance(context)
     }
-    val constructor = type.getDeclaredConstructor()
+    val constructor = runCatching { type.getDeclaredConstructor() }.getOrElse {
+        val signatures = type.declaredConstructors.joinToString { constructor ->
+            constructor.parameterTypes.joinToString(prefix = "(", postfix = ")") { it.name }
+        }
+        throw IllegalArgumentException(
+            "Mihon entry has no supported object, factory, Context or no-arg constructor: ${type.name} $signatures",
+            it,
+        )
+    }
     constructor.isAccessible = true
     return constructor.newInstance()
 }

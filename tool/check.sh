@@ -10,6 +10,17 @@ fi
 python3 "$ROOT/tool/check_repo.py"
 python3 "$ROOT/tool/check_android_runtime_dependencies.py"
 python3 "$ROOT/tool/test_android_runtime_dependencies.py"
+python3 "$ROOT/tool/test_venera_network_policy.py"
+python3 "$ROOT/tool/test_mihon_entry_instantiation.py"
+python3 "$ROOT/tool/test_mihon_payload_context.py"
+if command -v node >/dev/null 2>&1; then
+  python3 "$ROOT/tool/test_venera_bootstrap.py"
+elif [[ "$REQUIRE_TOOLCHAINS" -eq 1 ]]; then
+  echo "Node.js is required for the Venera bootstrap contract" >&2
+  exit 1
+else
+  echo "SKIP: Node.js is not installed for the Venera bootstrap contract"
+fi
 "$ROOT/tool/check_native_header.sh"
 
 SOURCE_TOOLS=(git cmake ninja)

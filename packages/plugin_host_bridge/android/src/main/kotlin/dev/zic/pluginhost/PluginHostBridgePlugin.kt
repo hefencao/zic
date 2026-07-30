@@ -384,7 +384,10 @@ internal fun normalizeMihonExtensionLib(
     versionName: String?,
 ): String? {
     val declared = metadataValue?.toString()?.trim()
-    if (!declared.isNullOrEmpty()) return declared
+    if (!declared.isNullOrEmpty()) {
+        val normalized = Regex("""^(\d+)\.(\d+)(?:\.|$)""").find(declared)
+        return normalized?.let { "${it.groupValues[1]}.${it.groupValues[2]}" } ?: declared
+    }
     val match = Regex("""^(\d+)\.(\d+)(?:\.|$)""").find(versionName.orEmpty())
         ?: return null
     return "${match.groupValues[1]}.${match.groupValues[2]}"

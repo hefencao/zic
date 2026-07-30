@@ -113,7 +113,10 @@ final class ExternalPluginActivationException implements Exception {
   final Object? cause;
 
   @override
-  String toString() =>
-      'ExternalPluginActivationException($pluginId, '
-      '${denials.map((value) => value.name).join(', ')})';
+  String toString() {
+    final reason = cause?.toString().trim();
+    return 'ExternalPluginActivationException($pluginId, '
+        '${denials.map((value) => value.name).join(', ')})'
+        '${reason == null || reason.isEmpty ? '' : ': $reason'}';
+  }
 }
