@@ -1,3 +1,13 @@
+## dev.67：Reader 控制所有权收口与组合解耦
+
+顶部控制栏不再拥有页面导航或布局选择。页面位置、跳页和 RTL 镜像由底部 Slider 与 Reader 手势统一承载；方向、纵向拼接和自适应只从全局/每漫画设置进入 Reader composition。`ReaderRuntimeScreen` 删除任意 action Widget 注入，本地文件 Reader 也不再直接调用 `ReaderController.requestPage`。
+
+顶部扩展从任意 Widget builder 窄化为 `pageSubtitleBuilder(PageAsset) -> String`。runtime 负责统一绘制章节标题和只读副标题，因此调用方不能再次放入页码、导航按钮、菜单或新的状态所有者。对应的本地文件页码、上一页、下一页、选页 key 与旧兼容别名已删除。
+
+`ReaderSessionSettings`、`AdaptiveReaderProfile` 和分类函数迁入 `reader_session_settings.dart`；`reader_runtime_screen.dart` 从 1600 余行降至 1500 行预算以内。仓库门禁同时拒绝 `ReaderAppBarActionsBuilder`、`appBarActionsBuilder`、旧标题 Widget builder 和顶部方向菜单重新出现。
+
+旧 Venera locator 刷新显式绑定 `RefreshableChapterComicSource`，不再依赖 Dart 对无继承关系接口的交叉类型提升。纵向导航只在目标连续页完成懒构建、进入视口并发布 observation 后 acknowledge；回归测试等待目标语义 identity，而不是固定 pump 次数。
+
 ## dev.66：Venera 代际刷新、实测拼接与控制命令恢复
 
 - Venera durable locator 恢复函数显式接收 source，修复 dev.65 所有新 locator 都会触发 `source is not defined` 的产品回归。

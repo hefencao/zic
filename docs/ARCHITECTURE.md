@@ -1155,3 +1155,17 @@ Within one runtime, resolved `onImageLoad` configurations are bounded and keyed 
 Continuous Reader geometry follows this order: source-declared dimensions, runtime-observed dimensions from the already-owned media payload, then a short conservative placeholder. Static PNG/JPEG/GIF/BMP/ICO dimensions are parsed from the same bytes used for decode; WebP uses the existing container parser. The implementation must not resolve a second ImageStream or crop content to hide geometry errors.
 
 Reader navigation commands are transactional with presentation readiness: after a direction/layout change, the target ScrollPosition must be attached and report content dimensions before jump and acknowledgement. A command that has not reached the target container remains pending rather than appearing successful.
+
+## Reader control ownership and narrow header projection (dev.67)
+
+Reader navigation has one Presentation command surface. Horizontal/RTL/continuous gestures and the bottom Slider issue `ReaderController.requestPage`; no source-specific screen or top-bar extension receives the controller. Layout direction, adaptive mode and stitch behavior enter through `ReaderSessionSettings` from global or per-comic preferences.
+
+```text
+Global/per-comic settings ----> ReaderSessionSettings ----> ReaderController.setDirection
+Reader gesture / bottom Slider ---------------------------> ReaderController.requestPage
+Top bar --------------------------------------------------> title/subtitle/progress only
+```
+
+`ReaderRuntimeScreen` no longer accepts arbitrary title or action Widgets. A caller may provide only `pageSubtitleBuilder(PageAsset) -> String`; runtime owns the title layout and semantics. This prevents local-media or future source adapters from recreating page counters, previous/next buttons, selection menus or alternate navigation state in the top bar.
+
+Session settings and adaptive classification live in `reader_session_settings.dart`, separate from runtime composition and control rendering. The runtime screen has a 1500-line repository budget. Vertical navigation acknowledgement is observation-backed: the command remains pending until the target lazy page has been laid out, the scroll position resolves to that page and the Reader observation is published.

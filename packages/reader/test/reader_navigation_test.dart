@@ -4,6 +4,18 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:reader/reader.dart';
 import 'package:telemetry/telemetry.dart';
 
+Future<void> _pumpUntilFound(
+  WidgetTester tester,
+  Finder finder, {
+  int maxFrames = 30,
+}) async {
+  for (var frame = 0; frame < maxFrames; frame++) {
+    await tester.pump();
+    if (finder.evaluate().isNotEmpty) return;
+  }
+  throw TestFailure('Timed out waiting for $finder');
+}
+
 void main() {
   testWidgets('controller page requests are consumed by ReaderView', (
     tester,
@@ -306,13 +318,12 @@ void main() {
         )
         .height;
     controller.requestPage(1);
-    await tester.pump();
-    await tester.pump();
+    final secondPage =
+        find.byKey(const ValueKey<String>('reader-vertical-page:1'));
+    await _pumpUntilFound(tester, secondPage);
     expect(
       tester
-          .getSize(
-            find.byKey(const ValueKey<String>('reader-vertical-page:1')),
-          )
+          .getSize(secondPage)
           .height,
       greaterThan(firstPageHeight),
     );
@@ -333,8 +344,10 @@ void main() {
     );
 
     controller.requestPage(2);
-    await tester.pump();
-    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.byKey(const ValueKey<String>('reader-vertical-page:2')),
+    );
     expect(controller.requestedIndex, isNull);
   });
 

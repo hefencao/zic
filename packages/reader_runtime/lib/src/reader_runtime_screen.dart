@@ -18,17 +18,19 @@ import 'package:transport/transport.dart';
 
 import 'asset_bundle_transport.dart';
 import 'media_load_token.dart';
+import 'reader_session_settings.dart';
 
 const readerTopControlsKey = ValueKey<String>('reader-top-controls');
 const readerBottomControlsKey = ValueKey<String>('reader-bottom-controls');
 const readerPageSliderKey = ValueKey<String>('reader-page-slider');
-const readerDirectionMenuKey = ValueKey<String>('reader-direction-menu');
 const readerPauseKey = ValueKey<String>('reader-pause');
 const readerSpeedKey = ValueKey<String>('reader-speed');
 const readerRotateKey = ValueKey<String>('reader-rotate');
 const readerFavoriteKey = ValueKey<String>('reader-favorite');
 const readerDownloadKey = ValueKey<String>('reader-download');
 const readerComicSettingsKey = ValueKey<String>('reader-comic-settings');
+const readerChapterTitleKey = ValueKey<String>('reader-chapter-title');
+const readerPageSubtitleKey = ValueKey<String>('reader-page-subtitle');
 const readerComicSettingsEnabledKey =
     ValueKey<String>('reader-comic-settings-enabled');
 const readerAdaptiveSettingsKey = ValueKey<String>('reader-adaptive-settings');
@@ -157,158 +159,13 @@ typedef ReaderArtifactPageBuilder = Widget? Function(
   VoidCallback reportFirstFrame,
   ReaderPageRuntime runtime,
 );
-typedef ReaderAppBarTitleBuilder = Widget Function(
-  BuildContext context,
-  ChapterManifest chapter,
-  int currentIndex,
-);
-typedef ReaderAppBarActionsBuilder = List<Widget> Function(
-  BuildContext context,
-  ReaderController controller,
-);
+typedef ReaderPageSubtitleBuilder = String Function(PageAsset asset);
 typedef ReaderProgressWriter = FutureOr<void> Function(
   ReadingProgress progress,
 );
 typedef ReaderSessionSettingsWriter = FutureOr<void> Function(
   ReaderSessionSettings settings,
 );
-
-@immutable
-final class ReaderSessionSettings {
-  const ReaderSessionSettings({
-    this.comicSpecificEnabled = false,
-    this.directionOverride,
-    this.verticalStitch = false,
-    this.fallbackVerticalStitch = false,
-    this.globalAdaptiveEnabled = false,
-    this.comicAdaptiveEnabled = true,
-  });
-
-  static const Object _unset = Object();
-
-  final bool comicSpecificEnabled;
-  final ReadingDirection? directionOverride;
-  final bool verticalStitch;
-  final bool fallbackVerticalStitch;
-  final bool globalAdaptiveEnabled;
-  final bool comicAdaptiveEnabled;
-
-  bool get effectiveVerticalStitch =>
-      comicSpecificEnabled ? verticalStitch : fallbackVerticalStitch;
-  bool get effectiveAdaptiveEnabled =>
-      globalAdaptiveEnabled && comicAdaptiveEnabled;
-
-  ReaderSessionSettings copyWith({
-    bool? comicSpecificEnabled,
-    Object? directionOverride = _unset,
-    bool? verticalStitch,
-    bool? fallbackVerticalStitch,
-    bool? globalAdaptiveEnabled,
-    bool? comicAdaptiveEnabled,
-  }) =>
-      ReaderSessionSettings(
-        comicSpecificEnabled:
-            comicSpecificEnabled ?? this.comicSpecificEnabled,
-        directionOverride: identical(directionOverride, _unset)
-            ? this.directionOverride
-            : directionOverride as ReadingDirection?,
-        verticalStitch: verticalStitch ?? this.verticalStitch,
-        fallbackVerticalStitch:
-            fallbackVerticalStitch ?? this.fallbackVerticalStitch,
-        globalAdaptiveEnabled:
-            globalAdaptiveEnabled ?? this.globalAdaptiveEnabled,
-        comicAdaptiveEnabled:
-            comicAdaptiveEnabled ?? this.comicAdaptiveEnabled,
-      );
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ReaderSessionSettings &&
-          comicSpecificEnabled == other.comicSpecificEnabled &&
-          directionOverride == other.directionOverride &&
-          verticalStitch == other.verticalStitch &&
-          fallbackVerticalStitch == other.fallbackVerticalStitch &&
-          globalAdaptiveEnabled == other.globalAdaptiveEnabled &&
-          comicAdaptiveEnabled == other.comicAdaptiveEnabled;
-
-  @override
-  int get hashCode => Object.hash(
-        comicSpecificEnabled,
-        directionOverride,
-        verticalStitch,
-        fallbackVerticalStitch,
-        globalAdaptiveEnabled,
-        comicAdaptiveEnabled,
-      );
-}
-
-@immutable
-final class AdaptiveReaderProfile {
-  const AdaptiveReaderProfile({
-    required this.direction,
-    required this.confidence,
-    required this.basis,
-    this.animated = false,
-  });
-
-  final ReadingDirection direction;
-  final double confidence;
-  final String basis;
-  final bool animated;
-}
-
-AdaptiveReaderProfile? classifyAdaptiveReaderLayout(ChapterManifest chapter) {
-  final pages = chapter.pages;
-  if (pages.isEmpty) return null;
-  final animated = pages.where((page) => page.animatedHint).length;
-  if (animated >= math.min(2, pages.length)) {
-    return AdaptiveReaderProfile(
-      direction: chapter.readingDirection == ReadingDirection.rtl
-          ? ReadingDirection.rtl
-          : ReadingDirection.ltr,
-      confidence: 1,
-      basis: 'animated-pages',
-      animated: true,
-    );
-  }
-  final ratios = <double>[
-    for (final page in pages)
-      if (page.width != null &&
-          page.height != null &&
-          page.width! > 0 &&
-          page.height! > 0)
-        page.height! / page.width!,
-  ];
-  if (ratios.length >= 2) {
-    final tall = ratios.where((ratio) => ratio >= 2.4).length;
-    final tallShare = tall / ratios.length;
-    if (tallShare >= 0.6) {
-      return AdaptiveReaderProfile(
-        direction: ReadingDirection.vertical,
-        confidence: (0.62 + tallShare * 0.36).clamp(0.0, 0.98).toDouble(),
-        basis: 'page-geometry',
-      );
-    }
-    if (tallShare <= 0.25) {
-      return AdaptiveReaderProfile(
-        direction: chapter.readingDirection == ReadingDirection.rtl
-            ? ReadingDirection.rtl
-            : ReadingDirection.ltr,
-        confidence: (0.78 + (1 - tallShare) * 0.18).clamp(0.0, 0.96).toDouble(),
-        basis: 'page-geometry',
-      );
-    }
-  }
-  if (chapter.readingDirection == ReadingDirection.vertical) {
-    return const AdaptiveReaderProfile(
-      direction: ReadingDirection.vertical,
-      confidence: 0.9,
-      basis: 'source-hint',
-    );
-  }
-  return null;
-}
 
 final class ReaderRuntimeScreen extends StatefulWidget {
   const ReaderRuntimeScreen({
@@ -317,8 +174,7 @@ final class ReaderRuntimeScreen extends StatefulWidget {
     this.mediaBytesLoader,
     this.artifactCache,
     this.loaderSources = const <Uri, LoaderTransportSource>{},
-    this.appBarTitleBuilder,
-    this.appBarActionsBuilder,
+    this.pageSubtitleBuilder,
     this.initialProgress,
     this.onProgressChanged,
     this.initialFavorite = false,
@@ -337,8 +193,7 @@ final class ReaderRuntimeScreen extends StatefulWidget {
   final ReaderArtifactBytesLoader? mediaBytesLoader;
   final ArtifactCacheStore? artifactCache;
   final Map<Uri, LoaderTransportSource> loaderSources;
-  final ReaderAppBarTitleBuilder? appBarTitleBuilder;
-  final ReaderAppBarActionsBuilder? appBarActionsBuilder;
+  final ReaderPageSubtitleBuilder? pageSubtitleBuilder;
   final ReadingProgress? initialProgress;
   final ReaderProgressWriter? onProgressChanged;
   final bool initialFavorite;
@@ -1271,7 +1126,9 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     BuildContext context,
     ReaderController reader,
   ) {
-    final titleBuilder = widget.appBarTitleBuilder;
+    final subtitle = widget.pageSubtitleBuilder?.call(
+      widget.chapter.pages[reader.currentIndex],
+    );
     return SafeArea(
       key: readerTopControlsKey,
       bottom: false,
@@ -1294,19 +1151,29 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                         icon: const Icon(Icons.arrow_back),
                       ),
                       Expanded(
-                        child: titleBuilder == null
-                            ? Text(
-                                widget.chapter.chapter.title,
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: <Widget>[
+                            Text(
+                              widget.chapter.chapter.title,
+                              key: readerChapterTitleKey,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            if (subtitle != null && subtitle.isNotEmpty)
+                              Text(
+                                subtitle,
+                                key: readerPageSubtitleKey,
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: Colors.white70,
+                                ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                              )
-                            : titleBuilder(
-                                context,
-                                widget.chapter,
-                                reader.currentIndex,
                               ),
+                          ],
+                        ),
                       ),
-                      ...?widget.appBarActionsBuilder?.call(context, reader),
                       if (widget.onSettingsChanged != null)
                         IconButton(
                           key: readerComicSettingsKey,
@@ -1314,28 +1181,6 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                           onPressed: () => unawaited(_editComicSettings()),
                           icon: const Icon(Icons.tune),
                         ),
-                      PopupMenuButton<ReadingDirection>(
-                        key: readerDirectionMenuKey,
-                        tooltip: '阅读方向',
-                        initialValue: reader.direction,
-                        onSelected: reader.setDirection,
-                        itemBuilder: (context) =>
-                            const <PopupMenuEntry<ReadingDirection>>[
-                          PopupMenuItem(
-                            value: ReadingDirection.ltr,
-                            child: Text('LTR'),
-                          ),
-                          PopupMenuItem(
-                            value: ReadingDirection.rtl,
-                            child: Text('RTL'),
-                          ),
-                          PopupMenuItem(
-                            value: ReadingDirection.vertical,
-                            child: Text('纵向'),
-                          ),
-                        ],
-                        icon: const Icon(Icons.swap_horiz),
-                      ),
                     ],
                   ),
                 ),

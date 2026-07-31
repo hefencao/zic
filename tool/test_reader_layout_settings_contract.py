@@ -13,6 +13,13 @@ def require(path: str, *needles: str) -> None:
         raise AssertionError(f"{path} missing reader layout contract tokens: {missing}")
 
 
+def reject(path: str, *needles: str) -> None:
+    text = (ROOT / path).read_text(encoding="utf-8")
+    present = [needle for needle in needles if needle in text]
+    if present:
+        raise AssertionError(f"{path} restored redundant Reader controls: {present}")
+
+
 def main() -> None:
     require(
         "packages/reader/lib/src/reader_view.dart",
@@ -31,9 +38,25 @@ def main() -> None:
         "readerComicSettingsKey",
         "TextDirection.rtl",
         "verticalStitch: _settings.effectiveVerticalStitch",
-        "readerDirectionMenuKey",
         "reportDimensions",
         "_reportPageDimensions",
+    )
+    reject(
+        "packages/reader_runtime/lib/src/reader_runtime_screen.dart",
+        "ReaderAppBarTitleBuilder",
+        "appBarTitleBuilder",
+        "ReaderAppBarActionsBuilder",
+        "appBarActionsBuilder",
+        "readerDirectionMenuKey",
+    )
+    reject(
+        "packages/local_media_ui/lib/src/local_media_screens.dart",
+        "imageFolderPreviousKey",
+        "imageFolderNextKey",
+        "imageFolderFileMenuKey",
+        "imageFolderPositionKey",
+        "imageFolderCurrentFileKey",
+        "imageFolderTitleKey",
     )
     require(
         "packages/local_media_ui/lib/src/local_image_player.dart",

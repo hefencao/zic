@@ -733,6 +733,15 @@ Mihon Android packaging must expose each host ABI namespace from exactly one art
 - 下载网络、供电和并发设置必须更新既有持久下载队列策略。
 - Debug trace 必须有界；设置页不得通过 trace 反向控制 Reader、pipeline、下载或缓存决策。 trace producer 在 Widget build 中记录时，观察通知必须帧后合并。
 - 每漫画设置按来源与漫画复合 identity 持久化，只可覆盖 Reader 方向、纵向拼接和自适应开关。自适应低置信度时必须回退来源/进度默认，不得直接生成预取、下载或解码命令。
+## dev.67 Reader control ownership requirements
+
+- The top Reader bar is informational and session-scoped: back, chapter title, optional plain-text page subtitle, transfer progress and per-comic settings only. It must not expose page counts, previous/next, page selection or layout switching.
+- Bottom Slider plus direct Reader gestures are the sole page-navigation surface. Global/per-comic settings are the sole layout-selection surface.
+- Reader callers may project a plain page subtitle but may not inject arbitrary title/action Widgets or receive `ReaderController` for UI navigation.
+- Local-media presentation must use the shared Reader navigation path and must not retain separate page index, previous/next or file-menu state.
+- Vertical page requests remain pending until the target lazy child is laid out, the target viewport position is observed and the controller observation is published.
+- Session settings/adaptive classification are model code and must not remain embedded in the runtime screen implementation.
+
 ## dev.66 resource and continuous-layout requirements
 
 - New Venera chapter pages must use reconstructable `venera-resource:<payload>` locators. Persisted generation-only `venera-resource://token` pages must be refreshed from the owning source before they enter Reader or download sessions.

@@ -228,15 +228,19 @@ final class _ReaderViewState extends State<ReaderView> {
 
   double get _effectiveGap => widget.verticalStitch ? 0 : _verticalPageGap;
 
-  double _verticalOffsetFor(int index) {
-    var offset = 0.0;
+  ({double start, double end}) _verticalBoundsFor(int index) {
+    var start = 0.0;
     final pages = widget.controller.chapter.pages;
     for (var i = 0; i < index; i++) {
-      offset += _verticalExtent(pages[i]);
-      offset += _effectiveGap;
+      start += _verticalExtent(pages[i]);
+      start += _effectiveGap;
     }
-    final extent = _verticalExtent(pages[index]);
-    return offset + extent / 2 - _viewport.height / 2;
+    return (start: start, end: start + _verticalExtent(pages[index]));
+  }
+
+  double _verticalOffsetFor(int index) {
+    final bounds = _verticalBoundsFor(index);
+    return (bounds.start + bounds.end) / 2 - _viewport.height / 2;
   }
 
   ({int index, double logicalPosition}) _verticalPosition(
@@ -290,12 +294,7 @@ final class _ReaderViewState extends State<ReaderView> {
       _verticalController.jumpTo(
         _verticalOffsetFor(requested).clamp(0.0, maxExtent).toDouble(),
       );
-      controller.acknowledgePageRequest(revision);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _verticalController.hasClients) {
-          _emitFromVerticalMetrics(_verticalController.position);
-        }
-      });
+      _completeVerticalPageRequest(revision, requested);
       return;
     }
     if (!_pageController.hasClients ||
@@ -316,6 +315,48 @@ final class _ReaderViewState extends State<ReaderView> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _commandScheduled = false;
       if (mounted) _handleControllerCommand();
+    });
+  }
+
+  void _completeVerticalPageRequest(int revision, int requested) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          widget.controller.direction != ReadingDirection.vertical ||
+          widget.controller.navigationRevision != revision ||
+          widget.controller.requestedIndex != requested) {
+        return;
+      }
+      if (!_verticalController.hasClients ||
+          !_verticalController.position.hasContentDimensions) {
+        _completeVerticalPageRequest(revision, requested);
+        return;
+      }
+      final position = _verticalController.position;
+      final bounds = _verticalBoundsFor(requested);
+      final viewportStart = position.pixels;
+      final viewportEnd = viewportStart + position.viewportDimension;
+      final targetVisible =
+          bounds.end > viewportStart && bounds.start < viewportEnd;
+      if (!targetVisible) {
+        final maxExtent = position.maxScrollExtent;
+        _verticalController.jumpTo(
+          _verticalOffsetFor(requested).clamp(0.0, maxExtent).toDouble(),
+        );
+        _completeVerticalPageRequest(revision, requested);
+        return;
+      }
+      _lastLogicalPosition = requested.toDouble();
+      _interaction = Interaction.jumping;
+      _emitObservation(
+        requested.toDouble(),
+        0,
+        stableIndex: requested,
+      );
+      if (_lastReportedVerticalPage != requested) {
+        _lastReportedVerticalPage = requested;
+        _recordPageCurrent(requested);
+      }
+      widget.controller.acknowledgePageRequest(revision);
     });
   }
 

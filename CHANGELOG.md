@@ -1,3 +1,12 @@
+## 0.31.0-dev.67：Reader 控制所有权收口与组合解耦
+
+- 修复 `demo_home_source_compat.dart` 对无继承关系能力接口的交叉类型提升编译错误；旧 Venera locator 刷新现在显式绑定 `RefreshableChapterComicSource`。
+- 删除顶部 Reader 中与底部 Slider、手势和每漫画设置重复的页码、上一页/下一页、选页菜单与布局切换；顶部只保留返回、章节标题、可选只读页面副标题、传输进度和本漫画设置。
+- 删除 `ReaderAppBarActionsBuilder`/`appBarActionsBuilder` 以及任意 Widget 标题注入，改为窄化的纯字符串 `pageSubtitleBuilder`；本地文件 Reader 不再直接持有 `ReaderController` 或调用 `requestPage`。
+- 将 `ReaderSessionSettings`、自适应 profile 与分类函数从 `reader_runtime_screen.dart` 拆到独立模型文件；runtime screen 重新低于 1500 行，并增加结构门禁防止重复控制 API 回流。
+- 纵向跳页在目标页面完成懒构建、进入目标视口并发布 observation 后才确认命令；测试按稳定语义 key 等待目标页，不再假设固定两次 pump 足够。
+- 移除本地文件 Reader 已废弃的页码/前后翻页/选页公开 key 和兼容别名，更新 UI/Reader 契约回归。
+
 ## 0.31.0-dev.66：Venera 代际刷新、请求合并与实测连续布局
 
 - 修复 dev.65 自描述 Venera locator 的作用域错误：资源恢复函数显式接收当前来源对象，不再引用仅存在于 operation 局部作用域的 `source`。

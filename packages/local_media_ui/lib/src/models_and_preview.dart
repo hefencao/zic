@@ -225,26 +225,8 @@ const webpFlutterPreviewKey = ValueKey<String>('webp-flutter-preview');
 const webpNativeTextureViewportKey =
     ValueKey<String>('webp-native-texture-viewport');
 const imageFolderScreenKey = ValueKey<String>('webp-folder-screen');
-const imageFolderTitleKey = ValueKey<String>('webp-folder-title');
-const imageFolderCurrentFileKey = ValueKey<String>('webp-folder-current-file');
-const imageFolderPositionKey = ValueKey<String>('webp-folder-position');
-const imageFolderPreviousKey = ValueKey<String>('webp-folder-previous');
-const imageFolderNextKey = ValueKey<String>('webp-folder-next');
-const imageFolderFileMenuKey = ValueKey<String>('webp-folder-file-menu');
 @Deprecated('Use imageFolderScreenKey')
 const webpFolderScreenKey = imageFolderScreenKey;
-@Deprecated('Use imageFolderTitleKey')
-const webpFolderTitleKey = imageFolderTitleKey;
-@Deprecated('Use imageFolderCurrentFileKey')
-const webpFolderCurrentFileKey = imageFolderCurrentFileKey;
-@Deprecated('Use imageFolderPositionKey')
-const webpFolderPositionKey = imageFolderPositionKey;
-@Deprecated('Use imageFolderPreviousKey')
-const webpFolderPreviousKey = imageFolderPreviousKey;
-@Deprecated('Use imageFolderNextKey')
-const webpFolderNextKey = imageFolderNextKey;
-@Deprecated('Use imageFolderFileMenuKey')
-const webpFolderFileMenuKey = imageFolderFileMenuKey;
 const imageFolderPreviewStateKey =
     ValueKey<String>('image-folder-preview-state');
 const imageFolderPreviewReadyKey =

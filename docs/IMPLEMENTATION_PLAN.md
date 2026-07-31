@@ -76,6 +76,16 @@
 - Android bound-service transport 必须以 binding generation 区分每次显式连接，并通过 Binder death recipient 失败当前请求；旧 generation 的迟到回调不得拆除新连接，也不得自动 replay/activate。packet response 必须校验 dedicated root、exact length 与 SHA-256，消费或失败后删除。
 
 
+### dev.67 当前主线约束
+
+#### dev.67 当前优先级
+
+- Reader 页面导航只有一个 Presentation 所有者：底部 Slider 与直接手势。顶部栏、本地媒体适配器和来源详情不得再次实现页码、上一页/下一页或选页菜单。
+- Reader 布局选择只有设置所有者：全局阅读设置与按 `sourceId + comicId` 的每漫画覆盖。顶部快捷布局菜单不得恢复。
+- Reader runtime 的调用方只能提供领域数据或窄化的只读字符串投影，不能注入任意 action Widget、持有 `ReaderController` 或创建第二套导航状态。
+- Reader 组合、会话设置模型和自适应分类必须保持文件级分离；`reader_runtime_screen.dart` 上限为 1500 行。
+- 连续列表命令只有在目标页面完成布局并由 observation 确认后才能 acknowledge；测试必须等待语义条件，不能依赖固定 pump 次数。
+
 ### dev.66 当前主线约束
 
 #### dev.66 当前优先级

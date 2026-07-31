@@ -222,38 +222,14 @@ void main() {
     expect(find.byKey(readerDownloadKey), findsOneWidget);
   });
 
-
-  testWidgets('top controls remain live after switching to vertical layout',
+  testWidgets('top controls omit duplicate navigation and layout actions',
       (tester) async {
-    const previousKey = ValueKey<String>('reader-test-previous');
-    const nextKey = ValueKey<String>('reader-test-next');
-    const positionKey = ValueKey<String>('reader-test-position');
-
     await tester.pumpWidget(
       MaterialApp(
         home: ReaderRuntimeScreen(
           chapter: _chapter(),
           initiallyImmersive: false,
-          appBarTitleBuilder: (context, chapter, currentIndex) => Text(
-            '${currentIndex + 1} / ${chapter.pages.length}',
-            key: positionKey,
-          ),
-          appBarActionsBuilder: (context, reader) => <Widget>[
-            IconButton(
-              key: previousKey,
-              onPressed: reader.currentIndex == 0
-                  ? null
-                  : () => reader.requestPage(reader.currentIndex - 1),
-              icon: const Icon(Icons.chevron_left),
-            ),
-            IconButton(
-              key: nextKey,
-              onPressed: reader.currentIndex + 1 >= reader.chapter.pages.length
-                  ? null
-                  : () => reader.requestPage(reader.currentIndex + 1),
-              icon: const Icon(Icons.chevron_right),
-            ),
-          ],
+          onSettingsChanged: (_) {},
           artifactPageBuilder: (
             context,
             asset,
@@ -268,29 +244,22 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.byKey(positionKey), findsOneWidget);
-    expect(find.text('1 / 3'), findsOneWidget);
-    await tester.tap(find.byKey(readerDirectionMenuKey));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('纵向').last);
-    await tester.pump();
-    await tester.pump();
-    expect(find.byType(ListView), findsOneWidget);
-    expect(find.byType(PageView), findsNothing);
-
-    await tester.tap(find.byKey(nextKey));
-    await tester.pump();
-    await tester.pump();
-    expect(find.text('2 / 3'), findsOneWidget);
+    final top = find.byKey(readerTopControlsKey);
+    expect(find.byKey(readerChapterTitleKey), findsOneWidget);
     expect(
-      find.byKey(const ValueKey<String>('reader-top-page:1')),
-      findsOneWidget,
+      find.descendant(of: top, matching: find.byIcon(Icons.chevron_left)),
+      findsNothing,
     );
-
-    await tester.tap(find.byKey(previousKey));
-    await tester.pump();
-    await tester.pump();
-    expect(find.text('1 / 3'), findsOneWidget);
+    expect(
+      find.descendant(of: top, matching: find.byIcon(Icons.chevron_right)),
+      findsNothing,
+    );
+    expect(
+      find.descendant(of: top, matching: find.byIcon(Icons.swap_horiz)),
+      findsNothing,
+    );
+    expect(find.byKey(readerComicSettingsKey), findsOneWidget);
+    expect(find.byKey(readerPageSliderKey), findsOneWidget);
   });
 
   testWidgets('RTL reader mirrors slider direction and index labels',

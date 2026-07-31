@@ -20,8 +20,11 @@ Future<ChapterManifest> _loadCompatibleSourceChapter(
   if (!_manifestHasLegacyVeneraLocators(manifest)) {
     return manifest;
   }
-  if (source is RefreshableChapterComicSource) {
-    manifest = await source.refreshChapter(chapterId);
+  final refreshable = source is RefreshableChapterComicSource
+      ? source as RefreshableChapterComicSource
+      : null;
+  if (refreshable != null) {
+    manifest = await refreshable.refreshChapter(chapterId);
   }
   if (_manifestHasLegacyVeneraLocators(manifest)) {
     throw StateError(

@@ -725,8 +725,7 @@ def check_compile_regressions() -> None:
         'final class LocalImagePlayer',
         'final class ImageFolderScreen',
         "@Deprecated('Use ImageFolderScreen')",
-        'imageFolderCurrentFileKey',
-        'imageFolderNextKey',
+        'pageSubtitleBuilder:',
         'ImagePreviewStateRegion',
         'MemoryImage(bytes)',
         'frameBuilder: (context, child, frame, wasSynchronouslyLoaded)',
@@ -983,11 +982,19 @@ def check_compile_regressions() -> None:
         if required not in chapter_downloads:
             fail(f'Managed chapter artifact capability is incomplete: {required}')
 
+    reader_runtime_path = (
+        ROOT / 'packages/reader_runtime/lib/src/reader_runtime_screen.dart'
+    )
+    if len(reader_runtime_path.read_text(encoding='utf-8').splitlines()) > 1500:
+        fail('reader_runtime_screen.dart exceeded the composition/UI budget')
+
     for required in (
         'final class ReaderRuntimeScreen',
         'LoaderTransport(widget.loaderSources)',
         'SystemUiMode.immersiveSticky',
         'readerBottomControlsKey',
+        'readerChapterTitleKey',
+        'readerPageSubtitleKey',
         'readerPageSliderKey',
         'readerPauseKey',
         'readerSpeedKey',
@@ -1005,8 +1012,18 @@ def check_compile_regressions() -> None:
     ):
         if required not in reader_runtime:
             fail(f'Reader runtime identity/transport path is incomplete: {required}')
+    for forbidden in (
+        'ReaderAppBarTitleBuilder',
+        'appBarTitleBuilder',
+        'ReaderAppBarActionsBuilder',
+        'appBarActionsBuilder',
+        'readerDirectionMenuKey',
+    ):
+        if forbidden in reader_runtime:
+            fail(f'Reader top controls restored redundant action API: {forbidden}')
     for required in (
         'reader starts immersive and exposes complete bottom controls',
+        'top controls omit duplicate navigation and layout actions',
         'readerTopControlsKey',
         'readerBottomControlsKey',
         'readerPageSliderKey',
@@ -1115,7 +1132,7 @@ def check_compile_regressions() -> None:
         'ReaderRuntimeScreen(',
         'LoaderTransportSource(',
         'tokenBytesLoader:',
-        'reader.requestPage(',
+        'pageSubtitleBuilder:',
         'downloadIdentity: readerPageDownloadId(runtime.chapter, asset)',
         'traceSessionId: runtime.sessionId',
         'demandRevision: runtime.demandRevision',
@@ -1124,6 +1141,8 @@ def check_compile_regressions() -> None:
             fail(f'Folder import is not integrated with Reader: {required}')
     if 'final class ImageFolderScreen extends StatefulWidget' in webp_demo:
         fail('Folder import must not retain the standalone manual-index reader')
+    if 'reader.requestPage(' in webp_demo:
+        fail('Folder Reader must use the shared bottom slider and gestures')
 
     imported_library = (
         ROOT / 'packages/catalog/lib/src/imported_library_store.dart'

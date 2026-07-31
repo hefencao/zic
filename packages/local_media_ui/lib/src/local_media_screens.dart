@@ -114,69 +114,10 @@ final class ImportedImageChapterScreen extends StatelessWidget {
       initialSettings: initialReaderSettings,
       onSettingsChanged: onReaderSettingsChanged,
       traceSink: traceSink,
-      appBarTitleBuilder: (context, chapter, currentIndex) {
-        final current = record.pages[currentIndex];
-        final format = _importedPageFormat(current);
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text(record.displayName, key: imageFolderTitleKey),
-            Row(
-              children: <Widget>[
-                Expanded(
-                  child: Text(
-                    '${current.displayName} · ${format.label}',
-                    key: imageFolderCurrentFileKey,
-                    style: Theme.of(context).textTheme.bodySmall,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  '${currentIndex + 1} / ${record.pages.length}',
-                  key: imageFolderPositionKey,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ],
-            ),
-          ],
-        );
+      pageSubtitleBuilder: (asset) {
+        final current = record.pages[asset.index];
+        return '${current.displayName} · ${_importedPageFormat(current).label}';
       },
-      appBarActionsBuilder: (context, reader) => <Widget>[
-        IconButton(
-          key: imageFolderPreviousKey,
-          tooltip: '上一张图片',
-          onPressed: reader.currentIndex == 0
-              ? null
-              : () => reader.requestPage(reader.currentIndex - 1),
-          icon: const Icon(Icons.chevron_left),
-        ),
-        IconButton(
-          key: imageFolderNextKey,
-          tooltip: '下一张图片',
-          onPressed: reader.currentIndex + 1 >= record.pages.length
-              ? null
-              : () => reader.requestPage(reader.currentIndex + 1),
-          icon: const Icon(Icons.chevron_right),
-        ),
-        PopupMenuButton<int>(
-          key: imageFolderFileMenuKey,
-          tooltip: '选择图片',
-          initialValue: reader.currentIndex,
-          onSelected: reader.requestPage,
-          itemBuilder: (context) => <PopupMenuEntry<int>>[
-            for (var index = 0; index < record.pages.length; index++)
-              PopupMenuItem<int>(
-                value: index,
-                child: Text(
-                  '${record.pages[index].displayName} · '
-                  '${_importedPageFormat(record.pages[index]).label}',
-                ),
-              ),
-          ],
-        ),
-      ],
       artifactPageBuilder: (
         context,
         asset,

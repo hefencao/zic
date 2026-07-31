@@ -3,11 +3,19 @@
 ## Sole baseline
 
 Continue only from
-`zic_v0.31.0-dev.66_venera-cache-measured-stitch-reader-controls.zip`.
+`zic_v0.31.0-dev.67_reader-control-ownership-decoupling.zip`.
 It is a direct modification of the user-provided
 `zic_v0.31.0-dev.62_source-management-tabs-mihon-chapter-preflight.zip`;
 do not merge an earlier candidate. `mihon-main.zip` and `vibevenera-master.zip`
 were read-only compatibility references and are not part of the product tree.
+
+## Completed in dev.67
+
+- Removed duplicate top page count, previous/next, page menu and layout switching. Bottom Slider/gestures now exclusively own page navigation; global/per-comic settings exclusively own layout.
+- Removed arbitrary Reader app-bar action/title Widget injection. Callers may provide only a plain page subtitle; local-media UI no longer receives or commands `ReaderController`.
+- Split Reader session settings and adaptive classification out of `reader_runtime_screen.dart`, added a 1500-line budget and static rejection of the removed APIs.
+- Fixed explicit `RefreshableChapterComicSource` capability binding for legacy Venera locator refresh.
+- Delayed vertical request acknowledgement until the target lazy page is laid out and its observation is published; updated the regression to wait on semantic page identity.
 
 ## Completed in dev.66
 

@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zic/demo_home.dart';
 import 'package:zic/main.dart';
+import 'package:zic/reader_runtime.dart';
 import 'package:zic/static_demo.dart';
 import 'package:zic/webp_demo.dart';
 
@@ -373,7 +374,7 @@ void main() {
     );
     expect(
       tester.widget<Text>(
-        find.byKey(imageFolderCurrentFileKey, skipOffstage: false),
+        find.byKey(readerPageSubtitleKey, skipOffstage: false),
       ).data,
       '002.bin · PNG',
     );
@@ -444,12 +445,8 @@ void main() {
     );
 
     expect(
-      tester.widget<Text>(find.byKey(imageFolderCurrentFileKey)).data,
+      tester.widget<Text>(find.byKey(readerPageSubtitleKey)).data,
       '001.webp · WebP',
-    );
-    expect(
-      tester.widget<Text>(find.byKey(imageFolderPositionKey)).data,
-      '1 / 2',
     );
     final firstPlayer = find.byKey(
       ValueKey<String>(
@@ -473,22 +470,17 @@ void main() {
       ImagePreviewPhase.loading,
     );
 
-    await tester.tap(find.byKey(imageFolderScreenKey));
-    await _pumpUntilHitTestable(tester, find.byKey(imageFolderNextKey));
-    await tester.tap(find.byKey(imageFolderNextKey));
+    final slider = tester.widget<Slider>(find.byKey(readerPageSliderKey));
+    slider.onChanged!(1);
     await _pumpUntilKeyText(
       tester,
-      imageFolderCurrentFileKey,
+      readerPageSubtitleKey,
       '002.bin · PNG',
     );
 
     expect(
-      tester.widget<Text>(find.byKey(imageFolderCurrentFileKey)).data,
+      tester.widget<Text>(find.byKey(readerPageSubtitleKey)).data,
       '002.bin · PNG',
-    );
-    expect(
-      tester.widget<Text>(find.byKey(imageFolderPositionKey)).data,
-      '2 / 2',
     );
     expect(progress.last.pageIndex, 1);
     expect(progress.last.readerMode, ReaderMode.paged);
