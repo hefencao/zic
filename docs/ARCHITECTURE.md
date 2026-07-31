@@ -162,7 +162,9 @@ zic/
 
 `AppPreferencesController` 只持有小型用户选择；文件读写由 composition 通过 `storage_bridge` 注入。设置页可以调用既有 application facade：书架默认值更新既有投影，Reader 默认模式/沉浸值进入既有 Reader composition，整本下载策略调用持久队列，缓存维护调用 `ResourceCacheCoordinator`。设置页不得直接创建 transport、访问插件 Cookie/存储、遍历或删除 artifact 文件。
 
-`DebugTraceLog` 是有界 `TraceSink` 读模型。trace producer 仍属于 startup、Reader、pipeline、download 等原 owner；Presentation 只能观察、复制、清空或暂停记录。
+`DebugTraceLog` 是有界 `TraceSink` 读模型。trace producer 仍属于 startup、Reader、pipeline、download 等原 owner；Presentation 只能观察、复制、清空或暂停记录。 event list 可立即更新，但 observer 通知必须在下一安全帧合并，允许 Reader build 中记录 trace 而不触发同步重建。
+
+每漫画 Reader 设置由 `AppPreferencesController` 以 `sourceId + comicId` 小型 map 持久化，并通过独立 projection 转换成 `ReaderSessionSettings`。它只能覆盖方向、纵向拼接和自适应开关；不能保存页面字节、artifact、下载状态、插件 session 或 pipeline demand。
 
 ### 3.1.3 外部插件仓库 UI
 
@@ -710,6 +712,12 @@ FrameHolder：
 - active run/writer 或调用方保护的资源不能被驱逐；
 - 返回实际释放字节，而不是按索引估算成功。
 
+## 11.4 Reader 布局自适应与连续呈现
+
+Reader layout adaptation is a presentation choice, not the resource policy in section 12. `ReaderSessionSettings` resolves in this order: explicit per-comic direction, high-confidence adaptive result, then stored progress/source direction. The classifier may inspect animation hints and page dimensions already present in `ChapterManifest`; it does not sniff bytes, create decode work, or emit `DemandPlan`.
+
+Vertical mode uses a proportional continuous list. Each child keeps the page asset key, download identity and media host. `verticalStitch` only removes the separator. RTL changes PageView/slider visual direction and labels while the underlying page index remains unchanged.
+
 ## 12. 自适应策略
 
 ### 12.1 决策边界
@@ -906,7 +914,7 @@ No source creates Reader controllers, DownloadSessions or artifacts. Source-brow
 use `loadResource`, while chapter pages are downloaded by the existing Reader transport and
 promoted-artifact path. For source-owned opaque locators such as `mihon:` and `venera-resource:`,
 `downloads` selects a `LoaderTransport` through an injected source-resource loader. App composition
-only resolves the active `BrowsableComicSource`; UI code does not branch on schemes or own bytes.
+only resolves the active `BrowsableComicSource`; UI code does not branch on schemes or own bytes. Newly generated Venera page locators are constrained, versioned and self-describing so they survive runtime generation changes; legacy in-memory tokens are read-only compatibility. Locator payloads may preserve image/comic/episode identity but cannot embed arbitrary final request headers, methods or scripts.
 
 Remote delivery URLs are mutable and may legitimately repeat inside one chapter. `ImportedPageRecord.pageId`
 stores the source-provided stable page identity separately from `sourceId`/URI and is the only per-chapter

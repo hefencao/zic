@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:typed_data';
-
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
@@ -8,7 +7,6 @@ import 'package:flutter/services.dart';
 import 'package:local_media/local_media.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:telemetry/telemetry.dart';
-
 import 'package:downloads/downloads.dart';
 import 'app_preferences.dart';
 import 'app_settings_screen.dart';
@@ -20,16 +18,14 @@ import 'library_backup.dart';
 import 'library_diagnostics.dart';
 import 'source_browser.dart';
 import 'misc_page.dart';
+import 'reader_preferences.dart';
 import 'source_migration_compare.dart';
 import 'static_demo.dart';
 import 'webp_demo.dart';
 import 'home_library_session.dart';
 import 'home_widgets.dart';
-
 export 'home_widgets.dart' show ComicCoverCard, ComicDetailsScreen, ComicDownloadProgress, ComicDownloadProgressKind;
-
 part 'demo_home_views.dart';
-
 const homePageKey = ValueKey<String>('home-page');
 const bookshelfPageKey = ValueKey<String>('bookshelf-page');
 const homeUpdatesSectionKey = ValueKey<String>('home-updates-section');
@@ -88,7 +84,6 @@ Key chapterReadKey(String sourceId, String chapterId) =>
     ValueKey<String>('chapter-read:$sourceId\u0000$chapterId');
 @Deprecated('Use localImageFolderPickerProgressKey')
 const localWebpFolderPickerProgressKey = localImageFolderPickerProgressKey;
-
 final class _PreparedChapterMigration {
   const _PreparedChapterMigration({
     required this.targetRecord,
@@ -97,21 +92,18 @@ final class _PreparedChapterMigration {
     required this.targetProgress,
     required this.targetReadState,
   });
-
   final ImportedChapterRecord targetRecord;
   final ReadingProgress? sourceProgress;
   final ChapterReadState? sourceReadState;
   final ReadingProgress? targetProgress;
   final ChapterReadState? targetReadState;
 }
-
 String _librarySortLabel(LibrarySortMode mode) => switch (mode) {
       LibrarySortMode.recent => '最近更新',
       LibrarySortMode.title => '标题',
       LibrarySortMode.pageCount => '页数',
       LibrarySortMode.custom => '自定义排序',
     };
-
 final class DemoHome extends StatefulWidget {
   const DemoHome({
     required this.picker,
@@ -132,7 +124,6 @@ final class DemoHome extends StatefulWidget {
           wholeComicDownloads == null || chapterDownloads != null,
           'a supplied whole-comic queue must share the supplied chapter service',
         );
-
   final WebpPicker picker;
   final ImageFolderPicker folderPicker;
   final ImageFolderRefresher folderRefresher;
@@ -146,7 +137,6 @@ final class DemoHome extends StatefulWidget {
   final DebugTraceLog debugTrace;
   final String? storageRoot;
   final HomeStartupTelemetry? startupTelemetry;
-
   @override
   State<DemoHome> createState() => _DemoHomeState();
 }
@@ -854,6 +844,16 @@ final class _DemoHomeState extends State<DemoHome> {
                 ),
             onProgressChanged: _library.saveProgress,
             initiallyImmersive: widget.preferences.readerStartsImmersive,
+            initialReaderSettings: widget.preferences.readerSessionSettingsFor(
+              current.chapter.sourceId,
+              current.chapter.comicId,
+            ),
+            onReaderSettingsChanged: (settings) =>
+                widget.preferences.saveReaderSessionSettings(
+              current.chapter.sourceId,
+              current.chapter.comicId,
+              settings,
+            ),
             traceSink: widget.debugTrace,
             onDownloadRequested: () => _downloadChapter(current),
             artifactCache: _chapterDownloads is ArtifactCacheStore

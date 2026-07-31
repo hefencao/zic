@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:telemetry/telemetry.dart';
 
 /// Bounded UI projection of trace events.
@@ -14,6 +15,7 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
   final List<TraceEvent> _events = <TraceEvent>[];
   bool _enabled;
   bool _disposed = false;
+  bool _notificationScheduled = false;
 
   bool get enabled => _enabled;
   List<TraceEvent> get events => List<TraceEvent>.unmodifiable(_events);
@@ -21,7 +23,7 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
   set enabled(bool value) {
     if (_disposed || _enabled == value) return;
     _enabled = value;
-    notifyListeners();
+    _scheduleNotification();
   }
 
   @override
@@ -32,13 +34,24 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     if (overflow > 0) {
       _events.removeRange(0, overflow);
     }
-    notifyListeners();
+    _scheduleNotification();
   }
 
   void clear() {
     if (_disposed || _events.isEmpty) return;
     _events.clear();
-    notifyListeners();
+    _scheduleNotification();
+  }
+
+  void _scheduleNotification() {
+    if (_disposed || _notificationScheduled) return;
+    _notificationScheduled = true;
+    final binding = SchedulerBinding.instance;
+    binding.addPostFrameCallback((_) {
+      _notificationScheduled = false;
+      if (!_disposed) notifyListeners();
+    });
+    binding.scheduleFrame();
   }
 
   @override

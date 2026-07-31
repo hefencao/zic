@@ -1,3 +1,12 @@
+## 0.31.0-dev.65：持久插件资源与每漫画 Reader 设置
+
+- Mihon bridge 补齐 `java.util.Locale` 导入，恢复 Android Kotlin 编译闭环。
+- Venera 章节页 locator 携带受约束的版本化 image/comic/episode identity，不依赖 WebView generation 内的 token map；来源运行时重建后仍延迟执行 `onImageLoad`。legacy token 继续可读，但新章节不再生成它。
+- `DebugTraceLog` 对 enabled/record/clear 使用单帧合并通知，修复 Reader page host build 中同步触发 `AnimatedBuilder.markNeedsBuild`。
+- 阅读设置新增全局自适应布局与纵向拼接。每漫画覆盖按 `sourceId + comicId` 存入小型 App preference map，最多 512 项；设置只投影 Reader 方向/拼接/自适应，不持有页面、下载或缓存。
+- 自适应分类依据动画提示、页面宽高分布与来源方向，只有置信度至少 0.6 才覆盖既有来源/进度模式。Animated WebP 优先保持分页，长图高占比选择纵向。
+- 纵向 Reader 由竖直分页改为按页面比例的连续列表；纵向拼接只把页间距设为零。RTL 页码 slider 和左右端点标签随阅读方向镜像。
+
 ## 0.31.0-dev.64：第四页杂项与设置所有权闭环
 
 - 修复 dev.63 的两个 Dart 编译阻断：下载服务通过显式 `ConfigurableChapterResourceLoader` 能力绑定注入 source loader；Mihon 分组测试使用显式 Map 下标闭包。

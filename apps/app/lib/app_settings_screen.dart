@@ -29,6 +29,9 @@ const appearanceSettingsScreenKey =
 const dataBackupExportKey = ValueKey<String>('data-backup-export');
 const dataCacheClearKey = ValueKey<String>('data-cache-clear');
 const dataCacheRefreshKey = ValueKey<String>('data-cache-refresh');
+const readingAdaptiveKey = ValueKey<String>('reading-adaptive');
+const readingVerticalStitchKey =
+    ValueKey<String>('reading-vertical-stitch');
 
 final class SettingsScreen extends StatelessWidget {
   const SettingsScreen({
@@ -484,6 +487,23 @@ final class ReadingSettingsScreen extends StatelessWidget {
               subtitle: const Text('打开 Reader 时隐藏系统栏和控制栏；点击页面仍可呼出控制。'),
               value: preferences.readerStartsImmersive,
               onChanged: preferences.setReaderStartsImmersive,
+            ),
+            SwitchListTile(
+              key: readingAdaptiveKey,
+              title: const Text('自适应阅读布局'),
+              subtitle: const Text(
+                '依据来源方向、页面宽高与动画提示选择分页或纵向；'
+                '低置信度时保持既有默认。',
+              ),
+              value: preferences.adaptiveReaderEnabled,
+              onChanged: preferences.setAdaptiveReaderEnabled,
+            ),
+            SwitchListTile(
+              key: readingVerticalStitchKey,
+              title: const Text('纵向拼接'),
+              subtitle: const Text('纵向连续模式移除页间距；不合并页面文件或缓存身份。'),
+              value: preferences.defaultVerticalStitch,
+              onChanged: preferences.setDefaultVerticalStitch,
             ),
             const ListTile(
               leading: Icon(Icons.swap_horiz),

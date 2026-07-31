@@ -6,7 +6,10 @@ import 'package:zic/reader_runtime.dart';
 
 const _screenKey = ValueKey<String>('reader-controls-screen');
 
-ChapterManifest _chapter({bool animated = false}) {
+ChapterManifest _chapter({
+  bool animated = false,
+  ReadingDirection direction = ReadingDirection.ltr,
+}) {
   return ChapterManifest(
     sourceId: 'reader-controls-source',
     comicId: 'reader-controls-comic',
@@ -32,7 +35,7 @@ ChapterManifest _chapter({bool animated = false}) {
         animatedHint: animated,
       ),
     ),
-    readingDirection: ReadingDirection.ltr,
+    readingDirection: direction,
   );
 }
 
@@ -217,6 +220,104 @@ void main() {
     expect(find.byKey(readerRotateKey), findsOneWidget);
     expect(find.byKey(readerFavoriteKey), findsOneWidget);
     expect(find.byKey(readerDownloadKey), findsOneWidget);
+  });
+
+
+  testWidgets('RTL reader mirrors slider direction and index labels',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderRuntimeScreen(
+          chapter: _chapter(direction: ReadingDirection.rtl),
+          initiallyImmersive: false,
+          initialSettings: const ReaderSessionSettings(
+            comicSpecificEnabled: true,
+            directionOverride: ReadingDirection.rtl,
+          ),
+          artifactPageBuilder: (
+            context,
+            asset,
+            reportFirstFrame,
+            runtime,
+          ) => ColoredBox(
+            key: ValueKey<String>('reader-rtl-page:${asset.index}'),
+            color: Colors.black,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final sliderFinder = find.byKey(readerPageSliderKey);
+    expect(sliderFinder, findsOneWidget);
+    expect(
+      Directionality.of(tester.element(sliderFinder)),
+      TextDirection.rtl,
+    );
+    final slider = tester.getRect(sliderFinder);
+    await tester.tapAt(Offset(slider.left + 2, slider.center.dy));
+    await tester.pump();
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey<String>('reader-rtl-page:2')),
+      findsOneWidget,
+    );
+  });
+
+  test('adaptive reader classifier respects animation and page geometry', () {
+    ChapterManifest manifest({
+      required bool animated,
+      required int width,
+      required int height,
+      ReadingDirection direction = ReadingDirection.ltr,
+    }) =>
+        ChapterManifest(
+          sourceId: 'adaptive-source',
+          comicId: 'adaptive-comic',
+          chapter: const Chapter(
+            chapterId: 'adaptive-chapter',
+            comicId: 'adaptive-comic',
+            title: 'adaptive',
+            sequence: 0,
+            pageCount: 3,
+            sourceRevision: 'r1',
+          ),
+          pages: List<PageAsset>.generate(
+            3,
+            (index) => PageAsset(
+              pageId: 'adaptive-$index',
+              chapterId: 'adaptive-chapter',
+              index: index,
+              uri: Uri.parse('asset:///adaptive-$index.webp'),
+              width: width,
+              height: height,
+              animatedHint: animated,
+            ),
+          ),
+          readingDirection: direction,
+        );
+
+    final animated = classifyAdaptiveReaderLayout(
+      manifest(animated: true, width: 1000, height: 3000),
+    );
+    expect(animated?.animated, isTrue);
+    expect(animated?.direction, ReadingDirection.ltr);
+
+    final vertical = classifyAdaptiveReaderLayout(
+      manifest(animated: false, width: 1000, height: 3000),
+    );
+    expect(vertical?.direction, ReadingDirection.vertical);
+    expect(vertical?.confidence, greaterThanOrEqualTo(0.9));
+
+    final paged = classifyAdaptiveReaderLayout(
+      manifest(
+        animated: false,
+        width: 1600,
+        height: 1000,
+        direction: ReadingDirection.rtl,
+      ),
+    );
+    expect(paged?.direction, ReadingDirection.rtl);
   });
 
 }

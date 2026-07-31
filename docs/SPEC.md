@@ -36,6 +36,8 @@
 - 页码滑杆、旋转、收藏和章节缓存命令；暂停与倍速仅在当前页面确认为动画媒体时显示。
 - 默认缩放比例下，分页 Reader 的横向拖动必须由页面导航接管；仅在用户显式放大后，页内拖动/缩放可以暂时接管手势。
 - 远程 Animated WebP 可以在 partial 持续增长时开始播放；顶部进度同时区分恢复/已有前缀与当前网络新增部分。
+- 阅读设置提供全局自适应布局和纵向拼接；Reader 顶栏提供按漫画的方向、拼接和自适应覆盖。
+- 纵向连续模式按页面比例滚动；拼接只移除页间距。RTL slider 的数值方向和端点标签必须与 RTL 翻页一致。
 
 ### 2.3 下载与离线
 
@@ -717,6 +719,7 @@ Mihon Android packaging must expose each host ABI namespace from exactly one art
 - `mihon:`、`venera-resource:` 等插件私有资源必须由 `downloads` 的注入式 source loader 进入既有 `DownloadJob/DownloadSession`，不得直接交给 `IoTransport`，也不得由详情页执行 scheme 分支。
 - Mihon/Venera 页面媒体类型字段只能作为 hint。宿主必须保留字节嗅探和 decoder 校验；只有可识别的原始 URL/文件名才能提前声明 WebP/GIF 等类型。
 - Mihon 目录页数未知时可渐进预检，但并发必须有界、结果必须复用 source cache，并只更新当前目录投影。失败必须显示可区分状态，不能永久伪装为实际 0 页。
+- Venera 新章节资源必须使用跨 runtime generation 可恢复的受约束 locator，只携带版本化 image/comic/episode identity，并在读取时重新执行来源 `onImageLoad`；legacy runtime token 只作读取兼容。
 - Venera 网络桥的重定向必须由宿主有限执行，并在每跳写入响应 Cookie；跨 origin 不得转发 Cookie 或 Authorization，底层 HTTP client 禁止叠加自动跟随。
 - Reader progress listener 可能在注册时同步回放 snapshot；Presentation 必须在 build phase 后合并发布 notifier，禁止由同步回调触发构建期 `markNeedsBuild`。
 
@@ -728,4 +731,5 @@ Mihon Android packaging must expose each host ABI namespace from exactly one art
 - 数据页必须显示当前目录投影，支持导出漫画库元数据备份，并通过统一缓存协调器检查和清理缓存；不得由 Widget 直接遍历缓存目录。
 - 外观主题、书架默认筛选/排序/视图、Reader 默认模式/沉浸行为必须作用于真实产品状态，而不是只改变测试或静态文案。
 - 下载网络、供电和并发设置必须更新既有持久下载队列策略。
-- Debug trace 必须有界；设置页不得通过 trace 反向控制 Reader、pipeline、下载或缓存决策。
+- Debug trace 必须有界；设置页不得通过 trace 反向控制 Reader、pipeline、下载或缓存决策。 trace producer 在 Widget build 中记录时，观察通知必须帧后合并。
+- 每漫画设置按来源与漫画复合 identity 持久化，只可覆盖 Reader 方向、纵向拼接和自适应开关。自适应低置信度时必须回退来源/进度默认，不得直接生成预取、下载或解码命令。

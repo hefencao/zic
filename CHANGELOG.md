@@ -1,3 +1,12 @@
+## 0.31.0-dev.65：持久 Venera 资源、每漫画自适应与连续 Reader
+
+- 修复 `MihonRuntimeDriver.kt` 使用 `Locale.US` 但未导入 `java.util.Locale` 的 Android 编译阻断。
+- Venera 章节页面改用版本化、自描述且仅允许 deferred image identity 的 `venera-resource:` locator；运行时 token 表丢失后仍可重新执行来源 `onImageLoad`。旧 `venera-resource://token` 仅保留读取兼容。
+- `DebugTraceLog` 的 enabled/record/clear 通知按帧合并，禁止在 Reader Widget build 中同步 dirty `AnimatedBuilder`。
+- 新增全局自适应布局和纵向拼接设置，以及按 `sourceId + comicId` 持久化的每漫画方向、拼接和自适应覆盖。
+- 自适应布局参考 VibeVenera 的“全局开关 + 每漫画覆盖 + 置信度门槛”，但只使用当前领域已有的来源方向、页面几何和动画提示；不创建模型或直接输出 pipeline demand。
+- Reader 纵向模式改为按页面比例的连续 `ListView`；拼接只移除页间距，不合并页面/artifact identity。RTL slider 的 Directionality、端点标签与页面顺序保持一致。
+
 ## 0.31.0-dev.64：杂项页、分层设置与编译闭环
 
 - 修复 ChapterDownloadService 能力接口绑定与 Map 下标测试编译错误。

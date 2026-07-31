@@ -21,6 +21,7 @@ final class ReaderView extends StatefulWidget {
     this.pageBuilder,
     this.demandRevision,
     this.onTap,
+    this.verticalStitch = false,
     super.key,
   });
 
@@ -31,30 +32,45 @@ final class ReaderView extends StatefulWidget {
   final int Function()? demandRevision;
   final VoidCallback? onTap;
 
+  /// Removes the visual gap between pages in continuous vertical mode.
+  ///
+  /// This is a presentation choice only. It does not merge page identities or
+  /// alter pipeline demand, cache ownership, or source artifacts.
+  final bool verticalStitch;
+
   @override
   State<ReaderView> createState() => _ReaderViewState();
 }
 
 final class _ReaderViewState extends State<ReaderView> {
+  static const double _verticalPageGap = 8;
+
   late PageController _pageController;
+  late ScrollController _verticalController;
   double _lastLogicalPosition = 0;
   int _lastMicros = 0;
   Interaction _interaction = Interaction.idle;
   int _handledNavigationRevision = 0;
   int? _zoomedPage;
+  int? _lastReportedVerticalPage;
+  Size _viewport = Size.zero;
+  late ReadingDirection _lastDirection;
+  bool _syncScheduled = false;
 
   @override
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: widget.controller.currentIndex);
+    _verticalController = ScrollController();
     _lastLogicalPosition = widget.controller.currentIndex.toDouble();
     _lastMicros = widget.clock.nowMicros();
     _handledNavigationRevision = widget.controller.navigationRevision;
+    _lastDirection = widget.controller.direction;
     widget.controller.addListener(_handleControllerCommand);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _emitObservation(_lastLogicalPosition, 0);
-      }
+      if (!mounted) return;
+      _syncToCurrentPage();
+      _emitObservation(_lastLogicalPosition, 0);
     });
   }
 
@@ -65,14 +81,21 @@ final class _ReaderViewState extends State<ReaderView> {
       oldWidget.controller.removeListener(_handleControllerCommand);
       widget.controller.addListener(_handleControllerCommand);
       _pageController.dispose();
+      _verticalController.dispose();
       _pageController = PageController(
         initialPage: widget.controller.currentIndex,
       );
+      _verticalController = ScrollController();
       _lastLogicalPosition = widget.controller.currentIndex.toDouble();
       _lastMicros = widget.clock.nowMicros();
       _interaction = Interaction.idle;
       _handledNavigationRevision = widget.controller.navigationRevision;
       _zoomedPage = null;
+      _lastReportedVerticalPage = null;
+      _lastDirection = widget.controller.direction;
+      _scheduleSyncToCurrentPage();
+    } else if (oldWidget.verticalStitch != widget.verticalStitch) {
+      _scheduleSyncToCurrentPage();
     }
   }
 
@@ -80,6 +103,7 @@ final class _ReaderViewState extends State<ReaderView> {
   void dispose() {
     widget.controller.removeListener(_handleControllerCommand);
     _pageController.dispose();
+    _verticalController.dispose();
     super.dispose();
   }
 
@@ -89,72 +113,177 @@ final class _ReaderViewState extends State<ReaderView> {
 
     return AnimatedBuilder(
       animation: widget.controller,
-      builder: (context, _) {
-        final direction = widget.controller.direction;
-        final isVertical = direction == ReadingDirection.vertical;
-        return NotificationListener<ScrollNotification>(
-          onNotification: _handleScrollNotification,
-          child: PageView.builder(
-            controller: _pageController,
-            itemCount: chapter.pages.length,
-            reverse: direction == ReadingDirection.rtl,
-            scrollDirection: isVertical ? Axis.vertical : Axis.horizontal,
-            physics: _zoomedPage == null
-                ? const PageScrollPhysics()
-                : const NeverScrollableScrollPhysics(),
-            onPageChanged: _handlePageChanged,
-            itemBuilder: (context, index) => RotatedBox(
-              key: ValueKey<String>('reader-page-rotation:$index'),
-              quarterTurns: widget.controller.rotationQuarterTurns,
-              child: _ZoomableReaderPage(
-                key: ValueKey<String>(
-                  'zoom:${chapter.pages[index].assetKey}',
+      builder: (context, _) => LayoutBuilder(
+        builder: (context, constraints) {
+          final nextViewport = constraints.biggest;
+          if (nextViewport.width.isFinite &&
+              nextViewport.height.isFinite &&
+              nextViewport.width > 0 &&
+              nextViewport.height > 0 &&
+              nextViewport != _viewport) {
+            _viewport = nextViewport;
+            if (widget.controller.direction == ReadingDirection.vertical) {
+              _scheduleSyncToCurrentPage();
+            }
+          }
+          final direction = widget.controller.direction;
+          if (_lastDirection != direction) {
+            _lastDirection = direction;
+            _zoomedPage = null;
+            _scheduleSyncToCurrentPage();
+          }
+          if (direction == ReadingDirection.vertical) {
+            return NotificationListener<ScrollNotification>(
+              onNotification: _handleVerticalScrollNotification,
+              child: ListView.separated(
+                key: const ValueKey<String>('reader-vertical-list'),
+                controller: _verticalController,
+                itemCount: chapter.pages.length,
+                cacheExtent: _viewport.height > 0 ? _viewport.height * 2 : null,
+                physics: _zoomedPage == null
+                    ? const ClampingScrollPhysics()
+                    : const NeverScrollableScrollPhysics(),
+                separatorBuilder: (context, index) => SizedBox(
+                  key: ValueKey<String>('reader-vertical-gap:$index'),
+                  height: widget.verticalStitch ? 0 : _verticalPageGap,
                 ),
-                active: index == widget.controller.currentIndex,
-                onTap: widget.onTap,
-                onZoomChanged: (zoomed) {
-                  final next = zoomed ? index : null;
-                  if (_zoomedPage == next) {
-                    return;
-                  }
-                  setState(() => _zoomedPage = next);
-                },
-                child: _ReaderPageHost(
-                  key: ValueKey<String>(
-                    'reader-page-host:${chapter.pages[index].assetKey}',
-                  ),
-                  asset: chapter.pages[index],
-                  sessionId: widget.controller.sessionId,
-                  clock: widget.clock,
-                  traceSink: widget.traceSink,
-                  pageBuilder: widget.pageBuilder,
-                  demandRevision: widget.demandRevision,
+                itemBuilder: (context, index) => SizedBox(
+                  key: ValueKey<String>('reader-vertical-page:$index'),
+                  height: _verticalExtent(chapter.pages[index]),
+                  child: _buildPage(chapter, index),
                 ),
               ),
+            );
+          }
+          return NotificationListener<ScrollNotification>(
+            onNotification: _handlePagedScrollNotification,
+            child: PageView.builder(
+              controller: _pageController,
+              itemCount: chapter.pages.length,
+              reverse: direction == ReadingDirection.rtl,
+              scrollDirection: Axis.horizontal,
+              physics: _zoomedPage == null
+                  ? const PageScrollPhysics()
+                  : const NeverScrollableScrollPhysics(),
+              onPageChanged: _handlePageChanged,
+              itemBuilder: (context, index) => _buildPage(chapter, index),
             ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildPage(ChapterManifest chapter, int index) => RotatedBox(
+        key: ValueKey<String>('reader-page-rotation:$index'),
+        quarterTurns: widget.controller.rotationQuarterTurns,
+        child: _ZoomableReaderPage(
+          key: ValueKey<String>('zoom:${chapter.pages[index].assetKey}'),
+          active: index == widget.controller.currentIndex,
+          onTap: widget.onTap,
+          onZoomChanged: (zoomed) {
+            final next = zoomed ? index : null;
+            if (_zoomedPage == next) return;
+            setState(() => _zoomedPage = next);
+          },
+          child: _ReaderPageHost(
+            key: ValueKey<String>(
+              'reader-page-host:${chapter.pages[index].assetKey}',
+            ),
+            asset: chapter.pages[index],
+            sessionId: widget.controller.sessionId,
+            clock: widget.clock,
+            traceSink: widget.traceSink,
+            pageBuilder: widget.pageBuilder,
+            demandRevision: widget.demandRevision,
           ),
-        );
-      },
+        ),
+      );
+
+  double _verticalExtent(PageAsset asset) {
+    if (_viewport.width <= 0 || _viewport.height <= 0) return 1;
+    var width = asset.width?.toDouble();
+    var height = asset.height?.toDouble();
+    if (width == null || height == null || width <= 0 || height <= 0) {
+      return _viewport.height;
+    }
+    if (widget.controller.rotationQuarterTurns.isOdd) {
+      final swap = width;
+      width = height;
+      height = swap;
+    }
+    final scaled = _viewport.width * height / width;
+    final upper = math.max(_viewport.height, _viewport.width * 16);
+    return scaled.clamp(64.0, upper).toDouble();
+  }
+
+  double get _effectiveGap => widget.verticalStitch ? 0 : _verticalPageGap;
+
+  double _verticalOffsetFor(int index) {
+    var offset = 0.0;
+    final pages = widget.controller.chapter.pages;
+    for (var i = 0; i < index; i++) {
+      offset += _verticalExtent(pages[i]);
+      offset += _effectiveGap;
+    }
+    final extent = _verticalExtent(pages[index]);
+    return offset + extent / 2 - _viewport.height / 2;
+  }
+
+  ({int index, double logicalPosition}) _verticalPosition(
+    ScrollMetrics metrics,
+  ) {
+    final pages = widget.controller.chapter.pages;
+    final center = metrics.pixels + metrics.viewportDimension / 2;
+    var offset = 0.0;
+    for (var i = 0; i < pages.length; i++) {
+      final extent = _verticalExtent(pages[i]);
+      final end = offset + extent;
+      if (center <= end || i == pages.length - 1) {
+        final fraction = ((center - offset) / math.max(1.0, extent))
+            .clamp(0.0, 0.999)
+            .toDouble();
+        return (index: i, logicalPosition: i + fraction);
+      }
+      offset = end + _effectiveGap;
+    }
+    return (
+      index: pages.length - 1,
+      logicalPosition: (pages.length - 1).toDouble(),
     );
   }
 
   void _handleControllerCommand() {
     final controller = widget.controller;
-    final revision = controller.navigationRevision;
-    if (revision == _handledNavigationRevision) {
-      return;
+    if (_lastDirection != controller.direction) {
+      _lastDirection = controller.direction;
+      _zoomedPage = null;
+      _scheduleSyncToCurrentPage();
     }
+    final revision = controller.navigationRevision;
+    if (revision == _handledNavigationRevision) return;
     final requested = controller.requestedIndex;
     if (requested == null) {
       _handledNavigationRevision = revision;
       return;
     }
+    if (controller.direction == ReadingDirection.vertical) {
+      if (!_verticalController.hasClients || _viewport == Size.zero) {
+        _scheduleControllerCommand();
+        return;
+      }
+      _handledNavigationRevision = revision;
+      _interaction = Interaction.jumping;
+      _zoomedPage = null;
+      final maxExtent = _verticalController.position.maxScrollExtent;
+      _verticalController.jumpTo(
+        _verticalOffsetFor(requested).clamp(0.0, maxExtent).toDouble(),
+      );
+      controller.acknowledgePageRequest(revision);
+      return;
+    }
     if (!_pageController.hasClients) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _handleControllerCommand();
-        }
-      });
+      _scheduleControllerCommand();
       return;
     }
     _handledNavigationRevision = revision;
@@ -164,34 +293,100 @@ final class _ReaderViewState extends State<ReaderView> {
     controller.acknowledgePageRequest(revision);
   }
 
-  bool _handleScrollNotification(ScrollNotification notification) {
+  void _scheduleControllerCommand() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _handleControllerCommand();
+    });
+  }
+
+  void _scheduleSyncToCurrentPage() {
+    if (_syncScheduled) return;
+    _syncScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _syncScheduled = false;
+      if (mounted) _syncToCurrentPage();
+    });
+  }
+
+  void _syncToCurrentPage() {
+    final controller = widget.controller;
+    final index = controller.currentIndex;
+    if (controller.direction == ReadingDirection.vertical) {
+      if (!_verticalController.hasClients || _viewport == Size.zero) return;
+      final maxExtent = _verticalController.position.maxScrollExtent;
+      _verticalController.jumpTo(
+        _verticalOffsetFor(index).clamp(0.0, maxExtent).toDouble(),
+      );
+      return;
+    }
+    if (_pageController.hasClients) {
+      _pageController.jumpToPage(index);
+    }
+  }
+
+  bool _handlePagedScrollNotification(ScrollNotification notification) {
+    if (notification.depth != 0) return false;
     if (notification is ScrollStartNotification) {
       _interaction = notification.dragDetails == null
           ? Interaction.scrolling
           : Interaction.dragging;
-      _emitFromMetrics(notification.metrics);
+      _emitFromPageMetrics(notification.metrics);
     } else if (notification is ScrollUpdateNotification) {
       _interaction = Interaction.scrolling;
-      _emitFromMetrics(notification.metrics);
+      _emitFromPageMetrics(notification.metrics);
     } else if (notification is ScrollEndNotification) {
       _interaction = Interaction.idle;
-      _emitFromMetrics(notification.metrics);
+      _emitFromPageMetrics(notification.metrics);
     }
     return false;
   }
 
-  void _emitFromMetrics(ScrollMetrics metrics) {
-    if (metrics is! PageMetrics) {
-      return;
+  bool _handleVerticalScrollNotification(ScrollNotification notification) {
+    if (notification.depth != 0) return false;
+    if (notification is ScrollStartNotification) {
+      _interaction = notification.dragDetails == null
+          ? Interaction.scrolling
+          : Interaction.dragging;
+      _emitFromVerticalMetrics(notification.metrics);
+    } else if (notification is ScrollUpdateNotification) {
+      _interaction = Interaction.scrolling;
+      _emitFromVerticalMetrics(notification.metrics);
+    } else if (notification is ScrollEndNotification) {
+      _interaction = Interaction.idle;
+      _emitFromVerticalMetrics(notification.metrics);
     }
+    return false;
+  }
+
+  void _emitFromPageMetrics(ScrollMetrics metrics) {
+    if (metrics is! PageMetrics) return;
     final logicalPosition =
         metrics.page ?? widget.controller.currentIndex.toDouble();
+    final velocity = _velocityFor(logicalPosition);
+    _emitObservation(logicalPosition, velocity);
+  }
+
+  void _emitFromVerticalMetrics(ScrollMetrics metrics) {
+    final position = _verticalPosition(metrics);
+    final velocity = _velocityFor(position.logicalPosition);
+    _emitObservation(
+      position.logicalPosition,
+      velocity,
+      stableIndex: position.index,
+    );
+    if (_lastReportedVerticalPage != position.index) {
+      _lastReportedVerticalPage = position.index;
+      _recordPageCurrent(position.index);
+    }
+  }
+
+  double _velocityFor(double logicalPosition) {
     final now = widget.clock.nowMicros();
     final elapsedSeconds = math.max(1, now - _lastMicros) / 1000000.0;
     final velocity = (logicalPosition - _lastLogicalPosition) / elapsedSeconds;
     _lastLogicalPosition = logicalPosition;
     _lastMicros = now;
-    _emitObservation(logicalPosition, velocity);
+    return velocity;
   }
 
   void _handlePageChanged(int index) {
@@ -199,6 +394,10 @@ final class _ReaderViewState extends State<ReaderView> {
     _lastLogicalPosition = index.toDouble();
     _interaction = Interaction.settling;
     _emitObservation(index.toDouble(), 0, stableIndex: index);
+    _recordPageCurrent(index);
+  }
+
+  void _recordPageCurrent(int index) {
     widget.traceSink.record(
       traceEvent(
         clock: widget.clock,
@@ -231,9 +430,7 @@ final class _ReaderViewState extends State<ReaderView> {
           ? logicalPosition.ceil()
           : logicalPosition.floor();
       targetIndex = targetIndex.clamp(0, pages.length - 1).toInt();
-      if (targetIndex == boundedStable) {
-        targetIndex = null;
-      }
+      if (targetIndex == boundedStable) targetIndex = null;
     }
 
     final observation = ReaderObs(

@@ -27,6 +27,11 @@ const readerSpeedKey = ValueKey<String>('reader-speed');
 const readerRotateKey = ValueKey<String>('reader-rotate');
 const readerFavoriteKey = ValueKey<String>('reader-favorite');
 const readerDownloadKey = ValueKey<String>('reader-download');
+const readerComicSettingsKey = ValueKey<String>('reader-comic-settings');
+const readerComicSettingsEnabledKey =
+    ValueKey<String>('reader-comic-settings-enabled');
+const readerAdaptiveSettingsKey = ValueKey<String>('reader-adaptive-settings');
+const readerVerticalStitchKey = ValueKey<String>('reader-vertical-stitch');
 const readerExistingProgressKey = ValueKey<String>('reader-existing-progress');
 const readerNetworkProgressKey = ValueKey<String>('reader-network-progress');
 Key readerSpeedOptionKey(double speed) =>
@@ -160,6 +165,146 @@ typedef ReaderAppBarActionsBuilder = List<Widget> Function(
 typedef ReaderProgressWriter = FutureOr<void> Function(
   ReadingProgress progress,
 );
+typedef ReaderSessionSettingsWriter = FutureOr<void> Function(
+  ReaderSessionSettings settings,
+);
+
+@immutable
+final class ReaderSessionSettings {
+  const ReaderSessionSettings({
+    this.comicSpecificEnabled = false,
+    this.directionOverride,
+    this.verticalStitch = false,
+    this.fallbackVerticalStitch = false,
+    this.globalAdaptiveEnabled = false,
+    this.comicAdaptiveEnabled = true,
+  });
+
+  static const Object _unset = Object();
+
+  final bool comicSpecificEnabled;
+  final ReadingDirection? directionOverride;
+  final bool verticalStitch;
+  final bool fallbackVerticalStitch;
+  final bool globalAdaptiveEnabled;
+  final bool comicAdaptiveEnabled;
+
+  bool get effectiveVerticalStitch =>
+      comicSpecificEnabled ? verticalStitch : fallbackVerticalStitch;
+  bool get effectiveAdaptiveEnabled =>
+      globalAdaptiveEnabled && comicAdaptiveEnabled;
+
+  ReaderSessionSettings copyWith({
+    bool? comicSpecificEnabled,
+    Object? directionOverride = _unset,
+    bool? verticalStitch,
+    bool? fallbackVerticalStitch,
+    bool? globalAdaptiveEnabled,
+    bool? comicAdaptiveEnabled,
+  }) =>
+      ReaderSessionSettings(
+        comicSpecificEnabled:
+            comicSpecificEnabled ?? this.comicSpecificEnabled,
+        directionOverride: identical(directionOverride, _unset)
+            ? this.directionOverride
+            : directionOverride as ReadingDirection?,
+        verticalStitch: verticalStitch ?? this.verticalStitch,
+        fallbackVerticalStitch:
+            fallbackVerticalStitch ?? this.fallbackVerticalStitch,
+        globalAdaptiveEnabled:
+            globalAdaptiveEnabled ?? this.globalAdaptiveEnabled,
+        comicAdaptiveEnabled:
+            comicAdaptiveEnabled ?? this.comicAdaptiveEnabled,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ReaderSessionSettings &&
+          comicSpecificEnabled == other.comicSpecificEnabled &&
+          directionOverride == other.directionOverride &&
+          verticalStitch == other.verticalStitch &&
+          fallbackVerticalStitch == other.fallbackVerticalStitch &&
+          globalAdaptiveEnabled == other.globalAdaptiveEnabled &&
+          comicAdaptiveEnabled == other.comicAdaptiveEnabled;
+
+  @override
+  int get hashCode => Object.hash(
+        comicSpecificEnabled,
+        directionOverride,
+        verticalStitch,
+        fallbackVerticalStitch,
+        globalAdaptiveEnabled,
+        comicAdaptiveEnabled,
+      );
+}
+
+@immutable
+final class AdaptiveReaderProfile {
+  const AdaptiveReaderProfile({
+    required this.direction,
+    required this.confidence,
+    required this.basis,
+    this.animated = false,
+  });
+
+  final ReadingDirection direction;
+  final double confidence;
+  final String basis;
+  final bool animated;
+}
+
+AdaptiveReaderProfile? classifyAdaptiveReaderLayout(ChapterManifest chapter) {
+  final pages = chapter.pages;
+  if (pages.isEmpty) return null;
+  final animated = pages.where((page) => page.animatedHint).length;
+  if (animated >= math.min(2, pages.length)) {
+    return AdaptiveReaderProfile(
+      direction: chapter.readingDirection == ReadingDirection.rtl
+          ? ReadingDirection.rtl
+          : ReadingDirection.ltr,
+      confidence: 1,
+      basis: 'animated-pages',
+      animated: true,
+    );
+  }
+  final ratios = <double>[
+    for (final page in pages)
+      if (page.width != null &&
+          page.height != null &&
+          page.width! > 0 &&
+          page.height! > 0)
+        page.height! / page.width!,
+  ];
+  if (ratios.length >= 2) {
+    final tall = ratios.where((ratio) => ratio >= 2.4).length;
+    final tallShare = tall / ratios.length;
+    if (tallShare >= 0.6) {
+      return AdaptiveReaderProfile(
+        direction: ReadingDirection.vertical,
+        confidence: (0.62 + tallShare * 0.36).clamp(0.0, 0.98).toDouble(),
+        basis: 'page-geometry',
+      );
+    }
+    if (tallShare <= 0.25) {
+      return AdaptiveReaderProfile(
+        direction: chapter.readingDirection == ReadingDirection.rtl
+            ? ReadingDirection.rtl
+            : ReadingDirection.ltr,
+        confidence: (0.78 + (1 - tallShare) * 0.18).clamp(0.0, 0.96).toDouble(),
+        basis: 'page-geometry',
+      );
+    }
+  }
+  if (chapter.readingDirection == ReadingDirection.vertical) {
+    return const AdaptiveReaderProfile(
+      direction: ReadingDirection.vertical,
+      confidence: 0.9,
+      basis: 'source-hint',
+    );
+  }
+  return null;
+}
 
 final class ReaderRuntimeScreen extends StatefulWidget {
   const ReaderRuntimeScreen({
@@ -176,6 +321,8 @@ final class ReaderRuntimeScreen extends StatefulWidget {
     this.onFavoriteChanged,
     this.onDownloadRequested,
     this.initiallyImmersive = true,
+    this.initialSettings = const ReaderSessionSettings(),
+    this.onSettingsChanged,
     this.traceSink,
     this.screenKey,
     super.key,
@@ -194,6 +341,8 @@ final class ReaderRuntimeScreen extends StatefulWidget {
   final FutureOr<void> Function(bool favorite)? onFavoriteChanged;
   final FutureOr<void> Function()? onDownloadRequested;
   final bool initiallyImmersive;
+  final ReaderSessionSettings initialSettings;
+  final ReaderSessionSettingsWriter? onSettingsChanged;
   final TraceSink? traceSink;
   final Key? screenKey;
 
@@ -238,11 +387,17 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   late bool _controlsVisible;
   bool _downloading = false;
   bool _downloaded = false;
+  late ReaderSessionSettings _settings;
+  AdaptiveReaderProfile? _adaptiveProfile;
 
   @override
   void initState() {
     super.initState();
     _playback = ReaderPlaybackController();
+    _settings = widget.initialSettings;
+    _adaptiveProfile = _settings.effectiveAdaptiveEnabled
+        ? classifyAdaptiveReaderLayout(widget.chapter)
+        : null;
     _transferProgress = ValueNotifier<ReaderTransferProgress>(
       const ReaderTransferProgress(),
     );
@@ -326,6 +481,12 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     if (oldWidget.initialFavorite != widget.initialFavorite) {
       _favorite = widget.initialFavorite;
     }
+    if (oldWidget.initialSettings != widget.initialSettings) {
+      _settings = widget.initialSettings;
+      _adaptiveProfile = _settings.effectiveAdaptiveEnabled
+          ? classifyAdaptiveReaderLayout(widget.chapter)
+          : null;
+    }
     if (!_sameChapterSession(oldWidget.chapter, widget.chapter) ||
         !identical(oldWidget.artifactCache, widget.artifactCache) ||
         !_sameLoaderSources(
@@ -358,10 +519,9 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
         (initialProgress?.pageIndex ?? 0)
             .clamp(0, widget.chapter.pages.length - 1)
             .toInt();
-    final direction = previous?.direction ??
-        (initialProgress?.readerMode == ReaderMode.continuous
-            ? ReadingDirection.vertical
-            : widget.chapter.readingDirection);
+    final direction = previous?.direction ?? _resolveInitialDirection(
+      initialProgress,
+    );
     if (previous != null) {
       previous.removeListener(_handleReaderProgress);
       _binding?.detach(previous.sessionId);
@@ -392,6 +552,23 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     _lastProgressPage = reader.currentIndex;
     _lastProgressMode = _readerMode(reader.direction);
     _syncCurrentTransferProgress();
+  }
+
+  ReadingDirection _resolveInitialDirection(ReadingProgress? progress) {
+    final base = progress?.readerMode == ReaderMode.continuous
+        ? ReadingDirection.vertical
+        : widget.chapter.readingDirection;
+    if (_settings.comicSpecificEnabled &&
+        _settings.directionOverride != null) {
+      return _settings.directionOverride!;
+    }
+    final adaptive = _adaptiveProfile;
+    if (_settings.effectiveAdaptiveEnabled &&
+        adaptive != null &&
+        adaptive.confidence >= 0.6) {
+      return adaptive.direction;
+    }
+    return base;
   }
 
   ReadingProgress? _matchingInitialProgress() {
@@ -884,6 +1061,173 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     );
   }
 
+  String _directionLabel(ReadingDirection? direction) => switch (direction) {
+        ReadingDirection.ltr => 'LTR',
+        ReadingDirection.rtl => 'RTL',
+        ReadingDirection.vertical => '纵向',
+        null => '跟随来源/进度',
+      };
+
+  String _adaptiveProfileLabel(ReaderSessionSettings settings) {
+    final profile = _adaptiveProfile;
+    if (!settings.globalAdaptiveEnabled) return '全局自适应未启用';
+    if (!settings.comicAdaptiveEnabled) return '本漫画已停用自适应';
+    if (profile == null) return '暂无高置信度结果';
+    final confidence = (profile.confidence * 100).round();
+    final kind = profile.animated
+        ? '动画分页'
+        : _directionLabel(profile.direction);
+    final basis = switch (profile.basis) {
+      'animated-pages' => '动画页提示',
+      'page-geometry' => '页面比例',
+      'source-hint' => '来源方向',
+      _ => profile.basis,
+    };
+    return '$kind · $confidence% · $basis';
+  }
+
+  Future<void> _editComicSettings() async {
+    var draft = _settings;
+    final saved = await showModalBottomSheet<ReaderSessionSettings>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheetState) => SafeArea(
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                16,
+                12,
+                16,
+                16 + MediaQuery.viewInsetsOf(context).bottom,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Text(
+                    '本漫画阅读设置',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  SwitchListTile(
+                    key: readerComicSettingsEnabledKey,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('启用本漫画设置'),
+                    subtitle: const Text(
+                      '方向与拼接覆盖全局默认；关闭后仍可单独停用自适应。',
+                    ),
+                    value: draft.comicSpecificEnabled,
+                    onChanged: (value) => setSheetState(
+                      () => draft = draft.copyWith(
+                        comicSpecificEnabled: value,
+                      ),
+                    ),
+                  ),
+                  SwitchListTile(
+                    key: readerAdaptiveSettingsKey,
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('使用自适应设置'),
+                    subtitle: Text(_adaptiveProfileLabel(draft)),
+                    value: draft.comicAdaptiveEnabled,
+                    onChanged: draft.globalAdaptiveEnabled
+                        ? (value) => setSheetState(
+                              () => draft = draft.copyWith(
+                                comicAdaptiveEnabled: value,
+                              ),
+                            )
+                        : null,
+                  ),
+                  if (draft.comicSpecificEnabled) ...<Widget>[
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      value: draft.directionOverride?.name ?? 'follow',
+                      decoration: const InputDecoration(
+                        labelText: '阅读方向',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: <DropdownMenuItem<String>>[
+                        const DropdownMenuItem(
+                          value: 'follow',
+                          child: Text('跟随来源/进度或自适应'),
+                        ),
+                        for (final direction in ReadingDirection.values)
+                          DropdownMenuItem(
+                            value: direction.name,
+                            child: Text(_directionLabel(direction)),
+                          ),
+                      ],
+                      onChanged: (value) => setSheetState(
+                        () => draft = draft.copyWith(
+                          directionOverride: value == null || value == 'follow'
+                              ? null
+                              : ReadingDirection.values.byName(value),
+                        ),
+                      ),
+                    ),
+                    SwitchListTile(
+                      key: readerVerticalStitchKey,
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('纵向拼接'),
+                      subtitle: const Text(
+                        '纵向模式中移除页面间距，按页面比例连续滚动。',
+                      ),
+                      value: draft.verticalStitch,
+                      onChanged: (value) => setSheetState(
+                        () => draft = draft.copyWith(verticalStitch: value),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  Row(
+                    children: <Widget>[
+                      TextButton(
+                        onPressed: () => Navigator.pop(
+                          context,
+                          ReaderSessionSettings(
+                            fallbackVerticalStitch:
+                                draft.fallbackVerticalStitch,
+                            globalAdaptiveEnabled:
+                                draft.globalAdaptiveEnabled,
+                          ),
+                        ),
+                        child: const Text('清除本漫画设置'),
+                      ),
+                      const Spacer(),
+                      FilledButton(
+                        onPressed: () => Navigator.pop(context, draft),
+                        child: const Text('保存'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    if (saved == null || !mounted) return;
+    setState(() {
+      _settings = saved;
+      _adaptiveProfile = _settings.effectiveAdaptiveEnabled
+          ? classifyAdaptiveReaderLayout(widget.chapter)
+          : null;
+    });
+    _reader?.setDirection(_resolveInitialDirection(_matchingInitialProgress()));
+    final writer = widget.onSettingsChanged;
+    if (writer != null) {
+      try {
+        await Future<void>.sync(() => writer(saved));
+      } on Object catch (error) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('保存本漫画阅读设置失败：$error')),
+          );
+        }
+      }
+    }
+  }
+
   Widget _topControls(
     BuildContext context,
     ReaderController reader,
@@ -924,6 +1268,13 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                               ),
                       ),
                       ...?widget.appBarActionsBuilder?.call(context, reader),
+                      if (widget.onSettingsChanged != null)
+                        IconButton(
+                          key: readerComicSettingsKey,
+                          tooltip: '本漫画阅读设置',
+                          onPressed: () => unawaited(_editComicSettings()),
+                          icon: const Icon(Icons.tune),
+                        ),
                       PopupMenuButton<ReadingDirection>(
                         tooltip: '阅读方向',
                         initialValue: reader.direction,
@@ -1017,20 +1368,33 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                 children: <Widget>[
                   Row(
                     children: <Widget>[
-                      Text('${reader.currentIndex + 1}'),
+                      Text(
+                        reader.direction == ReadingDirection.rtl
+                            ? '$pages'
+                            : '${reader.currentIndex + 1}',
+                      ),
                       Expanded(
-                        child: Slider(
-                          key: readerPageSliderKey,
-                          value: reader.currentIndex.toDouble(),
-                          min: 0,
-                          max: math.max(1, pages - 1).toDouble(),
-                          divisions: pages > 1 ? pages - 1 : null,
-                          onChanged: pages <= 1
-                              ? null
-                              : (value) => reader.requestPage(value.round()),
+                        child: Directionality(
+                          textDirection: reader.direction == ReadingDirection.rtl
+                              ? TextDirection.rtl
+                              : TextDirection.ltr,
+                          child: Slider(
+                            key: readerPageSliderKey,
+                            value: reader.currentIndex.toDouble(),
+                            min: 0,
+                            max: math.max(1, pages - 1).toDouble(),
+                            divisions: pages > 1 ? pages - 1 : null,
+                            onChanged: pages <= 1
+                                ? null
+                                : (value) => reader.requestPage(value.round()),
+                          ),
                         ),
                       ),
-                      Text('$pages'),
+                      Text(
+                        reader.direction == ReadingDirection.rtl
+                            ? '${reader.currentIndex + 1}'
+                            : '$pages',
+                      ),
                     ],
                   ),
                   ValueListenableBuilder<ReaderPlaybackState>(
@@ -1146,6 +1510,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
               pageBuilder: pageBuilder,
               demandRevision: () => _binding?.revision ?? 0,
               onTap: _toggleControls,
+              verticalStitch: _settings.effectiveVerticalStitch,
             ),
             AnimatedOpacity(
               opacity: _controlsVisible ? 1 : 0,

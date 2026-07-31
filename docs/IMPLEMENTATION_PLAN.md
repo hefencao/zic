@@ -21,7 +21,7 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.64）
+## 当前应用主线（0.31.0-dev.65）
 
 - 完成第四根导航“杂项”，将快捷设置、完整设置、关于和 Debug trace 从 Home 主线分离。
 - 设置按数据/网络/书架/阅读/下载/外观分层；所有可执行项复用既有 store、queue、cache coordinator 与 Reader composition。
@@ -75,6 +75,15 @@
 - Mihon/Venera isolated backend 必须通过 `ExternalPluginRuntimeMessageChannel` 交换 protocol-v1 基础值/`Uint8List` 消息。handshake source identity、schema 和每次 response requestId 在跨边界处验证；不得返回进程内 zic domain/session 对象。
 - Android bound-service transport 必须以 binding generation 区分每次显式连接，并通过 Binder death recipient 失败当前请求；旧 generation 的迟到回调不得拆除新连接，也不得自动 replay/activate。packet response 必须校验 dedicated root、exact length 与 SHA-256，消费或失败后删除。
 
+
+### dev.65 当前主线约束
+
+- Venera 新章节资源 locator 必须跨 runtime generation 可恢复，并只编码宿主批准的版本化 image/comic/episode identity。不得把任意 URL、header、脚本或网络配置作为可伪造 locator 载荷。legacy runtime token 只作读取兼容。
+- 每漫画设置是 `sourceId + comicId` 的小型 Presentation preference，仅可覆盖 Reader 方向、纵向拼接和自适应开关；不得包含 artifact、下载、缓存、Cookie、插件 session 或 pipeline demand。
+- 自适应布局只选择 Reader presentation mode。输入限于来源/进度方向、页面几何和动画 hint；低置信度回退既有值，hint 不能替代字节嗅探。
+- 纵向连续列表必须保持每页稳定 asset identity。拼接只控制视觉间距，不能把相邻图片合成一个文件、缓存项或 decode identity。
+- RTL Reader 的 slider 最小/最大方向和端点标签必须镜像；页面 index、持久进度和 DownloadId 不反转。
+- Debug trace producer 可在 build 期间记录，但观察通知必须合并到安全帧边界。
 
 ### dev.63 当前主线约束
 

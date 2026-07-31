@@ -10,6 +10,8 @@ final class ImageFolderScreen extends StatelessWidget {
     this.initialFavorite = false,
     this.onFavoriteChanged,
     this.onDownloadRequested,
+    this.initialReaderSettings = const ReaderSessionSettings(),
+    this.onReaderSettingsChanged,
     super.key,
   });
 
@@ -21,6 +23,8 @@ final class ImageFolderScreen extends StatelessWidget {
   final bool initialFavorite;
   final FutureOr<void> Function(bool favorite)? onFavoriteChanged;
   final FutureOr<void> Function()? onDownloadRequested;
+  final ReaderSessionSettings initialReaderSettings;
+  final ReaderSessionSettingsWriter? onReaderSettingsChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -39,6 +43,8 @@ final class ImageFolderScreen extends StatelessWidget {
       initialFavorite: initialFavorite,
       onFavoriteChanged: onFavoriteChanged,
       onDownloadRequested: onDownloadRequested,
+      initialReaderSettings: initialReaderSettings,
+      onReaderSettingsChanged: onReaderSettingsChanged,
     );
   }
 }
@@ -55,6 +61,8 @@ final class ImportedImageChapterScreen extends StatelessWidget {
     this.onDownloadRequested,
     this.artifactCache,
     this.initiallyImmersive = true,
+    this.initialReaderSettings = const ReaderSessionSettings(),
+    this.onReaderSettingsChanged,
     this.traceSink,
     super.key,
   });
@@ -69,6 +77,8 @@ final class ImportedImageChapterScreen extends StatelessWidget {
   final FutureOr<void> Function()? onDownloadRequested;
   final ArtifactCacheStore? artifactCache;
   final bool initiallyImmersive;
+  final ReaderSessionSettings initialReaderSettings;
+  final ReaderSessionSettingsWriter? onReaderSettingsChanged;
   final TraceSink? traceSink;
 
   @override
@@ -101,6 +111,8 @@ final class ImportedImageChapterScreen extends StatelessWidget {
       onFavoriteChanged: onFavoriteChanged,
       onDownloadRequested: onDownloadRequested,
       initiallyImmersive: initiallyImmersive,
+      initialSettings: initialReaderSettings,
+      onSettingsChanged: onReaderSettingsChanged,
       traceSink: traceSink,
       appBarTitleBuilder: (context, chapter, currentIndex) {
         final current = record.pages[currentIndex];

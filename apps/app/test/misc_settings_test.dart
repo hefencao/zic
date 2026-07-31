@@ -66,6 +66,17 @@ void main() {
         'shelfView': 'list',
         'defaultReaderMode': 'continuous',
         'readerStartsImmersive': false,
+        'adaptiveReaderEnabled': true,
+        'defaultVerticalStitch': true,
+        'comicReaderSettings': <String, Object?>{
+          comicReaderSettingsIdentity('source-a', 'comic-a'):
+              <String, Object?>{
+            'enabled': true,
+            'directionOverride': 'rtl',
+            'verticalStitch': true,
+            'adaptiveEnabled': false,
+          },
+        },
       },
       write: (values) async => written = Map<String, Object?>.from(values),
     );
@@ -77,13 +88,39 @@ void main() {
     expect(controller.shelfView, ShelfViewPreference.list);
     expect(controller.defaultReaderMode, ReaderMode.continuous);
     expect(controller.readerStartsImmersive, isFalse);
+    expect(controller.adaptiveReaderEnabled, isTrue);
+    expect(controller.defaultVerticalStitch, isTrue);
+    expect(
+      controller.comicReaderSettingsFor('source-a', 'comic-a'),
+      const ComicReaderSettings(
+        enabled: true,
+        directionOverride: ReadingDirection.rtl,
+        verticalStitch: true,
+        adaptiveEnabled: false,
+      ),
+    );
 
     controller.setThemeMode(ThemeMode.dark);
     controller.setShelfSortMode(LibrarySortMode.custom);
+    controller.setComicReaderSettings(
+      'source-b',
+      'comic-b',
+      const ComicReaderSettings(
+        enabled: true,
+        directionOverride: ReadingDirection.vertical,
+        verticalStitch: true,
+      ),
+    );
     await controller.flush();
 
     expect(written?['themeMode'], 'dark');
     expect(written?['shelfSortMode'], 'custom');
+    final comicSettings = written?['comicReaderSettings']! as Map;
+    expect(
+      (comicSettings[comicReaderSettingsIdentity('source-b', 'comic-b')]
+              as Map)['directionOverride'],
+      'vertical',
+    );
   });
 
   test('library backup preserves the complete metadata sections', () async {
@@ -147,4 +184,39 @@ void main() {
     );
     expect(log.events, hasLength(2));
   });
+  testWidgets('debug trace notifications are deferred past build',
+      (tester) async {
+    final log = DebugTraceLog(maxEvents: 4);
+    addTearDown(log.dispose);
+    var notifications = 0;
+    var recorded = false;
+    log.addListener(() => notifications++);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AnimatedBuilder(
+          animation: log,
+          builder: (context, _) {
+            if (!recorded) {
+              recorded = true;
+              log.record(
+                TraceEvent(
+                  monotonicMicros: 1,
+                  sessionId: 'build',
+                  kind: TraceEventKind.pageHostMounted,
+                ),
+              );
+            }
+            return Text('${log.events.length}');
+          },
+        ),
+      ),
+    );
+
+    expect(notifications, 0);
+    await tester.pump();
+    expect(notifications, 1);
+    expect(find.text('1'), findsOneWidget);
+  });
+
 }

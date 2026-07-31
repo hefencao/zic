@@ -1444,6 +1444,8 @@ const __zicPaging = new Map();
 let __zicResourceKey = 0;
 function __zicRetainResource(config){const token=String(++__zicResourceKey);__zicResources.set(token,config);while(__zicResources.size>__zicResourceLimit)__zicResources.delete(__zicResources.keys().next().value);return token}
 function __zicGetResource(token){const config=__zicResources.get(token);if(config){__zicResources.delete(token);__zicResources.set(token,config)}return config}
+function __zicResourceUri(config){return 'venera-resource:'+__zicB64({v:1,image:String(config.image),comicId:config.comicId??null,epId:config.epId??null})}
+function __zicResolveResourceUri(uri){const payload=String(uri).slice('venera-resource:'.length);if(payload.startsWith('//'))return __zicGetResource(payload.slice(2));try{const value=__zicUnb64(payload);if(value?.v!==1||typeof value.image!=='string')return undefined;return {image:value.image,comicId:value.comicId??null,epId:value.epId??null,deferredImageConfig:true}}catch(_){return __zicGetResource(payload)}}
 function __zicDecode(value) {
   if (value && value.__zicType === 'bytes') {
     const raw = atob(value.base64); const bytes = new Uint8Array(raw.length);
@@ -1677,7 +1679,7 @@ async function __zicOperation(request){
  }
  if(request.operation==='loadChapter'){
   const chapter=__zicUnb64(args.chapterId.slice('venera:chapter:'.length));const loaded=await source.comic.loadEp(chapter.comicRawId,chapter.epId);const images=Array.isArray(loaded)?loaded:(loaded?.images||[]);
-  const pages=[];for(let i=0;i<images.length;i++){const image=String(images[i]),token=__zicRetainResource({image,comicId:chapter.comicRawId,epId:chapter.epId,deferredImageConfig:true}),kind=__zicImageKindHint(image),page={chapterId:args.chapterId,pageId:String(args.chapterId)+':'+i,index:i,uri:'venera-resource://'+token};if(kind){page.contentKindHint=kind;page.animatedHint=kind==='webp'||kind==='gif'}pages.push(page)}
+  const pages=[];for(let i=0;i<images.length;i++){const image=String(images[i]),config={image,comicId:chapter.comicRawId,epId:chapter.epId,deferredImageConfig:true},kind=__zicImageKindHint(image),page={chapterId:args.chapterId,pageId:String(args.chapterId)+':'+i,index:i,uri:__zicResourceUri(config)};if(kind){page.contentKindHint=kind;page.animatedHint=kind==='webp'||kind==='gif'}pages.push(page)}
   return {comicId:chapter.comicId,chapter:__zicChapterMessage(chapter.comicId,chapter.epId,chapter.title,chapter.sequence,pages.length),pages,readingDirection:'vertical'};
  }
  if(request.operation==='loadSourceAccount')return __zicAccountDescriptor(source);
@@ -1686,10 +1688,10 @@ async function __zicOperation(request){
  if(request.operation==='loadSourceSettings')return __zicSourceSettings(source);
  if(request.operation==='updateSourceSetting')return await __zicUpdateSourceSetting(source,String(args.key||''),args.value);
  if(request.operation==='loadResource'){
-  const uri=String(args.uri||'');const isToken=uri.startsWith('venera-resource://');let token=null,config;
-  if(isToken){token=uri.slice('venera-resource://'.length);config=__zicGetResource(token);if(!config)throw new Error('Venera resource token expired')}
+  const uri=String(args.uri||'');const isResource=uri.startsWith('venera-resource:');let config;
+  if(isResource){config=__zicResolveResourceUri(uri);if(!config)throw new Error('Venera resource locator is unavailable')}
   else if(/^https?:\/\//i.test(uri)){let override={};if(typeof source.comic?.onImageLoad==='function'){try{override=await Promise.resolve(source.comic.onImageLoad(uri,null,null))||{}}catch(_){override={}}}config={url:override.url||uri,method:override.method||'GET',headers:override.headers||{},data:override.data,onResponse:override.onResponse,onLoadFailed:override.onLoadFailed,modifyImage:override.modifyImage}}
-  else throw new Error('Venera resource URI must be a runtime token or HTTP(S) URL');
+  else throw new Error('Venera resource URI must be a source locator or HTTP(S) URL');
   if(config.deferredImageConfig){const original=config.image;const override=await Promise.resolve(source.comic?.onImageLoad?.(original,config.comicId,config.epId)||{});config={url:override.url||original,method:override.method||'GET',headers:override.headers||{},data:override.data,onResponse:override.onResponse,onLoadFailed:override.onLoadFailed,modifyImage:override.modifyImage}}
   let active=config;for(let attempt=0;attempt<2;attempt++){try{const response=await Network.fetchBytes(active.method||'GET',active.url,active.headers||{},active.data);if(response.status<200||response.status>=300)throw new Error('Venera resource HTTP '+response.status);let bytes=response.body;if(typeof active.onResponse==='function')bytes=await active.onResponse(bytes);if(typeof active.modifyImage==='string'&&active.modifyImage.trim()){const key=sendMessage({method:'image',function:'decode',data:bytes});try{const modifier=(0,eval)(String(active.modifyImage)+'\n;(typeof modifyImage==="function"?modifyImage:null)');if(typeof modifier!=='function')throw new Error('Venera modifyImage script defines no modifyImage function');const transformed=await Promise.resolve(modifier(new Image(key)));if(!transformed||typeof transformed.key!=='number')throw new Error('Venera modifyImage returned no Image');bytes=sendMessage({method:'image',function:'encode',key:transformed.key})}finally{sendMessage({method:'image',function:'disposeAll'})}}return bytes}catch(error){if(attempt||typeof active.onLoadFailed!=='function')throw error;const retry=await active.onLoadFailed();if(!retry)throw error;active={url:retry.url||active.url,method:retry.method||'GET',headers:retry.headers||{},data:retry.data,onResponse:retry.onResponse,onLoadFailed:retry.onLoadFailed,modifyImage:retry.modifyImage}}}throw new Error('Venera resource retry exhausted')
  }

@@ -3,11 +3,20 @@
 ## Sole baseline
 
 Continue only from
-`zic_v0.31.0-dev.64_misc-settings-compile-fix.zip`.
+`zic_v0.31.0-dev.65_adaptive-per-comic-reader-venera-locator.zip`.
 It is a direct modification of the user-provided
 `zic_v0.31.0-dev.62_source-management-tabs-mihon-chapter-preflight.zip`;
 do not merge an earlier candidate. `mihon-main.zip` and `vibevenera-master.zip`
 were read-only compatibility references and are not part of the product tree.
+
+## Completed in dev.65
+
+- Added the missing `java.util.Locale` import to the Mihon Android runtime.
+- Replaced newly generated ephemeral Venera page tokens with constrained, versioned, self-describing `venera-resource:` locators. Clearing runtime token state no longer breaks later page loads; legacy `venera-resource://token` remains readable.
+- Frame-coalesced `DebugTraceLog` notifications so trace producers may record during Reader build without synchronously dirtying the diagnostics `AnimatedBuilder`.
+- Added global adaptive-layout and vertical-stitch settings plus bounded per-comic direction/stitch/adaptive overrides keyed by source and comic identity.
+- Replaced vertical PageView paging with proportional continuous ListView presentation. Stitching removes only the page gap.
+- Mirrored the Reader slider and endpoint labels for RTL while preserving normal page indices and progress identity.
 
 ## Completed in dev.64
 
@@ -90,6 +99,7 @@ python3 tool/test_venera_response_headers.py
 python3 tool/test_external_login_bridge.py
 python3 tool/test_external_source_settings_contract.py
 python3 tool/test_reader_streaming_contract.py
+python3 tool/test_reader_layout_settings_contract.py
 python3 tool/test_ui_architecture_contract.py
 python3 tool/test_configure_platforms.py
 bash -n tool/*.sh
@@ -110,12 +120,11 @@ flutter pub get
 ## Next mainline work
 
 1. Run the full Flutter/Dart suite and Android release build to close the SDK
-   validation gap for dev.64, including `misc_settings_test.dart`.
+   validation gap for dev.65, including `misc_settings_test.dart`, `reader_controls_test.dart`, and the continuous Reader navigation regression.
 2. Define an atomic directory migration/rollback protocol before adding mutable
    data, download, cache, or plugin root selectors. Add backup import only after
    validating schema and collision behavior.
-3. On a real Android device, verify Venera animated WebP playback through both a
-   direct image URL and a deferred `onImageLoad` resource.
+3. On a real Android device, verify that a long Venera chapter continues loading after runtime process recreation and that deferred `onImageLoad` still applies to later pages.
 4. Verify JMComic/18comic accepts the synthetic gallery only when body pages load,
    and preserve the complete diagnostic when both chapter and page APIs fail.
 5. Verify www.wn04.ru cover rendering, repeated-image chapters, Reader opening

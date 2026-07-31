@@ -239,6 +239,98 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
   });
 
+
+  testWidgets('vertical mode uses proportional continuous pages and stitch gap',
+      (tester) async {
+    final chapter = ChapterManifest(
+      sourceId: 'source',
+      comicId: 'vertical-comic',
+      chapter: const Chapter(
+        chapterId: 'vertical-chapter',
+        comicId: 'vertical-comic',
+        title: 'vertical',
+        sequence: 0,
+        pageCount: 3,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        3,
+        (index) => PageAsset(
+          pageId: 'vertical-$index',
+          chapterId: 'vertical-chapter',
+          index: index,
+          uri: Uri.parse('asset:///vertical-$index.png'),
+          width: 1000,
+          height: index == 1 ? 2400 : 1600,
+        ),
+      ),
+      readingDirection: ReadingDirection.vertical,
+    );
+    final controller = ReaderController(
+      sessionId: 'reader-vertical-test',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: FakeClock(),
+    );
+    addTearDown(controller.dispose);
+
+    Future<void> pump({required bool stitch}) => tester.pumpWidget(
+          MaterialApp(
+            home: ReaderView(
+              controller: controller,
+              clock: FakeClock(),
+              verticalStitch: stitch,
+              pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
+                key: ValueKey<String>(asset.pageId),
+                color: Colors.black,
+              ),
+            ),
+          ),
+        );
+
+    await pump(stitch: false);
+    await tester.pump();
+    expect(find.byType(ListView), findsOneWidget);
+    expect(find.byType(PageView), findsNothing);
+    expect(
+      tester
+          .widget<SizedBox>(
+            find.byKey(const ValueKey<String>('reader-vertical-gap:0')),
+          )
+          .height,
+      8,
+    );
+    expect(
+      tester
+          .getSize(
+            find.byKey(const ValueKey<String>('reader-vertical-page:1')),
+          )
+          .height,
+      greaterThan(
+        tester
+            .getSize(
+              find.byKey(const ValueKey<String>('reader-vertical-page:0')),
+            )
+            .height,
+      ),
+    );
+
+    await pump(stitch: true);
+    await tester.pump();
+    expect(
+      tester
+          .widget<SizedBox>(
+            find.byKey(const ValueKey<String>('reader-vertical-gap:0')),
+          )
+          .height,
+      0,
+    );
+
+    controller.requestPage(2);
+    await tester.pump();
+    expect(controller.requestedIndex, isNull);
+  });
+
   test('rotation cycles and can reset', () {
     final controller = ReaderController(
       sessionId: 'reader-rotation-test',

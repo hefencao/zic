@@ -8,6 +8,77 @@ enum ShelfSourceFilter { all, local, remote }
 
 enum ShelfViewPreference { gallery, list }
 
+@immutable
+final class ComicReaderSettings {
+  const ComicReaderSettings({
+    this.enabled = false,
+    this.directionOverride,
+    this.verticalStitch = false,
+    this.adaptiveEnabled = true,
+  });
+
+  static const Object _unset = Object();
+
+  final bool enabled;
+  final ReadingDirection? directionOverride;
+  final bool verticalStitch;
+  final bool adaptiveEnabled;
+
+  ComicReaderSettings copyWith({
+    bool? enabled,
+    Object? directionOverride = _unset,
+    bool? verticalStitch,
+    bool? adaptiveEnabled,
+  }) =>
+      ComicReaderSettings(
+        enabled: enabled ?? this.enabled,
+        directionOverride: identical(directionOverride, _unset)
+            ? this.directionOverride
+            : directionOverride as ReadingDirection?,
+        verticalStitch: verticalStitch ?? this.verticalStitch,
+        adaptiveEnabled: adaptiveEnabled ?? this.adaptiveEnabled,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ComicReaderSettings &&
+          enabled == other.enabled &&
+          directionOverride == other.directionOverride &&
+          verticalStitch == other.verticalStitch &&
+          adaptiveEnabled == other.adaptiveEnabled;
+
+  @override
+  int get hashCode => Object.hash(
+        enabled,
+        directionOverride,
+        verticalStitch,
+        adaptiveEnabled,
+      );
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'enabled': enabled,
+        if (directionOverride != null)
+          'directionOverride': directionOverride!.name,
+        'verticalStitch': verticalStitch,
+        'adaptiveEnabled': adaptiveEnabled,
+      };
+
+  factory ComicReaderSettings.fromJson(Map<String, Object?> json) =>
+      ComicReaderSettings(
+        enabled: _boolValue(json['enabled'], false),
+        directionOverride: _nullableEnumByName(
+          ReadingDirection.values,
+          json['directionOverride'],
+        ),
+        verticalStitch: _boolValue(json['verticalStitch'], false),
+        adaptiveEnabled: _boolValue(json['adaptiveEnabled'], true),
+      );
+}
+
+String comicReaderSettingsIdentity(String sourceId, String comicId) =>
+    '$sourceId\u0000$comicId';
+
 /// Application-level preferences that are safe for Presentation to observe.
 ///
 /// This controller owns only small user choices. It does not own cache files,
@@ -22,6 +93,10 @@ final class AppPreferencesController extends ChangeNotifier {
   ShelfViewPreference _shelfView = ShelfViewPreference.gallery;
   ReaderMode _defaultReaderMode = ReaderMode.paged;
   bool _readerStartsImmersive = true;
+  bool _adaptiveReaderEnabled = false;
+  bool _defaultVerticalStitch = false;
+  Map<String, ComicReaderSettings> _comicReaderSettings =
+      <String, ComicReaderSettings>{};
   Future<void> Function(Map<String, Object?> values)? _write;
   Future<void> _writeTail = Future<void>.value();
   int _revision = 0;
@@ -34,6 +109,14 @@ final class AppPreferencesController extends ChangeNotifier {
   ShelfViewPreference get shelfView => _shelfView;
   ReaderMode get defaultReaderMode => _defaultReaderMode;
   bool get readerStartsImmersive => _readerStartsImmersive;
+  bool get adaptiveReaderEnabled => _adaptiveReaderEnabled;
+  bool get defaultVerticalStitch => _defaultVerticalStitch;
+  Map<String, ComicReaderSettings> get comicReaderSettings =>
+      Map<String, ComicReaderSettings>.unmodifiable(_comicReaderSettings);
+
+  ComicReaderSettings comicReaderSettingsFor(String sourceId, String comicId) =>
+      _comicReaderSettings[comicReaderSettingsIdentity(sourceId, comicId)] ??
+      const ComicReaderSettings();
 
   Future<void> attach({
     required Future<Map<String, Object?>?> Function() read,
@@ -88,6 +171,15 @@ final class AppPreferencesController extends ChangeNotifier {
     );
     _readerStartsImmersive =
         _boolValue(values['readerStartsImmersive'], _readerStartsImmersive);
+    _adaptiveReaderEnabled =
+        _boolValue(values['adaptiveReaderEnabled'], _adaptiveReaderEnabled);
+    _defaultVerticalStitch = _boolValue(
+      values['defaultVerticalStitch'],
+      _defaultVerticalStitch,
+    );
+    _comicReaderSettings = _decodeComicReaderSettings(
+      values['comicReaderSettings'],
+    );
     if (!_disposed) notifyListeners();
   }
 
@@ -133,6 +225,47 @@ final class AppPreferencesController extends ChangeNotifier {
     _changed();
   }
 
+  void setAdaptiveReaderEnabled(bool value) {
+    if (_disposed || _adaptiveReaderEnabled == value) return;
+    _adaptiveReaderEnabled = value;
+    _changed();
+  }
+
+  void setDefaultVerticalStitch(bool value) {
+    if (_disposed || _defaultVerticalStitch == value) return;
+    _defaultVerticalStitch = value;
+    _changed();
+  }
+
+  void setComicReaderSettings(
+    String sourceId,
+    String comicId,
+    ComicReaderSettings settings,
+  ) {
+    if (_disposed) return;
+    final identity = comicReaderSettingsIdentity(sourceId, comicId);
+    if (_comicReaderSettings[identity] == settings) return;
+    final next = <String, ComicReaderSettings>{
+      ..._comicReaderSettings,
+      identity: settings,
+    };
+    while (next.length > 512) {
+      next.remove(next.keys.first);
+    }
+    _comicReaderSettings = next;
+    _changed();
+  }
+
+  void clearComicReaderSettings(String sourceId, String comicId) {
+    if (_disposed) return;
+    final identity = comicReaderSettingsIdentity(sourceId, comicId);
+    if (!_comicReaderSettings.containsKey(identity)) return;
+    _comicReaderSettings = <String, ComicReaderSettings>{
+      ..._comicReaderSettings,
+    }..remove(identity);
+    _changed();
+  }
+
   Future<void> flush() => _writeTail;
 
   void _changed() {
@@ -160,7 +293,7 @@ final class AppPreferencesController extends ChangeNotifier {
     final write = _write;
     if (write == null) return;
     await write(<String, Object?>{
-      'version': 1,
+      'version': 2,
       'themeMode': _themeMode.name,
       'debugTraceEnabled': _debugTraceEnabled,
       'shelfSourceFilter': _shelfSourceFilter.name,
@@ -168,6 +301,12 @@ final class AppPreferencesController extends ChangeNotifier {
       'shelfView': _shelfView.name,
       'defaultReaderMode': _defaultReaderMode.name,
       'readerStartsImmersive': _readerStartsImmersive,
+      'adaptiveReaderEnabled': _adaptiveReaderEnabled,
+      'defaultVerticalStitch': _defaultVerticalStitch,
+      'comicReaderSettings': <String, Object?>{
+        for (final entry in _comicReaderSettings.entries)
+          entry.key: entry.value.toJson(),
+      },
     });
   }
 
@@ -188,6 +327,33 @@ T _enumByName<T extends Enum>(
     if (value.name == raw) return value;
   }
   return fallback;
+}
+
+T? _nullableEnumByName<T extends Enum>(List<T> values, Object? raw) {
+  if (raw is! String) return null;
+  for (final value in values) {
+    if (value.name == raw) return value;
+  }
+  return null;
+}
+
+Map<String, ComicReaderSettings> _decodeComicReaderSettings(Object? raw) {
+  if (raw is! Map) return <String, ComicReaderSettings>{};
+  final result = <String, ComicReaderSettings>{};
+  for (final entry in raw.entries) {
+    final key = entry.key;
+    final value = entry.value;
+    if (key is! String || value is! Map) continue;
+    try {
+      result[key] = ComicReaderSettings.fromJson(
+        Map<String, Object?>.from(value),
+      );
+    } on Object {
+      // One malformed per-comic override must not discard the remaining
+      // application preferences.
+    }
+  }
+  return result;
 }
 
 bool _boolValue(Object? raw, bool fallback) => raw is bool ? raw : fallback;
