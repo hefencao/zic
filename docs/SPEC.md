@@ -33,7 +33,9 @@
 - GIF fallback；
 - 本地和远程来源；
 - 默认沉浸并隐藏控制栏，轻触切换控制栏；
-- 页码滑杆、暂停、倍速、旋转、收藏和章节缓存命令。
+- 页码滑杆、旋转、收藏和章节缓存命令；暂停与倍速仅在当前页面确认为动画媒体时显示。
+- 默认缩放比例下，分页 Reader 的横向拖动必须由页面导航接管；仅在用户显式放大后，页内拖动/缩放可以暂时接管手势。
+- 远程 Animated WebP 可以在 partial 持续增长时开始播放；顶部进度同时区分恢复/已有前缀与当前网络新增部分。
 
 ### 2.3 下载与离线
 
@@ -78,6 +80,7 @@ continue through Reader demand, transport, promoted artifact and decode ownershi
 - Flutter 首个可见 surface 不得等待 SQLite、缓存索引或离线页面恢复。书架恢复后，read-state 必须用批量查询，下载徽标必须用 index-only bulk projection；两者不得为每部漫画/每页执行 N+1 查询或 materialize `DownloadSession`。
 - 持久封面命中应优先返回完整不可变文件引用，不得在每次首页进入时读取整文件到 Dart heap、重算完整 hash 并同步 flush LRU 元数据。
 - 持久封面索引应以一个版本化 compact manifest 在进程内一次恢复；逐项 metadata 只作为崩溃恢复日志。首页性能诊断必须记录 bootstrap、服务打开、封面来源和首帧的单调时间线。
+- durable 书架恢复不得以全屏“正在恢复”阻塞已经挂载的 Home；恢复期间必须保持导航可操作，并只呈现非模态同步状态。
 - 普通本地静态图片在没有 pipeline/session loader 时应由文件型 ImageProvider 打开。Android SAF `content://` 可复制一次到应用私有持久缓存；后续命中使用该文件。
 - 一个普通静态文件只能由渲染用 `Image` 持有一个 provider stream；不得再次手动 `resolve` 同一 provider 观察 ready。ready 必须来自实际 frame 回调。文件路由测试不得等待宿主 decoder 才证明 zero-copy，并应在结束前卸载 provider。
 - Animated WebP/GIF、Reader 页面和远程首次下载继续由其既有 decoder、demand 和 artifact owner 管理。
@@ -95,6 +98,7 @@ continue through Reader demand, transport, promoted artifact and decode ownershi
 
 - Mihon 与 Venera backend 必须实现同一版本化协议；版本不匹配、未知 operation、额外字段或非法 wire type 必须拒绝。
 - 协议只允许 source descriptor、browse、comic、chapter、binary resource 与规范化 source settings 数据，不得传递 Widget、Reader、导航、demand、`DownloadSession`、缓存维护、SharedPreferences、JavaScript 对象或 artifact 句柄。
+- 来源账号协议只允许规范化 account descriptor、凭据、按声明顺序排列的 Cookie 字段，以及有界 Web 登录快照（最终 URL、标题、Cookie、localStorage）。来源验证、持久化和退出在隔离 runtime 中执行。
 - runtime source ID 必须由 host 添加 `mihon:`/`venera:` 命名空间，并与 repository/inspection identity 一致；comic/chapter/page 返回值必须保持请求身份和父子关系。
 - host 必须独立执行 timeout、响应字节和真实并发上限。调用方 timeout 后，底层操作真正结束前不得释放并发令牌。
 - session close 必须拒绝排队调用、通知隔离 backend 终止活动调用并等待实际工作排空；并发 close 必须加入同一关闭过程。

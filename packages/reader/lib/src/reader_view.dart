@@ -433,23 +433,30 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage> {
 
   @override
   Widget build(BuildContext context) {
+    final child = SizedBox.expand(child: widget.child);
     return Listener(
       behavior: HitTestBehavior.opaque,
       onPointerDown: _handlePointerDown,
       onPointerMove: _handlePointerMove,
       onPointerUp: _handlePointerUp,
       onPointerCancel: _handlePointerCancel,
-      child: InteractiveViewer(
-        transformationController: _transformation,
-        minScale: 1,
-        maxScale: 5,
-        panEnabled: true,
-        scaleEnabled: true,
-        clipBehavior: Clip.hardEdge,
-        onInteractionUpdate: (_) => _publishZoom(),
-        onInteractionEnd: (_) => _publishZoom(),
-        child: SizedBox.expand(child: widget.child),
-      ),
+      // At scale 1 the page content must not install a scale recognizer in the
+      // horizontal gesture arena. Remote image widgets otherwise win the drag
+      // before PageView can turn it into navigation. Double tap enters the
+      // explicit zoom state; only then does InteractiveViewer own pan/scale.
+      child: _zoomed
+          ? InteractiveViewer(
+              transformationController: _transformation,
+              minScale: 1,
+              maxScale: 5,
+              panEnabled: true,
+              scaleEnabled: true,
+              clipBehavior: Clip.hardEdge,
+              onInteractionUpdate: (_) => _publishZoom(),
+              onInteractionEnd: (_) => _publishZoom(),
+              child: child,
+            )
+          : child,
     );
   }
 }

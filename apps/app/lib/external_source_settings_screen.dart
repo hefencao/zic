@@ -3,17 +3,26 @@ import 'dart:async';
 import 'package:catalog/catalog.dart';
 import 'package:flutter/material.dart';
 
+typedef ExternalSourceLoginSnapshot = ({
+  Uri currentUrl,
+  String title,
+  Map<String, String> cookies,
+  Map<String, String> localStorage,
+});
+
 final class ExternalSourceSettingsScreen extends StatefulWidget {
   const ExternalSourceSettingsScreen({
     required this.source,
     required this.onApply,
     this.onLogin,
+    this.onReadLogin,
     super.key,
   });
 
   final BrowsableComicSource source;
   final Future<void> Function() onApply;
-  final Future<void> Function()? onLogin;
+  final Future<void> Function(Uri url)? onLogin;
+  final Future<ExternalSourceLoginSnapshot?> Function(Uri url)? onReadLogin;
 
   @override
   State<ExternalSourceSettingsScreen> createState() =>
@@ -27,6 +36,7 @@ final class _ExternalSourceSettingsScreenState
   bool _loading = true;
   bool _working = false;
   bool _changed = false;
+  ComicSourceAccount? _account;
 
   ConfigurableComicSource get _source =>
       widget.source as ConfigurableComicSource;
@@ -38,14 +48,30 @@ final class _ExternalSourceSettingsScreenState
   }
 
   Future<void> _load() async {
+    var settings = const <ComicSourceSetting>[];
+    ComicSourceAccount? account;
+    Object? firstError;
     try {
-      final settings = await _source.loadSettings();
-      if (mounted) setState(() => _settings = settings);
+      settings = await _source.loadSettings();
     } on Object catch (error) {
-      if (mounted) setState(() => _error = error);
-    } finally {
-      if (mounted) setState(() => _loading = false);
+      firstError = error;
     }
+    if (widget.source.sourceId.startsWith('venera:') &&
+        widget.source is AuthenticatableComicSource) {
+      try {
+        account = await (widget.source as AuthenticatableComicSource)
+            .loadAccount();
+      } on Object catch (error) {
+        firstError ??= error;
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _settings = settings;
+      _account = account;
+      _error = firstError;
+      _loading = false;
+    });
   }
 
   Future<void> _update(ComicSourceSetting setting, Object value) async {
@@ -214,6 +240,229 @@ final class _ExternalSourceSettingsScreenState
     if (value != null) await _update(setting, value);
   }
 
+
+  AuthenticatableComicSource get _accountSource =>
+      widget.source as AuthenticatableComicSource;
+
+  Future<void> _withAccountWork(Future<void> Function() action) async {
+    setState(() {
+      _working = true;
+      _error = null;
+    });
+    try {
+      await action();
+      final account = await _accountSource.loadAccount();
+      if (mounted) setState(() => _account = account);
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = error);
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  Future<void> _loginCredentials() async {
+    final accountController = TextEditingController();
+    final passwordController = TextEditingController();
+    final values = await showDialog<(String, String)>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('登录漫画源'),
+        content: AutofillGroup(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              TextField(
+                controller: accountController,
+                autofocus: true,
+                autofillHints: const <String>[AutofillHints.username],
+                decoration: const InputDecoration(
+                  labelText: '账号',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: passwordController,
+                obscureText: true,
+                autofillHints: const <String>[AutofillHints.password],
+                decoration: const InputDecoration(
+                  labelText: '密码',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final account = accountController.text.trim();
+              final password = passwordController.text;
+              if (account.isNotEmpty && password.isNotEmpty) {
+                Navigator.pop(context, (account, password));
+              }
+            },
+            child: const Text('登录'),
+          ),
+        ],
+      ),
+    );
+    accountController.dispose();
+    passwordController.dispose();
+    if (values == null) return;
+    await _withAccountWork(
+      () => _accountSource.loginWithCredentials(values.$1, values.$2),
+    );
+  }
+
+  Future<void> _loginCookies(List<String> fields) async {
+    final controllers = <String, TextEditingController>{
+      for (final field in fields) field: TextEditingController(),
+    };
+    final values = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Cookie 登录'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              for (final entry in controllers.entries) ...<Widget>[
+                TextField(
+                  controller: entry.value,
+                  obscureText: true,
+                  decoration: InputDecoration(
+                    labelText: entry.key,
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+            ],
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final result = <String, String>{
+                for (final entry in controllers.entries)
+                  entry.key: entry.value.text.trim(),
+              };
+              if (result.values.every((value) => value.isNotEmpty)) {
+                Navigator.pop(context, result);
+              }
+            },
+            child: const Text('验证并登录'),
+          ),
+        ],
+      ),
+    );
+    for (final controller in controllers.values) {
+      controller.dispose();
+    }
+    if (values == null) return;
+    await _withAccountWork(() => _accountSource.loginWithCookies(values));
+  }
+
+  Future<void> _openWebLogin() async {
+    final open = widget.onLogin;
+    if (open == null) return;
+    final website = _account?.loginWebsite;
+    if (website == null) return;
+    await open(website);
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('完成网页登录'),
+        content: const Text('返回后确认登录状态。若网页仍未完成登录，请选择取消并重新打开。'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('验证登录'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed ?? false) {
+      final snapshot = await widget.onReadLogin?.call(website);
+      await _withAccountWork(
+        () => _accountSource.confirmWebLogin(
+          currentUrl: snapshot?.currentUrl.toString(),
+          title: snapshot?.title,
+          cookies: snapshot?.cookies ?? const <String, String>{},
+          localStorage:
+              snapshot?.localStorage ?? const <String, String>{},
+        ),
+      );
+    }
+  }
+
+  Widget _accountSection() {
+    final account = _account;
+    if (account == null) return const SizedBox.shrink();
+    return Card(
+      margin: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+      child: Column(
+        children: <Widget>[
+          ListTile(
+            leading: Icon(
+              account.loggedIn ? Icons.verified_user : Icons.person_outline,
+            ),
+            title: Text(account.loggedIn ? '已登录' : '账号登录'),
+            subtitle: Text(
+              account.loggedIn
+                  ? '登录状态由插件隔离存储维护'
+                  : '选择该插件支持的登录方式',
+            ),
+          ),
+          if (!account.loggedIn && account.supportsCredentials)
+            ListTile(
+              leading: const Icon(Icons.password),
+              title: const Text('账号与密码'),
+              onTap: _working ? null : () => unawaited(_loginCredentials()),
+            ),
+          if (!account.loggedIn && account.cookieFields.isNotEmpty)
+            ListTile(
+              leading: const Icon(Icons.cookie_outlined),
+              title: const Text('Cookie 登录'),
+              subtitle: Text(account.cookieFields.join('、')),
+              onTap: _working
+                  ? null
+                  : () => unawaited(_loginCookies(account.cookieFields)),
+            ),
+          if (!account.loggedIn && account.loginWebsite != null)
+            ListTile(
+              leading: const Icon(Icons.open_in_browser),
+              title: const Text('网页登录'),
+              subtitle: Text(account.loginWebsite.toString()),
+              onTap: _working ? null : () => unawaited(_openWebLogin()),
+            ),
+          if (account.loggedIn)
+            ListTile(
+              leading: const Icon(Icons.logout),
+              title: const Text('退出登录'),
+              onTap: _working
+                  ? null
+                  : () => unawaited(_withAccountWork(_accountSource.logout)),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -230,14 +479,17 @@ final class _ExternalSourceSettingsScreenState
           ? const Center(child: CircularProgressIndicator())
           : ListView(
               children: <Widget>[
-                if (widget.onLogin != null)
+                if (_account != null) _accountSection(),
+                if (_account == null && widget.onLogin != null)
                   ListTile(
                     leading: const Icon(Icons.login),
                     title: const Text('网页登录'),
                     subtitle: Text(widget.source.descriptor.website.toString()),
                     onTap: _working
                         ? null
-                        : () => unawaited(widget.onLogin!()),
+                        : () => unawaited(
+                              widget.onLogin!(widget.source.descriptor.website),
+                            ),
                   ),
                 if (_error != null)
                   Padding(
@@ -252,9 +504,9 @@ final class _ExternalSourceSettingsScreenState
                 if (_settings.isEmpty)
                   ListTile(
                     title: const Text('该漫画源没有扩展自定义设置'),
-                    subtitle: widget.onLogin == null
+                    subtitle: widget.onLogin == null && _account == null
                         ? null
-                        : const Text('仍可使用网页登录建立 Cookie 会话'),
+                        : const Text('仍可使用上方账号功能建立会话'),
                   ),
                 for (final setting in _settings) _settingTile(setting),
                 if (_working) const LinearProgressIndicator(),

@@ -33,7 +33,6 @@ final class _BootstrapApp extends StatefulWidget {
 
 final class _BootstrapAppState extends State<_BootstrapApp> {
   late final HomeStartupTelemetry _startupTelemetry;
-  late final Future<_AppServices> _servicesFuture;
   _AppServices? _services;
   bool _disposed = false;
 
@@ -52,14 +51,13 @@ final class _BootstrapAppState extends State<_BootstrapApp> {
         _startupTelemetry.bootstrapPresented();
       }
     });
-    _servicesFuture = _openServices(_startupTelemetry).then((services) {
+    unawaited(_openServices(_startupTelemetry).then<void>((services) {
       if (_disposed) {
         unawaited(services.close());
       } else {
-        _services = services;
+        setState(() => _services = services);
       }
-      return services;
-    });
+    }));
   }
 
   @override
@@ -74,61 +72,17 @@ final class _BootstrapAppState extends State<_BootstrapApp> {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<_AppServices>(
-      future: _servicesFuture,
-      builder: (context, snapshot) {
-        final services = snapshot.data;
-        if (services == null) {
-          return const _StartupApp();
-        }
-        return App(
-          libraryStore: services.libraryStore,
-          chapterDownloads: services.chapterDownloads,
-          wholeComicDownloads: services.wholeComicDownloads,
-          cacheCoordinator: services.cacheCoordinator,
-          externalPlugins: services.externalPlugins,
-          startupTelemetry: _startupTelemetry,
-        );
-      },
-    );
-  }
-}
-
-final class _StartupApp extends StatelessWidget {
-  const _StartupApp();
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'zic',
-      debugShowCheckedModeBanner: false,
-      themeMode: ThemeMode.dark,
-      darkTheme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.indigo,
-          brightness: Brightness.dark,
-        ),
-        useMaterial3: true,
+    final services = _services;
+    return App(
+      homeKey: ValueKey<String>(
+        services == null ? 'bootstrap-memory' : 'durable-services',
       ),
-      home: const Scaffold(
-        body: SafeArea(
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Icon(Icons.auto_stories_outlined, size: 52),
-                SizedBox(height: 18),
-                Text('正在恢复书架'),
-                SizedBox(height: 14),
-                SizedBox.square(
-                  dimension: 24,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+      libraryStore: services?.libraryStore,
+      chapterDownloads: services?.chapterDownloads,
+      wholeComicDownloads: services?.wholeComicDownloads,
+      cacheCoordinator: services?.cacheCoordinator,
+      externalPlugins: services?.externalPlugins,
+      startupTelemetry: _startupTelemetry,
     );
   }
 }
@@ -260,6 +214,7 @@ final class App extends StatelessWidget {
     this.cacheCoordinator,
     this.externalPlugins,
     this.startupTelemetry,
+    this.homeKey,
     super.key,
   }) : assert(
           wholeComicDownloads == null || chapterDownloads != null,
@@ -276,6 +231,7 @@ final class App extends StatelessWidget {
   final ResourceCacheCoordinator? cacheCoordinator;
   final ExternalPluginController? externalPlugins;
   final HomeStartupTelemetry? startupTelemetry;
+  final Key? homeKey;
 
   @override
   Widget build(BuildContext context) {
@@ -295,6 +251,7 @@ final class App extends StatelessWidget {
       ),
       themeMode: ThemeMode.dark,
       home: DemoHome(
+        key: homeKey,
         picker: picker,
         folderPicker: folderPicker,
         folderRefresher: folderRefresher,

@@ -288,7 +288,7 @@ private data class VeneraActivation(
         append(script)
         append("\n;(async()=>{try{globalThis.__zicSource=new ")
         append(className)
-        append("();await Promise.resolve(__zicSource.init?.());")
+        append("();__zicInstallSourceData(__zicSource);await Promise.resolve(__zicSource.init?.());")
         append("__zicInstallComicInfoCache(__zicSource);")
         append("if(__zicCompareVersion(String(__zicSource.minAppVersion||'0'),appVersion)>0)")
         append("throw new Error('Venera source requires app '+__zicSource.minAppVersion+' or newer');")
@@ -343,7 +343,7 @@ private class VeneraNativeBridge(
                 }
                 "getLocale" -> Locale.getDefault().toLanguageTag().replace('-', '_')
                 "getPlatform" -> "android"
-                "isLogged" -> false
+                "isLogged" -> isLogged()
                 "log" -> null
                 "image" -> image(message)
                 "UI", "setClipboard", "getClipboard", "compute" ->
@@ -701,17 +701,44 @@ private class VeneraNativeBridge(
                 }
             }
             "set" -> {
-                val cookies = message.optJSONArray("cookies") ?: JSONArray()
+                val rawCookies = message.opt("cookies")
+                val cookies = when (rawCookies) {
+                    is JSONArray -> rawCookies
+                    is JSONObject -> JSONArray().apply {
+                        rawCookies.keys().forEach { name ->
+                            put(
+                                JSONObject()
+                                    .put("name", name)
+                                    .put("value", rawCookies.optString(name)),
+                            )
+                        }
+                    }
+                    else -> JSONArray()
+                }
                 repeat(cookies.length()) { index ->
                     val cookie = cookies.getJSONObject(index)
+                    val name = cookie.getString("name")
+                    val cookieValue = cookie.getString("value")
+                    require(name.isNotBlank() && !name.contains(Regex("[=;\r\n]"))) {
+                        "Venera cookie name is invalid"
+                    }
+                    require(!cookieValue.contains(Regex("[\r\n]"))) {
+                        "Venera cookie value is invalid"
+                    }
                     val value = buildString {
-                        append(cookie.getString("name"))
+                        append(name)
                         append('=')
-                        append(cookie.getString("value"))
+                        append(cookieValue)
                         cookie.optString("domain").takeIf { it.isNotBlank() }?.let {
                             append("; Domain=")
                             append(it)
                         }
+                        cookie.optString("path").takeIf { it.isNotBlank() }?.let {
+                            append("; Path=")
+                            append(it)
+                        }
+                        if (cookie.optBoolean("secure")) append("; Secure")
+                        if (cookie.optBoolean("httpOnly")) append("; HttpOnly")
                     }
                     cookieManager.setCookie(url, value)
                 }
@@ -729,6 +756,12 @@ private class VeneraNativeBridge(
             }
             else -> error("unsupported Venera cookie operation")
         }
+    }
+
+    private fun isLogged(): Boolean {
+        if (!capabilities.contains("persistentStorage")) return false
+        val raw = preferences.getString("data:account", null) ?: return false
+        return runCatching { !JSONObject(raw).isNull("value") }.getOrDefault(false)
     }
 
     private fun loadData(message: JSONObject): Any? {
@@ -1450,6 +1483,18 @@ class ComicSource {
 }
 const APP={get version(){return appVersion},get locale(){return sendMessage({method:'getLocale'})},get platform(){return 'android'}};
 
+function __zicInstallSourceData(source){
+ const proxy=new Proxy({}, {get:(_,key)=>source.loadData(String(key)),set:(_,key,value)=>{source.saveData(String(key),value);return true},deleteProperty:(_,key)=>{source.deleteData(String(key));return true},has:(_,key)=>source.loadData(String(key))!==null});
+ try{Object.defineProperty(source,'data',{value:proxy,writable:false,configurable:true})}catch(_){try{source.data=proxy}catch(__){}}
+}
+function __zicAccountDescriptor(source){const account=source?.account;if(!account||typeof account!=='object')return {loggedIn:Boolean(source?.isLogged),supportsCredentials:false,cookieFields:[],loginWebsite:null,registerWebsite:null};const cookies=account.loginWithCookies,web=account.loginWithWebview;return {loggedIn:Boolean(source.isLogged),supportsCredentials:typeof account.login==='function',cookieFields:Array.isArray(cookies?.fields)?cookies.fields.map(field=>String(field?.key??field?.name??field?.title??field)).filter(Boolean):[],loginWebsite:web?.url?String(web.url):null,registerWebsite:account.registerWebsite??source.registerWebsite??null}}
+async function __zicLoginSource(source,mode,values){const account=source?.account;if(!account||typeof account!=='object')throw new Error('Venera source exposes no account login');
+ if(mode==='credentials'){if(typeof account.login!=='function')throw new Error('Venera source exposes no credential login');const name=String(values?.account??''),password=String(values?.password??'');if(!name||!password)throw new Error('Account and password are required');const result=await Promise.resolve(account.login.call(source,name,password));if(result===false)throw new Error('Venera credential login was rejected');source.saveData('account',[name,password]);return null}
+ if(mode==='cookies'){const config=account.loginWithCookies;if(!config||typeof config.validate!=='function')throw new Error('Venera source exposes no cookie login');const raw=values?.cookies&&typeof values.cookies==='object'?values.cookies:{};const fields=Array.isArray(config.fields)?config.fields.map(field=>String(field?.key??field?.name??field?.title??field)):Object.keys(raw);const ordered=fields.map(field=>String(raw[field]??''));const result=await Promise.resolve(config.validate.call(source,ordered));if(result===false)throw new Error('Venera cookie login was rejected');source.saveData('account','ok');return null}
+ if(mode==='web'){const config=account.loginWithWebview;if(!config)throw new Error('Venera source exposes no web login');const currentUrl=String(values?.currentUrl??config.url??''),title=String(values?.title??'');const imported=values?.cookies&&typeof values.cookies==='object'?values.cookies:{};const localStorage=values?.localStorage&&typeof values.localStorage==='object'?values.localStorage:{};if(currentUrl&&Object.keys(imported).length)Network.setCookies(currentUrl,imported);if(typeof config.checkStatus==='function'){const ok=await Promise.resolve(config.checkStatus.call(source,currentUrl,title));if(!ok)throw new Error('Venera web login is not complete')}if(Object.keys(localStorage).length)source.saveData('_localStorage',localStorage);if(typeof config.onLoginSuccess==='function')await Promise.resolve(config.onLoginSuccess.call(source));source.saveData('account','ok');return null}
+ throw new Error('Unsupported Venera login mode: '+String(mode));
+}
+async function __zicLogoutSource(source){const account=source?.account;if(typeof account?.logout==='function')await Promise.resolve(account.logout.call(source));source.deleteData('account');return null}
 function __zicTranslateSetting(source,value){const text=String(value??'');try{return typeof source?.translate==='function'?String(source.translate(text)):text}catch(_){return text}}
 function __zicSettingChoices(source,setting){const values=Array.isArray(setting?.options)?setting.options:[];return values.map(option=>{if(option&&typeof option==='object'){const value=String(option.value??option.key??option.id??'');const label=__zicTranslateSetting(source,option.text??option.label??option.title??value);return{value,label}}const raw=String(option??''),split=raw.indexOf('-');const value=split<0?raw:raw.slice(0,split),label=split<0?raw:raw.slice(split+1);return{value,label:__zicTranslateSetting(source,label)}}).filter(choice=>choice.value!=='')}
 function __zicSettingSensitive(key,setting){if(setting?.sensitive===true||setting?.obscure===true)return true;return /password|passwd|token|cookie|secret|api.?key|密码|令牌/i.test(String(key)+' '+String(setting?.title??''))}
@@ -1553,6 +1598,9 @@ async function __zicOperation(request){
   const pages=[];for(let i=0;i<images.length;i++){const token=__zicRetainResource({image:String(images[i]),comicId:chapter.comicRawId,epId:chapter.epId,deferredImageConfig:true});pages.push({chapterId:args.chapterId,pageId:String(args.chapterId)+':'+i,index:i,uri:'venera-resource://'+token})}
   return {comicId:chapter.comicId,chapter:__zicChapterMessage(chapter.comicId,chapter.epId,chapter.title,chapter.sequence,pages.length),pages,readingDirection:'vertical'};
  }
+ if(request.operation==='loadSourceAccount')return __zicAccountDescriptor(source);
+ if(request.operation==='loginSourceAccount')return await __zicLoginSource(source,String(args.mode||''),args.values||{});
+ if(request.operation==='logoutSourceAccount')return await __zicLogoutSource(source);
  if(request.operation==='loadSourceSettings')return __zicSourceSettings(source);
  if(request.operation==='updateSourceSetting')return await __zicUpdateSourceSetting(source,String(args.key||''),args.value);
  if(request.operation==='loadResource'){

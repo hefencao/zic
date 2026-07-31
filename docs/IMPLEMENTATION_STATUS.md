@@ -1,3 +1,12 @@
+## 0.31.0-dev.60：Venera 登录与增量 Reader 主线
+
+- Venera `account` 已进入统一 `AuthenticatableComicSource`：支持凭据、按字段顺序 Cookie、WebView 最终 URL/标题/Cookie/localStorage 快照、退出与登录状态；设置页提供对应入口，runtime 继续持有来源数据与回调执行权。
+- Mihon 章节目录解析改为多候选、多方法探测。组合详情缺少章节不会触发提前单章化；真实列表为空或某个兼容方法 unsupported 时继续尝试独立目录接口，只有所有候选结束后仍为空才生成 gallery 单章节。
+- App 首页不再等待 durable composition。内存 composition 先提供可操作 UI，持久书架在后台恢复并以顶部细同步条提示；恢复完成后原位切换服务。
+- Reader 在 scale=1 时不安装缩放 recognizer，远程 PageView 横向滑动恢复；动画播放控件只对声明/探测为动画的页面显示。
+- 远程 WebP native cursor 直接消费 DownloadSession 的增量 source，并处理 `needMoreData`。顶部 transfer 指示分离已恢复前缀和当前网络新增字节，不复制下载或 artifact 所有权。
+- runtime worker 协议回归已覆盖 settings 与 account 扩展操作；错误报告中的夹具缺口已修复为真实调用覆盖。
+
 ## 0.31.0-dev.59：Mihon 章节目录身份与 Venera 插件设置闭环
 
 - 严格以用户上传的 `zic_v0.31.0-dev.58_fixed.zip` 为唯一基线。未合并此前 dev.58 归档或其他历史候选。

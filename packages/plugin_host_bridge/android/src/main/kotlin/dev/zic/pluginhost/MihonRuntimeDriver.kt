@@ -282,26 +282,66 @@ internal class MihonRuntimeDriver private constructor(
             null
         }
         ensureNotCancelled(requestId)
-        if (update != null) {
-            return MihonComicCatalog(
-                manga = update.readValue("manga", "getManga") ?: manga,
-                chapters = update.readList("chapters", "getChapters"),
-            )
-        }
-        val detailedManga = source.invokeFirst(
+        val detailedManga = update?.readValue("manga", "getManga") ?: source.invokeFirst(
             listOf(
                 Invocation("getMangaDetails", listOf(manga)),
                 Invocation("fetchMangaDetails", listOf(manga)),
             ),
         ).unwrapAsync()
         ensureNotCancelled(requestId)
-        val chapters = source.invokeFirst(
-            listOf(
-                Invocation("getChapterList", listOf(detailedManga)),
-                Invocation("fetchChapterList", listOf(detailedManga)),
-            ),
-        ).unwrapAsync().asObjectList()
-        ensureNotCancelled(requestId)
+
+        // Chapter discovery is authoritative and independent from the combined
+        // details fast-path. Several extensions return no chapters from
+        // fetchMangaUpdate even though get/fetchChapterList exposes a complete
+        // multi-chapter catalog. Try the detailed model first, then the original
+        // browse model because old sources sometimes only accept that instance.
+        val chapterModels = buildList {
+            add(detailedManga)
+            if (manga !== detailedManga) add(manga)
+        }
+        val chapterFailures = mutableListOf<Throwable>()
+        var chapterProbeCompleted = false
+        var authoritativeChapters = emptyList<Any>()
+        chapterSearch@ for (chapterModel in chapterModels) {
+            for (candidate in listOf("getChapterList", "fetchChapterList")) {
+                val loaded = try {
+                    source.invokeCompatible(candidate, listOf(chapterModel))
+                        .unwrapAsync()
+                        .asObjectList()
+                } catch (error: Throwable) {
+                    val cause = error.rootCause()
+                    if (error is NoSuchMethodException ||
+                        cause is NoSuchMethodException ||
+                        cause is UnsupportedOperationException
+                    ) {
+                        continue
+                    }
+                    chapterFailures += error
+                    continue
+                }
+                chapterProbeCompleted = true
+                ensureNotCancelled(requestId)
+                if (loaded.isNotEmpty()) {
+                    authoritativeChapters = loaded
+                    break@chapterSearch
+                }
+            }
+        }
+        val updateChapters = update
+            ?.readList("chapters", "getChapters", "newChapters", "getNewChapters")
+            .orEmpty()
+        val chapters = when {
+            authoritativeChapters.isNotEmpty() -> authoritativeChapters
+            updateChapters.isNotEmpty() -> updateChapters
+            chapterFailures.isNotEmpty() && !chapterProbeCompleted && update == null ->
+                throw IllegalStateException(
+                    "Mihon chapter catalog failed for ${source.javaClass.name}",
+                    chapterFailures.first(),
+                ).also { failure ->
+                    chapterFailures.drop(1).forEach(failure::addSuppressed)
+                }
+            else -> emptyList()
+        }
         return MihonComicCatalog(detailedManga, chapters)
     }
 

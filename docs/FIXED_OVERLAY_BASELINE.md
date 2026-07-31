@@ -9,5 +9,5 @@ This iteration starts only from the complete user-provided archive
 - Uncompressed bytes reported by ZIP central directory: 4,250,211
 
 The archive already contains the user's fixed dev.58 state. No earlier dev.58
-candidate, patch bundle, or historical overlay is applied on top. All dev.59
+candidate, patch bundle, or historical overlay is applied on top. All dev.59 and dev.60
 changes are direct descendants of this extracted tree.

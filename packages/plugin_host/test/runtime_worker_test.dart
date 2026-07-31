@@ -35,6 +35,14 @@ void main() {
         Uri.parse('https://cdn.invalid/page-1.webp'),
       );
       expect(bytes, <int>[82, 73, 70, 70]);
+      final configurable = source as ConfigurableComicSource;
+      await configurable.loadSettings();
+      await configurable.updateSetting('mirror', 'auto');
+      final accountSource = source as AuthenticatableComicSource;
+      final account = await accountSource.loadAccount();
+      expect(account.supportsCredentials, isTrue);
+      await accountSource.loginWithCredentials('reader', 'secret');
+      await accountSource.logout();
       expect(driver.operations, ExternalPluginRuntimeOperation.values);
     });
 
@@ -331,6 +339,18 @@ class _FixtureDriver implements ExternalPluginRuntimeDriver {
       ExternalPluginRuntimeOperation.loadSourceSettings =>
         const <Object?>[],
       ExternalPluginRuntimeOperation.updateSourceSetting =>
+        const <String, Object?>{},
+      ExternalPluginRuntimeOperation.loadSourceAccount =>
+        const <String, Object?>{
+          'loggedIn': false,
+          'supportsCredentials': true,
+          'cookieFields': <Object?>[],
+          'loginWebsite': null,
+          'registerWebsite': null,
+        },
+      ExternalPluginRuntimeOperation.loginSourceAccount =>
+        const <String, Object?>{},
+      ExternalPluginRuntimeOperation.logoutSourceAccount =>
         const <String, Object?>{},
     };
   }

@@ -1,3 +1,14 @@
+## 0.31.0-dev.60：Venera 登录、Mihon 章节探测与 Reader 流式闭环
+
+- 严格沿用 dev.59 代码线；`vibevenera-master` 仅作为 Venera 账号和流式进度交互参考，没有替换 ZIC 的 runtime、下载、缓存或 Reader 所有权。
+- Mihon 组合详情接口返回空章节时不再立即生成“正文”。runtime 会继续对详情对象与原始漫画对象探测独立章节目录，并依次兼容 `getChapterList`/`fetchChapterList`；空结果或明确的 unsupported 只表示继续探测，只有最终规范化目录为空才生成单章节兜底。真实章节仍保留 live `SChapter` 和稳定 wire identity。
+- Venera `account` 现映射为统一来源账号协议：账号密码、按源声明顺序传递的 Cookie 字段、WebView 登录快照、退出登录和登录状态。网页登录回传最终 URL、标题、Cookie 与 localStorage；隔离 runtime 仍拥有持久化与来源回调，Presentation 只承担用户交互。
+- App bootstrap 立即挂载内存 composition 与主界面，持久书架/缓存/下载服务在后台打开；恢复期间只显示顶部 2px 同步条，不再用“正在恢复书架”阻塞可操作界面。
+- Reader 默认缩放比例下不创建会竞争横向手势的 `InteractiveViewer`，远程分页重新由 `PageView` 接管；只有显式缩放后才进入单页拖动/缩放。静态 PNG/JPEG/静态 WebP 不显示暂停与播放速度，动画能力由媒体探测或页面提示决定。
+- 远程 WebP 直接绑定权威 `DownloadSession.ingress.source` 的增量 native cursor；`needMoreData` 等待 session committed bytes 推进而不是回退到完整文件。顶部控制栏分别显示恢复时已有前缀和本次网络新增进度，下载完成后仍沿既有 artifact/promote 生命周期收口。
+- 修复 runtime worker 回归夹具只调用四个旧操作的问题：测试现在实际往返 settings 与 account 操作，再验证完整 operation 集合，不通过缩短期望绕过协议缺口。
+- 新增 Mihon 章节探测、Venera 账号/login snapshot、Reader 手势/静态控制、WebP 增量 source 与双进度条的源码提取式门禁；Venera 账号加载与设置失败相互隔离，设置回调失败不会隐藏登录入口。
+
 ## 0.31.0-dev.59：Mihon 章节目录身份与 Venera 插件设置闭环
 
 - 严格以用户上传的 `zic_v0.31.0-dev.58_fixed.zip` 为唯一基线。未合并此前 dev.58 归档或其他历史候选。

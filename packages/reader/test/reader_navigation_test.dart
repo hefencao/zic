@@ -197,14 +197,25 @@ void main() {
     await tester.pump();
     expect(tester.widget<RotatedBox>(rotation).quarterTurns, 1);
 
-    final viewer = find.descendant(
+    var viewer = find.descendant(
       of: rotation,
       matching: find.byType(InteractiveViewer),
     );
-    await tester.tap(viewer);
+    expect(
+      viewer,
+      findsNothing,
+      reason: 'scale recognizers must not compete with PageView at scale 1',
+    );
+    final center = tester.getCenter(rotation);
+    await tester.tapAt(center);
     await tester.pump(const Duration(milliseconds: 80));
-    await tester.tap(viewer);
+    await tester.tapAt(center);
     await tester.pump(const Duration(milliseconds: 50));
+    viewer = find.descendant(
+      of: rotation,
+      matching: find.byType(InteractiveViewer),
+    );
+    expect(viewer, findsOneWidget);
     final interactive = tester.widget<InteractiveViewer>(viewer);
     expect(
       interactive.transformationController!.value.getMaxScaleOnAxis(),
@@ -220,12 +231,9 @@ void main() {
       matching: find.byType(InteractiveViewer),
     );
     expect(
-      tester
-          .widget<InteractiveViewer>(resetViewer)
-          .transformationController!
-          .value
-          .getMaxScaleOnAxis(),
-      1,
+      resetViewer,
+      findsNothing,
+      reason: 'returning to a page must reset it to swipe-through scale 1',
     );
     // Drain the reader's own delayed single-tap window before disposal.
     await tester.pump(const Duration(milliseconds: 400));

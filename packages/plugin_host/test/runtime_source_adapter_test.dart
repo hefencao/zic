@@ -351,6 +351,18 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
           ],
         ExternalPluginRuntimeOperation.updateSourceSetting =>
           const <String, Object?>{},
+        ExternalPluginRuntimeOperation.loadSourceAccount =>
+          const <String, Object?>{
+            'loggedIn': false,
+            'supportsCredentials': true,
+            'cookieFields': <Object?>['igneous'],
+            'loginWebsite': 'https://example.invalid/login',
+            'registerWebsite': null,
+          },
+        ExternalPluginRuntimeOperation.loginSourceAccount =>
+          const <String, Object?>{},
+        ExternalPluginRuntimeOperation.logoutSourceAccount =>
+          const <String, Object?>{},
       },
     );
   }
@@ -429,6 +441,12 @@ final class _SequencedConnection implements ExternalPluginRuntimeConnection {
           ExternalPluginRuntimeOperation.loadSourceSettings =>
             throw UnimplementedError(),
           ExternalPluginRuntimeOperation.updateSourceSetting =>
+            throw UnimplementedError(),
+          ExternalPluginRuntimeOperation.loadSourceAccount =>
+            throw UnimplementedError(),
+          ExternalPluginRuntimeOperation.loginSourceAccount =>
+            throw UnimplementedError(),
+          ExternalPluginRuntimeOperation.logoutSourceAccount =>
             throw UnimplementedError(),
         },
       );

@@ -1908,7 +1908,8 @@ def check_compile_regressions() -> None:
     app_main = (ROOT / 'apps/app/lib/main.dart').read_text(encoding='utf-8')
     for required in (
         'runApp(const _BootstrapApp())',
-        "const _StartupApp()",
+        "services == null ? 'bootstrap-memory' : 'durable-services'",
+        'setState(() => _services = services)',
         'openImportedLibraryStore(root)',
     ):
         if required not in app_main:

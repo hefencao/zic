@@ -55,14 +55,8 @@ extension _DemoHomeViews on _DemoHomeState {
   }
 
   Widget _buildLibraryState() {
-    if (_libraryLoading) {
-      return const Center(
-        key: importedLibraryLoadingKey,
-        child: CircularProgressIndicator(),
-      );
-    }
     final error = _libraryError;
-    if (error != null) {
+    if (error != null && _libraryComics.isEmpty) {
       return Center(
         key: importedLibraryErrorKey,
         child: Padding(
@@ -86,21 +80,34 @@ extension _DemoHomeViews on _DemoHomeState {
         ),
       );
     }
-    return IndexedStack(
-      index: _navigationIndex,
+    return Stack(
+      fit: StackFit.expand,
       children: <Widget>[
-        _buildHomePage(),
-        _buildBookshelfPage(),
-        _sourcePageVisited
-            ? ComicSourcesPage(
-                sources: _enabledSources,
-                activeSourceId: _activeSourceId,
-                onSourceSelected: (sourceId) {
-                  _activeSourceId = sourceId;
-                },
-                onOpenComic: _openSourceComic,
-              )
-            : const SizedBox.shrink(),
+        IndexedStack(
+          index: _navigationIndex,
+          children: <Widget>[
+            _buildHomePage(),
+            _buildBookshelfPage(),
+            _sourcePageVisited
+                ? ComicSourcesPage(
+                    sources: _enabledSources,
+                    activeSourceId: _activeSourceId,
+                    onSourceSelected: (sourceId) {
+                      _activeSourceId = sourceId;
+                    },
+                    onOpenComic: _openSourceComic,
+                  )
+                : const SizedBox.shrink(),
+          ],
+        ),
+        if (_libraryLoading)
+          const Align(
+            alignment: Alignment.topCenter,
+            child: LinearProgressIndicator(
+              key: importedLibraryLoadingKey,
+              minHeight: 2,
+            ),
+          ),
       ],
     );
   }

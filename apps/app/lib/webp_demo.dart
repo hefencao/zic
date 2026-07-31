@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:pipeline/pipeline.dart';
 import 'package:resource_cache/resource_cache.dart';
+import 'package:sessions/sessions.dart';
 import 'package:storage_bridge/storage_bridge.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:texture_bridge/texture_bridge.dart';
@@ -728,6 +729,8 @@ final class LocalImagePlayer extends StatefulWidget {
     this.traceSessionId = 'local-image-preview',
     this.demandRevision,
     this.playback,
+    this.streamingSession,
+    this.onPlaybackCapabilityChanged,
     this.flutterAnimatedCodecFactory = instantiateFlutterAnimatedCodec,
     super.key,
   });
@@ -744,6 +747,8 @@ final class LocalImagePlayer extends StatefulWidget {
   final String traceSessionId;
   final int Function()? demandRevision;
   final ReaderPlaybackController? playback;
+  final DownloadSession? streamingSession;
+  final ValueChanged<bool>? onPlaybackCapabilityChanged;
   final FlutterAnimatedCodecFactory flutterAnimatedCodecFactory;
 
   Uri get sourceUri => image.sourceUri;
@@ -761,6 +766,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   int _scheduledStaticFrameGeneration = -1;
   late MediaLoadToken _loadToken;
   bool _reportedFirstFrame = false;
+  DownloadSnapshotListener? _pageStreamingListener;
+  bool _fallbackLoadStarted = false;
 
   @override
   void initState() {
@@ -769,7 +776,12 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     _state = ImagePreviewState.loading(widget.image.format);
     _loadToken = MediaLoadToken();
     _scheduleObserverSnapshot();
-    unawaited(_load());
+    final streaming = widget.streamingSession;
+    if (streaming != null) {
+      _attachPageStreaming(streaming);
+    } else {
+      unawaited(_load());
+    }
   }
 
   @override
@@ -788,8 +800,42 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       _detectedFormat = widget.image.format;
       _state = ImagePreviewState.loading(widget.image.format);
       _notifyObserver(_state);
-      unawaited(_load());
+      _fallbackLoadStarted = false;
+      final oldStreaming = oldWidget.streamingSession;
+      final oldListener = _pageStreamingListener;
+      if (oldStreaming != null && oldListener != null) {
+        oldStreaming.removeSnapshotListener(oldListener);
+      }
+      _pageStreamingListener = null;
+      final streaming = widget.streamingSession;
+      if (streaming != null) {
+        _attachPageStreaming(streaming);
+      } else {
+        unawaited(_load());
+      }
     }
+  }
+
+  void _attachPageStreaming(DownloadSession session) {
+    void listener(DownloadSnapshot snapshot) {
+      if (!mounted) return;
+      final kind = snapshot.ingress?.kind;
+      if (kind == ContentKind.webp) {
+        if (_detectedFormat != LocalImageFormat.webp) {
+          setState(() => _detectedFormat = LocalImageFormat.webp);
+        }
+        widget.onPlaybackCapabilityChanged?.call(false);
+        return;
+      }
+      if (!_fallbackLoadStarted &&
+          (snapshot.state == DownloadState.promoted ||
+              snapshot.state == DownloadState.sealed)) {
+        _fallbackLoadStarted = true;
+        unawaited(_load());
+      }
+    }
+    _pageStreamingListener = listener;
+    session.addSnapshotListener(listener);
   }
 
   Future<void> _load() async {
@@ -842,6 +888,9 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           return;
         }
       }
+      widget.onPlaybackCapabilityChanged?.call(
+        detected == LocalImageFormat.gif,
+      );
       setState(() {
         _detectedFormat = detected;
         _bytes = bytes;
@@ -863,6 +912,12 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
 
   @override
   void dispose() {
+    final streaming = widget.streamingSession;
+    final listener = _pageStreamingListener;
+    if (streaming != null && listener != null) {
+      streaming.removeSnapshotListener(listener);
+    }
+
     _generation++;
     _loadToken.cancel();
     super.dispose();
@@ -986,7 +1041,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         ),
       );
     } else if (_detectedFormat.isWebp) {
-      if (bytes == null) {
+      if (bytes == null && widget.streamingSession == null) {
         content = const Center(
           child: CircularProgressIndicator(),
         );
@@ -994,10 +1049,14 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         content = NativeWebpPlayer(
           title: widget.image.displayName,
           sourceUri: widget.sourceUri,
-          loadBytes: (_) async => bytes,
+          loadBytes: (token) => bytes != null
+              ? Future<Uint8List>.value(bytes)
+              : widget.tokenBytesLoader!(widget.image, token),
           showEngineControls: false,
           showStatus: false,
-          initialEngine: WebpPlayerEngine.flutter,
+          initialEngine: widget.streamingSession == null
+              ? WebpPlayerEngine.flutter
+              : WebpPlayerEngine.native,
           onPreviewStateChanged: _onWebpState,
           onFirstFrame: _onWebpFirstFrame,
           downloadIdentity: widget.downloadIdentity,
@@ -1006,6 +1065,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           traceSessionId: widget.traceSessionId,
           demandRevision: widget.demandRevision,
           playback: widget.playback,
+          streamingSession: widget.streamingSession,
+          onPlaybackCapabilityChanged: widget.onPlaybackCapabilityChanged,
           flutterAnimatedCodecFactory: widget.flutterAnimatedCodecFactory,
         );
       }
@@ -1637,6 +1698,8 @@ final class ImportedImageChapterScreen extends StatelessWidget {
             traceSessionId: runtime.sessionId,
             demandRevision: runtime.demandRevision,
             playback: runtime.playback,
+            streamingSession: runtime.downloadSession,
+            onPlaybackCapabilityChanged: runtime.reportPlaybackCapability,
           ),
         );
       },
@@ -1800,6 +1863,8 @@ final class NativeWebpPlayer extends StatefulWidget {
     this.initialEngine = WebpPlayerEngine.flutter,
     this.onPreviewStateChanged,
     this.playback,
+    this.streamingSession,
+    this.onPlaybackCapabilityChanged,
     this.flutterAnimatedCodecFactory = instantiateFlutterAnimatedCodec,
     super.key,
   });
@@ -1818,6 +1883,8 @@ final class NativeWebpPlayer extends StatefulWidget {
   final WebpPlayerEngine initialEngine;
   final WebpPreviewStateChanged? onPreviewStateChanged;
   final ReaderPlaybackController? playback;
+  final DownloadSession? streamingSession;
+  final ValueChanged<bool>? onPlaybackCapabilityChanged;
   final FlutterAnimatedCodecFactory flutterAnimatedCodecFactory;
 
   @override
@@ -1863,6 +1930,9 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   int _generation = 0;
   bool _reportedFirstFrame = false;
   late final WebpLoadToken _loadToken;
+  DownloadSnapshotListener? _streamingListener;
+  bool _streamingSyncing = false;
+  bool _ownsSource = true;
 
   @override
   void initState() {
@@ -1881,7 +1951,12 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         _notifyPreviewObserver(_previewState);
       }
     });
-    unawaited(_load());
+    final streaming = widget.streamingSession;
+    if (streaming != null) {
+      _attachStreamingSession(streaming);
+    } else {
+      unawaited(_load());
+    }
   }
 
   @override
@@ -2009,6 +2084,11 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   void dispose() {
     _generation++;
     widget.playback?.removeListener(_handleExternalPlayback);
+    final streaming = widget.streamingSession;
+    final listener = _streamingListener;
+    if (streaming != null && listener != null) {
+      streaming.removeSnapshotListener(listener);
+    }
     _loadToken.cancel();
     _resetNative(disposeImage: true);
     super.dispose();
@@ -2027,6 +2107,57 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     _notifyPreviewObserver(state);
   }
 
+  void _attachStreamingSession(DownloadSession session) {
+    void listener(DownloadSnapshot snapshot) {
+      if (!mounted) return;
+      unawaited(_syncStreamingSnapshot(session, snapshot));
+    }
+    _streamingListener = listener;
+    session.addSnapshotListener(listener);
+  }
+
+  Future<void> _syncStreamingSnapshot(
+    DownloadSession session,
+    DownloadSnapshot snapshot,
+  ) async {
+    if (_streamingSyncing || !mounted) return;
+    _streamingSyncing = true;
+    try {
+      if (_sourceCanvas == null && snapshot.committedLength >= 20) {
+        final prefix = Uint8List.fromList(
+          await session.artifact.readPrefix(
+            math.min(snapshot.committedLength, 256 * 1024),
+          ),
+        );
+        final info = parseWebpPrefixInfo(prefix);
+        if (info != null && mounted) {
+          widget.onPlaybackCapabilityChanged?.call(
+            webpPrefixDeclaresAnimation(prefix),
+          );
+          setState(() {
+            _sourceCanvas = info;
+            _loadError = null;
+            _publishPreviewState(WebpPreviewState.ready(info));
+            _status = '流式读取 ${snapshot.committedLength} B';
+          });
+        }
+      }
+      if (_engine == WebpPlayerEngine.native &&
+          _cursor == null &&
+          session.ingress?.source != null &&
+          _target != null &&
+          _raster != null) {
+        await _startNative(++_generation);
+      }
+      if (snapshot.state == DownloadState.failed && mounted) {
+        setState(() => _loadError = snapshot.failure ??
+            StateError('streaming WebP download failed'));
+      }
+    } finally {
+      _streamingSyncing = false;
+    }
+  }
+
   Future<void> _load() async {
     final generation = ++_generation;
     final token = _loadToken;
@@ -2040,6 +2171,9 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         return;
       }
       final canvas = parseWebpInfo(bytes);
+      widget.onPlaybackCapabilityChanged?.call(
+        webpPrefixDeclaresAnimation(bytes),
+      );
       setState(() {
         _encoded = bytes;
         _sourceCanvas = canvas;
@@ -2098,7 +2232,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
             : 'Flutter codec · ${raster.decodeWidth}×${raster.decodeHeight}';
       });
       if (decodeChanged &&
-          _encoded != null &&
+          (_encoded != null || widget.streamingSession?.ingress?.source != null) &&
           _engine == WebpPlayerEngine.native) {
         unawaited(_startNative(++_generation));
       }
@@ -2106,6 +2240,10 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   }
 
   Future<void> _startNative(int generation) async {
+    final streamingSession = widget.streamingSession;
+    if (streamingSession != null) {
+      return _startStreamingNative(generation, streamingSession);
+    }
     final token = _loadToken;
     final bytes = _encoded;
     final target = _target;
@@ -2190,6 +2328,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         return;
       }
 
+      _ownsSource = true;
       _source = source;
       _cursor = cursor;
       _decodeId = id;
@@ -2250,12 +2389,112 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     }
   }
 
+  Future<void> _startStreamingNative(
+    int generation,
+    DownloadSession session,
+  ) async {
+    final source = session.ingress?.source;
+    final raster = _raster;
+    if (!mounted ||
+        generation != _generation ||
+        source == null ||
+        raster == null ||
+        _engine != WebpPlayerEngine.native) {
+      return;
+    }
+    _resetNative(disposeImage: true);
+    try {
+      final id = DecodeId(
+        download: widget.downloadIdentity ?? session.id,
+        physicalWidth: raster.decodeWidth,
+        physicalHeight: raster.decodeHeight,
+        pixelFormat: PixelFormat.rgba8888,
+        renderer: AndroidTexturePresenter.isSupported
+            ? RendererKind.androidTexture
+            : RendererKind.flutterImage,
+      );
+      final cursor = const NativeCursorFactory().create(
+        id: id,
+        source: source,
+        epoch: source.epoch,
+      );
+      AndroidTextureLease? texture;
+      if (AndroidTexturePresenter.isSupported) {
+        texture = await _texturePresenter.create(
+          width: raster.decodeWidth,
+          height: raster.decodeHeight,
+        );
+      }
+      if (!mounted || generation != _generation) {
+        cursor.frames.dispose();
+        await texture?.release();
+        return;
+      }
+      _ownsSource = false;
+      _source = source;
+      _cursor = cursor;
+      _decodeId = id;
+      _nativeEpoch = source.epoch;
+      _texture = texture;
+      _textureId = texture?.textureId;
+      final first = await _decodePrepared(generation);
+      if (first != null) await _presentPrepared(first, generation);
+    } on Object catch (error) {
+      if (!mounted || generation != _generation) return;
+      _resetNative(disposeImage: true);
+      setState(() {
+        _nativeError = error;
+        _engine = WebpPlayerEngine.flutter;
+        _status = '流式 native 不可用，等待完整文件';
+      });
+      unawaited(_load());
+    }
+  }
+
+  Future<void> _waitForStreamingAdvance(
+    DownloadSession session,
+    int committedLength,
+  ) async {
+    final current = session.snapshot;
+    if (current.committedLength > committedLength ||
+        current.state == DownloadState.promoted ||
+        current.state == DownloadState.failed ||
+        current.state == DownloadState.disposed) {
+      return;
+    }
+    final completer = Completer<void>();
+    late final DownloadSnapshotListener listener;
+    listener = (snapshot) {
+      if (!completer.isCompleted &&
+          (snapshot.committedLength > committedLength ||
+              snapshot.state == DownloadState.promoted ||
+              snapshot.state == DownloadState.failed ||
+              snapshot.state == DownloadState.disposed)) {
+        completer.complete();
+      }
+    };
+    session.addSnapshotListener(listener);
+    try {
+      await completer.future;
+    } finally {
+      session.removeSnapshotListener(listener);
+    }
+    final latest = session.snapshot;
+    if (latest.state == DownloadState.failed) {
+      throw latest.failure ?? StateError('streaming WebP download failed');
+    }
+    if (latest.state == DownloadState.disposed) {
+      throw StateError('streaming WebP session was disposed');
+    }
+  }
+
   Future<_PreparedNativeFrame?> _decodePrepared(int generation) async {
     final binding = _cursor;
     if (binding == null) {
       return null;
     }
     while (mounted && generation == _generation) {
+      final streamingLength = widget.streamingSession?.committedLength;
       final decodeClock = Stopwatch()..start();
       final step = await binding.frames.decodeNext();
       final decodeMicros = decodeClock.elapsedMicroseconds;
@@ -2274,6 +2513,9 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
               ? frame.duration
               : const Duration(milliseconds: 100);
           final index = frame.index;
+          if (index > 0 || (binding.loop?.animation.frameCount ?? 0) > 1) {
+            widget.onPlaybackCapabilityChanged?.call(true);
+          }
           final cycle = binding.loop?.cycle ?? 0;
           if (_texture != null) {
             if (frame is! NativeFrame) {
@@ -2314,10 +2556,31 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
           _recordDecoded(prepared, RendererKind.flutterImage);
           return prepared;
         case CursorStepKind.needMoreData:
-          throw StateError('sealed WebP unexpectedly needs more data');
+          final streaming = widget.streamingSession;
+          if (streaming == null) {
+            throw StateError('sealed WebP unexpectedly needs more data');
+          }
+          await _waitForStreamingAdvance(
+            streaming,
+            streamingLength ?? streaming.committedLength,
+          );
+          continue;
         case CursorStepKind.end:
           final loop = binding.loop;
           if (loop != null && loop.rewind()) {
+            if (loop.animation.frameCount > 1) {
+              widget.onPlaybackCapabilityChanged?.call(true);
+            }
+            continue;
+          }
+          final streaming = widget.streamingSession;
+          if (streaming != null &&
+              streaming.state != DownloadState.promoted &&
+              streaming.state != DownloadState.sealed) {
+            await _waitForStreamingAdvance(
+              streaming,
+              streamingLength ?? streaming.committedLength,
+            );
             continue;
           }
           return null;
@@ -2580,8 +2843,11 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     _pending = null;
     _cursor?.frames.dispose();
     _cursor = null;
-    _source?.dispose();
+    if (_ownsSource) {
+      _source?.dispose();
+    }
     _source = null;
+    _ownsSource = true;
     _decodeId = null;
     _nativeEpoch = null;
     final texture = _texture;

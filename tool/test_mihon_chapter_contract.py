@@ -16,13 +16,19 @@ ABI_ROOTS = (
 
 
 def main() -> int:
-    driver = DRIVER.read_text()
+    raw_driver = DRIVER.read_bytes()
+    if b'\x00' in raw_driver:
+        raise SystemExit('Mihon runtime source contains an embedded NUL byte')
+    driver = raw_driver.decode()
     required = (
         'selectMihonChapters(catalog.chapters)',
         'chapterById[chapterId]?.let { return it }',
         'mihonChapterMatches(chapter, encoded)',
         'if (chapters.isEmpty())',
         'MihonChapterSelection(chapters, synthetic = false)',
+        'for (candidate in listOf("getChapterList", "fetchChapterList"))',
+        'cause is UnsupportedOperationException',
+        'newChapters',
     )
     for token in required:
         if token not in driver:

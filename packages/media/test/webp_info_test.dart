@@ -37,4 +37,30 @@ void main() {
       throwsFormatException,
     );
   });
+
+  test('reads animated canvas metadata from an incomplete WebP prefix', () {
+    final bytes = File(
+      '../../native/media_core/testdata/partial_blend.webp',
+    ).readAsBytesSync();
+    final prefix = Uint8List.fromList(bytes.sublist(0, 30));
+
+    final info = parseWebpPrefixInfo(prefix);
+
+    expect(info, isNotNull);
+    expect(info!.width, 4);
+    expect(info.height, 4);
+    expect(webpPrefixDeclaresAnimation(prefix), isTrue);
+  });
+
+  test('incomplete WebP signature waits for more metadata', () {
+    final prefix = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46,
+      0, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50,
+    ]);
+
+    expect(parseWebpPrefixInfo(prefix), isNull);
+    expect(webpPrefixDeclaresAnimation(prefix), isFalse);
+  });
+
 }

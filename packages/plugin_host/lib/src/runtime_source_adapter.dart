@@ -159,7 +159,7 @@ typedef _RuntimeInvoke = Future<Object> Function(
 );
 
 final class _RuntimeBrowsableComicSource
-    implements BrowsableComicSource, ConfigurableComicSource {
+    implements BrowsableComicSource, ConfigurableComicSource, AuthenticatableComicSource {
   _RuntimeBrowsableComicSource({
     required ExternalComicPluginFormat format,
     required ExternalPluginRuntimeSourceDescriptor descriptor,
@@ -397,6 +397,77 @@ final class _RuntimeBrowsableComicSource
       ExternalPluginRuntimeOperation.updateSourceSetting,
       _externalId,
       <String, Object?>{'key': key, 'value': value},
+    );
+  }
+
+
+  @override
+  Future<ComicSourceAccount> loadAccount() async {
+    final payload = await _invoke(
+      ExternalPluginRuntimeOperation.loadSourceAccount,
+      _externalId,
+      const <String, Object?>{},
+    );
+    final account = _map(payload, 'source account');
+    return ComicSourceAccount(
+      loggedIn: _bool(account, 'loggedIn'),
+      supportsCredentials: _optionalBool(account['supportsCredentials']) ?? false,
+      cookieFields: _stringList(account['cookieFields'], 'cookieFields'),
+      loginWebsite: _optionalUri(account['loginWebsite'], 'loginWebsite'),
+      registerWebsite: _optionalUri(account['registerWebsite'], 'registerWebsite'),
+    );
+  }
+
+  @override
+  Future<void> loginWithCredentials(String account, String password) async {
+    if (account.trim().isEmpty || password.isEmpty) {
+      throw ArgumentError('account and password must not be empty');
+    }
+    await _login('credentials', <String, Object?>{
+      'account': account,
+      'password': password,
+    });
+  }
+
+  @override
+  Future<void> loginWithCookies(Map<String, String> cookies) async {
+    if (cookies.isEmpty || cookies.values.any((value) => value.trim().isEmpty)) {
+      throw ArgumentError('cookie login values must not be empty');
+    }
+    await _login('cookies', <String, Object?>{'cookies': cookies});
+  }
+
+  @override
+  Future<void> confirmWebLogin({
+    String? currentUrl,
+    String? title,
+    Map<String, String> cookies = const <String, String>{},
+    Map<String, String> localStorage = const <String, String>{},
+  }) =>
+      _login(
+        'web',
+        <String, Object?>{
+          if (currentUrl != null) 'currentUrl': currentUrl,
+          if (title != null) 'title': title,
+          if (cookies.isNotEmpty) 'cookies': cookies,
+          if (localStorage.isNotEmpty) 'localStorage': localStorage,
+        },
+      );
+
+  Future<void> _login(String mode, Map<String, Object?> values) async {
+    await _invoke(
+      ExternalPluginRuntimeOperation.loginSourceAccount,
+      _externalId,
+      <String, Object?>{'mode': mode, 'values': values},
+    );
+  }
+
+  @override
+  Future<void> logout() async {
+    await _invoke(
+      ExternalPluginRuntimeOperation.logoutSourceAccount,
+      _externalId,
+      const <String, Object?>{},
     );
   }
 }

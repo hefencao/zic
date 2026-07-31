@@ -6,6 +6,7 @@ import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import org.json.JSONArray
 
 class MihonLoginActivity : Activity() {
     private lateinit var webView: WebView
@@ -19,6 +20,7 @@ class MihonLoginActivity : Activity() {
             finish()
             return
         }
+        ExternalLoginSnapshotStore.begin(this, url)
         webView = WebView(this).apply {
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -27,7 +29,11 @@ class MihonLoginActivity : Activity() {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.databaseEnabled = true
-            webViewClient = WebViewClient()
+            webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView, currentUrl: String) {
+                    captureSnapshot(view, currentUrl)
+                }
+            }
         }
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
@@ -35,6 +41,30 @@ class MihonLoginActivity : Activity() {
         }
         setContentView(webView)
         webView.loadUrl(url)
+    }
+
+    private fun captureSnapshot(view: WebView, currentUrl: String) {
+        val cookieHeader = CookieManager.getInstance().getCookie(currentUrl)
+        ExternalLoginSnapshotStore.update(
+            context = this,
+            currentUrl = currentUrl,
+            title = view.title,
+            cookieHeader = cookieHeader,
+        )
+        view.evaluateJavascript(
+            "JSON.stringify(Object.assign({}, window.localStorage))",
+        ) { rawValue ->
+            val localStorage = runCatching {
+                JSONArray("[$rawValue]").optString(0).takeIf(String::isNotBlank)
+            }.getOrNull()
+            ExternalLoginSnapshotStore.update(
+                context = this,
+                currentUrl = currentUrl,
+                title = view.title,
+                cookieHeader = cookieHeader,
+                localStorageJson = localStorage,
+            )
+        }
     }
 
     @Suppress("DEPRECATION")
@@ -48,6 +78,16 @@ class MihonLoginActivity : Activity() {
 
     override fun onDestroy() {
         if (::webView.isInitialized) {
+            val currentUrl =
+                webView.url ?: intent.getStringExtra(EXTRA_URL).orEmpty()
+            ExternalLoginSnapshotStore.update(
+                context = this,
+                currentUrl = currentUrl,
+                title = webView.title,
+                cookieHeader = currentUrl.takeIf(String::isNotBlank)?.let { url ->
+                    CookieManager.getInstance().getCookie(url)
+                },
+            )
             CookieManager.getInstance().flush()
             webView.stopLoading()
             webView.destroy()

@@ -1,6 +1,22 @@
 import 'package:flutter/services.dart';
 import 'package:plugin_host/plugin_host.dart';
 
+
+final class ExternalLoginSnapshot {
+  ExternalLoginSnapshot({
+    required this.currentUrl,
+    required this.title,
+    required Map<String, String> cookies,
+    required Map<String, String> localStorage,
+  })  : cookies = Map<String, String>.unmodifiable(cookies),
+        localStorage = Map<String, String>.unmodifiable(localStorage);
+
+  final Uri currentUrl;
+  final String title;
+  final Map<String, String> cookies;
+  final Map<String, String> localStorage;
+}
+
 final class InstalledMihonExtension {
   InstalledMihonExtension({
     required this.packageName,
@@ -67,6 +83,48 @@ final class AndroidMihonApkMetadataReader implements MihonApkMetadataReader {
     await _channel.invokeMethod<void>(
       'openMihonLogin',
       <String, Object?>{'url': url.toString()},
+    );
+  }
+
+  Future<ExternalLoginSnapshot?> readLoginSnapshot(Uri url) async {
+    if (url.scheme != 'https' && url.scheme != 'http') {
+      throw ArgumentError.value(url, 'url', 'must use HTTP(S)');
+    }
+    final value = await _channel.invokeMapMethod<String, Object?>(
+      'readExternalLoginSnapshot',
+      <String, Object?>{'url': url.toString()},
+    );
+    if (value == null) return null;
+    final currentUrl = value['currentUrl'];
+    final title = value['title'];
+    if (currentUrl is! String || title is! String) {
+      throw const FormatException('Android login snapshot is invalid');
+    }
+    final parsedUrl = Uri.tryParse(currentUrl);
+    if (parsedUrl == null ||
+        (parsedUrl.scheme != 'https' && parsedUrl.scheme != 'http')) {
+      throw const FormatException('Android login snapshot URL is invalid');
+    }
+    Map<String, String> parseStringMap(Object? raw, String label) {
+      if (raw == null) return const <String, String>{};
+      if (raw is! Map) throw FormatException('$label is invalid');
+      final result = <String, String>{};
+      for (final entry in raw.entries) {
+        if (entry.key is! String || entry.value is! String) {
+          throw FormatException('$label is invalid');
+        }
+        result[entry.key as String] = entry.value as String;
+      }
+      return result;
+    }
+    return ExternalLoginSnapshot(
+      currentUrl: parsedUrl,
+      title: title,
+      cookies: parseStringMap(value['cookies'], 'Android login cookies'),
+      localStorage: parseStringMap(
+        value['localStorage'],
+        'Android login local storage',
+      ),
     );
   }
 

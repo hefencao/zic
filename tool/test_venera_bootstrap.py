@@ -190,6 +190,45 @@ async function checkSourceSettings(){
  if(values[0].value!==true||values[1].value!=='two'||actions.length!==1)throw new Error('settings update failed '+JSON.stringify({values,actions,stored:Array.from(stored)}));
 }
 
+async function checkSourceAccount(){
+ const stored=new Map(),cookieWrites=[],calls=[];
+ ZicNative.request=raw=>{
+   const message=__zicDecode(JSON.parse(raw));
+   if(message.method==='load_data')return JSON.stringify({ok:true,value:__zicEncode(stored.has(message.data_key)?stored.get(message.data_key):null)});
+   if(message.method==='save_data'){stored.set(message.data_key,message.data);return JSON.stringify({ok:true,value:null})}
+   if(message.method==='delete_data'){stored.delete(message.data_key);return JSON.stringify({ok:true,value:null})}
+   if(message.method==='isLogged')return JSON.stringify({ok:true,value:stored.has('account')});
+   if(message.method==='cookie'&&message.function==='set'){cookieWrites.push({url:message.url,cookies:message.cookies});return JSON.stringify({ok:true,value:null})}
+   throw new Error('unexpected account bridge method '+message.method);
+ };
+ class AccountSource extends ComicSource {
+   key='account';name='Account';
+   account={
+     registerWebsite:'https://account.invalid/register',
+     login:async(account,password)=>{calls.push(['credentials',account,password]);return true},
+     loginWithCookies:{fields:['igneous','ipb_member_id'],validate:async values=>{calls.push(['cookies',...values]);return values[0]==='igneous-value'&&values[1]==='member-value'}},
+     loginWithWebview:{url:'https://account.invalid/login',checkStatus:(url,title)=>{calls.push(['web',url,title]);return url.endsWith('/done')&&title==='Done'},onLoginSuccess:()=>calls.push(['web-success'])},
+     logout:()=>calls.push(['logout']),
+   };
+ }
+ globalThis.__zicSource=new AccountSource();
+ __zicInstallSourceData(globalThis.__zicSource);
+ let descriptor=await __zicOperation({operation:'loadSourceAccount',arguments:{}});
+ if(descriptor.loggedIn||!descriptor.supportsCredentials||descriptor.cookieFields.join(',')!=='igneous,ipb_member_id'||descriptor.loginWebsite!=='https://account.invalid/login'||descriptor.registerWebsite!=='https://account.invalid/register')throw new Error('account descriptor failed '+JSON.stringify(descriptor));
+ await __zicOperation({operation:'loginSourceAccount',arguments:{mode:'credentials',values:{account:'user',password:'pass'}}});
+ if(!stored.has('account')||calls[0].join(',')!=='credentials,user,pass')throw new Error('credential login failed '+JSON.stringify({stored:Array.from(stored),calls}));
+ await __zicOperation({operation:'logoutSourceAccount',arguments:{}});
+ await __zicOperation({operation:'loginSourceAccount',arguments:{mode:'cookies',values:{cookies:{ipb_member_id:'member-value',igneous:'igneous-value'}}}});
+ if(calls.find(entry=>entry[0]==='cookies').join(',')!=='cookies,igneous-value,member-value')throw new Error('cookie order failed '+JSON.stringify(calls));
+ await __zicOperation({operation:'logoutSourceAccount',arguments:{}});
+ await __zicOperation({operation:'loginSourceAccount',arguments:{mode:'web',values:{currentUrl:'https://account.invalid/done',title:'Done',cookies:{sid:'cookie-value'},localStorage:{token:'storage-value'}}}});
+ if(cookieWrites.length!==1||cookieWrites[0].cookies.sid!=='cookie-value'||stored.get('_localStorage')?.token!=='storage-value'||!calls.some(entry=>entry[0]==='web-success'))throw new Error('web login failed '+JSON.stringify({cookieWrites,calls}));
+ descriptor=await __zicOperation({operation:'loadSourceAccount',arguments:{}});
+ if(!descriptor.loggedIn)throw new Error('logged-in state was not persisted');
+ await __zicOperation({operation:'logoutSourceAccount',arguments:{}});
+ if(stored.has('account'))throw new Error('logout did not clear account');
+}
+
 async function checkNetworkExtraAndCryptoSurface(){
  let seen=null;
  ZicNative.request=raw=>{seen=__zicDecode(JSON.parse(raw));return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},body:'ok'})})};
@@ -198,7 +237,7 @@ async function checkNetworkExtraAndCryptoSurface(){
  if(typeof Convert.encryptAesEcb!=='function'||Convert.encryptAesCfb.length!==4||Convert.decryptAesCfb.length!==4)throw new Error('Convert AES surface is incomplete');
 }
 
-(async()=>{await checkCurrentCategory();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkSingleVolumeChapter();await checkChapterResourceCanBeReadAgain();await checkChapterImageConfigIsDeferred();await checkSourceSettings();await checkNetworkExtraAndCryptoSurface();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
+(async()=>{await checkCurrentCategory();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkSingleVolumeChapter();await checkChapterResourceCanBeReadAgain();await checkChapterImageConfigIsDeferred();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
 '''
 with tempfile.TemporaryDirectory() as td:
     js=Path(td)/'test.js'; js.write_text(bootstrap+'\n'+test)

@@ -590,8 +590,23 @@ final class _SourceManagementScreenState
             await controller.restartSource(source.sourceId);
             await changed();
           },
-          onLogin: source.sourceId.startsWith('mihon:')
-              ? () => controller.openMihonLogin(source.descriptor.website)
+          onLogin: source.sourceId.startsWith('mihon:') ||
+                  source.sourceId.startsWith('venera:')
+              ? controller.openMihonLogin
+              : null,
+          onReadLogin: source.sourceId.startsWith('venera:')
+              ? (url) async {
+                  final snapshot =
+                      await controller.readExternalLoginSnapshot(url);
+                  return snapshot == null
+                      ? null
+                      : (
+                          currentUrl: snapshot.currentUrl,
+                          title: snapshot.title,
+                          cookies: snapshot.cookies,
+                          localStorage: snapshot.localStorage,
+                        );
+                }
               : null,
         ),
       ),
@@ -691,9 +706,7 @@ final class _SourceManagementScreenState
                           key: ValueKey<String>(
                             'source-settings:${source.sourceId}',
                           ),
-                          tooltip: source.sourceId.startsWith('mihon:')
-                              ? '插件设置与登录'
-                              : '插件设置',
+                          tooltip: '插件设置与登录',
                           onPressed: () =>
                               unawaited(_openSourceSettings(source)),
                           icon: const Icon(Icons.settings_outlined),

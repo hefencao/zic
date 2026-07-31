@@ -144,6 +144,12 @@ final class ExternalPluginController {
     await _androidMihonMetadata.openLogin(url);
   }
 
+  Future<ExternalLoginSnapshot?> readExternalLoginSnapshot(Uri url) async {
+    _requireOpen();
+    if (!Platform.isAndroid) return null;
+    return _androidMihonMetadata.readLoginSnapshot(url);
+  }
+
   Future<void> refreshDeviceMihonExtensions() async {
     _requireOpen();
     if (!Platform.isAndroid) {

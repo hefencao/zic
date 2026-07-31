@@ -6,7 +6,7 @@ import 'package:zic/reader_runtime.dart';
 
 const _screenKey = ValueKey<String>('reader-controls-screen');
 
-ChapterManifest _chapter() {
+ChapterManifest _chapter({bool animated = false}) {
   return ChapterManifest(
     sourceId: 'reader-controls-source',
     comicId: 'reader-controls-comic',
@@ -27,7 +27,9 @@ ChapterManifest _chapter() {
         uri: Uri.parse(
           'assets/demo/pages/${(index + 1).toString().padLeft(3, '0')}.png',
         ),
-        contentKindHint: ContentKindHint.png,
+        contentKindHint:
+            animated ? ContentKindHint.webp : ContentKindHint.png,
+        animatedHint: animated,
       ),
     ),
     readingDirection: ReadingDirection.ltr,
@@ -83,7 +85,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: ReaderRuntimeScreen(
-          chapter: _chapter(),
+          chapter: _chapter(animated: true),
           screenKey: _screenKey,
           initialFavorite: false,
           onFavoriteChanged: (value) async => favorite = value,
@@ -184,4 +186,37 @@ void main() {
     );
     expect(_controlsPointer(tester, bottom).ignoring, isTrue);
   });
+
+  testWidgets('static images hide playback-only controls', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderRuntimeScreen(
+          chapter: _chapter(),
+          screenKey: const ValueKey<String>('reader-static-controls-screen'),
+          artifactPageBuilder: (
+            context,
+            asset,
+            reportFirstFrame,
+            runtime,
+          ) => ColoredBox(
+            key: ValueKey<String>('reader-static-page:${asset.index}'),
+            color: Colors.black,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final top = find.byKey(readerTopControlsKey);
+    final bottom = find.byKey(readerBottomControlsKey);
+    await tester.tap(find.byType(ReaderView));
+    await _pumpUntilControls(tester, top, bottom, ignoring: false);
+
+    expect(find.byKey(readerPauseKey), findsNothing);
+    expect(find.byKey(readerSpeedKey), findsNothing);
+    expect(find.byKey(readerRotateKey), findsOneWidget);
+    expect(find.byKey(readerFavoriteKey), findsOneWidget);
+    expect(find.byKey(readerDownloadKey), findsOneWidget);
+  });
+
 }

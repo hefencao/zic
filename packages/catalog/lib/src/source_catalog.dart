@@ -47,6 +47,42 @@ abstract interface class ConfigurableComicSource {
   Future<void> updateSetting(String key, Object value);
 }
 
+final class ComicSourceAccount {
+  ComicSourceAccount({
+    required this.loggedIn,
+    this.supportsCredentials = false,
+    Iterable<String> cookieFields = const <String>[],
+    this.loginWebsite,
+    this.registerWebsite,
+  }) : cookieFields = List<String>.unmodifiable(cookieFields);
+
+  final bool loggedIn;
+  final bool supportsCredentials;
+  final List<String> cookieFields;
+  final Uri? loginWebsite;
+  final Uri? registerWebsite;
+
+  bool get supportsLogin =>
+      supportsCredentials || cookieFields.isNotEmpty || loginWebsite != null;
+}
+
+abstract interface class AuthenticatableComicSource {
+  Future<ComicSourceAccount> loadAccount();
+
+  Future<void> loginWithCredentials(String account, String password);
+
+  Future<void> loginWithCookies(Map<String, String> cookies);
+
+  Future<void> confirmWebLogin({
+    String? currentUrl,
+    String? title,
+    Map<String, String> cookies = const <String, String>{},
+    Map<String, String> localStorage = const <String, String>{},
+  });
+
+  Future<void> logout();
+}
+
 final class ComicSourceDescriptor {
   const ComicSourceDescriptor({
     required this.sourceId,

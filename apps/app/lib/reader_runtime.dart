@@ -2,10 +2,12 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:bridge/bridge.dart';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:media/media.dart';
 import 'package:pipeline/pipeline.dart';
 import 'package:reader/reader.dart';
 import 'package:sessions/sessions.dart';
@@ -24,6 +26,8 @@ const readerSpeedKey = ValueKey<String>('reader-speed');
 const readerRotateKey = ValueKey<String>('reader-rotate');
 const readerFavoriteKey = ValueKey<String>('reader-favorite');
 const readerDownloadKey = ValueKey<String>('reader-download');
+const readerExistingProgressKey = ValueKey<String>('reader-existing-progress');
+const readerNetworkProgressKey = ValueKey<String>('reader-network-progress');
 Key readerSpeedOptionKey(double speed) =>
     ValueKey<String>('reader-speed-option:$speed');
 
@@ -67,6 +71,36 @@ final class ReaderPlaybackController
   }
 }
 
+
+@immutable
+final class ReaderTransferProgress {
+  const ReaderTransferProgress({
+    this.active = false,
+    this.existingBytes = 0,
+    this.committedBytes = 0,
+    this.totalBytes,
+  });
+
+  final bool active;
+  final int existingBytes;
+  final int committedBytes;
+  final int? totalBytes;
+
+  double? get existingFraction {
+    final total = totalBytes;
+    return total == null || total <= 0
+        ? null
+        : (existingBytes / total).clamp(0.0, 1.0).toDouble();
+  }
+
+  double? get committedFraction {
+    final total = totalBytes;
+    return total == null || total <= 0
+        ? null
+        : (committedBytes / total).clamp(0.0, 1.0).toDouble();
+  }
+}
+
 final class ReaderPageRuntime {
   const ReaderPageRuntime({
     required this.chapter,
@@ -76,6 +110,8 @@ final class ReaderPageRuntime {
     required this.demandRevision,
     required this.loadBytes,
     required this.playback,
+    required this.downloadSession,
+    required this.reportPlaybackCapability,
   });
 
   final ChapterManifest chapter;
@@ -85,6 +121,8 @@ final class ReaderPageRuntime {
   final int Function() demandRevision;
   final ReaderPageBytesLoader loadBytes;
   final ReaderPlaybackController playback;
+  final DownloadSession downloadSession;
+  final ValueChanged<bool> reportPlaybackCapability;
 }
 
 typedef ReaderArtifactPageBuilder = Widget? Function(
@@ -155,6 +193,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   late final LoaderTransport _loaderTransport;
   ArtifactCacheTransport? _artifactCacheTransport;
   PromotedArtifactReadPool? _artifactReads;
+  late final SourcePool _streamingSources;
   late final DownloadRegistry _downloads;
   PromotedArtifactCacheHandoff? _artifactCacheHandoff;
   late final LiveCoordinator _coordinator;
@@ -164,6 +203,13 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   int? _lastProgressPage;
   ReaderMode? _lastProgressMode;
   late final ReaderPlaybackController _playback;
+  late final ValueNotifier<ReaderTransferProgress> _transferProgress;
+  final Map<String, DownloadSession> _pageSessions = <String, DownloadSession>{};
+  final Map<DownloadSession, DownloadSnapshotListener> _sessionProgressListeners =
+      <DownloadSession, DownloadSnapshotListener>{};
+  final Map<DownloadSession, int> _sessionExistingBytes = <DownloadSession, int>{};
+  final Set<DownloadSession> _sessionTransferStarted = <DownloadSession>{};
+  final Map<String, bool> _playbackCapabilities = <String, bool>{};
   late bool _favorite;
   bool _controlsVisible = false;
   bool _downloading = false;
@@ -173,6 +219,9 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   void initState() {
     super.initState();
     _playback = ReaderPlaybackController();
+    _transferProgress = ValueNotifier<ReaderTransferProgress>(
+      const ReaderTransferProgress(),
+    );
     _favorite = widget.initialFavorite;
     unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky));
     _sessionId = 'reader-${++_sessionSequence}';
@@ -191,6 +240,17 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
         asset.uri,
         readerPageDownloadId(widget.chapter, asset),
       ),
+    ).toList(growable: false);
+    final sourceBudgets = <DownloadId, int>{
+      for (final asset in widget.chapter.pages)
+        readerPageDownloadId(widget.chapter, asset): math.max(
+          asset.byteLength ?? 0,
+          256 * 1024 * 1024,
+        ),
+    };
+    _streamingSources = SourcePool(
+      factory: const NativeSourceFactory(),
+      budgetFor: (id) => sourceBudgets[id] ?? 256 * 1024 * 1024,
     );
     final cache = widget.artifactCache;
     if (cache != null) {
@@ -217,6 +277,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       layout: _workspace.layout,
       clock: _clock,
       traceSink: _trace,
+      sources: _streamingSources,
       onSessionCreated: _observeDownloadSession,
     );
     _coordinator = LiveCoordinator(
@@ -298,6 +359,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     _reader = reader;
     _lastProgressPage = reader.currentIndex;
     _lastProgressMode = _readerMode(reader.direction);
+    _syncCurrentTransferProgress();
   }
 
   ReadingProgress? _matchingInitialProgress() {
@@ -313,8 +375,12 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
 
   void _handleReaderProgress() {
     final reader = _reader;
+    if (reader == null) {
+      return;
+    }
+    _syncCurrentTransferProgress();
     final writer = widget.onProgressChanged;
-    if (reader == null || writer == null) {
+    if (writer == null) {
       return;
     }
     final mode = _readerMode(reader.direction);
@@ -401,6 +467,71 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   void _observeDownloadSession(DownloadSession session) {
     _artifactReads?.observe(session);
     _artifactCacheHandoff?.observe(session);
+    _pageSessions[session.id.key] = session;
+    _sessionExistingBytes[session] = session.committedLength;
+    void listener(DownloadSnapshot snapshot) {
+      if (!_sessionTransferStarted.contains(session)) {
+        if (snapshot.state == DownloadState.receiving || snapshot.activeRun) {
+          _sessionTransferStarted.add(session);
+        } else {
+          _sessionExistingBytes[session] = math.max(
+            _sessionExistingBytes[session] ?? 0,
+            snapshot.committedLength,
+          );
+        }
+      }
+      _syncCurrentTransferProgress();
+    }
+    _sessionProgressListeners[session] = listener;
+    session.addSnapshotListener(listener);
+  }
+
+  void _syncCurrentTransferProgress() {
+    final reader = _reader;
+    if (reader == null || widget.chapter.pages.isEmpty) {
+      _transferProgress.value = const ReaderTransferProgress();
+      return;
+    }
+    final asset = widget.chapter.pages[reader.currentIndex];
+    final id = readerPageDownloadId(widget.chapter, asset);
+    final session = _pageSessions[id.key] ?? _downloads.find(id);
+    if (session == null) {
+      _transferProgress.value = const ReaderTransferProgress();
+      return;
+    }
+    final snapshot = session.snapshot;
+    final existing = math.min(
+      _sessionExistingBytes[session] ?? snapshot.committedLength,
+      snapshot.committedLength,
+    );
+    final active = snapshot.state == DownloadState.receiving ||
+        snapshot.state == DownloadState.queued ||
+        snapshot.activeRun ||
+        (snapshot.committedLength > 0 &&
+            snapshot.state != DownloadState.promoted &&
+            snapshot.state != DownloadState.failed &&
+            snapshot.state != DownloadState.disposed);
+    _transferProgress.value = ReaderTransferProgress(
+      active: active,
+      existingBytes: existing,
+      committedBytes: snapshot.committedLength,
+      totalBytes: snapshot.totalLength,
+    );
+  }
+
+  bool _currentPageSupportsPlayback(ReaderController reader) {
+    final asset = widget.chapter.pages[reader.currentIndex];
+    return _playbackCapabilities[asset.assetKey] ?? asset.animatedHint;
+  }
+
+  void _reportPlaybackCapability(PageAsset asset, bool supported) {
+    if (_playbackCapabilities[asset.assetKey] == supported) return;
+    _playbackCapabilities[asset.assetKey] = supported;
+    final reader = _reader;
+    if (mounted && reader != null &&
+        widget.chapter.pages[reader.currentIndex].assetKey == asset.assetKey) {
+      setState(() {});
+    }
   }
 
   Future<Uint8List> _loadMediaBytes(
@@ -533,6 +664,11 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       _binding?.detach(reader.sessionId);
       reader.dispose();
     }
+    for (final entry in _sessionProgressListeners.entries) {
+      entry.key.removeSnapshotListener(entry.value);
+    }
+    _sessionProgressListeners.clear();
+    _transferProgress.dispose();
     _playback.dispose();
     unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
     unawaited(
@@ -549,6 +685,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     _artifactCacheHandoff?.detach();
     _artifactReads?.close();
     await _downloads.dispose();
+    _streamingSources.dispose();
     _ioTransport.close(force: true);
     await _workspace.dispose();
   }
@@ -697,52 +834,97 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
           data: const IconThemeData(color: Colors.white),
           child: DefaultTextStyle.merge(
             style: const TextStyle(color: Colors.white),
-            child: SizedBox(
-              height: kToolbarHeight,
-              child: Row(
-                children: <Widget>[
-                  IconButton(
-                    tooltip: '返回',
-                    onPressed: () => Navigator.of(context).maybePop(),
-                    icon: const Icon(Icons.arrow_back),
-                  ),
-                  Expanded(
-                    child: titleBuilder == null
-                        ? Text(
-                            widget.chapter.chapter.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          )
-                        : titleBuilder(
-                            context,
-                            widget.chapter,
-                            reader.currentIndex,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                SizedBox(
+                  height: kToolbarHeight,
+                  child: Row(
+                    children: <Widget>[
+                      IconButton(
+                        tooltip: '返回',
+                        onPressed: () => Navigator.of(context).maybePop(),
+                        icon: const Icon(Icons.arrow_back),
+                      ),
+                      Expanded(
+                        child: titleBuilder == null
+                            ? Text(
+                                widget.chapter.chapter.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              )
+                            : titleBuilder(
+                                context,
+                                widget.chapter,
+                                reader.currentIndex,
+                              ),
+                      ),
+                      ...?widget.appBarActionsBuilder?.call(context, reader),
+                      PopupMenuButton<ReadingDirection>(
+                        tooltip: '阅读方向',
+                        initialValue: reader.direction,
+                        onSelected: reader.setDirection,
+                        itemBuilder: (context) =>
+                            const <PopupMenuEntry<ReadingDirection>>[
+                          PopupMenuItem(
+                            value: ReadingDirection.ltr,
+                            child: Text('LTR'),
                           ),
-                  ),
-                  ...?widget.appBarActionsBuilder?.call(context, reader),
-                  PopupMenuButton<ReadingDirection>(
-                    tooltip: '阅读方向',
-                    initialValue: reader.direction,
-                    onSelected: reader.setDirection,
-                    itemBuilder: (context) =>
-                        const <PopupMenuEntry<ReadingDirection>>[
-                      PopupMenuItem(
-                        value: ReadingDirection.ltr,
-                        child: Text('LTR'),
-                      ),
-                      PopupMenuItem(
-                        value: ReadingDirection.rtl,
-                        child: Text('RTL'),
-                      ),
-                      PopupMenuItem(
-                        value: ReadingDirection.vertical,
-                        child: Text('纵向'),
+                          PopupMenuItem(
+                            value: ReadingDirection.rtl,
+                            child: Text('RTL'),
+                          ),
+                          PopupMenuItem(
+                            value: ReadingDirection.vertical,
+                            child: Text('纵向'),
+                          ),
+                        ],
+                        icon: const Icon(Icons.swap_horiz),
                       ),
                     ],
-                    icon: const Icon(Icons.swap_horiz),
                   ),
-                ],
-              ),
+                ),
+                ValueListenableBuilder<ReaderTransferProgress>(
+                  valueListenable: _transferProgress,
+                  builder: (context, progress, _) {
+                    if (!progress.active) return const SizedBox(height: 3);
+                    final committed = progress.committedFraction;
+                    final existing = progress.existingFraction;
+                    if (committed == null) {
+                      return const LinearProgressIndicator(
+                        key: readerNetworkProgressKey,
+                        minHeight: 3,
+                      );
+                    }
+                    return SizedBox(
+                      height: 3,
+                      child: Stack(
+                        fit: StackFit.expand,
+                        alignment: Alignment.centerLeft,
+                        children: <Widget>[
+                          FractionallySizedBox(
+                            key: readerNetworkProgressKey,
+                            widthFactor: committed,
+                            alignment: Alignment.centerLeft,
+                            child: ColoredBox(
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                          ),
+                          if (existing != null && existing > 0)
+                            FractionallySizedBox(
+                              key: readerExistingProgressKey,
+                              widthFactor: existing,
+                              alignment: Alignment.centerLeft,
+                              child: ColoredBox(
+                                color: Theme.of(context).colorScheme.secondary,
+                              ),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ],
             ),
           ),
         ),
@@ -792,22 +974,24 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                     builder: (context, playback, _) => Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: <Widget>[
-                        IconButton(
-                          key: readerPauseKey,
-                          tooltip: playback.paused ? '继续播放' : '暂停动画',
-                          onPressed: _togglePlaybackPaused,
-                          icon: Icon(
-                            playback.paused ? Icons.play_arrow : Icons.pause,
+                        if (_currentPageSupportsPlayback(reader))
+                          IconButton(
+                            key: readerPauseKey,
+                            tooltip: playback.paused ? '继续播放' : '暂停动画',
+                            onPressed: _togglePlaybackPaused,
+                            icon: Icon(
+                              playback.paused ? Icons.play_arrow : Icons.pause,
+                            ),
                           ),
-                        ),
-                        TextButton(
-                          key: readerSpeedKey,
-                          style: TextButton.styleFrom(
-                            foregroundColor: Colors.white,
+                        if (_currentPageSupportsPlayback(reader))
+                          TextButton(
+                            key: readerSpeedKey,
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.white,
+                            ),
+                            onPressed: () => unawaited(_choosePlaybackSpeed()),
+                            child: Text(_playbackSpeedLabel(playback.speed)),
                           ),
-                          onPressed: () => unawaited(_choosePlaybackSpeed()),
-                          child: Text(_playbackSpeedLabel(playback.speed)),
-                        ),
                         IconButton(
                           key: readerRotateKey,
                           tooltip: '顺时针旋转',
@@ -876,6 +1060,11 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                 loadBytes: (token) =>
                     (widget.mediaBytesLoader ?? _loadMediaBytes)(asset, token),
                 playback: _playback,
+                downloadSession: _downloads.get(
+                  readerPageDownloadId(widget.chapter, asset),
+                ),
+                reportPlaybackCapability: (supported) =>
+                    _reportPlaybackCapability(asset, supported),
               ),
             );
     return AnimatedBuilder(

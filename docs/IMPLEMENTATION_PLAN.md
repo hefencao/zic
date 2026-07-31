@@ -21,7 +21,7 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.59）
+## 当前应用主线（0.31.0-dev.60）
 
 - Mihon extensionLib 1.4/1.5/1.6 必须映射到版本化 Source ABI asset；不得把任一 `extensions-lib` 放回 App runtime classpath，也不得回退为 parent-first Source API。
 - Mihon 章节目录必须保留来源返回的全部真实 `SChapter`；单章节兜底仅允许在目录为空时创建。详情到阅读之间优先保留原始章节对象，重启恢复只能按稳定来源身份重新匹配，不得把漫画 URL 或第一章复用于所有章节。
@@ -69,6 +69,14 @@
 - promoted artifact 共享读取以权威 `DownloadSession.beginRun` 为最早启动信号，允许在临时 workspace restore 期间读取持久 artifact；页面仍只能 join，不能自行触发 cache/network demand。
 - Mihon/Venera isolated backend 必须通过 `ExternalPluginRuntimeMessageChannel` 交换 protocol-v1 基础值/`Uint8List` 消息。handshake source identity、schema 和每次 response requestId 在跨边界处验证；不得返回进程内 zic domain/session 对象。
 - Android bound-service transport 必须以 binding generation 区分每次显式连接，并通过 Binder death recipient 失败当前请求；旧 generation 的迟到回调不得拆除新连接，也不得自动 replay/activate。packet response 必须校验 dedicated root、exact length 与 SHA-256，消费或失败后删除。
+
+### dev.60 当前主线约束
+
+- Mihon 单章节是最终空目录兜底，不是组合详情缺字段时的默认答案；目录探测必须跨候选对象与兼容 API 完成。
+- Venera 登录是隔离来源能力：Flutter 负责输入与 WebView 用户交互，runtime 负责校验回调、Cookie/localStorage 写入和登录状态持久化。
+- durable 书架恢复不得阻塞首个可操作 Home surface；后台恢复状态只能以非模态提示呈现。
+- Reader 手势由当前缩放状态裁决：scale=1 由 PageView 翻页，scale>1 才由页内缩放/拖动接管。
+- 静态媒体不暴露动画播放控制；远程 WebP 必须复用权威 DownloadSession 的增量 source，并分别呈现恢复前缀与本次传输进度。
 
 ## 2. 阶段划分
 

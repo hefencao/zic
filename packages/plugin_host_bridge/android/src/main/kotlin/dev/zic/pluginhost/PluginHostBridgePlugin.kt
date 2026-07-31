@@ -51,6 +51,7 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             "listInstalledMihonExtensions" -> listInstalledMihonExtensions(result)
             "copyInstalledMihonExtension" -> copyInstalledMihonExtension(call, result)
             "openMihonLogin" -> openMihonLogin(call, result)
+            "readExternalLoginSnapshot" -> readExternalLoginSnapshot(call, result)
             "activateMihonRuntime",
             "activateVeneraRuntime",
             "invokeExternalRuntime",
@@ -91,6 +92,18 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }.onFailure { error ->
             result.error("mihon-login-failed", error.message, null)
         }
+    }
+
+
+    private fun readExternalLoginSnapshot(call: MethodCall, result: MethodChannel.Result) {
+        val url = call.argument<String>("url")
+        if (url.isNullOrBlank() ||
+            (!url.startsWith("https://") && !url.startsWith("http://"))
+        ) {
+            result.error("invalid-argument", "HTTP(S) login URL is required", null)
+            return
+        }
+        result.success(ExternalLoginSnapshotStore.read(context, url))
     }
 
     private fun readMihonApkMetadata(call: MethodCall, result: MethodChannel.Result) {

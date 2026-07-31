@@ -15,6 +15,9 @@ enum ExternalPluginRuntimeOperation {
   loadResource,
   loadSourceSettings,
   updateSourceSetting,
+  loadSourceAccount,
+  loginSourceAccount,
+  logoutSourceAccount,
 }
 
 /// Runtime-discovered source metadata returned after the inspected payload has
@@ -374,6 +377,20 @@ void _validateArguments(
               value is! int &&
               value is! List<Object?>)) {
         throw const FormatException('source setting arguments are invalid');
+      }
+      return;
+    case ExternalPluginRuntimeOperation.loadSourceAccount:
+    case ExternalPluginRuntimeOperation.logoutSourceAccount:
+      _expectKeys(arguments, const <String>{});
+      return;
+    case ExternalPluginRuntimeOperation.loginSourceAccount:
+      _expectKeys(arguments, const <String>{'mode', 'values'});
+      final mode = arguments['mode'];
+      final values = arguments['values'];
+      if (mode is! String ||
+          !const <String>{'credentials', 'cookies', 'web'}.contains(mode) ||
+          values is! Map<String, Object?>) {
+        throw const FormatException('source login arguments are invalid');
       }
       return;
   }

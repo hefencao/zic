@@ -14,7 +14,7 @@ import 'source_catalog.dart';
 /// pass-through because Reader page bytes must enter pipeline/session/artifact
 /// ownership instead of being prefetched by the catalog response cache.
 final class CachedBrowsableComicSource
-    implements BrowsableComicSource, ConfigurableComicSource {
+    implements BrowsableComicSource, ConfigurableComicSource, AuthenticatableComicSource {
   CachedBrowsableComicSource({
     required this.source,
     required this.cache,
@@ -115,6 +115,45 @@ final class CachedBrowsableComicSource
     }
     return configurable.updateSetting(key, value);
   }
+
+
+  AuthenticatableComicSource get _accountSource {
+    final account = source is AuthenticatableComicSource
+        ? source as AuthenticatableComicSource
+        : null;
+    if (account == null) {
+      throw UnsupportedError('comic source does not expose account login');
+    }
+    return account;
+  }
+
+  @override
+  Future<ComicSourceAccount> loadAccount() => _accountSource.loadAccount();
+
+  @override
+  Future<void> loginWithCredentials(String account, String password) =>
+      _accountSource.loginWithCredentials(account, password);
+
+  @override
+  Future<void> loginWithCookies(Map<String, String> cookies) =>
+      _accountSource.loginWithCookies(cookies);
+
+  @override
+  Future<void> confirmWebLogin({
+    String? currentUrl,
+    String? title,
+    Map<String, String> cookies = const <String, String>{},
+    Map<String, String> localStorage = const <String, String>{},
+  }) =>
+      _accountSource.confirmWebLogin(
+        currentUrl: currentUrl,
+        title: title,
+        cookies: cookies,
+        localStorage: localStorage,
+      );
+
+  @override
+  Future<void> logout() => _accountSource.logout();
 
   /// Cached source artwork entry used by cover and comparison presentation.
   Future<Uint8List> loadImage(
