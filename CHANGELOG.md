@@ -1,3 +1,12 @@
+## 0.31.0-dev.62：漫画源分类、插件页签与 Mihon 章节结果闭环
+
+- 漫画源管理中的启用来源按“原生 / Mihon / Venera”分区，并以分隔线隔开；Mihon 同一插件 family 的语言来源只显示当前语言或通用语言，其余语言在该页面默认折叠。折叠不改变安装记录、来源 identity、启用状态或信任粒度。
+- Mihon/Venera 各自的管理页移除左右双栏，顶部仅保留“已安装 / 仓库”切换，内容区随页签整页切换。设备上的 Mihon 扩展迁入“已安装”页，使用独立刷新按钮与错误状态，不再和仓库加载共用 busy/error 区域。
+- 保留来源启用顺序：原生与 Venera 在各自分区内可拖动，Mihon 以语言 family 为单位拖动，折叠的语言来源随 family 一起移动。
+- Mihon 章节探测同时兼容 public/inherited 方法以及 Future、RxJava 1 `toBlocking().value/single/first`、RxJava 2/3 `blockingGet/blockingFirst/blockingSingle`。真实目录探测出现错误时不再被空候选掩盖为 synthetic 单章节。
+- 空目录 gallery 兜底在详情阶段先实际解析页面；只有能得到非空页面列表才暴露 synthetic “正文”，并写入真实页数。普通远程章节的未知页数显示为“页数待加载”，不再误导为 0 页。
+- 新增/更新漫画源信息架构、Mihon reactive adapter、空目录 page preflight 和折叠位置回归门禁。
+
 ## 0.31.0-dev.61：Reader/WebP 组合解耦与兼容插件双栏管理
 
 - 修复 `apps/app/lib/reader_runtime.dart` 直接引用未导入 `SourcePool` 的编译错误。Reader session、transport、workspace、pipeline 与 streaming source 的装配迁入新 `packages/reader_runtime`；App 文件缩为兼容导出，生产依赖不再直接声明 `pipeline/sessions/storage/transport`。

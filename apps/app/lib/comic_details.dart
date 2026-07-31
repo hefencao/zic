@@ -1229,7 +1229,9 @@ final class _ComicDetailsScaffold extends StatelessWidget {
                   children: <Widget>[
                     Expanded(
                       child: Text(
-                        '$chapterCount 章 · $pageCount 页',
+                        pageCount == 0 && chapterCount > 0
+                            ? '$chapterCount 章 · 页数待加载'
+                            : '$chapterCount 章 · $pageCount 页',
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                     ),
@@ -1453,7 +1455,7 @@ final class _ComicChapterList extends StatelessWidget {
       itemBuilder: (context, index) {
         final chapter = chapters[index];
         final subtitle = <String>[
-          '${chapter.pageCount} 页',
+          chapter.pageCount == 0 ? '页数待加载' : '${chapter.pageCount} 页',
           if (chapter.publishedAt != null)
             chapter.publishedAt!.toLocal().toString().split(' ').first,
         ].join(' · ');

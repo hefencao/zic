@@ -1,3 +1,11 @@
+## 0.31.0-dev.62：漫画源管理投影与 Mihon 章节结果闭环
+
+- 漫画源管理只投影已启用来源，固定按原生、Mihon、Venera 三段排列并使用分隔线。Mihon language family 在该投影中选择当前 locale、通用语言、英语或其他语言作为默认项，剩余来源默认折叠。
+- Mihon/Venera 安装管理分别采用顶部“已安装/仓库”页签，不再把标题和内容切成左右两栏。Mihon 设备扩展发现、刷新、导入与错误只属于已安装页；仓库页仅负责索引、安装和更新。
+- 来源顺序仍持久化：普通来源在各自生态内拖动，Mihon 语言 family 作为一个可排序单元。
+- Mihon `unwrapAsync` 兼容 Future、RxJava 1 BlockingObservable/BlockingSingle 与 RxJava 2/3 blocking API。章节/页面候选出现真实错误时会聚合并返回，不会因另一路径返回空列表而生成“正文”。
+- synthetic gallery 只有在真实章节目录完整为空、并且 synthetic 章节实际得到非空页面后才进入协议；详情直接携带验证后的页数。远程目录中 pageCount=0 被解释为未知而非实际 0 页。
+
 ## 0.31.0-dev.61：UI composition ownership 与外部仓库信息架构
 
 ### 已完成
@@ -5,7 +13,7 @@
 - 新增 `reader_runtime` package，集中拥有 Reader 的 session composition、`SourcePool`、transport/workspace、download registry、coordinator 与流式进度投影。`apps/app/lib/reader_runtime.dart`、`asset_bundle_transport.dart`、`media_load_token.dart` 仅作兼容导出。
 - 新增 `local_media_ui` package，将原 `webp_demo.dart` 按职责拆分，并从 `media` 显式导入 WebP prefix parser。App 的生产依赖不再直接包含 `pipeline`、`sessions`、`storage`、`transport`、`texture_bridge`。
 - 外部插件管理从主来源列表中移出安装记录；Mihon/Venera 各自在生态页面左栏显示已安装，右栏显示仓库。安装、更新、移除和 activation failure 仍由 `ExternalPluginController` 所有。
-- Mihon 仓库按 package family 聚合语言变体，默认语言项始终可见，其他语言默认折叠。
+- dev.61 的“仓库语言折叠”已由 dev.62 废弃；语言折叠只存在于漫画源管理的已启用 Mihon 来源投影。
 - 新增 `external_plugin_repository_model_test.dart` 与 `tool/test_ui_architecture_contract.py`，并更新 repository checker 对新 package 边界的要求。
 
 ### 保持不变

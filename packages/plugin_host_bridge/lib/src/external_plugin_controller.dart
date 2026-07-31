@@ -113,6 +113,8 @@ final class ExternalPluginController {
 
   List<BrowsableComicSource> get activeSources => _registry.activeSources;
 
+  String? ownerOfSource(String sourceId) => _registry.ownerOfSource(sourceId);
+
   Map<String, Object> get activationFailures =>
       Map<String, Object>.unmodifiable(_activationFailures);
 

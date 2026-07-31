@@ -1,75 +1,91 @@
 import 'package:catalog/catalog.dart';
 
-final class MihonLanguageGroup {
-  const MihonLanguageGroup({
+/// One visible Mihon source plus language variants hidden by default in the
+/// source-management projection. Installation records remain independent.
+final class MihonSourceLanguageGroup {
+  const MihonSourceLanguageGroup({
     required this.groupKey,
-    required this.defaultEntry,
+    required this.defaultSource,
     required this.otherLanguages,
   });
 
   final String groupKey;
-  final ExternalComicPluginCatalogEntry defaultEntry;
-  final List<ExternalComicPluginCatalogEntry> otherLanguages;
+  final BrowsableComicSource defaultSource;
+  final List<BrowsableComicSource> otherLanguages;
 }
 
-List<MihonLanguageGroup> groupMihonEntriesByLanguage(
-  List<ExternalComicPluginCatalogEntry> entries, {
+List<MihonSourceLanguageGroup> groupMihonSourcesByLanguage(
+  List<BrowsableComicSource> sources, {
   required String preferredLanguage,
+  required String? Function(String sourceId) pluginOwner,
 }) {
-  final grouped = <String, List<ExternalComicPluginCatalogEntry>>{};
-  for (final entry in entries) {
+  final grouped = <String, List<BrowsableComicSource>>{};
+  for (final source in sources) {
     grouped.putIfAbsent(
-      mihonPluginFamilyKey(entry),
-      () => <ExternalComicPluginCatalogEntry>[],
-    )..add(entry);
+      _mihonSourceFamilyKey(source, pluginOwner(source.sourceId)),
+      () => <BrowsableComicSource>[],
+    )..add(source);
   }
-  final result = <MihonLanguageGroup>[];
+  final result = <MihonSourceLanguageGroup>[];
   for (final group in grouped.entries) {
     final values = group.value
-      ..sort(
-        (left, right) => mihonLanguageRank(
-          left,
+      ..sort((left, right) {
+        final rank = _languageRank(
+          left.descriptor.language,
           preferredLanguage,
-        ).compareTo(mihonLanguageRank(right, preferredLanguage)),
-      );
+        ).compareTo(
+          _languageRank(right.descriptor.language, preferredLanguage),
+        );
+        if (rank != 0) return rank;
+        return left.descriptor.name.compareTo(right.descriptor.name);
+      });
     result.add(
-      MihonLanguageGroup(
+      MihonSourceLanguageGroup(
         groupKey: group.key,
-        defaultEntry: values.first,
-        otherLanguages: List<ExternalComicPluginCatalogEntry>.unmodifiable(
+        defaultSource: values.first,
+        otherLanguages: List<BrowsableComicSource>.unmodifiable(
           values.skip(1),
         ),
       ),
     );
   }
-  result.sort(
-    (left, right) => left.defaultEntry.name.compareTo(
-      right.defaultEntry.name,
-    ),
-  );
-  return List<MihonLanguageGroup>.unmodifiable(result);
+  return List<MihonSourceLanguageGroup>.unmodifiable(result);
 }
 
-String mihonPluginFamilyKey(ExternalComicPluginCatalogEntry entry) {
-  final packageName = entry.pluginId.replaceFirst('mihon:', '');
+String _mihonSourceFamilyKey(
+  BrowsableComicSource source,
+  String? pluginId,
+) {
+  final pluginFamily = _mihonPluginFamilyKey(pluginId);
+  final host = source.descriptor.website.host.trim().toLowerCase();
+  final site = host.isNotEmpty
+      ? host
+      : source.descriptor.name.trim().toLowerCase();
+  return '$pluginFamily|$site';
+}
+
+String _mihonPluginFamilyKey(String? pluginId) {
+  if (pluginId == null || pluginId.isEmpty) return 'unowned';
+  final packageName = pluginId.replaceFirst('mihon:', '');
   final parts = packageName.split('.');
   final extensionIndex = parts.indexOf('extension');
   if (extensionIndex >= 0 && parts.length > extensionIndex + 2) {
     return parts.skip(extensionIndex + 2).join('.').toLowerCase();
   }
-  return entry.name.trim().toLowerCase();
+  return packageName.toLowerCase();
 }
 
-int mihonLanguageRank(
-  ExternalComicPluginCatalogEntry entry,
-  String preferredLanguage,
-) {
-  final language = externalPluginEntryLanguage(entry).toLowerCase();
-  final preferred = preferredLanguage.toLowerCase();
-  if (language == preferred || language.startsWith('$preferred-')) return 0;
-  if (language == 'all' || language == 'multi' || language == 'mul') return 1;
-  if (language == 'en') return 2;
-  if (language == 'und') return 4;
+int _languageRank(String language, String preferredLanguage) {
+  final normalized = language.trim().toLowerCase();
+  final preferred = preferredLanguage.trim().toLowerCase();
+  if (normalized == preferred || normalized.startsWith('$preferred-')) {
+    return 0;
+  }
+  if (normalized == 'all' || normalized == 'multi' || normalized == 'mul') {
+    return 1;
+  }
+  if (normalized == 'en') return 2;
+  if (normalized == 'und' || normalized.isEmpty) return 4;
   return 3;
 }
 

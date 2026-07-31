@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:downloads/downloads.dart';
 import 'comic_details.dart' as details;
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
+import 'external_plugin_repository_model.dart';
 import 'external_plugin_repository_screen.dart';
 import 'external_source_settings_screen.dart';
 
@@ -489,37 +490,102 @@ final class _SourceManagementScreenState
     }
   }
 
-  Future<void> _reorder(int oldIndex, int newIndex) async {
-    if (newIndex > oldIndex) {
-      newIndex--;
-    }
-    final moved = _sources.removeAt(oldIndex);
-    _sources.insert(newIndex, moved);
+
+  Future<void> _persistSourceOrder(
+    List<BrowsableComicSource> ordered,
+  ) async {
+    final previous = List<BrowsableComicSource>.of(_sources);
+    final previousPreferences =
+        Map<String, ComicSourcePreference>.of(_preferences);
     final now = DateTime.now().toUtc();
     final updates = <ComicSourcePreference>[];
-    for (var index = 0; index < _sources.length; index++) {
-      final source = _sources[index];
-      final next = _preference(source).copyWith(
-        sortOrder: index,
-        updatedAt: now.add(Duration(microseconds: index)),
-      );
-      _preferences[source.sourceId] = next;
-      updates.add(next);
-    }
-    setState(() {});
+    setState(() {
+      _sources = List<BrowsableComicSource>.of(ordered);
+      for (var index = 0; index < _sources.length; index++) {
+        final source = _sources[index];
+        final next = _preference(source).copyWith(
+          sortOrder: index,
+          updatedAt: now.add(Duration(microseconds: index)),
+        );
+        _preferences[source.sourceId] = next;
+        updates.add(next);
+      }
+    });
     try {
       for (final preference in updates) {
         await widget.onPreferenceChanged(preference);
       }
     } on Object catch (error, stackTrace) {
-      if (mounted) {
-        _showSourceFailureSnackBar(
-          context,
-          prefix: '保存漫画源顺序失败',
-          failure: _SourceFailure.capture(error, stackTrace),
-        );
-      }
+      if (!mounted) return;
+      setState(() {
+        _sources = previous;
+        _preferences = previousPreferences;
+      });
+      _showSourceFailureSnackBar(
+        context,
+        prefix: '保存漫画源顺序失败',
+        failure: _SourceFailure.capture(error, stackTrace),
+      );
     }
+  }
+
+  Future<void> _persistSourceCategory(
+    List<BrowsableComicSource> orderedCategory,
+  ) async {
+    if (orderedCategory.isEmpty) return;
+    final native = _sources
+        .where((source) =>
+            !source.sourceId.startsWith('mihon:') &&
+            !source.sourceId.startsWith('venera:'))
+        .toList(growable: false);
+    final mihon = _sources
+        .where((source) => source.sourceId.startsWith('mihon:'))
+        .toList(growable: false);
+    final venera = _sources
+        .where((source) => source.sourceId.startsWith('venera:'))
+        .toList(growable: false);
+    if (orderedCategory.first.sourceId.startsWith('mihon:')) {
+      await _persistSourceOrder(<BrowsableComicSource>[
+        ...native,
+        ...orderedCategory,
+        ...venera,
+      ]);
+    } else if (orderedCategory.first.sourceId.startsWith('venera:')) {
+      await _persistSourceOrder(<BrowsableComicSource>[
+        ...native,
+        ...mihon,
+        ...orderedCategory,
+      ]);
+    } else {
+      await _persistSourceOrder(<BrowsableComicSource>[
+        ...orderedCategory,
+        ...mihon,
+        ...venera,
+      ]);
+    }
+  }
+
+  Future<void> _reorderSourceCategory(
+    List<BrowsableComicSource> category,
+    int oldIndex,
+    int newIndex,
+  ) async {
+    if (newIndex > oldIndex) newIndex--;
+    final reordered = List<BrowsableComicSource>.of(category);
+    final moved = reordered.removeAt(oldIndex);
+    reordered.insert(newIndex, moved);
+    await _persistSourceCategory(reordered);
+  }
+
+  Widget _reorderableSourceList(List<BrowsableComicSource> sources) {
+    return ReorderableListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: sources.length,
+      onReorder: (oldIndex, newIndex) =>
+          unawaited(_reorderSourceCategory(sources, oldIndex, newIndex)),
+      itemBuilder: (context, index) => _sourceTile(sources[index]),
+    );
   }
 
   Future<void> _openExternalRepository(
@@ -595,8 +661,139 @@ final class _SourceManagementScreenState
     if (mounted) _refreshExternalSources(controller);
   }
 
+  Widget _sourceTile(
+    BrowsableComicSource source, {
+    bool nested = false,
+  }) {
+    final preference = _preference(source);
+    return SwitchListTile(
+      key: ValueKey<String>('source-manager:${source.sourceId}'),
+      contentPadding: EdgeInsets.fromLTRB(nested ? 40 : 16, 0, 12, 0),
+      value: preference.enabled,
+      onChanged: (value) => unawaited(_toggle(source, value)),
+      secondary: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(
+            source.sourceId.startsWith('mihon:')
+                ? Icons.extension_outlined
+                : source.sourceId.startsWith('venera:')
+                    ? Icons.javascript_outlined
+                    : Icons.public,
+          ),
+          if ((source.sourceId.startsWith('mihon:') ||
+                  source.sourceId.startsWith('venera:')) &&
+              source is ConfigurableComicSource)
+            IconButton(
+              key: ValueKey<String>('source-settings:${source.sourceId}'),
+              tooltip: '插件设置与登录',
+              onPressed: () => unawaited(_openSourceSettings(source)),
+              icon: const Icon(Icons.settings_outlined),
+            ),
+        ],
+      ),
+      title: Text(source.descriptor.name),
+      subtitle: Text(
+        '${source.descriptor.language} · ${source.descriptor.website.host}',
+      ),
+    );
+  }
+
+  Widget _sectionHeader(
+    BuildContext context, {
+    required String title,
+    required IconData icon,
+    required int count,
+  }) =>
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+        child: Row(
+          children: <Widget>[
+            Icon(icon, size: 20),
+            const SizedBox(width: 8),
+            Text('$title（$count）', style: Theme.of(context).textTheme.titleMedium),
+          ],
+        ),
+      );
+
+  Widget _mihonSourceList(BuildContext context) {
+    final mihonSources = _sources
+        .where((source) => source.sourceId.startsWith('mihon:'))
+        .toList(growable: false);
+    final groups = groupMihonSourcesByLanguage(
+      mihonSources,
+      preferredLanguage: Localizations.localeOf(context).languageCode,
+      pluginOwner: (sourceId) =>
+          widget.externalPlugins?.ownerOfSource(sourceId),
+    );
+    return ReorderableListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: groups.length,
+      onReorder: (oldIndex, newIndex) {
+        if (newIndex > oldIndex) newIndex--;
+        final reordered = List<MihonSourceLanguageGroup>.of(groups);
+        final moved = reordered.removeAt(oldIndex);
+        reordered.insert(newIndex, moved);
+        final flattened = <BrowsableComicSource>[
+          for (final group in reordered)
+            ...<BrowsableComicSource>[
+              group.defaultSource,
+              ...group.otherLanguages,
+            ],
+        ];
+        unawaited(_persistSourceCategory(flattened));
+      },
+      itemBuilder: (context, index) {
+        final group = groups[index];
+        return KeyedSubtree(
+          key: ValueKey<String>('mihon-source-group:${group.groupKey}'),
+          child: Column(
+            children: <Widget>[
+              _sourceTile(group.defaultSource),
+              if (group.otherLanguages.isNotEmpty)
+                ExpansionTile(
+                  key: PageStorageKey<String>(
+                    'source-manager-mihon-languages:${group.groupKey}',
+                  ),
+                  initiallyExpanded: false,
+                  leading: const Icon(Icons.translate_outlined),
+                  title: Text('其他语言（${group.otherLanguages.length}）'),
+                  subtitle: Text(
+                    group.otherLanguages
+                        .map((source) => source.descriptor.language)
+                        .join('、'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  children: <Widget>[
+                    for (final source in group.otherLanguages)
+                      _sourceTile(source, nested: true),
+                  ],
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final nativeSources = _sources
+        .where(
+          (source) =>
+              !source.sourceId.startsWith('mihon:') &&
+              !source.sourceId.startsWith('venera:'),
+        )
+        .toList(growable: false);
+    final mihonSources = _sources
+        .where((source) => source.sourceId.startsWith('mihon:'))
+        .toList(growable: false);
+    final veneraSources = _sources
+        .where((source) => source.sourceId.startsWith('venera:'))
+        .toList(growable: false);
+
     return Scaffold(
       key: sourceManagementScreenKey,
       appBar: AppBar(title: const Text('漫画源管理')),
@@ -610,73 +807,73 @@ final class _SourceManagementScreenState
                   ListTile(
                     leading: const Icon(Icons.extension_outlined),
                     title: const Text('Mihon 扩展'),
-                    subtitle: const Text('从兼容仓库安装 APK，并在独立进程运行'),
+                    subtitle: const Text('管理已安装 APK、设备扩展与兼容仓库'),
                     trailing: const Icon(Icons.chevron_right),
-                    onTap: () => unawaited(_openExternalRepository(
-                      ExternalComicPluginFormat.mihonExtension,
-                    )),
+                    onTap: () => unawaited(
+                      _openExternalRepository(
+                        ExternalComicPluginFormat.mihonExtension,
+                      ),
+                    ),
                   ),
+                  const Divider(height: 1),
                   ListTile(
                     leading: const Icon(Icons.javascript_outlined),
                     title: const Text('Venera 漫画源'),
-                    subtitle: const Text('从兼容仓库安装 JavaScript 源并受限执行'),
+                    subtitle: const Text('管理已安装 JavaScript 源与兼容仓库'),
                     trailing: const Icon(Icons.chevron_right),
-                    onTap: () => unawaited(_openExternalRepository(
-                      ExternalComicPluginFormat.veneraJavaScript,
-                    )),
+                    onTap: () => unawaited(
+                      _openExternalRepository(
+                        ExternalComicPluginFormat.veneraJavaScript,
+                      ),
+                    ),
                   ),
                 ],
               ),
             ),
           Expanded(
-            child: ReorderableListView.builder(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              itemCount: _sources.length,
-              onReorder: (oldIndex, newIndex) {
-                unawaited(_reorder(oldIndex, newIndex));
-              },
-              itemBuilder: (context, index) {
-                final source = _sources[index];
-                final preference = _preference(source);
-                return SwitchListTile(
-                  key: ValueKey<String>(
-                    'source-manager:${source.sourceId}',
-                  ),
-                  value: preference.enabled,
-                  onChanged: (value) {
-                    unawaited(_toggle(source, value));
-                  },
-                  secondary: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      const Icon(Icons.public),
-                      if ((source.sourceId.startsWith('mihon:') ||
-                              source.sourceId.startsWith('venera:')) &&
-                          source is ConfigurableComicSource)
-                        IconButton(
-                          key: ValueKey<String>(
-                            'source-settings:${source.sourceId}',
-                          ),
-                          tooltip: '插件设置与登录',
-                          onPressed: () =>
-                              unawaited(_openSourceSettings(source)),
-                          icon: const Icon(Icons.settings_outlined),
-                        ),
-                    ],
-                  ),
-                  title: Text(source.descriptor.name),
-                  subtitle: Text(
-                    '${source.descriptor.language} · '
-                    '${source.descriptor.website.host}',
-                  ),
-                );
-              },
+            child: ListView(
+              padding: const EdgeInsets.only(bottom: 24),
+              children: <Widget>[
+                _sectionHeader(
+                  context,
+                  title: '原生',
+                  icon: Icons.apps_outlined,
+                  count: nativeSources.length,
+                ),
+                if (nativeSources.isEmpty)
+                  const ListTile(title: Text('没有原生漫画源'))
+                else
+                  _reorderableSourceList(nativeSources),
+                const Divider(height: 1),
+                _sectionHeader(
+                  context,
+                  title: 'Mihon',
+                  icon: Icons.extension_outlined,
+                  count: mihonSources.length,
+                ),
+                if (mihonSources.isEmpty)
+                  const ListTile(title: Text('没有已启用的 Mihon 漫画源'))
+                else
+                  _mihonSourceList(context),
+                const Divider(height: 1),
+                _sectionHeader(
+                  context,
+                  title: 'Venera',
+                  icon: Icons.javascript_outlined,
+                  count: veneraSources.length,
+                ),
+                if (veneraSources.isEmpty)
+                  const ListTile(title: Text('没有已启用的 Venera 漫画源'))
+                else
+                  _reorderableSourceList(veneraSources),
+              ],
             ),
           ),
         ],
       ),
     );
   }
+
 }
 
 final class SourceComicDetailsScreen extends StatelessWidget {

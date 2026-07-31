@@ -7,6 +7,8 @@ import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 
 import 'external_plugin_repository_model.dart';
 
+enum _ExternalPluginPage { installed, repository }
+
 final class ExternalPluginRepositoryScreen extends StatefulWidget {
   const ExternalPluginRepositoryScreen({
     required this.format,
@@ -37,8 +39,11 @@ final class _ExternalPluginRepositoryScreenState
   List<ExternalComicPluginCatalogEntry> _entries =
       const <ExternalComicPluginCatalogEntry>[];
   final Set<String> _working = <String>{};
-  Object? _error;
-  bool _loading = false;
+  _ExternalPluginPage _page = _ExternalPluginPage.installed;
+  Object? _repositoryError;
+  Object? _deviceError;
+  bool _loadingRepository = false;
+  bool _loadingDevice = false;
 
   String get _ecosystem => switch (widget.format) {
         ExternalComicPluginFormat.mihonExtension => 'Mihon 扩展',
@@ -50,21 +55,27 @@ final class _ExternalPluginRepositoryScreenState
       .toList(growable: false)
     ..sort((left, right) => left.plugin.name.compareTo(right.plugin.name));
 
+  Set<String> get _installedPluginIds => <String>{
+        for (final item in widget.controller.installed) item.plugin.pluginId,
+      };
+
   @override
   void dispose() {
     _url.dispose();
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _loadRepository() async {
     final uri = Uri.tryParse(_url.text.trim());
-    if (uri == null) {
-      setState(() => _error = const FormatException('仓库地址无效'));
+    if (uri == null || !uri.hasScheme || !uri.hasAuthority) {
+      setState(
+        () => _repositoryError = const FormatException('仓库地址无效'),
+      );
       return;
     }
     setState(() {
-      _loading = true;
-      _error = null;
+      _loadingRepository = true;
+      _repositoryError = null;
     });
     try {
       final entries = await widget.controller.loadRepository(
@@ -74,9 +85,9 @@ final class _ExternalPluginRepositoryScreenState
       if (!mounted) return;
       setState(() => _entries = entries);
     } on Object catch (error) {
-      if (mounted) setState(() => _error = error);
+      if (mounted) setState(() => _repositoryError = error);
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() => _loadingRepository = false);
     }
   }
 
@@ -110,8 +121,7 @@ final class _ExternalPluginRepositoryScreenState
       );
       setState(() {});
     } on Object catch (error) {
-      if (!mounted) return;
-      await _showOperationError('无法启用 ${plugin.name}', error);
+      if (mounted) await _showOperationError('无法启用 ${plugin.name}', error);
     } finally {
       _working.remove(plugin.pluginId);
       if (mounted) setState(() {});
@@ -171,17 +181,18 @@ final class _ExternalPluginRepositoryScreenState
   }
 
   Future<void> _refreshDeviceMihon() async {
+    if (_loadingDevice) return;
     setState(() {
-      _loading = true;
-      _error = null;
+      _loadingDevice = true;
+      _deviceError = null;
     });
     try {
       await widget.controller.refreshDeviceMihonExtensions();
       if (mounted) setState(() {});
     } on Object catch (error) {
-      if (mounted) setState(() => _error = error);
+      if (mounted) setState(() => _deviceError = error);
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() => _loadingDevice = false);
     }
   }
 
@@ -204,40 +215,64 @@ final class _ExternalPluginRepositoryScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(_ecosystem)),
-      body: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      body: Column(
         children: <Widget>[
-          Expanded(
-            flex: 4,
-            child: _InstalledPluginsPane(
-              ecosystem: _ecosystem,
-              installed: _installed,
-              activationFailures: widget.controller.activationFailures,
-              working: _working,
-              onRemove: (installed) => unawaited(_remove(installed)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            child: SizedBox(
+              width: double.infinity,
+              child: SegmentedButton<_ExternalPluginPage>(
+                segments: const <ButtonSegment<_ExternalPluginPage>>[
+                  ButtonSegment<_ExternalPluginPage>(
+                    value: _ExternalPluginPage.installed,
+                    icon: Icon(Icons.download_done_outlined),
+                    label: Text('已安装'),
+                  ),
+                  ButtonSegment<_ExternalPluginPage>(
+                    value: _ExternalPluginPage.repository,
+                    icon: Icon(Icons.cloud_download_outlined),
+                    label: Text('仓库'),
+                  ),
+                ],
+                selected: <_ExternalPluginPage>{_page},
+                showSelectedIcon: false,
+                onSelectionChanged: (selection) {
+                  setState(() => _page = selection.single);
+                },
+              ),
             ),
           ),
-          const VerticalDivider(width: 1),
+          const Divider(height: 1),
           Expanded(
-            flex: 6,
-            child: _RepositoryPane(
-              format: widget.format,
-              url: _url,
-              entries: _entries,
-              deviceMihonExtensions: widget.controller.deviceMihonExtensions,
-              installedPluginIds: <String>{
-                for (final item in widget.controller.installed)
-                  item.plugin.pluginId,
-              },
-              working: _working,
-              loading: _loading,
-              error: _error,
-              onLoad: () => unawaited(_load()),
-              onInstall: (plugin) => unawaited(_install(plugin)),
-              onInstallDeviceMihon: (extension) =>
-                  unawaited(_installDeviceMihon(extension)),
-              onRefreshDeviceMihon: () => unawaited(_refreshDeviceMihon()),
-            ),
+            child: switch (_page) {
+              _ExternalPluginPage.installed => _InstalledPluginsPane(
+                  format: widget.format,
+                  ecosystem: _ecosystem,
+                  installed: _installed,
+                  deviceMihonExtensions:
+                      widget.controller.deviceMihonExtensions,
+                  installedPluginIds: _installedPluginIds,
+                  activationFailures: widget.controller.activationFailures,
+                  working: _working,
+                  loadingDevice: _loadingDevice,
+                  deviceError: _deviceError,
+                  onRemove: (installed) => unawaited(_remove(installed)),
+                  onInstallDeviceMihon: (extension) =>
+                      unawaited(_installDeviceMihon(extension)),
+                  onRefreshDeviceMihon: () =>
+                      unawaited(_refreshDeviceMihon()),
+                ),
+              _ExternalPluginPage.repository => _RepositoryPane(
+                  url: _url,
+                  entries: _entries,
+                  installedPluginIds: _installedPluginIds,
+                  working: _working,
+                  loading: _loadingRepository,
+                  error: _repositoryError,
+                  onLoad: () => unawaited(_loadRepository()),
+                  onInstall: (plugin) => unawaited(_install(plugin)),
+                ),
+            },
           ),
         ],
       ),
@@ -247,153 +282,153 @@ final class _ExternalPluginRepositoryScreenState
 
 final class _InstalledPluginsPane extends StatelessWidget {
   const _InstalledPluginsPane({
+    required this.format,
     required this.ecosystem,
     required this.installed,
+    required this.deviceMihonExtensions,
+    required this.installedPluginIds,
     required this.activationFailures,
     required this.working,
+    required this.loadingDevice,
+    required this.deviceError,
+    required this.onRemove,
+    required this.onInstallDeviceMihon,
+    required this.onRefreshDeviceMihon,
+  });
+
+  final ExternalComicPluginFormat format;
+  final String ecosystem;
+  final List<InstalledExternalPlugin> installed;
+  final List<InstalledMihonExtension> deviceMihonExtensions;
+  final Set<String> installedPluginIds;
+  final Map<String, Object> activationFailures;
+  final Set<String> working;
+  final bool loadingDevice;
+  final Object? deviceError;
+  final ValueChanged<InstalledExternalPlugin> onRemove;
+  final ValueChanged<InstalledMihonExtension> onInstallDeviceMihon;
+  final VoidCallback onRefreshDeviceMihon;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(10, 10, 10, 24),
+      children: <Widget>[
+        if (format == ExternalComicPluginFormat.mihonExtension) ...<Widget>[
+          _DeviceMihonSection(
+            extensions: deviceMihonExtensions,
+            installedPluginIds: installedPluginIds,
+            working: working,
+            loading: loadingDevice,
+            error: deviceError,
+            onInstall: onInstallDeviceMihon,
+            onRefresh: onRefreshDeviceMihon,
+          ),
+          const SizedBox(height: 12),
+          const Divider(height: 1),
+          const SizedBox(height: 8),
+        ],
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+          child: Text(
+            'ZIC 已安装（${installed.length}）',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        ),
+        if (installed.isEmpty)
+          Padding(
+            padding: const EdgeInsets.all(24),
+            child: Center(child: Text('尚未安装 $ecosystem')),
+          )
+        else
+          for (final item in installed) ...<Widget>[
+            _InstalledPluginTile(
+              item: item,
+              failure: activationFailures[item.plugin.pluginId],
+              busy: working.contains(item.plugin.pluginId),
+              onRemove: onRemove,
+            ),
+            const Divider(height: 1),
+          ],
+      ],
+    );
+  }
+}
+
+final class _InstalledPluginTile extends StatelessWidget {
+  const _InstalledPluginTile({
+    required this.item,
+    required this.failure,
+    required this.busy,
     required this.onRemove,
   });
 
-  final String ecosystem;
-  final List<InstalledExternalPlugin> installed;
-  final Map<String, Object> activationFailures;
-  final Set<String> working;
+  final InstalledExternalPlugin item;
+  final Object? failure;
+  final bool busy;
   final ValueChanged<InstalledExternalPlugin> onRemove;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        Padding(
-          padding: const EdgeInsets.fromLTRB(14, 14, 10, 8),
-          child: Text(
-            '已安装（${installed.length}）',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-        ),
-        Expanded(
-          child: installed.isEmpty
-              ? Center(child: Text('尚未安装 $ecosystem'))
-              : ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
-                  itemCount: installed.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemBuilder: (context, index) {
-                    final item = installed[index];
-                    final plugin = item.plugin;
-                    final failure = activationFailures[plugin.pluginId];
-                    final busy = working.contains(plugin.pluginId);
-                    return Card(
-                      margin: const EdgeInsets.symmetric(vertical: 4),
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(10, 9, 6, 6),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: <Widget>[
-                            Row(
-                              children: <Widget>[
-                                Icon(
-                                  failure == null
-                                      ? Icons.check_circle_outline
-                                      : Icons.error_outline,
-                                  size: 18,
-                                ),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: Text(
-                                    plugin.name,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(context).textTheme.bodyMedium,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              failure == null
-                                  ? [
-                                      plugin.language,
-                                      'v${plugin.version}',
-                                      if (plugin.sources.isNotEmpty)
-                                        '${plugin.sources.length} 个源',
-                                    ].whereType<String>().join(' · ')
-                                  : '启动失败 · $failure',
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                            Align(
-                              alignment: Alignment.centerRight,
-                              child: busy
-                                  ? const Padding(
-                                      padding: EdgeInsets.all(8),
-                                      child: SizedBox.square(
-                                        dimension: 18,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      ),
-                                    )
-                                  : IconButton(
-                                      tooltip: '移除',
-                                      visualDensity: VisualDensity.compact,
-                                      onPressed: () => onRemove(item),
-                                      icon: const Icon(Icons.delete_outline),
-                                    ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-        ),
-      ],
+    final plugin = item.plugin;
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      leading: Icon(
+        failure == null ? Icons.check_circle_outline : Icons.error_outline,
+      ),
+      title: Text(plugin.name),
+      subtitle: Text(
+        failure == null
+            ? <String?>[
+                plugin.language,
+                'v${plugin.version}',
+                if (plugin.sources.isNotEmpty) '${plugin.sources.length} 个源',
+              ].whereType<String>().join(' · ')
+            : '启动失败 · $failure',
+        maxLines: 3,
+        overflow: TextOverflow.ellipsis,
+      ),
+      trailing: busy
+          ? const SizedBox.square(
+              dimension: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : IconButton(
+              tooltip: '移除',
+              onPressed: () => onRemove(item),
+              icon: const Icon(Icons.delete_outline),
+            ),
     );
   }
 }
 
 final class _RepositoryPane extends StatelessWidget {
   const _RepositoryPane({
-    required this.format,
     required this.url,
     required this.entries,
-    required this.deviceMihonExtensions,
     required this.installedPluginIds,
     required this.working,
     required this.loading,
     required this.error,
     required this.onLoad,
     required this.onInstall,
-    required this.onInstallDeviceMihon,
-    required this.onRefreshDeviceMihon,
   });
 
-  final ExternalComicPluginFormat format;
   final TextEditingController url;
   final List<ExternalComicPluginCatalogEntry> entries;
-  final List<InstalledMihonExtension> deviceMihonExtensions;
   final Set<String> installedPluginIds;
   final Set<String> working;
   final bool loading;
   final Object? error;
   final VoidCallback onLoad;
   final ValueChanged<ExternalComicPluginCatalogEntry> onInstall;
-  final ValueChanged<InstalledMihonExtension> onInstallDeviceMihon;
-  final VoidCallback onRefreshDeviceMihon;
 
   @override
   Widget build(BuildContext context) {
-    final content = <Widget>[
-      Padding(
-        padding: const EdgeInsets.fromLTRB(14, 14, 14, 8),
-        child: Text('仓库', style: Theme.of(context).textTheme.titleMedium),
-      ),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-        child: Row(
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(10, 12, 10, 24),
+      children: <Widget>[
+        Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Expanded(
@@ -422,91 +457,36 @@ final class _RepositoryPane extends StatelessWidget {
             ),
           ],
         ),
-      ),
-      if (error != null)
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-          child: Material(
-            color: Theme.of(context).colorScheme.errorContainer,
-            borderRadius: BorderRadius.circular(12),
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: SelectableText(error.toString()),
+        if (error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Material(
+              color: Theme.of(context).colorScheme.errorContainer,
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: SelectableText(error.toString()),
+              ),
             ),
           ),
-        ),
-      if (format == ExternalComicPluginFormat.mihonExtension)
-        _DeviceMihonSection(
-          extensions: deviceMihonExtensions,
-          installedPluginIds: installedPluginIds,
-          working: working,
-          loading: loading,
-          onInstall: onInstallDeviceMihon,
-          onRefresh: onRefreshDeviceMihon,
-        ),
-      if (entries.isEmpty)
-        const Padding(
-          padding: EdgeInsets.all(24),
-          child: Center(child: Text('加载仓库后选择扩展或脚本源')),
-        )
-      else if (format == ExternalComicPluginFormat.mihonExtension)
-        ..._mihonRepositoryWidgets(context)
-      else
-        for (final plugin in entries)
-          _RepositoryPluginTile(
-            plugin: plugin,
-            active: installedPluginIds.contains(plugin.pluginId),
-            working: working.contains(plugin.pluginId),
-            onInstall: onInstall,
-          ),
-      const SizedBox(height: 24),
-    ];
-
-    return ListView(children: content);
-  }
-
-  List<Widget> _mihonRepositoryWidgets(BuildContext context) {
-    final localeLanguage = Localizations.localeOf(context).languageCode;
-    final groups = groupMihonEntriesByLanguage(
-      entries,
-      preferredLanguage: localeLanguage,
-    );
-    return <Widget>[
-      for (final group in groups) ...<Widget>[
-        _RepositoryPluginTile(
-          plugin: group.defaultEntry,
-          active: installedPluginIds.contains(group.defaultEntry.pluginId),
-          working: working.contains(group.defaultEntry.pluginId),
-          onInstall: onInstall,
-        ),
-        if (group.otherLanguages.isNotEmpty)
-          ExpansionTile(
-            key: PageStorageKey<String>('mihon-languages:${group.groupKey}'),
-            initiallyExpanded: false,
-            dense: true,
-            leading: const Icon(Icons.translate_outlined),
-            title: Text('其他语言（${group.otherLanguages.length}）'),
-            subtitle: Text(
-              group.otherLanguages
-                  .map((entry) => externalPluginEntryLanguage(entry))
-                  .join('、'),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+        const SizedBox(height: 10),
+        if (entries.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: Text('加载仓库后选择扩展或脚本源')),
+          )
+        else
+          for (final plugin in entries) ...<Widget>[
+            _RepositoryPluginTile(
+              plugin: plugin,
+              active: installedPluginIds.contains(plugin.pluginId),
+              working: working.contains(plugin.pluginId),
+              onInstall: onInstall,
             ),
-            children: <Widget>[
-              for (final plugin in group.otherLanguages)
-                _RepositoryPluginTile(
-                  plugin: plugin,
-                  active: installedPluginIds.contains(plugin.pluginId),
-                  working: working.contains(plugin.pluginId),
-                  onInstall: onInstall,
-                  indent: true,
-                ),
-            ],
-          ),
-        const Divider(height: 1),
+            const Divider(height: 1),
+          ],
       ],
-    ];
+    );
   }
 }
 
@@ -516,6 +496,7 @@ final class _DeviceMihonSection extends StatelessWidget {
     required this.installedPluginIds,
     required this.working,
     required this.loading,
+    required this.error,
     required this.onInstall,
     required this.onRefresh,
   });
@@ -524,52 +505,94 @@ final class _DeviceMihonSection extends StatelessWidget {
   final Set<String> installedPluginIds;
   final Set<String> working;
   final bool loading;
+  final Object? error;
   final ValueChanged<InstalledMihonExtension> onInstall;
   final VoidCallback onRefresh;
 
   @override
   Widget build(BuildContext context) {
-    return ExpansionTile(
-      initiallyExpanded: false,
-      leading: const Icon(Icons.phone_android_outlined),
-      title: Text('设备上的 Mihon 扩展（${extensions.length}）'),
-      subtitle: const Text('确认信任后复制到 ZIC 私有运行目录'),
-      trailing: IconButton(
-        tooltip: '重新检测',
-        onPressed: loading ? null : onRefresh,
-        icon: const Icon(Icons.refresh),
-      ),
-      children: extensions.isEmpty
-          ? const <Widget>[ListTile(title: Text('未检测到可用扩展'))]
-          : <Widget>[
-              for (final extension in extensions)
-                Builder(
-                  builder: (context) {
-                    final pluginId = 'mihon:${extension.packageName}';
-                    final active = installedPluginIds.contains(pluginId);
-                    final busy = working.contains(pluginId);
-                    return ListTile(
-                      dense: true,
-                      title: Text(extension.displayName),
-                      subtitle: Text(
-                        '${extension.packageName}\n'
-                        'v${extension.versionName} · ABI ${extension.extensionLib}',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: busy
-                          ? const SizedBox.square(
-                              dimension: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : FilledButton.tonal(
-                              onPressed: () => onInstall(extension),
-                              child: Text(active ? '重新导入' : '启用'),
-                            ),
-                    );
-                  },
-                ),
-            ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            const Icon(Icons.phone_android_outlined),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    '设备上的 Mihon 扩展（${extensions.length}）',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  Text(
+                    '确认信任后复制到 ZIC 私有运行目录',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+            IconButton.filledTonal(
+              key: const ValueKey<String>('refresh-device-mihon-extensions'),
+              tooltip: '重新检测设备扩展',
+              onPressed: loading ? null : onRefresh,
+              icon: loading
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.refresh),
+            ),
+          ],
+        ),
+        if (error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Material(
+              color: Theme.of(context).colorScheme.errorContainer,
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: SelectableText(error.toString()),
+              ),
+            ),
+          ),
+        const SizedBox(height: 6),
+        if (extensions.isEmpty)
+          const ListTile(
+            contentPadding: EdgeInsets.symmetric(horizontal: 8),
+            title: Text('未检测到可用扩展'),
+          )
+        else
+          for (final extension in extensions)
+            Builder(
+              builder: (context) {
+                final pluginId = 'mihon:${extension.packageName}';
+                final active = installedPluginIds.contains(pluginId);
+                final busy = working.contains(pluginId);
+                return ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                  title: Text(extension.displayName),
+                  subtitle: Text(
+                    '${extension.packageName}\n'
+                    'v${extension.versionName} · ABI ${extension.extensionLib}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: busy
+                      ? const SizedBox.square(
+                          dimension: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : FilledButton.tonal(
+                          onPressed: () => onInstall(extension),
+                          child: Text(active ? '重新导入' : '启用'),
+                        ),
+                );
+              },
+            ),
+      ],
     );
   }
 }
@@ -580,71 +603,40 @@ final class _RepositoryPluginTile extends StatelessWidget {
     required this.active,
     required this.working,
     required this.onInstall,
-    this.indent = false,
   });
 
   final ExternalComicPluginCatalogEntry plugin;
   final bool active;
   final bool working;
   final ValueChanged<ExternalComicPluginCatalogEntry> onInstall;
-  final bool indent;
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: EdgeInsets.fromLTRB(indent ? 24 : 10, 3, 10, 3),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(10, 9, 8, 7),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Row(
-              children: <Widget>[
-                Icon(
-                  plugin.format == ExternalComicPluginFormat.mihonExtension
-                      ? Icons.extension_outlined
-                      : Icons.javascript_outlined,
-                  size: 19,
-                ),
-                const SizedBox(width: 7),
-                Expanded(
-                  child: Text(
-                    plugin.name,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Text(
-              <String?>[
-                externalPluginEntryLanguage(plugin),
-                'v${plugin.version}',
-                if (plugin.sources.isNotEmpty) '${plugin.sources.length} 个源',
-                if (plugin.adult) '成人内容',
-              ].whereType<String>().join(' · '),
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 5),
-            Align(
-              alignment: Alignment.centerRight,
-              child: working
-                  ? const Padding(
-                      padding: EdgeInsets.all(8),
-                      child: SizedBox.square(
-                        dimension: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      ),
-                    )
-                  : FilledButton.tonal(
-                      onPressed: () => onInstall(plugin),
-                      child: Text(active ? '更新' : '安装'),
-                    ),
-            ),
-          ],
-        ),
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      leading: Icon(
+        plugin.format == ExternalComicPluginFormat.mihonExtension
+            ? Icons.extension_outlined
+            : Icons.javascript_outlined,
       ),
+      title: Text(plugin.name),
+      subtitle: Text(
+        <String?>[
+          externalPluginEntryLanguage(plugin),
+          'v${plugin.version}',
+          if (plugin.sources.isNotEmpty) '${plugin.sources.length} 个源',
+          if (plugin.adult) '成人内容',
+        ].whereType<String>().join(' · '),
+      ),
+      trailing: working
+          ? const SizedBox.square(
+              dimension: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : FilledButton.tonal(
+              onPressed: () => onInstall(plugin),
+              child: Text(active ? '更新' : '安装'),
+            ),
     );
   }
 }
@@ -686,7 +678,9 @@ final class _TrustDialog extends StatelessWidget {
               if (inspection.sourceKey != null)
                 SelectableText('Venera key：${inspection.sourceKey}'),
               const SizedBox(height: 8),
-              Text('授权：${inspection.requestedCapabilities.map((e) => e.name).join(', ')}'),
+              Text(
+                '授权：${inspection.requestedCapabilities.map((e) => e.name).join(', ')}',
+              ),
             ],
           ),
         ),

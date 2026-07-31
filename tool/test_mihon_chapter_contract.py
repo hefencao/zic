@@ -29,10 +29,18 @@ def main() -> int:
         'for (candidate in listOf("getChapterList", "fetchChapterList"))',
         'cause is UnsupportedOperationException',
         'newChapters',
+        'loadMihonPageModels(source, selectedChapters.chapters.single(), requestId)',
+        'Mihon source exposed neither a chapter catalog nor readable gallery pages',
+        'chapterFailures.isNotEmpty() ->',
+        'source.invokeMihonCompatible(candidate, listOf(chapterModel))',
+        '"blockingGet"',
+        '"value"',
     )
     for token in required:
         if token not in driver:
             raise SystemExit(f'Mihon chapter contract is incomplete: {token}')
+    if '!chapterProbeCompleted' in driver:
+        raise SystemExit('Mihon chapter failures are still hidden behind an empty probe')
     for source in ABI_ROOTS:
         text = source.read_text()
         if 'chapters.onEach { chapter -> prepareNewChapter(chapter, manga) }' not in text:
@@ -59,6 +67,40 @@ def main() -> int:
             source = root / 'ChapterContract.kt'
             jar = root / 'chapter-contract.jar'
             source.write_text(harness)
+            subprocess.run(
+                [kotlinc, str(source), '-include-runtime', '-d', str(jar)],
+                check=True,
+            )
+            subprocess.run([java, '-jar', str(jar)], check=True)
+
+        unwrap = re.search(
+            r'private fun Any\?\.unwrapAsync\(\): Any \{.*?\n\}',
+            driver,
+            re.DOTALL,
+        )
+        if unwrap is None:
+            raise SystemExit('Mihon async adapter could not be extracted')
+        async_harness = f'''package dev.zic.pluginhost
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.Future
+
+{unwrap.group(0)}
+
+private class BlockingSingle(private val result: Any) {{ fun value(): Any = result }}
+private class Rx1Single(private val result: Any) {{ fun toBlocking(): BlockingSingle = BlockingSingle(result) }}
+private class Rx2Single(private val result: Any) {{ fun blockingGet(): Any = result }}
+
+fun main() {{
+    check((CompletableFuture.completedFuture(listOf("future")) as Future<*>).unwrapAsync() == listOf("future"))
+    check(Rx1Single(listOf("rx1")).unwrapAsync() == listOf("rx1"))
+    check(Rx2Single(listOf("rx2")).unwrapAsync() == listOf("rx2"))
+}}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'AsyncContract.kt'
+            jar = root / 'async-contract.jar'
+            source.write_text(async_harness)
             subprocess.run(
                 [kotlinc, str(source), '-include-runtime', '-d', str(jar)],
                 check=True,

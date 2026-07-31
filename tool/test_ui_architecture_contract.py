@@ -49,21 +49,39 @@ def main() -> None:
     if 'for (final installed in widget.externalPlugins!.installed)' in source_manager:
         raise SystemExit('source manager still owns the installed plugin list')
     for needle in (
-        'body: Row(',
-        "item.plugin.format == widget.format",
-        "'已安装（${installed.length}）'",
-        "Text('仓库'",
+        "title: '原生'",
+        "title: 'Mihon'",
+        "title: 'Venera'",
+        "groupMihonSourcesByLanguage(",
+        "'其他语言（${group.otherLanguages.length}）'",
         'initiallyExpanded: false',
+        "const Divider(height: 1)",
+    ):
+        require(source_manager, needle, 'categorized source management')
+    for needle in (
+        'SegmentedButton<_ExternalPluginPage>',
+        '_ExternalPluginPage.installed',
+        '_ExternalPluginPage.repository',
+        "label: Text('已安装')",
+        "label: Text('仓库')",
+        "'refresh-device-mihon-extensions'",
+        'item.plugin.format == widget.format',
+    ):
+        require(repository, needle, 'ecosystem repository tabs')
+    for forbidden in (
+        'body: Row(',
+        'groupMihonEntriesByLanguage(',
         "'其他语言（${group.otherLanguages.length}）'",
     ):
-        require(repository, needle, 'ecosystem split repository')
+        if forbidden in repository:
+            raise SystemExit(f'repository still contains obsolete split/group UI: {forbidden}')
     for needle in (
-        'groupMihonEntriesByLanguage(',
-        'preferredLanguage',
-        "language == 'all'",
+        'groupMihonSourcesByLanguage(',
+        'pluginOwner',
+        "normalized == 'all'",
         'parts.skip(extensionIndex + 2)',
     ):
-        require(model, needle, 'Mihon language grouping')
+        require(model, needle, 'Mihon source-language grouping')
 
     print('UI architecture and external repository layout: OK')
 

@@ -245,12 +245,23 @@ internal class MihonRuntimeDriver private constructor(
         val selectedChapters = selectMihonChapters(catalog.chapters) {
             createSyntheticMihonChapter(source, catalog.manga)
         }
+        val syntheticPageCount = if (selectedChapters.synthetic) {
+            loadMihonPageModels(source, selectedChapters.chapters.single(), requestId).size
+                .also { count ->
+                    require(count > 0) {
+                        "Mihon source exposed neither a chapter catalog nor readable gallery pages"
+                    }
+                }
+        } else {
+            null
+        }
         val chapterMessages = selectedChapters.chapters.mapIndexed { index, chapter ->
             chapterMessage(
                 chapter = chapter,
                 comicId = comicId,
                 sequence = index,
                 synthetic = selectedChapters.synthetic,
+                pageCount = syntheticPageCount,
             )
         }
         rememberMihonChapters(comicId, selectedChapters.chapters, chapterMessages)
@@ -300,12 +311,11 @@ internal class MihonRuntimeDriver private constructor(
             if (manga !== detailedManga) add(manga)
         }
         val chapterFailures = mutableListOf<Throwable>()
-        var chapterProbeCompleted = false
         var authoritativeChapters = emptyList<Any>()
         chapterSearch@ for (chapterModel in chapterModels) {
             for (candidate in listOf("getChapterList", "fetchChapterList")) {
                 val loaded = try {
-                    source.invokeCompatible(candidate, listOf(chapterModel))
+                    source.invokeMihonCompatible(candidate, listOf(chapterModel))
                         .unwrapAsync()
                         .asObjectList()
                 } catch (error: Throwable) {
@@ -319,7 +329,6 @@ internal class MihonRuntimeDriver private constructor(
                     chapterFailures += error
                     continue
                 }
-                chapterProbeCompleted = true
                 ensureNotCancelled(requestId)
                 if (loaded.isNotEmpty()) {
                     authoritativeChapters = loaded
@@ -333,7 +342,7 @@ internal class MihonRuntimeDriver private constructor(
         val chapters = when {
             authoritativeChapters.isNotEmpty() -> authoritativeChapters
             updateChapters.isNotEmpty() -> updateChapters
-            chapterFailures.isNotEmpty() && !chapterProbeCompleted && update == null ->
+            chapterFailures.isNotEmpty() ->
                 throw IllegalStateException(
                     "Mihon chapter catalog failed for ${source.javaClass.name}",
                     chapterFailures.first(),
@@ -357,7 +366,7 @@ internal class MihonRuntimeDriver private constructor(
                 .put("scanlator", ""),
         )
         runCatching {
-            source.invokeCompatible("prepareNewChapter", listOf(chapter, manga))
+            source.invokeMihonCompatible("prepareNewChapter", listOf(chapter, manga))
         }
         return chapter
     }
@@ -404,7 +413,7 @@ internal class MihonRuntimeDriver private constructor(
                 encoded,
             ).also { chapter ->
                 runCatching {
-                    source.invokeCompatible("prepareNewChapter", listOf(chapter, manga))
+                    source.invokeMihonCompatible("prepareNewChapter", listOf(chapter, manga))
                 }
             }
         }
@@ -435,18 +444,54 @@ internal class MihonRuntimeDriver private constructor(
         return matches.single().also { chapterById[chapterId] = it }
     }
 
+    private fun loadMihonPageModels(
+        source: Any,
+        chapter: Any,
+        requestId: String,
+    ): List<Any> {
+        val failures = mutableListOf<Throwable>()
+        var completed = false
+        for (candidate in listOf("getPageList", "fetchPageList")) {
+            val pages = try {
+                source.invokeMihonCompatible(candidate, listOf(chapter))
+                    .unwrapAsync()
+                    .asObjectList()
+            } catch (error: Throwable) {
+                val cause = error.rootCause()
+                if (error is NoSuchMethodException ||
+                    cause is NoSuchMethodException ||
+                    cause is UnsupportedOperationException
+                ) {
+                    continue
+                }
+                failures += error
+                continue
+            }
+            completed = true
+            ensureNotCancelled(requestId)
+            if (pages.isNotEmpty()) return pages
+        }
+        if (failures.isNotEmpty()) {
+            throw IllegalStateException(
+                "Mihon page list failed for ${source.javaClass.name}",
+                failures.first(),
+            ).also { failure ->
+                failures.drop(1).forEach(failure::addSuppressed)
+            }
+        }
+        check(completed) {
+            "Mihon source exposes no compatible page-list operation"
+        }
+        return emptyList()
+    }
+
     private fun loadChapter(source: Any, chapterId: String, requestId: String): Map<String, Any?> {
         val encoded = decodeOpaque(chapterId, "chapter")
         val comicId = encoded.optString("comicId")
         require(comicId.isNotBlank()) { "chapter comic identity is missing" }
         val chapter = resolveMihonChapter(source, chapterId, encoded, requestId)
-        val pages = source.invokeFirst(
-            listOf(
-                Invocation("getPageList", listOf(chapter)),
-                Invocation("fetchPageList", listOf(chapter)),
-            ),
-        ).unwrapAsync().asObjectList()
-        ensureNotCancelled(requestId)
+        val pages = loadMihonPageModels(source, chapter, requestId)
+        require(pages.isNotEmpty()) { "Mihon chapter contains no readable pages" }
         val pageMessages = pages.mapIndexed { index, page ->
             val resource = mihonPageResource(source, page, index)
             val uri = encodeOpaque(
@@ -760,6 +805,7 @@ internal class MihonRuntimeDriver private constructor(
         comicId: String,
         sequence: Int,
         synthetic: Boolean = false,
+        pageCount: Int? = null,
     ): Map<String, Any?> {
         val json = mihonModelJson(chapter).apply {
             put("comicId", comicId)
@@ -774,7 +820,7 @@ internal class MihonRuntimeDriver private constructor(
             "chapterId" to id,
             "title" to title,
             "sequence" to sequence,
-            "pageCount" to 0,
+            "pageCount" to (pageCount ?: 0),
             "sourceRevision" to listOfNotNull(
                 chapter.readString("url", "getUrl")?.takeIf { it.isNotBlank() },
                 chapter.readLong("date_upload", "getDate_upload", "getDateUpload")?.toString(),
@@ -1380,6 +1426,13 @@ private fun Any.invokeCompatible(name: String, args: List<Any?>): Any? {
     }
 }
 
+private fun Any.invokeMihonCompatible(name: String, args: List<Any?>): Any? =
+    try {
+        invokeCompatible(name, args)
+    } catch (_: NoSuchMethodException) {
+        invokeHierarchyCompatible(name, args)
+    }
+
 private fun Any.invokeHierarchyCompatible(name: String, args: List<Any?>): Any? {
     var current: Class<*>? = javaClass
     while (current != null) {
@@ -1440,15 +1493,43 @@ private fun invokeSuspend(receiver: Any, method: Method, args: List<Any?>): Any?
 
 private fun Any?.unwrapAsync(): Any {
     var value = this ?: error("Mihon operation returned no value")
-    if (value is Future<*>) value = value.get() ?: error("Mihon future returned no value")
-    val toBlocking = value.javaClass.methods.firstOrNull {
-        it.name == "toBlocking" && it.parameterCount == 0
-    }
-    if (toBlocking != null) {
-        val blocking = toBlocking.invoke(value)
-        value = blocking.javaClass.methods.first {
-            it.name == "single" && it.parameterCount == 0
-        }.invoke(blocking) ?: error("Mihon observable returned no value")
+    repeat(6) {
+        val current = value
+        if (current is Future<*>) {
+            value = current.get() ?: error("Mihon future returned no value")
+            return@repeat
+        }
+        val directBlocking = current.javaClass.methods.firstOrNull { method ->
+            method.parameterCount == 0 && method.name in setOf(
+                "blockingGet",
+                "blockingFirst",
+                "blockingSingle",
+            )
+        }
+        if (directBlocking != null) {
+            value = directBlocking.invoke(current)
+                ?: error("Mihon reactive operation returned no value")
+            return@repeat
+        }
+        val toBlocking = current.javaClass.methods.firstOrNull {
+            it.name == "toBlocking" && it.parameterCount == 0
+        }
+        if (toBlocking != null) {
+            val blocking = toBlocking.invoke(current)
+            val terminal = blocking.javaClass.methods.firstOrNull { method ->
+                method.parameterCount == 0 && method.name in setOf(
+                    "single",
+                    "value",
+                    "first",
+                )
+            } ?: error(
+                "Mihon reactive type ${current.javaClass.name} has no supported blocking terminal",
+            )
+            value = terminal.invoke(blocking)
+                ?: error("Mihon reactive operation returned no value")
+            return@repeat
+        }
+        return current
     }
     return value
 }

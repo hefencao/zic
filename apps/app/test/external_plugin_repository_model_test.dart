@@ -1,60 +1,158 @@
+import 'dart:typed_data';
+
 import 'package:catalog/catalog.dart';
+import 'package:domain/domain.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zic/external_plugin_repository_model.dart';
 
-ExternalComicPluginCatalogEntry _mihon({
-  required String language,
-  required String slug,
-}) {
-  return ExternalComicPluginCatalogEntry(
-    format: ExternalComicPluginFormat.mihonExtension,
-    pluginId: 'mihon:eu.kanade.tachiyomi.extension.$language.$slug',
-    name: 'Example $slug',
-    version: '1.0',
-    entrypoint: Uri.parse('https://example.invalid/$language-$slug.apk'),
-    sources: <ExternalComicPluginSource>[
-      ExternalComicPluginSource(
-        sourceId: 'mihon:$language:$slug',
-        externalId: '$language:$slug',
-        name: slug,
-        language: language,
-      ),
-    ],
-    language: language,
-  );
+final class _Source implements BrowsableComicSource {
+  _Source({
+    required this.sourceId,
+    required String name,
+    required String language,
+    required String host,
+  }) : descriptor = ComicSourceDescriptor(
+          sourceId: sourceId,
+          name: name,
+          language: language,
+          website: Uri.https(host, '/'),
+          supportsSearch: true,
+          contentRatings: const <SourceContentRating>{SourceContentRating.safe},
+        );
+
+  @override
+  final String sourceId;
+
+  @override
+  final ComicSourceDescriptor descriptor;
+
+  @override
+  Future<SourceBrowsePage> browse({
+    String query = '',
+    int offset = 0,
+    int limit = 24,
+  }) =>
+      throw UnimplementedError();
+
+  @override
+  Future<ComicManifest> loadComic(String comicId) => throw UnimplementedError();
+
+  @override
+  Future<ChapterManifest> loadChapter(String chapterId) =>
+      throw UnimplementedError();
+
+  @override
+  Future<Uint8List> loadResource(Uri uri) => throw UnimplementedError();
 }
 
 void main() {
-  test('preferred Mihon language stays visible and alternatives are grouped', () {
-    final groups = groupMihonEntriesByLanguage(
-      <ExternalComicPluginCatalogEntry>[
-        _mihon(language: 'en', slug: 'sample'),
-        _mihon(language: 'all', slug: 'sample'),
-        _mihon(language: 'zh', slug: 'sample'),
-        _mihon(language: 'en', slug: 'other'),
+  test('preferred Mihon source language stays visible in source management', () {
+    final owners = <String, String>{
+      'mihon:zh': 'mihon:eu.kanade.tachiyomi.extension.zh.ehentai',
+      'mihon:all': 'mihon:eu.kanade.tachiyomi.extension.all.ehentai',
+      'mihon:en': 'mihon:eu.kanade.tachiyomi.extension.en.ehentai',
+      'mihon:other': 'mihon:eu.kanade.tachiyomi.extension.en.other',
+    };
+    final groups = groupMihonSourcesByLanguage(
+      <BrowsableComicSource>[
+        _Source(
+          sourceId: 'mihon:en',
+          name: 'E-Hentai',
+          language: 'en',
+          host: 'e-hentai.org',
+        ),
+        _Source(
+          sourceId: 'mihon:all',
+          name: 'E-Hentai',
+          language: 'all',
+          host: 'e-hentai.org',
+        ),
+        _Source(
+          sourceId: 'mihon:zh',
+          name: 'E-Hentai',
+          language: 'zh',
+          host: 'e-hentai.org',
+        ),
+        _Source(
+          sourceId: 'mihon:other',
+          name: 'Other',
+          language: 'en',
+          host: 'other.invalid',
+        ),
       ],
       preferredLanguage: 'zh',
+      pluginOwner: owners.operator [],
     );
 
     expect(groups, hasLength(2));
-    final sample = groups.singleWhere((group) => group.groupKey == 'sample');
-    expect(sample.defaultEntry.language, 'zh');
+    final ehentai = groups.singleWhere(
+      (group) => group.defaultSource.descriptor.website.host == 'e-hentai.org',
+    );
+    expect(ehentai.defaultSource.descriptor.language, 'zh');
     expect(
-      sample.otherLanguages.map((entry) => entry.language),
-      <String?>['all', 'en'],
+      ehentai.otherLanguages.map((source) => source.descriptor.language),
+      <String>['all', 'en'],
     );
   });
 
-  test('all-language variant is default when locale variant is absent', () {
-    final group = groupMihonEntriesByLanguage(
-      <ExternalComicPluginCatalogEntry>[
-        _mihon(language: 'en', slug: 'sample'),
-        _mihon(language: 'all', slug: 'sample'),
-        _mihon(language: 'ja', slug: 'sample'),
+  test('all-language source is default when locale variant is absent', () {
+    final groups = groupMihonSourcesByLanguage(
+      <BrowsableComicSource>[
+        _Source(
+          sourceId: 'mihon:en',
+          name: 'Sample',
+          language: 'en',
+          host: 'sample.invalid',
+        ),
+        _Source(
+          sourceId: 'mihon:all',
+          name: 'Sample',
+          language: 'all',
+          host: 'sample.invalid',
+        ),
+        _Source(
+          sourceId: 'mihon:ja',
+          name: 'Sample',
+          language: 'ja',
+          host: 'sample.invalid',
+        ),
       ],
       preferredLanguage: 'zh',
-    ).single;
+      pluginOwner: (sourceId) => switch (sourceId) {
+        'mihon:en' => 'mihon:eu.kanade.tachiyomi.extension.en.sample',
+        'mihon:all' => 'mihon:eu.kanade.tachiyomi.extension.all.sample',
+        _ => 'mihon:eu.kanade.tachiyomi.extension.ja.sample',
+      },
+    );
 
-    expect(group.defaultEntry.language, 'all');
+    expect(groups.single.defaultSource.descriptor.language, 'all');
   });
+  test('Mihon family order follows persisted source order', () {
+    final groups = groupMihonSourcesByLanguage(
+      <BrowsableComicSource>[
+        _Source(
+          sourceId: 'mihon:z',
+          name: 'Zed',
+          language: 'zh',
+          host: 'z.invalid',
+        ),
+        _Source(
+          sourceId: 'mihon:a',
+          name: 'Alpha',
+          language: 'zh',
+          host: 'a.invalid',
+        ),
+      ],
+      preferredLanguage: 'zh',
+      pluginOwner: (sourceId) => sourceId == 'mihon:z'
+          ? 'mihon:eu.kanade.tachiyomi.extension.zh.zed'
+          : 'mihon:eu.kanade.tachiyomi.extension.zh.alpha',
+    );
+
+    expect(
+      groups.map((group) => group.defaultSource.descriptor.name),
+      <String>['Zed', 'Alpha'],
+    );
+  });
+
 }
