@@ -116,6 +116,34 @@ final class ExternalPluginController {
   Map<String, Object> get activationFailures =>
       Map<String, Object>.unmodifiable(_activationFailures);
 
+  Future<void> restartSource(String sourceId) async {
+    _requireOpen();
+    final pluginId = _registry.ownerOfSource(sourceId);
+    if (pluginId == null) {
+      throw StateError('external source is not active: $sourceId');
+    }
+    final record = _installed[pluginId];
+    if (record == null) {
+      throw StateError('external source owner is not installed: $pluginId');
+    }
+    await _registry.deactivate(pluginId);
+    try {
+      await _registry.activate(record.plugin);
+      _activationFailures.remove(pluginId);
+    } on Object catch (error) {
+      _activationFailures[pluginId] = error;
+      rethrow;
+    }
+  }
+
+  Future<void> openMihonLogin(Uri url) async {
+    _requireOpen();
+    if (!Platform.isAndroid) {
+      throw UnsupportedError('Mihon login requires Android');
+    }
+    await _androidMihonMetadata.openLogin(url);
+  }
+
   Future<void> refreshDeviceMihonExtensions() async {
     _requireOpen();
     if (!Platform.isAndroid) {

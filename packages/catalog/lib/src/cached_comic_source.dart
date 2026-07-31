@@ -13,7 +13,8 @@ import 'source_catalog.dart';
 /// [ResourceCacheManager]. [loadResource] deliberately remains a raw
 /// pass-through because Reader page bytes must enter pipeline/session/artifact
 /// ownership instead of being prefetched by the catalog response cache.
-final class CachedBrowsableComicSource implements BrowsableComicSource {
+final class CachedBrowsableComicSource
+    implements BrowsableComicSource, ConfigurableComicSource {
   CachedBrowsableComicSource({
     required this.source,
     required this.cache,
@@ -90,6 +91,30 @@ final class CachedBrowsableComicSource implements BrowsableComicSource {
   /// Raw page/resource transport entry used by Reader and download sessions.
   @override
   Future<Uint8List> loadResource(Uri uri) => source.loadResource(uri);
+
+  @override
+  Future<List<ComicSourceSetting>> loadSettings() {
+    final configurable = source is ConfigurableComicSource
+        ? source as ConfigurableComicSource
+        : null;
+    if (configurable == null) {
+      return Future<List<ComicSourceSetting>>.value(
+        const <ComicSourceSetting>[],
+      );
+    }
+    return configurable.loadSettings();
+  }
+
+  @override
+  Future<void> updateSetting(String key, Object value) {
+    final configurable = source is ConfigurableComicSource
+        ? source as ConfigurableComicSource
+        : null;
+    if (configurable == null) {
+      throw UnsupportedError('comic source does not expose settings');
+    }
+    return configurable.updateSetting(key, value);
+  }
 
   /// Cached source artwork entry used by cover and comparison presentation.
   Future<Uint8List> loadImage(

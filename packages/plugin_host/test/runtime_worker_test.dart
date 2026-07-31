@@ -328,6 +328,10 @@ class _FixtureDriver implements ExternalPluginRuntimeDriver {
         },
       ExternalPluginRuntimeOperation.loadResource =>
         Uint8List.fromList(<int>[82, 73, 70, 70]),
+      ExternalPluginRuntimeOperation.loadSourceSettings =>
+        const <Object?>[],
+      ExternalPluginRuntimeOperation.updateSourceSetting =>
+        const <String, Object?>{},
     };
   }
 

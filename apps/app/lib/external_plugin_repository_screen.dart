@@ -193,29 +193,30 @@ final class _ExternalPluginRepositoryScreenState
     };
     return Scaffold(
       appBar: AppBar(title: Text('$_ecosystem 仓库')),
-      body: Column(
-        children: <Widget>[
+      body: CustomScrollView(
+        slivers: <Widget>[
           if (widget.format == ExternalComicPluginFormat.mihonExtension)
-            ExpansionTile(
-              initiallyExpanded: true,
-              leading: const Icon(Icons.phone_android_outlined),
-              title: Text(
-                '设备上的 Mihon 扩展'
-                '（${widget.controller.deviceMihonExtensions.length}）',
-              ),
-              subtitle: const Text('检测 Mihon 已安装的扩展，确认信任后复制并启用'),
-              trailing: IconButton(
-                tooltip: '重新检测',
-                onPressed: _loading
-                    ? null
-                    : () => unawaited(_refreshDeviceMihon()),
-                icon: const Icon(Icons.refresh),
-              ),
-              children: widget.controller.deviceMihonExtensions.isEmpty
-                  ? const <Widget>[
-                      ListTile(title: Text('未检测到可用的 Mihon 扩展')),
-                    ]
-                  : widget.controller.deviceMihonExtensions.map((extension) {
+            SliverToBoxAdapter(
+              child: ExpansionTile(
+                initiallyExpanded: true,
+                leading: const Icon(Icons.phone_android_outlined),
+                title: Text(
+                  '设备上的 Mihon 扩展'
+                  '（${widget.controller.deviceMihonExtensions.length}）',
+                ),
+                subtitle: const Text('检测 Mihon 已安装的扩展，确认信任后复制并启用'),
+                trailing: IconButton(
+                  tooltip: '重新检测',
+                  onPressed: _loading
+                      ? null
+                      : () => unawaited(_refreshDeviceMihon()),
+                  icon: const Icon(Icons.refresh),
+                ),
+                children: widget.controller.deviceMihonExtensions.isEmpty
+                    ? const <Widget>[
+                        ListTile(title: Text('未检测到可用的 Mihon 扩展')),
+                      ]
+                    : widget.controller.deviceMihonExtensions.map((extension) {
                       final pluginId = 'mihon:${extension.packageName}';
                       final active = installed.contains(pluginId);
                       final working = _working.contains(pluginId);
@@ -248,60 +249,68 @@ final class _ExternalPluginRepositoryScreenState
                               ),
                       );
                     }).toList(growable: false),
+              ),
             ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Expanded(
-                  child: TextField(
-                    controller: _url,
-                    keyboardType: TextInputType.url,
-                    autocorrect: false,
-                    decoration: const InputDecoration(
-                      labelText: 'HTTPS 仓库索引',
-                      border: OutlineInputBorder(),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Expanded(
+                    child: TextField(
+                      controller: _url,
+                      keyboardType: TextInputType.url,
+                      autocorrect: false,
+                      decoration: const InputDecoration(
+                        labelText: 'HTTPS 仓库索引',
+                        border: OutlineInputBorder(),
+                      ),
+                      onSubmitted: (_) => unawaited(_load()),
                     ),
-                    onSubmitted: (_) => unawaited(_load()),
                   ),
-                ),
-                const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: _loading ? null : () => unawaited(_load()),
-                  icon: _loading
-                      ? const SizedBox.square(
-                          dimension: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.refresh),
-                  label: const Text('加载'),
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    onPressed: _loading ? null : () => unawaited(_load()),
+                    icon: _loading
+                        ? const SizedBox.square(
+                            dimension: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.refresh),
+                    label: const Text('加载'),
+                  ),
+                ],
+              ),
             ),
           ),
           if (_error != null)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Material(
-                color: Theme.of(context).colorScheme.errorContainer,
-                borderRadius: BorderRadius.circular(12),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: SelectableText(_error.toString()),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Material(
+                  color: Theme.of(context).colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: SelectableText(_error.toString()),
+                  ),
                 ),
               ),
             ),
-          Expanded(
-            child: _entries.isEmpty
-                ? const Center(child: Text('加载仓库后选择扩展或脚本源'))
-                : ListView.builder(
-                    itemCount: _entries.length,
-                    itemBuilder: (context, index) {
-                      final plugin = _entries[index];
-                      final active = installed.contains(plugin.pluginId);
-                      final working = _working.contains(plugin.pluginId);
-                      return ListTile(
+          if (_entries.isEmpty)
+            const SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(child: Text('加载仓库后选择扩展或脚本源')),
+            )
+          else
+            SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  final plugin = _entries[index];
+                  final active = installed.contains(plugin.pluginId);
+                  final working = _working.contains(plugin.pluginId);
+                  return ListTile(
                         leading: Icon(
                           widget.format ==
                                   ExternalComicPluginFormat.mihonExtension
@@ -327,10 +336,11 @@ final class _ExternalPluginRepositoryScreenState
                                 onPressed: () => unawaited(_install(plugin)),
                                 child: Text(active ? '更新' : '安装'),
                               ),
-                      );
-                    },
-                  ),
-          ),
+                  );
+                },
+                childCount: _entries.length,
+              ),
+            ),
         ],
       ),
     );

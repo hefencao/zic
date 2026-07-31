@@ -10,6 +10,7 @@ import 'package:downloads/downloads.dart';
 import 'comic_details.dart' as details;
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 import 'external_plugin_repository_screen.dart';
+import 'external_source_settings_screen.dart';
 
 const comicSourcesPageKey = ValueKey<String>('comic-sources-page');
 const comicSourceManageKey = ValueKey<String>('comic-source-manage');
@@ -577,6 +578,25 @@ final class _SourceManagementScreenState
     }
   }
 
+  Future<void> _openSourceSettings(BrowsableComicSource source) async {
+    final controller = widget.externalPlugins;
+    final changed = widget.onExternalSourcesChanged;
+    if (controller == null || changed == null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ExternalSourceSettingsScreen(
+          source: source,
+          onApply: () async {
+            await controller.restartSource(source.sourceId);
+            await changed();
+          },
+          onLogin: () => controller.openMihonLogin(source.descriptor.website),
+        ),
+      ),
+    );
+    if (mounted) _refreshExternalSources(controller);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -658,7 +678,22 @@ final class _SourceManagementScreenState
                   onChanged: (value) {
                     unawaited(_toggle(source, value));
                   },
-                  secondary: const Icon(Icons.public),
+                  secondary: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      const Icon(Icons.public),
+                      if (source.sourceId.startsWith('mihon:'))
+                        IconButton(
+                          key: ValueKey<String>(
+                            'source-settings:${source.sourceId}',
+                          ),
+                          tooltip: '插件设置与登录',
+                          onPressed: () =>
+                              unawaited(_openSourceSettings(source)),
+                          icon: const Icon(Icons.settings_outlined),
+                        ),
+                    ],
+                  ),
                   title: Text(source.descriptor.name),
                   subtitle: Text(
                     '${source.descriptor.language} · '

@@ -13,6 +13,8 @@ enum ExternalPluginRuntimeOperation {
   loadComic,
   loadChapter,
   loadResource,
+  loadSourceSettings,
+  updateSourceSetting,
 }
 
 /// Runtime-discovered source metadata returned after the inspected payload has
@@ -356,6 +358,22 @@ void _validateArguments(
       final uri = Uri.tryParse(arguments['uri']! as String);
       if (uri == null || !uri.hasScheme) {
         throw const FormatException('resource URI is invalid');
+      }
+      return;
+    case ExternalPluginRuntimeOperation.loadSourceSettings:
+      _expectKeys(arguments, const <String>{});
+      return;
+    case ExternalPluginRuntimeOperation.updateSourceSetting:
+      _expectKeys(arguments, const <String>{'key', 'value'});
+      final key = arguments['key'];
+      final value = arguments['value'];
+      if (key is! String ||
+          key.trim().isEmpty ||
+          (value is! String &&
+              value is! bool &&
+              value is! int &&
+              value is! List<Object?>)) {
+        throw const FormatException('source setting arguments are invalid');
       }
       return;
   }

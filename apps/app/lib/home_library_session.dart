@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:catalog/catalog.dart';
 import 'package:flutter/foundation.dart';
@@ -121,6 +122,14 @@ final class HomeLibrarySession extends ChangeNotifier {
       for (final preference in storedSourcePreferences)
         preference.sourceId: preference,
     };
+    final systemLanguage =
+        ui.PlatformDispatcher.instance.locale.languageCode.toLowerCase();
+    final defaultLanguages = <String>{'all', 'en', systemLanguage};
+    defaultLanguages.addAll(
+      sources
+          .map((source) => source.descriptor.language.toLowerCase())
+          .where((language) => language.startsWith('$systemLanguage-')),
+    );
     for (var index = 0; index < sources.length; index++) {
       final source = sources[index];
       if (sourcePreferences.containsKey(source.sourceId)) {
@@ -129,7 +138,13 @@ final class HomeLibrarySession extends ChangeNotifier {
       final preference = ComicSourcePreference.defaults(
         sourceId: source.sourceId,
         sortOrder: index,
-      ).copyWith(updatedAt: DateTime.now().toUtc());
+      ).copyWith(
+        enabled: defaultComicSourceEnabled(
+          source,
+          defaultLanguages: defaultLanguages,
+        ),
+        updatedAt: DateTime.now().toUtc(),
+      );
       sourcePreferences[source.sourceId] = preference;
       await library.saveSourcePreference(preference);
     }
@@ -341,4 +356,12 @@ final class HomeLibrarySession extends ChangeNotifier {
       notifyListeners();
     }
   }
+}
+
+bool defaultComicSourceEnabled(
+  BrowsableComicSource source, {
+  required Set<String> defaultLanguages,
+}) {
+  if (!source.sourceId.startsWith('mihon:')) return true;
+  return defaultLanguages.contains(source.descriptor.language.toLowerCase());
 }

@@ -60,6 +60,16 @@ final class AndroidMihonApkMetadataReader implements MihonApkMetadataReader {
     );
   }
 
+  Future<void> openLogin(Uri url) async {
+    if (url.scheme != 'https' && url.scheme != 'http') {
+      throw ArgumentError.value(url, 'url', 'must use HTTP(S)');
+    }
+    await _channel.invokeMethod<void>(
+      'openMihonLogin',
+      <String, Object?>{'url': url.toString()},
+    );
+  }
+
   @override
   Future<MihonApkMetadata> readMetadata(String apkPath) async {
     if (apkPath.trim().isEmpty) {

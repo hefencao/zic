@@ -36,6 +36,8 @@ final class ExternalPluginRuntimeRegistry {
 
   bool isActive(String pluginId) => _sessions.containsKey(pluginId);
 
+  String? ownerOfSource(String sourceId) => _sourceOwners[sourceId];
+
   Future<List<BrowsableComicSource>> activate(
     ExternalComicPluginCatalogEntry plugin,
   ) async {

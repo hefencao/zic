@@ -4,6 +4,49 @@ import 'comic_source.dart';
 
 enum SourceContentRating { safe, suggestive, erotica, pornographic }
 
+enum ComicSourceSettingKind { toggle, text, select, multiSelect }
+
+final class ComicSourceSettingChoice {
+  const ComicSourceSettingChoice({
+    required this.value,
+    required this.label,
+  });
+
+  final String value;
+  final String label;
+}
+
+final class ComicSourceSetting {
+  ComicSourceSetting({
+    required this.key,
+    required this.title,
+    required this.kind,
+    required this.value,
+    this.summary,
+    this.sensitive = false,
+    Iterable<ComicSourceSettingChoice> choices =
+        const <ComicSourceSettingChoice>[],
+  }) : choices = List<ComicSourceSettingChoice>.unmodifiable(choices) {
+    if (key.trim().isEmpty || title.trim().isEmpty) {
+      throw ArgumentError('comic source setting identity must not be empty');
+    }
+  }
+
+  final String key;
+  final String title;
+  final String? summary;
+  final ComicSourceSettingKind kind;
+  final Object value;
+  final bool sensitive;
+  final List<ComicSourceSettingChoice> choices;
+}
+
+abstract interface class ConfigurableComicSource {
+  Future<List<ComicSourceSetting>> loadSettings();
+
+  Future<void> updateSetting(String key, Object value);
+}
+
 final class ComicSourceDescriptor {
   const ComicSourceDescriptor({
     required this.sourceId,

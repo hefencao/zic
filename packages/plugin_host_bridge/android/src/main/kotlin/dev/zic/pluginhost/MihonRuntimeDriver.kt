@@ -3,6 +3,7 @@ package dev.zic.pluginhost
 import android.app.Application
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.SharedPreferences
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.content.res.AssetManager
@@ -10,6 +11,15 @@ import android.content.res.Resources
 import android.view.LayoutInflater
 import android.os.Build
 import android.os.Looper
+import android.os.SystemClock
+import androidx.preference.EditTextPreference
+import androidx.preference.ListPreference
+import androidx.preference.MultiSelectListPreference
+import androidx.preference.Preference
+import androidx.preference.PreferenceGroup
+import androidx.preference.PreferenceManager
+import androidx.preference.SwitchPreferenceCompat
+import androidx.preference.TwoStatePreference
 import dalvik.system.DexClassLoader
 import org.json.JSONArray
 import org.json.JSONObject
@@ -23,6 +33,7 @@ import java.lang.reflect.Modifier
 import java.lang.reflect.Proxy
 import java.security.MessageDigest
 import java.util.Properties
+import java.util.ArrayDeque
 import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
@@ -48,6 +59,7 @@ internal class MihonRuntimeDriver private constructor(
     override val runtimeId: String,
     private val executor: ExecutorService,
     private val sourceById: ConcurrentHashMap<String, Any>,
+    private val payloadContext: Context,
     private val runtimeRoot: File,
     private val maxResponseBytes: Int,
     override val sources: List<Map<String, Any?>>,
@@ -56,6 +68,7 @@ internal class MihonRuntimeDriver private constructor(
     private val calls = ConcurrentHashMap<String, Any>()
     private val tasks = ConcurrentHashMap<String, Future<*>>()
     private val completions = ConcurrentHashMap<String, CountDownLatch>()
+    private val rateLimiters = ConcurrentHashMap<String, SourceRequestLimiter>()
     private val closed = AtomicBoolean(false)
     private val sourcesClosed = AtomicBoolean(false)
     private val runtimeDeleted = AtomicBoolean(false)
@@ -82,11 +95,21 @@ internal class MihonRuntimeDriver private constructor(
             try {
                 ensureNotCancelled(requestId)
                 val arguments = request["arguments"].stringMap("runtime request arguments")
-                val payload = when (request.requireString("operation")) {
+                val operation = request.requireString("operation")
+                if (operation in rateLimitedMihonOperations) {
+                    enforceSourceRequestLimit(sourceId, source)
+                }
+                val payload = when (operation) {
                     "browse" -> browse(source, arguments, requestId)
                     "loadComic" -> loadComic(source, arguments.requireString("comicId"), requestId)
                     "loadChapter" -> loadChapter(source, arguments.requireString("chapterId"), requestId)
                     "loadResource" -> loadResource(source, arguments.requireString("uri"), requestId)
+                    "loadSourceSettings" -> loadSourceSettings(source)
+                    "updateSourceSetting" -> updateSourceSetting(
+                        source,
+                        arguments.requireString("key"),
+                        arguments["value"],
+                    )
                     else -> error("unsupported Mihon runtime operation")
                 }
                 ensureNotCancelled(requestId)
@@ -356,6 +379,109 @@ internal class MihonRuntimeDriver private constructor(
             calls.remove(requestId)
             runCatching { response.invokeOptional("close") }
         }
+    }
+
+    private fun loadSourceSettings(source: Any): List<Map<String, Any?>> {
+        val preferences = sourcePreferences(source)
+        val extension = createSourcePreferenceScreen(source)
+            ?.flattenPreferences()
+            ?.mapNotNull(::preferenceMessage)
+            ?.toList()
+            .orEmpty()
+        return extension + listOf(
+            mapOf(
+                "key" to ZIC_REQUEST_LIMIT_KEY,
+                "title" to "限制时间内允许的请求数",
+                "summary" to "0 表示不限制；漫画列表、章节和图片请求均计数",
+                "kind" to "text",
+                "value" to preferences.getInt(ZIC_REQUEST_LIMIT_KEY, 0).toString(),
+                "sensitive" to false,
+                "choices" to emptyList<Map<String, String>>(),
+            ),
+            mapOf(
+                "key" to ZIC_REQUEST_PERIOD_KEY,
+                "title" to "请求限制时间（秒）",
+                "summary" to "范围 1–3600 秒",
+                "kind" to "text",
+                "value" to preferences.getInt(ZIC_REQUEST_PERIOD_KEY, 60).toString(),
+                "sensitive" to false,
+                "choices" to emptyList<Map<String, String>>(),
+            ),
+        )
+    }
+
+    private fun updateSourceSetting(source: Any, key: String, value: Any?): Map<String, Any?> {
+        if (key == ZIC_REQUEST_LIMIT_KEY || key == ZIC_REQUEST_PERIOD_KEY) {
+            val parsed = (value as? String)?.toIntOrNull()
+                ?: error("Mihon request limit preference requires an integer")
+            if (key == ZIC_REQUEST_LIMIT_KEY) {
+                require(parsed in 0..1000) { "Request limit must be between 0 and 1000" }
+            } else {
+                require(parsed in 1..3600) { "Request period must be between 1 and 3600 seconds" }
+            }
+            sourcePreferences(source).edit().putInt(key, parsed).apply()
+            rateLimiters.remove(source.readValue("id", "getId").toString())
+            return emptyMap()
+        }
+        val screen = createSourcePreferenceScreen(source)
+            ?: error("Mihon source does not expose configurable preferences")
+        val preference = screen.findPreference<Preference>(key)
+            ?: error("Mihon source preference is unavailable: $key")
+        val accepted = when (preference) {
+            is SwitchPreferenceCompat -> {
+                val next = value as? Boolean
+                    ?: error("Mihon switch preference requires a boolean")
+                preference.callChangeListener(next).also { if (it) preference.isChecked = next }
+            }
+            is ListPreference -> {
+                val next = value as? String
+                    ?: error("Mihon list preference requires a string")
+                require(preference.entryValues.orEmpty().any { it.toString() == next }) {
+                    "Mihon list preference value is unavailable"
+                }
+                preference.callChangeListener(next).also { if (it) preference.value = next }
+            }
+            is MultiSelectListPreference -> {
+                val next = value.asStringList("Mihon multi-select preference").toSet()
+                preference.callChangeListener(next).also { if (it) preference.values = next }
+            }
+            is EditTextPreference -> {
+                val next = value as? String
+                    ?: error("Mihon text preference requires a string")
+                preference.callChangeListener(next).also { if (it) preference.text = next }
+            }
+            else -> error("Mihon source preference type is unsupported")
+        }
+        require(accepted) { "Mihon source rejected the preference value" }
+        return emptyMap()
+    }
+
+    private fun createSourcePreferenceScreen(source: Any): PreferenceGroup? {
+        if (!source.hasMethod("setupPreferenceScreen", 1)) return null
+        val sourceId = source.readValue("id", "getId")?.toString()
+            ?: error("Mihon source id is missing")
+        val manager = PreferenceManager(payloadContext).apply {
+            sharedPreferencesName = "source_$sourceId"
+        }
+        val screen = manager.createPreferenceScreen(payloadContext)
+        source.invokeHierarchyCompatible("setupPreferenceScreen", listOf(screen))
+        return screen
+    }
+
+    private fun sourcePreferences(source: Any): SharedPreferences {
+        val sourceId = source.readValue("id", "getId")?.toString()
+            ?: error("Mihon source id is missing")
+        return payloadContext.getSharedPreferences("source_$sourceId", Context.MODE_PRIVATE)
+    }
+
+    private fun enforceSourceRequestLimit(sourceId: String, source: Any) {
+        val preferences = sourcePreferences(source)
+        val permits = preferences.getInt(ZIC_REQUEST_LIMIT_KEY, 0)
+        if (permits <= 0) return
+        val periodMillis = preferences.getInt(ZIC_REQUEST_PERIOD_KEY, 60)
+            .coerceIn(1, 3600) * 1000L
+        rateLimiters.getOrPut(sourceId, ::SourceRequestLimiter)
+            .acquire(permits.coerceAtMost(1000), periodMillis)
     }
 
     private fun mihonPageResource(source: Any, page: Any, index: Int): JSONObject {
@@ -637,6 +763,7 @@ internal class MihonRuntimeDriver private constructor(
                     runtimeId = "mihon:$pluginId:$version",
                     executor = executor,
                     sourceById = ConcurrentHashMap(discovered),
+                    payloadContext = extensionContext,
                     runtimeRoot = runtimeRoot,
                     maxResponseBytes = maxResponseBytes,
                     sources = descriptors,
@@ -647,6 +774,110 @@ internal class MihonRuntimeDriver private constructor(
             }
         }
     }
+}
+
+private const val ZIC_REQUEST_LIMIT_KEY = "__zic_request_limit"
+private const val ZIC_REQUEST_PERIOD_KEY = "__zic_request_period_seconds"
+private val rateLimitedMihonOperations = setOf(
+    "browse",
+    "loadComic",
+    "loadChapter",
+    "loadResource",
+)
+
+private class SourceRequestLimiter {
+    private val timestamps = ArrayDeque<Long>()
+    private var currentPermits = 0
+    private var currentPeriodMillis = 0L
+
+    fun acquire(permits: Int, periodMillis: Long) {
+        while (true) {
+            val waitMillis = synchronized(this) {
+                if (currentPermits != permits || currentPeriodMillis != periodMillis) {
+                    timestamps.clear()
+                    currentPermits = permits
+                    currentPeriodMillis = periodMillis
+                }
+                val now = SystemClock.elapsedRealtime()
+                while (timestamps.isNotEmpty() &&
+                    timestamps.peekFirst() <= now - periodMillis
+                ) {
+                    timestamps.removeFirst()
+                }
+                if (timestamps.size < permits) {
+                    timestamps.addLast(now)
+                    return
+                }
+                (timestamps.peekFirst() + periodMillis - now).coerceAtLeast(1L)
+            }
+            Thread.sleep(waitMillis)
+        }
+    }
+}
+
+private fun PreferenceGroup.flattenPreferences(): Sequence<Preference> = sequence {
+    for (index in 0 until preferenceCount) {
+        val preference = getPreference(index)
+        if (preference is PreferenceGroup) {
+            yieldAll(preference.flattenPreferences())
+        } else {
+            yield(preference)
+        }
+    }
+}
+
+private fun preferenceMessage(preference: Preference): Map<String, Any?>? {
+    val key = preference.key?.takeIf(String::isNotBlank) ?: return null
+    val title = preference.title?.toString()?.takeIf(String::isNotBlank) ?: key
+    val base = mutableMapOf<String, Any?>(
+        "key" to key,
+        "title" to title,
+        "summary" to preference.summary?.toString()?.takeIf(String::isNotBlank),
+        "sensitive" to preference.isSensitivePreference(),
+        "choices" to emptyList<Map<String, String>>(),
+    )
+    when (preference) {
+        is TwoStatePreference -> {
+            base["kind"] = "toggle"
+            base["value"] = preference.isChecked
+        }
+        is ListPreference -> {
+            base["kind"] = "select"
+            base["value"] = preference.value.orEmpty()
+            base["choices"] = preference.entryValues.orEmpty().mapIndexed { index, value ->
+                mapOf(
+                    "value" to value.toString(),
+                    "label" to (
+                        preference.entries?.getOrNull(index)?.toString() ?: value.toString()
+                    ),
+                )
+            }
+        }
+        is MultiSelectListPreference -> {
+            base["kind"] = "multiSelect"
+            base["value"] = preference.values.orEmpty().sorted()
+            base["choices"] = preference.entryValues.orEmpty().mapIndexed { index, value ->
+                mapOf(
+                    "value" to value.toString(),
+                    "label" to (
+                        preference.entries?.getOrNull(index)?.toString() ?: value.toString()
+                    ),
+                )
+            }
+        }
+        is EditTextPreference -> {
+            base["kind"] = "text"
+            base["value"] = preference.text.orEmpty()
+        }
+        else -> return null
+    }
+    return base
+}
+
+private fun Preference.isSensitivePreference(): Boolean {
+    val identity = "${key.orEmpty()} ${title?.toString().orEmpty()}".lowercase()
+    return listOf("password", "passwd", "token", "cookie", "secret", "密码", "令牌")
+        .any(identity::contains)
 }
 
 

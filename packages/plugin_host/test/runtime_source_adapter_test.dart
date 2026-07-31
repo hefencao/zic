@@ -67,6 +67,29 @@ void main() {
     expect(chapter.chapter.pageCount, 1);
   });
 
+  test('Mihon source settings round-trip through the runtime adapter', () async {
+    final connection = _FixtureConnection();
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(format: ExternalComicPluginFormat.mihonExtension),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single as ConfigurableComicSource;
+
+    final settings = await source.loadSettings();
+    expect(settings.single.key, 'mirror');
+    expect(settings.single.kind, ComicSourceSettingKind.select);
+    expect(settings.single.value, 'auto');
+    expect(settings.single.choices.single.label, '自动');
+
+    await source.updateSetting('mirror', 'https://mirror.invalid');
+    expect(connection.lastRequest?.arguments, <String, Object?>{
+      'key': 'mirror',
+      'value': 'https://mirror.invalid',
+    });
+  });
+
   test('adapter rejects a resolved chapter without readable pages', () async {
     final session = ExternalPluginRuntimeSession(
       plugin: _plugin(),
@@ -187,9 +210,12 @@ void main() {
   });
 }
 
-ExternalComicPluginCatalogEntry _plugin() =>
+ExternalComicPluginCatalogEntry _plugin({
+  ExternalComicPluginFormat format =
+      ExternalComicPluginFormat.veneraJavaScript,
+}) =>
     ExternalComicPluginCatalogEntry(
-      format: ExternalComicPluginFormat.veneraJavaScript,
+      format: format,
       pluginId: 'venera:fixture',
       name: 'Fixture',
       version: '1.0.0',
@@ -224,6 +250,7 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
       <ExternalPluginRuntimeOperation>[];
   bool closed = false;
   int closeCalls = 0;
+  ExternalPluginRuntimeRequest? lastRequest;
 
   @override
   List<ExternalPluginRuntimeSourceDescriptor> get sources =>
@@ -240,6 +267,7 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
   Future<ExternalPluginRuntimeResponse> invoke(
     ExternalPluginRuntimeRequest request,
   ) async {
+    lastRequest = request;
     operations.add(request.operation);
     await (block ?? Future<void>.value());
     final requestId = mismatchRequestId ? 'other' : request.requestId;
@@ -295,6 +323,22 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
                 : <Object?>[],
           },
         ExternalPluginRuntimeOperation.loadResource => resource,
+        ExternalPluginRuntimeOperation.loadSourceSettings =>
+          const <Object?>[
+            <String, Object?>{
+              'key': 'mirror',
+              'title': '镜像',
+              'summary': '选择镜像',
+              'kind': 'select',
+              'value': 'auto',
+              'sensitive': false,
+              'choices': <Object?>[
+                <String, Object?>{'value': 'auto', 'label': '自动'},
+              ],
+            },
+          ],
+        ExternalPluginRuntimeOperation.updateSourceSetting =>
+          const <String, Object?>{},
       },
     );
   }
@@ -369,6 +413,10 @@ final class _SequencedConnection implements ExternalPluginRuntimeConnection {
           ExternalPluginRuntimeOperation.loadChapter =>
             throw UnimplementedError(),
           ExternalPluginRuntimeOperation.loadResource =>
+            throw UnimplementedError(),
+          ExternalPluginRuntimeOperation.loadSourceSettings =>
+            throw UnimplementedError(),
+          ExternalPluginRuntimeOperation.updateSourceSetting =>
             throw UnimplementedError(),
         },
       );

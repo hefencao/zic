@@ -158,7 +158,8 @@ typedef _RuntimeInvoke = Future<Object> Function(
   Map<String, Object?> arguments,
 );
 
-final class _RuntimeBrowsableComicSource implements BrowsableComicSource {
+final class _RuntimeBrowsableComicSource
+    implements BrowsableComicSource, ConfigurableComicSource {
   _RuntimeBrowsableComicSource({
     required ExternalComicPluginFormat format,
     required ExternalPluginRuntimeSourceDescriptor descriptor,
@@ -338,6 +339,65 @@ final class _RuntimeBrowsableComicSource implements BrowsableComicSource {
       );
     }
     return payload;
+  }
+
+  @override
+  Future<List<ComicSourceSetting>> loadSettings() async {
+    final payload = await _invoke(
+      ExternalPluginRuntimeOperation.loadSourceSettings,
+      _externalId,
+      const <String, Object?>{},
+    );
+    return _list(payload, 'source settings').map((value) {
+      final setting = _map(value, 'source setting');
+      final kindName = _string(setting, 'kind');
+      final kind = ComicSourceSettingKind.values.firstWhere(
+        (value) => value.name == kindName,
+        orElse: () => throw FormatException(
+          'unknown source setting kind: $kindName',
+        ),
+      );
+      final rawValue = setting['value'];
+      final Object normalizedValue;
+      if (kind == ComicSourceSettingKind.toggle && rawValue is bool) {
+        normalizedValue = rawValue;
+      } else if (kind == ComicSourceSettingKind.multiSelect) {
+        normalizedValue = _stringList(rawValue, 'source setting value');
+      } else if (rawValue is String) {
+        normalizedValue = rawValue;
+      } else {
+        throw const FormatException('source setting value is invalid');
+      }
+      final choices = _list(setting['choices'], 'source setting choices')
+          .map((value) {
+        final choice = _map(value, 'source setting choice');
+        return ComicSourceSettingChoice(
+          value: _string(choice, 'value'),
+          label: _string(choice, 'label'),
+        );
+      });
+      return ComicSourceSetting(
+        key: _string(setting, 'key'),
+        title: _string(setting, 'title'),
+        summary: _optionalString(setting['summary'], 'summary'),
+        kind: kind,
+        value: normalizedValue,
+        sensitive: _optionalBool(setting['sensitive']) ?? false,
+        choices: choices,
+      );
+    }).toList(growable: false);
+  }
+
+  @override
+  Future<void> updateSetting(String key, Object value) async {
+    if (key.trim().isEmpty) {
+      throw ArgumentError.value(key, 'key');
+    }
+    await _invoke(
+      ExternalPluginRuntimeOperation.updateSourceSetting,
+      _externalId,
+      <String, Object?>{'key': key, 'value': value},
+    );
   }
 }
 
