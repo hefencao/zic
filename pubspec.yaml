@@ -14,6 +14,7 @@ workspace:
   - packages/plugin_host_bridge
   - packages/resource_cache
   - packages/reader
+  - packages/reader_runtime
   - packages/pipeline
   - packages/media
   - packages/sessions
@@ -26,6 +27,7 @@ workspace:
   - packages/texture_bridge
   - packages/local_media_bridge
   - packages/local_media
+  - packages/local_media_ui
   - packages/runtime_bridge
 
 dev_dependencies:

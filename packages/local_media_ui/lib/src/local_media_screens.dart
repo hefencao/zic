@@ -1,0 +1,347 @@
+part of '../local_media_ui.dart';
+
+final class ImageFolderScreen extends StatelessWidget {
+  const ImageFolderScreen({
+    required this.folder,
+    this.bytesLoader,
+    this.onPreviewStateChanged,
+    this.initialProgress,
+    this.onProgressChanged,
+    this.initialFavorite = false,
+    this.onFavoriteChanged,
+    this.onDownloadRequested,
+    super.key,
+  });
+
+  final PickedImageFolder folder;
+  final LocalImageBytesLoader? bytesLoader;
+  final ImagePreviewStateChanged? onPreviewStateChanged;
+  final ReadingProgress? initialProgress;
+  final ReaderProgressWriter? onProgressChanged;
+  final bool initialFavorite;
+  final FutureOr<void> Function(bool favorite)? onFavoriteChanged;
+  final FutureOr<void> Function()? onDownloadRequested;
+
+  @override
+  Widget build(BuildContext context) {
+    final record = imageFolderChapterRecord(folder);
+    return ImportedImageChapterScreen(
+      record: record,
+      byteLoaders: <String, LocalImageFileBytesLoader>{
+        for (final image in folder.files)
+          image.sourceId: () => bytesLoader == null
+              ? image.readAsBytes()
+              : bytesLoader!(image),
+      },
+      onPreviewStateChanged: onPreviewStateChanged,
+      initialProgress: initialProgress,
+      onProgressChanged: onProgressChanged,
+      initialFavorite: initialFavorite,
+      onFavoriteChanged: onFavoriteChanged,
+      onDownloadRequested: onDownloadRequested,
+    );
+  }
+}
+
+final class ImportedImageChapterScreen extends StatelessWidget {
+  const ImportedImageChapterScreen({
+    required this.record,
+    this.byteLoaders = const <String, LocalImageFileBytesLoader>{},
+    this.onPreviewStateChanged,
+    this.initialProgress,
+    this.onProgressChanged,
+    this.initialFavorite = false,
+    this.onFavoriteChanged,
+    this.onDownloadRequested,
+    this.artifactCache,
+    super.key,
+  });
+
+  final ImportedChapterRecord record;
+  final Map<String, LocalImageFileBytesLoader> byteLoaders;
+  final ImagePreviewStateChanged? onPreviewStateChanged;
+  final ReadingProgress? initialProgress;
+  final ReaderProgressWriter? onProgressChanged;
+  final bool initialFavorite;
+  final FutureOr<void> Function(bool favorite)? onFavoriteChanged;
+  final FutureOr<void> Function()? onDownloadRequested;
+  final ArtifactCacheStore? artifactCache;
+
+  @override
+  Widget build(BuildContext context) {
+    final chapter = record.toManifest();
+    final sources = <Uri, LoaderTransportSource>{};
+    for (var index = 0; index < record.pages.length; index++) {
+      final page = record.pages[index];
+      final uri = chapter.pages[index].uri;
+      final loader = byteLoaders[page.sourceId];
+      if (loader != null || !_isRemoteMediaUri(uri)) {
+        sources[uri] = LoaderTransportSource(
+          revision: '${record.sourceRevision}:$index',
+          loadBytes: loader ?? () => readLocalImageSource(page.sourceId),
+        );
+      }
+    }
+
+    return ReaderRuntimeScreen(
+      key: ValueKey<Object>(
+        (record.chapterId, record.sourceRevision, byteLoaders.length),
+      ),
+      screenKey: imageFolderScreenKey,
+      chapter: chapter,
+      loaderSources: sources,
+      artifactCache: artifactCache,
+      initialProgress: initialProgress,
+      onProgressChanged: onProgressChanged,
+      initialFavorite: initialFavorite,
+      onFavoriteChanged: onFavoriteChanged,
+      onDownloadRequested: onDownloadRequested,
+      appBarTitleBuilder: (context, chapter, currentIndex) {
+        final current = record.pages[currentIndex];
+        final format = _importedPageFormat(current);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(record.displayName, key: imageFolderTitleKey),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: Text(
+                    '${current.displayName} · ${format.label}',
+                    key: imageFolderCurrentFileKey,
+                    style: Theme.of(context).textTheme.bodySmall,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${currentIndex + 1} / ${record.pages.length}',
+                  key: imageFolderPositionKey,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ],
+        );
+      },
+      appBarActionsBuilder: (context, reader) => <Widget>[
+        IconButton(
+          key: imageFolderPreviousKey,
+          tooltip: '上一张图片',
+          onPressed: reader.currentIndex == 0
+              ? null
+              : () => reader.requestPage(reader.currentIndex - 1),
+          icon: const Icon(Icons.chevron_left),
+        ),
+        IconButton(
+          key: imageFolderNextKey,
+          tooltip: '下一张图片',
+          onPressed: reader.currentIndex + 1 >= record.pages.length
+              ? null
+              : () => reader.requestPage(reader.currentIndex + 1),
+          icon: const Icon(Icons.chevron_right),
+        ),
+        PopupMenuButton<int>(
+          key: imageFolderFileMenuKey,
+          tooltip: '选择图片',
+          initialValue: reader.currentIndex,
+          onSelected: reader.requestPage,
+          itemBuilder: (context) => <PopupMenuEntry<int>>[
+            for (var index = 0; index < record.pages.length; index++)
+              PopupMenuItem<int>(
+                value: index,
+                child: Text(
+                  '${record.pages[index].displayName} · '
+                  '${_importedPageFormat(record.pages[index]).label}',
+                ),
+              ),
+          ],
+        ),
+      ],
+      artifactPageBuilder: (
+        context,
+        asset,
+        reportFirstFrame,
+        runtime,
+      ) {
+        final page = record.pages[asset.index];
+        final format = _importedPageFormat(page);
+        final image = PickedImage(
+          file: XFile(page.sourceId),
+          format: format,
+          displayName: page.displayName,
+          sourceId: page.sourceId,
+          byteLength: page.byteLength,
+          readBytes: byteLoaders[page.sourceId] ??
+              (_isRemoteMediaUri(page.uri)
+                  ? () => Future<Uint8List>.error(
+                        StateError(
+                          'remote page bytes are owned by the Reader artifact',
+                        ),
+                      )
+                  : () => readLocalImageSource(page.sourceId)),
+        );
+        return ColoredBox(
+          color: Colors.black,
+          child: LocalImagePlayer(
+            key: ValueKey<String>(
+              'folder-image:${page.sourceId}:${format.name}:${asset.index}',
+            ),
+            image: image,
+            tokenBytesLoader: (_, token) => runtime.loadBytes(token),
+            onPreviewStateChanged: onPreviewStateChanged,
+            onFirstFrame: reportFirstFrame,
+            downloadIdentity: readerPageDownloadId(runtime.chapter, asset),
+            traceClock: runtime.clock,
+            traceSink: runtime.traceSink,
+            traceSessionId: runtime.sessionId,
+            demandRevision: runtime.demandRevision,
+            playback: runtime.playback,
+            streamingSession: runtime.downloadSession,
+            onPlaybackCapabilityChanged: runtime.reportPlaybackCapability,
+          ),
+        );
+      },
+    );
+  }
+}
+
+
+bool _isRemoteMediaUri(Uri uri) =>
+    uri.scheme == 'http' || uri.scheme == 'https';
+
+LocalImageFormat _importedPageFormat(ImportedPageRecord page) {
+  final stored = localImageFormatByName(page.mediaFormat ?? '');
+  if (stored != null) {
+    return stored;
+  }
+  return switch (page.contentKindHint) {
+    ContentKindHint.jpeg => LocalImageFormat.jpeg,
+    ContentKindHint.png => LocalImageFormat.png,
+    ContentKindHint.gif => LocalImageFormat.gif,
+    ContentKindHint.webp => LocalImageFormat.webp,
+    ContentKindHint.avif => LocalImageFormat.avif,
+    ContentKindHint.unknown || ContentKindHint.fallback =>
+      _formatFromSourceName(page.sourceId),
+  };
+}
+
+LocalImageFormat _formatFromSourceName(String sourceId) {
+  final path = (Uri.tryParse(sourceId)?.path ?? sourceId).toLowerCase();
+  if (path.endsWith('.bmp') || path.endsWith('.dib')) {
+    return LocalImageFormat.bmp;
+  }
+  if (path.endsWith('.tif') || path.endsWith('.tiff')) {
+    return LocalImageFormat.tiff;
+  }
+  if (path.endsWith('.ico')) {
+    return LocalImageFormat.ico;
+  }
+  if (path.endsWith('.heif') ||
+      path.endsWith('.heic') ||
+      path.endsWith('.hif')) {
+    return LocalImageFormat.heif;
+  }
+  return LocalImageFormat.jpeg;
+}
+
+@Deprecated('Use ImageFolderScreen')
+final class WebpFolderScreen extends StatelessWidget {
+  const WebpFolderScreen({
+    required this.folder,
+    this.bytesLoader,
+    this.onPreviewStateChanged,
+    this.initialProgress,
+    this.onProgressChanged,
+    super.key,
+  });
+
+  final PickedImageFolder folder;
+  final LocalImageBytesLoader? bytesLoader;
+  final ImagePreviewStateChanged? onPreviewStateChanged;
+  final ReadingProgress? initialProgress;
+  final ReaderProgressWriter? onProgressChanged;
+
+  @override
+  Widget build(BuildContext context) => ImageFolderScreen(
+        folder: folder,
+        bytesLoader: bytesLoader,
+        onPreviewStateChanged: onPreviewStateChanged,
+        initialProgress: initialProgress,
+        onProgressChanged: onProgressChanged,
+      );
+}
+
+final class WebpPlayerScreen extends StatelessWidget {
+  const WebpPlayerScreen._({
+    required this.title,
+    required this.loadBytes,
+    required this.sourceUri,
+  });
+
+  factory WebpPlayerScreen.asset({required WebpDemoEntry entry}) {
+    return WebpPlayerScreen._(
+      title: entry.title,
+      sourceUri: Uri.parse(entry.asset),
+      loadBytes: (_) async {
+        final data = await rootBundle.load(entry.asset);
+        return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+      },
+    );
+  }
+
+  factory WebpPlayerScreen.file(
+    XFile file, {
+    String? displayName,
+  }) {
+    final explicit = displayName?.trim() ?? '';
+    final title = explicit.isEmpty ? webpDisplayName(file) : explicit;
+    return WebpPlayerScreen._(
+      title: title,
+      sourceUri: file.path.isEmpty
+          ? Uri(scheme: 'memory', path: title)
+          : Uri.file(file.path),
+      loadBytes: (_) => file.readAsBytes(),
+    );
+  }
+
+  factory WebpPlayerScreen.picked(PickedWebp picked) => WebpPlayerScreen.file(
+        picked.file,
+        displayName: picked.displayName,
+      );
+
+  factory WebpPlayerScreen.bytes({
+    required String displayName,
+    required Uint8List bytes,
+    Uri? sourceUri,
+  }) =>
+      WebpPlayerScreen._(
+        title: displayName,
+        sourceUri: sourceUri ?? Uri(scheme: 'memory', path: displayName),
+        loadBytes: (_) async => bytes,
+      );
+
+  final String title;
+  final Uri sourceUri;
+  final WebpBytesLoader loadBytes;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      key: webpPreviewScreenKey,
+      appBar: AppBar(
+        title: Text(
+          title,
+          key: webpPreviewTitleKey,
+        ),
+      ),
+      body: NativeWebpPlayer(
+        title: title,
+        sourceUri: sourceUri,
+        loadBytes: loadBytes,
+      ),
+    );
+  }
+}
+

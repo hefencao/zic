@@ -2,8 +2,17 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNTIME = (ROOT / 'apps/app/lib/reader_runtime.dart').read_text()
-PLAYER = (ROOT / 'apps/app/lib/webp_demo.dart').read_text()
+RUNTIME = (
+    ROOT / 'packages/reader_runtime/lib/src/reader_runtime_screen.dart'
+).read_text()
+PLAYER_ROOT = ROOT / 'packages/local_media_ui/lib'
+PLAYER = '\n'.join(
+    path.read_text()
+    for path in [
+        PLAYER_ROOT / 'local_media_ui.dart',
+        *sorted((PLAYER_ROOT / 'src').glob('*.dart')),
+    ]
+)
 READER = (ROOT / 'packages/reader/lib/src/reader_view.dart').read_text()
 CONTROLS_TEST = (ROOT / 'apps/app/test/reader_controls_test.dart').read_text()
 NAV_TEST = (ROOT / 'packages/reader/test/reader_navigation_test.dart').read_text()

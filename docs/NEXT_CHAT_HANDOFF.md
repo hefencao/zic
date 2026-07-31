@@ -3,11 +3,11 @@
 ## Sole baseline
 
 Continue only from
-`zic_v0.31.0-dev.60_venera-login-mihon-chapters-async-reader-webp-streaming.zip`.
+`zic_v0.31.0-dev.61_reader-media-ui-decoupling-plugin-repository-layout.zip`.
 It descends from the user-provided `zic_v0.31.0-dev.58_fixed.zip` through dev.59;
 do not merge an earlier dev.58/dev.59 candidate.
 
-## Completed in dev.60
+## Completed in dev.61
 
 - Mihon combined detail no longer treats an absent/empty embedded chapter property as
   final emptiness. It probes detailed/original manga candidates and compatible
@@ -30,6 +30,11 @@ do not merge an earlier dev.58/dev.59 candidate.
   top controls.
 - Runtime worker tests now actually round-trip settings/account operations before
   asserting the complete protocol operation set.
+
+- Reader composition moved to `packages/reader_runtime`; App uses a thin compatibility export and no longer has production dependencies on pipeline/session/storage/transport.
+- Local image/WebP presentation moved to `packages/local_media_ui` and split into bounded files. WebP prefix parsing is imported explicitly from `media`.
+- Mihon and Venera repository pages use left installed/right repository columns. The root source manager no longer duplicates installed plugins.
+- Mihon language variants are grouped by package family; preferred/common entry is visible and alternatives are collapsed by default.
 
 ## Invariants
 
@@ -66,6 +71,7 @@ python3 tool/test_venera_response_headers.py
 python3 tool/test_external_login_bridge.py
 python3 tool/test_external_source_settings_contract.py
 python3 tool/test_reader_streaming_contract.py
+python3 tool/test_ui_architecture_contract.py
 python3 tool/test_configure_platforms.py
 bash -n tool/*.sh
 python3 -m py_compile tool/*.py

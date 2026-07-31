@@ -11,6 +11,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+
+def reader_runtime_source() -> str:
+    return (
+        ROOT / 'packages/reader_runtime/lib/src/reader_runtime_screen.dart'
+    ).read_text(encoding='utf-8')
+
+
+def local_media_ui_source() -> str:
+    root = ROOT / 'packages/local_media_ui/lib'
+    paths = [root / 'local_media_ui.dart', *sorted((root / 'src').glob('*.dart'))]
+    return '\n'.join(path.read_text(encoding='utf-8') for path in paths)
+
 EXPECTED_DEPENDENCIES = {
     'domain': set(),
     'downloads': {
@@ -24,6 +36,10 @@ EXPECTED_DEPENDENCIES = {
     'resource_cache': set(),
     'telemetry': set(),
     'reader': {'domain', 'telemetry'},
+    'reader_runtime': {
+        'bridge', 'domain', 'downloads', 'media', 'pipeline', 'reader',
+        'sessions', 'storage', 'telemetry', 'transport',
+    },
     'pipeline': {'domain', 'telemetry'},
     'media': {'domain', 'transport'},
     'transport': {'domain'},
@@ -35,6 +51,11 @@ EXPECTED_DEPENDENCIES = {
     'texture_bridge': {'bridge'},
     'local_media_bridge': set(),
     'local_media': {'local_media_bridge'},
+    'local_media_ui': {
+        'bridge', 'catalog', 'domain', 'downloads', 'local_media', 'media',
+        'pipeline', 'reader_runtime', 'resource_cache', 'sessions',
+        'storage_bridge', 'telemetry', 'texture_bridge', 'transport',
+    },
     'runtime_bridge': set(),
 }
 
@@ -194,7 +215,7 @@ def check_animated_demo() -> None:
     ):
         if label not in home:
             fail(f'app demo entry is missing: {label}')
-    player = (app / 'lib' / 'webp_demo.dart').read_text(encoding='utf-8')
+    player = local_media_ui_source()
     for required in (
         'NativeSourceFactory',
         'NativeCursorFactory',
@@ -471,7 +492,7 @@ def check_compile_regressions() -> None:
         if forbidden in decode_session:
             fail(f'DecodeSession must not use runtime cursor typing: {forbidden}')
     static_demo = (ROOT / 'apps/app/lib/static_demo.dart').read_text(encoding='utf-8')
-    reader_runtime = (ROOT / 'apps/app/lib/reader_runtime.dart').read_text(encoding='utf-8')
+    reader_runtime = reader_runtime_source()
     reader_page_identity = (
         ROOT / 'packages/downloads/lib/src/reader_page_identity.dart'
     ).read_text(encoding='utf-8')
@@ -501,7 +522,7 @@ def check_compile_regressions() -> None:
     ):
         if required not in raster:
             fail(f'codec/display raster separation is incomplete: {required}')
-    webp_demo = (ROOT / 'apps/app/lib/webp_demo.dart').read_text(encoding='utf-8')
+    webp_demo = local_media_ui_source()
     for required in (
         'LayoutBuilder(',
         'RasterPlan.fit(',
@@ -648,7 +669,7 @@ def check_compile_regressions() -> None:
     if "_status = 'WebP 文件无效'" in webp_demo:
         fail('preview status must not duplicate the keyed WebP validation error')
     media_load_token = (
-        ROOT / 'apps/app/lib/media_load_token.dart'
+        ROOT / 'packages/reader_runtime/lib/src/media_load_token.dart'
     ).read_text(encoding='utf-8')
     for required in (
         'final class MediaLoadToken',
@@ -1021,7 +1042,9 @@ def check_compile_regressions() -> None:
     ):
         if required not in local_image_preview_test:
             fail(f'Flutter cold-decode regression is incomplete: {required}')
-    asset_transport_path = ROOT / 'apps/app/lib/asset_bundle_transport.dart'
+    asset_transport_path = (
+        ROOT / 'packages/reader_runtime/lib/src/asset_bundle_transport.dart'
+    )
     asset_transport_test_path = (
         ROOT / 'apps/app/test/asset_bundle_transport_test.dart'
     )
@@ -1174,12 +1197,18 @@ def check_compile_regressions() -> None:
         encoding='utf-8'
     )
     for required in (
-        'storage:',
+        'reader_runtime:',
         'storage_bridge:',
-        'transport:',
     ):
         if required not in app_pubspec:
-            fail(f'Reader app runtime dependency is missing: {required}')
+            fail(f'Reader app composition dependency is missing: {required}')
+    dependencies_section = app_pubspec.split('dev_dependencies:', 1)[0]
+    for forbidden in ('storage:', 'transport:', 'sessions:', 'pipeline:'):
+        if forbidden in dependencies_section:
+            fail(
+                'App Presentation must consume reader_runtime instead of owning '
+                f'the low-level dependency directly: {forbidden}'
+            )
     download_session = (
         ROOT / 'packages/sessions/lib/src/download_session.dart'
     ).read_text(encoding='utf-8')
@@ -2181,9 +2210,7 @@ def check_compile_regressions() -> None:
     if 'android.permission.ACCESS_NETWORK_STATE' not in runtime_manifest:
         fail('runtime environment Android bridge lacks network-state permission')
 
-    reader_runtime = (ROOT / 'apps/app/lib/reader_runtime.dart').read_text(
-        encoding='utf-8'
-    )
+    reader_runtime = reader_runtime_source()
     for required in (
         'void _togglePlaybackPaused()',
         'onPressed: _togglePlaybackPaused',
@@ -2460,9 +2487,7 @@ def check_current_iteration() -> None:
         if required not in bridge:
             fail(f'dev.51 Android runtime bridge is incomplete: {required}')
 
-    image_player = (ROOT / 'apps/app/lib/webp_demo.dart').read_text(
-        encoding='utf-8'
-    )
+    image_player = local_media_ui_source()
     image_test = (
         ROOT / 'apps/app/test/local_image_preview_test.dart'
     ).read_text(encoding='utf-8')

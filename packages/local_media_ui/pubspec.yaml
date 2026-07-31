@@ -1,0 +1,46 @@
+name: local_media_ui
+description: Local image import, preview, and WebP playback presentation for zic.
+version: 0.31.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  bridge:
+    path: ../bridge
+  catalog:
+    path: ../catalog
+  domain:
+    path: ../domain
+  downloads:
+    path: ../downloads
+  file_selector: ^1.0.3
+  local_media:
+    path: ../local_media
+  media:
+    path: ../media
+  pipeline:
+    path: ../pipeline
+  reader_runtime:
+    path: ../reader_runtime
+  resource_cache:
+    path: ../resource_cache
+  sessions:
+    path: ../sessions
+  storage_bridge:
+    path: ../storage_bridge
+  telemetry:
+    path: ../telemetry
+  texture_bridge:
+    path: ../texture_bridge
+  transport:
+    path: ../transport
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0

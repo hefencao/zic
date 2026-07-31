@@ -20,7 +20,7 @@ decode/upload registry、frame holder、viewport 播放门控、帧字节预算�
 `0.31.0-dev.54` 修复外部插件 manifest 恢复的 Dart 编译阻断，并把 JitPack 配置提升到真正解析 App runtime classpath 的生成宿主仓库所有者；Groovy/Kotlin DSL 与旧 `www.jitpack.io` 地址均被幂等归一化。Mihon extraction 改为 activation 独立 workspace，请求关闭在真实任务排空后再释放 source 和代码缓存，专用 Service 启动时清理上次进程死亡遗留目录。
 `0.31.0-dev.56` 在 dev.55 单一 Mihon ABI 基础上补齐真实运行环境：APK 使用 payload 专属 Context/资源/隔离存储并兼容 object、工厂和构造器入口；Venera 归一化当前 explore/category 契约、压缩协商，并对公共域名被异常解析到回环地址提供受限且保持 TLS hostname 的 DNS 回退。
 `0.31.0-dev.57` 关闭真机反馈中的一组运行时缺口：Mihon APK 在 dex 加载前以同目录原子流程提升为只读文件；Venera 同时兼容 `load/loadNext`、直接 HTTP(S) 封面资源、方向别名和类级 source key，且响应头适配同时接受 Android nullable 与 OkHttp non-null multimap。
-`0.31.0-dev.60` 继续以 dev.58 fixed 后继链为基础：Mihon 在组合详情缺少章节时继续探测独立章节目录，只有最终目录为空才生成单章节；Venera 补齐账号密码、Cookie 与网页登录/退出协议；首页先呈现再异步恢复书架；Reader 恢复默认比例远程滑动、仅对动画显示播放控制，并让远程 WebP 直接消费下载 session 的增量 source，在顶部区分已有前缀与本次下载进度。
+`0.31.0-dev.61` 继续以 dev.60 为唯一基线：Reader 会话装配已从 App Presentation 迁入 `packages/reader_runtime`，本地图片/WebP UI 迁入并拆分到 `packages/local_media_ui`，修复 `SourcePool` 与 WebP 前缀探测符号遗漏，同时降低 App 对 pipeline/session/storage/transport 的直接耦合。Mihon 与 Venera 管理页各自使用左侧已安装、右侧仓库的双栏布局；Mihon 同插件多语言版本只默认展开当前语言或通用版本，其余语言折叠。
 
 ```text
 ReaderView

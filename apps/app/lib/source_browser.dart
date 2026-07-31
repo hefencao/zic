@@ -558,25 +558,6 @@ final class _SourceManagementScreenState
     });
   }
 
-  Future<void> _removeExternal(String pluginId) async {
-    final controller = widget.externalPlugins;
-    final changed = widget.onExternalSourcesChanged;
-    if (controller == null || changed == null) return;
-    try {
-      await controller.remove(pluginId);
-      await changed();
-      if (mounted) {
-        _refreshExternalSources(controller);
-      }
-    } on Object catch (error, stackTrace) {
-      if (!mounted) return;
-      _showSourceFailureSnackBar(
-        context,
-        prefix: '移除外部漫画源失败',
-        failure: _SourceFailure.capture(error, stackTrace),
-      );
-    }
-  }
 
   Future<void> _openSourceSettings(BrowsableComicSource source) async {
     final controller = widget.externalPlugins;
@@ -644,36 +625,6 @@ final class _SourceManagementScreenState
                       ExternalComicPluginFormat.veneraJavaScript,
                     )),
                   ),
-                  for (final installed in widget.externalPlugins!.installed)
-                    Builder(
-                      builder: (context) {
-                        final failure = widget.externalPlugins!
-                            .activationFailures[installed.plugin.pluginId];
-                        return ListTile(
-                          dense: true,
-                          leading: Icon(
-                            failure == null
-                                ? Icons.verified_user_outlined
-                                : Icons.error_outline,
-                          ),
-                          title: Text(installed.plugin.name),
-                          subtitle: Text(
-                            failure == null
-                                ? '${installed.plugin.format.name} · ${installed.plugin.version}'
-                                : '启动失败 · $failure',
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          trailing: IconButton(
-                            tooltip: '移除',
-                            onPressed: () => unawaited(
-                              _removeExternal(installed.plugin.pluginId),
-                            ),
-                            icon: const Icon(Icons.delete_outline),
-                          ),
-                        );
-                      },
-                    ),
                 ],
               ),
             ),

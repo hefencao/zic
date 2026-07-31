@@ -1,3 +1,19 @@
+## 0.31.0-dev.61：UI composition ownership 与外部仓库信息架构
+
+### 已完成
+
+- 新增 `reader_runtime` package，集中拥有 Reader 的 session composition、`SourcePool`、transport/workspace、download registry、coordinator 与流式进度投影。`apps/app/lib/reader_runtime.dart`、`asset_bundle_transport.dart`、`media_load_token.dart` 仅作兼容导出。
+- 新增 `local_media_ui` package，将原 `webp_demo.dart` 按职责拆分，并从 `media` 显式导入 WebP prefix parser。App 的生产依赖不再直接包含 `pipeline`、`sessions`、`storage`、`transport`、`texture_bridge`。
+- 外部插件管理从主来源列表中移出安装记录；Mihon/Venera 各自在生态页面左栏显示已安装，右栏显示仓库。安装、更新、移除和 activation failure 仍由 `ExternalPluginController` 所有。
+- Mihon 仓库按 package family 聚合语言变体，默认语言项始终可见，其他语言默认折叠。
+- 新增 `external_plugin_repository_model_test.dart` 与 `tool/test_ui_architecture_contract.py`，并更新 repository checker 对新 package 边界的要求。
+
+### 保持不变
+
+- Reader demand、download/artifact、decode 与 cache 所有权未移入 Presentation。
+- 外部插件仍在独立 runtime process 执行，仓库 UI 不获得 payload 或 session 所有权。
+- dev.60 的异步书架恢复、Venera 登录、Mihon 章节探测与 WebP 增量播放语义保持不变。
+
 ## 0.31.0-dev.60：Venera 登录与增量 Reader 主线
 
 - Venera `account` 已进入统一 `AuthenticatableComicSource`：支持凭据、按字段顺序 Cookie、WebView 最终 URL/标题/Cookie/localStorage 快照、退出与登录状态；设置页提供对应入口，runtime 继续持有来源数据与回调执行权。

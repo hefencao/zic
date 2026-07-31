@@ -1,7 +1,7 @@
 name: zic
 description: zic Flutter application.
 publish_to: none
-version: 0.31.0+60
+version: 0.31.0+61
 resolution: workspace
 
 environment:
@@ -22,33 +22,29 @@ dependencies:
     path: ../../packages/plugin_host
   plugin_host_bridge:
     path: ../../packages/plugin_host_bridge
-  bridge:
-    path: ../../packages/bridge
-  texture_bridge:
-    path: ../../packages/texture_bridge
   local_media:
     path: ../../packages/local_media
-  runtime_bridge:
-    path: ../../packages/runtime_bridge
+  local_media_ui:
+    path: ../../packages/local_media_ui
   file_selector: ^1.0.3
-  pipeline:
-    path: ../../packages/pipeline
   resource_cache:
     path: ../../packages/resource_cache
-  reader:
-    path: ../../packages/reader
-  sessions:
-    path: ../../packages/sessions
-  storage:
-    path: ../../packages/storage
+  reader_runtime:
+    path: ../../packages/reader_runtime
   storage_bridge:
     path: ../../packages/storage_bridge
   telemetry:
     path: ../../packages/telemetry
-  transport:
-    path: ../../packages/transport
 
 dev_dependencies:
+  bridge:
+    path: ../../packages/bridge
+  pipeline:
+    path: ../../packages/pipeline
+  reader:
+    path: ../../packages/reader
+  transport:
+    path: ../../packages/transport
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0

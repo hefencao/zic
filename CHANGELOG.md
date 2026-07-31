@@ -1,3 +1,12 @@
+## 0.31.0-dev.61：Reader/WebP 组合解耦与兼容插件双栏管理
+
+- 修复 `apps/app/lib/reader_runtime.dart` 直接引用未导入 `SourcePool` 的编译错误。Reader session、transport、workspace、pipeline 与 streaming source 的装配迁入新 `packages/reader_runtime`；App 文件缩为兼容导出，生产依赖不再直接声明 `pipeline/sessions/storage/transport`。
+- 修复 WebP 流式探测对 `parseWebpPrefixInfo` 与 `webpPrefixDeclaresAnimation` 的遗漏。两者由 `media` 包显式提供，WebP UI 不再依赖偶然的转出。
+- 将超过 3300 行的 `webp_demo.dart` 迁入 `packages/local_media_ui`，按模型与预览、catalog/codec、静态图片播放器、页面、native WebP 播放器拆分；App 保留两行兼容 facade，单个实现文件均低于 1600 行。
+- 漫画源管理首页只保留 Mihon/Venera 入口。每个生态自己的管理页改为固定双栏：左侧仅显示该生态已安装插件及启动失败/移除状态，右侧显示设备导入与仓库安装/更新。
+- Mihon 仓库按包名中的插件 family 聚合多语言变体。当前界面语言优先作为默认可见项，其次 `all/multi`、英语；其余语言放入默认折叠的“其他语言”区域，不再把同一插件的所有语言版本平铺。
+- 架构门禁改为读取新 package 实现而非 App facade，并新增 App 生产依赖泄漏、文件规模、双栏布局和 Mihon 语言折叠回归。
+
 ## 0.31.0-dev.60：Venera 登录、Mihon 章节探测与 Reader 流式闭环
 
 - 严格沿用 dev.59 代码线；`vibevenera-master` 仅作为 Venera 账号和流式进度交互参考，没有替换 ZIC 的 runtime、下载、缓存或 Reader 所有权。

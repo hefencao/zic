@@ -88,6 +88,7 @@ zic/
     downloads/               页面 artifact 下载与整本队列核心
     downloads_bridge/        网络/供电与队列持久化平台适配
     reader/                  Reader UI、viewport、交互报告
+    reader_runtime/          Reader session composition、transport/workspace adapter
     pipeline/                policy/window/ranker/demand
     sessions/                download/decode/display session
     transport/               网络、本地文件、resume
@@ -97,6 +98,7 @@ zic/
     bridge/                  FFI、native source/cursor/frame handle
     texture_bridge/          Flutter texture 契约与 Android 插件
     local_media/             本地图片模型、格式嗅探、桌面目录枚举和平台 facade
+    local_media_ui/          本地图片导入/预览与 WebP Flutter/native 播放 UI
     local_media_bridge/      Android SAF document tree/content URI 插件
     runtime_bridge/          Android 网络计费与供电状态信号插件
     testkit/                 fake clock/source/decoder/trace
@@ -139,6 +141,19 @@ zic/
 - 直接创建/销毁 decode session；
 - 清理 artifact；
 - 根据 Widget 生命周期推断物理资源生命周期。
+
+### 3.1.1 App composition facades
+
+`apps/app/lib/reader_runtime.dart` 与 `webp_demo.dart` 仅是兼容导出，不实现 session、transport、decode 或媒体探测。
+
+- `packages/reader_runtime` 负责把 Reader application/controller 与 session、transport、workspace、artifact handoff 装配起来，并显式依赖 `media.SourcePool`。
+- `packages/local_media_ui` 负责本地图片导入、预览和 WebP presentation；WebP prefix 元数据来自 `packages/media`，native cursor/texture 仍通过既有 bridge。
+- App production dependencies 不直接声明 `pipeline/sessions/storage/transport`；这些低层依赖只能由 composition package 所有。测试可在 `dev_dependencies` 中直接引用其契约。
+- App facade 不得再次增长为实现文件。单个 local-media UI 实现文件上限为 1600 行，继续增长时必须按状态所有权进一步拆分。
+
+### 3.1.2 外部插件仓库 UI
+
+每个生态的仓库页面固定分成两个 ownership projection：左栏是 `ExternalPluginController.installed` 的按格式只读投影，右栏是 repository/device discovery。主漫画源管理页不重复显示安装记录。Mihon repository 只在 UI 层按 package family 聚合语言变体；catalog identity、pluginId、签名、payload 和 activation session 不因此合并。默认语言或通用语言项可见，其余语言默认折叠。
 
 ### 3.2 Application
 
