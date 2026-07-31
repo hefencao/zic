@@ -44,13 +44,18 @@ final class PipelineController {
 
   int _revision = 0;
   DemandPlan _previous = DemandPlan.empty();
+  Map<int, PageRole>? _previousRoles;
 
   int get revision => _revision;
   DemandPlan get currentPlan => _previous;
 
   void accept(ReaderObs observation) {
-    _revision++;
     final window = windowResolver.resolve(chapter, observation);
+    if (_sameRoles(_previousRoles, window.roles)) {
+      return;
+    }
+    _previousRoles = Map<int, PageRole>.unmodifiable(window.roles);
+    _revision++;
     final proposal = policy.createPlan(
       revision: _revision,
       chapter: chapter,
@@ -79,4 +84,17 @@ final class PipelineController {
     );
     _onUpdate(PipelineDelta(plan: plan, diff: diff, window: window));
   }
+}
+
+
+bool _sameRoles(Map<int, PageRole>? previous, Map<int, PageRole> next) {
+  if (previous == null || previous.length != next.length) {
+    return false;
+  }
+  for (final entry in next.entries) {
+    if (previous[entry.key] != entry.value) {
+      return false;
+    }
+  }
+  return true;
 }

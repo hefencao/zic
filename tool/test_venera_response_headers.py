@@ -11,7 +11,7 @@ source = (
     / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraRuntimeDriver.kt'
 ).read_text()
 match = re.search(
-    r'(private fun veneraResponse\(.*?\n\})\n\nprivate fun JSONObject',
+    r'(private data class VeneraHttpResponse\(.*?\n\}\n\nprivate fun veneraResponse\(.*?\n\})\n\nprivate fun JSONObject',
     source,
     re.S,
 )
@@ -24,7 +24,7 @@ for token in (
     'headers.keys.none { it.equals("user-agent", ignoreCase = true) }',
     'headers["User-Agent"] = defaultUserAgent',
     'repeat(VENERA_HTTP_MAX_REDIRECTS + 1)',
-    'persistResponseCookies(targetIdentity, result.optJSONObject("headers"))',
+    'persistResponseCookies(targetIdentity, result.headers)',
     '.veneraHeaderValue("location")',
     'forwardHeaders.removeVeneraHeader("authorization")',
     'connection.instanceFollowRedirects = false',
@@ -57,8 +57,8 @@ private fun encodeWireValue(value: Any?): Any? = value
 fun main() {
     val strict: Map<String, List<String>> = mapOf("content-type" to listOf("image/jpeg"))
     val nullable: Map<String?, List<String>?> = mapOf("set-cookie" to listOf("a=1"), null to null)
-    check(veneraResponse(200, strict, byteArrayOf(1, 2), true).toString().contains("content-type"))
-    check(veneraResponse(200, nullable, byteArrayOf(), false).toString().contains("set-cookie"))
+    check(veneraResponse(200, strict, byteArrayOf(1, 2)).toWire(true).toString().contains("content-type"))
+    check(veneraResponse(200, nullable, byteArrayOf()).toWire(false).toString().contains("set-cookie"))
     println("Venera response header adapter: OK")
 }
 '''

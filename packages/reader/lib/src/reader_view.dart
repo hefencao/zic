@@ -52,6 +52,7 @@ final class ReaderView extends StatefulWidget {
 
 final class _ReaderViewState extends State<ReaderView> {
   static const double _verticalPageGap = 8;
+  static const double _verticalStitchOverlap = 1;
 
   late PageController _pageController;
   late ScrollController _verticalController;
@@ -64,7 +65,10 @@ final class _ReaderViewState extends State<ReaderView> {
   Size _viewport = Size.zero;
   late ReadingDirection _lastDirection;
   bool _syncScheduled = false;
+  bool _anchorRestoreScheduled = false;
+  ({int index, double fraction})? _pendingVerticalAnchor;
   bool _commandScheduled = false;
+  final Set<String> _readyPageKeys = <String>{};
 
   @override
   void initState() {
@@ -102,10 +106,14 @@ final class _ReaderViewState extends State<ReaderView> {
       _zoomedPage = null;
       _lastReportedVerticalPage = null;
       _lastDirection = widget.controller.direction;
+      _readyPageKeys.clear();
       _scheduleSyncToCurrentPage();
     } else if (oldWidget.verticalStitch != widget.verticalStitch ||
         oldWidget.pageAspectRatios != widget.pageAspectRatios) {
-      _scheduleSyncToCurrentPage();
+      _preserveVerticalAnchor(
+        oldRatios: oldWidget.pageAspectRatios,
+        oldStitch: oldWidget.verticalStitch,
+      );
     }
   }
 
@@ -131,18 +139,37 @@ final class _ReaderViewState extends State<ReaderView> {
               nextViewport.width > 0 &&
               nextViewport.height > 0 &&
               nextViewport != _viewport) {
+            final previousViewport = _viewport;
+            if (widget.controller.direction == ReadingDirection.vertical &&
+                previousViewport != Size.zero) {
+              _preserveVerticalAnchor(
+                oldRatios: widget.pageAspectRatios,
+                oldStitch: widget.verticalStitch,
+                oldViewport: previousViewport,
+              );
+            }
             _viewport = nextViewport;
-            if (widget.controller.direction == ReadingDirection.vertical) {
+            if (widget.controller.direction == ReadingDirection.vertical &&
+                previousViewport == Size.zero) {
               _scheduleSyncToCurrentPage();
             }
           }
           final direction = widget.controller.direction;
           if (direction == ReadingDirection.vertical) {
-            Widget pageBuilder(BuildContext context, int index) => SizedBox(
-                  key: ValueKey<String>('reader-vertical-page:$index'),
-                  height: _verticalExtent(chapter.pages[index], index),
-                  child: _buildPage(chapter, index),
-                );
+            Widget pageBuilder(BuildContext context, int index) {
+              final page = _buildPage(chapter, index);
+              return SizedBox(
+                key: ValueKey<String>('reader-vertical-page:$index'),
+                height: _verticalExtent(chapter.pages[index], index),
+                child: widget.verticalStitch && index > 0
+                    ? Transform.translate(
+                        offset: const Offset(0, -_verticalStitchOverlap),
+                        transformHitTests: false,
+                        child: page,
+                      )
+                    : page,
+              );
+            }
             final physics = _zoomedPage == null
                 ? const ClampingScrollPhysics()
                 : const NeverScrollableScrollPhysics();
@@ -169,28 +196,60 @@ final class _ReaderViewState extends State<ReaderView> {
                     ),
                     itemBuilder: pageBuilder,
                   );
-            return NotificationListener<ScrollNotification>(
-              onNotification: _handleVerticalScrollNotification,
-              child: list,
+            return _withLoadingOverlay(
+              chapter,
+              NotificationListener<ScrollNotification>(
+                onNotification: _handleVerticalScrollNotification,
+                child: list,
+              ),
             );
           }
-          return NotificationListener<ScrollNotification>(
-            onNotification: _handlePagedScrollNotification,
-            child: PageView.builder(
-              controller: _pageController,
-              itemCount: chapter.pages.length,
-              reverse: direction == ReadingDirection.rtl,
-              scrollDirection: Axis.horizontal,
-              physics: _zoomedPage == null
-                  ? const PageScrollPhysics()
-                  : const NeverScrollableScrollPhysics(),
-              onPageChanged: _handlePageChanged,
-              itemBuilder: (context, index) => _buildPage(chapter, index),
+          return _withLoadingOverlay(
+            chapter,
+            NotificationListener<ScrollNotification>(
+              onNotification: _handlePagedScrollNotification,
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: chapter.pages.length,
+                reverse: direction == ReadingDirection.rtl,
+                scrollDirection: Axis.horizontal,
+                physics: _zoomedPage == null
+                    ? const PageScrollPhysics()
+                    : const NeverScrollableScrollPhysics(),
+                onPageChanged: _handlePageChanged,
+                itemBuilder: (context, index) => _buildPage(chapter, index),
+              ),
             ),
           );
         },
       ),
     );
+  }
+
+  Widget _withLoadingOverlay(ChapterManifest chapter, Widget content) {
+    final current = chapter.pages[widget.controller.currentIndex].assetKey;
+    return Stack(
+      fit: StackFit.expand,
+      children: <Widget>[
+        content,
+        if (!_readyPageKeys.contains(current))
+          const IgnorePointer(
+            child: Center(
+              child: CircularProgressIndicator(
+                key: ValueKey<String>('reader-loading-indicator'),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  void _markFirstFrameReady(String assetKey) {
+    if (_readyPageKeys.contains(assetKey)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_readyPageKeys.add(assetKey)) return;
+      setState(() {});
+    });
   }
 
   Widget _buildPage(ChapterManifest chapter, int index) => RotatedBox(
@@ -215,13 +274,21 @@ final class _ReaderViewState extends State<ReaderView> {
             traceSink: widget.traceSink,
             pageBuilder: widget.pageBuilder,
             demandRevision: widget.demandRevision,
+            onFirstFrameReady: () =>
+                _markFirstFrameReady(chapter.pages[index].assetKey),
           ),
         ),
       );
 
-  double _verticalExtent(PageAsset asset, int index) {
-    if (_viewport.width <= 0 || _viewport.height <= 0) return 1;
-    var ratio = widget.pageAspectRatios[asset.assetKey];
+  double _verticalExtent(
+    PageAsset asset,
+    int index, {
+    Map<String, double>? ratios,
+    Size? viewport,
+  }) {
+    final effectiveViewport = viewport ?? _viewport;
+    if (effectiveViewport.width <= 0 || effectiveViewport.height <= 0) return 1;
+    var ratio = (ratios ?? widget.pageAspectRatios)[asset.assetKey];
     var hasMeasuredRatio = ratio != null;
     final width = asset.width?.toDouble();
     final height = asset.height?.toDouble();
@@ -237,24 +304,114 @@ final class _ReaderViewState extends State<ReaderView> {
     if (widget.controller.rotationQuarterTurns.isOdd) {
       ratio = 1 / math.max(0.001, ratio);
     }
-    var scaled = _viewport.width * ratio;
+    var scaled = effectiveViewport.width * ratio;
     if (!hasMeasuredRatio && index == widget.controller.currentIndex) {
-      scaled = math.max(scaled, _viewport.height);
+      scaled = math.max(scaled, effectiveViewport.height);
     }
-    final upper = math.max(_viewport.height, _viewport.width * 64);
+    final upper = math.max(
+      effectiveViewport.height,
+      effectiveViewport.width * 64,
+    );
     return scaled.clamp(64.0, upper).toDouble();
   }
 
-  double get _effectiveGap => widget.verticalStitch ? 0 : _verticalPageGap;
+  double _verticalGapFor(bool stitch) => stitch ? 0 : _verticalPageGap;
 
-  ({double start, double end}) _verticalBoundsFor(int index) {
+  double get _effectiveGap => _verticalGapFor(widget.verticalStitch);
+
+  ({double start, double end}) _verticalBoundsFor(
+    int index, {
+    Map<String, double>? ratios,
+    bool? stitch,
+    Size? viewport,
+  }) {
     var start = 0.0;
     final pages = widget.controller.chapter.pages;
     for (var i = 0; i < index; i++) {
-      start += _verticalExtent(pages[i], i);
-      start += _effectiveGap;
+      start += _verticalExtent(
+        pages[i],
+        i,
+        ratios: ratios,
+        viewport: viewport,
+      );
+      start += _verticalGapFor(stitch ?? widget.verticalStitch);
     }
-    return (start: start, end: start + _verticalExtent(pages[index], index));
+    return (
+      start: start,
+      end: start +
+          _verticalExtent(
+            pages[index],
+            index,
+            ratios: ratios,
+            viewport: viewport,
+          ),
+    );
+  }
+
+  void _preserveVerticalAnchor({
+    required Map<String, double> oldRatios,
+    required bool oldStitch,
+    Size? oldViewport,
+  }) {
+    if (widget.controller.direction != ReadingDirection.vertical ||
+        !_verticalController.hasClients ||
+        !_verticalController.position.hasContentDimensions ||
+        _verticalController.position.isScrollingNotifier.value ||
+        _interaction != Interaction.idle ||
+        _viewport == Size.zero) {
+      return;
+    }
+    final metrics = _verticalController.position;
+    final center = metrics.pixels + metrics.viewportDimension / 2;
+    final pages = widget.controller.chapter.pages;
+    var offset = 0.0;
+    for (var index = 0; index < pages.length; index++) {
+      final extent = _verticalExtent(
+        pages[index],
+        index,
+        ratios: oldRatios,
+        viewport: oldViewport,
+      );
+      final end = offset + extent;
+      if (center <= end || index == pages.length - 1) {
+        _pendingVerticalAnchor = (
+          index: index,
+          fraction: ((center - offset) / math.max(1.0, extent))
+              .clamp(0.0, 1.0)
+              .toDouble(),
+        );
+        _scheduleVerticalAnchorRestore();
+        return;
+      }
+      offset = end + _verticalGapFor(oldStitch);
+    }
+  }
+
+  void _scheduleVerticalAnchorRestore() {
+    if (_anchorRestoreScheduled) return;
+    _anchorRestoreScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _anchorRestoreScheduled = false;
+      if (!mounted) return;
+      final anchor = _pendingVerticalAnchor;
+      _pendingVerticalAnchor = null;
+      if (anchor == null ||
+          widget.controller.direction != ReadingDirection.vertical ||
+          !_verticalController.hasClients ||
+          !_verticalController.position.hasContentDimensions ||
+          _verticalController.position.isScrollingNotifier.value ||
+          _interaction != Interaction.idle) {
+        return;
+      }
+      final bounds = _verticalBoundsFor(anchor.index);
+      final targetCenter = bounds.start +
+          (bounds.end - bounds.start) * anchor.fraction;
+      final position = _verticalController.position;
+      final target = targetCenter - position.viewportDimension / 2;
+      _verticalController.jumpTo(
+        target.clamp(0.0, position.maxScrollExtent).toDouble(),
+      );
+    });
   }
 
   double _verticalOffsetFor(int index) {
@@ -751,6 +908,7 @@ final class _ReaderPageHost extends StatefulWidget {
     required this.traceSink,
     required this.pageBuilder,
     required this.demandRevision,
+    required this.onFirstFrameReady,
     super.key,
   });
 
@@ -760,6 +918,7 @@ final class _ReaderPageHost extends StatefulWidget {
   final TraceSink traceSink;
   final ReaderPageBuilder? pageBuilder;
   final int Function()? demandRevision;
+  final VoidCallback onFirstFrameReady;
 
   @override
   State<_ReaderPageHost> createState() => _ReaderPageHostState();
@@ -834,6 +993,7 @@ final class _ReaderPageHostState extends State<_ReaderPageHost> {
       return;
     }
     _reportedFirstFrame = true;
+    widget.onFirstFrameReady();
     final asset = widget.asset;
     final clock = widget.clock;
     final sessionId = widget.sessionId;

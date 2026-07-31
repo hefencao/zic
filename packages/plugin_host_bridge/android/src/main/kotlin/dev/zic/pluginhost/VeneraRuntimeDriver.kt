@@ -72,7 +72,22 @@ internal class VeneraRuntimeDriver private constructor(
                     envelope.optBoolean("retryable", false),
                 )
             } else {
-                result.success(decodeWireValue(envelope.opt("value")) ?: emptyMap<String, Any?>())
+                val decoded = decodeWireValue(envelope.opt("value"))
+                val nativeToken = (decoded as? Map<*, *>)
+                    ?.get("__zicNativeBytesToken") as? String
+                if (nativeToken.isNullOrBlank()) {
+                    result.success(decoded ?: emptyMap<String, Any?>())
+                } else {
+                    val bytes = bridge.takeNativeBytes(nativeToken)
+                    if (bytes == null) {
+                        result.error(
+                            "venera-native-bytes-missing",
+                            "Venera native image payload is unavailable",
+                        )
+                    } else {
+                        result.success(bytes)
+                    }
+                }
             }
         }
     }
@@ -316,8 +331,11 @@ private class VeneraNativeBridge(
         Context.MODE_PRIVATE,
     )
     private val connections = ConcurrentHashMap.newKeySet<Any>()
+    private val requestConnections =
+        ConcurrentHashMap<String, MutableSet<Any>>()
     private val images = ConcurrentHashMap<Int, Bitmap>()
     private val nextImageKey = AtomicInteger(1)
+    private val nativeBytes = LinkedHashMap<String, ByteArray>()
     private val cookieManager = CookieManager.getInstance()
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
     @Volatile private var dnsFallbackClient: ReflectiveVeneraHttpClient? = null
@@ -330,6 +348,7 @@ private class VeneraNativeBridge(
             val message = JSONObject(raw)
             val value = when (message.getString("method")) {
                 "http" -> http(message)
+                "http_binary" -> httpBinary(message)
                 "cookie" -> cookie(message)
                 "load_data" -> loadData(message)
                 "save_data" -> saveData(message)
@@ -387,12 +406,38 @@ private class VeneraNativeBridge(
             }
     }
 
-    fun cancel(requestId: String) {
-        cancelled.add(requestId)
+    @JavascriptInterface
+    fun finished(requestId: String) {
+        cancelled.remove(requestId)
+        requestConnections.remove(requestId)
     }
 
-    private fun http(message: JSONObject): Any {
+    fun cancel(requestId: String) {
+        cancelled.add(requestId)
+        requestConnections[requestId]?.toList()?.forEach(::cancelConnection)
+    }
+
+    private fun http(message: JSONObject): Any =
+        performHttp(message).toWire(message.optBoolean("bytes"))
+
+    private fun httpBinary(message: JSONObject): Any {
+        val response = performHttp(message)
+        val result = JSONObject()
+            .put("status", response.status)
+            .put("headers", response.headers)
+        if (response.status in 200..299) {
+            result.put("nativeBytesToken", retainNativeBytes(response.body))
+        }
+        return result
+    }
+
+    private fun performHttp(message: JSONObject): VeneraHttpResponse {
         requireCapability("network")
+        val requestId = message.optString("requestId")
+            .takeIf { it.isNotBlank() }
+        if (requestId != null && cancelled.contains(requestId)) {
+            error("Venera request was cancelled")
+        }
         val rawUrl = message.getString("url")
         require(rawUrl.startsWith("https://") || rawUrl.startsWith("http://")) {
             "Venera network URL must use HTTP(S)"
@@ -410,12 +455,26 @@ private class VeneraNativeBridge(
             is String -> data.toByteArray(Charsets.UTF_8)
             else -> JSONObject.wrap(data).toString().toByteArray(Charsets.UTF_8)
         }
-        if (method !in setOf("GET", "HEAD") &&
-            forwardHeaders.keys.none { it.equals("content-type", ignoreCase = true) }
-        ) {
-            forwardHeaders["Content-Type"] = "application/octet-stream"
+        if (method in setOf("GET", "HEAD")) {
+            bodyBytes = ByteArray(0)
+            forwardHeaders.removeVeneraHeader("content-length")
+            forwardHeaders.removeVeneraHeader("content-type")
+            forwardHeaders.removeVeneraHeader("transfer-encoding")
+        } else {
+            require(bodyBytes.size <= VENERA_HTTP_MAX_REQUEST_BYTES) {
+                "Venera request body exceeds $VENERA_HTTP_MAX_REQUEST_BYTES bytes"
+            }
+            if (forwardHeaders.keys.none {
+                    it.equals("content-type", ignoreCase = true)
+                }
+            ) {
+                forwardHeaders["Content-Type"] = "application/octet-stream"
+            }
         }
         repeat(VENERA_HTTP_MAX_REDIRECTS + 1) { redirectCount ->
+            if (requestId != null && cancelled.contains(requestId)) {
+                error("Venera request was cancelled")
+            }
             val targetIdentity = target.toExternalForm()
             val requestHeaders = LinkedHashMap(forwardHeaders)
             if (capabilities.contains("cookies") &&
@@ -430,15 +489,16 @@ private class VeneraNativeBridge(
                 method = method,
                 headers = requestHeaders,
                 bodyBytes = bodyBytes,
-                bytes = message.optBoolean("bytes"),
+                requestId = requestId,
             )
-            persistResponseCookies(targetIdentity, result.optJSONObject("headers"))
-            val status = result.optInt("status")
-            val location = result.optJSONObject("headers")
+            persistResponseCookies(targetIdentity, result.headers)
+            val location = result.headers
                 .veneraHeaderValue("location")
                 ?.trim()
                 .orEmpty()
-            if (status !in VENERA_HTTP_REDIRECT_STATUSES || location.isEmpty()) {
+            if (result.status !in VENERA_HTTP_REDIRECT_STATUSES ||
+                location.isEmpty()
+            ) {
                 return result
             }
             require(redirectCount < VENERA_HTTP_MAX_REDIRECTS) {
@@ -454,9 +514,11 @@ private class VeneraNativeBridge(
                 forwardHeaders.removeVeneraHeader("authorization")
                 forwardHeaders.removeVeneraHeader("cookie")
             }
-            if (status == HttpURLConnection.HTTP_SEE_OTHER ||
-                (status in setOf(HttpURLConnection.HTTP_MOVED_PERM, HttpURLConnection.HTTP_MOVED_TEMP) &&
-                    method !in setOf("GET", "HEAD"))
+            if (result.status == HttpURLConnection.HTTP_SEE_OTHER ||
+                (result.status in setOf(
+                    HttpURLConnection.HTTP_MOVED_PERM,
+                    HttpURLConnection.HTTP_MOVED_TEMP,
+                ) && method !in setOf("GET", "HEAD"))
             ) {
                 method = "GET"
                 bodyBytes = ByteArray(0)
@@ -469,24 +531,68 @@ private class VeneraNativeBridge(
         error("Venera HTTP redirect state escaped its bounded loop")
     }
 
+    private fun registerConnection(requestId: String?, connection: Any) {
+        connections.add(connection)
+        if (requestId == null) return
+        requestConnections
+            .computeIfAbsent(requestId) { ConcurrentHashMap.newKeySet() }
+            .add(connection)
+        if (cancelled.contains(requestId)) {
+            cancelConnection(connection)
+        }
+    }
+
+    private fun unregisterConnection(requestId: String?, connection: Any) {
+        connections.remove(connection)
+        if (requestId == null) return
+        requestConnections[requestId]?.let { scoped ->
+            scoped.remove(connection)
+            if (scoped.isEmpty()) {
+                requestConnections.remove(requestId, scoped)
+            }
+        }
+    }
+
+    private fun cancelConnection(connection: Any) {
+        when (connection) {
+            is HttpURLConnection -> connection.disconnect()
+            is ReflectiveVeneraCall -> connection.cancel()
+        }
+    }
+
+    private fun retainNativeBytes(bytes: ByteArray): String {
+        val token = UUID.randomUUID().toString()
+        synchronized(nativeBytes) {
+            while (nativeBytes.size >= VENERA_MAX_NATIVE_BYTE_PAYLOADS) {
+                nativeBytes.remove(nativeBytes.keys.first())
+            }
+            nativeBytes[token] = bytes
+        }
+        return token
+    }
+
+    fun takeNativeBytes(token: String): ByteArray? = synchronized(nativeBytes) {
+        nativeBytes.remove(token)
+    }
+
     private fun executeHttpRequest(
         target: URL,
         method: String,
         headers: Map<String, String>,
         bodyBytes: ByteArray,
-        bytes: Boolean,
-    ): JSONObject {
+        requestId: String?,
+    ): VeneraHttpResponse {
         return if (shouldUseVeneraDnsFallback(target) ||
             prefersVeneraDnsFallback(target.host)
         ) {
-            httpWithDnsFallback(target, method, headers, bodyBytes, bytes)
+            httpWithDnsFallback(target, method, headers, bodyBytes, requestId)
                 .also { rememberVeneraDnsFallback(target.host) }
         } else {
             runCatching {
-                httpWithUrlConnection(target, method, headers, bodyBytes, bytes)
+                httpWithUrlConnection(target, method, headers, bodyBytes, requestId)
             }.recoverCatching { error ->
                 if (!shouldRetryVeneraWithDnsFallback(error, target, method)) throw error
-                httpWithDnsFallback(target, method, headers, bodyBytes, bytes)
+                httpWithDnsFallback(target, method, headers, bodyBytes, requestId)
                     .also { rememberVeneraDnsFallback(target.host) }
             }.getOrThrow()
         }
@@ -497,8 +603,8 @@ private class VeneraNativeBridge(
         method: String,
         headers: Map<String, String>,
         bodyBytes: ByteArray,
-        bytes: Boolean,
-    ): JSONObject {
+        requestId: String?,
+    ): VeneraHttpResponse {
         val connection = target.openConnection() as HttpURLConnection
         connection.instanceFollowRedirects = false
         connection.connectTimeout = VENERA_HTTP_CONNECT_TIMEOUT_MILLIS
@@ -507,7 +613,7 @@ private class VeneraNativeBridge(
         connection.useCaches = false
         headers.forEach(connection::setRequestProperty)
         if (method !in setOf("GET", "HEAD")) connection.doOutput = true
-        connections.add(connection)
+        registerConnection(requestId, connection)
         try {
             if (connection.doOutput) connection.outputStream.use { it.write(bodyBytes) }
             val status = connection.responseCode
@@ -523,10 +629,9 @@ private class VeneraNativeBridge(
                 status = status,
                 headers = connection.headerFields,
                 body = responseBytes,
-                bytes = bytes,
             )
         } finally {
-            connections.remove(connection)
+            unregisterConnection(requestId, connection)
             connection.disconnect()
         }
     }
@@ -536,14 +641,14 @@ private class VeneraNativeBridge(
         method: String,
         headers: Map<String, String>,
         bodyBytes: ByteArray,
-        bytes: Boolean,
-    ): JSONObject {
+        requestId: String?,
+    ): VeneraHttpResponse {
         val resolved = resolveVeneraPublicAddresses(target.host)
         require(resolved.isNotEmpty()) {
             "Venera public DNS fallback returned no safe address for ${target.host}"
         }
         val call = getDnsFallbackClient().newCall(target, method, headers, bodyBytes)
-        connections.add(call)
+        registerConnection(requestId, call)
         try {
             val response = call.execute()
                 ?: error("Venera DNS fallback returned no response")
@@ -570,7 +675,7 @@ private class VeneraNativeBridge(
                 val responseBytes = stream?.let {
                     readDecodedResponseBytes(it, contentEncoding, maxResponseBytes)
                 } ?: ByteArray(0)
-                return veneraResponse(status.toInt(), headerMap, responseBytes, bytes)
+                return veneraResponse(status.toInt(), headerMap, responseBytes)
             } finally {
                 runCatching {
                     response.javaClass.methods.first {
@@ -579,7 +684,7 @@ private class VeneraNativeBridge(
                 }
             }
         } finally {
-            connections.remove(call)
+            unregisterConnection(requestId, call)
             call.close()
         }
     }
@@ -961,16 +1066,12 @@ private class VeneraNativeBridge(
         activationSink = null
         resultSink = null
         cancelled.clear()
-        connections.toList().forEach { connection ->
-            when (connection) {
-                is HttpURLConnection -> connection.disconnect()
-                is ReflectiveVeneraCall -> connection.cancel()
-                else -> Unit
-            }
-        }
+        connections.toList().forEach(::cancelConnection)
         connections.clear()
+        requestConnections.clear()
         dnsFallbackClient?.close()
         dnsFallbackClient = null
+        synchronized(nativeBytes) { nativeBytes.clear() }
         releaseImages()
     }
 }
@@ -1051,12 +1152,25 @@ private fun veneraRequestHeaders(
     return headers
 }
 
+private data class VeneraHttpResponse(
+    val status: Int,
+    val headers: JSONObject,
+    val body: ByteArray,
+) {
+    fun toWire(bytes: Boolean): JSONObject = JSONObject()
+        .put("status", status)
+        .put("headers", headers)
+        .put(
+            "body",
+            if (bytes) encodeWireValue(body) else body.toString(Charsets.UTF_8),
+        )
+}
+
 private fun veneraResponse(
     status: Int,
     headers: Map<*, *>,
     body: ByteArray,
-    bytes: Boolean,
-): JSONObject {
+): VeneraHttpResponse {
     val responseHeaders = JSONObject()
     headers.entries.forEach { (rawName, rawValues) ->
         val name = rawName as? String ?: return@forEach
@@ -1067,10 +1181,7 @@ private fun veneraResponse(
         }
         responseHeaders.put(name, values.joinToString(", "))
     }
-    return JSONObject()
-        .put("status", status)
-        .put("headers", responseHeaders)
-        .put("body", if (bytes) encodeWireValue(body) else body.toString(Charsets.UTF_8))
+    return VeneraHttpResponse(status, responseHeaders, body)
 }
 
 private fun JSONObject?.veneraHeaderValue(name: String): String? {
@@ -1175,10 +1286,12 @@ private data class VeneraDnsCacheEntry(
 )
 
 private const val VENERA_DNS_CACHE_NANOS = 5L * 60L * 1_000_000_000L
-private const val VENERA_HTTP_CONNECT_TIMEOUT_MILLIS = 5_000
-private const val VENERA_HTTP_READ_TIMEOUT_MILLIS = 10_000
-private const val VENERA_HTTP_CALL_TIMEOUT_MILLIS = 15_000L
+private const val VENERA_HTTP_CONNECT_TIMEOUT_MILLIS = 10_000
+private const val VENERA_HTTP_READ_TIMEOUT_MILLIS = 45_000
+private const val VENERA_HTTP_CALL_TIMEOUT_MILLIS = 50_000L
 private const val VENERA_HTTP_MAX_REDIRECTS = 8
+private const val VENERA_HTTP_MAX_REQUEST_BYTES = 2 * 1024 * 1024
+private const val VENERA_MAX_NATIVE_BYTE_PAYLOADS = 2
 private val VENERA_HTTP_REDIRECT_STATUSES = setOf(301, 302, 303, 307, 308)
 private const val VENERA_DOH_TIMEOUT_MILLIS = 1_500
 private val veneraDnsCache = ConcurrentHashMap<String, VeneraDnsCacheEntry>()
@@ -1476,7 +1589,10 @@ function __zicEncode(value) {
   }
   return value;
 }
+let __zicActiveRequestId=null;
 function sendMessage(message) {
+  if(__zicActiveRequestId&&message.requestId==null){message={...message,requestId:__zicActiveRequestId}}
+  if(__zicActiveRequestId&&__zicCancelled.has(__zicActiveRequestId))throw new Error('Venera request was cancelled');
   const envelope = JSON.parse(ZicNative.request(JSON.stringify(__zicEncode(message))));
   if (!envelope.ok) throw new Error(envelope.error || 'Venera bridge failed');
   return __zicDecode(envelope.value);
@@ -1509,9 +1625,11 @@ const Convert = {
 function createUuid(){ return sendMessage({method:'uuid'}); }
 function randomInt(min,max){ return sendMessage({method:'random',type:'int',min,max}); }
 function randomDouble(min,max){ return sendMessage({method:'random',type:'double',min,max}); }
+function __zicNetworkPayload(method,data){return /^(GET|HEAD)$/i.test(String(method||'GET'))?undefined:data}
 const Network = {
-  fetchBytes:async(method,url,headers,data,extra)=>sendMessage({method:'http',http_method:method,bytes:true,url,headers:headers||{},data,extra}),
-  sendRequest:async(method,url,headers,data,extra)=>sendMessage({method:'http',http_method:method,url,headers:headers||{},data,extra}),
+  fetchBytes:async(method,url,headers,data,extra)=>sendMessage({method:'http',http_method:method,bytes:true,url,headers:headers||{},data:__zicNetworkPayload(method,data),extra}),
+  fetchBinary:async(method,url,headers,data)=>sendMessage({method:'http_binary',http_method:method,url,headers:headers||{},data:__zicNetworkPayload(method,data)}),
+  sendRequest:async(method,url,headers,data,extra)=>sendMessage({method:'http',http_method:method,url,headers:headers||{},data:__zicNetworkPayload(method,data),extra}),
   get(url,headers,extra){return this.sendRequest('GET',url,headers,undefined,extra)}, post(url,headers,data,extra){return this.sendRequest('POST',url,headers,data,extra)},
   put(url,headers,data,extra){return this.sendRequest('PUT',url,headers,data,extra)}, patch(url,headers,data,extra){return this.sendRequest('PATCH',url,headers,data,extra)},
   delete(url,headers,extra){return this.sendRequest('DELETE',url,headers,undefined,extra)},
@@ -1696,10 +1814,10 @@ async function __zicOperation(request){
   if(isResource){config=await __zicResolveResourceConfig(uri,source)}
   else if(/^https?:\/\//i.test(uri)){let override={};if(typeof source.comic?.onImageLoad==='function'){try{override=await Promise.resolve(source.comic.onImageLoad(uri,null,null))||{}}catch(_){override={}}}config={url:override.url||uri,method:override.method||'GET',headers:override.headers||{},data:override.data,onResponse:override.onResponse,onLoadFailed:override.onLoadFailed,modifyImage:override.modifyImage}}
   else throw new Error('Venera resource URI must be a source locator or HTTP(S) URL');
-  let active=config;for(let attempt=0;attempt<2;attempt++){try{const response=await Network.fetchBytes(active.method||'GET',active.url,active.headers||{},active.data);if(response.status<200||response.status>=300)throw new Error('Venera resource HTTP '+response.status);let bytes=response.body;if(typeof active.onResponse==='function')bytes=await active.onResponse(bytes);if(typeof active.modifyImage==='string'&&active.modifyImage.trim()){const key=sendMessage({method:'image',function:'decode',data:bytes});try{const modifier=(0,eval)(String(active.modifyImage)+'\n;(typeof modifyImage==="function"?modifyImage:null)');if(typeof modifier!=='function')throw new Error('Venera modifyImage script defines no modifyImage function');const transformed=await Promise.resolve(modifier(new Image(key)));if(!transformed||typeof transformed.key!=='number')throw new Error('Venera modifyImage returned no Image');bytes=sendMessage({method:'image',function:'encode',key:transformed.key})}finally{sendMessage({method:'image',function:'disposeAll'})}}return bytes}catch(error){if(attempt||typeof active.onLoadFailed!=='function')throw error;const retry=await active.onLoadFailed();if(!retry)throw error;active={url:retry.url||active.url,method:retry.method||'GET',headers:retry.headers||{},data:retry.data,onResponse:retry.onResponse,onLoadFailed:retry.onLoadFailed,modifyImage:retry.modifyImage}}}throw new Error('Venera resource retry exhausted')
+  let active=config;for(let attempt=0;attempt<2;attempt++){try{const needsJsBytes=typeof active.onResponse==='function'||(typeof active.modifyImage==='string'&&active.modifyImage.trim());if(!needsJsBytes){const direct=await Network.fetchBinary(active.method||'GET',active.url,active.headers||{},active.data);if(direct.status<200||direct.status>=300)throw new Error('Venera resource HTTP '+direct.status);if(!direct.nativeBytesToken)throw new Error('Venera native resource payload is unavailable');return {__zicNativeBytesToken:direct.nativeBytesToken}}const response=await Network.fetchBytes(active.method||'GET',active.url,active.headers||{},active.data);if(response.status<200||response.status>=300)throw new Error('Venera resource HTTP '+response.status);let bytes=response.body;if(typeof active.onResponse==='function')bytes=await active.onResponse(bytes);if(typeof active.modifyImage==='string'&&active.modifyImage.trim()){const key=sendMessage({method:'image',function:'decode',data:bytes});try{const modifier=(0,eval)(String(active.modifyImage)+'\n;(typeof modifyImage==="function"?modifyImage:null)');if(typeof modifier!=='function')throw new Error('Venera modifyImage script defines no modifyImage function');const transformed=await Promise.resolve(modifier(new Image(key)));if(!transformed||typeof transformed.key!=='number')throw new Error('Venera modifyImage returned no Image');bytes=sendMessage({method:'image',function:'encode',key:transformed.key})}finally{sendMessage({method:'image',function:'disposeAll'})}}return bytes}catch(error){if(attempt||typeof active.onLoadFailed!=='function')throw error;const retry=await active.onLoadFailed();if(!retry)throw error;active={url:retry.url||active.url,method:retry.method||'GET',headers:retry.headers||{},data:retry.data,onResponse:retry.onResponse,onLoadFailed:retry.onLoadFailed,modifyImage:retry.modifyImage}}}throw new Error('Venera resource retry exhausted')
  }
  throw new Error('Unsupported Venera operation');
 }
-async function __zicInvoke(raw){const request=typeof raw==='string'?JSON.parse(raw):raw;try{const value=await __zicOperation(request);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:true,value:__zicEncode(value)}))}catch(error){const message=__zicErrorMessage(error,request.operation),retryable=/timeout|timed out|connect|network|dns|temporar|HTTP 5\d\d/i.test(message);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:false,code:'venera-operation-failed',message,retryable}))}finally{__zicCancelled.delete(request.requestId)}}
+async function __zicInvoke(raw){const request=typeof raw==='string'?JSON.parse(raw):raw,previousRequestId=__zicActiveRequestId;__zicActiveRequestId=request.requestId;try{const value=await __zicOperation(request);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:true,value:__zicEncode(value)}))}catch(error){const message=__zicErrorMessage(error,request.operation),retryable=/timeout|timed out|connect|network|dns|temporar|HTTP 5\d\d/i.test(message);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:false,code:'venera-operation-failed',message,retryable}))}finally{__zicCancelled.delete(request.requestId);__zicActiveRequestId=previousRequestId;ZicNative.finished(request.requestId)}}
 function __zicCancel(requestId){__zicCancelled.add(requestId)}
 """

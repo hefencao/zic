@@ -3,11 +3,23 @@
 ## Sole baseline
 
 Continue only from
-`zic_v0.31.0-dev.68_venera-entry-preflight-gapless-stitch.zip`.
+`zic_v0.31.0-dev.69_venera-native-binary-stable-stitch.zip`.
 It is a direct modification of the user-provided
 `zic_v0.31.0-dev.62_source-management-tabs-mihon-chapter-preflight.zip`;
 do not merge an earlier candidate. `mihon-main.zip` and `vibevenera-master.zip`
 were read-only compatibility references and are not part of the product tree.
+
+
+## Completed in dev.69
+
+- Audited dev.65–68 and documented which changes landed versus which remained ineffective.
+- Replaced ordinary Venera image Base64/JavaScript return with native binary-token transport; kept JS bytes only for explicit transformation hooks.
+- Forced GET/HEAD to carry no body, serialized Venera runtime work, limited Reader demand to current page, and suppressed unchanged pipeline role-window submissions.
+- Propagated runtime request identity to native HTTP and made cancel/demand detach disconnect request-scoped URLConnection or fallback calls.
+- Migrated per-comic stitch to inherit/on/off; legacy false now inherits global stitch.
+- Preserved continuous viewport anchors through media/viewport reflow and prohibited restore jumps while scrolling.
+- Removed page-local loading indicators in Reader composition, added a viewport-centered single loader, and closed stitched raster seams without separator/cropping.
+- Fixed the persistent vertical test at the actual lazy separator lookup and added static/behavioral regressions.
 
 ## Completed in dev.68
 

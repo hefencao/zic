@@ -95,7 +95,7 @@ void main() {
       const ComicReaderSettings(
         enabled: true,
         directionOverride: ReadingDirection.rtl,
-        verticalStitch: true,
+        verticalStitchOverride: true,
         adaptiveEnabled: false,
       ),
     );
@@ -108,7 +108,7 @@ void main() {
       const ComicReaderSettings(
         enabled: true,
         directionOverride: ReadingDirection.vertical,
-        verticalStitch: true,
+        verticalStitchOverride: true,
       ),
     );
     await controller.flush();
@@ -120,6 +120,33 @@ void main() {
       (comicSettings[comicReaderSettingsIdentity('source-b', 'comic-b')]
               as Map)['directionOverride'],
       'vertical',
+    );
+  });
+
+  test('legacy per-comic stitch false inherits the global setting', () async {
+    final controller = AppPreferencesController();
+    addTearDown(controller.dispose);
+
+    await controller.attach(
+      read: () async => <String, Object?>{
+        'defaultVerticalStitch': true,
+        'comicReaderSettings': <String, Object?>{
+          comicReaderSettingsIdentity('source', 'comic'): <String, Object?>{
+            'enabled': true,
+            'directionOverride': 'vertical',
+            'verticalStitch': false,
+          },
+        },
+      },
+      write: (_) async {},
+    );
+
+    final comic = controller.comicReaderSettingsFor('source', 'comic');
+    expect(comic.verticalStitchOverride, isNull);
+    expect(
+      controller.readerSessionSettingsFor('source', 'comic')
+          .effectiveVerticalStitch,
+      isTrue,
     );
   });
 

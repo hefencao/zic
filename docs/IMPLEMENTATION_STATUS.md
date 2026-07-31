@@ -1,3 +1,12 @@
+## dev.69：Venera 原生字节与稳定连续 Reader
+
+- 完成 dev.65–68 回归审计，明确区分 locator、图片正文传输、取消、pipeline 重提和连续布局锚点五条链路。
+- Venera 普通图片正文走原生二进制 token，不经 WebView Base64；动态响应变换仍保留受限兼容路径。
+- Venera requestId 绑定原生连接，取消会真实终止连接；默认串行、仅当前页，GET/HEAD 无请求体。
+- Pipeline 不重复提交未变化的 role window。
+- 纵向拼接三态继承、无 separator、1px 覆盖；媒体/viewport 重排保留可视锚点，拖动期间不跳转。
+- Reader viewport 单一拥有 loading indicator；持续失败的 lazy separator 测试断言已实际修复。
+
 ## dev.68：Venera 入口预检、请求止损与无缝连续布局
 
 远程详情页是否要求普通内容刷新，不再决定 locator 兼容性。`_openImportedChapter`、单章下载和整本下载在任何路径上看到 `venera-resource://` 都会通过显式 `RefreshableChapterComicSource` 获取新章节；若来源仍返回旧 locator，则在 Reader/Pipeline/DownloadSession 建立前失败。

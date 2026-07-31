@@ -216,9 +216,9 @@ final class VeneraSandboxExecutor implements ExternalPluginExecutor {
   const VeneraSandboxExecutor({
     required this.backend,
     this.limits = const ExternalPluginRuntimeLimits(
-      invocationTimeout: Duration(seconds: 15),
-      maxResponseBytes: 8 * 1024 * 1024,
-      maxConcurrentInvocations: 2,
+      invocationTimeout: Duration(seconds: 55),
+      maxResponseBytes: 32 * 1024 * 1024,
+      maxConcurrentInvocations: 1,
       maxRuntimeHeapBytes: 32 * 1024 * 1024,
     ),
   });

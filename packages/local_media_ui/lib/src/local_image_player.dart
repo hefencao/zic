@@ -18,6 +18,7 @@ final class LocalImagePlayer extends StatefulWidget {
     this.onPlaybackCapabilityChanged,
     this.onDimensionsChanged,
     this.fit = BoxFit.contain,
+    this.showLoadingIndicator = true,
     this.flutterAnimatedCodecFactory = instantiateFlutterAnimatedCodec,
     super.key,
   });
@@ -38,6 +39,7 @@ final class LocalImagePlayer extends StatefulWidget {
   final ValueChanged<bool>? onPlaybackCapabilityChanged;
   final ValueChanged<Size>? onDimensionsChanged;
   final BoxFit fit;
+  final bool showLoadingIndicator;
   final FlutterAnimatedCodecFactory flutterAnimatedCodecFactory;
 
   Uri get sourceUri => image.sourceUri;
@@ -342,6 +344,10 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     _publish(ImagePreviewState.invalid(_detectedFormat, error));
   }
 
+  Widget _loadingIndicator() => widget.showLoadingIndicator
+      ? const Center(child: CircularProgressIndicator())
+      : const SizedBox.expand();
+
   @override
   Widget build(BuildContext context) {
     final bytes = _bytes;
@@ -359,9 +365,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       );
     } else if (_detectedFormat.isWebp) {
       if (bytes == null && widget.streamingSession == null) {
-        content = const Center(
-          child: CircularProgressIndicator(),
-        );
+        content = _loadingIndicator();
       } else {
         content = NativeWebpPlayer(
           title: widget.image.displayName,
@@ -391,9 +395,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     } else if (widget.playback != null &&
         _detectedFormat == LocalImageFormat.gif) {
       if (bytes == null) {
-        content = const Center(
-          child: CircularProgressIndicator(),
-        );
+        content = _loadingIndicator();
       } else {
         content = _ControlledAnimatedImage(
           bytes: bytes,
@@ -410,9 +412,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         );
       }
     } else if (imageProvider == null) {
-      content = const Center(
-        child: CircularProgressIndicator(),
-      );
+      content = _loadingIndicator();
     } else {
       content = Center(
         child: Image(

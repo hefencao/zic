@@ -32,7 +32,14 @@ def main() -> None:
         "hasContentDimensions",
         "_scheduleControllerCommand",
         "widget.verticalStitch",
-        "math.max(scaled, _viewport.height)",
+        "math.max(scaled, effectiveViewport.height)",
+        "_preserveVerticalAnchor",
+        "_scheduleVerticalAnchorRestore",
+        "oldViewport: previousViewport",
+        "viewport: oldViewport",
+        "Transform.translate",
+        "reader-loading-indicator",
+        "isScrollingNotifier.value",
     )
     require(
         "packages/reader_runtime/lib/src/reader_runtime_screen.dart",
@@ -45,6 +52,8 @@ def main() -> None:
         "_reportPageDimensions",
         "BoxFit.fitWidth",
         "mediaFit",
+        "forwardEncodedPages: 0",
+        "PolicyGuard(maxDownloadDemands: 1)",
     )
     reject(
         "packages/reader_runtime/lib/src/reader_runtime_screen.dart",
@@ -64,12 +73,17 @@ def main() -> None:
         "imageFolderTitleKey",
     )
     require(
+        "packages/local_media_ui/lib/src/local_media_screens.dart",
+        "showLoadingIndicator: false",
+    )
+    require(
         "packages/local_media_ui/lib/src/local_image_player.dart",
         "onDimensionsChanged",
         "_staticImageDimensions",
         "_reportDimensions(info.width, info.height)",
         "final BoxFit fit",
         "fit: widget.fit",
+        "showLoadingIndicator",
     )
     require(
         "packages/texture_bridge/lib/src/native_texture_viewport.dart",
@@ -87,6 +101,7 @@ def main() -> None:
         "ComicReaderSettings",
         "comicReaderSettingsIdentity",
         "defaultVerticalStitch",
+        "verticalStitchOverride",
         "adaptiveReaderEnabled",
     )
     print("Reader layout settings contract: OK")

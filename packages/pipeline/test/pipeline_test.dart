@@ -1,5 +1,6 @@
 import 'package:domain/domain.dart';
 import 'package:pipeline/pipeline.dart';
+import 'package:telemetry/telemetry.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -95,6 +96,26 @@ void main() {
     );
   });
 
+
+  test('pipeline does not resubmit an unchanged role window', () {
+    final updates = <PipelineDelta>[];
+    final controller = PipelineController(
+      chapter: chapter,
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+      clock: _FakeClock(),
+      onUpdate: updates.add,
+    );
+
+    controller.accept(observation());
+    controller.accept(observation());
+
+    expect(controller.revision, 1);
+    expect(updates, hasLength(1));
+  });
+
   test('demand diff detaches resources that leave the window', () {
     final firstWindow = const RoleResolver().resolve(chapter, observation());
     final policy = const HeuristicPolicy();
@@ -132,4 +153,10 @@ void main() {
 
     expect(DemandDiff.between(first, second).downloads.removed, isNotEmpty);
   });
+}
+
+
+final class _FakeClock implements MonoClock {
+  @override
+  int nowMicros() => 1;
 }

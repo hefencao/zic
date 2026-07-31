@@ -19,6 +19,7 @@ import 'package:transport/transport.dart';
 import 'asset_bundle_transport.dart';
 import 'media_load_token.dart';
 import 'reader_session_settings.dart';
+import 'reader_settings_fields.dart';
 
 const readerTopControlsKey = ValueKey<String>('reader-top-controls');
 const readerBottomControlsKey = ValueKey<String>('reader-bottom-controls');
@@ -408,13 +409,13 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       playback: _coordinator,
       windowResolver: _usesDeferredPluginResources
           ? const RoleResolver(
-              forwardEncodedPages: 1,
+              forwardEncodedPages: 0,
               backwardEncodedPages: 0,
-              nearRadius: 1,
+              nearRadius: 0,
             )
           : const RoleResolver(),
       policyGuard: _usesDeferredPluginResources
-          ? const PolicyGuard(maxDownloadDemands: 2)
+          ? const PolicyGuard(maxDownloadDemands: 1)
           : const PolicyGuard(),
     );
     final reader = ReaderController(
@@ -1077,16 +1078,13 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                         ),
                       ),
                     ),
-                    SwitchListTile(
+                    readerVerticalStitchOverrideField(
                       key: readerVerticalStitchKey,
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('纵向拼接'),
-                      subtitle: const Text(
-                        '纵向模式中移除页面间距，按页面比例连续滚动。',
-                      ),
-                      value: draft.verticalStitch,
+                      value: draft.verticalStitchOverride,
                       onChanged: (value) => setSheetState(
-                        () => draft = draft.copyWith(verticalStitch: value),
+                        () => draft = draft.copyWith(
+                          verticalStitchOverride: value,
+                        ),
                       ),
                     ),
                   ],

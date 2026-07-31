@@ -36,9 +36,11 @@ void main() {
     expect(backend.connection.closed, isTrue);
   });
 
-  test('Venera default timeout bounds native network reads', () {
+  test('Venera defaults serialize bounded native resource reads', () {
     final executor = VeneraSandboxExecutor(backend: _VeneraBackend());
-    expect(executor.limits.invocationTimeout, const Duration(seconds: 15));
+    expect(executor.limits.invocationTimeout, const Duration(seconds: 55));
+    expect(executor.limits.maxResponseBytes, 32 * 1024 * 1024);
+    expect(executor.limits.maxConcurrentInvocations, 1);
   });
 
   test('Venera executor forwards limits and one inspected source key', () async {
@@ -110,7 +112,7 @@ void main() {
     const limits = ExternalPluginRuntimeLimits(
       invocationTimeout: Duration(milliseconds: 250),
       maxResponseBytes: 4096,
-      maxConcurrentInvocations: 2,
+      maxConcurrentInvocations: 1,
       maxRuntimeHeapBytes: 8192,
     );
 

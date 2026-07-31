@@ -77,9 +77,9 @@ def main() -> None:
         "packages/reader_runtime/lib/src/reader_runtime_screen.dart",
         "_usesDeferredPluginResources",
         "RetryPolicy(maxAttempts: 1)",
-        "forwardEncodedPages: 1",
+        "forwardEncodedPages: 0",
         "backwardEncodedPages: 0",
-        "PolicyGuard(maxDownloadDemands: 2)",
+        "PolicyGuard(maxDownloadDemands: 1)",
     )
     require(
         "apps/app/test/source_browser_test.dart",

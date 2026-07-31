@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""Static guard for duplicate policy submissions and the vertical test regression."""
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+pipeline = (ROOT / 'packages/pipeline/lib/src/pipeline_controller.dart').read_text(
+    encoding='utf-8'
+)
+for token in (
+    'if (_sameRoles(_previousRoles, window.roles))',
+    '_previousRoles = Map<int, PageRole>.unmodifiable(window.roles)',
+    'bool _sameRoles(Map<int, PageRole>? previous, Map<int, PageRole> next)',
+):
+    if token not in pipeline:
+        raise SystemExit(f'pipeline stability contract is missing: {token}')
+
+reader_test = (ROOT / 'packages/reader/test/reader_navigation_test.dart').read_text(
+    encoding='utf-8'
+)
+case = reader_test.split(
+    "testWidgets('vertical mode uses proportional continuous pages and stitch gap'",
+    1,
+)[1].split("testWidgets('vertical mode adopts measured media geometry", 1)[0]
+for token in (
+    'final gapElements = gap.evaluate().toList(growable: false)',
+    'expect(gapElements, hasLength(1))',
+    'gapElements.first.widget as SizedBox',
+):
+    if token not in case:
+        raise SystemExit(f'vertical navigation regression test is missing: {token}')
+if 'tester.widget<SizedBox>(gap)' in case or '.single' in case:
+    raise SystemExit('vertical navigation test still assumes a lazy child exists')
+
+print('Pipeline demand stability and vertical test contract: OK')

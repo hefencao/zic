@@ -8,7 +8,7 @@ final class ReaderSessionSettings {
   const ReaderSessionSettings({
     this.comicSpecificEnabled = false,
     this.directionOverride,
-    this.verticalStitch = false,
+    this.verticalStitchOverride,
     this.fallbackVerticalStitch = false,
     this.globalAdaptiveEnabled = false,
     this.comicAdaptiveEnabled = true,
@@ -18,20 +18,21 @@ final class ReaderSessionSettings {
 
   final bool comicSpecificEnabled;
   final ReadingDirection? directionOverride;
-  final bool verticalStitch;
+  final bool? verticalStitchOverride;
   final bool fallbackVerticalStitch;
   final bool globalAdaptiveEnabled;
   final bool comicAdaptiveEnabled;
 
-  bool get effectiveVerticalStitch =>
-      comicSpecificEnabled ? verticalStitch : fallbackVerticalStitch;
+  bool get effectiveVerticalStitch => comicSpecificEnabled
+      ? verticalStitchOverride ?? fallbackVerticalStitch
+      : fallbackVerticalStitch;
   bool get effectiveAdaptiveEnabled =>
       globalAdaptiveEnabled && comicAdaptiveEnabled;
 
   ReaderSessionSettings copyWith({
     bool? comicSpecificEnabled,
     Object? directionOverride = _unset,
-    bool? verticalStitch,
+    Object? verticalStitchOverride = _unset,
     bool? fallbackVerticalStitch,
     bool? globalAdaptiveEnabled,
     bool? comicAdaptiveEnabled,
@@ -42,7 +43,9 @@ final class ReaderSessionSettings {
         directionOverride: identical(directionOverride, _unset)
             ? this.directionOverride
             : directionOverride as ReadingDirection?,
-        verticalStitch: verticalStitch ?? this.verticalStitch,
+        verticalStitchOverride: identical(verticalStitchOverride, _unset)
+            ? this.verticalStitchOverride
+            : verticalStitchOverride as bool?,
         fallbackVerticalStitch:
             fallbackVerticalStitch ?? this.fallbackVerticalStitch,
         globalAdaptiveEnabled:
@@ -57,7 +60,7 @@ final class ReaderSessionSettings {
       other is ReaderSessionSettings &&
           comicSpecificEnabled == other.comicSpecificEnabled &&
           directionOverride == other.directionOverride &&
-          verticalStitch == other.verticalStitch &&
+          verticalStitchOverride == other.verticalStitchOverride &&
           fallbackVerticalStitch == other.fallbackVerticalStitch &&
           globalAdaptiveEnabled == other.globalAdaptiveEnabled &&
           comicAdaptiveEnabled == other.comicAdaptiveEnabled;
@@ -66,7 +69,7 @@ final class ReaderSessionSettings {
   int get hashCode => Object.hash(
         comicSpecificEnabled,
         directionOverride,
-        verticalStitch,
+        verticalStitchOverride,
         fallbackVerticalStitch,
         globalAdaptiveEnabled,
         comicAdaptiveEnabled,

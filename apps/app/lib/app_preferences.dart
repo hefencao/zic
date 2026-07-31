@@ -13,7 +13,7 @@ final class ComicReaderSettings {
   const ComicReaderSettings({
     this.enabled = false,
     this.directionOverride,
-    this.verticalStitch = false,
+    this.verticalStitchOverride,
     this.adaptiveEnabled = true,
   });
 
@@ -21,13 +21,13 @@ final class ComicReaderSettings {
 
   final bool enabled;
   final ReadingDirection? directionOverride;
-  final bool verticalStitch;
+  final bool? verticalStitchOverride;
   final bool adaptiveEnabled;
 
   ComicReaderSettings copyWith({
     bool? enabled,
     Object? directionOverride = _unset,
-    bool? verticalStitch,
+    Object? verticalStitchOverride = _unset,
     bool? adaptiveEnabled,
   }) =>
       ComicReaderSettings(
@@ -35,7 +35,9 @@ final class ComicReaderSettings {
         directionOverride: identical(directionOverride, _unset)
             ? this.directionOverride
             : directionOverride as ReadingDirection?,
-        verticalStitch: verticalStitch ?? this.verticalStitch,
+        verticalStitchOverride: identical(verticalStitchOverride, _unset)
+            ? this.verticalStitchOverride
+            : verticalStitchOverride as bool?,
         adaptiveEnabled: adaptiveEnabled ?? this.adaptiveEnabled,
       );
 
@@ -45,14 +47,14 @@ final class ComicReaderSettings {
       other is ComicReaderSettings &&
           enabled == other.enabled &&
           directionOverride == other.directionOverride &&
-          verticalStitch == other.verticalStitch &&
+          verticalStitchOverride == other.verticalStitchOverride &&
           adaptiveEnabled == other.adaptiveEnabled;
 
   @override
   int get hashCode => Object.hash(
         enabled,
         directionOverride,
-        verticalStitch,
+        verticalStitchOverride,
         adaptiveEnabled,
       );
 
@@ -60,7 +62,8 @@ final class ComicReaderSettings {
         'enabled': enabled,
         if (directionOverride != null)
           'directionOverride': directionOverride!.name,
-        'verticalStitch': verticalStitch,
+        if (verticalStitchOverride != null)
+          'verticalStitchOverride': verticalStitchOverride,
         'adaptiveEnabled': adaptiveEnabled,
       };
 
@@ -71,7 +74,11 @@ final class ComicReaderSettings {
           ReadingDirection.values,
           json['directionOverride'],
         ),
-        verticalStitch: _boolValue(json['verticalStitch'], false),
+        verticalStitchOverride: json['verticalStitchOverride'] is bool
+            ? json['verticalStitchOverride'] as bool
+            : json['verticalStitch'] == true
+                ? true
+                : null,
         adaptiveEnabled: _boolValue(json['adaptiveEnabled'], true),
       );
 }
@@ -293,7 +300,7 @@ final class AppPreferencesController extends ChangeNotifier {
     final write = _write;
     if (write == null) return;
     await write(<String, Object?>{
-      'version': 2,
+      'version': 3,
       'themeMode': _themeMode.name,
       'debugTraceEnabled': _debugTraceEnabled,
       'shelfSourceFilter': _shelfSourceFilter.name,

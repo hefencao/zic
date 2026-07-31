@@ -304,14 +304,6 @@ void main() {
     await tester.pump();
     expect(find.byType(ListView), findsOneWidget);
     expect(find.byType(PageView), findsNothing);
-    expect(
-      tester
-          .widget<SizedBox>(
-            find.byKey(const ValueKey<String>('reader-vertical-gap:0')),
-          )
-          .height,
-      8,
-    );
     final firstPageHeight = tester
         .getSize(
           find.byKey(const ValueKey<String>('reader-vertical-page:0')),
@@ -321,6 +313,14 @@ void main() {
     final secondPage =
         find.byKey(const ValueKey<String>('reader-vertical-page:1'));
     await _pumpUntilFound(tester, secondPage);
+    final gap =
+        find.byKey(const ValueKey<String>('reader-vertical-gap:0'));
+    final gapElements = gap.evaluate().toList(growable: false);
+    expect(gapElements, hasLength(1));
+    if (gapElements.length == 1) {
+      final gapWidget = gapElements.first.widget as SizedBox;
+      expect(gapWidget.height, 8);
+    }
     expect(
       tester
           .getSize(secondPage)
@@ -405,6 +405,16 @@ void main() {
       reason: 'the active unknown-size page must center loading in viewport',
     );
 
+    final loader = find.byKey(
+      const ValueKey<String>('reader-loading-indicator'),
+    );
+    expect(loader, findsOneWidget);
+    expect(
+      tester.getCenter(loader),
+      tester.getCenter(find.byType(ReaderView)),
+      reason: 'loading belongs to the viewport, not an estimated page box',
+    );
+
     await pump(<String, double>{chapter.pages.single.assetKey: 2.4});
     await tester.pump();
     final measuredHeight = tester.getSize(finder).height;
@@ -413,6 +423,81 @@ void main() {
     expect(
       measuredHeight,
       closeTo(tester.getSize(find.byType(ReaderView)).width * 2.4, 0.1),
+    );
+  });
+
+  testWidgets('vertical geometry updates preserve the visible scroll anchor',
+      (tester) async {
+    final chapter = ChapterManifest(
+      sourceId: 'source',
+      comicId: 'anchor-comic',
+      chapter: const Chapter(
+        chapterId: 'anchor-chapter',
+        comicId: 'anchor-comic',
+        title: 'anchor',
+        sequence: 0,
+        pageCount: 3,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        3,
+        (index) => PageAsset(
+          pageId: 'anchor-$index',
+          chapterId: 'anchor-chapter',
+          index: index,
+          uri: Uri.parse('asset:///anchor-$index.png'),
+        ),
+      ),
+      readingDirection: ReadingDirection.vertical,
+    );
+    final controller = ReaderController(
+      sessionId: 'reader-anchor-test',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: FakeClock(),
+    );
+    addTearDown(controller.dispose);
+
+    Future<void> pump(Map<String, double> ratios) => tester.pumpWidget(
+          MaterialApp(
+            home: ReaderView(
+              controller: controller,
+              clock: FakeClock(),
+              verticalStitch: true,
+              pageAspectRatios: ratios,
+              pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
+                color: Colors.black,
+                child: Text(asset.pageId),
+              ),
+            ),
+          ),
+        );
+
+    final initial = <String, double>{
+      for (final page in chapter.pages) page.assetKey: 1.6,
+    };
+    await pump(initial);
+    await tester.pump();
+    final list = find.byKey(
+      const ValueKey<String>('reader-vertical-list'),
+    );
+    await tester.drag(list, const Offset(0, -240));
+    await tester.pump();
+    final before = tester.widget<ListView>(list).controller!.offset;
+
+    await pump(<String, double>{
+      ...initial,
+      chapter.pages.first.assetKey: 2.4,
+    });
+    await tester.pump();
+    await tester.pump();
+    final after = tester.widget<ListView>(list).controller!.offset;
+
+    expect(after, greaterThan(before));
+    expect(
+      after,
+      greaterThan(600),
+      reason: 'measured geometry must not jump back to page zero center',
     );
   });
 

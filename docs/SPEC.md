@@ -757,3 +757,16 @@ Mihon Android packaging must expose each host ABI namespace from exactly one art
 - Deferred Venera resource chapters default to current plus one forward encoded page, at most two download demands, and no automatic Reader network retry. This bound does not authorize an additional byte cache.
 - Stitched vertical mode has no separator child. Its static, animated and native-texture media must share a width-fit presentation contract so contain rounding cannot expose the Reader background. Non-stitched mode may render the configured page gap.
 - While the active page lacks reliable geometry, its placeholder extent must keep the loading indicator within the active viewport. Measured geometry replaces the placeholder without cropping or stretching.
+
+
+## dev.69 Venera traffic and continuous-reader requirements
+
+- Ordinary Venera resource responses MUST return image bytes through the native binary packet path. JSON/Base64 byte transport is permitted only for declared response/image transformation hooks.
+- GET and HEAD MUST send no entity body or entity headers, regardless of plugin-provided `data`.
+- A canceled external runtime request MUST cancel its active native HTTP connection. Ignoring a late response is insufficient.
+- Venera Reader demand MUST default to the current page only and one active runtime invocation. Identical role windows MUST NOT produce a new demand revision.
+- Per-comic vertical stitch MUST support inherit/on/off. Legacy false values written before the tri-state schema MUST migrate to inherit.
+- Stitched vertical presentation MUST create no separator and MUST preserve all source pixels. A small overlap may cover raster rounding but MUST NOT crop the image payload.
+- Geometry or viewport changes MUST preserve the visible in-page anchor. No automatic jump is allowed while the user is dragging or the scroll position reports active scrolling.
+- Reader loading UI MUST have one viewport-level owner. Page renderers MUST be able to suppress their internal loading indicator.
+- Widget tests for lazy lists MUST wait until the target child is constructed before retrieving a single widget.

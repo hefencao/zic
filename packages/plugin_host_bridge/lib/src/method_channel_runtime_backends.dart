@@ -11,7 +11,7 @@ import 'package:plugin_host/plugin_host.dart';
 final class PlatformExternalPluginRuntimeSupport {
   const PlatformExternalPluginRuntimeSupport({
     this.maxInvocationTimeout = const Duration(minutes: 1),
-    this.maxResponseBytes = 16 * 1024 * 1024,
+    this.maxResponseBytes = 32 * 1024 * 1024,
     this.maxConcurrentInvocations = 4,
     this.maxRuntimeHeapBytes = 64 * 1024 * 1024,
   });

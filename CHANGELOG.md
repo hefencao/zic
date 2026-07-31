@@ -1,3 +1,14 @@
+## 0.31.0-dev.69：Venera 原生二进制、请求取消与稳定连续锚点
+
+- 对 dev.65–68 做差异审计并记录未闭环项：durable locator 到 dev.68 已进入真实日志，但普通图片正文仍经 JavaScript/Base64 桥；原生连接在 demand 解除后继续到超时；尺寸更新会调用当前页同步；纵向测试仍直接读取未构建 lazy separator。
+- 普通 Venera 图片使用 `http_binary` 原生快路：JavaScript 只接收一次性 token，图片字节由 Android 原生响应直接回到 runtime packet；仅当来源声明 `onResponse`/`modifyImage` 时保留兼容的 JS 字节路径。
+- GET/HEAD 强制清空 body 与实体 headers，Venera 默认并发降为 1、Reader deferred window 降为仅当前页；Pipeline 对完全相同的 role window 不再增加 revision 或重复提交 demand。
+- requestId 进入每个 Venera bridge HTTP 调用；cancel 会立即 disconnect `HttpURLConnection` 或 cancel fallback call，JS finally 显式释放 request-scoped 状态。页面关闭后不再让已解除 demand 的网络工作继续到超时。
+- 每漫画纵向拼接改为继承/启用/停用三态。旧 `verticalStitch:false` 迁移为继承，避免仅设置方向时暗中关闭全局拼接。
+- 连续 Reader 在尺寸或 viewport 改变时保存可视中心的页面内锚点，重排后恢复；拖动/滚动期间不执行恢复或当前页同步。拼接模式无 separator，并对后续页面做 1 logical-pixel 覆盖以封闭物理像素舍入接缝。
+- 页面内部 loading spinner 在 Reader 中关闭，改为 viewport 级唯一加载指示；未知当前页至少占满 viewport，真实尺寸到达后无裁切重排。
+- 修复 `reader_navigation_test.dart` 原第 309 行：先导航并等待第二页进入 lazy list，再通过已构建 element 读取 gap；新增媒体尺寸、视口锚点、偏好迁移、pipeline 去重与 Venera 原生二进制/取消门禁。
+
 ## 0.31.0-dev.68：Venera 入口预检、请求止损与无缝连续布局
 
 - 修复远程详情以 `refreshRemote: false` 打开已存在章节时绕过旧 Venera locator 迁移的问题。只要章节含 `venera-resource://token`，Reader/单章下载/整本下载入口都强制刷新章节元数据；刷新后仍为旧 token 时在进入 pipeline 前失败。

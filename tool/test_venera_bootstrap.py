@@ -7,7 +7,7 @@ m=re.search(r'private const val VENERA_BOOTSTRAP = """\n(.*?)\n"""', source, re.
 if not m: raise SystemExit('VENERA_BOOTSTRAP not found')
 bootstrap=m.group(1)
 test=r'''
-globalThis.ZicNative={request(){throw new Error('native bridge unexpectedly used')},complete(){},activated(){}};
+globalThis.ZicNative={request(){throw new Error('native bridge unexpectedly used')},complete(){},finished(){},activated(){}};
 async function checkCurrentCategory(){
  let seen=null;
  globalThis.__zicSource={
@@ -86,12 +86,12 @@ async function checkDirectCoverResource(){
  let seen=null;
  ZicNative.request=raw=>{
    const message=__zicDecode(JSON.parse(raw));seen=message;
-   if(message.method!=='http')throw new Error('unexpected direct cover bridge method '+message.method);
-   return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{'content-type':'image/jpeg'},body:new Uint8Array([1,2,3]).buffer})});
+   if(message.method!=='http_binary')throw new Error('unexpected direct cover bridge method '+message.method);
+   return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{'content-type':'image/jpeg'},nativeBytesToken:'cover-token'})});
  };
  globalThis.__zicSource={comic:{}};
  const bytes=await __zicOperation({operation:'loadResource',arguments:{uri:'https://cdn.invalid/cover.jpg'}});
- if(!(bytes instanceof ArrayBuffer)||JSON.stringify(Array.from(new Uint8Array(bytes)))!==JSON.stringify([1,2,3]))throw new Error('direct cover bytes failed');
+ if(bytes.__zicNativeBytesToken!=='cover-token')throw new Error('direct cover native token failed '+JSON.stringify(bytes));
  if(seen.url!=='https://cdn.invalid/cover.jpg'||seen.http_method!=='GET')throw new Error('direct cover request failed '+JSON.stringify(seen));
 }
 
@@ -139,9 +139,9 @@ async function checkChapterResourceCanBeReadAgain(){
  let requests=0,configs=0;
  ZicNative.request=raw=>{
    const message=__zicDecode(JSON.parse(raw));
-   if(message.method!=='http')throw new Error('unexpected resource bridge method '+message.method);
+   if(message.method!=='http_binary')throw new Error('unexpected resource bridge method '+message.method);
    requests++;
-   return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},body:new Uint8Array([4,5,6]).buffer})});
+   return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},nativeBytesToken:'resource-token-'+requests})});
  };
  globalThis.__zicSource={comic:{
   loadEp:async()=>({images:['retry-image']}),
@@ -165,9 +165,9 @@ async function checkLegacyChapterResourceToken(){
  let requests=0;
  ZicNative.request=raw=>{
    const message=__zicDecode(JSON.parse(raw));
-   if(message.method!=='http')throw new Error('unexpected legacy token bridge method '+message.method);
+   if(message.method!=='http_binary')throw new Error('unexpected legacy token bridge method '+message.method);
    requests++;
-   return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},body:new Uint8Array([1]).buffer})});
+   return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},nativeBytesToken:'legacy-token'})});
  };
  globalThis.__zicSource={comic:{}};
  const token=__zicRetainResource({url:'https://cdn.invalid/legacy.jpg',method:'GET',headers:{}});
@@ -181,9 +181,9 @@ async function checkChapterImageConfigIsDeferred(){
  let configs=0,requests=0;
  ZicNative.request=raw=>{
    const message=__zicDecode(JSON.parse(raw));
-   if(message.method!=='http')throw new Error('unexpected deferred bridge method '+message.method);
+   if(message.method!=='http_binary')throw new Error('unexpected deferred bridge method '+message.method);
    requests++;
-   return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},body:new Uint8Array([7,8,9]).buffer})});
+   return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},nativeBytesToken:'deferred-token'})});
  };
  globalThis.__zicSource={comic:{
    loadEp:async()=>({images:['image-1','image-2']}),
@@ -275,7 +275,23 @@ async function checkNetworkExtraAndCryptoSurface(){
  if(typeof Convert.encryptAesEcb!=='function'||Convert.encryptAesCfb.length!==4||Convert.decryptAesCfb.length!==4)throw new Error('Convert AES surface is incomplete');
 }
 
-(async()=>{await checkCurrentCategory();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkChapterImageConfigIsDeferred();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
+async function checkInvokeRequestLifecycle(){
+ let seenRequestId=null,completed=null,finished=null;
+ globalThis.__zicSource={comic:{onImageLoad:async()=>({url:'https://cdn.invalid/image.jpg',method:'GET',data:'must-not-cross-get'})}};
+ ZicNative.request=raw=>{
+   const message=__zicDecode(JSON.parse(raw));
+   if(message.method!=='http_binary')throw new Error('unexpected invoke lifecycle method '+message.method);
+   seenRequestId=message.requestId;
+   if(message.data!==undefined)throw new Error('GET resource data crossed the bridge');
+   return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},nativeBytesToken:'invoke-token'})});
+ };
+ ZicNative.complete=(requestId,envelope)=>{completed={requestId,envelope:JSON.parse(envelope)}};
+ ZicNative.finished=requestId=>{finished=requestId};
+ await __zicInvoke({requestId:'invoke-lifecycle',operation:'loadResource',arguments:{uri:'https://cdn.invalid/image.jpg'}});
+ if(seenRequestId!=='invoke-lifecycle'||completed?.requestId!=='invoke-lifecycle'||finished!=='invoke-lifecycle')throw new Error('invoke lifecycle did not retain the request id '+JSON.stringify({seenRequestId,completed,finished}));
+}
+
+(async()=>{await checkCurrentCategory();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkChapterImageConfigIsDeferred();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
 '''
 with tempfile.TemporaryDirectory() as td:
     js=Path(td)/'test.js'; js.write_text(bootstrap+'\n'+test)

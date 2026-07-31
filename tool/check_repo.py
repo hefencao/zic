@@ -1583,8 +1583,8 @@ def check_compile_regressions() -> None:
     runtime_executors = (ROOT / 'packages/plugin_host/lib/src/runtime_executors.dart').read_text(
         encoding='utf-8',
     )
-    if 'invocationTimeout: Duration(seconds: 15)' not in runtime_executors:
-        fail('Venera runtime default timeout is not aligned with native network bounds')
+    if 'invocationTimeout: Duration(seconds: 55)' not in runtime_executors:
+        fail('Venera runtime default timeout is not aligned with bounded native resource reads')
 
     mihon_host_abi_test = (
         ROOT
@@ -1939,6 +1939,8 @@ def check_compile_regressions() -> None:
         'ExternalPluginRuntimeSession(',
         'payloadSha256',
         'supportsLimits',
+        'invocationTimeout: Duration(seconds: 55)',
+        'maxConcurrentInvocations: 1',
     ):
         if required not in runtime_executors:
             fail(f'external plugin execution contract is incomplete: {required}')

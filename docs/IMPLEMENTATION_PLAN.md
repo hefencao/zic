@@ -21,7 +21,7 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.65）
+## 当前应用主线（0.31.0-dev.69）
 
 - 完成第四根导航“杂项”，将快捷设置、完整设置、关于和 Debug trace 从 Home 主线分离。
 - 设置按数据/网络/书架/阅读/下载/外观分层；所有可执行项复用既有 store、queue、cache coordinator 与 Reader composition。
@@ -75,6 +75,18 @@
 - Mihon/Venera isolated backend 必须通过 `ExternalPluginRuntimeMessageChannel` 交换 protocol-v1 基础值/`Uint8List` 消息。handshake source identity、schema 和每次 response requestId 在跨边界处验证；不得返回进程内 zic domain/session 对象。
 - Android bound-service transport 必须以 binding generation 区分每次显式连接，并通过 Binder death recipient 失败当前请求；旧 generation 的迟到回调不得拆除新连接，也不得自动 replay/activate。packet response 必须校验 dedicated root、exact length 与 SHA-256，消费或失败后删除。
 
+
+
+### dev.69 当前主线约束
+
+#### dev.69 当前优先级
+
+- Venera 普通图片正文不得通过 JSON/Base64 或 JavaScript typed-array 返还宿主；来源确实需要 `onResponse`/`modifyImage` 时才允许进入兼容路径。
+- 每个 runtime invocation 的 bridge HTTP 必须携带 requestId；取消和 demand detach 必须终止对应 native connection，而不只是忽略迟到结果。
+- Venera Reader 默认只请求当前页且 runtime 串行。扩大并发或预取前必须有设备 trace 证明不会重复执行 `onImageLoad` 或上传请求体。
+- Pipeline 输入产生相同 role window 时不得递增 revision 或重新提交同一 demand plan。
+- 连续布局的媒体尺寸、viewport 和拼接设置变化必须保持当前可视锚点；用户拖动时禁止任何自动 `jumpTo`。拼接设置是继承/启用/停用三态。
+- 懒列表测试必须先让目标 child 进入构建范围，再读取 Widget/RenderObject；禁止对未满足 finder 数量的结果使用 `.single` 或 `tester.widget`。
 
 ### dev.68 当前主线约束
 
