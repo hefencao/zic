@@ -17,6 +17,7 @@ final class LocalImagePlayer extends StatefulWidget {
     this.streamingSession,
     this.onPlaybackCapabilityChanged,
     this.onDimensionsChanged,
+    this.fit = BoxFit.contain,
     this.flutterAnimatedCodecFactory = instantiateFlutterAnimatedCodec,
     super.key,
   });
@@ -36,6 +37,7 @@ final class LocalImagePlayer extends StatefulWidget {
   final DownloadSession? streamingSession;
   final ValueChanged<bool>? onPlaybackCapabilityChanged;
   final ValueChanged<Size>? onDimensionsChanged;
+  final BoxFit fit;
   final FlutterAnimatedCodecFactory flutterAnimatedCodecFactory;
 
   Uri get sourceUri => image.sourceUri;
@@ -382,6 +384,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           playback: widget.playback,
           streamingSession: widget.streamingSession,
           onPlaybackCapabilityChanged: widget.onPlaybackCapabilityChanged,
+          fit: widget.fit,
           flutterAnimatedCodecFactory: widget.flutterAnimatedCodecFactory,
         );
       }
@@ -398,6 +401,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           onReady: _onControlledReady,
           onError: _onControlledError,
           codecFactory: widget.flutterAnimatedCodecFactory,
+          fit: widget.fit,
           downloadIdentity: widget.downloadIdentity,
           traceClock: widget.traceClock,
           traceSink: widget.traceSink,
@@ -414,7 +418,9 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         child: Image(
           image: imageProvider,
           key: imageFolderFlutterPreviewKey,
-          fit: BoxFit.contain,
+          width: double.infinity,
+          height: double.infinity,
+          fit: widget.fit,
           filterQuality: FilterQuality.medium,
           frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
             if (frame != null || wasSynchronouslyLoaded) {
@@ -534,6 +540,7 @@ final class _ControlledAnimatedImage extends StatefulWidget {
     required this.onReady,
     required this.onError,
     required this.codecFactory,
+    this.fit = BoxFit.contain,
     this.targetWidth,
     this.targetHeight,
     this.downloadIdentity,
@@ -546,6 +553,7 @@ final class _ControlledAnimatedImage extends StatefulWidget {
 
   final Uint8List bytes;
   final ReaderPlaybackController playback;
+  final BoxFit fit;
   final int? targetWidth;
   final int? targetHeight;
   final DownloadId? downloadIdentity;
@@ -847,7 +855,7 @@ final class _ControlledAnimatedImageState
     }
     return RawImage(
       image: image,
-      fit: BoxFit.contain,
+      fit: widget.fit,
       filterQuality: FilterQuality.medium,
     );
   }

@@ -67,6 +67,27 @@ void main() {
     expect(chapter.chapter.pageCount, 1);
   });
 
+  test('legacy Venera runtime locator is rejected before invocation', () async {
+    final connection = _FixtureConnection();
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(),
+    );
+    addTearDown(session.close);
+
+    expect(
+      () => session.sources.single.loadResource(
+        Uri.parse('venera-resource://expired-token'),
+      ),
+      throwsStateError,
+    );
+    expect(
+      connection.operations,
+      isNot(contains(ExternalPluginRuntimeOperation.loadResource)),
+    );
+  });
+
   test('concurrent identical resource loads share one runtime invocation',
       () async {
     final gate = Completer<void>();

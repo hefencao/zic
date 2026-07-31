@@ -335,12 +335,9 @@ void main() {
     await pump(stitch: true);
     await tester.pump();
     expect(
-      tester
-          .widget<SizedBox>(
-            find.byKey(const ValueKey<String>('reader-vertical-gap:0')),
-          )
-          .height,
-      0,
+      find.byKey(const ValueKey<String>('reader-vertical-gap:0')),
+      findsNothing,
+      reason: 'stitched pages must not build a separator render object',
     );
 
     controller.requestPage(2);
@@ -402,6 +399,11 @@ void main() {
       const ValueKey<String>('reader-vertical-page:0'),
     );
     final fallbackHeight = tester.getSize(finder).height;
+    expect(
+      fallbackHeight,
+      greaterThanOrEqualTo(tester.getSize(find.byType(ReaderView)).height),
+      reason: 'the active unknown-size page must center loading in viewport',
+    );
 
     await pump(<String, double>{chapter.pages.single.assetKey: 2.4});
     await tester.pump();

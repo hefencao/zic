@@ -76,6 +76,15 @@
 - Android bound-service transport 必须以 binding generation 区分每次显式连接，并通过 Binder death recipient 失败当前请求；旧 generation 的迟到回调不得拆除新连接，也不得自动 replay/activate。packet response 必须校验 dedicated root、exact length 与 SHA-256，消费或失败后删除。
 
 
+### dev.68 当前主线约束
+
+#### dev.68 当前优先级
+
+- locator 兼容性是 Reader/下载入口不变量，不是详情页刷新选项；任何 generation-scoped Venera token 都必须在创建 page demand 前刷新或失败。
+- 插件资源边界必须在 runtime invocation 前拒绝已知不可恢复 identity；禁止依赖失败后的 pipeline 重试来发现旧 token。
+- deferred plugin resource 的预取窗口和重试次数必须显式受限。扩大窗口或恢复自动重试前需以 trace 证明收益，并分别核算配置解析、HTTP 请求和页面字节流量。
+- 纵向拼接必须从 render tree 中移除 separator，而不是把 separator 高度设置为零；拼接媒体须使用统一的宽度贴合策略，避免 `contain` 的舍入边缘重新露出背景。加载占位可调整布局，但不得裁切或拉伸漫画页。
+
 ### dev.67 当前主线约束
 
 #### dev.67 当前优先级

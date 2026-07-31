@@ -1,29 +1,50 @@
 part of 'demo_home.dart';
 
+bool _isLegacyVeneraLocator(String value) =>
+    value.startsWith('venera-resource://');
+
 bool _hasLegacyVeneraLocators(ImportedChapterRecord chapter) =>
-    chapter.sourceId.startsWith('venera:') &&
     chapter.pages.any(
-      (page) => page.sourceId.startsWith('venera-resource://'),
+      (page) => _isLegacyVeneraLocator(page.sourceId),
     );
 
 bool _manifestHasLegacyVeneraLocators(ChapterManifest manifest) =>
-    manifest.sourceId.startsWith('venera:') &&
     manifest.pages.any(
-      (page) => page.uri.toString().startsWith('venera-resource://'),
+      (page) => _isLegacyVeneraLocator(page.uri.toString()),
     );
+
+Future<Uint8List> _loadCompatibleSourceResource(
+  _DemoHomeState state,
+  String sourceId,
+  Uri uri,
+) {
+  if (_isLegacyVeneraLocator(uri.toString())) {
+    throw StateError('已阻止读取失效的 Venera 运行时资源定位符：$uri');
+  }
+  final source = state._sourceForId(sourceId);
+  if (source == null) {
+    throw StateError('漫画源 $sourceId 当前不可用，无法加载 $uri');
+  }
+  return source.loadResource(uri);
+}
 
 Future<ChapterManifest> _loadCompatibleSourceChapter(
   BrowsableComicSource source,
-  String chapterId,
-) async {
-  var manifest = await source.loadChapter(chapterId);
+  String chapterId, {
+  bool forceRefresh = false,
+}) async {
+  final RefreshableChapterComicSource? refreshable =
+      source is RefreshableChapterComicSource
+          ? source as RefreshableChapterComicSource
+          : null;
+  final refreshedImmediately = forceRefresh && refreshable != null;
+  var manifest = refreshedImmediately
+      ? await refreshable.refreshChapter(chapterId)
+      : await source.loadChapter(chapterId);
   if (!_manifestHasLegacyVeneraLocators(manifest)) {
     return manifest;
   }
-  final refreshable = source is RefreshableChapterComicSource
-      ? source as RefreshableChapterComicSource
-      : null;
-  if (refreshable != null) {
+  if (refreshable != null && !refreshedImmediately) {
     manifest = await refreshable.refreshChapter(chapterId);
   }
   if (_manifestHasLegacyVeneraLocators(manifest)) {
@@ -39,7 +60,10 @@ Future<void> _downloadCompatibleChapter(
   ImportedLibraryEntry entry,
 ) async {
   final current = _hasLegacyVeneraLocators(entry.chapter)
-      ? await state._refreshRemoteEntry(entry)
+      ? await state._refreshRemoteEntry(
+          entry,
+          forceSourceRefresh: true,
+        )
       : entry;
   await state._chapterDownloads.download(current);
   state._acceptDownloadSnapshot(
@@ -56,7 +80,10 @@ Future<void> _downloadCompatibleComicEntries(
   for (final entry in entries) {
     chapters.add(
       _hasLegacyVeneraLocators(entry.chapter)
-          ? await state._refreshRemoteEntry(entry)
+          ? await state._refreshRemoteEntry(
+              entry,
+              forceSourceRefresh: true,
+            )
           : entry,
     );
   }

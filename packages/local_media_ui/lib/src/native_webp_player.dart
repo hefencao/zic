@@ -20,6 +20,7 @@ final class NativeWebpPlayer extends StatefulWidget {
     this.playback,
     this.streamingSession,
     this.onPlaybackCapabilityChanged,
+    this.fit = BoxFit.contain,
     this.flutterAnimatedCodecFactory = instantiateFlutterAnimatedCodec,
     super.key,
   });
@@ -40,6 +41,7 @@ final class NativeWebpPlayer extends StatefulWidget {
   final ReaderPlaybackController? playback;
   final DownloadSession? streamingSession;
   final ValueChanged<bool>? onPlaybackCapabilityChanged;
+  final BoxFit fit;
   final FlutterAnimatedCodecFactory flutterAnimatedCodecFactory;
 
   @override
@@ -1221,6 +1223,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
                                   raster?.sourceHeight ??
                                   1,
                               filterQuality: quality,
+                              fit: widget.fit,
                               viewportKey: webpNativeTextureViewportKey,
                             )
                           : _image == null
@@ -1229,7 +1232,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
                                 )
                               : RawImage(
                                   image: _image,
-                                  fit: BoxFit.contain,
+                                  fit: widget.fit,
                                   filterQuality: quality,
                                   isAntiAlias: !nearest,
                                 ),
@@ -1263,7 +1266,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
                                       }
                                       return child;
                                     },
-                                    fit: BoxFit.contain,
+                                    fit: widget.fit,
                                     filterQuality: quality,
                                     isAntiAlias: !nearest,
                                     errorBuilder: (
@@ -1293,6 +1296,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
                                     onReady: _reportFirstFrame,
                                     codecFactory:
                                         widget.flutterAnimatedCodecFactory,
+                                    fit: widget.fit,
                                     onError: (error) {
                                       if (mounted) {
                                         setState(() {

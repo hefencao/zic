@@ -24,12 +24,15 @@ def main() -> None:
     require(
         "packages/reader/lib/src/reader_view.dart",
         "reader-vertical-list",
+        "ListView.builder",
         "ListView.separated",
         "verticalStitch",
         "_verticalExtent",
         "pageAspectRatios",
         "hasContentDimensions",
         "_scheduleControllerCommand",
+        "widget.verticalStitch",
+        "math.max(scaled, _viewport.height)",
     )
     require(
         "packages/reader_runtime/lib/src/reader_runtime_screen.dart",
@@ -40,6 +43,8 @@ def main() -> None:
         "verticalStitch: _settings.effectiveVerticalStitch",
         "reportDimensions",
         "_reportPageDimensions",
+        "BoxFit.fitWidth",
+        "mediaFit",
     )
     reject(
         "packages/reader_runtime/lib/src/reader_runtime_screen.dart",
@@ -63,6 +68,14 @@ def main() -> None:
         "onDimensionsChanged",
         "_staticImageDimensions",
         "_reportDimensions(info.width, info.height)",
+        "final BoxFit fit",
+        "fit: widget.fit",
+    )
+    require(
+        "packages/texture_bridge/lib/src/native_texture_viewport.dart",
+        "final BoxFit fit",
+        "FittedBox",
+        "alignment: Alignment.topCenter",
     )
     require(
         "apps/app/lib/reader_preferences.dart",

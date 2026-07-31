@@ -1,3 +1,11 @@
+## 0.31.0-dev.68：Venera 入口预检、请求止损与无缝连续布局
+
+- 修复远程详情以 `refreshRemote: false` 打开已存在章节时绕过旧 Venera locator 迁移的问题。只要章节含 `venera-resource://token`，Reader/单章下载/整本下载入口都强制刷新章节元数据；刷新后仍为旧 token 时在进入 pipeline 前失败。
+- App source-resource composition 与 Venera runtime adapter 增加独立止损门：旧 token 在插件 runtime 调用前被拒绝，避免遗漏入口再次产生确定性失败请求。
+- Venera deferred resource Reader profile 收窄为当前页加一张前向编码页，把单次 download demand 上限降为 2，并关闭 Reader 层自动网络重试；相同 URI 仍只共享进行中的读取，完成字节继续归既有 session/artifact 所有。
+- 纵向拼接模式不再创建零高度 separator，而是使用完全相邻的 builder children；非拼接模式才创建 8px 间距。未知活动页至少占满一个 viewport，使加载指示保持在可视区域中心；拼接呈现使用 `fitWidth` 对齐页面宽度，真实尺寸到达后按完整图片比例重排，不裁切也不拉伸。
+- 新增旧 locator UI 刷新、runtime 调用前拒绝、保守 demand window、无 separator 拼接和 viewport loading placeholder 回归及静态契约。
+
 ## 0.31.0-dev.67：Reader 控制所有权收口与组合解耦
 
 - 修复 `demo_home_source_compat.dart` 对无继承关系能力接口的交叉类型提升编译错误；旧 Venera locator 刷新现在显式绑定 `RefreshableChapterComicSource`。

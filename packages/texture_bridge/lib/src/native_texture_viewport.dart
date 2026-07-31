@@ -12,6 +12,7 @@ final class NativeTextureViewport extends StatelessWidget {
     required this.sourceWidth,
     required this.sourceHeight,
     this.filterQuality = FilterQuality.low,
+    this.fit = BoxFit.contain,
     this.viewportKey,
     super.key,
   })  : assert(sourceWidth > 0),
@@ -21,19 +22,38 @@ final class NativeTextureViewport extends StatelessWidget {
   final int sourceWidth;
   final int sourceHeight;
   final FilterQuality filterQuality;
+  final BoxFit fit;
   final Key? viewportKey;
 
   double get aspectRatio => sourceWidth / sourceHeight;
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: AspectRatio(
-        key: viewportKey,
-        aspectRatio: aspectRatio,
-        child: Texture(
-          textureId: textureId,
-          filterQuality: filterQuality,
+    if (fit == BoxFit.contain) {
+      return Center(
+        child: AspectRatio(
+          key: viewportKey,
+          aspectRatio: aspectRatio,
+          child: Texture(
+            textureId: textureId,
+            filterQuality: filterQuality,
+          ),
+        ),
+      );
+    }
+    return SizedBox.expand(
+      child: FittedBox(
+        fit: fit,
+        alignment: Alignment.topCenter,
+        clipBehavior: Clip.hardEdge,
+        child: SizedBox(
+          key: viewportKey,
+          width: sourceWidth.toDouble(),
+          height: sourceHeight.toDouble(),
+          child: Texture(
+            textureId: textureId,
+            filterQuality: filterQuality,
+          ),
         ),
       ),
     );

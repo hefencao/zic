@@ -570,13 +570,8 @@ final class _DemoHomeState extends State<DemoHome> {
     );
   }
 
-  Future<Uint8List> _loadSourceResourceBytes(String sourceId, Uri uri) {
-    final source = _sourceForId(sourceId);
-    if (source == null) {
-      throw StateError('漫画源 $sourceId 当前不可用，无法加载 $uri');
-    }
-    return source.loadResource(uri);
-  }
+  Future<Uint8List> _loadSourceResourceBytes(String sourceId, Uri uri) =>
+      _loadCompatibleSourceResource(this, sourceId, uri);
 
   Future<Uint8List> _loadChapterPageBytes(
     ImportedLibraryEntry entry,
@@ -590,7 +585,7 @@ final class _DemoHomeState extends State<DemoHome> {
     final source = _sourceForId(entry.chapter.sourceId);
     final uri = Uri.tryParse(page.sourceId);
     if (source != null && uri != null) {
-      return source.loadResource(uri);
+      return _loadSourceResourceBytes(entry.chapter.sourceId, uri);
     }
     return readLocalImageSource(page.sourceId);
   }
@@ -635,8 +630,9 @@ final class _DemoHomeState extends State<DemoHome> {
   }
 
   Future<ImportedLibraryEntry> _refreshRemoteEntry(
-    ImportedLibraryEntry entry,
-  ) async {
+    ImportedLibraryEntry entry, {
+    bool forceSourceRefresh = false,
+  }) async {
     if (entry.chapter.sourceId == 'local-folder') {
       return entry;
     }
@@ -647,6 +643,7 @@ final class _DemoHomeState extends State<DemoHome> {
     final manifest = await _loadCompatibleSourceChapter(
       source,
       entry.chapter.chapterId,
+      forceRefresh: forceSourceRefresh,
     );
     final comic = Comic(
       comicId: entry.chapter.comicId,
@@ -782,7 +779,17 @@ final class _DemoHomeState extends State<DemoHome> {
     ImportedLibraryEntry entry, {
     bool refreshRemote = true,
   }) async {
-    final current = refreshRemote ? await _refreshRemoteEntry(entry) : entry;
+    final legacyVenera = _hasLegacyVeneraLocators(entry.chapter);
+    final current = legacyVenera
+        ? await _refreshRemoteEntry(entry, forceSourceRefresh: true)
+        : refreshRemote
+            ? await _refreshRemoteEntry(entry)
+            : entry;
+    if (_hasLegacyVeneraLocators(current.chapter)) {
+      throw StateError(
+        'Venera 章节仍包含已失效的运行时资源定位符，已阻止进入 Reader',
+      );
+    }
     await _setChapterRead(current, true);
     if (!mounted) {
       return;
@@ -803,8 +810,10 @@ final class _DemoHomeState extends State<DemoHome> {
             ? const <String, LocalImageFileBytesLoader>{}
             : <String, LocalImageFileBytesLoader>{
                 for (final page in current.chapter.pages)
-                  page.sourceId: () =>
-                      source.loadResource(Uri.parse(page.sourceId)),
+                  page.sourceId: () => _loadSourceResourceBytes(
+                        current.chapter.sourceId,
+                        Uri.parse(page.sourceId),
+                      ),
               };
     await Navigator.of(context).push(
       MaterialPageRoute<void>(

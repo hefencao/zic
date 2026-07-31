@@ -223,7 +223,7 @@ void main() {
     expect(entry.chapter.pages.single.stablePageId, 'fixture-page-1');
   });
 
-  testWidgets('runtime chapter URI loads bytes through its comic source',
+  testWidgets('legacy runtime chapter URI refreshes before entering Reader',
       (tester) async {
     final store = MemoryImportedLibraryStore();
     await store.open();
@@ -276,17 +276,88 @@ void main() {
     final screen = tester.widget<ImportedImageChapterScreen>(
       find.byType(ImportedImageChapterScreen),
     );
-    final runtimeUri =
+    final legacyUri =
         'venera-resource://fixture-runtime-page/fixture-runtime-page-chapter';
-    expect(screen.byteLoaders, contains(runtimeUri));
-    await screen.byteLoaders[runtimeUri]!();
+    final durableUri =
+        'venera-resource:fixture-runtime-page/fixture-runtime-page-chapter';
+    expect(source.chapterRefreshes, 1);
+    expect(screen.byteLoaders, isNot(contains(legacyUri)));
+    expect(screen.byteLoaders, contains(durableUri));
+    await screen.byteLoaders[durableUri]!();
     expect(
       source.loadedResources.map((uri) => uri.toString()),
-      contains(runtimeUri),
+      contains(durableUri),
     );
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
+  });
+
+  testWidgets(
+      'persisted legacy Venera chapter refreshes despite local-detail open hint',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    const sourceId = 'fixture-persisted-runtime';
+    const comicId = '$sourceId-comic';
+    const chapterId = '$sourceId-chapter';
+    final source = _FixtureSource(
+      sourceId,
+      '持久旧定位符源',
+      runtimePageUri: true,
+    );
+    await store.upsertChapter(
+      ImportedChapterRecord(
+        directoryId: '$sourceId:$comicId',
+        displayName: '第 1 话',
+        sourceId: sourceId,
+        comicId: comicId,
+        comicTitle: '持久旧定位符漫画',
+        chapterId: chapterId,
+        sourceRevision: 'legacy-r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '1.png',
+            sourceId:
+                'venera-resource://fixture-persisted-runtime/fixture-persisted-runtime-chapter',
+            contentKindHint: ContentKindHint.png,
+            pageId: 'fixture-persisted-runtime-page-1',
+          ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(
+      App(
+        libraryStore: store,
+        comicSources: <BrowsableComicSource>[source],
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
+    await tester.pump();
+    await _tapVisible(tester, find.byKey(comicCoverKey(sourceId, comicId)));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(details.localComicDetailsScreenKey),
+    );
+    await _tapVisible(
+      tester,
+      find.byKey(sourceChapterKey(sourceId, chapterId)),
+    );
+    await _pumpUntilFound(tester, find.byType(ImportedImageChapterScreen));
+
+    final screen = tester.widget<ImportedImageChapterScreen>(
+      find.byType(ImportedImageChapterScreen),
+    );
+    final durableUri = 'venera-resource:$sourceId/$chapterId';
+    expect(source.chapterRefreshes, 1);
+    expect(screen.byteLoaders, contains(durableUri));
+    expect(
+      screen.byteLoaders,
+      isNot(contains('venera-resource://$sourceId/$chapterId')),
+    );
   });
 
   testWidgets(
@@ -655,7 +726,8 @@ void main() {
   });
 }
 
-final class _FixtureSource implements BrowsableComicSource {
+final class _FixtureSource
+    implements BrowsableComicSource, RefreshableChapterComicSource {
   _FixtureSource(
     this.sourceId,
     this.name, {
@@ -678,11 +750,13 @@ final class _FixtureSource implements BrowsableComicSource {
   final int catalogPageCount;
   int _comicLoads = 0;
   int _chapterLoads = 0;
+  int _chapterRefreshes = 0;
   int browseCalls = 0;
   final List<Uri> loadedResources = <Uri>[];
 
   int get comicLoads => _comicLoads;
   int get chapterLoads => _chapterLoads;
+  int get chapterRefreshes => _chapterRefreshes;
 
   String get _comicId => '$sourceId-comic';
   String get _chapterId => '$sourceId-chapter';
@@ -776,6 +850,20 @@ final class _FixtureSource implements BrowsableComicSource {
   Future<ChapterManifest> loadChapter(String chapterId) async {
     expect(chapterId, anyOf(_chapterId, _secondChapterId));
     _chapterLoads++;
+    return _chapterManifest(chapterId, durableRuntimeLocator: false);
+  }
+
+  @override
+  Future<ChapterManifest> refreshChapter(String chapterId) async {
+    expect(chapterId, anyOf(_chapterId, _secondChapterId));
+    _chapterRefreshes++;
+    return _chapterManifest(chapterId, durableRuntimeLocator: true);
+  }
+
+  ChapterManifest _chapterManifest(
+    String chapterId, {
+    required bool durableRuntimeLocator,
+  }) {
     final chapter = chapterId == _chapterId
         ? _resolvedChapterAt(1)
         : _resolvedChapterAt(2);
@@ -790,7 +878,11 @@ final class _FixtureSource implements BrowsableComicSource {
           chapterId: chapterId,
           index: 0,
           uri: runtimePageUri
-              ? Uri.parse('venera-resource://$sourceId/$chapterId')
+              ? Uri.parse(
+                  durableRuntimeLocator
+                      ? 'venera-resource:$sourceId/$chapterId'
+                      : 'venera-resource://$sourceId/$chapterId',
+                )
               : Uri.https(
                   'example.invalid',
                   '/$sourceId/$chapterId/page-1.png',

@@ -3,11 +3,19 @@
 ## Sole baseline
 
 Continue only from
-`zic_v0.31.0-dev.67_reader-control-ownership-decoupling.zip`.
+`zic_v0.31.0-dev.68_venera-entry-preflight-gapless-stitch.zip`.
 It is a direct modification of the user-provided
 `zic_v0.31.0-dev.62_source-management-tabs-mihon-chapter-preflight.zip`;
 do not merge an earlier candidate. `mihon-main.zip` and `vibevenera-master.zip`
 were read-only compatibility references and are not part of the product tree.
+
+## Completed in dev.68
+
+- Made legacy Venera locator compatibility an unconditional Reader/download entry preflight; `refreshRemote: false` can no longer bypass it.
+- Added App and runtime-adapter rejection before any plugin invocation for `venera-resource://` values.
+- Reduced deferred Venera Reader demand to current plus one forward page, at most two download demands, and no automatic Reader network retry.
+- Removed separator render objects entirely in stitched vertical mode, applied one width-fit contract across static/animated/native media, and centered the active unknown-size loading placeholder in the viewport.
+- Added UI/runtime/demand/stitch regression and SDK-limited static contracts.
 
 ## Completed in dev.67
 

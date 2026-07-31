@@ -164,7 +164,8 @@ final class _RuntimeBrowsableComicSource
     required ExternalComicPluginFormat format,
     required ExternalPluginRuntimeSourceDescriptor descriptor,
     required _RuntimeInvoke invoke,
-  })  : _externalId = descriptor.externalId,
+  })  : _format = format,
+        _externalId = descriptor.externalId,
         _invoke = invoke,
         sourceId = '${_sourcePrefix(format)}${descriptor.externalId}',
         descriptor = ComicSourceDescriptor(
@@ -176,6 +177,7 @@ final class _RuntimeBrowsableComicSource
           contentRatings: descriptor.contentRatings,
         );
 
+  final ExternalComicPluginFormat _format;
   final String _externalId;
   final _RuntimeInvoke _invoke;
   final Map<Uri, Future<Uint8List>> _resourceLoads =
@@ -329,6 +331,12 @@ final class _RuntimeBrowsableComicSource
   Future<Uint8List> loadResource(Uri uri) {
     if (!uri.hasScheme) {
       throw ArgumentError.value(uri, 'uri', 'must be absolute');
+    }
+    if (_format == ExternalComicPluginFormat.veneraJavaScript &&
+        uri.toString().startsWith('venera-resource://')) {
+      throw StateError(
+        'legacy Venera runtime locator must be refreshed before resource load',
+      );
     }
     final existing = _resourceLoads[uri];
     if (existing != null) {

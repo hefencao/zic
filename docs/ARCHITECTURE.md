@@ -1169,3 +1169,18 @@ Top bar --------------------------------------------------> title/subtitle/progr
 `ReaderRuntimeScreen` no longer accepts arbitrary title or action Widgets. A caller may provide only `pageSubtitleBuilder(PageAsset) -> String`; runtime owns the title layout and semantics. This prevents local-media or future source adapters from recreating page counters, previous/next buttons, selection menus or alternate navigation state in the top bar.
 
 Session settings and adaptive classification live in `reader_session_settings.dart`, separate from runtime composition and control rendering. The runtime screen has a 1500-line repository budget. Vertical navigation acknowledgement is observation-backed: the command remains pending until the target lazy page has been laid out, the scroll position resolves to that page and the Reader observation is published.
+
+
+## Venera entry preflight and continuous-page seams (dev.68)
+
+Locator migration is enforced at command composition, before Reader or download work exists. The App asks the source's optional `RefreshableChapterComicSource` capability for fresh metadata whenever a persisted chapter contains a generation-scoped Venera token. The source-resource loader and runtime adapter are defensive sinks that reject the same token before plugin invocation; they do not own chapter migration or page caching.
+
+```text
+Persisted chapter --legacy token--> refresh chapter metadata --durable locator--> Reader/download
+                                      | still legacy
+                                      +-------------------------------> fail before demand
+```
+
+Deferred Venera locators require source JavaScript and native HTTP resolution, so their policy window is composed explicitly at `ReaderBinding`: current plus one forward encoded page, guarded to at most two downloads. Their `LiveCoordinator` uses a single-attempt retry policy; ordinary chapters keep the default role window and retry policy. In-flight URI coalescing remains below this policy and does not retain completed bytes.
+
+Stitched continuous presentation uses adjacent sliver children with no separator object. Page extent comes from source geometry, then measured geometry from the already-owned media payload, then a viewport-sized active placeholder. In stitched mode the media renderer receives `BoxFit.fitWidth`, including Flutter images, animated codecs and native textures, so a contain-style rounding margin cannot reopen a visible seam. The parent extent still comes from the same source/measured geometry, so this width fit does not authorize cropping or stretching. The placeholder is presentation state only; it never changes page identity, download identity, decode ownership or cache keys.

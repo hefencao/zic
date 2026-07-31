@@ -138,26 +138,40 @@ final class _ReaderViewState extends State<ReaderView> {
           }
           final direction = widget.controller.direction;
           if (direction == ReadingDirection.vertical) {
+            Widget pageBuilder(BuildContext context, int index) => SizedBox(
+                  key: ValueKey<String>('reader-vertical-page:$index'),
+                  height: _verticalExtent(chapter.pages[index], index),
+                  child: _buildPage(chapter, index),
+                );
+            final physics = _zoomedPage == null
+                ? const ClampingScrollPhysics()
+                : const NeverScrollableScrollPhysics();
+            final cacheExtent =
+                _viewport.height > 0 ? _viewport.height * 2 : null;
+            final list = widget.verticalStitch
+                ? ListView.builder(
+                    key: const ValueKey<String>('reader-vertical-list'),
+                    controller: _verticalController,
+                    itemCount: chapter.pages.length,
+                    cacheExtent: cacheExtent,
+                    physics: physics,
+                    itemBuilder: pageBuilder,
+                  )
+                : ListView.separated(
+                    key: const ValueKey<String>('reader-vertical-list'),
+                    controller: _verticalController,
+                    itemCount: chapter.pages.length,
+                    cacheExtent: cacheExtent,
+                    physics: physics,
+                    separatorBuilder: (context, index) => SizedBox(
+                      key: ValueKey<String>('reader-vertical-gap:$index'),
+                      height: _verticalPageGap,
+                    ),
+                    itemBuilder: pageBuilder,
+                  );
             return NotificationListener<ScrollNotification>(
               onNotification: _handleVerticalScrollNotification,
-              child: ListView.separated(
-                key: const ValueKey<String>('reader-vertical-list'),
-                controller: _verticalController,
-                itemCount: chapter.pages.length,
-                cacheExtent: _viewport.height > 0 ? _viewport.height * 2 : null,
-                physics: _zoomedPage == null
-                    ? const ClampingScrollPhysics()
-                    : const NeverScrollableScrollPhysics(),
-                separatorBuilder: (context, index) => SizedBox(
-                  key: ValueKey<String>('reader-vertical-gap:$index'),
-                  height: widget.verticalStitch ? 0 : _verticalPageGap,
-                ),
-                itemBuilder: (context, index) => SizedBox(
-                  key: ValueKey<String>('reader-vertical-page:$index'),
-                  height: _verticalExtent(chapter.pages[index]),
-                  child: _buildPage(chapter, index),
-                ),
-              ),
+              child: list,
             );
           }
           return NotificationListener<ScrollNotification>(
@@ -205,9 +219,10 @@ final class _ReaderViewState extends State<ReaderView> {
         ),
       );
 
-  double _verticalExtent(PageAsset asset) {
+  double _verticalExtent(PageAsset asset, int index) {
     if (_viewport.width <= 0 || _viewport.height <= 0) return 1;
     var ratio = widget.pageAspectRatios[asset.assetKey];
+    var hasMeasuredRatio = ratio != null;
     final width = asset.width?.toDouble();
     final height = asset.height?.toDouble();
     if (ratio == null &&
@@ -216,12 +231,16 @@ final class _ReaderViewState extends State<ReaderView> {
         width > 0 &&
         height > 0) {
       ratio = height / width;
+      hasMeasuredRatio = true;
     }
     ratio ??= 1.5;
     if (widget.controller.rotationQuarterTurns.isOdd) {
       ratio = 1 / math.max(0.001, ratio);
     }
-    final scaled = _viewport.width * ratio;
+    var scaled = _viewport.width * ratio;
+    if (!hasMeasuredRatio && index == widget.controller.currentIndex) {
+      scaled = math.max(scaled, _viewport.height);
+    }
     final upper = math.max(_viewport.height, _viewport.width * 64);
     return scaled.clamp(64.0, upper).toDouble();
   }
@@ -232,10 +251,10 @@ final class _ReaderViewState extends State<ReaderView> {
     var start = 0.0;
     final pages = widget.controller.chapter.pages;
     for (var i = 0; i < index; i++) {
-      start += _verticalExtent(pages[i]);
+      start += _verticalExtent(pages[i], i);
       start += _effectiveGap;
     }
-    return (start: start, end: start + _verticalExtent(pages[index]));
+    return (start: start, end: start + _verticalExtent(pages[index], index));
   }
 
   double _verticalOffsetFor(int index) {
@@ -250,7 +269,7 @@ final class _ReaderViewState extends State<ReaderView> {
     final center = metrics.pixels + metrics.viewportDimension / 2;
     var offset = 0.0;
     for (var i = 0; i < pages.length; i++) {
-      final extent = _verticalExtent(pages[i]);
+      final extent = _verticalExtent(pages[i], i);
       final end = offset + extent;
       if (center <= end || i == pages.length - 1) {
         final fraction = ((center - offset) / math.max(1.0, extent))

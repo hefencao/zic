@@ -50,4 +50,28 @@ void main() {
 
     expect(tester.getSize(find.byKey(viewportKey)), const Size(150, 300));
   });
+
+  testWidgets('external texture exposes width-fit presentation for stitch', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: SizedBox(
+          width: 300,
+          height: 600,
+          child: NativeTextureViewport(
+            textureId: 9,
+            sourceWidth: 100,
+            sourceHeight: 200,
+            fit: BoxFit.fitWidth,
+          ),
+        ),
+      ),
+    );
+
+    final fitted = tester.widget<FittedBox>(find.byType(FittedBox));
+    expect(fitted.fit, BoxFit.fitWidth);
+    expect(fitted.alignment, Alignment.topCenter);
+  });
+
 }

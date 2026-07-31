@@ -18,6 +18,12 @@ python3 "$ROOT/tool/test_mihon_classloader_contract.py"
 python3 "$ROOT/tool/test_mihon_read_only_payload.py"
 python3 "$ROOT/tool/test_mihon_chapter_contract.py"
 python3 "$ROOT/tool/test_venera_response_headers.py"
+python3 "$ROOT/tool/test_venera_reader_preflight.py"
+python3 "$ROOT/tool/test_reader_layout_settings_contract.py"
+python3 "$ROOT/tool/test_reader_streaming_contract.py"
+python3 "$ROOT/tool/test_ui_architecture_contract.py"
+python3 "$ROOT/tool/test_external_login_bridge.py"
+python3 "$ROOT/tool/test_external_source_settings_contract.py"
 if command -v node >/dev/null 2>&1; then
   python3 "$ROOT/tool/test_venera_bootstrap.py"
 elif [[ "$REQUIRE_TOOLCHAINS" -eq 1 ]]; then

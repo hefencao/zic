@@ -61,6 +61,38 @@ void main() {
     expect(playback.ids, isNotEmpty);
   });
 
+  test('reader binding accepts a conservative deferred-resource window', () {
+    final coordinator = FakeCoordinator(clock: _Clock());
+    final binding = ReaderBinding(
+      chapter: _deferredChapter(),
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+      clock: _Clock(),
+      coordinator: coordinator,
+      playback: coordinator,
+      windowResolver: const RoleResolver(
+        forwardEncodedPages: 1,
+        backwardEncodedPages: 0,
+        nearRadius: 1,
+      ),
+      policyGuard: const PolicyGuard(maxDownloadDemands: 2),
+    );
+
+    binding.accept(_obs(
+      interaction: Interaction.idle,
+      current: 0,
+      currentFraction: 1,
+    ));
+
+    expect(coordinator.downloads.length, lessThanOrEqualTo(2));
+    expect(
+      coordinator.downloads.keys.map((id) => id.content.pageId),
+      containsAll(<String>['deferred-0', 'deferred-1']),
+    );
+  });
+
   test('continuous binding freezes viewport while scrolling', () {
     final coordinator = FakeCoordinator(clock: _Clock());
     final binding = ReaderBinding(
@@ -124,6 +156,34 @@ void main() {
       throwsStateError,
     );
   });
+}
+
+ChapterManifest _deferredChapter() {
+  final pages = List<PageAsset>.generate(
+    6,
+    (index) => PageAsset(
+      pageId: 'deferred-$index',
+      chapterId: 'chapter',
+      index: index,
+      uri: Uri.parse('venera-resource:page-$index'),
+      contentKindHint: ContentKindHint.webp,
+      animatedHint: true,
+    ),
+  );
+  return ChapterManifest(
+    sourceId: 'venera:fixture',
+    comicId: 'comic',
+    chapter: const Chapter(
+      chapterId: 'chapter',
+      comicId: 'comic',
+      title: 'Chapter',
+      sequence: 1,
+      pageCount: 6,
+      sourceRevision: 'r1',
+    ),
+    pages: pages,
+    readingDirection: ReadingDirection.ltr,
+  );
 }
 
 ChapterManifest _chapter() {

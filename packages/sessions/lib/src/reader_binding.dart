@@ -17,6 +17,8 @@ final class ReaderBinding {
     required PlaybackCoordinator playback,
     TraceSink traceSink = const NoopTraceSink(),
     ViewportResolver viewportResolver = const ViewportResolver(),
+    RoleResolver windowResolver = const RoleResolver(),
+    PolicyGuard policyGuard = const PolicyGuard(),
     this.discretePages = true,
   })  : _coordinator = coordinator,
         _playback = playback,
@@ -26,6 +28,8 @@ final class ReaderBinding {
       decodeTarget: decodeTarget,
       clock: clock,
       traceSink: traceSink,
+      windowResolver: windowResolver,
+      guard: policyGuard,
       onUpdate: _onUpdate,
     );
   }

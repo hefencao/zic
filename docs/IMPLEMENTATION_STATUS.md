@@ -1,3 +1,11 @@
+## dev.68：Venera 入口预检、请求止损与无缝连续布局
+
+远程详情页是否要求普通内容刷新，不再决定 locator 兼容性。`_openImportedChapter`、单章下载和整本下载在任何路径上看到 `venera-resource://` 都会通过显式 `RefreshableChapterComicSource` 获取新章节；若来源仍返回旧 locator，则在 Reader/Pipeline/DownloadSession 建立前失败。
+
+App 的 source-resource loader 与 `plugin_host` runtime adapter 都拒绝旧 Venera token，后者在创建 runtime invocation 前执行，因此未来即使新增调用方漏掉预检，也不会形成插件请求风暴。Reader 对 `venera-resource:` 章节采用当前页 + 下一页、最多两个 download demands 且不自动重试的保守窗口；普通 HTTP/file 章节维持原策略。
+
+纵向拼接使用无 separator 的 `ListView.builder`。只有非拼接模式创建 8px gap；未知活动页的临时高度至少等于 viewport，使加载圈位于当前可视区域中心。真实媒体尺寸仍从来源元数据或同一份媒体载荷回传；拼接时静态图、Flutter 动图和 native texture 统一按宽度贴合，完整显示、不裁切。
+
 ## dev.67：Reader 控制所有权收口与组合解耦
 
 顶部控制栏不再拥有页面导航或布局选择。页面位置、跳页和 RTL 镜像由底部 Slider 与 Reader 手势统一承载；方向、纵向拼接和自适应只从全局/每漫画设置进入 Reader composition。`ReaderRuntimeScreen` 删除任意 action Widget 注入，本地文件 Reader 也不再直接调用 `ReaderController.requestPage`。

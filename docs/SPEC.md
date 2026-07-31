@@ -748,3 +748,12 @@ Mihon Android packaging must expose each host ABI namespace from exactly one art
 - Repeated consumers of the same source URI may share only the same in-flight resource operation. Completed bytes remain under existing session/artifact ownership.
 - Vertical continuous layout must preserve the complete image. It may update page extent when real geometry becomes available, but it must not crop, stretch, or create a second image stream solely for measurement.
 - Reader page number, previous/next, slider and direction commands must remain live across paged/vertical/RTL transitions. Navigation is acknowledged only after the target presentation controller can execute it.
+
+
+## dev.68 Venera entry and continuous-stitch requirements
+
+- `venera-resource://token` is a generation-scoped legacy identity and must not enter Reader, chapter download, whole-comic download, or plugin runtime invocation. Entry composition must refresh the owning chapter or fail before demand creation.
+- A UI `refreshRemote` choice controls ordinary content freshness only; it cannot disable adapter-compatibility migration.
+- Deferred Venera resource chapters default to current plus one forward encoded page, at most two download demands, and no automatic Reader network retry. This bound does not authorize an additional byte cache.
+- Stitched vertical mode has no separator child. Its static, animated and native-texture media must share a width-fit presentation contract so contain rounding cannot expose the Reader background. Non-stitched mode may render the configured page gap.
+- While the active page lacks reliable geometry, its placeholder extent must keep the loading indicator within the active viewport. Measured geometry replaces the placeholder without cropping or stretching.

@@ -139,6 +139,7 @@ final class ReaderPageRuntime {
     required this.downloadSession,
     required this.reportPlaybackCapability,
     required this.reportDimensions,
+    required this.mediaFit,
   });
 
   final ChapterManifest chapter;
@@ -151,6 +152,7 @@ final class ReaderPageRuntime {
   final DownloadSession downloadSession;
   final ValueChanged<bool> reportPlaybackCapability;
   final ReaderPageDimensionsReporter reportDimensions;
+  final BoxFit mediaFit;
 }
 
 typedef ReaderArtifactPageBuilder = Widget? Function(
@@ -211,6 +213,10 @@ final class ReaderRuntimeScreen extends StatefulWidget {
 
 final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   static int _sessionSequence = 0;
+
+  bool get _usesDeferredPluginResources => widget.chapter.pages.any(
+        (asset) => asset.uri.scheme == 'venera-resource',
+      );
 
   late final String _sessionId;
   late final MonoClock _clock;
@@ -334,6 +340,9 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       transportFor: _transportFor,
       clock: _clock,
       traceSink: _trace,
+      retry: _usesDeferredPluginResources
+          ? const RetryPolicy(maxAttempts: 1)
+          : const RetryPolicy(),
     );
   }
 
@@ -397,6 +406,16 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       traceSink: _trace,
       coordinator: _coordinator,
       playback: _coordinator,
+      windowResolver: _usesDeferredPluginResources
+          ? const RoleResolver(
+              forwardEncodedPages: 1,
+              backwardEncodedPages: 0,
+              nearRadius: 1,
+            )
+          : const RoleResolver(),
+      policyGuard: _usesDeferredPluginResources
+          ? const PolicyGuard(maxDownloadDemands: 2)
+          : const PolicyGuard(),
     );
     final reader = ReaderController(
       sessionId: _sessionId,
@@ -1380,6 +1399,10 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                     _reportPlaybackCapability(asset, supported),
                 reportDimensions: (width, height) =>
                     _reportPageDimensions(asset, width, height),
+                mediaFit: reader.direction == ReadingDirection.vertical &&
+                        _settings.effectiveVerticalStitch
+                    ? BoxFit.fitWidth
+                    : BoxFit.contain,
               ),
             );
     return AnimatedBuilder(

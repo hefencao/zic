@@ -163,6 +163,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
               size.width.round(),
               size.height.round(),
             ),
+            fit: runtime.mediaFit,
           ),
         );
       },
