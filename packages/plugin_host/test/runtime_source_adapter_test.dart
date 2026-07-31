@@ -78,10 +78,13 @@ void main() {
     final source = session.sources.single as ConfigurableComicSource;
 
     final settings = await source.loadSettings();
-    expect(settings.single.key, 'mirror');
-    expect(settings.single.kind, ComicSourceSettingKind.select);
-    expect(settings.single.value, 'auto');
-    expect(settings.single.choices.single.label, '自动');
+    final mirror = settings.first;
+    expect(mirror.key, 'mirror');
+    expect(mirror.kind, ComicSourceSettingKind.select);
+    expect(mirror.value, 'auto');
+    expect(mirror.choices.single.label, '自动');
+    expect(settings.last.kind, ComicSourceSettingKind.action);
+    expect(settings.last.value, '刷新');
 
     await source.updateSetting('mirror', 'https://mirror.invalid');
     expect(connection.lastRequest?.arguments, <String, Object?>{
@@ -335,6 +338,15 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
               'choices': <Object?>[
                 <String, Object?>{'value': 'auto', 'label': '自动'},
               ],
+            },
+            <String, Object?>{
+              'key': 'refresh',
+              'title': '刷新域名',
+              'summary': null,
+              'kind': 'action',
+              'value': '刷新',
+              'sensitive': false,
+              'choices': <Object?>[],
             },
           ],
         ExternalPluginRuntimeOperation.updateSourceSetting =>

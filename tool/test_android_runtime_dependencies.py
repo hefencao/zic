@@ -48,7 +48,7 @@ def main() -> int:
     )
     _must_fail(
         gradle,
-        rules.replace('-keep,allowoptimization class okhttp3.** { *; }\n', ''),
+        rules.replace('-keep class okhttp3.** { *; }\n', ''),
         'does not retain okhttp3.**',
     )
     print('Android version-isolated dependency mutations: OK')

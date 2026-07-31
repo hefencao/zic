@@ -58,8 +58,21 @@ def validate_contract(gradle: str, rules: str) -> None:
         if any(coordinate in line for line in parent_declarations):
             raise DependencyContractError(f'duplicate host provider is declared: {coordinate}')
 
+    preference_coordinate = 'androidx.preference:preference:1.2.1'
+    preference_lines = tuple(
+        line.strip()
+        for line in gradle.splitlines()
+        if preference_coordinate in line
+    )
+    if set(preference_lines) != {
+        f'compileOnly "{preference_coordinate}"',
+        f'runtimeOnly "{preference_coordinate}"',
+    }:
+        raise DependencyContractError(
+            'AndroidX Preference must have one compile-only and one runtime provider declaration',
+        )
+
     required = (
-        'androidx.preference:preference:1.2.1',
         'com.github.null2264.injekt:injekt-core:4135455a2a',
         'com.github.zhanghai.quickjs-java:quickjs-android:547f5b1597',
         'consumerProguardFiles "consumer-rules.pro"',

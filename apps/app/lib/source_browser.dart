@@ -590,7 +590,9 @@ final class _SourceManagementScreenState
             await controller.restartSource(source.sourceId);
             await changed();
           },
-          onLogin: () => controller.openMihonLogin(source.descriptor.website),
+          onLogin: source.sourceId.startsWith('mihon:')
+              ? () => controller.openMihonLogin(source.descriptor.website)
+              : null,
         ),
       ),
     );
@@ -682,12 +684,16 @@ final class _SourceManagementScreenState
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
                       const Icon(Icons.public),
-                      if (source.sourceId.startsWith('mihon:'))
+                      if ((source.sourceId.startsWith('mihon:') ||
+                              source.sourceId.startsWith('venera:')) &&
+                          source is ConfigurableComicSource)
                         IconButton(
                           key: ValueKey<String>(
                             'source-settings:${source.sourceId}',
                           ),
-                          tooltip: '插件设置与登录',
+                          tooltip: source.sourceId.startsWith('mihon:')
+                              ? '插件设置与登录'
+                              : '插件设置',
                           onPressed: () =>
                               unawaited(_openSourceSettings(source)),
                           icon: const Icon(Icons.settings_outlined),

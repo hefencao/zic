@@ -84,6 +84,53 @@ class MihonHostAbiTest {
     }
 
     @Test
+    fun preservesEveryRealChapterAndSynthesizesOnlyForAnEmptyCatalog() {
+        var syntheticCalls = 0
+        val real = listOf("chapter-1", "chapter-2", "chapter-3")
+
+        val selected = selectMihonChapters(real) {
+            syntheticCalls++
+            "synthetic"
+        }
+
+        assertEquals(real, selected.chapters)
+        assertFalse(selected.synthetic)
+        assertEquals(0, syntheticCalls)
+
+        val empty = selectMihonChapters(emptyList<String>()) {
+            syntheticCalls++
+            "正文"
+        }
+        assertEquals(listOf("正文"), empty.chapters)
+        assertTrue(empty.synthetic)
+        assertEquals(1, syntheticCalls)
+    }
+
+    @Test
+    fun matchesRefetchedChaptersByStableExtensionIdentity() {
+        val first = object {
+            @Suppress("unused")
+            fun getUrl() = "/chapter/1"
+            @Suppress("unused")
+            fun getName() = "第一话"
+            @Suppress("unused")
+            fun getChapterNumber() = 1f
+        }
+        val second = object {
+            @Suppress("unused")
+            fun getUrl() = "/chapter/2"
+            @Suppress("unused")
+            fun getName() = "第二话"
+            @Suppress("unused")
+            fun getChapterNumber() = 2f
+        }
+        val encoded = mihonModelJson(second)
+
+        assertFalse(mihonChapterMatches(first, encoded))
+        assertTrue(mihonChapterMatches(second, encoded))
+    }
+
+    @Test
     fun preservesCurrentAbiMemoAcrossOpaqueChapterIdentity() {
         val encoded = mihonModelJson(
             object {

@@ -161,6 +161,35 @@ async function checkChapterImageConfigIsDeferred(){
  if(configs!==1||requests!==1)throw new Error('resource did not lazily resolve one image config');
 }
 
+async function checkSourceSettings(){
+ const stored=new Map(),actions=[];
+ ZicNative.request=raw=>{
+   const message=__zicDecode(JSON.parse(raw));
+   if(message.method==='load_setting')return JSON.stringify({ok:true,value:__zicEncode(stored.has(message.setting_key)?stored.get(message.setting_key):null)});
+   if(message.method==='save_setting'){stored.set(message.setting_key,message.value);return JSON.stringify({ok:true,value:null})}
+   if(message.method==='getLocale')return JSON.stringify({ok:true,value:'zh_CN'});
+   throw new Error('unexpected settings bridge method '+message.method);
+ };
+ class SettingsSource extends ComicSource {
+   key='settings';name='Settings';translation={zh_CN:{Enabled:'已启用',Mirror:'镜像',Auto:'自动',Refresh:'刷新',Run:'执行'}};
+   settings={
+     enabled:{title:'Enabled',type:'switch',default:false},
+     mirror:{title:'Mirror',type:'select',options:[{value:'auto',text:'Auto'},{value:'two'}],default:'auto'},
+     refresh:{title:'Refresh',type:'callback',buttonText:'Run',callback:()=>UI.showDialog('Confirm','Apply?', [{text:'Cancel',callback:()=>actions.push('cancel')},{text:'Apply',callback:()=>actions.push('refresh')}])},
+   };
+ }
+ globalThis.__zicSource=new SettingsSource();
+ let values=await __zicOperation({operation:'loadSourceSettings',arguments:{}});
+ if(values.length!==3||values[0].kind!=='toggle'||values[0].value!==false)throw new Error('toggle setting failed '+JSON.stringify(values));
+ if(values[1].kind!=='select'||values[1].value!=='auto'||values[1].choices[0].label!=='自动')throw new Error('select setting failed '+JSON.stringify(values[1]));
+ if(values[2].kind!=='action'||values[2].value!=='执行')throw new Error('action setting failed '+JSON.stringify(values[2]));
+ await __zicOperation({operation:'updateSourceSetting',arguments:{key:'enabled',value:true}});
+ await __zicOperation({operation:'updateSourceSetting',arguments:{key:'mirror',value:'two'}});
+ await __zicOperation({operation:'updateSourceSetting',arguments:{key:'refresh',value:true}});
+ values=await __zicOperation({operation:'loadSourceSettings',arguments:{}});
+ if(values[0].value!==true||values[1].value!=='two'||actions.length!==1)throw new Error('settings update failed '+JSON.stringify({values,actions,stored:Array.from(stored)}));
+}
+
 async function checkNetworkExtraAndCryptoSurface(){
  let seen=null;
  ZicNative.request=raw=>{seen=__zicDecode(JSON.parse(raw));return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},body:'ok'})})};
@@ -169,7 +198,7 @@ async function checkNetworkExtraAndCryptoSurface(){
  if(typeof Convert.encryptAesEcb!=='function'||Convert.encryptAesCfb.length!==4||Convert.decryptAesCfb.length!==4)throw new Error('Convert AES surface is incomplete');
 }
 
-(async()=>{await checkCurrentCategory();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkSingleVolumeChapter();await checkChapterResourceCanBeReadAgain();await checkChapterImageConfigIsDeferred();await checkNetworkExtraAndCryptoSurface();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
+(async()=>{await checkCurrentCategory();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkSingleVolumeChapter();await checkChapterResourceCanBeReadAgain();await checkChapterImageConfigIsDeferred();await checkSourceSettings();await checkNetworkExtraAndCryptoSurface();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
 '''
 with tempfile.TemporaryDirectory() as td:
     js=Path(td)/'test.js'; js.write_text(bootstrap+'\n'+test)

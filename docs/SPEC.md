@@ -94,7 +94,7 @@ continue through Reader demand, transport, promoted artifact and decode ownershi
 ## 2.9 外部插件运行时协议
 
 - Mihon 与 Venera backend 必须实现同一版本化协议；版本不匹配、未知 operation、额外字段或非法 wire type 必须拒绝。
-- 协议只允许 source descriptor、browse、comic、chapter 和 binary resource 数据，不得传递 Widget、Reader、导航、demand、`DownloadSession`、缓存维护或 artifact 句柄。
+- 协议只允许 source descriptor、browse、comic、chapter、binary resource 与规范化 source settings 数据，不得传递 Widget、Reader、导航、demand、`DownloadSession`、缓存维护、SharedPreferences、JavaScript 对象或 artifact 句柄。
 - runtime source ID 必须由 host 添加 `mihon:`/`venera:` 命名空间，并与 repository/inspection identity 一致；comic/chapter/page 返回值必须保持请求身份和父子关系。
 - host 必须独立执行 timeout、响应字节和真实并发上限。调用方 timeout 后，底层操作真正结束前不得释放并发令牌。
 - session close 必须拒绝排队调用、通知隔离 backend 终止活动调用并等待实际工作排空；并发 close 必须加入同一关闭过程。
@@ -706,3 +706,5 @@ connection and drain the actual operation lifecycle.
 Mihon Android packaging must expose each host ABI namespace from exactly one artifact. `extensions-lib` is non-transitive, old Kohesive Injekt and a second AndroidX Preference dependency are forbidden, and release shrinking must retain dynamically referenced host classes. Activation must report an incomplete host ABI before loading extension entry classes.
 
 - Mihon/Venera runtime compatibility: a Mihon APK and its selected 1.4/1.6 Source ABI dex asset must be exact-length/SHA-256 verified and non-writable before a child-first loader observes them. `eu.kanade.tachiyomi.*` comes only from that versioned child loader; AndroidX Preference and other common libraries remain parent-first so Android resources are merged. Venera accepts page-number `load` and cursor `loadNext`, preserves legacy global `res` script behavior, uses a 55-second bounded invocation limit, and routes ordinary HTTP(S) covers plus transient page tokens through the isolated resource bridge.
+- Mihon 多章节漫画必须返回来源目录中的全部章节。只有目录为空时才能创建单一 synthetic 章节；读取真实章节时必须复用或重新匹配对应 `SChapter`，禁止把 manga URL、第一章对象或 synthetic 标记应用到非空目录。
+- Mihon/Venera 自定义设置必须归一化为 toggle/text/select/multiSelect/action。Venera 值必须在 runtime 私有存储中保持 boolean/string/list 类型，且只有已批准 persistentStorage capability 才可读写；设置更新不得绕过统一 restart/session 关闭流程。

@@ -4,7 +4,7 @@ import 'comic_source.dart';
 
 enum SourceContentRating { safe, suggestive, erotica, pornographic }
 
-enum ComicSourceSettingKind { toggle, text, select, multiSelect }
+enum ComicSourceSettingKind { toggle, text, select, multiSelect, action }
 
 final class ComicSourceSettingChoice {
   const ComicSourceSettingChoice({

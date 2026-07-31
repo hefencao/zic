@@ -16,6 +16,7 @@ python3 "$ROOT/tool/test_mihon_payload_context.py"
 python3 "$ROOT/tool/test_mihon_abi_routing.py"
 python3 "$ROOT/tool/test_mihon_classloader_contract.py"
 python3 "$ROOT/tool/test_mihon_read_only_payload.py"
+python3 "$ROOT/tool/test_mihon_chapter_contract.py"
 python3 "$ROOT/tool/test_venera_response_headers.py"
 if command -v node >/dev/null 2>&1; then
   python3 "$ROOT/tool/test_venera_bootstrap.py"

@@ -333,6 +333,7 @@ private class VeneraNativeBridge(
                 "save_data" -> saveData(message)
                 "delete_data" -> deleteData(message)
                 "load_setting" -> loadSetting(message)
+                "save_setting" -> saveSetting(message)
                 "convert" -> convert(message)
                 "uuid" -> UUID.randomUUID().toString()
                 "random" -> random(message)
@@ -755,7 +756,36 @@ private class VeneraNativeBridge(
 
     private fun loadSetting(message: JSONObject): Any? {
         requireCapability("persistentStorage")
-        return preferences.getString("setting:${message.getString("setting_key")}", null)
+        val raw = preferences.getString(
+            "setting:${message.getString("setting_key")}",
+            null,
+        ) ?: return null
+        return runCatching {
+            decodeWireValue(JSONObject(raw).opt("value"))
+        }.getOrElse {
+            // dev.58 stored setting values as plain strings. Preserve text,
+            // while recovering booleans and string lists that otherwise have
+            // different JavaScript truthiness/type semantics.
+            when (raw.trim().lowercase(Locale.US)) {
+                "true" -> true
+                "false" -> false
+                else -> runCatching {
+                    val array = JSONArray(raw)
+                    List(array.length()) { index -> array.optString(index) }
+                }.getOrDefault(raw)
+            }
+        }
+    }
+
+    private fun saveSetting(message: JSONObject): Any? {
+        requireCapability("persistentStorage")
+        val key = message.getString("setting_key")
+        val value = decodeWireValue(message.opt("value"))
+        preferences.edit().putString(
+            "setting:$key",
+            JSONObject().put("value", encodeWireValue(value)).toString(),
+        ).apply()
+        return null
     }
 
     private fun convert(message: JSONObject): Any {
@@ -1414,11 +1444,38 @@ class ComicSource {
   saveData(dataKey,data){return sendMessage({method:'save_data',key:this.key,data_key:dataKey,data})}
   deleteData(dataKey){return sendMessage({method:'delete_data',key:this.key,data_key:dataKey})}
   loadSetting(key){const stored=sendMessage({method:'load_setting',key:this.key,setting_key:key});if(stored!==null&&stored!==undefined)return stored;const setting=this.settings?.[key];if(setting===null||setting===undefined)return null;if(typeof setting!=='object')return setting;if(setting.default!==undefined)return setting.default;const first=setting.options?.[0];return first&&typeof first==='object'?(first.value??first.key??null):(first??null)}
+  saveSetting(key,value){return sendMessage({method:'save_setting',key:this.key,setting_key:key,value})}
   get isLogged(){return sendMessage({method:'isLogged',key:this.key})}
   translate(key){return this.translation?.[APP.locale]?.[key]??key}
 }
 const APP={get version(){return appVersion},get locale(){return sendMessage({method:'getLocale'})},get platform(){return 'android'}};
-const UI={showMessage(){},showDialog:async()=>{},launchUrl(){},showLoading:()=>0,cancelLoading(){},showInputDialog:async()=>null,showSelectDialog:async()=>null};
+
+function __zicTranslateSetting(source,value){const text=String(value??'');try{return typeof source?.translate==='function'?String(source.translate(text)):text}catch(_){return text}}
+function __zicSettingChoices(source,setting){const values=Array.isArray(setting?.options)?setting.options:[];return values.map(option=>{if(option&&typeof option==='object'){const value=String(option.value??option.key??option.id??'');const label=__zicTranslateSetting(source,option.text??option.label??option.title??value);return{value,label}}const raw=String(option??''),split=raw.indexOf('-');const value=split<0?raw:raw.slice(0,split),label=split<0?raw:raw.slice(split+1);return{value,label:__zicTranslateSetting(source,label)}}).filter(choice=>choice.value!=='')}
+function __zicSettingSensitive(key,setting){if(setting?.sensitive===true||setting?.obscure===true)return true;return /password|passwd|token|cookie|secret|api.?key|密码|令牌/i.test(String(key)+' '+String(setting?.title??''))}
+function __zicSourceSettings(source){const settings=source?.settings;if(!settings||typeof settings!=='object')return[];const result=[];for(const [key,setting] of Object.entries(settings)){if(!setting||typeof setting!=='object')continue;const type=String(setting.type??'text').toLowerCase(),title=__zicTranslateSetting(source,setting.title??key),summaryValue=setting.summary??setting.description??null,summary=summaryValue==null?null:__zicTranslateSetting(source,summaryValue);let kind,value,choices=[];
+ if(type==='switch'||type==='bool'||type==='boolean'){kind='toggle';value=Boolean(source.loadSetting(key))}
+ else if(type==='select'||type==='dropdown'){kind='select';choices=__zicSettingChoices(source,setting);const loaded=source.loadSetting(key);value=String(loaded??choices[0]?.value??'')}
+ else if(type==='multiselect'||type==='multi-select'||type==='multiple'){kind='multiSelect';choices=__zicSettingChoices(source,setting);const loaded=source.loadSetting(key);value=Array.isArray(loaded)?loaded.map(String):(loaded==null?[]:[String(loaded)])}
+ else if(type==='callback'||type==='action'||type==='button'){kind='action';value=__zicTranslateSetting(source,setting.buttonText??setting.text??'执行')}
+ else if(type==='input'||type==='text'||type==='string'){kind='text';value=String(source.loadSetting(key)??'')}
+ else continue;
+ result.push({key:String(key),title,summary,kind,value,sensitive:__zicSettingSensitive(key,setting),choices})}return result}
+async function __zicUpdateSourceSetting(source,key,value){const setting=source?.settings?.[key];if(!setting||typeof setting!=='object')throw new Error('Venera source setting is unavailable: '+String(key));const type=String(setting.type??'text').toLowerCase();
+ if(type==='callback'||type==='action'||type==='button'){if(typeof setting.callback!=='function')throw new Error('Venera source setting action has no callback: '+String(key));const taskStart=__zicSettingActionTasks.length;__zicSettingActionDepth++;try{const result=await Promise.resolve(setting.callback.call(source));await Promise.all(__zicSettingActionTasks.slice(taskStart));return result}finally{__zicSettingActionDepth--;if(__zicSettingActionDepth===0)__zicSettingActionTasks=[]}}
+ let normalized=value;
+ if(type==='switch'||type==='bool'||type==='boolean'){if(typeof value!=='boolean')throw new Error('Venera switch setting requires a boolean');normalized=value}
+ else if(type==='select'||type==='dropdown'){normalized=String(value??'');const choices=__zicSettingChoices(source,setting);if(choices.length&&!choices.some(choice=>choice.value===normalized))throw new Error('Venera select setting value is unavailable: '+normalized)}
+ else if(type==='multiselect'||type==='multi-select'||type==='multiple'){if(!Array.isArray(value))throw new Error('Venera multi-select setting requires a list');normalized=value.map(String);const allowed=new Set(__zicSettingChoices(source,setting).map(choice=>choice.value));if(allowed.size&&normalized.some(item=>!allowed.has(item)))throw new Error('Venera multi-select setting contains an unavailable value')}
+ else if(type==='input'||type==='text'||type==='string'){normalized=String(value??'')}
+ else throw new Error('Unsupported Venera source setting type: '+type);
+ source.saveSetting(key,normalized);if(typeof setting.onChanged==='function')await Promise.resolve(setting.onChanged.call(source,normalized));return null}
+let __zicSettingActionDepth=0,__zicSettingActionTasks=[];
+const UI={
+ showMessage(){},
+ showDialog:(title,message,buttons=[])=>{if(__zicSettingActionDepth<=0)return Promise.resolve(null);const candidates=Array.isArray(buttons)?buttons:[],action=[...candidates].reverse().find(item=>typeof item?.callback==='function'&&!/cancel|close|no|取消|关闭|否/i.test(String(item?.text??'')))??candidates.find(item=>typeof item?.callback==='function'),task=Promise.resolve().then(()=>action?typeof action.callback==='function'?action.callback():null:null);__zicSettingActionTasks.push(task);return task},
+ launchUrl(){},showLoading:()=>0,cancelLoading(){},showInputDialog:async()=>null,showSelectDialog:async()=>null
+};
 async function compute(func,...args){return (0,eval)('('+func+')')(args)}
 function __zicB64(value){return btoa(unescape(encodeURIComponent(JSON.stringify(value)))).replaceAll('+','-').replaceAll('/','_').replaceAll('=','')}
 function __zicUnb64(value){let raw=value.replaceAll('-','+').replaceAll('_','/');while(raw.length%4)raw+='=';return JSON.parse(decodeURIComponent(escape(atob(raw))))}
@@ -1496,6 +1553,8 @@ async function __zicOperation(request){
   const pages=[];for(let i=0;i<images.length;i++){const token=__zicRetainResource({image:String(images[i]),comicId:chapter.comicRawId,epId:chapter.epId,deferredImageConfig:true});pages.push({chapterId:args.chapterId,pageId:String(args.chapterId)+':'+i,index:i,uri:'venera-resource://'+token})}
   return {comicId:chapter.comicId,chapter:__zicChapterMessage(chapter.comicId,chapter.epId,chapter.title,chapter.sequence,pages.length),pages,readingDirection:'vertical'};
  }
+ if(request.operation==='loadSourceSettings')return __zicSourceSettings(source);
+ if(request.operation==='updateSourceSetting')return await __zicUpdateSourceSetting(source,String(args.key||''),args.value);
  if(request.operation==='loadResource'){
   const uri=String(args.uri||'');const isToken=uri.startsWith('venera-resource://');let token=null,config;
   if(isToken){token=uri.slice('venera-resource://'.length);config=__zicGetResource(token);if(!config)throw new Error('Venera resource token expired')}

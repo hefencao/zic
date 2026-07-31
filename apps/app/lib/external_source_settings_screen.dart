@@ -7,13 +7,13 @@ final class ExternalSourceSettingsScreen extends StatefulWidget {
   const ExternalSourceSettingsScreen({
     required this.source,
     required this.onApply,
-    required this.onLogin,
+    this.onLogin,
     super.key,
   });
 
   final BrowsableComicSource source;
   final Future<void> Function() onApply;
-  final Future<void> Function() onLogin;
+  final Future<void> Function()? onLogin;
 
   @override
   State<ExternalSourceSettingsScreen> createState() =>
@@ -148,6 +148,26 @@ final class _ExternalSourceSettingsScreenState
     }
   }
 
+  Future<void> _invokeAction(ComicSourceSetting setting) async {
+    setState(() {
+      _working = true;
+      _error = null;
+    });
+    try {
+      await _source.updateSetting(setting.key, true);
+      final settings = await _source.loadSettings();
+      if (!mounted) return;
+      setState(() => _settings = settings);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('插件操作已执行')),
+      );
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = error);
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
   Future<void> _selectMany(ComicSourceSetting setting) async {
     final selected = Set<String>.from(setting.value as List<String>);
     final value = await showDialog<List<String>>(
@@ -210,12 +230,15 @@ final class _ExternalSourceSettingsScreenState
           ? const Center(child: CircularProgressIndicator())
           : ListView(
               children: <Widget>[
-                ListTile(
-                  leading: const Icon(Icons.login),
-                  title: const Text('网页登录'),
-                  subtitle: Text(widget.source.descriptor.website.toString()),
-                  onTap: _working ? null : () => unawaited(widget.onLogin()),
-                ),
+                if (widget.onLogin != null)
+                  ListTile(
+                    leading: const Icon(Icons.login),
+                    title: const Text('网页登录'),
+                    subtitle: Text(widget.source.descriptor.website.toString()),
+                    onTap: _working
+                        ? null
+                        : () => unawaited(widget.onLogin!()),
+                  ),
                 if (_error != null)
                   Padding(
                     padding: const EdgeInsets.all(12),
@@ -227,9 +250,11 @@ final class _ExternalSourceSettingsScreenState
                     ),
                   ),
                 if (_settings.isEmpty)
-                  const ListTile(
-                    title: Text('该漫画源没有扩展自定义设置'),
-                    subtitle: Text('仍可使用网页登录建立 Cookie 会话'),
+                  ListTile(
+                    title: const Text('该漫画源没有扩展自定义设置'),
+                    subtitle: widget.onLogin == null
+                        ? null
+                        : const Text('仍可使用网页登录建立 Cookie 会话'),
                   ),
                 for (final setting in _settings) _settingTile(setting),
                 if (_working) const LinearProgressIndicator(),
@@ -282,6 +307,17 @@ final class _ExternalSourceSettingsScreenState
           ),
           trailing: const Icon(Icons.checklist),
           onTap: _working ? null : () => unawaited(_selectMany(setting)),
+        );
+      case ComicSourceSettingKind.action:
+        return ListTile(
+          title: Text(setting.title),
+          subtitle: setting.summary == null ? null : Text(setting.summary!),
+          trailing: FilledButton.tonal(
+            onPressed: _working
+                ? null
+                : () => unawaited(_invokeAction(setting)),
+            child: Text(setting.value as String),
+          ),
         );
     }
   }

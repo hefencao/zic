@@ -59,6 +59,8 @@ internal class MihonRuntimeDriver private constructor(
     override val runtimeId: String,
     private val executor: ExecutorService,
     private val sourceById: ConcurrentHashMap<String, Any>,
+    private val chapterById: ConcurrentHashMap<String, Any>,
+    private val chapterIdsByComic: ConcurrentHashMap<String, Set<String>>,
     private val payloadContext: Context,
     private val runtimeRoot: File,
     private val maxResponseBytes: Int,
@@ -193,6 +195,8 @@ internal class MihonRuntimeDriver private constructor(
                 runCatching { source.invokeOptional("close") }
             }
             sourceById.clear()
+            chapterById.clear()
+            chapterIdsByComic.clear()
         }
         if (runtimeDeleted.compareAndSet(false, true)) {
             runtimeRoot.deleteRecursively()
@@ -237,6 +241,30 @@ internal class MihonRuntimeDriver private constructor(
     }
 
     private fun loadComic(source: Any, comicId: String, requestId: String): Map<String, Any?> {
+        val catalog = loadMihonComicCatalog(source, comicId, requestId)
+        val selectedChapters = selectMihonChapters(catalog.chapters) {
+            createSyntheticMihonChapter(source, catalog.manga)
+        }
+        val chapterMessages = selectedChapters.chapters.mapIndexed { index, chapter ->
+            chapterMessage(
+                chapter = chapter,
+                comicId = comicId,
+                sequence = index,
+                synthetic = selectedChapters.synthetic,
+            )
+        }
+        rememberMihonChapters(comicId, selectedChapters.chapters, chapterMessages)
+        return mapOf(
+            "comic" to comicMessage(catalog.manga, comicId),
+            "chapters" to chapterMessages,
+        )
+    }
+
+    private fun loadMihonComicCatalog(
+        source: Any,
+        comicId: String,
+        requestId: String,
+    ): MihonComicCatalog {
         val encoded = decodeOpaque(comicId, "manga")
         val manga = createModel(
             source.javaClass.classLoader,
@@ -254,44 +282,124 @@ internal class MihonRuntimeDriver private constructor(
             null
         }
         ensureNotCancelled(requestId)
-        val detailedManga: Any
-        val chapters: List<Any>
         if (update != null) {
-            detailedManga = update.readValue("manga", "getManga") ?: manga
-            chapters = update.readList("chapters", "getChapters")
-        } else {
-            detailedManga = source.invokeFirst(
-                listOf(
-                    Invocation("getMangaDetails", listOf(manga)),
-                    Invocation("fetchMangaDetails", listOf(manga)),
-                ),
-            ).unwrapAsync()
-            ensureNotCancelled(requestId)
-            chapters = source.invokeFirst(
-                listOf(
-                    Invocation("getChapterList", listOf(detailedManga)),
-                    Invocation("fetchChapterList", listOf(detailedManga)),
-                ),
-            ).unwrapAsync().asObjectList()
+            return MihonComicCatalog(
+                manga = update.readValue("manga", "getManga") ?: manga,
+                chapters = update.readList("chapters", "getChapters"),
+            )
         }
-        val chapterMessages = chapters.mapIndexed { index, chapter ->
-            chapterMessage(chapter, comicId, index)
-        }
-        return mapOf(
-            "comic" to comicMessage(detailedManga, comicId),
-            "chapters" to chapterMessages,
+        val detailedManga = source.invokeFirst(
+            listOf(
+                Invocation("getMangaDetails", listOf(manga)),
+                Invocation("fetchMangaDetails", listOf(manga)),
+            ),
+        ).unwrapAsync()
+        ensureNotCancelled(requestId)
+        val chapters = source.invokeFirst(
+            listOf(
+                Invocation("getChapterList", listOf(detailedManga)),
+                Invocation("fetchChapterList", listOf(detailedManga)),
+            ),
+        ).unwrapAsync().asObjectList()
+        ensureNotCancelled(requestId)
+        return MihonComicCatalog(detailedManga, chapters)
+    }
+
+    private fun createSyntheticMihonChapter(source: Any, manga: Any): Any {
+        val chapter = createModel(
+            source.javaClass.classLoader,
+            "eu.kanade.tachiyomi.source.model.SChapter",
+            JSONObject()
+                .put("url", manga.readString("url", "getUrl").orEmpty())
+                .put("name", "正文")
+                .put("chapter_number", 1f)
+                .put("date_upload", 0L)
+                .put("scanlator", ""),
         )
+        runCatching {
+            source.invokeCompatible("prepareNewChapter", listOf(chapter, manga))
+        }
+        return chapter
+    }
+
+    private fun rememberMihonChapters(
+        comicId: String,
+        chapters: List<Any>,
+        messages: List<Map<String, Any?>>,
+    ) {
+        val ids = messages.map { message -> message.getValue("chapterId") as String }.toSet()
+        synchronized(chapterById) {
+            chapterIdsByComic.put(comicId, ids)
+                ?.filterNot { id -> ids.contains(id) }
+                ?.forEach { id -> chapterById.remove(id) }
+            chapters.zip(messages).forEach { (chapter, message) ->
+                chapterById[message.getValue("chapterId") as String] = chapter
+            }
+            while (chapterById.size > MAX_CACHED_MIHON_CHAPTERS) {
+                val evictedComicId = chapterIdsByComic.keys.firstOrNull { it != comicId } ?: break
+                chapterIdsByComic.remove(evictedComicId)
+                    ?.forEach { id -> chapterById.remove(id) }
+            }
+        }
+    }
+
+    private fun resolveMihonChapter(
+        source: Any,
+        chapterId: String,
+        encoded: JSONObject,
+        requestId: String,
+    ): Any {
+        chapterById[chapterId]?.let { return it }
+        val comicId = encoded.optString("comicId")
+        require(comicId.isNotBlank()) { "chapter comic identity is missing" }
+        if (encoded.optBoolean("synthetic")) {
+            val manga = createModel(
+                source.javaClass.classLoader,
+                "eu.kanade.tachiyomi.source.model.SManga",
+                decodeOpaque(comicId, "manga"),
+            )
+            return createModel(
+                source.javaClass.classLoader,
+                "eu.kanade.tachiyomi.source.model.SChapter",
+                encoded,
+            ).also { chapter ->
+                runCatching {
+                    source.invokeCompatible("prepareNewChapter", listOf(chapter, manga))
+                }
+            }
+        }
+        val catalog = loadMihonComicCatalog(source, comicId, requestId)
+        val selectedChapters = selectMihonChapters(catalog.chapters) {
+            createSyntheticMihonChapter(source, catalog.manga)
+        }
+        val messages = selectedChapters.chapters.mapIndexed { index, chapter ->
+            chapterMessage(
+                chapter = chapter,
+                comicId = comicId,
+                sequence = index,
+                synthetic = selectedChapters.synthetic,
+            )
+        }
+        rememberMihonChapters(comicId, selectedChapters.chapters, messages)
+        chapterById[chapterId]?.let { return it }
+        val matches = selectedChapters.chapters.filter { chapter ->
+            mihonChapterMatches(chapter, encoded)
+        }
+        require(matches.size == 1) {
+            if (matches.isEmpty()) {
+                "Mihon chapter is no longer present in the source catalog"
+            } else {
+                "Mihon chapter identity is ambiguous after source refresh"
+            }
+        }
+        return matches.single().also { chapterById[chapterId] = it }
     }
 
     private fun loadChapter(source: Any, chapterId: String, requestId: String): Map<String, Any?> {
         val encoded = decodeOpaque(chapterId, "chapter")
         val comicId = encoded.optString("comicId")
         require(comicId.isNotBlank()) { "chapter comic identity is missing" }
-        val chapter = createModel(
-            source.javaClass.classLoader,
-            "eu.kanade.tachiyomi.source.model.SChapter",
-            encoded,
-        )
+        val chapter = resolveMihonChapter(source, chapterId, encoded, requestId)
         val pages = source.invokeFirst(
             listOf(
                 Invocation("getPageList", listOf(chapter)),
@@ -313,10 +421,12 @@ internal class MihonRuntimeDriver private constructor(
             )
         }
         val resolvedChapter = chapterMessage(
-            chapter,
-            comicId,
-            encoded.optInt("sequence", 0),
+            chapter = chapter,
+            comicId = comicId,
+            sequence = encoded.optInt("sequence", 0),
+            synthetic = encoded.optBoolean("synthetic"),
         ).toMutableMap().apply {
+            put("chapterId", chapterId)
             put("pageCount", pageMessages.size)
         }
         return mapOf(
@@ -605,10 +715,16 @@ internal class MihonRuntimeDriver private constructor(
                 ?.let { put("description", it) }
         }
 
-    private fun chapterMessage(chapter: Any, comicId: String, sequence: Int): Map<String, Any?> {
+    private fun chapterMessage(
+        chapter: Any,
+        comicId: String,
+        sequence: Int,
+        synthetic: Boolean = false,
+    ): Map<String, Any?> {
         val json = mihonModelJson(chapter).apply {
             put("comicId", comicId)
             put("sequence", sequence)
+            if (synthetic) put("synthetic", true)
         }
         val id = encodeOpaque("chapter", json)
         val title = chapter.readString("name", "getName")?.ifBlank { null }
@@ -763,6 +879,8 @@ internal class MihonRuntimeDriver private constructor(
                     runtimeId = "mihon:$pluginId:$version",
                     executor = executor,
                     sourceById = ConcurrentHashMap(discovered),
+                    chapterById = ConcurrentHashMap(),
+                    chapterIdsByComic = ConcurrentHashMap(),
                     payloadContext = extensionContext,
                     runtimeRoot = runtimeRoot,
                     maxResponseBytes = maxResponseBytes,
@@ -774,6 +892,49 @@ internal class MihonRuntimeDriver private constructor(
             }
         }
     }
+}
+
+private data class MihonComicCatalog(
+    val manga: Any,
+    val chapters: List<Any>,
+)
+
+internal data class MihonChapterSelection<T>(
+    val chapters: List<T>,
+    val synthetic: Boolean,
+)
+
+internal inline fun <T> selectMihonChapters(
+    chapters: List<T>,
+    createSynthetic: () -> T,
+): MihonChapterSelection<T> = if (chapters.isEmpty()) {
+    MihonChapterSelection(listOf(createSynthetic()), synthetic = true)
+} else {
+    MihonChapterSelection(chapters, synthetic = false)
+}
+
+private const val MAX_CACHED_MIHON_CHAPTERS = 4096
+
+internal fun mihonChapterMatches(chapter: Any, encoded: JSONObject): Boolean {
+    val encodedUrl = encoded.optString("url").trim()
+    val liveUrl = chapter.readString("url", "getUrl").orEmpty().trim()
+    if (encodedUrl.isNotEmpty() && liveUrl.isNotEmpty()) return encodedUrl == liveUrl
+    val encodedName = encoded.optString("name").trim()
+    val liveName = chapter.readString("name", "getName").orEmpty().trim()
+    val encodedNumber = encoded.optDouble("chapter_number", Double.NaN)
+    val liveNumber = (chapter.readValue(
+        "chapter_number",
+        "getChapter_number",
+        "getChapterNumber",
+    ) as? Number)?.toDouble()
+    val encodedScanlator = encoded.optString("scanlator").trim()
+    val liveScanlator = chapter.readString("scanlator", "getScanlator").orEmpty().trim()
+    val encodedDate = encoded.optLong("date_upload", Long.MIN_VALUE)
+    val liveDate = chapter.readLong("date_upload", "getDate_upload", "getDateUpload")
+    return encodedName.isNotEmpty() && encodedName == liveName &&
+        (encodedNumber.isNaN() || liveNumber == null || encodedNumber == liveNumber) &&
+        (encodedScanlator.isEmpty() || encodedScanlator == liveScanlator) &&
+        (encodedDate == Long.MIN_VALUE || liveDate == null || encodedDate == liveDate)
 }
 
 private const val ZIC_REQUEST_LIMIT_KEY = "__zic_request_limit"

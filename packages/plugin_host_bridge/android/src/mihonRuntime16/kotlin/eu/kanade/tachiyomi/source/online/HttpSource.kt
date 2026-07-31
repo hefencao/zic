@@ -111,6 +111,9 @@ abstract class HttpSource : CatalogueSource {
         client.newCall(chapterListRequest(manga))
             .asObservableSuccess()
             .map(::chapterListParse)
+            .map { chapters ->
+                chapters.onEach { chapter -> prepareNewChapter(chapter, manga) }
+            }
 
     protected open fun chapterListRequest(manga: SManga): Request = GET(baseUrl + manga.url, headers)
 
