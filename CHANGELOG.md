@@ -1,3 +1,16 @@
+## 0.31.0-dev.70：VibeVenera 风格流式来源管线与稳定进度
+
+- 以 dev.69 为唯一基线，对照用户上传的 VibeVenera `Streaming Image Pipeline Architecture`、共享下载流、稳定预取窗口和进度 publisher，撤销“Venera 只请求当前页”的退化。
+- 新增 `ComicResourceRequest` 能力边界：插件只解析图片 URL、method、headers、body 与变换需求；普通图片正文由共享 host transport 直接流入既有 `DownloadSession -> Artifact -> Ingress`，不再等待完整 `Uint8List` 或经插件 RPC 搬运整图。
+- Venera 稳定窗口恢复为前向 7 页、后向 3 页下载；前向 2 页、后向 1 页可预解码；只有当前/过渡页上传。network/decode/upload lane 分别为 5/3/2，JavaScript request-plan runtime 仍串行，避免全局 request context 串号。
+- GET/HEAD 在 JS 和 Dart transport 两层强制无 body/实体 headers；同 locator 的并发 request-plan 解析共享进行中的 Future。来源 `onLoadFailed` 只生成替代 request plan，不再迫使普通图片回退到完整 RPC body。
+- 章节持久下载优先使用 streaming `ByteResponse`，每个 chunk 更新 authoritative session；80ms 合并投影真实已收字节和页内进度。下载管理在首个 chunk 后退出“连接中”不定进度，完成页不再重现网络态。
+- Reader 当前页进度独立为 `ReaderDownloadProgressPublisher`：立即同步页切换、只显示 queued/receiving，sealed/promoted/restore 均隐藏，避免已完成页面切换时进度条闪烁。
+- 流响应支持 subscription cancel/discard；错误响应不再为重试完整读取正文。普通窗口 detach 仍保留已经 receiving 的连接，显式取消/关闭才终止，遵循 VibeVenera 的 detach-not-eviction 规则。
+- Debug trace 对 Venera resource/comic/chapter 的 Base64 locator 使用 hash+长度摘要，identity 与嵌套 payload 均不再打印完整 token。
+- Pipeline demand 去重与 viewport/playback 更新解耦：相同 role window 不重复提交下载/解码，但拖动覆盖率仍逐 observation 更新呈现；同 sourceId 的新 wrapper 也不会关闭旧 Reader 正在使用的活动 transport。
+- 新增 GET 零上传、首 chunk 早于完整 body、显式 discard、runtime transform fallback、`onLoadFailed` 替代计划、章节 chunk 进度、完成 artifact 不闪烁、7/3 下载与 2/1 预解码分层回归。
+
 ## 0.31.0-dev.69：Venera 原生二进制、请求取消与稳定连续锚点
 
 - 对 dev.65–68 做差异审计并记录未闭环项：durable locator 到 dev.68 已进入真实日志，但普通图片正文仍经 JavaScript/Base64 桥；原生连接在 demand 解除后继续到超时；尺寸更新会调用当前页同步；纵向测试仍直接读取未构建 lazy separator。

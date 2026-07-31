@@ -39,6 +39,30 @@ void main() {
     expect((decoded.payload! as Uint8List).toList(), <int>[1, 2, 3]);
   });
 
+  test('resource request and retry operations share the absolute URI schema',
+      () {
+    final uri = Uri.parse('venera-resource:durable-page');
+    final resolved = ExternalPluginRuntimeRequest.fromMessage(
+      ExternalPluginRuntimeRequest.resolveResource(
+        requestId: 'resolve-1',
+        externalSourceId: 'fixture',
+        uri: uri,
+      ).toMessage(),
+    );
+    final retried = ExternalPluginRuntimeRequest.fromMessage(
+      ExternalPluginRuntimeRequest.retryResource(
+        requestId: 'retry-1',
+        externalSourceId: 'fixture',
+        uri: uri,
+      ).toMessage(),
+    );
+
+    expect(resolved.operation, ExternalPluginRuntimeOperation.resolveResource);
+    expect(retried.operation, ExternalPluginRuntimeOperation.retryResource);
+    expect(resolved.arguments['uri'], uri.toString());
+    expect(retried.arguments['uri'], uri.toString());
+  });
+
   test('source handshake round-trips ratings without runtime code', () {
     final descriptor = ExternalPluginRuntimeSourceDescriptor(
       externalId: 'fixture',

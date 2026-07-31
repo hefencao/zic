@@ -52,8 +52,23 @@ def main() -> None:
         "_reportPageDimensions",
         "BoxFit.fitWidth",
         "mediaFit",
-        "forwardEncodedPages: 0",
-        "PolicyGuard(maxDownloadDemands: 1)",
+        "readerPipelineProfileFor(widget.chapter)",
+        "_pipelineProfile.windowResolver",
+        "_pipelineProfile.policy",
+        "_pipelineProfile.guard",
+    )
+    require(
+        "packages/reader_runtime/lib/src/reader_pipeline_profile.dart",
+        "final class ReaderPipelineProfile",
+        "forwardEncodedPages: 7",
+        "backwardEncodedPages: 3",
+        "forwardDecodePages: 2",
+        "backwardDecodePages: 1",
+        "HeuristicPolicy(decodeWarmPages: true)",
+        "PolicyGuard(maxDownloadDemands: 11)",
+        "networkConcurrency: 5",
+        "decodeConcurrency: 3",
+        "uploadConcurrency: 2",
     )
     reject(
         "packages/reader_runtime/lib/src/reader_runtime_screen.dart",
@@ -62,6 +77,8 @@ def main() -> None:
         "ReaderAppBarActionsBuilder",
         "appBarActionsBuilder",
         "readerDirectionMenuKey",
+        "forwardEncodedPages: 0",
+        "PolicyGuard(maxDownloadDemands: 1)",
     )
     reject(
         "packages/local_media_ui/lib/src/local_media_screens.dart",

@@ -1,3 +1,12 @@
+## dev.70：VibeVenera 风格 request-plan / streaming-body 分离
+
+- Venera source runtime 只负责 `onImageLoad`/`onLoadFailed` 及 Cookie/header/request-plan 解析；普通图片 body 由 composition-owned `ExternalPluginResourceTransportPool` 使用 Dart `HttpClient` 直接流入 DownloadSession。
+- request-plan 与 body 所有权分离后，Reader、持久章节下载和整本队列复用同一 response-loader/transport/artifact 边界；需要 `onResponse`/`modifyImage` 的来源才使用完整 runtime fallback。
+- 稳定资源窗口为下载 +7/-3、预解码 +2/-1、上传 current/transition；lane 为 network/decode/upload 5/3/2。普通来源继续使用标准 profile。
+- 正常 role-window detach 不取消 receiving 连接；显式 cancel/dispose 通过 Stream subscription 取消 response。错误响应直接 abort，不为重试读取完整错误 body。
+- ChapterDownloadSnapshot 使用 completed pages + 当前页 chunk fraction，80ms 合并发布；Reader 只显示 queued/receiving，promoted/sealed/restore 隐藏。
+- trace 构造时递归摘要 Venera locator，避免 Debug trace 被完整 Base64 identity 淹没。
+
 ## dev.69：Venera 原生字节与稳定连续 Reader
 
 - 完成 dev.65–68 回归审计，明确区分 locator、图片正文传输、取消、pipeline 重提和连续布局锚点五条链路。

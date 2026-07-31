@@ -175,6 +175,35 @@ async function checkLegacyChapterResourceToken(){
  if(requests!==1)throw new Error('legacy resource token compatibility failed');
 }
 
+
+async function checkStreamableOnLoadFailedConfig(){
+ const locator='venera-resource:'+__zicB64({v:1,image:'streamable',comicId:'comic',epId:'ep'});
+ let failedCalls=0,nativeCalls=0;
+ ZicNative.request=raw=>{
+   const message=__zicDecode(JSON.parse(raw));
+   if(message.method==='cookie'&&message.function==='get')return JSON.stringify({ok:true,value:__zicEncode([])});
+   if(message.method==='http'||message.method==='http_binary')nativeCalls++;
+   throw new Error('request-plan operation unexpectedly invoked native '+message.method);
+ };
+ globalThis.__zicSource={comic:{
+   onImageLoad:async()=>({
+     url:'https://cdn.invalid/original.webp',
+     headers:{Referer:'https://gallery.invalid/'},
+     onLoadFailed:async()=>{
+       failedCalls++;
+       return {url:'https://cdn.invalid/retry.webp',headers:{Referer:'https://gallery.invalid/'}};
+     },
+   }),
+ }};
+ const resolved=await __zicOperation({operation:'resolveResource',arguments:{uri:locator}});
+ if(resolved.url!=='https://cdn.invalid/original.webp'||resolved.requiresRuntimeTransform!==false)throw new Error('streamable onLoadFailed request was forced through runtime bytes '+JSON.stringify(resolved));
+ if(resolved.headers['Accept-Encoding']!=='identity')throw new Error('streamable request lost identity encoding '+JSON.stringify(resolved));
+ if(failedCalls!==0||nativeCalls!==0)throw new Error('resolveResource executed the retry/body path '+JSON.stringify({failedCalls,nativeCalls}));
+ const retry=await __zicOperation({operation:'retryResource',arguments:{uri:locator}});
+ if(!retry.available||retry.request.url!=='https://cdn.invalid/retry.webp'||retry.request.requiresRuntimeTransform!==false)throw new Error('retryResource did not return a replacement request plan '+JSON.stringify(retry));
+ if(failedCalls!==1||nativeCalls!==0)throw new Error('retryResource invoked the wrong path '+JSON.stringify({failedCalls,nativeCalls}));
+}
+
 async function checkChapterImageConfigIsDeferred(){
  const comicId='venera:comic:'+__zicB64({id:'deferred-comic',title:'Deferred'});
  const chapter=__zicChapterMessage(comicId,'ep-deferred','Deferred episode',0);
@@ -291,7 +320,7 @@ async function checkInvokeRequestLifecycle(){
  if(seenRequestId!=='invoke-lifecycle'||completed?.requestId!=='invoke-lifecycle'||finished!=='invoke-lifecycle')throw new Error('invoke lifecycle did not retain the request id '+JSON.stringify({seenRequestId,completed,finished}));
 }
 
-(async()=>{await checkCurrentCategory();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkChapterImageConfigIsDeferred();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
+(async()=>{await checkCurrentCategory();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkChapterImageConfigIsDeferred();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
 '''
 with tempfile.TemporaryDirectory() as td:
     js=Path(td)/'test.js'; js.write_text(bootstrap+'\n'+test)

@@ -7,6 +7,7 @@ import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:test/test.dart';
+import 'package:transport/transport.dart';
 
 void main() {
   test('managed chapter service is a cache-maintenance capability', () async {
@@ -207,6 +208,81 @@ void main() {
     expect(requested, <Uri>[Uri.parse('mihon:resource:opaque-page')]);
     expect(await service.readPage(entry, 0), bytes);
     expect((await service.inspect(entry)).phase, ChapterDownloadPhase.complete);
+  });
+
+  test('persistent plugin download publishes streamed byte progress in order',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-plugin-stream-progress-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'venera:fixture:comic',
+        displayName: '流式章节',
+        sourceId: 'venera:fixture',
+        comicId: 'comic',
+        comicTitle: '流式进度测试',
+        chapterId: 'chapter',
+        sourceRevision: 'r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '1.webp',
+            sourceId: 'venera-resource:stream-page',
+            pageId: 'page-1',
+            contentKindHint: ContentKindHint.webp,
+          ),
+        ],
+      ),
+    );
+    final release = Completer<void>();
+    final controller = StreamController<List<int>>();
+    addTearDown(() async {
+      if (!release.isCompleted) release.complete();
+      if (!controller.isClosed) await controller.close();
+    });
+    final service = await PersistentChapterDownloadService.open(directory.path);
+    addTearDown(service.close);
+    service.setChapterResourceTransport(
+      (sourceId, uri, {range, validators}) async {
+        scheduleMicrotask(() async {
+          controller.add(<int>[1, 2, 3]);
+          await release.future;
+          controller.add(<int>[4, 5, 6]);
+          await controller.close();
+        });
+        return ByteResponse(
+          bytes: controller.stream,
+          statusCode: HttpStatus.ok,
+          rangeStart: 0,
+          totalLength: 6,
+          validators: const Validators(etag: '"stream"'),
+          rangeSupported: true,
+        );
+      },
+    );
+    final events = <ChapterDownloadSnapshot>[];
+    final partial = Completer<ChapterDownloadSnapshot>();
+    final subscription = service.changes.listen((snapshot) {
+      events.add(snapshot);
+      if (!partial.isCompleted &&
+          snapshot.phase == ChapterDownloadPhase.downloading &&
+          snapshot.receivedBytes == 3) {
+        partial.complete(snapshot);
+      }
+    });
+    addTearDown(subscription.cancel);
+
+    final run = service.download(entry);
+    final live = await partial.future.timeout(const Duration(seconds: 2));
+    expect(live.totalBytes, 6);
+    expect(live.fraction, closeTo(0.5, 0.001));
+
+    release.complete();
+    await run;
+    expect(events.last.phase, ChapterDownloadPhase.complete);
+    expect(events.last.receivedBytes, 6);
+    expect(events.last.fraction, 1);
   });
 
   test('memory download publishes progress and delete returns to idle',

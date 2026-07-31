@@ -6,14 +6,20 @@ import 'package:domain/domain.dart';
 import 'transport.dart';
 
 typedef TransportByteLoader = Future<Uint8List> Function();
+typedef TransportResponseLoader = Future<ByteResponse> Function({
+  ByteRange? range,
+  Validators? validators,
+});
 
 final class LoaderTransportSource {
   const LoaderTransportSource({
-    required this.loadBytes,
+    this.loadBytes,
+    this.openResponse,
     required this.revision,
-  });
+  }) : assert(loadBytes != null || openResponse != null);
 
-  final TransportByteLoader loadBytes;
+  final TransportByteLoader? loadBytes;
+  final TransportResponseLoader? openResponse;
   final String revision;
 }
 
@@ -49,7 +55,11 @@ final class LoaderTransport implements Transport {
       );
     }
 
-    final bytes = await source.loadBytes();
+    final openResponse = source.openResponse;
+    if (openResponse != null) {
+      return openResponse(range: range, validators: validators);
+    }
+    final bytes = await source.loadBytes!();
     final contentHash = _fnv64Bytes(bytes);
     final currentValidators = Validators(
       etag: '"${source.revision}-${bytes.length}-$contentHash"',

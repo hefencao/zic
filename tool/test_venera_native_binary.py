@@ -12,6 +12,9 @@ required = (
     'private fun retainNativeBytes(bytes: ByteArray): String',
     'VENERA_MAX_NATIVE_BYTE_PAYLOADS',
     'function __zicNetworkPayload(method,data)',
+    'function __zicDescribeResourceRequest(config)',
+    'async function __zicRetryResourceConfig(uri,source)',
+    "if(request.operation==='retryResource')",
     'fetchBinary:async(method,url,headers,data)',
     "return {__zicNativeBytesToken:direct.nativeBytesToken}",
     'if (method in setOf("GET", "HEAD")) {',
@@ -39,6 +42,24 @@ if "typeof active.onResponse==='function'" not in load_resource:
     raise SystemExit('Venera transformed responses lost the JS compatibility path')
 if "typeof active.modifyImage==='string'" not in load_resource:
     raise SystemExit('Venera image modifiers lost the JS compatibility path')
+
+describe = text.split('function __zicDescribeResourceRequest(config)', 1)[1]
+describe = describe.split('async function __zicRetryResourceConfig', 1)[0]
+if "typeof config.onLoadFailed==='function'" in describe:
+    raise SystemExit(
+        'Venera onLoadFailed must not force the complete image body through RPC'
+    )
+
+transport = (ROOT / 'packages/downloads/lib/src/source_resource_transport.dart').read_text(
+    encoding='utf-8'
+)
+for token in (
+    'RetryableComicResourceSource',
+    'retryable.retryResource(locator)',
+    '_client.autoUncompress = false',
+):
+    if token not in transport:
+        raise SystemExit(f'Venera streaming retry contract is missing: {token}')
 
 executor = (ROOT / 'packages/plugin_host/lib/src/runtime_executors.dart').read_text(
     encoding='utf-8'

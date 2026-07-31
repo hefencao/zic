@@ -6,3 +6,5 @@ export 'src/reader_page_identity.dart';
 
 export 'src/chapter_downloads.dart';
 export 'src/whole_comic_downloads.dart';
+
+export 'src/source_resource_transport.dart';

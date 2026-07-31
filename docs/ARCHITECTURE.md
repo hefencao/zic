@@ -1194,3 +1194,28 @@ Stitched continuous presentation uses adjacent sliver children with no separator
 - Continuous layout owns presentation geometry only. Source dimensions or the already-owned media bytes update `pageAspectRatios`; Reader records the viewport-center page and in-page fraction before reflow and restores that anchor after layout. It never restores while the scroll position is active.
 - Stitched preference is tri-state at per-comic scope. `null` inherits the global value; `true` and `false` explicitly override. Stitched layout creates no separator and overlaps adjacent painted pages by one logical pixel to cover device-pixel rounding without cropping source pixels.
 - Loading indication belongs to the Reader viewport. Page media widgets report first frame and dimensions but do not draw a competing spinner inside continuous page boxes.
+
+
+## Venera request-plan streaming pipeline and progress ownership (dev.70)
+
+Venera integration follows the same ownership split as VibeVenera's streaming pipeline. The plugin runtime resolves an immutable `ComicResourceRequest`; it does not become the body transport for ordinary images. Composition maps that request to a shared `Transport`, and the existing session stack remains the only byte owner.
+
+```text
+Venera onImageLoad/onLoadFailed
+        | request plan only
+        v
+ExternalPluginResourceTransportPool
+        | ByteResponse chunks
+        v
+DownloadSession -> Artifact -> Ingress -> decode source
+        |                         |
+        +-> chapter progress      +-> streaming WebP/GIF/static decode
+```
+
+The stable source-streaming profile classifies pages independently by resource stage: +7/-3 are download-warm, +2/-1 are decode-warm, and only current/transition pages are upload-visible. JavaScript request-plan resolution is serialized because the WebView bridge owns one request context; body network, decode and upload work use independent 5/3/2 lanes.
+
+A role-window detach is not transport eviction. Receiving downloads retain their writer and connection unless an explicit cancel/close occurs. Explicit cancellation propagates through `StreamIterator.cancel` to the response subscription. Progress publishers observe snapshots only: they may coalesce UI updates but cannot queue, cancel, seal, promote or delete artifacts.
+
+### dev.70 viewport/demand separation
+
+`PipelineController` suppresses reconciliation only when the page-role map is unchanged. `ReaderBinding` still resolves and publishes viewport coverage for every observation, so drag/transition playback remains continuous without re-submitting network/decode demands. `ExternalPluginResourceTransportPool` is keyed by source object identity; source-registry replacement never force-closes a transport still owned by an active Reader.

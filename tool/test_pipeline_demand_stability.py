@@ -14,6 +14,22 @@ for token in (
     if token not in pipeline:
         raise SystemExit(f'pipeline stability contract is missing: {token}')
 
+binding = (ROOT / 'packages/sessions/lib/src/reader_binding.dart').read_text(
+    encoding='utf-8'
+)
+for token in (
+    'pipeline.accept(observation);\n    _syncViewport(observation);',
+    '_playback.syncPlayback(viewport, _decodeIds(pipeline.currentPlan))',
+):
+    if token not in binding:
+        raise SystemExit(f'viewport/demand separation contract is missing: {token}')
+
+reader_binding_test = (
+    ROOT / 'packages/sessions/test/reader_binding_test.dart'
+).read_text(encoding='utf-8')
+if "unchanged demand roles still update viewport playback" not in reader_binding_test:
+    raise SystemExit('viewport updates are not covered independently from demand roles')
+
 reader_test = (ROOT / 'packages/reader/test/reader_navigation_test.dart').read_text(
     encoding='utf-8'
 )

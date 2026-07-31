@@ -21,7 +21,12 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.69）
+## 当前应用主线（0.31.0-dev.70）
+
+- Venera 主线采用 request-plan/body 分离：插件解析 URL/header/callback，ZIC Transport/DownloadSession/Artifact 承担流式正文、resume、进度和缓存。
+- 预取不得再次退化：下载窗口固定 +7/-3，预解码 +2/-1，只上传 current/transition；network/decode/upload lane 为 5/3/2，JavaScript request-plan 保持串行。
+- 下载管理与 Reader 进度只能投影 authoritative session；完成/restore 页面不显示网络态，chunk 到达后必须可见真实进度。
+- Android 实机验证重点是 GET 零 body、onImageLoad 调用次数、正文下行、请求上行、首 chunk/首帧时间和 detach 后连接保留/显式取消。
 
 - 完成第四根导航“杂项”，将快捷设置、完整设置、关于和 Debug trace 从 Home 主线分离。
 - 设置按数据/网络/书架/阅读/下载/外观分层；所有可执行项复用既有 store、queue、cache coordinator 与 Reader composition。
@@ -77,85 +82,15 @@
 
 
 
-### dev.69 当前主线约束
+### dev.70 当前主线约束
 
-#### dev.69 当前优先级
+1. 不允许通过缩小为“仅当前页”规避来源性能问题。Venera profile 必须保持稳定的 +7/-3 下载窗口、+2/-1 预解码和 current/transition 上传。
+2. 插件 runtime 只拥有请求方案与来源回调；transport、partial artifact、resume、chunk progress、decode source 和 cache handoff 由 ZIC session 管线拥有。
+3. JavaScript request-plan invocation 必须串行；network/decode/upload lane 并发不得反向提高 runtime 并发。
+4. GET/HEAD 不得携带 body 或实体 headers。普通图片 body 不得经过 JSON/Base64/plugin RPC；只有显式 response transform 才允许 fallback。
+5. normal detach 保留 receiving transport；显式取消必须终止 response subscription。任何 UI progress publisher 都不能改变 writer/session 生命周期。
+6. 已 promoted 或仅 restore 的页面不得显示网络进度；章节进度必须在 chunk 到达时可观察，而不是完整页结束后跳变。
 
-- Venera 普通图片正文不得通过 JSON/Base64 或 JavaScript typed-array 返还宿主；来源确实需要 `onResponse`/`modifyImage` 时才允许进入兼容路径。
-- 每个 runtime invocation 的 bridge HTTP 必须携带 requestId；取消和 demand detach 必须终止对应 native connection，而不只是忽略迟到结果。
-- Venera Reader 默认只请求当前页且 runtime 串行。扩大并发或预取前必须有设备 trace 证明不会重复执行 `onImageLoad` 或上传请求体。
-- Pipeline 输入产生相同 role window 时不得递增 revision 或重新提交同一 demand plan。
-- 连续布局的媒体尺寸、viewport 和拼接设置变化必须保持当前可视锚点；用户拖动时禁止任何自动 `jumpTo`。拼接设置是继承/启用/停用三态。
-- 懒列表测试必须先让目标 child 进入构建范围，再读取 Widget/RenderObject；禁止对未满足 finder 数量的结果使用 `.single` 或 `tester.widget`。
-
-### dev.68 当前主线约束
-
-#### dev.68 当前优先级
-
-- locator 兼容性是 Reader/下载入口不变量，不是详情页刷新选项；任何 generation-scoped Venera token 都必须在创建 page demand 前刷新或失败。
-- 插件资源边界必须在 runtime invocation 前拒绝已知不可恢复 identity；禁止依赖失败后的 pipeline 重试来发现旧 token。
-- deferred plugin resource 的预取窗口和重试次数必须显式受限。扩大窗口或恢复自动重试前需以 trace 证明收益，并分别核算配置解析、HTTP 请求和页面字节流量。
-- 纵向拼接必须从 render tree 中移除 separator，而不是把 separator 高度设置为零；拼接媒体须使用统一的宽度贴合策略，避免 `contain` 的舍入边缘重新露出背景。加载占位可调整布局，但不得裁切或拉伸漫画页。
-
-### dev.67 当前主线约束
-
-#### dev.67 当前优先级
-
-- Reader 页面导航只有一个 Presentation 所有者：底部 Slider 与直接手势。顶部栏、本地媒体适配器和来源详情不得再次实现页码、上一页/下一页或选页菜单。
-- Reader 布局选择只有设置所有者：全局阅读设置与按 `sourceId + comicId` 的每漫画覆盖。顶部快捷布局菜单不得恢复。
-- Reader runtime 的调用方只能提供领域数据或窄化的只读字符串投影，不能注入任意 action Widget、持有 `ReaderController` 或创建第二套导航状态。
-- Reader 组合、会话设置模型和自适应分类必须保持文件级分离；`reader_runtime_screen.dart` 上限为 1500 行。
-- 连续列表命令只有在目标页面完成布局并由 observation 确认后才能 acknowledge；测试必须等待语义条件，不能依赖固定 pump 次数。
-
-### dev.66 当前主线约束
-
-#### dev.66 当前优先级
-
-- Venera 页面 locator 必须跨 runtime generation 可恢复；持久化 legacy token 必须刷新，禁止让 pipeline 对确定性失效 locator 无限重复请求。
-- 并发合并只用于同一逻辑资源的进行中工作；完成后的页面字节继续由 session/artifact/cache 既有所有者持有。
-- 连续布局优先使用来源尺寸，其次使用同一媒体载荷解析出的尺寸。禁止为测量再创建第二条 ImageStream，禁止通过裁切掩盖错误比例。
-- Reader 控制命令必须在目标滚动容器完成 attach/layout 后才 acknowledge；布局切换不得让页码、前后翻页或 slider 进入假成功状态。
-
-- Venera 新章节资源 locator 必须跨 runtime generation 可恢复，并只编码宿主批准的版本化 image/comic/episode identity。不得把任意 URL、header、脚本或网络配置作为可伪造 locator 载荷。legacy runtime token 只作读取兼容。
-- 每漫画设置是 `sourceId + comicId` 的小型 Presentation preference，仅可覆盖 Reader 方向、纵向拼接和自适应开关；不得包含 artifact、下载、缓存、Cookie、插件 session 或 pipeline demand。
-- 自适应布局只选择 Reader presentation mode。输入限于来源/进度方向、页面几何和动画 hint；低置信度回退既有值，hint 不能替代字节嗅探。
-- 纵向连续列表必须保持每页稳定 asset identity。拼接只控制视觉间距，不能把相邻图片合成一个文件、缓存项或 decode identity。
-- RTL Reader 的 slider 最小/最大方向和端点标签必须镜像；页面 index、持久进度和 DownloadId 不反转。
-- Debug trace producer 可在 build 期间记录，但观察通知必须合并到安全帧边界。
-
-### dev.63 当前主线约束
-
-- `ImportedPageRecord.pageId` 是页面唯一 identity；资源 URI 是可变、可重复的 delivery locator。任何 catalog/download/cache 层都不得用 URI 重复拒绝合法章节。
-- 插件私有页面资源必须由 `downloads` 通过注入的 source loader 选择 transport；Presentation 只能请求下载或打开，不能识别 URI scheme 后自行联网或保存字节。
-- Venera/Mihon 的 `contentKindHint`/`animatedHint` 是加速提示，不能替代字节嗅探和 codec 校验；未知 token 不得被猜成 WebP。
-- Mihon `pageCount == 0` 由详情页做受控、可缓存的渐进 preflight，最多两个并发 worker；不得在 build 中同步拉取，也不得为显示页数创建第二套页面缓存。
-- synthetic gallery 可在目录路径全部为空或失败后尝试，但必须以真实非空 page list 为准；若 page preflight 失败，目录错误必须保留在诊断链中。
-- Venera HTTP redirect 由宿主逐跳管理，必须有限、逐跳保存 Cookie、解析相对地址并在跨 origin 时移除 Cookie/Authorization；底层 URLConnection/OkHttp 不得再次自动跟随。
-- Reader transfer notifier 不得在 build phase 同步发布；同一帧的 snapshot 变化应合并为最新值并在安全帧边界更新。
-
-### dev.62 历史约束（由 dev.63 保留并扩展）
-
-- 漫画源管理负责启用来源的原生/Mihon/Venera 分类；Mihon 多语言来源折叠只发生在该投影。
-- Mihon/Venera 安装页只能通过顶部“已安装/仓库”切换，不得恢复左右双栏或在生态内部重复分类。
-- 设备 Mihon 扩展扫描属于 Mihon 已安装页，拥有独立 refresh/busy/error 状态；仓库加载不得禁用或覆盖设备扫描。
-- Mihon synthetic chapter 是经过非空 page-list preflight 的 gallery adapter，不得用于吞掉 reactive 解包、目录网络或反射错误。
-- remote chapter `pageCount == 0` 表示目录阶段未知；UI 必须显示待加载，读取后以真实 manifest 页数替换。
-
-### dev.61 历史约束（已由 dev.62 替代）
-
-- `apps/app` 只装配顶层页面和业务服务，不直接拥有 Reader session/transport/media pipeline。
-- `reader_runtime` 是 Reader composition 唯一入口；`local_media_ui` 是本地图片/WebP presentation 唯一入口。
-- `webp_demo.dart` 与 `reader_runtime.dart` 保持薄 facade，不允许重新堆实现。
-- Mihon/Venera 安装列表只出现在各自生态页面左栏；仓库/设备发现只在右栏。
-- Mihon 多语言折叠只改变展示，不改变插件 identity、安装、更新或 trust 粒度。
-
-### dev.60 当前主线约束
-
-- Mihon 单章节是最终空目录兜底，不是组合详情缺字段时的默认答案；目录探测必须跨候选对象与兼容 API 完成。
-- Venera 登录是隔离来源能力：Flutter 负责输入与 WebView 用户交互，runtime 负责校验回调、Cookie/localStorage 写入和登录状态持久化。
-- durable 书架恢复不得阻塞首个可操作 Home surface；后台恢复状态只能以非模态提示呈现。
-- Reader 手势由当前缩放状态裁决：scale=1 由 PageView 翻页，scale>1 才由页内缩放/拖动接管。
-- 静态媒体不暴露动画播放控制；远程 WebP 必须复用权威 DownloadSession 的增量 source，并分别呈现恢复前缀与本次传输进度。
 
 ## 2. 阶段划分
 
@@ -659,3 +594,83 @@
 8. Add side-by-side target-source migration candidate comparison before confirmation. **Next.**
 
 - 首页持久封面索引由 storage-owned compact manifest 一次加载；逐项 JSON 仅用于 crash recovery/migration。启动 trace 必须区分 bootstrap、service open、cover source origin 和 first frame，不得反向控制加载策略。
+
+### dev.69 历史约束（由 dev.70 替代）
+
+#### dev.69 当时的优先级
+
+- Venera 普通图片正文不得通过 JSON/Base64 或 JavaScript typed-array 返还宿主；来源确实需要 `onResponse`/`modifyImage` 时才允许进入兼容路径。
+- 每个 runtime invocation 的 bridge HTTP 必须携带 requestId；取消和 demand detach 必须终止对应 native connection，而不只是忽略迟到结果。
+- Venera Reader 默认只请求当前页且 runtime 串行。扩大并发或预取前必须有设备 trace 证明不会重复执行 `onImageLoad` 或上传请求体。
+- Pipeline 输入产生相同 role window 时不得递增 revision 或重新提交同一 demand plan。
+- 连续布局的媒体尺寸、viewport 和拼接设置变化必须保持当前可视锚点；用户拖动时禁止任何自动 `jumpTo`。拼接设置是继承/启用/停用三态。
+- 懒列表测试必须先让目标 child 进入构建范围，再读取 Widget/RenderObject；禁止对未满足 finder 数量的结果使用 `.single` 或 `tester.widget`。
+
+### dev.68 当前主线约束
+
+#### dev.68 当前优先级
+
+- locator 兼容性是 Reader/下载入口不变量，不是详情页刷新选项；任何 generation-scoped Venera token 都必须在创建 page demand 前刷新或失败。
+- 插件资源边界必须在 runtime invocation 前拒绝已知不可恢复 identity；禁止依赖失败后的 pipeline 重试来发现旧 token。
+- deferred plugin resource 的预取窗口和重试次数必须显式受限。扩大窗口或恢复自动重试前需以 trace 证明收益，并分别核算配置解析、HTTP 请求和页面字节流量。
+- 纵向拼接必须从 render tree 中移除 separator，而不是把 separator 高度设置为零；拼接媒体须使用统一的宽度贴合策略，避免 `contain` 的舍入边缘重新露出背景。加载占位可调整布局，但不得裁切或拉伸漫画页。
+
+### dev.67 当前主线约束
+
+#### dev.67 当前优先级
+
+- Reader 页面导航只有一个 Presentation 所有者：底部 Slider 与直接手势。顶部栏、本地媒体适配器和来源详情不得再次实现页码、上一页/下一页或选页菜单。
+- Reader 布局选择只有设置所有者：全局阅读设置与按 `sourceId + comicId` 的每漫画覆盖。顶部快捷布局菜单不得恢复。
+- Reader runtime 的调用方只能提供领域数据或窄化的只读字符串投影，不能注入任意 action Widget、持有 `ReaderController` 或创建第二套导航状态。
+- Reader 组合、会话设置模型和自适应分类必须保持文件级分离；`reader_runtime_screen.dart` 上限为 1500 行。
+- 连续列表命令只有在目标页面完成布局并由 observation 确认后才能 acknowledge；测试必须等待语义条件，不能依赖固定 pump 次数。
+
+### dev.66 当前主线约束
+
+#### dev.66 当前优先级
+
+- Venera 页面 locator 必须跨 runtime generation 可恢复；持久化 legacy token 必须刷新，禁止让 pipeline 对确定性失效 locator 无限重复请求。
+- 并发合并只用于同一逻辑资源的进行中工作；完成后的页面字节继续由 session/artifact/cache 既有所有者持有。
+- 连续布局优先使用来源尺寸，其次使用同一媒体载荷解析出的尺寸。禁止为测量再创建第二条 ImageStream，禁止通过裁切掩盖错误比例。
+- Reader 控制命令必须在目标滚动容器完成 attach/layout 后才 acknowledge；布局切换不得让页码、前后翻页或 slider 进入假成功状态。
+
+- Venera 新章节资源 locator 必须跨 runtime generation 可恢复，并只编码宿主批准的版本化 image/comic/episode identity。不得把任意 URL、header、脚本或网络配置作为可伪造 locator 载荷。legacy runtime token 只作读取兼容。
+- 每漫画设置是 `sourceId + comicId` 的小型 Presentation preference，仅可覆盖 Reader 方向、纵向拼接和自适应开关；不得包含 artifact、下载、缓存、Cookie、插件 session 或 pipeline demand。
+- 自适应布局只选择 Reader presentation mode。输入限于来源/进度方向、页面几何和动画 hint；低置信度回退既有值，hint 不能替代字节嗅探。
+- 纵向连续列表必须保持每页稳定 asset identity。拼接只控制视觉间距，不能把相邻图片合成一个文件、缓存项或 decode identity。
+- RTL Reader 的 slider 最小/最大方向和端点标签必须镜像；页面 index、持久进度和 DownloadId 不反转。
+- Debug trace producer 可在 build 期间记录，但观察通知必须合并到安全帧边界。
+
+### dev.63 当前主线约束
+
+- `ImportedPageRecord.pageId` 是页面唯一 identity；资源 URI 是可变、可重复的 delivery locator。任何 catalog/download/cache 层都不得用 URI 重复拒绝合法章节。
+- 插件私有页面资源必须由 `downloads` 通过注入的 source loader 选择 transport；Presentation 只能请求下载或打开，不能识别 URI scheme 后自行联网或保存字节。
+- Venera/Mihon 的 `contentKindHint`/`animatedHint` 是加速提示，不能替代字节嗅探和 codec 校验；未知 token 不得被猜成 WebP。
+- Mihon `pageCount == 0` 由详情页做受控、可缓存的渐进 preflight，最多两个并发 worker；不得在 build 中同步拉取，也不得为显示页数创建第二套页面缓存。
+- synthetic gallery 可在目录路径全部为空或失败后尝试，但必须以真实非空 page list 为准；若 page preflight 失败，目录错误必须保留在诊断链中。
+- Venera HTTP redirect 由宿主逐跳管理，必须有限、逐跳保存 Cookie、解析相对地址并在跨 origin 时移除 Cookie/Authorization；底层 URLConnection/OkHttp 不得再次自动跟随。
+- Reader transfer notifier 不得在 build phase 同步发布；同一帧的 snapshot 变化应合并为最新值并在安全帧边界更新。
+
+### dev.62 历史约束（由 dev.63 保留并扩展）
+
+- 漫画源管理负责启用来源的原生/Mihon/Venera 分类；Mihon 多语言来源折叠只发生在该投影。
+- Mihon/Venera 安装页只能通过顶部“已安装/仓库”切换，不得恢复左右双栏或在生态内部重复分类。
+- 设备 Mihon 扩展扫描属于 Mihon 已安装页，拥有独立 refresh/busy/error 状态；仓库加载不得禁用或覆盖设备扫描。
+- Mihon synthetic chapter 是经过非空 page-list preflight 的 gallery adapter，不得用于吞掉 reactive 解包、目录网络或反射错误。
+- remote chapter `pageCount == 0` 表示目录阶段未知；UI 必须显示待加载，读取后以真实 manifest 页数替换。
+
+### dev.61 历史约束（已由 dev.62 替代）
+
+- `apps/app` 只装配顶层页面和业务服务，不直接拥有 Reader session/transport/media pipeline。
+- `reader_runtime` 是 Reader composition 唯一入口；`local_media_ui` 是本地图片/WebP presentation 唯一入口。
+- `webp_demo.dart` 与 `reader_runtime.dart` 保持薄 facade，不允许重新堆实现。
+- Mihon/Venera 安装列表只出现在各自生态页面左栏；仓库/设备发现只在右栏。
+- Mihon 多语言折叠只改变展示，不改变插件 identity、安装、更新或 trust 粒度。
+
+### dev.60 当前主线约束
+
+- Mihon 单章节是最终空目录兜底，不是组合详情缺字段时的默认答案；目录探测必须跨候选对象与兼容 API 完成。
+- Venera 登录是隔离来源能力：Flutter 负责输入与 WebView 用户交互，runtime 负责校验回调、Cookie/localStorage 写入和登录状态持久化。
+- durable 书架恢复不得阻塞首个可操作 Home surface；后台恢复状态只能以非模态提示呈现。
+- Reader 手势由当前缩放状态裁决：scale=1 由 PageView 翻页，scale>1 才由页内缩放/拖动接管。
+- 静态媒体不暴露动画播放控制；远程 WebP 必须复用权威 DownloadSession 的增量 source，并分别呈现恢复前缀与本次传输进度。

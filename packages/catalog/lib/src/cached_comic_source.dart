@@ -18,7 +18,9 @@ final class CachedBrowsableComicSource
         BrowsableComicSource,
         ConfigurableComicSource,
         AuthenticatableComicSource,
-        RefreshableChapterComicSource {
+        RefreshableChapterComicSource,
+        ResolvableComicResourceSource,
+        RetryableComicResourceSource {
   CachedBrowsableComicSource({
     required this.source,
     required this.cache,
@@ -98,6 +100,34 @@ final class CachedBrowsableComicSource
   /// Raw page/resource transport entry used by Reader and download sessions.
   @override
   Future<Uint8List> loadResource(Uri uri) => source.loadResource(uri);
+
+  @override
+  Future<ComicResourceRequest> resolveResource(Uri uri) {
+    final resolvable = source is ResolvableComicResourceSource
+        ? source as ResolvableComicResourceSource
+        : null;
+    if (resolvable == null) {
+      final direct = uri.scheme == 'http' || uri.scheme == 'https';
+      return Future<ComicResourceRequest>.value(
+        ComicResourceRequest(
+          uri: uri,
+          requiresRuntimeTransform: !direct,
+        ),
+      );
+    }
+    return resolvable.resolveResource(uri);
+  }
+
+  @override
+  Future<ComicResourceRequest?> retryResource(Uri uri) {
+    final retryable = source is RetryableComicResourceSource
+        ? source as RetryableComicResourceSource
+        : null;
+    if (retryable == null) {
+      return Future<ComicResourceRequest?>.value(null);
+    }
+    return retryable.retryResource(uri);
+  }
 
   /// Invalidates one chapter metadata response without touching page artifacts.
   ///

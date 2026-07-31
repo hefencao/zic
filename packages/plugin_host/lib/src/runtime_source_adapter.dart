@@ -159,7 +159,9 @@ typedef _RuntimeInvoke = Future<Object> Function(
 );
 
 final class _RuntimeBrowsableComicSource
-    implements BrowsableComicSource, ConfigurableComicSource, AuthenticatableComicSource {
+    implements BrowsableComicSource, ConfigurableComicSource,
+        AuthenticatableComicSource, ResolvableComicResourceSource,
+        RetryableComicResourceSource {
   _RuntimeBrowsableComicSource({
     required ExternalComicPluginFormat format,
     required ExternalPluginRuntimeSourceDescriptor descriptor,
@@ -364,6 +366,73 @@ final class _RuntimeBrowsableComicSource
       );
     }
     return payload;
+  }
+
+  @override
+  Future<ComicResourceRequest> resolveResource(Uri uri) async {
+    if (_format != ExternalComicPluginFormat.veneraJavaScript) {
+      return ComicResourceRequest(uri: uri, requiresRuntimeTransform: true);
+    }
+    final payload = await _invoke(
+      ExternalPluginRuntimeOperation.resolveResource,
+      _externalId,
+      <String, Object?>{'uri': uri.toString()},
+    );
+    return _resourceRequestFromPayload(payload, 'runtime resource request');
+  }
+
+  @override
+  Future<ComicResourceRequest?> retryResource(Uri uri) async {
+    if (_format != ExternalComicPluginFormat.veneraJavaScript) {
+      return null;
+    }
+    final payload = await _invoke(
+      ExternalPluginRuntimeOperation.retryResource,
+      _externalId,
+      <String, Object?>{'uri': uri.toString()},
+    );
+    final message = _map(payload, 'runtime resource retry');
+    if (_optionalBool(message['available']) != true) {
+      return null;
+    }
+    return _resourceRequestFromPayload(
+      message['request'],
+      'runtime retry resource request',
+    );
+  }
+
+  ComicResourceRequest _resourceRequestFromPayload(
+    Object? payload,
+    String label,
+  ) {
+    final message = _map(payload, label);
+    final url = Uri.tryParse(_string(message, 'url'));
+    if (url == null) {
+      throw const FormatException('runtime resource URL is invalid');
+    }
+    final rawHeaders = _map(message['headers'] ?? const <String, Object?>{}, 'headers');
+    final headers = <String, String>{
+      for (final entry in rawHeaders.entries)
+        entry.key: entry.value is String
+            ? entry.value as String
+            : entry.value.toString(),
+    };
+    final rawBody = message['body'];
+    final Uint8List? body = switch (rawBody) {
+      null => null,
+      Uint8List value => value,
+      List<int> value => Uint8List.fromList(value),
+      String value => Uint8List.fromList(utf8.encode(value)),
+      _ => throw const FormatException('runtime resource body is invalid'),
+    };
+    return ComicResourceRequest(
+      uri: url,
+      method: _optionalString(message['method'], 'method') ?? 'GET',
+      headers: headers,
+      body: body,
+      requiresRuntimeTransform:
+          _optionalBool(message['requiresRuntimeTransform']) ?? false,
+    );
   }
 
   @override

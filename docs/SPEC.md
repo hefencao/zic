@@ -770,3 +770,14 @@ Mihon Android packaging must expose each host ABI namespace from exactly one art
 - Geometry or viewport changes MUST preserve the visible in-page anchor. No automatic jump is allowed while the user is dragging or the scroll position reports active scrolling.
 - Reader loading UI MUST have one viewport-level owner. Page renderers MUST be able to suppress their internal loading indicator.
 - Widget tests for lazy lists MUST wait until the target child is constructed before retrieving a single widget.
+
+
+## dev.70 Venera streaming pipeline requirements
+
+- Source runtime MUST return a request plan separately from image body bytes. Ordinary HTTP(S) bodies MUST stream through the host Transport/DownloadSession path.
+- GET and HEAD MUST carry no request body and no source-provided Content-Length, Content-Type or Transfer-Encoding entity header.
+- The Venera profile MUST preserve a stable +7/-3 download window. +2/-1 MAY decode ahead; only current/transition MAY upload/present. Runtime request-plan calls remain serialized while network/decode/upload lanes are independent.
+- A normal demand detach MUST NOT abort an already receiving download. Explicit cancel/dispose MUST cancel the response stream and release the writer lifecycle.
+- Persistent chapter progress MUST become observable after chunks commit. Reader progress MUST be idle for sealed, promoted, failed, disposed and restore-only sessions.
+- Trace identity/payload MUST summarize opaque Venera resource/comic/chapter tokens rather than emitting complete Base64 values.
+- Sources that require `onResponse` or `modifyImage` MAY use a bounded complete-body runtime fallback; that exception MUST NOT become the ordinary image path.

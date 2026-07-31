@@ -36,6 +36,44 @@ void main() {
     expect(binding.revision, 1);
   });
 
+  test('unchanged demand roles still update viewport playback', () {
+    final coordinator = FakeCoordinator(clock: _Clock());
+    final binding = ReaderBinding(
+      chapter: _chapter(),
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+      clock: _Clock(),
+      coordinator: coordinator,
+      playback: coordinator,
+    );
+
+    binding.accept(_obs(
+      interaction: Interaction.dragging,
+      current: 1,
+      currentFraction: 0.7,
+      target: 2,
+      targetFraction: 0.3,
+    ));
+    final demandRevision = binding.revision;
+    final playbackSyncs = coordinator.playbackSyncs;
+
+    binding.accept(_obs(
+      interaction: Interaction.dragging,
+      current: 1,
+      currentFraction: 0.5,
+      target: 2,
+      targetFraction: 0.5,
+    ));
+
+    expect(binding.revision, demandRevision,
+        reason: 'the stable role window must not resubmit demands');
+    expect(coordinator.playbackSyncs, playbackSyncs + 1,
+        reason: 'viewport coverage is independent from demand reconciliation');
+    expect(coordinator.viewport?.dominantPageIndex, 2);
+  });
+
   test('reader binding uses explicit demand and playback contracts', () {
     final demand = _DemandOnly();
     final playback = _PlaybackOnly();

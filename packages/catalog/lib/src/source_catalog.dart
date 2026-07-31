@@ -140,6 +140,51 @@ final class SourceBrowsePage {
   final bool hasMore;
 }
 
+/// Resolved source-owned media request. Source runtimes own URL/header
+/// derivation; Reader/download sessions own transport, streaming and artifacts.
+final class ComicResourceRequest {
+  ComicResourceRequest({
+    required this.uri,
+    this.method = 'GET',
+    Map<String, String> headers = const <String, String>{},
+    Uint8List? body,
+    this.requiresRuntimeTransform = false,
+  })  : headers = Map<String, String>.unmodifiable(headers),
+        body = body == null ? null : Uint8List.fromList(body) {
+    if (!requiresRuntimeTransform &&
+        uri.scheme != 'http' &&
+        uri.scheme != 'https') {
+      throw ArgumentError.value(uri, 'uri', 'direct requests must use HTTP(S)');
+    }
+    if (method.trim().isEmpty) {
+      throw ArgumentError.value(method, 'method', 'must not be empty');
+    }
+  }
+
+  final Uri uri;
+  final String method;
+  final Map<String, String> headers;
+  final Uint8List? body;
+  final bool requiresRuntimeTransform;
+}
+
+/// Optional capability used by pipeline transports to stream source-owned
+/// resources without routing complete image bodies through a plugin RPC.
+abstract interface class ResolvableComicResourceSource {
+  Future<ComicResourceRequest> resolveResource(Uri uri);
+}
+
+/// Optional companion capability for source-defined failure recovery.
+///
+/// The initial request remains streamable by the host. Only after that request
+/// fails does the source runtime execute its `onLoadFailed` callback and return
+/// a replacement request plan. This preserves VibeVenera's streaming fast path
+/// without forcing every source that exposes a retry hook to proxy the complete
+/// image body through the plugin runtime.
+abstract interface class RetryableComicResourceSource {
+  Future<ComicResourceRequest?> retryResource(Uri uri);
+}
+
 abstract interface class BrowsableComicSource implements ComicSource {
   ComicSourceDescriptor get descriptor;
 

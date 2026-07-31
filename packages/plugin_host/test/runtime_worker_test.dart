@@ -35,6 +35,14 @@ void main() {
         Uri.parse('https://cdn.invalid/page-1.webp'),
       );
       expect(bytes, <int>[82, 73, 70, 70]);
+      final request = await (source as ResolvableComicResourceSource)
+          .resolveResource(Uri.parse('venera-resource:fixture'));
+      expect(request.uri, Uri.parse('https://cdn.invalid/page.webp'));
+      expect(
+        await (source as RetryableComicResourceSource)
+            .retryResource(Uri.parse('venera-resource:fixture')),
+        isNull,
+      );
       final configurable = source as ConfigurableComicSource;
       await configurable.loadSettings();
       await configurable.updateSetting('mirror', 'auto');
@@ -336,6 +344,16 @@ class _FixtureDriver implements ExternalPluginRuntimeDriver {
         },
       ExternalPluginRuntimeOperation.loadResource =>
         Uint8List.fromList(<int>[82, 73, 70, 70]),
+      ExternalPluginRuntimeOperation.resolveResource =>
+        const <String, Object?>{
+          'url': 'https://cdn.invalid/page.webp',
+          'method': 'GET',
+          'headers': <String, Object?>{},
+          'body': null,
+          'requiresRuntimeTransform': false,
+        },
+      ExternalPluginRuntimeOperation.retryResource =>
+        const <String, Object?>{'available': false},
       ExternalPluginRuntimeOperation.loadSourceSettings =>
         const <Object?>[],
       ExternalPluginRuntimeOperation.updateSourceSetting =>

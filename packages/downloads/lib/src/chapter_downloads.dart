@@ -32,12 +32,14 @@ final class ChapterDownloadSnapshot {
     required this.receivedBytes,
     required this.phase,
     this.totalBytes,
+    this.pageProgressUnits,
     this.failure,
   })  : assert(completedPages >= 0),
         assert(totalPages > 0),
         assert(completedPages <= totalPages),
         assert(receivedBytes >= 0),
-        assert(totalBytes == null || totalBytes >= 0);
+        assert(totalBytes == null || totalBytes >= 0),
+        assert(pageProgressUnits == null || pageProgressUnits >= 0);
 
   factory ChapterDownloadSnapshot.idle(ImportedLibraryEntry entry) =>
       ChapterDownloadSnapshot(
@@ -64,6 +66,7 @@ final class ChapterDownloadSnapshot {
   final int totalPages;
   final int receivedBytes;
   final int? totalBytes;
+  final double? pageProgressUnits;
   final ChapterDownloadPhase phase;
   final String? failure;
 
@@ -78,18 +81,16 @@ final class ChapterDownloadSnapshot {
   bool get hasDurableBytes => receivedBytes > 0 || isComplete;
 
   double get fraction {
-    final byteTotal = totalBytes;
-    if (byteTotal != null && byteTotal > 0) {
-      return (receivedBytes / byteTotal).clamp(0, 1).toDouble();
-    }
-    return (completedPages / totalPages).clamp(0, 1).toDouble();
+    return (completedPageUnits / totalPages).clamp(0, 1).toDouble();
   }
 
   double get completedPageUnits {
     if (isComplete) {
       return totalPages.toDouble();
     }
-    return (fraction * totalPages).clamp(0, totalPages).toDouble();
+    return (pageProgressUnits ?? completedPages.toDouble())
+        .clamp(0, totalPages)
+        .toDouble();
   }
 }
 
@@ -141,6 +142,20 @@ typedef ChapterResourceLoader = Future<Uint8List> Function(
 /// access to source-owned resource loading without depending on app/UI types.
 abstract interface class ConfigurableChapterResourceLoader {
   void setChapterResourceLoader(ChapterResourceLoader? loader);
+}
+
+typedef ChapterResourceTransport = Future<ByteResponse> Function(
+  String sourceId,
+  Uri uri, {
+  ByteRange? range,
+  Validators? validators,
+});
+
+/// Streaming counterpart to [ConfigurableChapterResourceLoader]. Persistent
+/// downloads prefer this capability so content length and committed chunks are
+/// observable before the complete image arrives.
+abstract interface class ConfigurableChapterResourceTransport {
+  void setChapterResourceTransport(ChapterResourceTransport? transport);
 }
 
 typedef ChapterPageLoader = Future<Uint8List> Function(
@@ -585,7 +600,8 @@ final class MemoryChapterDownloadService
 final class PersistentChapterDownloadService
     implements
         ManagedChapterDownloadService,
-        ConfigurableChapterResourceLoader {
+        ConfigurableChapterResourceLoader,
+        ConfigurableChapterResourceTransport {
   PersistentChapterDownloadService._({
     required DownloadRegistry registry,
     required SqliteIndex index,
@@ -625,6 +641,7 @@ final class PersistentChapterDownloadService
   final IoTransport _transport;
   final CacheOps _cacheOps;
   ChapterResourceLoader? _resourceLoader;
+  ChapterResourceTransport? _resourceTransport;
   final StreamController<ChapterDownloadSnapshot> _changes =
       StreamController<ChapterDownloadSnapshot>.broadcast(sync: true);
   final Map<String, CancelToken> _tokens = <String, CancelToken>{};
@@ -651,6 +668,12 @@ final class PersistentChapterDownloadService
   }
 
   @override
+  void setChapterResourceTransport(ChapterResourceTransport? transport) {
+    _requireOpen();
+    _resourceTransport = transport;
+  }
+
+  @override
   Future<void> download(ImportedLibraryEntry entry) {
     _requireOpen();
     final identity = _identity(entry);
@@ -672,7 +695,21 @@ final class PersistentChapterDownloadService
     _tokens[identity] = token;
     _cancelled.remove(identity);
     _terminalPhases.remove(identity);
-    await _emitInspection(entry, phase: ChapterDownloadPhase.downloading);
+    final indexedRecords = <String, CacheRec>{
+      for (final record in await _index.list()) record.key: record,
+    };
+    await _emitInspection(
+      entry,
+      phase: ChapterDownloadPhase.downloading,
+      indexedRecords: indexedRecords,
+    );
+    final progress = _ChapterProgressPublisher(
+      () => _emitInspection(
+        entry,
+        phase: ChapterDownloadPhase.downloading,
+        indexedRecords: indexedRecords,
+      ),
+    );
     try {
       final manifest = entry.chapter.toManifest();
       for (final page in manifest.pages) {
@@ -683,11 +720,12 @@ final class PersistentChapterDownloadService
           await _emitInspection(
             entry,
             phase: ChapterDownloadPhase.downloading,
+            indexedRecords: indexedRecords,
           );
           continue;
         }
         void listener(DownloadSnapshot _) {
-          unawaited(_emitInspection(entry));
+          progress.schedule();
         }
 
         session.addSnapshotListener(listener);
@@ -703,9 +741,13 @@ final class PersistentChapterDownloadService
           session.removeSnapshotListener(listener);
         }
       }
+      await progress.flush();
+      progress.close();
       _terminalPhases[identity] = ChapterDownloadPhase.complete;
       await _emitInspection(entry, phase: ChapterDownloadPhase.complete);
     } on Failure catch (error) {
+      await progress.flush();
+      progress.close();
       if (error.code == ErrorCode.cancelled || token.cancelled) {
         _cancelled.add(identity);
         _terminalPhases[identity] = ChapterDownloadPhase.cancelled;
@@ -720,6 +762,8 @@ final class PersistentChapterDownloadService
       );
       rethrow;
     } on Object catch (error) {
+      await progress.flush();
+      progress.close();
       _terminalPhases[identity] = ChapterDownloadPhase.failed;
       await _emitInspection(
         entry,
@@ -727,18 +771,34 @@ final class PersistentChapterDownloadService
         failure: error.toString(),
       );
       rethrow;
+    } finally {
+      progress.close();
     }
   }
 
   Transport _transportForPage(ChapterManifest manifest, PageAsset page) {
+    if (!_isSourceOwnedResource(manifest.sourceId, page.uri)) {
+      return _transport;
+    }
+    final stream = _resourceTransport;
     final loader = _resourceLoader;
-    if (loader == null || !_isSourceOwnedResource(manifest.sourceId, page.uri)) {
+    if (stream == null && loader == null) {
       return _transport;
     }
     return LoaderTransport(<Uri, LoaderTransportSource>{
       page.uri: LoaderTransportSource(
         revision: '${manifest.chapter.sourceRevision}:${page.pageId}',
-        loadBytes: () => loader(manifest.sourceId, page.uri),
+        openResponse: stream == null
+            ? null
+            : ({ByteRange? range, Validators? validators}) => stream(
+                  manifest.sourceId,
+                  page.uri,
+                  range: range,
+                  validators: validators,
+                ),
+        loadBytes: stream != null || loader == null
+            ? null
+            : () => loader(manifest.sourceId, page.uri),
       ),
     });
   }
@@ -825,10 +885,14 @@ final class PersistentChapterDownloadService
     Map<String, CacheRec>? indexedRecords,
   }) async {
     final manifest = entry.chapter.toManifest();
+    final records = indexedRecords ?? <String, CacheRec>{
+      for (final record in await _index.list()) record.key: record,
+    };
     var completedPages = 0;
     var receivedBytes = 0;
     var totalBytes = 0;
     var knowsTotalBytes = true;
+    var pageProgressUnits = 0.0;
     String? sessionFailure;
     var hasFailedSession = false;
     for (var index = 0; index < manifest.pages.length; index++) {
@@ -841,9 +905,7 @@ final class PersistentChapterDownloadService
                   sessionSnapshot.hasWriter)
           ? sessionSnapshot
           : null;
-      final indexed = snapshot == null
-          ? (indexedRecords?[id.key] ?? await _index.get(id.key))
-          : null;
+      final indexed = snapshot == null ? records[id.key] : null;
       final exactIndexed = indexed?.id == id ? indexed : null;
       final committedLength = snapshot?.committedLength ?? exactIndexed?.bytes ?? 0;
       receivedBytes += committedLength;
@@ -851,6 +913,7 @@ final class PersistentChapterDownloadService
           exactIndexed?.state == CacheState.ready;
       if (promoted) {
         completedPages++;
+        pageProgressUnits += 1;
       }
       final knownLength = snapshot?.totalLength ??
           entry.chapter.pages[index].byteLength ??
@@ -859,6 +922,10 @@ final class PersistentChapterDownloadService
         knowsTotalBytes = false;
       } else {
         totalBytes += knownLength;
+        if (!promoted && knownLength > 0 && committedLength > 0) {
+          pageProgressUnits +=
+              (committedLength / knownLength).clamp(0, 1).toDouble();
+        }
       }
       if (snapshot?.state == DownloadState.failed) {
         hasFailedSession = true;
@@ -888,6 +955,7 @@ final class PersistentChapterDownloadService
       totalPages: manifest.pages.length,
       receivedBytes: receivedBytes,
       totalBytes: knowsTotalBytes ? totalBytes : null,
+      pageProgressUnits: pageProgressUnits,
       phase: resolvedPhase,
       failure: failure ?? sessionFailure,
     );
@@ -897,12 +965,14 @@ final class PersistentChapterDownloadService
     ImportedLibraryEntry entry, {
     ChapterDownloadPhase? phase,
     String? failure,
+    Map<String, CacheRec>? indexedRecords,
   }) async {
     _emit(
       await _buildSnapshot(
         entry,
         phase: phase,
         failure: failure,
+        indexedRecords: indexedRecords,
       ),
     );
   }
@@ -1054,6 +1124,7 @@ final class PersistentChapterDownloadService
     }
     _closed = true;
     _resourceLoader = null;
+    _resourceTransport = null;
     for (final token in _tokens.values) {
       token.cancel();
     }
@@ -1125,4 +1196,74 @@ int? _declaredTotalBytes(ImportedLibraryEntry entry) {
     total += length;
   }
   return total;
+}
+
+/// Coalesces chunk-driven chapter projections and preserves emission order.
+///
+/// DownloadSession remains authoritative; this publisher merely prevents one
+/// asynchronous index scan per network chunk and guarantees that a stale
+/// `downloading` projection cannot arrive after the terminal snapshot.
+final class _ChapterProgressPublisher {
+  _ChapterProgressPublisher(this._publish);
+
+  static const Duration _minimumInterval = Duration(milliseconds: 80);
+
+  final Future<void> Function() _publish;
+  Future<void>? _active;
+  bool _dirty = false;
+  bool _force = false;
+  bool _closed = false;
+  DateTime? _lastPublished;
+
+  void schedule() {
+    if (_closed) return;
+    _dirty = true;
+    _active ??= _drain();
+  }
+
+  Future<void> flush() async {
+    if (_closed) return;
+    _force = true;
+    schedule();
+    while (true) {
+      final active = _active;
+      if (active == null) return;
+      await active;
+    }
+  }
+
+  Future<void> _drain() async {
+    try {
+      while (_dirty && !_closed) {
+        _dirty = false;
+        final force = _force;
+        _force = false;
+        final last = _lastPublished;
+        if (!force && last != null) {
+          final remaining = _minimumInterval - DateTime.now().difference(last);
+          if (remaining > Duration.zero) {
+            await Future<void>.delayed(remaining);
+          }
+        }
+        if (_closed) return;
+        try {
+          await _publish();
+        } on Object {
+          // Progress is a projection. A transient index/UI read must not fail
+          // the authoritative DownloadSession writer or discard valid bytes.
+        }
+        _lastPublished = DateTime.now();
+      }
+    } finally {
+      _active = null;
+      if (_dirty && !_closed) {
+        schedule();
+      }
+    }
+  }
+
+  void close() {
+    _closed = true;
+    _dirty = false;
+  }
 }

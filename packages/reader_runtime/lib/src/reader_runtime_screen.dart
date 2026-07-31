@@ -7,7 +7,6 @@ import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:media/media.dart' show SourcePool;
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:pipeline/pipeline.dart';
 import 'package:reader/reader.dart';
@@ -19,6 +18,8 @@ import 'package:transport/transport.dart';
 import 'asset_bundle_transport.dart';
 import 'media_load_token.dart';
 import 'reader_session_settings.dart';
+import 'reader_download_progress.dart';
+import 'reader_pipeline_profile.dart';
 import 'reader_settings_fields.dart';
 
 const readerTopControlsKey = ValueKey<String>('reader-top-controls');
@@ -80,52 +81,6 @@ final class ReaderPlaybackController
     }
     value = value.copyWith(speed: speed);
   }
-}
-
-@immutable
-final class ReaderTransferProgress {
-  const ReaderTransferProgress({
-    this.active = false,
-    this.existingBytes = 0,
-    this.committedBytes = 0,
-    this.totalBytes,
-  });
-
-  final bool active;
-  final int existingBytes;
-  final int committedBytes;
-  final int? totalBytes;
-
-  double? get existingFraction {
-    final total = totalBytes;
-    return total == null || total <= 0
-        ? null
-        : (existingBytes / total).clamp(0.0, 1.0).toDouble();
-  }
-
-  double? get committedFraction {
-    final total = totalBytes;
-    return total == null || total <= 0
-        ? null
-        : (committedBytes / total).clamp(0.0, 1.0).toDouble();
-  }
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ReaderTransferProgress &&
-          active == other.active &&
-          existingBytes == other.existingBytes &&
-          committedBytes == other.committedBytes &&
-          totalBytes == other.totalBytes;
-
-  @override
-  int get hashCode => Object.hash(
-        active,
-        existingBytes,
-        committedBytes,
-        totalBytes,
-      );
 }
 
 final class ReaderPageRuntime {
@@ -215,10 +170,6 @@ final class ReaderRuntimeScreen extends StatefulWidget {
 final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   static int _sessionSequence = 0;
 
-  bool get _usesDeferredPluginResources => widget.chapter.pages.any(
-        (asset) => asset.uri.scheme == 'venera-resource',
-      );
-
   late final String _sessionId;
   late final MonoClock _clock;
   late final MemoryTraceSink _memoryTrace;
@@ -239,15 +190,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   int? _lastProgressPage;
   ReaderMode? _lastProgressMode;
   late final ReaderPlaybackController _playback;
-  late final ValueNotifier<ReaderTransferProgress> _transferProgress;
-  ReaderTransferProgress? _pendingTransferProgress;
-  bool _transferProgressScheduled = false;
-  bool _transferProgressDisposed = false;
-  final Map<String, DownloadSession> _pageSessions = <String, DownloadSession>{};
-  final Map<DownloadSession, DownloadSnapshotListener> _sessionProgressListeners =
-      <DownloadSession, DownloadSnapshotListener>{};
-  final Map<DownloadSession, int> _sessionExistingBytes = <DownloadSession, int>{};
-  final Set<DownloadSession> _sessionTransferStarted = <DownloadSession>{};
+  late final ReaderDownloadProgressPublisher _downloadProgress;
+  late final ReaderPipelineProfile _pipelineProfile;
   final Map<String, bool> _playbackCapabilities = <String, bool>{};
   Map<String, double> _pageAspectRatios = const <String, double>{};
   final Map<String, double> _pendingPageAspectRatios = <String, double>{};
@@ -267,9 +211,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     _adaptiveProfile = _settings.effectiveAdaptiveEnabled
         ? classifyAdaptiveReaderLayout(widget.chapter)
         : null;
-    _transferProgress = ValueNotifier<ReaderTransferProgress>(
-      const ReaderTransferProgress(),
-    );
+    _downloadProgress = ReaderDownloadProgressPublisher();
+    _pipelineProfile = readerPipelineProfileFor(widget.chapter);
     _favorite = widget.initialFavorite;
     _controlsVisible = !widget.initiallyImmersive;
     unawaited(
@@ -341,9 +284,10 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       transportFor: _transportFor,
       clock: _clock,
       traceSink: _trace,
-      retry: _usesDeferredPluginResources
-          ? const RetryPolicy(maxAttempts: 1)
-          : const RetryPolicy(),
+      retry: _pipelineProfile.retry,
+      net: NetLane(maxActive: _pipelineProfile.networkConcurrency),
+      decode: DecodeLane(maxActive: _pipelineProfile.decodeConcurrency),
+      upload: UploadLane(maxActive: _pipelineProfile.uploadConcurrency),
     );
   }
 
@@ -407,16 +351,9 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       traceSink: _trace,
       coordinator: _coordinator,
       playback: _coordinator,
-      windowResolver: _usesDeferredPluginResources
-          ? const RoleResolver(
-              forwardEncodedPages: 0,
-              backwardEncodedPages: 0,
-              nearRadius: 0,
-            )
-          : const RoleResolver(),
-      policyGuard: _usesDeferredPluginResources
-          ? const PolicyGuard(maxDownloadDemands: 1)
-          : const PolicyGuard(),
+      windowResolver: _pipelineProfile.windowResolver,
+      policy: _pipelineProfile.policy,
+      policyGuard: _pipelineProfile.guard,
     );
     final reader = ReaderController(
       sessionId: _sessionId,
@@ -433,7 +370,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     _reader = reader;
     _lastProgressPage = reader.currentIndex;
     _lastProgressMode = _readerMode(reader.direction);
-    _syncCurrentTransferProgress();
+    _selectCurrentDownloadProgress();
   }
 
   ReadingDirection _resolveInitialDirection(ReadingProgress? progress) {
@@ -469,7 +406,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     if (reader == null) {
       return;
     }
-    _syncCurrentTransferProgress();
+    _selectCurrentDownloadProgress();
     final writer = widget.onProgressChanged;
     if (writer == null) {
       return;
@@ -558,58 +495,17 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   void _observeDownloadSession(DownloadSession session) {
     _artifactReads?.observe(session);
     _artifactCacheHandoff?.observe(session);
-    _pageSessions[session.id.key] = session;
-    _sessionExistingBytes[session] = session.committedLength;
-    void listener(DownloadSnapshot snapshot) {
-      if (!_sessionTransferStarted.contains(session)) {
-        if (snapshot.state == DownloadState.receiving || snapshot.activeRun) {
-          _sessionTransferStarted.add(session);
-        } else {
-          _sessionExistingBytes[session] = math.max(
-            _sessionExistingBytes[session] ?? 0,
-            snapshot.committedLength,
-          );
-        }
-      }
-      _syncCurrentTransferProgress();
-    }
-    _sessionProgressListeners[session] = listener;
-    session.addSnapshotListener(listener);
+    _downloadProgress.observe(session);
   }
 
-  void _syncCurrentTransferProgress() {
+  void _selectCurrentDownloadProgress() {
     final reader = _reader;
     if (reader == null || widget.chapter.pages.isEmpty) {
-      _publishTransferProgress(const ReaderTransferProgress());
+      _downloadProgress.clear();
       return;
     }
     final asset = widget.chapter.pages[reader.currentIndex];
-    final id = readerPageDownloadId(widget.chapter, asset);
-    final session = _pageSessions[id.key] ?? _downloads.find(id);
-    if (session == null) {
-      _publishTransferProgress(const ReaderTransferProgress());
-      return;
-    }
-    final snapshot = session.snapshot;
-    final existing = math.min(
-      _sessionExistingBytes[session] ?? snapshot.committedLength,
-      snapshot.committedLength,
-    );
-    final active = snapshot.state == DownloadState.receiving ||
-        snapshot.state == DownloadState.queued ||
-        snapshot.activeRun ||
-        (snapshot.committedLength > 0 &&
-            snapshot.state != DownloadState.promoted &&
-            snapshot.state != DownloadState.failed &&
-            snapshot.state != DownloadState.disposed);
-    _publishTransferProgress(
-      ReaderTransferProgress(
-        active: active,
-        existingBytes: existing,
-        committedBytes: snapshot.committedLength,
-        totalBytes: snapshot.totalLength,
-      ),
-    );
+    _downloadProgress.select(readerPageDownloadId(widget.chapter, asset));
   }
 
   void _reportPageDimensions(PageAsset asset, int width, int height) {
@@ -641,34 +537,6 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
           ...updates,
         };
       });
-    });
-  }
-
-  void _publishTransferProgress(ReaderTransferProgress next) {
-    if (_transferProgressDisposed) return;
-    if (!_transferProgressScheduled && _transferProgress.value == next) return;
-    final scheduler = SchedulerBinding.instance;
-    if (scheduler.schedulerPhase == SchedulerPhase.idle) {
-      _pendingTransferProgress = null;
-      if (_transferProgress.value != next) {
-        _transferProgress.value = next;
-      }
-      return;
-    }
-    _pendingTransferProgress = next;
-    if (_transferProgressScheduled) return;
-    _transferProgressScheduled = true;
-    scheduler.addPostFrameCallback((_) {
-      _transferProgressScheduled = false;
-      if (_transferProgressDisposed || !mounted) {
-        _pendingTransferProgress = null;
-        return;
-      }
-      final pending = _pendingTransferProgress;
-      _pendingTransferProgress = null;
-      if (pending != null && _transferProgress.value != pending) {
-        _transferProgress.value = pending;
-      }
     });
   }
 
@@ -817,13 +685,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       _binding?.detach(reader.sessionId);
       reader.dispose();
     }
-    for (final entry in _sessionProgressListeners.entries) {
-      entry.key.removeSnapshotListener(entry.value);
-    }
-    _sessionProgressListeners.clear();
-    _transferProgressDisposed = true;
-    _pendingTransferProgress = null;
-    _transferProgress.dispose();
+    _downloadProgress.dispose();
     _playback.dispose();
     unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
     unawaited(
@@ -1202,7 +1064,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                   ),
                 ),
                 ValueListenableBuilder<ReaderTransferProgress>(
-                  valueListenable: _transferProgress,
+                  valueListenable: _downloadProgress.notifier,
                   builder: (context, progress, _) {
                     if (!progress.active) return const SizedBox(height: 3);
                     final committed = progress.committedFraction;

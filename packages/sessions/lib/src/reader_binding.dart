@@ -18,6 +18,7 @@ final class ReaderBinding {
     TraceSink traceSink = const NoopTraceSink(),
     ViewportResolver viewportResolver = const ViewportResolver(),
     RoleResolver windowResolver = const RoleResolver(),
+    HeuristicPolicy policy = const HeuristicPolicy(),
     PolicyGuard policyGuard = const PolicyGuard(),
     this.discretePages = true,
   })  : _coordinator = coordinator,
@@ -29,6 +30,7 @@ final class ReaderBinding {
       clock: clock,
       traceSink: traceSink,
       windowResolver: windowResolver,
+      policy: policy,
       guard: policyGuard,
       onUpdate: _onUpdate,
     );
@@ -54,6 +56,7 @@ final class ReaderBinding {
     }
     _observation = observation;
     pipeline.accept(observation);
+    _syncViewport(observation);
   }
 
   /// Reconciles every outstanding demand to empty before this binding is
@@ -91,13 +94,15 @@ final class ReaderBinding {
       throw StateError('pipeline update has no reader observation');
     }
     _coordinator.reconcile(observation.sessionId, update);
+  }
 
+  void _syncViewport(ReaderObs observation) {
     final viewport = _viewportResolver.resolve(
       observation,
       discretePages: discretePages,
     );
     _viewport = viewport;
-    _playback.syncPlayback(viewport, _decodeIds(update.plan));
+    _playback.syncPlayback(viewport, _decodeIds(pipeline.currentPlan));
   }
 
   Map<int, DecodeId> _decodeIds(DemandPlan plan) {

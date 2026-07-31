@@ -218,6 +218,9 @@ final class VeneraSandboxExecutor implements ExternalPluginExecutor {
     this.limits = const ExternalPluginRuntimeLimits(
       invocationTimeout: Duration(seconds: 55),
       maxResponseBytes: 32 * 1024 * 1024,
+      // The WebView runtime owns one JavaScript request context. Network
+      // concurrency belongs to Reader/download transport lanes after the
+      // request plan is resolved; runtime invocations remain serialized.
       maxConcurrentInvocations: 1,
       maxRuntimeHeapBytes: 32 * 1024 * 1024,
     ),

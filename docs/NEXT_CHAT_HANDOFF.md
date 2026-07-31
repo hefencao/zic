@@ -3,23 +3,22 @@
 ## Sole baseline
 
 Continue only from
-`zic_v0.31.0-dev.69_venera-native-binary-stable-stitch.zip`.
+`zic_v0.31.0-dev.70_vibevenera-streaming-pipeline-progress.zip`.
 It is a direct modification of the user-provided
 `zic_v0.31.0-dev.62_source-management-tabs-mihon-chapter-preflight.zip`;
 do not merge an earlier candidate. `mihon-main.zip` and `vibevenera-master.zip`
 were read-only compatibility references and are not part of the product tree.
 
 
-## Completed in dev.69
+## Completed in dev.70
 
-- Audited dev.65–68 and documented which changes landed versus which remained ineffective.
-- Replaced ordinary Venera image Base64/JavaScript return with native binary-token transport; kept JS bytes only for explicit transformation hooks.
-- Forced GET/HEAD to carry no body, serialized Venera runtime work, limited Reader demand to current page, and suppressed unchanged pipeline role-window submissions.
-- Propagated runtime request identity to native HTTP and made cancel/demand detach disconnect request-scoped URLConnection or fallback calls.
-- Migrated per-comic stitch to inherit/on/off; legacy false now inherits global stitch.
-- Preserved continuous viewport anchors through media/viewport reflow and prohibited restore jumps while scrolling.
-- Removed page-local loading indicators in Reader composition, added a viewport-centered single loader, and closed stitched raster seams without separator/cropping.
-- Fixed the persistent vertical test at the actual lazy separator lookup and added static/behavioral regressions.
+- Replaced complete-byte Venera resource RPC for ordinary images with request-plan resolution plus a composition-owned streaming `ByteResponse` transport.
+- Restored VibeVenera's stable +7/-3 download window, +2/-1 decode-warm window and current/transition upload window; scheduler lanes are 5/3/2 while JavaScript request-plan invocation remains serial.
+- Preserved normal receiving downloads across demand detach. Explicit cancel/dispose cancels the response subscription; HTTP error responses are aborted instead of fully downloaded before retry.
+- Persistent chapter progress now follows committed chunks and publishes at a bounded cadence. Reader current-page progress hides sealed/promoted/restore-only sessions and synchronizes immediately on page changes.
+- GET/HEAD cannot upload source body data. `onLoadFailed` returns a replacement request plan; full runtime bytes remain only for explicit `onResponse`/`modifyImage` transforms.
+- Debug trace recursively replaces Venera resource/comic/chapter Base64 identities with hash-and-length summaries.
+- Next validation must use Android device traffic and trace. Do not reduce the preload window as a substitute for fixing transport or source configuration.
 
 ## Completed in dev.68
 

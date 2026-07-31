@@ -15,12 +15,16 @@ final class RoleResolver {
   const RoleResolver({
     this.forwardEncodedPages = 2,
     this.backwardEncodedPages = 1,
+    this.forwardDecodePages,
+    this.backwardDecodePages,
     this.nearRadius = 3,
     this.transitionThreshold = 0.15,
   });
 
   final int forwardEncodedPages;
   final int backwardEncodedPages;
+  final int? forwardDecodePages;
+  final int? backwardDecodePages;
   final int nearRadius;
   final double transitionThreshold;
 
@@ -43,7 +47,15 @@ final class RoleResolver {
     for (var offset = 1; offset <= forwardEncodedPages; offset++) {
       final index = current + offset;
       if (index < chapter.pages.length) {
-        _setRole(roles, index, offset == 1 ? PageRole.next : PageRole.near);
+        _setRole(
+          roles,
+          index,
+          offset == 1
+              ? PageRole.next
+              : forwardDecodePages == null || offset <= forwardDecodePages!
+                  ? PageRole.near
+                  : PageRole.far,
+        );
       }
     }
     for (var offset = 1; offset <= backwardEncodedPages; offset++) {
@@ -52,7 +64,11 @@ final class RoleResolver {
         _setRole(
           roles,
           index,
-          offset == 1 ? PageRole.previous : PageRole.near,
+          offset == 1
+              ? PageRole.previous
+              : backwardDecodePages == null || offset <= backwardDecodePages!
+                  ? PageRole.near
+                  : PageRole.far,
         );
       }
     }

@@ -97,6 +97,77 @@ void main() {
   });
 
 
+  test('source streaming profile keeps far pages download-only', () {
+    final longChapter = ChapterManifest(
+      sourceId: 'venera:fixture',
+      comicId: 'comic',
+      chapter: const Chapter(
+        chapterId: 'chapter',
+        comicId: 'comic',
+        title: 'Chapter',
+        sequence: 1,
+        pageCount: 20,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        20,
+        (index) => PageAsset(
+          pageId: 'p$index',
+          chapterId: 'chapter',
+          index: index,
+          uri: Uri.parse('venera-resource:page-$index'),
+        ),
+      ),
+      readingDirection: ReadingDirection.ltr,
+    );
+    final obs = ReaderObs(
+      sessionId: 's1',
+      currentIndex: 8,
+      stableIndex: 8,
+      interaction: Interaction.idle,
+      logicalPosition: 8,
+      velocity: 0,
+      currentCoverage: const Coverage(
+        pageIndex: 8,
+        assetKey: 'chapter/p8',
+        fraction: 1,
+      ),
+      direction: ReadingDirection.ltr,
+      timestamp: DateTime.utc(2026, 7, 31),
+      monotonicMicros: 1,
+    );
+    final window = const RoleResolver(
+      forwardEncodedPages: 7,
+      backwardEncodedPages: 3,
+      forwardDecodePages: 2,
+      backwardDecodePages: 1,
+      nearRadius: 0,
+    ).resolve(longChapter, obs);
+    final plan = const HeuristicPolicy(decodeWarmPages: true).createPlan(
+      revision: 1,
+      chapter: longChapter,
+      observation: obs,
+      window: window,
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+    );
+
+    expect(plan.downloads, hasLength(11));
+    expect(plan.decodes, hasLength(4));
+    expect(window.roleOf(10), PageRole.near);
+    expect(window.roleOf(11), PageRole.far);
+    expect(
+      plan.decodes.keys.map((id) => id.download.content.pageId),
+      containsAll(<String>['p7', 'p8', 'p9', 'p10']),
+    );
+    expect(
+      plan.decodes.keys.map((id) => id.download.content.pageId),
+      isNot(contains('p11')),
+    );
+  });
+
   test('pipeline does not resubmit an unchanged role window', () {
     final updates = <PipelineDelta>[];
     final controller = PipelineController(

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:domain/domain.dart';
 import 'package:transport/transport.dart';
 
@@ -95,9 +97,10 @@ final class DownloadJob {
     );
     final writer = session.acquireWriter();
     var offset = session.committedLength;
+    final iterator = StreamIterator<List<int>>(response.bytes);
     try {
-      await for (final chunk in response.bytes) {
-        cancel?.throwIfCancelled();
+      while (await _moveNext(iterator, cancel)) {
+        final chunk = iterator.current;
         await session.append(writer, offset, chunk);
         offset += chunk.length;
       }
@@ -108,11 +111,31 @@ final class DownloadJob {
       );
       await session.promote();
     } catch (error) {
+      await iterator.cancel();
       if (session.hasWriter) {
         await session.fail(writer, error);
       }
       rethrow;
     }
+  }
+
+  Future<bool> _moveNext(
+    StreamIterator<List<int>> iterator,
+    CancelToken? cancel,
+  ) async {
+    if (cancel == null) {
+      return iterator.moveNext();
+    }
+    cancel.throwIfCancelled();
+    final result = await Future.any<Object>(<Future<Object>>[
+      iterator.moveNext().then<Object>(_NextChunk.new),
+      cancel.whenCancelled.then<Object>((_) => const _DownloadCancelled()),
+    ]);
+    if (result is _DownloadCancelled) {
+      await iterator.cancel();
+      cancel.throwIfCancelled();
+    }
+    return (result as _NextChunk).available;
   }
 
   Future<void> _discardIfCancelled(
@@ -135,4 +158,14 @@ final class DownloadJob {
     }
     return transport.open(session.id.canonicalUri);
   }
+}
+
+final class _NextChunk {
+  const _NextChunk(this.available);
+
+  final bool available;
+}
+
+final class _DownloadCancelled {
+  const _DownloadCancelled();
 }

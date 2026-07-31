@@ -19,4 +19,34 @@ void main() {
     expect(event.toJson()['t'], 42);
     expect(event.toJson()['revision'], 3);
   });
+
+  test('trace replaces Venera locator payloads with compact summaries', () {
+    const token =
+        'venera-resource:eyJ2IjoxLCJpbWFnZSI6IjE2MSIsImNvbWljSWQiOiJsb25nLWNvbWljLWlkIn0';
+    const comic =
+        'venera:comic:eyJpZCI6ImxvbmcgY29taWMgaWRlbnRpdHkiLCJ0aXRsZSI6IkZpeHR1cmUifQ';
+    const chapter =
+        'venera:chapter:eyJjb21pY0lkIjoibG9uZy1jb21pYyIsInNlcXVlbmNlIjoxNjF9';
+    final event = traceEvent(
+      clock: _Clock(),
+      sessionId: 'reader',
+      kind: TraceEventKind.decodeDemand,
+      identityHash: '$comic/$chapter/page|$token|1216x2656',
+      payload: const <String, Object?>{
+        'uri': token,
+        'comicId': comic,
+        'chapterId': chapter,
+        'nested': <String, Object?>{'locator': token},
+      },
+    );
+    final encoded = event.toJsonLine();
+
+    expect(encoded, isNot(contains(token)));
+    expect(encoded, isNot(contains(comic)));
+    expect(encoded, isNot(contains(chapter)));
+    expect(encoded, contains('venera-resource:<'));
+    expect(encoded, contains('venera:comic:<'));
+    expect(encoded, contains('venera:chapter:<'));
+    expect(encoded, contains(token.length.toString()));
+  });
 }

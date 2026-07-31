@@ -13,6 +13,8 @@ enum ExternalPluginRuntimeOperation {
   loadComic,
   loadChapter,
   loadResource,
+  resolveResource,
+  retryResource,
   loadSourceSettings,
   updateSourceSetting,
   loadSourceAccount,
@@ -162,6 +164,30 @@ final class ExternalPluginRuntimeRequest {
       ExternalPluginRuntimeRequest(
         requestId: requestId,
         operation: ExternalPluginRuntimeOperation.loadResource,
+        externalSourceId: externalSourceId,
+        arguments: <String, Object?>{'uri': uri.toString()},
+      );
+
+  factory ExternalPluginRuntimeRequest.resolveResource({
+    required String requestId,
+    required String externalSourceId,
+    required Uri uri,
+  }) =>
+      ExternalPluginRuntimeRequest(
+        requestId: requestId,
+        operation: ExternalPluginRuntimeOperation.resolveResource,
+        externalSourceId: externalSourceId,
+        arguments: <String, Object?>{'uri': uri.toString()},
+      );
+
+  factory ExternalPluginRuntimeRequest.retryResource({
+    required String requestId,
+    required String externalSourceId,
+    required Uri uri,
+  }) =>
+      ExternalPluginRuntimeRequest(
+        requestId: requestId,
+        operation: ExternalPluginRuntimeOperation.retryResource,
         externalSourceId: externalSourceId,
         arguments: <String, Object?>{'uri': uri.toString()},
       );
@@ -357,6 +383,8 @@ void _validateArguments(
       _expectSingleNonEmptyString(arguments, 'chapterId');
       return;
     case ExternalPluginRuntimeOperation.loadResource:
+    case ExternalPluginRuntimeOperation.resolveResource:
+    case ExternalPluginRuntimeOperation.retryResource:
       _expectSingleNonEmptyString(arguments, 'uri');
       final uri = Uri.tryParse(arguments['uri']! as String);
       if (uri == null || !uri.hasScheme) {

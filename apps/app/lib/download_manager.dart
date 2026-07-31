@@ -799,7 +799,7 @@ final class _DownloadTaskTile extends StatelessWidget {
             const SizedBox(height: 8),
             LinearProgressIndicator(
               value: snapshot.phase == ChapterDownloadPhase.downloading &&
-                      snapshot.totalBytes == null &&
+                      snapshot.receivedBytes == 0 &&
                       snapshot.completedPages == 0
                   ? null
                   : snapshot.fraction,

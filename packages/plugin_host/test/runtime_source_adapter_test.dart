@@ -42,6 +42,15 @@ void main() {
       Uri.parse('https://cdn.invalid/1.webp'),
     );
     expect(bytes, <int>[82, 73, 70, 70]);
+    final request = await (source as ResolvableComicResourceSource)
+        .resolveResource(Uri.parse('venera-resource:durable-page'));
+    expect(request.uri, Uri.parse('https://cdn.invalid/1.webp'));
+    expect(request.requiresRuntimeTransform, isFalse);
+    expect(
+      await (source as RetryableComicResourceSource)
+          .retryResource(Uri.parse('venera-resource:durable-page')),
+      isNull,
+    );
     expect(
       connection.operations,
       <ExternalPluginRuntimeOperation>[
@@ -49,6 +58,8 @@ void main() {
         ExternalPluginRuntimeOperation.loadComic,
         ExternalPluginRuntimeOperation.loadChapter,
         ExternalPluginRuntimeOperation.loadResource,
+        ExternalPluginRuntimeOperation.resolveResource,
+        ExternalPluginRuntimeOperation.retryResource,
       ],
     );
   });
@@ -376,6 +387,16 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
                 : <Object?>[],
           },
         ExternalPluginRuntimeOperation.loadResource => resource,
+        ExternalPluginRuntimeOperation.resolveResource =>
+          const <String, Object?>{
+            'url': 'https://cdn.invalid/1.webp',
+            'method': 'GET',
+            'headers': <String, Object?>{},
+            'body': null,
+            'requiresRuntimeTransform': false,
+          },
+        ExternalPluginRuntimeOperation.retryResource =>
+          const <String, Object?>{'available': false},
         ExternalPluginRuntimeOperation.loadSourceSettings =>
           const <Object?>[
             <String, Object?>{
@@ -487,6 +508,10 @@ final class _SequencedConnection implements ExternalPluginRuntimeConnection {
           ExternalPluginRuntimeOperation.loadChapter =>
             throw UnimplementedError(),
           ExternalPluginRuntimeOperation.loadResource =>
+            throw UnimplementedError(),
+          ExternalPluginRuntimeOperation.resolveResource =>
+            throw UnimplementedError(),
+          ExternalPluginRuntimeOperation.retryResource =>
             throw UnimplementedError(),
           ExternalPluginRuntimeOperation.loadSourceSettings =>
             throw UnimplementedError(),

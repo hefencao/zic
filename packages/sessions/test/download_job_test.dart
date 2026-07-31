@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:domain/domain.dart';
@@ -106,6 +107,30 @@ void main() {
     expect(changed.discardCount, 1);
     expect(result.epoch, const SourceEpoch(1));
   });
+  test('explicit cancellation closes a stalled response stream', () async {
+    final session = createSession();
+    final transport = _BlockingTransport();
+    final cancel = CancelToken();
+    final run = DownloadJob(transport: transport, session: session).run(
+      cancel: cancel,
+    );
+
+    await transport.firstChunk.future;
+    cancel.cancel();
+
+    await expectLater(
+      run,
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+    await transport.cancelled.future.timeout(const Duration(seconds: 1));
+  });
+
   test('promotes a complete restored partial without another request', () async {
     final bytes = List<int>.generate(12, (index) => index + 1);
     final session = createSession();
@@ -132,4 +157,33 @@ void main() {
     expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
   });
 
+}
+
+final class _BlockingTransport implements Transport {
+  final Completer<void> firstChunk = Completer<void>();
+  final Completer<void> cancelled = Completer<void>();
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async {
+    late final StreamController<List<int>> controller;
+    controller = StreamController<List<int>>(
+      onListen: () {
+        controller.add(<int>[1, 2, 3]);
+        if (!firstChunk.isCompleted) firstChunk.complete();
+      },
+      onCancel: () {
+        if (!cancelled.isCompleted) cancelled.complete();
+      },
+    );
+    return ByteResponse(
+      bytes: controller.stream,
+      statusCode: HttpStatus.ok,
+      rangeStart: 0,
+      totalLength: 6,
+    );
+  }
 }

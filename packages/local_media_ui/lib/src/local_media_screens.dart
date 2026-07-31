@@ -53,6 +53,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
   const ImportedImageChapterScreen({
     required this.record,
     this.byteLoaders = const <String, LocalImageFileBytesLoader>{},
+    this.responseLoaders = const <String, TransportResponseLoader>{},
     this.onPreviewStateChanged,
     this.initialProgress,
     this.onProgressChanged,
@@ -69,6 +70,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
 
   final ImportedChapterRecord record;
   final Map<String, LocalImageFileBytesLoader> byteLoaders;
+  final Map<String, TransportResponseLoader> responseLoaders;
   final ImagePreviewStateChanged? onPreviewStateChanged;
   final ReadingProgress? initialProgress;
   final ReaderProgressWriter? onProgressChanged;
@@ -89,17 +91,22 @@ final class ImportedImageChapterScreen extends StatelessWidget {
       final page = record.pages[index];
       final uri = chapter.pages[index].uri;
       final loader = byteLoaders[page.sourceId];
-      if (loader != null || !_isRemoteMediaUri(uri)) {
+      final responseLoader = responseLoaders[page.sourceId];
+      if (loader != null || responseLoader != null || !_isRemoteMediaUri(uri)) {
         sources[uri] = LoaderTransportSource(
           revision: '${record.sourceRevision}:$index',
-          loadBytes: loader ?? () => readLocalImageSource(page.sourceId),
+          loadBytes: loader ??
+              (responseLoader == null
+                  ? () => readLocalImageSource(page.sourceId)
+                  : null),
+          openResponse: responseLoader,
         );
       }
     }
 
     return ReaderRuntimeScreen(
       key: ValueKey<Object>(
-        (record.chapterId, record.sourceRevision, byteLoaders.length),
+        (record.chapterId, record.sourceRevision, byteLoaders.length, responseLoaders.length),
       ),
       screenKey: imageFolderScreenKey,
       chapter: chapter,

@@ -75,11 +75,45 @@ def main() -> None:
     )
     require(
         "packages/reader_runtime/lib/src/reader_runtime_screen.dart",
-        "_usesDeferredPluginResources",
+        "readerPipelineProfileFor(widget.chapter)",
+        "retry: _pipelineProfile.retry",
+        "NetLane(maxActive: _pipelineProfile.networkConcurrency)",
+        "DecodeLane(maxActive: _pipelineProfile.decodeConcurrency)",
+        "UploadLane(maxActive: _pipelineProfile.uploadConcurrency)",
+        "windowResolver: _pipelineProfile.windowResolver",
+        "policyGuard: _pipelineProfile.guard",
+    )
+    require(
+        "packages/reader_runtime/lib/src/reader_pipeline_profile.dart",
+        "ReaderPipelineProfile.sourceStreaming",
+        "forwardEncodedPages: 7",
+        "backwardEncodedPages: 3",
+        "PolicyGuard(maxDownloadDemands: 11)",
+        "networkConcurrency: 5",
+        "decodeConcurrency: 3",
+        "uploadConcurrency: 2",
+    )
+    reject(
+        "packages/reader_runtime/lib/src/reader_runtime_screen.dart",
         "RetryPolicy(maxAttempts: 1)",
         "forwardEncodedPages: 0",
         "backwardEncodedPages: 0",
         "PolicyGuard(maxDownloadDemands: 1)",
+    )
+    require(
+        "packages/downloads/lib/src/source_resource_transport.dart",
+        "ExternalPluginResourceTransportPool",
+        "Map<BrowsableComicSource, _SourceResourceTransport>.identity()",
+        "ResolvableComicResourceSource",
+        "HttpHeaders.acceptEncodingHeader",
+        "response.contentLength",
+        "source.loadResource(uri)",
+    )
+    require(
+        "packages/downloads/lib/src/chapter_downloads.dart",
+        "ConfigurableChapterResourceTransport",
+        "openResponse:",
+        "totalLength",
     )
     require(
         "apps/app/test/source_browser_test.dart",

@@ -145,6 +145,7 @@ final class DemoHome extends StatefulWidget {
 final class _DemoHomeState extends State<DemoHome> {
   late final ImportedLibraryStore _library;
   late final ChapterDownloadService _chapterDownloads;
+  final _sourceResourceTransports = ExternalPluginResourceTransportPool();
   late final WholeComicDownloadQueue _wholeComicDownloads;
   late List<BrowsableComicSource> _sources;
   late final HomeLibrarySession _librarySession;
@@ -223,11 +224,7 @@ final class _DemoHomeState extends State<DemoHome> {
               ),
       ),
     );
-    if (_chapterDownloads is ConfigurableChapterResourceLoader) {
-      final resourceBinding =
-          _chapterDownloads as ConfigurableChapterResourceLoader;
-      resourceBinding.setChapterResourceLoader(_loadSourceResourceBytes);
-    }
+    _bindCompatibleSourceResourceTransport(this);
     final ownsWholeComicDownloads = widget.wholeComicDownloads == null;
     _wholeComicDownloads = widget.wholeComicDownloads ??
         WholeComicDownloadQueue(downloads: _chapterDownloads);
@@ -284,6 +281,7 @@ final class _DemoHomeState extends State<DemoHome> {
 
   @override
   void dispose() {
+    _sourceResourceTransports.close();
     widget.preferences.removeListener(_handleAppPreferencesChanged);
     _librarySession.removeListener(_handleLibrarySessionChanged);
     if (_ownsCacheCoordinator) {
@@ -573,6 +571,7 @@ final class _DemoHomeState extends State<DemoHome> {
   Future<Uint8List> _loadSourceResourceBytes(String sourceId, Uri uri) =>
       _loadCompatibleSourceResource(this, sourceId, uri);
 
+
   Future<Uint8List> _loadChapterPageBytes(
     ImportedLibraryEntry entry,
     int pageIndex,
@@ -806,15 +805,14 @@ final class _DemoHomeState extends State<DemoHome> {
               current.chapter.pages[index].sourceId: () =>
                   _chapterDownloads.readPage(current, index),
           }
-        : source == null
-            ? const <String, LocalImageFileBytesLoader>{}
-            : <String, LocalImageFileBytesLoader>{
-                for (final page in current.chapter.pages)
-                  page.sourceId: () => _loadSourceResourceBytes(
-                        current.chapter.sourceId,
-                        Uri.parse(page.sourceId),
-                      ),
-              };
+        : const <String, LocalImageFileBytesLoader>{};
+    final responseLoaders = hasOfflineBytes || source == null
+        ? const <String, ExternalPluginResourceResponseLoader>{}
+        : <String, ExternalPluginResourceResponseLoader>{
+            for (final page in current.chapter.pages)
+              page.sourceId: _sourceResourceTransports.loaderFor(
+                source, Uri.parse(page.sourceId)),
+          };
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) {
@@ -831,6 +829,7 @@ final class _DemoHomeState extends State<DemoHome> {
           return ImportedImageChapterScreen(
             record: current.chapter,
             byteLoaders: byteLoaders,
+            responseLoaders: responseLoaders,
             initialProgress: current.progress ??
                 ReadingProgress(
                   sourceId: current.chapter.sourceId,

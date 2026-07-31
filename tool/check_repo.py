@@ -1713,6 +1713,7 @@ def check_compile_regressions() -> None:
         for path in (
             home_path,
             ROOT / 'apps/app/lib/demo_home_views.dart',
+            ROOT / 'apps/app/lib/demo_home_source_compat.dart',
             ROOT / 'apps/app/lib/home_widgets.dart',
             ROOT / 'apps/app/lib/home_library_session.dart',
         )
@@ -2151,8 +2152,9 @@ def check_compile_regressions() -> None:
     for required in (
         "label: '杂项'",
         'MiscPage(',
-        'as ConfigurableChapterResourceLoader',
-        'setChapterResourceLoader(_loadSourceResourceBytes)',
+        'downloads is ConfigurableChapterResourceLoader',
+        'downloads.setChapterResourceLoader(state._loadSourceResourceBytes)',
+        'downloads is ConfigurableChapterResourceTransport',
     ):
         if required not in home:
             fail(f'dev.64 root/settings compile contract is incomplete: {required}')

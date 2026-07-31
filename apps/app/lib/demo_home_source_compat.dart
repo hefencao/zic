@@ -1,4 +1,23 @@
 part of 'demo_home.dart';
+void _bindCompatibleSourceResourceTransport(_DemoHomeState state) {
+  final downloads = state._chapterDownloads;
+  if (downloads is ConfigurableChapterResourceLoader) {
+    downloads.setChapterResourceLoader(state._loadSourceResourceBytes);
+  }
+  if (downloads is ConfigurableChapterResourceTransport) {
+    downloads.setChapterResourceTransport(
+      (sourceId, uri, {range, validators}) {
+        final source = state._sourceForId(sourceId);
+        if (source == null) {
+          throw StateError('漫画源 $sourceId 当前不可用');
+        }
+        return state._sourceResourceTransports
+            .loaderFor(source, uri)(range: range, validators: validators);
+      },
+    );
+  }
+}
+
 
 bool _isLegacyVeneraLocator(String value) =>
     value.startsWith('venera-resource://');

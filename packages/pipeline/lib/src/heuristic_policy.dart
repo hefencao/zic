@@ -5,7 +5,9 @@ import 'demand.dart';
 import 'role_window.dart';
 
 final class HeuristicPolicy {
-  const HeuristicPolicy();
+  const HeuristicPolicy({this.decodeWarmPages = false});
+
+  final bool decodeWarmPages;
 
   DemandPlan createPlan({
     required int revision,
@@ -89,25 +91,24 @@ final class HeuristicPolicy {
         PageRole.next => 720,
         PageRole.previous => 680,
         PageRole.near => 520,
-        PageRole.far || PageRole.detached => 0,
+        PageRole.far => 400,
+        PageRole.detached => 0,
       };
 
   int _decodePriority(PageRole role) => switch (role) {
         PageRole.current => 1000,
         PageRole.transition => 900,
-        PageRole.next => 0,
-        PageRole.previous => 0,
-        PageRole.near => 0,
+        PageRole.next => decodeWarmPages ? 720 : 0,
+        PageRole.previous => decodeWarmPages ? 680 : 0,
+        PageRole.near => decodeWarmPages ? 520 : 0,
         PageRole.far || PageRole.detached => 0,
       };
 
   int _decodeWatermark(PageRole role) => switch (role) {
         PageRole.current => 1,
         PageRole.transition => 1,
-        PageRole.next ||
-        PageRole.previous ||
-        PageRole.near ||
-        PageRole.far ||
-        PageRole.detached => 0,
+        PageRole.next || PageRole.previous || PageRole.near =>
+          decodeWarmPages ? 1 : 0,
+        PageRole.far || PageRole.detached => 0,
       };
 }
