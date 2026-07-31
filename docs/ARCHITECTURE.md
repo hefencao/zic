@@ -156,7 +156,15 @@ zic/
 - App production dependencies 不直接声明 `pipeline/sessions/storage/transport`；这些低层依赖只能由 composition package 所有。测试可在 `dev_dependencies` 中直接引用其契约。
 - App facade 不得再次增长为实现文件。单个 local-media UI 实现文件上限为 1600 行，继续增长时必须按状态所有权进一步拆分。
 
-### 3.1.2 外部插件仓库 UI
+### 3.1.2 根导航与设置投影
+
+根导航固定为 `首页 / 书架 / 漫画源 / 杂项`。`杂项`承载快捷设置、完整设置入口、关于和 Debug trace，不把诊断控件重新塞回 Home 主线。
+
+`AppPreferencesController` 只持有小型用户选择；文件读写由 composition 通过 `storage_bridge` 注入。设置页可以调用既有 application facade：书架默认值更新既有投影，Reader 默认模式/沉浸值进入既有 Reader composition，整本下载策略调用持久队列，缓存维护调用 `ResourceCacheCoordinator`。设置页不得直接创建 transport、访问插件 Cookie/存储、遍历或删除 artifact 文件。
+
+`DebugTraceLog` 是有界 `TraceSink` 读模型。trace producer 仍属于 startup、Reader、pipeline、download 等原 owner；Presentation 只能观察、复制、清空或暂停记录。
+
+### 3.1.3 外部插件仓库 UI
 
 每个生态的安装管理页固定使用顶部 `Installed / Repository` 两个 ownership projection，同一时刻只展示一个整页内容。Mihon device discovery 只属于 Installed，并拥有独立 refresh/busy/error 状态；Repository 只负责索引、安装与更新。主漫画源管理页只投影已启用来源并按 Native/Mihon/Venera 分段。Mihon language family 的默认折叠发生在这个启用来源投影，不发生在 repository；catalog identity、pluginId、签名、payload、设置、启用状态和 activation session 始终独立。
 

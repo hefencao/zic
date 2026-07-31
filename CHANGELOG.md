@@ -1,3 +1,10 @@
+## 0.31.0-dev.64：杂项页、分层设置与编译闭环
+
+- 修复 ChapterDownloadService 能力接口绑定与 Map 下标测试编译错误。
+- 新增第四页“杂项”，包含快捷设置、设置、关于与 Debug trace。
+- 设置页按数据、网络、书架、阅读、下载、外观分层；数据备份和统一缓存维护可执行。
+- 主题、书架默认值、Reader 默认模式/沉浸行为和整本下载策略持久化或复用现有持久队列。
+
 ## 0.31.0-dev.63：插件资源传输、媒体识别与章节元数据渐进收口
 
 - 严格以用户上传的 `zic_v0.31.0-dev.62_source-management-tabs-mihon-chapter-preflight.zip` 为唯一代码基线；`mihon-main` 与 `vibevenera-master` 仅用于兼容行为对照，未修改、未并入产品源码。

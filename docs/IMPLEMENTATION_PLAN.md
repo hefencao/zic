@@ -21,7 +21,12 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.63）
+## 当前应用主线（0.31.0-dev.64）
+
+- 完成第四根导航“杂项”，将快捷设置、完整设置、关于和 Debug trace 从 Home 主线分离。
+- 设置按数据/网络/书架/阅读/下载/外观分层；所有可执行项复用既有 store、queue、cache coordinator 与 Reader composition。
+- App 小型偏好通过 `storage_bridge` 注入式 map 读写持久化，禁止 `apps/app` 直接导入 `dart:io`。
+- 下一步补齐目录迁移/恢复协议与数据备份导入；不得在未定义索引和 artifact 迁移前允许任意修改根目录。
 
 - Mihon extensionLib 1.4/1.5/1.6 必须映射到版本化 Source ABI asset；不得把任一 `extensions-lib` 放回 App runtime classpath，也不得回退为 parent-first Source API。
 - Mihon 章节目录必须保留来源返回的全部真实 `SChapter`；单章节兜底仅允许在目录为空时创建。详情到阅读之间优先保留原始章节对象，重启恢复只能按稳定来源身份重新匹配，不得把漫画 URL 或第一章复用于所有章节。

@@ -10,11 +10,16 @@ import 'package:resource_cache/resource_cache.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'package:downloads/downloads.dart';
+import 'app_preferences.dart';
+import 'app_settings_screen.dart';
 import 'comic_details.dart' as details;
+import 'debug_trace.dart';
 import 'download_manager.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
+import 'library_backup.dart';
 import 'library_diagnostics.dart';
 import 'source_browser.dart';
+import 'misc_page.dart';
 import 'source_migration_compare.dart';
 import 'static_demo.dart';
 import 'webp_demo.dart';
@@ -84,8 +89,6 @@ Key chapterReadKey(String sourceId, String chapterId) =>
 @Deprecated('Use localImageFolderPickerProgressKey')
 const localWebpFolderPickerProgressKey = localImageFolderPickerProgressKey;
 
-enum _SourceFilter { all, local, remote }
-
 final class _PreparedChapterMigration {
   const _PreparedChapterMigration({
     required this.targetRecord,
@@ -101,8 +104,6 @@ final class _PreparedChapterMigration {
   final ReadingProgress? targetProgress;
   final ChapterReadState? targetReadState;
 }
-
-enum _ShelfViewMode { gallery, list }
 
 String _librarySortLabel(LibrarySortMode mode) => switch (mode) {
       LibrarySortMode.recent => '最近更新',
@@ -122,6 +123,9 @@ final class DemoHome extends StatefulWidget {
     this.comicSources,
     this.externalPlugins,
     this.cacheCoordinator,
+    required this.preferences,
+    required this.debugTrace,
+    this.storageRoot,
     this.startupTelemetry,
     super.key,
   }) : assert(
@@ -138,6 +142,9 @@ final class DemoHome extends StatefulWidget {
   final List<BrowsableComicSource>? comicSources;
   final ExternalPluginController? externalPlugins;
   final ResourceCacheCoordinator? cacheCoordinator;
+  final AppPreferencesController preferences;
+  final DebugTraceLog debugTrace;
+  final String? storageRoot;
   final HomeStartupTelemetry? startupTelemetry;
 
   @override
@@ -161,10 +168,10 @@ final class _DemoHomeState extends State<DemoHome> {
   final Set<String> _openingComicIdentities = <String>{};
   int _navigationIndex = 0;
   bool _sourcePageVisited = false;
-  _SourceFilter _sourceFilter = _SourceFilter.all;
+  late ShelfSourceFilter _sourceFilter;
   String? _selectedCategoryId;
-  LibrarySortMode _sortMode = LibrarySortMode.recent;
-  _ShelfViewMode _shelfViewMode = _ShelfViewMode.gallery;
+  late LibrarySortMode _sortMode;
+  late ShelfViewPreference _shelfViewMode;
 
   Future<void> get _libraryReady => _librarySession.ready;
   List<ImportedLibraryEntry> get _libraryEntries => _librarySession.entries;
@@ -193,6 +200,10 @@ final class _DemoHomeState extends State<DemoHome> {
   @override
   void initState() {
     super.initState();
+    _sourceFilter = widget.preferences.shelfSourceFilter;
+    _sortMode = widget.preferences.shelfSortMode;
+    _shelfViewMode = widget.preferences.shelfView;
+    widget.preferences.addListener(_handleAppPreferencesChanged);
     final ownsLibrary = widget.libraryStore == null;
     _library = widget.libraryStore ?? MemoryImportedLibraryStore();
     final ownsChapterDownloads = widget.chapterDownloads == null;
@@ -221,8 +232,9 @@ final class _DemoHomeState extends State<DemoHome> {
               ),
       ),
     );
-    final resourceBinding = _chapterDownloads;
-    if (resourceBinding is ConfigurableChapterResourceLoader) {
+    if (_chapterDownloads is ConfigurableChapterResourceLoader) {
+      final resourceBinding =
+          _chapterDownloads as ConfigurableChapterResourceLoader;
       resourceBinding.setChapterResourceLoader(_loadSourceResourceBytes);
     }
     final ownsWholeComicDownloads = widget.wholeComicDownloads == null;
@@ -237,6 +249,25 @@ final class _DemoHomeState extends State<DemoHome> {
       ownsChapterDownloads: ownsChapterDownloads,
       ownsWholeComicDownloads: ownsWholeComicDownloads,
     )..addListener(_handleLibrarySessionChanged);
+  }
+
+  void _handleAppPreferencesChanged() {
+    final sourceFilter = widget.preferences.shelfSourceFilter;
+    final sortMode = widget.preferences.shelfSortMode;
+    final shelfView = widget.preferences.shelfView;
+    if (_sourceFilter == sourceFilter &&
+        _sortMode == sortMode &&
+        _shelfViewMode == shelfView) {
+      return;
+    }
+    if (mounted) {
+      setState(() {
+        _sourceFilter = sourceFilter;
+        _sortMode = sortMode;
+        _shelfViewMode = shelfView;
+        _clearManagedSelection();
+      });
+    }
   }
 
   void _handleLibrarySessionChanged() {
@@ -262,6 +293,7 @@ final class _DemoHomeState extends State<DemoHome> {
 
   @override
   void dispose() {
+    widget.preferences.removeListener(_handleAppPreferencesChanged);
     _librarySession.removeListener(_handleLibrarySessionChanged);
     if (_ownsCacheCoordinator) {
       unawaited(_cacheCoordinator.close());
@@ -448,6 +480,22 @@ final class _DemoHomeState extends State<DemoHome> {
           await _refreshDownloadSnapshots(_libraryEntries);
         }
       }),
+    );
+  }
+
+  void _openSettings() {
+    unawaited(
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => SettingsScreen(
+            preferences: widget.preferences,
+            downloads: _wholeComicDownloads,
+            cacheCoordinator: _cacheCoordinator,
+            storageRoot: widget.storageRoot,
+            exportBackup: () => exportImportedLibraryBackup(_library),
+          ),
+        ),
+      ),
     );
   }
 
@@ -794,8 +842,19 @@ final class _DemoHomeState extends State<DemoHome> {
           return ImportedImageChapterScreen(
             record: current.chapter,
             byteLoaders: byteLoaders,
-            initialProgress: current.progress,
+            initialProgress: current.progress ??
+                ReadingProgress(
+                  sourceId: current.chapter.sourceId,
+                  comicId: current.chapter.comicId,
+                  chapterId: current.chapter.chapterId,
+                  pageIndex: 0,
+                  subPageOffset: 0,
+                  readerMode: widget.preferences.defaultReaderMode,
+                  updatedAt: DateTime.now().toUtc(),
+                ),
             onProgressChanged: _library.saveProgress,
+            initiallyImmersive: widget.preferences.readerStartsImmersive,
+            traceSink: widget.debugTrace,
             onDownloadRequested: () => _downloadChapter(current),
             artifactCache: _chapterDownloads is ArtifactCacheStore
                 ? _chapterDownloads as ArtifactCacheStore
@@ -1675,7 +1734,8 @@ final class _DemoHomeState extends State<DemoHome> {
           switch (_navigationIndex) {
             0 => 'zic',
             1 => '书架',
-            _ => '漫画源',
+            2 => '漫画源',
+            _ => '杂项',
           },
         ),
         actions: <Widget>[
@@ -1686,14 +1746,14 @@ final class _DemoHomeState extends State<DemoHome> {
               icon: const Icon(Icons.tune),
               label: const Text('漫画源管理'),
             ),
-          if (_navigationIndex != 2)
+          if (_navigationIndex < 2)
             IconButton(
               key: downloadManagerEntryKey,
               tooltip: '下载管理',
               onPressed: _openDownloadManager,
               icon: const Icon(Icons.download_for_offline_outlined),
             ),
-          if (_navigationIndex != 2)
+          if (_navigationIndex < 2)
             IconButton(
               tooltip: '导入漫画文件夹',
               onPressed: _picking || _pickingFolder ? null : _importImageFolder,
@@ -1719,6 +1779,11 @@ final class _DemoHomeState extends State<DemoHome> {
             icon: Icon(Icons.public_outlined),
             selectedIcon: Icon(Icons.public),
             label: '漫画源',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.more_horiz),
+            selectedIcon: Icon(Icons.more),
+            label: '杂项',
           ),
         ],
         onDestinationSelected: (index) {

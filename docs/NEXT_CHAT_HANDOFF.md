@@ -3,11 +3,28 @@
 ## Sole baseline
 
 Continue only from
-`zic_v0.31.0-dev.63_plugin-resource-transport-media-preflight.zip`.
+`zic_v0.31.0-dev.64_misc-settings-compile-fix.zip`.
 It is a direct modification of the user-provided
 `zic_v0.31.0-dev.62_source-management-tabs-mihon-chapter-preflight.zip`;
 do not merge an earlier candidate. `mihon-main.zip` and `vibevenera-master.zip`
 were read-only compatibility references and are not part of the product tree.
+
+## Completed in dev.64
+
+- Fixed the `ChapterDownloadService` capability binding by explicitly casting
+  to `ConfigurableChapterResourceLoader` after the runtime type check.
+- Fixed the repository-model test callback to use `owners[sourceId]` instead of
+  a nonexistent `Map.operator` getter.
+- Added the fourth root destination, Misc, with quick settings, Settings,
+  About, download/import shortcuts, and a bounded Debug trace projection.
+- Added Data, Network, Bookshelf, Reading, Download, and Appearance settings.
+  Executable settings delegate to the existing catalog store, cache
+  coordinator, whole-comic queue, Reader composition, and theme owner.
+- App preferences persist through injected `storage_bridge` map readers and
+  writers. Presentation still does not import `dart:io` or own files.
+- Library backup exports catalog metadata and progress through a user-selected
+  destination. Directory roots remain read-only until an indexed migration and
+  rollback protocol exists.
 
 ## Completed in dev.63
 
@@ -32,6 +49,15 @@ were read-only compatibility references and are not part of the product tree.
   remains in the diagnostic chain.
 
 ## Invariants
+
+- Misc and Settings are projections and command surfaces, not new service
+  owners. They cannot open plugin transports, read cookies, retain page bytes,
+  or delete cache files outside `ResourceCacheCoordinator`.
+- Storage-root changes remain unavailable until catalog indexes, plugin data,
+  queue state, response bytes, and page artifacts can migrate atomically with
+  rollback. Displaying and copying current paths is allowed.
+- Debug trace capture is bounded and observational; disabling or clearing its
+  UI projection does not change Reader/pipeline/download decisions.
 
 - Presentation does not select transports, own page bytes, create page caches or
   branch on plugin URI schemes.
@@ -83,14 +109,17 @@ flutter pub get
 
 ## Next mainline work
 
-1. On a real Android device, verify Venera animated WebP playback through both a
+1. Run the full Flutter/Dart suite and Android release build to close the SDK
+   validation gap for dev.64, including `misc_settings_test.dart`.
+2. Define an atomic directory migration/rollback protocol before adding mutable
+   data, download, cache, or plugin root selectors. Add backup import only after
+   validating schema and collision behavior.
+3. On a real Android device, verify Venera animated WebP playback through both a
    direct image URL and a deferred `onImageLoad` resource.
-2. Verify JMComic/18comic accepts the synthetic gallery only when正文 pages load,
+4. Verify JMComic/18comic accepts the synthetic gallery only when body pages load,
    and preserve the complete diagnostic when both chapter and page APIs fail.
-3. Verify www.wn04.ru cover rendering, repeated-image chapters, Reader opening
+5. Verify www.wn04.ru cover rendering, repeated-image chapters, Reader opening
    and persistent chapter download with source headers.
-4. Measure page-count preflight on a large Mihon catalog; retain the two-worker
+6. Measure page-count preflight on a large Mihon catalog; retain the two-worker
    bound and source-cache reuse unless trace data proves a different owner needs
    adjustment.
-5. Run full Flutter/Dart and Android release validation in an environment with
-   the project SDKs installed.

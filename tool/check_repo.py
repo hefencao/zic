@@ -2066,10 +2066,10 @@ def check_compile_regressions() -> None:
         'homeUpdatesSectionKey',
         'homeHistorySectionKey',
         'NavigationBar(',
-        'SegmentedButton<_SourceFilter>',
+        'SegmentedButton<ShelfSourceFilter>',
         'showSelectedIcon: false',
         'showCheckmark: false',
-        '_ShelfViewMode',
+        'ShelfViewPreference',
         'bookshelfViewKey',
         'Draggable<String>',
         'DragTarget<String>',
@@ -2113,6 +2113,53 @@ def check_compile_regressions() -> None:
     ):
         if required not in home:
             fail(f'Android library UI slice is incomplete: {required}')
+
+
+    misc_page = (ROOT / 'apps/app/lib/misc_page.dart').read_text(
+        encoding='utf-8'
+    )
+    settings_page = (ROOT / 'apps/app/lib/app_settings_screen.dart').read_text(
+        encoding='utf-8'
+    )
+    app_preferences = (ROOT / 'apps/app/lib/app_preferences.dart').read_text(
+        encoding='utf-8'
+    )
+    external_repository_test = (
+        ROOT / 'apps/app/test/external_plugin_repository_model_test.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        "label: '杂项'",
+        'MiscPage(',
+        'as ConfigurableChapterResourceLoader',
+        'setChapterResourceLoader(_loadSourceResourceBytes)',
+    ):
+        if required not in home:
+            fail(f'dev.64 root/settings compile contract is incomplete: {required}')
+    for required in (
+        'miscQuickSettingsKey',
+        'miscSettingsEntryKey',
+        'miscAboutEntryKey',
+        'miscDebugTraceEntryKey',
+        'DebugTraceScreen(',
+    ):
+        if required not in misc_page:
+            fail(f'dev.64 misc surface is incomplete: {required}')
+    for required in (
+        'settingsDataEntryKey',
+        'settingsNetworkEntryKey',
+        'settingsBookshelfEntryKey',
+        'settingsReadingEntryKey',
+        'settingsDownloadEntryKey',
+        'settingsAppearanceEntryKey',
+        'cacheCoordinator.clear()',
+        'downloads.updatePolicy(',
+    ):
+        if required not in settings_page:
+            fail(f'dev.64 settings hierarchy is incomplete: {required}')
+    if "import 'dart:io';" in app_preferences:
+        fail('dev.64 application preferences bypass storage_bridge composition')
+    if 'owners.operator' in external_repository_test:
+        fail('dev.64 repository model test still uses nonexistent Map.operator getter')
 
     for forbidden in (
         '_buildManagementBar(',

@@ -54,6 +54,8 @@ final class ImportedImageChapterScreen extends StatelessWidget {
     this.onFavoriteChanged,
     this.onDownloadRequested,
     this.artifactCache,
+    this.initiallyImmersive = true,
+    this.traceSink,
     super.key,
   });
 
@@ -66,6 +68,8 @@ final class ImportedImageChapterScreen extends StatelessWidget {
   final FutureOr<void> Function(bool favorite)? onFavoriteChanged;
   final FutureOr<void> Function()? onDownloadRequested;
   final ArtifactCacheStore? artifactCache;
+  final bool initiallyImmersive;
+  final TraceSink? traceSink;
 
   @override
   Widget build(BuildContext context) {
@@ -96,6 +100,8 @@ final class ImportedImageChapterScreen extends StatelessWidget {
       initialFavorite: initialFavorite,
       onFavoriteChanged: onFavoriteChanged,
       onDownloadRequested: onDownloadRequested,
+      initiallyImmersive: initiallyImmersive,
+      traceSink: traceSink,
       appBarTitleBuilder: (context, chapter, currentIndex) {
         final current = record.pages[currentIndex];
         final format = _importedPageFormat(current);

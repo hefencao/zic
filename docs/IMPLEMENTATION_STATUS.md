@@ -1,3 +1,12 @@
+## 0.31.0-dev.64：第四页杂项与设置所有权闭环
+
+- 修复 dev.63 的两个 Dart 编译阻断：下载服务通过显式 `ConfigurableChapterResourceLoader` 能力绑定注入 source loader；Mihon 分组测试使用显式 Map 下标闭包。
+- 根导航新增第四页“杂项”，包含主题/沉浸/trace 快捷设置、下载管理、导入、设置、关于和 Debug trace。
+- 设置根页包含数据、网络、书架、阅读、下载、外观。主题和书架默认值持久化；Reader 新章节默认模式/沉浸值进入既有 Reader；网络/供电/并发调用持久整本下载队列。
+- 数据页显示 storage-derived 目录，导出 catalog 元数据备份，并通过统一缓存协调器 inspect/clear。目录变更仍受迁移协议门禁，不提供危险的字符串替换。
+- `DebugTraceLog` 作为最多 500 条事件的观察投影接入 startup 与 Reader trace；关闭记录、清空或复制均不改变生产策略。
+- App 偏好控制器不导入 `dart:io`，持久 map 读写由 `storage_bridge` composition 注入。
+
 ## 0.31.0-dev.63：插件资源传输与媒体/章节兼容闭环
 
 - 页面稳定 identity 与资源定位分离：章节内允许重复 URI，唯一性只由非空 `pageId` 保证。该规则与 Reader、下载和持久进度使用的 stable identity 一致。

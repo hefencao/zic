@@ -81,7 +81,7 @@ void main() {
         ),
       ],
       preferredLanguage: 'zh',
-      pluginOwner: owners.operator [],
+      pluginOwner: (sourceId) => owners[sourceId],
     );
 
     expect(groups, hasLength(2));

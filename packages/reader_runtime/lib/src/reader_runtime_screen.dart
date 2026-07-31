@@ -175,6 +175,8 @@ final class ReaderRuntimeScreen extends StatefulWidget {
     this.initialFavorite = false,
     this.onFavoriteChanged,
     this.onDownloadRequested,
+    this.initiallyImmersive = true,
+    this.traceSink,
     this.screenKey,
     super.key,
   });
@@ -191,6 +193,8 @@ final class ReaderRuntimeScreen extends StatefulWidget {
   final bool initialFavorite;
   final FutureOr<void> Function(bool favorite)? onFavoriteChanged;
   final FutureOr<void> Function()? onDownloadRequested;
+  final bool initiallyImmersive;
+  final TraceSink? traceSink;
   final Key? screenKey;
 
   @override
@@ -231,7 +235,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   final Set<DownloadSession> _sessionTransferStarted = <DownloadSession>{};
   final Map<String, bool> _playbackCapabilities = <String, bool>{};
   late bool _favorite;
-  bool _controlsVisible = false;
+  late bool _controlsVisible;
   bool _downloading = false;
   bool _downloaded = false;
 
@@ -243,12 +247,20 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       const ReaderTransferProgress(),
     );
     _favorite = widget.initialFavorite;
-    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky));
+    _controlsVisible = !widget.initiallyImmersive;
+    unawaited(
+      SystemChrome.setEnabledSystemUIMode(
+        widget.initiallyImmersive
+            ? SystemUiMode.immersiveSticky
+            : SystemUiMode.edgeToEdge,
+      ),
+    );
     _sessionId = 'reader-${++_sessionSequence}';
     _clock = SystemClock();
     _memoryTrace = MemoryTraceSink();
     _trace = MultiTraceSink(<TraceSink>[
       _memoryTrace,
+      if (widget.traceSink != null) widget.traceSink!,
       CallbackTraceSink((event) => debugPrint(event.toJsonLine())),
     ]);
     _workspace = EphemeralCacheWorkspace.readerSession(_sessionId);

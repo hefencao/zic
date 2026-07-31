@@ -10,11 +10,11 @@ extension _DemoHomeViews on _DemoHomeState {
     if (!preference.inShelf) {
       return false;
     }
-    if (_sourceFilter == _SourceFilter.local &&
+    if (_sourceFilter == ShelfSourceFilter.local &&
         preference.sourceKind != ComicSourceKind.local) {
       return false;
     }
-    if (_sourceFilter == _SourceFilter.remote &&
+    if (_sourceFilter == ShelfSourceFilter.remote &&
         preference.sourceKind != ComicSourceKind.remote) {
       return false;
     }
@@ -98,6 +98,15 @@ extension _DemoHomeViews on _DemoHomeState {
                     onOpenComic: _openSourceComic,
                   )
                 : const SizedBox.shrink(),
+            MiscPage(
+              preferences: widget.preferences,
+              debugTrace: widget.debugTrace,
+              onOpenSettings: _openSettings,
+              onOpenDownloads: _openDownloadManager,
+              onImportFolder: _picking || _pickingFolder
+                  ? null
+                  : () => unawaited(_importImageFolder()),
+            ),
           ],
         ),
         if (_libraryLoading)
@@ -862,26 +871,28 @@ extension _DemoHomeViews on _DemoHomeState {
               Row(
                 children: <Widget>[
                   Expanded(
-                    child: SegmentedButton<_SourceFilter>(
+                    child: SegmentedButton<ShelfSourceFilter>(
                       key: bookshelfSourceFilterKey,
                       showSelectedIcon: false,
-                      segments: const <ButtonSegment<_SourceFilter>>[
+                      segments: const <ButtonSegment<ShelfSourceFilter>>[
                         ButtonSegment(
-                          value: _SourceFilter.all,
+                          value: ShelfSourceFilter.all,
                           label: Text('全部'),
                         ),
                         ButtonSegment(
-                          value: _SourceFilter.local,
+                          value: ShelfSourceFilter.local,
                           label: Text('本地'),
                         ),
                         ButtonSegment(
-                          value: _SourceFilter.remote,
+                          value: ShelfSourceFilter.remote,
                           label: Text('远程'),
                         ),
                       ],
-                      selected: <_SourceFilter>{_sourceFilter},
+                      selected: <ShelfSourceFilter>{_sourceFilter},
                       onSelectionChanged: (selection) {
-                        setState(() => _sourceFilter = selection.single);
+                        widget.preferences.setShelfSourceFilter(
+                          selection.single,
+                        );
                       },
                     ),
                   ),
@@ -904,16 +915,16 @@ extension _DemoHomeViews on _DemoHomeState {
                 children: <Widget>[
                   IconButton(
                     key: bookshelfViewKey,
-                    tooltip: _shelfViewMode == _ShelfViewMode.gallery
+                    tooltip: _shelfViewMode == ShelfViewPreference.gallery
                         ? '切换列表视图'
                         : '切换画廊视图',
-                    onPressed: () => setState(() {
-                      _shelfViewMode = _shelfViewMode == _ShelfViewMode.gallery
-                          ? _ShelfViewMode.list
-                          : _ShelfViewMode.gallery;
-                    }),
+                    onPressed: () => widget.preferences.setShelfView(
+                      _shelfViewMode == ShelfViewPreference.gallery
+                          ? ShelfViewPreference.list
+                          : ShelfViewPreference.gallery,
+                    ),
                     icon: Icon(
-                      _shelfViewMode == _ShelfViewMode.gallery
+                      _shelfViewMode == ShelfViewPreference.gallery
                           ? Icons.view_list_outlined
                           : Icons.grid_view_outlined,
                     ),
@@ -922,10 +933,7 @@ extension _DemoHomeViews on _DemoHomeState {
                     key: bookshelfSortKey,
                     tooltip: '排序方式',
                     initialValue: _sortMode,
-                    onSelected: (mode) => setState(() {
-                      _sortMode = mode;
-                      _clearManagedSelection();
-                    }),
+                    onSelected: widget.preferences.setShelfSortMode,
                     itemBuilder: (context) => <PopupMenuEntry<LibrarySortMode>>[
                       _sortMenuItem(
                         bookshelfSortRecentKey,
@@ -1030,7 +1038,7 @@ extension _DemoHomeViews on _DemoHomeState {
         Expanded(
           child: comics.isEmpty
               ? const Center(child: Text('当前筛选下没有漫画'))
-              : _shelfViewMode == _ShelfViewMode.gallery
+              : _shelfViewMode == ShelfViewPreference.gallery
                   ? _buildShelfGallery(comics)
                   : _buildShelfList(comics),
         ),

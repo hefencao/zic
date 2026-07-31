@@ -660,7 +660,7 @@ Coordinator 验证安全条件。结果：
 
 ## 2.5 Android Home, Bookshelf and comic details
 
-The Android primary navigation contains Home, Bookshelf and Comic Sources. Home displays update and
+The Android primary navigation contains Home, Bookshelf, Comic Sources and Misc. Home displays update and
 reading-history rails using the same fixed-size cover-card contract as the Bookshelf gallery.
 Local-folder import is visible; directory maintenance is not part of the Home product surface.
 Diagnostics remain collapsed and secondary.
@@ -719,3 +719,13 @@ Mihon Android packaging must expose each host ABI namespace from exactly one art
 - Mihon 目录页数未知时可渐进预检，但并发必须有界、结果必须复用 source cache，并只更新当前目录投影。失败必须显示可区分状态，不能永久伪装为实际 0 页。
 - Venera 网络桥的重定向必须由宿主有限执行，并在每跳写入响应 Cookie；跨 origin 不得转发 Cookie 或 Authorization，底层 HTTP client 禁止叠加自动跟随。
 - Reader progress listener 可能在注册时同步回放 snapshot；Presentation 必须在 build phase 后合并发布 notifier，禁止由同步回调触发构建期 `markNeedsBuild`。
+
+
+## 2.8 杂项与应用设置
+
+- Android 根导航必须包含第四页“杂项”，并提供快捷设置、设置、关于和 Debug trace。
+- 设置根页必须包含数据、网络、书架、阅读、下载、外观六个分区。
+- 数据页必须显示当前目录投影，支持导出漫画库元数据备份，并通过统一缓存协调器检查和清理缓存；不得由 Widget 直接遍历缓存目录。
+- 外观主题、书架默认筛选/排序/视图、Reader 默认模式/沉浸行为必须作用于真实产品状态，而不是只改变测试或静态文案。
+- 下载网络、供电和并发设置必须更新既有持久下载队列策略。
+- Debug trace 必须有界；设置页不得通过 trace 反向控制 Reader、pipeline、下载或缓存决策。

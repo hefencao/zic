@@ -12,6 +12,8 @@ import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
 import 'package:telemetry/telemetry.dart';
 
+import 'app_preferences.dart';
+import 'debug_trace.dart';
 import 'demo_home.dart';
 import 'webp_demo.dart';
 
@@ -32,6 +34,8 @@ final class _BootstrapApp extends StatefulWidget {
 }
 
 final class _BootstrapAppState extends State<_BootstrapApp> {
+  late final AppPreferencesController _preferences;
+  late final DebugTraceLog _debugTrace;
   late final HomeStartupTelemetry _startupTelemetry;
   _AppServices? _services;
   bool _disposed = false;
@@ -39,11 +43,17 @@ final class _BootstrapAppState extends State<_BootstrapApp> {
   @override
   void initState() {
     super.initState();
+    _preferences = AppPreferencesController();
+    _debugTrace = DebugTraceLog();
+    _preferences.addListener(_syncDebugTrace);
+    _syncDebugTrace();
     _startupTelemetry = HomeStartupTelemetry(
       clock: SystemClock(),
-      sink: kDebugMode
-          ? CallbackTraceSink((event) => debugPrint(event.toJsonLine()))
-          : const NoopTraceSink(),
+      sink: MultiTraceSink(<TraceSink>[
+        _debugTrace,
+        if (kDebugMode)
+          CallbackTraceSink((event) => debugPrint(event.toJsonLine())),
+      ]),
     );
     _startupTelemetry.servicesOpenStarted();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -51,22 +61,32 @@ final class _BootstrapAppState extends State<_BootstrapApp> {
         _startupTelemetry.bootstrapPresented();
       }
     });
-    unawaited(_openServices(_startupTelemetry).then<void>((services) {
-      if (_disposed) {
-        unawaited(services.close());
-      } else {
-        setState(() => _services = services);
-      }
-    }));
+    unawaited(
+      _openServices(_startupTelemetry, _preferences).then<void>((services) {
+        if (_disposed) {
+          unawaited(services.close());
+        } else {
+          setState(() => _services = services);
+        }
+      }),
+    );
+  }
+
+  void _syncDebugTrace() {
+    _debugTrace.enabled = _preferences.debugTraceEnabled;
   }
 
   @override
   void dispose() {
     _disposed = true;
+    _preferences.removeListener(_syncDebugTrace);
     final services = _services;
     if (services != null) {
       unawaited(services.close());
     }
+    unawaited(_preferences.flush());
+    _preferences.dispose();
+    _debugTrace.dispose();
     super.dispose();
   }
 
@@ -83,6 +103,9 @@ final class _BootstrapAppState extends State<_BootstrapApp> {
       cacheCoordinator: services?.cacheCoordinator,
       externalPlugins: services?.externalPlugins,
       startupTelemetry: _startupTelemetry,
+      preferences: _preferences,
+      debugTrace: _debugTrace,
+      storageRoot: services?.storageRoot,
     );
   }
 }
@@ -94,6 +117,7 @@ final class _AppServices {
     this.wholeComicDownloads,
     this.cacheCoordinator,
     this.externalPlugins,
+    this.storageRoot,
   });
 
   final ImportedLibraryStore? libraryStore;
@@ -101,6 +125,7 @@ final class _AppServices {
   final WholeComicDownloadQueue? wholeComicDownloads;
   final ResourceCacheCoordinator? cacheCoordinator;
   final ExternalPluginController? externalPlugins;
+  final String? storageRoot;
   bool _closed = false;
 
   Future<void> close() async {
@@ -130,7 +155,10 @@ final class _AppServices {
   }
 }
 
-Future<_AppServices> _openServices(HomeStartupTelemetry telemetry) async {
+Future<_AppServices> _openServices(
+  HomeStartupTelemetry telemetry,
+  AppPreferencesController preferences,
+) async {
   ImportedLibraryStore? libraryStore;
   ManagedChapterDownloadService? chapterDownloads;
   WholeComicDownloadQueue? wholeComicDownloads;
@@ -140,6 +168,15 @@ Future<_AppServices> _openServices(HomeStartupTelemetry telemetry) async {
     final openedAt = telemetry.nowMicros();
     var stageStarted = telemetry.nowMicros();
     final root = await getDefaultZicStorageRoot();
+    final preferencePath = '$root/app_preferences.json';
+    try {
+      await preferences.attach(
+        read: () => readJsonObjectFile(preferencePath),
+        write: (values) => writeJsonObjectFile(preferencePath, values),
+      );
+    } on Object catch (error) {
+      debugPrint('app preferences unavailable: $error');
+    }
     telemetry.serviceReady('storage-root', startedAtMicros: stageStarted);
     stageStarted = telemetry.nowMicros();
     libraryStore = await openImportedLibraryStore(root);
@@ -190,6 +227,7 @@ Future<_AppServices> _openServices(HomeStartupTelemetry telemetry) async {
       wholeComicDownloads: wholeComicDownloads,
       cacheCoordinator: cacheCoordinator,
       externalPlugins: externalPlugins,
+      storageRoot: root,
     );
   } on Object catch (error) {
     debugPrint('durable application storage unavailable: $error');
@@ -202,7 +240,7 @@ Future<_AppServices> _openServices(HomeStartupTelemetry telemetry) async {
   }
 }
 
-final class App extends StatelessWidget {
+final class App extends StatefulWidget {
   const App({
     this.picker = defaultWebpPicker,
     this.folderPicker = defaultImageFolderPicker,
@@ -215,6 +253,9 @@ final class App extends StatelessWidget {
     this.externalPlugins,
     this.startupTelemetry,
     this.homeKey,
+    this.preferences,
+    this.debugTrace,
+    this.storageRoot,
     super.key,
   }) : assert(
           wholeComicDownloads == null || chapterDownloads != null,
@@ -230,38 +271,77 @@ final class App extends StatelessWidget {
   final List<BrowsableComicSource>? comicSources;
   final ResourceCacheCoordinator? cacheCoordinator;
   final ExternalPluginController? externalPlugins;
+  final AppPreferencesController? preferences;
+  final DebugTraceLog? debugTrace;
+  final String? storageRoot;
   final HomeStartupTelemetry? startupTelemetry;
   final Key? homeKey;
 
   @override
+  State<App> createState() => _AppState();
+}
+
+final class _AppState extends State<App> {
+  late final AppPreferencesController _preferences =
+      widget.preferences ?? AppPreferencesController();
+  late final DebugTraceLog _debugTrace =
+      widget.debugTrace ?? DebugTraceLog();
+
+  @override
+  void initState() {
+    super.initState();
+    _preferences.addListener(_syncTrace);
+    _syncTrace();
+  }
+
+  void _syncTrace() {
+    _debugTrace.enabled = _preferences.debugTraceEnabled;
+  }
+
+  @override
+  void dispose() {
+    _preferences.removeListener(_syncTrace);
+    if (widget.preferences == null) _preferences.dispose();
+    if (widget.debugTrace == null) _debugTrace.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'zic',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-        useMaterial3: true,
-      ),
-      darkTheme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.indigo,
-          brightness: Brightness.dark,
+    return AnimatedBuilder(
+      animation: _preferences,
+      builder: (context, _) => MaterialApp(
+        key: ValueKey<String>(widget.storageRoot ?? 'bootstrap-memory'),
+        title: 'zic',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
+          useMaterial3: true,
         ),
-        useMaterial3: true,
-      ),
-      themeMode: ThemeMode.dark,
-      home: DemoHome(
-        key: homeKey,
-        picker: picker,
-        folderPicker: folderPicker,
-        folderRefresher: folderRefresher,
-        libraryStore: libraryStore,
-        chapterDownloads: chapterDownloads,
-        wholeComicDownloads: wholeComicDownloads,
-        comicSources: comicSources,
-        externalPlugins: externalPlugins,
-        cacheCoordinator: cacheCoordinator,
-        startupTelemetry: startupTelemetry,
+        darkTheme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: Colors.indigo,
+            brightness: Brightness.dark,
+          ),
+          useMaterial3: true,
+        ),
+        themeMode: _preferences.themeMode,
+        home: DemoHome(
+          key: widget.homeKey,
+          picker: widget.picker,
+          folderPicker: widget.folderPicker,
+          folderRefresher: widget.folderRefresher,
+          libraryStore: widget.libraryStore,
+          chapterDownloads: widget.chapterDownloads,
+          wholeComicDownloads: widget.wholeComicDownloads,
+          comicSources: widget.comicSources,
+          externalPlugins: widget.externalPlugins,
+          cacheCoordinator: widget.cacheCoordinator,
+          startupTelemetry: widget.startupTelemetry,
+          preferences: _preferences,
+          debugTrace: _debugTrace,
+          storageRoot: widget.storageRoot,
+        ),
       ),
     );
   }

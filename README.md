@@ -23,6 +23,7 @@ decode/upload registry、frame holder、viewport 播放门控、帧字节预算�
 `0.31.0-dev.61` 继续以 dev.60 为唯一基线：Reader 会话装配已从 App Presentation 迁入 `packages/reader_runtime`，本地图片/WebP UI 迁入并拆分到 `packages/local_media_ui`，修复 `SourcePool` 与 WebP 前缀探测符号遗漏，同时降低 App 对 pipeline/session/storage/transport 的直接耦合。dev.61 曾尝试双栏插件管理与仓库语言折叠；该信息架构已由 dev.62 明确替代。
 `0.31.0-dev.62` 修正外部插件信息架构：漫画源管理中的启用来源按原生、Mihon、Venera 分区，Mihon 语言变体在这里折叠；Mihon/Venera 独立页面改为顶部“已安装/仓库”页签，设备扩展扫描归属 Mihon 已安装页。Mihon runtime 同时修复 reactive 返回值解包、空结果吞错和 synthetic gallery 0 页问题；未知远程页数显示为待加载。
 `0.31.0-dev.63` 收口插件媒体兼容链路：Venera/Mihon 页面携带 WebP/动画提示并仍由字节嗅探最终裁决；插件私有资源 URI 通过 `downloads` 注入式 source transport 进入持久下载；Mihon 未知页数在详情页受控预检后渐进更新，空目录但可读取正文的 gallery 允许经真实页面预检生成单章；重复图片 URL 不再冒充页面身份。Venera 网络桥改为逐跳 Cookie 的有限手动重定向。
+`0.31.0-dev.64` 修复 dev.63 的两个 Dart 编译阻断，并新增第四根导航“杂项”、分层设置、可执行数据备份/缓存维护与有界 Debug trace；偏好持久化通过 `storage_bridge` 注入，设置页不取得 Reader、下载、缓存或插件资源所有权。
 
 ```text
 ReaderView
