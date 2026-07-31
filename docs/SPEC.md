@@ -733,3 +733,9 @@ Mihon Android packaging must expose each host ABI namespace from exactly one art
 - 下载网络、供电和并发设置必须更新既有持久下载队列策略。
 - Debug trace 必须有界；设置页不得通过 trace 反向控制 Reader、pipeline、下载或缓存决策。 trace producer 在 Widget build 中记录时，观察通知必须帧后合并。
 - 每漫画设置按来源与漫画复合 identity 持久化，只可覆盖 Reader 方向、纵向拼接和自适应开关。自适应低置信度时必须回退来源/进度默认，不得直接生成预取、下载或解码命令。
+## dev.66 resource and continuous-layout requirements
+
+- New Venera chapter pages must use reconstructable `venera-resource:<payload>` locators. Persisted generation-only `venera-resource://token` pages must be refreshed from the owning source before they enter Reader or download sessions.
+- Repeated consumers of the same source URI may share only the same in-flight resource operation. Completed bytes remain under existing session/artifact ownership.
+- Vertical continuous layout must preserve the complete image. It may update page extent when real geometry becomes available, but it must not crop, stretch, or create a second image stream solely for measurement.
+- Reader page number, previous/next, slider and direction commands must remain live across paged/vertical/RTL transitions. Navigation is acknowledged only after the target presentation controller can execute it.

@@ -26,6 +26,7 @@ import 'home_library_session.dart';
 import 'home_widgets.dart';
 export 'home_widgets.dart' show ComicCoverCard, ComicDetailsScreen, ComicDownloadProgress, ComicDownloadProgressKind;
 part 'demo_home_views.dart';
+part 'demo_home_source_compat.dart';
 const homePageKey = ValueKey<String>('home-page');
 const bookshelfPageKey = ValueKey<String>('bookshelf-page');
 const homeUpdatesSectionKey = ValueKey<String>('home-updates-section');
@@ -594,31 +595,14 @@ final class _DemoHomeState extends State<DemoHome> {
     return readLocalImageSource(page.sourceId);
   }
 
-  Future<void> _downloadChapter(ImportedLibraryEntry entry) async {
-    await _chapterDownloads.download(entry);
-    _acceptDownloadSnapshot(await _chapterDownloads.inspect(entry));
-  }
+  Future<void> _downloadChapter(ImportedLibraryEntry entry) =>
+      _downloadCompatibleChapter(this, entry);
 
   Future<void> _downloadComicEntries(
     String comicIdentity,
     Iterable<ImportedLibraryEntry> entries,
-  ) async {
-    final chapters = entries.toList(growable: false);
-    if (chapters.isEmpty) {
-      throw StateError('没有可下载的章节');
-    }
-    final first = chapters.first.chapter;
-    if (comicIdentity != comicLibraryIdentity(first.sourceId, first.comicId)) {
-      throw StateError('整本下载身份与章节所有者不一致');
-    }
-    await _wholeComicDownloads.enqueue(
-      sourceId: first.sourceId,
-      comicId: first.comicId,
-      comicTitle: first.comicTitle,
-      chapters: chapters,
-    );
-    _librarySession.refreshWholeComicSnapshot();
-  }
+  ) =>
+      _downloadCompatibleComicEntries(this, comicIdentity, entries);
 
   int get _nextCustomOrder => _preferences.values.fold<int>(
         0,
@@ -633,7 +617,10 @@ final class _DemoHomeState extends State<DemoHome> {
     Chapter chapter,
   ) async {
     await _ensureLibraryReady();
-    final manifest = await source.loadChapter(chapter.chapterId);
+    final manifest = await _loadCompatibleSourceChapter(
+      source,
+      chapter.chapterId,
+    );
     final record = ImportedChapterRecord.remote(
       comic: comic,
       manifest: manifest,
@@ -657,7 +644,10 @@ final class _DemoHomeState extends State<DemoHome> {
     if (source == null) {
       throw StateError('漫画源 ${entry.chapter.sourceId} 当前不可用');
     }
-    final manifest = await source.loadChapter(entry.chapter.chapterId);
+    final manifest = await _loadCompatibleSourceChapter(
+      source,
+      entry.chapter.chapterId,
+    );
     final comic = Comic(
       comicId: entry.chapter.comicId,
       sourceId: entry.chapter.sourceId,

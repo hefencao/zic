@@ -121,6 +121,45 @@ void main() {
     expect(cache.stats.forKind(ResourceCacheKind.imageBytes).entries, 2);
   });
 
+  test('chapter metadata schema revision bypasses stale locator entries',
+      () async {
+    final raw = _CountingSource();
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final source = CachedBrowsableComicSource(source: raw, cache: cache);
+    final stale = await raw.loadChapter('chapter');
+    raw.chapterLoads = 0;
+
+    await cache.getOrLoad<ChapterManifest>(
+      key: const ResourceCacheKey(
+        kind: ResourceCacheKind.chapterMetadata,
+        identity: 'fixture\u0000chapter',
+        namespace: 'source:fixture',
+      ),
+      loader: () async => stale,
+      weightOf: (_) => 1,
+    );
+
+    final loaded = await source.loadChapter('chapter');
+
+    expect(loaded.pages.single.uri, stale.pages.single.uri);
+    expect(raw.chapterLoads, 1);
+    expect(cache.stats.forKind(ResourceCacheKind.chapterMetadata).entries, 2);
+  });
+
+  test('chapter refresh capability bypasses the current response', () async {
+    final raw = _CountingSource();
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final source = CachedBrowsableComicSource(source: raw, cache: cache);
+
+    await source.loadChapter('chapter');
+    await source.refreshChapter('chapter');
+
+    expect(raw.chapterLoads, 2);
+    expect(cache.stats.forKind(ResourceCacheKind.chapterMetadata).entries, 1);
+  });
+
   test('raw page resources bypass response cache for pipeline ownership',
       () async {
     final raw = _CountingSource();

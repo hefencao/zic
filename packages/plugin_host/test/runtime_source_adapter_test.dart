@@ -67,6 +67,35 @@ void main() {
     expect(chapter.chapter.pageCount, 1);
   });
 
+  test('concurrent identical resource loads share one runtime invocation',
+      () async {
+    final gate = Completer<void>();
+    final connection = _FixtureConnection(block: gate.future);
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(maxConcurrentInvocations: 4),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single;
+    final uri = Uri.parse('venera-resource:durable-page');
+
+    final first = source.loadResource(uri);
+    final second = source.loadResource(uri);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+      connection.operations
+          .where((value) =>
+              value == ExternalPluginRuntimeOperation.loadResource)
+          .length,
+      1,
+    );
+    gate.complete();
+    expect(await first, <int>[82, 73, 70, 70]);
+    expect(await second, <int>[82, 73, 70, 70]);
+  });
+
   test('Mihon source settings round-trip through the runtime adapter', () async {
     final connection = _FixtureConnection();
     final session = ExternalPluginRuntimeSession(

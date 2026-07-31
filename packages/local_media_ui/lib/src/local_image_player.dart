@@ -16,6 +16,7 @@ final class LocalImagePlayer extends StatefulWidget {
     this.playback,
     this.streamingSession,
     this.onPlaybackCapabilityChanged,
+    this.onDimensionsChanged,
     this.flutterAnimatedCodecFactory = instantiateFlutterAnimatedCodec,
     super.key,
   });
@@ -34,6 +35,7 @@ final class LocalImagePlayer extends StatefulWidget {
   final ReaderPlaybackController? playback;
   final DownloadSession? streamingSession;
   final ValueChanged<bool>? onPlaybackCapabilityChanged;
+  final ValueChanged<Size>? onDimensionsChanged;
   final FlutterAnimatedCodecFactory flutterAnimatedCodecFactory;
 
   Uri get sourceUri => image.sourceUri;
@@ -53,6 +55,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   bool _reportedFirstFrame = false;
   DownloadSnapshotListener? _pageStreamingListener;
   bool _fallbackLoadStarted = false;
+  Size? _reportedDimensions;
 
   @override
   void initState() {
@@ -82,6 +85,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       _scheduledStaticFrameGeneration = -1;
       _bytes = null;
       _imageProvider = null;
+      _reportedDimensions = null;
       _detectedFormat = widget.image.format;
       _state = ImagePreviewState.loading(widget.image.format);
       _notifyObserver(_state);
@@ -181,6 +185,12 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         _bytes = bytes;
         _imageProvider = provider;
       });
+      if (provider != null) {
+        final dimensions = _staticImageDimensions(bytes, detected);
+        if (dimensions != null) {
+          _reportDimensions(dimensions.width, dimensions.height);
+        }
+      }
       if (provider != null && decodeProbe != null) {
         _publish(ImagePreviewState.ready(detected));
       }
@@ -206,6 +216,22 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     _generation++;
     _loadToken.cancel();
     super.dispose();
+  }
+
+  void _reportDimensions(int width, int height) {
+    if (width <= 0 || height <= 0) {
+      return;
+    }
+    final dimensions = Size(width.toDouble(), height.toDouble());
+    if (_reportedDimensions == dimensions) {
+      return;
+    }
+    _reportedDimensions = dimensions;
+    try {
+      widget.onDimensionsChanged?.call(dimensions);
+    } on Object catch (error) {
+      debugPrint('image dimensions observer failed: $error');
+    }
   }
 
   void _scheduleStaticFramePresented(
@@ -281,6 +307,10 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       case WebpPreviewPhase.loading:
         break;
       case WebpPreviewPhase.ready:
+        final info = state.info;
+        if (info != null) {
+          _reportDimensions(info.width, info.height);
+        }
         // Container validation is not presentation readiness. The outer local
         // image state becomes ready only after the Flutter/native renderer
         // reports an actually presented first frame.
@@ -419,6 +449,82 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       child: keyed,
     );
   }
+}
+
+({int width, int height})? _staticImageDimensions(
+  Uint8List bytes,
+  LocalImageFormat format,
+) {
+  final data = ByteData.sublistView(bytes);
+  int u16le(int offset) => data.getUint16(offset, Endian.little);
+  int u32le(int offset) => data.getUint32(offset, Endian.little);
+  int i32le(int offset) => data.getInt32(offset, Endian.little);
+  int u32be(int offset) => data.getUint32(offset, Endian.big);
+
+  try {
+    switch (format) {
+      case LocalImageFormat.png:
+        if (bytes.length >= 24) {
+          return (width: u32be(16), height: u32be(20));
+        }
+        break;
+      case LocalImageFormat.gif:
+        if (bytes.length >= 10) {
+          return (width: u16le(6), height: u16le(8));
+        }
+        break;
+      case LocalImageFormat.bmp:
+        if (bytes.length >= 26) {
+          return (width: u32le(18), height: i32le(22).abs());
+        }
+        break;
+      case LocalImageFormat.ico:
+        if (bytes.length >= 8) {
+          return (
+            width: bytes[6] == 0 ? 256 : bytes[6],
+            height: bytes[7] == 0 ? 256 : bytes[7],
+          );
+        }
+        break;
+      case LocalImageFormat.jpeg:
+        var offset = 2;
+        while (offset + 8 < bytes.length) {
+          if (bytes[offset] != 0xff) {
+            offset++;
+            continue;
+          }
+          final marker = bytes[offset + 1];
+          offset += 2;
+          if (marker == 0xd8 || marker == 0xd9 || marker == 0x01) {
+            continue;
+          }
+          if (offset + 2 > bytes.length) break;
+          final segmentLength = data.getUint16(offset, Endian.big);
+          if (segmentLength < 2 || offset + segmentLength > bytes.length) break;
+          final isStartOfFrame = marker >= 0xc0 &&
+              marker <= 0xcf &&
+              marker != 0xc4 &&
+              marker != 0xc8 &&
+              marker != 0xcc;
+          if (isStartOfFrame && segmentLength >= 7) {
+            return (
+              width: data.getUint16(offset + 5, Endian.big),
+              height: data.getUint16(offset + 3, Endian.big),
+            );
+          }
+          offset += segmentLength;
+        }
+        break;
+      case LocalImageFormat.webp:
+      case LocalImageFormat.avif:
+      case LocalImageFormat.heif:
+      case LocalImageFormat.tiff:
+        break;
+    }
+  } on RangeError {
+    return null;
+  }
+  return null;
 }
 
 final class _ControlledAnimatedImage extends StatefulWidget {

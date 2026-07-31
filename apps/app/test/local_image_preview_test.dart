@@ -482,6 +482,34 @@ void main() {
     }
   });
 
+  testWidgets('static image header reports geometry without a second stream',
+      (tester) async {
+    Size? dimensions;
+    final image = PickedImage(
+      file: XFile('/virtual/chapter/measured.png'),
+      format: LocalImageFormat.png,
+      displayName: 'measured.png',
+    );
+
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LocalImagePlayer(
+            image: image,
+            bytesLoader: (_) async => _tinyPng(),
+            decodeProbe: (_) async {},
+            onDimensionsChanged: (value) => dimensions = value,
+          ),
+        ),
+      );
+      await _pumpUntilCondition(tester, () => dimensions != null);
+
+      expect(dimensions, const Size(1, 1));
+    } finally {
+      await _unmountAsyncImage(tester);
+    }
+  });
+
   testWidgets('content scan corrects stale JPEG metadata to PNG', (
     tester,
   ) async {

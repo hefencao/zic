@@ -22,6 +22,7 @@ import 'media_load_token.dart';
 const readerTopControlsKey = ValueKey<String>('reader-top-controls');
 const readerBottomControlsKey = ValueKey<String>('reader-bottom-controls');
 const readerPageSliderKey = ValueKey<String>('reader-page-slider');
+const readerDirectionMenuKey = ValueKey<String>('reader-direction-menu');
 const readerPauseKey = ValueKey<String>('reader-pause');
 const readerSpeedKey = ValueKey<String>('reader-speed');
 const readerRotateKey = ValueKey<String>('reader-rotate');
@@ -44,6 +45,7 @@ typedef ReaderArtifactBytesLoader = Future<Uint8List> Function(
 typedef ReaderPageBytesLoader = Future<Uint8List> Function(
   MediaLoadToken token,
 );
+typedef ReaderPageDimensionsReporter = void Function(int width, int height);
 
 @immutable
 final class ReaderPlaybackState {
@@ -134,6 +136,7 @@ final class ReaderPageRuntime {
     required this.playback,
     required this.downloadSession,
     required this.reportPlaybackCapability,
+    required this.reportDimensions,
   });
 
   final ChapterManifest chapter;
@@ -145,6 +148,7 @@ final class ReaderPageRuntime {
   final ReaderPlaybackController playback;
   final DownloadSession downloadSession;
   final ValueChanged<bool> reportPlaybackCapability;
+  final ReaderPageDimensionsReporter reportDimensions;
 }
 
 typedef ReaderArtifactPageBuilder = Widget? Function(
@@ -383,6 +387,9 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   final Map<DownloadSession, int> _sessionExistingBytes = <DownloadSession, int>{};
   final Set<DownloadSession> _sessionTransferStarted = <DownloadSession>{};
   final Map<String, bool> _playbackCapabilities = <String, bool>{};
+  Map<String, double> _pageAspectRatios = const <String, double>{};
+  final Map<String, double> _pendingPageAspectRatios = <String, double>{};
+  bool _pageAspectRatioUpdateScheduled = false;
   late bool _favorite;
   late bool _controlsVisible;
   bool _downloading = false;
@@ -728,6 +735,38 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
         totalBytes: snapshot.totalLength,
       ),
     );
+  }
+
+  void _reportPageDimensions(PageAsset asset, int width, int height) {
+    if (width <= 0 || height <= 0) {
+      return;
+    }
+    final ratio = (height / width).clamp(0.05, 64.0).toDouble();
+    final current = _pendingPageAspectRatios[asset.assetKey] ??
+        _pageAspectRatios[asset.assetKey];
+    if (current != null && (current - ratio).abs() < 0.001) {
+      return;
+    }
+    _pendingPageAspectRatios[asset.assetKey] = ratio;
+    if (_pageAspectRatioUpdateScheduled) {
+      return;
+    }
+    _pageAspectRatioUpdateScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pageAspectRatioUpdateScheduled = false;
+      if (!mounted || _pendingPageAspectRatios.isEmpty) {
+        _pendingPageAspectRatios.clear();
+        return;
+      }
+      final updates = Map<String, double>.from(_pendingPageAspectRatios);
+      _pendingPageAspectRatios.clear();
+      setState(() {
+        _pageAspectRatios = <String, double>{
+          ..._pageAspectRatios,
+          ...updates,
+        };
+      });
+    });
   }
 
   void _publishTransferProgress(ReaderTransferProgress next) {
@@ -1276,6 +1315,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                           icon: const Icon(Icons.tune),
                         ),
                       PopupMenuButton<ReadingDirection>(
+                        key: readerDirectionMenuKey,
                         tooltip: '阅读方向',
                         initialValue: reader.direction,
                         onSelected: reader.setDirection,
@@ -1493,6 +1533,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                 ),
                 reportPlaybackCapability: (supported) =>
                     _reportPlaybackCapability(asset, supported),
+                reportDimensions: (width, height) =>
+                    _reportPageDimensions(asset, width, height),
               ),
             );
     return AnimatedBuilder(
@@ -1511,6 +1553,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
               demandRevision: () => _binding?.revision ?? 0,
               onTap: _toggleControls,
               verticalStitch: _settings.effectiveVerticalStitch,
+              pageAspectRatios: _pageAspectRatios,
             ),
             AnimatedOpacity(
               opacity: _controlsVisible ? 1 : 0,

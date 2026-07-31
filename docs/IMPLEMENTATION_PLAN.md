@@ -76,7 +76,14 @@
 - Android bound-service transport 必须以 binding generation 区分每次显式连接，并通过 Binder death recipient 失败当前请求；旧 generation 的迟到回调不得拆除新连接，也不得自动 replay/activate。packet response 必须校验 dedicated root、exact length 与 SHA-256，消费或失败后删除。
 
 
-### dev.65 当前主线约束
+### dev.66 当前主线约束
+
+#### dev.66 当前优先级
+
+- Venera 页面 locator 必须跨 runtime generation 可恢复；持久化 legacy token 必须刷新，禁止让 pipeline 对确定性失效 locator 无限重复请求。
+- 并发合并只用于同一逻辑资源的进行中工作；完成后的页面字节继续由 session/artifact/cache 既有所有者持有。
+- 连续布局优先使用来源尺寸，其次使用同一媒体载荷解析出的尺寸。禁止为测量再创建第二条 ImageStream，禁止通过裁切掩盖错误比例。
+- Reader 控制命令必须在目标滚动容器完成 attach/layout 后才 acknowledge；布局切换不得让页码、前后翻页或 slider 进入假成功状态。
 
 - Venera 新章节资源 locator 必须跨 runtime generation 可恢复，并只编码宿主批准的版本化 image/comic/episode identity。不得把任意 URL、header、脚本或网络配置作为可伪造 locator 载荷。legacy runtime token 只作读取兼容。
 - 每漫画设置是 `sourceId + comicId` 的小型 Presentation preference，仅可覆盖 Reader 方向、纵向拼接和自适应开关；不得包含 artifact、下载、缓存、Cookie、插件 session 或 pipeline demand。

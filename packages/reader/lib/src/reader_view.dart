@@ -22,6 +22,7 @@ final class ReaderView extends StatefulWidget {
     this.demandRevision,
     this.onTap,
     this.verticalStitch = false,
+    this.pageAspectRatios = const <String, double>{},
     super.key,
   });
 
@@ -37,6 +38,13 @@ final class ReaderView extends StatefulWidget {
   /// This is a presentation choice only. It does not merge page identities or
   /// alter pipeline demand, cache ownership, or source artifacts.
   final bool verticalStitch;
+
+  /// Runtime-observed page height/width ratios keyed by stable asset identity.
+  ///
+  /// Source metadata remains the first choice. This projection fills missing
+  /// or inaccurate dimensions after the media header is parsed, without
+  /// changing page, download, decode or cache identity.
+  final Map<String, double> pageAspectRatios;
 
   @override
   State<ReaderView> createState() => _ReaderViewState();
@@ -56,6 +64,7 @@ final class _ReaderViewState extends State<ReaderView> {
   Size _viewport = Size.zero;
   late ReadingDirection _lastDirection;
   bool _syncScheduled = false;
+  bool _commandScheduled = false;
 
   @override
   void initState() {
@@ -94,7 +103,8 @@ final class _ReaderViewState extends State<ReaderView> {
       _lastReportedVerticalPage = null;
       _lastDirection = widget.controller.direction;
       _scheduleSyncToCurrentPage();
-    } else if (oldWidget.verticalStitch != widget.verticalStitch) {
+    } else if (oldWidget.verticalStitch != widget.verticalStitch ||
+        oldWidget.pageAspectRatios != widget.pageAspectRatios) {
       _scheduleSyncToCurrentPage();
     }
   }
@@ -127,11 +137,6 @@ final class _ReaderViewState extends State<ReaderView> {
             }
           }
           final direction = widget.controller.direction;
-          if (_lastDirection != direction) {
-            _lastDirection = direction;
-            _zoomedPage = null;
-            _scheduleSyncToCurrentPage();
-          }
           if (direction == ReadingDirection.vertical) {
             return NotificationListener<ScrollNotification>(
               onNotification: _handleVerticalScrollNotification,
@@ -202,18 +207,22 @@ final class _ReaderViewState extends State<ReaderView> {
 
   double _verticalExtent(PageAsset asset) {
     if (_viewport.width <= 0 || _viewport.height <= 0) return 1;
-    var width = asset.width?.toDouble();
-    var height = asset.height?.toDouble();
-    if (width == null || height == null || width <= 0 || height <= 0) {
-      return _viewport.height;
+    var ratio = widget.pageAspectRatios[asset.assetKey];
+    final width = asset.width?.toDouble();
+    final height = asset.height?.toDouble();
+    if (ratio == null &&
+        width != null &&
+        height != null &&
+        width > 0 &&
+        height > 0) {
+      ratio = height / width;
     }
+    ratio ??= 1.5;
     if (widget.controller.rotationQuarterTurns.isOdd) {
-      final swap = width;
-      width = height;
-      height = swap;
+      ratio = 1 / math.max(0.001, ratio);
     }
-    final scaled = _viewport.width * height / width;
-    final upper = math.max(_viewport.height, _viewport.width * 16);
+    final scaled = _viewport.width * ratio;
+    final upper = math.max(_viewport.height, _viewport.width * 64);
     return scaled.clamp(64.0, upper).toDouble();
   }
 
@@ -268,7 +277,9 @@ final class _ReaderViewState extends State<ReaderView> {
       return;
     }
     if (controller.direction == ReadingDirection.vertical) {
-      if (!_verticalController.hasClients || _viewport == Size.zero) {
+      if (!_verticalController.hasClients ||
+          _viewport == Size.zero ||
+          !_verticalController.position.hasContentDimensions) {
         _scheduleControllerCommand();
         return;
       }
@@ -280,9 +291,15 @@ final class _ReaderViewState extends State<ReaderView> {
         _verticalOffsetFor(requested).clamp(0.0, maxExtent).toDouble(),
       );
       controller.acknowledgePageRequest(revision);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _verticalController.hasClients) {
+          _emitFromVerticalMetrics(_verticalController.position);
+        }
+      });
       return;
     }
-    if (!_pageController.hasClients) {
+    if (!_pageController.hasClients ||
+        !_pageController.position.hasViewportDimension) {
       _scheduleControllerCommand();
       return;
     }
@@ -294,7 +311,10 @@ final class _ReaderViewState extends State<ReaderView> {
   }
 
   void _scheduleControllerCommand() {
+    if (_commandScheduled) return;
+    _commandScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _commandScheduled = false;
       if (mounted) _handleControllerCommand();
     });
   }
@@ -312,7 +332,12 @@ final class _ReaderViewState extends State<ReaderView> {
     final controller = widget.controller;
     final index = controller.currentIndex;
     if (controller.direction == ReadingDirection.vertical) {
-      if (!_verticalController.hasClients || _viewport == Size.zero) return;
+      if (!_verticalController.hasClients ||
+          _viewport == Size.zero ||
+          !_verticalController.position.hasContentDimensions) {
+        _scheduleSyncToCurrentPage();
+        return;
+      }
       final maxExtent = _verticalController.position.maxScrollExtent;
       _verticalController.jumpTo(
         _verticalOffsetFor(index).clamp(0.0, maxExtent).toDouble(),

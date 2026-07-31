@@ -218,6 +218,10 @@ final class ImportedImageChapterScreen extends StatelessWidget {
             playback: runtime.playback,
             streamingSession: runtime.downloadSession,
             onPlaybackCapabilityChanged: runtime.reportPlaybackCapability,
+            onDimensionsChanged: (size) => runtime.reportDimensions(
+              size.width.round(),
+              size.height.round(),
+            ),
           ),
         );
       },

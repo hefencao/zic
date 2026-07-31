@@ -1,6 +1,6 @@
 # ADR 0049: Durable Venera locators and per-comic Reader layout
 
-Status: Accepted in `0.31.0-dev.65`.
+Status: Accepted in `0.31.0-dev.65`; Venera locator recovery details are superseded in part by ADR 0050.
 
 ## Context
 
@@ -11,7 +11,7 @@ VibeVenera demonstrates a useful product shape for adaptive reading: a global op
 ## Decision
 
 - Newly generated Venera page locators use `venera-resource:<base64url-json>`. The versioned payload contains only the original image identity plus comic/episode identity. Decoding rejects other shapes and reconstructs a deferred `onImageLoad` request; it cannot carry arbitrary headers, methods, scripts or final network configuration.
-- Legacy `venera-resource://token` values remain readable for already persisted records, but no new chapter emits them.
+- Legacy `venera-resource://token` values remain readable only while the original runtime generation still retains the token. Persisted legacy records require the dev.66 chapter refresh described by ADR 0050; no new chapter emits them.
 - App preferences store a bounded map keyed by `sourceId + comicId`. A record may override direction, vertical stitching and adaptive enablement. It contains no page bytes, plugin state, downloads, cache references or policy commands.
 - Adaptive classification uses only existing `ChapterManifest` evidence: source direction, declared animation hints and page geometry. A result applies only above the confidence threshold; otherwise source/progress defaults win. Animation biases toward paged presentation, while a strong tall-page majority selects vertical.
 - Vertical presentation uses a proportional continuous list. Each page retains its own stable page/asset/artifact identity. Stitching changes only the visual separator height.

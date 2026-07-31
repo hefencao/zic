@@ -1,3 +1,12 @@
+## 0.31.0-dev.66：Venera 代际刷新、请求合并与实测连续布局
+
+- 修复 dev.65 自描述 Venera locator 的作用域错误：资源恢复函数显式接收当前来源对象，不再引用仅存在于 operation 局部作用域的 `source`。
+- 章节元数据缓存引入 durable-locator schema revision；打开、单章下载和整本下载遇到持久化的 `venera-resource://token` 时，先通过刷新能力绕过旧章节元数据并从来源刷新，避免不可恢复 token 被 Reader 反复重试。
+- Venera runtime 按 locator 记忆已解析的 `onImageLoad` 配置并合并同一运行时的并发解析；Dart source adapter 只在请求进行期间合并相同资源读取。完成后的页面字节仍由 Reader/download artifact 所有者管理，不新增长期页面缓存。
+- 纵向连续 Reader 不再用整屏高度猜测未知页面。静态图片从同一份已取得字节读取 PNG/JPEG/GIF/BMP/ICO 头，WebP 复用既有容器解析尺寸，再按真实比例重排；不创建第二条 `ImageStream`，不裁切漫画内容。
+- Reader 方向切换、页码跳转和上一页/下一页命令会等待新滚动容器 attach 且具备 content dimensions 后再执行和确认，修复布局切换后顶部控制栏失效。
+- 新增旧 Venera locator 刷新、章节缓存代际、并发资源合并、实测媒体几何、连续列表跳页及顶部控制栏跨布局回归。
+
 ## 0.31.0-dev.65：持久 Venera 资源、每漫画自适应与连续 Reader
 
 - 修复 `MihonRuntimeDriver.kt` 使用 `Locale.US` 但未导入 `java.util.Locale` 的 Android 编译阻断。

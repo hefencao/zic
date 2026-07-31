@@ -14,7 +14,11 @@ import 'source_catalog.dart';
 /// pass-through because Reader page bytes must enter pipeline/session/artifact
 /// ownership instead of being prefetched by the catalog response cache.
 final class CachedBrowsableComicSource
-    implements BrowsableComicSource, ConfigurableComicSource, AuthenticatableComicSource {
+    implements
+        BrowsableComicSource,
+        ConfigurableComicSource,
+        AuthenticatableComicSource,
+        RefreshableChapterComicSource {
   CachedBrowsableComicSource({
     required this.source,
     required this.cache,
@@ -22,6 +26,8 @@ final class CachedBrowsableComicSource
 
   final BrowsableComicSource source;
   final ResourceCacheManager cache;
+  static const String _chapterMetadataSchemaRevision =
+      'chapter-metadata-v2-durable-plugin-locators';
   static const int _maxChapterIdentityIndex = 512;
   final LinkedHashMap<String, String> _chapterComicIds =
       LinkedHashMap<String, String>();
@@ -78,6 +84,7 @@ final class CachedBrowsableComicSource
             namespace: comicId == null
                 ? _sourceNamespace(sourceId)
                 : comicResourceCacheNamespace(sourceId, comicId),
+            revision: _chapterMetadataSchemaRevision,
           ),
           loader: () => source.loadChapter(chapterId),
           weightOf: _chapterWeight,
@@ -91,6 +98,23 @@ final class CachedBrowsableComicSource
   /// Raw page/resource transport entry used by Reader and download sessions.
   @override
   Future<Uint8List> loadResource(Uri uri) => source.loadResource(uri);
+
+  /// Invalidates one chapter metadata response without touching page artifacts.
+  ///
+  /// This is used when an adapter-level locator contract changes or a persisted
+  /// chapter is known to contain generation-scoped resource identities. Page
+  /// bytes remain owned by Reader/download sessions and are deliberately not
+  /// removed here.
+  @override
+  Future<ChapterManifest> refreshChapter(String chapterId) {
+    cache.invalidateWhere(
+      (key) =>
+          key.kind == ResourceCacheKind.chapterMetadata &&
+          key.identity == '$sourceId\u0000$chapterId',
+    );
+    _chapterComicIds.remove(chapterId);
+    return loadChapter(chapterId);
+  }
 
   @override
   Future<List<ComicSourceSetting>> loadSettings() {

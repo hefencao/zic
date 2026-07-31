@@ -1,3 +1,11 @@
+## dev.66：Venera 代际刷新、实测拼接与控制命令恢复
+
+- Venera durable locator 恢复函数显式接收 source，修复 dev.65 所有新 locator 都会触发 `source is not defined` 的产品回归。
+- `CachedBrowsableComicSource` 的章节元数据使用新的 schema revision；App 在打开和下载前识别持久化 legacy token，失效旧缓存并重新加载章节。
+- Venera runtime 记忆同一 locator 的已解析图片配置并合并并发 `onImageLoad`；Dart adapter 合并并发的同 URI runtime 调用，完成后立即释放，不建立新的页面字节缓存。
+- Reader runtime 接收媒体实际宽高。静态格式读取当前字节头，WebP 复用已有容器信息；连续列表按真实比例重排，拼接仅控制 separator，不裁切内容。
+- ReaderView 的方向切换和页码命令等待 ScrollPosition 完成 dimensions，再 jump、acknowledge 并发布 observation；顶部页码、前后翻页和布局切换恢复工作。
+
 ## 0.31.0-dev.65：持久插件资源与每漫画 Reader 设置
 
 - Mihon bridge 补齐 `java.util.Locale` 导入，恢复 Android Kotlin 编译闭环。

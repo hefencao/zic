@@ -3,16 +3,24 @@
 ## Sole baseline
 
 Continue only from
-`zic_v0.31.0-dev.65_adaptive-per-comic-reader-venera-locator.zip`.
+`zic_v0.31.0-dev.66_venera-cache-measured-stitch-reader-controls.zip`.
 It is a direct modification of the user-provided
 `zic_v0.31.0-dev.62_source-management-tabs-mihon-chapter-preflight.zip`;
 do not merge an earlier candidate. `mihon-main.zip` and `vibevenera-master.zip`
 were read-only compatibility references and are not part of the product tree.
 
+## Completed in dev.66
+
+- Fixed the dev.65 Venera durable-locator scope regression by passing the active source explicitly into resource configuration restoration.
+- Added a chapter-metadata schema generation and App compatibility refresh so persisted `venera-resource://token` records are replaced before Reader or download use.
+- Coalesced same-locator Venera configuration resolution and in-flight Dart resource loads without retaining completed page bytes.
+- Measured vertical page geometry from the already-owned static bytes or WebP container metadata; continuous layout reflows without cropping or a second ImageStream.
+- Delayed layout-switch and page-navigation acknowledgement until the target scroll position has valid content dimensions, restoring top page/navigation/layout controls.
+
 ## Completed in dev.65
 
 - Added the missing `java.util.Locale` import to the Mihon Android runtime.
-- Replaced newly generated ephemeral Venera page tokens with constrained, versioned, self-describing `venera-resource:` locators. Clearing runtime token state no longer breaks later page loads; legacy `venera-resource://token` remains readable.
+- Replaced newly generated ephemeral Venera page tokens with constrained, versioned, self-describing `venera-resource:` locators. Clearing runtime token state no longer breaks later page loads; legacy `venera-resource://token` is readable only while its original runtime generation still owns the token; persisted legacy chapters are refreshed in dev.66.
 - Frame-coalesced `DebugTraceLog` notifications so trace producers may record during Reader build without synchronously dirtying the diagnostics `AnimatedBuilder`.
 - Added global adaptive-layout and vertical-stitch settings plus bounded per-comic direction/stitch/adaptive overrides keyed by source and comic identity.
 - Replaced vertical PageView paging with proportional continuous ListView presentation. Stitching removes only the page gap.

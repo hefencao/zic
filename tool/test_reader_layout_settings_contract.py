@@ -20,6 +20,9 @@ def main() -> None:
         "ListView.separated",
         "verticalStitch",
         "_verticalExtent",
+        "pageAspectRatios",
+        "hasContentDimensions",
+        "_scheduleControllerCommand",
     )
     require(
         "packages/reader_runtime/lib/src/reader_runtime_screen.dart",
@@ -28,6 +31,15 @@ def main() -> None:
         "readerComicSettingsKey",
         "TextDirection.rtl",
         "verticalStitch: _settings.effectiveVerticalStitch",
+        "readerDirectionMenuKey",
+        "reportDimensions",
+        "_reportPageDimensions",
+    )
+    require(
+        "packages/local_media_ui/lib/src/local_image_player.dart",
+        "onDimensionsChanged",
+        "_staticImageDimensions",
+        "_reportDimensions(info.width, info.height)",
     )
     require(
         "apps/app/lib/reader_preferences.dart",

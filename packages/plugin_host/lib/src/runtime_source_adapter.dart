@@ -178,6 +178,8 @@ final class _RuntimeBrowsableComicSource
 
   final String _externalId;
   final _RuntimeInvoke _invoke;
+  final Map<Uri, Future<Uint8List>> _resourceLoads =
+      <Uri, Future<Uint8List>>{};
 
   @override
   final String sourceId;
@@ -324,10 +326,25 @@ final class _RuntimeBrowsableComicSource
   }
 
   @override
-  Future<Uint8List> loadResource(Uri uri) async {
+  Future<Uint8List> loadResource(Uri uri) {
     if (!uri.hasScheme) {
       throw ArgumentError.value(uri, 'uri', 'must be absolute');
     }
+    final existing = _resourceLoads[uri];
+    if (existing != null) {
+      return existing;
+    }
+    late final Future<Uint8List> load;
+    load = _loadResource(uri).whenComplete(() {
+      if (identical(_resourceLoads[uri], load)) {
+        _resourceLoads.remove(uri);
+      }
+    });
+    _resourceLoads[uri] = load;
+    return load;
+  }
+
+  Future<Uint8List> _loadResource(Uri uri) async {
     final payload = await _invoke(
       ExternalPluginRuntimeOperation.loadResource,
       _externalId,

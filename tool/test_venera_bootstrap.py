@@ -136,21 +136,28 @@ async function checkSingleVolumeChapter(){
 async function checkChapterResourceCanBeReadAgain(){
  const comicId='venera:comic:'+__zicB64({id:'retry-comic',title:'Retry'});
  const chapter=__zicChapterMessage(comicId,'ep-retry','Retry episode',0);
- let requests=0;
+ let requests=0,configs=0;
  ZicNative.request=raw=>{
    const message=__zicDecode(JSON.parse(raw));
    if(message.method!=='http')throw new Error('unexpected resource bridge method '+message.method);
    requests++;
    return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},body:new Uint8Array([4,5,6]).buffer})});
  };
- globalThis.__zicSource={comic:{loadEp:async()=>({images:['https://cdn.invalid/retry.jpg']})}};
+ globalThis.__zicSource={comic:{
+  loadEp:async()=>({images:['retry-image']}),
+  onImageLoad:async image=>{configs++;return {url:'https://cdn.invalid/'+image+'.jpg'}}
+ }};
  const loaded=await __zicOperation({operation:'loadChapter',arguments:{chapterId:chapter.chapterId}});
  const uri=loaded.pages[0].uri;
  if(!uri.startsWith('venera-resource:')||uri.startsWith('venera-resource://'))throw new Error('chapter resource locator is not durable '+uri);
  await __zicOperation({operation:'loadResource',arguments:{uri}});
- __zicResources.clear();
  await __zicOperation({operation:'loadResource',arguments:{uri}});
- if(requests!==2)throw new Error('chapter resource locator did not survive runtime state loss');
+ if(configs!==1||requests!==2)throw new Error('resource config was not reused within one runtime '+JSON.stringify({configs,requests}));
+ __zicResources.clear();
+ __zicResourceConfigs.clear();
+ __zicResourceResolutions.clear();
+ await __zicOperation({operation:'loadResource',arguments:{uri}});
+ if(configs!==2||requests!==3)throw new Error('chapter resource locator did not survive runtime state loss '+JSON.stringify({configs,requests}));
 }
 
 

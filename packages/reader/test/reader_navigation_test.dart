@@ -300,21 +300,27 @@ void main() {
           .height,
       8,
     );
+    final firstPageHeight = tester
+        .getSize(
+          find.byKey(const ValueKey<String>('reader-vertical-page:0')),
+        )
+        .height;
+    controller.requestPage(1);
+    await tester.pump();
+    await tester.pump();
     expect(
       tester
           .getSize(
             find.byKey(const ValueKey<String>('reader-vertical-page:1')),
           )
           .height,
-      greaterThan(
-        tester
-            .getSize(
-              find.byKey(const ValueKey<String>('reader-vertical-page:0')),
-            )
-            .height,
-      ),
+      greaterThan(firstPageHeight),
     );
+    expect(controller.requestedIndex, isNull);
 
+    controller.requestPage(0);
+    await tester.pump();
+    await tester.pump();
     await pump(stitch: true);
     await tester.pump();
     expect(
@@ -328,7 +334,71 @@ void main() {
 
     controller.requestPage(2);
     await tester.pump();
+    await tester.pump();
     expect(controller.requestedIndex, isNull);
+  });
+
+  testWidgets('vertical mode adopts measured media geometry without cropping',
+      (tester) async {
+    final chapter = ChapterManifest(
+      sourceId: 'source',
+      comicId: 'measured-comic',
+      chapter: const Chapter(
+        chapterId: 'measured-chapter',
+        comicId: 'measured-comic',
+        title: 'measured',
+        sequence: 0,
+        pageCount: 1,
+        sourceRevision: 'r1',
+      ),
+      pages: <PageAsset>[
+        PageAsset(
+          pageId: 'measured-page',
+          chapterId: 'measured-chapter',
+          index: 0,
+          uri: Uri.parse('asset:///measured.png'),
+        ),
+      ],
+      readingDirection: ReadingDirection.vertical,
+    );
+    final controller = ReaderController(
+      sessionId: 'reader-measured-test',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: FakeClock(),
+    );
+    addTearDown(controller.dispose);
+
+    Future<void> pump(Map<String, double> ratios) => tester.pumpWidget(
+          MaterialApp(
+            home: ReaderView(
+              controller: controller,
+              clock: FakeClock(),
+              pageAspectRatios: ratios,
+              pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
+                color: Colors.black,
+                child: Text(asset.pageId),
+              ),
+            ),
+          ),
+        );
+
+    await pump(const <String, double>{});
+    await tester.pump();
+    final finder = find.byKey(
+      const ValueKey<String>('reader-vertical-page:0'),
+    );
+    final fallbackHeight = tester.getSize(finder).height;
+
+    await pump(<String, double>{chapter.pages.single.assetKey: 2.4});
+    await tester.pump();
+    final measuredHeight = tester.getSize(finder).height;
+
+    expect(measuredHeight, greaterThan(fallbackHeight));
+    expect(
+      measuredHeight,
+      closeTo(tester.getSize(find.byType(ReaderView)).width * 2.4, 0.1),
+    );
   });
 
   test('rotation cycles and can reset', () {
