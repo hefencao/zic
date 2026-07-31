@@ -713,3 +713,9 @@ Mihon Android packaging must expose each host ABI namespace from exactly one art
 - Mihon 多章节漫画必须返回来源目录中的全部章节。只有所有兼容目录路径都完成为空，并且 synthetic 章节实际解析出至少一页时，才能创建单一 synthetic 章节；读取真实章节时必须复用或重新匹配对应 `SChapter`，禁止把 manga URL、第一章对象或 synthetic 标记应用到非空目录。目录/页面反射、网络或 reactive 解包错误不得降级为空目录。
 - 漫画源管理中的启用来源必须按原生、Mihon、Venera 分类并用分隔线区分。Mihon 同 family 的语言来源在此处默认折叠；Mihon/Venera 安装管理页仅使用顶部“已安装/仓库”切换，不得同时展示左右双栏。
 - Mihon/Venera 自定义设置必须归一化为 toggle/text/select/multiSelect/action。Venera 值必须在 runtime 私有存储中保持 boolean/string/list 类型，且只有已批准 persistentStorage capability 才可读写；设置更新不得绕过统一 restart/session 关闭流程。
+- `ImportedPageRecord.pageId` 必须非空且在章节内唯一；`sourceId`/URI 只描述资源定位，允许重复。重复 URI 不得导致章节导入失败、页面合并或进度 identity 冲突。
+- `mihon:`、`venera-resource:` 等插件私有资源必须由 `downloads` 的注入式 source loader 进入既有 `DownloadJob/DownloadSession`，不得直接交给 `IoTransport`，也不得由详情页执行 scheme 分支。
+- Mihon/Venera 页面媒体类型字段只能作为 hint。宿主必须保留字节嗅探和 decoder 校验；只有可识别的原始 URL/文件名才能提前声明 WebP/GIF 等类型。
+- Mihon 目录页数未知时可渐进预检，但并发必须有界、结果必须复用 source cache，并只更新当前目录投影。失败必须显示可区分状态，不能永久伪装为实际 0 页。
+- Venera 网络桥的重定向必须由宿主有限执行，并在每跳写入响应 Cookie；跨 origin 不得转发 Cookie 或 Authorization，底层 HTTP client 禁止叠加自动跟随。
+- Reader progress listener 可能在注册时同步回放 snapshot；Presentation 必须在 build phase 后合并发布 notifier，禁止由同步回调触发构建期 `markNeedsBuild`。

@@ -234,7 +234,7 @@ internal class MihonRuntimeDriver private constructor(
         val hasNext = pageResult.readBoolean("hasNextPage", "getHasNextPage") ?: (mangas.size >= limit)
         val sliced = mangas.drop(offset % limit).take(limit)
         return mapOf(
-            "items" to sliced.map { manga -> mangaSummary(manga) },
+            "items" to sliced.map { manga -> mangaSummary(source, manga) },
             "offset" to offset,
             "hasMore" to (hasNext || mangas.size > (offset % limit) + sliced.size),
         )
@@ -246,12 +246,17 @@ internal class MihonRuntimeDriver private constructor(
             createSyntheticMihonChapter(source, catalog.manga)
         }
         val syntheticPageCount = if (selectedChapters.synthetic) {
-            loadMihonPageModels(source, selectedChapters.chapters.single(), requestId).size
-                .also { count ->
-                    require(count > 0) {
-                        "Mihon source exposed neither a chapter catalog nor readable gallery pages"
+            try {
+                loadMihonPageModels(source, selectedChapters.chapters.single(), requestId).size
+                    .also { count ->
+                        require(count > 0) {
+                            "Mihon source exposed neither a chapter catalog nor readable gallery pages"
+                        }
                     }
-                }
+            } catch (error: Throwable) {
+                catalog.chapterFailure?.let(error::addSuppressed)
+                throw error
+            }
         } else {
             null
         }
@@ -266,7 +271,7 @@ internal class MihonRuntimeDriver private constructor(
         }
         rememberMihonChapters(comicId, selectedChapters.chapters, chapterMessages)
         return mapOf(
-            "comic" to comicMessage(catalog.manga, comicId),
+            "comic" to comicMessage(source, catalog.manga, comicId),
             "chapters" to chapterMessages,
         )
     }
@@ -339,19 +344,25 @@ internal class MihonRuntimeDriver private constructor(
         val updateChapters = update
             ?.readList("chapters", "getChapters", "newChapters", "getNewChapters")
             .orEmpty()
+        val detailedChapters = detailedManga
+            .readList("chapters", "getChapters", "chapterList", "getChapterList")
         val chapters = when {
             authoritativeChapters.isNotEmpty() -> authoritativeChapters
             updateChapters.isNotEmpty() -> updateChapters
-            chapterFailures.isNotEmpty() ->
-                throw IllegalStateException(
-                    "Mihon chapter catalog failed for ${source.javaClass.name}",
-                    chapterFailures.first(),
-                ).also { failure ->
-                    chapterFailures.drop(1).forEach(failure::addSuppressed)
-                }
+            detailedChapters.isNotEmpty() -> detailedChapters
             else -> emptyList()
         }
-        return MihonComicCatalog(detailedManga, chapters)
+        val chapterFailure = if (chapters.isEmpty() && chapterFailures.isNotEmpty()) {
+            IllegalStateException(
+                "Mihon chapter catalog failed for ${source.javaClass.name}",
+                chapterFailures.first(),
+            ).also { failure ->
+                chapterFailures.drop(1).forEach(failure::addSuppressed)
+            }
+        } else {
+            null
+        }
+        return MihonComicCatalog(detailedManga, chapters, chapterFailure)
     }
 
     private fun createSyntheticMihonChapter(source: Any, manga: Any): Any {
@@ -498,12 +509,17 @@ internal class MihonRuntimeDriver private constructor(
                 "resource",
                 resource,
             )
-            mapOf(
+            mutableMapOf<String, Any?>(
                 "chapterId" to chapterId,
                 "pageId" to "${chapterId}:$index",
                 "index" to index,
                 "uri" to uri,
-            )
+            ).apply {
+                mihonContentKindHint(resource.optString("url"))?.let { kind ->
+                    put("contentKindHint", kind)
+                    put("animatedHint", kind == "webp" || kind == "gif")
+                }
+            }
         }
         val resolvedChapter = chapterMessage(
             chapter = chapter,
@@ -520,6 +536,18 @@ internal class MihonRuntimeDriver private constructor(
             "pages" to pageMessages,
             "readingDirection" to "vertical",
         )
+    }
+
+    private fun mihonContentKindHint(url: String): String? {
+        val path = url.substringBefore('?').substringBefore('#').lowercase(Locale.US)
+        return when {
+            path.endsWith(".webp") -> "webp"
+            path.endsWith(".gif") -> "gif"
+            path.endsWith(".png") -> "png"
+            path.endsWith(".jpg") || path.endsWith(".jpeg") || path.endsWith(".jpe") -> "jpeg"
+            path.endsWith(".avif") -> "avif"
+            else -> null
+        }
     }
 
     private fun loadResource(source: Any, uri: String, requestId: String): ByteArray {
@@ -762,7 +790,7 @@ internal class MihonRuntimeDriver private constructor(
         }
     }
 
-    private fun mangaSummary(manga: Any): Map<String, Any?> {
+    private fun mangaSummary(source: Any, manga: Any): Map<String, Any?> {
         val id = encodeOpaque("manga", mihonModelJson(manga))
         val title = manga.readString("title", "getTitle")?.ifBlank { null } ?: "未命名漫画"
         val author = manga.readString("author", "getAuthor")
@@ -773,16 +801,14 @@ internal class MihonRuntimeDriver private constructor(
             "authors" to listOfNotNull(author, artist).distinct(),
             "contentRating" to "suggestive",
         ).apply {
-            manga.readString("thumbnail_url", "getThumbnail_url", "getThumbnailUrl")
-                ?.takeIf { it.isNotBlank() }
-                ?.let { put("coverUri", it) }
+            mihonCoverResource(source, manga)?.let { put("coverUri", it) }
             manga.readString("description", "getDescription")
                 ?.takeIf { it.isNotBlank() }
                 ?.let { put("description", it) }
         }
     }
 
-    private fun comicMessage(manga: Any, comicId: String): Map<String, Any?> =
+    private fun comicMessage(source: Any, manga: Any, comicId: String): Map<String, Any?> =
         mutableMapOf<String, Any?>(
             "comicId" to comicId,
             "title" to (manga.readString("title", "getTitle")?.ifBlank { null } ?: "未命名漫画"),
@@ -792,13 +818,36 @@ internal class MihonRuntimeDriver private constructor(
             ).distinct(),
             "readingDirection" to "vertical",
         ).apply {
-            manga.readString("thumbnail_url", "getThumbnail_url", "getThumbnailUrl")
-                ?.takeIf { it.isNotBlank() }
-                ?.let { put("coverUri", it) }
+            mihonCoverResource(source, manga)?.let { put("coverUri", it) }
             manga.readString("description", "getDescription")
                 ?.takeIf { it.isNotBlank() }
                 ?.let { put("description", it) }
         }
+
+    private fun mihonCoverResource(source: Any, manga: Any): String? {
+        val raw = manga.readString("thumbnail_url", "getThumbnail_url", "getThumbnailUrl")
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?: return null
+        val baseUrl = source.readString("baseUrl", "getBaseUrl")?.trim().orEmpty()
+        val absolute = runCatching {
+            when {
+                raw.startsWith("https://") || raw.startsWith("http://") -> raw
+                raw.startsWith("//") -> {
+                    val scheme = runCatching { URL(baseUrl).protocol }.getOrDefault("https")
+                    "$scheme:$raw"
+                }
+                baseUrl.isNotBlank() -> URL(URL(baseUrl), raw).toString()
+                else -> return null
+            }
+        }.getOrNull() ?: return null
+        val headers = source.readValue("headers", "getHeaders").stringHeaders()
+        val resource = JSONObject().put("url", absolute)
+        if (headers.isNotEmpty()) {
+            resource.put("headers", JSONObject(headers))
+        }
+        return encodeOpaque("resource", resource)
+    }
 
     private fun chapterMessage(
         chapter: Any,
@@ -983,6 +1032,7 @@ internal class MihonRuntimeDriver private constructor(
 private data class MihonComicCatalog(
     val manga: Any,
     val chapters: List<Any>,
+    val chapterFailure: Throwable?,
 )
 
 internal data class MihonChapterSelection<T>(

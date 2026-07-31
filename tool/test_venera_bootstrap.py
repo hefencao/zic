@@ -103,6 +103,20 @@ async function checkChapterPageCount(){
  if(value.chapter.pageCount!==2||value.pages.length!==2)throw new Error('chapter page count mismatch '+JSON.stringify(value));
 }
 
+async function checkWebpPageHints(){
+ const comicId='venera:comic:'+__zicB64({id:'webp-comic',title:'WebP'});
+ const chapter=__zicChapterMessage(comicId,'ep-webp','WebP episode',0);
+ globalThis.__zicSource={comic:{loadEp:async()=>[
+   'https://cdn.invalid/animated.webp?token=1',
+   'https://cdn.invalid/static.png#fragment',
+   'opaque-image-id'
+ ]}};
+ const value=await __zicOperation({operation:'loadChapter',arguments:{chapterId:chapter.chapterId}});
+ if(value.pages[0].contentKindHint!=='webp'||value.pages[0].animatedHint!==true)throw new Error('WebP page hint missing '+JSON.stringify(value.pages[0]));
+ if(value.pages[1].contentKindHint!=='png'||value.pages[1].animatedHint!==false)throw new Error('PNG page hint missing '+JSON.stringify(value.pages[1]));
+ if(value.pages[2].contentKindHint!==undefined||value.pages[2].animatedHint!==undefined)throw new Error('opaque image received an invented hint '+JSON.stringify(value.pages[2]));
+}
+
 async function checkSingleVolumeChapter(){
   const comicId='venera:comic:'+__zicB64({id:'https://e-hentai.org/g/1/token/',title:'Gallery'});
   let seenEpId='not-called',infoLoads=0;
@@ -237,7 +251,7 @@ async function checkNetworkExtraAndCryptoSurface(){
  if(typeof Convert.encryptAesEcb!=='function'||Convert.encryptAesCfb.length!==4||Convert.decryptAesCfb.length!==4)throw new Error('Convert AES surface is incomplete');
 }
 
-(async()=>{await checkCurrentCategory();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkSingleVolumeChapter();await checkChapterResourceCanBeReadAgain();await checkChapterImageConfigIsDeferred();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
+(async()=>{await checkCurrentCategory();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkChapterResourceCanBeReadAgain();await checkChapterImageConfigIsDeferred();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
 '''
 with tempfile.TemporaryDirectory() as td:
     js=Path(td)/'test.js'; js.write_text(bootstrap+'\n'+test)

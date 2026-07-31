@@ -11,12 +11,30 @@ source = (
     / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraRuntimeDriver.kt'
 ).read_text()
 match = re.search(
-    r'(private fun veneraResponse\(.*?\n\})\n\nprivate fun isPublicVeneraHost',
+    r'(private fun veneraResponse\(.*?\n\})\n\nprivate fun JSONObject',
     source,
     re.S,
 )
 if not match:
     raise SystemExit('veneraResponse helper not found')
+for token in (
+    'defaultUserAgent = webView.settings.userAgentString.orEmpty()',
+    'veneraRequestHeaders(',
+    'message.optJSONObject("headers")',
+    'headers.keys.none { it.equals("user-agent", ignoreCase = true) }',
+    'headers["User-Agent"] = defaultUserAgent',
+    'repeat(VENERA_HTTP_MAX_REDIRECTS + 1)',
+    'persistResponseCookies(targetIdentity, result.optJSONObject("headers"))',
+    '.veneraHeaderValue("location")',
+    'forwardHeaders.removeVeneraHeader("authorization")',
+    'connection.instanceFollowRedirects = false',
+    'it.name == "followRedirects"',
+    'it.name == "followSslRedirects"',
+):
+    if token not in source:
+        raise SystemExit(
+            f'Venera native HTTP default user-agent contract is missing: {token}'
+        )
 helper = match.group(1)
 
 with tempfile.TemporaryDirectory() as directory:

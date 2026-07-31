@@ -123,7 +123,6 @@ void main() {
     );
   });
 
-
   test('folder revision preserves exact imported media format', () {
     ImportedChapterRecord record(String mediaFormat) =>
         ImportedChapterRecord.folder(
@@ -183,7 +182,34 @@ void main() {
     expect(content.uri.toString(), 'content://provider/document/002');
   });
 
-  test('duplicate source identities are rejected', () {
+  test('duplicate source identities keep distinct stable page identities', () {
+    final record = ImportedChapterRecord.folder(
+      directoryId: '/chapter',
+      displayName: 'chapter',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '1.png',
+          sourceId: '/chapter/1.png',
+          pageId: 'page-1',
+          contentKindHint: ContentKindHint.png,
+        ),
+        ImportedPageRecord(
+          displayName: 'copy.png',
+          sourceId: '/chapter/1.png',
+          pageId: 'page-2',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+
+    expect(record.pages.map((page) => page.sourceId).toSet(), hasLength(1));
+    expect(
+      record.pages.map((page) => page.pageId),
+      <String?>['page-1', 'page-2'],
+    );
+  });
+
+  test('duplicate source identities still require unique stable page ids', () {
     expect(
       () => ImportedChapterRecord.folder(
         directoryId: '/chapter',

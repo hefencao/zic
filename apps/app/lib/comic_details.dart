@@ -655,6 +655,10 @@ final class _RemoteComicDetailsScreenState
       <String, ChapterDownloadSnapshot>{};
   StreamSubscription<ChapterDownloadSnapshot>? _downloadSubscription;
   bool _downloadingComic = false;
+  int _pageCountPreflightGeneration = 0;
+  Future<void>? _pageCountPreflightRun;
+  final Set<String> _pageCountPreflighting = <String>{};
+  final Set<String> _pageCountPreflightFailed = <String>{};
   final Map<String, Future<ImportedLibraryEntry>> _ensureInFlight =
       <String, Future<ImportedLibraryEntry>>{};
 
@@ -672,6 +676,7 @@ final class _RemoteComicDetailsScreenState
 
   @override
   void dispose() {
+    _pageCountPreflightGeneration++;
     unawaited(_downloadSubscription?.cancel());
     super.dispose();
   }
@@ -755,6 +760,7 @@ final class _RemoteComicDetailsScreenState
         _manifest = manifest;
         _library = library.copyWith(sourceChapters: manifest.chapters);
       });
+      _startPageCountPreflight(manifest);
       unawaited(_loadDownloadStatuses(library.chapters));
       if (announce) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -770,6 +776,118 @@ final class _RemoteComicDetailsScreenState
         setState(() => _refreshing = false);
       }
     }
+  }
+
+  void _startPageCountPreflight(ComicManifest manifest) {
+    final generation = ++_pageCountPreflightGeneration;
+    _pageCountPreflighting.clear();
+    _pageCountPreflightFailed.clear();
+    if (!widget.source.sourceId.startsWith('mihon:')) {
+      return;
+    }
+    final pending = manifest.chapters
+        .where((chapter) => chapter.pageCount == 0)
+        .toList(growable: false);
+    if (pending.isEmpty) {
+      return;
+    }
+    setState(() {
+      _pageCountPreflighting.addAll(
+        pending.map((chapter) => chapter.chapterId),
+      );
+    });
+    _queuePageCountPreflight(pending, generation);
+  }
+
+  void _queuePageCountPreflight(
+    List<Chapter> chapters,
+    int generation,
+  ) {
+    final previous = _pageCountPreflightRun;
+    late final Future<void> run;
+    run = Future<void>.sync(() async {
+      if (previous != null) {
+        await previous;
+      }
+      if (!mounted || generation != _pageCountPreflightGeneration) {
+        return;
+      }
+      await _preflightPageCounts(chapters, generation);
+    });
+    _pageCountPreflightRun = run;
+    unawaited(
+      run.whenComplete(() {
+        if (identical(_pageCountPreflightRun, run)) {
+          _pageCountPreflightRun = null;
+        }
+      }),
+    );
+  }
+
+  Future<void> _preflightPageCounts(
+    List<Chapter> chapters,
+    int generation,
+  ) async {
+    var next = 0;
+    Future<void> worker() async {
+      while (generation == _pageCountPreflightGeneration) {
+        final index = next++;
+        if (index >= chapters.length) return;
+        final chapter = chapters[index];
+        try {
+          final loaded = await widget.source.loadChapter(chapter.chapterId);
+          if (generation != _pageCountPreflightGeneration) return;
+          _finishPageCountPreflight(
+            chapter.chapterId,
+            loaded.pages.length,
+            generation,
+          );
+        } on Object {
+          if (generation != _pageCountPreflightGeneration) return;
+          _finishPageCountPreflight(chapter.chapterId, null, generation);
+        }
+      }
+    }
+
+    final workers = chapters.length < 2 ? chapters.length : 2;
+    await Future.wait<void>(
+      List<Future<void>>.generate(workers, (_) => worker()),
+    );
+  }
+
+  void _finishPageCountPreflight(
+    String chapterId,
+    int? pageCount,
+    int generation,
+  ) {
+    if (!mounted || generation != _pageCountPreflightGeneration) return;
+    setState(() {
+      _pageCountPreflighting.remove(chapterId);
+      if (pageCount == null || pageCount <= 0) {
+        _pageCountPreflightFailed.add(chapterId);
+        return;
+      }
+      _pageCountPreflightFailed.remove(chapterId);
+      final manifest = _manifest;
+      if (manifest == null) return;
+      final chapters = <Chapter>[
+        for (final chapter in manifest.chapters)
+          if (chapter.chapterId == chapterId)
+            Chapter(
+              chapterId: chapter.chapterId,
+              comicId: chapter.comicId,
+              title: chapter.title,
+              sequence: chapter.sequence,
+              pageCount: pageCount,
+              sourceRevision: chapter.sourceRevision,
+              publishedAt: chapter.publishedAt,
+            )
+          else
+            chapter,
+      ];
+      _manifest = ComicManifest(comic: manifest.comic, chapters: chapters);
+      _library = _library.copyWith(sourceChapters: chapters);
+    });
   }
 
   Future<void> _savePreference(ComicPreference preference) async {
@@ -1069,6 +1187,7 @@ final class _RemoteComicDetailsScreenState
       onReverse: () => setState(() => _descending = !_descending),
       chapterCount: ordered.length,
       pageCount: ordered.fold<int>(0, (sum, chapter) => sum + chapter.pageCount),
+      pageCountPending: ordered.any((chapter) => chapter.pageCount == 0),
       chapterList: _ComicChapterList(
         chapters: <_ChapterViewModel>[
           for (final chapter in ordered)
@@ -1078,6 +1197,10 @@ final class _RemoteComicDetailsScreenState
               chapterId: chapter.chapterId,
               sequence: chapter.sequence,
               pageCount: chapter.pageCount,
+              pageCountLoading:
+                  _pageCountPreflighting.contains(chapter.chapterId),
+              pageCountFailed:
+                  _pageCountPreflightFailed.contains(chapter.chapterId),
               publishedAt: chapter.publishedAt,
               entry: _localEntry(chapter.chapterId),
               isRead: _isReadById(
@@ -1144,6 +1267,7 @@ final class _ComicDetailsScaffold extends StatelessWidget {
     required this.onReverse,
     required this.chapterCount,
     required this.pageCount,
+    this.pageCountPending = false,
     required this.chapterList,
     this.onMigrateSource,
   });
@@ -1166,6 +1290,7 @@ final class _ComicDetailsScaffold extends StatelessWidget {
   final VoidCallback onReverse;
   final int chapterCount;
   final int pageCount;
+  final bool pageCountPending;
   final Widget chapterList;
   final VoidCallback? onMigrateSource;
 
@@ -1229,8 +1354,10 @@ final class _ComicDetailsScaffold extends StatelessWidget {
                   children: <Widget>[
                     Expanded(
                       child: Text(
-                        pageCount == 0 && chapterCount > 0
-                            ? '$chapterCount 章 · 页数待加载'
+                        pageCountPending
+                            ? pageCount == 0
+                                ? '$chapterCount 章 · 页数待加载'
+                                : '$chapterCount 章 · 已知 $pageCount 页'
                             : '$chapterCount 章 · $pageCount 页',
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
@@ -1454,8 +1581,15 @@ final class _ComicChapterList extends StatelessWidget {
       itemCount: chapters.length,
       itemBuilder: (context, index) {
         final chapter = chapters[index];
+        final pageLabel = chapter.pageCount > 0
+            ? '${chapter.pageCount} 页'
+            : chapter.pageCountLoading
+                ? '正在加载页数'
+                : chapter.pageCountFailed
+                    ? '页数加载失败'
+                    : '页数待加载';
         final subtitle = <String>[
-          chapter.pageCount == 0 ? '页数待加载' : '${chapter.pageCount} 页',
+          pageLabel,
           if (chapter.publishedAt != null)
             chapter.publishedAt!.toLocal().toString().split(' ').first,
         ].join(' · ');
@@ -1518,6 +1652,8 @@ final class _ChapterViewModel {
     required this.chapterId,
     required this.sequence,
     required this.pageCount,
+    this.pageCountLoading = false,
+    this.pageCountFailed = false,
     required this.publishedAt,
     required this.entry,
     required this.isRead,
@@ -1533,6 +1669,8 @@ final class _ChapterViewModel {
   final String chapterId;
   final int sequence;
   final int pageCount;
+  final bool pageCountLoading;
+  final bool pageCountFailed;
   final DateTime? publishedAt;
   final ImportedLibraryEntry? entry;
   final bool isRead;

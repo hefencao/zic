@@ -7,6 +7,7 @@ import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:media/media.dart' show SourcePool;
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:pipeline/pipeline.dart';
 import 'package:reader/reader.dart';
@@ -71,7 +72,6 @@ final class ReaderPlaybackController
   }
 }
 
-
 @immutable
 final class ReaderTransferProgress {
   const ReaderTransferProgress({
@@ -99,6 +99,23 @@ final class ReaderTransferProgress {
         ? null
         : (committedBytes / total).clamp(0.0, 1.0).toDouble();
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ReaderTransferProgress &&
+          active == other.active &&
+          existingBytes == other.existingBytes &&
+          committedBytes == other.committedBytes &&
+          totalBytes == other.totalBytes;
+
+  @override
+  int get hashCode => Object.hash(
+        active,
+        existingBytes,
+        committedBytes,
+        totalBytes,
+      );
 }
 
 final class ReaderPageRuntime {
@@ -204,6 +221,9 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   ReaderMode? _lastProgressMode;
   late final ReaderPlaybackController _playback;
   late final ValueNotifier<ReaderTransferProgress> _transferProgress;
+  ReaderTransferProgress? _pendingTransferProgress;
+  bool _transferProgressScheduled = false;
+  bool _transferProgressDisposed = false;
   final Map<String, DownloadSession> _pageSessions = <String, DownloadSession>{};
   final Map<DownloadSession, DownloadSnapshotListener> _sessionProgressListeners =
       <DownloadSession, DownloadSnapshotListener>{};
@@ -489,14 +509,14 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   void _syncCurrentTransferProgress() {
     final reader = _reader;
     if (reader == null || widget.chapter.pages.isEmpty) {
-      _transferProgress.value = const ReaderTransferProgress();
+      _publishTransferProgress(const ReaderTransferProgress());
       return;
     }
     final asset = widget.chapter.pages[reader.currentIndex];
     final id = readerPageDownloadId(widget.chapter, asset);
     final session = _pageSessions[id.key] ?? _downloads.find(id);
     if (session == null) {
-      _transferProgress.value = const ReaderTransferProgress();
+      _publishTransferProgress(const ReaderTransferProgress());
       return;
     }
     final snapshot = session.snapshot;
@@ -511,12 +531,42 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
             snapshot.state != DownloadState.promoted &&
             snapshot.state != DownloadState.failed &&
             snapshot.state != DownloadState.disposed);
-    _transferProgress.value = ReaderTransferProgress(
-      active: active,
-      existingBytes: existing,
-      committedBytes: snapshot.committedLength,
-      totalBytes: snapshot.totalLength,
+    _publishTransferProgress(
+      ReaderTransferProgress(
+        active: active,
+        existingBytes: existing,
+        committedBytes: snapshot.committedLength,
+        totalBytes: snapshot.totalLength,
+      ),
     );
+  }
+
+  void _publishTransferProgress(ReaderTransferProgress next) {
+    if (_transferProgressDisposed) return;
+    if (!_transferProgressScheduled && _transferProgress.value == next) return;
+    final scheduler = SchedulerBinding.instance;
+    if (scheduler.schedulerPhase == SchedulerPhase.idle) {
+      _pendingTransferProgress = null;
+      if (_transferProgress.value != next) {
+        _transferProgress.value = next;
+      }
+      return;
+    }
+    _pendingTransferProgress = next;
+    if (_transferProgressScheduled) return;
+    _transferProgressScheduled = true;
+    scheduler.addPostFrameCallback((_) {
+      _transferProgressScheduled = false;
+      if (_transferProgressDisposed || !mounted) {
+        _pendingTransferProgress = null;
+        return;
+      }
+      final pending = _pendingTransferProgress;
+      _pendingTransferProgress = null;
+      if (pending != null && _transferProgress.value != pending) {
+        _transferProgress.value = pending;
+      }
+    });
   }
 
   bool _currentPageSupportsPlayback(ReaderController reader) {
@@ -668,6 +718,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       entry.key.removeSnapshotListener(entry.value);
     }
     _sessionProgressListeners.clear();
+    _transferProgressDisposed = true;
+    _pendingTransferProgress = null;
     _transferProgress.dispose();
     _playback.dispose();
     unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));

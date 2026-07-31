@@ -229,6 +229,23 @@ LocalImageFormat _importedPageFormat(ImportedPageRecord page) {
 
 LocalImageFormat _formatFromSourceName(String sourceId) {
   final path = (Uri.tryParse(sourceId)?.path ?? sourceId).toLowerCase();
+  if (path.endsWith('.webp')) {
+    return LocalImageFormat.webp;
+  }
+  if (path.endsWith('.gif')) {
+    return LocalImageFormat.gif;
+  }
+  if (path.endsWith('.png')) {
+    return LocalImageFormat.png;
+  }
+  if (path.endsWith('.avif')) {
+    return LocalImageFormat.avif;
+  }
+  if (path.endsWith('.jpg') ||
+      path.endsWith('.jpeg') ||
+      path.endsWith('.jpe')) {
+    return LocalImageFormat.jpeg;
+  }
   if (path.endsWith('.bmp') || path.endsWith('.dib')) {
     return LocalImageFormat.bmp;
   }

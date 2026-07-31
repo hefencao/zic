@@ -116,16 +116,15 @@ final class ImportedChapterRecord {
     if (pages.isEmpty) {
       throw ArgumentError.value(pages, 'pages', 'must not be empty');
     }
-    final sources = <String>{};
     final pageIds = <String>{};
     for (final page in pages) {
       if (page.displayName.trim().isEmpty || page.sourceId.trim().isEmpty) {
         throw ArgumentError('imported page identity must be non-empty');
       }
-      if (page.pageId != null &&
-          (page.pageId!.trim().isEmpty || !pageIds.add(page.pageId!))) {
+      final stablePageId = page.stablePageId;
+      if (stablePageId.trim().isEmpty || !pageIds.add(stablePageId)) {
         throw ArgumentError.value(
-          page.pageId,
+          stablePageId,
           'pages',
           'contains an empty or duplicate stable page identity',
         );
@@ -137,16 +136,8 @@ final class ImportedChapterRecord {
           'contains a negative byte length',
         );
       }
-      if (!sources.add(page.sourceId)) {
-        throw ArgumentError.value(
-          page.sourceId,
-          'pages',
-          'contains a duplicate source identity',
-        );
-      }
     }
   }
-
 
   factory ImportedChapterRecord.remote({
     required Comic comic,
@@ -391,7 +382,6 @@ final class ImportedChapterRecord {
     );
   }
 }
-
 
 String _remoteDisplayName(PageAsset page) {
   final segment = page.uri.pathSegments.isEmpty

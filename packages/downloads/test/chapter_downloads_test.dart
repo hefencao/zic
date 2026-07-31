@@ -168,6 +168,47 @@ void main() {
     expect(await reopened.readPage(entry, 0), bytes);
   });
 
+  test('persistent plugin download resolves opaque source resources', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-plugin-chapter-download-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final bytes = Uint8List.fromList(<int>[82, 73, 70, 70, 1, 2, 3]);
+    final requested = <Uri>[];
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:test:comic',
+        displayName: '第 1 话',
+        sourceId: 'mihon:test',
+        comicId: 'comic',
+        comicTitle: '插件下载测试',
+        chapterId: 'chapter',
+        sourceRevision: 'r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '1.webp',
+            sourceId: 'mihon:resource:opaque-page',
+            pageId: 'page-1',
+            contentKindHint: ContentKindHint.webp,
+          ),
+        ],
+      ),
+    );
+    final service = await PersistentChapterDownloadService.open(directory.path);
+    addTearDown(service.close);
+    service.setChapterResourceLoader((sourceId, uri) async {
+      expect(sourceId, 'mihon:test');
+      requested.add(uri);
+      return bytes;
+    });
+
+    await service.download(entry);
+
+    expect(requested, <Uri>[Uri.parse('mihon:resource:opaque-page')]);
+    expect(await service.readPage(entry, 0), bytes);
+    expect((await service.inspect(entry)).phase, ChapterDownloadPhase.complete);
+  });
+
   test('memory download publishes progress and delete returns to idle',
       () async {
     final entry = ImportedLibraryEntry(

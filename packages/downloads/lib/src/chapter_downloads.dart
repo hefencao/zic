@@ -129,6 +129,20 @@ abstract interface class ManagedChapterDownloadService
         ArtifactCacheMaintenance,
         ArtifactCacheStore {}
 
+/// Resolves bytes owned by an active comic source. External plugin page URIs
+/// are intentionally opaque and must stay behind the source boundary instead
+/// of falling through to [IoTransport].
+typedef ChapterResourceLoader = Future<Uint8List> Function(
+  String sourceId,
+  Uri uri,
+);
+
+/// Optional composition capability for persistent download services that need
+/// access to source-owned resource loading without depending on app/UI types.
+abstract interface class ConfigurableChapterResourceLoader {
+  void setChapterResourceLoader(ChapterResourceLoader? loader);
+}
+
 typedef ChapterPageLoader = Future<Uint8List> Function(
   ImportedLibraryEntry entry,
   int pageIndex,
@@ -569,7 +583,9 @@ final class MemoryChapterDownloadService
 }
 
 final class PersistentChapterDownloadService
-    implements ManagedChapterDownloadService {
+    implements
+        ManagedChapterDownloadService,
+        ConfigurableChapterResourceLoader {
   PersistentChapterDownloadService._({
     required DownloadRegistry registry,
     required SqliteIndex index,
@@ -608,6 +624,7 @@ final class PersistentChapterDownloadService
   final SqliteIndex _index;
   final IoTransport _transport;
   final CacheOps _cacheOps;
+  ChapterResourceLoader? _resourceLoader;
   final StreamController<ChapterDownloadSnapshot> _changes =
       StreamController<ChapterDownloadSnapshot>.broadcast(sync: true);
   final Map<String, CancelToken> _tokens = <String, CancelToken>{};
@@ -626,6 +643,12 @@ final class PersistentChapterDownloadService
 
   @override
   Stream<ChapterDownloadSnapshot> get changes => _changes.stream;
+
+  @override
+  void setChapterResourceLoader(ChapterResourceLoader? loader) {
+    _requireOpen();
+    _resourceLoader = loader;
+  }
 
   @override
   Future<void> download(ImportedLibraryEntry entry) {
@@ -669,7 +692,10 @@ final class PersistentChapterDownloadService
 
         session.addSnapshotListener(listener);
         try {
-          await DownloadJob(transport: _transport, session: session).run(
+          await DownloadJob(
+            transport: _transportForPage(manifest, page),
+            session: session,
+          ).run(
             expectedChecksum: page.checksum,
             cancel: token,
           );
@@ -702,6 +728,26 @@ final class PersistentChapterDownloadService
       );
       rethrow;
     }
+  }
+
+  Transport _transportForPage(ChapterManifest manifest, PageAsset page) {
+    final loader = _resourceLoader;
+    if (loader == null || !_isSourceOwnedResource(manifest.sourceId, page.uri)) {
+      return _transport;
+    }
+    return LoaderTransport(<Uri, LoaderTransportSource>{
+      page.uri: LoaderTransportSource(
+        revision: '${manifest.chapter.sourceRevision}:${page.pageId}',
+        loadBytes: () => loader(manifest.sourceId, page.uri),
+      ),
+    });
+  }
+
+  bool _isSourceOwnedResource(String sourceId, Uri uri) {
+    if (sourceId.startsWith('mihon:') || sourceId.startsWith('venera:')) {
+      return true;
+    }
+    return uri.scheme == 'mihon' || uri.scheme == 'venera-resource';
   }
 
   @override
@@ -1007,6 +1053,7 @@ final class PersistentChapterDownloadService
       return;
     }
     _closed = true;
+    _resourceLoader = null;
     for (final token in _tokens.values) {
       token.cancel();
     }

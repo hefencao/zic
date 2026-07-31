@@ -1,3 +1,12 @@
+## 0.31.0-dev.63：插件资源传输与媒体/章节兼容闭环
+
+- 页面稳定 identity 与资源定位分离：章节内允许重复 URI，唯一性只由非空 `pageId` 保证。该规则与 Reader、下载和持久进度使用的 stable identity 一致。
+- 持久章节下载在 `downloads` 内选择 transport。普通 file/http(s) 继续使用 `IoTransport`；Mihon/Venera 私有 URI 通过 composition 注入的 `ChapterResourceLoader` 调用对应 `BrowsableComicSource.loadResource`，详情页不拥有网络或下载分流。
+- Reader 的同步 session snapshot 不再在 Widget build 中直接更新 transfer notifier；同一帧内只保留最新进度并在 post-frame 发布。
+- Venera 与 Mihon 页面输出 WebP/GIF 等内容提示，Venera 默认补浏览器 UA 并使用逐跳 Cookie 的 8 跳有限重定向；媒体字节嗅探仍为最终格式判定。
+- Mihon 封面统一为保留 source headers 的 opaque resource。未知章节页数由详情页最多两路并发渐进预检并写回当前 manifest；缓存层合并相同 `loadChapter`，打开/下载不会重复请求。
+- Mihon gallery 兜底允许在目录 API 报错或返回空时继续做 synthetic page preflight；只有非空正文可进入协议，目录与正文都失败时返回包含原始目录根因的诊断。
+
 ## 0.31.0-dev.62：漫画源管理投影与 Mihon 章节结果闭环
 
 - 漫画源管理只投影已启用来源，固定按原生、Mihon、Venera 三段排列并使用分隔线。Mihon language family 在该投影中选择当前 locale、通用语言、英语或其他语言作为默认项，剩余来源默认折叠。

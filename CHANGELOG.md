@@ -1,3 +1,16 @@
+## 0.31.0-dev.63：插件资源传输、媒体识别与章节元数据渐进收口
+
+- 严格以用户上传的 `zic_v0.31.0-dev.62_source-management-tabs-mihon-chapter-preflight.zip` 为唯一代码基线；`mihon-main` 与 `vibevenera-master` 仅用于兼容行为对照，未修改、未并入产品源码。
+- `ImportedChapterRecord` 只要求稳定 `pageId` 唯一，不再把可重复的资源 URI 当作页面主键。同一图片地址可在章节中出现多次，而下载、进度与 Reader identity 仍由不同 `pageId` 区分。
+- `PersistentChapterDownloadService` 新增可注入的 source-resource loader，并在 `downloads` 内为 `mihon:`/`venera-resource:` 等来源私有 URI 选择 `LoaderTransport`。App composition 只绑定当前 source registry，不在详情页或按钮中复制下载分流。
+- Reader transfer progress 改为按帧合并、在 build 结束后发布，避免 `ValueListenableBuilder` 构建期间被同步 `DownloadSession` snapshot 再次标脏。
+- Venera 章节页根据原始资源名提供 WebP/GIF/PNG/JPEG/AVIF 提示，本地媒体名也补齐常见格式识别；提示只用于快速选择，实际字节嗅探和 codec 仍是最终裁决。
+- Venera native HTTP 默认继承受限 WebView 浏览器 UA，并改为最多 8 跳的宿主管理重定向：逐跳接收 Cookie、支持相对 `Location`、跨 origin 清理 Cookie/Authorization，URLConnection 与 DNS fallback 均禁用内部自动重定向。
+- Mihon 封面被归一化为保留来源 headers 的 `mihon:resource:`；相对与 protocol-relative thumbnail 可通过统一 source loader 显示。页面资源同时携带媒体类型提示。
+- Mihon 详情中的未知页数以最多两个并发 worker 渐进预检并复用 `CachedBrowsableComicSource` 的章节结果；成功后同时更新目录总页数与章节行，失败显示明确状态。
+- Mihon 目录调用失败或为空时不再立即终止：只有 synthetic 章节真实解析出非空页面才接受 gallery 兜底；目录与页面均失败时保留原始目录失败为 suppressed 诊断。
+- 新增重复资源 URI、插件私有持久下载、Mihon 页数预检、Venera WebP/UA/重定向及 Mihon gallery/封面契约回归。
+
 ## 0.31.0-dev.62：漫画源分类、插件页签与 Mihon 章节结果闭环
 
 - 漫画源管理中的启用来源按“原生 / Mihon / Venera”分区，并以分隔线隔开；Mihon 同一插件 family 的语言来源只显示当前语言或通用语言，其余语言在该页面默认折叠。折叠不改变安装记录、来源 identity、启用状态或信任粒度。

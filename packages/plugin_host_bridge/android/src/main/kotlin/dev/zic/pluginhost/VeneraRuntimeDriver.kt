@@ -180,6 +180,7 @@ internal class VeneraRuntimeDriver private constructor(
                     sourceKey = sourceKey,
                     capabilities = capabilities,
                     maxResponseBytes = maxResponseBytes,
+                    defaultUserAgent = webView.settings.userAgentString.orEmpty(),
                 )
                 webView.addJavascriptInterface(bridge, BRIDGE_NAME)
                 VeneraActivation(
@@ -307,6 +308,7 @@ private class VeneraNativeBridge(
     private val sourceKey: String,
     private val capabilities: Set<String>,
     private val maxResponseBytes: Int,
+    private val defaultUserAgent: String,
 ) : Closeable {
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences(
@@ -391,64 +393,103 @@ private class VeneraNativeBridge(
 
     private fun http(message: JSONObject): Any {
         requireCapability("network")
-        val url = message.getString("url")
-        require(url.startsWith("https://") || url.startsWith("http://")) {
+        val rawUrl = message.getString("url")
+        require(rawUrl.startsWith("https://") || rawUrl.startsWith("http://")) {
             "Venera network URL must use HTTP(S)"
         }
-        val method = message.optString("http_method", "GET").uppercase(Locale.US)
-        val headers = veneraRequestHeaders(message.optJSONObject("headers"))
-        if (capabilities.contains("cookies")) {
-            cookieManager.getCookie(url)?.takeIf { it.isNotBlank() }?.let { cookie ->
-                if (headers.keys.none { it.equals("cookie", ignoreCase = true) }) {
-                    headers["Cookie"] = cookie
-                }
-            }
-        }
+        var target = URL(rawUrl)
+        var method = message.optString("http_method", "GET").uppercase(Locale.US)
+        val forwardHeaders = veneraRequestHeaders(
+            message.optJSONObject("headers"),
+            defaultUserAgent,
+        )
         val data = decodeWireValue(message.opt("data"))
-        val bodyBytes = when (data) {
+        var bodyBytes = when (data) {
             null -> ByteArray(0)
             is ByteArray -> data
             is String -> data.toByteArray(Charsets.UTF_8)
             else -> JSONObject.wrap(data).toString().toByteArray(Charsets.UTF_8)
         }
         if (method !in setOf("GET", "HEAD") &&
-            headers.keys.none { it.equals("content-type", ignoreCase = true) }
+            forwardHeaders.keys.none { it.equals("content-type", ignoreCase = true) }
         ) {
-            headers["Content-Type"] = "application/octet-stream"
+            forwardHeaders["Content-Type"] = "application/octet-stream"
         }
-        val target = URL(url)
-        val result = if (shouldUseVeneraDnsFallback(target) ||
+        repeat(VENERA_HTTP_MAX_REDIRECTS + 1) { redirectCount ->
+            val targetIdentity = target.toExternalForm()
+            val requestHeaders = LinkedHashMap(forwardHeaders)
+            if (capabilities.contains("cookies") &&
+                requestHeaders.keys.none { it.equals("cookie", ignoreCase = true) }
+            ) {
+                cookieManager.getCookie(targetIdentity)
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { requestHeaders["Cookie"] = it }
+            }
+            val result = executeHttpRequest(
+                target = target,
+                method = method,
+                headers = requestHeaders,
+                bodyBytes = bodyBytes,
+                bytes = message.optBoolean("bytes"),
+            )
+            persistResponseCookies(targetIdentity, result.optJSONObject("headers"))
+            val status = result.optInt("status")
+            val location = result.optJSONObject("headers")
+                .veneraHeaderValue("location")
+                ?.trim()
+                .orEmpty()
+            if (status !in VENERA_HTTP_REDIRECT_STATUSES || location.isEmpty()) {
+                return result
+            }
+            require(redirectCount < VENERA_HTTP_MAX_REDIRECTS) {
+                "Venera HTTP exceeded $VENERA_HTTP_MAX_REDIRECTS redirects"
+            }
+            val next = URL(target, location)
+            require(next.protocol.equals("https", ignoreCase = true) ||
+                next.protocol.equals("http", ignoreCase = true)
+            ) {
+                "Venera redirect URL must use HTTP(S)"
+            }
+            if (!sameVeneraOrigin(target, next)) {
+                forwardHeaders.removeVeneraHeader("authorization")
+                forwardHeaders.removeVeneraHeader("cookie")
+            }
+            if (status == HttpURLConnection.HTTP_SEE_OTHER ||
+                (status in setOf(HttpURLConnection.HTTP_MOVED_PERM, HttpURLConnection.HTTP_MOVED_TEMP) &&
+                    method !in setOf("GET", "HEAD"))
+            ) {
+                method = "GET"
+                bodyBytes = ByteArray(0)
+                forwardHeaders.removeVeneraHeader("content-length")
+                forwardHeaders.removeVeneraHeader("content-type")
+                forwardHeaders.removeVeneraHeader("transfer-encoding")
+            }
+            target = next
+        }
+        error("Venera HTTP redirect state escaped its bounded loop")
+    }
+
+    private fun executeHttpRequest(
+        target: URL,
+        method: String,
+        headers: Map<String, String>,
+        bodyBytes: ByteArray,
+        bytes: Boolean,
+    ): JSONObject {
+        return if (shouldUseVeneraDnsFallback(target) ||
             prefersVeneraDnsFallback(target.host)
         ) {
-            httpWithDnsFallback(
-                target,
-                method,
-                headers,
-                bodyBytes,
-                message.optBoolean("bytes"),
-            ).also { rememberVeneraDnsFallback(target.host) }
+            httpWithDnsFallback(target, method, headers, bodyBytes, bytes)
+                .also { rememberVeneraDnsFallback(target.host) }
         } else {
             runCatching {
-                httpWithUrlConnection(
-                    target,
-                    method,
-                    headers,
-                    bodyBytes,
-                    message.optBoolean("bytes"),
-                )
+                httpWithUrlConnection(target, method, headers, bodyBytes, bytes)
             }.recoverCatching { error ->
                 if (!shouldRetryVeneraWithDnsFallback(error, target, method)) throw error
-                httpWithDnsFallback(
-                    target,
-                    method,
-                    headers,
-                    bodyBytes,
-                    message.optBoolean("bytes"),
-                ).also { rememberVeneraDnsFallback(target.host) }
+                httpWithDnsFallback(target, method, headers, bodyBytes, bytes)
+                    .also { rememberVeneraDnsFallback(target.host) }
             }.getOrThrow()
         }
-        persistResponseCookies(url, result.optJSONObject("headers"))
-        return result
     }
 
     private fun httpWithUrlConnection(
@@ -459,7 +500,7 @@ private class VeneraNativeBridge(
         bytes: Boolean,
     ): JSONObject {
         val connection = target.openConnection() as HttpURLConnection
-        connection.instanceFollowRedirects = true
+        connection.instanceFollowRedirects = false
         connection.connectTimeout = VENERA_HTTP_CONNECT_TIMEOUT_MILLIS
         connection.readTimeout = VENERA_HTTP_READ_TIMEOUT_MILLIS
         connection.requestMethod = method
@@ -988,12 +1029,20 @@ internal fun normalizeVeneraAcceptEncoding(value: String?): String {
         ?.joinToString(", ") ?: "gzip, deflate"
 }
 
-private fun veneraRequestHeaders(raw: JSONObject?): LinkedHashMap<String, String> {
+private fun veneraRequestHeaders(
+    raw: JSONObject?,
+    defaultUserAgent: String,
+): LinkedHashMap<String, String> {
     val headers = LinkedHashMap<String, String>()
     raw?.keys()?.forEach { name ->
         if (!name.equals("accept-encoding", ignoreCase = true)) {
             headers[name] = raw.optString(name)
         }
+    }
+    if (headers.keys.none { it.equals("user-agent", ignoreCase = true) } &&
+        defaultUserAgent.isNotBlank()
+    ) {
+        headers["User-Agent"] = defaultUserAgent
     }
     val requestedEncoding = raw?.keys()?.asSequence()?.firstOrNull {
         it.equals("accept-encoding", ignoreCase = true)
@@ -1022,6 +1071,30 @@ private fun veneraResponse(
         .put("status", status)
         .put("headers", responseHeaders)
         .put("body", if (bytes) encodeWireValue(body) else body.toString(Charsets.UTF_8))
+}
+
+private fun JSONObject?.veneraHeaderValue(name: String): String? {
+    if (this == null) return null
+    val key = keys().asSequence().firstOrNull { it.equals(name, ignoreCase = true) }
+        ?: return null
+    return optString(key).takeIf { it.isNotBlank() }
+}
+
+private fun MutableMap<String, String>.removeVeneraHeader(name: String) {
+    keys.filter { it.equals(name, ignoreCase = true) }
+        .forEach { remove(it) }
+}
+
+private fun sameVeneraOrigin(first: URL, second: URL): Boolean =
+    first.protocol.equals(second.protocol, ignoreCase = true) &&
+        first.host.equals(second.host, ignoreCase = true) &&
+        first.veneraEffectivePort() == second.veneraEffectivePort()
+
+private fun URL.veneraEffectivePort(): Int = when {
+    port >= 0 -> port
+    defaultPort >= 0 -> defaultPort
+    protocol.equals("https", ignoreCase = true) -> 443
+    else -> 80
 }
 
 private fun isPublicVeneraHost(host: String): Boolean {
@@ -1105,6 +1178,8 @@ private const val VENERA_DNS_CACHE_NANOS = 5L * 60L * 1_000_000_000L
 private const val VENERA_HTTP_CONNECT_TIMEOUT_MILLIS = 5_000
 private const val VENERA_HTTP_READ_TIMEOUT_MILLIS = 10_000
 private const val VENERA_HTTP_CALL_TIMEOUT_MILLIS = 15_000L
+private const val VENERA_HTTP_MAX_REDIRECTS = 8
+private val VENERA_HTTP_REDIRECT_STATUSES = setOf(301, 302, 303, 307, 308)
 private const val VENERA_DOH_TIMEOUT_MILLIS = 1_500
 private val veneraDnsCache = ConcurrentHashMap<String, VeneraDnsCacheEntry>()
 private val veneraDnsFallbackPreferences = ConcurrentHashMap<String, Long>()
@@ -1244,6 +1319,12 @@ private fun createReflectiveVeneraHttpClient(): ReflectiveVeneraHttpClient {
     val clientBuilder = clientBuilderType.getDeclaredConstructor().newInstance()
     clientBuilderType.methods.first { it.name == "dns" && it.parameterCount == 1 }
         .invoke(clientBuilder, dns)
+    clientBuilderType.methods.firstOrNull {
+        it.name == "followRedirects" && it.parameterCount == 1
+    }?.invoke(clientBuilder, false)
+    clientBuilderType.methods.firstOrNull {
+        it.name == "followSslRedirects" && it.parameterCount == 1
+    }?.invoke(clientBuilder, false)
     clientBuilderType.methods.first {
         it.name == "connectTimeout" && it.parameterCount == 2
     }.invoke(
@@ -1574,6 +1655,7 @@ function __zicInstallComicInfoCache(source){
  Object.defineProperty(cached,'__zicCached',{value:true});comic.loadInfo=cached
 }
 function __zicChapterMessage(comicId,epId,title,index,pageCount=0){const revision=epId==null?'single':String(epId);return {comicId,chapterId:'venera:chapter:'+__zicB64({comicId,comicRawId:__zicUnb64(comicId.slice('venera:comic:'.length)).id,epId:epId==null?null:String(epId),title:String(title),sequence:index}),title:String(title||('第 '+(index+1)+' 话')),sequence:index,pageCount,sourceRevision:revision}}
+function __zicImageKindHint(value){const path=String(value??'').split(/[?#]/,1)[0].toLowerCase();if(path.endsWith('.webp'))return 'webp';if(path.endsWith('.gif'))return 'gif';if(path.endsWith('.png'))return 'png';if(path.endsWith('.jpg')||path.endsWith('.jpeg')||path.endsWith('.jpe'))return 'jpeg';if(path.endsWith('.avif'))return 'avif';return null}
 async function __zicOperation(request){
  const source=globalThis.__zicSource,args=request.arguments||{};
  if(request.operation==='browse'){
@@ -1595,7 +1677,7 @@ async function __zicOperation(request){
  }
  if(request.operation==='loadChapter'){
   const chapter=__zicUnb64(args.chapterId.slice('venera:chapter:'.length));const loaded=await source.comic.loadEp(chapter.comicRawId,chapter.epId);const images=Array.isArray(loaded)?loaded:(loaded?.images||[]);
-  const pages=[];for(let i=0;i<images.length;i++){const token=__zicRetainResource({image:String(images[i]),comicId:chapter.comicRawId,epId:chapter.epId,deferredImageConfig:true});pages.push({chapterId:args.chapterId,pageId:String(args.chapterId)+':'+i,index:i,uri:'venera-resource://'+token})}
+  const pages=[];for(let i=0;i<images.length;i++){const image=String(images[i]),token=__zicRetainResource({image,comicId:chapter.comicRawId,epId:chapter.epId,deferredImageConfig:true}),kind=__zicImageKindHint(image),page={chapterId:args.chapterId,pageId:String(args.chapterId)+':'+i,index:i,uri:'venera-resource://'+token};if(kind){page.contentKindHint=kind;page.animatedHint=kind==='webp'||kind==='gif'}pages.push(page)}
   return {comicId:chapter.comicId,chapter:__zicChapterMessage(chapter.comicId,chapter.epId,chapter.title,chapter.sequence,pages.length),pages,readingDirection:'vertical'};
  }
  if(request.operation==='loadSourceAccount')return __zicAccountDescriptor(source);

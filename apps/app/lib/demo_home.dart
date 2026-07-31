@@ -221,6 +221,10 @@ final class _DemoHomeState extends State<DemoHome> {
               ),
       ),
     );
+    final resourceBinding = _chapterDownloads;
+    if (resourceBinding is ConfigurableChapterResourceLoader) {
+      resourceBinding.setChapterResourceLoader(_loadSourceResourceBytes);
+    }
     final ownsWholeComicDownloads = widget.wholeComicDownloads == null;
     _wholeComicDownloads = widget.wholeComicDownloads ??
         WholeComicDownloadQueue(downloads: _chapterDownloads);
@@ -525,6 +529,14 @@ final class _DemoHomeState extends State<DemoHome> {
           : '${completed.length} 章已离线',
       offlineChapters: completed.length,
     );
+  }
+
+  Future<Uint8List> _loadSourceResourceBytes(String sourceId, Uri uri) {
+    final source = _sourceForId(sourceId);
+    if (source == null) {
+      throw StateError('漫画源 $sourceId 当前不可用，无法加载 $uri');
+    }
+    return source.loadResource(uri);
   }
 
   Future<Uint8List> _loadChapterPageBytes(

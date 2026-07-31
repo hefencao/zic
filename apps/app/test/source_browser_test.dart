@@ -568,6 +568,57 @@ void main() {
     expect(await downloads.isDownloaded(second!), isTrue);
   });
 
+  testWidgets('Mihon pending page counts resolve progressively',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final source = _FixtureSource(
+      'mihon:fixture-count',
+      'Mihon 页数源',
+      catalogPageCount: 0,
+    );
+
+    await tester.pumpWidget(
+      App(
+        libraryStore: store,
+        comicSources: <BrowsableComicSource>[source],
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.public_outlined));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(
+        sourceComicCardKey(
+          'mihon:fixture-count',
+          'mihon:fixture-count-comic',
+        ),
+      ),
+    );
+    await tester.tap(
+      find.byKey(
+        sourceComicCardKey(
+          'mihon:fixture-count',
+          'mihon:fixture-count-comic',
+        ),
+      ),
+    );
+    final chapterTile = find.byKey(
+      sourceChapterKey(
+        'mihon:fixture-count',
+        'mihon:fixture-count-chapter',
+      ),
+    );
+    await _pumpUntilFound(
+      tester,
+      find.descendant(of: chapterTile, matching: find.text('1 页')),
+    );
+
+    expect(source.chapterLoads, 1);
+    expect(find.text('1 章 · 1 页'), findsOneWidget);
+  });
+
   testWidgets('source comic details retries a transient source failure',
       (tester) async {
     final store = MemoryImportedLibraryStore();
@@ -613,6 +664,7 @@ final class _FixtureSource implements BrowsableComicSource {
     this.includeSecondChapter = false,
     this.revealSecondChapterOnRefresh = false,
     this.runtimePageUri = false,
+    this.catalogPageCount = 1,
   });
 
   @override
@@ -623,11 +675,14 @@ final class _FixtureSource implements BrowsableComicSource {
   final bool includeSecondChapter;
   final bool revealSecondChapterOnRefresh;
   final bool runtimePageUri;
+  final int catalogPageCount;
   int _comicLoads = 0;
+  int _chapterLoads = 0;
   int browseCalls = 0;
   final List<Uri> loadedResources = <Uri>[];
 
   int get comicLoads => _comicLoads;
+  int get chapterLoads => _chapterLoads;
 
   String get _comicId => '$sourceId-comic';
   String get _chapterId => '$sourceId-chapter';
@@ -655,6 +710,15 @@ final class _FixtureSource implements BrowsableComicSource {
   Chapter get _secondChapter => _chapterAt(2);
 
   Chapter _chapterAt(int sequence) => Chapter(
+        chapterId: sequence == 1 ? _chapterId : _secondChapterId,
+        comicId: _comicId,
+        title: '第 $sequence 话',
+        sequence: sequence,
+        pageCount: catalogPageCount,
+        sourceRevision: 'fixture-r$sequence',
+      );
+
+  Chapter _resolvedChapterAt(int sequence) => Chapter(
         chapterId: sequence == 1 ? _chapterId : _secondChapterId,
         comicId: _comicId,
         title: '第 $sequence 话',
@@ -711,7 +775,10 @@ final class _FixtureSource implements BrowsableComicSource {
   @override
   Future<ChapterManifest> loadChapter(String chapterId) async {
     expect(chapterId, anyOf(_chapterId, _secondChapterId));
-    final chapter = chapterId == _chapterId ? _chapter : _secondChapter;
+    _chapterLoads++;
+    final chapter = chapterId == _chapterId
+        ? _resolvedChapterAt(1)
+        : _resolvedChapterAt(2);
     return ChapterManifest(
       sourceId: sourceId,
       comicId: _comicId,

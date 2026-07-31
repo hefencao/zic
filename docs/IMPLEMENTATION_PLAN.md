@@ -21,7 +21,7 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.62）
+## 当前应用主线（0.31.0-dev.63）
 
 - Mihon extensionLib 1.4/1.5/1.6 必须映射到版本化 Source ABI asset；不得把任一 `extensions-lib` 放回 App runtime classpath，也不得回退为 parent-first Source API。
 - Mihon 章节目录必须保留来源返回的全部真实 `SChapter`；单章节兜底仅允许在目录为空时创建。详情到阅读之间优先保留原始章节对象，重启恢复只能按稳定来源身份重新匹配，不得把漫画 URL 或第一章复用于所有章节。
@@ -71,7 +71,17 @@
 - Android bound-service transport 必须以 binding generation 区分每次显式连接，并通过 Binder death recipient 失败当前请求；旧 generation 的迟到回调不得拆除新连接，也不得自动 replay/activate。packet response 必须校验 dedicated root、exact length 与 SHA-256，消费或失败后删除。
 
 
-### dev.62 当前主线约束
+### dev.63 当前主线约束
+
+- `ImportedPageRecord.pageId` 是页面唯一 identity；资源 URI 是可变、可重复的 delivery locator。任何 catalog/download/cache 层都不得用 URI 重复拒绝合法章节。
+- 插件私有页面资源必须由 `downloads` 通过注入的 source loader 选择 transport；Presentation 只能请求下载或打开，不能识别 URI scheme 后自行联网或保存字节。
+- Venera/Mihon 的 `contentKindHint`/`animatedHint` 是加速提示，不能替代字节嗅探和 codec 校验；未知 token 不得被猜成 WebP。
+- Mihon `pageCount == 0` 由详情页做受控、可缓存的渐进 preflight，最多两个并发 worker；不得在 build 中同步拉取，也不得为显示页数创建第二套页面缓存。
+- synthetic gallery 可在目录路径全部为空或失败后尝试，但必须以真实非空 page list 为准；若 page preflight 失败，目录错误必须保留在诊断链中。
+- Venera HTTP redirect 由宿主逐跳管理，必须有限、逐跳保存 Cookie、解析相对地址并在跨 origin 时移除 Cookie/Authorization；底层 URLConnection/OkHttp 不得再次自动跟随。
+- Reader transfer notifier 不得在 build phase 同步发布；同一帧的 snapshot 变化应合并为最新值并在安全帧边界更新。
+
+### dev.62 历史约束（由 dev.63 保留并扩展）
 
 - 漫画源管理负责启用来源的原生/Mihon/Venera 分类；Mihon 多语言来源折叠只发生在该投影。
 - Mihon/Venera 安装页只能通过顶部“已安装/仓库”切换，不得恢复左右双栏或在生态内部重复分类。

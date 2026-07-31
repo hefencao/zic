@@ -70,6 +70,10 @@ ArtifactCacheStore.read(exact DownloadId)
 - External source settings: Mihon Preference objects and Venera `settings` definitions both terminate at `ConfigurableComicSource`. The isolated runtime owns plugin preference/storage reads and writes; Presentation renders normalized toggle/text/select/multi-select/action values and may request an explicit runtime restart, but never receives SharedPreferences or JavaScript objects.
 - External source authentication: Venera `account` terminates at `AuthenticatableComicSource`. Presentation may collect credentials or host a login WebView, but only a bounded snapshot of final URL/title/Cookie/localStorage crosses the bridge; the isolated runtime invokes source validators, persists account state and performs logout. Cookie fields preserve source-declared order.
 - Mihon chapter discovery: a combined detail result with no chapters is not authoritative emptiness. The driver probes detailed/original manga objects through compatible public or inherited chapter-list APIs and adapts Future, RxJava 1 and RxJava 2/3 blocking results. Empty/unsupported candidates continue probing, but real failures are aggregated and returned. A gallery chapter is synthesized only after the complete catalog is empty and a non-empty page list has been preflighted; its detail row carries the verified page count.
+- External media hints and covers: Mihon cover locators are normalized into source-owned resources with source headers; Mihon/Venera page messages may carry WebP/GIF/etc. hints, but byte sniffing and codec validation remain authoritative. Unknown opaque tokens are not guessed.
+- Venera HTTP compatibility: the sandbox bridge supplies the bounded WebView user agent when a source omits one and owns at most eight redirect hops. Cookies are committed after every hop, relative locations are resolved, and credentials are stripped across origins; URLConnection and DNS-fallback OkHttp do not auto-follow independently.
+- Progressive Mihon page metadata: catalog `pageCount == 0` means unknown. Remote details may preflight up to two chapters concurrently through the cached source adapter and replace the current manifest with resolved counts; this is metadata projection only and creates no alternate page-byte cache.
+- Reader transfer publication: synchronous DownloadSession snapshots are coalesced and published after the current build frame, so Presentation observes progress without mutating a notifier during build.
 - Source-management projection: installed plugin records and enabled source instances are separate views. The root page groups enabled sources into Native/Mihon/Venera sections and folds Mihon language variants there. Each ecosystem installation page switches between Installed and Repository tabs; device Mihon discovery exists only in Installed and has independent refresh/error state.
 - Non-blocking durable composition: `_BootstrapApp` mounts an in-memory usable app first, opens durable library/cache/download services asynchronously, and swaps composition after readiness. Home restoration is represented by a non-modal top sync indicator rather than a blocking route.
 - Reader input and streaming: at scale 1, `PageView` owns horizontal paging and no scale recognizer is installed. Animated playback controls require an actual animation capability. Remote WebP binds the native incremental cursor to the authoritative `DownloadSession.ingress.source`; `needMoreData` waits for committed-byte advancement, and UI projects restored-prefix and current-network progress without owning transport.
@@ -154,7 +158,7 @@ zic/
 
 ### 3.1.2 外部插件仓库 UI
 
-每个生态的仓库页面固定分成两个 ownership projection：左栏是 `ExternalPluginController.installed` 的按格式只读投影，右栏是 repository/device discovery。主漫画源管理页不重复显示安装记录。Mihon repository 只在 UI 层按 package family 聚合语言变体；catalog identity、pluginId、签名、payload 和 activation session 不因此合并。默认语言或通用语言项可见，其余语言默认折叠。
+每个生态的安装管理页固定使用顶部 `Installed / Repository` 两个 ownership projection，同一时刻只展示一个整页内容。Mihon device discovery 只属于 Installed，并拥有独立 refresh/busy/error 状态；Repository 只负责索引、安装与更新。主漫画源管理页只投影已启用来源并按 Native/Mihon/Venera 分段。Mihon language family 的默认折叠发生在这个启用来源投影，不发生在 repository；catalog identity、pluginId、签名、payload、设置、启用状态和 activation session 始终独立。
 
 ### 3.2 Application
 
@@ -892,10 +896,13 @@ management; a bottom strip switches only among enabled sources.
 opening or downloading one chapter converts only that chapter manifest to `ImportedChapterRecord`.
 No source creates Reader controllers, DownloadSessions or artifacts. Source-browser cover requests
 use `loadResource`, while chapter pages are downloaded by the existing Reader transport and
-promoted-artifact path.
+promoted-artifact path. For source-owned opaque locators such as `mihon:` and `venera-resource:`,
+`downloads` selects a `LoaderTransport` through an injected source-resource loader. App composition
+only resolves the active `BrowsableComicSource`; UI code does not branch on schemes or own bytes.
 
-Remote delivery URLs are mutable. `ImportedPageRecord.pageId` stores the source-provided stable page
-identity separately from `sourceId`/URI. A remote chapter resolves a fresh manifest before opening,
+Remote delivery URLs are mutable and may legitimately repeat inside one chapter. `ImportedPageRecord.pageId`
+stores the source-provided stable page identity separately from `sourceId`/URI and is the only per-chapter
+uniqueness requirement. A remote chapter resolves a fresh manifest before opening,
 and store reconciliation follows `stablePageId`; a unique display-name fallback only supports
 records written before page IDs existed. SQLite schema version 3 added `comic_source_preference`;
 version 4 added source-composite `saved_comic`; version 5 makes imported chapter, progress, comic
@@ -1098,9 +1105,11 @@ ownership. Its maintenance policy owns response/artifact thresholds; App code re
 assemble cache budgets ad hoc inside a page, and does not construct response-cache keys.
 
 `downloads` owns `ChapterDownloadService`, the persistent page-artifact implementation and
-`WholeComicDownloadQueue`. `downloads_bridge` adapts runtime network/power signals and JSON persistence. Download
-Manager is a presentation/command surface over those interfaces; it cannot open the index, delete files directly or
-mutate library metadata.
+`WholeComicDownloadQueue`. It also owns transport selection for a page: normal file/http(s) locators use the ordinary
+I/O transport, while source-owned opaque locators use an injected `ChapterResourceLoader` and still pass through the
+same `DownloadJob/DownloadSession` artifact lifecycle. `downloads_bridge` adapts runtime network/power signals and
+JSON persistence. Download Manager is a presentation/command surface over those interfaces; it cannot open the index,
+delete files directly, select a transport or mutate library metadata.
 
 
 Reader transition replay is owned by `telemetry`, while exact page/DownloadId identity construction is owned by
