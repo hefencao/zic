@@ -111,6 +111,23 @@ final class DecodeSession {
       return snapshot;
     }
 
+    switch (source.kind) {
+      case SourceKind.unknown:
+        _setState(DecodeState.waitingSource);
+        return snapshot;
+      case SourceKind.gif:
+      case SourceKind.other:
+        _cursor?.frames.dispose();
+        _cursor = null;
+        _holder?.dispose();
+        _holder = null;
+        _failure = null;
+        _setState(DecodeState.ended);
+        return snapshot;
+      case SourceKind.webp:
+        break;
+    }
+
     _bind(source, epoch);
     final holder = _holder!;
     final targetDepth = demand.targetWatermark > preparedDepth

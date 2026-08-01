@@ -15,12 +15,16 @@ final class LocalImagePlayer extends StatefulWidget {
     this.demandRevision,
     this.playback,
     this.pageStream,
+    this.pageOutput,
     this.onPlaybackCapabilityChanged,
     this.onDimensionsChanged,
     this.fit = BoxFit.contain,
     this.flutterAnimatedCodecFactory = instantiateFlutterAnimatedCodec,
     super.key,
-  });
+  }) : assert(
+          pageStream == null || pageOutput != null,
+          'Pipeline page streams must be paired with their owned output',
+        );
 
   final PickedImage image;
   final LocalImageBytesLoader? bytesLoader;
@@ -35,6 +39,7 @@ final class LocalImagePlayer extends StatefulWidget {
   final int Function()? demandRevision;
   final ReaderPlaybackController? playback;
   final PipelinePageStream? pageStream;
+  final PipelinePageOutputStream? pageOutput;
   final ValueChanged<bool>? onPlaybackCapabilityChanged;
   final ValueChanged<Size>? onDimensionsChanged;
   final BoxFit fit;
@@ -56,6 +61,10 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   late MediaLoadToken _loadToken;
   bool _reportedFirstFrame = false;
   PipelinePageStreamListener? _pageStreamingListener;
+  PipelinePageOutputListener? _pageOutputListener;
+  PipelinePageOutputSnapshot? _pageOutputSnapshot;
+  PipelinePageSurface? _scheduledOutputSurface;
+  bool _streamingPrefixSyncing = false;
   bool _fallbackLoadStarted = false;
   Size? _reportedDimensions;
 
@@ -69,6 +78,10 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     final streaming = widget.pageStream;
     if (streaming != null) {
       _attachPageStreaming(streaming);
+      final output = widget.pageOutput;
+      if (output != null) {
+        _attachPageOutput(output);
+      }
     } else {
       unawaited(_load());
     }
@@ -79,7 +92,9 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.image.sourceId != widget.image.sourceId ||
         oldWidget.image.displayName != widget.image.displayName ||
-        oldWidget.image.format != widget.image.format) {
+        oldWidget.image.format != widget.image.format ||
+        oldWidget.pageStream != widget.pageStream ||
+        oldWidget.pageOutput != widget.pageOutput) {
       _generation++;
       _loadToken.cancel();
       _loadToken = MediaLoadToken();
@@ -98,9 +113,22 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         oldStreaming.removeListener(oldListener);
       }
       _pageStreamingListener = null;
+      final oldOutput = oldWidget.pageOutput;
+      final oldOutputListener = _pageOutputListener;
+      if (oldOutput != null && oldOutputListener != null) {
+        oldOutput.removeListener(oldOutputListener);
+      }
+      _pageOutputListener = null;
+      _pageOutputSnapshot = null;
+      _scheduledOutputSurface = null;
+      _streamingPrefixSyncing = false;
       final streaming = widget.pageStream;
       if (streaming != null) {
         _attachPageStreaming(streaming);
+        final output = widget.pageOutput;
+        if (output != null) {
+          _attachPageOutput(output);
+        }
       } else {
         unawaited(_load());
       }
@@ -115,7 +143,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         if (_detectedFormat != LocalImageFormat.webp) {
           setState(() => _detectedFormat = LocalImageFormat.webp);
         }
-        widget.onPlaybackCapabilityChanged?.call(false);
+        unawaited(_syncStreamingWebpPrefix(stream, snapshot));
         return;
       }
       if (!_fallbackLoadStarted &&
@@ -124,9 +152,74 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         _fallbackLoadStarted = true;
         unawaited(_load());
       }
+      if (snapshot.state == PipelinePageTransferState.failed) {
+        _publish(
+          ImagePreviewState.invalid(
+            _detectedFormat,
+            snapshot.failure ?? StateError('pipeline page transfer failed'),
+          ),
+        );
+      }
     }
     _pageStreamingListener = listener;
     stream.addListener(listener);
+  }
+
+  Future<void> _syncStreamingWebpPrefix(
+    PipelinePageStream stream,
+    PipelinePageStreamSnapshot snapshot,
+  ) async {
+    if (_streamingPrefixSyncing || snapshot.committedLength < 20) {
+      return;
+    }
+    _streamingPrefixSyncing = true;
+    try {
+      final prefix = await stream.readPrefix(
+        math.min(snapshot.committedLength, 256 * 1024),
+      );
+      if (!mounted || widget.pageStream != stream) {
+        return;
+      }
+      final info = parseWebpPrefixInfo(prefix);
+      if (info == null) {
+        return;
+      }
+      _reportDimensions(info.width, info.height);
+      widget.onPlaybackCapabilityChanged?.call(
+        webpPrefixDeclaresAnimation(prefix),
+      );
+    } on Object {
+      // An incomplete prefix is expected while the authoritative source grows.
+    } finally {
+      _streamingPrefixSyncing = false;
+    }
+  }
+
+  void _attachPageOutput(PipelinePageOutputStream output) {
+    void listener(PipelinePageOutputSnapshot snapshot) {
+      if (!mounted) return;
+      setState(() => _pageOutputSnapshot = snapshot);
+      if (snapshot.hasSurface) {
+        final surface = snapshot.surface!;
+        _reportDimensions(surface.width, surface.height);
+        if (snapshot.animation.complete) {
+          widget.onPlaybackCapabilityChanged?.call(snapshot.isAnimated);
+        }
+        _schedulePipelineOutputFirstFrame(surface);
+        return;
+      }
+      _scheduledOutputSurface = null;
+      if (snapshot.state == PipelinePageOutputState.failed) {
+        _publish(
+          ImagePreviewState.invalid(
+            LocalImageFormat.webp,
+            snapshot.failure ?? StateError('pipeline page output failed'),
+          ),
+        );
+      }
+    }
+    _pageOutputListener = listener;
+    output.addListener(listener);
   }
 
   Future<void> _load() async {
@@ -213,6 +306,11 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     final listener = _pageStreamingListener;
     if (streaming != null && listener != null) {
       streaming.removeListener(listener);
+    }
+    final output = widget.pageOutput;
+    final outputListener = _pageOutputListener;
+    if (output != null && outputListener != null) {
+      output.removeListener(outputListener);
     }
 
     _generation++;
@@ -328,6 +426,22 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     }
   }
 
+  void _schedulePipelineOutputFirstFrame(PipelinePageSurface surface) {
+    if (_reportedFirstFrame || identical(_scheduledOutputSurface, surface)) {
+      return;
+    }
+    _scheduledOutputSurface = surface;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          _reportedFirstFrame ||
+          !identical(_pageOutputSnapshot?.surface, surface)) {
+        return;
+      }
+      _scheduledOutputSurface = null;
+      _onWebpFirstFrame();
+    });
+  }
+
   void _onWebpFirstFrame() {
     _publish(ImagePreviewState.ready(LocalImageFormat.webp));
     _reportFirstFrame();
@@ -364,20 +478,28 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         ),
       );
     } else if (_detectedFormat.isWebp) {
-      if (bytes == null && widget.pageStream == null) {
+      final output = widget.pageOutput;
+      if (output != null) {
+        final surface = _pageOutputSnapshot?.surface;
+        content = surface == null
+            ? _loadingIndicator()
+            : Center(
+                child: surface.build(
+                  key: webpNativeTextureViewportKey,
+                  fit: widget.fit,
+                  filterQuality: FilterQuality.medium,
+                ),
+              );
+      } else if (bytes == null) {
         content = _loadingIndicator();
       } else {
         content = NativeWebpPlayer(
           title: widget.image.displayName,
           sourceUri: widget.sourceUri,
-          loadBytes: (token) => bytes != null
-              ? Future<Uint8List>.value(bytes)
-              : widget.tokenBytesLoader!(widget.image, token),
+          loadBytes: (_) => Future<Uint8List>.value(bytes),
           showEngineControls: false,
           showStatus: false,
-          initialEngine: widget.pageStream == null
-              ? WebpPlayerEngine.flutter
-              : WebpPlayerEngine.native,
+          initialEngine: WebpPlayerEngine.flutter,
           onPreviewStateChanged: _onWebpState,
           onFirstFrame: _onWebpFirstFrame,
           downloadIdentity: widget.downloadIdentity,
@@ -386,7 +508,6 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           traceSessionId: widget.traceSessionId,
           demandRevision: widget.demandRevision,
           playback: widget.playback,
-          pageStream: widget.pageStream,
           onPlaybackCapabilityChanged: widget.onPlaybackCapabilityChanged,
           fit: widget.fit,
           flutterAnimatedCodecFactory: widget.flutterAnimatedCodecFactory,

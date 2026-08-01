@@ -1,5 +1,7 @@
 # zic
 
+`0.31.0-dev.77` 以 dev.76 为唯一基线，原子收回 Reader WebP 的 source、cursor、decode、upload、动画推进与 texture 生命周期。App 只注入一个 `PipelineMediaRuntimeFactory`，`pipeline_runtime` 创建并关闭 session-owned runtime；Presentation 只消费 `PipelinePageOutputStream` 与 opaque `PipelinePageSurface`，不再取得 `EncodedSource`、textureId 或 native handle。Android texture 按稳定 `DecodeId` 复用，并在最后一个 output claim 释放后退休；surface replacement 会先完成下一帧视觉切换再释放旧 claim。播放配置由 UploadRegistry 原子保存，用户暂停与 viewport freeze 分离，避免异步 present 或解除暂停误唤醒 transition 页；playback ticker 仅在存在 running timer 时运行，静态页和冻结页不再空转。下载 +7/-3、预解码 +2/-1、current/transition 上传与 5/3/2 lane 未改。
+
 `0.31.0-dev.76` 以 dev.75 为唯一基线，修复纵向拼接的双加载圈：Reader 删除 viewport 固定居中 overlay 与页面 ready 集合，页面媒体成为唯一可见 loading/ready/invalid 所有者，首帧回调仅保留 telemetry。设备 trace 显示立即退出时 7 个 demand 均完成 detach，未见异常、退出后继续收包或生命周期泄漏；Pipeline 的前 7/后 3 下载、前 2/后 1 预解码、current/transition 上传和 5/3/2 lane 未改。
 
 `0.31.0-dev.75` 完成 dev.74 后续编译闭包并收紧契约归属：删除无生产调用的详情兼容包装和 AssetBundleTransport 转出 facade，底层 transport 测试迁回 `pipeline_runtime`，下载 identity 测试留在 `downloads`，并新增可直接复制的 Architecture/耦合迭代提示词。媒体策略与 dev.74 保持不变。

@@ -1,15 +1,14 @@
 import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
-import 'package:media/media.dart';
 import 'package:sessions/sessions.dart';
 import 'package:transport/transport.dart' show ContentKind;
 
-/// Presentation-safe projection of one pipeline-owned encoded-byte session.
+/// Presentation-safe transfer projection for one Pipeline-owned page.
 ///
-/// Reader/media widgets can observe committed bytes and attach a streaming
-/// decoder, but they cannot enqueue, retry, cancel, promote or otherwise
-/// mutate the underlying DownloadSession.
+/// EncodedSource, cursor, artifact and session objects never cross this
+/// boundary. WebP rendering is exposed separately through
+/// PipelinePageOutputStream.
 enum PipelinePageTransferState {
   idle,
   queued,
@@ -32,7 +31,6 @@ final class PipelinePageStreamSnapshot {
     required this.committedLength,
     required this.totalLength,
     required this.kind,
-    required this.source,
     required this.failure,
   });
 
@@ -40,7 +38,6 @@ final class PipelinePageStreamSnapshot {
   final int committedLength;
   final int? totalLength;
   final PipelinePageContentKind? kind;
-  final EncodedSource? source;
   final Failure? failure;
 }
 
@@ -61,7 +58,6 @@ final class PipelinePageStream {
   PipelinePageStreamSnapshot get snapshot => _project(_session.snapshot);
   int get committedLength => _session.committedLength;
   PipelinePageTransferState get state => _state(_session.state);
-  EncodedSource? get source => _session.ingress?.source;
   DownloadId get identity => _session.id;
 
   Future<Uint8List> readPrefix(int maxBytes) async =>
@@ -88,7 +84,6 @@ final class PipelinePageStream {
         committedLength: snapshot.committedLength,
         totalLength: snapshot.totalLength,
         kind: _contentKind(snapshot.ingress?.kind),
-        source: _session.ingress?.source,
         failure: snapshot.failure,
       );
 }

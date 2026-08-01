@@ -17,6 +17,7 @@ workspace:
   - packages/reader_runtime
   - packages/pipeline
   - packages/pipeline_runtime
+  - packages/pipeline_native
   - packages/media
   - packages/sessions
   - packages/storage

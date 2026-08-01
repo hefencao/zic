@@ -1,6 +1,18 @@
+## dev.77 completed
+
+1. Replace independent source-only composition with one `PipelineMediaRuntimeFactory` and a session-owned runtime.
+2. Wire production SourcePool, DecodeRegistry, UploadRegistry, FrameBudgeter and LiveCoordinator from that same capability; preserve existing windows and lanes.
+3. Add `pipeline_native` above the core boundary and keep `pipeline_runtime` free of bridge/texture dependencies.
+4. Remove `PipelinePageStream.source`; expose opaque claimed output through `PipelinePageOutputStream` and migrate every Reader/App caller in one closure.
+5. Move pause/speed and animation due-frame advance into Pipeline session ownership.
+6. Add claim-safe per-DecodeId Android texture retirement and drain it before runtime close.
+7. Add owner tests/static gates, update ADR/docs and validate the supplied libwebp 1.6.0 source locally.
+
+Next validation: run Flutter analyze/tests and Android debug/release on an SDK-equipped machine; on device verify current/transition outputs, animated frame pacing, target replacement without flash, immediate route exit and texture-memory retirement. Non-WebP output unification remains a separate future design, not an excuse to restore direct Reader WebP decode.
+
 ## dev.76 completed
 
-Boundary follow-up: add a composition-injected production `FrameUploader` and presentation-safe output projection, then atomically remove `PipelinePageStream.source` plus Presentation-owned native cursor/texture lifecycle. Do not use complete-byte fallback or dual decode as an intermediate state.
+Boundary follow-up completed by dev.77 / ADR 0061.
 
 1. Read the sole dev.75 baseline, current ownership documents, ADRs, device trace and read-only Mihon/VibeVenera references before editing.
 2. Record compile/product/performance/test issues, authoritative owners and rejected regressions in `docs/audits/dev76-reader-exit-and-loading-ownership-audit.md`.

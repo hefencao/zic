@@ -134,18 +134,18 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       viewport: viewport,
       ids: ids,
       freeze: (id) {
-        if (uploads?.find(id) == null) {
+        final registry = uploads;
+        if (registry == null) {
           return false;
         }
-        freezePlayback(id);
-        return true;
+        return registry.get(id).freezePlayback();
       },
       resume: (id) {
-        if (uploads?.find(id) == null) {
+        final registry = uploads;
+        if (registry == null) {
           return false;
         }
-        resumePlayback(id);
-        return true;
+        return registry.get(id).resumePlayback();
       },
     );
   }

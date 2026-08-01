@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted in `0.31.0-dev.60`.
+Accepted in `0.31.0-dev.60`. Reader direct-source/cursor ownership was superseded by ADR 0061 in `0.31.0-dev.77`.
 
 ## Context
 

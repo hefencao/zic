@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -91,7 +92,7 @@ final class MediaPipelineReaderScreen extends StatefulWidget {
 
   final ChapterManifestLoader? chapterLoader;
   final ReaderMediaBytesLoader? mediaBytesLoader;
-  final WebpPreviewStateChanged? onPreviewStateChanged;
+  final ImagePreviewStateChanged? onPreviewStateChanged;
 
   @override
   State<MediaPipelineReaderScreen> createState() =>
@@ -177,7 +178,7 @@ Widget? _buildMediaReaderPage(
   PageAsset asset,
   VoidCallback reportFirstFrame,
   ReaderPageRuntime runtime, {
-  WebpPreviewStateChanged? onPreviewStateChanged,
+  ImagePreviewStateChanged? onPreviewStateChanged,
 }) {
   if (asset.contentKindHint != ContentKindHint.webp) {
     return null;
@@ -185,16 +186,23 @@ Widget? _buildMediaReaderPage(
   return ColoredBox(
     key: readerMediaWebpPageKey,
     color: Colors.black,
-    child: NativeWebpPlayer(
+    child: LocalImagePlayer(
       key: ValueKey<String>(asset.assetKey),
-      title: asset.pageId,
-      sourceUri: asset.uri,
-      loadBytes: (token) => runtime.loadBytes(token),
-      showEngineControls: false,
-      showStatus: false,
-      initialEngine: WebpPlayerEngine.native,
+      image: PickedImage(
+        file: XFile(asset.uri.toString()),
+        format: LocalImageFormat.webp,
+        displayName: asset.pageId,
+        sourceId: asset.uri.toString(),
+        byteLength: asset.byteLength,
+      ),
+      tokenBytesLoader: (_, token) => runtime.loadBytes(token),
       pageStream: runtime.pageStream,
+      pageOutput: runtime.pageOutput,
       onPlaybackCapabilityChanged: runtime.reportPlaybackCapability,
+      onDimensionsChanged: (size) => runtime.reportDimensions(
+        size.width.round(),
+        size.height.round(),
+      ),
       onFirstFrame: reportFirstFrame,
       traceClock: runtime.clock,
       traceSink: runtime.traceSink,
@@ -203,6 +211,7 @@ Widget? _buildMediaReaderPage(
       downloadIdentity: runtime.pageStream.identity,
       onPreviewStateChanged: onPreviewStateChanged,
       playback: runtime.playback,
+      fit: runtime.mediaFit,
     ),
   );
 }

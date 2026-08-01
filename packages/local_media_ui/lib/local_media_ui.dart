@@ -38,6 +38,3 @@ part 'src/local_image_player.dart';
 part 'src/local_media_screens.dart';
 part 'src/native_webp_player.dart';
 
-const defaultLocalMediaPipelineFactory = PipelineReaderSessionFactory(
-  sourceFactory: NativeSourceFactory(),
-);

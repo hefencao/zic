@@ -431,6 +431,9 @@ final class _TestUploader implements FrameUploader {
     outputs.add(output);
     return output;
   }
+
+  @override
+  void release(DecodeId id) {}
 }
 
 final class _TestOutput implements OutputFrame {

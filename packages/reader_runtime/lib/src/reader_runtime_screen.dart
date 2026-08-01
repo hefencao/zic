@@ -81,6 +81,7 @@ final class ReaderPageRuntime {
     required this.loadBytes,
     required this.playback,
     required this.pageStream,
+    required this.pageOutput,
     required this.reportPlaybackCapability,
     required this.reportDimensions,
     required this.mediaFit,
@@ -94,6 +95,7 @@ final class ReaderPageRuntime {
   final ReaderPageBytesLoader loadBytes;
   final ReaderPlaybackController playback;
   final PipelinePageStream pageStream;
+  final PipelinePageOutputStream pageOutput;
   final ValueChanged<bool> reportPlaybackCapability;
   final ReaderPageDimensionsReporter reportDimensions;
   final BoxFit mediaFit;
@@ -170,7 +172,9 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   @override
   void initState() {
     super.initState();
-    _playback = ReaderPlaybackController();
+    _playback = ReaderPlaybackController()
+      ..addListener(_syncPipelinePlayback);
+    _syncPipelinePlayback();
     _settings = widget.initialSettings;
     _adaptiveProfile = _settings.effectiveAdaptiveEnabled
         ? classifyAdaptiveReaderLayout(widget.chapter)
@@ -215,6 +219,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       logicalWidth: media.size.width,
       logicalHeight: media.size.height,
       devicePixelRatio: media.devicePixelRatio,
+      renderer: _pipeline.renderer,
     );
     if (_target == target) {
       return;
@@ -394,6 +399,11 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     });
   }
 
+  void _syncPipelinePlayback() {
+    final state = _playback.value;
+    _pipeline.setPlayback(paused: state.paused, speed: state.speed);
+  }
+
   @override
   void dispose() {
     final reader = _reader;
@@ -402,6 +412,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       _pipeline.detach(reader.sessionId);
       reader.dispose();
     }
+    _playback.removeListener(_syncPipelinePlayback);
     _playback.dispose();
     unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
     super.dispose();
@@ -893,6 +904,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                     _pipeline.loadBytes(asset, token),
                 playback: _playback,
                 pageStream: _pipeline.pageStream(asset),
+                pageOutput: _pipeline.pageOutput(asset),
                 reportPlaybackCapability: (supported) =>
                     _reportPlaybackCapability(asset, supported),
                 reportDimensions: (width, height) =>

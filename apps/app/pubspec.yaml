@@ -1,7 +1,7 @@
 name: zic
 description: zic Flutter application.
 publish_to: none
-version: 0.31.0+76
+version: 0.31.0+77
 resolution: workspace
 
 environment:
@@ -26,6 +26,10 @@ dependencies:
     path: ../../packages/local_media
   local_media_ui:
     path: ../../packages/local_media_ui
+  pipeline_native:
+    path: ../../packages/pipeline_native
+  pipeline_runtime:
+    path: ../../packages/pipeline_runtime
   file_selector: ^1.0.3
   resource_cache:
     path: ../../packages/resource_cache

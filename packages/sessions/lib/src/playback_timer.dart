@@ -52,6 +52,27 @@ final class PlaybackTimer {
     return true;
   }
 
+  bool rescale({
+    required int nowUs,
+    required double oldSpeed,
+    required double newSpeed,
+  }) {
+    if (_state == PlaybackState.idle ||
+        !oldSpeed.isFinite ||
+        !newSpeed.isFinite ||
+        oldSpeed <= 0 ||
+        newSpeed <= 0 ||
+        oldSpeed == newSpeed) {
+      return false;
+    }
+    final scaled = (remainingUs(nowUs) * oldSpeed / newSpeed).round();
+    _remainingUs = scaled > 0 ? scaled : 0;
+    if (_state == PlaybackState.running) {
+      _deadlineUs = nowUs + _remainingUs;
+    }
+    return true;
+  }
+
   int? takeDue(int nowUs) {
     if (_state != PlaybackState.running || nowUs < _deadlineUs) {
       return null;

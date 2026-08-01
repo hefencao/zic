@@ -29,6 +29,7 @@ done
 for rel in \
   packages/reader \
   packages/pipeline_runtime \
+  packages/pipeline_native \
   packages/reader_runtime \
   packages/plugin_host_bridge \
   packages/texture_bridge \

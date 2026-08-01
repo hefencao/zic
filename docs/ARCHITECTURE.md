@@ -1,3 +1,29 @@
+## dev.77 Pipeline 媒体运行时原子所有权
+
+- App composition 只注入一个 `PipelineMediaRuntimeFactory`；每个 `PipelineReaderSession` 从中创建一个 owned runtime，原子绑定 `SourceFactory`、`CursorFactory`、`FrameUploader`、`PipelineOutputProjector` 与 `RendererKind`。
+- 平台实现位于 `pipeline_native`。它可依赖 `bridge`/`texture_bridge`；`pipeline_runtime` 只依赖抽象，不创建 `NativeSourceFactory`、native cursor 或 Android presenter。
+- Reader session 真实创建并连接 `SourcePool -> DecodeRegistry -> UploadRegistry -> LiveCoordinator`。下载、解码、上传、动画推进、output claim 与关闭顺序只有这一条权威链。
+- `PipelinePageStream` 只投影 identity、内容嗅探、字节进度与受控 prefix 读取，不再暴露 `EncodedSource`。Presentation 只消费 `PipelinePageOutputStream` 的 immutable snapshot 与 opaque `PipelinePageSurface`，看不到 textureId、native handle、mutable frame/session 或 artifact store。
+- Android uploader 按稳定 `DecodeId` 复用 texture。identity 从 upload ownership 退休时先从 active map 移除；旧 page surface 的 claim 仍保持 frame/lease 有效，最后一个 frame owner 释放后才销毁 texture，session close 排空 active 与 retired leases。
+- Reader 暂停/倍速命令进入 `PipelineReaderSession`，由 UploadSession playback timer freeze/resume/rescale；viewport 播放门只绑定 `DemandPlan.uploads` 的 current/transition identity，不为纯预解码页创建 upload session，Presentation 不再推进 Pipeline-owned native cursor。
+- output snapshot 不公开 `DecodeId`；播放 ticker 也只在当前 upload plan 至少一个 timer 为 running 时存在，静态页和全部冻结页不会维持 60Hz 空轮询。
+- 本轮原子关闭 WebP streaming debt。非 WebP complete-artifact 的 Flutter Presentation 路径保持现状，不能被描述为已迁移，也不能借此恢复第二条 Reader WebP decode 链。
+- ADR 0061 取代 ADR 0044 的 Reader direct-source/cursor 决策，并关闭 dev.76 记录的 encoded-source/decode/upload 边界债务。既有 +7/-3、+2/-1、current/transition 与 5/3/2 策略不变。
+
+```text
+App composition
+  -> PipelineMediaRuntimeFactory (one atomic capability)
+       -> pipeline_native on supported platforms
+  -> PipelineReaderSession (owns one runtime)
+       -> SourcePool -> DownloadRegistry / Artifact
+       -> DecodeRegistry -> FrameHolder
+       -> UploadRegistry -> OutputFrame / playback timer
+       -> PipelinePageOutputStream -> opaque PipelinePageSurface
+  -> ReaderRuntime / local_media_ui
+       -> ReaderObs + user playback commands
+       -> read-only transfer/output snapshots only
+```
+
 ## dev.76 Reader 页面加载状态所有权
 
 - `ReaderView` 只负责几何、交互、observation 和 page host 生命周期 telemetry，不拥有页面 loading/ready/invalid 状态，也不绘制 viewport 固定居中加载 overlay。
@@ -6,7 +32,7 @@
 - 未知尺寸页面仍由 Reader 提供至少一个 viewport 的占位 extent，使页面媒体自己的加载圈位于实际页面区域；尺寸到达后继续使用 `height / width` 重排，不裁切、不重叠。
 - Reader route 退出只释放其 observation/page-host 生命周期；资源 demand/session 的 detach、保留与关闭仍归 `pipeline_runtime`。dev.76 trace 审计未发现退出后继续收包或 Reader 直接关闭 DownloadSession。
 - ADR 0060 取代 ADR 0053 decision 7；Pipeline 的 7/3、2/1、current/transition 和 5/3/2 策略不变。
-- 既有边界债务：`PipelinePageStream.source` 仍把 `EncodedSource` 暴露给 `local_media_ui.NativeWebpPlayer`，后者当前仍创建 native cursor/texture presenter。它不符合 decode/upload 最终归 Pipeline 的目标，但仓库尚缺 production `FrameUploader` 与 presentation-safe output 投影；后续必须把 source/decoder/uploader/output 作为一个原子 capability 迁入 `pipeline_runtime`，不得只搬一半或在 Reader/App 再建竞争链。
+- 该版本记录的 `PipelinePageStream.source -> NativeWebpPlayer` 边界债务已由 dev.77 / ADR 0061 原子关闭；历史描述不得作为恢复 Presentation cursor/texture 生命周期的依据。
 
 ## dev.75 编译闭包、契约归属与测试边界
 
@@ -31,7 +57,7 @@
 
 Presentation contributes only local transport handles through immutable factory derivation. `local_media_ui` cannot name `ArtifactCacheStore`, call `readerPageDownloadId`, or construct download/decode owners. A rendered page receives its canonical `DownloadId` from `PipelinePageStream.identity`.
 
-`PipelinePageStreamSnapshot` maps transport sniffing to `PipelinePageContentKind`. The dev.73 compatibility contract also exposed the ingress `EncodedSource`; current architecture no longer accepts that as the final boundary because `local_media_ui` can then own native decode/upload objects. Until an atomic production uploader/output migration is complete, this is recorded as existing debt rather than described as a clean read-only Presentation API. Transport enums and mutable DownloadSession objects still do not cross the boundary. Measured page dimensions are frame-coalesced Reader layout input only; they do not submit pipeline demand or restart media work.
+`PipelinePageStreamSnapshot` maps transport sniffing to `PipelinePageContentKind`. The dev.73 compatibility exposure of ingress `EncodedSource` was superseded by dev.77 / ADR 0061: transfer projection and opaque page output are separate read-only APIs, and cursor/upload/platform objects remain inside the Pipeline-owned runtime. Transport enums and mutable DownloadSession objects do not cross the boundary. Measured page dimensions are frame-coalesced Reader layout input only; they do not submit pipeline demand or restart media work.
 
 ## dev.72 Reader / Pipeline 所有权
 

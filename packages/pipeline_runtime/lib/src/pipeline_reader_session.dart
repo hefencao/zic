@@ -5,7 +5,8 @@ import 'dart:typed_data';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:flutter/services.dart';
-import 'package:media/media.dart' show SourceFactory, SourcePool;
+import 'package:flutter/widgets.dart';
+import 'package:media/media.dart';
 import 'package:pipeline/pipeline.dart';
 import 'package:sessions/sessions.dart';
 import 'package:storage/storage.dart';
@@ -14,9 +15,12 @@ import 'package:transport/transport.dart';
 
 import 'asset_bundle_transport.dart';
 import 'media_load_token.dart';
+import 'pipeline_media_runtime.dart';
 import 'pipeline_page_stream.dart';
 import 'pipeline_transfer_progress.dart';
 import 'reader_pipeline_profile.dart';
+
+part 'pipeline_page_output.dart';
 
 typedef PipelineArtifactBytesLoader = Future<Uint8List> Function(
   PageAsset asset,
@@ -25,13 +29,13 @@ typedef PipelineArtifactBytesLoader = Future<Uint8List> Function(
 
 final class PipelineReaderSessionFactory {
   const PipelineReaderSessionFactory({
-    required this.sourceFactory,
+    required this.mediaRuntimeFactory,
     this.artifactCache,
     this.loaderSources = const <Uri, LoaderTransportSource>{},
     this.bytesLoader,
   });
 
-  final SourceFactory sourceFactory;
+  final PipelineMediaRuntimeFactory mediaRuntimeFactory;
   final ArtifactCacheStore? artifactCache;
   final Map<Uri, LoaderTransportSource> loaderSources;
   final PipelineArtifactBytesLoader? bytesLoader;
@@ -45,7 +49,7 @@ final class PipelineReaderSessionFactory {
     Map<Uri, LoaderTransportSource> sources,
   ) =>
       PipelineReaderSessionFactory(
-        sourceFactory: sourceFactory,
+        mediaRuntimeFactory: mediaRuntimeFactory,
         artifactCache: artifactCache,
         loaderSources: <Uri, LoaderTransportSource>{
           ...loaderSources,
@@ -58,7 +62,7 @@ final class PipelineReaderSessionFactory {
     ArtifactCacheStore? cache,
   ) =>
       PipelineReaderSessionFactory(
-        sourceFactory: sourceFactory,
+        mediaRuntimeFactory: mediaRuntimeFactory,
         artifactCache: cache,
         loaderSources: loaderSources,
         bytesLoader: bytesLoader,
@@ -68,7 +72,7 @@ final class PipelineReaderSessionFactory {
     PipelineArtifactBytesLoader? loader,
   ) =>
       PipelineReaderSessionFactory(
-        sourceFactory: sourceFactory,
+        mediaRuntimeFactory: mediaRuntimeFactory,
         artifactCache: artifactCache,
         loaderSources: loaderSources,
         bytesLoader: loader,
@@ -81,7 +85,7 @@ final class PipelineReaderSessionFactory {
   }) =>
       PipelineReaderSession(
         chapter: chapter,
-        sourceFactory: sourceFactory,
+        mediaRuntimeFactory: mediaRuntimeFactory,
         sessionId: sessionId,
         artifactCache: artifactCache,
         loaderSources: loaderSources,
@@ -92,13 +96,14 @@ final class PipelineReaderSessionFactory {
 
 /// Owns the complete resource side of one Reader session.
 ///
-/// Reader reports viewport observations and consumes [PipelinePageStream]
+/// Reader reports viewport observations and consumes read-only
+/// [PipelinePageStream] transfer plus [PipelinePageOutputStream] presentation
 /// projections. Download scheduling, request transport, artifact promotion,
 /// decode/upload lanes and transfer progress remain behind this boundary.
 final class PipelineReaderSession {
   PipelineReaderSession({
     required this.chapter,
-    required SourceFactory sourceFactory,
+    required PipelineMediaRuntimeFactory mediaRuntimeFactory,
     required this.sessionId,
     ArtifactCacheStore? artifactCache,
     Map<Uri, LoaderTransportSource> loaderSources =
@@ -118,6 +123,11 @@ final class PipelineReaderSession {
       _memoryTrace,
       if (traceSink != null) traceSink,
     ]);
+    _media = mediaRuntimeFactory.create(
+      sessionId: sessionId,
+      clock: clock,
+      traceSink: trace,
+    );
     final identities = chapter.pages
         .map(
           (asset) => MapEntry<Uri, DownloadId>(
@@ -134,7 +144,7 @@ final class PipelineReaderSession {
         ),
     };
     _streamingSources = SourcePool(
-      factory: sourceFactory,
+      factory: _media.sources,
       budgetFor: (id) => sourceBudgets[id] ?? 256 * 1024 * 1024,
     );
     if (artifactCache != null) {
@@ -162,12 +172,37 @@ final class PipelineReaderSession {
       sources: _streamingSources,
       onSessionCreated: _observeDownloadSession,
     );
+    _decodes = DecodeRegistry(
+      downloads: _downloads,
+      cursors: _media.cursors,
+      clock: clock,
+      traceSink: trace,
+    );
+    _uploads = UploadRegistry(
+      decodes: _decodes,
+      uploader: _media.uploader,
+      clock: clock,
+      traceSink: trace,
+    )..addListener(_handleUploadSnapshot);
+    _frameBudgets = FrameBudgeter(
+      decodes: _decodes,
+      uploads: _uploads,
+      limits: const FrameBudget(
+        decodedBytes: 256 * 1024 * 1024,
+        outputBytes: 128 * 1024 * 1024,
+        currentDecodedReserve: 64 * 1024 * 1024,
+        currentOutputReserve: 32 * 1024 * 1024,
+      ),
+    );
     _coordinator = LiveCoordinator(
       registry: _downloads,
       transportFor: _transportFor,
       clock: clock,
       traceSink: trace,
       retry: _profile.retry,
+      decodes: _decodes,
+      uploads: _uploads,
+      budgets: _frameBudgets,
       net: NetLane(maxActive: _profile.networkConcurrency),
       decode: DecodeLane(maxActive: _profile.decodeConcurrency),
       upload: UploadLane(maxActive: _profile.uploadConcurrency),
@@ -180,6 +215,7 @@ final class PipelineReaderSession {
   final MemoryTraceSink _memoryTrace;
   late final TraceSink trace;
   final ReaderPipelineProfile _profile;
+  late final PipelineMediaRuntime _media;
   final PipelineArtifactBytesLoader? _bytesLoader;
   final EphemeralCacheWorkspace _workspace;
   final AssetBundleTransport _assetTransport;
@@ -189,18 +225,34 @@ final class PipelineReaderSession {
   PromotedArtifactReadPool? _artifactReads;
   late final SourcePool _streamingSources;
   late final DownloadRegistry _downloads;
+  late final DecodeRegistry _decodes;
+  late final UploadRegistry _uploads;
+  late final FrameBudgeter _frameBudgets;
   PromotedArtifactCacheHandoff? _artifactCacheHandoff;
   late final LiveCoordinator _coordinator;
   ReaderBinding? _binding;
   final Map<String, PipelinePageStream> _pageStreams =
       <String, PipelinePageStream>{};
+  final Map<String, PipelinePageOutputStream> _pageOutputs =
+      <String, PipelinePageOutputStream>{};
+  Timer? _playbackTicker;
+  bool _playbackPaused = false;
   final PipelineTransferProgressPublisher transferProgress;
   bool _disposed = false;
 
   int get revision => _binding?.revision ?? 0;
+  RendererKind get renderer => _media.renderer;
 
   void attach(DecodeTarget target) {
     _requireOpen();
+    if (target.renderer != renderer) {
+      throw ArgumentError.value(
+        target.renderer,
+        'target.renderer',
+        'must match the atomically injected Pipeline media renderer '
+            '${renderer.name}',
+      );
+    }
     _binding = ReaderBinding(
       chapter: chapter,
       decodeTarget: target,
@@ -227,6 +279,22 @@ final class PipelineReaderSession {
       readerPageDownloadId(chapter, chapter.pages[pageIndex]),
     );
     binding.accept(observation);
+    _syncPageOutputs();
+    _ensurePlaybackTicker();
+  }
+
+  void setPlayback({required bool paused, required double speed}) {
+    _requireOpen();
+    if (!speed.isFinite || speed < 0.25 || speed > 4) {
+      throw ArgumentError.value(
+        speed,
+        'speed',
+        'must be finite and within 0.25..4',
+      );
+    }
+    _uploads.setPlayback(paused: paused, speed: speed);
+    _playbackPaused = paused;
+    _ensurePlaybackTicker();
   }
 
   void detach(String readerSessionId) {
@@ -235,7 +303,6 @@ final class PipelineReaderSession {
     transferProgress.clear();
   }
 
-
   PipelinePageStream pageStream(PageAsset asset) {
     _requireOpen();
     final id = readerPageDownloadId(chapter, asset);
@@ -243,6 +310,22 @@ final class PipelineReaderSession {
       id.key,
       () => PipelinePageStream.fromSession(_downloads.get(id)),
     );
+  }
+
+  PipelinePageOutputStream pageOutput(PageAsset asset) {
+    _requireOpen();
+    final id = readerPageDownloadId(chapter, asset);
+    final output = _pageOutputs.putIfAbsent(
+      id.key,
+      () => PipelinePageOutputStream._(
+        download: id,
+        uploads: _uploads,
+        decodes: _decodes,
+        outputs: _media.outputs,
+      ),
+    );
+    output._bind(_activeUploadIdentity(id));
+    return output;
   }
 
   Future<Uint8List> loadBytes(
@@ -370,15 +453,84 @@ final class PipelineReaderSession {
     transferProgress.observe(session);
   }
 
+  void _handleUploadSnapshot(DecodeId id, UploadSnapshot snapshot) {
+    _pageOutputs[id.download.key]?._accept(id, snapshot);
+    if (snapshot.state == UploadState.ready) {
+      _ensurePlaybackTicker();
+    }
+  }
+
+  DecodeId? _activeUploadIdentity(DownloadId download) {
+    final uploads = _binding?.pipeline.currentPlan.uploads;
+    if (uploads == null) {
+      return null;
+    }
+    for (final id in uploads.keys) {
+      if (id.download == download) {
+        return id;
+      }
+    }
+    return null;
+  }
+
+  void _syncPageOutputs() {
+    for (final output in _pageOutputs.values) {
+      output._bind(_activeUploadIdentity(output.download));
+    }
+  }
+
+  void _ensurePlaybackTicker() {
+    final ids = _binding?.pipeline.currentPlan.uploads.keys;
+    final hasRunnablePlayback =
+        ids != null && _uploads.hasRunnablePlayback(ids);
+    if (_playbackPaused || !hasRunnablePlayback || _disposed) {
+      _playbackTicker?.cancel();
+      _playbackTicker = null;
+      return;
+    }
+    _playbackTicker ??= Timer.periodic(
+      const Duration(milliseconds: 16),
+      (_) => _advanceDueFrames(),
+    );
+  }
+
+  void _advanceDueFrames() {
+    if (_disposed || _playbackPaused) {
+      _ensurePlaybackTicker();
+      return;
+    }
+    final uploads = _binding?.pipeline.currentPlan.uploads.keys;
+    if (uploads == null || uploads.isEmpty) {
+      _ensurePlaybackTicker();
+      return;
+    }
+    for (final id in uploads.toList(growable: false)) {
+      _coordinator.advanceDueFrame(sessionId, id);
+    }
+    _ensurePlaybackTicker();
+  }
+
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    _playbackTicker?.cancel();
+    _playbackTicker = null;
+    final binding = _binding;
     _binding = null;
+    binding?.detach(sessionId);
+    for (final output in _pageOutputs.values) {
+      output._dispose();
+    }
+    _pageOutputs.clear();
     transferProgress.dispose();
+    _uploads.removeListener(_handleUploadSnapshot);
     await _coordinator.dispose();
     await _artifactCacheHandoff?.drain(_downloads.sessions);
     _artifactCacheHandoff?.detach();
     _artifactReads?.close();
+    _uploads.dispose();
+    _decodes.dispose();
+    await _media.close();
     await _downloads.dispose();
     _streamingSources.dispose();
     _ioTransport.close(force: true);

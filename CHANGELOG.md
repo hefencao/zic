@@ -1,3 +1,17 @@
+## 0.31.0-dev.77：Pipeline 媒体运行时原子迁移
+
+- 新增原子 `PipelineMediaRuntimeFactory`/`PipelineMediaRuntime`，一次绑定 source、cursor、uploader、opaque output projector 与 renderer；每个 Reader session 创建并按依赖顺序关闭一个 runtime。
+- 新增独立 `pipeline_native` composition package。`pipeline_runtime` 不依赖 `bridge`/`texture_bridge`，App 通过 `NativePipelineMediaRuntimeFactory` 注入平台实现。
+- `PipelineReaderSession` 正式接通生产 `DecodeRegistry`、`UploadRegistry`、FrameBudgeter 与 LiveCoordinator；保持 +7/-3 下载、+2/-1 预解码、current/transition 上传和 5/3/2 lane。
+- 删除 `PipelinePageStream.source`/`EncodedSource` Presentation 泄漏；Reader 页面改为消费只读 `PipelinePageOutputStream` 和不暴露 `DecodeId`、textureId/native handle 的 `PipelinePageSurface`。
+- Reader WebP 不再由 `NativeWebpPlayer` 创建 cursor/texture。App 的媒体 Pipeline 演示同步迁移到 `LocalImagePlayer + PipelinePageOutputStream`，未保留测试专用旧参数。
+- 暂停/倍速命令进入 Pipeline session，UploadRegistry 原子保存并向新旧 UploadSession 投影同一配置；用户 pause 与 viewport freeze 独立，异步 present 完成后读取最新 speed，避免旧命令覆盖或误唤醒 transition 页。
+- Android uploader 按 `DecodeId` 复用 texture；identity 退休后等待最后一个 output claim/frame owner 释放再销毁 lease，session close 排空已退休 texture，避免长章节累积或旧 surface 使用已释放 texture。
+- output replacement/清空先切换 snapshot，并在下一 Flutter frame 释放旧 claim；`LocalImagePlayer` 也只在 opaque surface 真正进入 widget tree 后报告首帧，避免 use-after-release 与过早 ready telemetry。
+- playback ticker 只在至少一个 UploadSession timer 处于 running 时运行；静态页和全部 viewport-frozen 输出不再维持无效 60Hz 轮询，present/resume 会重新唤醒。
+- 新增 runtime close、upload claim/retirement、composition smoke 与 dev.77 静态边界门禁；使用用户提供的 libwebp 1.6.0 源码完成 host build、增量解码和 loop fixtures 验证。
+- 非 WebP 完整 artifact 的现有 Flutter Presentation 路径未在本轮伪装为已迁移；后续统一必须单独设计，且不得恢复第二条 Reader WebP decode 链。
+
 ## 0.31.0-dev.76：Reader 页面加载所有权与立即退出审计
 
 - 删除 `ReaderView` 的 viewport 固定居中加载 overlay、`_readyPageKeys` 和由首帧回调驱动的父级 setState；Reader 不再保存第二份页面 ready 权威状态。

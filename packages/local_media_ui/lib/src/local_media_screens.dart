@@ -10,7 +10,7 @@ final class ImageFolderScreen extends StatelessWidget {
     this.initialFavorite = false,
     this.onFavoriteChanged,
     this.onDownloadRequested,
-    this.pipelineFactory = defaultLocalMediaPipelineFactory,
+    required this.pipelineFactory,
     this.initialReaderSettings = const ReaderSessionSettings(),
     this.onReaderSettingsChanged,
     super.key,
@@ -63,7 +63,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
     this.initialFavorite = false,
     this.onFavoriteChanged,
     this.onDownloadRequested,
-    this.pipelineFactory = defaultLocalMediaPipelineFactory,
+    required this.pipelineFactory,
     this.initiallyImmersive = true,
     this.initialReaderSettings = const ReaderSessionSettings(),
     this.onReaderSettingsChanged,
@@ -175,6 +175,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
               demandRevision: runtime.demandRevision,
               playback: runtime.playback,
               pageStream: runtime.pageStream,
+              pageOutput: runtime.pageOutput,
               onPlaybackCapabilityChanged: runtime.reportPlaybackCapability,
               onDimensionsChanged: (size) => runtime.reportDimensions(
                 size.width.round(),
@@ -249,6 +250,7 @@ LocalImageFormat _formatFromSourceName(String sourceId) {
 final class WebpFolderScreen extends StatelessWidget {
   const WebpFolderScreen({
     required this.folder,
+    required this.pipelineFactory,
     this.bytesLoader,
     this.onPreviewStateChanged,
     this.initialProgress,
@@ -257,6 +259,7 @@ final class WebpFolderScreen extends StatelessWidget {
   });
 
   final PickedImageFolder folder;
+  final PipelineReaderSessionFactory pipelineFactory;
   final LocalImageBytesLoader? bytesLoader;
   final ImagePreviewStateChanged? onPreviewStateChanged;
   final ReadingProgress? initialProgress;
@@ -269,6 +272,7 @@ final class WebpFolderScreen extends StatelessWidget {
         onPreviewStateChanged: onPreviewStateChanged,
         initialProgress: initialProgress,
         onProgressChanged: onProgressChanged,
+        pipelineFactory: pipelineFactory,
       );
 }
 

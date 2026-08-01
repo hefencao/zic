@@ -45,6 +45,10 @@ EXPECTED_DEPENDENCIES = {
         'domain', 'downloads', 'media', 'pipeline', 'sessions',
         'storage', 'telemetry', 'transport',
     },
+    'pipeline_native': {
+        'bridge', 'domain', 'media', 'pipeline_runtime', 'telemetry',
+        'texture_bridge',
+    },
     'media': {'domain', 'transport'},
     'transport': {'domain'},
     'storage': {'catalog', 'domain', 'resource_cache'},
@@ -309,10 +313,10 @@ def check_tool_dirs() -> None:
     ):
         if required not in bootstrap:
             fail(f'Flutter bootstrap directory/command is incomplete: {required}')
-    for required in ('packages/reader', 'packages/pipeline_runtime', 'packages/reader_runtime', 'packages/local_media_bridge', 'packages/local_media', 'packages/local_media_ui', 'packages/storage_bridge', 'apps/app', 'flutter test test'):
+    for required in ('packages/reader', 'packages/pipeline_runtime', 'packages/pipeline_native', 'packages/reader_runtime', 'packages/local_media_bridge', 'packages/local_media', 'packages/local_media_ui', 'packages/storage_bridge', 'apps/app', 'flutter test test'):
         if required not in flutter_tests:
             fail(f'Flutter test directory is not explicit: {required}')
-    for required in ('packages/plugin_host', 'packages/pipeline_runtime', 'packages/reader_runtime', 'packages/local_media_ui', 'flutter analyze'):
+    for required in ('packages/plugin_host', 'packages/pipeline_runtime', 'packages/pipeline_native', 'packages/reader_runtime', 'packages/local_media_ui', 'flutter analyze'):
         if required not in analyze:
             fail(f'Flutter analyze directory is not explicit: {required}')
     for required in ('packages/domain', 'packages/media', 'packages/sessions', 'dart test test'):
@@ -918,7 +922,9 @@ def check_compile_regressions() -> None:
     for required in (
         'MediaPipelineReaderScreen',
         'chapter_media_pipeline.json',
-        'NativeWebpPlayer(',
+        'LocalImagePlayer(',
+        'pageStream: runtime.pageStream',
+        'pageOutput: runtime.pageOutput',
         'ReaderRuntimeScreen(',
         'traceSessionId: runtime.sessionId',
         'demandRevision: runtime.demandRevision',
@@ -928,6 +934,8 @@ def check_compile_regressions() -> None:
             fail(f'Reader media pipeline route is incomplete: {required}')
     if "import 'package:downloads/downloads.dart'" in static_demo:
         fail('static_demo.dart must consume pipeline-owned page identity')
+    if 'NativeWebpPlayer(' in static_demo:
+        fail('Reader media route must not create a Presentation WebP decoder')
 
     for required in (
         'DownloadId readerPageDownloadId(',

@@ -90,6 +90,7 @@ require(
 
 for package in (
     'packages/pipeline_runtime',
+    'packages/pipeline_native',
     'packages/reader_runtime',
     'packages/local_media_ui',
 ):

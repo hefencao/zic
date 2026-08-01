@@ -6,6 +6,7 @@ RUNTIME = (ROOT / 'packages/reader_runtime/lib/src/reader_runtime_screen.dart').
 PIPELINE_RUNTIME = (ROOT / 'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart').read_text()
 PIPELINE_HOST = (ROOT / 'packages/pipeline_runtime/lib/src/pipeline_reader_host.dart').read_text()
 PAGE_STREAM = (ROOT / 'packages/pipeline_runtime/lib/src/pipeline_page_stream.dart').read_text()
+PAGE_OUTPUT = (ROOT / 'packages/pipeline_runtime/lib/src/pipeline_page_output.dart').read_text()
 PROGRESS = (ROOT / 'packages/pipeline_runtime/lib/src/pipeline_transfer_progress.dart').read_text()
 CHAPTER_DOWNLOADS = (ROOT / 'packages/downloads/lib/src/chapter_downloads.dart').read_text()
 DOWNLOAD_UI = (ROOT / 'apps/app/lib/download_manager.dart').read_text()
@@ -25,63 +26,38 @@ for token in (
     '_pipeline.accept',
     '_pipeline.loadBytes(asset, token)',
     '_pipeline.pageStream(asset)',
+    '_pipeline.pageOutput(asset)',
     'PipelineTransferProgress',
 ):
     if token not in RUNTIME:
         raise SystemExit(f'Reader projection contract missing: {token}')
-for token in (
-    'final class PipelineReaderSessionHost',
-    'widget.factory.create(',
-    '_session.dispose()',
-):
+for token in ('final class PipelineReaderSessionHost', 'widget.factory.create(', '_session.dispose()'):
     if token not in PIPELINE_HOST:
         raise SystemExit(f'Pipeline host ownership contract missing: {token}')
-for forbidden in (
-    'PipelineReaderSessionFactory',
-    'pipelineFactory',
-    '_pipeline.dispose()',
-    '_pipeline.selectPage',
-    'transferProgress.select',
-):
+for forbidden in ('PipelineReaderSessionFactory', 'pipelineFactory', '_pipeline.dispose()', '_pipeline.selectPage', 'transferProgress.select'):
     if forbidden in RUNTIME:
         raise SystemExit(f'Reader retained pipeline composition: {forbidden}')
 for token in (
-    'DownloadRegistry(',
-    'LiveCoordinator(',
-    'SourcePool(',
-    'NetLane(maxActive: _profile.networkConcurrency)',
-    'DecodeLane(maxActive: _profile.decodeConcurrency)',
-    'UploadLane(maxActive: _profile.uploadConcurrency)',
-    'ReaderBinding(',
-    'PipelinePageStream.fromSession',
-    'PipelineTransferProgressPublisher()',
-    'transferProgress.select(',
-    'observation.currentIndex',
+    'DownloadRegistry(', 'LiveCoordinator(', 'SourcePool(', 'DecodeRegistry(',
+    'UploadRegistry(', 'FrameBudgeter(', 'ReaderBinding(',
+    'PipelinePageStream.fromSession', 'PipelinePageOutputStream._(',
+    'PipelineTransferProgressPublisher()', 'transferProgress.select(',
 ):
     if token not in PIPELINE_RUNTIME:
         raise SystemExit(f'Pipeline runtime ownership contract missing: {token}')
-for forbidden in (
-    'DownloadRegistry', 'DownloadSession', 'LiveCoordinator', 'NetLane(',
-    'DecodeLane(', 'UploadLane(', "package:downloads/", "package:sessions/",
-    "package:storage/", "package:transport/", "package:media/",
-):
+for forbidden in ('DownloadRegistry', 'DownloadSession', 'LiveCoordinator', 'NetLane(', 'DecodeLane(', 'UploadLane(', "package:downloads/", "package:sessions/", "package:storage/", "package:transport/", "package:media/"):
     if forbidden in RUNTIME:
         raise SystemExit(f'Reader regained pipeline ownership: {forbidden}')
-for token in (
-    'final class PipelinePageStream',
-    'PipelinePageStreamSnapshot',
-    'Future<Uint8List> readPrefix',
-    'EncodedSource? get source',
-):
+for token in ('final class PipelinePageStream', 'PipelinePageStreamSnapshot', 'Future<Uint8List> readPrefix'):
     if token not in PAGE_STREAM:
         raise SystemExit(f'Pipeline page-stream projection missing: {token}')
-for token in (
-    'final class PipelineTransferProgressPublisher',
-    'snapshot.state == DownloadState.promoted',
-    'committedBytes: snapshot.committedLength',
-    'totalBytes: snapshot.totalLength',
-    'addPostFrameCallback',
-):
+for forbidden in ('final EncodedSource', 'EncodedSource? get source', ' get source'):
+    if forbidden in PAGE_STREAM:
+        raise SystemExit(f'Pipeline transfer projection leaked mutable media: {forbidden}')
+for token in ('final class PipelinePageOutputStream', 'PipelinePageSurface?', '_uploads.claimPresent(', '_outputs.project('):
+    if token not in PAGE_OUTPUT:
+        raise SystemExit(f'Pipeline page-output projection missing: {token}')
+for token in ('final class PipelineTransferProgressPublisher', 'snapshot.state == DownloadState.promoted', 'committedBytes: snapshot.committedLength', 'totalBytes: snapshot.totalLength', 'addPostFrameCallback'):
     if token not in PROGRESS:
         raise SystemExit(f'Pipeline progress publisher contract missing: {token}')
 if 'snapshot.committedLength > 0' in PROGRESS:
@@ -98,19 +74,12 @@ for token in ('_sanitizeTraceString', '_traceOpaqueSummary', "RegExp(r'venera:(c
 for token in ('StreamIterator<List<int>>', 'cancel.whenCancelled', 'await iterator.cancel()'):
     if token not in DOWNLOAD_JOB:
         raise SystemExit(f'Explicit streaming cancellation contract missing: {token}')
-for token in (
-    'pageStream: runtime.pageStream',
-    'PipelinePageStream? pageStream',
-    'parseWebpPrefixInfo(prefix)',
-    'CursorStepKind.needMoreData',
-    '_waitForStreamingAdvance(',
-    '_ownsSource = false',
-):
+for token in ('pageStream: runtime.pageStream', 'pageOutput: runtime.pageOutput', 'PipelinePageOutputStream? pageOutput', 'parseWebpPrefixInfo(prefix)', 'surface.build('):
     if token not in PLAYER:
-        raise SystemExit(f'WebP pipeline-stream contract missing: {token}')
-for forbidden in ('DownloadSession?', 'DownloadSnapshotListener', 'streamingSession'):
+        raise SystemExit(f'WebP Pipeline projection contract missing: {token}')
+for forbidden in ('stream.source', 'pageStream?.source', '_startStreamingNative(', '_waitForStreamingAdvance(', '_ownsSource = false'):
     if forbidden in PLAYER:
-        raise SystemExit(f'Local media UI regained session ownership: {forbidden}')
+        raise SystemExit(f'Presentation regained Pipeline decode/source ownership: {forbidden}')
 if 'child: _zoomed\n          ? InteractiveViewer(' not in READER:
     raise SystemExit('Reader scale recognizer is not gated behind explicit zoom')
 if 'static images hide playback-only controls' not in CONTROLS_TEST:
@@ -121,4 +90,4 @@ if "services == null ? 'bootstrap-memory' : 'durable-services'" not in STARTUP:
     raise SystemExit('Non-blocking bootstrap service swap is missing')
 if 'importedLibraryLoadingKey' not in LIBRARY or 'Positioned(' not in LIBRARY:
     raise SystemExit('Background library restore indicator is missing')
-print('Pipeline-owned Reader streaming and non-blocking startup contract: OK')
+print('Pipeline-owned Reader streaming/output and non-blocking startup contract: OK')

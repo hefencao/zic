@@ -257,6 +257,9 @@ final class _Uploader implements FrameUploader {
     required DecodeId id,
     required FrameRef frame,
   }) async => _Output(frame.epoch, frame.index);
+
+  @override
+  void release(DecodeId id) {}
 }
 
 final class _Output implements OutputFrame {

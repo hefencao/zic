@@ -1,8 +1,20 @@
+## dev.77：Pipeline 媒体运行时原子迁移
+
+- 新增 `PipelineMediaRuntimeFactory`/`PipelineMediaRuntime` 原子能力和 `pipeline_native` 平台 composition package；App 注入，Pipeline session 创建并关闭，核心不反向依赖 bridge。
+- `PipelineReaderSession` 真实接线 SourcePool、DecodeRegistry、UploadRegistry、FrameBudgeter 与 LiveCoordinator；策略窗口和 5/3/2 lane 未修改。
+- 删除 `PipelinePageStream.source`。Reader/local media 只消费 transfer stream 与 `PipelinePageOutputStream` opaque surface，不取得 `DecodeId`、mutable source、cursor、output claim、textureId 或 native handle。
+- Reader WebP 页面不再创建 `NativeWebpPlayer` streaming cursor/texture；App 演示调用方和测试同步迁移，没有保留旧命名兼容参数。
+- 暂停/倍速与动画 due-frame 推进进入 Pipeline；UploadSession 按 command freeze/resume/rescale。viewport 播放门只绑定 current/transition upload identity，不为纯预解码页创建 upload session；ticker 仅在存在 running timer 时运行。
+- Android texture 按 DecodeId 复用并采用 claim-safe retirement：旧 surface 在 replacement 期间有效，最后一个 frame owner 释放后销毁 lease；runtime close 等待 retired lease drain。
+- 新增 runtime ownership、upload retirement 与 composition smoke 回归，以及 dev.77 静态所有权门禁。用户提供的 libwebp 1.6.0 已在本地源码构建并通过增量/loop fixtures。
+- 当前环境仍无 Flutter/Dart SDK 和 Android Gradle wrapper，analyzer、Widget/package tests 与 APK/kernel snapshot 未执行；静态门禁不能替代这些验证。
+- 非 WebP complete-artifact Flutter decode 仍是已记录的下一阶段格式统一问题；dev.77 只声明 WebP Reader streaming 链已原子收回。
+
 ## dev.76：Reader 页面加载所有权与立即退出审计
 
 - Reader 删除 viewport 固定居中加载圈、页面 ready 集合和首帧触发的全屏 overlay 重建；连续纵向页面只保留具体图片区域内的加载反馈。
 - `LocalImagePlayer` 删除 `showLoadingIndicator` 兼容开关，页面 loading/ready/invalid 状态不再由 Reader 与媒体组件双重拥有。
-- 已识别但未伪装闭合：`PipelinePageStream.source -> NativeWebpPlayer` 仍泄漏 encoded source 并让 Presentation 创建 cursor/texture；需在具备 production `FrameUploader` 后按原子 capability 迁入 `pipeline_runtime`。本轮未新增该入口，也未建立第二条 decode 链。
+- dev.76 当时记录的 `PipelinePageStream.source -> NativeWebpPlayer` 债务已由 dev.77 / ADR 0061 原子关闭；该历史项不得作为恢复直接 source/cursor 路径的依据。
 - `_ReaderPageHost` 继续去重首帧回调并记录 telemetry，不参与可见 loading 状态。
 - 设备 trace 无 exception；7 个页面 demand 在退出时全部 detach，`receivingRetained=false`，未见退出后继续收包或 Reader 越权关闭 session 的证据。当前页 WebP 在 partial/full artifact 阶段有两次 decode start，退出前未记录首帧，列为真机后续验证而非通过缩窗处理。
 - 全仓其他固定居中圈均属于封面内容、详情/设置/演示路由初始化或具体媒体页面；Reader controls 只保留局部下载按钮工作态和只读 Pipeline 进度。

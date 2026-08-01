@@ -25,4 +25,10 @@ abstract interface class FrameUploader {
     required DecodeId id,
     required FrameRef frame,
   });
+
+  /// Retires uploader-owned resources for [id].
+  ///
+  /// Existing [OutputFrame] owners remain valid until they release their
+  /// claims; the uploader must defer platform destruction until then.
+  void release(DecodeId id);
 }

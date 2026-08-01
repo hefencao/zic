@@ -19,10 +19,15 @@ binding = (ROOT / 'packages/sessions/lib/src/reader_binding.dart').read_text(
 )
 for token in (
     'pipeline.accept(observation);\n    _syncViewport(observation);',
-    '_playback.syncPlayback(viewport, _decodeIds(pipeline.currentPlan))',
+    '_playback.syncPlayback(viewport, _uploadIds(pipeline.currentPlan))',
 ):
     if token not in binding:
         raise SystemExit(f'viewport/demand separation contract is missing: {token}')
+
+if 'for (final id in plan.uploads.keys)' not in binding:
+    raise SystemExit('viewport playback must bind only current/transition upload identities')
+if '...plan.decodes.keys' in binding:
+    raise SystemExit('viewport playback must not create upload sessions for decode-only pages')
 
 reader_binding_test = (
     ROOT / 'packages/sessions/test/reader_binding_test.dart'

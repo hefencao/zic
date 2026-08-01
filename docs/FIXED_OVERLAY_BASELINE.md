@@ -13,3 +13,5 @@ candidate, patch bundle, or historical overlay is applied on top. All dev.59, de
 changes are direct descendants of this extracted tree.
 
 Current delivery lineage continues directly through dev.76. The sole baseline for dev.76 is the complete user-provided `zic_v0.31.0-dev.75_compile-contract-ownership` archive; no historical candidate, patch tree or overlay is merged.
+
+Current delivery lineage continues directly through dev.77. The sole baseline for dev.77 is the complete delivered `zic_v0.31.0-dev.76_reader-page-loading-ownership.zip`; the user-supplied `libwebp-1.6.0.zip` is used only as the decoder dependency source and is not a ZIC source overlay.

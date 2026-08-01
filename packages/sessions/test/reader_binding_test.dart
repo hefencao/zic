@@ -36,6 +36,38 @@ void main() {
     expect(binding.revision, 1);
   });
 
+  test('viewport playback binds upload identities, not decode-only warm pages', () {
+    final coordinator = FakeCoordinator(clock: _Clock());
+    final binding = ReaderBinding(
+      chapter: _deferredChapter(),
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+      clock: _Clock(),
+      coordinator: coordinator,
+      playback: coordinator,
+      windowResolver: const RoleResolver(
+        forwardEncodedPages: 2,
+        backwardEncodedPages: 1,
+        forwardDecodePages: 2,
+        backwardDecodePages: 1,
+        nearRadius: 0,
+      ),
+      policy: const HeuristicPolicy(decodeWarmPages: true),
+    );
+
+    binding.accept(_obs(
+      interaction: Interaction.idle,
+      current: 2,
+      currentFraction: 1,
+    ));
+
+    expect(coordinator.decodes.length, greaterThan(coordinator.uploads.length));
+    expect(coordinator.uploads, hasLength(1));
+    expect(coordinator.playbackIds.keys, unorderedEquals(<int>[2]));
+  });
+
   test('unchanged demand roles still update viewport playback', () {
     final coordinator = FakeCoordinator(clock: _Clock());
     final binding = ReaderBinding(

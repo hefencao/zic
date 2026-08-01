@@ -10,6 +10,8 @@ import 'playback_timer.dart';
 
 enum UploadState { idle, waitingFrame, uploading, ready, failed, disposed }
 
+typedef UploadSnapshotListener = void Function(UploadSnapshot snapshot);
+
 final class UploadSnapshot {
   const UploadSnapshot({
     required this.id,
@@ -87,6 +89,12 @@ final class UploadSession {
   int _revision = 0;
   bool _disposed = false;
   final PlaybackTimer _playback = PlaybackTimer();
+  bool _userPaused = false;
+  bool _viewportFrozen = false;
+  double _playbackSpeed = 1;
+
+  final Set<UploadSnapshotListener> _listeners =
+      <UploadSnapshotListener>{};
 
   UploadState get state => _state;
   OutputFrame? get frame => _slot?.frame;
@@ -95,6 +103,21 @@ final class UploadSession {
   int get outputBytes =>
       _slot == null || _slot!.frame.disposed ? 0 : _slot!.frame.byteLength;
   PlaybackState get playbackState => _playback.state;
+
+  void addSnapshotListener(
+    UploadSnapshotListener listener, {
+    bool fireImmediately = true,
+  }) {
+    _requireOpen();
+    _listeners.add(listener);
+    if (fireImmediately) {
+      listener(snapshot);
+    }
+  }
+
+  void removeSnapshotListener(UploadSnapshotListener listener) {
+    _listeners.remove(listener);
+  }
 
   UploadSnapshot get snapshot => UploadSnapshot(
         id: id,
@@ -218,6 +241,7 @@ final class UploadSession {
     _playback.clear();
     _slot = null;
     slot.retire();
+    uploader.release(id);
     _setState(UploadState.waitingFrame);
     return bytes;
   }
@@ -257,11 +281,17 @@ final class UploadSession {
     _requireOpen();
     await claim.present();
     if (identical(_slot?.frame, claim.frame)) {
+      final micros = claim.frame.duration.inMicroseconds;
+      final scaledMicros =
+          micros <= 0 ? 0 : (micros / _playbackSpeed).round();
+      final nowUs = clock.nowMicros();
       _playback.start(
         frameIndex: claim.frame.index,
-        duration: claim.frame.duration,
-        nowUs: clock.nowMicros(),
+        duration: Duration(microseconds: scaledMicros),
+        nowUs: nowUs,
       );
+      _syncPlaybackPause(nowUs);
+      _notifySnapshot();
     }
     _emit(
       TraceEventKind.framePresented,
@@ -269,16 +299,65 @@ final class UploadSession {
     );
   }
 
-  bool freezePlayback() => _playback.freeze(clock.nowMicros());
+  /// Records viewport-owned freeze independently from the user's pause state.
+  ///
+  /// The desired state is retained even before a frame timer exists, so a
+  /// transition output cannot begin animating merely because upload finished
+  /// after the latest viewport observation.
+  bool freezePlayback() {
+    if (_viewportFrozen) {
+      return false;
+    }
+    _viewportFrozen = true;
+    _syncPlaybackPause(clock.nowMicros());
+    return true;
+  }
 
-  bool resumePlayback() => _playback.resume(clock.nowMicros());
+  bool resumePlayback() {
+    if (!_viewportFrozen) {
+      return false;
+    }
+    _viewportFrozen = false;
+    _syncPlaybackPause(clock.nowMicros());
+    return true;
+  }
+
+  void setPlayback({required bool paused, required double speed}) {
+    if (!speed.isFinite || speed < 0.25 || speed > 4) {
+      throw ArgumentError.value(
+        speed,
+        'speed',
+        'must be finite and within 0.25..4',
+      );
+    }
+    final oldSpeed = _playbackSpeed;
+    _userPaused = paused;
+    _playbackSpeed = speed;
+    if (oldSpeed != speed) {
+      _playback.rescale(
+        nowUs: clock.nowMicros(),
+        oldSpeed: oldSpeed,
+        newSpeed: speed,
+      );
+    }
+    _syncPlaybackPause(clock.nowMicros());
+  }
 
   int? takeDueFrame() => _playback.takeDue(clock.nowMicros());
+
+  void _syncPlaybackPause(int nowUs) {
+    if (_userPaused || _viewportFrozen) {
+      _playback.freeze(nowUs);
+    } else {
+      _playback.resume(nowUs);
+    }
+  }
 
   void detach() {
     _requireOpen();
     _revision++;
     _retireCurrent();
+    uploader.release(id);
     _setState(UploadState.idle);
   }
 
@@ -287,6 +366,7 @@ final class UploadSession {
     _revision++;
     _epoch = epoch;
     _retireCurrent();
+    uploader.release(id);
     _failure = null;
     _setState(UploadState.idle);
   }
@@ -297,7 +377,10 @@ final class UploadSession {
     }
     _revision++;
     _retireCurrent();
+    uploader.release(id);
     _state = UploadState.disposed;
+    _notifySnapshot();
+    _listeners.clear();
     _disposed = true;
   }
 
@@ -313,6 +396,7 @@ final class UploadSession {
       return;
     }
     _state = state;
+    _notifySnapshot();
     _emit(
       TraceEventKind.uploadState,
       <String, Object?>{
@@ -320,6 +404,16 @@ final class UploadSession {
         if (_slot != null) 'frame': _slot!.frame.index,
       },
     );
+  }
+
+  void _notifySnapshot() {
+    if (_listeners.isEmpty) {
+      return;
+    }
+    final current = snapshot;
+    for (final listener in _listeners.toList(growable: false)) {
+      listener(current);
+    }
   }
 
   void _emit(TraceEventKind kind, Map<String, Object?> payload) {

@@ -238,11 +238,13 @@ void main() {
     await tester.pump();
 
     expect(find.byKey(readerMediaWebpPageKey), findsOneWidget);
-    expect(find.byType(NativeWebpPlayer), findsOneWidget);
-    final state = tester.widget<WebpPreviewStateRegion>(
-      find.byKey(webpPreviewStateKey),
+    expect(find.byType(LocalImagePlayer), findsOneWidget);
+    expect(find.byType(NativeWebpPlayer), findsNothing);
+    final state = tester.widget<ImagePreviewStateRegion>(
+      find.byKey(imageFolderPreviewStateKey),
     );
-    expect(state.state.phase, WebpPreviewPhase.loading);
+    expect(state.state.phase, ImagePreviewPhase.loading);
+    expect(find.byKey(imagePageLoadingIndicatorKey), findsOneWidget);
     expect(find.byKey(webpEngineControlKey), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -438,6 +440,7 @@ void main() {
       MaterialApp(
         home: ImageFolderScreen(
           folder: _folderFixture(),
+          pipelineFactory: defaultLocalMediaPipelineFactory,
           bytesLoader: (image) => pending[image.displayName]!.future,
           onProgressChanged: progress.add,
         ),

@@ -1,0 +1,30 @@
+name: pipeline_native
+description: Native platform media capability for the Pipeline-owned Reader runtime.
+version: 0.31.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+  flutter: '>=3.27.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  bridge:
+    path: ../bridge
+  domain:
+    path: ../domain
+  media:
+    path: ../media
+  pipeline_runtime:
+    path: ../pipeline_runtime
+  telemetry:
+    path: ../telemetry
+  texture_bridge:
+    path: ../texture_bridge
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0

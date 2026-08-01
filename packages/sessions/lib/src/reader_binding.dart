@@ -96,24 +96,29 @@ final class ReaderBinding {
     _coordinator.reconcile(observation.sessionId, update);
   }
 
+  void resyncPlayback() {
+    final viewport = _viewport;
+    if (_detached || viewport == null) {
+      return;
+    }
+    _playback.syncPlayback(viewport, _uploadIds(pipeline.currentPlan));
+  }
+
   void _syncViewport(ReaderObs observation) {
     final viewport = _viewportResolver.resolve(
       observation,
       discretePages: discretePages,
     );
     _viewport = viewport;
-    _playback.syncPlayback(viewport, _decodeIds(pipeline.currentPlan));
+    _playback.syncPlayback(viewport, _uploadIds(pipeline.currentPlan));
   }
 
-  Map<int, DecodeId> _decodeIds(DemandPlan plan) {
+  Map<int, DecodeId> _uploadIds(DemandPlan plan) {
     final pageIndexes = <String, int>{
       for (final page in chapter.pages) page.pageId: page.index,
     };
     final result = <int, DecodeId>{};
-    for (final id in <DecodeId>{
-      ...plan.decodes.keys,
-      ...plan.uploads.keys,
-    }) {
+    for (final id in plan.uploads.keys) {
       final index = pageIndexes[id.download.content.pageId];
       if (index != null) {
         result[index] = id;

@@ -33,9 +33,11 @@ def main() -> None:
 
     require(app_reader, "export 'package:reader_runtime/reader_runtime.dart';", 'reader facade')
     require(app_webp, "export 'package:local_media_ui/local_media_ui.dart';", 'media UI facade')
-    require(pipeline_runtime, 'show SourceFactory, SourcePool;', 'SourcePool abstraction')
-    require(pipeline_runtime, 'factory: sourceFactory,', 'SourceFactory injection')
-    require(media_ui, 'sourceFactory: NativeSourceFactory(),', 'native source composition')
+    require(pipeline_runtime, 'PipelineMediaRuntimeFactory', 'atomic media abstraction')
+    require(pipeline_runtime, 'factory: _media.sources,', 'Pipeline source ownership')
+    require(app_webp, 'NativePipelineMediaRuntimeFactory()', 'App native composition')
+    if 'pipeline_native' in media_ui or 'NativePipelineMediaRuntimeFactory' in media_ui:
+        raise SystemExit('local_media_ui must remain platform-composition neutral')
     require(pipeline_host, 'widget.factory.create(', 'pipeline composition owner')
     require(pipeline_host, '_session.dispose()', 'pipeline lifecycle owner')
     for forbidden in ('DownloadRegistry', 'LiveCoordinator', 'NetLane', 'DecodeLane', 'UploadLane'):
@@ -46,8 +48,8 @@ def main() -> None:
         'show parseWebpPrefixInfo, webpPrefixDeclaresAnimation;',
         'WebP prefix owner',
     )
-    if len(app_reader.splitlines()) > 8 or len(app_webp.splitlines()) > 8:
-        raise SystemExit('App compatibility facades must stay thin')
+    if len(app_reader.splitlines()) > 8 or len(app_webp.splitlines()) > 16:
+        raise SystemExit('App facades/composition must stay thin')
     for part in (ROOT / 'packages/local_media_ui/lib/src').glob('*.dart'):
         if len(part.read_text().splitlines()) > 1600:
             raise SystemExit(f'local media UI part is too large: {part.name}')
@@ -58,6 +60,8 @@ def main() -> None:
             raise SystemExit(f'App production dependency leaked: {forbidden.strip()}')
     require(production, '  reader_runtime:', 'App reader composition dependency')
     require(production, '  local_media_ui:', 'App local-media UI dependency')
+    require(production, '  pipeline_native:', 'App native Pipeline composition')
+    require(production, '  pipeline_runtime:', 'App Pipeline factory composition')
 
     if 'for (final installed in widget.externalPlugins!.installed)' in source_manager:
         raise SystemExit('source manager still owns the installed plugin list')

@@ -9,6 +9,11 @@ export 'package:pipeline_runtime/pipeline_runtime.dart'
     show
         PipelineArtifactBytesLoader,
         PipelinePageContentKind,
+        PipelinePageOutputListener,
+        PipelinePageOutputSnapshot,
+        PipelinePageOutputState,
+        PipelinePageOutputStream,
+        PipelinePageSurface,
         PipelinePageStream,
         PipelinePageStreamListener,
         PipelinePageStreamSnapshot,

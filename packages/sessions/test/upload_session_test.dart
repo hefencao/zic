@@ -53,6 +53,8 @@ void main() {
       uploader: uploader,
       clock: playbackClock,
     );
+    final snapshots = <UploadSnapshot>[];
+    upload.addSnapshotListener(snapshots.add);
     final ready = await upload.prepare(
       demand: const UploadDemand(
         role: PageRole.current,
@@ -71,18 +73,33 @@ void main() {
 
     final claim = upload.claimPresent();
     expect(claim, isNotNull);
+    upload.setPlayback(paused: true, speed: 2);
     await upload.present(claim!);
     expect(uploader.outputs.single.presented, 1);
-    expect(upload.takeDueFrame(), isNull);
+    expect(upload.playbackState, PlaybackState.frozen);
     playbackClock.value = 16000;
+    expect(upload.takeDueFrame(), isNull);
+    expect(upload.freezePlayback(), isTrue);
+    upload.setPlayback(paused: false, speed: 1);
+    playbackClock.value = 32000;
+    expect(upload.takeDueFrame(), isNull);
+    expect(upload.resumePlayback(), isTrue);
+    expect(upload.playbackState, PlaybackState.running);
+    playbackClock.value = 47999;
+    expect(upload.takeDueFrame(), isNull);
+    playbackClock.value = 48000;
     expect(upload.takeDueFrame(), 0);
+    expect(upload.playbackState, PlaybackState.idle);
+    expect(snapshots.any((snapshot) => snapshot.state == UploadState.ready), isTrue);
 
     upload.detach();
+    expect(uploader.released, <DecodeId>[decode.id]);
     expect(uploader.outputs.single.disposed, isFalse);
     claim.release();
     expect(uploader.outputs.single.disposed, isTrue);
 
     upload.dispose();
+    expect(snapshots.last.state, UploadState.disposed);
     decode.dispose();
     await download.dispose();
     await temp.delete(recursive: true);
@@ -290,6 +307,7 @@ final class _Uploader implements FrameUploader {
 
   final int epochOffset;
   final List<_Output> outputs = <_Output>[];
+  final List<DecodeId> released = <DecodeId>[];
 
   @override
   Future<OutputFrame> upload({
@@ -303,6 +321,9 @@ final class _Uploader implements FrameUploader {
     outputs.add(output);
     return output;
   }
+
+  @override
+  void release(DecodeId id) => released.add(id);
 }
 
 final class _Output implements OutputFrame {

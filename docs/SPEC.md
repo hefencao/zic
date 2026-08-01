@@ -1,3 +1,17 @@
+## dev.77 atomic Pipeline media runtime requirements
+
+- App composition MUST inject source/cursor/uploader/output/renderer as one `PipelineMediaRuntimeFactory`; independent setters or partially updated capability tuples are forbidden.
+- `pipeline_runtime` MUST NOT depend on `bridge`, `texture_bridge` or create a platform implementation directly. The session-created runtime is owned and closed by `PipelineReaderSession`.
+- Reader WebP decode/upload MUST execute through the production DecodeRegistry/UploadRegistry lanes. Presentation MUST NOT create a cursor, upload frame, texture presenter or competing complete-byte native decode path.
+- `PipelinePageStream` MUST NOT expose `EncodedSource`, mutable session objects or platform handles. Page output MUST be a read-only `PipelinePageOutputStream` with an opaque surface.
+- Public page output MUST NOT expose `DecodeId`, texture IDs, native pointers, mutable `OutputFrame`, present claims, artifact stores or transport enums.
+- A replacement target/frame MUST preserve the prior claimed surface until the new output is presented. Releasing an upload identity MUST retire its platform resources only after all outstanding output claims release.
+- Android texture allocation MUST be per stable `DecodeId`, reused across animation frames and drained on session close; it MUST NOT be per frame or retained for an entire chapter after identity eviction.
+- Pause/speed commands MUST enter `PipelineReaderSession`; Pipeline playback timers own freeze/resume/rescale and due-frame advance.
+- Reader streaming capability bindings MUST be atomic: a `PipelinePageStream` presented as WebP MUST be paired with its `PipelinePageOutputStream`.
+- +7/-3 download, +2/-1 decode, current/transition upload and 5/3/2 lanes MUST remain unchanged.
+- Non-WebP complete-artifact Flutter rendering is not claimed as migrated by dev.77. A later migration MUST use a separate approved design and MUST NOT restore a parallel Reader WebP decoder.
+
 ## dev.76 Reader page-loading ownership requirements
 
 - Reader Presentation MUST NOT own a viewport-level loading spinner or a second page-ready collection.
