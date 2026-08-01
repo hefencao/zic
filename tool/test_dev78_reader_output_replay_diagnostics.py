@@ -95,7 +95,7 @@ for token in ('await _markChapterReadForNavigation(current)',):
     forbid(demo_home, token, 'read persistence navigation block')
 
 for token in (
-    'this.maxExportEvents = 20000',
+    'this.maxExportEvents = 10000',
     'final List<TraceEvent> _exportEvents',
     'List<TraceEvent> get exportEvents',
     'int get exportDroppedCount',

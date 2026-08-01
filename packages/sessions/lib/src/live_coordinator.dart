@@ -8,6 +8,7 @@ import 'package:transport/transport.dart';
 
 import 'coordinator.dart';
 import 'decode_registry.dart';
+import 'decode_session.dart';
 import 'download_job.dart';
 import 'download_registry.dart';
 import 'download_session.dart';
@@ -15,7 +16,9 @@ import 'frame_budget.dart';
 import 'net_lane.dart';
 import 'playback_gate.dart';
 import 'retry_policy.dart';
+import 'source_progress.dart';
 import 'upload_registry.dart';
+import 'upload_session.dart';
 
 typedef TransportPick = Transport Function(Uri uri);
 typedef DecodeWork = Future<void> Function(
@@ -92,6 +95,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final Map<DownloadId, SourceListener> _sourceListeners =
       <DownloadId, SourceListener>{};
   final Map<DownloadId, int> _sourceRevisions = <DownloadId, int>{};
+  final Map<DownloadId, int> _sourceWakeLengths = <DownloadId, int>{};
   final Map<DecodeId, int> _decodeSourceRevisions = <DecodeId, int>{};
   final PlaybackGate _playbackGate = PlaybackGate();
   int _revision = 0;
@@ -173,8 +177,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     if (!registry.advance(id, frameIndex)) {
       return false;
     }
-    _wakeUpload(sessionId, id);
-    _wakeDecodes(sessionId, id.download);
+    _wakeDecode(sessionId, id, force: true);
     return true;
   }
 
@@ -193,6 +196,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     }
     _sourceListeners.clear();
     _sourceRevisions.clear();
+    _sourceWakeLengths.clear();
     _decodeSourceRevisions.clear();
     for (final session in registry.sessions) {
       net.cancel(session.id.key);
@@ -238,6 +242,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         session?.removeSourceListener(listener);
       }
       _sourceRevisions.remove(id);
+      _sourceWakeLengths.remove(id);
       session?.detach();
     }
     for (final entry in <MapEntry<DownloadId, DownloadDemand>>[
@@ -264,10 +269,21 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       return;
     }
     void listener(IngressSnap snapshot) {
-      // Every emitted ingress lifecycle change can unblock or terminate decode:
-      // new bytes, seal and authoritative source failure all belong here.
+      // Source revision remains authoritative, but tiny network chunks are not
+      // independent decode work. The first ready source, each 64 KiB growth
+      // quantum, seal and failure wake the same decode demand.
       _sourceRevisions[id] = snapshot.revision;
-      _wakeDecodes(sessionId, id);
+      final priorLength = _sourceWakeLengths[id];
+      final shouldWake = onDecode != null ||
+          priorLength == null ||
+          snapshot.failure != null ||
+          snapshot.sealed ||
+          snapshot.length - priorLength >= sourceProgressQuantumBytes;
+      if (!shouldWake) {
+        return;
+      }
+      _sourceWakeLengths[id] = snapshot.length;
+      _wakeDecodesForSource(sessionId, id);
     }
     _sourceListeners[id] = listener;
     session.addSourceListener(listener);
@@ -292,7 +308,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           transport: transportFor(id.canonicalUri),
           session: session,
         ).run(cancel: token);
-        _wakeDecodes(sessionId, id);
+        _wakeDecodesForSource(sessionId, id);
         return;
       } on Object catch (error) {
         if (!retry.allows(error, attempt)) {
@@ -359,121 +375,183 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         entry.value.priority,
         revision: demandRevision,
       );
-      final work = onDecode;
-      final registry = decodes;
-      if (work == null && registry == null) {
+      if (onDecode == null && decodes == null) {
         continue;
       }
-      final decodeWork = work;
-      final decodeRegistry = registry;
       final submit = diff.changed.containsKey(entry.key)
           ? decode.replace
           : decode.submit;
       submit(
         key: entry.key.key,
         priority: entry.value.priority,
-        task: (token) async {
-          final current = _decodes[entry.key];
-          if (current == null || current.expirationRevision < _revision) {
-            return;
-          }
-          _resourceTrace(
-            sessionId,
-            TraceEventKind.decodeStarted,
-            entry.key.key,
-            current.priority,
-            revision: demandRevision,
-          );
-          final sourceRevision =
-              _sourceRevisions[entry.key.download] ?? -1;
-          if (sourceRevision >= 0) {
-            _decodeSourceRevisions[entry.key] = sourceRevision;
-          }
-          try {
-            if (decodeWork != null) {
-              await decodeWork(entry.key, current, token);
-            } else if (decodeRegistry != null) {
-              await decodeRegistry.fill(
-                entry.key,
-                current,
-                token,
-                revision: demandRevision,
-                preparedDepth: uploads?.preparedDepth(entry.key) ?? 0,
-              );
-            }
-            _wakeUpload(sessionId, entry.key);
-            _enforceBudget(sessionId);
-          } on Object catch (error) {
-            if (error is! Failure || error.code != ErrorCode.cancelled) {
-              _error(sessionId, entry.key.key, 'decode', error);
-              _wakeUpload(sessionId, entry.key);
-            }
-          }
-        },
+        task: (token) => _runDecode(
+          sessionId,
+          entry.key,
+          token,
+          demandRevision: demandRevision,
+          sourceWake: false,
+          force: true,
+        ),
       );
     }
   }
 
-  void _wakeDecodes(String sessionId, DownloadId downloadId) {
-    for (final entry in _decodes.entries) {
-      if (entry.key.download != downloadId) {
-        continue;
+  void _wakeDecodesForSource(String sessionId, DownloadId downloadId) {
+    for (final id in _decodes.keys) {
+      if (id.download == downloadId) {
+        _wakeDecode(sessionId, id, sourceWake: true);
       }
-      final id = entry.key;
-      final demand = entry.value;
-      final demandRevision = _decodeDemandRevisions[id] ?? _revision;
-      decode.follow(
-        key: id.key,
-        priority: demand.priority,
-        task: (token) async {
-          while (true) {
-            final current = _decodes[id];
-            if (current == null || current.expirationRevision < _revision) {
-              return;
-            }
-            final sourceRevision = _sourceRevisions[downloadId] ?? 0;
-            final observedSourceRevision =
-                _decodeSourceRevisions[id] ?? -1;
-            if (observedSourceRevision >= sourceRevision) {
-              return;
-            }
-            _decodeSourceRevisions[id] = sourceRevision;
-            _resourceTrace(
-              sessionId,
-              TraceEventKind.decodeStarted,
-              id.key,
-              current.priority,
-              revision: demandRevision,
-            );
-            try {
-              final work = onDecode;
-              if (work != null) {
-                await work(id, current, token);
-              } else {
-                final registry = decodes;
-                if (registry != null) {
-                  await registry.fill(
-                    id,
-                    current,
-                    token,
-                    revision: demandRevision,
-                    preparedDepth: uploads?.preparedDepth(id) ?? 0,
-                  );
-                }
-              }
-              _wakeUpload(sessionId, id);
-              _enforceBudget(sessionId);
-            } on Object catch (error) {
-              if (error is! Failure || error.code != ErrorCode.cancelled) {
-                _error(sessionId, id.key, 'decode', error);
-                _wakeUpload(sessionId, id);
-              }
-              return;
-            }
-          }
-        },
-      );
     }
+  }
+
+  void _wakeDecode(
+    String sessionId,
+    DecodeId id, {
+    bool sourceWake = false,
+    bool force = false,
+  }) {
+    final demand = _decodes[id];
+    if (demand == null || (onDecode == null && decodes == null)) {
+      return;
+    }
+    decode.follow(
+      key: id.key,
+      priority: demand.priority,
+      task: (token) => _runDecode(
+        sessionId,
+        id,
+        token,
+        demandRevision: _decodeDemandRevisions[id] ?? _revision,
+        sourceWake: sourceWake,
+        force: force,
+      ),
+    );
+  }
+
+  Future<void> _runDecode(
+    String sessionId,
+    DecodeId id,
+    CancelToken token, {
+    required int demandRevision,
+    required bool sourceWake,
+    required bool force,
+  }) async {
+    while (true) {
+      final current = _decodes[id];
+      if (current == null || current.expirationRevision < _revision) {
+        return;
+      }
+      final sourceRevision = _sourceRevisions[id.download] ?? -1;
+      final observedSourceRevision = _decodeSourceRevisions[id] ?? -1;
+      if (sourceWake && observedSourceRevision >= sourceRevision) {
+        return;
+      }
+
+      final registry = decodes;
+      final before = registry?.find(id)?.snapshot;
+      final preparedDepth = uploads?.preparedDepth(id) ?? 0;
+      if (registry != null &&
+          !_decodeNeedsFill(
+            before,
+            current,
+            preparedDepth: preparedDepth,
+            sourceWake: sourceWake,
+            force: force,
+          )) {
+        if (sourceWake && sourceRevision >= 0) {
+          _decodeSourceRevisions[id] = sourceRevision;
+        }
+        return;
+      }
+      if (sourceRevision >= 0) {
+        _decodeSourceRevisions[id] = sourceRevision;
+      }
+
+      _resourceTrace(
+        sessionId,
+        TraceEventKind.decodeStarted,
+        id.key,
+        current.priority,
+        revision: demandRevision,
+      );
+      try {
+        DecodeSnapshot? after;
+        final work = onDecode;
+        if (work != null) {
+          await work(id, current, token);
+        } else if (registry != null) {
+          after = await registry.fill(
+            id,
+            current,
+            token,
+            revision: demandRevision,
+            preparedDepth: preparedDepth,
+          );
+        }
+        if (work != null || _decodeChangeNeedsUpload(before, after)) {
+          _wakeUpload(sessionId, id);
+        }
+        _enforceBudget(sessionId);
+      } on Object catch (error) {
+        if (error is! Failure || error.code != ErrorCode.cancelled) {
+          _error(sessionId, id.key, 'decode', error);
+          _wakeUpload(sessionId, id);
+        }
+        return;
+      }
+
+      if (!sourceWake) {
+        return;
+      }
+      final latestSourceRevision = _sourceRevisions[id.download] ?? -1;
+      final consumedSourceRevision = _decodeSourceRevisions[id] ?? -1;
+      if (consumedSourceRevision >= latestSourceRevision) {
+        return;
+      }
+    }
+  }
+
+  bool _decodeNeedsFill(
+    DecodeSnapshot? snapshot,
+    DecodeDemand demand, {
+    required int preparedDepth,
+    required bool sourceWake,
+    required bool force,
+  }) {
+    if (snapshot == null) {
+      return true;
+    }
+    final targetDepth = demand.targetWatermark > preparedDepth
+        ? demand.targetWatermark - preparedDepth
+        : 0;
+    if (snapshot.failure != null || snapshot.state == DecodeState.failed) {
+      return true;
+    }
+    if (sourceWake) {
+      return snapshot.state == DecodeState.waitingSource ||
+          snapshot.depth < targetDepth;
+    }
+    if (force) {
+      return snapshot.depth < targetDepth;
+    }
+    return true;
+  }
+
+  bool _decodeChangeNeedsUpload(
+    DecodeSnapshot? before,
+    DecodeSnapshot? after,
+  ) {
+    if (after == null) {
+      return false;
+    }
+    if (after.depth > (before?.depth ?? 0)) {
+      return true;
+    }
+    if (after.failure != before?.failure) {
+      return true;
+    }
+    return after.state == DecodeState.ended &&
+        before?.state != DecodeState.ended;
   }
 
   void _reconcileUploads(
@@ -562,12 +640,20 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           } else {
             final registry = uploads;
             if (registry != null) {
-              await registry.prepare(
+              final before = registry.find(id)?.snapshot;
+              final after = await registry.prepare(
                 id,
                 current,
                 token,
                 revision: demandRevision,
               );
+              final producedFrame = after.state == UploadState.ready &&
+                  (before?.state != UploadState.ready ||
+                      before?.epoch != after.epoch ||
+                      before?.frameIndex != after.frameIndex);
+              if (producedFrame) {
+                _wakeDecode(sessionId, id, force: true);
+              }
             }
           }
           _enforceBudget(sessionId);

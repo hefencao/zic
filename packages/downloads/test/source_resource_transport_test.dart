@@ -39,10 +39,11 @@ void main() {
     expect(response.validators.etag, '"fixture"');
 
     body.add(<int>[4, 5, 6]);
-    await body.close();
+    final closed = body.close();
     expect(await iterator.moveNext(), isTrue);
     expect(iterator.current, <int>[4, 5, 6]);
     expect(await iterator.moveNext(), isFalse);
+    await closed;
     expect(source.resolveCalls, 1);
     expect(source.loadCalls, 0);
   });
@@ -73,11 +74,12 @@ void main() {
     );
     expect(body.discarded, isFalse);
     body.add(<int>[4, 5, 6]);
-    await body.close();
+    final closed = body.close();
 
     expect(await iterator.moveNext(), isTrue);
     expect(iterator.current, <int>[4, 5, 6]);
     expect(await iterator.moveNext(), isFalse);
+    await closed;
   });
 
   test('GET request normalization removes body and entity headers', () async {
@@ -140,6 +142,8 @@ void main() {
     await response.discard();
     expect(body.discarded, isTrue);
     expect(body.closed, isTrue);
+    await iterator.cancel();
+    await body.done;
   });
 
   test('failed direct retry falls back to the source-owned byte transform',
@@ -243,6 +247,9 @@ final class _ControlledBody {
       StreamController<List<int>>(sync: true);
   bool discarded = false;
   bool closed = false;
+  Future<void>? _done;
+
+  Future<void> get done => _done ?? Future<void>.value();
 
   ByteResponse response({required int? totalLength, String? etag}) =>
       ByteResponse(
@@ -259,15 +266,20 @@ final class _ControlledBody {
     _controller.add(bytes);
   }
 
-  Future<void> close() async {
-    if (closed) return;
-    closed = true;
-    await _controller.close();
+  Future<void> close() {
+    if (!closed) {
+      closed = true;
+      _done = _controller.close();
+    }
+    return done;
   }
 
   Future<void> discard() async {
     discarded = true;
-    await close();
+    if (!closed) {
+      closed = true;
+      _done = _controller.close();
+    }
   }
 }
 

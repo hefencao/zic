@@ -1,3 +1,12 @@
+## dev.82 动画源网格、帧消费与诊断生产所有权
+
+- `native/media_core` 是 WebP blend/dispose 与动画 canvas 的唯一所有者。ANMF 子矩形始终以源 canvas 坐标合成；统一 raster 只在完整 canvas 形成后执行一次，Presentation 与 Android texture 不得再解释子矩形几何。
+- source revision 与 playback frame consumption 是两个正交事件。source revision 只解除 `needMoreData`；当前 output 被消费后，由 `LiveCoordinator -> DecodeRegistry` 独立补充 holder watermark，不能等待下一次下载增长。
+- source 增长的生产唤醒按 64 KiB 边界、seal 与 failure 合并；`DecodeRegistry.fill`/`UploadRegistry.prepare` 返回只读 snapshot，Coordinator 仅在真实深度、终态或输出 frame 变化时推进下游。
+- `DownloadSession` 是 committed-byte telemetry 的唯一生产者，按 64 KiB 批量记录并在 seal/failure/detach/reset/evict/dispose 刷新尾部。
+- `DebugTraceLog` 保留最多 500 条合并 UI projection 和默认最多 10000 条原始 export ring。缩小 ring 不能替代生产侧聚合；错误和权威状态不得被合并丢失。
+- transport/几何测试必须使用可控 Stream/Future、纯 owner 值对象和数值容差，禁止真实 socket、固定等待、暂停订阅时等待 close、lazy child 数量或 double 精确相等。
+
 ## dev.81 路由优先、Mihon 宿主流式与上传生命周期所有权
 
 - `plugin_host`/Mihon runtime 只解析普通图片的最终 URL、headers 与无 body GET request plan；正文 bytes 由宿主 `downloads` transport 流入同一 `DownloadSession/artifact/ingress`。插件完整字节 `loadResource` 只作为直连失败后的兼容回退，不是正常路径。
@@ -35,7 +44,7 @@
 - `DecodeSession` 继续拥有 cursor/holder。detach 后只有在 holder 已空的下一次 demand 才重建 cursor；普通 EOF 不自动 rewind，finite loop 语义不变。
 - 漫画详情页不再为了页数标签遍历 `loadChapter`。未知页数属于 catalog 元数据缺失，显示“页数待加载”；正文只由目标打开/下载路径请求。
 - Reader 导航 owner 非阻塞提交已读持久化，详情页只做乐观只读投影，不建立第二个持久化权威来源。
-- `DebugTraceLog` 原子拥有两个有界平面：最多 500 条、可合并的 UI projection，以及默认最多 20000 条、不合并的 raw export ring。复制、文件导出和 session filter 使用 raw ring；导出文件能力注入 Debug 页面并显式报告失败。
+- `DebugTraceLog` 原子拥有两个有界平面：最多 500 条、可合并的 UI projection，以及默认最多 10000 条、不合并的 raw export ring。复制、文件导出和 session filter 使用 raw ring；导出文件能力注入 Debug 页面并显式报告失败。
 - 编译边界补齐：`pipeline_runtime` 显式导入 domain-owned `RendererKind`；`UploadRegistry` 只消费 `UploadSession.playbackRunning`，不认识 `PlaybackState`。
 - ADR 0062 补充 ADR 0061。+7/-3、+2/-1、current/transition 与 5/3/2 不变。
 

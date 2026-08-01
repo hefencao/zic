@@ -4,6 +4,36 @@
 
 Use only:
 
+`zic_v0.31.0-dev.82_animation-source-grid-trace-stability.zip`
+
+Do not merge dev.65–81 candidates, overlays or remembered source trees. Mihon and VibeVenera references remain read-only. The user-provided libwebp 1.6.0 archive is validation input only.
+
+## Completed in dev.82
+
+- Animated WebP ANMF rectangles are blended/disposed on the source canvas and the complete frame is scaled once; Presentation and texture layers do not own fragment geometry.
+- Source growth and frame consumption are independent wake reasons. A consumed timed frame refills decode even after the download is sealed.
+- Source wake and committed-byte telemetry are aggregated at 64 KiB boundaries plus seal/failure; downstream work is submitted only after real snapshot changes.
+- Raw Trace export defaults to 10000 events while UI projection remains 500; authoritative errors and terminal lifecycle events remain uncoalesced.
+- Controlled transport tests no longer await controller close while the iterator is paused; geometry uses tolerance rather than exact binary-double equality.
+
+## Device/toolchain validation still required
+
+1. Run `flutter analyze`, affected downloads/sessions/reader tests, then the complete Dart/Flutter suite.
+2. Run Rust tests and build Android debug/release or at least kernel snapshot.
+3. Reopen the exact WebP shown in the dev.81 screenshot: no horizontal strip displacement may appear in continuous mode.
+4. Let the same animation finish downloading and remain visible through at least one full loop; playback must continue without source growth.
+5. Export a short diagnostic capture and verify committed-byte/decode/upload no-op storms are absent and the file stays bounded.
+
+## Rejected regressions
+
+Do not scale animation fragments independently, couple playback progress to network revision, wake every decoder for every tiny chunk, hide the problem by shrinking windows/lanes, or restore socket/fixed-time/lazy-child/exact-double tests.
+
+## Historical dev.81 handoff
+
+## Sole baseline
+
+Use only:
+
 `zic_v0.31.0-dev.81_route-first-mihon-streaming-stability.zip`
 
 Do not merge dev.65–80 candidates, overlays or remembered source trees. Mihon and VibeVenera references remain read-only. The user-provided libwebp 1.6.0 archive is validation input only.

@@ -4,6 +4,8 @@ import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
+import 'source_progress.dart';
+
 enum DownloadState { idle, queued, receiving, sealed, promoted, failed, disposed }
 
 typedef SourceListener = void Function(IngressSnap snapshot);
@@ -91,6 +93,8 @@ final class DownloadSession {
   int _networkStartLength = 0;
   Failure? _failure;
   List<int> _prefix = <int>[];
+  int _pendingCommitTraceBytes = 0;
+  int _pendingCommitTraceChunks = 0;
   final Set<SourceListener> _sourceListeners = <SourceListener>{};
   final Set<DownloadSnapshotListener> _snapshotListeners =
       <DownloadSnapshotListener>{};
@@ -330,14 +334,7 @@ final class DownloadSession {
       _prefix.addAll(chunk.take(remaining));
       _contentKind = sniffContent(_prefix);
     }
-    _emit(
-      TraceEventKind.bytesCommitted,
-      <String, Object?>{
-        'bytes': chunk.length,
-        'committedLength': committedLength,
-        'kind': _contentKind.name,
-      },
-    );
+    _recordCommittedChunk(chunk.length);
   }
 
   Future<DownloadSnapshot> seal(
@@ -359,6 +356,7 @@ final class DownloadSession {
     _writer = null;
     _state = DownloadState.sealed;
     _contentKind = sniffContent(_prefix, finalChunk: true);
+    _flushCommittedTrace();
     _emit(
       TraceEventKind.artifactSealed,
       <String, Object?>{
@@ -397,6 +395,7 @@ final class DownloadSession {
           ? error
           : Failure(code: ErrorCode.network, message: '$error', cause: error);
     }
+    _flushCommittedTrace();
     _emit(
       TraceEventKind.downloadState,
       <String, Object?>{'state': _state.name, 'error': '$_failure'},
@@ -422,6 +421,7 @@ final class DownloadSession {
   }
 
   void detach() {
+    _flushCommittedTrace();
     _demanded = false;
     _emit(
       TraceEventKind.demandDetached,
@@ -434,6 +434,7 @@ final class DownloadSession {
 
   Future<void> reset() async {
     _requireNotDisposed();
+    _flushCommittedTrace();
     _writer = null;
     _epoch = _epoch.next();
     ingress?.reset(_epoch);
@@ -454,6 +455,7 @@ final class DownloadSession {
 
   Future<int> evict() async {
     _requireNotDisposed();
+    _flushCommittedTrace();
     if (!canEvict) {
       throw const Failure(
         code: ErrorCode.writerBusy,
@@ -482,6 +484,7 @@ final class DownloadSession {
     if (_state == DownloadState.disposed) {
       return;
     }
+    _flushCommittedTrace();
     if (_writer != null || _run != null) {
       throw const Failure(
         code: ErrorCode.sessionBusy,
@@ -494,6 +497,34 @@ final class DownloadSession {
     _state = DownloadState.disposed;
     _notifySnapshot();
     _snapshotListeners.clear();
+  }
+
+  void _recordCommittedChunk(int bytes) {
+    if (bytes <= 0) {
+      return;
+    }
+    _pendingCommitTraceBytes += bytes;
+    _pendingCommitTraceChunks++;
+    if (_pendingCommitTraceBytes >= sourceProgressQuantumBytes) {
+      _flushCommittedTrace();
+    }
+  }
+
+  void _flushCommittedTrace() {
+    if (_pendingCommitTraceBytes == 0) {
+      return;
+    }
+    _emit(
+      TraceEventKind.bytesCommitted,
+      <String, Object?>{
+        'bytes': _pendingCommitTraceBytes,
+        'chunks': _pendingCommitTraceChunks,
+        'committedLength': committedLength,
+        'kind': _contentKind.name,
+      },
+    );
+    _pendingCommitTraceBytes = 0;
+    _pendingCommitTraceChunks = 0;
   }
 
   Future<void> _rebuildIngress({required bool sealed}) async {

@@ -1,3 +1,11 @@
+## dev.82：动画源网格、帧消费推进与 Trace 聚合
+
+- 已修复代码中可确认的两条根因：ANMF 子矩形独立缩放导致的条带错位，以及下载完成后 source revision 停止增长导致的动画推进停滞。
+- source chunk 调度与 `bytesCommitted` telemetry 均按 64 KiB 边界聚合；Trace raw ring 默认 10000，保留权威终态和错误。
+- 三个 downloads 测试的关闭死锁和 Reader 几何精确 double 断言已修正，未增加固定 pump、真实 socket 或 lazy child 断言。
+- 工作树与完整 ZIP 的系统 `unzip` 副本均通过结构、dev.75–dev.82、Reader/Pipeline/UI、Android Trace、Mihon ABI、Venera response header、native header 与本地 libwebp 1.6.0 host fixtures；工作树完整 Android/Mihon/Venera 契约也已通过。
+- 当前环境没有 Flutter/Dart SDK、Cargo/rustc 与 Gradle wrapper；不能声明真实 tests、Rust 编译、APK 或真机问题已经验证通过。
+
 ## dev.81：Mihon 宿主流式、上传竞态与章节即时入场
 
 - Mihon `resolveResource` 现在返回最终 URL、headers、GET、null body 与 `requiresRuntimeTransform=false`。宿主 transport 首选直接流式请求；失败后刷新 plan，再失败才调用插件 complete-byte fallback。

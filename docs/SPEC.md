@@ -1,3 +1,11 @@
+## dev.82 动画正确性、持续播放与诊断体积要求
+
+- Animated WebP 的 frame rect、blend 与 dispose 必须在源像素网格执行；不得独立缩放子矩形后再拼接。完整合成帧再进入统一等比、8 像素对齐 raster。
+- 下载增长与动画计时器是独立输入。下载 sealed 后，当前帧到期仍必须触发下一帧 decode/upload，直到 codec loop/end 语义结束。
+- source 小 chunk 不得逐条制造 decode/upload no-op；生产调度以 64 KiB 增长边界、seal、failure 和 holder/output 实际变化推进。
+- raw Trace 默认最多 10000 条；`bytesCommitted` 必须聚合 chunk 数、累计长度和内容类型，错误、frame presented、终态与 demand detach 不得丢失。
+- controlled streaming 测试不得依赖 socket 或计时；关闭顺序必须先恢复/取消订阅再等待 controller done。几何浮点比较必须使用明确容差。
+
 ## dev.81 route-first、宿主流式与稳定回归要求
 
 1. Mihon 普通图片必须先返回无 body GET request plan；宿主 response stream 的首个 chunk 必须在 body 完成前进入 DownloadSession。只有宿主直连及刷新 request plan 均失败时，才允许 source-owned complete-byte fallback。

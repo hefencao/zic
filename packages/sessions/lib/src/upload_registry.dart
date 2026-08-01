@@ -94,13 +94,13 @@ final class UploadRegistry {
     });
   }
 
-  Future<void> prepare(
+  Future<UploadSnapshot> prepare(
     DecodeId id,
     UploadDemand demand,
     CancelToken token, {
     required int revision,
-  }) async {
-    await get(id).prepare(
+  }) {
+    return get(id).prepare(
       demand: demand,
       revision: revision,
       cancel: token,

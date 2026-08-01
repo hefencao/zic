@@ -289,6 +289,18 @@ void main() {
     expect(uploader.outputs, hasLength(2));
     expect(uploads.find(decodeId)?.snapshot.frameIndex, 1);
     expect(decodes.find(decodeId)?.snapshot.depth, 0);
+    expect(
+      trace.events
+          .where((event) => event.kind == TraceEventKind.decodeStarted)
+          .length,
+      lessThanOrEqualTo(4),
+    );
+    expect(
+      trace.events
+          .where((event) => event.kind == TraceEventKind.uploadStarted)
+          .length,
+      lessThanOrEqualTo(4),
+    );
 
     await coordinator.dispose();
     uploads.dispose();

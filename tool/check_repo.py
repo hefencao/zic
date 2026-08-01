@@ -407,7 +407,10 @@ def check_compile_regressions() -> None:
     )
     if 'return await reader.read(length < maxBytes ? length : maxBytes);' not in artifact:
         fail('Artifact.readPrefix must await the read before closing its file handle')
-    if 'preparedDepth: uploads?.preparedDepth(id) ?? 0' not in live:
+    if (
+        'final preparedDepth = uploads?.preparedDepth(id) ?? 0;' not in live
+        or 'preparedDepth: preparedDepth' not in live
+    ):
         fail('ready uploaded output must contribute to the decode watermark')
     if 'decode.follow(' not in live:
         fail('source wake-up must queue a decode successor without cancelling active work')

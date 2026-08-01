@@ -33,7 +33,7 @@ TraceHighlightLevel traceHighlightLevel(TraceEvent event) =>
 final class DebugTraceLog extends ChangeNotifier implements TraceSink {
   DebugTraceLog({
     this.maxEvents = 500,
-    this.maxExportEvents = 20000,
+    this.maxExportEvents = 10000,
     bool enabled = true,
   })  : assert(maxEvents > 0),
         assert(maxExportEvents >= maxEvents),

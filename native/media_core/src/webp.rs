@@ -236,14 +236,6 @@ impl Decoder {
         // Wait until a complete frame is available before committing decoder
         // state, so later bytes can refine the container header safely.
         self.ensure_canvas(demux.0, source_width, source_height)?;
-        let target_rect = scale_rect(
-            source_rect,
-            source_width,
-            source_height,
-            self.target_width,
-            self.target_height,
-        )?;
-
         let fragment_len = rgba_len(source_rect.width, source_rect.height)?;
         if fragment_len > MAX_WORKING_BYTES
             || iter.0.fragment.bytes.is_null()
@@ -266,20 +258,17 @@ impl Decoder {
             return Err(DecodeError::Failed);
         }
 
-        let scaled = scale_rgba(
-            &fragment,
-            source_rect.width,
-            source_rect.height,
-            target_rect.width,
-            target_rect.height,
-        )?;
+        // WebP blend and disposal semantics belong to the source pixel grid.
+        // Scaling each animation sub-rectangle independently creates rounding
+        // seams and horizontal strip displacement. Composite the authoritative
+        // source canvas first, then scale the complete frame once.
         let mut next_canvas = self.canvas.clone();
         if let Some(previous) = self.previous {
             if previous.dispose_background {
                 fill_rect(
                     &mut next_canvas,
-                    self.target_width,
-                    self.target_height,
+                    self.source_width,
+                    self.source_height,
                     previous.rect,
                     self.background,
                 );
@@ -287,10 +276,10 @@ impl Decoder {
         }
         composite(
             &mut next_canvas,
-            self.target_width,
-            self.target_height,
-            target_rect,
-            &scaled,
+            self.source_width,
+            self.source_height,
+            source_rect,
+            &fragment,
             iter.0.blend_method != WEBP_MUX_NO_BLEND,
         )?;
 
@@ -298,17 +287,24 @@ impl Decoder {
         let duration_us = duration_ms.saturating_mul(1_000);
         self.canvas = next_canvas;
         self.previous = Some(PreviousFrame {
-            rect: target_rect,
+            rect: source_rect,
             dispose_background: iter.0.dispose_method == WEBP_MUX_DISPOSE_BACKGROUND,
         });
         self.next_frame_number = self.next_frame_number.saturating_add(1);
         self.ended = false;
 
+        let output = scale_rgba(
+            &self.canvas,
+            self.source_width,
+            self.source_height,
+            self.target_width,
+            self.target_height,
+        )?;
         Ok(DecodedFrame {
             width: self.target_width as u32,
             height: self.target_height as u32,
             duration_us,
-            bytes: self.canvas.clone(),
+            bytes: output,
         })
     }
 
@@ -353,8 +349,12 @@ impl Decoder {
         )?;
         self.target_width = target_width;
         self.target_height = target_height;
-        let canvas_len = rgba_len(self.target_width, self.target_height)?;
-        if canvas_len > MAX_WORKING_BYTES {
+        let canvas_len = rgba_len(source_width, source_height)?;
+        let target_len = rgba_len(self.target_width, self.target_height)?;
+        if canvas_len > MAX_WORKING_BYTES ||
+            target_len > MAX_WORKING_BYTES ||
+            canvas_len.saturating_add(target_len) > MAX_WORKING_BYTES
+        {
             return Err(DecodeError::Failed);
         }
         let background = unsafe { WebPDemuxGetI(demux, WEBP_FF_BACKGROUND_COLOR) };
@@ -367,13 +367,13 @@ impl Decoder {
         self.canvas = vec![0u8; canvas_len];
         fill_rect(
             &mut self.canvas,
-            self.target_width,
-            self.target_height,
+            source_width,
+            source_height,
             Rect {
                 x: 0,
                 y: 0,
-                width: self.target_width,
-                height: self.target_height,
+                width: source_width,
+                height: source_height,
             },
             self.background,
         );
@@ -538,40 +538,6 @@ fn align_up(value: usize, alignment: usize) -> usize {
         * alignment
 }
 
-fn scale_rect(
-    rect: Rect,
-    source_width: usize,
-    source_height: usize,
-    target_width: usize,
-    target_height: usize,
-) -> Result<Rect, DecodeError> {
-    let x0 = rect.x.saturating_mul(target_width) / source_width;
-    let y0 = rect.y.saturating_mul(target_height) / source_height;
-    let x1 = rect
-        .x
-        .saturating_add(rect.width)
-        .saturating_mul(target_width)
-        .saturating_add(source_width - 1)
-        / source_width;
-    let y1 = rect
-        .y
-        .saturating_add(rect.height)
-        .saturating_mul(target_height)
-        .saturating_add(source_height - 1)
-        / source_height;
-    let x1 = x1.min(target_width);
-    let y1 = y1.min(target_height);
-    if x0 >= x1 || y0 >= y1 {
-        return Err(DecodeError::Failed);
-    }
-    Ok(Rect {
-        x: x0,
-        y: y0,
-        width: x1 - x0,
-        height: y1 - y0,
-    })
-}
-
 fn scale_rgba(
     source: &[u8],
     source_width: usize,
@@ -729,6 +695,57 @@ mod tests {
         assert!((fitted.0 as f64 / fitted.1 as f64 - 4.0 / 3.0).abs() < 0.01);
     }
 
+
+    #[test]
+    fn source_grid_composition_keeps_subrect_offsets_when_scaled() {
+        let mut canvas = vec![0u8; 6 * 4 * BYTES_PER_PIXEL];
+        fill_rect(
+            &mut canvas,
+            6,
+            4,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 6,
+                height: 4,
+            },
+            [0, 0, 0, 255],
+        );
+        composite(
+            &mut canvas,
+            6,
+            4,
+            Rect {
+                x: 1,
+                y: 0,
+                width: 2,
+                height: 2,
+            },
+            &[255, 0, 0, 255].repeat(4),
+            false,
+        )
+        .unwrap();
+        composite(
+            &mut canvas,
+            6,
+            4,
+            Rect {
+                x: 3,
+                y: 2,
+                width: 2,
+                height: 2,
+            },
+            &[0, 0, 255, 255].repeat(4),
+            false,
+        )
+        .unwrap();
+
+        let scaled = scale_rgba(&canvas, 6, 4, 12, 8).unwrap();
+        assert_eq!(pixel(&scaled, 12, 3, 1), [255, 0, 0, 255]);
+        assert_eq!(pixel(&scaled, 12, 7, 5), [0, 0, 255, 255]);
+        assert_eq!(pixel(&scaled, 12, 10, 1), [0, 0, 0, 255]);
+    }
+
     #[test]
     fn source_over_blends_straight_alpha() {
         let mut target = [0, 0, 255, 255];
@@ -739,24 +756,4 @@ mod tests {
         assert_eq!(target[3], 255);
     }
 
-    #[test]
-    fn scale_rect_preserves_outer_edges() {
-        let rect = scale_rect(
-            Rect {
-                x: 1,
-                y: 1,
-                width: 2,
-                height: 2,
-            },
-            4,
-            4,
-            8,
-            8,
-        )
-        .unwrap();
-        assert_eq!(rect.x, 2);
-        assert_eq!(rect.y, 2);
-        assert_eq!(rect.width, 4);
-        assert_eq!(rect.height, 4);
-    }
 }

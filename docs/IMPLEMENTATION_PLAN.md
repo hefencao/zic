@@ -1,3 +1,14 @@
+## dev.82 completed
+
+- [x] 从 20000 条设备 Trace 统计每 identity 的 chunk、decode、upload 与 frame 有效产出，确认下载完成后 frame consume 缺少独立 decode wake。
+- [x] 将 WebP 子矩形合成迁回源 canvas，整帧一次缩放。
+- [x] 分离 source-revision wake 与 frame-consumed wake，并以 snapshot 变化门控下游。
+- [x] 在 DownloadSession 聚合 committed-byte telemetry，并将 raw export ring 默认上限调整为 10000。
+- [x] 修复 controlled transport close 死锁与几何精确浮点测试。
+- [x] 增加 ADR 0066、dev.82 审计/门禁并更新文档。
+- [ ] 在 Flutter/Android 环境运行 analyzer、真实 Dart/Flutter tests、Rust tests 和 APK 构建。
+- [ ] 真机复验截图对应 WebP 的条带、完整下载后的持续播放和长时间 Trace 体积。
+
 ## dev.81 completed
 
 1. 从 2032 条设备 Trace 区分缓存分块复制与 Mihon origin 完整 blob：将 Mihon 正常正文改为 request-plan + host streaming，保留失败后兼容 fallback。

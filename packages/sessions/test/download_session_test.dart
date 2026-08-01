@@ -173,6 +173,41 @@ void main() {
     expect(session.snapshot.networkStartLength, 3);
   });
 
+  test('commit telemetry batches small chunks and flushes the final tail',
+      () async {
+    await session.dispose();
+    final trace = MemoryTraceSink();
+    session = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/trace.webp',
+        finalPath: '${temp.path}/cache/trace.webp',
+      ),
+      clock: FakeMonoClock(),
+      traceSink: trace,
+    );
+    await session.restore();
+    final writer = session.acquireWriter();
+    var offset = 0;
+    for (var index = 0; index < 4; index++) {
+      final chunk = List<int>.filled(20 * 1024, index);
+      await session.append(writer, offset, chunk);
+      offset += chunk.length;
+    }
+    await session.append(writer, offset, List<int>.filled(1024, 9));
+    offset += 1024;
+    await session.seal(writer, expectedLength: offset);
+
+    final commits = trace.events
+        .where((event) => event.kind == TraceEventKind.bytesCommitted)
+        .toList(growable: false);
+    expect(commits, hasLength(2));
+    expect(commits.first.payload['chunks'], 4);
+    expect(commits.first.payload['bytes'], 80 * 1024);
+    expect(commits.last.payload['chunks'], 1);
+    expect(commits.last.payload['bytes'], 1024);
+  });
+
   test('run lease serializes active transport work', () {
     final run = session.beginRun();
     expect(session.activeRun, isTrue);

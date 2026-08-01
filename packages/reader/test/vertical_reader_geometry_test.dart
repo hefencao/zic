@@ -72,7 +72,7 @@ void main() {
     expect(anchor.index, 1);
     expect(anchor.offset, 137);
     expect(restored, measured.boundsAt(1).start + 137);
-    expect(restored - top, 400 * (2.4 - 1.6));
+    expect(restored - top, closeTo(320, 1e-9));
   });
 
   test('unknown extents do not depend on current page state', () {

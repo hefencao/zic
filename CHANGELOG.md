@@ -1,3 +1,12 @@
+## 0.31.0-dev.82：修复动画源网格合成、帧消费推进与 Trace 风暴
+
+- Animated WebP 不再独立缩放每个 ANMF 子矩形；blend/dispose 在源 canvas 上完成，再统一缩放完整帧，修复纵向页面内部水平条带错位。
+- frame timer 消费当前输出后独立补充 decode watermark，动画不再等待下一次网络 chunk；下载完成后仍可继续逐帧播放。
+- source 增长按 64 KiB、seal、failure 边界唤醒 decoder；无实际 holder/output 变化时不记录或提交 decode/upload 工作。
+- `bytesCommitted` 在 `DownloadSession` 按 64 KiB 聚合并在终态刷新；raw Trace 默认上限从 20000 降为 10000，避免短时间内导出巨大文件。
+- 修复 controlled transport 测试在暂停 `StreamIterator` 时等待 `StreamController.close()` 的关闭死锁；纵向几何 double 断言改用容差。
+- 新增 ADR 0066、dev.82 三清单审计、source-grid 合成单测与动画帧消费回归。窗口、lane 与所有权边界不变。
+
 ## 0.31.0-dev.81：修复 Mihon 宿主流式传输、动画上传竞态与章节即时入场
 
 - Mihon `resolveResource` 只返回最终 URL/headers/GET request plan；宿主 transport 直接流入 `DownloadSession`，source-owned 完整字节 RPC 仅在直连及刷新计划均失败后兼容回退。

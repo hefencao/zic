@@ -46,14 +46,14 @@ final class DecodeRegistry {
     });
   }
 
-  Future<void> fill(
+  Future<DecodeSnapshot> fill(
     DecodeId id,
     DecodeDemand demand,
     CancelToken token, {
     required int revision,
     int preparedDepth = 0,
-  }) async {
-    await get(id).fill(
+  }) {
+    return get(id).fill(
       demand: demand,
       revision: revision,
       cancel: token,
