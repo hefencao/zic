@@ -305,7 +305,6 @@ private data class VeneraActivation(
         append("\n;(async()=>{try{globalThis.__zicSource=new ")
         append(className)
         append("();__zicInstallSourceData(__zicSource);await Promise.resolve(__zicSource.init?.());")
-        append("__zicInstallComicInfoCache(__zicSource);")
         append("if(__zicCompareVersion(String(__zicSource.minAppVersion||'0'),appVersion)>0)")
         append("throw new Error('Venera source requires app '+__zicSource.minAppVersion+' or newer');")
         append("const __browse=__zicHasBrowseCapability(__zicSource);")
@@ -1769,21 +1768,6 @@ function __zicFlatten(result){
  return unpack(result)
 }
 function __zicChapterEntries(raw){const out=[];const visit=(value,fallback)=>{if(value instanceof Map){for(const [k,v] of value.entries())visit(v,k);return}if(Array.isArray(value)){value.forEach((v,i)=>visit(v,String(i)));return}if(value&&typeof value==='object'){if(value.id!==undefined||value.epId!==undefined||value.title!==undefined||value.name!==undefined){out.push([String(value.id??value.epId??fallback),String(value.title??value.name??fallback)]);return}for(const [k,v] of Object.entries(value))visit(v,k);return}out.push([String(fallback),String(value??fallback)])};visit(raw,'0');return out}
-function __zicInstallComicInfoCache(source){
- const comic=source?.comic;if(!comic||typeof comic.loadInfo!=='function'||comic.loadInfo.__zicCached)return;
- const original=comic.loadInfo,cache=new Map(),ttl=60000,maxEntries=32;
- const cached=async function(...args){
-  let key;try{key=JSON.stringify(args)}catch(_){return original.apply(this,args)}
-  const now=Date.now(),existing=cache.get(key);
-  if(existing&&existing.expires>now)return existing.promise;
-  const promise=Promise.resolve().then(()=>original.apply(this,args));
-  cache.set(key,{expires:now+ttl,promise});
-  promise.catch(()=>{if(cache.get(key)?.promise===promise)cache.delete(key)});
-  while(cache.size>maxEntries)cache.delete(cache.keys().next().value);
-  return promise
- };
- Object.defineProperty(cached,'__zicCached',{value:true});comic.loadInfo=cached
-}
 function __zicChapterMessage(comicId,epId,title,index,pageCount=0){const revision=epId==null?'single':String(epId);return {comicId,chapterId:'venera:chapter:'+__zicB64({comicId,comicRawId:__zicUnb64(comicId.slice('venera:comic:'.length)).id,epId:epId==null?null:String(epId),title:String(title),sequence:index}),title:String(title||('第 '+(index+1)+' 话')),sequence:index,pageCount,sourceRevision:revision}}
 function __zicImageKindHint(value){const path=String(value??'').split(/[?#]/,1)[0].toLowerCase();if(path.endsWith('.webp'))return 'webp';if(path.endsWith('.gif'))return 'gif';if(path.endsWith('.png'))return 'png';if(path.endsWith('.jpg')||path.endsWith('.jpeg')||path.endsWith('.jpe'))return 'jpeg';if(path.endsWith('.avif'))return 'avif';return null}
 async function __zicOperation(request){

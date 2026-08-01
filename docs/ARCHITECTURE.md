@@ -1,3 +1,14 @@
+## dev.79 插件、封面与 Reader 流式稳定性所有权
+
+- `plugin_host` 按 runtime format 拥有 source operation 调用契约。Venera JavaScript source 使用单 in-flight gate，因为其 WebView/source 脚本共享全局 scratch；Mihon 隔离运行时继续使用配置并发。图片正文仍由宿主 streaming transport 处理，串行 source operation 不等于降低网络 lane。
+- Venera WebView 不缓存 raw `comic.loadInfo` promise、DOM 或临时对象。漫画详情的 TTL、失效和复用唯一属于 `resource_cache/catalog`，插件 host 只执行调用并返回可序列化结果。
+- source-owned artwork locator 的判断基于“存在 scheme 且 source 可用”，不局限于 HTTP(S)。`ComicSourceResourceGateway` 解析 request plan，`ResourceCacheManager` 以稳定 `sourceId + comicId + locator + artwork schema revision` 合并完整 `EncodedResourceSource` resolution；App/封面 Widget 不持有第二套字节 cache。
+- `DownloadSession -> Ingress` 是 encoded source 增长、seal 和失败的权威生命周期。source listener 晚接入时立即获得 ready snapshot；后续每个长度变化、seal 和 failure 都唤醒相同 Decode demand。不得恢复定时轮询或 Presentation cursor。
+- `DecodeSession` 将 ingress/source/cursor 错误记为权威 failure；`LiveCoordinator` 唤醒 `UploadSession`，后者只读投影 failed 或保留上一成功 surface。失败页面结束 loading，但不会自动无限重试。
+- 连续阅读未知页面 extent 是稳定 Presentation 几何，不依赖 currentIndex。真实 `height / width` 到达时，只在 idle 状态保持顶部可见页的绝对像素偏移；拖动、惯性滚动和用户跳页会取消待处理 anchor。
+- `LocalImagePlayer` 负责从受控 prefix/output metadata 报告实际动画能力；`reader_runtime` observation adapter 在自适应开启且无显式漫画方向覆盖时，以 runtime-confirmed animation 覆盖 source vertical hint。扩展名本身不是最终动画证据。
+- ADR 0063 补充 ADR 0061/0062。下载 +7/-3、预解码 +2/-1、current/transition 上传和 5/3/2 lane 不变。
+
 ## dev.78 Reader 输出几何、重入与诊断所有权
 
 - `DecodeId.physicalWidth/physicalHeight` 是 decode 最大物理边界，不是强制输出尺寸。`pipeline_native` 的 WebP cursor 读取源 canvas 后在边界内等比 fit，禁止独立拉伸 X/Y，也不对小图强制放大。

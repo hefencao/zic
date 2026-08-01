@@ -319,6 +319,9 @@ final class ResourceCacheManager {
       <ResourceCacheKey, _FileResourceEntry>{};
   final Map<ResourceCacheKey, Future<Object>> _inFlight =
       <ResourceCacheKey, Future<Object>>{};
+  final Map<ResourceCacheKey, Future<EncodedResourceSource>>
+      _encodedImageInFlight =
+      <ResourceCacheKey, Future<EncodedResourceSource>>{};
   final Map<ResourceCacheKey, int> _generations = <ResourceCacheKey, int>{};
   final Map<ResourceCacheKey, int> _activeLoads = <ResourceCacheKey, int>{};
 
@@ -381,7 +384,7 @@ final class ResourceCacheManager {
     required ResourceCacheKey key,
     required Future<Uint8List> Function() loader,
     bool forceRefresh = false,
-  }) async {
+  }) {
     _requireOpen();
     if (key.kind != ResourceCacheKind.imageBytes) {
       throw ArgumentError.value(
@@ -396,45 +399,48 @@ final class ResourceCacheManager {
       final warmFile = _readFileSource(key);
       if (warmFile != null) {
         _hits++;
-        return warmFile;
+        return Future<EncodedResourceSource>.value(warmFile);
       }
       final memory = _read<Uint8List>(key);
       if (memory != null) {
         _hits++;
-        return MemoryEncodedResourceSource(memory);
+        return Future<EncodedResourceSource>.value(
+          MemoryEncodedResourceSource(memory),
+        );
       }
-      final pending = _inFlight[key];
+      final pending = _encodedImageInFlight[key];
       if (pending != null) {
         _hits++;
-        final value = await pending;
-        if (value is Uint8List) {
-          final file = await _locatePersistentFile(key);
-          if (file != null) {
-            final source = FileEncodedResourceSource(
-              path: file.path,
-              lengthInBytes: file.byteLength,
-            );
-            _removeEntry(key);
-            _storeFileSource(key, source, file.expiresAt);
-            return source;
-          }
-          return MemoryEncodedResourceSource(value);
-        }
+        return pending;
       }
-      final file = await _locatePersistentFile(key);
-      if (file != null) {
-        _hits++;
-        _persistentHits++;
-        final source = FileEncodedResourceSource(
-          path: file.path,
-          lengthInBytes: file.byteLength,
-        );
-        _storeFileSource(key, source, file.expiresAt);
-        return source;
+    }
+
+    final future = _resolveEncodedImage(key: key, loader: loader);
+    _encodedImageInFlight[key] = future;
+    return future.whenComplete(() {
+      if (identical(_encodedImageInFlight[key], future)) {
+        _encodedImageInFlight.remove(key);
       }
-      if (byteStore is ResourceCacheByteStoreFileAccess) {
-        _persistentMisses++;
-      }
+    });
+  }
+
+  Future<EncodedResourceSource> _resolveEncodedImage({
+    required ResourceCacheKey key,
+    required Future<Uint8List> Function() loader,
+  }) async {
+    final file = await _locatePersistentFile(key);
+    if (file != null) {
+      _hits++;
+      _persistentHits++;
+      final source = FileEncodedResourceSource(
+        path: file.path,
+        lengthInBytes: file.byteLength,
+      );
+      _storeFileSource(key, source, file.expiresAt);
+      return source;
+    }
+    if (byteStore is ResourceCacheByteStoreFileAccess) {
+      _persistentMisses++;
     }
 
     final bytes = await _getOrLoad<Uint8List>(
@@ -446,14 +452,14 @@ final class ResourceCacheManager {
       // immediately fall back to its legacy full-byte read path on a miss.
       allowPersistentRead: byteStore is! ResourceCacheByteStoreFileAccess,
     );
-    final file = await _locatePersistentFile(key);
-    if (file != null) {
+    final persisted = await _locatePersistentFile(key);
+    if (persisted != null) {
       final source = FileEncodedResourceSource(
-        path: file.path,
-        lengthInBytes: file.byteLength,
+        path: persisted.path,
+        lengthInBytes: persisted.byteLength,
       );
       _removeEntry(key);
-      _storeFileSource(key, source, file.expiresAt);
+      _storeFileSource(key, source, persisted.expiresAt);
       return source;
     }
     return MemoryEncodedResourceSource(bytes);
@@ -602,6 +608,7 @@ final class ResourceCacheManager {
       ..._entries.keys,
       ..._fileEntries.keys,
       ..._inFlight.keys,
+      ..._encodedImageInFlight.keys,
     }.where(predicate).toList(growable: false);
     for (final key in keys) {
       _invalidateLocal(key);
@@ -611,6 +618,7 @@ final class ResourceCacheManager {
   void _invalidateLocal(ResourceCacheKey key) {
     _generations[key] = _generationOf(key) + 1;
     _inFlight.remove(key);
+    _encodedImageInFlight.remove(key);
     _fileEntries.remove(key);
     _removeEntry(key);
   }
@@ -639,6 +647,7 @@ final class ResourceCacheManager {
     _entries.clear();
     _fileEntries.clear();
     _inFlight.clear();
+    _encodedImageInFlight.clear();
     _generations.clear();
     _weight = 0;
     _queuePersistenceMutation(() async {
@@ -693,7 +702,10 @@ final class ResourceCacheManager {
   Future<void> _performClose() async {
     // Stop accepting new work, but let already-owned requests reach their
     // normal cache/store commit point before closing the durable store.
-    final pending = _inFlight.values.toList(growable: false);
+    final pending = <Future<Object>>[
+      ..._inFlight.values,
+      ..._encodedImageInFlight.values,
+    ];
     if (pending.isNotEmpty) {
       await Future.wait<void>(
         pending.map((future) async {
@@ -716,6 +728,7 @@ final class ResourceCacheManager {
       _entries.clear();
       _fileEntries.clear();
       _inFlight.clear();
+      _encodedImageInFlight.clear();
       _generations.clear();
       _activeLoads.clear();
       _weight = 0;

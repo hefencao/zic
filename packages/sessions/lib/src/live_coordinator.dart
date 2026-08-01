@@ -259,9 +259,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       return;
     }
     void listener(IngressSnap snapshot) {
-      if (snapshot.sourceReady) {
-        _wakeDecodes(sessionId, id);
-      }
+      // Every emitted ingress lifecycle change can unblock or terminate decode:
+      // new bytes, seal and authoritative source failure all belong here.
+      _wakeDecodes(sessionId, id);
     }
     _sourceListeners[id] = listener;
     session.addSourceListener(listener);
@@ -394,6 +394,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           } on Object catch (error) {
             if (error is! Failure || error.code != ErrorCode.cancelled) {
               _error(sessionId, entry.key.key, 'decode', error);
+              _wakeUpload(sessionId, entry.key);
             }
           }
         },
@@ -445,6 +446,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           } on Object catch (error) {
             if (error is! Failure || error.code != ErrorCode.cancelled) {
               _error(sessionId, id.key, 'decode', error);
+              _wakeUpload(sessionId, id);
             }
           }
         },

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:domain/domain.dart';
+import 'package:media/media.dart';
 import 'package:sessions/sessions.dart';
 import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
@@ -74,6 +75,80 @@ void main() {
     await session.seal(writer, expectedLength: 3);
     expect(session.state, DownloadState.sealed);
   });
+  test('source listeners are notified as an incremental source grows',
+      () async {
+    await session.dispose();
+    final ingress = Ingress(factory: _TestSourceFactory(), maxBytes: 1024);
+    session = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/stream.webp',
+        finalPath: '${temp.path}/cache/stream.webp',
+      ),
+      clock: FakeMonoClock(),
+      ingress: ingress,
+    );
+    await session.restore();
+    final lengths = <int>[];
+    session.addSourceListener((snapshot) => lengths.add(snapshot.length));
+
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, 'RIFF....WEBP'.codeUnits);
+    await session.append(writer, 12, <int>[1, 2, 3, 4]);
+
+    expect(lengths.length, greaterThanOrEqualTo(2));
+    expect(lengths.last, 16);
+  });
+
+
+  test('source listeners receive authoritative ingress failure', () async {
+    await session.dispose();
+    final ingress = Ingress(factory: _FailingSourceFactory(), maxBytes: 1024);
+    session = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/failed.webp',
+        finalPath: '${temp.path}/cache/failed.webp',
+      ),
+      clock: FakeMonoClock(),
+      ingress: ingress,
+    );
+    await session.restore();
+    final snapshots = <IngressSnap>[];
+    session.addSourceListener(snapshots.add);
+
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, 'RIFF....WEBP'.codeUnits);
+
+    expect(snapshots, isNotEmpty);
+    expect(snapshots.last.sourceReady, isFalse);
+    expect(snapshots.last.failure?.code, ErrorCode.source);
+  });
+
+  test('source listeners observe restored readiness and terminal seal', () async {
+    await session.dispose();
+    final ingress = Ingress(factory: _TestSourceFactory(), maxBytes: 1024);
+    session = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/sealed.webp',
+        finalPath: '${temp.path}/cache/sealed.webp',
+      ),
+      clock: FakeMonoClock(),
+      ingress: ingress,
+    );
+    await session.restore();
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, 'RIFF....WEBP'.codeUnits);
+
+    final snapshots = <IngressSnap>[];
+    session.addSourceListener(snapshots.add);
+    await session.seal(writer, expectedLength: 12);
+
+    expect(snapshots.first.sourceReady, isTrue);
+    expect(snapshots.last.sealed, isTrue);
+  });
+
   test('run lease serializes active transport work', () {
     final run = session.beginRun();
     expect(session.activeRun, isTrue);
@@ -158,3 +233,102 @@ DownloadId _id() => DownloadId(
       sourceRevision: 'r1',
       canonicalUri: Uri.parse('https://example.test/page.webp'),
     );
+
+
+final class _TestSourceFactory implements SourceFactory {
+  @override
+  EncodedSource create({required int epoch, required int maxBytes}) =>
+      _TestEncodedSource(epoch);
+}
+
+final class _TestEncodedSource implements EncodedSource {
+  _TestEncodedSource(this._epoch);
+
+  int _epoch;
+  final List<int> _bytes = <int>[];
+  bool _sealed = false;
+
+  @override
+  int get epoch => _epoch;
+
+  @override
+  int get length => _bytes.length;
+
+  @override
+  SourceKind get kind => SourceKind.webp;
+
+  @override
+  bool get sealed => _sealed;
+
+  @override
+  SourceStatus append({
+    required int epoch,
+    required int offset,
+    required List<int> bytes,
+  }) {
+    if (epoch != _epoch) return SourceStatus.staleEpoch;
+    if (offset != _bytes.length) return SourceStatus.invalidOffset;
+    _bytes.addAll(bytes);
+    return SourceStatus.ok;
+  }
+
+  @override
+  SourceStatus reset(int epoch) {
+    _epoch = epoch;
+    _bytes.clear();
+    _sealed = false;
+    return SourceStatus.ok;
+  }
+
+  @override
+  SourceStatus seal(int epoch) {
+    if (epoch != _epoch) return SourceStatus.staleEpoch;
+    _sealed = true;
+    return SourceStatus.ok;
+  }
+
+  @override
+  void dispose() {}
+}
+
+final class _FailingSourceFactory implements SourceFactory {
+  @override
+  EncodedSource create({required int epoch, required int maxBytes}) =>
+      _FailingEncodedSource(epoch);
+}
+
+final class _FailingEncodedSource implements EncodedSource {
+  _FailingEncodedSource(this.epoch);
+
+  @override
+  int epoch;
+
+  @override
+  int get length => 0;
+
+  @override
+  SourceKind get kind => SourceKind.webp;
+
+  @override
+  bool get sealed => false;
+
+  @override
+  SourceStatus append({
+    required int epoch,
+    required int offset,
+    required List<int> bytes,
+  }) =>
+      SourceStatus.failed;
+
+  @override
+  SourceStatus reset(int epoch) {
+    this.epoch = epoch;
+    return SourceStatus.ok;
+  }
+
+  @override
+  SourceStatus seal(int epoch) => SourceStatus.failed;
+
+  @override
+  void dispose() {}
+}

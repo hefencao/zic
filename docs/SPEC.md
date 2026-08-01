@@ -1,3 +1,14 @@
+## dev.79 plugin, artwork and Reader stability requirements
+
+- Venera JavaScript source operations MUST be single in-flight inside `plugin_host`; Mihon isolated runtime concurrency MUST remain configurable. This MUST NOT reduce host image transport lane capacity.
+- Plugin WebView/bootstrap MUST NOT retain raw `loadInfo` promises, DOM-like objects or comic-detail TTL caches. `resource_cache/catalog` is the sole comic-detail cache owner.
+- Every source-owned absolute artwork locator, including non-HTTP schemes such as `mihon:resource:`, MUST enter `ComicSourceResourceGateway`. Complete encoded-image resolution MUST coalesce by the stable cache key before durable lookup/load/persist completion.
+- A growing encoded source MUST wake the same Decode demand after source creation, every committed length change and seal. A listener attached after source readiness MUST immediately observe the current source snapshot.
+- Ingress/source/cursor failures MUST become authoritative Decode failure and MUST be projected to page output. A failure MUST terminate visible loading; it MUST NOT create an unbounded retry loop or a Presentation-owned decoder.
+- Unknown continuous-page extent MUST be independent of currentIndex. Measured geometry updates MAY preserve an idle top-visible pixel anchor, but MUST NOT jump while the user is dragging or scrolling.
+- Runtime/header-confirmed animation MUST outrank a source vertical hint when adaptive layout is enabled, unless the user set an explicit per-comic direction. A `.webp` suffix alone MUST NOT be treated as conclusive animation evidence.
+- Existing +7/-3 download, +2/-1 decode, current/transition upload and 5/3/2 lanes MUST remain unchanged.
+
 ## dev.78 aspect, replay, navigation and diagnostics requirements
 
 - Decode target width/height MUST be interpreted as maximum physical bounds. A decoder MUST preserve source canvas aspect ratio, MUST NOT independently scale X/Y and MUST NOT upscale a source already within the bounds.

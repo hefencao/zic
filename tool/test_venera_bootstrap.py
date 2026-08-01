@@ -124,13 +124,12 @@ async function checkSingleVolumeChapter(){
    loadInfo:async()=>{infoLoads++;return {title:'Gallery',maxPage:24}},
    loadEp:async function(comicRawId,epId){seenEpId=epId;const info=await this.loadInfo(comicRawId);return Array.from({length:info.maxPage},(_,i)=>'https://cdn.invalid/'+i+'.jpg')}
   }};
-  __zicInstallComicInfoCache(globalThis.__zicSource);
   const detail=await __zicOperation({operation:'loadComic',arguments:{comicId}});
   if(detail.chapters.length!==1||detail.chapters[0].title!=='正文'||detail.chapters[0].pageCount!==24)throw new Error('single-volume detail failed '+JSON.stringify(detail));
   const rawChapter=__zicUnb64(detail.chapters[0].chapterId.slice('venera:chapter:'.length));
   if(rawChapter.epId!==null)throw new Error('single-volume epId was stringified '+JSON.stringify(rawChapter));
   const loaded=await __zicOperation({operation:'loadChapter',arguments:{chapterId:detail.chapters[0].chapterId}});
-  if(seenEpId!==null||loaded.pages.length!==24||infoLoads!==1)throw new Error('single-volume loadEp/cache failed '+JSON.stringify({seenEpId,infoLoads,loaded}));
+  if(seenEpId!==null||loaded.pages.length!==24||infoLoads!==2)throw new Error('single-volume loadEp ownership failed '+JSON.stringify({seenEpId,infoLoads,loaded}));
 }
 
 async function checkChapterResourceCanBeReadAgain(){

@@ -95,6 +95,12 @@ final class DecodeSession {
     }
     _revision = revision;
     final ingress = download.ingress;
+    final ingressSnapshot = ingress?.snapshot;
+    final ingressFailure = ingressSnapshot?.failure;
+    if (ingressFailure != null) {
+      _setFailure(ingressFailure);
+      return snapshot;
+    }
     final source = ingress?.source;
     if (source == null) {
       _setState(DecodeState.waitingSource);
@@ -127,85 +133,104 @@ final class DecodeSession {
         break;
     }
 
-    if (_restartAfterDetach) {
-      if ((_holder?.depth ?? 0) == 0) {
-        _releaseBinding();
+    try {
+      // A growing authoritative source may make a prior decode failure
+      // recoverable. The next demand owns the retry; stale failure state must
+      // not survive a successful frame from the same source epoch.
+      _failure = null;
+      if (_restartAfterDetach) {
+        if ((_holder?.depth ?? 0) == 0) {
+          _releaseBinding();
+        }
+        _restartAfterDetach = false;
       }
-      _restartAfterDetach = false;
-    }
-    _bind(source, epoch);
-    final holder = _holder!;
-    final targetDepth = demand.targetWatermark > preparedDepth
-        ? demand.targetWatermark - preparedDepth
-        : 0;
-    holder.trimTo(targetDepth);
-    if (holder.depth >= targetDepth) {
-      _setState(DecodeState.ready);
-      return snapshot;
-    }
+      _bind(source, epoch);
+      final holder = _holder!;
+      final targetDepth = demand.targetWatermark > preparedDepth
+          ? demand.targetWatermark - preparedDepth
+          : 0;
+      holder.trimTo(targetDepth);
+      if (holder.depth >= targetDepth) {
+        _setState(DecodeState.ready);
+        return snapshot;
+      }
 
-    _setState(DecodeState.decoding);
-    while (holder.depth < targetDepth) {
-      cancel.throwIfCancelled();
-      epoch.requireMatch(download.epoch);
-      if (_revision != revision) {
-        throw const Failure(
-          code: ErrorCode.cancelled,
-          message: 'decode demand was superseded',
-        );
-      }
-      final step = await _cursor!.frames.decodeNext();
-      if (cancel.cancelled || download.epoch != epoch || _revision != revision) {
-        step.frame?.dispose();
+      _setState(DecodeState.decoding);
+      while (holder.depth < targetDepth) {
         cancel.throwIfCancelled();
         epoch.requireMatch(download.epoch);
-        throw const Failure(
-          code: ErrorCode.cancelled,
-          message: 'decode demand was superseded',
-        );
-      }
-      switch (step.kind) {
-        case CursorStepKind.needMoreData:
-          _setState(DecodeState.waitingSource);
-          return snapshot;
-        case CursorStepKind.end:
-          final loop = _cursor!.loop;
-          if (loop != null && holder.isEmpty && loop.rewind()) {
+        if (_revision != revision) {
+          throw const Failure(
+            code: ErrorCode.cancelled,
+            message: 'decode demand was superseded',
+          );
+        }
+        final step = await _cursor!.frames.decodeNext();
+        if (cancel.cancelled || download.epoch != epoch || _revision != revision) {
+          step.frame?.dispose();
+          cancel.throwIfCancelled();
+          epoch.requireMatch(download.epoch);
+          throw const Failure(
+            code: ErrorCode.cancelled,
+            message: 'decode demand was superseded',
+          );
+        }
+        switch (step.kind) {
+          case CursorStepKind.needMoreData:
+            _setState(DecodeState.waitingSource);
+            return snapshot;
+          case CursorStepKind.end:
+            final loop = _cursor!.loop;
+            if (loop != null && holder.isEmpty && loop.rewind()) {
+              _emit(
+                TraceEventKind.animationLoop,
+                <String, Object?>{
+                  'cycle': loop.cycle,
+                  'frameCount': loop.animation.frameCount,
+                  'loopCount': loop.animation.loopCount,
+                },
+              );
+              continue;
+            }
+            _setState(holder.isEmpty ? DecodeState.ended : DecodeState.ready);
+            return snapshot;
+          case CursorStepKind.frame:
+            final frame = step.frame;
+            if (frame == null) {
+              throw const Failure(
+                code: ErrorCode.invalidState,
+                message: 'frame cursor returned a frame step without a frame',
+              );
+            }
+            holder.add(frame);
             _emit(
-              TraceEventKind.animationLoop,
+              TraceEventKind.frameDecoded,
               <String, Object?>{
-                'cycle': loop.cycle,
-                'frameCount': loop.animation.frameCount,
-                'loopCount': loop.animation.loopCount,
+                'frame': frame.index,
+                'bytes': frame.byteLength,
+                'depth': holder.depth,
+                'target': targetDepth,
+                'preparedDepth': preparedDepth,
               },
             );
-            continue;
-          }
-          _setState(holder.isEmpty ? DecodeState.ended : DecodeState.ready);
-          return snapshot;
-        case CursorStepKind.frame:
-          final frame = step.frame;
-          if (frame == null) {
-            throw const Failure(
-              code: ErrorCode.invalidState,
-              message: 'frame cursor returned a frame step without a frame',
-            );
-          }
-          holder.add(frame);
-          _emit(
-            TraceEventKind.frameDecoded,
-            <String, Object?>{
-              'frame': frame.index,
-              'bytes': frame.byteLength,
-              'depth': holder.depth,
-              'target': targetDepth,
-              'preparedDepth': preparedDepth,
-            },
-          );
+        }
       }
+      _setState(DecodeState.ready);
+      return snapshot;
+    } on Failure catch (error) {
+      if (error.code != ErrorCode.cancelled) {
+        _setFailure(error);
+      }
+      rethrow;
+    } on Object catch (error) {
+      final failure = Failure(
+        code: ErrorCode.decode,
+        message: 'frame decode failed',
+        cause: error,
+      );
+      _setFailure(failure);
+      throw failure;
     }
-    _setState(DecodeState.ready);
-    return snapshot;
   }
 
   int trimBytes(int maxBytes, {int minDepth = 0}) {

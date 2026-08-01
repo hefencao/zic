@@ -21,7 +21,13 @@ final class ExternalPluginRuntimeSession
     required ExternalPluginRuntimeLimits limits,
   })  : _connection = connection,
         _limits = limits,
-        _gate = _RuntimeInvocationGate(limits) {
+        _gate = _RuntimeInvocationGate(
+          limits,
+          maxConcurrentInvocations:
+              plugin.format == ExternalComicPluginFormat.veneraJavaScript
+                  ? 1
+                  : limits.maxConcurrentInvocations,
+        ) {
     limits.validate();
     final descriptors = connection.sources;
     if (descriptors.isEmpty) {
@@ -567,9 +573,13 @@ final class _RuntimeBrowsableComicSource
 }
 
 final class _RuntimeInvocationGate {
-  _RuntimeInvocationGate(this.limits);
+  _RuntimeInvocationGate(
+    this.limits, {
+    required this.maxConcurrentInvocations,
+  }) : assert(maxConcurrentInvocations > 0);
 
   final ExternalPluginRuntimeLimits limits;
+  final int maxConcurrentInvocations;
   final Queue<Completer<void>> _waiters = Queue<Completer<void>>();
   Completer<void>? _drained;
   int _active = 0;
@@ -579,7 +589,7 @@ final class _RuntimeInvocationGate {
     if (_closing) {
       throw StateError('external plugin runtime is closing');
     }
-    if (_active >= limits.maxConcurrentInvocations) {
+    if (_active >= maxConcurrentInvocations) {
       final waiter = Completer<void>();
       _waiters.add(waiter);
       await waiter.future;

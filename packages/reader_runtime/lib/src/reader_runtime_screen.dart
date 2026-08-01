@@ -370,8 +370,19 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     if (_playbackCapabilities[asset.assetKey] == supported) return;
     _playbackCapabilities[asset.assetKey] = supported;
     final reader = _reader;
-    if (mounted && reader != null &&
-        widget.chapter.pages[reader.currentIndex].assetKey == asset.assetKey) {
+    final observedAnimation = supported &&
+        _settings.effectiveAdaptiveEnabled &&
+        !(_settings.comicSpecificEnabled &&
+            _settings.directionOverride != null);
+    if (observedAnimation) {
+      _adaptiveProfile = runtimeAnimatedReaderProfile(widget.chapter);
+      reader?.setDirection(_adaptiveProfile!.direction);
+    }
+    if (mounted &&
+        reader != null &&
+        (observedAnimation ||
+            widget.chapter.pages[reader.currentIndex].assetKey ==
+                asset.assetKey)) {
       setState(() {});
     }
   }

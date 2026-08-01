@@ -65,7 +65,7 @@ final class _ReaderViewState extends State<ReaderView> {
   late ReadingDirection _lastDirection;
   bool _syncScheduled = false;
   bool _anchorRestoreScheduled = false;
-  ({int index, double fraction})? _pendingVerticalAnchor;
+  ({int index, double offset})? _pendingVerticalAnchor;
   bool _commandScheduled = false;
   bool _verticalInitialOffsetApplied = false;
 
@@ -252,7 +252,7 @@ final class _ReaderViewState extends State<ReaderView> {
 
   double _verticalExtent(
     PageAsset asset,
-    int index, {
+    int _, {
     Map<String, double>? ratios,
     Size? viewport,
   }) {
@@ -275,7 +275,10 @@ final class _ReaderViewState extends State<ReaderView> {
       ratio = 1 / math.max(0.001, ratio);
     }
     var scaled = effectiveViewport.width * ratio;
-    if (!hasMeasuredRatio && index == widget.controller.currentIndex) {
+    if (!hasMeasuredRatio) {
+      // Unknown pages must not change extent merely because currentIndex moved.
+      // A stable viewport-sized placeholder keeps continuous scrolling from
+      // correcting its own offset while the user crosses page boundaries.
       scaled = math.max(scaled, effectiveViewport.height);
     }
     final upper = math.max(
@@ -332,9 +335,9 @@ final class _ReaderViewState extends State<ReaderView> {
       return;
     }
     final metrics = _verticalController.position;
-    final center = metrics.pixels + metrics.viewportDimension / 2;
+    final top = metrics.pixels;
     final pages = widget.controller.chapter.pages;
-    var offset = 0.0;
+    var pageStart = 0.0;
     for (var index = 0; index < pages.length; index++) {
       final extent = _verticalExtent(
         pages[index],
@@ -342,18 +345,16 @@ final class _ReaderViewState extends State<ReaderView> {
         ratios: oldRatios,
         viewport: oldViewport,
       );
-      final end = offset + extent;
-      if (center <= end || index == pages.length - 1) {
+      final end = pageStart + extent;
+      if (top <= end || index == pages.length - 1) {
         _pendingVerticalAnchor = (
           index: index,
-          fraction: ((center - offset) / math.max(1.0, extent))
-              .clamp(0.0, 1.0)
-              .toDouble(),
+          offset: (top - pageStart).clamp(0.0, math.max(0.0, extent - 1)),
         );
         _scheduleVerticalAnchorRestore();
         return;
       }
-      offset = end + _verticalGapFor(oldStitch);
+      pageStart = end + _verticalGapFor(oldStitch);
     }
   }
 
@@ -374,13 +375,14 @@ final class _ReaderViewState extends State<ReaderView> {
         return;
       }
       final bounds = _verticalBoundsFor(anchor.index);
-      final targetCenter = bounds.start +
-          (bounds.end - bounds.start) * anchor.fraction;
       final position = _verticalController.position;
-      final target = targetCenter - position.viewportDimension / 2;
-      _verticalController.jumpTo(
-        target.clamp(0.0, position.maxScrollExtent).toDouble(),
-      );
+      final extent = math.max(1.0, bounds.end - bounds.start);
+      final target = bounds.start +
+          anchor.offset.clamp(0.0, math.max(0.0, extent - 1));
+      final bounded = target.clamp(0.0, position.maxScrollExtent).toDouble();
+      if ((bounded - position.pixels).abs() > 0.5) {
+        _verticalController.jumpTo(bounded);
+      }
     });
   }
 
@@ -554,11 +556,13 @@ final class _ReaderViewState extends State<ReaderView> {
   bool _handlePagedScrollNotification(ScrollNotification notification) {
     if (notification.depth != 0) return false;
     if (notification is ScrollStartNotification) {
+      _pendingVerticalAnchor = null;
       _interaction = notification.dragDetails == null
           ? Interaction.scrolling
           : Interaction.dragging;
       _emitFromPageMetrics(notification.metrics);
     } else if (notification is ScrollUpdateNotification) {
+      _pendingVerticalAnchor = null;
       _interaction = Interaction.scrolling;
       _emitFromPageMetrics(notification.metrics);
     } else if (notification is ScrollEndNotification) {
@@ -571,11 +575,13 @@ final class _ReaderViewState extends State<ReaderView> {
   bool _handleVerticalScrollNotification(ScrollNotification notification) {
     if (notification.depth != 0) return false;
     if (notification is ScrollStartNotification) {
+      _pendingVerticalAnchor = null;
       _interaction = notification.dragDetails == null
           ? Interaction.scrolling
           : Interaction.dragging;
       _emitFromVerticalMetrics(notification.metrics);
     } else if (notification is ScrollUpdateNotification) {
+      _pendingVerticalAnchor = null;
       _interaction = Interaction.scrolling;
       _emitFromVerticalMetrics(notification.metrics);
     } else if (notification is ScrollEndNotification) {

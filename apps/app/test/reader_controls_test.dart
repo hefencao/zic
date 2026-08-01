@@ -379,6 +379,18 @@ void main() {
     expect(animated?.animated, isTrue);
     expect(animated?.direction, ReadingDirection.ltr);
 
+    final runtimeAnimated = runtimeAnimatedReaderProfile(
+      manifest(
+        animated: false,
+        width: 1000,
+        height: 3000,
+        direction: ReadingDirection.vertical,
+      ),
+    );
+    expect(runtimeAnimated.animated, isTrue);
+    expect(runtimeAnimated.direction, ReadingDirection.ltr);
+    expect(runtimeAnimated.basis, 'runtime-animation');
+
     final vertical = classifyAdaptiveReaderLayout(
       manifest(animated: false, width: 1000, height: 3000),
     );

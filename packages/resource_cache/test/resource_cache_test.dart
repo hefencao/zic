@@ -48,6 +48,37 @@ void main() {
     expect(values[0], same(values[1]));
   });
 
+  test('coalesces complete encoded image resolution before durable lookup',
+      () async {
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final gate = Completer<void>();
+    var loads = 0;
+    const key = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'source/custom-locator-cover',
+    );
+
+    Future<Uint8List> loader() async {
+      loads++;
+      await gate.future;
+      return Uint8List.fromList(<int>[8, 9, 10]);
+    }
+
+    final first = cache.getOrLoadEncodedImage(key: key, loader: loader);
+    final second = cache.getOrLoadEncodedImage(key: key, loader: loader);
+    await Future<void>.delayed(Duration.zero);
+    expect(loads, 1);
+
+    gate.complete();
+    final values = await Future.wait<EncodedResourceSource>(<Future<EncodedResourceSource>>[
+      first,
+      second,
+    ]);
+    expect(values.first, same(values.last));
+    expect(values.first.lengthInBytes, 3);
+  });
+
   test('coalesced loader failures stay owned by awaiting callers', () async {
     final cache = ResourceCacheManager();
     addTearDown(cache.close);

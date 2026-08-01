@@ -1423,9 +1423,7 @@ final class _DemoHomeState extends State<DemoHome> {
     const revision = '';
     final source = _sourceForId(sourceId);
     final uri = Uri.tryParse(sourceValue);
-    if (source != null &&
-        uri != null &&
-        (uri.scheme == 'http' || uri.scheme == 'https')) {
+    if (source != null && uri != null && uri.hasScheme) {
       return _sourceResources.loadArtworkBytes(
         cache: _cacheCoordinator.responses,
         sourceId: source.sourceId,
@@ -1472,9 +1470,7 @@ final class _DemoHomeState extends State<DemoHome> {
     const revision = '';
     final source = _sourceForId(sourceId);
     final uri = Uri.tryParse(sourceValue);
-    if (source != null &&
-        uri != null &&
-        (uri.scheme == 'http' || uri.scheme == 'https')) {
+    if (source != null && uri != null && uri.hasScheme) {
       return _sourceResources.loadArtworkSource(
         cache: _cacheCoordinator.responses,
         sourceId: source.sourceId,

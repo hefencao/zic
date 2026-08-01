@@ -120,9 +120,26 @@ final class DownloadSession {
         ingress: ingress?.snapshot,
       );
 
-  void addSourceListener(SourceListener listener) {
+  void addSourceListener(
+    SourceListener listener, {
+    bool fireImmediately = true,
+  }) {
     _requireNotDisposed();
     _sourceListeners.add(listener);
+    final current = ingress?.snapshot;
+    if (fireImmediately && current != null && current.sourceReady) {
+      try {
+        listener(current);
+      } on Object catch (error) {
+        _emit(
+          TraceEventKind.taskFailed,
+          <String, Object?>{
+            'lane': 'source-listener',
+            'error': '$error',
+          },
+        );
+      }
+    }
   }
 
   void removeSourceListener(SourceListener listener) {
@@ -322,7 +339,12 @@ final class DownloadSession {
       expectedLength: expectedLength,
       expectedChecksum: expectedChecksum,
     );
-    ingress?.seal(lease.epoch);
+    final targetIngress = ingress;
+    if (targetIngress != null) {
+      final before = targetIngress.snapshot;
+      targetIngress.seal(lease.epoch);
+      _traceIngress(before, targetIngress.snapshot);
+    }
     _writer = null;
     _state = DownloadState.sealed;
     _contentKind = sniffContent(_prefix, finalChunk: true);
@@ -486,7 +508,8 @@ final class DownloadSession {
   }
 
   void _traceIngress(IngressSnap before, IngressSnap after) {
-    if (!before.sourceReady && after.sourceReady) {
+    final sourceBecameReady = !before.sourceReady && after.sourceReady;
+    if (sourceBecameReady) {
       _emit(
         TraceEventKind.sourceReady,
         <String, Object?>{
@@ -494,6 +517,15 @@ final class DownloadSession {
           'length': after.length,
         },
       );
+    }
+    final sourceChanged =
+        (after.sourceReady || after.failure != null) &&
+        (sourceBecameReady ||
+            before.length != after.length ||
+            before.sealed != after.sealed ||
+            before.kind != after.kind ||
+            before.failure != after.failure);
+    if (sourceChanged) {
       for (final listener in List<SourceListener>.of(_sourceListeners)) {
         try {
           listener(after);

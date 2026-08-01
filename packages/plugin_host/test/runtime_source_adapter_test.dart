@@ -226,6 +226,52 @@ void main() {
     expect(connection.maxActive, 1);
   });
 
+  test('Venera source operations are serialized even when limits allow more',
+      () async {
+    final firstGate = Completer<void>();
+    final connection = _SequencedConnection(firstGate: firstGate.future);
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(maxConcurrentInvocations: 4),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single;
+
+    final first = source.browse();
+    final second = source.loadComic('comic-1');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(connection.started, 1);
+    expect(connection.maxActive, 1);
+    firstGate.complete();
+    await first;
+    await second;
+    expect(connection.maxActive, 1);
+  });
+
+  test('Mihon runtime keeps configured parallel invocation capacity', () async {
+    final firstGate = Completer<void>();
+    final connection = _SequencedConnection(firstGate: firstGate.future);
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(format: ExternalComicPluginFormat.mihonExtension),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(maxConcurrentInvocations: 2),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single;
+
+    final first = source.browse();
+    final second = source.loadComic('comic-1');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(connection.started, 2);
+    expect(connection.maxActive, 2);
+    firstGate.complete();
+    await first;
+    await second;
+  });
+
   test('concurrent close calls join the same backend shutdown', () async {
     final closeGate = Completer<void>();
     final connection = _FixtureConnection(closeBlock: closeGate.future);

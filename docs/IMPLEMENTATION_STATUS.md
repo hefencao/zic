@@ -1,3 +1,14 @@
+## dev.79：插件、封面与 Reader 流式稳定性恢复
+
+- Venera source operation 由 `plugin_host` 强制单 in-flight；Mihon 继续使用配置并发。删除 Venera WebView 的 raw `loadInfo` promise/object cache，避免与 `resource_cache/catalog` 形成第二详情缓存和跨调用临时对象生命周期。
+- Home/迁移封面的 source-owned locator 判断从 HTTP(S) 扩展到任意 absolute scheme；`mihon:resource:` 等 custom locator 可经 `ComicSourceResourceGateway` 正确回源。`ResourceCacheManager` 新增完整 encoded-image resolution in-flight 合并。
+- DownloadSession source listener 覆盖 ready、每次增长、seal 和 failure，并对晚接入 ready source 立即投影。`needMoreData` cursor 可由后续 chunk 重新调度；最终 seal 也会唤醒解析。
+- DecodeSession 将 ingress/source/cursor failure 设为权威失败，LiveCoordinator 唤醒 Upload output，页面不再因错误永久 loading。空 holder 的稳定 identity 重入仍重建 cursor，不永久保活所有资源。
+- 连续阅读未知 extent 与 currentIndex 解耦；异步尺寸变化只在 idle 时保持顶部页像素锚点，滚动事件取消待恢复 anchor。
+- runtime/header 确认动画后，自适应 profile 使用分页方向覆盖 source vertical hint；显式漫画方向覆盖不被改写。
+- 新增 dev.79 审计、ADR/静态门禁和 owner-package 回归。用户提供的 libwebp 1.6.0 本地源码已通过 host incremental/loop fixtures。
+- 当前环境没有 Flutter/Dart SDK、Cargo/rustc 或 Android Gradle wrapper；analyzer、Dart/Flutter tests、Rust tests、APK/kernel snapshot 和真机行为仍需复验。
+
 ## dev.78：Reader 等比输出、页面重入与原始 Trace
 
 - 修复 `pipeline_media_runtime.dart` 漏导入 domain `RendererKind` 与 `UploadRegistry` 越权引用 `PlaybackState` 的编译闭包；Registry 改为只问 session-owned `playbackRunning`。

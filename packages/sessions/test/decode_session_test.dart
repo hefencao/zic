@@ -78,6 +78,52 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('authoritative ingress failure terminates decode loading', () async {
+    final temp = await Directory.systemTemp.createTemp('decode_source_failure_');
+    final ingress = Ingress(factory: _FailingSourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final cursors = _CursorFactory();
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: cursors,
+      clock: _Clock(),
+    );
+
+    final result = await decode.fill(
+      demand: const DecodeDemand(
+        role: PageRole.current,
+        priority: 1000,
+        targetWatermark: 1,
+        reason: 'source-failure',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+
+    expect(result.state, DecodeState.failed);
+    expect(result.failure?.code, ErrorCode.source);
+    expect(cursors.created, 0);
+
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
   test('disposes a decoded frame when cancellation wins the race', () async {
     final temp = await Directory.systemTemp.createTemp('decode_cancel_test_');
     final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
@@ -356,6 +402,77 @@ void main() {
     expect(ended.cycle, 0);
     expect(ended.animation.loopCount, 1);
 
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
+  test('decode exceptions become authoritative failures for upload projection',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('decode_failure_test_');
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: const _ThrowingCursorFactory(),
+      clock: _Clock(),
+    );
+    const demand = DecodeDemand(
+      role: PageRole.current,
+      priority: 1000,
+      targetWatermark: 1,
+      reason: 'failure',
+      expirationRevision: 1,
+    );
+
+    await expectLater(
+      decode.fill(
+        demand: demand,
+        revision: 1,
+        cancel: CancelToken(),
+      ),
+      throwsA(isA<Failure>().having(
+        (failure) => failure.code,
+        'code',
+        ErrorCode.decode,
+      )),
+    );
+    expect(decode.snapshot.state, DecodeState.failed);
+
+    final upload = UploadSession(
+      id: decode.id,
+      decode: decode,
+      uploader: _NoopUploader(),
+      clock: _Clock(),
+    );
+    final projected = await upload.prepare(
+      demand: const UploadDemand(
+        role: PageRole.current,
+        priority: 1000,
+        reason: 'failure',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    expect(projected.state, UploadState.failed);
+    expect(projected.failure?.code, ErrorCode.decode);
+
+    upload.dispose();
     decode.dispose();
     await download.dispose();
     await temp.delete(recursive: true);
@@ -705,3 +822,81 @@ final class _DelayedCursor implements FrameCursor {
   void dispose() {}
 }
 
+
+
+final class _ThrowingCursorFactory implements CursorFactory {
+  const _ThrowingCursorFactory();
+
+  @override
+  CursorBinding create({
+    required DecodeId id,
+    required EncodedSource source,
+    required int epoch,
+  }) => CursorBinding(frames: _ThrowingCursor(epoch));
+}
+
+final class _ThrowingCursor implements FrameCursor {
+  const _ThrowingCursor(this.epoch);
+
+  @override
+  final int epoch;
+
+  @override
+  Future<CursorStep> decodeNext() async => throw StateError('decode boom');
+
+  @override
+  void dispose() {}
+}
+
+final class _NoopUploader implements FrameUploader {
+  @override
+  Future<OutputFrame> upload({
+    required DecodeId id,
+    required FrameRef frame,
+  }) => throw StateError('upload must not run after decode failure');
+
+  @override
+  void release(DecodeId id) {}
+}
+
+final class _FailingSourceFactory implements SourceFactory {
+  @override
+  EncodedSource create({required int epoch, required int maxBytes}) =>
+      _FailingSource(epoch);
+}
+
+final class _FailingSource implements EncodedSource {
+  _FailingSource(this.epoch);
+
+  @override
+  int epoch;
+
+  @override
+  int get length => 0;
+
+  @override
+  bool get sealed => false;
+
+  @override
+  SourceKind get kind => SourceKind.webp;
+
+  @override
+  SourceStatus append({
+    required int epoch,
+    required int offset,
+    required List<int> bytes,
+  }) =>
+      SourceStatus.failed;
+
+  @override
+  SourceStatus reset(int epoch) {
+    this.epoch = epoch;
+    return SourceStatus.ok;
+  }
+
+  @override
+  SourceStatus seal(int epoch) => SourceStatus.failed;
+
+  @override
+  void dispose() {}
+}

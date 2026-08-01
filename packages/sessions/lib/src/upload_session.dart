@@ -138,6 +138,19 @@ final class UploadSession {
   }) async {
     _requireOpen();
     _revision = revision;
+    final decodeSnapshot = decode.snapshot;
+    if (decodeSnapshot.state == DecodeState.failed) {
+      _failure = decodeSnapshot.failure ??
+          const Failure(
+            code: ErrorCode.decode,
+            message: 'pipeline page decode failed',
+          );
+      _setState(
+        _slot == null ? UploadState.failed : UploadState.ready,
+        forceNotify: true,
+      );
+      return snapshot;
+    }
     final holder = decode.holder;
     if (holder == null || holder.isEmpty) {
       _setState(_slot == null ? UploadState.waitingFrame : UploadState.ready);
@@ -396,8 +409,11 @@ final class UploadSession {
     slot?.retire();
   }
 
-  void _setState(UploadState state) {
+  void _setState(UploadState state, {bool forceNotify = false}) {
     if (_state == state) {
+      if (forceNotify) {
+        _notifySnapshot();
+      }
       return;
     }
     _state = state;

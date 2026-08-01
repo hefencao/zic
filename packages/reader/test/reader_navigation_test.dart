@@ -487,6 +487,77 @@ void main() {
     );
   });
 
+  testWidgets('unknown vertical extents do not depend on current page',
+      (tester) async {
+    final chapter = ChapterManifest(
+      sourceId: 'source',
+      comicId: 'stable-placeholder-comic',
+      chapter: const Chapter(
+        chapterId: 'stable-placeholder-chapter',
+        comicId: 'stable-placeholder-comic',
+        title: 'stable placeholder',
+        sequence: 0,
+        pageCount: 2,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        2,
+        (index) => PageAsset(
+          pageId: 'stable-placeholder-$index',
+          chapterId: 'stable-placeholder-chapter',
+          index: index,
+          uri: Uri.parse('asset:///stable-placeholder-$index.webp'),
+        ),
+      ),
+      readingDirection: ReadingDirection.vertical,
+    );
+    final controller = ReaderController(
+      sessionId: 'reader-stable-placeholder-test',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: FakeClock(),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderView(
+          controller: controller,
+          clock: FakeClock(),
+          pageBuilder: (context, asset, reportFirstFrame) =>
+              Text(asset.pageId),
+        ),
+      ),
+    );
+    await tester.pump();
+    final first = find.byKey(
+      const ValueKey<String>('reader-vertical-page:0'),
+    );
+    final beforeFirst = tester.getSize(first).height;
+
+    controller.report(
+      ReaderObs(
+        sessionId: controller.sessionId,
+        currentIndex: 1,
+        stableIndex: 1,
+        currentCoverage: Coverage(
+          pageIndex: 1,
+          assetKey: chapter.pages[1].assetKey,
+          fraction: 1,
+        ),
+        interaction: Interaction.idle,
+        logicalPosition: 1,
+        velocity: 0,
+        direction: ReadingDirection.vertical,
+        timestamp: DateTime.utc(2026, 8, 1),
+        monotonicMicros: 1,
+      ),
+    );
+    await tester.pump();
+
+    expect(tester.getSize(first).height, beforeFirst);
+  });
+
   testWidgets('vertical geometry updates preserve the visible scroll anchor',
       (tester) async {
     final chapter = ChapterManifest(

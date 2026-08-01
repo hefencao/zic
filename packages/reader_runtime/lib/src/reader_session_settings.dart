@@ -91,6 +91,18 @@ final class AdaptiveReaderProfile {
   final bool animated;
 }
 
+AdaptiveReaderProfile runtimeAnimatedReaderProfile(
+  ChapterManifest chapter,
+) =>
+    AdaptiveReaderProfile(
+      direction: chapter.readingDirection == ReadingDirection.rtl
+          ? ReadingDirection.rtl
+          : ReadingDirection.ltr,
+      confidence: 1,
+      basis: 'runtime-animation',
+      animated: true,
+    );
+
 AdaptiveReaderProfile? classifyAdaptiveReaderLayout(ChapterManifest chapter) {
   final pages = chapter.pages;
   if (pages.isEmpty) return null;

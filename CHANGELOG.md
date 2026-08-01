@@ -1,3 +1,14 @@
+## 0.31.0-dev.79：恢复插件、封面与 Reader 流式稳定性
+
+- Venera JavaScript source operation 改为单 in-flight；Mihon 保留配置并发。删除 WebView 内 60 秒 raw `comic.loadInfo` promise/object cache，详情缓存只由 `resource_cache/catalog` 持有。
+- App 不再只把 HTTP(S) 视为 source-owned 封面。`mihon:resource:`、当前 Venera locator 等 absolute scheme 均进入 `ComicSourceResourceGateway`；`ResourceCacheManager` 合并完整 encoded-image resolution，避免同 key 重复 durable lookup 和回源。
+- DownloadSession 在 source ready、每个增量 chunk、seal 和 source failure 时通知同一 lifecycle listener；listener 晚接入 ready source 会立即收到当前 snapshot。Decode lane 因此可在 `needMoreData` 后继续，并能在最终 seal 时完成解析。
+- `DecodeSession` 将 ingress/source 和 cursor 异常保存为权威 failure；LiveCoordinator 唤醒 Upload，页面 output 显示失败，不再永久停留 loading。空 holder 的 demand 重入继续按稳定 identity 重建 cursor。
+- 连续阅读未知页面 extent 不再依赖 mutable currentIndex；异步尺寸更新只在 idle 时保持顶部可见页的像素偏移，用户拖动/惯性滚动不会被 anchor jump 竞争。
+- 运行时/header 确认 Animated WebP 后，自适应布局以 `runtime-animation` 高置信度覆盖 source vertical hint；显式漫画级方向覆盖仍优先。
+- 新增 Venera/Mihon 并发、custom locator 封面、encoded cache 合并、source growth/seal/failure、decode failure output、稳定纵向 extent 和动画方向回归及 dev.79 静态门禁。
+- 未缩小 +7/-3 下载、+2/-1 预解码、current/transition 上传或 5/3/2 lane。
+
 ## 0.31.0-dev.78：修复 Reader 等比输出、页面重入与原始 Trace 导出
 
 - 补齐 `RendererKind` 显式 domain 导入；`UploadRegistry` 不再越权读取 `PlaybackState`，改用 `UploadSession.playbackRunning`。

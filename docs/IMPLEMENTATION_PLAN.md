@@ -1,3 +1,14 @@
+## dev.79 completed
+
+1. Serialize Venera JavaScript source operations without changing Mihon concurrency or host streaming lanes, and remove the competing WebView raw `loadInfo` cache.
+2. Route all source-owned absolute artwork locators through the composition gateway and coalesce the complete encoded-image cache resolution.
+3. Project encoded source creation, growth, seal and failure through one DownloadSession lifecycle listener; make Decode/Upload terminate loading on authoritative failure.
+4. Stabilize unknown continuous-page extents and use an idle top-pixel anchor that never competes with active scrolling.
+5. Promote runtime-confirmed animation above source vertical hints while retaining explicit per-comic direction ownership.
+6. Add owner tests, ADR 0063 and dev.79 static gates; preserve media windows and lane capacities.
+
+Next validation: run Flutter analyze/package/App tests and Android debug/release. On device repeatedly refresh Venera details across runtime lifetime, restart Home with cold/warm custom-locator covers, verify partial Animated WebP starts before seal and resumes after scrolling away/back, confirm failures become visible, verify continuous scrolling does not pull back, and confirm adaptive animation switches to paged only after runtime/header evidence.
+
 ## dev.78 completed
 
 1. Close the reported RendererKind and PlaybackState compile gaps at their real owners.
