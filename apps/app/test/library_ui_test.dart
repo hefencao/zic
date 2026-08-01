@@ -49,8 +49,12 @@ Widget _localDetailsScreen({
     reloadLibrary: ({required bool refreshContent}) async => snapshot,
     onPreferenceChanged: onPreferenceChanged,
     onReadChanged: onReadChanged,
-    onOpenChapter: (chapter, {required bool refreshRemote}) =>
-        onOpenChapter(chapter),
+    onOpenChapter: (
+      loadChapter, {
+      required bool refreshRemote,
+      required String title,
+    }) async =>
+        onOpenChapter(await loadChapter()),
     onDownloadChapter: (_) async {},
     inspectChapterDownload: (chapter) async =>
         ChapterDownloadSnapshot.idle(chapter),

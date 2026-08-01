@@ -154,6 +154,25 @@ void main() {
     expect(snapshots.last.sealed, isTrue);
   });
 
+  test('snapshot owns the resume baseline for one network run', () async {
+    var writer = session.acquireWriter();
+    expect(session.snapshot.networkStartLength, 0);
+    await session.append(writer, 0, <int>[1, 2, 3]);
+    await session.fail(
+      writer,
+      const Failure(code: ErrorCode.network, message: 'controlled pause'),
+    );
+
+    session.queue();
+    expect(session.snapshot.networkStartLength, 3);
+    writer = session.acquireWriter();
+    expect(session.snapshot.networkStartLength, 3);
+    await session.append(writer, 3, <int>[4, 5]);
+
+    expect(session.snapshot.committedLength, 5);
+    expect(session.snapshot.networkStartLength, 3);
+  });
+
   test('run lease serializes active transport work', () {
     final run = session.beginRun();
     expect(session.activeRun, isTrue);

@@ -376,9 +376,6 @@ final class _RuntimeBrowsableComicSource
 
   @override
   Future<ComicResourceRequest> resolveResource(Uri uri) async {
-    if (_format != ExternalComicPluginFormat.veneraJavaScript) {
-      return ComicResourceRequest(uri: uri, requiresRuntimeTransform: true);
-    }
     final payload = await _invoke(
       ExternalPluginRuntimeOperation.resolveResource,
       _externalId,
@@ -389,8 +386,11 @@ final class _RuntimeBrowsableComicSource
 
   @override
   Future<ComicResourceRequest?> retryResource(Uri uri) async {
-    if (_format != ExternalComicPluginFormat.veneraJavaScript) {
-      return null;
+    if (_format == ExternalComicPluginFormat.mihonExtension) {
+      // A failed host-side stream can mean that a deferred Mihon page URL or
+      // source header has expired. Resolve a fresh request plan while keeping
+      // the image body on the shared host transport path.
+      return resolveResource(uri);
     }
     final payload = await _invoke(
       ExternalPluginRuntimeOperation.retryResource,

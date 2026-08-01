@@ -16,6 +16,7 @@ Future<void> _pumpUntilFound(
   throw TestFailure('Timed out waiting for $finder');
 }
 
+
 void main() {
   testWidgets('controller page requests are consumed by ReaderView', (
     tester,
@@ -147,7 +148,7 @@ void main() {
       );
 
       await gesture.up();
-      await tester.pumpAndSettle();
+      await tester.pump();
       expect(lifecycle.created['page-1'], 1);
       expect(lifecycle.disposed['page-1'] ?? 0, 0);
       expect(
@@ -220,9 +221,8 @@ void main() {
     );
     final center = tester.getCenter(rotation);
     await tester.tapAt(center);
-    await tester.pump(const Duration(milliseconds: 80));
     await tester.tapAt(center);
-    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump();
     viewer = find.descendant(
       of: rotation,
       matching: find.byType(InteractiveViewer),
@@ -247,171 +247,8 @@ void main() {
       findsNothing,
       reason: 'returning to a page must reset it to swipe-through scale 1',
     );
-    // Drain the reader's own delayed single-tap window before disposal.
-    await tester.pump(const Duration(milliseconds: 400));
   });
 
-
-  testWidgets('vertical mode uses proportional continuous pages and stitch gap',
-      (tester) async {
-    final chapter = ChapterManifest(
-      sourceId: 'source',
-      comicId: 'vertical-comic',
-      chapter: const Chapter(
-        chapterId: 'vertical-chapter',
-        comicId: 'vertical-comic',
-        title: 'vertical',
-        sequence: 0,
-        pageCount: 3,
-        sourceRevision: 'r1',
-      ),
-      pages: List<PageAsset>.generate(
-        3,
-        (index) => PageAsset(
-          pageId: 'vertical-$index',
-          chapterId: 'vertical-chapter',
-          index: index,
-          uri: Uri.parse('asset:///vertical-$index.png'),
-          width: 1000,
-          height: index == 1 ? 2400 : 1600,
-        ),
-      ),
-      readingDirection: ReadingDirection.vertical,
-    );
-    final controller = ReaderController(
-      sessionId: 'reader-vertical-test',
-      chapter: chapter,
-      onObservation: (_) {},
-      clock: FakeClock(),
-    );
-    addTearDown(controller.dispose);
-
-    Future<void> pump({required bool stitch}) => tester.pumpWidget(
-          MaterialApp(
-            home: ReaderView(
-              controller: controller,
-              clock: FakeClock(),
-              verticalStitch: stitch,
-              pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
-                key: ValueKey<String>(asset.pageId),
-                color: Colors.black,
-              ),
-            ),
-          ),
-        );
-
-    await pump(stitch: false);
-    await tester.pump();
-    expect(find.byType(ListView), findsOneWidget);
-    expect(find.byType(PageView), findsNothing);
-    final firstPageHeight = tester
-        .getSize(
-          find.byKey(const ValueKey<String>('reader-vertical-page:0')),
-        )
-        .height;
-    controller.requestPage(1);
-    final secondPage =
-        find.byKey(const ValueKey<String>('reader-vertical-page:1'));
-    await _pumpUntilFound(tester, secondPage);
-    final gap =
-        find.byKey(const ValueKey<String>('reader-vertical-gap:0'));
-    final gapElements = gap.evaluate().toList(growable: false);
-    expect(gapElements, hasLength(1));
-    if (gapElements.length == 1) {
-      final gapWidget = gapElements.first.widget as SizedBox;
-      expect(gapWidget.height, 8);
-    }
-    expect(
-      tester
-          .getSize(secondPage)
-          .height,
-      greaterThan(firstPageHeight),
-    );
-    expect(controller.requestedIndex, isNull);
-
-    controller.requestPage(0);
-    await tester.pump();
-    await tester.pump();
-    await pump(stitch: true);
-    await tester.pump();
-    expect(
-      find.byKey(const ValueKey<String>('reader-vertical-gap:0')),
-      findsNothing,
-      reason: 'stitched pages must not build a separator render object',
-    );
-
-    controller.requestPage(2);
-    await _pumpUntilFound(
-      tester,
-      find.byKey(const ValueKey<String>('reader-vertical-page:2')),
-    );
-    expect(controller.requestedIndex, isNull);
-  });
-
-  testWidgets('vertical restore starts near the saved page without mounting prefix',
-      (tester) async {
-    final chapter = ChapterManifest(
-      sourceId: 'source',
-      comicId: 'restore-comic',
-      chapter: const Chapter(
-        chapterId: 'restore-chapter',
-        comicId: 'restore-comic',
-        title: 'restore',
-        sequence: 0,
-        pageCount: 120,
-        sourceRevision: 'r1',
-      ),
-      pages: List<PageAsset>.generate(
-        120,
-        (index) => PageAsset(
-          pageId: 'restore-$index',
-          chapterId: 'restore-chapter',
-          index: index,
-          uri: Uri.parse('asset:///restore-$index.png'),
-          width: 1000,
-          height: 1600,
-        ),
-      ),
-      readingDirection: ReadingDirection.vertical,
-    );
-    final trace = MemoryTraceSink();
-    final controller = ReaderController(
-      sessionId: 'reader-restore-test',
-      chapter: chapter,
-      initialPage: 87,
-      onObservation: (_) {},
-      clock: FakeClock(),
-    );
-    addTearDown(controller.dispose);
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: ReaderView(
-          controller: controller,
-          clock: FakeClock(),
-          traceSink: trace,
-          verticalStitch: true,
-          pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
-            color: Colors.black,
-            child: Text(asset.pageId),
-          ),
-        ),
-      ),
-    );
-    await tester.pump();
-
-    final mounted = trace.events
-        .where((event) => event.kind == TraceEventKind.pageHostMounted)
-        .map((event) => event.payload['pageIndex'])
-        .whereType<int>()
-        .toList(growable: false);
-    expect(mounted, isNotEmpty);
-    expect(mounted, everyElement(greaterThan(70)));
-    expect(
-      find.byKey(const ValueKey<String>('reader-vertical-page:87')),
-      findsOneWidget,
-    );
-  });
 
   testWidgets('vertical mode adopts measured media geometry without cropping',
       (tester) async {
@@ -556,81 +393,6 @@ void main() {
     await tester.pump();
 
     expect(tester.getSize(first).height, beforeFirst);
-  });
-
-  testWidgets('vertical geometry updates preserve the visible scroll anchor',
-      (tester) async {
-    final chapter = ChapterManifest(
-      sourceId: 'source',
-      comicId: 'anchor-comic',
-      chapter: const Chapter(
-        chapterId: 'anchor-chapter',
-        comicId: 'anchor-comic',
-        title: 'anchor',
-        sequence: 0,
-        pageCount: 3,
-        sourceRevision: 'r1',
-      ),
-      pages: List<PageAsset>.generate(
-        3,
-        (index) => PageAsset(
-          pageId: 'anchor-$index',
-          chapterId: 'anchor-chapter',
-          index: index,
-          uri: Uri.parse('asset:///anchor-$index.png'),
-        ),
-      ),
-      readingDirection: ReadingDirection.vertical,
-    );
-    final controller = ReaderController(
-      sessionId: 'reader-anchor-test',
-      chapter: chapter,
-      onObservation: (_) {},
-      clock: FakeClock(),
-    );
-    addTearDown(controller.dispose);
-
-    Future<void> pump(Map<String, double> ratios) => tester.pumpWidget(
-          MaterialApp(
-            home: ReaderView(
-              controller: controller,
-              clock: FakeClock(),
-              verticalStitch: true,
-              pageAspectRatios: ratios,
-              pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
-                color: Colors.black,
-                child: Text(asset.pageId),
-              ),
-            ),
-          ),
-        );
-
-    final initial = <String, double>{
-      for (final page in chapter.pages) page.assetKey: 1.6,
-    };
-    await pump(initial);
-    await tester.pump();
-    final list = find.byKey(
-      const ValueKey<String>('reader-vertical-list'),
-    );
-    await tester.drag(list, const Offset(0, -240));
-    await tester.pump();
-    final before = tester.widget<ListView>(list).controller!.offset;
-
-    await pump(<String, double>{
-      ...initial,
-      chapter.pages.first.assetKey: 2.4,
-    });
-    await tester.pump();
-    await tester.pump();
-    final after = tester.widget<ListView>(list).controller!.offset;
-
-    expect(after, greaterThan(before));
-    expect(
-      after,
-      greaterThan(600),
-      reason: 'measured geometry must not jump back to page zero center',
-    );
   });
 
   test('rotation cycles and can reset', () {

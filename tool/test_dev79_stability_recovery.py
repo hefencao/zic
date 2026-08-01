@@ -48,11 +48,12 @@ assert '_sourceRevisions[id] = snapshot.revision;' in coordinator
 assert 'Every emitted ingress lifecycle change can unblock or terminate decode' in coordinator
 
 reader = text('packages/reader/lib/src/reader_view.dart')
-extent = reader[reader.index('  double _verticalExtent('):reader.index('  double _verticalGapFor')]
-assert 'widget.controller.currentIndex' not in extent
-assert 'if (!hasMeasuredRatio)' in extent
-assert 'final top = metrics.pixels;' in reader
-assert 'anchor.offset.clamp' in reader
+geometry = text('packages/reader/lib/src/vertical_reader_geometry.dart')
+assert 'currentIndex' not in geometry
+assert 'if (!hasMeasuredRatio)' in geometry
+assert 'anchorForTop(' in reader
+assert 'restoreTop(' in reader
+assert 'anchor.offset.clamp' in geometry
 
 settings = text('packages/reader_runtime/lib/src/reader_session_settings.dart')
 runtime = text('packages/reader_runtime/lib/src/reader_runtime_screen.dart')

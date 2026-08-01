@@ -15,7 +15,20 @@ import 'package:transport/transport.dart';
 /// DownloadSession. Complete image bodies never cross the plugin RPC fast path.
 typedef ExternalPluginResourceResponseLoader = TransportResponseLoader;
 
+/// Optional host transport capability after request normalization.
+///
+/// App composition normally leaves this null and uses the shared [HttpClient].
+/// Alternative hosts and owner-package tests can provide the same streaming
+/// response contract without changing request-plan or DownloadSession logic.
+typedef SourceResourceDirectOpen = Future<ByteResponse> Function(
+  ComicResourceRequest request,
+);
+
 final class ExternalPluginResourceTransportPool {
+  ExternalPluginResourceTransportPool({SourceResourceDirectOpen? directOpen})
+      : _directOpen = directOpen;
+
+  final SourceResourceDirectOpen? _directOpen;
   final Map<String, _SourceResourceTransport> _transports =
       <String, _SourceResourceTransport>{};
 
@@ -26,7 +39,7 @@ final class ExternalPluginResourceTransportPool {
     final sourceId = source.sourceId;
     final transport = _transports.putIfAbsent(
       sourceId,
-      () => _SourceResourceTransport(source),
+      () => _SourceResourceTransport(source, _directOpen),
     );
     transport.updateSource(source);
     return ({ByteRange? range, Validators? validators}) => transport.open(
@@ -45,7 +58,7 @@ final class ExternalPluginResourceTransportPool {
 }
 
 final class _SourceResourceTransport implements Transport {
-  _SourceResourceTransport(this._source) {
+  _SourceResourceTransport(this._source, this._directOpen) {
     _client.connectionTimeout = const Duration(seconds: 15);
     _client.userAgent = 'zic-venera/0.31.0';
     _client.autoUncompress = false;
@@ -55,6 +68,7 @@ final class _SourceResourceTransport implements Transport {
   static const _maxRequestPlans = 256;
 
   BrowsableComicSource _source;
+  final SourceResourceDirectOpen? _directOpen;
   final HttpClient _client = HttpClient();
   final Map<Uri, Future<ComicResourceRequest>> _requestLoads =
       <Uri, Future<ComicResourceRequest>>{};
@@ -97,57 +111,26 @@ final class _SourceResourceTransport implements Transport {
       _invalidate(uri);
       final retry = await _retry(uri);
       if (retry == null) rethrow;
-      if (retry.requiresRuntimeTransform) {
-        return _openRuntimeFallback(uri, range: range, validators: validators);
-      }
-      return _openDirect(
+      return _openRetryPlan(
         uri,
         retry,
         range: range,
         validators: validators,
       );
-    } on SocketException catch (error) {
+    } on IOException catch (error) {
       _invalidate(uri);
       final retry = await _retry(uri);
       if (retry != null) {
-        return retry.requiresRuntimeTransform
-            ? _openRuntimeFallback(
-                uri,
-                range: range,
-                validators: validators,
-              )
-            : _openDirect(
-                uri,
-                retry,
-                range: range,
-                validators: validators,
-              );
+        return _openRetryPlan(
+          uri,
+          retry,
+          range: range,
+          validators: validators,
+        );
       }
       throw Failure(
         code: ErrorCode.network,
-        message: 'source resource socket failure for ${request.uri}',
-        cause: error,
-      );
-    } on HttpException catch (error) {
-      _invalidate(uri);
-      final retry = await _retry(uri);
-      if (retry != null) {
-        return retry.requiresRuntimeTransform
-            ? _openRuntimeFallback(
-                uri,
-                range: range,
-                validators: validators,
-              )
-            : _openDirect(
-                uri,
-                retry,
-                range: range,
-                validators: validators,
-              );
-      }
-      throw Failure(
-        code: ErrorCode.network,
-        message: 'source resource HTTP failure for ${request.uri}',
+        message: 'source resource transport failure for ${request.uri}',
         cause: error,
       );
     }
@@ -220,44 +203,64 @@ final class _SourceResourceTransport implements Transport {
     _requestPlans.remove(locator);
   }
 
+  Future<ByteResponse> _openRetryPlan(
+    Uri locator,
+    ComicResourceRequest request, {
+    ByteRange? range,
+    Validators? validators,
+  }) async {
+    if (request.requiresRuntimeTransform) {
+      return _openRuntimeFallback(
+        locator,
+        range: range,
+        validators: validators,
+      );
+    }
+    try {
+      return await _openDirect(
+        locator,
+        request,
+        range: range,
+        validators: validators,
+      );
+    } on Failure catch (error) {
+      if (error.code != ErrorCode.network) rethrow;
+    } on IOException {
+      // A source-owned OkHttp interceptor, cookie jar or TLS stack can make
+      // the host request unusable. Preserve complete-body compatibility only
+      // after the streaming request plan has actually failed.
+    }
+    return _openRuntimeFallback(
+      locator,
+      range: range,
+      validators: validators,
+    );
+  }
+
   Future<ByteResponse> _openDirect(
     Uri locator,
     ComicResourceRequest spec, {
     ByteRange? range,
     Validators? validators,
   }) async {
-    final method = spec.method.trim().toUpperCase();
-    final request = await _client.openUrl(method, spec.uri);
+    final normalized = normalizeSourceResourceRequest(
+      spec,
+      range: range,
+      validators: validators,
+    );
+    final directOpen = _directOpen;
+    if (directOpen != null) {
+      return directOpen(normalized);
+    }
+    final method = normalized.method;
+    final request = await _client.openUrl(method, normalized.uri);
     request.followRedirects = true;
     request.maxRedirects = 8;
-    for (final entry in spec.headers.entries) {
-      final lower = entry.key.toLowerCase();
-      if ((method == 'GET' || method == 'HEAD') &&
-          (lower == HttpHeaders.contentLengthHeader ||
-              lower == HttpHeaders.contentTypeHeader ||
-              lower == HttpHeaders.transferEncodingHeader)) {
-        continue;
-      }
+    for (final entry in normalized.headers.entries) {
       request.headers.set(entry.key, entry.value);
     }
-    if (request.headers.value(HttpHeaders.acceptEncodingHeader) == null) {
-      request.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
-    }
-    if (range != null && (method == 'GET' || method == 'HEAD')) {
-      request.headers.set(HttpHeaders.rangeHeader, range.toString());
-      final ifRange = validators?.etag ??
-          (validators?.lastModified == null
-              ? null
-              : HttpDate.format(validators!.lastModified!.toUtc()));
-      if (ifRange != null) {
-        request.headers.set(HttpHeaders.ifRangeHeader, ifRange);
-      }
-    }
-    final requestBody = spec.body;
-    if (requestBody != null &&
-        requestBody.isNotEmpty &&
-        method != 'GET' &&
-        method != 'HEAD') {
+    final requestBody = normalized.body;
+    if (requestBody != null && requestBody.isNotEmpty) {
       request.add(requestBody);
     }
     final response = await request.close();
@@ -266,7 +269,7 @@ final class _SourceResourceTransport implements Transport {
       await _abortHttpResponse(response);
       throw Failure(
         code: ErrorCode.network,
-        message: 'HTTP ${response.statusCode} for ${spec.uri}',
+        message: 'HTTP ${response.statusCode} for ${normalized.uri}',
       );
     }
     final parsedRange = _parseContentRange(
@@ -330,6 +333,51 @@ final class _SourceResourceTransport implements Transport {
     _requestPlans.clear();
     _client.close(force: true);
   }
+}
+
+
+ComicResourceRequest normalizeSourceResourceRequest(
+  ComicResourceRequest spec, {
+  ByteRange? range,
+  Validators? validators,
+}) {
+  range?.validate();
+  final method = spec.method.trim().toUpperCase();
+  final entityless = method == 'GET' || method == 'HEAD';
+  final headers = <String, String>{};
+  var hasAcceptEncoding = false;
+  for (final entry in spec.headers.entries) {
+    final lower = entry.key.toLowerCase();
+    if (entityless &&
+        (lower == HttpHeaders.contentLengthHeader ||
+            lower == HttpHeaders.contentTypeHeader ||
+            lower == HttpHeaders.transferEncodingHeader)) {
+      continue;
+    }
+    if (lower == HttpHeaders.acceptEncodingHeader) {
+      hasAcceptEncoding = true;
+    }
+    headers[entry.key] = entry.value;
+  }
+  if (!hasAcceptEncoding) {
+    headers[HttpHeaders.acceptEncodingHeader] = 'identity';
+  }
+  if (range != null && entityless) {
+    headers[HttpHeaders.rangeHeader] = range.toString();
+    final ifRange = validators?.etag ??
+        (validators?.lastModified == null
+            ? null
+            : HttpDate.format(validators!.lastModified!.toUtc()));
+    if (ifRange != null) {
+      headers[HttpHeaders.ifRangeHeader] = ifRange;
+    }
+  }
+  return ComicResourceRequest(
+    uri: spec.uri,
+    method: method,
+    headers: headers,
+    body: entityless ? null : spec.body,
+  );
 }
 
 final class _RequestPlanEntry {

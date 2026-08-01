@@ -35,21 +35,29 @@ reader_binding_test = (
 if "unchanged demand roles still update viewport playback" not in reader_binding_test:
     raise SystemExit('viewport updates are not covered independently from demand roles')
 
+geometry_test = (
+    ROOT / 'packages/reader/test/vertical_reader_geometry_test.dart'
+).read_text(encoding='utf-8')
+for token in (
+    'ReaderVerticalGeometry(',
+    'readerVerticalPageGap',
+    'boundsAt(1)',
+    'anchorForTop(top)',
+    'restoreTop(anchor)',
+):
+    if token not in geometry_test:
+        raise SystemExit(f'pure vertical geometry regression coverage is missing: {token}')
+
 reader_test = (ROOT / 'packages/reader/test/reader_navigation_test.dart').read_text(
     encoding='utf-8'
 )
-case = reader_test.split(
-    "testWidgets('vertical mode uses proportional continuous pages and stitch gap'",
-    1,
-)[1].split("testWidgets('vertical mode adopts measured media geometry", 1)[0]
-for token in (
-    'final gapElements = gap.evaluate().toList(growable: false)',
-    'expect(gapElements, hasLength(1))',
-    'gapElements.first.widget as SizedBox',
+for unstable in (
+    '_pumpUntilCondition',
+    'Future.delayed(',
+    'gap.evaluate().toList',
+    'tester.widget<SizedBox>(gap)',
 ):
-    if token not in case:
-        raise SystemExit(f'vertical navigation regression test is missing: {token}')
-if 'tester.widget<SizedBox>(gap)' in case or '.single' in case:
-    raise SystemExit('vertical navigation test still assumes a lazy child exists')
+    if unstable in reader_test:
+        raise SystemExit(f'vertical Reader widget tests restored timing/lazy-child coupling: {unstable}')
 
 print('Pipeline demand stability and vertical test contract: OK')

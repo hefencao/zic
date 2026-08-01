@@ -74,8 +74,6 @@ final class PipelineTransferProgressPublisher {
   final Map<String, DownloadSession> _sessions = <String, DownloadSession>{};
   final Map<DownloadSession, DownloadSnapshotListener> _listeners =
       <DownloadSession, DownloadSnapshotListener>{};
-  final Map<DownloadSession, int> _existingBytes = <DownloadSession, int>{};
-  final Set<DownloadSession> _networkStarted = <DownloadSession>{};
   String? _currentKey;
   bool _scheduled = false;
   bool _disposed = false;
@@ -83,18 +81,7 @@ final class PipelineTransferProgressPublisher {
   void observe(DownloadSession session) {
     if (_disposed || _listeners.containsKey(session)) return;
     _sessions[session.id.key] = session;
-    _existingBytes[session] = session.committedLength;
-    void listener(DownloadSnapshot snapshot) {
-      if (!_networkStarted.contains(session)) {
-        if (snapshot.state == DownloadState.queued ||
-            snapshot.state == DownloadState.receiving) {
-          _networkStarted.add(session);
-        } else {
-          _existingBytes[session] = snapshot.committedLength;
-        }
-      }
-      _requestPublish();
-    }
+    void listener(DownloadSnapshot _) => _requestPublish();
     _listeners[session] = listener;
     session.addSnapshotListener(listener);
     _requestPublish();
@@ -158,7 +145,7 @@ final class PipelineTransferProgressPublisher {
     _set(
       PipelineTransferProgress(
         active: true,
-        existingBytes: (_existingBytes[session] ?? 0)
+        existingBytes: snapshot.networkStartLength
             .clamp(0, snapshot.committedLength)
             .toInt(),
         committedBytes: snapshot.committedLength,
@@ -179,8 +166,6 @@ final class PipelineTransferProgressPublisher {
     }
     _listeners.clear();
     _sessions.clear();
-    _existingBytes.clear();
-    _networkStarted.clear();
     notifier.dispose();
   }
 }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:domain/domain.dart';
 import 'package:media/media.dart';
 import 'package:pipeline/pipeline.dart';
@@ -92,6 +94,9 @@ final class UploadSession {
   bool _userPaused = false;
   bool _viewportFrozen = false;
   double _playbackSpeed = 1;
+  Future<void> _prepareTail = Future<void>.value();
+  int _pendingPrepares = 0;
+  bool _releaseUploaderWhenIdle = false;
 
   final Set<UploadSnapshotListener> _listeners =
       <UploadSnapshotListener>{};
@@ -135,9 +140,31 @@ final class UploadSession {
     required UploadDemand demand,
     required int revision,
     required CancelToken cancel,
-  }) async {
+  }) {
     _requireOpen();
+    _releaseUploaderWhenIdle = false;
     _revision = revision;
+    return _serializePrepare(
+      () => _prepareNow(
+        demand: demand,
+        revision: revision,
+        cancel: cancel,
+      ),
+    );
+  }
+
+  Future<UploadSnapshot> _prepareNow({
+    required UploadDemand demand,
+    required int revision,
+    required CancelToken cancel,
+  }) async {
+    cancel.throwIfCancelled();
+    if (_revision != revision) {
+      throw const Failure(
+        code: ErrorCode.cancelled,
+        message: 'upload demand was superseded before preparation started',
+      );
+    }
     final decodeSnapshot = decode.snapshot;
     if (decodeSnapshot.state == DecodeState.failed) {
       _failure = decodeSnapshot.failure ??
@@ -168,6 +195,12 @@ final class UploadSession {
     late final OutputFrame uploaded;
     try {
       cancel.throwIfCancelled();
+      if (_revision != revision || decode.holder?.epoch != _epoch) {
+        throw const Failure(
+          code: ErrorCode.cancelled,
+          message: 'upload demand changed before platform upload started',
+        );
+      }
       final candidate = await uploader.upload(id: id, frame: claim.frame);
       if (cancel.cancelled ||
           _revision != revision ||
@@ -202,6 +235,13 @@ final class UploadSession {
       }
       uploaded = candidate;
     } on Failure catch (error) {
+      if (_revision != revision || cancel.cancelled) {
+        throw Failure(
+          code: ErrorCode.cancelled,
+          message: 'superseded frame upload ended after its demand changed',
+          cause: error,
+        );
+      }
       _failure = error;
       _setState(
         _slot != null
@@ -212,6 +252,13 @@ final class UploadSession {
       );
       rethrow;
     } on Object catch (error) {
+      if (_revision != revision || cancel.cancelled) {
+        throw Failure(
+          code: ErrorCode.cancelled,
+          message: 'superseded frame upload ended after its demand changed',
+          cause: error,
+        );
+      }
       final failure = Failure(
         code: ErrorCode.texture,
         message: 'frame upload failed',
@@ -259,7 +306,7 @@ final class UploadSession {
     _playback.clear();
     _slot = null;
     slot.retire();
-    uploader.release(id);
+    _requestUploaderRelease();
     _setState(UploadState.waitingFrame);
     return bytes;
   }
@@ -375,7 +422,7 @@ final class UploadSession {
     _requireOpen();
     _revision++;
     _retireCurrent();
-    uploader.release(id);
+    _requestUploaderRelease();
     _setState(UploadState.idle);
   }
 
@@ -384,7 +431,7 @@ final class UploadSession {
     _revision++;
     _epoch = epoch;
     _retireCurrent();
-    uploader.release(id);
+    _requestUploaderRelease();
     _failure = null;
     _setState(UploadState.idle);
   }
@@ -395,7 +442,7 @@ final class UploadSession {
     }
     _revision++;
     _retireCurrent();
-    uploader.release(id);
+    _requestUploaderRelease();
     _state = UploadState.disposed;
     _notifySnapshot();
     _listeners.clear();
@@ -407,6 +454,39 @@ final class UploadSession {
     final slot = _slot;
     _slot = null;
     slot?.retire();
+  }
+
+  Future<T> _serializePrepare<T>(Future<T> Function() operation) {
+    final result = Completer<T>();
+    _pendingPrepares++;
+    _prepareTail = _prepareTail.then<void>((_) async {
+      try {
+        result.complete(await operation());
+      } on Object catch (error, stackTrace) {
+        result.completeError(error, stackTrace);
+      } finally {
+        _pendingPrepares--;
+        _flushUploaderRelease();
+      }
+    });
+    return result.future;
+  }
+
+  void _requestUploaderRelease() {
+    if (_pendingPrepares == 0) {
+      _releaseUploaderWhenIdle = false;
+      uploader.release(id);
+      return;
+    }
+    _releaseUploaderWhenIdle = true;
+  }
+
+  void _flushUploaderRelease() {
+    if (_pendingPrepares != 0 || !_releaseUploaderWhenIdle) {
+      return;
+    }
+    _releaseUploaderWhenIdle = false;
+    uploader.release(id);
   }
 
   void _setState(UploadState state, {bool forceNotify = false}) {

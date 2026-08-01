@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:domain/domain.dart';
@@ -160,6 +161,173 @@ void main() {
     expect(ready.state, UploadState.ready);
     expect(upload.frame?.width, 4);
     expect(upload.frame?.height, 8);
+
+    upload.dispose();
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
+  test('detach waits for an active upload before releasing the platform slot',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('upload_detach_test_');
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: _CursorFactory(),
+      clock: _Clock(),
+    );
+    await decode.fill(
+      demand: const DecodeDemand(
+        role: PageRole.current,
+        priority: 1000,
+        targetWatermark: 1,
+        reason: 'detach-race',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    final uploader = _ControlledUploader();
+    final upload = UploadSession(
+      id: decode.id,
+      decode: decode,
+      uploader: uploader,
+      clock: _Clock(),
+    );
+
+    final preparing = upload.prepare(
+      demand: const UploadDemand(
+        role: PageRole.current,
+        priority: 1000,
+        reason: 'detach-race',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    await uploader.started.future;
+    upload.detach();
+    expect(uploader.released, isEmpty);
+
+    uploader.complete();
+    await expectLater(
+      preparing,
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.cancelled,
+      )),
+    );
+    expect(uploader.released, <DecodeId>[decode.id]);
+    expect(uploader.output?.disposed, isTrue);
+    expect(upload.state, UploadState.idle);
+
+    upload.dispose();
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
+  test('superseded uploads serialize one platform slot per decode identity',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('upload_serial_test_');
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: _CursorFactory(),
+      clock: _Clock(),
+    );
+    await decode.fill(
+      demand: const DecodeDemand(
+        role: PageRole.current,
+        priority: 1000,
+        targetWatermark: 2,
+        reason: 'serial-upload',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    final uploader = _SequencedControlledUploader();
+    final upload = UploadSession(
+      id: decode.id,
+      decode: decode,
+      uploader: uploader,
+      clock: _Clock(),
+    );
+
+    final first = upload.prepare(
+      demand: const UploadDemand(
+        role: PageRole.current,
+        priority: 1000,
+        reason: 'first',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    await uploader.firstStarted.future;
+    final second = upload.prepare(
+      demand: const UploadDemand(
+        role: PageRole.current,
+        priority: 1000,
+        reason: 'replacement',
+        expirationRevision: 2,
+      ),
+      revision: 2,
+      cancel: CancelToken(),
+    );
+
+    expect(uploader.calls, 1, reason: 'same DecodeId must not upload concurrently');
+    uploader.complete(0);
+    await expectLater(
+      first,
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.cancelled,
+      )),
+    );
+    await uploader.secondStarted.future;
+    expect(uploader.calls, 2);
+    uploader.complete(1);
+    final ready = await second;
+
+    expect(ready.state, UploadState.ready);
+    expect(ready.frameIndex, 0);
+    expect(uploader.outputs[0].disposed, isTrue);
+    expect(uploader.outputs[1].disposed, isFalse);
 
     upload.dispose();
     decode.dispose();
@@ -403,6 +571,72 @@ final class _Uploader implements FrameUploader {
     outputs.add(output);
     return output;
   }
+
+  @override
+  void release(DecodeId id) => released.add(id);
+}
+
+final class _ControlledUploader implements FrameUploader {
+  final Completer<void> started = Completer<void>();
+  final Completer<OutputFrame> _result = Completer<OutputFrame>();
+  final List<DecodeId> released = <DecodeId>[];
+  _Output? output;
+
+  @override
+  Future<OutputFrame> upload({
+    required DecodeId id,
+    required FrameRef frame,
+  }) {
+    output = _Output(
+      epoch: frame.epoch,
+      index: frame.index,
+      width: frame.width,
+      height: frame.height,
+    );
+    if (!started.isCompleted) started.complete();
+    return _result.future;
+  }
+
+  void complete() {
+    _result.complete(output!);
+  }
+
+  @override
+  void release(DecodeId id) => released.add(id);
+}
+
+final class _SequencedControlledUploader implements FrameUploader {
+  final Completer<void> firstStarted = Completer<void>();
+  final Completer<void> secondStarted = Completer<void>();
+  final List<Completer<OutputFrame>> _results = <Completer<OutputFrame>>[];
+  final List<_Output> outputs = <_Output>[];
+  final List<DecodeId> released = <DecodeId>[];
+  int calls = 0;
+
+  @override
+  Future<OutputFrame> upload({
+    required DecodeId id,
+    required FrameRef frame,
+  }) {
+    final call = calls++;
+    final output = _Output(
+      epoch: frame.epoch,
+      index: frame.index,
+      width: frame.width,
+      height: frame.height,
+    );
+    outputs.add(output);
+    final result = Completer<OutputFrame>();
+    _results.add(result);
+    if (call == 0) {
+      firstStarted.complete();
+    } else if (call == 1) {
+      secondStarted.complete();
+    }
+    return result.future;
+  }
+
+  void complete(int index) => _results[index].complete(outputs[index]);
 
   @override
   void release(DecodeId id) => released.add(id);

@@ -26,7 +26,34 @@ void main() {
     );
 
     expect(tester.getSize(find.byKey(childKey)), const Size(200, 50));
+    final fitted = tester.widget<FittedBox>(find.descendant(
+      of: find.byKey(mediaAspectViewportKey),
+      matching: find.byType(FittedBox),
+    ));
+    expect(fitted.alignment, Alignment.center);
     expect(find.byKey(mediaAspectViewportKey), findsOneWidget);
+  });
+
+  testWidgets('continuous fitWidth keeps the media centered', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          width: 200,
+          height: 200,
+          child: MediaAspectViewport(
+            dimensions: const Size(100, 400),
+            fit: BoxFit.fitWidth,
+            builder: (_) => const ColoredBox(color: Colors.black),
+          ),
+        ),
+      ),
+    );
+
+    final fitted = tester.widget<FittedBox>(find.descendant(
+      of: find.byKey(mediaAspectViewportKey),
+      matching: find.byType(FittedBox),
+    ));
+    expect(fitted.alignment, Alignment.center);
   });
 
   testWidgets('unknown intrinsic size keeps requested fit instead of filling',

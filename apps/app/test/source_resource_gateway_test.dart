@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
@@ -32,21 +31,11 @@ void main() {
     expect(downloads.access, isNull);
   });
 
-  test('artwork cache uses the shared request-plan transport', () async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    var requests = 0;
-    server.listen((request) async {
-      requests += 1;
-      request.response
-        ..statusCode = HttpStatus.ok
-        ..contentLength = 4
-        ..add(<int>[0xff, 0xd8, 0xff, 0xd9]);
-      await request.response.close();
-    });
-    addTearDown(() => server.close(force: true));
-
+  test('artwork cache coalesces one source request-plan resolution', () async {
+    final locator = Uri.parse('mihon:resource:cover');
     final source = _ResolvedSource(
-      Uri.parse('http://${server.address.host}:${server.port}/cover.webp'),
+      resolvedUri: locator,
+      bytes: Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 0xd9]),
     );
     final gateway = ComicSourceResourceGateway(
       sourceForId: (sourceId) => sourceId == source.sourceId ? source : null,
@@ -55,7 +44,6 @@ void main() {
     addTearDown(gateway.close);
     addTearDown(cache.close);
 
-    final locator = Uri.https('catalog.invalid', '/cover.webp');
     final first = await gateway.loadArtworkBytes(
       cache: cache,
       sourceId: source.sourceId,
@@ -72,8 +60,7 @@ void main() {
     expect(first, <int>[0xff, 0xd8, 0xff, 0xd9]);
     expect(second, first);
     expect(source.resolveCalls, 1);
-    expect(source.loads, 0);
-    expect(requests, 1);
+    expect(source.loads, 1);
   });
 
   test('custom source artwork locator coalesces one runtime fallback',
@@ -111,19 +98,10 @@ void main() {
 
   test('invalid artwork responses are not persisted as cover cache hits',
       () async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    var requests = 0;
-    server.listen((request) async {
-      requests += 1;
-      request.response
-        ..statusCode = HttpStatus.ok
-        ..add(<int>[0x3c, 0x68, 0x74, 0x6d, 0x6c, 0x3e]);
-      await request.response.close();
-    });
-    addTearDown(() => server.close(force: true));
-
+    final locator = Uri.parse('mihon:resource:invalid-cover');
     final source = _ResolvedSource(
-      Uri.parse('http://${server.address.host}:${server.port}/cover.jpg'),
+      resolvedUri: locator,
+      bytes: Uint8List.fromList(<int>[0x3c, 0x68, 0x74, 0x6d, 0x6c, 0x3e]),
     );
     final gateway = ComicSourceResourceGateway(
       sourceForId: (sourceId) => sourceId == source.sourceId ? source : null,
@@ -131,7 +109,6 @@ void main() {
     final cache = ResourceCacheManager();
     addTearDown(gateway.close);
     addTearDown(cache.close);
-    final locator = Uri.https('catalog.invalid', '/invalid-cover.jpg');
 
     await expectLater(
       gateway.loadArtworkSource(
@@ -151,7 +128,8 @@ void main() {
       ),
       throwsFormatException,
     );
-    expect(requests, 2);
+    expect(source.resolveCalls, 1);
+    expect(source.loads, 2);
   });
 
   test('gateway rejects legacy Venera tokens before source dispatch', () async {
@@ -256,9 +234,10 @@ final class _RecordingDownloads
 
 final class _ResolvedSource
     implements BrowsableComicSource, ResolvableComicResourceSource {
-  _ResolvedSource(this.resolvedUri);
+  _ResolvedSource({required this.resolvedUri, required this.bytes});
 
   final Uri resolvedUri;
+  final Uint8List bytes;
   int resolveCalls = 0;
   int loads = 0;
 
@@ -276,13 +255,16 @@ final class _ResolvedSource
   @override
   Future<ComicResourceRequest> resolveResource(Uri uri) async {
     resolveCalls += 1;
-    return ComicResourceRequest(uri: resolvedUri);
+    return ComicResourceRequest(
+      uri: resolvedUri,
+      requiresRuntimeTransform: true,
+    );
   }
 
   @override
   Future<Uint8List> loadResource(Uri uri) async {
     loads += 1;
-    return Uint8List(0);
+    return Uint8List.fromList(bytes);
   }
 
   @override

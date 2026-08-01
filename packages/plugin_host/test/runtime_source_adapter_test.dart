@@ -64,6 +64,41 @@ void main() {
     );
   });
 
+  test('Mihon resolves host-streamable request plans and refreshes retry',
+      () async {
+    final connection = _FixtureConnection();
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(format: ExternalComicPluginFormat.mihonExtension),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single;
+    final locator = Uri.parse('mihon:resource:fixture');
+
+    final request = await (source as ResolvableComicResourceSource)
+        .resolveResource(locator);
+    final retry = await (source as RetryableComicResourceSource)
+        .retryResource(locator);
+
+    expect(request.uri, Uri.parse('https://cdn.invalid/1.webp'));
+    expect(request.method, 'GET');
+    expect(request.requiresRuntimeTransform, isFalse);
+    expect(retry?.uri, request.uri);
+    expect(retry?.requiresRuntimeTransform, isFalse);
+    expect(
+      connection.operations,
+      <ExternalPluginRuntimeOperation>[
+        ExternalPluginRuntimeOperation.resolveResource,
+        ExternalPluginRuntimeOperation.resolveResource,
+      ],
+    );
+    expect(
+      connection.operations,
+      isNot(contains(ExternalPluginRuntimeOperation.loadResource)),
+    );
+  });
+
   test('resolved page list replaces an unknown reported page count', () async {
     final session = ExternalPluginRuntimeSession(
       plugin: _plugin(),

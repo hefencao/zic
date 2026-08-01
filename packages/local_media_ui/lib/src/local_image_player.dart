@@ -704,6 +704,7 @@ final class MediaRasterImage extends StatelessWidget {
             width: double.infinity,
             height: double.infinity,
             fit: innerFit,
+            alignment: Alignment.center,
             filterQuality: FilterQuality.medium,
             frameBuilder: frameBuilder,
             errorBuilder: errorBuilder,
@@ -715,6 +716,8 @@ final class MediaRasterImage extends StatelessWidget {
 }
 
 typedef MediaAspectChildBuilder = Widget Function(BoxFit innerFit);
+
+Alignment mediaAlignmentFor(BoxFit fit) => Alignment.center;
 
 final class MediaAspectViewport extends StatelessWidget {
   const MediaAspectViewport({
@@ -737,7 +740,7 @@ final class MediaAspectViewport extends StatelessWidget {
       key: mediaAspectViewportKey,
       child: FittedBox(
         fit: fit,
-        alignment: Alignment.topCenter,
+        alignment: mediaAlignmentFor(fit),
         clipBehavior: Clip.hardEdge,
         child: SizedBox(
           width: source.width,

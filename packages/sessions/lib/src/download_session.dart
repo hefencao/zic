@@ -31,6 +31,7 @@ final class DownloadSnapshot {
     required this.state,
     required this.epoch,
     required this.committedLength,
+    required this.networkStartLength,
     required this.contentKind,
     required this.demanded,
     required this.hasWriter,
@@ -46,6 +47,7 @@ final class DownloadSnapshot {
   final DownloadState state;
   final SourceEpoch epoch;
   final int committedLength;
+  final int networkStartLength;
   final ContentKind contentKind;
   final bool demanded;
   final bool hasWriter;
@@ -86,6 +88,7 @@ final class DownloadSession {
   ContentKind _contentKind = ContentKind.unknown;
   Validators _validators = const Validators();
   int? _totalLength;
+  int _networkStartLength = 0;
   Failure? _failure;
   List<int> _prefix = <int>[];
   final Set<SourceListener> _sourceListeners = <SourceListener>{};
@@ -97,6 +100,7 @@ final class DownloadSession {
   int get committedLength => artifact.committedLength;
   Validators get validators => _validators;
   int? get totalLength => _totalLength;
+  int get networkStartLength => _networkStartLength;
   ContentKind get contentKind => _contentKind;
   bool get hasWriter => _writer != null;
   bool get demanded => _demanded;
@@ -109,6 +113,7 @@ final class DownloadSession {
         state: _state,
         epoch: _epoch,
         committedLength: committedLength,
+        networkStartLength: _networkStartLength,
         contentKind: _contentKind,
         demanded: _demanded,
         hasWriter: hasWriter,
@@ -210,6 +215,8 @@ final class DownloadSession {
       finalChunk: restored.state == ArtifactState.promoted,
     );
 
+    _networkStartLength = restored.committedLength;
+
     if (restored.state == ArtifactState.promoted) {
       await _rebuildIngress(sealed: true);
       _state = DownloadState.promoted;
@@ -260,6 +267,7 @@ final class DownloadSession {
 
   void queue() {
     _requireState(<DownloadState>{DownloadState.idle, DownloadState.failed});
+    _networkStartLength = committedLength;
     _state = DownloadState.queued;
     _emit(TraceEventKind.downloadState, <String, Object?>{'state': _state.name});
   }
@@ -304,6 +312,7 @@ final class DownloadSession {
       );
     }
     final lease = WriterLease._(id: ++_writerSeq, epoch: _epoch);
+    _networkStartLength = committedLength;
     _writer = lease;
     _state = DownloadState.receiving;
     _failure = null;
@@ -430,6 +439,7 @@ final class DownloadSession {
     ingress?.reset(_epoch);
     _validators = const Validators();
     _totalLength = null;
+    _networkStartLength = 0;
     _contentKind = ContentKind.unknown;
     _prefix = <int>[];
     _failure = null;
@@ -457,6 +467,7 @@ final class DownloadSession {
     _state = DownloadState.idle;
     _validators = const Validators();
     _totalLength = null;
+    _networkStartLength = 0;
     _contentKind = ContentKind.unknown;
     _prefix = <int>[];
     await index?.remove(id.key);

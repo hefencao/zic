@@ -22,7 +22,9 @@ assert "'saveJsonl'" in exporter
 assert 'getSaveLocation(suggestedName: suggestedName)' in exporter
 
 for token in (
-    'ActivityResultContracts.CreateDocument("application/x-ndjson")',
+    'Intent.ACTION_CREATE_DOCUMENT',
+    'startActivityForResult(intent, TRACE_EXPORT_REQUEST)',
+    'onActivityResult(requestCode: Int, resultCode: Int, data: Intent?)',
     'pendingTraceResult',
     'pendingTraceBytes',
     'contentResolver.openOutputStream(uri, "wt")',

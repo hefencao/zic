@@ -44,7 +44,7 @@ final class NativeTextureViewport extends StatelessWidget {
     return SizedBox.expand(
       child: FittedBox(
         fit: fit,
-        alignment: Alignment.topCenter,
+        alignment: Alignment.center,
         clipBehavior: Clip.hardEdge,
         child: SizedBox(
           key: viewportKey,

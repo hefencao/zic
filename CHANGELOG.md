@@ -1,3 +1,13 @@
+## 0.31.0-dev.81：修复 Mihon 宿主流式传输、动画上传竞态与章节即时入场
+
+- Mihon `resolveResource` 只返回最终 URL/headers/GET request plan；宿主 transport 直接流入 `DownloadSession`，source-owned 完整字节 RPC 仅在直连及刷新计划均失败后兼容回退。
+- `DownloadSession` 持有每次网络 run 的 `networkStartLength`，未知总长度在 committed bytes 增长后立即显示 receiving，而不是直到 seal 前都显示连接中。
+- `UploadSession` 串行化同一 `DecodeId` 的平台 upload，并在 queued/active 操作排空后才 release slot；被 supersede 的结果或 `Failure(texture)` 不再写入新 revision，修复快速翻页后动画停滞。
+- 章节入口改为 route-first：先 push Reader loading shell，再在 route 内加载 chapter、检查 artifact 与组合 response loader。
+- 普通图、完整 WebP 与 Pipeline texture 的 Presentation 对齐统一为居中，不建立 WebP 特例。
+- 删除 downloads/App 封面测试中的真实 loopback socket、30 秒 timeout、Reader `pumpAndSettle`、lazy child 数量、魔法 offset 和静态门禁强制的 400ms 等待；改为 controlled Stream/Future、注入单调时钟与纯 `ReaderVerticalGeometry` owner 测试。
+- 修复 `FlutterActivity` 上不可用的 `registerForActivityResult` 编译错误，Android Trace 导出继续使用系统文档创建 Intent。
+
 ## 0.31.0-dev.80：修复增量流式唤醒、统一等比栅格与 Android Trace 导出
 
 - `IngressSnap` 增加单调 source revision；Decode lane 按 `DecodeId` 排空活跃任务期间到达的增长/seal revision，并去重同 key 的后续任务，避免首个 partial decode 后直到下载完成才再次尝试。

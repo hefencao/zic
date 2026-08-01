@@ -75,7 +75,7 @@ for token in (
 for token in ('exportDebugTraceDocument', 'dev.zic.zic/debug_trace_export'):
     assert token in trace_export
 for token in (
-    'ActivityResultContracts.CreateDocument',
+    'Intent.ACTION_CREATE_DOCUMENT',
     'saveJsonl',
     'contentResolver.openOutputStream',
 ):

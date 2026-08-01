@@ -538,6 +538,7 @@ final class _FlutterImageSurface implements PipelinePageSurface {
         key: key,
         image: image,
         fit: fit,
+        alignment: Alignment.center,
         filterQuality: filterQuality,
       );
 }

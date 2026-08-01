@@ -1,3 +1,13 @@
+## dev.81：Mihon 宿主流式、上传竞态与章节即时入场
+
+- Mihon `resolveResource` 现在返回最终 URL、headers、GET、null body 与 `requiresRuntimeTransform=false`。宿主 transport 首选直接流式请求；失败后刷新 plan，再失败才调用插件 complete-byte fallback。
+- `DownloadSnapshot.networkStartLength` 由 DownloadSession 在 restore/queue/acquireWriter/reset/evict 生命周期维护；transfer publisher 不再保存第二套 guessed baseline。
+- `UploadSession` 统计 active uploads，延迟 release；revision/cancel 已变化时，任何上传 `Failure` 或对象异常均转为 cancelled，不更新当前 failure/state。
+- Local/remote 详情页传入 chapter loader；App 立即 push `DeferredReaderRoute`，后台准备章节并在同一路由替换为真实 Reader。
+- `ReaderVerticalGeometry` 持有连续页 extent/bounds/anchor；原来依赖 lazy child 和固定 offset 的两个 Widget 测试已删除。downloads transport 与 App artwork gateway 测试改为 controlled source/stream；Reader 双击使用注入单调时钟，不再 `pumpAndSettle` 或等待固定 400ms。
+- Android Trace export 改用 `startActivityForResult` 兼容 `FlutterActivity`；普通图与 WebP viewport 均居中。
+- 当前环境的 dev.75–dev.81、Reader/Pipeline/UI、Android、Mihon/Venera 与 native header 静态/宿主契约已通过。当前环境无 Flutter/Dart SDK、Cargo/rustc 与 Gradle wrapper，真实 analyzer/Dart/Flutter/APK 测试仍需外部复验。
+
 ## dev.80：增量流式、统一栅格与 Trace 平台导出
 
 - `IngressSnap` 增加单调 revision；DownloadSession 在每次 source lifecycle 变化通知，LiveCoordinator 按 DecodeId 去重并排空活跃 decode 期间到达的新 revision。source revision map 会随 demand detach/会话关闭释放。

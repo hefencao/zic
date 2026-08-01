@@ -1,3 +1,14 @@
+## dev.81 completed
+
+1. 从 2032 条设备 Trace 区分缓存分块复制与 Mihon origin 完整 blob：将 Mihon 正常正文改为 request-plan + host streaming，保留失败后兼容 fallback。
+2. 将网络 run partial baseline 收回 DownloadSession，并修正 current-page progress projection。
+3. 延迟 platform upload slot retirement 到 active Future 排空；拒绝 stale revision 的 success/failure 回写。
+4. 章节入口改为 route-first deferred Reader，并把准备工作移入 route。
+5. 将连续阅读 gap/anchor 算法拆为 `ReaderVerticalGeometry`，删除 downloads/App 真实 socket、`pumpAndSettle`、固定 400ms、lazy child 与魔法 offset 测试。
+6. 修复 Android Activity Result API 编译闭包、统一 media centering，更新 ADR/文档/静态门禁并完成当前环境可执行契约验证。
+
+Next validation: 在具备 Flutter/Android 工具链的机器上运行 analyze、受影响 package tests、App tests 与 APK/kernel build；真机验证 Mihon origin 首 chunk、未知长度进度、快速 30↔31 页切换动画、章节点击到 route 的时延和 WebP 居中。
+
 ## dev.80 completed
 
 1. Add monotonic ingress revision tracking and drain source updates through one DecodeId-owned follow path without duplicate latest-revision work.

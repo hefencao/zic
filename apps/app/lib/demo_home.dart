@@ -12,6 +12,7 @@ import 'app_preferences.dart';
 import 'app_settings_screen.dart';
 import 'comic_details.dart' as details;
 import 'debug_trace.dart';
+import 'deferred_reader_route.dart';
 import 'download_manager.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 import 'library_backup.dart';
@@ -28,6 +29,7 @@ import 'home_widgets.dart';
 export 'home_widgets.dart' show ComicCoverCard, ComicDownloadProgress, ComicDownloadProgressKind;
 part 'demo_home_views.dart';
 part 'demo_home_source_compat.dart';
+part 'demo_home_reader_route.dart';
 const homePageKey = ValueKey<String>('home-page');
 const bookshelfPageKey = ValueKey<String>('bookshelf-page');
 const homeUpdatesSectionKey = ValueKey<String>('home-updates-section');
@@ -66,6 +68,7 @@ const localImageFolderPickerProgressKey =
     ValueKey<String>('local-image-folder-picker-progress');
 const importedLibraryLoadingKey = ValueKey<String>('imported-library-loading');
 const importedLibraryErrorKey = ValueKey<String>('imported-library-error');
+
 Key importedChapterEntryKey(String sourceId, String chapterId) =>
     ValueKey<String>('imported-chapter:$sourceId\u0000$chapterId');
 Key historyChapterEntryKey(String sourceId, String chapterId) =>
@@ -410,11 +413,13 @@ final class _DemoHomeState extends State<DemoHome> {
             onPreferenceChanged: _savePreference,
             onReadChanged: _setChapterRead,
             onOpenChapter: (
-              chapter, {
+              loadChapter, {
               required bool refreshRemote,
+              required String title,
             }) =>
-                _openImportedChapter(
-              chapter,
+                _openImportedChapterLoader(
+              loadChapter,
+              title: title,
               refreshRemote: refreshRemote,
             ),
             onDownloadChapter: _downloadChapter,
@@ -767,7 +772,41 @@ final class _DemoHomeState extends State<DemoHome> {
   Future<void> _openImportedChapter(
     ImportedLibraryEntry entry, {
     bool refreshRemote = true,
+  }) =>
+      _openImportedChapterLoader(
+        () => Future<ImportedLibraryEntry>.value(entry),
+        title: entry.chapter.displayName,
+        refreshRemote: refreshRemote,
+      );
+
+  Future<void> _openImportedChapterLoader(
+    Future<ImportedLibraryEntry> Function() loadChapter, {
+    required String title,
+    bool refreshRemote = true,
   }) async {
+    if (!mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => DeferredReaderRoute<_PreparedImportedChapter>(
+          title: title,
+          load: () => _prepareImportedChapter(
+            loadChapter,
+            refreshRemote: refreshRemote,
+          ),
+          builder: (_, prepared) => this._buildImportedChapterScreen(prepared),
+        ),
+      ),
+    );
+    if (mounted) {
+      await _reloadLibrary();
+    }
+  }
+
+  Future<_PreparedImportedChapter> _prepareImportedChapter(
+    Future<ImportedLibraryEntry> Function() loadChapter, {
+    required bool refreshRemote,
+  }) async {
+    final entry = await loadChapter();
     final legacyVenera = _hasLegacyVeneraLocators(entry.chapter);
     final current = legacyVenera
         ? await _refreshRemoteEntry(entry, forceSourceRefresh: true)
@@ -779,14 +818,8 @@ final class _DemoHomeState extends State<DemoHome> {
         'Venera 章节仍包含已失效的运行时资源定位符，已阻止进入 Reader',
       );
     }
-    if (!mounted) {
-      return;
-    }
     final hasOfflineBytes = current.chapter.sourceId != 'local-folder' &&
         await _chapterDownloads.isDownloaded(current);
-    if (!mounted) {
-      return;
-    }
     final source = _sourceForId(current.chapter.sourceId);
     final byteLoaders = hasOfflineBytes
         ? <String, LocalImageFileBytesLoader>{
@@ -805,76 +838,11 @@ final class _DemoHomeState extends State<DemoHome> {
               ),
           };
     unawaited(_markChapterReadForNavigation(current));
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) {
-          final preference = _preferences[
-                comicLibraryIdentity(
-                  current.chapter.sourceId,
-                  current.chapter.comicId,
-                )
-              ] ??
-              ComicPreference.defaults(
-                sourceId: current.chapter.sourceId,
-                comicId: current.chapter.comicId,
-              );
-          return ImportedImageChapterScreen(
-            record: current.chapter,
-            byteLoaders: byteLoaders,
-            responseLoaders: responseLoaders,
-            initialProgress: current.progress ??
-                ReadingProgress(
-                  sourceId: current.chapter.sourceId,
-                  comicId: current.chapter.comicId,
-                  chapterId: current.chapter.chapterId,
-                  pageIndex: 0,
-                  subPageOffset: 0,
-                  readerMode: widget.preferences.defaultReaderMode,
-                  updatedAt: DateTime.now().toUtc(),
-                ),
-            onProgressChanged: _library.saveProgress,
-            initiallyImmersive: widget.preferences.readerStartsImmersive,
-            initialReaderSettings: widget.preferences.readerSessionSettingsFor(
-              current.chapter.sourceId,
-              current.chapter.comicId,
-            ),
-            onReaderSettingsChanged: (settings) =>
-                widget.preferences.saveReaderSessionSettings(
-              current.chapter.sourceId,
-              current.chapter.comicId,
-              settings,
-            ),
-            traceSink: widget.debugTrace,
-            onDownloadRequested: () => _downloadChapter(current),
-            pipelineFactory: defaultLocalMediaPipelineFactory
-                .withArtifactCache(
-              _chapterDownloads is ArtifactCacheStore
-                  ? _chapterDownloads as ArtifactCacheStore
-                  : null,
-            ),
-            initialFavorite: preference.collected,
-            onFavoriteChanged: (favorite) {
-              final preference = _preferences[
-                    comicLibraryIdentity(
-                      current.chapter.sourceId,
-                      current.chapter.comicId,
-                    )
-                  ] ??
-                  ComicPreference.defaults(
-                    sourceId: current.chapter.sourceId,
-                    comicId: current.chapter.comicId,
-                  );
-              return _savePreference(
-                preference.copyWith(collected: favorite),
-              );
-            },
-          );
-        },
-      ),
+    return (
+      entry: current,
+      byteLoaders: byteLoaders,
+      responseLoaders: responseLoaders,
     );
-    if (mounted) {
-      await _reloadLibrary();
-    }
   }
 
   Future<void> _pushComicDetails(LibraryComic comic) async {
@@ -914,11 +882,13 @@ final class _DemoHomeState extends State<DemoHome> {
           },
           onReadChanged: _setChapterRead,
           onOpenChapter: (
-            chapter, {
+            loadChapter, {
             required bool refreshRemote,
+            required String title,
           }) =>
-              _openImportedChapter(
-            chapter,
+              _openImportedChapterLoader(
+            loadChapter,
+            title: title,
             refreshRemote: refreshRemote,
           ),
           onDownloadChapter: _downloadChapter,

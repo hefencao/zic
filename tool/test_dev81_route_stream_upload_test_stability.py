@@ -1,0 +1,139 @@
+#!/usr/bin/env python3
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def read(path: str) -> str:
+    return (ROOT / path).read_text(encoding='utf-8')
+
+
+activity = read('apps/app/android/app/src/main/kotlin/dev/zic/zic/MainActivity.kt')
+transport = read('packages/downloads/lib/src/source_resource_transport.dart')
+transport_test = read('packages/downloads/test/source_resource_transport_test.dart')
+download = read('packages/sessions/lib/src/download_session.dart')
+download_test = read('packages/sessions/test/download_session_test.dart')
+upload = read('packages/sessions/lib/src/upload_session.dart')
+upload_test = read('packages/sessions/test/upload_session_test.dart')
+progress = read('packages/pipeline_runtime/lib/src/pipeline_transfer_progress.dart')
+media = read('packages/local_media_ui/lib/src/local_image_player.dart')
+texture = read('packages/texture_bridge/lib/src/native_texture_viewport.dart')
+details = read('apps/app/lib/comic_details.dart')
+home = read('apps/app/lib/demo_home.dart')
+reader_composition = read('apps/app/lib/demo_home_reader_route.dart')
+deferred = read('apps/app/lib/deferred_reader_route.dart')
+deferred_test = read('apps/app/test/deferred_reader_route_test.dart')
+gateway_test = read('apps/app/test/source_resource_gateway_test.dart')
+reader_test = read('packages/reader/test/reader_navigation_test.dart')
+geometry = read('packages/reader/lib/src/vertical_reader_geometry.dart')
+geometry_test = read('packages/reader/test/vertical_reader_geometry_test.dart')
+runtime_adapter = read('packages/plugin_host/lib/src/runtime_source_adapter.dart')
+mihon_driver = read(
+    'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/'
+    'MihonRuntimeDriver.kt'
+)
+
+for token in (
+    'Intent.ACTION_CREATE_DOCUMENT',
+    'startActivityForResult(intent, TRACE_EXPORT_REQUEST)',
+    'override fun onActivityResult',
+):
+    assert token in activity
+assert 'registerForActivityResult' not in activity
+
+for token in (
+    'typedef SourceResourceDirectOpen',
+    'normalizeSourceResourceRequest(',
+    'ExternalPluginResourceTransportPool({SourceResourceDirectOpen? directOpen})',
+    '_openRetryPlan(',
+):
+    assert token in transport
+assert 'HttpServer.bind' not in transport_test
+assert 'Duration(seconds: 30)' not in transport_test
+assert '_ControlledBody' in transport_test
+assert 'failed direct retry falls back' in transport_test
+
+for token in (
+    'Future<void> _prepareTail = Future<void>.value();',
+    'int _pendingPrepares = 0;',
+    '_serializePrepare(',
+    'bool _releaseUploaderWhenIdle = false;',
+    '_requestUploaderRelease()',
+    '_flushUploaderRelease()',
+):
+    assert token in upload
+for token in ('_ControlledUploader', '_SequencedControlledUploader', 'Completer<OutputFrame>'):
+    assert token in upload_test
+
+for token in (
+    'required this.networkStartLength',
+    '_networkStartLength = committedLength;',
+):
+    assert token in download
+assert 'snapshot owns the resume baseline' in download_test
+assert 'snapshot.networkStartLength' in progress
+assert '_lastStates' not in progress
+assert '_existingBytes' not in progress
+
+assert 'alignment: mediaAlignmentFor(fit)' in media
+assert 'Alignment mediaAlignmentFor(BoxFit fit) => Alignment.center;' in media
+assert 'alignment: Alignment.center' in texture
+assert 'Alignment.topCenter' not in texture
+
+for token in (
+    'typedef ComicDetailsChapterLoader',
+    'required String title',
+    'DeferredReaderRoute<_PreparedImportedChapter>',
+    '_prepareImportedChapter(',
+):
+    assert token in details + home + reader_composition
+for token in ('deferredReaderRouteKey', 'deferredReaderLoadingKey', 'widget.load()'):
+    assert token in deferred
+
+assert "find.byKey(const ValueKey<String>('reader-vertical-gap:0'))" not in reader_test
+assert 'greaterThan(600)' not in reader_test
+assert '_pumpUntilCondition' not in reader_test
+for fixed_wait in ('Duration(milliseconds: 80)', 'Duration(milliseconds: 50)', 'Duration(milliseconds: 400)'):
+    assert fixed_wait not in reader_test
+assert 'nowMicros = widget.clock.nowMicros()' in read('packages/reader/lib/src/reader_view.dart')
+assert 'pumpAndSettle' not in reader_test
+for token in (
+    'final class ReaderVerticalGeometry',
+    'ReaderVerticalAnchor anchorForTop',
+    'double restoreTop',
+):
+    assert token in geometry
+for token in ('boundsAt(1)', 'anchorForTop(top)', 'restoreTop(anchor)'):
+    assert token in geometry_test
+
+assert '_format != ExternalComicPluginFormat.veneraJavaScript' not in runtime_adapter
+assert 'ExternalComicPluginFormat.mihonExtension' in runtime_adapter
+for token in (
+    '"resolveResource" -> resolveResource(',
+    'private fun resolveResource(',
+    'enforceSourceRequestLimit(sourceId, source)',
+    '"requiresRuntimeTransform" to false',
+):
+    assert token in mihon_driver
+
+for text, label in (
+    (transport_test, 'downloads transport'),
+    (upload_test, 'upload session'),
+    (deferred_test, 'deferred Reader route'),
+    (gateway_test, 'source resource gateway'),
+):
+    for unstable in (
+        'HttpServer.bind',
+        'ServerSocket.bind',
+        'Future.delayed',
+        'pumpAndSettle',
+        'Duration(seconds: 30)',
+    ):
+        assert unstable not in text, f'{label} test retains unstable {unstable}'
+assert 'package:flutter_test/flutter_test.dart' not in geometry_test
+for token in ('_ResolvedSource', 'source.resolveCalls', 'source.loads'):
+    assert token in gateway_test
+
+assert (ROOT / 'docs/adr/0065-route-first-reader-and-inflight-upload-lifecycle.md').is_file()
+assert (ROOT / 'docs/audits/dev81-reader-route-streaming-and-test-stability-audit.md').is_file()
+print('dev.81 route-first Reader, direct streaming and deterministic tests: OK')

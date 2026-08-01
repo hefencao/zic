@@ -107,9 +107,12 @@ typedef ComicDetailsChapterEnsurer = Future<ImportedLibraryEntry> Function(
   Chapter chapter,
 );
 
+typedef ComicDetailsChapterLoader = Future<ImportedLibraryEntry> Function();
+
 typedef ComicDetailsChapterOpener = Future<void> Function(
-  ImportedLibraryEntry chapter, {
+  ComicDetailsChapterLoader loadChapter, {
   required bool refreshRemote,
+  required String title,
 });
 
 typedef ComicDetailsChapterDownloader = Future<void> Function(
@@ -390,19 +393,26 @@ final class _LocalComicDetailsScreenState
       setState(() {});
     }
     try {
-      final entry = chapter.entry ?? await _ensure(chapter.sourceChapter!);
-      if (!_isRead(_library.readStates, entry) && mounted) {
-        setState(() {
-          _library = _library.copyWith(
-            readStates: _projectChapterReadState(
-              _library.readStates,
-              entry,
-              true,
-            ),
-          );
-        });
-      }
-      await widget.onOpenChapter(entry, refreshRemote: false);
+      await widget.onOpenChapter(
+        () async {
+          final entry =
+              chapter.entry ?? await _ensure(chapter.sourceChapter!);
+          if (!_isRead(_library.readStates, entry) && mounted) {
+            setState(() {
+              _library = _library.copyWith(
+                readStates: _projectChapterReadState(
+                  _library.readStates,
+                  entry,
+                  true,
+                ),
+              );
+            });
+          }
+          return entry;
+        },
+        refreshRemote: false,
+        title: chapter.title,
+      );
     } on Object catch (error, stackTrace) {
       if (mounted) {
         _showFailureSnackBar(
@@ -910,19 +920,25 @@ final class _RemoteComicDetailsScreenState
       setState(() {});
     }
     try {
-      final entry = await _ensure(chapter);
-      if (!_isRead(_library.readStates, entry) && mounted) {
-        setState(() {
-          _library = _library.copyWith(
-            readStates: _projectChapterReadState(
-              _library.readStates,
-              entry,
-              true,
-            ),
-          );
-        });
-      }
-      await widget.onOpenChapter(entry, refreshRemote: false);
+      await widget.onOpenChapter(
+        () async {
+          final entry = await _ensure(chapter);
+          if (!_isRead(_library.readStates, entry) && mounted) {
+            setState(() {
+              _library = _library.copyWith(
+                readStates: _projectChapterReadState(
+                  _library.readStates,
+                  entry,
+                  true,
+                ),
+              );
+            });
+          }
+          return entry;
+        },
+        refreshRemote: false,
+        title: chapter.title,
+      );
     } on Object catch (error, stackTrace) {
       if (mounted) {
         _showFailureSnackBar(

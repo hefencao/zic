@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'reader_controller.dart';
+import 'vertical_reader_geometry.dart';
 
 typedef ReaderPageBuilder = Widget? Function(
   BuildContext context,
@@ -51,8 +52,6 @@ final class ReaderView extends StatefulWidget {
 }
 
 final class _ReaderViewState extends State<ReaderView> {
-  static const double _verticalPageGap = 8;
-
   late PageController _pageController;
   late ScrollController _verticalController;
   double _lastLogicalPosition = 0;
@@ -174,7 +173,7 @@ final class _ReaderViewState extends State<ReaderView> {
               physics: physics,
               itemExtentBuilder: (itemIndex, _) {
                 if (!stitched && itemIndex.isOdd) {
-                  return _verticalPageGap;
+                  return readerVerticalPageGap;
                 }
                 final pageIndex = stitched ? itemIndex : itemIndex ~/ 2;
                 return _verticalExtent(chapter.pages[pageIndex], pageIndex);
@@ -184,7 +183,7 @@ final class _ReaderViewState extends State<ReaderView> {
                   final gapIndex = itemIndex ~/ 2;
                   return SizedBox(
                     key: ValueKey<String>('reader-vertical-gap:$gapIndex'),
-                    height: _verticalPageGap,
+                    height: readerVerticalPageGap,
                   );
                 }
                 final pageIndex = stitched ? itemIndex : itemIndex ~/ 2;
@@ -230,6 +229,7 @@ final class _ReaderViewState extends State<ReaderView> {
         child: _ZoomableReaderPage(
           key: ValueKey<String>('zoom:${chapter.pages[index].assetKey}'),
           active: index == widget.controller.currentIndex,
+          clock: widget.clock,
           onTap: widget.onTap,
           onZoomChanged: (zoomed) {
             final next = zoomed ? index : null;
@@ -250,76 +250,41 @@ final class _ReaderViewState extends State<ReaderView> {
         ),
       );
 
-  double _verticalExtent(
-    PageAsset asset,
-    int _, {
+  ReaderVerticalGeometry _verticalGeometry({
     Map<String, double>? ratios,
+    bool? stitch,
     Size? viewport,
   }) {
     final effectiveViewport = viewport ?? _viewport;
-    if (effectiveViewport.width <= 0 || effectiveViewport.height <= 0) return 1;
-    var ratio = (ratios ?? widget.pageAspectRatios)[asset.assetKey];
-    var hasMeasuredRatio = ratio != null;
-    final width = asset.width?.toDouble();
-    final height = asset.height?.toDouble();
-    if (ratio == null &&
-        width != null &&
-        height != null &&
-        width > 0 &&
-        height > 0) {
-      ratio = height / width;
-      hasMeasuredRatio = true;
-    }
-    ratio ??= 1.5;
-    if (widget.controller.rotationQuarterTurns.isOdd) {
-      ratio = 1 / math.max(0.001, ratio);
-    }
-    var scaled = effectiveViewport.width * ratio;
-    if (!hasMeasuredRatio) {
-      // Unknown pages must not change extent merely because currentIndex moved.
-      // A stable viewport-sized placeholder keeps continuous scrolling from
-      // correcting its own offset while the user crosses page boundaries.
-      scaled = math.max(scaled, effectiveViewport.height);
-    }
-    final upper = math.max(
-      effectiveViewport.height,
-      effectiveViewport.width * 64,
+    return ReaderVerticalGeometry(
+      pages: widget.controller.chapter.pages,
+      ratios: ratios ?? widget.pageAspectRatios,
+      viewportWidth: effectiveViewport.width,
+      viewportHeight: effectiveViewport.height,
+      stitch: stitch ?? widget.verticalStitch,
+      rotationQuarterTurns: widget.controller.rotationQuarterTurns,
     );
-    return scaled.clamp(64.0, upper).toDouble();
   }
 
-  double _verticalGapFor(bool stitch) => stitch ? 0 : _verticalPageGap;
-
-  double get _effectiveGap => _verticalGapFor(widget.verticalStitch);
+  double _verticalExtent(
+    PageAsset _,
+    int index, {
+    Map<String, double>? ratios,
+    Size? viewport,
+  }) =>
+      _verticalGeometry(ratios: ratios, viewport: viewport).extentAt(index);
 
   ({double start, double end}) _verticalBoundsFor(
     int index, {
     Map<String, double>? ratios,
     bool? stitch,
     Size? viewport,
-  }) {
-    var start = 0.0;
-    final pages = widget.controller.chapter.pages;
-    for (var i = 0; i < index; i++) {
-      start += _verticalExtent(
-        pages[i],
-        i,
+  }) =>
+      _verticalGeometry(
         ratios: ratios,
+        stitch: stitch,
         viewport: viewport,
-      );
-      start += _verticalGapFor(stitch ?? widget.verticalStitch);
-    }
-    return (
-      start: start,
-      end: start +
-          _verticalExtent(
-            pages[index],
-            index,
-            ratios: ratios,
-            viewport: viewport,
-          ),
-    );
-  }
+      ).boundsAt(index);
 
   void _preserveVerticalAnchor({
     required Map<String, double> oldRatios,
@@ -334,28 +299,13 @@ final class _ReaderViewState extends State<ReaderView> {
         _viewport == Size.zero) {
       return;
     }
-    final metrics = _verticalController.position;
-    final top = metrics.pixels;
-    final pages = widget.controller.chapter.pages;
-    var pageStart = 0.0;
-    for (var index = 0; index < pages.length; index++) {
-      final extent = _verticalExtent(
-        pages[index],
-        index,
-        ratios: oldRatios,
-        viewport: oldViewport,
-      );
-      final end = pageStart + extent;
-      if (top <= end || index == pages.length - 1) {
-        _pendingVerticalAnchor = (
-          index: index,
-          offset: (top - pageStart).clamp(0.0, math.max(0.0, extent - 1)),
-        );
-        _scheduleVerticalAnchorRestore();
-        return;
-      }
-      pageStart = end + _verticalGapFor(oldStitch);
-    }
+    final anchor = _verticalGeometry(
+      ratios: oldRatios,
+      stitch: oldStitch,
+      viewport: oldViewport,
+    ).anchorForTop(_verticalController.position.pixels);
+    _pendingVerticalAnchor = (index: anchor.index, offset: anchor.offset);
+    _scheduleVerticalAnchorRestore();
   }
 
   void _scheduleVerticalAnchorRestore() {
@@ -374,11 +324,10 @@ final class _ReaderViewState extends State<ReaderView> {
           _interaction != Interaction.idle) {
         return;
       }
-      final bounds = _verticalBoundsFor(anchor.index);
       final position = _verticalController.position;
-      final extent = math.max(1.0, bounds.end - bounds.start);
-      final target = bounds.start +
-          anchor.offset.clamp(0.0, math.max(0.0, extent - 1));
+      final target = _verticalGeometry().restoreTop(
+        ReaderVerticalAnchor(index: anchor.index, offset: anchor.offset),
+      );
       final bounded = target.clamp(0.0, position.maxScrollExtent).toDouble();
       if ((bounded - position.pixels).abs() > 0.5) {
         _verticalController.jumpTo(bounded);
@@ -386,33 +335,16 @@ final class _ReaderViewState extends State<ReaderView> {
     });
   }
 
-  double _verticalOffsetFor(int index) {
-    final bounds = _verticalBoundsFor(index);
-    return (bounds.start + bounds.end) / 2 - _viewport.height / 2;
-  }
+  double _verticalOffsetFor(int index) =>
+      _verticalGeometry().centeredOffsetFor(index);
 
   ({int index, double logicalPosition}) _verticalPosition(
     ScrollMetrics metrics,
-  ) {
-    final pages = widget.controller.chapter.pages;
-    final center = metrics.pixels + metrics.viewportDimension / 2;
-    var offset = 0.0;
-    for (var i = 0; i < pages.length; i++) {
-      final extent = _verticalExtent(pages[i], i);
-      final end = offset + extent;
-      if (center <= end || i == pages.length - 1) {
-        final fraction = ((center - offset) / math.max(1.0, extent))
-            .clamp(0.0, 0.999)
-            .toDouble();
-        return (index: i, logicalPosition: i + fraction);
-      }
-      offset = end + _effectiveGap;
-    }
-    return (
-      index: pages.length - 1,
-      logicalPosition: (pages.length - 1).toDouble(),
-    );
-  }
+  ) =>
+      _verticalGeometry().positionAt(
+        pixels: metrics.pixels,
+        viewportDimension: metrics.viewportDimension,
+      );
 
   void _prepareVerticalControllerForCurrentPage() {
     if (_verticalController.hasClients || _viewport == Size.zero) return;
@@ -717,6 +649,7 @@ final class _ZoomableReaderPage extends StatefulWidget {
   const _ZoomableReaderPage({
     required this.child,
     required this.active,
+    required this.clock,
     required this.onZoomChanged,
     this.onTap,
     super.key,
@@ -724,6 +657,7 @@ final class _ZoomableReaderPage extends StatefulWidget {
 
   final Widget child;
   final bool active;
+  final MonoClock clock;
   final ValueChanged<bool> onZoomChanged;
   final VoidCallback? onTap;
 
@@ -738,7 +672,7 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage> {
   Offset? _pointerDown;
   bool _tapCandidate = false;
   Timer? _singleTapTimer;
-  DateTime? _lastTapAt;
+  int? _lastTapAtMicros;
   Offset? _lastTapPosition;
 
   @override
@@ -753,7 +687,7 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage> {
     if (oldWidget.active != widget.active && _zoomed) {
       _singleTapTimer?.cancel();
       _singleTapTimer = null;
-      _lastTapAt = null;
+      _lastTapAtMicros = null;
       _lastTapPosition = null;
       _transformation.value = Matrix4.identity();
       _zoomed = false;
@@ -829,27 +763,27 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage> {
     if (!candidate) {
       return;
     }
-    final now = DateTime.now();
-    final lastAt = _lastTapAt;
+    final nowMicros = widget.clock.nowMicros();
+    final lastAtMicros = _lastTapAtMicros;
     final lastPosition = _lastTapPosition;
-    final isDoubleTap = lastAt != null &&
-        now.difference(lastAt) <= const Duration(milliseconds: 280) &&
+    final isDoubleTap = lastAtMicros != null &&
+        nowMicros - lastAtMicros <= 280000 &&
         lastPosition != null &&
         (position - lastPosition).distance <= 48;
     if (isDoubleTap) {
       _singleTapTimer?.cancel();
       _singleTapTimer = null;
-      _lastTapAt = null;
+      _lastTapAtMicros = null;
       _lastTapPosition = null;
       _toggleZoom(position);
       return;
     }
-    _lastTapAt = now;
+    _lastTapAtMicros = nowMicros;
     _lastTapPosition = position;
     _singleTapTimer?.cancel();
     _singleTapTimer = Timer(const Duration(milliseconds: 280), () {
       _singleTapTimer = null;
-      _lastTapAt = null;
+      _lastTapAtMicros = null;
       _lastTapPosition = null;
       widget.onTap?.call();
     });

@@ -1,3 +1,13 @@
+## dev.81 route-first、宿主流式与稳定回归要求
+
+1. Mihon 普通图片必须先返回无 body GET request plan；宿主 response stream 的首个 chunk 必须在 body 完成前进入 DownloadSession。只有宿主直连及刷新 request plan 均失败时，才允许 source-owned complete-byte fallback。
+2. GET/HEAD 必须零 body并移除实体 headers。request plan、download identity、session 与 artifact 继续按稳定 identity 合并。
+3. 下载进度的 run baseline 属于 DownloadSession。未知 Content-Length 收到首个新增 byte 后必须是 receiving；不得伪造百分比。
+4. detach/reset/dispose 不得在 upload Future 活跃时释放 platform slot；旧 revision 的上传成功、取消或 texture failure 均不得污染新 revision。
+5. 点击章节必须先进入 Reader route，manifest/source/artifact/loader 准备在 route 内完成；失败在该 route 内显示并可重试。
+6. 普通图片、静态/动画 WebP、Pipeline surface 使用同一居中 Presentation 规则与既有 8 像素等比 raster contract。
+7. 回归测试禁止真实 loopback 网络、固定 sleep/timeout、lazy child `.single`、固定挂载数量或魔法滚动阈值；使用可控 Stream/Future 和 owner 纯值对象。
+
 ## dev.80 streaming, raster and Trace export requirements
 
 - Every authoritative source creation/growth/seal/failure MUST advance a monotonic ingress revision. A Decode demand MUST consume revisions that arrive while the same-key task is active, and duplicate queued follow work MUST NOT repeat an already-consumed revision.

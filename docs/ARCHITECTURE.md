@@ -1,3 +1,12 @@
+## dev.81 路由优先、Mihon 宿主流式与上传生命周期所有权
+
+- `plugin_host`/Mihon runtime 只解析普通图片的最终 URL、headers 与无 body GET request plan；正文 bytes 由宿主 `downloads` transport 流入同一 `DownloadSession/artifact/ingress`。插件完整字节 `loadResource` 只作为直连失败后的兼容回退，不是正常路径。
+- `DownloadSession` 是单次网络 run partial 基线的唯一所有者；`pipeline_runtime` 只投影 connecting/receiving，不根据 UI 时序猜测已有字节。
+- `UploadSession` 拥有 upload Future、candidate frame 与 platform slot 的完整生命周期。detach/reset/dispose 只能请求退休，active upload 排空后才能 release；stale revision 不得发布 success/failure。
+- App 采用 route-first 组合：章节点击立即 push Reader route，chapter/source/artifact/loader 准备在 route 内异步完成。详情页不再把插件网络延迟放在导航前。
+- `ReaderVerticalGeometry` 是连续阅读 extent、gap 与 anchor 的纯 owner；Widget 测试不读取 lazy child 是否当前挂载。普通图与 WebP 的 Presentation 对齐由统一 media viewport 居中。
+- Pipeline 窗口 +7/-3、预解码 +2/-1、current/transition 上传与 5/3/2 lane 不变。ADR 0065 补充 ADR 0061–0064。
+
 ## dev.80 增量 source、统一栅格与诊断导出所有权
 
 - `IngressSnap.revision` 是 encoded source 创建、增长、seal、reset 与失败的单调生命周期版本。`DownloadSession` 负责通知，`LiveCoordinator` 按 `DecodeId` 记录已消费 revision；活跃 decode 期间到达的新 revision 由同一 follow task 排空，重复 queued follow 读取到已消费 revision 后退出。

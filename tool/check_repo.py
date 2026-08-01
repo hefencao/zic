@@ -871,6 +871,7 @@ def check_compile_regressions() -> None:
         for name in (
             'demo_home.dart',
             'demo_home_views.dart',
+            'demo_home_reader_route.dart',
             'home_widgets.dart',
             'home_library_session.dart',
         )
@@ -1681,8 +1682,11 @@ def check_compile_regressions() -> None:
         fail('demo_home.dart must import Comic and Chapter from domain')
     if 'tester.doubleTap(' in reader_navigation_test:
         fail('Reader gesture test must use SDK-compatible real tap events')
-    if 'Duration(milliseconds: 400)' not in reader_navigation_test:
-        fail('Reader double-tap test must drain the app-owned tap window')
+    reader_view = (ROOT / 'packages/reader/lib/src/reader_view.dart').read_text(
+        encoding='utf-8',
+    )
+    if 'nowMicros = widget.clock.nowMicros()' not in reader_view:
+        fail('Reader double-tap timing must use the injected monotonic clock')
     for required in (
         'final class LocalComicDetailsScreen',
         'final class RemoteComicDetailsScreen',
@@ -1779,6 +1783,7 @@ def check_compile_regressions() -> None:
             home_path,
             ROOT / 'apps/app/lib/demo_home_views.dart',
             ROOT / 'apps/app/lib/demo_home_source_compat.dart',
+            ROOT / 'apps/app/lib/demo_home_reader_route.dart',
             ROOT / 'apps/app/lib/source_resource_gateway.dart',
             ROOT / 'apps/app/lib/home_widgets.dart',
             ROOT / 'apps/app/lib/home_library_session.dart',
@@ -1788,6 +1793,7 @@ def check_compile_regressions() -> None:
         fail('demo_home.dart exceeded the first-stage decomposition budget')
     for required in (
         "part 'demo_home_views.dart';",
+        "part 'demo_home_reader_route.dart';",
         'HomeLibrarySession(',
         'ResourceCacheCoordinator',
         'CachedBrowsableComicSource',

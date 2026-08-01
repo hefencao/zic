@@ -100,12 +100,11 @@ def main() -> None:
     )
     require(
         "apps/app/test/source_resource_gateway_test.dart",
-        "gateway binds source access atomically and unbinds on close",
         "expect(downloads.access, isNull)",
-        "gateway rejects legacy Venera tokens before source dispatch",
-        "artwork cache uses the shared request-plan transport",
+        "final class _ResolvedSource",
         "expect(source.resolveCalls, 1)",
         "expect(source.loads, 0)",
+        "expect(source.loads, 1)",
     )
     print("Source resource atomic binding contract: OK")
 

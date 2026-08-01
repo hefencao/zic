@@ -33,13 +33,20 @@ def main() -> None:
         "hasContentDimensions",
         "_scheduleControllerCommand",
         "widget.verticalStitch",
-        "math.max(scaled, effectiveViewport.height)",
+        "ReaderVerticalGeometry",
         "_preserveVerticalAnchor",
         "_scheduleVerticalAnchorRestore",
         "oldViewport: previousViewport",
         "viewport: oldViewport",
         "isScrollingNotifier.value",
         "reader-vertical-gap:",
+    )
+    require(
+        "packages/reader/lib/src/vertical_reader_geometry.dart",
+        "final class ReaderVerticalGeometry",
+        "scaled = math.max(scaled, viewportHeight)",
+        "readerVerticalPageGap",
+        "ReaderVerticalAnchor",
     )
     require(
         "packages/reader_runtime/lib/src/reader_runtime_screen.dart",
@@ -115,7 +122,7 @@ def main() -> None:
         "packages/texture_bridge/lib/src/native_texture_viewport.dart",
         "final BoxFit fit",
         "FittedBox",
-        "alignment: Alignment.topCenter",
+        "alignment: Alignment.center",
     )
     require(
         "apps/app/lib/reader_preferences.dart",

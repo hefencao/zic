@@ -107,6 +107,11 @@ internal class MihonRuntimeDriver private constructor(
                     "loadComic" -> loadComic(source, arguments.requireString("comicId"), requestId)
                     "loadChapter" -> loadChapter(source, arguments.requireString("chapterId"), requestId)
                     "loadResource" -> loadResource(source, arguments.requireString("uri"), requestId)
+                    "resolveResource" -> resolveResource(
+                        sourceId,
+                        source,
+                        arguments.requireString("uri"),
+                    )
                     "loadSourceSettings" -> loadSourceSettings(source)
                     "updateSourceSetting" -> updateSourceSetting(
                         source,
@@ -549,6 +554,37 @@ internal class MihonRuntimeDriver private constructor(
             path.endsWith(".avif") -> "avif"
             else -> null
         }
+    }
+
+    private fun resolveResource(
+        sourceId: String,
+        source: Any,
+        uri: String,
+    ): Map<String, Any?> {
+        val resource = if (uri.startsWith("mihon:resource:")) {
+            decodeOpaque(uri, "resource")
+        } else {
+            require(uri.startsWith("https://") || uri.startsWith("http://")) {
+                "Mihon resource URI must use a runtime token or HTTP(S)"
+            }
+            JSONObject().put("url", uri)
+        }
+        val resolvedResource = if (resource.optBoolean("deferredPage")) {
+            enforceSourceRequestLimit(sourceId, source)
+            resolveDeferredMihonPageResource(source, resource)
+        } else {
+            resource
+        }
+        val resourceUrl = resolvedResource.getString("url")
+        val headers = resolvedResource.optJSONObject("headers").stringMap()
+            .ifEmpty { source.readValue("headers", "getHeaders").stringHeaders() }
+        return mapOf(
+            "url" to resourceUrl,
+            "method" to "GET",
+            "headers" to headers,
+            "body" to null,
+            "requiresRuntimeTransform" to false,
+        )
     }
 
     private fun loadResource(source: Any, uri: String, requestId: String): ByteArray {
