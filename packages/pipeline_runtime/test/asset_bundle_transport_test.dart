@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:transport/transport.dart';
-import 'package:zic/asset_bundle_transport.dart';
+import '../lib/src/asset_bundle_transport.dart';
 
 void main() {
   test(

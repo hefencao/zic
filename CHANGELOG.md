@@ -1,3 +1,15 @@
+## 0.31.0-dev.75：编译闭包、契约归属与后续迭代提示词
+
+- 修复 `home_widgets.dart` 将 `Future<Uint8List>` 返回给 `EncodedResourceSource` loader 的类型错误，并删除只被测试使用的 `ComicDetailsScreen` 兼容包装；详情测试直接覆盖真实 `LocalComicDetailsScreen` owner。
+- 将 `AssetBundleTransport` 测试从 App 移到 `pipeline_runtime`，删除 App/Reader 对该内部 transport 的无用转出文件。
+- 显式导入 Reader preference extension 和 domain-owned `ComicManifest`；不通过扩大 package export 掩盖调用方漏导入。
+- 删除 App WebP 测试中重复的 `readerPageDownloadId` 契约，canonical download identity 继续由 `downloads` package 自己测试。
+- 修复 Pipeline 测试对非 const `Coverage` 的 const 调用。
+- 新增 dev.75 编译与所有权迁移门禁，并将仓库门禁更新到测试实际所有者。
+- 修复 CI/本地验证覆盖缺口：`pipeline_runtime`、`reader_runtime`、`local_media_ui` 现在进入 `flutter analyze` 与 `flutter test` 主循环；为此前没有 test 目录的 `local_media_ui` 增加 package composition 编译 smoke test；`check.sh` 不再违反 `AGENTS.md` 自动执行 `dart format`。
+- 新增 `docs/AI_ITERATION_PROMPT.md`，集中记录 Architecture、耦合审查、被否决退化方案、测试和交付约束。
+- 未改变 Pipeline 的 7/3 下载、2/1 预解码、current/transition 上传、5/3/2 lane 或现有网络/缓存行为。
+
 ## 0.31.0-dev.74：稳定纵向几何、封面文件缓存与可用 Debug Trace
 
 - 修复 `local_media_ui.dart` 在声明之后放置 `part` 指令导致的 Dart 编译失败，并新增全仓 Dart library 指令顺序门禁。

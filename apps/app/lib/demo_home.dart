@@ -25,7 +25,7 @@ import 'static_demo.dart';
 import 'webp_demo.dart';
 import 'home_library_session.dart';
 import 'home_widgets.dart';
-export 'home_widgets.dart' show ComicCoverCard, ComicDetailsScreen, ComicDownloadProgress, ComicDownloadProgressKind;
+export 'home_widgets.dart' show ComicCoverCard, ComicDownloadProgress, ComicDownloadProgressKind;
 part 'demo_home_views.dart';
 part 'demo_home_source_compat.dart';
 const homePageKey = ValueKey<String>('home-page');

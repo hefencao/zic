@@ -1,3 +1,12 @@
+## dev.75 编译闭包、契约归属与测试边界
+
+- 公共 API 迁移必须同时完成生产、测试、导出和 package 依赖闭包；不得依赖无 Flutter SDK 环境掩盖漏导入或旧调用。
+- 实现的单元测试归其 owner package。`AssetBundleTransport` 是 `pipeline_runtime` 内部 transport，不由 App 或 `reader_runtime` 转出。
+- `ComicManifest` 等领域模型从 `domain` 显式导入；调用方漏导入不得通过扩大 `catalog` 等 facade 的 export 修复。
+- canonical page `DownloadId` 属于 `downloads`。App/Presentation 测试不重复调用 identity helper，只验证自己消费的只读 identity。
+- 已无生产调用的 `ComicDetailsScreen` 兼容包装被删除；本地详情测试直接覆盖拥有生命周期的 `LocalComicDetailsScreen`，封面继续消费 `EncodedResourceSource`。
+- 静态门禁用于防止依赖和 API 回流，但不能替代 analyzer、Flutter test 或 Android 构建。`pipeline_runtime`、`reader_runtime`、`local_media_ui` 必须进入统一 analyze/test runner，避免拆包后只检查 App 而漏编译 owner package。长期执行提示见 `docs/AI_ITERATION_PROMPT.md`。
+
 ## dev.74 稳定几何、Artwork Presentation 与诊断投影边界
 
 - Pipeline 继续拥有下载、预解码、上传、artifact 与进度。Reader 只消费页面流、提交 observation，并维护纯 Presentation 几何。
@@ -134,8 +143,9 @@ zic/
     downloads/               页面 artifact 下载与整本队列核心
     downloads_bridge/        网络/供电与队列持久化平台适配
     reader/                  Reader UI、viewport、交互报告
-    reader_runtime/          Reader session composition、transport/workspace adapter
+    reader_runtime/          Reader Presentation、交互与 observation adapter
     pipeline/                policy/window/ranker/demand
+    pipeline_runtime/        Pipeline-owned Reader resource session composition
     sessions/                download/decode/display session
     transport/               网络、本地文件、resume
     storage/                 artifact、cache index、SQLite 与持久目录库
@@ -192,7 +202,8 @@ zic/
 
 `apps/app/lib/reader_runtime.dart` 与 `webp_demo.dart` 仅是兼容导出，不实现 session、transport、decode 或媒体探测。
 
-- `packages/reader_runtime` 负责把 Reader application/controller 与 session、transport、workspace、artifact handoff 装配起来，并显式依赖 `media.SourcePool`。
+- `packages/pipeline_runtime` 负责 DownloadSession、transport/workspace、artifact handoff、SourcePool 与 lane 的 Reader resource-session composition；平台 `SourceFactory` 由上层注入。
+- `packages/reader_runtime` 只负责 Reader application/controller、Presentation、交互和 observation 适配，并消费 `pipeline_runtime` 的只读页面流。
 - `packages/local_media_ui` 负责本地图片导入、预览和 WebP presentation；WebP prefix 元数据来自 `packages/media`，native cursor/texture 仍通过既有 bridge。
 - App production dependencies 不直接声明 `pipeline/sessions/storage/transport`；这些低层依赖只能由 composition package 所有。测试可在 `dev_dependencies` 中直接引用其契约。
 - App facade 不得再次增长为实现文件。单个 local-media UI 实现文件上限为 1600 行，继续增长时必须按状态所有权进一步拆分。

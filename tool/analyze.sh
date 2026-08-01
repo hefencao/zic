@@ -12,6 +12,7 @@ for rel in \
   packages/domain \
   packages/resource_cache \
   packages/catalog \
+  packages/plugin_host \
   packages/downloads \
   packages/telemetry \
   packages/transport \
@@ -25,7 +26,19 @@ for rel in \
   (cd "$ROOT/$rel" && dart analyze)
 done
 
-for rel in packages/reader packages/plugin_host_bridge packages/texture_bridge packages/local_media_bridge packages/local_media packages/runtime_bridge packages/storage_bridge packages/downloads_bridge apps/app; do
+for rel in \
+  packages/reader \
+  packages/pipeline_runtime \
+  packages/reader_runtime \
+  packages/plugin_host_bridge \
+  packages/texture_bridge \
+  packages/local_media_bridge \
+  packages/local_media \
+  packages/local_media_ui \
+  packages/runtime_bridge \
+  packages/storage_bridge \
+  packages/downloads_bridge \
+  apps/app; do
   echo "FLUTTER ANALYZE: $rel"
   (cd "$ROOT/$rel" && flutter analyze)
 done

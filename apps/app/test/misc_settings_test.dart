@@ -11,6 +11,7 @@ import 'package:zic/debug_trace.dart';
 import 'package:zic/library_backup.dart';
 import 'package:zic/main.dart';
 import 'package:zic/misc_page.dart';
+import 'package:zic/reader_preferences.dart';
 
 Future<void> _pumpUntilFound(
   WidgetTester tester,

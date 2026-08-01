@@ -1,11 +1,14 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
+import 'package:downloads/downloads.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resource_cache/resource_cache.dart';
+import 'package:zic/comic_details.dart' as details;
 import 'package:zic/demo_home.dart';
 import 'package:zic/download_manager.dart';
 import 'package:zic/library_diagnostics.dart';
@@ -15,6 +18,46 @@ Uint8List _tinyPng() => base64Decode(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
       'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
     );
+
+Widget _localDetailsScreen({
+  required LibraryComic comic,
+  required ComicPreference preference,
+  required Map<String, ChapterReadState> readStates,
+  required Future<void> Function(ComicPreference preference)
+      onPreferenceChanged,
+  required Future<void> Function(ImportedLibraryEntry chapter, bool isRead)
+      onReadChanged,
+  required Future<void> Function(ImportedLibraryEntry chapter) onOpenChapter,
+}) {
+  final snapshot = details.ComicDetailsLibrarySnapshot(
+    chapters: comic.chapters,
+    sourceChapters: comic.sourceChapters,
+    readStates: readStates,
+    preference: preference,
+  );
+  return details.LocalComicDetailsScreen(
+    comic: comic,
+    initialLibrary: snapshot,
+    categories: const <LibraryCategory>[],
+    loadCover: ({
+      required String sourceId,
+      required String comicId,
+      required Uri? coverUri,
+      required ImportedLibraryEntry? fallbackChapter,
+    }) async =>
+        MemoryEncodedResourceSource(_tinyPng()),
+    reloadLibrary: ({required bool refreshContent}) async => snapshot,
+    onPreferenceChanged: onPreferenceChanged,
+    onReadChanged: onReadChanged,
+    onOpenChapter: (chapter, {required bool refreshRemote}) =>
+        onOpenChapter(chapter),
+    onDownloadChapter: (_) async {},
+    inspectChapterDownload: (chapter) async =>
+        ChapterDownloadSnapshot.idle(chapter),
+    downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
+    onDownloadComic: (_) async {},
+  );
+}
 
 ImportedChapterRecord _chapter({String name = '本地漫画'}) {
   return ImportedChapterRecord.folder(
@@ -507,15 +550,13 @@ void main() {
     var opened = false;
     await tester.pumpWidget(
       MaterialApp(
-        home: ComicDetailsScreen(
+        home: _localDetailsScreen(
           comic: LibraryComic.fromEntries(<ImportedLibraryEntry>[entry]),
           preference: ComicPreference.defaults(
             sourceId: chapter.sourceId,
             comicId: chapter.comicId,
           ),
-          categories: const <LibraryCategory>[],
           readStates: const <String, ChapterReadState>{},
-          coverBytes: () async => _tinyPng(),
           onPreferenceChanged: (value) async => saved = value,
           onReadChanged: (_, value) async => read = value,
           onOpenChapter: (_) async => opened = true,
@@ -557,16 +598,16 @@ void main() {
     String? openedChapterId;
     await tester.pumpWidget(
       MaterialApp(
-        home: ComicDetailsScreen(
+        home: _localDetailsScreen(
           comic: LibraryComic.fromEntries(<ImportedLibraryEntry>[
             ImportedLibraryEntry(chapter: second),
             ImportedLibraryEntry(chapter: first),
           ]),
           preference: ComicPreference.defaults(
-              sourceId: first.sourceId, comicId: first.comicId),
-          categories: const <LibraryCategory>[],
+            sourceId: first.sourceId,
+            comicId: first.comicId,
+          ),
           readStates: const <String, ChapterReadState>{},
-          coverBytes: () async => _tinyPng(),
           onPreferenceChanged: (_) async {},
           onReadChanged: (_, __) async {},
           onOpenChapter: (entry) async {

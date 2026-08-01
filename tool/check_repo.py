@@ -309,9 +309,12 @@ def check_tool_dirs() -> None:
     ):
         if required not in bootstrap:
             fail(f'Flutter bootstrap directory/command is incomplete: {required}')
-    for required in ('packages/reader', 'packages/local_media_bridge', 'packages/local_media', 'packages/storage_bridge', 'apps/app', 'flutter test test'):
+    for required in ('packages/reader', 'packages/pipeline_runtime', 'packages/reader_runtime', 'packages/local_media_bridge', 'packages/local_media', 'packages/local_media_ui', 'packages/storage_bridge', 'apps/app', 'flutter test test'):
         if required not in flutter_tests:
             fail(f'Flutter test directory is not explicit: {required}')
+    for required in ('packages/plugin_host', 'packages/pipeline_runtime', 'packages/reader_runtime', 'packages/local_media_ui', 'flutter analyze'):
+        if required not in analyze:
+            fail(f'Flutter analyze directory is not explicit: {required}')
     for required in ('packages/domain', 'packages/media', 'packages/sessions', 'dart test test'):
         if required not in dart_tests:
             fail(f'Dart test directory is not explicit: {required}')
@@ -548,6 +551,9 @@ def check_compile_regressions() -> None:
     contract_test = (app_test / 'webp_demo_test.dart').read_text(
         encoding='utf-8'
     )
+    reader_page_identity_test = (
+        ROOT / 'packages/downloads/test/reader_page_identity_test.dart'
+    ).read_text(encoding='utf-8')
     image_preview_test = (app_test / 'local_image_preview_test.dart').read_text(
         encoding='utf-8'
     )
@@ -604,12 +610,18 @@ def check_compile_regressions() -> None:
         'system picker preserves cancellation as null',
         'valid local WebP passes container validation',
         'malformed local WebP fails container validation',
-        'Reader media identity matches the chapter manifest contract',
         'Reader media player owns the supplied download identity',
         "XFile('/virtual/source-with-unrelated-name')",
     ):
         if required not in contract_test:
             fail(f'picker/validation contract boundary is incomplete: {required}')
+
+    for required in (
+        'reader page trace identity shares the exact DownloadId prefix',
+        'reader page identity rejects assets from another chapter',
+    ):
+        if required not in reader_page_identity_test:
+            fail(f'download identity ownership regression: {required}')
 
     for required in (
         'WebpPreviewStateRegion',
@@ -1105,7 +1117,7 @@ def check_compile_regressions() -> None:
         ROOT / 'packages/pipeline_runtime/lib/src/asset_bundle_transport.dart'
     )
     asset_transport_test_path = (
-        ROOT / 'apps/app/test/asset_bundle_transport_test.dart'
+        ROOT / 'packages/pipeline_runtime/test/asset_bundle_transport_test.dart'
     )
     if not asset_transport_test_path.is_file():
         fail('AssetBundle transport tests are missing')

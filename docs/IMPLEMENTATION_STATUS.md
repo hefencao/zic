@@ -1,3 +1,12 @@
+## dev.75：编译闭包与契约归属
+
+- 用户报告的 `EncodedResourceSource`、AssetBundleTransport、Reader preference extension、ComicManifest、readerPageDownloadId 与 Coverage const 错误均已修复。
+- 删除无生产调用的 `ComicDetailsScreen`、App `asset_bundle_transport.dart` 和 Reader runtime 对该内部 transport 的兼容转出。
+- `AssetBundleTransport` 测试迁入 `pipeline_runtime`；download identity 契约保留在 `downloads` owner。
+- App 详情测试直接使用 `LocalComicDetailsScreen`，不再维护第二套详情生命周期和 byte-only cover API。
+- Architecture 文档修正旧的 `reader_runtime` session composition 描述：资源会话归 `pipeline_runtime`，Reader runtime 只做 Presentation/observation adapter。
+- 新增后续迭代提示词与 dev.75 ownership gate；补齐 `pipeline_runtime`、`reader_runtime`、`local_media_ui` 的 analyzer/Flutter test runner 覆盖，为 `local_media_ui` 增加 composition 编译 smoke test，并移除 check 脚本中的自动格式化。Pipeline 网络、预下载、解码和上传策略未修改。
+
 ## dev.74：纵向几何与诊断可用性闭环
 
 - `local_media_ui` library 指令顺序编译阻断已修复。
@@ -116,7 +125,7 @@ App 的 source-resource loader 与 `plugin_host` runtime adapter 都拒绝旧 Ve
 
 ### 已完成
 
-- 新增 `reader_runtime` package，集中拥有 Reader 的 session composition、`SourcePool`、transport/workspace、download registry、coordinator 与流式进度投影。`apps/app/lib/reader_runtime.dart`、`asset_bundle_transport.dart`、`media_load_token.dart` 仅作兼容导出。
+- 当时新增 `reader_runtime` package 以承接 Reader session composition；该资源所有权已在 dev.72 迁移到 `pipeline_runtime`。当前 `reader_runtime` 只保留 Presentation/observation adapter，App facade 只转出仍被应用使用的 Reader API。
 - 新增 `local_media_ui` package，将原 `webp_demo.dart` 按职责拆分，并从 `media` 显式导入 WebP prefix parser。App 的生产依赖不再直接包含 `pipeline`、`sessions`、`storage`、`transport`、`texture_bridge`。
 - 外部插件管理从主来源列表中移出安装记录；Mihon/Venera 各自在生态页面左栏显示已安装，右栏显示仓库。安装、更新、移除和 activation failure 仍由 `ExternalPluginController` 所有。
 - dev.61 的“仓库语言折叠”已由 dev.62 废弃；语言折叠只存在于漫画源管理的已启用 Mihon 来源投影。

@@ -1,3 +1,12 @@
+## dev.75 completed
+
+- Close all reported dev.74 compile/test API migrations.
+- Move private transport tests to `pipeline_runtime` and remove obsolete App/Reader facades.
+- Remove the unused local-details compatibility wrapper and test the actual owner.
+- Add a compile/ownership migration gate and include every Flutter composition package in the shared analyze/test runners.
+- Publish a reusable AI iteration prompt focused on Architecture and coupling.
+- Preserve all Pipeline media policy and transport behavior.
+
 ## dev.74 completed
 
 1. 修复 Dart library directive 顺序并建立门禁。

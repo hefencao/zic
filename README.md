@@ -1,6 +1,8 @@
 # zic
 
-`0.31.0-dev.74` 修复连续 Reader 的真实几何与定位：运行时尺寸统一为 height/width，拼接不再负位移重叠，列表使用可预测 item extent 并从保存页直接建立初始 offset。来源浏览、详情与首页封面统一复用持久文件型响应缓存，失效图片响应不会写入缓存。Debug Trace 增加高频事件压缩、过滤、强调色和 JSONL 导出；Reader/Pipeline 下载、预解码与 7/3、2/1、5/3/2 策略保持不变。
+`0.31.0-dev.75` 完成 dev.74 后续编译闭包并收紧契约归属：删除无生产调用的详情兼容包装和 AssetBundleTransport 转出 facade，底层 transport 测试迁回 `pipeline_runtime`，下载 identity 测试留在 `downloads`，并新增可直接复制的 Architecture/耦合迭代提示词。媒体策略与 dev.74 保持不变。
+
+后续新聊天可直接使用 [`docs/AI_ITERATION_PROMPT.md`](docs/AI_ITERATION_PROMPT.md) 中的执行提示词。
 
 `zic` 是从零开发的高性能漫画阅读器。当前版本已完成静态 Reader、可恢复下载、
 持久化缓存恢复、容量/LRU 策略、受控清理、失败退避重试、独立资源 lane、格式感知 ingress、

@@ -56,39 +56,6 @@ void main() {
     expect(picked.displayName, 'selected.webp');
   });
 
-  test('Reader media identity matches the chapter manifest contract', () {
-    final asset = PageAsset(
-      pageId: 'page',
-      chapterId: 'chapter',
-      index: 0,
-      uri: Uri.parse('asset:///page.webp'),
-      contentKindHint: ContentKindHint.webp,
-    );
-    final chapter = ChapterManifest(
-      sourceId: 'source',
-      comicId: 'comic',
-      chapter: const Chapter(
-        chapterId: 'chapter',
-        comicId: 'comic',
-        title: 'Chapter',
-        sequence: 1,
-        pageCount: 1,
-        sourceRevision: 'revision',
-      ),
-      pages: <PageAsset>[asset],
-      readingDirection: ReadingDirection.ltr,
-    );
-
-    final download = readerPageDownloadId(chapter, asset);
-
-    expect(download.content.sourceId, 'source');
-    expect(download.content.comicId, 'comic');
-    expect(download.content.chapterId, 'chapter');
-    expect(download.content.pageId, 'page');
-    expect(download.sourceRevision, 'revision');
-    expect(download.canonicalUri, asset.uri);
-  });
-
   test('Reader media player owns the supplied download identity', () {
     final download = DownloadId(
       content: const ContentId(
@@ -157,7 +124,7 @@ void main() {
     expect(reads, 1);
   });
 
-  test('folder import produces stable catalog and Reader identities', () {
+  test('folder import produces stable catalog identities', () {
     final folder = PickedImageFolder(
       directoryPath: 'content://provider/tree/chapter',
       displayName: 'chapter',
@@ -190,10 +157,6 @@ void main() {
         'content://provider/document/001');
     expect(manifest.pages.first.contentKindHint, ContentKindHint.webp);
     expect(manifest.pages.last.contentKindHint, ContentKindHint.png);
-    expect(
-      readerPageDownloadId(manifest, manifest.pages.first).canonicalUri,
-      manifest.pages.first.uri,
-    );
   });
 
   test('folder picker preserves cancellation as null', () async {

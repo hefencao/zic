@@ -1,3 +1,13 @@
+## dev.75 compile and ownership requirements
+
+- Public API migrations MUST update production callers, tests, exports and package dependencies in one change.
+- Tests for private implementation details MUST live in the owning package; App tests MUST NOT import or duplicate Pipeline/download internal contracts.
+- Domain types MUST be imported from `domain`; facade exports MUST NOT be broadened solely to hide missing imports.
+- Dead compatibility wrappers and re-export-only files with no production callers SHOULD be removed after whole-repository reference checks.
+- Cover Presentation MUST use `EncodedResourceSource`; byte-only compatibility callbacks MUST NOT create an alternate cover path.
+- Static ownership gates supplement but MUST NOT be reported as analyzer, Flutter test or Android build success.
+- Pipeline preload windows and lane capacities MUST remain unchanged by compile-closure work.
+
 ## dev.74 vertical geometry, artwork and diagnostics requirements
 
 - Runtime-reported page ratio MUST use height/width, matching source metadata and continuous extent calculations.

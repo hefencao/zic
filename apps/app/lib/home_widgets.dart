@@ -1,13 +1,9 @@
-import 'dart:typed_data';
-
 import 'package:catalog/catalog.dart';
 import 'package:flutter/material.dart';
 
-import 'package:downloads/downloads.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
 import 'package:telemetry/telemetry.dart';
-import 'comic_details.dart' as details;
 
 enum ComicDownloadProgressKind { active, offline }
 
@@ -385,106 +381,6 @@ final class _DownloadWatermark extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-final class ComicDetailsScreen extends StatefulWidget {
-  const ComicDetailsScreen({
-    required this.comic,
-    required this.preference,
-    required this.categories,
-    required this.readStates,
-    required this.coverBytes,
-    required this.onPreferenceChanged,
-    required this.onReadChanged,
-    required this.onOpenChapter,
-    this.onDownloadChapter,
-    super.key,
-  });
-
-  final LibraryComic comic;
-  final ComicPreference preference;
-  final List<LibraryCategory> categories;
-  final Map<String, ChapterReadState> readStates;
-  final Future<Uint8List> Function() coverBytes;
-  final Future<void> Function(ComicPreference preference) onPreferenceChanged;
-  final Future<void> Function(ImportedLibraryEntry chapter, bool isRead)
-      onReadChanged;
-  final Future<void> Function(ImportedLibraryEntry chapter) onOpenChapter;
-  final Future<void> Function(ImportedLibraryEntry chapter)? onDownloadChapter;
-
-  @override
-  State<ComicDetailsScreen> createState() => _ComicDetailsScreenState();
-}
-
-final class _ComicDetailsScreenState extends State<ComicDetailsScreen> {
-  late ComicPreference _preference;
-  late Map<String, ChapterReadState> _readStates;
-
-  @override
-  void initState() {
-    super.initState();
-    _preference = widget.preference;
-    _readStates = Map<String, ChapterReadState>.from(widget.readStates);
-  }
-
-  details.ComicDetailsLibrarySnapshot _snapshot() {
-    return details.ComicDetailsLibrarySnapshot(
-      chapters: widget.comic.chapters,
-      sourceChapters: widget.comic.sourceChapters,
-      readStates: _readStates,
-      preference: _preference,
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return details.LocalComicDetailsScreen(
-      comic: widget.comic,
-      initialLibrary: _snapshot(),
-      categories: widget.categories,
-      loadCover: ({
-        required String sourceId,
-        required String comicId,
-        required Uri? coverUri,
-        required ImportedLibraryEntry? fallbackChapter,
-      }) =>
-          widget.coverBytes(),
-      reloadLibrary: ({required bool refreshContent}) async => _snapshot(),
-      onPreferenceChanged: (preference) async {
-        _preference = preference;
-        await widget.onPreferenceChanged(preference);
-      },
-      onReadChanged: (chapter, isRead) async {
-        final state = ChapterReadState(
-          sourceId: chapter.chapter.sourceId,
-          comicId: chapter.chapter.comicId,
-          chapterId: chapter.chapter.chapterId,
-          isRead: isRead,
-          updatedAt: DateTime.now().toUtc(),
-        );
-        _readStates = <String, ChapterReadState>{
-          ..._readStates,
-          state.identity: state,
-        };
-        await widget.onReadChanged(chapter, isRead);
-      },
-      onOpenChapter: (chapter, {required bool refreshRemote}) =>
-          widget.onOpenChapter(chapter),
-      onDownloadChapter: widget.onDownloadChapter ?? (_) async {},
-      inspectChapterDownload: (chapter) async =>
-          ChapterDownloadSnapshot.idle(chapter),
-      downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
-      onDownloadComic: (chapters) async {
-        final download = widget.onDownloadChapter;
-        if (download == null) {
-          return;
-        }
-        for (final chapter in chapters) {
-          await download(chapter);
-        }
-      },
     );
   }
 }

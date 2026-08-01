@@ -127,7 +127,7 @@ void main() {
       interaction: Interaction.idle,
       logicalPosition: 8,
       velocity: 0,
-      currentCoverage: const Coverage(
+      currentCoverage: Coverage(
         pageIndex: 8,
         assetKey: 'chapter/p8',
         fraction: 1,

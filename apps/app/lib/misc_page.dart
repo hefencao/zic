@@ -195,7 +195,7 @@ final class AboutScreen extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           const Text(
-            '0.31.0-dev.74',
+            '0.31.0-dev.75',
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 24),

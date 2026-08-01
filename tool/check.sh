@@ -8,6 +8,11 @@ if [[ "${1:-}" == "--require-toolchains" ]]; then
 fi
 
 python3 "$ROOT/tool/check_repo.py"
+python3 "$ROOT/tool/check_dart_structure.py"
+python3 "$ROOT/tool/test_dart_library_directive_order.py"
+python3 "$ROOT/tool/test_pipeline_runtime_compile_boundary.py"
+python3 "$ROOT/tool/test_dev75_compile_ownership.py"
+python3 "$ROOT/tool/test_vertical_geometry_cover_trace_contract.py"
 python3 "$ROOT/tool/check_android_runtime_dependencies.py"
 python3 "$ROOT/tool/test_android_runtime_dependencies.py"
 python3 "$ROOT/tool/test_venera_network_policy.py"
@@ -53,7 +58,6 @@ fi
 
 if command -v flutter >/dev/null 2>&1; then
   (cd "$ROOT" && flutter pub get)
-  (cd "$ROOT" && dart format apps packages)
   "$ROOT/tool/analyze.sh"
   "$ROOT/tool/test_dart.sh"
   "$ROOT/tool/test_flutter.sh"

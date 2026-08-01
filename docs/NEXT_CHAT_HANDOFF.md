@@ -4,22 +4,23 @@
 
 Use only:
 
-`zic_v0.31.0-dev.74_vertical-geometry-artwork-trace.zip`
+`zic_v0.31.0-dev.75_compile-contract-ownership.zip`
 
-Do not merge dev.65–73 candidates or overlays.
+Do not merge dev.65–74 candidates or overlays.
 
-## Completed in dev.74
+## Completed in dev.75
 
-- Fixed `local_media_ui.dart` directive-order compilation failure and added an all-Dart directive gate.
-- Corrected runtime page ratio to height/width, removed negative stitch overlap, and made the continuous list directly positionable at a distant saved page.
-- Unified source-browser/detail artwork with durable file-backed cache presentation and rejected non-image cache entries.
-- Added Debug Trace coalescing, keyword/session/severity filtering, severity accents, and JSONL export; Mihon/Venera opaque identities are summarized.
-- Kept Pipeline download/decode/upload ownership and 7/3, 2/1, 5/3/2 policy unchanged.
+- Closed all compile errors reported after dev.74.
+- Removed the unused `ComicDetailsScreen` compatibility wrapper and obsolete AssetBundleTransport App/Reader facades.
+- Moved AssetBundleTransport tests to `pipeline_runtime`; downloads retains canonical page identity tests.
+- Corrected explicit extension/domain imports and the invalid const Coverage call.
+- Added compile/ownership regression gates and restored analyze/test coverage for pipeline_runtime, reader_runtime and local_media_ui.
+- Added `docs/AI_ITERATION_PROMPT.md` for future Architecture/coupling-safe iterations.
+- Kept Pipeline preload, decode/upload lanes, source transport, cover cache and Debug Trace behavior unchanged.
 
 ## Next validation
 
-1. Run `flutter analyze`, targeted Reader/App tests, and Android release build.
-2. On device, restore a chapter near page 87 and confirm no prefix mount burst or scroll reset.
-3. Check stitched pages at multiple DPR values and source-provided/runtime-measured dimensions.
-4. Reopen source/details pages and verify cover warm hits do not trigger network reloads.
-5. Export filtered Debug Trace JSONL and inspect error-only output.
+1. Run `flutter analyze`, all affected package tests, App tests and Android kernel/release build.
+2. Verify the reported compile errors no longer occur in the user's Flutter environment.
+3. Continue device validation of vertical geometry, cover warm cache and Debug Trace export/filter behavior.
+4. Use `docs/AI_ITERATION_PROMPT.md` when opening a new chat.

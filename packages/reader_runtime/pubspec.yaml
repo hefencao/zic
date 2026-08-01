@@ -1,5 +1,5 @@
 name: reader_runtime
-description: Reader session composition and streaming presentation adapter for zic.
+description: Reader presentation and observation adapter for Pipeline-owned sessions.
 version: 0.31.0
 publish_to: none
 resolution: workspace

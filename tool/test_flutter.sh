@@ -8,7 +8,19 @@ if ! command -v flutter >/dev/null 2>&1; then
   exit 1
 fi
 
-for rel in packages/reader packages/plugin_host_bridge packages/texture_bridge packages/local_media_bridge packages/local_media packages/runtime_bridge packages/storage_bridge packages/downloads_bridge apps/app; do
+for rel in \
+  packages/reader \
+  packages/pipeline_runtime \
+  packages/reader_runtime \
+  packages/plugin_host_bridge \
+  packages/texture_bridge \
+  packages/local_media_bridge \
+  packages/local_media \
+  packages/local_media_ui \
+  packages/runtime_bridge \
+  packages/storage_bridge \
+  packages/downloads_bridge \
+  apps/app; do
   echo "FLUTTER TEST: $rel/test"
   (
     cd "$ROOT/$rel"
