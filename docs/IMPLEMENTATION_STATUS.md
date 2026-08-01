@@ -1,3 +1,14 @@
+## dev.76：Reader 页面加载所有权与立即退出审计
+
+- Reader 删除 viewport 固定居中加载圈、页面 ready 集合和首帧触发的全屏 overlay 重建；连续纵向页面只保留具体图片区域内的加载反馈。
+- `LocalImagePlayer` 删除 `showLoadingIndicator` 兼容开关，页面 loading/ready/invalid 状态不再由 Reader 与媒体组件双重拥有。
+- 已识别但未伪装闭合：`PipelinePageStream.source -> NativeWebpPlayer` 仍泄漏 encoded source 并让 Presentation 创建 cursor/texture；需在具备 production `FrameUploader` 后按原子 capability 迁入 `pipeline_runtime`。本轮未新增该入口，也未建立第二条 decode 链。
+- `_ReaderPageHost` 继续去重首帧回调并记录 telemetry，不参与可见 loading 状态。
+- 设备 trace 无 exception；7 个页面 demand 在退出时全部 detach，`receivingRetained=false`，未见退出后继续收包或 Reader 越权关闭 session 的证据。当前页 WebP 在 partial/full artifact 阶段有两次 decode start，退出前未记录首帧，列为真机后续验证而非通过缩窗处理。
+- 全仓其他固定居中圈均属于封面内容、详情/设置/演示路由初始化或具体媒体页面；Reader controls 只保留局部下载按钮工作态和只读 Pipeline 进度。
+- 新增 local-media owner Widget 测试、Reader 无全局圈测试、dev.76 静态门禁、审计文档和 ADR 0060。Pipeline 7/3、2/1、current/transition、5/3/2 未修改。
+- 当前执行环境没有 Flutter/Dart SDK；静态/结构门禁可执行，analyzer、Flutter test 与 Android build 必须在具备 SDK 的环境复验。
+
 ## dev.75：编译闭包与契约归属
 
 - 用户报告的 `EncodedResourceSource`、AssetBundleTransport、Reader preference extension、ComicManifest、readerPageDownloadId 与 Coverage const 错误均已修复。
@@ -58,7 +69,7 @@
 - Venera requestId 绑定原生连接，取消会真实终止连接；默认串行、仅当前页，GET/HEAD 无请求体。
 - Pipeline 不重复提交未变化的 role window。
 - 纵向拼接三态继承、无 separator、1px 覆盖；媒体/viewport 重排保留可视锚点，拖动期间不跳转。
-- Reader viewport 单一拥有 loading indicator；持续失败的 lazy separator 测试断言已实际修复。
+- Reader viewport 当时单一拥有 loading indicator；该设计已被 dev.76 / ADR 0060 的页面媒体所有权取代。持续失败的 lazy separator 测试断言已实际修复。
 
 ## dev.68：Venera 入口预检、请求止损与无缝连续布局
 
@@ -66,7 +77,7 @@
 
 App 的 source-resource loader 与 `plugin_host` runtime adapter 都拒绝旧 Venera token，后者在创建 runtime invocation 前执行，因此未来即使新增调用方漏掉预检，也不会形成插件请求风暴。Reader 对 `venera-resource:` 章节采用当前页 + 下一页、最多两个 download demands 且不自动重试的保守窗口；普通 HTTP/file 章节维持原策略。
 
-纵向拼接使用无 separator 的 `ListView.builder`。只有非拼接模式创建 8px gap；未知活动页的临时高度至少等于 viewport，使加载圈位于当前可视区域中心。真实媒体尺寸仍从来源元数据或同一份媒体载荷回传；拼接时静态图、Flutter 动图和 native texture 统一按宽度贴合，完整显示、不裁切。
+纵向拼接使用无 separator 的 `ListView.builder`。只有非拼接模式创建 8px gap；未知活动页的临时高度至少等于 viewport，使页面媒体自己的加载圈位于当前可视区域内。真实媒体尺寸仍从来源元数据或同一份媒体载荷回传；拼接时静态图、Flutter 动图和 native texture 统一按宽度贴合，完整显示、不裁切。
 
 ## dev.67：Reader 控制所有权收口与组合解耦
 

@@ -18,7 +18,6 @@ final class LocalImagePlayer extends StatefulWidget {
     this.onPlaybackCapabilityChanged,
     this.onDimensionsChanged,
     this.fit = BoxFit.contain,
-    this.showLoadingIndicator = true,
     this.flutterAnimatedCodecFactory = instantiateFlutterAnimatedCodec,
     super.key,
   });
@@ -39,7 +38,6 @@ final class LocalImagePlayer extends StatefulWidget {
   final ValueChanged<bool>? onPlaybackCapabilityChanged;
   final ValueChanged<Size>? onDimensionsChanged;
   final BoxFit fit;
-  final bool showLoadingIndicator;
   final FlutterAnimatedCodecFactory flutterAnimatedCodecFactory;
 
   Uri get sourceUri => image.sourceUri;
@@ -344,9 +342,11 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     _publish(ImagePreviewState.invalid(_detectedFormat, error));
   }
 
-  Widget _loadingIndicator() => widget.showLoadingIndicator
-      ? const Center(child: CircularProgressIndicator())
-      : const SizedBox.expand();
+  Widget _loadingIndicator() => const Center(
+        child: CircularProgressIndicator(
+          key: imagePageLoadingIndicatorKey,
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {

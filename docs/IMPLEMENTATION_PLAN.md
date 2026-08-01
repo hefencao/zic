@@ -1,3 +1,15 @@
+## dev.76 completed
+
+Boundary follow-up: add a composition-injected production `FrameUploader` and presentation-safe output projection, then atomically remove `PipelinePageStream.source` plus Presentation-owned native cursor/texture lifecycle. Do not use complete-byte fallback or dual decode as an intermediate state.
+
+1. Read the sole dev.75 baseline, current ownership documents, ADRs, device trace and read-only Mihon/VibeVenera references before editing.
+2. Record compile/product/performance/test issues, authoritative owners and rejected regressions in `docs/audits/dev76-reader-exit-and-loading-ownership-audit.md`.
+3. Remove Reader viewport loading state/overlay and the page-loading suppression compatibility API; keep first-frame telemetry in the Reader page host.
+4. Add owner-package and Reader regressions plus a static ownership gate; audit all remaining centered progress indicators by scope.
+5. Preserve Pipeline windows, lanes, source transport, GET/HEAD and cache behavior.
+
+Next: run Flutter analyzer/package/App tests and Android debug/release in an SDK-equipped environment, then verify on device that vertical pages show exactly one image-local spinner and that the current-page WebP reports its first frame before or cleanly after immediate route exit.
+
 ## dev.75 completed
 
 - Close all reported dev.74 compile/test API migrations.

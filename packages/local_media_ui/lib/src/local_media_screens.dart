@@ -181,7 +181,6 @@ final class ImportedImageChapterScreen extends StatelessWidget {
                 size.height.round(),
               ),
               fit: runtime.mediaFit,
-              showLoadingIndicator: false,
             ),
           );
         },

@@ -467,17 +467,13 @@ void main() {
     expect(
       fallbackHeight,
       greaterThanOrEqualTo(tester.getSize(find.byType(ReaderView)).height),
-      reason: 'the active unknown-size page must center loading in viewport',
+      reason: 'unknown geometry must keep the page presentation in view',
     );
 
-    final loader = find.byKey(
-      const ValueKey<String>('reader-loading-indicator'),
-    );
-    expect(loader, findsOneWidget);
     expect(
-      tester.getCenter(loader),
-      tester.getCenter(find.byType(ReaderView)),
-      reason: 'loading belongs to the viewport, not an estimated page box',
+      find.byType(CircularProgressIndicator),
+      findsNothing,
+      reason: 'Reader geometry must not create a second loading authority',
     );
 
     await pump(<String, double>{chapter.pages.single.assetKey: 2.4});

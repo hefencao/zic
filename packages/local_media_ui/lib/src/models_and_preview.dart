@@ -233,6 +233,8 @@ const imageFolderPreviewReadyKey =
     ValueKey<String>('image-folder-preview-ready');
 const imageFolderPreviewLoadingKey =
     ValueKey<String>('image-folder-preview-loading');
+const imagePageLoadingIndicatorKey =
+    ValueKey<String>('image-page-loading-indicator');
 const imageFolderPreviewErrorKey =
     ValueKey<String>('image-folder-preview-error');
 const imageFolderFlutterPreviewKey =

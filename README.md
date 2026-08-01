@@ -1,5 +1,7 @@
 # zic
 
+`0.31.0-dev.76` 以 dev.75 为唯一基线，修复纵向拼接的双加载圈：Reader 删除 viewport 固定居中 overlay 与页面 ready 集合，页面媒体成为唯一可见 loading/ready/invalid 所有者，首帧回调仅保留 telemetry。设备 trace 显示立即退出时 7 个 demand 均完成 detach，未见异常、退出后继续收包或生命周期泄漏；Pipeline 的前 7/后 3 下载、前 2/后 1 预解码、current/transition 上传和 5/3/2 lane 未改。
+
 `0.31.0-dev.75` 完成 dev.74 后续编译闭包并收紧契约归属：删除无生产调用的详情兼容包装和 AssetBundleTransport 转出 facade，底层 transport 测试迁回 `pipeline_runtime`，下载 identity 测试留在 `downloads`，并新增可直接复制的 Architecture/耦合迭代提示词。媒体策略与 dev.74 保持不变。
 
 后续新聊天可直接使用 [`docs/AI_ITERATION_PROMPT.md`](docs/AI_ITERATION_PROMPT.md) 中的执行提示词。
@@ -14,7 +16,7 @@ decode/upload registry、frame holder、viewport 播放门控、帧字节预算�
 
 `0.31.0-dev.70` 以 dev.69 为唯一基线，直接参考用户上传的 VibeVenera 流式图片管线：Venera 插件只解析受限的图片请求方案，普通图片正文由共享 host transport 按 chunk 写入既有 DownloadSession/artifact/ingress。恢复稳定的前 7/后 3 下载预取、前 2/后 1 预解码与 5/3/2 独立 lane，JavaScript 配置解析保持串行。章节下载和 Reader 进度改为 authoritative session 投影，首 chunk 后显示真实字节进度，promoted/restore 页面不再闪烁；GET/HEAD 不上传 body，trace 只保留 Venera token 的 hash 与长度摘要。
 
-`0.31.0-dev.69` 对 dev.65–68 的 Venera/连续 Reader 回归做了差异审计并替换无效补丁：普通 Venera 图片正文不再作为 Base64 数组往返 WebView JavaScript，而由受限原生 HTTP 返回一次性二进制 token；GET/HEAD 强制无请求体、Venera 调用串行且只请求当前页，页面/demand 取消会断开对应原生连接，未变化的 pipeline role window 不再重复提交同一计划。纵向拼接将旧每漫画 `false` 迁移为“继承全局”，拼接树无 separator 并覆盖物理像素接缝；媒体尺寸与 viewport 变化按视口锚点重排，不在拖动期间回跳，加载指示由 Reader viewport 单一居中所有。长期失败的纵向 Widget 测试已修改到原先直接读取未构建 lazy separator 的具体断言。
+`0.31.0-dev.69` 对 dev.65–68 的 Venera/连续 Reader 回归做了差异审计并替换无效补丁：普通 Venera 图片正文不再作为 Base64 数组往返 WebView JavaScript，而由受限原生 HTTP 返回一次性二进制 token；GET/HEAD 强制无请求体、Venera 调用串行且只请求当前页，页面/demand 取消会断开对应原生连接，未变化的 pipeline role window 不再重复提交同一计划。纵向拼接将旧每漫画 `false` 迁移为“继承全局”，拼接树无 separator 并覆盖物理像素接缝；媒体尺寸与 viewport 变化按视口锚点重排，不在拖动期间回跳，加载指示当时由 Reader viewport 单一居中所有；该决定已被 dev.76 / ADR 0060 的页面媒体所有权取代。长期失败的纵向 Widget 测试已修改到原先直接读取未构建 lazy separator 的具体断言。
 
 `0.31.0-dev.68` 将 Venera 兼容检查提升为 Reader/下载入口硬前置条件，但仍保留大图 JavaScript/Base64 传输、取消不终止原生连接、重复 role-window 提交和连续布局回跳等缺口；这些部分由 dev.69 替代。
 

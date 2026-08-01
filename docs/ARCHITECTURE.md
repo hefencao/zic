@@ -1,3 +1,13 @@
+## dev.76 Reader 页面加载状态所有权
+
+- `ReaderView` 只负责几何、交互、observation 和 page host 生命周期 telemetry，不拥有页面 loading/ready/invalid 状态，也不绘制 viewport 固定居中加载 overlay。
+- `local_media_ui` 的具体页面媒体是可见加载反馈的唯一所有者。页面媒体可消费只读 `PipelinePageStream`，但不得通过 loading 状态反向创建、取消或选择 Pipeline demand/session。
+- `_ReaderPageHost` 对首帧回调去重并记录 `firstFrameReady`；该 telemetry 不是 Presentation 权威状态，不能驱动第二个全屏 spinner。
+- 未知尺寸页面仍由 Reader 提供至少一个 viewport 的占位 extent，使页面媒体自己的加载圈位于实际页面区域；尺寸到达后继续使用 `height / width` 重排，不裁切、不重叠。
+- Reader route 退出只释放其 observation/page-host 生命周期；资源 demand/session 的 detach、保留与关闭仍归 `pipeline_runtime`。dev.76 trace 审计未发现退出后继续收包或 Reader 直接关闭 DownloadSession。
+- ADR 0060 取代 ADR 0053 decision 7；Pipeline 的 7/3、2/1、current/transition 和 5/3/2 策略不变。
+- 既有边界债务：`PipelinePageStream.source` 仍把 `EncodedSource` 暴露给 `local_media_ui.NativeWebpPlayer`，后者当前仍创建 native cursor/texture presenter。它不符合 decode/upload 最终归 Pipeline 的目标，但仓库尚缺 production `FrameUploader` 与 presentation-safe output 投影；后续必须把 source/decoder/uploader/output 作为一个原子 capability 迁入 `pipeline_runtime`，不得只搬一半或在 Reader/App 再建竞争链。
+
 ## dev.75 编译闭包、契约归属与测试边界
 
 - 公共 API 迁移必须同时完成生产、测试、导出和 package 依赖闭包；不得依赖无 Flutter SDK 环境掩盖漏导入或旧调用。
@@ -21,7 +31,7 @@
 
 Presentation contributes only local transport handles through immutable factory derivation. `local_media_ui` cannot name `ArtifactCacheStore`, call `readerPageDownloadId`, or construct download/decode owners. A rendered page receives its canonical `DownloadId` from `PipelinePageStream.identity`.
 
-`PipelinePageStreamSnapshot` maps transport sniffing to `PipelinePageContentKind` and exposes the read-only encoded source from the authoritative session ingress. Transport enums and mutable session objects do not cross the presentation boundary. Measured page dimensions are frame-coalesced Reader layout input only; they do not submit pipeline demand or restart media work.
+`PipelinePageStreamSnapshot` maps transport sniffing to `PipelinePageContentKind`. The dev.73 compatibility contract also exposed the ingress `EncodedSource`; current architecture no longer accepts that as the final boundary because `local_media_ui` can then own native decode/upload objects. Until an atomic production uploader/output migration is complete, this is recorded as existing debt rather than described as a clean read-only Presentation API. Transport enums and mutable DownloadSession objects still do not cross the boundary. Measured page dimensions are frame-coalesced Reader layout input only; they do not submit pipeline demand or restart media work.
 
 ## dev.72 Reader / Pipeline 所有权
 

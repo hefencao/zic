@@ -2,6 +2,8 @@
 
 Status: Accepted in `0.31.0-dev.69`.
 
+Decision 7 superseded by ADR 0060 in `0.31.0-dev.76`.
+
 ## Context
 
 The durable locator work in dev.65–68 solved only resource identity. Device traces still showed the same Venera page re-entering decode/upload plans across unchanged observations, large image responses timing out in the WebView bridge, and detached demands continuing until timeout. Continuous layout also recentered on every geometry update, while an old per-comic `false` value could silently disable global stitching. The vertical regression test still read a lazy separator before it existed.

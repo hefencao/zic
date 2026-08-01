@@ -38,7 +38,6 @@ def main() -> None:
         "_scheduleVerticalAnchorRestore",
         "oldViewport: previousViewport",
         "viewport: oldViewport",
-        "reader-loading-indicator",
         "isScrollingNotifier.value",
         "reader-vertical-gap:",
     )
@@ -75,6 +74,10 @@ def main() -> None:
         "ListView.separated",
         "Transform.translate",
         "_verticalStitchOverlap",
+        "reader-loading-indicator",
+        "_readyPageKeys",
+        "_withLoadingOverlay",
+        "CircularProgressIndicator",
     )
     reject(
         "packages/reader_runtime/lib/src/reader_runtime_screen.dart",
@@ -95,9 +98,9 @@ def main() -> None:
         "imageFolderCurrentFileKey",
         "imageFolderTitleKey",
     )
-    require(
+    reject(
         "packages/local_media_ui/lib/src/local_media_screens.dart",
-        "showLoadingIndicator: false",
+        "showLoadingIndicator",
     )
     require(
         "packages/local_media_ui/lib/src/local_image_player.dart",
@@ -106,7 +109,7 @@ def main() -> None:
         "_reportDimensions(info.width, info.height)",
         "final BoxFit fit",
         "fit: widget.fit",
-        "showLoadingIndicator",
+        "imagePageLoadingIndicatorKey",
     )
     require(
         "packages/texture_bridge/lib/src/native_texture_viewport.dart",

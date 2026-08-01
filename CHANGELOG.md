@@ -1,3 +1,13 @@
+## 0.31.0-dev.76：Reader 页面加载所有权与立即退出审计
+
+- 删除 `ReaderView` 的 viewport 固定居中加载 overlay、`_readyPageKeys` 和由首帧回调驱动的父级 setState；Reader 不再保存第二份页面 ready 权威状态。
+- 删除 `LocalImagePlayer.showLoadingIndicator` 兼容开关。静态图、GIF、WebP 的 loading/ready/invalid 继续由实际页面媒体呈现，纵向连续布局只出现随图片区域移动的加载反馈。
+- 首帧回调继续由 `_ReaderPageHost` 去重并记录 `firstFrameReady` telemetry，但不再控制全屏视觉状态。
+- 审计设备 trace：Reader 立即退出时 7 个 demand 均 detach，未出现 exception、退出后继续接收字节或 session 泄漏证据；当前页 WebP 首帧仍需在有 Flutter/Android 环境复验。
+- 全仓检查其他 `CircularProgressIndicator`：Reader 控制栏只保留下载按钮工作态和 Pipeline 进度投影；封面、详情、仓库与路由初始化圈均属于其局部操作/内容 owner，没有第二个 Reader 固定居中 overlay。
+- 新增 owner-package Widget 回归、Reader 禁止全局加载圈回归、静态所有权门禁和 ADR 0060。未改变下载/解码/上传窗口、lane、GET/HEAD、插件或缓存策略。
+- 耦合审查另记录基线既有债务：`PipelinePageStream.source` 仍向 `NativeWebpPlayer` 暴露 encoded source，Presentation 仍创建 native cursor/texture。仓库尚缺 production `FrameUploader` 与只读 output 投影，因此本轮不做会形成双链或破坏播放的半迁移；后续必须原子收回 `pipeline_runtime`。
+
 ## 0.31.0-dev.75：编译闭包、契约归属与后续迭代提示词
 
 - 修复 `home_widgets.dart` 将 `Future<Uint8List>` 返回给 `EncodedResourceSource` loader 的类型错误，并删除只被测试使用的 `ComicDetailsScreen` 兼容包装；详情测试直接覆盖真实 `LocalComicDetailsScreen` owner。

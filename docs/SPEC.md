@@ -1,3 +1,13 @@
+## dev.76 Reader page-loading ownership requirements
+
+- Reader Presentation MUST NOT own a viewport-level loading spinner or a second page-ready collection.
+- The concrete page-media widget MUST be the only visible owner of loading/ready/invalid feedback, centered inside that page's presentation area.
+- First-frame callbacks MAY feed deduplicated telemetry, but MUST NOT drive a global loading overlay.
+- Page media MUST NOT expose a suppression flag whose purpose is to transfer loading ownership back to Reader.
+- Unknown vertical geometry MUST allocate at least the active viewport for the page-media placeholder; measured `height / width` replaces it without cropping, overlap or negative translation.
+- Exiting Reader MUST detach its observation/demand binding through `pipeline_runtime`; Reader MUST NOT close or cancel mutable DownloadSession/transport/artifact owners directly.
+- The 7/3 download window, 2/1 decode window, current/transition upload set and 5/3/2 lanes MUST remain unchanged unless a separately approved experiment changes them.
+
 ## dev.75 compile and ownership requirements
 
 - Public API migrations MUST update production callers, tests, exports and package dependencies in one change.
@@ -792,7 +802,7 @@ Mihon Android packaging must expose each host ABI namespace from exactly one art
 - A UI `refreshRemote` choice controls ordinary content freshness only; it cannot disable adapter-compatibility migration.
 - Deferred Venera resource chapters default to current plus one forward encoded page, at most two download demands, and no automatic Reader network retry. This bound does not authorize an additional byte cache.
 - Stitched vertical mode has no separator child. Its static, animated and native-texture media must share a width-fit presentation contract so contain rounding cannot expose the Reader background. Non-stitched mode may render the configured page gap.
-- While the active page lacks reliable geometry, its placeholder extent must keep the loading indicator within the active viewport. Measured geometry replaces the placeholder without cropping or stretching.
+- While the active page lacks reliable geometry, its placeholder extent must keep the page-media loading indicator inside the active viewport. Measured geometry replaces the placeholder without cropping or stretching.
 
 
 ## dev.69 Venera traffic and continuous-reader requirements
@@ -804,7 +814,7 @@ Mihon Android packaging must expose each host ABI namespace from exactly one art
 - Per-comic vertical stitch MUST support inherit/on/off. Legacy false values written before the tri-state schema MUST migrate to inherit.
 - Stitched vertical presentation MUST create no separator and MUST preserve all source pixels. A small overlap may cover raster rounding but MUST NOT crop the image payload.
 - Geometry or viewport changes MUST preserve the visible in-page anchor. No automatic jump is allowed while the user is dragging or the scroll position reports active scrolling.
-- Reader loading UI MUST have one viewport-level owner. Page renderers MUST be able to suppress their internal loading indicator.
+- Superseded by ADR 0060: Reader MUST NOT own a viewport-level loading indicator. The concrete page renderer owns the only visible loading feedback and does not expose a suppression flag to Reader.
 - Widget tests for lazy lists MUST wait until the target child is constructed before retrieving a single widget.
 
 

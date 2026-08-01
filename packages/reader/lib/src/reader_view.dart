@@ -68,7 +68,6 @@ final class _ReaderViewState extends State<ReaderView> {
   ({int index, double fraction})? _pendingVerticalAnchor;
   bool _commandScheduled = false;
   bool _verticalInitialOffsetApplied = false;
-  final Set<String> _readyPageKeys = <String>{};
 
   @override
   void initState() {
@@ -107,7 +106,6 @@ final class _ReaderViewState extends State<ReaderView> {
       _zoomedPage = null;
       _lastReportedVerticalPage = null;
       _lastDirection = widget.controller.direction;
-      _readyPageKeys.clear();
       _scheduleSyncToCurrentPage();
     } else if (oldWidget.verticalStitch != widget.verticalStitch ||
         oldWidget.pageAspectRatios != widget.pageAspectRatios) {
@@ -202,60 +200,28 @@ final class _ReaderViewState extends State<ReaderView> {
                 );
               },
             );
-            return _withLoadingOverlay(
-              chapter,
-              NotificationListener<ScrollNotification>(
-                onNotification: _handleVerticalScrollNotification,
-                child: list,
-              ),
+            return NotificationListener<ScrollNotification>(
+              onNotification: _handleVerticalScrollNotification,
+              child: list,
             );
           }
-          return _withLoadingOverlay(
-            chapter,
-            NotificationListener<ScrollNotification>(
-              onNotification: _handlePagedScrollNotification,
-              child: PageView.builder(
-                controller: _pageController,
-                itemCount: chapter.pages.length,
-                reverse: direction == ReadingDirection.rtl,
-                scrollDirection: Axis.horizontal,
-                physics: _zoomedPage == null
-                    ? const PageScrollPhysics()
-                    : const NeverScrollableScrollPhysics(),
-                onPageChanged: _handlePageChanged,
-                itemBuilder: (context, index) => _buildPage(chapter, index),
-              ),
+          return NotificationListener<ScrollNotification>(
+            onNotification: _handlePagedScrollNotification,
+            child: PageView.builder(
+              controller: _pageController,
+              itemCount: chapter.pages.length,
+              reverse: direction == ReadingDirection.rtl,
+              scrollDirection: Axis.horizontal,
+              physics: _zoomedPage == null
+                  ? const PageScrollPhysics()
+                  : const NeverScrollableScrollPhysics(),
+              onPageChanged: _handlePageChanged,
+              itemBuilder: (context, index) => _buildPage(chapter, index),
             ),
           );
         },
       ),
     );
-  }
-
-  Widget _withLoadingOverlay(ChapterManifest chapter, Widget content) {
-    final current = chapter.pages[widget.controller.currentIndex].assetKey;
-    return Stack(
-      fit: StackFit.expand,
-      children: <Widget>[
-        content,
-        if (!_readyPageKeys.contains(current))
-          const IgnorePointer(
-            child: Center(
-              child: CircularProgressIndicator(
-                key: ValueKey<String>('reader-loading-indicator'),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  void _markFirstFrameReady(String assetKey) {
-    if (_readyPageKeys.contains(assetKey)) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_readyPageKeys.add(assetKey)) return;
-      setState(() {});
-    });
   }
 
   Widget _buildPage(ChapterManifest chapter, int index) => RotatedBox(
@@ -280,8 +246,6 @@ final class _ReaderViewState extends State<ReaderView> {
             traceSink: widget.traceSink,
             pageBuilder: widget.pageBuilder,
             demandRevision: widget.demandRevision,
-            onFirstFrameReady: () =>
-                _markFirstFrameReady(chapter.pages[index].assetKey),
           ),
         ),
       );
@@ -929,7 +893,6 @@ final class _ReaderPageHost extends StatefulWidget {
     required this.traceSink,
     required this.pageBuilder,
     required this.demandRevision,
-    required this.onFirstFrameReady,
     super.key,
   });
 
@@ -939,7 +902,6 @@ final class _ReaderPageHost extends StatefulWidget {
   final TraceSink traceSink;
   final ReaderPageBuilder? pageBuilder;
   final int Function()? demandRevision;
-  final VoidCallback onFirstFrameReady;
 
   @override
   State<_ReaderPageHost> createState() => _ReaderPageHostState();
@@ -1014,7 +976,6 @@ final class _ReaderPageHostState extends State<_ReaderPageHost> {
       return;
     }
     _reportedFirstFrame = true;
-    widget.onFirstFrameReady();
     final asset = widget.asset;
     final clock = widget.clock;
     final sessionId = widget.sessionId;

@@ -12,4 +12,4 @@ The archive already contains the user's fixed dev.58 state. No earlier dev.58
 candidate, patch bundle, or historical overlay is applied on top. All dev.59, dev.60, dev.61, dev.62 and dev.63
 changes are direct descendants of this extracted tree.
 
-Current delivery lineage continues directly through dev.75. The sole baseline for dev.75 is the complete `zic_v0.31.0-dev.74_vertical-geometry-artwork-trace.zip`; no historical candidate or overlay is merged.
+Current delivery lineage continues directly through dev.76. The sole baseline for dev.76 is the complete user-provided `zic_v0.31.0-dev.75_compile-contract-ownership` archive; no historical candidate, patch tree or overlay is merged.
