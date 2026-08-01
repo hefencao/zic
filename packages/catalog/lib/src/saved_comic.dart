@@ -71,6 +71,7 @@ final class SavedComicRecord {
     required this.comicId,
     required this.title,
     Iterable<String> authors = const <String>[],
+    Iterable<String> tags = const <String>[],
     this.description,
     this.coverSourceId,
     this.readingDirection = ReadingDirection.ltr,
@@ -86,6 +87,12 @@ final class SavedComicRecord {
           authors
               .map((author) => author.trim())
               .where((author) => author.isNotEmpty),
+        ),
+        tags = List<String>.unmodifiable(
+          tags
+              .map((tag) => tag.trim())
+              .where((tag) => tag.isNotEmpty)
+              .toSet(),
         ),
         savedAt = (savedAt ?? DateTime.now()).toUtc(),
         updatedAt = (updatedAt ?? DateTime.now()).toUtc() {
@@ -116,6 +123,7 @@ final class SavedComicRecord {
         comicId: comic.comicId,
         title: comic.title,
         authors: comic.authors,
+        tags: comic.tags,
         description: comic.description,
         coverSourceId: comic.coverUri?.toString(),
         readingDirection: comic.readingDirection,
@@ -133,6 +141,7 @@ final class SavedComicRecord {
         comicId: manifest.comic.comicId,
         title: manifest.comic.title,
         authors: manifest.comic.authors,
+        tags: manifest.comic.tags,
         description: manifest.comic.description,
         coverSourceId: manifest.comic.coverUri?.toString(),
         readingDirection: manifest.comic.readingDirection,
@@ -145,6 +154,7 @@ final class SavedComicRecord {
   final String comicId;
   final String title;
   final List<String> authors;
+  final List<String> tags;
   final String? description;
   final String? coverSourceId;
   final ReadingDirection readingDirection;
@@ -159,6 +169,7 @@ final class SavedComicRecord {
         sourceId: sourceId,
         title: title,
         authors: authors,
+        tags: tags,
         coverUri: coverSourceId == null ? null : Uri.tryParse(coverSourceId!),
         description: description,
         readingDirection: readingDirection,
@@ -168,6 +179,7 @@ final class SavedComicRecord {
   SavedComicRecord copyWith({
     String? title,
     Iterable<String>? authors,
+    Iterable<String>? tags,
     String? description,
     bool clearDescription = false,
     String? coverSourceId,
@@ -182,6 +194,7 @@ final class SavedComicRecord {
         comicId: comicId,
         title: title ?? this.title,
         authors: authors ?? this.authors,
+        tags: tags ?? this.tags,
         description:
             clearDescription ? null : (description ?? this.description),
         coverSourceId:
@@ -197,6 +210,7 @@ final class SavedComicRecord {
         'comicId': comicId,
         'title': title,
         'authors': authors,
+        'tags': tags,
         if (description != null) 'description': description,
         if (coverSourceId != null) 'coverSourceId': coverSourceId,
         'readingDirection': readingDirection.name,
@@ -215,6 +229,15 @@ final class SavedComicRecord {
     final authors = rawAuthors == null
         ? const <String>[]
         : (rawAuthors as List<Object?>).cast<String>();
+    final rawTags = json['tags'];
+    if (rawTags != null &&
+        (rawTags is! List<Object?> ||
+            rawTags.any((tag) => tag is! String))) {
+      throw const FormatException('tags must be a string list');
+    }
+    final tags = rawTags == null
+        ? const <String>[]
+        : (rawTags as List<Object?>).cast<String>();
 
     final rawChapters = json['chapters'];
     if (rawChapters != null && rawChapters is! List<Object?>) {
@@ -229,6 +252,7 @@ final class SavedComicRecord {
       comicId: _requiredString(json, 'comicId'),
       title: _requiredString(json, 'title'),
       authors: authors,
+      tags: tags,
       description: json['description'] as String?,
       coverSourceId: json['coverSourceId'] as String?,
       readingDirection: ReadingDirection.values.byName(

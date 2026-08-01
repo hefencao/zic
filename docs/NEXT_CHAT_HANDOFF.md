@@ -1,12 +1,16 @@
-## Sole baseline
+# dev.84 handoff
 
-Use only:
+唯一后续基线：`zic_v0.31.0-dev.84_mihon-transform-details-metadata.zip`。
 
-`zic_v0.31.0-dev.83_stable-preload-adaptive-pixel-stitch.zip`
+完成：JMComic 静态响应 transform capability 与旧 artifact revision 淘汰、Mihon 1.6 `SMangaUpdate` 章节权威采用、source name/description/genres tags 翻译与持久化、详情页图标/继续/tags/已知页数投影、稳定进度测试。
 
-Do not merge dev.65–82 candidates, overlays or remembered source trees. Mihon and VibeVenera references remain read-only. VibeVenera adaptive/preload code may be compared, but ZIC ownership boundaries remain authoritative.
+设备侧必须验证：JMComic 静态正文不再横条错位；无自定义 transform 的 Mihon 正文仍有流式首帧；18comic 章节列表可重复刷新；详情 source 名称、简介、tags、已下载页数正确；运行 analyzer、受影响 package tests、App tests 和 Android debug/release。
 
-## Completed in dev.83
+## Historical dev.83 record
+
+The dev.83 baseline below is historical only. Future work must use the dev.84 ZIP named above. Mihon and VibeVenera references remain read-only.
+
+### Completed in dev.83
 
 - Fixed missing session-owner imports for `DecodeSnapshot`, `DecodeState` and `UploadState`.
 - Replaced URI-scheme profile selection with one stable Reader profile for every source: +7/-3 download, +2/-1 decode warm, current/transition upload, 5/3/2 lanes.
@@ -15,7 +19,7 @@ Do not merge dev.65–82 candidates, overlays or remembered source trees. Mihon 
 - Snapped continuous extents to DPR, removed redundant stitched FittedBox/ordinary per-page clip/repaint boundaries, and direct-filled the authoritative texture box without overlap.
 - Added deterministic owner tests and ADR 0067.
 
-## Device/toolchain validation still required
+### Device/toolchain validation still required
 
 1. Run `flutter analyze`, affected pipeline_runtime/reader_runtime/reader/texture_bridge/App tests, then full Dart/Flutter tests.
 2. Build Android kernel snapshot and debug/release.
@@ -23,7 +27,7 @@ Do not merge dev.65–82 candidates, overlays or remembered source trees. Mihon 
 4. Reopen animated-title and static-WebP comics; animated metadata must select paged mode, static WebP must wait for actual evidence, and results must persist per comic.
 5. Scroll stitched vertical pages slowly and with fling at multiple DPRs; no 1–2 px line may appear at any scroll position.
 
-## Rejected regressions
+### Rejected regressions
 
 Do not restore source-specific Reader windows, call a second preloader from App/Reader, classify every WebP as animated, treat ordinary source direction as adaptive fact, or hide seams with overlap/negative translation/cropping/masks.
 

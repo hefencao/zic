@@ -629,6 +629,7 @@ final class _DemoHomeState extends State<DemoHome> {
       sourceId: entry.chapter.sourceId,
       title: entry.chapter.comicTitle,
       authors: entry.chapter.comicAuthors,
+      tags: entry.chapter.comicTags,
       coverUri: entry.chapter.coverSourceId == null
           ? null
           : Uri.tryParse(entry.chapter.coverSourceId!),
@@ -1329,6 +1330,7 @@ final class _DemoHomeState extends State<DemoHome> {
             comicId: entry.chapter.comicId,
             comicTitle: entry.chapter.comicTitle,
             comicAuthors: entry.chapter.comicAuthors,
+            comicTags: entry.chapter.comicTags,
             comicDescription: entry.chapter.comicDescription,
             coverSourceId: entry.chapter.coverSourceId,
             sequence: entry.chapter.sequence,

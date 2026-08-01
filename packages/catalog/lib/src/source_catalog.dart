@@ -113,6 +113,7 @@ final class SourceComicSummary {
     required this.comicId,
     required this.title,
     required this.authors,
+    this.tags = const <String>[],
     this.coverUri,
     this.description,
     this.contentRating = SourceContentRating.safe,
@@ -122,6 +123,7 @@ final class SourceComicSummary {
   final String comicId;
   final String title;
   final List<String> authors;
+  final List<String> tags;
   final Uri? coverUri;
   final String? description;
   final SourceContentRating contentRating;

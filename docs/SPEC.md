@@ -1,3 +1,11 @@
+## dev.84 Mihon 兼容与详情规范
+
+- Mihon request plan 必须保留 source client 的响应转译语义；扩展自定义 interceptor/cookie/auth/DNS 存在时不得绕过 runtime。
+- 非空 `SMangaUpdate.chapters` 必须直接用于章节目录。
+- 可读 source name、description、genres/tags 必须翻译；数字 source identity 不得显示给用户。
+- 详情 tags 默认一行，点击展开；下载整本与偏好按钮使用同一图标样式；阅读进度前显示“继续”药丸。
+- chapter pageCount 为 0 时可使用同 identity 已持久化页面数，不得自动加载所有未知章节正文。
+
 ## dev.83 Reader 稳定窗口、自适应与无缝拼接规范
 
 1. 章节中部 idle 时，plan 必须包含 11 个 download demand、4 个 decode demand和 1 个 upload demand；transition 时 upload 可为 2。该结果与 URI scheme 无关。

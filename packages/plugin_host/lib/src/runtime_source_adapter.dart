@@ -223,6 +223,7 @@ final class _RuntimeBrowsableComicSource
         comicId: _string(item, 'comicId'),
         title: _string(item, 'title'),
         authors: _stringList(item['authors'], 'authors'),
+        tags: _optionalStringList(item['tags'], 'tags'),
         coverUri: _optionalUri(item['coverUri'], 'coverUri'),
         description: _optionalString(item['description'], 'description'),
         contentRating: _contentRating(item['contentRating']),
@@ -260,6 +261,7 @@ final class _RuntimeBrowsableComicSource
       sourceId: sourceId,
       title: _string(comicValue, 'title'),
       authors: _stringList(comicValue['authors'], 'authors'),
+      tags: _optionalStringList(comicValue['tags'], 'tags'),
       readingDirection: _readingDirection(comicValue['readingDirection']),
       coverUri: _optionalUri(comicValue['coverUri'], 'coverUri'),
       description: _optionalString(comicValue['description'], 'description'),
@@ -752,6 +754,9 @@ List<String> _stringList(Object? value, String label) {
   }
   return List<String>.unmodifiable(list.cast<String>());
 }
+
+List<String> _optionalStringList(Object? value, String label) =>
+    value == null ? const <String>[] : _stringList(value, label);
 
 bool _bool(Map<String, Object?> value, String key) {
   final field = value[key];

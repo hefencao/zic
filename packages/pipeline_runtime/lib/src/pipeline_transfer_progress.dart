@@ -59,6 +59,30 @@ final class PipelineTransferProgress {
       Object.hash(active, existingBytes, committedBytes, totalBytes);
 }
 
+PipelineTransferProgress pipelineTransferProgressFor(
+  DownloadSnapshot snapshot,
+) {
+  if (snapshot.state == DownloadState.sealed ||
+      snapshot.state == DownloadState.promoted ||
+      snapshot.state == DownloadState.failed ||
+      snapshot.state == DownloadState.disposed) {
+    return const PipelineTransferProgress();
+  }
+  final active = snapshot.state == DownloadState.receiving ||
+      snapshot.state == DownloadState.queued;
+  if (!active) {
+    return const PipelineTransferProgress();
+  }
+  return PipelineTransferProgress(
+    active: true,
+    existingBytes: snapshot.networkStartLength
+        .clamp(0, snapshot.committedLength)
+        .toInt(),
+    committedBytes: snapshot.committedLength,
+    totalBytes: snapshot.totalLength,
+  );
+}
+
 /// Pipeline-owned current-page projection copied from VibeVenera's progress-publisher shape.
 ///
 /// DownloadSession remains authoritative. The publisher only selects one
@@ -124,34 +148,7 @@ final class PipelineTransferProgressPublisher {
       _set(const PipelineTransferProgress());
       return;
     }
-    final snapshot = session.snapshot;
-    if (snapshot.state == DownloadState.sealed ||
-        snapshot.state == DownloadState.promoted ||
-        snapshot.state == DownloadState.failed ||
-        snapshot.state == DownloadState.disposed) {
-      _set(const PipelineTransferProgress());
-      return;
-    }
-    // A run can be active while it only restores an already-promoted artifact.
-    // Showing progress for that transient restore produces the completed-page
-    // flicker reported when changing pages. Only network-facing states are UI
-    // active; sealed/promoted and idle restore work remain invisible.
-    final active = snapshot.state == DownloadState.receiving ||
-        snapshot.state == DownloadState.queued;
-    if (!active) {
-      _set(const PipelineTransferProgress());
-      return;
-    }
-    _set(
-      PipelineTransferProgress(
-        active: true,
-        existingBytes: snapshot.networkStartLength
-            .clamp(0, snapshot.committedLength)
-            .toInt(),
-        committedBytes: snapshot.committedLength,
-        totalBytes: snapshot.totalLength,
-      ),
-    );
+    _set(pipelineTransferProgressFor(session.snapshot));
   }
 
   void _set(PipelineTransferProgress value) {

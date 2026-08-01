@@ -26,9 +26,11 @@ void main() {
     final page = await source.browse(query: 'query', offset: 0, limit: 24);
     expect(page.items.single.comicId, 'comic-1');
     expect(page.items.single.sourceId, source.sourceId);
+    expect(page.items.single.tags, <String>['Action', 'Drama']);
 
     final comic = await source.loadComic('comic-1');
     expect(comic.comic.title, 'Comic');
+    expect(comic.comic.tags, <String>['Action', 'Drama']);
     expect(comic.comic.readingDirection, ReadingDirection.vertical);
     expect(comic.chapters.single.chapterId, 'chapter-1');
 
@@ -425,6 +427,7 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
                 'comicId': 'comic-1',
                 'title': 'Comic',
                 'authors': <Object?>['Author'],
+                'tags': <Object?>['Action', 'Drama'],
                 'coverUri': 'https://cdn.invalid/cover.jpg',
                 'description': 'Description',
                 'contentRating': 'safe',
@@ -438,6 +441,7 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
               'comicId': 'comic-1',
               'title': 'Comic',
               'authors': <Object?>['Author'],
+              'tags': <Object?>['Action', 'Drama'],
               'coverUri': 'https://cdn.invalid/cover.jpg',
               'description': 'Description',
               'readingDirection': 'topToBottom',

@@ -1,3 +1,7 @@
+## dev.84 状态
+
+源码已关闭 dev.83 对 Mihon 图片“全部可宿主直连”的错误假设，并按 source client 能力保留 JMComic 等扩展响应转译，并通过 transport revision 使旧未转译 artifact 失效。组合目录、详情元数据、按 token/source revision 复用持久 page list 的页数投影和详情交互已迁移；当前环境仍无 Flutter/Dart/Gradle/Rust 工具链，真实 analyzer、Flutter tests、Android build 与设备验证尚未完成。
+
 ## dev.83 状态
 
 源码已修复 dev.82 的 compile closure、source-specific preload profile、非持久 adaptive 和 stitched 分数像素边缘。VibeVenera model v4 的 metadata/category/language/tag-weight/softmax 与两样本规则已迁入，manifest `animatedHint` 不再冒充实际动画证据。工作树及完整 ZIP 解压副本已通过 dev.75–dev.83、Reader/Pipeline/UI、Android、Mihon、Venera、native header 和本地 libwebp 1.6.0 契约。当前容器无 Flutter/Dart/Rust/Gradle 工具链，因此真实 analyzer、Flutter tests、kernel snapshot、Android build 与真机接缝/预取验证仍未完成。

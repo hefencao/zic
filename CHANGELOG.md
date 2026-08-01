@@ -1,3 +1,12 @@
+## 0.31.0-dev.84：修复 Mihon 静态转译、章节目录与详情元数据
+
+- 修复 JMComic/18comic 静态 WebP：按扩展 source client 的自定义网络能力选择 runtime transform，普通 Mihon 图片仍使用宿主流式 transport；transform 版本进入 chapter source revision，淘汰旧未转译 artifact。
+- `SMangaUpdate.chapters` 非空时成为权威目录，删除组合更新后的重复 chapter-list 请求。
+- 翻译并持久化 Mihon source name、description 与 genres/tags；详情页隐藏数字 identity、统一下载整本图标、增加“继续”药丸和可展开单行 tags。
+- 章节行先按 chapter token、再按同 source/comic 的唯一 source revision 复用已持久化 page list，不重新预取全部章节正文。
+- 修正 DecodeTarget 错误放大测试，并将 completed artifact 进度回归迁移为纯 snapshot projection。
+- 新增 ADR 0068 与 dev.84 所有权门禁。
+
 ## 0.31.0-dev.83：恢复稳定预下载、每漫画自适应与物理像素拼接
 - 普通来源方向、manifest `animatedHint` 与 `.webp` 后缀不再预填自适应结果；动画分类只接受 metadata 或两份实际运行时动画能力。
 

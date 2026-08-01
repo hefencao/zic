@@ -128,6 +128,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
           comicId: record.comicId,
           title: record.comicTitle,
           authors: record.comicAuthors,
+          tags: record.comicTags,
           sourceUrl: record.pages.first.uri.toString(),
         ),
         initialProgress: initialProgress,

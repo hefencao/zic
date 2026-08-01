@@ -1,3 +1,10 @@
+## dev.84 Mihon 转译与详情元数据所有权
+
+- `plugin_host_bridge` 识别扩展 source client 的自定义网络能力并决定 request plan 是否需要 runtime transform；App、Reader、downloads 不识别 JMComic 或网站规则。
+- 无 transform 的正文由宿主 transport 流式进入同一 Pipeline；需要 transform 的正文仍由隔离 runtime 执行 source client，结果不建立第二缓存或解码链。
+- `SMangaUpdate` 是详情与章节的原子结果，非空 chapters 不再由第二调用覆盖。
+- tags 是 domain 值并由 catalog 持久化；详情与 adaptive 只读消费。
+
 ## dev.83 稳定预取、自适应和拼接所有权
 
 - `pipeline_runtime.ReaderPipelineProfile.stable` 是所有 Reader source kind 的唯一 demand profile。插件/transport/cache 能力只能改变执行适配，不能改变 7/3、2/1、current/transition 或 5/3/2。

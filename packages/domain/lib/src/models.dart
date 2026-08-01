@@ -11,6 +11,7 @@ final class Comic {
     required this.title,
     required this.authors,
     required this.readingDirection,
+    this.tags = const <String>[],
     this.coverUri,
     this.description,
     this.createdAt,
@@ -21,6 +22,7 @@ final class Comic {
   final String sourceId;
   final String title;
   final List<String> authors;
+  final List<String> tags;
   final Uri? coverUri;
   final String? description;
   final ReadingDirection readingDirection;

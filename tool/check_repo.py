@@ -2286,7 +2286,8 @@ def check_compile_regressions() -> None:
         'downloadChanges.listen',
         'ChapterDownloadSnapshot',
         'color: Theme.of(context).colorScheme.surface',
-        "label: const Text('下载整本')",
+        "label: '下载整本'",
+        'loading: downloadingComic',
         '_readingProgressLabel',
     ):
         if required not in details:

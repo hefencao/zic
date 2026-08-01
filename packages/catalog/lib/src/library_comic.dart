@@ -16,6 +16,7 @@ final class LibraryComic {
     required this.comicId,
     required this.title,
     required Iterable<String> authors,
+    required Iterable<String> tags,
     required this.description,
     required this.coverSourceId,
     required this.readingDirection,
@@ -24,6 +25,7 @@ final class LibraryComic {
     required this.savedAt,
     required this.metadataUpdatedAt,
   })  : authors = List<String>.unmodifiable(authors),
+        tags = List<String>.unmodifiable(tags),
         sourceChapters = List<Chapter>.unmodifiable(
           sourceChapters.toList(growable: false)..sort(
                 (left, right) => left.sequence.compareTo(right.sequence),
@@ -84,8 +86,10 @@ final class LibraryComic {
     }
     final metadata = metadataEntry?.chapter;
     final authors = <String>{...?savedComic?.authors};
+    final tags = <String>{...?savedComic?.tags};
     for (final entry in chapters) {
       authors.addAll(entry.chapter.comicAuthors);
+      tags.addAll(entry.chapter.comicTags);
     }
     final newestChapterAt = chapters.isEmpty
         ? null
@@ -103,6 +107,7 @@ final class LibraryComic {
       comicId: comicId,
       title: savedComic?.title ?? metadata!.comicTitle,
       authors: authors,
+      tags: tags,
       description: savedComic?.description ?? metadata?.comicDescription,
       coverSourceId: savedComic?.coverSourceId ?? metadata?.coverSourceId,
       readingDirection:
@@ -126,6 +131,7 @@ final class LibraryComic {
   final String comicId;
   final String title;
   final List<String> authors;
+  final List<String> tags;
   final String? description;
   final String? coverSourceId;
   final ReadingDirection readingDirection;

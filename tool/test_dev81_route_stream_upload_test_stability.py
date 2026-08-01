@@ -112,7 +112,7 @@ for token in (
     '"resolveResource" -> resolveResource(',
     'private fun resolveResource(',
     'enforceSourceRequestLimit(sourceId, source)',
-    '"requiresRuntimeTransform" to false',
+    'mihonSourceRequiresRuntimeTransform(source)',
 ):
     assert token in mihon_driver
 

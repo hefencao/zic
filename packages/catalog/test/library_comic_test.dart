@@ -367,6 +367,7 @@ void main() {
     final restored = SavedComicRecord.fromJson(saved.toJson());
     expect(restored.toJson(), saved.toJson());
     expect(restored.chapters.single.title, '第一章');
+    expect(restored.tags, const <String>['剧情', '全彩']);
 
     final legacy = Map<String, Object?>.from(saved.toJson())..remove('chapters');
     expect(SavedComicRecord.fromJson(legacy).chapters, isEmpty);
@@ -389,11 +390,13 @@ void main() {
     final legacy = Map<String, Object?>.from(chapter.toJson())
       ..remove('comicTitle')
       ..remove('comicAuthors')
+      ..remove('comicTags')
       ..remove('comicDescription')
       ..remove('sequence');
     final legacyRestored = ImportedChapterRecord.fromJson(legacy);
     expect(legacyRestored.comicTitle, chapter.displayName);
     expect(legacyRestored.comicAuthors, isEmpty);
+    expect(legacyRestored.comicTags, isEmpty);
     expect(legacyRestored.comicDescription, isNull);
     expect(legacyRestored.sequence, 0);
   });
@@ -494,6 +497,7 @@ ComicManifest _remoteManifest({
         sourceId: sourceId,
         title: title,
         authors: authors,
+        tags: const <String>['剧情', '全彩'],
         coverUri: Uri.https('example.invalid', '/cover.png'),
         description: '简介',
         readingDirection: readingDirection,

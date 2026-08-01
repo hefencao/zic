@@ -72,6 +72,7 @@ internal class MihonRuntimeDriver private constructor(
     private val tasks = ConcurrentHashMap<String, Future<*>>()
     private val completions = ConcurrentHashMap<String, CountDownLatch>()
     private val rateLimiters = ConcurrentHashMap<String, SourceRequestLimiter>()
+    private val runtimeTransformBySource = ConcurrentHashMap<String, Boolean>()
     private val closed = AtomicBoolean(false)
     private val sourcesClosed = AtomicBoolean(false)
     private val runtimeDeleted = AtomicBoolean(false)
@@ -248,6 +249,9 @@ internal class MihonRuntimeDriver private constructor(
 
     private fun loadComic(source: Any, comicId: String, requestId: String): Map<String, Any?> {
         val catalog = loadMihonComicCatalog(source, comicId, requestId)
+        val sourceId = source.readValue("id", "getId")?.toString()
+            ?: error("Mihon source id is missing")
+        val transportRevision = mihonTransportRevision(sourceId, source)
         val selectedChapters = selectMihonChapters(catalog.chapters) {
             createSyntheticMihonChapter(source, catalog.manga)
         }
@@ -273,6 +277,7 @@ internal class MihonRuntimeDriver private constructor(
                 sequence = index,
                 synthetic = selectedChapters.synthetic,
                 pageCount = syntheticPageCount,
+                transportRevision = transportRevision,
             )
         }
         rememberMihonChapters(comicId, selectedChapters.chapters, chapterMessages)
@@ -296,66 +301,65 @@ internal class MihonRuntimeDriver private constructor(
         val update = try {
             source.invokeFirst(
                 listOf(
-                    Invocation("fetchMangaUpdate", listOf(manga, emptyList<Any>(), true, true)),
                     Invocation("getMangaUpdate", listOf(manga, emptyList<Any>(), true, true)),
+                    Invocation("fetchMangaUpdate", listOf(manga, emptyList<Any>(), true, true)),
                 ),
             ).unwrapAsync()
-        } catch (_: NoSuchMethodException) {
-            null
+        } catch (error: Throwable) {
+            if (error.isMihonCapabilityAbsence()) null else throw error
         }
         ensureNotCancelled(requestId)
-        val detailedManga = update?.readValue("manga", "getManga") ?: source.invokeFirst(
-            listOf(
-                Invocation("getMangaDetails", listOf(manga)),
-                Invocation("fetchMangaDetails", listOf(manga)),
-            ),
-        ).unwrapAsync()
+        val detailedManga = update?.readValue("manga", "getManga") ?: try {
+            source.invokeFirst(
+                listOf(
+                    Invocation("getMangaDetails", listOf(manga)),
+                    Invocation("fetchMangaDetails", listOf(manga)),
+                ),
+            ).unwrapAsync()
+        } catch (error: Throwable) {
+            if (error.isMihonCapabilityAbsence()) manga else throw error
+        }
         ensureNotCancelled(requestId)
 
-        // Chapter discovery is authoritative and independent from the combined
-        // details fast-path. Several extensions return no chapters from
-        // fetchMangaUpdate even though get/fetchChapterList exposes a complete
-        // multi-chapter catalog. Try the detailed model first, then the original
-        // browse model because old sources sometimes only accept that instance.
-        val chapterModels = buildList {
-            add(detailedManga)
-            if (manga !== detailedManga) add(manga)
-        }
-        val chapterFailures = mutableListOf<Throwable>()
-        var authoritativeChapters = emptyList<Any>()
-        chapterSearch@ for (chapterModel in chapterModels) {
-            for (candidate in listOf("getChapterList", "fetchChapterList")) {
-                val loaded = try {
-                    source.invokeMihonCompatible(candidate, listOf(chapterModel))
-                        .unwrapAsync()
-                        .asObjectList()
-                } catch (error: Throwable) {
-                    val cause = error.rootCause()
-                    if (error is NoSuchMethodException ||
-                        cause is NoSuchMethodException ||
-                        cause is UnsupportedOperationException
-                    ) {
-                        continue
-                    }
-                    chapterFailures += error
-                    continue
-                }
-                ensureNotCancelled(requestId)
-                if (loaded.isNotEmpty()) {
-                    authoritativeChapters = loaded
-                    break@chapterSearch
-                }
-            }
-        }
+        // Mihon 1.6 exposes details and chapters atomically through
+        // SMangaUpdate. A non-empty combined chapter result is authoritative;
+        // asking the source for the chapter list again duplicates a potentially
+        // non-idempotent extension operation.
         val updateChapters = update
             ?.readList("chapters", "getChapters", "newChapters", "getNewChapters")
             .orEmpty()
         val detailedChapters = detailedManga
             .readList("chapters", "getChapters", "chapterList", "getChapterList")
+        val chapterFailures = mutableListOf<Throwable>()
+        var compatibilityChapters = emptyList<Any>()
+        if (updateChapters.isEmpty() && detailedChapters.isEmpty()) {
+            val chapterModels = buildList {
+                add(detailedManga)
+                if (manga !== detailedManga) add(manga)
+            }
+            chapterSearch@ for (chapterModel in chapterModels) {
+                for (candidate in listOf("getChapterList", "fetchChapterList")) {
+                    val loaded = try {
+                        source.invokeMihonCompatible(candidate, listOf(chapterModel))
+                            .unwrapAsync()
+                            .asObjectList()
+                    } catch (error: Throwable) {
+                        if (error.isMihonCapabilityAbsence()) continue
+                        chapterFailures += error
+                        continue
+                    }
+                    ensureNotCancelled(requestId)
+                    if (loaded.isNotEmpty()) {
+                        compatibilityChapters = loaded
+                        break@chapterSearch
+                    }
+                }
+            }
+        }
         val chapters = when {
-            authoritativeChapters.isNotEmpty() -> authoritativeChapters
             updateChapters.isNotEmpty() -> updateChapters
             detailedChapters.isNotEmpty() -> detailedChapters
+            compatibilityChapters.isNotEmpty() -> compatibilityChapters
             else -> emptyList()
         }
         val chapterFailure = if (chapters.isEmpty() && chapterFailures.isNotEmpty()) {
@@ -527,11 +531,14 @@ internal class MihonRuntimeDriver private constructor(
                 }
             }
         }
+        val sourceId = source.readValue("id", "getId")?.toString()
+            ?: error("Mihon source id is missing")
         val resolvedChapter = chapterMessage(
             chapter = chapter,
             comicId = comicId,
             sequence = encoded.optInt("sequence", 0),
             synthetic = encoded.optBoolean("synthetic"),
+            transportRevision = mihonTransportRevision(sourceId, source),
         ).toMutableMap().apply {
             put("chapterId", chapterId)
             put("pageCount", pageMessages.size)
@@ -556,6 +563,15 @@ internal class MihonRuntimeDriver private constructor(
         }
     }
 
+    private fun mihonTransportRevision(sourceId: String, source: Any): String? =
+        if (runtimeTransformBySource.computeIfAbsent(sourceId) {
+                mihonSourceRequiresRuntimeTransform(source)
+            }) {
+            MIHON_RUNTIME_TRANSFORM_REVISION
+        } else {
+            null
+        }
+
     private fun resolveResource(
         sourceId: String,
         source: Any,
@@ -578,12 +594,13 @@ internal class MihonRuntimeDriver private constructor(
         val resourceUrl = resolvedResource.getString("url")
         val headers = resolvedResource.optJSONObject("headers").stringMap()
             .ifEmpty { source.readValue("headers", "getHeaders").stringHeaders() }
+        val requiresRuntimeTransform = mihonTransportRevision(sourceId, source) != null
         return mapOf(
             "url" to resourceUrl,
             "method" to "GET",
             "headers" to headers,
             "body" to null,
-            "requiresRuntimeTransform" to false,
+            "requiresRuntimeTransform" to requiresRuntimeTransform,
         )
     }
 
@@ -836,6 +853,7 @@ internal class MihonRuntimeDriver private constructor(
             "comicId" to id,
             "title" to title,
             "authors" to listOfNotNull(author, artist).distinct(),
+            "tags" to mihonGenres(manga),
             "contentRating" to "suggestive",
         ).apply {
             mihonCoverResource(source, manga)?.let { put("coverUri", it) }
@@ -853,6 +871,7 @@ internal class MihonRuntimeDriver private constructor(
                 manga.readString("author", "getAuthor"),
                 manga.readString("artist", "getArtist"),
             ).distinct(),
+            "tags" to mihonGenres(manga),
             "readingDirection" to "vertical",
         ).apply {
             mihonCoverResource(source, manga)?.let { put("coverUri", it) }
@@ -892,6 +911,7 @@ internal class MihonRuntimeDriver private constructor(
         sequence: Int,
         synthetic: Boolean = false,
         pageCount: Int? = null,
+        transportRevision: String? = null,
     ): Map<String, Any?> {
         val json = mihonModelJson(chapter).apply {
             put("comicId", comicId)
@@ -910,6 +930,7 @@ internal class MihonRuntimeDriver private constructor(
             "sourceRevision" to listOfNotNull(
                 chapter.readString("url", "getUrl")?.takeIf { it.isNotBlank() },
                 chapter.readLong("date_upload", "getDate_upload", "getDateUpload")?.toString(),
+                transportRevision,
             ).joinToString(":"),
         ).apply {
             val published = chapter.readLong("date_upload", "getDate_upload", "getDateUpload")
@@ -1039,7 +1060,12 @@ internal class MihonRuntimeDriver private constructor(
                         ?: "https://invalid.local/"
                     mapOf(
                         "externalId" to id,
-                        "name" to (source.readString("name", "getName") ?: "Mihon source"),
+                        "name" to normalizedMihonSourceName(
+                            raw = source.readString("name", "getName"),
+                            sourceId = id,
+                            sourceType = source.javaClass.simpleName,
+                            pluginId = pluginId,
+                        ),
                         "language" to (source.readString("lang", "getLang") ?: "und"),
                         "website" to normalizeWebsite(baseUrl),
                         "supportsSearch" to true,
@@ -1087,6 +1113,7 @@ internal inline fun <T> selectMihonChapters(
 }
 
 private const val MAX_CACHED_MIHON_CHAPTERS = 4096
+private const val MIHON_RUNTIME_TRANSFORM_REVISION = "mihon-runtime-transform-v1"
 
 internal fun mihonChapterMatches(chapter: Any, encoded: JSONObject): Boolean {
     val encodedUrl = encoded.optString("url").trim()
@@ -1650,6 +1677,76 @@ private fun Any.readValue(vararg names: String): Any? {
         }
     }
     return null
+}
+
+internal fun normalizedMihonSourceName(
+    raw: String?,
+    sourceId: String,
+    sourceType: String,
+    pluginId: String,
+): String {
+    val value = raw?.trim().orEmpty()
+    val numericIdentity = Regex("^(?:mihon:)?-?\\d+$")
+    if (value.isNotEmpty() && value != sourceId && !numericIdentity.matches(value)) {
+        return value
+    }
+    val typeName = sourceType
+        .removeSuffix("HttpSource")
+        .removeSuffix("Source")
+        .trim()
+    if (typeName.isNotEmpty() && typeName !in setOf("Source", "Http")) {
+        return typeName
+    }
+    val pluginName = pluginId.substringAfterLast('.').substringAfterLast(':').trim()
+    return pluginName.takeIf { it.isNotEmpty() } ?: "Mihon"
+}
+
+internal fun mihonSourceRequiresRuntimeTransform(source: Any): Boolean {
+    val sourceLoader = source.javaClass.classLoader ?: return false
+    val client = source.readValue("client", "getClient") ?: return false
+    val capabilities = buildList {
+        for (name in listOf(
+            "interceptors", "getInterceptors",
+            "networkInterceptors", "getNetworkInterceptors",
+        )) {
+            when (val value = client.invokeOptional(name)) {
+                is Iterable<*> -> addAll(value.filterNotNull())
+                is Array<*> -> addAll(value.filterNotNull())
+            }
+        }
+        for (name in listOf(
+            "cookieJar", "getCookieJar",
+            "authenticator", "getAuthenticator",
+            "proxyAuthenticator", "getProxyAuthenticator",
+            "dns", "getDns",
+        )) {
+            client.invokeOptional(name)?.let(::add)
+        }
+    }
+    return capabilities.any { capability ->
+        capability.javaClass.classLoader === sourceLoader
+    }
+}
+
+private fun mihonGenres(manga: Any): List<String> {
+    val direct = runCatching {
+        manga.readList("genres", "getGenres").map { it.toString() }
+    }.getOrDefault(emptyList())
+    val raw = manga.readString("genre", "getGenre")
+        ?.split(',', ';', '\n')
+        .orEmpty()
+    return (direct + raw)
+        .map(String::trim)
+        .filter(String::isNotEmpty)
+        .distinctBy { it.lowercase(Locale.US) }
+}
+
+private fun Throwable.isMihonCapabilityAbsence(): Boolean {
+    val cause = rootCause()
+    return this is NoSuchMethodException ||
+        cause is NoSuchMethodException ||
+        cause is UnsupportedOperationException ||
+        cause is AbstractMethodError
 }
 
 private fun Any.readString(vararg names: String): String? = readValue(*names)?.toString()

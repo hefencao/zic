@@ -1,3 +1,7 @@
+## dev.84 完成项与后续设备验证
+
+已实现 Mihon source-client transform capability、`SMangaUpdate` 章节权威采用、source name/description/tags 翻译与持久化、详情 UI 调整和持久页数回填。下一步在设备上验证 JMComic 静态反混淆、普通 Mihon 宿主流式不退化、插件重进后的章节目录和 tags/source 名称。
+
 ## dev.83 完成项与后续设备验证
 
 - [x] 所有 source kind 合并到稳定 7/3、2/1、5/3/2 profile，并删除无生产调用的 profile aliases。

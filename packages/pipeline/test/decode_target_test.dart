@@ -11,7 +11,7 @@ void main() {
       devicePixelRatio: 3,
     );
 
-    expect(target.physicalWidth, 1080);
+    expect(target.physicalWidth, 1024);
     expect(target.physicalHeight % 8, 0);
     expect(target.physicalHeight, lessThanOrEqualTo(1920));
     expect(

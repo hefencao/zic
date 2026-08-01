@@ -83,6 +83,7 @@ final class ImportedChapterRecord {
     required List<ImportedPageRecord> pages,
     String? comicTitle,
     Iterable<String> comicAuthors = const <String>[],
+    Iterable<String> comicTags = const <String>[],
     this.comicDescription,
     this.coverSourceId,
     this.sequence = 0,
@@ -93,6 +94,12 @@ final class ImportedChapterRecord {
           comicAuthors
               .map((author) => author.trim())
               .where((author) => author.isNotEmpty),
+        ),
+        comicTags = List<String>.unmodifiable(
+          comicTags
+              .map((tag) => tag.trim())
+              .where((tag) => tag.isNotEmpty)
+              .toSet(),
         ),
         pages = List<ImportedPageRecord>.unmodifiable(pages),
         importedAt = (importedAt ?? DateTime.now()).toUtc() {
@@ -156,6 +163,7 @@ final class ImportedChapterRecord {
       comicId: manifest.comicId,
       comicTitle: comic.title,
       comicAuthors: comic.authors,
+      comicTags: comic.tags,
       comicDescription: comic.description,
       coverSourceId: comic.coverUri?.toString(),
       chapterId: manifest.chapter.chapterId,
@@ -226,6 +234,7 @@ final class ImportedChapterRecord {
   final String sourceRevision;
   final String comicTitle;
   final List<String> comicAuthors;
+  final List<String> comicTags;
   final String? comicDescription;
   final String? coverSourceId;
   final int sequence;
@@ -240,6 +249,7 @@ final class ImportedChapterRecord {
     String? comicId,
     String? comicTitle,
     Iterable<String>? comicAuthors,
+    Iterable<String>? comicTags,
     String? comicDescription,
     bool clearComicDescription = false,
     String? coverSourceId,
@@ -258,6 +268,7 @@ final class ImportedChapterRecord {
       comicId: comicId ?? this.comicId,
       comicTitle: comicTitle ?? this.comicTitle,
       comicAuthors: comicAuthors ?? this.comicAuthors,
+      comicTags: comicTags ?? this.comicTags,
       comicDescription: clearComicDescription
           ? null
           : (comicDescription ?? this.comicDescription),
@@ -313,6 +324,7 @@ final class ImportedChapterRecord {
         'sourceRevision': sourceRevision,
         'comicTitle': comicTitle,
         'comicAuthors': comicAuthors,
+        'comicTags': comicTags,
         if (comicDescription != null) 'comicDescription': comicDescription,
         if (coverSourceId != null) 'coverSourceId': coverSourceId,
         'sequence': sequence,
@@ -336,6 +348,11 @@ final class ImportedChapterRecord {
         (rawAuthors is! List<Object?> ||
             rawAuthors.any((author) => author is! String))) {
       throw const FormatException('comicAuthors must be a string list');
+    }
+    final rawTags = json['comicTags'];
+    if (rawTags != null &&
+        (rawTags is! List<Object?> || rawTags.any((tag) => tag is! String))) {
+      throw const FormatException('comicTags must be a string list');
     }
     final rawDescription = json['comicDescription'];
     if (rawDescription != null &&
@@ -365,6 +382,8 @@ final class ImportedChapterRecord {
       comicTitle: (rawComicTitle as String?) ??
           _requiredString(json, 'displayName'),
       comicAuthors: (rawAuthors as List<Object?>?)?.cast<String>() ??
+          const <String>[],
+      comicTags: (rawTags as List<Object?>?)?.cast<String>() ??
           const <String>[],
       comicDescription: rawDescription as String?,
       coverSourceId: rawCoverSourceId as String?,
