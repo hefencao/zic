@@ -180,6 +180,13 @@ String _sanitizeTraceString(String value) {
       match.group(0)!,
     ),
   );
+  sanitized = sanitized.replaceAllMapped(
+    RegExp(r'mihon:(manga|chapter|resource):[A-Za-z0-9_-]{24,}'),
+    (match) => _traceOpaqueSummary(
+      'mihon:${match.group(1)}',
+      match.group(0)!,
+    ),
+  );
   return sanitized;
 }
 

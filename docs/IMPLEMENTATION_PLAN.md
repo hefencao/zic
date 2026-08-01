@@ -1,3 +1,13 @@
+## dev.74 completed
+
+1. 修复 Dart library directive 顺序并建立门禁。
+2. 统一连续 Reader 的 ratio 单位，删除拼接负位移，使用可定位 variable-extent list。
+3. 将来源浏览与详情封面切换为文件型 encoded source，并拒绝持久化非图片响应。
+4. 将 Debug Trace 从原始事件堆积升级为可筛选、可导出、有强调色的有界诊断投影。
+5. 保持 Pipeline 预取与 lane 参数，不用退化策略掩盖 Presentation/缓存问题。
+
+Next: 在 Android 真机验证保存页直接定位、不同 DPR 下无拼接接缝、封面 warm-start 命中和 JSONL 导出。
+
 ## dev.73 completed
 
 1. Close all dev.72 package/type/API compile gaps.

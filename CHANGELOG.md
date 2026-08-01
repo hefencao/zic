@@ -1,3 +1,14 @@
+## 0.31.0-dev.74：稳定纵向几何、封面文件缓存与可用 Debug Trace
+
+- 修复 `local_media_ui.dart` 在声明之后放置 `part` 指令导致的 Dart 编译失败，并新增全仓 Dart library 指令顺序门禁。
+- 修复运行时媒体尺寸使用 `width / height` 而 Reader 连续布局要求 `height / width` 的单位倒置；删除拼接页的负 1 像素平移，不再用重叠掩盖错误几何。
+- 连续 Reader 改用带 `itemExtentBuilder` 的可定位列表，并在首次 attach 前按保存页设置初始 offset。恢复第 87 页不再先挂载 0 到目标页，尺寸变化继续使用视口锚点而不是回跳。
+- 来源浏览和详情封面统一消费 `EncodedResourceSource`/`FileImage`，不再把持久缓存重新读成 `Uint8List`/`MemoryImage`；封面 identity 不再混入章节 revision，成功封面也不会因列表 reload token 重建请求。
+- 封面缓存升级为 `artwork-v2`，旧的无效响应自动旁路；新响应在写入前验证常见图片容器，HTML/错误页不会污染七天持久缓存。
+- Debug Trace 增加 JSONL 导出、关键词/会话/级别过滤和严重度强调色；连续高频 mount/dispose/observation/demand 仅在 UI 投影中合并，失败事件完整保留。
+- Trace 同时摘要 Mihon manga/chapter/resource opaque token，避免 identity 占据整份日志。
+- 新增纵向恢复不挂载长前缀、封面文件恢复、无效封面不缓存、trace burst 合并及诊断 UI 回归。
+
 ## 0.31.0-dev.73：Pipeline 构造闭包与 Presentation 依赖收口
 
 - 修复 dev.72 拆分后遗漏的 Dart 编译闭包：`ArtifactCacheStore`、`ContentKind`、`ReaderPipelineProfile`、`readerPageDownloadId`、`IngressSnap.source`、`NativeSourceFactory` 与 `_reportPageDimensions` 均改为正确的所有者接口或显式依赖。

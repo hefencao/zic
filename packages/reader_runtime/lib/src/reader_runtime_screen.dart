@@ -373,7 +373,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
 
   void _reportPageDimensions(PageAsset asset, int width, int height) {
     if (width <= 0 || height <= 0) return;
-    final ratio = width / height;
+    final ratio = height / width;
     final prior = _pendingPageAspectRatios[asset.assetKey] ??
         _pageAspectRatios[asset.assetKey];
     if (prior != null && (prior - ratio).abs() < 0.0001) return;

@@ -246,4 +246,56 @@ void main() {
     expect(find.text('1'), findsOneWidget);
   });
 
+  test('debug trace coalesces lifecycle bursts but preserves failures', () {
+    final log = DebugTraceLog(maxEvents: 20);
+    addTearDown(log.dispose);
+    for (var index = 0; index < 12; index++) {
+      log.record(
+        TraceEvent(
+          monotonicMicros: index * 1000,
+          sessionId: 'reader',
+          kind: TraceEventKind.pageHostMounted,
+          payload: <String, Object?>{'pageIndex': index},
+        ),
+      );
+    }
+    log.record(
+      TraceEvent(
+        monotonicMicros: 13000,
+        sessionId: 'reader',
+        kind: TraceEventKind.taskFailed,
+      ),
+    );
+
+    expect(log.recordedCount, 13);
+    expect(log.events, hasLength(2));
+    expect(log.events.first.payload['coalescedCount'], 12);
+    expect(log.events.first.payload['firstPageIndex'], 0);
+    expect(log.events.first.payload['lastPageIndex'], 11);
+    expect(log.events.last.kind, TraceEventKind.taskFailed);
+  });
+
+  testWidgets('debug trace screen exposes export and filters', (tester) async {
+    final log = DebugTraceLog(maxEvents: 20);
+    addTearDown(log.dispose);
+    log.record(
+      TraceEvent(
+        monotonicMicros: 1,
+        sessionId: 'reader-a',
+        kind: TraceEventKind.taskFailed,
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: DebugTraceScreen(log: log)),
+    );
+    await tester.pump();
+
+    expect(find.byKey(debugTraceExportKey), findsOneWidget);
+    expect(find.byKey(debugTraceSearchKey), findsOneWidget);
+    expect(find.byKey(debugTraceSessionFilterKey), findsOneWidget);
+    expect(find.byKey(debugTraceLevelFilterKey), findsOneWidget);
+    expect(find.text('taskFailed'), findsOneWidget);
+  });
+
 }

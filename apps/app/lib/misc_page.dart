@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import 'app_preferences.dart';
 import 'debug_trace.dart';
+import 'debug_trace_screen.dart';
+
+export 'debug_trace_screen.dart';
 
 const miscPageKey = ValueKey<String>('misc-page');
 const miscQuickSettingsKey = ValueKey<String>('misc-quick-settings');
@@ -14,9 +16,6 @@ const miscDebugTraceEntryKey = ValueKey<String>('misc-debug-trace-entry');
 const miscDownloadEntryKey = ValueKey<String>('misc-download-entry');
 const miscImportEntryKey = ValueKey<String>('misc-import-entry');
 const aboutScreenKey = ValueKey<String>('about-screen');
-const debugTraceScreenKey = ValueKey<String>('debug-trace-screen');
-const debugTraceClearKey = ValueKey<String>('debug-trace-clear');
-const debugTraceCopyKey = ValueKey<String>('debug-trace-copy');
 
 final class MiscPage extends StatelessWidget {
   const MiscPage({
@@ -84,7 +83,7 @@ final class MiscPage extends StatelessWidget {
                 SwitchListTile(
                   secondary: const Icon(Icons.bug_report_outlined),
                   title: const Text('记录 Debug trace'),
-                  subtitle: const Text('最多保留最近 500 条事件'),
+                  subtitle: const Text('最多保留最近 500 条诊断事件，高频生命周期会合并显示'),
                   value: preferences.debugTraceEnabled,
                   onChanged: preferences.setDebugTraceEnabled,
                 ),
@@ -155,7 +154,7 @@ final class MiscPage extends StatelessWidget {
                   animation: debugTrace,
                   builder: (context, _) => Text(
                     debugTrace.enabled
-                        ? '${debugTrace.events.length} 条事件'
+                        ? '${debugTrace.events.length} 条事件（原始 ${debugTrace.recordedCount}）'
                         : '记录已关闭',
                   ),
                 ),
@@ -196,7 +195,7 @@ final class AboutScreen extends StatelessWidget {
           ),
           const SizedBox(height: 6),
           const Text(
-            '0.31.0-dev.65',
+            '0.31.0-dev.74',
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 24),
@@ -217,68 +216,6 @@ final class AboutScreen extends StatelessWidget {
             subtitle: Text('支持静态图片、WebP 动图与 Reader 增量媒体管线。'),
           ),
         ],
-      ),
-    );
-  }
-}
-
-final class DebugTraceScreen extends StatelessWidget {
-  const DebugTraceScreen({required this.log, super.key});
-
-  final DebugTraceLog log;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      key: debugTraceScreenKey,
-      appBar: AppBar(
-        title: const Text('Debug trace'),
-        actions: <Widget>[
-          IconButton(
-            key: debugTraceCopyKey,
-            tooltip: '复制全部',
-            onPressed: () {
-              final text = log.events
-                  .map((event) => event.toJsonLine())
-                  .join('\n');
-              unawaited(Clipboard.setData(ClipboardData(text: text)));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Trace 已复制')),
-              );
-            },
-            icon: const Icon(Icons.copy_all_outlined),
-          ),
-          IconButton(
-            key: debugTraceClearKey,
-            tooltip: '清空',
-            onPressed: log.clear,
-            icon: const Icon(Icons.delete_sweep_outlined),
-          ),
-        ],
-      ),
-      body: AnimatedBuilder(
-        animation: log,
-        builder: (context, _) {
-          final events = log.events.reversed.toList(growable: false);
-          if (events.isEmpty) {
-            return Center(
-              child: Text(log.enabled ? '暂无 Trace 事件' : 'Debug trace 记录已关闭'),
-            );
-          }
-          return ListView.separated(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
-            itemCount: events.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (context, index) {
-              final event = events[index];
-              return ListTile(
-                dense: true,
-                title: Text(event.kind.name),
-                subtitle: SelectableText(event.toJsonLine()),
-              );
-            },
-          );
-        },
       ),
     );
   }

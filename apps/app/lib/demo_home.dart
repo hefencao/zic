@@ -397,7 +397,7 @@ final class _DemoHomeState extends State<DemoHome> {
             source: source,
             summary: comic,
             categories: _categories,
-            loadCover: _loadDetailsCover,
+            loadCover: _loadCoverSource,
             reloadLibrary: ({required bool refreshContent}) =>
                 _reloadDetailsSnapshot(
               source.sourceId,
@@ -874,7 +874,7 @@ final class _DemoHomeState extends State<DemoHome> {
             comic.comicId,
           ),
           categories: _categories,
-          loadCover: _loadDetailsCover,
+          loadCover: _loadCoverSource,
           reloadLibrary: ({required bool refreshContent}) =>
               _reloadDetailsSnapshot(
             comic.sourceId,
@@ -1128,7 +1128,7 @@ final class _DemoHomeState extends State<DemoHome> {
         targetName: request.source.descriptor.name,
         loadSourceCover: comic.coverSourceId == null && comic.coverChapter == null
             ? null
-            : _coverLoaderForComic(comic),
+            : _migrationCoverLoaderForComic(comic),
         loadTargetCover: manifest.comic.coverUri == null
             ? null
             : () => _sourceResources.loadArtworkBytes(
@@ -1376,19 +1376,19 @@ final class _DemoHomeState extends State<DemoHome> {
     );
   }
 
-  Future<Uint8List> _loadSourceBrowseCover(
+  Future<EncodedResourceSource> _loadSourceBrowseCover(
     BrowsableComicSource source,
     SourceComicSummary comic,
     Uri uri,
   ) =>
-      _sourceResources.loadArtworkBytes(
+      _sourceResources.loadArtworkSource(
         cache: _cacheCoordinator.responses,
         sourceId: source.sourceId,
         comicId: comic.comicId,
         uri: uri,
       );
 
-  Future<Uint8List> _loadDetailsCover({
+  Future<Uint8List> _loadMigrationCoverBytes({
     required String sourceId,
     required String comicId,
     required Uri? coverUri,
@@ -1406,7 +1406,7 @@ final class _DemoHomeState extends State<DemoHome> {
     if (sourceValue == null || sourceValue.trim().isEmpty) {
       throw StateError('漫画详情没有可用封面');
     }
-    final revision = fallback?.chapter.sourceRevision ?? '';
+    const revision = '';
     final source = _sourceForId(sourceId);
     final uri = Uri.tryParse(sourceValue);
     if (source != null &&
@@ -1455,7 +1455,7 @@ final class _DemoHomeState extends State<DemoHome> {
         origin: EncodedResourceOrigin.localFile,
       );
     }
-    final revision = fallback?.chapter.sourceRevision ?? '';
+    const revision = '';
     final source = _sourceForId(sourceId);
     final uri = Uri.tryParse(sourceValue);
     if (source != null &&
@@ -1482,19 +1482,8 @@ final class _DemoHomeState extends State<DemoHome> {
     );
   }
 
-  Future<Uint8List> Function() _coverLoader(ImportedLibraryEntry entry) {
-    return () => _loadDetailsCover(
-          sourceId: entry.chapter.sourceId,
-          comicId: entry.chapter.comicId,
-          coverUri: entry.chapter.coverSourceId == null
-              ? null
-              : Uri.tryParse(entry.chapter.coverSourceId!),
-          fallbackChapter: entry,
-        );
-  }
-
-  Future<Uint8List> Function() _coverLoaderForComic(LibraryComic comic) {
-    return () => _loadDetailsCover(
+  Future<Uint8List> Function() _migrationCoverLoaderForComic(LibraryComic comic) {
+    return () => _loadMigrationCoverBytes(
           sourceId: comic.sourceId,
           comicId: comic.comicId,
           coverUri: comic.coverSourceId == null

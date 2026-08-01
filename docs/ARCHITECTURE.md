@@ -1,3 +1,11 @@
+## dev.74 稳定几何、Artwork Presentation 与诊断投影边界
+
+- Pipeline 继续拥有下载、预解码、上传、artifact 与进度。Reader 只消费页面流、提交 observation，并维护纯 Presentation 几何。
+- 连续布局的比例单位统一为 `height / width`。`itemExtentBuilder` 提供可预测 sliver extent；初始滚动位置在 attach 前由保存页和页面尺寸索引计算，不通过挂载 0..N 页面寻找目标。
+- 纵向拼接不创建 separator，也不平移或裁切相邻页面。媒体真实尺寸到达时，Reader 保存视口中心的页内比例并恢复同一锚点。
+- `ResourceCacheManager` 仍是封面响应字节唯一所有者。Presentation 消费 `EncodedResourceSource`，暖缓存使用稳定 `FileImage`；App 不建立第二套封面字节缓存。
+- `DebugTraceLog` 是有界 UI 投影。高频生命周期事件可以合并显示，但 telemetry producer 与错误事件不被删除；过滤、强调与导出不影响 Pipeline 决策。
+
 ## dev.73 Pipeline 构造与 Presentation 边界
 
 `pipeline_runtime` owns the resource-session implementation but does not own a platform FFI choice. `PipelineReaderSessionFactory` therefore requires a `media.SourceFactory`; Android/native composition supplies `NativeSourceFactory` from `local_media_ui`. The pipeline package must not import or depend on `bridge`.

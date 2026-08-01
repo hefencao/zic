@@ -1,3 +1,11 @@
+## dev.74：纵向几何与诊断可用性闭环
+
+- `local_media_ui` library 指令顺序编译阻断已修复。
+- 运行时尺寸比例、无缝拼接、保存页直接定位和视口锚点已统一。
+- 来源页/详情页封面改为持久文件 source；稳定 artwork revision 与图片签名验证避免重复下载和坏缓存。
+- Debug Trace 支持 burst 合并、筛选、强调色、复制和 JSONL 导出，并摘要 Venera/Mihon opaque identity。
+- 未改变 Pipeline 的 7/3 下载、2/1 预解码、current/transition 上传和 5/3/2 lane。
+
 ## dev.73：Pipeline 构造闭包与 UI 依赖收口
 
 - 修复 dev.72 新包遗漏的 11 个编译错误，补齐 profile import、SourceFactory 注入、page stream 内容类型投影、权威 ingress source 读取与 Reader 尺寸回调。

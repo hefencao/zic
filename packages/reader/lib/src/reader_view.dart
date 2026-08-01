@@ -52,7 +52,6 @@ final class ReaderView extends StatefulWidget {
 
 final class _ReaderViewState extends State<ReaderView> {
   static const double _verticalPageGap = 8;
-  static const double _verticalStitchOverlap = 1;
 
   late PageController _pageController;
   late ScrollController _verticalController;
@@ -68,6 +67,7 @@ final class _ReaderViewState extends State<ReaderView> {
   bool _anchorRestoreScheduled = false;
   ({int index, double fraction})? _pendingVerticalAnchor;
   bool _commandScheduled = false;
+  bool _verticalInitialOffsetApplied = false;
   final Set<String> _readyPageKeys = <String>{};
 
   @override
@@ -99,6 +99,7 @@ final class _ReaderViewState extends State<ReaderView> {
         initialPage: widget.controller.currentIndex,
       );
       _verticalController = ScrollController();
+      _verticalInitialOffsetApplied = false;
       _lastLogicalPosition = widget.controller.currentIndex.toDouble();
       _lastMicros = widget.clock.nowMicros();
       _interaction = Interaction.idle;
@@ -150,52 +151,57 @@ final class _ReaderViewState extends State<ReaderView> {
             }
             _viewport = nextViewport;
             if (widget.controller.direction == ReadingDirection.vertical &&
-                previousViewport == Size.zero) {
-              _scheduleSyncToCurrentPage();
+                previousViewport == Size.zero &&
+                !_verticalInitialOffsetApplied) {
+              _prepareVerticalControllerForCurrentPage();
             }
           }
           final direction = widget.controller.direction;
           if (direction == ReadingDirection.vertical) {
-            Widget pageBuilder(BuildContext context, int index) {
-              final page = _buildPage(chapter, index);
-              return SizedBox(
-                key: ValueKey<String>('reader-vertical-page:$index'),
-                height: _verticalExtent(chapter.pages[index], index),
-                child: widget.verticalStitch && index > 0
-                    ? Transform.translate(
-                        offset: const Offset(0, -_verticalStitchOverlap),
-                        transformHitTests: false,
-                        child: page,
-                      )
-                    : page,
-              );
-            }
+            final stitched = widget.verticalStitch;
+            final pageCount = chapter.pages.length;
+            final itemCount = stitched
+                ? pageCount
+                : (pageCount == 0 ? 0 : pageCount * 2 - 1);
             final physics = _zoomedPage == null
                 ? const ClampingScrollPhysics()
                 : const NeverScrollableScrollPhysics();
             final cacheExtent =
                 _viewport.height > 0 ? _viewport.height * 2 : null;
-            final list = widget.verticalStitch
-                ? ListView.builder(
-                    key: const ValueKey<String>('reader-vertical-list'),
-                    controller: _verticalController,
-                    itemCount: chapter.pages.length,
-                    cacheExtent: cacheExtent,
-                    physics: physics,
-                    itemBuilder: pageBuilder,
-                  )
-                : ListView.separated(
-                    key: const ValueKey<String>('reader-vertical-list'),
-                    controller: _verticalController,
-                    itemCount: chapter.pages.length,
-                    cacheExtent: cacheExtent,
-                    physics: physics,
-                    separatorBuilder: (context, index) => SizedBox(
-                      key: ValueKey<String>('reader-vertical-gap:$index'),
-                      height: _verticalPageGap,
-                    ),
-                    itemBuilder: pageBuilder,
+            final list = ListView.builder(
+              key: const ValueKey<String>('reader-vertical-list'),
+              controller: _verticalController,
+              itemCount: itemCount,
+              cacheExtent: cacheExtent,
+              physics: physics,
+              itemExtentBuilder: (itemIndex, _) {
+                if (!stitched && itemIndex.isOdd) {
+                  return _verticalPageGap;
+                }
+                final pageIndex = stitched ? itemIndex : itemIndex ~/ 2;
+                return _verticalExtent(chapter.pages[pageIndex], pageIndex);
+              },
+              itemBuilder: (context, itemIndex) {
+                if (!stitched && itemIndex.isOdd) {
+                  final gapIndex = itemIndex ~/ 2;
+                  return SizedBox(
+                    key: ValueKey<String>('reader-vertical-gap:$gapIndex'),
+                    height: _verticalPageGap,
                   );
+                }
+                final pageIndex = stitched ? itemIndex : itemIndex ~/ 2;
+                return SizedBox(
+                  key: ValueKey<String>('reader-vertical-page:$pageIndex'),
+                  height: _verticalExtent(
+                    chapter.pages[pageIndex],
+                    pageIndex,
+                  ),
+                  child: ClipRect(
+                    child: _buildPage(chapter, pageIndex),
+                  ),
+                );
+              },
+            );
             return _withLoadingOverlay(
               chapter,
               NotificationListener<ScrollNotification>(
@@ -442,11 +448,26 @@ final class _ReaderViewState extends State<ReaderView> {
     );
   }
 
+  void _prepareVerticalControllerForCurrentPage() {
+    if (_verticalController.hasClients || _viewport == Size.zero) return;
+    final initialOffset = math.max(
+      0.0,
+      _verticalOffsetFor(widget.controller.currentIndex),
+    );
+    _verticalController.dispose();
+    _verticalController = ScrollController(initialScrollOffset: initialOffset);
+    _verticalInitialOffsetApplied = true;
+  }
+
   void _handleControllerCommand() {
     final controller = widget.controller;
     if (_lastDirection != controller.direction) {
       _lastDirection = controller.direction;
       _zoomedPage = null;
+      if (controller.direction == ReadingDirection.vertical) {
+        _verticalInitialOffsetApplied = false;
+        _prepareVerticalControllerForCurrentPage();
+      }
       _scheduleSyncToCurrentPage();
     }
     final revision = controller.navigationRevision;

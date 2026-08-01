@@ -1,6 +1,6 @@
 # zic
 
-`0.31.0-dev.73` 修复 dev.72 Pipeline 拆分后的包级编译闭包，并继续收紧依赖：`pipeline_runtime` 只依赖 `SourceFactory` 抽象，Native FFI source 由 `local_media_ui` 平台组合注入；本地媒体 UI 不再知道 artifact cache 实现或重新计算下载 identity，而是消费 `PipelinePageStream.identity` 与 Pipeline 自有内容类型投影。页面尺寸只作为 Reader 连续布局的帧后只读几何更新。预下载、预解码、上传 lane、Venera 流式 transport 与 request-plan 复用均未改变。
+`0.31.0-dev.74` 修复连续 Reader 的真实几何与定位：运行时尺寸统一为 height/width，拼接不再负位移重叠，列表使用可预测 item extent 并从保存页直接建立初始 offset。来源浏览、详情与首页封面统一复用持久文件型响应缓存，失效图片响应不会写入缓存。Debug Trace 增加高频事件压缩、过滤、强调色和 JSONL 导出；Reader/Pipeline 下载、预解码与 7/3、2/1、5/3/2 策略保持不变。
 
 `zic` 是从零开发的高性能漫画阅读器。当前版本已完成静态 Reader、可恢复下载、
 持久化缓存恢复、容量/LRU 策略、受控清理、失败退避重试、独立资源 lane、格式感知 ingress、

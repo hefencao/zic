@@ -5,6 +5,8 @@ import 'package:catalog/catalog.dart';
 import 'package:downloads/downloads.dart';
 import 'package:resource_cache/resource_cache.dart';
 
+const _artworkCacheSchemaRevision = 'artwork-v2';
+
 bool isLegacyVeneraRuntimeLocator(String value) =>
     value.startsWith('venera-resource://');
 
@@ -70,8 +72,8 @@ final class ComicSourceResourceGateway {
       sourceId: sourceId,
       comicId: comicId,
       imageIdentity: uri.toString(),
-      revision: revision,
-      loader: () => _collectResponse(responseLoaderFor(sourceId, uri)),
+      revision: _artworkRevision(revision),
+      loader: () => _collectArtworkResponse(responseLoaderFor(sourceId, uri)),
     );
   }
 
@@ -88,9 +90,23 @@ final class ComicSourceResourceGateway {
       sourceId: sourceId,
       comicId: comicId,
       imageIdentity: uri.toString(),
-      revision: revision,
-      loader: () => _collectResponse(responseLoaderFor(sourceId, uri)),
+      revision: _artworkRevision(revision),
+      loader: () => _collectArtworkResponse(responseLoaderFor(sourceId, uri)),
     );
+  }
+
+  String _artworkRevision(String revision) => revision.isEmpty
+      ? _artworkCacheSchemaRevision
+      : '$_artworkCacheSchemaRevision:$revision';
+
+  Future<Uint8List> _collectArtworkResponse(
+    ExternalPluginResourceResponseLoader loader,
+  ) async {
+    final bytes = await _collectResponse(loader);
+    if (!_looksLikeEncodedImage(bytes)) {
+      throw const FormatException('source artwork response is not an image');
+    }
+    return bytes;
   }
 
   Future<Uint8List> _collectResponse(
@@ -172,4 +188,33 @@ final class ComicSourceResourceGateway {
       throw StateError('source resource gateway is closed');
     }
   }
+}
+
+bool _looksLikeEncodedImage(Uint8List bytes) {
+  bool matches(int offset, List<int> signature) {
+    if (bytes.length < offset + signature.length) return false;
+    for (var index = 0; index < signature.length; index++) {
+      if (bytes[offset + index] != signature[index]) return false;
+    }
+    return true;
+  }
+
+  if (matches(0, const <int>[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) {
+    return true;
+  }
+  if (matches(0, const <int>[0xff, 0xd8, 0xff]) ||
+      matches(0, const <int>[0x47, 0x49, 0x46, 0x38]) ||
+      matches(0, const <int>[0x42, 0x4d]) ||
+      matches(0, const <int>[0x00, 0x00, 0x01, 0x00])) {
+    return true;
+  }
+  if (matches(0, const <int>[0x52, 0x49, 0x46, 0x46]) &&
+      matches(8, const <int>[0x57, 0x45, 0x42, 0x50])) {
+    return true;
+  }
+  if (matches(4, const <int>[0x66, 0x74, 0x79, 0x70]) && bytes.length >= 12) {
+    final brand = String.fromCharCodes(bytes.sublist(8, 12));
+    return brand == 'avif' || brand == 'avis' || brand == 'heic' || brand == 'heix';
+  }
+  return false;
 }

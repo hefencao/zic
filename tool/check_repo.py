@@ -7,6 +7,7 @@ import struct
 import sys
 
 from check_dart_structure import DartStructureError, check_repository
+from test_dart_library_directive_order import check as check_directive_order
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1683,7 +1684,7 @@ def check_compile_regressions() -> None:
         'SelectableText(failure.details)',
         'comicDetailsRetryKey',
         'await _setRead(entry, true)',
-        'Future<Uint8List>.sync',
+        'Future<EncodedResourceSource>.sync',
     ):
         if required not in details_ui:
             fail(f'local/remote comic details UI is incomplete: {required}')
@@ -2870,6 +2871,16 @@ def check_current_iteration() -> None:
             fail(f'dev.49 meaningful target rebuild regression is incomplete: {required}')
 
 
+
+def check_directive_ordering() -> None:
+    errors = [
+        error
+        for path in ROOT.rglob('*.dart')
+        for error in check_directive_order(path)
+    ]
+    if errors:
+        fail(errors[0])
+
 def main() -> None:
     try:
         dart_files, dart_tests = check_repository(ROOT)
@@ -2880,6 +2891,7 @@ def main() -> None:
     check_animated_demo()
     check_names()
     check_dart_sources()
+    check_directive_ordering()
     check_tool_dirs()
     check_compile_regressions()
     check_current_iteration()

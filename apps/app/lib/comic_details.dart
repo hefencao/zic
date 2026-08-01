@@ -1,10 +1,11 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:resource_cache/resource_cache.dart';
+import 'package:storage_bridge/storage_bridge.dart';
 
 import 'package:downloads/downloads.dart';
 
@@ -90,7 +91,7 @@ final class ComicDetailsLibrarySnapshot {
   final ComicPreference preference;
 }
 
-typedef ComicDetailsCoverLoader = Future<Uint8List> Function({
+typedef ComicDetailsCoverLoader = Future<EncodedResourceSource> Function({
   required String sourceId,
   required String comicId,
   required Uri? coverUri,
@@ -1873,12 +1874,12 @@ final class _ComicDetailCover extends StatefulWidget {
 }
 
 final class _ComicDetailCoverState extends State<_ComicDetailCover> {
-  late Future<Uint8List> _bytes;
+  late Future<EncodedResourceSource> _source;
 
   @override
   void initState() {
     super.initState();
-    _bytes = _load();
+    _source = _load();
   }
 
   @override
@@ -1889,11 +1890,12 @@ final class _ComicDetailCoverState extends State<_ComicDetailCover> {
         oldWidget.coverUri != widget.coverUri ||
         oldWidget.fallbackChapter?.chapter.chapterId !=
             widget.fallbackChapter?.chapter.chapterId) {
-      _bytes = _load();
+      _source = _load();
     }
   }
 
-  Future<Uint8List> _load() => Future<Uint8List>.sync(
+  Future<EncodedResourceSource> _load() =>
+      Future<EncodedResourceSource>.sync(
         () => widget.loader(
           sourceId: widget.sourceId,
           comicId: widget.comicId,
@@ -1904,13 +1906,13 @@ final class _ComicDetailCoverState extends State<_ComicDetailCover> {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<Uint8List>(
-      future: _bytes,
+    return FutureBuilder<EncodedResourceSource>(
+      future: _source,
       builder: (context, snapshot) {
-        final bytes = snapshot.data;
-        if (bytes != null) {
-          return Image.memory(
-            bytes,
+        final source = snapshot.data;
+        if (source != null) {
+          return Image(
+            image: encodedResourceImageProvider(source),
             fit: BoxFit.cover,
             gaplessPlayback: true,
             errorBuilder: (_, __, ___) => const _CoverPlaceholder(),

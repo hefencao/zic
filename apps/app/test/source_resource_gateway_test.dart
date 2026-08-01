@@ -39,7 +39,7 @@ void main() {
       request.response
         ..statusCode = HttpStatus.ok
         ..contentLength = 4
-        ..add(<int>[9, 8, 7, 6]);
+        ..add(<int>[0xff, 0xd8, 0xff, 0xd9]);
       await request.response.close();
     });
     addTearDown(() => server.close(force: true));
@@ -68,11 +68,56 @@ void main() {
       uri: locator,
     );
 
-    expect(first, <int>[9, 8, 7, 6]);
+    expect(first, <int>[0xff, 0xd8, 0xff, 0xd9]);
     expect(second, first);
     expect(source.resolveCalls, 1);
     expect(source.loads, 0);
     expect(requests, 1);
+  });
+
+  test('invalid artwork responses are not persisted as cover cache hits',
+      () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    var requests = 0;
+    server.listen((request) async {
+      requests += 1;
+      request.response
+        ..statusCode = HttpStatus.ok
+        ..add(<int>[0x3c, 0x68, 0x74, 0x6d, 0x6c, 0x3e]);
+      await request.response.close();
+    });
+    addTearDown(() => server.close(force: true));
+
+    final source = _ResolvedSource(
+      Uri.parse('http://${server.address.host}:${server.port}/cover.jpg'),
+    );
+    final gateway = ComicSourceResourceGateway(
+      sourceForId: (sourceId) => sourceId == source.sourceId ? source : null,
+    );
+    final cache = ResourceCacheManager();
+    addTearDown(gateway.close);
+    addTearDown(cache.close);
+    final locator = Uri.https('catalog.invalid', '/invalid-cover.jpg');
+
+    await expectLater(
+      gateway.loadArtworkSource(
+        cache: cache,
+        sourceId: source.sourceId,
+        comicId: 'comic',
+        uri: locator,
+      ),
+      throwsFormatException,
+    );
+    await expectLater(
+      gateway.loadArtworkSource(
+        cache: cache,
+        sourceId: source.sourceId,
+        comicId: 'comic',
+        uri: locator,
+      ),
+      throwsFormatException,
+    );
+    expect(requests, 2);
   });
 
   test('gateway rejects legacy Venera tokens before source dispatch', () async {

@@ -348,6 +348,71 @@ void main() {
     expect(controller.requestedIndex, isNull);
   });
 
+  testWidgets('vertical restore starts near the saved page without mounting prefix',
+      (tester) async {
+    final chapter = ChapterManifest(
+      sourceId: 'source',
+      comicId: 'restore-comic',
+      chapter: const Chapter(
+        chapterId: 'restore-chapter',
+        comicId: 'restore-comic',
+        title: 'restore',
+        sequence: 0,
+        pageCount: 120,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        120,
+        (index) => PageAsset(
+          pageId: 'restore-$index',
+          chapterId: 'restore-chapter',
+          index: index,
+          uri: Uri.parse('asset:///restore-$index.png'),
+          width: 1000,
+          height: 1600,
+        ),
+      ),
+      readingDirection: ReadingDirection.vertical,
+    );
+    final trace = MemoryTraceSink();
+    final controller = ReaderController(
+      sessionId: 'reader-restore-test',
+      chapter: chapter,
+      initialPage: 87,
+      onObservation: (_) {},
+      clock: FakeClock(),
+    );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReaderView(
+          controller: controller,
+          clock: FakeClock(),
+          traceSink: trace,
+          verticalStitch: true,
+          pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
+            color: Colors.black,
+            child: Text(asset.pageId),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final mounted = trace.events
+        .where((event) => event.kind == TraceEventKind.pageHostMounted)
+        .map((event) => event.payload['pageIndex'])
+        .whereType<int>()
+        .toList(growable: false);
+    expect(mounted, isNotEmpty);
+    expect(mounted, everyElement(greaterThan(70)));
+    expect(
+      find.byKey(const ValueKey<String>('reader-vertical-page:87')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('vertical mode adopts measured media geometry without cropping',
       (tester) async {
     final chapter = ChapterManifest(

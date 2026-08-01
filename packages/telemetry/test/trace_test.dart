@@ -49,4 +49,27 @@ void main() {
     expect(encoded, contains('venera:chapter:<'));
     expect(encoded, contains(token.length.toString()));
   });
+  test('trace replaces Mihon opaque payloads with compact summaries', () {
+    const manga =
+        'mihon:manga:eyJ1cmwiOiJcL2Jvb2tzXC9sb25nLW1hbmdhIiwidGl0bGUiOiJGaXh0dXJlIn0';
+    const chapter =
+        'mihon:chapter:eyJ1cmwiOiJcL2Jvb2tzXC9sb25nLW1hbmdhXC8xIiwic2VxdWVuY2UiOjF9';
+    const resource =
+        'mihon:resource:eyJ1cmwiOiJodHRwczpcL1wvY2RuLmludmFsaWRcL2xvbmcuaW1hZ2UuanBnIn0';
+    final encoded = traceEvent(
+      clock: _Clock(),
+      sessionId: 'reader',
+      kind: TraceEventKind.decodeDemand,
+      identityHash: '$manga/$chapter/$resource',
+      payload: const <String, Object?>{'resource': resource},
+    ).toJsonLine();
+
+    expect(encoded, isNot(contains(manga)));
+    expect(encoded, isNot(contains(chapter)));
+    expect(encoded, isNot(contains(resource)));
+    expect(encoded, contains('mihon:manga:<'));
+    expect(encoded, contains('mihon:chapter:<'));
+    expect(encoded, contains('mihon:resource:<'));
+  });
+
 }

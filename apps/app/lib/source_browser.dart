@@ -1,10 +1,11 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:resource_cache/resource_cache.dart';
+import 'package:storage_bridge/storage_bridge.dart';
 
 import 'package:downloads/downloads.dart';
 import 'comic_details.dart' as details;
@@ -32,7 +33,7 @@ Key sourceComicCardKey(String sourceId, String comicId) =>
 Key sourceChapterKey(String sourceId, String chapterId) =>
     ValueKey<String>('source-chapter:$sourceId\u0000$chapterId');
 
-typedef SourceComicCoverLoader = Future<Uint8List> Function(
+typedef SourceComicCoverLoader = Future<EncodedResourceSource> Function(
   BrowsableComicSource source,
   SourceComicSummary comic,
   Uri uri,
@@ -416,7 +417,7 @@ final class _SourceComicCard extends StatelessWidget {
               borderRadius: BorderRadius.circular(10),
               child: _RemoteImage(
                 uri: comic.coverUri,
-                loadBytes: (uri) => loadCover(source, comic, uri),
+                loadSource: (uri) => loadCover(source, comic, uri),
                 reloadToken: reloadToken,
               ),
             ),
@@ -1132,12 +1133,12 @@ String? _hostFromFailure(String details) {
 final class _RemoteImage extends StatefulWidget {
   const _RemoteImage({
     required this.uri,
-    required this.loadBytes,
+    required this.loadSource,
     required this.reloadToken,
   });
 
   final Uri? uri;
-  final Future<Uint8List> Function(Uri uri) loadBytes;
+  final Future<EncodedResourceSource> Function(Uri uri) loadSource;
   final int reloadToken;
 
   @override
@@ -1145,7 +1146,8 @@ final class _RemoteImage extends StatefulWidget {
 }
 
 final class _RemoteImageState extends State<_RemoteImage> {
-  Future<Uint8List>? _bytes;
+  Future<EncodedResourceSource>? _source;
+  bool _failed = false;
 
   @override
   void initState() {
@@ -1157,33 +1159,40 @@ final class _RemoteImageState extends State<_RemoteImage> {
   void didUpdateWidget(covariant _RemoteImage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.uri != widget.uri ||
-        oldWidget.reloadToken != widget.reloadToken) {
+        (oldWidget.reloadToken != widget.reloadToken && _failed)) {
       _load();
     }
   }
 
   void _load() {
     final uri = widget.uri;
-    _bytes = uri == null ? null : widget.loadBytes(uri);
+    _failed = false;
+    _source = uri == null
+        ? null
+        : widget.loadSource(uri).catchError((Object error, StackTrace stack) {
+            _failed = true;
+            Error.throwWithStackTrace(error, stack);
+          });
   }
 
   @override
   Widget build(BuildContext context) {
-    final bytes = _bytes;
-    if (bytes == null) {
+    final source = _source;
+    if (source == null) {
       return const ColoredBox(
         color: Color(0x11000000),
         child: Center(child: Icon(Icons.image_not_supported_outlined)),
       );
     }
-    return FutureBuilder<Uint8List>(
-      future: bytes,
+    return FutureBuilder<EncodedResourceSource>(
+      future: source,
       builder: (context, snapshot) {
         final data = snapshot.data;
         if (data != null) {
-          return Image.memory(
-            data,
+          return Image(
+            image: encodedResourceImageProvider(data),
             fit: BoxFit.cover,
+            gaplessPlayback: true,
             filterQuality: FilterQuality.medium,
             errorBuilder: (_, __, ___) => const Center(
               child: Icon(Icons.broken_image_outlined),

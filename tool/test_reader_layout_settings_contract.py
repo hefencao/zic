@@ -25,7 +25,8 @@ def main() -> None:
         "packages/reader/lib/src/reader_view.dart",
         "reader-vertical-list",
         "ListView.builder",
-        "ListView.separated",
+        "itemExtentBuilder:",
+        "initialScrollOffset: initialOffset",
         "verticalStitch",
         "_verticalExtent",
         "pageAspectRatios",
@@ -37,9 +38,9 @@ def main() -> None:
         "_scheduleVerticalAnchorRestore",
         "oldViewport: previousViewport",
         "viewport: oldViewport",
-        "Transform.translate",
         "reader-loading-indicator",
         "isScrollingNotifier.value",
+        "reader-vertical-gap:",
     )
     require(
         "packages/reader_runtime/lib/src/reader_runtime_screen.dart",
@@ -68,6 +69,12 @@ def main() -> None:
         "networkConcurrency: 5",
         "decodeConcurrency: 3",
         "uploadConcurrency: 2",
+    )
+    reject(
+        "packages/reader/lib/src/reader_view.dart",
+        "ListView.separated",
+        "Transform.translate",
+        "_verticalStitchOverlap",
     )
     reject(
         "packages/reader_runtime/lib/src/reader_runtime_screen.dart",

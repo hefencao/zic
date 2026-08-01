@@ -51,7 +51,7 @@ def main() -> None:
         "isLegacyVeneraRuntimeLocator",
         "loadArtworkBytes",
         "loadArtworkSource",
-        "_collectResponse(responseLoaderFor(sourceId, uri))",
+        "_collectArtworkResponse(responseLoaderFor(sourceId, uri))",
     )
     require(
         "apps/app/lib/demo_home.dart",
@@ -76,7 +76,7 @@ def main() -> None:
     require(
         "apps/app/lib/source_browser.dart",
         "required this.loadCover",
-        "loadBytes: (uri) => loadCover(source, comic, uri)",
+        "loadSource: (uri) => loadCover(source, comic, uri)",
     )
     reject(
         "apps/app/lib/source_browser.dart",

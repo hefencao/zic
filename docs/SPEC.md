@@ -1,3 +1,12 @@
+## dev.74 vertical geometry, artwork and diagnostics requirements
+
+- Runtime-reported page ratio MUST use height/width, matching source metadata and continuous extent calculations.
+- Stitched vertical pages MUST have zero logical separator and MUST NOT overlap, translate or crop adjacent page widgets.
+- Restoring a distant page MUST use predictable extents/initial scroll offset instead of mounting every preceding page.
+- Home, source browse and details artwork MUST consume the same durable `EncodedResourceSource`; chapter revisions MUST NOT invalidate unchanged artwork identities.
+- Non-image responses MUST NOT be committed to the artwork cache.
+- Debug Trace MUST support export, keyword/session/severity filters and visual severity accents. High-frequency UI events MAY be coalesced only in the bounded diagnostics projection; failures MUST remain distinct.
+
 ## dev.73 compile-closure requirements
 
 - `pipeline_runtime` must receive `SourceFactory` through composition and must not depend on `bridge`.

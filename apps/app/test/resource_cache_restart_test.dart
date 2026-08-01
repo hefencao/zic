@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
 
 void main() {
@@ -43,18 +44,19 @@ void main() {
       cache: reopenedCache.responses,
     );
 
-    expect(
-      await reopened.loadImage(sourceCover, revision: 'source-r1'),
-      _CoverSource.sourceBytes,
+    final sourceFile = await reopened.loadImageSource(
+      sourceCover,
+      revision: 'source-r1',
     );
-    expect(
-      await reopened.loadImage(
-        detailCover,
-        comicId: 'comic-1',
-        revision: 'comic-r1',
-      ),
-      _CoverSource.detailBytes,
+    final detailFile = await reopened.loadImageSource(
+      detailCover,
+      comicId: 'comic-1',
+      revision: 'comic-r1',
     );
+    expect(sourceFile.origin, EncodedResourceOrigin.durableCacheFile);
+    expect(detailFile.origin, EncodedResourceOrigin.durableCacheFile);
+    expect(sourceFile, isA<FileEncodedResourceSource>());
+    expect(detailFile, isA<FileEncodedResourceSource>());
     expect(reopenedRaw.resourceLoads, 0);
     expect(reopenedCache.responses.stats.persistentHits, 2);
   });
