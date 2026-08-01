@@ -5,7 +5,7 @@ import 'dart:typed_data';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:flutter/services.dart';
-import 'package:media/media.dart' show NativeSourceFactory, SourcePool;
+import 'package:media/media.dart' show SourceFactory, SourcePool;
 import 'package:pipeline/pipeline.dart';
 import 'package:sessions/sessions.dart';
 import 'package:storage/storage.dart';
@@ -16,6 +16,7 @@ import 'asset_bundle_transport.dart';
 import 'media_load_token.dart';
 import 'pipeline_page_stream.dart';
 import 'pipeline_transfer_progress.dart';
+import 'reader_pipeline_profile.dart';
 
 typedef PipelineArtifactBytesLoader = Future<Uint8List> Function(
   PageAsset asset,
@@ -24,14 +25,54 @@ typedef PipelineArtifactBytesLoader = Future<Uint8List> Function(
 
 final class PipelineReaderSessionFactory {
   const PipelineReaderSessionFactory({
+    required this.sourceFactory,
     this.artifactCache,
     this.loaderSources = const <Uri, LoaderTransportSource>{},
     this.bytesLoader,
   });
 
+  final SourceFactory sourceFactory;
   final ArtifactCacheStore? artifactCache;
   final Map<Uri, LoaderTransportSource> loaderSources;
   final PipelineArtifactBytesLoader? bytesLoader;
+
+  /// Returns a factory that keeps composition-owned cache/byte loaders while
+  /// adding page-local transport sources.
+  ///
+  /// Presentation packages can contribute local source handles without
+  /// importing download/cache implementation types.
+  PipelineReaderSessionFactory withLoaderSources(
+    Map<Uri, LoaderTransportSource> sources,
+  ) =>
+      PipelineReaderSessionFactory(
+        sourceFactory: sourceFactory,
+        artifactCache: artifactCache,
+        loaderSources: <Uri, LoaderTransportSource>{
+          ...loaderSources,
+          ...sources,
+        },
+        bytesLoader: bytesLoader,
+      );
+
+  PipelineReaderSessionFactory withArtifactCache(
+    ArtifactCacheStore? cache,
+  ) =>
+      PipelineReaderSessionFactory(
+        sourceFactory: sourceFactory,
+        artifactCache: cache,
+        loaderSources: loaderSources,
+        bytesLoader: bytesLoader,
+      );
+
+  PipelineReaderSessionFactory withBytesLoader(
+    PipelineArtifactBytesLoader? loader,
+  ) =>
+      PipelineReaderSessionFactory(
+        sourceFactory: sourceFactory,
+        artifactCache: artifactCache,
+        loaderSources: loaderSources,
+        bytesLoader: loader,
+      );
 
   PipelineReaderSession create({
     required ChapterManifest chapter,
@@ -40,6 +81,7 @@ final class PipelineReaderSessionFactory {
   }) =>
       PipelineReaderSession(
         chapter: chapter,
+        sourceFactory: sourceFactory,
         sessionId: sessionId,
         artifactCache: artifactCache,
         loaderSources: loaderSources,
@@ -56,6 +98,7 @@ final class PipelineReaderSessionFactory {
 final class PipelineReaderSession {
   PipelineReaderSession({
     required this.chapter,
+    required SourceFactory sourceFactory,
     required this.sessionId,
     ArtifactCacheStore? artifactCache,
     Map<Uri, LoaderTransportSource> loaderSources =
@@ -91,7 +134,7 @@ final class PipelineReaderSession {
         ),
     };
     _streamingSources = SourcePool(
-      factory: const NativeSourceFactory(),
+      factory: sourceFactory,
       budgetFor: (id) => sourceBudgets[id] ?? 256 * 1024 * 1024,
     );
     if (artifactCache != null) {

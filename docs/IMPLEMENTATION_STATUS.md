@@ -1,3 +1,12 @@
+## dev.73：Pipeline 构造闭包与 UI 依赖收口
+
+- 修复 dev.72 新包遗漏的 11 个编译错误，补齐 profile import、SourceFactory 注入、page stream 内容类型投影、权威 ingress source 读取与 Reader 尺寸回调。
+- `pipeline_runtime` 不再依赖 `bridge`；NativeSourceFactory 由 `local_media_ui` 默认组合提供。
+- `local_media_ui` 通过不可变 `PipelineReaderSessionFactory` 派生页面 loader，页面 identity 来自 `PipelinePageStream`，不再依赖 downloads 实现。
+- 静态 demo 与 Widget 测试显式传入 Pipeline factory；Pipeline host 不再拥有隐式默认平台实现。
+- 新增编译边界门禁并更新现有 UI/repository 门禁以验证新所有权。
+- 本轮未修改 Venera transport、预下载/预解码窗口、lane 或进度策略；用户反馈的设备上行流量暂时正常。
+
 ## dev.72：Pipeline 运行时所有权与共享请求方案
 
 - `pipeline_runtime` 成为 Reader 资源会话的组合所有者，持有下载、artifact、SourcePool、解码/上传调度、进度与关闭顺序。

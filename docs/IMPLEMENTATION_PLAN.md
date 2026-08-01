@@ -1,3 +1,12 @@
+## dev.73 completed
+
+1. Close all dev.72 package/type/API compile gaps.
+2. Inject `SourceFactory` at platform composition instead of importing FFI bridge from Pipeline.
+3. Remove artifact-cache and download-identity implementation knowledge from local media presentation.
+4. Restore frame-coalesced page geometry projection.
+5. Preserve dev.70/72 streaming, preload and scheduler behavior.
+6. Add static compile-boundary regression and rebuild both full and incremental deliveries.
+
 ## dev.72 completed
 
 - [x] Extract Reader resource ownership into `pipeline_runtime`.

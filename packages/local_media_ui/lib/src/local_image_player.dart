@@ -113,7 +113,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     void listener(PipelinePageStreamSnapshot snapshot) {
       if (!mounted) return;
       final kind = snapshot.kind;
-      if (kind == ContentKind.webp) {
+      if (kind == PipelinePageContentKind.webp) {
         if (_detectedFormat != LocalImageFormat.webp) {
           setState(() => _detectedFormat = LocalImageFormat.webp);
         }

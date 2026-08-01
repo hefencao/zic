@@ -26,10 +26,18 @@ import 'package:transport/transport.dart';
 
 export 'package:local_media/local_media.dart';
 export 'package:reader_runtime/reader_runtime.dart'
-    show MediaLoadToken, ReaderSessionSettings, ReaderSessionSettingsWriter;
+    show
+        MediaLoadToken,
+        PipelineReaderSessionFactory,
+        ReaderSessionSettings,
+        ReaderSessionSettingsWriter;
 
 part 'src/models_and_preview.dart';
 part 'src/catalog_and_codec.dart';
 part 'src/local_image_player.dart';
 part 'src/local_media_screens.dart';
 part 'src/native_webp_player.dart';
+
+const defaultLocalMediaPipelineFactory = PipelineReaderSessionFactory(
+  sourceFactory: NativeSourceFactory(),
+);

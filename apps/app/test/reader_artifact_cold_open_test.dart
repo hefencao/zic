@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:transport/transport.dart';
 import 'package:zic/media_load_token.dart';
 import 'package:zic/reader_runtime.dart';
+import 'package:zic/webp_demo.dart' show defaultLocalMediaPipelineFactory;
 
 const _readyKey = ValueKey<String>('cold-reader-artifact-ready');
 
@@ -26,9 +27,9 @@ void main() {
           MaterialApp(
             home: PipelineReaderSessionHost(
               chapter: chapter,
-              factory: PipelineReaderSessionFactory(
-                artifactCache: store,
-                loaderSources: <Uri, LoaderTransportSource>{
+              factory: defaultLocalMediaPipelineFactory
+                  .withArtifactCache(store)
+                  .withLoaderSources(<Uri, LoaderTransportSource>{
                   id.canonicalUri: LoaderTransportSource(
                     revision: 'origin-r1',
                     loadBytes: () async {
@@ -38,8 +39,7 @@ void main() {
                       );
                     },
                   ),
-                },
-              ),
+                }),
               builder: (context, pipeline) => ReaderRuntimeScreen(
                 chapter: chapter,
                 pipeline: pipeline,

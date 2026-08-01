@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:domain/domain.dart';
 import 'package:media/media.dart';
 import 'package:sessions/sessions.dart';
+import 'package:transport/transport.dart' show ContentKind;
 
 /// Presentation-safe projection of one pipeline-owned encoded-byte session.
 ///
@@ -19,6 +20,12 @@ enum PipelinePageTransferState {
   disposed,
 }
 
+/// Presentation-safe content classification.
+///
+/// The pipeline maps transport sniffing into this enum so Reader/media
+/// consumers do not depend on transport-layer types.
+enum PipelinePageContentKind { unknown, webp, gif, fallback }
+
 final class PipelinePageStreamSnapshot {
   const PipelinePageStreamSnapshot({
     required this.state,
@@ -32,7 +39,7 @@ final class PipelinePageStreamSnapshot {
   final PipelinePageTransferState state;
   final int committedLength;
   final int? totalLength;
-  final ContentKind? kind;
+  final PipelinePageContentKind? kind;
   final EncodedSource? source;
   final Failure? failure;
 }
@@ -80,8 +87,8 @@ final class PipelinePageStream {
         state: _state(snapshot.state),
         committedLength: snapshot.committedLength,
         totalLength: snapshot.totalLength,
-        kind: snapshot.ingress?.kind,
-        source: snapshot.ingress?.source,
+        kind: _contentKind(snapshot.ingress?.kind),
+        source: _session.ingress?.source,
         failure: snapshot.failure,
       );
 }
@@ -94,4 +101,12 @@ PipelinePageTransferState _state(DownloadState state) => switch (state) {
       DownloadState.promoted => PipelinePageTransferState.promoted,
       DownloadState.failed => PipelinePageTransferState.failed,
       DownloadState.disposed => PipelinePageTransferState.disposed,
+    };
+
+PipelinePageContentKind? _contentKind(ContentKind? kind) => switch (kind) {
+      null => null,
+      ContentKind.unknown => PipelinePageContentKind.unknown,
+      ContentKind.webp => PipelinePageContentKind.webp,
+      ContentKind.gif => PipelinePageContentKind.gif,
+      ContentKind.fallback => PipelinePageContentKind.fallback,
     };

@@ -1,3 +1,11 @@
+## dev.73 Pipeline 构造与 Presentation 边界
+
+`pipeline_runtime` owns the resource-session implementation but does not own a platform FFI choice. `PipelineReaderSessionFactory` therefore requires a `media.SourceFactory`; Android/native composition supplies `NativeSourceFactory` from `local_media_ui`. The pipeline package must not import or depend on `bridge`.
+
+Presentation contributes only local transport handles through immutable factory derivation. `local_media_ui` cannot name `ArtifactCacheStore`, call `readerPageDownloadId`, or construct download/decode owners. A rendered page receives its canonical `DownloadId` from `PipelinePageStream.identity`.
+
+`PipelinePageStreamSnapshot` maps transport sniffing to `PipelinePageContentKind` and exposes the read-only encoded source from the authoritative session ingress. Transport enums and mutable session objects do not cross the presentation boundary. Measured page dimensions are frame-coalesced Reader layout input only; they do not submit pipeline demand or restart media work.
+
 ## dev.72 Reader / Pipeline 所有权
 
 ```text

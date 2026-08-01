@@ -1,3 +1,12 @@
+## dev.73 compile-closure requirements
+
+- `pipeline_runtime` must receive `SourceFactory` through composition and must not depend on `bridge`.
+- Every `PipelineReaderSessionHost` must receive an explicit factory; no hidden platform/default factory may exist in the pipeline package.
+- `local_media_ui` must not import or name `ArtifactCacheStore`, `DownloadSession`, `DownloadSnapshot` or `readerPageDownloadId`.
+- Presentation must obtain page identity from `PipelinePageStream.identity` and content classification from `PipelinePageContentKind`.
+- Page dimensions may update Reader layout only through a frame-coalesced callback; they must not create download/decode/upload demand.
+- dev.70/72 preload windows, lane capacities, request-plan reuse and streaming progress behavior must remain unchanged by compile-closure work.
+
 ## dev.72 ownership requirements
 
 1. Reader presentation MUST only publish viewport observations and consume read-only Pipeline projections. It MUST NOT own download, decode, upload, artifact, transport or retry state.

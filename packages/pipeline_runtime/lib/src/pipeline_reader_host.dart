@@ -20,8 +20,8 @@ typedef PipelineReaderSessionBuilder = Widget Function(
 final class PipelineReaderSessionHost extends StatefulWidget {
   const PipelineReaderSessionHost({
     required this.chapter,
+    required this.factory,
     required this.builder,
-    this.factory = const PipelineReaderSessionFactory(),
     this.traceSink,
     super.key,
   });

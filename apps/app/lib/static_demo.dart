@@ -2,8 +2,6 @@ import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
-import 'package:downloads/downloads.dart'
-    show readerPageDownloadId, readerPageTraceIdentity;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -11,8 +9,6 @@ import 'media_load_token.dart';
 import 'reader_runtime.dart';
 import 'webp_demo.dart';
 
-export 'package:downloads/downloads.dart'
-    show readerPageDownloadId, readerPageTraceIdentity;
 
 const staticDemoScreenKey = ValueKey<String>('static-demo-screen');
 
@@ -63,6 +59,7 @@ final class _StaticDemoScreenState extends State<StaticDemoScreen> {
           final chapter = snapshot.requireData;
           return PipelineReaderSessionHost(
             chapter: chapter,
+            factory: defaultLocalMediaPipelineFactory,
             builder: (context, pipeline) => ReaderRuntimeScreen(
               chapter: chapter,
               pipeline: pipeline,
@@ -148,8 +145,8 @@ final class _MediaPipelineReaderScreenState
           final chapter = snapshot.requireData;
           return PipelineReaderSessionHost(
             chapter: chapter,
-            factory: PipelineReaderSessionFactory(
-              bytesLoader: widget.mediaBytesLoader,
+            factory: defaultLocalMediaPipelineFactory.withBytesLoader(
+              widget.mediaBytesLoader,
             ),
             builder: (context, pipeline) => ReaderRuntimeScreen(
               chapter: chapter,
@@ -203,7 +200,7 @@ Widget? _buildMediaReaderPage(
       traceSink: runtime.traceSink,
       traceSessionId: runtime.sessionId,
       demandRevision: runtime.demandRevision,
-      downloadIdentity: readerPageDownloadId(runtime.chapter, asset),
+      downloadIdentity: runtime.pageStream.identity,
       onPreviewStateChanged: onPreviewStateChanged,
       playback: runtime.playback,
     ),

@@ -371,6 +371,29 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     }
   }
 
+  void _reportPageDimensions(PageAsset asset, int width, int height) {
+    if (width <= 0 || height <= 0) return;
+    final ratio = width / height;
+    final prior = _pendingPageAspectRatios[asset.assetKey] ??
+        _pageAspectRatios[asset.assetKey];
+    if (prior != null && (prior - ratio).abs() < 0.0001) return;
+    _pendingPageAspectRatios[asset.assetKey] = ratio;
+    if (_pageAspectRatioUpdateScheduled) return;
+    _pageAspectRatioUpdateScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pageAspectRatioUpdateScheduled = false;
+      if (!mounted || _pendingPageAspectRatios.isEmpty) return;
+      final updated = <String, double>{
+        ..._pageAspectRatios,
+        ..._pendingPageAspectRatios,
+      };
+      _pendingPageAspectRatios.clear();
+      setState(() => _pageAspectRatios = Map<String, double>.unmodifiable(
+            updated,
+          ));
+    });
+  }
+
   @override
   void dispose() {
     final reader = _reader;

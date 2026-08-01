@@ -909,12 +909,12 @@ def check_compile_regressions() -> None:
         'ReaderRuntimeScreen(',
         'traceSessionId: runtime.sessionId',
         'demandRevision: runtime.demandRevision',
-        'downloadIdentity: readerPageDownloadId(runtime.chapter, asset)',
+        'downloadIdentity: runtime.pageStream.identity',
     ):
         if required not in static_demo:
             fail(f'Reader media pipeline route is incomplete: {required}')
-    if "import 'package:downloads/downloads.dart'" not in static_demo:
-        fail('static_demo.dart must import the Reader page identity adapter')
+    if "import 'package:downloads/downloads.dart'" in static_demo:
+        fail('static_demo.dart must consume pipeline-owned page identity')
 
     for required in (
         'DownloadId readerPageDownloadId(',
@@ -1175,7 +1175,7 @@ def check_compile_regressions() -> None:
         'LoaderTransportSource(',
         'tokenBytesLoader:',
         'pageSubtitleBuilder:',
-        'downloadIdentity: readerPageDownloadId(runtime.chapter, asset)',
+        'downloadIdentity: runtime.pageStream.identity',
         'traceSessionId: runtime.sessionId',
         'demandRevision: runtime.demandRevision',
     ):

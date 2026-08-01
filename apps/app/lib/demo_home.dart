@@ -832,9 +832,12 @@ final class _DemoHomeState extends State<DemoHome> {
             ),
             traceSink: widget.debugTrace,
             onDownloadRequested: () => _downloadChapter(current),
-            artifactCache: _chapterDownloads is ArtifactCacheStore
-                ? _chapterDownloads as ArtifactCacheStore
-                : null,
+            pipelineFactory: defaultLocalMediaPipelineFactory
+                .withArtifactCache(
+              _chapterDownloads is ArtifactCacheStore
+                  ? _chapterDownloads as ArtifactCacheStore
+                  : null,
+            ),
             initialFavorite: preference.collected,
             onFavoriteChanged: (favorite) {
               final preference = _preferences[

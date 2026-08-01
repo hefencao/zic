@@ -9,6 +9,7 @@ export 'src/reader_download_progress.dart';
 export 'package:pipeline_runtime/pipeline_runtime.dart'
     show
         PipelineArtifactBytesLoader,
+        PipelinePageContentKind,
         PipelinePageStream,
         PipelinePageStreamListener,
         PipelinePageStreamSnapshot,

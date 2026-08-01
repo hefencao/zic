@@ -1,3 +1,14 @@
+## 0.31.0-dev.73：Pipeline 构造闭包与 Presentation 依赖收口
+
+- 修复 dev.72 拆分后遗漏的 Dart 编译闭包：`ArtifactCacheStore`、`ContentKind`、`ReaderPipelineProfile`、`readerPageDownloadId`、`IngressSnap.source`、`NativeSourceFactory` 与 `_reportPageDimensions` 均改为正确的所有者接口或显式依赖。
+- `PipelineReaderSessionFactory` 现在必须接收 `SourceFactory`；`pipeline_runtime` 不再依赖 FFI `bridge`，Native source 由 `local_media_ui` 的平台组合常量注入。
+- 新增 factory 的不可变派生接口，页面本地 loader、artifact cache 和测试 byte loader 在保留 source factory 的前提下组合，禁止 Presentation 自行创建下载或解码所有者。
+- `local_media_ui` 不再引用 `ArtifactCacheStore` 或调用 `readerPageDownloadId`；页面下载 identity 直接读取只读 `PipelinePageStream.identity`。
+- `PipelinePageStreamSnapshot` 使用 Pipeline 自有 `PipelinePageContentKind`，不向 Reader/媒体 UI 泄露 transport `ContentKind`；encoded source 从权威 session ingress 投影，不再读取不存在的 `IngressSnap.source`。
+- 恢复并帧后合并页面尺寸回报，只更新连续布局的只读比例投影，不创建下载、解码或重排命令。
+- 新增 `test_pipeline_runtime_compile_boundary.py`，覆盖 SourceFactory 注入、包依赖闭包、只读 identity/content projection 与尺寸回调边界。
+- dev.70/72 的前 7/后 3 下载、前 2/后 1 预解码、current/transition 上传、5/3/2 lane、共享 request-plan 与流式进度逻辑保持不变。
+
 ## 0.31.0-dev.72：Pipeline 运行时所有权与共享请求方案复用
 
 - 新增独立 `pipeline_runtime` 包，集中持有 Reader 会话的 `DownloadRegistry`、`LiveCoordinator`、`SourcePool`、artifact workspace、network/decode/upload lane、进度 publisher 与生命周期。

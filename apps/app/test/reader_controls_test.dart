@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reader/reader.dart';
 import 'package:zic/reader_runtime.dart';
+import 'package:zic/webp_demo.dart' show defaultLocalMediaPipelineFactory;
 
 const _screenKey = ValueKey<String>('reader-controls-screen');
 
@@ -86,6 +87,7 @@ Widget _pipelineReader({
 }) =>
     PipelineReaderSessionHost(
       chapter: chapter,
+      factory: defaultLocalMediaPipelineFactory,
       builder: (context, pipeline) => build(pipeline),
     );
 

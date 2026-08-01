@@ -33,7 +33,9 @@ def main() -> None:
 
     require(app_reader, "export 'package:reader_runtime/reader_runtime.dart';", 'reader facade')
     require(app_webp, "export 'package:local_media_ui/local_media_ui.dart';", 'media UI facade')
-    require(pipeline_runtime, 'show NativeSourceFactory, SourcePool;', 'SourcePool owner')
+    require(pipeline_runtime, 'show SourceFactory, SourcePool;', 'SourcePool abstraction')
+    require(pipeline_runtime, 'factory: sourceFactory,', 'SourceFactory injection')
+    require(media_ui, 'sourceFactory: NativeSourceFactory(),', 'native source composition')
     require(pipeline_host, 'widget.factory.create(', 'pipeline composition owner')
     require(pipeline_host, '_session.dispose()', 'pipeline lifecycle owner')
     for forbidden in ('DownloadRegistry', 'LiveCoordinator', 'NetLane', 'DecodeLane', 'UploadLane'):

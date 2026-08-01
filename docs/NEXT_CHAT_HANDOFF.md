@@ -3,12 +3,21 @@
 ## Sole baseline
 
 Continue only from
-`zic_v0.31.0-dev.72_pipeline-runtime-shared-request-plan.zip`.
+`zic_v0.31.0-dev.73_pipeline-runtime-compile-closure.zip`.
 It is a direct modification of the user-provided
 `zic_v0.31.0-dev.62_source-management-tabs-mihon-chapter-preflight.zip`;
 do not merge an earlier candidate. `mihon-main.zip` and `vibevenera-master.zip`
 were read-only compatibility references and are not part of the product tree.
 
+
+## Completed in dev.73
+
+- Closed the dev.72 Dart package/API compile gaps without moving download or decode ownership back into Reader.
+- `PipelineReaderSessionFactory` requires a `SourceFactory`; `pipeline_runtime` has no FFI bridge dependency. `local_media_ui` supplies the Native source at platform composition.
+- Local media presentation uses `PipelinePageStream.identity` and `PipelinePageContentKind`; it no longer names artifact-cache/download identity implementation types.
+- Restored frame-coalesced measured page dimensions for continuous layout.
+- Preserved +7/-3 download, +2/-1 decode warmup, current/transition upload, 5/3/2 lanes, request-plan reuse and streaming progress.
+- Added `tool/test_pipeline_runtime_compile_boundary.py` and updated ownership contracts.
 
 ## Completed in dev.72
 

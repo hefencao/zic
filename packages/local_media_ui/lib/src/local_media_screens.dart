@@ -10,6 +10,7 @@ final class ImageFolderScreen extends StatelessWidget {
     this.initialFavorite = false,
     this.onFavoriteChanged,
     this.onDownloadRequested,
+    this.pipelineFactory = defaultLocalMediaPipelineFactory,
     this.initialReaderSettings = const ReaderSessionSettings(),
     this.onReaderSettingsChanged,
     super.key,
@@ -23,6 +24,7 @@ final class ImageFolderScreen extends StatelessWidget {
   final bool initialFavorite;
   final FutureOr<void> Function(bool favorite)? onFavoriteChanged;
   final FutureOr<void> Function()? onDownloadRequested;
+  final PipelineReaderSessionFactory pipelineFactory;
   final ReaderSessionSettings initialReaderSettings;
   final ReaderSessionSettingsWriter? onReaderSettingsChanged;
 
@@ -43,6 +45,7 @@ final class ImageFolderScreen extends StatelessWidget {
       initialFavorite: initialFavorite,
       onFavoriteChanged: onFavoriteChanged,
       onDownloadRequested: onDownloadRequested,
+      pipelineFactory: pipelineFactory,
       initialReaderSettings: initialReaderSettings,
       onReaderSettingsChanged: onReaderSettingsChanged,
     );
@@ -60,7 +63,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
     this.initialFavorite = false,
     this.onFavoriteChanged,
     this.onDownloadRequested,
-    this.artifactCache,
+    this.pipelineFactory = defaultLocalMediaPipelineFactory,
     this.initiallyImmersive = true,
     this.initialReaderSettings = const ReaderSessionSettings(),
     this.onReaderSettingsChanged,
@@ -77,7 +80,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
   final bool initialFavorite;
   final FutureOr<void> Function(bool favorite)? onFavoriteChanged;
   final FutureOr<void> Function()? onDownloadRequested;
-  final ArtifactCacheStore? artifactCache;
+  final PipelineReaderSessionFactory pipelineFactory;
   final bool initiallyImmersive;
   final ReaderSessionSettings initialReaderSettings;
   final ReaderSessionSettingsWriter? onReaderSettingsChanged;
@@ -114,10 +117,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
         ),
       ),
       chapter: chapter,
-      factory: PipelineReaderSessionFactory(
-        loaderSources: sources,
-        artifactCache: artifactCache,
-      ),
+      factory: pipelineFactory.withLoaderSources(sources),
       traceSink: traceSink,
       builder: (context, pipeline) => ReaderRuntimeScreen(
         pipeline: pipeline,
@@ -168,7 +168,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
               tokenBytesLoader: (_, token) => runtime.loadBytes(token),
               onPreviewStateChanged: onPreviewStateChanged,
               onFirstFrame: reportFirstFrame,
-              downloadIdentity: readerPageDownloadId(runtime.chapter, asset),
+              downloadIdentity: runtime.pageStream.identity,
               traceClock: runtime.clock,
               traceSink: runtime.traceSink,
               traceSessionId: runtime.sessionId,
