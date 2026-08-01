@@ -33,12 +33,13 @@ def ordered(path: str, first: str, second: str) -> None:
 def main() -> None:
     require(
         "apps/app/lib/demo_home_source_compat.dart",
-        "_isLegacyVeneraLocator",
+        "isLegacyVeneraRuntimeLocator",
         "bool forceRefresh = false",
         "RefreshableChapterComicSource? refreshable",
         "await refreshable.refreshChapter(chapterId)",
         "final refreshedImmediately = forceRefresh && refreshable != null",
         "refreshable != null && !refreshedImmediately",
+        "_loadSourceResourceBytes(",
     )
     reject(
         "apps/app/lib/demo_home_source_compat.dart",
@@ -50,7 +51,6 @@ def main() -> None:
         "final legacyVenera = _hasLegacyVeneraLocators(entry.chapter)",
         "forceSourceRefresh: true",
         "Venera 章节仍包含已失效的运行时资源定位符",
-        "_loadSourceResourceBytes(",
     )
     ordered(
         "apps/app/lib/demo_home.dart",
@@ -58,9 +58,12 @@ def main() -> None:
         "final byteLoaders =",
     )
     require(
-        "apps/app/lib/demo_home_source_compat.dart",
-        "_loadCompatibleSourceResource",
+        "apps/app/lib/source_resource_gateway.dart",
+        "ComicSourceResourceGateway",
+        "isLegacyVeneraRuntimeLocator",
         "已阻止读取失效的 Venera 运行时资源定位符",
+        "ConfigurableChapterResourceAccess",
+        "setChapterResourceAccess(access)",
     )
     require(
         "packages/plugin_host/lib/src/runtime_source_adapter.dart",

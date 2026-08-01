@@ -10,6 +10,10 @@ import 'package:test/test.dart';
 import 'package:transport/transport.dart';
 
 void main() {
+  test('chapter resource access rejects an empty binding', () {
+    expect(ChapterResourceAccess.new, throwsArgumentError);
+  });
+
   test('managed chapter service is a cache-maintenance capability', () async {
     final ManagedChapterDownloadService service =
         MemoryChapterDownloadService(
@@ -243,23 +247,30 @@ void main() {
     });
     final service = await PersistentChapterDownloadService.open(directory.path);
     addTearDown(service.close);
-    service.setChapterResourceTransport(
-      (sourceId, uri, {range, validators}) async {
-        scheduleMicrotask(() async {
-          controller.add(<int>[1, 2, 3]);
-          await release.future;
-          controller.add(<int>[4, 5, 6]);
-          await controller.close();
-        });
-        return ByteResponse(
-          bytes: controller.stream,
-          statusCode: HttpStatus.ok,
-          rangeStart: 0,
-          totalLength: 6,
-          validators: const Validators(etag: '"stream"'),
-          rangeSupported: true,
-        );
-      },
+    var completeByteFallbackCalled = false;
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(
+        loadBytes: (sourceId, uri) async {
+          completeByteFallbackCalled = true;
+          return Uint8List(0);
+        },
+        openResponse: (sourceId, uri, {range, validators}) async {
+          scheduleMicrotask(() async {
+            controller.add(<int>[1, 2, 3]);
+            await release.future;
+            controller.add(<int>[4, 5, 6]);
+            await controller.close();
+          });
+          return ByteResponse(
+            bytes: controller.stream,
+            statusCode: HttpStatus.ok,
+            rangeStart: 0,
+            totalLength: 6,
+            validators: const Validators(etag: '"stream"'),
+            rangeSupported: true,
+          );
+        },
+      ),
     );
     final events = <ChapterDownloadSnapshot>[];
     final partial = Completer<ChapterDownloadSnapshot>();
@@ -283,6 +294,7 @@ void main() {
     expect(events.last.phase, ChapterDownloadPhase.complete);
     expect(events.last.receivedBytes, 6);
     expect(events.last.fraction, 1);
+    expect(completeByteFallbackCalled, isFalse);
   });
 
   test('memory download publishes progress and delete returns to idle',

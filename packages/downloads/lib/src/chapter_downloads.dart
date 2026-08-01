@@ -158,6 +158,30 @@ abstract interface class ConfigurableChapterResourceTransport {
   void setChapterResourceTransport(ChapterResourceTransport? transport);
 }
 
+/// Atomic source-resource binding used by application composition.
+///
+/// The complete-byte loader remains a compatibility fallback for sources that
+/// require a runtime transform. The streaming transport is authoritative when
+/// both capabilities are present. Binding them together prevents composition
+/// from exposing a half-updated loader/transport pair to an active download.
+final class ChapterResourceAccess {
+  ChapterResourceAccess({
+    this.loadBytes,
+    this.openResponse,
+  }) {
+    if (loadBytes == null && openResponse == null) {
+      throw ArgumentError('chapter resource access must expose a loader');
+    }
+  }
+
+  final ChapterResourceLoader? loadBytes;
+  final ChapterResourceTransport? openResponse;
+}
+
+abstract interface class ConfigurableChapterResourceAccess {
+  void setChapterResourceAccess(ChapterResourceAccess? access);
+}
+
 typedef ChapterPageLoader = Future<Uint8List> Function(
   ImportedLibraryEntry entry,
   int pageIndex,
@@ -600,6 +624,7 @@ final class MemoryChapterDownloadService
 final class PersistentChapterDownloadService
     implements
         ManagedChapterDownloadService,
+        ConfigurableChapterResourceAccess,
         ConfigurableChapterResourceLoader,
         ConfigurableChapterResourceTransport {
   PersistentChapterDownloadService._({
@@ -640,8 +665,7 @@ final class PersistentChapterDownloadService
   final SqliteIndex _index;
   final IoTransport _transport;
   final CacheOps _cacheOps;
-  ChapterResourceLoader? _resourceLoader;
-  ChapterResourceTransport? _resourceTransport;
+  ChapterResourceAccess? _resourceAccess;
   final StreamController<ChapterDownloadSnapshot> _changes =
       StreamController<ChapterDownloadSnapshot>.broadcast(sync: true);
   final Map<String, CancelToken> _tokens = <String, CancelToken>{};
@@ -662,15 +686,33 @@ final class PersistentChapterDownloadService
   Stream<ChapterDownloadSnapshot> get changes => _changes.stream;
 
   @override
+  void setChapterResourceAccess(ChapterResourceAccess? access) {
+    _requireOpen();
+    _resourceAccess = access;
+  }
+
+  @override
   void setChapterResourceLoader(ChapterResourceLoader? loader) {
     _requireOpen();
-    _resourceLoader = loader;
+    final transport = _resourceAccess?.openResponse;
+    _resourceAccess = loader == null && transport == null
+        ? null
+        : ChapterResourceAccess(
+            loadBytes: loader,
+            openResponse: transport,
+          );
   }
 
   @override
   void setChapterResourceTransport(ChapterResourceTransport? transport) {
     _requireOpen();
-    _resourceTransport = transport;
+    final loader = _resourceAccess?.loadBytes;
+    _resourceAccess = loader == null && transport == null
+        ? null
+        : ChapterResourceAccess(
+            loadBytes: loader,
+            openResponse: transport,
+          );
   }
 
   @override
@@ -780,8 +822,9 @@ final class PersistentChapterDownloadService
     if (!_isSourceOwnedResource(manifest.sourceId, page.uri)) {
       return _transport;
     }
-    final stream = _resourceTransport;
-    final loader = _resourceLoader;
+    final access = _resourceAccess;
+    final stream = access?.openResponse;
+    final loader = access?.loadBytes;
     if (stream == null && loader == null) {
       return _transport;
     }
@@ -1123,8 +1166,7 @@ final class PersistentChapterDownloadService
       return;
     }
     _closed = true;
-    _resourceLoader = null;
-    _resourceTransport = null;
+    _resourceAccess = null;
     for (final token in _tokens.values) {
       token.cancel();
     }

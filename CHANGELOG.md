@@ -1,3 +1,12 @@
+## 0.31.0-dev.71：来源资源原子绑定与组合层解耦
+
+- 修复 `demo_home_source_compat.dart` 通过 `ChapterDownloadService` 静态类型直接调用 `setChapterResourceLoader`/`setChapterResourceTransport` 的编译错误；无继承关系的能力接口全部显式绑定。
+- 新增 `ChapterResourceAccess` 与 `ConfigurableChapterResourceAccess`，将 complete-byte fallback 与 streaming `ByteResponse` transport 作为一个不可分割的组合值一次性注入。持久下载内部只读取同一 `_resourceAccess` 快照，避免运行中的下载观察到半更新配置。
+- 新增 `ComicSourceResourceGateway`：统一负责 sourceId 解析、旧 Venera runtime locator 拒绝、`ExternalPluginResourceTransportPool` 生命周期、Reader response loader 与章节下载绑定。`_DemoHomeState` 不再直接持有 transport pool 或调用下载服务的资源 setter。
+- gateway 关闭时先解除其绑定的下载服务，再关闭 transport pool；外部注入且晚于 Home 存活的下载服务不会继续保留指向已关闭 gateway 的回调。
+- 将章节页面读取、单章下载和整本下载动作收回 `_DemoHomeState` 的专用 extension，删除“把整个 State 传给全局 helper”访问私有下载/会话字段的隐式耦合。
+- 保留旧 loader/transport capability 作为第三方与测试服务兼容面；生产 `PersistentChapterDownloadService` 使用原子 capability。新增原子流式优先、gateway 关闭解绑和 legacy locator 前置拒绝回归及静态门禁。
+
 ## 0.31.0-dev.70：VibeVenera 风格流式来源管线与稳定进度
 
 - 以 dev.69 为唯一基线，对照用户上传的 VibeVenera `Streaming Image Pipeline Architecture`、共享下载流、稳定预取窗口和进度 publisher，撤销“Venera 只请求当前页”的退化。

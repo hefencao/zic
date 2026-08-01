@@ -1,3 +1,12 @@
+## dev.71：来源资源原子绑定与 Home 组合解耦
+
+- `ChapterResourceAccess` 原子携带 streaming response transport 与 complete-byte transform fallback；`PersistentChapterDownloadService` 只读取一个绑定快照。
+- `ComicSourceResourceGateway` 成为 App 中唯一 source-private resource composition owner，统一来源解析、旧 Venera locator 拒绝、transport pool、Reader loader 与章节下载绑定。
+- `DemoHome` 不再直接访问 `ExternalPluginResourceTransportPool`，也不再通过两个独立 setter 配置下载服务。
+- gateway close 先解绑仍存活的下载服务，再关闭其 transports；第三方旧 capability 保持兼容，但生产路径优先使用原子 capability。
+- source compatibility 动作改为 `_DemoHomeState` extension，移除全局函数对整个 State 的传递。
+- 新增 source-resource atomic binding 静态门禁、下载流式优先测试和 gateway 生命周期测试。
+
 ## dev.70：VibeVenera 风格 request-plan / streaming-body 分离
 
 - Venera source runtime 只负责 `onImageLoad`/`onLoadFailed` 及 Cookie/header/request-plan 解析；普通图片 body 由 composition-owned `ExternalPluginResourceTransportPool` 使用 Dart `HttpClient` 直接流入 DownloadSession。

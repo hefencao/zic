@@ -3,12 +3,20 @@
 ## Sole baseline
 
 Continue only from
-`zic_v0.31.0-dev.70_vibevenera-streaming-pipeline-progress.zip`.
+`zic_v0.31.0-dev.71_atomic-source-resource-composition.zip`.
 It is a direct modification of the user-provided
 `zic_v0.31.0-dev.62_source-management-tabs-mihon-chapter-preflight.zip`;
 do not merge an earlier candidate. `mihon-main.zip` and `vibevenera-master.zip`
 were read-only compatibility references and are not part of the product tree.
 
+
+## Completed in dev.71
+
+- Fixed the unrelated capability-interface compile failure by using explicit capability variables and an aggregate `ConfigurableChapterResourceAccess` production path.
+- Bound streaming response transport and complete-byte transform fallback atomically as `ChapterResourceAccess`; persistent downloads read one snapshot and still prefer streaming.
+- Added `ComicSourceResourceGateway` as the sole App owner for source lookup, legacy Venera locator rejection, transport-pool lifecycle, Reader response loaders and chapter-download composition.
+- Gateway close unbinds live download services before closing transports. Home no longer directly holds `ExternalPluginResourceTransportPool` or calls resource setters.
+- Moved Home-owned source download actions into a private State extension and added atomic-binding/lifecycle regression contracts.
 
 ## Completed in dev.70
 

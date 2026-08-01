@@ -20,6 +20,7 @@ import 'source_browser.dart';
 import 'misc_page.dart';
 import 'reader_preferences.dart';
 import 'source_migration_compare.dart';
+import 'source_resource_gateway.dart';
 import 'static_demo.dart';
 import 'webp_demo.dart';
 import 'home_library_session.dart';
@@ -145,7 +146,7 @@ final class DemoHome extends StatefulWidget {
 final class _DemoHomeState extends State<DemoHome> {
   late final ImportedLibraryStore _library;
   late final ChapterDownloadService _chapterDownloads;
-  final _sourceResourceTransports = ExternalPluginResourceTransportPool();
+  late final ComicSourceResourceGateway _sourceResources;
   late final WholeComicDownloadQueue _wholeComicDownloads;
   late List<BrowsableComicSource> _sources;
   late final HomeLibrarySession _librarySession;
@@ -224,7 +225,8 @@ final class _DemoHomeState extends State<DemoHome> {
               ),
       ),
     );
-    _bindCompatibleSourceResourceTransport(this);
+    _sourceResources = ComicSourceResourceGateway(sourceForId: _sourceForId);
+    _sourceResources.bindTo(_chapterDownloads);
     final ownsWholeComicDownloads = widget.wholeComicDownloads == null;
     _wholeComicDownloads = widget.wholeComicDownloads ??
         WholeComicDownloadQueue(downloads: _chapterDownloads);
@@ -281,15 +283,19 @@ final class _DemoHomeState extends State<DemoHome> {
 
   @override
   void dispose() {
-    _sourceResourceTransports.close();
     widget.preferences.removeListener(_handleAppPreferencesChanged);
     _librarySession.removeListener(_handleLibrarySessionChanged);
-    if (_ownsCacheCoordinator) {
-      unawaited(_cacheCoordinator.close());
-    }
-    unawaited(_librarySession.close());
+    unawaited(_closeHomeComposition());
     _librarySession.dispose();
     super.dispose();
+  }
+
+  Future<void> _closeHomeComposition() async {
+    await _librarySession.close();
+    _sourceResources.close();
+    if (_ownsCacheCoordinator) {
+      await _cacheCoordinator.close();
+    }
   }
 
   BrowsableComicSource? _sourceForId(String sourceId) {
@@ -568,36 +574,6 @@ final class _DemoHomeState extends State<DemoHome> {
     );
   }
 
-  Future<Uint8List> _loadSourceResourceBytes(String sourceId, Uri uri) =>
-      _loadCompatibleSourceResource(this, sourceId, uri);
-
-
-  Future<Uint8List> _loadChapterPageBytes(
-    ImportedLibraryEntry entry,
-    int pageIndex,
-  ) {
-    final pages = entry.chapter.pages;
-    if (pageIndex < 0 || pageIndex >= pages.length) {
-      throw RangeError.index(pageIndex, pages, 'pageIndex');
-    }
-    final page = pages[pageIndex];
-    final source = _sourceForId(entry.chapter.sourceId);
-    final uri = Uri.tryParse(page.sourceId);
-    if (source != null && uri != null) {
-      return _loadSourceResourceBytes(entry.chapter.sourceId, uri);
-    }
-    return readLocalImageSource(page.sourceId);
-  }
-
-  Future<void> _downloadChapter(ImportedLibraryEntry entry) =>
-      _downloadCompatibleChapter(this, entry);
-
-  Future<void> _downloadComicEntries(
-    String comicIdentity,
-    Iterable<ImportedLibraryEntry> entries,
-  ) =>
-      _downloadCompatibleComicEntries(this, comicIdentity, entries);
-
   int get _nextCustomOrder => _preferences.values.fold<int>(
         0,
         (value, preference) => preference.customOrder >= value
@@ -810,8 +786,10 @@ final class _DemoHomeState extends State<DemoHome> {
         ? const <String, ExternalPluginResourceResponseLoader>{}
         : <String, ExternalPluginResourceResponseLoader>{
             for (final page in current.chapter.pages)
-              page.sourceId: _sourceResourceTransports.loaderFor(
-                source, Uri.parse(page.sourceId)),
+              page.sourceId: _sourceResources.responseLoaderFor(
+                current.chapter.sourceId,
+                Uri.parse(page.sourceId),
+              ),
           };
     await Navigator.of(context).push(
       MaterialPageRoute<void>(

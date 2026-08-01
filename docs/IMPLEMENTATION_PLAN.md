@@ -21,8 +21,10 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.70）
+## 当前应用主线（0.31.0-dev.71）
 
+- 来源私有资源的 App 组合只允许通过 `ComicSourceResourceGateway -> ChapterResourceAccess` 一次性绑定；禁止 Home/UI 直接持有 transport pool 或分别设置 loader/transport。
+- gateway 生命周期必须先解绑外部下载服务再关闭 transport，防止持久服务保留失效回调。
 - Venera 主线采用 request-plan/body 分离：插件解析 URL/header/callback，ZIC Transport/DownloadSession/Artifact 承担流式正文、resume、进度和缓存。
 - 预取不得再次退化：下载窗口固定 +7/-3，预解码 +2/-1，只上传 current/transition；network/decode/upload lane 为 5/3/2，JavaScript request-plan 保持串行。
 - 下载管理与 Reader 进度只能投影 authoritative session；完成/restore 页面不显示网络态，chunk 到达后必须可见真实进度。
@@ -80,6 +82,15 @@
 - Mihon/Venera isolated backend 必须通过 `ExternalPluginRuntimeMessageChannel` 交换 protocol-v1 基础值/`Uint8List` 消息。handshake source identity、schema 和每次 response requestId 在跨边界处验证；不得返回进程内 zic domain/session 对象。
 - Android bound-service transport 必须以 binding generation 区分每次显式连接，并通过 Binder death recipient 失败当前请求；旧 generation 的迟到回调不得拆除新连接，也不得自动 replay/activate。packet response 必须校验 dedicated root、exact length 与 SHA-256，消费或失败后删除。
 
+
+
+### dev.71 当前主线约束
+
+1. `PersistentChapterDownloadService` 的来源资源配置必须以一个 `ChapterResourceAccess` 原子替换；不得在生产组合中分两次更新 loader 和 transport。
+2. `ComicSourceResourceGateway` 是 App 唯一的 source-private resource gateway；Presentation 不得直接创建或关闭 `ExternalPluginResourceTransportPool`。
+3. gateway 必须在关闭 transport 前解除已绑定下载服务；外部持久服务不得保留指向已关闭 gateway 的回调。
+4. legacy loader/transport setter 只用于兼容第三方/测试实现；新生产调用方必须优先检查 `ConfigurableChapterResourceAccess` 并显式转换能力类型。
+5. 章节下载/整本下载兼容动作属于 `_DemoHomeState` 的窄 extension，不得再把整个 State 传给全局 helper 访问私有所有者。
 
 
 ### dev.70 当前主线约束

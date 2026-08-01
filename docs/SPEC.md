@@ -781,3 +781,11 @@ Mihon Android packaging must expose each host ABI namespace from exactly one art
 - Persistent chapter progress MUST become observable after chunks commit. Reader progress MUST be idle for sealed, promoted, failed, disposed and restore-only sessions.
 - Trace identity/payload MUST summarize opaque Venera resource/comic/chapter tokens rather than emitting complete Base64 values.
 - Sources that require `onResponse` or `modifyImage` MAY use a bounded complete-body runtime fallback; that exception MUST NOT become the ordinary image path.
+
+## dev.71 source-resource composition requirements
+
+- App composition MUST bind complete-byte fallback and streaming response transport atomically through `ChapterResourceAccess` when the download service supports `ConfigurableChapterResourceAccess`.
+- Production composition MUST NOT call `setChapterResourceLoader` and `setChapterResourceTransport` separately. Those capabilities remain compatibility surfaces only.
+- Source lookup, legacy Venera runtime-locator rejection and `ExternalPluginResourceTransportPool` lifecycle MUST have one App owner. Reader and download widgets MUST receive loaders/projections only.
+- Closing the source-resource gateway MUST unbind any still-live download service before closing transports.
+- A source-private page MUST prefer the streaming response transport when both streaming and complete-byte fallback are bound. Runtime-transform fallback remains available without becoming the ordinary path.

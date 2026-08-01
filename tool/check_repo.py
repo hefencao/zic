@@ -1714,6 +1714,7 @@ def check_compile_regressions() -> None:
             home_path,
             ROOT / 'apps/app/lib/demo_home_views.dart',
             ROOT / 'apps/app/lib/demo_home_source_compat.dart',
+            ROOT / 'apps/app/lib/source_resource_gateway.dart',
             ROOT / 'apps/app/lib/home_widgets.dart',
             ROOT / 'apps/app/lib/home_library_session.dart',
         )
@@ -2152,12 +2153,20 @@ def check_compile_regressions() -> None:
     for required in (
         "label: '杂项'",
         'MiscPage(',
-        'downloads is ConfigurableChapterResourceLoader',
-        'downloads.setChapterResourceLoader(state._loadSourceResourceBytes)',
-        'downloads is ConfigurableChapterResourceTransport',
+        'ComicSourceResourceGateway(sourceForId: _sourceForId)',
+        '_sourceResources.bindTo(_chapterDownloads)',
+        'downloads is ConfigurableChapterResourceAccess',
+        'configurable.setChapterResourceAccess(access)',
     ):
         if required not in home:
-            fail(f'dev.64 root/settings compile contract is incomplete: {required}')
+            fail(f'dev.71 root/settings compile contract is incomplete: {required}')
+    for forbidden in (
+        'downloads.setChapterResourceLoader(state._loadSourceResourceBytes)',
+        'downloads.setChapterResourceTransport(',
+        'final _sourceResourceTransports =',
+    ):
+        if forbidden in home:
+            fail(f'dev.71 source-resource composition is still duplicated: {forbidden}')
     for required in (
         'miscQuickSettingsKey',
         'miscSettingsEntryKey',

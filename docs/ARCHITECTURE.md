@@ -1219,3 +1219,26 @@ A role-window detach is not transport eviction. Receiving downloads retain their
 ### dev.70 viewport/demand separation
 
 `PipelineController` suppresses reconciliation only when the page-role map is unchanged. `ReaderBinding` still resolves and publishes viewport coverage for every observation, so drag/transition playback remains continuous without re-submitting network/decode demands. `ExternalPluginResourceTransportPool` is keyed by source object identity; source-registry replacement never force-closes a transport still owned by an active Reader.
+
+## Atomic source-resource composition ownership (dev.71)
+
+The App previously configured persistent chapter downloads through two optional setters and also retained the source transport pool directly in `_DemoHomeState`. Besides the Dart capability-promotion compile failure, this allowed a service to observe a new loader with an old transport, and an externally owned service could retain callbacks after Home closed the transport pool.
+
+```text
+_DemoHomeState
+    | source resolver only
+    v
+ComicSourceResourceGateway
+    |-- legacy locator guard
+    |-- ExternalPluginResourceTransportPool lifecycle
+    |-- Reader response-loader projection
+    `-- ChapterResourceAccess (atomic)
+                |
+                v
+PersistentChapterDownloadService
+    _resourceAccess snapshot
+        | streaming preferred
+        ` complete-byte transform fallback
+```
+
+`ChapterResourceAccess` is replaced as one value. The old independent capabilities remain only for compatible third-party/test implementations; the gateway explicitly casts those interfaces and uses them only when the aggregate capability is absent. Gateway shutdown first clears bindings and then closes transports. Source compatibility actions that require Home owners live in a private `_DemoHomeState` extension rather than global helpers receiving the entire State object.

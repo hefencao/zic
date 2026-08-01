@@ -1,51 +1,14 @@
 part of 'demo_home.dart';
-void _bindCompatibleSourceResourceTransport(_DemoHomeState state) {
-  final downloads = state._chapterDownloads;
-  if (downloads is ConfigurableChapterResourceLoader) {
-    downloads.setChapterResourceLoader(state._loadSourceResourceBytes);
-  }
-  if (downloads is ConfigurableChapterResourceTransport) {
-    downloads.setChapterResourceTransport(
-      (sourceId, uri, {range, validators}) {
-        final source = state._sourceForId(sourceId);
-        if (source == null) {
-          throw StateError('漫画源 $sourceId 当前不可用');
-        }
-        return state._sourceResourceTransports
-            .loaderFor(source, uri)(range: range, validators: validators);
-      },
-    );
-  }
-}
-
-
-bool _isLegacyVeneraLocator(String value) =>
-    value.startsWith('venera-resource://');
 
 bool _hasLegacyVeneraLocators(ImportedChapterRecord chapter) =>
     chapter.pages.any(
-      (page) => _isLegacyVeneraLocator(page.sourceId),
+      (page) => isLegacyVeneraRuntimeLocator(page.sourceId),
     );
 
 bool _manifestHasLegacyVeneraLocators(ChapterManifest manifest) =>
     manifest.pages.any(
-      (page) => _isLegacyVeneraLocator(page.uri.toString()),
+      (page) => isLegacyVeneraRuntimeLocator(page.uri.toString()),
     );
-
-Future<Uint8List> _loadCompatibleSourceResource(
-  _DemoHomeState state,
-  String sourceId,
-  Uri uri,
-) {
-  if (_isLegacyVeneraLocator(uri.toString())) {
-    throw StateError('已阻止读取失效的 Venera 运行时资源定位符：$uri');
-  }
-  final source = state._sourceForId(sourceId);
-  if (source == null) {
-    throw StateError('漫画源 $sourceId 当前不可用，无法加载 $uri');
-  }
-  return source.loadResource(uri);
-}
 
 Future<ChapterManifest> _loadCompatibleSourceChapter(
   BrowsableComicSource source,
@@ -74,50 +37,66 @@ Future<ChapterManifest> _loadCompatibleSourceChapter(
   return manifest;
 }
 
-Future<void> _downloadCompatibleChapter(
-  _DemoHomeState state,
-  ImportedLibraryEntry entry,
-) async {
-  final current = _hasLegacyVeneraLocators(entry.chapter)
-      ? await state._refreshRemoteEntry(
-          entry,
-          forceSourceRefresh: true,
-        )
-      : entry;
-  await state._chapterDownloads.download(current);
-  state._acceptDownloadSnapshot(
-    await state._chapterDownloads.inspect(current),
-  );
-}
+extension _DemoHomeSourceResourceActions on _DemoHomeState {
+  Future<Uint8List> _loadSourceResourceBytes(String sourceId, Uri uri) =>
+      _sourceResources.loadBytes(sourceId, uri);
 
-Future<void> _downloadCompatibleComicEntries(
-  _DemoHomeState state,
-  String comicIdentity,
-  Iterable<ImportedLibraryEntry> entries,
-) async {
-  final chapters = <ImportedLibraryEntry>[];
-  for (final entry in entries) {
-    chapters.add(
-      _hasLegacyVeneraLocators(entry.chapter)
-          ? await state._refreshRemoteEntry(
-              entry,
-              forceSourceRefresh: true,
-            )
-          : entry,
+  Future<Uint8List> _loadChapterPageBytes(
+    ImportedLibraryEntry entry,
+    int pageIndex,
+  ) {
+    final pages = entry.chapter.pages;
+    if (pageIndex < 0 || pageIndex >= pages.length) {
+      throw RangeError.index(pageIndex, pages, 'pageIndex');
+    }
+    final page = pages[pageIndex];
+    final source = _sourceForId(entry.chapter.sourceId);
+    final uri = Uri.tryParse(page.sourceId);
+    if (source != null && uri != null) {
+      return _loadSourceResourceBytes(entry.chapter.sourceId, uri);
+    }
+    return readLocalImageSource(page.sourceId);
+  }
+
+  Future<void> _downloadChapter(ImportedLibraryEntry entry) async {
+    final current = _hasLegacyVeneraLocators(entry.chapter)
+        ? await _refreshRemoteEntry(
+            entry,
+            forceSourceRefresh: true,
+          )
+        : entry;
+    await _chapterDownloads.download(current);
+    _acceptDownloadSnapshot(await _chapterDownloads.inspect(current));
+  }
+
+  Future<void> _downloadComicEntries(
+    String comicIdentity,
+    Iterable<ImportedLibraryEntry> entries,
+  ) async {
+    final chapters = <ImportedLibraryEntry>[];
+    for (final entry in entries) {
+      chapters.add(
+        _hasLegacyVeneraLocators(entry.chapter)
+            ? await _refreshRemoteEntry(
+                entry,
+                forceSourceRefresh: true,
+              )
+            : entry,
+      );
+    }
+    if (chapters.isEmpty) {
+      throw StateError('没有可下载的章节');
+    }
+    final first = chapters.first.chapter;
+    if (comicIdentity != comicLibraryIdentity(first.sourceId, first.comicId)) {
+      throw StateError('整本下载身份与章节所有者不一致');
+    }
+    await _wholeComicDownloads.enqueue(
+      sourceId: first.sourceId,
+      comicId: first.comicId,
+      comicTitle: first.comicTitle,
+      chapters: chapters,
     );
+    _librarySession.refreshWholeComicSnapshot();
   }
-  if (chapters.isEmpty) {
-    throw StateError('没有可下载的章节');
-  }
-  final first = chapters.first.chapter;
-  if (comicIdentity != comicLibraryIdentity(first.sourceId, first.comicId)) {
-    throw StateError('整本下载身份与章节所有者不一致');
-  }
-  await state._wholeComicDownloads.enqueue(
-    sourceId: first.sourceId,
-    comicId: first.comicId,
-    comicTitle: first.comicTitle,
-    chapters: chapters,
-  );
-  state._librarySession.refreshWholeComicSnapshot();
 }
