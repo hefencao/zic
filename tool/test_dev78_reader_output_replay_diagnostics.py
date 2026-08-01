@@ -29,6 +29,7 @@ comic_details = read('apps/app/lib/comic_details.dart')
 demo_home = read('apps/app/lib/demo_home.dart')
 trace_log = read('apps/app/lib/debug_trace.dart')
 trace_screen = read('apps/app/lib/debug_trace_screen.dart')
+trace_export = read('apps/app/lib/debug_trace_export.dart')
 trace_tests = read('apps/app/test/misc_settings_test.dart')
 source_tests = read('apps/app/test/source_browser_test.dart')
 decode_tests = read('packages/sessions/test/decode_session_test.dart')
@@ -104,10 +105,12 @@ for token in (
 for token in (
     '_filteredEvents(log.exportEvents)',
     'DebugTraceFileExporter',
-    'exportDebugTraceFile',
+    'DebugTraceClipboardWriter',
     'Trace 导出失败：$error',
 ):
     require(trace_screen, token, 'raw trace export capability')
+require(trace_export, 'exportDebugTraceDocument', 'raw trace platform export facade')
+require(trace_export, 'application/x-ndjson', 'raw trace export MIME')
 require(trace_tests, 'debug trace copy uses the raw export ring', 'raw trace copy regression')
 require(trace_tests, 'debug trace file export uses the raw export ring', 'raw trace file regression')
 

@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:domain/domain.dart';
 
+import 'aligned_raster_size.dart';
+
 /// Physical decode dimensions shared by policy, decoder and renderer identity.
 ///
 /// Targets are aligned to [alignment] pixels and never exceed the supplied
@@ -88,23 +90,16 @@ final class DecodeTarget {
       maxPhysicalSide: maxPhysicalSide,
       maxPhysicalPixels: maxPhysicalPixels,
     );
-    final scale = math.min(
-      bounds.width / sourceWidth,
-      bounds.height / sourceHeight,
-    ).toDouble();
-    final width = _alignClosestWithin(
-      sourceWidth * scale,
-      bounds.width,
-      alignment,
-    );
-    final height = _alignClosestWithin(
-      sourceHeight * scale,
-      bounds.height,
-      alignment,
+    final raster = AlignedRasterSize.fit(
+      sourceWidth: sourceWidth,
+      sourceHeight: sourceHeight,
+      maxWidth: bounds.width,
+      maxHeight: bounds.height,
+      alignment: alignment,
     );
     return DecodeTarget._(
-      physicalWidth: width,
-      physicalHeight: height,
+      physicalWidth: raster.width,
+      physicalHeight: raster.height,
       pixelFormat: pixelFormat,
       renderer: renderer,
       alignment: alignment,
@@ -201,20 +196,6 @@ _PhysicalBounds _physicalBounds({
   );
 }
 
-int _alignClosestWithin(double value, int limit, int alignment) {
-  final down = _alignDown(value.floor(), alignment);
-  final up = math.min(
-    limit,
-    alignPhysicalDimension(
-      math.max(1, value.ceil()).toInt(),
-      alignment: alignment,
-    ),
-  ).toInt();
-  if (down < alignment) {
-    return up;
-  }
-  return (value - down).abs() <= (up - value).abs() ? down : up;
-}
 
 int _alignDown(int value, int alignment) {
   final aligned = (value ~/ alignment) * alignment;

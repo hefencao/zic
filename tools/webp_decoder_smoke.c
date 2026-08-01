@@ -64,6 +64,23 @@ static int check_all_prefixes(const uint8_t *bytes, size_t size) {
   return 1;
 }
 
+static int check_first_frame_before_complete(const uint8_t *bytes, size_t size) {
+  for (size_t length = 12; length < size; ++length) {
+    WebPData data = {bytes, length};
+    WebPDemuxState state = WEBP_DEMUX_PARSING_HEADER;
+    WebPDemuxer *demux = WebPDemuxPartial(&data, &state);
+    if (demux == NULL) continue;
+    WebPIterator iter;
+    int found = WebPDemuxGetFrame(demux, 1, &iter);
+    int complete = found && iter.complete && iter.fragment.bytes != NULL &&
+                   iter.fragment.size > 0;
+    if (found) WebPDemuxReleaseIterator(&iter);
+    WebPDemuxDelete(demux);
+    if (complete) return state != WEBP_DEMUX_DONE;
+  }
+  return 0;
+}
+
 static int check_frame(const WebPDemuxer *demux, int frame_number,
                        int expected_duration_ms,
                        const uint8_t expected[4]) {
@@ -165,6 +182,11 @@ int main(int argc, char **argv) {
   if (!check_all_prefixes(bytes, size)) {
     free(bytes);
     return 4;
+  }
+  if (!check_first_frame_before_complete(bytes, size)) {
+    fprintf(stderr, "first animation frame was not available before seal\n");
+    free(bytes);
+    return 12;
   }
 
   WebPData prefix = {bytes, size < 12 ? size : 12};

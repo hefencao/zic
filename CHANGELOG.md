@@ -1,3 +1,12 @@
+## 0.31.0-dev.80：修复增量流式唤醒、统一等比栅格与 Android Trace 导出
+
+- `IngressSnap` 增加单调 source revision；Decode lane 按 `DecodeId` 排空活跃任务期间到达的增长/seal revision，并去重同 key 的后续任务，避免首个 partial decode 后直到下载完成才再次尝试。
+- 未知 Content-Length 的传输投影按 committed bytes 区分 connecting/receiving，不伪造百分比；接收态公开实际新增字节。
+- 新增 `AlignedRasterSize` 作为普通图片、DecodeTarget 与 native WebP 共用的 contain + 原比例 + 8 像素物理栅格契约；Dart/Rust 使用相同整数比较和 fixture。
+- `MediaAspectViewport` 成为唯一 Presentation fit 决策。尺寸未知时不再落入 `BoxFit.fill`；header/static 原图尺寸也不会被对齐后的 output buffer 尺寸覆盖。WebP prefix 读取按 committed length 排空，避免同步期间的新 chunk 被吞。
+- Debug Trace Android 文件导出改由 App 注入的 SAF `CreateDocument` 能力完成，不再调用未实现的 `file_selector.getSavePath()`；复制独立限制为 64 KiB UTF-8 JSONL，并报告截断或平台错误。
+- 新增 source revision drain、统一 raster、未知尺寸 fit、transfer phase、raw copy/export 与 dev.80 静态门禁；+7/-3、+2/-1、current/transition 和 5/3/2 不变。
+
 ## 0.31.0-dev.79：恢复插件、封面与 Reader 流式稳定性
 
 - Venera JavaScript source operation 改为单 in-flight；Mihon 保留配置并发。删除 WebView 内 60 秒 raw `comic.loadInfo` promise/object cache，详情缓存只由 `resource_cache/catalog` 持有。

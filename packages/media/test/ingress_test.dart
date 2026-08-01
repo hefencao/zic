@@ -28,6 +28,33 @@ void main() {
     expect(ingress.snapshot.sealed, isTrue);
   });
 
+  test('source revision advances for every growth and seal event', () {
+    final ingress = Ingress(factory: _Factory(), maxBytes: 1024);
+    const epoch = SourceEpoch(0);
+
+    final initial = ingress.snapshot.revision;
+    ingress.append(epoch: epoch, offset: 0, bytes: 'RIFF'.codeUnits);
+    final prefix = ingress.snapshot.revision;
+    ingress.append(
+      epoch: epoch,
+      offset: 4,
+      bytes: '....WEBPframe'.codeUnits,
+    );
+    final ready = ingress.snapshot.revision;
+    ingress.append(
+      epoch: epoch,
+      offset: ingress.snapshot.length,
+      bytes: 'more'.codeUnits,
+    );
+    final grown = ingress.snapshot.revision;
+    ingress.seal(epoch);
+
+    expect(prefix, greaterThan(initial));
+    expect(ready, greaterThan(prefix));
+    expect(grown, greaterThan(ready));
+    expect(ingress.snapshot.revision, greaterThan(grown));
+  });
+
   test('does not create native sources for GIF or fallback content', () {
     final factory = _Factory();
     final gif = Ingress(factory: factory, maxBytes: 1024);

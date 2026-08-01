@@ -10,6 +10,7 @@ final class IngressSnap {
     required this.kind,
     required this.sealed,
     required this.sourceReady,
+    this.revision = 0,
     this.failure,
   });
 
@@ -18,6 +19,7 @@ final class IngressSnap {
   final ContentKind kind;
   final bool sealed;
   final bool sourceReady;
+  final int revision;
   final Failure? failure;
 }
 
@@ -37,6 +39,7 @@ final class Ingress {
   List<int> _pending = <int>[];
   int _length = 0;
   bool _sealed = false;
+  int _revision = 0;
   bool _disposed = false;
   Failure? _failure;
 
@@ -46,6 +49,7 @@ final class Ingress {
         kind: _kind,
         sealed: _sealed,
         sourceReady: _source != null,
+        revision: _revision,
         failure: _failure,
       );
 
@@ -85,11 +89,13 @@ final class Ingress {
         operation: 'append',
       );
       _length += bytes.length;
+      _revision++;
       return;
     }
 
     if (_kind != ContentKind.unknown) {
       _length += bytes.length;
+      _revision++;
       return;
     }
 
@@ -131,6 +137,7 @@ final class Ingress {
     } else if (detected != ContentKind.unknown) {
       _pending = <int>[];
     }
+    _revision++;
   }
 
   void seal(SourceEpoch epoch) {
@@ -148,6 +155,7 @@ final class Ingress {
       _invoke(() => source.seal(epoch.value), operation: 'seal');
     }
     _sealed = true;
+    _revision++;
   }
 
   Future<void> rebuild({
@@ -176,6 +184,7 @@ final class Ingress {
     _length = 0;
     _sealed = false;
     _failure = null;
+    _revision++;
   }
 
   void dispose() {
@@ -261,6 +270,7 @@ final class Ingress {
 
   void _disable(Failure failure) {
     _failure = failure;
+    _revision++;
     _source?.dispose();
     _source = null;
   }

@@ -123,6 +123,11 @@ void main() {
     expect(snapshots, isNotEmpty);
     expect(snapshots.last.sourceReady, isFalse);
     expect(snapshots.last.failure?.code, ErrorCode.source);
+
+    final lateSnapshots = <IngressSnap>[];
+    session.addSourceListener(lateSnapshots.add);
+    expect(lateSnapshots, hasLength(1));
+    expect(lateSnapshots.single.failure?.code, ErrorCode.source);
   });
 
   test('source listeners observe restored readiness and terminal seal', () async {

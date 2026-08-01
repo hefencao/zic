@@ -856,16 +856,37 @@ mod tests {
         assert!(frame.is_null());
         assert_eq!(unsafe { (*cursor).next_index }, 0);
 
+        const FIRST_FRAME_END: usize = 92;
         assert_eq!(
-            unsafe { zic_source_append(source_ptr, 3, 12, bytes[12..].as_ptr(), bytes.len() - 12) },
+            unsafe {
+                zic_source_append(
+                    source_ptr,
+                    3,
+                    12,
+                    bytes[12..FIRST_FRAME_END].as_ptr(),
+                    FIRST_FRAME_END - 12,
+                )
+            },
             Status::Ok as u32
         );
-        assert_eq!(unsafe { zic_source_seal(source_ptr, 3) }, Status::Ok as u32);
         assert_eq!(
             unsafe { zic_cursor_decode_next(cursor, 3, &mut frame) },
             CursorStatus::Ok as u32
         );
         assert_eq!(unsafe { zic_frame_index(frame) }, 0);
+        assert_eq!(
+            unsafe {
+                zic_source_append(
+                    source_ptr,
+                    3,
+                    FIRST_FRAME_END,
+                    bytes[FIRST_FRAME_END..].as_ptr(),
+                    bytes.len() - FIRST_FRAME_END,
+                )
+            },
+            Status::Ok as u32
+        );
+        assert_eq!(unsafe { zic_source_seal(source_ptr, 3) }, Status::Ok as u32);
 
         unsafe {
             zic_frame_release(frame);

@@ -1,5 +1,7 @@
 part of '../local_media_ui.dart';
 
+const mediaAspectViewportKey = ValueKey<String>('media-aspect-viewport');
+
 final class LocalImagePlayer extends StatefulWidget {
   const LocalImagePlayer({
     required this.image,
@@ -65,8 +67,12 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   PipelinePageOutputSnapshot? _pageOutputSnapshot;
   PipelinePageSurface? _scheduledOutputSurface;
   bool _streamingPrefixSyncing = false;
+  int _streamingPrefixRequestedLength = 0;
+  int _streamingPrefixRequestedRevision = 0;
+  int _streamingPrefixReadRevision = 0;
   bool _fallbackLoadStarted = false;
   Size? _reportedDimensions;
+  bool _reportedDimensionsAuthoritative = false;
 
   @override
   void initState() {
@@ -103,6 +109,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       _bytes = null;
       _imageProvider = null;
       _reportedDimensions = null;
+      _reportedDimensionsAuthoritative = false;
       _detectedFormat = widget.image.format;
       _state = ImagePreviewState.loading(widget.image.format);
       _notifyObserver(_state);
@@ -122,6 +129,9 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       _pageOutputSnapshot = null;
       _scheduledOutputSurface = null;
       _streamingPrefixSyncing = false;
+      _streamingPrefixRequestedLength = 0;
+      _streamingPrefixRequestedRevision = 0;
+      _streamingPrefixReadRevision = 0;
       final streaming = widget.pageStream;
       if (streaming != null) {
         _attachPageStreaming(streaming);
@@ -143,7 +153,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         if (_detectedFormat != LocalImageFormat.webp) {
           setState(() => _detectedFormat = LocalImageFormat.webp);
         }
-        unawaited(_syncStreamingWebpPrefix(stream, snapshot));
+        _requestStreamingWebpPrefix(stream, snapshot);
         return;
       }
       if (!_fallbackLoadStarted &&
@@ -165,33 +175,64 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     stream.addListener(listener);
   }
 
-  Future<void> _syncStreamingWebpPrefix(
+  void _requestStreamingWebpPrefix(
     PipelinePageStream stream,
     PipelinePageStreamSnapshot snapshot,
+  ) {
+    final requested = math.min(snapshot.committedLength, 256 * 1024);
+    if (requested > _streamingPrefixRequestedLength) {
+      _streamingPrefixRequestedLength = requested;
+    }
+    _streamingPrefixRequestedRevision++;
+    if (_streamingPrefixSyncing ||
+        _streamingPrefixRequestedLength < 20 ||
+        _streamingPrefixRequestedRevision <= _streamingPrefixReadRevision) {
+      return;
+    }
+    unawaited(_drainStreamingWebpPrefix(stream));
+  }
+
+  Future<void> _drainStreamingWebpPrefix(
+    PipelinePageStream stream,
   ) async {
-    if (_streamingPrefixSyncing || snapshot.committedLength < 20) {
+    if (_streamingPrefixSyncing) {
       return;
     }
     _streamingPrefixSyncing = true;
     try {
-      final prefix = await stream.readPrefix(
-        math.min(snapshot.committedLength, 256 * 1024),
-      );
-      if (!mounted || widget.pageStream != stream) {
-        return;
+      while (mounted && widget.pageStream == stream) {
+        final requested = _streamingPrefixRequestedLength;
+        final requestedRevision = _streamingPrefixRequestedRevision;
+        if (requested < 20 ||
+            requestedRevision <= _streamingPrefixReadRevision) {
+          return;
+        }
+        try {
+          final prefix = await stream.readPrefix(requested);
+          if (!mounted || widget.pageStream != stream) {
+            return;
+          }
+          _streamingPrefixReadRevision = requestedRevision;
+          final info = parseWebpPrefixInfo(prefix);
+          if (info != null) {
+            _reportDimensions(info.width, info.height);
+          }
+          if (webpPrefixDeclaresAnimation(prefix)) {
+            widget.onPlaybackCapabilityChanged?.call(true);
+          }
+        } on Object {
+          // Wait for the next source lifecycle revision before retrying.
+          _streamingPrefixReadRevision = requestedRevision;
+        }
       }
-      final info = parseWebpPrefixInfo(prefix);
-      if (info == null) {
-        return;
-      }
-      _reportDimensions(info.width, info.height);
-      widget.onPlaybackCapabilityChanged?.call(
-        webpPrefixDeclaresAnimation(prefix),
-      );
-    } on Object {
-      // An incomplete prefix is expected while the authoritative source grows.
     } finally {
       _streamingPrefixSyncing = false;
+      if (mounted &&
+          widget.pageStream == stream &&
+          _streamingPrefixRequestedRevision >
+              _streamingPrefixReadRevision) {
+        unawaited(_drainStreamingWebpPrefix(stream));
+      }
     }
   }
 
@@ -201,7 +242,11 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       setState(() => _pageOutputSnapshot = snapshot);
       if (snapshot.hasSurface) {
         final surface = snapshot.surface!;
-        _reportDimensions(surface.width, surface.height);
+        _reportDimensions(
+          surface.width,
+          surface.height,
+          authoritative: false,
+        );
         if (snapshot.animation.complete) {
           widget.onPlaybackCapabilityChanged?.call(snapshot.isAnimated);
         }
@@ -318,15 +363,37 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     super.dispose();
   }
 
-  void _reportDimensions(int width, int height) {
+  void _reportDimensions(
+    int width,
+    int height, {
+    bool authoritative = true,
+  }) {
     if (width <= 0 || height <= 0) {
       return;
     }
-    final dimensions = Size(width.toDouble(), height.toDouble());
-    if (_reportedDimensions == dimensions) {
+    if (!authoritative && _reportedDimensionsAuthoritative) {
       return;
     }
-    _reportedDimensions = dimensions;
+    final dimensions = Size(width.toDouble(), height.toDouble());
+    final changed = _reportedDimensions != dimensions;
+    final authoritativeChanged =
+        authoritative && !_reportedDimensionsAuthoritative;
+    if (!changed && !authoritativeChanged) {
+      return;
+    }
+    void commit() {
+      _reportedDimensions = dimensions;
+      _reportedDimensionsAuthoritative =
+          _reportedDimensionsAuthoritative || authoritative;
+    }
+    if (mounted) {
+      setState(commit);
+    } else {
+      commit();
+    }
+    if (!changed) {
+      return;
+    }
     try {
       widget.onDimensionsChanged?.call(dimensions);
     } on Object catch (error) {
@@ -483,34 +550,40 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         final surface = _pageOutputSnapshot?.surface;
         content = surface == null
             ? _loadingIndicator()
-            : Center(
-                child: surface.build(
+            : MediaAspectViewport(
+                dimensions: _reportedDimensions,
+                fit: widget.fit,
+                builder: (innerFit) => surface.build(
                   key: webpNativeTextureViewportKey,
-                  fit: widget.fit,
+                  fit: innerFit,
                   filterQuality: FilterQuality.medium,
                 ),
               );
       } else if (bytes == null) {
         content = _loadingIndicator();
       } else {
-        content = NativeWebpPlayer(
-          title: widget.image.displayName,
-          sourceUri: widget.sourceUri,
-          loadBytes: (_) => Future<Uint8List>.value(bytes),
-          showEngineControls: false,
-          showStatus: false,
-          initialEngine: WebpPlayerEngine.flutter,
-          onPreviewStateChanged: _onWebpState,
-          onFirstFrame: _onWebpFirstFrame,
-          downloadIdentity: widget.downloadIdentity,
-          traceClock: widget.traceClock,
-          traceSink: widget.traceSink,
-          traceSessionId: widget.traceSessionId,
-          demandRevision: widget.demandRevision,
-          playback: widget.playback,
-          onPlaybackCapabilityChanged: widget.onPlaybackCapabilityChanged,
+        content = MediaAspectViewport(
+          dimensions: _reportedDimensions,
           fit: widget.fit,
-          flutterAnimatedCodecFactory: widget.flutterAnimatedCodecFactory,
+          builder: (innerFit) => NativeWebpPlayer(
+            title: widget.image.displayName,
+            sourceUri: widget.sourceUri,
+            loadBytes: (_) => Future<Uint8List>.value(bytes),
+            showEngineControls: false,
+            showStatus: false,
+            initialEngine: WebpPlayerEngine.flutter,
+            onPreviewStateChanged: _onWebpState,
+            onFirstFrame: _onWebpFirstFrame,
+            downloadIdentity: widget.downloadIdentity,
+            traceClock: widget.traceClock,
+            traceSink: widget.traceSink,
+            traceSessionId: widget.traceSessionId,
+            demandRevision: widget.demandRevision,
+            playback: widget.playback,
+            onPlaybackCapabilityChanged: widget.onPlaybackCapabilityChanged,
+            fit: innerFit,
+            flutterAnimatedCodecFactory: widget.flutterAnimatedCodecFactory,
+          ),
         );
       }
     } else if (widget.playback != null &&
@@ -518,45 +591,45 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       if (bytes == null) {
         content = _loadingIndicator();
       } else {
-        content = _ControlledAnimatedImage(
-          bytes: bytes,
-          playback: widget.playback!,
-          onReady: _onControlledReady,
-          onError: _onControlledError,
-          codecFactory: widget.flutterAnimatedCodecFactory,
+        content = MediaAspectViewport(
+          dimensions: _reportedDimensions,
           fit: widget.fit,
-          downloadIdentity: widget.downloadIdentity,
-          traceClock: widget.traceClock,
-          traceSink: widget.traceSink,
-          traceSessionId: widget.traceSessionId,
-          demandRevision: widget.demandRevision,
+          builder: (innerFit) => _ControlledAnimatedImage(
+            bytes: bytes,
+            playback: widget.playback!,
+            onReady: _onControlledReady,
+            onError: _onControlledError,
+            codecFactory: widget.flutterAnimatedCodecFactory,
+            fit: innerFit,
+            downloadIdentity: widget.downloadIdentity,
+            traceClock: widget.traceClock,
+            traceSink: widget.traceSink,
+            traceSessionId: widget.traceSessionId,
+            demandRevision: widget.demandRevision,
+          ),
         );
       }
     } else if (imageProvider == null) {
       content = _loadingIndicator();
     } else {
-      content = Center(
-        child: Image(
-          image: imageProvider,
-          key: imageFolderFlutterPreviewKey,
-          width: double.infinity,
-          height: double.infinity,
-          fit: widget.fit,
-          filterQuality: FilterQuality.medium,
-          frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
-            if (frame != null || wasSynchronouslyLoaded) {
-              _scheduleStaticFramePresented(
-                _generation,
-                _detectedFormat,
-              );
-            }
-            return child;
-          },
-          errorBuilder: (context, error, stackTrace) {
-            _scheduleError(error);
-            return const SizedBox.shrink();
-          },
-        ),
+      content = MediaRasterImage(
+        image: imageProvider,
+        dimensions: _reportedDimensions,
+        fit: widget.fit,
+        imageKey: imageFolderFlutterPreviewKey,
+        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+          if (frame != null || wasSynchronouslyLoaded) {
+            _scheduleStaticFramePresented(
+              _generation,
+              _detectedFormat,
+            );
+          }
+          return child;
+        },
+        errorBuilder: (context, error, stackTrace) {
+          _scheduleError(error);
+          return const SizedBox.shrink();
+        },
       );
     }
     final keyed = switch (_state.phase) {
@@ -574,6 +647,104 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       key: imageFolderPreviewStateKey,
       state: _state,
       child: keyed,
+    );
+  }
+}
+
+final class MediaRasterImage extends StatelessWidget {
+  const MediaRasterImage({
+    required this.image,
+    required this.dimensions,
+    required this.fit,
+    this.imageKey,
+    this.frameBuilder,
+    this.errorBuilder,
+    super.key,
+  });
+
+  final ImageProvider<Object> image;
+  final Size? dimensions;
+  final BoxFit fit;
+  final Key? imageKey;
+  final ImageFrameBuilder? frameBuilder;
+  final ImageErrorWidgetBuilder? errorBuilder;
+
+  @override
+  Widget build(BuildContext context) {
+    final source = dimensions;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        ImageProvider<Object> provider = image;
+        if (source != null &&
+            source.width > 0 &&
+            source.height > 0 &&
+            constraints.hasBoundedWidth &&
+            constraints.hasBoundedHeight &&
+            constraints.maxWidth > 0 &&
+            constraints.maxHeight > 0) {
+          final ratio = MediaQuery.devicePixelRatioOf(context);
+          final raster = AlignedRasterSize.fit(
+            sourceWidth: source.width.round(),
+            sourceHeight: source.height.round(),
+            maxWidth: math.max(8, (constraints.maxWidth * ratio).floor()),
+            maxHeight: math.max(8, (constraints.maxHeight * ratio).floor()),
+          );
+          provider = ResizeImage.resizeIfNeeded(
+            raster.width < source.width ? raster.width : null,
+            raster.height < source.height ? raster.height : null,
+            image,
+          );
+        }
+        return MediaAspectViewport(
+          dimensions: source,
+          fit: fit,
+          builder: (innerFit) => Image(
+            image: provider,
+            key: imageKey,
+            width: double.infinity,
+            height: double.infinity,
+            fit: innerFit,
+            filterQuality: FilterQuality.medium,
+            frameBuilder: frameBuilder,
+            errorBuilder: errorBuilder,
+          ),
+        );
+      },
+    );
+  }
+}
+
+typedef MediaAspectChildBuilder = Widget Function(BoxFit innerFit);
+
+final class MediaAspectViewport extends StatelessWidget {
+  const MediaAspectViewport({
+    required this.dimensions,
+    required this.fit,
+    required this.builder,
+  });
+
+  final Size? dimensions;
+  final BoxFit fit;
+  final MediaAspectChildBuilder builder;
+
+  @override
+  Widget build(BuildContext context) {
+    final source = dimensions;
+    if (source == null || source.width <= 0 || source.height <= 0) {
+      return SizedBox.expand(child: builder(fit));
+    }
+    return SizedBox.expand(
+      key: mediaAspectViewportKey,
+      child: FittedBox(
+        fit: fit,
+        alignment: Alignment.topCenter,
+        clipBehavior: Clip.hardEdge,
+        child: SizedBox(
+          width: source.width,
+          height: source.height,
+          child: builder(BoxFit.fill),
+        ),
+      ),
     );
   }
 }

@@ -282,6 +282,65 @@ void main() {
     expect(copied, contains('\"index\":2'));
   });
 
+  testWidgets('debug trace copy is bounded by UTF-8 bytes', (tester) async {
+    final log = DebugTraceLog(maxEvents: 1, maxExportEvents: 2000);
+    addTearDown(log.dispose);
+    for (var index = 0; index < 1000; index++) {
+      log.record(
+        TraceEvent(
+          monotonicMicros: index,
+          sessionId: 'reader-large-copy',
+          kind: TraceEventKind.readerObservation,
+          payload: <String, Object?>{
+            'index': index,
+            'detail': List<String>.filled(40, '像素对齐').join(),
+          },
+        ),
+      );
+    }
+    String? copied;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DebugTraceScreen(
+          log: log,
+          writeClipboard: (text) async => copied = text,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(debugTraceCopyKey));
+    await tester.pump();
+
+    expect(copied, isNotNull);
+    expect(utf8.encode(copied!).length, lessThanOrEqualTo(debugTraceClipboardMaxBytes));
+    expect(find.textContaining('剪贴板上限'), findsOneWidget);
+  });
+
+  testWidgets('debug trace copy reports platform failure', (tester) async {
+    final log = DebugTraceLog(maxEvents: 2, maxExportEvents: 2);
+    addTearDown(log.dispose);
+    log.record(
+      const TraceEvent(
+        monotonicMicros: 1,
+        sessionId: 'reader-copy-failure',
+        kind: TraceEventKind.downloadState,
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DebugTraceScreen(
+          log: log,
+          writeClipboard: (_) async => throw StateError('clipboard unavailable'),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(debugTraceCopyKey));
+    await tester.pump();
+
+    expect(find.textContaining('Trace 复制失败'), findsOneWidget);
+  });
+
   testWidgets('debug trace file export uses the raw export ring',
       (tester) async {
     final log = DebugTraceLog(maxEvents: 1, maxExportEvents: 10);

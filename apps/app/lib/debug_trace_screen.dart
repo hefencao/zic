@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:telemetry/telemetry.dart';
@@ -26,29 +25,21 @@ typedef DebugTraceFileExporter = Future<String?> Function({
   required Uint8List bytes,
 });
 
-Future<String?> exportDebugTraceFile({
-  required String suggestedName,
-  required Uint8List bytes,
-}) async {
-  final location = await getSaveLocation(suggestedName: suggestedName);
-  if (location == null) return null;
-  await XFile.fromData(
-    bytes,
-    mimeType: 'application/x-ndjson',
-    name: suggestedName,
-  ).saveTo(location.path);
-  return location.path;
-}
+typedef DebugTraceClipboardWriter = Future<void> Function(String text);
+
+const debugTraceClipboardMaxBytes = 64 * 1024;
 
 final class DebugTraceScreen extends StatefulWidget {
   const DebugTraceScreen({
     required this.log,
     this.exportFile,
+    this.writeClipboard,
     super.key,
   });
 
   final DebugTraceLog log;
   final DebugTraceFileExporter? exportFile;
+  final DebugTraceClipboardWriter? writeClipboard;
 
   @override
   State<DebugTraceScreen> createState() => _DebugTraceScreenState();
@@ -83,12 +74,23 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
 
   Future<void> _copyFiltered() async {
     final events = _filteredEvents(log.exportEvents);
-    final text = events.map((event) => event.toJsonLine()).join('\n');
-    await Clipboard.setData(ClipboardData(text: text));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已复制 ${events.length} 条原始 Trace')),
-    );
+    final payload = _boundedClipboardPayload(events);
+    try {
+      final writer = widget.writeClipboard ?? _writeSystemClipboard;
+      await writer(payload.text);
+      if (!mounted) return;
+      final suffix = payload.copiedCount == events.length
+          ? ''
+          : '（剪贴板上限，仅复制前 ${payload.copiedCount}/${events.length} 条）';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已复制 ${payload.copiedCount} 条原始 Trace$suffix')),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Trace 复制失败：$error')),
+      );
+    }
   }
 
   Future<void> _exportFiltered() async {
@@ -101,7 +103,11 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
     final name = 'zic-debug-trace-$stamp.jsonl';
     final text = events.map((event) => event.toJsonLine()).join('\n');
     try {
-      final path = await (widget.exportFile ?? exportDebugTraceFile)(
+      final exporter = widget.exportFile;
+      if (exporter == null) {
+        throw UnsupportedError('当前组合未提供 Trace 文件导出能力');
+      }
+      final path = await exporter(
         suggestedName: name,
         bytes: Uint8List.fromList(utf8.encode(text)),
       );
@@ -299,6 +305,37 @@ final class _DebugTraceTile extends StatelessWidget {
       ),
     );
   }
+}
+
+Future<void> _writeSystemClipboard(String text) =>
+    Clipboard.setData(ClipboardData(text: text));
+
+({String text, int copiedCount}) _boundedClipboardPayload(
+  List<TraceEvent> events, {
+  int maxBytes = debugTraceClipboardMaxBytes,
+}) {
+  if (maxBytes <= 0 || events.isEmpty) {
+    return (text: '', copiedCount: 0);
+  }
+  final buffer = StringBuffer();
+  var usedBytes = 0;
+  var copiedCount = 0;
+  for (final event in events) {
+    final line = event.toJsonLine();
+    final lineBytes = utf8.encode(line);
+    final separatorBytes = copiedCount == 0 ? 0 : 1;
+    if (usedBytes + separatorBytes + lineBytes.length > maxBytes) {
+      break;
+    }
+    if (copiedCount > 0) {
+      buffer.write('\n');
+      usedBytes++;
+    }
+    buffer.write(line);
+    usedBytes += lineBytes.length;
+    copiedCount++;
+  }
+  return (text: buffer.toString(), copiedCount: copiedCount);
 }
 
 String _traceLevelFilterLabel(_TraceLevelFilter value) => switch (value) {

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:domain/domain.dart';
@@ -295,6 +296,135 @@ void main() {
     await downloads.dispose();
     await temp.delete(recursive: true);
   });
+
+  test('source revisions arriving during decode are drained exactly once',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('live_growth_test_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'growth',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/growth.webp'),
+    );
+    final decodeId = DecodeId(
+      download: id,
+      physicalWidth: 8,
+      physicalHeight: 8,
+      pixelFormat: PixelFormat.rgba8888,
+      renderer: RendererKind.flutterImage,
+    );
+    final clock = _Clock();
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+      sources: sources,
+    );
+    final transport = _ControlledTransport();
+    final initialStarted = Completer<void>();
+    final initialRelease = Completer<void>();
+    final followStarted = Completer<void>();
+    final followRelease = Completer<void>();
+    var decodeCalls = 0;
+    final coordinator = LiveCoordinator(
+      registry: downloads,
+      transportFor: (_) => transport,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+      decode: DecodeLane(maxActive: 1),
+      onDecode: (id, demand, token) async {
+        decodeCalls++;
+        if (decodeCalls == 1) {
+          initialStarted.complete();
+          await initialRelease.future;
+        } else if (decodeCalls == 2) {
+          followStarted.complete();
+          await followRelease.future;
+        }
+        token.throwIfCancelled();
+      },
+    );
+    final plan = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{
+        id: const DownloadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'growth',
+          expirationRevision: 2,
+        ),
+      },
+      decodes: <DecodeId, DecodeDemand>{
+        decodeId: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 1,
+          reason: 'growth',
+          expirationRevision: 2,
+        ),
+      },
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{
+        ResourceId.download(id),
+        ResourceId.decode(decodeId),
+      },
+    );
+
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: plan,
+        diff: DemandDiff.between(DemandPlan.empty(), plan),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    await initialStarted.future;
+    transport.add('RIFF....WEBP'.codeUnits);
+    transport.add('first-growth'.codeUnits);
+    initialRelease.complete();
+    await followStarted.future;
+    transport.add('second-growth'.codeUnits);
+    await transport.close();
+    followRelease.complete();
+    await coordinator.idle();
+
+    expect(decodeCalls, 3);
+
+    await coordinator.dispose();
+    await downloads.dispose();
+  });
+}
+
+final class _ControlledTransport implements Transport {
+  final StreamController<List<int>> _controller =
+      StreamController<List<int>>();
+
+  void add(List<int> bytes) => _controller.add(bytes);
+
+  Future<void> close() => _controller.close();
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async =>
+      ByteResponse(
+        bytes: _controller.stream,
+        statusCode: 200,
+        rangeStart: 0,
+        totalLength: null,
+        validators: const Validators(etag: 'growth'),
+        rangeSupported: false,
+      );
 }
 
 final class _FlakyTransport implements Transport {

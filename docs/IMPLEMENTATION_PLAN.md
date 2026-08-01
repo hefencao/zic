@@ -1,3 +1,14 @@
+## dev.80 completed
+
+1. Add monotonic ingress revision tracking and drain source updates through one DecodeId-owned follow path without duplicate latest-revision work.
+2. Project unknown-length transfer as connecting or receiving from real committed-byte movement; do not invent percentages.
+3. Introduce one aligned raster value object and make static images, DecodeTarget and native WebP use the same contain/aspect/8-pixel contract.
+4. Centralize Presentation fit in `MediaAspectViewport`, preserve requested fit before intrinsic dimensions resolve, and keep header dimensions authoritative over output buffers.
+5. Replace Android `file_selector` save with an App-owned SAF exporter; bound clipboard JSONL independently and report both failures.
+6. Add owner tests, ADR 0064, dev.80 audit/static gate and local libwebp validation without changing windows or lanes.
+
+Next validation: run Flutter analyze and all owner/App tests, Rust tests, Android debug/release or kernel snapshot. On device use a WebP whose first complete frame arrives before EOF, confirm first frame appears while bytes still increase, compare wide/tall static and animated pages at several DPRs, and verify both copy and SAF JSONL export.
+
 ## dev.79 completed
 
 1. Serialize Venera JavaScript source operations without changing Mihon concurrency or host streaming lanes, and remove the competing WebView raw `loadInfo` cache.

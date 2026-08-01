@@ -127,7 +127,9 @@ final class DownloadSession {
     _requireNotDisposed();
     _sourceListeners.add(listener);
     final current = ingress?.snapshot;
-    if (fireImmediately && current != null && current.sourceReady) {
+    if (fireImmediately &&
+        current != null &&
+        (current.sourceReady || current.failure != null)) {
       try {
         listener(current);
       } on Object catch (error) {
@@ -521,6 +523,7 @@ final class DownloadSession {
     final sourceChanged =
         (after.sourceReady || after.failure != null) &&
         (sourceBecameReady ||
+            before.revision != after.revision ||
             before.length != after.length ||
             before.sealed != after.sealed ||
             before.kind != after.kind ||

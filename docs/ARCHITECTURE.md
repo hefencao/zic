@@ -1,3 +1,13 @@
+## dev.80 增量 source、统一栅格与诊断导出所有权
+
+- `IngressSnap.revision` 是 encoded source 创建、增长、seal、reset 与失败的单调生命周期版本。`DownloadSession` 负责通知，`LiveCoordinator` 按 `DecodeId` 记录已消费 revision；活跃 decode 期间到达的新 revision 由同一 follow task 排空，重复 queued follow 读取到已消费 revision 后退出。
+- `pipeline.AlignedRasterSize` 是普通图片与 WebP 的唯一物理 raster 规则：在 source/viewport 边界内 contain，使用整数比例误差比较，同时对齐宽高到 8 像素。Dart policy/static image 与 Rust native WebP 使用相同 fixture 和算法；不得恢复按格式独立缩放。
+- 原图几何与 output buffer 几何分离。`local_media_ui.MediaAspectViewport` 唯一决定 contain/fitWidth/cover；有原图尺寸时，renderer 只 fill 已按原图比例拟合的内部盒；未知尺寸时 renderer 直接消费请求 fit，禁止默认 fill 整个 viewport。Pipeline surface 尺寸不得覆盖 header/static 权威尺寸。
+- WebP prefix observation 按最大 committed length 排空。同步读取期间到达的 chunk 不得被 boolean guard 永久吞掉。
+- `PipelineTransferProgress` 拥有 connecting/receiving/idle 语义。未知 Content-Length 不伪造百分比；committed bytes 超过进入网络前已有字节即为 receiving。
+- Debug 页面只消费注入的 `DebugTraceFileExporter` 与 clipboard writer。Android 文件落盘由 App composition 的 SAF `CreateDocument` MethodChannel 拥有；复制是独立的 64 KiB UTF-8 有界投影，不依赖保存能力。
+- ADR 0064 补充 ADR 0061–0063。+7/-3、+2/-1、current/transition 与 5/3/2 不变。
+
 ## dev.79 插件、封面与 Reader 流式稳定性所有权
 
 - `plugin_host` 按 runtime format 拥有 source operation 调用契约。Venera JavaScript source 使用单 in-flight gate，因为其 WebView/source 脚本共享全局 scratch；Mihon 隔离运行时继续使用配置并发。图片正文仍由宿主 streaming transport 处理，串行 source operation 不等于降低网络 lane。

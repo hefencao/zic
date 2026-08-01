@@ -1,3 +1,13 @@
+## dev.80：增量流式、统一栅格与 Trace 平台导出
+
+- `IngressSnap` 增加单调 revision；DownloadSession 在每次 source lifecycle 变化通知，LiveCoordinator 按 DecodeId 去重并排空活跃 decode 期间到达的新 revision。source revision map 会随 demand detach/会话关闭释放。
+- 未知 Content-Length 的当前页进度依据 committed bytes 投影 connecting/receiving；不伪造百分比。
+- 新增 `AlignedRasterSize`，Dart 与 native WebP 使用同一整数 aspect-error 比较和 8 像素对齐 fixture。`DecodeTarget.fit`、static `ResizeImage` 与 Rust decoder 不再各自独立决定 X/Y。
+- `MediaAspectViewport` 是普通图片、GIF、完整 WebP 与 Pipeline surface 的唯一 fit owner。直接文件图片在尺寸尚未知时继续使用 contain/fitWidth，而不是 fill；WebP output buffer 不覆盖 header 尺寸；prefix 读取排空同步期间新增长度。
+- Android Trace 文件保存迁移到 App MethodChannel + SAF `CreateDocument`；Debug 页面只调用注入 facade。复制限制为 64 KiB UTF-8 raw JSONL，并显式报告截断/错误。
+- 新增 source revision drain、raster parity、未知尺寸 fit、transfer phase 和 Trace copy/export 回归，以及 ADR 0064/dev.80 静态门禁。
+- 用户提供的 libwebp 1.6.0 已通过 host incremental、first-frame-before-complete、blend 与 finite-loop smoke。当前环境没有 Flutter/Dart SDK、Cargo/rustc 或 Android Gradle wrapper，相关 analyzer/test/build 和真机行为仍未验证。
+
 ## dev.79：插件、封面与 Reader 流式稳定性恢复
 
 - Venera source operation 由 `plugin_host` 强制单 in-flight；Mihon 继续使用配置并发。删除 Venera WebView 的 raw `loadInfo` promise/object cache，避免与 `resource_cache/catalog` 形成第二详情缓存和跨调用临时对象生命周期。

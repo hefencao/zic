@@ -1,3 +1,14 @@
+## dev.80 streaming, raster and Trace export requirements
+
+- Every authoritative source creation/growth/seal/failure MUST advance a monotonic ingress revision. A Decode demand MUST consume revisions that arrive while the same-key task is active, and duplicate queued follow work MUST NOT repeat an already-consumed revision.
+- A response with unknown Content-Length MUST NOT use a fake percentage. Transfer projection MUST distinguish connecting from receiving using committed-byte growth and MUST expose actual received bytes.
+- Static images, complete-byte animation and Pipeline WebP MUST use one aspect-preserving physical raster contract. Both physical dimensions MUST be aligned to 8 pixels, must remain within source/viewport bounds except sub-quantum sources, and Dart/native decisions MUST use matching integer fixture vectors.
+- Original media aspect and physical output-buffer dimensions MUST remain distinct. Presentation MUST use one `MediaAspectViewport`; unknown intrinsic dimensions MUST retain the requested contain/fitWidth/cover behavior and MUST NOT default to full-viewport fill.
+- A WebP prefix observer MUST drain committed-length changes that arrive while an asynchronous prefix read is active. Output-buffer dimensions MUST NOT replace authoritative header/static dimensions.
+- Debug file export MUST be an injected App/platform capability. Android MUST use a supported document-creation contract and MUST NOT call `file_selector.getSavePath()`. Clipboard copy MUST remain independent, UTF-8 bounded and failure-reporting.
+- Raw file export MUST continue to use the raw Trace ring rather than the coalesced UI ring.
+- Existing +7/-3 download, +2/-1 decode, current/transition upload and 5/3/2 lanes MUST remain unchanged.
+
 ## dev.79 plugin, artwork and Reader stability requirements
 
 - Venera JavaScript source operations MUST be single in-flight inside `plugin_host`; Mihon isolated runtime concurrency MUST remain configurable. This MUST NOT reduce host image transport lane capacity.

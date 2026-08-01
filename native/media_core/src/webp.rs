@@ -416,25 +416,126 @@ fn fit_dimensions(
     if source_width == 0 || source_height == 0 || max_width == 0 || max_height == 0 {
         return Err(DecodeError::Failed);
     }
-    if source_width <= max_width && source_height <= max_height {
-        return Ok((source_width, source_height));
+    const ALIGNMENT: usize = 8;
+    let width_bound = align_down(source_width.min(max_width), ALIGNMENT);
+    let height_bound = align_down(source_height.min(max_height), ALIGNMENT);
+    let width_limited = (width_bound as u128) * (source_height as u128)
+        <= (height_bound as u128) * (source_width as u128);
+    let ideal_width = if width_limited {
+        width_bound
+    } else {
+        ((source_width as u128) * (height_bound as u128) / (source_height as u128))
+            .max(ALIGNMENT as u128) as usize
+    };
+    let ideal_height = if width_limited {
+        ((source_height as u128) * (width_bound as u128) / (source_width as u128))
+            .max(ALIGNMENT as u128) as usize
+    } else {
+        height_bound
+    };
+    let largest_width = align_down(width_bound.min(ideal_width), ALIGNMENT);
+    let largest_height = align_down(height_bound.min(ideal_height), ALIGNMENT);
+    let minimum_area = (largest_width as u128) * (largest_height as u128) * 85 / 100;
+    let mut best: Option<(usize, usize, u128, u128)> = None;
+
+    let mut consider = |width: usize, height: usize| {
+        if width < ALIGNMENT
+            || height < ALIGNMENT
+            || width > width_bound
+            || height > height_bound
+        {
+            return;
+        }
+        let area = (width as u128) * (height as u128);
+        if area < minimum_area {
+            return;
+        }
+        let error = ((width as u128) * (source_height as u128))
+            .abs_diff((height as u128) * (source_width as u128));
+        let replace = best.map_or(true, |(_, current_height, current_error, current_area)| {
+            let relative_error = error.saturating_mul(current_height as u128);
+            let current_relative_error =
+                current_error.saturating_mul(height as u128);
+            relative_error < current_relative_error
+                || (relative_error == current_relative_error && area > current_area)
+        });
+        if replace {
+            best = Some((width, height, error, area));
+        }
+    };
+
+    let mut width = largest_width;
+    while width >= ALIGNMENT
+        && (width as u128) * (largest_height as u128) >= minimum_area
+    {
+        let height = align_ratio_closest(
+            (source_height as u128) * (width as u128),
+            source_width as u128,
+            height_bound,
+            ALIGNMENT,
+        );
+        consider(width, height);
+        if width == ALIGNMENT {
+            break;
+        }
+        width -= ALIGNMENT;
     }
 
-    let width_limited = (max_width as u128) * (source_height as u128)
-        <= (max_height as u128) * (source_width as u128);
-    let (width, height) = if width_limited {
-        let height = ((source_height as u128) * (max_width as u128)
-            / (source_width as u128)) as usize;
-        (max_width, height.max(1))
-    } else {
-        let width = ((source_width as u128) * (max_height as u128)
-            / (source_height as u128)) as usize;
-        (width.max(1), max_height)
-    };
-    if width > max_width || height > max_height {
-        return Err(DecodeError::Failed);
+    let mut height = largest_height;
+    while height >= ALIGNMENT
+        && (largest_width as u128) * (height as u128) >= minimum_area
+    {
+        let width = align_ratio_closest(
+            (source_width as u128) * (height as u128),
+            source_height as u128,
+            width_bound,
+            ALIGNMENT,
+        );
+        consider(width, height);
+        if height == ALIGNMENT {
+            break;
+        }
+        height -= ALIGNMENT;
     }
-    Ok((width, height))
+
+    best.map(|(width, height, _, _)| (width, height))
+        .ok_or(DecodeError::Failed)
+}
+
+fn align_ratio_closest(
+    numerator: u128,
+    denominator: u128,
+    limit: usize,
+    alignment: usize,
+) -> usize {
+    let floor = (numerator / denominator).min(usize::MAX as u128) as usize;
+    let ceil = numerator
+        .saturating_add(denominator.saturating_sub(1))
+        / denominator;
+    let down = align_down(floor, alignment);
+    let up = align_up(
+        ceil.min(usize::MAX as u128) as usize,
+        alignment,
+    )
+    .min(limit);
+    if down < alignment {
+        return up;
+    }
+    let down_error = numerator.abs_diff((down as u128) * denominator);
+    let up_error = numerator.abs_diff((up as u128) * denominator);
+    if down_error <= up_error { down } else { up }
+}
+
+fn align_down(value: usize, alignment: usize) -> usize {
+    let aligned = value / alignment * alignment;
+    aligned.max(alignment)
+}
+
+fn align_up(value: usize, alignment: usize) -> usize {
+    value
+        .saturating_add(alignment.saturating_sub(1))
+        / alignment
+        * alignment
 }
 
 fn scale_rect(
@@ -617,9 +718,15 @@ mod tests {
 
     #[test]
     fn fit_dimensions_preserves_wide_and_tall_aspect_ratios() {
-        assert_eq!(fit_dimensions(4000, 1000, 1000, 1000), Ok((1000, 250)));
-        assert_eq!(fit_dimensions(1000, 4000, 1000, 1000), Ok((250, 1000)));
+        assert_eq!(fit_dimensions(4000, 1000, 1000, 1000), Ok((992, 248)));
+        assert_eq!(fit_dimensions(1000, 4000, 1000, 1000), Ok((248, 992)));
         assert_eq!(fit_dimensions(320, 640, 1080, 1920), Ok((320, 640)));
+        assert_eq!(fit_dimensions(321, 643, 1080, 1920), Ok((320, 640)));
+        assert_eq!(fit_dimensions(101, 99, 1080, 1920), Ok((96, 96)));
+        let fitted = fit_dimensions(4032, 3024, 1080, 1920).unwrap();
+        assert_eq!(fitted.0 % 8, 0);
+        assert_eq!(fitted.1 % 8, 0);
+        assert!((fitted.0 as f64 / fitted.1 as f64 - 4.0 / 3.0).abs() < 0.01);
     }
 
     #[test]

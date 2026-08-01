@@ -4,27 +4,53 @@
 
 Use only:
 
-`zic_v0.31.0-dev.79_stability-recovery.zip`
+`zic_v0.31.0-dev.80_streaming-raster-trace-export.zip`
 
-Do not merge dev.65–78 candidates, overlays or remembered source trees. Mihon and VibeVenera references remain read-only. The user-provided libwebp 1.6.0 archive is validation input, not a ZIC source overlay.
+Do not merge dev.65–79 candidates, overlays or remembered source trees. Mihon
+and VibeVenera references remain read-only. The user-provided libwebp 1.6.0
+archive is validation input only.
 
-## Completed in dev.79
+## Completed in dev.80
 
-- Venera JavaScript source operations are single in-flight in `plugin_host`; Mihon retains configured runtime concurrency. The WebView raw `loadInfo` cache was removed, leaving comic-detail caching to `resource_cache/catalog`.
-- Source-owned absolute artwork locators, including `mihon:resource:`, route through `ComicSourceResourceGateway`; `ResourceCacheManager` coalesces the entire encoded-image resolution.
-- DownloadSession source listeners now project readiness, every length change, seal and failure, and immediately replay an already-ready snapshot to a late listener. Decode retries the same growing source demand and Upload receives terminal failures instead of indefinite loading.
-- Unknown continuous-page extents are stable across currentIndex changes. Idle geometry replacement preserves a top-visible pixel anchor and active scrolling cancels pending restoration.
-- Runtime/header-confirmed Animated WebP overrides source vertical hints in adaptive mode unless a per-comic direction override is explicit.
-- Added ADR 0063, dev.79 audit/static gate and owner tests. +7/-3, +2/-1, current/transition and 5/3/2 remain unchanged.
+- Added monotonic ingress source revisions and per-DecodeId consumed-revision
+  tracking. Same-key follow work drains source growth/seal changes that arrive
+  during an active decode and exits without repeating an already-consumed latest
+  revision.
+- Unknown Content-Length transfer is projected as connecting until committed
+  bytes advance, then receiving with real received-byte count. No fake percent.
+- Added one `AlignedRasterSize` contract for static images, DecodeTarget and
+  native WebP: contain, source aspect, integer comparison and paired 8-pixel
+  physical alignment. Dart and Rust share fixture vectors.
+- `MediaAspectViewport` is the only fit decision. Unknown intrinsic dimensions
+  keep requested contain/fitWidth instead of filling the viewport; authoritative
+  header/static dimensions are not replaced by aligned output-buffer dimensions.
+  WebP prefix reads drain lengths received while a read is active.
+- Android raw JSONL export uses an App-owned SAF `CreateDocument` channel.
+  Debug Presentation only calls injected capabilities. Clipboard copy is a
+  separate 64 KiB UTF-8 raw projection and reports truncation/failure.
+- Added ADR 0064, dev.80 audit/static gate and owner tests. +7/-3, +2/-1,
+  current/transition and 5/3/2 remain unchanged.
 
 ## Device/toolchain validation still required
 
-1. Run `flutter analyze`, all Dart/Flutter package tests (especially plugin_host, resource_cache, sessions, reader, reader_runtime and App), then Android debug/release or kernel snapshot.
-2. Keep a Venera source active across repeated browse/details/chapter calls and app background/foreground; verify no `null.children` runtime degradation. If the source script still fails, capture source ID, operation arguments hash and sanitized stack because upstream DOM/source logic may also be invalid.
-3. Cold-start and warm-start Home with HTTP, `mihon:resource:` and Venera cover locators. Confirm one stable request/cache identity and durable hits after restart.
-4. Test large Animated WebP whose first 64 KiB is insufficient: it must start as later chunks arrive, finish on seal, scroll out/back without infinite loading, and show an error for authoritative source/decode failure.
-5. In continuous mode scroll through unknown-to-measured page sizes; verify no pullback. With adaptive enabled, confirm a runtime-confirmed animation becomes LTR/RTL paged while explicit comic direction remains untouched.
+1. Run `flutter analyze`, all Dart/Flutter package and App tests, Rust tests, then
+   Android debug/release or at least kernel snapshot.
+2. Use a large animated WebP whose first complete frame arrives before download
+   completion. It must leave page loading while transfer remains active and keep
+   advancing as later source revisions arrive.
+3. Compare wide, tall and near-square JPEG/PNG/GIF/WebP pages in paged and
+   continuous fitWidth modes across multiple DPRs. No format may stretch to the
+   viewport; output raster dimensions should be 8-pixel aligned.
+4. Copy a large raw trace and confirm the UI reports the bounded copied count.
+   Export the full raw filtered trace through Android's document picker and
+   verify the resulting JSONL opens after app background/foreground.
+5. Re-run long-lived Venera, custom-locator cover cache, continuous-scroll and
+   adaptive-animation checks from dev.79.
 
 ## Rejected regressions
 
-Do not restore the WebView raw `loadInfo` cache, Presentation-owned WebP cursor/decoder, App-private cover bytes cache, currentIndex-dependent unknown extent, timer polling, infinite source retries, or reduced preload/lane settings.
+Do not wait for full download before decode, restore Presentation-owned source or
+cursor, add format-specific fit rules, independently resize X/Y, use `BoxFit.fill`
+as a viewport fallback, invent unknown-length percentages, call Android
+`file_selector.getSavePath()`, export the coalesced UI ring, or reduce preload and
+lane settings.

@@ -91,6 +91,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final Map<DecodeId, int> _uploadDemandRevisions = <DecodeId, int>{};
   final Map<DownloadId, SourceListener> _sourceListeners =
       <DownloadId, SourceListener>{};
+  final Map<DownloadId, int> _sourceRevisions = <DownloadId, int>{};
+  final Map<DecodeId, int> _decodeSourceRevisions = <DecodeId, int>{};
   final PlaybackGate _playbackGate = PlaybackGate();
   int _revision = 0;
 
@@ -190,6 +192,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       registry.find(entry.key)?.removeSourceListener(entry.value);
     }
     _sourceListeners.clear();
+    _sourceRevisions.clear();
+    _decodeSourceRevisions.clear();
     for (final session in registry.sessions) {
       net.cancel(session.id.key);
     }
@@ -233,6 +237,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       if (listener != null) {
         session?.removeSourceListener(listener);
       }
+      _sourceRevisions.remove(id);
       session?.detach();
     }
     for (final entry in <MapEntry<DownloadId, DownloadDemand>>[
@@ -261,6 +266,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     void listener(IngressSnap snapshot) {
       // Every emitted ingress lifecycle change can unblock or terminate decode:
       // new bytes, seal and authoritative source failure all belong here.
+      _sourceRevisions[id] = snapshot.revision;
       _wakeDecodes(sessionId, id);
     }
     _sourceListeners[id] = listener;
@@ -335,6 +341,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     for (final id in diff.removed) {
       _decodes.remove(id);
       _decodeDemandRevisions.remove(id);
+      _decodeSourceRevisions.remove(id);
       decode.cancel(id.key);
       decodes?.detach(id);
     }
@@ -377,6 +384,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             current.priority,
             revision: demandRevision,
           );
+          final sourceRevision =
+              _sourceRevisions[entry.key.download] ?? -1;
+          if (sourceRevision >= 0) {
+            _decodeSourceRevisions[entry.key] = sourceRevision;
+          }
           try {
             if (decodeWork != null) {
               await decodeWork(entry.key, current, token);
@@ -414,39 +426,49 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         key: id.key,
         priority: demand.priority,
         task: (token) async {
-          final current = _decodes[id];
-          if (current == null || current.expirationRevision < _revision) {
-            return;
-          }
-          _resourceTrace(
-            sessionId,
-            TraceEventKind.decodeStarted,
-            id.key,
-            current.priority,
-            revision: demandRevision,
-          );
-          try {
-            final work = onDecode;
-            if (work != null) {
-              await work(id, current, token);
-            } else {
-              final registry = decodes;
-              if (registry != null) {
-                await registry.fill(
-                  id,
-                  current,
-                  token,
-                  revision: demandRevision,
-                  preparedDepth: uploads?.preparedDepth(id) ?? 0,
-                );
-              }
+          while (true) {
+            final current = _decodes[id];
+            if (current == null || current.expirationRevision < _revision) {
+              return;
             }
-            _wakeUpload(sessionId, id);
-            _enforceBudget(sessionId);
-          } on Object catch (error) {
-            if (error is! Failure || error.code != ErrorCode.cancelled) {
-              _error(sessionId, id.key, 'decode', error);
+            final sourceRevision = _sourceRevisions[downloadId] ?? 0;
+            final observedSourceRevision =
+                _decodeSourceRevisions[id] ?? -1;
+            if (observedSourceRevision >= sourceRevision) {
+              return;
+            }
+            _decodeSourceRevisions[id] = sourceRevision;
+            _resourceTrace(
+              sessionId,
+              TraceEventKind.decodeStarted,
+              id.key,
+              current.priority,
+              revision: demandRevision,
+            );
+            try {
+              final work = onDecode;
+              if (work != null) {
+                await work(id, current, token);
+              } else {
+                final registry = decodes;
+                if (registry != null) {
+                  await registry.fill(
+                    id,
+                    current,
+                    token,
+                    revision: demandRevision,
+                    preparedDepth: uploads?.preparedDepth(id) ?? 0,
+                  );
+                }
+              }
               _wakeUpload(sessionId, id);
+              _enforceBudget(sessionId);
+            } on Object catch (error) {
+              if (error is! Failure || error.code != ErrorCode.cancelled) {
+                _error(sessionId, id.key, 'decode', error);
+                _wakeUpload(sessionId, id);
+              }
+              return;
             }
           }
         },

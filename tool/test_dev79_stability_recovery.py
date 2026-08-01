@@ -42,7 +42,9 @@ assert "message: 'pipeline page decode failed'" in upload
 
 coordinator = text('packages/sessions/lib/src/live_coordinator.dart')
 assert "_error(sessionId, entry.key.key, 'decode', error);\n              _wakeUpload(sessionId, entry.key);" in coordinator
-assert "_error(sessionId, id.key, 'decode', error);\n              _wakeUpload(sessionId, id);" in coordinator
+assert "_error(sessionId, id.key, 'decode', error);" in coordinator
+assert "_wakeUpload(sessionId, id);" in coordinator
+assert '_sourceRevisions[id] = snapshot.revision;' in coordinator
 assert 'Every emitted ingress lifecycle change can unblock or terminate decode' in coordinator
 
 reader = text('packages/reader/lib/src/reader_view.dart')

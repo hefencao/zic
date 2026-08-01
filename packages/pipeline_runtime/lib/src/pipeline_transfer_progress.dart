@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:sessions/sessions.dart';
 
+enum PipelineTransferPhase { idle, connecting, receiving }
+
 @immutable
 final class PipelineTransferProgress {
   const PipelineTransferProgress({
@@ -16,6 +18,18 @@ final class PipelineTransferProgress {
   final int existingBytes;
   final int committedBytes;
   final int? totalBytes;
+
+  PipelineTransferPhase get phase {
+    if (!active) {
+      return PipelineTransferPhase.idle;
+    }
+    return committedBytes > existingBytes
+        ? PipelineTransferPhase.receiving
+        : PipelineTransferPhase.connecting;
+  }
+
+  int get receivedBytes =>
+      (committedBytes - existingBytes).clamp(0, committedBytes).toInt();
 
   double? get existingFraction {
     final total = totalBytes;

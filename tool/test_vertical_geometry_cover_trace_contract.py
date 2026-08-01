@@ -74,7 +74,12 @@ def main() -> None:
         "debugTraceSearchKey",
         "debugTraceSessionFilterKey",
         "debugTraceLevelFilterKey",
+        "DebugTraceClipboardWriter",
+    )
+    require(
+        "apps/app/lib/debug_trace_export.dart",
         "application/x-ndjson",
+        "dev.zic.zic/debug_trace_export",
     )
     require(
         "packages/telemetry/lib/src/trace.dart",

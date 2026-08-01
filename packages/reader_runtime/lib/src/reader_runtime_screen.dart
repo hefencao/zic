@@ -731,9 +731,20 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                     final committed = progress.committedFraction;
                     final existing = progress.existingFraction;
                     if (committed == null) {
-                      return const LinearProgressIndicator(
-                        key: readerNetworkProgressKey,
-                        minHeight: 3,
+                      final receiving = progress.phase ==
+                          PipelineTransferPhase.receiving;
+                      return Semantics(
+                        label: receiving ? '正在接收页面数据' : '正在连接页面资源',
+                        value: receiving
+                            ? '${progress.receivedBytes} bytes'
+                            : null,
+                        child: LinearProgressIndicator(
+                          key: readerNetworkProgressKey,
+                          minHeight: 3,
+                          color: receiving
+                              ? Theme.of(context).colorScheme.primary
+                              : Theme.of(context).colorScheme.outline,
+                        ),
                       );
                     }
                     return SizedBox(
