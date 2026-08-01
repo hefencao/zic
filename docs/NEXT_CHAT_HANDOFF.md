@@ -3,12 +3,22 @@
 ## Sole baseline
 
 Continue only from
-`zic_v0.31.0-dev.71_atomic-source-resource-composition.zip`.
+`zic_v0.31.0-dev.72_pipeline-runtime-shared-request-plan.zip`.
 It is a direct modification of the user-provided
 `zic_v0.31.0-dev.62_source-management-tabs-mihon-chapter-preflight.zip`;
 do not merge an earlier candidate. `mihon-main.zip` and `vibevenera-master.zip`
 were read-only compatibility references and are not part of the product tree.
 
+
+## Completed in dev.72
+
+- Added `pipeline_runtime` as the sole Reader resource-session composition owner. Reader submits `ReaderObs` and consumes read-only page/progress projections; it no longer constructs or disposes downloads, artifacts, transports, decode/upload lanes or sessions.
+- Current-page transfer selection is derived from the observation stream inside Pipeline, removing the remaining Reader→download control path.
+- Local media presentation observes `PipelinePageStream` instead of `DownloadSession`.
+- Home, source browse, details and migration artwork use `ComicSourceResourceGateway` plus the shared source transport and response cache.
+- Venera HTTP artwork prefers `onThumbnailLoad`; durable chapter locators continue through `onImageLoad`. Request plans are coalesced and bounded in both runtime and host transport.
+- Preserved VibeVenera-derived +7/-3 downloads, +2/-1 decode warmup and 5/3/2 lanes. Do not reduce these to mask traffic issues.
+- Device Tx/Rx has not been measured in the build environment. Future traffic work must add sanitized byte/request counters and use real Android traffic evidence rather than inferring network upload from pipeline `uploadDemand`.
 
 ## Completed in dev.71
 

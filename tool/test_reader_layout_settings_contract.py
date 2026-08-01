@@ -52,13 +52,12 @@ def main() -> None:
         "_reportPageDimensions",
         "BoxFit.fitWidth",
         "mediaFit",
-        "readerPipelineProfileFor(widget.chapter)",
-        "_pipelineProfile.windowResolver",
-        "_pipelineProfile.policy",
-        "_pipelineProfile.guard",
+        "required this.pipeline",
+        "_pipeline.accept",
+        "_pipeline.pageStream(asset)",
     )
     require(
-        "packages/reader_runtime/lib/src/reader_pipeline_profile.dart",
+        "packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart",
         "final class ReaderPipelineProfile",
         "forwardEncodedPages: 7",
         "backwardEncodedPages: 3",

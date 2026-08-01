@@ -15,6 +15,12 @@ def main() -> None:
     runtime = (
         ROOT / 'packages/reader_runtime/lib/src/reader_runtime_screen.dart'
     ).read_text()
+    pipeline_runtime = (
+        ROOT / 'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart'
+    ).read_text()
+    pipeline_host = (
+        ROOT / 'packages/pipeline_runtime/lib/src/pipeline_reader_host.dart'
+    ).read_text()
     media_ui = (ROOT / 'packages/local_media_ui/lib/local_media_ui.dart').read_text()
     source_manager = (ROOT / 'apps/app/lib/source_browser.dart').read_text()
     repository = (
@@ -27,7 +33,12 @@ def main() -> None:
 
     require(app_reader, "export 'package:reader_runtime/reader_runtime.dart';", 'reader facade')
     require(app_webp, "export 'package:local_media_ui/local_media_ui.dart';", 'media UI facade')
-    require(runtime, "import 'package:media/media.dart' show SourcePool;", 'SourcePool owner')
+    require(pipeline_runtime, 'show NativeSourceFactory, SourcePool;', 'SourcePool owner')
+    require(pipeline_host, 'widget.factory.create(', 'pipeline composition owner')
+    require(pipeline_host, '_session.dispose()', 'pipeline lifecycle owner')
+    for forbidden in ('DownloadRegistry', 'LiveCoordinator', 'NetLane', 'DecodeLane', 'UploadLane'):
+        if forbidden in runtime:
+            raise SystemExit(f'Reader regained pipeline ownership: {forbidden}')
     require(
         media_ui,
         'show parseWebpPrefixInfo, webpPrefixDeclaresAnimation;',

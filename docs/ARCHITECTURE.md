@@ -1,3 +1,28 @@
+## dev.72 Reader / Pipeline 所有权
+
+```text
+PipelineReaderSessionHost
+  -> PipelineReaderSession
+       -> ReaderBinding / DemandPlan
+       -> LiveCoordinator
+       -> DownloadRegistry / DownloadSession / Artifact
+       -> SourcePool / DecodeLane / UploadLane
+       -> PipelinePageStream / PipelineTransferProgress (read-only)
+  -> ReaderRuntimeScreen
+       -> submit ReaderObs only
+       -> consume PipelinePageStream / presentation bytes only
+
+Home / Source browser / Details artwork
+  -> ComicSourceResourceGateway
+       -> ExternalPluginResourceTransportPool
+       -> bounded request-plan reuse
+       -> ResourceCacheManager
+```
+
+Reader 不得创建、销毁或直接访问 DownloadSession、DownloadRegistry、LiveCoordinator、transport、artifact workspace、decode/upload lane。当前页进度选择也由 Pipeline 在接收 `ReaderObs` 时完成。Presentation 仍可发出“缓存本章”等用户命令，但命令执行与状态所有权位于 Pipeline/download composition。
+
+Venera 封面和章节页面使用不同配置入口：HTTP artwork 优先 `onThumbnailLoad`，durable page locator 使用 `onImageLoad`。普通正文不经过完整插件字节 RPC；相同 locator 的配置解析在运行时与宿主两层并发合并并有界复用。
+
 # zic Architecture
 
 ## 1. 总览

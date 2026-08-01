@@ -14,7 +14,7 @@ final class LocalImagePlayer extends StatefulWidget {
     this.traceSessionId = 'local-image-preview',
     this.demandRevision,
     this.playback,
-    this.streamingSession,
+    this.pageStream,
     this.onPlaybackCapabilityChanged,
     this.onDimensionsChanged,
     this.fit = BoxFit.contain,
@@ -35,7 +35,7 @@ final class LocalImagePlayer extends StatefulWidget {
   final String traceSessionId;
   final int Function()? demandRevision;
   final ReaderPlaybackController? playback;
-  final DownloadSession? streamingSession;
+  final PipelinePageStream? pageStream;
   final ValueChanged<bool>? onPlaybackCapabilityChanged;
   final ValueChanged<Size>? onDimensionsChanged;
   final BoxFit fit;
@@ -57,7 +57,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   int _scheduledStaticFrameGeneration = -1;
   late MediaLoadToken _loadToken;
   bool _reportedFirstFrame = false;
-  DownloadSnapshotListener? _pageStreamingListener;
+  PipelinePageStreamListener? _pageStreamingListener;
   bool _fallbackLoadStarted = false;
   Size? _reportedDimensions;
 
@@ -68,7 +68,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     _state = ImagePreviewState.loading(widget.image.format);
     _loadToken = MediaLoadToken();
     _scheduleObserverSnapshot();
-    final streaming = widget.streamingSession;
+    final streaming = widget.pageStream;
     if (streaming != null) {
       _attachPageStreaming(streaming);
     } else {
@@ -94,13 +94,13 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       _state = ImagePreviewState.loading(widget.image.format);
       _notifyObserver(_state);
       _fallbackLoadStarted = false;
-      final oldStreaming = oldWidget.streamingSession;
+      final oldStreaming = oldWidget.pageStream;
       final oldListener = _pageStreamingListener;
       if (oldStreaming != null && oldListener != null) {
-        oldStreaming.removeSnapshotListener(oldListener);
+        oldStreaming.removeListener(oldListener);
       }
       _pageStreamingListener = null;
-      final streaming = widget.streamingSession;
+      final streaming = widget.pageStream;
       if (streaming != null) {
         _attachPageStreaming(streaming);
       } else {
@@ -109,10 +109,10 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     }
   }
 
-  void _attachPageStreaming(DownloadSession session) {
-    void listener(DownloadSnapshot snapshot) {
+  void _attachPageStreaming(PipelinePageStream stream) {
+    void listener(PipelinePageStreamSnapshot snapshot) {
       if (!mounted) return;
-      final kind = snapshot.ingress?.kind;
+      final kind = snapshot.kind;
       if (kind == ContentKind.webp) {
         if (_detectedFormat != LocalImageFormat.webp) {
           setState(() => _detectedFormat = LocalImageFormat.webp);
@@ -121,14 +121,14 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         return;
       }
       if (!_fallbackLoadStarted &&
-          (snapshot.state == DownloadState.promoted ||
-              snapshot.state == DownloadState.sealed)) {
+          (snapshot.state == PipelinePageTransferState.promoted ||
+              snapshot.state == PipelinePageTransferState.sealed)) {
         _fallbackLoadStarted = true;
         unawaited(_load());
       }
     }
     _pageStreamingListener = listener;
-    session.addSnapshotListener(listener);
+    stream.addListener(listener);
   }
 
   Future<void> _load() async {
@@ -211,10 +211,10 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
 
   @override
   void dispose() {
-    final streaming = widget.streamingSession;
+    final streaming = widget.pageStream;
     final listener = _pageStreamingListener;
     if (streaming != null && listener != null) {
-      streaming.removeSnapshotListener(listener);
+      streaming.removeListener(listener);
     }
 
     _generation++;
@@ -364,7 +364,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         ),
       );
     } else if (_detectedFormat.isWebp) {
-      if (bytes == null && widget.streamingSession == null) {
+      if (bytes == null && widget.pageStream == null) {
         content = _loadingIndicator();
       } else {
         content = NativeWebpPlayer(
@@ -375,7 +375,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
               : widget.tokenBytesLoader!(widget.image, token),
           showEngineControls: false,
           showStatus: false,
-          initialEngine: widget.streamingSession == null
+          initialEngine: widget.pageStream == null
               ? WebpPlayerEngine.flutter
               : WebpPlayerEngine.native,
           onPreviewStateChanged: _onWebpState,
@@ -386,7 +386,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           traceSessionId: widget.traceSessionId,
           demandRevision: widget.demandRevision,
           playback: widget.playback,
-          streamingSession: widget.streamingSession,
+          pageStream: widget.pageStream,
           onPlaybackCapabilityChanged: widget.onPlaybackCapabilityChanged,
           fit: widget.fit,
           flutterAnimatedCodecFactory: widget.flutterAnimatedCodecFactory,

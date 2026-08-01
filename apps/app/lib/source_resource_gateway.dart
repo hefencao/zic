@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:downloads/downloads.dart';
+import 'package:resource_cache/resource_cache.dart';
 
 bool isLegacyVeneraRuntimeLocator(String value) =>
     value.startsWith('venera-resource://');
@@ -54,6 +55,58 @@ final class ComicSourceResourceGateway {
       throw StateError('已阻止读取失效的 Venera 运行时资源定位符：$uri');
     }
     return _requireSource(sourceId, uri).loadResource(uri);
+  }
+
+  Future<Uint8List> loadArtworkBytes({
+    required ResourceCacheManager cache,
+    required String sourceId,
+    required String comicId,
+    required Uri uri,
+    String revision = '',
+  }) {
+    _requireOpen();
+    return loadCachedComicImage(
+      cache: cache,
+      sourceId: sourceId,
+      comicId: comicId,
+      imageIdentity: uri.toString(),
+      revision: revision,
+      loader: () => _collectResponse(responseLoaderFor(sourceId, uri)),
+    );
+  }
+
+  Future<EncodedResourceSource> loadArtworkSource({
+    required ResourceCacheManager cache,
+    required String sourceId,
+    required String comicId,
+    required Uri uri,
+    String revision = '',
+  }) {
+    _requireOpen();
+    return loadCachedComicImageSource(
+      cache: cache,
+      sourceId: sourceId,
+      comicId: comicId,
+      imageIdentity: uri.toString(),
+      revision: revision,
+      loader: () => _collectResponse(responseLoaderFor(sourceId, uri)),
+    );
+  }
+
+  Future<Uint8List> _collectResponse(
+    ExternalPluginResourceResponseLoader loader,
+  ) async {
+    final response = await loader();
+    final builder = BytesBuilder(copy: false);
+    try {
+      await for (final chunk in response.bytes) {
+        builder.add(chunk);
+      }
+      return builder.takeBytes();
+    } on Object {
+      await response.discard();
+      rethrow;
+    }
   }
 
   ExternalPluginResourceResponseLoader responseLoaderFor(

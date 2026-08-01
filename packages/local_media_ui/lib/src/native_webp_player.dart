@@ -18,7 +18,7 @@ final class NativeWebpPlayer extends StatefulWidget {
     this.initialEngine = WebpPlayerEngine.flutter,
     this.onPreviewStateChanged,
     this.playback,
-    this.streamingSession,
+    this.pageStream,
     this.onPlaybackCapabilityChanged,
     this.fit = BoxFit.contain,
     this.flutterAnimatedCodecFactory = instantiateFlutterAnimatedCodec,
@@ -39,7 +39,7 @@ final class NativeWebpPlayer extends StatefulWidget {
   final WebpPlayerEngine initialEngine;
   final WebpPreviewStateChanged? onPreviewStateChanged;
   final ReaderPlaybackController? playback;
-  final DownloadSession? streamingSession;
+  final PipelinePageStream? pageStream;
   final ValueChanged<bool>? onPlaybackCapabilityChanged;
   final BoxFit fit;
   final FlutterAnimatedCodecFactory flutterAnimatedCodecFactory;
@@ -87,7 +87,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   int _generation = 0;
   bool _reportedFirstFrame = false;
   late final WebpLoadToken _loadToken;
-  DownloadSnapshotListener? _streamingListener;
+  PipelinePageStreamListener? _streamingListener;
   bool _streamingSyncing = false;
   bool _ownsSource = true;
 
@@ -108,7 +108,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         _notifyPreviewObserver(_previewState);
       }
     });
-    final streaming = widget.streamingSession;
+    final streaming = widget.pageStream;
     if (streaming != null) {
       _attachStreamingSession(streaming);
     } else {
@@ -241,10 +241,10 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   void dispose() {
     _generation++;
     widget.playback?.removeListener(_handleExternalPlayback);
-    final streaming = widget.streamingSession;
+    final streaming = widget.pageStream;
     final listener = _streamingListener;
     if (streaming != null && listener != null) {
-      streaming.removeSnapshotListener(listener);
+      streaming.removeListener(listener);
     }
     _loadToken.cancel();
     _resetNative(disposeImage: true);
@@ -264,25 +264,25 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     _notifyPreviewObserver(state);
   }
 
-  void _attachStreamingSession(DownloadSession session) {
-    void listener(DownloadSnapshot snapshot) {
+  void _attachStreamingSession(PipelinePageStream stream) {
+    void listener(PipelinePageStreamSnapshot snapshot) {
       if (!mounted) return;
-      unawaited(_syncStreamingSnapshot(session, snapshot));
+      unawaited(_syncStreamingSnapshot(stream, snapshot));
     }
     _streamingListener = listener;
-    session.addSnapshotListener(listener);
+    stream.addListener(listener);
   }
 
   Future<void> _syncStreamingSnapshot(
-    DownloadSession session,
-    DownloadSnapshot snapshot,
+    PipelinePageStream stream,
+    PipelinePageStreamSnapshot snapshot,
   ) async {
     if (_streamingSyncing || !mounted) return;
     _streamingSyncing = true;
     try {
       if (_sourceCanvas == null && snapshot.committedLength >= 20) {
         final prefix = Uint8List.fromList(
-          await session.artifact.readPrefix(
+          await stream.readPrefix(
             math.min(snapshot.committedLength, 256 * 1024),
           ),
         );
@@ -301,12 +301,12 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       }
       if (_engine == WebpPlayerEngine.native &&
           _cursor == null &&
-          session.ingress?.source != null &&
+          stream.source != null &&
           _target != null &&
           _raster != null) {
         await _startNative(++_generation);
       }
-      if (snapshot.state == DownloadState.failed && mounted) {
+      if (snapshot.state == PipelinePageTransferState.failed && mounted) {
         setState(() => _loadError = snapshot.failure ??
             StateError('streaming WebP download failed'));
       }
@@ -389,7 +389,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
             : 'Flutter codec · ${raster.decodeWidth}×${raster.decodeHeight}';
       });
       if (decodeChanged &&
-          (_encoded != null || widget.streamingSession?.ingress?.source != null) &&
+          (_encoded != null || widget.pageStream?.source != null) &&
           _engine == WebpPlayerEngine.native) {
         unawaited(_startNative(++_generation));
       }
@@ -397,9 +397,9 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   }
 
   Future<void> _startNative(int generation) async {
-    final streamingSession = widget.streamingSession;
-    if (streamingSession != null) {
-      return _startStreamingNative(generation, streamingSession);
+    final pageStream = widget.pageStream;
+    if (pageStream != null) {
+      return _startStreamingNative(generation, pageStream);
     }
     final token = _loadToken;
     final bytes = _encoded;
@@ -548,9 +548,9 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
 
   Future<void> _startStreamingNative(
     int generation,
-    DownloadSession session,
+    PipelinePageStream stream,
   ) async {
-    final source = session.ingress?.source;
+    final source = stream.source;
     final raster = _raster;
     if (!mounted ||
         generation != _generation ||
@@ -562,7 +562,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     _resetNative(disposeImage: true);
     try {
       final id = DecodeId(
-        download: widget.downloadIdentity ?? session.id,
+        download: widget.downloadIdentity ?? stream.identity,
         physicalWidth: raster.decodeWidth,
         physicalHeight: raster.decodeHeight,
         pixelFormat: PixelFormat.rgba8888,
@@ -609,38 +609,38 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   }
 
   Future<void> _waitForStreamingAdvance(
-    DownloadSession session,
+    PipelinePageStream stream,
     int committedLength,
   ) async {
-    final current = session.snapshot;
+    final current = stream.snapshot;
     if (current.committedLength > committedLength ||
-        current.state == DownloadState.promoted ||
-        current.state == DownloadState.failed ||
-        current.state == DownloadState.disposed) {
+        current.state == PipelinePageTransferState.promoted ||
+        current.state == PipelinePageTransferState.failed ||
+        current.state == PipelinePageTransferState.disposed) {
       return;
     }
     final completer = Completer<void>();
-    late final DownloadSnapshotListener listener;
+    late final PipelinePageStreamListener listener;
     listener = (snapshot) {
       if (!completer.isCompleted &&
           (snapshot.committedLength > committedLength ||
-              snapshot.state == DownloadState.promoted ||
-              snapshot.state == DownloadState.failed ||
-              snapshot.state == DownloadState.disposed)) {
+              snapshot.state == PipelinePageTransferState.promoted ||
+              snapshot.state == PipelinePageTransferState.failed ||
+              snapshot.state == PipelinePageTransferState.disposed)) {
         completer.complete();
       }
     };
-    session.addSnapshotListener(listener);
+    stream.addListener(listener);
     try {
       await completer.future;
     } finally {
-      session.removeSnapshotListener(listener);
+      stream.removeListener(listener);
     }
-    final latest = session.snapshot;
-    if (latest.state == DownloadState.failed) {
+    final latest = stream.snapshot;
+    if (latest.state == PipelinePageTransferState.failed) {
       throw latest.failure ?? StateError('streaming WebP download failed');
     }
-    if (latest.state == DownloadState.disposed) {
+    if (latest.state == PipelinePageTransferState.disposed) {
       throw StateError('streaming WebP session was disposed');
     }
   }
@@ -651,7 +651,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
       return null;
     }
     while (mounted && generation == _generation) {
-      final streamingLength = widget.streamingSession?.committedLength;
+      final streamingLength = widget.pageStream?.committedLength;
       final decodeClock = Stopwatch()..start();
       final step = await binding.frames.decodeNext();
       final decodeMicros = decodeClock.elapsedMicroseconds;
@@ -713,7 +713,7 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
           _recordDecoded(prepared, RendererKind.flutterImage);
           return prepared;
         case CursorStepKind.needMoreData:
-          final streaming = widget.streamingSession;
+          final streaming = widget.pageStream;
           if (streaming == null) {
             throw StateError('sealed WebP unexpectedly needs more data');
           }
@@ -730,10 +730,10 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
             }
             continue;
           }
-          final streaming = widget.streamingSession;
+          final streaming = widget.pageStream;
           if (streaming != null &&
-              streaming.state != DownloadState.promoted &&
-              streaming.state != DownloadState.sealed) {
+              streaming.state != PipelinePageTransferState.promoted &&
+              streaming.state != PipelinePageTransferState.sealed) {
             await _waitForStreamingAdvance(
               streaming,
               streamingLength ?? streaming.committedLength,

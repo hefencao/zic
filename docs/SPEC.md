@@ -1,3 +1,11 @@
+## dev.72 ownership requirements
+
+1. Reader presentation MUST only publish viewport observations and consume read-only Pipeline projections. It MUST NOT own download, decode, upload, artifact, transport or retry state.
+2. Pipeline composition MUST create and dispose the Reader resource session and derive current-page progress from the same `ReaderObs` stream used for demand planning.
+3. Home, source browsing and details artwork MUST share the composition-owned source transport and response cache. HTTP artwork MUST use the source thumbnail resolver when available; chapter pages use the page resolver.
+4. Request-plan reuse MUST be bounded and invalidated on explicit failure/retry. It MUST NOT retain completed image bodies as a competing cache.
+5. The VibeVenera-derived 7/3 encoded prefetch, 2/1 decode-warm window and 5/3/2 lanes MUST NOT be reduced as a substitute for fixing transport/request duplication.
+
 # zic Product and Engineering Specification
 
 ## 1. 版本范围

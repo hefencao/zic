@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -15,17 +16,19 @@ import 'package:transport/transport.dart';
 typedef ExternalPluginResourceResponseLoader = TransportResponseLoader;
 
 final class ExternalPluginResourceTransportPool {
-  final Map<BrowsableComicSource, _SourceResourceTransport> _transports =
-      Map<BrowsableComicSource, _SourceResourceTransport>.identity();
+  final Map<String, _SourceResourceTransport> _transports =
+      <String, _SourceResourceTransport>{};
 
   TransportResponseLoader loaderFor(
     BrowsableComicSource source,
     Uri locator,
   ) {
+    final sourceId = source.sourceId;
     final transport = _transports.putIfAbsent(
-      source,
+      sourceId,
       () => _SourceResourceTransport(source),
     );
+    transport.updateSource(source);
     return ({ByteRange? range, Validators? validators}) => transport.open(
           locator,
           range: range,
@@ -42,17 +45,31 @@ final class ExternalPluginResourceTransportPool {
 }
 
 final class _SourceResourceTransport implements Transport {
-  _SourceResourceTransport(this.source) {
+  _SourceResourceTransport(this._source) {
     _client.connectionTimeout = const Duration(seconds: 15);
     _client.userAgent = 'zic-venera/0.31.0';
     _client.autoUncompress = false;
   }
 
-  final BrowsableComicSource source;
+  static const _requestPlanTtl = Duration(minutes: 10);
+  static const _maxRequestPlans = 256;
+
+  BrowsableComicSource _source;
   final HttpClient _client = HttpClient();
   final Map<Uri, Future<ComicResourceRequest>> _requestLoads =
       <Uri, Future<ComicResourceRequest>>{};
+  final LinkedHashMap<Uri, _RequestPlanEntry> _requestPlans =
+      LinkedHashMap<Uri, _RequestPlanEntry>();
   final Set<Uri> _failedStreams = <Uri>{};
+
+  void updateSource(BrowsableComicSource source) {
+    if (identical(_source, source)) return;
+    _source = source;
+    // Authentication/settings may have changed with the wrapper. Keep the
+    // shared HttpClient and active response streams, but do not reuse plans
+    // resolved by the previous runtime instance.
+    _requestPlans.clear();
+  }
 
   @override
   Future<ByteResponse> open(
@@ -77,6 +94,7 @@ final class _SourceResourceTransport implements Transport {
       );
     } on Failure catch (error) {
       if (error.code != ErrorCode.network) rethrow;
+      _invalidate(uri);
       final retry = await _retry(uri);
       if (retry == null) rethrow;
       if (retry.requiresRuntimeTransform) {
@@ -89,6 +107,7 @@ final class _SourceResourceTransport implements Transport {
         validators: validators,
       );
     } on SocketException catch (error) {
+      _invalidate(uri);
       final retry = await _retry(uri);
       if (retry != null) {
         return retry.requiresRuntimeTransform
@@ -110,6 +129,7 @@ final class _SourceResourceTransport implements Transport {
         cause: error,
       );
     } on HttpException catch (error) {
+      _invalidate(uri);
       final retry = await _retry(uri);
       if (retry != null) {
         return retry.requiresRuntimeTransform
@@ -134,16 +154,22 @@ final class _SourceResourceTransport implements Transport {
   }
 
   Future<ComicResourceRequest?> _retry(Uri locator) async {
+    final source = _source;
     final retryable = source is RetryableComicResourceSource
         ? source as RetryableComicResourceSource
         : null;
     if (retryable == null) return null;
-    return retryable.retryResource(locator);
+    final replacement = await retryable.retryResource(locator);
+    if (replacement != null) _remember(locator, replacement);
+    return replacement;
   }
 
   Future<ComicResourceRequest> _resolve(Uri locator) {
+    final cached = _cached(locator);
+    if (cached != null) return Future<ComicResourceRequest>.value(cached);
     final active = _requestLoads[locator];
     if (active != null) return active;
+    final source = _source;
     final resolvable = source is ResolvableComicResourceSource
         ? source as ResolvableComicResourceSource
         : null;
@@ -157,13 +183,41 @@ final class _SourceResourceTransport implements Transport {
       );
     }
     late final Future<ComicResourceRequest> load;
-    load = resolvable.resolveResource(locator).whenComplete(() {
+    load = resolvable.resolveResource(locator).then((request) {
+      _remember(locator, request);
+      return request;
+    }).whenComplete(() {
       if (identical(_requestLoads[locator], load)) {
         _requestLoads.remove(locator);
       }
     });
     _requestLoads[locator] = load;
     return load;
+  }
+
+  ComicResourceRequest? _cached(Uri locator) {
+    final entry = _requestPlans.remove(locator);
+    if (entry == null) return null;
+    if (DateTime.now().difference(entry.resolvedAt) > _requestPlanTtl) {
+      return null;
+    }
+    _requestPlans[locator] = entry;
+    return entry.request;
+  }
+
+  void _remember(Uri locator, ComicResourceRequest request) {
+    _requestPlans.remove(locator);
+    _requestPlans[locator] = _RequestPlanEntry(
+      request: request,
+      resolvedAt: DateTime.now(),
+    );
+    while (_requestPlans.length > _maxRequestPlans) {
+      _requestPlans.remove(_requestPlans.keys.first);
+    }
+  }
+
+  void _invalidate(Uri locator) {
+    _requestPlans.remove(locator);
   }
 
   Future<ByteResponse> _openDirect(
@@ -252,7 +306,7 @@ final class _SourceResourceTransport implements Transport {
     ByteRange? range,
     Validators? validators,
   }) async {
-    final bytes = await source.loadResource(uri);
+    final bytes = await _source.loadResource(uri);
     final current = Validators(etag: '"runtime-${bytes.length}-${_fnv(bytes)}"');
     final canRange = range != null &&
         range.start <= bytes.length &&
@@ -271,7 +325,18 @@ final class _SourceResourceTransport implements Transport {
     );
   }
 
-  void close() => _client.close(force: true);
+  void close() {
+    _requestLoads.clear();
+    _requestPlans.clear();
+    _client.close(force: true);
+  }
+}
+
+final class _RequestPlanEntry {
+  const _RequestPlanEntry({required this.request, required this.resolvedAt});
+
+  final ComicResourceRequest request;
+  final DateTime resolvedAt;
 }
 
 final class _HttpResponseBody {

@@ -60,7 +60,14 @@ final class _StaticDemoScreenState extends State<StaticDemoScreen> {
               body: Center(child: CircularProgressIndicator()),
             );
           }
-          return ReaderRuntimeScreen(chapter: snapshot.requireData);
+          final chapter = snapshot.requireData;
+          return PipelineReaderSessionHost(
+            chapter: chapter,
+            builder: (context, pipeline) => ReaderRuntimeScreen(
+              chapter: chapter,
+              pipeline: pipeline,
+            ),
+          );
         },
       ),
     );
@@ -138,21 +145,28 @@ final class _MediaPipelineReaderScreenState
               body: Center(child: CircularProgressIndicator()),
             );
           }
-          return ReaderRuntimeScreen(
-            chapter: snapshot.requireData,
-            mediaBytesLoader: widget.mediaBytesLoader,
-            artifactPageBuilder: (
-              context,
-              asset,
-              reportFirstFrame,
-              runtime,
-            ) =>
-                _buildMediaReaderPage(
-              context,
-              asset,
-              reportFirstFrame,
-              runtime,
-              onPreviewStateChanged: widget.onPreviewStateChanged,
+          final chapter = snapshot.requireData;
+          return PipelineReaderSessionHost(
+            chapter: chapter,
+            factory: PipelineReaderSessionFactory(
+              bytesLoader: widget.mediaBytesLoader,
+            ),
+            builder: (context, pipeline) => ReaderRuntimeScreen(
+              chapter: chapter,
+              pipeline: pipeline,
+              artifactPageBuilder: (
+                context,
+                asset,
+                reportFirstFrame,
+                runtime,
+              ) =>
+                  _buildMediaReaderPage(
+                context,
+                asset,
+                reportFirstFrame,
+                runtime,
+                onPreviewStateChanged: widget.onPreviewStateChanged,
+              ),
             ),
           );
         },
@@ -182,7 +196,7 @@ Widget? _buildMediaReaderPage(
       showEngineControls: false,
       showStatus: false,
       initialEngine: WebpPlayerEngine.native,
-      streamingSession: runtime.downloadSession,
+      pageStream: runtime.pageStream,
       onPlaybackCapabilityChanged: runtime.reportPlaybackCapability,
       onFirstFrame: reportFirstFrame,
       traceClock: runtime.clock,

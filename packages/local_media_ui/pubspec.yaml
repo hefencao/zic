@@ -16,8 +16,6 @@ dependencies:
     path: ../catalog
   domain:
     path: ../domain
-  downloads:
-    path: ../downloads
   file_selector: ^1.0.3
   local_media:
     path: ../local_media
@@ -25,12 +23,12 @@ dependencies:
     path: ../media
   pipeline:
     path: ../pipeline
+  pipeline_runtime:
+    path: ../pipeline_runtime
   reader_runtime:
     path: ../reader_runtime
   resource_cache:
     path: ../resource_cache
-  sessions:
-    path: ../sessions
   storage_bridge:
     path: ../storage_bridge
   telemetry:

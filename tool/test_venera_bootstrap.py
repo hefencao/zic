@@ -228,6 +228,28 @@ async function checkChapterImageConfigIsDeferred(){
  if(configs!==1||requests!==1)throw new Error('resource did not lazily resolve one image config');
 }
 
+
+async function checkRequestPlanReuseAndThumbnailPath(){
+ const locator='venera-resource:'+__zicB64({v:1,image:'page-1',comicId:'comic',epId:'ep'});
+ let pageConfigs=0,thumbnailConfigs=0;
+ ZicNative.request=raw=>{
+   const message=__zicDecode(JSON.parse(raw));
+   if(message.method==='cookie'&&message.function==='get')return JSON.stringify({ok:true,value:__zicEncode([])});
+   throw new Error('request-plan reuse unexpectedly invoked native '+message.method);
+ };
+ globalThis.__zicSource={comic:{
+   onImageLoad:async()=>{pageConfigs++;return {url:'https://cdn.invalid/page.webp'}},
+   onThumbnailLoad:async uri=>{thumbnailConfigs++;return {url:String(uri).replace('cover','thumb')}},
+ }};
+ const first=await __zicOperation({operation:'resolveResource',arguments:{uri:locator}});
+ const second=await __zicOperation({operation:'resolveResource',arguments:{uri:locator}});
+ if(first.url!==second.url||pageConfigs!==1)throw new Error('durable request plan was re-resolved '+JSON.stringify({first,second,pageConfigs}));
+ const cover='https://cdn.invalid/cover.webp';
+ const coverFirst=await __zicOperation({operation:'resolveResource',arguments:{uri:cover}});
+ const coverSecond=await __zicOperation({operation:'resolveResource',arguments:{uri:cover}});
+ if(coverFirst.url!=='https://cdn.invalid/thumb.webp'||coverSecond.url!==coverFirst.url||thumbnailConfigs!==1||pageConfigs!==1)throw new Error('thumbnail request plan was not cached '+JSON.stringify({coverFirst,coverSecond,thumbnailConfigs,pageConfigs}));
+}
+
 async function checkSourceSettings(){
  const stored=new Map(),actions=[];
  ZicNative.request=raw=>{
@@ -320,7 +342,7 @@ async function checkInvokeRequestLifecycle(){
  if(seenRequestId!=='invoke-lifecycle'||completed?.requestId!=='invoke-lifecycle'||finished!=='invoke-lifecycle')throw new Error('invoke lifecycle did not retain the request id '+JSON.stringify({seenRequestId,completed,finished}));
 }
 
-(async()=>{await checkCurrentCategory();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkChapterImageConfigIsDeferred();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
+(async()=>{await checkCurrentCategory();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
 '''
 with tempfile.TemporaryDirectory() as td:
     js=Path(td)/'test.js'; js.write_text(bootstrap+'\n'+test)

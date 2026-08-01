@@ -59,8 +59,8 @@ void main() {
     expect(await _collect(second.bytes), <int>[1, 2, 3, 4, 5, 6]);
     expect(
       source.resolveCalls,
-      2,
-      reason: 'a later download refreshes potentially expiring request URLs',
+      1,
+      reason: 'one transport session reuses the resolved request plan',
     );
   });
 

@@ -1,0 +1,33 @@
+name: pipeline_runtime
+description: Pipeline-owned Reader download, decode, artifact and progress runtime.
+version: 0.31.0
+publish_to: none
+resolution: workspace
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  domain:
+    path: ../domain
+  downloads:
+    path: ../downloads
+  media:
+    path: ../media
+  pipeline:
+    path: ../pipeline
+  sessions:
+    path: ../sessions
+  storage:
+    path: ../storage
+  telemetry:
+    path: ../telemetry
+  transport:
+    path: ../transport
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0

@@ -37,10 +37,13 @@ EXPECTED_DEPENDENCIES = {
     'telemetry': set(),
     'reader': {'domain', 'telemetry'},
     'reader_runtime': {
-        'bridge', 'domain', 'downloads', 'media', 'pipeline', 'reader',
-        'sessions', 'storage', 'telemetry', 'transport',
+        'domain', 'pipeline', 'pipeline_runtime', 'reader', 'telemetry',
     },
     'pipeline': {'domain', 'telemetry'},
+    'pipeline_runtime': {
+        'domain', 'downloads', 'media', 'pipeline', 'sessions',
+        'storage', 'telemetry', 'transport',
+    },
     'media': {'domain', 'transport'},
     'transport': {'domain'},
     'storage': {'catalog', 'domain', 'resource_cache'},
@@ -52,8 +55,8 @@ EXPECTED_DEPENDENCIES = {
     'local_media_bridge': set(),
     'local_media': {'local_media_bridge'},
     'local_media_ui': {
-        'bridge', 'catalog', 'domain', 'downloads', 'local_media', 'media',
-        'pipeline', 'reader_runtime', 'resource_cache', 'sessions',
+        'bridge', 'catalog', 'domain', 'local_media', 'media', 'pipeline',
+        'pipeline_runtime', 'reader_runtime', 'resource_cache',
         'storage_bridge', 'telemetry', 'texture_bridge', 'transport',
     },
     'runtime_bridge': set(),
@@ -669,7 +672,7 @@ def check_compile_regressions() -> None:
     if "_status = 'WebP 文件无效'" in webp_demo:
         fail('preview status must not duplicate the keyed WebP validation error')
     media_load_token = (
-        ROOT / 'packages/reader_runtime/lib/src/media_load_token.dart'
+        ROOT / 'packages/pipeline_runtime/lib/src/media_load_token.dart'
     ).read_text(encoding='utf-8')
     for required in (
         'final class MediaLoadToken',
@@ -990,7 +993,11 @@ def check_compile_regressions() -> None:
 
     for required in (
         'final class ReaderRuntimeScreen',
-        'LoaderTransport(widget.loaderSources)',
+        'required this.pipeline',
+        'PipelineReaderSession get _pipeline => widget.pipeline',
+        '_pipeline.accept',
+        '_pipeline.loadBytes(asset, token)',
+        '_pipeline.pageStream(asset)',
         'SystemUiMode.immersiveSticky',
         'readerBottomControlsKey',
         'readerChapterTitleKey',
@@ -1005,13 +1012,30 @@ def check_compile_regressions() -> None:
         'playback: _playback',
         'IconThemeData(color: Colors.white)',
         'DefaultTextStyle.merge',
-        'Future<void> _downloadChapter()',
-        "'consumer': 'reader-direct'",
-        'PromotedArtifactReadPool',
-        "'fallback': 'session'",
     ):
         if required not in reader_runtime:
             fail(f'Reader runtime identity/transport path is incomplete: {required}')
+    pipeline_host = (
+        ROOT / 'packages/pipeline_runtime/lib/src/pipeline_reader_host.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'final class PipelineReaderSessionHost',
+        'widget.factory.create(',
+        '_session.dispose()',
+        'PipelineReaderSessionBuilder',
+    ):
+        if required not in pipeline_host:
+            fail(f'Pipeline Reader host ownership is incomplete: {required}')
+    for forbidden in (
+        'PipelineReaderSessionFactory',
+        'pipelineFactory',
+        '_pipeline.dispose()',
+        '_pipeline.selectPage',
+        'transferProgress.select',
+    ):
+        if forbidden in reader_runtime:
+            fail(f'Reader presentation retained pipeline composition: {forbidden}')
+
     for forbidden in (
         'ReaderAppBarTitleBuilder',
         'appBarTitleBuilder',
@@ -1021,6 +1045,23 @@ def check_compile_regressions() -> None:
     ):
         if forbidden in reader_runtime:
             fail(f'Reader top controls restored redundant action API: {forbidden}')
+    for forbidden in (
+        'DownloadRegistry',
+        'DownloadSession',
+        'LiveCoordinator',
+        'NetLane',
+        'DecodeLane',
+        'UploadLane',
+        'LoaderTransport',
+        'ArtifactCacheTransport',
+        "package:downloads/",
+        "package:sessions/",
+        "package:storage/",
+        "package:transport/",
+        "package:media/",
+    ):
+        if forbidden in reader_runtime:
+            fail(f'Reader presentation regained pipeline ownership: {forbidden}')
     for required in (
         'reader starts immersive and exposes complete bottom controls',
         'top controls omit duplicate navigation and layout actions',
@@ -1060,7 +1101,7 @@ def check_compile_regressions() -> None:
         if required not in local_image_preview_test:
             fail(f'Flutter cold-decode regression is incomplete: {required}')
     asset_transport_path = (
-        ROOT / 'packages/reader_runtime/lib/src/asset_bundle_transport.dart'
+        ROOT / 'packages/pipeline_runtime/lib/src/asset_bundle_transport.dart'
     )
     asset_transport_test_path = (
         ROOT / 'apps/app/test/asset_bundle_transport_test.dart'
@@ -1075,6 +1116,7 @@ def check_compile_regressions() -> None:
     ):
         if required not in asset_transport:
             fail(f'AssetBundle transport is incomplete: {required}')
+    pipeline_runtime = (ROOT / 'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart').read_text(encoding='utf-8')
     for required in (
         'LiveCoordinator(',
         'DownloadRegistry(',
@@ -1082,13 +1124,13 @@ def check_compile_regressions() -> None:
         'layout: _workspace.layout',
         '_workspace.readArtifact(',
         'await _workspace.dispose()',
-        'addSnapshotListener(listener)',
+        'addSnapshotListener(acceptSnapshot',
         '_binding?.detach(',
         'AssetBundleTransport(rootBundle)',
-        'LoaderTransport(widget.loaderSources)',
+        'LoaderTransport(loaderSources)',
     ):
-        if required not in reader_runtime:
-            fail(f'Reader live artifact path is incomplete: {required}')
+        if required not in pipeline_runtime:
+            fail(f'Pipeline runtime live artifact path is incomplete: {required}')
     if 'FakeCoordinator(' in static_demo or 'FakeCoordinator(' in reader_runtime:
         fail('Reader app runtime must not use the fake coordinator')
     imported_chapter = (

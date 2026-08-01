@@ -32,11 +32,18 @@ Key sourceComicCardKey(String sourceId, String comicId) =>
 Key sourceChapterKey(String sourceId, String chapterId) =>
     ValueKey<String>('source-chapter:$sourceId\u0000$chapterId');
 
+typedef SourceComicCoverLoader = Future<Uint8List> Function(
+  BrowsableComicSource source,
+  SourceComicSummary comic,
+  Uri uri,
+);
+
 final class ComicSourcesPage extends StatefulWidget {
   const ComicSourcesPage({
     required this.sources,
     required this.activeSourceId,
     required this.onSourceSelected,
+    required this.loadCover,
     required this.onOpenComic,
     super.key,
   });
@@ -44,6 +51,7 @@ final class ComicSourcesPage extends StatefulWidget {
   final List<BrowsableComicSource> sources;
   final String? activeSourceId;
   final ValueChanged<String> onSourceSelected;
+  final SourceComicCoverLoader loadCover;
   final Future<void> Function(
     BrowsableComicSource source,
     SourceComicSummary comic,
@@ -320,6 +328,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
               source: source,
               comic: comic,
               reloadToken: _generation,
+              loadCover: widget.loadCover,
               onTap: () => unawaited(
                 widget.onOpenComic(source, comic),
               ),
@@ -383,6 +392,7 @@ final class _SourceComicCard extends StatelessWidget {
     required this.source,
     required this.comic,
     required this.reloadToken,
+    required this.loadCover,
     required this.onTap,
     super.key,
   });
@@ -390,6 +400,7 @@ final class _SourceComicCard extends StatelessWidget {
   final BrowsableComicSource source;
   final SourceComicSummary comic;
   final int reloadToken;
+  final SourceComicCoverLoader loadCover;
   final VoidCallback onTap;
 
   @override
@@ -405,11 +416,7 @@ final class _SourceComicCard extends StatelessWidget {
               borderRadius: BorderRadius.circular(10),
               child: _RemoteImage(
                 uri: comic.coverUri,
-                loadBytes: (uri) => loadCachedSourceImage(
-                  source,
-                  uri,
-                  comicId: comic.comicId,
-                ),
+                loadBytes: (uri) => loadCover(source, comic, uri),
                 reloadToken: reloadToken,
               ),
             ),

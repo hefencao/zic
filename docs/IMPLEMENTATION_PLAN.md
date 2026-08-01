@@ -1,3 +1,13 @@
+## dev.72 completed
+
+- [x] Extract Reader resource ownership into `pipeline_runtime`.
+- [x] Make Reader and local-media presentation consume read-only Pipeline streams.
+- [x] Derive current-page transfer projection from Reader observations inside Pipeline.
+- [x] Route Home/source/details artwork through one source request-plan transport and response cache.
+- [x] Split Venera thumbnail resolution from chapter-page resolution and coalesce request plans.
+- [x] Preserve dev.70 prefetch/decode/upload windows and lane concurrency.
+- [ ] Validate actual Android process Tx/Rx bytes with device traffic tooling and correlate them with sanitized request counters.
+
 # zic Implementation Plan
 
 ## 1. 实施原则
@@ -21,7 +31,7 @@
   DownloadSession 进入 Reader；记录与最后阅读位置由持久目录库保存，禁止保留独立目录浏览器的直接文件读取权威。
 - 本地目录递归枚举不得在 UI isolate 执行，只创建当前可见图片的播放器；Android 必须沿 SAF document tree/content URI grant 读取，桌面使用 isolate 文件扫描；格式由文件头嗅探，完整 codec 负责最终校验。
 
-## 当前应用主线（0.31.0-dev.71）
+## 当前应用主线（0.31.0-dev.72）
 
 - 来源私有资源的 App 组合只允许通过 `ComicSourceResourceGateway -> ChapterResourceAccess` 一次性绑定；禁止 Home/UI 直接持有 transport pool 或分别设置 loader/transport。
 - gateway 生命周期必须先解绑外部下载服务再关闭 transport，防止持久服务保留失效回调。
@@ -82,6 +92,15 @@
 - Mihon/Venera isolated backend 必须通过 `ExternalPluginRuntimeMessageChannel` 交换 protocol-v1 基础值/`Uint8List` 消息。handshake source identity、schema 和每次 response requestId 在跨边界处验证；不得返回进程内 zic domain/session 对象。
 - Android bound-service transport 必须以 binding generation 区分每次显式连接，并通过 Binder death recipient 失败当前请求；旧 generation 的迟到回调不得拆除新连接，也不得自动 replay/activate。packet response 必须校验 dedicated root、exact length 与 SHA-256，消费或失败后删除。
 
+
+
+### dev.72 当前主线约束
+
+1. `pipeline_runtime` 是 Reader 资源会话唯一组合所有者；Reader 不得创建、关闭或直接访问下载、artifact、transport、decode/upload lane。
+2. Reader 只能提交 `ReaderObs` 和消费只读 `PipelinePageStream`/progress；当前页传输选择必须由 Pipeline 从 observation 派生。
+3. Home、来源浏览、详情页和迁移对比的远程 artwork 必须共用 `ComicSourceResourceGateway`、source transport 与 response cache。
+4. Venera HTTP artwork 优先 `onThumbnailLoad`，durable chapter locator 使用 `onImageLoad`；同 locator request plan 必须并发合并并有界缓存。
+5. 不得为降低流量再次缩小 +7/-3 下载、+2/-1 预解码或 5/3/2 lane。设备流量结论必须来自真实 Android Tx/Rx 计数与净化后的请求统计。
 
 
 ### dev.71 当前主线约束

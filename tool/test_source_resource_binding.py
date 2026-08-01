@@ -49,6 +49,9 @@ def main() -> None:
         "_setAccess(downloads, null)",
         "ExternalPluginResourceTransportPool",
         "isLegacyVeneraRuntimeLocator",
+        "loadArtworkBytes",
+        "loadArtworkSource",
+        "_collectResponse(responseLoaderFor(sourceId, uri))",
     )
     require(
         "apps/app/lib/demo_home.dart",
@@ -57,11 +60,28 @@ def main() -> None:
         "_sourceResources.bindTo(_chapterDownloads)",
         "_sourceResources.close()",
     )
+    require(
+        "apps/app/lib/demo_home.dart",
+        "_sourceResources.loadArtworkBytes(",
+        "_sourceResources.loadArtworkSource(",
+    )
     reject(
         "apps/app/lib/demo_home.dart",
         "ExternalPluginResourceTransportPool()",
         "setChapterResourceLoader(",
         "setChapterResourceTransport(",
+        "loadCachedSourceImage(",
+        "loadCachedSourceImageSource(",
+    )
+    require(
+        "apps/app/lib/source_browser.dart",
+        "required this.loadCover",
+        "loadBytes: (uri) => loadCover(source, comic, uri)",
+    )
+    reject(
+        "apps/app/lib/source_browser.dart",
+        "loadCachedSourceImage(",
+        "source.loadResource(",
     )
     ordered(
         "apps/app/lib/demo_home.dart",
@@ -83,6 +103,9 @@ def main() -> None:
         "gateway binds source access atomically and unbinds on close",
         "expect(downloads.access, isNull)",
         "gateway rejects legacy Venera tokens before source dispatch",
+        "artwork cache uses the shared request-plan transport",
+        "expect(source.resolveCalls, 1)",
+        "expect(source.loads, 0)",
     )
     print("Source resource atomic binding contract: OK")
 

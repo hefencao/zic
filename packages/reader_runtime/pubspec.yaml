@@ -10,28 +10,22 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  bridge:
-    path: ../bridge
   domain:
     path: ../domain
-  downloads:
-    path: ../downloads
-  media:
-    path: ../media
   pipeline:
     path: ../pipeline
+  pipeline_runtime:
+    path: ../pipeline_runtime
   reader:
     path: ../reader
+  telemetry:
+    path: ../telemetry
+
+dev_dependencies:
   sessions:
     path: ../sessions
   storage:
     path: ../storage
-  telemetry:
-    path: ../telemetry
-  transport:
-    path: ../transport
-
-dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0

@@ -11,3 +11,5 @@ This iteration starts only from the complete user-provided archive
 The archive already contains the user's fixed dev.58 state. No earlier dev.58
 candidate, patch bundle, or historical overlay is applied on top. All dev.59, dev.60, dev.61, dev.62 and dev.63
 changes are direct descendants of this extracted tree.
+
+Current delivery lineage continues directly through dev.72. The sole baseline for dev.72 was the complete `zic_v0.31.0-dev.71_atomic-source-resource-composition.zip`; no historical candidate or overlay was merged.

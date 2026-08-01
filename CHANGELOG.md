@@ -1,3 +1,14 @@
+## 0.31.0-dev.72：Pipeline 运行时所有权与共享请求方案复用
+
+- 新增独立 `pipeline_runtime` 包，集中持有 Reader 会话的 `DownloadRegistry`、`LiveCoordinator`、`SourcePool`、artifact workspace、network/decode/upload lane、进度 publisher 与生命周期。
+- `ReaderRuntimeScreen` 不再创建、销毁或直接引用下载/解码/上传/session/storage/transport 所有者；它只提交 `ReaderObs`，消费 `PipelinePageStream`、页面字节投影和当前页进度投影。
+- 当前页传输进度选择迁入 `PipelineReaderSession.accept(ReaderObs)`，删除 Reader 对 page transfer selection 的第二条控制路径。
+- 本地图片/WebP presentation 不再接触 `DownloadSession` 或 `DownloadSnapshot`，仅观察 Pipeline 提供的只读 encoded-byte stream。
+- 首页、来源浏览、详情页与迁移对比的远程封面统一通过 `ComicSourceResourceGateway` 和共享 source transport/cache；不再各自调用插件完整 `loadResource`。
+- Venera HTTP artwork 优先解析 `comic.onThumbnailLoad`，仅无 thumbnail hook 时兼容回退 `onImageLoad`；章节 durable locator 继续使用 `onImageLoad`。同 locator request plan 在 JavaScript runtime 与宿主 transport 中并发合并并有界缓存。
+- 保持 dev.70 的前 7/后 3 下载、前 2/后 1 预解码、current/transition 上传和 5/3/2 lane；没有通过削减预下载或并发处理上行流量。
+- 新增 Pipeline ownership、封面共享 request-plan、Venera thumbnail resolver 和 Reader 无底层所有权静态/回归门禁。
+
 ## 0.31.0-dev.71：来源资源原子绑定与组合层解耦
 
 - 修复 `demo_home_source_compat.dart` 通过 `ChapterDownloadService` 静态类型直接调用 `setChapterResourceLoader`/`setChapterResourceTransport` 的编译错误；无继承关系的能力接口全部显式绑定。

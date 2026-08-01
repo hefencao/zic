@@ -1,3 +1,12 @@
+## dev.72：Pipeline 运行时所有权与共享请求方案
+
+- `pipeline_runtime` 成为 Reader 资源会话的组合所有者，持有下载、artifact、SourcePool、解码/上传调度、进度与关闭顺序。
+- Reader 仅报告 viewport observation 并读取只读页面流；当前页进度由 Pipeline 从 observation 选择，不存在 Reader→下载状态的独立控制入口。
+- `local_media_ui` 只消费 `PipelinePageStream`，不再依赖 `DownloadSession`。
+- Home、来源浏览和详情页封面共用 source request-plan transport 与 response cache；Venera thumbnail/page resolver 分流。
+- source request-plan 对同 locator 并发合并并有界缓存，普通正文流式进入既有 artifact；VibeVenera 的 7/3、2/1、5/3/2 策略保持不变。
+- 当前环境无 Flutter/Dart SDK，需在 Android/Flutter 环境继续以真实 Tx/Rx 计数验证上行异常；本版本只声明已消除代码中可确认的重复插件配置与封面正文路径，不声明设备流量已实测正常。
+
 ## dev.71：来源资源原子绑定与 Home 组合解耦
 
 - `ChapterResourceAccess` 原子携带 streaming response transport 与 complete-byte transform fallback；`PersistentChapterDownloadService` 只读取一个绑定快照。

@@ -1,8 +1,10 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:downloads/downloads.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:resource_cache/resource_cache.dart';
 import 'package:zic/source_resource_gateway.dart';
 
 void main() {
@@ -27,6 +29,50 @@ void main() {
 
     gateway.close();
     expect(downloads.access, isNull);
+  });
+
+  test('artwork cache uses the shared request-plan transport', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    var requests = 0;
+    server.listen((request) async {
+      requests += 1;
+      request.response
+        ..statusCode = HttpStatus.ok
+        ..contentLength = 4
+        ..add(<int>[9, 8, 7, 6]);
+      await request.response.close();
+    });
+    addTearDown(() => server.close(force: true));
+
+    final source = _ResolvedSource(
+      Uri.parse('http://${server.address.host}:${server.port}/cover.webp'),
+    );
+    final gateway = ComicSourceResourceGateway(
+      sourceForId: (sourceId) => sourceId == source.sourceId ? source : null,
+    );
+    final cache = ResourceCacheManager();
+    addTearDown(gateway.close);
+    addTearDown(cache.close);
+
+    final locator = Uri.https('catalog.invalid', '/cover.webp');
+    final first = await gateway.loadArtworkBytes(
+      cache: cache,
+      sourceId: source.sourceId,
+      comicId: 'comic',
+      uri: locator,
+    );
+    final second = await gateway.loadArtworkBytes(
+      cache: cache,
+      sourceId: source.sourceId,
+      comicId: 'comic',
+      uri: locator,
+    );
+
+    expect(first, <int>[9, 8, 7, 6]);
+    expect(second, first);
+    expect(source.resolveCalls, 1);
+    expect(source.loads, 0);
+    expect(requests, 1);
   });
 
   test('gateway rejects legacy Venera tokens before source dispatch', () async {
@@ -127,4 +173,52 @@ final class _RecordingDownloads
 
   @override
   Future<void> retry(ImportedLibraryEntry entry) async {}
+}
+
+final class _ResolvedSource
+    implements BrowsableComicSource, ResolvableComicResourceSource {
+  _ResolvedSource(this.resolvedUri);
+
+  final Uri resolvedUri;
+  int resolveCalls = 0;
+  int loads = 0;
+
+  @override
+  String get sourceId => 'venera:resolved';
+
+  @override
+  ComicSourceDescriptor get descriptor => ComicSourceDescriptor(
+        sourceId: sourceId,
+        name: 'Resolved fixture',
+        language: 'all',
+        website: Uri.https('example.invalid', '/'),
+      );
+
+  @override
+  Future<ComicResourceRequest> resolveResource(Uri uri) async {
+    resolveCalls += 1;
+    return ComicResourceRequest(uri: resolvedUri);
+  }
+
+  @override
+  Future<Uint8List> loadResource(Uri uri) async {
+    loads += 1;
+    return Uint8List(0);
+  }
+
+  @override
+  Future<SourceBrowsePage> browse({
+    String query = '',
+    int offset = 0,
+    int limit = 24,
+  }) =>
+      throw UnimplementedError();
+
+  @override
+  Future<ComicManifest> loadComic(String comicId) =>
+      throw UnimplementedError();
+
+  @override
+  Future<ChapterManifest> loadChapter(String chapterId) =>
+      throw UnimplementedError();
 }

@@ -104,77 +104,88 @@ final class ImportedImageChapterScreen extends StatelessWidget {
       }
     }
 
-    return ReaderRuntimeScreen(
+    return PipelineReaderSessionHost(
       key: ValueKey<Object>(
-        (record.chapterId, record.sourceRevision, byteLoaders.length, responseLoaders.length),
+        (
+          record.chapterId,
+          record.sourceRevision,
+          byteLoaders.length,
+          responseLoaders.length,
+        ),
       ),
-      screenKey: imageFolderScreenKey,
       chapter: chapter,
-      loaderSources: sources,
-      artifactCache: artifactCache,
-      initialProgress: initialProgress,
-      onProgressChanged: onProgressChanged,
-      initialFavorite: initialFavorite,
-      onFavoriteChanged: onFavoriteChanged,
-      onDownloadRequested: onDownloadRequested,
-      initiallyImmersive: initiallyImmersive,
-      initialSettings: initialReaderSettings,
-      onSettingsChanged: onReaderSettingsChanged,
+      factory: PipelineReaderSessionFactory(
+        loaderSources: sources,
+        artifactCache: artifactCache,
+      ),
       traceSink: traceSink,
-      pageSubtitleBuilder: (asset) {
-        final current = record.pages[asset.index];
-        return '${current.displayName} · ${_importedPageFormat(current).label}';
-      },
-      artifactPageBuilder: (
-        context,
-        asset,
-        reportFirstFrame,
-        runtime,
-      ) {
-        final page = record.pages[asset.index];
-        final format = _importedPageFormat(page);
-        final image = PickedImage(
-          file: XFile(page.sourceId),
-          format: format,
-          displayName: page.displayName,
-          sourceId: page.sourceId,
-          byteLength: page.byteLength,
-          readBytes: byteLoaders[page.sourceId] ??
-              (_isRemoteMediaUri(page.uri)
-                  ? () => Future<Uint8List>.error(
-                        StateError(
-                          'remote page bytes are owned by the Reader artifact',
-                        ),
-                      )
-                  : () => readLocalImageSource(page.sourceId)),
-        );
-        return ColoredBox(
-          color: Colors.black,
-          child: LocalImagePlayer(
-            key: ValueKey<String>(
-              'folder-image:${page.sourceId}:${format.name}:${asset.index}',
+      builder: (context, pipeline) => ReaderRuntimeScreen(
+        pipeline: pipeline,
+        screenKey: imageFolderScreenKey,
+        chapter: chapter,
+        initialProgress: initialProgress,
+        onProgressChanged: onProgressChanged,
+        initialFavorite: initialFavorite,
+        onFavoriteChanged: onFavoriteChanged,
+        onDownloadRequested: onDownloadRequested,
+        initiallyImmersive: initiallyImmersive,
+        initialSettings: initialReaderSettings,
+        onSettingsChanged: onReaderSettingsChanged,
+        pageSubtitleBuilder: (asset) {
+          final current = record.pages[asset.index];
+          return '${current.displayName} · ${_importedPageFormat(current).label}';
+        },
+        artifactPageBuilder: (
+          context,
+          asset,
+          reportFirstFrame,
+          runtime,
+        ) {
+          final page = record.pages[asset.index];
+          final format = _importedPageFormat(page);
+          final image = PickedImage(
+            file: XFile(page.sourceId),
+            format: format,
+            displayName: page.displayName,
+            sourceId: page.sourceId,
+            byteLength: page.byteLength,
+            readBytes: byteLoaders[page.sourceId] ??
+                (_isRemoteMediaUri(page.uri)
+                    ? () => Future<Uint8List>.error(
+                          StateError(
+                            'remote page bytes are owned by the Reader artifact',
+                          ),
+                        )
+                    : () => readLocalImageSource(page.sourceId)),
+          );
+          return ColoredBox(
+            color: Colors.black,
+            child: LocalImagePlayer(
+              key: ValueKey<String>(
+                'folder-image:${page.sourceId}:${format.name}:${asset.index}',
+              ),
+              image: image,
+              tokenBytesLoader: (_, token) => runtime.loadBytes(token),
+              onPreviewStateChanged: onPreviewStateChanged,
+              onFirstFrame: reportFirstFrame,
+              downloadIdentity: readerPageDownloadId(runtime.chapter, asset),
+              traceClock: runtime.clock,
+              traceSink: runtime.traceSink,
+              traceSessionId: runtime.sessionId,
+              demandRevision: runtime.demandRevision,
+              playback: runtime.playback,
+              pageStream: runtime.pageStream,
+              onPlaybackCapabilityChanged: runtime.reportPlaybackCapability,
+              onDimensionsChanged: (size) => runtime.reportDimensions(
+                size.width.round(),
+                size.height.round(),
+              ),
+              fit: runtime.mediaFit,
+              showLoadingIndicator: false,
             ),
-            image: image,
-            tokenBytesLoader: (_, token) => runtime.loadBytes(token),
-            onPreviewStateChanged: onPreviewStateChanged,
-            onFirstFrame: reportFirstFrame,
-            downloadIdentity: readerPageDownloadId(runtime.chapter, asset),
-            traceClock: runtime.clock,
-            traceSink: runtime.traceSink,
-            traceSessionId: runtime.sessionId,
-            demandRevision: runtime.demandRevision,
-            playback: runtime.playback,
-            streamingSession: runtime.downloadSession,
-            onPlaybackCapabilityChanged: runtime.reportPlaybackCapability,
-            onDimensionsChanged: (size) => runtime.reportDimensions(
-              size.width.round(),
-              size.height.round(),
-            ),
-            fit: runtime.mediaFit,
-            showLoadingIndicator: false,
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }

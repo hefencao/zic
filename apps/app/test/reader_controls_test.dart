@@ -80,27 +80,42 @@ Future<void> _pumpUntilFound(
   throw TestFailure('Timed out waiting for $finder');
 }
 
+Widget _pipelineReader({
+  required ChapterManifest chapter,
+  required ReaderRuntimeScreen Function(PipelineReaderSession pipeline) build,
+}) =>
+    PipelineReaderSessionHost(
+      chapter: chapter,
+      builder: (context, pipeline) => build(pipeline),
+    );
+
 void main() {
   testWidgets('reader starts immersive and exposes complete bottom controls',
       (tester) async {
     bool? favorite;
     var downloadRequested = false;
+    final chapter = _chapter(animated: true);
     await tester.pumpWidget(
       MaterialApp(
-        home: ReaderRuntimeScreen(
-          chapter: _chapter(animated: true),
-          screenKey: _screenKey,
-          initialFavorite: false,
-          onFavoriteChanged: (value) async => favorite = value,
-          onDownloadRequested: () async => downloadRequested = true,
-          artifactPageBuilder: (
-            context,
-            asset,
-            reportFirstFrame,
-            runtime,
-          ) => ColoredBox(
-            key: ValueKey<String>('reader-control-page:${asset.index}'),
-            color: Colors.black,
+        home: _pipelineReader(
+          chapter: chapter,
+          build: (pipeline) => ReaderRuntimeScreen(
+            chapter: chapter,
+            pipeline: pipeline,
+            screenKey: _screenKey,
+            initialFavorite: false,
+            onFavoriteChanged: (value) async => favorite = value,
+            onDownloadRequested: () async => downloadRequested = true,
+            artifactPageBuilder: (
+              context,
+              asset,
+              reportFirstFrame,
+              runtime,
+            ) =>
+                ColoredBox(
+              key: ValueKey<String>('reader-control-page:${asset.index}'),
+              color: Colors.black,
+            ),
           ),
         ),
       ),
@@ -191,19 +206,27 @@ void main() {
   });
 
   testWidgets('static images hide playback-only controls', (tester) async {
+    final chapter = _chapter();
     await tester.pumpWidget(
       MaterialApp(
-        home: ReaderRuntimeScreen(
-          chapter: _chapter(),
-          screenKey: const ValueKey<String>('reader-static-controls-screen'),
-          artifactPageBuilder: (
-            context,
-            asset,
-            reportFirstFrame,
-            runtime,
-          ) => ColoredBox(
-            key: ValueKey<String>('reader-static-page:${asset.index}'),
-            color: Colors.black,
+        home: _pipelineReader(
+          chapter: chapter,
+          build: (pipeline) => ReaderRuntimeScreen(
+            chapter: chapter,
+            pipeline: pipeline,
+            screenKey: const ValueKey<String>(
+              'reader-static-controls-screen',
+            ),
+            artifactPageBuilder: (
+              context,
+              asset,
+              reportFirstFrame,
+              runtime,
+            ) =>
+                ColoredBox(
+              key: ValueKey<String>('reader-static-page:${asset.index}'),
+              color: Colors.black,
+            ),
           ),
         ),
       ),
@@ -224,20 +247,26 @@ void main() {
 
   testWidgets('top controls omit duplicate navigation and layout actions',
       (tester) async {
+    final chapter = _chapter();
     await tester.pumpWidget(
       MaterialApp(
-        home: ReaderRuntimeScreen(
-          chapter: _chapter(),
-          initiallyImmersive: false,
-          onSettingsChanged: (_) {},
-          artifactPageBuilder: (
-            context,
-            asset,
-            reportFirstFrame,
-            runtime,
-          ) => ColoredBox(
-            key: ValueKey<String>('reader-top-page:${asset.index}'),
-            color: Colors.black,
+        home: _pipelineReader(
+          chapter: chapter,
+          build: (pipeline) => ReaderRuntimeScreen(
+            chapter: chapter,
+            pipeline: pipeline,
+            initiallyImmersive: false,
+            onSettingsChanged: (_) {},
+            artifactPageBuilder: (
+              context,
+              asset,
+              reportFirstFrame,
+              runtime,
+            ) =>
+                ColoredBox(
+              key: ValueKey<String>('reader-top-page:${asset.index}'),
+              color: Colors.black,
+            ),
           ),
         ),
       ),
@@ -264,23 +293,29 @@ void main() {
 
   testWidgets('RTL reader mirrors slider direction and index labels',
       (tester) async {
+    final chapter = _chapter(direction: ReadingDirection.rtl);
     await tester.pumpWidget(
       MaterialApp(
-        home: ReaderRuntimeScreen(
-          chapter: _chapter(direction: ReadingDirection.rtl),
-          initiallyImmersive: false,
-          initialSettings: const ReaderSessionSettings(
-            comicSpecificEnabled: true,
-            directionOverride: ReadingDirection.rtl,
-          ),
-          artifactPageBuilder: (
-            context,
-            asset,
-            reportFirstFrame,
-            runtime,
-          ) => ColoredBox(
-            key: ValueKey<String>('reader-rtl-page:${asset.index}'),
-            color: Colors.black,
+        home: _pipelineReader(
+          chapter: chapter,
+          build: (pipeline) => ReaderRuntimeScreen(
+            chapter: chapter,
+            pipeline: pipeline,
+            initiallyImmersive: false,
+            initialSettings: const ReaderSessionSettings(
+              comicSpecificEnabled: true,
+              directionOverride: ReadingDirection.rtl,
+            ),
+            artifactPageBuilder: (
+              context,
+              asset,
+              reportFirstFrame,
+              runtime,
+            ) =>
+                ColoredBox(
+              key: ValueKey<String>('reader-rtl-page:${asset.index}'),
+              color: Colors.black,
+            ),
           ),
         ),
       ),

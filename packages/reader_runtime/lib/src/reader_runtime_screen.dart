@@ -2,24 +2,15 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:bridge/bridge.dart';
 import 'package:domain/domain.dart';
-import 'package:downloads/downloads.dart';
-import 'package:media/media.dart' show SourcePool;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:pipeline/pipeline.dart';
+import 'package:pipeline_runtime/pipeline_runtime.dart';
 import 'package:reader/reader.dart';
-import 'package:sessions/sessions.dart';
-import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
-import 'package:transport/transport.dart';
 
-import 'asset_bundle_transport.dart';
-import 'media_load_token.dart';
 import 'reader_session_settings.dart';
-import 'reader_download_progress.dart';
-import 'reader_pipeline_profile.dart';
 import 'reader_settings_fields.dart';
 
 const readerTopControlsKey = ValueKey<String>('reader-top-controls');
@@ -42,10 +33,7 @@ const readerNetworkProgressKey = ValueKey<String>('reader-network-progress');
 Key readerSpeedOptionKey(double speed) =>
     ValueKey<String>('reader-speed-option:$speed');
 
-typedef ReaderArtifactBytesLoader = Future<Uint8List> Function(
-  PageAsset asset,
-  MediaLoadToken token,
-);
+typedef ReaderArtifactBytesLoader = PipelineArtifactBytesLoader;
 typedef ReaderPageBytesLoader = Future<Uint8List> Function(
   MediaLoadToken token,
 );
@@ -92,7 +80,7 @@ final class ReaderPageRuntime {
     required this.demandRevision,
     required this.loadBytes,
     required this.playback,
-    required this.downloadSession,
+    required this.pageStream,
     required this.reportPlaybackCapability,
     required this.reportDimensions,
     required this.mediaFit,
@@ -105,7 +93,7 @@ final class ReaderPageRuntime {
   final int Function() demandRevision;
   final ReaderPageBytesLoader loadBytes;
   final ReaderPlaybackController playback;
-  final DownloadSession downloadSession;
+  final PipelinePageStream pageStream;
   final ValueChanged<bool> reportPlaybackCapability;
   final ReaderPageDimensionsReporter reportDimensions;
   final BoxFit mediaFit;
@@ -128,10 +116,8 @@ typedef ReaderSessionSettingsWriter = FutureOr<void> Function(
 final class ReaderRuntimeScreen extends StatefulWidget {
   const ReaderRuntimeScreen({
     required this.chapter,
+    required this.pipeline,
     this.artifactPageBuilder,
-    this.mediaBytesLoader,
-    this.artifactCache,
-    this.loaderSources = const <Uri, LoaderTransportSource>{},
     this.pageSubtitleBuilder,
     this.initialProgress,
     this.onProgressChanged,
@@ -141,16 +127,13 @@ final class ReaderRuntimeScreen extends StatefulWidget {
     this.initiallyImmersive = true,
     this.initialSettings = const ReaderSessionSettings(),
     this.onSettingsChanged,
-    this.traceSink,
     this.screenKey,
     super.key,
   });
 
   final ChapterManifest chapter;
+  final PipelineReaderSession pipeline;
   final ReaderArtifactPageBuilder? artifactPageBuilder;
-  final ReaderArtifactBytesLoader? mediaBytesLoader;
-  final ArtifactCacheStore? artifactCache;
-  final Map<Uri, LoaderTransportSource> loaderSources;
   final ReaderPageSubtitleBuilder? pageSubtitleBuilder;
   final ReadingProgress? initialProgress;
   final ReaderProgressWriter? onProgressChanged;
@@ -160,7 +143,6 @@ final class ReaderRuntimeScreen extends StatefulWidget {
   final bool initiallyImmersive;
   final ReaderSessionSettings initialSettings;
   final ReaderSessionSettingsWriter? onSettingsChanged;
-  final TraceSink? traceSink;
   final Key? screenKey;
 
   @override
@@ -168,30 +150,12 @@ final class ReaderRuntimeScreen extends StatefulWidget {
 }
 
 final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
-  static int _sessionSequence = 0;
-
-  late final String _sessionId;
-  late final MonoClock _clock;
-  late final MemoryTraceSink _memoryTrace;
-  late final TraceSink _trace;
-  late final EphemeralCacheWorkspace _workspace;
-  late final AssetBundleTransport _assetTransport;
-  late final IoTransport _ioTransport;
-  late final LoaderTransport _loaderTransport;
-  ArtifactCacheTransport? _artifactCacheTransport;
-  PromotedArtifactReadPool? _artifactReads;
-  late final SourcePool _streamingSources;
-  late final DownloadRegistry _downloads;
-  PromotedArtifactCacheHandoff? _artifactCacheHandoff;
-  late final LiveCoordinator _coordinator;
-  ReaderBinding? _binding;
+  PipelineReaderSession get _pipeline => widget.pipeline;
   ReaderController? _reader;
   DecodeTarget? _target;
   int? _lastProgressPage;
   ReaderMode? _lastProgressMode;
   late final ReaderPlaybackController _playback;
-  late final ReaderDownloadProgressPublisher _downloadProgress;
-  late final ReaderPipelineProfile _pipelineProfile;
   final Map<String, bool> _playbackCapabilities = <String, bool>{};
   Map<String, double> _pageAspectRatios = const <String, double>{};
   final Map<String, double> _pendingPageAspectRatios = <String, double>{};
@@ -211,8 +175,6 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     _adaptiveProfile = _settings.effectiveAdaptiveEnabled
         ? classifyAdaptiveReaderLayout(widget.chapter)
         : null;
-    _downloadProgress = ReaderDownloadProgressPublisher();
-    _pipelineProfile = readerPipelineProfileFor(widget.chapter);
     _favorite = widget.initialFavorite;
     _controlsVisible = !widget.initiallyImmersive;
     unawaited(
@@ -221,73 +183,6 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
             ? SystemUiMode.immersiveSticky
             : SystemUiMode.edgeToEdge,
       ),
-    );
-    _sessionId = 'reader-${++_sessionSequence}';
-    _clock = SystemClock();
-    _memoryTrace = MemoryTraceSink();
-    _trace = MultiTraceSink(<TraceSink>[
-      _memoryTrace,
-      if (widget.traceSink != null) widget.traceSink!,
-      CallbackTraceSink((event) => debugPrint(event.toJsonLine())),
-    ]);
-    _workspace = EphemeralCacheWorkspace.readerSession(_sessionId);
-    _assetTransport = AssetBundleTransport(rootBundle);
-    _ioTransport = IoTransport();
-    _loaderTransport = LoaderTransport(widget.loaderSources);
-    final identities = widget.chapter.pages.map(
-      (asset) => MapEntry<Uri, DownloadId>(
-        asset.uri,
-        readerPageDownloadId(widget.chapter, asset),
-      ),
-    ).toList(growable: false);
-    final sourceBudgets = <DownloadId, int>{
-      for (final asset in widget.chapter.pages)
-        readerPageDownloadId(widget.chapter, asset): math.max(
-          asset.byteLength ?? 0,
-          256 * 1024 * 1024,
-        ),
-    };
-    _streamingSources = SourcePool(
-      factory: const NativeSourceFactory(),
-      budgetFor: (id) => sourceBudgets[id] ?? 256 * 1024 * 1024,
-    );
-    final cache = widget.artifactCache;
-    if (cache != null) {
-      final reads = PromotedArtifactReadPool(cache: cache);
-      _artifactReads = reads;
-      _artifactCacheTransport = ArtifactCacheTransport(
-        cache: cache,
-        identities: identities,
-        fallbackFor: _baseTransportFor,
-        readPool: reads,
-        clock: _clock,
-        traceSink: _trace,
-        sessionId: _sessionId,
-        demandRevision: () => _binding?.revision ?? 0,
-      );
-      _artifactCacheHandoff = PromotedArtifactCacheHandoff(
-        cache: cache,
-        onError: (error, stackTrace) {
-          debugPrint('reader artifact cache handoff failed: $error');
-        },
-      );
-    }
-    _downloads = DownloadRegistry(
-      layout: _workspace.layout,
-      clock: _clock,
-      traceSink: _trace,
-      sources: _streamingSources,
-      onSessionCreated: _observeDownloadSession,
-    );
-    _coordinator = LiveCoordinator(
-      registry: _downloads,
-      transportFor: _transportFor,
-      clock: _clock,
-      traceSink: _trace,
-      retry: _pipelineProfile.retry,
-      net: NetLane(maxActive: _pipelineProfile.networkConcurrency),
-      decode: DecodeLane(maxActive: _pipelineProfile.decodeConcurrency),
-      upload: UploadLane(maxActive: _pipelineProfile.uploadConcurrency),
     );
   }
 
@@ -303,16 +198,11 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
           ? classifyAdaptiveReaderLayout(widget.chapter)
           : null;
     }
-    if (!_sameChapterSession(oldWidget.chapter, widget.chapter) ||
-        !identical(oldWidget.artifactCache, widget.artifactCache) ||
-        !_sameLoaderSources(
-          oldWidget.loaderSources,
-          widget.loaderSources,
-        )) {
+    if (!_sameChapterSession(oldWidget.chapter, widget.chapter)) {
       throw StateError(
-        'ReaderRuntimeScreen chapter, artifact cache and loader source '
-        'identities are immutable for a mounted session; replace the widget '
-        'key to open another chapter or source revision',
+        'ReaderRuntimeScreen chapter identity is immutable for a mounted '
+        'session; replace the widget key to open another chapter or source '
+        'revision',
       );
     }
   }
@@ -340,37 +230,25 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     );
     if (previous != null) {
       previous.removeListener(_handleReaderProgress);
-      _binding?.detach(previous.sessionId);
+      _pipeline.detach(previous.sessionId);
       previous.dispose();
     }
 
-    final binding = ReaderBinding(
-      chapter: widget.chapter,
-      decodeTarget: target,
-      clock: _clock,
-      traceSink: _trace,
-      coordinator: _coordinator,
-      playback: _coordinator,
-      windowResolver: _pipelineProfile.windowResolver,
-      policy: _pipelineProfile.policy,
-      policyGuard: _pipelineProfile.guard,
-    );
+    _pipeline.attach(target);
     final reader = ReaderController(
-      sessionId: _sessionId,
+      sessionId: _pipeline.sessionId,
       chapter: widget.chapter,
       initialPage: currentIndex,
-      onObservation: binding.accept,
-      clock: _clock,
-      traceSink: _trace,
+      onObservation: _pipeline.accept,
+      clock: _pipeline.clock,
+      traceSink: _pipeline.trace,
     );
     reader.setDirection(direction);
     reader.addListener(_handleReaderProgress);
-    _binding = binding;
     _target = target;
     _reader = reader;
     _lastProgressPage = reader.currentIndex;
     _lastProgressMode = _readerMode(reader.direction);
-    _selectCurrentDownloadProgress();
   }
 
   ReadingDirection _resolveInitialDirection(ReadingProgress? progress) {
@@ -406,7 +284,6 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     if (reader == null) {
       return;
     }
-    _selectCurrentDownloadProgress();
     final writer = widget.onProgressChanged;
     if (writer == null) {
       return;
@@ -479,67 +356,6 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     }
   }
 
-  Transport _baseTransportFor(Uri uri) {
-    if (_loaderTransport.contains(uri)) {
-      return _loaderTransport;
-    }
-    if (uri.scheme.isEmpty || uri.scheme == 'asset') {
-      return _assetTransport;
-    }
-    return _ioTransport;
-  }
-
-  Transport _transportFor(Uri uri) =>
-      _artifactCacheTransport ?? _baseTransportFor(uri);
-
-  void _observeDownloadSession(DownloadSession session) {
-    _artifactReads?.observe(session);
-    _artifactCacheHandoff?.observe(session);
-    _downloadProgress.observe(session);
-  }
-
-  void _selectCurrentDownloadProgress() {
-    final reader = _reader;
-    if (reader == null || widget.chapter.pages.isEmpty) {
-      _downloadProgress.clear();
-      return;
-    }
-    final asset = widget.chapter.pages[reader.currentIndex];
-    _downloadProgress.select(readerPageDownloadId(widget.chapter, asset));
-  }
-
-  void _reportPageDimensions(PageAsset asset, int width, int height) {
-    if (width <= 0 || height <= 0) {
-      return;
-    }
-    final ratio = (height / width).clamp(0.05, 64.0).toDouble();
-    final current = _pendingPageAspectRatios[asset.assetKey] ??
-        _pageAspectRatios[asset.assetKey];
-    if (current != null && (current - ratio).abs() < 0.001) {
-      return;
-    }
-    _pendingPageAspectRatios[asset.assetKey] = ratio;
-    if (_pageAspectRatioUpdateScheduled) {
-      return;
-    }
-    _pageAspectRatioUpdateScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _pageAspectRatioUpdateScheduled = false;
-      if (!mounted || _pendingPageAspectRatios.isEmpty) {
-        _pendingPageAspectRatios.clear();
-        return;
-      }
-      final updates = Map<String, double>.from(_pendingPageAspectRatios);
-      _pendingPageAspectRatios.clear();
-      setState(() {
-        _pageAspectRatios = <String, double>{
-          ..._pageAspectRatios,
-          ...updates,
-        };
-      });
-    });
-  }
-
   bool _currentPageSupportsPlayback(ReaderController reader) {
     final asset = widget.chapter.pages[reader.currentIndex];
     return _playbackCapabilities[asset.assetKey] ?? asset.animatedHint;
@@ -555,156 +371,17 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     }
   }
 
-  Future<Uint8List> _loadMediaBytes(
-    PageAsset asset,
-    MediaLoadToken token,
-  ) async {
-    token.throwIfCancelled();
-    final id = readerPageDownloadId(widget.chapter, asset);
-    final session = _downloads.get(id);
-    if (session.state != DownloadState.promoted) {
-      final reads = _artifactReads;
-      if (reads != null) {
-        final readStarted = _clock.nowMicros();
-        final readRevision = _binding?.revision ?? 0;
-        try {
-          final cached = await reads.join(id);
-          token.throwIfCancelled();
-          if (cached != null) {
-            _trace.record(
-              traceEvent(
-                clock: _clock,
-                sessionId: _sessionId,
-                kind: TraceEventKind.artifactSource,
-                identityHash: id.key,
-                revision: readRevision,
-                payload: <String, Object?>{
-                  'source': 'artifact-cache',
-                  'consumer': 'reader-direct',
-                  'bytes': cached.lengthInBytes,
-                  'joinMicros': _clock.nowMicros() - readStarted,
-                  'sessionState': session.state.name,
-                },
-              ),
-            );
-            return cached;
-          }
-        } on Object catch (error) {
-          token.throwIfCancelled();
-          _trace.record(
-            traceEvent(
-              clock: _clock,
-              sessionId: _sessionId,
-              kind: TraceEventKind.taskFailed,
-              identityHash: id.key,
-              revision: readRevision,
-              payload: <String, Object?>{
-                'lane': 'artifact-cache-read',
-                'consumer': 'reader-direct',
-                'reason': error.toString(),
-                'joinMicros': _clock.nowMicros() - readStarted,
-                'fallback': 'session',
-              },
-            ),
-          );
-        }
-      }
-      await _waitForMediaPromotion(session, token);
-    }
-    token.throwIfCancelled();
-    final bytes = await _workspace.readArtifact(session.artifact);
-    token.throwIfCancelled();
-    return bytes;
-  }
-
-  Future<void> _waitForMediaPromotion(
-    DownloadSession session,
-    MediaLoadToken token,
-  ) async {
-    token.throwIfCancelled();
-    final ready = Completer<void>();
-
-    void accept(DownloadSnapshot snapshot) {
-      if (ready.isCompleted) {
-        return;
-      }
-      switch (snapshot.state) {
-        case DownloadState.promoted:
-          ready.complete();
-          break;
-        case DownloadState.failed:
-          ready.completeError(
-            snapshot.failure ??
-                const Failure(
-                  code: ErrorCode.network,
-                  message: 'reader media download failed',
-                ),
-          );
-          break;
-        case DownloadState.disposed:
-          ready.completeError(
-            const Failure(
-              code: ErrorCode.cancelled,
-              message: 'reader media download was disposed',
-            ),
-          );
-          break;
-        case DownloadState.idle:
-        case DownloadState.queued:
-        case DownloadState.receiving:
-        case DownloadState.sealed:
-          break;
-      }
-    }
-
-    // DownloadSession fires the current snapshot on attachment. The explicit
-    // snapshot checks on both sides of registration also document and close
-    // the transition window for alternative session implementations.
-    accept(session.snapshot);
-    if (ready.isCompleted) {
-      await ready.future;
-      return;
-    }
-    session.addSnapshotListener(accept, fireImmediately: false);
-    try {
-      accept(session.snapshot);
-      await Future.any<void>(<Future<void>>[
-        ready.future,
-        token.whenCancelled.then<void>((_) => token.throwIfCancelled()),
-      ]);
-    } finally {
-      session.removeSnapshotListener(accept);
-    }
-  }
-
   @override
   void dispose() {
     final reader = _reader;
     if (reader != null) {
       reader.removeListener(_handleReaderProgress);
-      _binding?.detach(reader.sessionId);
+      _pipeline.detach(reader.sessionId);
       reader.dispose();
     }
-    _downloadProgress.dispose();
     _playback.dispose();
     unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
-    unawaited(
-      _disposeRuntime().catchError((Object error, StackTrace stackTrace) {
-        debugPrint('reader runtime dispose failed: $error');
-      }),
-    );
     super.dispose();
-  }
-
-  Future<void> _disposeRuntime() async {
-    await _coordinator.dispose();
-    await _artifactCacheHandoff?.drain(_downloads.sessions);
-    _artifactCacheHandoff?.detach();
-    _artifactReads?.close();
-    await _downloads.dispose();
-    _streamingSources.dispose();
-    _ioTransport.close(force: true);
-    await _workspace.dispose();
   }
 
   void _toggleControls() {
@@ -750,32 +427,12 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     setState(() => _downloading = true);
     try {
       final external = widget.onDownloadRequested;
-      if (external != null) {
-        await Future<void>.sync(external);
-      } else {
-        for (final asset in widget.chapter.pages) {
-          final id = readerPageDownloadId(widget.chapter, asset);
-          final session = _downloads.get(id);
-          if (session.state == DownloadState.promoted) {
-            continue;
-          }
-          if (session.activeRun) {
-            await _waitForPromotion(session);
-            continue;
-          }
-          try {
-            await DownloadJob(
-              transport: _transportFor(asset.uri),
-              session: session,
-            ).run();
-          } on Failure catch (error) {
-            if (error.code != ErrorCode.sessionBusy) {
-              rethrow;
-            }
-            await _waitForPromotion(session);
-          }
-        }
+      if (external == null) {
+        throw StateError(
+          'chapter download command must be supplied by pipeline composition',
+        );
       }
+      await Future<void>.sync(external);
       if (!mounted) {
         return;
       }
@@ -794,47 +451,6 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
         setState(() => _downloading = false);
       }
     }
-  }
-
-  Future<void> _waitForPromotion(DownloadSession session) {
-    final completer = Completer<void>();
-    late final DownloadSnapshotListener listener;
-    listener = (snapshot) {
-      if (completer.isCompleted) {
-        return;
-      }
-      switch (snapshot.state) {
-        case DownloadState.promoted:
-          completer.complete();
-          break;
-        case DownloadState.failed:
-          completer.completeError(
-            snapshot.failure ??
-                const Failure(
-                  code: ErrorCode.network,
-                  message: 'chapter cache failed',
-                ),
-          );
-          break;
-        case DownloadState.disposed:
-          completer.completeError(
-            const Failure(
-              code: ErrorCode.cancelled,
-              message: 'chapter cache was disposed',
-            ),
-          );
-          break;
-        case DownloadState.idle:
-        case DownloadState.queued:
-        case DownloadState.receiving:
-        case DownloadState.sealed:
-          break;
-      }
-    };
-    session.addSnapshotListener(listener);
-    return completer.future.whenComplete(
-      () => session.removeSnapshotListener(listener),
-    );
   }
 
   String _directionLabel(ReadingDirection? direction) => switch (direction) {
@@ -1063,8 +679,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                     ],
                   ),
                 ),
-                ValueListenableBuilder<ReaderTransferProgress>(
-                  valueListenable: _downloadProgress.notifier,
+                ValueListenableBuilder<PipelineTransferProgress>(
+                  valueListenable: _pipeline.transferProgress.notifier,
                   builder: (context, progress, _) {
                     if (!progress.active) return const SizedBox(height: 3);
                     final committed = progress.committedFraction;
@@ -1202,7 +818,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                                 : Icons.bookmark_border,
                           ),
                         ),
-                        IconButton(
+                        if (widget.onDownloadRequested != null)
+                          IconButton(
                           key: readerDownloadKey,
                           tooltip: _downloaded ? '本章已缓存' : '缓存本章',
                           onPressed: _downloading || _downloaded
@@ -1245,16 +862,14 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
               reportFirstFrame,
               ReaderPageRuntime(
                 chapter: widget.chapter,
-                clock: _clock,
-                traceSink: _trace,
+                clock: _pipeline.clock,
+                traceSink: _pipeline.trace,
                 sessionId: reader.sessionId,
-                demandRevision: () => _binding?.revision ?? 0,
+                demandRevision: () => _pipeline.revision,
                 loadBytes: (token) =>
-                    (widget.mediaBytesLoader ?? _loadMediaBytes)(asset, token),
+                    _pipeline.loadBytes(asset, token),
                 playback: _playback,
-                downloadSession: _downloads.get(
-                  readerPageDownloadId(widget.chapter, asset),
-                ),
+                pageStream: _pipeline.pageStream(asset),
                 reportPlaybackCapability: (supported) =>
                     _reportPlaybackCapability(asset, supported),
                 reportDimensions: (width, height) =>
@@ -1275,10 +890,10 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
           children: <Widget>[
             ReaderView(
               controller: reader,
-              clock: _clock,
-              traceSink: _trace,
+              clock: _pipeline.clock,
+              traceSink: _pipeline.trace,
               pageBuilder: pageBuilder,
-              demandRevision: () => _binding?.revision ?? 0,
+              demandRevision: () => _pipeline.revision,
               onTap: _toggleControls,
               verticalStitch: _settings.effectiveVerticalStitch,
               pageAspectRatios: _pageAspectRatios,
@@ -1336,22 +951,6 @@ bool _sameChapterSession(ChapterManifest left, ChapterManifest right) {
         a.byteLength != b.byteLength ||
         a.contentKindHint != b.contentKindHint ||
         a.animatedHint != b.animatedHint) {
-      return false;
-    }
-  }
-  return true;
-}
-
-bool _sameLoaderSources(
-  Map<Uri, LoaderTransportSource> left,
-  Map<Uri, LoaderTransportSource> right,
-) {
-  if (left.length != right.length) {
-    return false;
-  }
-  for (final entry in left.entries) {
-    final candidate = right[entry.key];
-    if (candidate == null || candidate.revision != entry.value.revision) {
       return false;
     }
   }

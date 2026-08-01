@@ -1128,10 +1128,11 @@ final class _DemoHomeState extends State<DemoHome> {
             : _coverLoaderForComic(comic),
         loadTargetCover: manifest.comic.coverUri == null
             ? null
-            : () => loadCachedSourceImage(
-                  request.source,
-                  manifest.comic.coverUri!,
+            : () => _sourceResources.loadArtworkBytes(
+                  cache: _cacheCoordinator.responses,
+                  sourceId: request.source.sourceId,
                   comicId: manifest.comic.comicId,
+                  uri: manifest.comic.coverUri!,
                 ),
       );
       if (!confirmed) {
@@ -1372,6 +1373,18 @@ final class _DemoHomeState extends State<DemoHome> {
     );
   }
 
+  Future<Uint8List> _loadSourceBrowseCover(
+    BrowsableComicSource source,
+    SourceComicSummary comic,
+    Uri uri,
+  ) =>
+      _sourceResources.loadArtworkBytes(
+        cache: _cacheCoordinator.responses,
+        sourceId: source.sourceId,
+        comicId: comic.comicId,
+        uri: uri,
+      );
+
   Future<Uint8List> _loadDetailsCover({
     required String sourceId,
     required String comicId,
@@ -1396,10 +1409,11 @@ final class _DemoHomeState extends State<DemoHome> {
     if (source != null &&
         uri != null &&
         (uri.scheme == 'http' || uri.scheme == 'https')) {
-      return loadCachedSourceImage(
-        source,
-        uri,
+      return _sourceResources.loadArtworkBytes(
+        cache: _cacheCoordinator.responses,
+        sourceId: source.sourceId,
         comicId: comicId,
+        uri: uri,
         revision: revision,
       );
     }
@@ -1444,10 +1458,11 @@ final class _DemoHomeState extends State<DemoHome> {
     if (source != null &&
         uri != null &&
         (uri.scheme == 'http' || uri.scheme == 'https')) {
-      return loadCachedSourceImageSource(
-        source,
-        uri,
+      return _sourceResources.loadArtworkSource(
+        cache: _cacheCoordinator.responses,
+        sourceId: source.sourceId,
         comicId: comicId,
+        uri: uri,
         revision: revision,
       );
     }

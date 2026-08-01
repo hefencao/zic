@@ -77,17 +77,17 @@ def main() -> None:
         "final existing = _resourceLoads[uri]",
     )
     require(
-        "packages/reader_runtime/lib/src/reader_runtime_screen.dart",
-        "readerPipelineProfileFor(widget.chapter)",
-        "retry: _pipelineProfile.retry",
-        "NetLane(maxActive: _pipelineProfile.networkConcurrency)",
-        "DecodeLane(maxActive: _pipelineProfile.decodeConcurrency)",
-        "UploadLane(maxActive: _pipelineProfile.uploadConcurrency)",
-        "windowResolver: _pipelineProfile.windowResolver",
-        "policyGuard: _pipelineProfile.guard",
+        "packages/pipeline_runtime/lib/src/pipeline_reader_session.dart",
+        "readerPipelineProfileFor(chapter)",
+        "retry: _profile.retry",
+        "NetLane(maxActive: _profile.networkConcurrency)",
+        "DecodeLane(maxActive: _profile.decodeConcurrency)",
+        "UploadLane(maxActive: _profile.uploadConcurrency)",
+        "windowResolver: _profile.windowResolver",
+        "policyGuard: _profile.guard",
     )
     require(
-        "packages/reader_runtime/lib/src/reader_pipeline_profile.dart",
+        "packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart",
         "ReaderPipelineProfile.sourceStreaming",
         "forwardEncodedPages: 7",
         "backwardEncodedPages: 3",
@@ -97,7 +97,7 @@ def main() -> None:
         "uploadConcurrency: 2",
     )
     reject(
-        "packages/reader_runtime/lib/src/reader_runtime_screen.dart",
+        "packages/pipeline_runtime/lib/src/pipeline_reader_session.dart",
         "RetryPolicy(maxAttempts: 1)",
         "forwardEncodedPages: 0",
         "backwardEncodedPages: 0",
@@ -106,11 +106,13 @@ def main() -> None:
     require(
         "packages/downloads/lib/src/source_resource_transport.dart",
         "ExternalPluginResourceTransportPool",
-        "Map<BrowsableComicSource, _SourceResourceTransport>.identity()",
+        "Map<String, _SourceResourceTransport>",
+        "_requestPlanTtl",
+        "_requestPlans",
         "ResolvableComicResourceSource",
         "HttpHeaders.acceptEncodingHeader",
         "response.contentLength",
-        "source.loadResource(uri)",
+        "_source.loadResource(uri)",
     )
     require(
         "packages/downloads/lib/src/chapter_downloads.dart",

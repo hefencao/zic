@@ -9,7 +9,6 @@ import 'dart:ui' as ui;
 import 'package:bridge/bridge.dart';
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
-import 'package:downloads/downloads.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -17,9 +16,9 @@ import 'package:local_media/local_media.dart';
 import 'package:media/media.dart'
     show parseWebpPrefixInfo, webpPrefixDeclaresAnimation;
 import 'package:pipeline/pipeline.dart';
+import 'package:pipeline_runtime/pipeline_runtime.dart';
 import 'package:reader_runtime/reader_runtime.dart';
 import 'package:resource_cache/resource_cache.dart';
-import 'package:sessions/sessions.dart';
 import 'package:storage_bridge/storage_bridge.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:texture_bridge/texture_bridge.dart';

@@ -24,26 +24,35 @@ void main() {
       try {
         await tester.pumpWidget(
           MaterialApp(
-            home: ReaderRuntimeScreen(
+            home: PipelineReaderSessionHost(
               chapter: chapter,
-              artifactCache: store,
-              loaderSources: <Uri, LoaderTransportSource>{
-                id.canonicalUri: LoaderTransportSource(
-                  revision: 'origin-r1',
-                  loadBytes: () async {
-                    originLoads++;
-                    throw StateError('promoted artifact unexpectedly missed');
-                  },
+              factory: PipelineReaderSessionFactory(
+                artifactCache: store,
+                loaderSources: <Uri, LoaderTransportSource>{
+                  id.canonicalUri: LoaderTransportSource(
+                    revision: 'origin-r1',
+                    loadBytes: () async {
+                      originLoads++;
+                      throw StateError(
+                        'promoted artifact unexpectedly missed',
+                      );
+                    },
+                  ),
+                },
+              ),
+              builder: (context, pipeline) => ReaderRuntimeScreen(
+                chapter: chapter,
+                pipeline: pipeline,
+                artifactPageBuilder: (
+                  context,
+                  asset,
+                  reportFirstFrame,
+                  runtime,
+                ) =>
+                    _ArtifactBytesPage(
+                  runtime: runtime,
+                  reportFirstFrame: reportFirstFrame,
                 ),
-              },
-              artifactPageBuilder: (
-                context,
-                asset,
-                reportFirstFrame,
-                runtime,
-              ) => _ArtifactBytesPage(
-                runtime: runtime,
-                reportFirstFrame: reportFirstFrame,
               ),
             ),
           ),

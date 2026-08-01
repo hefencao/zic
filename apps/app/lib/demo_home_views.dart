@@ -95,6 +95,7 @@ extension _DemoHomeViews on _DemoHomeState {
                     onSourceSelected: (sourceId) {
                       _activeSourceId = sourceId;
                     },
+                    loadCover: _loadSourceBrowseCover,
                     onOpenComic: _openSourceComic,
                   )
                 : const SizedBox.shrink(),
