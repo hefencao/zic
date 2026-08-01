@@ -5,7 +5,6 @@ import 'package:telemetry/telemetry.dart';
 
 import 'decode_registry.dart';
 import 'net_lane.dart';
-import 'playback_timer.dart';
 import 'upload_session.dart';
 
 typedef UploadRegistryListener = void Function(
@@ -67,7 +66,7 @@ final class UploadRegistry {
 
   bool hasRunnablePlayback(Iterable<DecodeId> ids) {
     for (final id in ids) {
-      if (_sessions[id]?.playbackState == PlaybackState.running) {
+      if (_sessions[id]?.playbackRunning == true) {
         return true;
       }
     }

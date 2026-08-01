@@ -1,3 +1,13 @@
+## dev.78：Reader 等比输出、页面重入与原始 Trace
+
+- 修复 `pipeline_media_runtime.dart` 漏导入 domain `RendererKind` 与 `UploadRegistry` 越权引用 `PlaybackState` 的编译闭包；Registry 改为只问 session-owned `playbackRunning`。
+- native WebP 将 DecodeId 尺寸改为最大边界，按源 canvas 等比 fit 且不放大小图；decoded/output/Android texture 使用实际尺寸，同 identity 尺寸变化会失败并退休 slot。
+- `DecodeSession` 在 holder 已空且 demand detach 后的下一次进入重建 cursor，修复静态/有限动画滑出窗口再返回只剩 loading；普通 EOF 和有限 loop 语义未改。
+- 删除详情页对所有未知页数章节的正文 preflight；未知页数继续显示待加载，目标打开/下载才解析正文。目标 manifest 写入后不再同步全库 reload，已读写入改由统一导航 owner 非阻塞提交。
+- Debug Trace 增加独立有界 raw export ring；UI projection 仍小且可合并。复制、文件导出和会话过滤使用 raw ring，显示 raw dropped，保存失败不再静默。
+- 新增 decode replay、fitted upload、无 page-count preflight、raw copy/export Widget 回归与 dev.78 静态门禁。既定 Pipeline 窗口和 lane 未修改。
+- 当前环境没有 Flutter/Dart SDK、Cargo 与 Android Gradle wrapper；相关 analyzer/测试/build 必须在具备工具链的环境复验。
+
 ## dev.77：Pipeline 媒体运行时原子迁移
 
 - 新增 `PipelineMediaRuntimeFactory`/`PipelineMediaRuntime` 原子能力和 `pipeline_native` 平台 composition package；App 注入，Pipeline session 创建并关闭，核心不反向依赖 bridge。
@@ -133,7 +143,7 @@ App 的 source-resource loader 与 `plugin_host` runtime adapter 都拒绝旧 Ve
 - 持久章节下载在 `downloads` 内选择 transport。普通 file/http(s) 继续使用 `IoTransport`；Mihon/Venera 私有 URI 通过 composition 注入的 `ChapterResourceLoader` 调用对应 `BrowsableComicSource.loadResource`，详情页不拥有网络或下载分流。
 - Reader 的同步 session snapshot 不再在 Widget build 中直接更新 transfer notifier；同一帧内只保留最新进度并在 post-frame 发布。
 - Venera 与 Mihon 页面输出 WebP/GIF 等内容提示，Venera 默认补浏览器 UA 并使用逐跳 Cookie 的 8 跳有限重定向；媒体字节嗅探仍为最终格式判定。
-- Mihon 封面统一为保留 source headers 的 opaque resource。未知章节页数由详情页最多两路并发渐进预检并写回当前 manifest；缓存层合并相同 `loadChapter`，打开/下载不会重复请求。
+- Mihon 封面统一为保留 source headers 的 opaque resource。该版本曾让详情页并发预检未知章节页数；普通章节预检已由 dev.78 / ADR 0062 删除，只有 synthetic gallery 非空验证保留。
 - Mihon gallery 兜底允许在目录 API 报错或返回空时继续做 synthetic page preflight；只有非空正文可进入协议，目录与正文都失败时返回包含原始目录根因的诊断。
 
 ## 0.31.0-dev.62：漫画源管理投影与 Mihon 章节结果闭环

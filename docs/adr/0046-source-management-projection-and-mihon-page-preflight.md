@@ -2,6 +2,8 @@
 
 Status: Accepted in `0.31.0-dev.62`.
 
+The source-management and synthetic-gallery validation decisions remain active. Any later use of ordinary chapter-body loading to fill unknown page-count labels was superseded by ADR 0062.
+
 ## Context
 
 The dev.61 external-plugin screen interpreted “installed / repository” as two

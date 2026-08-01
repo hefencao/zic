@@ -74,8 +74,11 @@ for token in ('pageStream', 'PipelinePageStream', '_startStreamingNative(', '_wa
 
 for token in ('_userPaused', '_viewportFrozen', 'void setPlayback(', '_syncPlaybackPause(', '_notifySnapshot()'):
     require(sessions, token, 'Pipeline playback/output lifecycle')
-for token in ('_playbackPaused', '_playbackSpeed', '..setPlayback(', 'session.setPlayback(', 'hasRunnablePlayback', 'PlaybackState.running'):
+for token in ('_playbackPaused', '_playbackSpeed', '..setPlayback(', 'session.setPlayback(', 'hasRunnablePlayback', 'playbackRunning'):
     require(upload_registry, token, 'registry-owned atomic playback command')
+for token in ('PlaybackState.running', 'playbackState =='):
+    forbid(upload_registry, token, 'registry playback timer enum leak')
+require(sessions, 'bool get playbackRunning', 'session-owned playback state projection')
 for token in ('required double Function() playbackSpeed', 'required bool Function() playbackPaused'):
     forbid(output, token, 'Presentation-owned playback closure')
 require(media_player, '_schedulePipelineOutputFirstFrame(', 'post-frame first-output readiness')

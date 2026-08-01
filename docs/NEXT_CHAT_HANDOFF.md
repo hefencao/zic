@@ -4,27 +4,24 @@
 
 Use only:
 
-`zic_v0.31.0-dev.77_atomic-pipeline-media-runtime.zip`
+`zic_v0.31.0-dev.78_reader-output-replay-diagnostics.zip`
 
-Do not merge dev.65–76 candidates, overlays or remembered source trees. Mihon and VibeVenera references remain read-only.
+Do not merge dev.65–77 candidates, overlays or remembered source trees. Mihon and VibeVenera references remain read-only. The user-provided libwebp 1.6.0 archive is a validation/dependency source, not a ZIC source overlay.
 
-## Completed in dev.77
+## Completed in dev.78
 
-- Replaced source-only composition with one App-injected `PipelineMediaRuntimeFactory`; each Reader session owns one atomically matched source/cursor/uploader/output/renderer runtime.
-- Added `pipeline_native`; `pipeline_runtime` has no bridge/texture dependency.
-- Wired production DecodeRegistry/UploadRegistry into LiveCoordinator without changing +7/-3, +2/-1, current/transition or 5/3/2.
-- Removed `PipelinePageStream.source` and all Reader Presentation streaming-cursor/texture use.
-- Added read-only `PipelinePageOutputStream` and opaque `PipelinePageSurface`; no `DecodeId`, texture ID/native handle/output claim crosses into Presentation.
-- Routed Reader pause/speed and animation due-frame advance through Pipeline ownership.
-- Added per-DecodeId, frame-claim-safe Android texture retirement and runtime close drain.
-- Migrated the App media Pipeline demo and tests in the same API closure; no compatibility parameter remains.
-- Added ADR 0061, dev.77 audit/static gate and owner tests. Built the user-supplied libwebp 1.6.0 source and passed host incremental/loop checks.
+- Closed the reported `RendererKind` import and `PlaybackState` registry compile gaps at their owning packages.
+- Changed native WebP target dimensions from an exact stretch rectangle to no-upscale aspect-preserving maximum bounds; upload and Android textures use actual fitted frame dimensions.
+- Added demand-detach replay: an empty WebP holder recreates its ended cursor when the page returns, while ordinary EOF/finite-loop semantics remain unchanged.
+- Removed details-page all-chapter page-count body preflight, removed the target-manifest full-library reload, and moved durable read-state persistence off the synchronous Reader navigation path.
+- Split Debug Trace into a small coalesced UI ring and a larger bounded raw export ring; copy/file export use raw events and file-save errors are visible.
+- Added ADR 0062, dev.78 audit/static gate and owner regressions. Preserved +7/-3, +2/-1, current/transition and 5/3/2.
 
 ## Next validation
 
-1. Run `flutter analyze`, all package tests including `pipeline_native`, App tests and Android debug/release or kernel snapshot.
-2. On Android, verify current and transition WebP surfaces appear without reverting to complete-byte decode, and target replacement keeps the old surface until the new one is ready.
-3. Exercise animated WebP pause, resume and 0.25–4x speed; correlate due-frame, upload and first-frame telemetry.
-4. Enter/exit long chapters while watching texture/GPU memory; evicted DecodeIds must retire after the final page-output claim, not accumulate until chapter exit.
-5. Repeat immediate Reader exit during create/present and confirm runtime close drains pending texture leases without late callbacks or post-exit receiving.
-6. Design non-WebP complete-artifact output unification separately; do not restore `PipelinePageStream.source`, direct Reader cursor creation or a second WebP decoder.
+1. Run `flutter analyze`, all package tests including sessions/pipeline_native/local_media_ui/reader_runtime, and App Widget tests.
+2. Build Android debug/release or at least kernel snapshot.
+3. On Android, open representative wide, tall and small WebP pages and verify actual geometry is not stretched or cropped.
+4. Scroll affected static/finite WebP pages out of the decode/upload window and back; they must replay a first frame without texture accumulation.
+5. Measure chapter-tap-to-route and route-to-first-frame separately after removing page-count preflight.
+6. Export a long Reader trace through Android's document provider; verify raw download/decode/upload/error context and raw-drop count.

@@ -1,3 +1,14 @@
+## dev.78 Reader 输出几何、重入与诊断所有权
+
+- `DecodeId.physicalWidth/physicalHeight` 是 decode 最大物理边界，不是强制输出尺寸。`pipeline_native` 的 WebP cursor 读取源 canvas 后在边界内等比 fit，禁止独立拉伸 X/Y，也不对小图强制放大。
+- decoded frame 与 `OutputFrame` 携带实际 fitted 宽高；Android texture 以实际 frame 尺寸创建。同一 `DecodeId` 后续帧尺寸必须稳定，变化时退休 slot 并失败，不能复用错误纹理。
+- `DecodeSession` 继续拥有 cursor/holder。detach 后只有在 holder 已空的下一次 demand 才重建 cursor；普通 EOF 不自动 rewind，finite loop 语义不变。
+- 漫画详情页不再为了页数标签遍历 `loadChapter`。未知页数属于 catalog 元数据缺失，显示“页数待加载”；正文只由目标打开/下载路径请求。
+- Reader 导航 owner 非阻塞提交已读持久化，详情页只做乐观只读投影，不建立第二个持久化权威来源。
+- `DebugTraceLog` 原子拥有两个有界平面：最多 500 条、可合并的 UI projection，以及默认最多 20000 条、不合并的 raw export ring。复制、文件导出和 session filter 使用 raw ring；导出文件能力注入 Debug 页面并显式报告失败。
+- 编译边界补齐：`pipeline_runtime` 显式导入 domain-owned `RendererKind`；`UploadRegistry` 只消费 `UploadSession.playbackRunning`，不认识 `PlaybackState`。
+- ADR 0062 补充 ADR 0061。+7/-3、+2/-1、current/transition 与 5/3/2 不变。
+
 ## dev.77 Pipeline 媒体运行时原子所有权
 
 - App composition 只注入一个 `PipelineMediaRuntimeFactory`；每个 `PipelineReaderSession` 从中创建一个 owned runtime，原子绑定 `SourceFactory`、`CursorFactory`、`FrameUploader`、`PipelineOutputProjector` 与 `RendererKind`。
@@ -158,7 +169,7 @@ ArtifactCacheStore.read(exact DownloadId)
 - Mihon chapter discovery: a combined detail result with no chapters is not authoritative emptiness. The driver probes detailed/original manga objects through compatible public or inherited chapter-list APIs and adapts Future, RxJava 1 and RxJava 2/3 blocking results. Empty/unsupported candidates continue probing, but real failures are aggregated and returned. A gallery chapter is synthesized only after the complete catalog is empty and a non-empty page list has been preflighted; its detail row carries the verified page count.
 - External media hints and covers: Mihon cover locators are normalized into source-owned resources with source headers; Mihon/Venera page messages may carry WebP/GIF/etc. hints, but byte sniffing and codec validation remain authoritative. Unknown opaque tokens are not guessed.
 - Venera HTTP compatibility: the sandbox bridge supplies the bounded WebView user agent when a source omits one and owns at most eight redirect hops. Cookies are committed after every hop, relative locations are resolved, and credentials are stripped across origins; URLConnection and DNS-fallback OkHttp do not auto-follow independently.
-- Progressive Mihon page metadata: catalog `pageCount == 0` means unknown. Remote details may preflight up to two chapters concurrently through the cached source adapter and replace the current manifest with resolved counts; this is metadata projection only and creates no alternate page-byte cache.
+- Mihon page metadata: catalog `pageCount == 0` means unknown. Remote details display that unknown state and MUST NOT load ordinary chapter bodies only to resolve labels. A synthetic gallery may still validate one non-empty page list only after every real catalog path is authoritatively empty.
 - Reader transfer publication: synchronous DownloadSession snapshots are coalesced and published after the current build frame, so Presentation observes progress without mutating a notifier during build.
 - Source-management projection: installed plugin records and enabled source instances are separate views. The root page groups enabled sources into Native/Mihon/Venera sections and folds Mihon language variants there. Each ecosystem installation page switches between Installed and Repository tabs; device Mihon discovery exists only in Installed and has independent refresh/error state.
 - Non-blocking durable composition: `_BootstrapApp` mounts an in-memory usable app first, opens durable library/cache/download services asynchronously, and swaps composition after readiness. Home restoration is represented by a non-modal top sync indicator rather than a blocking route.

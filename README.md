@@ -1,3 +1,5 @@
+`0.31.0-dev.78` 以 dev.77 为唯一代码基线，修复原子媒体迁移后的输出几何、需求重入、章节入口竞争和诊断导出闭包。WebP decode 尺寸现在是最大边界：源 canvas 在边界内等比 fit，不再按 viewport 宽高独立拉伸；上传/texture 使用实际 frame 尺寸。静态或有限动画页面在移出窗口、holder 已空后重新进入会由 Pipeline 重建 cursor，不永久保留帧也不把 EOF 改成无限循环。详情页不再为页数标签加载所有章节正文，已读持久化不阻塞路由。Debug Trace 保留小型合并 UI 投影，同时新增较大的有界 raw export ring，复制和 JSONL 导出使用原始事件并报告保存错误。下载、预解码、上传窗口与 5/3/2 lane 均未修改。
+
 # zic
 
 `0.31.0-dev.77` 以 dev.76 为唯一基线，原子收回 Reader WebP 的 source、cursor、decode、upload、动画推进与 texture 生命周期。App 只注入一个 `PipelineMediaRuntimeFactory`，`pipeline_runtime` 创建并关闭 session-owned runtime；Presentation 只消费 `PipelinePageOutputStream` 与 opaque `PipelinePageSurface`，不再取得 `EncodedSource`、textureId 或 native handle。Android texture 按稳定 `DecodeId` 复用，并在最后一个 output claim 释放后退休；surface replacement 会先完成下一帧视觉切换再释放旧 claim。播放配置由 UploadRegistry 原子保存，用户暂停与 viewport freeze 分离，避免异步 present 或解除暂停误唤醒 transition 页；playback ticker 仅在存在 running timer 时运行，静态页和冻结页不再空转。下载 +7/-3、预解码 +2/-1、current/transition 上传与 5/3/2 lane 未改。
@@ -40,7 +42,7 @@ decode/upload registry、frame holder、viewport 播放门控、帧字节预算�
 `0.31.0-dev.57` 关闭真机反馈中的一组运行时缺口：Mihon APK 在 dex 加载前以同目录原子流程提升为只读文件；Venera 同时兼容 `load/loadNext`、直接 HTTP(S) 封面资源、方向别名和类级 source key，且响应头适配同时接受 Android nullable 与 OkHttp non-null multimap。
 `0.31.0-dev.61` 继续以 dev.60 为唯一基线：Reader 会话装配已从 App Presentation 迁入 `packages/reader_runtime`，本地图片/WebP UI 迁入并拆分到 `packages/local_media_ui`，修复 `SourcePool` 与 WebP 前缀探测符号遗漏，同时降低 App 对 pipeline/session/storage/transport 的直接耦合。dev.61 曾尝试双栏插件管理与仓库语言折叠；该信息架构已由 dev.62 明确替代。
 `0.31.0-dev.62` 修正外部插件信息架构：漫画源管理中的启用来源按原生、Mihon、Venera 分区，Mihon 语言变体在这里折叠；Mihon/Venera 独立页面改为顶部“已安装/仓库”页签，设备扩展扫描归属 Mihon 已安装页。Mihon runtime 同时修复 reactive 返回值解包、空结果吞错和 synthetic gallery 0 页问题；未知远程页数显示为待加载。
-`0.31.0-dev.63` 收口插件媒体兼容链路：Venera/Mihon 页面携带 WebP/动画提示并仍由字节嗅探最终裁决；插件私有资源 URI 通过 `downloads` 注入式 source transport 进入持久下载；Mihon 未知页数在详情页受控预检后渐进更新，空目录但可读取正文的 gallery 允许经真实页面预检生成单章；重复图片 URL 不再冒充页面身份。Venera 网络桥改为逐跳 Cookie 的有限手动重定向。
+`0.31.0-dev.63` 收口插件媒体兼容链路：Venera/Mihon 页面携带 WebP/动画提示并仍由字节嗅探最终裁决；插件私有资源 URI 通过 `downloads` 注入式 source transport 进入持久下载；Mihon 未知页数当时在详情页受控预检后渐进更新（该普通章节预检已由 dev.78 / ADR 0062 撤销），空目录但可读取正文的 gallery 允许经真实页面预检生成单章；重复图片 URL 不再冒充页面身份。Venera 网络桥改为逐跳 Cookie 的有限手动重定向。
 `0.31.0-dev.64` 修复 dev.63 的两个 Dart 编译阻断，并新增第四根导航“杂项”、分层设置、可执行数据备份/缓存维护与有界 Debug trace；偏好持久化通过 `storage_bridge` 注入，设置页不取得 Reader、下载、缓存或插件资源所有权。
 `0.31.0-dev.65` 修复 Mihon Android bridge 的 `Locale` 导入，并把 Venera 章节页从运行时内存 token 改为受约束、可持久恢复的自描述资源定位符；Reader 新增全局与每漫画方向/自适应/纵向拼接设置，纵向模式使用按页面比例的连续列表，RTL 页码滑杆与分页方向一致。Debug trace 通知改为帧后合并，避免观察面板在 Reader build 中触发重建。
 

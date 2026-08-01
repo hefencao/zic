@@ -21,10 +21,34 @@ const debugTraceLevelFilterKey =
 
 enum _TraceLevelFilter { all, normal, activity, warning, error }
 
+typedef DebugTraceFileExporter = Future<String?> Function({
+  required String suggestedName,
+  required Uint8List bytes,
+});
+
+Future<String?> exportDebugTraceFile({
+  required String suggestedName,
+  required Uint8List bytes,
+}) async {
+  final location = await getSaveLocation(suggestedName: suggestedName);
+  if (location == null) return null;
+  await XFile.fromData(
+    bytes,
+    mimeType: 'application/x-ndjson',
+    name: suggestedName,
+  ).saveTo(location.path);
+  return location.path;
+}
+
 final class DebugTraceScreen extends StatefulWidget {
-  const DebugTraceScreen({required this.log, super.key});
+  const DebugTraceScreen({
+    required this.log,
+    this.exportFile,
+    super.key,
+  });
 
   final DebugTraceLog log;
+  final DebugTraceFileExporter? exportFile;
 
   @override
   State<DebugTraceScreen> createState() => _DebugTraceScreenState();
@@ -37,9 +61,9 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
 
   DebugTraceLog get log => widget.log;
 
-  List<TraceEvent> _filteredEvents() {
+  List<TraceEvent> _filteredEvents(Iterable<TraceEvent> source) {
     final query = _query.trim().toLowerCase();
-    return log.events.where((event) {
+    return source.where((event) {
       if (_sessionId != null && event.sessionId != _sessionId) return false;
       final level = traceHighlightLevel(event);
       final levelMatches = switch (_level) {
@@ -58,36 +82,39 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
   }
 
   Future<void> _copyFiltered() async {
-    final text = _filteredEvents()
-        .map((event) => event.toJsonLine())
-        .join('\n');
+    final events = _filteredEvents(log.exportEvents);
+    final text = events.map((event) => event.toJsonLine()).join('\n');
     await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('已复制当前筛选结果')),
+      SnackBar(content: Text('已复制 ${events.length} 条原始 Trace')),
     );
   }
 
   Future<void> _exportFiltered() async {
-    final events = _filteredEvents();
+    final events = _filteredEvents(log.exportEvents);
     final stamp = DateTime.now()
         .toUtc()
         .toIso8601String()
         .replaceAll(':', '-')
         .split('.').first;
     final name = 'zic-debug-trace-$stamp.jsonl';
-    final location = await getSaveLocation(suggestedName: name);
-    if (location == null) return;
     final text = events.map((event) => event.toJsonLine()).join('\n');
-    await XFile.fromData(
-      Uint8List.fromList(utf8.encode(text)),
-      mimeType: 'application/x-ndjson',
-      name: name,
-    ).saveTo(location.path);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已导出 ${events.length} 条 Trace')),
-    );
+    try {
+      final path = await (widget.exportFile ?? exportDebugTraceFile)(
+        suggestedName: name,
+        bytes: Uint8List.fromList(utf8.encode(text)),
+      );
+      if (!mounted || path == null) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已导出 ${events.length} 条原始 Trace')),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Trace 导出失败：$error')),
+      );
+    }
   }
 
   @override
@@ -99,13 +126,13 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
         actions: <Widget>[
           IconButton(
             key: debugTraceCopyKey,
-            tooltip: '复制筛选结果',
+            tooltip: '复制原始筛选结果',
             onPressed: () => unawaited(_copyFiltered()),
             icon: const Icon(Icons.copy_all_outlined),
           ),
           IconButton(
             key: debugTraceExportKey,
-            tooltip: '导出筛选结果',
+            tooltip: '导出原始筛选结果',
             onPressed: () => unawaited(_exportFiltered()),
             icon: const Icon(Icons.file_download_outlined),
           ),
@@ -124,7 +151,9 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
           if (_sessionId != null && !sessions.contains(_sessionId)) {
             _sessionId = null;
           }
-          final events = _filteredEvents().reversed.toList(growable: false);
+          final events = _filteredEvents(log.events)
+              .reversed
+              .toList(growable: false);
           return Column(
             children: <Widget>[
               Padding(
@@ -204,8 +233,10 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
                   alignment: Alignment.centerLeft,
                   child: Text(
                     '显示 ${events.length}/${log.events.length} 条 · '
-                    '原始 ${log.recordedCount} 条 · '
-                    '合并 ${log.coalescedCount} 条高频事件',
+                    '导出缓冲 ${log.exportEvents.length} 条 · '
+                    '累计 ${log.recordedCount} 条 · '
+                    '合并 ${log.coalescedCount} 条 · '
+                    '导出丢弃 ${log.exportDroppedCount} 条',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ),

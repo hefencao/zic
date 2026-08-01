@@ -154,7 +154,7 @@ final class MiscPage extends StatelessWidget {
                   animation: debugTrace,
                   builder: (context, _) => Text(
                     debugTrace.enabled
-                        ? '${debugTrace.events.length} 条事件（原始 ${debugTrace.recordedCount}）'
+                        ? '${debugTrace.events.length} 条显示 · ${debugTrace.exportEvents.length} 条可导出'
                         : '记录已关闭',
                   ),
                 ),

@@ -24,14 +24,19 @@ TraceHighlightLevel traceHighlightLevel(TraceEvent event) =>
       _ => TraceHighlightLevel.normal,
     };
 
-/// Bounded, compact UI projection of trace events.
+/// Bounded trace owner with separate raw-export and compact UI projections.
 ///
-/// Producers and durable telemetry keep every event. This read model only
-/// coalesces consecutive high-frequency lifecycle events so opening a long
-/// continuous chapter does not make the debug surface unusable.
+/// The raw ring preserves event order for diagnostics while the smaller UI
+/// projection coalesces consecutive lifecycle bursts. Both rings are bounded;
+/// producers must continue to emit token hashes and byte-length summaries
+/// rather than complete plugin credentials or Base64 payloads.
 final class DebugTraceLog extends ChangeNotifier implements TraceSink {
-  DebugTraceLog({this.maxEvents = 500, bool enabled = true})
-      : assert(maxEvents > 0),
+  DebugTraceLog({
+    this.maxEvents = 500,
+    this.maxExportEvents = 20000,
+    bool enabled = true,
+  })  : assert(maxEvents > 0),
+        assert(maxExportEvents >= maxEvents),
         _enabled = enabled;
 
   static const int _coalesceWindowMicros = 250000;
@@ -46,19 +51,25 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
   };
 
   final int maxEvents;
+  final int maxExportEvents;
   final List<TraceEvent> _events = <TraceEvent>[];
+  final List<TraceEvent> _exportEvents = <TraceEvent>[];
   bool _enabled;
   bool _disposed = false;
   bool _notificationScheduled = false;
   int _recordedCount = 0;
   int _coalescedCount = 0;
+  int _exportDroppedCount = 0;
 
   bool get enabled => _enabled;
   int get recordedCount => _recordedCount;
   int get coalescedCount => _coalescedCount;
+  int get exportDroppedCount => _exportDroppedCount;
   List<TraceEvent> get events => List<TraceEvent>.unmodifiable(_events);
+  List<TraceEvent> get exportEvents =>
+      List<TraceEvent>.unmodifiable(_exportEvents);
   Set<String> get sessionIds => Set<String>.unmodifiable(
-        _events.map((event) => event.sessionId),
+        _exportEvents.map((event) => event.sessionId),
       );
 
   set enabled(bool value) {
@@ -71,6 +82,12 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
   void record(TraceEvent event) {
     if (_disposed || !_enabled) return;
     _recordedCount++;
+    _exportEvents.add(event);
+    final exportOverflow = _exportEvents.length - maxExportEvents;
+    if (exportOverflow > 0) {
+      _exportEvents.removeRange(0, exportOverflow);
+      _exportDroppedCount += exportOverflow;
+    }
     if (_tryCoalesce(event)) {
       _coalescedCount++;
     } else {
@@ -119,10 +136,15 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
   }
 
   void clear() {
-    if (_disposed || (_events.isEmpty && _recordedCount == 0)) return;
+    if (_disposed ||
+        (_events.isEmpty && _exportEvents.isEmpty && _recordedCount == 0)) {
+      return;
+    }
     _events.clear();
+    _exportEvents.clear();
     _recordedCount = 0;
     _coalescedCount = 0;
+    _exportDroppedCount = 0;
     _scheduleNotification();
   }
 

@@ -600,7 +600,6 @@ final class _DemoHomeState extends State<DemoHome> {
     if (entry == null) {
       throw StateError('漫画章节写入后无法重新读取：${record.chapterId}');
     }
-    await _reloadLibrary();
     return entry;
   }
 
@@ -674,6 +673,21 @@ final class _DemoHomeState extends State<DemoHome> {
     );
     await _library.saveChapterReadState(state);
     _librarySession.replaceReadState(state);
+  }
+
+  Future<void> _markChapterReadForNavigation(
+    ImportedLibraryEntry entry,
+  ) async {
+    try {
+      await _setChapterRead(entry, true);
+    } on Object catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('已进入 Reader，但已读状态保存失败：$error')),
+      );
+    }
   }
 
   Future<void> _importWebp() async {
@@ -765,7 +779,6 @@ final class _DemoHomeState extends State<DemoHome> {
         'Venera 章节仍包含已失效的运行时资源定位符，已阻止进入 Reader',
       );
     }
-    await _setChapterRead(current, true);
     if (!mounted) {
       return;
     }
@@ -791,6 +804,7 @@ final class _DemoHomeState extends State<DemoHome> {
                 Uri.parse(page.sourceId),
               ),
           };
+    unawaited(_markChapterReadForNavigation(current));
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) {

@@ -1,3 +1,12 @@
+## 0.31.0-dev.78：修复 Reader 等比输出、页面重入与原始 Trace 导出
+
+- 补齐 `RendererKind` 显式 domain 导入；`UploadRegistry` 不再越权读取 `PlaybackState`，改用 `UploadSession.playbackRunning`。
+- native WebP 将 decode target 解释为最大边界，按源 canvas 等比缩小且不强制放大；上传和 Android texture 使用实际 frame 尺寸，消除纵向压缩/拉伸。
+- WebP 页面移出 demand 且 holder 为空后，再次进入会重建 cursor 并恢复首帧；不通过永久保留纹理或每次 EOF rewind 制造无限循环。
+- 删除详情页自动遍历所有章节正文的页数预检，未知页数保持待加载；目标 manifest 写入后不再同步全库 reload，已读持久化也从进入 Reader 的同步路径移除。
+- Debug Trace 拆分 UI projection 与最多 20000 条的 raw export ring；复制/文件导出使用原始事件，导出 capability 可测试并显示平台保存失败。
+- 新增 fitted decode/upload、detach replay、章节不预取正文、raw trace copy/export 与 dev.78 所有权门禁。+7/-3、+2/-1、current/transition、5/3/2 未改变。
+
 ## 0.31.0-dev.77：Pipeline 媒体运行时原子迁移
 
 - 新增原子 `PipelineMediaRuntimeFactory`/`PipelineMediaRuntime`，一次绑定 source、cursor、uploader、opaque output projector 与 renderer；每个 Reader session 创建并按依赖顺序关闭一个 runtime。
@@ -151,9 +160,9 @@
 - Venera 章节页根据原始资源名提供 WebP/GIF/PNG/JPEG/AVIF 提示，本地媒体名也补齐常见格式识别；提示只用于快速选择，实际字节嗅探和 codec 仍是最终裁决。
 - Venera native HTTP 默认继承受限 WebView 浏览器 UA，并改为最多 8 跳的宿主管理重定向：逐跳接收 Cookie、支持相对 `Location`、跨 origin 清理 Cookie/Authorization，URLConnection 与 DNS fallback 均禁用内部自动重定向。
 - Mihon 封面被归一化为保留来源 headers 的 `mihon:resource:`；相对与 protocol-relative thumbnail 可通过统一 source loader 显示。页面资源同时携带媒体类型提示。
-- Mihon 详情中的未知页数以最多两个并发 worker 渐进预检并复用 `CachedBrowsableComicSource` 的章节结果；成功后同时更新目录总页数与章节行，失败显示明确状态。
+- Mihon 详情中的未知页数当时以最多两个并发 worker 渐进预检并复用 `CachedBrowsableComicSource`；该普通章节正文预检已由 dev.78 / ADR 0062 撤销，synthetic gallery 的非空正文验证仍保留。
 - Mihon 目录调用失败或为空时不再立即终止：只有 synthetic 章节真实解析出非空页面才接受 gallery 兜底；目录与页面均失败时保留原始目录失败为 suppressed 诊断。
-- 新增重复资源 URI、插件私有持久下载、Mihon 页数预检、Venera WebP/UA/重定向及 Mihon gallery/封面契约回归。
+- 新增重复资源 URI、插件私有持久下载、当时的 Mihon 页数预检、Venera WebP/UA/重定向及 Mihon gallery/封面契约回归；普通章节页数预检后由 dev.78 替代。
 
 ## 0.31.0-dev.62：漫画源分类、插件页签与 Mihon 章节结果闭环
 

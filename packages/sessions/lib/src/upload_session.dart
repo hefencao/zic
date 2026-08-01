@@ -103,6 +103,7 @@ final class UploadSession {
   int get outputBytes =>
       _slot == null || _slot!.frame.disposed ? 0 : _slot!.frame.byteLength;
   PlaybackState get playbackState => _playback.state;
+  bool get playbackRunning => _playback.state == PlaybackState.running;
 
   void addSnapshotListener(
     UploadSnapshotListener listener, {
@@ -173,8 +174,12 @@ final class UploadSession {
           message: 'uploader returned a frame for the wrong identity or epoch',
         );
       }
-      if (candidate.width != id.physicalWidth ||
-          candidate.height != id.physicalHeight ||
+      if (candidate.width != claim.frame.width ||
+          candidate.height != claim.frame.height ||
+          candidate.width <= 0 ||
+          candidate.height <= 0 ||
+          candidate.width > id.physicalWidth ||
+          candidate.height > id.physicalHeight ||
           candidate.renderer != id.renderer) {
         candidate.dispose();
         throw const Failure(

@@ -105,6 +105,68 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('accepts an aspect-fitted output inside DecodeId bounds', () async {
+    final temp = await Directory.systemTemp.createTemp('upload_fit_test_');
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: _CursorFactory(width: 4, height: 8),
+      clock: _Clock(),
+    );
+    await decode.fill(
+      demand: const DecodeDemand(
+        role: PageRole.current,
+        priority: 1000,
+        targetWatermark: 1,
+        reason: 'fit',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    final upload = UploadSession(
+      id: decode.id,
+      decode: decode,
+      uploader: _Uploader(),
+      clock: _Clock(),
+    );
+
+    final ready = await upload.prepare(
+      demand: const UploadDemand(
+        role: PageRole.current,
+        priority: 1000,
+        reason: 'fit',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+
+    expect(ready.state, UploadState.ready);
+    expect(upload.frame?.width, 4);
+    expect(upload.frame?.height, 8);
+
+    upload.dispose();
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
   test('stale uploaded output is disposed and never replaces current state', () async {
     final temp = await Directory.systemTemp.createTemp('upload_stale_test_');
     final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
@@ -251,6 +313,10 @@ final class _Source implements EncodedSource {
 }
 
 final class _CursorFactory implements CursorFactory {
+  _CursorFactory({this.width = 8, this.height = 8});
+
+  final int width;
+  final int height;
   final List<_Frame> frames = <_Frame>[];
 
   @override
@@ -258,20 +324,29 @@ final class _CursorFactory implements CursorFactory {
     required DecodeId id,
     required EncodedSource source,
     required int epoch,
-  }) => CursorBinding(frames: _Cursor(epoch, frames));
+  }) => CursorBinding(
+        frames: _Cursor(epoch, frames, width: width, height: height),
+      );
 }
 
 final class _Cursor implements FrameCursor {
-  _Cursor(this.epoch, this.frames);
+  _Cursor(
+    this.epoch,
+    this.frames, {
+    required this.width,
+    required this.height,
+  });
 
   @override
   final int epoch;
   final List<_Frame> frames;
+  final int width;
+  final int height;
   int next = 0;
 
   @override
   Future<CursorStep> decodeNext() async {
-    final frame = _Frame(epoch, next++);
+    final frame = _Frame(epoch, next++, width: width, height: height);
     frames.add(frame);
     return CursorStep.frame(frame);
   }
@@ -281,7 +356,12 @@ final class _Cursor implements FrameCursor {
 }
 
 final class _Frame implements FrameRef {
-  _Frame(this.epoch, this.index);
+  _Frame(
+    this.epoch,
+    this.index, {
+    this.width = 8,
+    this.height = 8,
+  });
 
   @override
   final int epoch;
@@ -292,9 +372,9 @@ final class _Frame implements FrameRef {
   @override
   Duration get duration => const Duration(milliseconds: 16);
   @override
-  int get height => 8;
+  final int width;
   @override
-  int get width => 8;
+  final int height;
   @override
   bool disposed = false;
 
@@ -317,6 +397,8 @@ final class _Uploader implements FrameUploader {
     final output = _Output(
       epoch: frame.epoch + epochOffset,
       index: frame.index,
+      width: frame.width,
+      height: frame.height,
     );
     outputs.add(output);
     return output;
@@ -327,18 +409,23 @@ final class _Uploader implements FrameUploader {
 }
 
 final class _Output implements OutputFrame {
-  _Output({required this.epoch, required this.index});
+  _Output({
+    required this.epoch,
+    required this.index,
+    required this.width,
+    required this.height,
+  });
 
   @override
   final int epoch;
   @override
   final int index;
   @override
-  int get width => 8;
+  final int width;
   @override
-  int get height => 8;
+  final int height;
   @override
-  int get byteLength => 256;
+  int get byteLength => width * height * 4;
   @override
   Duration get duration => const Duration(milliseconds: 16);
   @override

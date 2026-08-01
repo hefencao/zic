@@ -1703,11 +1703,13 @@ def check_compile_regressions() -> None:
         'reloadLibrary(refreshContent:',
         'SelectableText(failure.details)',
         'comicDetailsRetryKey',
-        'await _setRead(entry, true)',
+        '_projectChapterReadState(',
         'Future<EncodedResourceSource>.sync',
     ):
         if required not in details_ui:
             fail(f'local/remote comic details UI is incomplete: {required}')
+    if 'await _setRead(entry, true)' in details_ui:
+        fail('Reader navigation must not await duplicate details read persistence')
     saved_comic = (
         ROOT / 'packages/catalog/lib/src/saved_comic.dart'
     ).read_text(encoding='utf-8')

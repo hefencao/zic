@@ -104,12 +104,23 @@ final class _AndroidTextureUploader implements _NativeFrameUploader {
     final slot = _slots.putIfAbsent(
       id,
       () => _AndroidTextureSlot(
-        _presenter.create(
-          width: id.physicalWidth,
-          height: id.physicalHeight,
+        width: frame.width,
+        height: frame.height,
+        lease: _presenter.create(
+          width: frame.width,
+          height: frame.height,
         ),
       ),
     );
+    if (slot.width != frame.width || slot.height != frame.height) {
+      if (identical(_slots[id], slot)) {
+        _slots.remove(id);
+        _retire(slot);
+      }
+      throw StateError(
+        'decoded frame dimensions changed within one DecodeId',
+      );
+    }
     try {
       final lease = await slot.lease;
       if (_closed || !identical(_slots[id], slot) || slot.retired) {
@@ -170,8 +181,14 @@ final class _AndroidTextureUploader implements _NativeFrameUploader {
 }
 
 final class _AndroidTextureSlot {
-  _AndroidTextureSlot(this.lease);
+  _AndroidTextureSlot({
+    required this.width,
+    required this.height,
+    required this.lease,
+  });
 
+  final int width;
+  final int height;
   final Future<AndroidTextureLease> lease;
   final Completer<void> _released = Completer<void>();
   int _frameOwners = 0;

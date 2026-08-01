@@ -1,13 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:zic/app_preferences.dart';
 import 'package:zic/app_settings_screen.dart';
 import 'package:zic/debug_trace.dart';
+import 'package:zic/debug_trace_screen.dart';
 import 'package:zic/library_backup.dart';
 import 'package:zic/main.dart';
 import 'package:zic/misc_page.dart';
@@ -212,6 +216,113 @@ void main() {
     );
     expect(log.events, hasLength(2));
   });
+  test('debug trace keeps a separate bounded raw export ring', () {
+    final log = DebugTraceLog(maxEvents: 1, maxExportEvents: 3);
+    addTearDown(log.dispose);
+    for (var index = 0; index < 5; index++) {
+      log.record(
+        TraceEvent(
+          monotonicMicros: index,
+          sessionId: index < 2 ? 'old' : 'reader',
+          kind: TraceEventKind.readerObservation,
+          payload: <String, Object?>{'index': index},
+        ),
+      );
+    }
+
+    expect(log.events, hasLength(1));
+    expect(log.exportEvents, hasLength(3));
+    expect(log.exportEvents.map((event) => event.payload['index']), <int>[2, 3, 4]);
+    expect(log.exportDroppedCount, 2);
+    expect(log.sessionIds, <String>{'reader'});
+    log.clear();
+    expect(log.exportEvents, isEmpty);
+    expect(log.exportDroppedCount, 0);
+  });
+
+  testWidgets('debug trace copy uses the raw export ring', (tester) async {
+    final log = DebugTraceLog(maxEvents: 1, maxExportEvents: 10);
+    addTearDown(log.dispose);
+    for (var index = 0; index < 3; index++) {
+      log.record(
+        TraceEvent(
+          monotonicMicros: index,
+          sessionId: 'reader-copy',
+          kind: TraceEventKind.downloadState,
+          payload: <String, Object?>{'index': index},
+        ),
+      );
+    }
+    String? copied;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          final arguments = Map<String, Object?>.from(call.arguments as Map);
+          copied = arguments['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+
+    await tester.pumpWidget(MaterialApp(home: DebugTraceScreen(log: log)));
+    await tester.pump();
+    await tester.tap(find.byKey(debugTraceCopyKey));
+    await tester.pump();
+
+    expect(copied, isNotNull);
+    expect(copied!.split('\n'), hasLength(3));
+    expect(copied, contains('\"index\":0'));
+    expect(copied, contains('\"index\":2'));
+  });
+
+  testWidgets('debug trace file export uses the raw export ring',
+      (tester) async {
+    final log = DebugTraceLog(maxEvents: 1, maxExportEvents: 10);
+    addTearDown(log.dispose);
+    for (var index = 0; index < 3; index++) {
+      log.record(
+        TraceEvent(
+          monotonicMicros: index,
+          sessionId: 'reader-export',
+          kind: TraceEventKind.pageTransition,
+          payload: <String, Object?>{'index': index},
+        ),
+      );
+    }
+    Uint8List? exported;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DebugTraceScreen(
+          log: log,
+          exportFile: ({
+            required String suggestedName,
+            required Uint8List bytes,
+          }) async {
+            expect(suggestedName, endsWith('.jsonl'));
+            exported = bytes;
+            return '/tmp/$suggestedName';
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(debugTraceExportKey));
+    await tester.pump();
+
+    final text = utf8.decode(exported!);
+    expect(text.split('\n'), hasLength(3));
+    expect(text, contains('\"index\":0'));
+    expect(text, contains('\"index\":2'));
+    expect(find.text('已导出 3 条原始 Trace'), findsOneWidget);
+  });
+
   testWidgets('debug trace notifications are deferred past build',
       (tester) async {
     final log = DebugTraceLog(maxEvents: 4);

@@ -118,6 +118,8 @@ struct PreviousFrame {
 }
 
 pub(crate) struct Decoder {
+    max_width: usize,
+    max_height: usize,
     target_width: usize,
     target_height: usize,
     source_width: usize,
@@ -134,8 +136,10 @@ pub(crate) struct Decoder {
 impl Decoder {
     pub(crate) fn new(target_width: u32, target_height: u32) -> Self {
         Self {
-            target_width: target_width as usize,
-            target_height: target_height as usize,
+            max_width: target_width as usize,
+            max_height: target_height as usize,
+            target_width: 0,
+            target_height: 0,
             source_width: 0,
             source_height: 0,
             background: [0; 4],
@@ -228,6 +232,10 @@ impl Decoder {
         {
             return Err(DecodeError::Failed);
         }
+        // Partial demux metadata can report provisional canvas dimensions.
+        // Wait until a complete frame is available before committing decoder
+        // state, so later bytes can refine the container header safely.
+        self.ensure_canvas(demux.0, source_width, source_height)?;
         let target_rect = scale_rect(
             source_rect,
             source_width,
@@ -235,10 +243,6 @@ impl Decoder {
             self.target_width,
             self.target_height,
         )?;
-        // Partial demux metadata can report provisional canvas dimensions.
-        // Wait until a complete frame is available before committing decoder
-        // state, so later bytes can refine the container header safely.
-        self.ensure_canvas(demux.0, source_width, source_height)?;
 
         let fragment_len = rgba_len(source_rect.width, source_rect.height)?;
         if fragment_len > MAX_WORKING_BYTES
@@ -317,6 +321,8 @@ impl Decoder {
     }
 
     pub(crate) fn rewind(&mut self) {
+        self.target_width = 0;
+        self.target_height = 0;
         self.source_width = 0;
         self.source_height = 0;
         self.background = [0; 4];
@@ -339,6 +345,14 @@ impl Decoder {
             }
             return Ok(());
         }
+        let (target_width, target_height) = fit_dimensions(
+            source_width,
+            source_height,
+            self.max_width,
+            self.max_height,
+        )?;
+        self.target_width = target_width;
+        self.target_height = target_height;
         let canvas_len = rgba_len(self.target_width, self.target_height)?;
         if canvas_len > MAX_WORKING_BYTES {
             return Err(DecodeError::Failed);
@@ -391,6 +405,36 @@ fn rgba_len(width: usize, height: usize) -> Result<usize, DecodeError> {
         .checked_mul(height)
         .and_then(|pixels| pixels.checked_mul(BYTES_PER_PIXEL))
         .ok_or(DecodeError::Failed)
+}
+
+fn fit_dimensions(
+    source_width: usize,
+    source_height: usize,
+    max_width: usize,
+    max_height: usize,
+) -> Result<(usize, usize), DecodeError> {
+    if source_width == 0 || source_height == 0 || max_width == 0 || max_height == 0 {
+        return Err(DecodeError::Failed);
+    }
+    if source_width <= max_width && source_height <= max_height {
+        return Ok((source_width, source_height));
+    }
+
+    let width_limited = (max_width as u128) * (source_height as u128)
+        <= (max_height as u128) * (source_width as u128);
+    let (width, height) = if width_limited {
+        let height = ((source_height as u128) * (max_width as u128)
+            / (source_width as u128)) as usize;
+        (max_width, height.max(1))
+    } else {
+        let width = ((source_width as u128) * (max_height as u128)
+            / (source_height as u128)) as usize;
+        (width.max(1), max_height)
+    };
+    if width > max_width || height > max_height {
+        return Err(DecodeError::Failed);
+    }
+    Ok((width, height))
 }
 
 fn scale_rect(
@@ -570,6 +614,13 @@ fn blend_source_over(target: &mut [u8], source: &[u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fit_dimensions_preserves_wide_and_tall_aspect_ratios() {
+        assert_eq!(fit_dimensions(4000, 1000, 1000, 1000), Ok((1000, 250)));
+        assert_eq!(fit_dimensions(1000, 4000, 1000, 1000), Ok((250, 1000)));
+        assert_eq!(fit_dimensions(320, 640, 1080, 1920), Ok((320, 640)));
+    }
 
     #[test]
     fn source_over_blends_straight_alpha() {

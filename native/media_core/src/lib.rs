@@ -659,6 +659,35 @@ mod tests {
     }
 
     #[test]
+    fn animated_webp_fits_inside_decode_bounds_without_stretching() {
+        let bytes = include_bytes!("../testdata/animated.webp");
+        let source = Box::new(ByteSource::new(11, bytes.len() + 16));
+        let source_ptr = Box::into_raw(source);
+        assert_eq!(
+            unsafe { zic_source_append(source_ptr, 11, 0, bytes.as_ptr(), bytes.len()) },
+            Status::Ok as u32
+        );
+        assert_eq!(unsafe { zic_source_seal(source_ptr, 11) }, Status::Ok as u32);
+        let cursor = unsafe { zic_cursor_create(source_ptr, 11, 1, 8) };
+        assert!(!cursor.is_null());
+
+        let mut frame = ptr::null_mut();
+        assert_eq!(
+            unsafe { zic_cursor_decode_next(cursor, 11, &mut frame) },
+            CursorStatus::Ok as u32
+        );
+        assert_eq!(unsafe { zic_frame_width(frame) }, 1);
+        assert_eq!(unsafe { zic_frame_height(frame) }, 1);
+        assert_eq!(unsafe { zic_frame_len(frame) }, 4);
+
+        unsafe {
+            zic_frame_release(frame);
+            zic_cursor_free(cursor);
+            zic_source_free(source_ptr);
+        }
+    }
+
+    #[test]
     fn animated_webp_accepts_every_byte_prefix_without_false_progress() {
         let bytes = include_bytes!("../testdata/animated.webp");
         let source = Box::new(ByteSource::new(10, bytes.len() + 16));

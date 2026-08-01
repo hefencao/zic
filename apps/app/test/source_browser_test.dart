@@ -639,7 +639,7 @@ void main() {
     expect(await downloads.isDownloaded(second!), isTrue);
   });
 
-  testWidgets('Mihon pending page counts resolve progressively',
+  testWidgets('pending page counts do not preflight chapter bodies',
       (tester) async {
     final store = MemoryImportedLibraryStore();
     await store.open();
@@ -683,11 +683,11 @@ void main() {
     );
     await _pumpUntilFound(
       tester,
-      find.descendant(of: chapterTile, matching: find.text('1 页')),
+      find.descendant(of: chapterTile, matching: find.text('页数待加载')),
     );
 
-    expect(source.chapterLoads, 1);
-    expect(find.text('1 章 · 1 页'), findsOneWidget);
+    expect(source.chapterLoads, 0);
+    expect(find.text('1 章 · 页数待加载'), findsOneWidget);
   });
 
   testWidgets('source comic details retries a transient source failure',

@@ -253,6 +253,62 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('detached static page recreates its cursor on the next demand', () async {
+    final temp = await Directory.systemTemp.createTemp('decode_replay_test_');
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final cursors = _LoopCursorFactory(frameCount: 1, loopCount: 1);
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: cursors,
+      clock: _Clock(),
+    );
+    const demand = DecodeDemand(
+      role: PageRole.current,
+      priority: 1000,
+      targetWatermark: 1,
+      reason: 'replay',
+      expirationRevision: 8,
+    );
+
+    final first = await decode.fill(
+      demand: demand,
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    expect(first.depth, 1);
+    expect(decode.holder!.consume(0), isTrue);
+    decode.detach(retainDepth: 0);
+
+    final replayed = await decode.fill(
+      demand: demand,
+      revision: 2,
+      cancel: CancelToken(),
+    );
+    expect(replayed.state, DecodeState.ready);
+    expect(replayed.depth, 1);
+    expect(decode.holder!.frames.single.index, 0);
+    expect(cursors.created, 2);
+
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
   test('finite animation enters ended after its play count is exhausted', () async {
     final temp = await Directory.systemTemp.createTemp('decode_end_test_');
     final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
@@ -527,6 +583,7 @@ final class _LoopCursorFactory implements CursorFactory {
 
   final int frameCount;
   final int loopCount;
+  int created = 0;
 
   @override
   CursorBinding create({
@@ -534,6 +591,7 @@ final class _LoopCursorFactory implements CursorFactory {
     required EncodedSource source,
     required int epoch,
   }) {
+    created++;
     final cursor = _LoopCursor(
       epoch: epoch,
       frameCount: frameCount,

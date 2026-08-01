@@ -56,6 +56,7 @@ final class DecodeSession {
   FrameHolder? _holder;
   Failure? _failure;
   int _revision = 0;
+  bool _restartAfterDetach = false;
   bool _disposed = false;
 
   DecodeState get state => _state;
@@ -117,10 +118,8 @@ final class DecodeSession {
         return snapshot;
       case SourceKind.gif:
       case SourceKind.other:
-        _cursor?.frames.dispose();
-        _cursor = null;
-        _holder?.dispose();
-        _holder = null;
+        _releaseBinding();
+        _restartAfterDetach = false;
         _failure = null;
         _setState(DecodeState.ended);
         return snapshot;
@@ -128,6 +127,12 @@ final class DecodeSession {
         break;
     }
 
+    if (_restartAfterDetach) {
+      if ((_holder?.depth ?? 0) == 0) {
+        _releaseBinding();
+      }
+      _restartAfterDetach = false;
+    }
     _bind(source, epoch);
     final holder = _holder!;
     final targetDepth = demand.targetWatermark > preparedDepth
@@ -220,6 +225,7 @@ final class DecodeSession {
     _requireOpen();
     _revision++;
     _holder?.trimTo(retainDepth);
+    _restartAfterDetach = true;
     if ((_holder?.depth ?? 0) == 0) {
       _setState(DecodeState.idle);
     }
@@ -228,10 +234,8 @@ final class DecodeSession {
   void reset(SourceEpoch epoch) {
     _requireOpen();
     _revision++;
-    _cursor?.frames.dispose();
-    _cursor = null;
-    _holder?.dispose();
-    _holder = null;
+    _releaseBinding();
+    _restartAfterDetach = false;
     _epoch = epoch;
     _failure = null;
     _setState(DecodeState.idle);
@@ -241,10 +245,8 @@ final class DecodeSession {
     if (_disposed) {
       return;
     }
-    _cursor?.frames.dispose();
-    _holder?.dispose();
-    _cursor = null;
-    _holder = null;
+    _releaseBinding();
+    _restartAfterDetach = false;
     _state = DecodeState.disposed;
     _disposed = true;
   }
@@ -253,12 +255,18 @@ final class DecodeSession {
     if (_cursor != null && _epoch == epoch) {
       return;
     }
-    _cursor?.frames.dispose();
-    _holder?.dispose();
+    _releaseBinding();
     _epoch = epoch;
     _cursor = cursors.create(id: id, source: source, epoch: epoch.value);
     _holder = FrameHolder(epoch: epoch);
     _failure = null;
+  }
+
+  void _releaseBinding() {
+    _cursor?.frames.dispose();
+    _holder?.dispose();
+    _cursor = null;
+    _holder = null;
   }
 
   void _setState(DecodeState state) {

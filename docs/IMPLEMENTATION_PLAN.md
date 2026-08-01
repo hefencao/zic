@@ -1,3 +1,14 @@
+## dev.78 completed
+
+1. Close the reported RendererKind and PlaybackState compile gaps at their real owners.
+2. Treat native decode dimensions as aspect-preserving maximum bounds and propagate actual frame dimensions through upload/texture output.
+3. Recreate an ended WebP cursor only across an empty-holder demand detach/re-entry boundary.
+4. Remove all-chapter page-count body preflight and move read persistence off the Reader navigation critical path.
+5. Split Debug Trace into bounded UI/raw rings and route copy/export through an injectable, failure-reporting file capability.
+6. Add owner tests, ADR 0062 and a dev.78 static boundary gate without changing windows or lanes.
+
+Next validation: run Flutter analyze/package/App tests and Android debug/release. On device verify representative wide/tall pages, scroll away/back replay, selected-chapter entry latency, raw JSONL export size and save-provider behavior.
+
 ## dev.77 completed
 
 1. Replace independent source-only composition with one `PipelineMediaRuntimeFactory` and a session-owned runtime.
@@ -728,7 +739,7 @@ Next: 在 Android 真机验证保存页直接定位、不同 DPR 下无拼接接
 - `ImportedPageRecord.pageId` 是页面唯一 identity；资源 URI 是可变、可重复的 delivery locator。任何 catalog/download/cache 层都不得用 URI 重复拒绝合法章节。
 - 插件私有页面资源必须由 `downloads` 通过注入的 source loader 选择 transport；Presentation 只能请求下载或打开，不能识别 URI scheme 后自行联网或保存字节。
 - Venera/Mihon 的 `contentKindHint`/`animatedHint` 是加速提示，不能替代字节嗅探和 codec 校验；未知 token 不得被猜成 WebP。
-- Mihon `pageCount == 0` 由详情页做受控、可缓存的渐进 preflight，最多两个并发 worker；不得在 build 中同步拉取，也不得为显示页数创建第二套页面缓存。
+- 历史上 Mihon `pageCount == 0` 曾由详情页渐进 preflight；该方案已由 dev.78 / ADR 0062 否决。普通章节保持待加载，详情页不得为标签请求正文；synthetic gallery 的非空验证例外保留。
 - synthetic gallery 可在目录路径全部为空或失败后尝试，但必须以真实非空 page list 为准；若 page preflight 失败，目录错误必须保留在诊断链中。
 - Venera HTTP redirect 由宿主逐跳管理，必须有限、逐跳保存 Cookie、解析相对地址并在跨 origin 时移除 Cookie/Authorization；底层 URLConnection/OkHttp 不得再次自动跟随。
 - Reader transfer notifier 不得在 build phase 同步发布；同一帧的 snapshot 变化应合并为最新值并在安全帧边界更新。
