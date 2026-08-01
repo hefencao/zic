@@ -1,3 +1,7 @@
+## dev.83 状态
+
+源码已修复 dev.82 的 compile closure、source-specific preload profile、非持久 adaptive 和 stitched 分数像素边缘。VibeVenera model v4 的 metadata/category/language/tag-weight/softmax 与两样本规则已迁入，manifest `animatedHint` 不再冒充实际动画证据。工作树及完整 ZIP 解压副本已通过 dev.75–dev.83、Reader/Pipeline/UI、Android、Mihon、Venera、native header 和本地 libwebp 1.6.0 契约。当前容器无 Flutter/Dart/Rust/Gradle 工具链，因此真实 analyzer、Flutter tests、kernel snapshot、Android build 与真机接缝/预取验证仍未完成。
+
 ## dev.82：动画源网格、帧消费推进与 Trace 聚合
 
 - 已修复代码中可确认的两条根因：ANMF 子矩形独立缩放导致的条带错位，以及下载完成后 source revision 停止增长导致的动画推进停滞。

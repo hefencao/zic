@@ -15,6 +15,7 @@ extension ReaderPreferenceProjection on AppPreferencesController {
       fallbackVerticalStitch: defaultVerticalStitch,
       globalAdaptiveEnabled: adaptiveReaderEnabled,
       comicAdaptiveEnabled: comic.adaptiveEnabled,
+      adaptiveProfile: comic.adaptiveProfile,
     );
   }
 
@@ -28,6 +29,7 @@ extension ReaderPreferenceProjection on AppPreferencesController {
       directionOverride: settings.directionOverride,
       verticalStitchOverride: settings.verticalStitchOverride,
       adaptiveEnabled: settings.comicAdaptiveEnabled,
+      adaptiveProfile: settings.adaptiveProfile,
     );
     if (comic == const ComicReaderSettings()) {
       clearComicReaderSettings(sourceId, comicId);

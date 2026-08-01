@@ -41,6 +41,18 @@ final class NativeTextureViewport extends StatelessWidget {
         ),
       );
     }
+    if (fit == BoxFit.fill) {
+      // The continuous Reader already owns an exact, aspect-preserving page
+      // box. Avoid a second FittedBox/layer at every stitched boundary: the
+      // texture fills that authoritative box directly.
+      return SizedBox.expand(
+        key: viewportKey,
+        child: Texture(
+          textureId: textureId,
+          filterQuality: filterQuality,
+        ),
+      );
+    }
     return SizedBox.expand(
       child: FittedBox(
         fit: fit,

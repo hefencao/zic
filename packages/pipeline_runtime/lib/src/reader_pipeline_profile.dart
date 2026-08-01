@@ -18,23 +18,13 @@ final class ReaderPipelineProfile {
     required this.uploadConcurrency,
   });
 
-  static const standard = ReaderPipelineProfile(
-    windowResolver: RoleResolver(),
-    guard: PolicyGuard(),
-    policy: HeuristicPolicy(),
-    retry: RetryPolicy(),
-    networkConcurrency: 3,
-    decodeConcurrency: 2,
-    uploadConcurrency: 1,
-  );
-
-  /// Stable VibeVenera-style encoded-byte window.
+  /// Stable Reader pipeline profile shared by every source kind.
   ///
-  /// Mirrors VibeVenera's stable asymmetric window: download seven pages in
-  /// the reading direction and retain three behind. Only +2/-1 are decode-warm;
-  /// the outer pages remain encoded-byte prefetch, preserving playback budgets
-  /// and pipeline ownership.
-  static const sourceStreaming = ReaderPipelineProfile(
+  /// Transport and plugin differences belong below the policy plane. Reader
+  /// demand remains VibeVenera-style for local, Mihon, Venera and direct HTTP
+  /// pages alike: seven ahead, three behind, decode-warm two ahead/one behind,
+  /// and upload only current/transition through 5/3/2 lanes.
+  static const stable = ReaderPipelineProfile(
     windowResolver: RoleResolver(
       forwardEncodedPages: 7,
       backwardEncodedPages: 3,
@@ -60,10 +50,8 @@ final class ReaderPipelineProfile {
 }
 
 ReaderPipelineProfile readerPipelineProfileFor(ChapterManifest chapter) {
-  final hasSourceOwnedStreamingLocator = chapter.pages.any(
-    (page) => page.uri.scheme == 'venera-resource',
-  );
-  return hasSourceOwnedStreamingLocator
-      ? ReaderPipelineProfile.sourceStreaming
-      : ReaderPipelineProfile.standard;
+  // Keep the manifest parameter in the composition API because future
+  // transport capabilities may be selected atomically here. They must not
+  // change the Reader demand window.
+  return ReaderPipelineProfile.stable;
 }

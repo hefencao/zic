@@ -7,6 +7,7 @@ import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:reader_runtime/reader_runtime.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:zic/app_preferences.dart';
 import 'package:zic/app_settings_screen.dart';
@@ -80,6 +81,14 @@ void main() {
             'directionOverride': 'rtl',
             'verticalStitch': true,
             'adaptiveEnabled': false,
+            'adaptiveProfile': <String, Object?>{
+              'direction': 'rtl',
+              'confidence': 0.91,
+              'basis': 'page-geometry',
+              'animated': false,
+              'samples': 3,
+              'modelVersion': AdaptiveReaderProfile.currentModelVersion,
+            },
           },
         },
       },
@@ -102,6 +111,12 @@ void main() {
         directionOverride: ReadingDirection.rtl,
         verticalStitchOverride: true,
         adaptiveEnabled: false,
+        adaptiveProfile: const AdaptiveReaderProfile(
+          direction: ReadingDirection.rtl,
+          confidence: 0.91,
+          basis: 'page-geometry',
+          samples: 3,
+        ),
       ),
     );
 

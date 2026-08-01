@@ -119,6 +119,7 @@ final class ReaderRuntimeScreen extends StatefulWidget {
   const ReaderRuntimeScreen({
     required this.chapter,
     required this.pipeline,
+    this.adaptiveMetadata,
     this.artifactPageBuilder,
     this.pageSubtitleBuilder,
     this.initialProgress,
@@ -135,6 +136,7 @@ final class ReaderRuntimeScreen extends StatefulWidget {
 
   final ChapterManifest chapter;
   final PipelineReaderSession pipeline;
+  final AdaptiveReaderMetadata? adaptiveMetadata;
   final ReaderArtifactPageBuilder? artifactPageBuilder;
   final ReaderPageSubtitleBuilder? pageSubtitleBuilder;
   final ReadingProgress? initialProgress;
@@ -167,6 +169,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   bool _downloading = false;
   bool _downloaded = false;
   late ReaderSessionSettings _settings;
+  late final AdaptiveReaderClassifier _adaptiveClassifier;
   AdaptiveReaderProfile? _adaptiveProfile;
 
   @override
@@ -176,9 +179,19 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       ..addListener(_syncPipelinePlayback);
     _syncPipelinePlayback();
     _settings = widget.initialSettings;
-    _adaptiveProfile = _settings.effectiveAdaptiveEnabled
-        ? classifyAdaptiveReaderLayout(widget.chapter)
-        : null;
+    _adaptiveClassifier = AdaptiveReaderClassifier(
+      widget.chapter,
+      metadata: widget.adaptiveMetadata,
+    );
+    _adaptiveProfile = _initialAdaptiveProfile(_settings);
+    final initialProfile = _adaptiveProfile;
+    if (initialProfile != null &&
+        initialProfile != _settings.adaptiveProfile) {
+      _settings = _settings.copyWith(adaptiveProfile: initialProfile);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _persistSettings();
+      });
+    }
     _favorite = widget.initialFavorite;
     _controlsVisible = !widget.initiallyImmersive;
     unawaited(
@@ -198,9 +211,14 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     }
     if (oldWidget.initialSettings != widget.initialSettings) {
       _settings = widget.initialSettings;
-      _adaptiveProfile = _settings.effectiveAdaptiveEnabled
-          ? classifyAdaptiveReaderLayout(widget.chapter)
-          : null;
+      _adaptiveProfile = _initialAdaptiveProfile(_settings);
+    }
+    if (oldWidget.adaptiveMetadata?.fingerprint !=
+        widget.adaptiveMetadata?.fingerprint) {
+      throw StateError(
+        'ReaderRuntimeScreen adaptive metadata is immutable for a mounted '
+        'session; replace the widget key when comic metadata changes',
+      );
     }
     if (!_sameChapterSession(oldWidget.chapter, widget.chapter)) {
       throw StateError(
@@ -271,6 +289,53 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       return adaptive.direction;
     }
     return base;
+  }
+
+  AdaptiveReaderProfile? _initialAdaptiveProfile(
+    ReaderSessionSettings settings,
+  ) {
+    if (!settings.effectiveAdaptiveEnabled) return null;
+    final stored = settings.adaptiveProfile;
+    if (stored != null &&
+        stored.isCurrent &&
+        stored.metadataFingerprint == _adaptiveClassifier.metadataFingerprint &&
+        stored.confidence >= AdaptiveReaderProfile.applyConfidence) {
+      return stored;
+    }
+    return _adaptiveClassifier.classifyManifest();
+  }
+
+  void _applyAdaptiveProfile(AdaptiveReaderProfile? candidate) {
+    if (candidate == null ||
+        candidate.confidence < AdaptiveReaderProfile.applyConfidence ||
+        !_settings.effectiveAdaptiveEnabled ||
+        (_settings.comicSpecificEnabled &&
+            _settings.directionOverride != null)) {
+      return;
+    }
+    final current = _adaptiveProfile;
+    if (current != null) {
+      if (current.animated && !candidate.animated) return;
+      if (!candidate.animated && current.isCurrent && current.isTerminal) {
+        return;
+      }
+      if (current == candidate) return;
+    }
+    _adaptiveProfile = candidate;
+    _settings = _settings.copyWith(adaptiveProfile: candidate);
+    _reader?.setDirection(candidate.direction);
+    _persistSettings();
+    if (mounted) setState(() {});
+  }
+
+  void _persistSettings() {
+    final writer = widget.onSettingsChanged;
+    if (writer == null) return;
+    Future<void>.sync(() => writer(_settings)).catchError(
+      (Object error, StackTrace stackTrace) {
+        debugPrint('reader settings write failed: $error');
+      },
+    );
   }
 
   ReadingProgress? _matchingInitialProgress() {
@@ -370,25 +435,21 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     if (_playbackCapabilities[asset.assetKey] == supported) return;
     _playbackCapabilities[asset.assetKey] = supported;
     final reader = _reader;
-    final observedAnimation = supported &&
-        _settings.effectiveAdaptiveEnabled &&
-        !(_settings.comicSpecificEnabled &&
-            _settings.directionOverride != null);
-    if (observedAnimation) {
-      _adaptiveProfile = runtimeAnimatedReaderProfile(widget.chapter);
-      reader?.setDirection(_adaptiveProfile!.direction);
+    if (supported) {
+      _applyAdaptiveProfile(_adaptiveClassifier.observeAnimated(asset));
     }
     if (mounted &&
         reader != null &&
-        (observedAnimation ||
-            widget.chapter.pages[reader.currentIndex].assetKey ==
-                asset.assetKey)) {
+        widget.chapter.pages[reader.currentIndex].assetKey == asset.assetKey) {
       setState(() {});
     }
   }
 
   void _reportPageDimensions(PageAsset asset, int width, int height) {
     if (width <= 0 || height <= 0) return;
+    _applyAdaptiveProfile(
+      _adaptiveClassifier.observeDimensions(asset, width, height),
+    );
     final ratio = height / width;
     final prior = _pendingPageAspectRatios[asset.assetKey] ??
         _pageAspectRatios[asset.assetKey];
@@ -517,7 +578,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     final basis = switch (profile.basis) {
       'animated-pages' => '动画页提示',
       'page-geometry' => '页面比例',
-      'source-hint' => '来源方向',
+      'decoded-animation' => '实际动画页',
+      'runtime-animation' => '实际动画页',
       _ => profile.basis,
     };
     return '$kind · $confidence% · $basis';
@@ -643,15 +705,16 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
     if (saved == null || !mounted) return;
     setState(() {
       _settings = saved;
-      _adaptiveProfile = _settings.effectiveAdaptiveEnabled
-          ? classifyAdaptiveReaderLayout(widget.chapter)
-          : null;
+      _adaptiveProfile = _initialAdaptiveProfile(_settings);
+      if (_adaptiveProfile != _settings.adaptiveProfile) {
+        _settings = _settings.copyWith(adaptiveProfile: _adaptiveProfile);
+      }
     });
     _reader?.setDirection(_resolveInitialDirection(_matchingInitialProgress()));
     final writer = widget.onSettingsChanged;
     if (writer != null) {
       try {
-        await Future<void>.sync(() => writer(saved));
+        await Future<void>.sync(() => writer(_settings));
       } on Object catch (error) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(

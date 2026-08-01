@@ -1,3 +1,10 @@
+## dev.83 稳定预取、自适应和拼接所有权
+
+- `pipeline_runtime.ReaderPipelineProfile.stable` 是所有 Reader source kind 的唯一 demand profile。插件/transport/cache 能力只能改变执行适配，不能改变 7/3、2/1、current/transition 或 5/3/2。
+- `reader_runtime.AdaptiveReaderClassifier` 拥有 metadata、页面几何和实际动画证据；App preferences 只持久化每漫画 profile 值。`ChapterManifest.readingDirection` 是 fallback，不是 adaptive evidence。
+- `ReaderVerticalGeometry` 唯一拥有连续页面 extent 和 DPR 栅格。`local_media_ui`/`texture_bridge` 只能填充该权威 box，不能再次计算 fitWidth 高度或建立接缝补偿。
+- stitched 页面禁止 overlap、负位移、遮罩和每页独立边缘层；缩放状态除外，普通滚动不需要 per-page clip。
+
 ## dev.82 动画源网格、帧消费与诊断生产所有权
 
 - `native/media_core` 是 WebP blend/dispose 与动画 canvas 的唯一所有者。ANMF 子矩形始终以源 canvas 坐标合成；统一 raster 只在完整 canvas 形成后执行一次，Presentation 与 Android texture 不得再解释子矩形几何。

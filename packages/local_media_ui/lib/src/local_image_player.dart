@@ -556,7 +556,9 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
                 builder: (innerFit) => surface.build(
                   key: webpNativeTextureViewportKey,
                   fit: innerFit,
-                  filterQuality: FilterQuality.medium,
+                  filterQuality: widget.fit == BoxFit.fitWidth
+                      ? FilterQuality.low
+                      : FilterQuality.medium,
                 ),
               );
       } else if (bytes == null) {
@@ -735,6 +737,15 @@ final class MediaAspectViewport extends StatelessWidget {
     final source = dimensions;
     if (source == null || source.width <= 0 || source.height <= 0) {
       return SizedBox.expand(child: builder(fit));
+    }
+    if (fit == BoxFit.fitWidth) {
+      // In continuous mode ReaderVerticalGeometry already owns the exact
+      // aspect-preserving, physical-pixel-aligned page box. Recomputing a
+      // second fitted height here can leave a subpixel strip at the boundary.
+      return SizedBox.expand(
+        key: mediaAspectViewportKey,
+        child: builder(BoxFit.fill),
+      );
     }
     return SizedBox.expand(
       key: mediaAspectViewportKey,
@@ -1174,8 +1185,10 @@ ImportedChapterRecord imageFolderChapterRecord(
             contentKindHint: _contentKindHint(image.format),
             mediaFormat: image.format.name,
             byteLength: image.byteLength,
-            animatedHint: image.format == LocalImageFormat.webp ||
-                image.format == LocalImageFormat.gif,
+            // GIF is intrinsically animated. WebP animation must be
+            // confirmed from its container/runtime metadata; the extension
+            // alone also covers static WebP images.
+            animatedHint: image.format == LocalImageFormat.gif,
           ),
         )
         .toList(growable: false),

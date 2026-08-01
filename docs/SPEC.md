@@ -1,3 +1,11 @@
+## dev.83 Reader 稳定窗口、自适应与无缝拼接规范
+
+1. 章节中部 idle 时，plan 必须包含 11 个 download demand、4 个 decode demand和 1 个 upload demand；transition 时 upload 可为 2。该结果与 URI scheme 无关。
+2. adaptive model version 为 4。多页漫画封面不计样本；无明确 metadata 时至少需要两份非封面几何或两份 decoded-animation 证据。普通来源 vertical 不得独立改变方向。
+3. adaptive profile 以 sourceId+comicId 设置持久化，并携带 metadata fingerprint；手动方向覆盖优先。
+4. 静态 WebP 不得因扩展名被判定为动画。
+5. stitched 页面相邻 bounds 必须共享同一物理像素边界。显示链不得通过 overlap、负位移、裁切内容或额外遮罩消除线条。
+
 ## dev.82 动画正确性、持续播放与诊断体积要求
 
 - Animated WebP 的 frame rect、blend 与 dispose 必须在源像素网格执行；不得独立缩放子矩形后再拼接。完整合成帧再进入统一等比、8 像素对齐 raster。

@@ -75,6 +75,38 @@ void main() {
     expect(restored - top, closeTo(320, 1e-9));
   });
 
+
+  test('stitched boundaries share one physical-pixel grid', () {
+    final geometry = ReaderVerticalGeometry(
+      pages: pages,
+      ratios: <String, double>{
+        pages[0].assetKey: 1.3333333333,
+        pages[1].assetKey: 2.123456789,
+        pages[2].assetKey: 1.777777777,
+      },
+      viewportWidth: 411.428571,
+      viewportHeight: 890,
+      stitch: true,
+      rotationQuarterTurns: 0,
+      devicePixelRatio: 2.75,
+    );
+
+    for (var index = 0; index < pages.length; index++) {
+      final bounds = geometry.boundsAt(index);
+      expect(
+        bounds.start * geometry.devicePixelRatio,
+        closeTo((bounds.start * geometry.devicePixelRatio).round(), 1e-9),
+      );
+      expect(
+        bounds.end * geometry.devicePixelRatio,
+        closeTo((bounds.end * geometry.devicePixelRatio).round(), 1e-9),
+      );
+      if (index + 1 < pages.length) {
+        expect(bounds.end, geometry.boundsAt(index + 1).start);
+      }
+    }
+  });
+
   test('unknown extents do not depend on current page state', () {
     final unknownPages = List<PageAsset>.generate(
       2,

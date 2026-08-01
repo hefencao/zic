@@ -47,11 +47,14 @@ def main() -> None:
         "scaled = math.max(scaled, viewportHeight)",
         "readerVerticalPageGap",
         "ReaderVerticalAnchor",
+        "devicePixelRatio",
+        "(bounded * dpr).round()",
     )
     require(
         "packages/reader_runtime/lib/src/reader_runtime_screen.dart",
         "ReaderSessionSettings",
-        "classifyAdaptiveReaderLayout",
+        "AdaptiveReaderClassifier",
+        "_initialAdaptiveProfile",
         "readerComicSettingsKey",
         "TextDirection.rtl",
         "verticalStitch: _settings.effectiveVerticalStitch",
@@ -75,6 +78,8 @@ def main() -> None:
         "networkConcurrency: 5",
         "decodeConcurrency: 3",
         "uploadConcurrency: 2",
+        "static const stable",
+        "return ReaderPipelineProfile.stable",
     )
     reject(
         "packages/reader/lib/src/reader_view.dart",

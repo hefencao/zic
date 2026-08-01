@@ -123,6 +123,13 @@ final class ImportedImageChapterScreen extends StatelessWidget {
         pipeline: pipeline,
         screenKey: imageFolderScreenKey,
         chapter: chapter,
+        adaptiveMetadata: AdaptiveReaderMetadata(
+          sourceKey: record.sourceId,
+          comicId: record.comicId,
+          title: record.comicTitle,
+          authors: record.comicAuthors,
+          sourceUrl: record.pages.first.uri.toString(),
+        ),
         initialProgress: initialProgress,
         onProgressChanged: onProgressChanged,
         initialFavorite: initialFavorite,

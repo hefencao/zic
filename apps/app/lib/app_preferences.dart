@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
+import 'package:reader_runtime/reader_runtime.dart';
 
 enum ShelfSourceFilter { all, local, remote }
 
@@ -15,6 +16,7 @@ final class ComicReaderSettings {
     this.directionOverride,
     this.verticalStitchOverride,
     this.adaptiveEnabled = true,
+    this.adaptiveProfile,
   });
 
   static const Object _unset = Object();
@@ -23,12 +25,14 @@ final class ComicReaderSettings {
   final ReadingDirection? directionOverride;
   final bool? verticalStitchOverride;
   final bool adaptiveEnabled;
+  final AdaptiveReaderProfile? adaptiveProfile;
 
   ComicReaderSettings copyWith({
     bool? enabled,
     Object? directionOverride = _unset,
     Object? verticalStitchOverride = _unset,
     bool? adaptiveEnabled,
+    Object? adaptiveProfile = _unset,
   }) =>
       ComicReaderSettings(
         enabled: enabled ?? this.enabled,
@@ -39,6 +43,9 @@ final class ComicReaderSettings {
             ? this.verticalStitchOverride
             : verticalStitchOverride as bool?,
         adaptiveEnabled: adaptiveEnabled ?? this.adaptiveEnabled,
+        adaptiveProfile: identical(adaptiveProfile, _unset)
+            ? this.adaptiveProfile
+            : adaptiveProfile as AdaptiveReaderProfile?,
       );
 
   @override
@@ -48,7 +55,8 @@ final class ComicReaderSettings {
           enabled == other.enabled &&
           directionOverride == other.directionOverride &&
           verticalStitchOverride == other.verticalStitchOverride &&
-          adaptiveEnabled == other.adaptiveEnabled;
+          adaptiveEnabled == other.adaptiveEnabled &&
+          adaptiveProfile == other.adaptiveProfile;
 
   @override
   int get hashCode => Object.hash(
@@ -56,6 +64,7 @@ final class ComicReaderSettings {
         directionOverride,
         verticalStitchOverride,
         adaptiveEnabled,
+        adaptiveProfile,
       );
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -65,6 +74,8 @@ final class ComicReaderSettings {
         if (verticalStitchOverride != null)
           'verticalStitchOverride': verticalStitchOverride,
         'adaptiveEnabled': adaptiveEnabled,
+        if (adaptiveProfile != null)
+          'adaptiveProfile': adaptiveProfile!.toJson(),
       };
 
   factory ComicReaderSettings.fromJson(Map<String, Object?> json) =>
@@ -80,6 +91,13 @@ final class ComicReaderSettings {
                 ? true
                 : null,
         adaptiveEnabled: _boolValue(json['adaptiveEnabled'], true),
+        adaptiveProfile: json['adaptiveProfile'] is Map
+            ? AdaptiveReaderProfile.fromJson(
+                Map<String, Object?>.from(
+                  json['adaptiveProfile']! as Map,
+                ),
+              )
+            : null,
       );
 }
 

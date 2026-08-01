@@ -71,7 +71,32 @@ void main() {
 
     final fitted = tester.widget<FittedBox>(find.byType(FittedBox));
     expect(fitted.fit, BoxFit.fitWidth);
-    expect(fitted.alignment, Alignment.topCenter);
+    expect(fitted.alignment, Alignment.center);
+  });
+
+
+  testWidgets('authoritative stitched box fills without a second FittedBox', (
+    tester,
+  ) async {
+    const viewportKey = ValueKey<String>('native-texture-fill-box');
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: SizedBox(
+          width: 300,
+          height: 600,
+          child: NativeTextureViewport(
+            textureId: 10,
+            sourceWidth: 104,
+            sourceHeight: 208,
+            fit: BoxFit.fill,
+            viewportKey: viewportKey,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byType(FittedBox), findsNothing);
+    expect(tester.getSize(find.byKey(viewportKey)), const Size(300, 600));
   });
 
 }

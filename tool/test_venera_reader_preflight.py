@@ -88,7 +88,8 @@ def main() -> None:
     )
     require(
         "packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart",
-        "ReaderPipelineProfile.sourceStreaming",
+        "static const stable = ReaderPipelineProfile(",
+        "return ReaderPipelineProfile.stable",
         "forwardEncodedPages: 7",
         "backwardEncodedPages: 3",
         "PolicyGuard(maxDownloadDemands: 11)",

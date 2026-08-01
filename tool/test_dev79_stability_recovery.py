@@ -56,9 +56,11 @@ assert 'anchor.offset.clamp' in geometry
 
 settings = text('packages/reader_runtime/lib/src/reader_session_settings.dart')
 runtime = text('packages/reader_runtime/lib/src/reader_runtime_screen.dart')
-assert 'runtimeAnimatedReaderProfile' in settings
-assert "basis: 'runtime-animation'" in settings
-assert 'runtimeAnimatedReaderProfile(widget.chapter)' in runtime
+assert 'final class AdaptiveReaderClassifier' in settings
+assert 'observeAnimated(PageAsset page)' in settings
+assert "_classifyAnimated('decoded-animation')" in settings
+assert '_adaptiveClassifier.observeAnimated(asset)' in runtime
+assert 'runtimeAnimatedReaderProfile' not in settings
 
 assert (ROOT / 'docs/audits/dev79-stability-recovery-audit.md').exists()
 print('dev.79 stability recovery ownership: OK')

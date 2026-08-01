@@ -38,7 +38,9 @@ def main() -> None:
         "itemExtentBuilder:",
         "initialScrollOffset: initialOffset",
         "reader-vertical-gap:",
-        "child: ClipRect(",
+        "addRepaintBoundaries: !stitched",
+        "stitched && _zoomedPage == null",
+        ": ClipRect(child: page)",
     )
     reject(
         "packages/reader/lib/src/reader_view.dart",

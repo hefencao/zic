@@ -1,3 +1,34 @@
+## Sole baseline
+
+Use only:
+
+`zic_v0.31.0-dev.83_stable-preload-adaptive-pixel-stitch.zip`
+
+Do not merge dev.65–82 candidates, overlays or remembered source trees. Mihon and VibeVenera references remain read-only. VibeVenera adaptive/preload code may be compared, but ZIC ownership boundaries remain authoritative.
+
+## Completed in dev.83
+
+- Fixed missing session-owner imports for `DecodeSnapshot`, `DecodeState` and `UploadState`.
+- Replaced URI-scheme profile selection with one stable Reader profile for every source: +7/-3 download, +2/-1 decode warm, current/transition upload, 5/3/2 lanes.
+- Migrated the portable VibeVenera adaptive model v4: title/tag/category/language/explicit type, tag-weighted geometry and softmax, cover exclusion, two geometry or actual decoded-animation samples, 0.60 apply/0.80 stop, metadata fingerprint and per-comic persistence.
+- Ordinary source reading direction is fallback only; manifest animatedHint and a static WebP suffix are not actual animation evidence.
+- Snapped continuous extents to DPR, removed redundant stitched FittedBox/ordinary per-page clip/repaint boundaries, and direct-filled the authoritative texture box without overlap.
+- Added deterministic owner tests and ADR 0067.
+
+## Device/toolchain validation still required
+
+1. Run `flutter analyze`, affected pipeline_runtime/reader_runtime/reader/texture_bridge/App tests, then full Dart/Flutter tests.
+2. Build Android kernel snapshot and debug/release.
+3. Open a long Mihon/Venera chapter near its middle and verify policy telemetry reports 11 downloads and 4 decodes before a transition.
+4. Reopen animated-title and static-WebP comics; animated metadata must select paged mode, static WebP must wait for actual evidence, and results must persist per comic.
+5. Scroll stitched vertical pages slowly and with fling at multiple DPRs; no 1–2 px line may appear at any scroll position.
+
+## Rejected regressions
+
+Do not restore source-specific Reader windows, call a second preloader from App/Reader, classify every WebP as animated, treat ordinary source direction as adaptive fact, or hide seams with overlap/negative translation/cropping/masks.
+
+## Historical dev.82 handoff
+
 # Next chat handoff
 
 ## Sole baseline

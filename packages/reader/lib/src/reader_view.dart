@@ -61,6 +61,7 @@ final class _ReaderViewState extends State<ReaderView> {
   int? _zoomedPage;
   int? _lastReportedVerticalPage;
   Size _viewport = Size.zero;
+  double _devicePixelRatio = 1;
   late ReadingDirection _lastDirection;
   bool _syncScheduled = false;
   bool _anchorRestoreScheduled = false;
@@ -131,6 +132,21 @@ final class _ReaderViewState extends State<ReaderView> {
       animation: widget.controller,
       builder: (context, _) => LayoutBuilder(
         builder: (context, constraints) {
+          final nextDevicePixelRatio = MediaQuery.devicePixelRatioOf(context);
+          if (nextDevicePixelRatio.isFinite &&
+              nextDevicePixelRatio > 0 &&
+              nextDevicePixelRatio != _devicePixelRatio) {
+            final previous = _devicePixelRatio;
+            if (widget.controller.direction == ReadingDirection.vertical &&
+                _viewport != Size.zero) {
+              _preserveVerticalAnchor(
+                oldRatios: widget.pageAspectRatios,
+                oldStitch: widget.verticalStitch,
+                oldDevicePixelRatio: previous,
+              );
+            }
+            _devicePixelRatio = nextDevicePixelRatio;
+          }
           final nextViewport = constraints.biggest;
           if (nextViewport.width.isFinite &&
               nextViewport.height.isFinite &&
@@ -171,6 +187,11 @@ final class _ReaderViewState extends State<ReaderView> {
               itemCount: itemCount,
               cacheExtent: cacheExtent,
               physics: physics,
+              // In stitched mode adjacent pages share one paint layer. A
+              // RepaintBoundary per page lets external texture edges round
+              // independently while scrolling and can expose a transient
+              // one-pixel background line.
+              addRepaintBoundaries: !stitched,
               itemExtentBuilder: (itemIndex, _) {
                 if (!stitched && itemIndex.isOdd) {
                   return readerVerticalPageGap;
@@ -187,15 +208,19 @@ final class _ReaderViewState extends State<ReaderView> {
                   );
                 }
                 final pageIndex = stitched ? itemIndex : itemIndex ~/ 2;
+                final page = _buildPage(chapter, pageIndex);
                 return SizedBox(
                   key: ValueKey<String>('reader-vertical-page:$pageIndex'),
                   height: _verticalExtent(
                     chapter.pages[pageIndex],
                     pageIndex,
                   ),
-                  child: ClipRect(
-                    child: _buildPage(chapter, pageIndex),
-                  ),
+                  // Exact stitched extents already constrain the page. Avoid
+                  // independent hard-clip edges during ordinary scrolling;
+                  // zoom still clips to its page so it cannot cover siblings.
+                  child: stitched && _zoomedPage == null
+                      ? page
+                      : ClipRect(child: page),
                 );
               },
             );
@@ -254,6 +279,7 @@ final class _ReaderViewState extends State<ReaderView> {
     Map<String, double>? ratios,
     bool? stitch,
     Size? viewport,
+    double? devicePixelRatio,
   }) {
     final effectiveViewport = viewport ?? _viewport;
     return ReaderVerticalGeometry(
@@ -263,6 +289,7 @@ final class _ReaderViewState extends State<ReaderView> {
       viewportHeight: effectiveViewport.height,
       stitch: stitch ?? widget.verticalStitch,
       rotationQuarterTurns: widget.controller.rotationQuarterTurns,
+      devicePixelRatio: devicePixelRatio ?? _devicePixelRatio,
     );
   }
 
@@ -290,6 +317,7 @@ final class _ReaderViewState extends State<ReaderView> {
     required Map<String, double> oldRatios,
     required bool oldStitch,
     Size? oldViewport,
+    double? oldDevicePixelRatio,
   }) {
     if (widget.controller.direction != ReadingDirection.vertical ||
         !_verticalController.hasClients ||
@@ -303,6 +331,7 @@ final class _ReaderViewState extends State<ReaderView> {
       ratios: oldRatios,
       stitch: oldStitch,
       viewport: oldViewport,
+      devicePixelRatio: oldDevicePixelRatio,
     ).anchorForTop(_verticalController.position.pixels);
     _pendingVerticalAnchor = (index: anchor.index, offset: anchor.offset);
     _scheduleVerticalAnchorRestore();

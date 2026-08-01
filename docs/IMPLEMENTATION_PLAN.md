@@ -1,3 +1,12 @@
+## dev.83 完成项与后续设备验证
+
+- [x] 所有 source kind 合并到稳定 7/3、2/1、5/3/2 profile，并删除无生产调用的 profile aliases。
+- [x] 迁移 VibeVenera adaptive model v4 的 portable metadata/geometry/animation 逻辑并持久化 per-comic profile。
+- [x] 统一 stitched DPR extent、direct texture fill 和共享 paint boundary。
+- [ ] 在 Flutter/Android 环境运行 analyzer、owner tests、App tests、kernel snapshot 和 debug/release。
+- [ ] 真机验证章节中部 policy 为 11 downloads/4 decodes，且预下载页面在进入 viewport 前已 receiving/sealed。
+- [ ] 在多个 DPR 和缩放/惯性滚动位置验证连续接缝始终为 0 像素。
+
 ## dev.82 completed
 
 - [x] 从 20000 条设备 Trace 统计每 identity 的 chunk、decode、upload 与 frame 有效产出，确认下载完成后 frame consume 缺少独立 decode wake。

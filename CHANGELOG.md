@@ -1,3 +1,14 @@
+## 0.31.0-dev.83：恢复稳定预下载、每漫画自适应与物理像素拼接
+- 普通来源方向、manifest `animatedHint` 与 `.webp` 后缀不再预填自适应结果；动画分类只接受 metadata 或两份实际运行时动画能力。
+
+- 修复 `LiveCoordinator` 漏导入 `DecodeSnapshot/DecodeState/UploadState` 的 kernel snapshot 编译闭包。
+- 删除按 `venera-resource` scheme 选择预取 profile 的分支；所有 Reader 统一 current+前7+后3 下载、current+前2+后1 预解码、current/transition 上传和 5/3/2 lane。
+- 迁移 VibeVenera 可移植的 per-comic adaptive model v4：metadata、封面排除、两份几何/实际动画证据、0.60/0.80 confidence 与持久化 fingerprint；普通来源方向不再冒充 adaptive 事实。
+- 本地 `.webp` 后缀不再直接写入动画 hint；GIF 保留固有动画 hint，WebP 由 metadata/header/runtime 证明。
+- 连续 Reader page extent 按 DPR 落到同一物理像素栅格；stitched texture 直接填充权威 page box，移除普通滚动时每页独立 FittedBox/ClipRect/RepaintBoundary 边缘。
+- 删除生产无调用的 `ReaderPipelineProfile.standard/sourceStreaming` 兼容别名。
+- 新增 policy plan、adaptive classifier、metadata 持久化、physical boundary 与 texture direct-fill 的确定性 owner 测试和 ADR 0067。
+
 ## 0.31.0-dev.82：修复动画源网格合成、帧消费推进与 Trace 风暴
 
 - Animated WebP 不再独立缩放每个 ANMF 子矩形；blend/dispose 在源 canvas 上完成，再统一缩放完整帧，修复纵向页面内部水平条带错位。

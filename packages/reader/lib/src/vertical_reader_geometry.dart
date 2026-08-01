@@ -25,6 +25,7 @@ final class ReaderVerticalGeometry {
     required this.viewportHeight,
     required this.stitch,
     required this.rotationQuarterTurns,
+    this.devicePixelRatio = 1,
   });
 
   final List<PageAsset> pages;
@@ -33,6 +34,7 @@ final class ReaderVerticalGeometry {
   final double viewportHeight;
   final bool stitch;
   final int rotationQuarterTurns;
+  final double devicePixelRatio;
 
   double get gap => stitch ? 0 : readerVerticalPageGap;
 
@@ -60,7 +62,11 @@ final class ReaderVerticalGeometry {
       scaled = math.max(scaled, viewportHeight);
     }
     final upper = math.max(viewportHeight, viewportWidth * 64);
-    return scaled.clamp(64.0, upper).toDouble();
+    final bounded = scaled.clamp(64.0, upper).toDouble();
+    final dpr = devicePixelRatio.isFinite && devicePixelRatio > 0
+        ? devicePixelRatio
+        : 1.0;
+    return math.max(1, (bounded * dpr).round()) / dpr;
   }
 
   ({double start, double end}) boundsAt(int index) {

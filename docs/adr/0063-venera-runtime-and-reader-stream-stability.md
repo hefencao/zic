@@ -26,7 +26,7 @@ The regressions had different owners and must not be hidden by shrinking the est
 - Cached comic details are serializable and invalidated by the shared cache owner; raw plugin objects cannot outlive their invocation.
 - Incremental decode may be scheduled repeatedly as bytes grow, but the keyed DecodeLane coalesces pending follow-up work.
 - Errors become visible instead of appearing as permanent loading. Upstream Venera source/DOM errors can still occur and require sanitized device trace rather than host-side infinite retry.
-- Adaptive mode may switch from an initial source-hint layout after actual animation evidence arrives. This is preferable to treating every WebP suffix as animated.
+- Historical note: the initial source-hint adaptive layout was removed by ADR 0067. Ordinary source direction is now fallback only; metadata, geometry or decoded animation must supply adaptive evidence.
 
 ## Rejected alternatives
 
