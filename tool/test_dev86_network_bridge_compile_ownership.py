@@ -81,8 +81,8 @@ def main() -> int:
     )
     require(
         'packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/AndroidCookieJar.kt',
-        'class AndroidCookieJar(context: Context) : CookieJar',
-        'NetworkBrowserSnapshotStore.read(application, url.toString())',
+        'class AndroidCookieJar(',
+        'AndroidBrowserCookieSession.importCookies(',
         'CookieManager.getInstance()',
     )
     require(
@@ -113,7 +113,7 @@ def main() -> int:
             'import dev.zic.network.AndroidCloudflareInterceptor',
             'import dev.zic.network.AndroidCookieJar',
             'import dev.zic.network.FallbackDns',
-            'AndroidCookieJar(context)',
+            'AndroidCookieJar(context, ::defaultUserAgentProvider)',
         )
     plugin = 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/PluginHostBridgePlugin.kt'
     forbid(

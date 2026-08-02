@@ -73,6 +73,7 @@ internal class MihonRuntimeDriver private constructor(
     private val completions = ConcurrentHashMap<String, CountDownLatch>()
     private val rateLimiters = ConcurrentHashMap<String, SourceRequestLimiter>()
     private val runtimeTransformBySource = ConcurrentHashMap<String, Boolean>()
+    private val realChapterCatalogs = ConcurrentHashMap.newKeySet<String>()
     private val closed = AtomicBoolean(false)
     private val sourcesClosed = AtomicBoolean(false)
     private val runtimeDeleted = AtomicBoolean(false)
@@ -262,11 +263,16 @@ internal class MihonRuntimeDriver private constructor(
         val sourceId = source.readValue("id", "getId")?.toString()
             ?: error("Mihon source id is missing")
         val transportRevision = mihonTransportRevision(sourceId, source)
+        val catalogIdentity = "$sourceId\u0000$comicId"
         val selectedChapters = selectMihonChapters(
             chapters = catalog.chapters,
-            allowSynthetic = !catalog.chapterCatalogAvailable,
+            allowSynthetic = !catalog.chapterCatalogAvailable &&
+                !realChapterCatalogs.contains(catalogIdentity),
         ) {
             createSyntheticMihonChapter(source, catalog.manga)
+        }
+        if (!selectedChapters.synthetic && selectedChapters.chapters.isNotEmpty()) {
+            realChapterCatalogs += catalogIdentity
         }
         val syntheticPageCount = if (selectedChapters.synthetic) {
             loadMihonPageModels(source, selectedChapters.chapters.single(), requestId).size
@@ -454,7 +460,13 @@ internal class MihonRuntimeDriver private constructor(
         chapterById[chapterId]?.let { return it }
         val comicId = encoded.optString("comicId")
         require(comicId.isNotBlank()) { "chapter comic identity is missing" }
+        val sourceId = source.readValue("id", "getId")?.toString()
+            ?: error("Mihon source id is missing")
+        val catalogIdentity = "$sourceId\u0000$comicId"
         if (encoded.optBoolean("synthetic")) {
+            require(!realChapterCatalogs.contains(catalogIdentity)) {
+                "Mihon synthetic chapter is invalid after a real catalog was observed"
+            }
             val manga = createModel(
                 source.javaClass.classLoader,
                 "eu.kanade.tachiyomi.source.model.SManga",
@@ -474,9 +486,13 @@ internal class MihonRuntimeDriver private constructor(
         catalog.chapterFailure?.let { throw it }
         val selectedChapters = selectMihonChapters(
             chapters = catalog.chapters,
-            allowSynthetic = !catalog.chapterCatalogAvailable,
+            allowSynthetic = !catalog.chapterCatalogAvailable &&
+                !realChapterCatalogs.contains(catalogIdentity),
         ) {
             createSyntheticMihonChapter(source, catalog.manga)
+        }
+        if (!selectedChapters.synthetic && selectedChapters.chapters.isNotEmpty()) {
+            realChapterCatalogs += catalogIdentity
         }
         val messages = selectedChapters.chapters.mapIndexed { index, chapter ->
             chapterMessage(
@@ -1108,6 +1124,7 @@ internal class MihonRuntimeDriver private constructor(
                         "language" to (source.readString("lang", "getLang") ?: "und"),
                         "website" to normalizeWebsite(baseUrl),
                         "supportsSearch" to true,
+                        "browserUserAgent" to MIHON_BROWSER_USER_AGENT,
                         "contentRatings" to listOf("safe", "suggestive"),
                     )
                 }
@@ -1157,8 +1174,11 @@ internal inline fun <T> selectMihonChapters(
     MihonChapterSelection(chapters, synthetic = false)
 }
 
+private const val MIHON_BROWSER_USER_AGENT =
+    "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 " +
+        "Chrome/131 Mobile Safari/537.36"
 private const val MAX_CACHED_MIHON_CHAPTERS = 4096
-private const val MIHON_SYNTHETIC_REVISION = 2
+private const val MIHON_SYNTHETIC_REVISION = 3
 private const val MIHON_RUNTIME_TRANSFORM_REVISION = "mihon-runtime-transform-v1"
 
 internal fun mihonChapterMatches(chapter: Any, encoded: JSONObject): Boolean {
@@ -1396,6 +1416,7 @@ internal val requiredMihonCommonRuntimeClasses: List<String> = listOf(
     "org.jsoup.Jsoup",
     "com.google.gson.Gson",
     "dev.zic.network.AndroidCloudflareInterceptor",
+    "dev.zic.network.AndroidBrowserCookieSession",
     "dev.zic.network.AndroidCookieJar",
     "dev.zic.network.FallbackDns",
 )
@@ -1793,10 +1814,27 @@ private fun mihonGenres(manga: Any): List<String> {
 
 private fun Throwable.isMihonCapabilityAbsence(): Boolean {
     val cause = rootCause()
-    return this is NoSuchMethodException ||
-        cause is NoSuchMethodException ||
-        cause is UnsupportedOperationException ||
+    if (this is NoSuchMethodException || cause is NoSuchMethodException ||
         cause is AbstractMethodError
+    ) {
+        return true
+    }
+    if (cause !is UnsupportedOperationException) {
+        return false
+    }
+    // Mihon 1.6 compatibility interfaces and HttpSource defaults use an
+    // UnsupportedOperationException for genuinely absent legacy methods. An
+    // extension parser can also throw the same type for a real source/network
+    // failure; treating every UOE as capability absence enabled a false
+    // synthetic single chapter after Cloudflare failures. Only accept UOE
+    // frames owned by the shared Mihon ABI defaults.
+    return cause.stackTrace.any { frame ->
+        frame.className == "eu.kanade.tachiyomi.source.Source" ||
+            frame.className.startsWith("eu.kanade.tachiyomi.source.Source\$") ||
+            frame.className == "eu.kanade.tachiyomi.source.CatalogueSource" ||
+            frame.className.startsWith("eu.kanade.tachiyomi.source.CatalogueSource\$") ||
+            frame.className == "eu.kanade.tachiyomi.source.online.HttpSource"
+    }
 }
 
 private fun Any.readString(vararg names: String): String? = readValue(*names)?.toString()

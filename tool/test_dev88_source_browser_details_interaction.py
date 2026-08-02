@@ -78,7 +78,7 @@ cookies = read(
     "packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/"
     "AndroidCookieJar.kt"
 )
-require(cookies, "NetworkBrowserSnapshotStore.read", "browser-cookie handoff")
+require(cookies, "AndroidBrowserCookieSession.importCookies", "browser-cookie handoff")
 require(cookies, "importBrowserSnapshot(url)", "cookie import before request")
 
 executors = read("packages/plugin_host/lib/src/runtime_executors.dart")
@@ -101,7 +101,7 @@ mihon = read(
     "MihonRuntimeDriver.kt"
 )
 require(mihon, 'put("synthetic_revision", MIHON_SYNTHETIC_REVISION)', "synthetic wire revision")
-require(mihon, "MIHON_SYNTHETIC_REVISION = 2", "synthetic current revision")
+require(mihon, "MIHON_SYNTHETIC_REVISION = 3", "synthetic current revision")
 home = read("apps/app/lib/demo_home.dart")
 require(home, "isCurrentSyntheticMihonChapterIdentity", "legacy synthetic eviction")
 

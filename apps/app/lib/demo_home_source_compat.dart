@@ -5,10 +5,20 @@ Uri _sourceComicWebUri(
   BrowsableComicSource source,
   String comicId,
 ) {
-  final ComicWebUriSource? webSource = source is ComicWebUriSource
-      ? source as ComicWebUriSource
-      : null;
+  final Object candidate = source;
+  final ComicWebUriSource? webSource =
+      candidate is ComicWebUriSource ? candidate : null;
   return webSource?.resolveComicWebUri(comicId) ?? source.descriptor.website;
+}
+
+ComicWebViewRequest _sourceWebViewRequest(
+  BrowsableComicSource source,
+  Uri url,
+) {
+  final Object candidate = source;
+  final ComicWebViewRequestSource? requestSource =
+      candidate is ComicWebViewRequestSource ? candidate : null;
+  return requestSource?.webViewRequest(url) ?? ComicWebViewRequest(url: url);
 }
 
 bool _hasLegacyVeneraLocators(ImportedChapterRecord chapter) =>
@@ -49,6 +59,54 @@ Future<ChapterManifest> _loadCompatibleSourceChapter(
 }
 
 extension _DemoHomeSourceResourceActions on _DemoHomeState {
+  Future<void> _openSourceWebView(
+    BrowsableComicSource source,
+    Uri url,
+  ) async {
+    final request = _sourceWebViewRequest(source, url);
+    widget.debugTrace.record(
+      TraceEvent(
+        monotonicMicros: _traceClock.elapsedMicroseconds,
+        sessionId: 'source-browser:${source.sourceId}',
+        kind: TraceEventKind.retryScheduled,
+        payload: <String, Object?>{
+          'stage': 'source-verification-browser-open',
+          'host': request.url.host,
+          'userAgentLength': request.userAgent?.length ?? 0,
+        },
+      ),
+    );
+    await widget.networkBridge.openBrowser(
+      request.url,
+      userAgent: request.userAgent,
+    );
+    final snapshot = await widget.networkBridge.readBrowserSnapshot(request.url);
+    widget.debugTrace.record(
+      TraceEvent(
+        monotonicMicros: _traceClock.elapsedMicroseconds,
+        sessionId: 'source-browser:${source.sourceId}',
+        kind: snapshot == null
+            ? TraceEventKind.taskFailed
+            : TraceEventKind.sourceReady,
+        payload: <String, Object?>{
+          'stage': 'source-verification-browser-result',
+          'host': request.url.host,
+          'snapshotPresent': snapshot != null,
+          'snapshotHost': snapshot?.currentUrl.host ?? '',
+          'cookieNames': snapshot?.cookies.keys.toList(growable: false) ??
+              const <String>[],
+          'cookieCount': snapshot?.cookies.length ?? 0,
+          'cfClearancePresent':
+              snapshot?.cookies.containsKey('cf_clearance') ?? false,
+          'userAgentLength': snapshot?.userAgent?.length ?? 0,
+          'userAgentMatched': snapshot != null &&
+              (request.userAgent == null ||
+                  snapshot.userAgent == request.userAgent),
+        },
+      ),
+    );
+  }
+
   Future<Uint8List> _loadSourceResourceBytes(String sourceId, Uri uri) =>
       _sourceResources.loadBytes(sourceId, uri);
 
@@ -212,7 +270,8 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
             downloadChanges: _chapterDownloads.changes,
             onDownloadComic: (entries) =>
                 _downloadComicEntries(identity, entries),
-            onOpenSourceWebView: () => widget.networkBridge.openBrowser(
+            onOpenSourceWebView: () => _openSourceWebView(
+                  source,
                   _sourceComicWebUri(source, comic.comicId),
                 ),
             onOpenSourceSettings: sourceSupportsSettings(source)
@@ -220,6 +279,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
                 : null,
             onSearchMetadata: (query) =>
                 _searchSourceMetadata(source, query),
+            traceSink: widget.debugTrace,
           ),
         ),
       );
@@ -287,7 +347,8 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
           ),
           onOpenSourceWebView: source == null
               ? null
-              : () => widget.networkBridge.openBrowser(
+              : () => _openSourceWebView(
+                    source,
                     _sourceComicWebUri(source, comic.comicId),
                   ),
           onOpenSourceSettings:
@@ -297,6 +358,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
           onSearchMetadata: source == null
               ? null
               : (query) => _searchSourceMetadata(source, query),
+          traceSink: widget.debugTrace,
           onMigrateSource: comic.sourceId == 'local-folder'
               ? null
               : _openSourceMigration,

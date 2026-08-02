@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
+import 'package:telemetry/telemetry.dart';
 
 import 'package:downloads/downloads.dart';
 
@@ -74,6 +75,7 @@ final class ComicDetailsLibrarySnapshot {
     required Iterable<ImportedLibraryEntry> chapters,
     required Map<String, ChapterReadState> readStates,
     required this.preference,
+    this.sourceComic,
     Iterable<Chapter> sourceChapters = const <Chapter>[],
   })  : chapters = List<ImportedLibraryEntry>.unmodifiable(chapters),
         sourceChapters = List<Chapter>.unmodifiable(sourceChapters),
@@ -84,18 +86,21 @@ final class ComicDetailsLibrarySnapshot {
     Iterable<Chapter>? sourceChapters,
     Map<String, ChapterReadState>? readStates,
     ComicPreference? preference,
+    Comic? sourceComic,
   }) =>
       ComicDetailsLibrarySnapshot(
         chapters: chapters ?? this.chapters,
         sourceChapters: sourceChapters ?? this.sourceChapters,
         readStates: readStates ?? this.readStates,
         preference: preference ?? this.preference,
+        sourceComic: sourceComic ?? this.sourceComic,
       );
 
   final List<ImportedLibraryEntry> chapters;
   final List<Chapter> sourceChapters;
   final Map<String, ChapterReadState> readStates;
   final ComicPreference preference;
+  final Comic? sourceComic;
 }
 
 typedef ComicDetailsCoverLoader = Future<EncodedResourceSource> Function({
@@ -171,6 +176,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
     this.onOpenSourceSettings,
     this.onSearchMetadata,
     this.onMigrateSource,
+    this.traceSink = const NoopTraceSink(),
     super.key,
   });
 
@@ -193,6 +199,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final ComicDetailsMetadataSearch? onSearchMetadata;
   final ComicDetailsMigrationOpener? onMigrateSource;
+  final TraceSink traceSink;
 
   @override
   State<LocalComicDetailsScreen> createState() =>
@@ -204,6 +211,7 @@ final class _LocalComicDetailsScreenState
   late ComicDetailsLibrarySnapshot _library;
   bool _descending = true;
   bool _refreshing = false;
+  Future<bool>? _refreshInFlight;
   final Set<String> _opening = <String>{};
   final Set<String> _workingDownloads = <String>{};
   final Map<String, ChapterDownloadSnapshot> _downloadSnapshots =
@@ -213,6 +221,26 @@ final class _LocalComicDetailsScreenState
   _DetailFailure? _failure;
   final Map<String, Future<ImportedLibraryEntry>> _ensureInFlight =
       <String, Future<ImportedLibraryEntry>>{};
+  final Stopwatch _traceClock = Stopwatch()..start();
+
+  void _recordRefreshTrace(
+    TraceEventKind kind,
+    String stage, {
+    Map<String, Object?> payload = const <String, Object?>{},
+  }) {
+    widget.traceSink.record(
+      TraceEvent(
+        monotonicMicros: _traceClock.elapsedMicroseconds,
+        sessionId: 'comic-details:${widget.comic.sourceId}',
+        kind: kind,
+        payload: <String, Object?>{
+          'stage': stage,
+          'comicIdLength': widget.comic.comicId.length,
+          ...payload,
+        },
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -265,10 +293,31 @@ final class _LocalComicDetailsScreenState
     }
   }
 
-  Future<bool> _refresh({required bool announce}) async {
-    if (_refreshing) {
-      return false;
+  Future<bool> _refresh({required bool announce}) {
+    final active = _refreshInFlight;
+    if (active != null) {
+      _recordRefreshTrace(
+        TraceEventKind.retryScheduled,
+        'local-refresh-joined',
+      );
+      return active;
     }
+    late final Future<bool> tracked;
+    tracked = _performRefresh(announce: announce).whenComplete(() {
+      if (identical(_refreshInFlight, tracked)) {
+        _refreshInFlight = null;
+      }
+    });
+    _refreshInFlight = tracked;
+    return tracked;
+  }
+
+  Future<bool> _performRefresh({required bool announce}) async {
+    final startedMicros = _traceClock.elapsedMicroseconds;
+    _recordRefreshTrace(
+      TraceEventKind.retryScheduled,
+      'local-refresh-start',
+    );
     setState(() {
       _refreshing = true;
       _failure = null;
@@ -282,12 +331,29 @@ final class _LocalComicDetailsScreenState
       setState(() => _library = next);
       unawaited(_loadDownloadStatuses(next.chapters));
       succeeded = true;
+      _recordRefreshTrace(
+        TraceEventKind.sourceReady,
+        'local-refresh-complete',
+        payload: <String, Object?>{
+          'durationMicros': _traceClock.elapsedMicroseconds - startedMicros,
+          'chapterCount': next.sourceChapters.length,
+        },
+      );
       if (announce) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('漫画详情已更新')),
         );
       }
     } on Object catch (error, stackTrace) {
+      _recordRefreshTrace(
+        TraceEventKind.taskFailed,
+        'local-refresh-failed',
+        payload: <String, Object?>{
+          'durationMicros': _traceClock.elapsedMicroseconds - startedMicros,
+          'errorType': error.runtimeType.toString(),
+          if (error is Failure) 'errorCode': error.code.name,
+        },
+      );
       if (mounted) {
         final failure = _DetailFailure.capture(error, stackTrace);
         setState(() => _failure = failure);
@@ -711,6 +777,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
     this.onSearchMetadata,
+    this.traceSink = const NoopTraceSink(),
     super.key,
   });
 
@@ -733,6 +800,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
   final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final ComicDetailsMetadataSearch? onSearchMetadata;
+  final TraceSink traceSink;
 
   @override
   State<RemoteComicDetailsScreen> createState() =>
@@ -745,6 +813,7 @@ final class _RemoteComicDetailsScreenState
   ComicManifest? _manifest;
   _DetailFailure? _failure;
   bool _refreshing = false;
+  Future<bool>? _refreshInFlight;
   bool _descending = true;
   final Set<String> _opening = <String>{};
   final Set<String> _workingDownloads = <String>{};
@@ -754,6 +823,26 @@ final class _RemoteComicDetailsScreenState
   bool _downloadingComic = false;
   final Map<String, Future<ImportedLibraryEntry>> _ensureInFlight =
       <String, Future<ImportedLibraryEntry>>{};
+  final Stopwatch _traceClock = Stopwatch()..start();
+
+  void _recordRefreshTrace(
+    TraceEventKind kind,
+    String stage, {
+    Map<String, Object?> payload = const <String, Object?>{},
+  }) {
+    widget.traceSink.record(
+      TraceEvent(
+        monotonicMicros: _traceClock.elapsedMicroseconds,
+        sessionId: 'comic-details:${widget.source.sourceId}',
+        kind: kind,
+        payload: <String, Object?>{
+          'stage': stage,
+          'comicIdLength': widget.summary.comicId.length,
+          ...payload,
+        },
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -821,10 +910,39 @@ final class _RemoteComicDetailsScreenState
   Future<bool> _refresh({
     required bool announce,
     bool forceRefresh = false,
-  }) async {
-    if (_refreshing) {
-      return false;
+  }) {
+    final active = _refreshInFlight;
+    if (active != null) {
+      _recordRefreshTrace(
+        TraceEventKind.retryScheduled,
+        'remote-refresh-joined',
+        payload: <String, Object?>{'forceRefresh': forceRefresh},
+      );
+      return active;
     }
+    late final Future<bool> tracked;
+    tracked = _performRefresh(
+      announce: announce,
+      forceRefresh: forceRefresh,
+    ).whenComplete(() {
+      if (identical(_refreshInFlight, tracked)) {
+        _refreshInFlight = null;
+      }
+    });
+    _refreshInFlight = tracked;
+    return tracked;
+  }
+
+  Future<bool> _performRefresh({
+    required bool announce,
+    bool forceRefresh = false,
+  }) async {
+    final startedMicros = _traceClock.elapsedMicroseconds;
+    _recordRefreshTrace(
+      TraceEventKind.retryScheduled,
+      'remote-refresh-start',
+      payload: <String, Object?>{'forceRefresh': forceRefresh},
+    );
     setState(() {
       _refreshing = true;
       _failure = null;
@@ -834,33 +952,43 @@ final class _RemoteComicDetailsScreenState
       if (forceRefresh) {
         invalidateCachedComic(widget.source, widget.summary.comicId);
       }
-      final results = await Future.wait<Object>(<Future<Object>>[
-        widget.source.loadComic(widget.summary.comicId),
-        widget.reloadLibrary(refreshContent: false),
-      ]);
-      final manifest = results[0] as ComicManifest;
-      final library = results[1] as ComicDetailsLibrarySnapshot;
-      if (manifest.comic.sourceId != widget.source.sourceId ||
-          manifest.comic.comicId != widget.summary.comicId ||
-          manifest.chapters.any(
+      final library = await widget.reloadLibrary(refreshContent: true);
+      final comic = library.sourceComic;
+      final sourceChapters = library.sourceChapters;
+      if (comic == null ||
+          comic.sourceId != widget.source.sourceId ||
+          comic.comicId != widget.summary.comicId ||
+          sourceChapters.any(
             (chapter) => chapter.comicId != widget.summary.comicId,
           )) {
-        throw StateError('漫画源详情返回了不匹配的漫画或章节身份');
+        throw StateError('漫画源详情组合刷新未返回匹配的漫画和章节身份');
       }
-      if (manifest.chapters.isEmpty) {
+      if (sourceChapters.isEmpty) {
         throw StateError(
           '漫画源未返回可确认的章节目录；这不代表单章节漫画。'
           '请打开 WebView 完成站点验证后重试。',
         );
       }
+      final manifest = ComicManifest(
+        comic: comic,
+        chapters: sourceChapters,
+      );
       if (!mounted) {
         return false;
       }
       setState(() {
         _manifest = manifest;
-        _library = library.copyWith(sourceChapters: manifest.chapters);
+        _library = library;
       });
       succeeded = true;
+      _recordRefreshTrace(
+        TraceEventKind.sourceReady,
+        'remote-refresh-complete',
+        payload: <String, Object?>{
+          'durationMicros': _traceClock.elapsedMicroseconds - startedMicros,
+          'chapterCount': manifest.chapters.length,
+        },
+      );
       unawaited(_loadDownloadStatuses(library.chapters));
       if (announce) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -868,6 +996,15 @@ final class _RemoteComicDetailsScreenState
         );
       }
     } on Object catch (error, stackTrace) {
+      _recordRefreshTrace(
+        TraceEventKind.taskFailed,
+        'remote-refresh-failed',
+        payload: <String, Object?>{
+          'durationMicros': _traceClock.elapsedMicroseconds - startedMicros,
+          'errorType': error.runtimeType.toString(),
+          if (error is Failure) 'errorCode': error.code.name,
+        },
+      );
       if (mounted) {
         final failure = _DetailFailure.capture(error, stackTrace);
         setState(() => _failure = failure);

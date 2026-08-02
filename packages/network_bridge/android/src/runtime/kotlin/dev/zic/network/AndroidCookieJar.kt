@@ -14,7 +14,10 @@ import okhttp3.HttpUrl
  * completed Cloudflare challenge is available to the isolated runtime without
  * relying on WebView's process-local CookieManager cache.
  */
-class AndroidCookieJar(context: Context) : CookieJar {
+class AndroidCookieJar(
+    context: Context,
+    private val userAgentProvider: () -> String = { "" },
+) : CookieJar {
     private val application = context.applicationContext
     private val manager: CookieManager
         get() = CookieManager.getInstance()
@@ -35,15 +38,10 @@ class AndroidCookieJar(context: Context) : CookieJar {
     }
 
     private fun importBrowserSnapshot(url: HttpUrl) {
-        val snapshot = NetworkBrowserSnapshotStore.read(application, url.toString())
-            ?: return
-        @Suppress("UNCHECKED_CAST")
-        val cookies = snapshot["cookies"] as? Map<String, String> ?: return
-        cookies.forEach { (name, value) ->
-            if (name.isNotBlank()) {
-                manager.setCookie(url.toString(), "$name=$value; Path=/")
-            }
-        }
-        if (cookies.isNotEmpty()) manager.flush()
+        AndroidBrowserCookieSession.importCookies(
+            application,
+            url.toString(),
+            expectedUserAgent = userAgentProvider(),
+        )
     }
 }

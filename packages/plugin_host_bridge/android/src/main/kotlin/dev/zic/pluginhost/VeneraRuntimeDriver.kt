@@ -10,6 +10,7 @@ import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.webkit.CookieManager
+import dev.zic.network.AndroidBrowserCookieSession
 import android.webkit.JavascriptInterface
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -256,6 +257,8 @@ internal class VeneraRuntimeDriver private constructor(
                                         "language" to "und",
                                         "website" to website,
                                         "supportsSearch" to supportsSearch,
+                                        "browserUserAgent" to
+                                            state.webView.settings.userAgentString.orEmpty(),
                                         "contentRatings" to listOf("safe", "suggestive"),
                                     ),
                                 ),
@@ -475,6 +478,13 @@ private class VeneraNativeBridge(
                 error("Venera request was cancelled")
             }
             val targetIdentity = target.toExternalForm()
+            if (capabilities.contains("cookies")) {
+                AndroidBrowserCookieSession.importCookies(
+                    appContext,
+                    targetIdentity,
+                    expectedUserAgent = defaultUserAgent,
+                )
+            }
             val requestHeaders = LinkedHashMap(forwardHeaders)
             if (capabilities.contains("cookies") &&
                 requestHeaders.keys.none { it.equals("cookie", ignoreCase = true) }
@@ -830,6 +840,11 @@ private class VeneraNativeBridge(
         val url = message.getString("url")
         return when (message.getString("function")) {
             "get" -> {
+                AndroidBrowserCookieSession.importCookies(
+                    appContext,
+                    url,
+                    expectedUserAgent = defaultUserAgent,
+                )
                 val raw = cookieManager.getCookie(url).orEmpty()
                 JSONArray().apply {
                     raw.split(';').map(String::trim).filter(String::isNotEmpty).forEach { item ->

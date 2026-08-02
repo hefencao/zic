@@ -133,11 +133,19 @@ final class _ComicDetailsScaffold extends StatefulWidget {
 
 final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
   _DetailsRefreshState _refreshState = _DetailsRefreshState.idle;
+  Timer? _refreshResultTimer;
+
+  @override
+  void dispose() {
+    _refreshResultTimer?.cancel();
+    super.dispose();
+  }
 
   Future<void> _handleRefresh() async {
     if (_refreshState == _DetailsRefreshState.refreshing) {
       return;
     }
+    _refreshResultTimer?.cancel();
     setState(() => _refreshState = _DetailsRefreshState.refreshing);
     var succeeded = false;
     try {
@@ -148,11 +156,15 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
     if (!mounted) {
       return;
     }
-    setState(
-      () => _refreshState = succeeded
-          ? _DetailsRefreshState.success
-          : _DetailsRefreshState.failure,
-    );
+    final resultState = succeeded
+        ? _DetailsRefreshState.success
+        : _DetailsRefreshState.failure;
+    setState(() => _refreshState = resultState);
+    _refreshResultTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted && _refreshState == resultState) {
+        setState(() => _refreshState = _DetailsRefreshState.idle);
+      }
+    });
   }
 
   @override
@@ -279,22 +291,11 @@ final class _SourceSettingsAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TextButton.icon(
+    return IconButton(
       key: comicDetailsSourceSettingsKey,
+      tooltip: '设置漫画源：$sourceLabel',
       onPressed: onPressed,
-      style: TextButton.styleFrom(
-        foregroundColor: Theme.of(context).colorScheme.onSurface,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-      ),
-      icon: Icon(_sourcePluginIcon(sourceId), size: 20),
-      label: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 112),
-        child: Text(
-          sourceLabel,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-      ),
+      icon: Icon(_sourcePluginIcon(sourceId)),
     );
   }
 }

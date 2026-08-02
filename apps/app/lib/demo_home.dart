@@ -174,6 +174,7 @@ final class DemoHome extends StatefulWidget {
 }
 
 final class _DemoHomeState extends State<DemoHome> {
+  final Stopwatch _traceClock = Stopwatch()..start();
   late final ImportedLibraryStore _library;
   late final ChapterDownloadService _chapterDownloads;
   late final ComicSourceResourceGateway _sourceResources;
@@ -390,6 +391,53 @@ final class _DemoHomeState extends State<DemoHome> {
     }
   }
 
+  bool _savedComicHasRealCatalog(SavedComicRecord comic) =>
+      comic.chapters.any(
+        (chapter) =>
+            !isSyntheticMihonChapterIdentity(chapter.chapterId),
+      );
+
+  bool _manifestHasRealCatalog(ComicManifest manifest) =>
+      manifest.chapters.any(
+        (chapter) =>
+            !isSyntheticMihonChapterIdentity(chapter.chapterId),
+      );
+
+  void _rejectCatalogRegression({
+    required SavedComicRecord? existing,
+    required ComicManifest incoming,
+  }) {
+    if (existing == null ||
+        !_savedComicHasRealCatalog(existing) ||
+        _manifestHasRealCatalog(incoming)) {
+      return;
+    }
+    widget.debugTrace.record(
+      TraceEvent(
+        monotonicMicros: _traceClock.elapsedMicroseconds,
+        sessionId: 'source-catalog:${incoming.comic.sourceId}',
+        kind: TraceEventKind.taskFailed,
+        payload: <String, Object?>{
+          'stage': 'chapter-catalog-regression-rejected',
+          'comicIdLength': incoming.comic.comicId.length,
+          'previousChapterCount': existing.chapters.length,
+          'incomingChapterCount': incoming.chapters.length,
+          'incomingSyntheticCount': incoming.chapters
+              .where(
+                (chapter) => isSyntheticMihonChapterIdentity(
+                  chapter.chapterId,
+                ),
+              )
+              .length,
+        },
+      ),
+    );
+    throw StateError(
+      '漫画源曾返回真实章节目录，本次结果为空或仅含兼容单章节；'
+      '已保留原目录，请重新完成站点验证后刷新。',
+    );
+  }
+
   Future<void> _persistRemoteComic(
     ComicManifest manifest,
     bool retained,
@@ -406,6 +454,7 @@ final class _DemoHomeState extends State<DemoHome> {
       manifest.comic.sourceId,
       manifest.comic.comicId,
     );
+    _rejectCatalogRegression(existing: existing, incoming: manifest);
     await _library.upsertSavedComic(
       SavedComicRecord.fromManifest(
         manifest,
@@ -1193,6 +1242,7 @@ final class _DemoHomeState extends State<DemoHome> {
     return details.ComicDetailsLibrarySnapshot(
       chapters: chapters,
       sourceChapters: sourceChapters,
+      sourceComic: saved.isEmpty ? null : saved.first.toComic(),
       readStates: <String, ChapterReadState>{
         for (final chapter in chapters)
           if (_chapterReadStates.containsKey(chapter.identity))
@@ -1246,6 +1296,28 @@ final class _DemoHomeState extends State<DemoHome> {
         }
         final manifest = await source.loadComic(comicId);
         final existing = await _library.getSavedComic(sourceId, comicId);
+        widget.debugTrace.record(
+          TraceEvent(
+            monotonicMicros: _traceClock.elapsedMicroseconds,
+            sessionId: 'source-catalog:$sourceId',
+            kind: TraceEventKind.sourceReady,
+            payload: <String, Object?>{
+              'stage': 'chapter-catalog-refresh-result',
+              'comicIdLength': comicId.length,
+              'chapterCount': manifest.chapters.length,
+              'syntheticChapterCount': manifest.chapters
+                  .where(
+                    (chapter) => isSyntheticMihonChapterIdentity(
+                      chapter.chapterId,
+                    ),
+                  )
+                  .length,
+              'previousRealCatalog': existing != null &&
+                  _savedComicHasRealCatalog(existing),
+            },
+          ),
+        );
+        _rejectCatalogRegression(existing: existing, incoming: manifest);
         await _library.upsertSavedComic(
           SavedComicRecord.fromManifest(
             manifest,

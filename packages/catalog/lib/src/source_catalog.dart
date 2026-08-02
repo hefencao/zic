@@ -74,6 +74,22 @@ abstract interface class ComicWebUriSource {
   Uri? resolveComicWebUri(String comicId);
 }
 
+/// Atomic browser configuration for one source-owned website request.
+///
+/// User-agent selection belongs to the source/network adapter because
+/// Cloudflare clearance cookies can be bound to the browser user agent. The
+/// App only forwards this immutable value to the shared network bridge.
+final class ComicWebViewRequest {
+  const ComicWebViewRequest({required this.url, this.userAgent});
+
+  final Uri url;
+  final String? userAgent;
+}
+
+abstract interface class ComicWebViewRequestSource {
+  ComicWebViewRequest webViewRequest(Uri url);
+}
+
 abstract interface class AuthenticatableComicSource {
   Future<ComicSourceAccount> loadAccount();
 

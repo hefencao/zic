@@ -53,6 +53,20 @@ void main() {
     );
   });
 
+  test('cached source preserves the WebView request user agent', () {
+    final raw = _CountingSource();
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final source = CachedBrowsableComicSource(source: raw, cache: cache);
+    final request = source.webViewRequest(
+      Uri.parse('https://example.invalid/comic/comic'),
+    );
+
+    expect(source, isA<ComicWebViewRequestSource>());
+    expect(request.url.path, '/comic/comic');
+    expect(request.userAgent, 'fixture-browser-agent');
+  });
+
   test('comic invalidation clears related detail chapter and artwork only',
       () async {
     final raw = _CountingSource();
@@ -189,8 +203,10 @@ void main() {
   });
 }
 
-final class _CountingSource
-    implements BrowsableComicSource, ComicWebUriSource {
+final class _CountingSource implements
+        BrowsableComicSource,
+        ComicWebUriSource,
+        ComicWebViewRequestSource {
   var comicLoads = 0;
   var chapterLoads = 0;
   var browseLoads = 0;
@@ -276,6 +292,12 @@ final class _CountingSource
   @override
   Uri resolveComicWebUri(String comicId) =>
       Uri.parse('https://example.invalid/comic/$comicId');
+
+  @override
+  ComicWebViewRequest webViewRequest(Uri url) => ComicWebViewRequest(
+        url: url,
+        userAgent: 'fixture-browser-agent',
+      );
 
   @override
   Future<Uint8List> loadResource(Uri uri) async {

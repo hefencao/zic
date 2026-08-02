@@ -97,8 +97,8 @@ extension _DemoHomeViews on _DemoHomeState {
                     },
                     loadCover: _loadSourceBrowseCover,
                     onOpenComic: _openSourceComic,
-                    onOpenSourceWebView: (source, url) =>
-                        widget.networkBridge.openBrowser(url),
+                    onOpenSourceWebView: _openSourceWebView,
+                    traceSink: widget.debugTrace,
                     requestedQuery: _sourceSearchQuery,
                     queryRevision: _sourceSearchRevision,
                   )

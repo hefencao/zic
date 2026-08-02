@@ -1,3 +1,7 @@
+## dev.89 状态
+
+来源浏览器与 Mihon/Venera 请求现在共享来源拥有的 User-Agent 配置和原子 Cookie 快照，但各进程继续维护独立 WebView data directory。详情刷新竞态、2 秒结果图标和插件 IconButton 已完成；synthetic revision 3 与双层真实目录保护已生效。远程详情原先绕过 composition 直接调用来源的第二条更新路径已删除，刷新只能消费经过目录回归检查和持久化的原子快照。新增 app-level Trace 可区分浏览器快照、UA 匹配、`cf_clearance` 是否存在、browse timeout、刷新合并、章节数/synthetic 数量变化和目录回归。当前环境已通过 repository/Dart structure、dev.75–dev.89、共享浏览器 Kotlin、Mihon ABI/classloader/payload/chapter、Venera、Reader/Pipeline/UI、Android dependency/Trace、native header 与本地 libwebp 1.6.0 fixtures；Flutter/Dart/Gradle/Android SDK/Cargo 不可用的项目仍列为未验证。
+
 ## dev.88 状态
 
 已在 dev.87 唯一基线上完成来源验证生命周期与详情交互闭环。错误报告中的 Dart 3.12 无关 interface 提升、两个错误 `Stream.toList(growable:)` 和 `reader_runtime` 测试缺少 `ContentKind` 所属依赖均已修复。可见 WebView 由 `network_bridge` 主进程 Activity 持有并通过 activity result 完成；插件隔离进程预先设置 WebView data-directory suffix，浏览器 Cookie/localStorage 通过原子 snapshot 导入 source CookieJar。Cloudflare interceptor 不再后台等待，Mihon cause-chain 投影 typed verification；来源页/详情页等待用户返回后再失效缓存重试。旧 synthetic 单章 revision 已失效。

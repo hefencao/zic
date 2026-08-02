@@ -21,15 +21,21 @@ class NetworkBrowserActivity : Activity() {
             failAndFinish("HTTP(S) browser URL is required")
             return
         }
+        val requestedUserAgent = intent.getStringExtra(EXTRA_USER_AGENT)
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
         setResult(RESULT_CANCELED)
         runCatching {
-            NetworkBrowserSnapshotStore.begin(this, url)
+            NetworkBrowserSnapshotStore.begin(this, url, requestedUserAgent)
             webView = WebView(this).apply {
                 layoutParams = ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.MATCH_PARENT,
                 )
                 settings.javaScriptEnabled = true
+                if (requestedUserAgent != null) {
+                    settings.userAgentString = requestedUserAgent
+                }
                 settings.domStorageEnabled = true
                 settings.databaseEnabled = true
                 webViewClient = object : WebViewClient() {
@@ -64,6 +70,7 @@ class NetworkBrowserActivity : Activity() {
             currentUrl = currentUrl,
             title = view.title,
             cookieHeader = cookieHeader,
+            userAgent = view.settings.userAgentString,
         )
         view.evaluateJavascript(
             "JSON.stringify(Object.assign({}, window.localStorage))",
@@ -77,6 +84,7 @@ class NetworkBrowserActivity : Activity() {
                 title = view.title,
                 cookieHeader = cookieHeader,
                 localStorageJson = localStorage,
+                userAgent = view.settings.userAgentString,
             )
         }
     }
@@ -114,6 +122,7 @@ class NetworkBrowserActivity : Activity() {
                 cookieHeader = currentUrl.takeIf(String::isNotBlank)?.let { url ->
                     CookieManager.getInstance().getCookie(url)
                 },
+                userAgent = webView.settings.userAgentString,
             )
             CookieManager.getInstance().flush()
             webView.stopLoading()
@@ -124,6 +133,7 @@ class NetworkBrowserActivity : Activity() {
 
     companion object {
         const val EXTRA_URL = "url"
+        const val EXTRA_USER_AGENT = "userAgent"
         const val EXTRA_ERROR = "error"
     }
 }

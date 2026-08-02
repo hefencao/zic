@@ -69,6 +69,7 @@ void main() {
       name: 'Fixture',
       language: 'en',
       website: Uri.parse('https://example.invalid'),
+      browserUserAgent: 'fixture-browser-agent',
       contentRatings: const <SourceContentRating>{
         SourceContentRating.safe,
         SourceContentRating.erotica,
@@ -80,6 +81,7 @@ void main() {
     );
 
     expect(decoded.externalId, 'fixture');
+    expect(decoded.browserUserAgent, 'fixture-browser-agent');
     expect(decoded.contentRatings, contains(SourceContentRating.erotica));
   });
 

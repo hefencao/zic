@@ -1,3 +1,9 @@
+## dev.89 完成项与后续设备验证
+
+已完成：来源 descriptor 浏览器 User-Agent；Mihon/Venera 同站点同 UA Cookie 快照导入；独立 WebView data directory 保持；详情刷新 Future 合并；2 秒刷新结果；统一插件 IconButton；synthetic revision 3；runtime 真实目录记忆；持久目录回归拒绝；远程详情改为只消费 composition 原子刷新快照；UOE 能力判定收紧；来源/详情/会话 Trace；协议、组件和静态门禁回归。
+
+设备验证重点：同一个 JMComic 作品完成 Cloudflare 后连续刷新 5 次，并在 1、5、15 分钟后重试；确认 Trace 中 `source-verification-browser-result` 有 `cf_clearance` 名称、`remote/local-refresh-complete` 的章节数稳定、无 `chapter-catalog-regression-rejected`。若仍失败，导出 zic trace 与 logcat 中 WebView/OkHttp 状态，不得通过恢复 synthetic 单章节掩盖。
+
 ## dev.88 完成项与后续验证
 
 已完成：错误报告编译闭包；浏览器 Activity result 完成边界；插件隔离 WebView data-directory suffix；原子 Cookie snapshot 导入；Cloudflare fail-fast typed verification；45/65 秒 runtime/IPC timeout 层级；来源页和详情页返回后自动重试；synthetic revision 2 淘汰；详情 WebView/迁移/插件 action；加入书架后的来源能力保留；持续刷新结果图标；同源标签搜索与多选复制；ADR、审计和 dev.88 门禁。

@@ -6,6 +6,7 @@ final class NetworkBrowserSnapshot {
     required this.title,
     required Map<String, String> cookies,
     required Map<String, String> localStorage,
+    this.userAgent,
   })  : cookies = Map<String, String>.unmodifiable(cookies),
         localStorage = Map<String, String>.unmodifiable(localStorage);
 
@@ -13,6 +14,7 @@ final class NetworkBrowserSnapshot {
   final String title;
   final Map<String, String> cookies;
   final Map<String, String> localStorage;
+  final String? userAgent;
 }
 
 /// Android-owned browser and cookie capability shared by built-in and external
@@ -26,11 +28,16 @@ final class AndroidNetworkBridge {
   static const String _channelName = 'dev.zic/network_bridge';
   final MethodChannel _channel;
 
-  Future<void> openBrowser(Uri url) async {
+  Future<void> openBrowser(Uri url, {String? userAgent}) async {
     _requireHttpUrl(url);
+    final normalizedUserAgent = userAgent?.trim();
     await _channel.invokeMethod<void>(
       'openBrowser',
-      <String, Object?>{'url': url.toString()},
+      <String, Object?>{
+        'url': url.toString(),
+        if (normalizedUserAgent != null && normalizedUserAgent.isNotEmpty)
+          'userAgent': normalizedUserAgent,
+      },
     );
   }
 
@@ -59,6 +66,11 @@ final class AndroidNetworkBridge {
         value['localStorage'],
         'Android browser local storage',
       ),
+      userAgent: value['userAgent'] is String
+          ? (value['userAgent'] as String).trim().isEmpty
+              ? null
+              : value['userAgent'] as String
+          : null,
     );
   }
 }

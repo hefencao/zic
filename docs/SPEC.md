@@ -1,3 +1,14 @@
+## dev.89 来源 Cookie、刷新和目录规范
+
+1. `ComicWebViewRequest` 必须将 URL 与来源拥有的 User-Agent 作为一个原子配置值传递，禁止多个 setter 形成半更新状态。
+2. 浏览器快照只可被同站点请求读取；提供 expected User-Agent 时必须完全匹配，否则不得导入 Cookie。
+3. Mihon 与 Venera 的请求必须在读取各自进程 CookieManager 前导入最新匹配快照。Cookie 值不得进入 Dart Trace。
+4. 不得让 App 主进程和插件 runtime 共用 WebView data directory；进程隔离使用 suffix，跨进程共享使用原子文件快照。
+5. 同一详情页的初始化刷新与手势刷新必须共享 in-flight Future；Presentation 不得因“已有刷新正在运行”返回失败。
+6. 刷新中显示旋转刷新图标；成功绿勾、失败红叉均保持 2 秒后回到 idle。三个 AppBar action 顺序固定为地球 WebView、迁移、插件设置，均使用同风格 IconButton。
+7. 曾返回真实目录的 source/comic 不得被空目录或 synthetic-only 结果覆盖。只有从未确认目录能力、正文 page-list 非空且没有真实目录证据时才允许 revision 3 synthetic gallery。远程详情刷新不得直接调用来源并自行更新页面 manifest，必须使用 composition 返回的原子刷新快照。
+8. Trace 必须覆盖 browse/refresh 开始、完成、失败、WebView 快照、in-flight 合并和目录回归拒绝；高敏值只记录名称、数量、长度或稳定摘要。
+
 ## dev.88 来源验证与详情交互规范
 
 - 作品 WebView 使用地球图标；正常和失败详情的 AppBar action 顺序均为 WebView、迁移、插件来源设置。加入书架后仍显示可用的来源 action。

@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:network_bridge/network_bridge.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
+import 'package:telemetry/telemetry.dart';
 
 import 'package:downloads/downloads.dart';
 import 'comic_details.dart' as details;
@@ -44,6 +45,16 @@ typedef SourceComicCoverLoader = Future<EncodedResourceSource> Function(
   Uri uri,
 );
 
+ComicWebViewRequest _browserRequestForSource(
+  BrowsableComicSource source,
+  Uri url,
+) {
+  final Object candidate = source;
+  final ComicWebViewRequestSource? requestSource =
+      candidate is ComicWebViewRequestSource ? candidate : null;
+  return requestSource?.webViewRequest(url) ?? ComicWebViewRequest(url: url);
+}
+
 bool sourceSupportsSettings(BrowsableComicSource source) {
   final Object candidate =
       source is CachedBrowsableComicSource ? source.source : source;
@@ -74,7 +85,13 @@ Future<void> openComicSourceSettings(
         },
         onLogin: source.sourceId.startsWith('mihon:') ||
                 source.sourceId.startsWith('venera:')
-            ? networkBridge.openBrowser
+            ? (url) {
+                final request = _browserRequestForSource(source, url);
+                return networkBridge.openBrowser(
+                  request.url,
+                  userAgent: request.userAgent,
+                );
+              }
             : null,
         onReadLogin: source.sourceId.startsWith('venera:')
             ? (url) async {
@@ -103,6 +120,7 @@ final class ComicSourcesPage extends StatefulWidget {
     required this.loadCover,
     required this.onOpenComic,
     this.onOpenSourceWebView,
+    this.traceSink = const NoopTraceSink(),
     this.requestedQuery,
     this.queryRevision = 0,
     super.key,
@@ -120,6 +138,7 @@ final class ComicSourcesPage extends StatefulWidget {
     BrowsableComicSource source,
     Uri url,
   )? onOpenSourceWebView;
+  final TraceSink traceSink;
   final String? requestedQuery;
   final int queryRevision;
 
@@ -139,6 +158,26 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   _SourceFailure? _failure;
   int _generation = 0;
   bool _recoveringSourceAccess = false;
+  final Stopwatch _traceClock = Stopwatch()..start();
+
+  void _recordSourceTrace(
+    TraceEventKind kind,
+    String stage,
+    BrowsableComicSource source, {
+    Map<String, Object?> payload = const <String, Object?>{},
+  }) {
+    widget.traceSink.record(
+      TraceEvent(
+        monotonicMicros: _traceClock.elapsedMicroseconds,
+        sessionId: 'source-browser:${source.sourceId}',
+        kind: kind,
+        payload: <String, Object?>{
+          'stage': stage,
+          ...payload,
+        },
+      ),
+    );
+  }
 
   BrowsableComicSource? get _activeSource {
     final id = widget.activeSourceId;
@@ -220,6 +259,16 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       });
       return;
     }
+    final startedMicros = _traceClock.elapsedMicroseconds;
+    _recordSourceTrace(
+      TraceEventKind.retryScheduled,
+      'browse-start',
+      source,
+      payload: <String, Object?>{
+        'forceRefresh': forceRefresh,
+        'queryLength': _query.length,
+      },
+    );
     if (forceRefresh) {
       invalidateCachedSearch(source);
     }
@@ -241,6 +290,16 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         _hasMore = page.hasMore;
         _nextOffset = page.offset + page.items.length;
       });
+      _recordSourceTrace(
+        TraceEventKind.sourceReady,
+        'browse-complete',
+        source,
+        payload: <String, Object?>{
+          'durationMicros': _traceClock.elapsedMicroseconds - startedMicros,
+          'itemCount': page.items.length,
+          'hasMore': page.hasMore,
+        },
+      );
     } on Object catch (error, stackTrace) {
       if (!mounted || generation != _generation) {
         return;
@@ -248,6 +307,16 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       setState(() {
         _failure = _SourceFailure.capture(error, stackTrace);
       });
+      _recordSourceTrace(
+        TraceEventKind.taskFailed,
+        'browse-failed',
+        source,
+        payload: <String, Object?>{
+          'durationMicros': _traceClock.elapsedMicroseconds - startedMicros,
+          'errorType': error.runtimeType.toString(),
+          if (error is Failure) 'errorCode': error.code.name,
+        },
+      );
     } finally {
       if (mounted && generation == _generation) {
         setState(() => _loading = false);
@@ -308,12 +377,31 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     final open = widget.onOpenSourceWebView;
     if (open == null || _recoveringSourceAccess) return;
     setState(() => _recoveringSourceAccess = true);
+    _recordSourceTrace(
+      TraceEventKind.retryScheduled,
+      'verification-recovery-start',
+      source,
+    );
     try {
       await open(source, source.descriptor.website);
       if (mounted) {
         await _reload(forceRefresh: true);
+        _recordSourceTrace(
+          TraceEventKind.sourceReady,
+          'verification-recovery-complete',
+          source,
+        );
       }
     } on Object catch (error, stackTrace) {
+      _recordSourceTrace(
+        TraceEventKind.taskFailed,
+        'verification-recovery-failed',
+        source,
+        payload: <String, Object?>{
+          'errorType': error.runtimeType.toString(),
+          if (error is Failure) 'errorCode': error.code.name,
+        },
+      );
       if (mounted) {
         _showSourceFailureSnackBar(
           context,
@@ -1008,6 +1096,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
     this.onSearchMetadata,
+    this.traceSink = const NoopTraceSink(),
     super.key,
   });
 
@@ -1030,6 +1119,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
   final details.ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
   final details.ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final details.ComicDetailsMetadataSearch? onSearchMetadata;
+  final TraceSink traceSink;
 
   @override
   Widget build(BuildContext context) {
@@ -1052,6 +1142,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
       onOpenSourceWebView: onOpenSourceWebView,
       onOpenSourceSettings: onOpenSourceSettings,
       onSearchMetadata: onSearchMetadata,
+      traceSink: traceSink,
     );
   }
 }

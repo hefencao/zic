@@ -85,7 +85,7 @@ def main() -> None:
     )
     require(
         "apps/app/lib/demo_home_source_compat.dart",
-        "source is ComicWebUriSource",
+        "candidate is ComicWebUriSource",
         "webSource?.resolveComicWebUri(comicId)",
     )
     require(

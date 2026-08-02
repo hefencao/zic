@@ -44,7 +44,7 @@ void main() {
       'kind': 'chapter',
       'comicId': 'mihon:manga:fixture',
       'synthetic': true,
-      'synthetic_revision': 2,
+      'synthetic_revision': 3,
     });
     expect(isSyntheticMihonChapterIdentity(legacySynthetic), isTrue);
     expect(isCurrentSyntheticMihonChapterIdentity(legacySynthetic), isFalse);

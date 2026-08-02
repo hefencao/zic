@@ -70,6 +70,7 @@ class NetworkBridgePlugin :
 
     private fun openBrowser(call: MethodCall, result: MethodChannel.Result) {
         val url = call.httpUrlOrError(result) ?: return
+        val userAgent = call.argument<String>("userAgent")?.trim()?.takeIf(String::isNotEmpty)
         val activity = activityBinding?.activity
         if (activity == null) {
             result.error(
@@ -91,7 +92,12 @@ class NetworkBridgePlugin :
         runCatching {
             activity.startActivityForResult(
                 Intent(activity, NetworkBrowserActivity::class.java)
-                    .putExtra(NetworkBrowserActivity.EXTRA_URL, url),
+                    .putExtra(NetworkBrowserActivity.EXTRA_URL, url)
+                    .apply {
+                        if (userAgent != null) {
+                            putExtra(NetworkBrowserActivity.EXTRA_USER_AGENT, userAgent)
+                        }
+                    },
                 BROWSER_REQUEST_CODE,
             )
         }.onFailure { error ->

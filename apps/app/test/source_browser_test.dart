@@ -300,7 +300,16 @@ void main() {
             required Uri? coverUri,
             required ImportedLibraryEntry? fallbackChapter,
           }) async => MemoryEncodedResourceSource(_tinyPng()),
-          reloadLibrary: ({required bool refreshContent}) async => library,
+          reloadLibrary: ({required bool refreshContent}) async {
+            if (!refreshContent) {
+              return library;
+            }
+            final manifest = await source.loadComic(source._comicId);
+            return library.copyWith(
+              sourceComic: manifest.comic,
+              sourceChapters: manifest.chapters,
+            );
+          },
           ensureSourceChapter: (_, __, ___) async =>
               throw StateError('chapter should not open'),
           persistComic: (_, __) async {},
@@ -849,6 +858,104 @@ void main() {
     expect(find.text('1 章 · 页数待加载'), findsOneWidget);
   });
 
+  testWidgets(
+      'pull refresh joins initial load and hides success badge after two seconds',
+      (tester) async {
+    final loadStarted = Completer<void>();
+    final loadGate = Completer<void>();
+    final source = _FixtureSource(
+      'fixture-refresh-race',
+      '刷新竞态源',
+      firstComicLoadStarted: loadStarted,
+      firstComicLoadGate: loadGate,
+    );
+    final preference = ComicPreference.defaults(
+      sourceId: source.sourceId,
+      comicId: source._comicId,
+    );
+    final library = details.ComicDetailsLibrarySnapshot(
+      chapters: const <ImportedLibraryEntry>[],
+      sourceChapters: const <Chapter>[],
+      readStates: const <String, ChapterReadState>{},
+      preference: preference,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: details.RemoteComicDetailsScreen(
+          source: source,
+          summary: SourceComicSummary(
+            sourceId: source.sourceId,
+            comicId: source._comicId,
+            title: source._comic.title,
+            authors: source._comic.authors,
+            coverUri: source._comic.coverUri,
+          ),
+          initialLibrary: library,
+          categories: const <LibraryCategory>[],
+          loadCover: ({
+            required String sourceId,
+            required String comicId,
+            required Uri? coverUri,
+            required ImportedLibraryEntry? fallbackChapter,
+          }) async => throw StateError('cover not needed'),
+          reloadLibrary: ({required bool refreshContent}) async {
+            if (!refreshContent) {
+              return library;
+            }
+            final manifest = await source.loadComic(source._comicId);
+            return library.copyWith(
+              sourceComic: manifest.comic,
+              sourceChapters: manifest.chapters,
+            );
+          },
+          ensureSourceChapter: (_, __, ___) async =>
+              throw StateError('chapter not needed'),
+          persistComic: (_, __) async {},
+          onPreferenceChanged: (_) async {},
+          onReadChanged: (_, __) async {},
+          onOpenChapter: (
+            _, {
+            required bool refreshRemote,
+            required String title,
+          }) async {},
+          onDownloadChapter: (_) async {},
+          inspectChapterDownload: (chapter) async =>
+              ChapterDownloadSnapshot.idle(chapter),
+          downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
+          onDownloadComic: (_) async {},
+        ),
+      ),
+    );
+
+    await loadStarted.future;
+    await tester.drag(
+      find.byKey(details.remoteComicDetailsScreenKey),
+      const Offset(0, 520),
+    );
+    await tester.pump();
+    loadGate.complete();
+    await _pumpUntilFound(
+      tester,
+      find.descendant(
+        of: find.byKey(details.comicDetailsRefreshStateKey),
+        matching: find.byIcon(Icons.check),
+      ),
+    );
+
+    expect(source.comicLoads, 1);
+    expect(
+      find.descendant(
+        of: find.byKey(details.comicDetailsRefreshStateKey),
+        matching: find.byIcon(Icons.close),
+      ),
+      findsNothing,
+    );
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(find.byKey(details.comicDetailsRefreshStateKey), findsNothing);
+  });
+
   testWidgets('empty source catalog shows WebView recovery instead of a chapter',
       (tester) async {
     final source = _FixtureSource(
@@ -887,7 +994,16 @@ void main() {
             required Uri? coverUri,
             required ImportedLibraryEntry? fallbackChapter,
           }) async => throw StateError('cover must not load for failed catalog'),
-          reloadLibrary: ({required bool refreshContent}) async => library,
+          reloadLibrary: ({required bool refreshContent}) async {
+            if (!refreshContent) {
+              return library;
+            }
+            final manifest = await source.loadComic(source._comicId);
+            return library.copyWith(
+              sourceComic: manifest.comic,
+              sourceChapters: manifest.chapters,
+            );
+          },
           ensureSourceChapter: (_, __, ___) async =>
               throw StateError('chapter must not be synthesized'),
           persistComic: (_, __) async {},
@@ -968,6 +1084,8 @@ final class _FixtureSource
     this.catalogPageCount = 1,
     this.emptyCatalog = false,
     this.comicTags = const <String>[],
+    this.firstComicLoadStarted,
+    this.firstComicLoadGate,
   });
 
   @override
@@ -981,6 +1099,8 @@ final class _FixtureSource
   final int catalogPageCount;
   final bool emptyCatalog;
   final List<String> comicTags;
+  final Completer<void>? firstComicLoadStarted;
+  final Completer<void>? firstComicLoadGate;
   int _comicLoads = 0;
   int _chapterLoads = 0;
   int _chapterRefreshes = 0;
@@ -1067,6 +1187,13 @@ final class _FixtureSource
   Future<ComicManifest> loadComic(String comicId) async {
     expect(comicId, _comicId);
     final loadIndex = _comicLoads++;
+    if (loadIndex == 0) {
+      final started = firstComicLoadStarted;
+      if (started != null && !started.isCompleted) {
+        started.complete();
+      }
+      await firstComicLoadGate?.future;
+    }
     if (failFirstComicLoad && loadIndex == 0) {
       throw StateError('transient source failure');
     }

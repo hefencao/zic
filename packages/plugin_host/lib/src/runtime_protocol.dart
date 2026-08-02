@@ -31,6 +31,7 @@ final class ExternalPluginRuntimeSourceDescriptor {
     required this.language,
     required this.website,
     this.supportsSearch = true,
+    this.browserUserAgent,
     Iterable<SourceContentRating> contentRatings = const <SourceContentRating>{
       SourceContentRating.safe,
       SourceContentRating.suggestive,
@@ -39,6 +40,7 @@ final class ExternalPluginRuntimeSourceDescriptor {
     if (externalId.trim().isEmpty ||
         name.trim().isEmpty ||
         language.trim().isEmpty ||
+        (browserUserAgent != null && browserUserAgent!.trim().isEmpty) ||
         this.contentRatings.isEmpty) {
       throw ArgumentError('external source descriptor is incomplete');
     }
@@ -52,6 +54,7 @@ final class ExternalPluginRuntimeSourceDescriptor {
   final String language;
   final Uri website;
   final bool supportsSearch;
+  final String? browserUserAgent;
   final Set<SourceContentRating> contentRatings;
 
   Map<String, Object?> toMessage() {
@@ -62,6 +65,7 @@ final class ExternalPluginRuntimeSourceDescriptor {
       'language': language,
       'website': website.toString(),
       'supportsSearch': supportsSearch,
+      if (browserUserAgent != null) 'browserUserAgent': browserUserAgent,
       'contentRatings': ratings,
     };
   }
@@ -87,6 +91,13 @@ final class ExternalPluginRuntimeSourceDescriptor {
       language: _requiredString(message, 'language'),
       website: website,
       supportsSearch: _requiredBool(message, 'supportsSearch'),
+      browserUserAgent: switch (message['browserUserAgent']) {
+        null => null,
+        final String value when value.trim().isNotEmpty => value,
+        _ => throw const FormatException(
+            'source browserUserAgent must be a non-empty string',
+          ),
+      },
       contentRatings: ratings,
     );
   }

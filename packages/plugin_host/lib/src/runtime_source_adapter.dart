@@ -85,7 +85,7 @@ bool isSyntheticMihonChapterIdentity(String chapterId) =>
 bool isCurrentSyntheticMihonChapterIdentity(String chapterId) {
   final decoded = _decodeMihonChapterIdentity(chapterId);
   return decoded?['synthetic'] == true &&
-      decoded?['synthetic_revision'] == 2;
+      decoded?['synthetic_revision'] == 3;
 }
 
 /// Adapts one isolated-runtime connection to ordinary zic catalog sources.
@@ -239,6 +239,10 @@ final class ExternalPluginRuntimeSession
   }
 }
 
+const mihonBrowserUserAgent =
+    'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 '
+    'Chrome/131 Mobile Safari/537.36';
+
 typedef _RuntimeInvoke = Future<Object> Function(
   ExternalPluginRuntimeOperation operation,
   String externalSourceId,
@@ -248,12 +252,13 @@ typedef _RuntimeInvoke = Future<Object> Function(
 final class _RuntimeBrowsableComicSource
     implements BrowsableComicSource, ConfigurableComicSource,
         AuthenticatableComicSource, ComicWebUriSource,
-        ResolvableComicResourceSource, RetryableComicResourceSource {
+        ComicWebViewRequestSource, ResolvableComicResourceSource, RetryableComicResourceSource {
   _RuntimeBrowsableComicSource({
     required ExternalComicPluginFormat format,
     required ExternalPluginRuntimeSourceDescriptor descriptor,
     required _RuntimeInvoke invoke,
   })  : _format = format,
+        _browserUserAgent = descriptor.browserUserAgent,
         _externalId = descriptor.externalId,
         _invoke = invoke,
         sourceId = '${_sourcePrefix(format)}${descriptor.externalId}',
@@ -267,6 +272,7 @@ final class _RuntimeBrowsableComicSource
         );
 
   final ExternalComicPluginFormat _format;
+  final String? _browserUserAgent;
   final String _externalId;
   final _RuntimeInvoke _invoke;
   final Map<Uri, Future<Uint8List>> _resourceLoads =
@@ -291,6 +297,15 @@ final class _RuntimeBrowsableComicSource
             sourceWebsite: descriptor.website,
           ),
       };
+
+  @override
+  ComicWebViewRequest webViewRequest(Uri url) => ComicWebViewRequest(
+        url: url,
+        userAgent: _browserUserAgent ?? switch (_format) {
+          ExternalComicPluginFormat.mihonExtension => mihonBrowserUserAgent,
+          ExternalComicPluginFormat.veneraJavaScript => null,
+        },
+      );
 
   @override
   Future<SourceBrowsePage> browse({

@@ -1,3 +1,12 @@
+## 0.31.0-dev.89：稳定来源 Cookie 会话与章节目录
+
+- 可见 WebView 使用来源运行时声明的精确 User-Agent；Mihon `AndroidCookieJar` 与 Venera runtime 通过共享 `AndroidBrowserCookieSession` 导入同站点、同 User-Agent 的原子 Cookie 快照。
+- 保持主进程浏览器与插件隔离进程独立 WebView data directory，避免 Android 多进程目录锁冲突和数据损坏；共享的是有界会话快照，不是 WebView 私有数据库。
+- 修复详情初始化刷新和下拉刷新并发时“章节已更新但显示红叉”；成功/失败结果图标 2 秒后自动消失，插件设置改为与 WebView、迁移一致的 IconButton。
+- Mihon synthetic revision 升至 3；runtime 记忆已观察到的真实目录，App 持久层拒绝用空目录或 synthetic-only 结果覆盖真实目录，并收紧 `UnsupportedOperationException` 的能力缺失判定。
+- 新增来源浏览、验证恢复、浏览器会话、详情刷新和目录回归 Trace；Cookie 仅记录名称与数量，禁止输出值。
+- 新增 ADR 0073、dev.89 三清单审计和所有权门禁；Reader/Pipeline 的 7/3、2/1、current/transition、5/3/2、256 KiB 传输及本地 artifact 所有权未改变。
+
 ## 0.31.0-dev.88：修复来源验证闭环并完善详情交互
 
 - 修复 Dart 3.12 无关 capability interface 不提升、两个 `Stream.toList(growable:)` 测试错误和 `reader_runtime` 测试缺少 `ContentKind` 依赖的编译闭包。

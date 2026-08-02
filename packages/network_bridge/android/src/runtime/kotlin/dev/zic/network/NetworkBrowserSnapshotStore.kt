@@ -21,14 +21,16 @@ internal object NetworkBrowserSnapshotStore {
     private const val KEY_TITLE = "title"
     private const val KEY_COOKIE_HEADER = "cookieHeader"
     private const val KEY_LOCAL_STORAGE = "localStorage"
+    private const val KEY_USER_AGENT = "userAgent"
     private const val KEY_UPDATED_AT = "updatedAt"
     private const val MAX_AGE_MILLIS = 30L * 60L * 1000L
 
-    fun begin(context: Context, requestedUrl: String) {
+    fun begin(context: Context, requestedUrl: String, userAgent: String?) {
         write(
             context,
             JSONObject()
                 .put(KEY_REQUESTED_URL, requestedUrl)
+                .put(KEY_USER_AGENT, userAgent.orEmpty())
                 .put(KEY_UPDATED_AT, System.currentTimeMillis()),
         )
     }
@@ -39,12 +41,14 @@ internal object NetworkBrowserSnapshotStore {
         title: String?,
         cookieHeader: String?,
         localStorageJson: String? = null,
+        userAgent: String? = null,
     ) {
         val snapshot = readObject(context) ?: JSONObject()
         snapshot
             .put(KEY_CURRENT_URL, currentUrl)
             .put(KEY_TITLE, title.orEmpty())
             .put(KEY_COOKIE_HEADER, cookieHeader.orEmpty())
+            .put(KEY_USER_AGENT, userAgent.orEmpty())
             .put(KEY_UPDATED_AT, System.currentTimeMillis())
         if (localStorageJson != null) {
             snapshot.put(KEY_LOCAL_STORAGE, localStorageJson)
@@ -52,7 +56,11 @@ internal object NetworkBrowserSnapshotStore {
         write(context, snapshot)
     }
 
-    fun read(context: Context, expectedUrl: String): Map<String, Any?>? {
+    fun read(
+        context: Context,
+        expectedUrl: String,
+        expectedUserAgent: String? = null,
+    ): Map<String, Any?>? {
         val snapshot = readObject(context) ?: return null
         val updatedAt = snapshot.optLong(KEY_UPDATED_AT, 0L)
         if (updatedAt <= 0L || System.currentTimeMillis() - updatedAt > MAX_AGE_MILLIS) {
@@ -67,6 +75,13 @@ internal object NetworkBrowserSnapshotStore {
         ) {
             return null
         }
+        val storedUserAgent = snapshot.optString(KEY_USER_AGENT).trim()
+        val normalizedExpectedUserAgent = expectedUserAgent?.trim().orEmpty()
+        if (normalizedExpectedUserAgent.isNotEmpty() &&
+            storedUserAgent != normalizedExpectedUserAgent
+        ) {
+            return null
+        }
         val currentUrl = snapshot.optString(KEY_CURRENT_URL).ifBlank { requestedUrl }
         val currentHost = runCatching { URI(currentUrl).host.orEmpty() }.getOrDefault("")
         if (currentHost.isBlank() || !sameSiteHost(requestedHost, currentHost)) {
@@ -77,6 +92,7 @@ internal object NetworkBrowserSnapshotStore {
             "title" to snapshot.optString(KEY_TITLE),
             "cookies" to parseCookieHeader(snapshot.optString(KEY_COOKIE_HEADER)),
             "localStorage" to parseLocalStorage(snapshot.optString(KEY_LOCAL_STORAGE)),
+            "userAgent" to snapshot.optString(KEY_USER_AGENT),
         )
     }
 

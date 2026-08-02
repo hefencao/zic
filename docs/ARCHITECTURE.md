@@ -1,3 +1,24 @@
+# dev.89 来源 Cookie 会话与目录稳定性补充
+
+## Cookie 所有权
+
+- `network_bridge` 拥有可见 WebView、来源浏览器 User-Agent、原子 Cookie/localStorage 快照和 Android 进程内快照导入。共享的是有界会话数据，不共享 WebView data directory。
+- App 主进程运行可见浏览器；插件 runtime 在首次 WebView/CookieManager 初始化前使用独立 `zic_plugin_runtime` data-directory suffix。Android WebView 的数据库、锁和内存缓存不是跨进程共享协议。
+- Mihon 的 `NetworkHelper` 使用 `AndroidCookieJar`；每次请求前通过 `AndroidBrowserCookieSession` 按同站点和精确 User-Agent 导入快照。
+- Venera runtime 的 HTTP 和 `Network.getCookies` 在读取进程内 CookieManager 前执行同一导入；Venera descriptor 将实际 runtime WebView User-Agent 原子传给 App 浏览器。
+- Android 原生网络实现可以注入同一 `AndroidBrowserCookieSession`/`AndroidCookieJar`。当前 Dart 原生 MangaDex 源是无登录的 source-owned Transport，不伪装成插件，也不会自动读取 Android CookieManager；未来需要 Cookie 的原生源必须在 network/transport composition 中显式注入会话能力。
+
+## 章节目录稳定性
+
+- Mihon runtime 一旦在某 source/comic identity 上观察到真实非空章节目录，本次 runtime 生命周期内不得再选择 synthetic gallery。
+- `UnsupportedOperationException` 只有来自共享 Mihon ABI 默认实现时才表示能力不存在；扩展解析器抛出的同类异常属于真实失败。
+- App 持久层若已有真实章节，拒绝空目录或 synthetic-only manifest 覆盖，并保留旧权威目录。远程详情 Presentation 不再直接调用 `source.loadComic`；它只消费 composition 原子完成加载、校验、持久化后的 `ComicDetailsLibrarySnapshot`。Presentation 不解析 Mihon token。
+- synthetic identity revision 为 3，dev.88 revision 2 自动失效。
+
+## 诊断
+
+来源浏览、WebView 返回、详情刷新、刷新合并和目录回归均投影到现有 `DebugTraceLog`。Trace 只记录阶段、耗时、数量、错误码、Cookie 名称以及 User-Agent 长度；不得记录 Cookie 值、localStorage 值或 opaque comic/chapter token。
+
 # dev.88 来源浏览器与详情交互所有权补充
 
 1. 可见来源浏览器由 `network_bridge` 主进程 Activity 唯一拥有；`openBrowser` 的完成边界是 Activity 关闭，而不是 `startActivity` 返回。

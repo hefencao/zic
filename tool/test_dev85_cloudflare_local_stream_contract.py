@@ -51,7 +51,7 @@ def main() -> int:
     for abi in ('mihonRuntime14', 'mihonRuntime16'):
         require(
             f'packages/plugin_host_bridge/android/src/{abi}/kotlin/eu/kanade/tachiyomi/network/RuntimeNetwork.kt',
-            '.cookieJar(AndroidCookieJar(context))',
+            '.cookieJar(AndroidCookieJar(context, ::defaultUserAgentProvider))',
             'AndroidCloudflareInterceptor(context, ::defaultUserAgentProvider)',
             '.callTimeout(45, TimeUnit.SECONDS)',
         )
@@ -62,10 +62,12 @@ def main() -> int:
         '漫画源未返回可确认的章节目录；这不代表单章节漫画。',
         'onOpenSourceWebView',
     )
-    if details.index('if (manifest.chapters.isEmpty)') > details.index(
+    if details.index('if (sourceChapters.isEmpty)') > details.index(
         '_manifest = manifest',
     ):
         raise SystemExit('empty catalog must fail before becoming presentation state')
+    if 'widget.source.loadComic(widget.summary.comicId)' in details:
+        raise SystemExit('remote details must consume the composition refresh result')
     forbid('apps/app/lib/comic_details.dart', 'isSyntheticMihonChapterIdentity')
     require(
         'apps/app/lib/demo_home.dart',
