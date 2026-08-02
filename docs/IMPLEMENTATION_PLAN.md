@@ -1,3 +1,22 @@
+## dev.94 完成项与设备验证
+
+### 已完成
+
+- 过滤用户 Trace，区分 codec、native texture blit 与 platform callback 等待。
+- 只读审计 VibeVenera 的常驻 decode workers、persistent demux、advanced libwebp config 与 serial native blit。
+- 在 ZIC `bridge` 所有权内实现两个常驻 decode Isolate 和 native handle-only handoff。
+- 在 `media_core` 缓存 frame descriptors，删除逐帧 demux、完整压缩快照副本和合成前 full-canvas clone。
+- 保留 source-grid blend/dispose，使用 libwebp threaded advanced decode。
+- 增加 native/dispatch timing、descriptor reuse fixture、C smoke 和 dev.94 gate。
+
+### 下一步设备验证
+
+1. 比较同一动画 dev.93/dev.94 的 `nativeDecodeMicros`、`decodeDispatchMicros`、`bridgeMicros` 和 `presentMicros`。
+2. UI isolate 不再被 decode 阻塞后，Android texture `bridgeMicros` 应明显收敛；若 native decode 仍高于帧 duration，再基于新 timing 优化 source-grid scaler，而不是改变播放时长或缩窗。
+3. 检查首帧或 source 增长时的 descriptor rebuild，后续 sealed 帧及 rewind 不应重复整文件 demux。
+4. 检查 output 图像无 dev.82 横向条带/子矩形位移回归。
+5. 部分远程图片下载失败继续作为独立任务，不混入本地 WebP pipeline。
+
 ## dev.93 完成项与下一步设备验证
 
 - 先关闭错误报告中的四类测试/编译假设，不修改正确产品逻辑迎合旧断言。

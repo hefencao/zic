@@ -2,6 +2,9 @@ use std::os::raw::{c_int, c_void};
 use std::ptr;
 
 const WEBP_DEMUX_ABI_VERSION: c_int = 0x0107;
+const WEBP_DECODER_ABI_VERSION: c_int = 0x0210;
+const MODE_RGBA: c_int = 1;
+const VP8_STATUS_OK: c_int = 0;
 const WEBP_DEMUX_PARSING_HEADER: c_int = 0;
 const WEBP_DEMUX_DONE: c_int = 2;
 
@@ -16,6 +19,85 @@ const WEBP_MUX_NO_BLEND: c_int = 1;
 
 const BYTES_PER_PIXEL: usize = 4;
 const MAX_WORKING_BYTES: usize = 512 * 1024 * 1024;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct WebPBitstreamFeatures {
+    width: c_int,
+    height: c_int,
+    has_alpha: c_int,
+    has_animation: c_int,
+    format: c_int,
+    pad: [u32; 5],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct WebPRgbBuffer {
+    rgba: *mut u8,
+    stride: c_int,
+    size: usize,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct WebPYuvaBuffer {
+    y: *mut u8,
+    u: *mut u8,
+    v: *mut u8,
+    a: *mut u8,
+    y_stride: c_int,
+    u_stride: c_int,
+    v_stride: c_int,
+    a_stride: c_int,
+    y_size: usize,
+    u_size: usize,
+    v_size: usize,
+    a_size: usize,
+}
+
+#[repr(C)]
+union WebPBufferUnion {
+    rgba: WebPRgbBuffer,
+    yuva: WebPYuvaBuffer,
+}
+
+#[repr(C)]
+struct WebPDecBuffer {
+    colorspace: c_int,
+    width: c_int,
+    height: c_int,
+    is_external_memory: c_int,
+    buffer: WebPBufferUnion,
+    pad: [u32; 4],
+    private_memory: *mut u8,
+}
+
+#[repr(C)]
+struct WebPDecoderOptions {
+    bypass_filtering: c_int,
+    no_fancy_upsampling: c_int,
+    use_cropping: c_int,
+    crop_left: c_int,
+    crop_top: c_int,
+    crop_width: c_int,
+    crop_height: c_int,
+    use_scaling: c_int,
+    scaled_width: c_int,
+    scaled_height: c_int,
+    use_threads: c_int,
+    dithering_strength: c_int,
+    flip: c_int,
+    alpha_dithering_strength: c_int,
+    pad: [u32; 5],
+}
+
+#[repr(C)]
+struct WebPDecoderConfig {
+    input: WebPBitstreamFeatures,
+    output: WebPDecBuffer,
+    options: WebPDecoderOptions,
+}
 
 #[repr(C)]
 struct WebPData {
@@ -64,13 +146,16 @@ extern "C" {
     ) -> c_int;
     fn WebPDemuxReleaseIterator(iter: *mut WebPIterator);
 
-    fn WebPDecodeRGBAInto(
+    fn WebPInitDecoderConfigInternal(
+        config: *mut WebPDecoderConfig,
+        version: c_int,
+    ) -> c_int;
+    fn WebPDecode(
         data: *const u8,
         data_size: usize,
-        output_buffer: *mut u8,
-        output_buffer_size: usize,
-        output_stride: c_int,
-    ) -> *mut u8;
+        config: *mut WebPDecoderConfig,
+    ) -> c_int;
+    fn WebPFreeDecBuffer(buffer: *mut WebPDecBuffer);
 }
 
 pub(crate) fn decoder_version() -> u32 {
@@ -103,7 +188,7 @@ pub(crate) struct DecodedFrame {
     pub(crate) bytes: Vec<u8>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Rect {
     x: usize,
     y: usize,
@@ -117,6 +202,133 @@ struct PreviousFrame {
     dispose_background: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct FrameDescriptor {
+    x_offset: usize,
+    y_offset: usize,
+    width: usize,
+    height: usize,
+    duration_ms: u64,
+    dispose_background: bool,
+    blend: bool,
+    complete: bool,
+    fragment_offset: usize,
+    fragment_length: usize,
+}
+
+struct DemuxSnapshot {
+    source_length: usize,
+    sealed: bool,
+    source_width: usize,
+    source_height: usize,
+    background: [u8; 4],
+    meta: AnimationMeta,
+    frames: Vec<FrameDescriptor>,
+}
+
+impl DemuxSnapshot {
+    fn parse(bytes: &[u8], sealed: bool) -> Result<Self, DecodeError> {
+        let data = WebPData {
+            bytes: bytes.as_ptr(),
+            size: bytes.len(),
+        };
+        let mut state = WEBP_DEMUX_PARSING_HEADER;
+        let demux_ptr = unsafe {
+            WebPDemuxInternal(&data, 1, &mut state, WEBP_DEMUX_ABI_VERSION)
+        };
+        if demux_ptr.is_null() {
+            return Err(if sealed {
+                DecodeError::Failed
+            } else {
+                DecodeError::NeedMoreData
+            });
+        }
+        let demux = Demux(demux_ptr);
+        let source_width = unsafe { WebPDemuxGetI(demux.0, WEBP_FF_CANVAS_WIDTH) } as usize;
+        let source_height = unsafe { WebPDemuxGetI(demux.0, WEBP_FF_CANVAS_HEIGHT) } as usize;
+        if source_width == 0 || source_height == 0 {
+            return Err(if sealed {
+                DecodeError::Failed
+            } else {
+                DecodeError::NeedMoreData
+            });
+        }
+        let background_value = unsafe { WebPDemuxGetI(demux.0, WEBP_FF_BACKGROUND_COLOR) };
+        let background = [
+            ((background_value >> 16) & 0xff) as u8,
+            ((background_value >> 8) & 0xff) as u8,
+            (background_value & 0xff) as u8,
+            ((background_value >> 24) & 0xff) as u8,
+        ];
+        let meta = AnimationMeta {
+            frame_count: unsafe { WebPDemuxGetI(demux.0, WEBP_FF_FRAME_COUNT) },
+            loop_count: unsafe { WebPDemuxGetI(demux.0, WEBP_FF_LOOP_COUNT) },
+            complete: state == WEBP_DEMUX_DONE,
+        };
+        let mut frames = Vec::with_capacity(meta.frame_count as usize);
+        let base = bytes.as_ptr() as usize;
+        for frame_number in 1..=meta.frame_count {
+            let mut raw_iter = unsafe { std::mem::zeroed::<WebPIterator>() };
+            if unsafe { WebPDemuxGetFrame(demux.0, frame_number as c_int, &mut raw_iter) } == 0 {
+                break;
+            }
+            let iter = Iter(raw_iter);
+            if iter.0.complete == 0
+                || iter.0.fragment.bytes.is_null()
+                || iter.0.fragment.size == 0
+            {
+                if sealed || meta.complete {
+                    return Err(DecodeError::Failed);
+                }
+                break;
+            }
+            if iter.0.width <= 0
+                || iter.0.height <= 0
+                || iter.0.x_offset < 0
+                || iter.0.y_offset < 0
+            {
+                return Err(DecodeError::Failed);
+            }
+            let fragment_address = iter.0.fragment.bytes as usize;
+            let fragment_length = iter.0.fragment.size;
+            let Some(fragment_offset) = fragment_address.checked_sub(base) else {
+                return Err(DecodeError::Failed);
+            };
+            if fragment_offset
+                .checked_add(fragment_length)
+                .map_or(true, |end| end > bytes.len())
+            {
+                return Err(DecodeError::Failed);
+            }
+            frames.push(FrameDescriptor {
+                x_offset: iter.0.x_offset as usize,
+                y_offset: iter.0.y_offset as usize,
+                width: iter.0.width as usize,
+                height: iter.0.height as usize,
+                duration_ms: iter.0.duration.max(0) as u64,
+                dispose_background: iter.0.dispose_method == WEBP_MUX_DISPOSE_BACKGROUND,
+                blend: iter.0.blend_method != WEBP_MUX_NO_BLEND,
+                complete: iter.0.complete != 0,
+                fragment_offset,
+                fragment_length,
+            });
+        }
+        Ok(Self {
+            source_length: bytes.len(),
+            sealed,
+            source_width,
+            source_height,
+            background,
+            meta,
+            frames,
+        })
+    }
+
+    fn matches(&self, bytes: &[u8], sealed: bool) -> bool {
+        self.source_length == bytes.len() && self.sealed == sealed
+    }
+}
+
 pub(crate) struct Decoder {
     max_width: usize,
     max_height: usize,
@@ -125,12 +337,23 @@ pub(crate) struct Decoder {
     source_width: usize,
     source_height: usize,
     background: [u8; 4],
+    // Blend/disposal remain authoritative in the source pixel grid. The
+    // canvas is mutated in place and copied/scaled only once for the immutable
+    // output frame, avoiding the prior full-canvas clone before composition.
     canvas: Vec<u8>,
     previous: Option<PreviousFrame>,
     next_frame_number: c_int,
     initialized: bool,
     meta: AnimationMeta,
     ended: bool,
+    reset_canvas_before_decode: bool,
+    // Cache frame descriptors and offsets across frames, rebuilding only when
+    // the incremental source grows or becomes sealed. The authoritative source
+    // read lock keeps those offsets stable during decode, so no second full
+    // compressed-byte snapshot is retained.
+    demux: Option<DemuxSnapshot>,
+    #[cfg(test)]
+    demux_builds: usize,
 }
 
 impl Decoder {
@@ -149,6 +372,10 @@ impl Decoder {
             initialized: false,
             meta: AnimationMeta::default(),
             ended: false,
+            reset_canvas_before_decode: false,
+            demux: None,
+            #[cfg(test)]
+            demux_builds: 0,
         }
     }
 
@@ -164,109 +391,101 @@ impl Decoder {
                 DecodeError::NeedMoreData
             });
         }
-
-        let data = WebPData {
-            bytes: bytes.as_ptr(),
-            size: bytes.len(),
+        self.ensure_demux(bytes, sealed)?;
+        let (
+            meta,
+            source_width,
+            source_height,
+            background,
+            descriptor,
+            fragment_offset,
+            fragment_length,
+            demux_complete,
+        ) = {
+            let snapshot = self.demux.as_ref().ok_or(DecodeError::Failed)?;
+            let frame_index = self.next_frame_number.saturating_sub(1) as usize;
+            let descriptor = snapshot.frames.get(frame_index).copied();
+            let Some(descriptor) = descriptor else {
+                if sealed || snapshot.meta.complete {
+                    self.ended = true;
+                    return Err(DecodeError::End);
+                }
+                return Err(DecodeError::NeedMoreData);
+            };
+            (
+                snapshot.meta,
+                snapshot.source_width,
+                snapshot.source_height,
+                snapshot.background,
+                descriptor,
+                descriptor.fragment_offset,
+                descriptor.fragment_length,
+                snapshot.meta.complete,
+            )
         };
-        let mut demux_state = WEBP_DEMUX_PARSING_HEADER;
-        let demux_ptr =
-            unsafe { WebPDemuxInternal(&data, 1, &mut demux_state, WEBP_DEMUX_ABI_VERSION) };
-        if demux_ptr.is_null() {
-            // libwebp may report a parse error for a valid, still-incomplete
-            // RIFF/WebP prefix. Until the source is sealed, the caller must
-            // be able to append more bytes rather than treating it as a
-            // terminal decoder failure.
-            return Err(if sealed {
+        self.meta = meta;
+        if !descriptor.complete {
+            return Err(if sealed || demux_complete {
                 DecodeError::Failed
             } else {
                 DecodeError::NeedMoreData
             });
         }
-        let demux = Demux(demux_ptr);
-        self.meta = AnimationMeta {
-            frame_count: unsafe { WebPDemuxGetI(demux.0, WEBP_FF_FRAME_COUNT) },
-            loop_count: unsafe { WebPDemuxGetI(demux.0, WEBP_FF_LOOP_COUNT) },
-            complete: demux_state == WEBP_DEMUX_DONE,
-        };
-
-        let source_width = unsafe { WebPDemuxGetI(demux.0, WEBP_FF_CANVAS_WIDTH) } as usize;
-        let source_height = unsafe { WebPDemuxGetI(demux.0, WEBP_FF_CANVAS_HEIGHT) } as usize;
-        if source_width == 0 || source_height == 0 {
-            return Err(if sealed {
-                DecodeError::Failed
-            } else {
-                DecodeError::NeedMoreData
-            });
-        }
-        let mut raw_iter = unsafe { std::mem::zeroed::<WebPIterator>() };
-        let found =
-            unsafe { WebPDemuxGetFrame(demux.0, self.next_frame_number, &mut raw_iter) } != 0;
-        if !found {
-            if sealed || demux_state == WEBP_DEMUX_DONE {
-                self.ended = true;
-                return Err(DecodeError::End);
-            }
-            return Err(DecodeError::NeedMoreData);
-        }
-        let iter = Iter(raw_iter);
-        if iter.0.complete == 0 {
-            return Err(if sealed {
-                DecodeError::Failed
-            } else {
-                DecodeError::NeedMoreData
-            });
-        }
-        if iter.0.width <= 0 || iter.0.height <= 0 || iter.0.x_offset < 0 || iter.0.y_offset < 0 {
-            return Err(DecodeError::Failed);
-        }
-
         let source_rect = Rect {
-            x: iter.0.x_offset as usize,
-            y: iter.0.y_offset as usize,
-            width: iter.0.width as usize,
-            height: iter.0.height as usize,
+            x: descriptor.x_offset,
+            y: descriptor.y_offset,
+            width: descriptor.width,
+            height: descriptor.height,
         };
         if source_rect.x.saturating_add(source_rect.width) > source_width
             || source_rect.y.saturating_add(source_rect.height) > source_height
         {
             return Err(DecodeError::Failed);
         }
-        // Partial demux metadata can report provisional canvas dimensions.
-        // Wait until a complete frame is available before committing decoder
-        // state, so later bytes can refine the container header safely.
-        self.ensure_canvas(demux.0, source_width, source_height)?;
-        let fragment_len = rgba_len(source_rect.width, source_rect.height)?;
-        if fragment_len > MAX_WORKING_BYTES
-            || iter.0.fragment.bytes.is_null()
-            || iter.0.fragment.size == 0
+        self.ensure_canvas(background, source_width, source_height)?;
+        if self.reset_canvas_before_decode {
+            fill_rect(
+                &mut self.canvas,
+                self.source_width,
+                self.source_height,
+                Rect {
+                    x: 0,
+                    y: 0,
+                    width: self.source_width,
+                    height: self.source_height,
+                },
+                self.background,
+            );
+            self.reset_canvas_before_decode = false;
+        }
+
+        let source_fragment_len = rgba_len(source_rect.width, source_rect.height)?;
+        let fragment_end = fragment_offset
+            .checked_add(fragment_length)
+            .ok_or(DecodeError::Failed)?;
+        if source_fragment_len > MAX_WORKING_BYTES
+            || fragment_length == 0
+            || fragment_end > bytes.len()
             || source_rect.width > c_int::MAX as usize / BYTES_PER_PIXEL
         {
             return Err(DecodeError::Failed);
         }
-        let mut fragment = vec![0u8; fragment_len];
-        let decoded = unsafe {
-            WebPDecodeRGBAInto(
-                iter.0.fragment.bytes,
-                iter.0.fragment.size,
-                fragment.as_mut_ptr(),
-                fragment.len(),
-                (source_rect.width * BYTES_PER_PIXEL) as c_int,
-            )
-        };
-        if decoded.is_null() {
-            return Err(DecodeError::Failed);
-        }
+        let fragment_ptr = unsafe { bytes.as_ptr().add(fragment_offset) };
+        let source_fragment = decode_rgba_threaded(
+            fragment_ptr,
+            fragment_length,
+            source_rect.width,
+            source_rect.height,
+        )?;
 
-        // WebP blend and disposal semantics belong to the source pixel grid.
-        // Scaling each animation sub-rectangle independently creates rounding
-        // seams and horizontal strip displacement. Composite the authoritative
-        // source canvas first, then scale the complete frame once.
-        let mut next_canvas = self.canvas.clone();
+        // Composite the authoritative source canvas in source-grid semantics. The prior dev.82
+        // fix rejected independently rounded target rectangles because they
+        // can displace animation strips. Mutate the source canvas in place,
+        // then produce one presentation-sized immutable snapshot.
         if let Some(previous) = self.previous {
             if previous.dispose_background {
                 fill_rect(
-                    &mut next_canvas,
+                    &mut self.canvas,
                     self.source_width,
                     self.source_height,
                     previous.rect,
@@ -275,20 +494,18 @@ impl Decoder {
             }
         }
         composite(
-            &mut next_canvas,
+            &mut self.canvas,
             self.source_width,
             self.source_height,
             source_rect,
-            &fragment,
-            iter.0.blend_method != WEBP_MUX_NO_BLEND,
+            &source_fragment,
+            descriptor.blend,
         )?;
 
-        let duration_ms = iter.0.duration.max(0) as u64;
-        let duration_us = duration_ms.saturating_mul(1_000);
-        self.canvas = next_canvas;
+        let duration_us = descriptor.duration_ms.saturating_mul(1_000);
         self.previous = Some(PreviousFrame {
             rect: source_rect,
-            dispose_background: iter.0.dispose_method == WEBP_MUX_DISPOSE_BACKGROUND,
+            dispose_background: descriptor.dispose_background,
         });
         self.next_frame_number = self.next_frame_number.saturating_add(1);
         self.ended = false;
@@ -317,21 +534,33 @@ impl Decoder {
     }
 
     pub(crate) fn rewind(&mut self) {
-        self.target_width = 0;
-        self.target_height = 0;
-        self.source_width = 0;
-        self.source_height = 0;
-        self.background = [0; 4];
-        self.canvas.clear();
         self.previous = None;
         self.next_frame_number = 1;
-        self.initialized = false;
         self.ended = false;
+        // Rewind is called from the session isolate. Defer the potentially
+        // multi-megabyte canvas clear to the next decode worker invocation.
+        self.reset_canvas_before_decode = self.initialized;
+        // Keep the descriptor snapshot and fitted canvas. Rewind changes
+        // playback state, not source identity or presentation geometry.
+    }
+
+    fn ensure_demux(&mut self, bytes: &[u8], sealed: bool) -> Result<(), DecodeError> {
+        if let Some(snapshot) = self.demux.as_ref() {
+            if snapshot.matches(bytes, sealed) {
+                return Ok(());
+            }
+        }
+        self.demux = Some(DemuxSnapshot::parse(bytes, sealed)?);
+        #[cfg(test)]
+        {
+            self.demux_builds = self.demux_builds.saturating_add(1);
+        }
+        Ok(())
     }
 
     fn ensure_canvas(
         &mut self,
-        demux: *const WebPDemuxer,
+        background: [u8; 4],
         source_width: usize,
         source_height: usize,
     ) -> Result<(), DecodeError> {
@@ -347,23 +576,19 @@ impl Decoder {
             self.max_width,
             self.max_height,
         )?;
-        self.target_width = target_width;
-        self.target_height = target_height;
         let canvas_len = rgba_len(source_width, source_height)?;
-        let target_len = rgba_len(self.target_width, self.target_height)?;
-        if canvas_len > MAX_WORKING_BYTES ||
-            target_len > MAX_WORKING_BYTES ||
-            canvas_len.saturating_add(target_len) > MAX_WORKING_BYTES
+        let target_len = rgba_len(target_width, target_height)?;
+        if canvas_len > MAX_WORKING_BYTES
+            || target_len > MAX_WORKING_BYTES
+            || canvas_len.saturating_add(target_len) > MAX_WORKING_BYTES
         {
             return Err(DecodeError::Failed);
         }
-        let background = unsafe { WebPDemuxGetI(demux, WEBP_FF_BACKGROUND_COLOR) };
-        self.background = [
-            ((background >> 16) & 0xff) as u8,
-            ((background >> 8) & 0xff) as u8,
-            (background & 0xff) as u8,
-            ((background >> 24) & 0xff) as u8,
-        ];
+        self.target_width = target_width;
+        self.target_height = target_height;
+        self.source_width = source_width;
+        self.source_height = source_height;
+        self.background = background;
         self.canvas = vec![0u8; canvas_len];
         fill_rect(
             &mut self.canvas,
@@ -377,8 +602,6 @@ impl Decoder {
             },
             self.background,
         );
-        self.source_width = source_width;
-        self.source_height = source_height;
         self.initialized = true;
         Ok(())
     }
@@ -398,6 +621,54 @@ impl Drop for Iter {
     fn drop(&mut self) {
         unsafe { WebPDemuxReleaseIterator(&mut self.0) }
     }
+}
+
+
+fn decode_rgba_threaded(
+    data: *const u8,
+    data_length: usize,
+    width: usize,
+    height: usize,
+) -> Result<Vec<u8>, DecodeError> {
+    if data.is_null()
+        || data_length == 0
+        || width == 0
+        || height == 0
+        || width > c_int::MAX as usize / BYTES_PER_PIXEL
+        || height > c_int::MAX as usize
+    {
+        return Err(DecodeError::Failed);
+    }
+    let output_length = rgba_len(width, height)?;
+    if output_length > MAX_WORKING_BYTES {
+        return Err(DecodeError::Failed);
+    }
+    let mut output = vec![0u8; output_length];
+    let mut config = unsafe { std::mem::zeroed::<WebPDecoderConfig>() };
+    if unsafe {
+        WebPInitDecoderConfigInternal(&mut config, WEBP_DECODER_ABI_VERSION)
+    } == 0
+    {
+        return Err(DecodeError::Failed);
+    }
+    config.options.use_threads = 1;
+    config.output.colorspace = MODE_RGBA;
+    config.output.is_external_memory = 1;
+    config.output.buffer = WebPBufferUnion {
+        rgba: WebPRgbBuffer {
+            rgba: output.as_mut_ptr(),
+            stride: (width * BYTES_PER_PIXEL) as c_int,
+            size: output.len(),
+        },
+    };
+    let status = unsafe { WebPDecode(data, data_length, &mut config) };
+    let dimensions_match = config.output.width == width as c_int
+        && config.output.height == height as c_int;
+    unsafe { WebPFreeDecBuffer(&mut config.output) };
+    if status != VP8_STATUS_OK || !dimensions_match {
+        return Err(DecodeError::Failed);
+    }
+    Ok(output)
 }
 
 fn rgba_len(width: usize, height: usize) -> Result<usize, DecodeError> {
@@ -697,30 +968,34 @@ mod tests {
 
 
     #[test]
+    fn sealed_source_reuses_demux_across_frames_and_rewind() {
+        let bytes = include_bytes!("../testdata/animated.webp");
+        let mut decoder = Decoder::new(512, 512);
+        let first = decoder.decode_next(bytes, true).unwrap();
+        assert_eq!(decoder.demux_builds, 1);
+        assert_eq!(first.bytes.len(), (first.width * first.height * 4) as usize);
+
+        decoder.rewind();
+        let repeated = decoder.decode_next(bytes, true).unwrap();
+        assert_eq!(decoder.demux_builds, 1);
+        assert_eq!((repeated.width, repeated.height), (first.width, first.height));
+    }
+
+    #[test]
     fn source_grid_composition_keeps_subrect_offsets_when_scaled() {
         let mut canvas = vec![0u8; 6 * 4 * BYTES_PER_PIXEL];
         fill_rect(
             &mut canvas,
             6,
             4,
-            Rect {
-                x: 0,
-                y: 0,
-                width: 6,
-                height: 4,
-            },
+            Rect { x: 0, y: 0, width: 6, height: 4 },
             [0, 0, 0, 255],
         );
         composite(
             &mut canvas,
             6,
             4,
-            Rect {
-                x: 1,
-                y: 0,
-                width: 2,
-                height: 2,
-            },
+            Rect { x: 1, y: 0, width: 2, height: 2 },
             &[255, 0, 0, 255].repeat(4),
             false,
         )
@@ -729,12 +1004,7 @@ mod tests {
             &mut canvas,
             6,
             4,
-            Rect {
-                x: 3,
-                y: 2,
-                width: 2,
-                height: 2,
-            },
+            Rect { x: 3, y: 2, width: 2, height: 2 },
             &[0, 0, 255, 255].repeat(4),
             false,
         )

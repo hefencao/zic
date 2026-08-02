@@ -214,6 +214,12 @@ final class DecodeSession {
                 'target': targetDepth,
                 'preparedDepth': preparedDepth,
                 'decodeMicros': decodeMicros < 0 ? 0 : decodeMicros,
+                'nativeDecodeMicros': frame is FrameDecodeTiming
+                    ? (frame as FrameDecodeTiming).nativeDecodeMicros
+                    : 0,
+                'decodeDispatchMicros': frame is FrameDecodeTiming
+                    ? (frame as FrameDecodeTiming).dispatchMicros
+                    : 0,
                 'width': frame.width,
                 'height': frame.height,
                 'durationMicros': frame.duration.inMicroseconds,

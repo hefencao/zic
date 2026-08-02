@@ -1,4 +1,7 @@
+import 'dart:async';
+import 'dart:collection';
 import 'dart:ffi';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:ffi/ffi.dart';
@@ -7,6 +10,7 @@ import 'package:media/media.dart';
 import 'native_lib.dart';
 
 part 'native_cursor.dart';
+part 'native_decode_pool.dart';
 
 final class _Source extends Opaque {}
 

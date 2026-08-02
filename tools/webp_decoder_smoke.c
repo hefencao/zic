@@ -30,6 +30,25 @@ static uint8_t *read_file(const char *path, size_t *size) {
 }
 
 
+
+static int decode_rgba_threaded(const uint8_t *bytes, size_t size,
+                                int width, int height, uint8_t *rgba,
+                                size_t rgba_size) {
+  WebPDecoderConfig config;
+  if (!WebPInitDecoderConfig(&config)) return 0;
+  config.options.use_threads = 1;
+  config.output.colorspace = MODE_RGBA;
+  config.output.is_external_memory = 1;
+  config.output.u.RGBA.rgba = rgba;
+  config.output.u.RGBA.stride = width * 4;
+  config.output.u.RGBA.size = rgba_size;
+  VP8StatusCode status = WebPDecode(bytes, size, &config);
+  int ok = status == VP8_STATUS_OK && config.output.width == width &&
+           config.output.height == height;
+  WebPFreeDecBuffer(&config.output);
+  return ok;
+}
+
 static int check_all_prefixes(const uint8_t *bytes, size_t size) {
   for (size_t length = 1; length <= size; ++length) {
     WebPData data = {bytes, length};
@@ -52,6 +71,15 @@ static int check_all_prefixes(const uint8_t *bytes, size_t size) {
             WebPDemuxReleaseIterator(&iter);
             WebPDemuxDelete(demux);
             fprintf(stderr, "complete frame has no fragment at prefix %zu\n",
+                    length);
+            return 0;
+          }
+          if (iter.complete &&
+              (iter.fragment.bytes < bytes ||
+               iter.fragment.bytes + iter.fragment.size > bytes + length)) {
+            WebPDemuxReleaseIterator(&iter);
+            WebPDemuxDelete(demux);
+            fprintf(stderr, "frame fragment escaped source snapshot at %zu\n",
                     length);
             return 0;
           }
@@ -90,8 +118,8 @@ static int check_frame(const WebPDemuxer *demux, int frame_number,
   if (iter.complete && iter.width == 2 && iter.height == 2 &&
       iter.duration == expected_duration_ms) {
     uint8_t rgba[16];
-    if (WebPDecodeRGBAInto(iter.fragment.bytes, iter.fragment.size, rgba,
-                           sizeof(rgba), 8) != NULL) {
+    if (decode_rgba_threaded(iter.fragment.bytes, iter.fragment.size,
+                             iter.width, iter.height, rgba, sizeof(rgba))) {
       ok = 1;
       for (size_t offset = 0; offset < sizeof(rgba); offset += 4) {
         if (memcmp(rgba + offset, expected, 4) != 0) {
@@ -123,12 +151,12 @@ static int check_partial_blend_fixture(const char *path) {
   int ok = WebPDemuxGetFrame(demux, 2, &iter);
   if (ok) {
     uint8_t rgba[4];
-    uint8_t *decoded = WebPDecodeRGBAInto(iter.fragment.bytes,
-                                          iter.fragment.size, rgba,
-                                          sizeof(rgba), 4);
+    int decoded = decode_rgba_threaded(iter.fragment.bytes, iter.fragment.size,
+                                       iter.width, iter.height, rgba,
+                                       sizeof(rgba));
     ok = iter.complete && iter.x_offset == 2 && iter.y_offset == 2 &&
          iter.width == 1 && iter.height == 1 &&
-         iter.blend_method == WEBP_MUX_BLEND && decoded != NULL &&
+         iter.blend_method == WEBP_MUX_BLEND && decoded &&
          rgba[0] == 0 && rgba[1] == 255 && rgba[2] == 0 && rgba[3] == 128;
     WebPDemuxReleaseIterator(&iter);
   }

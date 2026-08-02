@@ -91,79 +91,128 @@ final class NativeCursorFactory implements CursorFactory {
     if (ptr == nullptr) {
       throw StateError('native cursor allocation failed');
     }
-    final cursor = NativeCursor._(ptr, api);
+    if (api.epoch(ptr) != epoch) {
+      api.free(ptr);
+      throw StateError('native cursor epoch mismatch');
+    }
+    final decodePool = _NativeDecodeWorkerPool.forLibrary(libPath)..acquire();
+    final cursor = NativeCursor._(ptr, api, decodePool, epoch);
     return CursorBinding(frames: cursor, loop: cursor);
   }
 }
 
 final class NativeCursor implements FrameCursor, LoopCursor {
-  NativeCursor._(this._ptr, this._api);
+  NativeCursor._(this._ptr, this._api, this._decodePool, this._epoch);
 
   Pointer<_Cursor> _ptr;
   final _CursorApi _api;
+  final _NativeDecodeWorkerPool _decodePool;
+  final int _epoch;
 
-  bool get disposed => _ptr == nullptr;
+  int _frameCount = 0;
+  int _loopCount = 0;
+  int _cycle = 0;
+  bool _metadataComplete = false;
+  bool _decodeInFlight = false;
+  bool _disposeRequested = false;
+  bool _poolReleased = false;
+
+  bool get disposed => _disposeRequested || _ptr == nullptr;
 
   @override
-  int get epoch => _api.epoch(_requirePtr());
+  int get epoch => _epoch;
 
   @override
   AnimationInfo get animation => AnimationInfo(
-        frameCount: _api.frameCount(_requirePtr()),
-        loopCount: _api.loopCount(_requirePtr()),
-        complete: _api.metadataComplete(_requirePtr()) != 0,
+        frameCount: _frameCount,
+        loopCount: _loopCount,
+        complete: _metadataComplete,
       );
 
   @override
-  int get cycle => _api.cycle(_requirePtr());
+  int get cycle => _cycle;
 
   @override
   Future<CursorStep> decodeNext() async {
-    final out = calloc<Pointer<_Frame>>();
+    final ptr = _requirePtr();
+    if (_decodeInFlight) {
+      throw StateError('native cursor already has a decode in flight');
+    }
+    _decodeInFlight = true;
+    final decodeRoundTrip = Stopwatch()..start();
     try {
-      out.value = nullptr;
-      final raw = _api.decode(_requirePtr(), epoch, out);
+      final result = await _decodePool.decode(
+        cursorAddress: ptr.address,
+        epoch: _epoch,
+      );
+      _frameCount = result.frameCount;
+      _loopCount = result.loopCount;
+      _metadataComplete = result.metadataComplete;
+      _cycle = result.cycle;
+
+      final raw = result.status;
       if (raw < 0 || raw >= _CursorStatus.values.length) {
+        _releaseWorkerFrame(result.frameAddress);
         throw StateError('native cursor returned unknown status $raw');
       }
       final status = _CursorStatus.values[raw];
       switch (status) {
         case _CursorStatus.ok:
-          final frame = out.value;
-          if (frame == nullptr) {
+          if (result.frameAddress == 0) {
             throw StateError('native cursor returned OK without a frame');
           }
-          return CursorStep.frame(NativeFrame._(frame, _api));
+          return CursorStep.frame(
+            NativeFrame._(
+              Pointer<_Frame>.fromAddress(result.frameAddress),
+              _api,
+              nativeDecodeMicros: result.nativeMicros,
+              dispatchMicros: (decodeRoundTrip.elapsedMicroseconds -
+                      result.nativeMicros)
+                  .clamp(0, 1 << 62)
+                  .toInt(),
+            ),
+          );
         case _CursorStatus.needMoreData:
+          _releaseWorkerFrame(result.frameAddress);
           return const CursorStep.needMoreData();
         case _CursorStatus.end:
+          _releaseWorkerFrame(result.frameAddress);
           return const CursorStep.end();
         case _CursorStatus.staleEpoch:
+          _releaseWorkerFrame(result.frameAddress);
           throw StateError('native cursor rejected a stale epoch');
         case _CursorStatus.unsupported:
+          _releaseWorkerFrame(result.frameAddress);
           throw UnsupportedError('native cursor does not support this content');
         case _CursorStatus.nullPointer:
+          _releaseWorkerFrame(result.frameAddress);
           throw StateError('native cursor is unavailable');
         case _CursorStatus.failed:
+          _releaseWorkerFrame(result.frameAddress);
           throw StateError('native cursor decode failed');
       }
     } finally {
-      calloc.free(out);
+      _decodeInFlight = false;
+      _freeIfRequested();
     }
   }
 
   @override
   bool rewind() {
-    final raw = _api.rewind(_requirePtr(), epoch);
+    final ptr = _requirePtr();
+    if (_decodeInFlight) {
+      throw StateError('native cursor cannot rewind during decode');
+    }
+    final raw = _api.rewind(ptr, _epoch);
     if (raw < 0 || raw >= _CursorStatus.values.length) {
       throw StateError('native cursor returned unknown rewind status $raw');
     }
+    _cycle = _api.cycle(ptr);
     final status = _CursorStatus.values[raw];
     switch (status) {
       case _CursorStatus.ok:
         return true;
       case _CursorStatus.end:
-        return false;
       case _CursorStatus.needMoreData:
         return false;
       case _CursorStatus.staleEpoch:
@@ -179,27 +228,59 @@ final class NativeCursor implements FrameCursor, LoopCursor {
 
   @override
   void dispose() {
+    if (_disposeRequested || _ptr == nullptr) {
+      return;
+    }
+    _disposeRequested = true;
+    _freeIfRequested();
+  }
+
+  void _freeIfRequested() {
+    if (!_disposeRequested || _decodeInFlight) {
+      return;
+    }
     final ptr = _ptr;
     if (ptr == nullptr) {
       return;
     }
     _ptr = nullptr;
     _api.free(ptr);
+    if (!_poolReleased) {
+      _poolReleased = true;
+      _decodePool.release();
+    }
+  }
+
+  void _releaseWorkerFrame(int address) {
+    if (address != 0) {
+      _api.frameRelease(Pointer<_Frame>.fromAddress(address));
+    }
   }
 
   Pointer<_Cursor> _requirePtr() {
-    if (_ptr == nullptr) {
+    if (_disposeRequested || _ptr == nullptr) {
       throw StateError('native cursor is disposed');
     }
     return _ptr;
   }
 }
 
-final class NativeFrame implements PixelFrame {
-  NativeFrame._(this._ptr, this._api);
+final class NativeFrame implements PixelFrame, FrameDecodeTiming {
+  NativeFrame._(
+    this._ptr,
+    this._api, {
+    this.nativeDecodeMicros = 0,
+    this.dispatchMicros = 0,
+  });
 
   Pointer<_Frame> _ptr;
   final _CursorApi _api;
+
+  @override
+  final int nativeDecodeMicros;
+
+  @override
+  final int dispatchMicros;
 
   @override
   bool get disposed => _ptr == nullptr;

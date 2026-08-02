@@ -1,3 +1,14 @@
+## 0.31.0-dev.94：迁移常驻 WebP 解码 worker 与持久 demux
+
+- 根据设备 Trace 定位：动画 `decodeMicros` 中位约 124.9 ms；Android native blit 约 5.6 ms，但 platform round trip 中位约 770 ms、最大约 1.69 s，主要等待发生在 Dart/MethodChannel 调度。
+- 只读参考 VibeVenera 的通用 WebP pipeline，在 `bridge` 增加两个常驻 decode Isolate；帧解码不再同步阻塞 UI isolate。
+- isolate 消息只传 native cursor/frame 地址、epoch 和小型状态，不复制像素或完整 WebP 字节。
+- `media_core` 缓存 demux frame descriptors；只有 source 长度或 seal 状态变化才重新 demux，不再逐帧解析完整文件。
+- demux descriptor 只保存 authoritative source 中的 offset/length，不再保留第二份完整压缩字节快照。
+- libwebp 使用 advanced decoder config 与 `use_threads=1`；删除逐帧 full-canvas clone，并保持 dev.82 的源像素网格 blend/dispose 后整帧缩放。
+- `frameDecoded` Trace 增加 `nativeDecodeMicros` 与 `decodeDispatchMicros`，区分 native codec 与 isolate/queue 往返。
+- 新增 demux reuse/rewind Rust fixture、C threaded decode smoke、ADR 0078、dev.94 三清单审计和静态所有权门禁。
+
 ## 0.31.0-dev.93：预解码动画后继帧并修复媒体测试闭包
 
 - 修复 `upload_session_test` 的 cursor fixture 未绑定 `LoopCursor`，导致完整静态元数据未进入 UploadSession。

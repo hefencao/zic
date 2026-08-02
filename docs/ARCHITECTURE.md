@@ -1,3 +1,14 @@
+# dev.94 常驻 WebP worker 与持久 demux 所有权
+
+- `bridge.NativeCursor` 继续是 Dart 侧 cursor facade，但重型 `zic_cursor_decode_next` 不得在 UI isolate 同步执行。`_NativeDecodeWorkerPool` 按 native library 维护两个常驻 Isolate，cursor acquire/release 原子管理 worker 生命周期。
+- worker 消息只包含 native cursor 地址、epoch、返回 frame 地址和小型 metadata/timing。像素始终留在 `media_core` frame owner；禁止通过 SendPort 传 `Uint8List` 或在 Reader 建立帧副本。
+- 每个 cursor 最多一个 in-flight decode；dispose 等待该 decode 完成后再释放 native cursor。worker 启动失败必须关闭已启动 worker，最后一个 owner 离开且队列排空后关闭 pool。
+- `media_core::webp::Decoder` 唯一拥有 demux descriptor、source-grid composite canvas、blend/dispose、rewind 与 libwebp decode。descriptor 只记录 authoritative source slice 中的 offset/length；source read lock 保证一次 decode 期间地址稳定，不保存第二份完整压缩内容。
+- source 长度或 sealed 状态变化才重建 descriptors；同一 sealed source 的逐帧 decode 和 rewind 复用同一 descriptor set。
+- libwebp advanced config 开启 `use_threads=1`，帧 fragment 解码结果在源像素网格合成。dev.82 已否决的“分别缩放 ANMF 子矩形后在目标网格合成”不得恢复；最终 presentation 只对完整权威 canvas 做一次等比缩放/复制。
+- ZIC 既有 Android texture bridge 已在专用串行 blit 线程执行 native handle blit，因此本轮不复制 VibeVenera 的 presenter，也不建立第二 texture registry。
+- `sessions` 只记录 `decodeMicros/nativeDecodeMicros/decodeDispatchMicros` 并维持既有 demand；这些 timing 不改变 lane、deadline 或缓存所有权。Reader 继续只消费只读 output。
+
 # dev.93 动画 successor 缓冲与 texture bridge 诊断
 
 - `UploadSession.preparedDepth` 只表示未来可消费的准备量。静态 output 可贡献 1；当前正在显示的动画 output 不得冒充 successor，因此动画 output 投影 0，使既有 DecodeSession 在当前帧期限内预解码一帧。

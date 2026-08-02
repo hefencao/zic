@@ -2490,8 +2490,10 @@ def check_native_abi() -> None:
     for required in (
         'WebPDemuxInternal',
         'WebPDemuxGetFrame',
-        'WebPDecodeRGBAInto',
-        'iter.0.complete == 0',
+        'WebPInitDecoderConfigInternal',
+        'WebPDecode',
+        'config.options.use_threads = 1',
+        'complete: iter.0.complete != 0',
         'blend_source_over',
         'dispose_background',
     ):

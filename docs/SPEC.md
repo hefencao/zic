@@ -1,3 +1,16 @@
+## dev.94 WebP worker/demux 规范
+
+1. native WebP 帧解码不得同步占用 Dart UI isolate；平台 composition 必须通过常驻 worker Isolate 执行 cursor decode。
+2. isolate 边界只允许 native handle 地址、epoch、状态、animation metadata 和 timing；禁止传递像素字节、完整 encoded source 或 mutable session。
+3. 同一 cursor 任一时刻只能有一个 decode in flight；dispose/rewind 不得与 decode 并发释放或修改 cursor。
+4. worker pool 固定两个常驻 worker，按 library identity 共享；最后一个 cursor owner 释放且任务排空后必须关闭，部分启动失败不得泄漏已启动 isolate。
+5. demux frame descriptor 应跨帧和 rewind 复用；只有 authoritative source 长度或 seal 状态变化时才重建。
+6. descriptor 只保存 source-relative fragment offset/length；不得复制第二份完整 WebP 压缩字节。decode 时必须在 source read lock 生命周期内验证 range 并取 pointer。
+7. libwebp decode 必须使用 version-checked advanced config、external RGBA buffer 和 `use_threads=1`。
+8. blend/dispose 继续在源像素网格执行，完整 canvas 再一次性按权威目标尺寸缩放；禁止恢复独立目标子矩形缩放或每帧 full-canvas clone。
+9. `frameDecoded` 必须同时投影 total、native 与 dispatch timing；diagnostic timing 不得成为第二调度权威来源。
+10. 现有前 7/后 3下载、前 2/后 1预解码、current/transition 上传、5/3/2 lane、256 KiB source chunk 不得因性能问题缩小。
+
 ## dev.93 动画后继帧预解码与平台上传诊断规范
 
 1. 当前可见的动画 output 是 presentation state，不是未来 successor；其 upload prepared depth 必须为 0。

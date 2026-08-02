@@ -62,6 +62,15 @@ abstract interface class PixelFrame implements FrameRef {
   Uint8List copyBytes();
 }
 
+/// Optional read-only timing projected by a frame decoder implementation.
+///
+/// Sessions consume this capability only for diagnostics; scheduling and frame
+/// ownership remain defined by [FrameCursor] and [FrameRef].
+abstract interface class FrameDecodeTiming {
+  int get nativeDecodeMicros;
+  int get dispatchMicros;
+}
+
 enum CursorStepKind { frame, needMoreData, end }
 
 final class CursorStep {

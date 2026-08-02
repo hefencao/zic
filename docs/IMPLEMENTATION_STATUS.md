@@ -1,3 +1,7 @@
+## dev.94 状态
+
+已在 dev.93 唯一基线上迁移 VibeVenera 中与 Venera 协议无关的 WebP 执行结构。用户 Trace 共 798 条事件：`frameDecoded` 17 次，total decode 中位约 124893 µs；Android texture native blit 中位约 5625 µs，而 platform round trip 中位约 770103 µs、最大约 1689081 µs，bridge 等待占主导。根因是 ZIC 在 UI isolate 同步执行 native decode，且 native decoder 逐帧重新 demux 完整 source。现在 bridge 使用两个常驻 decode Isolate，只传 native cursor/frame 地址；media_core 持久缓存 source-relative frame descriptors，source length/seal 变化才重建，libwebp advanced config 开启线程，并删除每帧完整 demux、第二份压缩快照和 full-canvas clone。source-grid blend/dispose 和既有 texture serial blit 保持不变。当前 repository/Dart structure、dev.82/dev.94 gate 与本地 libwebp 1.6.0 C smoke 已通过；环境仍无 Flutter/Dart/Gradle/Android SDK/Cargo/rustc，真实 analyzer、package tests、Rust/Android 编译、APK 和设备帧率需用户环境复验。
+
 ## dev.93 状态
 
 用户确认 dev.92 不再持续无限 loading，但设备 Trace 显示本地动画仍明显卡顿。2753 条事件中，动画帧 duration 主要为 33/34 ms，而 `frameDecoded.decodeMicros` 中位数约 124 ms；旧实现把当前动画 output 计为 prepared depth 1，导致当前帧显示期间不预解码 successor，deadline 后才开始下一帧工作。本轮将动画 output 的 prepared depth 改为 0，在同一 DecodeSession/FrameHolder 中预解码一个 successor，并保持 deadline 前不提前替换、deadline 后原子替换。Android texture telemetry 新增 round-trip 与 bridge 分解。本地文档桥协议升至 v5：seekable descriptor 不再逐 chunk 往返 MethodChannel，而由 Dart 通过同进程 `/proc/self/fd` 直接 256 KiB 读取；不可 seek provider 保留旧 fallback。错误报告中的静态 cursor fixture、50/50 viewport、source seal revision 和本地媒体 viewport 测试已按归属修正。当前静态/契约验证通过；Flutter/Dart/Android 真机结果仍待用户环境复验。
