@@ -26,11 +26,15 @@ const comicSourceErrorKey = ValueKey<String>('comic-source-error');
 const comicSourceErrorDetailsKey =
     ValueKey<String>('comic-source-error-details');
 const comicSourceCopyErrorKey = ValueKey<String>('comic-source-copy-error');
+const comicSourceOpenWebViewKey =
+    ValueKey<String>('comic-source-open-webview');
 const comicSourceEmptyKey = ValueKey<String>('comic-source-empty');
 Key comicSourceChoiceKey(String sourceId) =>
     ValueKey<String>('comic-source-choice:$sourceId');
 Key sourceComicCardKey(String sourceId, String comicId) =>
     ValueKey<String>('source-comic:$sourceId\u0000$comicId');
+Key sourceComicCoverVerificationKey(String sourceId, String comicId) =>
+    ValueKey<String>('source-comic-verify:$sourceId\u0000$comicId');
 Key sourceChapterKey(String sourceId, String chapterId) =>
     ValueKey<String>('source-chapter:$sourceId\u0000$chapterId');
 
@@ -47,6 +51,7 @@ final class ComicSourcesPage extends StatefulWidget {
     required this.onSourceSelected,
     required this.loadCover,
     required this.onOpenComic,
+    this.onOpenSourceWebView,
     super.key,
   });
 
@@ -58,6 +63,10 @@ final class ComicSourcesPage extends StatefulWidget {
     BrowsableComicSource source,
     SourceComicSummary comic,
   ) onOpenComic;
+  final Future<void> Function(
+    BrowsableComicSource source,
+    Uri url,
+  )? onOpenSourceWebView;
 
   @override
   State<ComicSourcesPage> createState() => _ComicSourcesPageState();
@@ -74,6 +83,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   int _nextOffset = 0;
   _SourceFailure? _failure;
   int _generation = 0;
+  bool _recoveringSourceAccess = false;
 
   BrowsableComicSource? get _activeSource {
     final id = widget.activeSourceId;
@@ -208,16 +218,47 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       });
     } on Object catch (error, stackTrace) {
       if (mounted && generation == _generation) {
+        final failure = _SourceFailure.capture(error, stackTrace);
         _showSourceFailureSnackBar(
           context,
           prefix: '加载更多失败',
-          failure: _SourceFailure.capture(error, stackTrace),
+          failure: failure,
+          actionLabel: failure.requiresSourceVerification &&
+                  widget.onOpenSourceWebView != null
+              ? 'WebView'
+              : null,
+          onAction: failure.requiresSourceVerification &&
+                  widget.onOpenSourceWebView != null
+              ? () => unawaited(_recoverSourceAccess(source))
+              : null,
         );
       }
     } finally {
       if (mounted && generation == _generation) {
         setState(() => _loadingMore = false);
       }
+    }
+  }
+
+  Future<void> _recoverSourceAccess(BrowsableComicSource source) async {
+    final open = widget.onOpenSourceWebView;
+    if (open == null || _recoveringSourceAccess) return;
+    setState(() => _recoveringSourceAccess = true);
+    try {
+      await open(source, source.descriptor.website);
+      if (mounted) {
+        await _reload(forceRefresh: true);
+      }
+    } on Object catch (error, stackTrace) {
+      if (mounted) {
+        _showSourceFailureSnackBar(
+          context,
+          prefix: 'WebView 访问失败',
+          failure: _SourceFailure.capture(error, stackTrace),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _recoveringSourceAccess = false);
     }
   }
 
@@ -292,6 +333,11 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         title: '漫画源加载失败',
         failure: failure,
         onRetry: () => unawaited(_reload(forceRefresh: true)),
+        onOpenWebView: failure.requiresSourceVerification &&
+                widget.onOpenSourceWebView != null
+            ? () => unawaited(_recoverSourceAccess(source))
+            : null,
+        openingWebView: _recoveringSourceAccess,
       );
     }
     if (_items.isEmpty) {
@@ -331,6 +377,10 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
               comic: comic,
               reloadToken: _generation,
               loadCover: widget.loadCover,
+              onSourceVerificationRequired:
+                  widget.onOpenSourceWebView == null
+                      ? null
+                      : () => unawaited(_recoverSourceAccess(source)),
               onTap: () => unawaited(
                 widget.onOpenComic(source, comic),
               ),
@@ -396,6 +446,7 @@ final class _SourceComicCard extends StatelessWidget {
     required this.reloadToken,
     required this.loadCover,
     required this.onTap,
+    this.onSourceVerificationRequired,
     super.key,
   });
 
@@ -404,6 +455,7 @@ final class _SourceComicCard extends StatelessWidget {
   final int reloadToken;
   final SourceComicCoverLoader loadCover;
   final VoidCallback onTap;
+  final VoidCallback? onSourceVerificationRequired;
 
   @override
   Widget build(BuildContext context) {
@@ -420,6 +472,13 @@ final class _SourceComicCard extends StatelessWidget {
                 uri: comic.coverUri,
                 loadSource: (uri) => loadCover(source, comic, uri),
                 reloadToken: reloadToken,
+                verificationKey:
+                    sourceComicCoverVerificationKey(
+                      source.sourceId,
+                      comic.comicId,
+                    ),
+                onSourceVerificationRequired:
+                    onSourceVerificationRequired,
               ),
             ),
           ),
@@ -954,6 +1013,7 @@ final class _SourceFailure {
     required this.summary,
     required this.guidance,
     required this.details,
+    this.requiresSourceVerification = false,
   });
 
   factory _SourceFailure.capture(
@@ -977,6 +1037,15 @@ final class _SourceFailure {
     final lower = details.toLowerCase();
     final host = _hostFromFailure(details);
 
+    if (error is Failure &&
+        error.code == ErrorCode.sourceVerificationRequired) {
+      return _SourceFailure(
+        summary: '漫画源需要完成网页验证',
+        guidance: '请打开 WebView 完成 Cloudflare 或站点验证；返回后会自动重新加载当前列表。',
+        details: details,
+        requiresSourceVerification: true,
+      );
+    }
     if (lower.contains('failed host lookup') ||
         lower.contains('nodename nor servname provided')) {
       return _SourceFailure(
@@ -1003,6 +1072,7 @@ final class _SourceFailure {
   final String summary;
   final String guidance;
   final String details;
+  final bool requiresSourceVerification;
 }
 
 final class _SourceFailurePanel extends StatelessWidget {
@@ -1010,12 +1080,16 @@ final class _SourceFailurePanel extends StatelessWidget {
     required this.title,
     required this.failure,
     required this.onRetry,
+    this.onOpenWebView,
+    this.openingWebView = false,
     super.key,
   });
 
   final String title;
   final _SourceFailure failure;
   final VoidCallback onRetry;
+  final VoidCallback? onOpenWebView;
+  final bool openingWebView;
 
   @override
   Widget build(BuildContext context) {
@@ -1057,7 +1131,21 @@ final class _SourceFailurePanel extends StatelessWidget {
                     spacing: 10,
                     runSpacing: 8,
                     children: <Widget>[
-                      FilledButton.icon(
+                      if (onOpenWebView != null)
+                        FilledButton.icon(
+                          key: comicSourceOpenWebViewKey,
+                          onPressed: openingWebView ? null : onOpenWebView,
+                          icon: openingWebView
+                              ? const SizedBox.square(
+                                  dimension: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.open_in_browser),
+                          label: const Text('WebView 验证'),
+                        ),
+                      OutlinedButton.icon(
                         onPressed: onRetry,
                         icon: const Icon(Icons.refresh),
                         label: const Text('重试'),
@@ -1117,13 +1205,15 @@ void _showSourceFailureSnackBar(
   BuildContext context, {
   required String prefix,
   required _SourceFailure failure,
+  String? actionLabel,
+  VoidCallback? onAction,
 }) {
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
       content: Text('$prefix：${failure.summary}'),
       action: SnackBarAction(
-        label: '复制',
-        onPressed: () {
+        label: actionLabel ?? '复制',
+        onPressed: onAction ?? () {
           unawaited(_copySourceFailure(context, failure));
         },
       ),
@@ -1141,11 +1231,15 @@ final class _RemoteImage extends StatefulWidget {
     required this.uri,
     required this.loadSource,
     required this.reloadToken,
+    required this.verificationKey,
+    this.onSourceVerificationRequired,
   });
 
   final Uri? uri;
   final Future<EncodedResourceSource> Function(Uri uri) loadSource;
   final int reloadToken;
+  final Key verificationKey;
+  final VoidCallback? onSourceVerificationRequired;
 
   @override
   State<_RemoteImage> createState() => _RemoteImageState();
@@ -1206,9 +1300,22 @@ final class _RemoteImageState extends State<_RemoteImage> {
           );
         }
         if (snapshot.hasError) {
-          return const ColoredBox(
-            color: Color(0x11000000),
-            child: Center(child: Icon(Icons.broken_image_outlined)),
+          final error = snapshot.error;
+          final canVerify = error is Failure &&
+              error.code == ErrorCode.sourceVerificationRequired &&
+              widget.onSourceVerificationRequired != null;
+          return ColoredBox(
+            color: const Color(0x11000000),
+            child: Center(
+              child: canVerify
+                  ? IconButton(
+                      key: widget.verificationKey,
+                      tooltip: '在 WebView 中完成来源验证',
+                      onPressed: widget.onSourceVerificationRequired,
+                      icon: const Icon(Icons.open_in_browser),
+                    )
+                  : const Icon(Icons.broken_image_outlined),
+            ),
           );
         }
         return const ColoredBox(

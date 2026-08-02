@@ -1,3 +1,9 @@
+## dev.87 状态
+
+已在 dev.86 唯一基线上完成：`Bundle` 导入；Cloudflare verification typed error；来源首页、分页、封面、详情与下载动作的统一 WebView fallback；详情右上角作品网页；来源分类/标签/书架分类分区；条漫 adaptive model v5；持久 promoted artifact 快速恢复。设备 trace 共 7181 条事件，其中 16 次可计时的本地 `content://` artifact cache session-copy 中位吞吐约 5.47 MB/s，同一 5.6–20.0 MB 页面重复恢复，单次约 0.87–4.96 秒；修复删除命中缓存时的重复 CRC 全扫，但未绕过 Pipeline 或建立 App 私有缓存。
+
+当前环境通过 repository/Dart structure、dev.75–dev.87 owner gates、Android dependency、Mihon ABI/classloader/chapter、Venera、Reader/Pipeline/UI、共享 browser Kotlin 提取编译和本地 libwebp 1.6.0 host fixture。环境无 Flutter/Dart/Gradle/Android SDK/Cargo，故 analyzer、Dart/Flutter test、APK/kernel 和 Rust 未执行。
+
 ## dev.86 状态
 
 已在 dev.85 唯一基线上补齐详情 WebView callback typedef，关闭用户报告的四处 Dart 类型错误。通用 Android 网络能力已迁入新 `network_bridge`：来源 WebView、Cookie/localStorage 快照、Cloudflare interceptor、Android CookieJar 和 fallback DNS 不再由 `plugin_host_bridge` 拥有；Mihon ABI 只保留 `NetworkHelper` 兼容外壳并 parent-first 消费共享类。旧 plugin-host 登录 Activity、snapshot store、MethodChannel API、metadata reader 网络方法以及 `ExternalPluginController` 的通用网络转发方法已删除；App composition 直接注入 `AndroidNetworkBridge`。 浏览器进程由 App manifest placeholder 选择；主进程读取的 Cookie/localStorage snapshot 使用原子文件交接，未保留跨进程 SharedPreferences。仓库结构、Dart 结构、dev.75–dev.86 门禁、共享浏览器 Kotlin 提取编译、Mihon ABI/classloader/chapter、Venera、Reader/Pipeline/UI 等当前可执行检查通过。当前环境仍无 Flutter/Dart/Android SDK/Gradle，因此 analyzer、Flutter tests 和 APK/kernel 未执行；rhttp 尚未引入。

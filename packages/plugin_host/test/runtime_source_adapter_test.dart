@@ -39,6 +39,54 @@ void main() {
     expect(isSyntheticMihonChapterIdentity('mihon:chapter:broken'), isFalse);
   });
 
+  test('resolves a Mihon manga detail URL without leaking opaque parsing', () {
+    final payload = base64Url
+        .encode(utf8.encode(jsonEncode(<String, Object?>{
+          'kind': 'manga',
+          'url': '/album/123',
+        })))
+        .replaceAll('=', '');
+
+    expect(
+      resolveMihonComicWebUri(
+        comicId: 'mihon:manga:$payload',
+        sourceWebsite: Uri.parse('https://18comic.vip/base/'),
+      ),
+      Uri.parse('https://18comic.vip/album/123'),
+    );
+    expect(
+      resolveMihonComicWebUri(
+        comicId: 'comic-1',
+        sourceWebsite: Uri.parse('https://example.invalid'),
+      ),
+      isNull,
+    );
+  });
+
+  test('maps runtime verification requirement to a typed domain failure',
+      () async {
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: _VerificationFailureConnection(),
+      limits: const ExternalPluginRuntimeLimits(
+        maxResponseBytes: 4096,
+        maxConcurrentInvocations: 1,
+      ),
+    );
+    addTearDown(session.close);
+
+    await expectLater(
+      session.sources.single.browse(),
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.sourceVerificationRequired,
+        ),
+      ),
+    );
+  });
+
   test('shared runtime adapter exposes one ordinary browsable source', () async {
     final connection = _FixtureConnection();
     final session = ExternalPluginRuntimeSession(
@@ -408,6 +456,36 @@ ExternalComicPluginCatalogEntry _plugin({
         ),
       ],
     );
+
+final class _VerificationFailureConnection
+    implements ExternalPluginRuntimeConnection {
+  @override
+  List<ExternalPluginRuntimeSourceDescriptor> get sources =>
+      <ExternalPluginRuntimeSourceDescriptor>[
+        ExternalPluginRuntimeSourceDescriptor(
+          externalId: 'fixture',
+          name: 'Fixture',
+          language: 'en',
+          website: Uri.parse('https://example.invalid'),
+        ),
+      ];
+
+  @override
+  Future<ExternalPluginRuntimeResponse> invoke(
+    ExternalPluginRuntimeRequest request,
+  ) async =>
+      ExternalPluginRuntimeResponse.failure(
+        requestId: request.requestId,
+        error: ExternalPluginRuntimeError(
+          code: 'source-verification-required',
+          message: 'Cloudflare verification failed',
+          retryable: true,
+        ),
+      );
+
+  @override
+  Future<void> close() async {}
+}
 
 final class _FixtureConnection implements ExternalPluginRuntimeConnection {
   _FixtureConnection({

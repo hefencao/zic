@@ -1,3 +1,12 @@
+## dev.87 来源验证、作品网页和 promoted artifact 所有权
+
+- `network_bridge` 继续拥有通用 WebView/Cookie/Cloudflare Android 能力；`plugin_host_bridge` 只把插件运行时 cause 链归一为稳定错误码，不拥有 Presentation fallback。
+- `domain.ErrorCode.sourceVerificationRequired` 是跨来源的权威验证状态。来源列表、封面和详情只消费该状态并调用 App composition 注入的 `AndroidNetworkBridge` 命令；不得按 UI 文本或任意网络错误猜测 Cloudflare。
+- `catalog.ComicWebUriSource` 是作品网页的可选来源能力。Mihon/Venera opaque comic identity 由 `plugin_host` adapter 解析；App 只获取 URI，无法读取 token payload。
+- 来源 metadata 与书架分类是不同状态平面：Comic tags/categories 来自 catalog/source，LibraryCategory 与选择状态来自 library preference，Presentation 仅分区投影。
+- 自适应 Reader profile 仍由 `reader_runtime` 拥有。来源 metadata 可覆盖被切片后失真的单页比例证据；App/详情不得直接指定 LTR/vertical。
+- promoted page artifact 仍由 downloads/sessions/storage 管理。正常 `Artifact.restore()` 默认完整校验；只有 App 私有、已原子 promote 的持久 cache read path 可请求 metadata/length 快速恢复，失配立即退回 CRC 重算。Reader/App 不新增字节缓存或直接文件旁路。
+
 ## dev.86 共享网络能力与详情编译闭包所有权
 
 - `apps/app/comic_details.dart` 只定义 Presentation callback 类型 `ComicDetailsSourceWebViewOpener` 并消费命令；详情页不拥有 WebView、Cookie、Cloudflare、transport 或插件 session。

@@ -1,6 +1,16 @@
 final class Crc32 {
   Crc32() : _value = 0xffffffff;
 
+  factory Crc32.fromHex(String checksum) {
+    if (!RegExp(r'^[0-9a-fA-F]{8}$').hasMatch(checksum)) {
+      throw FormatException('CRC32 checksum must contain eight hex digits');
+    }
+    final value = int.parse(checksum, radix: 16);
+    return Crc32._raw(value ^ 0xffffffff);
+  }
+
+  Crc32._raw(this._value);
+
   int _value;
 
   void add(List<int> bytes) {

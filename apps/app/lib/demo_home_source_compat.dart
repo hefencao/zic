@@ -1,5 +1,17 @@
 part of 'demo_home.dart';
 
+
+Uri _sourceComicWebUri(
+  BrowsableComicSource source,
+  SourceComicSummary comic,
+) {
+  if (source is ComicWebUriSource) {
+    return (source as ComicWebUriSource).resolveComicWebUri(comic.comicId) ??
+        source.descriptor.website;
+  }
+  return source.descriptor.website;
+}
+
 bool _hasLegacyVeneraLocators(ImportedChapterRecord chapter) =>
     chapter.pages.any(
       (page) => isLegacyVeneraRuntimeLocator(page.sourceId),

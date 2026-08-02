@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:downloads/downloads.dart';
+import 'package:resource_cache/resource_cache.dart';
 import 'package:zic/comic_details.dart' as details;
 import 'package:zic/demo_home.dart';
 import 'package:zic/main.dart';
@@ -176,6 +177,164 @@ void main() {
     await _tapVisible(tester, copy);
     expect(clipboardWrites, hasLength(1));
     expect(clipboardWrites.single, detailsText.data);
+  });
+
+  testWidgets('verification failure opens source WebView then retries',
+      (tester) async {
+    final source = _FixtureSource(
+      'mihon:verification',
+      '验证源',
+      browseError: const Failure(
+        code: ErrorCode.sourceVerificationRequired,
+        message: 'source-verification-required: Cloudflare verification failed',
+      ),
+    );
+    var webViewOpens = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ComicSourcesPage(
+            sources: <BrowsableComicSource>[source],
+            activeSourceId: source.sourceId,
+            onSourceSelected: (_) {},
+            loadCover: (_, __, ___) async =>
+                throw StateError('cover should not load'),
+            onOpenComic: (_, __) async {},
+            onOpenSourceWebView: (_, url) async {
+              expect(url, source.descriptor.website);
+              webViewOpens++;
+            },
+          ),
+        ),
+      ),
+    );
+
+    await _pumpUntilFound(tester, find.byKey(comicSourceOpenWebViewKey));
+    expect(find.text('漫画源需要完成网页验证'), findsOneWidget);
+    await _tapVisible(tester, find.byKey(comicSourceOpenWebViewKey));
+    expect(webViewOpens, 1);
+    expect(source.browseCalls, greaterThanOrEqualTo(2));
+  });
+
+  testWidgets('cover verification failure exposes its source WebView action',
+      (tester) async {
+    final source = _FixtureSource('mihon:cover-verification', '封面验证源');
+    var webViewOpens = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ComicSourcesPage(
+            sources: <BrowsableComicSource>[source],
+            activeSourceId: source.sourceId,
+            onSourceSelected: (_) {},
+            loadCover: (_, __, ___) async => throw const Failure(
+              code: ErrorCode.sourceVerificationRequired,
+              message: 'Cloudflare verification failed',
+            ),
+            onOpenComic: (_, __) async {},
+            onOpenSourceWebView: (_, url) async {
+              expect(url, source.descriptor.website);
+              webViewOpens++;
+            },
+          ),
+        ),
+      ),
+    );
+
+    final verify = find.byKey(
+      sourceComicCoverVerificationKey(source.sourceId, source._comicId),
+    );
+    await _pumpUntilFound(tester, verify);
+    await _tapVisible(tester, verify);
+    expect(webViewOpens, 1);
+  });
+
+  testWidgets('detail separates source categories tags and shelf categories',
+      (tester) async {
+    final source = _FixtureSource(
+      'mihon:metadata',
+      '元数据源',
+      comicTags: const <String>[
+        'category:Webtoon',
+        'genre:Romance',
+        'author:重复作者',
+        'language:Korean',
+      ],
+    );
+    final category = LibraryCategory(
+      categoryId: 'favorites',
+      name: '收藏分类',
+      sortOrder: 0,
+      createdAt: DateTime.utc(2026, 8, 2),
+    );
+    final library = details.ComicDetailsLibrarySnapshot(
+      chapters: const <ImportedLibraryEntry>[],
+      sourceChapters: const <Chapter>[],
+      readStates: const <String, ChapterReadState>{},
+      preference: ComicPreference.defaults(
+        sourceId: source.sourceId,
+        comicId: source._comicId,
+      ),
+    );
+    var webViewOpens = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: details.RemoteComicDetailsScreen(
+          source: source,
+          summary: SourceComicSummary(
+            sourceId: source.sourceId,
+            comicId: source._comicId,
+            title: source._comic.title,
+            authors: source._comic.authors,
+            tags: source._comic.tags,
+            coverUri: source._comic.coverUri,
+          ),
+          initialLibrary: library,
+          categories: <LibraryCategory>[category],
+          loadCover: ({
+            required String sourceId,
+            required String comicId,
+            required Uri? coverUri,
+            required ImportedLibraryEntry? fallbackChapter,
+          }) async => MemoryEncodedResourceSource(_tinyPng()),
+          reloadLibrary: ({required bool refreshContent}) async => library,
+          ensureSourceChapter: (_, __, ___) async =>
+              throw StateError('chapter should not open'),
+          persistComic: (_, __) async {},
+          onPreferenceChanged: (_) async {},
+          onReadChanged: (_, __) async {},
+          onOpenChapter: (
+            _, {
+            required bool refreshRemote,
+            required String title,
+          }) async {},
+          onDownloadChapter: (_) async {},
+          inspectChapterDownload: (chapter) async =>
+              ChapterDownloadSnapshot.idle(chapter),
+          downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
+          onDownloadComic: (_) async {},
+          onOpenSourceWebView: () async {
+            webViewOpens++;
+          },
+        ),
+      ),
+    );
+
+    await _pumpUntilFound(tester, find.text('来源分类'));
+    expect(find.text('Webtoon'), findsOneWidget);
+    expect(find.text('标签'), findsOneWidget);
+    expect(find.text('Romance'), findsOneWidget);
+    expect(find.text('language：Korean'), findsOneWidget);
+    expect(find.text('书架分类'), findsOneWidget);
+    expect(find.text('收藏分类'), findsOneWidget);
+    expect(find.textContaining('重复作者'), findsNothing);
+    expect(find.byKey(details.comicDetailsRetryKey), findsNothing);
+
+    await _tapVisible(tester, find.byKey(details.comicDetailsOpenWebViewKey));
+    expect(webViewOpens, 1);
   });
 
   testWidgets('whole comic shelf and chapter download have separate ownership',
@@ -808,6 +967,7 @@ final class _FixtureSource
     this.runtimePageUri = false,
     this.catalogPageCount = 1,
     this.emptyCatalog = false,
+    this.comicTags = const <String>[],
   });
 
   @override
@@ -820,6 +980,7 @@ final class _FixtureSource
   final bool runtimePageUri;
   final int catalogPageCount;
   final bool emptyCatalog;
+  final List<String> comicTags;
   int _comicLoads = 0;
   int _chapterLoads = 0;
   int _chapterRefreshes = 0;
@@ -847,6 +1008,7 @@ final class _FixtureSource
         sourceId: sourceId,
         title: '$name 漫画',
         authors: const <String>['测试作者'],
+        tags: comicTags,
         coverUri: Uri.https('example.invalid', '/$sourceId/cover.png'),
         readingDirection: ReadingDirection.ltr,
       );
@@ -889,6 +1051,7 @@ final class _FixtureSource
       comicId: _comicId,
       title: _comic.title,
       authors: _comic.authors,
+      tags: _comic.tags,
       coverUri: _comic.coverUri,
     );
     return SourceBrowsePage(

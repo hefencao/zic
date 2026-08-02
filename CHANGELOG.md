@@ -1,3 +1,12 @@
+## 0.31.0-dev.87：统一来源验证回退并优化本地大图恢复
+
+- 修复 `PluginHostBridgePlugin.kt` 缺少 `android.os.Bundle` 导入的 Android 编译闭包。
+- Mihon runtime 将 cause 链中的 Cloudflare challenge 统一投影为 `sourceVerificationRequired`；来源首页、分页、封面、详情和章节/下载操作均提供同一 WebView 恢复动作，普通网络/解码错误不会误触发验证。
+- 新增 `ComicWebUriSource` 能力，Mihon/Venera opaque identity 只在 plugin adapter 中解析；详情页右上角改为访问作品网页，下拉刷新仍是唯一刷新入口。
+- 来源分类、来源标签和书架分类分区显示并过滤重复作者；自适应模型升至 v5，补充 long strip/vertical comic/scroll comic/长条漫画等条漫证据，纠正被来源切片后误判 LTR 的作品。
+- 根据设备 trace，promoted artifact 恢复改为优先验证原子 metadata 与文件长度并单次读取；缺失/失配仍完整重算 CRC。默认完整校验 API 与 Pipeline/DownloadSession 权威边界保持不变。
+- 使用文件库中的 libwebp 1.6.0 源码完成 host 增量/循环 fixture 检查；新增 dev.87 owner gate、回归测试、ADR 0071 与审计。
+
 ## 0.31.0-dev.86：修复详情 WebView 编译闭包并拆分共享网络桥
 
 - 补齐 `ComicDetailsSourceWebViewOpener = Future<void> Function()`，一次修复 `comic_details.dart` 与 `source_browser.dart` 的四处类型未定义编译错误。

@@ -1037,15 +1037,11 @@ final class PersistentChapterDownloadService
     final session = _registry.get(
       _downloadId(manifest, manifest.pages[pageIndex]),
     );
-    await session.restore();
+    await session.restore(verifyPromotedChecksum: false);
     if (session.state != DownloadState.promoted) {
       throw StateError('requested page is not downloaded');
     }
-    final builder = BytesBuilder(copy: false);
-    await for (final chunk in session.artifact.readChunks()) {
-      builder.add(chunk);
-    }
-    return builder.takeBytes();
+    return session.artifact.readBytes();
   }
 
   @override
@@ -1055,15 +1051,11 @@ final class PersistentChapterDownloadService
     if (session.activeRun || session.hasWriter) {
       return null;
     }
-    await session.restore();
+    await session.restore(verifyPromotedChecksum: false);
     if (session.state != DownloadState.promoted) {
       return null;
     }
-    final builder = BytesBuilder(copy: false);
-    await for (final chunk in session.artifact.readChunks()) {
-      builder.add(chunk);
-    }
-    return builder.takeBytes();
+    return session.artifact.readBytes();
   }
 
   @override

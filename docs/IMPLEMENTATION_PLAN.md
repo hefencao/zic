@@ -1,3 +1,9 @@
+## dev.87 完成项与后续验证
+
+已完成：Android Bundle 编译闭包；Cloudflare typed failure 全链路投影；来源列表/分页/封面/详情/章节与下载的 WebView fallback；作品 URL capability；详情 metadata 分区；adaptive model v5；promoted artifact metadata 快速恢复；libwebp 1.6.0 本地源码检查；dev.87 ADR、审计和静态门禁。
+
+后续必须在有 Flutter/Android 工具链的环境执行：`flutter analyze`、受影响 catalog/plugin_host/storage/downloads/reader_runtime/App 测试、完整 Flutter suite、Android debug/release 或 kernel snapshot。设备验证需对同一批 5–20 MB `content://` WebP 对比 `artifactSource.readMicros`，确认缓存命中不再先整文件重扫；同时验证 WebView 返回后的 Cookie 恢复覆盖来源首页和详情。
+
 ## dev.86 完成项与后续验证
 
 - [x] 复现并修复 `ComicDetailsSourceWebViewOpener` 漏定义的 Dart 编译闭包。

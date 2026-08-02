@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
 
@@ -62,13 +63,22 @@ final class Artifact {
         finalMetaPath: finalMetaPath,
       );
 
-  Future<ArtifactSnapshot> restore() async {
+  Future<ArtifactSnapshot> restore({
+    bool verifyPromotedChecksum = true,
+  }) async {
     _requireNotDisposed();
     await _closeWriter();
 
     final finalFile = File(finalPath);
     if (await finalFile.exists()) {
-      await _rehash(finalFile);
+      final restoredFromMeta = !verifyPromotedChecksum &&
+          await _restorePromotedFromMeta(finalFile);
+      if (!restoredFromMeta) {
+        await _rehash(finalFile);
+        if (!verifyPromotedChecksum) {
+          await _repairFinalMetaAfterVerification();
+        }
+      }
       _state = ArtifactState.promoted;
       await _recoverFinalMeta();
       return snapshot;
@@ -206,6 +216,15 @@ final class Artifact {
     }
     _state = ArtifactState.promoted;
     return snapshot;
+  }
+
+  Future<Uint8List> readBytes() async {
+    _requireNotDisposed();
+    await flush();
+    final path = _state == ArtifactState.promoted ? finalPath : partialPath;
+    final file = File(path);
+    if (!await file.exists()) return Uint8List(0);
+    return file.readAsBytes();
   }
 
   Stream<List<int>> readChunks({int chunkSize = 256 * 1024}) async* {
@@ -401,6 +420,67 @@ final class Artifact {
         await target.delete();
       }
       await source.rename(target.path);
+    }
+  }
+
+  Future<bool> _restorePromotedFromMeta(File file) async {
+    final Map<String, Object?>? metadata;
+    try {
+      metadata = await _readJson(File(finalMetaPath)) ??
+          await _readJson(File('$finalMetaPath.tmp'));
+    } on Failure catch (error) {
+      if (error.code != ErrorCode.artifactCorruption) rethrow;
+      return false;
+    }
+    final bytes = metadata?['bytes'];
+    final checksum = metadata?['checksum'];
+    if (metadata?['artifactState'] != 'ready' ||
+        bytes is! int ||
+        bytes < 0 ||
+        checksum is! String ||
+        !RegExp(r'^[0-9a-fA-F]{8}$').hasMatch(checksum)) {
+      return false;
+    }
+    if (await file.length() != bytes) return false;
+    _crc = Crc32.fromHex(checksum);
+    _committed = bytes;
+    return true;
+  }
+
+  Future<void> _repairFinalMetaAfterVerification() async {
+    Map<String, Object?> raw = <String, Object?>{};
+    for (final file in <File>[
+      File(finalMetaPath),
+      File('$finalMetaPath.tmp'),
+      File(metaPath),
+    ]) {
+      try {
+        final value = await _readJson(file);
+        if (value != null) {
+          raw = value;
+          break;
+        }
+      } on Failure catch (error) {
+        if (error.code != ErrorCode.artifactCorruption) rethrow;
+      }
+    }
+    final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+    await _writeJson(File(finalMetaPath), <String, Object?>{
+      ...raw,
+      'artifactState': 'ready',
+      'path': finalPath,
+      'bytes': _committed,
+      'checksum': checksum,
+      'touchedUs': now,
+      'createdUs': raw['createdUs'] is int ? raw['createdUs'] : now,
+    });
+    for (final path in <String>[
+      '$finalMetaPath.tmp',
+      metaPath,
+      '$metaPath.tmp',
+    ]) {
+      final file = File(path);
+      if (await file.exists()) await file.delete();
     }
   }
 

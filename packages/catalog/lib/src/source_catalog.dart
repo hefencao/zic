@@ -66,6 +66,14 @@ final class ComicSourceAccount {
       supportsCredentials || cookieFields.isNotEmpty || loginWebsite != null;
 }
 
+/// Optional source capability for resolving the human-facing comic page.
+///
+/// Opaque plugin identities stay inside the source adapter. Presentation only
+/// receives a normal URI and never parses Mihon/Venera payloads.
+abstract interface class ComicWebUriSource {
+  Uri? resolveComicWebUri(String comicId);
+}
+
 abstract interface class AuthenticatableComicSource {
   Future<ComicSourceAccount> loadAccount();
 

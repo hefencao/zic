@@ -152,6 +152,28 @@ void main() {
     );
   });
 
+  test('long-strip metadata overrides source-sliced page geometry', () {
+    final chapter = manifest(
+      pages: const [
+        (width: 1200, height: 1600, animated: false),
+        (width: 1200, height: 1600, animated: false),
+        (width: 1200, height: 1600, animated: false),
+      ],
+    );
+    final metadata = AdaptiveReaderMetadata(
+      sourceKey: 'mihon:fixture',
+      comicId: 'comic',
+      title: 'sample',
+      tags: const <String>['Long Strip'],
+    );
+
+    final profile = classifyAdaptiveReaderLayout(chapter, metadata: metadata);
+
+    expect(profile?.direction, ReadingDirection.vertical);
+    expect(profile?.basis, 'tag:long strip');
+    expect(profile?.modelVersion, 5);
+  });
+
   test('persisted profile round-trips at the current model version', () {
     const profile = AdaptiveReaderProfile(
       direction: ReadingDirection.vertical,

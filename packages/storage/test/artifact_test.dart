@@ -129,4 +129,60 @@ void main() {
     expect(chunkLengths, <int>[256 * 1024, 256 * 1024, 7]);
   });
 
+  test('fast promoted restore trusts atomic metadata and reads once', () async {
+    final first = createArtifact();
+    final bytes = List<int>.generate(1024, (index) => index & 0xff);
+    await first.restore();
+    await first.writeMeta(<String, Object?>{'fixture': true});
+    await first.append(0, bytes);
+    await first.seal(expectedLength: bytes.length);
+    final promoted = await first.promote();
+    final expectedChecksum = promoted.checksum;
+    await first.dispose();
+
+    final second = createArtifact();
+    final restored = await second.restore(verifyPromotedChecksum: false);
+
+    expect(restored.state, ArtifactState.promoted);
+    expect(restored.committedLength, bytes.length);
+    expect(restored.checksum, expectedChecksum);
+    expect(await second.readBytes(), bytes);
+  });
+
+  test('fast promoted restore repairs invalid metadata after rehash', () async {
+    final first = createArtifact();
+    await first.restore();
+    await first.writeMeta(<String, Object?>{'fixture': true});
+    await first.append(0, <int>[5, 4, 3, 2, 1]);
+    await first.seal(expectedLength: 5);
+    await first.promote();
+    await first.dispose();
+    await File(first.finalMetaPath).writeAsString('{invalid');
+
+    final second = createArtifact();
+    final restored = await second.restore(verifyPromotedChecksum: false);
+
+    expect(restored.committedLength, 5);
+    expect(await second.readBytes(), <int>[5, 4, 3, 2, 1]);
+    expect(await second.readMeta(), containsPair('artifactState', 'ready'));
+    expect(await second.readMeta(), containsPair('bytes', 5));
+  });
+
+  test('fast promoted restore falls back when metadata length is stale', () async {
+    final first = createArtifact();
+    await first.restore();
+    await first.writeMeta(<String, Object?>{'fixture': true});
+    await first.append(0, <int>[1, 2, 3]);
+    await first.seal(expectedLength: 3);
+    await first.promote();
+    await first.dispose();
+    await File(first.finalPath).writeAsBytes(<int>[1, 2, 3, 4]);
+
+    final second = createArtifact();
+    final restored = await second.restore(verifyPromotedChecksum: false);
+
+    expect(restored.committedLength, 4);
+    expect(await second.readBytes(), <int>[1, 2, 3, 4]);
+  });
+
 }

@@ -1,6 +1,7 @@
 enum ErrorCode {
   source,
   network,
+  sourceVerificationRequired,
   resumeRejected,
   artifactCorruption,
   unsupportedFormat,

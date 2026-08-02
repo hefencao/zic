@@ -127,8 +127,13 @@ internal class MihonRuntimeDriver private constructor(
                 val cause = error.rootCause()
                 val cancelledRequest = cancelled.contains(requestId) || cause is InterruptedException
                 if (responded.compareAndSet(false, true)) {
+                    val verificationRequired = !cancelledRequest && error.isSourceVerificationFailure()
                     result.error(
-                        if (cancelledRequest) "runtime-request-cancelled" else "mihon-operation-failed",
+                        when {
+                            cancelledRequest -> "runtime-request-cancelled"
+                            verificationRequired -> "source-verification-required"
+                            else -> "mihon-operation-failed"
+                        },
                         if (cancelledRequest) {
                             "Mihon request was cancelled"
                         } else {
@@ -2168,6 +2173,23 @@ private fun Throwable.mihonDiagnosticMessage(): String {
             if (it.lineNumber > 0) ":${it.lineNumber}" else ""
     }.orEmpty()
     return (parts.joinToString(" <- ") + location).take(600)
+}
+
+private fun Throwable.isSourceVerificationFailure(): Boolean {
+    var current: Throwable? = this
+    val visited = java.util.Collections.newSetFromMap(
+        java.util.IdentityHashMap<Throwable, Boolean>(),
+    )
+    while (current != null && visited.add(current)) {
+        val message = current.message.orEmpty().lowercase(Locale.US)
+        if (message.contains("cloudflare verification failed") ||
+            message.contains("source verification required") ||
+            message.contains("cf-mitigated")) {
+            return true
+        }
+        current = current.cause
+    }
+    return false
 }
 
 private fun Throwable.isNetworkFailure(): Boolean =

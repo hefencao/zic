@@ -15,7 +15,6 @@ const localComicDetailsScreenKey =
 const remoteComicDetailsScreenKey =
     ValueKey<String>('remote-comic-details-screen');
 const comicDetailsReverseKey = ValueKey<String>('comic-details-reverse');
-const comicDetailsRefreshKey = ValueKey<String>('comic-details-refresh');
 const comicDetailsErrorKey = ValueKey<String>('comic-details-error');
 const comicDetailsCopyErrorKey =
     ValueKey<String>('comic-details-copy-error');
@@ -598,7 +597,6 @@ final class _LocalComicDetailsScreenState
       ),
       preference: _library.preference,
       categories: widget.categories,
-      refreshing: _refreshing,
       descending: _descending,
       onRefresh: () => _refresh(announce: true),
       onPreferenceChanged: _savePreference,
@@ -799,7 +797,17 @@ final class _RemoteComicDetailsScreenState
       }
     } on Object catch (error, stackTrace) {
       if (mounted) {
-        setState(() => _failure = _DetailFailure.capture(error, stackTrace));
+        final failure = _DetailFailure.capture(error, stackTrace);
+        setState(() => _failure = failure);
+        if (_manifest != null) {
+          _showFailureSnackBar(
+            context,
+            failure,
+            onOpenSourceWebView: widget.onOpenSourceWebView == null
+                ? null
+                : () => unawaited(_openSourceWebView()),
+          );
+        }
       }
     } finally {
       if (mounted) {
@@ -956,10 +964,7 @@ final class _RemoteComicDetailsScreenState
       );
     } on Object catch (error, stackTrace) {
       if (mounted) {
-        _showFailureSnackBar(
-          context,
-          _DetailFailure.capture(error, stackTrace),
-        );
+        _showRemoteFailure(error, stackTrace);
       }
     } finally {
       if (mounted) {
@@ -996,10 +1001,7 @@ final class _RemoteComicDetailsScreenState
       }
     } on Object catch (error, stackTrace) {
       if (mounted) {
-        _showFailureSnackBar(
-          context,
-          _DetailFailure.capture(error, stackTrace),
-        );
+        _showRemoteFailure(error, stackTrace);
       }
     } finally {
       if (mounted) {
@@ -1036,16 +1038,24 @@ final class _RemoteComicDetailsScreenState
       }
     } on Object catch (error, stackTrace) {
       if (mounted) {
-        _showFailureSnackBar(
-          context,
-          _DetailFailure.capture(error, stackTrace),
-        );
+        _showRemoteFailure(error, stackTrace);
       }
     } finally {
       if (mounted) {
         setState(() => _downloadingComic = false);
       }
     }
+  }
+
+  void _showRemoteFailure(Object error, StackTrace stackTrace) {
+    final failure = _DetailFailure.capture(error, stackTrace);
+    _showFailureSnackBar(
+      context,
+      failure,
+      onOpenSourceWebView: widget.onOpenSourceWebView == null
+          ? null
+          : () => unawaited(_openSourceWebView()),
+    );
   }
 
   Future<void> _openSourceWebView() async {
@@ -1141,9 +1151,11 @@ final class _RemoteComicDetailsScreenState
       ),
       preference: _library.preference,
       categories: widget.categories,
-      refreshing: _refreshing,
       descending: _descending,
       onRefresh: () => _refresh(announce: true, forceRefresh: true),
+      onOpenSourceWebView: widget.onOpenSourceWebView == null
+          ? null
+          : () => unawaited(_openSourceWebView()),
       onPreferenceChanged: _savePreference,
       progressLabel: _readingProgressLabel(_library.chapters),
       downloadingComic: _downloadingComic,
@@ -1221,9 +1233,9 @@ final class _ComicDetailsScaffold extends StatelessWidget {
     required this.cover,
     required this.preference,
     required this.categories,
-    required this.refreshing,
     required this.descending,
     required this.onRefresh,
+    this.onOpenSourceWebView,
     required this.onPreferenceChanged,
     required this.progressLabel,
     required this.downloadingComic,
@@ -1245,9 +1257,9 @@ final class _ComicDetailsScaffold extends StatelessWidget {
   final Widget cover;
   final ComicPreference preference;
   final List<LibraryCategory> categories;
-  final bool refreshing;
   final bool descending;
   final Future<void> Function() onRefresh;
+  final VoidCallback? onOpenSourceWebView;
   final Future<void> Function(ComicPreference preference) onPreferenceChanged;
   final String? progressLabel;
   final bool downloadingComic;
@@ -1273,17 +1285,13 @@ final class _ComicDetailsScaffold extends StatelessWidget {
               onPressed: onMigrateSource,
               icon: const Icon(Icons.swap_horiz),
             ),
-          IconButton(
-            key: comicDetailsRefreshKey,
-            tooltip: '更新详情',
-            onPressed: refreshing ? null : () => unawaited(onRefresh()),
-            icon: refreshing
-                ? const SizedBox.square(
-                    dimension: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.refresh),
-          ),
+          if (onOpenSourceWebView != null)
+            IconButton(
+              key: comicDetailsOpenWebViewKey,
+              tooltip: '在 WebView 中访问该漫画详情页',
+              onPressed: onOpenSourceWebView,
+              icon: const Icon(Icons.open_in_browser),
+            ),
         ],
       ),
       body: RefreshIndicator(
@@ -1382,6 +1390,7 @@ final class _ComicDetailsHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final sourceMetadata = _groupSourceMetadata(tags);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -1483,12 +1492,24 @@ final class _ComicDetailsHeader extends StatelessWidget {
               ? description!.trim()
               : '暂无简介',
         ),
-        if (tags.isNotEmpty) ...<Widget>[
+        if (sourceMetadata.categories.isNotEmpty) ...<Widget>[
           const SizedBox(height: 12),
-          _ExpandableTagRow(tags: tags),
+          _ExpandableTagRow(
+            label: '来源分类',
+            tags: sourceMetadata.categories,
+          ),
+        ],
+        if (sourceMetadata.tags.isNotEmpty) ...<Widget>[
+          const SizedBox(height: 12),
+          _ExpandableTagRow(
+            label: '标签',
+            tags: sourceMetadata.tags,
+          ),
         ],
         if (categories.isNotEmpty) ...<Widget>[
           const SizedBox(height: 12),
+          Text('书架分类', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 6),
           Wrap(
             spacing: 8,
             runSpacing: 8,
@@ -1837,9 +1858,88 @@ String _comicSourceLabel(
   return sourceId.startsWith('mihon:') ? 'Mihon' : sourceId;
 }
 
-final class _ExpandableTagRow extends StatefulWidget {
-  const _ExpandableTagRow({required this.tags});
+final class _SourceMetadataGroups {
+  const _SourceMetadataGroups({
+    required this.categories,
+    required this.tags,
+  });
 
+  final List<String> categories;
+  final List<String> tags;
+}
+
+_SourceMetadataGroups _groupSourceMetadata(List<String> rawTags) {
+  const categoryNamespaces = <String>{
+    'category',
+    'categories',
+    'type',
+    '分类',
+    '分類',
+    '类型',
+    '類型',
+  };
+  const tagNamespaces = <String>{
+    'tag',
+    'tags',
+    'genre',
+    'genres',
+    '标签',
+    '標籤',
+  };
+  const duplicatedAuthorNamespaces = <String>{
+    'author',
+    'authors',
+    'artist',
+    'artists',
+    '作者',
+    '画师',
+    '畫師',
+  };
+  final categories = <String>[];
+  final tags = <String>[];
+  final categoryKeys = <String>{};
+  final tagKeys = <String>{};
+
+  void add(List<String> target, Set<String> keys, String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) return;
+    final key = normalized.toLowerCase();
+    if (keys.add(key)) target.add(normalized);
+  }
+
+  for (final raw in rawTags) {
+    final value = raw.trim();
+    if (value.isEmpty) continue;
+    final separator = value.indexOf(':');
+    if (separator <= 0 || separator == value.length - 1) {
+      add(tags, tagKeys, value);
+      continue;
+    }
+    final namespace = value.substring(0, separator).trim().toLowerCase();
+    final payload = value.substring(separator + 1).trim();
+    if (categoryNamespaces.contains(namespace)) {
+      add(categories, categoryKeys, payload);
+    } else if (duplicatedAuthorNamespaces.contains(namespace)) {
+      continue;
+    } else if (tagNamespaces.contains(namespace)) {
+      add(tags, tagKeys, payload);
+    } else {
+      add(tags, tagKeys, '$namespace：$payload');
+    }
+  }
+  return _SourceMetadataGroups(
+    categories: List<String>.unmodifiable(categories),
+    tags: List<String>.unmodifiable(tags),
+  );
+}
+
+final class _ExpandableTagRow extends StatefulWidget {
+  const _ExpandableTagRow({
+    required this.label,
+    required this.tags,
+  });
+
+  final String label;
   final List<String> tags;
 
   @override
@@ -1863,7 +1963,7 @@ final class _ExpandableTagRowState extends State<_ExpandableTagRow> {
       children: <Widget>[
         Row(
           children: <Widget>[
-            Text('标签', style: Theme.of(context).textTheme.titleSmall),
+            Text(widget.label, style: Theme.of(context).textTheme.titleSmall),
             const Spacer(),
             Icon(
               _expanded ? Icons.expand_less : Icons.expand_more,
@@ -2045,7 +2145,11 @@ final class _CoverPlaceholder extends StatelessWidget {
 }
 
 final class _DetailFailure {
-  const _DetailFailure({required this.summary, required this.details});
+  const _DetailFailure({
+    required this.summary,
+    required this.details,
+    this.requiresSourceVerification = false,
+  });
 
   factory _DetailFailure.capture(Object error, StackTrace stackTrace) {
     final lines = <String>[error.toString()];
@@ -2059,11 +2163,14 @@ final class _DetailFailure {
     return _DetailFailure(
       summary: error is Failure ? error.message : error.toString(),
       details: lines.join('\n\n'),
+      requiresSourceVerification: error is Failure &&
+          error.code == ErrorCode.sourceVerificationRequired,
     );
   }
 
   final String summary;
   final String details;
+  final bool requiresSourceVerification;
 }
 
 final class _DetailFailurePanel extends StatelessWidget {
@@ -2195,13 +2302,21 @@ int _compareChapters(Chapter left, Chapter right) {
   return left.chapterId.compareTo(right.chapterId);
 }
 
-void _showFailureSnackBar(BuildContext context, _DetailFailure failure) {
+void _showFailureSnackBar(
+  BuildContext context,
+  _DetailFailure failure, {
+  VoidCallback? onOpenSourceWebView,
+}) {
+  final canVerify = failure.requiresSourceVerification &&
+      onOpenSourceWebView != null;
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
       content: Text(failure.summary, maxLines: 3),
       action: SnackBarAction(
-        label: '复制',
-        onPressed: () => unawaited(_copyFailure(context, failure)),
+        label: canVerify ? 'WebView' : '复制',
+        onPressed: canVerify
+            ? onOpenSourceWebView
+            : () => unawaited(_copyFailure(context, failure)),
       ),
     ),
   );

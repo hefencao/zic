@@ -14,6 +14,49 @@ import 'runtime_protocol.dart';
 ///
 /// Keeping this parser beside the runtime protocol prevents presentation and
 /// storage layers from depending on Mihon's opaque identity representation.
+Uri? resolveMihonComicWebUri({
+  required String comicId,
+  required Uri sourceWebsite,
+}) {
+  const prefix = 'mihon:manga:';
+  if (!comicId.startsWith(prefix)) return null;
+  try {
+    final payload = comicId.substring(prefix.length);
+    final decoded = jsonDecode(
+      utf8.decode(base64Url.decode(base64Url.normalize(payload))),
+    );
+    if (decoded is! Map<String, dynamic> || decoded['kind'] != 'manga') {
+      return null;
+    }
+    final raw = decoded['url'];
+    if (raw is! String || raw.trim().isEmpty) return null;
+    return sourceWebsite.resolve(raw.trim());
+  } on Object {
+    return null;
+  }
+}
+
+
+Uri? _resolveVeneraComicWebUri({
+  required String comicId,
+  required Uri sourceWebsite,
+}) {
+  const prefix = 'venera:comic:';
+  if (!comicId.startsWith(prefix)) return null;
+  try {
+    final payload = comicId.substring(prefix.length);
+    final decoded = jsonDecode(
+      utf8.decode(base64Url.decode(base64Url.normalize(payload))),
+    );
+    if (decoded is! Map<String, dynamic>) return null;
+    final raw = decoded['id'];
+    if (raw is! String || raw.trim().isEmpty) return null;
+    return sourceWebsite.resolve(raw.trim());
+  } on Object {
+    return null;
+  }
+}
+
 bool isSyntheticMihonChapterIdentity(String chapterId) {
   const prefix = 'mihon:chapter:';
   if (!chapterId.startsWith(prefix)) {
@@ -124,7 +167,9 @@ final class ExternalPluginRuntimeSession
     final runtimeError = response.error;
     if (runtimeError != null) {
       throw Failure(
-        code: ErrorCode.source,
+        code: runtimeError.code == 'source-verification-required'
+            ? ErrorCode.sourceVerificationRequired
+            : ErrorCode.source,
         message: '${runtimeError.code}: ${runtimeError.message}',
         cause: runtimeError,
       );
@@ -189,8 +234,8 @@ typedef _RuntimeInvoke = Future<Object> Function(
 
 final class _RuntimeBrowsableComicSource
     implements BrowsableComicSource, ConfigurableComicSource,
-        AuthenticatableComicSource, ResolvableComicResourceSource,
-        RetryableComicResourceSource {
+        AuthenticatableComicSource, ComicWebUriSource,
+        ResolvableComicResourceSource, RetryableComicResourceSource {
   _RuntimeBrowsableComicSource({
     required ExternalComicPluginFormat format,
     required ExternalPluginRuntimeSourceDescriptor descriptor,
@@ -219,6 +264,20 @@ final class _RuntimeBrowsableComicSource
 
   @override
   final ComicSourceDescriptor descriptor;
+
+
+  @override
+  Uri? resolveComicWebUri(String comicId) => switch (_format) {
+        ExternalComicPluginFormat.mihonExtension => resolveMihonComicWebUri(
+            comicId: comicId,
+            sourceWebsite: descriptor.website,
+          ),
+        ExternalComicPluginFormat.veneraJavaScript =>
+          _resolveVeneraComicWebUri(
+            comicId: comicId,
+            sourceWebsite: descriptor.website,
+          ),
+      };
 
   @override
   Future<SourceBrowsePage> browse({

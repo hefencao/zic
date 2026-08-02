@@ -1,3 +1,11 @@
+# dev.87 handoff
+
+唯一后续基线：`zic_v0.31.0-dev.87_cloudflare-metadata-local-artifact.zip`。不得混入 dev.86 或更早候选。
+
+本轮关键边界：Cloudflare 通过 `ErrorCode.sourceVerificationRequired` 传播；`network_bridge` 执行通用 WebView/Cookie 能力，`plugin_host` 只解析插件协议和 opaque 作品 URL；详情下拉刷新、右上角作品 WebView；来源分类/标签与书架分类分离；adaptive profile model v5；持久 promoted artifact 只在原子 metadata/长度有效时跳过 CRC 重扫，默认 restore 仍完整校验。
+
+下一环境优先运行 Flutter analyze/test 和 Android build，再用用户 trace 同类 5–20 MB 本地 WebP 验证 artifactSource readMicros。不得通过关闭 7/3 预取、缩小 2/1 预解码、降低 5/3/2 lane 或绕过 DownloadSession 掩盖慢读。
+
 # dev.86 handoff
 
 唯一后续基线：`zic_v0.31.0-dev.86_network-bridge-compile-closure.zip`。

@@ -1,3 +1,14 @@
+## dev.87 来源验证与本地大图恢复规范
+
+1. Android 插件桥凡使用 `Bundle` 必须显式导入 `android.os.Bundle`，并由静态门禁覆盖。
+2. 插件运行时 cause 链包含 `Cloudflare verification failed`、`source verification required` 或 `cf-mitigated` 时，必须返回 `source-verification-required`，Dart adapter 必须映射为 `ErrorCode.sourceVerificationRequired`。
+3. 来源首页初始加载、分页、封面、详情、章节打开和下载遇到该错误时，必须提供对应来源 WebView 恢复动作；其他错误不得自动打开或伪装为 Cloudflare。
+4. 详情正常态右上角只提供作品 WebView；更新由现有下拉刷新负责。作品网页由 `ComicWebUriSource` 解析，Presentation 不解析 opaque identity。
+5. 来源分类、来源标签、作者与用户书架分类必须分区。`author/artist` namespace 不重复显示；未知 namespace 保留名称以避免信息丢失。
+6. 条漫自适应模型版本为 5。long strip、vertical comic、vertical scroll、scroll comic、长条漫画/長條漫畫等 metadata 可作为 vertical 证据；不得因来源将条漫切成普通比例页面就强制 LTR。
+7. promoted artifact 快速恢复只接受 `artifactState=ready`、合法 CRC、合法长度且实际文件长度一致的原子 metadata。任一条件不满足必须完整重算；partial/resume 与默认 restore 继续完整校验。
+8. 数据传输块保持 256 KiB，Reader 窗口和 lane 保持 7/3、2/1、current/transition、5/3/2。
+
 ## dev.86 编译闭包与共享网络桥规范
 
 1. `RemoteComicDetailsScreen` 与 `SourceComicDetailsScreen` 的 WebView callback 必须使用已定义的稳定 typedef；公共字段类型变化时必须一次迁移全部生产和测试调用方。

@@ -453,11 +453,9 @@ final class _DemoHomeState extends State<DemoHome> {
             downloadChanges: _chapterDownloads.changes,
             onDownloadComic: (entries) =>
                 _downloadComicEntries(identity, entries),
-            onOpenSourceWebView: source.sourceId.startsWith('mihon:')
-                ? () => widget.networkBridge.openBrowser(
-                      source.descriptor.website,
-                    )
-                : null,
+            onOpenSourceWebView: () => widget.networkBridge.openBrowser(
+                  _sourceComicWebUri(source, comic),
+                ),
           ),
         ),
       );

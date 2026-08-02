@@ -53,7 +53,8 @@ for text in (saved, imported, library):
 
 for token in (
     'tags: comic.tags',
-    '_ExpandableTagRow(tags: tags)',
+    '_ExpandableTagRow(',
+    'tags: sourceMetadata.tags',
     "label: '下载整本'",
     'loading: downloadingComic',
     "label: Text('继续 · $progressLabel')",

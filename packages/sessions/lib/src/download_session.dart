@@ -201,7 +201,9 @@ final class DownloadSession {
     _notifySnapshot();
   }
 
-  Future<DownloadSnapshot> restore() async {
+  Future<DownloadSnapshot> restore({
+    bool verifyPromotedChecksum = true,
+  }) async {
     _requireNotDisposed();
     if (_writer != null) {
       throw const Failure(
@@ -209,7 +211,9 @@ final class DownloadSession {
         message: 'cannot restore while a writer is active',
       );
     }
-    final restored = await artifact.restore();
+    final restored = await artifact.restore(
+      verifyPromotedChecksum: verifyPromotedChecksum,
+    );
     _prefix = List<int>.of(
       await artifact.readPrefix(sniffPrefixLength),
       growable: true,

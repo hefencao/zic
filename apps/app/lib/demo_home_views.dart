@@ -97,6 +97,8 @@ extension _DemoHomeViews on _DemoHomeState {
                     },
                     loadCover: _loadSourceBrowseCover,
                     onOpenComic: _openSourceComic,
+                    onOpenSourceWebView: (source, url) =>
+                        widget.networkBridge.openBrowser(url),
                   )
                 : const SizedBox.shrink(),
             MiscPage(

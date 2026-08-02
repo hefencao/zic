@@ -143,7 +143,7 @@ final class AdaptiveReaderProfile {
     this.modelVersion = currentModelVersion,
   });
 
-  static const int currentModelVersion = 4;
+  static const int currentModelVersion = 5;
   static const double applyConfidence = 0.60;
   static const double stopConfidence = 0.80;
 
@@ -295,6 +295,12 @@ final class AdaptiveReaderClassifier {
       '條漫',
       '长条漫',
       '長條漫',
+      '长条漫画',
+      '長條漫畫',
+      'long strip',
+      'vertical comic',
+      'vertical scroll',
+      'scroll comic',
     ]);
     final pagedTag = _match(value.tags, const <String>[
       '日漫',
@@ -333,6 +339,12 @@ final class AdaptiveReaderClassifier {
       '韓漫',
       '条漫',
       '條漫',
+      '长条漫',
+      '長條漫',
+      'long strip',
+      'vertical comic',
+      'vertical scroll',
+      'scroll comic',
     ]);
     if (verticalTitle != null) {
       return _metadataProfile(
@@ -514,6 +526,10 @@ final class AdaptiveReaderClassifier {
         '條漫',
         '长条',
         '長條',
+        'long strip',
+        'vertical comic',
+        'vertical scroll',
+        'scroll comic',
         'category:manga',
         'type:manga',
         '分类:manga',
