@@ -90,7 +90,7 @@ def main() -> int:
     )
     bridge = require(
         'packages/local_media_bridge/lib/src/local_media_bridge.dart',
-        'localMediaBridgeProtocolVersion = 4',
+        'localMediaBridgeProtocolVersion = 5',
         'localMediaBridgeChunkBytes = 256 * 1024',
         "'openDocument'",
         "'readDocumentChunk'",

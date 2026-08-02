@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
@@ -165,6 +166,49 @@ void main() {
     expect(closeCount, 1);
     expect(methods.first, 'openDocument');
     expect(methods.last, 'closeDocument');
+  });
+
+  test('seekable document descriptor bypasses per-chunk method calls',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('local_media_fd_test_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final file = File('${temp.path}/page.webp');
+    await file.writeAsBytes(List<int>.generate(16, (index) => index));
+    var closeCount = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      switch (call.method) {
+        case 'openDocument':
+          return <String, Object?>{
+            'handleId': 'direct-handle',
+            'rangeStart': 4,
+            'totalLength': 16,
+            'revision': 'direct-revision',
+            'rangeSupported': true,
+            'partial': true,
+            'directPath': file.path,
+            'directStart': 4,
+            'directEndExclusive': 9,
+          };
+        case 'readDocumentChunk':
+          fail('direct descriptor must not use per-chunk MethodChannel reads');
+        case 'closeDocument':
+          closeCount++;
+          return null;
+        default:
+          fail('unexpected method ${call.method}');
+      }
+    });
+
+    final response = await bridge.openDocument(
+      'content://provider/document/direct-page',
+      start: 4,
+      endExclusive: 9,
+    );
+    final bytes = await response.bytes.expand((chunk) => chunk).toList();
+
+    expect(bytes, <int>[4, 5, 6, 7, 8]);
+    expect(closeCount, 1);
   });
 
   test('document reads use the persisted content identity', () async {

@@ -45,6 +45,7 @@ final class TexturePresentTelemetry extends TextureTelemetry {
     required this.queueMicros,
     required this.uploadMicros,
     required this.deadlineMissMicros,
+    required this.roundTripMicros,
   });
 
   final int frameIndex;
@@ -54,6 +55,11 @@ final class TexturePresentTelemetry extends TextureTelemetry {
   final int queueMicros;
   final int uploadMicros;
   final int deadlineMissMicros;
+  final int roundTripMicros;
+
+  int get bridgeMicros => (roundTripMicros - queueMicros - uploadMicros)
+      .clamp(0, 1 << 62)
+      .toInt();
 }
 
 final class TextureFallbackTelemetry extends TextureTelemetry {
@@ -171,6 +177,7 @@ final class AndroidTexturePresenter {
       );
     }
     final retained = frame.retain();
+    final roundTrip = Stopwatch()..start();
     try {
       final response = await _channel.invokeMapMethod<String, Object?>(
         'present',
@@ -194,6 +201,7 @@ final class AndroidTexturePresenter {
         queueMicros: _readInt(response, 'queueMicros'),
         uploadMicros: _readInt(response, 'uploadMicros'),
         deadlineMissMicros: _readInt(response, 'deadlineMissMicros'),
+        roundTripMicros: roundTrip.elapsedMicroseconds,
       );
       _emit(sample);
       return sample;

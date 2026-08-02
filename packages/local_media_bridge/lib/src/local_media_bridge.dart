@@ -1,11 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 const String localMediaBridgeChannelName = 'dev.zic/local_media';
-const int localMediaBridgeProtocolVersion = 4;
+const int localMediaBridgeProtocolVersion = 5;
 const int localMediaBridgeChunkBytes = 256 * 1024;
 
 @immutable
@@ -143,8 +144,23 @@ final class LocalMediaBridge {
     if (partial is! bool) {
       throw const FormatException('Android document range response is invalid');
     }
+    final directPath = response['directPath'];
+    final directStart = response['directStart'];
+    final directEndExclusive = response['directEndExclusive'];
+    final hasDirectDescriptor = directPath is String &&
+        directPath.isNotEmpty &&
+        directStart is int &&
+        directStart >= 0 &&
+        (directEndExclusive == null ||
+            (directEndExclusive is int && directEndExclusive >= directStart));
     return LocalMediaDocumentResponse(
-      bytes: _readDocumentChunks(handleId),
+      bytes: _readDocumentStream(
+        handleId,
+        directPath: hasDirectDescriptor ? directPath : null,
+        directStart: hasDirectDescriptor ? directStart : null,
+        directEndExclusive:
+            hasDirectDescriptor ? directEndExclusive as int? : null,
+      ),
       rangeStart: rangeStart,
       totalLength: totalLength as int?,
       revision: revision,
@@ -154,8 +170,49 @@ final class LocalMediaBridge {
     );
   }
 
-  Stream<List<int>> _readDocumentChunks(String handleId) async* {
+  Stream<List<int>> _readDocumentStream(
+    String handleId, {
+    String? directPath,
+    int? directStart,
+    int? directEndExclusive,
+  }) async* {
     try {
+      if (directPath != null && directStart != null) {
+        RandomAccessFile? reader;
+        var yielded = false;
+        try {
+          reader = await File(directPath).open();
+          await reader.setPosition(directStart);
+          var remaining = directEndExclusive == null
+              ? null
+              : directEndExclusive - directStart;
+          while (remaining == null || remaining > 0) {
+            final requested = remaining == null
+                ? localMediaBridgeChunkBytes
+                : remaining < localMediaBridgeChunkBytes
+                    ? remaining
+                    : localMediaBridgeChunkBytes;
+            final chunk = await reader.read(requested);
+            if (chunk.isEmpty) {
+              break;
+            }
+            yielded = true;
+            remaining = remaining == null ? null : remaining - chunk.length;
+            yield chunk;
+          }
+          return;
+        } on FileSystemException {
+          // Some providers expose a descriptor that Android can seek but Dart
+          // cannot reopen through /proc/self/fd. Fall back before publishing
+          // bytes; a mid-stream failure remains authoritative and is retried
+          // by the existing range/session layer.
+          if (yielded) {
+            rethrow;
+          }
+        } finally {
+          await reader?.close();
+        }
+      }
       while (true) {
         final chunk = await _channel.invokeMethod<Uint8List>(
           'readDocumentChunk',

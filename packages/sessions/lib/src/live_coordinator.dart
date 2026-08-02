@@ -177,6 +177,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     if (!registry.advance(id, frameIndex)) {
       return false;
     }
+    // A predecoded successor can be uploaded immediately. If none is ready,
+    // the retained output remains visible while decode fills and wakes upload.
+    _wakeUpload(sessionId, id);
     _wakeDecode(sessionId, id, force: true);
     return true;
   }

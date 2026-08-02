@@ -104,11 +104,16 @@ final class UploadSession {
 
   UploadState get state => _state;
   OutputFrame? get frame => _slot?.frame;
-  int get preparedDepth => _awaitingSuccessor ||
-          _slot == null ||
-          _slot!.frame.disposed
-      ? 0
-      : 1;
+  int get preparedDepth {
+    final slot = _slot;
+    if (_awaitingSuccessor || slot == null || slot.frame.disposed) {
+      return 0;
+    }
+    // A visible animation frame is presentation state, not a prepared
+    // successor. Keeping one decoded successor lets the decode lane overlap
+    // the current frame deadline without widening the page upload window.
+    return decode.snapshot.animation.frameCount > 1 ? 0 : 1;
+  }
   int get outputBytes =>
       _slot == null || _slot!.frame.disposed ? 0 : _slot!.frame.byteLength;
   PlaybackState get playbackState => _playback.state;
@@ -188,25 +193,24 @@ final class UploadSession {
         // Finite animation playback keeps its final renderer output. Retiring
         // the visible frame before proving that a successor exists turns a
         // valid completed animation into an infinite loading placeholder.
-        _awaitingSuccessor = false;
-        final animation = decodeSnapshot.animation;
-        _emit(
-          TraceEventKind.playbackCompleted,
-          <String, Object?>{
-            'frame': _slot?.frame.index ?? -1,
-            'outputRetained': _slot != null && !_slot!.frame.disposed,
-            'animationFrameCount': animation.frameCount,
-            'animationLoopCount': animation.loopCount,
-            'animationComplete': animation.complete,
-          },
-        );
-        _setState(
-          _slot == null ? UploadState.waitingFrame : UploadState.ready,
-          forceNotify: true,
-        );
+        _completePlayback(decodeSnapshot);
         return snapshot;
       }
-      _setState(_slot == null ? UploadState.waitingFrame : UploadState.ready);
+      _setState(
+        _slot == null || _awaitingSuccessor
+            ? UploadState.waitingFrame
+            : UploadState.ready,
+      );
+      return snapshot;
+    }
+
+    if (_slot != null &&
+        !_awaitingSuccessor &&
+        decodeSnapshot.animation.frameCount > 1) {
+      // Decode may run ahead by one frame, but upload remains deadline-owned.
+      // Consuming the successor here would replace the visible frame before
+      // its duration elapsed.
+      _setState(UploadState.ready);
       return snapshot;
     }
 
@@ -370,12 +374,17 @@ final class UploadSession {
         slot.frame.index != frameIndex) {
       return false;
     }
+    final decodeSnapshot = decode.snapshot;
+    if (decodeSnapshot.state == DecodeState.ended &&
+        (decode.holder?.isEmpty ?? true)) {
+      _completePlayback(decodeSnapshot);
+      return false;
+    }
     _revision++;
     _playback.clear();
     // Keep the current renderer output visible until a successor has been
     // decoded and uploaded. The next successful upload atomically replaces
-    // and retires this slot. If a finite animation reaches EOF, _prepareNow
-    // clears the awaiting flag and the final frame remains visible.
+    // and retires this slot.
     _awaitingSuccessor = true;
     _failure = null;
     _setState(UploadState.ready, forceNotify: true);
@@ -438,6 +447,7 @@ final class UploadSession {
         'authoritativeStatic': authoritativeStatic,
         'animationFrameCount': animation.frameCount,
         'animationComplete': animation.complete,
+        'successorDepth': decode.holder?.depth ?? 0,
       },
     );
   }
@@ -497,10 +507,33 @@ final class UploadSession {
           'frame': frameIndex,
           'lateByMicros': lateByMicros,
           'speed': _playbackSpeed,
+          'successorBuffered': (decode.holder?.depth ?? 0) > 0,
+          'decodeState': decode.state.name,
+          'decodeDepth': decode.holder?.depth ?? 0,
         },
       );
     }
     return frameIndex;
+  }
+
+  void _completePlayback(DecodeSnapshot decodeSnapshot) {
+    _awaitingSuccessor = false;
+    _playback.clear();
+    final animation = decodeSnapshot.animation;
+    _emit(
+      TraceEventKind.playbackCompleted,
+      <String, Object?>{
+        'frame': _slot?.frame.index ?? -1,
+        'outputRetained': _slot != null && !_slot!.frame.disposed,
+        'animationFrameCount': animation.frameCount,
+        'animationLoopCount': animation.loopCount,
+        'animationComplete': animation.complete,
+      },
+    );
+    _setState(
+      _slot == null ? UploadState.waitingFrame : UploadState.ready,
+      forceNotify: true,
+    );
   }
 
   void _syncPlaybackPause(int nowUs) {

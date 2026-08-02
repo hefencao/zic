@@ -1,3 +1,7 @@
+## dev.93 状态
+
+用户确认 dev.92 不再持续无限 loading，但设备 Trace 显示本地动画仍明显卡顿。2753 条事件中，动画帧 duration 主要为 33/34 ms，而 `frameDecoded.decodeMicros` 中位数约 124 ms；旧实现把当前动画 output 计为 prepared depth 1，导致当前帧显示期间不预解码 successor，deadline 后才开始下一帧工作。本轮将动画 output 的 prepared depth 改为 0，在同一 DecodeSession/FrameHolder 中预解码一个 successor，并保持 deadline 前不提前替换、deadline 后原子替换。Android texture telemetry 新增 round-trip 与 bridge 分解。本地文档桥协议升至 v5：seekable descriptor 不再逐 chunk 往返 MethodChannel，而由 Dart 通过同进程 `/proc/self/fd` 直接 256 KiB 读取；不可 seek provider 保留旧 fallback。错误报告中的静态 cursor fixture、50/50 viewport、source seal revision 和本地媒体 viewport 测试已按归属修正。当前静态/契约验证通过；Flutter/Dart/Android 真机结果仍待用户环境复验。
+
 ## dev.92 状态
 
 用户在 dev.91 上实际操作回切后提供的 1337 条 Trace 证明此前修复不完整：6 次 page mount 仅 3 次 first frame；3 次已呈现帧的 duration 全为 0，却各自产生 playback due，之后对应 identity 在 depth=0 上反复 decoding/ended，且没有 pageOutputReleased，说明 output 是被播放推进内部提前移除。现已使零时长 timer 保持 idle；动画 advance 保留旧 output、以 preparedDepth=0 请求 successor，新帧成功上传后原子替换；有限 EOF 保留最后帧并输出 playbackCompleted。错误报告中的 storage 测试 API 与 texture viewport fixture 已按归属修复。当前 repository/Dart structure、dev.75–dev.92、Android/Mihon/Venera/Reader/Pipeline/UI、共享浏览器 Kotlin、native header 与本地 libwebp 1.6.0 fixtures 已通过；环境无 Flutter/Dart/Gradle/Android SDK/Cargo，analyzer、Dart/Flutter tests、APK/kernel、Rust 与设备结果仍未验证。

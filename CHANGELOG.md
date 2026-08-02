@@ -1,3 +1,15 @@
+## 0.31.0-dev.93：预解码动画后继帧并修复媒体测试闭包
+
+- 修复 `upload_session_test` 的 cursor fixture 未绑定 `LoopCursor`，导致完整静态元数据未进入 UploadSession。
+- 更新 Reader viewport 测试：50/50 覆盖属于 overlap，不再伪造 dominant page。
+- 更新 LiveCoordinator source revision 测试：source seal 是独立权威 revision，应被 drain 一次。
+- 修复本地媒体 viewport 测试对 transformed child 尺寸和 fitWidth 第二层 FittedBox 的过时假设。
+- 动画当前 output 不再计入未来 prepared depth；DecodeSession 可在当前帧显示期间保留一个 decoded successor。
+- UploadSession 在 deadline 前不提前替换 output，deadline 到达后优先消费已缓冲 successor；没有 successor 时保留旧 output 等待。
+- Android texture telemetry 增加 MethodChannel 总往返和扣除 native queue/upload 后的 bridge 等待。
+- Android `content://` seekable descriptor 通过 `/proc/self/fd` 直接分块读取，避免每 256 KiB 一次 MethodChannel 往返；不可 seek provider 保留原流式 fallback。
+- 新增 ADR 0077、dev.93 三清单审计和静态门禁。
+
 ## 0.31.0-dev.92：修复静态/有限动画播放输出生命周期
 
 - 根据用户实际回切复现 Trace 纠正 dev.91 结论：6 次页面挂载仅 3 次首帧；3 个已呈现帧的时长均为 0，却仍产生 `playbackFrameDue`，之后在空缓冲上反复 `decoding -> ended`。

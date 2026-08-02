@@ -1,3 +1,13 @@
+## dev.93 完成项与下一步设备验证
+
+- 先关闭错误报告中的四类测试/编译假设，不修改正确产品逻辑迎合旧断言。
+- 将动画当前 output 从 successor prepared depth 中排除，使 DecodeSession 在当前帧显示期间预解码一帧。
+- 保持 deadline-owned replacement：到期前不提前上传，到期后优先消费缓冲 successor。
+- 增加 Android texture `roundTripMicros/bridgeMicros`，结合 `decodeMicros/uploadMicros/presentMicros/playbackFrameDue` 过滤本地播放瓶颈。
+- 对 seekable Android document descriptor 启用同进程 direct-fd stream；保留 256 KiB、range/revision 和不可 seek fallback，设备 Trace 对比 origin `content://` 的 firstChunk/stream/maxGap。
+- 下一步设备验证：确认动画 `playbackFrameDue.successorBuffered=true` 比例、帧 replacement 是否稳定，以及 native queue/upload 很短但 bridge/present 很长时的主线程或 MethodChannel 竞争。
+- 部分远程图片下载失败暂不与本地播放链混合处理，保留 Trace 后在本地链稳定后单独修复。
+
 ## dev.92 完成项与设备复验
 
 ### 已完成

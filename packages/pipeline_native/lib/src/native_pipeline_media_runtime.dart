@@ -575,6 +575,8 @@ void _recordTextureTelemetry(
         'queueMicros': event.queueMicros,
         'uploadMicros': event.uploadMicros,
         'deadlineMissMicros': event.deadlineMissMicros,
+        'roundTripMicros': event.roundTripMicros,
+        'bridgeMicros': event.bridgeMicros,
       },
     TextureFallbackTelemetry() => <String, Object?>{
         'reason': event.reason,

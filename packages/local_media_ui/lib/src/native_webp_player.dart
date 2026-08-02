@@ -173,6 +173,8 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
             'queueMicros': event.queueMicros,
             'uploadMicros': event.uploadMicros,
             'deadlineMissMicros': event.deadlineMissMicros,
+            'roundTripMicros': event.roundTripMicros,
+            'bridgeMicros': event.bridgeMicros,
             'frameBytes': event.frameBytes,
             'textureBytes': event.textureBytes,
             'inFlightBytes': event.inFlightBytes,

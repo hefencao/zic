@@ -407,7 +407,12 @@ void main() {
     followRelease.complete();
     await coordinator.idle();
 
-    expect(decodeCalls, 3);
+    expect(
+      decodeCalls,
+      4,
+      reason: 'initial demand, first source growth, accumulated growth, '
+          'and the authoritative seal are distinct decode opportunities',
+    );
 
     await coordinator.dispose();
     await downloads.dispose();

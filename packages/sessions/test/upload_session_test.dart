@@ -200,6 +200,109 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('animated output buffers one successor without early replacement',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('upload_buffer_test_');
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: _CursorFactory(
+        frameLimit: 2,
+        animation: const AnimationInfo(
+          frameCount: 2,
+          loopCount: 1,
+          complete: true,
+        ),
+      ),
+      clock: _Clock(),
+    );
+    const decodeDemand = DecodeDemand(
+      role: PageRole.current,
+      priority: 1000,
+      targetWatermark: 1,
+      reason: 'buffer',
+      expirationRevision: 3,
+    );
+    await decode.fill(
+      demand: decodeDemand,
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    final playbackClock = _Clock();
+    final uploader = _Uploader();
+    final upload = UploadSession(
+      id: decode.id,
+      decode: decode,
+      uploader: uploader,
+      clock: playbackClock,
+    );
+    const uploadDemand = UploadDemand(
+      role: PageRole.current,
+      priority: 1000,
+      reason: 'buffer',
+      expirationRevision: 3,
+    );
+    await upload.prepare(
+      demand: uploadDemand,
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    final firstClaim = upload.claimPresent();
+    expect(firstClaim, isNotNull);
+    await upload.present(firstClaim!);
+    firstClaim.release();
+
+    expect(upload.preparedDepth, 0);
+    final buffered = await decode.fill(
+      demand: decodeDemand,
+      revision: 2,
+      cancel: CancelToken(),
+      preparedDepth: upload.preparedDepth,
+    );
+    expect(buffered.depth, 1);
+    final early = await upload.prepare(
+      demand: uploadDemand,
+      revision: 2,
+      cancel: CancelToken(),
+    );
+    expect(early.frameIndex, 0);
+    expect(decode.holder?.depth, 1);
+    expect(uploader.outputs, hasLength(1));
+
+    playbackClock.value = 16000;
+    expect(upload.takeDueFrame(), 0);
+    expect(upload.advance(0), isTrue);
+    final replaced = await upload.prepare(
+      demand: uploadDemand,
+      revision: 3,
+      cancel: CancelToken(),
+    );
+    expect(replaced.frameIndex, 1);
+    expect(uploader.outputs, hasLength(2));
+    expect(uploader.outputs.first.disposed, isTrue);
+    expect(uploader.outputs.last.disposed, isFalse);
+
+    upload.dispose();
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
   test('finite animation keeps its final output after decoder end', () async {
     final temp = await Directory.systemTemp.createTemp('upload_finite_test_');
     final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
@@ -695,17 +798,18 @@ final class _CursorFactory implements CursorFactory {
     required DecodeId id,
     required EncodedSource source,
     required int epoch,
-  }) => CursorBinding(
-        frames: _Cursor(
-          epoch,
-          frames,
-          width: width,
-          height: height,
-          duration: duration,
-          frameLimit: frameLimit,
-          animation: animation,
-        ),
-      );
+  }) {
+    final cursor = _Cursor(
+      epoch,
+      frames,
+      width: width,
+      height: height,
+      duration: duration,
+      frameLimit: frameLimit,
+      animation: animation,
+    );
+    return CursorBinding(frames: cursor, loop: cursor);
+  }
 }
 
 final class _Cursor implements FrameCursor, LoopCursor {

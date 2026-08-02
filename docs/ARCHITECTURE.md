@@ -1,3 +1,12 @@
+# dev.93 动画 successor 缓冲与 texture bridge 诊断
+
+- `UploadSession.preparedDepth` 只表示未来可消费的准备量。静态 output 可贡献 1；当前正在显示的动画 output 不得冒充 successor，因此动画 output 投影 0，使既有 DecodeSession 在当前帧期限内预解码一帧。
+- `DecodeSession` 仍是 cursor、AnimationInfo 和 FrameHolder 的唯一所有者，最多按既有 target watermark 保存一帧 successor；UploadSession 不创建第二 cursor 或私有帧缓存。
+- UploadSession 在 deadline 前不得消费已缓冲 successor。`playbackFrameDue` 后由 LiveCoordinator 同时唤醒 upload/decode：已有 successor 立即原子替换；没有 successor 时旧 output 继续可见，decoder 填充后再唤醒 upload。
+- Android texture presenter 记录整个 MethodChannel `roundTripMicros`，并从中扣除 Android 回报的 `queueMicros + uploadMicros` 得到诊断性的 `bridgeMicros`。该投影只用于 Trace，不成为 deadline 或调度状态来源。
+- `local_media_bridge` 是 Android document descriptor 的唯一所有者。seekable `content://` descriptor 可向同进程 Dart 暴露短生命周期 `/proc/self/fd/<n>` 与受限 byte range，由 bridge 自己保持/关闭原 descriptor；Dart 只用 `RandomAccessFile` 产生 256 KiB stream。不可 seek、虚拟或无法重开的 descriptor 回退既有 open/readChunk/close。该路径不向 Reader 泄漏 fd/path，也不创建 App 私有副本。
+- 当前/transition 上传窗口、前 2/后 1 decode page window、5/3/2 lane 和 256 KiB source chunk 均不改变。
+
 ## dev.92 静态与有限动画 output 生命周期
 
 - `PlaybackTimer` 只拥有正时长 deadline；零/负时长不创建 running timer。

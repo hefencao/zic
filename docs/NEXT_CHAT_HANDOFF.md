@@ -1,24 +1,23 @@
-# dev.92 handoff
+# 下一聊天交接
 
-唯一后续基线：`zic_v0.31.0-dev.92_static-finite-output-lifecycle.zip`。不得混入 dev.91 或更早候选。
+唯一后续基线：`zic_v0.31.0-dev.93_animation-successor-local-fd-trace.zip`。不得混入 dev.92 或更早候选。
 
-## 当前边界
+## 已完成
 
-- UploadSession 独占 renderer output、present claim、playback timer 与 successor replacement；动画到期时旧 output 保持到新 output 上传成功。
-- PlaybackTimer 不接受零/负时长；已确认静态帧不得触发 playback advance。
-- DecodeSession 独占 cursor、AnimationInfo 与 FrameHolder。等待 successor 时 ended 表示有限动画完成，不得由 Reader 推断。
-- ADR 0075 仅处理 demand detach/frame-budget 的真实 output 退休和 cursor re-prime；ADR 0076 处理同一 UploadSession 内的帧替换，两条路径不得重新合并成 Presentation 缓存。
-- Reader 继续只消费 PipelinePageOutputStream，不持有 last frame、bytes、ImageProvider、texture 或 mutable session。
-- `sourceRead/frameDecoded/frameUploaded/framePresented/playbackFrameDue/pageOutputReleased/playbackCompleted` 只用于诊断，不成为播放权威。
-- 7/3、2/1、current/transition、5/3/2 和 256 KiB I/O 不得为掩盖问题而改变。
+- dev.92 的静态零时长与有限动画末帧生命周期保持不变。
+- 修复错误报告中的四类测试闭包：LoopCursor fixture、50/50 overlap、source seal revision、local media transformed geometry/fitWidth。
+- 当前动画 output 不再冒充 prepared successor；同一 DecodeSession 在当前帧显示期间最多预解码一帧。
+- deadline 前不提前替换；deadline 后优先消费缓冲 successor，没有 successor 时保留旧 output。
+- texture Trace 增加 `roundTripMicros` 和 `bridgeMicros`。
+- Android 本地媒体桥协议 v5：seekable document descriptor 走同进程 direct-fd 256 KiB stream，不可 seek/无法重开时回退 readDocumentChunk。
 
-## 设备复验
+## 设备复验重点
 
-1. 静态图前后切换，确认零时长呈现后没有 playback due，回页不再无限 loading。
-2. 动画前后切换并观察慢帧，确认旧 output 保持到 successor 上传，不出现空白/loading 闪烁。
-3. 有限动画结束后检查 `playbackCompleted.outputRetained=true`。
-4. 本地/缓存大图或动画仍慢时，继续导出 Trace，并按 sourceRead、decode、upload、present 与 deadline 分段过滤。
+1. 过滤同一 identity 的 `frameDecoded -> frameUploaded -> framePresented -> playbackFrameDue`；到期时应经常出现 `successorBuffered=true`。
+2. 比较 `decodeMicros`、UploadSession `uploadMicros`、Android texture `queueMicros/uploadMicros/roundTripMicros/bridgeMicros` 和 Presentation `presentMicros`。
+3. 静态图仍应 `playbackScheduled=false`，有限动画结束应 `playbackCompleted.outputRetained=true`。
+4. 对比 direct-fd 修复后的 origin `content://` sourceRead；仍慢时检查 firstChunk/maxChunkGap。部分远程图片下载失败仍是独立后续项，不得通过缩小 7/3 或 2/1 窗口掩盖。
 
-## 未验证
+## 约束
 
-当前环境无 Flutter/Dart/Android SDK/Gradle/Cargo。必须在具备工具链的机器运行 analyzer、受影响 storage/texture_bridge/sessions/reader_runtime/App tests、Android debug/release 或 kernel snapshot，并进行真机回切与动画播放验证。
+Reader/App 不得新增图片字节、last-frame 或 texture 缓存。UploadSession 仍是 renderer output 唯一所有者，DecodeSession 仍是 cursor/FrameHolder 唯一所有者。保留前 7/后 3、前 2/后 1、current/transition、5/3/2、256 KiB 和 GET/HEAD 零 body。完整验证顺序继续遵守 AGENTS.md。

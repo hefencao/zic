@@ -1,3 +1,15 @@
+## dev.93 动画后继帧预解码与平台上传诊断规范
+
+1. 当前可见的动画 output 是 presentation state，不是未来 successor；其 upload prepared depth 必须为 0。
+2. 在 current/transition upload demand 存在时，DecodeSession 应按既有 watermark 在当前帧显示期间最多准备一帧 successor。
+3. successor 在当前帧 deadline 前不得替换可见 output；deadline 后存在缓冲帧时应优先原子替换。
+4. deadline 后尚无 successor 时，旧 output 必须继续可见；不得退回 loading，也不得新建 Reader/App last-frame cache。
+5. 有限动画 ended 且 holder 为空时继续执行 dev.92 的最终帧保留语义。
+6. texture telemetry 必须区分 native queue、native upload、完整 platform round trip 和推导出的 bridge 等待；这些值只能用于诊断。
+7. Android seekable document descriptor 应由 `local_media_bridge` 保持生命周期，并允许同进程 Dart 通过 `/proc/self/fd` 直接按 256 KiB 读取；不可 seek 或 direct open 失败必须在发布任何字节前回退 MethodChannel chunk，不能复制整文件到 App 安装目录。
+8. 50/50 双页覆盖属于 overlap，dominant page 为 null；source seal 是独立权威 revision，必须恰好 drain 一次。
+9. fitWidth continuous geometry 不得增加第二层 FittedBox；测试必须观察 transform 后矩形而非未变换 RenderBox size。
+
 ## dev.92 静态/有限动画播放规范
 
 1. 帧时长小于等于 0 时，`PlaybackTimer` 不得进入 running，也不得产生立即到期的 `playbackFrameDue`。

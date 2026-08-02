@@ -103,7 +103,8 @@ void main() {
         reason: 'the stable role window must not resubmit demands');
     expect(coordinator.playbackSyncs, playbackSyncs + 1,
         reason: 'viewport coverage is independent from demand reconciliation');
-    expect(coordinator.viewport?.dominantPageIndex, 2);
+    expect(coordinator.viewport?.phase, ViewportPhase.overlap);
+    expect(coordinator.viewport?.dominantPageIndex, isNull);
   });
 
   test('reader binding uses explicit demand and playback contracts', () {

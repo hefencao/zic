@@ -9,6 +9,8 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.DocumentsContract
+import android.system.Os
+import android.system.OsConstants
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -191,14 +193,6 @@ class LocalMediaBridgePlugin :
                 (expectedRevision == null || expectedRevision == revision)
             val rangeStart = if (canServeRange) requestedStart else 0L
             val descriptor = openDocumentDescriptor(uri, metadata.mimeType)
-            val input = descriptor.createInputStream()
-            try {
-                skipFully(input, rangeStart)
-            } catch (error: Throwable) {
-                input.close()
-                descriptor.close()
-                throw error
-            }
             val totalLength = metadata.byteLength
                 ?: descriptor.length.takeIf { it >= 0L }
             val boundedEnd = if (!canServeRange) {
@@ -214,12 +208,28 @@ class LocalMediaBridgePlugin :
             val handleId = UUID.randomUUID().toString()
             documentHandles[handleId] = DocumentReadHandle(
                 descriptor = descriptor,
-                input = input,
                 remaining = remaining,
+                openInput = {
+                    val input = descriptor.createInputStream()
+                    try {
+                        skipFully(input, rangeStart)
+                        input
+                    } catch (error: Throwable) {
+                        input.close()
+                        throw error
+                    }
+                },
             )
             if (detached.get()) {
                 documentHandles.remove(handleId)?.close()
                 throw IOException("local media bridge detached while opening $uri")
+            }
+            val directDescriptor = descriptor.takeIf { isSeekableDescriptor(it) }
+            val directStart = directDescriptor?.let { it.startOffset + rangeStart }
+            val directEndExclusive = if (directStart == null || remaining == null) {
+                null
+            } else {
+                directStart + remaining
             }
             mapOf(
                 "handleId" to handleId,
@@ -228,6 +238,11 @@ class LocalMediaBridgePlugin :
                 "revision" to revision,
                 "rangeSupported" to true,
                 "partial" to canServeRange,
+                "directPath" to directDescriptor?.let {
+                    "/proc/self/fd/${it.parcelFileDescriptor.fd}"
+                },
+                "directStart" to directStart,
+                "directEndExclusive" to directEndExclusive,
             )
         }
     }
@@ -350,6 +365,17 @@ class LocalMediaBridgePlugin :
         failures.forEach(failure::addSuppressed)
         throw failure
     }
+
+
+    private fun isSeekableDescriptor(descriptor: AssetFileDescriptor): Boolean =
+        try {
+            val fileDescriptor = descriptor.parcelFileDescriptor.fileDescriptor
+            val position = Os.lseek(fileDescriptor, 0L, OsConstants.SEEK_CUR)
+            Os.lseek(fileDescriptor, position, OsConstants.SEEK_SET)
+            true
+        } catch (_: Throwable) {
+            false
+        }
 
     private fun documentRevision(uri: Uri, metadata: DocumentReadMetadata): String =
         "${metadata.byteLength ?: -1}:${metadata.lastModified ?: -1}:${uri}"
@@ -678,9 +704,11 @@ class LocalMediaBridgePlugin :
 
     private class DocumentReadHandle(
         private val descriptor: AssetFileDescriptor,
-        private val input: InputStream,
         private var remaining: Long?,
+        private val openInput: () -> InputStream,
     ) {
+        private var input: InputStream? = null
+
         fun read(maxBytes: Int): ByteArray {
             val available = remaining
             if (available != null && available <= 0L) return ByteArray(0)
@@ -689,10 +717,11 @@ class LocalMediaBridgePlugin :
             } else {
                 minOf(maxBytes.toLong(), available).toInt()
             }
+            val source = input ?: openInput().also { input = it }
             val buffer = ByteArray(size)
             var count = 0
             while (count < size) {
-                val read = input.read(buffer, count, size - count)
+                val read = source.read(buffer, count, size - count)
                 if (read < 0) break
                 if (read == 0) continue
                 count += read
@@ -704,7 +733,7 @@ class LocalMediaBridgePlugin :
 
         fun close() {
             try {
-                input.close()
+                input?.close()
             } finally {
                 descriptor.close()
             }
@@ -713,7 +742,7 @@ class LocalMediaBridgePlugin :
 
     companion object {
         private const val CHANNEL_NAME = "dev.zic/local_media"
-        private const val PROTOCOL_VERSION = 4
+        private const val PROTOCOL_VERSION = 5
         private const val DOCUMENT_CHUNK_BYTES = 256 * 1024
         private const val PICK_DIRECTORY_REQUEST = 0x5A31
         private const val HEADER_PROBE_BYTES = 64
