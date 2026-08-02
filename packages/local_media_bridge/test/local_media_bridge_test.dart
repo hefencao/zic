@@ -100,6 +100,73 @@ void main() {
     expect(await bridge.pickImageDirectory(), isNull);
   });
 
+  test('document streams pull bounded 256 KiB chunks and close', () async {
+    final methods = <String>[];
+    var readCount = 0;
+    var closeCount = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      methods.add(call.method);
+      switch (call.method) {
+        case 'openDocument':
+          expect(
+            call.arguments,
+            <String, Object?>{
+              'sourceUri': 'content://provider/document/page-large',
+              'start': 4,
+              'endExclusive': 9,
+              'expectedRevision': 'old-revision',
+            },
+          );
+          return <String, Object?>{
+            'handleId': 'handle-1',
+            'rangeStart': 4,
+            'totalLength': 12,
+            'revision': 'current-revision',
+            'rangeSupported': true,
+            'partial': true,
+          };
+        case 'readDocumentChunk':
+          expect(
+            call.arguments,
+            <String, Object?>{
+              'handleId': 'handle-1',
+              'maxBytes': localMediaBridgeChunkBytes,
+            },
+          );
+          return switch (readCount++) {
+            0 => Uint8List.fromList(<int>[4, 5, 6]),
+            1 => Uint8List.fromList(<int>[7, 8]),
+            _ => Uint8List(0),
+          };
+        case 'closeDocument':
+          closeCount++;
+          expect(call.arguments, <String, Object?>{'handleId': 'handle-1'});
+          return null;
+        default:
+          fail('unexpected method ${call.method}');
+      }
+    });
+
+    final response = await bridge.openDocument(
+      'content://provider/document/page-large',
+      start: 4,
+      endExclusive: 9,
+      expectedRevision: 'old-revision',
+    );
+    final bytes = await response.bytes.expand((chunk) => chunk).toList();
+
+    expect(bytes, <int>[4, 5, 6, 7, 8]);
+    expect(response.rangeStart, 4);
+    expect(response.totalLength, 12);
+    expect(response.revision, 'current-revision');
+    expect(response.rangeSupported, isTrue);
+    expect(response.partial, isTrue);
+    expect(closeCount, 1);
+    expect(methods.first, 'openDocument');
+    expect(methods.last, 'closeDocument');
+  });
+
   test('document reads use the persisted content identity', () async {
     final expected = Uint8List.fromList(<int>[1, 2, 3, 4]);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

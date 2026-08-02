@@ -99,6 +99,8 @@ final class ByteResponse {
   }
 }
 
+const int defaultTransportChunkBytes = 256 * 1024;
+
 abstract interface class Transport {
   Future<ByteResponse> open(
     Uri uri, {

@@ -1,3 +1,13 @@
+## 0.31.0-dev.85：修复 Cloudflare 章节目录并流式读取本地大图
+
+- 应用 staged 覆盖后继续收口：Mihon 章节目录调用失败不再创建 synthetic “正文”章节；只有目录能力不存在且 gallery 正文预检非空时才允许兼容单章。
+- 详情首屏目录失败显示权威错误、重试和 WebView 图标；WebView 命令由 App composition 注入既有 `openMihonLogin`，Presentation 不访问 Cookie、runtime 或 session。
+- 旧 synthetic 章节只在权威真实目录恢复后由 composition 协调淘汰；opaque Mihon identity 解析保留在 `plugin_host` 协议适配层。
+- Mihon runtime 增加共享 Android CookieManager 的 Cloudflare WebView interceptor，覆盖 403/503、`cloudflare`/`cloudflare-nginx` 与 30 秒 challenge 等待；GET/HEAD 零 body 契约不变。
+- transport、artifact 与下载 fallback 默认块由 64 KiB 提升到 256 KiB；source progress/Trace 的 64 KiB 聚合语义保持不变。
+- 普通本地文件使用 `RandomAccessFile` 直接分块；Android `content://` 使用 bridge v4 的 `openDocument/readDocumentChunk/closeDocument` 句柄、range/validator 和取消关闭，不再通过单个完整 `Uint8List` 作为 Reader 常规输入。
+- 新增 owner package 测试、Mihon 章节/ABI 契约、dev.85 静态所有权门禁、ADR 0069 与三清单审计。
+
 ## 0.31.0-dev.84：修复 Mihon 静态转译、章节目录与详情元数据
 
 - 修复 JMComic/18comic 静态 WebP：按扩展 source client 的自定义网络能力选择 runtime transform，普通 Mihon 图片仍使用宿主流式 transport；transform 版本进入 chapter source revision，淘汰旧未转译 artifact。

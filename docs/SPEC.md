@@ -1,3 +1,14 @@
+## dev.85 Cloudflare 章节目录与本地流式读取规范
+
+1. Mihon 章节列表调用抛错时必须保留原始失败链并向详情投影错误；不得创建 synthetic 章节。返回空目录也不得仅凭“空”推断 gallery。
+2. synthetic gallery 只在 chapter-list 能力不存在且正文页面预检得到非空结果时允许。已有 chapter capability 返回空目录时，详情必须显示“未获得可确认目录”并提供重试/WebView。
+3. 详情失败态必须以稳定 key 提供 WebView 命令；命令由 App composition 注入现有插件登录能力，Presentation 不得访问 Cookie、transport 或 runtime 内部对象。
+4. Cloudflare 自动兼容必须使用 Mihon runtime source client、共享 CookieManager 和安全 WebView headers；GET/HEAD 继续零 body，失败后不得静默降级成单章节。
+5. transport/storage/download fallback 的默认数据块为 256 KiB。source progress 与 Trace 的 64 KiB 聚合量子保持不变。
+6. 普通本地文件必须直接以 range/chunk 读取；Android `content://` 必须通过可关闭的流式 bridge 响应进入现有 Pipeline。validator 不匹配时必须明确返回完整响应并从 0 重启，不能把旧 range 末端误作有效 partial。
+7. 外部注入的流/句柄由 response close 生命周期释放；Pipeline session/artifact 仍由其 owner 创建和关闭。不得先把 Reader 页面完整复制到 App 目录或建立第二字节 LRU。
+8. 既有 +7/-3 下载、+2/-1 预解码、current/transition 上传与 5/3/2 lane 不得改变。
+
 ## dev.84 Mihon 兼容与详情规范
 
 - Mihon request plan 必须保留 source client 的响应转译语义；扩展自定义 interceptor/cookie/auth/DNS 存在时不得绕过 runtime。

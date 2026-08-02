@@ -1,6 +1,7 @@
 package dev.zic.localmedia
 
 import android.app.Activity
+import android.content.res.AssetFileDescriptor
 import android.content.ContentResolver
 import android.content.Intent
 import android.database.Cursor
@@ -18,6 +19,8 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.util.ArrayDeque
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
@@ -33,6 +36,7 @@ class LocalMediaBridgePlugin :
     private var worker: ExecutorService? = null
     private var activityBinding: ActivityPluginBinding? = null
     private var pendingDirectoryResult: MethodChannel.Result? = null
+    private val documentHandles = ConcurrentHashMap<String, DocumentReadHandle>()
     private lateinit var channel: MethodChannel
     private lateinit var resolver: ContentResolver
 
@@ -50,6 +54,7 @@ class LocalMediaBridgePlugin :
         detached.set(true)
         channel.setMethodCallHandler(null)
         finishPendingWithError("detached", "local media bridge detached")
+        closeAllDocuments()
         worker?.shutdownNow()
         worker = null
     }
@@ -86,6 +91,9 @@ class LocalMediaBridgePlugin :
             "pickImageDirectory" -> pickImageDirectory(result)
             "scanImageDirectory" -> scanImageDirectory(call, result)
             "readDocument" -> readDocument(call, result)
+            "openDocument" -> openDocument(call, result)
+            "readDocumentChunk" -> readDocumentChunk(call, result)
+            "closeDocument" -> closeDocument(call, result)
             else -> result.notImplemented()
         }
     }
@@ -164,6 +172,192 @@ class LocalMediaBridgePlugin :
         execute(result) {
             scanDirectory(treeUri).toMap()
         }
+    }
+
+    private fun openDocument(call: MethodCall, result: MethodChannel.Result) {
+        val uri = requireContentUri(call, result) ?: return
+        val requestedStart = call.argument<Number>("start")?.toLong() ?: 0L
+        val requestedEnd = call.argument<Number>("endExclusive")?.toLong()
+        val expectedRevision = call.argument<String>("expectedRevision")
+        if (requestedStart < 0L || (requestedEnd != null && requestedEnd < requestedStart)) {
+            result.error("invalid_range", "document byte range is invalid", null)
+            return
+        }
+        execute(result) {
+            val metadata = queryDocumentReadMetadata(uri)
+            val revision = documentRevision(uri, metadata)
+            val rangeRequested = requestedStart > 0L || requestedEnd != null
+            val canServeRange = rangeRequested &&
+                (expectedRevision == null || expectedRevision == revision)
+            val rangeStart = if (canServeRange) requestedStart else 0L
+            val descriptor = openDocumentDescriptor(uri, metadata.mimeType)
+            val input = descriptor.createInputStream()
+            try {
+                skipFully(input, rangeStart)
+            } catch (error: Throwable) {
+                input.close()
+                descriptor.close()
+                throw error
+            }
+            val totalLength = metadata.byteLength
+                ?: descriptor.length.takeIf { it >= 0L }
+            val boundedEnd = if (!canServeRange) {
+                totalLength
+            } else {
+                when {
+                    requestedEnd == null -> totalLength
+                    totalLength == null -> requestedEnd
+                    else -> minOf(requestedEnd, totalLength)
+                }
+            }
+            val remaining = boundedEnd?.let { (it - rangeStart).coerceAtLeast(0L) }
+            val handleId = UUID.randomUUID().toString()
+            documentHandles[handleId] = DocumentReadHandle(
+                descriptor = descriptor,
+                input = input,
+                remaining = remaining,
+            )
+            if (detached.get()) {
+                documentHandles.remove(handleId)?.close()
+                throw IOException("local media bridge detached while opening $uri")
+            }
+            mapOf(
+                "handleId" to handleId,
+                "rangeStart" to rangeStart,
+                "totalLength" to totalLength,
+                "revision" to revision,
+                "rangeSupported" to true,
+                "partial" to canServeRange,
+            )
+        }
+    }
+
+    private fun readDocumentChunk(call: MethodCall, result: MethodChannel.Result) {
+        val handleId = call.argument<String>("handleId")?.trim()
+        val requested = call.argument<Number>("maxBytes")?.toInt()
+            ?: DOCUMENT_CHUNK_BYTES
+        if (handleId.isNullOrEmpty() || requested <= 0) {
+            result.error("invalid_handle", "handleId and maxBytes are required", null)
+            return
+        }
+        execute(result) {
+            val handle = documentHandles[handleId]
+                ?: throw IOException("local document handle is closed: $handleId")
+            val chunk = handle.read(minOf(requested, DOCUMENT_CHUNK_BYTES))
+            if (chunk.isEmpty()) {
+                documentHandles.remove(handleId)?.close()
+            }
+            chunk
+        }
+    }
+
+    private fun closeDocument(call: MethodCall, result: MethodChannel.Result) {
+        val handleId = call.argument<String>("handleId")?.trim()
+        if (handleId.isNullOrEmpty()) {
+            result.error("invalid_handle", "handleId is required", null)
+            return
+        }
+        execute(result) {
+            documentHandles.remove(handleId)?.close()
+            null
+        }
+    }
+
+    private fun requireContentUri(
+        call: MethodCall,
+        result: MethodChannel.Result,
+    ): Uri? {
+        val raw = call.argument<String>("sourceUri")?.trim()
+        if (raw.isNullOrEmpty()) {
+            result.error("invalid_uri", "sourceUri is required", null)
+            return null
+        }
+        val uri = try {
+            Uri.parse(raw)
+        } catch (error: Throwable) {
+            result.error("invalid_uri", error.message ?: error.toString(), null)
+            return null
+        }
+        if (uri.scheme != ContentResolver.SCHEME_CONTENT) {
+            result.error("invalid_uri", "only content document URIs are supported", null)
+            return null
+        }
+        return uri
+    }
+
+    private fun queryDocumentReadMetadata(uri: Uri): DocumentReadMetadata {
+        var byteLength: Long? = null
+        var lastModified: Long? = null
+        var mimeType: String? = null
+        try {
+            resolver.query(
+                uri,
+                arrayOf(
+                    DocumentsContract.Document.COLUMN_SIZE,
+                    DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE,
+                ),
+                null,
+                null,
+                null,
+            ).use { cursor ->
+                if (cursor != null && cursor.moveToFirst()) {
+                    val size = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
+                    val modified = cursor.getColumnIndex(
+                        DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+                    )
+                    val mime = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
+                    if (size >= 0 && !cursor.isNull(size)) {
+                        byteLength = cursor.getLong(size).takeIf { it >= 0L }
+                    }
+                    if (modified >= 0 && !cursor.isNull(modified)) {
+                        lastModified = cursor.getLong(modified).takeIf { it >= 0L }
+                    }
+                    if (mime >= 0 && !cursor.isNull(mime)) {
+                        mimeType = cursor.getString(mime)
+                    }
+                }
+            }
+        } catch (_: Throwable) {
+            // Metadata is advisory; descriptor streaming remains authoritative.
+        }
+        if (mimeType.isNullOrBlank()) {
+            mimeType = runCatching { resolver.getType(uri) }.getOrNull()
+        }
+        return DocumentReadMetadata(byteLength, lastModified, mimeType)
+    }
+
+    private fun openDocumentDescriptor(
+        uri: Uri,
+        mimeType: String?,
+    ): AssetFileDescriptor {
+        val failures = ArrayList<Throwable>()
+        try {
+            resolver.openAssetFileDescriptor(uri, "r")?.let { return it }
+        } catch (error: Throwable) {
+            failures.add(error)
+        }
+        try {
+            resolver.openTypedAssetFileDescriptor(
+                uri,
+                mimeType?.takeIf { it.startsWith("image/") } ?: "image/*",
+                null,
+            )?.let { return it }
+        } catch (error: Throwable) {
+            failures.add(error)
+        }
+        val failure = IOException("content resolver returned no file descriptor for $uri")
+        failures.forEach(failure::addSuppressed)
+        throw failure
+    }
+
+    private fun documentRevision(uri: Uri, metadata: DocumentReadMetadata): String =
+        "${metadata.byteLength ?: -1}:${metadata.lastModified ?: -1}:${uri}"
+
+    private fun closeAllDocuments() {
+        val handles = documentHandles.values.toList()
+        documentHandles.clear()
+        handles.forEach { handle -> runCatching(handle::close) }
     }
 
     private fun readDocument(call: MethodCall, result: MethodChannel.Result) {
@@ -476,13 +670,55 @@ class LocalMediaBridgePlugin :
             naturalCompare(left.displayName, right.displayName)
     }
 
+    private data class DocumentReadMetadata(
+        val byteLength: Long?,
+        val lastModified: Long?,
+        val mimeType: String?,
+    )
+
+    private class DocumentReadHandle(
+        private val descriptor: AssetFileDescriptor,
+        private val input: InputStream,
+        private var remaining: Long?,
+    ) {
+        fun read(maxBytes: Int): ByteArray {
+            val available = remaining
+            if (available != null && available <= 0L) return ByteArray(0)
+            val size = if (available == null) {
+                maxBytes
+            } else {
+                minOf(maxBytes.toLong(), available).toInt()
+            }
+            val buffer = ByteArray(size)
+            var count = 0
+            while (count < size) {
+                val read = input.read(buffer, count, size - count)
+                if (read < 0) break
+                if (read == 0) continue
+                count += read
+            }
+            if (count <= 0) return ByteArray(0)
+            remaining = remaining?.minus(count.toLong())
+            return if (count == buffer.size) buffer else buffer.copyOf(count)
+        }
+
+        fun close() {
+            try {
+                input.close()
+            } finally {
+                descriptor.close()
+            }
+        }
+    }
+
     companion object {
         private const val CHANNEL_NAME = "dev.zic/local_media"
-        private const val PROTOCOL_VERSION = 3
+        private const val PROTOCOL_VERSION = 4
+        private const val DOCUMENT_CHUNK_BYTES = 256 * 1024
         private const val PICK_DIRECTORY_REQUEST = 0x5A31
         private const val HEADER_PROBE_BYTES = 64
         private const val MIN_MEDIA_BYTES = 4
-        internal const val READ_BUFFER_BYTES = 64 * 1024
+        internal const val READ_BUFFER_BYTES = 256 * 1024
         private val DOCUMENT_PROJECTION = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
@@ -523,6 +759,21 @@ private fun readPrefix(input: InputStream, limit: Int): ByteArray {
         output.write(buffer, 0, count)
     }
     return output.toByteArray()
+}
+
+private fun skipFully(input: InputStream, byteCount: Long) {
+    var remaining = byteCount
+    while (remaining > 0L) {
+        val skipped = input.skip(remaining)
+        if (skipped > 0L) {
+            remaining -= skipped
+            continue
+        }
+        if (input.read() < 0) {
+            throw IOException("content resolver stream ended before requested range")
+        }
+        remaining--
+    }
 }
 
 private fun readFully(input: InputStream): ByteArray {

@@ -901,6 +901,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
     required this.inspectChapterDownload,
     required this.downloadChanges,
     required this.onDownloadComic,
+    this.onOpenSourceWebView,
     super.key,
   });
 
@@ -920,6 +921,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
   final details.ComicDetailsChapterDownloadInspector inspectChapterDownload;
   final Stream<ChapterDownloadSnapshot> downloadChanges;
   final details.ComicDetailsComicDownloader onDownloadComic;
+  final details.ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
 
   @override
   Widget build(BuildContext context) {
@@ -939,6 +941,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
       inspectChapterDownload: inspectChapterDownload,
       downloadChanges: downloadChanges,
       onDownloadComic: onDownloadComic,
+      onOpenSourceWebView: onOpenSourceWebView,
     );
   }
 }

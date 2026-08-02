@@ -80,6 +80,8 @@ final class PickedImage {
     return Uri.file(sourceId);
   }
 
+  bool get hasCustomBytesLoader => _bytesLoader != null;
+
   Future<Uint8List> readAsBytes() =>
       _bytesLoader == null ? file.readAsBytes() : _bytesLoader();
 }

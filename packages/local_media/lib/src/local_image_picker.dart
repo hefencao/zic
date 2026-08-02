@@ -34,6 +34,19 @@ Future<LocalImageDirectoryScan> listLocalImageDirectory(String path) =>
 Future<Uint8List> readLocalImageSource(String sourceId) =>
     platform.readLocalImageSource(sourceId);
 
+Future<LocalImageSourceResponse> openLocalImageSource(
+  String sourceId, {
+  int start = 0,
+  int? endExclusive,
+  String? expectedRevision,
+}) =>
+    platform.openLocalImageSource(
+      sourceId,
+      start: start,
+      endExclusive: endExclusive,
+      expectedRevision: expectedRevision,
+    );
+
 /// Returns a directly decodable local file path when [sourceId] is not a
 /// platform document URI.
 ///

@@ -1,3 +1,15 @@
+## dev.85 完成项与后续设备验证
+
+- [x] 应用 staged 覆盖并审计其所有权影响。
+- [x] 区分 Mihon 章节调用失败、权威空目录、chapter capability 缺失和经正文预检确认的 synthetic gallery。
+- [x] 详情失败态增加稳定 WebView/retry 命令；旧 synthetic 条目由 composition 使用协议 helper 协调淘汰。
+- [x] 安装共享 CookieManager 的 Cloudflare interceptor，不改变 GET/HEAD 与宿主 Pipeline 边界。
+- [x] 将数据块统一提升为 256 KiB，并保留 64 KiB telemetry/source wake 聚合。
+- [x] 普通文件改用直接 RandomAccessFile 分块；Android `content://` 增加 bridge v4 流式/range/close。
+- [x] 增加 owner tests、dev.85 门禁、ADR 与三清单审计。
+- [ ] 在 Flutter/Android 环境运行 analyzer、受影响 package tests、App tests、kernel snapshot、debug/release。
+- [ ] 真机验证 Cloudflare 失败→WebView→重试恢复目录、真实 gallery fallback、本地高分辨率首帧/内存、range resume 与取消句柄释放。
+
 ## dev.84 完成项与后续设备验证
 
 已实现 Mihon source-client transform capability、`SMangaUpdate` 章节权威采用、source name/description/tags 翻译与持久化、详情 UI 调整和持久页数回填。下一步在设备上验证 JMComic 静态反混淆、普通 Mihon 宿主流式不退化、插件重进后的章节目录和 tags/source 名称。

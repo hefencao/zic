@@ -93,4 +93,25 @@ void main() {
       throwsA(isA<Object>()),
     );
   });
+
+
+  test('in-memory loader responses emit 256 KiB chunks', () async {
+    final bytes = Uint8List(defaultTransportChunkBytes * 2 + 5);
+    final transport = LoaderTransport(<Uri, LoaderTransportSource>{
+      uri: LoaderTransportSource(
+        revision: 'chunked',
+        loadBytes: () async => bytes,
+      ),
+    });
+
+    final response = await transport.open(uri);
+    final chunkLengths = await response.bytes
+        .map((chunk) => chunk.length)
+        .toList(growable: false);
+
+    expect(
+      chunkLengths,
+      <int>[defaultTransportChunkBytes, defaultTransportChunkBytes, 5],
+    );
+  });
 }

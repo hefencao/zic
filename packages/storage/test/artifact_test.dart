@@ -113,4 +113,20 @@ void main() {
     expect(await File(artifact.partialPath).readAsBytes(), <int>[1, 2, 3, 4]);
   });
 
+
+  test('readChunks defaults to 256 KiB', () async {
+    final artifact = createArtifact();
+    final bytes = List<int>.filled(256 * 1024 * 2 + 7, 11);
+    await artifact.restore();
+    await artifact.append(0, bytes);
+    await artifact.seal(expectedLength: bytes.length);
+    await artifact.promote();
+
+    final chunkLengths = await artifact.readChunks()
+        .map((chunk) => chunk.length)
+        .toList(growable: false);
+
+    expect(chunkLengths, <int>[256 * 1024, 256 * 1024, 7]);
+  });
+
 }

@@ -24,4 +24,26 @@ void main() {
     expect(partial.rangeStart, 4);
     expect(await partial.bytes.expand((chunk) => chunk).toList(), <int>[4, 5, 6, 7, 8, 9]);
   });
+
+
+  test('file transport emits 256 KiB chunks', () async {
+    final temp = await Directory.systemTemp.createTemp('file_transport_chunks_');
+    addTearDown(() async {
+      await temp.delete(recursive: true);
+    });
+    final file = File('${temp.path}/large-page.bin');
+    await file.writeAsBytes(
+      List<int>.filled(defaultTransportChunkBytes * 2 + 3, 7),
+    );
+
+    final response = await const FileTransport().open(file.uri);
+    final chunkLengths = await response.bytes
+        .map((chunk) => chunk.length)
+        .toList(growable: false);
+
+    expect(
+      chunkLengths,
+      <int>[defaultTransportChunkBytes, defaultTransportChunkBytes, 3],
+    );
+  });
 }

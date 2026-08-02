@@ -86,6 +86,91 @@ String _directoryDisplayName(String path) {
   return name.trim().isEmpty ? '本地图片文件夹' : name;
 }
 
+Future<LocalImageSourceResponse> openLocalImageSource(
+  String sourceId, {
+  int start = 0,
+  int? endExclusive,
+  String? expectedRevision,
+}) async {
+  if (start < 0 || (endExclusive != null && endExclusive < start)) {
+    throw ArgumentError('invalid local image byte range');
+  }
+  final uri = Uri.tryParse(sourceId);
+  final scheme = uri?.scheme.toLowerCase() ?? '';
+  if (Platform.isAndroid && scheme == 'content') {
+    final response = await _androidBridge.openDocument(
+      sourceId,
+      start: start,
+      endExclusive: endExclusive,
+      expectedRevision: expectedRevision,
+    );
+    return LocalImageSourceResponse(
+      bytes: response.bytes,
+      rangeStart: response.rangeStart,
+      totalLength: response.totalLength,
+      revision: response.revision,
+      rangeSupported: response.rangeSupported,
+      partial: response.partial,
+      close: response.close,
+    );
+  }
+  final file = switch (scheme) {
+    'file' => File.fromUri(uri!),
+    '' => File(sourceId),
+    _ => throw FileSystemException(
+        '不支持的本地图片来源协议',
+        sourceId,
+      ),
+  };
+  if (!await file.exists()) {
+    throw FileSystemException('本地图片不存在', file.path);
+  }
+  final length = await file.length();
+  final modified = await file.lastModified();
+  final revision = '$length:${modified.microsecondsSinceEpoch}:${file.path}';
+  final rangeRequested = start > 0 || endExclusive != null;
+  final canServeRange = rangeRequested &&
+      (expectedRevision == null || expectedRevision == revision);
+  final rangeStart = canServeRange ? start : 0;
+  final boundedEnd = canServeRange
+      ? (endExclusive == null
+          ? length
+          : endExclusive.clamp(rangeStart, length).toInt())
+      : length;
+  return LocalImageSourceResponse(
+    bytes: _readLocalFileChunks(file, rangeStart, boundedEnd),
+    rangeStart: rangeStart,
+    totalLength: length,
+    revision: revision,
+    rangeSupported: true,
+    partial: canServeRange,
+    close: () async {},
+  );
+}
+
+Stream<List<int>> _readLocalFileChunks(
+  File file,
+  int start,
+  int endExclusive,
+) async* {
+  const chunkBytes = 256 * 1024;
+  final reader = await file.open();
+  try {
+    await reader.setPosition(start);
+    var remaining = endExclusive - start;
+    while (remaining > 0) {
+      final chunk = await reader.read(
+        remaining < chunkBytes ? remaining : chunkBytes,
+      );
+      if (chunk.isEmpty) break;
+      remaining -= chunk.length;
+      yield chunk;
+    }
+  } finally {
+    await reader.close();
+  }
+}
+
 Future<Uint8List> readLocalImageSource(String sourceId) async {
   final uri = Uri.tryParse(sourceId);
   final scheme = uri?.scheme.toLowerCase() ?? '';

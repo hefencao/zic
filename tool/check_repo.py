@@ -837,7 +837,11 @@ def check_compile_regressions() -> None:
         'readDocument',
         'LocalMediaDirectory',
         'LocalMediaDocument',
-        'localMediaBridgeProtocolVersion = 3',
+        'localMediaBridgeProtocolVersion = 4',
+        'localMediaBridgeChunkBytes = 256 * 1024',
+        "'openDocument'",
+        "'readDocumentChunk'",
+        "'closeDocument'",
         './tool/clean.sh',
     ):
         if required not in local_media_dart:
@@ -854,7 +858,11 @@ def check_compile_regressions() -> None:
         'scanImageDirectory(call, result)',
         'headerRecognizedFiles',
         'metadataRecognizedFiles',
-        'PROTOCOL_VERSION = 3',
+        'PROTOCOL_VERSION = 4',
+        'DOCUMENT_CHUNK_BYTES = 256 * 1024',
+        'openDocument(call, result)',
+        'readDocumentChunk(call, result)',
+        'closeDocument(call, result)',
     ):
         if required not in local_media_kotlin:
             fail(f'Android scoped document tree bridge is incomplete: {required}')

@@ -5,6 +5,8 @@ import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:local_media/local_media.dart';
+import 'package:plugin_host/plugin_host.dart'
+    show isSyntheticMihonChapterIdentity;
 import 'package:resource_cache/resource_cache.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:downloads/downloads.dart';
@@ -71,6 +73,26 @@ const importedLibraryErrorKey = ValueKey<String>('imported-library-error');
 
 Key importedChapterEntryKey(String sourceId, String chapterId) =>
     ValueKey<String>('imported-chapter:$sourceId\u0000$chapterId');
+
+List<ImportedLibraryEntry> reconcileComicDetailsChapterEntries({
+  required Iterable<ImportedLibraryEntry> entries,
+  required Iterable<Chapter> sourceChapters,
+  required bool Function(String chapterId) isCompatibilityFallback,
+}) {
+  final authoritativeChapterIds = sourceChapters
+      .map((chapter) => chapter.chapterId)
+      .toSet();
+  if (authoritativeChapterIds.isEmpty) {
+    return List<ImportedLibraryEntry>.unmodifiable(entries);
+  }
+  return List<ImportedLibraryEntry>.unmodifiable(
+    entries.where((entry) {
+      final chapterId = entry.chapter.chapterId;
+      return !isCompatibilityFallback(chapterId) ||
+          authoritativeChapterIds.contains(chapterId);
+    }),
+  );
+}
 Key historyChapterEntryKey(String sourceId, String chapterId) =>
     ValueKey<String>('history-chapter:$sourceId\u0000$chapterId');
 Key comicCoverKey(String sourceId, String comicId) =>
@@ -427,6 +449,12 @@ final class _DemoHomeState extends State<DemoHome> {
             downloadChanges: _chapterDownloads.changes,
             onDownloadComic: (entries) =>
                 _downloadComicEntries(identity, entries),
+            onOpenSourceWebView: widget.externalPlugins != null &&
+                    source.sourceId.startsWith('mihon:')
+                ? () => widget.externalPlugins!.openMihonLogin(
+                      source.descriptor.website,
+                    )
+                : null,
           ),
         ),
       );
@@ -1276,22 +1304,26 @@ final class _DemoHomeState extends State<DemoHome> {
     String comicId, {
     ComicPreference? preference,
   }) {
-    final chapters = _libraryEntries
-        .where(
-          (entry) =>
-              entry.chapter.sourceId == sourceId &&
-              entry.chapter.comicId == comicId,
-        )
-        .toList(growable: false);
     final saved = _savedComics.where(
       (item) => item.sourceId == sourceId && item.comicId == comicId,
     );
+    final sourceChapters = saved.isEmpty
+        ? const <Chapter>[]
+        : saved.first.chapters
+            .map((chapter) => chapter.toChapter(comicId))
+            .toList(growable: false);
+    final chapters = reconcileComicDetailsChapterEntries(
+      entries: _libraryEntries.where(
+        (entry) =>
+            entry.chapter.sourceId == sourceId &&
+            entry.chapter.comicId == comicId,
+      ),
+      sourceChapters: sourceChapters,
+      isCompatibilityFallback: isSyntheticMihonChapterIdentity,
+    );
     return details.ComicDetailsLibrarySnapshot(
       chapters: chapters,
-      sourceChapters: saved.isEmpty
-          ? const <Chapter>[]
-          : saved.first.chapters
-              .map((chapter) => chapter.toChapter(comicId)),
+      sourceChapters: sourceChapters,
       readStates: <String, ChapterReadState>{
         for (final chapter in chapters)
           if (_chapterReadStates.containsKey(chapter.identity))

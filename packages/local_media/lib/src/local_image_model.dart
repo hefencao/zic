@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:file_selector/file_selector.dart';
@@ -31,6 +32,26 @@ extension LocalImageFormatLabel on LocalImageFormat {
 }
 
 typedef LocalImageFileBytesLoader = Future<Uint8List> Function();
+
+final class LocalImageSourceResponse {
+  const LocalImageSourceResponse({
+    required this.bytes,
+    required this.rangeStart,
+    required this.totalLength,
+    required this.revision,
+    required this.rangeSupported,
+    required this.partial,
+    required this.close,
+  });
+
+  final Stream<List<int>> bytes;
+  final int rangeStart;
+  final int? totalLength;
+  final String revision;
+  final bool rangeSupported;
+  final bool partial;
+  final Future<void> Function() close;
+}
 
 final class LocalImageFile {
   const LocalImageFile({

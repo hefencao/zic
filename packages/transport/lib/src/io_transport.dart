@@ -199,13 +199,39 @@ final class FileTransport implements Transport {
         : (requestedEnd + 1 > length ? length : requestedEnd + 1);
 
     return ByteResponse(
-      bytes: file.openRead(start, endExclusive),
+      bytes: _readFileChunks(file, start, endExclusive),
       statusCode: canServeRange ? HttpStatus.partialContent : HttpStatus.ok,
       rangeStart: start,
       totalLength: length,
       validators: currentValidators,
       rangeSupported: true,
     );
+  }
+}
+
+Stream<List<int>> _readFileChunks(
+  File file,
+  int start,
+  int endExclusive,
+) async* {
+  final reader = await file.open();
+  try {
+    await reader.setPosition(start);
+    var remaining = endExclusive - start;
+    while (remaining > 0) {
+      final chunk = await reader.read(
+        remaining < defaultTransportChunkBytes
+            ? remaining
+            : defaultTransportChunkBytes,
+      );
+      if (chunk.isEmpty) {
+        break;
+      }
+      remaining -= chunk.length;
+      yield chunk;
+    }
+  } finally {
+    await reader.close();
   }
 }
 

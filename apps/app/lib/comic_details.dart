@@ -4,8 +4,6 @@ import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:plugin_host/plugin_host.dart'
-    show isSyntheticMihonChapterIdentity;
 import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
 
@@ -29,6 +27,8 @@ const comicDetailsMigrateKey = ValueKey<String>('comic-details-migrate');
 const comicDetailsDownloadAllKey =
     ValueKey<String>('comic-details-download-all');
 const comicDetailsRetryKey = ValueKey<String>('comic-details-retry');
+const comicDetailsOpenWebViewKey =
+    ValueKey<String>('comic-details-open-webview');
 const comicDetailsRetryBodyKey =
     ValueKey<String>('comic-details-retry-body');
 const comicDetailsPullRefreshKey =
@@ -484,9 +484,6 @@ final class _LocalComicDetailsScreenState
         }
       }
       for (final entry in _library.chapters) {
-        if (_isStaleSyntheticMihonEntry(entry)) {
-          continue;
-        }
         if (seen.add(entry.identity)) {
           entries.add(entry);
         }
@@ -546,9 +543,6 @@ final class _LocalComicDetailsScreenState
       );
     }
     for (final entry in _library.chapters) {
-      if (_isStaleSyntheticMihonEntry(entry)) {
-        continue;
-      }
       final identity = comicDetailsChapterIdentity(
         entry.chapter.sourceId,
         entry.chapter.chapterId,
@@ -629,15 +623,6 @@ final class _LocalComicDetailsScreenState
     );
   }
 
-  bool _isStaleSyntheticMihonEntry(ImportedLibraryEntry entry) {
-    if (!isSyntheticMihonChapterIdentity(entry.chapter.chapterId) ||
-        _library.sourceChapters.isEmpty) {
-      return false;
-    }
-    return !_library.sourceChapters.any(
-      (chapter) => chapter.chapterId == entry.chapter.chapterId,
-    );
-  }
 }
 
 final class RemoteComicDetailsScreen extends StatefulWidget {
@@ -657,6 +642,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
     required this.inspectChapterDownload,
     required this.downloadChanges,
     required this.onDownloadComic,
+    this.onOpenSourceWebView,
     super.key,
   });
 
@@ -676,6 +662,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
   final ComicDetailsChapterDownloadInspector inspectChapterDownload;
   final Stream<ChapterDownloadSnapshot> downloadChanges;
   final ComicDetailsComicDownloader onDownloadComic;
+  final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
 
   @override
   State<RemoteComicDetailsScreen> createState() =>
@@ -788,6 +775,12 @@ final class _RemoteComicDetailsScreenState
             (chapter) => chapter.comicId != widget.summary.comicId,
           )) {
         throw StateError('漫画源详情返回了不匹配的漫画或章节身份');
+      }
+      if (manifest.chapters.isEmpty) {
+        throw StateError(
+          '漫画源未返回可确认的章节目录；这不代表单章节漫画。'
+          '请打开 WebView 完成站点验证后重试。',
+        );
       }
       if (!mounted) {
         return;
@@ -1053,6 +1046,21 @@ final class _RemoteComicDetailsScreenState
     }
   }
 
+  Future<void> _openSourceWebView() async {
+    final open = widget.onOpenSourceWebView;
+    if (open == null) return;
+    try {
+      await open();
+    } on Object catch (error, stackTrace) {
+      if (mounted) {
+        _showFailureSnackBar(
+          context,
+          _DetailFailure.capture(error, stackTrace),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final failure = _failure;
@@ -1062,6 +1070,13 @@ final class _RemoteComicDetailsScreenState
         appBar: AppBar(
           title: Text(widget.source.descriptor.name),
           actions: <Widget>[
+            if (widget.onOpenSourceWebView != null)
+              IconButton(
+                key: comicDetailsOpenWebViewKey,
+                tooltip: '在 WebView 中访问漫画源',
+                onPressed: () => unawaited(_openSourceWebView()),
+                icon: const Icon(Icons.open_in_browser),
+              ),
             IconButton(
               key: comicDetailsRetryKey,
               tooltip: '重试加载漫画详情',

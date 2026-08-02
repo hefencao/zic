@@ -1,3 +1,7 @@
+## dev.85 状态
+
+源码已在本次 dev.84 唯一基线上应用 staged 覆盖并完成后续闭环。Mihon 章节调用失败不再被 synthetic “正文”吞掉；权威空目录在详情显示错误和 WebView/retry，只有 capability 缺失且正文预检非空才生成兼容单章。旧 synthetic 条目由 App composition 使用 `plugin_host` helper 在真实目录恢复后淘汰，Presentation 不解析协议 token。Cloudflare interceptor、256 KiB 数据块、普通文件直接读取和 Android document bridge v4 流式/range 生命周期已接入既有 DownloadSession/Pipeline。当前环境静态/宿主契约已通过；无 Flutter/Dart/Android Gradle/Rust 工具链，因此 analyzer、Dart/Flutter tests、kernel/APK 和真机性能仍未验证。
+
 ## dev.84 状态
 
 源码已关闭 dev.83 对 Mihon 图片“全部可宿主直连”的错误假设，并按 source client 能力保留 JMComic 等扩展响应转译，并通过 transport revision 使旧未转译 artifact 失效。组合目录、详情元数据、按 token/source revision 复用持久 page list 的页数投影和详情交互已迁移；当前环境仍无 Flutter/Dart/Gradle/Rust 工具链，真实 analyzer、Flutter tests、Android build 与设备验证尚未完成。

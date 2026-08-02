@@ -35,9 +35,13 @@ final class ImageFolderScreen extends StatelessWidget {
       record: record,
       byteLoaders: <String, LocalImageFileBytesLoader>{
         for (final image in folder.files)
-          image.sourceId: () => bytesLoader == null
-              ? image.readAsBytes()
-              : bytesLoader!(image),
+          if (image.sourceUri.scheme != 'content' &&
+              (bytesLoader != null ||
+                  image.hasCustomBytesLoader ||
+                  image.sourceUri.scheme == 'memory'))
+            image.sourceId: () => bytesLoader == null
+                ? image.readAsBytes()
+                : bytesLoader!(image),
       },
       onPreviewStateChanged: onPreviewStateChanged,
       initialProgress: initialProgress,
@@ -95,14 +99,19 @@ final class ImportedImageChapterScreen extends StatelessWidget {
       final uri = chapter.pages[index].uri;
       final loader = byteLoaders[page.sourceId];
       final responseLoader = responseLoaders[page.sourceId];
-      if (loader != null || responseLoader != null || !_isRemoteMediaUri(uri)) {
+      if (loader != null || responseLoader != null || uri.scheme == 'content') {
         sources[uri] = LoaderTransportSource(
           revision: '${record.sourceRevision}:$index',
-          loadBytes: loader ??
-              (responseLoader == null
-                  ? () => readLocalImageSource(page.sourceId)
+          loadBytes: loader,
+          openResponse: responseLoader ??
+              (loader == null && uri.scheme == 'content'
+                  ? ({ByteRange? range, Validators? validators}) =>
+                      _openLocalMediaResponse(
+                        page.sourceId,
+                        range: range,
+                        validators: validators,
+                      )
                   : null),
-          openResponse: responseLoader,
         );
       }
     }
@@ -356,3 +365,28 @@ final class WebpPlayerScreen extends StatelessWidget {
   }
 }
 
+
+
+Future<ByteResponse> _openLocalMediaResponse(
+  String sourceId, {
+  ByteRange? range,
+  Validators? validators,
+}) async {
+  range?.validate();
+  final response = await openLocalImageSource(
+    sourceId,
+    start: range?.start ?? 0,
+    endExclusive: range?.end == null ? null : range!.end! + 1,
+    expectedRevision: validators?.etag,
+  );
+  final partial = response.partial;
+  return ByteResponse(
+    bytes: response.bytes,
+    statusCode: partial ? 206 : 200,
+    rangeStart: response.rangeStart,
+    totalLength: response.totalLength,
+    validators: Validators(etag: response.revision),
+    rangeSupported: response.rangeSupported,
+    onDiscard: response.close,
+  );
+}

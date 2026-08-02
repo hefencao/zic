@@ -45,7 +45,7 @@ void main() {
   test('streams a large promoted artifact in cooperative chunks', () async {
     final uri = Uri.parse('https://example.invalid/large-page.bin');
     final id = _downloadId(uri, 'page-large');
-    final bytes = Uint8List(160 * 1024);
+    final bytes = Uint8List(defaultTransportChunkBytes * 2 + 32 * 1024);
     final cache = _MemoryArtifactStore(<DownloadId, Uint8List>{id: bytes});
     final transport = ArtifactCacheTransport(
       cache: cache,
@@ -56,7 +56,14 @@ void main() {
     final response = await transport.open(uri);
     final chunks = await response.bytes.map((chunk) => chunk.length).toList();
 
-    expect(chunks, <int>[64 * 1024, 64 * 1024, 32 * 1024]);
+    expect(
+      chunks,
+      <int>[
+        defaultTransportChunkBytes,
+        defaultTransportChunkBytes,
+        32 * 1024,
+      ],
+    );
   });
 
   test('rejects a read pool backed by another cache', () {

@@ -1,3 +1,12 @@
+## dev.85 Cloudflare 目录失败与本地文档流所有权
+
+- `plugin_host_bridge/MihonRuntimeDriver` 唯一拥有 Mihon 详情/章节调用结果、能力缺失判定和 synthetic gallery 资格。调用失败必须冒泡；权威空目录也不得被当成失败或 gallery。synthetic 仅允许在 chapter-list 能力不存在且非空 gallery 页面预检成功时创建。
+- Mihon opaque synthetic identity 的解析属于 `plugin_host` runtime 协议适配层。App composition 可调用显式 helper 协调旧持久条目与新权威目录；详情 Presentation、catalog storage 与 Reader 不解析 token。
+- Cloudflare 自动 challenge 属于隔离 Mihon runtime 的网络兼容层，共享 Android `CookieManager`；手动 WebView 是由 App composition 注入详情 Presentation 的命令 callback。Presentation 不接触 Cookie、OkHttp client、插件对象或 session。
+- `local_media_bridge` 拥有 Android document descriptor/handle 与 open/readChunk/close 生命周期；`local_media` 将其适配为带 range、validator、partial 与 close 的只读流。普通文件由 `transport/FileTransport` 直接读取。
+- `pipeline_runtime` 仍是本地页面 DownloadSession、artifact、resume、decode/upload 与进度的唯一所有者。平台流只作为 transport source 注入，不建立 App/Reader 私有缓存或第二会话。
+- 256 KiB 是数据 I/O 默认块；64 KiB source wake/telemetry 聚合仍由 sessions 诊断策略拥有，二者不得混同。Reader 7/3、2/1、current/transition 与 5/3/2 不变。
+
 ## dev.84 Mihon 转译与详情元数据所有权
 
 - `plugin_host_bridge` 识别扩展 source client 的自定义网络能力并决定 request plan 是否需要 runtime transform；App、Reader、downloads 不识别 JMComic 或网站规则。

@@ -37,7 +37,9 @@ class RuntimeCloudflareInterceptor(
         if (!response.isCloudflareChallenge()) return response
 
         response.close()
-        val previousClearance = clearanceCookie(request.url.toString())
+        val requestUrl = request.url.toString()
+        val previousClearance = clearanceCookie(requestUrl)
+        clearClearanceCookie(requestUrl)
         resolveWithWebView(request, previousClearance)
         return chain.proceed(request)
     }
@@ -89,7 +91,12 @@ class RuntimeCloudflareInterceptor(
             }
         }
 
-        latch.await(CLOUDFLARE_WAIT_SECONDS, TimeUnit.SECONDS)
+        try {
+            latch.await(CLOUDFLARE_WAIT_SECONDS, TimeUnit.SECONDS)
+        } catch (error: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw IOException("Cloudflare verification was interrupted", error)
+        }
         mainHandler.post {
             webView?.run {
                 stopLoading()
@@ -104,6 +111,11 @@ class RuntimeCloudflareInterceptor(
         }
     }
 
+    private fun clearClearanceCookie(url: String) {
+        cookieManager.setCookie(url, "cf_clearance=; Max-Age=0; Path=/")
+        cookieManager.flush()
+    }
+
     private fun clearanceCookie(url: String): String? = cookieManager.getCookie(url)
         .orEmpty()
         .split(';')
@@ -111,9 +123,8 @@ class RuntimeCloudflareInterceptor(
         .firstOrNull { it.startsWith("cf_clearance=") }
 
     private fun Response.isCloudflareChallenge(): Boolean {
-        if (code !in CLOUDFLARE_STATUS_CODES ||
-            header("Server")?.lowercase(Locale.US) != "cloudflare"
-        ) {
+        val server = header("Server")?.lowercase(Locale.US)
+        if (code !in CLOUDFLARE_STATUS_CODES || server !in CLOUDFLARE_SERVERS) {
             return false
         }
         if (header("cf-mitigated")?.equals("challenge", ignoreCase = true) == true) {
@@ -140,9 +151,10 @@ private fun isSafeWebViewHeader(rawName: String, rawValue: String): Boolean {
     return name != "connection" || value != "upgrade"
 }
 
-private const val CLOUDFLARE_WAIT_SECONDS = 8L
+private const val CLOUDFLARE_WAIT_SECONDS = 30L
 private const val CLOUDFLARE_BODY_LIMIT = 128L * 1024L
 private val CLOUDFLARE_STATUS_CODES = setOf(403, 503)
+private val CLOUDFLARE_SERVERS = setOf("cloudflare", "cloudflare-nginx")
 private val UNSAFE_WEBVIEW_HEADERS = setOf(
     "content-length",
     "host",

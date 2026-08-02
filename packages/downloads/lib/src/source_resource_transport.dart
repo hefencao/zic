@@ -319,7 +319,7 @@ final class _SourceResourceTransport implements Transport {
         ? (range.end! + 1).clamp(start, bytes.length).toInt()
         : bytes.length;
     return ByteResponse(
-      bytes: Stream<List<int>>.value(Uint8List.sublistView(bytes, start, end)),
+      bytes: _chunkRuntimeBytes(Uint8List.sublistView(bytes, start, end)),
       statusCode: canRange ? HttpStatus.partialContent : HttpStatus.ok,
       rangeStart: start,
       totalLength: bytes.length,
@@ -494,4 +494,13 @@ String _fnv(Uint8List bytes) {
     hash = (hash * 0x100000001b3) & 0xffffffffffffffff;
   }
   return hash.toRadixString(16).padLeft(16, '0');
+}
+
+
+Stream<List<int>> _chunkRuntimeBytes(Uint8List bytes) async* {
+  const chunkSize = defaultTransportChunkBytes;
+  for (var offset = 0; offset < bytes.lengthInBytes; offset += chunkSize) {
+    final end = (offset + chunkSize).clamp(0, bytes.lengthInBytes).toInt();
+    yield Uint8List.sublistView(bytes, offset, end);
+  }
 }

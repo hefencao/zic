@@ -690,6 +690,76 @@ void main() {
     expect(find.text('1 章 · 页数待加载'), findsOneWidget);
   });
 
+  testWidgets('empty source catalog shows WebView recovery instead of a chapter',
+      (tester) async {
+    final source = _FixtureSource(
+      'mihon:fixture-empty',
+      '空目录源',
+      emptyCatalog: true,
+    );
+    final preference = ComicPreference.defaults(
+      sourceId: source.sourceId,
+      comicId: source._comicId,
+    );
+    final library = details.ComicDetailsLibrarySnapshot(
+      chapters: const <ImportedLibraryEntry>[],
+      sourceChapters: const <Chapter>[],
+      readStates: const <String, ChapterReadState>{},
+      preference: preference,
+    );
+    var webViewOpens = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: details.RemoteComicDetailsScreen(
+          source: source,
+          summary: SourceComicSummary(
+            sourceId: source.sourceId,
+            comicId: source._comicId,
+            title: source._comic.title,
+            authors: source._comic.authors,
+            coverUri: source._comic.coverUri,
+          ),
+          initialLibrary: library,
+          categories: const <LibraryCategory>[],
+          loadCover: ({
+            required String sourceId,
+            required String comicId,
+            required Uri? coverUri,
+            required ImportedLibraryEntry? fallbackChapter,
+          }) async => throw StateError('cover must not load for failed catalog'),
+          reloadLibrary: ({required bool refreshContent}) async => library,
+          ensureSourceChapter: (_, __, ___) async =>
+              throw StateError('chapter must not be synthesized'),
+          persistComic: (_, __) async {},
+          onPreferenceChanged: (_) async {},
+          onReadChanged: (_, __) async {},
+          onOpenChapter: (
+            _, {
+            required bool refreshRemote,
+            required String title,
+          }) async {},
+          onDownloadChapter: (_) async {},
+          inspectChapterDownload: (chapter) async =>
+              ChapterDownloadSnapshot.idle(chapter),
+          downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
+          onDownloadComic: (_) async {},
+          onOpenSourceWebView: () async {
+            webViewOpens++;
+          },
+        ),
+      ),
+    );
+
+    await _pumpUntilFound(tester, find.byKey(details.comicDetailsOpenWebViewKey));
+    expect(
+      find.byKey(sourceChapterKey(source.sourceId, source._chapterId)),
+      findsNothing,
+    );
+    await _tapVisible(tester, find.byKey(details.comicDetailsOpenWebViewKey));
+    expect(webViewOpens, 1);
+  });
+
   testWidgets('source comic details retries a transient source failure',
       (tester) async {
     final store = MemoryImportedLibraryStore();
@@ -737,6 +807,7 @@ final class _FixtureSource
     this.revealSecondChapterOnRefresh = false,
     this.runtimePageUri = false,
     this.catalogPageCount = 1,
+    this.emptyCatalog = false,
   });
 
   @override
@@ -748,6 +819,7 @@ final class _FixtureSource
   final bool revealSecondChapterOnRefresh;
   final bool runtimePageUri;
   final int catalogPageCount;
+  final bool emptyCatalog;
   int _comicLoads = 0;
   int _chapterLoads = 0;
   int _chapterRefreshes = 0;
@@ -839,10 +911,12 @@ final class _FixtureSource
         includeSecondChapter || (revealSecondChapterOnRefresh && loadIndex > 0);
     return ComicManifest(
       comic: _comic,
-      chapters: <Chapter>[
-        _chapter,
-        if (showSecond) _secondChapter,
-      ],
+      chapters: emptyCatalog
+          ? const <Chapter>[]
+          : <Chapter>[
+              _chapter,
+              if (showSecond) _secondChapter,
+            ],
     );
   }
 

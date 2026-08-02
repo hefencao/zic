@@ -27,7 +27,7 @@ class NetworkHelper(context: Context) {
             .dns(FallbackDns())
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)
-            .callTimeout(15, TimeUnit.SECONDS)
+            .callTimeout(45, TimeUnit.SECONDS)
             .addInterceptor(
                 RuntimeCloudflareInterceptor(context, ::defaultUserAgentProvider),
             )

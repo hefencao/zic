@@ -1,10 +1,16 @@
-# dev.84 handoff
+# dev.85 handoff
 
-唯一后续基线：`zic_v0.31.0-dev.84_mihon-transform-details-metadata.zip`。
+唯一后续基线：`zic_v0.31.0-dev.85_cloudflare-catalog-local-stream.zip`。
 
-完成：JMComic 静态响应 transform capability 与旧 artifact revision 淘汰、Mihon 1.6 `SMangaUpdate` 章节权威采用、source name/description/genres tags 翻译与持久化、详情页图标/继续/tags/已知页数投影、稳定进度测试。
+完成：staged 覆盖、Mihon Cloudflare runtime interceptor、章节失败/权威空目录与 synthetic gallery 的区分、详情错误 + WebView 恢复入口、旧 synthetic 目录协调淘汰、256 KiB 数据块、普通文件直接分块、Android `content://` bridge v4 流式/range 生命周期，以及 owner 测试/门禁/文档。
 
-设备侧必须验证：JMComic 静态正文不再横条错位；无自定义 transform 的 Mihon 正文仍有流式首帧；18comic 章节列表可重复刷新；详情 source 名称、简介、tags、已下载页数正确；运行 analyzer、受影响 package tests、App tests 和 Android debug/release。
+设备侧必须验证：18comic/JMComic 在未通过 Cloudflare 时显示错误而不是单章节；WebView 完成验证后重试可恢复真实章节；真正无 chapter-list API 的 gallery 仍能通过非空正文预检生成一章；大尺寸本地文件和 SAF `content://` 首帧/翻页耗时及内存峰值改善；range resume 与取消关闭无句柄泄漏。运行 `flutter analyze`、受影响 package tests、App tests、Android kernel/debug/release 和真机契约。
+
+不得恢复：仅凭空列表创建单章节、在 Presentation 解析 Mihon token、完整 `readDocument` 作为 Reader 常规路径、把 content URI 预复制到 App 目录后才读取、或修改 7/3、2/1、current/transition、5/3/2 掩盖 I/O/请求错误。
+
+## Historical dev.84 record
+
+`dev.84` 仅为历史记录；后续不得回退或混入该树之外的候选补丁。Mihon 与 VibeVenera 参考源码继续只读。
 
 ## Historical dev.83 record
 

@@ -77,7 +77,7 @@ final class LoaderTransport implements Transport {
     final body = Uint8List.sublistView(bytes, start, endExclusive);
 
     return ByteResponse(
-      bytes: Stream<List<int>>.value(body),
+      bytes: _chunkedLoaderBytes(body),
       statusCode: canServeRange ? 206 : 200,
       rangeStart: start,
       totalLength: bytes.length,
@@ -95,4 +95,16 @@ String _fnv64Bytes(Uint8List bytes) {
     hash = (hash * 0x100000001b3) & 0xffffffffffffffff;
   }
   return hash.toRadixString(16).padLeft(16, '0');
+}
+
+
+Stream<List<int>> _chunkedLoaderBytes(Uint8List bytes) async* {
+  for (var offset = 0;
+      offset < bytes.lengthInBytes;
+      offset += defaultTransportChunkBytes) {
+    final end = (offset + defaultTransportChunkBytes)
+        .clamp(0, bytes.lengthInBytes)
+        .toInt();
+    yield Uint8List.sublistView(bytes, offset, end);
+  }
 }

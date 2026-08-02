@@ -229,7 +229,7 @@ ByteResponse? _cachedResponse({
 }
 
 Stream<List<int>> _chunkedBytes(Uint8List bytes) async* {
-  const chunkSize = 64 * 1024;
+  const chunkSize = defaultTransportChunkBytes;
   for (var offset = 0; offset < bytes.lengthInBytes; offset += chunkSize) {
     final end = (offset + chunkSize).clamp(0, bytes.lengthInBytes).toInt();
     yield Uint8List.sublistView(bytes, offset, end);

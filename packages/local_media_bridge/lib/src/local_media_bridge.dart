@@ -1,10 +1,12 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 const String localMediaBridgeChannelName = 'dev.zic/local_media';
-const int localMediaBridgeProtocolVersion = 3;
+const int localMediaBridgeProtocolVersion = 4;
+const int localMediaBridgeChunkBytes = 256 * 1024;
 
 @immutable
 final class LocalMediaDocument {
@@ -21,6 +23,27 @@ final class LocalMediaDocument {
   final String format;
   final String recognition;
   final int? byteLength;
+}
+
+@immutable
+final class LocalMediaDocumentResponse {
+  const LocalMediaDocumentResponse({
+    required this.bytes,
+    required this.rangeStart,
+    required this.totalLength,
+    required this.revision,
+    required this.rangeSupported,
+    required this.partial,
+    required this.close,
+  });
+
+  final Stream<List<int>> bytes;
+  final int rangeStart;
+  final int? totalLength;
+  final String revision;
+  final bool rangeSupported;
+  final bool partial;
+  final Future<void> Function() close;
 }
 
 @immutable
@@ -78,6 +101,90 @@ final class LocalMediaBridge {
       throw StateError('Android directory rescan returned no result');
     }
     return _parseDirectory(response);
+  }
+
+  Future<LocalMediaDocumentResponse> openDocument(
+    String sourceUri, {
+    int start = 0,
+    int? endExclusive,
+    String? expectedRevision,
+  }) async {
+    final normalized = sourceUri.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError.value(sourceUri, 'sourceUri', 'must not be empty');
+    }
+    if (start < 0 || (endExclusive != null && endExclusive < start)) {
+      throw ArgumentError('invalid local document byte range');
+    }
+    final response = await _channel.invokeMapMethod<String, Object?>(
+      'openDocument',
+      <String, Object?>{
+        'sourceUri': normalized,
+        'start': start,
+        if (endExclusive != null) 'endExclusive': endExclusive,
+        if (expectedRevision != null) 'expectedRevision': expectedRevision,
+      },
+    );
+    if (response == null) {
+      throw StateError('Android document open returned no response');
+    }
+    final handleId = _requiredString(response, 'handleId');
+    final rangeStart = _requiredInt(response, 'rangeStart');
+    final totalLength = response['totalLength'];
+    if (totalLength != null && (totalLength is! int || totalLength < 0)) {
+      throw const FormatException('Android document length is invalid');
+    }
+    final revision = _requiredString(response, 'revision');
+    final rangeSupported = response['rangeSupported'];
+    if (rangeSupported is! bool) {
+      throw const FormatException('Android document range support is invalid');
+    }
+    final partial = response['partial'];
+    if (partial is! bool) {
+      throw const FormatException('Android document range response is invalid');
+    }
+    return LocalMediaDocumentResponse(
+      bytes: _readDocumentChunks(handleId),
+      rangeStart: rangeStart,
+      totalLength: totalLength as int?,
+      revision: revision,
+      rangeSupported: rangeSupported,
+      partial: partial,
+      close: () => _closeDocumentHandle(handleId),
+    );
+  }
+
+  Stream<List<int>> _readDocumentChunks(String handleId) async* {
+    try {
+      while (true) {
+        final chunk = await _channel.invokeMethod<Uint8List>(
+          'readDocumentChunk',
+          <String, Object?>{
+            'handleId': handleId,
+            'maxBytes': localMediaBridgeChunkBytes,
+          },
+        );
+        if (chunk == null || chunk.isEmpty) {
+          break;
+        }
+        yield chunk;
+      }
+    } finally {
+      await _closeDocumentHandle(handleId);
+    }
+  }
+
+  Future<void> _closeDocumentHandle(String handleId) async {
+    try {
+      await _channel.invokeMethod<void>(
+        'closeDocument',
+        <String, Object?>{'handleId': handleId},
+      );
+    } on PlatformException catch (error) {
+      if (error.code != 'invalid_handle' && error.code != 'detached') {
+        rethrow;
+      }
+    }
   }
 
   Future<Uint8List> readDocument(String sourceUri) async {

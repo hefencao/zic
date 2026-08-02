@@ -22,4 +22,13 @@ Future<Uint8List> readLocalImageSource(String sourceId) {
   throw UnsupportedError('当前平台不支持读取本地图片来源：$sourceId');
 }
 
+Future<LocalImageSourceResponse> openLocalImageSource(
+  String sourceId, {
+  int start = 0,
+  int? endExclusive,
+  String? expectedRevision,
+}) {
+  throw UnsupportedError('当前平台不支持流式读取本地图片来源：$sourceId');
+}
+
 String? localImageFilePath(String sourceId) => null;

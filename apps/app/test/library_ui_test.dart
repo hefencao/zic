@@ -625,6 +625,13 @@ void main() {
       pageCount: 0,
       sourceRevision: '/photo/1',
     );
+    final reconciled = reconcileComicDetailsChapterEntries(
+      entries: <ImportedLibraryEntry>[
+        ImportedLibraryEntry(chapter: stale),
+      ],
+      sourceChapters: const <Chapter>[real],
+      isCompatibilityFallback: (chapterId) => chapterId == stale.chapterId,
+    );
     final comic = LibraryComic(
       sourceId: 'mihon:source',
       comicId: 'mihon:manga:fixture',
@@ -634,9 +641,7 @@ void main() {
       description: null,
       coverSourceId: null,
       readingDirection: ReadingDirection.vertical,
-      chapters: <ImportedLibraryEntry>[
-        ImportedLibraryEntry(chapter: stale),
-      ],
+      chapters: reconciled,
       sourceChapters: const <Chapter>[real],
       savedAt: DateTime.utc(2026, 8, 1),
       metadataUpdatedAt: DateTime.utc(2026, 8, 1),

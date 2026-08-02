@@ -208,7 +208,7 @@ final class Artifact {
     return snapshot;
   }
 
-  Stream<List<int>> readChunks({int chunkSize = 64 * 1024}) async* {
+  Stream<List<int>> readChunks({int chunkSize = 256 * 1024}) async* {
     _requireNotDisposed();
     if (chunkSize <= 0) {
       throw ArgumentError.value(chunkSize, 'chunkSize', 'must be positive');

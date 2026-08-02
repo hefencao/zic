@@ -349,7 +349,10 @@ internal class MihonRuntimeDriver private constructor(
             .readList("chapters", "getChapters", "chapterList", "getChapterList")
         val chapterFailures = failures
         var compatibilityChapters = emptyList<Any>()
-        var chapterCatalogAvailable = false
+        // A successful combined SMangaUpdate call proves that this source has
+        // an authoritative chapter-catalog capability even when it returns an
+        // empty list. Empty is not evidence for a gallery fallback.
+        var chapterCatalogAvailable = update != null
         if (updateChapters.isEmpty() && detailedChapters.isEmpty()) {
             val chapterModels = buildList {
                 add(detailedManga)
