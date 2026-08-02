@@ -1,3 +1,7 @@
+## dev.91 状态
+
+已在 dev.90 唯一基线上修复页面 output 生命周期错误。用户 Trace 的 14 次 page mount 只有 7 次首帧；首次成功页面返回后，多个 decode identity 在 depth=0 下持续 `decoding -> ended`，Upload 停在 `waitingFrame`。根因为 upload 已消费 FrameHolder，output 离开 current/transition 后被退休，但 decode demand 仍在预解码窗口，cursor 未 detach/restart。现在 demand detach 与 frame-budget trim 都由 UploadSession 通知 DecodeSession；空 holder 重建 cursor，retained demand 由 Coordinator follow-up。新增 source/cache read 聚合、decode/upload/present timing、playback lateness 与 output retirement Trace。当前 repository/Dart structure、dev.75–dev.91、Android dependency/Trace、Mihon ABI/classloader/chapter、Venera、Reader/Pipeline/UI、共享浏览器 Kotlin、native header 与本地 libwebp 1.6.0 fixtures 均通过；Flutter/Dart/Gradle/Android SDK/Cargo 不可用，analyzer、Dart/Flutter tests、APK/kernel、Rust 和真机结果仍未验证。
+
 ## dev.90 状态
 
 已在 dev.89 唯一基线上修复 Mihon ABI asset 的 network runtime 编译闭包：snapshot store 已进入 runtime source set、完整性检查与 keep。设备 Trace 中 439/440 长度的同源 identity 分别持有 342/1 章，且 syntheticCount 均为 0；确认根因是 Mihon `comicId` 编码可变 SManga 模型，而非卡片 key 或 synthetic fallback。source adapter 现提供规范化 URL 的 comparison-only canonical identity，catalog 合并别名并保留章节最完整的原始 locator。远程详情接受 canonical-equivalent 快照，App 对 canonical group 阻止单章节回归，并输出脱敏 alias Trace。旧精确 ID 路由 facade 已删除。当前环境已通过 repository/Dart structure、dev.90 gate、共享浏览器 Kotlin 编译和 Mihon payload/ABI/classloader/chapter 契约；Flutter/Dart/Gradle/Android SDK/Cargo 仍不可用。

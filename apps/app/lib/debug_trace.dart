@@ -20,7 +20,10 @@ TraceHighlightLevel traceHighlightLevel(TraceEvent event) =>
       TraceEventKind.pageCurrent ||
       TraceEventKind.decodeDemand ||
       TraceEventKind.uploadDemand ||
-      TraceEventKind.framePresented => TraceHighlightLevel.activity,
+      TraceEventKind.sourceRead ||
+      TraceEventKind.pageOutputReleased ||
+      TraceEventKind.framePresented ||
+      TraceEventKind.playbackFrameDue => TraceHighlightLevel.activity,
       _ => TraceHighlightLevel.normal,
     };
 
@@ -47,7 +50,10 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     TraceEventKind.pageTransition,
     TraceEventKind.decodeDemand,
     TraceEventKind.uploadDemand,
+    TraceEventKind.sourceRead,
+    TraceEventKind.pageOutputReleased,
     TraceEventKind.framePresented,
+    TraceEventKind.playbackFrameDue,
   };
 
   final int maxEvents;

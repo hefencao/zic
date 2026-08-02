@@ -136,8 +136,8 @@ final class UploadRegistry {
     return _sessions[id]?.advance(frameIndex) ?? false;
   }
 
-  void detach(DecodeId id) {
-    _sessions[id]?.detach();
+  bool detach(DecodeId id) {
+    return _sessions[id]?.detach() ?? false;
   }
 
   bool evict(DecodeId id) {

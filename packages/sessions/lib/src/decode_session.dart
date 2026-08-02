@@ -165,7 +165,9 @@ final class DecodeSession {
             message: 'decode demand was superseded',
           );
         }
+        final decodeStartedAt = clock.nowMicros();
         final step = await _cursor!.frames.decodeNext();
+        final decodeMicros = clock.nowMicros() - decodeStartedAt;
         if (cancel.cancelled || download.epoch != epoch || _revision != revision) {
           step.frame?.dispose();
           cancel.throwIfCancelled();
@@ -211,6 +213,12 @@ final class DecodeSession {
                 'depth': holder.depth,
                 'target': targetDepth,
                 'preparedDepth': preparedDepth,
+                'decodeMicros': decodeMicros < 0 ? 0 : decodeMicros,
+                'width': frame.width,
+                'height': frame.height,
+                'durationMicros': frame.duration.inMicroseconds,
+                'sourceLength': source.length,
+                'sourceSealed': source.sealed,
               },
             );
         }
@@ -244,6 +252,23 @@ final class DecodeSession {
       _setState(DecodeState.idle);
     }
     return removed;
+  }
+
+  /// Invalidates an exhausted cursor when its uploaded output is retired while
+  /// the page is still inside the decode window.
+  ///
+  /// The upload lane owns platform output retirement, but only the decode
+  /// session can recreate a consumed static frame or restart an animation from
+  /// its authoritative encoded source. Held predecoded frames remain intact.
+  bool prepareForOutputLoss() {
+    _requireOpen();
+    if ((_holder?.depth ?? 0) > 0) {
+      return false;
+    }
+    _revision++;
+    _restartAfterDetach = true;
+    _setState(DecodeState.idle);
+    return true;
   }
 
   void detach({int retainDepth = 1}) {

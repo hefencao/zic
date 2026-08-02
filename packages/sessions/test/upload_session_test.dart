@@ -48,11 +48,13 @@ void main() {
 
     final uploader = _Uploader();
     final playbackClock = _Clock();
+    final trace = MemoryTraceSink();
     final upload = UploadSession(
       id: decode.id,
       decode: decode,
       uploader: uploader,
       clock: playbackClock,
+      traceSink: trace,
     );
     final snapshots = <UploadSnapshot>[];
     upload.addSnapshotListener(snapshots.add);
@@ -93,7 +95,19 @@ void main() {
     expect(upload.playbackState, PlaybackState.idle);
     expect(snapshots.any((snapshot) => snapshot.state == UploadState.ready), isTrue);
 
-    upload.detach();
+    expect(upload.detach(), isTrue);
+    expect(decode.state, DecodeState.idle);
+    final uploaded = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.frameUploaded,
+    );
+    expect(uploaded.payload['uploadMicros'], isA<int>());
+    expect(uploaded.payload['inputBytes'], greaterThan(0));
+    expect(uploaded.payload['outputBytes'], greaterThan(0));
+    final released = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.pageOutputReleased,
+    );
+    expect(released.payload['reason'], 'demand-detached');
+    expect(released.payload['decodeRestarted'], isTrue);
     expect(uploader.released, <DecodeId>[decode.id]);
     expect(uploader.outputs.single.disposed, isFalse);
     claim.release();

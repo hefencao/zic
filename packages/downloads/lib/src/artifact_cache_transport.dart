@@ -82,8 +82,17 @@ final class ArtifactCacheTransport implements Transport {
               range: range,
               revision: revision,
               readMicros: readMicros,
+              sourceClass: 'persistent-artifact',
             );
-            return response;
+            return _traceResponse(
+              response,
+              source: 'artifact-cache',
+              sourceClass: 'persistent-artifact',
+              id: id,
+              uri: uri,
+              revision: revision,
+              openMicros: readMicros,
+            );
           }
         }
       } on Object catch (error) {
@@ -96,17 +105,36 @@ final class ArtifactCacheTransport implements Transport {
         );
       }
     }
+    final fallback = _fallbackFor(uri);
+    final openStarted = _clock?.nowMicros();
+    final response = await fallback.open(
+      uri,
+      range: range,
+      validators: validators,
+    );
+    final openMicros = openStarted == null
+        ? null
+        : (_clock!.nowMicros() - openStarted).clamp(0, 1 << 62).toInt();
+    final sourceClass = _originSourceClass(uri, fallback);
     _recordSource(
       source: 'origin',
       id: id,
       uri: uri,
       range: range,
       revision: revision,
+      readMicros: openMicros,
+      sourceClass: sourceClass,
+      statusCode: response.statusCode,
+      totalLength: response.totalLength,
     );
-    return _fallbackFor(uri).open(
-      uri,
-      range: range,
-      validators: validators,
+    return _traceResponse(
+      response,
+      source: 'origin',
+      sourceClass: sourceClass,
+      id: id,
+      uri: uri,
+      revision: revision,
+      openMicros: openMicros,
     );
   }
 
@@ -149,6 +177,9 @@ final class ArtifactCacheTransport implements Transport {
     int? bytes,
     int? revision,
     int? readMicros,
+    String? sourceClass,
+    int? statusCode,
+    int? totalLength,
   }) {
     final clock = _clock;
     if (clock == null) {
@@ -168,11 +199,132 @@ final class ArtifactCacheTransport implements Transport {
           if (range != null) 'rangeStart': range.start,
           if (range?.end != null) 'rangeEnd': range!.end,
           if (readMicros != null) 'readMicros': readMicros,
+          if (sourceClass != null) 'sourceClass': sourceClass,
+          if (statusCode != null) 'statusCode': statusCode,
+          if (totalLength != null) 'totalLength': totalLength,
+          'uriScheme': uri.scheme.isEmpty ? 'file' : uri.scheme,
           'consumer': 'session-copy',
         },
       ),
     );
   }
+
+  ByteResponse _traceResponse(
+    ByteResponse response, {
+    required String source,
+    required String sourceClass,
+    required DownloadId? id,
+    required Uri uri,
+    required int? revision,
+    required int? openMicros,
+  }) {
+    final clock = _clock;
+    if (clock == null) {
+      return response;
+    }
+    final streamStarted = clock.nowMicros();
+    var firstChunkMicros = 0;
+    var bytes = 0;
+    var chunks = 0;
+    var minChunkBytes = 0;
+    var maxChunkBytes = 0;
+    var maxChunkGapMicros = 0;
+    var lastChunkMicros = streamStarted;
+    var completed = false;
+    Object? failure;
+
+    Stream<List<int>> tracedBytes() async* {
+      try {
+        await for (final chunk in response.bytes) {
+          final nowMicros = clock.nowMicros();
+          final chunkGapMicros =
+              (nowMicros - lastChunkMicros).clamp(0, 1 << 62).toInt();
+          if (chunks == 0) {
+            firstChunkMicros =
+                (nowMicros - streamStarted).clamp(0, 1 << 62).toInt();
+            minChunkBytes = chunk.length;
+          } else if (chunk.length < minChunkBytes) {
+            minChunkBytes = chunk.length;
+          }
+          if (chunk.length > maxChunkBytes) {
+            maxChunkBytes = chunk.length;
+          }
+          if (chunkGapMicros > maxChunkGapMicros) {
+            maxChunkGapMicros = chunkGapMicros;
+          }
+          lastChunkMicros = nowMicros;
+          chunks++;
+          bytes += chunk.length;
+          yield chunk;
+        }
+        completed = true;
+      } on Object catch (error) {
+        failure = error;
+        rethrow;
+      } finally {
+        _traceSink.record(
+          traceEvent(
+            clock: clock,
+            sessionId: _sessionId,
+            kind: TraceEventKind.sourceRead,
+            identityHash: id?.key,
+            revision: revision,
+            payload: <String, Object?>{
+              'source': source,
+              'sourceClass': sourceClass,
+              'uriScheme': uri.scheme.isEmpty ? 'file' : uri.scheme,
+              'statusCode': response.statusCode,
+              'rangeStart': response.rangeStart,
+              if (response.totalLength != null)
+                'totalLength': response.totalLength,
+              if (openMicros != null) 'openMicros': openMicros,
+              'firstChunkMicros': firstChunkMicros,
+              'streamMicros':
+                  (clock.nowMicros() - streamStarted).clamp(0, 1 << 62).toInt(),
+              'bytes': bytes,
+              'chunks': chunks,
+              'minChunkBytes': minChunkBytes,
+              'maxChunkBytes': maxChunkBytes,
+              'maxChunkGapMicros': maxChunkGapMicros,
+              'completed': completed,
+              if (failure != null) 'failure': failure.toString(),
+              'consumer': 'session-copy',
+            },
+          ),
+        );
+      }
+    }
+
+    return ByteResponse(
+      bytes: tracedBytes(),
+      statusCode: response.statusCode,
+      rangeStart: response.rangeStart,
+      totalLength: response.totalLength,
+      validators: response.validators,
+      rangeSupported: response.rangeSupported,
+      onDiscard: response.discard,
+    );
+  }
+}
+
+String _originSourceClass(Uri uri, Transport transport) {
+  final scheme = uri.scheme.toLowerCase();
+  if (scheme == 'content') {
+    return 'local-document';
+  }
+  if (scheme.isEmpty || scheme == 'file') {
+    return 'local-file';
+  }
+  if (scheme == 'asset') {
+    return 'asset';
+  }
+  if (transport is LoaderTransport) {
+    return 'source-loader';
+  }
+  if (scheme.startsWith('mihon') || scheme.startsWith('venera')) {
+    return 'plugin-resource';
+  }
+  return 'remote';
 }
 
 Map<String, DownloadId> _uniqueIdentities(

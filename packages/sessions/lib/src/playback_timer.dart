@@ -10,6 +10,13 @@ final class PlaybackTimer {
   int? get frameIndex => _frameIndex;
   bool get active => _state != PlaybackState.idle;
 
+  int lateByUs(int nowUs) {
+    if (_state != PlaybackState.running || nowUs <= _deadlineUs) {
+      return 0;
+    }
+    return nowUs - _deadlineUs;
+  }
+
   int remainingUs(int nowUs) {
     switch (_state) {
       case PlaybackState.idle:

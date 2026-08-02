@@ -278,7 +278,6 @@ void main() {
     expect(decodeDemand.monotonicMicros, lessThan(decodeStarted.monotonicMicros));
     expect(decodeStarted.monotonicMicros, lessThan(frameDecoded.monotonicMicros));
 
-
     final claim = uploads.find(decodeId)?.claimPresent();
     expect(claim, isNotNull);
     await uploads.find(decodeId)!.present(claim!);
@@ -413,6 +412,158 @@ void main() {
     await coordinator.dispose();
     await downloads.dispose();
   });
+
+  test('retired output re-primes a consumed static frame before page revisit',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('live_revisit_test_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final source = File('${temp.path}/source.webp');
+    await source.writeAsBytes('RIFF....WEBPpayload'.codeUnits);
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'revisit',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: source.uri,
+    );
+    final decodeId = DecodeId(
+      download: id,
+      physicalWidth: 8,
+      physicalHeight: 8,
+      pixelFormat: PixelFormat.rgba8888,
+      renderer: RendererKind.flutterImage,
+    );
+    final clock = _Clock();
+    final trace = MemoryTraceSink();
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+      sources: sources,
+      traceSink: trace,
+    );
+    final cursors = _StaticCursorFactory();
+    final decodes = DecodeRegistry(
+      downloads: downloads,
+      cursors: cursors,
+      clock: clock,
+      traceSink: trace,
+    );
+    final uploader = _TestUploader();
+    final uploads = UploadRegistry(
+      decodes: decodes,
+      uploader: uploader,
+      clock: clock,
+      traceSink: trace,
+    );
+    final coordinator = LiveCoordinator(
+      registry: downloads,
+      transportFor: (_) => const FileTransport(),
+      clock: clock,
+      traceSink: trace,
+      decodes: decodes,
+      uploads: uploads,
+      net: NetLane(maxActive: 1),
+      decode: DecodeLane(maxActive: 1),
+      upload: UploadLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await coordinator.dispose();
+      uploads.dispose();
+      decodes.dispose();
+      await downloads.dispose();
+    });
+
+    DemandPlan plan({required int revision, required bool upload}) => DemandPlan(
+          revision: revision,
+          downloads: <DownloadId, DownloadDemand>{
+            id: DownloadDemand(
+              role: PageRole.current,
+              priority: 1000,
+              reason: 'revisit',
+              expirationRevision: revision + 1,
+            ),
+          },
+          decodes: <DecodeId, DecodeDemand>{
+            decodeId: DecodeDemand(
+              role: PageRole.near,
+              priority: 720,
+              targetWatermark: 1,
+              reason: 'revisit',
+              expirationRevision: revision + 1,
+            ),
+          },
+          uploads: upload
+              ? <DecodeId, UploadDemand>{
+                  decodeId: UploadDemand(
+                    role: PageRole.current,
+                    priority: 1000,
+                    reason: 'revisit',
+                    expirationRevision: revision + 1,
+                  ),
+                }
+              : const <DecodeId, UploadDemand>{},
+          keep: <ResourceId>{
+            ResourceId.download(id),
+            ResourceId.decode(decodeId),
+          },
+        );
+
+    var prior = DemandPlan.empty();
+    final visible = plan(revision: 1, upload: true);
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: visible,
+        diff: DemandDiff.between(prior, visible),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    await coordinator.idle();
+    expect(uploads.find(decodeId)?.state, UploadState.ready);
+    expect(decodes.find(decodeId)?.snapshot.depth, 0);
+    expect(uploader.outputs, hasLength(1));
+
+    prior = visible;
+    final predecoded = plan(revision: 2, upload: false);
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: predecoded,
+        diff: DemandDiff.between(prior, predecoded),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.near}),
+      ),
+    );
+    await coordinator.idle();
+    expect(decodes.find(decodeId)?.snapshot.depth, 1);
+    expect(cursors.created, 2);
+    final released = trace.events.lastWhere(
+      (event) => event.kind == TraceEventKind.pageOutputReleased,
+    );
+    expect(released.payload['reason'], 'demand-detached');
+    expect(released.payload['decodeRestarted'], isTrue);
+
+    prior = predecoded;
+    final revisited = plan(revision: 3, upload: true);
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: revisited,
+        diff: DemandDiff.between(prior, revisited),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    await coordinator.idle();
+    expect(uploads.find(decodeId)?.state, UploadState.ready);
+    expect(uploader.outputs, hasLength(2));
+  });
+
 }
 
 final class _ControlledTransport implements Transport {
@@ -509,6 +660,40 @@ final class _TestSource implements EncodedSource {
   SourceStatus seal(int epoch) {
     sealed = true;
     return SourceStatus.ok;
+  }
+
+  @override
+  void dispose() {}
+}
+
+final class _StaticCursorFactory implements CursorFactory {
+  int created = 0;
+
+  @override
+  CursorBinding create({
+    required DecodeId id,
+    required EncodedSource source,
+    required int epoch,
+  }) {
+    created++;
+    return CursorBinding(frames: _StaticCursor(epoch));
+  }
+}
+
+final class _StaticCursor implements FrameCursor {
+  _StaticCursor(this.epoch);
+
+  @override
+  final int epoch;
+  bool _emitted = false;
+
+  @override
+  Future<CursorStep> decodeNext() async {
+    if (_emitted) {
+      return const CursorStep.end();
+    }
+    _emitted = true;
+    return CursorStep.frame(_TestFrame(epoch, 0));
   }
 
   @override

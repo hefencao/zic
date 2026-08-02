@@ -192,7 +192,10 @@ final class UploadSession {
 
     _epoch = holder.epoch;
     _setState(UploadState.uploading);
+    final inputBytes = claim.frame.byteLength;
+    final inputDurationMicros = claim.frame.duration.inMicroseconds;
     late final OutputFrame uploaded;
+    late final int uploadMicros;
     try {
       cancel.throwIfCancelled();
       if (_revision != revision || decode.holder?.epoch != _epoch) {
@@ -201,7 +204,9 @@ final class UploadSession {
           message: 'upload demand changed before platform upload started',
         );
       }
+      final uploadStartedAt = clock.nowMicros();
       final candidate = await uploader.upload(id: id, frame: claim.frame);
+      uploadMicros = clock.nowMicros() - uploadStartedAt;
       if (cancel.cancelled ||
           _revision != revision ||
           decode.holder?.epoch != _epoch) {
@@ -291,6 +296,12 @@ final class UploadSession {
         'frame': uploaded.index,
         'renderer': uploaded.renderer.name,
         'role': demand.role.name,
+        'uploadMicros': uploadMicros < 0 ? 0 : uploadMicros,
+        'inputBytes': inputBytes,
+        'outputBytes': uploaded.byteLength,
+        'width': uploaded.width,
+        'height': uploaded.height,
+        'durationMicros': inputDurationMicros,
       },
     );
     return snapshot;
@@ -303,11 +314,23 @@ final class UploadSession {
       return 0;
     }
     final bytes = slot.frame.byteLength;
+    final frameIndex = slot.frame.index;
+    final presentClaims = slot.claims;
+    final decodeBefore = decode.snapshot;
     _playback.clear();
     _slot = null;
     slot.retire();
+    final decodeRestarted = decode.prepareForOutputLoss();
     _requestUploaderRelease();
     _setState(UploadState.waitingFrame);
+    _emitOutputReleased(
+      reason: 'frame-budget',
+      frameIndex: frameIndex,
+      outputBytes: bytes,
+      presentClaims: presentClaims,
+      decodeBefore: decodeBefore,
+      decodeRestarted: decodeRestarted,
+    );
     return bytes;
   }
 
@@ -344,7 +367,9 @@ final class UploadSession {
 
   Future<void> present(PresentClaim claim) async {
     _requireOpen();
+    final presentStartedAt = clock.nowMicros();
     await claim.present();
+    final presentMicros = clock.nowMicros() - presentStartedAt;
     if (identical(_slot?.frame, claim.frame)) {
       final micros = claim.frame.duration.inMicroseconds;
       final scaledMicros =
@@ -360,7 +385,12 @@ final class UploadSession {
     }
     _emit(
       TraceEventKind.framePresented,
-      <String, Object?>{'frame': claim.frame.index},
+      <String, Object?>{
+        'frame': claim.frame.index,
+        'presentMicros': presentMicros < 0 ? 0 : presentMicros,
+        'durationMicros': claim.frame.duration.inMicroseconds,
+        'playbackState': _playback.state.name,
+      },
     );
   }
 
@@ -408,7 +438,22 @@ final class UploadSession {
     _syncPlaybackPause(clock.nowMicros());
   }
 
-  int? takeDueFrame() => _playback.takeDue(clock.nowMicros());
+  int? takeDueFrame() {
+    final nowUs = clock.nowMicros();
+    final lateByMicros = _playback.lateByUs(nowUs);
+    final frameIndex = _playback.takeDue(nowUs);
+    if (frameIndex != null) {
+      _emit(
+        TraceEventKind.playbackFrameDue,
+        <String, Object?>{
+          'frame': frameIndex,
+          'lateByMicros': lateByMicros,
+          'speed': _playbackSpeed,
+        },
+      );
+    }
+    return frameIndex;
+  }
 
   void _syncPlaybackPause(int nowUs) {
     if (_userPaused || _viewportFrozen) {
@@ -418,12 +463,31 @@ final class UploadSession {
     }
   }
 
-  void detach() {
+  bool detach() {
     _requireOpen();
     _revision++;
+    final slot = _slot;
+    final hadOutput = slot != null && !slot.frame.disposed;
+    final frameIndex = slot?.frame.index;
+    final outputBytes = slot?.frame.byteLength ?? 0;
+    final presentClaims = slot?.claims ?? 0;
+    final decodeBefore = decode.snapshot;
     _retireCurrent();
+    final decodeRestarted =
+        hadOutput ? decode.prepareForOutputLoss() : false;
     _requestUploaderRelease();
     _setState(UploadState.idle);
+    if (slot != null) {
+      _emitOutputReleased(
+        reason: 'demand-detached',
+        frameIndex: frameIndex!,
+        outputBytes: outputBytes,
+        presentClaims: presentClaims,
+        decodeBefore: decodeBefore,
+        decodeRestarted: decodeRestarted,
+      );
+    }
+    return decodeRestarted;
   }
 
   void reset(SourceEpoch epoch) {
@@ -447,6 +511,28 @@ final class UploadSession {
     _notifySnapshot();
     _listeners.clear();
     _disposed = true;
+  }
+
+  void _emitOutputReleased({
+    required String reason,
+    required int frameIndex,
+    required int outputBytes,
+    required int presentClaims,
+    required DecodeSnapshot decodeBefore,
+    required bool decodeRestarted,
+  }) {
+    _emit(
+      TraceEventKind.pageOutputReleased,
+      <String, Object?>{
+        'reason': reason,
+        'frame': frameIndex,
+        'outputBytes': outputBytes,
+        'presentClaims': presentClaims,
+        'decodeState': decodeBefore.state.name,
+        'decodeDepth': decodeBefore.depth,
+        'decodeRestarted': decodeRestarted,
+      },
+    );
   }
 
   void _retireCurrent() {

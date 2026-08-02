@@ -1,3 +1,13 @@
+## dev.91 页面重入与媒体诊断规范
+
+1. 已上传 output 被 demand detach 或 frame budget 回收后，如果绑定 DecodeSession 的 holder 已空，则下一次 fill 必须重建 cursor；不得在 EOF cursor 上反复提交 decode。
+2. holder 中仍有 decoded frame 时不得因 output 回收而丢弃；动画正常 frame advance 不触发页面重入重置。
+3. output 回收由 UploadSession 原子执行；LiveCoordinator 只根据返回结果调度 retained decode，Reader/App 不访问 mutable session。
+4. 回页不得通过保留所有 texture、扩大 upload window、缩小预取窗口或创建 Presentation byte cache 实现。
+5. 本地/缓存读取必须产生可关联 DownloadId/DecodeId 的脱敏 Trace，至少包含来源类别、字节、总耗时和 chunk 聚合；不得输出完整插件 token 或文件内容。
+6. 每帧诊断至少覆盖 decode、upload、present 与 playback deadline lateness；Trace 不改变播放时序或成为状态权威来源。
+7. Pipeline profile 固定为下载前 7/后 3、预解码前 2/后 1、上传 current/transition、lane 5/3/2。
+
 ## dev.90 runtime 编译与 canonical identity 规范
 
 1. `generateMihonAbiAssets` 可引用的共享 Android 网络类必须全部位于 `network_bridge/android/src/runtime/kotlin`；主 AAR通过 source set复用同一文件，禁止复制实现。

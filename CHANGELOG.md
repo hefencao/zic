@@ -1,3 +1,12 @@
+## 0.31.0-dev.91：修复页面回切无限加载并补齐本地媒体 Trace
+
+- 根据设备 Trace 定位：upload 消费 decoded frame 后，页面离开 current/transition 会退休 output，但仍在前 2/后 1 decode window 的 DecodeSession 不 detach，空 holder 对应 cursor 停在 EOF；回页反复 `decoding -> ended` 并永久 `waitingFrame`。
+- UploadSession 在 demand detach 与 frame-budget trim 两条 output 回收路径中统一通知 DecodeSession；仅 holder 为空时标记 cursor 重建。LiveCoordinator 只在 retained decode 实际重置后提交 follow-up，upload 遇到 missing frame 也会唤醒现有 decode demand。
+- 动画正常 frame advance 不重启 cursor；不保留整章 texture、不新增 Reader/App bytes/ImageProvider cache，7/3、2/1、current/transition 与 5/3/2 保持不变。
+- 新增 `sourceRead` 聚合 Trace，区分 persistent artifact、session artifact、本地 file、Android document、插件资源与远程来源，并记录 open、首块、总流时长、块数、块尺寸和最大块间停顿。
+- `frameDecoded/frameUploaded/framePresented/playbackFrameDue/pageOutputReleased` 增加解码、上传、呈现、播放迟到和 output 生命周期字段；高频 chunk 只聚合，不逐块写事件。
+- 新增静态图页面离开再返回回归、UploadSession 输出退休回归、缓存/来源读取 Trace、playback lateness 测试、ADR 0075、dev.91 三清单审计和所有权门禁。
+
 ## 0.31.0-dev.90：修复 Mihon runtime 编译闭包与漫画身份别名
 
 - 将 `NetworkBrowserSnapshotStore` 移入 `network_bridge/android/src/runtime/kotlin`；该 source set 同时进入 network AAR 与 `generateMihonAbiAssets` 的隔离 Kotlin 编译，并加入 Mihon runtime 完整性检查和 release keep 规则。

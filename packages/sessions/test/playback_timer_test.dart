@@ -48,4 +48,20 @@ void main() {
     expect(timer.takeDue(10000), isNull);
     expect(timer.takeDue(35000), 2);
   });
+  test('reports playback lateness only while a frame is running', () {
+    final timer = PlaybackTimer();
+    timer.start(
+      frameIndex: 7,
+      duration: const Duration(milliseconds: 10),
+      nowUs: 1000,
+    );
+
+    expect(timer.lateByUs(10999), 0);
+    expect(timer.lateByUs(12000), 1000);
+    expect(timer.freeze(12000), isTrue);
+    expect(timer.lateByUs(20000), 0);
+    expect(timer.resume(20000), isTrue);
+    expect(timer.lateByUs(20000), 0);
+  });
+
 }

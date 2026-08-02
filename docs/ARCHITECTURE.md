@@ -1,3 +1,19 @@
+# dev.91 页面 output 生命周期与本地媒体诊断
+
+## 页面回切
+
+- UploadSession 唯一拥有 renderer output、present claim 和 output retirement。current/transition demand 移除或 frame budget trim 真正释放 output 时，由 UploadSession 调用绑定 DecodeSession 的 output-loss re-prime；LiveCoordinator 不直接操作 cursor。
+- DecodeSession 仍唯一拥有 cursor 与 FrameHolder。只有 holder 已空时才使 cursor 在下一次 fill 重建；若仍有预解码 frame，则保留该 frame。动画正常 `advance` 继续从下一帧推进，不使用页面离场重置。
+- LiveCoordinator 只在 decode demand 仍存在且 re-prime 成功时提交同 identity follow-up。Reader 仍只提交 observation/commands 并消费只读 output stream，不取得 session、cursor、texture 或 artifact。
+- output window 仍为 current/transition；不得用 Widget keepAlive、Reader 私有缓存或扩大 texture 数量代替 lifecycle 修复。
+
+## 本地与缓存媒体 Trace
+
+- `downloads.ArtifactCacheTransport` 记录 `sourceRead`：storage tier、origin class、URI scheme、range、open/首块/总时长、bytes、chunks、最小/最大 chunk 和最大 chunk gap。事件聚合于一次 response 消费，禁止逐 chunk Trace 风暴。
+- `pipeline_runtime` 对 direct promoted-artifact join 与 session artifact read 记录同一 source-read schema；这些事件只是诊断投影，不成为第二缓存或进度来源。
+- DecodeSession 记录每帧 decode 时间、source 长度/密封状态、尺寸、帧字节与 duration；UploadSession 记录 upload/present 时间和 playback deadline 迟到量。
+- `pageOutputReleased` 记录回收原因、output bytes、present claims、decode depth/state 与是否重建。原始 trace 保留权威事件；Debug UI 可合并显示。
+
 # dev.90 Mihon runtime 网络快照与漫画身份别名
 
 ## Runtime source set

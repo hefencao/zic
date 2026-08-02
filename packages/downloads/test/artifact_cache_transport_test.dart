@@ -39,7 +39,20 @@ void main() {
     expect(source.identityHash, id.key);
     expect(source.revision, 7);
     expect(source.payload['source'], 'artifact-cache');
+    expect(source.payload['sourceClass'], 'persistent-artifact');
     expect(source.payload['bytes'], 4);
+    final read = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.sourceRead,
+    );
+    expect(read.identityHash, id.key);
+    expect(read.payload['source'], 'artifact-cache');
+    expect(read.payload['sourceClass'], 'persistent-artifact');
+    expect(read.payload['bytes'], 4);
+    expect(read.payload['chunks'], 1);
+    expect(read.payload['minChunkBytes'], 4);
+    expect(read.payload['maxChunkBytes'], 4);
+    expect(read.payload['maxChunkGapMicros'], isA<int>());
+    expect(read.payload['completed'], isTrue);
   });
 
   test('streams a large promoted artifact in cooperative chunks', () async {
@@ -143,6 +156,13 @@ void main() {
     );
     expect(source.revision, 9);
     expect(source.payload['source'], 'origin');
+    final read = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.sourceRead,
+    );
+    expect(read.payload['source'], 'origin');
+    expect(read.payload['sourceClass'], 'remote');
+    expect(read.payload['bytes'], 2);
+    expect(read.payload['completed'], isTrue);
   });
 
   test('cache read failure falls back to the source transport', () async {

@@ -345,6 +345,7 @@ final class PipelineReaderSession {
           final cached = await reads.join(id);
           token.throwIfCancelled();
           if (cached != null) {
+            final joinMicros = clock.nowMicros() - readStarted;
             trace.record(
               traceEvent(
                 clock: clock,
@@ -354,10 +355,36 @@ final class PipelineReaderSession {
                 revision: revision,
                 payload: <String, Object?>{
                   'source': 'artifact-cache',
+                  'sourceClass': 'persistent-artifact',
                   'consumer': 'pipeline-presentation',
                   'bytes': cached.lengthInBytes,
-                  'joinMicros': clock.nowMicros() - readStarted,
+                  'joinMicros': joinMicros,
                   'sessionState': session.state.name,
+                },
+              ),
+            );
+            trace.record(
+              traceEvent(
+                clock: clock,
+                sessionId: sessionId,
+                kind: TraceEventKind.sourceRead,
+                identityHash: id.key,
+                revision: revision,
+                payload: <String, Object?>{
+                  'source': 'artifact-cache',
+                  'sourceClass': 'persistent-artifact',
+                  'uriScheme': asset.uri.scheme.isEmpty
+                      ? 'file'
+                      : asset.uri.scheme,
+                  'bytes': cached.lengthInBytes,
+                  'chunks': 1,
+                  'minChunkBytes': cached.lengthInBytes,
+                  'maxChunkBytes': cached.lengthInBytes,
+                  'firstChunkMicros': joinMicros < 0 ? 0 : joinMicros,
+                  'streamMicros': joinMicros < 0 ? 0 : joinMicros,
+                  'readMicros': joinMicros < 0 ? 0 : joinMicros,
+                  'completed': true,
+                  'consumer': 'pipeline-presentation',
                 },
               ),
             );
@@ -386,8 +413,33 @@ final class PipelineReaderSession {
       await _waitForPromotion(session, token);
     }
     token.throwIfCancelled();
+    final artifactReadStarted = clock.nowMicros();
     final bytes = await _workspace.readArtifact(session.artifact);
     token.throwIfCancelled();
+    final artifactReadMicros = clock.nowMicros() - artifactReadStarted;
+    trace.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.sourceRead,
+        identityHash: id.key,
+        revision: revision,
+        payload: <String, Object?>{
+          'source': 'session-artifact',
+          'sourceClass': _readerSourceClass(asset.uri),
+          'uriScheme': asset.uri.scheme.isEmpty ? 'file' : asset.uri.scheme,
+          'bytes': bytes.lengthInBytes,
+          'chunks': 1,
+          'minChunkBytes': bytes.lengthInBytes,
+          'maxChunkBytes': bytes.lengthInBytes,
+          'firstChunkMicros': artifactReadMicros < 0 ? 0 : artifactReadMicros,
+          'streamMicros': artifactReadMicros < 0 ? 0 : artifactReadMicros,
+          'readMicros': artifactReadMicros < 0 ? 0 : artifactReadMicros,
+          'completed': true,
+          'consumer': 'pipeline-presentation',
+        },
+      ),
+    );
     return bytes;
   }
 
@@ -541,4 +593,21 @@ final class PipelineReaderSession {
   void _requireOpen() {
     if (_disposed) throw StateError('pipeline Reader session is disposed');
   }
+}
+
+String _readerSourceClass(Uri uri) {
+  final scheme = uri.scheme.toLowerCase();
+  if (scheme == 'content') {
+    return 'local-document';
+  }
+  if (scheme.isEmpty || scheme == 'file') {
+    return 'local-file';
+  }
+  if (scheme == 'asset') {
+    return 'asset';
+  }
+  if (scheme.startsWith('mihon') || scheme.startsWith('venera')) {
+    return 'plugin-resource';
+  }
+  return 'remote';
 }

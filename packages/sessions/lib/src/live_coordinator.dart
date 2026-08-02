@@ -562,7 +562,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       _uploads.remove(id);
       _uploadDemandRevisions.remove(id);
       upload.cancel(id.key);
-      uploads?.detach(id);
+      final decodeDemanded = _decodes.containsKey(id);
+      final decodeRestarted = uploads?.detach(id) ?? false;
+      if (decodeDemanded && decodeRestarted) {
+        _wakeDecode(sessionId, id, force: true);
+      }
     }
     for (final entry in <MapEntry<DecodeId, UploadDemand>>[
       ...diff.added.entries,
@@ -651,7 +655,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
                   (before?.state != UploadState.ready ||
                       before?.epoch != after.epoch ||
                       before?.frameIndex != after.frameIndex);
-              if (producedFrame) {
+              if (producedFrame ||
+                  (after.state == UploadState.waitingFrame &&
+                      _decodes.containsKey(id))) {
                 _wakeDecode(sessionId, id, force: true);
               }
             }

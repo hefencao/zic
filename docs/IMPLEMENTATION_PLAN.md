@@ -1,3 +1,20 @@
+## dev.91 完成项与设备复验
+
+### 已完成
+
+- 从设备 Trace 复现 output 退休后 EOF cursor 未重建的静态/动画共性路径。
+- 将 demand detach 与 frame-budget trim 收敛到 UploadSession 的统一 output retirement 通知。
+- retained decode re-prime、waiting upload wake-up 和静态帧回页回归已实现。
+- 补齐本地/缓存 source read、decode、upload、present、playback lateness 与 output retirement Trace。
+- 新增 ADR 0075、dev.91 三清单审计和静态所有权门禁。
+
+### 下一步设备复验
+
+1. 静态图片前后切页多次，确认返回后出现新的 `frameDecoded -> frameUploaded -> firstFrameReady`，不再无限 loading。
+2. Animated WebP/GIF 前后切页，确认重新进入后可播放且不会在 `playbackFrameDue` 后长期缺少下一帧。
+3. 对本地大图、已缓存大图分别导出 Trace，比较 `sourceRead.streamMicros/maxChunkGapMicros`、`frameDecoded.decodeMicros`、`frameUploaded.uploadMicros` 和 `framePresented.presentMicros`。
+4. 若卡顿仍在，按 `playbackFrameDue.lateByMicros` 与下一次 frame upload/present 的间隔判断是调度、解码还是平台上传瓶颈。
+
 ## dev.90 完成项与设备复验
 
 已完成：runtime snapshot store source-set 迁移；Mihon 完整性/keep；source-owned canonical identity；catalog alias collapse；详情 identity matcher；canonical group 单章节回归拒绝；alias Trace；删除精确 ID 路由 facade；新增 owner tests、ADR、审计和门禁。
