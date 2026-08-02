@@ -249,23 +249,26 @@ internal class MihonRuntimeDriver private constructor(
 
     private fun loadComic(source: Any, comicId: String, requestId: String): Map<String, Any?> {
         val catalog = loadMihonComicCatalog(source, comicId, requestId)
+        // A failed chapter request is not evidence that this is a gallery with
+        // no chapters. Do not hide a real source/network failure behind the
+        // synthetic single-chapter fallback (this used to make JMComic appear
+        // to have one "正文" chapter while dropping its real catalog).
+        catalog.chapterFailure?.let { throw it }
         val sourceId = source.readValue("id", "getId")?.toString()
             ?: error("Mihon source id is missing")
         val transportRevision = mihonTransportRevision(sourceId, source)
-        val selectedChapters = selectMihonChapters(catalog.chapters) {
+        val selectedChapters = selectMihonChapters(
+            chapters = catalog.chapters,
+            allowSynthetic = !catalog.chapterCatalogAvailable,
+        ) {
             createSyntheticMihonChapter(source, catalog.manga)
         }
         val syntheticPageCount = if (selectedChapters.synthetic) {
-            try {
-                loadMihonPageModels(source, selectedChapters.chapters.single(), requestId).size
-                    .also { count ->
-                        require(count > 0) {
-                            "Mihon source exposed neither a chapter catalog nor readable gallery pages"
-                        }
+            loadMihonPageModels(source, selectedChapters.chapters.single(), requestId).size
+                .also { count ->
+                    require(count > 0) {
+                        "Mihon source exposed neither a chapter catalog nor readable gallery pages"
                     }
-            } catch (error: Throwable) {
-                catalog.chapterFailure?.let(error::addSuppressed)
-                throw error
             }
         } else {
             null
@@ -298,6 +301,7 @@ internal class MihonRuntimeDriver private constructor(
             "eu.kanade.tachiyomi.source.model.SManga",
             encoded,
         )
+        val failures = mutableListOf<Throwable>()
         val update = try {
             source.invokeFirst(
                 listOf(
@@ -306,7 +310,15 @@ internal class MihonRuntimeDriver private constructor(
                 ),
             ).unwrapAsync()
         } catch (error: Throwable) {
-            if (error.isMihonCapabilityAbsence()) null else throw error
+            if (error.isMihonCapabilityAbsence()) {
+                null
+            } else {
+                // Some extensions were built against the combined API but
+                // still only implement the legacy detail/chapter methods.
+                // Keep the failure and try those methods before giving up.
+                failures += error
+                null
+            }
         }
         ensureNotCancelled(requestId)
         val detailedManga = update?.readValue("manga", "getManga") ?: try {
@@ -317,7 +329,12 @@ internal class MihonRuntimeDriver private constructor(
                 ),
             ).unwrapAsync()
         } catch (error: Throwable) {
-            if (error.isMihonCapabilityAbsence()) manga else throw error
+            if (error.isMihonCapabilityAbsence()) {
+                manga
+            } else {
+                failures += error
+                manga
+            }
         }
         ensureNotCancelled(requestId)
 
@@ -330,8 +347,9 @@ internal class MihonRuntimeDriver private constructor(
             .orEmpty()
         val detailedChapters = detailedManga
             .readList("chapters", "getChapters", "chapterList", "getChapterList")
-        val chapterFailures = mutableListOf<Throwable>()
+        val chapterFailures = failures
         var compatibilityChapters = emptyList<Any>()
+        var chapterCatalogAvailable = false
         if (updateChapters.isEmpty() && detailedChapters.isEmpty()) {
             val chapterModels = buildList {
                 add(detailedManga)
@@ -348,6 +366,7 @@ internal class MihonRuntimeDriver private constructor(
                         chapterFailures += error
                         continue
                     }
+                    chapterCatalogAvailable = true
                     ensureNotCancelled(requestId)
                     if (loaded.isNotEmpty()) {
                         compatibilityChapters = loaded
@@ -372,7 +391,12 @@ internal class MihonRuntimeDriver private constructor(
         } else {
             null
         }
-        return MihonComicCatalog(detailedManga, chapters, chapterFailure)
+        return MihonComicCatalog(
+            manga = detailedManga,
+            chapters = chapters,
+            chapterFailure = chapterFailure,
+            chapterCatalogAvailable = chapterCatalogAvailable,
+        )
     }
 
     private fun createSyntheticMihonChapter(source: Any, manga: Any): Any {
@@ -439,7 +463,11 @@ internal class MihonRuntimeDriver private constructor(
             }
         }
         val catalog = loadMihonComicCatalog(source, comicId, requestId)
-        val selectedChapters = selectMihonChapters(catalog.chapters) {
+        catalog.chapterFailure?.let { throw it }
+        val selectedChapters = selectMihonChapters(
+            chapters = catalog.chapters,
+            allowSynthetic = !catalog.chapterCatalogAvailable,
+        ) {
             createSyntheticMihonChapter(source, catalog.manga)
         }
         val messages = selectedChapters.chapters.mapIndexed { index, chapter ->
@@ -1096,6 +1124,7 @@ private data class MihonComicCatalog(
     val manga: Any,
     val chapters: List<Any>,
     val chapterFailure: Throwable?,
+    val chapterCatalogAvailable: Boolean,
 )
 
 internal data class MihonChapterSelection<T>(
@@ -1105,9 +1134,14 @@ internal data class MihonChapterSelection<T>(
 
 internal inline fun <T> selectMihonChapters(
     chapters: List<T>,
+    allowSynthetic: Boolean = true,
     createSynthetic: () -> T,
 ): MihonChapterSelection<T> = if (chapters.isEmpty()) {
-    MihonChapterSelection(listOf(createSynthetic()), synthetic = true)
+    if (allowSynthetic) {
+        MihonChapterSelection(listOf(createSynthetic()), synthetic = true)
+    } else {
+        MihonChapterSelection(emptyList(), synthetic = false)
+    }
 } else {
     MihonChapterSelection(chapters, synthetic = false)
 }

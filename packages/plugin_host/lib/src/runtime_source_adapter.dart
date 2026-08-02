@@ -9,6 +9,29 @@ import 'package:domain/domain.dart';
 import 'runtime_limits.dart';
 import 'runtime_protocol.dart';
 
+/// Returns whether [chapterId] is the compatibility chapter synthesized by
+/// the Mihon runtime for a gallery source with no chapter-list operation.
+///
+/// Keeping this parser beside the runtime protocol prevents presentation and
+/// storage layers from depending on Mihon's opaque identity representation.
+bool isSyntheticMihonChapterIdentity(String chapterId) {
+  const prefix = 'mihon:chapter:';
+  if (!chapterId.startsWith(prefix)) {
+    return false;
+  }
+  try {
+    final payload = chapterId.substring(prefix.length);
+    final decoded = jsonDecode(
+      utf8.decode(base64Url.decode(base64Url.normalize(payload))),
+    );
+    return decoded is Map<String, dynamic> &&
+        decoded['kind'] == 'chapter' &&
+        decoded['synthetic'] == true;
+  } on Object {
+    return false;
+  }
+}
+
 /// Adapts one isolated-runtime connection to ordinary zic catalog sources.
 ///
 /// This is the only layer that understands both the serialized runtime schema

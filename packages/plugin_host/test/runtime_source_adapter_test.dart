@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
@@ -7,6 +8,37 @@ import 'package:plugin_host/plugin_host.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('recognizes only explicit synthetic Mihon chapter identities', () {
+    String identity(Map<String, Object?> value) {
+      final payload = base64Url
+          .encode(utf8.encode(jsonEncode(value)))
+          .replaceAll('=', '');
+      return 'mihon:chapter:$payload';
+    }
+
+    expect(
+      isSyntheticMihonChapterIdentity(
+        identity(<String, Object?>{
+          'kind': 'chapter',
+          'comicId': 'mihon:manga:fixture',
+          'synthetic': true,
+        }),
+      ),
+      isTrue,
+    );
+    expect(
+      isSyntheticMihonChapterIdentity(
+        identity(<String, Object?>{
+          'kind': 'chapter',
+          'synthetic': false,
+        }),
+      ),
+      isFalse,
+    );
+    expect(isSyntheticMihonChapterIdentity('chapter-1'), isFalse);
+    expect(isSyntheticMihonChapterIdentity('mihon:chapter:broken'), isFalse);
+  });
+
   test('shared runtime adapter exposes one ordinary browsable source', () async {
     final connection = _FixtureConnection();
     final session = ExternalPluginRuntimeSession(

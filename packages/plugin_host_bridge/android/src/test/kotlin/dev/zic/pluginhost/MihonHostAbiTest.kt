@@ -104,6 +104,17 @@ class MihonHostAbiTest {
         assertEquals(listOf("正文"), empty.chapters)
         assertTrue(empty.synthetic)
         assertEquals(1, syntheticCalls)
+
+        val authoritativeEmpty = selectMihonChapters(
+            emptyList<String>(),
+            allowSynthetic = false,
+        ) {
+            syntheticCalls++
+            "不应创建"
+        }
+        assertTrue(authoritativeEmpty.chapters.isEmpty())
+        assertFalse(authoritativeEmpty.synthetic)
+        assertEquals(1, syntheticCalls)
     }
 
     @Test

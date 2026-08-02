@@ -21,7 +21,8 @@ def main() -> int:
         raise SystemExit('Mihon runtime source contains an embedded NUL byte')
     driver = raw_driver.decode()
     required = (
-        'selectMihonChapters(catalog.chapters)',
+        'allowSynthetic = !catalog.chapterCatalogAvailable',
+        'catalog.chapterFailure?.let { throw it }',
         'chapterById[chapterId]?.let { return it }',
         'mihonChapterMatches(chapter, encoded)',
         'if (chapters.isEmpty())',
@@ -32,7 +33,6 @@ def main() -> int:
         'newChapters',
         'loadMihonPageModels(source, selectedChapters.chapters.single(), requestId)',
         'Mihon source exposed neither a chapter catalog nor readable gallery pages',
-        'catalog.chapterFailure?.let(error::addSuppressed)',
         'updateChapters.isNotEmpty() -> updateChapters',
         'detailedChapters.isNotEmpty() -> detailedChapters',
         'mihonCoverResource(source, manga)',

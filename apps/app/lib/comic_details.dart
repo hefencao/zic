@@ -4,6 +4,8 @@ import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:plugin_host/plugin_host.dart'
+    show isSyntheticMihonChapterIdentity;
 import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
 
@@ -482,6 +484,9 @@ final class _LocalComicDetailsScreenState
         }
       }
       for (final entry in _library.chapters) {
+        if (_isStaleSyntheticMihonEntry(entry)) {
+          continue;
+        }
         if (seen.add(entry.identity)) {
           entries.add(entry);
         }
@@ -541,6 +546,9 @@ final class _LocalComicDetailsScreenState
       );
     }
     for (final entry in _library.chapters) {
+      if (_isStaleSyntheticMihonEntry(entry)) {
+        continue;
+      }
       final identity = comicDetailsChapterIdentity(
         entry.chapter.sourceId,
         entry.chapter.chapterId,
@@ -575,6 +583,7 @@ final class _LocalComicDetailsScreenState
       0,
       (total, chapter) => total + chapter.pageCount,
     );
+    final pageCountPending = models.any((chapter) => chapter.pageCount == 0);
     return _ComicDetailsScaffold(
       screenKey: localComicDetailsScreenKey,
       title: comic.title,
@@ -606,7 +615,8 @@ final class _LocalComicDetailsScreenState
           ? null
           : () => widget.onMigrateSource!(comic),
       chapterCount: ordered.length,
-      pageCount: catalogPages == 0 ? comic.totalPages : catalogPages,
+      pageCount: catalogPages,
+      pageCountPending: pageCountPending,
       chapterList: _ComicChapterList(
         chapters: ordered,
         onOpen: _open,
@@ -616,6 +626,16 @@ final class _LocalComicDetailsScreenState
           return entry == null ? Future<void>.value() : _setRead(entry, false);
         },
       ),
+    );
+  }
+
+  bool _isStaleSyntheticMihonEntry(ImportedLibraryEntry entry) {
+    if (!isSyntheticMihonChapterIdentity(entry.chapter.chapterId) ||
+        _library.sourceChapters.isEmpty) {
+      return false;
+    }
+    return !_library.sourceChapters.any(
+      (chapter) => chapter.chapterId == entry.chapter.chapterId,
     );
   }
 }
