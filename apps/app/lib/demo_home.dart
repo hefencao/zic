@@ -5,6 +5,7 @@ import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:local_media/local_media.dart';
+import 'package:network_bridge/network_bridge.dart';
 import 'package:plugin_host/plugin_host.dart'
     show isSyntheticMihonChapterIdentity;
 import 'package:resource_cache/resource_cache.dart';
@@ -141,6 +142,7 @@ final class DemoHome extends StatefulWidget {
     this.wholeComicDownloads,
     this.comicSources,
     this.externalPlugins,
+    this.networkBridge = const AndroidNetworkBridge(),
     this.cacheCoordinator,
     required this.preferences,
     required this.debugTrace,
@@ -159,6 +161,7 @@ final class DemoHome extends StatefulWidget {
   final WholeComicDownloadQueue? wholeComicDownloads;
   final List<BrowsableComicSource>? comicSources;
   final ExternalPluginController? externalPlugins;
+  final AndroidNetworkBridge networkBridge;
   final ResourceCacheCoordinator? cacheCoordinator;
   final AppPreferencesController preferences;
   final DebugTraceLog debugTrace;
@@ -373,6 +376,7 @@ final class _DemoHomeState extends State<DemoHome> {
           preferences: _sourcePreferences,
           onPreferenceChanged: _saveSourcePreference,
           externalPlugins: widget.externalPlugins,
+          networkBridge: widget.networkBridge,
           onExternalSourcesChanged: _replaceExternalSources,
         ),
       ),
@@ -449,9 +453,8 @@ final class _DemoHomeState extends State<DemoHome> {
             downloadChanges: _chapterDownloads.changes,
             onDownloadComic: (entries) =>
                 _downloadComicEntries(identity, entries),
-            onOpenSourceWebView: widget.externalPlugins != null &&
-                    source.sourceId.startsWith('mihon:')
-                ? () => widget.externalPlugins!.openMihonLogin(
+            onOpenSourceWebView: source.sourceId.startsWith('mihon:')
+                ? () => widget.networkBridge.openBrowser(
                       source.descriptor.website,
                     )
                 : null,

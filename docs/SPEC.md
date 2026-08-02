@@ -1,3 +1,13 @@
+## dev.86 编译闭包与共享网络桥规范
+
+1. `RemoteComicDetailsScreen` 与 `SourceComicDetailsScreen` 的 WebView callback 必须使用已定义的稳定 typedef；公共字段类型变化时必须一次迁移全部生产和测试调用方。
+2. 通用来源 WebView、Cookie/localStorage 快照、Cloudflare interceptor、Android CookieJar 和 DNS fallback 必须由 `network_bridge` 所有；`plugin_host_bridge` 不得重新声明同功能 MethodChannel、Activity、存储或通用 helper。
+3. Mihon 兼容 `NetworkHelper` 可保留 ABI 包名，但实际实现必须消费共享网络能力。动态 classloader 必须 parent-first 加载并验证 `dev.zic.network.*`，release 包必须保留这些类。
+4. `network_bridge` 不能拥有插件信任、插件会话、请求协议、DownloadSession、artifact、cache、Reader demand 或导航状态。
+5. 来源浏览器进程必须由 App composition 选择；跨进程登录 snapshot 必须使用可见的原子持久交接，不得依赖 SharedPreferences 的进程内缓存。
+5. rhttp 或其他原生 HTTP 实现若引入，必须作为共享 transport/network backend 由 composition 注入，并遵守 GET/HEAD 零 body、稳定 identity 合并、range/validator 和同一 Pipeline 规则；不得成为 Mihon/Venera 私有第二数据平面。
+6. dev.85 的章节失败不 synthetic、256 KiB 正文块、本地大文件流式与 Reader 7/3、2/1、current/transition、5/3/2 行为不得改变。
+
 ## dev.85 Cloudflare 章节目录与本地流式读取规范
 
 1. Mihon 章节列表调用抛错时必须保留原始失败链并向详情投影错误；不得创建 synthetic 章节。返回空目录也不得仅凭“空”推断 gallery。

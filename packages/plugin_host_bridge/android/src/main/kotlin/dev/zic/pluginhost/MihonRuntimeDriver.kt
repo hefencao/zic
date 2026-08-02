@@ -1386,6 +1386,9 @@ internal val requiredMihonCommonRuntimeClasses: List<String> = listOf(
     "kotlinx.coroutines.CoroutineScope",
     "org.jsoup.Jsoup",
     "com.google.gson.Gson",
+    "dev.zic.network.AndroidCloudflareInterceptor",
+    "dev.zic.network.AndroidCookieJar",
+    "dev.zic.network.FallbackDns",
 )
 
 internal fun missingMihonClasses(
@@ -1475,7 +1478,8 @@ internal fun isMihonParentFirstClass(name: String): Boolean {
         name.startsWith("com.google.gson.") ||
         name.startsWith("eu.kanade.tachiyomi.") ||
         name.startsWith("uy.kohesive.injekt.") ||
-        name.startsWith("dev.mihon.injekt.")
+        name.startsWith("dev.mihon.injekt.") ||
+        name.startsWith("dev.zic.network.")
 }
 
 private class MihonExtensionClassLoader(

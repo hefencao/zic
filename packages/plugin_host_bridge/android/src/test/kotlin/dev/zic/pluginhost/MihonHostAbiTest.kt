@@ -64,6 +64,7 @@ class MihonHostAbiTest {
         assertTrue(isMihonParentFirstClass("dev.mihon.injekt.InjektKt"))
         assertTrue(isMihonParentFirstClass("androidx.preference.Preference"))
         assertTrue(isMihonParentFirstClass("okhttp3.OkHttpClient"))
+        assertTrue(isMihonParentFirstClass("dev.zic.network.AndroidCookieJar"))
     }
 
     @Test

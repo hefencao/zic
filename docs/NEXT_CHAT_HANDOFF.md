@@ -1,4 +1,16 @@
-# dev.85 handoff
+# dev.86 handoff
+
+唯一后续基线：`zic_v0.31.0-dev.86_network-bridge-compile-closure.zip`。
+
+完成：补齐 `ComicDetailsSourceWebViewOpener` 编译闭包；新增 `network_bridge` 并迁移通用来源 WebView、Cookie/localStorage 快照、Cloudflare interceptor、Android CookieJar 与 fallback DNS；删除 plugin host 旧登录通道/Activity/store 与 controller 网络转发；App composition 直接注入 network facade；浏览器进程由 App placeholder 组合，snapshot 通过原子文件跨进程交接；Mihon ABI adapter 改为 parent-first 消费共享网络类，并增加运行时完整性与 shrinker 门禁。dev.85 的章节目录失败语义、256 KiB chunk、本地文件/SAF 流式和 Pipeline 策略未改。
+
+设备侧必须验证：`flutter analyze`；`network_bridge`、`plugin_host_bridge`、App 受影响测试；Android kernel/debug/release；18comic/JMComic Cloudflare 自动和手动 WebView 恢复；Venera Web 登录 snapshot；多进程 WebView/Cookie 持久化。rhttp 尚未引入，后续不得直接放入 plugin host；应先作为共享 transport backend 评估。
+
+不得恢复：未定义 callback 类型、`openMihonLogin`/`readExternalLoginSnapshot` 插件桥私有通道、plugin host 私有 Cloudflare/CookieJar/DNS、仅凭目录空创建 synthetic、整文件 SAF Reader 路径，或通过缩窗/降并发掩盖错误。
+
+## Historical dev.85 record
+
+### dev.85 handoff
 
 唯一后续基线：`zic_v0.31.0-dev.85_cloudflare-catalog-local-stream.zip`。
 

@@ -1,0 +1,10 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application>
+        <activity
+            android:name="dev.zic.network.NetworkBrowserActivity"
+            android:exported="false"
+            android:process="${zicNetworkBrowserProcess}"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+    </application>
+</manifest>

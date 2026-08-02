@@ -137,6 +137,8 @@ typedef ComicDetailsMigrationOpener = Future<void> Function(
   LibraryComic comic,
 );
 
+typedef ComicDetailsSourceWebViewOpener = Future<void> Function();
+
 final class LocalComicDetailsScreen extends StatefulWidget {
   const LocalComicDetailsScreen({
     required this.comic,

@@ -45,7 +45,7 @@
 | Mihon 详情/章节调用结果与失败 | `plugin_host_bridge/MihonRuntimeDriver` | 同左 | 区分“目录能力不存在/权威空”与“调用失败”；失败直接冒泡 |
 | synthetic gallery 判定 | runtime driver 生成 opaque chapter token，旧条目可能持久化 | `plugin_host_bridge` 判定资格；`plugin_host` 协议适配层解析明确 synthetic identity | App composition 仅调用 helper 协调旧条目；Presentation/catalog storage 不解析 token |
 | Cloudflare challenge 自动尝试 | Mihon source `NetworkHelper.client` | `plugin_host_bridge` 的 Mihon runtime compatibility network | 按 Mihon client 语义安装 interceptor，共享 Android CookieManager |
-| 手动 WebView 访问命令 | `plugin_host_bridge` 已有 `openMihonLogin`，来源管理页可调用 | App composition 注入只读/命令 callback，详情 Presentation 仅显示按钮 | 详情失败态增加 callback，不直接访问 Cookie/runtime/session |
+| 手动 WebView 访问命令 | dev.85 临时使用 `plugin_host_bridge.openMihonLogin`；dev.86 已由 ADR 0070 迁到 `network_bridge.openBrowser` | App composition 注入只读/命令 callback，详情 Presentation 仅显示按钮 | 详情失败态增加 callback，不直接访问 Cookie/runtime/session |
 | 章节详情错误 UI | `apps/app/comic_details` | 同左（Presentation 局部投影） | 显示错误、重试、WebView 图标，不伪造目录 |
 | 本地 content URI descriptor/读取 | `local_media_bridge` | 同左的平台能力；上层只接收 `ByteResponse` | 增加流式/range 读取能力，生命周期由 bridge response owner 关闭 |
 | Reader 本地页面 transport | `pipeline_runtime` 的 LoaderTransport/DownloadSession | 同左 | composition 注入 content URI `openResponse`，不建立第二 session/cache |
@@ -71,7 +71,7 @@
 
 - staged 文件已先覆盖唯一 dev.84 工作树；Mihon driver 将章节异常保存为 `chapterFailure` 并在 synthetic 选择前抛出，`chapterCatalogAvailable` 阻止权威空目录进入 fallback。
 - Cloudflare interceptor 接入两套 Mihon ABI runtime network，共享 Android CookieManager、过滤 WebView headers、等待 30 秒并在失败时提示打开来源登录页。
-- 详情页以稳定 key 显示 WebView/retry；App composition 绑定 `openMihonLogin`。真实目录恢复时通过 `plugin_host.isSyntheticMihonChapterIdentity` 清理旧 synthetic library entry。
+- 详情页以稳定 key 显示 WebView/retry；App composition 在 dev.86 直接绑定 `network_bridge.openBrowser`。真实目录恢复时通过 `plugin_host.isSyntheticMihonChapterIdentity` 清理旧 synthetic library entry。
 - `defaultTransportChunkBytes`、artifact 默认块和下载 fallback 块统一为 256 KiB；64 KiB source progress/Trace 量子未修改。
 - 本地普通路径使用 RandomAccessFile 分块。Android document bridge 升级到 v4，以 handle open/readChunk/close 返回流和 range 元数据；取消、读完或 detach 均关闭句柄，validator 不匹配返回完整响应。
 - Reader 页面仍进入既有 `PipelineReaderSession -> DownloadSession -> artifact -> decode/upload`，没有新增 App/Reader 私有字节缓存、session 或预取实现。

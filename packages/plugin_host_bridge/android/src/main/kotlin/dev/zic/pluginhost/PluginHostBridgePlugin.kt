@@ -1,13 +1,12 @@
 package dev.zic.pluginhost
 
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import android.os.Bundle
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
-import android.os.Bundle
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -50,8 +49,6 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             "readMihonApkMetadata" -> readMihonApkMetadata(call, result)
             "listInstalledMihonExtensions" -> listInstalledMihonExtensions(result)
             "copyInstalledMihonExtension" -> copyInstalledMihonExtension(call, result)
-            "openMihonLogin" -> openMihonLogin(call, result)
-            "readExternalLoginSnapshot" -> readExternalLoginSnapshot(call, result)
             "activateMihonRuntime",
             "activateVeneraRuntime",
             "invokeExternalRuntime",
@@ -71,39 +68,6 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             }
             else -> result.notImplemented()
         }
-    }
-
-    private fun openMihonLogin(call: MethodCall, result: MethodChannel.Result) {
-        val url = call.argument<String>("url")
-        if (url.isNullOrBlank() ||
-            (!url.startsWith("https://") && !url.startsWith("http://"))
-        ) {
-            result.error("invalid-argument", "HTTP(S) login URL is required", null)
-            return
-        }
-        runCatching {
-            context.startActivity(
-                Intent(context, MihonLoginActivity::class.java)
-                    .putExtra(MihonLoginActivity.EXTRA_URL, url)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-            )
-        }.onSuccess {
-            result.success(null)
-        }.onFailure { error ->
-            result.error("mihon-login-failed", error.message, null)
-        }
-    }
-
-
-    private fun readExternalLoginSnapshot(call: MethodCall, result: MethodChannel.Result) {
-        val url = call.argument<String>("url")
-        if (url.isNullOrBlank() ||
-            (!url.startsWith("https://") && !url.startsWith("http://"))
-        ) {
-            result.error("invalid-argument", "HTTP(S) login URL is required", null)
-            return
-        }
-        result.success(ExternalLoginSnapshotStore.read(context, url))
     }
 
     private fun readMihonApkMetadata(call: MethodCall, result: MethodChannel.Result) {

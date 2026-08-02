@@ -34,7 +34,8 @@ if not settings_try < settings_catch < account_try:
 
 required_browser = (
     "source.sourceId.startsWith('venera:')",
-    "controller.readExternalLoginSnapshot(url)",
+    "widget.networkBridge.readBrowserSnapshot(url)",
+    "widget.networkBridge.openBrowser",
     "localStorage: snapshot.localStorage",
     "tooltip: '插件设置与登录'",
 )

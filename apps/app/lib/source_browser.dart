@@ -4,6 +4,7 @@ import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:network_bridge/network_bridge.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
 
@@ -441,6 +442,7 @@ final class SourceManagementScreen extends StatefulWidget {
     required this.preferences,
     required this.onPreferenceChanged,
     this.externalPlugins,
+    this.networkBridge = const AndroidNetworkBridge(),
     this.onExternalSourcesChanged,
     super.key,
   });
@@ -450,6 +452,7 @@ final class SourceManagementScreen extends StatefulWidget {
   final Future<void> Function(ComicSourcePreference preference)
       onPreferenceChanged;
   final ExternalPluginController? externalPlugins;
+  final AndroidNetworkBridge networkBridge;
   final Future<void> Function()? onExternalSourcesChanged;
 
   @override
@@ -647,12 +650,12 @@ final class _SourceManagementScreenState
           },
           onLogin: source.sourceId.startsWith('mihon:') ||
                   source.sourceId.startsWith('venera:')
-              ? controller.openMihonLogin
+              ? widget.networkBridge.openBrowser
               : null,
           onReadLogin: source.sourceId.startsWith('venera:')
               ? (url) async {
                   final snapshot =
-                      await controller.readExternalLoginSnapshot(url);
+                      await widget.networkBridge.readBrowserSnapshot(url);
                   return snapshot == null
                       ? null
                       : (

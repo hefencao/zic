@@ -21,6 +21,7 @@ android {
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
+        manifestPlaceholders["zicNetworkBrowserProcess"] = ":zic_plugin_runtime"
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }

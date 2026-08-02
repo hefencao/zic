@@ -1,7 +1,7 @@
 name: zic
 description: zic Flutter application.
 publish_to: none
-version: 0.31.0+85
+version: 0.31.0+86
 resolution: workspace
 
 environment:
@@ -22,6 +22,8 @@ dependencies:
     path: ../../packages/plugin_host
   plugin_host_bridge:
     path: ../../packages/plugin_host_bridge
+  network_bridge:
+    path: ../../packages/network_bridge
   local_media:
     path: ../../packages/local_media
   local_media_ui:

@@ -14,6 +14,7 @@ for rel in \
   packages/pipeline_native \
   packages/reader_runtime \
   packages/plugin_host_bridge \
+  packages/network_bridge \
   packages/texture_bridge \
   packages/local_media_bridge \
   packages/local_media \

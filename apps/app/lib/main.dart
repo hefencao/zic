@@ -5,6 +5,7 @@ import 'package:downloads/downloads.dart';
 import 'package:downloads_bridge/downloads_bridge.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:network_bridge/network_bridge.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 import 'package:plugin_host_bridge/runtime_service_entrypoint.dart'
     as plugin_runtime_service;
@@ -251,6 +252,7 @@ final class App extends StatefulWidget {
     this.comicSources,
     this.cacheCoordinator,
     this.externalPlugins,
+    this.networkBridge = const AndroidNetworkBridge(),
     this.startupTelemetry,
     this.homeKey,
     this.preferences,
@@ -271,6 +273,7 @@ final class App extends StatefulWidget {
   final List<BrowsableComicSource>? comicSources;
   final ResourceCacheCoordinator? cacheCoordinator;
   final ExternalPluginController? externalPlugins;
+  final AndroidNetworkBridge networkBridge;
   final AppPreferencesController? preferences;
   final DebugTraceLog? debugTrace;
   final String? storageRoot;
@@ -336,6 +339,7 @@ final class _AppState extends State<App> {
           wholeComicDownloads: widget.wholeComicDownloads,
           comicSources: widget.comicSources,
           externalPlugins: widget.externalPlugins,
+          networkBridge: widget.networkBridge,
           cacheCoordinator: widget.cacheCoordinator,
           startupTelemetry: widget.startupTelemetry,
           preferences: _preferences,

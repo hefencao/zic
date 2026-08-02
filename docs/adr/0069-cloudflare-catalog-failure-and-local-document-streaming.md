@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted for `0.31.0-dev.85`.
+Accepted for `0.31.0-dev.85`; network ownership in decision 4 is superseded by ADR 0070.
 
 ## Context
 
@@ -11,9 +11,9 @@ Mihon 来源的章节接口可能因 Cloudflare、扩展网络栈或真实插件
 ## Decision
 
 1. `MihonRuntimeDriver` 明确区分章节调用失败、权威目录（包括空目录）与 chapter-list capability 不存在。失败直接冒泡。synthetic gallery 只在 capability 不存在且非空正文页面预检成功时创建。
-2. 详情 Presentation 对空权威目录显示错误、重试和 WebView 命令。WebView callback 由 App composition 绑定既有 `openMihonLogin`; Presentation 不访问 runtime、Cookie 或 transport。
+2. 详情 Presentation 对空权威目录显示错误、重试和 WebView 命令。dev.85 当时由 App composition 绑定插件桥 `openMihonLogin`；该临时所有权已由 ADR 0070 替换为直接注入 `network_bridge.openBrowser`。Presentation 始终不访问 runtime、Cookie 或 transport。
 3. Mihon opaque synthetic token 的解析保留在 `plugin_host` 协议适配层。App composition 只通过显式 helper 清理真实目录恢复后的旧 synthetic 持久条目。
-4. Cloudflare 自动兼容位于隔离 Mihon runtime network，使用 Android `CookieManager`、安全 headers 与 30 秒 WebView challenge；网络失败不得改写为 gallery。
+4. dev.85 的 Cloudflare 自动兼容最初位于隔离 Mihon runtime network；ADR 0070 已把通用 interceptor/CookieJar/DNS 实现迁到 `network_bridge`，Mihon runtime 仅保留 ABI adapter。30 秒 challenge 与网络失败不得改写为 gallery 的语义不变。
 5. transport、storage artifact 与 downloads fallback 的默认 I/O 块设为 256 KiB；sessions 的 64 KiB source wake/telemetry 聚合保持不变。
 6. 普通文件由 `FileTransport/RandomAccessFile` 直接 range/chunk 读取。Android document URI 通过 bridge v4 的 `openDocument/readDocumentChunk/closeDocument` 句柄返回流、revision、range/partial 元数据；validator 不匹配时从 0 返回完整响应。
 7. 平台流只注入既有 Pipeline。DownloadSession、partial、resume、artifact、decode/upload 和关闭顺序不迁出 owner，也不新增 App/Reader 字节缓存。

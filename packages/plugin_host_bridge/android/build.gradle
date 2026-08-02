@@ -64,6 +64,7 @@ def mihonAbiAssetsRoot = file("$buildDir/generated/mihonAbiAssets")
 def mihonRuntime14Sources = file("src/mihonRuntime14/kotlin")
 def mihonRuntime16Sources = file("src/mihonRuntime16/kotlin")
 def mihonRuntimeCommonSources = file("src/mihonRuntimeCommon/kotlin")
+def networkRuntimeSources = file("../../network_bridge/android/src/runtime/kotlin")
 def mihonRuntimeCompilerVersion = "2.3.20"
 def mihonCompileSdk = 37
 
@@ -176,6 +177,7 @@ def generateMihonAbiAssets = tasks.register("generateMihonAbiAssets") {
     inputs.dir(mihonRuntime14Sources)
     inputs.dir(mihonRuntime16Sources)
     inputs.dir(mihonRuntimeCommonSources)
+    inputs.dir(networkRuntimeSources)
     outputs.dir(mihonAbiAssetsRoot)
 
     doLast {
@@ -287,6 +289,9 @@ def generateMihonAbiAssets = tasks.register("generateMihonAbiAssets") {
                     include "**/*.kt"
                 }.files +
                     fileTree(mihonRuntimeCommonSources) {
+                        include "**/*.kt"
+                    }.files +
+                    fileTree(networkRuntimeSources) {
                         include "**/*.kt"
                     }.files
             ).sort { it.path }

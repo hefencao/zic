@@ -40,7 +40,7 @@ def main() -> int:
         raise SystemExit('Mihon catalog failure must escape before synthetic selection')
 
     cloudflare = require(
-        'packages/plugin_host_bridge/android/src/mihonRuntimeCommon/kotlin/dev/zic/mihonruntime/RuntimeCloudflareInterceptor.kt',
+        'packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/AndroidCloudflareInterceptor.kt',
         'CLOUDFLARE_WAIT_SECONDS = 30L',
         'setOf("cloudflare", "cloudflare-nginx")',
         'clearClearanceCookie(requestUrl)',
@@ -52,7 +52,7 @@ def main() -> int:
         require(
             f'packages/plugin_host_bridge/android/src/{abi}/kotlin/eu/kanade/tachiyomi/network/RuntimeNetwork.kt',
             '.cookieJar(AndroidCookieJar())',
-            'RuntimeCloudflareInterceptor(context, ::defaultUserAgentProvider)',
+            'AndroidCloudflareInterceptor(context, ::defaultUserAgentProvider)',
             '.callTimeout(45, TimeUnit.SECONDS)',
         )
 
@@ -71,7 +71,7 @@ def main() -> int:
         'apps/app/lib/demo_home.dart',
         'reconcileComicDetailsChapterEntries',
         'isCompatibilityFallback: isSyntheticMihonChapterIdentity',
-        'openMihonLogin(',
+        'widget.networkBridge.openBrowser(',
     )
 
     require(

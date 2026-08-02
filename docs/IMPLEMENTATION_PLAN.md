@@ -1,3 +1,15 @@
+## dev.86 完成项与后续验证
+
+- [x] 复现并修复 `ComicDetailsSourceWebViewOpener` 漏定义的 Dart 编译闭包。
+- [x] 新建 `network_bridge`，迁移通用来源 WebView、Cookie/localStorage 快照、Cloudflare、CookieJar 与 fallback DNS。
+- [x] 将浏览器进程选择上移到 App manifest composition，并以原子文件替换跨进程 snapshot，删除 SharedPreferences 隐式耦合。
+- [x] 删除 plugin host 旧登录 MethodChannel、Activity、snapshot store 和 Mihon metadata reader 中的网络 API。
+- [x] Mihon ABI adapter 改用共享实现，并补 parent-first、runtime class verification 与 release keep 规则。
+- [x] 更新 workspace、依赖白名单、analyzer/test runner、owner tests、静态门禁、ADR、审计和文档。
+- [ ] 在具备 Flutter/Android SDK 的机器执行 `flutter analyze`、`network_bridge`/`plugin_host_bridge`/App tests 和 Android debug/release 或 kernel snapshot。
+- [ ] 真机验证 Mihon/JMComic Cloudflare 自动 challenge、手动来源 WebView、Venera Web 登录 Cookie/localStorage 快照及多进程 WebView 数据目录行为。
+- [ ] 若引入 rhttp，先建立共享 transport backend 实验和请求/流量数据，不得直接替换插件 runtime 或建立第二 artifact/session 平面。
+
 ## dev.85 完成项与后续设备验证
 
 - [x] 应用 staged 覆盖并审计其所有权影响。

@@ -1,3 +1,7 @@
+## dev.86 状态
+
+已在 dev.85 唯一基线上补齐详情 WebView callback typedef，关闭用户报告的四处 Dart 类型错误。通用 Android 网络能力已迁入新 `network_bridge`：来源 WebView、Cookie/localStorage 快照、Cloudflare interceptor、Android CookieJar 和 fallback DNS 不再由 `plugin_host_bridge` 拥有；Mihon ABI 只保留 `NetworkHelper` 兼容外壳并 parent-first 消费共享类。旧 plugin-host 登录 Activity、snapshot store、MethodChannel API、metadata reader 网络方法以及 `ExternalPluginController` 的通用网络转发方法已删除；App composition 直接注入 `AndroidNetworkBridge`。 浏览器进程由 App manifest placeholder 选择；主进程读取的 Cookie/localStorage snapshot 使用原子文件交接，未保留跨进程 SharedPreferences。仓库结构、Dart 结构、dev.75–dev.86 门禁、共享浏览器 Kotlin 提取编译、Mihon ABI/classloader/chapter、Venera、Reader/Pipeline/UI 等当前可执行检查通过。当前环境仍无 Flutter/Dart/Android SDK/Gradle，因此 analyzer、Flutter tests 和 APK/kernel 未执行；rhttp 尚未引入。
+
 ## dev.85 状态
 
 源码已在本次 dev.84 唯一基线上应用 staged 覆盖并完成后续闭环。Mihon 章节调用失败不再被 synthetic “正文”吞掉；权威空目录在详情显示错误和 WebView/retry，只有 capability 缺失且正文预检非空才生成兼容单章。旧 synthetic 条目由 App composition 使用 `plugin_host` helper 在真实目录恢复后淘汰，Presentation 不解析协议 token。Cloudflare interceptor、256 KiB 数据块、普通文件直接读取和 Android document bridge v4 流式/range 生命周期已接入既有 DownloadSession/Pipeline。当前环境静态/宿主契约已通过；无 Flutter/Dart/Android Gradle/Rust 工具链，因此 analyzer、Dart/Flutter tests、kernel/APK 和真机性能仍未验证。

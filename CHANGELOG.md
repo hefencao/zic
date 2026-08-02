@@ -1,7 +1,18 @@
+## 0.31.0-dev.86：修复详情 WebView 编译闭包并拆分共享网络桥
+
+- 补齐 `ComicDetailsSourceWebViewOpener = Future<void> Function()`，一次修复 `comic_details.dart` 与 `source_browser.dart` 的四处类型未定义编译错误。
+- 新增 `network_bridge` workspace/Flutter package，统一拥有来源 WebView、Cookie/localStorage 快照和 Android 平台网络辅助能力；App composition 直接调用稳定 facade；插件控制器不再转发通用 WebView/Cookie 命令。
+- 将 `MihonLoginActivity`、登录快照存储、Cloudflare interceptor、Android CookieJar 与 fallback DNS 从 `plugin_host_bridge` 迁出；删除旧 `openMihonLogin`/`readExternalLoginSnapshot` MethodChannel API 和实现。
+- Mihon 1.4/1.6 `NetworkHelper` 继续保留兼容包名，但改为消费 `dev.zic.network` 共享实现。共享类加入 parent-first、运行时完整性校验与 consumer ProGuard keep 规则。
+- `plugin_host_bridge` 只保留插件信任、APK/脚本隔离、ABI shim、请求路由和生命周期；通用浏览器/Cookie/Cloudflare 不再由插件桥拥有。
+- 浏览器 Activity 的进程名改为 manifest placeholder，由 App composition 显式选择；登录 snapshot 改为原子文件交换，避免跨进程 SharedPreferences 缓存导致读不到最新 Cookie/localStorage。
+- 新增 network owner Dart 测试、Kotlin 提取编译、dev.86 静态门禁和 ADR 0070；更新全仓 analyzer/test runner、依赖白名单和文档。
+- 未新增 rhttp 依赖，未改变章节目录判定、256 KiB 数据块、GET/HEAD 零 body、Pipeline 7/3、2/1、current/transition 或 5/3/2 lane。
+
 ## 0.31.0-dev.85：修复 Cloudflare 章节目录并流式读取本地大图
 
 - 应用 staged 覆盖后继续收口：Mihon 章节目录调用失败不再创建 synthetic “正文”章节；只有目录能力不存在且 gallery 正文预检非空时才允许兼容单章。
-- 详情首屏目录失败显示权威错误、重试和 WebView 图标；WebView 命令由 App composition 注入既有 `openMihonLogin`，Presentation 不访问 Cookie、runtime 或 session。
+- 详情首屏目录失败显示权威错误、重试和 WebView 图标；dev.85 当时由 App composition 注入 `openMihonLogin`，该临时入口已在 dev.86 迁到 `network_bridge.openBrowser`；Presentation 不访问 Cookie、runtime 或 session。
 - 旧 synthetic 章节只在权威真实目录恢复后由 composition 协调淘汰；opaque Mihon identity 解析保留在 `plugin_host` 协议适配层。
 - Mihon runtime 增加共享 Android CookieManager 的 Cloudflare WebView interceptor，覆盖 403/503、`cloudflare`/`cloudflare-nginx` 与 30 秒 challenge 等待；GET/HEAD 零 body 契约不变。
 - transport、artifact 与下载 fallback 默认块由 64 KiB 提升到 256 KiB；source progress/Trace 的 64 KiB 聚合语义保持不变。

@@ -1,8 +1,19 @@
+## dev.86 共享网络能力与详情编译闭包所有权
+
+- `apps/app/comic_details.dart` 只定义 Presentation callback 类型 `ComicDetailsSourceWebViewOpener` 并消费命令；详情页不拥有 WebView、Cookie、Cloudflare、transport 或插件 session。
+- `network_bridge` 是 Android 通用来源浏览器、Cookie/localStorage 快照、Android CookieJar、Cloudflare challenge 和 fallback DNS 的平台所有者。它可被原生来源与外部插件 ABI adapter 共同消费，不依赖 `plugin_host`。
+- `plugin_host_bridge` 的 Android ABI adapter 依赖 `network_bridge`，但 Dart `ExternalPluginController` 不转发通用浏览器/Cookie 命令；该包只拥有 APK/JavaScript 隔离、Mihon/Venera ABI/protocol adapter、request routing、取消与生命周期。Mihon `eu.kanade.tachiyomi.network.NetworkHelper` 是兼容外壳，不拥有通用网络实现。
+- Mihon runtime 对 `dev.zic.network.*` 使用 parent-first class loading，并在 activation 前验证共享类完整；network bridge 发布 consumer keep rules，防止动态 ABI 引用在 release shrink 时被删除。
+- `NetworkBrowserActivity` 的进程由上层 manifest placeholder 组合；当前 App 将其放入既有隔离 WebView 进程以复用同一 WebView/Cookie profile。浏览器到主进程的 snapshot 通过 App 私有文件的原子替换交接，不能使用跨进程缓存不一致的 SharedPreferences。
+- `transport` 继续拥有 ByteRequest/ByteResponse、GET/HEAD body、range、validator 和正文流语义；`network_bridge` 不创建 DownloadSession、artifact、cache 或 Reader demand。未来 rhttp/其他 native client 只能作为 transport/network backend 由 composition 注入，不得塞回 `plugin_host_bridge`。
+- Venera restricted WebView/JavaScript bridge 仍属于插件运行时实现；其中协议特定的 `Network` API 不是通用网络权威来源，不能被原生来源直接复用。
+- dev.85 的 Cloudflare 章节错误判定、本地文档流和 256 KiB 数据块不变。
+
 ## dev.85 Cloudflare 目录失败与本地文档流所有权
 
 - `plugin_host_bridge/MihonRuntimeDriver` 唯一拥有 Mihon 详情/章节调用结果、能力缺失判定和 synthetic gallery 资格。调用失败必须冒泡；权威空目录也不得被当成失败或 gallery。synthetic 仅允许在 chapter-list 能力不存在且非空 gallery 页面预检成功时创建。
 - Mihon opaque synthetic identity 的解析属于 `plugin_host` runtime 协议适配层。App composition 可调用显式 helper 协调旧持久条目与新权威目录；详情 Presentation、catalog storage 与 Reader 不解析 token。
-- Cloudflare 自动 challenge 属于隔离 Mihon runtime 的网络兼容层，共享 Android `CookieManager`；手动 WebView 是由 App composition 注入详情 Presentation 的命令 callback。Presentation 不接触 Cookie、OkHttp client、插件对象或 session。
+- dev.85 曾把 Cloudflare 自动 challenge 放在隔离 Mihon runtime；dev.86 起通用 interceptor/CookieJar/DNS 与手动 WebView 均由 `network_bridge` 拥有，Mihon runtime 只保留 ABI adapter。App composition 注入详情 Presentation 的命令 callback；Presentation 不接触 Cookie、OkHttp client、插件对象或 session。
 - `local_media_bridge` 拥有 Android document descriptor/handle 与 open/readChunk/close 生命周期；`local_media` 将其适配为带 range、validator、partial 与 close 的只读流。普通文件由 `transport/FileTransport` 直接读取。
 - `pipeline_runtime` 仍是本地页面 DownloadSession、artifact、resume、decode/upload 与进度的唯一所有者。平台流只作为 transport source 注入，不建立 App/Reader 私有缓存或第二会话。
 - 256 KiB 是数据 I/O 默认块；64 KiB source wake/telemetry 聚合仍由 sessions 诊断策略拥有，二者不得混同。Reader 7/3、2/1、current/transition 与 5/3/2 不变。

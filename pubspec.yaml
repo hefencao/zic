@@ -12,6 +12,7 @@ workspace:
   - packages/catalog
   - packages/plugin_host
   - packages/plugin_host_bridge
+  - packages/network_bridge
   - packages/resource_cache
   - packages/reader
   - packages/reader_runtime

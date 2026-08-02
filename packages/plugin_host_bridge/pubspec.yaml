@@ -11,6 +11,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  network_bridge:
+    path: ../network_bridge
   plugin_host:
     path: ../plugin_host
 
