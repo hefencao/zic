@@ -1,3 +1,7 @@
+## dev.92 状态
+
+用户在 dev.91 上实际操作回切后提供的 1337 条 Trace 证明此前修复不完整：6 次 page mount 仅 3 次 first frame；3 次已呈现帧的 duration 全为 0，却各自产生 playback due，之后对应 identity 在 depth=0 上反复 decoding/ended，且没有 pageOutputReleased，说明 output 是被播放推进内部提前移除。现已使零时长 timer 保持 idle；动画 advance 保留旧 output、以 preparedDepth=0 请求 successor，新帧成功上传后原子替换；有限 EOF 保留最后帧并输出 playbackCompleted。错误报告中的 storage 测试 API 与 texture viewport fixture 已按归属修复。当前 repository/Dart structure、dev.75–dev.92、Android/Mihon/Venera/Reader/Pipeline/UI、共享浏览器 Kotlin、native header 与本地 libwebp 1.6.0 fixtures 已通过；环境无 Flutter/Dart/Gradle/Android SDK/Cargo，analyzer、Dart/Flutter tests、APK/kernel、Rust 与设备结果仍未验证。
+
 ## dev.91 状态
 
 已在 dev.90 唯一基线上修复页面 output 生命周期错误。用户 Trace 的 14 次 page mount 只有 7 次首帧；首次成功页面返回后，多个 decode identity 在 depth=0 下持续 `decoding -> ended`，Upload 停在 `waitingFrame`。根因为 upload 已消费 FrameHolder，output 离开 current/transition 后被退休，但 decode demand 仍在预解码窗口，cursor 未 detach/restart。现在 demand detach 与 frame-budget trim 都由 UploadSession 通知 DecodeSession；空 holder 重建 cursor，retained demand 由 Coordinator follow-up。新增 source/cache read 聚合、decode/upload/present timing、playback lateness 与 output retirement Trace。当前 repository/Dart structure、dev.75–dev.91、Android dependency/Trace、Mihon ABI/classloader/chapter、Venera、Reader/Pipeline/UI、共享浏览器 Kotlin、native header 与本地 libwebp 1.6.0 fixtures 均通过；Flutter/Dart/Gradle/Android SDK/Cargo 不可用，analyzer、Dart/Flutter tests、APK/kernel、Rust 和真机结果仍未验证。

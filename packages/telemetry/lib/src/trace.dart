@@ -43,6 +43,7 @@ enum TraceEventKind {
   frameUploaded,
   framePresented,
   playbackFrameDue,
+  playbackCompleted,
   sourceReady,
   sourceDisabled,
   uploadDemand,

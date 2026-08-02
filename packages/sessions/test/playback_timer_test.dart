@@ -2,6 +2,20 @@ import 'package:sessions/sessions.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('zero duration never creates an immediately due playback frame', () {
+    final timer = PlaybackTimer();
+
+    timer.start(
+      frameIndex: 4,
+      duration: Duration.zero,
+      nowUs: 1000,
+    );
+
+    expect(timer.state, PlaybackState.idle);
+    expect(timer.active, isFalse);
+    expect(timer.takeDue(1000), isNull);
+  });
+
   test('duration begins at actual present time and fires once', () {
     final timer = PlaybackTimer();
     timer.start(

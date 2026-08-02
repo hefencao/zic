@@ -94,6 +94,7 @@ final class UploadSession {
   bool _userPaused = false;
   bool _viewportFrozen = false;
   double _playbackSpeed = 1;
+  bool _awaitingSuccessor = false;
   Future<void> _prepareTail = Future<void>.value();
   int _pendingPrepares = 0;
   bool _releaseUploaderWhenIdle = false;
@@ -103,8 +104,11 @@ final class UploadSession {
 
   UploadState get state => _state;
   OutputFrame? get frame => _slot?.frame;
-  int get preparedDepth =>
-      _slot == null || _slot!.frame.disposed ? 0 : 1;
+  int get preparedDepth => _awaitingSuccessor ||
+          _slot == null ||
+          _slot!.frame.disposed
+      ? 0
+      : 1;
   int get outputBytes =>
       _slot == null || _slot!.frame.disposed ? 0 : _slot!.frame.byteLength;
   PlaybackState get playbackState => _playback.state;
@@ -180,6 +184,28 @@ final class UploadSession {
     }
     final holder = decode.holder;
     if (holder == null || holder.isEmpty) {
+      if (_awaitingSuccessor && decodeSnapshot.state == DecodeState.ended) {
+        // Finite animation playback keeps its final renderer output. Retiring
+        // the visible frame before proving that a successor exists turns a
+        // valid completed animation into an infinite loading placeholder.
+        _awaitingSuccessor = false;
+        final animation = decodeSnapshot.animation;
+        _emit(
+          TraceEventKind.playbackCompleted,
+          <String, Object?>{
+            'frame': _slot?.frame.index ?? -1,
+            'outputRetained': _slot != null && !_slot!.frame.disposed,
+            'animationFrameCount': animation.frameCount,
+            'animationLoopCount': animation.loopCount,
+            'animationComplete': animation.complete,
+          },
+        );
+        _setState(
+          _slot == null ? UploadState.waitingFrame : UploadState.ready,
+          forceNotify: true,
+        );
+        return snapshot;
+      }
       _setState(_slot == null ? UploadState.waitingFrame : UploadState.ready);
       return snapshot;
     }
@@ -285,6 +311,7 @@ final class UploadSession {
     }
     final prior = _slot;
     _slot = _OutputSlot(uploaded);
+    _awaitingSuccessor = false;
     _failure = null;
     if (prior != null && !identical(prior.frame, uploaded)) {
       prior.retire();
@@ -321,6 +348,7 @@ final class UploadSession {
     _slot = null;
     slot.retire();
     final decodeRestarted = decode.prepareForOutputLoss();
+    _awaitingSuccessor = false;
     _requestUploaderRelease();
     _setState(UploadState.waitingFrame);
     _emitOutputReleased(
@@ -344,10 +372,13 @@ final class UploadSession {
     }
     _revision++;
     _playback.clear();
-    _slot = null;
-    slot.retire();
+    // Keep the current renderer output visible until a successor has been
+    // decoded and uploaded. The next successful upload atomically replaces
+    // and retires this slot. If a finite animation reaches EOF, _prepareNow
+    // clears the awaiting flag and the final frame remains visible.
+    _awaitingSuccessor = true;
     _failure = null;
-    _setState(UploadState.waitingFrame);
+    _setState(UploadState.ready, forceNotify: true);
     return true;
   }
 
@@ -370,17 +401,29 @@ final class UploadSession {
     final presentStartedAt = clock.nowMicros();
     await claim.present();
     final presentMicros = clock.nowMicros() - presentStartedAt;
+    final micros = claim.frame.duration.inMicroseconds;
+    final animation = decode.snapshot.animation;
+    final authoritativeStatic = micros <= 0 &&
+        animation.complete &&
+        animation.frameCount <= 1;
     if (identical(_slot?.frame, claim.frame)) {
-      final micros = claim.frame.duration.inMicroseconds;
-      final scaledMicros =
-          micros <= 0 ? 0 : (micros / _playbackSpeed).round();
-      final nowUs = clock.nowMicros();
-      _playback.start(
-        frameIndex: claim.frame.index,
-        duration: Duration(microseconds: scaledMicros),
-        nowUs: nowUs,
-      );
-      _syncPlaybackPause(nowUs);
+      final shouldAdvance = !_awaitingSuccessor && !authoritativeStatic;
+      if (shouldAdvance) {
+        final effectiveMicros = micros > 0 ? micros : 10000;
+        final scaledMicros = (effectiveMicros / _playbackSpeed).round();
+        final nowUs = clock.nowMicros();
+        _playback.start(
+          frameIndex: claim.frame.index,
+          duration: Duration(microseconds: scaledMicros),
+          nowUs: nowUs,
+        );
+        _syncPlaybackPause(nowUs);
+      } else {
+        // Static frames have zero duration and must remain resident until the
+        // upload window or frame budget retires them. A zero-length playback
+        // timer fires immediately and was the direct cause of revisit stalls.
+        _playback.clear();
+      }
       _notifySnapshot();
     }
     _emit(
@@ -390,6 +433,11 @@ final class UploadSession {
         'presentMicros': presentMicros < 0 ? 0 : presentMicros,
         'durationMicros': claim.frame.duration.inMicroseconds,
         'playbackState': _playback.state.name,
+        'playbackScheduled': _playback.active,
+        'awaitingSuccessor': _awaitingSuccessor,
+        'authoritativeStatic': authoritativeStatic,
+        'animationFrameCount': animation.frameCount,
+        'animationComplete': animation.complete,
       },
     );
   }
@@ -537,6 +585,7 @@ final class UploadSession {
 
   void _retireCurrent() {
     _playback.clear();
+    _awaitingSuccessor = false;
     final slot = _slot;
     _slot = null;
     slot?.retire();

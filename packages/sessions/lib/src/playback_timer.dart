@@ -35,8 +35,12 @@ final class PlaybackTimer {
     required int nowUs,
   }) {
     final micros = duration.inMicroseconds;
+    if (micros <= 0) {
+      clear();
+      return;
+    }
     _frameIndex = frameIndex;
-    _remainingUs = micros > 0 ? micros : 0;
+    _remainingUs = micros;
     _deadlineUs = nowUs + _remainingUs;
     _state = PlaybackState.running;
   }

@@ -1,3 +1,20 @@
+## dev.92 完成项与设备复验
+
+### 已完成
+
+- 使用用户实际回切复现 Trace 定位零时长静态帧错误进入 playback timer。
+- 将动画推进改为 successor-safe：旧 output 保留到 replacement 上传成功；有限 EOF 保留最后一帧。
+- 增加零时长 timer、静态 output、有限动画最终 output owner tests 与 `playbackCompleted` Trace。
+- 修复 storage Stream 测试 API 和 texture viewport 父约束 fixture。
+- 新增 ADR 0076、dev.92 三清单审计和静态门禁。
+
+### 下一步设备复验
+
+1. 静态 WebP/PNG/JPEG 连续前后切页，确认 `framePresented.durationMicros=0` 后没有 `playbackFrameDue`，回页始终可重新显示。
+2. Animated WebP/GIF 在慢解码或慢上传时确认旧帧保持到下一次 `frameUploaded`，不闪回 loading。
+3. 有限动画播放结束后确认出现 `playbackCompleted` 且 `outputRetained=true`，最后一帧保持。
+4. 同时使用 dev.91 的 `sourceRead/frameDecoded/frameUploaded/framePresented` 判断本地大图和动画卡顿是否来自读取、解码、上传或呈现。
+
 ## dev.91 完成项与设备复验
 
 ### 已完成

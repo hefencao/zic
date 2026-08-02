@@ -1,3 +1,12 @@
+## dev.92 静态与有限动画 output 生命周期
+
+- `PlaybackTimer` 只拥有正时长 deadline；零/负时长不创建 running timer。
+- `UploadSession` 是当前 renderer output 与 successor replacement 的唯一所有者。帧到期后它保留旧 output、将 `preparedDepth` 投影为 0，并等待同一 DecodeSession 产生 successor；新 output 上传成功后才原子退休旧 output。
+- `DecodeSession` 继续拥有 cursor、AnimationInfo 和 FrameHolder，只报告 frame/needMoreData/ended。等待 successor 时若进入 ended，UploadSession 保留有限动画最后一帧。
+- `LiveCoordinator` 只根据 demand 与 prepared depth 唤醒 decode/upload，不保存 last frame，也不解释静态/有限动画。
+- Reader Presentation 继续只消费只读 Pipeline output；不得通过 Widget keepAlive、last-frame cache 或 ImageProvider 复制本轮修复。
+- ADR 0075 的 demand-detach/frame-budget re-prime 仍处理真正的 output 退休；ADR 0076 处理同一 UploadSession 内的播放 replacement。两者不得合并成 Reader 私有生命周期。
+
 # dev.91 页面 output 生命周期与本地媒体诊断
 
 ## 页面回切

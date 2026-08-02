@@ -1,3 +1,11 @@
+## 0.31.0-dev.92：修复静态/有限动画播放输出生命周期
+
+- 根据用户实际回切复现 Trace 纠正 dev.91 结论：6 次页面挂载仅 3 次首帧；3 个已呈现帧的时长均为 0，却仍产生 `playbackFrameDue`，之后在空缓冲上反复 `decoding -> ended`。
+- `PlaybackTimer` 对零/负时长保持 idle；已确认的静态帧不进入动画推进。
+- 动画帧到期不再先删除当前 output，而是保留旧帧并将 `preparedDepth` 投影为 0；successor 上传成功后原子替换。有限动画到 EOF 时保留最后一帧并记录 `playbackCompleted`。
+- 修复错误报告中的 `Stream.toList(growable:)` 测试编译错误；修正 native texture viewport 测试的根节点 tight-constraint fixture，不改变产品几何。
+- 新增静态零时长、有限动画最终帧、零时长 PlaybackTimer 回归、ADR 0076、dev.92 三清单审计和所有权门禁。既定 7/3、2/1、current/transition、5/3/2 与 256 KiB I/O 不变。
+
 ## 0.31.0-dev.91：修复页面回切无限加载并补齐本地媒体 Trace
 
 - 根据设备 Trace 定位：upload 消费 decoded frame 后，页面离开 current/transition 会退休 output，但仍在前 2/后 1 decode window 的 DecodeSession 不 detach，空 holder 对应 cursor 停在 EOF；回页反复 `decoding -> ended` 并永久 `waitingFrame`。

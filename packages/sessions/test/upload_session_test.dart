@@ -120,6 +120,182 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('static zero-duration output remains visible without playback advance', () async {
+    final temp = await Directory.systemTemp.createTemp('upload_static_test_');
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: _CursorFactory(
+        duration: Duration.zero,
+        frameLimit: 1,
+        animation: const AnimationInfo(
+          frameCount: 1,
+          loopCount: 1,
+          complete: true,
+        ),
+      ),
+      clock: _Clock(),
+    );
+    const decodeDemand = DecodeDemand(
+      role: PageRole.current,
+      priority: 1000,
+      targetWatermark: 1,
+      reason: 'static',
+      expirationRevision: 1,
+    );
+    await decode.fill(
+      demand: decodeDemand,
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    final playbackClock = _Clock();
+    final uploader = _Uploader();
+    final upload = UploadSession(
+      id: decode.id,
+      decode: decode,
+      uploader: uploader,
+      clock: playbackClock,
+    );
+    final ready = await upload.prepare(
+      demand: const UploadDemand(
+        role: PageRole.current,
+        priority: 1000,
+        reason: 'static',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    expect(ready.state, UploadState.ready);
+    final claim = upload.claimPresent();
+    expect(claim, isNotNull);
+    await upload.present(claim!);
+    claim.release();
+
+    expect(upload.playbackState, PlaybackState.idle);
+    playbackClock.value = 1000000;
+    expect(upload.takeDueFrame(), isNull);
+    expect(upload.frame?.index, 0);
+    expect(uploader.outputs.single.disposed, isFalse);
+
+    upload.detach();
+    upload.dispose();
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
+  test('finite animation keeps its final output after decoder end', () async {
+    final temp = await Directory.systemTemp.createTemp('upload_finite_test_');
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: _CursorFactory(
+        frameLimit: 1,
+        animation: const AnimationInfo(
+          frameCount: 1,
+          loopCount: 1,
+          complete: true,
+        ),
+      ),
+      clock: _Clock(),
+    );
+    const decodeDemand = DecodeDemand(
+      role: PageRole.current,
+      priority: 1000,
+      targetWatermark: 1,
+      reason: 'finite',
+      expirationRevision: 3,
+    );
+    await decode.fill(
+      demand: decodeDemand,
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    final playbackClock = _Clock();
+    final uploader = _Uploader();
+    final upload = UploadSession(
+      id: decode.id,
+      decode: decode,
+      uploader: uploader,
+      clock: playbackClock,
+    );
+    const uploadDemand = UploadDemand(
+      role: PageRole.current,
+      priority: 1000,
+      reason: 'finite',
+      expirationRevision: 3,
+    );
+    await upload.prepare(
+      demand: uploadDemand,
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    final claim = upload.claimPresent();
+    expect(claim, isNotNull);
+    await upload.present(claim!);
+    claim.release();
+    playbackClock.value = 16000;
+    expect(upload.takeDueFrame(), 0);
+    expect(upload.advance(0), isTrue);
+    expect(upload.frame?.index, 0);
+    expect(upload.preparedDepth, 0);
+    expect(uploader.outputs.single.disposed, isFalse);
+
+    final ended = await decode.fill(
+      demand: decodeDemand,
+      revision: 2,
+      cancel: CancelToken(),
+      preparedDepth: upload.preparedDepth,
+    );
+    expect(ended.state, DecodeState.ended);
+    final finalOutput = await upload.prepare(
+      demand: uploadDemand,
+      revision: 2,
+      cancel: CancelToken(),
+    );
+    expect(finalOutput.state, UploadState.ready);
+    expect(finalOutput.frameIndex, 0);
+    expect(upload.preparedDepth, 1);
+    expect(uploader.outputs.single.disposed, isFalse);
+
+    upload.detach();
+    upload.dispose();
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
   test('accepts an aspect-fitted output inside DecodeId bounds', () async {
     final temp = await Directory.systemTemp.createTemp('upload_fit_test_');
     final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
@@ -495,10 +671,23 @@ final class _Source implements EncodedSource {
 }
 
 final class _CursorFactory implements CursorFactory {
-  _CursorFactory({this.width = 8, this.height = 8});
+  _CursorFactory({
+    this.width = 8,
+    this.height = 8,
+    this.duration = const Duration(milliseconds: 16),
+    this.frameLimit,
+    this.animation = const AnimationInfo(
+      frameCount: 2,
+      loopCount: 0,
+      complete: true,
+    ),
+  });
 
   final int width;
   final int height;
+  final Duration duration;
+  final int? frameLimit;
+  final AnimationInfo animation;
   final List<_Frame> frames = <_Frame>[];
 
   @override
@@ -507,16 +696,27 @@ final class _CursorFactory implements CursorFactory {
     required EncodedSource source,
     required int epoch,
   }) => CursorBinding(
-        frames: _Cursor(epoch, frames, width: width, height: height),
+        frames: _Cursor(
+          epoch,
+          frames,
+          width: width,
+          height: height,
+          duration: duration,
+          frameLimit: frameLimit,
+          animation: animation,
+        ),
       );
 }
 
-final class _Cursor implements FrameCursor {
+final class _Cursor implements FrameCursor, LoopCursor {
   _Cursor(
     this.epoch,
     this.frames, {
     required this.width,
     required this.height,
+    required this.duration,
+    required this.frameLimit,
+    required this.animation,
   });
 
   @override
@@ -524,13 +724,39 @@ final class _Cursor implements FrameCursor {
   final List<_Frame> frames;
   final int width;
   final int height;
+  final Duration duration;
+  final int? frameLimit;
+  @override
+  final AnimationInfo animation;
+  @override
+  int cycle = 0;
   int next = 0;
 
   @override
   Future<CursorStep> decodeNext() async {
-    final frame = _Frame(epoch, next++, width: width, height: height);
+    if (frameLimit != null && next >= frameLimit!) {
+      return const CursorStep.end();
+    }
+    final frame = _Frame(
+      epoch,
+      next++,
+      width: width,
+      height: height,
+      duration: duration,
+    );
     frames.add(frame);
     return CursorStep.frame(frame);
+  }
+
+  @override
+  bool rewind() {
+    final nextCycle = cycle + 1;
+    if (!animation.allowsCycle(nextCycle)) {
+      return false;
+    }
+    cycle = nextCycle;
+    next = 0;
+    return true;
   }
 
   @override
@@ -543,6 +769,7 @@ final class _Frame implements FrameRef {
     this.index, {
     this.width = 8,
     this.height = 8,
+    this.duration = const Duration(milliseconds: 16),
   });
 
   @override
@@ -552,7 +779,7 @@ final class _Frame implements FrameRef {
   @override
   int get byteLength => 4;
   @override
-  Duration get duration => const Duration(milliseconds: 16);
+  final Duration duration;
   @override
   final int width;
   @override
@@ -581,6 +808,7 @@ final class _Uploader implements FrameUploader {
       index: frame.index,
       width: frame.width,
       height: frame.height,
+      duration: frame.duration,
     );
     outputs.add(output);
     return output;
@@ -606,6 +834,7 @@ final class _ControlledUploader implements FrameUploader {
       index: frame.index,
       width: frame.width,
       height: frame.height,
+      duration: frame.duration,
     );
     if (!started.isCompleted) started.complete();
     return _result.future;
@@ -638,6 +867,7 @@ final class _SequencedControlledUploader implements FrameUploader {
       index: frame.index,
       width: frame.width,
       height: frame.height,
+      duration: frame.duration,
     );
     outputs.add(output);
     final result = Completer<OutputFrame>();
@@ -662,6 +892,7 @@ final class _Output implements OutputFrame {
     required this.index,
     required this.width,
     required this.height,
+    required this.duration,
   });
 
   @override
@@ -675,7 +906,7 @@ final class _Output implements OutputFrame {
   @override
   int get byteLength => width * height * 4;
   @override
-  Duration get duration => const Duration(milliseconds: 16);
+  final Duration duration;
   @override
   RendererKind get renderer => RendererKind.androidTexture;
   @override

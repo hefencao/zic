@@ -1,3 +1,14 @@
+## dev.92 静态/有限动画播放规范
+
+1. 帧时长小于等于 0 时，`PlaybackTimer` 不得进入 running，也不得产生立即到期的 `playbackFrameDue`。
+2. 动画元数据已完成且 frameCount 小于等于 1 的零时长 output 是权威静态帧，只能由 upload demand detach、预算、reset 或 dispose 退休。
+3. 动画帧到期后，当前 output 必须保持可呈现，直到 successor 成功上传；不得先显示 loading 再请求下一帧。
+4. 等待 successor 时 upload `preparedDepth` 必须为 0，使现有 decode demand继续工作；不得创建第二 DecodeSession 或 Reader 缓存。
+5. 等待 successor 时 decoder 进入 ended，视为有限动画完成；最后 output 必须保留，播放 timer 清除，并产生脱敏 `playbackCompleted`。
+6. source 增长、解码或上传暂时延迟时，旧 output 继续显示；下一帧失败不得无条件销毁已成功呈现的 output。
+7. `Stream.toList` 测试不得使用不存在的 growable 参数；viewport 测试必须构造符合期望的父约束，不得用错误 fixture 迫使产品几何变化。
+8. 下载前 7/后 3、预解码前 2/后 1、上传 current/transition、lane 5/3/2 与 256 KiB 数据块保持不变。
+
 ## dev.91 页面重入与媒体诊断规范
 
 1. 已上传 output 被 demand detach 或 frame budget 回收后，如果绑定 DecodeSession 的 holder 已空，则下一次 fill 必须重建 cursor；不得在 EOF cursor 上反复提交 decode。

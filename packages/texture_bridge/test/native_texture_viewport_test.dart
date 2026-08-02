@@ -81,15 +81,17 @@ void main() {
     const viewportKey = ValueKey<String>('native-texture-fill-box');
     await tester.pumpWidget(
       const MaterialApp(
-        home: SizedBox(
-          width: 300,
-          height: 600,
-          child: NativeTextureViewport(
-            textureId: 10,
-            sourceWidth: 104,
-            sourceHeight: 208,
-            fit: BoxFit.fill,
-            viewportKey: viewportKey,
+        home: Center(
+          child: SizedBox(
+            width: 300,
+            height: 600,
+            child: NativeTextureViewport(
+              textureId: 10,
+              sourceWidth: 104,
+              sourceHeight: 208,
+              fit: BoxFit.fill,
+              viewportKey: viewportKey,
+            ),
           ),
         ),
       ),

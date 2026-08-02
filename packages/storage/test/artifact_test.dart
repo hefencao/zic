@@ -124,7 +124,7 @@ void main() {
 
     final chunkLengths = await artifact.readChunks()
         .map((chunk) => chunk.length)
-        .toList(growable: false);
+        .toList();
 
     expect(chunkLengths, <int>[256 * 1024, 256 * 1024, 7]);
   });
