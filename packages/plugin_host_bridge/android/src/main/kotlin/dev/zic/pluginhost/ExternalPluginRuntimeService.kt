@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.Message
+import dev.zic.network.AndroidWebViewProcess
 import android.os.Messenger
 import io.flutter.FlutterInjector
 import io.flutter.embedding.engine.FlutterEngine
@@ -39,6 +40,7 @@ class ExternalPluginRuntimeService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        AndroidWebViewProcess.configureDataDirectorySuffix("zic_plugin_runtime")
         packetStore = RuntimeServicePacketStore(applicationContext)
         nativeDrivers = NativeExternalPluginDriverHost(applicationContext)
         packetStore.clear()

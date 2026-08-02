@@ -1,3 +1,14 @@
+# dev.88 来源浏览器与详情交互所有权补充
+
+1. 可见来源浏览器由 `network_bridge` 主进程 Activity 唯一拥有；`openBrowser` 的完成边界是 Activity 关闭，而不是 `startActivity` 返回。
+2. 插件隔离进程必须在任何 WebView/CookieManager 调用前配置独立 WebView data-directory suffix。浏览器验证结果只通过原子 snapshot 导入共享 CookieJar，禁止假设跨进程 CookieManager 自动同步。
+3. Cloudflare interceptor 只 fail-fast 生成稳定异常；`plugin_host_bridge` 转译协议错误，Domain 投影 typed verification，App 再决定是否显示地球恢复动作。
+4. typed verification 恢复顺序固定为：打开可见浏览器 → 等待关闭 → 失效来源缓存 → 重试。普通 timeout 不触发验证入口。
+5. cached source decorator 必须保留 `ComicWebUriSource` 和设置能力；加入书架切换到本地详情后不得丢失来源网页或插件设置 facade。
+6. 详情 action 只调用注入的 WebView/迁移/设置 facade，顺序为 WebView、迁移、插件。标签搜索只提交当前来源 query；来源页仍拥有 browse/cache 生命周期。
+7. 刷新结果图标和标签多选是 Presentation 局部状态，不成为详情数据或搜索结果的第二权威来源。
+8. synthetic gallery 必须带协议 revision；旧 revision 只能淘汰，目录失败不能借历史 synthetic 隐藏。
+
 ## dev.87 来源验证、作品网页和 promoted artifact 所有权
 
 - `network_bridge` 继续拥有通用 WebView/Cookie/Cloudflare Android 能力；`plugin_host_bridge` 只把插件运行时 cause 链归一为稳定错误码，不拥有 Presentation fallback。

@@ -99,6 +99,8 @@ extension _DemoHomeViews on _DemoHomeState {
                     onOpenComic: _openSourceComic,
                     onOpenSourceWebView: (source, url) =>
                         widget.networkBridge.openBrowser(url),
+                    requestedQuery: _sourceSearchQuery,
+                    queryRevision: _sourceSearchRevision,
                   )
                 : const SizedBox.shrink(),
             MiscPage(

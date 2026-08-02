@@ -1683,6 +1683,8 @@ def check_compile_regressions() -> None:
 
     details_ui = (ROOT / 'apps/app/lib/comic_details.dart').read_text(
         encoding='utf-8',
+    ) + (ROOT / 'apps/app/lib/comic_details_interactions.dart').read_text(
+        encoding='utf-8',
     )
     demo_home = (ROOT / 'apps/app/lib/demo_home.dart').read_text(
         encoding='utf-8',
@@ -2287,6 +2289,8 @@ def check_compile_regressions() -> None:
             fail(f'obsolete single-comic management UI remains: {forbidden}')
 
     details = (ROOT / 'apps/app/lib/comic_details.dart').read_text(
+        encoding='utf-8'
+    ) + (ROOT / 'apps/app/lib/comic_details_interactions.dart').read_text(
         encoding='utf-8'
     )
     for required in (

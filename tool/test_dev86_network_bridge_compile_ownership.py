@@ -60,23 +60,29 @@ def main() -> int:
         'packages/network_bridge/android/src/main/kotlin/dev/zic/network/NetworkBrowserSnapshotStore.kt',
         'getSharedPreferences',
     )
-    require(
+    forbid(
         'packages/network_bridge/android/src/main/AndroidManifest.xml',
-        'android:process="${zicNetworkBrowserProcess}"',
+        'android:process=',
     )
-    require(
+    forbid(
         'apps/app/android/app/build.gradle.kts',
-        'manifestPlaceholders["zicNetworkBrowserProcess"] = ":zic_plugin_runtime"',
+        'zicNetworkBrowserProcess',
     )
     require(
         'packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/AndroidCloudflareInterceptor.kt',
         'class AndroidCloudflareInterceptor',
-        'CookieManager.getInstance()',
-        'CLOUDFLARE_WAIT_SECONDS = 30L',
+        'Cloudflare verification failed',
+        'response.close()',
+    )
+    forbid(
+        'packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/AndroidCloudflareInterceptor.kt',
+        'WebView(',
+        'CLOUDFLARE_WAIT_SECONDS',
     )
     require(
         'packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/AndroidCookieJar.kt',
-        'class AndroidCookieJar : CookieJar',
+        'class AndroidCookieJar(context: Context) : CookieJar',
+        'NetworkBrowserSnapshotStore.read(application, url.toString())',
         'CookieManager.getInstance()',
     )
     require(
@@ -89,7 +95,10 @@ def main() -> int:
         'main.java.srcDir "src/runtime/kotlin"',
         'implementation "com.squareup.okhttp3:okhttp:5.4.0"',
         'consumerProguardFiles "consumer-rules.pro"',
-        'manifestPlaceholders = [zicNetworkBrowserProcess: ":zic_network_runtime"]',
+    )
+    forbid(
+        'packages/network_bridge/android/build.gradle',
+        'zicNetworkBrowserProcess',
     )
     require(
         'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt',
@@ -104,6 +113,7 @@ def main() -> int:
             'import dev.zic.network.AndroidCloudflareInterceptor',
             'import dev.zic.network.AndroidCookieJar',
             'import dev.zic.network.FallbackDns',
+            'AndroidCookieJar(context)',
         )
     plugin = 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/PluginHostBridgePlugin.kt'
     forbid(
@@ -135,14 +145,17 @@ def main() -> int:
     require(
         'apps/app/lib/demo_home.dart',
         'final AndroidNetworkBridge networkBridge;',
-        'widget.networkBridge.openBrowser(',
         'networkBridge: widget.networkBridge',
+    )
+    require(
+        'apps/app/lib/demo_home_source_compat.dart',
+        'widget.networkBridge.openBrowser(',
     )
     require(
         'apps/app/lib/source_browser.dart',
         'final AndroidNetworkBridge networkBridge;',
-        'widget.networkBridge.openBrowser',
-        'widget.networkBridge.readBrowserSnapshot(url)',
+        'networkBridge.openBrowser',
+        'networkBridge.readBrowserSnapshot(url)',
     )
     require(
         'apps/app/pubspec.yaml',

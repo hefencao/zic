@@ -1,6 +1,7 @@
 package dev.zic.network
 
 import android.app.Activity
+import android.content.Intent
 import android.os.Bundle
 import android.view.ViewGroup
 import android.webkit.CookieManager
@@ -17,30 +18,43 @@ class NetworkBrowserActivity : Activity() {
         if (url.isNullOrBlank() ||
             (!url.startsWith("https://") && !url.startsWith("http://"))
         ) {
-            finish()
+            failAndFinish("HTTP(S) browser URL is required")
             return
         }
-        NetworkBrowserSnapshotStore.begin(this, url)
-        webView = WebView(this).apply {
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT,
-            )
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.databaseEnabled = true
-            webViewClient = object : WebViewClient() {
-                override fun onPageFinished(view: WebView, currentUrl: String) {
-                    captureSnapshot(view, currentUrl)
+        setResult(RESULT_CANCELED)
+        runCatching {
+            NetworkBrowserSnapshotStore.begin(this, url)
+            webView = WebView(this).apply {
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                )
+                settings.javaScriptEnabled = true
+                settings.domStorageEnabled = true
+                settings.databaseEnabled = true
+                webViewClient = object : WebViewClient() {
+                    override fun onPageFinished(view: WebView, currentUrl: String) {
+                        captureSnapshot(view, currentUrl)
+                    }
                 }
             }
+            CookieManager.getInstance().apply {
+                setAcceptCookie(true)
+                setAcceptThirdPartyCookies(webView, true)
+            }
+            setContentView(webView)
+            webView.loadUrl(url)
+        }.onFailure { error ->
+            failAndFinish(error.message ?: error.javaClass.simpleName)
         }
-        CookieManager.getInstance().apply {
-            setAcceptCookie(true)
-            setAcceptThirdPartyCookies(webView, true)
-        }
-        setContentView(webView)
-        webView.loadUrl(url)
+    }
+
+    private fun failAndFinish(message: String) {
+        setResult(
+            RESULT_FIRST_USER,
+            Intent().putExtra(EXTRA_ERROR, message.take(500)),
+        )
+        finish()
     }
 
     private fun captureSnapshot(view: WebView, currentUrl: String) {
@@ -72,8 +86,21 @@ class NetworkBrowserActivity : Activity() {
         if (::webView.isInitialized && webView.canGoBack()) {
             webView.goBack()
         } else {
-            super.onBackPressed()
+            completeAndFinish()
         }
+    }
+
+    private fun completeAndFinish() {
+        if (::webView.isInitialized) {
+            val currentUrl =
+                webView.url ?: intent.getStringExtra(EXTRA_URL).orEmpty()
+            if (currentUrl.isNotBlank()) {
+                captureSnapshot(webView, currentUrl)
+            }
+            CookieManager.getInstance().flush()
+        }
+        setResult(RESULT_OK)
+        finish()
     }
 
     override fun onDestroy() {
@@ -97,5 +124,6 @@ class NetworkBrowserActivity : Activity() {
 
     companion object {
         const val EXTRA_URL = "url"
+        const val EXTRA_ERROR = "error"
     }
 }

@@ -35,7 +35,22 @@ void main() {
       ),
       isFalse,
     );
+    final legacySynthetic = identity(<String, Object?>{
+      'kind': 'chapter',
+      'comicId': 'mihon:manga:fixture',
+      'synthetic': true,
+    });
+    final currentSynthetic = identity(<String, Object?>{
+      'kind': 'chapter',
+      'comicId': 'mihon:manga:fixture',
+      'synthetic': true,
+      'synthetic_revision': 2,
+    });
+    expect(isSyntheticMihonChapterIdentity(legacySynthetic), isTrue);
+    expect(isCurrentSyntheticMihonChapterIdentity(legacySynthetic), isFalse);
+    expect(isCurrentSyntheticMihonChapterIdentity(currentSynthetic), isTrue);
     expect(isSyntheticMihonChapterIdentity('chapter-1'), isFalse);
+    expect(isCurrentSyntheticMihonChapterIdentity('chapter-1'), isFalse);
     expect(isSyntheticMihonChapterIdentity('mihon:chapter:broken'), isFalse);
   });
 

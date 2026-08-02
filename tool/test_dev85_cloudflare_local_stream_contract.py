@@ -41,17 +41,17 @@ def main() -> int:
 
     cloudflare = require(
         'packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/AndroidCloudflareInterceptor.kt',
-        'CLOUDFLARE_WAIT_SECONDS = 30L',
         'setOf("cloudflare", "cloudflare-nginx")',
-        'clearClearanceCookie(requestUrl)',
-        'open the source login page and retry',
+        'Cloudflare verification failed',
+        'response.close()',
     )
-    if 'request.safeWebViewHeaders()' not in cloudflare:
-        raise SystemExit('Cloudflare WebView retry must filter request headers')
+    for forbidden in ('WebView(', 'CLOUDFLARE_WAIT_SECONDS', 'clearClearanceCookie'):
+        if forbidden in cloudflare:
+            raise SystemExit('Cloudflare runtime interceptor must return typed recovery to visible UI')
     for abi in ('mihonRuntime14', 'mihonRuntime16'):
         require(
             f'packages/plugin_host_bridge/android/src/{abi}/kotlin/eu/kanade/tachiyomi/network/RuntimeNetwork.kt',
-            '.cookieJar(AndroidCookieJar())',
+            '.cookieJar(AndroidCookieJar(context))',
             'AndroidCloudflareInterceptor(context, ::defaultUserAgentProvider)',
             '.callTimeout(45, TimeUnit.SECONDS)',
         )
@@ -71,6 +71,9 @@ def main() -> int:
         'apps/app/lib/demo_home.dart',
         'reconcileComicDetailsChapterEntries',
         'isCompatibilityFallback: isSyntheticMihonChapterIdentity',
+    )
+    require(
+        'apps/app/lib/demo_home_source_compat.dart',
         'widget.networkBridge.openBrowser(',
     )
 

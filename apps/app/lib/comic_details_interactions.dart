@@ -1,0 +1,604 @@
+part of 'comic_details.dart';
+
+enum _DetailsRefreshState { idle, refreshing, success, failure }
+
+IconData _sourcePluginIcon(String sourceId) {
+  if (sourceId.startsWith('mihon:')) {
+    return Icons.extension_outlined;
+  }
+  if (sourceId.startsWith('venera:')) {
+    return Icons.javascript_outlined;
+  }
+  return Icons.public;
+}
+
+final class _ComicDetailsFailureScaffold extends StatelessWidget {
+  const _ComicDetailsFailureScaffold({
+    required this.title,
+    required this.sourceId,
+    required this.sourceLabel,
+    required this.failure,
+    required this.onRetry,
+    required this.refreshing,
+    this.onOpenSourceWebView,
+    this.onOpenSourceSettings,
+    this.onMigrateSource,
+  });
+
+  final String title;
+  final String sourceId;
+  final String sourceLabel;
+  final _DetailFailure failure;
+  final VoidCallback onRetry;
+  final bool refreshing;
+  final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
+  final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
+  final VoidCallback? onMigrateSource;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      key: comicDetailsScreenKey,
+      appBar: AppBar(
+        title: Text(title),
+        actions: <Widget>[
+          if (onOpenSourceWebView != null)
+            IconButton(
+              key: comicDetailsOpenWebViewKey,
+              tooltip: '在 WebView 中访问该漫画详情页',
+              onPressed: () => unawaited(onOpenSourceWebView!()),
+              icon: const Icon(Icons.public),
+            ),
+          if (onMigrateSource != null)
+            IconButton(
+              key: comicDetailsMigrateKey,
+              tooltip: '迁移漫画源',
+              onPressed: onMigrateSource,
+              icon: const Icon(Icons.swap_horiz),
+            ),
+          if (onOpenSourceSettings != null)
+            _SourceSettingsAction(
+              sourceId: sourceId,
+              sourceLabel: sourceLabel,
+              onPressed: () => unawaited(onOpenSourceSettings!()),
+            ),
+        ],
+      ),
+      body: _DetailFailurePanel(
+        failure: failure,
+        onRetry: refreshing ? null : onRetry,
+      ),
+    );
+  }
+}
+
+final class _ComicDetailsScaffold extends StatefulWidget {
+  const _ComicDetailsScaffold({
+    required this.screenKey,
+    required this.title,
+    required this.sourceId,
+    required this.sourceLabel,
+    required this.authors,
+    required this.tags,
+    required this.description,
+    required this.cover,
+    required this.preference,
+    required this.categories,
+    required this.descending,
+    required this.onRefresh,
+    this.onOpenSourceWebView,
+    this.onOpenSourceSettings,
+    this.onSearchMetadata,
+    required this.onPreferenceChanged,
+    required this.progressLabel,
+    required this.downloadingComic,
+    required this.onDownloadComic,
+    required this.onReverse,
+    required this.chapterCount,
+    required this.pageCount,
+    this.pageCountPending = false,
+    required this.chapterList,
+    this.onMigrateSource,
+  });
+
+  final Key screenKey;
+  final String title;
+  final String sourceId;
+  final String sourceLabel;
+  final List<String> authors;
+  final List<String> tags;
+  final String? description;
+  final Widget cover;
+  final ComicPreference preference;
+  final List<LibraryCategory> categories;
+  final bool descending;
+  final Future<bool> Function() onRefresh;
+  final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
+  final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
+  final ComicDetailsMetadataSearch? onSearchMetadata;
+  final Future<void> Function(ComicPreference preference) onPreferenceChanged;
+  final String? progressLabel;
+  final bool downloadingComic;
+  final Future<void> Function()? onDownloadComic;
+  final VoidCallback onReverse;
+  final int chapterCount;
+  final int pageCount;
+  final bool pageCountPending;
+  final Widget chapterList;
+  final VoidCallback? onMigrateSource;
+
+  @override
+  State<_ComicDetailsScaffold> createState() => _ComicDetailsScaffoldState();
+}
+
+final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
+  _DetailsRefreshState _refreshState = _DetailsRefreshState.idle;
+
+  Future<void> _handleRefresh() async {
+    if (_refreshState == _DetailsRefreshState.refreshing) {
+      return;
+    }
+    setState(() => _refreshState = _DetailsRefreshState.refreshing);
+    var succeeded = false;
+    try {
+      succeeded = await widget.onRefresh();
+    } on Object {
+      succeeded = false;
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(
+      () => _refreshState = succeeded
+          ? _DetailsRefreshState.success
+          : _DetailsRefreshState.failure,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      key: comicDetailsScreenKey,
+      appBar: AppBar(
+        title: Text(widget.title),
+        actions: <Widget>[
+          if (widget.onOpenSourceWebView != null)
+            IconButton(
+              key: comicDetailsOpenWebViewKey,
+              tooltip: '在 WebView 中访问该漫画详情页',
+              onPressed: () => unawaited(widget.onOpenSourceWebView!()),
+              icon: const Icon(Icons.public),
+            ),
+          if (widget.onMigrateSource != null)
+            IconButton(
+              key: comicDetailsMigrateKey,
+              tooltip: '迁移漫画源',
+              onPressed: widget.onMigrateSource,
+              icon: const Icon(Icons.swap_horiz),
+            ),
+          if (widget.onOpenSourceSettings != null)
+            _SourceSettingsAction(
+              sourceId: widget.sourceId,
+              sourceLabel: widget.sourceLabel,
+              onPressed: () => unawaited(widget.onOpenSourceSettings!()),
+            ),
+        ],
+      ),
+      body: Stack(
+        alignment: Alignment.topCenter,
+        children: <Widget>[
+          RefreshIndicator(
+            key: comicDetailsPullRefreshKey,
+            triggerMode: RefreshIndicatorTriggerMode.anywhere,
+            color: Colors.transparent,
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            strokeWidth: 0.01,
+            onRefresh: _handleRefresh,
+            child: CustomScrollView(
+              key: widget.screenKey,
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: <Widget>[
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  sliver: SliverToBoxAdapter(
+                    child: _ComicDetailsHeader(
+                      title: widget.title,
+                      sourceLabel: widget.sourceLabel,
+                      authors: widget.authors,
+                      tags: widget.tags,
+                      description: widget.description,
+                      cover: widget.cover,
+                      preference: widget.preference,
+                      categories: widget.categories,
+                      onPreferenceChanged: widget.onPreferenceChanged,
+                      onSearchMetadata: widget.onSearchMetadata,
+                      progressLabel: widget.progressLabel,
+                      downloadingComic: widget.downloadingComic,
+                      onDownloadComic: widget.onDownloadComic,
+                    ),
+                  ),
+                ),
+                SliverPadding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+                  sliver: SliverToBoxAdapter(
+                    child: Row(
+                      children: <Widget>[
+                        Expanded(
+                          child: Text(
+                            widget.pageCountPending
+                                ? widget.pageCount == 0
+                                    ? '${widget.chapterCount} 章 · 页数待加载'
+                                    : '${widget.chapterCount} 章 · 已知 ${widget.pageCount} 页'
+                                : '${widget.chapterCount} 章 · ${widget.pageCount} 页',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                        IconButton(
+                          key: comicDetailsReverseKey,
+                          tooltip: widget.descending ? '切换正序' : '切换倒序',
+                          onPressed: widget.onReverse,
+                          icon: Icon(
+                            widget.descending
+                                ? Icons.arrow_downward
+                                : Icons.arrow_upward,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                SliverToBoxAdapter(child: widget.chapterList),
+                const SliverPadding(padding: EdgeInsets.only(bottom: 36)),
+              ],
+            ),
+          ),
+          if (_refreshState != _DetailsRefreshState.idle)
+            SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: _DetailsRefreshBadge(state: _refreshState),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+final class _SourceSettingsAction extends StatelessWidget {
+  const _SourceSettingsAction({
+    required this.sourceId,
+    required this.sourceLabel,
+    required this.onPressed,
+  });
+
+  final String sourceId;
+  final String sourceLabel;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton.icon(
+      key: comicDetailsSourceSettingsKey,
+      onPressed: onPressed,
+      style: TextButton.styleFrom(
+        foregroundColor: Theme.of(context).colorScheme.onSurface,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+      ),
+      icon: Icon(_sourcePluginIcon(sourceId), size: 20),
+      label: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 112),
+        child: Text(
+          sourceLabel,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+    );
+  }
+}
+
+final class _DetailsRefreshBadge extends StatelessWidget {
+  const _DetailsRefreshBadge({required this.state});
+
+  final _DetailsRefreshState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final (icon, color) = switch (state) {
+      _DetailsRefreshState.refreshing => (
+          const _SpinningRefreshIcon(),
+          Theme.of(context).colorScheme.primary,
+        ),
+      _DetailsRefreshState.success => (
+          const Icon(Icons.check, size: 24),
+          Colors.green,
+        ),
+      _DetailsRefreshState.failure => (
+          const Icon(Icons.close, size: 24),
+          Theme.of(context).colorScheme.error,
+        ),
+      _DetailsRefreshState.idle => (
+          const SizedBox.shrink(),
+          Colors.transparent,
+        ),
+    };
+    return Material(
+      key: comicDetailsRefreshStateKey,
+      elevation: 2,
+      color: Theme.of(context).colorScheme.surface,
+      shape: const CircleBorder(),
+      child: SizedBox.square(
+        dimension: 40,
+        child: IconTheme(
+          data: IconThemeData(color: color),
+          child: Center(child: icon),
+        ),
+      ),
+    );
+  }
+}
+
+final class _SpinningRefreshIcon extends StatefulWidget {
+  const _SpinningRefreshIcon();
+
+  @override
+  State<_SpinningRefreshIcon> createState() => _SpinningRefreshIconState();
+}
+
+final class _SpinningRefreshIconState extends State<_SpinningRefreshIcon>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 720),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RotationTransition(
+      turns: _controller,
+      child: const Icon(Icons.refresh, size: 24),
+    );
+  }
+}
+
+final class _SourceMetadataGroups {
+  const _SourceMetadataGroups({
+    required this.categories,
+    required this.tags,
+  });
+
+  final List<String> categories;
+  final List<String> tags;
+}
+
+_SourceMetadataGroups _groupSourceMetadata(List<String> rawTags) {
+  const categoryNamespaces = <String>{
+    'category',
+    'categories',
+    'type',
+    '分类',
+    '分類',
+    '类型',
+    '類型',
+  };
+  const tagNamespaces = <String>{
+    'tag',
+    'tags',
+    'genre',
+    'genres',
+    '标签',
+    '標籤',
+  };
+  const duplicatedAuthorNamespaces = <String>{
+    'author',
+    'authors',
+    'artist',
+    'artists',
+    '作者',
+    '画师',
+    '畫師',
+  };
+  final categories = <String>[];
+  final tags = <String>[];
+  final categoryKeys = <String>{};
+  final tagKeys = <String>{};
+
+  void add(List<String> target, Set<String> keys, String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) return;
+    final key = normalized.toLowerCase();
+    if (keys.add(key)) target.add(normalized);
+  }
+
+  for (final raw in rawTags) {
+    final value = raw.trim();
+    if (value.isEmpty) continue;
+    final separator = value.indexOf(':');
+    if (separator <= 0 || separator == value.length - 1) {
+      add(tags, tagKeys, value);
+      continue;
+    }
+    final namespace = value.substring(0, separator).trim().toLowerCase();
+    final payload = value.substring(separator + 1).trim();
+    if (categoryNamespaces.contains(namespace)) {
+      add(categories, categoryKeys, payload);
+    } else if (duplicatedAuthorNamespaces.contains(namespace)) {
+      continue;
+    } else if (tagNamespaces.contains(namespace)) {
+      add(tags, tagKeys, payload);
+    } else {
+      add(tags, tagKeys, '$namespace：$payload');
+    }
+  }
+  return _SourceMetadataGroups(
+    categories: List<String>.unmodifiable(categories),
+    tags: List<String>.unmodifiable(tags),
+  );
+}
+
+final class _ExpandableTagRow extends StatefulWidget {
+  const _ExpandableTagRow({
+    required this.label,
+    required this.tags,
+    this.onSearch,
+  });
+
+  final String label;
+  final List<String> tags;
+  final ComicDetailsMetadataSearch? onSearch;
+
+  @override
+  State<_ExpandableTagRow> createState() => _ExpandableTagRowState();
+}
+
+final class _ExpandableTagRowState extends State<_ExpandableTagRow> {
+  bool _expanded = false;
+  final Set<String> _selected = <String>{};
+
+  void _toggleSelection(String tag) {
+    setState(() {
+      if (!_selected.add(tag)) {
+        _selected.remove(tag);
+      }
+    });
+  }
+
+  void _handleTap(String tag) {
+    if (_selected.isNotEmpty) {
+      _toggleSelection(tag);
+      return;
+    }
+    widget.onSearch?.call(tag);
+  }
+
+  Future<void> _copySelected() async {
+    if (_selected.isEmpty) {
+      return;
+    }
+    final values = widget.tags
+        .where(_selected.contains)
+        .toList(growable: false);
+    await Clipboard.setData(ClipboardData(text: values.join('\n')));
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已复制 ${values.length} 项')),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final selectionMode = _selected.isNotEmpty;
+    final chips = <Widget>[
+      for (final tag in widget.tags)
+        Semantics(
+          button: true,
+          selected: _selected.contains(tag),
+          label: '$tag；点击搜索，长按多选复制',
+          child: InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: () => _handleTap(tag),
+            onLongPress: () => _toggleSelection(tag),
+            child: Chip(
+              visualDensity: VisualDensity.compact,
+              avatar: _selected.contains(tag)
+                  ? const Icon(Icons.check, size: 16)
+                  : null,
+              label: Text(tag),
+            ),
+          ),
+        ),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Text(
+              selectionMode
+                  ? '${widget.label} · 已选 ${_selected.length}'
+                  : widget.label,
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const Spacer(),
+            if (selectionMode) ...<Widget>[
+              IconButton(
+                tooltip: '复制已选内容',
+                onPressed: () => unawaited(_copySelected()),
+                icon: const Icon(Icons.copy_outlined, size: 20),
+              ),
+              IconButton(
+                tooltip: '取消多选',
+                onPressed: () => setState(_selected.clear),
+                icon: const Icon(Icons.close, size: 20),
+              ),
+            ],
+            IconButton(
+              tooltip: _expanded ? '收起' : '展开',
+              onPressed: () => setState(() => _expanded = !_expanded),
+              icon: Icon(
+                _expanded ? Icons.expand_less : Icons.expand_more,
+                size: 20,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        AnimatedSize(
+          duration: const Duration(milliseconds: 160),
+          alignment: Alignment.topLeft,
+          child: _expanded
+              ? Wrap(spacing: 6, runSpacing: 6, children: chips)
+              : SizedBox(
+                  height: 36,
+                  child: ClipRect(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      physics: const NeverScrollableScrollPhysics(),
+                      child: Row(
+                        children: <Widget>[
+                          for (var index = 0;
+                              index < chips.length;
+                              index++) ...<Widget>[
+                            if (index > 0) const SizedBox(width: 6),
+                            chips[index],
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+String? _readingProgressLabel(Iterable<ImportedLibraryEntry> entries) {
+  ImportedLibraryEntry? latest;
+  for (final entry in entries) {
+    final progress = entry.progress;
+    if (progress == null) {
+      continue;
+    }
+    final current = latest?.progress;
+    if (current == null || progress.updatedAt.isAfter(current.updatedAt)) {
+      latest = entry;
+    }
+  }
+  final entry = latest;
+  final progress = entry?.progress;
+  if (entry == null || progress == null) {
+    return null;
+  }
+  return '阅读到 ${entry.chapter.displayName} · 第 ${progress.pageIndex + 1} 页';
+}

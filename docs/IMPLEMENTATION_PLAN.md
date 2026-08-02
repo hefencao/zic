@@ -1,3 +1,9 @@
+## dev.88 完成项与后续验证
+
+已完成：错误报告编译闭包；浏览器 Activity result 完成边界；插件隔离 WebView data-directory suffix；原子 Cookie snapshot 导入；Cloudflare fail-fast typed verification；45/65 秒 runtime/IPC timeout 层级；来源页和详情页返回后自动重试；synthetic revision 2 淘汰；详情 WebView/迁移/插件 action；加入书架后的来源能力保留；持续刷新结果图标；同源标签搜索与多选复制；ADR、审计和 dev.88 门禁。
+
+后续必须在具备 Flutter/Android 工具链的机器执行 `flutter analyze`、受影响 transport/reader_runtime/catalog/plugin_host/network_bridge/plugin_host_bridge/App 测试以及 Android debug/release 或 kernel snapshot。真机重点验证：18comic/JMComic 首次来源列表 challenge、浏览器不闪退、返回后 Cookie 导入和列表/章节恢复；加入书架前后 action 一致；刷新成功/失败图标；标签搜索和长按复制。
+
 ## dev.87 完成项与后续验证
 
 已完成：Android Bundle 编译闭包；Cloudflare typed failure 全链路投影；来源列表/分页/封面/详情/章节与下载的 WebView fallback；作品 URL capability；详情 metadata 分区；adaptive model v5；promoted artifact metadata 快速恢复；libwebp 1.6.0 本地源码检查；dev.87 ADR、审计和静态门禁。

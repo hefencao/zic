@@ -4,7 +4,6 @@
         <activity
             android:name="dev.zic.network.NetworkBrowserActivity"
             android:exported="false"
-            android:process="${zicNetworkBrowserProcess}"
             android:theme="@android:style/Theme.Material.Light.NoActionBar" />
     </application>
 </manifest>

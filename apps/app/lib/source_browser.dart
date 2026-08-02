@@ -44,6 +44,57 @@ typedef SourceComicCoverLoader = Future<EncodedResourceSource> Function(
   Uri uri,
 );
 
+bool sourceSupportsSettings(BrowsableComicSource source) {
+  final Object candidate =
+      source is CachedBrowsableComicSource ? source.source : source;
+  return candidate is ConfigurableComicSource;
+}
+
+Future<void> openComicSourceSettings(
+  BuildContext context, {
+  required BrowsableComicSource source,
+  required AndroidNetworkBridge networkBridge,
+  ExternalPluginController? externalPlugins,
+  Future<void> Function()? onExternalSourcesChanged,
+}) async {
+  if (!sourceSupportsSettings(source)) {
+    return;
+  }
+  await Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => ExternalSourceSettingsScreen(
+        source: source,
+        onApply: () async {
+          if (externalPlugins != null &&
+              (source.sourceId.startsWith('mihon:') ||
+                  source.sourceId.startsWith('venera:'))) {
+            await externalPlugins.restartSource(source.sourceId);
+          }
+          await onExternalSourcesChanged?.call();
+        },
+        onLogin: source.sourceId.startsWith('mihon:') ||
+                source.sourceId.startsWith('venera:')
+            ? networkBridge.openBrowser
+            : null,
+        onReadLogin: source.sourceId.startsWith('venera:')
+            ? (url) async {
+                final snapshot =
+                    await networkBridge.readBrowserSnapshot(url);
+                return snapshot == null
+                    ? null
+                    : (
+                        currentUrl: snapshot.currentUrl,
+                        title: snapshot.title,
+                        cookies: snapshot.cookies,
+                        localStorage: snapshot.localStorage,
+                      );
+              }
+            : null,
+      ),
+    ),
+  );
+}
+
 final class ComicSourcesPage extends StatefulWidget {
   const ComicSourcesPage({
     required this.sources,
@@ -52,6 +103,8 @@ final class ComicSourcesPage extends StatefulWidget {
     required this.loadCover,
     required this.onOpenComic,
     this.onOpenSourceWebView,
+    this.requestedQuery,
+    this.queryRevision = 0,
     super.key,
   });
 
@@ -67,6 +120,8 @@ final class ComicSourcesPage extends StatefulWidget {
     BrowsableComicSource source,
     Uri url,
   )? onOpenSourceWebView;
+  final String? requestedQuery;
+  final int queryRevision;
 
   @override
   State<ComicSourcesPage> createState() => _ComicSourcesPageState();
@@ -108,6 +163,15 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   @override
   void didUpdateWidget(covariant ComicSourcesPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.queryRevision != widget.queryRevision) {
+      _query = widget.requestedQuery?.trim() ?? '';
+      _search.value = TextEditingValue(
+        text: _query,
+        selection: TextSelection.collapsed(offset: _query.length),
+      );
+      scheduleMicrotask(() => unawaited(_reload()));
+      return;
+    }
     if (oldWidget.activeSourceId != widget.activeSourceId ||
         !_sameSourceIds(oldWidget.sources, widget.sources)) {
       _query = '';
@@ -696,39 +760,17 @@ final class _SourceManagementScreenState
 
 
   Future<void> _openSourceSettings(BrowsableComicSource source) async {
-    final controller = widget.externalPlugins;
-    final changed = widget.onExternalSourcesChanged;
-    if (controller == null || changed == null) return;
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => ExternalSourceSettingsScreen(
-          source: source,
-          onApply: () async {
-            await controller.restartSource(source.sourceId);
-            await changed();
-          },
-          onLogin: source.sourceId.startsWith('mihon:') ||
-                  source.sourceId.startsWith('venera:')
-              ? widget.networkBridge.openBrowser
-              : null,
-          onReadLogin: source.sourceId.startsWith('venera:')
-              ? (url) async {
-                  final snapshot =
-                      await widget.networkBridge.readBrowserSnapshot(url);
-                  return snapshot == null
-                      ? null
-                      : (
-                          currentUrl: snapshot.currentUrl,
-                          title: snapshot.title,
-                          cookies: snapshot.cookies,
-                          localStorage: snapshot.localStorage,
-                        );
-                }
-              : null,
-        ),
-      ),
+    await openComicSourceSettings(
+      context,
+      source: source,
+      networkBridge: widget.networkBridge,
+      externalPlugins: widget.externalPlugins,
+      onExternalSourcesChanged: widget.onExternalSourcesChanged,
     );
-    if (mounted) _refreshExternalSources(controller);
+    final controller = widget.externalPlugins;
+    if (mounted && controller != null) {
+      _refreshExternalSources(controller);
+    }
   }
 
   Widget _sourceTile(
@@ -753,7 +795,7 @@ final class _SourceManagementScreenState
           ),
           if ((source.sourceId.startsWith('mihon:') ||
                   source.sourceId.startsWith('venera:')) &&
-              source is ConfigurableComicSource)
+              sourceSupportsSettings(source))
             IconButton(
               key: ValueKey<String>('source-settings:${source.sourceId}'),
               tooltip: '插件设置与登录',
@@ -964,6 +1006,8 @@ final class SourceComicDetailsScreen extends StatelessWidget {
     required this.downloadChanges,
     required this.onDownloadComic,
     this.onOpenSourceWebView,
+    this.onOpenSourceSettings,
+    this.onSearchMetadata,
     super.key,
   });
 
@@ -984,6 +1028,8 @@ final class SourceComicDetailsScreen extends StatelessWidget {
   final Stream<ChapterDownloadSnapshot> downloadChanges;
   final details.ComicDetailsComicDownloader onDownloadComic;
   final details.ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
+  final details.ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
+  final details.ComicDetailsMetadataSearch? onSearchMetadata;
 
   @override
   Widget build(BuildContext context) {
@@ -1004,6 +1050,8 @@ final class SourceComicDetailsScreen extends StatelessWidget {
       downloadChanges: downloadChanges,
       onDownloadComic: onDownloadComic,
       onOpenSourceWebView: onOpenSourceWebView,
+      onOpenSourceSettings: onOpenSourceSettings,
+      onSearchMetadata: onSearchMetadata,
     );
   }
 }
@@ -1142,7 +1190,7 @@ final class _SourceFailurePanel extends StatelessWidget {
                                     strokeWidth: 2,
                                   ),
                                 )
-                              : const Icon(Icons.open_in_browser),
+                              : const Icon(Icons.public),
                           label: const Text('WebView 验证'),
                         ),
                       OutlinedButton.icon(
@@ -1312,7 +1360,7 @@ final class _RemoteImageState extends State<_RemoteImage> {
                       key: widget.verificationKey,
                       tooltip: '在 WebView 中完成来源验证',
                       onPressed: widget.onSourceVerificationRequired,
-                      icon: const Icon(Icons.open_in_browser),
+                      icon: const Icon(Icons.public),
                     )
                   : const Icon(Icons.broken_image_outlined),
             ),

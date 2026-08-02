@@ -83,7 +83,9 @@ abstract interface class MihonIsolatedRuntimeBackend {
 final class MihonIsolatedExecutor implements ExternalPluginExecutor {
   const MihonIsolatedExecutor({
     required this.backend,
-    this.limits = const ExternalPluginRuntimeLimits(),
+    this.limits = const ExternalPluginRuntimeLimits(
+      invocationTimeout: Duration(seconds: 45),
+    ),
   });
 
   final MihonIsolatedRuntimeBackend backend;

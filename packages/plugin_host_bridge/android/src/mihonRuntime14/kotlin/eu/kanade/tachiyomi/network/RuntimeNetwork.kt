@@ -20,7 +20,7 @@ class NetworkHelper(context: Context) {
 
     private val sharedClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
-            .cookieJar(AndroidCookieJar())
+            .cookieJar(AndroidCookieJar(context))
             .dns(FallbackDns())
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)

@@ -57,10 +57,10 @@ Uri? _resolveVeneraComicWebUri({
   }
 }
 
-bool isSyntheticMihonChapterIdentity(String chapterId) {
+Map<String, dynamic>? _decodeMihonChapterIdentity(String chapterId) {
   const prefix = 'mihon:chapter:';
   if (!chapterId.startsWith(prefix)) {
-    return false;
+    return null;
   }
   try {
     final payload = chapterId.substring(prefix.length);
@@ -68,11 +68,24 @@ bool isSyntheticMihonChapterIdentity(String chapterId) {
       utf8.decode(base64Url.decode(base64Url.normalize(payload))),
     );
     return decoded is Map<String, dynamic> &&
-        decoded['kind'] == 'chapter' &&
-        decoded['synthetic'] == true;
+            decoded['kind'] == 'chapter'
+        ? decoded
+        : null;
   } on Object {
-    return false;
+    return null;
   }
+}
+
+bool isSyntheticMihonChapterIdentity(String chapterId) =>
+    _decodeMihonChapterIdentity(chapterId)?['synthetic'] == true;
+
+/// Returns whether [chapterId] was synthesized by the current compatibility
+/// contract. Older synthetic identities are discarded once so a previous
+/// failed catalog load cannot remain visible as a fake single chapter.
+bool isCurrentSyntheticMihonChapterIdentity(String chapterId) {
+  final decoded = _decodeMihonChapterIdentity(chapterId);
+  return decoded?['synthetic'] == true &&
+      decoded?['synthetic_revision'] == 2;
 }
 
 /// Adapts one isolated-runtime connection to ordinary zic catalog sources.

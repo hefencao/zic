@@ -9,6 +9,8 @@ import 'package:storage_bridge/storage_bridge.dart';
 
 import 'package:downloads/downloads.dart';
 
+part 'comic_details_interactions.dart';
+
 const comicDetailsScreenKey = ValueKey<String>('comic-details-screen');
 const localComicDetailsScreenKey =
     ValueKey<String>('local-comic-details-screen');
@@ -28,6 +30,10 @@ const comicDetailsDownloadAllKey =
 const comicDetailsRetryKey = ValueKey<String>('comic-details-retry');
 const comicDetailsOpenWebViewKey =
     ValueKey<String>('comic-details-open-webview');
+const comicDetailsSourceSettingsKey =
+    ValueKey<String>('comic-details-source-settings');
+const comicDetailsRefreshStateKey =
+    ValueKey<String>('comic-details-refresh-state');
 const comicDetailsRetryBodyKey =
     ValueKey<String>('comic-details-retry-body');
 const comicDetailsPullRefreshKey =
@@ -137,6 +143,13 @@ typedef ComicDetailsMigrationOpener = Future<void> Function(
 );
 
 typedef ComicDetailsSourceWebViewOpener = Future<void> Function();
+typedef ComicDetailsSourceSettingsOpener = Future<void> Function();
+typedef ComicDetailsMetadataSearch = void Function(String query);
+
+void _ignoreRefreshResult(Future<bool> refresh) {
+  unawaited(refresh.then<void>((_) {}));
+}
+
 
 final class LocalComicDetailsScreen extends StatefulWidget {
   const LocalComicDetailsScreen({
@@ -154,6 +167,9 @@ final class LocalComicDetailsScreen extends StatefulWidget {
     required this.onDownloadComic,
     this.source,
     this.ensureSourceChapter,
+    this.onOpenSourceWebView,
+    this.onOpenSourceSettings,
+    this.onSearchMetadata,
     this.onMigrateSource,
     super.key,
   });
@@ -173,6 +189,9 @@ final class LocalComicDetailsScreen extends StatefulWidget {
   final ComicDetailsComicDownloader onDownloadComic;
   final BrowsableComicSource? source;
   final ComicDetailsChapterEnsurer? ensureSourceChapter;
+  final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
+  final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
+  final ComicDetailsMetadataSearch? onSearchMetadata;
   final ComicDetailsMigrationOpener? onMigrateSource;
 
   @override
@@ -191,6 +210,7 @@ final class _LocalComicDetailsScreenState
       <String, ChapterDownloadSnapshot>{};
   StreamSubscription<ChapterDownloadSnapshot>? _downloadSubscription;
   bool _downloadingComic = false;
+  _DetailFailure? _failure;
   final Map<String, Future<ImportedLibraryEntry>> _ensureInFlight =
       <String, Future<ImportedLibraryEntry>>{};
 
@@ -245,18 +265,23 @@ final class _LocalComicDetailsScreenState
     }
   }
 
-  Future<void> _refresh({required bool announce}) async {
+  Future<bool> _refresh({required bool announce}) async {
     if (_refreshing) {
-      return;
+      return false;
     }
-    setState(() => _refreshing = true);
+    setState(() {
+      _refreshing = true;
+      _failure = null;
+    });
+    var succeeded = false;
     try {
       final next = await widget.reloadLibrary(refreshContent: true);
       if (!mounted) {
-        return;
+        return false;
       }
       setState(() => _library = next);
       unawaited(_loadDownloadStatuses(next.chapters));
+      succeeded = true;
       if (announce) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('漫画详情已更新')),
@@ -264,9 +289,15 @@ final class _LocalComicDetailsScreenState
       }
     } on Object catch (error, stackTrace) {
       if (mounted) {
+        final failure = _DetailFailure.capture(error, stackTrace);
+        setState(() => _failure = failure);
         _showFailureSnackBar(
           context,
-          _DetailFailure.capture(error, stackTrace),
+          failure,
+          onOpenSourceWebView: failure.requiresSourceVerification &&
+                  widget.onOpenSourceWebView != null
+              ? () => unawaited(_recoverSourceAccess())
+              : null,
         );
       }
     } finally {
@@ -274,6 +305,7 @@ final class _LocalComicDetailsScreenState
         setState(() => _refreshing = false);
       }
     }
+    return succeeded;
   }
 
   Future<void> _savePreference(ComicPreference preference) async {
@@ -286,10 +318,7 @@ final class _LocalComicDetailsScreenState
         return;
       }
       setState(() => _library = _library.copyWith(preference: previous));
-      _showFailureSnackBar(
-        context,
-        _DetailFailure.capture(error, stackTrace),
-      );
+      _showLocalFailure(error, stackTrace);
     }
   }
 
@@ -376,10 +405,7 @@ final class _LocalComicDetailsScreenState
     } on Object catch (error, stackTrace) {
       if (mounted) {
         setState(() => _library = _library.copyWith(readStates: previous));
-        _showFailureSnackBar(
-          context,
-          _DetailFailure.capture(error, stackTrace),
-        );
+        _showLocalFailure(error, stackTrace);
       }
     }
   }
@@ -418,10 +444,7 @@ final class _LocalComicDetailsScreenState
       );
     } on Object catch (error, stackTrace) {
       if (mounted) {
-        _showFailureSnackBar(
-          context,
-          _DetailFailure.capture(error, stackTrace),
-        );
+        _showLocalFailure(error, stackTrace);
       }
     } finally {
       if (mounted) {
@@ -456,10 +479,7 @@ final class _LocalComicDetailsScreenState
       }
     } on Object catch (error, stackTrace) {
       if (mounted) {
-        _showFailureSnackBar(
-          context,
-          _DetailFailure.capture(error, stackTrace),
-        );
+        _showLocalFailure(error, stackTrace);
       }
     } finally {
       if (mounted) {
@@ -501,14 +521,38 @@ final class _LocalComicDetailsScreenState
       }
     } on Object catch (error, stackTrace) {
       if (mounted) {
-        _showFailureSnackBar(
-          context,
-          _DetailFailure.capture(error, stackTrace),
-        );
+        _showLocalFailure(error, stackTrace);
       }
     } finally {
       if (mounted) {
         setState(() => _downloadingComic = false);
+      }
+    }
+  }
+
+  void _showLocalFailure(Object error, StackTrace stackTrace) {
+    final failure = _DetailFailure.capture(error, stackTrace);
+    _showFailureSnackBar(
+      context,
+      failure,
+      onOpenSourceWebView: failure.requiresSourceVerification &&
+              widget.onOpenSourceWebView != null
+          ? () => unawaited(_recoverSourceAccess())
+          : null,
+    );
+  }
+
+  Future<void> _recoverSourceAccess() async {
+    final open = widget.onOpenSourceWebView;
+    if (open == null) return;
+    try {
+      await open();
+      if (mounted) {
+        await _refresh(announce: false);
+      }
+    } on Object catch (error, stackTrace) {
+      if (mounted) {
+        _showLocalFailure(error, stackTrace);
       }
     }
   }
@@ -579,10 +623,31 @@ final class _LocalComicDetailsScreenState
       (total, chapter) => total + chapter.pageCount,
     );
     final pageCountPending = models.any((chapter) => chapter.pageCount == 0);
+    final sourceLabel = _comicSourceLabel(widget.source, comic.sourceId);
+    final failure = _failure;
+    final onMigrateSource = widget.onMigrateSource == null
+        ? null
+        : () => widget.onMigrateSource!(comic);
+    if (failure != null && ordered.isEmpty) {
+      return _ComicDetailsFailureScaffold(
+        title: comic.title,
+        sourceId: comic.sourceId,
+        sourceLabel: sourceLabel,
+        failure: failure,
+        refreshing: _refreshing,
+        onRetry: () => _ignoreRefreshResult(_refresh(announce: false)),
+        onOpenSourceWebView: widget.onOpenSourceWebView == null
+            ? null
+            : _recoverSourceAccess,
+        onOpenSourceSettings: widget.onOpenSourceSettings,
+        onMigrateSource: onMigrateSource,
+      );
+    }
     return _ComicDetailsScaffold(
       screenKey: localComicDetailsScreenKey,
       title: comic.title,
-      sourceLabel: _comicSourceLabel(widget.source, comic.sourceId),
+      sourceId: comic.sourceId,
+      sourceLabel: sourceLabel,
       authors: comic.authors,
       tags: comic.tags,
       description: comic.description,
@@ -599,15 +664,16 @@ final class _LocalComicDetailsScreenState
       categories: widget.categories,
       descending: _descending,
       onRefresh: () => _refresh(announce: true),
+      onOpenSourceWebView: widget.onOpenSourceWebView,
+      onOpenSourceSettings: widget.onOpenSourceSettings,
+      onSearchMetadata: widget.onSearchMetadata,
       onPreferenceChanged: _savePreference,
       progressLabel: _readingProgressLabel(_library.chapters),
       downloadingComic: _downloadingComic,
       onDownloadComic:
           comic.sourceId == 'local-folder' ? null : _downloadComic,
       onReverse: () => setState(() => _descending = !_descending),
-      onMigrateSource: widget.onMigrateSource == null
-          ? null
-          : () => widget.onMigrateSource!(comic),
+      onMigrateSource: onMigrateSource,
       chapterCount: ordered.length,
       pageCount: catalogPages,
       pageCountPending: pageCountPending,
@@ -643,6 +709,8 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
     required this.downloadChanges,
     required this.onDownloadComic,
     this.onOpenSourceWebView,
+    this.onOpenSourceSettings,
+    this.onSearchMetadata,
     super.key,
   });
 
@@ -663,6 +731,8 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
   final Stream<ChapterDownloadSnapshot> downloadChanges;
   final ComicDetailsComicDownloader onDownloadComic;
   final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
+  final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
+  final ComicDetailsMetadataSearch? onSearchMetadata;
 
   @override
   State<RemoteComicDetailsScreen> createState() =>
@@ -694,7 +764,7 @@ final class _RemoteComicDetailsScreenState
     scheduleMicrotask(
       () => unawaited(_loadDownloadStatuses(_library.chapters)),
     );
-    scheduleMicrotask(() => unawaited(_refresh(announce: false)));
+    scheduleMicrotask(() => _ignoreRefreshResult(_refresh(announce: false)));
   }
 
   @override
@@ -748,17 +818,18 @@ final class _RemoteComicDetailsScreenState
     }
   }
 
-  Future<void> _refresh({
+  Future<bool> _refresh({
     required bool announce,
     bool forceRefresh = false,
   }) async {
     if (_refreshing) {
-      return;
+      return false;
     }
     setState(() {
       _refreshing = true;
       _failure = null;
     });
+    var succeeded = false;
     try {
       if (forceRefresh) {
         invalidateCachedComic(widget.source, widget.summary.comicId);
@@ -783,12 +854,13 @@ final class _RemoteComicDetailsScreenState
         );
       }
       if (!mounted) {
-        return;
+        return false;
       }
       setState(() {
         _manifest = manifest;
         _library = library.copyWith(sourceChapters: manifest.chapters);
       });
+      succeeded = true;
       unawaited(_loadDownloadStatuses(library.chapters));
       if (announce) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -803,9 +875,10 @@ final class _RemoteComicDetailsScreenState
           _showFailureSnackBar(
             context,
             failure,
-            onOpenSourceWebView: widget.onOpenSourceWebView == null
-                ? null
-                : () => unawaited(_openSourceWebView()),
+            onOpenSourceWebView: failure.requiresSourceVerification &&
+                    widget.onOpenSourceWebView != null
+                ? () => unawaited(_recoverSourceAccess())
+                : null,
           );
         }
       }
@@ -814,6 +887,7 @@ final class _RemoteComicDetailsScreenState
         setState(() => _refreshing = false);
       }
     }
+    return succeeded;
   }
 
   Future<void> _savePreference(ComicPreference preference) async {
@@ -1052,17 +1126,21 @@ final class _RemoteComicDetailsScreenState
     _showFailureSnackBar(
       context,
       failure,
-      onOpenSourceWebView: widget.onOpenSourceWebView == null
-          ? null
-          : () => unawaited(_openSourceWebView()),
+      onOpenSourceWebView: failure.requiresSourceVerification &&
+              widget.onOpenSourceWebView != null
+          ? () => unawaited(_recoverSourceAccess())
+          : null,
     );
   }
 
-  Future<void> _openSourceWebView() async {
+  Future<void> _recoverSourceAccess() async {
     final open = widget.onOpenSourceWebView;
     if (open == null) return;
     try {
       await open();
+      if (mounted) {
+        await _refresh(announce: false, forceRefresh: true);
+      }
     } on Object catch (error, stackTrace) {
       if (mounted) {
         _showFailureSnackBar(
@@ -1077,41 +1155,19 @@ final class _RemoteComicDetailsScreenState
   Widget build(BuildContext context) {
     final failure = _failure;
     if (failure != null && _manifest == null) {
-      return Scaffold(
-        key: comicDetailsScreenKey,
-        appBar: AppBar(
-          title: Text(widget.source.descriptor.name),
-          actions: <Widget>[
-            if (widget.onOpenSourceWebView != null)
-              IconButton(
-                key: comicDetailsOpenWebViewKey,
-                tooltip: '在 WebView 中访问漫画源',
-                onPressed: () => unawaited(_openSourceWebView()),
-                icon: const Icon(Icons.open_in_browser),
-              ),
-            IconButton(
-              key: comicDetailsRetryKey,
-              tooltip: '重试加载漫画详情',
-              onPressed: _refreshing
-                  ? null
-                  : () => unawaited(
-                        _refresh(announce: false, forceRefresh: true),
-                      ),
-              icon: _refreshing
-                  ? const SizedBox.square(
-                      dimension: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.refresh),
-            ),
-          ],
+      return _ComicDetailsFailureScaffold(
+        title: widget.summary.title,
+        sourceId: widget.source.sourceId,
+        sourceLabel: widget.source.descriptor.name,
+        failure: failure,
+        refreshing: _refreshing,
+        onRetry: () => _ignoreRefreshResult(
+          _refresh(announce: false, forceRefresh: true),
         ),
-        body: _DetailFailurePanel(
-          failure: failure,
-          onRetry: () => unawaited(
-            _refresh(announce: false, forceRefresh: true),
-          ),
-        ),
+        onOpenSourceWebView: widget.onOpenSourceWebView == null
+            ? null
+            : _recoverSourceAccess,
+        onOpenSourceSettings: widget.onOpenSourceSettings,
       );
     }
     final manifest = _manifest;
@@ -1137,6 +1193,7 @@ final class _RemoteComicDetailsScreenState
     return _ComicDetailsScaffold(
       screenKey: remoteComicDetailsScreenKey,
       title: comic.title,
+      sourceId: widget.source.sourceId,
       sourceLabel: _comicSourceLabel(widget.source, widget.source.sourceId),
       authors: comic.authors,
       tags: comic.tags,
@@ -1153,9 +1210,9 @@ final class _RemoteComicDetailsScreenState
       categories: widget.categories,
       descending: _descending,
       onRefresh: () => _refresh(announce: true, forceRefresh: true),
-      onOpenSourceWebView: widget.onOpenSourceWebView == null
-          ? null
-          : () => unawaited(_openSourceWebView()),
+      onOpenSourceWebView: widget.onOpenSourceWebView,
+      onOpenSourceSettings: widget.onOpenSourceSettings,
+      onSearchMetadata: widget.onSearchMetadata,
       onPreferenceChanged: _savePreference,
       progressLabel: _readingProgressLabel(_library.chapters),
       downloadingComic: _downloadingComic,
@@ -1222,143 +1279,6 @@ final class _RemoteComicDetailsScreenState
   }
 }
 
-final class _ComicDetailsScaffold extends StatelessWidget {
-  const _ComicDetailsScaffold({
-    required this.screenKey,
-    required this.title,
-    required this.sourceLabel,
-    required this.authors,
-    required this.tags,
-    required this.description,
-    required this.cover,
-    required this.preference,
-    required this.categories,
-    required this.descending,
-    required this.onRefresh,
-    this.onOpenSourceWebView,
-    required this.onPreferenceChanged,
-    required this.progressLabel,
-    required this.downloadingComic,
-    required this.onDownloadComic,
-    required this.onReverse,
-    required this.chapterCount,
-    required this.pageCount,
-    this.pageCountPending = false,
-    required this.chapterList,
-    this.onMigrateSource,
-  });
-
-  final Key screenKey;
-  final String title;
-  final String sourceLabel;
-  final List<String> authors;
-  final List<String> tags;
-  final String? description;
-  final Widget cover;
-  final ComicPreference preference;
-  final List<LibraryCategory> categories;
-  final bool descending;
-  final Future<void> Function() onRefresh;
-  final VoidCallback? onOpenSourceWebView;
-  final Future<void> Function(ComicPreference preference) onPreferenceChanged;
-  final String? progressLabel;
-  final bool downloadingComic;
-  final Future<void> Function()? onDownloadComic;
-  final VoidCallback onReverse;
-  final int chapterCount;
-  final int pageCount;
-  final bool pageCountPending;
-  final Widget chapterList;
-  final VoidCallback? onMigrateSource;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      key: comicDetailsScreenKey,
-      appBar: AppBar(
-        title: Text(sourceLabel),
-        actions: <Widget>[
-          if (onMigrateSource != null)
-            IconButton(
-              key: comicDetailsMigrateKey,
-              tooltip: '迁移漫画源',
-              onPressed: onMigrateSource,
-              icon: const Icon(Icons.swap_horiz),
-            ),
-          if (onOpenSourceWebView != null)
-            IconButton(
-              key: comicDetailsOpenWebViewKey,
-              tooltip: '在 WebView 中访问该漫画详情页',
-              onPressed: onOpenSourceWebView,
-              icon: const Icon(Icons.open_in_browser),
-            ),
-        ],
-      ),
-      body: RefreshIndicator(
-        key: comicDetailsPullRefreshKey,
-        triggerMode: RefreshIndicatorTriggerMode.anywhere,
-        onRefresh: onRefresh,
-        child: CustomScrollView(
-          key: screenKey,
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: <Widget>[
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-              sliver: SliverToBoxAdapter(
-                child: _ComicDetailsHeader(
-                  title: title,
-                  sourceLabel: sourceLabel,
-                  authors: authors,
-                  tags: tags,
-                  description: description,
-                  cover: cover,
-                  preference: preference,
-                  categories: categories,
-                  onPreferenceChanged: onPreferenceChanged,
-                  progressLabel: progressLabel,
-                  downloadingComic: downloadingComic,
-                  onDownloadComic: onDownloadComic,
-                ),
-              ),
-            ),
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
-              sliver: SliverToBoxAdapter(
-                child: Row(
-                  children: <Widget>[
-                    Expanded(
-                      child: Text(
-                        pageCountPending
-                            ? pageCount == 0
-                                ? '$chapterCount 章 · 页数待加载'
-                                : '$chapterCount 章 · 已知 $pageCount 页'
-                            : '$chapterCount 章 · $pageCount 页',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                    ),
-                    IconButton(
-                      key: comicDetailsReverseKey,
-                      tooltip: descending ? '切换正序' : '切换倒序',
-                      onPressed: onReverse,
-                      icon: Icon(
-                        descending
-                            ? Icons.arrow_downward
-                            : Icons.arrow_upward,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            SliverToBoxAdapter(child: chapterList),
-            const SliverPadding(padding: EdgeInsets.only(bottom: 36)),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 final class _ComicDetailsHeader extends StatelessWidget {
   const _ComicDetailsHeader({
     required this.title,
@@ -1370,6 +1290,7 @@ final class _ComicDetailsHeader extends StatelessWidget {
     required this.preference,
     required this.categories,
     required this.onPreferenceChanged,
+    this.onSearchMetadata,
     required this.progressLabel,
     required this.downloadingComic,
     required this.onDownloadComic,
@@ -1384,6 +1305,7 @@ final class _ComicDetailsHeader extends StatelessWidget {
   final ComicPreference preference;
   final List<LibraryCategory> categories;
   final Future<void> Function(ComicPreference preference) onPreferenceChanged;
+  final ComicDetailsMetadataSearch? onSearchMetadata;
   final String? progressLabel;
   final bool downloadingComic;
   final Future<void> Function()? onDownloadComic;
@@ -1497,6 +1419,7 @@ final class _ComicDetailsHeader extends StatelessWidget {
           _ExpandableTagRow(
             label: '来源分类',
             tags: sourceMetadata.categories,
+            onSearch: onSearchMetadata,
           ),
         ],
         if (sourceMetadata.tags.isNotEmpty) ...<Widget>[
@@ -1504,6 +1427,7 @@ final class _ComicDetailsHeader extends StatelessWidget {
           _ExpandableTagRow(
             label: '标签',
             tags: sourceMetadata.tags,
+            onSearch: onSearchMetadata,
           ),
         ],
         if (categories.isNotEmpty) ...<Widget>[
@@ -1858,172 +1782,6 @@ String _comicSourceLabel(
   return sourceId.startsWith('mihon:') ? 'Mihon' : sourceId;
 }
 
-final class _SourceMetadataGroups {
-  const _SourceMetadataGroups({
-    required this.categories,
-    required this.tags,
-  });
-
-  final List<String> categories;
-  final List<String> tags;
-}
-
-_SourceMetadataGroups _groupSourceMetadata(List<String> rawTags) {
-  const categoryNamespaces = <String>{
-    'category',
-    'categories',
-    'type',
-    '分类',
-    '分類',
-    '类型',
-    '類型',
-  };
-  const tagNamespaces = <String>{
-    'tag',
-    'tags',
-    'genre',
-    'genres',
-    '标签',
-    '標籤',
-  };
-  const duplicatedAuthorNamespaces = <String>{
-    'author',
-    'authors',
-    'artist',
-    'artists',
-    '作者',
-    '画师',
-    '畫師',
-  };
-  final categories = <String>[];
-  final tags = <String>[];
-  final categoryKeys = <String>{};
-  final tagKeys = <String>{};
-
-  void add(List<String> target, Set<String> keys, String value) {
-    final normalized = value.trim();
-    if (normalized.isEmpty) return;
-    final key = normalized.toLowerCase();
-    if (keys.add(key)) target.add(normalized);
-  }
-
-  for (final raw in rawTags) {
-    final value = raw.trim();
-    if (value.isEmpty) continue;
-    final separator = value.indexOf(':');
-    if (separator <= 0 || separator == value.length - 1) {
-      add(tags, tagKeys, value);
-      continue;
-    }
-    final namespace = value.substring(0, separator).trim().toLowerCase();
-    final payload = value.substring(separator + 1).trim();
-    if (categoryNamespaces.contains(namespace)) {
-      add(categories, categoryKeys, payload);
-    } else if (duplicatedAuthorNamespaces.contains(namespace)) {
-      continue;
-    } else if (tagNamespaces.contains(namespace)) {
-      add(tags, tagKeys, payload);
-    } else {
-      add(tags, tagKeys, '$namespace：$payload');
-    }
-  }
-  return _SourceMetadataGroups(
-    categories: List<String>.unmodifiable(categories),
-    tags: List<String>.unmodifiable(tags),
-  );
-}
-
-final class _ExpandableTagRow extends StatefulWidget {
-  const _ExpandableTagRow({
-    required this.label,
-    required this.tags,
-  });
-
-  final String label;
-  final List<String> tags;
-
-  @override
-  State<_ExpandableTagRow> createState() => _ExpandableTagRowState();
-}
-
-final class _ExpandableTagRowState extends State<_ExpandableTagRow> {
-  bool _expanded = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final chips = <Widget>[
-      for (final tag in widget.tags)
-        Chip(
-          visualDensity: VisualDensity.compact,
-          label: Text(tag),
-        ),
-    ];
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Row(
-          children: <Widget>[
-            Text(widget.label, style: Theme.of(context).textTheme.titleSmall),
-            const Spacer(),
-            Icon(
-              _expanded ? Icons.expand_less : Icons.expand_more,
-              size: 20,
-            ),
-          ],
-        ),
-        const SizedBox(height: 4),
-        InkWell(
-          borderRadius: BorderRadius.circular(8),
-          onTap: () => setState(() => _expanded = !_expanded),
-          child: AnimatedSize(
-            duration: const Duration(milliseconds: 160),
-            alignment: Alignment.topLeft,
-            child: _expanded
-                ? Wrap(spacing: 6, runSpacing: 6, children: chips)
-                : SizedBox(
-                    height: 36,
-                    child: ClipRect(
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        physics: const NeverScrollableScrollPhysics(),
-                        child: Row(
-                          children: <Widget>[
-                            for (var index = 0; index < chips.length; index++) ...<Widget>[
-                              if (index > 0) const SizedBox(width: 6),
-                              chips[index],
-                            ],
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-String? _readingProgressLabel(Iterable<ImportedLibraryEntry> entries) {
-  ImportedLibraryEntry? latest;
-  for (final entry in entries) {
-    final progress = entry.progress;
-    if (progress == null) {
-      continue;
-    }
-    final current = latest?.progress;
-    if (current == null || progress.updatedAt.isAfter(current.updatedAt)) {
-      latest = entry;
-    }
-  }
-  final entry = latest;
-  final progress = entry?.progress;
-  if (entry == null || progress == null) {
-    return null;
-  }
-  return '阅读到 ${entry.chapter.displayName} · 第 ${progress.pageIndex + 1} 页';
-}
-
 final class _PreferenceButton extends StatelessWidget {
   const _PreferenceButton({
     required this.icon,
@@ -2180,7 +1938,7 @@ final class _DetailFailurePanel extends StatelessWidget {
   });
 
   final _DetailFailure failure;
-  final VoidCallback onRetry;
+  final VoidCallback? onRetry;
 
   @override
   Widget build(BuildContext context) {

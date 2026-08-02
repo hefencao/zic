@@ -17,6 +17,14 @@ def require(path: str, *tokens: str) -> None:
         raise AssertionError(f"{path} missing dev.87 tokens: {missing}")
 
 
+
+
+def require_combined(paths: tuple[str, ...], *tokens: str) -> None:
+    text = "\n".join(read(path) for path in paths)
+    missing = [token for token in tokens if token not in text]
+    if missing:
+        raise AssertionError(f"{paths} missing dev.87 tokens: {missing}")
+
 def reject(path: str, *tokens: str) -> None:
     text = read(path)
     present = [token for token in tokens if token in text]
@@ -59,8 +67,11 @@ def main() -> None:
         "_recoverSourceAccess(source)",
         "在 WebView 中完成来源验证",
     )
-    require(
-        "apps/app/lib/comic_details.dart",
+    require_combined(
+        (
+            "apps/app/lib/comic_details.dart",
+            "apps/app/lib/comic_details_interactions.dart",
+        ),
         "typedef ComicDetailsSourceWebViewOpener",
         "comicDetailsOpenWebViewKey",
         "在 WebView 中访问该漫画详情页",
@@ -75,7 +86,7 @@ def main() -> None:
     require(
         "apps/app/lib/demo_home_source_compat.dart",
         "source is ComicWebUriSource",
-        "source.resolveComicWebUri(comic.comicId)",
+        "webSource?.resolveComicWebUri(comicId)",
     )
     require(
         "packages/reader_runtime/lib/src/reader_session_settings.dart",

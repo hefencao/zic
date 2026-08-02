@@ -7,7 +7,9 @@ import 'package:flutter/services.dart';
 import 'package:local_media/local_media.dart';
 import 'package:network_bridge/network_bridge.dart';
 import 'package:plugin_host/plugin_host.dart'
-    show isSyntheticMihonChapterIdentity;
+    show
+        isCurrentSyntheticMihonChapterIdentity,
+        isSyntheticMihonChapterIdentity;
 import 'package:resource_cache/resource_cache.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:downloads/downloads.dart';
@@ -189,6 +191,8 @@ final class _DemoHomeState extends State<DemoHome> {
   final Set<String> _openingComicIdentities = <String>{};
   int _navigationIndex = 0;
   bool _sourcePageVisited = false;
+  String? _sourceSearchQuery;
+  int _sourceSearchRevision = 0;
   late ShelfSourceFilter _sourceFilter;
   String? _selectedCategoryId;
   late LibrarySortMode _sortMode;
@@ -383,87 +387,6 @@ final class _DemoHomeState extends State<DemoHome> {
     );
     if (mounted) {
       await _reloadLibrary();
-    }
-  }
-
-  Future<void> _openSourceComic(
-    BrowsableComicSource source,
-    SourceComicSummary comic,
-  ) async {
-    final route = details.resolveComicDetailsRoute(
-      sourceId: source.sourceId,
-      comicId: comic.comicId,
-      library: _libraryComics,
-    );
-    if (route == details.ComicDetailsRouteKind.local) {
-      final local = _libraryComics.firstWhere(
-        (item) =>
-            item.sourceId == source.sourceId && item.comicId == comic.comicId,
-      );
-      await _openComicDetails(local);
-      return;
-    }
-    final identity = comicLibraryIdentity(source.sourceId, comic.comicId);
-    if (!_openingComicIdentities.add(identity)) {
-      return;
-    }
-    final preference = _preferences[identity] ??
-        ComicPreference.defaults(
-          sourceId: source.sourceId,
-          comicId: comic.comicId,
-          sourceKind: ComicSourceKind.remote,
-          customOrder: _nextCustomOrder,
-        ).copyWith(inShelf: false);
-    try {
-      await Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => SourceComicDetailsScreen(
-            initialLibrary: _detailsSnapshotForComic(
-              source.sourceId,
-              comic.comicId,
-              preference: preference,
-            ),
-            source: source,
-            summary: comic,
-            categories: _categories,
-            loadCover: _loadCoverSource,
-            reloadLibrary: ({required bool refreshContent}) =>
-                _reloadDetailsSnapshot(
-              source.sourceId,
-              comic.comicId,
-              refreshContent: refreshContent,
-              fallbackPreference: preference,
-            ),
-            ensureSourceChapter: _ensureSourceChapter,
-            persistComic: _persistRemoteComic,
-            onPreferenceChanged: _savePreference,
-            onReadChanged: _setChapterRead,
-            onOpenChapter: (
-              loadChapter, {
-              required bool refreshRemote,
-              required String title,
-            }) =>
-                _openImportedChapterLoader(
-              loadChapter,
-              title: title,
-              refreshRemote: refreshRemote,
-            ),
-            onDownloadChapter: _downloadChapter,
-            inspectChapterDownload: _chapterDownloads.inspect,
-            downloadChanges: _chapterDownloads.changes,
-            onDownloadComic: (entries) =>
-                _downloadComicEntries(identity, entries),
-            onOpenSourceWebView: () => widget.networkBridge.openBrowser(
-                  _sourceComicWebUri(source, comic),
-                ),
-          ),
-        ),
-      );
-      if (mounted) {
-        await _reloadLibrary();
-      }
-    } finally {
-      _openingComicIdentities.remove(identity);
     }
   }
 
@@ -875,70 +798,6 @@ final class _DemoHomeState extends State<DemoHome> {
     );
   }
 
-  Future<void> _pushComicDetails(LibraryComic comic) async {
-    final source = _sourceForId(comic.sourceId);
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => details.LocalComicDetailsScreen(
-          comic: comic,
-          initialLibrary: _detailsSnapshotForComic(
-            comic.sourceId,
-            comic.comicId,
-          ),
-          categories: _categories,
-          loadCover: _loadCoverSource,
-          reloadLibrary: ({required bool refreshContent}) =>
-              _reloadDetailsSnapshot(
-            comic.sourceId,
-            comic.comicId,
-            refreshContent: refreshContent,
-          ),
-          source: source,
-          ensureSourceChapter: source == null ? null : _ensureSourceChapter,
-          onPreferenceChanged: (preference) async {
-            await _savePreference(preference);
-            final retained = preference.inShelf ||
-                preference.liked ||
-                preference.collected ||
-                preference.categoryIds.isNotEmpty ||
-                _libraryEntries.any(
-                  (entry) =>
-                      entry.chapter.sourceId == comic.sourceId &&
-                      entry.chapter.comicId == comic.comicId,
-                );
-            if (!retained) {
-              await _library.removeSavedComic(comic.sourceId, comic.comicId);
-            }
-          },
-          onReadChanged: _setChapterRead,
-          onOpenChapter: (
-            loadChapter, {
-            required bool refreshRemote,
-            required String title,
-          }) =>
-              _openImportedChapterLoader(
-            loadChapter,
-            title: title,
-            refreshRemote: refreshRemote,
-          ),
-          onDownloadChapter: _downloadChapter,
-          inspectChapterDownload: _chapterDownloads.inspect,
-          downloadChanges: _chapterDownloads.changes,
-          onDownloadComic: (entries) => _downloadComicEntries(
-            comicLibraryIdentity(comic.sourceId, comic.comicId),
-            entries,
-          ),
-          onMigrateSource: comic.sourceId == 'local-folder'
-              ? null
-              : _openSourceMigration,
-        ),
-      ),
-    );
-    if (mounted) {
-      await _reloadLibrary();
-    }
-  }
-
   Future<({BrowsableComicSource source, String id})?>
       _selectSourceMigrationTarget(
     LibraryComic comic,
@@ -1312,12 +1171,21 @@ final class _DemoHomeState extends State<DemoHome> {
         ? const <Chapter>[]
         : saved.first.chapters
             .map((chapter) => chapter.toChapter(comicId))
+            .where(
+              (chapter) =>
+                  !isSyntheticMihonChapterIdentity(chapter.chapterId) ||
+                  isCurrentSyntheticMihonChapterIdentity(chapter.chapterId),
+            )
             .toList(growable: false);
     final chapters = reconcileComicDetailsChapterEntries(
       entries: _libraryEntries.where(
         (entry) =>
             entry.chapter.sourceId == sourceId &&
-            entry.chapter.comicId == comicId,
+            entry.chapter.comicId == comicId &&
+            (!isSyntheticMihonChapterIdentity(entry.chapter.chapterId) ||
+                isCurrentSyntheticMihonChapterIdentity(
+                  entry.chapter.chapterId,
+                )),
       ),
       sourceChapters: sourceChapters,
       isCompatibilityFallback: isSyntheticMihonChapterIdentity,

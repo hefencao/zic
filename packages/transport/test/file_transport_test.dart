@@ -39,7 +39,7 @@ void main() {
     final response = await const FileTransport().open(file.uri);
     final chunkLengths = await response.bytes
         .map((chunk) => chunk.length)
-        .toList(growable: false);
+        .toList();
 
     expect(
       chunkLengths,

@@ -952,7 +952,10 @@ internal class MihonRuntimeDriver private constructor(
         val json = mihonModelJson(chapter).apply {
             put("comicId", comicId)
             put("sequence", sequence)
-            if (synthetic) put("synthetic", true)
+            if (synthetic) {
+                put("synthetic", true)
+                put("synthetic_revision", MIHON_SYNTHETIC_REVISION)
+            }
         }
         val id = encodeOpaque("chapter", json)
         val title = chapter.readString("name", "getName")?.ifBlank { null }
@@ -1155,6 +1158,7 @@ internal inline fun <T> selectMihonChapters(
 }
 
 private const val MAX_CACHED_MIHON_CHAPTERS = 4096
+private const val MIHON_SYNTHETIC_REVISION = 2
 private const val MIHON_RUNTIME_TRANSFORM_REVISION = "mihon-runtime-transform-v1"
 
 internal fun mihonChapterMatches(chapter: Any, encoded: JSONObject): Boolean {

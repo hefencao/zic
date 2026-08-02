@@ -36,6 +36,11 @@ void main() {
     expect(backend.connection.closed, isTrue);
   });
 
+  test('Mihon default timeout leaves room for network challenge detection', () {
+    final executor = MihonIsolatedExecutor(backend: _MihonBackend());
+    expect(executor.limits.invocationTimeout, const Duration(seconds: 45));
+  });
+
   test('Venera defaults serialize bounded native resource reads', () {
     final executor = VeneraSandboxExecutor(backend: _VeneraBackend());
     expect(executor.limits.invocationTimeout, const Duration(seconds: 55));

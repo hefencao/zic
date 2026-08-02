@@ -1,3 +1,14 @@
+## dev.88 来源验证与详情交互规范
+
+- 作品 WebView 使用地球图标；正常和失败详情的 AppBar action 顺序均为 WebView、迁移、插件来源设置。加入书架后仍显示可用的来源 action。
+- 可见浏览器关闭前，来源页和详情页不得自动重试；关闭后必须清理对应缓存并重试一次。
+- Cloudflare challenge 必须使用 `ErrorCode.sourceVerificationRequired`；普通 timeout、DNS、离线或插件执行失败不得显示验证恢复。
+- 插件隔离进程和 App 主进程不得共享未分区的 WebView data directory。Cookie 恢复通过原子 snapshot 导入 source CookieJar。
+- 目录失败不能创建或继续采用历史 synthetic 单章。synthetic 只允许 capability 不存在、正文预检非空且 identity revision 为当前版本。
+- 下拉刷新触发后显示同风格旋转刷新图标；完成后成功保持绿勾、失败保持红叉，直到下一次刷新或页面销毁。
+- 来源分类/标签点击搜索当前漫画源；长按进入多选，后续点击增删选择并可复制。当前不实现聚合搜索。
+- 不改变 256 KiB 数据块、Reader 7/3、2/1、current/transition 或 5/3/2 lane。
+
 ## dev.87 来源验证与本地大图恢复规范
 
 1. Android 插件桥凡使用 `Bundle` 必须显式导入 `android.os.Bundle`，并由静态门禁覆盖。

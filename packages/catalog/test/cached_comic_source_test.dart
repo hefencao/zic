@@ -40,6 +40,19 @@ void main() {
     expect(cache.stats.forKind(ResourceCacheKind.searchResults).entries, 1);
   });
 
+  test('cached source preserves the optional comic web URI capability', () {
+    final raw = _CountingSource();
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final source = CachedBrowsableComicSource(source: raw, cache: cache);
+
+    expect(source, isA<ComicWebUriSource>());
+    expect(
+      source.resolveComicWebUri('comic'),
+      Uri.parse('https://example.invalid/comic/comic'),
+    );
+  });
+
   test('comic invalidation clears related detail chapter and artwork only',
       () async {
     final raw = _CountingSource();
@@ -176,7 +189,8 @@ void main() {
   });
 }
 
-final class _CountingSource implements BrowsableComicSource {
+final class _CountingSource
+    implements BrowsableComicSource, ComicWebUriSource {
   var comicLoads = 0;
   var chapterLoads = 0;
   var browseLoads = 0;
@@ -258,6 +272,10 @@ final class _CountingSource implements BrowsableComicSource {
       readingDirection: ReadingDirection.ltr,
     );
   }
+
+  @override
+  Uri resolveComicWebUri(String comicId) =>
+      Uri.parse('https://example.invalid/comic/$comicId');
 
   @override
   Future<Uint8List> loadResource(Uri uri) async {

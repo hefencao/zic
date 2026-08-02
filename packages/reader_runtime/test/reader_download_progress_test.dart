@@ -4,6 +4,7 @@ import 'package:media/media.dart';
 import 'package:pipeline_runtime/pipeline_runtime.dart';
 import 'package:sessions/sessions.dart';
 import 'package:storage/storage.dart';
+import 'package:transport/transport.dart';
 
 void main() {
   test('restored and completed artifacts never project network progress', () {

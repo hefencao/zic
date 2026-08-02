@@ -1,3 +1,9 @@
+## dev.88 状态
+
+已在 dev.87 唯一基线上完成来源验证生命周期与详情交互闭环。错误报告中的 Dart 3.12 无关 interface 提升、两个错误 `Stream.toList(growable:)` 和 `reader_runtime` 测试缺少 `ContentKind` 所属依赖均已修复。可见 WebView 由 `network_bridge` 主进程 Activity 持有并通过 activity result 完成；插件隔离进程预先设置 WebView data-directory suffix，浏览器 Cookie/localStorage 通过原子 snapshot 导入 source CookieJar。Cloudflare interceptor 不再后台等待，Mihon cause-chain 投影 typed verification；来源页/详情页等待用户返回后再失效缓存重试。旧 synthetic 单章 revision 已失效。
+
+详情 AppBar 固定地球 WebView、迁移、插件来源设置，加入书架后的本地详情继续注入来源能力；下拉刷新持续显示旋转刷新、绿勾或红叉；分类/标签点击搜索当前来源，长按多选复制。刷新状态、来源 action 与标签选择已按 Presentation 交互所有权拆入 `comic_details_interactions.dart`，主详情文件不再继续堆叠这些局部状态。当前环境通过 repository/Dart structure、dev.75–dev.88、Android dependency、Mihon ABI/classloader/chapter、Venera、Reader/Pipeline/UI、共享浏览器 Kotlin 提取编译和 native header 契约。环境无 Flutter/Dart/Gradle/Android SDK/Cargo，故 analyzer、Dart/Flutter test、APK/kernel 和 Rust 未执行。
+
 ## dev.87 状态
 
 已在 dev.86 唯一基线上完成：`Bundle` 导入；Cloudflare verification typed error；来源首页、分页、封面、详情与下载动作的统一 WebView fallback；详情右上角作品网页；来源分类/标签/书架分类分区；条漫 adaptive model v5；持久 promoted artifact 快速恢复。设备 trace 共 7181 条事件，其中 16 次可计时的本地 `content://` artifact cache session-copy 中位吞吐约 5.47 MB/s，同一 5.6–20.0 MB 页面重复恢复，单次约 0.87–4.96 秒；修复删除命中缓存时的重复 CRC 全扫，但未绕过 Pipeline 或建立 App 私有缓存。

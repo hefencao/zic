@@ -1,3 +1,13 @@
+# dev.88 handoff
+
+唯一后续基线：`zic_v0.31.0-dev.88_source-verification-details-interaction.zip`。不得混入 dev.87 或更早候选。
+
+完成：错误报告编译闭包；可见 WebView activity-result 生命周期；插件隔离进程 WebView data-directory suffix；原子 Cookie/localStorage snapshot；Cloudflare fail-fast typed verification；来源页/详情页返回后自动重试；45/65 秒 host/IPC timeout；synthetic revision 2；详情地球 WebView、迁移、插件设置 action；加入书架后保留来源能力；持续刷新结果图标；同源标签搜索与长按多选复制。
+
+设备侧必须先运行 `flutter analyze`、受影响 package/App tests 和 Android debug/release 或 kernel snapshot，再验证 18comic/JMComic：来源首页 challenge 能在 45 秒 host timeout 前快速投影为验证错误；WebView 不闪退；用户返回后 Cookie 导入并恢复列表和章节；目录失败不显示 synthetic 单章。还需验证加入书架前后 action、插件设置、刷新绿勾/红叉和标签搜索/复制。
+
+不得恢复：后台隐藏 WebView、Activity 启动即重试、把任意 timeout 猜成 Cloudflare、跨进程共享未分区 WebView data directory、未版本 synthetic 单章、详情解析插件 token、第二套聚合搜索缓存，或缩小 7/3、2/1 和 5/3/2 掩盖错误。
+
 # dev.87 handoff
 
 唯一后续基线：`zic_v0.31.0-dev.87_cloudflare-metadata-local-artifact.zip`。不得混入 dev.86 或更早候选。

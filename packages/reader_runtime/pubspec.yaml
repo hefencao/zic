@@ -26,6 +26,8 @@ dev_dependencies:
     path: ../sessions
   storage:
     path: ../storage
+  transport:
+    path: ../transport
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0

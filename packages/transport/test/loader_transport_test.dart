@@ -107,7 +107,7 @@ void main() {
     final response = await transport.open(uri);
     final chunkLengths = await response.bytes
         .map((chunk) => chunk.length)
-        .toList(growable: false);
+        .toList();
 
     expect(
       chunkLengths,

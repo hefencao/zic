@@ -1,3 +1,13 @@
+## 0.31.0-dev.88：修复来源验证闭环并完善详情交互
+
+- 修复 Dart 3.12 无关 capability interface 不提升、两个 `Stream.toList(growable:)` 测试错误和 `reader_runtime` 测试缺少 `ContentKind` 依赖的编译闭包。
+- `network_bridge.openBrowser` 改为等待可见浏览器 Activity 关闭；插件隔离进程在任何 WebView/CookieManager 使用前设置独立 data-directory suffix，避免主进程 WebView 打开即退出。
+- Cloudflare interceptor 取消不可交互的后台 WebView和 30 秒等待，challenge fail-fast 投影为 typed verification；Mihon host 默认调用窗口为 45 秒、Android IPC envelope 为 65 秒，普通 timeout 不伪装成验证错误。
+- 来源页和详情页在用户返回后才失效缓存并自动重试；历史 synthetic 单章以 revision 2 失效，目录失败或 timeout 不再退化为单章节。
+- 详情右上角固定为地球 WebView、迁移、插件来源设置；加入书架后的本地详情继续保留来源能力。下拉刷新使用持续的刷新/绿勾/红叉状态图标。
+- 来源分类和标签支持点击进入当前来源搜索，长按进入多选并复制；当前未建立聚合搜索或第二套搜索缓存。刷新、来源 action 和标签选择按 Presentation 交互所有权拆入 `comic_details_interactions.dart`，避免继续增长超大详情文件。
+- 新增 ADR 0072、dev.88 三清单审计和所有权门禁；Reader/Pipeline 的 7/3、2/1、current/transition、5/3/2 与 256 KiB 传输未改变。
+
 ## 0.31.0-dev.87：统一来源验证回退并优化本地大图恢复
 
 - 修复 `PluginHostBridgePlugin.kt` 缺少 `android.os.Bundle` 导入的 Android 编译闭包。
