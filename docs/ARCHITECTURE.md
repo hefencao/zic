@@ -1,11 +1,22 @@
+# dev.95 缓存直通、native ingress 与目标画布所有权
+
+- `downloads.ArtifactCacheStreamStore` 只公开 promoted artifact 的有界只读范围流；Reader 活跃数据仍必须进入同一个 `DownloadSession/Ingress`。`PromotedArtifactReadPool` 对流式 store 不得并发物化完整页面，App/Reader 不得看到 artifact path。
+- `storage.Artifact` 唯一拥有临时文件、CRC、durability 和范围读取。写入使用 `IOSink` 缓冲；pause、seal、promote 与 close 是 flush 边界，不能把每个 256 KiB chunk 变成同步 fsync/close。
+- `media.Ingress` 可以向实现了 `ExpectedLengthEncodedSource` 的平台 source 提交权威预计长度；该值只用于 capacity reservation，不代表已提交字节或下载进度。
+- `bridge.NativeSource` 与 `media_core.ByteSource` 通过 ABI 6 reserve/commit 维护唯一 committed prefix。Dart 直接填充 native 预留区域；未 commit reservation 对 decoder 不可见，Reader 不取得 pointer。
+- `media_core::webp::Decoder` 唯一拥有 demux descriptors、target canvas、blend/dispose 和 libwebp scaling。descriptor 可满足下一帧时 source 增长不触发重建；缺少下一帧时最多按 512 KiB 增量或 seal 刷新。
+- ANMF fragment 以来源 rectangle 的共享 start/end endpoint 映射到 target grid；相邻 rectangle 必须共享同一目标边界。libwebp 直接解码/缩放 fragment，随后在 target canvas blend/dispose；不再建立 source-size canvas 或执行完整帧二次缩放。
+- ADR 0064/dev.82 对“分别独立舍入 offset 与 width”造成条带的否决仍有效；ADR 0079 以共享端点映射取代旧 source-grid 整帧缩放，而不是恢复错误的独立 rectangle rounding。
+- `sessions` 只记录 native ingress/artifact write timing 并维持既有 demand；Reader 继续只消费只读 output。7/3、2/1、current/transition、5/3/2、256 KiB 与 GET/HEAD 零 body 均不变。
+
 # dev.94 常驻 WebP worker 与持久 demux 所有权
 
 - `bridge.NativeCursor` 继续是 Dart 侧 cursor facade，但重型 `zic_cursor_decode_next` 不得在 UI isolate 同步执行。`_NativeDecodeWorkerPool` 按 native library 维护两个常驻 Isolate，cursor acquire/release 原子管理 worker 生命周期。
 - worker 消息只包含 native cursor 地址、epoch、返回 frame 地址和小型 metadata/timing。像素始终留在 `media_core` frame owner；禁止通过 SendPort 传 `Uint8List` 或在 Reader 建立帧副本。
 - 每个 cursor 最多一个 in-flight decode；dispose 等待该 decode 完成后再释放 native cursor。worker 启动失败必须关闭已启动 worker，最后一个 owner 离开且队列排空后关闭 pool。
-- `media_core::webp::Decoder` 唯一拥有 demux descriptor、source-grid composite canvas、blend/dispose、rewind 与 libwebp decode。descriptor 只记录 authoritative source slice 中的 offset/length；source read lock 保证一次 decode 期间地址稳定，不保存第二份完整压缩内容。
+- `media_core::webp::Decoder` 唯一拥有 demux descriptor、blend/dispose、rewind 与 libwebp decode。dev.94 当时使用 source-grid composite canvas；该历史几何已由顶部 dev.95/ADR 0079 的共享端点 target-canvas 实现取代。descriptor 仍只记录 authoritative source slice 中的 offset/length，不保存第二份完整压缩内容。
 - source 长度或 sealed 状态变化才重建 descriptors；同一 sealed source 的逐帧 decode 和 rewind 复用同一 descriptor set。
-- libwebp advanced config 开启 `use_threads=1`，帧 fragment 解码结果在源像素网格合成。dev.82 已否决的“分别缩放 ANMF 子矩形后在目标网格合成”不得恢复；最终 presentation 只对完整权威 canvas 做一次等比缩放/复制。
+- libwebp advanced config 开启 `use_threads=1`。dev.94 曾保留源像素网格整帧缩放；dev.95 已证明可用共享 start/end endpoint 在目标网格无缝合成，因此当前规范以顶部 dev.95 为准。仍禁止独立舍入 offset 与 width 的旧错误实现。
 - ZIC 既有 Android texture bridge 已在专用串行 blit 线程执行 native handle blit，因此本轮不复制 VibeVenera 的 presenter，也不建立第二 texture registry。
 - `sessions` 只记录 `decodeMicros/nativeDecodeMicros/decodeDispatchMicros` 并维持既有 demand；这些 timing 不改变 lane、deadline 或缓存所有权。Reader 继续只消费只读 output。
 

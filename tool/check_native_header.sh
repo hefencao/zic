@@ -27,6 +27,16 @@ int main(void) {
   (void)zic_webp_decoder_version();
   (void)zic_webp_demux_version();
   zic_byte_source *source = zic_source_create(0, 1024);
+  uint8_t *reserved = 0;
+  (void)zic_source_reserve_capacity(source, 0, 512);
+  (void)zic_source_reserve(source, 0, 0, 4, &reserved);
+  if (reserved != 0) {
+    reserved[0] = 'R';
+    reserved[1] = 'I';
+    reserved[2] = 'F';
+    reserved[3] = 'F';
+    (void)zic_source_commit(source, 0, 0, 4);
+  }
   zic_cursor *cursor = zic_cursor_create(source, 0, 8, 8);
   zic_frame *frame = 0;
   (void)zic_cursor_decode_next(cursor, 0, &frame);

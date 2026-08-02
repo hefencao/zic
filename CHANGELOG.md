@@ -1,3 +1,14 @@
+## 0.31.0-dev.95：直通缓存/native ingress 并改用目标画布 WebP
+
+- 根据高性能设备 Trace 排除硬件瓶颈：native decode 中位约 70.7 ms、Android blit 中位低于 1 ms，但首帧仍约 1.7–2.3 秒，platform callback 最高约 1.59 秒。
+- 对照 VibeVenera 通用媒体链，确认 ZIC 仍在缓存命中时整页物化 `Uint8List`、并发重复读取 promoted artifact、逐块同步写临时 artifact，并在 Dart/native 边界执行双重复制。
+- 新增 `ArtifactCacheStreamStore`；持久缓存以范围流直接进入同一个 DownloadSession，流式 store 禁止 `PromotedArtifactReadPool` 再次整页 prime。
+- `Artifact` 改用 `IOSink` 缓冲写，pause/seal/promote 时统一 flush；DownloadSession 只建立一份 owned chunk，并增加 native ingress 与 artifact write 聚合 timing。
+- native media ABI 升至 6，增加 expected-capacity、reserve、commit；Dart 直接写入 native source 预留内存，兼容 `zic_source_append` 仅保留为旧调用 helper。
+- WebP demux 仅在下一 descriptor 不可用且增长达到 512 KiB 或 source seal 时刷新；不因每个 source revision 重解析完整文件。
+- ANMF rectangle 使用共享 start/end endpoint 映射，libwebp 直接缩放 fragment 到目标 rectangle，再在最终 target canvas blend/dispose；删除 source-size canvas 与每帧完整纯 Rust 缩放。
+- 新增 promoted stream、artifact exact range、native reserve/commit header、相邻/奇数 rectangle 无缝映射测试，以及 ADR 0079、dev.95 审计和门禁。
+
 ## 0.31.0-dev.94：迁移常驻 WebP 解码 worker 与持久 demux
 
 - 根据设备 Trace 定位：动画 `decodeMicros` 中位约 124.9 ms；Android native blit 约 5.6 ms，但 platform round trip 中位约 770 ms、最大约 1.69 s，主要等待发生在 Dart/MethodChannel 调度。

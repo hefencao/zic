@@ -43,7 +43,7 @@ final class Artifact {
   final String finalMetaPath;
 
   ArtifactState _state = ArtifactState.empty;
-  RandomAccessFile? _file;
+  IOSink? _sink;
   Crc32 _crc = Crc32();
   int _committed = 0;
   Future<void> _writeTail = Future<void>.value();
@@ -51,7 +51,7 @@ final class Artifact {
   ArtifactState get state => _state;
   int get committedLength => _committed;
   String get checksum => _crc.hex;
-  bool get hasOpenWriter => _file != null;
+  bool get hasOpenWriter => _sink != null;
 
   ArtifactSnapshot get snapshot => ArtifactSnapshot(
         state: _state,
@@ -98,9 +98,15 @@ final class Artifact {
     return snapshot;
   }
 
-  Future<void> append(int offset, List<int> bytes) {
-    final chunk = List<int>.of(bytes, growable: false);
-    final operation = _writeTail.then<void>((_) => _append(offset, chunk));
+  Future<void> append(int offset, List<int> bytes) =>
+      appendOwned(offset, Uint8List.fromList(bytes));
+
+  /// Appends a chunk whose byte storage is exclusively owned by the caller.
+  ///
+  /// DownloadSession uses this path to share one immutable chunk between the
+  /// buffered artifact writer and native ingress without a second Dart copy.
+  Future<void> appendOwned(int offset, Uint8List bytes) {
+    final operation = _writeTail.then<void>((_) => _append(offset, bytes));
     _writeTail = operation.then<void>(
       (_) {},
       onError: (Object _, StackTrace __) {},
@@ -120,7 +126,7 @@ final class Artifact {
       return;
     }
     final writer = await _writer();
-    await writer.writeFrom(bytes);
+    writer.add(bytes);
     _crc.add(bytes);
     _committed += bytes.length;
   }
@@ -128,7 +134,7 @@ final class Artifact {
   Future<void> flush() async {
     _requireNotDisposed();
     await _writeTail;
-    await _file?.flush();
+    await _sink?.flush();
   }
 
   Future<void> pause() async {
@@ -227,10 +233,17 @@ final class Artifact {
     return file.readAsBytes();
   }
 
-  Stream<List<int>> readChunks({int chunkSize = 256 * 1024}) async* {
+  Stream<List<int>> readChunks({
+    int chunkSize = 256 * 1024,
+    int start = 0,
+    int? endExclusive,
+  }) async* {
     _requireNotDisposed();
     if (chunkSize <= 0) {
       throw ArgumentError.value(chunkSize, 'chunkSize', 'must be positive');
+    }
+    if (start < 0 || (endExclusive != null && endExclusive < start)) {
+      throw RangeError('invalid artifact range $start..$endExclusive');
     }
     await flush();
     final path = _state == ArtifactState.promoted ? finalPath : partialPath;
@@ -238,13 +251,22 @@ final class Artifact {
     if (!await file.exists()) {
       return;
     }
+    final length = await file.length();
+    if (start >= length) {
+      return;
+    }
+    final limit = (endExclusive ?? length).clamp(start, length).toInt();
     final reader = await file.open();
     try {
-      while (true) {
-        final chunk = await reader.read(chunkSize);
+      await reader.setPosition(start);
+      var offset = start;
+      while (offset < limit) {
+        final readSize = (limit - offset).clamp(1, chunkSize).toInt();
+        final chunk = await reader.read(readSize);
         if (chunk.isEmpty) {
           break;
         }
+        offset += chunk.length;
         yield chunk;
       }
     } finally {
@@ -495,31 +517,31 @@ final class Artifact {
     _committed = length;
   }
 
-  Future<RandomAccessFile> _writer() async {
-    final existing = _file;
+  Future<IOSink> _writer() async {
+    final existing = _sink;
     if (existing != null) {
       return existing;
     }
     final partial = File(partialPath);
     await partial.parent.create(recursive: true);
-    final writer = await partial.open(mode: FileMode.append);
-    final length = await writer.length();
+    final length = await partial.exists() ? await partial.length() : 0;
     if (length != _committed) {
-      await writer.close();
       throw Failure(
         code: ErrorCode.artifactCorruption,
         message: 'partial length changed from $_committed to $length',
       );
     }
-    _file = writer;
+    final writer = partial.openWrite(mode: FileMode.append);
+    _sink = writer;
     return writer;
   }
 
   Future<void> _closeWriter() async {
     await _writeTail;
-    final writer = _file;
-    _file = null;
+    final writer = _sink;
+    _sink = null;
     if (writer != null) {
+      await writer.flush();
       await writer.close();
     }
   }

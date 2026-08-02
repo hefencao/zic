@@ -1,3 +1,22 @@
+## dev.95 完成项与设备验证
+
+### 已完成
+
+- 使用高性能设备 Trace 排除硬件不足，并将首帧等待关联到 promoted artifact 整页读取、重复 prime、临时 artifact chunk 写和 Dart/native 双复制。
+- 增加 cache range stream，使持久缓存直接进入唯一 DownloadSession；关闭流式 cache 的并发完整页 read pool。
+- Artifact 改为缓冲 IOSink，DownloadSession 复用同一 owned chunk 并记录 ingress/write timing。
+- native ABI 6 增加 expected capacity、reserve/commit，删除常规路径的 chunk 临时 native buffer。
+- demux descriptor 受控刷新；libwebp 将 fragment 直接缩放到共享端点映射的 target rectangle，在 target canvas 完成 blend/dispose。
+- 增加 promoted stream、exact range、ABI/header、奇数/相邻 rectangle、ADR 0079、三清单审计和 dev.95 门禁。
+
+### 下一步设备验证
+
+1. 同一已缓存 WebP 首帧应不再出现完整 `readArtifact`/read-pool 双重读取；比较 `sourceRead`、`nativeIngressMicros` 与 `artifactWriteMicros`。
+2. 比较 dev.94/dev.95 首帧 `firstChunkMicros`、首次 `frameDecoded` 与 `firstFrameReady`；目标是接近 VibeVenera 的 200 ms 级链路，但未取得设备结果前不得宣称达标。
+3. 检查 `nativeDecodeMicros` 是否下降；若仍高，继续分析 target fragment decode、canvas clone 与 native frame ownership，不能再次增加 Reader 缓存或缩小预取窗口。
+4. 验证 partial alpha、dispose、有限循环、奇数尺寸条带和回切无回归。
+5. 部分远程图片下载失败继续作为独立后续任务。
+
 ## dev.94 完成项与设备验证
 
 ### 已完成

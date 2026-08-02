@@ -128,7 +128,8 @@ abstract interface class ManagedChapterDownloadService
     implements
         ChapterDownloadService,
         ArtifactCacheMaintenance,
-        ArtifactCacheStore {}
+        ArtifactCacheStore,
+        ArtifactCacheStreamStore {}
 
 /// Resolves bytes owned by an active comic source. External plugin page URIs
 /// are intentionally opaque and must stay behind the source boundary instead
@@ -456,6 +457,26 @@ final class MemoryChapterDownloadService
     _requireOpen();
     final bytes = _readerArtifacts[id];
     return bytes == null ? null : Uint8List.fromList(bytes);
+  }
+
+  @override
+  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async {
+    _requireOpen();
+    final bytes = _readerArtifacts[id];
+    if (bytes == null) return null;
+    return ArtifactCacheStreamEntry(
+      length: bytes.lengthInBytes,
+      open: ({required int start, int? endExclusive}) async* {
+        final end = (endExclusive ?? bytes.lengthInBytes)
+            .clamp(start, bytes.lengthInBytes)
+            .toInt();
+        const chunkSize = 256 * 1024;
+        for (var offset = start; offset < end; offset += chunkSize) {
+          final chunkEnd = (offset + chunkSize).clamp(offset, end).toInt();
+          yield Uint8List.sublistView(bytes, offset, chunkEnd);
+        }
+      },
+    );
   }
 
   @override
@@ -1056,6 +1077,28 @@ final class PersistentChapterDownloadService
       return null;
     }
     return session.artifact.readBytes();
+  }
+
+  @override
+  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async {
+    _requireOpen();
+    final session = _registry.get(id);
+    if (session.activeRun || session.hasWriter) {
+      return null;
+    }
+    await session.restore(verifyPromotedChecksum: false);
+    if (session.state != DownloadState.promoted) {
+      return null;
+    }
+    final artifact = session.artifact;
+    final length = artifact.committedLength;
+    return ArtifactCacheStreamEntry(
+      length: length,
+      open: ({required int start, int? endExclusive}) => artifact.readChunks(
+        start: start,
+        endExclusive: endExclusive,
+      ),
+    );
   }
 
   @override

@@ -36,14 +36,14 @@ for token in (
     assert token in download
 
 for token in (
-    'Composite the authoritative',
-    'self.source_width,',
-    'self.source_height,',
-    '&self.canvas,',
+    'map_rect_endpoints(',
+    '.saturating_add(source.width)',
+    'left.x + left.width, right.x',
+    'bytes: self.canvas.clone(),',
 ):
     assert token in webp
-assert 'let target_rect = scale_rect' not in webp
-assert 'source_grid_composition_keeps_subrect_offsets_when_scaled' in webp
+assert 'scale_rect(' not in webp
+assert 'endpoint_mapping_keeps_adjacent_strips_gapless' in webp
 
 assert 'this.maxExportEvents = 10000' in trace
 assert 'await body.close();' not in transport_test
@@ -56,4 +56,4 @@ assert '319.99999999999994' not in geometry_test
 
 assert (ROOT / 'docs/adr/0066-frame-consumption-source-grid-composition-and-trace-aggregation.md').is_file()
 assert (ROOT / 'docs/audits/dev82-vertical-animation-trace-stability-audit.md').is_file()
-print('dev.82 animation, source-grid composition and trace stability: OK')
+print('dev.82 animation geometry and trace stability: OK')

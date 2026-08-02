@@ -1,3 +1,7 @@
+## dev.95 状态
+
+已在 dev.94 唯一基线上继续对照 VibeVenera 的通用媒体 Pipeline/libwebp。高性能设备 Trace 中 native decode 中位约 70.7 ms、Android blit 中位低于 1 ms，但首帧仍约 1.7–2.3 秒；确认主要额外工作来自 promoted artifact 整页物化/重复读取、临时 session 文件逐块等待、Dart→native 双复制以及 source-size canvas 的完整二次缩放。当前持久缓存通过 `ArtifactCacheStreamStore` 直接流入唯一 DownloadSession，流式 store 不再由 read pool 并行整页 prime；Artifact 改用 IOSink 缓冲。native ABI 6 增加 expected capacity、reserve/commit，使 Dart 直接写 native source committed prefix。WebP descriptor 受控刷新，fragment 由 libwebp 直接缩放到共享端点映射的 target rectangle，并在 target canvas blend/dispose。repository/Dart structure、dev.75–dev.95、Android/Mihon/Venera/Reader/Pipeline/UI、native header 和本地 libwebp host smoke 正在/已按当前环境验证；Flutter/Dart/Rust/Gradle/Android 工具链和真机 200 ms 目标仍需外部环境复验。
+
 ## dev.94 状态
 
 已在 dev.93 唯一基线上迁移 VibeVenera 中与 Venera 协议无关的 WebP 执行结构。用户 Trace 共 798 条事件：`frameDecoded` 17 次，total decode 中位约 124893 µs；Android texture native blit 中位约 5625 µs，而 platform round trip 中位约 770103 µs、最大约 1689081 µs，bridge 等待占主导。根因是 ZIC 在 UI isolate 同步执行 native decode，且 native decoder 逐帧重新 demux 完整 source。现在 bridge 使用两个常驻 decode Isolate，只传 native cursor/frame 地址；media_core 持久缓存 source-relative frame descriptors，source length/seal 变化才重建，libwebp advanced config 开启线程，并删除每帧完整 demux、第二份压缩快照和 full-canvas clone。source-grid blend/dispose 和既有 texture serial blit 保持不变。当前 repository/Dart structure、dev.82/dev.94 gate 与本地 libwebp 1.6.0 C smoke 已通过；环境仍无 Flutter/Dart/Gradle/Android SDK/Cargo/rustc，真实 analyzer、package tests、Rust/Android 编译、APK 和设备帧率需用户环境复验。

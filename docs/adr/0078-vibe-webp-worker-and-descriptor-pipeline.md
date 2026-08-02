@@ -2,7 +2,7 @@
 
 ## 状态
 
-Accepted for `0.31.0-dev.94`.
+Accepted for `0.31.0-dev.94`; target-canvas composition geometry superseded by ADR 0079 in dev.95. Worker、持久 demux 与 handle-only handoff 仍有效。
 
 ## 背景
 

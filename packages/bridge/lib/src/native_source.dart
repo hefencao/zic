@@ -18,6 +18,42 @@ typedef _CreateNative = Pointer<_Source> Function(Uint64 epoch, UintPtr maxBytes
 typedef _CreateDart = Pointer<_Source> Function(int epoch, int maxBytes);
 typedef _FreeNative = Void Function(Pointer<_Source> source);
 typedef _FreeDart = void Function(Pointer<_Source> source);
+typedef _ReserveCapacityNative = Uint32 Function(
+  Pointer<_Source> source,
+  Uint64 epoch,
+  UintPtr capacity,
+);
+typedef _ReserveCapacityDart = int Function(
+  Pointer<_Source> source,
+  int epoch,
+  int capacity,
+);
+typedef _ReserveNative = Uint32 Function(
+  Pointer<_Source> source,
+  Uint64 epoch,
+  UintPtr offset,
+  UintPtr length,
+  Pointer<Pointer<Uint8>> outData,
+);
+typedef _ReserveDart = int Function(
+  Pointer<_Source> source,
+  int epoch,
+  int offset,
+  int length,
+  Pointer<Pointer<Uint8>> outData,
+);
+typedef _CommitNative = Uint32 Function(
+  Pointer<_Source> source,
+  Uint64 epoch,
+  UintPtr offset,
+  UintPtr length,
+);
+typedef _CommitDart = int Function(
+  Pointer<_Source> source,
+  int epoch,
+  int offset,
+  int length,
+);
 typedef _AppendNative = Uint32 Function(
   Pointer<_Source> source,
   Uint64 epoch,
@@ -56,7 +92,7 @@ final class NativeSourceFactory implements SourceFactory {
   }
 }
 
-final class NativeSource implements EncodedSource {
+final class NativeSource implements EncodedSource, ExpectedLengthEncodedSource {
   NativeSource._(this._ptr, this._api);
 
   factory NativeSource.create({
@@ -89,30 +125,41 @@ final class NativeSource implements EncodedSource {
   SourceKind get kind => SourceKind.values[_api.kind(_requirePtr())];
 
   @override
+  SourceStatus reserveExpectedLength({
+    required int epoch,
+    required int length,
+  }) => SourceStatus.values[
+        _api.reserveCapacity(_requirePtr(), epoch, length)
+      ];
+
+  @override
   SourceStatus append({
     required int epoch,
     required int offset,
     required List<int> bytes,
   }) {
+    final ptr = _requirePtr();
     if (bytes.isEmpty) {
-      return SourceStatus.values[
-        _api.append(
-          _requirePtr(),
-          epoch,
-          offset,
-          nullptr.cast<Uint8>(),
-          0,
-        )
-      ];
+      return SourceStatus.values[_api.commit(ptr, epoch, offset, 0)];
     }
-    final data = calloc<Uint8>(bytes.length);
+    final outData = calloc<Pointer<Uint8>>();
     try {
-      data.asTypedList(bytes.length).setAll(0, bytes);
+      final reserve = SourceStatus.values[
+        _api.reserve(ptr, epoch, offset, bytes.length, outData)
+      ];
+      if (reserve != SourceStatus.ok) {
+        return reserve;
+      }
+      final destination = outData.value;
+      if (destination == nullptr) {
+        return SourceStatus.failed;
+      }
+      destination.asTypedList(bytes.length).setAll(0, bytes);
       return SourceStatus.values[
-        _api.append(_requirePtr(), epoch, offset, data, bytes.length)
+        _api.commit(ptr, epoch, offset, bytes.length)
       ];
     } finally {
-      calloc.free(data);
+      calloc.free(outData);
     }
   }
 
@@ -148,6 +195,16 @@ final class _SourceApi {
           'zic_source_create',
         ),
         free = lib.lookupFunction<_FreeNative, _FreeDart>('zic_source_free'),
+        reserveCapacity = lib.lookupFunction<
+            _ReserveCapacityNative,
+            _ReserveCapacityDart
+          >('zic_source_reserve_capacity'),
+        reserve = lib.lookupFunction<_ReserveNative, _ReserveDart>(
+          'zic_source_reserve',
+        ),
+        commit = lib.lookupFunction<_CommitNative, _CommitDart>(
+          'zic_source_commit',
+        ),
         append = lib.lookupFunction<_AppendNative, _AppendDart>(
           'zic_source_append',
         ),
@@ -168,6 +225,9 @@ final class _SourceApi {
 
   final _CreateDart create;
   final _FreeDart free;
+  final _ReserveCapacityDart reserveCapacity;
+  final _ReserveDart reserve;
+  final _CommitDart commit;
   final _AppendDart append;
   final _EpochOpDart seal;
   final _EpochOpDart reset;

@@ -27,6 +27,13 @@ abstract interface class EncodedSource {
   void dispose();
 }
 
+abstract interface class ExpectedLengthEncodedSource {
+  SourceStatus reserveExpectedLength({
+    required int epoch,
+    required int length,
+  });
+}
+
 abstract interface class SourceFactory {
   EncodedSource create({required int epoch, required int maxBytes});
 }

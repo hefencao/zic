@@ -62,37 +62,78 @@ final class ArtifactCacheTransport implements Transport {
     if (id != null) {
       final readStarted = _clock?.nowMicros();
       try {
-        final bytes = await (_readPool?.read(id) ?? _cache.readArtifact(id));
-        final readMicros = readStarted == null
-            ? null
-            : (_clock!.nowMicros() - readStarted).clamp(0, 1 << 62).toInt();
-        if (bytes != null) {
-          final response = _cachedResponse(
-            id: id,
-            bytes: bytes,
-            range: range,
-            validators: validators,
-          );
-          if (response != null) {
-            _recordSource(
-              source: 'artifact-cache',
+        final streamingCache = _cache;
+        if (streamingCache is ArtifactCacheStreamStore) {
+          final entry = await (streamingCache as ArtifactCacheStreamStore).openArtifactStream(id);
+          final readMicros = readStarted == null
+              ? null
+              : (_clock!.nowMicros() - readStarted)
+                  .clamp(0, 1 << 62)
+                  .toInt();
+          if (entry != null) {
+            final response = _streamedCachedResponse(
               id: id,
-              uri: uri,
-              bytes: bytes.lengthInBytes,
+              entry: entry,
               range: range,
-              revision: revision,
-              readMicros: readMicros,
-              sourceClass: 'persistent-artifact',
+              validators: validators,
             );
-            return _traceResponse(
-              response,
-              source: 'artifact-cache',
-              sourceClass: 'persistent-artifact',
+            if (response != null) {
+              _recordSource(
+                source: 'artifact-cache-stream',
+                id: id,
+                uri: uri,
+                bytes: entry.length,
+                range: range,
+                revision: revision,
+                readMicros: readMicros,
+                sourceClass: 'persistent-artifact',
+              );
+              return _traceResponse(
+                response,
+                source: 'artifact-cache-stream',
+                sourceClass: 'persistent-artifact',
+                id: id,
+                uri: uri,
+                revision: revision,
+                openMicros: readMicros,
+              );
+            }
+          }
+        } else {
+          final bytes = await (_readPool?.read(id) ?? _cache.readArtifact(id));
+          final readMicros = readStarted == null
+              ? null
+              : (_clock!.nowMicros() - readStarted)
+                  .clamp(0, 1 << 62)
+                  .toInt();
+          if (bytes != null) {
+            final response = _cachedResponse(
               id: id,
-              uri: uri,
-              revision: revision,
-              openMicros: readMicros,
+              bytes: bytes,
+              range: range,
+              validators: validators,
             );
+            if (response != null) {
+              _recordSource(
+                source: 'artifact-cache',
+                id: id,
+                uri: uri,
+                bytes: bytes.lengthInBytes,
+                range: range,
+                revision: revision,
+                readMicros: readMicros,
+                sourceClass: 'persistent-artifact',
+              );
+              return _traceResponse(
+                response,
+                source: 'artifact-cache',
+                sourceClass: 'persistent-artifact',
+                id: id,
+                uri: uri,
+                revision: revision,
+                openMicros: readMicros,
+              );
+            }
           }
         }
       } on Object catch (error) {
@@ -344,6 +385,38 @@ Map<String, DownloadId> _uniqueIdentities(
     result.remove(key);
   }
   return Map<String, DownloadId>.unmodifiable(result);
+}
+
+ByteResponse? _streamedCachedResponse({
+  required DownloadId id,
+  required ArtifactCacheStreamEntry entry,
+  required ByteRange? range,
+  required Validators? validators,
+}) {
+  final currentValidators = Validators(
+    etag: '"zic-artifact-${entry.length}-${_fnv64String(id.key)}"',
+  );
+  final canServeRange = range != null &&
+      range.start < entry.length &&
+      (validators == null ||
+          validators.isEmpty ||
+          validators.matches(currentValidators));
+  if (range != null && !canServeRange) {
+    return null;
+  }
+  final start = canServeRange ? range!.start : 0;
+  final requestedEnd = canServeRange ? range!.end : null;
+  final endExclusive = requestedEnd == null
+      ? entry.length
+      : (requestedEnd + 1).clamp(start, entry.length).toInt();
+  return ByteResponse(
+    bytes: entry.open(start: start, endExclusive: endExclusive),
+    statusCode: canServeRange ? 206 : 200,
+    rangeStart: start,
+    totalLength: entry.length,
+    validators: currentValidators,
+    rangeSupported: true,
+  );
 }
 
 ByteResponse? _cachedResponse({

@@ -16,3 +16,26 @@ abstract interface class ArtifactCacheStore {
     required Uint8List bytes,
   });
 }
+
+/// Immutable promoted artifact entry that can be streamed without first
+/// materializing the complete encoded page in Dart memory.
+final class ArtifactCacheStreamEntry {
+  const ArtifactCacheStreamEntry({
+    required this.length,
+    required this.open,
+  });
+
+  final int length;
+  final Stream<List<int>> Function({
+    required int start,
+    int? endExclusive,
+  }) open;
+}
+
+/// Optional persistent-store capability used by Reader DownloadSession.
+///
+/// The returned stream is still consumed by the authoritative session; this
+/// capability only removes the redundant full-file Uint8List handoff.
+abstract interface class ArtifactCacheStreamStore {
+  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id);
+}

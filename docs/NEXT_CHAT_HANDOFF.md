@@ -1,26 +1,27 @@
 # 下一聊天交接
 
-唯一后续基线：`zic_v0.31.0-dev.94_vibe-webp-worker-pipeline.zip`。不得混入 dev.93 或更早候选。
+唯一后续基线：`zic_v0.31.0-dev.95_vibe-native-ingress-target-canvas.zip`。不得混入 dev.94 或更早候选。
 
 ## 已完成
 
-- 保留 dev.92/93 的静态、有限动画、successor 与 direct-fd 修复。
-- `bridge` 增加两个常驻 native decode Isolate；UI isolate 不再同步执行 `zic_cursor_decode_next`。
-- isolate 只传 cursor/frame native 地址与小型 metadata，不传像素。
-- `media_core` 持久缓存 demux frame descriptors；source length/seal 不变时逐帧与 rewind 复用。
-- descriptors 使用 authoritative source-relative offset/length，不保留第二份完整压缩 bytes。
-- libwebp advanced decode 开启 `use_threads=1`。
-- 保留 dev.82 source-grid composition，删除每帧 full-canvas clone；现有 Android serial native blit 不重复实现。
-- `frameDecoded` 增加 `nativeDecodeMicros` 与 `decodeDispatchMicros`。
+- 保留 dev.92–94 的静态/有限动画、successor、direct-fd、常驻 decode worker 与持久 demux 修复。
+- promoted artifact 支持范围流并直接进入唯一 DownloadSession；流式 cache 禁止 read pool 再物化完整页面。
+- Artifact 使用 IOSink 缓冲写；DownloadSession 对 artifact/native ingress 复用同一 owned chunk。
+- native ABI 6 增加 expected-capacity、reserve/commit；Dart 直接写 native source 预留区，只有 committed prefix 对 decoder 可见。
+- demux 在 descriptor 已覆盖下一帧时复用；partial 缺帧时按 512 KiB 或 seal 受控刷新。
+- ANMF rectangle 使用共享 source endpoint 映射，libwebp 直接缩放到 target rectangle，并在 target canvas blend/dispose；删除 source-size canvas 与完整二次缩放。
+- 旧 dev.82 禁止独立 round(offset)+round(width) 的原则继续有效；当前目标画布实现依靠公共端点映射保证相邻 rectangle 无缝。
+- 新增 cache stream、artifact range、native ABI、target rectangle 与 dev.95 所有权门禁。
 
 ## 设备复验重点
 
-1. 过滤同一 DecodeId 的 `frameDecoded`：比较 total/native/dispatch；dispatch 不应再包含 UI isolate 被同步 FFI 占用的整个 decode。
-2. 比较 Android texture `queueMicros/uploadMicros/roundTripMicros/bridgeMicros`；bridge 等待应从 dev.93 的数百毫秒到秒级明显下降。
-3. 检查 33/34 ms 动画的实际流畅度与 `successorBuffered`；如果 native decode 仍慢，下一步只优化 media_core source-grid scaler/输出复制。
-4. 检查横向条带、blend/dispose、有限循环、回切和末帧保留。
-5. 远程部分图片无法下载是独立后续项。
+1. 对同一个已缓存大 WebP 比较 dev.94/dev.95 的 `sourceRead`、首次 `bytesCommitted`、`frameDecoded` 和 `firstFrameReady`。
+2. 确认 cache 命中没有第二次整页 read/prime，`nativeIngressMicros` 与 `artifactWriteMicros` 不再形成秒级 UI/platform callback 阻塞。
+3. 检查首帧是否接近 VibeVenera 的 200 ms 级表现；未取得 Trace 前不得假定已经达标。
+4. 检查相邻条带、奇数尺寸 frame rect、alpha blend、dispose、有限循环、回切和末帧保留。
+5. 若 native decode 仍慢，下一步分析 target canvas clone/native frame ownership；不得再缩小 7/3、2/1 或增加 Reader 私有缓存。
+6. 部分远程图片无法下载仍是独立后续项。
 
 ## 约束
 
-Reader/App 不得新增帧、字节或 texture cache。Decode worker 属于 `bridge` 平台执行层，demux/canvas 属于 `media_core`，sessions 只拥有 demand/trace。禁止恢复目标网格独立 ANMF rect 缩放；保留 7/3、2/1、current/transition、5/3/2、256 KiB 与 GET/HEAD 零 body。
+Reader/App 不得新增帧、字节、artifact path 或 texture cache。promoted cache/file 属于 downloads/storage；活跃 source 属于 DownloadSession/Ingress；native reservation 属于 bridge/media_core；demux/canvas 属于 media_core；UploadSession/texture_bridge 继续唯一拥有 renderer output。保留 7/3、2/1、current/transition、5/3/2、256 KiB 与 GET/HEAD 零 body。

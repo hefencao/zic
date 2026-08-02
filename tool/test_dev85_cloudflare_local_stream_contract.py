@@ -114,7 +114,7 @@ def main() -> int:
     )
     require(
         'packages/storage/lib/src/artifact.dart',
-        'readChunks({int chunkSize = 256 * 1024})',
+        'Stream<List<int>> readChunks({',
     )
     require(
         'packages/sessions/lib/src/source_progress.dart',

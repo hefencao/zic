@@ -12,8 +12,8 @@ use std::ptr;
 use std::slice;
 use std::sync::{Arc, RwLock};
 
-pub const ABI_VERSION: u32 = 5;
-pub const LIB_VERSION: u32 = 0x0012_0300;
+pub const ABI_VERSION: u32 = 6;
+pub const LIB_VERSION: u32 = 0x0012_0500;
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -54,10 +54,18 @@ pub enum PixelFormat {
     Rgba8888 = 0,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SourceReservation {
+    offset: usize,
+    length: usize,
+}
+
 struct SourceState {
     epoch: u64,
     max_bytes: usize,
-    bytes: Vec<u8>,
+    storage: Vec<u8>,
+    committed_len: usize,
+    reservation: Option<SourceReservation>,
     sealed: bool,
 }
 
@@ -66,33 +74,81 @@ impl SourceState {
         Self {
             epoch,
             max_bytes,
-            bytes: Vec::new(),
+            storage: Vec::new(),
+            committed_len: 0,
+            reservation: None,
             sealed: false,
         }
     }
 
-    fn append(&mut self, epoch: u64, offset: usize, bytes: &[u8]) -> Status {
+    fn committed_bytes(&self) -> &[u8] {
+        &self.storage[..self.committed_len]
+    }
+
+    fn reserve(&mut self, epoch: u64, offset: usize, length: usize) -> Result<*mut u8, Status> {
+        if epoch != self.epoch {
+            return Err(Status::StaleEpoch);
+        }
+        if self.sealed {
+            return Err(Status::Sealed);
+        }
+        if self.reservation.is_some() || offset != self.committed_len {
+            return Err(Status::InvalidOffset);
+        }
+        let Some(next_len) = offset.checked_add(length) else {
+            return Err(Status::Budget);
+        };
+        if next_len > self.max_bytes {
+            return Err(Status::Budget);
+        }
+        if length == 0 {
+            return Ok(ptr::null_mut());
+        }
+        if self.storage.len() < next_len {
+            self.storage.resize(next_len, 0);
+        }
+        self.reservation = Some(SourceReservation { offset, length });
+        Ok(unsafe { self.storage.as_mut_ptr().add(offset) })
+    }
+
+    fn commit(&mut self, epoch: u64, offset: usize, length: usize) -> Status {
         if epoch != self.epoch {
             return Status::StaleEpoch;
         }
         if self.sealed {
             return Status::Sealed;
         }
-        if offset != self.bytes.len() {
+        if length == 0 {
+            return if offset == self.committed_len {
+                Status::Ok
+            } else {
+                Status::InvalidOffset
+            };
+        }
+        let expected = SourceReservation { offset, length };
+        if self.reservation != Some(expected) {
             return Status::InvalidOffset;
         }
-        let Some(next_len) = self.bytes.len().checked_add(bytes.len()) else {
-            return Status::Budget;
-        };
-        if next_len > self.max_bytes {
-            return Status::Budget;
-        }
-        self.bytes.extend_from_slice(bytes);
+        self.committed_len = offset + length;
+        self.reservation = None;
         Status::Ok
     }
 
+    fn append(&mut self, epoch: u64, offset: usize, bytes: &[u8]) -> Status {
+        let destination = match self.reserve(epoch, offset, bytes.len()) {
+            Ok(destination) => destination,
+            Err(status) => return status,
+        };
+        if !bytes.is_empty() {
+            unsafe {
+                ptr::copy_nonoverlapping(bytes.as_ptr(), destination, bytes.len());
+            }
+        }
+        self.commit(epoch, offset, bytes.len())
+    }
+
     fn sniff(&self) -> ContainerKind {
-        sniff(&self.bytes, self.sealed)
+        sniff(self.committed_bytes(), self.sealed)
     }
 }
 
@@ -199,6 +255,77 @@ pub unsafe extern "C" fn zic_source_free(source: *mut ByteSource) {
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn zic_source_reserve_capacity(
+    source: *mut ByteSource,
+    epoch: u64,
+    capacity: usize,
+) -> u32 {
+    let Some(source) = source.as_ref() else {
+        return Status::Null as u32;
+    };
+    source.inner.write().map_or(Status::Failed, |mut state| {
+        if epoch != state.epoch {
+            return Status::StaleEpoch;
+        }
+        if state.sealed {
+            return Status::Sealed;
+        }
+        if capacity > state.max_bytes {
+            return Status::Budget;
+        }
+        if capacity > state.storage.capacity() {
+            let additional = capacity.saturating_sub(state.storage.len());
+            if state.storage.try_reserve_exact(additional).is_err() {
+                return Status::Budget;
+            }
+        }
+        Status::Ok
+    }) as u32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zic_source_reserve(
+    source: *mut ByteSource,
+    epoch: u64,
+    offset: usize,
+    len: usize,
+    out_data: *mut *mut u8,
+) -> u32 {
+    if out_data.is_null() {
+        return Status::Null as u32;
+    }
+    *out_data = ptr::null_mut();
+    let Some(source) = source.as_ref() else {
+        return Status::Null as u32;
+    };
+    source.inner.write().map_or(Status::Failed, |mut state| {
+        match state.reserve(epoch, offset, len) {
+            Ok(data) => {
+                *out_data = data;
+                Status::Ok
+            }
+            Err(status) => status,
+        }
+    }) as u32
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zic_source_commit(
+    source: *mut ByteSource,
+    epoch: u64,
+    offset: usize,
+    len: usize,
+) -> u32 {
+    let Some(source) = source.as_ref() else {
+        return Status::Null as u32;
+    };
+    source
+        .inner
+        .write()
+        .map_or(Status::Failed, |mut state| state.commit(epoch, offset, len)) as u32
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn zic_source_append(
     source: *mut ByteSource,
     epoch: u64,
@@ -243,7 +370,9 @@ pub unsafe extern "C" fn zic_source_reset(source: *mut ByteSource, epoch: u64) -
     };
     source.inner.write().map_or(Status::Failed, |mut state| {
         state.epoch = epoch;
-        state.bytes.clear();
+        state.storage.clear();
+        state.committed_len = 0;
+        state.reservation = None;
         state.sealed = false;
         Status::Ok
     }) as u32
@@ -254,7 +383,7 @@ pub unsafe extern "C" fn zic_source_len(source: *const ByteSource) -> usize {
     let Some(source) = source.as_ref() else {
         return 0;
     };
-    source.inner.read().map_or(0, |state| state.bytes.len())
+    source.inner.read().map_or(0, |state| state.committed_len)
 }
 
 #[no_mangle]
@@ -355,7 +484,10 @@ pub unsafe extern "C" fn zic_cursor_decode_next(
     match source.sniff() {
         ContainerKind::Unknown => CursorStatus::NeedMoreData as u32,
         ContainerKind::Gif | ContainerKind::Other => CursorStatus::Unsupported as u32,
-        ContainerKind::Webp => match cursor.decoder.decode_next(&source.bytes, source.sealed) {
+        ContainerKind::Webp => match cursor
+            .decoder
+            .decode_next(source.committed_bytes(), source.sealed)
+        {
             Ok(decoded) => {
                 let frame = FrameHandle {
                     data: Arc::new(FrameData {
@@ -522,8 +654,8 @@ mod tests {
 
     #[test]
     fn exported_versions_are_stable() {
-        assert_eq!(zic_abi_version(), 5);
-        assert_eq!(zic_version(), 0x0012_0300);
+        assert_eq!(zic_abi_version(), 6);
+        assert_eq!(zic_version(), 0x0012_0500);
         // These values are provided by the linked system libwebp, so their
         // exact version is platform-dependent while the exported ABI remains
         // stable.
@@ -540,6 +672,22 @@ mod tests {
         assert_eq!(state.append(8, 4, b"x"), Status::StaleEpoch);
         assert_eq!(state.append(7, 4, b"....WEBP"), Status::Ok);
         assert_eq!(state.sniff(), ContainerKind::Webp);
+    }
+
+    #[test]
+    fn source_reservation_exposes_only_committed_prefix() {
+        let source = ByteSource::new(12, 32);
+        let mut state = source.inner.write().unwrap();
+        let destination = state.reserve(12, 0, 12).unwrap();
+        assert_eq!(state.committed_bytes(), b"");
+        unsafe {
+            ptr::copy_nonoverlapping(b"RIFF....WEBP".as_ptr(), destination, 12);
+        }
+        assert_eq!(state.sniff(), ContainerKind::Unknown);
+        assert_eq!(state.commit(12, 0, 12), Status::Ok);
+        assert_eq!(state.committed_bytes(), b"RIFF....WEBP");
+        assert_eq!(state.sniff(), ContainerKind::Webp);
+        assert_eq!(state.commit(12, 0, 12), Status::InvalidOffset);
     }
 
     #[test]
@@ -667,7 +815,10 @@ mod tests {
             unsafe { zic_source_append(source_ptr, 11, 0, bytes.as_ptr(), bytes.len()) },
             Status::Ok as u32
         );
-        assert_eq!(unsafe { zic_source_seal(source_ptr, 11) }, Status::Ok as u32);
+        assert_eq!(
+            unsafe { zic_source_seal(source_ptr, 11) },
+            Status::Ok as u32
+        );
         let cursor = unsafe { zic_cursor_create(source_ptr, 11, 1, 8) };
         assert!(!cursor.is_null());
 

@@ -75,8 +75,8 @@ require(
     'sealed_source_reuses_demux_across_frames_and_rewind',
     'config.options.use_threads = 1;',
     'WebPInitDecoderConfigInternal',
-    'Composite the authoritative source canvas',
-    'bytes: output,',
+    'map_rect_endpoints(',
+    'bytes: self.canvas.clone(),',
 )
 forbid(
     'native/media_core/src/webp.rs',

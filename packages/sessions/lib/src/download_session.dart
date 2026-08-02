@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:domain/domain.dart';
 import 'package:media/media.dart';
 import 'package:storage/storage.dart';
@@ -95,6 +97,10 @@ final class DownloadSession {
   List<int> _prefix = <int>[];
   int _pendingCommitTraceBytes = 0;
   int _pendingCommitTraceChunks = 0;
+  int _pendingNativeIngressMicros = 0;
+  int _pendingArtifactWriteMicros = 0;
+  int _pendingMaxNativeIngressMicros = 0;
+  int _pendingMaxArtifactWriteMicros = 0;
   final Set<SourceListener> _sourceListeners = <SourceListener>{};
   final Set<DownloadSnapshotListener> _snapshotListeners =
       <DownloadSnapshotListener>{};
@@ -287,6 +293,7 @@ final class DownloadSession {
     _requireNotDisposed();
     _validators = validators;
     _totalLength = totalLength;
+    ingress?.expectLength(totalLength);
     await artifact.writeMeta(<String, Object?>{
       'version': 2,
       'downloadKey': id.key,
@@ -330,9 +337,20 @@ final class DownloadSession {
 
   Future<void> append(WriterLease lease, int offset, List<int> bytes) async {
     _requireWriter(lease);
-    final chunk = List<int>.of(bytes, growable: false);
-    await artifact.append(offset, chunk);
+    final chunk = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
+    final artifactStarted = clock.nowMicros();
+    final artifactWrite = artifact.appendOwned(offset, chunk);
+    final ingressStarted = clock.nowMicros();
     _appendIngress(lease.epoch, offset, chunk);
+    final nativeIngressMicros =
+        (clock.nowMicros() - ingressStarted).clamp(0, 1 << 62).toInt();
+    await artifactWrite;
+    final artifactWriteMicros =
+        (clock.nowMicros() - artifactStarted).clamp(0, 1 << 62).toInt();
+    _recordIngressTiming(
+      nativeIngressMicros: nativeIngressMicros,
+      artifactWriteMicros: artifactWriteMicros,
+    );
     if (_prefix.length < sniffPrefixLength && chunk.isNotEmpty) {
       final remaining = sniffPrefixLength - _prefix.length;
       _prefix.addAll(chunk.take(remaining));
@@ -503,6 +521,20 @@ final class DownloadSession {
     _snapshotListeners.clear();
   }
 
+  void _recordIngressTiming({
+    required int nativeIngressMicros,
+    required int artifactWriteMicros,
+  }) {
+    _pendingNativeIngressMicros += nativeIngressMicros;
+    _pendingArtifactWriteMicros += artifactWriteMicros;
+    if (nativeIngressMicros > _pendingMaxNativeIngressMicros) {
+      _pendingMaxNativeIngressMicros = nativeIngressMicros;
+    }
+    if (artifactWriteMicros > _pendingMaxArtifactWriteMicros) {
+      _pendingMaxArtifactWriteMicros = artifactWriteMicros;
+    }
+  }
+
   void _recordCommittedChunk(int bytes) {
     if (bytes <= 0) {
       return;
@@ -525,10 +557,18 @@ final class DownloadSession {
         'chunks': _pendingCommitTraceChunks,
         'committedLength': committedLength,
         'kind': _contentKind.name,
+        'nativeIngressMicros': _pendingNativeIngressMicros,
+        'artifactWriteMicros': _pendingArtifactWriteMicros,
+        'maxNativeIngressMicros': _pendingMaxNativeIngressMicros,
+        'maxArtifactWriteMicros': _pendingMaxArtifactWriteMicros,
       },
     );
     _pendingCommitTraceBytes = 0;
     _pendingCommitTraceChunks = 0;
+    _pendingNativeIngressMicros = 0;
+    _pendingArtifactWriteMicros = 0;
+    _pendingMaxNativeIngressMicros = 0;
+    _pendingMaxArtifactWriteMicros = 0;
   }
 
   Future<void> _rebuildIngress({required bool sealed}) async {

@@ -129,6 +129,25 @@ void main() {
     expect(chunkLengths, <int>[256 * 1024, 256 * 1024, 7]);
   });
 
+  test('readChunks streams an exact promoted range', () async {
+    final artifact = createArtifact();
+    final bytes = List<int>.generate(700000, (index) => index & 0xff);
+    await artifact.restore();
+    await artifact.append(0, bytes);
+    await artifact.seal(expectedLength: bytes.length);
+    await artifact.promote();
+
+    final restored = <int>[];
+    await for (final chunk in artifact.readChunks(
+      start: 250000,
+      endExclusive: 550000,
+    )) {
+      restored.addAll(chunk);
+    }
+
+    expect(restored, bytes.sublist(250000, 550000));
+  });
+
   test('fast promoted restore trusts atomic metadata and reads once', () async {
     final first = createArtifact();
     final bytes = List<int>.generate(1024, (index) => index & 0xff);

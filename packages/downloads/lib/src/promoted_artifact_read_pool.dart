@@ -63,6 +63,9 @@ final class PromotedArtifactReadPool {
   /// turn PageView construction into an independent download/cache demand.
   Future<Uint8List?> join(DownloadId id) {
     _requireOpen();
+    if (cache is ArtifactCacheStreamStore) {
+      return Future<Uint8List?>.value();
+    }
     final existing = _reads[id];
     if (existing != null) {
       return existing;
@@ -122,6 +125,9 @@ final class PromotedArtifactReadPool {
   }
 
   void _prime(DownloadId id) {
+    if (cache is ArtifactCacheStreamStore) {
+      return;
+    }
     final pending = read(id);
     // The session transport or page consumer will normally await the same
     // Future. This listener only prevents an unhandled asynchronous error if

@@ -50,6 +50,12 @@ uint32_t zic_webp_demux_version(void);
 
 zic_byte_source *zic_source_create(uint64_t epoch, size_t max_bytes);
 void zic_source_free(zic_byte_source *source);
+uint32_t zic_source_reserve_capacity(zic_byte_source *source,
+                                     uint64_t epoch, size_t capacity);
+uint32_t zic_source_reserve(zic_byte_source *source, uint64_t epoch,
+                            size_t offset, size_t len, uint8_t **out_data);
+uint32_t zic_source_commit(zic_byte_source *source, uint64_t epoch,
+                           size_t offset, size_t len);
 uint32_t zic_source_append(zic_byte_source *source, uint64_t epoch,
                            size_t offset, const uint8_t *data, size_t len);
 uint32_t zic_source_seal(zic_byte_source *source, uint64_t epoch);

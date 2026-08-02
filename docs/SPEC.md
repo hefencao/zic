@@ -1,3 +1,16 @@
+## dev.95 缓存/native ingress/目标画布规范
+
+1. promoted artifact 缓存命中必须可通过 `ArtifactCacheStreamStore` 以范围流进入唯一 DownloadSession；不得先物化整页 `Uint8List`，不得由 read pool 同时读取第二份完整文件。
+2. Artifact 写入必须缓冲；pause、seal、promote、close 才是 durability flush 边界。同一 chunk 最多产生一份 Dart-owned `Uint8List`。
+3. native source ABI 必须提供 capacity reservation、reserve 和 commit；只有 committed prefix 可被 sniff/demux/decode 观察。reservation 未提交、offset 不连续、epoch 不匹配或超过预算必须失败。
+4. expected length 只用于预留 capacity，不得伪造 committed bytes、进度或 sealed 状态。
+5. Demux descriptor 已覆盖下一帧时不得因 source 增长重建；缺少 descriptor 时，partial source 最多按 512 KiB 增量刷新，seal 必须触发最终解析。
+6. ANMF source rectangle 必须通过共享 start/end endpoint 映射到目标 canvas；相邻 source rectangle 的公共端点必须映射成同一目标像素边界。禁止独立 round(offset)+round(width)。
+7. libwebp 必须直接缩放 fragment 到 mapped target rectangle；blend/dispose 在 target canvas 执行。不得恢复 source-size canvas 后每帧完整纯 Dart/Rust 二次缩放。
+8. direct target composition 必须继续覆盖 alpha blend、background dispose、finite loop、partial source 和奇数尺寸相邻 rectangle 回归。
+9. `bytesCommitted` timing 仅用于区分 native ingress 与 artifact write，不能成为第二下载进度或 lane 调度来源。
+10. 既有前 7/后 3、前 2/后 1、current/transition、5/3/2、256 KiB 与 GET/HEAD 零 body 不得为性能问题缩小。
+
 ## dev.94 WebP worker/demux 规范
 
 1. native WebP 帧解码不得同步占用 Dart UI isolate；平台 composition 必须通过常驻 worker Isolate 执行 cursor decode。
@@ -7,7 +20,7 @@
 5. demux frame descriptor 应跨帧和 rewind 复用；只有 authoritative source 长度或 seal 状态变化时才重建。
 6. descriptor 只保存 source-relative fragment offset/length；不得复制第二份完整 WebP 压缩字节。decode 时必须在 source read lock 生命周期内验证 range 并取 pointer。
 7. libwebp decode 必须使用 version-checked advanced config、external RGBA buffer 和 `use_threads=1`。
-8. blend/dispose 继续在源像素网格执行，完整 canvas 再一次性按权威目标尺寸缩放；禁止恢复独立目标子矩形缩放或每帧 full-canvas clone。
+8. dev.94 历史实现曾在源像素网格 blend/dispose 后整帧缩放；该要求已由顶部 dev.95 共享端点 target-canvas 规范取代。仍禁止独立 round(offset)+round(width) 与每帧 full-canvas clone。
 9. `frameDecoded` 必须同时投影 total、native 与 dispatch timing；diagnostic timing 不得成为第二调度权威来源。
 10. 现有前 7/后 3下载、前 2/后 1预解码、current/transition 上传、5/3/2 lane、256 KiB source chunk 不得因性能问题缩小。
 

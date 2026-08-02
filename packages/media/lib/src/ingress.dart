@@ -42,6 +42,7 @@ final class Ingress {
   int _revision = 0;
   bool _disposed = false;
   Failure? _failure;
+  int? _expectedLength;
 
   IngressSnap get snapshot => IngressSnap(
         epoch: _epoch,
@@ -54,6 +55,28 @@ final class Ingress {
       );
 
   EncodedSource? get source => _source;
+
+  void expectLength(int? length) {
+    _requireOpen();
+    if (length == null) return;
+    if (length < 0 || length > maxBytes) {
+      throw Failure(
+        code: ErrorCode.memoryBudgetExceeded,
+        message: 'encoded source expected length $length exceeds $maxBytes',
+      );
+    }
+    _expectedLength = length;
+    final source = _source;
+    if (source is ExpectedLengthEncodedSource) {
+      _invoke(
+        () => (source as ExpectedLengthEncodedSource).reserveExpectedLength(
+          epoch: _epoch.value,
+          length: length,
+        ),
+        operation: 'reserve expected length',
+      );
+    }
+  }
 
   void append({
     required SourceEpoch epoch,
@@ -124,6 +147,16 @@ final class Ingress {
         return;
       }
       _source = created;
+      final expectedLength = _expectedLength;
+      if (expectedLength != null && created is ExpectedLengthEncodedSource) {
+        _invoke(
+          () => (created as ExpectedLengthEncodedSource).reserveExpectedLength(
+            epoch: epoch.value,
+            length: expectedLength,
+          ),
+          operation: 'reserve expected length',
+        );
+      }
       final replay = <int>[...prior, ...bytes];
       _invoke(
         () => created.append(
@@ -184,6 +217,7 @@ final class Ingress {
     _length = 0;
     _sealed = false;
     _failure = null;
+    _expectedLength = null;
     _revision++;
   }
 

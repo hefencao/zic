@@ -79,6 +79,39 @@ void main() {
     );
   });
 
+
+  test('stream-capable cache bypasses full-page Uint8List reads', () async {
+    final uri = Uri.parse('https://example.invalid/streamed-page.bin');
+    final id = _downloadId(uri, 'page-streamed');
+    final cache = _StreamingArtifactStore(
+      id,
+      Uint8List.fromList(List<int>.generate(700000, (index) => index & 0xff)),
+    );
+    final fallback = _RecordingTransport(Uint8List(0));
+    final trace = MemoryTraceSink();
+    final transport = ArtifactCacheTransport(
+      cache: cache,
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => fallback,
+      clock: _Clock(),
+      traceSink: trace,
+    );
+
+    final response = await transport.open(uri);
+    final chunks = await response.bytes.map((chunk) => chunk.length).toList();
+
+    expect(cache.fullReads, 0);
+    expect(cache.streamOpens, 1);
+    expect(fallback.opens, 0);
+    expect(chunks, <int>[256 * 1024, 256 * 1024, 175712]);
+    expect(
+      trace.events
+          .singleWhere((event) => event.kind == TraceEventKind.artifactSource)
+          .payload['source'],
+      'artifact-cache-stream',
+    );
+  });
+
   test('rejects a read pool backed by another cache', () {
     final uri = Uri.parse('https://example.invalid/pool-mismatch.bin');
     final id = _downloadId(uri, 'page-pool-mismatch');
@@ -265,6 +298,47 @@ final class _MemoryArtifactStore implements ArtifactCacheStore {
   }) async {
     values[id] = Uint8List.fromList(bytes);
   }
+}
+
+final class _StreamingArtifactStore
+    implements ArtifactCacheStore, ArtifactCacheStreamStore {
+  _StreamingArtifactStore(this.id, this.bytes);
+
+  final DownloadId id;
+  final Uint8List bytes;
+  int fullReads = 0;
+  int streamOpens = 0;
+
+  @override
+  Future<Uint8List?> readArtifact(DownloadId id) async {
+    fullReads++;
+    return bytes;
+  }
+
+  @override
+  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async {
+    if (id != this.id) return null;
+    streamOpens++;
+    return ArtifactCacheStreamEntry(
+      length: bytes.lengthInBytes,
+      open: ({required int start, int? endExclusive}) async* {
+        final end = (endExclusive ?? bytes.lengthInBytes)
+            .clamp(start, bytes.lengthInBytes)
+            .toInt();
+        const chunkSize = 256 * 1024;
+        for (var offset = start; offset < end; offset += chunkSize) {
+          final chunkEnd = (offset + chunkSize).clamp(offset, end).toInt();
+          yield Uint8List.sublistView(bytes, offset, chunkEnd);
+        }
+      },
+    );
+  }
+
+  @override
+  Future<void> storePromotedArtifact({
+    required DownloadId id,
+    required Uint8List bytes,
+  }) async {}
 }
 
 final class _ThrowingArtifactStore implements ArtifactCacheStore {

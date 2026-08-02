@@ -1013,7 +1013,8 @@ def check_compile_regressions() -> None:
         'abstract interface class ManagedChapterDownloadService',
         'ChapterDownloadService,',
         'ArtifactCacheMaintenance,',
-        'ArtifactCacheStore {}',
+        'ArtifactCacheStore,',
+        'ArtifactCacheStreamStore {}',
         'implements ManagedChapterDownloadService',
     ):
         if required not in chapter_downloads:
@@ -2446,6 +2447,9 @@ def check_native_abi() -> None:
         'zic_webp_demux_version',
         'zic_source_create',
         'zic_source_free',
+        'zic_source_reserve_capacity',
+        'zic_source_reserve',
+        'zic_source_commit',
         'zic_source_append',
         'zic_source_seal',
         'zic_source_reset',
@@ -2476,10 +2480,10 @@ def check_native_abi() -> None:
     ):
         if symbol not in rust or symbol not in header or symbol not in dart:
             fail(f'ABI symbol is not represented in Rust/header/Dart: {symbol}')
-    if 'pub const ABI_VERSION: u32 = 5;' not in rust:
-        fail('native ABI version must be 5 for runtime libwebp provenance')
-    if 'pub const LIB_VERSION: u32 = 0x0012_0300;' not in rust:
-        fail('native library version must identify the explicit picker-name repair release')
+    if 'pub const ABI_VERSION: u32 = 6;' not in rust:
+        fail('native ABI version must be 6 for reserve/commit ingress')
+    if 'pub const LIB_VERSION: u32 = 0x0012_0500;' not in rust:
+        fail('native library version must identify the direct-ingress target-canvas release')
     webp_path = ROOT / 'native/media_core/src/webp.rs'
     if not webp_path.is_file():
         fail('native WebP decoder module is missing')
