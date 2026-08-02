@@ -423,6 +423,40 @@ void main() {
     );
   });
 
+  test('canonical alias projection keeps the richer source catalog', () {
+    final short = SavedComicRecord.fromManifest(
+      _remoteManifest(
+        sourceId: 'mihon:fixture',
+        comicId: 'mutable-alias-short',
+        chapterTitles: const <String>['第一话'],
+      ),
+      updatedAt: DateTime.utc(2026, 8, 2, 1),
+    );
+    final complete = SavedComicRecord.fromManifest(
+      _remoteManifest(
+        sourceId: 'mihon:fixture',
+        comicId: 'mutable-alias-complete',
+        chapterTitles: <String>[
+          for (var index = 1; index <= 12; index++) '第 $index 话',
+        ],
+      ),
+      updatedAt: DateTime.utc(2026, 8, 2),
+    );
+
+    final collapsed = collapseCanonicalLibraryComics(
+      aggregateImportedLibrary(
+        const <ImportedLibraryEntry>[],
+        savedComics: <SavedComicRecord>[short, complete],
+      ),
+      canonicalIdentity: (sourceId, comicId) =>
+          '$sourceId\u0000https://example.invalid/work/42',
+    );
+
+    expect(collapsed, hasLength(1));
+    expect(collapsed.single.comicId, 'mutable-alias-complete');
+    expect(collapsed.single.sourceChapters, hasLength(12));
+  });
+
   test('chapter copy preserves aggregate identity while replacing page data', () {
     final chapter = _chapter(
       chapterId: 'chapter-4',

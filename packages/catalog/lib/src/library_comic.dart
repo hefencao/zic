@@ -215,6 +215,86 @@ final class LibraryComic {
   }
 }
 
+/// Collapses source-owned aliases into one read-only library projection.
+///
+/// [canonicalIdentity] is comparison-only. The selected [LibraryComic] keeps
+/// its original source [LibraryComic.comicId], so plugin request locators and
+/// chapter ownership never get rewritten by the catalog projection.
+List<LibraryComic> collapseCanonicalLibraryComics(
+  Iterable<LibraryComic> comics, {
+  required String Function(String sourceId, String comicId) canonicalIdentity,
+  bool Function(String chapterId)? isCompatibilityChapter,
+}) {
+  final grouped = <String, List<LibraryComic>>{};
+  for (final comic in comics) {
+    final identity = canonicalIdentity(comic.sourceId, comic.comicId);
+    grouped.putIfAbsent(identity, () => <LibraryComic>[]).add(comic);
+  }
+  final collapsed = <LibraryComic>[
+    for (final aliases in grouped.values)
+      preferredLibraryComicAlias(
+        aliases,
+        isCompatibilityChapter: isCompatibilityChapter,
+      ),
+  ]
+    ..sort((left, right) {
+      final recent = right.latestUpdatedAt.compareTo(left.latestUpdatedAt);
+      return recent != 0 ? recent : left.identity.compareTo(right.identity);
+    });
+  return List<LibraryComic>.unmodifiable(collapsed);
+}
+
+/// Selects the strongest durable alias without changing its raw identity.
+///
+/// A richer authoritative catalog wins over a one-chapter or compatibility
+/// projection. Downloaded chapters and page counts are secondary evidence.
+LibraryComic preferredLibraryComicAlias(
+  Iterable<LibraryComic> aliases, {
+  bool Function(String chapterId)? isCompatibilityChapter,
+}) {
+  final values = aliases.toList(growable: false);
+  if (values.isEmpty) {
+    throw ArgumentError.value(aliases, 'aliases', 'must not be empty');
+  }
+  final compatibility = isCompatibilityChapter ?? (_) => false;
+  return values.reduce(
+    (left, right) => _compareLibraryComicAliasQuality(
+              left,
+              right,
+              compatibility,
+            ) >=
+            0
+        ? left
+        : right,
+  );
+}
+
+int _compareLibraryComicAliasQuality(
+  LibraryComic left,
+  LibraryComic right,
+  bool Function(String chapterId) isCompatibilityChapter,
+) {
+  final leftReal = left.sourceChapters
+      .where((chapter) => !isCompatibilityChapter(chapter.chapterId))
+      .length;
+  final rightReal = right.sourceChapters
+      .where((chapter) => !isCompatibilityChapter(chapter.chapterId))
+      .length;
+  var result = leftReal.compareTo(rightReal);
+  if (result != 0) return result;
+  result = left.sourceChapters.length.compareTo(right.sourceChapters.length);
+  if (result != 0) return result;
+  result = left.chapters.length.compareTo(right.chapters.length);
+  if (result != 0) return result;
+  result = left.totalPages.compareTo(right.totalPages);
+  if (result != 0) return result;
+  result = left.metadataUpdatedAt.compareTo(right.metadataUpdatedAt);
+  if (result != 0) return result;
+  result = right.comicId.length.compareTo(left.comicId.length);
+  if (result != 0) return result;
+  return right.comicId.compareTo(left.comicId);
+}
+
 List<LibraryComic> aggregateImportedLibrary(
   Iterable<ImportedLibraryEntry> entries, {
   Iterable<SavedComicRecord> savedComics = const <SavedComicRecord>[],

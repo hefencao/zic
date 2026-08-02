@@ -1,3 +1,9 @@
+## dev.90 完成项与设备复验
+
+已完成：runtime snapshot store source-set 迁移；Mihon 完整性/keep；source-owned canonical identity；catalog alias collapse；详情 identity matcher；canonical group 单章节回归拒绝；alias Trace；删除精确 ID 路由 facade；新增 owner tests、ADR、审计和门禁。
+
+设备复验：使用当前出现重复的同一漫画，确认首页“更新漫画”和书架仅显示一个卡片，进入详情始终显示完整目录；从来源页点击任一旧/新 alias 均路由到同一完整目录。连续刷新后不得出现绿勾+单章节。若异常，导出 Trace，重点检查 `comic-identity-alias-resolved`、`chapter-catalog-refresh-result` 的 identityHash/aliasCount/requestedComicIdLength 和 `chapter-catalog-regression-rejected`。
+
 ## dev.89 完成项与后续设备验证
 
 已完成：来源 descriptor 浏览器 User-Agent；Mihon/Venera 同站点同 UA Cookie 快照导入；独立 WebView data directory 保持；详情刷新 Future 合并；2 秒刷新结果；统一插件 IconButton；synthetic revision 3；runtime 真实目录记忆；持久目录回归拒绝；远程详情改为只消费 composition 原子刷新快照；UOE 能力判定收紧；来源/详情/会话 Trace；协议、组件和静态门禁回归。

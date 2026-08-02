@@ -1,3 +1,13 @@
+## 0.31.0-dev.90：修复 Mihon runtime 编译闭包与漫画身份别名
+
+- 将 `NetworkBrowserSnapshotStore` 移入 `network_bridge/android/src/runtime/kotlin`；该 source set 同时进入 network AAR 与 `generateMihonAbiAssets` 的隔离 Kotlin 编译，并加入 Mihon runtime 完整性检查和 release keep 规则。
+- 根据设备 Trace 定位同一 Mihon source 下 439/440 长度的两个漫画 identity：一个持久 342 章，另一个反复返回 1 章，且均非 synthetic。根因为 `comicId` 编码了可变 SManga 标题、简介和 memo。
+- 新增 source-owned `CanonicalComicIdentitySource`；Mihon/Venera adapter 只用规范化作品 URL 比较同源别名，原始 opaque identity 继续作为唯一请求 locator，禁止把 canonical key 传回插件。
+- canonical alias 合并与最优目录选择归 `catalog`；首页、书架和更新投影只显示一个漫画，优先保留真实章节更完整的 locator。详情和下载状态通过注入的 identity matcher 接受同源别名。
+- App composition 按 canonical alias 检查目录回归；曾有多个真实章节时，空目录、synthetic-only 或单章节结果均不得覆盖。Trace 增加 requested/effective ID 长度、alias 数量和脱敏 canonical identity hash。
+- 删除仅被旧门禁和文档引用的 `resolveComicDetailsRoute` 兼容 facade，并把 source identity/catalog 回归逻辑拆入 `demo_home_catalog_identity.dart`。
+- 新增 ADR 0074、dev.90 三清单审计、catalog/plugin-host 回归和 dev.90 所有权门禁；Reader/Pipeline 策略未改变。
+
 ## 0.31.0-dev.89：稳定来源 Cookie 会话与章节目录
 
 - 可见 WebView 使用来源运行时声明的精确 User-Agent；Mihon `AndroidCookieJar` 与 Venera runtime 通过共享 `AndroidBrowserCookieSession` 导入同站点、同 User-Agent 的原子 Cookie 快照。

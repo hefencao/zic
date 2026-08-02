@@ -34,6 +34,7 @@ import 'home_widgets.dart';
 export 'home_widgets.dart' show ComicCoverCard, ComicDownloadProgress, ComicDownloadProgressKind;
 part 'demo_home_views.dart';
 part 'demo_home_source_compat.dart';
+part 'demo_home_catalog_identity.dart';
 part 'demo_home_reader_route.dart';
 const homePageKey = ValueKey<String>('home-page');
 const bookshelfPageKey = ValueKey<String>('bookshelf-page');
@@ -114,6 +115,24 @@ Key chapterReadKey(String sourceId, String chapterId) =>
     ValueKey<String>('chapter-read:$sourceId\u0000$chapterId');
 @Deprecated('Use localImageFolderPickerProgressKey')
 const localWebpFolderPickerProgressKey = localImageFolderPickerProgressKey;
+
+String _comicIdentityTraceHash(
+  String sourceId,
+  String comicId, {
+  required String canonical,
+}) =>
+    'source:${_stableTraceHash(sourceId)}'
+    '/comic:${_stableTraceHash(comicId)}'
+    '/canonical:${_stableTraceHash(canonical)}';
+
+String _stableTraceHash(String value) {
+  var hash = 0x811c9dc5;
+  for (final unit in value.codeUnits) {
+    hash ^= unit;
+    hash = (hash * 0x01000193) & 0xffffffff;
+  }
+  return hash.toRadixString(16).padLeft(8, '0');
+}
 final class _PreparedChapterMigration {
   const _PreparedChapterMigration({
     required this.targetRecord,
@@ -218,9 +237,13 @@ final class _DemoHomeState extends State<DemoHome> {
   String? get _activeSourceId => _librarySession.activeSourceId;
   set _activeSourceId(String? value) => _librarySession.activeSourceId = value;
 
-  List<LibraryComic> get _libraryComics => aggregateImportedLibrary(
-        _libraryEntries,
-        savedComics: _savedComics,
+  List<LibraryComic> get _libraryComics => collapseCanonicalLibraryComics(
+        aggregateImportedLibrary(
+          _libraryEntries,
+          savedComics: _savedComics,
+        ),
+        canonicalIdentity: _canonicalComicKey,
+        isCompatibilityChapter: isSyntheticMihonChapterIdentity,
       );
 
   @override
@@ -389,79 +412,6 @@ final class _DemoHomeState extends State<DemoHome> {
     if (mounted) {
       await _reloadLibrary();
     }
-  }
-
-  bool _savedComicHasRealCatalog(SavedComicRecord comic) =>
-      comic.chapters.any(
-        (chapter) =>
-            !isSyntheticMihonChapterIdentity(chapter.chapterId),
-      );
-
-  bool _manifestHasRealCatalog(ComicManifest manifest) =>
-      manifest.chapters.any(
-        (chapter) =>
-            !isSyntheticMihonChapterIdentity(chapter.chapterId),
-      );
-
-  void _rejectCatalogRegression({
-    required SavedComicRecord? existing,
-    required ComicManifest incoming,
-  }) {
-    if (existing == null ||
-        !_savedComicHasRealCatalog(existing) ||
-        _manifestHasRealCatalog(incoming)) {
-      return;
-    }
-    widget.debugTrace.record(
-      TraceEvent(
-        monotonicMicros: _traceClock.elapsedMicroseconds,
-        sessionId: 'source-catalog:${incoming.comic.sourceId}',
-        kind: TraceEventKind.taskFailed,
-        payload: <String, Object?>{
-          'stage': 'chapter-catalog-regression-rejected',
-          'comicIdLength': incoming.comic.comicId.length,
-          'previousChapterCount': existing.chapters.length,
-          'incomingChapterCount': incoming.chapters.length,
-          'incomingSyntheticCount': incoming.chapters
-              .where(
-                (chapter) => isSyntheticMihonChapterIdentity(
-                  chapter.chapterId,
-                ),
-              )
-              .length,
-        },
-      ),
-    );
-    throw StateError(
-      '漫画源曾返回真实章节目录，本次结果为空或仅含兼容单章节；'
-      '已保留原目录，请重新完成站点验证后刷新。',
-    );
-  }
-
-  Future<void> _persistRemoteComic(
-    ComicManifest manifest,
-    bool retained,
-  ) async {
-    await _ensureLibraryReady();
-    if (!retained) {
-      await _library.removeSavedComic(
-        manifest.comic.sourceId,
-        manifest.comic.comicId,
-      );
-      return;
-    }
-    final existing = await _library.getSavedComic(
-      manifest.comic.sourceId,
-      manifest.comic.comicId,
-    );
-    _rejectCatalogRegression(existing: existing, incoming: manifest);
-    await _library.upsertSavedComic(
-      SavedComicRecord.fromManifest(
-        manifest,
-        savedAt: existing?.savedAt,
-        updatedAt: DateTime.now().toUtc(),
-      ),
-    );
   }
 
   void _openDownloadManager() {
@@ -650,21 +600,100 @@ final class _DemoHomeState extends State<DemoHome> {
         ImportedLibraryEntry(chapter: refreshed, progress: entry.progress);
   }
 
-  ComicPreference _preferenceForComic(LibraryComic comic) {
-    return _preferences[comic.identity] ??
-        ComicPreference.defaults(
-          sourceId: comic.sourceId,
-          comicId: comic.comicId,
-          sourceKind: comic.sourceId == 'local-folder'
-              ? ComicSourceKind.local
-              : ComicSourceKind.remote,
-        );
+  ComicPreference _preferenceForComic(LibraryComic comic) =>
+      _mergedPreferenceFor(comic.sourceId, comic.comicId);
+
+  ComicPreference _mergedPreferenceFor(
+    String sourceId,
+    String comicId, {
+    ComicPreference? fallbackPreference,
+    ComicSourceKind? fallbackSourceKind,
+    bool fallbackInShelf = true,
+  }) {
+    final aliases = _canonicalComicAliases(sourceId, comicId);
+    final values = <ComicPreference>[];
+    for (final alias in aliases) {
+      final value = _preferences[comicLibraryIdentity(sourceId, alias)];
+      if (value != null) values.add(value);
+    }
+    if (values.isEmpty) {
+      final fallback = fallbackPreference;
+      if (fallback != null) {
+        return fallback;
+      }
+      return ComicPreference.defaults(
+        sourceId: sourceId,
+        comicId: comicId,
+        sourceKind: fallbackSourceKind ??
+            (sourceId == 'local-folder'
+                ? ComicSourceKind.local
+                : ComicSourceKind.remote),
+      ).copyWith(inShelf: fallbackInShelf);
+    }
+    final categories = <String>{};
+    var inShelf = false;
+    var liked = false;
+    var collected = false;
+    var customOrder = values.first.customOrder;
+    var updatedAt = values.first.updatedAt;
+    var sourceKind = values.first.sourceKind;
+    for (final value in values) {
+      inShelf = inShelf || value.inShelf;
+      liked = liked || value.liked;
+      collected = collected || value.collected;
+      categories.addAll(value.categoryIds);
+      if (value.customOrder < customOrder) customOrder = value.customOrder;
+      if (value.updatedAt.isAfter(updatedAt)) {
+        updatedAt = value.updatedAt;
+        sourceKind = value.sourceKind;
+      }
+    }
+    return ComicPreference(
+      sourceId: sourceId,
+      comicId: comicId,
+      sourceKind: sourceKind,
+      inShelf: inShelf,
+      liked: liked,
+      collected: collected,
+      categoryIds: categories,
+      customOrder: customOrder,
+      updatedAt: updatedAt,
+    );
   }
 
   Future<void> _savePreference(ComicPreference preference) async {
-    final updated = preference.copyWith(updatedAt: DateTime.now().toUtc());
+    final now = DateTime.now().toUtc();
+    final updated = preference.copyWith(updatedAt: now);
     await _library.saveComicPreference(updated);
     _librarySession.replacePreference(updated);
+    for (final alias in _canonicalComicAliases(
+      preference.sourceId,
+      preference.comicId,
+    )) {
+      if (alias == preference.comicId) continue;
+      final identity = comicLibraryIdentity(preference.sourceId, alias);
+      final prior = _preferences[identity];
+      if (prior == null ||
+          (!prior.inShelf &&
+              !prior.liked &&
+              !prior.collected &&
+              prior.categoryIds.isEmpty)) {
+        continue;
+      }
+      final neutral = ComicPreference(
+        sourceId: prior.sourceId,
+        comicId: prior.comicId,
+        sourceKind: prior.sourceKind,
+        inShelf: false,
+        liked: false,
+        collected: false,
+        categoryIds: const <String>{},
+        customOrder: prior.customOrder,
+        updatedAt: now,
+      );
+      await _library.saveComicPreference(neutral);
+      _librarySession.replacePreference(neutral);
+    }
   }
 
   Future<void> _setChapterRead(
@@ -1213,13 +1242,16 @@ final class _DemoHomeState extends State<DemoHome> {
     String comicId, {
     ComicPreference? preference,
   }) {
+    final preferred = _libraryComicForSourceIdentity(sourceId, comicId);
+    final effectiveComicId = preferred?.comicId ?? comicId;
     final saved = _savedComics.where(
-      (item) => item.sourceId == sourceId && item.comicId == comicId,
+      (item) =>
+          item.sourceId == sourceId && item.comicId == effectiveComicId,
     );
     final sourceChapters = saved.isEmpty
         ? const <Chapter>[]
         : saved.first.chapters
-            .map((chapter) => chapter.toChapter(comicId))
+            .map((chapter) => chapter.toChapter(effectiveComicId))
             .where(
               (chapter) =>
                   !isSyntheticMihonChapterIdentity(chapter.chapterId) ||
@@ -1230,7 +1262,7 @@ final class _DemoHomeState extends State<DemoHome> {
       entries: _libraryEntries.where(
         (entry) =>
             entry.chapter.sourceId == sourceId &&
-            entry.chapter.comicId == comicId &&
+            entry.chapter.comicId == effectiveComicId &&
             (!isSyntheticMihonChapterIdentity(entry.chapter.chapterId) ||
                 isCurrentSyntheticMihonChapterIdentity(
                   entry.chapter.chapterId,
@@ -1251,12 +1283,13 @@ final class _DemoHomeState extends State<DemoHome> {
               chapter.chapter.chapterId,
             ): _chapterReadStates[chapter.identity]!,
       },
-      preference: _preferences[comicLibraryIdentity(sourceId, comicId)] ??
-          preference ??
-          ComicPreference.defaults(
-            sourceId: sourceId,
-            comicId: comicId,
-          ),
+      preference: _mergedPreferenceFor(
+        sourceId,
+        effectiveComicId,
+        fallbackPreference: preference,
+        fallbackSourceKind: preference?.sourceKind,
+        fallbackInShelf: preference?.inShelf ?? true,
+      ),
     );
   }
 
@@ -1266,13 +1299,15 @@ final class _DemoHomeState extends State<DemoHome> {
     required bool refreshContent,
     ComicPreference? fallbackPreference,
   }) async {
+    final preferred = _libraryComicForSourceIdentity(sourceId, comicId);
+    final effectiveComicId = preferred?.comicId ?? comicId;
     if (refreshContent) {
       if (sourceId == 'local-folder') {
         final entries = _libraryEntries
             .where(
               (entry) =>
                   entry.chapter.sourceId == sourceId &&
-                  entry.chapter.comicId == comicId,
+                  entry.chapter.comicId == effectiveComicId,
             )
             .toList(growable: false);
         for (final entry in entries) {
@@ -1294,16 +1329,32 @@ final class _DemoHomeState extends State<DemoHome> {
         if (source == null) {
           throw StateError('漫画源 $sourceId 当前不可用');
         }
-        final manifest = await source.loadComic(comicId);
-        final existing = await _library.getSavedComic(sourceId, comicId);
+        final manifest = await source.loadComic(effectiveComicId);
+        final existing = _preferredSavedComicAlias(
+              sourceId,
+              effectiveComicId,
+            ) ??
+            await _library.getSavedComic(sourceId, effectiveComicId);
         widget.debugTrace.record(
           TraceEvent(
             monotonicMicros: _traceClock.elapsedMicroseconds,
             sessionId: 'source-catalog:$sourceId',
             kind: TraceEventKind.sourceReady,
+            identityHash: _comicIdentityTraceHash(
+              sourceId,
+              effectiveComicId,
+              canonical: _canonicalComicKey(sourceId, effectiveComicId),
+            ),
             payload: <String, Object?>{
               'stage': 'chapter-catalog-refresh-result',
-              'comicIdLength': comicId.length,
+              'comicIdLength': effectiveComicId.length,
+              'requestedComicIdLength': comicId.length,
+              'aliasCount': _canonicalComicAliases(
+                sourceId,
+                effectiveComicId,
+              ).length,
+              'previousRealChapterCount':
+                  existing == null ? 0 : _savedRealChapterCount(existing),
               'chapterCount': manifest.chapters.length,
               'syntheticChapterCount': manifest.chapters
                   .where(
@@ -1312,8 +1363,6 @@ final class _DemoHomeState extends State<DemoHome> {
                     ),
                   )
                   .length,
-              'previousRealCatalog': existing != null &&
-                  _savedComicHasRealCatalog(existing),
             },
           ),
         );
@@ -1330,7 +1379,7 @@ final class _DemoHomeState extends State<DemoHome> {
     await _reloadLibrary();
     return _detailsSnapshotForComic(
       sourceId,
-      comicId,
+      effectiveComicId,
       preference: fallbackPreference,
     );
   }

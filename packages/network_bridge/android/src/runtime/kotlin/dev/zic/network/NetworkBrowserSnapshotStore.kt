@@ -11,8 +11,9 @@ import org.json.JSONObject
  * The visible browser and Flutter MethodChannel live in the App process.
  * Isolated source runtimes use their own WebView data directory and import
  * this snapshot into their process-local CookieJar. SharedPreferences keeps a
- * process-local cache and is therefore unsuitable for this handoff. A same-directory temporary file + rename keeps readers on
- * either the previous or the complete next snapshot.
+ * process-local cache and is therefore unsuitable for this handoff. A
+ * same-directory temporary file plus rename keeps readers on either the
+ * previous or the complete next snapshot.
  */
 internal object NetworkBrowserSnapshotStore {
     private const val FILE_NAME = "zic_network_browser_snapshot.json"

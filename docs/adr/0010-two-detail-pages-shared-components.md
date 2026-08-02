@@ -1,6 +1,6 @@
 # ADR 0010: two detail pages with shared components and centralized routing
 
-- Status: Accepted
+- Status: Superseded by ADR 0074
 - Version: `0.23.0-dev.27`
 - Supersedes: ADR 0009
 

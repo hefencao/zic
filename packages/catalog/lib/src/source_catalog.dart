@@ -74,6 +74,17 @@ abstract interface class ComicWebUriSource {
   Uri? resolveComicWebUri(String comicId);
 }
 
+/// Optional source-owned equivalence key for durable comic identities.
+///
+/// The returned value is only used to compare aliases emitted by the same
+/// source. It is never passed back to [loadComic], persisted as a replacement
+/// locator, or interpreted by Presentation. Plugin-specific opaque identities
+/// therefore remain inside their adapter while App composition can collapse
+/// duplicate projections of the same work.
+abstract interface class CanonicalComicIdentitySource {
+  String canonicalComicIdentity(String comicId);
+}
+
 /// Atomic browser configuration for one source-owned website request.
 ///
 /// User-agent selection belongs to the source/network adapter because

@@ -78,6 +78,41 @@ void main() {
     );
   });
 
+  test('canonicalizes mutable Mihon manga aliases by source URL', () {
+    String identity(Map<String, Object?> value) {
+      final payload = base64Url
+          .encode(utf8.encode(jsonEncode(<String, Object?>{
+            'kind': 'manga',
+            ...value,
+          })))
+          .replaceAll('=', '');
+      return 'mihon:manga:$payload';
+    }
+
+    final first = identity(<String, Object?>{
+      'url': '/album/123/',
+      'title': '旧标题',
+      'description': '',
+    });
+    final second = identity(<String, Object?>{
+      'url': '/album/123',
+      'title': '新标题',
+      'description': '详情加载后补齐的简介',
+      'memo': <String, Object?>{'token': 'runtime-only'},
+    });
+
+    expect(
+      canonicalMihonComicIdentity(
+        comicId: first,
+        sourceWebsite: Uri.parse('https://18comic.vip/base/'),
+      ),
+      canonicalMihonComicIdentity(
+        comicId: second,
+        sourceWebsite: Uri.parse('https://18comic.vip/base/'),
+      ),
+    );
+  });
+
   test('maps runtime verification requirement to a typed domain failure',
       () async {
     final session = ExternalPluginRuntimeSession(

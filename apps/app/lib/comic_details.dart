@@ -52,24 +52,6 @@ Key comicDetailsReadKey(String sourceId, String chapterId) =>
 Key comicDetailsDownloadKey(String sourceId, String chapterId) =>
     ValueKey<String>('chapter-download:$sourceId\u0000$chapterId');
 
-enum ComicDetailsRouteKind { local, remote }
-
-/// Centralized route decision. A source page reuses the local details page only
-/// when the same source and native comic identity already has durable metadata
-/// or chapters. Same titles from other sources are not silently merged.
-ComicDetailsRouteKind resolveComicDetailsRoute({
-  required String sourceId,
-  required String comicId,
-  required Iterable<LibraryComic> library,
-}) {
-  for (final comic in library) {
-    if (comic.sourceId == sourceId && comic.comicId == comicId) {
-      return ComicDetailsRouteKind.local;
-    }
-  }
-  return ComicDetailsRouteKind.remote;
-}
-
 final class ComicDetailsLibrarySnapshot {
   ComicDetailsLibrarySnapshot({
     required Iterable<ImportedLibraryEntry> chapters,
@@ -150,6 +132,14 @@ typedef ComicDetailsMigrationOpener = Future<void> Function(
 typedef ComicDetailsSourceWebViewOpener = Future<void> Function();
 typedef ComicDetailsSourceSettingsOpener = Future<void> Function();
 typedef ComicDetailsMetadataSearch = void Function(String query);
+typedef ComicDetailsIdentityMatcher = bool Function(
+  String leftComicId,
+  String rightComicId,
+);
+
+bool _exactComicIdentity(String leftComicId, String rightComicId) =>
+    leftComicId == rightComicId;
+
 
 void _ignoreRefreshResult(Future<bool> refresh) {
   unawaited(refresh.then<void>((_) {}));
@@ -777,6 +767,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
     this.onSearchMetadata,
+    this.sameComicIdentity = _exactComicIdentity,
     this.traceSink = const NoopTraceSink(),
     super.key,
   });
@@ -800,6 +791,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
   final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final ComicDetailsMetadataSearch? onSearchMetadata;
+  final ComicDetailsIdentityMatcher sameComicIdentity;
   final TraceSink traceSink;
 
   @override
@@ -865,7 +857,10 @@ final class _RemoteComicDetailsScreenState
   void _acceptDownloadSnapshot(ChapterDownloadSnapshot snapshot) {
     if (!mounted ||
         snapshot.sourceId != widget.source.sourceId ||
-        snapshot.comicId != widget.summary.comicId) {
+        !widget.sameComicIdentity(
+          snapshot.comicId,
+          widget.summary.comicId,
+        )) {
       return;
     }
     setState(() {
@@ -950,16 +945,29 @@ final class _RemoteComicDetailsScreenState
     var succeeded = false;
     try {
       if (forceRefresh) {
-        invalidateCachedComic(widget.source, widget.summary.comicId);
+        final identities = <String>{widget.summary.comicId};
+        final manifestComic = _manifest?.comic.comicId;
+        if (manifestComic != null) identities.add(manifestComic);
+        final libraryComic = _library.sourceComic?.comicId;
+        if (libraryComic != null) identities.add(libraryComic);
+        for (final comicId in identities) {
+          invalidateCachedComic(widget.source, comicId);
+        }
       }
       final library = await widget.reloadLibrary(refreshContent: true);
       final comic = library.sourceComic;
       final sourceChapters = library.sourceChapters;
       if (comic == null ||
           comic.sourceId != widget.source.sourceId ||
-          comic.comicId != widget.summary.comicId ||
+          !widget.sameComicIdentity(
+            comic.comicId,
+            widget.summary.comicId,
+          ) ||
           sourceChapters.any(
-            (chapter) => chapter.comicId != widget.summary.comicId,
+            (chapter) => !widget.sameComicIdentity(
+              chapter.comicId,
+              widget.summary.comicId,
+            ),
           )) {
         throw StateError('漫画源详情组合刷新未返回匹配的漫画和章节身份');
       }
@@ -1065,7 +1073,7 @@ final class _RemoteComicDetailsScreenState
   ImportedLibraryEntry? _localEntry(Chapter chapter) => _chapterEntryFor(
         _library.chapters,
         sourceId: widget.source.sourceId,
-        comicId: widget.summary.comicId,
+        comicId: chapter.comicId,
         chapter: chapter,
       );
 

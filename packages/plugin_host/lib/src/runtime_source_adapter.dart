@@ -14,28 +14,56 @@ import 'runtime_protocol.dart';
 ///
 /// Keeping this parser beside the runtime protocol prevents presentation and
 /// storage layers from depending on Mihon's opaque identity representation.
-Uri? resolveMihonComicWebUri({
-  required String comicId,
-  required Uri sourceWebsite,
-}) {
-  const prefix = 'mihon:manga:';
-  if (!comicId.startsWith(prefix)) return null;
+Map<String, dynamic>? _decodeOpaqueIdentity(
+  String value,
+  String prefix,
+  String kind,
+) {
+  if (!value.startsWith(prefix)) return null;
   try {
-    final payload = comicId.substring(prefix.length);
+    final payload = value.substring(prefix.length);
     final decoded = jsonDecode(
       utf8.decode(base64Url.decode(base64Url.normalize(payload))),
     );
-    if (decoded is! Map<String, dynamic> || decoded['kind'] != 'manga') {
-      return null;
-    }
-    final raw = decoded['url'];
-    if (raw is! String || raw.trim().isEmpty) return null;
-    return sourceWebsite.resolve(raw.trim());
+    return decoded is Map<String, dynamic> && decoded['kind'] == kind
+        ? decoded
+        : null;
   } on Object {
     return null;
   }
 }
 
+Uri? resolveMihonComicWebUri({
+  required String comicId,
+  required Uri sourceWebsite,
+}) {
+  final decoded = _decodeOpaqueIdentity(
+    comicId,
+    'mihon:manga:',
+    'manga',
+  );
+  final raw = decoded?['url'];
+  if (raw is! String || raw.trim().isEmpty) return null;
+  return sourceWebsite.resolve(raw.trim());
+}
+
+/// Stable same-source comparison key for Mihon manga aliases.
+///
+/// Mihon browse/detail models can carry different mutable title, description,
+/// thumbnail and memo fields for the same URL. Those fields must remain in the
+/// opaque locator used by [loadComic], but they must not create two durable
+/// comics in App projections. This key is comparison-only and is never used as
+/// a runtime request locator.
+String? canonicalMihonComicIdentity({
+  required String comicId,
+  required Uri sourceWebsite,
+}) {
+  final uri = resolveMihonComicWebUri(
+    comicId: comicId,
+    sourceWebsite: sourceWebsite,
+  );
+  return uri == null ? null : _canonicalWebIdentity(uri);
+}
 
 Uri? _resolveVeneraComicWebUri({
   required String comicId,
@@ -55,6 +83,30 @@ Uri? _resolveVeneraComicWebUri({
   } on Object {
     return null;
   }
+}
+
+String _canonicalWebIdentity(Uri uri) {
+  var path = uri.path;
+  while (path.length > 1 && path.endsWith('/')) {
+    path = path.substring(0, path.length - 1);
+  }
+  return uri.replace(
+    scheme: uri.scheme.toLowerCase(),
+    host: uri.host.toLowerCase(),
+    path: path,
+    fragment: '',
+  ).toString();
+}
+
+String? _canonicalVeneraComicIdentity({
+  required String comicId,
+  required Uri sourceWebsite,
+}) {
+  final uri = _resolveVeneraComicWebUri(
+    comicId: comicId,
+    sourceWebsite: sourceWebsite,
+  );
+  return uri == null ? null : _canonicalWebIdentity(uri);
 }
 
 Map<String, dynamic>? _decodeMihonChapterIdentity(String chapterId) {
@@ -252,7 +304,8 @@ typedef _RuntimeInvoke = Future<Object> Function(
 final class _RuntimeBrowsableComicSource
     implements BrowsableComicSource, ConfigurableComicSource,
         AuthenticatableComicSource, ComicWebUriSource,
-        ComicWebViewRequestSource, ResolvableComicResourceSource, RetryableComicResourceSource {
+        CanonicalComicIdentitySource, ComicWebViewRequestSource,
+        ResolvableComicResourceSource, RetryableComicResourceSource {
   _RuntimeBrowsableComicSource({
     required ExternalComicPluginFormat format,
     required ExternalPluginRuntimeSourceDescriptor descriptor,
@@ -284,7 +337,6 @@ final class _RuntimeBrowsableComicSource
   @override
   final ComicSourceDescriptor descriptor;
 
-
   @override
   Uri? resolveComicWebUri(String comicId) => switch (_format) {
         ExternalComicPluginFormat.mihonExtension => resolveMihonComicWebUri(
@@ -296,6 +348,22 @@ final class _RuntimeBrowsableComicSource
             comicId: comicId,
             sourceWebsite: descriptor.website,
           ),
+      };
+
+  @override
+  String canonicalComicIdentity(String comicId) => switch (_format) {
+        ExternalComicPluginFormat.mihonExtension =>
+          canonicalMihonComicIdentity(
+                comicId: comicId,
+                sourceWebsite: descriptor.website,
+              ) ??
+              comicId,
+        ExternalComicPluginFormat.veneraJavaScript =>
+          _canonicalVeneraComicIdentity(
+                comicId: comicId,
+                sourceWebsite: descriptor.website,
+              ) ??
+              comicId,
       };
 
   @override

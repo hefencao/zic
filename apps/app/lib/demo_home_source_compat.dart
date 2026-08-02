@@ -207,16 +207,38 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     BrowsableComicSource source,
     SourceComicSummary comic,
   ) async {
-    final route = details.resolveComicDetailsRoute(
-      sourceId: source.sourceId,
-      comicId: comic.comicId,
-      library: _libraryComics,
+    final local = _libraryComicForSourceIdentity(
+      source.sourceId,
+      comic.comicId,
     );
-    if (route == details.ComicDetailsRouteKind.local) {
-      final local = _libraryComics.firstWhere(
-        (item) =>
-            item.sourceId == source.sourceId && item.comicId == comic.comicId,
-      );
+    if (local != null) {
+      if (local.comicId != comic.comicId) {
+        widget.debugTrace.record(
+          TraceEvent(
+            monotonicMicros: _traceClock.elapsedMicroseconds,
+            sessionId: 'source-catalog:${source.sourceId}',
+            kind: TraceEventKind.sourceReady,
+            identityHash: _comicIdentityTraceHash(
+              source.sourceId,
+              comic.comicId,
+              canonical: _canonicalComicKey(
+                source.sourceId,
+                comic.comicId,
+              ),
+            ),
+            payload: <String, Object?>{
+              'stage': 'comic-identity-alias-resolved',
+              'requestedIdLength': comic.comicId.length,
+              'selectedIdLength': local.comicId.length,
+              'selectedChapterCount': local.sourceChapters.length,
+              'aliasCount': _canonicalComicAliases(
+                source.sourceId,
+                comic.comicId,
+              ).length,
+            },
+          ),
+        );
+      }
       await _openComicDetails(local);
       return;
     }
@@ -224,13 +246,18 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     if (!_openingComicIdentities.add(identity)) {
       return;
     }
-    final preference = _preferences[identity] ??
-        ComicPreference.defaults(
-          sourceId: source.sourceId,
-          comicId: comic.comicId,
-          sourceKind: ComicSourceKind.remote,
-          customOrder: _nextCustomOrder,
-        ).copyWith(inShelf: false);
+    final preference = _mergedPreferenceFor(
+      source.sourceId,
+      comic.comicId,
+      fallbackPreference: ComicPreference.defaults(
+        sourceId: source.sourceId,
+        comicId: comic.comicId,
+        sourceKind: ComicSourceKind.remote,
+        customOrder: _nextCustomOrder,
+      ).copyWith(inShelf: false),
+      fallbackSourceKind: ComicSourceKind.remote,
+      fallbackInShelf: false,
+    );
     try {
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
@@ -279,6 +306,9 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
                 : null,
             onSearchMetadata: (query) =>
                 _searchSourceMetadata(source, query),
+            sameComicIdentity: (left, right) =>
+                _canonicalComicKey(source.sourceId, left) ==
+                _canonicalComicKey(source.sourceId, right),
             traceSink: widget.debugTrace,
           ),
         ),

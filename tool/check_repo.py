@@ -1704,7 +1704,6 @@ def check_compile_regressions() -> None:
     for required in (
         'final class LocalComicDetailsScreen',
         'final class RemoteComicDetailsScreen',
-        'ComicDetailsRouteKind resolveComicDetailsRoute',
         'final class ComicDetailsLibrarySnapshot',
         'final class _ComicDetailsScaffold',
         'final class _ComicDetailsHeader',

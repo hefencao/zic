@@ -19,6 +19,7 @@ final class CachedBrowsableComicSource
         ConfigurableComicSource,
         AuthenticatableComicSource,
         ComicWebUriSource,
+        CanonicalComicIdentitySource,
         ComicWebViewRequestSource,
         RefreshableChapterComicSource,
         ResolvableComicResourceSource,
@@ -70,6 +71,14 @@ final class CachedBrowsableComicSource
     final ComicWebUriSource? webSource =
         candidate is ComicWebUriSource ? candidate : null;
     return webSource?.resolveComicWebUri(comicId) ?? descriptor.website;
+  }
+
+  @override
+  String canonicalComicIdentity(String comicId) {
+    final Object candidate = source;
+    final CanonicalComicIdentitySource? identitySource =
+        candidate is CanonicalComicIdentitySource ? candidate : null;
+    return identitySource?.canonicalComicIdentity(comicId) ?? comicId;
   }
 
   @override

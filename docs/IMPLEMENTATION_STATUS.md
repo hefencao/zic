@@ -1,3 +1,7 @@
+## dev.90 状态
+
+已在 dev.89 唯一基线上修复 Mihon ABI asset 的 network runtime 编译闭包：snapshot store 已进入 runtime source set、完整性检查与 keep。设备 Trace 中 439/440 长度的同源 identity 分别持有 342/1 章，且 syntheticCount 均为 0；确认根因是 Mihon `comicId` 编码可变 SManga 模型，而非卡片 key 或 synthetic fallback。source adapter 现提供规范化 URL 的 comparison-only canonical identity，catalog 合并别名并保留章节最完整的原始 locator。远程详情接受 canonical-equivalent 快照，App 对 canonical group 阻止单章节回归，并输出脱敏 alias Trace。旧精确 ID 路由 facade 已删除。当前环境已通过 repository/Dart structure、dev.90 gate、共享浏览器 Kotlin 编译和 Mihon payload/ABI/classloader/chapter 契约；Flutter/Dart/Gradle/Android SDK/Cargo 仍不可用。
+
 ## dev.89 状态
 
 来源浏览器与 Mihon/Venera 请求现在共享来源拥有的 User-Agent 配置和原子 Cookie 快照，但各进程继续维护独立 WebView data directory。详情刷新竞态、2 秒结果图标和插件 IconButton 已完成；synthetic revision 3 与双层真实目录保护已生效。远程详情原先绕过 composition 直接调用来源的第二条更新路径已删除，刷新只能消费经过目录回归检查和持久化的原子快照。新增 app-level Trace 可区分浏览器快照、UA 匹配、`cf_clearance` 是否存在、browse timeout、刷新合并、章节数/synthetic 数量变化和目录回归。当前环境已通过 repository/Dart structure、dev.75–dev.89、共享浏览器 Kotlin、Mihon ABI/classloader/payload/chapter、Venera、Reader/Pipeline/UI、Android dependency/Trace、native header 与本地 libwebp 1.6.0 fixtures；Flutter/Dart/Gradle/Android SDK/Cargo 不可用的项目仍列为未验证。
@@ -641,10 +645,10 @@ regressions.
 
 ## Previous iteration — two detail owners, whole-comic persistence and chapter downloads
 
-`RemoteComicDetailsScreen` and `LocalComicDetailsScreen` now own different lifecycles while composing
-the same header, preference/category controls, chapter rows, error presentation and pull-to-refresh
-scaffold. `resolveComicDetailsRoute` is the centralized decision: exact durable `sourceId + comicId`
-metadata or chapters use local details; an unsaved source result uses remote details.
+`RemoteComicDetailsScreen` and `LocalComicDetailsScreen` own different lifecycles while composing the
+same header, preference/category controls, chapter rows, error presentation and pull-to-refresh
+scaffold. The former `resolveComicDetailsRoute` compatibility facade has been removed: current App
+composition resolves same-source canonical aliases and routes to the strongest durable raw locator.
 
 `SavedComicRecord` separates whole-comic persistence from chapter persistence. SQLite schema version 4
 stores source-aware comic metadata and a lightweight chapter-catalog snapshot. Liking, collecting or

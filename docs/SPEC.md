@@ -1,3 +1,14 @@
+## dev.90 runtime 编译与 canonical identity 规范
+
+1. `generateMihonAbiAssets` 可引用的共享 Android 网络类必须全部位于 `network_bridge/android/src/runtime/kotlin`；主 AAR通过 source set复用同一文件，禁止复制实现。
+2. `NetworkBrowserSnapshotStore` 只负责原子文件会话交换；Cookie 导入属于 `AndroidBrowserCookieSession/AndroidCookieJar`，插件协议仍属于 `plugin_host_bridge`。
+3. 同一 source 的可变 opaque comic identities可通过 `CanonicalComicIdentitySource` 比较；返回值只可用于等价判断、投影合并、路由和回归保护，不得作为 `loadComic` locator、持久替代 ID 或 chapter owner。
+4. 首页、更新、书架和 source-card 本地路由必须将 canonical aliases投影为一个漫画，并选择真实 source catalog 更完整的原始 alias。
+5. Remote details 可以接受 canonical-equivalent 的 composition 快照；不得因 raw ID 不等而显示红叉，也不得把 chapters重新挂到请求 alias。
+6. canonical group 已有两个以上真实章节时，后续空目录、synthetic-only 或单真实章节结果必须拒绝并保留旧目录。
+7. Trace 只能记录 identity hash、长度、数量和阶段，禁止完整 Mihon/Venera opaque token。
+8. `resolveComicDetailsRoute` 等只被测试/文档引用的精确 ID 兼容层不得恢复。
+
 ## dev.89 来源 Cookie、刷新和目录规范
 
 1. `ComicWebViewRequest` 必须将 URL 与来源拥有的 User-Agent 作为一个原子配置值传递，禁止多个 setter 形成半更新状态。

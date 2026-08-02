@@ -53,6 +53,19 @@ void main() {
     );
   });
 
+  test('cached source preserves canonical comic identity capability', () {
+    final raw = _CountingSource();
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final source = CachedBrowsableComicSource(source: raw, cache: cache);
+
+    expect(source, isA<CanonicalComicIdentitySource>());
+    expect(
+      source.canonicalComicIdentity('mutable-alias'),
+      'https://example.invalid/comic/mutable-alias',
+    );
+  });
+
   test('cached source preserves the WebView request user agent', () {
     final raw = _CountingSource();
     final cache = ResourceCacheManager();
@@ -206,6 +219,7 @@ void main() {
 final class _CountingSource implements
         BrowsableComicSource,
         ComicWebUriSource,
+        CanonicalComicIdentitySource,
         ComicWebViewRequestSource {
   var comicLoads = 0;
   var chapterLoads = 0;
@@ -292,6 +306,10 @@ final class _CountingSource implements
   @override
   Uri resolveComicWebUri(String comicId) =>
       Uri.parse('https://example.invalid/comic/$comicId');
+
+  @override
+  String canonicalComicIdentity(String comicId) =>
+      resolveComicWebUri(comicId).toString();
 
   @override
   ComicWebViewRequest webViewRequest(Uri url) => ComicWebViewRequest(

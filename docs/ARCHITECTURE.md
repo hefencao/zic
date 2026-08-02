@@ -1,3 +1,23 @@
+# dev.90 Mihon runtime 网络快照与漫画身份别名
+
+## Runtime source set
+
+- `NetworkBrowserSnapshotStore` 属于 `network_bridge` 的 Android runtime 基础设施：它只负责同 App filesDir 内的原子浏览器会话交换，不拥有 Flutter MethodChannel、插件协议或页面导航。
+- 文件位于 `android/src/runtime/kotlin/dev/zic/network`。`network_bridge` 的 main source set显式包含该目录；`plugin_host_bridge.generateMihonAbiAssets` 也只从该目录抽取共享网络源码进行 Mihon 1.4/1.6 隔离编译。不得在 `src/main/kotlin` 保留第二份实现。
+- Mihon runtime 完整性清单和 consumer keep rules必须包含 snapshot store、cookie session、cookie jar、Cloudflare interceptor 与 DNS。
+
+## 漫画身份与 locator
+
+- Mihon opaque `comicId` 仍是插件请求 locator；其中可能包含扩展运行所需的可变 SManga memo/详情字段，不能直接改写或用 URL 替代。
+- `CanonicalComicIdentitySource` 只提供同一 source 内的等价比较值。Mihon/Venera adapter 以规范化作品 URL 生成该值；App、storage 和 Presentation不得解析 opaque token。
+- `catalog.collapseCanonicalLibraryComics` 拥有只读别名投影和最优 alias 选择。选择结果保留原始 `comicId`，优先真实 source chapter 数，再考虑总目录、离线章节、页面数和更新时间。
+- App composition负责将 source card、持久漫画、详情刷新和 preference 合并绑定到 canonical alias group。Presentation仅接收 identity matcher，不拥有 canonical 算法。
+- 同一 canonical group 曾持有多个真实章节时，任何别名返回空、synthetic-only 或单章节都属于目录回归，不能覆盖权威目录。
+
+## 诊断
+
+Trace 记录 source hash、raw comic hash、canonical hash、requested/effective ID 长度、alias 数量、旧/新真实章节数和回归原因；不得记录完整 opaque identity 或 Cookie 值。
+
 # dev.89 来源 Cookie 会话与目录稳定性补充
 
 ## Cookie 所有权
@@ -45,7 +65,7 @@
 - `network_bridge` 是 Android 通用来源浏览器、Cookie/localStorage 快照、Android CookieJar、Cloudflare challenge 和 fallback DNS 的平台所有者。它可被原生来源与外部插件 ABI adapter 共同消费，不依赖 `plugin_host`。
 - `plugin_host_bridge` 的 Android ABI adapter 依赖 `network_bridge`，但 Dart `ExternalPluginController` 不转发通用浏览器/Cookie 命令；该包只拥有 APK/JavaScript 隔离、Mihon/Venera ABI/protocol adapter、request routing、取消与生命周期。Mihon `eu.kanade.tachiyomi.network.NetworkHelper` 是兼容外壳，不拥有通用网络实现。
 - Mihon runtime 对 `dev.zic.network.*` 使用 parent-first class loading，并在 activation 前验证共享类完整；network bridge 发布 consumer keep rules，防止动态 ABI 引用在 release shrink 时被删除。
-- `NetworkBrowserActivity` 的进程由上层 manifest placeholder 组合；当前 App 将其放入既有隔离 WebView 进程以复用同一 WebView/Cookie profile。浏览器到主进程的 snapshot 通过 App 私有文件的原子替换交接，不能使用跨进程缓存不一致的 SharedPreferences。
+- `NetworkBrowserActivity` 的进程由上层 manifest placeholder 组合；dev.86 初版曾放入隔离进程；dev.88 起可见浏览器固定在 App 主进程，插件 runtime 使用独立 data-directory suffix。浏览器到主进程的 snapshot 通过 App 私有文件的原子替换交接，不能使用跨进程缓存不一致的 SharedPreferences。
 - `transport` 继续拥有 ByteRequest/ByteResponse、GET/HEAD body、range、validator 和正文流语义；`network_bridge` 不创建 DownloadSession、artifact、cache 或 Reader demand。未来 rhttp/其他 native client 只能作为 transport/network backend 由 composition 注入，不得塞回 `plugin_host_bridge`。
 - Venera restricted WebView/JavaScript bridge 仍属于插件运行时实现；其中协议特定的 `Network` API 不是通用网络权威来源，不能被原生来源直接复用。
 - dev.85 的 Cloudflare 章节错误判定、本地文档流和 256 KiB 数据块不变。
@@ -1190,9 +1210,10 @@ may format/copy diagnostics, but it does not resolve DNS, open sockets or alter 
 ## 3.13 Detail ownership, durable comic records and source migration
 
 `RemoteComicDetailsScreen` and `LocalComicDetailsScreen` compose shared presentation widgets but own
-different state. `resolveComicDetailsRoute` is the only source-card routing decision and checks exact
-`sourceId + comicId` durability. `SavedComicRecord` lets whole-comic preference actions retain metadata
-and a source chapter catalog independently of imported chapters.
+different state. Source-card routing is performed only by App composition using the source-owned
+canonical identity capability. It compares aliases within one source, selects the strongest durable
+raw locator, and never rewrites that locator into a canonical key. `SavedComicRecord` lets whole-comic
+preference actions retain metadata and a source chapter catalog independently of imported chapters.
 
 `PersistentChapterDownloadService` owns the durable offline root and index. It reuses the existing
 transport/download session machinery, promotes every page, verifies chapter completeness and exposes

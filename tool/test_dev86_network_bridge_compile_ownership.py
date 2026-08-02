@@ -51,13 +51,13 @@ def main() -> int:
         'NetworkBrowserSnapshotStore.read(context, url)',
     )
     require(
-        'packages/network_bridge/android/src/main/kotlin/dev/zic/network/NetworkBrowserSnapshotStore.kt',
+        'packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/NetworkBrowserSnapshotStore.kt',
         'File(context.filesDir, FILE_NAME)',
         'File(target.parentFile, "$FILE_NAME.pending")',
         'pending.renameTo(target)',
     )
     forbid(
-        'packages/network_bridge/android/src/main/kotlin/dev/zic/network/NetworkBrowserSnapshotStore.kt',
+        'packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/NetworkBrowserSnapshotStore.kt',
         'getSharedPreferences',
     )
     forbid(

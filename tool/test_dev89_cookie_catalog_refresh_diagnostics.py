@@ -54,7 +54,7 @@ require(
     "userAgent = view.settings.userAgentString",
 )
 require(
-    "packages/network_bridge/android/src/main/kotlin/dev/zic/network/NetworkBrowserSnapshotStore.kt",
+    "packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/NetworkBrowserSnapshotStore.kt",
     "expectedUserAgent: String? = null",
     "storedUserAgent != normalizedExpectedUserAgent",
 )
@@ -149,14 +149,20 @@ require(
     "packages/plugin_host/lib/src/runtime_source_adapter.dart",
     "decoded?['synthetic_revision'] == 3",
 )
-require(
-    "apps/app/lib/demo_home.dart",
+home_catalog = read("apps/app/lib/demo_home.dart") + read(
+    "apps/app/lib/demo_home_catalog_identity.dart"
+)
+for token in (
     "_rejectCatalogRegression",
     "chapter-catalog-regression-rejected",
     "chapter-catalog-refresh-result",
     "syntheticChapterCount",
-    "本次结果为空或仅含兼容单章节",
-)
+    "本次目录退化为",
+):
+    if token not in home_catalog:
+        raise SystemExit(
+            f"FAIL: App catalog composition missing dev.89 token {token!r}"
+        )
 require(
     "apps/app/test/source_browser_test.dart",
     "pull refresh joins initial load and hides success badge after two seconds",

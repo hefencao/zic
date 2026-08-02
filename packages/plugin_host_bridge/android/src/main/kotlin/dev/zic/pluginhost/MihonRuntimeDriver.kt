@@ -1416,6 +1416,7 @@ internal val requiredMihonCommonRuntimeClasses: List<String> = listOf(
     "org.jsoup.Jsoup",
     "com.google.gson.Gson",
     "dev.zic.network.AndroidCloudflareInterceptor",
+    "dev.zic.network.NetworkBrowserSnapshotStore",
     "dev.zic.network.AndroidBrowserCookieSession",
     "dev.zic.network.AndroidCookieJar",
     "dev.zic.network.FallbackDns",
