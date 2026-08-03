@@ -1,3 +1,16 @@
+## dev.97 Reader 交接与诊断 Trace 规范
+
+1. 离散 PageView 在 `onPageChanged` 时必须使用真实 fractional position 构造 observation；只要 outgoing page 仍有 coverage，就不得发出 targetless 整数 observation。
+2. stable page 跨越 50% 后，新页必须成为 playback dominant/current；旧页必须暂停并保留 transition output。不得在 40%–60% 区间冻结两页。
+3. 同一次滑动跨越 50% 不得移除再重新加入 outgoing upload demand，不得产生 `pageOutputReleased(reason=demand-detached)`；真正离开 current/transition window 后仍正常释放。
+4. 异步创建或重新绑定的 UploadSession 必须立即消费 ReaderBinding 已保存的 viewport freeze/resume；runtime 不得创建第二 viewport 状态。
+5. Debug Trace 错误、writer rejection、retry、source disable、output retirement 等权威事件不得合并。高频 frame/decode/upload/scroll 事件可按固定窗口合并，但必须保留 count、首尾时间以及存在字段的 min/max；有界容量淘汰必须显式计数。
+6. export 合并窗口必须锚定首事件，不得因持续流量无限延长；导出结果按 monotonic time 排序。
+7. 超过 160 字符的 Trace identity 必须输出稳定 hash+原长度，不输出完整 locator；该处理不能改变业务 identity。
+8. libwebp v1.6.0 VP8 TLS patch 必须对 LF/CRLF 输入一致、幂等；检测部分 token 时失败，不得生成半应用 prepared tree。
+9. Dart interface capability 在闭包中必须显式绑定到 capability 局部变量，不能依赖无关 interface promotion。
+10. 7/3、页面 2/1、current/transition、5/3/2、双 decode isolate、帧内单线程与 successor 2/1 不得改变。
+
 ## dev.96 本地 Animated WebP 播放规范
 
 1. native decode pool 固定两个 Dart isolate，并应由 App composition 在 `runApp` 前显式等待预热完成；cursor dispose 不得关闭 pool。
@@ -46,7 +59,7 @@
 5. 有限动画 ended 且 holder 为空时继续执行 dev.92 的最终帧保留语义。
 6. texture telemetry 必须区分 native queue、native upload、完整 platform round trip 和推导出的 bridge 等待；这些值只能用于诊断。
 7. Android seekable document descriptor 应由 `local_media_bridge` 保持生命周期，并允许同进程 Dart 通过 `/proc/self/fd` 直接按 256 KiB 读取；不可 seek 或 direct open 失败必须在发布任何字节前回退 MethodChannel chunk，不能复制整文件到 App 安装目录。
-8. 50/50 双页覆盖属于 overlap，dominant page 为 null；source seal 是独立权威 revision，必须恰好 drain 一次。
+8. dev.93 曾把 50/50 双页覆盖定义为 overlap；该 viewport 部分已由 dev.97 取代：PageView 报告新 stable page 后，精确 50% 由新 stable/current 接管。source seal 仍是独立权威 revision，必须恰好 drain 一次。
 9. fitWidth continuous geometry 不得增加第二层 FittedBox；测试必须观察 transform 后矩形而非未变换 RenderBox size。
 
 ## dev.92 静态/有限动画播放规范
@@ -156,7 +169,7 @@
 - Animated WebP 的 frame rect、blend 与 dispose 必须在源像素网格执行；不得独立缩放子矩形后再拼接。完整合成帧再进入统一等比、8 像素对齐 raster。
 - 下载增长与动画计时器是独立输入。下载 sealed 后，当前帧到期仍必须触发下一帧 decode/upload，直到 codec loop/end 语义结束。
 - source 小 chunk 不得逐条制造 decode/upload no-op；生产调度以 64 KiB 增长边界、seal、failure 和 holder/output 实际变化推进。
-- raw Trace 默认最多 10000 条；`bytesCommitted` 必须聚合 chunk 数、累计长度和内容类型，错误、frame presented、终态与 demand detach 不得丢失。
+- dev.82 的 10000 条 raw ring 已由 dev.97 的有界诊断 export 取代；高频事件按固定首事件窗口摘要，错误、终态与 demand detach 不参与合并，任何容量淘汰必须显式计数。`bytesCommitted` 继续聚合 chunk 数、累计长度和内容类型。
 - controlled streaming 测试不得依赖 socket 或计时；关闭顺序必须先恢复/取消订阅再等待 controller done。几何浮点比较必须使用明确容差。
 
 ## dev.81 route-first、宿主流式与稳定回归要求
@@ -177,7 +190,7 @@
 - Original media aspect and physical output-buffer dimensions MUST remain distinct. Presentation MUST use one `MediaAspectViewport`; unknown intrinsic dimensions MUST retain the requested contain/fitWidth/cover behavior and MUST NOT default to full-viewport fill.
 - A WebP prefix observer MUST drain committed-length changes that arrive while an asynchronous prefix read is active. Output-buffer dimensions MUST NOT replace authoritative header/static dimensions.
 - Debug file export MUST be an injected App/platform capability. Android MUST use a supported document-creation contract and MUST NOT call `file_selector.getSavePath()`. Clipboard copy MUST remain independent, UTF-8 bounded and failure-reporting.
-- Raw file export MUST continue to use the raw Trace ring rather than the coalesced UI ring.
+- The dev.80 raw-ring export contract is superseded by dev.97: file export MUST use the separately bounded diagnostic export projection, not the smaller UI projection; errors and authoritative lifecycle edges MUST remain uncoalesced and capacity eviction MUST be counted.
 - Existing +7/-3 download, +2/-1 decode, current/transition upload and 5/3/2 lanes MUST remain unchanged.
 
 ## dev.79 plugin, artwork and Reader stability requirements

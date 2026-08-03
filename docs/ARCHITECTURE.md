@@ -1,3 +1,24 @@
+# dev.97 Reader midpoint 播放交接与诊断投影所有权
+
+## Reader → Pipeline 交接
+
+- `reader::ReaderView` 仍只拥有 PageView 几何与 interaction 投影。`onPageChanged` 只更新 stable page，不得把 fractional viewport 强制改成整数；仍可见的 outgoing page 必须继续出现在 `ReaderObs.targetCoverage`。
+- `pipeline::RoleResolver` 继续唯一决定 current/transition/next/previous；上传窗口仍只有 current/transition。50% 时新 stable page 成为 current，旧页成为 transition，因此不会产生中间空 demand，也不需要 Reader keepAlive、last-frame cache 或额外 texture。
+- `pipeline::ViewportResolver` 是播放主导页的唯一纯规则。离散页面默认 threshold 为 0.5；PageView 已把新页设为 stable/current 后，精确 tie 由 current 接管。continuous 模式维持既有冻结规则。
+- `sessions::PlaybackCoordinator` 继续唯一执行 UploadSession freeze/resume。`pipeline_runtime` 只在 upload snapshot 到达后要求 `ReaderBinding` 用已保存 viewport 重投影，不能保存第二份 current page 或自行推断角色。
+
+## 诊断与构建工具
+
+- `telemetry` 唯一负责 Trace payload/identity 安全投影。超过 160 字符的 identity 改为稳定 hash+长度；业务 identity 和 demand 合并仍使用原值，不受 Trace 摘要影响。
+- `apps/app::DebugTraceLog` 只是有界诊断 projection。frame/decode/upload/scroll 高频事件在固定 250 ms–1 s 首事件窗口内合并，保存 count、首尾时间/frame/position 与数值 min/max；错误、拒绝、retry 和 output retirement 等事实不合并。容量淘汰继续显式计数，不能静默宣称无界无损。
+- `tool/prepare_webp.sh` 继续拥有 libwebp prepared tree。补丁应用改由 `apply_libwebp_vp8_tls_patch.py` 以 v1.6.0 函数锚点执行，统一 CRLF/LF、支持幂等并拒绝部分应用；patch 文件与 applier 脚本的 SHA 都进入 prepared identity。runtime 不依赖该脚本。
+
+## 不变边界
+
+双常驻 Dart decode isolate、current 保留槽、libwebp 帧内单线程、VP8 TLS workspace、current successor 2、transition successor 1、下载 7/3、页面预解码 2/1、上传 current/transition、lane 5/3/2、target-canvas、预乘 RGBA 与 GET/HEAD 零 body 均不改变。ADR 0081 是本轮 midpoint 与诊断规则的权威记录。
+
+---
+
 # dev.96 本地 WebP 常驻播放与预乘纹理所有权
 
 ## 调度和生命周期
@@ -217,7 +238,7 @@ Trace 记录 source hash、raw comic hash、canonical hash、requested/effective
 - `DecodeSession` 继续拥有 cursor/holder。detach 后只有在 holder 已空的下一次 demand 才重建 cursor；普通 EOF 不自动 rewind，finite loop 语义不变。
 - 漫画详情页不再为了页数标签遍历 `loadChapter`。未知页数属于 catalog 元数据缺失，显示“页数待加载”；正文只由目标打开/下载路径请求。
 - Reader 导航 owner 非阻塞提交已读持久化，详情页只做乐观只读投影，不建立第二个持久化权威来源。
-- `DebugTraceLog` 原子拥有两个有界平面：最多 500 条、可合并的 UI projection，以及默认最多 10000 条、不合并的 raw export ring。复制、文件导出和 session filter 使用 raw ring；导出文件能力注入 Debug 页面并显式报告失败。
+- `DebugTraceLog` 原子拥有两个有界平面：最多 500 条的 UI projection，以及默认最多 10000 条的诊断 export ring。dev.78 的“不合并 raw”历史规则已由顶部 dev.97/ADR 0081 取代：高频事件可固定窗口摘要，错误与权威生命周期仍逐条；复制、文件导出和 session filter 使用诊断 ring。
 - 编译边界补齐：`pipeline_runtime` 显式导入 domain-owned `RendererKind`；`UploadRegistry` 只消费 `UploadSession.playbackRunning`，不认识 `PlaybackState`。
 - ADR 0062 补充 ADR 0061。+7/-3、+2/-1、current/transition 与 5/3/2 不变。
 

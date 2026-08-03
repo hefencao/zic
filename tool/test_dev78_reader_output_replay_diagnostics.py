@@ -111,8 +111,16 @@ for token in (
     require(trace_screen, token, 'raw trace export capability')
 require(trace_export, 'exportDebugTraceDocument', 'raw trace platform export facade')
 require(trace_export, 'application/x-ndjson', 'raw trace export MIME')
-require(trace_tests, 'debug trace copy uses the raw export ring', 'raw trace copy regression')
-require(trace_tests, 'debug trace file export uses the raw export ring', 'raw trace file regression')
+require(
+    trace_tests,
+    'debug trace copy uses the diagnostic export ring',
+    'diagnostic trace copy regression',
+)
+require(
+    trace_tests,
+    'debug trace file export uses the diagnostic export ring',
+    'diagnostic trace file regression',
+)
 
 for required in (
     'docs/adr/0062-aspect-preserving-replay-and-raw-diagnostics.md',

@@ -1,3 +1,7 @@
+## dev.97 状态
+
+设备 Trace 共 6486 条、4,147,260 bytes，确认多次 50% 翻页在 `pageCurrent` 前后出现 outgoing `pageOutputReleased(reason=demand-detached)`，随后同页又以 transition demand 加回。根因是 `onPageChanged` 的整数 observation，而不是图片下载失败。源码现保留真实 PageController fractional position，默认 50% 完成播放所有权交接，并在 late UploadSession snapshot 后重投影 viewport。Debug export 对高频事件做固定窗口摘要，长本地 identity 改为稳定 hash+长度；错误与生命周期边缘不合并。用户报告的三处 Dart capability 编译错误和 libwebp CRLF patch 拒绝也已关闭。当前环境仍无 Flutter/Dart、Cargo/Rust、Gradle/Android SDK，故 analyzer、Dart/Flutter tests、native/Android 构建和真机结果必须列为未验证。
+
 ## dev.96 状态
 
 验证明细见 `docs/audits/dev96-validation-results.md`。
@@ -107,7 +111,7 @@
 - native WebP 将 DecodeId 尺寸改为最大边界，按源 canvas 等比 fit 且不放大小图；decoded/output/Android texture 使用实际尺寸，同 identity 尺寸变化会失败并退休 slot。
 - `DecodeSession` 在 holder 已空且 demand detach 后的下一次进入重建 cursor，修复静态/有限动画滑出窗口再返回只剩 loading；普通 EOF 和有限 loop 语义未改。
 - 删除详情页对所有未知页数章节的正文 preflight；未知页数继续显示待加载，目标打开/下载才解析正文。目标 manifest 写入后不再同步全库 reload，已读写入改由统一导航 owner 非阻塞提交。
-- Debug Trace 增加独立有界 raw export ring；UI projection 仍小且可合并。复制、文件导出和会话过滤使用 raw ring，显示 raw dropped，保存失败不再静默。
+- Debug Trace 在 dev.78 增加独立有界 export ring；其当时“不合并 raw”规则已由 dev.97/ADR 0081 的有界高频摘要取代。复制、文件导出和会话过滤仍使用该诊断 ring，保存失败不静默。
 - 新增 decode replay、fitted upload、无 page-count preflight、raw copy/export Widget 回归与 dev.78 静态门禁。既定 Pipeline 窗口和 lane 未修改。
 - 当前环境没有 Flutter/Dart SDK、Cargo 与 Android Gradle wrapper；相关 analyzer/测试/build 必须在具备工具链的环境复验。
 

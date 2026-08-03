@@ -59,7 +59,8 @@ require(
 )
 require(
     'packages/downloads/lib/src/artifact_cache_transport.dart',
-    'streamingCache is ArtifactCacheStreamStore',
+    '_cache is ArtifactCacheStreamStore',
+    'final streamingCache = _cache as ArtifactCacheStreamStore;',
     '_streamedCachedResponse(',
     "source: 'artifact-cache-stream'",
 )

@@ -145,8 +145,14 @@ require(
 require(
     'tool/prepare_webp.sh',
     'libwebp-vp8-thread-buffer-pool-v1.6.0.patch',
-    'patch --batch --forward',
+    'apply_libwebp_vp8_tls_patch.py',
     'zic_vp8_thread_buffer',
+)
+require(
+    'tool/apply_libwebp_vp8_tls_patch.py',
+    'replace("\\r\\n", "\\n").replace("\\r", "\\n")',
+    'refusing to continue from a partially applied VP8 TLS patch',
+    'dec->mem_size >= zic_vp8_thread_buffer.size',
 )
 for path in (
     'tool/build_webp_host.sh',
@@ -167,7 +173,7 @@ for token in (
 with tempfile.TemporaryDirectory(prefix='zic-libwebp-patch-') as directory:
     source = Path(directory) / 'src/dec/vp8_dec.c'
     source.parent.mkdir(parents=True)
-    source.write_text(
+    source.write_bytes(
         '''static void SetOk(VP8Decoder* const dec) {
   dec->status = VP8_STATUS_OK;
   dec->error_msg = "OK";
@@ -207,14 +213,14 @@ void VP8Clear(VP8Decoder* const dec) {
   WEBP_UNSAFE_MEMSET(&dec->br, 0, sizeof(dec->br));
   dec->ready = 0;
 }
-''',
-        encoding='utf-8',
+'''.replace('\n', '\r\n').encode('utf-8'),
     )
     result = subprocess.run(
-        ['patch', '--dry-run', '--batch', '-p1', '-i', str(
-            ROOT / 'native/patches/libwebp-vp8-thread-buffer-pool-v1.6.0.patch'
-        )],
-        cwd=directory,
+        [
+            'python3',
+            str(ROOT / 'tool/apply_libwebp_vp8_tls_patch.py'),
+            str(source),
+        ],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -222,8 +228,31 @@ void VP8Clear(VP8Decoder* const dec) {
     )
     if result.returncode != 0:
         raise SystemExit(
-            'FAIL: pinned libwebp patch dry-run failed:\n' + result.stdout
+            'FAIL: pinned libwebp CRLF patch application failed:\n' + result.stdout
         )
+    transformed = source.read_text(encoding='utf-8')
+    for token in (
+        'ZIC_VP8_THREAD_LOCAL',
+        'dec->mem = zic_vp8_thread_buffer.memory;',
+        'dec->mem_size >= zic_vp8_thread_buffer.size',
+    ):
+        if token not in transformed:
+            raise SystemExit(f'FAIL: transformed libwebp source missing {token!r}')
+    if '\r' in transformed:
+        raise SystemExit('FAIL: transformed libwebp source retained CR line endings')
+    second = subprocess.run(
+        [
+            'python3',
+            str(ROOT / 'tool/apply_libwebp_vp8_tls_patch.py'),
+            str(source),
+        ],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if second.returncode != 0:
+        raise SystemExit('FAIL: pinned libwebp patch is not idempotent:\n' + second.stdout)
 for path in ROOT.rglob('*'):
     if path.is_file() and path.name == 'webp_worker.rs':
         raise SystemExit(f'FAIL: rejected persistent libwebp worker pool exists: {path}')
@@ -249,7 +278,7 @@ require(
     '## 所有权清单',
     '## 被否决方案清单',
 )
-require('apps/app/pubspec.yaml', 'version: 0.31.0+96')
+require('apps/app/pubspec.yaml', 'version: 0.31.0+97')
 require('docs/adr/0080-local-webp-resident-single-thread-playback.md', '0.31.0-dev.96')
 require('tool/check.sh', 'test_dev96_local_webp_playback.py')
 print('dev.96 resident single-thread local WebP playback ownership: OK')

@@ -62,9 +62,9 @@ final class ArtifactCacheTransport implements Transport {
     if (id != null) {
       final readStarted = _clock?.nowMicros();
       try {
-        final streamingCache = _cache;
-        if (streamingCache is ArtifactCacheStreamStore) {
-          final entry = await (streamingCache as ArtifactCacheStreamStore).openArtifactStream(id);
+        if (_cache is ArtifactCacheStreamStore) {
+          final streamingCache = _cache as ArtifactCacheStreamStore;
+          final entry = await streamingCache.openArtifactStream(id);
           final readMicros = readStarted == null
               ? null
               : (_clock!.nowMicros() - readStarted)

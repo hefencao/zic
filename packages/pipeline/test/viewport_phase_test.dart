@@ -17,8 +17,23 @@ void main() {
     expect(state.freezesPresentation, isFalse);
   });
 
-  test('significant two-page overlap freezes presentation', () {
+  test('exact midpoint transfers playback to the new stable page', () {
     final state = resolver.resolve(_obs(
+      interaction: Interaction.dragging,
+      current: 2,
+      currentFraction: 0.5,
+      target: 1,
+      targetFraction: 0.5,
+    ));
+
+    expect(state.phase, ViewportPhase.dominant);
+    expect(state.dominantPageIndex, 2);
+    expect(state.freezesPresentation, isFalse);
+  });
+
+  test('higher custom threshold can still represent an overlap freeze', () {
+    const cautiousResolver = ViewportResolver(dominantThreshold: 0.6);
+    final state = cautiousResolver.resolve(_obs(
       interaction: Interaction.dragging,
       current: 1,
       currentFraction: 0.5,

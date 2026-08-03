@@ -5,7 +5,7 @@
 ### 编译/测试错误
 
 - `upload_session_test` 的 `_CursorFactory` 只返回 FrameCursor，遗漏同一 cursor 的 LoopCursor 绑定，导致 AnimationInfo 始终未知，静态零时长用例错误进入 running。
-- ReaderBinding 测试仍把 0.5/0.5 覆盖期望为目标页 dominant；权威 resolver 将其定义为 overlap 且 dominant null。
+- dev.93 当时把 0.5/0.5 定义为 overlap 且 dominant null；该历史判断已由 dev.97/ADR 0081 的新 stable/current midpoint 接管语义取代。
 - LiveCoordinator 测试漏算最终 source seal 的独立 revision；实现 drain 4 次是正确行为。
 - local_media_ui 测试读取未应用 FittedBox transform 的 RenderBox size，并假设 fitWidth 仍存在第二 FittedBox；均为旧 fixture。
 

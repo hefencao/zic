@@ -231,7 +231,7 @@ void main() {
     );
     expect(log.events, hasLength(2));
   });
-  test('debug trace keeps a separate bounded raw export ring', () {
+  test('debug trace keeps a separate bounded diagnostic export ring', () {
     final log = DebugTraceLog(maxEvents: 1, maxExportEvents: 3);
     addTearDown(log.dispose);
     for (var index = 0; index < 5; index++) {
@@ -239,7 +239,7 @@ void main() {
         TraceEvent(
           monotonicMicros: index,
           sessionId: index < 2 ? 'old' : 'reader',
-          kind: TraceEventKind.readerObservation,
+          kind: TraceEventKind.downloadState,
           payload: <String, Object?>{'index': index},
         ),
       );
@@ -255,7 +255,7 @@ void main() {
     expect(log.exportDroppedCount, 0);
   });
 
-  testWidgets('debug trace copy uses the raw export ring', (tester) async {
+  testWidgets('debug trace copy uses the diagnostic export ring', (tester) async {
     final log = DebugTraceLog(maxEvents: 1, maxExportEvents: 10);
     addTearDown(log.dispose);
     for (var index = 0; index < 3; index++) {
@@ -305,7 +305,7 @@ void main() {
         TraceEvent(
           monotonicMicros: index,
           sessionId: 'reader-large-copy',
-          kind: TraceEventKind.readerObservation,
+          kind: TraceEventKind.downloadState,
           payload: <String, Object?>{
             'index': index,
             'detail': List<String>.filled(40, '像素对齐').join(),
@@ -335,7 +335,7 @@ void main() {
     final log = DebugTraceLog(maxEvents: 2, maxExportEvents: 2);
     addTearDown(log.dispose);
     log.record(
-      const TraceEvent(
+      TraceEvent(
         monotonicMicros: 1,
         sessionId: 'reader-copy-failure',
         kind: TraceEventKind.downloadState,
@@ -356,7 +356,7 @@ void main() {
     expect(find.textContaining('Trace 复制失败'), findsOneWidget);
   });
 
-  testWidgets('debug trace file export uses the raw export ring',
+  testWidgets('debug trace file export uses the diagnostic export ring',
       (tester) async {
     final log = DebugTraceLog(maxEvents: 1, maxExportEvents: 10);
     addTearDown(log.dispose);
@@ -365,7 +365,7 @@ void main() {
         TraceEvent(
           monotonicMicros: index,
           sessionId: 'reader-export',
-          kind: TraceEventKind.pageTransition,
+          kind: TraceEventKind.downloadState,
           payload: <String, Object?>{'index': index},
         ),
       );
@@ -394,7 +394,44 @@ void main() {
     expect(text.split('\n'), hasLength(3));
     expect(text, contains('\"index\":0'));
     expect(text, contains('\"index\":2'));
-    expect(find.text('已导出 3 条原始 Trace'), findsOneWidget);
+    expect(find.text('已导出 3 条诊断 Trace'), findsOneWidget);
+  });
+
+  test('debug trace folds high-frequency export samples but preserves errors', () {
+    final log = DebugTraceLog(maxEvents: 4, maxExportEvents: 20);
+    addTearDown(log.dispose);
+    for (var index = 0; index < 8; index++) {
+      log.record(
+        TraceEvent(
+          monotonicMicros: index * 100000,
+          sessionId: 'reader-export-fold',
+          kind: TraceEventKind.framePresented,
+          identityHash: 'page-a',
+          payload: <String, Object?>{
+            'frame': index,
+            'presentMicros': 100 + index,
+          },
+        ),
+      );
+    }
+    log.record(
+      TraceEvent(
+        monotonicMicros: 900000,
+        sessionId: 'reader-export-fold',
+        kind: TraceEventKind.taskFailed,
+        payload: <String, Object?>{'reason': 'fixture'},
+      ),
+    );
+
+    expect(log.exportEvents, hasLength(2));
+    expect(log.exportCoalescedCount, 7);
+    final folded = log.exportEvents.first;
+    expect(folded.payload['coalescedCount'], 8);
+    expect(folded.payload['firstFrameIndex'], 0);
+    expect(folded.payload['lastFrameIndex'], 7);
+    expect(folded.payload['minPresentMicros'], 100);
+    expect(folded.payload['maxPresentMicros'], 107);
+    expect(log.exportEvents.last.kind, TraceEventKind.taskFailed);
   });
 
   testWidgets('debug trace notifications are deferred past build',

@@ -60,8 +60,9 @@ final class TraceEvent {
     this.revision,
     this.epoch,
     Map<String, Object?> payload = const <String, Object?>{},
-  })  : identityHash =
-            identityHash == null ? null : _sanitizeTraceString(identityHash),
+  })  : identityHash = identityHash == null
+            ? null
+            : _sanitizeTraceIdentity(identityHash),
         payload = Map<String, Object?>.unmodifiable(
           _sanitizeTraceMap(payload),
         );
@@ -154,6 +155,13 @@ TraceEvent traceEvent({
   );
 }
 
+String _sanitizeTraceIdentity(String value) {
+  final sanitized = _sanitizeTraceString(value);
+  if (sanitized.length <= 160) {
+    return sanitized;
+  }
+  return _traceOpaqueSummary('identity', sanitized);
+}
 
 Map<String, Object?> _sanitizeTraceMap(Map<String, Object?> value) =>
     <String, Object?>{

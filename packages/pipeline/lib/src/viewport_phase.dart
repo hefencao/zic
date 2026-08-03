@@ -21,7 +21,7 @@ final class ViewportState {
 
 final class ViewportResolver {
   const ViewportResolver({
-    this.dominantThreshold = 0.6,
+    this.dominantThreshold = 0.5,
     this.overlapThreshold = 0.15,
   })  : assert(dominantThreshold > 0 && dominantThreshold <= 1),
         assert(overlapThreshold >= 0 && overlapThreshold < dominantThreshold);
@@ -54,21 +54,19 @@ final class ViewportResolver {
       );
     }
 
-    if (target.fraction >= dominantThreshold) {
+    if (target.fraction >= dominantThreshold ||
+        current.fraction >= dominantThreshold) {
+      // PageView updates currentPageIndex at the 50% boundary. A strict target
+      // comparison means the new stable page wins an exact tie, so playback
+      // ownership changes once without a 40%..60% interval that freezes both.
+      final dominant = target.fraction > current.fraction
+          ? target.pageIndex
+          : current.pageIndex;
       return ViewportState(
         phase: ViewportPhase.dominant,
         currentPageIndex: current.pageIndex,
         targetPageIndex: target.pageIndex,
-        dominantPageIndex: target.pageIndex,
-      );
-    }
-
-    if (current.fraction >= dominantThreshold) {
-      return ViewportState(
-        phase: ViewportPhase.dominant,
-        currentPageIndex: current.pageIndex,
-        targetPageIndex: target.pageIndex,
-        dominantPageIndex: current.pageIndex,
+        dominantPageIndex: dominant,
       );
     }
 

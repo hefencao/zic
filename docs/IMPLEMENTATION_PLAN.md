@@ -1,3 +1,13 @@
+## dev.97 已实施与验证计划
+
+1. 从设备 Trace 关联 `pageCurrent → targetless observation → demand detach → pageOutputReleased → transition re-add`，确认黑屏不是下载窗口不足。
+2. Reader midpoint 保留 fractional observation；Viewport 默认 0.5；late UploadSession 重投影已有 viewport。
+3. 修复三处 Dart interface promotion 编译闭包和 libwebp CRLF 半补丁。
+4. telemetry 压缩长 identity；App export 对高频事件做固定窗口摘要，错误与关键生命周期事件不合并，容量淘汰显式计数。
+5. 增加 Reader、Viewport、Trace、CRLF patch 与 dev.97 静态回归；运行仓库及 Android/Mihon/Venera 合同。
+6. 更新 Architecture、Spec、Status、Handoff、CHANGELOG、README、ADR 0081 和三清单。
+7. 清理生成物、完整打包、重新解压并复验。
+
 ## dev.96 已实施与验证计划
 
 ### 已实施
@@ -43,7 +53,7 @@
 - 只读审计 VibeVenera 的常驻 decode workers、persistent demux、advanced libwebp config 与 serial native blit。
 - 在 ZIC `bridge` 所有权内实现两个常驻 decode Isolate 和 native handle-only handoff。
 - 在 `media_core` 缓存 frame descriptors，删除逐帧 demux、完整压缩快照副本和合成前 full-canvas clone。
-- 保留 source-grid blend/dispose，使用 libwebp threaded advanced decode。
+- dev.94 当时保留 source-grid blend/dispose 与 threaded advanced decode；几何自 dev.95 改为 target-canvas，帧内线程自 dev.96 固定为 0。
 - 增加 native/dispatch timing、descriptor reuse fixture、C smoke 和 dev.94 gate。
 
 ### 下一步设备验证

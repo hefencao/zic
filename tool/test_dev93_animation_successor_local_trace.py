@@ -44,8 +44,8 @@ require(
 )
 require(
     'packages/sessions/test/reader_binding_test.dart',
-    'expect(coordinator.viewport?.phase, ViewportPhase.overlap);',
-    'expect(coordinator.viewport?.dominantPageIndex, isNull);',
+    'expect(coordinator.viewport?.phase, ViewportPhase.dominant);',
+    'expect(coordinator.viewport?.dominantPageIndex, 1);',
 )
 require(
     'packages/sessions/test/live_coordinator_test.dart',

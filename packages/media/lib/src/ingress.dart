@@ -68,8 +68,9 @@ final class Ingress {
     _expectedLength = length;
     final source = _source;
     if (source is ExpectedLengthEncodedSource) {
+      final reservable = source as ExpectedLengthEncodedSource;
       _invoke(
-        () => (source as ExpectedLengthEncodedSource).reserveExpectedLength(
+        () => reservable.reserveExpectedLength(
           epoch: _epoch.value,
           length: length,
         ),
@@ -149,8 +150,9 @@ final class Ingress {
       _source = created;
       final expectedLength = _expectedLength;
       if (expectedLength != null && created is ExpectedLengthEncodedSource) {
+        final reservable = created as ExpectedLengthEncodedSource;
         _invoke(
-          () => (created as ExpectedLengthEncodedSource).reserveExpectedLength(
+          () => reservable.reserveExpectedLength(
             epoch: epoch.value,
             length: expectedLength,
           ),

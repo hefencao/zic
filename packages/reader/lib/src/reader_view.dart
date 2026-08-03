@@ -585,9 +585,28 @@ final class _ReaderViewState extends State<ReaderView> {
 
   void _handlePageChanged(int index) {
     _zoomedPage = null;
-    _lastLogicalPosition = index.toDouble();
+    final priorPosition = _lastLogicalPosition;
+    final pagePosition = _pageController.hasClients
+        ? _pageController.page
+        : null;
+    final observedPosition = pagePosition ?? priorPosition;
+    final priorStillOverlaps = (priorPosition - index).abs() < 1.0 &&
+        (priorPosition - index).abs() > 0.001;
+    final observedCollapsedToStable =
+        (observedPosition - index).abs() <= 0.001;
+    final handoffPosition = (observedCollapsedToStable && priorStillOverlaps
+            ? priorPosition
+            : observedPosition)
+        .clamp(0.0, widget.controller.chapter.pages.length - 1.0)
+        .toDouble();
+    _lastLogicalPosition = handoffPosition;
     _interaction = Interaction.settling;
-    _emitObservation(index.toDouble(), 0, stableIndex: index);
+    // PageView changes its stable page when the drag crosses 50%. Preserve the
+    // actual fractional position so the outgoing page remains transition-owned
+    // until it leaves the viewport. Emitting the integer page here briefly
+    // removed its upload demand, retired a valid texture, and produced a black
+    // frame followed by a full presentation reload.
+    _emitObservation(handoffPosition, 0, stableIndex: index);
     _recordPageCurrent(index);
   }
 

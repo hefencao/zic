@@ -103,8 +103,39 @@ void main() {
         reason: 'the stable role window must not resubmit demands');
     expect(coordinator.playbackSyncs, playbackSyncs + 1,
         reason: 'viewport coverage is independent from demand reconciliation');
-    expect(coordinator.viewport?.phase, ViewportPhase.overlap);
-    expect(coordinator.viewport?.dominantPageIndex, isNull);
+    expect(coordinator.viewport?.phase, ViewportPhase.dominant);
+    expect(coordinator.viewport?.dominantPageIndex, 1);
+  });
+
+  test('late upload availability can reproject the saved viewport', () {
+    final coordinator = FakeCoordinator(clock: _Clock());
+    final binding = ReaderBinding(
+      chapter: _chapter(),
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+      clock: _Clock(),
+      coordinator: coordinator,
+      playback: coordinator,
+    );
+
+    binding.accept(_obs(
+      interaction: Interaction.settling,
+      current: 2,
+      currentFraction: 0.5,
+      target: 1,
+      targetFraction: 0.5,
+    ));
+    final revision = binding.revision;
+    final syncs = coordinator.playbackSyncs;
+
+    binding.resyncPlayback();
+
+    expect(binding.revision, revision);
+    expect(coordinator.playbackSyncs, syncs + 1);
+    expect(coordinator.viewport?.dominantPageIndex, 2);
+    expect(coordinator.playbackIds.keys, containsAll(<int>[1, 2]));
   });
 
   test('reader binding uses explicit demand and playback contracts', () {

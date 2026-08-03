@@ -77,10 +77,11 @@ void main() {
     'crossing the page midpoint preserves loaded page hosts',
     (tester) async {
       final chapter = _chapter(pageCount: 3);
+      final observations = <ReaderObs>[];
       final controller = ReaderController(
         sessionId: 'reader-midpoint-test',
         chapter: chapter,
-        onObservation: (_) {},
+        onObservation: observations.add,
         clock: FakeClock(),
       );
       addTearDown(controller.dispose);
@@ -129,6 +130,22 @@ void main() {
         delta: dragStep,
         condition: () => controller.currentIndex == 1,
         failure: 'gesture never crossed the page midpoint',
+      );
+
+      final midpointObservation = observations.last;
+      expect(midpointObservation.currentIndex, 1);
+      expect(midpointObservation.targetCoverage?.pageIndex, 0);
+      expect(
+        midpointObservation.currentCoverage.fraction,
+        greaterThanOrEqualTo(0.5),
+      );
+      expect(midpointObservation.targetCoverage!.fraction, greaterThan(0));
+      expect(
+        midpointObservation.currentCoverage.fraction +
+            midpointObservation.targetCoverage!.fraction,
+        closeTo(1, 0.001),
+        reason:
+            'PageView midpoint ownership must not emit a targetless integer observation',
       );
 
       expect(controller.currentIndex, 1);

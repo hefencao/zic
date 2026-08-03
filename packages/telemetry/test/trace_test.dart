@@ -72,4 +72,26 @@ void main() {
     expect(encoded, contains('mihon:resource:<'));
   });
 
+  test('trace bounds long local identities without losing stable correlation', () {
+    final identity =
+        'local-folder/${List<String>.filled(40, 'segment').join('/')}';
+    final first = traceEvent(
+      clock: _Clock(),
+      sessionId: 'reader',
+      kind: TraceEventKind.framePresented,
+      identityHash: identity,
+    );
+    final second = traceEvent(
+      clock: _Clock(),
+      sessionId: 'reader',
+      kind: TraceEventKind.frameUploaded,
+      identityHash: identity,
+    );
+
+    expect(first.identityHash, startsWith('identity:<'));
+    expect(first.identityHash, second.identityHash);
+    expect(first.identityHash!.length, lessThan(identity.length));
+    expect(first.toJsonLine(), isNot(contains(identity)));
+  });
+
 }

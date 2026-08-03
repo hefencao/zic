@@ -83,7 +83,7 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
           ? ''
           : '（剪贴板上限，仅复制前 ${payload.copiedCount}/${events.length} 条）';
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已复制 ${payload.copiedCount} 条原始 Trace$suffix')),
+        SnackBar(content: Text('已复制 ${payload.copiedCount} 条诊断 Trace$suffix')),
       );
     } on Object catch (error) {
       if (!mounted) return;
@@ -113,7 +113,7 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
       );
       if (!mounted || path == null) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已导出 ${events.length} 条原始 Trace')),
+        SnackBar(content: Text('已导出 ${events.length} 条诊断 Trace')),
       );
     } on Object catch (error) {
       if (!mounted) return;
@@ -132,13 +132,13 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
         actions: <Widget>[
           IconButton(
             key: debugTraceCopyKey,
-            tooltip: '复制原始筛选结果',
+            tooltip: '复制筛选后的诊断结果',
             onPressed: () => unawaited(_copyFiltered()),
             icon: const Icon(Icons.copy_all_outlined),
           ),
           IconButton(
             key: debugTraceExportKey,
-            tooltip: '导出原始筛选结果',
+            tooltip: '导出筛选后的诊断结果',
             onPressed: () => unawaited(_exportFiltered()),
             icon: const Icon(Icons.file_download_outlined),
           ),
@@ -242,6 +242,7 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
                     '导出缓冲 ${log.exportEvents.length} 条 · '
                     '累计 ${log.recordedCount} 条 · '
                     '合并 ${log.coalescedCount} 条 · '
+                    '导出合并 ${log.exportCoalescedCount} 条 · '
                     '导出丢弃 ${log.exportDroppedCount} 条',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),

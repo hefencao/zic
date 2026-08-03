@@ -1,3 +1,13 @@
+## 0.31.0-dev.97：Reader 50% 无缝播放交接与诊断 Trace 压缩
+
+- `ReaderView.onPageChanged` 不再发出整数 targetless observation；stable page 改变时保留真实 fractional position，outgoing page 继续是 transition，避免 `demand-detached` 退休有效 texture。
+- `ViewportResolver` 默认 50% 交接；新 stable/current 在 midpoint 接管播放，旧 transition 暂停，无 40%–60% 双冻结区。
+- Pipeline runtime 在异步 UploadSession snapshot 后重投影既有 viewport，修复新页偶发不启动、回切才播放。
+- Debug Trace 对高频 frame/decode/upload/scroll 事件作固定首事件窗口摘要，保留 count、首尾、min/max；错误与权威生命周期不合并。超长本地 identity 输出稳定 hash+长度。
+- 修复 `ArtifactCacheStreamStore`、`FrameDecodeTiming`、`ExpectedLengthEncodedSource` 三处 Dart interface promotion 编译闭包。
+- libwebp prepared tree 改用 CRLF/LF 无关、幂等的 v1.6.0 函数锚点 transformer；发现半应用 patch 立即失败。
+- 新增 ADR 0081、dev.97 三清单、midpoint/Trace/CRLF patch 回归与静态门禁。
+
 ## 0.31.0-dev.96：常驻双 isolate 与单线程本地 WebP 播放
 
 - 两个 Dart native decode isolate 由 App composition 在 `runApp` 前显式等待预热完成并进程期常驻；页面/cursor 不再关闭 worker pool。
@@ -34,7 +44,7 @@
 ## 0.31.0-dev.93：预解码动画后继帧并修复媒体测试闭包
 
 - 修复 `upload_session_test` 的 cursor fixture 未绑定 `LoopCursor`，导致完整静态元数据未进入 UploadSession。
-- 更新 Reader viewport 测试：50/50 覆盖属于 overlap，不再伪造 dominant page。
+- 当时更新 Reader viewport 测试：50/50 覆盖属于 overlap；该历史合同已由 dev.97 的 stable/current midpoint 接管语义取代。
 - 更新 LiveCoordinator source revision 测试：source seal 是独立权威 revision，应被 drain 一次。
 - 修复本地媒体 viewport 测试对 transformed child 尺寸和 fitWidth 第二层 FittedBox 的过时假设。
 - 动画当前 output 不再计入未来 prepared depth；DecodeSession 可在当前帧显示期间保留一个 decoded successor。
