@@ -1,7 +1,8 @@
-diff -U1 -r a/src/dec/vp8_dec.c b/src/dec/vp8_dec.c
 --- a/src/dec/vp8_dec.c
 +++ b/src/dec/vp8_dec.c
-@@ -5,2 +5,22 @@
+@@ -55,6 +55,26 @@
+   dec->error_msg = "OK";
+ }
  
 +// ZIC playback decodes each animation on one of two process-lifetime Dart
 +// isolate threads. Keep the largest VP8 frame workspace on that OS thread so
@@ -24,14 +25,22 @@ diff -U1 -r a/src/dec/vp8_dec.c b/src/dec/vp8_dec.c
 +    zic_vp8_thread_buffer = { NULL, 0 };
 +
  int VP8InitIoInternal(VP8Io* const io, int version) {
-@@ -18,2 +38,6 @@
+   if (WEBP_ABI_IS_INCOMPATIBLE(version, WEBP_DECODER_ABI_VERSION)) {
+     return 0;  // mismatch error
+@@ -68,6 +88,10 @@
+ VP8Decoder* VP8New(void) {
+   VP8Decoder* const dec = (VP8Decoder*)WebPSafeCalloc(1ULL, sizeof(*dec));
    if (dec != NULL) {
 +    dec->mem = zic_vp8_thread_buffer.memory;
 +    dec->mem_size = zic_vp8_thread_buffer.size;
 +    zic_vp8_thread_buffer.memory = NULL;
 +    zic_vp8_thread_buffer.size = 0;
      SetOk(dec);
-@@ -33,3 +57,9 @@
+     WebPGetWorkerInterface()->Init(&dec->worker);
+     dec->ready = 0;
+@@ -729,7 +753,13 @@
+   }
+   WebPGetWorkerInterface()->End(&dec->worker);
    WebPDeallocateAlphaMemory(dec);
 -  WebPSafeFree(dec->mem);
 +  if (dec->mem != NULL && dec->mem_size >= zic_vp8_thread_buffer.size) {
@@ -42,3 +51,5 @@ diff -U1 -r a/src/dec/vp8_dec.c b/src/dec/vp8_dec.c
 +    WebPSafeFree(dec->mem);
 +  }
    dec->mem = NULL;
+   dec->mem_size = 0;
+   memset(&dec->br, 0, sizeof(dec->br));

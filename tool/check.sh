@@ -34,6 +34,7 @@ python3 "$ROOT/tool/test_dev94_vibe_webp_worker_pipeline.py"
 python3 "$ROOT/tool/test_dev95_vibe_native_ingress_target_canvas.py"
 python3 "$ROOT/tool/test_dev96_local_webp_playback.py"
 python3 "$ROOT/tool/test_dev97_midpoint_trace_filter.py"
+python3 "$ROOT/tool/test_dev98_libwebp_archive_prepare.py"
 python3 "$ROOT/tool/test_vertical_geometry_cover_trace_contract.py"
 python3 "$ROOT/tool/check_android_runtime_dependencies.py"
 python3 "$ROOT/tool/test_android_runtime_dependencies.py"
@@ -65,7 +66,7 @@ else
 fi
 "$ROOT/tool/check_native_header.sh"
 
-SOURCE_TOOLS=(git cmake ninja)
+SOURCE_TOOLS=(cmake ninja)
 MISSING_SOURCE=()
 for command in "${SOURCE_TOOLS[@]}"; do
   command -v "$command" >/dev/null 2>&1 || MISSING_SOURCE+=("$command")
@@ -95,7 +96,7 @@ fi
 if command -v cargo >/dev/null 2>&1 && ((${#MISSING_SOURCE[@]} == 0)); then
   "$ROOT/tool/test_rust.sh"
 elif [[ "$REQUIRE_TOOLCHAINS" -eq 1 ]]; then
-  echo "Rust plus git/cmake/ninja are required" >&2
+  echo "Rust plus cmake/ninja are required" >&2
   exit 1
 else
   echo "SKIP: Rust or source-build tools are not installed"

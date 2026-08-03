@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import struct
@@ -356,14 +357,30 @@ def check_tool_dirs() -> None:
     ):
         if required not in android_webp:
             fail(f'Android libwebp source build is incomplete: {required}')
+    libwebp_lock = (ROOT / 'native/libwebp.lock').read_text(encoding='utf-8')
+    lock_or_fetch = fetch_webp + libwebp_lock
     for required in (
         'chromium.googlesource.com/webm/libwebp',
         'WEBP_COMMIT',
+        'WEBP_ARCHIVE_PATH',
+        'WEBP_ARCHIVE_SHA256',
+        'WEBP_VP8_DEC_SHA256',
+        'ZIC_WEBP_ARCHIVE',
+        'src/upstream/libwebp-',
         'git -C "$TMP" fetch',
     ):
-        lock_or_fetch = fetch_webp + (ROOT / 'native/libwebp.lock').read_text(encoding='utf-8')
         if required not in lock_or_fetch:
             fail(f'pinned libwebp source fetch is incomplete: {required}')
+    archive_match = re.search(r'^WEBP_ARCHIVE_PATH=(.+)$', libwebp_lock, re.MULTILINE)
+    sha_match = re.search(r'^WEBP_ARCHIVE_SHA256=([0-9a-f]{64})$', libwebp_lock, re.MULTILINE)
+    if archive_match is None or sha_match is None:
+        fail('pinned libwebp archive path/hash are malformed')
+    archive = ROOT / archive_match.group(1)
+    if not archive.is_file():
+        fail(f'pinned libwebp archive is missing: {archive}')
+    actual_archive_sha = hashlib.sha256(archive.read_bytes()).hexdigest()
+    if actual_archive_sha != sha_match.group(1):
+        fail('pinned libwebp archive sha256 does not match native/libwebp.lock')
     if 'ZIC_ANDROID_WEBP_ROOT' in android_native or 'ZIC_ANDROID_WEBP_ROOT' in android_build:
         fail('Android native build must not depend on prebuilt libwebp directories')
     if 'build_android_native.sh' not in android_build:

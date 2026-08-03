@@ -17,7 +17,7 @@ case "$LINK" in
   shared|static) ;;
   *) echo "ZIC_WEBP_HOST_LINK must be shared or static" >&2; exit 64 ;;
 esac
-for command in cmake ninja git; do
+for command in cmake ninja; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "$command is required to build libwebp from source" >&2
     exit 1
@@ -29,7 +29,7 @@ BUILD_TYPE=Release
 [[ "$MODE" == debug ]] && BUILD_TYPE=Debug
 BUILD="$DEPS/build/libwebp/host/$WEBP_VERSION/$MODE/$LINK"
 PREFIX="$DEPS/install/libwebp/host/$WEBP_VERSION/$MODE/$LINK"
-CONFIG_ID="$WEBP_COMMIT|$PATCH_SHA|host|$BUILD_TYPE|$LINK"
+CONFIG_ID="$WEBP_COMMIT|$WEBP_ARCHIVE_SHA256|$WEBP_VP8_DEC_SHA256|$PATCH_SHA|host|$BUILD_TYPE|$LINK"
 if [[ -f "$BUILD/.zic-config" && "$(cat "$BUILD/.zic-config")" != "$CONFIG_ID" ]]; then
   rm -rf "$BUILD" "$PREFIX"
 fi

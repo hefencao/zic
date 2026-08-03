@@ -1,6 +1,6 @@
 # ADR 0081：50% 播放所有权交接与有界诊断 Trace
 
-- 状态：接受
+- 状态：接受；第 6 项构建准备机制由 ADR 0082 取代
 - 版本：0.31.0-dev.97
 - 取代：ADR 0080 中未规定 PageView midpoint 细节的部分
 
@@ -17,7 +17,7 @@
 3. Pipeline runtime 在 UploadSession snapshot 到达时重投影 ReaderBinding 已保存的 viewport，使晚创建的 session 立即获得正确 freeze/resume。它不得创建第二 viewport 状态。
 4. Debug Trace 的权威事件继续由原所有者发出。App export projection 可按 kind/session/identity/state 在 250 ms–1 s 的固定首事件窗口内合并高频事件，保留 count、首尾 frame/position/timestamp 和数值 min/max。错误、拒绝、retry 与生命周期边缘不合并。
 5. telemetry 对超过 160 字符的 identity 输出稳定 FNV hash 与原长度，不输出完整 locator。该摘要只用于相关性，不替代业务 identity。
-6. libwebp v1.6.0 patch 由幂等函数锚点 transformer 应用；输入先统一 LF。检测到部分 token 时立即失败，不得继续半应用。patch 与 transformer SHA 都进入 prepared tree identity。
+6. （已由 ADR 0082 取代）dev.97 曾使用函数锚点 transformer；当前使用锁定离线归档、干净 source hash、零 fuzz patch dry-run 和独立 verifier。
 
 ## 后果
 

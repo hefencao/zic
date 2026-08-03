@@ -23,7 +23,7 @@ esac
   echo "ANDROID_NDK_HOME or ANDROID_NDK_ROOT must point to an Android NDK" >&2
   exit 1
 }
-for command in cargo rustup cmake ninja git; do
+for command in cargo rustup cmake ninja; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "$command is required" >&2
     exit 1

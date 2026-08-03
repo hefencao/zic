@@ -3,3 +3,9 @@ WEBP_VERSION=1.6.0
 WEBP_TAG=v1.6.0
 WEBP_COMMIT=4fa21912338357f89e4fd51cf2368325b59e9bd9
 WEBP_REPO=https://chromium.googlesource.com/webm/libwebp
+# Exact archive materialized from the project file library and retained as the
+# default offline source input. The vp8_dec hash also validates clean extracted
+# trees and pinned git checkouts before ZIC applies its local patch.
+WEBP_ARCHIVE_PATH=third_party/source_archives/libwebp-1.6.0.zip
+WEBP_ARCHIVE_SHA256=9cdad01b79c62928a0da1353b5c8aaac427589944baebc4c61e3ac0e7289d7e6
+WEBP_VP8_DEC_SHA256=e35bbdd94e8f20ace4fa4f8c53e2fedf0acfaa7a5271e7a147e0fda1cd7f4416

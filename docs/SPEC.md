@@ -1,3 +1,12 @@
+## dev.98 libwebp source/patch 规范
+
+1. 默认 source 必须是仓库保留的 `libwebp-1.6.0.zip`；归档 SHA-256 与干净 `vp8_dec.c` SHA-256 必须同时匹配 `native/libwebp.lock`。
+2. upstream cache 与 prepared cache 必须分离。上游树不可原地 patch；发现上游树被修改必须从锁定归档重建，不得继续猜测其等价性。
+3. `prepare_webp.sh` 必须先对临时副本统一 LF，再执行 `patch --dry-run --batch --forward --fuzz=0`。dry-run 失败时不得修改任何 source，不得以出现一两个 TLS token、`.rej` 文件或 fuzzy hunk 作为成功。
+4. 实际应用后必须运行独立 verifier，确认 TLS 声明、VP8New workspace acquire、VP8Clear largest-buffer return 各恰好一份，并拒绝 `VP8MemPoolAcquire/Return` 或额外 `WebPSetWorkerInterface`。
+5. bare `bash tool/prepare_webp.sh` 在仓库保留归档存在时必须离线成功；git 仅可作为归档缺失时的 pinned fallback，不能是正常构建的强制依赖。
+6. 该变更只修复构建输入与补丁准备链，不得改变播放窗口、lane、decode isolate 数量、libwebp 帧内线程数或 Reader/Pipeline 生命周期。
+
 ## dev.97 Reader 交接与诊断 Trace 规范
 
 1. 离散 PageView 在 `onPageChanged` 时必须使用真实 fractional position 构造 observation；只要 outgoing page 仍有 coverage，就不得发出 targetless 整数 observation。

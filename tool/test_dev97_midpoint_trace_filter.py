@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import subprocess
-import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -24,7 +22,7 @@ def forbid(path: str, *tokens: str) -> None:
         raise SystemExit(f'FAIL: {path} contains rejected dev.97 tokens: {found}')
 
 
-require('apps/app/pubspec.yaml', 'version: 0.31.0+97')
+require('apps/app/pubspec.yaml', 'version: 0.31.0+98')
 require(
     'packages/reader/lib/src/reader_view.dart',
     'final pagePosition = _pageController.hasClients',
@@ -94,76 +92,17 @@ for rejected in (
 
 require(
     'tool/prepare_webp.sh',
-    'apply_libwebp_vp8_tls_patch.py',
-    'python3 sha256sum',
-    'APPLIER_SHA=',
-    'EXPECTED="$WEBP_COMMIT|$PATCH_SHA|$APPLIER_SHA"',
+    'patch --dry-run --batch --forward --fuzz=0',
+    'verify_libwebp_vp8_tls_patch.py',
+    'EXPECTED="$WEBP_COMMIT|$SOURCE_SHA|$PATCH_SHA"',
 )
-forbid('tool/prepare_webp.sh', 'patch --batch --forward')
+forbid('tool/prepare_webp.sh', 'apply_libwebp_vp8_tls_patch.py')
 require(
-    'tool/apply_libwebp_vp8_tls_patch.py',
-    'replace("\\r\\n", "\\n").replace("\\r", "\\n")',
-    'refusing to continue from a partially applied VP8 TLS patch',
-    'expected exactly one {label} anchor in pinned libwebp v1.6.0',
+    'tool/fetch_webp.sh',
+    'WEBP_ARCHIVE_SHA256',
+    'WEBP_VP8_DEC_SHA256',
+    'rebuilding corrupted libwebp upstream cache',
 )
-
-fixture = '''static void SetOk(VP8Decoder* const dec) {
-  dec->status = VP8_STATUS_OK;
-}
-
-int VP8InitIoInternal(VP8Io* const io, int version) {
-  return 1;
-}
-
-VP8Decoder* VP8New(void) {
-  VP8Decoder* const dec = (VP8Decoder*)WebPSafeCalloc(1ULL, sizeof(*dec));
-  if (dec != NULL) {
-    SetOk(dec);
-    WebPGetWorkerInterface()->Init(&dec->worker);
-  }
-  return dec;
-}
-
-void VP8Clear(VP8Decoder* const dec) {
-  if (dec == NULL) return;
-  WebPDeallocateAlphaMemory(dec);
-  WebPSafeFree(dec->mem);
-  dec->mem = NULL;
-  dec->mem_size = 0;
-}
-'''
-with tempfile.TemporaryDirectory(prefix='zic-dev97-webp-crlf-') as directory:
-    source = Path(directory) / 'vp8_dec.c'
-    source.write_bytes(fixture.replace('\n', '\r\n').encode('utf-8'))
-    command = [
-        'python3',
-        str(ROOT / 'tool/apply_libwebp_vp8_tls_patch.py'),
-        str(source),
-    ]
-    for attempt in range(2):
-        result = subprocess.run(
-            command,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            check=False,
-        )
-        if result.returncode != 0:
-            raise SystemExit(
-                f'FAIL: CRLF/idempotent libwebp transform attempt {attempt + 1}:\n'
-                + result.stdout
-            )
-    transformed = source.read_bytes()
-    if b'\r' in transformed:
-        raise SystemExit('FAIL: libwebp transformer retained CR line endings')
-    if b'ZIC_VP8_THREAD_LOCAL' not in transformed:
-        raise SystemExit('FAIL: libwebp transformed TLS macro is missing')
-    for token in (
-        b'dec->mem = zic_vp8_thread_buffer.memory;',
-        b'dec->mem_size >= zic_vp8_thread_buffer.size',
-    ):
-        if transformed.count(token) != 1:
-            raise SystemExit(f'FAIL: libwebp transformed token count is not one: {token!r}')
 
 require(
     'packages/reader/test/reader_navigation_test.dart',
@@ -204,7 +143,6 @@ require(
 )
 require(
     'docs/NEXT_CHAT_HANDOFF.md',
-    '唯一后续基线：`zic_v0.31.0-dev.97_midpoint-playback-trace-filter.zip`',
     'docs/audits/dev97-validation-results.md',
 )
 

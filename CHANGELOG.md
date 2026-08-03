@@ -1,3 +1,11 @@
+## 0.31.0-dev.98：锁定 libwebp 离线归档与精确补丁准备链
+
+- 从文件库取得并保留 `libwebp-1.6.0.zip`，锁定归档 SHA-256 与干净 `vp8_dec.c` SHA-256；默认构建不再依赖网络。
+- `fetch_webp.sh` 将归档解压到 tool-owned immutable upstream cache；发现缓存漂移时自动从锁定归档重建。显式 `ZIC_WEBP_SOURCE` 必须匹配干净源哈希，避免旧补丁树进入 prepared 阶段。
+- VP8 TLS patch 由文件库真实源码重新生成；`prepare_webp.sh` 统一 LF，先用 `patch --dry-run --fuzz=0` 验证全部 hunk，再实际应用并运行结构 verifier，杜绝 partial patch 被 token grep 误判为成功。
+- 删除无生产调用且已证明脆弱的 `apply_libwebp_vp8_tls_patch.py`；host/Android source build 在归档可用时不再强制依赖 git。
+- 新增 ADR 0082、dev.98 三清单、真实归档准备/缓存修复/修改源拒绝回归，并实际完成 host libwebp 静态构建与 Animated WebP smoke。
+
 ## 0.31.0-dev.97：Reader 50% 无缝播放交接与诊断 Trace 压缩
 
 - `ReaderView.onPageChanged` 不再发出整数 targetless observation；stable page 改变时保留真实 fractional position，outgoing page 继续是 transition，避免 `demand-detached` 退休有效 texture。
@@ -5,7 +13,7 @@
 - Pipeline runtime 在异步 UploadSession snapshot 后重投影既有 viewport，修复新页偶发不启动、回切才播放。
 - Debug Trace 对高频 frame/decode/upload/scroll 事件作固定首事件窗口摘要，保留 count、首尾、min/max；错误与权威生命周期不合并。超长本地 identity 输出稳定 hash+长度。
 - 修复 `ArtifactCacheStreamStore`、`FrameDecodeTiming`、`ExpectedLengthEncodedSource` 三处 Dart interface promotion 编译闭包。
-- libwebp prepared tree 改用 CRLF/LF 无关、幂等的 v1.6.0 函数锚点 transformer；发现半应用 patch 立即失败。
+- libwebp prepared tree 当时改用函数锚点 transformer；该机制已由 dev.98 的锁定归档、源哈希与精确 patch dry-run 取代。
 - 新增 ADR 0081、dev.97 三清单、midpoint/Trace/CRLF patch 回归与静态门禁。
 
 ## 0.31.0-dev.96：常驻双 isolate 与单线程本地 WebP 播放

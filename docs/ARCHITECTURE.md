@@ -1,3 +1,11 @@
+# dev.98 libwebp 锁定归档与 prepared tree 所有权
+
+- `third_party/source_archives/libwebp-1.6.0.zip` 是 host/Android 构建的默认、只读、离线上游输入；`native/libwebp.lock` 同时锁定 archive SHA-256、上游 commit 与干净 `src/dec/vp8_dec.c` SHA-256。
+- `tool/fetch_webp.sh` 独占上游 source cache 生命周期。归档解压到 `.deps/src/upstream/`；该目录是 tool-owned immutable cache，发现源文件漂移时从锁定归档重建。显式外部 source 只有在干净源哈希匹配时才可进入主构建链。
+- `tool/prepare_webp.sh` 独占 patched prepared tree 生命周期。它从干净 upstream tree 复制到 `.deps/src/prepared/`，统一目标 C 文件换行，对真实 v1.6.0 生成的 patch 先执行零 fuzz dry-run，全部 hunk 成功后才修改临时树；`verify_libwebp_vp8_tls_patch.py` 验证 VP8New acquire、VP8Clear return、单份 TLS cache 与无竞争 worker pool。
+- prepared identity 由 pinned commit、干净 source SHA 与 patch SHA 原子组成；build/install cache 不得复用旧 applier、旧 partial tree 或用户手改 upstream tree。
+- 旧 `apply_libwebp_vp8_tls_patch.py` 已删除。ADR 0081 中函数锚点 transformer 的构建机制由 ADR 0082 取代；runtime 的双常驻 Dart isolate、libwebp `use_threads=0`、successor 和 Reader midpoint 所有权不变。
+
 # dev.97 Reader midpoint 播放交接与诊断投影所有权
 
 ## Reader → Pipeline 交接
@@ -11,7 +19,7 @@
 
 - `telemetry` 唯一负责 Trace payload/identity 安全投影。超过 160 字符的 identity 改为稳定 hash+长度；业务 identity 和 demand 合并仍使用原值，不受 Trace 摘要影响。
 - `apps/app::DebugTraceLog` 只是有界诊断 projection。frame/decode/upload/scroll 高频事件在固定 250 ms–1 s 首事件窗口内合并，保存 count、首尾时间/frame/position 与数值 min/max；错误、拒绝、retry 和 output retirement 等事实不合并。容量淘汰继续显式计数，不能静默宣称无界无损。
-- `tool/prepare_webp.sh` 继续拥有 libwebp prepared tree。补丁应用改由 `apply_libwebp_vp8_tls_patch.py` 以 v1.6.0 函数锚点执行，统一 CRLF/LF、支持幂等并拒绝部分应用；patch 文件与 applier 脚本的 SHA 都进入 prepared identity。runtime 不依赖该脚本。
+- `tool/prepare_webp.sh` 继续拥有 libwebp prepared tree。dev.97 使用的函数锚点 applier 已删除；当前由 ADR 0082 规定的锁定归档、干净 source hash、零 fuzz dry-run 与独立 verifier 执行，runtime 不依赖这些构建脚本。
 
 ## 不变边界
 

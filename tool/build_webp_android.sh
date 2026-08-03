@@ -19,7 +19,7 @@ case "$LINK" in shared|static) ;; *) echo "ZIC_ANDROID_WEBP_LINK must be shared 
   echo "ANDROID_NDK_HOME or ANDROID_NDK_ROOT must point to an Android NDK" >&2
   exit 1
 }
-for command in cmake ninja git; do
+for command in cmake ninja; do
   command -v "$command" >/dev/null 2>&1 || {
     echo "$command is required to build Android libwebp from source" >&2
     exit 1
@@ -31,7 +31,7 @@ BUILD_TYPE=Release
 [[ "$MODE" == debug ]] && BUILD_TYPE=Debug
 BUILD="$DEPS/build/libwebp/android/$WEBP_VERSION/$ABI/$MODE/$LINK"
 PREFIX="$DEPS/install/libwebp/android/$WEBP_VERSION/$ABI/$MODE/$LINK"
-CONFIG_ID="$WEBP_COMMIT|$PATCH_SHA|$ABI|android-$API|$BUILD_TYPE|$LINK|$NDK"
+CONFIG_ID="$WEBP_COMMIT|$WEBP_ARCHIVE_SHA256|$WEBP_VP8_DEC_SHA256|$PATCH_SHA|$ABI|android-$API|$BUILD_TYPE|$LINK|$NDK"
 if [[ -f "$BUILD/.zic-config" && "$(cat "$BUILD/.zic-config")" != "$CONFIG_ID" ]]; then
   rm -rf "$BUILD" "$PREFIX"
 fi

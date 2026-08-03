@@ -1,3 +1,11 @@
+## dev.98 已实施与验证计划
+
+1. 从文件库 materialize `libwebp-1.6.0.zip`，计算归档与真实 `vp8_dec.c` 哈希，并将归档作为项目只读构建输入。
+2. 重写 source fetch/cache：默认离线归档、上游缓存漂移重建、显式 source 精确哈希校验、网络 git 仅作 fallback。
+3. 用真实 v1.6.0 文件重新生成 VP8 TLS patch；删除函数锚点 transformer，改为零 fuzz dry-run、实际 patch、独立语义 verifier。
+4. 迁移 dev.96/dev.97 历史门禁，新增真实归档、cache repair、幂等 prepare、修改源早期拒绝回归；同步 build scripts 与 repository gate。
+5. 运行 prepare 两次、host static CMake/Ninja 构建、Animated WebP smoke、全仓静态合同、干净 ZIP 解压复验。
+
 ## dev.97 已实施与验证计划
 
 1. 从设备 Trace 关联 `pageCurrent → targetless observation → demand detach → pageOutputReleased → transition re-add`，确认黑屏不是下载窗口不足。

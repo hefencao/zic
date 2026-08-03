@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import subprocess
-import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -141,17 +139,25 @@ require(
     'native/libwebp.lock',
     'WEBP_VERSION=1.6.0',
     'WEBP_COMMIT=4fa21912338357f89e4fd51cf2368325b59e9bd9',
+    'WEBP_ARCHIVE_SHA256=',
+    'WEBP_VP8_DEC_SHA256=',
+)
+require(
+    'tool/fetch_webp.sh',
+    'ZIC_WEBP_ARCHIVE',
+    'validate_clean_revision',
+    'src/upstream/libwebp-',
 )
 require(
     'tool/prepare_webp.sh',
     'libwebp-vp8-thread-buffer-pool-v1.6.0.patch',
-    'apply_libwebp_vp8_tls_patch.py',
-    'zic_vp8_thread_buffer',
+    'verify_libwebp_vp8_tls_patch.py',
+    'patch --dry-run --batch --forward --fuzz=0',
+    'src/prepared/libwebp-',
 )
 require(
-    'tool/apply_libwebp_vp8_tls_patch.py',
-    'replace("\\r\\n", "\\n").replace("\\r", "\\n")',
-    'refusing to continue from a partially applied VP8 TLS patch',
+    'tool/verify_libwebp_vp8_tls_patch.py',
+    'competing playback worker/memory pool token',
     'dec->mem_size >= zic_vp8_thread_buffer.size',
 )
 for path in (
@@ -166,93 +172,11 @@ for token in (
     'zic_vp8_thread_buffer',
     'dec->mem_size >= zic_vp8_thread_buffer.size',
     'This is deliberately a one-entry TLS cache, not an additional worker pool.',
+    '@@ -729,7 +753,13 @@',
 ):
     if token not in patch:
         raise SystemExit(f'FAIL: libwebp patch missing {token!r}')
 
-with tempfile.TemporaryDirectory(prefix='zic-libwebp-patch-') as directory:
-    source = Path(directory) / 'src/dec/vp8_dec.c'
-    source.parent.mkdir(parents=True)
-    source.write_bytes(
-        '''static void SetOk(VP8Decoder* const dec) {
-  dec->status = VP8_STATUS_OK;
-  dec->error_msg = "OK";
-}
-
-int VP8InitIoInternal(VP8Io* const io, int version) {
-  if (WEBP_ABI_IS_INCOMPATIBLE(version, WEBP_DECODER_ABI_VERSION)) {
-    return 0;
-  }
-  if (io != NULL) {
-    WEBP_UNSAFE_MEMSET(io, 0, sizeof(*io));
-  }
-  return 1;
-}
-
-VP8Decoder* VP8New(void) {
-  VP8Decoder* const dec = (VP8Decoder*)WebPSafeCalloc(1ULL, sizeof(*dec));
-  if (dec != NULL) {
-    SetOk(dec);
-    WebPGetWorkerInterface()->Init(&dec->worker);
-    dec->ready = 0;
-    dec->num_parts_minus_one = 0;
-    InitGetCoeffs();
-  }
-  return dec;
-}
-
-void VP8Clear(VP8Decoder* const dec) {
-  if (dec == NULL) {
-    return;
-  }
-  WebPGetWorkerInterface()->End(&dec->worker);
-  WebPDeallocateAlphaMemory(dec);
-  WebPSafeFree(dec->mem);
-  dec->mem = NULL;
-  dec->mem_size = 0;
-  WEBP_UNSAFE_MEMSET(&dec->br, 0, sizeof(dec->br));
-  dec->ready = 0;
-}
-'''.replace('\n', '\r\n').encode('utf-8'),
-    )
-    result = subprocess.run(
-        [
-            'python3',
-            str(ROOT / 'tool/apply_libwebp_vp8_tls_patch.py'),
-            str(source),
-        ],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise SystemExit(
-            'FAIL: pinned libwebp CRLF patch application failed:\n' + result.stdout
-        )
-    transformed = source.read_text(encoding='utf-8')
-    for token in (
-        'ZIC_VP8_THREAD_LOCAL',
-        'dec->mem = zic_vp8_thread_buffer.memory;',
-        'dec->mem_size >= zic_vp8_thread_buffer.size',
-    ):
-        if token not in transformed:
-            raise SystemExit(f'FAIL: transformed libwebp source missing {token!r}')
-    if '\r' in transformed:
-        raise SystemExit('FAIL: transformed libwebp source retained CR line endings')
-    second = subprocess.run(
-        [
-            'python3',
-            str(ROOT / 'tool/apply_libwebp_vp8_tls_patch.py'),
-            str(source),
-        ],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
-    )
-    if second.returncode != 0:
-        raise SystemExit('FAIL: pinned libwebp patch is not idempotent:\n' + second.stdout)
 for path in ROOT.rglob('*'):
     if path.is_file() and path.name == 'webp_worker.rs':
         raise SystemExit(f'FAIL: rejected persistent libwebp worker pool exists: {path}')
@@ -270,7 +194,7 @@ for path in ROOT.rglob('*'):
         text = path.read_text(encoding='utf-8')
     except UnicodeDecodeError:
         continue
-    if 'WebPSetWorkerInterface' in text:
+    if 'WebPSetWorkerInterface(' in text:
         raise SystemExit(f'FAIL: rejected native worker interface in {path}')
 require(
     'docs/audits/dev96-local-webp-playback-audit.md',
@@ -278,7 +202,7 @@ require(
     '## 所有权清单',
     '## 被否决方案清单',
 )
-require('apps/app/pubspec.yaml', 'version: 0.31.0+97')
+require('apps/app/pubspec.yaml', 'version: 0.31.0+98')
 require('docs/adr/0080-local-webp-resident-single-thread-playback.md', '0.31.0-dev.96')
 require('tool/check.sh', 'test_dev96_local_webp_playback.py')
 print('dev.96 resident single-thread local WebP playback ownership: OK')

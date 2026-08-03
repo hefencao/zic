@@ -1,6 +1,6 @@
 # ADR 0080：本地 WebP 常驻双 worker 与帧内单线程播放
 
-- 状态：Accepted
+- 状态：Accepted；第 4 项的 source/patch 准备机制由 ADR 0082 修正
 - 版本：`0.31.0-dev.96`
 - 日期：2026-08-03
 - 取代/修正：ADR 0078 中 cursor 归零后关闭 worker 与 libwebp `use_threads=1` 的部分；保留 ADR 0078 的 handle-only handoff、持久 demux 与 Pipeline 所有权。ADR 0079 的 target-canvas 几何继续有效。

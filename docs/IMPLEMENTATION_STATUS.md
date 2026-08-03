@@ -1,3 +1,7 @@
+## dev.98 状态
+
+文件库中的 `libwebp-1.6.0.zip` 已成为项目默认离线上游输入，archive SHA-256 与干净 `vp8_dec.c` SHA-256 已锁定。旧 `.deps/src/libwebp-1.6.0` 可变树和函数锚点 transformer 不再参与主构建：upstream cache 被修改会从归档重建，prepared tree 只接受干净源副本并在零 fuzz dry-run 全部成功后应用 patch。真实归档已完成两次幂等 prepare、CMake/Ninja host static build，以及 incremental/loop Animated WebP smoke。Reader/Pipeline 与 dev.97 Trace 行为未改变。Flutter/Dart、Rust、Android NDK/Gradle 与真机播放仍需相应工具链复验。
+
 ## dev.97 状态
 
 设备 Trace 共 6486 条、4,147,260 bytes，确认多次 50% 翻页在 `pageCurrent` 前后出现 outgoing `pageOutputReleased(reason=demand-detached)`，随后同页又以 transition demand 加回。根因是 `onPageChanged` 的整数 observation，而不是图片下载失败。源码现保留真实 PageController fractional position，默认 50% 完成播放所有权交接，并在 late UploadSession snapshot 后重投影 viewport。Debug export 对高频事件做固定窗口摘要，长本地 identity 改为稳定 hash+长度；错误与生命周期边缘不合并。用户报告的三处 Dart capability 编译错误和 libwebp CRLF patch 拒绝也已关闭。当前环境仍无 Flutter/Dart、Cargo/Rust、Gradle/Android SDK，故 analyzer、Dart/Flutter tests、native/Android 构建和真机结果必须列为未验证。
