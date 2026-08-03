@@ -273,6 +273,14 @@ def summarize(path: Path) -> dict[str, Any]:
                     "sourceClass": payload.get("sourceClass"),
                     "consumer": payload.get("consumer"),
                     "priority": _number(payload.get("priority")),
+                    "artifactReadMode": payload.get("artifactReadMode"),
+                    "memoryCacheHit": payload.get("memoryCacheHit"),
+                    "memoryCacheJoined": payload.get("memoryCacheJoined"),
+                    "artifactMaterializeMicros": _number(
+                        payload.get("artifactMaterializeMicros")
+                    ),
+                    "hotCacheEntries": _number(payload.get("hotCacheEntries")),
+                    "hotCacheBytes": _number(payload.get("hotCacheBytes")),
                     "bytes": _number(payload.get("bytes")),
                     "chunks": _number(payload.get("chunks")),
                     "openMicros": _number(payload.get("openMicros")),
@@ -339,6 +347,22 @@ def summarize(path: Path) -> dict[str, Any]:
         "taskFailures": failures,
         "sourceReadCount": len(source_reads),
         "sourceReadMicros": _stats([row["streamMicros"] for row in source_reads]),
+        "sourceReadModeCounts": dict(
+            Counter(
+                str(row["artifactReadMode"])
+                for row in source_reads
+                if row["artifactReadMode"] is not None
+            )
+        ),
+        "sourceMemoryCacheHits": sum(
+            1 for row in source_reads if row["memoryCacheHit"] is True
+        ),
+        "sourceMemoryCacheJoins": sum(
+            1 for row in source_reads if row["memoryCacheJoined"] is True
+        ),
+        "sourceArtifactMaterializeMicros": _stats(
+            [row["artifactMaterializeMicros"] for row in source_reads]
+        ),
         "sourceReadSchedulerWaitMicros": _stats(
             [row["readSchedulerWaitMicros"] for row in source_reads]
         ),
@@ -388,6 +412,10 @@ def main() -> None:
         f"maxConcurrent={report['sourceMaxConcurrentReads']} "
         f"scope={report['sourceConcurrencyScope']} "
         f"schedulerWait={report['sourceReadSchedulerWaitMicros']} "
+        f"modes={report['sourceReadModeCounts']} "
+        f"memoryHits={report['sourceMemoryCacheHits']} "
+        f"memoryJoins={report['sourceMemoryCacheJoins']} "
+        f"materialize={report['sourceArtifactMaterializeMicros']} "
         f"stream={report['sourceReadMicros']} "
         f"firstChunk={report['sourceFirstChunkMicros']} "
         f"maxGap={report['sourceMaxChunkGapMicros']}"
@@ -423,6 +451,10 @@ def main() -> None:
             "  "
             f"t={row['t']} source={row['source']} class={row['sourceClass']} "
             f"consumer={row['consumer']} priority={row['priority']} "
+            f"mode={row['artifactReadMode']} memoryHit={row['memoryCacheHit']} "
+            f"joined={row['memoryCacheJoined']} "
+            f"materialize={row['artifactMaterializeMicros']} "
+            f"hotEntries={row['hotCacheEntries']} hotBytes={row['hotCacheBytes']} "
             f"bytes={row['bytes']} chunks={row['chunks']} "
             f"schedulerWait={row['readSchedulerWaitMicros']} "
             f"schedulerMaxWait={row['readSchedulerMaxWaitMicros']} "

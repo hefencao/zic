@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
@@ -476,6 +477,7 @@ final class MemoryChapterDownloadService
           yield Uint8List.sublistView(bytes, offset, chunkEnd);
         }
       },
+      readAll: () async => bytes,
     );
   }
 
@@ -1058,39 +1060,27 @@ final class PersistentChapterDownloadService
     final session = _registry.get(
       _downloadId(manifest, manifest.pages[pageIndex]),
     );
-    await session.restore(verifyPromotedChecksum: false);
-    if (session.state != DownloadState.promoted) {
+    final artifact = await _promotedArtifactForRead(session);
+    if (artifact == null) {
       throw StateError('requested page is not downloaded');
     }
-    return session.artifact.readBytes();
+    return artifact.readBytes();
   }
 
   @override
   Future<Uint8List?> readArtifact(DownloadId id) async {
     _requireOpen();
     final session = _registry.get(id);
-    if (session.activeRun || session.hasWriter) {
-      return null;
-    }
-    await session.restore(verifyPromotedChecksum: false);
-    if (session.state != DownloadState.promoted) {
-      return null;
-    }
-    return session.artifact.readBytes();
+    final artifact = await _promotedArtifactForRead(session);
+    return artifact?.readBytes();
   }
 
   @override
   Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async {
     _requireOpen();
     final session = _registry.get(id);
-    if (session.activeRun || session.hasWriter) {
-      return null;
-    }
-    await session.restore(verifyPromotedChecksum: false);
-    if (session.state != DownloadState.promoted) {
-      return null;
-    }
-    final artifact = session.artifact;
+    final artifact = await _promotedArtifactForRead(session);
+    if (artifact == null) return null;
     final length = artifact.committedLength;
     return ArtifactCacheStreamEntry(
       length: length,
@@ -1099,7 +1089,21 @@ final class PersistentChapterDownloadService
         start: start,
         endExclusive: endExclusive,
       ),
+      readAll: artifact.readBytes,
     );
+  }
+
+  Future<Artifact?> _promotedArtifactForRead(DownloadSession session) async {
+    if (session.activeRun || session.hasWriter) {
+      return null;
+    }
+    final artifact = session.artifact;
+    if (artifact.state == ArtifactState.promoted &&
+        await File(artifact.finalPath).exists()) {
+      return artifact;
+    }
+    final restored = await artifact.restore(verifyPromotedChecksum: false);
+    return restored.state == ArtifactState.promoted ? artifact : null;
   }
 
   @override

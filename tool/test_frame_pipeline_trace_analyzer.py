@@ -73,9 +73,15 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
             "sessionId": "reader-a",
             "kind": "sourceRead",
             "payload": {
-                "source": "artifact-cache-stream",
+                "source": "artifact-read-all",
                 "sourceClass": "persistent-artifact",
                 "consumer": "session-copy",
+                "artifactReadMode": "read-all",
+                "memoryCacheHit": False,
+                "memoryCacheJoined": False,
+                "artifactMaterializeMicros": 1500,
+                "hotCacheEntries": 1,
+                "hotCacheBytes": 1048576,
                 "bytes": 1048576,
                 "chunks": 1,
                 "firstChunkMicros": 2000,
@@ -128,6 +134,11 @@ assert report["sourceReadCount"] == 1
 assert report["processClock"] is False
 assert report["sourceConcurrencyScope"] == "per-session-legacy-clock"
 assert report["sourceReadMicros"]["max"] == 3000
+assert report["sourceReadModeCounts"] == {"read-all": 1}
+assert report["sourceMemoryCacheHits"] == 0
+assert report["sourceMemoryCacheJoins"] == 0
+assert report["sourceArtifactMaterializeMicros"]["max"] == 1500
+assert report["sourceReads"][0]["hotCacheEntries"] == 1
 assert report["taskFailureCount"] == 1
 assert report["taskFailures"][0]["executionMicros"] == 5000
 assert report["frames"][0]["frame"] == 0

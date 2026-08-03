@@ -7,6 +7,7 @@ import 'package:transport/transport.dart';
 
 import 'artifact_cache_read_scheduler.dart';
 import 'artifact_cache_store.dart';
+import 'promoted_artifact_byte_cache.dart';
 import 'promoted_artifact_read_pool.dart';
 
 /// Read-through transport for already-promoted page artifacts.
@@ -21,6 +22,7 @@ final class ArtifactCacheTransport implements Transport {
     required Iterable<MapEntry<Uri, DownloadId>> identities,
     required Transport Function(Uri uri) fallbackFor,
     PromotedArtifactReadPool? readPool,
+    PromotedArtifactByteCache? byteCache,
     ArtifactCacheReadScheduler? readScheduler,
     int Function(DownloadId id)? demandPriority,
     MonoClock? clock,
@@ -31,6 +33,7 @@ final class ArtifactCacheTransport implements Transport {
         _identities = _uniqueIdentities(identities),
         _fallbackFor = fallbackFor,
         _readPool = readPool,
+        _byteCache = byteCache,
         _readScheduler = readScheduler,
         _demandPriority = demandPriority,
         _clock = clock,
@@ -50,6 +53,7 @@ final class ArtifactCacheTransport implements Transport {
   final Map<String, DownloadId> _identities;
   final Transport Function(Uri uri) _fallbackFor;
   final PromotedArtifactReadPool? _readPool;
+  final PromotedArtifactByteCache? _byteCache;
   final ArtifactCacheReadScheduler? _readScheduler;
   final int Function(DownloadId id)? _demandPriority;
   final MonoClock? _clock;
@@ -78,6 +82,18 @@ final class ArtifactCacheTransport implements Transport {
                   .clamp(0, 1 << 62)
                   .toInt();
           if (entry != null) {
+            final foregroundResponse = await _foregroundArtifactResponse(
+              id: id,
+              uri: uri,
+              entry: entry,
+              range: range,
+              validators: validators,
+              revision: revision,
+              openMicros: readMicros,
+            );
+            if (foregroundResponse != null) {
+              return foregroundResponse;
+            }
             final cachedResponse = _streamedCachedResponse(
               id: id,
               entry: entry,
@@ -217,6 +233,156 @@ final class ArtifactCacheTransport implements Transport {
     );
   }
 
+  Future<ByteResponse?> _foregroundArtifactResponse({
+    required DownloadId id,
+    required Uri uri,
+    required ArtifactCacheStreamEntry entry,
+    required ByteRange? range,
+    required Validators? validators,
+    required int? revision,
+    required int? openMicros,
+  }) async {
+    final byteCache = _byteCache;
+    final readAll = entry.readAll;
+    if (byteCache == null || readAll == null) return null;
+    final scheduler = _readScheduler;
+    final foregroundPriority = scheduler?.foregroundPriority ?? 900;
+    final requestedPriority = _demandPriority?.call(id) ?? 0;
+    if (requestedPriority < foregroundPriority) return null;
+
+    var schedulerWaitMicros = 0;
+    var schedulerAcquires = 0;
+    var schedulerForegroundAcquires = 0;
+    var acquiredPriority = requestedPriority;
+    ArtifactCacheReadLease? lease;
+    final materializeStarted = _clock?.nowMicros();
+    PromotedArtifactByteRead read;
+    try {
+      final cached = byteCache.lookup(id, length: entry.length);
+      if (cached != null) {
+        read = PromotedArtifactByteRead(
+          bytes: cached,
+          memoryHit: true,
+          joined: false,
+        );
+      } else {
+        if (scheduler != null) {
+          final wait = Stopwatch()..start();
+          lease = await scheduler.acquire(
+            priority: () => _demandPriority?.call(id) ?? requestedPriority,
+          );
+          schedulerWaitMicros = wait.elapsedMicroseconds;
+          schedulerAcquires = 1;
+          schedulerForegroundAcquires = lease.foreground ? 1 : 0;
+          acquiredPriority = lease.priority;
+        }
+        read = await byteCache.read(
+          id: id,
+          length: entry.length,
+          loader: readAll,
+        );
+      }
+    } on Object catch (error) {
+      _recordForegroundReadFailure(
+        id: id,
+        uri: uri,
+        revision: revision,
+        error: error,
+        materializeStarted: materializeStarted,
+      );
+      return null;
+    } finally {
+      lease?.release();
+    }
+    final bytes = read.bytes;
+    final materializeMicros = materializeStarted == null
+        ? null
+        : (_clock!.nowMicros() - materializeStarted)
+            .clamp(0, 1 << 62)
+            .toInt();
+    final response = _cachedResponse(
+      id: id,
+      bytes: bytes,
+      range: range,
+      validators: validators,
+    );
+    if (response == null) return null;
+    final source = read.memoryHit
+        ? 'artifact-byte-cache'
+        : 'artifact-read-all';
+    final details = <String, Object?>{
+      'artifactReadMode': read.memoryHit
+          ? 'memory-hit'
+          : read.joined
+              ? 'joined-read-all'
+              : 'read-all',
+      'memoryCacheHit': read.memoryHit,
+      'memoryCacheJoined': read.joined,
+      if (materializeMicros != null)
+        'artifactMaterializeMicros': materializeMicros,
+      'readSchedulerWaitMicros': schedulerWaitMicros,
+      'readSchedulerAcquires': schedulerAcquires,
+      'readSchedulerForegroundAcquires': schedulerForegroundAcquires,
+      'hotCacheEntries': byteCache.entryCount,
+      'hotCacheBytes': byteCache.retainedBytes,
+    };
+    _recordSource(
+      source: source,
+      id: id,
+      uri: uri,
+      bytes: bytes.lengthInBytes,
+      range: range,
+      revision: revision,
+      readMicros: openMicros,
+      sourceClass: 'persistent-artifact',
+      priority: acquiredPriority,
+      details: details,
+    );
+    return _traceResponse(
+      response,
+      source: source,
+      sourceClass: 'persistent-artifact',
+      id: id,
+      uri: uri,
+      revision: revision,
+      openMicros: openMicros,
+      priority: () => acquiredPriority,
+      readDetails: () => details,
+    );
+  }
+
+
+  void _recordForegroundReadFailure({
+    required DownloadId id,
+    required Uri uri,
+    required int? revision,
+    required Object error,
+    required int? materializeStarted,
+  }) {
+    final clock = _clock;
+    if (clock == null) return;
+    _traceSink.record(
+      traceEvent(
+        clock: clock,
+        sessionId: _sessionId,
+        kind: TraceEventKind.taskFailed,
+        identityHash: id.key,
+        revision: revision,
+        payload: <String, Object?>{
+          'lane': 'artifact-cache-read-all',
+          'uri': uri.toString(),
+          'error': error.toString(),
+          'reason': error.toString(),
+          if (materializeStarted != null)
+            'readMicros': (clock.nowMicros() - materializeStarted)
+                .clamp(0, 1 << 62)
+                .toInt(),
+          'fallback': 'artifact-cache-stream',
+        },
+      ),
+    );
+  }
+
   void _recordCacheFailure({
     required DownloadId id,
     required Uri uri,
@@ -260,6 +426,7 @@ final class ArtifactCacheTransport implements Transport {
     int? statusCode,
     int? totalLength,
     int? priority,
+    Map<String, Object?> details = const <String, Object?>{},
   }) {
     final clock = _clock;
     if (clock == null) {
@@ -283,6 +450,7 @@ final class ArtifactCacheTransport implements Transport {
           if (statusCode != null) 'statusCode': statusCode,
           if (totalLength != null) 'totalLength': totalLength,
           if (priority != null) 'priority': priority,
+          ...details,
           'uriScheme': uri.scheme.isEmpty ? 'file' : uri.scheme,
           'consumer': 'session-copy',
         },
@@ -303,6 +471,7 @@ final class ArtifactCacheTransport implements Transport {
     int Function()? schedulerMaxWaitMicros,
     int Function()? schedulerAcquires,
     int Function()? schedulerForegroundAcquires,
+    Map<String, Object?> Function()? readDetails,
   }) {
     final clock = _clock;
     if (clock == null) {
@@ -374,6 +543,7 @@ final class ArtifactCacheTransport implements Transport {
               if (schedulerForegroundAcquires != null)
                 'readSchedulerForegroundAcquires':
                     schedulerForegroundAcquires(),
+              if (readDetails != null) ...readDetails(),
               'firstChunkMicros': firstChunkMicros,
               'streamMicros':
                   (clock.nowMicros() - streamStarted).clamp(0, 1 << 62).toInt(),
@@ -547,7 +717,10 @@ ByteResponse? _cachedResponse({
       : (requestedEnd + 1).clamp(start, bytes.lengthInBytes).toInt();
   final body = Uint8List.sublistView(bytes, start, endExclusive);
   return ByteResponse(
-    bytes: _chunkedBytes(body),
+    bytes: _chunkedBytes(
+      body,
+      chunkSize: promotedArtifactReadChunkBytes,
+    ),
     statusCode: canServeRange ? 206 : 200,
     rangeStart: start,
     totalLength: bytes.lengthInBytes,
@@ -556,8 +729,10 @@ ByteResponse? _cachedResponse({
   );
 }
 
-Stream<List<int>> _chunkedBytes(Uint8List bytes) async* {
-  const chunkSize = defaultTransportChunkBytes;
+Stream<List<int>> _chunkedBytes(
+  Uint8List bytes, {
+  int chunkSize = defaultTransportChunkBytes,
+}) async* {
   for (var offset = 0; offset < bytes.lengthInBytes; offset += chunkSize) {
     final end = (offset + chunkSize).clamp(0, bytes.lengthInBytes).toInt();
     yield Uint8List.sublistView(bytes, offset, end);

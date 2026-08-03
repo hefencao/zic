@@ -996,7 +996,8 @@ def check_compile_regressions() -> None:
     for required in (
         'readPool.cache',
         "'consumer': 'session-copy'",
-        '_chunkedBytes(body)',
+        '_chunkedBytes(',
+        'chunkSize: promotedArtifactReadChunkBytes',
         '_fnv64String(id.key)',
         "'fallback': 'origin'",
     ):

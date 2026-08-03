@@ -23,8 +23,7 @@ final class EphemeralCacheWorkspace {
   final String rootPath;
   final CacheLayout layout;
 
-  Future<Uint8List> readArtifact(Artifact artifact) =>
-      File(artifact.finalPath).readAsBytes();
+  Future<Uint8List> readArtifact(Artifact artifact) => artifact.readBytes();
 
   Future<void> dispose() async {
     final root = Directory(rootPath);

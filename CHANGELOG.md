@@ -1,3 +1,11 @@
+## 0.31.0-dev.105：直接 promoted artifact 读取与 encoded-byte 热缓存
+
+- persistent cache 命中不再调用 `DownloadSession.restore()` 执行 metadata/prefix sniff、SQLite cache sync 和状态通知；只恢复 artifact 元数据并直接读取 promoted file。
+- 大于 1 MiB 的 promoted file 参考 VibeVenera，在 isolate 中执行整文件同步读取；current/transition 使用快速路径，background 继续 1 MiB chunk quantum。
+- 新增 composition-shared encoded-byte LRU：默认 4 项/96 MiB、并发读取合并、快速 Reader 重进复用；不拥有 demand/decode/upload 状态。
+- 快速读取失败回退同一 artifact stream，不错误转向 origin；Trace 增加 read mode、memory hit/join、materialize 和 hot-cache 容量。
+- 新增 ADR 0089、dev.105 audit、owner tests 与静态 ownership gate；稳定 README/Architecture/Spec 未修改。
+
 ## 0.31.0-dev.104：分块 Artifact 调度与 retained cursor 连续性
 
 - persistent artifact scheduler 从整条 stream lease 改为 chunk quantum；foreground 连续读取，foreground 压力期 background 同时最多占一个槽。

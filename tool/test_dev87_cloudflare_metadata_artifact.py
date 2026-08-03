@@ -104,8 +104,8 @@ def main() -> None:
     )
     require(
         "packages/downloads/lib/src/chapter_downloads.dart",
-        "session.restore(verifyPromotedChecksum: false)",
-        "return session.artifact.readBytes();",
+        "artifact.restore(verifyPromotedChecksum: false)",
+        "return artifact.readBytes();",
     )
     require(
         "apps/app/test/source_browser_test.dart",

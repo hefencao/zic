@@ -213,6 +213,84 @@ void main() {
     await iterator.cancel();
   });
 
+  test('foreground read-all populates and reuses the shared byte cache',
+      () async {
+    final uri = Uri.parse('https://example.invalid/hot-page.bin');
+    final id = _downloadId(uri, 'page-hot');
+    final bytes = Uint8List(promotedArtifactReadChunkBytes + 17);
+    final cache = _StreamingArtifactStore(id, bytes, exposeReadAll: true);
+    final byteCache = PromotedArtifactByteCache();
+    final trace = MemoryTraceSink();
+    final transport = ArtifactCacheTransport(
+      cache: cache,
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => _RecordingTransport(Uint8List(0)),
+      byteCache: byteCache,
+      readScheduler: ArtifactCacheReadScheduler(maxActive: 3),
+      demandPriority: (_) => 1000,
+      clock: _Clock(),
+      traceSink: trace,
+    );
+
+    final first = await (await transport.open(uri)).bytes
+        .map((chunk) => chunk.length)
+        .toList();
+    final second = await (await transport.open(uri)).bytes
+        .map((chunk) => chunk.length)
+        .toList();
+
+    expect(first, <int>[promotedArtifactReadChunkBytes, 17]);
+    expect(second, first);
+    expect(cache.readAllCalls, 1);
+    expect(cache.streamOpens, 2);
+    expect(byteCache.entryCount, 1);
+    final sources = trace.events
+        .where((event) => event.kind == TraceEventKind.artifactSource)
+        .map((event) => event.payload['source'])
+        .toList();
+    expect(sources, <Object?>['artifact-read-all', 'artifact-byte-cache']);
+    final reads = trace.events
+        .where((event) => event.kind == TraceEventKind.sourceRead)
+        .toList();
+    expect(reads[0].payload['artifactReadMode'], 'read-all');
+    expect(reads[1].payload['artifactReadMode'], 'memory-hit');
+    expect(reads[1].payload['readSchedulerAcquires'], 0);
+  });
+
+  test('read-all failure falls back to the artifact stream, not origin',
+      () async {
+    final uri = Uri.parse('https://example.invalid/read-all-failure.bin');
+    final id = _downloadId(uri, 'page-read-all-failure');
+    final bytes = Uint8List.fromList(<int>[1, 2, 3, 4]);
+    final cache = _StreamingArtifactStore(
+      id,
+      bytes,
+      exposeReadAll: true,
+      failReadAll: true,
+    );
+    final fallback = _RecordingTransport(Uint8List.fromList(<int>[9]));
+    final trace = MemoryTraceSink();
+    final transport = ArtifactCacheTransport(
+      cache: cache,
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => fallback,
+      byteCache: PromotedArtifactByteCache(),
+      readScheduler: ArtifactCacheReadScheduler(),
+      demandPriority: (_) => 1000,
+      clock: _Clock(),
+      traceSink: trace,
+    );
+
+    expect(await _collect(await transport.open(uri)), <int>[1, 2, 3, 4]);
+    expect(fallback.opens, 0);
+    expect(cache.readAllCalls, 1);
+    final failure = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.taskFailed,
+    );
+    expect(failure.payload['lane'], 'artifact-cache-read-all');
+    expect(failure.payload['fallback'], 'artifact-cache-stream');
+  });
+
   test('rejects a read pool backed by another cache', () {
     final uri = Uri.parse('https://example.invalid/pool-mismatch.bin');
     final id = _downloadId(uri, 'page-pool-mismatch');
@@ -403,12 +481,20 @@ final class _MemoryArtifactStore implements ArtifactCacheStore {
 
 final class _StreamingArtifactStore
     implements ArtifactCacheStore, ArtifactCacheStreamStore {
-  _StreamingArtifactStore(this.id, this.bytes);
+  _StreamingArtifactStore(
+    this.id,
+    this.bytes, {
+    this.exposeReadAll = false,
+    this.failReadAll = false,
+  });
 
   final DownloadId id;
   final Uint8List bytes;
+  final bool exposeReadAll;
+  final bool failReadAll;
   int fullReads = 0;
   int streamOpens = 0;
+  int readAllCalls = 0;
 
   @override
   Future<Uint8List?> readArtifact(DownloadId id) async {
@@ -432,6 +518,13 @@ final class _StreamingArtifactStore
           yield Uint8List.sublistView(bytes, offset, chunkEnd);
         }
       },
+      readAll: exposeReadAll
+          ? () async {
+              readAllCalls++;
+              if (failReadAll) throw StateError('read-all fixture failure');
+              return bytes;
+            }
+          : null,
     );
   }
 

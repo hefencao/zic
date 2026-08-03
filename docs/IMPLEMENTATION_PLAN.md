@@ -6,57 +6,34 @@
 
 1. 只以最近交付的完整 ZIP 为代码基线。
 2. 先恢复编译闭包，再修产品错误和性能问题。
-3. 每项改动必须落在真正所有者；App 和 Reader 不建立竞争实现。
-4. 公共 API 修改必须一次迁移全部生产和测试调用方。
-5. 优化必须有可比较的 Trace、基准或设备证据；不得缩小 7/3、2/1 或 lane 5/3/2 掩盖错误。
-6. 静态门禁不能替代 Flutter、Android 或设备验证。
-7. 每轮默认只更新 Status、Handoff、CHANGELOG 和 audit；稳定合同未变化时不修改 Architecture/Spec。
+3. 改动落在真正所有者；App 和 Reader 不建立竞争缓存、session 或 texture 实现。
+4. 优化必须有可比较的 Trace 或设备证据；不得缩小 7/3、2/1 或 lane 5/3/2 掩盖错误。
+5. 每轮默认只更新 Status、Handoff、CHANGELOG 和 audit；稳定合同未变化时不修改 Architecture/Spec。
 
-## P0：前帧播放链设备闭环
+## P0：promoted artifact 读取设备闭环
 
-下一步：
+- 在同一设备/fixture 采集 dev.105 首次进入、快速退出重进和未稳定时切页 Trace；
+- 验证 current/transition 出现 `artifactReadMode=read-all`，重进出现 `memory-hit`；
+- 比较 open、materialize、first chunk、完整 stream 和 source wait；
+- 确认 cache hit 不再执行多余的 DownloadSession restore/prefix/index 状态链，也没有回退原始 `content://`；
+- 观察 4 项/96 MiB cache 的淘汰是否符合当前/transition 工作集。
 
-- 在相同设备和 WebP fixture 上采集 dev.104 Trace，覆盖刚进入 Reader、尚未稳定时切页和稳定后频繁切页；
-- 验证 `readSchedulerAcquires`、`readSchedulerForegroundAcquires`、background quantum 数和 current first-chunk/source-wait；
-- 检查新 current 的 frame 序列，确认 retained frame 后直接进入 frame 1，不再重复上传 frame 0；
-- 继续关联 current decode failure 的 source epoch、frame、worker 和 native 错误；
-- 复验 50% 交接、前 12 帧和页面回切。
+退出条件：数秒级文件读取长尾显著下降，快速重进不重复读取同一 promoted artifact，且首帧不因整文件快速路径退化。
 
-退出条件：启动阶段没有由 background 全量复制造成的 current 饥饿；新 current 连续播放；50% 交接无黑屏和同 identity 重载。
+## P0：前帧播放与切页连续性
+
+- 继续复验 current/transition 50% 交接、retained cursor 和新页自动播放；
+- 关联 remaining current decode failure 的 source epoch、frame、worker 与 native 错误；
+- 确认预解码实际产生 successor，而不是只完成 encoded-byte 预读。
 
 ## P0：Flutter 与 Android 验证闭包
 
-下一步：
-
-- 运行 `flutter analyze`；
-- 运行受影响 package tests 和 App tests，确认 quarantine 与 cold-open 修复；
-- 构建 Android debug/release；
-- 区分产品错误、测试错误和环境错误，不以改产品逻辑迎合过时测试。
-
-退出条件：结果进入 validation audit；所有失败均有明确所有者和处理结论。
-
-## P1：共享 artifact stream 设备验证
-
-下一步：
-
-- 从具有进程级时钟和 session lifecycle 的 Trace 读取 `readSchedulerWaitMicros`、priority、页面角色和跨 session 最大并发；
-- 验证总并发不超过 5；foreground 压力期 background chunk 同时最多占 1，压力消失后可恢复全部容量；
-- 验证 background→current 在下一 chunk 原地晋升，不取消、不重开同一 artifact stream；
-- 比较 source first-chunk、stream 和 current source-wait 的变化。
-
-退出条件：共享调度行为与 Pipeline demand 一致，且没有引入 current starvation 或预下载退化。
+运行 `flutter analyze`、受影响 package/App tests、Android debug/release；失败必须区分产品、测试和环境所有者。
 
 ## P1：解除 Source Browser quarantine
 
-当前登记：`Q-001`、`Q-002`、`Q-003`。
-
-下一步：为 locator refresh、persisted Venera refresh 和 transient retry 建立直接 facade/widget harness，移除对主页、lazy list 和真实网络时序的依赖。
-
-退出条件：对应测试不再 `skip`，失败能直接指向 owner。
+为 `Q-001` 至 `Q-003` 建立直接 facade/widget harness，移除主页、lazy list 和真实网络时序依赖。
 
 ## 每轮收尾
 
-1. 全仓引用搜索并删除死兼容层。
-2. 执行当前环境可用的门禁和目标测试。
-3. 更新 Status、Handoff、CHANGELOG 和本轮 audit。
-4. 干净打包，并从 ZIP 独立解压复验。
+全仓引用搜索、可用门禁、Status/Handoff/CHANGELOG/audit 更新、干净打包与 ZIP 独立解压复验。

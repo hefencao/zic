@@ -6,6 +6,34 @@ import 'package:pipeline_runtime/pipeline_runtime.dart';
 import 'package:telemetry/telemetry.dart';
 
 void main() {
+  test('factory clones retain the composition-owned artifact byte cache', () {
+    final factory = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(_Runtime()),
+    );
+
+    expect(
+      identical(
+        factory.artifactByteCache,
+        factory.withLoaderSources(factory.loaderSources).artifactByteCache,
+      ),
+      isTrue,
+    );
+    expect(
+      identical(
+        factory.artifactByteCache,
+        factory.withArtifactCache(null).artifactByteCache,
+      ),
+      isTrue,
+    );
+    expect(
+      identical(
+        factory.artifactByteCache,
+        factory.withBytesLoader(null).artifactByteCache,
+      ),
+      isTrue,
+    );
+  });
+
   test('Reader session owns and closes one atomic media runtime', () async {
     final runtime = _Runtime();
     final factory = _Factory(runtime);

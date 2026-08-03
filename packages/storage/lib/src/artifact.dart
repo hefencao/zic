@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
@@ -230,6 +231,10 @@ final class Artifact {
     final path = _state == ArtifactState.promoted ? finalPath : partialPath;
     final file = File(path);
     if (!await file.exists()) return Uint8List(0);
+    final length = await file.length();
+    if (length > 1024 * 1024) {
+      return Isolate.run(() => File(path).readAsBytesSync());
+    }
     return file.readAsBytes();
   }
 

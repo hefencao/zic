@@ -28,6 +28,7 @@ final class ArtifactCacheStreamEntry {
   const ArtifactCacheStreamEntry({
     required this.length,
     required this.open,
+    this.readAll,
   });
 
   final int length;
@@ -35,6 +36,11 @@ final class ArtifactCacheStreamEntry {
     required int start,
     int? endExclusive,
   }) open;
+
+  /// Optional optimized complete-file read used only for foreground pages.
+  /// Implementations should avoid repeated async chunk dispatch and return
+  /// immutable bytes owned by the caller/cache.
+  final Future<Uint8List> Function()? readAll;
 }
 
 /// Optional persistent-store capability used by Reader DownloadSession.

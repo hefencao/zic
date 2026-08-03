@@ -148,6 +148,20 @@ void main() {
     expect(restored, bytes.sublist(250000, 550000));
   });
 
+  test('reads a promoted file larger than one MiB exactly', () async {
+    final artifact = createArtifact();
+    final bytes = List<int>.generate(
+      1024 * 1024 + 257,
+      (index) => index & 0xff,
+    );
+    await artifact.restore();
+    await artifact.append(0, bytes);
+    await artifact.seal(expectedLength: bytes.length);
+    await artifact.promote();
+
+    expect(await artifact.readBytes(), bytes);
+  });
+
   test('fast promoted restore trusts atomic metadata and reads once', () async {
     final first = createArtifact();
     final bytes = List<int>.generate(1024, (index) => index & 0xff);
