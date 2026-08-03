@@ -1,3 +1,12 @@
+## dev.100 执行计划
+
+- [x] 逐项审计错误报告 51，区分编译、产品、性能和测试错误。
+- [x] 删除重复/过时断言，修正测试编译闭包和相反期望。
+- [x] 建立 test quarantine 文档、有限 allow-list 和 repository 门禁。
+- [x] 用前一帧 deadline 拆分 decode lead 与 upload backpressure，并更新离线 analyzer。
+- [x] 预热 Android texture；保持 schedule-before-reply，删除第二次 main-thread result post。
+- [ ] 在具备 Flutter/Android 工具链的环境运行被影响 package tests、App tests、analyze 和设备 trace。
+
 ## dev.99 已实施计划
 
 1. 从 dev.98 trace 重建前帧时序并分类错误报告。

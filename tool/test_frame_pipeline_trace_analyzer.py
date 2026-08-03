@@ -24,7 +24,12 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
                 "dominantStage": "workerReady",
                 "dominantStageMicros": 300000,
                 "workerReadyMicros": 300000,
+                "decodedAtMicros": 600000,
+                "uploadStartedAtMicros": 640000,
+                "decodedToUploadMicros": 40000,
                 "platformOtherMicros": 12000,
+                "presentedAtMicros": 1000000,
+                "durationMicros": 100000,
                 "endToEndMicros": 410000,
                 "presentMicros": 50000,
                 "presentationPath": "platform",
@@ -45,9 +50,14 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
                 "cycle": 0,
                 "presentationOrdinal": 1,
                 "traceReason": "startup",
-                "dominantStage": "nativeDecode",
-                "dominantStageMicros": 90000,
+                "dominantStage": "decodedToUpload",
+                "dominantStageMicros": 950000,
+                "decodedAtMicros": 200000,
+                "uploadStartedAtMicros": 1150000,
+                "decodedToUploadMicros": 950000,
                 "nativeDecodeMicros": 90000,
+                "presentedAtMicros": 1200000,
+                "durationMicros": 100000,
                 "endToEndMicros": 120000,
                 "presentMicros": 20000,
                 "presentationPath": "platform",
@@ -96,14 +106,22 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
 
 assert report["eventCount"] == 2
 assert report["reasonCounts"] == {"startup+stall": 1, "startup": 1}
+assert report["recordedDominantStageCounts"] == {
+    "workerReady": 1,
+    "decodedToUpload": 1,
+}
 assert report["dominantStageCounts"] == {"workerReady": 1, "nativeDecode": 1}
 assert report["endToEndMicros"]["p50"] == 120000
 assert report["endToEndMicros"]["max"] == 410000
 assert report["stages"]["workerReadyMicros"]["max"] == 300000
 assert report["stages"]["platformOtherMicros"]["max"] == 12000
+assert report["stages"]["decodedLeadMicros"]["max"] == 900000
+assert report["stages"]["uploadBackpressureMicros"]["max"] == 50000
 assert report["sourceReadCount"] == 1
 assert report["sourceReadMicros"]["max"] == 3000
 assert report["taskFailureCount"] == 1
 assert report["taskFailures"][0]["executionMicros"] == 5000
 assert report["frames"][0]["frame"] == 0
+assert report["frames"][1]["recordedDominantStage"] == "decodedToUpload"
+assert report["frames"][1]["dominantStage"] == "nativeDecode"
 print("frame pipeline trace analyzer: OK")

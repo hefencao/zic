@@ -20,6 +20,8 @@ STAGE_FIELDS = (
     "nativeDecodeMicros",
     "nativeMetadataMicros",
     "decodedToUploadMicros",
+    "decodedLeadMicros",
+    "uploadBackpressureMicros",
     "uploadLaneQueueMicros",
     "outputPrepareMicros",
     "outputReadyToPresentMicros",
@@ -34,6 +36,34 @@ STAGE_FIELDS = (
     "channelDispatchMicros",
     "fallbackDecodeMicros",
 )
+
+# These fields are mutually attributable enough to select a useful bottleneck.
+# decodedLead is intentional successor work, decodedToUpload contains that lead,
+# and platformUpload overlaps the platform sub-stages, so none of those three
+# participates directly in dominant-stage selection.
+DOMINANT_STAGE_FIELDS = {
+    "workerReady": "workerReadyMicros",
+    "decodeLaneQueue": "decodeLaneQueueMicros",
+    "sourceWait": "sourceWaitMicros",
+    "cursorCreate": "cursorCreateMicros",
+    "workerQueue": "workerQueueMicros",
+    "decodeDispatch": "decodeDispatchMicros",
+    "nativeDecode": "nativeDecodeMicros",
+    "nativeMetadata": "nativeMetadataMicros",
+    "uploadBackpressure": "uploadBackpressureMicros",
+    "uploadLaneQueue": "uploadLaneQueueMicros",
+    "outputPrepare": "outputPrepareMicros",
+    "outputReadyToPresent": "outputReadyToPresentMicros",
+    "platformQueue": "platformQueueMicros",
+    "platformOther": "platformOtherMicros",
+    "platformRetain": "platformRetainMicros",
+    "platformBlit": "platformBlitMicros",
+    "platformSchedule": "platformScheduleMicros",
+    "platformReplace": "platformReplaceMicros",
+    "platformResultDispatch": "platformResultDispatchMicros",
+    "channelDispatch": "channelDispatchMicros",
+    "fallbackDecode": "fallbackDecodeMicros",
+}
 
 
 def _number(value: Any) -> int:
@@ -70,8 +100,41 @@ def _events(path: Path) -> Iterable[dict[str, Any]]:
                 yield event
 
 
+def _normalized_waits(
+    payload: dict[str, Any],
+    previous_due_micros: int | None,
+) -> tuple[int, int]:
+    raw_wait = _number(payload.get("decodedToUploadMicros"))
+    if "decodedLeadMicros" in payload or "uploadBackpressureMicros" in payload:
+        return (
+            _number(payload.get("decodedLeadMicros")),
+            _number(payload.get("uploadBackpressureMicros")),
+        )
+
+    decoded_at = _number(payload.get("decodedAtMicros"))
+    upload_started = _number(payload.get("uploadStartedAtMicros"))
+    if decoded_at <= 0 or upload_started <= 0:
+        return 0, raw_wait
+    if previous_due_micros is None:
+        return 0, max(0, upload_started - decoded_at)
+
+    lead = max(0, min(raw_wait, previous_due_micros - decoded_at))
+    backpressure_start = max(decoded_at, previous_due_micros)
+    backpressure = max(0, upload_started - backpressure_start)
+    return lead, backpressure
+
+
+def _dominant(payload: dict[str, Any]) -> tuple[str, int]:
+    pairs = (
+        (name, _number(payload.get(field)))
+        for name, field in DOMINANT_STAGE_FIELDS.items()
+    )
+    return max(pairs, key=lambda item: item[1], default=("unknown", 0))
+
+
 def summarize(path: Path) -> dict[str, Any]:
     dominant = Counter()
+    recorded_dominant = Counter()
     reasons = Counter()
     paths = Counter()
     stages: dict[str, list[int]] = defaultdict(list)
@@ -80,6 +143,7 @@ def summarize(path: Path) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     source_reads: list[dict[str, Any]] = []
+    next_due_by_session: dict[str, int] = {}
 
     for event in _events(path):
         kind = event.get("kind")
@@ -87,11 +151,36 @@ def summarize(path: Path) -> dict[str, Any]:
         if not isinstance(payload, dict):
             payload = {}
         if kind == "framePipelineTiming":
-            dominant[str(payload.get("dominantStage", "unknown"))] += 1
+            session_id = str(event.get("sessionId", ""))
+            previous_due = (
+                None
+                if _number(payload.get("presentationOrdinal")) == 0
+                else next_due_by_session.get(session_id)
+            )
+            lead, backpressure = _normalized_waits(payload, previous_due)
+            normalized_payload = dict(payload)
+            normalized_payload["decodedLeadMicros"] = lead
+            normalized_payload["uploadBackpressureMicros"] = backpressure
+            platform_upload = _number(payload.get("platformUploadMicros"))
+            if platform_upload > 0:
+                normalized_payload["platformOtherMicros"] = max(
+                    0,
+                    platform_upload
+                    - _number(payload.get("platformQueueMicros"))
+                    - _number(payload.get("platformRetainMicros"))
+                    - _number(payload.get("platformBlitMicros"))
+                    - _number(payload.get("platformScheduleMicros"))
+                    - _number(payload.get("platformReplaceMicros")),
+                )
+            normalized_stage, normalized_stage_micros = _dominant(normalized_payload)
+            recorded_stage = str(payload.get("dominantStage", "unknown"))
+
+            dominant[normalized_stage] += 1
+            recorded_dominant[recorded_stage] += 1
             reasons[str(payload.get("traceReason", "unknown"))] += 1
             paths[str(payload.get("presentationPath", "unknown"))] += 1
             for field in STAGE_FIELDS:
-                stages[field].append(_number(payload.get(field)))
+                stages[field].append(_number(normalized_payload.get(field)))
             end_to_end.append(_number(payload.get("endToEndMicros")))
             present.append(_number(payload.get("presentMicros")))
             rows.append(
@@ -104,15 +193,29 @@ def summarize(path: Path) -> dict[str, Any]:
                     "ordinal": payload.get("presentationOrdinal"),
                     "startupFrameOrdinal": payload.get("startupFrameOrdinal"),
                     "role": payload.get("role"),
+                    "decodedRole": payload.get("decodedRole"),
+                    "uploadRole": payload.get("uploadRole"),
                     "reason": payload.get("traceReason"),
-                    "dominantStage": payload.get("dominantStage"),
-                    "dominantStageMicros": _number(payload.get("dominantStageMicros")),
+                    "recordedDominantStage": recorded_stage,
+                    "dominantStage": normalized_stage,
+                    "dominantStageMicros": normalized_stage_micros,
+                    "decodedToUploadMicros": _number(
+                        payload.get("decodedToUploadMicros")
+                    ),
+                    "decodedLeadMicros": lead,
+                    "uploadBackpressureMicros": backpressure,
                     "endToEndMicros": _number(payload.get("endToEndMicros")),
                     "presentMicros": _number(payload.get("presentMicros")),
                     "deadlineMissMicros": _number(payload.get("deadlineMissMicros")),
                     "presentationPath": payload.get("presentationPath"),
                 }
             )
+            presented_at = _number(payload.get("presentedAtMicros"))
+            duration = _number(payload.get("durationMicros"))
+            if presented_at > 0 and duration > 0:
+                next_due_by_session[session_id] = presented_at + duration
+            elif duration <= 0:
+                next_due_by_session.pop(session_id, None)
         elif kind == "taskFailed":
             failures.append(
                 {
@@ -154,6 +257,7 @@ def summarize(path: Path) -> dict[str, Any]:
         "reasonCounts": dict(reasons),
         "presentationPathCounts": dict(paths),
         "dominantStageCounts": dict(dominant),
+        "recordedDominantStageCounts": dict(recorded_dominant),
         "endToEndMicros": _stats(end_to_end),
         "presentMicros": _stats(present),
         "stages": {field: _stats(values) for field, values in stages.items()},
@@ -186,7 +290,8 @@ def main() -> None:
     print(f"framePipelineTiming events: {report['eventCount']}")
     print(f"reasons: {report['reasonCounts']}")
     print(f"paths: {report['presentationPathCounts']}")
-    print(f"dominant stages: {report['dominantStageCounts']}")
+    print(f"recorded dominant stages: {report['recordedDominantStageCounts']}")
+    print(f"normalized dominant stages: {report['dominantStageCounts']}")
     print(f"end-to-end µs: {report['endToEndMicros']}")
     print(f"present µs: {report['presentMicros']}")
     print(
@@ -210,8 +315,13 @@ def main() -> None:
             "  "
             f"t={row['t']} session={row['sessionId']} frame={row['frame']} "
             f"cycle={row['cycle']} ordinal={row['ordinal']} role={row['role']} "
+            f"decodedRole={row['decodedRole']} uploadRole={row['uploadRole']} "
             f"reason={row['reason']} dominant={row['dominantStage']}:"
-            f"{row['dominantStageMicros']} endToEnd={row['endToEndMicros']} "
+            f"{row['dominantStageMicros']} "
+            f"recorded={row['recordedDominantStage']} "
+            f"lead={row['decodedLeadMicros']} "
+            f"backpressure={row['uploadBackpressureMicros']} "
+            f"endToEnd={row['endToEndMicros']} "
             f"present={row['presentMicros']} deadlineMiss={row['deadlineMissMicros']} "
             f"path={row['presentationPath']}"
         )

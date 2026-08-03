@@ -19,7 +19,6 @@ void main() {
     expect(plan.decodeWidth, 4);
     expect(plan.decodeHeight, 4);
     expect(plan.isDownsampled, isFalse);
-    expect(plan.isRenderUpscaled, isTrue);
     expect(plan.prefersNearestNeighbor, isTrue);
   });
 

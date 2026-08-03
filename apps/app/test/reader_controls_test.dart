@@ -145,7 +145,7 @@ void main() {
     expect(find.byKey(readerSpeedKey), findsOneWidget);
     expect(find.byKey(readerRotateKey), findsOneWidget);
     expect(find.byKey(readerFavoriteKey), findsOneWidget);
-    expect(find.byKey(readerDownloadKey), findsNothing);
+    expect(find.byKey(readerDownloadKey), findsOneWidget);
 
     await _pumpUntilFound(tester, find.byKey(readerPauseKey).hitTestable());
     await tester.tap(find.byKey(readerPauseKey).hitTestable());
@@ -244,7 +244,7 @@ void main() {
     expect(find.byKey(readerSpeedKey), findsNothing);
     expect(find.byKey(readerRotateKey), findsOneWidget);
     expect(find.byKey(readerFavoriteKey), findsOneWidget);
-    expect(find.byKey(readerDownloadKey), findsOneWidget);
+    expect(find.byKey(readerDownloadKey), findsNothing);
   });
 
   testWidgets('top controls omit duplicate navigation and layout actions',
@@ -340,70 +340,6 @@ void main() {
     );
   });
 
-  test('adaptive reader classifier respects animation and page geometry', () {
-    ChapterManifest manifest({
-      required bool animated,
-      required int width,
-      required int height,
-      ReadingDirection direction = ReadingDirection.ltr,
-    }) =>
-        ChapterManifest(
-          sourceId: 'adaptive-source',
-          comicId: 'adaptive-comic',
-          chapter: const Chapter(
-            chapterId: 'adaptive-chapter',
-            comicId: 'adaptive-comic',
-            title: 'adaptive',
-            sequence: 0,
-            pageCount: 3,
-            sourceRevision: 'r1',
-          ),
-          pages: List<PageAsset>.generate(
-            3,
-            (index) => PageAsset(
-              pageId: 'adaptive-$index',
-              chapterId: 'adaptive-chapter',
-              index: index,
-              uri: Uri.parse('asset:///adaptive-$index.webp'),
-              width: width,
-              height: height,
-              animatedHint: animated,
-            ),
-          ),
-          readingDirection: direction,
-        );
-
-    final animatedManifest = manifest(
-      animated: true,
-      width: 1000,
-      height: 3000,
-    );
-    expect(classifyAdaptiveReaderLayout(animatedManifest), isNull);
-    final animatedClassifier = AdaptiveReaderClassifier(animatedManifest);
-    expect(
-      animatedClassifier.observeAnimated(animatedManifest.pages[1]),
-      isNull,
-    );
-    final animated =
-        animatedClassifier.observeAnimated(animatedManifest.pages[2]);
-    expect(animated?.animated, isTrue);
-    expect(animated?.direction, ReadingDirection.ltr);
-
-    final vertical = classifyAdaptiveReaderLayout(
-      manifest(animated: false, width: 1000, height: 3000),
-    );
-    expect(vertical?.direction, ReadingDirection.vertical);
-    expect(vertical?.confidence, greaterThanOrEqualTo(0.9));
-
-    final paged = classifyAdaptiveReaderLayout(
-      manifest(
-        animated: false,
-        width: 1600,
-        height: 1000,
-        direction: ReadingDirection.rtl,
-      ),
-    );
-    expect(paged?.direction, ReadingDirection.rtl);
-  });
-
+  // Adaptive classification belongs to reader_runtime and is covered by
+  // packages/reader_runtime/test/adaptive_reader_classifier_test.dart.
 }

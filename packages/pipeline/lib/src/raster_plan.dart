@@ -49,22 +49,11 @@ final class RasterPlan {
   bool get isDownsampled =>
       decodeWidth < sourceWidth || decodeHeight < sourceHeight;
 
-  bool get isRenderUpscaled => !isDownsampled &&
-      display.physicalWidth >= decodeWidth &&
-      display.physicalHeight >= decodeHeight;
-
-  double get renderScale => math.min(
-        display.physicalWidth / decodeWidth,
-        display.physicalHeight / decodeHeight,
-      );
-
   /// Tiny deterministic fixtures and pixel-art-like images should be enlarged
   /// with nearest-neighbour filtering. Normal comic pages retain smooth
   /// filtering even if the viewport is slightly larger than the source.
   bool get prefersNearestNeighbor =>
-      isRenderUpscaled &&
-      math.max(sourceWidth, sourceHeight) <= 64 &&
-      renderScale >= 2;
+      !isDownsampled && math.max(sourceWidth, sourceHeight) <= 64;
 
   @override
   bool operator ==(Object other) =>

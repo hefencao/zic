@@ -134,6 +134,16 @@ final class AndroidTexturePresenter {
   static bool get isSupported =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
+  /// Exercises plugin attachment and SurfaceProducer creation before Reader
+  /// entry. The temporary lease owns no frame and is released immediately.
+  Future<void> prewarm() async {
+    if (!isSupported) {
+      return;
+    }
+    final lease = await create(width: 1, height: 1);
+    await lease.release();
+  }
+
   Future<AndroidTextureLease> create({
     required int width,
     required int height,

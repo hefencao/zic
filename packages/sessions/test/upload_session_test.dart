@@ -111,8 +111,11 @@ void main() {
     expect(pipelineTiming.payload['workerQueueMicros'], 11);
     expect(pipelineTiming.payload['nativeDecodeMicros'], 17);
     expect(pipelineTiming.payload['nativeMetadataMicros'], 19);
+    expect(pipelineTiming.payload['decodedRole'], 'current');
+    expect(pipelineTiming.payload['decodedLeadMicros'], 0);
+    expect(pipelineTiming.payload['uploadBackpressureMicros'], isA<int>());
     expect(pipelineTiming.payload['platformUploadMicros'], 200);
-    expect(pipelineTiming.payload['platformOtherMicros'], 49);
+    expect(pipelineTiming.payload['platformOtherMicros'], 26);
     expect(pipelineTiming.payload['platformResultDispatchMicros'], 43);
     expect(pipelineTiming.payload['presentationPath'], 'platform');
     final released = trace.events.singleWhere(

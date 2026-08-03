@@ -243,7 +243,6 @@ void main() {
 
     final image = tester.widget<Image>(find.byKey(webpFlutterPreviewKey));
     expect(image.image, isNot(isA<ResizeImage>()));
-    expect(image.filterQuality, FilterQuality.none);
     expect(image.isAntiAlias, isFalse);
 
     await tester.pumpWidget(const SizedBox.shrink());

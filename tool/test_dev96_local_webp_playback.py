@@ -43,7 +43,8 @@ forbid(
 require(
     'packages/pipeline_native/lib/src/native_pipeline_media_runtime.dart',
     'NativePipelineMediaRuntimeFactory() {',
-    'Future<void> prewarm() => prewarmNativeDecodeWorkers();',
+    'prewarmNativeDecodeWorkers(),',
+    'AndroidTexturePresenter().prewarm(),',
 )
 require(
     'apps/app/lib/webp_demo.dart',
@@ -53,7 +54,7 @@ require(
 require(
     'apps/app/lib/main.dart',
     'await prewarmDefaultLocalMediaPipeline();',
-    "debugPrint('native decode worker prewarm unavailable: $error');",
+    "debugPrint('native media prewarm unavailable: $error');",
     'runApp(const _BootstrapApp());',
 )
 require(
@@ -202,7 +203,7 @@ require(
     '## 所有权清单',
     '## 被否决方案清单',
 )
-require('apps/app/pubspec.yaml', 'version: 0.31.0+99')
+require('apps/app/pubspec.yaml', 'version: 0.31.0+100')
 require('docs/adr/0080-local-webp-resident-single-thread-playback.md', '0.31.0-dev.96')
 require('tool/check.sh', 'test_dev96_local_webp_playback.py')
 print('dev.96 resident single-thread local WebP playback ownership: OK')

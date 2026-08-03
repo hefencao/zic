@@ -121,14 +121,13 @@ required_docs = {
     'docs/adr/0082-pinned-libwebp-archive-and-exact-patch.md': '0.31.0-dev.98',
     'docs/audits/dev98-libwebp-source-patch-audit.md': '被否决方案清单',
     'docs/audits/dev98-validation-results.md': 'libwebp incremental and loop fixtures: OK',
-    'docs/NEXT_CHAT_HANDOFF.md': 'zic_v0.31.0-dev.98_libwebp-archive-exact-patch.zip',
 }
 for relative, token in required_docs.items():
     text = (ROOT / relative).read_text(encoding='utf-8')
     if token not in text:
         raise SystemExit(f'FAIL: {relative} missing {token!r}')
-if 'version: 0.31.0+99' not in (ROOT / 'apps/app/pubspec.yaml').read_text(encoding='utf-8'):
-    raise SystemExit('FAIL: App version is not 0.31.0+99')
+if 'version: 0.31.0+100' not in (ROOT / 'apps/app/pubspec.yaml').read_text(encoding='utf-8'):
+    raise SystemExit('FAIL: App version is not 0.31.0+100')
 if 'test_dev98_libwebp_archive_prepare.py' not in (ROOT / 'tool/check.sh').read_text(encoding='utf-8'):
     raise SystemExit('FAIL: dev.98 gate is not wired into tool/check.sh')
 

@@ -74,6 +74,8 @@ final class _FramePipelineTiming {
     required this.role,
     required this.uploadLaneQueueMicros,
     required this.decodedToUploadMicros,
+    required this.decodedLeadMicros,
+    required this.uploadBackpressureMicros,
     required this.outputPrepareMicros,
     required this.uploadStartedAtMicros,
     required this.outputReadyAtMicros,
@@ -83,6 +85,8 @@ final class _FramePipelineTiming {
   final PageRole role;
   final int uploadLaneQueueMicros;
   final int decodedToUploadMicros;
+  final int decodedLeadMicros;
+  final int uploadBackpressureMicros;
   final int outputPrepareMicros;
   final int uploadStartedAtMicros;
   final int outputReadyAtMicros;
@@ -124,6 +128,7 @@ final class UploadSession {
   int _presentationTimingSamples = 0;
   final Map<int, int> _startupFrameOrdinals = <int, int>{};
   PageRole? _latestDemandRole;
+  int? _nextUploadEligibleAtMicros;
 
   final Set<UploadSnapshotListener> _listeners =
       <UploadSnapshotListener>{};
@@ -267,6 +272,26 @@ final class UploadSession {
       }
       final decodedTiming = decode.timingForFrame(claim.frame.index);
       final uploadStartedAt = clock.nowMicros();
+      final decodedToUploadMicros = decodedTiming == null
+          ? 0
+          : (uploadStartedAt - decodedTiming.decodedAtMicros)
+              .clamp(0, 1 << 62)
+              .toInt();
+      final eligibleAtMicros = _nextUploadEligibleAtMicros;
+      final decodedLeadMicros = decodedTiming == null || eligibleAtMicros == null
+          ? 0
+          : (eligibleAtMicros - decodedTiming.decodedAtMicros)
+              .clamp(0, decodedToUploadMicros)
+              .toInt();
+      final uploadBackpressureMicros = decodedTiming == null
+          ? 0
+          : (uploadStartedAt -
+                  (eligibleAtMicros == null ||
+                          eligibleAtMicros < decodedTiming.decodedAtMicros
+                      ? decodedTiming.decodedAtMicros
+                      : eligibleAtMicros))
+              .clamp(0, 1 << 62)
+              .toInt();
       final candidate = await uploader.upload(id: id, frame: claim.frame);
       final outputReadyAtMicros = clock.nowMicros();
       uploadMicros = outputReadyAtMicros - uploadStartedAt;
@@ -274,11 +299,9 @@ final class UploadSession {
         decoded: decodedTiming,
         role: demand.role,
         uploadLaneQueueMicros: laneQueueMicros < 0 ? 0 : laneQueueMicros,
-        decodedToUploadMicros: decodedTiming == null
-            ? 0
-            : (uploadStartedAt - decodedTiming.decodedAtMicros)
-                .clamp(0, 1 << 62)
-                .toInt(),
+        decodedToUploadMicros: decodedToUploadMicros,
+        decodedLeadMicros: decodedLeadMicros,
+        uploadBackpressureMicros: uploadBackpressureMicros,
         outputPrepareMicros: uploadMicros < 0 ? 0 : uploadMicros,
         uploadStartedAtMicros: uploadStartedAt,
         outputReadyAtMicros: outputReadyAtMicros,
@@ -376,9 +399,16 @@ final class UploadSession {
         'frame': uploaded.index,
         'renderer': uploaded.renderer.name,
         'role': demand.role.name,
+        'decodedRole':
+            _framePipelineTimings[uploaded.index]?.decoded?.role.name ??
+                'unknown',
         'uploadLaneQueueMicros': laneQueueMicros < 0 ? 0 : laneQueueMicros,
         'decodedToUploadMicros':
             _framePipelineTimings[uploaded.index]?.decodedToUploadMicros ?? 0,
+        'decodedLeadMicros':
+            _framePipelineTimings[uploaded.index]?.decodedLeadMicros ?? 0,
+        'uploadBackpressureMicros':
+            _framePipelineTimings[uploaded.index]?.uploadBackpressureMicros ?? 0,
         'outputPrepareMicros': uploadMicros < 0 ? 0 : uploadMicros,
         'uploadMicros': uploadMicros < 0 ? 0 : uploadMicros,
         'inputBytes': inputBytes,
@@ -402,6 +432,7 @@ final class UploadSession {
     final presentClaims = slot.claims;
     final decodeBefore = decode.snapshot;
     _playback.clear();
+    _nextUploadEligibleAtMicros = null;
     _slot = null;
     _framePipelineTimings.remove(frameIndex);
     _presentationTimingSamples = 0;
@@ -489,6 +520,7 @@ final class UploadSession {
         // upload window or frame budget retires them. A zero-length playback
         // timer fires immediately and was the direct cause of revisit stalls.
         _playback.clear();
+        _nextUploadEligibleAtMicros = null;
       }
       _notifySnapshot();
     }
@@ -554,6 +586,7 @@ final class UploadSession {
     final platformOtherMicros = platform == null
         ? 0
         : (platform.platformUploadMicros -
+                platform.platformQueueMicros -
                 platform.platformRetainMicros -
                 platform.platformBlitMicros -
                 platform.platformScheduleMicros -
@@ -569,7 +602,7 @@ final class UploadSession {
       'decodeDispatch': decoded?.dispatchMicros ?? 0,
       'nativeDecode': decoded?.nativeDecodeMicros ?? 0,
       'nativeMetadata': decoded?.nativeMetadataMicros ?? 0,
-      'decodedToUpload': timing?.decodedToUploadMicros ?? 0,
+      'uploadBackpressure': timing?.uploadBackpressureMicros ?? 0,
       'uploadLaneQueue': timing?.uploadLaneQueueMicros ?? 0,
       'outputPrepare': timing?.outputPrepareMicros ?? 0,
       'outputReadyToPresent': outputReadyToPresentMicros,
@@ -602,6 +635,7 @@ final class UploadSession {
         if (startupFrameOrdinal != null)
           'startupFrameOrdinal': startupFrameOrdinal,
         'role': (_latestDemandRole ?? timing?.role)?.name ?? 'unknown',
+        'decodedRole': decoded?.role.name ?? 'unknown',
         'uploadRole': timing?.role.name ?? 'unknown',
         'traceReason': startupFrame && stalled
             ? 'startup+stall'
@@ -628,6 +662,9 @@ final class UploadSession {
         'decodeMicros': decoded?.decodeMicros ?? 0,
         'workerIndex': decoded?.workerIndex ?? -1,
         'decodedToUploadMicros': timing?.decodedToUploadMicros ?? 0,
+        'decodedLeadMicros': timing?.decodedLeadMicros ?? 0,
+        'uploadBackpressureMicros':
+            timing?.uploadBackpressureMicros ?? 0,
         'uploadLaneQueueMicros': timing?.uploadLaneQueueMicros ?? 0,
         'outputPrepareMicros': timing?.outputPrepareMicros ?? 0,
         'outputReadyToPresentMicros': outputReadyToPresentMicros,
@@ -702,9 +739,11 @@ final class UploadSession {
 
   int? takeDueFrame() {
     final nowUs = clock.nowMicros();
+    final eligibleAtMicros = _playback.deadlineUs;
     final lateByMicros = _playback.lateByUs(nowUs);
     final frameIndex = _playback.takeDue(nowUs);
     if (frameIndex != null) {
+      _nextUploadEligibleAtMicros = eligibleAtMicros;
       _emit(
         TraceEventKind.playbackFrameDue,
         <String, Object?>{
@@ -723,6 +762,7 @@ final class UploadSession {
   void _completePlayback(DecodeSnapshot decodeSnapshot) {
     _awaitingSuccessor = false;
     _playback.clear();
+    _nextUploadEligibleAtMicros = null;
     final animation = decodeSnapshot.animation;
     _emit(
       TraceEventKind.playbackCompleted,
@@ -743,8 +783,10 @@ final class UploadSession {
   void _syncPlaybackPause(int nowUs) {
     if (_userPaused || _viewportFrozen) {
       _playback.freeze(nowUs);
+      _nextUploadEligibleAtMicros = null;
     } else {
       _playback.resume(nowUs);
+      _nextUploadEligibleAtMicros = _playback.deadlineUs;
     }
   }
 
@@ -822,6 +864,7 @@ final class UploadSession {
 
   void _retireCurrent() {
     _playback.clear();
+    _nextUploadEligibleAtMicros = null;
     _awaitingSuccessor = false;
     final slot = _slot;
     _slot = null;

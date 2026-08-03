@@ -7,6 +7,7 @@ import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.view.TextureRegistry
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
@@ -180,10 +181,10 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                     val presentation = output.present(frameAddress, frameBytes)
                     val finishedNanos = System.nanoTime()
                     if (presentation.status != 0) {
-                        error(
-                            result,
+                        result.error(
                             "blit_failed",
                             "native blit failed with status ${presentation.status}",
+                            null,
                         )
                         return@execute
                     }
@@ -207,16 +208,20 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                         "inFlightBytes" to
                             output.retainedFrameBytes + otherQueuedBytes,
                     )
-                    mainHandler.post {
-                        result.success(
-                            response + mapOf(
-                                "resultDispatchMicros" to
-                                    (System.nanoTime() - finishedNanos) / 1_000L,
-                            ),
-                        )
-                    }
+                    // scheduleFrame() has already completed on the platform thread.
+                    // MethodChannel.Result is thread-safe, so the blit lane can reply
+                    // without enqueueing a second platform-thread runnable.
+                    result.success(
+                        response + mapOf(
+                            "resultDispatchMicros" to 0L,
+                        ),
+                    )
                 } catch (error: Throwable) {
-                    error(result, "blit_failed", error.message ?: error.toString())
+                    result.error(
+                        "blit_failed",
+                        error.message ?: error.toString(),
+                        null,
+                    )
                 } finally {
                     queue.addAndGet(-frameBytes)
                 }
@@ -274,18 +279,41 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private fun scheduleProducerFrame(
         producer: TextureRegistry.SurfaceProducer,
         canSchedule: () -> Boolean,
-    ): Boolean = synchronized(lifecycleLock) {
-        if (detached.get() || !canSchedule()) {
-            false
-        } else {
-            mainHandler.post {
+    ): Boolean {
+        if (Looper.myLooper() == mainHandler.looper) {
+            return synchronized(lifecycleLock) {
+                if (detached.get() || !canSchedule()) {
+                    false
+                } else {
+                    producer.scheduleFrame()
+                    true
+                }
+            }
+        }
+
+        val completed = CountDownLatch(1)
+        val scheduled = AtomicBoolean(false)
+        val posted = mainHandler.post {
+            try {
                 synchronized(lifecycleLock) {
                     if (!detached.get() && canSchedule()) {
                         producer.scheduleFrame()
+                        scheduled.set(true)
                     }
                 }
+            } finally {
+                completed.countDown()
             }
-            true
+        }
+        if (!posted) {
+            return false
+        }
+        return try {
+            completed.await()
+            scheduled.get()
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
         }
     }
 

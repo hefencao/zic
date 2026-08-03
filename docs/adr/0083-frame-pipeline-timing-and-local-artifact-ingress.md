@@ -1,5 +1,8 @@
 # ADR 0083：前帧端到端耗时与本地 artifact ingress
 
+
+> dev.100 修正：`platformUploadMicros` 同时包含 platform queue，当前 `platformOtherMicros` 必须再扣除 `platformQueueMicros`；`decodedToUploadMicros` 也已拆为 intentional lead 与真实 backpressure。
+
 - 状态：Accepted
 - 版本：`0.31.0-dev.99`
 - 日期：2026-08-03

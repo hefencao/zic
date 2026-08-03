@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:texture_bridge/texture_bridge.dart';
@@ -47,6 +48,17 @@ void main() {
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
+  });
+
+  test('prewarm creates and releases one minimal Android texture', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final presenter = AndroidTexturePresenter(channel: channel);
+
+    await presenter.prewarm();
+
+    expect(calls.map((call) => call.method), <String>['create', 'release']);
+    expect(calls.first.arguments, <String, Object?>{'width': 1, 'height': 1});
   });
 
   test('serial presenter retains frame until platform upload completes', () async {

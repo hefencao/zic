@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reader_runtime/reader_runtime.dart';
@@ -447,6 +448,8 @@ void main() {
             'frame': index,
             'presentationOrdinal': index,
             'nativeDecodeMicros': 100 + index,
+            'decodedLeadMicros': 150 + index,
+            'uploadBackpressureMicros': 175 + index,
             'platformResultDispatchMicros': 200 + index,
           },
         ),

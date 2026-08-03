@@ -93,6 +93,8 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     'sourceWaitMicros',
     'cursorCreateMicros',
     'decodedToUploadMicros',
+    'decodedLeadMicros',
+    'uploadBackpressureMicros',
     'uploadLaneQueueMicros',
     'outputPrepareMicros',
     'outputReadyToPresentMicros',

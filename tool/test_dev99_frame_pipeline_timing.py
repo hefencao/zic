@@ -22,7 +22,7 @@ def forbid(path: str, *tokens: str) -> None:
         raise SystemExit(f'FAIL: {path} contains rejected dev.99 tokens: {found}')
 
 
-require('apps/app/pubspec.yaml', 'version: 0.31.0+99')
+require('apps/app/pubspec.yaml', 'version: 0.31.0+100')
 require(
     'packages/media/lib/src/frame.dart',
     'abstract interface class FrameDecodeTiming',
@@ -147,6 +147,5 @@ require('tool/check.sh', 'test_frame_pipeline_trace_analyzer.py')
 require('docs/adr/0083-frame-pipeline-timing-and-local-artifact-ingress.md', '0.31.0-dev.99')
 require('docs/audits/dev99-frame-pipeline-timing-audit.md', '被否决方案清单')
 require('docs/audits/dev99-validation-results.md', 'framePipelineTiming')
-require('docs/NEXT_CHAT_HANDOFF.md', 'zic_v0.31.0-dev.99_frame-pipeline-timing.zip')
 
 print('dev.99 exact frame pipeline timing and local artifact ingress: OK')

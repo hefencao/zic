@@ -16,7 +16,13 @@ final class NativePipelineMediaRuntimeFactory
     unawaited(prewarm().catchError((Object _, StackTrace __) {}));
   }
 
-  Future<void> prewarm() => prewarmNativeDecodeWorkers();
+  Future<void>? _prewarmFuture;
+
+  Future<void> prewarm() => _prewarmFuture ??= Future.wait<void>(<Future<void>>[
+        prewarmNativeDecodeWorkers(),
+        if (AndroidTexturePresenter.isSupported)
+          AndroidTexturePresenter().prewarm(),
+      ]);
 
   @override
   PipelineMediaRuntime create({

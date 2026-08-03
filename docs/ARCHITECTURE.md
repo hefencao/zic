@@ -1,3 +1,11 @@
+## dev.100 测试所有权与 Android texture reply 边界
+
+- 测试必须位于实现所有者 package；App 不重复测试 `reader_runtime` classifier 或 `pipeline` identity/geometry 算法。
+- 默认套件中的 skip 是 repository 受控资源，只允许 `docs/testing/TEST_QUARANTINE.md` 登记的有限集合；隔离不能替代 owner-level coverage。
+- Android texture 的像素 copy、platform-thread `SurfaceProducer.scheduleFrame` 和 result reply 仍由 `texture_bridge` 原子拥有。present 成功必须发生在 schedule 已执行之后；MethodChannel reply 可从 blit lane提交，不能再排第二个 platform-thread runnable。
+- `sessions` 只保存 previous presentation deadline，用于把 intentional `decodedLead` 与 deadline 后 `uploadBackpressure` 分开；Reader 不获得 timing 状态机或 texture handle。
+- App composition 在 `runApp` 前预热 decode workers 与最小 texture lease，但不接管其生命周期。
+
 # dev.99 frame timing 所有权
 
 - `bridge` 唯一拥有 process decode worker pool 的 ready、排队和 isolate 往返采样；不向 Reader 暴露 worker 或 native handle。

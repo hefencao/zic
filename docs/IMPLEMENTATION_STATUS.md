@@ -1,3 +1,7 @@
+## dev.100 状态
+
+错误报告 51 的测试已按所有权处理：两处编译漏项修复；三个概念错误/重复断言删除；Reader download、metadata persistence 和 refresh join 的期望/同步修正；三个依赖 Whole-App bootstrap 的 Source Browser 测试已明确 quarantine，低层 legacy locator 覆盖继续运行。新 Trace 的旧 dominant 统计已归一化：292 个 `decodedToUpload` 大多是 successor lead，实际主要节点为 `platformResultDispatch`、native decode 和少量 upload backpressure。Android present 现等待 platform thread 执行 `scheduleFrame`，随后由 blit lane直接 reply；启动 prewarm 包含 texture lease。当前环境仍缺 Flutter/Dart/Android/Rust 工具链，相关真实测试和设备效果必须外部复验。
+
 ## dev.99 状态
 
 - `framePipelineTiming` 跨层关联已实现，Reader/App 未获得底层生命周期权限。

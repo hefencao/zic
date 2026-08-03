@@ -24,6 +24,7 @@ void main() {
       nowUs: 1000,
     );
 
+    expect(timer.deadlineUs, 21000);
     expect(timer.takeDue(20999), isNull);
     expect(timer.takeDue(21000), 4);
     expect(timer.takeDue(22000), isNull);
@@ -39,9 +40,11 @@ void main() {
     );
 
     expect(timer.freeze(5000), isTrue);
+    expect(timer.deadlineUs, isNull);
     expect(timer.remainingUs(100000), 15000);
     expect(timer.takeDue(100000), isNull);
     expect(timer.resume(100000), isTrue);
+    expect(timer.deadlineUs, 115000);
     expect(timer.takeDue(114999), isNull);
     expect(timer.takeDue(115000), 2);
   });
@@ -77,5 +80,4 @@ void main() {
     expect(timer.resume(20000), isTrue);
     expect(timer.lateByUs(20000), 0);
   });
-
 }

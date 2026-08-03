@@ -27,7 +27,7 @@ Future<void> main() async {
   try {
     await prewarmDefaultLocalMediaPipeline();
   } on Object catch (error) {
-    debugPrint('native decode worker prewarm unavailable: $error');
+    debugPrint('native media prewarm unavailable: $error');
   }
   runApp(const _BootstrapApp());
 }

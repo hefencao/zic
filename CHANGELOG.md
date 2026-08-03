@@ -1,3 +1,13 @@
+## 0.31.0-dev.100：测试隔离治理与 Android texture schedule/reply 修复
+
+- 修复 `library_ui_test.dart` 未限定 key、`misc_settings_test.dart` 缺 scheduler import 的测试编译闭包。
+- 删除重复/过时测试：App adaptive classifier、`RasterPlan.isRenderUpscaled`、以 filter quality 证明 codec resize 的断言。
+- 修正 Reader download callback 条件、remote metadata persistence 和 refresh in-flight 测试。
+- 三个 Whole-App Source Browser 时序测试登记为 dev.100 quarantine；匿名 skip 由静态门禁拒绝。
+- Android present 等待 platform thread 实际执行 `scheduleFrame` 后，从 blit lane 直接 reply，避免第二次 main-thread result runnable。
+- 启动时预热 1×1 Android texture lease；lease 立即释放。
+- timing 拆出 `decodedLeadMicros` 与 `uploadBackpressureMicros`，analyzer 对 dev.99 旧 trace 按前帧 deadline 归一化 dominant stage。
+
 ## 0.31.0-dev.99：前帧端到端耗时与本地 artifact 1 MiB ingress
 
 - 新增不合并的 `framePipelineTiming`：覆盖 worker ready/queue、isolate、native decode/metadata、decode/upload lane、source wait、output prepare、Android texture 原子子阶段、`platformOther` 和 fallback。

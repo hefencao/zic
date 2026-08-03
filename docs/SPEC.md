@@ -1,3 +1,12 @@
+## dev.100 验收规格
+
+1. 所有 `*_test.dart` 的 `skip:` 必须有 `ZIC-QUARANTINE(dev.100):`，并在测试隔离文档登记原因、所有者级覆盖和解除条件。
+2. App 测试不得复制 `reader_runtime` adaptive classifier；tiny image 测试不得用 target canvas 或 filter quality 冒充 codec upscale 证据。
+3. Android native frame 成功呈现顺序必须为：RGBA blit → platform thread 实际 `scheduleFrame` → blit lane MethodChannel success。不得在 schedule 之前推进 playback。
+4. `framePipelineTiming` 必须同时输出 `decodedLeadMicros`、`uploadBackpressureMicros` 和 `decodedRole`；dominant stage 不得使用 `decodedLead` 或重叠的 `platformUpload` 总量。
+5. App 启动前的 native media prewarm 必须包含两个常驻 decode workers 和可立即释放的 1×1 Android texture lease。
+6. 不得缩小 7/3、2/1、current/transition、5/3/2 来掩盖调度等待。
+
 ## dev.99 前帧诊断规范
 
 1. 每个 output 激活的前 12 个不同 frame 首次呈现必须产生一个完整 `framePipelineTiming`；重复呈现不消耗新的 startup slot。
