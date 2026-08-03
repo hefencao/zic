@@ -57,6 +57,8 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
                 "dominantStageMicros": 950000,
                 "decodedAtMicros": 200000,
                 "uploadStartedAtMicros": 1150000,
+                "decodedRole": "next",
+                "uploadRole": "current",
                 "decodedToUploadMicros": 950000,
                 "nativeDecodeMicros": 90000,
                 "presentedAtMicros": 1200000,
@@ -120,9 +122,11 @@ assert report["stages"]["workerReadyMicros"]["max"] == 300000
 assert report["stages"]["platformOtherMicros"]["max"] == 12000
 assert report["stages"]["platformScheduleQueueMicros"]["max"] == 100000
 assert report["stages"]["platformScheduleCallMicros"]["max"] == 10000
-assert report["stages"]["decodedLeadMicros"]["max"] == 900000
-assert report["stages"]["uploadBackpressureMicros"]["max"] == 50000
+assert report["stages"]["decodedLeadMicros"]["max"] == 950000
+assert report["stages"]["uploadBackpressureMicros"]["max"] == 40000
 assert report["sourceReadCount"] == 1
+assert report["processClock"] is False
+assert report["sourceConcurrencyScope"] == "per-session-legacy-clock"
 assert report["sourceReadMicros"]["max"] == 3000
 assert report["taskFailureCount"] == 1
 assert report["taskFailures"][0]["executionMicros"] == 5000

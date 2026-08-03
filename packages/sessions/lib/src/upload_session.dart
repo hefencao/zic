@@ -278,12 +278,21 @@ final class UploadSession {
               .clamp(0, 1 << 62)
               .toInt();
       final eligibleAtMicros = _nextUploadEligibleAtMicros;
-      final decodedLeadMicros = decodedTiming == null || eligibleAtMicros == null
+      // A frame decoded under a prefetch/transition role can legitimately sit
+      // ready until the page becomes current. That interval is useful lead,
+      // not upload-lane backpressure.
+      final rolePromoted =
+          decodedTiming != null && decodedTiming.role != demand.role;
+      final decodedLeadMicros = decodedTiming == null
           ? 0
-          : (eligibleAtMicros - decodedTiming.decodedAtMicros)
-              .clamp(0, decodedToUploadMicros)
-              .toInt();
-      final uploadBackpressureMicros = decodedTiming == null
+          : rolePromoted
+              ? decodedToUploadMicros
+              : eligibleAtMicros == null
+                  ? 0
+                  : (eligibleAtMicros - decodedTiming.decodedAtMicros)
+                      .clamp(0, decodedToUploadMicros)
+                      .toInt();
+      final uploadBackpressureMicros = decodedTiming == null || rolePromoted
           ? 0
           : (uploadStartedAt -
                   (eligibleAtMicros == null ||
@@ -499,6 +508,9 @@ final class UploadSession {
     final presentedAtMicros = clock.nowMicros();
     final presentMicros = presentedAtMicros - presentStartedAt;
     final micros = claim.frame.duration.inMicroseconds;
+    final platformTiming = claim.frame is OutputFrameTiming
+        ? (claim.frame as OutputFrameTiming).lastPresentationTiming
+        : null;
     final animation = decode.snapshot.animation;
     final authoritativeStatic = micros <= 0 &&
         animation.complete &&
@@ -508,13 +520,27 @@ final class UploadSession {
       if (shouldAdvance) {
         final effectiveMicros = micros > 0 ? micros : 10000;
         final scaledMicros = (effectiveMicros / _playbackSpeed).round();
-        final nowUs = clock.nowMicros();
+        // scheduleFrame() has already executed when the platform result is
+        // sent. Do not add an unbounded MethodChannel acknowledgement delay to
+        // every frame duration. Credit at most one nominal frame so a delayed
+        // reply can make the successor immediately due without skipping more
+        // than one presentation interval.
+        final presentationAckCreditMicros = platformTiming == null ||
+                platformTiming.path != FramePresentationPath.platform
+            ? 0
+            : platformTiming.channelDispatchMicros
+                .clamp(0, scaledMicros)
+                .toInt();
+        final visibleAtMicros =
+            (presentedAtMicros - presentationAckCreditMicros)
+                .clamp(presentStartedAt, presentedAtMicros)
+                .toInt();
         _playback.start(
           frameIndex: claim.frame.index,
           duration: Duration(microseconds: scaledMicros),
-          nowUs: nowUs,
+          nowUs: visibleAtMicros,
         );
-        _syncPlaybackPause(nowUs);
+        _syncPlaybackPause(visibleAtMicros);
       } else {
         // Static frames have zero duration and must remain resident until the
         // upload window or frame budget retires them. A zero-length playback
@@ -524,10 +550,23 @@ final class UploadSession {
       }
       _notifySnapshot();
     }
+    final presentationAckCreditMicros = platformTiming == null ||
+            platformTiming.path != FramePresentationPath.platform ||
+            micros <= 0
+        ? 0
+        : platformTiming.channelDispatchMicros
+            .clamp(0, (micros / _playbackSpeed).round())
+            .toInt();
+    final presentationVisibleAtMicros =
+        (presentedAtMicros - presentationAckCreditMicros)
+            .clamp(presentStartedAt, presentedAtMicros)
+            .toInt();
     _emitFramePipelineTiming(
       claim.frame,
       presentStartedAtMicros: presentStartedAt,
       presentedAtMicros: presentedAtMicros,
+      presentationVisibleAtMicros: presentationVisibleAtMicros,
+      presentationAckCreditMicros: presentationAckCreditMicros,
       presentMicros: presentMicros < 0 ? 0 : presentMicros,
     );
     _emit(
@@ -535,6 +574,8 @@ final class UploadSession {
       <String, Object?>{
         'frame': claim.frame.index,
         'presentMicros': presentMicros < 0 ? 0 : presentMicros,
+        'presentationVisibleAtMicros': presentationVisibleAtMicros,
+        'presentationAckCreditMicros': presentationAckCreditMicros,
         'durationMicros': claim.frame.duration.inMicroseconds,
         'playbackState': _playback.state.name,
         'playbackScheduled': _playback.active,
@@ -551,6 +592,8 @@ final class UploadSession {
     OutputFrame frame, {
     required int presentStartedAtMicros,
     required int presentedAtMicros,
+    required int presentationVisibleAtMicros,
+    required int presentationAckCreditMicros,
     required int presentMicros,
   }) {
     final sampleOrdinal = _presentationTimingSamples++;
@@ -586,7 +629,6 @@ final class UploadSession {
     final platformOtherMicros = platform == null
         ? 0
         : (platform.platformUploadMicros -
-                platform.platformQueueMicros -
                 platform.platformRetainMicros -
                 platform.platformBlitMicros -
                 platform.platformScheduleMicros -
@@ -653,6 +695,8 @@ final class UploadSession {
         'outputReadyAtMicros': timing?.outputReadyAtMicros ?? 0,
         'presentStartedAtMicros': presentStartedAtMicros,
         'presentedAtMicros': presentedAtMicros,
+        'presentationVisibleAtMicros': presentationVisibleAtMicros,
+        'presentationAckCreditMicros': presentationAckCreditMicros,
         'decodeLaneQueueMicros': decoded?.laneQueueMicros ?? 0,
         'sourceWaitMicros': decoded?.sourceWaitMicros ?? 0,
         'cursorCreateMicros': decoded?.cursorCreateMicros ?? 0,

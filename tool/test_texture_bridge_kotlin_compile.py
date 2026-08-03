@@ -35,6 +35,7 @@ class Looper {
 package android.os
 class Handler(val looper: Looper) {
     fun post(action: () -> Unit): Boolean { action(); return true }
+    fun postAtFrontOfQueue(action: () -> Unit): Boolean { action(); return true }
 }
 """,
     "android/view/Surface.kt": """
@@ -66,9 +67,27 @@ class MethodCall(val method: String) {
     fun <T> argument(name: String): T? = null
 }
 """,
+    "io/flutter/plugin/common/BinaryMessenger.kt": """
+package io.flutter.plugin.common
+interface BinaryMessenger {
+    interface TaskQueue
+    fun makeBackgroundTaskQueue(): TaskQueue
+}
+""",
+    "io/flutter/plugin/common/StandardMethodCodec.kt": """
+package io.flutter.plugin.common
+class StandardMethodCodec private constructor() {
+    companion object { val INSTANCE = StandardMethodCodec() }
+}
+""",
     "io/flutter/plugin/common/MethodChannel.kt": """
 package io.flutter.plugin.common
-class MethodChannel(messenger: Any, name: String) {
+class MethodChannel(
+    messenger: BinaryMessenger,
+    name: String,
+    codec: StandardMethodCodec,
+    taskQueue: BinaryMessenger.TaskQueue,
+) {
     interface Result {
         fun success(value: Any?)
         fun error(code: String, message: String?, details: Any?)
@@ -82,10 +101,11 @@ class MethodChannel(messenger: Any, name: String) {
 """,
     "io/flutter/embedding/engine/plugins/FlutterPlugin.kt": """
 package io.flutter.embedding.engine.plugins
+import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.view.TextureRegistry
 interface FlutterPlugin {
     class FlutterPluginBinding(
-        val binaryMessenger: Any,
+        val binaryMessenger: BinaryMessenger,
         val textureRegistry: TextureRegistry,
     )
     fun onAttachedToEngine(binding: FlutterPluginBinding)

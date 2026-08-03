@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.102`  
-**App build：** `0.31.0+102`
+**源码版本：** `0.31.0-dev.103`  
+**App build：** `0.31.0+103`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`；单轮 Trace、命令与数值见 `docs/audits/`。
 
@@ -42,8 +42,10 @@
 - libwebp 1.6.0 使用锁定离线归档、零 fuzz 补丁和帧内单线程。
 - current 保留两个 successor；本地/promoted artifact 使用 1 MiB，普通网络使用 256 KiB。
 - 前帧 timing 覆盖 source、两级队列、native decode、upload 和 Android texture，并区分 schedule queue/call。
-- Android texture blit lane 不再同步等待 platform thread；schedule 与结果回复位于同一 main-thread runnable。
+- Android texture MethodChannel 使用 background task queue；两个稳定分配的 blit lane 保持单 output 串行，`scheduleFrame` 通过 main queue 前部执行。
 - persistent artifact stream 使用 composition-shared scheduler；pending priority 动态跟随 Pipeline plan，current/transition 保留一个槽。
+- 所有 Reader/resource session 共享进程级 monotonic epoch；Trace 显式记录 Reader session create/dispose。
+- Android platform reply 延迟最多按一个名义帧周期抵扣 playback deadline，避免逐帧放大确认延迟。
 - quarantine 使用稳定 `Q-xxx` ID、布尔 skip 和登记门禁。
 - 稳定文档按 `DOCUMENTATION_POLICY.md` 分责。
 
@@ -62,7 +64,7 @@
 | 检查 | 状态 |
 |---|---|
 | repository / documentation / Dart structure / directive order | Verified-static |
-| dev.75–dev.102 所有权门禁 | Verified-static |
+| dev.75–dev.103 所有权门禁 | Verified-static |
 | quarantine 与 texture timing contract | Verified-static |
 | Kotlin texture stub compile | Verified-static |
 | Trace analyzer fixture | Verified-static |
@@ -72,9 +74,9 @@
 | Dart/Flutter tests | Unverified：当前环境无 Flutter SDK |
 | Rust tests | Unverified：当前环境无 Cargo/rustc |
 | Android debug/release | Unverified：当前环境无 Android toolchain |
-| dev.102 真机播放与 Trace | Unverified |
+| dev.103 真机播放与 Trace | Unverified |
 
-完整命令和续跑说明见 `docs/audits/dev102-validation-results.md`。
+完整命令和续跑说明见 `docs/audits/dev103-validation-results.md`。
 
 ## 开放问题
 

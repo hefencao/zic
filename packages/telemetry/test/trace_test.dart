@@ -94,4 +94,13 @@ void main() {
     expect(first.toJsonLine(), isNot(contains(identity)));
   });
 
+  test('SystemClock instances share one process monotonic epoch', () {
+    const first = SystemClock();
+    while (first.nowMicros() < 1000) {}
+    final checkpoint = first.nowMicros();
+    const second = SystemClock();
+
+    expect(second.nowMicros(), greaterThanOrEqualTo(checkpoint));
+  });
+
 }

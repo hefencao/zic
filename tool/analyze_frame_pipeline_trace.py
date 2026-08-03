@@ -110,6 +110,15 @@ def _normalized_waits(
     previous_due_micros: int | None,
 ) -> tuple[int, int]:
     raw_wait = _number(payload.get("decodedToUploadMicros"))
+    decoded_role = str(payload.get("decodedRole", "unknown"))
+    upload_role = str(payload.get("uploadRole", "unknown"))
+    if (
+        raw_wait > 0
+        and decoded_role != "unknown"
+        and upload_role != "unknown"
+        and decoded_role != upload_role
+    ):
+        return raw_wait, 0
     if "decodedLeadMicros" in payload or "uploadBackpressureMicros" in payload:
         return (
             _number(payload.get("decodedLeadMicros")),
@@ -138,6 +147,10 @@ def _dominant(payload: dict[str, Any]) -> tuple[str, int]:
 
 
 def summarize(path: Path) -> dict[str, Any]:
+    events = list(_events(path))
+    has_process_clock = any(
+        event.get("kind") == "readerSessionCreated" for event in events
+    )
     dominant = Counter()
     recorded_dominant = Counter()
     reasons = Counter()
@@ -149,12 +162,20 @@ def summarize(path: Path) -> dict[str, Any]:
     failures: list[dict[str, Any]] = []
     source_reads: list[dict[str, Any]] = []
     next_due_by_session: dict[str, int] = {}
+    session_lifecycle: dict[str, dict[str, int]] = defaultdict(dict)
 
-    for event in _events(path):
+    for event in events:
         kind = event.get("kind")
         payload = event.get("payload")
         if not isinstance(payload, dict):
             payload = {}
+        if kind in {
+            "readerSessionCreated",
+            "readerSessionDisposeStarted",
+            "readerSessionDisposed",
+        }:
+            session_id = str(event.get("sessionId", ""))
+            session_lifecycle[session_id][kind] = _number(event.get("t"))
         if kind == "framePipelineTiming":
             session_id = str(event.get("sessionId", ""))
             previous_due = (
@@ -179,7 +200,6 @@ def summarize(path: Path) -> dict[str, Any]:
                 normalized_payload["platformOtherMicros"] = max(
                     0,
                     platform_upload
-                    - _number(payload.get("platformQueueMicros"))
                     - _number(payload.get("platformRetainMicros"))
                     - _number(payload.get("platformBlitMicros"))
                     - _number(payload.get("platformScheduleMicros"))
@@ -268,17 +288,33 @@ def summarize(path: Path) -> dict[str, Any]:
             )
 
     source_reads.sort(key=lambda row: row["streamMicros"], reverse=True)
-    boundaries: list[tuple[int, int]] = []
-    for row in source_reads:
-        end = _number(row.get("t"))
-        start = max(0, end - _number(row.get("streamMicros")))
-        boundaries.append((start, 1))
-        boundaries.append((end, -1))
-    active_reads = 0
-    max_concurrent_reads = 0
-    for _, delta in sorted(boundaries, key=lambda item: (item[0], item[1])):
-        active_reads += delta
-        max_concurrent_reads = max(max_concurrent_reads, active_reads)
+
+    def max_concurrency(rows: list[dict[str, Any]]) -> int:
+        boundaries: list[tuple[int, int]] = []
+        for row in rows:
+            end = _number(row.get("t"))
+            start = max(0, end - _number(row.get("streamMicros")))
+            boundaries.append((start, 1))
+            boundaries.append((end, -1))
+        active = 0
+        maximum = 0
+        for _, delta in sorted(boundaries, key=lambda item: (item[0], item[1])):
+            active += delta
+            maximum = max(maximum, active)
+        return maximum
+
+    if has_process_clock:
+        max_concurrent_reads = max_concurrency(source_reads)
+        concurrency_scope = "process"
+    else:
+        reads_by_session: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in source_reads:
+            reads_by_session[str(row.get("sessionId", ""))].append(row)
+        max_concurrent_reads = max(
+            (max_concurrency(rows) for rows in reads_by_session.values()),
+            default=0,
+        )
+        concurrency_scope = "per-session-legacy-clock"
     return {
         "trace": str(path),
         "eventCount": len(rows),
@@ -298,6 +334,9 @@ def summarize(path: Path) -> dict[str, Any]:
             [row["readSchedulerWaitMicros"] for row in source_reads]
         ),
         "sourceMaxConcurrentReads": max_concurrent_reads,
+        "sourceConcurrencyScope": concurrency_scope,
+        "processClock": has_process_clock,
+        "readerSessionLifecycle": dict(session_lifecycle),
         "sourceFirstChunkMicros": _stats(
             [row["firstChunkMicros"] for row in source_reads]
         ),
@@ -329,6 +368,7 @@ def main() -> None:
     print(
         f"source reads: {report['sourceReadCount']} "
         f"maxConcurrent={report['sourceMaxConcurrentReads']} "
+        f"scope={report['sourceConcurrencyScope']} "
         f"schedulerWait={report['sourceReadSchedulerWaitMicros']} "
         f"stream={report['sourceReadMicros']} "
         f"firstChunk={report['sourceFirstChunkMicros']} "

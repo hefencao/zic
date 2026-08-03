@@ -23,7 +23,7 @@ require(
     "scheduleQueueMicros",
     "scheduleCallMicros",
     "complete: (ScheduleResult) -> Unit",
-    "return mainHandler.post",
+    "postAtFrontOfQueue",
 )
 require(
     "packages/texture_bridge/lib/src/android_texture_presenter.dart",

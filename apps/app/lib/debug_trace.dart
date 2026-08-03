@@ -13,6 +13,9 @@ TraceHighlightLevel traceHighlightLevel(TraceEvent event) =>
       TraceEventKind.staleWorkRejected ||
       TraceEventKind.resumeRestarted ||
       TraceEventKind.cacheTrim => TraceHighlightLevel.warning,
+      TraceEventKind.readerSessionCreated ||
+      TraceEventKind.readerSessionDisposeStarted ||
+      TraceEventKind.readerSessionDisposed ||
       TraceEventKind.pageHostMounted ||
       TraceEventKind.pageHostDisposed ||
       TraceEventKind.readerObservation ||
@@ -108,6 +111,8 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     'platformScheduleCallMicros',
     'platformReplaceMicros',
     'platformResultDispatchMicros',
+    'presentationAckCreditMicros',
+    'presentationVisibleAtMicros',
     'channelRoundTripMicros',
     'channelDispatchMicros',
     'fallbackDecodeMicros',

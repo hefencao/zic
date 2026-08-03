@@ -16,9 +16,9 @@
 
 下一步：
 
-- 在相同设备和 WebP fixture 上采集 dev.102 Trace；
+- 在相同设备和 WebP fixture 上采集 dev.103 Trace，分别记录首次进入和退出后再次进入；
 - 比较 platform schedule queue、channel dispatch、native decode、source wait 和 upload backpressure；
-- 验证 asynchronous schedule 后 blit lane 不再被 main-thread queue 串行阻塞；
+- 验证 background channel、双 blit lane、front-of-queue schedule 与 playback ack credit 后的前帧长尾；
 - 关联两次 current decode failure 的 source epoch、frame、worker 和 native 错误；
 - 复验 50% 交接、前 12 帧和页面回切。
 
@@ -39,7 +39,7 @@
 
 下一步：
 
-- 从 Trace 读取 `readSchedulerWaitMicros`、priority、页面角色和跨 session 最大并发；
+- 从具有进程级时钟和 session lifecycle 的 Trace 读取 `readSchedulerWaitMicros`、priority、页面角色和跨 session 最大并发；
 - 验证总并发不超过 5，background 最多占 4，current/transition 可使用保留槽；
 - 验证 background→current 晋升不取消、不重开同一 artifact stream；
 - 比较 source first-chunk、stream 和 current source-wait 的变化。

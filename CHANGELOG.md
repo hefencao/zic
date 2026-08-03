@@ -1,3 +1,12 @@
+## 0.31.0-dev.103：Reader 重进与 platform presentation 确认修复
+
+- `SystemClock` 改为进程级 monotonic epoch，增加 Reader session create/dispose 生命周期 Trace，修复跨 session 导出时间轴不可比。
+- Android texture MethodChannel 改用 background task queue；两个 output-stable blit lane 取代单一全局 lane，`scheduleFrame` 使用 main queue 前部执行。
+- playback timer 对 platform acknowledgement 最多抵扣一个名义帧周期，避免 MethodChannel 回包延迟逐帧拉长动画。
+- decode/upload role 晋升间隔改记为 predecode lead，不再误报 upload backpressure；旧独立时钟 Trace 的 source concurrency 仅按 session 报告。
+- 修正 `platformOther` 重叠计算，不再从 platform upload 重复扣除外部 blit-lane queue。
+- 新增 ADR 0087、dev.103 三清单、Kotlin background task queue stub 和 ownership gate；既定 7/3、2/1、current/transition、5/3/2 不变。
+
 ## 0.31.0-dev.102：异步 texture schedule 与共享 artifact 读取调度
 
 - 修复三项 Source Browser quarantine 向 `testWidgets(skip:)` 传入字符串导致的测试编译错误，改为布尔 skip、稳定 ID 注释和登记门禁。

@@ -115,9 +115,11 @@ void main() {
     expect(pipelineTiming.payload['decodedLeadMicros'], 0);
     expect(pipelineTiming.payload['uploadBackpressureMicros'], isA<int>());
     expect(pipelineTiming.payload['platformUploadMicros'], 200);
-    expect(pipelineTiming.payload['platformOtherMicros'], 26);
+    expect(pipelineTiming.payload['platformOtherMicros'], 49);
     expect(pipelineTiming.payload['platformResultDispatchMicros'], 43);
     expect(pipelineTiming.payload['presentationPath'], 'platform');
+    expect(pipelineTiming.payload['presentationAckCreditMicros'], 6);
+    expect(pipelineTiming.payload['presentationVisibleAtMicros'], 0);
     final released = trace.events.singleWhere(
       (event) => event.kind == TraceEventKind.pageOutputReleased,
     );

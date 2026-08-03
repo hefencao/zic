@@ -218,6 +218,17 @@ final class PipelineReaderSession {
       decode: DecodeLane(maxActive: _profile.decodeConcurrency),
       upload: UploadLane(maxActive: _profile.uploadConcurrency),
     );
+    trace.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.readerSessionCreated,
+        payload: <String, Object?>{
+          'pages': chapter.pages.length,
+          'renderer': _media.renderer.name,
+        },
+      ),
+    );
   }
 
   final ChapterManifest chapter;
@@ -587,11 +598,26 @@ final class PipelineReaderSession {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    final disposeStartedAtMicros = clock.nowMicros();
+    trace.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.readerSessionDisposeStarted,
+        revision: revision,
+        payload: <String, Object?>{
+          'downloadSessions': _downloads.sessions.length,
+          'decodeSessions': _decodes.sessions.length,
+          'uploadSessions': _uploads.sessions.length,
+        },
+      ),
+    );
     _playbackTicker?.cancel();
     _playbackTicker = null;
     final binding = _binding;
     _binding = null;
     binding?.detach(sessionId);
+    artifactReadScheduler.refresh();
     for (final output in _pageOutputs.values) {
       output._dispose();
     }
@@ -610,6 +636,16 @@ final class PipelineReaderSession {
     _ioTransport.close(force: true);
     await _workspace.dispose();
     _pageStreams.clear();
+    trace.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.readerSessionDisposed,
+        payload: <String, Object?>{
+          'disposeMicros': clock.nowMicros() - disposeStartedAtMicros,
+        },
+      ),
+    );
   }
 
   void _requireOpen() {

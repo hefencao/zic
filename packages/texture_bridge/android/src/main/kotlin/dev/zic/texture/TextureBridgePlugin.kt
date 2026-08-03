@@ -4,13 +4,16 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Surface
 import io.flutter.embedding.engine.plugins.FlutterPlugin
+import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.StandardMethodCodec
 import io.flutter.view.TextureRegistry
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 internal object NativeBlitter {
@@ -35,16 +38,26 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private val detached = AtomicBoolean(true)
     private var queuedBytes = AtomicLong(0)
 
-    private var blitLane: ExecutorService? = null
+    private var blitLanes: List<ExecutorService> = emptyList()
+    private val nextBlitLane = AtomicInteger(0)
     private lateinit var textures: TextureRegistry
     private lateinit var channel: MethodChannel
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         synchronized(lifecycleLock) { detached.set(false) }
         queuedBytes = AtomicLong(0)
-        blitLane = newBlitLane()
+        nextBlitLane.set(0)
+        blitLanes = List(BLIT_LANE_COUNT, ::newBlitLane)
+        blitLanes.forEach { lane -> lane.execute {} }
         textures = binding.textureRegistry
-        channel = MethodChannel(binding.binaryMessenger, CHANNEL_NAME)
+        val taskQueue: BinaryMessenger.TaskQueue =
+            binding.binaryMessenger.makeBackgroundTaskQueue()
+        channel = MethodChannel(
+            binding.binaryMessenger,
+            CHANNEL_NAME,
+            StandardMethodCodec.INSTANCE,
+            taskQueue,
+        )
         channel.setMethodCallHandler(this)
     }
 
@@ -54,19 +67,16 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val owned = synchronized(outputs) {
             outputs.values.toList().also { outputs.clear() }
         }
-        val lane = blitLane
-        blitLane = null
-        if (lane == null) {
-            owned.forEach(Output::release)
-        } else {
+        val lanes = blitLanes
+        blitLanes = emptyList()
+        for (output in owned) {
             try {
-                lane.execute { owned.forEach(Output::release) }
+                output.lane.execute(output::release)
             } catch (_: RejectedExecutionException) {
-                owned.forEach(Output::release)
-            } finally {
-                lane.shutdown()
+                output.release()
             }
         }
+        lanes.forEach(ExecutorService::shutdown)
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -90,43 +100,46 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             )
             return
         }
-        val lane = blitLane
-        if (lane == null || detached.get()) {
-            result.error("detached", "texture bridge is detached", null)
-            return
-        }
-        val producer = textures.createSurfaceProducer()
-        producer.setSize(width, height)
-        lateinit var output: Output
-        output = Output(
-            producer = producer,
-            width = width,
-            height = height,
-            canPresent = { !detached.get() },
-            scheduleFrame = { complete ->
-                scheduleProducerFrame(
-                    producer,
-                    canSchedule = { !output.isReleased },
-                    complete = complete,
-                )
-            },
-            scheduleRedraw = { target -> scheduleRedraw(lane, target) },
-            resizeProducer = { nextWidth, nextHeight ->
-                mainHandler.post {
-                    if (!output.isReleased && !detached.get()) {
-                        producer.setSize(nextWidth, nextHeight)
+        val lane = nextLane(result) ?: return
+        runOnMain(result) {
+            if (detached.get()) {
+                result.error("detached", "texture bridge is detached", null)
+                return@runOnMain
+            }
+            val producer = textures.createSurfaceProducer()
+            producer.setSize(width, height)
+            lateinit var output: Output
+            output = Output(
+                lane = lane,
+                producer = producer,
+                width = width,
+                height = height,
+                canPresent = { !detached.get() },
+                scheduleFrame = { complete ->
+                    scheduleProducerFrame(
+                        producer,
+                        canSchedule = { !output.isReleased },
+                        complete = complete,
+                    )
+                },
+                scheduleRedraw = { target -> scheduleRedraw(target) },
+                resizeProducer = { nextWidth, nextHeight ->
+                    mainHandler.post {
+                        if (!output.isReleased && !detached.get()) {
+                            producer.setSize(nextWidth, nextHeight)
+                        }
                     }
-                }
-            },
-            releaseProducer = {
-                mainHandler.post {
-                    producer.setCallback(null)
-                    producer.release()
-                }
-            },
-        )
-        synchronized(outputs) { outputs[producer.id()] = output }
-        result.success(mapOf("textureId" to producer.id()))
+                },
+                releaseProducer = {
+                    mainHandler.post {
+                        producer.setCallback(null)
+                        producer.release()
+                    }
+                },
+            )
+            synchronized(outputs) { outputs[producer.id()] = output }
+            result.success(mapOf("textureId" to producer.id()))
+        }
     }
 
     private fun resize(call: MethodCall, result: MethodChannel.Result) {
@@ -141,7 +154,7 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             )
             return
         }
-        val lane = lane(result) ?: return
+        val lane = lane(output, result) ?: return
         try {
             lane.execute {
                 try {
@@ -173,7 +186,7 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             result.error("invalid_deadline", "deadline must be non-negative", null)
             return
         }
-        val lane = lane(result) ?: return
+        val lane = lane(output, result) ?: return
         val submittedNanos = System.nanoTime()
         val queue = queuedBytes
         queue.addAndGet(frameBytes)
@@ -276,7 +289,7 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             result.success(null)
             return
         }
-        val lane = lane(result) ?: run {
+        val lane = lane(output, result) ?: run {
             output.release()
             return
         }
@@ -300,13 +313,25 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         return output
     }
 
-    private fun lane(result: MethodChannel.Result): ExecutorService? {
-        val lane = blitLane
-        if (lane == null || detached.get()) {
+    private fun nextLane(result: MethodChannel.Result): ExecutorService? {
+        val lanes = blitLanes
+        if (lanes.isEmpty() || detached.get()) {
             result.error("detached", "texture bridge is detached", null)
             return null
         }
-        return lane
+        val index = Math.floorMod(nextBlitLane.getAndIncrement(), lanes.size)
+        return lanes[index]
+    }
+
+    private fun lane(
+        output: Output,
+        result: MethodChannel.Result,
+    ): ExecutorService? {
+        if (detached.get()) {
+            result.error("detached", "texture bridge is detached", null)
+            return null
+        }
+        return output.lane
     }
 
     private fun scheduleProducerFrame(
@@ -346,25 +371,53 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
 
         val submittedNanos = System.nanoTime()
-        return mainHandler.post {
+        return mainHandler.postAtFrontOfQueue {
             schedule((System.nanoTime() - submittedNanos) / 1_000L)
         }
     }
 
-    private fun scheduleRedraw(lane: ExecutorService, output: Output) {
+    private fun scheduleRedraw(output: Output) {
         try {
-            lane.execute { output.redraw() }
+            output.lane.execute { output.redraw() }
         } catch (_: RejectedExecutionException) {
             // Detach or shutdown owns final cleanup.
         }
     }
 
+    private fun runOnMain(
+        result: MethodChannel.Result,
+        action: () -> Unit,
+    ) {
+        if (Looper.myLooper() == mainHandler.looper) {
+            try {
+                action()
+            } catch (error: Throwable) {
+                result.error("platform_failure", error.message ?: error.toString(), null)
+            }
+            return
+        }
+        if (!mainHandler.post {
+                try {
+                    action()
+                } catch (error: Throwable) {
+                    result.error(
+                        "platform_failure",
+                        error.message ?: error.toString(),
+                        null,
+                    )
+                }
+            }
+        ) {
+            result.error("detached", "platform thread is unavailable", null)
+        }
+    }
+
     private fun success(result: MethodChannel.Result, value: Any?) {
-        mainHandler.post { result.success(value) }
+        result.success(value)
     }
 
     private fun error(result: MethodChannel.Result, code: String, message: String) {
-        mainHandler.post { result.error(code, message, null) }
+        result.error(code, message, null)
     }
 
     private data class ScheduleResult(
@@ -390,6 +443,7 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     @Suppress("DEPRECATION")
     private class Output(
+        val lane: ExecutorService,
         private val producer: TextureRegistry.SurfaceProducer,
         private var width: Int,
         private var height: Int,
@@ -562,10 +616,13 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     private companion object {
         const val CHANNEL_NAME = "dev.zic/texture"
+        const val BLIT_LANE_COUNT = 2
 
-        fun newBlitLane(): ExecutorService =
+        fun newBlitLane(index: Int): ExecutorService =
             Executors.newSingleThreadExecutor { runnable ->
-                Thread(runnable, "zic-texture-blit").apply { isDaemon = true }
+                Thread(runnable, "zic-texture-blit-$index").apply {
+                    isDaemon = true
+                }
             }
     }
 }
