@@ -30,6 +30,8 @@ void main() {
             'retainMicros': 3,
             'blitMicros': 7,
             'scheduleMicros': 13,
+            'scheduleQueueMicros': 8,
+            'scheduleCallMicros': 5,
             'replaceMicros': 17,
             'resultDispatchMicros': 19,
             'deadlineMissMicros': 5,
@@ -94,6 +96,8 @@ void main() {
     expect(sample.retainMicros, 3);
     expect(sample.blitMicros, 7);
     expect(sample.scheduleMicros, 13);
+    expect(sample.scheduleQueueMicros, 8);
+    expect(sample.scheduleCallMicros, 5);
     expect(sample.replaceMicros, 17);
     expect(sample.resultDispatchMicros, 19);
     expect(sample.deadlineMissMicros, 5);

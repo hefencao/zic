@@ -31,6 +31,8 @@ final class FramePresentationTiming {
     required this.platformRetainMicros,
     required this.platformBlitMicros,
     required this.platformScheduleMicros,
+    required this.platformScheduleQueueMicros,
+    required this.platformScheduleCallMicros,
     required this.platformReplaceMicros,
     required this.platformResultDispatchMicros,
     required this.channelDispatchMicros,
@@ -45,6 +47,8 @@ final class FramePresentationTiming {
   final int platformRetainMicros;
   final int platformBlitMicros;
   final int platformScheduleMicros;
+  final int platformScheduleQueueMicros;
+  final int platformScheduleCallMicros;
   final int platformReplaceMicros;
   final int platformResultDispatchMicros;
   final int channelDispatchMicros;

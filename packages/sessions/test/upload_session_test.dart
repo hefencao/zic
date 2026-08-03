@@ -1058,6 +1058,8 @@ final class _Output implements OutputFrame, OutputFrameTiming {
         platformRetainMicros: 31,
         platformBlitMicros: 37,
         platformScheduleMicros: 41,
+        platformScheduleQueueMicros: 29,
+        platformScheduleCallMicros: 12,
         platformReplaceMicros: 42,
         platformResultDispatchMicros: 43,
         channelDispatchMicros: 6,

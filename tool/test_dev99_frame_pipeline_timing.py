@@ -22,7 +22,6 @@ def forbid(path: str, *tokens: str) -> None:
         raise SystemExit(f'FAIL: {path} contains rejected dev.99 tokens: {found}')
 
 
-require('apps/app/pubspec.yaml', 'version: 0.31.0+100')
 require(
     'packages/media/lib/src/frame.dart',
     'abstract interface class FrameDecodeTiming',

@@ -31,6 +31,9 @@ STAGE_FIELDS = (
     "platformRetainMicros",
     "platformBlitMicros",
     "platformScheduleMicros",
+    "platformScheduleQueueMicros",
+    "platformScheduleCallMicros",
+    "platformScheduleLegacyMicros",
     "platformReplaceMicros",
     "platformResultDispatchMicros",
     "channelDispatchMicros",
@@ -58,7 +61,9 @@ DOMINANT_STAGE_FIELDS = {
     "platformOther": "platformOtherMicros",
     "platformRetain": "platformRetainMicros",
     "platformBlit": "platformBlitMicros",
-    "platformSchedule": "platformScheduleMicros",
+    "platformScheduleQueue": "platformScheduleQueueMicros",
+    "platformScheduleCall": "platformScheduleCallMicros",
+    "platformScheduleLegacy": "platformScheduleLegacyMicros",
     "platformReplace": "platformReplaceMicros",
     "platformResultDispatch": "platformResultDispatchMicros",
     "channelDispatch": "channelDispatchMicros",
@@ -161,6 +166,14 @@ def summarize(path: Path) -> dict[str, Any]:
             normalized_payload = dict(payload)
             normalized_payload["decodedLeadMicros"] = lead
             normalized_payload["uploadBackpressureMicros"] = backpressure
+            schedule_queue = _number(payload.get("platformScheduleQueueMicros"))
+            schedule_call = _number(payload.get("platformScheduleCallMicros"))
+            schedule_total = _number(payload.get("platformScheduleMicros"))
+            normalized_payload["platformScheduleLegacyMicros"] = (
+                schedule_total
+                if schedule_total > 0 and schedule_queue == 0 and schedule_call == 0
+                else 0
+            )
             platform_upload = _number(payload.get("platformUploadMicros"))
             if platform_upload > 0:
                 normalized_payload["platformOtherMicros"] = max(

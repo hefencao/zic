@@ -22,7 +22,6 @@ def forbid(path: str, *tokens: str) -> None:
         raise SystemExit(f'FAIL: {path} contains rejected dev.97 tokens: {found}')
 
 
-require('apps/app/pubspec.yaml', 'version: 0.31.0+100')
 require(
     'packages/reader/lib/src/reader_view.dart',
     'final pagePosition = _pageController.hasClients',
@@ -141,9 +140,4 @@ require(
     '2387 个诊断桶',
     '4099 条高频样本',
 )
-require(
-    'docs/NEXT_CHAT_HANDOFF.md',
-    'docs/audits/dev97-validation-results.md',
-)
-
 print('dev.97 midpoint playback handoff and diagnostic trace ownership: OK')

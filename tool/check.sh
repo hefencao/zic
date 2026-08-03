@@ -8,6 +8,7 @@ if [[ "${1:-}" == "--require-toolchains" ]]; then
 fi
 
 python3 "$ROOT/tool/check_repo.py"
+python3 "$ROOT/tool/check_documentation.py"
 python3 "$ROOT/tool/check_dart_structure.py"
 python3 "$ROOT/tool/test_dart_library_directive_order.py"
 python3 "$ROOT/tool/test_pipeline_runtime_compile_boundary.py"
@@ -37,7 +38,7 @@ python3 "$ROOT/tool/test_dev97_midpoint_trace_filter.py"
 python3 "$ROOT/tool/test_dev98_libwebp_archive_prepare.py"
 python3 "$ROOT/tool/test_dev99_frame_pipeline_timing.py"
 python3 "$ROOT/tool/check_test_quarantine.py"
-python3 "$ROOT/tool/test_dev100_test_quarantine_texture_dispatch.py"
+python3 "$ROOT/tool/test_texture_schedule_timing_contract.py"
 python3 "$ROOT/tool/test_texture_bridge_kotlin_compile.py"
 python3 "$ROOT/tool/test_frame_pipeline_trace_analyzer.py"
 python3 "$ROOT/tool/test_vertical_geometry_cover_trace_contract.py"

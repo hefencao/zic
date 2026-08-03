@@ -7,17 +7,20 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-MARKER = "ZIC-QUARANTINE(dev.100):"
+MARKER_PATTERN = re.compile(r"ZIC-QUARANTINE\((Q-\d{3})\):")
 EXPECTED = {
     "legacy runtime chapter URI refreshes before entering Reader": (
+        "Q-001",
         "whole-App legacy runtime route",
         "source_resource_gateway_test.dart",
     ),
     "persisted legacy Venera chapter refreshes despite local-detail open hint": (
+        "Q-002",
         "persisted legacy route test",
         "runtime_source_adapter_test.dart",
     ),
     "source comic details retries a transient source failure": (
+        "Q-003",
         "whole-App retry test",
         "RemoteComicDetailsScreen",
     ),
@@ -30,7 +33,7 @@ for path in sorted(ROOT.rglob("*_test.dart")):
         line = text.count("\n", 0, match.start()) + 1
         window = text[match.start() : match.start() + 700]
         skip_sites.append((path, line, window))
-        if MARKER not in window:
+        if MARKER_PATTERN.search(window) is None:
             raise SystemExit(
                 f"FAIL: anonymous or untracked skip at {path.relative_to(ROOT)}:{line}"
             )

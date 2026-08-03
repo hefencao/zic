@@ -198,6 +198,8 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                         "retainMicros" to presentation.retainMicros,
                         "blitMicros" to presentation.blitMicros,
                         "scheduleMicros" to presentation.scheduleMicros,
+                        "scheduleQueueMicros" to presentation.scheduleQueueMicros,
+                        "scheduleCallMicros" to presentation.scheduleCallMicros,
                         "replaceMicros" to presentation.replaceMicros,
                         "deadlineMissMicros" to if (deadlineAfterMicros == null) {
                             0L
@@ -279,25 +281,39 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private fun scheduleProducerFrame(
         producer: TextureRegistry.SurfaceProducer,
         canSchedule: () -> Boolean,
-    ): Boolean {
+    ): ScheduleResult {
         if (Looper.myLooper() == mainHandler.looper) {
             return synchronized(lifecycleLock) {
                 if (detached.get() || !canSchedule()) {
-                    false
+                    ScheduleResult(scheduled = false)
                 } else {
+                    val callStartedNanos = System.nanoTime()
                     producer.scheduleFrame()
-                    true
+                    ScheduleResult(
+                        scheduled = true,
+                        callMicros =
+                            (System.nanoTime() - callStartedNanos) / 1_000L,
+                    )
                 }
             }
         }
 
+        val submittedNanos = System.nanoTime()
         val completed = CountDownLatch(1)
         val scheduled = AtomicBoolean(false)
+        val queueMicros = AtomicLong(0L)
+        val callMicros = AtomicLong(0L)
         val posted = mainHandler.post {
+            val startedNanos = System.nanoTime()
+            queueMicros.set((startedNanos - submittedNanos) / 1_000L)
             try {
                 synchronized(lifecycleLock) {
                     if (!detached.get() && canSchedule()) {
+                        val callStartedNanos = System.nanoTime()
                         producer.scheduleFrame()
+                        callMicros.set(
+                            (System.nanoTime() - callStartedNanos) / 1_000L,
+                        )
                         scheduled.set(true)
                     }
                 }
@@ -306,14 +322,18 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             }
         }
         if (!posted) {
-            return false
+            return ScheduleResult(scheduled = false)
         }
         return try {
             completed.await()
-            scheduled.get()
+            ScheduleResult(
+                scheduled = scheduled.get(),
+                queueMicros = queueMicros.get(),
+                callMicros = callMicros.get(),
+            )
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
-            false
+            ScheduleResult(scheduled = false)
         }
     }
 
@@ -333,11 +353,22 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         mainHandler.post { result.error(code, message, null) }
     }
 
+    private data class ScheduleResult(
+        val scheduled: Boolean,
+        val queueMicros: Long = 0L,
+        val callMicros: Long = 0L,
+    ) {
+        val totalMicros: Long
+            get() = queueMicros + callMicros
+    }
+
     private data class PresentResult(
         val status: Int,
         val retainMicros: Long,
         val blitMicros: Long,
         val scheduleMicros: Long,
+        val scheduleQueueMicros: Long,
+        val scheduleCallMicros: Long,
         val replaceMicros: Long,
     )
 
@@ -347,7 +378,7 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         private var width: Int,
         private var height: Int,
         private val canPresent: () -> Boolean,
-        private val scheduleFrame: () -> Boolean,
+        private val scheduleFrame: () -> ScheduleResult,
         private val scheduleRedraw: (Output) -> Unit,
         private val resizeProducer: (Int, Int) -> Unit,
         private val releaseProducer: () -> Unit,
@@ -402,12 +433,15 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                         retainMicros = (retainFinishedNanos - retainStartedNanos) / 1_000L,
                         blitMicros = (blitFinishedNanos - blitStartedNanos) / 1_000L,
                         scheduleMicros = 0L,
+                        scheduleQueueMicros = 0L,
+                        scheduleCallMicros = 0L,
                         replaceMicros = 0L,
                     )
                 }
-                val scheduleStartedNanos = System.nanoTime()
-                check(scheduleFrame()) { "texture bridge detached during blit" }
-                val scheduleFinishedNanos = System.nanoTime()
+                val schedule = scheduleFrame()
+                check(schedule.scheduled) {
+                    "texture bridge detached during blit"
+                }
                 val replaceStartedNanos = System.nanoTime()
                 replaceCurrentFrame(retained, frameBytes)
                 val replaceFinishedNanos = System.nanoTime()
@@ -415,7 +449,9 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                     status = 0,
                     retainMicros = (retainFinishedNanos - retainStartedNanos) / 1_000L,
                     blitMicros = (blitFinishedNanos - blitStartedNanos) / 1_000L,
-                    scheduleMicros = (scheduleFinishedNanos - scheduleStartedNanos) / 1_000L,
+                    scheduleMicros = schedule.totalMicros,
+                    scheduleQueueMicros = schedule.queueMicros,
+                    scheduleCallMicros = schedule.callMicros,
                     replaceMicros = (replaceFinishedNanos - replaceStartedNanos) / 1_000L,
                 )
             } finally {

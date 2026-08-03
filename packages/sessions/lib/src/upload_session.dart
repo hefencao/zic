@@ -610,7 +610,10 @@ final class UploadSession {
       'platformOther': platformOtherMicros,
       'platformRetain': platform?.platformRetainMicros ?? 0,
       'platformBlit': platform?.platformBlitMicros ?? 0,
-      'platformSchedule': platform?.platformScheduleMicros ?? 0,
+      'platformScheduleQueue':
+          platform?.platformScheduleQueueMicros ?? 0,
+      'platformScheduleCall':
+          platform?.platformScheduleCallMicros ?? 0,
       'platformReplace': platform?.platformReplaceMicros ?? 0,
       'platformResultDispatch': platform?.platformResultDispatchMicros ?? 0,
       'channelDispatch': platform?.channelDispatchMicros ?? 0,
@@ -675,6 +678,10 @@ final class UploadSession {
         'platformRetainMicros': platform?.platformRetainMicros ?? 0,
         'platformBlitMicros': platform?.platformBlitMicros ?? 0,
         'platformScheduleMicros': platform?.platformScheduleMicros ?? 0,
+        'platformScheduleQueueMicros':
+            platform?.platformScheduleQueueMicros ?? 0,
+        'platformScheduleCallMicros':
+            platform?.platformScheduleCallMicros ?? 0,
         'platformReplaceMicros': platform?.platformReplaceMicros ?? 0,
         'platformResultDispatchMicros':
             platform?.platformResultDispatchMicros ?? 0,

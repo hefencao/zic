@@ -1,3 +1,12 @@
+## 0.31.0-dev.101：恢复文档职责并拆分 Android schedule timing
+
+- 重写 README、Architecture、Spec、Implementation Plan、Implementation Status 和 Handoff，删除稳定文档中的逐轮 dev 堆叠、Trace 数字和验证结果。
+- 新增 `DOCUMENTATION_POLICY.md` 与 repository gate，禁止版本历史、单轮推断和完成记录重新污染稳定文档。
+- quarantine 从版本绑定的 `dev.100` marker 迁移为稳定 `Q-001` 至 `Q-003` ID；删除版本耦合的 dev.100 聚合门禁。
+- 历史 feature gate 不再绑定当前 App build 或要求当前 Handoff 引用历史 audit。
+- Android texture 将旧 `platformScheduleMicros` 拆为 platform-thread queue 和实际 `scheduleFrame()` call；旧 Trace 由 analyzer 标记为 legacy combined timing。
+- 分析新设备 Trace：前帧主导仍集中在旧 combined platform schedule、native decode 和 channel dispatch；1 MiB promoted artifact stream 仍存在 1–3 秒尾部，保持为未关闭问题。
+
 ## 0.31.0-dev.100：测试隔离治理与 Android texture schedule/reply 修复
 
 - 修复 `library_ui_test.dart` 未限定 key、`misc_settings_test.dart` 缺 scheduler import 的测试编译闭包。

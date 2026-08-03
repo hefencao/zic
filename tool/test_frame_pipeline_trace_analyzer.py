@@ -28,6 +28,9 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
                 "uploadStartedAtMicros": 640000,
                 "decodedToUploadMicros": 40000,
                 "platformOtherMicros": 12000,
+                "platformScheduleMicros": 110000,
+                "platformScheduleQueueMicros": 100000,
+                "platformScheduleCallMicros": 10000,
                 "presentedAtMicros": 1000000,
                 "durationMicros": 100000,
                 "endToEndMicros": 410000,
@@ -115,6 +118,8 @@ assert report["endToEndMicros"]["p50"] == 120000
 assert report["endToEndMicros"]["max"] == 410000
 assert report["stages"]["workerReadyMicros"]["max"] == 300000
 assert report["stages"]["platformOtherMicros"]["max"] == 12000
+assert report["stages"]["platformScheduleQueueMicros"]["max"] == 100000
+assert report["stages"]["platformScheduleCallMicros"]["max"] == 10000
 assert report["stages"]["decodedLeadMicros"]["max"] == 900000
 assert report["stages"]["uploadBackpressureMicros"]["max"] == 50000
 assert report["sourceReadCount"] == 1

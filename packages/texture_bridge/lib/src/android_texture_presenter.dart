@@ -47,6 +47,8 @@ final class TexturePresentTelemetry extends TextureTelemetry {
     required this.retainMicros,
     required this.blitMicros,
     required this.scheduleMicros,
+    required this.scheduleQueueMicros,
+    required this.scheduleCallMicros,
     required this.replaceMicros,
     required this.resultDispatchMicros,
     required this.deadlineMissMicros,
@@ -62,6 +64,8 @@ final class TexturePresentTelemetry extends TextureTelemetry {
   final int retainMicros;
   final int blitMicros;
   final int scheduleMicros;
+  final int scheduleQueueMicros;
+  final int scheduleCallMicros;
   final int replaceMicros;
   final int resultDispatchMicros;
   final int deadlineMissMicros;
@@ -224,6 +228,8 @@ final class AndroidTexturePresenter {
         retainMicros: _readInt(response, 'retainMicros'),
         blitMicros: _readInt(response, 'blitMicros'),
         scheduleMicros: _readInt(response, 'scheduleMicros'),
+        scheduleQueueMicros: _readInt(response, 'scheduleQueueMicros'),
+        scheduleCallMicros: _readInt(response, 'scheduleCallMicros'),
         replaceMicros: _readInt(response, 'replaceMicros'),
         resultDispatchMicros: _readInt(response, 'resultDispatchMicros'),
         deadlineMissMicros: _readInt(response, 'deadlineMissMicros'),

@@ -1,6 +1,6 @@
 # ADR 0084：测试隔离所有权与 Android texture schedule/reply 顺序
 
-- 状态：接受
+- 状态：接受；quarantine marker 的版本绑定机制由 ADR 0085 修正
 - 版本：`0.31.0-dev.100`
 - 基线：`0.31.0-dev.99`
 
@@ -12,7 +12,7 @@
 
 ## 决策
 
-1. 默认测试中任何 `skip` 都必须使用 `ZIC-QUARANTINE(dev.100):`，在 `docs/testing/TEST_QUARANTINE.md` 登记失效原因、仍运行的所有者级覆盖与解除条件，并由 `tool/check_test_quarantine.py` 限定允许集合。
+1. 默认测试中任何 `skip` 都必须使用已登记的稳定 `ZIC-QUARANTINE(Q-xxx):` ID，在 `docs/testing/TEST_QUARANTINE.md` 登记失效原因、仍运行的所有者级覆盖与解除条件，并由 `tool/check_test_quarantine.py` 限定允许集合。
 2. 删除重复或概念错误的断言，而不是保留永久 skip：
    - App 不再重复测试 `reader_runtime` 的 adaptive classifier；
    - 删除无法代表最终 renderer 放大的 `RasterPlan.isRenderUpscaled`；

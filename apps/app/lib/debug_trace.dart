@@ -104,6 +104,8 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     'platformRetainMicros',
     'platformBlitMicros',
     'platformScheduleMicros',
+    'platformScheduleQueueMicros',
+    'platformScheduleCallMicros',
     'platformReplaceMicros',
     'platformResultDispatchMicros',
     'channelRoundTripMicros',
