@@ -43,3 +43,44 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+val verifyZicNativeArtifacts by tasks.registering {
+    group = "verification"
+    description = "Rejects missing or stale source-built ZIC Android native libraries."
+    doLast {
+        val repositoryRoot = projectDir.resolve("../../../..").canonicalFile
+        val expectedFile = repositoryRoot.resolve(
+            "native/media_core/ANDROID_NATIVE_BUILD_ID",
+        )
+        val marker = projectDir.resolve("src/main/jniLibs/.zic-native-build-id")
+        val expected = expectedFile.takeIf { it.isFile }?.readText()?.trim().orEmpty()
+        val actual = marker.takeIf { it.isFile }?.readText()?.trim().orEmpty()
+        check(expected.isNotEmpty()) {
+            "Missing source Android native build ID: $expectedFile"
+        }
+        check(actual == expected) {
+            "Android native artifacts are missing or stale. " +
+                "Expected '$expected', found '${actual.ifEmpty { "<missing>" }}'. " +
+                "Run ./tool/build_android_native.sh debug or release."
+        }
+        val configured = providers.environmentVariable("ZIC_ANDROID_ABIS")
+            .orElse("arm64-v8a,armeabi-v7a,x86_64")
+            .get()
+            .split(',')
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+        for (abi in configured) {
+            val library = projectDir.resolve(
+                "src/main/jniLibs/$abi/libmedia_core.so",
+            )
+            check(library.isFile && library.length() > 0L) {
+                "Missing source-built native media library: $library. " +
+                    "Run ./tool/build_android_native.sh debug or release."
+            }
+        }
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(verifyZicNativeArtifacts)
+}

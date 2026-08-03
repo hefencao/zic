@@ -1,3 +1,12 @@
+## 0.31.0-dev.109：Cache tier 内聚与 Android native build identity
+
+- 将 encoded-byte L1、LRU、in-flight join、tier lookup 和 write-through 内聚进 `ArtifactCacheManager`；backend 只保留 open/store。
+- 删除独立 byte-cache 文件、过渡 cache interfaces、backend readArtifact 旁路及对应旧门禁。
+- 删除独立 `NativeBlitter.configure` JNI；Rust `blit` 内部按 geometry mismatch 配置，并在 lock failure 后只重试一次。
+- 增加 source native build ID、JNI symbol gate 与 Gradle preBuild 验证，禁止旧 `.so` 静默进入 APK。
+- telemetry 使用 `surfaceReconfigureCount`；旧 configure/retry 字段仅由 analyzer 兼容读取。
+- README/Architecture/Spec 未修改。
+
 ## 0.31.0-dev.108：统一 Reader artifact cache 与 Android texture geometry
 
 - 新增 composition `ArtifactCacheManager`，统一 Reader page artifact 的 memory→backend lookup、读取可见性/backend 持久存在性、精确长度、并发读取合并、LRU与写穿。

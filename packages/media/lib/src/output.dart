@@ -29,9 +29,8 @@ final class FramePresentationTiming {
     required this.platformQueueMicros,
     required this.platformUploadMicros,
     required this.platformRetainMicros,
-    required this.platformConfigureMicros,
     required this.platformBlitMicros,
-    required this.blitRetryCount,
+    required this.surfaceReconfigureCount,
     required this.platformScheduleMicros,
     required this.platformScheduleQueueMicros,
     required this.platformScheduleCallMicros,
@@ -47,9 +46,8 @@ final class FramePresentationTiming {
   final int platformQueueMicros;
   final int platformUploadMicros;
   final int platformRetainMicros;
-  final int platformConfigureMicros;
   final int platformBlitMicros;
-  final int blitRetryCount;
+  final int surfaceReconfigureCount;
   final int platformScheduleMicros;
   final int platformScheduleQueueMicros;
   final int platformScheduleCallMicros;

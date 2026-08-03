@@ -45,9 +45,8 @@ final class TexturePresentTelemetry extends TextureTelemetry {
     required this.queueMicros,
     required this.uploadMicros,
     required this.retainMicros,
-    required this.configureMicros,
     required this.blitMicros,
-    required this.blitRetryCount,
+    required this.surfaceReconfigureCount,
     required this.scheduleMicros,
     required this.scheduleQueueMicros,
     required this.scheduleCallMicros,
@@ -64,9 +63,8 @@ final class TexturePresentTelemetry extends TextureTelemetry {
   final int queueMicros;
   final int uploadMicros;
   final int retainMicros;
-  final int configureMicros;
   final int blitMicros;
-  final int blitRetryCount;
+  final int surfaceReconfigureCount;
   final int scheduleMicros;
   final int scheduleQueueMicros;
   final int scheduleCallMicros;
@@ -230,9 +228,9 @@ final class AndroidTexturePresenter {
         queueMicros: _readInt(response, 'queueMicros'),
         uploadMicros: _readInt(response, 'uploadMicros'),
         retainMicros: _readInt(response, 'retainMicros'),
-        configureMicros: _readInt(response, 'configureMicros'),
         blitMicros: _readInt(response, 'blitMicros'),
-        blitRetryCount: _readInt(response, 'blitRetryCount'),
+        surfaceReconfigureCount:
+            _readInt(response, 'surfaceReconfigureCount'),
         scheduleMicros: _readInt(response, 'scheduleMicros'),
         scheduleQueueMicros: _readInt(response, 'scheduleQueueMicros'),
         scheduleCallMicros: _readInt(response, 'scheduleCallMicros'),

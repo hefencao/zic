@@ -8,7 +8,6 @@ import 'package:transport/transport.dart';
 import 'artifact_cache_manager.dart';
 import 'artifact_cache_read_scheduler.dart';
 import 'artifact_cache_store.dart';
-import 'promoted_artifact_byte_cache.dart';
 
 const int _foregroundStartupChunkBytes = 1024 * 1024;
 const int _foregroundContinuationChunkBytes = 1024 * 1024;
@@ -214,7 +213,7 @@ final class ArtifactCacheTransport implements Transport {
     var acquiredPriority = requestedPriority;
     ArtifactCacheReadLease? lease;
     final materializeStarted = _clock?.nowMicros();
-    late final PromotedArtifactByteRead read;
+    late final ArtifactCacheRead read;
     try {
       if (scheduler != null) {
         final wait = Stopwatch()..start();

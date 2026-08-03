@@ -28,9 +28,6 @@ internal object NativeBlitter {
     external fun release(frameAddress: Long)
 
     @JvmStatic
-    external fun configure(surface: Surface, width: Int, height: Int): Int
-
-    @JvmStatic
     external fun blit(surface: Surface, frameAddress: Long): Int
 }
 
@@ -236,9 +233,9 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                             "uploadMicros" to
                                 (finishedNanos - startedNanos) / 1_000L,
                             "retainMicros" to presentation.retainMicros,
-                            "configureMicros" to presentation.configureMicros,
                             "blitMicros" to presentation.blitMicros,
-                            "blitRetryCount" to presentation.blitRetryCount,
+                            "surfaceReconfigureCount" to
+                                presentation.surfaceReconfigureCount,
                             "scheduleMicros" to presentation.scheduleMicros,
                             "scheduleQueueMicros" to
                                 presentation.scheduleQueueMicros,
@@ -438,9 +435,8 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private data class PresentResult(
         val status: Int,
         val retainMicros: Long,
-        val configureMicros: Long,
         val blitMicros: Long,
-        val blitRetryCount: Int,
+        val surfaceReconfigureCount: Int,
         val scheduleMicros: Long,
         val scheduleQueueMicros: Long,
         val scheduleCallMicros: Long,
@@ -450,9 +446,8 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     private data class BlitResult(
         val status: Int,
-        val configureMicros: Long,
         val blitMicros: Long,
-        val retryCount: Int,
+        val surfaceReconfigureCount: Int,
     )
 
     @Suppress("DEPRECATION")
@@ -473,9 +468,6 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         @Volatile
         private var released = false
 
-        @Volatile
-        private var needsConfiguration = true
-
         private var currentFrameAddress = 0L
         private var currentFrameBytes = 0L
 
@@ -484,13 +476,11 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 object : TextureRegistry.SurfaceProducer.Callback {
                     override fun onSurfaceAvailable() {
                         surfaceAvailable = true
-                        needsConfiguration = true
                         scheduleRedraw(this@Output)
                     }
 
                     override fun onSurfaceCleanup() {
                         surfaceAvailable = false
-                        needsConfiguration = true
                     }
                 },
             )
@@ -525,9 +515,8 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                         PresentResult(
                             status = blit.status,
                             retainMicros = retainMicros,
-                            configureMicros = blit.configureMicros,
-                            blitMicros = blit.blitMicros,
-                            blitRetryCount = blit.retryCount,
+                                                        blitMicros = blit.blitMicros,
+                            surfaceReconfigureCount = blit.surfaceReconfigureCount,
                             scheduleMicros = 0L,
                             scheduleQueueMicros = 0L,
                             scheduleCallMicros = 0L,
@@ -545,9 +534,8 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                         PresentResult(
                             status = if (schedule.scheduled) 0 else -1,
                             retainMicros = retainMicros,
-                            configureMicros = blit.configureMicros,
-                            blitMicros = blit.blitMicros,
-                            blitRetryCount = blit.retryCount,
+                                                        blitMicros = blit.blitMicros,
+                            surfaceReconfigureCount = blit.surfaceReconfigureCount,
                             scheduleMicros = schedule.totalMicros,
                             scheduleQueueMicros = schedule.queueMicros,
                             scheduleCallMicros = schedule.callMicros,
@@ -561,9 +549,8 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                         PresentResult(
                             status = -1,
                             retainMicros = retainMicros,
-                            configureMicros = blit.configureMicros,
-                            blitMicros = blit.blitMicros,
-                            blitRetryCount = blit.retryCount,
+                                                        blitMicros = blit.blitMicros,
+                            surfaceReconfigureCount = blit.surfaceReconfigureCount,
                             scheduleMicros = 0L,
                             scheduleQueueMicros = 0L,
                             scheduleCallMicros = 0L,
@@ -599,7 +586,6 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             resizeProducer(width, height)
             this.width = width
             this.height = height
-            needsConfiguration = true
         }
 
         fun release() {
@@ -608,49 +594,20 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             }
             released = true
             surfaceAvailable = false
-            needsConfiguration = true
             clearCurrentFrame()
             releaseProducer()
         }
 
         private fun blitConfigured(frameAddress: Long): BlitResult {
-            val target = surface()
-            var configureMicros = 0L
-            var blitMicros = 0L
-            var retries = 0
-
-            fun configure(): Int {
-                val started = System.nanoTime()
-                val status = NativeBlitter.configure(target, width, height)
-                configureMicros += (System.nanoTime() - started) / 1_000L
-                needsConfiguration = status != BLIT_OK
-                return status
-            }
-
-            if (needsConfiguration) {
-                val configured = configure()
-                if (configured != BLIT_OK) {
-                    return BlitResult(configured, configureMicros, blitMicros, retries)
-                }
-            }
-
-            var started = System.nanoTime()
-            var status = NativeBlitter.blit(target, frameAddress)
-            blitMicros += (System.nanoTime() - started) / 1_000L
-            if (status == BLIT_LOCK_FAILED) {
-                needsConfiguration = true
-                retries = 1
-                val configured = configure()
-                if (configured == BLIT_OK) {
-                    started = System.nanoTime()
-                    status = NativeBlitter.blit(target, frameAddress)
-                    blitMicros += (System.nanoTime() - started) / 1_000L
-                } else {
-                    status = configured
-                }
-            }
-            if (status == BLIT_OK) needsConfiguration = false
-            return BlitResult(status, configureMicros, blitMicros, retries)
+            val started = System.nanoTime()
+            val rawStatus = NativeBlitter.blit(surface(), frameAddress)
+            val blitMicros = (System.nanoTime() - started) / 1_000L
+            val reconfigured = rawStatus == BLIT_OK_RECONFIGURED
+            return BlitResult(
+                status = if (reconfigured) BLIT_OK else rawStatus,
+                blitMicros = blitMicros,
+                surfaceReconfigureCount = if (reconfigured) 1 else 0,
+            )
         }
 
         private fun surface(): Surface {
@@ -681,7 +638,7 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         const val CHANNEL_NAME = "dev.zic/texture"
         const val BLIT_LANE_COUNT = 2
         const val BLIT_OK = 0
-        const val BLIT_LOCK_FAILED = 4
+        const val BLIT_OK_RECONFIGURED = 6
 
         fun newBlitLane(index: Int): ExecutorService =
             Executors.newSingleThreadExecutor { runnable ->

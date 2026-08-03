@@ -1,35 +1,49 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
 
 import 'artifact_cache_store.dart';
-import 'promoted_artifact_byte_cache.dart';
 
 /// Composition-owned multi-level router for immutable Reader page artifacts.
-///
-/// This manager owns tier ordering, exact identity/length presence checks,
-/// complete-file read joining, hot-byte retention and write-through. Storage
-/// backends only implement durable/in-memory artifact primitives; they do not
-/// decide cache policy or duplicate tier routing.
-final class ArtifactCacheManager
-    implements ArtifactCacheStore, ArtifactCacheStreamStore {
+final class ArtifactCacheManager {
   ArtifactCacheManager({
     required this.backend,
-    PromotedArtifactByteCache? memory,
-  }) : _memory = memory ?? PromotedArtifactByteCache();
+    this.memoryMaxEntries = 4,
+    this.memoryMaxBytes = 96 * 1024 * 1024,
+  })  : assert(memoryMaxEntries > 0),
+        assert(memoryMaxBytes > 0);
 
   final ArtifactCacheBackend backend;
-  final PromotedArtifactByteCache _memory;
+  final int memoryMaxEntries;
+  final int memoryMaxBytes;
+  final LinkedHashMap<_ArtifactByteKey, Uint8List> _memory =
+      LinkedHashMap<_ArtifactByteKey, Uint8List>();
+  final Map<_ArtifactByteKey, Future<Uint8List>> _inFlight =
+      <_ArtifactByteKey, Future<Uint8List>>{};
+  int _memoryBytes = 0;
 
-  int get memoryEntryCount => _memory.entryCount;
-  int get memoryBytes => _memory.retainedBytes;
+  int get memoryEntryCount => _memory.length;
+  int get memoryBytes => _memoryBytes;
 
-  Uint8List? lookupMemory(DownloadId id, {int? length}) =>
-      _memory.lookup(id, length: length);
+  Uint8List? lookupMemory(DownloadId id, {int? length}) {
+    _ArtifactByteKey? selected;
+    for (final key in _memory.keys.toList(growable: false).reversed) {
+      if (key.id == id && (length == null || key.length == length)) {
+        selected = key;
+        break;
+      }
+    }
+    if (selected == null) return null;
+    final bytes = _memory.remove(selected);
+    if (bytes == null) return null;
+    _memory[selected] = bytes;
+    return bytes;
+  }
 
   Future<ArtifactCacheLookup?> lookup(DownloadId id) async {
-    final memory = _memory.lookup(id);
+    final memory = lookupMemory(id);
     if (memory != null) {
       return ArtifactCacheLookup(
         id: id,
@@ -37,29 +51,23 @@ final class ArtifactCacheManager
         tier: ArtifactCacheTier.memory,
       );
     }
-    final persistent = await backend.openArtifactStream(id);
-    if (persistent == null) return null;
+    final entry = await backend.openArtifactStream(id);
+    if (entry == null) return null;
     return ArtifactCacheLookup(
       id: id,
-      entry: persistent,
+      entry: entry,
       tier: ArtifactCacheTier.persistent,
     );
   }
 
-  /// Answers exact-key read visibility across all tiers using one policy.
   Future<bool> contains({
     required DownloadId id,
     required int expectedLength,
   }) async {
-    if (_memory.contains(id, length: expectedLength)) return true;
+    if (lookupMemory(id, length: expectedLength) != null) return true;
     return containsBackend(id: id, expectedLength: expectedLength);
   }
 
-  /// Answers exact-key presence in the durable/backend tier.
-  ///
-  /// Handoff must use this method rather than [contains]: an L1 memory hit is
-  /// readable but does not prove that the promoted artifact was written
-  /// through to the backend.
   Future<bool> containsBackend({
     required DownloadId id,
     required int expectedLength,
@@ -68,62 +76,113 @@ final class ArtifactCacheManager
     return entry != null && entry.length == expectedLength;
   }
 
-  /// Materializes a resolved foreground entry and joins concurrent reads.
-  Future<PromotedArtifactByteRead> readForegroundLookup(
+  Future<ArtifactCacheRead> readForegroundLookup(
     ArtifactCacheLookup lookup,
   ) async {
     if (lookup.tier == ArtifactCacheTier.memory) {
-      final bytes = await lookup.entry.readAll!();
-      return PromotedArtifactByteRead(
-        bytes: bytes,
+      return ArtifactCacheRead(
+        bytes: await lookup.entry.readAll!(),
         memoryHit: true,
         joined: false,
       );
     }
-    return _memory.read(
+    return _readJoined(
       id: lookup.id,
       length: lookup.entry.length,
       loader: lookup.entry.readAll ?? () => _collect(lookup.entry),
     );
   }
 
-  Future<PromotedArtifactByteRead?> readForeground(DownloadId id) async {
-    final resolved = await lookup(id);
-    return resolved == null ? null : readForegroundLookup(resolved);
+  Future<ArtifactCacheRead?> readForeground(DownloadId id) async {
+    final lookup = await this.lookup(id);
+    return lookup == null ? null : readForegroundLookup(lookup);
   }
 
-  /// Joins/retains immutable bytes produced by the authoritative Reader
-  /// session without routing around its DownloadSession ownership.
-  Future<PromotedArtifactByteRead> readSessionArtifact({
+  Future<ArtifactCacheRead> readSessionArtifact({
     required DownloadId id,
     required int length,
     required Future<Uint8List> Function() loader,
-  }) =>
-      _memory.read(id: id, length: length, loader: loader);
+  }) => _readJoined(id: id, length: length, loader: loader);
 
-  @override
-  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async =>
-      (await lookup(id))?.entry;
-
-  @override
-  Future<Uint8List?> readArtifact(DownloadId id) async =>
-      (await readForeground(id))?.bytes;
-
-  @override
   Future<void> storePromotedArtifact({
     required DownloadId id,
     required Uint8List bytes,
   }) async {
     await backend.storePromotedArtifact(id: id, bytes: bytes);
-    _memory.remember(id: id, bytes: bytes);
+    remember(id: id, bytes: bytes);
   }
 
-  void remember({required DownloadId id, required Uint8List bytes}) =>
-      _memory.remember(id: id, bytes: bytes);
+  void remember({required DownloadId id, required Uint8List bytes}) {
+    final key = _ArtifactByteKey(id, bytes.lengthInBytes);
+    for (final stale in _memory.keys
+        .where((candidate) => candidate.id == id && candidate != key)
+        .toList(growable: false)) {
+      final removed = _memory.remove(stale);
+      if (removed != null) _memoryBytes -= removed.lengthInBytes;
+    }
+    final previous = _memory.remove(key);
+    if (previous != null) _memoryBytes -= previous.lengthInBytes;
+    if (bytes.lengthInBytes > memoryMaxBytes) return;
+    _memory[key] = bytes;
+    _memoryBytes += bytes.lengthInBytes;
+    while (_memory.length > memoryMaxEntries || _memoryBytes > memoryMaxBytes) {
+      final oldest = _memory.keys.first;
+      _memoryBytes -= _memory.remove(oldest)!.lengthInBytes;
+    }
+  }
 
-  void invalidateMemory(DownloadId id) => _memory.invalidate(id);
+  void invalidateMemory(DownloadId id) {
+    for (final key in _memory.keys
+        .where((candidate) => candidate.id == id)
+        .toList(growable: false)) {
+      final removed = _memory.remove(key);
+      if (removed != null) _memoryBytes -= removed.lengthInBytes;
+    }
+  }
 
-  void clearMemory() => _memory.clear();
+  void clearMemory() {
+    _memory.clear();
+    _memoryBytes = 0;
+  }
+
+  Future<ArtifactCacheRead> _readJoined({
+    required DownloadId id,
+    required int length,
+    required Future<Uint8List> Function() loader,
+  }) async {
+    final cached = lookupMemory(id, length: length);
+    if (cached != null) {
+      return ArtifactCacheRead(bytes: cached, memoryHit: true, joined: false);
+    }
+    final key = _ArtifactByteKey(id, length);
+    final running = _inFlight[key];
+    if (running != null) {
+      return ArtifactCacheRead(
+        bytes: await running,
+        memoryHit: false,
+        joined: true,
+      );
+    }
+    late final Future<Uint8List> tracked;
+    tracked = Future<Uint8List>.sync(loader).then((bytes) {
+      if (bytes.lengthInBytes != length) {
+        throw StateError(
+          'artifact cache length changed while reading: '
+          '${bytes.lengthInBytes}/$length for ${id.key}',
+        );
+      }
+      remember(id: id, bytes: bytes);
+      return bytes;
+    }).whenComplete(() {
+      if (identical(_inFlight[key], tracked)) _inFlight.remove(key);
+    });
+    _inFlight[key] = tracked;
+    return ArtifactCacheRead(
+      bytes: await tracked,
+      memoryHit: false,
+      joined: false,
+    );
+  }
 
   static ArtifactCacheStreamEntry _memoryEntry(Uint8List bytes) =>
       ArtifactCacheStreamEntry(
@@ -172,4 +231,29 @@ final class ArtifactCacheLookup {
   final DownloadId id;
   final ArtifactCacheStreamEntry entry;
   final ArtifactCacheTier tier;
+}
+
+final class ArtifactCacheRead {
+  const ArtifactCacheRead({
+    required this.bytes,
+    required this.memoryHit,
+    required this.joined,
+  });
+
+  final Uint8List bytes;
+  final bool memoryHit;
+  final bool joined;
+}
+
+final class _ArtifactByteKey {
+  const _ArtifactByteKey(this.id, this.length);
+  final DownloadId id;
+  final int length;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _ArtifactByteKey && other.id == id && other.length == length;
+
+  @override
+  int get hashCode => Object.hash(id, length);
 }

@@ -224,8 +224,6 @@ final class _Backend implements ArtifactCacheBackend {
   Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async =>
       null;
 
-  @override
-  Future<Uint8List?> readArtifact(DownloadId id) async => null;
 
   @override
   Future<void> storePromotedArtifact({

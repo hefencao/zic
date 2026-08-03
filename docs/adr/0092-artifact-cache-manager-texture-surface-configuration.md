@@ -1,6 +1,8 @@
 # ADR 0092：Reader artifact 统一路由与 Android Surface 几何配置
 
-**状态：Provisional**
+**状态：Superseded**
+
+由 ADR 0093 取代。统一 artifact manager 方向保留；独立 `NativeBlitter.configure` JNI 被设备 Trace 证明未进入实际 Android native library，已删除并内聚回既有 `blit` ABI。
 
 ## 问题
 

@@ -54,6 +54,50 @@ void main() {
     expect(backend.readAllCalls, 1);
   });
 
+  test('evicts least-recently-used bytes within manager bounds', () async {
+    final backend = _Backend(<DownloadId, Uint8List>{});
+    final manager = ArtifactCacheManager(
+      backend: backend,
+      memoryMaxEntries: 2,
+      memoryMaxBytes: 7,
+    );
+    final first = _id('first');
+    final second = _id('second');
+    final third = _id('third');
+    manager.remember(id: first, bytes: Uint8List(3));
+    manager.remember(id: second, bytes: Uint8List(3));
+    expect(manager.lookupMemory(first, length: 3), isNotNull);
+    manager.remember(id: third, bytes: Uint8List(4));
+
+    expect(manager.lookupMemory(first, length: 3), isNotNull);
+    expect(manager.lookupMemory(second, length: 3), isNull);
+    expect(manager.lookupMemory(third, length: 4), isNotNull);
+    expect(manager.memoryEntryCount, 2);
+    expect(manager.memoryBytes, 7);
+  });
+
+  test('rejects changed advertised length without retaining bytes', () async {
+    final id = _id('changed');
+    final backend = _Backend(<DownloadId, Uint8List>{
+      id: Uint8List(5),
+    });
+    final manager = ArtifactCacheManager(backend: backend);
+    final lookup = ArtifactCacheLookup(
+      id: id,
+      entry: ArtifactCacheStreamEntry(
+        length: 4,
+        open: ({required int start, int? endExclusive}) async* {
+          yield Uint8List(5);
+        },
+        readAll: () async => Uint8List(5),
+      ),
+      tier: ArtifactCacheTier.persistent,
+    );
+
+    await expectLater(manager.readForegroundLookup(lookup), throwsStateError);
+    expect(manager.lookupMemory(id), isNull);
+  });
+
   test('writes through the backend and updates the memory tier', () async {
     final id = _id('store');
     final backend = _Backend(<DownloadId, Uint8List>{});
@@ -108,8 +152,6 @@ final class _Backend implements ArtifactCacheBackend {
     );
   }
 
-  @override
-  Future<Uint8List?> readArtifact(DownloadId id) async => values[id];
 
   @override
   Future<void> storePromotedArtifact({

@@ -28,9 +28,8 @@ void main() {
             'queueMicros': 11,
             'uploadMicros': 23,
             'retainMicros': 3,
-            'configureMicros': 2,
             'blitMicros': 7,
-            'blitRetryCount': 1,
+            'surfaceReconfigureCount': 1,
             'scheduleMicros': 13,
             'scheduleQueueMicros': 8,
             'scheduleCallMicros': 5,
@@ -96,9 +95,8 @@ void main() {
     expect(sample.queueMicros, 11);
     expect(sample.uploadMicros, 23);
     expect(sample.retainMicros, 3);
-    expect(sample.configureMicros, 2);
     expect(sample.blitMicros, 7);
-    expect(sample.blitRetryCount, 1);
+    expect(sample.surfaceReconfigureCount, 1);
     expect(sample.scheduleMicros, 13);
     expect(sample.scheduleQueueMicros, 8);
     expect(sample.scheduleCallMicros, 5);

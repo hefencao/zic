@@ -261,6 +261,9 @@ def summarize(path: Path) -> dict[str, Any]:
                         payload.get("platformConfigureMicros")
                     ),
                     "blitRetryCount": _number(payload.get("blitRetryCount")),
+                    "surfaceReconfigureCount": _number(
+                        payload.get("surfaceReconfigureCount")
+                    ),
                 }
             )
             presented_at = _number(payload.get("presentedAtMicros"))
@@ -396,6 +399,9 @@ def summarize(path: Path) -> dict[str, Any]:
             [row["platformConfigureMicros"] for row in rows]
         ),
         "blitRetryCount": sum(row["blitRetryCount"] for row in rows),
+        "surfaceReconfigureCount": sum(
+            row["surfaceReconfigureCount"] for row in rows
+        ),
         "sourceReadCount": len(source_reads),
         "sourceReadMicros": _stats([row["streamMicros"] for row in source_reads]),
         "sourceReadModeCounts": dict(
@@ -494,8 +500,9 @@ def main() -> None:
         f"task failures: {report['taskFailureCount']} "
         f"blitLock={report['blitLockFailureCount']} "
         f"fallback={report['blitFallbackCount']} "
-        f"configure={report['platformConfigureMicros']} "
-        f"blitRetries={report['blitRetryCount']}"
+        f"legacyConfigure={report['platformConfigureMicros']} "
+        f"legacyBlitRetries={report['blitRetryCount']} "
+        f"surfaceReconfigures={report['surfaceReconfigureCount']}"
     )
     print(f"reader lifecycle: {report['readerSessionLifecycle']}")
     print(
@@ -524,8 +531,9 @@ def main() -> None:
             f"backpressure={row['uploadBackpressureMicros']} "
             f"endToEnd={row['endToEndMicros']} "
             f"present={row['presentMicros']} deadlineMiss={row['deadlineMissMicros']} "
-            f"configure={row['platformConfigureMicros']} "
-            f"blitRetries={row['blitRetryCount']} "
+            f"legacyConfigure={row['platformConfigureMicros']} "
+            f"legacyBlitRetries={row['blitRetryCount']} "
+            f"surfaceReconfigures={row['surfaceReconfigureCount']} "
             f"path={row['presentationPath']}"
         )
     print("slow source reads:")

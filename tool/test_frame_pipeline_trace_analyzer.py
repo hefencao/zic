@@ -30,6 +30,7 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
                 "platformOtherMicros": 12000,
                 "platformConfigureMicros": 15000,
                 "blitRetryCount": 1,
+                "surfaceReconfigureCount": 1,
                 "platformScheduleMicros": 110000,
                 "platformScheduleQueueMicros": 100000,
                 "platformScheduleCallMicros": 10000,
@@ -196,6 +197,7 @@ assert report["blitLockFailureCount"] == 1
 assert report["blitFallbackCount"] == 1
 assert report["platformConfigureMicros"]["max"] == 15000
 assert report["blitRetryCount"] == 1
+assert report["surfaceReconfigureCount"] == 1
 assert report["taskFailures"][0]["executionMicros"] == 5000
 assert report["frames"][0]["frame"] == 0
 assert report["frames"][1]["recordedDominantStage"] == "decodedToUpload"

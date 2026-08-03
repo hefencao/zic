@@ -139,4 +139,6 @@ for ABI in "${ABI_LIST[@]}"; do
   printf 'Packaged source-built native media libraries for %s in %s\n' "$ABI" "$DEST"
 done
 
+cp "$ROOT/native/media_core/ANDROID_NATIVE_BUILD_ID" \
+  "$ROOT/apps/app/android/app/src/main/jniLibs/.zic-native-build-id"
 "$ROOT/tool/check_android_native.sh"

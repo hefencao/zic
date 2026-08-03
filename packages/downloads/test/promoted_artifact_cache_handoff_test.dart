@@ -166,8 +166,6 @@ final class _RecordingArtifactStore implements ArtifactCacheBackend {
     return _entry(bytes);
   }
 
-  @override
-  Future<Uint8List?> readArtifact(DownloadId id) async => values[id];
 
   @override
   Future<void> storePromotedArtifact({
@@ -188,8 +186,6 @@ final class _ExistingArtifactStore implements ArtifactCacheBackend {
     return bytes == null ? null : _entry(bytes);
   }
 
-  @override
-  Future<Uint8List?> readArtifact(DownloadId id) async => existing;
 
   @override
   Future<void> storePromotedArtifact({

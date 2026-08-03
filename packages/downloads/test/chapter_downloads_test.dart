@@ -70,13 +70,13 @@ void main() {
     final id = _readerArtifactId('memory-cache-page');
     final bytes = Uint8List.fromList(<int>[4, 5, 6]);
 
-    expect(await service.readArtifact(id), isNull);
+    expect(await _readBackendArtifact(service, id), isNull);
     await service.storePromotedArtifact(id: id, bytes: bytes);
-    expect(await service.readArtifact(id), bytes);
+    expect(await _readBackendArtifact(service, id), bytes);
 
     final report = await service.clearArtifacts();
     expect(report.evictedEntries, 1);
-    expect(await service.readArtifact(id), isNull);
+    expect(await _readBackendArtifact(service, id), isNull);
   });
 
   test('persistent service opens without eagerly restoring indexed pages',
@@ -106,7 +106,7 @@ void main() {
     expect(projected.receivedBytes, 4);
     expect(reopened.materializedSessionCount, 0);
 
-    expect(await reopened.readArtifact(id), <int>[2, 4, 6, 8]);
+    expect(await _readBackendArtifact(reopened, id), <int>[2, 4, 6, 8]);
     final stream = await reopened.openArtifactStream(id);
     expect(stream, isNotNull);
     expect(
@@ -126,13 +126,13 @@ void main() {
 
     final first = await PersistentChapterDownloadService.open(directory.path);
     await first.storePromotedArtifact(id: id, bytes: bytes);
-    expect(await first.readArtifact(id), bytes);
+    expect(await _readBackendArtifact(first, id), bytes);
     await first.close();
 
     final reopened =
         await PersistentChapterDownloadService.open(directory.path);
     addTearDown(reopened.close);
-    expect(await reopened.readArtifact(id), bytes);
+    expect(await _readBackendArtifact(reopened, id), bytes);
   });
 
   test('persistent chapter download survives reopen and serves page bytes',
@@ -462,6 +462,21 @@ ImportedLibraryEntry _entryForArtifact(
         ],
       ),
     );
+
+
+Future<Uint8List?> _readBackendArtifact(
+  ArtifactCacheBackend backend,
+  DownloadId id,
+) async {
+  final entry = await backend.openArtifactStream(id);
+  if (entry == null) return null;
+  if (entry.readAll != null) return entry.readAll!();
+  final builder = BytesBuilder(copy: false);
+  await for (final chunk in entry.open(start: 0)) {
+    builder.add(chunk);
+  }
+  return builder.takeBytes();
+}
 
 DownloadId _readerArtifactId(String pageId) => DownloadId(
       content: ContentId(

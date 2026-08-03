@@ -22,14 +22,13 @@ if "skip: 'ZIC-QUARANTINE" in source_tests:
     raise SystemExit("FAIL: Flutter testWidgets cannot use a String skip reason")
 
 manager = read("packages/downloads/lib/src/artifact_cache_manager.dart")
-byte_cache = read("packages/downloads/lib/src/promoted_artifact_byte_cache.dart")
 for token in (
     "readForegroundLookup(",
     "readSessionArtifact(",
     "final running = _inFlight[key]",
     "Future<Uint8List>.sync(loader)",
 ):
-    if token not in manager + byte_cache:
+    if token not in manager:
         raise SystemExit(f"FAIL: typed central artifact read bridge missing: {token}")
 
 host = read("packages/pipeline_runtime/lib/src/pipeline_reader_host.dart")

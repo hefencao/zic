@@ -55,7 +55,7 @@ require(
 require(
     'packages/downloads/lib/src/artifact_cache_store.dart',
     'final class ArtifactCacheStreamEntry',
-    'abstract interface class ArtifactCacheStreamStore',
+    'abstract interface class ArtifactCacheBackend',
 )
 require(
     'packages/downloads/lib/src/artifact_cache_transport.dart',

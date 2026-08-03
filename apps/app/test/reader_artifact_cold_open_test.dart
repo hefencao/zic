@@ -179,11 +179,6 @@ final class _ArtifactStore implements ArtifactCacheBackend {
     );
   }
 
-  @override
-  Future<Uint8List?> readArtifact(DownloadId id) async {
-    reads++;
-    return values[id];
-  }
 
   @override
   Future<void> storePromotedArtifact({

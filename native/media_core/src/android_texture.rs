@@ -6,6 +6,20 @@ pub(crate) const BLIT_INVALID_FRAME: i32 = 2;
 pub(crate) const BLIT_SURFACE_FAILED: i32 = 3;
 pub(crate) const BLIT_LOCK_FAILED: i32 = 4;
 pub(crate) const BLIT_CONFIG_FAILED: i32 = 5;
+pub(crate) const BLIT_OK_RECONFIGURED: i32 = 6;
+const WINDOW_FORMAT_RGBA_8888: i32 = 1;
+
+pub(crate) fn needs_geometry_configuration(
+    window_width: i32,
+    window_height: i32,
+    window_format: i32,
+    frame_width: i32,
+    frame_height: i32,
+) -> bool {
+    window_width != frame_width
+        || window_height != frame_height
+        || window_format != WINDOW_FORMAT_RGBA_8888
+}
 
 pub(crate) fn copy_premultiplied_rgba(
     source: &[u8],
@@ -66,6 +80,9 @@ mod android {
     extern "C" {
         fn ANativeWindow_fromSurface(env: *mut c_void, surface: *mut c_void) -> *mut ANativeWindow;
         fn ANativeWindow_release(window: *mut ANativeWindow);
+        fn ANativeWindow_getWidth(window: *mut ANativeWindow) -> i32;
+        fn ANativeWindow_getHeight(window: *mut ANativeWindow) -> i32;
+        fn ANativeWindow_getFormat(window: *mut ANativeWindow) -> i32;
         fn ANativeWindow_setBuffersGeometry(
             window: *mut ANativeWindow,
             width: i32,
@@ -86,6 +103,43 @@ mod android {
         fn drop(&mut self) {
             unsafe { ANativeWindow_release(self.0) };
         }
+    }
+
+    unsafe fn configure_if_needed(
+        window: *mut ANativeWindow,
+        width: i32,
+        height: i32,
+        force: bool,
+    ) -> Result<bool, i32> {
+        let needed = force
+            || needs_geometry_configuration(
+                ANativeWindow_getWidth(window),
+                ANativeWindow_getHeight(window),
+                ANativeWindow_getFormat(window),
+                width,
+                height,
+            );
+        if !needed {
+            return Ok(false);
+        }
+        if ANativeWindow_setBuffersGeometry(
+            window,
+            width,
+            height,
+            WINDOW_FORMAT_RGBA_8888,
+        ) == 0
+        {
+            Ok(true)
+        } else {
+            Err(BLIT_CONFIG_FAILED)
+        }
+    }
+
+    unsafe fn lock_window(
+        window: *mut ANativeWindow,
+        buffer: &mut ANativeWindowBuffer,
+    ) -> bool {
+        ANativeWindow_lock(window, buffer, std::ptr::null_mut()) == 0
     }
 
     #[no_mangle]
@@ -113,36 +167,6 @@ mod android {
     }
 
     #[no_mangle]
-    pub unsafe extern "system" fn Java_dev_zic_texture_NativeBlitter_configure(
-        env: *mut c_void,
-        _class: *mut c_void,
-        surface: *mut c_void,
-        width: i32,
-        height: i32,
-    ) -> i32 {
-        const WINDOW_FORMAT_RGBA_8888: i32 = 1;
-        if env.is_null() || surface.is_null() || width <= 0 || height <= 0 {
-            return BLIT_NULL;
-        }
-        let window = ANativeWindow_fromSurface(env, surface);
-        if window.is_null() {
-            return BLIT_SURFACE_FAILED;
-        }
-        let window = WindowOwner(window);
-        if ANativeWindow_setBuffersGeometry(
-            window.0,
-            width,
-            height,
-            WINDOW_FORMAT_RGBA_8888,
-        ) == 0
-        {
-            BLIT_OK
-        } else {
-            BLIT_CONFIG_FAILED
-        }
-    }
-
-    #[no_mangle]
     pub unsafe extern "system" fn Java_dev_zic_texture_NativeBlitter_blit(
         env: *mut c_void,
         _class: *mut c_void,
@@ -159,14 +183,15 @@ mod android {
         if frame.data.format != PixelFormat::Rgba8888
             || frame.data.width == 0
             || frame.data.height == 0
+            || frame.data.width > i32::MAX as u32
+            || frame.data.height > i32::MAX as u32
         {
-            return BLIT_INVALID_FRAME;
-        }
-        if frame.data.width > i32::MAX as u32 || frame.data.height > i32::MAX as u32 {
             return BLIT_INVALID_FRAME;
         }
         let width = frame.data.width as usize;
         let height = frame.data.height as usize;
+        let width_i32 = frame.data.width as i32;
+        let height_i32 = frame.data.height as i32;
         let Some(expected) = width
             .checked_mul(height)
             .and_then(|value| value.checked_mul(4))
@@ -182,6 +207,15 @@ mod android {
             return BLIT_SURFACE_FAILED;
         }
         let window = WindowOwner(window);
+        let mut reconfigured = match configure_if_needed(
+            window.0,
+            width_i32,
+            height_i32,
+            false,
+        ) {
+            Ok(value) => value,
+            Err(status) => return status,
+        };
         let mut buffer = ANativeWindowBuffer {
             width: 0,
             height: 0,
@@ -190,14 +224,20 @@ mod android {
             bits: std::ptr::null_mut(),
             reserved: [0; 6],
         };
-        if ANativeWindow_lock(window.0, &mut buffer, std::ptr::null_mut()) != 0 {
-            return BLIT_LOCK_FAILED;
+        if !lock_window(window.0, &mut buffer) {
+            match configure_if_needed(window.0, width_i32, height_i32, true) {
+                Ok(_) => reconfigured = true,
+                Err(status) => return status,
+            }
+            if !lock_window(window.0, &mut buffer) {
+                return BLIT_LOCK_FAILED;
+            }
         }
         if buffer.bits.is_null()
             || buffer.stride <= 0
             || buffer.height <= 0
-            || buffer.width < frame.data.width as i32
-            || buffer.height < frame.data.height as i32
+            || buffer.width < width_i32
+            || buffer.height < height_i32
         {
             ANativeWindow_unlockAndPost(window.0);
             return BLIT_LOCK_FAILED;
@@ -218,24 +258,34 @@ mod android {
             buffer.stride as usize,
         );
         let posted = ANativeWindow_unlockAndPost(window.0) == 0;
-        if copied && posted {
-            BLIT_OK
+        if !copied || !posted {
+            return BLIT_LOCK_FAILED;
+        }
+        if reconfigured {
+            BLIT_OK_RECONFIGURED
         } else {
-            BLIT_LOCK_FAILED
+            BLIT_OK
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::copy_premultiplied_rgba;
+    use super::{copy_premultiplied_rgba, needs_geometry_configuration};
+
+    #[test]
+    fn geometry_configuration_only_tracks_real_mismatch() {
+        assert!(!needs_geometry_configuration(100, 200, 1, 100, 200));
+        assert!(needs_geometry_configuration(99, 200, 1, 100, 200));
+        assert!(needs_geometry_configuration(100, 199, 1, 100, 200));
+        assert!(needs_geometry_configuration(100, 200, 2, 100, 200));
+    }
 
     #[test]
     fn blit_copies_premultiplied_rgba_and_respects_destination_stride() {
         let source = [128, 32, 0, 128, 10, 20, 30, 255];
         let mut destination = [7u8; 16];
-
-        assert!(copy_premultiplied_rgba(&source, 2, 1, &mut destination, 4,));
+        assert!(copy_premultiplied_rgba(&source, 2, 1, &mut destination, 4));
         assert_eq!(&destination[..8], &[128, 32, 0, 128, 10, 20, 30, 255]);
         assert_eq!(&destination[8..], &[7; 8]);
     }

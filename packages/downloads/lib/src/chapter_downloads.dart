@@ -454,13 +454,6 @@ final class MemoryChapterDownloadService
   }
 
   @override
-  Future<Uint8List?> readArtifact(DownloadId id) async {
-    _requireOpen();
-    final bytes = _readerArtifacts[id];
-    return bytes == null ? null : Uint8List.fromList(bytes);
-  }
-
-  @override
   Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async {
     _requireOpen();
     final bytes = _readerArtifacts[id];
@@ -1065,14 +1058,6 @@ final class PersistentChapterDownloadService
       throw StateError('requested page is not downloaded');
     }
     return artifact.readBytes();
-  }
-
-  @override
-  Future<Uint8List?> readArtifact(DownloadId id) async {
-    _requireOpen();
-    final entry = await _indexedPromotedArtifact(id);
-    if (entry == null) return null;
-    return entry.readAll!();
   }
 
   @override
