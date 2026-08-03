@@ -26,6 +26,11 @@ void main() {
           return <String, Object?>{
             'queueMicros': 11,
             'uploadMicros': 23,
+            'retainMicros': 3,
+            'blitMicros': 7,
+            'scheduleMicros': 13,
+            'replaceMicros': 17,
+            'resultDispatchMicros': 19,
             'deadlineMissMicros': 5,
             'textureBytes': 64,
             'inFlightBytes': 64,
@@ -74,6 +79,11 @@ void main() {
     expect(sample.inFlightBytes, 64);
     expect(sample.queueMicros, 11);
     expect(sample.uploadMicros, 23);
+    expect(sample.retainMicros, 3);
+    expect(sample.blitMicros, 7);
+    expect(sample.scheduleMicros, 13);
+    expect(sample.replaceMicros, 17);
+    expect(sample.resultDispatchMicros, 19);
     expect(sample.deadlineMissMicros, 5);
     expect(sample.context, same(context));
     expect(sample.context.sessionId, 'reader-1');

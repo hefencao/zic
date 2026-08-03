@@ -52,12 +52,14 @@ final class DecodeRegistry {
     CancelToken token, {
     required int revision,
     int preparedDepth = 0,
+    int laneQueueMicros = 0,
   }) {
     return get(id).fill(
       demand: demand,
       revision: revision,
       cancel: token,
       preparedDepth: preparedDepth,
+      laneQueueMicros: laneQueueMicros,
     );
   }
 

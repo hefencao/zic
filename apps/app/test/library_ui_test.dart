@@ -704,7 +704,8 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('聚合漫画'), findsOneWidget);
+    expect(find.byKey(localComicDetailsScreenKey), findsOneWidget);
+    expect(find.text('聚合漫画'), findsWidgets);
     expect(find.text('第 1 话'), findsOneWidget);
     expect(find.text('第 2 话'), findsOneWidget);
     expect(find.text('2 章 · 2 页'), findsOneWidget);

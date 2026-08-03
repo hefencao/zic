@@ -11,6 +11,11 @@ final class _NativeDecodeResult {
     required this.metadataComplete,
     required this.cycle,
     required this.nativeMicros,
+    required this.nativeMetadataMicros,
+    required this.workerRoundTripMicros,
+    required this.workerReadyMicros,
+    required this.workerQueueMicros,
+    required this.workerIndex,
   });
 
   final int status;
@@ -20,6 +25,11 @@ final class _NativeDecodeResult {
   final bool metadataComplete;
   final int cycle;
   final int nativeMicros;
+  final int nativeMetadataMicros;
+  final int workerRoundTripMicros;
+  final int workerReadyMicros;
+  final int workerQueueMicros;
+  final int workerIndex;
 }
 
 /// Process-lifetime pool: page/cursor disposal never owns worker shutdown.
@@ -56,13 +66,17 @@ final class _NativeDecodeWorkerPool {
     required int epoch,
     required DecodeExecutionClass executionClass,
   }) async {
+    final ready = Stopwatch()..start();
     await _ensureStarted();
+    final workerReadyMicros = ready.elapsedMicroseconds;
     final completer = Completer<_NativeDecodeResult>();
     final pending = _PendingNativeDecode(
       cursorAddress: cursorAddress,
       epoch: epoch,
       executionClass: executionClass,
       completer: completer,
+      workerReadyMicros: workerReadyMicros,
+      queued: Stopwatch()..start(),
     );
     if (executionClass == DecodeExecutionClass.current) {
       _currentPending.addLast(pending);
@@ -111,7 +125,7 @@ final class _NativeDecodeWorkerPool {
       if (value is! SendPort) {
         throw StateError('native decode worker failed to start: $value');
       }
-      return _NativeDecodeWorker(value);
+      return _NativeDecodeWorker(value, index);
     } finally {
       ready.close();
     }
@@ -153,11 +167,27 @@ final class _NativeDecodeWorkerPool {
     _PendingNativeDecode pending,
   ) async {
     try {
+      final workerQueueMicros = pending.queued.elapsedMicroseconds;
       final result = await worker.decode(
         cursorAddress: pending.cursorAddress,
         epoch: pending.epoch,
       );
-      pending.completer.complete(result);
+      pending.completer.complete(
+        _NativeDecodeResult(
+          status: result.status,
+          frameAddress: result.frameAddress,
+          frameCount: result.frameCount,
+          loopCount: result.loopCount,
+          metadataComplete: result.metadataComplete,
+          cycle: result.cycle,
+          nativeMicros: result.nativeMicros,
+          nativeMetadataMicros: result.nativeMetadataMicros,
+          workerRoundTripMicros: result.workerRoundTripMicros,
+          workerReadyMicros: pending.workerReadyMicros,
+          workerQueueMicros: workerQueueMicros,
+          workerIndex: worker.index,
+        ),
+      );
     } on Object catch (error, stack) {
       pending.completer.completeError(error, stack);
     } finally {
@@ -174,18 +204,23 @@ final class _PendingNativeDecode {
     required this.epoch,
     required this.executionClass,
     required this.completer,
+    required this.workerReadyMicros,
+    required this.queued,
   });
 
   final int cursorAddress;
   final int epoch;
   final DecodeExecutionClass executionClass;
   final Completer<_NativeDecodeResult> completer;
+  final int workerReadyMicros;
+  final Stopwatch queued;
 }
 
 final class _NativeDecodeWorker {
-  _NativeDecodeWorker(this.port);
+  _NativeDecodeWorker(this.port, this.index);
 
   final SendPort port;
+  final int index;
   bool busy = false;
   DecodeExecutionClass? executionClass;
 
@@ -198,6 +233,7 @@ final class _NativeDecodeWorker {
     required int epoch,
   }) async {
     final response = ReceivePort();
+    final workerRoundTrip = Stopwatch()..start();
     try {
       port.send(<Object?>[response.sendPort, cursorAddress, epoch]);
       final value = await response.first;
@@ -209,7 +245,7 @@ final class _NativeDecodeWorker {
           value.length > 1 ? value[1].toString() : 'decode failed',
         );
       }
-      if (value.length < 7) {
+      if (value.length < 8) {
         throw StateError('incomplete native decode worker response: $value');
       }
       return _NativeDecodeResult(
@@ -220,6 +256,11 @@ final class _NativeDecodeWorker {
         metadataComplete: value[4] == true,
         cycle: value[5]! as int,
         nativeMicros: value[6]! as int,
+        nativeMetadataMicros: value[7]! as int,
+        workerRoundTripMicros: workerRoundTrip.elapsedMicroseconds,
+        workerReadyMicros: 0,
+        workerQueueMicros: 0,
+        workerIndex: index,
       );
     } finally {
       response.close();
@@ -258,15 +299,23 @@ void _nativeDecodeWorkerEntry(List<Object?> arguments) {
       out.value = nullptr;
       final cursor = Pointer<_Cursor>.fromAddress(cursorAddress);
       final status = api.decode(cursor, epoch, out);
+      final nativeMicros = stopwatch.elapsedMicroseconds;
+      final metadataStopwatch = Stopwatch()..start();
       final frameAddress = out.value == nullptr ? 0 : out.value.address;
+      final frameCount = api.frameCount(cursor);
+      final loopCount = api.loopCount(cursor);
+      final metadataComplete = api.metadataComplete(cursor) != 0;
+      final cycle = api.cycle(cursor);
+      final nativeMetadataMicros = metadataStopwatch.elapsedMicroseconds;
       reply.send(<Object?>[
         status,
         frameAddress,
-        api.frameCount(cursor),
-        api.loopCount(cursor),
-        api.metadataComplete(cursor) != 0,
-        api.cycle(cursor),
-        stopwatch.elapsedMicroseconds,
+        frameCount,
+        loopCount,
+        metadataComplete,
+        cycle,
+        nativeMicros,
+        nativeMetadataMicros,
       ]);
     } on Object catch (error) {
       final frame = out.value;

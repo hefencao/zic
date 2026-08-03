@@ -1,3 +1,12 @@
+## 0.31.0-dev.99：前帧端到端耗时与本地 artifact 1 MiB ingress
+
+- 新增不合并的 `framePipelineTiming`：覆盖 worker ready/queue、isolate、native decode/metadata、decode/upload lane、source wait、output prepare、Android texture 原子子阶段、`platformOther` 和 fallback。
+- 每次 output 激活仅记录前 12 个不同 frame 的首次 presentation；后续只记录 >=250 ms 端到端、>=100 ms present/单阶段、deadline miss 或错误。
+- 增加 `tool/analyze_frame_pipeline_trace.py`，直接汇总 dominant stage、p50/p95/max、逐帧启动样本、sourceRead 与 taskFailed lane 时序；总 platform upload 不再与子阶段重复竞争 dominant。
+- promoted artifact 本地流式读取由 256 KiB 修复为 1 MiB；普通网络 chunk 不变。
+- 修复 refresh in-flight 发布竞态、章节打开未持久化已读、tiny WebP renderer filter 投影，以及错误报告中多个过时/脆弱测试假设；删除仅被旧测试引用的 `comicDetailsRetryKey`。
+- 新增 ADR 0083、dev.99 三清单和 ownership gate。
+
 ## 0.31.0-dev.98：锁定 libwebp 离线归档与精确补丁准备链
 
 - 从文件库取得并保留 `libwebp-1.6.0.zip`，锁定归档 SHA-256 与干净 `vp8_dec.c` SHA-256；默认构建不再依赖网络。

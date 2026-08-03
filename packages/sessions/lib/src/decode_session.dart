@@ -33,6 +33,49 @@ final class DecodeSnapshot {
   final Failure? failure;
 }
 
+
+final class DecodedFrameTiming {
+  const DecodedFrameTiming({
+    required this.frameIndex,
+    required this.cycle,
+    required this.role,
+    required this.decodeStartedAtMicros,
+    required this.decodedAtMicros,
+    required this.laneQueueMicros,
+    required this.sourceWaitMicros,
+    required this.cursorCreateMicros,
+    required this.workerReadyMicros,
+    required this.workerQueueMicros,
+    required this.workerRoundTripMicros,
+    required this.dispatchMicros,
+    required this.nativeDecodeMicros,
+    required this.nativeMetadataMicros,
+    required this.decodeMicros,
+    required this.workerIndex,
+    required this.sourceLength,
+    required this.sourceSealed,
+  });
+
+  final int frameIndex;
+  final int cycle;
+  final PageRole role;
+  final int decodeStartedAtMicros;
+  final int decodedAtMicros;
+  final int laneQueueMicros;
+  final int sourceWaitMicros;
+  final int cursorCreateMicros;
+  final int workerReadyMicros;
+  final int workerQueueMicros;
+  final int workerRoundTripMicros;
+  final int dispatchMicros;
+  final int nativeDecodeMicros;
+  final int nativeMetadataMicros;
+  final int decodeMicros;
+  final int workerIndex;
+  final int sourceLength;
+  final bool sourceSealed;
+}
+
 final class DecodeSession {
   DecodeSession({
     required this.id,
@@ -58,6 +101,10 @@ final class DecodeSession {
   int _revision = 0;
   bool _restartAfterDetach = false;
   bool _disposed = false;
+  int? _waitingSourceSinceMicros;
+  int _cursorCreateMicros = 0;
+  final Map<int, DecodedFrameTiming> _frameTimings =
+      <int, DecodedFrameTiming>{};
 
   DecodeState get state => _state;
   FrameHolder? get holder => _holder;
@@ -66,6 +113,9 @@ final class DecodeSession {
       _cursor?.loop?.animation ?? const AnimationInfo.unknown();
 
   int get _cycle => _cursor?.loop?.cycle ?? 0;
+
+  DecodedFrameTiming? timingForFrame(int frameIndex) =>
+      _frameTimings[frameIndex];
 
   DecodeSnapshot get snapshot => DecodeSnapshot(
         id: id,
@@ -84,6 +134,7 @@ final class DecodeSession {
     required int revision,
     required CancelToken cancel,
     int preparedDepth = 0,
+    int laneQueueMicros = 0,
   }) async {
     _requireOpen();
     if (preparedDepth < 0) {
@@ -103,6 +154,7 @@ final class DecodeSession {
     }
     final source = ingress?.source;
     if (source == null) {
+      _waitingSourceSinceMicros ??= clock.nowMicros();
       _setState(DecodeState.waitingSource);
       return snapshot;
     }
@@ -120,6 +172,10 @@ final class DecodeSession {
 
     switch (source.kind) {
       case SourceKind.unknown:
+        // The authoritative source exists but its streamed header is not yet
+        // sufficient to classify the codec. Count this interval as ingress
+        // wait rather than hiding it inside the first successful decode.
+        _waitingSourceSinceMicros ??= clock.nowMicros();
         _setState(DecodeState.waitingSource);
         return snapshot;
       case SourceKind.gif:
@@ -144,7 +200,7 @@ final class DecodeSession {
         }
         _restartAfterDetach = false;
       }
-      _bind(source, epoch);
+      _cursorCreateMicros = _bind(source, epoch);
       final holder = _holder!;
       final targetDepth = demand.targetWatermark > preparedDepth
           ? demand.targetWatermark - preparedDepth
@@ -156,6 +212,8 @@ final class DecodeSession {
       }
 
       _setState(DecodeState.decoding);
+      var remainingLaneQueueMicros =
+          laneQueueMicros < 0 ? 0 : laneQueueMicros;
       while (holder.depth < targetDepth) {
         cancel.throwIfCancelled();
         epoch.requireMatch(download.epoch);
@@ -174,7 +232,8 @@ final class DecodeSession {
                     : DecodeExecutionClass.nonCurrent,
               )
             : await frames.decodeNext();
-        final decodeMicros = clock.nowMicros() - decodeStartedAt;
+        final decodedAtMicros = clock.nowMicros();
+        final decodeMicros = decodedAtMicros - decodeStartedAt;
         if (cancel.cancelled || download.epoch != epoch || _revision != revision) {
           step.frame?.dispose();
           cancel.throwIfCancelled();
@@ -186,6 +245,7 @@ final class DecodeSession {
         }
         switch (step.kind) {
           case CursorStepKind.needMoreData:
+            _waitingSourceSinceMicros ??= clock.nowMicros();
             _setState(DecodeState.waitingSource);
             return snapshot;
           case CursorStepKind.end:
@@ -215,22 +275,65 @@ final class DecodeSession {
             final timing = frame is FrameDecodeTiming
                 ? frame as FrameDecodeTiming
                 : null;
+            final sourceWaitMicros = _waitingSourceSinceMicros == null
+                ? 0
+                : (decodeStartedAt - _waitingSourceSinceMicros!)
+                    .clamp(0, 1 << 62)
+                    .toInt();
+            final frameTiming = DecodedFrameTiming(
+              frameIndex: frame.index,
+              cycle: frame is FrameCycleInfo
+                  ? (frame as FrameCycleInfo).cycle
+                  : 0,
+              role: demand.role,
+              decodeStartedAtMicros: decodeStartedAt,
+              decodedAtMicros: decodedAtMicros,
+              laneQueueMicros: remainingLaneQueueMicros,
+              sourceWaitMicros: sourceWaitMicros,
+              cursorCreateMicros: _cursorCreateMicros,
+              workerReadyMicros: timing?.workerReadyMicros ?? 0,
+              workerQueueMicros: timing?.workerQueueMicros ?? 0,
+              workerRoundTripMicros: timing?.workerRoundTripMicros ?? 0,
+              dispatchMicros: timing?.dispatchMicros ?? 0,
+              nativeDecodeMicros: timing?.nativeDecodeMicros ?? 0,
+              nativeMetadataMicros: timing?.nativeMetadataMicros ?? 0,
+              decodeMicros: decodeMicros < 0 ? 0 : decodeMicros,
+              workerIndex: timing?.workerIndex ?? -1,
+              sourceLength: source.length,
+              sourceSealed: source.sealed,
+            );
+            _frameTimings[frame.index] = frameTiming;
+            while (_frameTimings.length > 24) {
+              _frameTimings.remove(_frameTimings.keys.first);
+            }
+            _waitingSourceSinceMicros = null;
+            _cursorCreateMicros = 0;
+            remainingLaneQueueMicros = 0;
             _emit(
               TraceEventKind.frameDecoded,
               <String, Object?>{
                 'frame': frame.index,
+                'cycle': frameTiming.cycle,
                 'bytes': frame.byteLength,
                 'depth': holder.depth,
                 'target': targetDepth,
                 'preparedDepth': preparedDepth,
-                'decodeMicros': decodeMicros < 0 ? 0 : decodeMicros,
-                'nativeDecodeMicros': timing?.nativeDecodeMicros ?? 0,
-                'decodeDispatchMicros': timing?.dispatchMicros ?? 0,
+                'decodeLaneQueueMicros': frameTiming.laneQueueMicros,
+                'sourceWaitMicros': frameTiming.sourceWaitMicros,
+                'cursorCreateMicros': frameTiming.cursorCreateMicros,
+                'workerReadyMicros': frameTiming.workerReadyMicros,
+                'workerQueueMicros': frameTiming.workerQueueMicros,
+                'workerRoundTripMicros': frameTiming.workerRoundTripMicros,
+                'decodeMicros': frameTiming.decodeMicros,
+                'nativeDecodeMicros': frameTiming.nativeDecodeMicros,
+                'nativeMetadataMicros': frameTiming.nativeMetadataMicros,
+                'decodeDispatchMicros': frameTiming.dispatchMicros,
+                'workerIndex': frameTiming.workerIndex,
                 'width': frame.width,
                 'height': frame.height,
                 'durationMicros': frame.duration.inMicroseconds,
-                'sourceLength': source.length,
-                'sourceSealed': source.sealed,
+                'sourceLength': frameTiming.sourceLength,
+                'sourceSealed': frameTiming.sourceSealed,
               },
             );
         }
@@ -313,15 +416,18 @@ final class DecodeSession {
     _disposed = true;
   }
 
-  void _bind(EncodedSource source, SourceEpoch epoch) {
+  int _bind(EncodedSource source, SourceEpoch epoch) {
     if (_cursor != null && _epoch == epoch) {
-      return;
+      return 0;
     }
     _releaseBinding();
     _epoch = epoch;
+    final startedAt = clock.nowMicros();
     _cursor = cursors.create(id: id, source: source, epoch: epoch.value);
+    final elapsed = clock.nowMicros() - startedAt;
     _holder = FrameHolder(epoch: epoch);
     _failure = null;
+    return elapsed < 0 ? 0 : elapsed;
   }
 
   void _releaseBinding() {
@@ -329,6 +435,8 @@ final class DecodeSession {
     _holder?.dispose();
     _cursor = null;
     _holder = null;
+    _frameTimings.clear();
+    _cursorCreateMicros = 0;
   }
 
   void _setState(DecodeState state) {

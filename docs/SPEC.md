@@ -1,3 +1,14 @@
+## dev.99 前帧诊断规范
+
+1. 每个 output 激活的前 12 个不同 frame 首次呈现必须产生一个完整 `framePipelineTiming`；重复呈现不消耗新的 startup slot。
+2. startup 之后，端到端 >=250 ms、present >=100 ms、任一阶段 >=100 ms、deadline miss 或错误必须逐条保留。
+3. `framePipelineTiming` 禁止进入 Debug Trace export coalescing；必须包含 `traceReason`、`dominantStage`、阶段 durations、关键 session timestamps、role/uploadRole、cycle、source length/sealed、renderer 与 presentation path。
+4. worker pool 首次准备等待必须独立于 worker slot queue；native metadata 必须独立于 native decode。
+5. Android texture 必须区分 queue、总 upload、retain、blit、schedule、replace、result dispatch 和 channel dispatch；总 upload 不得与其子阶段同时竞争 dominant stage，必须投影扣除子阶段后的 `platformOther`。fallback 必须记录 fallback decode。
+6. decode/upload/network `taskFailed` 必须保留 lane queue、execution、task elapsed；source 已存在但 codec header 未完成时必须计入 `sourceWait`。
+7. promoted local artifact 使用 1 MiB chunk；远程 transport 仍使用 256 KiB。
+8. Reader 不读取 timing，不据此改变 demand、窗口、lane 或播放策略。
+
 ## dev.98 libwebp source/patch 规范
 
 1. 默认 source 必须是仓库保留的 `libwebp-1.6.0.zip`；归档 SHA-256 与干净 `vp8_dec.c` SHA-256 必须同时匹配 `native/libwebp.lock`。

@@ -177,31 +177,44 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             lane.execute {
                 try {
                     val startedNanos = System.nanoTime()
-                    val status = output.present(frameAddress, frameBytes)
+                    val presentation = output.present(frameAddress, frameBytes)
                     val finishedNanos = System.nanoTime()
-                    if (status != 0) {
-                        error(result, "blit_failed", "native blit failed with status $status")
+                    if (presentation.status != 0) {
+                        error(
+                            result,
+                            "blit_failed",
+                            "native blit failed with status ${presentation.status}",
+                        )
                         return@execute
                     }
                     val elapsedMicros = (finishedNanos - submittedNanos) / 1_000L
                     val otherQueuedBytes = maxOf(0L, queue.get() - frameBytes)
-                    success(
-                        result,
-                        mapOf(
-                            "queueMicros" to
-                                (startedNanos - submittedNanos) / 1_000L,
-                            "uploadMicros" to
-                                (finishedNanos - startedNanos) / 1_000L,
-                            "deadlineMissMicros" to if (deadlineAfterMicros == null) {
-                                0L
-                            } else {
-                                maxOf(0L, elapsedMicros - deadlineAfterMicros)
-                            },
-                            "textureBytes" to output.textureBytes,
-                            "inFlightBytes" to
-                                output.retainedFrameBytes + otherQueuedBytes,
-                        ),
+                    val response = mapOf(
+                        "queueMicros" to
+                            (startedNanos - submittedNanos) / 1_000L,
+                        "uploadMicros" to
+                            (finishedNanos - startedNanos) / 1_000L,
+                        "retainMicros" to presentation.retainMicros,
+                        "blitMicros" to presentation.blitMicros,
+                        "scheduleMicros" to presentation.scheduleMicros,
+                        "replaceMicros" to presentation.replaceMicros,
+                        "deadlineMissMicros" to if (deadlineAfterMicros == null) {
+                            0L
+                        } else {
+                            maxOf(0L, elapsedMicros - deadlineAfterMicros)
+                        },
+                        "textureBytes" to output.textureBytes,
+                        "inFlightBytes" to
+                            output.retainedFrameBytes + otherQueuedBytes,
                     )
+                    mainHandler.post {
+                        result.success(
+                            response + mapOf(
+                                "resultDispatchMicros" to
+                                    (System.nanoTime() - finishedNanos) / 1_000L,
+                            ),
+                        )
+                    }
                 } catch (error: Throwable) {
                     error(result, "blit_failed", error.message ?: error.toString())
                 } finally {
@@ -292,6 +305,14 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         mainHandler.post { result.error(code, message, null) }
     }
 
+    private data class PresentResult(
+        val status: Int,
+        val retainMicros: Long,
+        val blitMicros: Long,
+        val scheduleMicros: Long,
+        val replaceMicros: Long,
+    )
+
     @Suppress("DEPRECATION")
     private class Output(
         private val producer: TextureRegistry.SurfaceProducer,
@@ -336,19 +357,39 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val retainedFrameBytes: Long
             get() = currentFrameBytes
 
-        fun present(frameAddress: Long, frameBytes: Long): Int {
+        fun present(frameAddress: Long, frameBytes: Long): PresentResult {
             check(!released) { "texture output is released" }
             check(canPresent()) { "texture bridge is detached" }
+            val retainStartedNanos = System.nanoTime()
             val retained = NativeBlitter.retain(frameAddress)
+            val retainFinishedNanos = System.nanoTime()
             check(retained != 0L) { "native frame retain failed" }
             try {
+                val blitStartedNanos = System.nanoTime()
                 val status = NativeBlitter.blit(surface(), retained)
+                val blitFinishedNanos = System.nanoTime()
                 if (status != 0) {
-                    return status
+                    return PresentResult(
+                        status = status,
+                        retainMicros = (retainFinishedNanos - retainStartedNanos) / 1_000L,
+                        blitMicros = (blitFinishedNanos - blitStartedNanos) / 1_000L,
+                        scheduleMicros = 0L,
+                        replaceMicros = 0L,
+                    )
                 }
+                val scheduleStartedNanos = System.nanoTime()
                 check(scheduleFrame()) { "texture bridge detached during blit" }
+                val scheduleFinishedNanos = System.nanoTime()
+                val replaceStartedNanos = System.nanoTime()
                 replaceCurrentFrame(retained, frameBytes)
-                return 0
+                val replaceFinishedNanos = System.nanoTime()
+                return PresentResult(
+                    status = 0,
+                    retainMicros = (retainFinishedNanos - retainStartedNanos) / 1_000L,
+                    blitMicros = (blitFinishedNanos - blitStartedNanos) / 1_000L,
+                    scheduleMicros = (scheduleFinishedNanos - scheduleStartedNanos) / 1_000L,
+                    replaceMicros = (replaceFinishedNanos - replaceStartedNanos) / 1_000L,
+                )
             } finally {
                 if (currentFrameAddress != retained) {
                     NativeBlitter.release(retained)

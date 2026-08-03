@@ -144,7 +144,6 @@ final class NativeCursor implements ScheduledFrameCursor, LoopCursor {
       throw StateError('native cursor already has a decode in flight');
     }
     _decodeInFlight = true;
-    final decodeRoundTrip = Stopwatch()..start();
     try {
       final result = await _decodePool.decode(
         cursorAddress: ptr.address,
@@ -172,8 +171,14 @@ final class NativeCursor implements ScheduledFrameCursor, LoopCursor {
               Pointer<_Frame>.fromAddress(result.frameAddress),
               _api,
               nativeDecodeMicros: result.nativeMicros,
-              dispatchMicros: (decodeRoundTrip.elapsedMicroseconds -
-                      result.nativeMicros)
+              nativeMetadataMicros: result.nativeMetadataMicros,
+              workerReadyMicros: result.workerReadyMicros,
+              workerQueueMicros: result.workerQueueMicros,
+              workerRoundTripMicros: result.workerRoundTripMicros,
+              workerIndex: result.workerIndex,
+              dispatchMicros: (result.workerRoundTripMicros -
+                      result.nativeMicros -
+                      result.nativeMetadataMicros)
                   .clamp(0, 1 << 62)
                   .toInt(),
             ),
@@ -267,12 +272,18 @@ final class NativeCursor implements ScheduledFrameCursor, LoopCursor {
   }
 }
 
-final class NativeFrame implements PixelFrame, FrameDecodeTiming {
+final class NativeFrame
+    implements PixelFrame, FrameCycleInfo, FrameDecodeTiming {
   NativeFrame._(
     this._ptr,
     this._api, {
     this.nativeDecodeMicros = 0,
+    this.nativeMetadataMicros = 0,
     this.dispatchMicros = 0,
+    this.workerReadyMicros = 0,
+    this.workerQueueMicros = 0,
+    this.workerRoundTripMicros = 0,
+    this.workerIndex = -1,
   });
 
   Pointer<_Frame> _ptr;
@@ -282,7 +293,22 @@ final class NativeFrame implements PixelFrame, FrameDecodeTiming {
   final int nativeDecodeMicros;
 
   @override
+  final int nativeMetadataMicros;
+
+  @override
   final int dispatchMicros;
+
+  @override
+  final int workerReadyMicros;
+
+  @override
+  final int workerQueueMicros;
+
+  @override
+  final int workerRoundTripMicros;
+
+  @override
+  final int workerIndex;
 
   @override
   bool get disposed => _ptr == nullptr;
@@ -293,6 +319,7 @@ final class NativeFrame implements PixelFrame, FrameDecodeTiming {
   @override
   int get index => _api.frameIndex(_requirePtr());
 
+  @override
   int get cycle => _api.frameCycle(_requirePtr());
 
   @override

@@ -103,6 +103,18 @@ void main() {
     expect(uploaded.payload['uploadMicros'], isA<int>());
     expect(uploaded.payload['inputBytes'], greaterThan(0));
     expect(uploaded.payload['outputBytes'], greaterThan(0));
+    final pipelineTiming = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.framePipelineTiming,
+    );
+    expect(pipelineTiming.payload['traceReason'], 'startup');
+    expect(pipelineTiming.payload['workerReadyMicros'], 7);
+    expect(pipelineTiming.payload['workerQueueMicros'], 11);
+    expect(pipelineTiming.payload['nativeDecodeMicros'], 17);
+    expect(pipelineTiming.payload['nativeMetadataMicros'], 19);
+    expect(pipelineTiming.payload['platformUploadMicros'], 200);
+    expect(pipelineTiming.payload['platformOtherMicros'], 49);
+    expect(pipelineTiming.payload['platformResultDispatchMicros'], 43);
+    expect(pipelineTiming.payload['presentationPath'], 'platform');
     final released = trace.events.singleWhere(
       (event) => event.kind == TraceEventKind.pageOutputReleased,
     );
@@ -867,7 +879,8 @@ final class _Cursor implements FrameCursor, LoopCursor {
   void dispose() {}
 }
 
-final class _Frame implements FrameRef {
+final class _Frame
+    implements FrameRef, FrameCycleInfo, FrameDecodeTiming {
   _Frame(
     this.epoch,
     this.index, {
@@ -890,6 +903,22 @@ final class _Frame implements FrameRef {
   final int height;
   @override
   bool disposed = false;
+  @override
+  int get cycle => 0;
+  @override
+  int get workerReadyMicros => 7;
+  @override
+  int get workerQueueMicros => 11;
+  @override
+  int get dispatchMicros => 13;
+  @override
+  int get nativeDecodeMicros => 17;
+  @override
+  int get nativeMetadataMicros => 19;
+  @override
+  int get workerRoundTripMicros => 49;
+  @override
+  int get workerIndex => 1;
 
   @override
   void dispose() => disposed = true;
@@ -990,7 +1019,7 @@ final class _SequencedControlledUploader implements FrameUploader {
   void release(DecodeId id) => released.add(id);
 }
 
-final class _Output implements OutputFrame {
+final class _Output implements OutputFrame, OutputFrameTiming {
   _Output({
     required this.epoch,
     required this.index,
@@ -1016,6 +1045,23 @@ final class _Output implements OutputFrame {
   @override
   bool disposed = false;
   int presented = 0;
+
+  @override
+  FramePresentationTiming get lastPresentationTiming =>
+      const FramePresentationTiming(
+        channelRoundTripMicros: 101,
+        platformQueueMicros: 23,
+        platformUploadMicros: 200,
+        platformRetainMicros: 31,
+        platformBlitMicros: 37,
+        platformScheduleMicros: 41,
+        platformReplaceMicros: 42,
+        platformResultDispatchMicros: 43,
+        channelDispatchMicros: 6,
+        fallbackDecodeMicros: 0,
+        deadlineMissMicros: 0,
+        path: FramePresentationPath.platform,
+      );
 
   @override
   Future<void> present() async {

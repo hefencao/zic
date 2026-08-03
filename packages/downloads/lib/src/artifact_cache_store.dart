@@ -2,6 +2,11 @@ import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
 
+/// Local promoted artifacts are read in 1 MiB chunks so the session ingress
+/// does not pay dozens of Dart stream wakeups for a single large WebP. Network
+/// transports retain their independent 256 KiB chunk contract.
+const int promotedArtifactReadChunkBytes = 1024 * 1024;
+
 /// Read/write handoff for completed encoded page artifacts.
 ///
 /// Pipeline and DownloadSession remain authoritative while a page is active.

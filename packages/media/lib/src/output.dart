@@ -20,6 +20,44 @@ abstract interface class OutputFrame {
   void dispose();
 }
 
+
+enum FramePresentationPath { platform, flutterFallback }
+
+final class FramePresentationTiming {
+  const FramePresentationTiming({
+    required this.channelRoundTripMicros,
+    required this.platformQueueMicros,
+    required this.platformUploadMicros,
+    required this.platformRetainMicros,
+    required this.platformBlitMicros,
+    required this.platformScheduleMicros,
+    required this.platformReplaceMicros,
+    required this.platformResultDispatchMicros,
+    required this.channelDispatchMicros,
+    required this.fallbackDecodeMicros,
+    required this.deadlineMissMicros,
+    required this.path,
+  });
+
+  final int channelRoundTripMicros;
+  final int platformQueueMicros;
+  final int platformUploadMicros;
+  final int platformRetainMicros;
+  final int platformBlitMicros;
+  final int platformScheduleMicros;
+  final int platformReplaceMicros;
+  final int platformResultDispatchMicros;
+  final int channelDispatchMicros;
+  final int fallbackDecodeMicros;
+  final int deadlineMissMicros;
+  final FramePresentationPath path;
+}
+
+/// Optional read-only timing from the last platform presentation call.
+abstract interface class OutputFrameTiming {
+  FramePresentationTiming? get lastPresentationTiming;
+}
+
 abstract interface class FrameUploader {
   Future<OutputFrame> upload({
     required DecodeId id,

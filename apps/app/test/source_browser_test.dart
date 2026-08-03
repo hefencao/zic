@@ -340,7 +340,7 @@ void main() {
     expect(find.text('书架分类'), findsOneWidget);
     expect(find.text('收藏分类'), findsOneWidget);
     expect(find.textContaining('重复作者'), findsNothing);
-    expect(find.byKey(details.comicDetailsRetryKey), findsNothing);
+    expect(find.byKey(details.comicDetailsRetryBodyKey), findsNothing);
 
     await _tapVisible(tester, find.byKey(details.comicDetailsOpenWebViewKey));
     expect(webViewOpens, 1);
@@ -493,6 +493,13 @@ void main() {
             pageId: 'fixture-persisted-runtime-page-1',
           ),
         ],
+      ),
+    );
+    await store.saveComicPreference(
+      ComicPreference.defaults(
+        sourceId: sourceId,
+        comicId: comicId,
+        sourceKind: ComicSourceKind.remote,
       ),
     );
 
@@ -648,10 +655,12 @@ void main() {
     expect(source.comicLoads, 2);
     expect(await store.get('fixture-refresh', 'fixture-refresh-chapter-2'),
         isNull);
-    expect(
-      await store.getSavedComic('fixture-refresh', 'fixture-refresh-comic'),
-      isNull,
+    final savedComic = await store.getSavedComic(
+      'fixture-refresh',
+      'fixture-refresh-comic',
     );
+    expect(savedComic, isNotNull);
+    expect(savedComic?.chapters, isEmpty);
   });
 
   testWidgets('active chapter download survives details route re-entry',
@@ -816,6 +825,9 @@ void main() {
       'mihon:fixture-count',
       'Mihon 页数源',
       catalogPageCount: 0,
+    );
+    await store.saveSourcePreference(
+      ComicSourcePreference.defaults(sourceId: source.sourceId),
     );
 
     await tester.pumpWidget(
@@ -1062,7 +1074,7 @@ void main() {
         find.byKey(sourceComicCardKey('fixture-retry', 'fixture-retry-comic')));
     await _pumpUntilFound(tester, find.textContaining('漫画详情加载失败'));
 
-    final retry = find.byKey(details.comicDetailsRetryKey);
+    final retry = find.byKey(details.comicDetailsRetryBodyKey);
     await _tapVisible(tester, retry);
     await _pumpUntilFound(
       tester,

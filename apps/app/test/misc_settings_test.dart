@@ -434,13 +434,47 @@ void main() {
     expect(log.exportEvents.last.kind, TraceEventKind.taskFailed);
   });
 
+  test('frame pipeline timing remains exact in export', () {
+    final log = DebugTraceLog(maxEvents: 4);
+    addTearDown(log.dispose);
+    for (var index = 0; index < 3; index++) {
+      log.record(
+        TraceEvent(
+          monotonicMicros: index * 1000,
+          sessionId: 'frame-pipeline',
+          kind: TraceEventKind.framePipelineTiming,
+          payload: <String, Object?>{
+            'frame': index,
+            'presentationOrdinal': index,
+            'nativeDecodeMicros': 100 + index,
+            'platformResultDispatchMicros': 200 + index,
+          },
+        ),
+      );
+    }
+
+    expect(log.exportEvents, hasLength(3));
+    expect(log.exportCoalescedCount, 0);
+    expect(
+      log.exportEvents.map((event) => event.payload['frame']),
+      <Object?>[0, 1, 2],
+    );
+  });
+
   testWidgets('debug trace notifications are deferred past build',
       (tester) async {
     final log = DebugTraceLog(maxEvents: 4);
     addTearDown(log.dispose);
     var notifications = 0;
+    var notifiedDuringBuild = false;
     var recorded = false;
-    log.addListener(() => notifications++);
+    log.addListener(() {
+      notifications++;
+      if (SchedulerBinding.instance.schedulerPhase ==
+          SchedulerPhase.persistentCallbacks) {
+        notifiedDuringBuild = true;
+      }
+    });
 
     await tester.pumpWidget(
       MaterialApp(
@@ -463,8 +497,7 @@ void main() {
       ),
     );
 
-    expect(notifications, 0);
-    await tester.pump();
+    expect(notifiedDuringBuild, isFalse);
     expect(notifications, 1);
     expect(find.text('1'), findsOneWidget);
   });

@@ -99,11 +99,13 @@ final class UploadRegistry {
     UploadDemand demand,
     CancelToken token, {
     required int revision,
+    int laneQueueMicros = 0,
   }) {
     return get(id).prepare(
       demand: demand,
       revision: revision,
       cancel: token,
+      laneQueueMicros: laneQueueMicros,
     );
   }
 

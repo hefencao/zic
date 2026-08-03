@@ -44,6 +44,11 @@ final class TexturePresentTelemetry extends TextureTelemetry {
     required this.inFlightBytes,
     required this.queueMicros,
     required this.uploadMicros,
+    required this.retainMicros,
+    required this.blitMicros,
+    required this.scheduleMicros,
+    required this.replaceMicros,
+    required this.resultDispatchMicros,
     required this.deadlineMissMicros,
     required this.roundTripMicros,
   });
@@ -54,10 +59,16 @@ final class TexturePresentTelemetry extends TextureTelemetry {
   final int inFlightBytes;
   final int queueMicros;
   final int uploadMicros;
+  final int retainMicros;
+  final int blitMicros;
+  final int scheduleMicros;
+  final int replaceMicros;
+  final int resultDispatchMicros;
   final int deadlineMissMicros;
   final int roundTripMicros;
 
-  int get bridgeMicros => (roundTripMicros - queueMicros - uploadMicros)
+  int get bridgeMicros =>
+      (roundTripMicros - queueMicros - uploadMicros - resultDispatchMicros)
       .clamp(0, 1 << 62)
       .toInt();
 }
@@ -200,6 +211,11 @@ final class AndroidTexturePresenter {
         inFlightBytes: _readInt(response, 'inFlightBytes'),
         queueMicros: _readInt(response, 'queueMicros'),
         uploadMicros: _readInt(response, 'uploadMicros'),
+        retainMicros: _readInt(response, 'retainMicros'),
+        blitMicros: _readInt(response, 'blitMicros'),
+        scheduleMicros: _readInt(response, 'scheduleMicros'),
+        replaceMicros: _readInt(response, 'replaceMicros'),
+        resultDispatchMicros: _readInt(response, 'resultDispatchMicros'),
         deadlineMissMicros: _readInt(response, 'deadlineMissMicros'),
         roundTripMicros: roundTrip.elapsedMicroseconds,
       );

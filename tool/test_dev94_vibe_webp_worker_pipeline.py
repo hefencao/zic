@@ -62,8 +62,8 @@ require(
 require(
     'packages/sessions/lib/src/decode_session.dart',
     'final timing = frame is FrameDecodeTiming',
-    "'nativeDecodeMicros': timing?.nativeDecodeMicros ?? 0",
-    "'decodeDispatchMicros': timing?.dispatchMicros ?? 0",
+    "'nativeDecodeMicros': frameTiming.nativeDecodeMicros",
+    "'decodeDispatchMicros': frameTiming.dispatchMicros",
 )
 require(
     'native/media_core/src/webp.rs',

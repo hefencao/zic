@@ -33,7 +33,7 @@ require(
     'bool prepareForOutputLoss()',
     '_restartAfterDetach = true;',
     "'decodeMicros':",
-    "'sourceLength': source.length",
+    "'sourceLength': frameTiming.sourceLength",
 )
 require(
     'packages/sessions/lib/src/upload_session.dart',

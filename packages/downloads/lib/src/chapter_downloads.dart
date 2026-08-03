@@ -470,7 +470,7 @@ final class MemoryChapterDownloadService
         final end = (endExclusive ?? bytes.lengthInBytes)
             .clamp(start, bytes.lengthInBytes)
             .toInt();
-        const chunkSize = 256 * 1024;
+        const chunkSize = promotedArtifactReadChunkBytes;
         for (var offset = start; offset < end; offset += chunkSize) {
           final chunkEnd = (offset + chunkSize).clamp(offset, end).toInt();
           yield Uint8List.sublistView(bytes, offset, chunkEnd);
@@ -1095,6 +1095,7 @@ final class PersistentChapterDownloadService
     return ArtifactCacheStreamEntry(
       length: length,
       open: ({required int start, int? endExclusive}) => artifact.readChunks(
+        chunkSize: promotedArtifactReadChunkBytes,
         start: start,
         endExclusive: endExclusive,
       ),

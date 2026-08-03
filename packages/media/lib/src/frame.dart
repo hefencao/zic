@@ -66,9 +66,32 @@ abstract interface class PixelFrame implements FrameRef {
 ///
 /// Sessions consume this capability only for diagnostics; scheduling and frame
 /// ownership remain defined by [FrameCursor] and [FrameRef].
+abstract interface class FrameCycleInfo {
+  int get cycle;
+}
+
 abstract interface class FrameDecodeTiming {
-  int get nativeDecodeMicros;
+  /// Time spent waiting for the process-level worker pool to become ready.
+  int get workerReadyMicros;
+
+  /// Time spent waiting for a process-level decode worker slot.
+  int get workerQueueMicros;
+
+  /// Time from isolate request dispatch until the native call begins/returns,
+  /// excluding [nativeDecodeMicros].
   int get dispatchMicros;
+
+  /// Time inside `zic_cursor_decode_next`, including demux and libwebp work.
+  int get nativeDecodeMicros;
+
+  /// Cursor metadata reads performed after native decode returned.
+  int get nativeMetadataMicros;
+
+  /// Total worker round trip after the pool assigned a worker.
+  int get workerRoundTripMicros;
+
+  /// Stable process-lifetime worker slot used for this decode.
+  int get workerIndex;
 }
 
 enum CursorStepKind { frame, needMoreData, end }

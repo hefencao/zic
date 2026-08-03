@@ -41,7 +41,9 @@ assert 'decodeSnapshot.state == DecodeState.failed' in upload
 assert "message: 'pipeline page decode failed'" in upload
 
 coordinator = text('packages/sessions/lib/src/live_coordinator.dart')
-assert "_error(sessionId, id.key, 'decode', error);" in coordinator
+assert "'decode'," in coordinator
+assert "'laneQueueMicros': decodeLaneQueueMicros" in coordinator
+assert "'taskElapsedMicros':" in coordinator
 assert "_wakeUpload(sessionId, id);" in coordinator
 assert '_sourceRevisions[id] = snapshot.revision;' in coordinator
 assert '_wakeDecodesForSource(sessionId, id);' in coordinator

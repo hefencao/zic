@@ -248,7 +248,8 @@ final class _AndroidTextureSlot {
   }
 }
 
-final class _AndroidTextureOutputFrame implements OutputFrame {
+final class _AndroidTextureOutputFrame
+    implements OutputFrame, OutputFrameTiming {
   _AndroidTextureOutputFrame({
     required this.id,
     required NativeFrame frame,
@@ -261,6 +262,11 @@ final class _AndroidTextureOutputFrame implements OutputFrame {
   final _AndroidTextureSlot slot;
   final AndroidTextureLease lease;
   ui.Image? _fallback;
+  FramePresentationTiming? _lastPresentationTiming;
+
+  @override
+  FramePresentationTiming? get lastPresentationTiming =>
+      _lastPresentationTiming;
 
   NativeFrame get _activeFrame {
     final frame = _frame;
@@ -302,20 +308,51 @@ final class _AndroidTextureOutputFrame implements OutputFrame {
     if (_fallback != null) {
       return;
     }
+    final platformAttempt = Stopwatch()..start();
     try {
-      await lease.present(
+      final sample = await lease.present(
         NativeTextureFrameOwner(frame),
         context: TextureTelemetryContext(
           decodeIdentity: id.key,
           epoch: frame.epoch,
         ),
       );
+      _lastPresentationTiming = FramePresentationTiming(
+        channelRoundTripMicros: sample.roundTripMicros,
+        platformQueueMicros: sample.queueMicros,
+        platformUploadMicros: sample.uploadMicros,
+        platformRetainMicros: sample.retainMicros,
+        platformBlitMicros: sample.blitMicros,
+        platformScheduleMicros: sample.scheduleMicros,
+        platformReplaceMicros: sample.replaceMicros,
+        platformResultDispatchMicros: sample.resultDispatchMicros,
+        channelDispatchMicros: sample.bridgeMicros,
+        fallbackDecodeMicros: 0,
+        deadlineMissMicros: sample.deadlineMissMicros,
+        path: FramePresentationPath.platform,
+      );
     } on Object {
+      final failedPlatformRoundTripMicros = platformAttempt.elapsedMicroseconds;
+      final fallbackDecode = Stopwatch()..start();
       final rgba = frame.copyBytes();
       _fallback = await _decodeRgba(
         rgba,
         width: frame.width,
         height: frame.height,
+      );
+      _lastPresentationTiming = FramePresentationTiming(
+        channelRoundTripMicros: failedPlatformRoundTripMicros,
+        platformQueueMicros: 0,
+        platformUploadMicros: 0,
+        platformRetainMicros: 0,
+        platformBlitMicros: 0,
+        platformScheduleMicros: 0,
+        platformReplaceMicros: 0,
+        platformResultDispatchMicros: 0,
+        channelDispatchMicros: 0,
+        fallbackDecodeMicros: fallbackDecode.elapsedMicroseconds,
+        deadlineMissMicros: 0,
+        path: FramePresentationPath.flutterFallback,
       );
     }
   }
@@ -576,6 +613,11 @@ void _recordTextureTelemetry(
         'inFlightBytes': event.inFlightBytes,
         'queueMicros': event.queueMicros,
         'uploadMicros': event.uploadMicros,
+        'retainMicros': event.retainMicros,
+        'blitMicros': event.blitMicros,
+        'scheduleMicros': event.scheduleMicros,
+        'replaceMicros': event.replaceMicros,
+        'resultDispatchMicros': event.resultDispatchMicros,
         'deadlineMissMicros': event.deadlineMissMicros,
         'roundTripMicros': event.roundTripMicros,
         'bridgeMicros': event.bridgeMicros,

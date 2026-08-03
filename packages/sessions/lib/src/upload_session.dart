@@ -67,6 +67,27 @@ final class PresentClaim {
   }
 }
 
+
+final class _FramePipelineTiming {
+  const _FramePipelineTiming({
+    required this.decoded,
+    required this.role,
+    required this.uploadLaneQueueMicros,
+    required this.decodedToUploadMicros,
+    required this.outputPrepareMicros,
+    required this.uploadStartedAtMicros,
+    required this.outputReadyAtMicros,
+  });
+
+  final DecodedFrameTiming? decoded;
+  final PageRole role;
+  final int uploadLaneQueueMicros;
+  final int decodedToUploadMicros;
+  final int outputPrepareMicros;
+  final int uploadStartedAtMicros;
+  final int outputReadyAtMicros;
+}
+
 final class UploadSession {
   UploadSession({
     required this.id,
@@ -98,6 +119,11 @@ final class UploadSession {
   Future<void> _prepareTail = Future<void>.value();
   int _pendingPrepares = 0;
   bool _releaseUploaderWhenIdle = false;
+  final Map<int, _FramePipelineTiming> _framePipelineTimings =
+      <int, _FramePipelineTiming>{};
+  int _presentationTimingSamples = 0;
+  final Map<int, int> _startupFrameOrdinals = <int, int>{};
+  PageRole? _latestDemandRole;
 
   final Set<UploadSnapshotListener> _listeners =
       <UploadSnapshotListener>{};
@@ -150,15 +176,18 @@ final class UploadSession {
     required UploadDemand demand,
     required int revision,
     required CancelToken cancel,
+    int laneQueueMicros = 0,
   }) {
     _requireOpen();
     _releaseUploaderWhenIdle = false;
     _revision = revision;
+    _latestDemandRole = demand.role;
     return _serializePrepare(
       () => _prepareNow(
         demand: demand,
         revision: revision,
         cancel: cancel,
+        laneQueueMicros: laneQueueMicros,
       ),
     );
   }
@@ -167,6 +196,7 @@ final class UploadSession {
     required UploadDemand demand,
     required int revision,
     required CancelToken cancel,
+    required int laneQueueMicros,
   }) async {
     cancel.throwIfCancelled();
     if (_revision != revision) {
@@ -235,9 +265,24 @@ final class UploadSession {
           message: 'upload demand changed before platform upload started',
         );
       }
+      final decodedTiming = decode.timingForFrame(claim.frame.index);
       final uploadStartedAt = clock.nowMicros();
       final candidate = await uploader.upload(id: id, frame: claim.frame);
-      uploadMicros = clock.nowMicros() - uploadStartedAt;
+      final outputReadyAtMicros = clock.nowMicros();
+      uploadMicros = outputReadyAtMicros - uploadStartedAt;
+      final pipelineTiming = _FramePipelineTiming(
+        decoded: decodedTiming,
+        role: demand.role,
+        uploadLaneQueueMicros: laneQueueMicros < 0 ? 0 : laneQueueMicros,
+        decodedToUploadMicros: decodedTiming == null
+            ? 0
+            : (uploadStartedAt - decodedTiming.decodedAtMicros)
+                .clamp(0, 1 << 62)
+                .toInt(),
+        outputPrepareMicros: uploadMicros < 0 ? 0 : uploadMicros,
+        uploadStartedAtMicros: uploadStartedAt,
+        outputReadyAtMicros: outputReadyAtMicros,
+      );
       if (cancel.cancelled ||
           _revision != revision ||
           decode.holder?.epoch != _epoch) {
@@ -269,6 +314,7 @@ final class UploadSession {
           message: 'uploader returned an incompatible output frame',
         );
       }
+      _framePipelineTimings[claim.frame.index] = pipelineTiming;
       uploaded = candidate;
     } on Failure catch (error) {
       if (_revision != revision || cancel.cancelled) {
@@ -308,6 +354,7 @@ final class UploadSession {
     }
 
     if (!holder.consume(uploaded.index)) {
+      _framePipelineTimings.remove(uploaded.index);
       uploaded.dispose();
       throw const Failure(
         code: ErrorCode.invalidState,
@@ -319,6 +366,7 @@ final class UploadSession {
     _awaitingSuccessor = false;
     _failure = null;
     if (prior != null && !identical(prior.frame, uploaded)) {
+      _framePipelineTimings.remove(prior.frame.index);
       prior.retire();
     }
     _setState(UploadState.ready);
@@ -328,6 +376,10 @@ final class UploadSession {
         'frame': uploaded.index,
         'renderer': uploaded.renderer.name,
         'role': demand.role.name,
+        'uploadLaneQueueMicros': laneQueueMicros < 0 ? 0 : laneQueueMicros,
+        'decodedToUploadMicros':
+            _framePipelineTimings[uploaded.index]?.decodedToUploadMicros ?? 0,
+        'outputPrepareMicros': uploadMicros < 0 ? 0 : uploadMicros,
         'uploadMicros': uploadMicros < 0 ? 0 : uploadMicros,
         'inputBytes': inputBytes,
         'outputBytes': uploaded.byteLength,
@@ -351,6 +403,9 @@ final class UploadSession {
     final decodeBefore = decode.snapshot;
     _playback.clear();
     _slot = null;
+    _framePipelineTimings.remove(frameIndex);
+    _presentationTimingSamples = 0;
+    _startupFrameOrdinals.clear();
     slot.retire();
     final decodeRestarted = decode.prepareForOutputLoss();
     _awaitingSuccessor = false;
@@ -410,7 +465,8 @@ final class UploadSession {
     _requireOpen();
     final presentStartedAt = clock.nowMicros();
     await claim.present();
-    final presentMicros = clock.nowMicros() - presentStartedAt;
+    final presentedAtMicros = clock.nowMicros();
+    final presentMicros = presentedAtMicros - presentStartedAt;
     final micros = claim.frame.duration.inMicroseconds;
     final animation = decode.snapshot.animation;
     final authoritativeStatic = micros <= 0 &&
@@ -436,6 +492,12 @@ final class UploadSession {
       }
       _notifySnapshot();
     }
+    _emitFramePipelineTiming(
+      claim.frame,
+      presentStartedAtMicros: presentStartedAt,
+      presentedAtMicros: presentedAtMicros,
+      presentMicros: presentMicros < 0 ? 0 : presentMicros,
+    );
     _emit(
       TraceEventKind.framePresented,
       <String, Object?>{
@@ -449,6 +511,147 @@ final class UploadSession {
         'animationFrameCount': animation.frameCount,
         'animationComplete': animation.complete,
         'successorDepth': decode.holder?.depth ?? 0,
+      },
+    );
+  }
+
+  void _emitFramePipelineTiming(
+    OutputFrame frame, {
+    required int presentStartedAtMicros,
+    required int presentedAtMicros,
+    required int presentMicros,
+  }) {
+    final sampleOrdinal = _presentationTimingSamples++;
+    final knownStartupOrdinal = _startupFrameOrdinals[frame.index];
+    final startupFrame = knownStartupOrdinal == null &&
+        _startupFrameOrdinals.length < 12;
+    final startupFrameOrdinal = startupFrame
+        ? _startupFrameOrdinals.length
+        : knownStartupOrdinal;
+    if (startupFrame) {
+      _startupFrameOrdinals[frame.index] = startupFrameOrdinal!;
+    }
+    final timing = _framePipelineTimings[frame.index];
+    final decoded = timing?.decoded;
+    final platform = frame is OutputFrameTiming
+        ? (frame as OutputFrameTiming).lastPresentationTiming
+        : null;
+    final decodedToPresentMicros = decoded == null
+        ? 0
+        : (presentedAtMicros - decoded.decodedAtMicros)
+            .clamp(0, 1 << 62)
+            .toInt();
+    final outputReadyToPresentMicros = timing == null
+        ? 0
+        : (presentStartedAtMicros - timing.outputReadyAtMicros)
+            .clamp(0, 1 << 62)
+            .toInt();
+    final endToEndMicros = decoded == null
+        ? 0
+        : (presentedAtMicros - decoded.decodeStartedAtMicros)
+            .clamp(0, 1 << 62)
+            .toInt();
+    final platformOtherMicros = platform == null
+        ? 0
+        : (platform.platformUploadMicros -
+                platform.platformRetainMicros -
+                platform.platformBlitMicros -
+                platform.platformScheduleMicros -
+                platform.platformReplaceMicros)
+            .clamp(0, 1 << 62)
+            .toInt();
+    final stages = <String, int>{
+      'decodeLaneQueue': decoded?.laneQueueMicros ?? 0,
+      'sourceWait': decoded?.sourceWaitMicros ?? 0,
+      'cursorCreate': decoded?.cursorCreateMicros ?? 0,
+      'workerReady': decoded?.workerReadyMicros ?? 0,
+      'workerQueue': decoded?.workerQueueMicros ?? 0,
+      'decodeDispatch': decoded?.dispatchMicros ?? 0,
+      'nativeDecode': decoded?.nativeDecodeMicros ?? 0,
+      'nativeMetadata': decoded?.nativeMetadataMicros ?? 0,
+      'decodedToUpload': timing?.decodedToUploadMicros ?? 0,
+      'uploadLaneQueue': timing?.uploadLaneQueueMicros ?? 0,
+      'outputPrepare': timing?.outputPrepareMicros ?? 0,
+      'outputReadyToPresent': outputReadyToPresentMicros,
+      'platformQueue': platform?.platformQueueMicros ?? 0,
+      'platformOther': platformOtherMicros,
+      'platformRetain': platform?.platformRetainMicros ?? 0,
+      'platformBlit': platform?.platformBlitMicros ?? 0,
+      'platformSchedule': platform?.platformScheduleMicros ?? 0,
+      'platformReplace': platform?.platformReplaceMicros ?? 0,
+      'platformResultDispatch': platform?.platformResultDispatchMicros ?? 0,
+      'channelDispatch': platform?.channelDispatchMicros ?? 0,
+      'fallbackDecode': platform?.fallbackDecodeMicros ?? 0,
+    };
+    final dominant = stages.entries.reduce(
+      (left, right) => left.value >= right.value ? left : right,
+    );
+    final stalled = endToEndMicros >= 250000 ||
+        presentMicros >= 100000 ||
+        dominant.value >= 100000 ||
+        (platform?.deadlineMissMicros ?? 0) > 0;
+    if (!startupFrame && !stalled) {
+      return;
+    }
+    _emit(
+      TraceEventKind.framePipelineTiming,
+      <String, Object?>{
+        'frame': frame.index,
+        'cycle': decoded?.cycle ?? 0,
+        'presentationOrdinal': sampleOrdinal,
+        if (startupFrameOrdinal != null)
+          'startupFrameOrdinal': startupFrameOrdinal,
+        'role': (_latestDemandRole ?? timing?.role)?.name ?? 'unknown',
+        'uploadRole': timing?.role.name ?? 'unknown',
+        'traceReason': startupFrame && stalled
+            ? 'startup+stall'
+            : startupFrame
+                ? 'startup'
+                : 'stall',
+        'dominantStage': dominant.key,
+        'dominantStageMicros': dominant.value,
+        'decodeStartedAtMicros': decoded?.decodeStartedAtMicros ?? 0,
+        'decodedAtMicros': decoded?.decodedAtMicros ?? 0,
+        'uploadStartedAtMicros': timing?.uploadStartedAtMicros ?? 0,
+        'outputReadyAtMicros': timing?.outputReadyAtMicros ?? 0,
+        'presentStartedAtMicros': presentStartedAtMicros,
+        'presentedAtMicros': presentedAtMicros,
+        'decodeLaneQueueMicros': decoded?.laneQueueMicros ?? 0,
+        'sourceWaitMicros': decoded?.sourceWaitMicros ?? 0,
+        'cursorCreateMicros': decoded?.cursorCreateMicros ?? 0,
+        'workerReadyMicros': decoded?.workerReadyMicros ?? 0,
+        'workerQueueMicros': decoded?.workerQueueMicros ?? 0,
+        'workerRoundTripMicros': decoded?.workerRoundTripMicros ?? 0,
+        'decodeDispatchMicros': decoded?.dispatchMicros ?? 0,
+        'nativeDecodeMicros': decoded?.nativeDecodeMicros ?? 0,
+        'nativeMetadataMicros': decoded?.nativeMetadataMicros ?? 0,
+        'decodeMicros': decoded?.decodeMicros ?? 0,
+        'workerIndex': decoded?.workerIndex ?? -1,
+        'decodedToUploadMicros': timing?.decodedToUploadMicros ?? 0,
+        'uploadLaneQueueMicros': timing?.uploadLaneQueueMicros ?? 0,
+        'outputPrepareMicros': timing?.outputPrepareMicros ?? 0,
+        'outputReadyToPresentMicros': outputReadyToPresentMicros,
+        'presentMicros': presentMicros,
+        'platformQueueMicros': platform?.platformQueueMicros ?? 0,
+        'platformUploadMicros': platform?.platformUploadMicros ?? 0,
+        'platformOtherMicros': platformOtherMicros,
+        'platformRetainMicros': platform?.platformRetainMicros ?? 0,
+        'platformBlitMicros': platform?.platformBlitMicros ?? 0,
+        'platformScheduleMicros': platform?.platformScheduleMicros ?? 0,
+        'platformReplaceMicros': platform?.platformReplaceMicros ?? 0,
+        'platformResultDispatchMicros':
+            platform?.platformResultDispatchMicros ?? 0,
+        'channelRoundTripMicros': platform?.channelRoundTripMicros ?? 0,
+        'channelDispatchMicros': platform?.channelDispatchMicros ?? 0,
+        'fallbackDecodeMicros': platform?.fallbackDecodeMicros ?? 0,
+        'presentationPath': platform?.path.name ?? 'unknown',
+        'deadlineMissMicros': platform?.deadlineMissMicros ?? 0,
+        'decodedToPresentMicros': decodedToPresentMicros,
+        'endToEndMicros': endToEndMicros,
+        'sourceLength': decoded?.sourceLength ?? 0,
+        'sourceSealed': decoded?.sourceSealed ?? false,
+        'durationMicros': frame.duration.inMicroseconds,
+        'renderer': frame.renderer.name,
       },
     );
   }
@@ -622,7 +825,13 @@ final class UploadSession {
     _awaitingSuccessor = false;
     final slot = _slot;
     _slot = null;
-    slot?.retire();
+    _presentationTimingSamples = 0;
+    _startupFrameOrdinals.clear();
+    _latestDemandRole = null;
+    if (slot != null) {
+      _framePipelineTimings.remove(slot.frame.index);
+      slot.retire();
+    }
   }
 
   Future<T> _serializePrepare<T>(Future<T> Function() operation) {

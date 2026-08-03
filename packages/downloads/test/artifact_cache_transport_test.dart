@@ -85,7 +85,9 @@ void main() {
     final id = _downloadId(uri, 'page-streamed');
     final cache = _StreamingArtifactStore(
       id,
-      Uint8List.fromList(List<int>.generate(700000, (index) => index & 0xff)),
+      Uint8List.fromList(
+        List<int>.generate(1500000, (index) => index & 0xff),
+      ),
     );
     final fallback = _RecordingTransport(Uint8List(0));
     final trace = MemoryTraceSink();
@@ -103,7 +105,7 @@ void main() {
     expect(cache.fullReads, 0);
     expect(cache.streamOpens, 1);
     expect(fallback.opens, 0);
-    expect(chunks, <int>[256 * 1024, 256 * 1024, 175712]);
+    expect(chunks, <int>[1024 * 1024, 451424]);
     expect(
       trace.events
           .singleWhere((event) => event.kind == TraceEventKind.artifactSource)
@@ -325,7 +327,7 @@ final class _StreamingArtifactStore
         final end = (endExclusive ?? bytes.lengthInBytes)
             .clamp(start, bytes.lengthInBytes)
             .toInt();
-        const chunkSize = 256 * 1024;
+        const chunkSize = promotedArtifactReadChunkBytes;
         for (var offset = start; offset < end; offset += chunkSize) {
           final chunkEnd = (offset + chunkSize).clamp(offset, end).toInt();
           yield Uint8List.sublistView(bytes, offset, chunkEnd);

@@ -28,7 +28,6 @@ const comicDetailsLikedKey = ValueKey<String>('comic-details-liked');
 const comicDetailsMigrateKey = ValueKey<String>('comic-details-migrate');
 const comicDetailsDownloadAllKey =
     ValueKey<String>('comic-details-download-all');
-const comicDetailsRetryKey = ValueKey<String>('comic-details-retry');
 const comicDetailsOpenWebViewKey =
     ValueKey<String>('comic-details-open-webview');
 const comicDetailsSourceSettingsKey =
@@ -292,13 +291,18 @@ final class _LocalComicDetailsScreenState
       );
       return active;
     }
+    final result = Completer<bool>();
     late final Future<bool> tracked;
-    tracked = _performRefresh(announce: announce).whenComplete(() {
+    tracked = result.future.whenComplete(() {
       if (identical(_refreshInFlight, tracked)) {
         _refreshInFlight = null;
       }
     });
     _refreshInFlight = tracked;
+    Future<bool>.sync(() => _performRefresh(announce: announce)).then(
+      result.complete,
+      onError: result.completeError,
+    );
     return tracked;
   }
 
@@ -483,15 +487,7 @@ final class _LocalComicDetailsScreenState
           final entry =
               chapter.entry ?? await _ensure(chapter.sourceChapter!);
           if (!_isRead(_library.readStates, entry) && mounted) {
-            setState(() {
-              _library = _library.copyWith(
-                readStates: _projectChapterReadState(
-                  _library.readStates,
-                  entry,
-                  true,
-                ),
-              );
-            });
+            await _setRead(entry, true);
           }
           return entry;
         },
@@ -915,16 +911,23 @@ final class _RemoteComicDetailsScreenState
       );
       return active;
     }
+    final result = Completer<bool>();
     late final Future<bool> tracked;
-    tracked = _performRefresh(
-      announce: announce,
-      forceRefresh: forceRefresh,
-    ).whenComplete(() {
+    tracked = result.future.whenComplete(() {
       if (identical(_refreshInFlight, tracked)) {
         _refreshInFlight = null;
       }
     });
     _refreshInFlight = tracked;
+    Future<bool>.sync(
+      () => _performRefresh(
+        announce: announce,
+        forceRefresh: forceRefresh,
+      ),
+    ).then(
+      result.complete,
+      onError: result.completeError,
+    );
     return tracked;
   }
 
@@ -1166,15 +1169,7 @@ final class _RemoteComicDetailsScreenState
         () async {
           final entry = await _ensure(chapter);
           if (!_isRead(_library.readStates, entry) && mounted) {
-            setState(() {
-              _library = _library.copyWith(
-                readStates: _projectChapterReadState(
-                  _library.readStates,
-                  entry,
-                  true,
-                ),
-              );
-            });
+            await _setRead(entry, true);
           }
           return entry;
         },

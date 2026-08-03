@@ -1,23 +1,39 @@
-# dev.98 后续交接
+# dev.99 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.98_libwebp-archive-exact-patch.zip`。不得再以 dev.97 或更早 ZIP、旧 prepared tree、函数锚点 applier 或记忆源码覆盖。
+唯一后续基线：`zic_v0.31.0-dev.99_frame-pipeline-timing.zip`。不得以 dev.98 或更早 ZIP、旧工作树、dev.97 锚点 transformer、未校验 libwebp tree 或记忆源码覆盖。
 
-- 三清单审计：`docs/audits/dev98-libwebp-source-patch-audit.md`
-- 验证明细：`docs/audits/dev98-validation-results.md`
-- 架构决策：`docs/adr/0082-pinned-libwebp-archive-and-exact-patch.md`
-- dev.97 Reader/Trace 验证：`docs/audits/dev97-validation-results.md`
+上一基线：`zic_v0.31.0-dev.98_libwebp-archive-exact-patch.zip`；其归档和精确补丁合同仍有效。
 
-## 已完成
+必读：
 
-1. 文件库 `libwebp-1.6.0.zip` 已保留到 `third_party/source_archives/`，archive 与干净 `vp8_dec.c` SHA-256 均锁定。
-2. `fetch_webp.sh` 默认离线解压到 immutable upstream cache；缓存漂移会从归档重建，显式 source 必须匹配干净源哈希。
-3. VP8 TLS patch 已按真实 v1.6.0 源码重新生成；`prepare_webp.sh` 先执行 `--dry-run --fuzz=0`，再应用并由 verifier 检查完整语义。
-4. 已删除 `apply_libwebp_vp8_tls_patch.py`；不得恢复 token grep 接受 partial patch、fuzzy hunk 或 `VP8Clear` 字符串锚点。
-5. host libwebp 1.6.0 static CMake/Ninja build 和 incremental/loop Animated WebP smoke 已通过。
-6. dev.97 的 50% 播放交接、Trace 合并与 identity 摘要保持不变；7/3、2/1、current/transition、5/3/2、双常驻 decode isolate、libwebp 帧内单线程均未改变。
+1. `AGENTS.md`
+2. 本文件
+3. `docs/ARCHITECTURE.md`
+4. `docs/SPEC.md`
+5. `docs/IMPLEMENTATION_PLAN.md`
+6. `docs/IMPLEMENTATION_STATUS.md`
+7. `docs/adr/0083-frame-pipeline-timing-and-local-artifact-ingress.md`
+8. `docs/audits/dev99-frame-pipeline-timing-audit.md`
+9. `docs/audits/dev99-validation-results.md`
 
-## 后续验证
+下一份设备 trace 应先运行（dev.98 旧 trace 不含 `framePipelineTiming`，显示 0 属预期）：
 
-1. 有 Flutter/Android 工具链时依序运行 analyzer、受影响 package tests、App tests、Android debug/release 与真机 Animated WebP 往返切页。
-2. Android NDK 构建必须使用仓库归档默认路径完成，不设置 `ZIC_WEBP_ALLOW_UNPINNED=1`。
-3. 升级 libwebp 时必须同时更新 archive SHA、干净关键源文件 SHA、真实 patch 和 smoke；不得仅改版本字符串。
+```bash
+python3 tool/analyze_frame_pipeline_trace.py zic-debug-trace-*.jsonl
+```
+
+重点判断 `dominantStage`：
+
+- `workerReady`：进程预热/动态库加载未在首帧前完成；
+- `sourceWait` 或 `outputReadyToPresent`：ingress 或 lane/调度等待；
+- `nativeDecode`：libwebp/demux；
+- `platformRetain`/`platformBlit`/`platformSchedule`/`platformReplace`：Android 原子 texture 节点；
+- `platformOther`：总 platform upload 扣除上述子节点后的未归因平台工作；`platformUpload` 仅作总量核对，不参与 dominant；
+- `platformResultDispatch`/`channelDispatch`：Android main thread 或 MethodChannel；
+- `fallbackDecode`：Android texture 失败后退回 Flutter；
+- `taskFailed`：同时检查 lane、role、laneQueue/execution/taskElapsed；
+- 所有阶段低但可见画面仍停顿：需要新增 Flutter raster/compositor confirmation，而不是猜测 native decode。
+
+不可改变：7/3、2/1、current/transition、lane 5/3/2、两个进程期 Dart decode isolate、libwebp 帧内单线程、两帧 successor、Reader 不拥有 session/transport/artifact/texture。
+
+历史验证仍可查：`docs/audits/dev97-validation-results.md`、`docs/audits/dev98-validation-results.md`。

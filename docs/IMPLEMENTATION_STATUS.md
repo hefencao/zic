@@ -1,3 +1,12 @@
+## dev.99 状态
+
+- `framePipelineTiming` 跨层关联已实现，Reader/App 未获得底层生命周期权限。
+- worker pool startup、queue、native metadata、Android texture 原子子阶段、`platformOther` 与 fallback 已拆分；失败任务携带 lane queue/execution/task elapsed。
+- 前 12 个不同 frame 精确导出和慢帧阈值已实现。
+- promoted artifact stream 已恢复为 1 MiB。
+- refresh in-flight 竞态、read persistence、tiny raster 与明确 stale tests 已修正。
+- 实际验证结果见 `docs/audits/dev99-validation-results.md`。
+
 ## dev.98 状态
 
 文件库中的 `libwebp-1.6.0.zip` 已成为项目默认离线上游输入，archive SHA-256 与干净 `vp8_dec.c` SHA-256 已锁定。旧 `.deps/src/libwebp-1.6.0` 可变树和函数锚点 transformer 不再参与主构建：upstream cache 被修改会从归档重建，prepared tree 只接受干净源副本并在零 fuzz dry-run 全部成功后应用 patch。真实归档已完成两次幂等 prepare、CMake/Ninja host static build，以及 incremental/loop Animated WebP smoke。Reader/Pipeline 与 dev.97 Trace 行为未改变。Flutter/Dart、Rust、Android NDK/Gradle 与真机播放仍需相应工具链复验。

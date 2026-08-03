@@ -145,7 +145,7 @@ void main() {
     expect(find.byKey(readerSpeedKey), findsOneWidget);
     expect(find.byKey(readerRotateKey), findsOneWidget);
     expect(find.byKey(readerFavoriteKey), findsOneWidget);
-    expect(find.byKey(readerDownloadKey), findsOneWidget);
+    expect(find.byKey(readerDownloadKey), findsNothing);
 
     await _pumpUntilFound(tester, find.byKey(readerPauseKey).hitTestable());
     await tester.tap(find.byKey(readerPauseKey).hitTestable());
@@ -373,9 +373,19 @@ void main() {
           readingDirection: direction,
         );
 
-    final animated = classifyAdaptiveReaderLayout(
-      manifest(animated: true, width: 1000, height: 3000),
+    final animatedManifest = manifest(
+      animated: true,
+      width: 1000,
+      height: 3000,
     );
+    expect(classifyAdaptiveReaderLayout(animatedManifest), isNull);
+    final animatedClassifier = AdaptiveReaderClassifier(animatedManifest);
+    expect(
+      animatedClassifier.observeAnimated(animatedManifest.pages[1]),
+      isNull,
+    );
+    final animated =
+        animatedClassifier.observeAnimated(animatedManifest.pages[2]);
     expect(animated?.animated, isTrue);
     expect(animated?.direction, ReadingDirection.ltr);
 

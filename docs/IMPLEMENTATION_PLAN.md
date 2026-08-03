@@ -1,3 +1,12 @@
+## dev.99 已实施计划
+
+1. 从 dev.98 trace 重建前帧时序并分类错误报告。
+2. 在 owning layer 增加可选 timing capability，形成 sessions 端到端关联事件。
+3. 保留前 12 个不同 frame，慢帧阈值后采样，并保持 export 有界；dominant 只比较互斥节点，失败任务独立记录 lane 时序。
+4. 恢复 promoted artifact 1 MiB 本地 ingress；不改网络 chunk。
+5. 修复 refresh 原子发布、read persistence、tiny raster 与错误报告中的 stale tests。
+6. 增加 analyzer、ADR、静态 ownership gate、可执行工具链验证和独立解压复验。
+
 ## dev.98 已实施与验证计划
 
 1. 从文件库 materialize `libwebp-1.6.0.zip`，计算归档与真实 `vp8_dec.c` 哈希，并将归档作为项目只读构建输入。

@@ -306,6 +306,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           !session.demanded) {
         return;
       }
+      final attemptStartedAtMicros = clock.nowMicros();
       try {
         await DownloadJob(
           transport: transportFor(id.canonicalUri),
@@ -318,7 +319,20 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           if (error is Failure && error.code == ErrorCode.cancelled) {
             return;
           }
-          _error(sessionId, id.key, 'network', error);
+          final failedAtMicros = clock.nowMicros();
+          _error(
+            sessionId,
+            id.key,
+            'network',
+            error,
+            details: <String, Object?>{
+              'attempt': attempt,
+              'executionMicros':
+                  (failedAtMicros - attemptStartedAtMicros)
+                      .clamp(0, 1 << 62)
+                      .toInt(),
+            },
+          );
           return;
         }
         final delay = retry.delayAfter(attempt);
@@ -384,6 +398,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       final submit = diff.changed.containsKey(entry.key)
           ? decode.follow
           : decode.submit;
+      final submittedAtMicros = clock.nowMicros();
       submit(
         key: entry.key.key,
         priority: entry.value.priority,
@@ -394,6 +409,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           demandRevision: demandRevision,
           sourceWake: false,
           force: true,
+          submittedAtMicros: submittedAtMicros,
         ),
       );
     }
@@ -417,6 +433,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     if (demand == null || (onDecode == null && decodes == null)) {
       return;
     }
+    final submittedAtMicros = clock.nowMicros();
     decode.follow(
       key: id.key,
       priority: demand.priority,
@@ -427,6 +444,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         demandRevision: _decodeDemandRevisions[id] ?? _revision,
         sourceWake: sourceWake,
         force: force,
+        submittedAtMicros: submittedAtMicros,
       ),
     );
   }
@@ -438,6 +456,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     required int demandRevision,
     required bool sourceWake,
     required bool force,
+    required int submittedAtMicros,
   }) async {
     while (true) {
       final current = _decodes[id];
@@ -470,6 +489,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         _decodeSourceRevisions[id] = sourceRevision;
       }
 
+      final decodeLaneQueueMicros =
+          (clock.nowMicros() - submittedAtMicros).clamp(0, 1 << 62).toInt();
       _resourceTrace(
         sessionId,
         TraceEventKind.decodeStarted,
@@ -489,6 +510,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             token,
             revision: demandRevision,
             preparedDepth: preparedDepth,
+            laneQueueMicros: decodeLaneQueueMicros,
           );
         }
         if (work != null || _decodeChangeNeedsUpload(before, after)) {
@@ -497,7 +519,26 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         _enforceBudget(sessionId);
       } on Object catch (error) {
         if (error is! Failure || error.code != ErrorCode.cancelled) {
-          _error(sessionId, id.key, 'decode', error);
+          final failedAtMicros = clock.nowMicros();
+          _error(
+            sessionId,
+            id.key,
+            'decode',
+            error,
+            details: <String, Object?>{
+              'role': current.role.name,
+              'laneQueueMicros': decodeLaneQueueMicros,
+              'executionMicros':
+                  (failedAtMicros - submittedAtMicros -
+                          decodeLaneQueueMicros)
+                      .clamp(0, 1 << 62)
+                      .toInt(),
+              'taskElapsedMicros':
+                  (failedAtMicros - submittedAtMicros)
+                      .clamp(0, 1 << 62)
+                      .toInt(),
+            },
+          );
           _wakeUpload(sessionId, id);
         }
         return;
@@ -620,6 +661,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     required int demandRevision,
   }) {
     final submit = follow ? upload.follow : upload.submit;
+    final submittedAtMicros = clock.nowMicros();
     submit(
       key: id.key,
       priority: demand.priority,
@@ -628,6 +670,10 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         if (current == null || current.expirationRevision < _revision) {
           return;
         }
+        final uploadLaneQueueMicros =
+            (clock.nowMicros() - submittedAtMicros)
+                .clamp(0, 1 << 62)
+                .toInt();
         _resourceTrace(
           sessionId,
           TraceEventKind.uploadStarted,
@@ -648,6 +694,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
                 current,
                 token,
                 revision: demandRevision,
+                laneQueueMicros: uploadLaneQueueMicros,
               );
               final producedFrame = after.state == UploadState.ready &&
                   (before?.state != UploadState.ready ||
@@ -663,7 +710,26 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           _enforceBudget(sessionId);
         } on Object catch (error) {
           if (error is! Failure || error.code != ErrorCode.cancelled) {
-            _error(sessionId, id.key, 'upload', error);
+            final failedAtMicros = clock.nowMicros();
+            final taskElapsedMicros =
+                (failedAtMicros - submittedAtMicros)
+                    .clamp(0, 1 << 62)
+                    .toInt();
+            _error(
+              sessionId,
+              id.key,
+              'upload',
+              error,
+              details: <String, Object?>{
+                'role': current.role.name,
+                'laneQueueMicros': uploadLaneQueueMicros,
+                'executionMicros':
+                    (taskElapsedMicros - uploadLaneQueueMicros)
+                        .clamp(0, 1 << 62)
+                        .toInt(),
+                'taskElapsedMicros': taskElapsedMicros,
+              },
+            );
           }
         }
       },
@@ -725,8 +791,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     String sessionId,
     String identity,
     String lane,
-    Object error,
-  ) {
+    Object error, {
+    Map<String, Object?> details = const <String, Object?>{},
+  }) {
     traceSink.record(
       traceEvent(
         clock: clock,
@@ -734,7 +801,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         kind: TraceEventKind.taskFailed,
         identityHash: identity,
         revision: _revision,
-        payload: <String, Object?>{'lane': lane, 'error': '$error'},
+        payload: <String, Object?>{
+          'lane': lane,
+          'error': '$error',
+          ...details,
+        },
       ),
     );
   }

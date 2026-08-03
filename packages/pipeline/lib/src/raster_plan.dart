@@ -49,9 +49,9 @@ final class RasterPlan {
   bool get isDownsampled =>
       decodeWidth < sourceWidth || decodeHeight < sourceHeight;
 
-  bool get isRenderUpscaled =>
-      display.physicalWidth > decodeWidth ||
-      display.physicalHeight > decodeHeight;
+  bool get isRenderUpscaled => !isDownsampled &&
+      display.physicalWidth >= decodeWidth &&
+      display.physicalHeight >= decodeHeight;
 
   double get renderScale => math.min(
         display.physicalWidth / decodeWidth,

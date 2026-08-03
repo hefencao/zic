@@ -1,3 +1,12 @@
+# dev.99 frame timing 所有权
+
+- `bridge` 唯一拥有 process decode worker pool 的 ready、排队和 isolate 往返采样；不向 Reader 暴露 worker 或 native handle。
+- `media_core`/native decode 产生 native decode 与 metadata duration；`media` 只定义可选只读 timing capability。
+- `sessions` 唯一关联 decode、upload、present 的同一 frame 时序并决定启动/慢帧采样；decode lane queue 只归属于一次 fill 实际产出的首帧，失败任务保留 lane queue/execution/task elapsed。该 timing 不参与调度，也不是第二份 session 状态。
+- `texture_bridge` 唯一采样 Android queue、总 platform upload、RGBA retain/copy、schedule、replace 与主线程 result dispatch；`pipeline_native` 只投影平台或 Flutter fallback 路径。`sessions` 仅派生 `platformOther = platformUpload - retain - blit - schedule - replace`，以互斥节点计算 dominant stage。
+- App 的 `DebugTraceLog` 只负责有界导出；`framePipelineTiming` 保持逐条，普通高频事件继续时间桶合并。
+- promoted artifact 仍由 downloads/sessions 所有；其本地 stream 使用 1 MiB chunk，网络 transport 的 256 KiB chunk 属于 transport 平面。
+
 # dev.98 libwebp 锁定归档与 prepared tree 所有权
 
 - `third_party/source_archives/libwebp-1.6.0.zip` 是 host/Android 构建的默认、只读、离线上游输入；`native/libwebp.lock` 同时锁定 archive SHA-256、上游 commit 与干净 `src/dec/vp8_dec.c` SHA-256。
