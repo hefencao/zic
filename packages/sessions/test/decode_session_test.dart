@@ -409,6 +409,68 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('retained frame detach preserves cursor continuation', () async {
+    final temp = await Directory.systemTemp.createTemp('decode_retain_test_');
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final cursors = _CursorFactory();
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: cursors,
+      clock: _Clock(),
+    );
+    const firstDemand = DecodeDemand(
+      role: PageRole.transition,
+      priority: 900,
+      targetWatermark: 1,
+      reason: 'retain-transition',
+      expirationRevision: 8,
+    );
+
+    final retained = await decode.fill(
+      demand: firstDemand,
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    expect(retained.depth, 1);
+    expect(decode.holder!.frames.single.index, 0);
+    decode.detach(retainDepth: 1);
+    expect(decode.holder!.consume(0), isTrue);
+
+    final continued = await decode.fill(
+      demand: const DecodeDemand(
+        role: PageRole.current,
+        priority: 1000,
+        targetWatermark: 2,
+        reason: 'promoted-current',
+        expirationRevision: 9,
+      ),
+      revision: 3,
+      cancel: CancelToken(),
+    );
+    expect(continued.state, DecodeState.ready);
+    expect(decode.holder!.frames.map((frame) => frame.index), <int>[1, 2]);
+    expect(cursors.created, 1);
+
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
   test('finite animation enters ended after its play count is exhausted', () async {
     final temp = await Directory.systemTemp.createTemp('decode_end_test_');
     final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);

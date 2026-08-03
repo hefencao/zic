@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.103`  
-**App build：** `0.31.0+103`
+**源码版本：** `0.31.0-dev.104`  
+**App build：** `0.31.0+104`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`；单轮 Trace、命令与数值见 `docs/audits/`。
 
@@ -43,9 +43,10 @@
 - current 保留两个 successor；本地/promoted artifact 使用 1 MiB，普通网络使用 256 KiB。
 - 前帧 timing 覆盖 source、两级队列、native decode、upload 和 Android texture，并区分 schedule queue/call。
 - Android texture MethodChannel 使用 background task queue；两个稳定分配的 blit lane 保持单 output 串行，`scheduleFrame` 通过 main queue 前部执行。
-- persistent artifact stream 使用 composition-shared scheduler；pending priority 动态跟随 Pipeline plan，current/transition 保留一个槽。
+- persistent artifact stream 使用 composition-shared chunk scheduler；foreground 连续读取，foreground 压力期 background 同时最多占一个 chunk 槽，priority 每个 background chunk 重新读取。
 - 所有 Reader/resource session 共享进程级 monotonic epoch；Trace 显式记录 Reader session create/dispose。
 - Android platform reply 延迟最多按一个名义帧周期抵扣 playback deadline，避免逐帧放大确认延迟。
+- DecodeSession 保留 frame 后离开 decode/upload 窗口时继续原 cursor；只有 holder 为空或 output 真正丢失时才重播。
 - quarantine 使用稳定 `Q-xxx` ID、布尔 skip 和登记门禁。
 - 稳定文档按 `DOCUMENTATION_POLICY.md` 分责。
 
@@ -64,7 +65,7 @@
 | 检查 | 状态 |
 |---|---|
 | repository / documentation / Dart structure / directive order | Verified-static |
-| dev.75–dev.103 所有权门禁 | Verified-static |
+| dev.75–dev.104 所有权门禁 | Verified-static |
 | quarantine 与 texture timing contract | Verified-static |
 | Kotlin texture stub compile | Verified-static |
 | Trace analyzer fixture | Verified-static |
@@ -74,14 +75,14 @@
 | Dart/Flutter tests | Unverified：当前环境无 Flutter SDK |
 | Rust tests | Unverified：当前环境无 Cargo/rustc |
 | Android debug/release | Unverified：当前环境无 Android toolchain |
-| dev.103 真机播放与 Trace | Unverified |
+| dev.104 真机启动拥堵与连续播放 | Unverified |
 
-完整命令和续跑说明见 `docs/audits/dev103-validation-results.md`。
+完整命令和续跑说明见 `docs/audits/dev104-validation-results.md`。
 
 ## 开放问题
 
-1. 需要设备 Trace 验证异步 schedule 是否消除 blit-lane 串行放大。
-2. 需要验证跨 Reader persistent artifact 最大并发不超过共享上限，current/transition 能取得保留槽。
-3. 当前输入 Trace 含两次 current decode failure，native 失败细节尚未闭环。
+1. 需要 dev.104 设备 Trace 验证 foreground 压力期 background chunk 限流是否降低启动拥堵。
+2. 需要验证新 current 消费 retained frame 后不再重复 frame 0，页面无需切走再切回即可连续播放。
+3. 当前输入 Trace 含多次 current decode failure，native 失败细节尚未闭环。
 4. 三项 Source Browser 测试仍处于 quarantine。
 5. Flutter analyzer/tests、Android build 和真机复验尚未执行。

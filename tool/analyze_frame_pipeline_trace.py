@@ -279,6 +279,15 @@ def summarize(path: Path) -> dict[str, Any]:
                     "readSchedulerWaitMicros": _number(
                         payload.get("readSchedulerWaitMicros")
                     ),
+                    "readSchedulerMaxWaitMicros": _number(
+                        payload.get("readSchedulerMaxWaitMicros")
+                    ),
+                    "readSchedulerAcquires": _number(
+                        payload.get("readSchedulerAcquires")
+                    ),
+                    "readSchedulerForegroundAcquires": _number(
+                        payload.get("readSchedulerForegroundAcquires")
+                    ),
                     "firstChunkMicros": _number(payload.get("firstChunkMicros")),
                     "streamMicros": _number(payload.get("streamMicros")),
                     "maxChunkGapMicros": _number(payload.get("maxChunkGapMicros")),
@@ -332,6 +341,15 @@ def summarize(path: Path) -> dict[str, Any]:
         "sourceReadMicros": _stats([row["streamMicros"] for row in source_reads]),
         "sourceReadSchedulerWaitMicros": _stats(
             [row["readSchedulerWaitMicros"] for row in source_reads]
+        ),
+        "sourceReadSchedulerMaxWaitMicros": _stats(
+            [row["readSchedulerMaxWaitMicros"] for row in source_reads]
+        ),
+        "sourceReadSchedulerAcquires": _stats(
+            [row["readSchedulerAcquires"] for row in source_reads]
+        ),
+        "sourceReadSchedulerForegroundAcquires": _stats(
+            [row["readSchedulerForegroundAcquires"] for row in source_reads]
         ),
         "sourceMaxConcurrentReads": max_concurrent_reads,
         "sourceConcurrencyScope": concurrency_scope,
@@ -407,6 +425,9 @@ def main() -> None:
             f"consumer={row['consumer']} priority={row['priority']} "
             f"bytes={row['bytes']} chunks={row['chunks']} "
             f"schedulerWait={row['readSchedulerWaitMicros']} "
+            f"schedulerMaxWait={row['readSchedulerMaxWaitMicros']} "
+            f"schedulerAcquires={row['readSchedulerAcquires']} "
+            f"foregroundAcquires={row['readSchedulerForegroundAcquires']} "
             f"firstChunk={row['firstChunkMicros']} stream={row['streamMicros']} "
             f"maxGap={row['maxChunkGapMicros']} maxChunk={row['maxChunkBytes']}"
         )

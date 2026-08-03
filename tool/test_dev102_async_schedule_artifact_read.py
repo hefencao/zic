@@ -54,7 +54,8 @@ for token in (
     "final class ArtifactCacheReadScheduler",
     "this.maxActive = 5",
     "this.foregroundPriority = 900",
-    "_activeBackground < maxActive - 1",
+    "this.maxBackgroundWhileForeground = 1",
+    "_activeBackground < maxBackgroundWhileForeground",
     "void refresh() => _pump()",
     "int get currentPriority => priority()",
 ):
@@ -76,7 +77,7 @@ for token in (
     "readSchedulerWaitMicros",
     "priority: priority",
     "scheduler.acquire(priority: priority)",
-    "lease.priority",
+    "activeLease.priority",
 ):
     if token not in transport:
         raise SystemExit(f"FAIL: artifact scheduler telemetry missing: {token}")

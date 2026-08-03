@@ -1,30 +1,37 @@
 import 'dart:async';
 
-/// Process-composition scheduler for persistent artifact streams.
+/// Process-composition scheduler for persistent artifact read quanta.
 ///
 /// Reader sessions keep their normal download window and network lane. This
 /// scheduler only prevents multiple sessions from multiplying local artifact
-/// reads against the same persistent store. One slot is reserved for current
-/// or transition work so background session copies cannot occupy every reader.
-/// Pending work reads its authoritative demand priority again whenever the
-/// scheduler is refreshed, allowing an existing transition/background stream
-/// to become foreground without cancellation or a second artifact request.
+/// reads against the same persistent store. Foreground streams may keep their
+/// lease while they remain current/transition. Background streams release the
+/// lease after each chunk so pending foreground work can take the next quantum
+/// without cancelling or reopening the artifact stream.
 final class ArtifactCacheReadScheduler {
   ArtifactCacheReadScheduler({
     this.maxActive = 5,
     this.foregroundPriority = 900,
-  }) : assert(maxActive >= 2);
+    this.maxBackgroundWhileForeground = 1,
+  })  : assert(maxActive >= 2),
+        assert(maxBackgroundWhileForeground >= 0),
+        assert(maxBackgroundWhileForeground < maxActive);
 
   final int maxActive;
   final int foregroundPriority;
+  final int maxBackgroundWhileForeground;
 
   final List<_PendingRead> _pending = <_PendingRead>[];
   int _active = 0;
+  int _activeForeground = 0;
   int _activeBackground = 0;
   int _sequence = 0;
 
   int get activeCount => _active;
+  int get activeForegroundCount => _activeForeground;
+  int get activeBackgroundCount => _activeBackground;
   int get pendingCount => _pending.length;
+  bool get foregroundPressure => _hasForegroundPressure;
 
   Future<ArtifactCacheReadLease> acquire({
     required int Function() priority,
@@ -44,32 +51,58 @@ final class ArtifactCacheReadScheduler {
         completer: completer,
       ),
     );
+    _pump();
     return completer.future;
   }
 
   /// Re-evaluates pending demand priorities after the authoritative Reader plan
-  /// changes. Active streams are never cancelled or reclassified.
+  /// changes. Active work is never cancelled; a background stream is
+  /// reclassified when it requests its next chunk quantum.
   void refresh() => _pump();
 
   bool _isForeground(int priority) => priority >= foregroundPriority;
 
+  bool get _hasForegroundPressure {
+    if (_activeForeground > 0) {
+      return true;
+    }
+    for (final pending in _pending) {
+      if (_isForeground(pending.currentPriority)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   bool _canStart(bool foreground) {
     if (_active >= maxActive) return false;
     if (foreground) return true;
-    return _activeBackground < maxActive - 1;
+    if (_hasForegroundPressure) {
+      return _activeBackground < maxBackgroundWhileForeground;
+    }
+    return true;
   }
 
   ArtifactCacheReadLease _start(bool foreground, int priority) {
     _active++;
-    if (!foreground) _activeBackground++;
+    if (foreground) {
+      _activeForeground++;
+    } else {
+      _activeBackground++;
+    }
     var released = false;
     return ArtifactCacheReadLease._(
       priority: priority,
+      foreground: foreground,
       release: () {
         if (released) return;
         released = true;
         _active--;
-        if (!foreground) _activeBackground--;
+        if (foreground) {
+          _activeForeground--;
+        } else {
+          _activeBackground--;
+        }
         _pump();
       },
     );
@@ -104,10 +137,12 @@ final class ArtifactCacheReadScheduler {
 final class ArtifactCacheReadLease {
   ArtifactCacheReadLease._({
     required this.priority,
+    required this.foreground,
     required void Function() release,
   }) : _release = release;
 
   final int priority;
+  final bool foreground;
   final void Function() _release;
 
   void release() => _release();

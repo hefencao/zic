@@ -114,6 +114,105 @@ void main() {
     );
   });
 
+  test('background artifact stream reacquires the scheduler per chunk',
+      () async {
+    final uri = Uri.parse('https://example.invalid/scheduled-page.bin');
+    final id = _downloadId(uri, 'page-scheduled');
+    final cache = _StreamingArtifactStore(
+      id,
+      Uint8List(promotedArtifactReadChunkBytes + 256),
+    );
+    final trace = MemoryTraceSink();
+    final transport = ArtifactCacheTransport(
+      cache: cache,
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => _RecordingTransport(Uint8List(0)),
+      readScheduler: ArtifactCacheReadScheduler(maxActive: 3),
+      demandPriority: (_) => 400,
+      clock: _Clock(),
+      traceSink: trace,
+    );
+
+    expect((await _collect(await transport.open(uri))).length,
+        promotedArtifactReadChunkBytes + 256);
+    final read = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.sourceRead,
+    );
+    expect(read.payload['chunks'], 2);
+    expect(read.payload['readSchedulerAcquires'], 2);
+    expect(read.payload['readSchedulerForegroundAcquires'], 0);
+    expect(read.payload['readSchedulerMaxWaitMicros'], isA<int>());
+  });
+
+  test('foreground artifact stream keeps its scheduler lease across chunks',
+      () async {
+    final uri = Uri.parse('https://example.invalid/current-page.bin');
+    final id = _downloadId(uri, 'page-current');
+    final cache = _StreamingArtifactStore(
+      id,
+      Uint8List(promotedArtifactReadChunkBytes + 256),
+    );
+    final trace = MemoryTraceSink();
+    final transport = ArtifactCacheTransport(
+      cache: cache,
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => _RecordingTransport(Uint8List(0)),
+      readScheduler: ArtifactCacheReadScheduler(maxActive: 3),
+      demandPriority: (_) => 1000,
+      clock: _Clock(),
+      traceSink: trace,
+    );
+
+    expect((await _collect(await transport.open(uri))).length,
+        promotedArtifactReadChunkBytes + 256);
+    final read = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.sourceRead,
+    );
+    expect(read.payload['chunks'], 2);
+    expect(read.payload['readSchedulerAcquires'], 1);
+    expect(read.payload['readSchedulerForegroundAcquires'], 1);
+  });
+
+  test('background promotion reclassifies the next chunk without reopening',
+      () async {
+    final uri = Uri.parse('https://example.invalid/promoted-page.bin');
+    final id = _downloadId(uri, 'page-promoted');
+    final cache = _StreamingArtifactStore(
+      id,
+      Uint8List(promotedArtifactReadChunkBytes * 2 + 256),
+    );
+    final trace = MemoryTraceSink();
+    var priority = 400;
+    final transport = ArtifactCacheTransport(
+      cache: cache,
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => _RecordingTransport(Uint8List(0)),
+      readScheduler: ArtifactCacheReadScheduler(maxActive: 3),
+      demandPriority: (_) => priority,
+      clock: _Clock(),
+      traceSink: trace,
+    );
+
+    final response = await transport.open(uri);
+    final iterator = StreamIterator<List<int>>(response.bytes);
+    expect(await iterator.moveNext(), isTrue);
+    expect(iterator.current.length, promotedArtifactReadChunkBytes);
+    priority = 1000;
+    expect(await iterator.moveNext(), isTrue);
+    expect(iterator.current.length, promotedArtifactReadChunkBytes);
+    expect(await iterator.moveNext(), isTrue);
+    expect(iterator.current.length, 256);
+    expect(await iterator.moveNext(), isFalse);
+
+    expect(cache.streamOpens, 1);
+    final read = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.sourceRead,
+    );
+    expect(read.payload['readSchedulerAcquires'], 2);
+    expect(read.payload['readSchedulerForegroundAcquires'], 1);
+    await iterator.cancel();
+  });
+
   test('rejects a read pool backed by another cache', () {
     final uri = Uri.parse('https://example.invalid/pool-mismatch.bin');
     final id = _downloadId(uri, 'page-pool-mismatch');

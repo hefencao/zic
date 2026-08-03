@@ -1,3 +1,11 @@
+## 0.31.0-dev.104：分块 Artifact 调度与 retained cursor 连续性
+
+- persistent artifact scheduler 从整条 stream lease 改为 chunk quantum；foreground 连续读取，foreground 压力期 background 同时最多占一个槽。
+- background 每个 chunk 重新读取权威 demand priority，晋升 current/transition 不取消、不重开同一 artifact stream。
+- `sourceRead` 增加 scheduler acquire 次数、最大等待和 foreground acquire 数，便于验证启动拥堵。
+- `DecodeSession.detach()` 在保留 frame 时继续原 cursor，修复角色回切后重复上传 frame 0、需要切走再切回才播放。
+- 新增 owner-package 回归、ADR 0088、dev.104 三清单与 ownership gate；7/3、2/1、current/transition、5/3/2 不变。
+
 ## 0.31.0-dev.103：Reader 重进与 platform presentation 确认修复
 
 - `SystemClock` 改为进程级 monotonic epoch，增加 Reader session create/dispose 生命周期 Trace，修复跨 session 导出时间轴不可比。

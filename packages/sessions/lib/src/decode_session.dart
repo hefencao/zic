@@ -390,8 +390,9 @@ final class DecodeSession {
     _requireOpen();
     _revision++;
     _holder?.trimTo(retainDepth);
-    _restartAfterDetach = true;
-    if ((_holder?.depth ?? 0) == 0) {
+    final retainedDepth = _holder?.depth ?? 0;
+    _restartAfterDetach = retainedDepth == 0;
+    if (retainedDepth == 0) {
       _setState(DecodeState.idle);
     }
   }

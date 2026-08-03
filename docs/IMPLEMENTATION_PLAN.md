@@ -16,13 +16,13 @@
 
 下一步：
 
-- 在相同设备和 WebP fixture 上采集 dev.103 Trace，分别记录首次进入和退出后再次进入；
-- 比较 platform schedule queue、channel dispatch、native decode、source wait 和 upload backpressure；
-- 验证 background channel、双 blit lane、front-of-queue schedule 与 playback ack credit 后的前帧长尾；
-- 关联两次 current decode failure 的 source epoch、frame、worker 和 native 错误；
+- 在相同设备和 WebP fixture 上采集 dev.104 Trace，覆盖刚进入 Reader、尚未稳定时切页和稳定后频繁切页；
+- 验证 `readSchedulerAcquires`、`readSchedulerForegroundAcquires`、background quantum 数和 current first-chunk/source-wait；
+- 检查新 current 的 frame 序列，确认 retained frame 后直接进入 frame 1，不再重复上传 frame 0；
+- 继续关联 current decode failure 的 source epoch、frame、worker 和 native 错误；
 - 复验 50% 交接、前 12 帧和页面回切。
 
-退出条件：current 前帧没有无法归因的数秒空洞；50% 交接无黑屏和同 identity 重载；decode failure 有可行动原因。
+退出条件：启动阶段没有由 background 全量复制造成的 current 饥饿；新 current 连续播放；50% 交接无黑屏和同 identity 重载。
 
 ## P0：Flutter 与 Android 验证闭包
 
@@ -40,8 +40,8 @@
 下一步：
 
 - 从具有进程级时钟和 session lifecycle 的 Trace 读取 `readSchedulerWaitMicros`、priority、页面角色和跨 session 最大并发；
-- 验证总并发不超过 5，background 最多占 4，current/transition 可使用保留槽；
-- 验证 background→current 晋升不取消、不重开同一 artifact stream；
+- 验证总并发不超过 5；foreground 压力期 background chunk 同时最多占 1，压力消失后可恢复全部容量；
+- 验证 background→current 在下一 chunk 原地晋升，不取消、不重开同一 artifact stream；
 - 比较 source first-chunk、stream 和 current source-wait 的变化。
 
 退出条件：共享调度行为与 Pipeline demand 一致，且没有引入 current starvation 或预下载退化。

@@ -86,15 +86,26 @@ final class ArtifactCacheTransport implements Transport {
             );
             if (cachedResponse != null) {
               var schedulerWaitMicros = 0;
+              var schedulerMaxWaitMicros = 0;
+              var schedulerAcquires = 0;
+              var schedulerForegroundAcquires = 0;
               var acquiredPriority = _demandPriority?.call(id) ?? 0;
-              final response = _readScheduler == null
+              final readScheduler = _readScheduler;
+              final response = readScheduler == null
                   ? cachedResponse
                   : _scheduledArtifactResponse(
                       cachedResponse,
-                      scheduler: _readScheduler,
+                      scheduler: readScheduler,
                       priority: () => _demandPriority?.call(id) ?? 0,
                       onAcquired: (waitMicros, priority) {
-                        schedulerWaitMicros = waitMicros;
+                        schedulerWaitMicros += waitMicros;
+                        if (waitMicros > schedulerMaxWaitMicros) {
+                          schedulerMaxWaitMicros = waitMicros;
+                        }
+                        schedulerAcquires++;
+                        if (priority >= readScheduler.foregroundPriority) {
+                          schedulerForegroundAcquires++;
+                        }
                         acquiredPriority = priority;
                       },
                     );
@@ -119,6 +130,10 @@ final class ArtifactCacheTransport implements Transport {
                 openMicros: readMicros,
                 priority: () => acquiredPriority,
                 schedulerWaitMicros: () => schedulerWaitMicros,
+                schedulerMaxWaitMicros: () => schedulerMaxWaitMicros,
+                schedulerAcquires: () => schedulerAcquires,
+                schedulerForegroundAcquires: () =>
+                    schedulerForegroundAcquires,
               );
             }
           }
@@ -285,6 +300,9 @@ final class ArtifactCacheTransport implements Transport {
     required int? openMicros,
     int Function()? priority,
     int Function()? schedulerWaitMicros,
+    int Function()? schedulerMaxWaitMicros,
+    int Function()? schedulerAcquires,
+    int Function()? schedulerForegroundAcquires,
   }) {
     final clock = _clock;
     if (clock == null) {
@@ -349,6 +367,13 @@ final class ArtifactCacheTransport implements Transport {
               if (priority != null) 'priority': priority(),
               if (schedulerWaitMicros != null)
                 'readSchedulerWaitMicros': schedulerWaitMicros(),
+              if (schedulerMaxWaitMicros != null)
+                'readSchedulerMaxWaitMicros': schedulerMaxWaitMicros(),
+              if (schedulerAcquires != null)
+                'readSchedulerAcquires': schedulerAcquires(),
+              if (schedulerForegroundAcquires != null)
+                'readSchedulerForegroundAcquires':
+                    schedulerForegroundAcquires(),
               'firstChunkMicros': firstChunkMicros,
               'streamMicros':
                   (clock.nowMicros() - streamStarted).clamp(0, 1 << 62).toInt(),
@@ -424,15 +449,33 @@ ByteResponse _scheduledArtifactResponse(
   required void Function(int waitMicros, int priority) onAcquired,
 }) {
   Stream<List<int>> scheduledBytes() async* {
-    final wait = Stopwatch()..start();
-    final lease = await scheduler.acquire(priority: priority);
-    onAcquired(wait.elapsedMicroseconds, lease.priority);
+    final iterator = StreamIterator<List<int>>(response.bytes);
+    ArtifactCacheReadLease? lease;
     try {
-      await for (final chunk in response.bytes) {
-        yield chunk;
+      while (true) {
+        var activeLease = lease;
+        if (activeLease == null) {
+          final wait = Stopwatch()..start();
+          activeLease = await scheduler.acquire(priority: priority);
+          lease = activeLease;
+          onAcquired(wait.elapsedMicroseconds, activeLease.priority);
+        }
+        final available = await iterator.moveNext();
+        if (!available) {
+          return;
+        }
+        yield iterator.current;
+
+        final stillForeground =
+            priority() >= scheduler.foregroundPriority;
+        if (!activeLease.foreground || !stillForeground) {
+          activeLease.release();
+          lease = null;
+        }
       }
     } finally {
-      lease.release();
+      lease?.release();
+      await iterator.cancel();
     }
   }
 

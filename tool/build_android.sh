@@ -6,6 +6,8 @@ APP="$ROOT/apps/app"
 MODE="${1:-release}"
 NATIVE="${ZIC_ANDROID_NATIVE:-1}"
 
+chmod +x $ROOT/tool/*.sh
+
 case "$MODE" in
   debug|profile|release) ;;
   *) echo "usage: $0 [debug|profile|release]" >&2; exit 64 ;;
