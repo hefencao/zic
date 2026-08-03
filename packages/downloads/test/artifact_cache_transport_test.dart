@@ -238,7 +238,7 @@ void main() {
         .map((chunk) => chunk.length)
         .toList();
 
-    expect(first, <int>[promotedArtifactReadChunkBytes + 17]);
+    expect(first, <int>[promotedArtifactReadChunkBytes, 17]);
     expect(second, first);
     expect(cache.readAllCalls, 1);
     expect(cache.streamOpens, 2);
@@ -252,10 +252,14 @@ void main() {
         .where((event) => event.kind == TraceEventKind.sourceRead)
         .toList();
     expect(reads[0].payload['artifactReadMode'], 'read-all');
-    expect(reads[0].payload['deliveryMode'], 'whole-body');
+    expect(reads[0].payload['deliveryMode'], 'startup-segmented');
+    expect(
+      reads[0].payload['startupChunkBytes'],
+      promotedArtifactReadChunkBytes,
+    );
     expect(reads[0].payload['readSchedulerLeaseThroughStream'], isTrue);
     expect(reads[1].payload['artifactReadMode'], 'memory-hit');
-    expect(reads[1].payload['deliveryMode'], 'whole-body');
+    expect(reads[1].payload['deliveryMode'], 'startup-segmented');
     expect(reads[1].payload['readSchedulerAcquires'], 1);
   });
 
@@ -279,7 +283,10 @@ void main() {
     expect(scheduler.activeForegroundCount, 1);
     final iterator = StreamIterator<List<int>>(response.bytes);
     expect(await iterator.moveNext(), isTrue);
-    expect(iterator.current.length, bytes.lengthInBytes);
+    expect(iterator.current.length, promotedArtifactReadChunkBytes);
+    expect(scheduler.activeForegroundCount, 1);
+    expect(await iterator.moveNext(), isTrue);
+    expect(iterator.current.length, 17);
     expect(scheduler.activeForegroundCount, 1);
     expect(await iterator.moveNext(), isFalse);
     expect(scheduler.activeForegroundCount, 0);

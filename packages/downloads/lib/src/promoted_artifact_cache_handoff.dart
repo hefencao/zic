@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
 import 'package:sessions/sessions.dart';
+import 'package:telemetry/telemetry.dart';
 
 import 'artifact_cache_store.dart';
 
@@ -20,10 +21,16 @@ final class PromotedArtifactCacheHandoff {
   PromotedArtifactCacheHandoff({
     required this.cache,
     this.onError,
+    this.clock,
+    this.traceSink = const NoopTraceSink(),
+    this.sessionId = 'artifact-cache-handoff',
   });
 
   final ArtifactCacheStore cache;
   final ArtifactCacheHandoffError? onError;
+  final MonoClock? clock;
+  final TraceSink traceSink;
+  final String sessionId;
   final Map<DownloadSession, DownloadSnapshotListener> _listeners =
       <DownloadSession, DownloadSnapshotListener>{};
   final Map<DownloadId, Future<void>> _commits =
@@ -93,13 +100,66 @@ final class PromotedArtifactCacheHandoff {
     if (session.state != DownloadState.promoted) {
       return;
     }
+    final startedAtMicros = clock?.nowMicros();
+    final expectedLength = session.artifact.committedLength;
+    final presence = cache is ArtifactCachePresenceStore
+        ? cache as ArtifactCachePresenceStore
+        : null;
+    if (presence != null &&
+        await presence.containsPromotedArtifact(
+          id: session.id,
+          expectedLength: expectedLength,
+        )) {
+      _recordCommit(
+        session,
+        action: 'skip-existing',
+        bytes: expectedLength,
+        startedAtMicros: startedAtMicros,
+      );
+      return;
+    }
     final builder = BytesBuilder(copy: false);
     await for (final chunk in session.artifact.readChunks()) {
       builder.add(chunk);
     }
+    final bytes = builder.takeBytes();
     await cache.storePromotedArtifact(
       id: session.id,
-      bytes: builder.takeBytes(),
+      bytes: bytes,
+    );
+    _recordCommit(
+      session,
+      action: 'stored',
+      bytes: bytes.lengthInBytes,
+      startedAtMicros: startedAtMicros,
+    );
+  }
+
+  void _recordCommit(
+    DownloadSession session, {
+    required String action,
+    required int bytes,
+    required int? startedAtMicros,
+  }) {
+    final sourceClock = clock;
+    if (sourceClock == null) return;
+    traceSink.record(
+      traceEvent(
+        clock: sourceClock,
+        sessionId: sessionId,
+        kind: TraceEventKind.artifactSource,
+        identityHash: session.id.key,
+        payload: <String, Object?>{
+          'source': 'session-artifact-handoff',
+          'consumer': 'persistent-cache',
+          'action': action,
+          'bytes': bytes,
+          if (startedAtMicros != null)
+            'handoffMicros': (sourceClock.nowMicros() - startedAtMicros)
+                .clamp(0, 1 << 62)
+                .toInt(),
+        },
+      ),
     );
   }
 }

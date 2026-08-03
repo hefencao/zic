@@ -1,6 +1,6 @@
-# dev.106 后续交接
+# dev.107 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.106_startup-foreground-pressure-whole-body-ingress.zip`。不得使用 dev.105 或更早 ZIP、旧工作树、记忆源码或可变 libwebp tree 覆盖。
+唯一后续基线：`zic_v0.31.0-dev.107_reader-reentry-progressive-artifact-handoff.zip`。不得使用 dev.106 或更早 ZIP、旧工作树、记忆源码或可变 libwebp tree 覆盖。
 
 ## 必读
 
@@ -12,17 +12,16 @@
 6. `docs/IMPLEMENTATION_STATUS.md`
 7. `docs/IMPLEMENTATION_PLAN.md`
 8. `docs/testing/TEST_QUARANTINE.md`
-9. `docs/adr/0090-startup-foreground-pressure-whole-body-ingress.md`
-10. `docs/audits/dev106-startup-ingress-pressure-audit.md`
-11. `docs/audits/dev106-validation-results.md`
+9. `docs/adr/0091-reader-reentry-progressive-artifact-handoff.md`
+10. `docs/audits/dev107-reentry-progressive-handoff-audit.md`
+11. `docs/audits/dev107-validation-results.md`
 
 ## 当前主线
 
-1. 采集 dev.106 首次进入、快速重进和未稳定切页 Trace。
-2. 检查 whole-body delivery、lease-through-stream、foreground pressure hold 和释放时点。
-3. 比较 current 首帧、前 12 帧、background 开始时间以及 pressure 释放后的 7/3 推进。
-4. 继续验证 retained cursor、新 current 自动播放和 successor 预解码。
-5. 运行 Flutter analyzer/tests 与 Android debug/release。
+1. 设备验证 handoff `skip-existing`、dispose 分阶段耗时和快速重进重叠。
+2. 验证 `startup-segmented` 是否让 source-ready/decode 在完整 body 前推进。
+3. 继续检查前 12 帧水位、current decode failure、新 current 自动播放和 successor 预解码。
+4. 运行 Flutter analyzer/tests 与 Android debug/release。
 
 ## 不可改变
 

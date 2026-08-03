@@ -1,3 +1,11 @@
+## 0.31.0-dev.107：Reader 重进清理与 progressive artifact handoff
+
+- persistent cache handoff 在读取临时 promoted artifact 前按 identity 与长度探测持久副本；命中时跳过重复 materialize/store。
+- current/transition encoded bytes 从单个 whole-body chunk 改为受 foreground pressure 和 lease-through-stream 保护的 1 MiB progressive startup segments。
+- Reader dispose 先 detach handoff listener，并记录 coordinator、handoff、media、downloads、workspace 分阶段耗时。
+- 修复 nullable `ArtifactCacheReadScheduler` Trace projection 的编译错误。
+- 新增 ADR 0091、dev.107 audit、owner tests、Trace analyzer 扩展与静态 ownership gate；README/Architecture/Spec 未修改。
+
 ## 0.31.0-dev.106：启动前景背压与整块 artifact ingress
 
 - current/transition 的 promoted encoded bytes 改为单个 immutable body 注入 Reader DownloadSession，避免 1 MiB Dart stream 循环重复唤醒。

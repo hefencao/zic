@@ -130,7 +130,8 @@ abstract interface class ManagedChapterDownloadService
         ChapterDownloadService,
         ArtifactCacheMaintenance,
         ArtifactCacheStore,
-        ArtifactCacheStreamStore {}
+        ArtifactCacheStreamStore,
+        ArtifactCachePresenceStore {}
 
 /// Resolves bytes owned by an active comic source. External plugin page URIs
 /// are intentionally opaque and must stay behind the source boundary instead
@@ -479,6 +480,16 @@ final class MemoryChapterDownloadService
       },
       readAll: () async => bytes,
     );
+  }
+
+  @override
+  Future<bool> containsPromotedArtifact({
+    required DownloadId id,
+    required int expectedLength,
+  }) async {
+    _requireOpen();
+    final bytes = _readerArtifacts[id];
+    return bytes != null && bytes.lengthInBytes == expectedLength;
   }
 
   @override
@@ -1091,6 +1102,17 @@ final class PersistentChapterDownloadService
       ),
       readAll: artifact.readBytes,
     );
+  }
+
+  @override
+  Future<bool> containsPromotedArtifact({
+    required DownloadId id,
+    required int expectedLength,
+  }) async {
+    _requireOpen();
+    final session = _registry.get(id);
+    final artifact = await _promotedArtifactForRead(session);
+    return artifact != null && artifact.committedLength == expectedLength;
   }
 
   Future<Artifact?> _promotedArtifactForRead(DownloadSession session) async {

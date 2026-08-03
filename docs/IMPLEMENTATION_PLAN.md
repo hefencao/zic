@@ -10,21 +10,19 @@
 4. 优化必须有可比较的 Trace 或设备证据；不得缩小 7/3、2/1 或 lane 5/3/2 掩盖错误。
 5. 每轮默认只更新 Status、Handoff、CHANGELOG 和 audit；稳定合同未变化时不修改 Architecture/Spec。
 
-## P0：启动前景压力设备闭环
+## P0：Reader 重进清理设备闭环
 
-- 采集 dev.106 首次进入、快速退出重进和未稳定切页 Trace；
-- 确认 current/transition 使用 `deliveryMode=whole-body`，foreground lease 覆盖 body consumption；
-- 检查 `readSchedulerPressureHolds` 在首帧与 successor 水位形成前保持，随后释放；
-- 比较 mount-to-first-frame、前 12 帧 end-to-end、source stream、output prepare 和 platform presentation；
-- 确认 pressure 释放后 background 7/3 继续推进，没有饥饿。
+- 采集 dev.107 首次进入、快速退出重进和未稳定切页 Trace；
+- 确认相同持久 artifact 的 handoff 为 `skip-existing`，`handoffDrainMicros` 不再形成秒级长尾；
+- 确认旧 Reader dispose 不再覆盖新 Reader 的主要播放区间；
+- 比较新旧 session 的 dispose 分阶段耗时。
 
-退出条件：首帧和前几帧的秒级拥堵显著下降，未稳定切页不再继承启动队列长尾。
+## P0：progressive ingress 与前帧水位
 
-## P0：切页播放连续性
-
-- 继续复验 current/transition 50% 交接、retained cursor 和新页自动播放；
-- 关联 remaining current decode failure 的 source epoch、frame、worker 与 native 错误；
-- 确认预解码实际产生 successor，而不是只完成 encoded-byte 预读。
+- 确认 current/transition 使用 `deliveryMode=startup-segmented`；
+- 验证首个 1 MiB 后 source-ready/decode 即可推进，不再等待完整文件；
+- 检查 startup pressure、lease-through-stream 与 successor depth=2 的释放顺序；
+- 继续关联 current decode failure 和新页无法播放。
 
 ## P0：Flutter 与 Android 验证闭包
 

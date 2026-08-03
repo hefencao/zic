@@ -15,12 +15,10 @@ def require(text: str, token: str, owner: str) -> None:
 
 
 scheduler = read("packages/downloads/lib/src/artifact_cache_read_scheduler.dart")
-transport = read("packages/downloads/lib/src/artifact_cache_transport.dart")
 pipeline = read("packages/pipeline_runtime/lib/src/pipeline_reader_session.dart")
 scheduler_test = read("packages/downloads/test/artifact_cache_read_scheduler_test.dart")
-transport_test = read("packages/downloads/test/artifact_cache_transport_test.dart")
 check = read("tool/check.sh")
-pubspec = read("apps/app/pubspec.yaml")
+adr = read("docs/adr/0090-startup-foreground-pressure-whole-body-ingress.md")
 
 for token in (
     "int _foregroundPressureHolds = 0;",
@@ -29,16 +27,6 @@ for token in (
     "final class ArtifactCachePressureLease",
 ):
     require(scheduler, token, "artifact read scheduler")
-
-for token in (
-    "wholeBodyChunk: true",
-    "_leaseBoundResponse(response, lease)",
-    "readSchedulerLeaseThroughStream",
-    "readSchedulerPressureHolds",
-    "deliveryMode': 'whole-body",
-    "Stream<List<int>> _wholeBodyBytes",
-):
-    require(transport, token, "artifact cache transport")
 
 for token in (
     "_holdStartupArtifactPressureFor(currentDownload);",
@@ -60,13 +48,9 @@ require(
     "external foreground pressure reserves background capacity",
     "scheduler owner test",
 )
-require(
-    transport_test,
-    "foreground read-all holds its scheduler lease until body drains",
-    "transport owner test",
-)
 require(check, "test_dev106_startup_ingress_pressure.py", "repository check")
-require(pubspec, "version: 0.31.0+106", "app version")
+require(adr, "**状态：Superseded**", "dev.106 ADR status")
+require(adr, "ADR 0091", "dev.106 superseding decision")
 
 for path in (
     "docs/adr/0090-startup-foreground-pressure-whole-body-ingress.md",

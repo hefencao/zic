@@ -10,6 +10,9 @@ import 'artifact_cache_store.dart';
 import 'promoted_artifact_byte_cache.dart';
 import 'promoted_artifact_read_pool.dart';
 
+const int _foregroundStartupChunkBytes = 1024 * 1024;
+const int _foregroundContinuationChunkBytes = 1024 * 1024;
+
 /// Read-through transport for already-promoted page artifacts.
 ///
 /// The transport never writes cache state and never chooses which pages should
@@ -297,7 +300,7 @@ final class ArtifactCacheTransport implements Transport {
       bytes: bytes,
       range: range,
       validators: validators,
-      wholeBodyChunk: true,
+      foregroundStartupSegmented: true,
     );
     if (response == null) {
       lease?.release();
@@ -325,7 +328,9 @@ final class ArtifactCacheTransport implements Transport {
       'readSchedulerLeaseThroughStream': lease != null,
       'readSchedulerPressureHolds':
           scheduler?.foregroundPressureHoldCount ?? 0,
-      'deliveryMode': 'whole-body',
+      'deliveryMode': 'startup-segmented',
+      'startupChunkBytes': _foregroundStartupChunkBytes,
+      'continuationChunkBytes': _foregroundContinuationChunkBytes,
       'hotCacheEntries': byteCache.entryCount,
       'hotCacheBytes': byteCache.retainedBytes,
     };
@@ -738,7 +743,7 @@ ByteResponse? _cachedResponse({
   required Uint8List bytes,
   required ByteRange? range,
   required Validators? validators,
-  bool wholeBodyChunk = false,
+  bool foregroundStartupSegmented = false,
 }) {
   final currentValidators = Validators(
     etag: '"zic-artifact-${bytes.lengthInBytes}-'
@@ -759,8 +764,8 @@ ByteResponse? _cachedResponse({
       : (requestedEnd + 1).clamp(start, bytes.lengthInBytes).toInt();
   final body = Uint8List.sublistView(bytes, start, endExclusive);
   return ByteResponse(
-    bytes: wholeBodyChunk
-        ? _wholeBodyBytes(body)
+    bytes: foregroundStartupSegmented
+        ? _startupSegmentedBytes(body)
         : _chunkedBytes(
             body,
             chunkSize: promotedArtifactReadChunkBytes,
@@ -773,9 +778,23 @@ ByteResponse? _cachedResponse({
   );
 }
 
-Stream<List<int>> _wholeBodyBytes(Uint8List bytes) async* {
-  if (bytes.isNotEmpty) {
-    yield bytes;
+Stream<List<int>> _startupSegmentedBytes(Uint8List bytes) async* {
+  if (bytes.isEmpty) return;
+  final startupEnd = bytes.lengthInBytes < _foregroundStartupChunkBytes
+      ? bytes.lengthInBytes
+      : _foregroundStartupChunkBytes;
+  yield Uint8List.sublistView(bytes, 0, startupEnd);
+  for (var offset = startupEnd;
+      offset < bytes.lengthInBytes;
+      offset += _foregroundContinuationChunkBytes) {
+    // Let source-ready listeners, decode workers and the current presentation
+    // run after the codec prefix instead of blocking the Reader isolate on one
+    // 5–20 MiB native ingress and artifact write.
+    await Future<void>.delayed(Duration.zero);
+    final end = (offset + _foregroundContinuationChunkBytes)
+        .clamp(offset, bytes.lengthInBytes)
+        .toInt();
+    yield Uint8List.sublistView(bytes, offset, end);
   }
 }
 

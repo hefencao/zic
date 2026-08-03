@@ -1,6 +1,8 @@
 # ADR 0090：Reader 启动前景背压与整块 artifact ingress
 
-**状态：Provisional**
+**状态：Superseded**
+
+由 `ADR 0091` 取代。启动前景 pressure 与 lease-through-stream 继续保留，但单个 whole-body chunk 被设备 Trace 证明会阻塞 source-ready，因此 current/transition 改为受 pressure 保护的渐进注入。
 
 ## 问题
 

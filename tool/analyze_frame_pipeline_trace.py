@@ -161,6 +161,7 @@ def summarize(path: Path) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     source_reads: list[dict[str, Any]] = []
+    cache_handoffs: list[dict[str, Any]] = []
     next_due_by_session: dict[str, int] = {}
     session_lifecycle: dict[str, dict[str, int]] = defaultdict(dict)
 
@@ -176,6 +177,18 @@ def summarize(path: Path) -> dict[str, Any]:
         }:
             session_id = str(event.get("sessionId", ""))
             session_lifecycle[session_id][kind] = _number(event.get("t"))
+            if kind == "readerSessionDisposed":
+                for field in (
+                    "disposeMicros",
+                    "coordinatorDisposeMicros",
+                    "handoffDrainMicros",
+                    "mediaCloseMicros",
+                    "downloadsDisposeMicros",
+                    "workspaceDisposeMicros",
+                ):
+                    session_lifecycle[session_id][field] = _number(
+                        payload.get(field)
+                    )
         if kind == "framePipelineTiming":
             session_id = str(event.get("sessionId", ""))
             previous_due = (
@@ -307,6 +320,17 @@ def summarize(path: Path) -> dict[str, Any]:
                     "completed": payload.get("completed"),
                 }
             )
+        elif kind == "artifactSource" and payload.get("consumer") == "persistent-cache":
+            cache_handoffs.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "identityHash": event.get("identityHash"),
+                    "action": payload.get("action"),
+                    "bytes": _number(payload.get("bytes")),
+                    "handoffMicros": _number(payload.get("handoffMicros")),
+                }
+            )
 
     source_reads.sort(key=lambda row: row["streamMicros"], reverse=True)
 
@@ -393,6 +417,13 @@ def summarize(path: Path) -> dict[str, Any]:
         "sourceConcurrencyScope": concurrency_scope,
         "processClock": has_process_clock,
         "readerSessionLifecycle": dict(session_lifecycle),
+        "cacheHandoffActionCounts": dict(
+            Counter(str(row["action"]) for row in cache_handoffs)
+        ),
+        "cacheHandoffMicros": _stats(
+            [row["handoffMicros"] for row in cache_handoffs]
+        ),
+        "cacheHandoffs": cache_handoffs,
         "sourceFirstChunkMicros": _stats(
             [row["firstChunkMicros"] for row in source_reads]
         ),
@@ -437,6 +468,11 @@ def main() -> None:
         f"maxGap={report['sourceMaxChunkGapMicros']}"
     )
     print(f"task failures: {report['taskFailureCount']}")
+    print(f"reader lifecycle: {report['readerSessionLifecycle']}")
+    print(
+        f"cache handoff: actions={report['cacheHandoffActionCounts']} "
+        f"timing={report['cacheHandoffMicros']}"
+    )
     for failure in report["taskFailures"][: max(0, args.limit)]:
         print(
             "  failure "

@@ -1032,7 +1032,8 @@ def check_compile_regressions() -> None:
         'ChapterDownloadService,',
         'ArtifactCacheMaintenance,',
         'ArtifactCacheStore,',
-        'ArtifactCacheStreamStore {}',
+        'ArtifactCacheStreamStore,',
+        'ArtifactCachePresenceStore {}',
         'implements ManagedChapterDownloadService',
     ):
         if required not in chapter_downloads:
@@ -2500,7 +2501,7 @@ def check_native_abi() -> None:
             fail(f'ABI symbol is not represented in Rust/header/Dart: {symbol}')
     if 'pub const ABI_VERSION: u32 = 6;' not in rust:
         fail('native ABI version must be 6 for reserve/commit ingress')
-    if 'pub const LIB_VERSION: u32 = 0x0012_0600;' not in rust:
+    if 'pub const LIB_VERSION: u32 = 0x0012_0700;' not in rust:
         fail('native library version must identify the resident local-WebP playback release')
     webp_path = ROOT / 'native/media_core/src/webp.rs'
     if not webp_path.is_file():

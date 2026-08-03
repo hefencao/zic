@@ -94,6 +94,44 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
             },
         },
         {
+            "t": 5,
+            "sessionId": "reader-a",
+            "kind": "readerSessionCreated",
+            "payload": {},
+        },
+        {
+            "t": 23,
+            "sessionId": "reader-a",
+            "kind": "artifactSource",
+            "identityHash": "artifact-a",
+            "payload": {
+                "source": "session-artifact-handoff",
+                "consumer": "persistent-cache",
+                "action": "skip-existing",
+                "bytes": 1048576,
+                "handoffMicros": 700,
+            },
+        },
+        {
+            "t": 24,
+            "sessionId": "reader-a",
+            "kind": "readerSessionDisposeStarted",
+            "payload": {},
+        },
+        {
+            "t": 30,
+            "sessionId": "reader-a",
+            "kind": "readerSessionDisposed",
+            "payload": {
+                "disposeMicros": 6000,
+                "coordinatorDisposeMicros": 1000,
+                "handoffDrainMicros": 700,
+                "mediaCloseMicros": 800,
+                "downloadsDisposeMicros": 900,
+                "workspaceDisposeMicros": 1000,
+            },
+        },
+        {
             "t": 22,
             "sessionId": "reader-a",
             "kind": "taskFailed",
@@ -133,8 +171,8 @@ assert report["stages"]["platformScheduleCallMicros"]["max"] == 10000
 assert report["stages"]["decodedLeadMicros"]["max"] == 950000
 assert report["stages"]["uploadBackpressureMicros"]["max"] == 40000
 assert report["sourceReadCount"] == 1
-assert report["processClock"] is False
-assert report["sourceConcurrencyScope"] == "per-session-legacy-clock"
+assert report["processClock"] is True
+assert report["sourceConcurrencyScope"] == "process"
 assert report["sourceReadMicros"]["max"] == 3000
 assert report["sourceReadModeCounts"] == {"read-all": 1}
 assert report["sourceDeliveryModeCounts"] == {"whole-body": 1}
@@ -143,6 +181,12 @@ assert report["sourceMemoryCacheHits"] == 0
 assert report["sourceMemoryCacheJoins"] == 0
 assert report["sourceArtifactMaterializeMicros"]["max"] == 1500
 assert report["sourceReads"][0]["hotCacheEntries"] == 1
+
+assert report["readerSessionLifecycle"]["reader-a"]["disposeMicros"] == 6000
+assert report["readerSessionLifecycle"]["reader-a"]["handoffDrainMicros"] == 700
+assert report["cacheHandoffActionCounts"] == {"skip-existing": 1}
+assert report["cacheHandoffMicros"]["max"] == 700
+assert report["cacheHandoffs"][0]["bytes"] == 1048576
 assert report["taskFailureCount"] == 1
 assert report["taskFailures"][0]["executionMicros"] == 5000
 assert report["frames"][0]["frame"] == 0

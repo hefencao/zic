@@ -185,6 +185,9 @@ final class PipelineReaderSession {
       _artifactCacheHandoff = PromotedArtifactCacheHandoff(
         cache: artifactCache,
         onError: (error, stackTrace) {},
+        clock: clock,
+        traceSink: trace,
+        sessionId: sessionId,
       );
     }
     _downloads = DownloadRegistry(
@@ -787,17 +790,30 @@ final class PipelineReaderSession {
     _pageOutputs.clear();
     transferProgress.dispose();
     _uploads.removeListener(_handleUploadSnapshot);
-    await _coordinator.dispose();
-    await _artifactCacheHandoff?.drain(_downloads.sessions);
     _artifactCacheHandoff?.detach();
+    final coordinatorDisposeStartedAtMicros = clock.nowMicros();
+    await _coordinator.dispose();
+    final coordinatorDisposeMicros =
+        clock.nowMicros() - coordinatorDisposeStartedAtMicros;
+    final handoffDrainStartedAtMicros = clock.nowMicros();
+    await _artifactCacheHandoff?.drain(_downloads.sessions);
+    final handoffDrainMicros = clock.nowMicros() - handoffDrainStartedAtMicros;
     _artifactReads?.close();
     _uploads.dispose();
     _decodes.dispose();
+    final mediaCloseStartedAtMicros = clock.nowMicros();
     await _media.close();
+    final mediaCloseMicros = clock.nowMicros() - mediaCloseStartedAtMicros;
+    final downloadsDisposeStartedAtMicros = clock.nowMicros();
     await _downloads.dispose();
+    final downloadsDisposeMicros =
+        clock.nowMicros() - downloadsDisposeStartedAtMicros;
     _streamingSources.dispose();
     _ioTransport.close(force: true);
+    final workspaceDisposeStartedAtMicros = clock.nowMicros();
     await _workspace.dispose();
+    final workspaceDisposeMicros =
+        clock.nowMicros() - workspaceDisposeStartedAtMicros;
     _pageStreams.clear();
     trace.record(
       traceEvent(
@@ -806,6 +822,11 @@ final class PipelineReaderSession {
         kind: TraceEventKind.readerSessionDisposed,
         payload: <String, Object?>{
           'disposeMicros': clock.nowMicros() - disposeStartedAtMicros,
+          'coordinatorDisposeMicros': coordinatorDisposeMicros,
+          'handoffDrainMicros': handoffDrainMicros,
+          'mediaCloseMicros': mediaCloseMicros,
+          'downloadsDisposeMicros': downloadsDisposeMicros,
+          'workspaceDisposeMicros': workspaceDisposeMicros,
         },
       ),
     );
