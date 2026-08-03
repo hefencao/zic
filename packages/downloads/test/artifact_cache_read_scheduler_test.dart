@@ -97,4 +97,31 @@ void main() {
     background.release();
     foreground.release();
   });
+
+  test('external foreground pressure reserves background capacity', () async {
+    final scheduler = ArtifactCacheReadScheduler(maxActive: 3);
+    final pressure = scheduler.holdForegroundPressure();
+    final firstBackground = await scheduler.acquire(priority: () => 400);
+    var secondStarted = false;
+    final secondBackground = scheduler.acquire(priority: () => 400).then(
+      (lease) {
+        secondStarted = true;
+        return lease;
+      },
+    );
+
+    await Future<void>.delayed(Duration.zero);
+    expect(scheduler.foregroundPressure, isTrue);
+    expect(scheduler.foregroundPressureHoldCount, 1);
+    expect(scheduler.activeBackgroundCount, 1);
+    expect(secondStarted, isFalse);
+
+    pressure.release();
+    final second = await secondBackground;
+    expect(secondStarted, isTrue);
+    expect(scheduler.foregroundPressureHoldCount, 0);
+
+    second.release();
+    firstBackground.release();
+  });
 }

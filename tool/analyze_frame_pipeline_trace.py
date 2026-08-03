@@ -274,6 +274,7 @@ def summarize(path: Path) -> dict[str, Any]:
                     "consumer": payload.get("consumer"),
                     "priority": _number(payload.get("priority")),
                     "artifactReadMode": payload.get("artifactReadMode"),
+                    "deliveryMode": payload.get("deliveryMode"),
                     "memoryCacheHit": payload.get("memoryCacheHit"),
                     "memoryCacheJoined": payload.get("memoryCacheJoined"),
                     "artifactMaterializeMicros": _number(
@@ -295,6 +296,9 @@ def summarize(path: Path) -> dict[str, Any]:
                     ),
                     "readSchedulerForegroundAcquires": _number(
                         payload.get("readSchedulerForegroundAcquires")
+                    ),
+                    "readSchedulerPressureHolds": _number(
+                        payload.get("readSchedulerPressureHolds")
                     ),
                     "firstChunkMicros": _number(payload.get("firstChunkMicros")),
                     "streamMicros": _number(payload.get("streamMicros")),
@@ -354,6 +358,13 @@ def summarize(path: Path) -> dict[str, Any]:
                 if row["artifactReadMode"] is not None
             )
         ),
+        "sourceDeliveryModeCounts": dict(
+            Counter(
+                str(row["deliveryMode"])
+                for row in source_reads
+                if row["deliveryMode"] is not None
+            )
+        ),
         "sourceMemoryCacheHits": sum(
             1 for row in source_reads if row["memoryCacheHit"] is True
         ),
@@ -374,6 +385,9 @@ def summarize(path: Path) -> dict[str, Any]:
         ),
         "sourceReadSchedulerForegroundAcquires": _stats(
             [row["readSchedulerForegroundAcquires"] for row in source_reads]
+        ),
+        "sourceReadSchedulerPressureHolds": _stats(
+            [row["readSchedulerPressureHolds"] for row in source_reads]
         ),
         "sourceMaxConcurrentReads": max_concurrent_reads,
         "sourceConcurrencyScope": concurrency_scope,
@@ -412,7 +426,9 @@ def main() -> None:
         f"maxConcurrent={report['sourceMaxConcurrentReads']} "
         f"scope={report['sourceConcurrencyScope']} "
         f"schedulerWait={report['sourceReadSchedulerWaitMicros']} "
+        f"pressureHolds={report['sourceReadSchedulerPressureHolds']} "
         f"modes={report['sourceReadModeCounts']} "
+        f"delivery={report['sourceDeliveryModeCounts']} "
         f"memoryHits={report['sourceMemoryCacheHits']} "
         f"memoryJoins={report['sourceMemoryCacheJoins']} "
         f"materialize={report['sourceArtifactMaterializeMicros']} "
@@ -460,6 +476,8 @@ def main() -> None:
             f"schedulerMaxWait={row['readSchedulerMaxWaitMicros']} "
             f"schedulerAcquires={row['readSchedulerAcquires']} "
             f"foregroundAcquires={row['readSchedulerForegroundAcquires']} "
+            f"pressureHolds={row['readSchedulerPressureHolds']} "
+            f"delivery={row['deliveryMode']} "
             f"firstChunk={row['firstChunkMicros']} stream={row['streamMicros']} "
             f"maxGap={row['maxChunkGapMicros']} maxChunk={row['maxChunkBytes']}"
         )

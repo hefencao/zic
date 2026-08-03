@@ -273,6 +273,8 @@ final class PipelineReaderSession {
   final PipelineTransferProgressPublisher transferProgress;
   final ArtifactCacheReadScheduler artifactReadScheduler;
   final PromotedArtifactByteCache artifactByteCache;
+  ArtifactCachePressureLease? _startupArtifactPressure;
+  DownloadId? _startupArtifactPressureDownload;
   bool _disposed = false;
 
   int get revision => _binding?.revision ?? 0;
@@ -310,10 +312,12 @@ final class PipelineReaderSession {
     final pageIndex = observation.currentIndex
         .clamp(0, chapter.pages.length - 1)
         .toInt();
-    transferProgress.select(
-      readerPageDownloadId(chapter, chapter.pages[pageIndex]),
-    );
+    final currentDownload =
+        readerPageDownloadId(chapter, chapter.pages[pageIndex]);
+    transferProgress.select(currentDownload);
+    _holdStartupArtifactPressureFor(currentDownload);
     binding.accept(observation);
+    _syncStartupArtifactPressure();
     artifactReadScheduler.refresh();
     _syncPageOutputs();
     _ensurePlaybackTicker();
@@ -336,6 +340,7 @@ final class PipelineReaderSession {
   void detach(String readerSessionId) {
     _binding?.detach(readerSessionId);
     _binding = null;
+    _releaseStartupArtifactPressure();
     artifactReadScheduler.refresh();
     transferProgress.clear();
   }
@@ -601,6 +606,101 @@ final class PipelineReaderSession {
     if (snapshot.state == UploadState.ready) {
       _ensurePlaybackTicker();
     }
+    _maybeReleaseStartupArtifactPressure();
+  }
+
+  void _holdStartupArtifactPressureFor(DownloadId current) {
+    if (_artifactCacheTransport == null || _disposed) return;
+    if (_startupArtifactPressureDownload == current &&
+        _startupArtifactPressure != null) {
+      return;
+    }
+    _releaseStartupArtifactPressure();
+    _startupArtifactPressureDownload = current;
+    _startupArtifactPressure = artifactReadScheduler.holdForegroundPressure();
+  }
+
+  void _syncStartupArtifactPressure() {
+    if (_artifactCacheTransport == null || _disposed) {
+      _releaseStartupArtifactPressure();
+      return;
+    }
+    final uploads = _binding?.pipeline.currentPlan.uploads;
+    DecodeId? current;
+    if (uploads != null) {
+      for (final entry in uploads.entries) {
+        if (entry.value.role == PageRole.current) {
+          current = entry.key;
+          break;
+        }
+      }
+    }
+    if (current == null) {
+      _releaseStartupArtifactPressure();
+      return;
+    }
+    if (_startupOutputReady(current)) {
+      _releaseStartupArtifactPressure();
+      return;
+    }
+    _holdStartupArtifactPressureFor(current.download);
+  }
+
+  void _maybeReleaseStartupArtifactPressure() {
+    final held = _startupArtifactPressureDownload;
+    if (held == null) return;
+    final uploads = _binding?.pipeline.currentPlan.uploads;
+    if (uploads == null) {
+      _releaseStartupArtifactPressure();
+      return;
+    }
+    DecodeId? current;
+    for (final entry in uploads.entries) {
+      if (entry.value.role == PageRole.current) {
+        current = entry.key;
+        break;
+      }
+    }
+    if (current == null || current.download != held) {
+      _syncStartupArtifactPressure();
+      return;
+    }
+    if (_startupOutputReady(current)) {
+      _releaseStartupArtifactPressure();
+    }
+  }
+
+  bool _startupOutputReady(DecodeId id) {
+    final download = _downloads.get(id.download).snapshot;
+    if (download.state == DownloadState.failed ||
+        download.state == DownloadState.disposed) {
+      return true;
+    }
+    final upload = _uploads.find(id)?.snapshot;
+    if (upload == null) return false;
+    if (upload.state == UploadState.failed ||
+        upload.state == UploadState.disposed) {
+      return true;
+    }
+    if (upload.state != UploadState.ready || upload.presentClaims <= 0) {
+      return false;
+    }
+    final decode = _decodes.find(id)?.snapshot;
+    if (decode == null) return true;
+    final animation = decode.animation;
+    final authoritativeStatic =
+        animation.complete && animation.frameCount <= 1;
+    return authoritativeStatic ||
+        decode.state == DecodeState.ended ||
+        decode.state == DecodeState.failed ||
+        decode.state == DecodeState.disposed ||
+        decode.depth >= 2;
+  }
+
+  void _releaseStartupArtifactPressure() {
+    _startupArtifactPressure?.release();
+    _startupArtifactPressure = null;
+    _startupArtifactPressureDownload = null;
   }
 
   int _artifactReadPriority(DownloadId id) =>
@@ -653,6 +753,7 @@ final class PipelineReaderSession {
     for (final id in uploads.toList(growable: false)) {
       _coordinator.advanceDueFrame(sessionId, id);
     }
+    _maybeReleaseStartupArtifactPressure();
     _ensurePlaybackTicker();
   }
 
@@ -675,6 +776,7 @@ final class PipelineReaderSession {
     );
     _playbackTicker?.cancel();
     _playbackTicker = null;
+    _releaseStartupArtifactPressure();
     final binding = _binding;
     _binding = null;
     binding?.detach(sessionId);

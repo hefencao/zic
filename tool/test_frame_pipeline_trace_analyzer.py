@@ -77,11 +77,13 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
                 "sourceClass": "persistent-artifact",
                 "consumer": "session-copy",
                 "artifactReadMode": "read-all",
+                "deliveryMode": "whole-body",
                 "memoryCacheHit": False,
                 "memoryCacheJoined": False,
                 "artifactMaterializeMicros": 1500,
                 "hotCacheEntries": 1,
                 "hotCacheBytes": 1048576,
+                "readSchedulerPressureHolds": 1,
                 "bytes": 1048576,
                 "chunks": 1,
                 "firstChunkMicros": 2000,
@@ -135,6 +137,8 @@ assert report["processClock"] is False
 assert report["sourceConcurrencyScope"] == "per-session-legacy-clock"
 assert report["sourceReadMicros"]["max"] == 3000
 assert report["sourceReadModeCounts"] == {"read-all": 1}
+assert report["sourceDeliveryModeCounts"] == {"whole-body": 1}
+assert report["sourceReadSchedulerPressureHolds"]["max"] == 1
 assert report["sourceMemoryCacheHits"] == 0
 assert report["sourceMemoryCacheJoins"] == 0
 assert report["sourceArtifactMaterializeMicros"]["max"] == 1500

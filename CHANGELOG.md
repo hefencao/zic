@@ -1,3 +1,11 @@
+## 0.31.0-dev.106：启动前景背压与整块 artifact ingress
+
+- current/transition 的 promoted encoded bytes 改为单个 immutable body 注入 Reader DownloadSession，避免 1 MiB Dart stream 循环重复唤醒。
+- 前景 artifact scheduler lease 保持到 response body 被真正消费，不再在整文件 materialize 后提前释放。
+- Reader 在首次 demand 提交前建立 composition 级 foreground pressure；首帧已呈现且 successor 水位达到 2（或确认静态/结束）后释放。
+- background 仍保留 1 MiB chunk quantum；下载 7/3、预解码 2/1、lane 5/3/2 未改变。
+- Trace 新增 delivery mode 与 foreground pressure hold 统计；新增 ADR 0090、dev.106 audit、owner tests 和静态门禁。
+
 ## 0.31.0-dev.105：直接 promoted artifact 读取与 encoded-byte 热缓存
 
 - persistent cache 命中不再调用 `DownloadSession.restore()` 执行 metadata/prefix sniff、SQLite cache sync 和状态通知；只恢复 artifact 元数据并直接读取 promoted file。

@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.105`  
-**App build：** `0.31.0+105`
+**源码版本：** `0.31.0-dev.106`  
+**App build：** `0.31.0+106`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`；单轮 Trace、命令与数值见 `docs/audits/`。
 
@@ -35,8 +35,8 @@
 - Pipeline 窗口保持下载 7/3、预解码 2/1、上传 current/transition、lane 5/3/2。
 - 两个 Dart decode isolate 常驻；libwebp 1.6.0 使用锁定离线归档、零 fuzz 补丁和帧内单线程。
 - persistent artifact background 使用 1 MiB chunk quantum；foreground 压力期 background 同时最多一个 chunk 槽。
-- persistent cache read 不再恢复 DownloadSession ingress；current/transition 可直接整文件读取 promoted artifact。
-- composition 共享 4 项/96 MiB encoded-byte LRU，并合并同 identity 并发读取；Reader 重进可复用 immutable bytes。
+- current/transition promoted bytes 使用 composition encoded-byte LRU，并以单个 immutable body 注入 Reader DownloadSession。
+- foreground read lease 覆盖 materialize 与 body consumption；Reader 在 current demand 提交前建立 startup pressure，首帧已呈现且 successor depth 达到 2（或确认静态/结束）后释放。
 - DecodeSession 保留 frame 后继续原 cursor；Android texture 和 playback timing 维持 dev.103 合同。
 - quarantine 使用稳定 `Q-xxx` ID 和登记门禁；稳定文档按 `DOCUMENTATION_POLICY.md` 分责。
 
@@ -51,12 +51,12 @@
 | 检查 | 状态 |
 |---|---|
 | repository / documentation / Dart structure / directive order | Verified-static |
-| dev.75–dev.105 所有权门禁 | Verified-static |
+| dev.75–dev.106 所有权门禁 | Verified-static |
 | Trace analyzer fixture | Verified-static |
 | pinned libwebp prepare/build/smoke | Verified-static（host-native） |
 | `flutter analyze` 与 Dart/Flutter tests | Unverified：当前环境无 Flutter SDK |
 | Rust tests | Unverified：当前环境无 Cargo/rustc |
 | Android debug/release | Unverified：当前环境无 Android toolchain |
-| dev.105 设备文件读取与重进复用 | Unverified |
+| dev.106 启动压力与整块 ingress | Unverified |
 
-完整结果写入 `docs/audits/dev105-validation-results.md`。
+完整结果写入 `docs/audits/dev106-validation-results.md`。

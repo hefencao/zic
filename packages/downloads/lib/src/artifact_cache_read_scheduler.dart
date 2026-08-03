@@ -25,6 +25,7 @@ final class ArtifactCacheReadScheduler {
   int _active = 0;
   int _activeForeground = 0;
   int _activeBackground = 0;
+  int _foregroundPressureHolds = 0;
   int _sequence = 0;
 
   int get activeCount => _active;
@@ -32,6 +33,26 @@ final class ArtifactCacheReadScheduler {
   int get activeBackgroundCount => _activeBackground;
   int get pendingCount => _pending.length;
   bool get foregroundPressure => _hasForegroundPressure;
+  int get foregroundPressureHoldCount => _foregroundPressureHolds;
+
+  /// Holds foreground pressure without consuming a read slot.
+  ///
+  /// Reader startup uses this while the current output is not yet presented
+  /// with its successor watermark. Background reads remain queued or limited,
+  /// but the current artifact stream still has access to the full read pool.
+  ArtifactCachePressureLease holdForegroundPressure() {
+    _foregroundPressureHolds++;
+    _pump();
+    var released = false;
+    return ArtifactCachePressureLease._(() {
+      if (released) return;
+      released = true;
+      if (_foregroundPressureHolds > 0) {
+        _foregroundPressureHolds--;
+      }
+      _pump();
+    });
+  }
 
   Future<ArtifactCacheReadLease> acquire({
     required int Function() priority,
@@ -63,7 +84,7 @@ final class ArtifactCacheReadScheduler {
   bool _isForeground(int priority) => priority >= foregroundPriority;
 
   bool get _hasForegroundPressure {
-    if (_activeForeground > 0) {
+    if (_foregroundPressureHolds > 0 || _activeForeground > 0) {
       return true;
     }
     for (final pending in _pending) {
@@ -132,6 +153,14 @@ final class ArtifactCacheReadScheduler {
       }
     }
   }
+}
+
+final class ArtifactCachePressureLease {
+  ArtifactCachePressureLease._(this._release);
+
+  final void Function() _release;
+
+  void release() => _release();
 }
 
 final class ArtifactCacheReadLease {

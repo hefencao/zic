@@ -150,6 +150,8 @@ final class ArtifactCacheTransport implements Transport {
                 schedulerAcquires: () => schedulerAcquires,
                 schedulerForegroundAcquires: () =>
                     schedulerForegroundAcquires,
+                schedulerPressureHolds: () =>
+                    readScheduler?.foregroundPressureHoldCount ?? 0,
               );
             }
           }
@@ -258,31 +260,23 @@ final class ArtifactCacheTransport implements Transport {
     final materializeStarted = _clock?.nowMicros();
     PromotedArtifactByteRead read;
     try {
-      final cached = byteCache.lookup(id, length: entry.length);
-      if (cached != null) {
-        read = PromotedArtifactByteRead(
-          bytes: cached,
-          memoryHit: true,
-          joined: false,
+      if (scheduler != null) {
+        final wait = Stopwatch()..start();
+        lease = await scheduler.acquire(
+          priority: () => _demandPriority?.call(id) ?? requestedPriority,
         );
-      } else {
-        if (scheduler != null) {
-          final wait = Stopwatch()..start();
-          lease = await scheduler.acquire(
-            priority: () => _demandPriority?.call(id) ?? requestedPriority,
-          );
-          schedulerWaitMicros = wait.elapsedMicroseconds;
-          schedulerAcquires = 1;
-          schedulerForegroundAcquires = lease.foreground ? 1 : 0;
-          acquiredPriority = lease.priority;
-        }
-        read = await byteCache.read(
-          id: id,
-          length: entry.length,
-          loader: readAll,
-        );
+        schedulerWaitMicros = wait.elapsedMicroseconds;
+        schedulerAcquires = 1;
+        schedulerForegroundAcquires = lease.foreground ? 1 : 0;
+        acquiredPriority = lease.priority;
       }
+      read = await byteCache.read(
+        id: id,
+        length: entry.length,
+        loader: readAll,
+      );
     } on Object catch (error) {
+      lease?.release();
       _recordForegroundReadFailure(
         id: id,
         uri: uri,
@@ -291,8 +285,6 @@ final class ArtifactCacheTransport implements Transport {
         materializeStarted: materializeStarted,
       );
       return null;
-    } finally {
-      lease?.release();
     }
     final bytes = read.bytes;
     final materializeMicros = materializeStarted == null
@@ -300,13 +292,20 @@ final class ArtifactCacheTransport implements Transport {
         : (_clock!.nowMicros() - materializeStarted)
             .clamp(0, 1 << 62)
             .toInt();
-    final response = _cachedResponse(
+    var response = _cachedResponse(
       id: id,
       bytes: bytes,
       range: range,
       validators: validators,
+      wholeBodyChunk: true,
     );
-    if (response == null) return null;
+    if (response == null) {
+      lease?.release();
+      return null;
+    }
+    if (lease != null) {
+      response = _leaseBoundResponse(response, lease);
+    }
     final source = read.memoryHit
         ? 'artifact-byte-cache'
         : 'artifact-read-all';
@@ -323,6 +322,10 @@ final class ArtifactCacheTransport implements Transport {
       'readSchedulerWaitMicros': schedulerWaitMicros,
       'readSchedulerAcquires': schedulerAcquires,
       'readSchedulerForegroundAcquires': schedulerForegroundAcquires,
+      'readSchedulerLeaseThroughStream': lease != null,
+      'readSchedulerPressureHolds':
+          scheduler?.foregroundPressureHoldCount ?? 0,
+      'deliveryMode': 'whole-body',
       'hotCacheEntries': byteCache.entryCount,
       'hotCacheBytes': byteCache.retainedBytes,
     };
@@ -350,7 +353,6 @@ final class ArtifactCacheTransport implements Transport {
       readDetails: () => details,
     );
   }
-
 
   void _recordForegroundReadFailure({
     required DownloadId id,
@@ -471,6 +473,7 @@ final class ArtifactCacheTransport implements Transport {
     int Function()? schedulerMaxWaitMicros,
     int Function()? schedulerAcquires,
     int Function()? schedulerForegroundAcquires,
+    int Function()? schedulerPressureHolds,
     Map<String, Object?> Function()? readDetails,
   }) {
     final clock = _clock;
@@ -543,6 +546,8 @@ final class ArtifactCacheTransport implements Transport {
               if (schedulerForegroundAcquires != null)
                 'readSchedulerForegroundAcquires':
                     schedulerForegroundAcquires(),
+              if (schedulerPressureHolds != null)
+                'readSchedulerPressureHolds': schedulerPressureHolds(),
               if (readDetails != null) ...readDetails(),
               'firstChunkMicros': firstChunkMicros,
               'streamMicros':
@@ -610,6 +615,42 @@ Map<String, DownloadId> _uniqueIdentities(
     result.remove(key);
   }
   return Map<String, DownloadId>.unmodifiable(result);
+}
+
+ByteResponse _leaseBoundResponse(
+  ByteResponse response,
+  ArtifactCacheReadLease lease,
+) {
+  var released = false;
+  void release() {
+    if (released) return;
+    released = true;
+    lease.release();
+  }
+
+  Stream<List<int>> bytes() async* {
+    try {
+      yield* response.bytes;
+    } finally {
+      release();
+    }
+  }
+
+  return ByteResponse(
+    bytes: bytes(),
+    statusCode: response.statusCode,
+    rangeStart: response.rangeStart,
+    totalLength: response.totalLength,
+    validators: response.validators,
+    rangeSupported: response.rangeSupported,
+    onDiscard: () async {
+      try {
+        await response.discard();
+      } finally {
+        release();
+      }
+    },
+  );
 }
 
 ByteResponse _scheduledArtifactResponse(
@@ -697,6 +738,7 @@ ByteResponse? _cachedResponse({
   required Uint8List bytes,
   required ByteRange? range,
   required Validators? validators,
+  bool wholeBodyChunk = false,
 }) {
   final currentValidators = Validators(
     etag: '"zic-artifact-${bytes.lengthInBytes}-'
@@ -717,16 +759,24 @@ ByteResponse? _cachedResponse({
       : (requestedEnd + 1).clamp(start, bytes.lengthInBytes).toInt();
   final body = Uint8List.sublistView(bytes, start, endExclusive);
   return ByteResponse(
-    bytes: _chunkedBytes(
-      body,
-      chunkSize: promotedArtifactReadChunkBytes,
-    ),
+    bytes: wholeBodyChunk
+        ? _wholeBodyBytes(body)
+        : _chunkedBytes(
+            body,
+            chunkSize: promotedArtifactReadChunkBytes,
+          ),
     statusCode: canServeRange ? 206 : 200,
     rangeStart: start,
     totalLength: bytes.lengthInBytes,
     validators: currentValidators,
     rangeSupported: true,
   );
+}
+
+Stream<List<int>> _wholeBodyBytes(Uint8List bytes) async* {
+  if (bytes.isNotEmpty) {
+    yield bytes;
+  }
 }
 
 Stream<List<int>> _chunkedBytes(

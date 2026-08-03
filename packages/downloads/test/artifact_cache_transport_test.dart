@@ -79,7 +79,6 @@ void main() {
     );
   });
 
-
   test('stream-capable cache bypasses full-page Uint8List reads', () async {
     final uri = Uri.parse('https://example.invalid/streamed-page.bin');
     final id = _downloadId(uri, 'page-streamed');
@@ -239,7 +238,7 @@ void main() {
         .map((chunk) => chunk.length)
         .toList();
 
-    expect(first, <int>[promotedArtifactReadChunkBytes, 17]);
+    expect(first, <int>[promotedArtifactReadChunkBytes + 17]);
     expect(second, first);
     expect(cache.readAllCalls, 1);
     expect(cache.streamOpens, 2);
@@ -253,8 +252,37 @@ void main() {
         .where((event) => event.kind == TraceEventKind.sourceRead)
         .toList();
     expect(reads[0].payload['artifactReadMode'], 'read-all');
+    expect(reads[0].payload['deliveryMode'], 'whole-body');
+    expect(reads[0].payload['readSchedulerLeaseThroughStream'], isTrue);
     expect(reads[1].payload['artifactReadMode'], 'memory-hit');
-    expect(reads[1].payload['readSchedulerAcquires'], 0);
+    expect(reads[1].payload['deliveryMode'], 'whole-body');
+    expect(reads[1].payload['readSchedulerAcquires'], 1);
+  });
+
+  test('foreground read-all holds its scheduler lease until body drains',
+      () async {
+    final uri = Uri.parse('https://example.invalid/lease-body.bin');
+    final id = _downloadId(uri, 'page-lease-body');
+    final bytes = Uint8List(promotedArtifactReadChunkBytes + 17);
+    final cache = _StreamingArtifactStore(id, bytes, exposeReadAll: true);
+    final scheduler = ArtifactCacheReadScheduler(maxActive: 2);
+    final transport = ArtifactCacheTransport(
+      cache: cache,
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => _RecordingTransport(Uint8List(0)),
+      byteCache: PromotedArtifactByteCache(),
+      readScheduler: scheduler,
+      demandPriority: (_) => 1000,
+    );
+
+    final response = await transport.open(uri);
+    expect(scheduler.activeForegroundCount, 1);
+    final iterator = StreamIterator<List<int>>(response.bytes);
+    expect(await iterator.moveNext(), isTrue);
+    expect(iterator.current.length, bytes.lengthInBytes);
+    expect(scheduler.activeForegroundCount, 1);
+    expect(await iterator.moveNext(), isFalse);
+    expect(scheduler.activeForegroundCount, 0);
   });
 
   test('read-all failure falls back to the artifact stream, not origin',

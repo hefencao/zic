@@ -1,6 +1,6 @@
-# dev.105 后续交接
+# dev.106 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.105_direct-promoted-artifact-hot-cache.zip`。不得使用 dev.104 或更早 ZIP、旧工作树、记忆源码或可变 libwebp tree 覆盖。
+唯一后续基线：`zic_v0.31.0-dev.106_startup-foreground-pressure-whole-body-ingress.zip`。不得使用 dev.105 或更早 ZIP、旧工作树、记忆源码或可变 libwebp tree 覆盖。
 
 ## 必读
 
@@ -12,15 +12,15 @@
 6. `docs/IMPLEMENTATION_STATUS.md`
 7. `docs/IMPLEMENTATION_PLAN.md`
 8. `docs/testing/TEST_QUARANTINE.md`
-9. `docs/adr/0089-direct-promoted-artifact-read-and-hot-cache.md`
-10. `docs/audits/dev105-direct-artifact-read-cache-audit.md`
-11. `docs/audits/dev105-validation-results.md`
+9. `docs/adr/0090-startup-foreground-pressure-whole-body-ingress.md`
+10. `docs/audits/dev106-startup-ingress-pressure-audit.md`
+11. `docs/audits/dev106-validation-results.md`
 
 ## 当前主线
 
-1. 采集 dev.105 首次进入、快速重进和未稳定切页 Trace。
-2. 检查 `artifactReadMode`、`artifactMaterializeMicros`、memory hit/join、first chunk 和完整 stream。
-3. 确认 persistent cache hit 不再执行多余的 DownloadSession restore/prefix/index 状态链，也不回退原始 `content://`。
+1. 采集 dev.106 首次进入、快速重进和未稳定切页 Trace。
+2. 检查 whole-body delivery、lease-through-stream、foreground pressure hold 和释放时点。
+3. 比较 current 首帧、前 12 帧、background 开始时间以及 pressure 释放后的 7/3 推进。
 4. 继续验证 retained cursor、新 current 自动播放和 successor 预解码。
 5. 运行 Flutter analyzer/tests 与 Android debug/release。
 

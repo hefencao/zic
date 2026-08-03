@@ -10,17 +10,17 @@
 4. 优化必须有可比较的 Trace 或设备证据；不得缩小 7/3、2/1 或 lane 5/3/2 掩盖错误。
 5. 每轮默认只更新 Status、Handoff、CHANGELOG 和 audit；稳定合同未变化时不修改 Architecture/Spec。
 
-## P0：promoted artifact 读取设备闭环
+## P0：启动前景压力设备闭环
 
-- 在同一设备/fixture 采集 dev.105 首次进入、快速退出重进和未稳定时切页 Trace；
-- 验证 current/transition 出现 `artifactReadMode=read-all`，重进出现 `memory-hit`；
-- 比较 open、materialize、first chunk、完整 stream 和 source wait；
-- 确认 cache hit 不再执行多余的 DownloadSession restore/prefix/index 状态链，也没有回退原始 `content://`；
-- 观察 4 项/96 MiB cache 的淘汰是否符合当前/transition 工作集。
+- 采集 dev.106 首次进入、快速退出重进和未稳定切页 Trace；
+- 确认 current/transition 使用 `deliveryMode=whole-body`，foreground lease 覆盖 body consumption；
+- 检查 `readSchedulerPressureHolds` 在首帧与 successor 水位形成前保持，随后释放；
+- 比较 mount-to-first-frame、前 12 帧 end-to-end、source stream、output prepare 和 platform presentation；
+- 确认 pressure 释放后 background 7/3 继续推进，没有饥饿。
 
-退出条件：数秒级文件读取长尾显著下降，快速重进不重复读取同一 promoted artifact，且首帧不因整文件快速路径退化。
+退出条件：首帧和前几帧的秒级拥堵显著下降，未稳定切页不再继承启动队列长尾。
 
-## P0：前帧播放与切页连续性
+## P0：切页播放连续性
 
 - 继续复验 current/transition 50% 交接、retained cursor 和新页自动播放；
 - 关联 remaining current decode failure 的 source epoch、frame、worker 与 native 错误；
