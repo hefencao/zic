@@ -21,15 +21,16 @@ for marker in (
 if "skip: 'ZIC-QUARANTINE" in source_tests:
     raise SystemExit("FAIL: Flutter testWidgets cannot use a String skip reason")
 
-read_pool = read("packages/downloads/lib/src/promoted_artifact_read_pool.dart")
+manager = read("packages/downloads/lib/src/artifact_cache_manager.dart")
+byte_cache = read("packages/downloads/lib/src/promoted_artifact_byte_cache.dart")
 for token in (
-    "final completer = Completer<Uint8List?>()",
-    "completer.completeError(error, stackTrace)",
+    "readForegroundLookup(",
+    "readSessionArtifact(",
+    "final running = _inFlight[key]",
+    "Future<Uint8List>.sync(loader)",
 ):
-    if token not in read_pool:
-        raise SystemExit(f"FAIL: typed artifact read error bridge missing: {token}")
-if "cache.readArtifact(id).catchError" in read_pool:
-    raise SystemExit("FAIL: non-void artifact read must not use weak catchError")
+    if token not in manager + byte_cache:
+        raise SystemExit(f"FAIL: typed central artifact read bridge missing: {token}")
 
 host = read("packages/pipeline_runtime/lib/src/pipeline_reader_host.dart")
 if "unawaited(_disposeSession())" not in host or "await _session.dispose()" not in host:

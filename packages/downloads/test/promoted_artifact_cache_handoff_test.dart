@@ -26,7 +26,8 @@ void main() {
       sourceRevision: 'r1',
       canonicalUri: uri,
     );
-    final cache = _RecordingArtifactStore();
+    final backend = _RecordingArtifactStore();
+    final cache = ArtifactCacheManager(backend: backend);
     final handoff = PromotedArtifactCacheHandoff(cache: cache);
     final registry = DownloadRegistry(
       layout: CacheLayout(directory.path),
@@ -46,12 +47,56 @@ void main() {
       ),
     });
 
-    expect(cache.values, isEmpty);
+    expect(backend.values, isEmpty);
     await DownloadJob(transport: transport, session: session).run();
     await handoff.drain(registry.sessions);
 
     expect(session.state, DownloadState.promoted);
-    expect(cache.values[id], bytes);
+    expect(backend.values[id], bytes);
+  });
+
+  test('memory-only hit still writes through to the backend', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-promoted-cache-handoff-memory-only-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final uri = Uri.parse('memory://memory-only-promoted-page');
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'memory-only-page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: uri,
+    );
+    final backend = _RecordingArtifactStore();
+    final cache = ArtifactCacheManager(backend: backend);
+    final bytes = Uint8List.fromList(<int>[1, 6, 1, 8]);
+    cache.remember(id: id, bytes: bytes);
+    final handoff = PromotedArtifactCacheHandoff(cache: cache);
+    final registry = DownloadRegistry(
+      layout: CacheLayout(directory.path),
+      clock: SystemClock(),
+      onSessionCreated: handoff.observe,
+    );
+    addTearDown(() async {
+      handoff.detach();
+      await registry.dispose();
+    });
+    final session = registry.get(id);
+    final transport = LoaderTransport(<Uri, LoaderTransportSource>{
+      uri: LoaderTransportSource(
+        revision: 'fixture-r1',
+        loadBytes: () async => bytes,
+      ),
+    });
+
+    await DownloadJob(transport: transport, session: session).run();
+    await handoff.drain(registry.sessions);
+
+    expect(backend.values[id], bytes);
   });
 
   test('skips materializing a session artifact already present durably',
@@ -71,7 +116,8 @@ void main() {
       sourceRevision: 'r1',
       canonicalUri: uri,
     );
-    final cache = _ExistingArtifactStore();
+    final backend = _ExistingArtifactStore();
+    final cache = ArtifactCacheManager(backend: backend);
     final trace = MemoryTraceSink();
     final handoff = PromotedArtifactCacheHandoff(
       cache: cache,
@@ -97,10 +143,10 @@ void main() {
     });
 
     await DownloadJob(transport: transport, session: session).run();
-    cache.expectedLength = bytes.lengthInBytes;
+    backend.existing = Uint8List(bytes.lengthInBytes);
     await handoff.drain(<DownloadSession>[session]);
 
-    expect(cache.storeCalls, 0);
+    expect(backend.storeCalls, 0);
     final event = trace.events.singleWhere(
       (event) =>
           event.kind == TraceEventKind.artifactSource &&
@@ -110,8 +156,15 @@ void main() {
   });
 }
 
-final class _RecordingArtifactStore implements ArtifactCacheStore {
+final class _RecordingArtifactStore implements ArtifactCacheBackend {
   final Map<DownloadId, Uint8List> values = <DownloadId, Uint8List>{};
+
+  @override
+  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async {
+    final bytes = values[id];
+    if (bytes == null) return null;
+    return _entry(bytes);
+  }
 
   @override
   Future<Uint8List?> readArtifact(DownloadId id) async => values[id];
@@ -125,20 +178,18 @@ final class _RecordingArtifactStore implements ArtifactCacheStore {
   }
 }
 
-final class _ExistingArtifactStore
-    implements ArtifactCacheStore, ArtifactCachePresenceStore {
-  int expectedLength = 0;
+final class _ExistingArtifactStore implements ArtifactCacheBackend {
+  Uint8List? existing;
   int storeCalls = 0;
 
   @override
-  Future<bool> containsPromotedArtifact({
-    required DownloadId id,
-    required int expectedLength,
-  }) async =>
-      expectedLength == this.expectedLength;
+  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async {
+    final bytes = existing;
+    return bytes == null ? null : _entry(bytes);
+  }
 
   @override
-  Future<Uint8List?> readArtifact(DownloadId id) async => null;
+  Future<Uint8List?> readArtifact(DownloadId id) async => existing;
 
   @override
   Future<void> storePromotedArtifact({
@@ -146,5 +197,18 @@ final class _ExistingArtifactStore
     required Uint8List bytes,
   }) async {
     storeCalls++;
+    existing = Uint8List.fromList(bytes);
   }
 }
+
+ArtifactCacheStreamEntry _entry(Uint8List bytes) => ArtifactCacheStreamEntry(
+      length: bytes.lengthInBytes,
+      open: ({required int start, int? endExclusive}) async* {
+        yield Uint8List.sublistView(
+          bytes,
+          start,
+          endExclusive ?? bytes.lengthInBytes,
+        );
+      },
+      readAll: () async => bytes,
+    );

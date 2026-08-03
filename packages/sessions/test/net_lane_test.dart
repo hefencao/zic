@@ -113,4 +113,37 @@ void main() {
     expect(values, <String>['active', 'latest-follow']);
   });
 
+  test('cancelAll clears pending work and signals active tokens', () async {
+    final lane = NetLane(maxActive: 1);
+    final started = Completer<void>();
+    final activeCancelled = Completer<void>();
+    var queuedRan = false;
+
+    lane.submit(
+      key: 'active',
+      priority: 1,
+      task: (token) async {
+        started.complete();
+        await token.whenCancelled;
+        activeCancelled.complete();
+      },
+    );
+    lane.submit(
+      key: 'queued',
+      priority: 2,
+      task: (_) async {
+        queuedRan = true;
+      },
+    );
+    await started.future;
+
+    lane.cancelAll();
+    await activeCancelled.future;
+    await lane.idle();
+
+    expect(queuedRan, isFalse);
+    expect(lane.queued, 0);
+    expect(lane.active, 0);
+  });
+
 }

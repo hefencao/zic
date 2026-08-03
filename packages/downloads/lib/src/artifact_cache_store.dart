@@ -22,21 +22,6 @@ abstract interface class ArtifactCacheStore {
   });
 }
 
-/// Optional cheap presence probe used before copying a promoted session
-/// artifact back into the persistent cache.
-///
-/// Reader cache hits are copied into an ephemeral DownloadSession so decode
-/// and upload keep one authoritative lifecycle. That ephemeral promotion must
-/// not then be read back into Dart memory merely to overwrite the identical
-/// persistent artifact. Implementations should answer from durable metadata
-/// and the promoted file length without materializing the complete body.
-abstract interface class ArtifactCachePresenceStore {
-  Future<bool> containsPromotedArtifact({
-    required DownloadId id,
-    required int expectedLength,
-  });
-}
-
 /// Immutable promoted artifact entry that can be streamed without first
 /// materializing the complete encoded page in Dart memory.
 final class ArtifactCacheStreamEntry {
@@ -65,3 +50,12 @@ final class ArtifactCacheStreamEntry {
 abstract interface class ArtifactCacheStreamStore {
   Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id);
 }
+
+/// Storage backend used by the composition-owned [ArtifactCacheManager].
+///
+/// Memory and durable chapter services are alternative backends for different
+/// environments. They expose storage primitives only; cache-tier lookup,
+/// in-flight joining, hot-byte routing and presence decisions belong to the
+/// manager rather than being reimplemented by each backend.
+abstract interface class ArtifactCacheBackend
+    implements ArtifactCacheStore, ArtifactCacheStreamStore {}

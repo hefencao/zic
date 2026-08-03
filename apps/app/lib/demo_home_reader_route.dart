@@ -47,10 +47,9 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
       ),
       traceSink: widget.debugTrace,
       onDownloadRequested: () => _downloadChapter(current),
-      pipelineFactory: defaultLocalMediaPipelineFactory.withArtifactCache(
-        _chapterDownloads is ArtifactCacheStore
-            ? _chapterDownloads as ArtifactCacheStore
-            : null,
+      pipelineFactory:
+          defaultLocalMediaPipelineFactory.withArtifactCacheManager(
+        _readerArtifactCache,
       ),
       initialFavorite: preference.collected,
       onFavoriteChanged: (favorite) {

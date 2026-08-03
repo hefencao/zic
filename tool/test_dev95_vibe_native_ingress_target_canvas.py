@@ -59,14 +59,9 @@ require(
 )
 require(
     'packages/downloads/lib/src/artifact_cache_transport.dart',
-    '_cache is ArtifactCacheStreamStore',
-    'final streamingCache = _cache as ArtifactCacheStreamStore;',
+    '_cache.lookup(id)',
     '_streamedCachedResponse(',
-    "source: 'artifact-cache-stream'",
-)
-require(
-    'packages/downloads/lib/src/promoted_artifact_read_pool.dart',
-    'cache is ArtifactCacheStreamStore',
+    "'artifact-cache-stream'",
 )
 require(
     'native/media_core/src/webp.rs',

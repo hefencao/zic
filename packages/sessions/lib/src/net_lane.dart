@@ -56,6 +56,7 @@ abstract interface class TaskLane {
 
   bool cancelQueued(String key);
   bool cancel(String key);
+  void cancelAll();
   Future<void> idle();
 }
 
@@ -86,6 +87,8 @@ final class NetLane implements TaskLane {
   bool cancelQueued(String key) => _core.cancelQueued(key);
   @override
   bool cancel(String key) => _core.cancel(key);
+  @override
+  void cancelAll() => _core.cancelAll();
   @override
   Future<void> idle() => _core.idle();
 }
@@ -118,6 +121,8 @@ final class DecodeLane implements TaskLane {
   @override
   bool cancel(String key) => _core.cancel(key);
   @override
+  void cancelAll() => _core.cancelAll();
+  @override
   Future<void> idle() => _core.idle();
 }
 
@@ -149,6 +154,8 @@ final class UploadLane implements TaskLane {
   @override
   bool cancel(String key) => _core.cancel(key);
   @override
+  void cancelAll() => _core.cancelAll();
+  @override
   Future<void> idle() => _core.idle();
 }
 
@@ -179,6 +186,8 @@ final class MaintenanceLane implements TaskLane {
   bool cancelQueued(String key) => _core.cancelQueued(key);
   @override
   bool cancel(String key) => _core.cancel(key);
+  @override
+  void cancelAll() => _core.cancelAll();
   @override
   Future<void> idle() => _core.idle();
 }
@@ -254,6 +263,14 @@ final class _Lane {
     token?.cancel();
     _notifyIdle();
     return queued || token != null;
+  }
+
+  void cancelAll() {
+    _pending.clear();
+    for (final token in _active.values) {
+      token.cancel();
+    }
+    _notifyIdle();
   }
 
   Future<void> idle() {

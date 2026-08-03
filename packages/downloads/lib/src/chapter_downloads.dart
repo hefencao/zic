@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
@@ -129,9 +130,7 @@ abstract interface class ManagedChapterDownloadService
     implements
         ChapterDownloadService,
         ArtifactCacheMaintenance,
-        ArtifactCacheStore,
-        ArtifactCacheStreamStore,
-        ArtifactCachePresenceStore {}
+        ArtifactCacheBackend {}
 
 /// Resolves bytes owned by an active comic source. External plugin page URIs
 /// are intentionally opaque and must stay behind the source boundary instead
@@ -480,16 +479,6 @@ final class MemoryChapterDownloadService
       },
       readAll: () async => bytes,
     );
-  }
-
-  @override
-  Future<bool> containsPromotedArtifact({
-    required DownloadId id,
-    required int expectedLength,
-  }) async {
-    _requireOpen();
-    final bytes = _readerArtifacts[id];
-    return bytes != null && bytes.lengthInBytes == expectedLength;
   }
 
   @override
@@ -1081,38 +1070,59 @@ final class PersistentChapterDownloadService
   @override
   Future<Uint8List?> readArtifact(DownloadId id) async {
     _requireOpen();
-    final session = _registry.get(id);
-    final artifact = await _promotedArtifactForRead(session);
-    return artifact?.readBytes();
+    final entry = await _indexedPromotedArtifact(id);
+    if (entry == null) return null;
+    return entry.readAll!();
   }
 
   @override
   Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async {
     _requireOpen();
-    final session = _registry.get(id);
-    final artifact = await _promotedArtifactForRead(session);
-    if (artifact == null) return null;
-    final length = artifact.committedLength;
+    return _indexedPromotedArtifact(id);
+  }
+
+  /// Resolves a promoted Reader artifact directly from the durable index.
+  ///
+  /// Cache lookup must not materialize a persistent DownloadSession merely to
+  /// inspect immutable ready bytes. Active writers still win and make the
+  /// entry temporarily unavailable; writes and partial/resume remain owned by
+  /// the registry/session path.
+  Future<ArtifactCacheStreamEntry?> _indexedPromotedArtifact(
+    DownloadId id,
+  ) async {
+    if (_artifactWrites.containsKey(id)) return null;
+    final active = _registry.find(id);
+    if (active != null && (active.activeRun || active.hasWriter)) return null;
+
+    final record = await _index.get(id.key);
+    if (record == null ||
+        record.state != CacheState.ready ||
+        record.id != id ||
+        record.bytes < 0) {
+      return null;
+    }
+    final file = File(record.path);
+    if (!await file.exists()) return null;
+    final length = await file.length();
+    if (length != record.bytes) return null;
+
+    final touchedUs = DateTime.now().toUtc().microsecondsSinceEpoch;
+    unawaited(
+      _index.touch(id.key, touchedUs).then<void>(
+        (_) {},
+        onError: (Object _, StackTrace __) {},
+      ),
+    );
     return ArtifactCacheStreamEntry(
       length: length,
-      open: ({required int start, int? endExclusive}) => artifact.readChunks(
-        chunkSize: promotedArtifactReadChunkBytes,
+      open: ({required int start, int? endExclusive}) => _readIndexedChunks(
+        record.path,
+        length: length,
         start: start,
         endExclusive: endExclusive,
       ),
-      readAll: artifact.readBytes,
+      readAll: () => _readIndexedBytes(record.path, expectedLength: length),
     );
-  }
-
-  @override
-  Future<bool> containsPromotedArtifact({
-    required DownloadId id,
-    required int expectedLength,
-  }) async {
-    _requireOpen();
-    final session = _registry.get(id);
-    final artifact = await _promotedArtifactForRead(session);
-    return artifact != null && artifact.committedLength == expectedLength;
   }
 
   Future<Artifact?> _promotedArtifactForRead(DownloadSession session) async {
@@ -1274,6 +1284,54 @@ final class PersistentChapterDownloadService
     if (_closed) {
       throw StateError('chapter download service is closed');
     }
+  }
+}
+
+Future<Uint8List> _readIndexedBytes(
+  String path, {
+  required int expectedLength,
+}) async {
+  final bytes = expectedLength > 1024 * 1024
+      ? await Isolate.run(() => File(path).readAsBytesSync())
+      : await File(path).readAsBytes();
+  if (bytes.lengthInBytes != expectedLength) {
+    throw StateError(
+      'indexed artifact length changed while reading: '
+      '${bytes.lengthInBytes}/$expectedLength',
+    );
+  }
+  return bytes;
+}
+
+Stream<List<int>> _readIndexedChunks(
+  String path, {
+  required int length,
+  required int start,
+  int? endExclusive,
+}) async* {
+  if (start < 0 || (endExclusive != null && endExclusive < start)) {
+    throw RangeError('invalid indexed artifact range $start..$endExclusive');
+  }
+  if (start >= length) return;
+  final limit = (endExclusive ?? length).clamp(start, length).toInt();
+  final reader = await File(path).open();
+  try {
+    await reader.setPosition(start);
+    var offset = start;
+    while (offset < limit) {
+      final readSize = (limit - offset)
+          .clamp(1, promotedArtifactReadChunkBytes)
+          .toInt();
+      final chunk = await reader.read(readSize);
+      if (chunk.isEmpty) break;
+      offset += chunk.length;
+      yield chunk;
+    }
+    if (offset != limit) {
+      throw StateError('indexed artifact ended at $offset/$limit');
+    }
+  } finally {
+    await reader.close();
   }
 }
 

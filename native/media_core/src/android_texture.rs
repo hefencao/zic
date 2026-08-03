@@ -5,6 +5,7 @@ pub(crate) const BLIT_NULL: i32 = 1;
 pub(crate) const BLIT_INVALID_FRAME: i32 = 2;
 pub(crate) const BLIT_SURFACE_FAILED: i32 = 3;
 pub(crate) const BLIT_LOCK_FAILED: i32 = 4;
+pub(crate) const BLIT_CONFIG_FAILED: i32 = 5;
 
 pub(crate) fn copy_premultiplied_rgba(
     source: &[u8],
@@ -65,6 +66,12 @@ mod android {
     extern "C" {
         fn ANativeWindow_fromSurface(env: *mut c_void, surface: *mut c_void) -> *mut ANativeWindow;
         fn ANativeWindow_release(window: *mut ANativeWindow);
+        fn ANativeWindow_setBuffersGeometry(
+            window: *mut ANativeWindow,
+            width: i32,
+            height: i32,
+            format: i32,
+        ) -> i32;
         fn ANativeWindow_lock(
             window: *mut ANativeWindow,
             buffer: *mut ANativeWindowBuffer,
@@ -102,6 +109,36 @@ mod android {
     ) {
         if frame_address != 0 {
             crate::zic_frame_release(frame_address as usize as *mut FrameHandle);
+        }
+    }
+
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_dev_zic_texture_NativeBlitter_configure(
+        env: *mut c_void,
+        _class: *mut c_void,
+        surface: *mut c_void,
+        width: i32,
+        height: i32,
+    ) -> i32 {
+        const WINDOW_FORMAT_RGBA_8888: i32 = 1;
+        if env.is_null() || surface.is_null() || width <= 0 || height <= 0 {
+            return BLIT_NULL;
+        }
+        let window = ANativeWindow_fromSurface(env, surface);
+        if window.is_null() {
+            return BLIT_SURFACE_FAILED;
+        }
+        let window = WindowOwner(window);
+        if ANativeWindow_setBuffersGeometry(
+            window.0,
+            width,
+            height,
+            WINDOW_FORMAT_RGBA_8888,
+        ) == 0
+        {
+            BLIT_OK
+        } else {
+            BLIT_CONFIG_FAILED
         }
     }
 

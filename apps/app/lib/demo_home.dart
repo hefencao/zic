@@ -196,6 +196,7 @@ final class _DemoHomeState extends State<DemoHome> {
   final Stopwatch _traceClock = Stopwatch()..start();
   late final ImportedLibraryStore _library;
   late final ChapterDownloadService _chapterDownloads;
+  late final ArtifactCacheManager? _readerArtifactCache;
   late final ComicSourceResourceGateway _sourceResources;
   late final WholeComicDownloadQueue _wholeComicDownloads;
   late List<BrowsableComicSource> _sources;
@@ -258,6 +259,11 @@ final class _DemoHomeState extends State<DemoHome> {
     final ownsChapterDownloads = widget.chapterDownloads == null;
     _chapterDownloads = widget.chapterDownloads ??
         MemoryChapterDownloadService(pageLoader: _loadChapterPageBytes);
+    _readerArtifactCache = _chapterDownloads is ArtifactCacheBackend
+        ? ArtifactCacheManager(
+            backend: _chapterDownloads as ArtifactCacheBackend,
+          )
+        : null;
     final suppliedCache = widget.cacheCoordinator;
     _ownsCacheCoordinator = suppliedCache == null;
     _cacheCoordinator = suppliedCache ??

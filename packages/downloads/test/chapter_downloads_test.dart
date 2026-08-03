@@ -107,7 +107,13 @@ void main() {
     expect(reopened.materializedSessionCount, 0);
 
     expect(await reopened.readArtifact(id), <int>[2, 4, 6, 8]);
-    expect(reopened.materializedSessionCount, 1);
+    final stream = await reopened.openArtifactStream(id);
+    expect(stream, isNotNull);
+    expect(
+      await stream!.open(start: 1, endExclusive: 3).expand((chunk) => chunk).toList(),
+      <int>[4, 6],
+    );
+    expect(reopened.materializedSessionCount, 0);
   });
 
   test('persistent artifact store survives Reader service reopen', () async {

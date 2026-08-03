@@ -201,29 +201,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _sourceRevisions.clear();
     _sourceWakeLengths.clear();
     _decodeSourceRevisions.clear();
-    for (final session in registry.sessions) {
-      net.cancel(session.id.key);
-    }
-    final decodeRegistry = decodes;
-    if (decodeRegistry != null) {
-      for (final session in decodeRegistry.sessions) {
-        decode.cancel(session.id.key);
-      }
-    } else {
-      for (final id in _decodes.keys) {
-        decode.cancel(id.key);
-      }
-    }
-    final uploadRegistry = uploads;
-    if (uploadRegistry != null) {
-      for (final session in uploadRegistry.sessions) {
-        upload.cancel(session.id.key);
-      }
-    } else {
-      for (final id in _uploads.keys) {
-        upload.cancel(id.key);
-      }
-    }
+    // Cancel the lane-owned key sets directly. Registry enumeration can miss
+    // a follow-up task that was queued after a session changed identity.
+    net.cancelAll();
+    decode.cancelAll();
+    upload.cancelAll();
     _downloads.clear();
     _decodes.clear();
     _decodeDemandRevisions.clear();

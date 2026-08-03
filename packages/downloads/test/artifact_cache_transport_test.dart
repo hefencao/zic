@@ -18,7 +18,7 @@ void main() {
     final fallback = _RecordingTransport(Uint8List.fromList(<int>[9]));
     final trace = MemoryTraceSink();
     final transport = ArtifactCacheTransport(
-      cache: cache,
+      cache: ArtifactCacheManager(backend: cache),
       identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
       fallbackFor: (_) => fallback,
       clock: _Clock(),
@@ -38,14 +38,14 @@ void main() {
     );
     expect(source.identityHash, id.key);
     expect(source.revision, 7);
-    expect(source.payload['source'], 'artifact-cache');
+    expect(source.payload['source'], 'artifact-cache-stream');
     expect(source.payload['sourceClass'], 'persistent-artifact');
     expect(source.payload['bytes'], 4);
     final read = trace.events.singleWhere(
       (event) => event.kind == TraceEventKind.sourceRead,
     );
     expect(read.identityHash, id.key);
-    expect(read.payload['source'], 'artifact-cache');
+    expect(read.payload['source'], 'artifact-cache-stream');
     expect(read.payload['sourceClass'], 'persistent-artifact');
     expect(read.payload['bytes'], 4);
     expect(read.payload['chunks'], 1);
@@ -61,7 +61,7 @@ void main() {
     final bytes = Uint8List(defaultTransportChunkBytes * 2 + 32 * 1024);
     final cache = _MemoryArtifactStore(<DownloadId, Uint8List>{id: bytes});
     final transport = ArtifactCacheTransport(
-      cache: cache,
+      cache: ArtifactCacheManager(backend: cache),
       identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
       fallbackFor: (_) => _RecordingTransport(Uint8List(0)),
     );
@@ -91,7 +91,7 @@ void main() {
     final fallback = _RecordingTransport(Uint8List(0));
     final trace = MemoryTraceSink();
     final transport = ArtifactCacheTransport(
-      cache: cache,
+      cache: ArtifactCacheManager(backend: cache),
       identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
       fallbackFor: (_) => fallback,
       clock: _Clock(),
@@ -123,7 +123,7 @@ void main() {
     );
     final trace = MemoryTraceSink();
     final transport = ArtifactCacheTransport(
-      cache: cache,
+      cache: ArtifactCacheManager(backend: cache),
       identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
       fallbackFor: (_) => _RecordingTransport(Uint8List(0)),
       readScheduler: ArtifactCacheReadScheduler(maxActive: 3),
@@ -153,7 +153,7 @@ void main() {
     );
     final trace = MemoryTraceSink();
     final transport = ArtifactCacheTransport(
-      cache: cache,
+      cache: ArtifactCacheManager(backend: cache),
       identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
       fallbackFor: (_) => _RecordingTransport(Uint8List(0)),
       readScheduler: ArtifactCacheReadScheduler(maxActive: 3),
@@ -183,7 +183,7 @@ void main() {
     final trace = MemoryTraceSink();
     var priority = 400;
     final transport = ArtifactCacheTransport(
-      cache: cache,
+      cache: ArtifactCacheManager(backend: cache),
       identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
       fallbackFor: (_) => _RecordingTransport(Uint8List(0)),
       readScheduler: ArtifactCacheReadScheduler(maxActive: 3),
@@ -221,10 +221,9 @@ void main() {
     final byteCache = PromotedArtifactByteCache();
     final trace = MemoryTraceSink();
     final transport = ArtifactCacheTransport(
-      cache: cache,
+      cache: ArtifactCacheManager(backend: cache, memory: byteCache),
       identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
       fallbackFor: (_) => _RecordingTransport(Uint8List(0)),
-      byteCache: byteCache,
       readScheduler: ArtifactCacheReadScheduler(maxActive: 3),
       demandPriority: (_) => 1000,
       clock: _Clock(),
@@ -241,7 +240,7 @@ void main() {
     expect(first, <int>[promotedArtifactReadChunkBytes, 17]);
     expect(second, first);
     expect(cache.readAllCalls, 1);
-    expect(cache.streamOpens, 2);
+    expect(cache.streamOpens, 1);
     expect(byteCache.entryCount, 1);
     final sources = trace.events
         .where((event) => event.kind == TraceEventKind.artifactSource)
@@ -271,10 +270,12 @@ void main() {
     final cache = _StreamingArtifactStore(id, bytes, exposeReadAll: true);
     final scheduler = ArtifactCacheReadScheduler(maxActive: 2);
     final transport = ArtifactCacheTransport(
-      cache: cache,
+      cache: ArtifactCacheManager(
+        backend: cache,
+        memory: PromotedArtifactByteCache(),
+      ),
       identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
       fallbackFor: (_) => _RecordingTransport(Uint8List(0)),
-      byteCache: PromotedArtifactByteCache(),
       readScheduler: scheduler,
       demandPriority: (_) => 1000,
     );
@@ -306,10 +307,12 @@ void main() {
     final fallback = _RecordingTransport(Uint8List.fromList(<int>[9]));
     final trace = MemoryTraceSink();
     final transport = ArtifactCacheTransport(
-      cache: cache,
+      cache: ArtifactCacheManager(
+        backend: cache,
+        memory: PromotedArtifactByteCache(),
+      ),
       identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
       fallbackFor: (_) => fallback,
-      byteCache: PromotedArtifactByteCache(),
       readScheduler: ArtifactCacheReadScheduler(),
       demandPriority: (_) => 1000,
       clock: _Clock(),
@@ -326,25 +329,6 @@ void main() {
     expect(failure.payload['fallback'], 'artifact-cache-stream');
   });
 
-  test('rejects a read pool backed by another cache', () {
-    final uri = Uri.parse('https://example.invalid/pool-mismatch.bin');
-    final id = _downloadId(uri, 'page-pool-mismatch');
-    final cache = _MemoryArtifactStore(<DownloadId, Uint8List>{});
-    final other = _MemoryArtifactStore(<DownloadId, Uint8List>{});
-    final pool = PromotedArtifactReadPool(cache: other);
-    addTearDown(pool.close);
-
-    expect(
-      () => ArtifactCacheTransport(
-        cache: cache,
-        readPool: pool,
-        identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
-        fallbackFor: (_) => _RecordingTransport(Uint8List(0)),
-      ),
-      throwsArgumentError,
-    );
-  });
-
   test('serves resumable ranges only for matching cache validators',
       () async {
     final uri = Uri.parse('https://example.invalid/range.bin');
@@ -354,7 +338,7 @@ void main() {
     });
     final fallback = _RecordingTransport(Uint8List.fromList(<int>[9]));
     final transport = ArtifactCacheTransport(
-      cache: cache,
+      cache: ArtifactCacheManager(backend: cache),
       identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
       fallbackFor: (_) => fallback,
     );
@@ -382,7 +366,7 @@ void main() {
     final fallback = _RecordingTransport(Uint8List.fromList(<int>[8, 9]));
     final trace = MemoryTraceSink();
     final transport = ArtifactCacheTransport(
-      cache: cache,
+      cache: ArtifactCacheManager(backend: cache),
       identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
       fallbackFor: (_) => fallback,
       clock: _Clock(),
@@ -419,7 +403,7 @@ void main() {
     final fallback = _RecordingTransport(Uint8List.fromList(<int>[7, 8]));
     final trace = MemoryTraceSink();
     final transport = ArtifactCacheTransport(
-      cache: cache,
+      cache: ArtifactCacheManager(backend: cache),
       identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
       fallbackFor: (_) => fallback,
       clock: _Clock(),
@@ -451,7 +435,7 @@ void main() {
     });
     final fallback = _RecordingTransport(Uint8List.fromList(<int>[7]));
     final transport = ArtifactCacheTransport(
-      cache: cache,
+      cache: ArtifactCacheManager(backend: cache),
       identities: <MapEntry<Uri, DownloadId>>[
         MapEntry(uri, first),
         MapEntry(uri, second),
@@ -493,17 +477,32 @@ final class _Clock implements MonoClock {
   int nowMicros() => _value++;
 }
 
-final class _MemoryArtifactStore implements ArtifactCacheStore {
+final class _MemoryArtifactStore implements ArtifactCacheBackend {
   _MemoryArtifactStore(this.values);
 
   final Map<DownloadId, Uint8List> values;
   int reads = 0;
 
   @override
-  Future<Uint8List?> readArtifact(DownloadId id) async {
+  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async {
     reads++;
-    return values[id];
+    final bytes = values[id];
+    if (bytes == null) return null;
+    return ArtifactCacheStreamEntry(
+      length: bytes.lengthInBytes,
+      open: ({required int start, int? endExclusive}) async* {
+        yield Uint8List.sublistView(
+          bytes,
+          start,
+          endExclusive ?? bytes.lengthInBytes,
+        );
+      },
+      readAll: () async => bytes,
+    );
   }
+
+  @override
+  Future<Uint8List?> readArtifact(DownloadId id) async => values[id];
 
   @override
   Future<void> storePromotedArtifact({
@@ -514,8 +513,7 @@ final class _MemoryArtifactStore implements ArtifactCacheStore {
   }
 }
 
-final class _StreamingArtifactStore
-    implements ArtifactCacheStore, ArtifactCacheStreamStore {
+final class _StreamingArtifactStore implements ArtifactCacheBackend {
   _StreamingArtifactStore(
     this.id,
     this.bytes, {
@@ -570,7 +568,12 @@ final class _StreamingArtifactStore
   }) async {}
 }
 
-final class _ThrowingArtifactStore implements ArtifactCacheStore {
+final class _ThrowingArtifactStore implements ArtifactCacheBackend {
+  @override
+  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async {
+    throw StateError('corrupt promoted artifact');
+  }
+
   @override
   Future<Uint8List?> readArtifact(DownloadId id) async {
     throw StateError('corrupt promoted artifact');

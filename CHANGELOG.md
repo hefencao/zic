@@ -1,3 +1,12 @@
+## 0.31.0-dev.108：统一 Reader artifact cache 与 Android texture geometry
+
+- 新增 composition `ArtifactCacheManager`，统一 Reader page artifact 的 memory→backend lookup、读取可见性/backend 持久存在性、精确长度、并发读取合并、LRU与写穿。
+- Memory/Persistent chapter service 改为可替换 `ArtifactCacheBackend`，删除各 backend presence capability、独立 read pool 及 transport/handoff 的重复分派；persistent cache read 直接按 durable index/path 打开，不再 materialize DownloadSession。
+- transport、handoff、presentation bytes loader 和快速重进共享同一个 manager；普通 response cache 保持独立。
+- Reader dispose 改用 lane-level `cancelAll()` 清除 active/pending task，避免 registry snapshot 遗漏 queued key。
+- Android native texture 在首次、resize、Surface 重建或一次 lock failure 后配置 `ANativeWindow` geometry；lock status 4 只重试一次，禁止每帧配置。
+- Trace 增加 configure/retry 与 blit-lock/fallback 汇总；新增 ADR 0092、dev.108 audit、owner tests 和 ownership gate；README/Architecture/Spec 未修改。
+
 ## 0.31.0-dev.107：Reader 重进清理与 progressive artifact handoff
 
 - persistent cache handoff 在读取临时 promoted artifact 前按 identity 与长度探测持久副本；命中时跳过重复 materialize/store。

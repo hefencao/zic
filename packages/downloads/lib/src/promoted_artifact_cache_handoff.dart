@@ -5,7 +5,7 @@ import 'package:domain/domain.dart';
 import 'package:sessions/sessions.dart';
 import 'package:telemetry/telemetry.dart';
 
-import 'artifact_cache_store.dart';
+import 'artifact_cache_manager.dart';
 
 typedef ArtifactCacheHandoffError = void Function(
   Object error,
@@ -26,7 +26,7 @@ final class PromotedArtifactCacheHandoff {
     this.sessionId = 'artifact-cache-handoff',
   });
 
-  final ArtifactCacheStore cache;
+  final ArtifactCacheManager cache;
   final ArtifactCacheHandoffError? onError;
   final MonoClock? clock;
   final TraceSink traceSink;
@@ -102,14 +102,10 @@ final class PromotedArtifactCacheHandoff {
     }
     final startedAtMicros = clock?.nowMicros();
     final expectedLength = session.artifact.committedLength;
-    final presence = cache is ArtifactCachePresenceStore
-        ? cache as ArtifactCachePresenceStore
-        : null;
-    if (presence != null &&
-        await presence.containsPromotedArtifact(
-          id: session.id,
-          expectedLength: expectedLength,
-        )) {
+    if (await cache.containsBackend(
+      id: session.id,
+      expectedLength: expectedLength,
+    )) {
       _recordCommit(
         session,
         action: 'skip-existing',

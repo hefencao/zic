@@ -47,7 +47,7 @@ require(
 )
 require(
     'packages/downloads/lib/src/artifact_cache_transport.dart',
-    'final streamingCache = _cache as ArtifactCacheStreamStore;',
+    'final lookup = await _cache.lookup(id);',
 )
 require(
     'packages/media/lib/src/ingress.dart',

@@ -1,4 +1,7 @@
+import 'dart:typed_data';
+
 import 'package:domain/domain.dart';
+import 'package:downloads/downloads.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:media/media.dart';
@@ -6,29 +9,31 @@ import 'package:pipeline_runtime/pipeline_runtime.dart';
 import 'package:telemetry/telemetry.dart';
 
 void main() {
-  test('factory clones retain the composition-owned artifact byte cache', () {
+  test('factory clones retain the composition-owned artifact cache manager', () {
+    final manager = ArtifactCacheManager(backend: _Backend());
     final factory = PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(_Runtime()),
+      artifactCacheManager: manager,
     );
 
     expect(
       identical(
-        factory.artifactByteCache,
-        factory.withLoaderSources(factory.loaderSources).artifactByteCache,
+        factory.artifactCacheManager,
+        factory.withLoaderSources(factory.loaderSources).artifactCacheManager,
       ),
       isTrue,
     );
     expect(
       identical(
-        factory.artifactByteCache,
-        factory.withArtifactCache(null).artifactByteCache,
+        factory.artifactCacheManager,
+        factory.withArtifactCacheManager(manager).artifactCacheManager,
       ),
       isTrue,
     );
     expect(
       identical(
-        factory.artifactByteCache,
-        factory.withBytesLoader(null).artifactByteCache,
+        factory.artifactCacheManager,
+        factory.withBytesLoader(null).artifactCacheManager,
       ),
       isTrue,
     );
@@ -212,4 +217,19 @@ final class _Surface implements PipelinePageSurface {
     FilterQuality filterQuality = FilterQuality.low,
   }) =>
       SizedBox(key: key, width: 1, height: 1);
+}
+
+final class _Backend implements ArtifactCacheBackend {
+  @override
+  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async =>
+      null;
+
+  @override
+  Future<Uint8List?> readArtifact(DownloadId id) async => null;
+
+  @override
+  Future<void> storePromotedArtifact({
+    required DownloadId id,
+    required Uint8List bytes,
+  }) async {}
 }

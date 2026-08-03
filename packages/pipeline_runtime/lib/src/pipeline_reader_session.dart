@@ -30,36 +30,28 @@ typedef PipelineArtifactBytesLoader = Future<Uint8List> Function(
 final class PipelineReaderSessionFactory {
   PipelineReaderSessionFactory({
     required this.mediaRuntimeFactory,
-    this.artifactCache,
+    this.artifactCacheManager,
     ArtifactCacheReadScheduler? artifactReadScheduler,
-    PromotedArtifactByteCache? artifactByteCache,
     this.loaderSources = const <Uri, LoaderTransportSource>{},
     this.bytesLoader,
-  })  : artifactReadScheduler =
-            artifactReadScheduler ?? ArtifactCacheReadScheduler(),
-        artifactByteCache =
-            artifactByteCache ?? PromotedArtifactByteCache();
+  }) : artifactReadScheduler =
+            artifactReadScheduler ?? ArtifactCacheReadScheduler();
 
   final PipelineMediaRuntimeFactory mediaRuntimeFactory;
-  final ArtifactCacheStore? artifactCache;
+  final ArtifactCacheManager? artifactCacheManager;
   final ArtifactCacheReadScheduler artifactReadScheduler;
-  final PromotedArtifactByteCache artifactByteCache;
   final Map<Uri, LoaderTransportSource> loaderSources;
   final PipelineArtifactBytesLoader? bytesLoader;
 
   /// Returns a factory that keeps composition-owned cache/byte loaders while
   /// adding page-local transport sources.
-  ///
-  /// Presentation packages can contribute local source handles without
-  /// importing download/cache implementation types.
   PipelineReaderSessionFactory withLoaderSources(
     Map<Uri, LoaderTransportSource> sources,
   ) =>
       PipelineReaderSessionFactory(
         mediaRuntimeFactory: mediaRuntimeFactory,
-        artifactCache: artifactCache,
+        artifactCacheManager: artifactCacheManager,
         artifactReadScheduler: artifactReadScheduler,
-        artifactByteCache: artifactByteCache,
         loaderSources: <Uri, LoaderTransportSource>{
           ...loaderSources,
           ...sources,
@@ -67,14 +59,13 @@ final class PipelineReaderSessionFactory {
         bytesLoader: bytesLoader,
       );
 
-  PipelineReaderSessionFactory withArtifactCache(
-    ArtifactCacheStore? cache,
+  PipelineReaderSessionFactory withArtifactCacheManager(
+    ArtifactCacheManager? manager,
   ) =>
       PipelineReaderSessionFactory(
         mediaRuntimeFactory: mediaRuntimeFactory,
-        artifactCache: cache,
+        artifactCacheManager: manager,
         artifactReadScheduler: artifactReadScheduler,
-        artifactByteCache: artifactByteCache,
         loaderSources: loaderSources,
         bytesLoader: bytesLoader,
       );
@@ -84,9 +75,8 @@ final class PipelineReaderSessionFactory {
   ) =>
       PipelineReaderSessionFactory(
         mediaRuntimeFactory: mediaRuntimeFactory,
-        artifactCache: artifactCache,
+        artifactCacheManager: artifactCacheManager,
         artifactReadScheduler: artifactReadScheduler,
-        artifactByteCache: artifactByteCache,
         loaderSources: loaderSources,
         bytesLoader: loader,
       );
@@ -100,9 +90,8 @@ final class PipelineReaderSessionFactory {
         chapter: chapter,
         mediaRuntimeFactory: mediaRuntimeFactory,
         sessionId: sessionId,
-        artifactCache: artifactCache,
+        artifactCacheManager: artifactCacheManager,
         artifactReadScheduler: artifactReadScheduler,
-        artifactByteCache: artifactByteCache,
         loaderSources: loaderSources,
         bytesLoader: bytesLoader,
         traceSink: traceSink,
@@ -120,15 +109,14 @@ final class PipelineReaderSession {
     required this.chapter,
     required PipelineMediaRuntimeFactory mediaRuntimeFactory,
     required this.sessionId,
-    ArtifactCacheStore? artifactCache,
+    ArtifactCacheManager? artifactCacheManager,
     required ArtifactCacheReadScheduler artifactReadScheduler,
-    required PromotedArtifactByteCache artifactByteCache,
     Map<Uri, LoaderTransportSource> loaderSources =
         const <Uri, LoaderTransportSource>{},
     PipelineArtifactBytesLoader? bytesLoader,
     TraceSink? traceSink,
   })  : artifactReadScheduler = artifactReadScheduler,
-        artifactByteCache = artifactByteCache,
+        _artifactCacheManager = artifactCacheManager,
         _bytesLoader = bytesLoader,
         clock = SystemClock(),
         _memoryTrace = MemoryTraceSink(),
@@ -166,15 +154,11 @@ final class PipelineReaderSession {
       factory: _media.sources,
       budgetFor: (id) => sourceBudgets[id] ?? 256 * 1024 * 1024,
     );
-    if (artifactCache != null) {
-      final reads = PromotedArtifactReadPool(cache: artifactCache);
-      _artifactReads = reads;
+    if (artifactCacheManager != null) {
       _artifactCacheTransport = ArtifactCacheTransport(
-        cache: artifactCache,
+        cache: artifactCacheManager,
         identities: identities,
         fallbackFor: _baseTransportFor,
-        readPool: reads,
-        byteCache: artifactByteCache,
         readScheduler: artifactReadScheduler,
         demandPriority: _artifactReadPriority,
         clock: clock,
@@ -183,7 +167,7 @@ final class PipelineReaderSession {
         demandRevision: () => revision,
       );
       _artifactCacheHandoff = PromotedArtifactCacheHandoff(
-        cache: artifactCache,
+        cache: artifactCacheManager,
         onError: (error, stackTrace) {},
         clock: clock,
         traceSink: trace,
@@ -257,8 +241,8 @@ final class PipelineReaderSession {
   final AssetBundleTransport _assetTransport;
   final IoTransport _ioTransport;
   final LoaderTransport _loaderTransport;
+  final ArtifactCacheManager? _artifactCacheManager;
   ArtifactCacheTransport? _artifactCacheTransport;
-  PromotedArtifactReadPool? _artifactReads;
   late final SourcePool _streamingSources;
   late final DownloadRegistry _downloads;
   late final DecodeRegistry _decodes;
@@ -275,7 +259,6 @@ final class PipelineReaderSession {
   bool _playbackPaused = false;
   final PipelineTransferProgressPublisher transferProgress;
   final ArtifactCacheReadScheduler artifactReadScheduler;
-  final PromotedArtifactByteCache artifactByteCache;
   ArtifactCachePressureLease? _startupArtifactPressure;
   DownloadId? _startupArtifactPressureDownload;
   bool _disposed = false;
@@ -381,125 +364,121 @@ final class PipelineReaderSession {
     if (override != null) return override(asset, token);
     token.throwIfCancelled();
     final id = readerPageDownloadId(chapter, asset);
-    final hotBytes = artifactByteCache.lookup(id);
+    final cache = _artifactCacheManager;
+    final hotBytes = cache?.lookupMemory(id);
     if (hotBytes != null) {
-      trace.record(
-        traceEvent(
-          clock: clock,
-          sessionId: sessionId,
-          kind: TraceEventKind.sourceRead,
-          identityHash: id.key,
-          revision: revision,
-          payload: <String, Object?>{
-            'source': 'artifact-byte-cache',
-            'sourceClass': 'persistent-artifact',
-            'uriScheme': asset.uri.scheme.isEmpty
-                ? 'file'
-                : asset.uri.scheme,
-            'bytes': hotBytes.lengthInBytes,
-            'chunks': 1,
-            'minChunkBytes': hotBytes.lengthInBytes,
-            'maxChunkBytes': hotBytes.lengthInBytes,
-            'firstChunkMicros': 0,
-            'streamMicros': 0,
-            'readMicros': 0,
-            'artifactReadMode': 'memory-hit',
-            'memoryCacheHit': true,
-            'hotCacheEntries': artifactByteCache.entryCount,
-            'hotCacheBytes': artifactByteCache.retainedBytes,
-            'completed': true,
-            'consumer': 'pipeline-presentation',
-          },
-        ),
+      _recordPresentationCacheRead(
+        asset: asset,
+        id: id,
+        bytes: hotBytes,
+        source: 'artifact-byte-cache',
+        readMode: 'memory-hit',
+        readMicros: 0,
+        memoryHit: true,
+        joined: false,
       );
       return hotBytes;
     }
+
     final session = _downloads.get(id);
-    if (session.state != DownloadState.promoted) {
-      final reads = _artifactReads;
-      if (reads != null) {
-        final readStarted = clock.nowMicros();
-        try {
-          final cached = await reads.join(id);
-          token.throwIfCancelled();
-          if (cached != null) {
-            final joinMicros = clock.nowMicros() - readStarted;
-            trace.record(
-              traceEvent(
-                clock: clock,
-                sessionId: sessionId,
-                kind: TraceEventKind.artifactSource,
-                identityHash: id.key,
-                revision: revision,
-                payload: <String, Object?>{
-                  'source': 'artifact-cache',
-                  'sourceClass': 'persistent-artifact',
-                  'consumer': 'pipeline-presentation',
-                  'bytes': cached.lengthInBytes,
-                  'joinMicros': joinMicros,
-                  'sessionState': session.state.name,
-                },
-              ),
-            );
-            trace.record(
-              traceEvent(
-                clock: clock,
-                sessionId: sessionId,
-                kind: TraceEventKind.sourceRead,
-                identityHash: id.key,
-                revision: revision,
-                payload: <String, Object?>{
-                  'source': 'artifact-cache',
-                  'sourceClass': 'persistent-artifact',
-                  'uriScheme': asset.uri.scheme.isEmpty
-                      ? 'file'
-                      : asset.uri.scheme,
-                  'bytes': cached.lengthInBytes,
-                  'chunks': 1,
-                  'minChunkBytes': cached.lengthInBytes,
-                  'maxChunkBytes': cached.lengthInBytes,
-                  'firstChunkMicros': joinMicros < 0 ? 0 : joinMicros,
-                  'streamMicros': joinMicros < 0 ? 0 : joinMicros,
-                  'readMicros': joinMicros < 0 ? 0 : joinMicros,
-                  'completed': true,
-                  'consumer': 'pipeline-presentation',
-                },
-              ),
-            );
-            return cached;
-          }
-        } on Object catch (error) {
-          token.throwIfCancelled();
-          trace.record(
-            traceEvent(
-              clock: clock,
-              sessionId: sessionId,
-              kind: TraceEventKind.taskFailed,
-              identityHash: id.key,
-              revision: revision,
-              payload: <String, Object?>{
-                'lane': 'artifact-cache-read',
-                'consumer': 'pipeline-presentation',
-                'reason': error.toString(),
-                'joinMicros': clock.nowMicros() - readStarted,
-                'fallback': 'session',
-              },
-            ),
+    if (session.state != DownloadState.promoted && cache != null) {
+      final readStarted = clock.nowMicros();
+      try {
+        final cached = await cache.readForeground(id);
+        token.throwIfCancelled();
+        if (cached != null) {
+          final readMicros = clock.nowMicros() - readStarted;
+          _recordPresentationCacheRead(
+            asset: asset,
+            id: id,
+            bytes: cached.bytes,
+            source: cached.memoryHit
+                ? 'artifact-byte-cache'
+                : 'artifact-cache',
+            readMode: cached.memoryHit
+                ? 'memory-hit'
+                : cached.joined
+                    ? 'joined-read-all'
+                    : 'read-all',
+            readMicros: readMicros,
+            memoryHit: cached.memoryHit,
+            joined: cached.joined,
+            sessionState: session.state.name,
           );
+          return cached.bytes;
         }
+      } on Object catch (error) {
+        token.throwIfCancelled();
+        trace.record(
+          traceEvent(
+            clock: clock,
+            sessionId: sessionId,
+            kind: TraceEventKind.taskFailed,
+            identityHash: id.key,
+            revision: revision,
+            payload: <String, Object?>{
+              'lane': 'artifact-cache-manager-read',
+              'consumer': 'pipeline-presentation',
+              'reason': error.toString(),
+              'readMicros': clock.nowMicros() - readStarted,
+              'fallback': 'session',
+            },
+          ),
+        );
       }
+    }
+
+    if (session.state != DownloadState.promoted) {
       await _waitForPromotion(session, token);
     }
     token.throwIfCancelled();
     final artifactReadStarted = clock.nowMicros();
-    final cacheRead = await artifactByteCache.read(
-      id: id,
-      length: session.artifact.committedLength,
-      loader: () => _workspace.readArtifact(session.artifact),
-    );
-    final bytes = cacheRead.bytes;
+    final cacheRead = cache == null
+        ? null
+        : await cache.readSessionArtifact(
+            id: id,
+            length: session.artifact.committedLength,
+            loader: () => _workspace.readArtifact(session.artifact),
+          );
+    final Uint8List bytes;
+    if (cacheRead != null) {
+      bytes = cacheRead.bytes;
+    } else {
+      bytes = await _workspace.readArtifact(session.artifact);
+    }
     token.throwIfCancelled();
     final artifactReadMicros = clock.nowMicros() - artifactReadStarted;
+    _recordPresentationCacheRead(
+      asset: asset,
+      id: id,
+      bytes: bytes,
+      source: 'session-artifact',
+      readMode: cacheRead == null
+          ? 'session-read-all'
+          : cacheRead.memoryHit
+              ? 'memory-hit'
+              : cacheRead.joined
+                  ? 'joined-session-read-all'
+                  : 'session-read-all',
+      readMicros: artifactReadMicros,
+      memoryHit: cacheRead?.memoryHit ?? false,
+      joined: cacheRead?.joined ?? false,
+    );
+    return bytes;
+  }
+
+  void _recordPresentationCacheRead({
+    required PageAsset asset,
+    required DownloadId id,
+    required Uint8List bytes,
+    required String source,
+    required String readMode,
+    required int readMicros,
+    required bool memoryHit,
+    required bool joined,
+    String? sessionState,
+  }) {
+    final safeMicros = readMicros < 0 ? 0 : readMicros;
     trace.record(
       traceEvent(
         clock: clock,
@@ -508,33 +487,30 @@ final class PipelineReaderSession {
         identityHash: id.key,
         revision: revision,
         payload: <String, Object?>{
-          'source': 'session-artifact',
-          'sourceClass': _readerSourceClass(asset.uri),
+          'source': source,
+          'sourceClass': source == 'session-artifact'
+              ? _readerSourceClass(asset.uri)
+              : 'persistent-artifact',
           'uriScheme': asset.uri.scheme.isEmpty ? 'file' : asset.uri.scheme,
           'bytes': bytes.lengthInBytes,
           'chunks': 1,
           'minChunkBytes': bytes.lengthInBytes,
           'maxChunkBytes': bytes.lengthInBytes,
-          'firstChunkMicros': artifactReadMicros < 0 ? 0 : artifactReadMicros,
-          'streamMicros': artifactReadMicros < 0 ? 0 : artifactReadMicros,
-          'readMicros': artifactReadMicros < 0 ? 0 : artifactReadMicros,
-          'artifactReadMode': cacheRead.memoryHit
-              ? 'memory-hit'
-              : cacheRead.joined
-                  ? 'joined-session-read-all'
-                  : 'session-read-all',
-          'memoryCacheHit': cacheRead.memoryHit,
-          'memoryCacheJoined': cacheRead.joined,
-          'artifactMaterializeMicros':
-              artifactReadMicros < 0 ? 0 : artifactReadMicros,
-          'hotCacheEntries': artifactByteCache.entryCount,
-          'hotCacheBytes': artifactByteCache.retainedBytes,
+          'firstChunkMicros': safeMicros,
+          'streamMicros': safeMicros,
+          'readMicros': safeMicros,
+          'artifactReadMode': readMode,
+          'memoryCacheHit': memoryHit,
+          'memoryCacheJoined': joined,
+          'artifactMaterializeMicros': safeMicros,
+          'hotCacheEntries': _artifactCacheManager?.memoryEntryCount ?? 0,
+          'hotCacheBytes': _artifactCacheManager?.memoryBytes ?? 0,
+          if (sessionState != null) 'sessionState': sessionState,
           'completed': true,
           'consumer': 'pipeline-presentation',
         },
       ),
     );
-    return bytes;
   }
 
   Future<void> _waitForPromotion(
@@ -594,7 +570,6 @@ final class PipelineReaderSession {
       _artifactCacheTransport ?? _baseTransportFor(uri);
 
   void _observeDownloadSession(DownloadSession session) {
-    _artifactReads?.observe(session);
     _artifactCacheHandoff?.observe(session);
     transferProgress.observe(session);
   }
@@ -798,7 +773,6 @@ final class PipelineReaderSession {
     final handoffDrainStartedAtMicros = clock.nowMicros();
     await _artifactCacheHandoff?.drain(_downloads.sessions);
     final handoffDrainMicros = clock.nowMicros() - handoffDrainStartedAtMicros;
-    _artifactReads?.close();
     _uploads.dispose();
     _decodes.dispose();
     final mediaCloseStartedAtMicros = clock.nowMicros();

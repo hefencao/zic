@@ -13,7 +13,7 @@ use std::slice;
 use std::sync::{Arc, RwLock};
 
 pub const ABI_VERSION: u32 = 6;
-pub const LIB_VERSION: u32 = 0x0012_0700;
+pub const LIB_VERSION: u32 = 0x0012_0800;
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -652,7 +652,7 @@ mod tests {
     #[test]
     fn exported_versions_are_stable() {
         assert_eq!(zic_abi_version(), 6);
-        assert_eq!(zic_version(), 0x0012_0700);
+        assert_eq!(zic_version(), 0x0012_0800);
         // These values are provided by the linked system libwebp, so their
         // exact version is platform-dependent while the exported ABI remains
         // stable.

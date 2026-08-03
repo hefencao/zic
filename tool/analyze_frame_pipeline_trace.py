@@ -29,6 +29,7 @@ STAGE_FIELDS = (
     "platformUploadMicros",
     "platformOtherMicros",
     "platformRetainMicros",
+    "platformConfigureMicros",
     "platformBlitMicros",
     "platformScheduleMicros",
     "platformScheduleQueueMicros",
@@ -60,6 +61,7 @@ DOMINANT_STAGE_FIELDS = {
     "platformQueue": "platformQueueMicros",
     "platformOther": "platformOtherMicros",
     "platformRetain": "platformRetainMicros",
+    "platformConfigure": "platformConfigureMicros",
     "platformBlit": "platformBlitMicros",
     "platformScheduleQueue": "platformScheduleQueueMicros",
     "platformScheduleCall": "platformScheduleCallMicros",
@@ -214,6 +216,7 @@ def summarize(path: Path) -> dict[str, Any]:
                     0,
                     platform_upload
                     - _number(payload.get("platformRetainMicros"))
+                    - _number(payload.get("platformConfigureMicros"))
                     - _number(payload.get("platformBlitMicros"))
                     - _number(payload.get("platformScheduleMicros"))
                     - _number(payload.get("platformReplaceMicros")),
@@ -254,6 +257,10 @@ def summarize(path: Path) -> dict[str, Any]:
                     "presentMicros": _number(payload.get("presentMicros")),
                     "deadlineMissMicros": _number(payload.get("deadlineMissMicros")),
                     "presentationPath": payload.get("presentationPath"),
+                    "platformConfigureMicros": _number(
+                        payload.get("platformConfigureMicros")
+                    ),
+                    "blitRetryCount": _number(payload.get("blitRetryCount")),
                 }
             )
             presented_at = _number(payload.get("presentedAtMicros"))
@@ -270,7 +277,13 @@ def summarize(path: Path) -> dict[str, Any]:
                     "identityHash": event.get("identityHash"),
                     "lane": payload.get("lane"),
                     "role": payload.get("role"),
-                    "error": payload.get("error"),
+                    "error": payload.get("error") or payload.get("reason"),
+                    "fallback": payload.get("fallback"),
+                    "blitStatus": (
+                        4
+                        if "status 4" in str(payload.get("reason") or payload.get("error") or "")
+                        else None
+                    ),
                     "laneQueueMicros": _number(payload.get("laneQueueMicros")),
                     "executionMicros": _number(payload.get("executionMicros")),
                     "taskElapsedMicros": _number(payload.get("taskElapsedMicros")),
@@ -373,6 +386,16 @@ def summarize(path: Path) -> dict[str, Any]:
         "frames": rows,
         "taskFailureCount": len(failures),
         "taskFailures": failures,
+        "blitLockFailureCount": sum(
+            1 for failure in failures if failure.get("blitStatus") == 4
+        ),
+        "blitFallbackCount": sum(
+            1 for failure in failures if failure.get("fallback") == "flutterImage"
+        ),
+        "platformConfigureMicros": _stats(
+            [row["platformConfigureMicros"] for row in rows]
+        ),
+        "blitRetryCount": sum(row["blitRetryCount"] for row in rows),
         "sourceReadCount": len(source_reads),
         "sourceReadMicros": _stats([row["streamMicros"] for row in source_reads]),
         "sourceReadModeCounts": dict(
@@ -467,7 +490,13 @@ def main() -> None:
         f"firstChunk={report['sourceFirstChunkMicros']} "
         f"maxGap={report['sourceMaxChunkGapMicros']}"
     )
-    print(f"task failures: {report['taskFailureCount']}")
+    print(
+        f"task failures: {report['taskFailureCount']} "
+        f"blitLock={report['blitLockFailureCount']} "
+        f"fallback={report['blitFallbackCount']} "
+        f"configure={report['platformConfigureMicros']} "
+        f"blitRetries={report['blitRetryCount']}"
+    )
     print(f"reader lifecycle: {report['readerSessionLifecycle']}")
     print(
         f"cache handoff: actions={report['cacheHandoffActionCounts']} "
@@ -495,6 +524,8 @@ def main() -> None:
             f"backpressure={row['uploadBackpressureMicros']} "
             f"endToEnd={row['endToEndMicros']} "
             f"present={row['presentMicros']} deadlineMiss={row['deadlineMissMicros']} "
+            f"configure={row['platformConfigureMicros']} "
+            f"blitRetries={row['blitRetryCount']} "
             f"path={row['presentationPath']}"
         )
     print("slow source reads:")

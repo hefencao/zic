@@ -28,7 +28,9 @@ void main() {
             home: PipelineReaderSessionHost(
               chapter: chapter,
               factory: defaultLocalMediaPipelineFactory
-                  .withArtifactCache(store)
+                  .withArtifactCacheManager(
+                    ArtifactCacheManager(backend: store),
+                  )
                   .withLoaderSources(<Uri, LoaderTransportSource>{
                   id.canonicalUri: LoaderTransportSource(
                     revision: 'origin-r1',
@@ -155,11 +157,27 @@ final class _ArtifactBytesPageState extends State<_ArtifactBytesPage> {
   }
 }
 
-final class _ArtifactStore implements ArtifactCacheStore {
+final class _ArtifactStore implements ArtifactCacheBackend {
   _ArtifactStore(this.values);
 
   final Map<DownloadId, Uint8List> values;
   int reads = 0;
+
+
+  @override
+  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async {
+    reads++;
+    final bytes = values[id];
+    if (bytes == null) return null;
+    return ArtifactCacheStreamEntry(
+      length: bytes.lengthInBytes,
+      open: ({required int start, int? endExclusive}) async* {
+        final end = endExclusive ?? bytes.lengthInBytes;
+        yield Uint8List.sublistView(bytes, start, end);
+      },
+      readAll: () async => bytes,
+    );
+  }
 
   @override
   Future<Uint8List?> readArtifact(DownloadId id) async {

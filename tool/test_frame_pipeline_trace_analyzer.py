@@ -28,6 +28,8 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
                 "uploadStartedAtMicros": 640000,
                 "decodedToUploadMicros": 40000,
                 "platformOtherMicros": 12000,
+                "platformConfigureMicros": 15000,
+                "blitRetryCount": 1,
                 "platformScheduleMicros": 110000,
                 "platformScheduleQueueMicros": 100000,
                 "platformScheduleCallMicros": 10000,
@@ -141,7 +143,8 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
                 "laneQueueMicros": 4000,
                 "executionMicros": 5000,
                 "taskElapsedMicros": 9000,
-                "error": "decode failed",
+                "error": "PlatformException(blit_failed, native blit failed with status 4)",
+                "fallback": "flutterImage",
             },
         },
     ]
@@ -166,6 +169,7 @@ assert report["endToEndMicros"]["p50"] == 120000
 assert report["endToEndMicros"]["max"] == 410000
 assert report["stages"]["workerReadyMicros"]["max"] == 300000
 assert report["stages"]["platformOtherMicros"]["max"] == 12000
+assert report["stages"]["platformConfigureMicros"]["max"] == 15000
 assert report["stages"]["platformScheduleQueueMicros"]["max"] == 100000
 assert report["stages"]["platformScheduleCallMicros"]["max"] == 10000
 assert report["stages"]["decodedLeadMicros"]["max"] == 950000
@@ -188,6 +192,10 @@ assert report["cacheHandoffActionCounts"] == {"skip-existing": 1}
 assert report["cacheHandoffMicros"]["max"] == 700
 assert report["cacheHandoffs"][0]["bytes"] == 1048576
 assert report["taskFailureCount"] == 1
+assert report["blitLockFailureCount"] == 1
+assert report["blitFallbackCount"] == 1
+assert report["platformConfigureMicros"]["max"] == 15000
+assert report["blitRetryCount"] == 1
 assert report["taskFailures"][0]["executionMicros"] == 5000
 assert report["frames"][0]["frame"] == 0
 assert report["frames"][1]["recordedDominantStage"] == "decodedToUpload"

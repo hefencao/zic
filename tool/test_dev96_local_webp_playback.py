@@ -106,7 +106,6 @@ require(
 )
 forbid(
     'native/media_core/src/android_texture.rs',
-    'ANativeWindow_setBuffersGeometry',
     'input[0] as u16 * alpha',
 )
 require(

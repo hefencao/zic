@@ -4,7 +4,7 @@ import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
 
-/// Bounded composition-level L2 cache for immutable promoted page bytes.
+/// Bounded composition-level hot-byte tier for immutable promoted pages.
 ///
 /// Only current/transition reads populate this cache. Background prefetch keeps
 /// using chunked artifact streams so the normal download window does not turn
@@ -29,6 +29,15 @@ final class PromotedArtifactByteCache {
 
   int get entryCount => _entries.length;
   int get retainedBytes => _retainedBytes;
+
+  bool contains(DownloadId id, {int? length}) {
+    for (final key in _entries.keys) {
+      if (key.id == id && (length == null || key.length == length)) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   Uint8List? lookup(DownloadId id, {int? length}) {
     _ArtifactByteKey? selected;
@@ -90,6 +99,13 @@ final class PromotedArtifactByteCache {
       memoryHit: false,
       joined: false,
     );
+  }
+
+  void remember({
+    required DownloadId id,
+    required Uint8List bytes,
+  }) {
+    _remember(_ArtifactByteKey(id, bytes.lengthInBytes), bytes);
   }
 
   void invalidate(DownloadId id) {

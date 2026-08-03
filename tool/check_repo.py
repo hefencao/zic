@@ -978,23 +978,27 @@ def check_compile_regressions() -> None:
     artifact_cache_transport = (
         ROOT / 'packages/downloads/lib/src/artifact_cache_transport.dart'
     ).read_text(encoding='utf-8')
-    promoted_read_pool = (
-        ROOT / 'packages/downloads/lib/src/promoted_artifact_read_pool.dart'
+    artifact_cache_manager = (
+        ROOT / 'packages/downloads/lib/src/artifact_cache_manager.dart'
     ).read_text(encoding='utf-8')
-    promoted_read_pool_test = (
-        ROOT / 'packages/downloads/test/promoted_artifact_read_pool_test.dart'
+    artifact_cache_manager_test = (
+        ROOT / 'packages/downloads/test/artifact_cache_manager_test.dart'
     ).read_text(encoding='utf-8')
     for required in (
-        'final class PromotedArtifactReadPool',
-        'Future<Uint8List?> read(DownloadId id)',
-        'Future<Uint8List?> join(DownloadId id)',
-        'void observe(DownloadSession session)',
-        'void release(DownloadId id)',
+        'final class ArtifactCacheManager',
+        'ArtifactCacheTier.memory',
+        'ArtifactCacheTier.persistent',
+        'Future<bool> contains(',
+        'readForegroundLookup(',
+        'readSessionArtifact(',
+        'await backend.storePromotedArtifact',
     ):
-        if required not in promoted_read_pool:
-            fail(f'promoted artifact read coalescing is incomplete: {required}')
+        if required not in artifact_cache_manager:
+            fail(f'artifact cache manager is incomplete: {required}')
     for required in (
-        'readPool.cache',
+        'required ArtifactCacheManager cache',
+        '_cache.lookup(id)',
+        '_cache.readForegroundLookup(lookup)',
         "'consumer': 'session-copy'",
         '_chunkedBytes(',
         'chunkSize: promotedArtifactReadChunkBytes',
@@ -1004,13 +1008,12 @@ def check_compile_regressions() -> None:
         if required not in artifact_cache_transport:
             fail(f'artifact cache transport cold-open path is incomplete: {required}')
     for required in (
-        'page consumer and session transport share one promoted read',
-        'terminal replacement session releases the shared encoded read',
-        'failed cache reads are not retained',
-        'joining does not initiate a cache read',
+        'routes memory before backend and validates exact length',
+        'joins concurrent foreground materialization in the manager',
+        'writes through the backend and updates the memory tier',
     ):
-        if required not in promoted_read_pool_test:
-            fail(f'promoted read pool regression is incomplete: {required}')
+        if required not in artifact_cache_manager_test:
+            fail(f'artifact cache manager regression is incomplete: {required}')
 
     cold_open_test_path = ROOT / 'apps/app/test/reader_artifact_cold_open_test.dart'
     if not cold_open_test_path.is_file():
@@ -1031,9 +1034,7 @@ def check_compile_regressions() -> None:
         'abstract interface class ManagedChapterDownloadService',
         'ChapterDownloadService,',
         'ArtifactCacheMaintenance,',
-        'ArtifactCacheStore,',
-        'ArtifactCacheStreamStore,',
-        'ArtifactCachePresenceStore {}',
+        'ArtifactCacheBackend {}',
         'implements ManagedChapterDownloadService',
     ):
         if required not in chapter_downloads:
@@ -2501,7 +2502,7 @@ def check_native_abi() -> None:
             fail(f'ABI symbol is not represented in Rust/header/Dart: {symbol}')
     if 'pub const ABI_VERSION: u32 = 6;' not in rust:
         fail('native ABI version must be 6 for reserve/commit ingress')
-    if 'pub const LIB_VERSION: u32 = 0x0012_0700;' not in rust:
+    if 'pub const LIB_VERSION: u32 = 0x0012_0800;' not in rust:
         fail('native library version must identify the resident local-WebP playback release')
     webp_path = ROOT / 'native/media_core/src/webp.rs'
     if not webp_path.is_file():

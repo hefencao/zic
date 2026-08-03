@@ -5,27 +5,24 @@ import 'package:domain/domain.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
+import 'artifact_cache_manager.dart';
 import 'artifact_cache_read_scheduler.dart';
 import 'artifact_cache_store.dart';
 import 'promoted_artifact_byte_cache.dart';
-import 'promoted_artifact_read_pool.dart';
 
 const int _foregroundStartupChunkBytes = 1024 * 1024;
 const int _foregroundContinuationChunkBytes = 1024 * 1024;
 
-/// Read-through transport for already-promoted page artifacts.
+/// Read-through transport for immutable Reader page artifacts.
 ///
-/// The transport never writes cache state and never chooses which pages should
-/// be requested. It only serves an exact Reader DownloadId from the persistent
-/// artifact tier before delegating the same request to the authoritative source
-/// transport selected by the session coordinator.
+/// Tier lookup is delegated to the composition-owned [ArtifactCacheManager].
+/// This transport only applies authoritative demand priority, foreground read
+/// scheduling and the origin fallback selected by the owning Reader session.
 final class ArtifactCacheTransport implements Transport {
   ArtifactCacheTransport({
-    required ArtifactCacheStore cache,
+    required ArtifactCacheManager cache,
     required Iterable<MapEntry<Uri, DownloadId>> identities,
     required Transport Function(Uri uri) fallbackFor,
-    PromotedArtifactReadPool? readPool,
-    PromotedArtifactByteCache? byteCache,
     ArtifactCacheReadScheduler? readScheduler,
     int Function(DownloadId id)? demandPriority,
     MonoClock? clock,
@@ -35,28 +32,16 @@ final class ArtifactCacheTransport implements Transport {
   })  : _cache = cache,
         _identities = _uniqueIdentities(identities),
         _fallbackFor = fallbackFor,
-        _readPool = readPool,
-        _byteCache = byteCache,
         _readScheduler = readScheduler,
         _demandPriority = demandPriority,
         _clock = clock,
         _traceSink = traceSink,
         _sessionId = sessionId,
-        _demandRevision = demandRevision {
-    if (readPool != null && !identical(readPool.cache, cache)) {
-      throw ArgumentError.value(
-        readPool,
-        'readPool',
-        'must read from the same artifact cache',
-      );
-    }
-  }
+        _demandRevision = demandRevision;
 
-  final ArtifactCacheStore _cache;
+  final ArtifactCacheManager _cache;
   final Map<String, DownloadId> _identities;
   final Transport Function(Uri uri) _fallbackFor;
-  final PromotedArtifactReadPool? _readPool;
-  final PromotedArtifactByteCache? _byteCache;
   final ArtifactCacheReadScheduler? _readScheduler;
   final int Function(DownloadId id)? _demandPriority;
   final MonoClock? _clock;
@@ -76,123 +61,93 @@ final class ArtifactCacheTransport implements Transport {
     if (id != null) {
       final readStarted = _clock?.nowMicros();
       try {
-        if (_cache is ArtifactCacheStreamStore) {
-          final streamingCache = _cache as ArtifactCacheStreamStore;
-          final entry = await streamingCache.openArtifactStream(id);
-          final readMicros = readStarted == null
-              ? null
-              : (_clock!.nowMicros() - readStarted)
-                  .clamp(0, 1 << 62)
-                  .toInt();
-          if (entry != null) {
-            final foregroundResponse = await _foregroundArtifactResponse(
+        final lookup = await _cache.lookup(id);
+        final readMicros = readStarted == null
+            ? null
+            : (_clock!.nowMicros() - readStarted)
+                .clamp(0, 1 << 62)
+                .toInt();
+        if (lookup != null) {
+          final foregroundResponse = await _foregroundArtifactResponse(
+            lookup: lookup,
+            uri: uri,
+            range: range,
+            validators: validators,
+            revision: revision,
+            openMicros: readMicros,
+          );
+          if (foregroundResponse != null) return foregroundResponse;
+
+          final cachedResponse = _streamedCachedResponse(
+            id: id,
+            entry: lookup.entry,
+            range: range,
+            validators: validators,
+          );
+          if (cachedResponse != null) {
+            var schedulerWaitMicros = 0;
+            var schedulerMaxWaitMicros = 0;
+            var schedulerAcquires = 0;
+            var schedulerForegroundAcquires = 0;
+            var acquiredPriority = _demandPriority?.call(id) ?? 0;
+            final readScheduler = _readScheduler;
+            final response = readScheduler == null
+                ? cachedResponse
+                : _scheduledArtifactResponse(
+                    cachedResponse,
+                    scheduler: readScheduler,
+                    priority: () => _demandPriority?.call(id) ?? 0,
+                    onAcquired: (waitMicros, priority) {
+                      schedulerWaitMicros += waitMicros;
+                      if (waitMicros > schedulerMaxWaitMicros) {
+                        schedulerMaxWaitMicros = waitMicros;
+                      }
+                      schedulerAcquires++;
+                      if (priority >= readScheduler.foregroundPriority) {
+                        schedulerForegroundAcquires++;
+                      }
+                      acquiredPriority = priority;
+                    },
+                  );
+            final source = lookup.tier == ArtifactCacheTier.memory
+                ? 'artifact-byte-cache-stream'
+                : 'artifact-cache-stream';
+            final details = <String, Object?>{
+              'cacheTier': lookup.tier.name,
+              'memoryCacheHit': lookup.tier == ArtifactCacheTier.memory,
+              'hotCacheEntries': _cache.memoryEntryCount,
+              'hotCacheBytes': _cache.memoryBytes,
+            };
+            _recordSource(
+              source: source,
               id: id,
               uri: uri,
-              entry: entry,
+              bytes: lookup.entry.length,
               range: range,
-              validators: validators,
+              revision: revision,
+              readMicros: readMicros,
+              sourceClass: 'persistent-artifact',
+              priority: acquiredPriority,
+              details: details,
+            );
+            return _traceResponse(
+              response,
+              source: source,
+              sourceClass: 'persistent-artifact',
+              id: id,
+              uri: uri,
               revision: revision,
               openMicros: readMicros,
+              priority: () => acquiredPriority,
+              schedulerWaitMicros: () => schedulerWaitMicros,
+              schedulerMaxWaitMicros: () => schedulerMaxWaitMicros,
+              schedulerAcquires: () => schedulerAcquires,
+              schedulerForegroundAcquires: () =>
+                  schedulerForegroundAcquires,
+              schedulerPressureHolds: () =>
+                  readScheduler?.foregroundPressureHoldCount ?? 0,
+              readDetails: () => details,
             );
-            if (foregroundResponse != null) {
-              return foregroundResponse;
-            }
-            final cachedResponse = _streamedCachedResponse(
-              id: id,
-              entry: entry,
-              range: range,
-              validators: validators,
-            );
-            if (cachedResponse != null) {
-              var schedulerWaitMicros = 0;
-              var schedulerMaxWaitMicros = 0;
-              var schedulerAcquires = 0;
-              var schedulerForegroundAcquires = 0;
-              var acquiredPriority = _demandPriority?.call(id) ?? 0;
-              final readScheduler = _readScheduler;
-              final response = readScheduler == null
-                  ? cachedResponse
-                  : _scheduledArtifactResponse(
-                      cachedResponse,
-                      scheduler: readScheduler,
-                      priority: () => _demandPriority?.call(id) ?? 0,
-                      onAcquired: (waitMicros, priority) {
-                        schedulerWaitMicros += waitMicros;
-                        if (waitMicros > schedulerMaxWaitMicros) {
-                          schedulerMaxWaitMicros = waitMicros;
-                        }
-                        schedulerAcquires++;
-                        if (priority >= readScheduler.foregroundPriority) {
-                          schedulerForegroundAcquires++;
-                        }
-                        acquiredPriority = priority;
-                      },
-                    );
-              _recordSource(
-                source: 'artifact-cache-stream',
-                id: id,
-                uri: uri,
-                bytes: entry.length,
-                range: range,
-                revision: revision,
-                readMicros: readMicros,
-                sourceClass: 'persistent-artifact',
-                priority: acquiredPriority,
-              );
-              return _traceResponse(
-                response,
-                source: 'artifact-cache-stream',
-                sourceClass: 'persistent-artifact',
-                id: id,
-                uri: uri,
-                revision: revision,
-                openMicros: readMicros,
-                priority: () => acquiredPriority,
-                schedulerWaitMicros: () => schedulerWaitMicros,
-                schedulerMaxWaitMicros: () => schedulerMaxWaitMicros,
-                schedulerAcquires: () => schedulerAcquires,
-                schedulerForegroundAcquires: () =>
-                    schedulerForegroundAcquires,
-                schedulerPressureHolds: () =>
-                    readScheduler?.foregroundPressureHoldCount ?? 0,
-              );
-            }
-          }
-        } else {
-          final bytes = await (_readPool?.read(id) ?? _cache.readArtifact(id));
-          final readMicros = readStarted == null
-              ? null
-              : (_clock!.nowMicros() - readStarted)
-                  .clamp(0, 1 << 62)
-                  .toInt();
-          if (bytes != null) {
-            final response = _cachedResponse(
-              id: id,
-              bytes: bytes,
-              range: range,
-              validators: validators,
-            );
-            if (response != null) {
-              _recordSource(
-                source: 'artifact-cache',
-                id: id,
-                uri: uri,
-                bytes: bytes.lengthInBytes,
-                range: range,
-                revision: revision,
-                readMicros: readMicros,
-                sourceClass: 'persistent-artifact',
-              );
-              return _traceResponse(
-                response,
-                source: 'artifact-cache',
-                sourceClass: 'persistent-artifact',
-                id: id,
-                uri: uri,
-                revision: revision,
-                openMicros: readMicros,
-              );
-            }
           }
         }
       } on Object catch (error) {
@@ -205,6 +160,7 @@ final class ArtifactCacheTransport implements Transport {
         );
       }
     }
+
     final fallback = _fallbackFor(uri);
     final openStarted = _clock?.nowMicros();
     final response = await fallback.open(
@@ -239,17 +195,14 @@ final class ArtifactCacheTransport implements Transport {
   }
 
   Future<ByteResponse?> _foregroundArtifactResponse({
-    required DownloadId id,
+    required ArtifactCacheLookup lookup,
     required Uri uri,
-    required ArtifactCacheStreamEntry entry,
     required ByteRange? range,
     required Validators? validators,
     required int? revision,
     required int? openMicros,
   }) async {
-    final byteCache = _byteCache;
-    final readAll = entry.readAll;
-    if (byteCache == null || readAll == null) return null;
+    final id = lookup.id;
     final scheduler = _readScheduler;
     final foregroundPriority = scheduler?.foregroundPriority ?? 900;
     final requestedPriority = _demandPriority?.call(id) ?? 0;
@@ -261,7 +214,7 @@ final class ArtifactCacheTransport implements Transport {
     var acquiredPriority = requestedPriority;
     ArtifactCacheReadLease? lease;
     final materializeStarted = _clock?.nowMicros();
-    PromotedArtifactByteRead read;
+    late final PromotedArtifactByteRead read;
     try {
       if (scheduler != null) {
         final wait = Stopwatch()..start();
@@ -273,11 +226,7 @@ final class ArtifactCacheTransport implements Transport {
         schedulerForegroundAcquires = lease.foreground ? 1 : 0;
         acquiredPriority = lease.priority;
       }
-      read = await byteCache.read(
-        id: id,
-        length: entry.length,
-        loader: readAll,
-      );
+      read = await _cache.readForegroundLookup(lookup);
     } on Object catch (error) {
       lease?.release();
       _recordForegroundReadFailure(
@@ -289,6 +238,7 @@ final class ArtifactCacheTransport implements Transport {
       );
       return null;
     }
+
     final bytes = read.bytes;
     final materializeMicros = materializeStarted == null
         ? null
@@ -306,13 +256,15 @@ final class ArtifactCacheTransport implements Transport {
       lease?.release();
       return null;
     }
-    if (lease != null) {
-      response = _leaseBoundResponse(response, lease);
-    }
+    if (lease != null) response = _leaseBoundResponse(response, lease);
+
     final source = read.memoryHit
         ? 'artifact-byte-cache'
         : 'artifact-read-all';
     final details = <String, Object?>{
+      'cacheTier': read.memoryHit
+          ? ArtifactCacheTier.memory.name
+          : lookup.tier.name,
       'artifactReadMode': read.memoryHit
           ? 'memory-hit'
           : read.joined
@@ -331,8 +283,8 @@ final class ArtifactCacheTransport implements Transport {
       'deliveryMode': 'startup-segmented',
       'startupChunkBytes': _foregroundStartupChunkBytes,
       'continuationChunkBytes': _foregroundContinuationChunkBytes,
-      'hotCacheEntries': byteCache.entryCount,
-      'hotCacheBytes': byteCache.retainedBytes,
+      'hotCacheEntries': _cache.memoryEntryCount,
+      'hotCacheBytes': _cache.memoryBytes,
     };
     _recordSource(
       source: source,
@@ -358,7 +310,6 @@ final class ArtifactCacheTransport implements Transport {
       readDetails: () => details,
     );
   }
-
   void _recordForegroundReadFailure({
     required DownloadId id,
     required Uri uri,

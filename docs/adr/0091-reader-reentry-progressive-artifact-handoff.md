@@ -1,6 +1,6 @@
 # ADR 0091：Reader 重进清理与渐进 artifact handoff
 
-**状态：Provisional**
+**状态：Superseded by ADR 0092**
 
 ## 问题
 
@@ -11,7 +11,7 @@ dev.106 设备 Trace 显示两个独立问题：
 
 ## 决策
 
-1. `downloads` 提供可选的 `ArtifactCachePresenceStore`。handoff 在读取临时 artifact 之前按 `DownloadId + expectedLength` 探测持久副本；命中时记录 `skip-existing` 并直接完成。
+1. dev.107 以可选 presence capability 在读取临时 artifact 前探测持久副本。该局部分派已由 ADR 0092 的中央 `ArtifactCacheManager` 取代。
 2. current/transition 继续使用 composition encoded-byte cache、foreground lease-through-stream 与 startup pressure，但 response 改为 1 MiB 渐进分段；每段之间让出事件循环，使 source-ready、decode 和 current presentation 能在完整 body 消费前推进。
 3. background 继续使用既有 1 MiB quantum 与动态 priority，不改变下载 7/3、预解码 2/1 或 lane 5/3/2。
 4. Reader dispose 先 detach handoff listener，再关闭 coordinator；只等待真正需要写入持久层的 commit。dispose Trace 分开记录 coordinator、handoff、media、downloads 与 workspace 阶段。

@@ -108,7 +108,8 @@ require(
 require(
     'packages/downloads/lib/src/chapter_downloads.dart',
     'const chunkSize = promotedArtifactReadChunkBytes;',
-    'chunkSize: promotedArtifactReadChunkBytes,',
+    'Stream<List<int>> _readIndexedChunks(',
+    '.clamp(1, promotedArtifactReadChunkBytes)',
 )
 require(
     'apps/app/lib/comic_details.dart',

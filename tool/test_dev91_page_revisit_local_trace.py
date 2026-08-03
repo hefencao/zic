@@ -67,8 +67,8 @@ require(
 require(
     'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',
     'TraceEventKind.sourceRead',
-    "'source': 'artifact-cache'",
-    "'source': 'session-artifact'",
+    '_recordPresentationCacheRead(',
+    "source: 'session-artifact'",
     "'consumer': 'pipeline-presentation'",
 )
 require(
