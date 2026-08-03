@@ -10,6 +10,7 @@ NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
 API="${ZIC_ANDROID_API:-21}"
 LINK="${ZIC_ANDROID_WEBP_LINK:-static}"
 DEPS="${ZIC_DEPS_DIR:-$ROOT/.deps}"
+PATCH_SHA="$(sha256sum "$ROOT/native/patches/libwebp-vp8-thread-buffer-pool-v1.6.0.patch" | awk '{print $1}')"
 
 case "$ABI" in arm64-v8a|armeabi-v7a|x86_64) ;; *) echo "usage: $0 <arm64-v8a|armeabi-v7a|x86_64> [debug|release]" >&2; exit 64 ;; esac
 case "$MODE" in debug|release) ;; *) echo "usage: $0 <abi> [debug|release]" >&2; exit 64 ;; esac
@@ -25,12 +26,12 @@ for command in cmake ninja git; do
   }
 done
 
-SOURCE="$("$ROOT/tool/fetch_webp.sh")"
+SOURCE="$("$ROOT/tool/prepare_webp.sh")"
 BUILD_TYPE=Release
 [[ "$MODE" == debug ]] && BUILD_TYPE=Debug
 BUILD="$DEPS/build/libwebp/android/$WEBP_VERSION/$ABI/$MODE/$LINK"
 PREFIX="$DEPS/install/libwebp/android/$WEBP_VERSION/$ABI/$MODE/$LINK"
-CONFIG_ID="$WEBP_COMMIT|$ABI|android-$API|$BUILD_TYPE|$LINK|$NDK"
+CONFIG_ID="$WEBP_COMMIT|$PATCH_SHA|$ABI|android-$API|$BUILD_TYPE|$LINK|$NDK"
 if [[ -f "$BUILD/.zic-config" && "$(cat "$BUILD/.zic-config")" != "$CONFIG_ID" ]]; then
   rm -rf "$BUILD" "$PREFIX"
 fi

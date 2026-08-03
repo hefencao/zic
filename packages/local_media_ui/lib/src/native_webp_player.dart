@@ -484,7 +484,10 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     }
     while (mounted && generation == _generation) {
       final decodeClock = Stopwatch()..start();
-      final step = await binding.frames.decodeNext();
+      final frames = binding.frames;
+      final step = frames is ScheduledFrameCursor
+          ? await frames.decodeNextScheduled(DecodeExecutionClass.current)
+          : await frames.decodeNext();
       final decodeMicros = decodeClock.elapsedMicroseconds;
       if (!mounted || generation != _generation) {
         step.frame?.dispose();
@@ -525,7 +528,6 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
           final frameBytes = frame.byteLength;
           final prepareClock = Stopwatch()..start();
           final rgba = frame.copyBytes();
-          _premultiplyRgbaInPlace(rgba);
           late final ui.Image image;
           try {
             image = await _decodeRgba(rgba, frame.width, frame.height);
@@ -1280,16 +1282,4 @@ Future<ui.Image> _decodeRgba(Uint8List bytes, int width, int height) {
     rowBytes: width * 4,
   );
   return completer.future;
-}
-
-void _premultiplyRgbaInPlace(Uint8List bytes) {
-  for (var i = 0; i + 3 < bytes.length; i += 4) {
-    final alpha = bytes[i + 3];
-    if (alpha == 255) {
-      continue;
-    }
-    bytes[i] = (bytes[i] * alpha + 127) ~/ 255;
-    bytes[i + 1] = (bytes[i + 1] * alpha + 127) ~/ 255;
-    bytes[i + 2] = (bytes[i + 2] * alpha + 127) ~/ 255;
-  }
 }

@@ -153,7 +153,7 @@ Stream<List<int>> _readLocalFileChunks(
   int start,
   int endExclusive,
 ) async* {
-  const chunkBytes = 256 * 1024;
+  const chunkBytes = 1024 * 1024;
   final reader = await file.open();
   try {
     await reader.setPosition(start);

@@ -14,6 +14,11 @@ part 'native_decode_pool.dart';
 
 final class _Source extends Opaque {}
 
+/// Starts the two process-lifetime native decode isolates before first page use.
+/// The returned future reports library-load failures to composition/tests.
+Future<void> prewarmNativeDecodeWorkers({String? libPath}) =>
+    _NativeDecodeWorkerPool.forLibrary(libPath).prewarm();
+
 typedef _CreateNative = Pointer<_Source> Function(Uint64 epoch, UintPtr maxBytes);
 typedef _CreateDart = Pointer<_Source> Function(int epoch, int maxBytes);
 typedef _FreeNative = Void Function(Pointer<_Source> source);

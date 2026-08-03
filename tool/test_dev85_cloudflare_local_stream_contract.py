@@ -91,7 +91,7 @@ def main() -> int:
     bridge = require(
         'packages/local_media_bridge/lib/src/local_media_bridge.dart',
         'localMediaBridgeProtocolVersion = 5',
-        'localMediaBridgeChunkBytes = 256 * 1024',
+        'localMediaBridgeChunkBytes = 1024 * 1024',
         "'openDocument'",
         "'readDocumentChunk'",
         "'closeDocument'",
@@ -101,7 +101,7 @@ def main() -> int:
         raise SystemExit('legacy complete read must remain only as an explicit compatibility API')
     require(
         'packages/local_media_bridge/android/src/main/kotlin/dev/zic/localmedia/LocalMediaBridgePlugin.kt',
-        'DOCUMENT_CHUNK_BYTES = 256 * 1024',
+        'DOCUMENT_CHUNK_BYTES = 1024 * 1024',
         'documentHandles',
         '"partial" to canServeRange',
         'closeAllDocuments()',

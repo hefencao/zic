@@ -38,16 +38,7 @@ pub(crate) fn copy_premultiplied_rgba(
         let source_row = &source[source_start..source_start + source_row_bytes];
         let destination_row =
             &mut destination[destination_start..destination_start + source_row_bytes];
-        for (input, output) in source_row
-            .chunks_exact(4)
-            .zip(destination_row.chunks_exact_mut(4))
-        {
-            let alpha = input[3] as u16;
-            output[0] = ((input[0] as u16 * alpha + 127) / 255) as u8;
-            output[1] = ((input[1] as u16 * alpha + 127) / 255) as u8;
-            output[2] = ((input[2] as u16 * alpha + 127) / 255) as u8;
-            output[3] = input[3];
-        }
+        destination_row.copy_from_slice(source_row);
     }
     true
 }
@@ -57,8 +48,6 @@ mod android {
     use super::*;
     use std::ffi::c_void;
     use std::slice;
-
-    const WINDOW_FORMAT_RGBA_8888: i32 = 1;
 
     #[repr(C)]
     struct ANativeWindow;
@@ -76,12 +65,6 @@ mod android {
     extern "C" {
         fn ANativeWindow_fromSurface(env: *mut c_void, surface: *mut c_void) -> *mut ANativeWindow;
         fn ANativeWindow_release(window: *mut ANativeWindow);
-        fn ANativeWindow_setBuffersGeometry(
-            window: *mut ANativeWindow,
-            width: i32,
-            height: i32,
-            format: i32,
-        ) -> i32;
         fn ANativeWindow_lock(
             window: *mut ANativeWindow,
             buffer: *mut ANativeWindowBuffer,
@@ -162,16 +145,6 @@ mod android {
             return BLIT_SURFACE_FAILED;
         }
         let window = WindowOwner(window);
-        if ANativeWindow_setBuffersGeometry(
-            window.0,
-            frame.data.width as i32,
-            frame.data.height as i32,
-            WINDOW_FORMAT_RGBA_8888,
-        ) != 0
-        {
-            return BLIT_SURFACE_FAILED;
-        }
-
         let mut buffer = ANativeWindowBuffer {
             width: 0,
             height: 0,
@@ -221,8 +194,8 @@ mod tests {
     use super::copy_premultiplied_rgba;
 
     #[test]
-    fn blit_copy_premultiplies_and_respects_destination_stride() {
-        let source = [255, 64, 0, 128, 10, 20, 30, 255];
+    fn blit_copies_premultiplied_rgba_and_respects_destination_stride() {
+        let source = [128, 32, 0, 128, 10, 20, 30, 255];
         let mut destination = [7u8; 16];
 
         assert!(copy_premultiplied_rgba(&source, 2, 1, &mut destination, 4,));

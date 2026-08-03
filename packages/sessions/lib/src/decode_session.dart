@@ -166,7 +166,14 @@ final class DecodeSession {
           );
         }
         final decodeStartedAt = clock.nowMicros();
-        final step = await _cursor!.frames.decodeNext();
+        final frames = _cursor!.frames;
+        final step = frames is ScheduledFrameCursor
+            ? await frames.decodeNextScheduled(
+                demand.role == PageRole.current
+                    ? DecodeExecutionClass.current
+                    : DecodeExecutionClass.nonCurrent,
+              )
+            : await frames.decodeNext();
         final decodeMicros = clock.nowMicros() - decodeStartedAt;
         if (cancel.cancelled || download.epoch != epoch || _revision != revision) {
           step.frame?.dispose();

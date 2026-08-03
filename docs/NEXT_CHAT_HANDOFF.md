@@ -1,6 +1,28 @@
+# dev.96 后续交接
+
+本轮验证明细：`docs/audits/dev96-validation-results.md`。
+
+唯一后续基线：`zic_v0.31.0-dev.96_local-webp-resident-single-thread-playback.zip`。不得混入 dev.95 或更早候选。
+
+## 已完成
+
+- bridge 双 decode isolate 由 App composition 在 `runApp` 前显式等待预热完成并进程期常驻，current 保留槽，cursor 不拥有 pool 关闭。
+- ScheduledFrameCursor 只把 session 的 PageRole 调度意图下传；Reader/App 未获得 native 能力。
+- transition→current same-key decode/upload 使用 follow；current successor 水位 2。
+- libwebp 1.6.0 自动补丁链、VP8 TLS workspace、帧内单线程；明确禁止额外 persistent native worker pool。
+- 预乘 RGBA 在 media_core 唯一生成；Android 不重复 geometry/alpha，Flutter fallback 不二次预乘。
+- metadata 主动刷新、小尺寸不放大、本地 1 MiB 分块；网络 256 KiB 和既定窗口/lane 不变。
+
+## 下一步设备验证
+
+1. 在能访问上游且装有 Rust/CMake 的环境运行 `tool/prepare_webp.sh`、`tool/check_webp.sh` 和 `cargo test -p media_core`，确认补丁在精确 v1.6.0 tree 应用。
+2. 运行 Flutter analyze 与受影响 package/App tests，再构建 Android debug/release。
+3. 真机记录首次进入、退出重进、transition→current 连续滑动、透明动画和长播放 trace；重点比较 worker 冷启动、decode dispatch、successor depth、texture create/retire、firstFrameReady。
+4. 不得通过缩小 7/3、2/1 或 5/3/2 掩盖问题；未取得数据前不改这些参数。
+
 # 下一聊天交接
 
-唯一后续基线：`zic_v0.31.0-dev.95_vibe-native-ingress-target-canvas.zip`。不得混入 dev.94 或更早候选。
+dev.95 是本轮 dev.96 的历史输入基线；后续不得再以它覆盖顶部列出的 dev.96 唯一基线。
 
 ## 已完成
 

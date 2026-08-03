@@ -12,7 +12,11 @@ import 'package:texture_bridge/texture_bridge.dart';
 
 final class NativePipelineMediaRuntimeFactory
     implements PipelineMediaRuntimeFactory {
-  const NativePipelineMediaRuntimeFactory();
+  NativePipelineMediaRuntimeFactory() {
+    unawaited(prewarm().catchError((Object _, StackTrace __) {}));
+  }
+
+  Future<void> prewarm() => prewarmNativeDecodeWorkers();
 
   @override
   PipelineMediaRuntime create({
@@ -308,7 +312,6 @@ final class _AndroidTextureOutputFrame implements OutputFrame {
       );
     } on Object {
       final rgba = frame.copyBytes();
-      _premultiplyRgbaInPlace(rgba);
       _fallback = await _decodeRgba(
         rgba,
         width: frame.width,
@@ -350,7 +353,6 @@ final class _FlutterImageUploader implements _NativeFrameUploader {
       );
     }
     final rgba = frame.copyBytes();
-    _premultiplyRgbaInPlace(rgba);
     final image = await _decodeRgba(
       rgba,
       width: frame.width,
@@ -596,17 +598,4 @@ void _recordTextureTelemetry(
       payload: payload,
     ),
   );
-}
-
-
-void _premultiplyRgbaInPlace(Uint8List bytes) {
-  for (var i = 0; i + 3 < bytes.length; i += 4) {
-    final alpha = bytes[i + 3];
-    if (alpha == 255) {
-      continue;
-    }
-    bytes[i] = (bytes[i] * alpha + 127) ~/ 255;
-    bytes[i + 1] = (bytes[i + 1] * alpha + 127) ~/ 255;
-    bytes[i + 2] = (bytes[i + 2] * alpha + 127) ~/ 255;
-  }
 }

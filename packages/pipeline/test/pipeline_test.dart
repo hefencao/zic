@@ -94,8 +94,13 @@ void main() {
       plan.decodes.values.where((value) => value.role == PageRole.transition),
       hasLength(1),
     );
+    expect(
+      plan.decodes.values.singleWhere(
+        (value) => value.role == PageRole.current,
+      ).targetWatermark,
+      2,
+    );
   });
-
 
   test('source streaming profile keeps far pages download-only', () {
     final longChapter = ChapterManifest(

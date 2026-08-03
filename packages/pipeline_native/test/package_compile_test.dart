@@ -4,7 +4,7 @@ import 'package:pipeline_runtime/pipeline_runtime.dart';
 
 void main() {
   test('native Pipeline media capability is atomically injectable', () {
-    const factory = NativePipelineMediaRuntimeFactory();
+    final factory = NativePipelineMediaRuntimeFactory();
     expect(factory, isA<PipelineMediaRuntimeFactory>());
   });
 }

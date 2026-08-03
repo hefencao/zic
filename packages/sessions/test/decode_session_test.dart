@@ -50,6 +50,13 @@ void main() {
     expect(result.state, DecodeState.ready);
     expect(result.depth, 2);
     expect(factory.created, 1);
+    expect(
+      factory.cursors.single.executionClasses,
+      <DecodeExecutionClass>[
+        DecodeExecutionClass.current,
+        DecodeExecutionClass.current,
+      ],
+    );
 
     await download.reset();
     ingress.append(
@@ -72,6 +79,53 @@ void main() {
     expect(next.epoch, const SourceEpoch(1));
     expect(next.depth, 1);
     expect(factory.created, 2);
+
+    session.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
+  test('transition decode uses the non-current worker class', () async {
+    final temp = await Directory.systemTemp.createTemp('decode_role_test_');
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final factory = _CursorFactory();
+    final session = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: factory,
+      clock: _Clock(),
+    );
+
+    await session.fill(
+      demand: const DecodeDemand(
+        role: PageRole.transition,
+        priority: 900,
+        targetWatermark: 1,
+        reason: 'transition-role',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+
+    expect(
+      factory.cursors.single.executionClasses,
+      <DecodeExecutionClass>[DecodeExecutionClass.nonCurrent],
+    );
 
     session.dispose();
     await download.dispose();
@@ -658,16 +712,26 @@ final class _CursorFactory implements CursorFactory {
   }
 }
 
-final class _Cursor implements FrameCursor {
+final class _Cursor implements ScheduledFrameCursor {
   _Cursor(this.epoch);
 
   @override
   final int epoch;
   int next = 0;
+  final List<DecodeExecutionClass> executionClasses =
+      <DecodeExecutionClass>[];
 
   @override
-  Future<CursorStep> decodeNext() async =>
-      CursorStep.frame(_Frame(epoch, next++));
+  Future<CursorStep> decodeNext() =>
+      decodeNextScheduled(DecodeExecutionClass.nonCurrent);
+
+  @override
+  Future<CursorStep> decodeNextScheduled(
+    DecodeExecutionClass executionClass,
+  ) async {
+    executionClasses.add(executionClass);
+    return CursorStep.frame(_Frame(epoch, next++));
+  }
 
   @override
   void dispose() {}

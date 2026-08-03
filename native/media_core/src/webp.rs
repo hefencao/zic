@@ -1,8 +1,9 @@
 use std::os::raw::{c_int, c_void};
+use std::ptr;
 
 const WEBP_DEMUX_ABI_VERSION: c_int = 0x0107;
 const WEBP_DECODER_ABI_VERSION: c_int = 0x0210;
-const MODE_RGBA: c_int = 1;
+const MODE_RGBA_PREMULTIPLIED: c_int = 7;
 const VP8_STATUS_OK: c_int = 0;
 const WEBP_DEMUX_PARSING_HEADER: c_int = 0;
 const WEBP_DEMUX_DONE: c_int = 2;
@@ -146,8 +147,15 @@ extern "C" {
     ) -> c_int;
     fn WebPDemuxReleaseIterator(iter: *mut WebPIterator);
 
-    fn WebPInitDecoderConfigInternal(config: *mut WebPDecoderConfig, version: c_int) -> c_int;
-    fn WebPDecode(data: *const u8, data_size: usize, config: *mut WebPDecoderConfig) -> c_int;
+    fn WebPInitDecoderConfigInternal(
+        config: *mut WebPDecoderConfig,
+        version: c_int,
+    ) -> c_int;
+    fn WebPDecode(
+        data: *const u8,
+        data_size: usize,
+        config: *mut WebPDecoderConfig,
+    ) -> c_int;
     fn WebPFreeDecBuffer(buffer: *mut WebPDecBuffer);
 }
 
@@ -226,7 +234,9 @@ impl DemuxSnapshot {
             size: bytes.len(),
         };
         let mut state = WEBP_DEMUX_PARSING_HEADER;
-        let demux_ptr = unsafe { WebPDemuxInternal(&data, 1, &mut state, WEBP_DEMUX_ABI_VERSION) };
+        let demux_ptr = unsafe {
+            WebPDemuxInternal(&data, 1, &mut state, WEBP_DEMUX_ABI_VERSION)
+        };
         if demux_ptr.is_null() {
             return Err(if sealed {
                 DecodeError::Failed
@@ -264,14 +274,19 @@ impl DemuxSnapshot {
                 break;
             }
             let iter = Iter(raw_iter);
-            if iter.0.complete == 0 || iter.0.fragment.bytes.is_null() || iter.0.fragment.size == 0
+            if iter.0.complete == 0
+                || iter.0.fragment.bytes.is_null()
+                || iter.0.fragment.size == 0
             {
                 if sealed || meta.complete {
                     return Err(DecodeError::Failed);
                 }
                 break;
             }
-            if iter.0.width <= 0 || iter.0.height <= 0 || iter.0.x_offset < 0 || iter.0.y_offset < 0
+            if iter.0.width <= 0
+                || iter.0.height <= 0
+                || iter.0.x_offset < 0
+                || iter.0.y_offset < 0
             {
                 return Err(DecodeError::Failed);
             }
@@ -463,7 +478,7 @@ impl Decoder {
             return Err(DecodeError::Failed);
         }
         let fragment_ptr = unsafe { bytes.as_ptr().add(fragment_offset) };
-        let target_fragment = decode_rgba_scaled_threaded(
+        let target_fragment = decode_rgba_scaled_single_threaded(
             fragment_ptr,
             fragment_length,
             target_rect.width,
@@ -530,15 +545,23 @@ impl Decoder {
             if snapshot.matches(bytes, sealed) {
                 return Ok(());
             }
-            let next_index = self.next_frame_number.saturating_sub(1) as usize;
-            if snapshot.frames.get(next_index).is_some() {
-                return Ok(());
-            }
-            if !sealed
-                && !snapshot.frames.is_empty()
-                && bytes.len() < snapshot.source_length.saturating_add(DEMUX_REFRESH_BYTES)
-            {
-                return Err(DecodeError::NeedMoreData);
+            let source_grew = bytes.len() > snapshot.source_length;
+            if !snapshot.meta.complete && source_grew {
+                // Streaming metadata is authoritative only for the bytes seen
+                // by the demuxer. Rebuild immediately when new bytes arrive so
+                // animation/frame-count discovery can raise successor demand.
+            } else {
+                let next_index = self.next_frame_number.saturating_sub(1) as usize;
+                if snapshot.frames.get(next_index).is_some() {
+                    return Ok(());
+                }
+                if !sealed
+                    && !snapshot.frames.is_empty()
+                    && bytes.len()
+                        < snapshot.source_length.saturating_add(DEMUX_REFRESH_BYTES)
+                {
+                    return Err(DecodeError::NeedMoreData);
+                }
             }
         }
         self.demux = Some(DemuxSnapshot::parse(bytes, sealed)?);
@@ -561,8 +584,12 @@ impl Decoder {
             }
             return Ok(());
         }
-        let (target_width, target_height) =
-            fit_dimensions(source_width, source_height, self.max_width, self.max_height)?;
+        let (target_width, target_height) = fit_dimensions(
+            source_width,
+            source_height,
+            self.max_width,
+            self.max_height,
+        )?;
         let canvas_len = rgba_len(target_width, target_height)?;
         if canvas_len > MAX_WORKING_BYTES {
             return Err(DecodeError::Failed);
@@ -571,7 +598,7 @@ impl Decoder {
         self.target_height = target_height;
         self.source_width = source_width;
         self.source_height = source_height;
-        self.background = background;
+        self.background = premultiply_color(background);
         self.canvas = vec![0u8; canvas_len];
         fill_rect(
             &mut self.canvas,
@@ -606,7 +633,7 @@ impl Drop for Iter {
     }
 }
 
-fn decode_rgba_scaled_threaded(
+fn decode_rgba_scaled_single_threaded(
     data: *const u8,
     data_length: usize,
     width: usize,
@@ -627,14 +654,17 @@ fn decode_rgba_scaled_threaded(
     }
     let mut output = vec![0u8; output_length];
     let mut config = unsafe { std::mem::zeroed::<WebPDecoderConfig>() };
-    if unsafe { WebPInitDecoderConfigInternal(&mut config, WEBP_DECODER_ABI_VERSION) } == 0 {
+    if unsafe {
+        WebPInitDecoderConfigInternal(&mut config, WEBP_DECODER_ABI_VERSION)
+    } == 0
+    {
         return Err(DecodeError::Failed);
     }
-    config.options.use_threads = 1;
+    config.options.use_threads = 0;
     config.options.use_scaling = 1;
     config.options.scaled_width = width as c_int;
     config.options.scaled_height = height as c_int;
-    config.output.colorspace = MODE_RGBA;
+    config.output.colorspace = MODE_RGBA_PREMULTIPLIED;
     config.output.is_external_memory = 1;
     config.output.buffer = WebPBufferUnion {
         rgba: WebPRgbBuffer {
@@ -644,8 +674,8 @@ fn decode_rgba_scaled_threaded(
         },
     };
     let status = unsafe { WebPDecode(data, data_length, &mut config) };
-    let dimensions_match =
-        config.output.width == width as c_int && config.output.height == height as c_int;
+    let dimensions_match = config.output.width == width as c_int
+        && config.output.height == height as c_int;
     unsafe { WebPFreeDecBuffer(&mut config.output) };
     if status != VP8_STATUS_OK || !dimensions_match {
         return Err(DecodeError::Failed);
@@ -666,10 +696,28 @@ fn fit_dimensions(
     max_width: usize,
     max_height: usize,
 ) -> Result<(usize, usize), DecodeError> {
+    const ALIGNMENT: usize = 8;
     if source_width == 0 || source_height == 0 || max_width == 0 || max_height == 0 {
         return Err(DecodeError::Failed);
     }
-    const ALIGNMENT: usize = 8;
+    let bounded_width = source_width.min(max_width);
+    let bounded_height = source_height.min(max_height);
+    if bounded_width < ALIGNMENT || bounded_height < ALIGNMENT {
+        let width_limited = max_width.saturating_mul(source_height)
+            <= max_height.saturating_mul(source_width);
+        let (width, height) = if width_limited {
+            let width = bounded_width;
+            let height = ((source_height as u128) * (width as u128)
+                / source_width as u128) as usize;
+            (width, height.max(1).min(bounded_height))
+        } else {
+            let height = bounded_height;
+            let width = ((source_width as u128) * (height as u128)
+                / source_height as u128) as usize;
+            (width.max(1).min(bounded_width), height)
+        };
+        return Ok((width, height));
+    }
     let width_bound = align_down(source_width.min(max_width), ALIGNMENT);
     let height_bound = align_down(source_height.min(max_height), ALIGNMENT);
     let width_limited = (width_bound as u128) * (source_height as u128)
@@ -692,7 +740,11 @@ fn fit_dimensions(
     let mut best: Option<(usize, usize, u128, u128)> = None;
 
     let mut consider = |width: usize, height: usize| {
-        if width < ALIGNMENT || height < ALIGNMENT || width > width_bound || height > height_bound {
+        if width < ALIGNMENT
+            || height < ALIGNMENT
+            || width > width_bound
+            || height > height_bound
+        {
             return;
         }
         let area = (width as u128) * (height as u128);
@@ -703,7 +755,8 @@ fn fit_dimensions(
             .abs_diff((height as u128) * (source_width as u128));
         let replace = best.map_or(true, |(_, current_height, current_error, current_area)| {
             let relative_error = error.saturating_mul(current_height as u128);
-            let current_relative_error = current_error.saturating_mul(height as u128);
+            let current_relative_error =
+                current_error.saturating_mul(height as u128);
             relative_error < current_relative_error
                 || (relative_error == current_relative_error && area > current_area)
         });
@@ -713,7 +766,9 @@ fn fit_dimensions(
     };
 
     let mut width = largest_width;
-    while width >= ALIGNMENT && (width as u128) * (largest_height as u128) >= minimum_area {
+    while width >= ALIGNMENT
+        && (width as u128) * (largest_height as u128) >= minimum_area
+    {
         let height = align_ratio_closest(
             (source_height as u128) * (width as u128),
             source_width as u128,
@@ -728,7 +783,9 @@ fn fit_dimensions(
     }
 
     let mut height = largest_height;
-    while height >= ALIGNMENT && (largest_width as u128) * (height as u128) >= minimum_area {
+    while height >= ALIGNMENT
+        && (largest_width as u128) * (height as u128) >= minimum_area
+    {
         let width = align_ratio_closest(
             (source_width as u128) * (height as u128),
             source_height as u128,
@@ -753,19 +810,21 @@ fn align_ratio_closest(
     alignment: usize,
 ) -> usize {
     let floor = (numerator / denominator).min(usize::MAX as u128) as usize;
-    let ceil = numerator.saturating_add(denominator.saturating_sub(1)) / denominator;
+    let ceil = numerator
+        .saturating_add(denominator.saturating_sub(1))
+        / denominator;
     let down = align_down(floor, alignment);
-    let up = align_up(ceil.min(usize::MAX as u128) as usize, alignment).min(limit);
+    let up = align_up(
+        ceil.min(usize::MAX as u128) as usize,
+        alignment,
+    )
+    .min(limit);
     if down < alignment {
         return up;
     }
     let down_error = numerator.abs_diff((down as u128) * denominator);
     let up_error = numerator.abs_diff((up as u128) * denominator);
-    if down_error <= up_error {
-        down
-    } else {
-        up
-    }
+    if down_error <= up_error { down } else { up }
 }
 
 fn align_down(value: usize, alignment: usize) -> usize {
@@ -774,7 +833,10 @@ fn align_down(value: usize, alignment: usize) -> usize {
 }
 
 fn align_up(value: usize, alignment: usize) -> usize {
-    value.saturating_add(alignment.saturating_sub(1)) / alignment * alignment
+    value
+        .saturating_add(alignment.saturating_sub(1))
+        / alignment
+        * alignment
 }
 
 fn map_rect_endpoints(
@@ -807,7 +869,9 @@ fn map_rect_endpoints(
         / source_height;
     let width = end_x.saturating_sub(x).max(1);
     let height = end_y.saturating_sub(y).max(1);
-    if x.saturating_add(width) > target_width || y.saturating_add(height) > target_height {
+    if x.saturating_add(width) > target_width
+        || y.saturating_add(height) > target_height
+    {
         return Err(DecodeError::Failed);
     }
     Ok(Rect {
@@ -865,6 +929,14 @@ fn composite(
     Ok(())
 }
 
+fn premultiply_color(mut color: [u8; 4]) -> [u8; 4] {
+    let alpha = color[3] as u16;
+    for channel in &mut color[..3] {
+        *channel = ((*channel as u16 * alpha + 127) / 255) as u8;
+    }
+    color
+}
+
 fn blend_source_over(target: &mut [u8], source: &[u8]) {
     let source_alpha = source[3] as u32;
     if source_alpha == 0 {
@@ -874,20 +946,14 @@ fn blend_source_over(target: &mut [u8], source: &[u8]) {
         target.copy_from_slice(source);
         return;
     }
-    let target_alpha = target[3] as u32;
     let inverse = 255 - source_alpha;
-    let output_alpha = source_alpha + (target_alpha * inverse + 127) / 255;
-    if output_alpha == 0 {
-        target.fill(0);
-        return;
-    }
     for channel in 0..3 {
-        let numerator = source[channel] as u64 * source_alpha as u64 * 255
-            + target[channel] as u64 * target_alpha as u64 * inverse as u64;
-        let denominator = output_alpha as u64 * 255;
-        target[channel] = ((numerator + denominator / 2) / denominator).min(255) as u8;
+        target[channel] = (source[channel] as u32
+            + (target[channel] as u32 * inverse + 127) / 255)
+            .min(255) as u8;
     }
-    target[3] = output_alpha.min(255) as u8;
+    target[3] = (source_alpha + (target[3] as u32 * inverse + 127) / 255)
+        .min(255) as u8;
 }
 
 #[cfg(test)]
@@ -908,6 +974,14 @@ mod tests {
     }
 
     #[test]
+    fn fit_dimensions_never_upscales_sub_alignment_targets() {
+        assert_eq!(fit_dimensions(4, 4, 4, 4), Ok((4, 4)));
+        assert_eq!(fit_dimensions(4, 100, 4, 100), Ok((4, 100)));
+        assert_eq!(fit_dimensions(100, 4, 100, 4), Ok((100, 4)));
+    }
+
+
+    #[test]
     fn sealed_source_reuses_demux_across_frames_and_rewind() {
         let bytes = include_bytes!("../testdata/animated.webp");
         let mut decoder = Decoder::new(512, 512);
@@ -918,21 +992,13 @@ mod tests {
         decoder.rewind();
         let repeated = decoder.decode_next(bytes, true).unwrap();
         assert_eq!(decoder.demux_builds, 1);
-        assert_eq!(
-            (repeated.width, repeated.height),
-            (first.width, first.height)
-        );
+        assert_eq!((repeated.width, repeated.height), (first.width, first.height));
     }
 
     #[test]
     fn endpoint_mapping_keeps_adjacent_strips_gapless() {
         let left = map_rect_endpoints(
-            Rect {
-                x: 0,
-                y: 0,
-                width: 321,
-                height: 643,
-            },
+            Rect { x: 0, y: 0, width: 321, height: 643 },
             1000,
             643,
             320,
@@ -940,12 +1006,7 @@ mod tests {
         )
         .unwrap();
         let right = map_rect_endpoints(
-            Rect {
-                x: 321,
-                y: 0,
-                width: 679,
-                height: 643,
-            },
+            Rect { x: 321, y: 0, width: 679, height: 643 },
             1000,
             643,
             320,
@@ -961,12 +1022,7 @@ mod tests {
     #[test]
     fn endpoint_mapping_preserves_odd_subrect_boundaries() {
         let top = map_rect_endpoints(
-            Rect {
-                x: 1,
-                y: 1,
-                width: 3,
-                height: 4,
-            },
+            Rect { x: 1, y: 1, width: 3, height: 4 },
             7,
             9,
             5,
@@ -974,12 +1030,7 @@ mod tests {
         )
         .unwrap();
         let bottom = map_rect_endpoints(
-            Rect {
-                x: 1,
-                y: 5,
-                width: 3,
-                height: 4,
-            },
+            Rect { x: 1, y: 5, width: 3, height: 4 },
             7,
             9,
             5,
@@ -991,12 +1042,13 @@ mod tests {
     }
 
     #[test]
-    fn source_over_blends_straight_alpha() {
+    fn source_over_blends_premultiplied_alpha() {
         let mut target = [0, 0, 255, 255];
-        blend_source_over(&mut target, &[255, 0, 0, 128]);
+        blend_source_over(&mut target, &[128, 0, 0, 128]);
         assert!((target[0] as i32 - 128).abs() <= 1);
         assert_eq!(target[1], 0);
         assert!((target[2] as i32 - 127).abs() <= 1);
         assert_eq!(target[3], 255);
     }
+
 }

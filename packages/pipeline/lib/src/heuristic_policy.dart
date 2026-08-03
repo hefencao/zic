@@ -105,7 +105,7 @@ final class HeuristicPolicy {
       };
 
   int _decodeWatermark(PageRole role) => switch (role) {
-        PageRole.current => 1,
+        PageRole.current => 2,
         PageRole.transition => 1,
         PageRole.next || PageRole.previous || PageRole.near =>
           decodeWarmPages ? 1 : 0,

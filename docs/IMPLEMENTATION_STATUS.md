@@ -1,3 +1,11 @@
+## dev.96 状态
+
+验证明细见 `docs/audits/dev96-validation-results.md`。
+
+已完成本地 Animated WebP 播放链的所有权修复：两个 Dart decode isolate 由 bridge 进程级常驻，并由 App composition 在 `runApp` 前显式等待预热完成，current 保留一个槽；sessions 对 same-key transition→current 使用 follow，避免取消不可中断 native work；current 保留两个 successor。libwebp 锁定 1.6.0 并加入自动补丁准备链，VP8 大 workspace 按 OS decode 线程复用，帧内线程关闭，未引入 8 线程 worker interface。native 输出改为预乘 RGBA，Android 只复制且不每帧配置 Surface，Flutter fallback 删除二次预乘。流式 metadata 增长会主动刷新 demux，小于 8 px 的 target 不再放大，本地 ingress 统一 1 MiB。
+
+当前环境缺少 Flutter/Dart、Rust、Android SDK/NDK，不能执行 analyzer、Flutter package tests、cargo 或 Android build；repository Python/static gates、shell 语法、补丁 fixture 与干净解压复验作为本环境可执行证据。上游 libwebp fetch 在当前环境受 DNS 限制，因此真实 1.6.0 tree 上的 patch/build 仍列为外部未验证项。
+
 ## dev.95 状态
 
 已在 dev.94 唯一基线上继续对照 VibeVenera 的通用媒体 Pipeline/libwebp。高性能设备 Trace 中 native decode 中位约 70.7 ms、Android blit 中位低于 1 ms，但首帧仍约 1.7–2.3 秒；确认主要额外工作来自 promoted artifact 整页物化/重复读取、临时 session 文件逐块等待、Dart→native 双复制以及 source-size canvas 的完整二次缩放。当前持久缓存通过 `ArtifactCacheStreamStore` 直接流入唯一 DownloadSession，流式 store 不再由 read pool 并行整页 prime；Artifact 改用 IOSink 缓冲。native ABI 6 增加 expected capacity、reserve/commit，使 Dart 直接写 native source committed prefix。WebP descriptor 受控刷新，fragment 由 libwebp 直接缩放到共享端点映射的 target rectangle，并在 target canvas blend/dispose。repository/Dart structure、dev.75–dev.95、Android/Mihon/Venera/Reader/Pipeline/UI、native header 和本地 libwebp host smoke 正在/已按当前环境验证；Flutter/Dart/Rust/Gradle/Android 工具链和真机 200 ms 目标仍需外部环境复验。

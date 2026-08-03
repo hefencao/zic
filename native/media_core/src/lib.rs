@@ -13,7 +13,7 @@ use std::slice;
 use std::sync::{Arc, RwLock};
 
 pub const ABI_VERSION: u32 = 6;
-pub const LIB_VERSION: u32 = 0x0012_0500;
+pub const LIB_VERSION: u32 = 0x0012_0600;
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -254,6 +254,7 @@ pub unsafe extern "C" fn zic_source_free(source: *mut ByteSource) {
     }
 }
 
+
 #[no_mangle]
 pub unsafe extern "C" fn zic_source_reserve_capacity(
     source: *mut ByteSource,
@@ -319,10 +320,9 @@ pub unsafe extern "C" fn zic_source_commit(
     let Some(source) = source.as_ref() else {
         return Status::Null as u32;
     };
-    source
-        .inner
-        .write()
-        .map_or(Status::Failed, |mut state| state.commit(epoch, offset, len)) as u32
+    source.inner.write().map_or(Status::Failed, |mut state| {
+        state.commit(epoch, offset, len)
+    }) as u32
 }
 
 #[no_mangle]
@@ -484,10 +484,7 @@ pub unsafe extern "C" fn zic_cursor_decode_next(
     match source.sniff() {
         ContainerKind::Unknown => CursorStatus::NeedMoreData as u32,
         ContainerKind::Gif | ContainerKind::Other => CursorStatus::Unsupported as u32,
-        ContainerKind::Webp => match cursor
-            .decoder
-            .decode_next(source.committed_bytes(), source.sealed)
-        {
+        ContainerKind::Webp => match cursor.decoder.decode_next(source.committed_bytes(), source.sealed) {
             Ok(decoded) => {
                 let frame = FrameHandle {
                     data: Arc::new(FrameData {
@@ -655,7 +652,7 @@ mod tests {
     #[test]
     fn exported_versions_are_stable() {
         assert_eq!(zic_abi_version(), 6);
-        assert_eq!(zic_version(), 0x0012_0500);
+        assert_eq!(zic_version(), 0x0012_0600);
         // These values are provided by the linked system libwebp, so their
         // exact version is platform-dependent while the exported ABI remains
         // stable.
@@ -815,10 +812,7 @@ mod tests {
             unsafe { zic_source_append(source_ptr, 11, 0, bytes.as_ptr(), bytes.len()) },
             Status::Ok as u32
         );
-        assert_eq!(
-            unsafe { zic_source_seal(source_ptr, 11) },
-            Status::Ok as u32
-        );
+        assert_eq!(unsafe { zic_source_seal(source_ptr, 11) }, Status::Ok as u32);
         let cursor = unsafe { zic_cursor_create(source_ptr, 11, 1, 8) };
         assert!(!cursor.is_null());
 

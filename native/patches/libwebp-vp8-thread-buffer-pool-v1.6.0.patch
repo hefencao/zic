@@ -1,0 +1,44 @@
+diff -U1 -r a/src/dec/vp8_dec.c b/src/dec/vp8_dec.c
+--- a/src/dec/vp8_dec.c
++++ b/src/dec/vp8_dec.c
+@@ -5,2 +5,22 @@
+ 
++// ZIC playback decodes each animation on one of two process-lifetime Dart
++// isolate threads. Keep the largest VP8 frame workspace on that OS thread so
++// successive frames do not repeatedly allocate and free the same large block.
++// This is deliberately a one-entry TLS cache, not an additional worker pool.
++#if defined(_MSC_VER)
++#define ZIC_VP8_THREAD_LOCAL __declspec(thread)
++#elif defined(__GNUC__) || defined(__clang__)
++#define ZIC_VP8_THREAD_LOCAL __thread
++#else
++#define ZIC_VP8_THREAD_LOCAL _Thread_local
++#endif
++
++typedef struct {
++  uint8_t* memory;
++  size_t size;
++} ZicVp8ThreadBuffer;
++
++static ZIC_VP8_THREAD_LOCAL ZicVp8ThreadBuffer
++    zic_vp8_thread_buffer = { NULL, 0 };
++
+ int VP8InitIoInternal(VP8Io* const io, int version) {
+@@ -18,2 +38,6 @@
+   if (dec != NULL) {
++    dec->mem = zic_vp8_thread_buffer.memory;
++    dec->mem_size = zic_vp8_thread_buffer.size;
++    zic_vp8_thread_buffer.memory = NULL;
++    zic_vp8_thread_buffer.size = 0;
+     SetOk(dec);
+@@ -33,3 +57,9 @@
+   WebPDeallocateAlphaMemory(dec);
+-  WebPSafeFree(dec->mem);
++  if (dec->mem != NULL && dec->mem_size >= zic_vp8_thread_buffer.size) {
++    WebPSafeFree(zic_vp8_thread_buffer.memory);
++    zic_vp8_thread_buffer.memory = dec->mem;
++    zic_vp8_thread_buffer.size = dec->mem_size;
++  } else {
++    WebPSafeFree(dec->mem);
++  }
+   dec->mem = NULL;

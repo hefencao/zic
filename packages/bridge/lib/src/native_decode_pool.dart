@@ -22,6 +22,11 @@ final class _NativeDecodeResult {
   final int nativeMicros;
 }
 
+/// Process-lifetime pool: page/cursor disposal never owns worker shutdown.
+///
+/// With two workers, at most one non-current decode may run concurrently. The
+/// other slot remains available to current work, matching the playback path's
+/// single high-priority reservation without adding native nested thread pools.
 final class _NativeDecodeWorkerPool {
   _NativeDecodeWorkerPool._(this.libPath);
 
@@ -37,39 +42,33 @@ final class _NativeDecodeWorkerPool {
   }
 
   final String? libPath;
-  final Queue<_PendingNativeDecode> _pending = Queue<_PendingNativeDecode>();
+  final Queue<_PendingNativeDecode> _currentPending =
+      Queue<_PendingNativeDecode>();
+  final Queue<_PendingNativeDecode> _nonCurrentPending =
+      Queue<_PendingNativeDecode>();
   final List<_NativeDecodeWorker> _workers = <_NativeDecodeWorker>[];
   Future<void>? _starting;
-  int _owners = 0;
-  bool _closeWhenIdle = false;
 
-  void acquire() {
-    _owners++;
-  }
-
-  void release() {
-    if (_owners <= 0) {
-      throw StateError('native decode worker pool owner underflow');
-    }
-    _owners--;
-    if (_owners == 0) {
-      _requestShutdown();
-    }
-  }
+  Future<void> prewarm() => _ensureStarted();
 
   Future<_NativeDecodeResult> decode({
     required int cursorAddress,
     required int epoch,
+    required DecodeExecutionClass executionClass,
   }) async {
     await _ensureStarted();
     final completer = Completer<_NativeDecodeResult>();
-    _pending.addLast(
-      _PendingNativeDecode(
-        cursorAddress: cursorAddress,
-        epoch: epoch,
-        completer: completer,
-      ),
+    final pending = _PendingNativeDecode(
+      cursorAddress: cursorAddress,
+      epoch: epoch,
+      executionClass: executionClass,
+      completer: completer,
     );
+    if (executionClass == DecodeExecutionClass.current) {
+      _currentPending.addLast(pending);
+    } else {
+      _nonCurrentPending.addLast(pending);
+    }
     _pump();
     return completer.future;
   }
@@ -118,32 +117,35 @@ final class _NativeDecodeWorkerPool {
     }
   }
 
-  void _requestShutdown() {
-    if (_pending.isNotEmpty || _workers.any((worker) => worker.busy)) {
-      _closeWhenIdle = true;
-      return;
-    }
-    _shutdownNow();
-  }
-
-  void _shutdownNow() {
-    for (final worker in _workers) {
-      worker.close();
-    }
-    _workers.clear();
-    _starting = null;
-    _closeWhenIdle = false;
-  }
-
   void _pump() {
     for (final worker in _workers) {
-      if (worker.busy || _pending.isEmpty) {
+      if (worker.busy) {
         continue;
       }
-      final pending = _pending.removeFirst();
+      final pending = _takePending();
+      if (pending == null) {
+        return;
+      }
       worker.busy = true;
+      worker.executionClass = pending.executionClass;
       unawaited(_run(worker, pending));
     }
+  }
+
+  _PendingNativeDecode? _takePending() {
+    if (_currentPending.isNotEmpty) {
+      return _currentPending.removeFirst();
+    }
+    final nonCurrentBusy = _workers.where(
+      (worker) =>
+          worker.busy &&
+          worker.executionClass == DecodeExecutionClass.nonCurrent,
+    ).length;
+    if (_nonCurrentPending.isNotEmpty &&
+        nonCurrentBusy < _nativeDecodeWorkerCount - 1) {
+      return _nonCurrentPending.removeFirst();
+    }
+    return null;
   }
 
   Future<void> _run(
@@ -160,13 +162,8 @@ final class _NativeDecodeWorkerPool {
       pending.completer.completeError(error, stack);
     } finally {
       worker.busy = false;
+      worker.executionClass = null;
       _pump();
-      if (_closeWhenIdle &&
-          _owners == 0 &&
-          _pending.isEmpty &&
-          !_workers.any((candidate) => candidate.busy)) {
-        _shutdownNow();
-      }
     }
   }
 }
@@ -175,11 +172,13 @@ final class _PendingNativeDecode {
   const _PendingNativeDecode({
     required this.cursorAddress,
     required this.epoch,
+    required this.executionClass,
     required this.completer,
   });
 
   final int cursorAddress;
   final int epoch;
+  final DecodeExecutionClass executionClass;
   final Completer<_NativeDecodeResult> completer;
 }
 
@@ -188,6 +187,7 @@ final class _NativeDecodeWorker {
 
   final SendPort port;
   bool busy = false;
+  DecodeExecutionClass? executionClass;
 
   void close() {
     port.send('close');

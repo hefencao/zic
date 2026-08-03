@@ -1,3 +1,21 @@
+## dev.96 已实施与验证计划
+
+### 已实施
+
+- 将 decode pool 改为由 App composition 在 `runApp` 前显式等待预热完成、进程期常驻的双 isolate current/non-current 调度器。
+- 在 media cursor 增加只读调度能力，session 从 PageRole 投影；same-key changed decode/upload 使用 follow。
+- current successor 水位改为 2；保留所有既定窗口和 lane。
+- libwebp 1.6.0 增加 prepared-tree 自动补丁链、VP8 TLS workspace 复用和帧内单线程；禁止额外 native worker pool。
+- 统一预乘 RGBA 所有权，删除 Android/Flutter 重复工作；修复流式 demux 刷新、小尺寸 contain 与本地 1 MiB ingress。
+
+### 验证顺序
+
+1. repository、Dart structure、dev.75–dev.96、Android/Mihon/Venera 契约门禁。
+2. Flutter SDK 环境运行 `flutter analyze`、受影响 `media/bridge/pipeline/sessions/pipeline_native/local_media*` 测试及 App 测试。
+3. Rust 环境运行 `cargo test -p media_core`，并从可访问上游源执行 `tool/prepare_webp.sh`、host smoke。
+4. Android debug/release 或 kernel snapshot；真机对比首入/重进、transition→current、透明动画、长时间 successor 水位和纹理退休数。
+5. 干净 ZIP 解压后重复静态门禁。未完成设备验证前不宣称达到 200 ms。
+
 ## dev.95 完成项与设备验证
 
 ### 已完成

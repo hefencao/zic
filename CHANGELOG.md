@@ -1,3 +1,14 @@
+## 0.31.0-dev.96：常驻双 isolate 与单线程本地 WebP 播放
+
+- 两个 Dart native decode isolate 由 App composition 在 `runApp` 前显式等待预热完成并进程期常驻；页面/cursor 不再关闭 worker pool。
+- current 使用独立高优先级队列并保留一个 worker 槽，非 current 最多占用其余一个槽。
+- transition→current 的 same-key decode/upload 改为等待 active 完成后 follow，避免丢弃有效帧和反复退休纹理。
+- current watermark 从 1 提升为 2，保留两个 successor；既定 7/3、2/1、current/transition 和 5/3/2 不变。
+- libwebp 锁定 1.6.0；新增自动 prepared-tree 补丁链，复用 VP8 TLS workspace；帧内线程固定为 0，明确拒绝额外 8 线程 worker interface。
+- native WebP 改用预乘 `MODE_rgbA`，target canvas 使用预乘 source-over；Android 只逐行复制且不每帧设置 Surface geometry，Flutter fallback 删除二次预乘。
+- source 增长且 metadata 未完成时主动刷新 demux；小于 8 px 的 contain target 不再放大；本地文件/DocumentFile 分块提升为 1 MiB。
+- 新增 ADR 0080、dev.96 三清单审计、Dart/Rust 回归规格和 dev.96 静态门禁。
+
 ## 0.31.0-dev.95：直通缓存/native ingress 并改用目标画布 WebP
 
 - 根据高性能设备 Trace 排除硬件瓶颈：native decode 中位约 70.7 ms、Android blit 中位低于 1 ms，但首帧仍约 1.7–2.3 秒，platform callback 最高约 1.59 秒。
@@ -16,7 +27,7 @@
 - isolate 消息只传 native cursor/frame 地址、epoch 和小型状态，不复制像素或完整 WebP 字节。
 - `media_core` 缓存 demux frame descriptors；只有 source 长度或 seal 状态变化才重新 demux，不再逐帧解析完整文件。
 - demux descriptor 只保存 authoritative source 中的 offset/length，不再保留第二份完整压缩字节快照。
-- libwebp 使用 advanced decoder config 与 `use_threads=1`；删除逐帧 full-canvas clone，并保持 dev.82 的源像素网格 blend/dispose 后整帧缩放。
+- dev.94 当时使用 advanced decoder config 帧内多线程；该历史设置已由 dev.96 的单线程 frame decode 取代。删除逐帧 full-canvas clone 的改动仍保留。
 - `frameDecoded` Trace 增加 `nativeDecodeMicros` 与 `decodeDispatchMicros`，区分 native codec 与 isolate/queue 往返。
 - 新增 demux reuse/rewind Rust fixture、C threaded decode smoke、ADR 0078、dev.94 三清单审计和静态所有权门禁。
 

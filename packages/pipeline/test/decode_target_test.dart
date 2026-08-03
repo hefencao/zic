@@ -35,6 +35,26 @@ void main() {
     expect(target.physicalHeight, lessThanOrEqualTo((852 * 2.75).floor()));
   });
 
+  test('direct target preserves sub-eight-pixel dimensions', () {
+    final target = DecodeTarget(physicalWidth: 4, physicalHeight: 6);
+
+    expect(target.physicalWidth, 4);
+    expect(target.physicalHeight, 6);
+  });
+
+  test('fit preserves sub-eight-pixel targets without enlargement', () {
+    final target = DecodeTarget.fit(
+      sourceWidth: 4,
+      sourceHeight: 4,
+      logicalWidth: 4,
+      logicalHeight: 4,
+      devicePixelRatio: 1,
+    );
+
+    expect(target.physicalWidth, 4);
+    expect(target.physicalHeight, 4);
+  });
+
   test('viewport target applies the physical pixel budget', () {
     final target = DecodeTarget.viewport(
       logicalWidth: 1440,

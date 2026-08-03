@@ -22,7 +22,7 @@
 
 - 缺少禁止 UI isolate direct decode 的门禁。
 - 缺少 sealed source 跨帧/rewind 复用 demux 的 fixture。
-- 缺少 libwebp advanced config `use_threads=1` 与 external RGBA smoke。
+- dev.94 当时缺少 advanced config 与 external RGBA smoke；帧内 `use_threads=1` 已由 dev.96/ADR 0080 废止。
 - 当前环境缺少 Dart/Flutter/Rust/Android 工具链，无法执行真实 isolate/native integration test。
 
 ## 所有权清单

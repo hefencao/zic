@@ -41,10 +41,10 @@ require(
 )
 require(
     'packages/bridge/lib/src/native_cursor.dart',
-    '_NativeDecodeWorkerPool.forLibrary(libPath)..acquire()',
+    '_NativeDecodeWorkerPool.forLibrary(libPath)',
     'await _decodePool.decode(',
     'Pointer<_Frame>.fromAddress(result.frameAddress)',
-    '_decodePool.release();',
+    'decodeNextScheduled(',
     'nativeDecodeMicros: result.nativeMicros',
     'dispatchMicros:',
 )
@@ -73,7 +73,7 @@ require(
     'fragment_offset',
     'self.demux = Some(DemuxSnapshot::parse(bytes, sealed)?);',
     'sealed_source_reuses_demux_across_frames_and_rewind',
-    'config.options.use_threads = 1;',
+    'config.options.use_threads = 0;',
     'WebPInitDecoderConfigInternal',
     'map_rect_endpoints(',
     'bytes: self.canvas.clone(),',
@@ -89,7 +89,7 @@ forbid(
 require(
     'tools/webp_decoder_smoke.c',
     'decode_rgba_threaded',
-    'config.options.use_threads = 1;',
+    'config.options.use_threads = 0;',
     'WebPDecode(bytes, size, &config)',
 )
 require(

@@ -382,7 +382,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         continue;
       }
       final submit = diff.changed.containsKey(entry.key)
-          ? decode.replace
+          ? decode.follow
           : decode.submit;
       submit(
         key: entry.key.key,
@@ -592,7 +592,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         sessionId,
         entry.key,
         entry.value,
-        replace: diff.changed.containsKey(entry.key),
+        follow: diff.changed.containsKey(entry.key),
         demandRevision: demandRevision,
       );
     }
@@ -616,15 +616,10 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     String sessionId,
     DecodeId id,
     UploadDemand demand, {
-    bool replace = false,
     bool follow = false,
     required int demandRevision,
   }) {
-    final submit = replace
-        ? upload.replace
-        : follow
-            ? upload.follow
-            : upload.submit;
+    final submit = follow ? upload.follow : upload.submit;
     submit(
       key: id.key,
       priority: demand.priority,

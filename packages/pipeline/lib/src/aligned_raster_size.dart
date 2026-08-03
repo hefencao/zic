@@ -5,8 +5,8 @@ import 'dart:math' as math;
 /// Downsampled dimensions are aligned to [alignment] pixels as a pair. The
 /// search only considers candidates near the maximum fitting area, then picks
 /// the smallest source-aspect error and the largest area on ties. The result is
-/// always aligned as a pair and never exceeds either the source or viewport,
-/// except for a source side smaller than one alignment quantum.
+/// always aligned as a pair and never exceeds either the source or viewport.
+/// Tiny rasters below one alignment quantum retain their exact contain size.
 final class AlignedRasterSize {
   const AlignedRasterSize({
     required this.width,
@@ -28,6 +28,18 @@ final class AlignedRasterSize {
     }
     if (alignment <= 0) {
       throw ArgumentError.value(alignment, 'alignment', 'must be positive');
+    }
+    final boundedWidth = math.min(sourceWidth, maxWidth);
+    final boundedHeight = math.min(sourceHeight, maxHeight);
+    if (boundedWidth < alignment || boundedHeight < alignment) {
+      final scale = math.min(
+        1.0,
+        math.min(maxWidth / sourceWidth, maxHeight / sourceHeight),
+      );
+      return AlignedRasterSize(
+        width: math.max(1, (sourceWidth * scale).floor()),
+        height: math.max(1, (sourceHeight * scale).floor()),
+      );
     }
     final widthBound = _alignDown(
       math.min(sourceWidth, maxWidth),

@@ -2,7 +2,7 @@
 
 ## 状态
 
-Accepted for `0.31.0-dev.94`; target-canvas composition geometry superseded by ADR 0079 in dev.95. Worker、持久 demux 与 handle-only handoff 仍有效。
+Superseded in part by ADR 0079/0080. 持久 demux 与 handle-only handoff 仍有效；cursor-owner shutdown、帧内 `use_threads=1` 和 source-grid geometry 已失效。
 
 ## 背景
 
@@ -16,7 +16,7 @@ VibeVenera 的通用 WebP 路径使用常驻 decode Isolate、持久 native deco
 2. native pointer 生命周期由 cursor owner保证；同 cursor禁止并发 decode，dispose 等待 in-flight 结束。worker 最后一个 owner 释放且队列空时关闭。
 3. `media_core::webp::Decoder` 缓存 source-relative frame descriptors、animation metadata、canvas 和播放位置。source 长度/sealed 变化才重新 demux。
 4. descriptor 不拥有 encoded bytes；当前 source read lock 保证 fragment offset range 在 decode 期间稳定。
-5. libwebp 使用 advanced decoder config、external RGBA 和 `use_threads=1`。
+5. 历史决策：libwebp 使用 advanced decoder config、external RGBA 和 `use_threads=1`；ADR 0080 已改为 external 预乘 RGBA 与 `use_threads=0`。
 6. blend/dispose 继续在 source pixel grid完成，之后整帧一次缩放。删除逐帧 demux、第二份完整压缩 snapshot 和 composition 前 full-canvas clone。
 7. ZIC 已有 Android serial native texture blit，因此不迁移第二套 texture plugin。
 8. Trace 分离 native decode 与 dispatch/worker 往返。

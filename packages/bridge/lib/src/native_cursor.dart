@@ -95,13 +95,13 @@ final class NativeCursorFactory implements CursorFactory {
       api.free(ptr);
       throw StateError('native cursor epoch mismatch');
     }
-    final decodePool = _NativeDecodeWorkerPool.forLibrary(libPath)..acquire();
+    final decodePool = _NativeDecodeWorkerPool.forLibrary(libPath);
     final cursor = NativeCursor._(ptr, api, decodePool, epoch);
     return CursorBinding(frames: cursor, loop: cursor);
   }
 }
 
-final class NativeCursor implements FrameCursor, LoopCursor {
+final class NativeCursor implements ScheduledFrameCursor, LoopCursor {
   NativeCursor._(this._ptr, this._api, this._decodePool, this._epoch);
 
   Pointer<_Cursor> _ptr;
@@ -115,7 +115,6 @@ final class NativeCursor implements FrameCursor, LoopCursor {
   bool _metadataComplete = false;
   bool _decodeInFlight = false;
   bool _disposeRequested = false;
-  bool _poolReleased = false;
 
   bool get disposed => _disposeRequested || _ptr == nullptr;
 
@@ -133,7 +132,13 @@ final class NativeCursor implements FrameCursor, LoopCursor {
   int get cycle => _cycle;
 
   @override
-  Future<CursorStep> decodeNext() async {
+  Future<CursorStep> decodeNext() =>
+      decodeNextScheduled(DecodeExecutionClass.nonCurrent);
+
+  @override
+  Future<CursorStep> decodeNextScheduled(
+    DecodeExecutionClass executionClass,
+  ) async {
     final ptr = _requirePtr();
     if (_decodeInFlight) {
       throw StateError('native cursor already has a decode in flight');
@@ -144,6 +149,7 @@ final class NativeCursor implements FrameCursor, LoopCursor {
       final result = await _decodePool.decode(
         cursorAddress: ptr.address,
         epoch: _epoch,
+        executionClass: executionClass,
       );
       _frameCount = result.frameCount;
       _loopCount = result.loopCount;
@@ -245,10 +251,6 @@ final class NativeCursor implements FrameCursor, LoopCursor {
     }
     _ptr = nullptr;
     _api.free(ptr);
-    if (!_poolReleased) {
-      _poolReleased = true;
-      _decodePool.release();
-    }
   }
 
   void _releaseWorkerFrame(int address) {

@@ -24,6 +24,11 @@ Future<void> zicExternalPluginRuntimeServiceMain() =>
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  try {
+    await prewarmDefaultLocalMediaPipeline();
+  } on Object catch (error) {
+    debugPrint('native decode worker prewarm unavailable: $error');
+  }
   runApp(const _BootstrapApp());
 }
 

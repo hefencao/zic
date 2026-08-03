@@ -2,7 +2,7 @@
 
 ## 状态
 
-Accepted for `0.31.0-dev.93`.
+Accepted for `0.31.0-dev.93`; successor count and local chunk size are amended by ADR 0080/dev.96.
 
 ## 背景
 
@@ -13,13 +13,13 @@ Accepted for `0.31.0-dev.93`.
 ## 决策
 
 1. 当前可见动画 output 不计入 successor prepared depth；静态 output 仍计 1。
-2. DecodeSession 使用现有 cursor/FrameHolder 和 target watermark 在当前帧期限内最多预解码一帧 successor，不新增缓存层。
+2. DecodeSession 使用现有 cursor/FrameHolder 和 target watermark 在当前帧期限内预解码 successor，不新增缓存层。dev.93 的 watermark 为 1；ADR 0080 将 current 提升为 2。
 3. UploadSession 在 `_awaitingSuccessor=false` 且当前动画 output 仍在 deadline 内时，不得提前消费 holder 中 successor。
 4. deadline 到达后 LiveCoordinator 同时唤醒 upload 和 decode：holder 已有帧时立即上传替换；没有时旧 output 保持可见，decoder 完成后再唤醒 upload。
 5. dev.92 的有限动画 ended/final output 保留和静态零时长规则继续有效。
 6. AndroidTexturePresenter 在 MethodChannel 调用外测量 `roundTripMicros`；`bridgeMicros=max(roundTrip-queue-upload,0)` 只作诊断。
-7. Android document bridge 协议升至 v5。对 seekable `AssetFileDescriptor`，native 持有 descriptor 并返回同进程 `/proc/self/fd`、起止 offset；Dart `RandomAccessFile` 直接按 256 KiB 读取。不可 seek或 direct open 在首字节前失败时回退 MethodChannel chunk。
-8. 不改变页面预解码范围、上传窗口、lane、I/O 分块或 renderer output 数量上限。
+7. Android document bridge 协议升至 v5。对 seekable `AssetFileDescriptor`，native 持有 descriptor 并返回同进程 `/proc/self/fd`、起止 offset；Dart `RandomAccessFile` 直接分块读取。dev.93 使用 256 KiB，ADR 0080 将本地 File/DocumentFile 提升为 1 MiB。不可 seek或 direct open 在首字节前失败时回退 MethodChannel chunk。
+8. 不改变页面预解码范围、上传窗口、lane 或 renderer output 数量上限；I/O 分块在 ADR 0080 中仅对本地 File/DocumentFile 调整为 1 MiB，网络仍为 256 KiB。
 
 ## 被否决方案
 
@@ -32,4 +32,4 @@ Accepted for `0.31.0-dev.93`.
 
 ## 影响
 
-动画可以把当前帧显示时间与下一帧 decode 重叠；当 decode 仍慢于目标 duration 时无法凭空达到原始帧率，但不再额外串行等待。Trace 可区分 codec、native upload 和 bridge/presentation 等待。seekable Android document 可消除每个 256 KiB chunk 的 MethodChannel 往返；provider pipe/virtual document 仍使用原 fallback。
+动画可以把当前帧显示时间与 successor decode 重叠；当 decode 仍慢于目标 duration 时无法凭空达到原始帧率，但不再额外串行等待。Trace 可区分 codec、native upload 和 bridge/presentation 等待。seekable Android document 可消除逐 chunk MethodChannel 往返；provider pipe/virtual document 仍使用原 fallback。

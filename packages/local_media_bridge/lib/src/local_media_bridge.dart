@@ -7,7 +7,7 @@ import 'package:flutter/services.dart';
 
 const String localMediaBridgeChannelName = 'dev.zic/local_media';
 const int localMediaBridgeProtocolVersion = 5;
-const int localMediaBridgeChunkBytes = 256 * 1024;
+const int localMediaBridgeChunkBytes = 1024 * 1024;
 
 @immutable
 final class LocalMediaDocument {

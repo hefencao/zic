@@ -88,6 +88,17 @@ final class CursorStep {
   final FrameRef? frame;
 }
 
+enum DecodeExecutionClass { current, nonCurrent }
+
+/// Optional scheduling capability for cursor implementations backed by a
+/// shared decoder pool. Sessions choose the execution class from PageRole; the
+/// cursor/pool remains the sole owner of worker slots and native execution.
+abstract interface class ScheduledFrameCursor implements FrameCursor {
+  Future<CursorStep> decodeNextScheduled(
+    DecodeExecutionClass executionClass,
+  );
+}
+
 abstract interface class FrameCursor {
   int get epoch;
 

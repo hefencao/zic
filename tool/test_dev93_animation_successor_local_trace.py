@@ -25,7 +25,7 @@ def forbid(path: str, *tokens: str) -> None:
 require(
     'packages/sessions/lib/src/upload_session.dart',
     'return decode.snapshot.animation.frameCount > 1 ? 0 : 1;',
-    'Decode may run ahead by one frame, but upload remains deadline-owned.',
+    'Decode may run ahead to its watermark, but upload remains deadline-owned.',
     "'successorDepth': decode.holder?.depth ?? 0",
     "'successorBuffered': (decode.holder?.depth ?? 0) > 0",
 )

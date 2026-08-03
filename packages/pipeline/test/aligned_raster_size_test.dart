@@ -24,6 +24,27 @@ void main() {
     expect((tall.width / tall.height - 0.25).abs(), lessThan(0.01));
   });
 
+  test('does not upscale rasters smaller than one alignment quantum', () {
+    expect(
+      AlignedRasterSize.fit(
+        sourceWidth: 4,
+        sourceHeight: 4,
+        maxWidth: 4,
+        maxHeight: 4,
+      ),
+      const AlignedRasterSize(width: 4, height: 4),
+    );
+    expect(
+      AlignedRasterSize.fit(
+        sourceWidth: 4,
+        sourceHeight: 100,
+        maxWidth: 4,
+        maxHeight: 100,
+      ),
+      const AlignedRasterSize(width: 4, height: 100),
+    );
+  });
+
   test('aligns a fitting source without exceeding its dimensions', () {
     expect(
       AlignedRasterSize.fit(

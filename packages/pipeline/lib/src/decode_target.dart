@@ -16,13 +16,13 @@ final class DecodeTarget {
     this.renderer = RendererKind.flutterImage,
     int alignment = 8,
   })  : alignment = _checkAlignment(alignment),
-        physicalWidth = alignPhysicalDimension(
+        physicalWidth = _alignTargetDimension(
           physicalWidth,
-          alignment: alignment,
+          alignment,
         ),
-        physicalHeight = alignPhysicalDimension(
+        physicalHeight = _alignTargetDimension(
           physicalHeight,
-          alignment: alignment,
+          alignment,
         );
 
   DecodeTarget._({
@@ -196,10 +196,20 @@ _PhysicalBounds _physicalBounds({
   );
 }
 
+int _alignTargetDimension(int value, int alignment) {
+  if (value <= 0) {
+    throw ArgumentError.value(value, 'value', 'must be positive');
+  }
+  return value < alignment
+      ? value
+      : alignPhysicalDimension(value, alignment: alignment);
+}
 
 int _alignDown(int value, int alignment) {
-  final aligned = (value ~/ alignment) * alignment;
-  return aligned >= alignment ? aligned : alignment;
+  if (value < alignment) {
+    return value;
+  }
+  return (value ~/ alignment) * alignment;
 }
 
 int _checkAlignment(int alignment) {

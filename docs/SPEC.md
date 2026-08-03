@@ -1,3 +1,16 @@
+## dev.96 本地 Animated WebP 播放规范
+
+1. native decode pool 固定两个 Dart isolate，并应由 App composition 在 `runApp` 前显式等待预热完成；cursor dispose 不得关闭 pool。
+2. current 必须可占用保留槽；non-current 同时最多占用 `workerCount - 1` 个槽。调度类由 session 从 `PageRole` 投影，Reader 不得直接指定 worker。
+3. same locator/DecodeId 从 transition 提升为 current 时，active decode/upload 不得取消或丢弃；最新 demand 在 active 完成后 follow。removed identity 仍取消。
+4. current target watermark 为 2，transition 为 1。后继帧由 Pipeline/DecodeSession 填充，不由 widget 私有定时器或缓存实现。
+5. libwebp 必须是 lock 中的 1.6.0 commit，且构建必须成功应用 VP8 TLS workspace patch。帧内 `use_threads` 必须为 0；禁止额外 persistent `WebPWorkerInterface`。
+6. native 输出是预乘 RGBA。Android 与 Flutter presentation 不得再次预乘；Android native blit 不得每帧调用 `ANativeWindow_setBuffersGeometry`。
+7. metadata 未完成的流式 WebP 在 source length 增长时必须刷新 demux，即使旧 snapshot 已包含当前 descriptor。
+8. contain target 任一边小于 8 px 时保留精确不放大尺寸；其他尺寸继续成对 8 px 对齐。
+9. 本地 File/DocumentFile 每次最多读 1 MiB；网络 transport 默认分块仍为 256 KiB。
+10. 7/3、页面 2/1、current/transition upload、5/3/2 lane 与 target-canvas 无裁切几何不得改变。
+
 ## dev.95 缓存/native ingress/目标画布规范
 
 1. promoted artifact 缓存命中必须可通过 `ArtifactCacheStreamStore` 以范围流进入唯一 DownloadSession；不得先物化整页 `Uint8List`，不得由 read pool 同时读取第二份完整文件。
@@ -16,10 +29,10 @@
 1. native WebP 帧解码不得同步占用 Dart UI isolate；平台 composition 必须通过常驻 worker Isolate 执行 cursor decode。
 2. isolate 边界只允许 native handle 地址、epoch、状态、animation metadata 和 timing；禁止传递像素字节、完整 encoded source 或 mutable session。
 3. 同一 cursor 任一时刻只能有一个 decode in flight；dispose/rewind 不得与 decode 并发释放或修改 cursor。
-4. worker pool 固定两个常驻 worker，按 library identity 共享；最后一个 cursor owner 释放且任务排空后必须关闭，部分启动失败不得泄漏已启动 isolate。
+4. worker pool 固定两个进程期常驻 worker，按 library identity 共享；cursor 不拥有 pool 关闭。部分启动失败必须关闭已启动 isolate并允许后续显式重试。
 5. demux frame descriptor 应跨帧和 rewind 复用；只有 authoritative source 长度或 seal 状态变化时才重建。
 6. descriptor 只保存 source-relative fragment offset/length；不得复制第二份完整 WebP 压缩字节。decode 时必须在 source read lock 生命周期内验证 range 并取 pointer。
-7. libwebp decode 必须使用 version-checked advanced config、external RGBA buffer 和 `use_threads=1`。
+7. libwebp decode 必须使用 version-checked advanced config、external 预乘 RGBA buffer 和 `use_threads=0`；禁止额外 native worker pool。
 8. dev.94 历史实现曾在源像素网格 blend/dispose 后整帧缩放；该要求已由顶部 dev.95 共享端点 target-canvas 规范取代。仍禁止独立 round(offset)+round(width) 与每帧 full-canvas clone。
 9. `frameDecoded` 必须同时投影 total、native 与 dispatch timing；diagnostic timing 不得成为第二调度权威来源。
 10. 现有前 7/后 3下载、前 2/后 1预解码、current/transition 上传、5/3/2 lane、256 KiB source chunk 不得因性能问题缩小。
@@ -27,7 +40,7 @@
 ## dev.93 动画后继帧预解码与平台上传诊断规范
 
 1. 当前可见的动画 output 是 presentation state，不是未来 successor；其 upload prepared depth 必须为 0。
-2. 在 current/transition upload demand 存在时，DecodeSession 应按既有 watermark 在当前帧显示期间最多准备一帧 successor。
+2. 在 current/transition upload demand 存在时，DecodeSession 应按 watermark 在当前帧显示期间准备 successor；dev.96 current 为 2、transition 为 1。
 3. successor 在当前帧 deadline 前不得替换可见 output；deadline 后存在缓冲帧时应优先原子替换。
 4. deadline 后尚无 successor 时，旧 output 必须继续可见；不得退回 loading，也不得新建 Reader/App last-frame cache。
 5. 有限动画 ended 且 holder 为空时继续执行 dev.92 的最终帧保留语义。
@@ -45,7 +58,7 @@
 5. 等待 successor 时 decoder 进入 ended，视为有限动画完成；最后 output 必须保留，播放 timer 清除，并产生脱敏 `playbackCompleted`。
 6. source 增长、解码或上传暂时延迟时，旧 output 继续显示；下一帧失败不得无条件销毁已成功呈现的 output。
 7. `Stream.toList` 测试不得使用不存在的 growable 参数；viewport 测试必须构造符合期望的父约束，不得用错误 fixture 迫使产品几何变化。
-8. 下载前 7/后 3、预解码前 2/后 1、上传 current/transition、lane 5/3/2 与 256 KiB 数据块保持不变。
+8. 下载前 7/后 3、预解码前 2/后 1、上传 current/transition 与 lane 5/3/2 保持不变；普通网络数据块为 256 KiB，本地 File/DocumentFile 自 dev.96 起为 1 MiB。
 
 ## dev.91 页面重入与媒体诊断规范
 

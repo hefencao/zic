@@ -839,7 +839,7 @@ def check_compile_regressions() -> None:
         'LocalMediaDirectory',
         'LocalMediaDocument',
         'localMediaBridgeProtocolVersion = 5',
-        'localMediaBridgeChunkBytes = 256 * 1024',
+        'localMediaBridgeChunkBytes = 1024 * 1024',
         "'openDocument'",
         "'readDocumentChunk'",
         "'closeDocument'",
@@ -860,7 +860,7 @@ def check_compile_regressions() -> None:
         'headerRecognizedFiles',
         'metadataRecognizedFiles',
         'PROTOCOL_VERSION = 5',
-        'DOCUMENT_CHUNK_BYTES = 256 * 1024',
+        'DOCUMENT_CHUNK_BYTES = 1024 * 1024',
         'openDocument(call, result)',
         'readDocumentChunk(call, result)',
         'closeDocument(call, result)',
@@ -2482,8 +2482,8 @@ def check_native_abi() -> None:
             fail(f'ABI symbol is not represented in Rust/header/Dart: {symbol}')
     if 'pub const ABI_VERSION: u32 = 6;' not in rust:
         fail('native ABI version must be 6 for reserve/commit ingress')
-    if 'pub const LIB_VERSION: u32 = 0x0012_0500;' not in rust:
-        fail('native library version must identify the direct-ingress target-canvas release')
+    if 'pub const LIB_VERSION: u32 = 0x0012_0600;' not in rust:
+        fail('native library version must identify the resident local-WebP playback release')
     webp_path = ROOT / 'native/media_core/src/webp.rs'
     if not webp_path.is_file():
         fail('native WebP decoder module is missing')
@@ -2496,7 +2496,7 @@ def check_native_abi() -> None:
         'WebPDemuxGetFrame',
         'WebPInitDecoderConfigInternal',
         'WebPDecode',
-        'config.options.use_threads = 1',
+        'config.options.use_threads = 0',
         'complete: iter.0.complete != 0',
         'blend_source_over',
         'dispose_background',

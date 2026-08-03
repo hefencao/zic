@@ -36,7 +36,7 @@ static int decode_rgba_threaded(const uint8_t *bytes, size_t size,
                                 size_t rgba_size) {
   WebPDecoderConfig config;
   if (!WebPInitDecoderConfig(&config)) return 0;
-  config.options.use_threads = 1;
+  config.options.use_threads = 0;
   config.output.colorspace = MODE_RGBA;
   config.output.is_external_memory = 1;
   config.output.u.RGBA.rgba = rgba;

@@ -743,11 +743,11 @@ class LocalMediaBridgePlugin :
     companion object {
         private const val CHANNEL_NAME = "dev.zic/local_media"
         private const val PROTOCOL_VERSION = 5
-        private const val DOCUMENT_CHUNK_BYTES = 256 * 1024
+        private const val DOCUMENT_CHUNK_BYTES = 1024 * 1024
         private const val PICK_DIRECTORY_REQUEST = 0x5A31
         private const val HEADER_PROBE_BYTES = 64
         private const val MIN_MEDIA_BYTES = 4
-        internal const val READ_BUFFER_BYTES = 256 * 1024
+        internal const val READ_BUFFER_BYTES = 1024 * 1024
         private val DOCUMENT_PROJECTION = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,

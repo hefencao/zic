@@ -110,8 +110,9 @@ final class UploadSession {
       return 0;
     }
     // A visible animation frame is presentation state, not a prepared
-    // successor. Keeping one decoded successor lets the decode lane overlap
-    // the current frame deadline without widening the page upload window.
+    // successor. Keeping decoded successors up to the current watermark lets
+    // the decode lane overlap the frame deadline without widening the page
+    // upload window. dev.96 uses a current watermark of two.
     return decode.snapshot.animation.frameCount > 1 ? 0 : 1;
   }
   int get outputBytes =>
@@ -207,7 +208,7 @@ final class UploadSession {
     if (_slot != null &&
         !_awaitingSuccessor &&
         decodeSnapshot.animation.frameCount > 1) {
-      // Decode may run ahead by one frame, but upload remains deadline-owned.
+      // Decode may run ahead to its watermark, but upload remains deadline-owned.
       // Consuming the successor here would replace the visible frame before
       // its duration elapsed.
       _setState(UploadState.ready);

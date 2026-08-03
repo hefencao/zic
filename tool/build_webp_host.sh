@@ -7,6 +7,7 @@ source "$ROOT/native/libwebp.lock"
 MODE="${1:-release}"
 LINK="${ZIC_WEBP_HOST_LINK:-shared}"
 DEPS="${ZIC_DEPS_DIR:-$ROOT/.deps}"
+PATCH_SHA="$(sha256sum "$ROOT/native/patches/libwebp-vp8-thread-buffer-pool-v1.6.0.patch" | awk '{print $1}')"
 
 case "$MODE" in
   debug|release) ;;
@@ -23,12 +24,12 @@ for command in cmake ninja git; do
   }
 done
 
-SOURCE="$("$ROOT/tool/fetch_webp.sh")"
+SOURCE="$("$ROOT/tool/prepare_webp.sh")"
 BUILD_TYPE=Release
 [[ "$MODE" == debug ]] && BUILD_TYPE=Debug
 BUILD="$DEPS/build/libwebp/host/$WEBP_VERSION/$MODE/$LINK"
 PREFIX="$DEPS/install/libwebp/host/$WEBP_VERSION/$MODE/$LINK"
-CONFIG_ID="$WEBP_COMMIT|host|$BUILD_TYPE|$LINK"
+CONFIG_ID="$WEBP_COMMIT|$PATCH_SHA|host|$BUILD_TYPE|$LINK"
 if [[ -f "$BUILD/.zic-config" && "$(cat "$BUILD/.zic-config")" != "$CONFIG_ID" ]]; then
   rm -rf "$BUILD" "$PREFIX"
 fi

@@ -52,7 +52,7 @@ if [[ ! -d "$ROOT/apps/app/android" ]]; then
   "$ROOT/tool/bootstrap_platforms.sh"
 fi
 
-SOURCE="$("$ROOT/tool/fetch_webp.sh")"
+SOURCE="$("$ROOT/tool/prepare_webp.sh")"
 NOTICE="$ROOT/apps/app/android/app/src/main/assets/third_party/libwebp"
 mkdir -p "$NOTICE"
 cp "$SOURCE/COPYING" "$NOTICE/COPYING"
@@ -62,7 +62,8 @@ libwebp $WEBP_VERSION
 Tag: $WEBP_TAG
 Commit: $WEBP_COMMIT
 Repository: $WEBP_REPO
-Built from source by tool/build_webp_android.sh.
+Patch: native/patches/libwebp-vp8-thread-buffer-pool-v1.6.0.patch
+Built from pinned source and patched by tool/prepare_webp.sh.
 NOTICE_EOF
 
 IFS=',' read -r -a ABI_LIST <<< "$ABIS"
