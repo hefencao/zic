@@ -5,6 +5,7 @@ import 'package:domain/domain.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
+import 'artifact_cache_read_scheduler.dart';
 import 'artifact_cache_store.dart';
 import 'promoted_artifact_read_pool.dart';
 
@@ -20,6 +21,8 @@ final class ArtifactCacheTransport implements Transport {
     required Iterable<MapEntry<Uri, DownloadId>> identities,
     required Transport Function(Uri uri) fallbackFor,
     PromotedArtifactReadPool? readPool,
+    ArtifactCacheReadScheduler? readScheduler,
+    int Function(DownloadId id)? demandPriority,
     MonoClock? clock,
     TraceSink traceSink = const NoopTraceSink(),
     String sessionId = 'artifact-cache',
@@ -28,6 +31,8 @@ final class ArtifactCacheTransport implements Transport {
         _identities = _uniqueIdentities(identities),
         _fallbackFor = fallbackFor,
         _readPool = readPool,
+        _readScheduler = readScheduler,
+        _demandPriority = demandPriority,
         _clock = clock,
         _traceSink = traceSink,
         _sessionId = sessionId,
@@ -45,6 +50,8 @@ final class ArtifactCacheTransport implements Transport {
   final Map<String, DownloadId> _identities;
   final Transport Function(Uri uri) _fallbackFor;
   final PromotedArtifactReadPool? _readPool;
+  final ArtifactCacheReadScheduler? _readScheduler;
+  final int Function(DownloadId id)? _demandPriority;
   final MonoClock? _clock;
   final TraceSink _traceSink;
   final String _sessionId;
@@ -71,13 +78,26 @@ final class ArtifactCacheTransport implements Transport {
                   .clamp(0, 1 << 62)
                   .toInt();
           if (entry != null) {
-            final response = _streamedCachedResponse(
+            final cachedResponse = _streamedCachedResponse(
               id: id,
               entry: entry,
               range: range,
               validators: validators,
             );
-            if (response != null) {
+            if (cachedResponse != null) {
+              var schedulerWaitMicros = 0;
+              var acquiredPriority = _demandPriority?.call(id) ?? 0;
+              final response = _readScheduler == null
+                  ? cachedResponse
+                  : _scheduledArtifactResponse(
+                      cachedResponse,
+                      scheduler: _readScheduler,
+                      priority: () => _demandPriority?.call(id) ?? 0,
+                      onAcquired: (waitMicros, priority) {
+                        schedulerWaitMicros = waitMicros;
+                        acquiredPriority = priority;
+                      },
+                    );
               _recordSource(
                 source: 'artifact-cache-stream',
                 id: id,
@@ -87,6 +107,7 @@ final class ArtifactCacheTransport implements Transport {
                 revision: revision,
                 readMicros: readMicros,
                 sourceClass: 'persistent-artifact',
+                priority: acquiredPriority,
               );
               return _traceResponse(
                 response,
@@ -96,6 +117,8 @@ final class ArtifactCacheTransport implements Transport {
                 uri: uri,
                 revision: revision,
                 openMicros: readMicros,
+                priority: () => acquiredPriority,
+                schedulerWaitMicros: () => schedulerWaitMicros,
               );
             }
           }
@@ -221,6 +244,7 @@ final class ArtifactCacheTransport implements Transport {
     String? sourceClass,
     int? statusCode,
     int? totalLength,
+    int? priority,
   }) {
     final clock = _clock;
     if (clock == null) {
@@ -243,6 +267,7 @@ final class ArtifactCacheTransport implements Transport {
           if (sourceClass != null) 'sourceClass': sourceClass,
           if (statusCode != null) 'statusCode': statusCode,
           if (totalLength != null) 'totalLength': totalLength,
+          if (priority != null) 'priority': priority,
           'uriScheme': uri.scheme.isEmpty ? 'file' : uri.scheme,
           'consumer': 'session-copy',
         },
@@ -258,6 +283,8 @@ final class ArtifactCacheTransport implements Transport {
     required Uri uri,
     required int? revision,
     required int? openMicros,
+    int Function()? priority,
+    int Function()? schedulerWaitMicros,
   }) {
     final clock = _clock;
     if (clock == null) {
@@ -319,6 +346,9 @@ final class ArtifactCacheTransport implements Transport {
               if (response.totalLength != null)
                 'totalLength': response.totalLength,
               if (openMicros != null) 'openMicros': openMicros,
+              if (priority != null) 'priority': priority(),
+              if (schedulerWaitMicros != null)
+                'readSchedulerWaitMicros': schedulerWaitMicros(),
               'firstChunkMicros': firstChunkMicros,
               'streamMicros':
                   (clock.nowMicros() - streamStarted).clamp(0, 1 << 62).toInt(),
@@ -385,6 +415,36 @@ Map<String, DownloadId> _uniqueIdentities(
     result.remove(key);
   }
   return Map<String, DownloadId>.unmodifiable(result);
+}
+
+ByteResponse _scheduledArtifactResponse(
+  ByteResponse response, {
+  required ArtifactCacheReadScheduler scheduler,
+  required int Function() priority,
+  required void Function(int waitMicros, int priority) onAcquired,
+}) {
+  Stream<List<int>> scheduledBytes() async* {
+    final wait = Stopwatch()..start();
+    final lease = await scheduler.acquire(priority: priority);
+    onAcquired(wait.elapsedMicroseconds, lease.priority);
+    try {
+      await for (final chunk in response.bytes) {
+        yield chunk;
+      }
+    } finally {
+      lease.release();
+    }
+  }
+
+  return ByteResponse(
+    bytes: scheduledBytes(),
+    statusCode: response.statusCode,
+    rangeStart: response.rangeStart,
+    totalLength: response.totalLength,
+    validators: response.validators,
+    rangeSupported: response.rangeSupported,
+    onDiscard: response.discard,
+  );
 }
 
 ByteResponse? _streamedCachedResponse({

@@ -40,16 +40,18 @@ final class PromotedArtifactReadPool {
       return existing;
     }
 
-    late final Future<Uint8List?> tracked;
-    tracked = cache.readArtifact(id).catchError(
-      (Object error, StackTrace stackTrace) {
+    final completer = Completer<Uint8List?>();
+    final tracked = completer.future;
+    _reads[id] = tracked;
+    Future<Uint8List?>.sync(() => cache.readArtifact(id)).then<void>(
+      completer.complete,
+      onError: (Object error, StackTrace stackTrace) {
         if (identical(_reads[id], tracked)) {
           _reads.remove(id);
         }
-        return Error.throwWithStackTrace(error, stackTrace);
+        completer.completeError(error, stackTrace);
       },
     );
-    _reads[id] = tracked;
     final joiner = _joiners.remove(id);
     if (joiner != null && !joiner.isCompleted) {
       joiner.complete(tracked);

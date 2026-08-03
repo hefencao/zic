@@ -14,38 +14,37 @@
 
 ## P0：前帧播放链设备闭环
 
-目标：解释并降低 Animated WebP 前几帧的长尾停顿。
-
 下一步：
 
-- 采集包含 `platformScheduleQueueMicros` 和 `platformScheduleCallMicros` 的 Android Trace；
-- 分别比较 platform queue、schedule call、native decode、channel dispatch、source wait 和 upload backpressure；
-- 关联 current decode failure 的 source epoch、worker 和 native error；
-- 在相同文件、窗口和设备条件下复验 50% 交接与前 12 帧。
+- 在相同设备和 WebP fixture 上采集 dev.102 Trace；
+- 比较 platform schedule queue、channel dispatch、native decode、source wait 和 upload backpressure；
+- 验证 asynchronous schedule 后 blit lane 不再被 main-thread queue 串行阻塞；
+- 关联两次 current decode failure 的 source epoch、frame、worker 和 native 错误；
+- 复验 50% 交接、前 12 帧和页面回切。
 
-退出条件：新字段能够解释主要长尾；current 前帧没有无法归因的数秒空洞；50% 交接无黑屏和同 identity 重新加载。
+退出条件：current 前帧没有无法归因的数秒空洞；50% 交接无黑屏和同 identity 重载；decode failure 有可行动原因。
 
 ## P0：Flutter 与 Android 验证闭包
 
 下一步：
 
 - 运行 `flutter analyze`；
-- 运行受影响 package tests 和 App tests；
+- 运行受影响 package tests 和 App tests，确认 quarantine 与 cold-open 修复；
 - 构建 Android debug/release；
 - 区分产品错误、测试错误和环境错误，不以改产品逻辑迎合过时测试。
 
 退出条件：结果进入 validation audit；所有失败均有明确所有者和处理结论。
 
-## P1：本地 artifact stream 归因
+## P1：共享 artifact stream 设备验证
 
 下一步：
 
-- 区分文件系统读取、Dart stream 调度、session copy 和 native ingress；
-- 记录同一 artifact 的并发 reader 数和页面角色；
-- 检查是否存在重复整页 materialization 或不必要的 session copy；
-- 只在证明 background stream 阻塞 current 后调整调度，不关闭预下载。
+- 从 Trace 读取 `readSchedulerWaitMicros`、priority、页面角色和跨 session 最大并发；
+- 验证总并发不超过 5，background 最多占 4，current/transition 可使用保留槽；
+- 验证 background→current 晋升不取消、不重开同一 artifact stream；
+- 比较 source first-chunk、stream 和 current source-wait 的变化。
 
-退出条件：current source wait 可与 near/background 读取分开，优化前后使用同一 fixture 比较。
+退出条件：共享调度行为与 Pipeline demand 一致，且没有引入 current starvation 或预下载退化。
 
 ## P1：解除 Source Browser quarantine
 

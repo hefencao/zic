@@ -252,9 +252,13 @@ def summarize(path: Path) -> dict[str, Any]:
                     "source": payload.get("source"),
                     "sourceClass": payload.get("sourceClass"),
                     "consumer": payload.get("consumer"),
+                    "priority": _number(payload.get("priority")),
                     "bytes": _number(payload.get("bytes")),
                     "chunks": _number(payload.get("chunks")),
                     "openMicros": _number(payload.get("openMicros")),
+                    "readSchedulerWaitMicros": _number(
+                        payload.get("readSchedulerWaitMicros")
+                    ),
                     "firstChunkMicros": _number(payload.get("firstChunkMicros")),
                     "streamMicros": _number(payload.get("streamMicros")),
                     "maxChunkGapMicros": _number(payload.get("maxChunkGapMicros")),
@@ -264,6 +268,17 @@ def summarize(path: Path) -> dict[str, Any]:
             )
 
     source_reads.sort(key=lambda row: row["streamMicros"], reverse=True)
+    boundaries: list[tuple[int, int]] = []
+    for row in source_reads:
+        end = _number(row.get("t"))
+        start = max(0, end - _number(row.get("streamMicros")))
+        boundaries.append((start, 1))
+        boundaries.append((end, -1))
+    active_reads = 0
+    max_concurrent_reads = 0
+    for _, delta in sorted(boundaries, key=lambda item: (item[0], item[1])):
+        active_reads += delta
+        max_concurrent_reads = max(max_concurrent_reads, active_reads)
     return {
         "trace": str(path),
         "eventCount": len(rows),
@@ -279,6 +294,10 @@ def summarize(path: Path) -> dict[str, Any]:
         "taskFailures": failures,
         "sourceReadCount": len(source_reads),
         "sourceReadMicros": _stats([row["streamMicros"] for row in source_reads]),
+        "sourceReadSchedulerWaitMicros": _stats(
+            [row["readSchedulerWaitMicros"] for row in source_reads]
+        ),
+        "sourceMaxConcurrentReads": max_concurrent_reads,
         "sourceFirstChunkMicros": _stats(
             [row["firstChunkMicros"] for row in source_reads]
         ),
@@ -309,6 +328,8 @@ def main() -> None:
     print(f"present µs: {report['presentMicros']}")
     print(
         f"source reads: {report['sourceReadCount']} "
+        f"maxConcurrent={report['sourceMaxConcurrentReads']} "
+        f"schedulerWait={report['sourceReadSchedulerWaitMicros']} "
         f"stream={report['sourceReadMicros']} "
         f"firstChunk={report['sourceFirstChunkMicros']} "
         f"maxGap={report['sourceMaxChunkGapMicros']}"
@@ -343,7 +364,9 @@ def main() -> None:
         print(
             "  "
             f"t={row['t']} source={row['source']} class={row['sourceClass']} "
-            f"consumer={row['consumer']} bytes={row['bytes']} chunks={row['chunks']} "
+            f"consumer={row['consumer']} priority={row['priority']} "
+            f"bytes={row['bytes']} chunks={row['chunks']} "
+            f"schedulerWait={row['readSchedulerWaitMicros']} "
             f"firstChunk={row['firstChunkMicros']} stream={row['streamMicros']} "
             f"maxGap={row['maxChunkGapMicros']} maxChunk={row['maxChunkBytes']}"
         )

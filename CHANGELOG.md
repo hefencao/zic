@@ -1,3 +1,12 @@
+## 0.31.0-dev.102：异步 texture schedule 与共享 artifact 读取调度
+
+- 修复三项 Source Browser quarantine 向 `testWidgets(skip:)` 传入字符串导致的测试编译错误，改为布尔 skip、稳定 ID 注释和登记门禁。
+- 修复 promoted artifact cold-open、Reader session dispose 与 native runtime prewarm 的弱类型 Future 错误链。
+- Android texture 移除 blit lane 的 main-thread latch；retain/blit/replace 完成后异步投递 schedule，并在同一 platform-thread runnable 中回复。
+- 新增 composition-shared persistent artifact read scheduler：总槽 5、background 最多 4、current/transition 保留槽；pending priority 动态跟随 Pipeline plan，晋升不取消流。
+- `sourceRead` 增加 scheduler wait 与取得槽位时 priority，Trace analyzer 增加跨 Reader 最大读取并发。
+- 新增 scheduler 单元测试、ADR 0086、dev.102 三清单和 ownership gate；既定 7/3、2/1、current/transition、5/3/2 不变。
+
 ## 0.31.0-dev.101：恢复文档职责并拆分 Android schedule timing
 
 - 重写 README、Architecture、Spec、Implementation Plan、Implementation Status 和 Handoff，删除稳定文档中的逐轮 dev 堆叠、Trace 数字和验证结果。

@@ -1,6 +1,6 @@
 # ADR 0084：测试隔离所有权与 Android texture schedule/reply 顺序
 
-- 状态：接受；quarantine marker 的版本绑定机制由 ADR 0085 修正
+- 状态：部分被 ADR 0085、ADR 0086 修正；测试隔离决策继续有效，texture latch 决策已被取代
 - 版本：`0.31.0-dev.100`
 - 基线：`0.31.0-dev.99`
 
@@ -18,7 +18,7 @@
    - 删除无法代表最终 renderer 放大的 `RasterPlan.isRenderUpscaled`；
    - 删除把 Flutter filter quality 当成 codec resize 证据的断言。
 3. 三个依赖 Whole-App catalog/route bootstrap 顺序的 Source Browser 测试临时隔离；legacy locator 的 gateway/plugin-host 所有者测试继续运行。
-4. Android texture present 保持严格顺序：native blit 完成后，在 platform thread 真正执行 `SurfaceProducer.scheduleFrame()`；blit lane 等待该执行完成，再直接提交 thread-safe `MethodChannel.Result`。禁止在 schedule 尚未执行时提前回复，也禁止再排第二个 main-thread result runnable。
+4. Android texture present 必须保持“回复不早于 platform thread 执行 `SurfaceProducer.scheduleFrame()`”的顺序。dev.100 采用 blit lane latch 等待；该具体等待方式已由 ADR 0086 的异步 schedule/reply 取代。
 5. App 在 `runApp` 前同时预热两个 Dart decode worker 与一个 1×1 Android texture lease，lease 立即释放，不转移 texture 生命周期所有权。
 6. `decodedToUpload` 拆为：
    - `decodedLeadMicros`：successor 在前一帧 deadline 前已完成的正常提前量；

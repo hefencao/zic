@@ -13,7 +13,15 @@ import 'package:texture_bridge/texture_bridge.dart';
 final class NativePipelineMediaRuntimeFactory
     implements PipelineMediaRuntimeFactory {
   NativePipelineMediaRuntimeFactory() {
-    unawaited(prewarm().catchError((Object _, StackTrace __) {}));
+    unawaited(_prewarmWithoutSurfacingFailure());
+  }
+
+  Future<void> _prewarmWithoutSurfacingFailure() async {
+    try {
+      await prewarm();
+    } on Object {
+      // A later real create/present call remains authoritative for errors.
+    }
   }
 
   Future<void>? _prewarmFuture;

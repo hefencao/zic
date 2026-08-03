@@ -67,12 +67,16 @@ final class _PipelineReaderSessionHostState
 
   @override
   void dispose() {
-    unawaited(
-      _session.dispose().catchError((Object error, StackTrace stackTrace) {
-        debugPrint('pipeline Reader session dispose failed: $error');
-      }),
-    );
+    unawaited(_disposeSession());
     super.dispose();
+  }
+
+  Future<void> _disposeSession() async {
+    try {
+      await _session.dispose();
+    } on Object catch (error) {
+      debugPrint('pipeline Reader session dispose failed: $error');
+    }
   }
 }
 

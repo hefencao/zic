@@ -7,7 +7,6 @@ import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.view.TextureRegistry
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
@@ -104,8 +103,12 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             width = width,
             height = height,
             canPresent = { !detached.get() },
-            scheduleFrame = {
-                scheduleProducerFrame(producer) { !output.isReleased }
+            scheduleFrame = { complete ->
+                scheduleProducerFrame(
+                    producer,
+                    canSchedule = { !output.isReleased },
+                    complete = complete,
+                )
             },
             scheduleRedraw = { target -> scheduleRedraw(lane, target) },
             resizeProducer = { nextWidth, nextHeight ->
@@ -176,56 +179,84 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         queue.addAndGet(frameBytes)
         try {
             lane.execute {
-                try {
-                    val startedNanos = System.nanoTime()
-                    val presentation = output.present(frameAddress, frameBytes)
-                    val finishedNanos = System.nanoTime()
-                    if (presentation.status != 0) {
+                val startedNanos = System.nanoTime()
+                val replied = AtomicBoolean(false)
+                fun complete(presentation: PresentResult?, failure: Throwable? = null) {
+                    if (!replied.compareAndSet(false, true)) return
+                    try {
+                        val finishedNanos = System.nanoTime()
+                        if (failure != null) {
+                            result.error(
+                                "blit_failed",
+                                failure.message ?: failure.toString(),
+                                null,
+                            )
+                            return
+                        }
+                        check(presentation != null)
+                        if (presentation.failure != null) {
+                            result.error(
+                                "schedule_failed",
+                                presentation.failure.message
+                                    ?: presentation.failure.toString(),
+                                null,
+                            )
+                            return
+                        }
+                        if (presentation.status != 0) {
+                            result.error(
+                                "blit_failed",
+                                "native blit failed with status ${presentation.status}",
+                                null,
+                            )
+                            return
+                        }
+                        val elapsedMicros =
+                            (finishedNanos - submittedNanos) / 1_000L
+                        val otherQueuedBytes = maxOf(0L, queue.get() - frameBytes)
+                        val response = mapOf(
+                            "queueMicros" to
+                                (startedNanos - submittedNanos) / 1_000L,
+                            "uploadMicros" to
+                                (finishedNanos - startedNanos) / 1_000L,
+                            "retainMicros" to presentation.retainMicros,
+                            "blitMicros" to presentation.blitMicros,
+                            "scheduleMicros" to presentation.scheduleMicros,
+                            "scheduleQueueMicros" to
+                                presentation.scheduleQueueMicros,
+                            "scheduleCallMicros" to
+                                presentation.scheduleCallMicros,
+                            "replaceMicros" to presentation.replaceMicros,
+                            "deadlineMissMicros" to
+                                if (deadlineAfterMicros == null) {
+                                    0L
+                                } else {
+                                    maxOf(0L, elapsedMicros - deadlineAfterMicros)
+                                },
+                            "textureBytes" to output.textureBytes,
+                            "inFlightBytes" to
+                                output.retainedFrameBytes + otherQueuedBytes,
+                            // Completion runs in the same platform-thread runnable
+                            // immediately after scheduleFrame().
+                            "resultDispatchMicros" to 0L,
+                        )
+                        result.success(response)
+                    } catch (error: Throwable) {
                         result.error(
                             "blit_failed",
-                            "native blit failed with status ${presentation.status}",
+                            error.message ?: error.toString(),
                             null,
                         )
-                        return@execute
+                    } finally {
+                        queue.addAndGet(-frameBytes)
                     }
-                    val elapsedMicros = (finishedNanos - submittedNanos) / 1_000L
-                    val otherQueuedBytes = maxOf(0L, queue.get() - frameBytes)
-                    val response = mapOf(
-                        "queueMicros" to
-                            (startedNanos - submittedNanos) / 1_000L,
-                        "uploadMicros" to
-                            (finishedNanos - startedNanos) / 1_000L,
-                        "retainMicros" to presentation.retainMicros,
-                        "blitMicros" to presentation.blitMicros,
-                        "scheduleMicros" to presentation.scheduleMicros,
-                        "scheduleQueueMicros" to presentation.scheduleQueueMicros,
-                        "scheduleCallMicros" to presentation.scheduleCallMicros,
-                        "replaceMicros" to presentation.replaceMicros,
-                        "deadlineMissMicros" to if (deadlineAfterMicros == null) {
-                            0L
-                        } else {
-                            maxOf(0L, elapsedMicros - deadlineAfterMicros)
-                        },
-                        "textureBytes" to output.textureBytes,
-                        "inFlightBytes" to
-                            output.retainedFrameBytes + otherQueuedBytes,
-                    )
-                    // scheduleFrame() has already completed on the platform thread.
-                    // MethodChannel.Result is thread-safe, so the blit lane can reply
-                    // without enqueueing a second platform-thread runnable.
-                    result.success(
-                        response + mapOf(
-                            "resultDispatchMicros" to 0L,
-                        ),
-                    )
+                }
+                try {
+                    output.present(frameAddress, frameBytes) { presentation ->
+                        complete(presentation)
+                    }
                 } catch (error: Throwable) {
-                    result.error(
-                        "blit_failed",
-                        error.message ?: error.toString(),
-                        null,
-                    )
-                } finally {
-                    queue.addAndGet(-frameBytes)
+                    complete(null, error)
                 }
             }
         } catch (_: RejectedExecutionException) {
@@ -281,59 +312,42 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     private fun scheduleProducerFrame(
         producer: TextureRegistry.SurfaceProducer,
         canSchedule: () -> Boolean,
-    ): ScheduleResult {
-        if (Looper.myLooper() == mainHandler.looper) {
-            return synchronized(lifecycleLock) {
-                if (detached.get() || !canSchedule()) {
-                    ScheduleResult(scheduled = false)
-                } else {
-                    val callStartedNanos = System.nanoTime()
-                    producer.scheduleFrame()
-                    ScheduleResult(
-                        scheduled = true,
-                        callMicros =
-                            (System.nanoTime() - callStartedNanos) / 1_000L,
-                    )
+        complete: (ScheduleResult) -> Unit,
+    ): Boolean {
+        fun schedule(queueMicros: Long) {
+            val result = try {
+                synchronized(lifecycleLock) {
+                    if (detached.get() || !canSchedule()) {
+                        ScheduleResult(scheduled = false, queueMicros = queueMicros)
+                    } else {
+                        val callStartedNanos = System.nanoTime()
+                        producer.scheduleFrame()
+                        ScheduleResult(
+                            scheduled = true,
+                            queueMicros = queueMicros,
+                            callMicros =
+                                (System.nanoTime() - callStartedNanos) / 1_000L,
+                        )
+                    }
                 }
+            } catch (error: Throwable) {
+                ScheduleResult(
+                    scheduled = false,
+                    queueMicros = queueMicros,
+                    failure = error,
+                )
             }
+            complete(result)
+        }
+
+        if (Looper.myLooper() == mainHandler.looper) {
+            schedule(0L)
+            return true
         }
 
         val submittedNanos = System.nanoTime()
-        val completed = CountDownLatch(1)
-        val scheduled = AtomicBoolean(false)
-        val queueMicros = AtomicLong(0L)
-        val callMicros = AtomicLong(0L)
-        val posted = mainHandler.post {
-            val startedNanos = System.nanoTime()
-            queueMicros.set((startedNanos - submittedNanos) / 1_000L)
-            try {
-                synchronized(lifecycleLock) {
-                    if (!detached.get() && canSchedule()) {
-                        val callStartedNanos = System.nanoTime()
-                        producer.scheduleFrame()
-                        callMicros.set(
-                            (System.nanoTime() - callStartedNanos) / 1_000L,
-                        )
-                        scheduled.set(true)
-                    }
-                }
-            } finally {
-                completed.countDown()
-            }
-        }
-        if (!posted) {
-            return ScheduleResult(scheduled = false)
-        }
-        return try {
-            completed.await()
-            ScheduleResult(
-                scheduled = scheduled.get(),
-                queueMicros = queueMicros.get(),
-                callMicros = callMicros.get(),
-            )
-        } catch (_: InterruptedException) {
-            Thread.currentThread().interrupt()
-            ScheduleResult(scheduled = false)
+        return mainHandler.post {
+            schedule((System.nanoTime() - submittedNanos) / 1_000L)
         }
     }
 
@@ -357,6 +371,7 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val scheduled: Boolean,
         val queueMicros: Long = 0L,
         val callMicros: Long = 0L,
+        val failure: Throwable? = null,
     ) {
         val totalMicros: Long
             get() = queueMicros + callMicros
@@ -370,6 +385,7 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val scheduleQueueMicros: Long,
         val scheduleCallMicros: Long,
         val replaceMicros: Long,
+        val failure: Throwable? = null,
     )
 
     @Suppress("DEPRECATION")
@@ -378,7 +394,7 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         private var width: Int,
         private var height: Int,
         private val canPresent: () -> Boolean,
-        private val scheduleFrame: () -> ScheduleResult,
+        private val scheduleFrame: ((ScheduleResult) -> Unit) -> Boolean,
         private val scheduleRedraw: (Output) -> Unit,
         private val resizeProducer: (Int, Int) -> Unit,
         private val releaseProducer: () -> Unit,
@@ -416,7 +432,11 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         val retainedFrameBytes: Long
             get() = currentFrameBytes
 
-        fun present(frameAddress: Long, frameBytes: Long): PresentResult {
+        fun present(
+            frameAddress: Long,
+            frameBytes: Long,
+            complete: (PresentResult) -> Unit,
+        ) {
             check(!released) { "texture output is released" }
             check(canPresent()) { "texture bridge is detached" }
             val retainStartedNanos = System.nanoTime()
@@ -427,33 +447,55 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 val blitStartedNanos = System.nanoTime()
                 val status = NativeBlitter.blit(surface(), retained)
                 val blitFinishedNanos = System.nanoTime()
+                val retainMicros =
+                    (retainFinishedNanos - retainStartedNanos) / 1_000L
+                val blitMicros =
+                    (blitFinishedNanos - blitStartedNanos) / 1_000L
                 if (status != 0) {
-                    return PresentResult(
-                        status = status,
-                        retainMicros = (retainFinishedNanos - retainStartedNanos) / 1_000L,
-                        blitMicros = (blitFinishedNanos - blitStartedNanos) / 1_000L,
-                        scheduleMicros = 0L,
-                        scheduleQueueMicros = 0L,
-                        scheduleCallMicros = 0L,
-                        replaceMicros = 0L,
+                    complete(
+                        PresentResult(
+                            status = status,
+                            retainMicros = retainMicros,
+                            blitMicros = blitMicros,
+                            scheduleMicros = 0L,
+                            scheduleQueueMicros = 0L,
+                            scheduleCallMicros = 0L,
+                            replaceMicros = 0L,
+                        ),
                     )
-                }
-                val schedule = scheduleFrame()
-                check(schedule.scheduled) {
-                    "texture bridge detached during blit"
+                    return
                 }
                 val replaceStartedNanos = System.nanoTime()
                 replaceCurrentFrame(retained, frameBytes)
-                val replaceFinishedNanos = System.nanoTime()
-                return PresentResult(
-                    status = 0,
-                    retainMicros = (retainFinishedNanos - retainStartedNanos) / 1_000L,
-                    blitMicros = (blitFinishedNanos - blitStartedNanos) / 1_000L,
-                    scheduleMicros = schedule.totalMicros,
-                    scheduleQueueMicros = schedule.queueMicros,
-                    scheduleCallMicros = schedule.callMicros,
-                    replaceMicros = (replaceFinishedNanos - replaceStartedNanos) / 1_000L,
-                )
+                val replaceMicros =
+                    (System.nanoTime() - replaceStartedNanos) / 1_000L
+                val accepted = scheduleFrame { schedule ->
+                    complete(
+                        PresentResult(
+                            status = if (schedule.scheduled) 0 else -1,
+                            retainMicros = retainMicros,
+                            blitMicros = blitMicros,
+                            scheduleMicros = schedule.totalMicros,
+                            scheduleQueueMicros = schedule.queueMicros,
+                            scheduleCallMicros = schedule.callMicros,
+                            replaceMicros = replaceMicros,
+                            failure = schedule.failure,
+                        ),
+                    )
+                }
+                if (!accepted) {
+                    complete(
+                        PresentResult(
+                            status = -1,
+                            retainMicros = retainMicros,
+                            blitMicros = blitMicros,
+                            scheduleMicros = 0L,
+                            scheduleQueueMicros = 0L,
+                            scheduleCallMicros = 0L,
+                            replaceMicros = replaceMicros,
+                        ),
+                    )
+                }
             } finally {
                 if (currentFrameAddress != retained) {
                     NativeBlitter.release(retained)
@@ -471,7 +513,7 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                 return
             }
             if (NativeBlitter.blit(surface(), currentFrameAddress) == 0) {
-                scheduleFrame()
+                scheduleFrame { _ -> }
             }
         }
 

@@ -31,8 +31,13 @@ for path in sorted(ROOT.rglob("*_test.dart")):
     text = path.read_text(encoding="utf-8")
     for match in re.finditer(r"\bskip\s*:", text):
         line = text.count("\n", 0, match.start()) + 1
-        window = text[match.start() : match.start() + 700]
+        window = text[max(0, match.start() - 200) : match.start() + 700]
         skip_sites.append((path, line, window))
+        if not re.match(r"skip\s*:\s*true\b", text[match.start() :]):
+            raise SystemExit(
+                f"FAIL: quarantined Flutter test must use skip: true at "
+                f"{path.relative_to(ROOT)}:{line}"
+            )
         if MARKER_PATTERN.search(window) is None:
             raise SystemExit(
                 f"FAIL: anonymous or untracked skip at {path.relative_to(ROOT)}:{line}"

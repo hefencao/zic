@@ -1,6 +1,6 @@
-# dev.101 后续交接
+# dev.102 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.101_documentation-boundary-schedule-timing.zip`。不得使用 dev.100 或更早 ZIP、旧工作树、记忆源码或可变 libwebp tree覆盖。
+唯一后续基线：`zic_v0.31.0-dev.102_async-texture-shared-artifact-read.zip`。不得使用 dev.101 或更早 ZIP、旧工作树、记忆源码或可变 libwebp tree覆盖。
 
 ## 必读
 
@@ -12,15 +12,17 @@
 6. `docs/IMPLEMENTATION_STATUS.md`
 7. `docs/IMPLEMENTATION_PLAN.md`
 8. `docs/testing/TEST_QUARANTINE.md`
-9. `docs/audits/dev101-documentation-trace-audit.md`
-10. `docs/audits/dev101-validation-results.md`
+9. `docs/adr/0086-async-texture-schedule-and-shared-artifact-read.md`
+10. `docs/audits/dev102-test-async-schedule-artifact-read-audit.md`
+11. `docs/audits/dev102-validation-results.md`
 
 ## 当前主线
 
-1. 在 Android 真机采集包含 `platformScheduleQueueMicros` 和 `platformScheduleCallMicros` 的新 Trace。
-2. 用 `tool/analyze_frame_pipeline_trace.py` 判断 platform-thread queue、native decode、channel dispatch 和 source stream 的真实占比。
-3. 运行 Flutter analyzer/tests、Android debug/release，并逐项处理失败。
-4. 为 `Q-001` 至 `Q-003` 建立可控 owner/facade harness，解除 quarantine。
+1. 运行 Flutter analyzer/tests 和 Android debug/release，确认 quarantine 与 cold-open 编译闭包。
+2. 在同一设备/fixture 采集 dev.102 Trace，验证异步 schedule 后的前帧长尾。
+3. 检查 `readSchedulerWaitMicros`、priority 和跨 session source-read 并发是否符合 5 总槽、1 foreground 保留槽。
+4. 为两次 current decode failure 增加或取得 native 错误细节。
+5. 为 `Q-001` 至 `Q-003` 建立可控 owner/facade harness。
 
 ## 文档规则
 
@@ -34,11 +36,6 @@
 
 ## 不可改变
 
-- 下载 7/3；
-- 页面预解码 2/1；
-- 只上传 current/transition；
-- lane 5/3/2；
-- 两个进程期 Dart decode isolate；
-- libwebp 帧内单线程；
-- current 两个 successor；
+- 下载 7/3；页面预解码 2/1；只上传 current/transition；lane 5/3/2；
+- 两个进程期 Dart decode isolate；libwebp 帧内单线程；current 两个 successor；
 - Reader 不拥有 session、transport、artifact、decode/upload lane 或 texture。

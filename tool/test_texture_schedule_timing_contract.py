@@ -22,7 +22,8 @@ require(
     "data class ScheduleResult",
     "scheduleQueueMicros",
     "scheduleCallMicros",
-    "completed.await()",
+    "complete: (ScheduleResult) -> Unit",
+    "return mainHandler.post",
 )
 require(
     "packages/texture_bridge/lib/src/android_texture_presenter.dart",
@@ -59,5 +60,11 @@ for marker in (
     "ZIC-QUARANTINE(Q-003):",
 ):
     require("apps/app/test/source_browser_test.dart", marker)
+
+kotlin = read(
+    "packages/texture_bridge/android/src/main/kotlin/dev/zic/texture/TextureBridgePlugin.kt"
+)
+if "CountDownLatch" in kotlin or "completed.await()" in kotlin:
+    raise SystemExit("FAIL: texture blit lane must not block on platform schedule")
 
 print("texture schedule timing and quarantine contract: OK")

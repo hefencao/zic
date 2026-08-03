@@ -460,10 +460,8 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
   },
-      skip: 'ZIC-QUARANTINE(Q-001): whole-App legacy runtime route depends '
-          'on obsolete source-browser fixture ordering; keep lower-level '
-          'legacy-token rejection tests active until a deterministic route '
-          'harness replaces it.');
+      skip: true); // ZIC-QUARANTINE(Q-001): whole-App legacy runtime route;
+  // owner coverage remains active until a deterministic route harness exists.
 
   testWidgets(
       'persisted legacy Venera chapter refreshes despite local-detail open hint',
@@ -538,9 +536,8 @@ void main() {
       isNot(contains('venera-resource://$sourceId/$chapterId')),
     );
   },
-      skip: 'ZIC-QUARANTINE(Q-002): persisted legacy route test relies on '
-          'shelf/card bootstrap timing rather than the locator-refresh owner; '
-          'lower-level gateway and plugin-host rejection tests remain mandatory.');
+      skip: true); // ZIC-QUARANTINE(Q-002): persisted legacy route test timing;
+  // gateway/plugin-host owner coverage remains mandatory.
 
   testWidgets(
       'central route opens remote then local details for the same source',
@@ -1094,9 +1091,8 @@ void main() {
       find.byKey(sourceChapterKey('fixture-retry', 'fixture-retry-chapter')),
     );
   },
-      skip: 'ZIC-QUARANTINE(Q-003): whole-App retry test races source '
-          'enablement/catalog bootstrap; replace with a direct '
-          'RemoteComicDetailsScreen retry-state test before re-enabling.');
+      skip: true); // ZIC-QUARANTINE(Q-003): whole-App retry test bootstrap race;
+  // replace with a direct RemoteComicDetailsScreen harness before re-enabling.
 }
 
 final class _FixtureSource

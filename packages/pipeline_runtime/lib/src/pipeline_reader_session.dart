@@ -28,15 +28,18 @@ typedef PipelineArtifactBytesLoader = Future<Uint8List> Function(
 );
 
 final class PipelineReaderSessionFactory {
-  const PipelineReaderSessionFactory({
+  PipelineReaderSessionFactory({
     required this.mediaRuntimeFactory,
     this.artifactCache,
+    ArtifactCacheReadScheduler? artifactReadScheduler,
     this.loaderSources = const <Uri, LoaderTransportSource>{},
     this.bytesLoader,
-  });
+  }) : artifactReadScheduler =
+            artifactReadScheduler ?? ArtifactCacheReadScheduler();
 
   final PipelineMediaRuntimeFactory mediaRuntimeFactory;
   final ArtifactCacheStore? artifactCache;
+  final ArtifactCacheReadScheduler artifactReadScheduler;
   final Map<Uri, LoaderTransportSource> loaderSources;
   final PipelineArtifactBytesLoader? bytesLoader;
 
@@ -51,6 +54,7 @@ final class PipelineReaderSessionFactory {
       PipelineReaderSessionFactory(
         mediaRuntimeFactory: mediaRuntimeFactory,
         artifactCache: artifactCache,
+        artifactReadScheduler: artifactReadScheduler,
         loaderSources: <Uri, LoaderTransportSource>{
           ...loaderSources,
           ...sources,
@@ -64,6 +68,7 @@ final class PipelineReaderSessionFactory {
       PipelineReaderSessionFactory(
         mediaRuntimeFactory: mediaRuntimeFactory,
         artifactCache: cache,
+        artifactReadScheduler: artifactReadScheduler,
         loaderSources: loaderSources,
         bytesLoader: bytesLoader,
       );
@@ -74,6 +79,7 @@ final class PipelineReaderSessionFactory {
       PipelineReaderSessionFactory(
         mediaRuntimeFactory: mediaRuntimeFactory,
         artifactCache: artifactCache,
+        artifactReadScheduler: artifactReadScheduler,
         loaderSources: loaderSources,
         bytesLoader: loader,
       );
@@ -88,6 +94,7 @@ final class PipelineReaderSessionFactory {
         mediaRuntimeFactory: mediaRuntimeFactory,
         sessionId: sessionId,
         artifactCache: artifactCache,
+        artifactReadScheduler: artifactReadScheduler,
         loaderSources: loaderSources,
         bytesLoader: bytesLoader,
         traceSink: traceSink,
@@ -106,11 +113,13 @@ final class PipelineReaderSession {
     required PipelineMediaRuntimeFactory mediaRuntimeFactory,
     required this.sessionId,
     ArtifactCacheStore? artifactCache,
+    required ArtifactCacheReadScheduler artifactReadScheduler,
     Map<Uri, LoaderTransportSource> loaderSources =
         const <Uri, LoaderTransportSource>{},
     PipelineArtifactBytesLoader? bytesLoader,
     TraceSink? traceSink,
-  })  : _bytesLoader = bytesLoader,
+  })  : artifactReadScheduler = artifactReadScheduler,
+        _bytesLoader = bytesLoader,
         clock = SystemClock(),
         _memoryTrace = MemoryTraceSink(),
         _profile = readerPipelineProfileFor(chapter),
@@ -155,6 +164,8 @@ final class PipelineReaderSession {
         identities: identities,
         fallbackFor: _baseTransportFor,
         readPool: reads,
+        readScheduler: artifactReadScheduler,
+        demandPriority: _artifactReadPriority,
         clock: clock,
         traceSink: trace,
         sessionId: sessionId,
@@ -238,6 +249,7 @@ final class PipelineReaderSession {
   Timer? _playbackTicker;
   bool _playbackPaused = false;
   final PipelineTransferProgressPublisher transferProgress;
+  final ArtifactCacheReadScheduler artifactReadScheduler;
   bool _disposed = false;
 
   int get revision => _binding?.revision ?? 0;
@@ -279,6 +291,7 @@ final class PipelineReaderSession {
       readerPageDownloadId(chapter, chapter.pages[pageIndex]),
     );
     binding.accept(observation);
+    artifactReadScheduler.refresh();
     _syncPageOutputs();
     _ensurePlaybackTicker();
   }
@@ -300,6 +313,7 @@ final class PipelineReaderSession {
   void detach(String readerSessionId) {
     _binding?.detach(readerSessionId);
     _binding = null;
+    artifactReadScheduler.refresh();
     transferProgress.clear();
   }
 
@@ -516,6 +530,9 @@ final class PipelineReaderSession {
       _ensurePlaybackTicker();
     }
   }
+
+  int _artifactReadPriority(DownloadId id) =>
+      _binding?.pipeline.currentPlan.downloads[id]?.priority ?? 0;
 
   DecodeId? _activeUploadIdentity(DownloadId download) {
     final uploads = _binding?.pipeline.currentPlan.uploads;
