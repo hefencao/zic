@@ -308,6 +308,144 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('source-ready prefetch refill is directed to its own decode id',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'live_directed_source_wake_test_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final currentId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'current',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/current.webp'),
+    );
+    final prefetchId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'prefetch',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/prefetch.webp'),
+    );
+    DecodeId decodeId(DownloadId id) => DecodeId(
+          download: id,
+          physicalWidth: 8,
+          physicalHeight: 8,
+          pixelFormat: PixelFormat.rgba8888,
+          renderer: RendererKind.flutterImage,
+        );
+    final currentDecode = decodeId(currentId);
+    final prefetchDecode = decodeId(prefetchId);
+    final clock = _Clock();
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+      sources: sources,
+    );
+    final currentDecodeStarted = Completer<void>();
+    final releaseCurrentDecode = Completer<void>();
+    final prefetchDecoded = Completer<void>();
+    final cursors = _DirectedWakeCursorFactory(
+      currentDecodeStarted: currentDecodeStarted,
+      releaseCurrentDecode: releaseCurrentDecode,
+      prefetchDecoded: prefetchDecoded,
+    );
+    final decodes = DecodeRegistry(
+      downloads: downloads,
+      cursors: cursors,
+      clock: clock,
+    );
+    final prefetchTransport = _ControlledTransport();
+    final currentBytes = 'RIFF....WEBPcurrent'.codeUnits;
+    final coordinator = LiveCoordinator(
+      registry: downloads,
+      transportFor: (uri) => uri == prefetchId.canonicalUri
+          ? prefetchTransport
+          : _ImmediateTransport(currentBytes),
+      clock: clock,
+      decodes: decodes,
+      net: NetLane(maxActive: 2),
+      decode: DecodeLane(maxActive: 2),
+    );
+    final plan = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{
+        currentId: const DownloadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'current',
+          expirationRevision: 2,
+        ),
+        prefetchId: const DownloadDemand(
+          role: PageRole.far,
+          priority: 760,
+          reason: 'prefetch',
+          expirationRevision: 2,
+        ),
+      },
+      decodes: <DecodeId, DecodeDemand>{
+        currentDecode: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 8,
+          reason: 'current',
+          expirationRevision: 2,
+        ),
+        prefetchDecode: const DecodeDemand(
+          role: PageRole.far,
+          priority: 760,
+          targetWatermark: 1,
+          reason: 'prefetch',
+          expirationRevision: 2,
+        ),
+      },
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{
+        ResourceId.download(currentId),
+        ResourceId.download(prefetchId),
+        ResourceId.decode(currentDecode),
+        ResourceId.decode(prefetchDecode),
+      },
+    );
+
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: plan,
+        diff: DemandDiff.between(DemandPlan.empty(), plan),
+        window: RoleWindow(
+          const <int, PageRole>{
+            0: PageRole.current,
+            1: PageRole.far,
+          },
+        ),
+      ),
+    );
+    await currentDecodeStarted.future;
+    prefetchTransport.add('RIFF....WEBPprefetch'.codeUnits);
+    await prefetchTransport.close();
+
+    await prefetchDecoded.future.timeout(const Duration(seconds: 1));
+    expect(decodes.find(prefetchDecode)?.snapshot.depth, 1);
+
+    releaseCurrentDecode.complete();
+    await coordinator.idle();
+    await coordinator.dispose();
+    decodes.dispose();
+    await downloads.dispose();
+  });
+
   test('source revisions arriving during decode are drained exactly once',
       () async {
     final temp = await Directory.systemTemp.createTemp('live_growth_test_');
@@ -587,6 +725,122 @@ void main() {
         reason: 'revisit reuses the retained static output');
   });
 
+}
+
+final class _ImmediateTransport implements Transport {
+  const _ImmediateTransport(this.bytes);
+
+  final List<int> bytes;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async =>
+      ByteResponse(
+        bytes: Stream<List<int>>.value(bytes),
+        statusCode: 200,
+        rangeStart: 0,
+        totalLength: bytes.length,
+        validators: const Validators(etag: 'immediate'),
+        rangeSupported: false,
+      );
+}
+
+final class _DirectedWakeCursorFactory implements CursorFactory {
+  _DirectedWakeCursorFactory({
+    required this.currentDecodeStarted,
+    required this.releaseCurrentDecode,
+    required this.prefetchDecoded,
+  });
+
+  final Completer<void> currentDecodeStarted;
+  final Completer<void> releaseCurrentDecode;
+  final Completer<void> prefetchDecoded;
+
+  @override
+  CursorBinding create({
+    required DecodeId id,
+    required EncodedSource source,
+    required int epoch,
+  }) {
+    if (id.download.content.pageId == 'current') {
+      return CursorBinding(
+        frames: _BlockingCursor(
+          epoch,
+          started: currentDecodeStarted,
+          release: releaseCurrentDecode,
+        ),
+      );
+    }
+    return CursorBinding(
+      frames: _SignallingStaticCursor(epoch, decoded: prefetchDecoded),
+    );
+  }
+}
+
+final class _BlockingCursor implements FrameCursor {
+  _BlockingCursor(
+    this.epoch, {
+    required this.started,
+    required this.release,
+  });
+
+  @override
+  final int epoch;
+  final Completer<void> started;
+  final Completer<void> release;
+  int _next = 0;
+
+  @override
+  Future<CursorStep> decodeNext() async {
+    if (!started.isCompleted) {
+      started.complete();
+      await release.future;
+    }
+    return CursorStep.frame(_TestFrame(epoch, _next++));
+  }
+
+  @override
+  void dispose() {}
+}
+
+final class _SignallingStaticCursor implements FrameCursor, LoopCursor {
+  _SignallingStaticCursor(this.epoch, {required this.decoded});
+
+  @override
+  final int epoch;
+  final Completer<void> decoded;
+  bool _emitted = false;
+
+  @override
+  AnimationInfo get animation => const AnimationInfo(
+        frameCount: 1,
+        loopCount: 1,
+        complete: true,
+      );
+
+  @override
+  int get cycle => 0;
+
+  @override
+  bool rewind() => false;
+
+  @override
+  Future<CursorStep> decodeNext() async {
+    if (_emitted) {
+      return const CursorStep.end();
+    }
+    _emitted = true;
+    if (!decoded.isCompleted) {
+      decoded.complete();
+    }
+    return CursorStep.frame(_TestFrame(epoch, 0));
+  }
+
+  @override
+  void dispose() {}
 }
 
 final class _ControlledTransport implements Transport {

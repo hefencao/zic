@@ -524,6 +524,11 @@ def summarize(path: Path) -> dict[str, Any]:
                     "depth": _number(payload.get("depth")),
                     "threshold": _number(payload.get("threshold")),
                     "target": _number(payload.get("target")),
+                    "sourceWake": bool(payload.get("sourceWake", False)),
+                    "sourceRevision": _number(payload.get("sourceRevision")),
+                    "consumedSourceRevision": _number(
+                        payload.get("consumedSourceRevision")
+                    ),
                 }
             )
         elif kind in {"lastFrameKept", "staticFrameKept"}:
@@ -669,6 +674,9 @@ def summarize(path: Path) -> dict[str, Any]:
         "decodeRefillStageCounts": dict(
             Counter(str(row["stage"]) for row in decode_refills)
         ),
+        "decodeRefillSourceWakeCount": sum(
+            1 for row in decode_refills if row["sourceWake"]
+        ),
         "decodeRefills": decode_refills,
         "decodeRecoveryCount": len(decode_recoveries),
         "decodeRecoveryAttemptCounts": dict(
@@ -799,7 +807,8 @@ def main() -> None:
         "decode refills: "
         f"count={report['decodeRefillCount']} "
         f"roles={report['decodeRefillRoleCounts']} "
-        f"stages={report['decodeRefillStageCounts']}"
+        f"stages={report['decodeRefillStageCounts']} "
+        f"sourceWake={report['decodeRefillSourceWakeCount']}"
     )
     print(
         "decode recoveries: "

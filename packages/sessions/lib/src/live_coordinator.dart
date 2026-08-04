@@ -507,16 +507,22 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       }
       final sourceRevision = _sourceRevisions[id.download] ?? -1;
       final observedSourceRevision = _decodeSourceRevisions[id] ?? -1;
-      if (sourceWake && observedSourceRevision >= sourceRevision) {
+      final pendingSourceWake = sourceRevision > observedSourceRevision;
+      if (sourceWake && !pendingSourceWake) {
         return;
       }
 
       final registry = decodes;
       final before = registry?.find(id)?.snapshot;
       final preparedDepth = uploads?.preparedDepth(id) ?? 0;
-      final refill = registry == null ? null : _nextDecodeRefill();
+      final refill = registry == null
+          ? null
+          : _nextDecodeRefill(only: pendingSourceWake ? id : null);
       if (registry != null) {
         if (refill == null) {
+          if (pendingSourceWake && sourceRevision >= 0) {
+            _decodeSourceRevisions[id] = sourceRevision;
+          }
           return;
         }
         if (refill.id != id) {
@@ -544,10 +550,10 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             before,
             effectiveDemand,
             preparedDepth: preparedDepth,
-            sourceWake: sourceWake,
+            sourceWake: pendingSourceWake,
             force: force,
           )) {
-        if (sourceWake && sourceRevision >= 0) {
+        if (pendingSourceWake && sourceRevision >= 0) {
           _decodeSourceRevisions[id] = sourceRevision;
         }
         return;
@@ -568,6 +574,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
               'depth': refill.depth,
               'threshold': refill.threshold,
               'target': refill.targetWatermark,
+              'sourceWake': pendingSourceWake,
+              'sourceRevision': sourceRevision,
+              'consumedSourceRevision': observedSourceRevision,
             },
           ),
         );
@@ -656,7 +665,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         return;
       }
 
-      if (!sourceWake) {
+      if (!pendingSourceWake) {
         return;
       }
       final latestSourceRevision = _sourceRevisions[id.download] ?? -1;
@@ -720,7 +729,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     }());
   }
 
-  DecodeRefillDecision? _nextDecodeRefill() {
+  DecodeRefillDecision? _nextDecodeRefill({DecodeId? only}) {
     final registry = decodes;
     if (registry == null) {
       return null;
@@ -736,6 +745,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             snapshot.animation.complete;
       },
       eligibleOf: (id) {
+        if (only != null && id != only) {
+          return false;
+        }
         final snapshot = registry.find(id)?.snapshot;
         if (snapshot == null ||
             snapshot.failure != null ||

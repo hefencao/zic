@@ -1,6 +1,6 @@
-# dev.119 后续交接
+# dev.120 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.119_prefetch-wake-static-output-retention.zip`。
+唯一后续基线：`zic_v0.31.0-dev.120_directed-prefetch-source-wake.zip`。
 
 ## 必读
 
@@ -11,15 +11,23 @@
 5. `docs/SPEC.md`
 6. `docs/IMPLEMENTATION_STATUS.md`
 7. `docs/IMPLEMENTATION_PLAN.md`
-8. `docs/adr/0103-prefetch-source-wake-static-output-retention.md`
-9. `docs/audits/dev119-prefetch-wake-static-retention-audit.md`
-10. `docs/audits/dev119-validation-results.md`
+8. `docs/adr/0104-directed-prefetch-source-wake.md`
+9. `docs/audits/dev120-directed-prefetch-source-wake-audit.md`
+10. `docs/audits/dev120-validation-results.md`
 
 ## 下一份 Trace
 
-### 纵向静态图
+### 纵向静态图预加载
 
-检查 sourceReady→decodeRefill/frameDecoded 的延迟、`staticFrameKept`、`frame-budget` 回收、page host dispose，以及滑入前是否已经有 output。不要重新引入 visible role；正常 7/3 预加载必须自行完成。
+逐页比较 `sourceReady` 与首个 `decodeRefill sourceWake=true`、`frameDecoded`、`frameUploaded`。正常 7/3 预加载必须在页面进入视口前完成；不要重新引入 visible role。
+
+重点检查：
+
+- `decodeRefillSourceWakeCount`；
+- source-ready→decodeRefill 延迟；
+- source-ready→frame 0 延迟；
+- 静态 output 的 `staticFrameKept` 与 `frame-budget` 回收；
+- 滑动不足半屏时是否直接显示已预加载 output。
 
 ### 本地动态 WebP
 

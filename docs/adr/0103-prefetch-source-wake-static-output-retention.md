@@ -2,6 +2,8 @@
 
 **状态：Provisional**
 
+> Source wake 的“重定向后等待后续全局 refill”执行方式已被 ADR 0104 取代；静态 output 驻留、FrameBudget 回收与删除 visible role 的决定保持。
+
 ## 背景
 
 设备 Trace 证明，多个纵向静态页在进入视口前已经完成正文读取并持续拥有 decode/upload demand，但仍停在 `waitingSource`。page 23 的 source ready 到 frame 0 约间隔 6.9 秒，page 25 约间隔 1.1 秒，二者都在角色提升为 transition/current 后才解码。

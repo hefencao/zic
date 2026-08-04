@@ -1,3 +1,11 @@
+## 0.31.0-dev.120：定向预加载 Source Wake
+
+- 修复 source-ready 预加载页仍被全局 staged refill 重定向：未消费 source revision 现在为对应 DecodeId 选择定向 refill，不再依赖后续角色变化触发。
+- `_runDecode` 在任务实际开始时重新比较可用/已消费 source revision，避免 queued task 使用提交时的过期 `sourceWake` 布尔值。
+- 普通补水继续使用全局 c/n/m/p 仲裁；定向 source wake 仍使用同一 staged policy，只把 eligibility 限定到产生 source 事件的页面。
+- `decodeRefill` Trace 增加 source wake 与 revision 字段，analyzer 增加 `decodeRefillSourceWakeCount`。
+- 新增“current decode 被阻塞时，prefetch source-ready 仍必须在 current 释放前完成 frame 0”的 owner test 与 dev.120 门禁；README、Architecture、Spec 未修改。
+
 ## 0.31.0-dev.119：预加载 Source Wake 与静态输出驻留
 
 - 修复 `sourceReady` 被更高优先级 staged refill 重定向后永久丢失；waitingSource 页面仅在没有未消费 source revision 时才阻塞，并从全局候选中跳过。

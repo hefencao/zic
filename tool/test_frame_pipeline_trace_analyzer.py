@@ -145,6 +145,9 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
                 "depth": 2,
                 "threshold": 3,
                 "target": 4,
+                "sourceWake": True,
+                "sourceRevision": 3,
+                "consumedSourceRevision": 2,
             },
         },
         {
@@ -281,7 +284,9 @@ assert report["cacheHandoffs"][0]["bytes"] == 1048576
 assert report["decodeRefillCount"] == 1
 assert report["decodeRefillRoleCounts"] == {"current": 1}
 assert report["decodeRefillStageCounts"] == {"c>3": 1}
+assert report["decodeRefillSourceWakeCount"] == 1
 assert report["decodeRefills"][0]["target"] == 4
+assert report["decodeRefills"][0]["sourceRevision"] == 3
 assert report["decodeRecoveryCount"] == 1
 assert report["decodeRecoveryAttemptCounts"] == {"1": 1}
 assert report["decodeRecoveries"][0]["bufferedDepth"] == 7

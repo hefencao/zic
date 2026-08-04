@@ -4,8 +4,8 @@
 
 ## P0：纵向静态预加载设备闭环
 
-- 确认 page source ready 后在进入视口前产生 `decodeRefill`、frame 0 与 output；
-- 确认预加载页不会因另一个 waitingSource current/neighbor 阻塞；
+- 确认 page source ready 后立即出现 `decodeRefill sourceWake=true`，并在进入视口前产生 frame 0 与 output；
+- 确认预加载页不会因 current/neighbor 的 staged refill 或 queued task 覆盖而延迟；
 - 确认静态页退出 upload demand 后出现 `staticFrameKept`，而非立即 `demand-detached`；
 - 确认只有 FrameBudget 超限时才出现 `pageOutputReleased reason=frame-budget`；
 - 对比上下滑动时的可见 loading 与 page host dispose。
