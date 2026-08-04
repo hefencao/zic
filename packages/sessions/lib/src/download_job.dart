@@ -94,6 +94,14 @@ final class DownloadJob {
       );
     }
 
+    if (start == 0 && response.totalLength == 0) {
+      await response.discard();
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'image response body is empty',
+      );
+    }
+
     if (start == 0 &&
         response.disposition == ByteResponseDisposition.durableImmutable &&
         response.totalLength != null) {
@@ -106,6 +114,7 @@ final class DownloadJob {
       try {
         while (await _moveNext(residentIterator, cancel)) {
           final chunk = residentIterator.current;
+          if (chunk.isEmpty) continue;
           session.appendDurableCachedIngress(residentOffset, chunk);
           residentOffset += chunk.length;
           await Future<void>.delayed(Duration.zero);
@@ -129,8 +138,15 @@ final class DownloadJob {
     try {
       while (await _moveNext(iterator, cancel)) {
         final chunk = iterator.current;
+        if (chunk.isEmpty) continue;
         await session.append(writer, offset, chunk);
         offset += chunk.length;
+      }
+      if (offset <= 0) {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'image response produced no bytes',
+        );
       }
       await session.seal(
         writer,

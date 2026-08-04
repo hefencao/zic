@@ -31,3 +31,8 @@ abstract interface class ArtifactCacheBackend {
     required Uint8List bytes,
   });
 }
+
+/// Optional backend capability used to remove a proven-corrupt page artifact.
+abstract interface class ArtifactCacheInvalidationBackend {
+  Future<void> invalidateArtifact(DownloadId id);
+}

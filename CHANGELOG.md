@@ -1,3 +1,11 @@
+## 0.31.0-dev.115：空 Artifact 自愈与纵向静态 Host 保活
+
+- 修复 durable cache direct-ingress promoted session 被 handoff 读取空临时 artifact，并将 0 字节正文写回 L1/L2 的缓存污染。
+- `ArtifactCacheManager` 与 Memory/Persistent backend 拒绝、失效并删除空条目；长度漂移或空 materialize 会逐层失效并自动回源。
+- `DownloadJob` 拒绝声明为 0 字节或最终未产生正文的图片响应，禁止空 artifact 进入 promoted 状态。
+- 纵向静态页面 current 前后 4 页使用 `AutomaticKeepAliveClientMixin` 保留轻量 host；decoded frame、texture 与 bytes 仍由 Pipeline/FrameBudget 管理。
+- Trace analyzer 增加空 artifact 与空 handoff 回写统计；新增 ADR 0099、owner tests 和 dev.115 gate。README/Architecture/Spec 未修改。
+
 ## 0.31.0-dev.114：纵向可见页 Demand 与静态输出内存预算
 
 - 纵向 Reader observation 改为按页面与视口的真实交叠投影 current/transition；相邻页一进入视口即建立 demand，不再等待视口中心跨过约 50%。

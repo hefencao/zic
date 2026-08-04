@@ -322,8 +322,12 @@ final class DownloadSession {
       DownloadState.queued,
       DownloadState.failed,
     });
-    if (totalLength < 0) {
-      throw ArgumentError.value(totalLength, 'totalLength');
+    if (totalLength <= 0) {
+      throw ArgumentError.value(
+        totalLength,
+        'totalLength',
+        'durable cache sources must contain image bytes',
+      );
     }
     _residentCacheBacked = true;
     _residentLength = 0;
@@ -395,8 +399,14 @@ final class DownloadSession {
       targetIngress.seal(_epoch);
       _traceIngress(before, targetIngress.snapshot);
     }
-    _state = DownloadState.promoted;
     _contentKind = sniffContent(_prefix, finalChunk: true);
+    if (committedLength <= 0 || _contentKind == ContentKind.unknown) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'durable cache source has no recognizable image body',
+      );
+    }
+    _state = DownloadState.promoted;
     _flushCommittedTrace();
     _emit(TraceEventKind.artifactPromoted, <String, Object?>{
       'length': committedLength,

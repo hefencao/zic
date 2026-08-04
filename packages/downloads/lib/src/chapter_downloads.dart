@@ -130,7 +130,8 @@ abstract interface class ManagedChapterDownloadService
     implements
         ChapterDownloadService,
         ArtifactCacheMaintenance,
-        ArtifactCacheBackend {}
+        ArtifactCacheBackend,
+        ArtifactCacheInvalidationBackend {}
 
 /// Resolves bytes owned by an active comic source. External plugin page URIs
 /// are intentionally opaque and must stay behind the source boundary instead
@@ -458,6 +459,10 @@ final class MemoryChapterDownloadService
     _requireOpen();
     final bytes = _readerArtifacts[id];
     if (bytes == null) return null;
+    if (bytes.isEmpty) {
+      _readerArtifacts.remove(id);
+      return null;
+    }
     return ArtifactCacheStreamEntry(
       length: bytes.lengthInBytes,
       open: ({required int start, int? endExclusive}) async* {
@@ -480,7 +485,16 @@ final class MemoryChapterDownloadService
     required Uint8List bytes,
   }) async {
     _requireOpen();
+    if (bytes.isEmpty) {
+      throw StateError('cannot cache an empty Reader artifact');
+    }
     _readerArtifacts.putIfAbsent(id, () => Uint8List.fromList(bytes));
+  }
+
+  @override
+  Future<void> invalidateArtifact(DownloadId id) async {
+    _requireOpen();
+    _readerArtifacts.remove(id);
   }
 
   @override
@@ -1082,14 +1096,19 @@ final class PersistentChapterDownloadService
     final record = await _index.get(id.key);
     if (record == null ||
         record.state != CacheState.ready ||
-        record.id != id ||
-        record.bytes < 0) {
+        record.id != id) {
       return null;
     }
     final file = File(record.path);
-    if (!await file.exists()) return null;
+    if (record.bytes <= 0 || !await file.exists()) {
+      await _invalidateIndexedArtifact(id, record: record);
+      return null;
+    }
     final length = await file.length();
-    if (length != record.bytes) return null;
+    if (length <= 0 || length != record.bytes) {
+      await _invalidateIndexedArtifact(id, record: record);
+      return null;
+    }
 
     final touchedUs = DateTime.now().toUtc().microsecondsSinceEpoch;
     unawaited(
@@ -1129,6 +1148,9 @@ final class PersistentChapterDownloadService
     required Uint8List bytes,
   }) {
     _requireOpen();
+    if (bytes.isEmpty) {
+      throw StateError('cannot cache an empty Reader artifact');
+    }
     final active = _artifactWrites[id];
     if (active != null) {
       return active;
@@ -1164,6 +1186,29 @@ final class PersistentChapterDownloadService
       ),
     });
     await DownloadJob(transport: transport, session: session).run();
+  }
+
+  @override
+  Future<void> invalidateArtifact(DownloadId id) async {
+    _requireOpen();
+    final record = await _index.get(id.key);
+    await _invalidateIndexedArtifact(id, record: record);
+  }
+
+  Future<void> _invalidateIndexedArtifact(
+    DownloadId id, {
+    CacheRec? record,
+  }) async {
+    if (_artifactWrites.containsKey(id)) return;
+    final active = _registry.find(id);
+    if (active != null && (active.activeRun || active.hasWriter)) return;
+    final current = record ?? await _index.get(id.key);
+    await _index.remove(id.key);
+    if (current == null) return;
+    final file = File(current.path);
+    if (await file.exists()) {
+      await file.delete();
+    }
   }
 
   @override

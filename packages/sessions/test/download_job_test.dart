@@ -131,6 +131,45 @@ void main() {
     await transport.cancelled.future.timeout(const Duration(seconds: 1));
   });
 
+  test('rejects a declared empty image response', () async {
+    final session = createSession();
+
+    await expectLater(
+      DownloadJob(transport: const _EmptyTransport(), session: session).run(),
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          ErrorCode.artifactCorruption,
+        ),
+      ),
+    );
+
+    expect(session.state, isNot(DownloadState.promoted));
+    expect(session.committedLength, 0);
+  });
+
+  test('rejects an unknown-length stream that produces no bytes', () async {
+    final session = createSession();
+
+    await expectLater(
+      DownloadJob(
+        transport: const _EmptyTransport(advertiseLength: false),
+        session: session,
+      ).run(),
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          ErrorCode.artifactCorruption,
+        ),
+      ),
+    );
+
+    expect(session.state, DownloadState.failed);
+    expect(session.committedLength, 0);
+  });
+
   test('promotes a complete restored partial without another request', () async {
     final bytes = List<int>.generate(12, (index) => index + 1);
     final session = createSession();
@@ -186,4 +225,23 @@ final class _BlockingTransport implements Transport {
       totalLength: 6,
     );
   }
+}
+
+final class _EmptyTransport implements Transport {
+  const _EmptyTransport({this.advertiseLength = true});
+
+  final bool advertiseLength;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async =>
+      ByteResponse(
+        bytes: const Stream<List<int>>.empty(),
+        statusCode: HttpStatus.ok,
+        rangeStart: 0,
+        totalLength: advertiseLength ? 0 : null,
+      );
 }

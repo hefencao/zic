@@ -101,7 +101,25 @@ final class PromotedArtifactCacheHandoff {
       return;
     }
     final startedAtMicros = clock?.nowMicros();
+    if (session.residentCacheBacked) {
+      _recordCommit(
+        session,
+        action: 'skip-cache-resident',
+        bytes: session.committedLength,
+        startedAtMicros: startedAtMicros,
+      );
+      return;
+    }
     final expectedLength = session.artifact.committedLength;
+    if (expectedLength <= 0) {
+      _recordCommit(
+        session,
+        action: 'skip-empty',
+        bytes: 0,
+        startedAtMicros: startedAtMicros,
+      );
+      return;
+    }
     if (await cache.containsBackend(
       id: session.id,
       expectedLength: expectedLength,
@@ -119,6 +137,15 @@ final class PromotedArtifactCacheHandoff {
       builder.add(chunk);
     }
     final bytes = builder.takeBytes();
+    if (bytes.isEmpty) {
+      _recordCommit(
+        session,
+        action: 'skip-empty',
+        bytes: 0,
+        startedAtMicros: startedAtMicros,
+      );
+      return;
+    }
     await cache.storePromotedArtifact(
       id: session.id,
       bytes: bytes,

@@ -247,6 +247,8 @@ assert report["sourceReadSchedulerPressureHolds"]["max"] == 1
 assert report["sourceMemoryCacheHits"] == 0
 assert report["sourceMemoryCacheJoins"] == 0
 assert report["sourceArtifactMaterializeMicros"]["max"] == 1500
+assert report["emptyArtifactEventCount"] == 0
+assert report["emptyArtifactHandoffStoreCount"] == 0
 assert report["cacheResidentCommitCount"] == 0
 assert report["textureLeasePresentationCount"] == 0
 assert report["sourceReads"][0]["hotCacheEntries"] == 1

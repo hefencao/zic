@@ -99,6 +99,62 @@ void main() {
     expect(backend.values[id], bytes);
   });
 
+  test('cache-resident promoted sessions never write empty artifacts back',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-promoted-cache-handoff-resident-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final uri = Uri.parse('memory://resident-promoted-page');
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'resident-page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: uri,
+    );
+    final backend = _RecordingArtifactStore();
+    final cache = ArtifactCacheManager(backend: backend);
+    final trace = MemoryTraceSink();
+    final handoff = PromotedArtifactCacheHandoff(
+      cache: cache,
+      clock: SystemClock(),
+      traceSink: trace,
+    );
+    final registry = DownloadRegistry(
+      layout: CacheLayout(directory.path),
+      clock: SystemClock(),
+      onSessionCreated: handoff.observe,
+    );
+    addTearDown(() async {
+      handoff.detach();
+      await registry.dispose();
+    });
+    final session = registry.get(id);
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x08, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+    ]);
+
+    await DownloadJob(
+      transport: _ResidentTransport(bytes),
+      session: session,
+    ).run();
+    await handoff.drain(registry.sessions);
+
+    expect(session.residentCacheBacked, isTrue);
+    expect(backend.values, isEmpty);
+    expect(
+      trace.events.any(
+        (event) => event.payload['action'] == 'skip-cache-resident',
+      ),
+      isTrue,
+    );
+  });
+
   test('skips materializing a session artifact already present durably',
       () async {
     final directory = await Directory.systemTemp.createTemp(
@@ -208,3 +264,24 @@ ArtifactCacheStreamEntry _entry(Uint8List bytes) => ArtifactCacheStreamEntry(
       },
       readAll: () async => bytes,
     );
+
+
+final class _ResidentTransport implements Transport {
+  const _ResidentTransport(this.bytes);
+
+  final Uint8List bytes;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async =>
+      ByteResponse(
+        bytes: Stream<List<int>>.value(bytes),
+        statusCode: 200,
+        rangeStart: 0,
+        totalLength: bytes.lengthInBytes,
+        disposition: ByteResponseDisposition.durableImmutable,
+      );
+}

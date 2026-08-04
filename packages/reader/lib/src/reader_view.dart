@@ -253,7 +253,13 @@ final class _ReaderViewState extends State<ReaderView> {
     );
   }
 
-  Widget _buildPage(ChapterManifest chapter, int index) => RotatedBox(
+  Widget _buildPage(ChapterManifest chapter, int index) {
+    final asset = chapter.pages[index];
+    final keepStaticHost =
+        widget.controller.direction == ReadingDirection.vertical &&
+            !asset.animatedHint &&
+            (index - widget.controller.currentIndex).abs() <= 4;
+    return RotatedBox(
         key: ValueKey<String>('reader-page-rotation:$index'),
         quarterTurns: widget.controller.rotationQuarterTurns,
         child: _ZoomableReaderPage(
@@ -270,7 +276,8 @@ final class _ReaderViewState extends State<ReaderView> {
             key: ValueKey<String>(
               'reader-page-host:${chapter.pages[index].assetKey}',
             ),
-            asset: chapter.pages[index],
+            asset: asset,
+            keepAlive: keepStaticHost,
             sessionId: widget.controller.sessionId,
             clock: widget.clock,
             traceSink: widget.traceSink,
@@ -279,6 +286,7 @@ final class _ReaderViewState extends State<ReaderView> {
           ),
         ),
       );
+  }
 
   ReaderVerticalGeometry _verticalGeometry({
     Map<String, double>? ratios,
@@ -951,6 +959,7 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage> {
 final class _ReaderPageHost extends StatefulWidget {
   const _ReaderPageHost({
     required this.asset,
+    required this.keepAlive,
     required this.sessionId,
     required this.clock,
     required this.traceSink,
@@ -960,6 +969,7 @@ final class _ReaderPageHost extends StatefulWidget {
   });
 
   final PageAsset asset;
+  final bool keepAlive;
   final String sessionId;
   final MonoClock clock;
   final TraceSink traceSink;
@@ -970,7 +980,8 @@ final class _ReaderPageHost extends StatefulWidget {
   State<_ReaderPageHost> createState() => _ReaderPageHostState();
 }
 
-final class _ReaderPageHostState extends State<_ReaderPageHost> {
+final class _ReaderPageHostState extends State<_ReaderPageHost>
+    with AutomaticKeepAliveClientMixin<_ReaderPageHost> {
   bool _reportedFirstFrame = false;
   late int _mountedAtMicros;
   int? _mountedRevision;
@@ -987,8 +998,14 @@ final class _ReaderPageHostState extends State<_ReaderPageHost> {
   }
 
   @override
+  bool get wantKeepAlive => widget.keepAlive;
+
+  @override
   void didUpdateWidget(covariant _ReaderPageHost oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.keepAlive != widget.keepAlive) {
+      updateKeepAlive();
+    }
     if (oldWidget.asset.assetKey != widget.asset.assetKey) {
       _reportedFirstFrame = false;
       _mountedAtMicros = widget.clock.nowMicros();
@@ -1028,6 +1045,7 @@ final class _ReaderPageHostState extends State<_ReaderPageHost> {
         revision: revision,
         payload: <String, Object?>{
           'pageIndex': widget.asset.index,
+          'keepAlive': widget.keepAlive,
           ...payload,
         },
       ),
@@ -1069,6 +1087,7 @@ final class _ReaderPageHostState extends State<_ReaderPageHost> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final custom = widget.pageBuilder?.call(
       context,
       widget.asset,

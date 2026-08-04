@@ -98,6 +98,33 @@ void main() {
     expect(manager.lookupMemory(id), isNull);
   });
 
+  test('purges an empty memory/backend artifact instead of serving it',
+      () async {
+    final id = _id('empty');
+    final backend = _InvalidatingBackend(<DownloadId, Uint8List>{
+      id: Uint8List(0),
+    });
+    final manager = ArtifactCacheManager(backend: backend);
+    manager.remember(id: id, bytes: Uint8List(0), durable: true);
+
+    expect(manager.lookupMemory(id), isNull);
+    expect(await manager.readForeground(id), isNull);
+    expect(backend.invalidated, contains(id));
+    expect(backend.values[id], isNull);
+  });
+
+  test('refuses to write an empty promoted artifact', () async {
+    final id = _id('empty-store');
+    final backend = _Backend(<DownloadId, Uint8List>{});
+    final manager = ArtifactCacheManager(backend: backend);
+
+    await expectLater(
+      manager.storePromotedArtifact(id: id, bytes: Uint8List(0)),
+      throwsStateError,
+    );
+    expect(backend.values, isEmpty);
+  });
+
   test('writes through the backend and updates the memory tier', () async {
     final id = _id('store');
     final backend = _Backend(<DownloadId, Uint8List>{});
@@ -159,5 +186,19 @@ final class _Backend implements ArtifactCacheBackend {
     required Uint8List bytes,
   }) async {
     values[id] = Uint8List.fromList(bytes);
+  }
+}
+
+
+final class _InvalidatingBackend extends _Backend
+    implements ArtifactCacheInvalidationBackend {
+  _InvalidatingBackend(super.values);
+
+  final List<DownloadId> invalidated = <DownloadId>[];
+
+  @override
+  Future<void> invalidateArtifact(DownloadId id) async {
+    invalidated.add(id);
+    values.remove(id);
   }
 }

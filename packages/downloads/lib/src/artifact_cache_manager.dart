@@ -39,6 +39,10 @@ final class ArtifactCacheManager {
     if (selected == null) return null;
     final bytes = _memory.remove(selected);
     if (bytes == null) return null;
+    if (bytes.isEmpty) {
+      _durableMemory.remove(selected);
+      return null;
+    }
     _memory[selected] = bytes;
     return bytes;
   }
@@ -56,6 +60,13 @@ final class ArtifactCacheManager {
     }
     final entry = await backend.openArtifactStream(id);
     if (entry == null) return null;
+    if (entry.length <= 0) {
+      final invalidation = backend;
+      if (invalidation is ArtifactCacheInvalidationBackend) {
+        await (invalidation as ArtifactCacheInvalidationBackend).invalidateArtifact(id);
+      }
+      return null;
+    }
     return ArtifactCacheLookup(
       id: id,
       entry: entry,
@@ -119,6 +130,9 @@ final class ArtifactCacheManager {
     required DownloadId id,
     required Uint8List bytes,
   }) async {
+    if (bytes.isEmpty) {
+      throw StateError('cannot store an empty promoted artifact for ${id.key}');
+    }
     await backend.storePromotedArtifact(id: id, bytes: bytes);
     remember(id: id, bytes: bytes, durable: true);
   }
@@ -128,6 +142,10 @@ final class ArtifactCacheManager {
     required Uint8List bytes,
     bool durable = false,
   }) {
+    if (bytes.isEmpty) {
+      invalidateMemory(id);
+      return;
+    }
     final key = _ArtifactByteKey(id, bytes.lengthInBytes);
     for (final stale in _memory.keys
         .where((candidate) => candidate.id == id && candidate != key)
@@ -160,6 +178,14 @@ final class ArtifactCacheManager {
     }
   }
 
+  Future<void> invalidate(DownloadId id) async {
+    invalidateMemory(id);
+    final invalidation = backend;
+    if (invalidation is ArtifactCacheInvalidationBackend) {
+      await (invalidation as ArtifactCacheInvalidationBackend).invalidateArtifact(id);
+    }
+  }
+
   void clearMemory() {
     _memory.clear();
     _durableMemory.clear();
@@ -172,6 +198,10 @@ final class ArtifactCacheManager {
     required bool durable,
     required Future<Uint8List> Function() loader,
   }) async {
+    if (length <= 0) {
+      await invalidate(id);
+      throw StateError('artifact cache entry is empty for ${id.key}');
+    }
     final cached = lookupMemory(id, length: length);
     if (cached != null) {
       return ArtifactCacheRead(
@@ -196,11 +226,14 @@ final class ArtifactCacheManager {
       );
     }
     late final Future<Uint8List> tracked;
-    tracked = Future<Uint8List>.sync(loader).then((bytes) {
-      if (bytes.lengthInBytes != length) {
+    tracked = Future<Uint8List>.sync(loader).then<Uint8List>((bytes) async {
+      if (bytes.isEmpty || bytes.lengthInBytes != length) {
+        await invalidate(id);
         throw StateError(
-          'artifact cache length changed while reading: '
-          '${bytes.lengthInBytes}/$length for ${id.key}',
+          bytes.isEmpty
+              ? 'artifact cache body is empty for ${id.key}'
+              : 'artifact cache length changed while reading: '
+                  '${bytes.lengthInBytes}/$length for ${id.key}',
         );
       }
       remember(id: id, bytes: bytes, durable: durable);

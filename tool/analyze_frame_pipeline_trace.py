@@ -163,6 +163,7 @@ def summarize(path: Path) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     source_reads: list[dict[str, Any]] = []
+    empty_artifact_events: list[dict[str, Any]] = []
     cache_handoffs: list[dict[str, Any]] = []
     decode_refills: list[dict[str, Any]] = []
     decode_recoveries: list[dict[str, Any]] = []
@@ -392,8 +393,7 @@ def summarize(path: Path) -> dict[str, Any]:
                 }
             )
         elif kind == "sourceRead":
-            source_reads.append(
-                {
+            source_read = {
                     "t": event.get("t"),
                     "sessionId": event.get("sessionId"),
                     "identityHash": event.get("identityHash"),
@@ -434,7 +434,46 @@ def summarize(path: Path) -> dict[str, Any]:
                     "maxChunkBytes": _number(payload.get("maxChunkBytes")),
                     "completed": payload.get("completed"),
                 }
+            source_reads.append(source_read)
+            if source_read["bytes"] == 0 and (
+                payload.get("totalLength") == 0
+                or source_read["completed"] is True
+            ):
+                empty_artifact_events.append(
+                    {
+                        "t": event.get("t"),
+                        "sessionId": event.get("sessionId"),
+                        "identityHash": event.get("identityHash"),
+                        "kind": kind,
+                        "source": payload.get("source"),
+                        "consumer": payload.get("consumer"),
+                        "cacheTier": payload.get("cacheTier"),
+                    }
+                )
+        elif kind == "artifactSource" and _number(payload.get("bytes")) == 0:
+            empty_artifact_events.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "identityHash": event.get("identityHash"),
+                    "kind": kind,
+                    "source": payload.get("source"),
+                    "consumer": payload.get("consumer"),
+                    "cacheTier": payload.get("cacheTier"),
+                    "action": payload.get("action"),
+                }
             )
+            if payload.get("consumer") == "persistent-cache":
+                cache_handoffs.append(
+                    {
+                        "t": event.get("t"),
+                        "sessionId": event.get("sessionId"),
+                        "identityHash": event.get("identityHash"),
+                        "action": payload.get("action"),
+                        "bytes": _number(payload.get("bytes")),
+                        "handoffMicros": _number(payload.get("handoffMicros")),
+                    }
+                )
         elif kind == "retryScheduled" and payload.get("stage") == "decode-recovery":
             decode_recoveries.append(
                 {
@@ -481,7 +520,11 @@ def summarize(path: Path) -> dict[str, Any]:
                     "outputBytes": _number(payload.get("outputBytes")),
                 }
             )
-        elif kind == "artifactSource" and payload.get("consumer") == "persistent-cache":
+        elif (
+            kind == "artifactSource"
+            and payload.get("consumer") == "persistent-cache"
+            and _number(payload.get("bytes")) != 0
+        ):
             cache_handoffs.append(
                 {
                     "t": event.get("t"),
@@ -659,6 +702,13 @@ def summarize(path: Path) -> dict[str, Any]:
             [row["outputFreed"] for row in frame_budgets]
         ),
         "frameBudgets": frame_budgets,
+        "emptyArtifactEventCount": len(empty_artifact_events),
+        "emptyArtifactHandoffStoreCount": sum(
+            1 for row in empty_artifact_events
+            if row.get("consumer") == "persistent-cache"
+            and row.get("action") == "stored"
+        ),
+        "emptyArtifactEvents": empty_artifact_events,
         "sourceFirstChunkMicros": _stats(
             [row["firstChunkMicros"] for row in source_reads]
         ),
@@ -739,6 +789,11 @@ def main() -> None:
         "page hosts: "
         f"disposed={report['pageHostDisposedCount']} "
         f"withoutFrame={report['pageHostDisposedWithoutFrameCount']}"
+    )
+    print(
+        "empty artifacts: "
+        f"events={report['emptyArtifactEventCount']} "
+        f"handoffStored={report['emptyArtifactHandoffStoreCount']}"
     )
     print(
         "cache-resident ingress: "

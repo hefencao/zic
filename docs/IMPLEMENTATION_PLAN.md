@@ -2,25 +2,22 @@
 
 本文件只列未完成工作。
 
-## P0：纵向真实可见 Demand 设备闭环
+## P0：空 Artifact 自愈设备闭环
 
-- 向上和向下拖动时，确认相邻页 coverage 刚大于 0 即进入 transition demand；
-- 对比 page host mount、decode/upload demand、firstFrameReady 与 dispose 时间；
-- 确认拖动未跨中心时不再长期显示伪 loading；
-- 检查快速反向拖动时 target/last 不抖动或误释放。
+- 使用已有毒化缓存进入 Reader，确认首次 lookup 清除 L1/L2 后自动回源；
+- 确认 Trace 不再出现 0 字节 cache hit、`artifactPromoted length=0` 或 handoff `stored bytes=0`；
+- 验证本地、Venera、Mihon 页面均不会因空响应永久进入 FormatException；
+- 若仍有非零但无效正文，补充 header/error-body 分类，不能用 decoder retry 掩盖。
 
-## P0：静态输出内存预算
+## P0：纵向静态 Host 与 Output 生命周期
 
-- 采集 `staticWarmDecodes`、`staticWarmUploads` 和 FrameBudget 回收；
-- 用不同分辨率静态章节验证 96 MiB 推测预算与 128 MiB 实际预算；
-- 确认内存充足时保留更多 previous/next/last，一旦超限优先回收远端静态 output；
-- 继续确认动画 staged c/n/m/p 水位不受静态策略影响。
+- 向上/向下小幅反向拖动，确认 current±4 静态 host 不 dispose/remount；
+- 比较 pageHost mount/dispose、firstFrameReady、last/previous output 与 FrameBudget 回收；
+- 若顶部仍短暂重载，区分 host remount 与 output budget eviction，禁止 Widget 建第二套图片缓存。
 
 ## P0：剩余首次加载长尾
 
-- 比较 direct ingress、texture lease reuse、outputPrepare 与 mount-to-first-frame；
-- 继续定位首次进入而非重进的 Surface/host 发布延迟；
-- 检查静态与动画章节差异。
+继续比较 direct ingress、texture reuse、outputPrepare 与 mount-to-first-frame，分别评估静态和动画章节。
 
 ## P0：工具链闭包
 
