@@ -320,8 +320,25 @@ final class PipelineReaderSession {
     final pageIndex = observation.currentIndex
         .clamp(0, chapter.pages.length - 1)
         .toInt();
-    final currentDownload =
-        readerPageDownloadId(chapter, chapter.pages[pageIndex]);
+    final currentAsset = chapter.pages[pageIndex];
+    final currentDownload = readerPageDownloadId(chapter, currentAsset);
+    final prewarmer = _media;
+    final width = currentAsset.width;
+    final height = currentAsset.height;
+    if (prewarmer is PipelineOutputPrewarmer &&
+        width != null &&
+        height != null &&
+        width > 0 &&
+        height > 0) {
+      unawaited(
+        _prewarmOutput(
+          prewarmer as PipelineOutputPrewarmer,
+          id: currentDownload,
+          width: width,
+          height: height,
+        ),
+      );
+    }
     transferProgress.select(currentDownload);
     _holdStartupArtifactPressureFor(currentDownload);
     binding.accept(observation);
@@ -329,6 +346,33 @@ final class PipelineReaderSession {
     artifactReadScheduler.refresh();
     _syncPageOutputs();
     _ensurePlaybackTicker();
+  }
+
+  Future<void> _prewarmOutput(
+    PipelineOutputPrewarmer prewarmer, {
+    required DownloadId id,
+    required int width,
+    required int height,
+  }) async {
+    try {
+      await prewarmer.prewarmOutput(width: width, height: height);
+    } on Object catch (error) {
+      trace.record(
+        traceEvent(
+          clock: clock,
+          sessionId: sessionId,
+          kind: TraceEventKind.taskFailed,
+          identityHash: id.key,
+          payload: <String, Object?>{
+            'lane': 'output-prewarm',
+            'reason': error.toString(),
+            'fallback': 'lazy-output-create',
+            'width': width,
+            'height': height,
+          },
+        ),
+      );
+    }
   }
 
   void setPlayback({required bool paused, required double speed}) {
@@ -403,7 +447,9 @@ final class PipelineReaderSession {
     }
 
     final session = _downloads.get(id);
-    if (session.state != DownloadState.promoted && cache != null) {
+    if ((session.state != DownloadState.promoted ||
+            session.residentCacheBacked) &&
+        cache != null) {
       final readStarted = clock.nowMicros();
       try {
         final cached = await cache.readForeground(id);

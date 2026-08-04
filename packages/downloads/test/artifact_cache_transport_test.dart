@@ -32,6 +32,10 @@ void main() {
     expect(await _collect(response), <int>[1, 2, 3, 4]);
     expect(response.statusCode, 200);
     expect(response.totalLength, 4);
+    expect(
+      response.disposition,
+      ByteResponseDisposition.durableImmutable,
+    );
     expect(fallback.opens, 0);
     final source = trace.events.singleWhere(
       (event) => event.kind == TraceEventKind.artifactSource,
@@ -101,6 +105,10 @@ void main() {
     final response = await transport.open(uri);
     final chunks = await response.bytes.map((chunk) => chunk.length).toList();
 
+    expect(
+      response.disposition,
+      ByteResponseDisposition.durableImmutable,
+    );
     expect(cache.fullReads, 0);
     expect(cache.streamOpens, 1);
     expect(fallback.opens, 0);
@@ -230,12 +238,20 @@ void main() {
       traceSink: trace,
     );
 
-    final first = await (await transport.open(uri)).bytes
-        .map((chunk) => chunk.length)
-        .toList();
-    final second = await (await transport.open(uri)).bytes
-        .map((chunk) => chunk.length)
-        .toList();
+    final firstResponse = await transport.open(uri);
+    final first = await firstResponse.bytes.map((chunk) => chunk.length).toList();
+    final secondResponse = await transport.open(uri);
+    final second =
+        await secondResponse.bytes.map((chunk) => chunk.length).toList();
+
+    expect(
+      firstResponse.disposition,
+      ByteResponseDisposition.durableImmutable,
+    );
+    expect(
+      secondResponse.disposition,
+      ByteResponseDisposition.durableImmutable,
+    );
 
     expect(first, <int>[promotedArtifactReadChunkBytes, 17]);
     expect(second, first);

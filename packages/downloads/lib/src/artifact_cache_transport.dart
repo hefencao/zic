@@ -82,6 +82,7 @@ final class ArtifactCacheTransport implements Transport {
             entry: lookup.entry,
             range: range,
             validators: validators,
+            durable: lookup.durable,
           );
           if (cachedResponse != null) {
             var schedulerWaitMicros = 0;
@@ -250,6 +251,7 @@ final class ArtifactCacheTransport implements Transport {
       range: range,
       validators: validators,
       foregroundStartupSegmented: true,
+      durable: read.durable,
     );
     if (response == null) {
       lease?.release();
@@ -528,6 +530,7 @@ final class ArtifactCacheTransport implements Transport {
       totalLength: response.totalLength,
       validators: response.validators,
       rangeSupported: response.rangeSupported,
+      disposition: response.disposition,
       onDiscard: response.discard,
     );
   }
@@ -598,6 +601,7 @@ ByteResponse _leaseBoundResponse(
     totalLength: response.totalLength,
     validators: response.validators,
     rangeSupported: response.rangeSupported,
+    disposition: response.disposition,
     onDiscard: () async {
       try {
         await response.discard();
@@ -652,6 +656,7 @@ ByteResponse _scheduledArtifactResponse(
     totalLength: response.totalLength,
     validators: response.validators,
     rangeSupported: response.rangeSupported,
+    disposition: response.disposition,
     onDiscard: response.discard,
   );
 }
@@ -661,6 +666,7 @@ ByteResponse? _streamedCachedResponse({
   required ArtifactCacheStreamEntry entry,
   required ByteRange? range,
   required Validators? validators,
+  required bool durable,
 }) {
   final currentValidators = Validators(
     etag: '"zic-artifact-${entry.length}-${_fnv64String(id.key)}"',
@@ -685,6 +691,9 @@ ByteResponse? _streamedCachedResponse({
     totalLength: entry.length,
     validators: currentValidators,
     rangeSupported: true,
+    disposition: durable
+        ? ByteResponseDisposition.durableImmutable
+        : ByteResponseDisposition.staged,
   );
 }
 
@@ -694,6 +703,7 @@ ByteResponse? _cachedResponse({
   required ByteRange? range,
   required Validators? validators,
   bool foregroundStartupSegmented = false,
+  bool durable = true,
 }) {
   final currentValidators = Validators(
     etag: '"zic-artifact-${bytes.lengthInBytes}-'
@@ -725,6 +735,9 @@ ByteResponse? _cachedResponse({
     totalLength: bytes.lengthInBytes,
     validators: currentValidators,
     rangeSupported: true,
+    disposition: durable
+        ? ByteResponseDisposition.durableImmutable
+        : ByteResponseDisposition.staged,
   );
 }
 

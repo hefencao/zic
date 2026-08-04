@@ -46,6 +46,82 @@ void main() {
     expect(ingress.snapshot.kind, ContentKind.webp);
   });
 
+  test('durable cache response seals ingress without staging an artifact',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('durable_ingress_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final bytes = 'RIFF....WEBPdurable-cache'.codeUnits;
+    final factory = _Factory();
+    final ingress = Ingress(factory: factory, maxBytes: 1024);
+    final session = DownloadSession(
+      id: DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'durable',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('cache://page/durable'),
+      ),
+      artifact: Artifact(
+        partialPath: '${temp.path}/cache/page.part',
+        finalPath: '${temp.path}/cache/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+
+    final result = await DownloadJob(
+      transport: _DurableTransport(bytes),
+      session: session,
+    ).run();
+
+    expect(result.state, DownloadState.promoted);
+    expect(result.committedLength, bytes.length);
+    expect(session.residentCacheBacked, isTrue);
+    expect(factory.created.single.bytes, bytes);
+    expect(factory.created.single.sealed, isTrue);
+    expect(File(session.artifact.partialPath).existsSync(), isFalse);
+    expect(File(session.artifact.finalPath).existsSync(), isFalse);
+  });
+
+  test('failed durable cache ingress resets the session for retry', () async {
+    final temp = await Directory.systemTemp.createTemp('durable_failure_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final ingress = Ingress(factory: _Factory(), maxBytes: 1024);
+    final session = DownloadSession(
+      id: DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'durable-failure',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('cache://page/failure'),
+      ),
+      artifact: Artifact(
+        partialPath: '${temp.path}/cache/page.part',
+        finalPath: '${temp.path}/cache/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+
+    await expectLater(
+      DownloadJob(
+        transport: const _FailingDurableTransport(),
+        session: session,
+      ).run(),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(session.state, DownloadState.idle);
+    expect(session.committedLength, 0);
+    expect(session.residentCacheBacked, isFalse);
+  });
+
   test('source listener failures do not fail the authoritative download', () async {
     final temp = await Directory.systemTemp.createTemp('source_listener_');
     addTearDown(() async => temp.delete(recursive: true));
@@ -119,6 +195,51 @@ void main() {
     expect(factory.created.single.bytes, bytes);
     expect(factory.created.single.sealed, isTrue);
   });
+}
+
+
+final class _DurableTransport implements Transport {
+  _DurableTransport(this.bytes);
+
+  final List<int> bytes;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async =>
+      ByteResponse(
+        bytes: Stream<List<int>>.fromIterable(<List<int>>[
+          bytes.sublist(0, bytes.length ~/ 2),
+          bytes.sublist(bytes.length ~/ 2),
+        ]),
+        statusCode: 200,
+        rangeStart: 0,
+        totalLength: bytes.length,
+        disposition: ByteResponseDisposition.durableImmutable,
+      );
+}
+
+final class _FailingDurableTransport implements Transport {
+  const _FailingDurableTransport();
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async =>
+      ByteResponse(
+        bytes: (() async* {
+          yield <int>[1, 2, 3, 4];
+          throw StateError('fixture durable stream failure');
+        })(),
+        statusCode: 200,
+        rangeStart: 0,
+        totalLength: 8,
+        disposition: ByteResponseDisposition.durableImmutable,
+      );
 }
 
 final class _Clock implements MonoClock {

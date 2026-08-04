@@ -31,6 +31,9 @@ final class DownloadJob {
     CancelToken? cancel,
   }) async {
     cancel?.throwIfCancelled();
+    if (session.state == DownloadState.promoted) {
+      return;
+    }
     await session.restore();
     if (session.state == DownloadState.promoted) {
       return;
@@ -89,6 +92,31 @@ final class DownloadJob {
         code: ErrorCode.resumeRejected,
         message: 'full response did not start at offset zero',
       );
+    }
+
+    if (start == 0 &&
+        response.disposition == ByteResponseDisposition.durableImmutable &&
+        response.totalLength != null) {
+      session.beginDurableCachedIngress(
+        validators: response.validators,
+        totalLength: response.totalLength!,
+      );
+      var residentOffset = 0;
+      final residentIterator = StreamIterator<List<int>>(response.bytes);
+      try {
+        while (await _moveNext(residentIterator, cancel)) {
+          final chunk = residentIterator.current;
+          session.appendDurableCachedIngress(residentOffset, chunk);
+          residentOffset += chunk.length;
+          await Future<void>.delayed(Duration.zero);
+        }
+        session.sealDurableCachedIngress();
+        return;
+      } catch (_) {
+        await residentIterator.cancel();
+        await session.reset();
+        rethrow;
+      }
     }
 
     await session.bindResponse(

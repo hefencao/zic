@@ -44,7 +44,7 @@ require(
     'packages/pipeline_native/lib/src/native_pipeline_media_runtime.dart',
     'NativePipelineMediaRuntimeFactory() {',
     'prewarmNativeDecodeWorkers(),',
-    'AndroidTexturePresenter().prewarm(),',
+    '_texturePresenter!.prewarm(),',
 )
 require(
     'apps/app/lib/webp_demo.dart',

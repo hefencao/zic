@@ -13,8 +13,19 @@ import 'package:texture_bridge/texture_bridge.dart';
 final class NativePipelineMediaRuntimeFactory
     implements PipelineMediaRuntimeFactory {
   NativePipelineMediaRuntimeFactory() {
+    if (AndroidTexturePresenter.isSupported) {
+      final presenter = AndroidTexturePresenter(telemetrySink: _routeTelemetry);
+      _texturePresenter = presenter;
+      _texturePool = _AndroidTextureLeasePool(presenter);
+    }
     unawaited(_prewarmWithoutSurfacingFailure());
   }
+
+  AndroidTexturePresenter? _texturePresenter;
+  _AndroidTextureLeasePool? _texturePool;
+  final Map<String, _TextureTraceTarget> _traceTargets =
+      <String, _TextureTraceTarget>{};
+  Future<void>? _prewarmFuture;
 
   Future<void> _prewarmWithoutSurfacingFailure() async {
     try {
@@ -24,12 +35,9 @@ final class NativePipelineMediaRuntimeFactory
     }
   }
 
-  Future<void>? _prewarmFuture;
-
   Future<void> prewarm() => _prewarmFuture ??= Future.wait<void>(<Future<void>>[
         prewarmNativeDecodeWorkers(),
-        if (AndroidTexturePresenter.isSupported)
-          AndroidTexturePresenter().prewarm(),
+        if (_texturePresenter != null) _texturePresenter!.prewarm(),
       ]);
 
   @override
@@ -38,42 +46,71 @@ final class NativePipelineMediaRuntimeFactory
     required MonoClock clock,
     required TraceSink traceSink,
   }) {
-    final useTexture = AndroidTexturePresenter.isSupported;
-    final presenter = useTexture
-        ? AndroidTexturePresenter(
-            telemetrySink: (event) => _recordTextureTelemetry(
-              event,
-              sessionId: sessionId,
-              clock: clock,
-              traceSink: traceSink,
-            ),
-          )
-        : null;
+    final pool = _texturePool;
+    if (pool != null) {
+      _traceTargets[sessionId] = _TextureTraceTarget(
+        clock: clock,
+        traceSink: traceSink,
+      );
+    }
     return _NativePipelineMediaRuntime(
-      renderer: useTexture
-          ? RendererKind.androidTexture
-          : RendererKind.flutterImage,
-      uploader: presenter == null
+      renderer: pool == null
+          ? RendererKind.flutterImage
+          : RendererKind.androidTexture,
+      uploader: pool == null
           ? _FlutterImageUploader()
-          : _AndroidTextureUploader(presenter),
-      outputs: useTexture
-          ? const _AndroidOutputProjector()
-          : const _FlutterOutputProjector(),
+          : _AndroidTextureUploader(
+              pool,
+              sessionId: sessionId,
+            ),
+      outputs: pool == null
+          ? const _FlutterOutputProjector()
+          : const _AndroidOutputProjector(),
+      onClose: pool == null
+          ? null
+          : () {
+              _traceTargets.remove(sessionId);
+            },
+    );
+  }
+
+  void _routeTelemetry(TextureTelemetry event) {
+    final sessionId = event.context.sessionId;
+    if (sessionId == null) return;
+    final target = _traceTargets[sessionId];
+    if (target == null) return;
+    _recordTextureTelemetry(
+      event,
+      sessionId: sessionId,
+      clock: target.clock,
+      traceSink: target.traceSink,
     );
   }
 }
 
-final class _NativePipelineMediaRuntime implements PipelineMediaRuntime {
+final class _TextureTraceTarget {
+  const _TextureTraceTarget({required this.clock, required this.traceSink});
+
+  final MonoClock clock;
+  final TraceSink traceSink;
+}
+
+final class _NativePipelineMediaRuntime
+    implements PipelineMediaRuntime, PipelineOutputPrewarmer {
   _NativePipelineMediaRuntime({
     required this.renderer,
     required _NativeFrameUploader uploader,
     required this.outputs,
-  }) : _uploader = uploader;
+    void Function()? onClose,
+  })  : _uploader = uploader,
+        _onClose = onClose;
 
   @override
   final RendererKind renderer;
 
   final _NativeFrameUploader _uploader;
+  final void Function()? _onClose;
+  bool _closed = false;
 
   @override
   SourceFactory get sources => const NativeSourceFactory();
@@ -88,21 +125,42 @@ final class _NativePipelineMediaRuntime implements PipelineMediaRuntime {
   final PipelineOutputProjector outputs;
 
   @override
-  Future<void> close() => _uploader.close();
+  Future<void> prewarmOutput({required int width, required int height}) =>
+      _uploader.prewarm(width: width, height: height);
+
+  @override
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    try {
+      await _uploader.close();
+    } finally {
+      _onClose?.call();
+    }
+  }
 }
 
 abstract interface class _NativeFrameUploader implements FrameUploader {
+  Future<void> prewarm({required int width, required int height});
   Future<void> close();
 }
 
 final class _AndroidTextureUploader implements _NativeFrameUploader {
-  _AndroidTextureUploader(this._presenter);
+  _AndroidTextureUploader(
+    this._pool, {
+    required this.sessionId,
+  });
 
-  final AndroidTexturePresenter _presenter;
+  final _AndroidTextureLeasePool _pool;
+  final String sessionId;
   final Map<DecodeId, _AndroidTextureSlot> _slots =
       <DecodeId, _AndroidTextureSlot>{};
   final Set<Future<void>> _pendingReleases = <Future<void>>{};
   bool _closed = false;
+
+  @override
+  Future<void> prewarm({required int width, required int height}) =>
+      _pool.prewarm(width: width, height: height);
 
   @override
   Future<OutputFrame> upload({
@@ -124,10 +182,8 @@ final class _AndroidTextureUploader implements _NativeFrameUploader {
       () => _AndroidTextureSlot(
         width: frame.width,
         height: frame.height,
-        lease: _presenter.create(
-          width: frame.width,
-          height: frame.height,
-        ),
+        reservation: _pool.acquire(width: frame.width, height: frame.height),
+        pool: _pool,
       ),
     );
     if (slot.width != frame.width || slot.height != frame.height) {
@@ -140,7 +196,7 @@ final class _AndroidTextureUploader implements _NativeFrameUploader {
       );
     }
     try {
-      final lease = await slot.lease;
+      final reservation = await slot.reservation;
       if (_closed || !identical(_slots[id], slot) || slot.retired) {
         throw StateError('native Pipeline uploader retired during upload');
       }
@@ -151,7 +207,9 @@ final class _AndroidTextureUploader implements _NativeFrameUploader {
           id: id,
           frame: retained,
           slot: slot,
-          lease: lease,
+          lease: reservation.lease,
+          sessionId: sessionId,
+          leaseReused: reservation.reused,
         );
       } on Object {
         retained.dispose();
@@ -169,22 +227,16 @@ final class _AndroidTextureUploader implements _NativeFrameUploader {
   @override
   void release(DecodeId id) {
     final slot = _slots.remove(id);
-    if (slot != null) {
-      _retire(slot);
-    }
+    if (slot != null) _retire(slot);
   }
 
   @override
   Future<void> close() async {
-    if (_closed) {
-      return;
-    }
+    if (_closed) return;
     _closed = true;
     final slots = _slots.values.toList(growable: false);
     _slots.clear();
-    for (final slot in slots) {
-      _retire(slot);
-    }
+    for (final slot in slots) _retire(slot);
     await Future.wait<void>(
       _pendingReleases.toList(growable: false),
       eagerError: false,
@@ -198,16 +250,109 @@ final class _AndroidTextureUploader implements _NativeFrameUploader {
   }
 }
 
+final class _AndroidTextureLeasePool {
+  _AndroidTextureLeasePool(this.presenter, {this.maxIdle = 4});
+
+  final AndroidTexturePresenter presenter;
+  final int maxIdle;
+  final Map<_TextureSize, List<AndroidTextureLease>> _idle =
+      <_TextureSize, List<AndroidTextureLease>>{};
+  final Map<_TextureSize, Future<void>> _prewarming =
+      <_TextureSize, Future<void>>{};
+  final Set<_TextureSize> _prewarmedSizes = <_TextureSize>{};
+
+  int get idleCount =>
+      _idle.values.fold<int>(0, (sum, leases) => sum + leases.length);
+
+  Future<_TextureReservation> acquire({
+    required int width,
+    required int height,
+  }) async {
+    final size = _TextureSize(width, height);
+    var leases = _idle[size];
+    if (leases == null || leases.isEmpty) {
+      final warming = _prewarming[size];
+      if (warming != null) {
+        await warming;
+        leases = _idle[size];
+      }
+    }
+    if (leases != null && leases.isNotEmpty) {
+      final lease = leases.removeLast();
+      if (leases.isEmpty) _idle.remove(size);
+      return _TextureReservation(lease: lease, reused: true);
+    }
+    return _TextureReservation(
+      lease: await presenter.create(width: width, height: height),
+      reused: false,
+    );
+  }
+
+  Future<void> prewarm({required int width, required int height}) {
+    if (width <= 0 || height <= 0) return Future<void>.value();
+    final size = _TextureSize(width, height);
+    if (_prewarmedSizes.contains(size) ||
+        (_idle[size]?.isNotEmpty ?? false)) {
+      return Future<void>.value();
+    }
+    _prewarmedSizes.add(size);
+    return _prewarming.putIfAbsent(size, () async {
+      try {
+        final lease = await presenter.create(width: width, height: height);
+        await release(lease);
+      } on Object {
+        _prewarmedSizes.remove(size);
+        rethrow;
+      } finally {
+        _prewarming.remove(size);
+      }
+    });
+  }
+
+  Future<void> release(AndroidTextureLease lease) async {
+    if (lease.released) return;
+    final size = _TextureSize(lease.width, lease.height);
+    if (idleCount >= maxIdle) {
+      await lease.release();
+      return;
+    }
+    _idle.putIfAbsent(size, () => <AndroidTextureLease>[]).add(lease);
+  }
+}
+
+final class _TextureReservation {
+  const _TextureReservation({required this.lease, required this.reused});
+
+  final AndroidTextureLease lease;
+  final bool reused;
+}
+
+final class _TextureSize {
+  const _TextureSize(this.width, this.height);
+
+  final int width;
+  final int height;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _TextureSize && other.width == width && other.height == height;
+
+  @override
+  int get hashCode => Object.hash(width, height);
+}
+
 final class _AndroidTextureSlot {
   _AndroidTextureSlot({
     required this.width,
     required this.height,
-    required this.lease,
+    required this.reservation,
+    required this.pool,
   });
 
   final int width;
   final int height;
-  final Future<AndroidTextureLease> lease;
+  final Future<_TextureReservation> reservation;
+  final _AndroidTextureLeasePool pool;
   final Completer<void> _released = Completer<void>();
   int _frameOwners = 0;
   bool _retired = false;
@@ -216,16 +361,12 @@ final class _AndroidTextureSlot {
   bool get retired => _retired;
 
   void retainFrame() {
-    if (_retired) {
-      throw StateError('Android texture slot is retired');
-    }
+    if (_retired) throw StateError('Android texture slot is retired');
     _frameOwners++;
   }
 
   void releaseFrame() {
-    if (_frameOwners > 0) {
-      _frameOwners--;
-    }
+    if (_frameOwners > 0) _frameOwners--;
     _releaseIfIdle();
   }
 
@@ -240,24 +381,19 @@ final class _AndroidTextureSlot {
   }
 
   void _releaseIfIdle() {
-    if (!_retired || _frameOwners != 0 || _releaseStarted) {
-      return;
-    }
+    if (!_retired || _frameOwners != 0 || _releaseStarted) return;
     _releaseStarted = true;
-    unawaited(_releaseLease());
+    unawaited(_releaseReservation());
   }
 
-  Future<void> _releaseLease() async {
+  Future<void> _releaseReservation() async {
     try {
-      final value = await lease;
-      await value.release();
+      final value = await reservation;
+      await pool.release(value.lease);
     } on Object {
-      // Closing an already-failed platform lease must still unblock session
-      // teardown. The original create/present failure is reported upstream.
+      // A failed platform create must not block Reader teardown.
     } finally {
-      if (!_released.isCompleted) {
-        _released.complete();
-      }
+      if (!_released.isCompleted) _released.complete();
     }
   }
 }
@@ -269,12 +405,16 @@ final class _AndroidTextureOutputFrame
     required NativeFrame frame,
     required this.slot,
     required this.lease,
+    required this.sessionId,
+    required this.leaseReused,
   }) : _frame = frame;
 
   final DecodeId id;
   NativeFrame? _frame;
   final _AndroidTextureSlot slot;
   final AndroidTextureLease lease;
+  final String sessionId;
+  final bool leaseReused;
   ui.Image? _fallback;
   FramePresentationTiming? _lastPresentationTiming;
 
@@ -319,16 +459,16 @@ final class _AndroidTextureOutputFrame
   @override
   Future<void> present() async {
     final frame = _activeFrame;
-    if (_fallback != null) {
-      return;
-    }
+    if (_fallback != null) return;
     final platformAttempt = Stopwatch()..start();
     try {
       final sample = await lease.present(
         NativeTextureFrameOwner(frame),
         context: TextureTelemetryContext(
+          sessionId: sessionId,
           decodeIdentity: id.key,
           epoch: frame.epoch,
+          leaseReused: leaseReused,
         ),
       );
       _lastPresentationTiming = FramePresentationTiming(
@@ -380,9 +520,7 @@ final class _AndroidTextureOutputFrame
   @override
   void dispose() {
     final frame = _frame;
-    if (frame == null) {
-      return;
-    }
+    if (frame == null) return;
     _frame = null;
     frame.dispose();
     _fallback?.dispose();
@@ -392,6 +530,9 @@ final class _AndroidTextureOutputFrame
 }
 
 final class _FlutterImageUploader implements _NativeFrameUploader {
+  @override
+  Future<void> prewarm({required int width, required int height}) async {}
+
   bool _closed = false;
 
   @override
@@ -644,6 +785,8 @@ void _recordTextureTelemetry(
         'deadlineMissMicros': event.deadlineMissMicros,
         'roundTripMicros': event.roundTripMicros,
         'bridgeMicros': event.bridgeMicros,
+        if (event.context.leaseReused != null)
+          'textureLeaseReused': event.context.leaseReused,
       },
     TextureFallbackTelemetry() => <String, Object?>{
         'reason': event.reason,

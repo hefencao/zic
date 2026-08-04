@@ -2,24 +2,25 @@
 
 本文件只列未完成工作。
 
-## P0：全局下载并发设备闭环
+## P0：direct durable ingress 设备闭环
 
-- 验证 `downloadStarted.globalActive` 始终不超过 5；
-- 验证 local 与不同 remote `sourceId` bucket 的 active 数不超过来源上限；
-- 快速跨多页时确认退出窗口任务被取消，新窗口按唯一 priority 启动；
-- 比较 scheduler wait、first chunk 和完整 stream 的 p50/p95。
+- 确认 cache-hit `bytesCommitted.cacheResident=true` 且 `artifactWriteMicros=0`；
+- 比较 current source-ready、native ingress、完整 source stream 与 mount-to-first-frame；
+- 验证 resident stream 中断后 session reset 并可重试；
+-确认 origin、partial 和 resume 仍正常写入并 promotion。
 
-## P0：WebP 增量解码闭环
+## P0：Android texture pool 设备闭环
 
-- 验证 partial source 的 `decode-prefix` 按 local 1 MiB / remote 256 KiB 增长；
-- 验证同一 page/frame 重进后复用最小充分前缀；
-- 分离 `partial-source` 与 `sealed-source` failure；
-- 若 sealed failure 持续，扩展 native 错误原因，而不是继续增加 chunk。
+- 首次进入确认真实尺寸预热与 source/decode 并行；
+- 快速重进确认 `textureLeaseReused=true`；
+- 比较 frame 0 `outputPrepareMicros` 与 Surface reconfigure；
+-检查 last/transition present claim 是否阻止 lease 过早归还。
 
-## P0：播放与 last keep
+## P0：decode wake 去重
 
-- 继续验证 staged refill、切页恢复、纵向 last output 与首帧发布；
-- 检查整体播放恶化是否随旧窗口任务取消而消失。
+- 比较逐帧 timing 与 `decodeRefill` 数量；
+-确认 waitingSource 只在首个 source、64 KiB 增长、seal、failure 或 demand revision 变化时重提；
+-继续区分 partial needMoreData 与 sealed cursor/native failure。
 
 ## P0：工具链闭包
 

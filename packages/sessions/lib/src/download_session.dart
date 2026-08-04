@@ -93,6 +93,8 @@ final class DownloadSession {
   Validators _validators = const Validators();
   int? _totalLength;
   int _networkStartLength = 0;
+  int? _residentLength;
+  bool _residentCacheBacked = false;
   Failure? _failure;
   List<int> _prefix = <int>[];
   int _pendingCommitTraceBytes = 0;
@@ -107,7 +109,8 @@ final class DownloadSession {
 
   DownloadState get state => _state;
   SourceEpoch get epoch => _epoch;
-  int get committedLength => artifact.committedLength;
+  int get committedLength => _residentLength ?? artifact.committedLength;
+  bool get residentCacheBacked => _residentCacheBacked;
   Validators get validators => _validators;
   int? get totalLength => _totalLength;
   int get networkStartLength => _networkStartLength;
@@ -211,6 +214,8 @@ final class DownloadSession {
     bool verifyPromotedChecksum = true,
   }) async {
     _requireNotDisposed();
+    _residentLength = null;
+    _residentCacheBacked = false;
     if (_writer != null) {
       throw const Failure(
         code: ErrorCode.writerBusy,
@@ -305,6 +310,99 @@ final class DownloadSession {
     });
     await _syncCache(CacheState.partial);
     _notifySnapshot();
+  }
+
+  void beginDurableCachedIngress({
+    required Validators validators,
+    required int totalLength,
+  }) {
+    _requireNotDisposed();
+    _requireState(<DownloadState>{
+      DownloadState.idle,
+      DownloadState.queued,
+      DownloadState.failed,
+    });
+    if (totalLength < 0) {
+      throw ArgumentError.value(totalLength, 'totalLength');
+    }
+    _residentCacheBacked = true;
+    _residentLength = 0;
+    _validators = validators;
+    _totalLength = totalLength;
+    _networkStartLength = 0;
+    _prefix = <int>[];
+    _contentKind = ContentKind.unknown;
+    _failure = null;
+    ingress?.reset(_epoch);
+    ingress?.expectLength(totalLength);
+    _state = DownloadState.receiving;
+    _emit(
+      TraceEventKind.downloadState,
+      <String, Object?>{'state': _state.name, 'cacheResident': true},
+    );
+  }
+
+  void appendDurableCachedIngress(int offset, List<int> bytes) {
+    _requireNotDisposed();
+    if (!_residentCacheBacked || _state != DownloadState.receiving) {
+      throw const Failure(
+        code: ErrorCode.invalidState,
+        message: 'session is not receiving a durable cache source',
+      );
+    }
+    if (offset != (_residentLength ?? 0)) {
+      throw Failure(
+        code: ErrorCode.invalidOffset,
+        message: 'expected resident offset ${_residentLength ?? 0}, got $offset',
+      );
+    }
+    final chunk = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
+    final ingressStarted = clock.nowMicros();
+    _appendIngress(_epoch, offset, chunk);
+    final nativeIngressMicros =
+        (clock.nowMicros() - ingressStarted).clamp(0, 1 << 62).toInt();
+    _residentLength = offset + chunk.length;
+    _recordIngressTiming(
+      nativeIngressMicros: nativeIngressMicros,
+      artifactWriteMicros: 0,
+    );
+    if (_prefix.length < sniffPrefixLength && chunk.isNotEmpty) {
+      final remaining = sniffPrefixLength - _prefix.length;
+      _prefix.addAll(chunk.take(remaining));
+      _contentKind = sniffContent(_prefix);
+    }
+    _recordCommittedChunk(chunk.length);
+  }
+
+  DownloadSnapshot sealDurableCachedIngress() {
+    _requireNotDisposed();
+    if (!_residentCacheBacked || _state != DownloadState.receiving) {
+      throw const Failure(
+        code: ErrorCode.invalidState,
+        message: 'session is not receiving a durable cache source',
+      );
+    }
+    final expected = _totalLength;
+    if (expected != null && expected != committedLength) {
+      throw Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'durable cache length $committedLength does not match $expected',
+      );
+    }
+    final targetIngress = ingress;
+    if (targetIngress != null) {
+      final before = targetIngress.snapshot;
+      targetIngress.seal(_epoch);
+      _traceIngress(before, targetIngress.snapshot);
+    }
+    _state = DownloadState.promoted;
+    _contentKind = sniffContent(_prefix, finalChunk: true);
+    _flushCommittedTrace();
+    _emit(TraceEventKind.artifactPromoted, <String, Object?>{
+      'length': committedLength,
+      'cacheResident': true,
+    });
+    return snapshot;
   }
 
   WriterLease acquireWriter() {
@@ -463,6 +561,8 @@ final class DownloadSession {
     _validators = const Validators();
     _totalLength = null;
     _networkStartLength = 0;
+    _residentLength = null;
+    _residentCacheBacked = false;
     _contentKind = ContentKind.unknown;
     _prefix = <int>[];
     _failure = null;
@@ -492,6 +592,8 @@ final class DownloadSession {
     _validators = const Validators();
     _totalLength = null;
     _networkStartLength = 0;
+    _residentLength = null;
+    _residentCacheBacked = false;
     _contentKind = ContentKind.unknown;
     _prefix = <int>[];
     await index?.remove(id.key);
@@ -557,6 +659,7 @@ final class DownloadSession {
         'chunks': _pendingCommitTraceChunks,
         'committedLength': committedLength,
         'kind': _contentKind.name,
+        'cacheResident': _residentCacheBacked,
         'nativeIngressMicros': _pendingNativeIngressMicros,
         'artifactWriteMicros': _pendingArtifactWriteMicros,
         'maxNativeIngressMicros': _pendingMaxNativeIngressMicros,

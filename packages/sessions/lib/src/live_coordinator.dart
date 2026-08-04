@@ -750,6 +750,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     if (snapshot.failure != null || snapshot.state == DecodeState.failed) {
       return true;
     }
+    if (snapshot.state == DecodeState.waitingSource && !sourceWake) {
+      return false;
+    }
     if (sourceWake) {
       return snapshot.state == DecodeState.waitingSource ||
           snapshot.depth < targetDepth;

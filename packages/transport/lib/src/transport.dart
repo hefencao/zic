@@ -67,6 +67,11 @@ final class Validators {
   }
 }
 
+enum ByteResponseDisposition {
+  staged,
+  durableImmutable,
+}
+
 final class ByteResponse {
   ByteResponse({
     required this.bytes,
@@ -75,6 +80,7 @@ final class ByteResponse {
     required this.totalLength,
     this.validators = const Validators(),
     this.rangeSupported = false,
+    this.disposition = ByteResponseDisposition.staged,
     Future<void> Function()? onDiscard,
   })  : _onDiscard = onDiscard,
         assert(statusCode >= 100),
@@ -87,6 +93,7 @@ final class ByteResponse {
   final int? totalLength;
   final Validators validators;
   final bool rangeSupported;
+  final ByteResponseDisposition disposition;
   final Future<void> Function()? _onDiscard;
 
   bool get isPartial => statusCode == 206;

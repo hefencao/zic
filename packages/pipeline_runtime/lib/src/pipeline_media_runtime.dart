@@ -15,6 +15,10 @@ abstract interface class PipelineMediaRuntimeFactory {
   });
 }
 
+abstract interface class PipelineOutputPrewarmer {
+  Future<void> prewarmOutput({required int width, required int height});
+}
+
 abstract interface class PipelineMediaRuntime {
   SourceFactory get sources;
   CursorFactory get cursors;

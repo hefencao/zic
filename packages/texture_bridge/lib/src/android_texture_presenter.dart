@@ -13,12 +13,14 @@ final class TextureTelemetryContext {
     this.decodeIdentity,
     this.demandRevision,
     this.epoch,
+    this.leaseReused,
   });
 
   final String? sessionId;
   final String? decodeIdentity;
   final int? demandRevision;
   final int? epoch;
+  final bool? leaseReused;
 }
 
 sealed class TextureTelemetry {

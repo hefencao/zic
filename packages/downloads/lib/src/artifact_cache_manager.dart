@@ -22,6 +22,7 @@ final class ArtifactCacheManager {
       LinkedHashMap<_ArtifactByteKey, Uint8List>();
   final Map<_ArtifactByteKey, Future<Uint8List>> _inFlight =
       <_ArtifactByteKey, Future<Uint8List>>{};
+  final Set<_ArtifactByteKey> _durableMemory = <_ArtifactByteKey>{};
   int _memoryBytes = 0;
 
   int get memoryEntryCount => _memory.length;
@@ -45,10 +46,12 @@ final class ArtifactCacheManager {
   Future<ArtifactCacheLookup?> lookup(DownloadId id) async {
     final memory = lookupMemory(id);
     if (memory != null) {
+      final key = _ArtifactByteKey(id, memory.lengthInBytes);
       return ArtifactCacheLookup(
         id: id,
         entry: _memoryEntry(memory),
         tier: ArtifactCacheTier.memory,
+        durable: _durableMemory.contains(key),
       );
     }
     final entry = await backend.openArtifactStream(id);
@@ -57,6 +60,7 @@ final class ArtifactCacheManager {
       id: id,
       entry: entry,
       tier: ArtifactCacheTier.persistent,
+      durable: true,
     );
   }
 
@@ -84,11 +88,13 @@ final class ArtifactCacheManager {
         bytes: await lookup.entry.readAll!(),
         memoryHit: true,
         joined: false,
+        durable: lookup.durable,
       );
     }
     return _readJoined(
       id: lookup.id,
       length: lookup.entry.length,
+      durable: true,
       loader: lookup.entry.readAll ?? () => _collect(lookup.entry),
     );
   }
@@ -102,31 +108,44 @@ final class ArtifactCacheManager {
     required DownloadId id,
     required int length,
     required Future<Uint8List> Function() loader,
-  }) => _readJoined(id: id, length: length, loader: loader);
+  }) => _readJoined(
+        id: id,
+        length: length,
+        durable: false,
+        loader: loader,
+      );
 
   Future<void> storePromotedArtifact({
     required DownloadId id,
     required Uint8List bytes,
   }) async {
     await backend.storePromotedArtifact(id: id, bytes: bytes);
-    remember(id: id, bytes: bytes);
+    remember(id: id, bytes: bytes, durable: true);
   }
 
-  void remember({required DownloadId id, required Uint8List bytes}) {
+  void remember({
+    required DownloadId id,
+    required Uint8List bytes,
+    bool durable = false,
+  }) {
     final key = _ArtifactByteKey(id, bytes.lengthInBytes);
     for (final stale in _memory.keys
         .where((candidate) => candidate.id == id && candidate != key)
         .toList(growable: false)) {
       final removed = _memory.remove(stale);
+      _durableMemory.remove(stale);
       if (removed != null) _memoryBytes -= removed.lengthInBytes;
     }
     final previous = _memory.remove(key);
+    final wasDurable = _durableMemory.remove(key);
     if (previous != null) _memoryBytes -= previous.lengthInBytes;
     if (bytes.lengthInBytes > memoryMaxBytes) return;
     _memory[key] = bytes;
+    if (durable || wasDurable) _durableMemory.add(key);
     _memoryBytes += bytes.lengthInBytes;
     while (_memory.length > memoryMaxEntries || _memoryBytes > memoryMaxBytes) {
       final oldest = _memory.keys.first;
+      _durableMemory.remove(oldest);
       _memoryBytes -= _memory.remove(oldest)!.lengthInBytes;
     }
   }
@@ -136,31 +155,44 @@ final class ArtifactCacheManager {
         .where((candidate) => candidate.id == id)
         .toList(growable: false)) {
       final removed = _memory.remove(key);
+      _durableMemory.remove(key);
       if (removed != null) _memoryBytes -= removed.lengthInBytes;
     }
   }
 
   void clearMemory() {
     _memory.clear();
+    _durableMemory.clear();
     _memoryBytes = 0;
   }
 
   Future<ArtifactCacheRead> _readJoined({
     required DownloadId id,
     required int length,
+    required bool durable,
     required Future<Uint8List> Function() loader,
   }) async {
     final cached = lookupMemory(id, length: length);
     if (cached != null) {
-      return ArtifactCacheRead(bytes: cached, memoryHit: true, joined: false);
+      return ArtifactCacheRead(
+        bytes: cached,
+        memoryHit: true,
+        joined: false,
+        durable: _durableMemory.contains(_ArtifactByteKey(id, length)),
+      );
     }
     final key = _ArtifactByteKey(id, length);
     final running = _inFlight[key];
     if (running != null) {
+      final bytes = await running;
+      if (durable) {
+        remember(id: id, bytes: bytes, durable: true);
+      }
       return ArtifactCacheRead(
-        bytes: await running,
+        bytes: bytes,
         memoryHit: false,
         joined: true,
+        durable: _durableMemory.contains(key),
       );
     }
     late final Future<Uint8List> tracked;
@@ -171,7 +203,7 @@ final class ArtifactCacheManager {
           '${bytes.lengthInBytes}/$length for ${id.key}',
         );
       }
-      remember(id: id, bytes: bytes);
+      remember(id: id, bytes: bytes, durable: durable);
       return bytes;
     }).whenComplete(() {
       if (identical(_inFlight[key], tracked)) _inFlight.remove(key);
@@ -181,6 +213,7 @@ final class ArtifactCacheManager {
       bytes: await tracked,
       memoryHit: false,
       joined: false,
+      durable: durable,
     );
   }
 
@@ -226,11 +259,13 @@ final class ArtifactCacheLookup {
     required this.id,
     required this.entry,
     required this.tier,
+    this.durable = false,
   });
 
   final DownloadId id;
   final ArtifactCacheStreamEntry entry;
   final ArtifactCacheTier tier;
+  final bool durable;
 }
 
 final class ArtifactCacheRead {
@@ -238,11 +273,13 @@ final class ArtifactCacheRead {
     required this.bytes,
     required this.memoryHit,
     required this.joined,
+    this.durable = false,
   });
 
   final Uint8List bytes;
   final bool memoryHit;
   final bool joined;
+  final bool durable;
 }
 
 final class _ArtifactByteKey {

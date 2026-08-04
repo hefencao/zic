@@ -169,6 +169,8 @@ def summarize(path: Path) -> dict[str, Any]:
     decode_prefix_hints: list[dict[str, Any]] = []
     ranked_downloads: list[dict[str, Any]] = []
     last_frames_kept: list[dict[str, Any]] = []
+    cache_resident_commits: list[dict[str, Any]] = []
+    texture_presentations: list[dict[str, Any]] = []
     next_due_by_session: dict[str, int] = {}
     session_lifecycle: dict[str, dict[str, int]] = defaultdict(dict)
 
@@ -277,6 +279,32 @@ def summarize(path: Path) -> dict[str, Any]:
                 next_due_by_session[session_id] = presented_at + duration
             elif duration <= 0:
                 next_due_by_session.pop(session_id, None)
+        elif kind == "bytesCommitted" and payload.get("cacheResident") is True:
+            cache_resident_commits.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "identityHash": event.get("identityHash"),
+                    "bytes": _number(payload.get("bytes")),
+                    "committedLength": _number(payload.get("committedLength")),
+                    "nativeIngressMicros": _number(
+                        payload.get("nativeIngressMicros")
+                    ),
+                    "artifactWriteMicros": _number(
+                        payload.get("artifactWriteMicros")
+                    ),
+                }
+            )
+        elif kind == "frameUploaded" and "textureLeaseReused" in payload:
+            texture_presentations.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "identityHash": event.get("identityHash"),
+                    "textureLeaseReused": payload.get("textureLeaseReused"),
+                    "uploadMicros": _number(payload.get("uploadMicros")),
+                }
+            )
         elif kind == "taskFailed":
             failures.append(
                 {
@@ -550,6 +578,20 @@ def summarize(path: Path) -> dict[str, Any]:
         "rankedDownloads": ranked_downloads,
         "lastFrameKeptCount": len(last_frames_kept),
         "lastFramesKept": last_frames_kept,
+        "cacheResidentCommitCount": len(cache_resident_commits),
+        "cacheResidentIngressMicros": _stats(
+            [row["nativeIngressMicros"] for row in cache_resident_commits]
+        ),
+        "cacheResidentArtifactWriteMicros": _stats(
+            [row["artifactWriteMicros"] for row in cache_resident_commits]
+        ),
+        "cacheResidentCommits": cache_resident_commits,
+        "textureLeasePresentationCount": len(texture_presentations),
+        "textureLeaseReuseCount": sum(
+            1 for row in texture_presentations
+            if row["textureLeaseReused"] is True
+        ),
+        "textureLeasePresentations": texture_presentations,
         "sourceFirstChunkMicros": _stats(
             [row["firstChunkMicros"] for row in source_reads]
         ),
@@ -621,6 +663,17 @@ def main() -> None:
         f"buckets={report['rankedDownloadBucketCounts']}"
     )
     print(f"last frames kept: {report['lastFrameKeptCount']}")
+    print(
+        "cache-resident ingress: "
+        f"count={report['cacheResidentCommitCount']} "
+        f"native={report['cacheResidentIngressMicros']} "
+        f"artifactWrite={report['cacheResidentArtifactWriteMicros']}"
+    )
+    print(
+        "texture lease presentations: "
+        f"count={report['textureLeasePresentationCount']} "
+        f"reused={report['textureLeaseReuseCount']}"
+    )
     print(
         f"cache handoff: actions={report['cacheHandoffActionCounts']} "
         f"timing={report['cacheHandoffMicros']}"

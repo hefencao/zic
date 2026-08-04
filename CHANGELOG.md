@@ -1,3 +1,11 @@
+## 0.31.0-dev.113：Texture Pool 与持久 Artifact 直连
+
+- durable persistent/memory cache response 通过权威 DownloadSession 直连 sealed ingress，不再写 Reader 临时 artifact；失败时 reset 回可重试状态。
+- ArtifactCacheManager 保留 key+length durability，memory-only session artifact 不会冒充已持久化资源。
+- Android texture lease pool 提升到 media runtime factory composition；按 PageAsset 尺寸预热并跨 Reader 重进复用。
+- waitingSource 无 source revision 变化时不再被普通 force/ticker 重复提交。
+- 新增 owner tests、dev.113 gate、Trace 的 cache-resident 与 texture reuse 统计；README/Architecture/Spec 未修改。
+
 ## 0.31.0-dev.112：全局页面下载排序与自适应 WebP 前缀
 
 - 页面传输改为 composition 共享全局 5 槽，按页面唯一 rank 和 local/remote source bucket 调度。
