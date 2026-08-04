@@ -1,3 +1,12 @@
+## 0.31.0-dev.111：缓冲解码恢复与启动近邻压力
+
+- startup foreground pressure 只放行 n/m/p 近邻 artifact，far 7/3 demand 保留但延后实际读取。
+- pressure 释放提升到 current output 已呈现且 c 水位达到 8。
+- DecodeSession failure 保留 FrameHolder；UploadSession 继续消费已解码 successor。
+- current/transition 增加最多四次、revision-bound 的有界 decode recovery。
+- Trace analyzer 增加 decode recovery attempt 与 buffered depth。
+- README、Architecture、Spec 未修改。
+
 ## 0.31.0-dev.110：分阶段解码水位与 last output 保留
 
 - 增加 `last`/`next2` 角色；last 不占 previous/next 槽，只冻结并保留既有 output。

@@ -645,6 +645,88 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('buffered successors continue after a transient decode failure',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'upload_buffered_decode_failure_test_',
+    );
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: _BufferedFailureCursorFactory(),
+      clock: _Clock(),
+    );
+    const decodeDemand = DecodeDemand(
+      role: PageRole.current,
+      priority: 1000,
+      targetWatermark: 3,
+      reason: 'buffered-failure',
+      expirationRevision: 3,
+    );
+    await expectLater(
+      decode.fill(
+        demand: decodeDemand,
+        revision: 1,
+        cancel: CancelToken(),
+      ),
+      throwsA(isA<Failure>()),
+    );
+    expect(decode.snapshot.state, DecodeState.failed);
+    expect(decode.snapshot.depth, 2);
+
+    final uploader = _Uploader();
+    final upload = UploadSession(
+      id: decode.id,
+      decode: decode,
+      uploader: uploader,
+      clock: _Clock(),
+    );
+    const uploadDemand = UploadDemand(
+      role: PageRole.current,
+      priority: 1000,
+      reason: 'buffered-failure',
+      expirationRevision: 3,
+    );
+    var result = await upload.prepare(
+      demand: uploadDemand,
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    expect(result.state, UploadState.ready);
+    expect(result.frameIndex, 0);
+    expect(decode.holder?.depth, 1);
+
+    expect(upload.advance(0), isTrue);
+    result = await upload.prepare(
+      demand: uploadDemand,
+      revision: 2,
+      cancel: CancelToken(),
+    );
+    expect(result.state, UploadState.ready);
+    expect(result.frameIndex, 1);
+    expect(decode.holder?.depth, 0);
+
+    upload.dispose();
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
   test('stale uploaded output is disposed and never replaces current state', () async {
     final temp = await Directory.systemTemp.createTemp('upload_stale_test_');
     final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
@@ -784,6 +866,34 @@ final class _Source implements EncodedSource {
   SourceStatus seal(int epoch) {
     sealed = true;
     return SourceStatus.ok;
+  }
+
+  @override
+  void dispose() {}
+}
+
+final class _BufferedFailureCursorFactory implements CursorFactory {
+  @override
+  CursorBinding create({
+    required DecodeId id,
+    required EncodedSource source,
+    required int epoch,
+  }) => CursorBinding(frames: _BufferedFailureCursor(epoch));
+}
+
+final class _BufferedFailureCursor implements FrameCursor {
+  _BufferedFailureCursor(this.epoch);
+
+  @override
+  final int epoch;
+  int next = 0;
+
+  @override
+  Future<CursorStep> decodeNext() async {
+    if (next >= 2) {
+      throw StateError('transient buffered failure');
+    }
+    return CursorStep.frame(_Frame(epoch, next++));
   }
 
   @override

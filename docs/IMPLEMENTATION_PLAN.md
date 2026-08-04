@@ -2,23 +2,17 @@
 
 本文件只列未完成工作。
 
-## P0：staged 水位与 last keep 设备闭环
+## P0：设备闭环
 
-- 验证 `decodeRefill` 顺序符合 c/n/m/p 阶段；
-- 验证 `lastFrameKept` 出现，旧 current 不再 `demand-detached`；
-- 验证 last→current 自动恢复播放；
-- 验证纵向重叠上半屏不再黑屏。
+- 验证 startup pressure 期间 priority 400 far artifact 不获得 chunk；
+- 比较 frame 0 platform presentation 到 `firstFrameReady` 的间隔；
+- 验证 current decode failure 后出现 `decode-recovery`，buffered successor 持续呈现；
+- 验证切页后不再播放一两帧即停滞。
 
-## P0：首帧闭环
+## P0：staged 水位与 last keep
 
-- 比较 frame 0 platform presentation 与 `firstFrameReady`；
-- 确认首帧 upload 在 c refill 完成前启动；
-- 检查前 12 帧 native decode、channel dispatch 与 schedule queue。
-
-## P0：重进 coordinator dispose
-
-- 继续定位约 5.67 秒 coordinator dispose 长尾；
-- 区分 active decode、upload present、lane idle 和 session registry 清理。
+- 继续核对 `decodeRefill` c/n/m/p 顺序；
+- 验证纵向 last output 不黑屏、last→current 自动恢复。
 
 ## P0：工具链闭包
 

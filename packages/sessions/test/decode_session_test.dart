@@ -527,6 +527,67 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('transient cursor failure retries in place while successors remain',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'decode_transient_failure_test_',
+    );
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final cursors = _TransientCursorFactory();
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: cursors,
+      clock: _Clock(),
+    );
+    const demand = DecodeDemand(
+      role: PageRole.current,
+      priority: 1000,
+      targetWatermark: 2,
+      reason: 'transient-failure',
+      expirationRevision: 3,
+    );
+
+    await expectLater(
+      decode.fill(
+        demand: demand,
+        revision: 1,
+        cancel: CancelToken(),
+      ),
+      throwsA(isA<Failure>()),
+    );
+    expect(decode.snapshot.state, DecodeState.failed);
+    expect(decode.snapshot.depth, 1);
+
+    final recovered = await decode.fill(
+      demand: demand,
+      revision: 2,
+      cancel: CancelToken(),
+    );
+    expect(recovered.state, DecodeState.ready);
+    expect(recovered.depth, 2);
+    expect(cursors.created, 1,
+        reason: 'a buffered transient failure retries the same cursor');
+
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
   test('decode exceptions become authoritative failures for upload projection',
       () async {
     final temp = await Directory.systemTemp.createTemp('decode_failure_test_');
@@ -919,6 +980,40 @@ final class _StepCursor implements FrameCursor {
 
   @override
   Future<CursorStep> decodeNext() async => step;
+
+  @override
+  void dispose() {}
+}
+
+final class _TransientCursorFactory implements CursorFactory {
+  int created = 0;
+
+  @override
+  CursorBinding create({
+    required DecodeId id,
+    required EncodedSource source,
+    required int epoch,
+  }) {
+    created++;
+    return CursorBinding(frames: _TransientCursor(epoch));
+  }
+}
+
+final class _TransientCursor implements FrameCursor {
+  _TransientCursor(this.epoch);
+
+  @override
+  final int epoch;
+  int calls = 0;
+
+  @override
+  Future<CursorStep> decodeNext() async {
+    final call = calls++;
+    if (call == 1) {
+      throw StateError('transient decode failure');
+    }
+    return CursorStep.frame(_Frame(epoch, call > 1 ? call - 1 : call));
+  }
 
   @override
   void dispose() {}

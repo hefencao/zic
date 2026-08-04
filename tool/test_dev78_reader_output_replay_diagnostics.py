@@ -75,9 +75,9 @@ for token in (
     require(upload_session, token, 'fitted output validation')
 
 for token in (
-    'bool _restartAfterDetach = false;',
-    '_restartAfterDetach = true;',
-    'if (_restartAfterDetach)',
+    'bool _restartCursorWhenHolderEmpty = false;',
+    '_restartCursorWhenHolderEmpty = true;',
+    'if (_restartCursorWhenHolderEmpty)',
     '_releaseBinding();',
 ):
     require(decode_session, token, 'decode replay lifecycle')

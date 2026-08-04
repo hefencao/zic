@@ -100,6 +100,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final Map<DownloadId, int> _sourceRevisions = <DownloadId, int>{};
   final Map<DownloadId, int> _sourceWakeLengths = <DownloadId, int>{};
   final Map<DecodeId, int> _decodeSourceRevisions = <DecodeId, int>{};
+  final Map<DecodeId, int> _decodeRecoveryAttempts = <DecodeId, int>{};
+  final Set<DecodeId> _decodeRecoveryPending = <DecodeId>{};
   final PlaybackGate _playbackGate = PlaybackGate();
   int _revision = 0;
 
@@ -360,6 +362,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       _decodes.remove(id);
       _decodeDemandRevisions.remove(id);
       _decodeSourceRevisions.remove(id);
+      _decodeRecoveryAttempts.remove(id);
+      _decodeRecoveryPending.remove(id);
       decode.cancel(id.key);
       decodes?.detach(id);
     }
@@ -535,9 +539,19 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             preparedDepth: preparedDepth,
             laneQueueMicros: decodeLaneQueueMicros,
             onFrameReady: _uploads.containsKey(id)
-                ? (_) => _wakeUpload(sessionId, id)
+                ? (_) {
+                    _decodeRecoveryAttempts.remove(id);
+                    _decodeRecoveryPending.remove(id);
+                    _wakeUpload(sessionId, id);
+                  }
                 : null,
           );
+        }
+        if (after != null &&
+            after.state != DecodeState.failed &&
+            after.failure == null) {
+          _decodeRecoveryAttempts.remove(id);
+          _decodeRecoveryPending.remove(id);
         }
         if (work != null || _decodeChangeNeedsUpload(before, after)) {
           _wakeUpload(sessionId, id);
@@ -569,6 +583,10 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             },
           );
           _wakeUpload(sessionId, id);
+          if (current.role == PageRole.current ||
+              current.role == PageRole.transition) {
+            _scheduleDecodeRecovery(sessionId, id, current);
+          }
         }
         return;
       }
@@ -582,6 +600,59 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         return;
       }
     }
+  }
+
+  void _scheduleDecodeRecovery(
+    String sessionId,
+    DecodeId id,
+    DecodeDemand demand,
+  ) {
+    if (_decodeRecoveryPending.contains(id) || !_decodes.containsKey(id)) {
+      return;
+    }
+    final attempt = (_decodeRecoveryAttempts[id] ?? 0) + 1;
+    if (attempt > 4) {
+      return;
+    }
+    _decodeRecoveryAttempts[id] = attempt;
+    _decodeRecoveryPending.add(id);
+    final demandRevision = _decodeDemandRevisions[id] ?? _revision;
+    final delay = Duration(milliseconds: 16 * attempt);
+    traceSink.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.retryScheduled,
+        identityHash: id.key,
+        revision: demandRevision,
+        payload: <String, Object?>{
+          'stage': 'decode-recovery',
+          'attempt': attempt,
+          'delayUs': delay.inMicroseconds,
+          'role': demand.role.name,
+          'bufferedDepth': decodes?.find(id)?.snapshot.depth ?? 0,
+        },
+      ),
+    );
+    unawaited(() async {
+      try {
+        await sleep(delay);
+      } finally {
+        _decodeRecoveryPending.remove(id);
+      }
+      final current = _decodes[id];
+      if (current == null ||
+          (_decodeDemandRevisions[id] ?? _revision) != demandRevision) {
+        return;
+      }
+      final snapshot = decodes?.find(id)?.snapshot;
+      if (snapshot == null ||
+          (snapshot.state != DecodeState.failed && snapshot.failure == null)) {
+        _decodeRecoveryAttempts.remove(id);
+        return;
+      }
+      _wakeDecode(sessionId, id, force: true);
+    }());
   }
 
   DecodeRefillDecision? _nextDecodeRefill() {

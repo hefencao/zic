@@ -31,7 +31,7 @@ require(
 require(
     'packages/sessions/lib/src/decode_session.dart',
     'bool prepareForOutputLoss()',
-    '_restartAfterDetach = true;',
+    '_restartCursorWhenHolderEmpty = true;',
     "'decodeMicros':",
     "'sourceLength': frameTiming.sourceLength",
 )

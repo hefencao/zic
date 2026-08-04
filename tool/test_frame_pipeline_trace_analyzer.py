@@ -150,6 +150,19 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
         {
             "t": 22,
             "sessionId": "reader-a",
+            "kind": "retryScheduled",
+            "identityHash": "decode-current",
+            "payload": {
+                "stage": "decode-recovery",
+                "attempt": 1,
+                "delayUs": 16000,
+                "role": "current",
+                "bufferedDepth": 7,
+            },
+        },
+        {
+            "t": 22,
+            "sessionId": "reader-a",
             "kind": "lastFrameKept",
             "identityHash": "decode-last",
             "payload": {"frame": 7, "outputBytes": 4300800},
@@ -216,6 +229,9 @@ assert report["decodeRefillCount"] == 1
 assert report["decodeRefillRoleCounts"] == {"current": 1}
 assert report["decodeRefillStageCounts"] == {"c>3": 1}
 assert report["decodeRefills"][0]["target"] == 4
+assert report["decodeRecoveryCount"] == 1
+assert report["decodeRecoveryAttemptCounts"] == {"1": 1}
+assert report["decodeRecoveries"][0]["bufferedDepth"] == 7
 assert report["lastFrameKeptCount"] == 1
 assert report["lastFramesKept"][0]["frame"] == 7
 assert report["taskFailureCount"] == 1

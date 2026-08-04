@@ -36,10 +36,10 @@ require(
 require(
     "packages/sessions/lib/src/decode_session.dart",
     "final retainedDepth = _holder?.depth ?? 0",
-    "_restartAfterDetach = retainedDepth == 0",
+    "_restartCursorWhenHolderEmpty = retainedDepth == 0",
 )
 decode = read("packages/sessions/lib/src/decode_session.dart")
-if "_holder?.trimTo(retainDepth);\n    _restartAfterDetach = true;" in decode:
+if "_holder?.trimTo(retainDepth);\n    _restartCursorWhenHolderEmpty = true;" in decode:
     raise SystemExit("FAIL: retained frame detach still forces cursor restart")
 
 require(

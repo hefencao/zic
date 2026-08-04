@@ -22,6 +22,8 @@ import 'reader_pipeline_profile.dart';
 
 part 'pipeline_page_output.dart';
 
+const int _startupArtifactNeighborPriorityFloor = 680;
+
 typedef PipelineArtifactBytesLoader = Future<Uint8List> Function(
   PageAsset asset,
   MediaLoadToken token,
@@ -35,7 +37,11 @@ final class PipelineReaderSessionFactory {
     this.loaderSources = const <Uri, LoaderTransportSource>{},
     this.bytesLoader,
   }) : artifactReadScheduler =
-            artifactReadScheduler ?? ArtifactCacheReadScheduler();
+            artifactReadScheduler ??
+            ArtifactCacheReadScheduler(
+              startupBackgroundPriorityFloor:
+                  _startupArtifactNeighborPriorityFloor,
+            );
 
   final PipelineMediaRuntimeFactory mediaRuntimeFactory;
   final ArtifactCacheManager? artifactCacheManager;
@@ -672,7 +678,7 @@ final class PipelineReaderSession {
         decode.state == DecodeState.ended ||
         decode.state == DecodeState.failed ||
         decode.state == DecodeState.disposed ||
-        decode.depth > 3;
+        decode.depth > 7;
   }
 
   void _releaseStartupArtifactPressure() {

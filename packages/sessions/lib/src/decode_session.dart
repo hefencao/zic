@@ -99,7 +99,7 @@ final class DecodeSession {
   FrameHolder? _holder;
   Failure? _failure;
   int _revision = 0;
-  bool _restartAfterDetach = false;
+  bool _restartCursorWhenHolderEmpty = false;
   bool _disposed = false;
   int? _waitingSourceSinceMicros;
   int _cursorCreateMicros = 0;
@@ -182,7 +182,7 @@ final class DecodeSession {
       case SourceKind.gif:
       case SourceKind.other:
         _releaseBinding();
-        _restartAfterDetach = false;
+        _restartCursorWhenHolderEmpty = false;
         _failure = null;
         _setState(DecodeState.ended);
         return snapshot;
@@ -195,11 +195,11 @@ final class DecodeSession {
       // recoverable. The next demand owns the retry; stale failure state must
       // not survive a successful frame from the same source epoch.
       _failure = null;
-      if (_restartAfterDetach) {
+      if (_restartCursorWhenHolderEmpty) {
         if ((_holder?.depth ?? 0) == 0) {
           _releaseBinding();
+          _restartCursorWhenHolderEmpty = false;
         }
-        _restartAfterDetach = false;
       }
       _cursorCreateMicros = _bind(source, epoch);
       final holder = _holder!;
@@ -309,6 +309,8 @@ final class DecodeSession {
             }
             _waitingSourceSinceMicros = null;
             _cursorCreateMicros = 0;
+            // A successful successor proves that the existing cursor recovered.
+            _restartCursorWhenHolderEmpty = false;
             remainingLaneQueueMicros = 0;
             _emit(
               TraceEventKind.frameDecoded,
@@ -344,6 +346,7 @@ final class DecodeSession {
       return snapshot;
     } on Failure catch (error) {
       if (error.code != ErrorCode.cancelled) {
+        _restartCursorWhenHolderEmpty = true;
         _setFailure(error);
       }
       rethrow;
@@ -353,6 +356,7 @@ final class DecodeSession {
         message: 'frame decode failed',
         cause: error,
       );
+      _restartCursorWhenHolderEmpty = true;
       _setFailure(failure);
       throw failure;
     }
@@ -383,7 +387,7 @@ final class DecodeSession {
       return false;
     }
     _revision++;
-    _restartAfterDetach = true;
+    _restartCursorWhenHolderEmpty = true;
     _setState(DecodeState.idle);
     return true;
   }
@@ -393,7 +397,7 @@ final class DecodeSession {
     _revision++;
     _holder?.trimTo(retainDepth);
     final retainedDepth = _holder?.depth ?? 0;
-    _restartAfterDetach = retainedDepth == 0;
+    _restartCursorWhenHolderEmpty = retainedDepth == 0;
     if (retainedDepth == 0) {
       _setState(DecodeState.idle);
     }
@@ -403,7 +407,7 @@ final class DecodeSession {
     _requireOpen();
     _revision++;
     _releaseBinding();
-    _restartAfterDetach = false;
+    _restartCursorWhenHolderEmpty = false;
     _epoch = epoch;
     _failure = null;
     _setState(DecodeState.idle);
@@ -414,7 +418,7 @@ final class DecodeSession {
       return;
     }
     _releaseBinding();
-    _restartAfterDetach = false;
+    _restartCursorWhenHolderEmpty = false;
     _state = DecodeState.disposed;
     _disposed = true;
   }

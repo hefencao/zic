@@ -165,6 +165,7 @@ def summarize(path: Path) -> dict[str, Any]:
     source_reads: list[dict[str, Any]] = []
     cache_handoffs: list[dict[str, Any]] = []
     decode_refills: list[dict[str, Any]] = []
+    decode_recoveries: list[dict[str, Any]] = []
     last_frames_kept: list[dict[str, Any]] = []
     next_due_by_session: dict[str, int] = {}
     session_lifecycle: dict[str, dict[str, int]] = defaultdict(dict)
@@ -338,6 +339,18 @@ def summarize(path: Path) -> dict[str, Any]:
                     "completed": payload.get("completed"),
                 }
             )
+        elif kind == "retryScheduled" and payload.get("stage") == "decode-recovery":
+            decode_recoveries.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "identityHash": event.get("identityHash"),
+                    "attempt": _number(payload.get("attempt")),
+                    "delayUs": _number(payload.get("delayUs")),
+                    "role": payload.get("role"),
+                    "bufferedDepth": _number(payload.get("bufferedDepth")),
+                }
+            )
         elif kind == "decodeRefill":
             decode_refills.append(
                 {
@@ -486,6 +499,11 @@ def summarize(path: Path) -> dict[str, Any]:
             Counter(str(row["stage"]) for row in decode_refills)
         ),
         "decodeRefills": decode_refills,
+        "decodeRecoveryCount": len(decode_recoveries),
+        "decodeRecoveryAttemptCounts": dict(
+            Counter(str(row["attempt"]) for row in decode_recoveries)
+        ),
+        "decodeRecoveries": decode_recoveries,
         "lastFrameKeptCount": len(last_frames_kept),
         "lastFramesKept": last_frames_kept,
         "sourceFirstChunkMicros": _stats(
@@ -545,6 +563,11 @@ def main() -> None:
         f"count={report['decodeRefillCount']} "
         f"roles={report['decodeRefillRoleCounts']} "
         f"stages={report['decodeRefillStageCounts']}"
+    )
+    print(
+        "decode recoveries: "
+        f"count={report['decodeRecoveryCount']} "
+        f"attempts={report['decodeRecoveryAttemptCounts']}"
     )
     print(f"last frames kept: {report['lastFrameKeptCount']}")
     print(

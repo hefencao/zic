@@ -211,7 +211,9 @@ final class UploadSession {
       );
     }
     final decodeSnapshot = decode.snapshot;
-    if (decodeSnapshot.state == DecodeState.failed) {
+    final holder = decode.holder;
+    if (decodeSnapshot.state == DecodeState.failed &&
+        (holder == null || holder.isEmpty)) {
       _failure = decodeSnapshot.failure ??
           const Failure(
             code: ErrorCode.decode,
@@ -223,7 +225,10 @@ final class UploadSession {
       );
       return snapshot;
     }
-    final holder = decode.holder;
+    // A transient decode failure must not discard already decoded successors.
+    // Continue consuming the authoritative holder while the coordinator retries
+    // the cursor in the background; the current output remains visible if the
+    // buffer eventually drains before recovery.
     if (holder == null || holder.isEmpty) {
       if (_awaitingSuccessor && decodeSnapshot.state == DecodeState.ended) {
         // Finite animation playback keeps its final renderer output. Retiring
