@@ -124,6 +124,7 @@ final class UploadSession {
   int _pendingPrepares = 0;
   bool _releaseUploaderWhenIdle = false;
   bool _retainedWithoutDemand = false;
+  bool _retainedRestoreAttempted = false;
   final Map<int, _FramePipelineTiming> _framePipelineTimings =
       <int, _FramePipelineTiming>{};
   int _presentationTimingSamples = 0;
@@ -229,6 +230,64 @@ final class UploadSession {
         message: 'upload demand was superseded before preparation started',
       );
     }
+    if (_slot == null && !_retainedRestoreAttempted) {
+      _retainedRestoreAttempted = true;
+      final retained = uploader is RetainedOutputUploader
+          ? await (uploader as RetainedOutputUploader)
+              .restoreRetainedOutput(id)
+          : null;
+      if (retained != null) {
+        if (cancel.cancelled || _revision != revision) {
+          retained.dispose();
+          cancel.throwIfCancelled();
+          throw const Failure(
+            code: ErrorCode.cancelled,
+            message: 'retained output restore was superseded',
+          );
+        }
+        final expectedEpoch = decode.download.epoch.value;
+        if (retained.disposed ||
+            retained.epoch != expectedEpoch ||
+            retained.width <= 0 ||
+            retained.height <= 0 ||
+            retained.width > id.physicalWidth ||
+            retained.height > id.physicalHeight ||
+            retained.renderer != id.renderer) {
+          retained.dispose();
+        } else {
+          _epoch = SourceEpoch(retained.epoch);
+          _slot = _OutputSlot(retained);
+          _awaitingSuccessor = false;
+          _failure = null;
+          _setState(UploadState.ready, forceNotify: true);
+          _emit(
+            TraceEventKind.frameUploaded,
+            <String, Object?>{
+              'frame': retained.index,
+              'renderer': retained.renderer.name,
+              'role': demand.role.name,
+              'decodedRole': 'retained',
+              'restored': true,
+              'restoreSource': 'texture-pool',
+              'uploadLaneQueueMicros':
+                  laneQueueMicros < 0 ? 0 : laneQueueMicros,
+              'decodedToUploadMicros': 0,
+              'decodedLeadMicros': 0,
+              'uploadBackpressureMicros': 0,
+              'outputPrepareMicros': 0,
+              'uploadMicros': 0,
+              'inputBytes': 0,
+              'outputBytes': retained.byteLength,
+              'width': retained.width,
+              'height': retained.height,
+              'durationMicros': retained.duration.inMicroseconds,
+            },
+          );
+          return snapshot;
+        }
+      }
+    }
+
     final decodeSnapshot = decode.snapshot;
     final holder = decode.holder;
     if (decodeSnapshot.state == DecodeState.failed &&
@@ -917,6 +976,7 @@ final class UploadSession {
     _requireOpen();
     _revision++;
     _retainedWithoutDemand = false;
+    _retainedRestoreAttempted = true;
     _epoch = epoch;
     _retireCurrent();
     _requestUploaderRelease();

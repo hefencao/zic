@@ -84,6 +84,7 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             "create" -> create(call, result)
             "resize" -> resize(call, result)
             "present" -> present(call, result)
+            "redraw" -> redraw(call, result)
             "release" -> release(call, result)
             else -> result.notImplemented()
         }
@@ -162,6 +163,27 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                     success(result, null)
                 } catch (error: Throwable) {
                     error(result, "resize_failed", error.message ?: error.toString())
+                }
+            }
+        } catch (_: RejectedExecutionException) {
+            result.error("detached", "texture blit lane is unavailable", null)
+        }
+    }
+
+    private fun redraw(call: MethodCall, result: MethodChannel.Result) {
+        val output = output(call, result) ?: return
+        val lane = lane(output, result) ?: return
+        try {
+            lane.execute {
+                try {
+                    output.redraw()
+                    success(result, null)
+                } catch (error: Throwable) {
+                    error(
+                        result,
+                        "redraw_failed",
+                        error.message ?: error.toString(),
+                    )
                 }
             }
         } catch (_: RejectedExecutionException) {

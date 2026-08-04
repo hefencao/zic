@@ -40,6 +40,7 @@ void main() {
             'inFlightBytes': 64,
           };
         case 'resize':
+        case 'redraw':
         case 'release':
           return null;
         default:
@@ -162,6 +163,16 @@ void main() {
     expect(sample.textureId, 17);
     expect(ownership.retains, 1);
     expect(ownership.releases, 1);
+  });
+
+  test('redraw resubmits the retained platform output', () async {
+    final presenter = AndroidTexturePresenter(channel: channel);
+    final lease = await presenter.create(width: 4, height: 4);
+
+    await lease.redraw();
+
+    expect(calls.map((call) => call.method), <String>['create', 'redraw']);
+    expect(calls.last.arguments, <String, Object?>{'textureId': 17});
   });
 
   test('resize updates identity and release is idempotent', () async {

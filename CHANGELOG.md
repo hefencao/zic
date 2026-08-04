@@ -1,3 +1,11 @@
+## 0.31.0-dev.125：后台恢复保留输出与 Partial Source Growth
+
+- Android texture pool 按完整 DecodeId 保留最后 platform frame，新 Reader 可先 redraw 恢复 output，后台 authoritative decode 继续并替换。
+- NativeCursor 将未封缄 ABI decode failure 归一为 NeedMoreData；LiveCoordinator 只等待 source revision，不进入定时 recovery。
+- 新增 retained restore/source-growth Trace 指标和 owner tests。
+- `.zic-workspace.json` 改为机器本地配置，加入 gitignore，正式 ZIP 与 patch 均排除；`ZIC_PATCH_DIR` 可覆盖。
+- README、Architecture、Spec 未修改。
+
 ## 0.31.0-dev.124：大 WebP 首帧与 Patch 交付
 
 - 低性能设备启动期，本地 current 首个 output 前独占 local bucket；首帧真实 present 后恢复稳定 local=2，不改变 7/3、远程/全局 5 或 active session。

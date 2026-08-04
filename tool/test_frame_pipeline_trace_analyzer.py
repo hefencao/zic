@@ -283,7 +283,36 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
                 "failureClass": "partial-source",
             },
         },
-    ]
+            {
+            "t": 700,
+            "sessionId": "reader-resume",
+            "kind": "frameUploaded",
+            "identityHash": "decode-retained",
+            "revision": 1,
+            "payload": {
+                "frame": 7,
+                "restored": True,
+                "restoreSource": "texture-pool",
+                "outputBytes": 4096,
+                "width": 32,
+                "height": 32,
+            },
+        },
+        {
+            "t": 710,
+            "sessionId": "reader-resume",
+            "kind": "retryScheduled",
+            "identityHash": "decode-partial",
+            "revision": 1,
+            "payload": {
+                "stage": "decode-source-growth",
+                "role": "current",
+                "sourceLength": 1048576,
+                "requiredSourceLength": 2097152,
+                "waitForSourceRevision": True,
+            },
+        },
+]
     trace.write_text(
         "".join(json.dumps(event) + "\n" for event in events),
         encoding="utf-8",

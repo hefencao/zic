@@ -2,6 +2,8 @@
 
 **状态：Provisional**
 
+> dev.125 修订：`.zic-workspace.json` 改为机器本地配置，不进入发行 ZIP 或生成 patch；环境变量 `ZIC_PATCH_DIR` 可覆盖。后台恢复与 partial failure 见 ADR 0109。
+
 ## 问题
 
 低性能设备 Trace 中，Reader 首帧 `mountToFirstFrameMicros=1600616`。current 与 next 两个 20 MiB 左右的 `content://` WebP 在进入 Reader 后同时占用 local bucket；current 首帧等待 3 MiB 前缀，`sourceWaitMicros=243900`。首帧 output 另有 `outputPrepareMicros=248001`、`presentMicros=224919`、`surfaceReconfigureCount=1`，且 texture lease 未复用。

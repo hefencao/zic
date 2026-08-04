@@ -67,7 +67,8 @@ for token in (
 for token in (
     "_AndroidTextureLeasePool",
     "final Set<_TextureSize> _prewarmedSizes",
-    "await pool.release(value.lease)",
+    "await pool.release(",
+    "value.lease",
     "textureLeaseReused",
 ):
     require(native, token, "composition texture pool")

@@ -173,6 +173,12 @@ final class AndroidTexturePresenter {
     );
   }
 
+  Future<void> _redraw(AndroidTextureLease lease) =>
+      _channel.invokeMethod<void>(
+        'redraw',
+        <String, Object?>{'textureId': lease.textureId},
+      );
+
   Future<void> _resize(
     AndroidTextureLease lease, {
     required int width,
@@ -310,6 +316,11 @@ final class AndroidTextureLease {
       deadlineAfterMicros: deadlineAfterMicros,
       context: context,
     );
+  }
+
+  Future<void> redraw() {
+    _requireActive();
+    return _presenter._redraw(this);
   }
 
   Future<void> release() async {

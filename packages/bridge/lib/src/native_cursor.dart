@@ -96,18 +96,31 @@ final class NativeCursorFactory implements CursorFactory {
       throw StateError('native cursor epoch mismatch');
     }
     final decodePool = _NativeDecodeWorkerPool.forLibrary(libPath);
-    final cursor = NativeCursor._(ptr, api, decodePool, epoch);
+    final cursor = NativeCursor._(
+      ptr,
+      api,
+      decodePool,
+      epoch,
+      source,
+    );
     return CursorBinding(frames: cursor, loop: cursor);
   }
 }
 
 final class NativeCursor implements ScheduledFrameCursor, LoopCursor {
-  NativeCursor._(this._ptr, this._api, this._decodePool, this._epoch);
+  NativeCursor._(
+    this._ptr,
+    this._api,
+    this._decodePool,
+    this._epoch,
+    this._source,
+  );
 
   Pointer<_Cursor> _ptr;
   final _CursorApi _api;
   final _NativeDecodeWorkerPool _decodePool;
   final int _epoch;
+  final NativeSource _source;
 
   int _frameCount = 0;
   int _loopCount = 0;
@@ -200,6 +213,9 @@ final class NativeCursor implements ScheduledFrameCursor, LoopCursor {
           throw StateError('native cursor is unavailable');
         case _CursorStatus.failed:
           _releaseWorkerFrame(result.frameAddress);
+          if (!_source.sealed) {
+            return const CursorStep.needMoreData();
+          }
           throw StateError('native cursor decode failed');
       }
     } finally {
@@ -233,6 +249,7 @@ final class NativeCursor implements ScheduledFrameCursor, LoopCursor {
       case _CursorStatus.nullPointer:
         throw StateError('native cursor is unavailable');
       case _CursorStatus.failed:
+        if (!_source.sealed) return false;
         throw StateError('native cursor rewind failed');
     }
   }

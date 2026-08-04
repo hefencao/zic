@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,6 +12,17 @@ CONFIG = ROOT / ".zic-workspace.json"
 
 
 def load() -> dict[str, object]:
+    environment_patch_dir = os.environ.get("ZIC_PATCH_DIR", "").strip()
+    if environment_patch_dir:
+        return {
+            "schema": "zic-workspace-v1",
+            "patch_dir": environment_patch_dir,
+        }
+    if not CONFIG.is_file():
+        raise SystemExit(
+            "patch_dir is not configured; set ZIC_PATCH_DIR or create "
+            ".zic-workspace.json in the local workspace"
+        )
     payload = json.loads(CONFIG.read_text(encoding="utf-8"))
     if payload.get("schema") != "zic-workspace-v1":
         raise SystemExit("unsupported .zic-workspace.json schema")

@@ -137,6 +137,76 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('retained platform output is restored before decode refill', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'upload_retained_restore_test_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: _CursorFactory(),
+      clock: _Clock(),
+    );
+    final retained = _Output(
+      epoch: download.epoch.value,
+      index: 7,
+      width: decode.id.physicalWidth,
+      height: decode.id.physicalHeight,
+      duration: const Duration(milliseconds: 16),
+    );
+    final uploader = _RetainedUploader(retained);
+    final trace = MemoryTraceSink();
+    final upload = UploadSession(
+      id: decode.id,
+      decode: decode,
+      uploader: uploader,
+      clock: _Clock(),
+      traceSink: trace,
+    );
+
+    final ready = await upload.prepare(
+      demand: const UploadDemand(
+        role: PageRole.current,
+        priority: 1000,
+        reason: 'resume',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+
+    expect(ready.state, UploadState.ready);
+    expect(ready.frameIndex, 7);
+    expect(uploader.restoreCalls, 1);
+    expect(uploader.uploadCalls, 0);
+    expect(decode.snapshot.depth, 0);
+    final uploaded = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.frameUploaded,
+    );
+    expect(uploaded.payload['restored'], isTrue);
+    expect(uploaded.payload['restoreSource'], 'texture-pool');
+    final claim = upload.claimPresent();
+    expect(claim, isNotNull);
+    await upload.present(claim!);
+    expect(retained.presented, 1);
+    claim.release();
+
+    upload.dispose();
+    decode.dispose();
+    await download.dispose();
+  });
+
   test(
     'detached authoritative static output remains until budget trim',
     () async {
@@ -1162,6 +1232,39 @@ final class _Uploader implements FrameUploader {
 
   @override
   void release(DecodeId id) => released.add(id);
+}
+
+final class _RetainedUploader
+    implements FrameUploader, RetainedOutputUploader {
+  _RetainedUploader(this.retained);
+
+  final _Output retained;
+  int restoreCalls = 0;
+  int uploadCalls = 0;
+
+  @override
+  Future<OutputFrame?> restoreRetainedOutput(DecodeId id) async {
+    restoreCalls++;
+    return retained;
+  }
+
+  @override
+  Future<OutputFrame> upload({
+    required DecodeId id,
+    required FrameRef frame,
+  }) async {
+    uploadCalls++;
+    return _Output(
+      epoch: frame.epoch,
+      index: frame.index,
+      width: frame.width,
+      height: frame.height,
+      duration: frame.duration,
+    );
+  }
+
+  @override
+  void release(DecodeId id) {}
 }
 
 final class _ControlledUploader implements FrameUploader {

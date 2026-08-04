@@ -176,6 +176,8 @@ def summarize(path: Path) -> dict[str, Any]:
     static_frames_kept: list[dict[str, Any]] = []
     cache_resident_commits: list[dict[str, Any]] = []
     texture_presentations: list[dict[str, Any]] = []
+    retained_output_restores: list[dict[str, Any]] = []
+    decode_source_growth_waits: list[dict[str, Any]] = []
     policy_decisions: list[dict[str, Any]] = []
     media_classifications: list[dict[str, Any]] = []
     first_frame_readies: list[dict[str, Any]] = []
@@ -374,6 +376,19 @@ def summarize(path: Path) -> dict[str, Any]:
                     "residentSource": payload.get("residentSource"),
                 }
             )
+        elif kind == "frameUploaded" and payload.get("restored") is True:
+            retained_output_restores.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "identityHash": event.get("identityHash"),
+                    "frame": _number(payload.get("frame")),
+                    "restoreSource": payload.get("restoreSource"),
+                    "outputBytes": _number(payload.get("outputBytes")),
+                    "width": _number(payload.get("width")),
+                    "height": _number(payload.get("height")),
+                }
+            )
         elif kind == "frameUploaded" and "textureLeaseReused" in payload:
             texture_presentations.append(
                 {
@@ -525,6 +540,22 @@ def summarize(path: Path) -> dict[str, Any]:
                         "handoffMicros": _number(payload.get("handoffMicros")),
                     }
                 )
+        elif kind == "retryScheduled" and payload.get("stage") == "decode-source-growth":
+            decode_source_growth_waits.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "identityHash": event.get("identityHash"),
+                    "role": payload.get("role"),
+                    "sourceLength": _number(payload.get("sourceLength")),
+                    "requiredSourceLength": _number(
+                        payload.get("requiredSourceLength")
+                    ),
+                    "waitForSourceRevision": bool(
+                        payload.get("waitForSourceRevision", False)
+                    ),
+                }
+            )
         elif kind == "retryScheduled" and payload.get("stage") == "decode-recovery":
             decode_recoveries.append(
                 {
@@ -823,6 +854,10 @@ def summarize(path: Path) -> dict[str, Any]:
             [row["artifactWriteMicros"] for row in cache_resident_commits]
         ),
         "cacheResidentCommits": cache_resident_commits,
+        "retainedOutputRestoreCount": len(retained_output_restores),
+        "retainedOutputRestores": retained_output_restores,
+        "decodeSourceGrowthWaitCount": len(decode_source_growth_waits),
+        "decodeSourceGrowthWaits": decode_source_growth_waits,
         "textureLeasePresentationCount": len(texture_presentations),
         "textureLeaseReuseCount": sum(
             1 for row in texture_presentations

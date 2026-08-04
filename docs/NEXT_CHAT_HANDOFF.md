@@ -1,38 +1,31 @@
-# dev.124 后续交接
+# dev.125 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.124_startup-current-prefix-exact-output-prewarm.zip`。不得使用 dev.123 或更早 ZIP、旧工作树或补丁树。
+唯一后续基线：`zic_v0.31.0-dev.125_background-retained-output-partial-source-growth.zip`。不得使用 dev.124 或更早 ZIP、旧工作树或补丁树。
 
 ## 必读
 
 1. `AGENTS.md`
 2. 本文件
-3. `.zic-workspace.json`
-4. `docs/DOCUMENTATION_POLICY.md`
-5. `docs/ARCHITECTURE.md`
-6. `docs/SPEC.md`
-7. `docs/IMPLEMENTATION_STATUS.md`
-8. `docs/IMPLEMENTATION_PLAN.md`
-9. `docs/adr/0107-active-rank-handoff-vertical-composition.md`
-10. `docs/adr/0108-startup-current-prefix-exact-output-prewarm.md`
-11. `docs/audits/dev124-startup-current-prefix-audit.md`
-12. `docs/audits/dev124-validation-results.md`
+3. `docs/DOCUMENTATION_POLICY.md`
+4. `docs/ARCHITECTURE.md`
+5. `docs/SPEC.md`
+6. `docs/IMPLEMENTATION_STATUS.md`
+7. `docs/IMPLEMENTATION_PLAN.md`
+8. `docs/adr/0108-startup-current-prefix-exact-output-prewarm.md`
+9. `docs/adr/0109-background-retained-output-partial-source-growth.md`
+10. `docs/audits/dev125-background-resume-retained-output-partial-failure-audit.md`
+11. `docs/audits/dev125-validation-results.md`
 
 ## Patch 交付
 
-- 每轮必须生成上一完整 ZIP 到新版本的 patch，格式兼容 `git apply --index`。
-- patch 输出目录读取 `python3 tool/workspace_config.py patch_dir --absolute`。
-- 不在聊天或脚本中另行硬编码不同 patch_dir。
+- 每轮生成上一完整 ZIP 到新版本的 `git apply --index` patch。
+- patch 目录由 `ZIC_PATCH_DIR` 或用户本地 `.zic-workspace.json` 提供。
+- `.zic-workspace.json` 不属于发行包，不得被 patch 创建、修改或删除。
 
-## 下一份低性能设备 Trace
+## 下一份 Trace
 
-重点检查：
-
-- `mountToFirstFrameMicros`；
-- 首帧前 local `bucketActive/bucketLimit`；
-- 首个 frame 的 source wait、native/dispatch decode、output prepare、present；
-- `textureLeaseReused` 与 `surfaceReconfigureCount`；
-- 首帧后 local cap 恢复 2，next 预下载继续。
+重点检查 `retainedOutputRestoreCount`、恢复首帧、后续 authoritative frame 替换、`decodeSourceGrowthWaitCount` 与 `decodeRecoveryCount`。
 
 ## 保持边界
 
-7/3、全局/remote 5、本地稳定 2、5/3/2、动画 7/5/3/2、静态一帧满足、30 帧 partial loop、retained transfer/output、统一 cache/session/texture 所有权不变。VibeVenera 参考源码继续只读。
+7/3、5/3/2、current handoff、动画 7/5/3/2、静态一帧、30 帧 partial loop、统一 cache/session/texture 所有权不变。VibeVenera 参考继续只读。

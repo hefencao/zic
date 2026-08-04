@@ -851,7 +851,26 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             },
           );
           _wakeUpload(sessionId, id);
-          if (current.role == PageRole.current ||
+          final sourceSealed = failedSnapshot?.sourceSealed;
+          if (sourceSealed == false) {
+            traceSink.record(
+              traceEvent(
+                clock: clock,
+                sessionId: sessionId,
+                kind: TraceEventKind.retryScheduled,
+                identityHash: id.key,
+                revision: demandRevision,
+                payload: <String, Object?>{
+                  'stage': 'decode-source-growth',
+                  'role': current.role.name,
+                  'waitForSourceRevision': true,
+                  'sourceLength': failedSnapshot?.sourceLength ?? 0,
+                  'requiredSourceLength':
+                      failedSnapshot?.requiredSourceLength ?? 0,
+                },
+              ),
+            );
+          } else if (current.role == PageRole.current ||
               current.role == PageRole.transition) {
             _scheduleDecodeRecovery(sessionId, id, current);
           }
@@ -875,6 +894,10 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     DecodeId id,
     DecodeDemand demand,
   ) {
+    final existing = decodes?.find(id)?.snapshot;
+    if (existing?.sourceSealed == false) {
+      return;
+    }
     if (_decodeRecoveryPending.contains(id) || !_decodes.containsKey(id)) {
       return;
     }
