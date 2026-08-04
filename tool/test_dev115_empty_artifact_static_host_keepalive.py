@@ -63,7 +63,7 @@ for token in (
 for token in (
     "AutomaticKeepAliveClientMixin<_ReaderPageHost>",
     "bool get wantKeepAlive => widget.keepAlive",
-    "(index - widget.controller.currentIndex).abs() <= 7",
+    "(widget.index - controller.currentIndex).abs() <= 7",
 ):
     require(reader, token, "vertical static page host")
 if reader.count("TraceEventKind kind, {") != 1:

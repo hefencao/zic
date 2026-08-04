@@ -449,6 +449,91 @@ void main() {
     expect(controller.navigationRevision, revision + 1);
   });
 
+  testWidgets(
+    'vertical current changes rebuild only page shells whose state changed',
+    (tester) async {
+      final chapter = ChapterManifest(
+        sourceId: 'source',
+        comicId: 'localized-rebuild-comic',
+        chapter: const Chapter(
+          chapterId: 'localized-rebuild-chapter',
+          comicId: 'localized-rebuild-comic',
+          title: 'localized rebuild',
+          sequence: 0,
+          pageCount: 6,
+          sourceRevision: 'r1',
+        ),
+        pages: List<PageAsset>.generate(
+          6,
+          (index) => PageAsset(
+            pageId: 'localized-$index',
+            chapterId: 'localized-rebuild-chapter',
+            index: index,
+            uri: Uri.parse('asset:///localized-$index.png'),
+            width: 1000,
+            height: 1000,
+          ),
+        ),
+        readingDirection: ReadingDirection.vertical,
+      );
+      final controller = ReaderController(
+        sessionId: 'reader-localized-rebuild-test',
+        chapter: chapter,
+        onObservation: (_) {},
+        clock: FakeClock(),
+      );
+      addTearDown(controller.dispose);
+      final builds = <String, int>{};
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ReaderView(
+            controller: controller,
+            clock: FakeClock(),
+            pageBuilder: (context, asset, reportFirstFrame) {
+              builds.update(
+                asset.pageId,
+                (count) => count + 1,
+                ifAbsent: () => 1,
+              );
+              return ColoredBox(
+                key: ValueKey<String>('localized:${asset.pageId}'),
+                color: Colors.black,
+              );
+            },
+          ),
+        ),
+      );
+      await _pumpUntilFound(
+        tester,
+        find.byKey(const ValueKey<String>('localized:localized-3')),
+      );
+      final prior = builds['localized-3'];
+
+      controller.report(
+        ReaderObs(
+          sessionId: controller.sessionId,
+          currentIndex: 1,
+          stableIndex: 1,
+          currentCoverage: Coverage(
+            pageIndex: 1,
+            assetKey: chapter.pages[1].assetKey,
+            fraction: 1,
+          ),
+          interaction: Interaction.idle,
+          logicalPosition: 1,
+          velocity: 0,
+          direction: ReadingDirection.vertical,
+          timestamp: DateTime.utc(2026, 8, 4),
+          monotonicMicros: 1,
+        ),
+      );
+      await tester.pump();
+
+      expect(builds['localized-3'], prior);
+    },
+  );
+
   test('page request validates chapter bounds', () {
     final chapter = ChapterManifest(
       sourceId: 'source',

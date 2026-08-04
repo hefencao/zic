@@ -2,13 +2,16 @@
 
 本文件只列未完成工作。
 
-## P0：纵向静态预加载设备闭环
+## P0：纵向静态预加载与滚动设备闭环
 
 - 确认 page source ready 后立即出现 `decodeRefill sourceWake=true`，并在进入视口前产生 frame 0 与 output；
 - 确认预加载页不会因 current/neighbor 的 staged refill 或 queued task 覆盖而延迟；
 - 确认静态页退出 upload demand 后出现 `staticFrameKept`，而非立即 `demand-detached`；
 - 确认只有 FrameBudget 超限时才出现 `pageOutputReleased reason=frame-budget`；
-- 对比上下滑动时的可见 loading 与 page host dispose。
+- 对比上下滑动时的可见 loading 与 page host dispose；
+- 验证权威静态 current 一帧完成后不再产生 c/n/m/p refill，邻页不会被静态 current 压制；
+- 验证普通 current/stable 变化不再重建整个 ReaderView/ListView，比较低性能设备 build/layout 长尾；
+- 复验纵向滑动偶发回拉和 settling 稳定性。
 
 ## P0：本地动态图路径设备闭环
 

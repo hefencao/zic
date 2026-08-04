@@ -1,3 +1,11 @@
+## 0.31.0-dev.121：静态单帧水位与 Reader 局部更新
+
+- 权威静态页在 holder 或已呈现 output 中拥有一帧时，直接视为当前 decode 水位已满足；即使旧 demand 暂时仍是 current 8 帧，也不会继续参与 c/n/m/p refill 竞争。
+- 不拆分静态/动画状态机：混合章节继续使用同一 staged policy，动画页保持 8/6/4/3，静态页一帧即满足。
+- Reader current/stable 变化不再通过两层 `AnimatedBuilder` 重建整个 Scaffold 与 ListView/PageView；已挂载页面由局部 shell 仅在 active、keep-alive 或旋转变化时更新。
+- 纵向一次 build 复用同一个 geometry 快照，避免 item extent 计算期间反复创建几何对象并降低同帧尺寸不一致风险。
+- 新增混合媒体水位 owner test、纵向局部 rebuild owner test 与 dev.121 门禁；README、Architecture、Spec 未修改。
+
 ## 0.31.0-dev.120：定向预加载 Source Wake
 
 - 修复 source-ready 预加载页仍被全局 staged refill 重定向：未消费 source revision 现在为对应 DecodeId 选择定向 refill，不再依赖后续角色变化触发。

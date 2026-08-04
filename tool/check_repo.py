@@ -1913,7 +1913,7 @@ def check_compile_regressions() -> None:
         ROOT / 'packages/reader/lib/src/reader_view.dart'
     ).read_text(encoding='utf-8')
     for required in (
-        "'reader-page-host:${chapter.pages[index].assetKey}'",
+        "'reader-page-host:${widget.asset.assetKey}'",
         'required this.demandRevision',
         'TraceEventKind.pageTransition',
         'TraceEventKind.pageHostMounted',
@@ -2165,8 +2165,8 @@ def check_compile_regressions() -> None:
             fail(f'artifact cache maintenance contract is incomplete: {required}')
     reader_view = (ROOT / 'packages/reader/lib/src/reader_view.dart').read_text(encoding='utf-8')
     for required in (
-        "'zoom:${chapter.pages[index].assetKey}'",
-        "'reader-page-host:${chapter.pages[index].assetKey}'",
+        "'zoom:${widget.asset.assetKey}'",
+        "'reader-page-host:${widget.asset.assetKey}'",
         'void didUpdateWidget(covariant _ZoomableReaderPage oldWidget)',
     ):
         if required not in reader_view:

@@ -1000,25 +1000,25 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                     : BoxFit.contain,
               ),
             );
-    return AnimatedBuilder(
-      animation: reader,
-      builder: (context, _) => Scaffold(
-        key: widget.screenKey,
-        backgroundColor: Colors.black,
-        body: Stack(
-          fit: StackFit.expand,
-          children: <Widget>[
-            ReaderView(
-              controller: reader,
-              clock: _pipeline.clock,
-              traceSink: _pipeline.trace,
-              pageBuilder: pageBuilder,
-              demandRevision: () => _pipeline.revision,
-              onTap: _toggleControls,
-              verticalStitch: _settings.effectiveVerticalStitch,
-              pageAspectRatios: _pageAspectRatios,
-            ),
-            AnimatedOpacity(
+    return Scaffold(
+      key: widget.screenKey,
+      backgroundColor: Colors.black,
+      body: Stack(
+        fit: StackFit.expand,
+        children: <Widget>[
+          ReaderView(
+            controller: reader,
+            clock: _pipeline.clock,
+            traceSink: _pipeline.trace,
+            pageBuilder: pageBuilder,
+            demandRevision: () => _pipeline.revision,
+            onTap: _toggleControls,
+            verticalStitch: _settings.effectiveVerticalStitch,
+            pageAspectRatios: _pageAspectRatios,
+          ),
+          AnimatedBuilder(
+            animation: reader,
+            builder: (context, _) => AnimatedOpacity(
               opacity: _controlsVisible ? 1 : 0,
               duration: const Duration(milliseconds: 140),
               child: IgnorePointer(
@@ -1032,7 +1032,10 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                 ),
               ),
             ),
-            AnimatedOpacity(
+          ),
+          AnimatedBuilder(
+            animation: reader,
+            builder: (context, _) => AnimatedOpacity(
               opacity: _controlsVisible ? 1 : 0,
               duration: const Duration(milliseconds: 140),
               child: IgnorePointer(
@@ -1046,8 +1049,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

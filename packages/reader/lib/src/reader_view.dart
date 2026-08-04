@@ -64,6 +64,7 @@ final class _ReaderViewState extends State<ReaderView> {
   Size _viewport = Size.zero;
   double _devicePixelRatio = 1;
   late ReadingDirection _lastDirection;
+  late int _lastRotationQuarterTurns;
   bool _syncScheduled = false;
   bool _anchorRestoreScheduled = false;
   ({int index, double offset})? _pendingVerticalAnchor;
@@ -79,6 +80,7 @@ final class _ReaderViewState extends State<ReaderView> {
     _lastMicros = widget.clock.nowMicros();
     _handledNavigationRevision = widget.controller.navigationRevision;
     _lastDirection = widget.controller.direction;
+    _lastRotationQuarterTurns = widget.controller.rotationQuarterTurns;
     widget.controller.addListener(_handleControllerCommand);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -107,6 +109,7 @@ final class _ReaderViewState extends State<ReaderView> {
       _zoomedPage = null;
       _lastReportedVerticalPage = null;
       _lastDirection = widget.controller.direction;
+      _lastRotationQuarterTurns = widget.controller.rotationQuarterTurns;
       _scheduleSyncToCurrentPage();
     } else if (oldWidget.verticalStitch != widget.verticalStitch ||
         oldWidget.pageAspectRatios != widget.pageAspectRatios) {
@@ -129,10 +132,8 @@ final class _ReaderViewState extends State<ReaderView> {
   Widget build(BuildContext context) {
     final chapter = widget.controller.chapter;
 
-    return AnimatedBuilder(
-      animation: widget.controller,
-      builder: (context, _) => LayoutBuilder(
-        builder: (context, constraints) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
           final nextDevicePixelRatio = MediaQuery.devicePixelRatioOf(context);
           if (nextDevicePixelRatio.isFinite &&
               nextDevicePixelRatio > 0 &&
@@ -173,6 +174,7 @@ final class _ReaderViewState extends State<ReaderView> {
           final direction = widget.controller.direction;
           if (direction == ReadingDirection.vertical) {
             final stitched = widget.verticalStitch;
+            final geometry = _verticalGeometry();
             final pageCount = chapter.pages.length;
             final itemCount = stitched
                 ? pageCount
@@ -200,7 +202,7 @@ final class _ReaderViewState extends State<ReaderView> {
                   return readerVerticalPageGap;
                 }
                 final pageIndex = stitched ? itemIndex : itemIndex ~/ 2;
-                return _verticalExtent(chapter.pages[pageIndex], pageIndex);
+                return geometry.extentAt(pageIndex);
               },
               itemBuilder: (context, itemIndex) {
                 if (!stitched && itemIndex.isOdd) {
@@ -214,10 +216,7 @@ final class _ReaderViewState extends State<ReaderView> {
                 final page = _buildPage(chapter, pageIndex);
                 return SizedBox(
                   key: ValueKey<String>('reader-vertical-page:$pageIndex'),
-                  height: _verticalExtent(
-                    chapter.pages[pageIndex],
-                    pageIndex,
-                  ),
+                  height: geometry.extentAt(pageIndex),
                   // Exact stitched extents already constrain the page. Avoid
                   // independent hard-clip edges during ordinary scrolling;
                   // zoom still clips to its page so it cannot cover siblings.
@@ -246,43 +245,27 @@ final class _ReaderViewState extends State<ReaderView> {
               itemBuilder: (context, index) => _buildPage(chapter, index),
             ),
           );
-        },
-      ),
+      },
     );
   }
 
   Widget _buildPage(ChapterManifest chapter, int index) {
-    final asset = chapter.pages[index];
-    final keepVerticalHost =
-        widget.controller.direction == ReadingDirection.vertical &&
-            (index - widget.controller.currentIndex).abs() <= 7;
-    return RotatedBox(
-        key: ValueKey<String>('reader-page-rotation:$index'),
-        quarterTurns: widget.controller.rotationQuarterTurns,
-        child: _ZoomableReaderPage(
-          key: ValueKey<String>('zoom:${chapter.pages[index].assetKey}'),
-          active: index == widget.controller.currentIndex,
-          clock: widget.clock,
-          onTap: widget.onTap,
-          onZoomChanged: (zoomed) {
-            final next = zoomed ? index : null;
-            if (_zoomedPage == next) return;
-            setState(() => _zoomedPage = next);
-          },
-          child: _ReaderPageHost(
-            key: ValueKey<String>(
-              'reader-page-host:${chapter.pages[index].assetKey}',
-            ),
-            asset: asset,
-            keepAlive: keepVerticalHost,
-            sessionId: widget.controller.sessionId,
-            clock: widget.clock,
-            traceSink: widget.traceSink,
-            pageBuilder: widget.pageBuilder,
-            demandRevision: widget.demandRevision,
-          ),
-        ),
-      );
+    return _ReaderPageShell(
+      key: ValueKey<String>('reader-page-shell:${chapter.pages[index].assetKey}'),
+      controller: widget.controller,
+      asset: chapter.pages[index],
+      index: index,
+      clock: widget.clock,
+      traceSink: widget.traceSink,
+      pageBuilder: widget.pageBuilder,
+      demandRevision: widget.demandRevision,
+      onTap: widget.onTap,
+      onZoomChanged: (zoomed) {
+        final next = zoomed ? index : null;
+        if (_zoomedPage == next) return;
+        setState(() => _zoomedPage = next);
+      },
+    );
   }
 
   ReaderVerticalGeometry _verticalGeometry({
@@ -398,14 +381,23 @@ final class _ReaderViewState extends State<ReaderView> {
 
   void _handleControllerCommand() {
     final controller = widget.controller;
+    var rebuildLayout = false;
     if (_lastDirection != controller.direction) {
       _lastDirection = controller.direction;
       _zoomedPage = null;
+      rebuildLayout = true;
       if (controller.direction == ReadingDirection.vertical) {
         _verticalInitialOffsetApplied = false;
         _prepareVerticalControllerForCurrentPage();
       }
       _scheduleSyncToCurrentPage();
+    }
+    if (_lastRotationQuarterTurns != controller.rotationQuarterTurns) {
+      _lastRotationQuarterTurns = controller.rotationQuarterTurns;
+      rebuildLayout = true;
+    }
+    if (rebuildLayout && mounted) {
+      setState(() {});
     }
     final revision = controller.navigationRevision;
     if (revision == _handledNavigationRevision) return;
@@ -791,6 +783,127 @@ final class _ReaderViewState extends State<ReaderView> {
         ),
       );
     }
+  }
+}
+
+
+final class _ReaderPageShell extends StatefulWidget {
+  const _ReaderPageShell({
+    required this.controller,
+    required this.asset,
+    required this.index,
+    required this.clock,
+    required this.traceSink,
+    required this.pageBuilder,
+    required this.demandRevision,
+    required this.onZoomChanged,
+    this.onTap,
+    super.key,
+  });
+
+  final ReaderController controller;
+  final PageAsset asset;
+  final int index;
+  final MonoClock clock;
+  final TraceSink traceSink;
+  final ReaderPageBuilder? pageBuilder;
+  final int Function()? demandRevision;
+  final ValueChanged<bool> onZoomChanged;
+  final VoidCallback? onTap;
+
+  @override
+  State<_ReaderPageShell> createState() => _ReaderPageShellState();
+}
+
+final class _ReaderPageShellState extends State<_ReaderPageShell> {
+  late bool _active;
+  late bool _keepAlive;
+  late int _rotationQuarterTurns;
+
+  @override
+  void initState() {
+    super.initState();
+    _readControllerState();
+    widget.controller.addListener(_handleControllerChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ReaderPageShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_handleControllerChanged);
+      widget.controller.addListener(_handleControllerChanged);
+    }
+    final nextActive = widget.index == widget.controller.currentIndex;
+    final nextKeepAlive = _keepAliveFor(widget.controller);
+    final nextRotation = widget.controller.rotationQuarterTurns;
+    if (_active != nextActive ||
+        _keepAlive != nextKeepAlive ||
+        _rotationQuarterTurns != nextRotation) {
+      _active = nextActive;
+      _keepAlive = nextKeepAlive;
+      _rotationQuarterTurns = nextRotation;
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_handleControllerChanged);
+    super.dispose();
+  }
+
+  bool _keepAliveFor(ReaderController controller) {
+    return controller.direction == ReadingDirection.vertical &&
+        (widget.index - controller.currentIndex).abs() <= 7;
+  }
+
+  void _readControllerState() {
+    _active = widget.index == widget.controller.currentIndex;
+    _keepAlive = _keepAliveFor(widget.controller);
+    _rotationQuarterTurns = widget.controller.rotationQuarterTurns;
+  }
+
+  void _handleControllerChanged() {
+    final nextActive = widget.index == widget.controller.currentIndex;
+    final nextKeepAlive = _keepAliveFor(widget.controller);
+    final nextRotation = widget.controller.rotationQuarterTurns;
+    if (_active == nextActive &&
+        _keepAlive == nextKeepAlive &&
+        _rotationQuarterTurns == nextRotation) {
+      return;
+    }
+    setState(() {
+      _active = nextActive;
+      _keepAlive = nextKeepAlive;
+      _rotationQuarterTurns = nextRotation;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RotatedBox(
+      key: ValueKey<String>('reader-page-rotation:${widget.index}'),
+      quarterTurns: _rotationQuarterTurns,
+      child: _ZoomableReaderPage(
+        key: ValueKey<String>('zoom:${widget.asset.assetKey}'),
+        active: _active,
+        clock: widget.clock,
+        onTap: widget.onTap,
+        onZoomChanged: widget.onZoomChanged,
+        child: _ReaderPageHost(
+          key: ValueKey<String>(
+            'reader-page-host:${widget.asset.assetKey}',
+          ),
+          asset: widget.asset,
+          keepAlive: _keepAlive,
+          sessionId: widget.controller.sessionId,
+          clock: widget.clock,
+          traceSink: widget.traceSink,
+          pageBuilder: widget.pageBuilder,
+          demandRevision: widget.demandRevision,
+        ),
+      ),
+    );
   }
 }
 

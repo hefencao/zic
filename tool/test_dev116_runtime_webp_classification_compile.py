@@ -32,13 +32,15 @@ if "ArtifactCacheInvalidationBackend" in manager:
 if runtime.count("final artifactReadMicros =") != 1:
     raise SystemExit("pipeline presentation read timing declaration is duplicated")
 for token in (
-    "final keepVerticalHost =",
+    "bool _keepAliveFor(ReaderController controller)",
     "ReadingDirection.vertical",
-    "(index - widget.controller.currentIndex).abs() <= 7",
-    "keepAlive: keepVerticalHost",
+    "(widget.index - controller.currentIndex).abs() <= 7",
+    "keepAlive: _keepAlive",
 ):
     require(reader, token, "vertical host retention")
-if "!asset.animatedHint" in reader[reader.find("final keepVerticalHost ="):reader.find("return RotatedBox")]:
+keep_alive_start = reader.find("bool _keepAliveFor(ReaderController controller)")
+keep_alive_end = reader.find("void _readControllerState()", keep_alive_start)
+if "animatedHint" in reader[keep_alive_start:keep_alive_end]:
     raise SystemExit("vertical host keep-alive still depends on unreliable WebP hint")
 for token in (
     "runtimeAnimatedPages",

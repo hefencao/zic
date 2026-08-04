@@ -66,6 +66,25 @@ void main() {
     expect(decision?.targetWatermark, 6);
   });
 
+
+  test('authoritative static current is satisfied by one prepared frame', () {
+    final current = _id('static-current-with-stale-watermark');
+    final animatedNext = _id('animated-next');
+    final demands = <DecodeId, DecodeDemand>{
+      current: _demand(PageRole.current, 8),
+      animatedNext: _demand(PageRole.next, 6),
+    };
+
+    final decision = const StagedDecodeRefillPolicy().next(
+      demands: demands,
+      depthOf: (_) => 0,
+      satisfiedOf: (id) => id == current,
+    );
+
+    expect(decision?.id, animatedNext);
+    expect(decision?.stage, 'n>1');
+  });
+
   test('ended finite pages do not block neighbor refill', () {
     final current = _id('c');
     final next = _id('n');

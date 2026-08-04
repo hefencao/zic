@@ -742,7 +742,20 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         return snapshot != null &&
             snapshot.state == DecodeState.ended &&
             snapshot.failure == null &&
-            snapshot.animation.complete;
+            snapshot.animation.complete &&
+            snapshot.animation.frameCount > 1;
+      },
+      satisfiedOf: (id) {
+        final snapshot = registry.find(id)?.snapshot;
+        if (snapshot == null || snapshot.failure != null) {
+          return false;
+        }
+        final animation = snapshot.animation;
+        if (!animation.complete || animation.frameCount > 1) {
+          return false;
+        }
+        final preparedDepth = uploads?.preparedDepth(id) ?? 0;
+        return snapshot.depth + preparedDepth >= 1;
       },
       eligibleOf: (id) {
         if (only != null && id != only) {
@@ -788,6 +801,12 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         : 0;
     if (snapshot.failure != null || snapshot.state == DecodeState.failed) {
       return true;
+    }
+    final animation = snapshot.animation;
+    if (animation.complete &&
+        animation.frameCount <= 1 &&
+        snapshot.depth + preparedDepth >= 1) {
+      return false;
     }
     if (snapshot.state == DecodeState.waitingSource && !sourceWake) {
       return false;
