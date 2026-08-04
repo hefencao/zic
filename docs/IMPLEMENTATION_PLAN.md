@@ -2,23 +2,27 @@
 
 本文件只列未完成工作。
 
-## P0：纵向静态预加载与滚动设备闭环
+## P0：传输与 Partial WebP 设备闭环
 
-- 确认 page source ready 后立即出现 `decodeRefill sourceWake=true`，并在进入视口前产生 frame 0 与 output；
-- 确认预加载页不会因 current/neighbor 的 staged refill 或 queued task 覆盖而延迟；
-- 确认静态页退出 upload demand 后出现 `staticFrameKept`，而非立即 `demand-detached`；
-- 确认只有 FrameBudget 超限时才出现 `pageOutputReleased reason=frame-budget`；
-- 对比上下滑动时的可见 loading 与 page host dispose；
-- 验证权威静态 current 一帧完成后不再产生 c/n/m/p refill，邻页不会被静态 current 压制；
-- 验证普通 current/stable 变化不再重建整个 ReaderView/ListView，比较低性能设备 build/layout 长尾；
-- 复验纵向滑动偶发回拉和 settling 稳定性。
+- 确认动画 current/transition/next2/previous 的实际最大水位为 7/5/3/2，权威静态页一帧后不再参与补水；
+- 确认未封缄 WebP 达到 30 个已证明可解帧后出现 `animationLoop partialPrefix=true`，并在下载继续增长时稳定循环而非等待 seal；
+- 对比 partial prefix 循环前后的播放停顿、循环边界、帧序和 source 增长；
+- 确认 active non-resumable transfer 离开窗口后不再收到 cancelled，重新进入时不会从 `rangeStart=0` 重启；
+- 确认 promoted、active、queued 与 retry-pending session 不因 policy revision 重复 `downloadStarted`；
+- 检查 `download-recovery` 的退避次数、延迟和最终成功/终态，避免网络失败风暴。
 
-## P0：本地动态图路径设备闭环
+## P0：无法加载设备闭环
 
-- 确认 local bucket active 不超过 2；
-- 确认完整本地响应 `artifactWriteMicros=0`；
-- 比较跳页后的 source wait、native ingress 与首帧；
-- 确认本地读取不再显示下载进度。
+- 对 10:50 Trace 中失败 identity 复验 session 级退避是否跨 revision 保持；
+- 区分 CDN/transport 失败、HTTP 非图片响应、source seal 与 decode failure；
+- 若有稳定终态失败，页面应展示可重试错误，而不是无限 loading。
+
+## P0：纵向滚动性能
+
+- 使用 performance overlay/DevTools 比较 PageAsset ratio 更新前后的 build/layout 长尾；
+- 确认已有源尺寸时，小于 1% 的 decoder 尺寸舍入不再触发 ReaderView 重建；
+- 记录 anchor capture/restore 与实际 jumpTo 修正量，确认小于 2 logical px 的微调被忽略；
+- 若仍卡顿，继续审计 item extent 计算、texture upload 和剩余 page-local rebuild，不关闭必要的尺寸更新。
 
 ## P0：Flutter 与 Android 工具链
 

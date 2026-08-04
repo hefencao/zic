@@ -283,11 +283,11 @@ final class HeuristicPolicy {
       };
 
   int _decodeWatermark(PageRole role) => switch (role) {
-        PageRole.current => 8,
-        PageRole.transition => 2,
-        PageRole.next => decodeWarmPages ? 6 : 0,
-        PageRole.next2 => decodeWarmPages ? 4 : 0,
-        PageRole.previous => decodeWarmPages ? 3 : 0,
+        PageRole.current => 7,
+        PageRole.transition => 5,
+        PageRole.next => decodeWarmPages ? 5 : 0,
+        PageRole.next2 => decodeWarmPages ? 3 : 0,
+        PageRole.previous => decodeWarmPages ? 2 : 0,
         PageRole.last || PageRole.near || PageRole.far || PageRole.detached => 0,
       };
 }

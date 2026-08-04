@@ -35,23 +35,23 @@ require(
 )
 require(
     "packages/pipeline/lib/src/heuristic_policy.dart",
-    "PageRole.current => 8",
-    "PageRole.next => decodeWarmPages ? 6 : 0",
-    "PageRole.next2 => decodeWarmPages ? 4 : 0",
-    "PageRole.previous => decodeWarmPages ? 3 : 0",
+    "PageRole.current => 7",
+    "PageRole.next => decodeWarmPages ? 5 : 0",
+    "PageRole.next2 => decodeWarmPages ? 3 : 0",
+    "PageRole.previous => decodeWarmPages ? 2 : 0",
     "role == PageRole.last",
     "PageRole.last => 0",
 )
 require(
     "packages/sessions/lib/src/decode_refill_policy.dart",
-    "c>3",
+    "c>2",
     "transition ?? byRole[PageRole.next]",
     "n>1",
     "m>1",
     "p>1",
-    "c>5",
-    "c>7",
-    "n>5",
+    "c>4",
+    "c>6",
+    "n>4",
 )
 require(
     "packages/sessions/lib/src/live_coordinator.dart",
@@ -87,8 +87,8 @@ require(
     "packages/sessions/test/decode_refill_policy_test.dart",
     "staged waterlines refill one role at a time",
     "transition is the logical next across every staged watermark",
-    "expectStep(PageRole.current, 4)",
-    "expectStep(PageRole.next, 6)",
+    "expectStep(PageRole.current, 3)",
+    "expectStep(PageRole.next, 5)",
 )
 require(
     "packages/pipeline/test/pipeline_test.dart",

@@ -168,6 +168,8 @@ def summarize(path: Path) -> dict[str, Any]:
     decode_refills: list[dict[str, Any]] = []
     decode_recoveries: list[dict[str, Any]] = []
     decode_prefix_hints: list[dict[str, Any]] = []
+    partial_prefix_loops: list[dict[str, Any]] = []
+    download_recoveries: list[dict[str, Any]] = []
     ranked_downloads: list[dict[str, Any]] = []
     last_frames_kept: list[dict[str, Any]] = []
     static_frames_kept: list[dict[str, Any]] = []
@@ -502,6 +504,17 @@ def summarize(path: Path) -> dict[str, Any]:
                     "bufferedDepth": _number(payload.get("bufferedDepth")),
                 }
             )
+        elif kind == "retryScheduled" and payload.get("stage") == "download-recovery":
+            download_recoveries.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "identityHash": event.get("identityHash"),
+                    "attempt": _number(payload.get("attempt")),
+                    "delayUs": _number(payload.get("delayUs")),
+                    "committedLength": _number(payload.get("committedLength")),
+                }
+            )
         elif kind == "retryScheduled" and payload.get("stage") == "decode-prefix":
             decode_prefix_hints.append(
                 {
@@ -511,6 +524,17 @@ def summarize(path: Path) -> dict[str, Any]:
                     "frame": _number(payload.get("frame")),
                     "sourceLength": _number(payload.get("sourceLength")),
                     "nextSourceLength": _number(payload.get("nextSourceLength")),
+                }
+            )
+        elif kind == "animationLoop" and payload.get("partialPrefix") is True:
+            partial_prefix_loops.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "identityHash": event.get("identityHash"),
+                    "cycle": _number(payload.get("cycle")),
+                    "frameCount": _number(payload.get("frameCount")),
+                    "sourceLength": _number(payload.get("sourceLength")),
                 }
             )
         elif kind == "decodeRefill":
@@ -685,6 +709,10 @@ def summarize(path: Path) -> dict[str, Any]:
         "decodeRecoveries": decode_recoveries,
         "decodePrefixHintCount": len(decode_prefix_hints),
         "decodePrefixHints": decode_prefix_hints,
+        "partialPrefixLoopCount": len(partial_prefix_loops),
+        "partialPrefixLoops": partial_prefix_loops,
+        "downloadRecoveryCount": len(download_recoveries),
+        "downloadRecoveries": download_recoveries,
         "rankedDownloadCount": len(ranked_downloads),
         "rankedDownloadMaxGlobalActive": max(
             (row["globalActive"] for row in ranked_downloads),
@@ -816,6 +844,8 @@ def main() -> None:
         f"attempts={report['decodeRecoveryAttemptCounts']}"
     )
     print(f"decode prefix hints: {report['decodePrefixHintCount']}")
+    print(f"partial prefix loops: {report['partialPrefixLoopCount']}")
+    print(f"download recoveries: {report['downloadRecoveryCount']}")
     print(
         "ranked downloads: "
         f"count={report['rankedDownloadCount']} "

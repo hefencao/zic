@@ -49,7 +49,7 @@ for token in (
     require(profile, token, "source concurrency profile")
 for token in (
     "net.submitRanked",
-    "net.cancel(taskKey)",
+    "net.cancelQueued(taskKey)",
     "net.idleKeys(networkKeys)",
     "TraceEventKind.downloadStarted",
     "'globalActive': net.active",

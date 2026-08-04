@@ -351,7 +351,7 @@ final class _ReaderViewState extends State<ReaderView> {
         ReaderVerticalAnchor(index: anchor.index, offset: anchor.offset),
       );
       final bounded = target.clamp(0.0, position.maxScrollExtent).toDouble();
-      if ((bounded - position.pixels).abs() > 0.5) {
+      if ((bounded - position.pixels).abs() > 2.0) {
         _verticalController.jumpTo(bounded);
       }
     });

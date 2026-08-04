@@ -12,10 +12,10 @@ void main() {
       PageRole.previous: _id('p'),
     };
     final demands = <DecodeId, DecodeDemand>{
-      ids[PageRole.current]!: _demand(PageRole.current, 8),
-      ids[PageRole.next]!: _demand(PageRole.next, 6),
-      ids[PageRole.next2]!: _demand(PageRole.next2, 4),
-      ids[PageRole.previous]!: _demand(PageRole.previous, 3),
+      ids[PageRole.current]!: _demand(PageRole.current, 7),
+      ids[PageRole.next]!: _demand(PageRole.next, 5),
+      ids[PageRole.next2]!: _demand(PageRole.next2, 3),
+      ids[PageRole.previous]!: _demand(PageRole.previous, 2),
     };
     final depth = <DecodeId, int>{for (final id in ids.values) id: 0};
     const policy = StagedDecodeRefillPolicy();
@@ -30,18 +30,16 @@ void main() {
       depth[decision!.id] = target;
     }
 
-    expectStep(PageRole.current, 4);
+    expectStep(PageRole.current, 3);
     expectStep(PageRole.next, 2);
     expectStep(PageRole.next2, 2);
     expectStep(PageRole.previous, 2);
-    expectStep(PageRole.current, 6);
+    expectStep(PageRole.current, 5);
     expectStep(PageRole.next, 3);
-    expectStep(PageRole.current, 8);
+    expectStep(PageRole.current, 7);
     expectStep(PageRole.next, 4);
     expectStep(PageRole.next2, 3);
-    expectStep(PageRole.previous, 3);
-    expectStep(PageRole.next, 6);
-    expectStep(PageRole.next2, 4);
+    expectStep(PageRole.next, 5);
     expect(
       policy.next(demands: demands, depthOf: (id) => depth[id]!),
       isNull,
@@ -52,10 +50,10 @@ void main() {
     final current = _id('c');
     final next = _id('n');
     final demands = <DecodeId, DecodeDemand>{
-      current: _demand(PageRole.current, 8),
-      next: _demand(PageRole.next, 6),
+      current: _demand(PageRole.current, 7),
+      next: _demand(PageRole.next, 5),
     };
-    final depth = <DecodeId, int>{current: 4, next: 2};
+    final depth = <DecodeId, int>{current: 3, next: 2};
 
     final decision = const StagedDecodeRefillPolicy().next(
       demands: demands,
@@ -63,7 +61,7 @@ void main() {
     );
 
     expect(decision?.role, PageRole.current);
-    expect(decision?.targetWatermark, 6);
+    expect(decision?.targetWatermark, 5);
   });
 
 
@@ -71,8 +69,8 @@ void main() {
     final current = _id('static-current-with-stale-watermark');
     final animatedNext = _id('animated-next');
     final demands = <DecodeId, DecodeDemand>{
-      current: _demand(PageRole.current, 8),
-      animatedNext: _demand(PageRole.next, 6),
+      current: _demand(PageRole.current, 7),
+      animatedNext: _demand(PageRole.next, 5),
     };
 
     final decision = const StagedDecodeRefillPolicy().next(
@@ -89,8 +87,8 @@ void main() {
     final current = _id('c');
     final next = _id('n');
     final demands = <DecodeId, DecodeDemand>{
-      current: _demand(PageRole.current, 8),
-      next: _demand(PageRole.next, 6),
+      current: _demand(PageRole.current, 7),
+      next: _demand(PageRole.next, 5),
     };
 
     final decision = const StagedDecodeRefillPolicy().next(
@@ -144,7 +142,7 @@ void main() {
     final current = _id('animated-current');
     final neighbor = _id('static-neighbor');
     final demands = <DecodeId, DecodeDemand>{
-      current: _demand(PageRole.current, 8),
+      current: _demand(PageRole.current, 7),
       neighbor: DecodeDemand(
         role: PageRole.next,
         priority: 820,
@@ -160,7 +158,7 @@ void main() {
     );
 
     expect(decision?.id, current);
-    expect(decision?.stage, 'c>3');
+    expect(decision?.stage, 'c>2');
   });
 
   test('terminal single-frame demand does not block another bootstrap', () {
@@ -185,8 +183,8 @@ void main() {
     final blockedCurrent = _id('blocked-current');
     final readyNext = _id('ready-next');
     final demands = <DecodeId, DecodeDemand>{
-      blockedCurrent: _demand(PageRole.current, 8),
-      readyNext: _demand(PageRole.next, 6),
+      blockedCurrent: _demand(PageRole.current, 7),
+      readyNext: _demand(PageRole.next, 5),
     };
 
     final decision = const StagedDecodeRefillPolicy().next(
@@ -204,11 +202,11 @@ void main() {
     final transition = _id('transition');
     final next2 = _id('m');
     final demands = <DecodeId, DecodeDemand>{
-      current: _demand(PageRole.current, 8),
-      transition: _demand(PageRole.transition, 6),
-      next2: _demand(PageRole.next2, 4),
+      current: _demand(PageRole.current, 7),
+      transition: _demand(PageRole.transition, 5),
+      next2: _demand(PageRole.next2, 3),
     };
-    final depth = <DecodeId, int>{current: 4, transition: 0, next2: 0};
+    final depth = <DecodeId, int>{current: 3, transition: 0, next2: 0};
     const policy = StagedDecodeRefillPolicy();
 
     var decision = policy.next(demands: demands, depthOf: (id) => depth[id]!);
@@ -216,7 +214,7 @@ void main() {
     expect(decision?.stage, 'n>1');
     depth[transition] = 2;
     depth[next2] = 2;
-    depth[current] = 6;
+    depth[current] = 5;
 
     decision = policy.next(demands: demands, depthOf: (id) => depth[id]!);
     expect(decision?.id, transition);

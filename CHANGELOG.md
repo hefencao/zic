@@ -1,3 +1,12 @@
+## 0.31.0-dev.122：活动传输保留与 Partial WebP 前缀循环
+
+- 动画 staged c/n/m/p 水位调整为 7/5/3/2；权威静态页仍以单帧视为水位满足，不拆分混合章节的统一 refill 状态机。
+- 未封缄 WebP 已连续解出至少 30 帧后，若下一帧需要更多数据且播放缓冲耗尽，则在当前可用前缀内循环；后台 source 继续增长，后续循环可自然扩展到更多帧。
+- 页面退出 7/3 窗口时只取消尚未开始的 queued transfer；已经开始写入 partial 的 non-resumable transfer 继续完成，避免切页后反复从 rangeStart=0 重新下载。
+- promoted、active、queued 或 retry-pending DownloadSession 不再随 observation revision 重复提交；远程三次尝试耗尽后使用跨 revision 的 session 级有界退避。
+- 页面 runtime 尺寸只更新 ReaderView 局部 notifier；已有源尺寸时忽略小于 1% 的舍入差异，纵向 anchor 微调阈值提升到 2 logical px，减少低性能设备的 build/layout 与滚动修正抖动。
+- Trace analyzer 增加 partial-prefix loop 与 download-recovery 统计；新增 owner tests、ADR 0106、dev.122 审计和专项门禁。README、Architecture、Spec 未修改。
+
 ## 0.31.0-dev.121：静态单帧水位与 Reader 局部更新
 
 - 权威静态页在 holder 或已呈现 output 中拥有一帧时，直接视为当前 decode 水位已满足；即使旧 demand 暂时仍是 current 8 帧，也不会继续参与 c/n/m/p refill 竞争。

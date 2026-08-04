@@ -90,6 +90,7 @@ final class DecodeSession {
     required this.cursors,
     required this.clock,
     WebpDecodePrefixHints? prefixHints,
+    this.partialLoopMinFrames = 30,
     this.onAnimationResolved,
     this.traceSink = const NoopTraceSink(),
     this.sessionId = 'decode',
@@ -100,6 +101,11 @@ final class DecodeSession {
   final CursorFactory cursors;
   final MonoClock clock;
   final WebpDecodePrefixHints prefixHints;
+
+  /// Minimum number of frames proven decodable from an unsealed WebP prefix
+  /// before playback may cycle that prefix while the download keeps growing.
+  final int partialLoopMinFrames;
+
   final void Function(DecodeId id, AnimationInfo animation)?
       onAnimationResolved;
   final TraceSink traceSink;
@@ -118,6 +124,9 @@ final class DecodeSession {
   int _nextFrameHintIndex = 0;
   int _requiredSourceLength = 0;
   AnimationInfo? _reportedAnimation;
+  int _maxDecodedPrefixFrames = 0;
+  int _partialPrefixCycle = 0;
+  bool _partialPrefixAnimated = false;
   final Map<int, DecodedFrameTiming> _frameTimings =
       <int, DecodedFrameTiming>{};
 
@@ -127,7 +136,7 @@ final class DecodeSession {
   AnimationInfo get _animation =>
       _cursor?.loop?.animation ?? const AnimationInfo.unknown();
 
-  int get _cycle => _cursor?.loop?.cycle ?? 0;
+  int get _cycle => _partialPrefixCycle + (_cursor?.loop?.cycle ?? 0);
 
   void _reportAnimationIfComplete() {
     final animation = _cursor?.loop?.animation;
@@ -170,6 +179,13 @@ final class DecodeSession {
     void Function(DecodeSnapshot snapshot)? onFrameReady,
   }) async {
     _requireOpen();
+    if (partialLoopMinFrames < 2) {
+      throw ArgumentError.value(
+        partialLoopMinFrames,
+        'partialLoopMinFrames',
+        'must be at least two frames',
+      );
+    }
     if (preparedDepth < 0) {
       throw ArgumentError.value(
         preparedDepth,
@@ -246,7 +262,7 @@ final class DecodeSession {
         }
       }
       _cursorCreateMicros = _bind(source, epoch);
-      final holder = _holder!;
+      var holder = _holder!;
       final targetDepth = demand.targetWatermark > preparedDepth
           ? demand.targetWatermark - preparedDepth
           : 0;
@@ -291,6 +307,24 @@ final class DecodeSession {
         switch (step.kind) {
           case CursorStepKind.needMoreData:
             _waitingSourceSinceMicros ??= clock.nowMicros();
+            if (_canLoopPartialPrefix(source, holder)) {
+              final availableFrames = _maxDecodedPrefixFrames;
+              _partialPrefixCycle++;
+              _restartPartialPrefix(source, epoch);
+              holder = _holder!;
+              _emit(
+                TraceEventKind.animationLoop,
+                <String, Object?>{
+                  'cycle': _partialPrefixCycle,
+                  'frameCount': availableFrames,
+                  'loopCount': 0,
+                  'partialPrefix': true,
+                  'sourceLength': source.length,
+                  'sourceSealed': false,
+                },
+              );
+              continue;
+            }
             if (!source.sealed) {
               _requiredSourceLength = prefixHints.recordNeedMoreData(
                 id: id.download,
@@ -305,6 +339,7 @@ final class DecodeSession {
                   'sourceLength': source.length,
                   'nextSourceLength': _requiredSourceLength,
                   'sealed': false,
+                  'decodedPrefixFrames': _maxDecodedPrefixFrames,
                 },
               );
             }
@@ -319,7 +354,7 @@ final class DecodeSession {
               _emit(
                 TraceEventKind.animationLoop,
                 <String, Object?>{
-                  'cycle': loop.cycle,
+                  'cycle': _cycle,
                   'frameCount': loop.animation.frameCount,
                   'loopCount': loop.animation.loopCount,
                 },
@@ -345,6 +380,17 @@ final class DecodeSession {
             }
             _nextFrameHintIndex = frame.index + 1;
             _requiredSourceLength = 0;
+            if (!source.sealed) {
+              final decodedPrefixFrames = frame.index + 1;
+              if (decodedPrefixFrames > _maxDecodedPrefixFrames) {
+                _maxDecodedPrefixFrames = decodedPrefixFrames;
+              }
+              final animation = _cursor?.loop?.animation;
+              if (frame.duration > Duration.zero ||
+                  (animation?.frameCount ?? 0) > 1) {
+                _partialPrefixAnimated = true;
+              }
+            }
             holder.add(frame);
             _reportAnimationIfComplete();
             final timing = frame is FrameDecodeTiming
@@ -477,11 +523,35 @@ final class DecodeSession {
     }
   }
 
+  bool _canLoopPartialPrefix(EncodedSource source, FrameHolder holder) =>
+      !source.sealed &&
+      holder.isEmpty &&
+      _partialPrefixAnimated &&
+      _maxDecodedPrefixFrames >= partialLoopMinFrames;
+
+  void _restartPartialPrefix(EncodedSource source, SourceEpoch epoch) {
+    _cursor?.frames.dispose();
+    _holder?.dispose();
+    _cursor = null;
+    _holder = null;
+    _nextFrameHintIndex = 0;
+    _requiredSourceLength = 0;
+    _reportedAnimation = null;
+    _frameTimings.clear();
+    final startedAt = clock.nowMicros();
+    _cursor = cursors.create(id: id, source: source, epoch: epoch.value);
+    final elapsed = clock.nowMicros() - startedAt;
+    _holder = FrameHolder(epoch: epoch);
+    _failure = null;
+    _cursorCreateMicros = elapsed < 0 ? 0 : elapsed;
+  }
+
   void reset(SourceEpoch epoch) {
     _requireOpen();
     _revision++;
     _releaseBinding();
     _restartCursorWhenHolderEmpty = false;
+    _resetPartialPrefix();
     _epoch = epoch;
     _failure = null;
     _setState(DecodeState.idle);
@@ -521,6 +591,13 @@ final class DecodeSession {
     _reportedAnimation = null;
     _frameTimings.clear();
     _cursorCreateMicros = 0;
+    _resetPartialPrefix();
+  }
+
+  void _resetPartialPrefix() {
+    _maxDecodedPrefixFrames = 0;
+    _partialPrefixCycle = 0;
+    _partialPrefixAnimated = false;
   }
 
   void _setState(DecodeState state) {

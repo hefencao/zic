@@ -362,6 +362,73 @@ void main() {
     await download.dispose();
     await temp.delete(recursive: true);
   });
+
+  test('cycles a thirty-frame partial prefix while source remains unsealed', () async {
+    final temp =
+        await Directory.systemTemp.createTemp('decode_partial_loop_test_');
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024 * 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpartial-animation'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final trace = MemoryTraceSink();
+    final cursors = _PartialPrefixCursorFactory(frameCount: 30);
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: cursors,
+      clock: _Clock(),
+      traceSink: trace,
+      partialLoopMinFrames: 30,
+    );
+    const demand = DecodeDemand(
+      role: PageRole.current,
+      priority: 1000,
+      targetWatermark: 1,
+      reason: 'partial-prefix-loop',
+      expirationRevision: 64,
+    );
+
+    for (var revision = 1; revision <= 30; revision++) {
+      final snap = await decode.fill(
+        demand: demand,
+        revision: revision,
+        cancel: CancelToken(),
+      );
+      expect(snap.depth, 1);
+      expect(decode.holder!.consume(revision - 1), isTrue);
+    }
+
+    final looped = await decode.fill(
+      demand: demand,
+      revision: 31,
+      cancel: CancelToken(),
+    );
+    expect(looped.depth, 1);
+    expect(decode.holder!.frames.single.index, 0);
+    expect(looped.cycle, 1);
+    expect(cursors.created, 2);
+    final loop = trace.events.lastWhere(
+      (event) => event.kind == TraceEventKind.animationLoop,
+    );
+    expect(loop.payload['partialPrefix'], isTrue);
+    expect(loop.payload['frameCount'], 30);
+
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
   test('rewinds an infinite animation only after held frames are consumed', () async {
     final temp = await Directory.systemTemp.createTemp('decode_loop_test_');
     final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
@@ -970,6 +1037,58 @@ final class _Frame implements FrameRef {
 
   @override
   void dispose() => disposed = true;
+}
+
+
+final class _PartialPrefixCursorFactory implements CursorFactory {
+  _PartialPrefixCursorFactory({required this.frameCount});
+
+  final int frameCount;
+  int created = 0;
+
+  @override
+  CursorBinding create({
+    required DecodeId id,
+    required EncodedSource source,
+    required int epoch,
+  }) {
+    created++;
+    final cursor = _PartialPrefixCursor(epoch, frameCount);
+    return CursorBinding(frames: cursor, loop: cursor);
+  }
+}
+
+final class _PartialPrefixCursor implements FrameCursor, LoopCursor {
+  _PartialPrefixCursor(this.epoch, this.frameCount);
+
+  @override
+  final int epoch;
+  final int frameCount;
+  int _next = 0;
+
+  @override
+  AnimationInfo get animation => AnimationInfo(
+        frameCount: frameCount,
+        loopCount: 0,
+        complete: false,
+      );
+
+  @override
+  int get cycle => 0;
+
+  @override
+  Future<CursorStep> decodeNext() async {
+    if (_next >= frameCount) {
+      return const CursorStep.needMoreData();
+    }
+    return CursorStep.frame(_Frame(epoch, _next++));
+  }
+
+  @override
+  bool rewind() => false;
+
+  @override
+  void dispose() {}
 }
 
 final class _LoopCursorFactory implements CursorFactory {

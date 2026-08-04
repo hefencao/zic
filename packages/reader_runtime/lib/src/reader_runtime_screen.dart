@@ -161,7 +161,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   ReaderMode? _lastProgressMode;
   late final ReaderPlaybackController _playback;
   final Map<String, bool> _playbackCapabilities = <String, bool>{};
-  Map<String, double> _pageAspectRatios = const <String, double>{};
+  late final ValueNotifier<Map<String, double>> _pageAspectRatios;
   final Map<String, double> _pendingPageAspectRatios = <String, double>{};
   bool _pageAspectRatioUpdateScheduled = false;
   late bool _favorite;
@@ -175,6 +175,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   @override
   void initState() {
     super.initState();
+    _pageAspectRatios =
+        ValueNotifier<Map<String, double>>(const <String, double>{});
     _playback = ReaderPlaybackController()
       ..addListener(_syncPipelinePlayback);
     _syncPipelinePlayback();
@@ -451,9 +453,22 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       _adaptiveClassifier.observeDimensions(asset, width, height),
     );
     final ratio = height / width;
+    final sourceWidth = asset.width;
+    final sourceHeight = asset.height;
+    if (sourceWidth != null &&
+        sourceHeight != null &&
+        sourceWidth > 0 &&
+        sourceHeight > 0) {
+      final intrinsicRatio = sourceHeight / sourceWidth;
+      final relativeDifference =
+          (intrinsicRatio - ratio).abs() / intrinsicRatio;
+      if (relativeDifference < 0.01) {
+        return;
+      }
+    }
     final prior = _pendingPageAspectRatios[asset.assetKey] ??
-        _pageAspectRatios[asset.assetKey];
-    if (prior != null && (prior - ratio).abs() < 0.0001) return;
+        _pageAspectRatios.value[asset.assetKey];
+    if (prior != null && (prior - ratio).abs() < 0.001) return;
     _pendingPageAspectRatios[asset.assetKey] = ratio;
     if (_pageAspectRatioUpdateScheduled) return;
     _pageAspectRatioUpdateScheduled = true;
@@ -461,13 +476,11 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       _pageAspectRatioUpdateScheduled = false;
       if (!mounted || _pendingPageAspectRatios.isEmpty) return;
       final updated = <String, double>{
-        ..._pageAspectRatios,
+        ..._pageAspectRatios.value,
         ..._pendingPageAspectRatios,
       };
       _pendingPageAspectRatios.clear();
-      setState(() => _pageAspectRatios = Map<String, double>.unmodifiable(
-            updated,
-          ));
+      _pageAspectRatios.value = Map<String, double>.unmodifiable(updated);
     });
   }
 
@@ -1006,15 +1019,18 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       body: Stack(
         fit: StackFit.expand,
         children: <Widget>[
-          ReaderView(
-            controller: reader,
-            clock: _pipeline.clock,
-            traceSink: _pipeline.trace,
-            pageBuilder: pageBuilder,
-            demandRevision: () => _pipeline.revision,
-            onTap: _toggleControls,
-            verticalStitch: _settings.effectiveVerticalStitch,
-            pageAspectRatios: _pageAspectRatios,
+          ValueListenableBuilder<Map<String, double>>(
+            valueListenable: _pageAspectRatios,
+            builder: (context, pageAspectRatios, _) => ReaderView(
+              controller: reader,
+              clock: _pipeline.clock,
+              traceSink: _pipeline.trace,
+              pageBuilder: pageBuilder,
+              demandRevision: () => _pipeline.revision,
+              onTap: _toggleControls,
+              verticalStitch: _settings.effectiveVerticalStitch,
+              pageAspectRatios: pageAspectRatios,
+            ),
           ),
           AnimatedBuilder(
             animation: reader,

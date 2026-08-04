@@ -99,7 +99,7 @@ void main() {
       plan.decodes.values.singleWhere(
         (value) => value.role == PageRole.current,
       ).targetWatermark,
-      8,
+      7,
     );
   });
 

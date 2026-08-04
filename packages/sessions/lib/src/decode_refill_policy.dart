@@ -32,11 +32,9 @@ final class DecodeRefillDecision {
 /// a depth at or below the threshold refills to the smallest value above it;
 /// cursor batching may overshoot naturally.
 ///
-///   c  n  m  p  l
-///   3  1  1  1  keep
-///   5  2  1  1  keep
-///   7  3  2  2  keep
-///   7  5  3  2  keep
+/// Refill targets are released in this order:
+/// `c3, n2, m2, p2, c5, n3, c7, n4, m3, n5`.
+/// The role maxima are therefore c/n/m/p = 7/5/3/2; last remains keep-only.
 ///
 /// During a drag, `transition` is the logical n. It therefore receives every
 /// n stage instead of a separate one-off transition watermark. `last` never
@@ -92,18 +90,16 @@ final class StagedDecodeRefillPolicy {
     };
 
     const steps = <_RefillStep>[
-      _RefillStep(_WaterlineRole.current, 3, 'c>3'),
+      _RefillStep(_WaterlineRole.current, 2, 'c>2'),
       _RefillStep(_WaterlineRole.next, 1, 'n>1'),
       _RefillStep(_WaterlineRole.next2, 1, 'm>1'),
       _RefillStep(_WaterlineRole.previous, 1, 'p>1'),
-      _RefillStep(_WaterlineRole.current, 5, 'c>5'),
+      _RefillStep(_WaterlineRole.current, 4, 'c>4'),
       _RefillStep(_WaterlineRole.next, 2, 'n>2'),
-      _RefillStep(_WaterlineRole.current, 7, 'c>7'),
+      _RefillStep(_WaterlineRole.current, 6, 'c>6'),
       _RefillStep(_WaterlineRole.next, 3, 'n>3'),
       _RefillStep(_WaterlineRole.next2, 2, 'm>2'),
-      _RefillStep(_WaterlineRole.previous, 2, 'p>2'),
-      _RefillStep(_WaterlineRole.next, 5, 'n>5'),
-      _RefillStep(_WaterlineRole.next2, 3, 'm>3'),
+      _RefillStep(_WaterlineRole.next, 4, 'n>4'),
     ];
 
     DecodeRefillDecision? stagedDecision;

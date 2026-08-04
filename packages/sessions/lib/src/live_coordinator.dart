@@ -99,6 +99,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final Map<DownloadId, DownloadDemand> _downloads =
       <DownloadId, DownloadDemand>{};
   final Map<DownloadId, String> _networkTaskKeys = <DownloadId, String>{};
+  final Map<DownloadId, int> _downloadRetryRounds = <DownloadId, int>{};
+  final Set<DownloadId> _downloadRetryPending = <DownloadId>{};
   final Map<DecodeId, DecodeDemand> _decodes = <DecodeId, DecodeDemand>{};
   final Map<DecodeId, int> _decodeDemandRevisions = <DecodeId, int>{};
   final Map<DecodeId, UploadDemand> _uploads = <DecodeId, UploadDemand>{};
@@ -111,7 +113,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final Map<DecodeId, int> _decodeRecoveryAttempts = <DecodeId, int>{};
   final Set<DecodeId> _decodeRecoveryPending = <DecodeId>{};
   final PlaybackGate _playbackGate = PlaybackGate();
+  static const int _maxDownloadRetryRounds = 4;
   int _revision = 0;
+  bool _disposed = false;
 
   Map<DownloadId, DownloadDemand> get demands =>
       Map<DownloadId, DownloadDemand>.unmodifiable(_downloads);
@@ -204,6 +208,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   }
 
   Future<void> dispose() async {
+    _disposed = true;
     _playbackGate.clear(
       freeze: (id) {
         if (uploads?.find(id) == null) {
@@ -227,6 +232,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       net.cancel(key);
     }
     _networkTaskKeys.clear();
+    _downloadRetryRounds.clear();
+    _downloadRetryPending.clear();
     decode.cancelAll();
     upload.cancelAll();
     _downloads.clear();
@@ -247,36 +254,73 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   ) {
     for (final id in diff.removed) {
       _downloads.remove(id);
-      final taskKey = _networkTaskKeys.remove(id);
-      if (taskKey != null) {
-        net.cancel(taskKey);
-      }
       final session = registry.find(id);
-      final listener = _sourceListeners.remove(id);
-      if (listener != null) {
-        session?.removeSourceListener(listener);
-      }
-      _sourceRevisions.remove(id);
-      _sourceWakeLengths.remove(id);
       session?.detach();
+      final taskKey = _networkTaskKeys[id];
+      if (session?.activeRun != true) {
+        if (taskKey != null) {
+          net.cancelQueued(taskKey);
+        }
+        _networkTaskKeys.remove(id);
+        _retireDownloadTracking(id, session);
+      }
     }
-    for (final entry in <MapEntry<DownloadId, DownloadDemand>>[
-      ...diff.added.entries,
-      ...diff.changed.entries,
-    ]) {
+    for (final entry in diff.added.entries) {
+      _downloads[entry.key] = entry.value;
+      final session = registry.get(entry.key)..attach();
+      if (!session.activeRun) {
+        _downloadRetryRounds.remove(entry.key);
+        _downloadRetryPending.remove(entry.key);
+      }
+      _watchSource(sessionId, entry.key, session);
+      _ensureDownloadTask(sessionId, entry.key, session);
+    }
+    for (final entry in diff.changed.entries) {
       _downloads[entry.key] = entry.value;
       final session = registry.get(entry.key)..attach();
       _watchSource(sessionId, entry.key, session);
-      final taskKey = '$sessionId:${entry.key.key}';
-      _networkTaskKeys[entry.key] = taskKey;
-      net.submitRanked(
-        key: taskKey,
-        priority: entry.value.priority,
-        bucket: downloadBucketFor(entry.key),
-        bucketLimit: downloadBucketLimitFor(entry.key),
-        task: (token) => _runDownload(sessionId, entry.key, session, token),
-      );
+      _ensureDownloadTask(sessionId, entry.key, session);
     }
+  }
+
+  void _ensureDownloadTask(
+    String sessionId,
+    DownloadId id,
+    DownloadSession session,
+  ) {
+    if (_disposed ||
+        !_downloads.containsKey(id) ||
+        session.state == DownloadState.promoted ||
+        session.state == DownloadState.disposed ||
+        session.activeRun ||
+        _downloadRetryPending.contains(id) ||
+        (_downloadRetryRounds[id] ?? 0) > _maxDownloadRetryRounds) {
+      return;
+    }
+    final demand = _downloads[id]!;
+    final taskKey = '$sessionId:${id.key}';
+    _networkTaskKeys[id] = taskKey;
+    net.submitRanked(
+      key: taskKey,
+      priority: demand.priority,
+      bucket: downloadBucketFor(id),
+      bucketLimit: downloadBucketLimitFor(id),
+      task: (token) => _runDownload(sessionId, id, session, token),
+    );
+  }
+
+  void _retireDownloadTracking(
+    DownloadId id,
+    DownloadSession? session,
+  ) {
+    final listener = _sourceListeners.remove(id);
+    if (listener != null) {
+      session?.removeSourceListener(listener);
+    }
+    _sourceRevisions.remove(id);
+    _sourceWakeLengths.remove(id);
+    _downloadRetryRounds.remove(id);
+    _downloadRetryPending.remove(id);
   }
 
   void _watchSource(
@@ -293,6 +337,10 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       // quantum, seal and failure wake the same decode demand.
       _sourceRevisions[id] = snapshot.revision;
       final priorLength = _sourceWakeLengths[id];
+      if (priorLength == null || snapshot.length > priorLength) {
+        _downloadRetryRounds.remove(id);
+        _downloadRetryPending.remove(id);
+      }
       final shouldWake = onDecode != null ||
           priorLength == null ||
           snapshot.failure != null ||
@@ -303,6 +351,15 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       }
       _sourceWakeLengths[id] = snapshot.length;
       _wakeDecodesForSource(sessionId, id);
+      if (snapshot.failure != null && _downloads.containsKey(id)) {
+        unawaited(() async {
+          await Future<void>.delayed(Duration.zero);
+          final demandedSession = registry.find(id);
+          if (demandedSession != null) {
+            _ensureDownloadTask(sessionId, id, demandedSession);
+          }
+        }());
+      }
     }
     _sourceListeners[id] = listener;
     session.addSourceListener(listener);
@@ -314,6 +371,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     DownloadSession session,
     CancelToken token,
   ) async {
+    final taskKey = '$sessionId:${id.key}';
     final bucket = downloadBucketFor(id);
     final bucketLimit = downloadBucketLimitFor(id);
     final initialDemand = _downloads[id];
@@ -332,65 +390,126 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             'globalActive': net.active,
             'globalLimit': net.maxActive,
             'bucketActive': net.activeForBucket(bucket),
+            'committedLength': session.committedLength,
           },
         ),
       );
     }
-    for (var attempt = 1; ; attempt++) {
-      token.throwIfCancelled();
-      final demand = _downloads[id];
-      if (demand == null ||
-          demand.expirationRevision < _revision ||
-          !session.demanded) {
-        return;
-      }
-      final attemptStartedAtMicros = clock.nowMicros();
-      try {
-        await DownloadJob(
-          transport: transportFor(id.canonicalUri),
-          session: session,
-        ).run(cancel: token);
-        _wakeDecodesForSource(sessionId, id);
-        return;
-      } on Object catch (error) {
-        if (!retry.allows(error, attempt)) {
-          if (error is Failure && error.code == ErrorCode.cancelled) {
-            return;
-          }
-          final failedAtMicros = clock.nowMicros();
-          _error(
-            sessionId,
-            id.key,
-            'network',
-            error,
-            details: <String, Object?>{
-              'attempt': attempt,
-              'executionMicros':
-                  (failedAtMicros - attemptStartedAtMicros)
-                      .clamp(0, 1 << 62)
-                      .toInt(),
-            },
-          );
+    try {
+      for (var attempt = 1; ; attempt++) {
+        token.throwIfCancelled();
+        final demand = _downloads[id];
+        if (demand == null && !session.activeRun) {
           return;
         }
-        final delay = retry.delayAfter(attempt);
-        traceSink.record(
-          traceEvent(
-            clock: clock,
-            sessionId: sessionId,
-            kind: TraceEventKind.retryScheduled,
-            identityHash: id.key,
-            revision: _revision,
-            payload: <String, Object?>{
-              'attempt': attempt + 1,
-              'delayUs': delay.inMicroseconds,
-              'error': '$error',
-            },
-          ),
-        );
-        await _sleepOrCancel(delay, token);
+        final attemptStartedAtMicros = clock.nowMicros();
+        try {
+          await DownloadJob(
+            transport: transportFor(id.canonicalUri),
+            session: session,
+          ).run(cancel: token);
+          _downloadRetryRounds.remove(id);
+          _downloadRetryPending.remove(id);
+          _wakeDecodesForSource(sessionId, id);
+          return;
+        } on Object catch (error) {
+          if (!retry.allows(error, attempt)) {
+            if (error is Failure && error.code == ErrorCode.cancelled) {
+              return;
+            }
+            final failedAtMicros = clock.nowMicros();
+            _error(
+              sessionId,
+              id.key,
+              'network',
+              error,
+              details: <String, Object?>{
+                'attempt': attempt,
+                'executionMicros':
+                    (failedAtMicros - attemptStartedAtMicros)
+                        .clamp(0, 1 << 62)
+                        .toInt(),
+              },
+            );
+            if (_downloads.containsKey(id) &&
+                error is Failure &&
+                error.code == ErrorCode.network) {
+              _scheduleDownloadRetry(sessionId, id, session, error);
+            }
+            return;
+          }
+          final delay = retry.delayAfter(attempt);
+          traceSink.record(
+            traceEvent(
+              clock: clock,
+              sessionId: sessionId,
+              kind: TraceEventKind.retryScheduled,
+              identityHash: id.key,
+              revision: _revision,
+              payload: <String, Object?>{
+                'stage': 'download-attempt',
+                'attempt': attempt + 1,
+                'delayUs': delay.inMicroseconds,
+                'error': '$error',
+              },
+            ),
+          );
+          await _sleepOrCancel(delay, token);
+        }
+      }
+    } finally {
+      if (_networkTaskKeys[id] == taskKey) {
+        _networkTaskKeys.remove(id);
+      }
+      if (!_downloads.containsKey(id) && !session.activeRun) {
+        _retireDownloadTracking(id, session);
       }
     }
+  }
+
+  void _scheduleDownloadRetry(
+    String sessionId,
+    DownloadId id,
+    DownloadSession session,
+    Failure failure,
+  ) {
+    if (_disposed ||
+        _downloadRetryPending.contains(id) ||
+        !_downloads.containsKey(id)) {
+      return;
+    }
+    final round = (_downloadRetryRounds[id] ?? 0) + 1;
+    if (round > _maxDownloadRetryRounds) {
+      return;
+    }
+    _downloadRetryRounds[id] = round;
+    _downloadRetryPending.add(id);
+    final delay = retry.delayAfter(round);
+    traceSink.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.retryScheduled,
+        identityHash: id.key,
+        revision: _revision,
+        payload: <String, Object?>{
+          'stage': 'download-recovery',
+          'attempt': round,
+          'delayUs': delay.inMicroseconds,
+          'committedLength': session.committedLength,
+          'error': '$failure',
+        },
+      ),
+    );
+    unawaited(() async {
+      await sleep(delay);
+      await Future<void>.delayed(Duration.zero);
+      _downloadRetryPending.remove(id);
+      if (_disposed || !_downloads.containsKey(id)) {
+        return;
+      }
+      _ensureDownloadTask(sessionId, id, session);
+    }());
   }
 
   Future<void> _sleepOrCancel(Duration delay, CancelToken token) async {

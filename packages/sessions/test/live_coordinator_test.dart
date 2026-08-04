@@ -83,6 +83,109 @@ void main() {
     expect((await index.get(id.key))?.state, CacheState.ready);
   });
 
+
+  test('active nonresumable transfer survives window detach and is not reopened',
+      () async {
+    final temp =
+        await Directory.systemTemp.createTemp('live_retained_download_test_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'retained',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/retained.webp'),
+    );
+    final index = MemIndex();
+    await index.open();
+    addTearDown(index.close);
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+      index: index,
+    );
+    addTearDown(registry.dispose);
+    final transport = _RetainedStreamTransport();
+    final coordinator = LiveCoordinator(
+      registry: registry,
+      transportFor: (_) => transport,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(coordinator.dispose);
+
+    const demand = DownloadDemand(
+      role: PageRole.current,
+      priority: 1000,
+      reason: 'retained',
+      expirationRevision: 8,
+    );
+    final first = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{id: demand},
+      decodes: const <DecodeId, DecodeDemand>{},
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{ResourceId.download(id)},
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: first,
+        diff: DemandDiff.between(DemandPlan.empty(), first),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    await transport.opened.future;
+    transport.add('RIFF....WEBP'.codeUnits);
+    await Future<void>.delayed(Duration.zero);
+    expect(registry.find(id)?.activeRun, isTrue);
+
+    final detached = DemandPlan(
+      revision: 2,
+      downloads: const <DownloadId, DownloadDemand>{},
+      decodes: const <DecodeId, DecodeDemand>{},
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: const <ResourceId>{},
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: detached,
+        diff: DemandDiff.between(first, detached),
+        window: const RoleWindow(<int, PageRole>{}),
+      ),
+    );
+    expect(registry.find(id)?.demanded, isFalse);
+
+    transport.add('payload'.codeUnits);
+    await transport.close();
+    await coordinator.idle();
+    expect(registry.find(id)?.state, DownloadState.promoted);
+    expect(transport.opens, 1);
+
+    final revisited = DemandPlan(
+      revision: 3,
+      downloads: <DownloadId, DownloadDemand>{id: demand},
+      decodes: const <DecodeId, DecodeDemand>{},
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{ResourceId.download(id)},
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: revisited,
+        diff: DemandDiff.between(detached, revisited),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    await coordinator.idle();
+    expect(transport.opens, 1);
+  });
+
   test('live coordinator retries a demanded network failure', () async {
     final temp = await Directory.systemTemp.createTemp('live_retry_test_');
     addTearDown(() async => temp.delete(recursive: true));
@@ -841,6 +944,38 @@ final class _SignallingStaticCursor implements FrameCursor, LoopCursor {
 
   @override
   void dispose() {}
+}
+
+
+final class _RetainedStreamTransport implements Transport {
+  final StreamController<List<int>> _controller =
+      StreamController<List<int>>();
+  final Completer<void> opened = Completer<void>();
+  int opens = 0;
+
+  void add(List<int> bytes) => _controller.add(bytes);
+
+  Future<void> close() => _controller.close();
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async {
+    opens++;
+    if (!opened.isCompleted) {
+      opened.complete();
+    }
+    return ByteResponse(
+      bytes: _controller.stream,
+      statusCode: 200,
+      rangeStart: 0,
+      totalLength: null,
+      validators: const Validators(),
+      rangeSupported: false,
+    );
+  }
 }
 
 final class _ControlledTransport implements Transport {
