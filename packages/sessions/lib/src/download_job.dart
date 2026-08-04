@@ -63,6 +63,17 @@ final class DownloadJob {
     cancel?.throwIfCancelled();
     var response = await _open(start);
     await _discardIfCancelled(cancel, response);
+    if (start > 0 &&
+        response.disposition == ByteResponseDisposition.durableImmutable) {
+      await response.discard();
+      session.recordResume(restarted: true);
+      await session.reset();
+      session.queue();
+      start = 0;
+      cancel?.throwIfCancelled();
+      response = await _open(0);
+      await _discardIfCancelled(cancel, response);
+    }
     if (start > 0) {
       try {
         requireResumeResponse(
@@ -108,6 +119,7 @@ final class DownloadJob {
       session.beginDurableCachedIngress(
         validators: response.validators,
         totalLength: response.totalLength!,
+        residentSource: _residentSourceFor(session.id.canonicalUri),
       );
       var residentOffset = 0;
       final residentIterator = StreamIterator<List<int>>(response.bytes);
@@ -161,6 +173,14 @@ final class DownloadJob {
       }
       rethrow;
     }
+  }
+
+
+  String _residentSourceFor(Uri uri) {
+    final scheme = uri.scheme.toLowerCase();
+    return scheme == 'file' || scheme == 'content' || scheme == 'asset'
+        ? 'local-immutable'
+        : 'durable-cache';
   }
 
   Future<bool> _moveNext(

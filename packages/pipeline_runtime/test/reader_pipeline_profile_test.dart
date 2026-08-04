@@ -47,7 +47,7 @@ void main() {
         monotonicMicros: 1,
       );
 
-  test('all source kinds share the stable 7/3, 2/1, 5/3/2 profile', () {
+  test('all source kinds share stable demand and decode/upload lanes', () {
     for (final scheme in <String>[
       'mihon-resource',
       'venera-resource',
@@ -76,7 +76,7 @@ void main() {
       expect(plan.decodes, hasLength(4), reason: scheme);
       expect(plan.uploads, hasLength(1), reason: scheme);
       expect(profile.networkConcurrency, 5, reason: scheme);
-      expect(profile.localSourceConcurrency, 5, reason: scheme);
+      expect(profile.localSourceConcurrency, 2, reason: scheme);
       expect(profile.remoteSourceConcurrency, 5, reason: scheme);
       expect(profile.decodeConcurrency, 3, reason: scheme);
       expect(profile.uploadConcurrency, 2, reason: scheme);
@@ -100,7 +100,7 @@ void main() {
     expect(profile.downloadBucket(local), 'local');
     expect(profile.downloadBucket(firstRemote), 'remote:mihon-a');
     expect(profile.downloadBucket(secondRemote), 'remote:mihon-b');
-    expect(profile.downloadBucketLimit(local), 5);
+    expect(profile.downloadBucketLimit(local), 2);
     expect(profile.downloadBucketLimit(firstRemote), 5);
   });
 

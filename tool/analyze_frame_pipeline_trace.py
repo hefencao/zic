@@ -354,6 +354,7 @@ def summarize(path: Path) -> dict[str, Any]:
                     "artifactWriteMicros": _number(
                         payload.get("artifactWriteMicros")
                     ),
+                    "residentSource": payload.get("residentSource"),
                 }
             )
         elif kind == "frameUploaded" and "textureLeaseReused" in payload:
@@ -682,6 +683,9 @@ def summarize(path: Path) -> dict[str, Any]:
         "lastFrameKeptCount": len(last_frames_kept),
         "lastFramesKept": last_frames_kept,
         "cacheResidentCommitCount": len(cache_resident_commits),
+        "residentSourceCounts": dict(
+            Counter(str(row["residentSource"]) for row in cache_resident_commits)
+        ),
         "cacheResidentIngressMicros": _stats(
             [row["nativeIngressMicros"] for row in cache_resident_commits]
         ),

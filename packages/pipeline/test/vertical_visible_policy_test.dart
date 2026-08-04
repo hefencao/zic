@@ -1,0 +1,107 @@
+import 'package:domain/domain.dart';
+import 'package:pipeline/pipeline.dart';
+import 'package:test/test.dart';
+
+void main() {
+  test('every vertically visible static page receives authoritative demand', () {
+    final chapter = ChapterManifest(
+      sourceId: 'local',
+      comicId: 'comic',
+      chapter: const Chapter(
+        chapterId: 'chapter',
+        comicId: 'comic',
+        title: 'chapter',
+        sequence: 1,
+        pageCount: 6,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        6,
+        (index) => PageAsset(
+          pageId: 'p$index',
+          chapterId: 'chapter',
+          index: index,
+          uri: Uri.parse('asset:///p$index.png'),
+          width: 1000,
+          height: 1600,
+          contentKindHint: ContentKindHint.png,
+          animatedHint: false,
+        ),
+      ),
+      readingDirection: ReadingDirection.vertical,
+    );
+    final observation = ReaderObs(
+      sessionId: 'reader',
+      currentIndex: 2,
+      stableIndex: 2,
+      interaction: Interaction.scrolling,
+      logicalPosition: 2.2,
+      velocity: -1,
+      currentCoverage: Coverage(
+        pageIndex: 2,
+        assetKey: chapter.pages[2].assetKey,
+        fraction: 0.6,
+      ),
+      targetCoverage: Coverage(
+        pageIndex: 1,
+        assetKey: chapter.pages[1].assetKey,
+        fraction: 0.2,
+      ),
+      visibleCoverages: <Coverage>[
+        Coverage(
+          pageIndex: 1,
+          assetKey: chapter.pages[1].assetKey,
+          fraction: 0.2,
+        ),
+        Coverage(
+          pageIndex: 2,
+          assetKey: chapter.pages[2].assetKey,
+          fraction: 0.6,
+        ),
+        Coverage(
+          pageIndex: 3,
+          assetKey: chapter.pages[3].assetKey,
+          fraction: 0.2,
+        ),
+      ],
+      direction: ReadingDirection.vertical,
+      timestamp: DateTime.utc(2026, 8, 4),
+      monotonicMicros: 1,
+    );
+    final window = const RoleResolver(
+      forwardEncodedPages: 7,
+      backwardEncodedPages: 3,
+      forwardDecodePages: 2,
+      backwardDecodePages: 1,
+      nearRadius: 0,
+    ).resolve(chapter, observation);
+    final plan = const HeuristicPolicy(
+      decodeWarmPages: true,
+      // Deliberately smaller than the three visible outputs. Visibility must
+      // remain authoritative; the real FrameBudget trims only non-visible work.
+      staticOutputBudgetBytes: 1,
+    ).createPlan(
+      revision: 1,
+      chapter: chapter,
+      observation: observation,
+      window: window,
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+    );
+
+    expect(window.roleOf(1), PageRole.transition);
+    expect(window.roleOf(3), PageRole.visible);
+    expect(
+      plan.uploads.values.where((demand) => demand.role == PageRole.visible),
+      hasLength(1),
+    );
+    expect(
+      plan.decodes.values.singleWhere(
+        (demand) => demand.role == PageRole.visible,
+      ).targetWatermark,
+      1,
+    );
+  });
+}

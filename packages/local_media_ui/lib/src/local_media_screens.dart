@@ -387,6 +387,7 @@ Future<ByteResponse> _openLocalMediaResponse(
     totalLength: response.totalLength,
     validators: Validators(etag: response.revision),
     rangeSupported: response.rangeSupported,
+    disposition: ByteResponseDisposition.durableImmutable,
     onDiscard: response.close,
   );
 }

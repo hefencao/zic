@@ -3,7 +3,7 @@ import 'models.dart';
 enum Interaction { idle, dragging, scrolling, jumping, settling }
 
 final class Coverage {
-  Coverage({
+  const Coverage({
     required this.pageIndex,
     required this.assetKey,
     required this.fraction,
@@ -28,6 +28,7 @@ final class ReaderObs {
     required this.timestamp,
     required this.monotonicMicros,
     this.targetCoverage,
+    this.visibleCoverages = const <Coverage>[],
   })  : assert(currentIndex >= 0),
         assert(stableIndex >= 0);
 
@@ -39,6 +40,7 @@ final class ReaderObs {
   final double velocity;
   final Coverage currentCoverage;
   final Coverage? targetCoverage;
+  final List<Coverage> visibleCoverages;
   final ReadingDirection direction;
   final DateTime timestamp;
   final int monotonicMicros;

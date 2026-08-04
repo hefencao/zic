@@ -503,6 +503,10 @@ final class PipelineReaderSession {
       await _waitForPromotion(session, token);
     }
     token.throwIfCancelled();
+    if (session.residentCacheBacked &&
+        _isDirectImmutableLocalUri(asset.uri)) {
+      return _readDirectImmutableSource(asset, id, token);
+    }
     final artifactReadStarted = clock.nowMicros();
     final cacheRead = cache == null
         ? null
@@ -538,6 +542,69 @@ final class PipelineReaderSession {
     return bytes;
   }
 
+  Future<Uint8List> _readDirectImmutableSource(
+    PageAsset asset,
+    DownloadId id,
+    MediaLoadToken token,
+  ) async {
+    final started = clock.nowMicros();
+    final session = _downloads.get(id);
+    final response = await _baseTransportFor(asset.uri).open(
+      asset.uri,
+      validators: session.validators,
+    );
+    if (session.validators.canResume &&
+        !session.validators.matches(response.validators)) {
+      await response.discard();
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'direct immutable image source revision changed',
+      );
+    }
+    final builder = BytesBuilder(copy: false);
+    try {
+      await for (final chunk in response.bytes) {
+        token.throwIfCancelled();
+        if (chunk.isNotEmpty) builder.add(chunk);
+      }
+    } finally {
+      await response.discard();
+    }
+    token.throwIfCancelled();
+    final bytes = builder.takeBytes();
+    if (bytes.isEmpty) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'direct immutable image source produced no bytes',
+      );
+    }
+    final expected = session.totalLength ?? response.totalLength;
+    if (expected != null && bytes.lengthInBytes != expected) {
+      throw Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'direct immutable image source length changed: '
+            '${bytes.lengthInBytes}/$expected',
+      );
+    }
+    _recordPresentationCacheRead(
+      asset: asset,
+      id: id,
+      bytes: bytes,
+      source: 'direct-source',
+      readMode: 'direct-read-all',
+      readMicros: clock.nowMicros() - started,
+      memoryHit: false,
+      joined: false,
+      sessionState: session.state.name,
+    );
+    return bytes;
+  }
+
+  bool _isDirectImmutableLocalUri(Uri uri) {
+    final scheme = uri.scheme.toLowerCase();
+    return scheme == 'file' || scheme == 'content' || scheme == 'asset';
+  }
+
   void _recordPresentationCacheRead({
     required PageAsset asset,
     required DownloadId id,
@@ -559,7 +626,8 @@ final class PipelineReaderSession {
         revision: revision,
         payload: <String, Object?>{
           'source': source,
-          'sourceClass': source == 'session-artifact'
+          'sourceClass': source == 'session-artifact' ||
+                  source == 'direct-source'
               ? _readerSourceClass(asset.uri)
               : 'persistent-artifact',
           'uriScheme': asset.uri.scheme.isEmpty ? 'file' : asset.uri.scheme,

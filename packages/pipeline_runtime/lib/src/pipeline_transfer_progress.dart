@@ -62,6 +62,10 @@ final class PipelineTransferProgress {
 PipelineTransferProgress pipelineTransferProgressFor(
   DownloadSnapshot snapshot,
 ) {
+  final scheme = snapshot.id.canonicalUri.scheme.toLowerCase();
+  if (scheme == 'file' || scheme == 'content' || scheme == 'asset') {
+    return const PipelineTransferProgress();
+  }
   if (snapshot.state == DownloadState.sealed ||
       snapshot.state == DownloadState.promoted ||
       snapshot.state == DownloadState.failed ||

@@ -95,6 +95,7 @@ final class DownloadSession {
   int _networkStartLength = 0;
   int? _residentLength;
   bool _residentCacheBacked = false;
+  String? _residentSource;
   Failure? _failure;
   List<int> _prefix = <int>[];
   int _pendingCommitTraceBytes = 0;
@@ -216,6 +217,7 @@ final class DownloadSession {
     _requireNotDisposed();
     _residentLength = null;
     _residentCacheBacked = false;
+    _residentSource = null;
     if (_writer != null) {
       throw const Failure(
         code: ErrorCode.writerBusy,
@@ -315,6 +317,7 @@ final class DownloadSession {
   void beginDurableCachedIngress({
     required Validators validators,
     required int totalLength,
+    String residentSource = 'durable-cache',
   }) {
     _requireNotDisposed();
     _requireState(<DownloadState>{
@@ -330,6 +333,7 @@ final class DownloadSession {
       );
     }
     _residentCacheBacked = true;
+    _residentSource = residentSource;
     _residentLength = 0;
     _validators = validators;
     _totalLength = totalLength;
@@ -342,7 +346,11 @@ final class DownloadSession {
     _state = DownloadState.receiving;
     _emit(
       TraceEventKind.downloadState,
-      <String, Object?>{'state': _state.name, 'cacheResident': true},
+      <String, Object?>{
+        'state': _state.name,
+        'cacheResident': true,
+        'residentSource': _residentSource,
+      },
     );
   }
 
@@ -411,6 +419,7 @@ final class DownloadSession {
     _emit(TraceEventKind.artifactPromoted, <String, Object?>{
       'length': committedLength,
       'cacheResident': true,
+      'residentSource': _residentSource,
     });
     return snapshot;
   }
@@ -573,6 +582,7 @@ final class DownloadSession {
     _networkStartLength = 0;
     _residentLength = null;
     _residentCacheBacked = false;
+    _residentSource = null;
     _contentKind = ContentKind.unknown;
     _prefix = <int>[];
     _failure = null;
@@ -604,6 +614,7 @@ final class DownloadSession {
     _networkStartLength = 0;
     _residentLength = null;
     _residentCacheBacked = false;
+    _residentSource = null;
     _contentKind = ContentKind.unknown;
     _prefix = <int>[];
     await index?.remove(id.key);
@@ -670,6 +681,7 @@ final class DownloadSession {
         'committedLength': committedLength,
         'kind': _contentKind.name,
         'cacheResident': _residentCacheBacked,
+        if (_residentSource != null) 'residentSource': _residentSource,
         'nativeIngressMicros': _pendingNativeIngressMicros,
         'artifactWriteMicros': _pendingArtifactWriteMicros,
         'maxNativeIngressMicros': _pendingMaxNativeIngressMicros,

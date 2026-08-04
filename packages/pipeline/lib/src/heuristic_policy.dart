@@ -76,7 +76,11 @@ final class HeuristicPolicy {
         keep.add(ResourceId.download(download));
       }
 
-      final staticWarm = staticWarmPages.contains(entry.key);
+      final runtimeAnimated = runtimeAnimatedPages[entry.key];
+      final visibleStatic = role == PageRole.visible &&
+          runtimeAnimated != true &&
+          (assumeUnresolvedStatic || !page.animatedHint);
+      final staticWarm = staticWarmPages.contains(entry.key) || visibleStatic;
       final decodeWatermark = role == PageRole.last
           ? 0
           : staticWarm
@@ -103,6 +107,7 @@ final class HeuristicPolicy {
 
       final primaryUpload = role == PageRole.current ||
           role == PageRole.transition ||
+          role == PageRole.visible ||
           role == PageRole.last;
       if (primaryUpload || staticWarm) {
         uploads[decode] = UploadDemand(
@@ -111,6 +116,7 @@ final class HeuristicPolicy {
               ? switch (role) {
                   PageRole.current => 1000,
                   PageRole.transition => 900,
+                  PageRole.visible => 880,
                   PageRole.last => 850,
                   _ => 0,
                 }
@@ -145,18 +151,17 @@ final class HeuristicPolicy {
     required bool assumeUnresolvedStatic,
   }) {
     if (staticOutputBudgetBytes <= 0) return const <int>{};
-    final outputBytes = decodeTarget.physicalWidth *
-        decodeTarget.physicalHeight *
-        4;
-    final slots = outputBytes <= 0
-        ? 1
-        : (staticOutputBudgetBytes ~/ outputBytes).clamp(1, 64).toInt();
     final candidates = window.roles.entries.where((entry) {
       final runtimeAnimated = runtimeAnimatedPages[entry.key];
       if (runtimeAnimated != null) return !runtimeAnimated;
       return assumeUnresolvedStatic || !chapter.pages[entry.key].animatedHint;
     }).toList();
     candidates.sort((a, b) {
+      final aVisible = observation.visibleCoverages
+          .any((coverage) => coverage.pageIndex == a.key);
+      final bVisible = observation.visibleCoverages
+          .any((coverage) => coverage.pageIndex == b.key);
+      if (aVisible != bVisible) return aVisible ? -1 : 1;
       final aPriority = _staticPriority(
         a.value,
         pageIndex: a.key,
@@ -173,7 +178,60 @@ final class HeuristicPolicy {
           .abs()
           .compareTo((b.key - observation.currentIndex).abs());
     });
-    return candidates.take(slots).map((entry) => entry.key).toSet();
+    final visibleIndexes = observation.visibleCoverages
+        .map((coverage) => coverage.pageIndex)
+        .toSet();
+    final selected = <int>{};
+    var remaining = staticOutputBudgetBytes;
+    for (final entry in candidates) {
+      final estimate = _estimatedStaticOutputBytes(
+        chapter.pages[entry.key],
+        decodeTarget,
+        vertical: observation.direction == ReadingDirection.vertical,
+      );
+      final visible = visibleIndexes.contains(entry.key);
+      if (!visible && selected.isNotEmpty && estimate > remaining) {
+        continue;
+      }
+      selected.add(entry.key);
+      remaining = (remaining - estimate)
+          .clamp(0, staticOutputBudgetBytes)
+          .toInt();
+    }
+    return selected;
+  }
+
+  int _estimatedStaticOutputBytes(
+    PageAsset page,
+    DecodeTarget decodeTarget, {
+    required bool vertical,
+  }) {
+    final sourceWidth = page.width;
+    final sourceHeight = page.height;
+    if (sourceWidth == null ||
+        sourceHeight == null ||
+        sourceWidth <= 0 ||
+        sourceHeight <= 0) {
+      return decodeTarget.physicalWidth *
+          decodeTarget.physicalHeight *
+          4;
+    }
+    final widthScale = decodeTarget.physicalWidth / sourceWidth;
+    final heightScale = decodeTarget.physicalHeight / sourceHeight;
+    final scale = vertical
+        ? widthScale.clamp(0.0, 1.0)
+        : widthScale < heightScale
+            ? widthScale.clamp(0.0, 1.0)
+            : heightScale.clamp(0.0, 1.0);
+    final projectedWidth = (sourceWidth * scale)
+        .round()
+        .clamp(1, 1 << 20)
+        .toInt();
+    final projectedHeight = (sourceHeight * scale)
+        .round()
+        .clamp(1, 1 << 20)
+        .toInt();
+    return projectedWidth * projectedHeight * 4;
   }
 
   int _staticPriority(
@@ -184,6 +242,7 @@ final class HeuristicPolicy {
       switch (role) {
         PageRole.current => 1000,
         PageRole.transition => 900,
+        PageRole.visible => 880,
         PageRole.last => 850,
         PageRole.next => 820,
         PageRole.next2 => 800,
@@ -204,6 +263,7 @@ final class HeuristicPolicy {
       PageRole.current => 1000,
       PageRole.last => 0,
       PageRole.transition => 900,
+      PageRole.visible => 880,
       PageRole.next => 820,
       PageRole.next2 => 800,
       PageRole.previous => 780,
@@ -233,6 +293,7 @@ final class HeuristicPolicy {
   int _decodePriority(PageRole role) => switch (role) {
         PageRole.current => 1000,
         PageRole.transition => 900,
+        PageRole.visible => 0,
         PageRole.next => decodeWarmPages ? 720 : 0,
         PageRole.next2 => decodeWarmPages ? 700 : 0,
         PageRole.previous => decodeWarmPages ? 680 : 0,
@@ -242,6 +303,7 @@ final class HeuristicPolicy {
   int _decodeWatermark(PageRole role) => switch (role) {
         PageRole.current => 8,
         PageRole.transition => 2,
+        PageRole.visible => 0,
         PageRole.next => decodeWarmPages ? 6 : 0,
         PageRole.next2 => decodeWarmPages ? 4 : 0,
         PageRole.previous => decodeWarmPages ? 3 : 0,

@@ -598,6 +598,15 @@ final class _ReaderViewState extends State<ReaderView> {
       currentIndex: position.index,
       travelDirection: _lastVerticalTravelDirection,
     );
+    final visibleCoverages = visible
+        .map(
+          (entry) => Coverage(
+            pageIndex: entry.index,
+            assetKey: widget.controller.chapter.pages[entry.index].assetKey,
+            fraction: entry.fraction,
+          ),
+        )
+        .toList(growable: false);
     _emitObservation(
       position.logicalPosition,
       velocity,
@@ -608,6 +617,7 @@ final class _ReaderViewState extends State<ReaderView> {
         fraction: currentVisible ?? 1,
       ),
       targetCoverageOverride: target,
+      visibleCoveragesOverride: visibleCoverages,
     );
     if (_lastReportedVerticalPage != position.index) {
       _lastReportedVerticalPage = position.index;
@@ -704,6 +714,7 @@ final class _ReaderViewState extends State<ReaderView> {
     int? stableIndex,
     Coverage? currentCoverageOverride,
     Coverage? targetCoverageOverride,
+    List<Coverage>? visibleCoveragesOverride,
   }) {
     final pages = widget.controller.chapter.pages;
     final stable = stableIndex ?? widget.controller.stableIndex;
@@ -747,6 +758,16 @@ final class _ReaderViewState extends State<ReaderView> {
             fraction: currentFraction,
           ),
       targetCoverage: targetCoverage,
+      visibleCoverages: visibleCoveragesOverride ??
+          <Coverage>[
+            currentCoverageOverride ??
+                Coverage(
+                  pageIndex: boundedStable,
+                  assetKey: pages[boundedStable].assetKey,
+                  fraction: currentFraction,
+                ),
+            if (targetCoverage != null) targetCoverage,
+          ],
       direction: widget.controller.direction,
       timestamp: DateTime.now(),
       monotonicMicros: widget.clock.nowMicros(),

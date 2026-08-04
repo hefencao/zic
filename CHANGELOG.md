@@ -1,3 +1,11 @@
+## 0.31.0-dev.118：本地资源直连与纵向全部可见输出
+
+- 本地 `content/file/asset` 完整响应改为 immutable direct ingress，跳过 Reader 临时 artifact 写入；local bucket 从 5 调整为 2，remote/global 保持 5。
+- 本地文件读取不再投影成下载进度；presentation fallback 按 validators/length 直接重读同一不可变来源。
+- Reader observation 增加全部视口可见覆盖，Pipeline 新增 visible role；全部可见静态页获得一帧 demand，FrameBudget 保护其 output。
+- 静态 96 MiB 预热选择改为按页面实际尺寸估算；可见页优先，剩余预算用于视口外邻页。
+- 新增 owner tests、ADR 0102、dev.118 审计与静态门禁；README、Architecture、Spec 未修改。
+
 ## 0.31.0-dev.117：单帧 WebP Bootstrap
 
 - 修复 `targetWatermark=1` demand 被 staged refill 永久跳过，新增按 priority 执行的 `one>0` 单帧阶段。

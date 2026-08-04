@@ -108,6 +108,9 @@ final class ReaderController extends ChangeNotifier {
           'logicalPosition': observation.logicalPosition,
           'velocity': observation.velocity,
           'targetIndex': observation.targetCoverage?.pageIndex,
+          'visibleIndexes': observation.visibleCoverages
+              .map((coverage) => coverage.pageIndex)
+              .toList(growable: false),
         },
       ),
     );

@@ -42,7 +42,7 @@ for token in (
     require(session, token, "pipeline composition")
 for token in (
     "networkConcurrency: 5",
-    "localSourceConcurrency: 5",
+    "localSourceConcurrency:",
     "remoteSourceConcurrency: 5",
     "remote:${id.content.sourceId}",
 ):

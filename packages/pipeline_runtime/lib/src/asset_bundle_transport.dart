@@ -44,6 +44,7 @@ final class AssetBundleTransport implements Transport {
       totalLength: bytes.length,
       validators: currentValidators,
       rangeSupported: true,
+      disposition: ByteResponseDisposition.durableImmutable,
     );
   }
 }

@@ -38,7 +38,7 @@ final class ReaderPipelineProfile {
     policy: HeuristicPolicy(decodeWarmPages: true),
     retry: RetryPolicy(),
     networkConcurrency: 5,
-    localSourceConcurrency: 5,
+    localSourceConcurrency: 2,
     remoteSourceConcurrency: 5,
     decodeConcurrency: 3,
     uploadConcurrency: 2,
@@ -51,8 +51,9 @@ final class ReaderPipelineProfile {
   /// Process-composition maximum across every active Reader page transfer.
   final int networkConcurrency;
 
-  /// Per-source caps. Both start at five; source/runtime capability can lower
-  /// them later without changing the 7/3 demand window or Reader policy.
+  /// Per-source caps. Local SAF/file reads use two slots to avoid saturating
+  /// one storage provider with large sequential copies; remote sources keep
+  /// five until a source-specific capability lowers the bucket.
   final int localSourceConcurrency;
   final int remoteSourceConcurrency;
   final int decodeConcurrency;

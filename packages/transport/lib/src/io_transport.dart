@@ -205,6 +205,7 @@ final class FileTransport implements Transport {
       totalLength: length,
       validators: currentValidators,
       rangeSupported: true,
+      disposition: ByteResponseDisposition.durableImmutable,
     );
   }
 }

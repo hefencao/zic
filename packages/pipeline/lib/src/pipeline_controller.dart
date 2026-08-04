@@ -124,6 +124,12 @@ final class PipelineController {
           'staticWarmUploads': plan.uploads.values
               .where((demand) => demand.reason.startsWith('heuristic:static-warm'))
               .length,
+          'visibleUploads': plan.uploads.values
+              .where((demand) => demand.role == PageRole.visible)
+              .length,
+          'visibleIndexes': observation.visibleCoverages
+              .map((coverage) => coverage.pageIndex)
+              .toList(growable: false),
           'runtimeStaticPages': _runtimeAnimatedPages.values
               .where((animated) => !animated)
               .length,

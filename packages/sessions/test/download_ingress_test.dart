@@ -9,7 +9,7 @@ import 'package:test/test.dart';
 import 'package:transport/transport.dart';
 
 void main() {
-  test('download commits WebP bytes into artifact and encoded source', () async {
+  test('local file seals ingress without staging an artifact', () async {
     final temp = await Directory.systemTemp.createTemp('download_ingress_');
     addTearDown(() async => temp.delete(recursive: true));
     final bytes = 'RIFF....WEBPpayload'.codeUnits;
@@ -40,7 +40,9 @@ void main() {
     await DownloadJob(transport: const FileTransport(), session: session).run();
 
     expect(session.state, DownloadState.promoted);
-    expect(await File(session.artifact.finalPath).readAsBytes(), bytes);
+    expect(session.residentCacheBacked, isTrue);
+    expect(File(session.artifact.partialPath).existsSync(), isFalse);
+    expect(File(session.artifact.finalPath).existsSync(), isFalse);
     expect(factory.created.single.bytes, bytes);
     expect(factory.created.single.sealed, isTrue);
     expect(ingress.snapshot.kind, ContentKind.webp);
@@ -156,7 +158,9 @@ void main() {
     ).run();
 
     expect(result.state, DownloadState.promoted);
-    expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
+    expect(session.residentCacheBacked, isTrue);
+    expect(File(result.artifact.partialPath).existsSync(), isFalse);
+    expect(File(result.artifact.finalPath).existsSync(), isFalse);
     await session.dispose();
   });
 

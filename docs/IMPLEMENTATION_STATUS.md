@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.117`  
-**App build：** `0.31.0+117`
+**源码版本：** `0.31.0-dev.118`  
+**App build：** `0.31.0+118`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -9,13 +9,12 @@
 
 ## 当前实现
 
-- 页面下载保持前 7 / 后 3、composition 全局 5 槽、页面 rank 与来源 bucket。
+- 页面下载保持前 7 / 后 3；全局与远程 source bucket 为 5，本地只读 source bucket 为 2。
+- `content/file/asset` 完整只读响应通过权威 DownloadSession 直连 sealed ingress，不写 Reader 临时 artifact，也不显示网络下载进度。
 - 动画 staged c/n/m/p 为 8/6/4/3；last 暂停并保留 output。
-- `targetWatermark=1` 的静态/未分类页面先通过 `one>0` 单帧 bootstrap，再进入媒体权威分类。
-- 本地 WebP 初始作为潜在动画候选；decoder 完整 metadata 覆盖来源 hint。
-- DecodeSession 在第一帧后即可上报完整 animation metadata，不必等待 cursor end。
-- 纵向 Reader 按真实视口交叠建立 transition，current±4 保留轻量 host。
-- 静态页使用 96 MiB 预热选择和 128 MiB output budget。
+- `targetWatermark=1` 页面通过 `one>0` bootstrap，decoder 权威分类覆盖来源 hint。
+- 纵向 Reader 上报全部真实可见页；current、transition、visible、last output 均受 FrameBudget 保护。
+- 静态页按实际页面尺寸使用 96 MiB 预热选择，128 MiB output budget 仍为实际裁决。
 - durable cache direct ingress、空 artifact 自愈、texture pool 与事件驱动 waitingSource 保持。
 
 以上为 Implemented；真机效果不能由静态源码推导。
@@ -25,8 +24,8 @@
 | 检查 | 状态 |
 |---|---|
 | repository/documentation/Dart/Kotlin static gates | Verified-static |
-| dev.75–dev.117 ownership 与平台合同 | Verified-static |
+| dev.75–dev.118 ownership 与平台合同 | Verified-static |
 | pinned libwebp host build/smoke | Verified-toolchain |
 | Flutter analyzer/tests | Unverified：当前环境无 SDK |
 | Android APK | Unverified：当前环境无 toolchain |
-| 动态 WebP bootstrap 与纵向静态邻页预热 | Unverified-device |
+| 本地 direct ingress 与纵向全部可见 output | Unverified-device |
