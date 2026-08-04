@@ -1,3 +1,11 @@
+## 0.31.0-dev.114：纵向可见页 Demand 与静态输出内存预算
+
+- 纵向 Reader observation 改为按页面与视口的真实交叠投影 current/transition；相邻页一进入视口即建立 demand，不再等待视口中心跨过约 50%。
+- 静态页面采用 96 MiB 推测输出预算选择 7/3 窗口内的邻近 decode/upload，每页只解码一帧；128 MiB FrameBudget 仍是实际 output 回收权威。
+- 静态纵向 ListView host cache extent 从 2 屏提升到 4 屏，减少轻量页面宿主过早 dispose；纹理和帧仍由 Pipeline/FrameBudget 管理。
+- 修复 `PipelineMediaRuntime` 到 `PipelineOutputPrewarmer` 的无继承接口类型错误，改为显式 capability narrowing。
+- Trace analyzer 增加 static-warm、无首帧 host dispose 与 frame-budget 回收统计；新增 ADR 0098、owner tests 和 dev.114 gate。README/Architecture/Spec 未修改。
+
 ## 0.31.0-dev.113：Texture Pool 与持久 Artifact 直连
 
 - durable persistent/memory cache response 通过权威 DownloadSession 直连 sealed ingress，不再写 Reader 临时 artifact；失败时 reset 回可重试状态。

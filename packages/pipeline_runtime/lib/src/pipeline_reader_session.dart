@@ -322,17 +322,19 @@ final class PipelineReaderSession {
         .toInt();
     final currentAsset = chapter.pages[pageIndex];
     final currentDownload = readerPageDownloadId(chapter, currentAsset);
-    final prewarmer = _media;
     final width = currentAsset.width;
     final height = currentAsset.height;
-    if (prewarmer is PipelineOutputPrewarmer &&
+    final prewarmer = _media is PipelineOutputPrewarmer
+        ? _media as PipelineOutputPrewarmer
+        : null;
+    if (prewarmer != null &&
         width != null &&
         height != null &&
         width > 0 &&
         height > 0) {
       unawaited(
         _prewarmOutput(
-          prewarmer as PipelineOutputPrewarmer,
+          prewarmer,
           id: currentDownload,
           width: width,
           height: height,

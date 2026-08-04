@@ -171,6 +171,9 @@ def summarize(path: Path) -> dict[str, Any]:
     last_frames_kept: list[dict[str, Any]] = []
     cache_resident_commits: list[dict[str, Any]] = []
     texture_presentations: list[dict[str, Any]] = []
+    policy_decisions: list[dict[str, Any]] = []
+    page_host_disposals: list[dict[str, Any]] = []
+    frame_budgets: list[dict[str, Any]] = []
     next_due_by_session: dict[str, int] = {}
     session_lifecycle: dict[str, dict[str, int]] = defaultdict(dict)
 
@@ -198,6 +201,49 @@ def summarize(path: Path) -> dict[str, Any]:
                     session_lifecycle[session_id][field] = _number(
                         payload.get(field)
                     )
+        if kind == "policyDecision":
+            policy_decisions.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "revision": event.get("revision"),
+                    "currentIndex": payload.get("currentIndex"),
+                    "targetIndex": payload.get("targetIndex"),
+                    "downloads": _number(payload.get("downloads")),
+                    "decodes": _number(payload.get("decodes")),
+                    "uploads": _number(payload.get("uploads")),
+                    "staticWarmDecodes": _number(
+                        payload.get("staticWarmDecodes")
+                    ),
+                    "staticWarmUploads": _number(
+                        payload.get("staticWarmUploads")
+                    ),
+                }
+            )
+        elif kind == "pageHostDisposed":
+            page_host_disposals.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "identityHash": event.get("identityHash"),
+                    "pageIndex": payload.get("pageIndex"),
+                    "firstFrameReady": payload.get("firstFrameReady"),
+                    "lifetimeMicros": _number(payload.get("lifetimeMicros")),
+                }
+            )
+        elif kind == "frameBudget":
+            frame_budgets.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "decodedFreed": _number(payload.get("decodedFreed")),
+                    "outputFreed": _number(payload.get("outputFreed")),
+                    "decodedAfter": _number(payload.get("decodedAfter")),
+                    "outputAfter": _number(payload.get("outputAfter")),
+                    "decodedLimit": _number(payload.get("decodedLimit")),
+                    "outputLimit": _number(payload.get("outputLimit")),
+                }
+            )
         if kind == "framePipelineTiming":
             session_id = str(event.get("sessionId", ""))
             previous_due = (
@@ -592,6 +638,27 @@ def summarize(path: Path) -> dict[str, Any]:
             if row["textureLeaseReused"] is True
         ),
         "textureLeasePresentations": texture_presentations,
+        "policyDecisionCount": len(policy_decisions),
+        "staticWarmDecodeMax": max(
+            (row["staticWarmDecodes"] for row in policy_decisions),
+            default=0,
+        ),
+        "staticWarmUploadMax": max(
+            (row["staticWarmUploads"] for row in policy_decisions),
+            default=0,
+        ),
+        "policyDecisions": policy_decisions,
+        "pageHostDisposedCount": len(page_host_disposals),
+        "pageHostDisposedWithoutFrameCount": sum(
+            1 for row in page_host_disposals
+            if row["firstFrameReady"] is False
+        ),
+        "pageHostDisposals": page_host_disposals,
+        "frameBudgetCount": len(frame_budgets),
+        "frameBudgetOutputFreed": _stats(
+            [row["outputFreed"] for row in frame_budgets]
+        ),
+        "frameBudgets": frame_budgets,
         "sourceFirstChunkMicros": _stats(
             [row["firstChunkMicros"] for row in source_reads]
         ),
@@ -663,6 +730,16 @@ def main() -> None:
         f"buckets={report['rankedDownloadBucketCounts']}"
     )
     print(f"last frames kept: {report['lastFrameKeptCount']}")
+    print(
+        "static warm: "
+        f"decodeMax={report['staticWarmDecodeMax']} "
+        f"uploadMax={report['staticWarmUploadMax']}"
+    )
+    print(
+        "page hosts: "
+        f"disposed={report['pageHostDisposedCount']} "
+        f"withoutFrame={report['pageHostDisposedWithoutFrameCount']}"
+    )
     print(
         "cache-resident ingress: "
         f"count={report['cacheResidentCommitCount']} "

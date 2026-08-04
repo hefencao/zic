@@ -2,25 +2,25 @@
 
 本文件只列未完成工作。
 
-## P0：direct durable ingress 设备闭环
+## P0：纵向真实可见 Demand 设备闭环
 
-- 确认 cache-hit `bytesCommitted.cacheResident=true` 且 `artifactWriteMicros=0`；
-- 比较 current source-ready、native ingress、完整 source stream 与 mount-to-first-frame；
-- 验证 resident stream 中断后 session reset 并可重试；
--确认 origin、partial 和 resume 仍正常写入并 promotion。
+- 向上和向下拖动时，确认相邻页 coverage 刚大于 0 即进入 transition demand；
+- 对比 page host mount、decode/upload demand、firstFrameReady 与 dispose 时间；
+- 确认拖动未跨中心时不再长期显示伪 loading；
+- 检查快速反向拖动时 target/last 不抖动或误释放。
 
-## P0：Android texture pool 设备闭环
+## P0：静态输出内存预算
 
-- 首次进入确认真实尺寸预热与 source/decode 并行；
-- 快速重进确认 `textureLeaseReused=true`；
-- 比较 frame 0 `outputPrepareMicros` 与 Surface reconfigure；
--检查 last/transition present claim 是否阻止 lease 过早归还。
+- 采集 `staticWarmDecodes`、`staticWarmUploads` 和 FrameBudget 回收；
+- 用不同分辨率静态章节验证 96 MiB 推测预算与 128 MiB 实际预算；
+- 确认内存充足时保留更多 previous/next/last，一旦超限优先回收远端静态 output；
+- 继续确认动画 staged c/n/m/p 水位不受静态策略影响。
 
-## P0：decode wake 去重
+## P0：剩余首次加载长尾
 
-- 比较逐帧 timing 与 `decodeRefill` 数量；
--确认 waitingSource 只在首个 source、64 KiB 增长、seal、failure 或 demand revision 变化时重提；
--继续区分 partial needMoreData 与 sealed cursor/native failure。
+- 比较 direct ingress、texture lease reuse、outputPrepare 与 mount-to-first-frame；
+- 继续定位首次进入而非重进的 Surface/host 发布延迟；
+- 检查静态与动画章节差异。
 
 ## P0：工具链闭包
 

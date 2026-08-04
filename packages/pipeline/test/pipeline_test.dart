@@ -22,6 +22,7 @@ void main() {
         chapterId: 'chapter',
         index: index,
         uri: Uri.parse('assets/p$index.png'),
+        animatedHint: true,
       ),
     ),
     readingDirection: ReadingDirection.ltr,
@@ -121,6 +122,7 @@ void main() {
           chapterId: 'chapter',
           index: index,
           uri: Uri.parse('venera-resource:page-$index'),
+          animatedHint: true,
         ),
       ),
       readingDirection: ReadingDirection.ltr,
@@ -312,4 +314,109 @@ void main() {
 final class _FakeClock implements MonoClock {
   @override
   int nowMicros() => 1;
+  test('vertical overlap becomes transition before midpoint', () {
+    final vertical = ReaderObs(
+      sessionId: 'vertical',
+      currentIndex: 2,
+      stableIndex: 2,
+      interaction: Interaction.scrolling,
+      logicalPosition: 2.8,
+      velocity: -0.2,
+      currentCoverage: Coverage(
+        pageIndex: 2,
+        assetKey: 'chapter/p2',
+        fraction: 0.92,
+      ),
+      targetCoverage: Coverage(
+        pageIndex: 1,
+        assetKey: 'chapter/p1',
+        fraction: 0.08,
+      ),
+      direction: ReadingDirection.vertical,
+      timestamp: DateTime.utc(2026, 8, 4),
+      monotonicMicros: 2,
+    );
+    final window = const RoleResolver().resolve(chapter, vertical);
+
+    expect(window.roleOf(2), PageRole.current);
+    expect(window.roleOf(1), PageRole.transition);
+  });
+
+  test('static neighbor outputs fill the byte budget and remain evictable', () {
+    final staticChapter = ChapterManifest(
+      sourceId: 'local',
+      comicId: 'static-comic',
+      chapter: const Chapter(
+        chapterId: 'static-chapter',
+        comicId: 'static-comic',
+        title: 'Static',
+        sequence: 1,
+        pageCount: 12,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        12,
+        (index) => PageAsset(
+          pageId: 's$index',
+          chapterId: 'static-chapter',
+          index: index,
+          uri: Uri.parse('asset:///s$index.png'),
+          contentKindHint: ContentKindHint.png,
+          animatedHint: false,
+        ),
+      ),
+      readingDirection: ReadingDirection.vertical,
+    );
+    final obs = ReaderObs(
+      sessionId: 'static',
+      currentIndex: 5,
+      stableIndex: 5,
+      interaction: Interaction.idle,
+      logicalPosition: 5,
+      velocity: 0,
+      currentCoverage: Coverage(
+        pageIndex: 5,
+        assetKey: 'static-chapter/s5',
+        fraction: 1,
+      ),
+      direction: ReadingDirection.vertical,
+      timestamp: DateTime.utc(2026, 8, 4),
+      monotonicMicros: 1,
+    );
+    final window = const RoleResolver(
+      forwardEncodedPages: 7,
+      backwardEncodedPages: 3,
+      forwardDecodePages: 2,
+      backwardDecodePages: 1,
+      nearRadius: 0,
+    ).resolve(staticChapter, obs);
+    final plan = const HeuristicPolicy(
+      decodeWarmPages: true,
+      staticOutputBudgetBytes: 20 * 1024 * 1024,
+    ).createPlan(
+      revision: 1,
+      chapter: staticChapter,
+      observation: obs,
+      window: window,
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1000,
+        physicalHeight: 1000,
+      ),
+    );
+
+    // 4 MiB per output, so the speculative budget admits five static pages.
+    expect(plan.uploads, hasLength(5));
+    expect(plan.decodes, hasLength(5));
+    expect(
+      plan.uploads.values.where(
+        (demand) => demand.reason.startsWith('heuristic:static-warm'),
+      ),
+      isNotEmpty,
+    );
+    expect(
+      plan.uploads.values.where((demand) => demand.role == PageRole.far),
+      isNotEmpty,
+    );
+  });
+
 }

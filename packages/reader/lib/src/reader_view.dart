@@ -60,6 +60,7 @@ final class _ReaderViewState extends State<ReaderView> {
   int _handledNavigationRevision = 0;
   int? _zoomedPage;
   int? _lastReportedVerticalPage;
+  int _lastVerticalTravelDirection = 0;
   Size _viewport = Size.zero;
   double _devicePixelRatio = 1;
   late ReadingDirection _lastDirection;
@@ -179,8 +180,12 @@ final class _ReaderViewState extends State<ReaderView> {
             final physics = _zoomedPage == null
                 ? const ClampingScrollPhysics()
                 : const NeverScrollableScrollPhysics();
-            final cacheExtent =
-                _viewport.height > 0 ? _viewport.height * 2 : null;
+            final staticChapter =
+                chapter.pages.every((page) => !page.animatedHint);
+            final cacheScreens = staticChapter ? 4 : 2;
+            final cacheExtent = _viewport.height > 0
+                ? _viewport.height * cacheScreens
+                : null;
             final list = ListView.builder(
               key: const ValueKey<String>('reader-vertical-list'),
               controller: _verticalController,
@@ -561,17 +566,80 @@ final class _ReaderViewState extends State<ReaderView> {
   }
 
   void _emitFromVerticalMetrics(ScrollMetrics metrics) {
-    final position = _verticalPosition(metrics);
+    final geometry = _verticalGeometry();
+    final position = geometry.positionAt(
+      pixels: metrics.pixels,
+      viewportDimension: metrics.viewportDimension,
+    );
     final velocity = _velocityFor(position.logicalPosition);
+    if (velocity.abs() > 0.001) {
+      _lastVerticalTravelDirection = velocity > 0 ? 1 : -1;
+    }
+    final visible = geometry.visibleCoverages(
+      pixels: metrics.pixels,
+      viewportDimension: metrics.viewportDimension,
+    );
+    double? currentVisible;
+    for (final entry in visible) {
+      if (entry.index == position.index) {
+        currentVisible = entry.fraction;
+        break;
+      }
+    }
+    final target = _verticalTargetCoverage(
+      visible,
+      currentIndex: position.index,
+      travelDirection: _lastVerticalTravelDirection,
+    );
     _emitObservation(
       position.logicalPosition,
       velocity,
       stableIndex: position.index,
+      currentCoverageOverride: Coverage(
+        pageIndex: position.index,
+        assetKey: widget.controller.chapter.pages[position.index].assetKey,
+        fraction: currentVisible ?? 1,
+      ),
+      targetCoverageOverride: target,
     );
     if (_lastReportedVerticalPage != position.index) {
       _lastReportedVerticalPage = position.index;
       _recordPageCurrent(position.index);
     }
+  }
+
+  Coverage? _verticalTargetCoverage(
+    List<({int index, double fraction})> visible, {
+    required int currentIndex,
+    required int travelDirection,
+  }) {
+    final candidates = visible
+        .where((entry) => entry.index != currentIndex && entry.fraction > 0)
+        .toList(growable: false);
+    if (candidates.isEmpty) return null;
+    Iterable<({int index, double fraction})> directional = candidates;
+    if (travelDirection > 0) {
+      directional = candidates.where((entry) => entry.index > currentIndex);
+    } else if (travelDirection < 0) {
+      directional = candidates.where((entry) => entry.index < currentIndex);
+    }
+    final ranked = directional.isEmpty
+        ? candidates.toList(growable: false)
+        : directional.toList(growable: false);
+    ranked.sort((a, b) {
+      final distance = (a.index - currentIndex)
+          .abs()
+          .compareTo((b.index - currentIndex).abs());
+      if (distance != 0) return distance;
+      return b.fraction.compareTo(a.fraction);
+    });
+    final target = ranked.first;
+    final page = widget.controller.chapter.pages[target.index];
+    return Coverage(
+      pageIndex: target.index,
+      assetKey: page.assetKey,
+      fraction: target.fraction,
+    );
   }
 
   double _velocityFor(double logicalPosition) {
@@ -627,6 +695,8 @@ final class _ReaderViewState extends State<ReaderView> {
     double logicalPosition,
     double velocity, {
     int? stableIndex,
+    Coverage? currentCoverageOverride,
+    Coverage? targetCoverageOverride,
   }) {
     final pages = widget.controller.chapter.pages;
     final stable = stableIndex ?? widget.controller.stableIndex;
@@ -635,15 +705,25 @@ final class _ReaderViewState extends State<ReaderView> {
         .abs()
         .clamp(0.0, 1.0)
         .toDouble();
-    final currentFraction = (1.0 - distance).clamp(0.0, 1.0).toDouble();
+    final currentFraction = currentCoverageOverride?.fraction ??
+        (1.0 - distance).clamp(0.0, 1.0).toDouble();
 
-    int? targetIndex;
-    if (distance > 0.001) {
+    var targetCoverage = targetCoverageOverride;
+    int? targetIndex = targetCoverage?.pageIndex;
+    if (targetCoverage == null && distance > 0.001) {
       targetIndex = logicalPosition > boundedStable
           ? logicalPosition.ceil()
           : logicalPosition.floor();
       targetIndex = targetIndex.clamp(0, pages.length - 1).toInt();
-      if (targetIndex == boundedStable) targetIndex = null;
+      if (targetIndex == boundedStable) {
+        targetIndex = null;
+      } else {
+        targetCoverage = Coverage(
+          pageIndex: targetIndex,
+          assetKey: pages[targetIndex].assetKey,
+          fraction: distance,
+        );
+      }
     }
 
     final observation = ReaderObs(
@@ -653,18 +733,13 @@ final class _ReaderViewState extends State<ReaderView> {
       interaction: _interaction,
       logicalPosition: logicalPosition,
       velocity: velocity,
-      currentCoverage: Coverage(
-        pageIndex: boundedStable,
-        assetKey: pages[boundedStable].assetKey,
-        fraction: currentFraction,
-      ),
-      targetCoverage: targetIndex == null
-          ? null
-          : Coverage(
-              pageIndex: targetIndex,
-              assetKey: pages[targetIndex].assetKey,
-              fraction: distance,
-            ),
+      currentCoverage: currentCoverageOverride ??
+          Coverage(
+            pageIndex: boundedStable,
+            assetKey: pages[boundedStable].assetKey,
+            fraction: currentFraction,
+          ),
+      targetCoverage: targetCoverage,
       direction: widget.controller.direction,
       timestamp: DateTime.now(),
       monotonicMicros: widget.clock.nowMicros(),
@@ -685,7 +760,7 @@ final class _ReaderViewState extends State<ReaderView> {
             'velocity': velocity,
             'interaction': _interaction.name,
             'currentCoverage': currentFraction,
-            'targetCoverage': distance,
+            'targetCoverage': targetCoverage?.fraction,
           },
         ),
       );

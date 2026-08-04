@@ -71,8 +71,14 @@ for token in (
     "textureLeaseReused",
 ):
     require(native, token, "composition texture pool")
+if not (
+    "prewarmer is PipelineOutputPrewarmer" in reader
+    or "_media is PipelineOutputPrewarmer" in reader
+):
+    raise SystemExit(
+        "Reader output prewarm projection is missing capability narrowing"
+    )
 for token in (
-    "prewarmer is PipelineOutputPrewarmer",
     "_prewarmOutput(",
     "'lane': 'output-prewarm'",
 ):

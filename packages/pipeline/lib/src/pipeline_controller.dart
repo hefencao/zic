@@ -87,6 +87,12 @@ final class PipelineController {
           'downloads': plan.downloads.length,
           'decodes': plan.decodes.length,
           'uploads': plan.uploads.length,
+          'staticWarmDecodes': plan.decodes.values
+              .where((demand) => demand.reason.startsWith('heuristic:static-warm'))
+              .length,
+          'staticWarmUploads': plan.uploads.values
+              .where((demand) => demand.reason.startsWith('heuristic:static-warm'))
+              .length,
           'currentIndex': observation.currentIndex,
           'targetIndex': observation.targetCoverage?.pageIndex,
         },

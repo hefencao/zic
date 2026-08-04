@@ -108,6 +108,36 @@ final class ReaderVerticalGeometry {
         anchor.offset.clamp(0.0, math.max(0.0, extent - 1));
   }
 
+  List<({int index, double fraction})> visibleCoverages({
+    required double pixels,
+    required double viewportDimension,
+  }) {
+    if (pages.isEmpty || viewportDimension <= 0) {
+      return const <({int index, double fraction})>[];
+    }
+    final viewportStart = pixels;
+    final viewportEnd = pixels + viewportDimension;
+    final result = <({int index, double fraction})>[];
+    var offset = 0.0;
+    for (var index = 0; index < pages.length; index++) {
+      final extent = extentAt(index);
+      final end = offset + extent;
+      final overlap = math.max(
+        0.0,
+        math.min(end, viewportEnd) - math.max(offset, viewportStart),
+      );
+      if (overlap > 0) {
+        result.add((
+          index: index,
+          fraction: (overlap / viewportDimension).clamp(0.0, 1.0),
+        ));
+      }
+      if (offset > viewportEnd) break;
+      offset = end + gap;
+    }
+    return result;
+  }
+
   ({int index, double logicalPosition}) positionAt({
     required double pixels,
     required double viewportDimension,

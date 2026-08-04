@@ -129,4 +129,25 @@ void main() {
     expect(geometry.extentAt(0), 900);
     expect(geometry.extentAt(1), 900);
   });
+  test('visible coverage reports adjacent pages before center handoff', () {
+    final geometry = ReaderVerticalGeometry(
+      pages: pages,
+      ratios: const <String, double>{},
+      viewportWidth: 400,
+      viewportHeight: 800,
+      stitch: true,
+      rotationQuarterTurns: 0,
+    );
+    final firstEnd = geometry.boundsAt(0).end;
+    final visible = geometry.visibleCoverages(
+      pixels: firstEnd - 80,
+      viewportDimension: 800,
+    );
+
+    expect(visible.map((entry) => entry.index), containsAll(<int>[0, 1]));
+    final next = visible.where((entry) => entry.index == 1).toList();
+    expect(next, hasLength(1));
+    expect(next[0].fraction, greaterThan(0));
+  });
+
 }

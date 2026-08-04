@@ -5,9 +5,17 @@ import 'demand.dart';
 import 'role_window.dart';
 
 final class HeuristicPolicy {
-  const HeuristicPolicy({this.decodeWarmPages = false});
+  const HeuristicPolicy({
+    this.decodeWarmPages = false,
+    this.staticOutputBudgetBytes = 96 * 1024 * 1024,
+  });
 
   final bool decodeWarmPages;
+
+  /// Budget available to speculative static-page outputs. The session-level
+  /// [FrameBudgeter] remains authoritative and may trim lower-priority outputs
+  /// when actual decoded dimensions exceed this estimate.
+  final int staticOutputBudgetBytes;
 
   DemandPlan createPlan({
     required int revision,
@@ -20,6 +28,12 @@ final class HeuristicPolicy {
     final decodes = <DecodeId, DecodeDemand>{};
     final uploads = <DecodeId, UploadDemand>{};
     final keep = <ResourceId>{};
+    final staticWarmPages = _staticWarmPages(
+      chapter: chapter,
+      observation: observation,
+      window: window,
+      decodeTarget: decodeTarget,
+    );
 
     for (final entry in window.roles.entries) {
       final page = chapter.pages[entry.key];
@@ -58,30 +72,52 @@ final class HeuristicPolicy {
         keep.add(ResourceId.download(download));
       }
 
-      final decodeWatermark = _decodeWatermark(role);
+      final staticWarm = staticWarmPages.contains(entry.key);
+      final decodeWatermark = role == PageRole.last
+          ? 0
+          : staticWarm
+              ? 1
+              : _decodeWatermark(role);
       if (decodeWatermark > 0) {
         decodes[decode] = DecodeDemand(
           role: role,
-          priority: _decodePriority(role),
+          priority: staticWarm
+              ? _staticPriority(
+                  role,
+                  pageIndex: entry.key,
+                  currentIndex: observation.currentIndex,
+                )
+              : _decodePriority(role),
           targetWatermark: decodeWatermark,
-          reason: 'heuristic:${role.name}',
+          reason: staticWarm
+              ? 'heuristic:static-warm:${role.name}'
+              : 'heuristic:${role.name}',
           expirationRevision: revision + 1,
         );
         keep.add(ResourceId.decode(decode));
       }
 
-      if (role == PageRole.current ||
+      final primaryUpload = role == PageRole.current ||
           role == PageRole.transition ||
-          role == PageRole.last) {
+          role == PageRole.last;
+      if (primaryUpload || staticWarm) {
         uploads[decode] = UploadDemand(
           role: role,
-          priority: switch (role) {
-            PageRole.current => 1000,
-            PageRole.transition => 900,
-            PageRole.last => 850,
-            _ => 0,
-          },
-          reason: 'heuristic:${role.name}',
+          priority: primaryUpload
+              ? switch (role) {
+                  PageRole.current => 1000,
+                  PageRole.transition => 900,
+                  PageRole.last => 850,
+                  _ => 0,
+                }
+              : _staticPriority(
+                  role,
+                  pageIndex: entry.key,
+                  currentIndex: observation.currentIndex,
+                ),
+          reason: staticWarm && !primaryUpload
+              ? 'heuristic:static-warm:${role.name}'
+              : 'heuristic:${role.name}',
           expirationRevision: revision + 1,
         );
       }
@@ -95,6 +131,61 @@ final class HeuristicPolicy {
       keep: keep,
     );
   }
+
+  Set<int> _staticWarmPages({
+    required ChapterManifest chapter,
+    required ReaderObs observation,
+    required RoleWindow window,
+    required DecodeTarget decodeTarget,
+  }) {
+    if (staticOutputBudgetBytes <= 0) return const <int>{};
+    final outputBytes = decodeTarget.physicalWidth *
+        decodeTarget.physicalHeight *
+        4;
+    final slots = outputBytes <= 0
+        ? 1
+        : (staticOutputBudgetBytes ~/ outputBytes).clamp(1, 64).toInt();
+    final candidates = window.roles.entries
+        .where((entry) => !chapter.pages[entry.key].animatedHint)
+        .toList();
+    candidates.sort((a, b) {
+      final aPriority = _staticPriority(
+        a.value,
+        pageIndex: a.key,
+        currentIndex: observation.currentIndex,
+      );
+      final bPriority = _staticPriority(
+        b.value,
+        pageIndex: b.key,
+        currentIndex: observation.currentIndex,
+      );
+      final priorityOrder = bPriority.compareTo(aPriority);
+      if (priorityOrder != 0) return priorityOrder;
+      return (a.key - observation.currentIndex)
+          .abs()
+          .compareTo((b.key - observation.currentIndex).abs());
+    });
+    return candidates.take(slots).map((entry) => entry.key).toSet();
+  }
+
+  int _staticPriority(
+    PageRole role, {
+    required int pageIndex,
+    required int currentIndex,
+  }) =>
+      switch (role) {
+        PageRole.current => 1000,
+        PageRole.transition => 900,
+        PageRole.last => 850,
+        PageRole.next => 820,
+        PageRole.next2 => 800,
+        PageRole.previous => 780,
+        PageRole.near || PageRole.far => _distanceDownloadPriority(
+            pageIndex: pageIndex,
+            currentIndex: currentIndex,
+          ),
+        PageRole.detached => 0,
+      };
 
   int _downloadPriority(
     PageRole role, {
@@ -122,13 +213,10 @@ final class HeuristicPolicy {
   }) {
     final distance = (pageIndex - currentIndex).abs();
     if (pageIndex > currentIndex) {
-      // Forward slots 3..7 rank 760, 740, 720, 700 and 680.
       return (760 - (distance - 3).clamp(0, 10) * 20)
           .clamp(540, 760)
           .toInt();
     }
-    // Backward slots 2..3 rank 660 and 640. The immediate previous page has
-    // its dedicated role/priority above.
     return (660 - (distance - 2).clamp(0, 10) * 20)
         .clamp(520, 660)
         .toInt();
