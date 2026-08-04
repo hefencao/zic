@@ -25,6 +25,7 @@ enum TraceEventKind {
   staleWorkRejected,
   downloadState,
   downloadStarted,
+  downloadPriorityChanged,
   bytesCommitted,
   artifactSealed,
   artifactPromoted,

@@ -257,7 +257,15 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       final session = registry.find(id);
       session?.detach();
       final taskKey = _networkTaskKeys[id];
-      if (session?.activeRun != true) {
+      if (session?.activeRun == true && taskKey != null) {
+        _migrateDownloadPriority(
+          sessionId,
+          id,
+          taskKey,
+          0,
+          reason: 'retained-background',
+        );
+      } else {
         if (taskKey != null) {
           net.cancelQueued(taskKey);
         }
@@ -283,13 +291,55 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     }
   }
 
+  void _migrateDownloadPriority(
+    String sessionId,
+    DownloadId id,
+    String taskKey,
+    int priority, {
+    required String reason,
+  }) {
+    final oldPriority = net.priorityOf(taskKey);
+    final active = net.isActive(taskKey);
+    if (!net.updatePriority(taskKey, priority) ||
+        oldPriority == null ||
+        oldPriority == priority) {
+      return;
+    }
+    traceSink.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.downloadPriorityChanged,
+        identityHash: id.key,
+        revision: _revision,
+        payload: <String, Object?>{
+          'oldPriority': oldPriority,
+          'newPriority': priority,
+          'active': active,
+          'reason': reason,
+        },
+      ),
+    );
+  }
+
   void _ensureDownloadTask(
     String sessionId,
     DownloadId id,
     DownloadSession session,
   ) {
+    final demand = _downloads[id];
+    if (demand == null) return;
+    final existingTaskKey = _networkTaskKeys[id];
+    if (existingTaskKey != null) {
+      _migrateDownloadPriority(
+        sessionId,
+        id,
+        existingTaskKey,
+        demand.priority,
+        reason: 'demand-role',
+      );
+    }
     if (_disposed ||
-        !_downloads.containsKey(id) ||
         session.state == DownloadState.promoted ||
         session.state == DownloadState.disposed ||
         session.activeRun ||
@@ -297,7 +347,6 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         (_downloadRetryRounds[id] ?? 0) > _maxDownloadRetryRounds) {
       return;
     }
-    final demand = _downloads[id]!;
     final taskKey = '$sessionId:${id.key}';
     _networkTaskKeys[id] = taskKey;
     net.submitRanked(
@@ -389,6 +438,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             'bucketLimit': bucketLimit,
             'globalActive': net.active,
             'globalLimit': net.maxActive,
+            'handoffActive': net.handoffActive,
+            'effectivePriority': net.priorityOf(taskKey),
             'bucketActive': net.activeForBucket(bucket),
             'committedLength': session.committedLength,
           },
@@ -463,6 +514,14 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       }
       if (!_downloads.containsKey(id) && !session.activeRun) {
         _retireDownloadTracking(id, session);
+      } else if (_downloads.containsKey(id) &&
+          session.state != DownloadState.promoted &&
+          session.state != DownloadState.disposed) {
+        scheduleMicrotask(() {
+          if (!_disposed && _downloads.containsKey(id)) {
+            _ensureDownloadTask(sessionId, id, session);
+          }
+        });
       }
     }
   }

@@ -1,3 +1,5 @@
+import 'dart:collection';
+
 import 'package:domain/domain.dart';
 import 'package:test/test.dart';
 
@@ -129,6 +131,32 @@ void main() {
     expect(geometry.extentAt(0), 900);
     expect(geometry.extentAt(1), 900);
   });
+  test('layout snapshot computes page extents once and reuses prefix bounds', () {
+    final counting = _CountingRatioMap(<String, double>{
+      for (final page in pages) page.assetKey: 1.6,
+    });
+    final geometry = ReaderVerticalGeometry(
+      pages: pages,
+      ratios: counting,
+      viewportWidth: 400,
+      viewportHeight: 800,
+      stitch: false,
+      rotationQuarterTurns: 0,
+    );
+
+    expect(geometry.boundsAt(2).start, greaterThan(0));
+    final readsAfterSnapshot = counting.reads;
+    expect(readsAfterSnapshot, pages.length);
+
+    for (var iteration = 0; iteration < 20; iteration++) {
+      geometry.extentAt(1);
+      geometry.boundsAt(2);
+      geometry.positionAt(pixels: 700, viewportDimension: 800);
+      geometry.visibleCoverages(pixels: 700, viewportDimension: 800);
+    }
+    expect(counting.reads, readsAfterSnapshot);
+  });
+
   test('visible coverage reports adjacent pages before center handoff', () {
     final geometry = ReaderVerticalGeometry(
       pages: pages,
@@ -150,4 +178,29 @@ void main() {
     expect(next[0].fraction, greaterThan(0));
   });
 
+}
+
+final class _CountingRatioMap extends MapBase<String, double> {
+  _CountingRatioMap(this.values);
+
+  final Map<String, double> values;
+  int reads = 0;
+
+  @override
+  double? operator [](Object? key) {
+    reads++;
+    return values[key];
+  }
+
+  @override
+  void operator []=(String key, double value) => values[key] = value;
+
+  @override
+  void clear() => values.clear();
+
+  @override
+  Iterable<String> get keys => values.keys;
+
+  @override
+  double? remove(Object? key) => values.remove(key);
 }

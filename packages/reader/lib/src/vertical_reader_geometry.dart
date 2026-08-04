@@ -11,14 +11,13 @@ final class ReaderVerticalAnchor {
   final double offset;
 }
 
-/// Pure continuous-reader geometry owned by the Reader presentation package.
+/// Immutable continuous-reader layout snapshot.
 ///
-/// Widget lifecycle code supplies viewport and measured page ratios; this
-/// value object performs all extent, gap, anchor and logical-position math.
-/// Tests can therefore validate geometry without depending on lazy ListView
-/// children, animation frames or guessed scroll offsets.
+/// Page extents and prefix starts are computed once. Scroll observations,
+/// commands and lazy child layout then use O(1) extent/bounds lookup and a
+/// binary search instead of rebuilding the same prefix sum on every call.
 final class ReaderVerticalGeometry {
-  const ReaderVerticalGeometry({
+  ReaderVerticalGeometry({
     required this.pages,
     required this.ratios,
     required this.viewportWidth,
@@ -38,7 +37,24 @@ final class ReaderVerticalGeometry {
 
   double get gap => stitch ? 0 : readerVerticalPageGap;
 
-  double extentAt(int index) {
+  late final List<double> _extents = List<double>.generate(
+    pages.length,
+    _computeExtent,
+    growable: false,
+  );
+  late final List<double> _starts = _buildStarts();
+
+  List<double> _buildStarts() {
+    final starts = List<double>.filled(pages.length, 0, growable: false);
+    var offset = 0.0;
+    for (var index = 0; index < pages.length; index++) {
+      starts[index] = offset;
+      offset += _extents[index] + (index + 1 < pages.length ? gap : 0);
+    }
+    return starts;
+  }
+
+  double _computeExtent(int index) {
     if (viewportWidth <= 0 || viewportHeight <= 0) return 1;
     final asset = pages[index];
     var ratio = ratios[asset.assetKey];
@@ -69,13 +85,12 @@ final class ReaderVerticalGeometry {
     return math.max(1, (bounded * dpr).round()) / dpr;
   }
 
-  ({double start, double end}) boundsAt(int index) {
-    var start = 0.0;
-    for (var page = 0; page < index; page++) {
-      start += extentAt(page) + gap;
-    }
-    return (start: start, end: start + extentAt(index));
-  }
+  double extentAt(int index) => _extents[index];
+
+  ({double start, double end}) boundsAt(int index) => (
+        start: _starts[index],
+        end: _starts[index] + _extents[index],
+      );
 
   double centeredOffsetFor(int index) {
     final bounds = boundsAt(index);
@@ -83,28 +98,24 @@ final class ReaderVerticalGeometry {
   }
 
   ReaderVerticalAnchor anchorForTop(double top) {
-    var pageStart = 0.0;
-    for (var index = 0; index < pages.length; index++) {
-      final extent = extentAt(index);
-      final end = pageStart + extent;
-      if (top <= end || index == pages.length - 1) {
-        return ReaderVerticalAnchor(
-          index: index,
-          offset: (top - pageStart).clamp(
-            0.0,
-            math.max(0.0, extent - 1),
-          ),
-        );
-      }
-      pageStart = end + gap;
+    if (pages.isEmpty) {
+      return const ReaderVerticalAnchor(index: 0, offset: 0);
     }
-    return const ReaderVerticalAnchor(index: 0, offset: 0);
+    final index = _indexAt(top);
+    return ReaderVerticalAnchor(
+      index: index,
+      offset: (top - _starts[index]).clamp(
+        0.0,
+        math.max(0.0, _extents[index] - 1),
+      ),
+    );
   }
 
   double restoreTop(ReaderVerticalAnchor anchor) {
-    final bounds = boundsAt(anchor.index);
-    final extent = math.max(1.0, bounds.end - bounds.start);
-    return bounds.start +
+    if (pages.isEmpty) return 0;
+    final index = anchor.index.clamp(0, pages.length - 1).toInt();
+    final extent = math.max(1.0, _extents[index]);
+    return _starts[index] +
         anchor.offset.clamp(0.0, math.max(0.0, extent - 1));
   }
 
@@ -118,13 +129,14 @@ final class ReaderVerticalGeometry {
     final viewportStart = pixels;
     final viewportEnd = pixels + viewportDimension;
     final result = <({int index, double fraction})>[];
-    var offset = 0.0;
-    for (var index = 0; index < pages.length; index++) {
-      final extent = extentAt(index);
-      final end = offset + extent;
+    var index = _indexAt(viewportStart);
+    while (index < pages.length) {
+      final start = _starts[index];
+      final end = start + _extents[index];
+      if (start >= viewportEnd) break;
       final overlap = math.max(
         0.0,
-        math.min(end, viewportEnd) - math.max(offset, viewportStart),
+        math.min(end, viewportEnd) - math.max(start, viewportStart),
       );
       if (overlap > 0) {
         result.add((
@@ -132,8 +144,7 @@ final class ReaderVerticalGeometry {
           fraction: (overlap / viewportDimension).clamp(0.0, 1.0),
         ));
       }
-      if (offset > viewportEnd) break;
-      offset = end + gap;
+      index++;
     }
     return result;
   }
@@ -142,22 +153,32 @@ final class ReaderVerticalGeometry {
     required double pixels,
     required double viewportDimension,
   }) {
+    if (pages.isEmpty) return (index: 0, logicalPosition: 0);
     final center = pixels + viewportDimension / 2;
-    var offset = 0.0;
-    for (var index = 0; index < pages.length; index++) {
-      final extent = extentAt(index);
-      final end = offset + extent;
-      if (center <= end || index == pages.length - 1) {
-        final fraction = ((center - offset) / math.max(1.0, extent))
-            .clamp(0.0, 0.999)
-            .toDouble();
-        return (index: index, logicalPosition: index + fraction);
+    final index = _indexAt(center);
+    final fraction = ((center - _starts[index]) / math.max(1.0, _extents[index]))
+        .clamp(0.0, 0.999)
+        .toDouble();
+    return (index: index, logicalPosition: index + fraction);
+  }
+
+  int _indexAt(double offset) {
+    if (pages.isEmpty || offset <= 0) return 0;
+    var low = 0;
+    var high = pages.length;
+    while (low < high) {
+      final mid = (low + high) >> 1;
+      if (_starts[mid] <= offset) {
+        low = mid + 1;
+      } else {
+        high = mid;
       }
-      offset = end + gap;
     }
-    return (
-      index: math.max(0, pages.length - 1),
-      logicalPosition: math.max(0, pages.length - 1).toDouble(),
-    );
+    var index = math.max(0, low - 1);
+    if (index + 1 < pages.length &&
+        offset > _starts[index] + _extents[index]) {
+      index++;
+    }
+    return index;
   }
 }

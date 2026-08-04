@@ -171,6 +171,7 @@ def summarize(path: Path) -> dict[str, Any]:
     partial_prefix_loops: list[dict[str, Any]] = []
     download_recoveries: list[dict[str, Any]] = []
     ranked_downloads: list[dict[str, Any]] = []
+    download_priority_changes: list[dict[str, Any]] = []
     last_frames_kept: list[dict[str, Any]] = []
     static_frames_kept: list[dict[str, Any]] = []
     cache_resident_commits: list[dict[str, Any]] = []
@@ -407,7 +408,23 @@ def summarize(path: Path) -> dict[str, Any]:
                     "bucketLimit": _number(payload.get("bucketLimit")),
                     "globalActive": _number(payload.get("globalActive")),
                     "globalLimit": _number(payload.get("globalLimit")),
+                    "handoffActive": _number(payload.get("handoffActive")),
+                    "effectivePriority": _number(
+                        payload.get("effectivePriority")
+                    ),
                     "bucketActive": _number(payload.get("bucketActive")),
+                }
+            )
+        elif kind == "downloadPriorityChanged":
+            download_priority_changes.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "identityHash": event.get("identityHash"),
+                    "oldPriority": _number(payload.get("oldPriority")),
+                    "newPriority": _number(payload.get("newPriority")),
+                    "active": bool(payload.get("active", False)),
+                    "reason": payload.get("reason"),
                 }
             )
         elif kind == "sourceRead":
@@ -718,6 +735,17 @@ def summarize(path: Path) -> dict[str, Any]:
             (row["globalActive"] for row in ranked_downloads),
             default=0,
         ),
+        "rankedDownloadMaxHandoffActive": max(
+            (row["handoffActive"] for row in ranked_downloads),
+            default=0,
+        ),
+        "rankedDownloadPriorityMigrationCount": len(
+            download_priority_changes
+        ),
+        "rankedDownloadActivePriorityMigrationCount": sum(
+            1 for row in download_priority_changes if row["active"]
+        ),
+        "downloadPriorityChanges": download_priority_changes,
         "rankedDownloadBucketCounts": dict(
             Counter(str(row["bucket"]) for row in ranked_downloads)
         ),

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:domain/domain.dart';
 
@@ -61,8 +62,19 @@ abstract interface class TaskLane {
 }
 
 final class NetLane implements TaskLane {
-  NetLane({required int maxActive, LaneError? onError})
-      : _core = _Lane(maxActive: maxActive, onError: onError);
+  NetLane({
+    required int maxActive,
+    int reservedHighPrioritySlots = 0,
+    int highPriorityThreshold = 1000,
+    int preemptionThreshold = 40,
+    LaneError? onError,
+  }) : _core = _Lane(
+          maxActive: maxActive,
+          reservedHighPrioritySlots: reservedHighPrioritySlots,
+          highPriorityThreshold: highPriorityThreshold,
+          preemptionThreshold: preemptionThreshold,
+          onError: onError,
+        );
 
   final _Lane _core;
 
@@ -83,6 +95,7 @@ final class NetLane implements TaskLane {
     required int priority,
     required String bucket,
     required int bucketLimit,
+    bool preemptible = true,
     required LaneTask task,
   }) =>
       _core.submit(
@@ -90,12 +103,18 @@ final class NetLane implements TaskLane {
         priority: priority,
         bucket: bucket,
         bucketLimit: bucketLimit,
+        preemptible: preemptible,
         task: task,
       );
 
   Future<void> idleKeys(Iterable<String> keys) => _core.idleKeys(keys);
 
   int activeForBucket(String bucket) => _core.activeForBucket(bucket);
+  int get handoffActive => _core.handoffActive;
+  int? priorityOf(String key) => _core.priorityOf(key);
+  bool isActive(String key) => _core.isActive(key);
+  bool updatePriority(String key, int priority) =>
+      _core.updatePriority(key, priority);
 
   @override
   bool replace({required String key, required int priority, required LaneTask task}) =>
@@ -213,9 +232,20 @@ final class MaintenanceLane implements TaskLane {
 }
 
 final class _Lane {
-  _Lane({required this.maxActive, this.onError}) : assert(maxActive > 0);
+  _Lane({
+    required this.maxActive,
+    this.reservedHighPrioritySlots = 0,
+    this.highPriorityThreshold = 1 << 30,
+    this.preemptionThreshold = 1 << 30,
+    this.onError,
+  })  : assert(maxActive > 0),
+        assert(reservedHighPrioritySlots >= 0),
+        assert(preemptionThreshold >= 0);
 
   final int maxActive;
+  final int reservedHighPrioritySlots;
+  final int highPriorityThreshold;
+  final int preemptionThreshold;
   final LaneError? onError;
   final Map<String, _Pending> _pending = <String, _Pending>{};
   final Map<String, _ActiveTask> _active = <String, _ActiveTask>{};
@@ -226,18 +256,56 @@ final class _Lane {
 
   int get queued => _pending.length;
   int get active => _active.length;
+  int get handoffActive {
+    var excess = math.max(0, active - maxActive);
+    final limits = <String, int>{};
+    for (final task in _active.values) {
+      final bucket = task.bucket;
+      final limit = task.bucketLimit;
+      if (bucket != null && limit != null) limits[bucket] = limit;
+    }
+    for (final entry in limits.entries) {
+      excess = math.max(
+        excess,
+        math.max(0, (_activeByBucket[entry.key] ?? 0) - entry.value),
+      );
+    }
+    return excess;
+  }
   bool get isIdle => _pending.isEmpty && _active.isEmpty;
 
   int activeForBucket(String bucket) => _activeByBucket[bucket] ?? 0;
+  bool isActive(String key) => _active.containsKey(key);
+  int? priorityOf(String key) =>
+      _active[key]?.priority ?? _pending[key]?.priority;
 
   bool submit({
     required String key,
     required int priority,
     String? bucket,
     int? bucketLimit,
+    bool preemptible = true,
     required LaneTask task,
   }) {
-    if (_active.containsKey(key)) {
+    final activeTask = _active[key];
+    if (activeTask != null) {
+      final increased = priority > activeTask.priority;
+      activeTask
+        ..priority = priority
+        ..preemptible = preemptible;
+      if (increased) _pump();
+      return false;
+    }
+    final pending = _pending[key];
+    if (pending != null) {
+      final increased = priority > pending.priority;
+      pending
+        ..priority = priority
+        ..bucket = bucket
+        ..bucketLimit = bucketLimit
+        ..preemptible = preemptible
+        ..task = task;
+      if (increased) _pump();
       return false;
     }
     _pending[key] = _Pending(
@@ -246,9 +314,26 @@ final class _Lane {
       seq: _seq++,
       bucket: bucket,
       bucketLimit: bucketLimit,
+      preemptible: preemptible,
       task: task,
     );
     _pump();
+    return true;
+  }
+
+  bool updatePriority(String key, int priority) {
+    final activeTask = _active[key];
+    if (activeTask != null) {
+      final increased = priority > activeTask.priority;
+      activeTask.priority = priority;
+      if (increased) _pump();
+      return true;
+    }
+    final pending = _pending[key];
+    if (pending == null) return false;
+    final increased = priority > pending.priority;
+    pending.priority = priority;
+    if (increased) _pump();
     return true;
   }
 
@@ -266,6 +351,7 @@ final class _Lane {
       seq: _seq++,
       bucket: bucket,
       bucketLimit: bucketLimit,
+      preemptible: true,
       task: task,
     );
     _pump();
@@ -285,6 +371,7 @@ final class _Lane {
       seq: _seq++,
       bucket: bucket,
       bucketLimit: bucketLimit,
+      preemptible: true,
       task: task,
     );
     _pump();
@@ -331,24 +418,34 @@ final class _Lane {
   bool _containsAny(Set<String> keys) =>
       keys.any((key) => _pending.containsKey(key) || _active.containsKey(key));
 
-  bool _bucketAvailable(_Pending pending) {
+  bool _bucketAvailable(_Pending pending, {required bool handoff}) {
     final bucket = pending.bucket;
     final limit = pending.bucketLimit;
     if (bucket == null || limit == null) return true;
-    return (_activeByBucket[bucket] ?? 0) < limit;
+    final allowance = handoff ? 1 : 0;
+    return (_activeByBucket[bucket] ?? 0) < limit + allowance;
   }
 
   void _pump() {
-    while (_active.length < maxActive && _pending.isNotEmpty) {
-      final eligible = _pending.values
-          .where(
-            (pending) =>
-                !_active.containsKey(pending.key) && _bucketAvailable(pending),
-          )
-          .toList(growable: false);
-      if (eligible.isEmpty) {
-        break;
-      }
+    while (_pending.isNotEmpty) {
+      final running = _active.length;
+      final handoffCapacity = maxActive + reservedHighPrioritySlots;
+      final eligible = _pending.values.where((pending) {
+        if (_active.containsKey(pending.key)) return false;
+        final highPriority = pending.priority >= highPriorityThreshold;
+        final handoff = highPriority && _needsHandoff(pending);
+        if (!handoff &&
+            (running >= maxActive ||
+                !_bucketAvailable(pending, handoff: false))) {
+          return false;
+        }
+        if (handoff &&
+            (reservedHighPrioritySlots <= 0 || running >= handoffCapacity)) {
+          return false;
+        }
+        return _bucketAvailable(pending, handoff: handoff);
+      }).toList(growable: false);
+      if (eligible.isEmpty) break;
       final next = eligible.reduce((a, b) {
         final priority = b.priority.compareTo(a.priority);
         if (priority != 0) {
@@ -356,9 +453,17 @@ final class _Lane {
         }
         return a.seq <= b.seq ? a : b;
       });
+      final handoff = _needsHandoff(next);
+      if (handoff && !_preemptLowestRunningFor(next)) break;
       _pending.remove(next.key);
       final token = CancelToken();
-      _active[next.key] = _ActiveTask(token: token, bucket: next.bucket);
+      _active[next.key] = _ActiveTask(
+        token: token,
+        bucket: next.bucket,
+        bucketLimit: next.bucketLimit,
+        priority: next.priority,
+        preemptible: next.preemptible,
+      );
       final bucket = next.bucket;
       if (bucket != null) {
         _activeByBucket[bucket] = (_activeByBucket[bucket] ?? 0) + 1;
@@ -387,6 +492,35 @@ final class _Lane {
     _notifyIdle();
   }
 
+  bool _needsHandoff(_Pending pending) {
+    if (_active.length >= maxActive) return true;
+    final bucket = pending.bucket;
+    final limit = pending.bucketLimit;
+    return bucket != null &&
+        limit != null &&
+        (_activeByBucket[bucket] ?? 0) >= limit;
+  }
+
+  bool _preemptLowestRunningFor(_Pending incoming) {
+    final incomingBucket = incoming.bucket;
+    final incomingBucketLimit = incoming.bucketLimit;
+    final bucketFull = incomingBucket != null &&
+        incomingBucketLimit != null &&
+        (_activeByBucket[incomingBucket] ?? 0) >= incomingBucketLimit;
+    _ActiveTask? lowest;
+    for (final task in _active.values) {
+      if (!task.preemptible || task.token.cancelled) continue;
+      if (bucketFull && task.bucket != incomingBucket) continue;
+      if (incoming.priority - task.priority < preemptionThreshold) continue;
+      if (lowest == null || task.priority < lowest.priority) {
+        lowest = task;
+      }
+    }
+    if (lowest == null) return false;
+    lowest.token.cancel();
+    return true;
+  }
+
   void _notifyIdle() {
     for (final waiter in List<_KeyIdleWaiter>.of(_keyIdleWaiters)) {
       if (!_containsAny(waiter.keys)) {
@@ -410,28 +544,39 @@ final class _Lane {
 }
 
 final class _Pending {
-  const _Pending({
+  _Pending({
     required this.key,
     required this.priority,
     required this.seq,
     required this.bucket,
     required this.bucketLimit,
+    required this.preemptible,
     required this.task,
   });
 
   final String key;
-  final int priority;
+  int priority;
   final int seq;
-  final String? bucket;
-  final int? bucketLimit;
-  final LaneTask task;
+  String? bucket;
+  int? bucketLimit;
+  bool preemptible;
+  LaneTask task;
 }
 
 final class _ActiveTask {
-  const _ActiveTask({required this.token, required this.bucket});
+  _ActiveTask({
+    required this.token,
+    required this.bucket,
+    required this.bucketLimit,
+    required this.priority,
+    required this.preemptible,
+  });
 
   final CancelToken token;
   final String? bucket;
+  final int? bucketLimit;
+  int priority;
+  bool preemptible;
 }
 
 final class _KeyIdleWaiter {

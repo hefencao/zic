@@ -41,7 +41,12 @@ final class PipelineReaderSessionFactory {
             artifactReadScheduler ?? ArtifactCacheReadScheduler(),
         pageDownloadLane =
             pageDownloadLane ??
-            NetLane(maxActive: ReaderPipelineProfile.stable.networkConcurrency),
+            NetLane(
+              maxActive: ReaderPipelineProfile.stable.networkConcurrency,
+              reservedHighPrioritySlots: 1,
+              highPriorityThreshold: 1000,
+              preemptionThreshold: 40,
+            ),
         decodePrefixHints = decodePrefixHints ?? WebpDecodePrefixHints();
 
   final PipelineMediaRuntimeFactory mediaRuntimeFactory;

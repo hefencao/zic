@@ -41,7 +41,7 @@ for text, token, owner in (
     (upload, "TraceEventKind.staticFrameKept", "static keep trace"),
     (registry, "bool retainStaticOutput = false", "upload registry retention"),
     (budget, "final aPriority = demands[a.id]?.priority ?? -1", "budget-owned dormant eviction"),
-    (reader, "const cacheScreens = 4", "vertical host cache extent"),
+    (reader, "_verticalCacheScreens = 2", "vertical host warmup extent"),
     (reader, ".abs() <= 7", "prefetch-aligned host retention"),
     (trace, "staticFrameKept", "telemetry event"),
     (analyzer, '"staticFrameKeptCount"', "trace analyzer"),

@@ -70,6 +70,15 @@ final class _ReaderViewState extends State<ReaderView> {
   ({int index, double offset})? _pendingVerticalAnchor;
   bool _commandScheduled = false;
   bool _verticalInitialOffsetApplied = false;
+  late List<Widget> _pageSlots;
+  ReaderVerticalGeometry? _cachedVerticalGeometry;
+  Map<String, double>? _cachedVerticalRatios;
+  Size? _cachedVerticalViewport;
+  bool? _cachedVerticalStitch;
+  int? _cachedVerticalRotation;
+  double? _cachedVerticalDevicePixelRatio;
+  int _verticalCacheScreens = 2;
+  bool _verticalWarmupScheduled = false;
 
   @override
   void initState() {
@@ -81,6 +90,7 @@ final class _ReaderViewState extends State<ReaderView> {
     _handledNavigationRevision = widget.controller.navigationRevision;
     _lastDirection = widget.controller.direction;
     _lastRotationQuarterTurns = widget.controller.rotationQuarterTurns;
+    _pageSlots = _createPageSlots();
     widget.controller.addListener(_handleControllerCommand);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -110,8 +120,16 @@ final class _ReaderViewState extends State<ReaderView> {
       _lastReportedVerticalPage = null;
       _lastDirection = widget.controller.direction;
       _lastRotationQuarterTurns = widget.controller.rotationQuarterTurns;
+      _pageSlots = _createPageSlots();
+      _resetVerticalCompositionCache();
       _scheduleSyncToCurrentPage();
-    } else if (oldWidget.verticalStitch != widget.verticalStitch ||
+    } else if ((oldWidget.pageBuilder == null) !=
+            (widget.pageBuilder == null) ||
+        oldWidget.traceSink != widget.traceSink ||
+        oldWidget.clock != widget.clock) {
+      _pageSlots = _createPageSlots();
+    }
+    if (oldWidget.verticalStitch != widget.verticalStitch ||
         oldWidget.pageAspectRatios != widget.pageAspectRatios) {
       _preserveVerticalAnchor(
         oldRatios: oldWidget.pageAspectRatios,
@@ -182,9 +200,9 @@ final class _ReaderViewState extends State<ReaderView> {
             final physics = _zoomedPage == null
                 ? const ClampingScrollPhysics()
                 : const NeverScrollableScrollPhysics();
-            const cacheScreens = 4;
+            _scheduleVerticalCompositionWarmup();
             final cacheExtent = _viewport.height > 0
-                ? _viewport.height * cacheScreens
+                ? _viewport.height * _verticalCacheScreens
                 : null;
             final list = ListView.builder(
               key: const ValueKey<String>('reader-vertical-list'),
@@ -197,6 +215,7 @@ final class _ReaderViewState extends State<ReaderView> {
               // independently while scrolling and can expose a transient
               // one-pixel background line.
               addRepaintBoundaries: !stitched,
+              addSemanticIndexes: false,
               itemExtentBuilder: (itemIndex, _) {
                 if (!stitched && itemIndex.isOdd) {
                   return readerVerticalPageGap;
@@ -213,7 +232,7 @@ final class _ReaderViewState extends State<ReaderView> {
                   );
                 }
                 final pageIndex = stitched ? itemIndex : itemIndex ~/ 2;
-                final page = _buildPage(chapter, pageIndex);
+                final page = _buildPage(pageIndex);
                 return SizedBox(
                   key: ValueKey<String>('reader-vertical-page:$pageIndex'),
                   height: geometry.extentAt(pageIndex),
@@ -242,30 +261,69 @@ final class _ReaderViewState extends State<ReaderView> {
                   ? const PageScrollPhysics()
                   : const NeverScrollableScrollPhysics(),
               onPageChanged: _handlePageChanged,
-              itemBuilder: (context, index) => _buildPage(chapter, index),
+              itemBuilder: (context, index) => _buildPage(index),
             ),
           );
       },
     );
   }
 
-  Widget _buildPage(ChapterManifest chapter, int index) {
-    return _ReaderPageShell(
-      key: ValueKey<String>('reader-page-shell:${chapter.pages[index].assetKey}'),
-      controller: widget.controller,
-      asset: chapter.pages[index],
-      index: index,
-      clock: widget.clock,
-      traceSink: widget.traceSink,
-      pageBuilder: widget.pageBuilder,
-      demandRevision: widget.demandRevision,
-      onTap: widget.onTap,
-      onZoomChanged: (zoomed) {
-        final next = zoomed ? index : null;
-        if (_zoomedPage == next) return;
-        setState(() => _zoomedPage = next);
-      },
-    );
+  Widget _buildPage(int index) => _pageSlots[index];
+
+  List<Widget> _createPageSlots() {
+    final chapter = widget.controller.chapter;
+    return List<Widget>.generate(chapter.pages.length, (index) {
+      final asset = chapter.pages[index];
+      return _ReaderPageShell(
+        key: ValueKey<String>('reader-page-shell:${asset.assetKey}'),
+        controller: widget.controller,
+        asset: asset,
+        index: index,
+        clock: widget.clock,
+        traceSink: widget.traceSink,
+        pageBuilder: widget.pageBuilder,
+        demandRevision: widget.demandRevision,
+        onTap: widget.onTap,
+        onZoomChanged: (zoomed) {
+          final next = zoomed ? index : null;
+          if (_zoomedPage == next) return;
+          setState(() => _zoomedPage = next);
+        },
+      );
+    }, growable: false);
+  }
+
+  void _resetVerticalCompositionCache() {
+    _cachedVerticalGeometry = null;
+    _cachedVerticalRatios = null;
+    _cachedVerticalViewport = null;
+    _cachedVerticalStitch = null;
+    _cachedVerticalRotation = null;
+    _cachedVerticalDevicePixelRatio = null;
+    _verticalCacheScreens = 2;
+    _verticalWarmupScheduled = false;
+  }
+
+  void _scheduleVerticalCompositionWarmup() {
+    if (_verticalWarmupScheduled ||
+        _verticalCacheScreens >= 7 ||
+        widget.controller.direction != ReadingDirection.vertical) {
+      return;
+    }
+    _verticalWarmupScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _verticalWarmupScheduled = false;
+      if (!mounted ||
+          widget.controller.direction != ReadingDirection.vertical ||
+          !_verticalController.hasClients ||
+          _verticalController.position.isScrollingNotifier.value) {
+        return;
+      }
+      setState(() {
+        _verticalCacheScreens = math.min(7, _verticalCacheScreens + 1);
+      });
+      _scheduleVerticalCompositionWarmup();
+    });
   }
 
   ReaderVerticalGeometry _verticalGeometry({
@@ -274,16 +332,42 @@ final class _ReaderViewState extends State<ReaderView> {
     Size? viewport,
     double? devicePixelRatio,
   }) {
+    final effectiveRatios = ratios ?? widget.pageAspectRatios;
     final effectiveViewport = viewport ?? _viewport;
-    return ReaderVerticalGeometry(
+    final effectiveStitch = stitch ?? widget.verticalStitch;
+    final effectiveRotation = widget.controller.rotationQuarterTurns;
+    final effectiveDevicePixelRatio = devicePixelRatio ?? _devicePixelRatio;
+    final cacheable = ratios == null &&
+        stitch == null &&
+        viewport == null &&
+        devicePixelRatio == null;
+    if (cacheable &&
+        _cachedVerticalGeometry != null &&
+        identical(_cachedVerticalRatios, effectiveRatios) &&
+        _cachedVerticalViewport == effectiveViewport &&
+        _cachedVerticalStitch == effectiveStitch &&
+        _cachedVerticalRotation == effectiveRotation &&
+        _cachedVerticalDevicePixelRatio == effectiveDevicePixelRatio) {
+      return _cachedVerticalGeometry!;
+    }
+    final geometry = ReaderVerticalGeometry(
       pages: widget.controller.chapter.pages,
-      ratios: ratios ?? widget.pageAspectRatios,
+      ratios: effectiveRatios,
       viewportWidth: effectiveViewport.width,
       viewportHeight: effectiveViewport.height,
-      stitch: stitch ?? widget.verticalStitch,
-      rotationQuarterTurns: widget.controller.rotationQuarterTurns,
-      devicePixelRatio: devicePixelRatio ?? _devicePixelRatio,
+      stitch: effectiveStitch,
+      rotationQuarterTurns: effectiveRotation,
+      devicePixelRatio: effectiveDevicePixelRatio,
     );
+    if (cacheable) {
+      _cachedVerticalGeometry = geometry;
+      _cachedVerticalRatios = effectiveRatios;
+      _cachedVerticalViewport = effectiveViewport;
+      _cachedVerticalStitch = effectiveStitch;
+      _cachedVerticalRotation = effectiveRotation;
+      _cachedVerticalDevicePixelRatio = effectiveDevicePixelRatio;
+    }
+    return geometry;
   }
 
   double _verticalExtent(
@@ -385,6 +469,7 @@ final class _ReaderViewState extends State<ReaderView> {
     if (_lastDirection != controller.direction) {
       _lastDirection = controller.direction;
       _zoomedPage = null;
+      _resetVerticalCompositionCache();
       rebuildLayout = true;
       if (controller.direction == ReadingDirection.vertical) {
         _verticalInitialOffsetApplied = false;
@@ -394,6 +479,7 @@ final class _ReaderViewState extends State<ReaderView> {
     }
     if (_lastRotationQuarterTurns != controller.rotationQuarterTurns) {
       _lastRotationQuarterTurns = controller.rotationQuarterTurns;
+      _cachedVerticalGeometry = null;
       rebuildLayout = true;
     }
     if (rebuildLayout && mounted) {

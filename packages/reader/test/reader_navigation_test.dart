@@ -534,6 +534,84 @@ void main() {
     },
   );
 
+  testWidgets(
+    'ratio updates reuse precomposed page shells instead of rebuilding content',
+    (tester) async {
+      final chapter = ChapterManifest(
+        sourceId: 'source',
+        comicId: 'composition-comic',
+        chapter: const Chapter(
+          chapterId: 'composition-chapter',
+          comicId: 'composition-comic',
+          title: 'composition',
+          sequence: 0,
+          pageCount: 4,
+          sourceRevision: 'r1',
+        ),
+        pages: List<PageAsset>.generate(
+          4,
+          (index) => PageAsset(
+            pageId: 'composition-$index',
+            chapterId: 'composition-chapter',
+            index: index,
+            uri: Uri.parse('asset:///composition-$index.png'),
+          ),
+        ),
+        readingDirection: ReadingDirection.vertical,
+      );
+      final controller = ReaderController(
+        sessionId: 'reader-composition-test',
+        chapter: chapter,
+        onObservation: (_) {},
+        clock: FakeClock(),
+      );
+      addTearDown(controller.dispose);
+      final ratios = ValueNotifier<Map<String, double>>(
+        const <String, double>{},
+      );
+      addTearDown(ratios.dispose);
+      final builds = <String, int>{};
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ValueListenableBuilder<Map<String, double>>(
+            valueListenable: ratios,
+            builder: (context, value, _) => ReaderView(
+              controller: controller,
+              clock: FakeClock(),
+              pageAspectRatios: value,
+              pageBuilder: (context, asset, reportFirstFrame) {
+                builds.update(
+                  asset.pageId,
+                  (count) => count + 1,
+                  ifAbsent: () => 1,
+                );
+                return ColoredBox(
+                  key: ValueKey<String>('composition:${asset.pageId}'),
+                  color: Colors.black,
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      await _pumpUntilFound(
+        tester,
+        find.byKey(const ValueKey<String>('composition:composition-0')),
+      );
+      final before = Map<String, int>.of(builds);
+
+      ratios.value = <String, double>{
+        chapter.pages.first.assetKey: 1.8,
+      };
+      await tester.pump();
+
+      for (final entry in before.entries) {
+        expect(builds[entry.key], entry.value);
+      }
+    },
+  );
+
   test('page request validates chapter bounds', () {
     final chapter = ChapterManifest(
       sourceId: 'source',

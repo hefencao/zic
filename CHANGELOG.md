@@ -1,3 +1,13 @@
+## 0.31.0-dev.123：Current 下载抢占与纵向页面预组合
+
+- `NetLane` 增加 queued/active rank migration；同 key 晋升 current 不取消重建。
+- lane/source bucket 满载时，current 使用唯一 handoff slot 并请求取消最低 rank active task；临时超额严格不超过 1。
+- 被抢占且仍有 demand 的下载在清理后重新排队并复用既有 session/partial。
+- 纵向 Reader 预组合稳定 page shell；geometry 缓存 extent/prefix 并使用二分定位。
+- 轻量 host cache 在空闲帧由 2 屏渐进预热至 7 屏；未新增图片或 texture 缓存。
+- 新增 owner tests、Trace handoff/priority migration 指标、ADR 0107 与 dev.123 gate。
+- README、Architecture、Spec 未修改。
+
 ## 0.31.0-dev.122：活动传输保留与 Partial WebP 前缀循环
 
 - 动画 staged c/n/m/p 水位调整为 7/5/3/2；权威静态页仍以单帧视为水位满足，不拆分混合章节的统一 refill 状态机。

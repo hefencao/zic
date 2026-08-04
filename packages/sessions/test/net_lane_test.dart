@@ -4,6 +4,7 @@ import 'package:sessions/sessions.dart';
 import 'package:test/test.dart';
 
 void main() {
+  _dev123NetLaneTests();
   test('queues by priority and keeps FIFO for equal priorities', () async {
     final lane = NetLane(maxActive: 1);
     final gate = Completer<void>();
@@ -215,4 +216,193 @@ void main() {
     await lane.idle();
   });
 
+}
+
+// dev.123 current-page migration/preemption contracts.
+void _dev123NetLaneTests() {
+  test('active same-key promotion updates rank without restarting transfer', () async {
+    final lane = NetLane(maxActive: 1);
+    final started = Completer<void>();
+    final release = Completer<void>();
+    var runs = 0;
+
+    lane.submitRanked(
+      key: 'page',
+      priority: 820,
+      bucket: 'remote:a',
+      bucketLimit: 5,
+      task: (_) async {
+        runs++;
+        started.complete();
+        await release.future;
+      },
+    );
+    await started.future;
+
+    expect(
+      lane.submitRanked(
+        key: 'page',
+        priority: 1000,
+        bucket: 'remote:a',
+        bucketLimit: 5,
+        task: (_) async => runs++,
+      ),
+      isFalse,
+    );
+    expect(lane.priorityOf('page'), 1000);
+    expect(runs, 1);
+
+    release.complete();
+    await lane.idle();
+    expect(runs, 1);
+  });
+
+  test('current uses one handoff slot and preempts the lowest ranked transfer',
+      () async {
+    final lane = NetLane(maxActive: 2, reservedHighPrioritySlots: 1);
+    final lowCancelled = Completer<void>();
+    final mediumRelease = Completer<void>();
+    final currentStarted = Completer<void>();
+    final currentRelease = Completer<void>();
+
+    lane.submitRanked(
+      key: 'low',
+      priority: 680,
+      bucket: 'remote:a',
+      bucketLimit: 2,
+      task: (token) async {
+        await token.whenCancelled;
+        lowCancelled.complete();
+      },
+    );
+    lane.submitRanked(
+      key: 'medium',
+      priority: 820,
+      bucket: 'remote:a',
+      bucketLimit: 2,
+      task: (_) async => mediumRelease.future,
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    lane.submitRanked(
+      key: 'current',
+      priority: 1000,
+      bucket: 'remote:a',
+      bucketLimit: 2,
+      task: (_) async {
+        currentStarted.complete();
+        await currentRelease.future;
+      },
+    );
+
+    await currentStarted.future;
+    expect(lane.active, 3);
+    expect(lane.handoffActive, 1);
+    await lowCancelled.future;
+    await Future<void>.delayed(Duration.zero);
+    expect(lane.active, 2);
+
+    currentRelease.complete();
+    mediumRelease.complete();
+    await lane.idle();
+  });
+
+  test('current preempts inside a full source bucket before global saturation',
+      () async {
+    final lane = NetLane(maxActive: 5, reservedHighPrioritySlots: 1);
+    final firstCancelled = Completer<void>();
+    final secondRelease = Completer<void>();
+    final currentStarted = Completer<void>();
+    final currentRelease = Completer<void>();
+
+    lane.submitRanked(
+      key: 'bucket-low',
+      priority: 680,
+      bucket: 'remote:a',
+      bucketLimit: 2,
+      task: (token) async {
+        await token.whenCancelled;
+        firstCancelled.complete();
+      },
+    );
+    lane.submitRanked(
+      key: 'bucket-near',
+      priority: 820,
+      bucket: 'remote:a',
+      bucketLimit: 2,
+      task: (_) async => secondRelease.future,
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(lane.active, 2);
+
+    lane.submitRanked(
+      key: 'bucket-current',
+      priority: 1000,
+      bucket: 'remote:a',
+      bucketLimit: 2,
+      task: (_) async {
+        currentStarted.complete();
+        await currentRelease.future;
+      },
+    );
+
+    await currentStarted.future;
+    expect(lane.active, 3);
+    expect(lane.activeForBucket('remote:a'), 3);
+    expect(lane.handoffActive, 1);
+    await firstCancelled.future;
+
+    currentRelease.complete();
+    secondRelease.complete();
+    await lane.idle();
+  });
+
+  test('handoff capacity stays bounded while cancellation unwinds', () async {
+    final lane = NetLane(maxActive: 1, reservedHighPrioritySlots: 1);
+    final lowRelease = Completer<void>();
+    final firstCurrentStarted = Completer<void>();
+    final firstCurrentRelease = Completer<void>();
+    var secondCurrentStarted = false;
+
+    lane.submitRanked(
+      key: 'low',
+      priority: 680,
+      bucket: 'remote:a',
+      bucketLimit: 5,
+      task: (_) async => lowRelease.future,
+    );
+    await Future<void>.delayed(Duration.zero);
+    lane.submitRanked(
+      key: 'current-a',
+      priority: 1000,
+      bucket: 'remote:a',
+      bucketLimit: 5,
+      task: (_) async {
+        firstCurrentStarted.complete();
+        await firstCurrentRelease.future;
+      },
+    );
+    await firstCurrentStarted.future;
+    lane.submitRanked(
+      key: 'current-b',
+      priority: 1000,
+      bucket: 'remote:a',
+      bucketLimit: 5,
+      task: (_) async {
+        secondCurrentStarted = true;
+      },
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(lane.active, 2);
+    expect(secondCurrentStarted, isFalse);
+
+    lowRelease.complete();
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(secondCurrentStarted, isTrue);
+
+    firstCurrentRelease.complete();
+    await lane.idle();
+  });
 }

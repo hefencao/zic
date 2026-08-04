@@ -192,6 +192,17 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
         {
             "t": 22,
             "sessionId": "reader-a",
+            "kind": "downloadPriorityChanged",
+            "identityHash": "download-current",
+            "payload": {
+                "oldPriority": 820,
+                "newPriority": 1000,
+                "active": True,
+            },
+        },
+        {
+            "t": 22,
+            "sessionId": "reader-a",
             "kind": "lastFrameKept",
             "identityHash": "decode-last",
             "payload": {"frame": 7, "outputBytes": 4300800},
@@ -294,6 +305,10 @@ assert report["decodePrefixHintCount"] == 1
 assert report["decodePrefixHints"][0]["nextSourceLength"] == 524288
 assert report["rankedDownloadCount"] == 1
 assert report["rankedDownloadMaxGlobalActive"] == 3
+assert report["rankedDownloadMaxHandoffActive"] == 0
+assert report["rankedDownloadPriorityMigrationCount"] == 1
+assert report["rankedDownloadActivePriorityMigrationCount"] == 1
+assert report["downloadPriorityChanges"][0]["newPriority"] == 1000
 assert report["rankedDownloadBucketCounts"] == {"remote:source": 1}
 assert report["mediaClassificationCount"] == 1
 assert report["runtimeStaticClassificationCount"] == 1
