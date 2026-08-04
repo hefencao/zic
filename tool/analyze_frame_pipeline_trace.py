@@ -178,6 +178,7 @@ def summarize(path: Path) -> dict[str, Any]:
     texture_presentations: list[dict[str, Any]] = []
     policy_decisions: list[dict[str, Any]] = []
     media_classifications: list[dict[str, Any]] = []
+    first_frame_readies: list[dict[str, Any]] = []
     page_host_disposals: list[dict[str, Any]] = []
     frame_budgets: list[dict[str, Any]] = []
     next_due_by_session: dict[str, int] = {}
@@ -237,6 +238,18 @@ def summarize(path: Path) -> dict[str, Any]:
                     "frameCount": _number(payload.get("frameCount")),
                     "loopCount": _number(payload.get("loopCount")),
                     "complete": payload.get("complete"),
+                }
+            )
+        elif kind == "firstFrameReady":
+            first_frame_readies.append(
+                {
+                    "t": _number(event.get("t")),
+                    "sessionId": event.get("sessionId"),
+                    "identityHash": event.get("identityHash"),
+                    "pageIndex": payload.get("pageIndex"),
+                    "mountToFirstFrameMicros": _number(
+                        payload.get("mountToFirstFrameMicros")
+                    ),
                 }
             )
         elif kind == "pageHostDisposed":
@@ -369,6 +382,9 @@ def summarize(path: Path) -> dict[str, Any]:
                     "identityHash": event.get("identityHash"),
                     "textureLeaseReused": payload.get("textureLeaseReused"),
                     "uploadMicros": _number(payload.get("uploadMicros")),
+                    "surfaceReconfigureCount": _number(
+                        payload.get("surfaceReconfigureCount")
+                    ),
                 }
             )
         elif kind == "taskFailed":
@@ -631,6 +647,26 @@ def summarize(path: Path) -> dict[str, Any]:
             default=0,
         )
         concurrency_scope = "per-session-legacy-clock"
+    first_frame_by_session = {
+        str(row["sessionId"]): row["t"]
+        for row in first_frame_readies
+        if row["sessionId"] is not None
+    }
+    startup_local_downloads = [
+        row
+        for row in ranked_downloads
+        if row["bucket"] == "local"
+        and str(row["sessionId"]) in first_frame_by_session
+        and _number(row["t"]) <= first_frame_by_session[str(row["sessionId"])]
+    ]
+    first_texture_by_session: dict[str, dict[str, Any]] = {}
+    for row in texture_presentations:
+        session = str(row["sessionId"])
+        first_texture_by_session.setdefault(session, row)
+    startup_first_timings = [
+        row for row in rows if row["startupFrameOrdinal"] == 0
+    ]
+
     return {
         "trace": str(path),
         "eventCount": len(rows),
@@ -701,6 +737,28 @@ def summarize(path: Path) -> dict[str, Any]:
         "sourceConcurrencyScope": concurrency_scope,
         "processClock": has_process_clock,
         "readerSessionLifecycle": dict(session_lifecycle),
+        "firstFrameReadyCount": len(first_frame_readies),
+        "mountToFirstFrameMicros": _stats(
+            [row["mountToFirstFrameMicros"] for row in first_frame_readies]
+        ),
+        "firstFrameReadies": first_frame_readies,
+        "startupLocalDownloadMaxBucketActive": max(
+            (row["bucketActive"] for row in startup_local_downloads),
+            default=0,
+        ),
+        "startupLocalDownloadBucketLimits": sorted(
+            {row["bucketLimit"] for row in startup_local_downloads}
+        ),
+        "startupLocalDownloads": startup_local_downloads,
+        "startupFirstTextureLeaseReuseCount": sum(
+            1
+            for row in first_texture_by_session.values()
+            if row["textureLeaseReused"] is True
+        ),
+        "startupFirstSurfaceReconfigureCount": sum(
+            row["surfaceReconfigureCount"] for row in startup_first_timings
+        ),
+        "startupFirstTextures": list(first_texture_by_session.values()),
         "cacheHandoffActionCounts": dict(
             Counter(str(row["action"]) for row in cache_handoffs)
         ),
@@ -859,6 +917,14 @@ def main() -> None:
         f"surfaceReconfigures={report['surfaceReconfigureCount']}"
     )
     print(f"reader lifecycle: {report['readerSessionLifecycle']}")
+    print(
+        "startup first output: "
+        f"mount={report['mountToFirstFrameMicros']} "
+        f"localMax={report['startupLocalDownloadMaxBucketActive']} "
+        f"localLimits={report['startupLocalDownloadBucketLimits']} "
+        f"textureReused={report['startupFirstTextureLeaseReuseCount']} "
+        f"surfaceReconfigures={report['startupFirstSurfaceReconfigureCount']}"
+    )
     print(
         "decode refills: "
         f"count={report['decodeRefillCount']} "

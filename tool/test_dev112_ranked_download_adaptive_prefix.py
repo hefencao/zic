@@ -36,7 +36,8 @@ for token in (
     "NetLane? pageDownloadLane",
     "pageDownloadLane: pageDownloadLane",
     "downloadBucketFor: _profile.downloadBucket",
-    "downloadBucketLimitFor: _profile.downloadBucketLimit",
+    "downloadBucketLimitFor: _downloadBucketLimit",
+    "final stableLimit = _profile.downloadBucketLimit(id)",
     "decode.depth > 4",
 ):
     require(session, token, "pipeline composition")

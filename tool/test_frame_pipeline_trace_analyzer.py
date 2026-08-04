@@ -20,6 +20,7 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
                 "frame": 0,
                 "cycle": 0,
                 "presentationOrdinal": 0,
+                "startupFrameOrdinal": 0,
                 "traceReason": "startup+stall",
                 "dominantStage": "workerReady",
                 "dominantStageMicros": 300000,
@@ -176,6 +177,44 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
             },
         },
         {
+            "t": 6,
+            "sessionId": "reader-a",
+            "kind": "downloadStarted",
+            "identityHash": "download-local-current",
+            "payload": {
+                "priority": 1000,
+                "bucket": "local",
+                "bucketLimit": 1,
+                "globalActive": 1,
+                "globalLimit": 5,
+                "handoffActive": 0,
+                "effectivePriority": 1000,
+                "bucketActive": 1,
+            },
+        },
+        {
+            "t": 15,
+            "sessionId": "reader-a",
+            "kind": "frameUploaded",
+            "identityHash": "decode-current",
+            "payload": {
+                "frame": 0,
+                "textureLeaseReused": True,
+                "uploadMicros": 1200,
+                "surfaceReconfigureCount": 0,
+            },
+        },
+        {
+            "t": 16,
+            "sessionId": "reader-a",
+            "kind": "firstFrameReady",
+            "identityHash": "page-current",
+            "payload": {
+                "pageIndex": 0,
+                "mountToFirstFrameMicros": 390000,
+            },
+        },
+        {
             "t": 22,
             "sessionId": "reader-a",
             "kind": "downloadStarted",
@@ -284,8 +323,15 @@ assert report["sourceArtifactMaterializeMicros"]["max"] == 1500
 assert report["emptyArtifactEventCount"] == 0
 assert report["emptyArtifactHandoffStoreCount"] == 0
 assert report["cacheResidentCommitCount"] == 0
-assert report["textureLeasePresentationCount"] == 0
+assert report["textureLeasePresentationCount"] == 1
 assert report["sourceReads"][0]["hotCacheEntries"] == 1
+
+assert report["firstFrameReadyCount"] == 1
+assert report["mountToFirstFrameMicros"]["max"] == 390000
+assert report["startupLocalDownloadMaxBucketActive"] == 1
+assert report["startupLocalDownloadBucketLimits"] == [1]
+assert report["startupFirstTextureLeaseReuseCount"] == 1
+assert report["startupFirstSurfaceReconfigureCount"] == 1
 
 assert report["readerSessionLifecycle"]["reader-a"]["disposeMicros"] == 6000
 assert report["readerSessionLifecycle"]["reader-a"]["handoffDrainMicros"] == 700
@@ -303,13 +349,13 @@ assert report["decodeRecoveryAttemptCounts"] == {"1": 1}
 assert report["decodeRecoveries"][0]["bufferedDepth"] == 7
 assert report["decodePrefixHintCount"] == 1
 assert report["decodePrefixHints"][0]["nextSourceLength"] == 524288
-assert report["rankedDownloadCount"] == 1
+assert report["rankedDownloadCount"] == 2
 assert report["rankedDownloadMaxGlobalActive"] == 3
 assert report["rankedDownloadMaxHandoffActive"] == 0
 assert report["rankedDownloadPriorityMigrationCount"] == 1
 assert report["rankedDownloadActivePriorityMigrationCount"] == 1
 assert report["downloadPriorityChanges"][0]["newPriority"] == 1000
-assert report["rankedDownloadBucketCounts"] == {"remote:source": 1}
+assert report["rankedDownloadBucketCounts"] == {"local": 1, "remote:source": 1}
 assert report["mediaClassificationCount"] == 1
 assert report["runtimeStaticClassificationCount"] == 1
 assert report["runtimeAnimatedClassificationCount"] == 0

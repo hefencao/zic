@@ -1,3 +1,12 @@
+## 0.31.0-dev.124：大 WebP 首帧与 Patch 交付
+
+- 低性能设备启动期，本地 current 首个 output 前独占 local bucket；首帧真实 present 后恢复稳定 local=2，不改变 7/3、远程/全局 5 或 active session。
+- output prewarm 改用最终对齐 DecodeTarget，避免来源画布尺寸导致首个 texture lease 未命中和 surface 重配置。
+- LiveCoordinator 可原位刷新 queued download scheduling；不重启 active DownloadSession。
+- Trace analyzer 增加 mount-to-first-frame、启动 local active/limit、首个 texture reuse 与 surface reconfigure 指标。
+- 新增 `.zic-workspace.json`、workspace config reader，并要求每轮交付完整 ZIP、SHA 与 `git apply --index` patch。
+- 新增 owner/static tests、ADR 0108、审计与 dev.124 gate；README/Architecture/Spec 未修改。
+
 ## 0.31.0-dev.123：Current 下载抢占与纵向页面预组合
 
 - `NetLane` 增加 queued/active rank migration；同 key 晋升 current 不取消重建。

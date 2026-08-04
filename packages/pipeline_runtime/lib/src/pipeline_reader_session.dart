@@ -240,7 +240,7 @@ final class PipelineReaderSession {
       budgets: _frameBudgets,
       net: pageDownloadLane,
       downloadBucketFor: _profile.downloadBucket,
-      downloadBucketLimitFor: _profile.downloadBucketLimit,
+      downloadBucketLimitFor: _downloadBucketLimit,
       decode: DecodeLane(maxActive: _profile.decodeConcurrency),
       upload: UploadLane(maxActive: _profile.uploadConcurrency),
     );
@@ -289,6 +289,7 @@ final class PipelineReaderSession {
   final ArtifactCacheReadScheduler artifactReadScheduler;
   ArtifactCachePressureLease? _startupArtifactPressure;
   DownloadId? _startupArtifactPressureDownload;
+  DownloadId? _startupCurrentDownload;
   bool _disposed = false;
 
   int get revision => _binding?.revision ?? 0;
@@ -328,24 +329,25 @@ final class PipelineReaderSession {
         .toInt();
     final currentAsset = chapter.pages[pageIndex];
     final currentDownload = readerPageDownloadId(chapter, currentAsset);
-    final width = currentAsset.width;
-    final height = currentAsset.height;
+    final target = binding.pipeline.decodeTarget;
     final prewarmer = _media is PipelineOutputPrewarmer
         ? _media as PipelineOutputPrewarmer
         : null;
-    if (prewarmer != null &&
-        width != null &&
-        height != null &&
-        width > 0 &&
-        height > 0) {
+    if (prewarmer != null) {
       unawaited(
         _prewarmOutput(
           prewarmer,
           id: currentDownload,
-          width: width,
-          height: height,
+          width: target.physicalWidth,
+          height: target.physicalHeight,
         ),
       );
+    }
+    final currentOutput = _pageOutputs[currentDownload.key]?.snapshot;
+    if (currentOutput?.hasSurface != true) {
+      _startupCurrentDownload = currentDownload;
+    } else if (_startupCurrentDownload == currentDownload) {
+      _releaseStartupCurrentDownload();
     }
     transferProgress.select(currentDownload);
     _holdStartupArtifactPressureFor(currentDownload);
@@ -401,6 +403,7 @@ final class PipelineReaderSession {
     _binding?.detach(readerSessionId);
     _binding = null;
     _releaseStartupArtifactPressure();
+    _releaseStartupCurrentDownload();
     artifactReadScheduler.refresh();
     transferProgress.clear();
   }
@@ -763,6 +766,7 @@ final class PipelineReaderSession {
     if (snapshot.state == UploadState.ready) {
       _ensurePlaybackTicker();
     }
+    _maybeReleaseStartupCurrentDownload();
     _maybeReleaseStartupArtifactPressure();
   }
 
@@ -798,9 +802,34 @@ final class PipelineReaderSession {
     }
     if (_startupOutputReady(current)) {
       _releaseStartupArtifactPressure();
+      _releaseStartupCurrentDownload();
       return;
     }
     _holdStartupArtifactPressureFor(current.download);
+  }
+
+  void _maybeReleaseStartupCurrentDownload() {
+    final held = _startupCurrentDownload;
+    if (held == null) return;
+    final uploads = _binding?.pipeline.currentPlan.uploads;
+    if (uploads == null) {
+      _releaseStartupCurrentDownload();
+      return;
+    }
+    DecodeId? current;
+    for (final entry in uploads.entries) {
+      if (entry.value.role == PageRole.current) {
+        current = entry.key;
+        break;
+      }
+    }
+    if (current == null || current.download != held) {
+      _releaseStartupCurrentDownload();
+      return;
+    }
+    if (_startupFirstOutputReady(current)) {
+      _releaseStartupCurrentDownload();
+    }
   }
 
   void _maybeReleaseStartupArtifactPressure() {
@@ -824,7 +853,21 @@ final class PipelineReaderSession {
     }
     if (_startupOutputReady(current)) {
       _releaseStartupArtifactPressure();
+      _releaseStartupCurrentDownload();
     }
+  }
+
+  bool _startupFirstOutputReady(DecodeId id) {
+    final download = _downloads.get(id.download).snapshot;
+    if (download.state == DownloadState.failed ||
+        download.state == DownloadState.disposed) {
+      return true;
+    }
+    final upload = _uploads.find(id)?.snapshot;
+    if (upload == null) return false;
+    return upload.state == UploadState.failed ||
+        upload.state == UploadState.disposed ||
+        (upload.state == UploadState.ready && upload.presentClaims > 0);
   }
 
   bool _startupOutputReady(DecodeId id) {
@@ -854,10 +897,28 @@ final class PipelineReaderSession {
         decode.depth > 4;
   }
 
+  void _releaseStartupCurrentDownload() {
+    if (_startupCurrentDownload == null) return;
+    _startupCurrentDownload = null;
+    _coordinator.refreshDownloadScheduling(sessionId);
+  }
+
   void _releaseStartupArtifactPressure() {
     _startupArtifactPressure?.release();
     _startupArtifactPressure = null;
     _startupArtifactPressureDownload = null;
+  }
+
+  int _downloadBucketLimit(DownloadId id) {
+    final stableLimit = _profile.downloadBucketLimit(id);
+    final current = _startupCurrentDownload;
+    if (stableLimit <= 1 || current == null) {
+      return stableLimit;
+    }
+    final currentBucket = _profile.downloadBucket(current);
+    return currentBucket == 'local' && _profile.downloadBucket(id) == 'local'
+        ? 1
+        : stableLimit;
   }
 
   int _artifactReadPriority(DownloadId id) =>
@@ -910,6 +971,7 @@ final class PipelineReaderSession {
     for (final id in uploads.toList(growable: false)) {
       _coordinator.advanceDueFrame(sessionId, id);
     }
+    _maybeReleaseStartupCurrentDownload();
     _maybeReleaseStartupArtifactPressure();
     _ensurePlaybackTicker();
   }
@@ -934,6 +996,7 @@ final class PipelineReaderSession {
     _playbackTicker?.cancel();
     _playbackTicker = null;
     _releaseStartupArtifactPressure();
+    _startupCurrentDownload = null;
     final binding = _binding;
     _binding = null;
     binding?.detach(sessionId);

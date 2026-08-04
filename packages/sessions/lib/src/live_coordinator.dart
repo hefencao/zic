@@ -119,6 +119,22 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
 
   Map<DownloadId, DownloadDemand> get demands =>
       Map<DownloadId, DownloadDemand>.unmodifiable(_downloads);
+
+  /// Re-applies dynamic transport bucket limits without changing demand.
+  ///
+  /// Reader startup uses this when the current first output releases its
+  /// foreground-only local-source gate. Existing active work is not restarted;
+  /// queued tasks migrate their bucket limit in place.
+  void refreshDownloadScheduling(String sessionId) {
+    if (_disposed) return;
+    for (final entry in _downloads.entries) {
+      final session = registry.find(entry.key);
+      if (session != null) {
+        _ensureDownloadTask(sessionId, entry.key, session);
+      }
+    }
+  }
+
   Map<DecodeId, DecodeDemand> get decodeDemands =>
       Map<DecodeId, DecodeDemand>.unmodifiable(_decodes);
   Map<DecodeId, UploadDemand> get uploadDemands =>

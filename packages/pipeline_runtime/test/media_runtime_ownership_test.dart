@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
@@ -53,6 +54,48 @@ void main() {
     );
   });
 
+  test('current output prewarms the exact aligned decode target', () async {
+    final runtime = _Runtime();
+    final session = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(runtime),
+    ).create(
+      chapter: _chapter(width: 4096, height: 3072),
+      sessionId: 'exact-output-prewarm-test',
+    );
+    final target = DecodeTarget(
+      physicalWidth: 1075,
+      physicalHeight: 803,
+    );
+    session.attach(target);
+    final page = session.chapter.pages.single;
+    session.accept(
+      ReaderObs(
+        sessionId: 'reader',
+        currentIndex: 0,
+        stableIndex: 0,
+        interaction: Interaction.idle,
+        logicalPosition: 0,
+        velocity: 0,
+        currentCoverage: Coverage(
+          pageIndex: 0,
+          assetKey: page.assetKey,
+          fraction: 1,
+        ),
+        direction: ReadingDirection.ltr,
+        timestamp: DateTime.utc(2026),
+        monotonicMicros: 1,
+      ),
+    );
+
+    expect(
+      await runtime.firstPrewarm.future,
+      <int>[target.physicalWidth, target.physicalHeight],
+    );
+    expect(runtime.prewarmCalls, 1);
+
+    await session.dispose();
+  });
+
   test('Reader session owns and closes one atomic media runtime', () async {
     final runtime = _Runtime();
     final factory = _Factory(runtime);
@@ -72,7 +115,7 @@ void main() {
   });
 }
 
-ChapterManifest _chapter() => ChapterManifest(
+ChapterManifest _chapter({int? width, int? height}) => ChapterManifest(
       sourceId: 'source',
       comicId: 'comic',
       chapter: const Chapter(
@@ -89,6 +132,8 @@ ChapterManifest _chapter() => ChapterManifest(
           chapterId: 'chapter',
           index: 0,
           uri: Uri.parse('asset:///page-0.webp'),
+          width: width,
+          height: height,
           contentKindHint: ContentKindHint.webp,
         ),
       ],
@@ -112,8 +157,11 @@ final class _Factory implements PipelineMediaRuntimeFactory {
   }
 }
 
-final class _Runtime implements PipelineMediaRuntime {
+final class _Runtime
+    implements PipelineMediaRuntime, PipelineOutputPrewarmer {
   bool closed = false;
+  int prewarmCalls = 0;
+  final Completer<List<int>> firstPrewarm = Completer<List<int>>();
 
   @override
   SourceFactory get sources => _SourceFactory();
@@ -129,6 +177,14 @@ final class _Runtime implements PipelineMediaRuntime {
 
   @override
   RendererKind get renderer => RendererKind.flutterImage;
+
+  @override
+  Future<void> prewarmOutput({required int width, required int height}) async {
+    prewarmCalls++;
+    if (!firstPrewarm.isCompleted) {
+      firstPrewarm.complete(<int>[width, height]);
+    }
+  }
 
   @override
   Future<void> close() async {
