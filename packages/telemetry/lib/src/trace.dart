@@ -44,6 +44,7 @@ enum TraceEventKind {
   decodeState,
   frameDecoded,
   animationLoop,
+  mediaClassified,
   uploadState,
   frameUploaded,
   lastFrameKept,

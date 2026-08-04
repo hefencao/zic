@@ -61,10 +61,7 @@ final class ArtifactCacheManager {
     final entry = await backend.openArtifactStream(id);
     if (entry == null) return null;
     if (entry.length <= 0) {
-      final invalidation = backend;
-      if (invalidation is ArtifactCacheInvalidationBackend) {
-        await (invalidation as ArtifactCacheInvalidationBackend).invalidateArtifact(id);
-      }
+      await backend.invalidateArtifact(id);
       return null;
     }
     return ArtifactCacheLookup(
@@ -180,10 +177,7 @@ final class ArtifactCacheManager {
 
   Future<void> invalidate(DownloadId id) async {
     invalidateMemory(id);
-    final invalidation = backend;
-    if (invalidation is ArtifactCacheInvalidationBackend) {
-      await (invalidation as ArtifactCacheInvalidationBackend).invalidateArtifact(id);
-    }
+    await backend.invalidateArtifact(id);
   }
 
   void clearMemory() {

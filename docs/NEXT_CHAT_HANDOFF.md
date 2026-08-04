@@ -1,6 +1,6 @@
-# dev.115 后续交接
+# dev.116 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.115_empty-artifact-self-heal-static-host-keepalive.zip`。不得使用 dev.114 或更早 ZIP、旧工作树或自行重建代码。
+唯一后续基线：`zic_v0.31.0-dev.116_runtime-webp-classification-compile-closure.zip`。不得使用 dev.115 或更早 ZIP、旧工作树或自行重建代码。
 
 ## 必读
 
@@ -11,25 +11,26 @@
 5. `docs/SPEC.md`
 6. `docs/IMPLEMENTATION_STATUS.md`
 7. `docs/IMPLEMENTATION_PLAN.md`
-8. `docs/adr/0097-direct-durable-ingress-texture-lease-pool.md`
-9. `docs/adr/0098-vertical-visible-demand-static-output-budget.md`
-10. `docs/adr/0099-empty-artifact-self-heal-static-host-keepalive.md`
-11. `docs/audits/dev115-empty-artifact-static-host-audit.md`
-12. `docs/audits/dev115-validation-results.md`
+8. `docs/adr/0099-empty-artifact-self-heal-static-host-keepalive.md`
+9. `docs/adr/0100-runtime-webp-classification-vertical-host-retention.md`
+10. `docs/audits/dev116-runtime-webp-classification-compile-audit.md`
+11. `docs/audits/dev116-validation-results.md`
 
-## 下一份 Trace
+## 下一份设备 Trace
 
 重点检查：
 
-- `emptyArtifactEventCount` 和 `emptyArtifactHandoffStoreCount` 必须为 0；
--历史空条目是否失效并出现 origin fallback、正常 bytesCommitted 和 firstFrameReady；
-- `skip-cache-resident` / `skip-empty` handoff；
--纵向静态 current±4 的 pageHost 是否保持 mounted；
--顶部重载发生时是 host remount、output eviction 还是 source failure。
+- `mediaClassified` 的 page、animated、frameCount 与 complete；
+- `runtimeStaticPages`、`assumeUnresolvedStatic` 和 static-warm decode/upload；
+-纵向邻页是否在成为 current 前 `firstFrameReady`；
+- `pageHostMounted.keepAlive=true`，current±4 是否不再 dispose/remount；
+- `emptyArtifactEventCount` 与 `emptyArtifactHandoffStoreCount` 仍为 0；
+-若页面仍无限 loading，区分 source、decode、upload、FrameBudget 和 host lifecycle。
 
-## 保持边界
+## 不可改变
 
-- 动画 staged c/n/m/p 8/6/4/3、last keep、下载 7/3、全局 5 槽与来源 bucket 不变；
--静态 96 MiB 只用于策略选择，128 MiB FrameBudget 仍是 output 权威；
-- cache manager 负责 tier/失效，backend 只负责存储原语；
+- 下载 7/3、全局 5 槽、来源 bucket 与页面 rank；
+-动画 c/n/m/p 8/6/4/3、last keep；
+-静态 96 MiB 选择预算、128 MiB output budget；
+- cache manager 决定 tier/失效，backend 只执行存储原语；
 - Reader Widget 不持有 frame、texture、cache body 或 session。

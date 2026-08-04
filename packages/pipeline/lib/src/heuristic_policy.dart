@@ -23,6 +23,8 @@ final class HeuristicPolicy {
     required ReaderObs observation,
     required RoleWindow window,
     required DecodeTarget decodeTarget,
+    Map<int, bool> runtimeAnimatedPages = const <int, bool>{},
+    bool assumeUnresolvedStatic = false,
   }) {
     final downloads = <DownloadId, DownloadDemand>{};
     final decodes = <DecodeId, DecodeDemand>{};
@@ -33,6 +35,8 @@ final class HeuristicPolicy {
       observation: observation,
       window: window,
       decodeTarget: decodeTarget,
+      runtimeAnimatedPages: runtimeAnimatedPages,
+      assumeUnresolvedStatic: assumeUnresolvedStatic,
     );
 
     for (final entry in window.roles.entries) {
@@ -137,6 +141,8 @@ final class HeuristicPolicy {
     required ReaderObs observation,
     required RoleWindow window,
     required DecodeTarget decodeTarget,
+    required Map<int, bool> runtimeAnimatedPages,
+    required bool assumeUnresolvedStatic,
   }) {
     if (staticOutputBudgetBytes <= 0) return const <int>{};
     final outputBytes = decodeTarget.physicalWidth *
@@ -145,9 +151,11 @@ final class HeuristicPolicy {
     final slots = outputBytes <= 0
         ? 1
         : (staticOutputBudgetBytes ~/ outputBytes).clamp(1, 64).toInt();
-    final candidates = window.roles.entries
-        .where((entry) => !chapter.pages[entry.key].animatedHint)
-        .toList();
+    final candidates = window.roles.entries.where((entry) {
+      final runtimeAnimated = runtimeAnimatedPages[entry.key];
+      if (runtimeAnimated != null) return !runtimeAnimated;
+      return assumeUnresolvedStatic || !chapter.pages[entry.key].animatedHint;
+    }).toList();
     candidates.sort((a, b) {
       final aPriority = _staticPriority(
         a.value,

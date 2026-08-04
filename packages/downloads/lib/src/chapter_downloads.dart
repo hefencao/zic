@@ -130,8 +130,7 @@ abstract interface class ManagedChapterDownloadService
     implements
         ChapterDownloadService,
         ArtifactCacheMaintenance,
-        ArtifactCacheBackend,
-        ArtifactCacheInvalidationBackend {}
+        ArtifactCacheBackend {}
 
 /// Resolves bytes owned by an active comic source. External plugin page URIs
 /// are intentionally opaque and must stay behind the source boundary instead

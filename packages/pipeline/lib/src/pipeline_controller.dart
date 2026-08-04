@@ -47,6 +47,8 @@ final class PipelineController {
   Map<int, PageRole>? _previousRoles;
   int? _currentIndex;
   int? _lastCurrentIndex;
+  ReaderObs? _lastObservation;
+  final Map<int, bool> _runtimeAnimatedPages = <int, bool>{};
 
   int get revision => _revision;
   DemandPlan get currentPlan => _previous;
@@ -56,12 +58,39 @@ final class PipelineController {
       _lastCurrentIndex = _currentIndex;
     }
     _currentIndex = observation.currentIndex;
+    _lastObservation = observation;
+    _replan(observation, force: false);
+  }
+
+  bool classifyPage({required int pageIndex, required bool animated}) {
+    if (pageIndex < 0 || pageIndex >= chapter.pages.length) return false;
+    final current = _runtimeAnimatedPages[pageIndex] ??
+        chapter.pages[pageIndex].animatedHint;
+    if (current == animated) return false;
+    _runtimeAnimatedPages[pageIndex] = animated;
+    final observation = _lastObservation;
+    if (observation != null) {
+      _replan(observation, force: true);
+    }
+    return true;
+  }
+
+  bool get _assumeUnresolvedStatic {
+    var staticCount = 0;
+    for (final animated in _runtimeAnimatedPages.values) {
+      if (animated) return false;
+      staticCount++;
+    }
+    return staticCount >= 2;
+  }
+
+  void _replan(ReaderObs observation, {required bool force}) {
     final window = windowResolver.resolve(
       chapter,
       observation,
       previousCurrentIndex: _lastCurrentIndex,
     );
-    if (_sameRoles(_previousRoles, window.roles)) {
+    if (!force && _sameRoles(_previousRoles, window.roles)) {
       return;
     }
     _previousRoles = Map<int, PageRole>.unmodifiable(window.roles);
@@ -72,6 +101,8 @@ final class PipelineController {
       observation: observation,
       window: window,
       decodeTarget: decodeTarget,
+      runtimeAnimatedPages: _runtimeAnimatedPages,
+      assumeUnresolvedStatic: _assumeUnresolvedStatic,
     );
     final plan = guard.enforce(proposal);
     final diff = DemandDiff.between(_previous, plan);
@@ -93,6 +124,10 @@ final class PipelineController {
           'staticWarmUploads': plan.uploads.values
               .where((demand) => demand.reason.startsWith('heuristic:static-warm'))
               .length,
+          'runtimeStaticPages': _runtimeAnimatedPages.values
+              .where((animated) => !animated)
+              .length,
+          'assumeUnresolvedStatic': _assumeUnresolvedStatic,
           'currentIndex': observation.currentIndex,
           'targetIndex': observation.targetCoverage?.pageIndex,
         },

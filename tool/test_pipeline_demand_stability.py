@@ -7,7 +7,7 @@ pipeline = (ROOT / 'packages/pipeline/lib/src/pipeline_controller.dart').read_te
     encoding='utf-8'
 )
 for token in (
-    'if (_sameRoles(_previousRoles, window.roles))',
+    'if (!force && _sameRoles(_previousRoles, window.roles))',
     '_previousRoles = Map<int, PageRole>.unmodifiable(window.roles)',
     'bool _sameRoles(Map<int, PageRole>? previous, Map<int, PageRole> next)',
 ):

@@ -1034,8 +1034,7 @@ def check_compile_regressions() -> None:
         'abstract interface class ManagedChapterDownloadService',
         'ChapterDownloadService,',
         'ArtifactCacheMaintenance,',
-        'ArtifactCacheBackend,',
-        'ArtifactCacheInvalidationBackend {}',
+        'ArtifactCacheBackend {}',
         'implements ManagedChapterDownloadService',
     ):
         if required not in chapter_downloads:

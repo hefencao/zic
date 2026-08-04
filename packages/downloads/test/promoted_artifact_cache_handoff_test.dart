@@ -230,6 +230,11 @@ final class _RecordingArtifactStore implements ArtifactCacheBackend {
   }) async {
     values[id] = Uint8List.fromList(bytes);
   }
+
+  @override
+  Future<void> invalidateArtifact(DownloadId id) async {
+    values.remove(id);
+  }
 }
 
 final class _ExistingArtifactStore implements ArtifactCacheBackend {
@@ -250,6 +255,11 @@ final class _ExistingArtifactStore implements ArtifactCacheBackend {
   }) async {
     storeCalls++;
     existing = Uint8List.fromList(bytes);
+  }
+
+  @override
+  Future<void> invalidateArtifact(DownloadId id) async {
+    existing = null;
   }
 }
 

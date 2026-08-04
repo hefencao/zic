@@ -205,6 +205,7 @@ final class PipelineReaderSession {
       cursors: _media.cursors,
       clock: clock,
       prefixHints: decodePrefixHints,
+      onAnimationResolved: _handleAnimationResolved,
       traceSink: trace,
     );
     _uploads = UploadRegistry(
@@ -642,6 +643,41 @@ final class PipelineReaderSession {
   void _observeDownloadSession(DownloadSession session) {
     _artifactCacheHandoff?.observe(session);
     transferProgress.observe(session);
+  }
+
+  void _handleAnimationResolved(DecodeId id, AnimationInfo animation) {
+    scheduleMicrotask(() {
+      if (_disposed) return;
+      final pageIndex = chapter.pages.indexWhere(
+        (page) => page.pageId == id.download.content.pageId,
+      );
+      if (pageIndex < 0) return;
+      final animated = animation.frameCount > 1;
+      final changed = _binding?.classifyPage(
+            pageIndex: pageIndex,
+            animated: animated,
+          ) ??
+          false;
+      if (!changed) return;
+      trace.record(
+        traceEvent(
+          clock: clock,
+          sessionId: sessionId,
+          kind: TraceEventKind.mediaClassified,
+          identityHash: id.download.key,
+          revision: revision,
+          payload: <String, Object?>{
+            'pageIndex': pageIndex,
+            'animated': animated,
+            'frameCount': animation.frameCount,
+            'loopCount': animation.loopCount,
+            'complete': animation.complete,
+          },
+        ),
+      );
+      artifactReadScheduler.refresh();
+      _syncPageOutputs();
+    });
   }
 
   void _handleUploadSnapshot(DecodeId id, UploadSnapshot snapshot) {

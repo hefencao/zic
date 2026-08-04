@@ -2,26 +2,28 @@
 
 本文件只列未完成工作。
 
-## P0：空 Artifact 自愈设备闭环
+## P0：运行时 WebP 分类设备闭环
 
-- 使用已有毒化缓存进入 Reader，确认首次 lookup 清除 L1/L2 后自动回源；
-- 确认 Trace 不再出现 0 字节 cache hit、`artifactPromoted length=0` 或 handoff `stored bytes=0`；
-- 验证本地、Venera、Mihon 页面均不会因空响应永久进入 FormatException；
-- 若仍有非零但无效正文，补充 header/error-body 分类，不能用 decoder retry 掩盖。
+- 在纵向 Venera 静态 WebP 章节确认出现 `mediaClassified animated=false`；
+- 确认两页静态后 `assumeUnresolvedStatic=true`，邻页出现 static-warm decode/upload；
+- 验证邻页在成为 current 前得到首帧，且真实动画 WebP 仍维持 staged 水位；
+- 若 frameCount/complete 仍无法区分，扩展 native animation metadata，不以扩展名替代。
 
-## P0：纵向静态 Host 与 Output 生命周期
+## P0：纵向轻量 Host 与 Output 生命周期
 
-- 向上/向下小幅反向拖动，确认 current±4 静态 host 不 dispose/remount；
-- 比较 pageHost mount/dispose、firstFrameReady、last/previous output 与 FrameBudget 回收；
-- 若顶部仍短暂重载，区分 host remount 与 output budget eviction，禁止 Widget 建第二套图片缓存。
+- 确认 current±4 host Trace 为 `keepAlive=true`，轻微反向滑动不 dispose/remount；
+-若仍有顶部重载，区分 output FrameBudget eviction、Surface lease 替换和 source failure；
+-禁止 Widget 持有 frame、texture 或 cache body。
 
-## P0：剩余首次加载长尾
+## P0：空 Artifact 自愈工具链闭环
+
+- 运行 Flutter analyzer/tests，确认 backend 必需 invalidation 接口全部实现；
+-在有历史毒化条目的设备确认自动失效、回源和首帧；
+-若出现非零但无效正文，增加 header/error-body 分类。
+
+## P0：剩余加载性能
 
 继续比较 direct ingress、texture reuse、outputPrepare 与 mount-to-first-frame，分别评估静态和动画章节。
-
-## P0：工具链闭包
-
-运行 Flutter analyzer/tests、Android native/APK debug/release 和 Rust tests。
 
 ## P1：解除 Source Browser quarantine
 

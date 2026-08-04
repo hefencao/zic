@@ -90,6 +90,7 @@ final class DecodeSession {
     required this.cursors,
     required this.clock,
     WebpDecodePrefixHints? prefixHints,
+    this.onAnimationResolved,
     this.traceSink = const NoopTraceSink(),
     this.sessionId = 'decode',
   }) : prefixHints = prefixHints ?? WebpDecodePrefixHints();
@@ -99,6 +100,8 @@ final class DecodeSession {
   final CursorFactory cursors;
   final MonoClock clock;
   final WebpDecodePrefixHints prefixHints;
+  final void Function(DecodeId id, AnimationInfo animation)?
+      onAnimationResolved;
   final TraceSink traceSink;
   final String sessionId;
 
@@ -114,6 +117,7 @@ final class DecodeSession {
   int _cursorCreateMicros = 0;
   int _nextFrameHintIndex = 0;
   int _requiredSourceLength = 0;
+  AnimationInfo? _reportedAnimation;
   final Map<int, DecodedFrameTiming> _frameTimings =
       <int, DecodedFrameTiming>{};
 
@@ -297,6 +301,13 @@ final class DecodeSession {
             return snapshot;
           case CursorStepKind.end:
             final loop = _cursor!.loop;
+            final animation = loop?.animation;
+            if (animation != null &&
+                animation.complete &&
+                _reportedAnimation != animation) {
+              _reportedAnimation = animation;
+              onAnimationResolved?.call(id, animation);
+            }
             if (loop != null && holder.isEmpty && loop.rewind()) {
               _nextFrameHintIndex = 0;
               _requiredSourceLength = 0;
@@ -501,10 +512,9 @@ final class DecodeSession {
     _holder = null;
     _nextFrameHintIndex = 0;
     _requiredSourceLength = 0;
+    _reportedAnimation = null;
     _frameTimings.clear();
     _cursorCreateMicros = 0;
-    _nextFrameHintIndex = 0;
-    _requiredSourceLength = 0;
   }
 
   void _setState(DecodeState state) {

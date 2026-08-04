@@ -2,6 +2,8 @@
 
 **状态：Provisional**
 
+> dev.116 修订：空 Artifact 自愈仍保留；“可选 backend invalidation”与“仅按 animatedHint 保活纵向 host”由 ADR 0100 取代。backend 失效成为必需存储原语，纵向轻量 host 不再依赖解码前 hint。
+
 ## 问题
 
 dev.113 的 durable cache direct-ingress 不写 Reader 临时 artifact，但旧 `PromotedArtifactCacheHandoff` 在 session promoted 后仍读取该临时 artifact。其正文为空，随后被写回中央 memory tier 与 persistent backend。后续 Reader 稳定命中 0 字节条目，在图片签名识别阶段抛出 `FormatException`；这发生在 native/WebP decode 之前，不等同于此前的 cursor decode failure。

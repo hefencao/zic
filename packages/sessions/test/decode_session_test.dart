@@ -555,6 +555,7 @@ void main() {
 
   test('finite animation enters ended after its play count is exhausted', () async {
     final temp = await Directory.systemTemp.createTemp('decode_end_test_');
+    AnimationInfo? resolvedAnimation;
     final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
     ingress.append(
       epoch: const SourceEpoch(0),
@@ -575,6 +576,9 @@ void main() {
       download: download,
       cursors: _LoopCursorFactory(frameCount: 1, loopCount: 1),
       clock: _Clock(),
+      onAnimationResolved: (_, animation) {
+        resolvedAnimation = animation;
+      },
     );
     const demand = DecodeDemand(
       role: PageRole.current,
@@ -599,6 +603,8 @@ void main() {
     expect(ended.state, DecodeState.ended);
     expect(ended.cycle, 0);
     expect(ended.animation.loopCount, 1);
+    expect(resolvedAnimation?.complete, isTrue);
+    expect(resolvedAnimation?.frameCount, 1);
 
     decode.dispose();
     await download.dispose();

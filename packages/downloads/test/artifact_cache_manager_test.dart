@@ -187,11 +187,16 @@ final class _Backend implements ArtifactCacheBackend {
   }) async {
     values[id] = Uint8List.fromList(bytes);
   }
+
+  @override
+  Future<void> invalidateArtifact(DownloadId id) async {
+    values.remove(id);
+  }
 }
 
 
 final class _InvalidatingBackend extends _Backend
-    implements ArtifactCacheInvalidationBackend {
+    implements ArtifactCacheBackend {
   _InvalidatingBackend(super.values);
 
   final List<DownloadId> invalidated = <DownloadId>[];

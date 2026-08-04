@@ -59,6 +59,11 @@ final class ReaderBinding {
     _syncViewport(observation);
   }
 
+  bool classifyPage({required int pageIndex, required bool animated}) {
+    if (_detached) return false;
+    return pipeline.classifyPage(pageIndex: pageIndex, animated: animated);
+  }
+
   /// Reconciles every outstanding demand to empty before this binding is
   /// replaced or the reader session leaves the widget tree.
   ///

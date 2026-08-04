@@ -419,4 +419,118 @@ final class _FakeClock implements MonoClock {
     );
   });
 
+  test('runtime static WebP evidence enables one-frame chapter warming', () {
+    final webpChapter = ChapterManifest(
+      sourceId: 'venera:fixture',
+      comicId: 'webp-static-comic',
+      chapter: const Chapter(
+        chapterId: 'webp-static-chapter',
+        comicId: 'webp-static-comic',
+        title: 'Static WebP',
+        sequence: 1,
+        pageCount: 8,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        8,
+        (index) => PageAsset(
+          pageId: 'w$index',
+          chapterId: 'webp-static-chapter',
+          index: index,
+          uri: Uri.parse('venera-resource://page/$index.webp'),
+          contentKindHint: ContentKindHint.webp,
+          // Source metadata can only say that WebP may animate.
+          animatedHint: true,
+        ),
+      ),
+      readingDirection: ReadingDirection.vertical,
+    );
+    final obs = ReaderObs(
+      sessionId: 'runtime-static',
+      currentIndex: 3,
+      stableIndex: 3,
+      interaction: Interaction.idle,
+      logicalPosition: 3,
+      velocity: 0,
+      currentCoverage: Coverage(
+        pageIndex: 3,
+        assetKey: 'webp-static-chapter/w3',
+        fraction: 1,
+      ),
+      direction: ReadingDirection.vertical,
+      timestamp: DateTime.utc(2026, 8, 4),
+      monotonicMicros: 1,
+    );
+    final updates = <PipelineDelta>[];
+    final controller = PipelineController(
+      chapter: webpChapter,
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1000,
+        physicalHeight: 1000,
+      ),
+      clock: _TestClock(),
+      policy: const HeuristicPolicy(
+        decodeWarmPages: true,
+        staticOutputBudgetBytes: 24 * 1024 * 1024,
+      ),
+      onUpdate: updates.add,
+    );
+
+    controller.accept(obs);
+    expect(controller.currentPlan.uploads, hasLength(1));
+
+    expect(controller.classifyPage(pageIndex: 3, animated: false), isTrue);
+    expect(controller.classifyPage(pageIndex: 4, animated: false), isTrue);
+
+    expect(updates, isNotEmpty);
+    expect(
+      controller.currentPlan.uploads.values.where(
+        (demand) => demand.reason.startsWith('heuristic:static-warm'),
+      ).length,
+      greaterThanOrEqualTo(2),
+    );
+  });
+
+  test('runtime animated evidence disables unresolved static inference', () {
+    final overrides = <int, bool>{0: false, 1: false, 2: true};
+    final obs = observation();
+    final window = const RoleResolver().resolve(chapter, obs);
+    final plan = const HeuristicPolicy(
+      decodeWarmPages: true,
+      staticOutputBudgetBytes: 64 * 1024 * 1024,
+    ).createPlan(
+      revision: 1,
+      chapter: chapter,
+      observation: obs,
+      window: window,
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1000,
+        physicalHeight: 1000,
+      ),
+      runtimeAnimatedPages: overrides,
+      assumeUnresolvedStatic: false,
+    );
+
+    final staticWarm = plan.uploads.entries.where(
+      (entry) => entry.value.reason.startsWith('heuristic:static-warm'),
+    ).toList(growable: false);
+    expect(staticWarm, hasLength(2));
+    expect(
+      staticWarm.map((entry) => entry.key.download.content.pageId),
+      containsAll(<String>['p0', 'p1']),
+    );
+    expect(
+      staticWarm.map((entry) => entry.key.download.content.pageId),
+      isNot(contains('p3')),
+    );
+  });
+
+}
+
+
+final class _TestClock implements MonoClock {
+  int _value = 0;
+
+  @override
+  int nowMicros() => _value++;
 }

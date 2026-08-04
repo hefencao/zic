@@ -173,6 +173,7 @@ def summarize(path: Path) -> dict[str, Any]:
     cache_resident_commits: list[dict[str, Any]] = []
     texture_presentations: list[dict[str, Any]] = []
     policy_decisions: list[dict[str, Any]] = []
+    media_classifications: list[dict[str, Any]] = []
     page_host_disposals: list[dict[str, Any]] = []
     frame_budgets: list[dict[str, Any]] = []
     next_due_by_session: dict[str, int] = {}
@@ -219,6 +220,19 @@ def summarize(path: Path) -> dict[str, Any]:
                     "staticWarmUploads": _number(
                         payload.get("staticWarmUploads")
                     ),
+                }
+            )
+        elif kind == "mediaClassified":
+            media_classifications.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "identityHash": event.get("identityHash"),
+                    "pageIndex": payload.get("pageIndex"),
+                    "animated": payload.get("animated"),
+                    "frameCount": _number(payload.get("frameCount")),
+                    "loopCount": _number(payload.get("loopCount")),
+                    "complete": payload.get("complete"),
                 }
             )
         elif kind == "pageHostDisposed":
@@ -681,6 +695,14 @@ def summarize(path: Path) -> dict[str, Any]:
             if row["textureLeaseReused"] is True
         ),
         "textureLeasePresentations": texture_presentations,
+        "mediaClassificationCount": len(media_classifications),
+        "runtimeStaticClassificationCount": sum(
+            1 for row in media_classifications if row["animated"] is False
+        ),
+        "runtimeAnimatedClassificationCount": sum(
+            1 for row in media_classifications if row["animated"] is True
+        ),
+        "mediaClassifications": media_classifications,
         "policyDecisionCount": len(policy_decisions),
         "staticWarmDecodeMax": max(
             (row["staticWarmDecodes"] for row in policy_decisions),
@@ -780,6 +802,12 @@ def main() -> None:
         f"buckets={report['rankedDownloadBucketCounts']}"
     )
     print(f"last frames kept: {report['lastFrameKeptCount']}")
+    print(
+        "media classifications: "
+        f"count={report['mediaClassificationCount']} "
+        f"static={report['runtimeStaticClassificationCount']} "
+        f"animated={report['runtimeAnimatedClassificationCount']}"
+    )
     print(
         "static warm: "
         f"decodeMax={report['staticWarmDecodeMax']} "

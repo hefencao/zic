@@ -244,4 +244,7 @@ final class _Backend implements ArtifactCacheBackend {
     required DownloadId id,
     required Uint8List bytes,
   }) async {}
+
+  @override
+  Future<void> invalidateArtifact(DownloadId id) async {}
 }

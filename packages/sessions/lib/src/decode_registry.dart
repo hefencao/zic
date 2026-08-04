@@ -14,6 +14,7 @@ final class DecodeRegistry {
     required this.cursors,
     required this.clock,
     WebpDecodePrefixHints? prefixHints,
+    this.onAnimationResolved,
     this.traceSink = const NoopTraceSink(),
   }) : prefixHints = prefixHints ?? WebpDecodePrefixHints();
 
@@ -21,6 +22,8 @@ final class DecodeRegistry {
   final CursorFactory cursors;
   final MonoClock clock;
   final WebpDecodePrefixHints prefixHints;
+  final void Function(DecodeId id, AnimationInfo animation)?
+      onAnimationResolved;
   final TraceSink traceSink;
   final Map<DecodeId, DecodeSession> _sessions = <DecodeId, DecodeSession>{};
 
@@ -44,6 +47,7 @@ final class DecodeRegistry {
         cursors: cursors,
         clock: clock,
         prefixHints: prefixHints,
+        onAnimationResolved: onAnimationResolved,
         traceSink: traceSink,
         sessionId: 'decode:${id.key.hashCode}',
       );

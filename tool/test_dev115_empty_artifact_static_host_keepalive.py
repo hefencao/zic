@@ -23,11 +23,13 @@ reader = read("packages/reader/lib/src/reader_view.dart")
 analyzer = read("tool/analyze_frame_pipeline_trace.py")
 check = read("tool/check.sh")
 
-for token in (
-    "ArtifactCacheInvalidationBackend",
+require(
+    store,
     "Future<void> invalidateArtifact(DownloadId id)",
-):
-    require(store, token, "cache backend invalidation capability")
+    "cache backend invalidation primitive",
+)
+if "ArtifactCacheInvalidationBackend" in store:
+    raise SystemExit("cache invalidation remains an unnecessary optional capability")
 for token in (
     "if (bytes.isEmpty)",
     "await invalidate(id)",

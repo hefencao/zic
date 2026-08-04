@@ -1,3 +1,11 @@
+## 0.31.0-dev.116：运行时 WebP 分类与编译闭包
+
+- 修复 dev.115 cache invalidation 可选接口造成的 Dart 编译失败；`invalidateArtifact` 内聚为 `ArtifactCacheBackend` 必需原语。
+- DecodeSession 在权威 cursor end 后上报静态/动画信息，Pipeline 用运行时分类覆盖错误的 WebP hint并强制重新规划。
+- 连续两页确认静态且无动画证据时，未分类页可获得一帧 static-warm；真实动画证据会立即停止推断。
+- 纵向 current±4 轻量 host 保活不再依赖 `animatedHint`，避免静态 WebP 邻页被误当动画而反复挂载。
+- 新增 `mediaClassified` Trace、analyzer 统计、owner tests、ADR 0100 与 dev.116 gate；README/Architecture/Spec 未修改。
+
 ## 0.31.0-dev.115：空 Artifact 自愈与纵向静态 Host 保活
 
 - 修复 durable cache direct-ingress promoted session 被 handoff 读取空临时 artifact，并将 0 字节正文写回 L1/L2 的缓存污染。

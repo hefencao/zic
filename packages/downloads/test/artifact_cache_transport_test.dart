@@ -519,6 +519,11 @@ final class _MemoryArtifactStore implements ArtifactCacheBackend {
   }) async {
     values[id] = Uint8List.fromList(bytes);
   }
+
+  @override
+  Future<void> invalidateArtifact(DownloadId id) async {
+    values.remove(id);
+  }
 }
 
 final class _StreamingArtifactStore implements ArtifactCacheBackend {
@@ -569,6 +574,9 @@ final class _StreamingArtifactStore implements ArtifactCacheBackend {
     required DownloadId id,
     required Uint8List bytes,
   }) async {}
+
+  @override
+  Future<void> invalidateArtifact(DownloadId id) async {}
 }
 
 final class _ThrowingArtifactStore implements ArtifactCacheBackend {
@@ -583,6 +591,9 @@ final class _ThrowingArtifactStore implements ArtifactCacheBackend {
     required DownloadId id,
     required Uint8List bytes,
   }) async {}
+
+  @override
+  Future<void> invalidateArtifact(DownloadId id) async {}
 }
 
 final class _RecordingTransport implements Transport {

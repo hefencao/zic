@@ -255,9 +255,8 @@ final class _ReaderViewState extends State<ReaderView> {
 
   Widget _buildPage(ChapterManifest chapter, int index) {
     final asset = chapter.pages[index];
-    final keepStaticHost =
+    final keepVerticalHost =
         widget.controller.direction == ReadingDirection.vertical &&
-            !asset.animatedHint &&
             (index - widget.controller.currentIndex).abs() <= 4;
     return RotatedBox(
         key: ValueKey<String>('reader-page-rotation:$index'),
@@ -277,7 +276,7 @@ final class _ReaderViewState extends State<ReaderView> {
               'reader-page-host:${chapter.pages[index].assetKey}',
             ),
             asset: asset,
-            keepAlive: keepStaticHost,
+            keepAlive: keepVerticalHost,
             sessionId: widget.controller.sessionId,
             clock: widget.clock,
             traceSink: widget.traceSink,
