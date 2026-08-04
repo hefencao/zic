@@ -1006,9 +1006,23 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     );
   }
 
+  void refreshDecodeScheduling(String sessionId, {DecodeId? only}) {
+    final decision = _nextDecodeRefill(only: only);
+    if (decision == null) return;
+    _wakeDecode(
+      sessionId,
+      decision.id,
+      sourceWake: _hasPendingSourceRevision(decision.id),
+      force: true,
+    );
+  }
+
   void _wakeNextDecodeRefill(String sessionId, {DecodeId? except}) {
     final decision = _nextDecodeRefill();
-    if (decision == null || decision.id == except) {
+    if (decision == null) return;
+    final sameStartupCurrent = decision.id == except &&
+        (uploads?.isStartupBuffering(decision.id) ?? false);
+    if (decision.id == except && !sameStartupCurrent) {
       return;
     }
     _wakeDecode(

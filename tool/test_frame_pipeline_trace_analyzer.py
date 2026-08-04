@@ -406,6 +406,9 @@ assert report["decodePrefixHintCount"] == 1
 assert report["decodePrefixHints"][0]["nextSourceLength"] == 524288
 assert report["playbackBufferingCount"] == 2
 assert report["playbackBufferingReadyCount"] == 1
+assert report["playbackBufferingCompletedCount"] == 1
+assert report["playbackBufferingWaitMicros"]["max"] == 1
+assert report["playbackBufferingOutstandingCount"] == 0
 assert report["playbackBuffering"][0]["targetDepth"] == 7
 assert report["playbackBuffering"][1]["state"] == "ready"
 assert report["rankedDownloadCount"] == 2

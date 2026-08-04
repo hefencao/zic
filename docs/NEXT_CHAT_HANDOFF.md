@@ -1,6 +1,6 @@
-# dev.126 后续交接
+# dev.127 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.126_startup-playback-buffer-deadline-lead.zip`。不得使用旧工作树或重放更早 patch。
+唯一后续基线：`zic_v0.31.0-dev.127_startup-buffer-refill-closure.zip`。不得使用旧工作树或重放更早 patch。
 
 ## 必读
 
@@ -11,19 +11,29 @@
 5. `docs/IMPLEMENTATION_PLAN.md`
 6. `docs/IMPLEMENTATION_STATUS.md`
 7. `docs/adr/0110-startup-playback-buffer-deadline-lead.md`
-8. `docs/audits/dev126-startup-playback-cadence-audit.md`
-9. `docs/audits/dev126-validation-results.md`
+8. `docs/adr/0111-startup-buffer-staged-refill-closure.md`
+9. `docs/audits/dev127-startup-buffer-refill-deadlock-audit.md`
+10. `docs/audits/dev127-validation-results.md`
 
 ## 下一份 Trace
 
 重点检查：
 
-- `playbackBuffering` waiting/ready 的间隔、targetDepth 与 successorDepth；
-- frame 0 是否仍在启动缓冲前立即显示；
-- ready 前 decode refill 是否仅 current，ready 后 next/next+1 是否恢复；
-- `playbackLeadMicros`、deadline miss、visible frame interval；
-- native decode 与 platform present 是否仍为主要瓶颈。
+- `playbackBufferingOutstandingCount` 必须为 0；
+- waiting 到 ready 的耗时与 targetDepth；
+-同一 current 是否按需出现 `c>2 → c>4 → c>6`；
+- ready 后邻页 refill 是否恢复；
+- frame 0 仍立即显示，后续持续播放；
+- source/decode/upload/present failure 是否为 0。
 
-## 交付
+## Patch
 
-继续交付完整 ZIP、基线到新版本 patch、SHA256SUMS。正式 ZIP 不包含 `.zic-workspace.json`，patch 不触碰本地配置。
+应用命令直接使用本地 resolver，不在聊天中引入 `PATCH_DIR`：
+
+```bash
+git apply --check --index   "$(python3 tool/workspace_config.py patch_dir --absolute)/zic_v0.31.0-dev.126_to_dev.127_startup-buffer-refill-closure.patch"
+
+git apply --index   "$(python3 tool/workspace_config.py patch_dir --absolute)/zic_v0.31.0-dev.126_to_dev.127_startup-buffer-refill-closure.patch"
+```
+
+正式 ZIP 不包含 `.zic-workspace.json`，patch 不触碰本地配置。

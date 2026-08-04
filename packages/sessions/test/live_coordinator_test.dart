@@ -411,6 +411,139 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+
+  test('startup buffering chains current through later staged waterlines',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'live_startup_buffer_refill_test_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final source = File('${temp.path}/source.webp');
+    await source.writeAsBytes('RIFF....WEBPstartup'.codeUnits);
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'startup',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: source.uri,
+    );
+    final decodeId = DecodeId(
+      download: id,
+      physicalWidth: 8,
+      physicalHeight: 8,
+      pixelFormat: PixelFormat.rgba8888,
+      renderer: RendererKind.flutterImage,
+    );
+    final clock = _Clock();
+    final trace = MemoryTraceSink();
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+      sources: SourcePool(
+        factory: _TestSourceFactory(),
+        budgetFor: (_) => 1024,
+      ),
+      traceSink: trace,
+    );
+    final decodes = DecodeRegistry(
+      downloads: downloads,
+      cursors: _StartupAnimationCursorFactory(),
+      clock: clock,
+      traceSink: trace,
+    );
+    final uploads = UploadRegistry(
+      decodes: decodes,
+      uploader: _TestUploader(),
+      clock: clock,
+      traceSink: trace,
+    );
+    final coordinator = LiveCoordinator(
+      registry: downloads,
+      transportFor: (_) => const FileTransport(),
+      clock: clock,
+      traceSink: trace,
+      decodes: decodes,
+      uploads: uploads,
+      net: NetLane(maxActive: 1),
+      decode: DecodeLane(maxActive: 1),
+      upload: UploadLane(maxActive: 1),
+    );
+    final plan = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{
+        id: const DownloadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'startup-buffer',
+          expirationRevision: 2,
+        ),
+      },
+      decodes: <DecodeId, DecodeDemand>{
+        decodeId: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 7,
+          reason: 'startup-buffer',
+          expirationRevision: 2,
+        ),
+      },
+      uploads: <DecodeId, UploadDemand>{
+        decodeId: const UploadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'startup-buffer',
+          expirationRevision: 2,
+        ),
+      },
+      keep: <ResourceId>{
+        ResourceId.download(id),
+        ResourceId.decode(decodeId),
+      },
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: plan,
+        diff: DemandDiff.between(DemandPlan.empty(), plan),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    await coordinator.idle();
+
+    final upload = uploads.find(decodeId);
+    final claim = upload?.claimPresent();
+    expect(claim, isNotNull);
+    await upload!.present(claim!);
+    claim.release();
+    expect(upload.startupBuffering, isTrue);
+
+    coordinator.refreshDecodeScheduling('reader', only: decodeId);
+    await coordinator.idle();
+
+    expect(upload.startupBuffering, isFalse);
+    expect(upload.playbackRunning, isTrue);
+    expect(decodes.find(decodeId)!.snapshot.depth, greaterThanOrEqualTo(7));
+    final stages = trace.events
+        .where((event) => event.kind == TraceEventKind.decodeRefill)
+        .map((event) => event.payload['stage'])
+        .toList(growable: false);
+    expect(stages, containsAllInOrder(<Object?>['c>2', 'c>4', 'c>6']));
+    expect(
+      trace.events
+          .where((event) => event.kind == TraceEventKind.playbackBuffering)
+          .map((event) => event.payload['state']),
+      containsAllInOrder(<Object?>['waiting', 'ready']),
+    );
+
+    await coordinator.dispose();
+    uploads.dispose();
+    decodes.dispose();
+    await downloads.dispose();
+  });
+
   test('source-ready prefetch refill is directed to its own decode id',
       () async {
     final temp = await Directory.systemTemp.createTemp(
@@ -1121,6 +1254,47 @@ final class _StaticCursor implements FrameCursor, LoopCursor {
     _emitted = true;
     return CursorStep.frame(_TestFrame(epoch, 0));
   }
+
+  @override
+  void dispose() {}
+}
+
+
+final class _StartupAnimationCursorFactory implements CursorFactory {
+  @override
+  CursorBinding create({
+    required DecodeId id,
+    required EncodedSource source,
+    required int epoch,
+  }) {
+    final cursor = _StartupAnimationCursor(epoch);
+    return CursorBinding(frames: cursor, loop: cursor);
+  }
+}
+
+final class _StartupAnimationCursor implements FrameCursor, LoopCursor {
+  _StartupAnimationCursor(this.epoch);
+
+  @override
+  final int epoch;
+  int _next = 0;
+
+  @override
+  AnimationInfo get animation => const AnimationInfo(
+        frameCount: 93,
+        loopCount: 0,
+        complete: true,
+      );
+
+  @override
+  int get cycle => 0;
+
+  @override
+  bool rewind() => true;
+
+  @override
+  Future<CursorStep> decodeNext() async =>
+      CursorStep.frame(_TestFrame(epoch, _next++));
 
   @override
   void dispose() {}

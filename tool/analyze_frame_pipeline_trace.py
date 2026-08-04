@@ -711,6 +711,34 @@ def summarize(path: Path) -> dict[str, Any]:
     startup_first_timings = [
         row for row in rows if row["startupFrameOrdinal"] == 0
     ]
+    buffering_waits: dict[tuple[str, str], dict[str, Any]] = {}
+    buffering_completed: list[dict[str, Any]] = []
+    for row in playback_buffering:
+        key = (str(row.get("sessionId", "")), str(row.get("identityHash", "")))
+        if row.get("state") == "waiting":
+            buffering_waits.setdefault(key, row)
+        elif row.get("state") == "ready":
+            waiting = buffering_waits.pop(key, None)
+            if waiting is not None:
+                buffering_completed.append(
+                    {
+                        "sessionId": row.get("sessionId"),
+                        "identityHash": row.get("identityHash"),
+                        "waitMicros": max(
+                            0,
+                            _number(row.get("t")) - _number(waiting.get("t")),
+                        ),
+                        "targetDepth": row.get("targetDepth"),
+                    }
+                )
+    trace_end = max((_number(event.get("t")) for event in events), default=0)
+    buffering_outstanding = [
+        {
+            **waiting,
+            "waitMicros": max(0, trace_end - _number(waiting.get("t"))),
+        }
+        for waiting in buffering_waits.values()
+    ]
 
     return {
         "trace": str(path),
@@ -876,6 +904,12 @@ def summarize(path: Path) -> dict[str, Any]:
         "playbackBufferingReadyCount": sum(
             1 for row in playback_buffering if row["state"] == "ready"
         ),
+        "playbackBufferingCompletedCount": len(buffering_completed),
+        "playbackBufferingWaitMicros": _stats(
+            [row["waitMicros"] for row in buffering_completed]
+        ),
+        "playbackBufferingOutstandingCount": len(buffering_outstanding),
+        "playbackBufferingOutstanding": buffering_outstanding,
         "playbackBuffering": playback_buffering,
         "textureLeasePresentationCount": len(texture_presentations),
         "textureLeaseReuseCount": sum(

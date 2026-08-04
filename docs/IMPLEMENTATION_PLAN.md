@@ -2,16 +2,18 @@
 
 本文件只列未完成工作。
 
-## P0：启动播放节奏设备闭环
+## P0：启动缓冲闭环设备验证
 
-- 确认 `playbackBuffering` 依次出现 waiting/ready；
-- 对齐 nominal frame duration 与实际 visible interval；
-- 验证首帧仍快速显示、缓冲期间 next demand 未删除、ready 后邻页 refill 恢复；
-- 检查 `playbackLeadMicros` 是否降低 deadline miss，且没有提前跳帧。
+- 确认每个 `playbackBuffering waiting` 都对应一个 `ready`；
+-确认 current 按目标需要连续执行 `c>2/c>4/c>6`，而非停在 depth 3；
+-确认 `playbackBufferingOutstandingCount=0`；
+-确认 ready 后 next/next+1 refill 恢复，切页前首帧预解码不再被长期阻塞。
 
-## P0：低性能设备 native decode
+## P0：动画节奏设备闭环
 
-若 deadline lead 和启动缓冲后 cadence 仍不足，继续分析 worker dispatch/native decode，不通过降低帧率或扩大长期缓存掩盖。
+- 对齐 nominal duration 与 visible interval；
+-检查 deadline lead、native decode 和 platform present 是否仍产生持续停顿；
+-不通过降低播放速度或扩大长期缓存掩盖。
 
 ## P0：后台与 partial 回归
 

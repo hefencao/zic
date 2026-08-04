@@ -758,6 +758,10 @@ final class PipelineReaderSession {
 
   void _handleUploadSnapshot(DecodeId id, UploadSnapshot snapshot) {
     _pageOutputs[id.download.key]?._accept(id, snapshot);
+    if (snapshot.state == UploadState.ready &&
+        _uploads.isStartupBuffering(id)) {
+      _coordinator.refreshDecodeScheduling(sessionId, only: id);
+    }
     // Pipeline reconciliation can create the upload session after the viewport
     // observation was applied. Re-project the existing viewport so a late
     // transition session is frozen and a late current session is resumed before

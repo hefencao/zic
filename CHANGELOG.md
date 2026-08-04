@@ -1,3 +1,12 @@
+## 0.31.0-dev.127：启动缓冲 Refill 闭包
+
+- 修复 dev.126 启动缓冲死锁：current 首档 `c>2` 补到 depth 3 后，可在同一 DecodeId 上继续 `c>4/c>6`，直至达到实际启动目标。
+- UploadSnapshot 在首帧后进入 startup buffering 时定向刷新 current decode scheduling，覆盖 upload/decode 完成顺序竞态。
+-普通非启动期仍禁止同一页面连续独占 lane，长期 7/5/3/2 和首帧立即显示保持。
+- Trace analyzer 新增 completed wait、outstanding buffering 和等待时长统计；修复前 Trace 检出 1 个持续约 3.78 秒的未闭合 buffering。
+-清理 `LiveCoordinator` 中重复的静态单帧条件。
+- Patch 命令统一直接使用 `$(python3 tool/workspace_config.py patch_dir --absolute)`，不再引入聊天级 `PATCH_DIR` 变量。
+
 ## 0.31.0-dev.126：启动播放缓冲与 Deadline Lead
 
 - 首帧继续立即呈现，但 current 长动画在约 250 ms、最多 7 帧的 successor 缓冲建立前不启动动画时钟。
