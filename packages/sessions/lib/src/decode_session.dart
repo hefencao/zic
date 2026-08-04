@@ -129,6 +129,17 @@ final class DecodeSession {
 
   int get _cycle => _cursor?.loop?.cycle ?? 0;
 
+  void _reportAnimationIfComplete() {
+    final animation = _cursor?.loop?.animation;
+    if (animation == null ||
+        !animation.complete ||
+        _reportedAnimation == animation) {
+      return;
+    }
+    _reportedAnimation = animation;
+    onAnimationResolved?.call(id, animation);
+  }
+
   DecodedFrameTiming? timingForFrame(int frameIndex) =>
       _frameTimings[frameIndex];
 
@@ -301,13 +312,7 @@ final class DecodeSession {
             return snapshot;
           case CursorStepKind.end:
             final loop = _cursor!.loop;
-            final animation = loop?.animation;
-            if (animation != null &&
-                animation.complete &&
-                _reportedAnimation != animation) {
-              _reportedAnimation = animation;
-              onAnimationResolved?.call(id, animation);
-            }
+            _reportAnimationIfComplete();
             if (loop != null && holder.isEmpty && loop.rewind()) {
               _nextFrameHintIndex = 0;
               _requiredSourceLength = 0;
@@ -341,6 +346,7 @@ final class DecodeSession {
             _nextFrameHintIndex = frame.index + 1;
             _requiredSourceLength = 0;
             holder.add(frame);
+            _reportAnimationIfComplete();
             final timing = frame is FrameDecodeTiming
                 ? frame as FrameDecodeTiming
                 : null;

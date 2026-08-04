@@ -1185,10 +1185,12 @@ ImportedChapterRecord imageFolderChapterRecord(
             contentKindHint: _contentKindHint(image.format),
             mediaFormat: image.format.name,
             byteLength: image.byteLength,
-            // GIF is intrinsically animated. WebP animation must be
-            // confirmed from its container/runtime metadata; the extension
-            // alone also covers static WebP images.
-            animatedHint: image.format == LocalImageFormat.gif,
+            // GIF is intrinsically animated. WebP is an unresolved animation
+            // candidate until the decoder reports authoritative container
+            // metadata; treating it as static here can suppress frame-zero
+            // bootstrap before runtime classification has a chance to run.
+            animatedHint: image.format == LocalImageFormat.gif ||
+                image.format == LocalImageFormat.webp,
           ),
         )
         .toList(growable: false),

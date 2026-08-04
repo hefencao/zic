@@ -593,6 +593,8 @@ void main() {
       revision: 1,
       cancel: CancelToken(),
     );
+    expect(resolvedAnimation?.complete, isTrue);
+    expect(resolvedAnimation?.frameCount, 1);
     expect(decode.holder!.consume(0), isTrue);
     final ended = await decode.fill(
       demand: demand,

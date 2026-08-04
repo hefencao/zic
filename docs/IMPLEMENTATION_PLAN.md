@@ -2,28 +2,20 @@
 
 本文件只列未完成工作。
 
-## P0：运行时 WebP 分类设备闭环
+## P0：单帧 Bootstrap 设备闭环
 
-- 在纵向 Venera 静态 WebP 章节确认出现 `mediaClassified animated=false`；
-- 确认两页静态后 `assumeUnresolvedStatic=true`，邻页出现 static-warm decode/upload；
-- 验证邻页在成为 current 前得到首帧，且真实动画 WebP 仍维持 staged 水位；
-- 若 frameCount/complete 仍无法区分，扩展 native animation metadata，不以扩展名替代。
+- 横向动态 WebP 确认出现 `decodeRefill stage=one>0` 和 frame 0；
+- 确认第一帧后出现 `mediaClassified animated=true`，随后 current 进入 c>3/c>5/c>7；
+- 纵向静态邻页确认在成为 current 前完成 `one>0`、上传和首帧；
+- 确认不再出现 policy 有 target=1 demand、但没有 decodeStarted 的情况。
 
-## P0：纵向轻量 Host 与 Output 生命周期
+## P0：剩余首帧性能
 
-- 确认 current±4 host Trace 为 `keepAlive=true`，轻微反向滑动不 dispose/remount；
--若仍有顶部重载，区分 output FrameBudget eviction、Surface lease 替换和 source failure；
--禁止 Widget 持有 frame、texture 或 cache body。
+分别比较 source wait、native decode、output prepare 与 presentation，禁止把动态和静态 Trace 混合归因。
 
-## P0：空 Artifact 自愈工具链闭环
+## P0：Flutter 与 Android 工具链
 
-- 运行 Flutter analyzer/tests，确认 backend 必需 invalidation 接口全部实现；
--在有历史毒化条目的设备确认自动失效、回源和首帧；
--若出现非零但无效正文，增加 header/error-body 分类。
-
-## P0：剩余加载性能
-
-继续比较 direct ingress、texture reuse、outputPrepare 与 mount-to-first-frame，分别评估静态和动画章节。
+运行 analyzer、owner tests 和 Android debug/release，确认实际编译闭包。
 
 ## P1：解除 Source Browser quarantine
 

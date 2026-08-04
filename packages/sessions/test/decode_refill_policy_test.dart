@@ -83,6 +83,85 @@ void main() {
     expect(decision?.role, PageRole.next);
     expect(decision?.targetWatermark, 2);
   });
+  test('single-frame demands bootstrap before staged animation waterlines', () {
+    final current = _id('current-static');
+    final neighbor = _id('neighbor-static');
+    final demands = <DecodeId, DecodeDemand>{
+      neighbor: DecodeDemand(
+        role: PageRole.next,
+        priority: 820,
+        targetWatermark: 1,
+        reason: 'heuristic:static-warm:next',
+        expirationRevision: 2,
+      ),
+      current: DecodeDemand(
+        role: PageRole.current,
+        priority: 1000,
+        targetWatermark: 1,
+        reason: 'heuristic:static-warm:current',
+        expirationRevision: 2,
+      ),
+    };
+    final depth = <DecodeId, int>{current: 0, neighbor: 0};
+
+    var decision = const StagedDecodeRefillPolicy().next(
+      demands: demands,
+      depthOf: (id) => depth[id]!,
+    );
+    expect(decision?.id, current);
+    expect(decision?.stage, 'one>0');
+    expect(decision?.targetWatermark, 1);
+    depth[current] = 1;
+
+    decision = const StagedDecodeRefillPolicy().next(
+      demands: demands,
+      depthOf: (id) => depth[id]!,
+    );
+    expect(decision?.id, neighbor);
+    expect(decision?.stage, 'one>0');
+  });
+
+  test('animated current waterline outranks lower-priority static warming', () {
+    final current = _id('animated-current');
+    final neighbor = _id('static-neighbor');
+    final demands = <DecodeId, DecodeDemand>{
+      current: _demand(PageRole.current, 8),
+      neighbor: DecodeDemand(
+        role: PageRole.next,
+        priority: 820,
+        targetWatermark: 1,
+        reason: 'heuristic:static-warm:next',
+        expirationRevision: 2,
+      ),
+    };
+
+    final decision = const StagedDecodeRefillPolicy().next(
+      demands: demands,
+      depthOf: (_) => 0,
+    );
+
+    expect(decision?.id, current);
+    expect(decision?.stage, 'c>3');
+  });
+
+  test('terminal single-frame demand does not block another bootstrap', () {
+    final current = _id('ended-static');
+    final neighbor = _id('waiting-static');
+    final demands = <DecodeId, DecodeDemand>{
+      current: _demand(PageRole.current, 1),
+      neighbor: _demand(PageRole.next, 1),
+    };
+
+    final decision = const StagedDecodeRefillPolicy().next(
+      demands: demands,
+      depthOf: (_) => 0,
+      terminalOf: (id) => id == current,
+    );
+
+    expect(decision?.id, neighbor);
+    expect(decision?.stage, 'one>0');
+  });
+
   test('transition is the logical next across every staged watermark', () {
     final current = _id('c');
     final transition = _id('transition');

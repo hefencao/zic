@@ -47,6 +47,30 @@ final class StagedDecodeRefillPolicy {
     required DecodeDepthLookup depthOf,
     DecodeTerminalLookup terminalOf = _neverTerminal,
   }) {
+    final oneFrame = demands.entries
+        .where(
+          (entry) =>
+              entry.value.targetWatermark == 1 &&
+              !terminalOf(entry.key) &&
+              depthOf(entry.key) < 1,
+        )
+        .toList(growable: false)
+      ..sort((a, b) {
+        final priority = b.value.priority.compareTo(a.value.priority);
+        if (priority != 0) return priority;
+        return a.key.key.compareTo(b.key.key);
+      });
+    final oneFrameDecision = oneFrame.isEmpty
+        ? null
+        : DecodeRefillDecision(
+            id: oneFrame.first.key,
+            role: oneFrame.first.value.role,
+            stage: 'one>0',
+            depth: depthOf(oneFrame.first.key),
+            threshold: 0,
+            targetWatermark: 1,
+          );
+
     final byRole = <PageRole, DecodeId>{};
     for (final entry in demands.entries) {
       byRole[entry.value.role] = entry.key;
@@ -76,6 +100,7 @@ final class StagedDecodeRefillPolicy {
       _RefillStep(_WaterlineRole.next2, 3, 'm>3'),
     ];
 
+    DecodeRefillDecision? stagedDecision;
     for (final step in steps) {
       final id = logical[step.role];
       if (id == null || terminalOf(id)) {
@@ -90,7 +115,7 @@ final class StagedDecodeRefillPolicy {
       if (depth > step.threshold) {
         continue;
       }
-      return DecodeRefillDecision(
+      stagedDecision = DecodeRefillDecision(
         id: id,
         role: demand.role,
         stage: step.stage,
@@ -98,8 +123,15 @@ final class StagedDecodeRefillPolicy {
         threshold: step.threshold,
         targetWatermark: (step.threshold + 1).clamp(1, maximum).toInt(),
       );
+      break;
     }
-    return null;
+    if (oneFrameDecision == null) return stagedDecision;
+    if (stagedDecision == null) return oneFrameDecision;
+    final oneFramePriority = demands[oneFrameDecision.id]!.priority;
+    final stagedPriority = demands[stagedDecision.id]!.priority;
+    return oneFramePriority > stagedPriority
+        ? oneFrameDecision
+        : stagedDecision;
   }
 }
 

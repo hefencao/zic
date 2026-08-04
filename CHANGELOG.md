@@ -1,3 +1,11 @@
+## 0.31.0-dev.117：单帧 WebP Bootstrap
+
+- 修复 `targetWatermark=1` demand 被 staged refill 永久跳过，新增按 priority 执行的 `one>0` 单帧阶段。
+- DecodeSession 在首帧后即可上报完整 animation metadata，不再等待 cursor end。
+- 本地 WebP 初始作为潜在动画候选，权威分类后动态页恢复 8/6/4/3，静态页保持一帧预算。
+- 新增 sessions/local_media_ui owner tests 与 dev.117 静态门禁。
+- README、Architecture、Spec 未修改。
+
 ## 0.31.0-dev.116：运行时 WebP 分类与编译闭包
 
 - 修复 dev.115 cache invalidation 可选接口造成的 Dart 编译失败；`invalidateArtifact` 内聚为 `ArtifactCacheBackend` 必需原语。
