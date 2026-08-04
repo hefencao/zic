@@ -178,6 +178,7 @@ def summarize(path: Path) -> dict[str, Any]:
     texture_presentations: list[dict[str, Any]] = []
     retained_output_restores: list[dict[str, Any]] = []
     decode_source_growth_waits: list[dict[str, Any]] = []
+    playback_buffering: list[dict[str, Any]] = []
     policy_decisions: list[dict[str, Any]] = []
     media_classifications: list[dict[str, Any]] = []
     first_frame_readies: list[dict[str, Any]] = []
@@ -374,6 +375,19 @@ def summarize(path: Path) -> dict[str, Any]:
                         payload.get("artifactWriteMicros")
                     ),
                     "residentSource": payload.get("residentSource"),
+                }
+            )
+        elif kind == "playbackBuffering":
+            playback_buffering.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "identityHash": event.get("identityHash"),
+                    "state": payload.get("state"),
+                    "frame": _number(payload.get("frame")),
+                    "successorDepth": _number(payload.get("successorDepth")),
+                    "targetDepth": _number(payload.get("targetDepth")),
+                    "durationMicros": _number(payload.get("durationMicros")),
                 }
             )
         elif kind == "frameUploaded" and payload.get("restored") is True:
@@ -858,6 +872,11 @@ def summarize(path: Path) -> dict[str, Any]:
         "retainedOutputRestores": retained_output_restores,
         "decodeSourceGrowthWaitCount": len(decode_source_growth_waits),
         "decodeSourceGrowthWaits": decode_source_growth_waits,
+        "playbackBufferingCount": len(playback_buffering),
+        "playbackBufferingReadyCount": sum(
+            1 for row in playback_buffering if row["state"] == "ready"
+        ),
+        "playbackBuffering": playback_buffering,
         "textureLeasePresentationCount": len(texture_presentations),
         "textureLeaseReuseCount": sum(
             1 for row in texture_presentations

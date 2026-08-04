@@ -53,6 +53,7 @@ enum TraceEventKind {
   framePresented,
   framePipelineTiming,
   playbackFrameDue,
+  playbackBuffering,
   playbackCompleted,
   sourceReady,
   sourceDisabled,

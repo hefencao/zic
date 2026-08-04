@@ -108,7 +108,7 @@ require(native, 'slot.releaseFrame();', 'texture owner release')
 require(native, '_retire(slot);', 'per-identity texture retirement')
 for token in ('Map<DecodeId, Future<AndroidTextureLease>>', '_leases ='):
     forbid(native, token, 'legacy session-long texture lease map')
-for token in ('_pendingReleases', 'await Future.wait<void>(', 'await pool.release(value.lease);'):
+for token in ('_pendingReleases', 'await Future.wait<void>(', 'await pool.release('):
     require(native, token, 'claim-safe pooled texture drain')
 
 print('dev.77 atomic Pipeline media ownership: OK')

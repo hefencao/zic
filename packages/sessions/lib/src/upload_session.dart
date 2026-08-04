@@ -131,6 +131,10 @@ final class UploadSession {
   final Map<int, int> _startupFrameOrdinals = <int, int>{};
   PageRole? _latestDemandRole;
   int? _nextUploadEligibleAtMicros;
+  bool _startupBuffering = false;
+  bool _startupBufferSatisfied = false;
+  int _startupBufferTarget = 0;
+  int _playbackLeadMicros = 0;
 
   final Set<UploadSnapshotListener> _listeners =
       <UploadSnapshotListener>{};
@@ -159,6 +163,7 @@ final class UploadSession {
   }
   PlaybackState get playbackState => _playback.state;
   bool get playbackRunning => _playback.state == PlaybackState.running;
+  bool get startupBuffering => _startupBuffering;
 
   void addSnapshotListener(
     UploadSnapshotListener listener, {
@@ -198,6 +203,11 @@ final class UploadSession {
     _releaseUploaderWhenIdle = false;
     _revision = revision;
     _latestDemandRole = demand.role;
+    if (demand.role != PageRole.current) {
+      _startupBuffering = false;
+      _startupBufferSatisfied = false;
+      _startupBufferTarget = 0;
+    }
     final prepared = _serializePrepare(
       () => _prepareNow(
         demand: demand,
@@ -328,7 +338,10 @@ final class UploadSession {
         decodeSnapshot.animation.frameCount > 1) {
       // Decode may run ahead to its watermark, but upload remains deadline-owned.
       // Consuming the successor here would replace the visible frame before
-      // its duration elapsed.
+      // its duration elapsed. A current-page startup gate may arm playback once
+      // the requested successor buffer is actually resident.
+      _maybeEnterStartupBuffer(demand);
+      _maybeReleaseStartupBuffer(demand);
       _setState(UploadState.ready);
       return snapshot;
     }
@@ -525,6 +538,10 @@ final class UploadSession {
     final decodeBefore = decode.snapshot;
     _playback.clear();
     _nextUploadEligibleAtMicros = null;
+    _startupBuffering = false;
+    _startupBufferSatisfied = false;
+    _startupBufferTarget = 0;
+    _playbackLeadMicros = 0;
     _slot = null;
     _retainedWithoutDemand = false;
     _framePipelineTimings.remove(frameIndex);
@@ -619,12 +636,42 @@ final class UploadSession {
             (presentedAtMicros - presentationAckCreditMicros)
                 .clamp(presentStartedAt, presentedAtMicros)
                 .toInt();
-        _playback.start(
-          frameIndex: claim.frame.index,
-          duration: Duration(microseconds: scaledMicros),
-          nowUs: visibleAtMicros,
-        );
-        _syncPlaybackPause(visibleAtMicros);
+        final holderDepth = decode.holder?.depth ?? 0;
+        final startupTarget = _startupTargetFor(scaledMicros);
+        final currentStartup = _latestDemandRole == PageRole.current &&
+            !_startupBufferSatisfied &&
+            animation.complete &&
+            animation.frameCount >= 7;
+        if (currentStartup && holderDepth < startupTarget) {
+          _startupBuffering = true;
+          _startupBufferTarget = startupTarget;
+          _playback.clear();
+          _nextUploadEligibleAtMicros = null;
+          _emit(
+            TraceEventKind.playbackBuffering,
+            <String, Object?>{
+              'state': 'waiting',
+              'frame': claim.frame.index,
+              'successorDepth': holderDepth,
+              'targetDepth': startupTarget,
+              'durationMicros': scaledMicros,
+            },
+          );
+        } else {
+          _startupBuffering = false;
+          if (_latestDemandRole != PageRole.current || animation.complete) {
+            _startupBufferSatisfied = true;
+          }
+          _startupBufferTarget = startupTarget;
+          _armPlayback(
+            frameIndex: claim.frame.index,
+            durationMicros: scaledMicros,
+            visibleAtMicros: visibleAtMicros,
+            leadMicros: (visibleAtMicros - presentStartedAt)
+                .clamp(0, scaledMicros)
+                .toInt(),
+          );
+        }
       } else {
         // Static frames have zero duration and must remain resident until the
         // upload window or frame budget retires them. A zero-length playback
@@ -668,6 +715,9 @@ final class UploadSession {
         'animationFrameCount': animation.frameCount,
         'animationComplete': animation.complete,
         'successorDepth': decode.holder?.depth ?? 0,
+        'startupBuffering': _startupBuffering,
+        'startupBufferTarget': _startupBufferTarget,
+        'playbackLeadMicros': _playbackLeadMicros,
       },
     );
   }
@@ -828,6 +878,105 @@ final class UploadSession {
         'renderer': frame.renderer.name,
       },
     );
+  }
+
+  int _startupTargetFor(int durationMicros) {
+    if (durationMicros <= 0) return 0;
+    final target = (250000 / durationMicros).ceil();
+    if (target < 2) return 2;
+    if (target > 7) return 7;
+    return target;
+  }
+
+  void _maybeEnterStartupBuffer(UploadDemand demand) {
+    if (_startupBuffering ||
+        _startupBufferSatisfied ||
+        demand.role != PageRole.current) {
+      return;
+    }
+    final animation = decode.snapshot.animation;
+    final slot = _slot;
+    if (slot == null ||
+        slot.frame.disposed ||
+        !animation.complete ||
+        animation.frameCount < 7) {
+      return;
+    }
+    final micros = slot.frame.duration.inMicroseconds;
+    final scaledMicros = micros <= 0 ? 0 : (micros / _playbackSpeed).round();
+    final target = _startupTargetFor(scaledMicros);
+    if (target <= 0) return;
+    final depth = decode.holder?.depth ?? 0;
+    _startupBufferTarget = target;
+    if (depth >= target) {
+      _startupBufferSatisfied = true;
+      return;
+    }
+    _startupBuffering = true;
+    _playback.clear();
+    _nextUploadEligibleAtMicros = null;
+    _emit(
+      TraceEventKind.playbackBuffering,
+      <String, Object?>{
+        'state': 'waiting',
+        'frame': slot.frame.index,
+        'successorDepth': depth,
+        'targetDepth': target,
+        'durationMicros': scaledMicros,
+      },
+    );
+  }
+
+  void _maybeReleaseStartupBuffer(UploadDemand demand) {
+    if (!_startupBuffering || demand.role != PageRole.current) return;
+    final slot = _slot;
+    if (slot == null || slot.frame.disposed) return;
+    final depth = decode.holder?.depth ?? 0;
+    if (depth < _startupBufferTarget) return;
+    _startupBuffering = false;
+    _startupBufferSatisfied = true;
+    final micros = slot.frame.duration.inMicroseconds;
+    final scaledMicros = micros <= 0 ? 0 : (micros / _playbackSpeed).round();
+    if (scaledMicros <= 0) return;
+    final nowUs = clock.nowMicros();
+    _armPlayback(
+      frameIndex: slot.frame.index,
+      durationMicros: scaledMicros,
+      visibleAtMicros: nowUs,
+      leadMicros: 0,
+    );
+    _emit(
+      TraceEventKind.playbackBuffering,
+      <String, Object?>{
+        'state': 'ready',
+        'frame': slot.frame.index,
+        'successorDepth': depth,
+        'targetDepth': _startupBufferTarget,
+        'durationMicros': scaledMicros,
+      },
+    );
+    _notifySnapshot();
+  }
+
+  void _armPlayback({
+    required int frameIndex,
+    required int durationMicros,
+    required int visibleAtMicros,
+    required int leadMicros,
+  }) {
+    final measuredLead = leadMicros <= 0
+        ? _playbackLeadMicros
+        : leadMicros.clamp(0, durationMicros).toInt();
+    _playbackLeadMicros = measuredLead;
+    final anchor = (visibleAtMicros - measuredLead)
+        .clamp(0, visibleAtMicros)
+        .toInt();
+    _playback.start(
+      frameIndex: frameIndex,
+      duration: Duration(microseconds: durationMicros),
+      nowUs: anchor,
+    );
+    _syncPlaybackPause(visibleAtMicros);
   }
 
   /// Records viewport-owned freeze independently from the user's pause state.
@@ -1023,6 +1172,10 @@ final class UploadSession {
   void _retireCurrent() {
     _playback.clear();
     _nextUploadEligibleAtMicros = null;
+    _startupBuffering = false;
+    _startupBufferSatisfied = false;
+    _startupBufferTarget = 0;
+    _playbackLeadMicros = 0;
     _awaitingSuccessor = false;
     final slot = _slot;
     _slot = null;

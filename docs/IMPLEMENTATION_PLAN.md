@@ -2,22 +2,21 @@
 
 本文件只列未完成工作。
 
-## P0：后台恢复闭环
+## P0：启动播放节奏设备闭环
 
-- 验证新 Reader 命中同一 DecodeId 的 retained output；
-- 检查 `retainedOutputRestoreCount`、恢复后的 mount-to-first-frame 和 redraw present；
-- 确认 authoritative download/decode 继续并替换恢复帧；
-- 验证不同 DecodeId 或超 64 MiB 时不会错误恢复。
+- 确认 `playbackBuffering` 依次出现 waiting/ready；
+- 对齐 nominal frame duration 与实际 visible interval；
+- 验证首帧仍快速显示、缓冲期间 next demand 未删除、ready 后邻页 refill 恢复；
+- 检查 `playbackLeadMicros` 是否降低 deadline miss，且没有提前跳帧。
 
-## P0：Partial failure 闭环
+## P0：低性能设备 native decode
 
-- 通过可控增长 source 触发 native partial failure；
-- 未封缄时只出现 `decode-source-growth`，不出现定时 `decode-recovery`；
-- source revision 增长后继续原 cursor；
-- sealed corruption 仍进入有界恢复并保留错误可观测性。
+若 deadline lead 和启动缓冲后 cadence 仍不足，继续分析 worker dispatch/native decode，不通过降低帧率或扩大长期缓存掩盖。
 
-## P0：工具链与 Patch
+## P0：后台与 partial 回归
 
-- 运行 Flutter analyzer/tests、Android release 与设备 Trace；
-- 从干净 dev.124 验证 patch `git apply --check --index` 和实际 apply；
-- 正式 ZIP 必须排除 `.zic-workspace.json`，patch 不得修改用户本地配置。
+继续验证 retained output 恢复、source-growth wait 与 authoritative frame 替换。
+
+## P1：纵向 build/layout
+
+继续用设备 Timeline 验证稳定 page composition 与渐进 host warm 的实际收益。

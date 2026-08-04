@@ -1,3 +1,11 @@
+## 0.31.0-dev.126：启动播放缓冲与 Deadline Lead
+
+- 首帧继续立即呈现，但 current 长动画在约 250 ms、最多 7 帧的 successor 缓冲建立前不启动动画时钟。
+- 启动缓冲期间只允许 current 参与 decode refill；next/next+1 demand 保留，缓冲完成后恢复原 7/5/3/2 水位竞争。
+- 播放 deadline 按上一帧从 present 调用到实际可见调度的耗时提前，避免把 Surface/MethodChannel 成本逐帧叠加到 WebP duration。
+- 活动动画 ticker 从 16 ms 调整为 4 ms；无 runnable playback 时不运行。
+- 新增 `playbackBuffering` Trace、analyzer 指标、owner test 与 dev.126 门禁。
+
 ## 0.31.0-dev.125：后台恢复保留输出与 Partial Source Growth
 
 - Android texture pool 按完整 DecodeId 保留最后 platform frame，新 Reader 可先 redraw 恢复 output，后台 authoritative decode 继续并替换。

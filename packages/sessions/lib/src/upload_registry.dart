@@ -64,6 +64,9 @@ final class UploadRegistry {
 
   int preparedDepth(DecodeId id) => _sessions[id]?.preparedDepth ?? 0;
 
+  bool isStartupBuffering(DecodeId id) =>
+      _sessions[id]?.startupBuffering ?? false;
+
   bool hasRunnablePlayback(Iterable<DecodeId> ids) {
     for (final id in ids) {
       if (_sessions[id]?.playbackRunning == true) {

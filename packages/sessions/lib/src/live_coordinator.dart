@@ -946,11 +946,24 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     }());
   }
 
+  DecodeId? _startupBufferingCurrent() {
+    final registry = uploads;
+    if (registry == null) return null;
+    for (final entry in _decodes.entries) {
+      if (entry.value.role == PageRole.current &&
+          registry.isStartupBuffering(entry.key)) {
+        return entry.key;
+      }
+    }
+    return null;
+  }
+
   DecodeRefillDecision? _nextDecodeRefill({DecodeId? only}) {
     final registry = decodes;
     if (registry == null) {
       return null;
     }
+    final startupCurrent = _startupBufferingCurrent();
     return refillPolicy.next(
       demands: _decodes,
       depthOf: (id) => registry.find(id)?.snapshot.depth ?? 0,
@@ -976,6 +989,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       },
       eligibleOf: (id) {
         if (only != null && id != only) {
+          return false;
+        }
+        if (startupCurrent != null && id != startupCurrent) {
           return false;
         }
         final snapshot = registry.find(id)?.snapshot;

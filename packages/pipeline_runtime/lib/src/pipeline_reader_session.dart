@@ -953,7 +953,7 @@ final class PipelineReaderSession {
       return;
     }
     _playbackTicker ??= Timer.periodic(
-      const Duration(milliseconds: 16),
+      const Duration(milliseconds: 4),
       (_) => _advanceDueFrames(),
     );
   }

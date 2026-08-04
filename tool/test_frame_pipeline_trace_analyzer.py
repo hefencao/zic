@@ -299,6 +299,32 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
             },
         },
         {
+            "t": 705,
+            "sessionId": "upload-a",
+            "kind": "playbackBuffering",
+            "identityHash": "decode-current",
+            "payload": {
+                "state": "waiting",
+                "frame": 0,
+                "successorDepth": 2,
+                "targetDepth": 7,
+                "durationMicros": 33333,
+            },
+        },
+        {
+            "t": 706,
+            "sessionId": "upload-a",
+            "kind": "playbackBuffering",
+            "identityHash": "decode-current",
+            "payload": {
+                "state": "ready",
+                "frame": 0,
+                "successorDepth": 7,
+                "targetDepth": 7,
+                "durationMicros": 33333,
+            },
+        },
+        {
             "t": 710,
             "sessionId": "reader-resume",
             "kind": "retryScheduled",
@@ -378,6 +404,10 @@ assert report["decodeRecoveryAttemptCounts"] == {"1": 1}
 assert report["decodeRecoveries"][0]["bufferedDepth"] == 7
 assert report["decodePrefixHintCount"] == 1
 assert report["decodePrefixHints"][0]["nextSourceLength"] == 524288
+assert report["playbackBufferingCount"] == 2
+assert report["playbackBufferingReadyCount"] == 1
+assert report["playbackBuffering"][0]["targetDepth"] == 7
+assert report["playbackBuffering"][1]["state"] == "ready"
 assert report["rankedDownloadCount"] == 2
 assert report["rankedDownloadMaxGlobalActive"] == 3
 assert report["rankedDownloadMaxHandoffActive"] == 0
