@@ -2,27 +2,28 @@
 
 本文件只列未完成工作。
 
-## P0：Android native 产物闭环
+## P0：staged 水位与 last keep 设备闭环
 
-- 在 Android 环境运行 `tool/build_android_native.sh debug` 与 `release`；
-- 确认 build marker 与 retain/release/blit JNI symbols；
-- Gradle debug/release 必须拒绝旧或缺失 `.so`；
-- 设备 Trace 确认缺失 configure JNI 错误消失，platform presentation 恢复。
+- 验证 `decodeRefill` 顺序符合 c/n/m/p 阶段；
+- 验证 `lastFrameKept` 出现，旧 current 不再 `demand-detached`；
+- 验证 last→current 自动恢复播放；
+- 验证纵向重叠上半屏不再黑屏。
 
-## P0：前帧与重进设备验证
+## P0：首帧闭环
 
-- 比较首次进入与快速重进的首帧、前 12 帧、fallback、surface reconfigure 和 dispose；
-- 确认 reconfigure 只发生在首次/resize/recreate 或一次 lock retry；
-- 继续定位剩余 decode failure 与新 current 自动播放问题。
+- 比较 frame 0 platform presentation 与 `firstFrameReady`；
+- 确认首帧 upload 在 c refill 完成前启动；
+- 检查前 12 帧 native decode、channel dispatch 与 schedule queue。
 
-## P0：Flutter/Dart 闭包
+## P0：重进 coordinator dispose
 
-运行 analyzer、downloads/sessions/pipeline/texture package tests 和 App 目标 tests；失败按产品、测试和环境所有者处理。
+- 继续定位约 5.67 秒 coordinator dispose 长尾；
+- 区分 active decode、upload present、lane idle 和 session registry 清理。
+
+## P0：工具链闭包
+
+运行 Flutter analyzer/tests、Android native/APK debug/release 和 Rust tests。
 
 ## P1：解除 Source Browser quarantine
 
-为 Q-001 至 Q-003 建立直接 facade/widget harness。
-
-## 每轮收尾
-
-引用搜索、可用门禁、Status/Handoff/CHANGELOG/audit、干净打包与 ZIP 独立解压。
+为 Q-001 至 Q-003 建立直接 owner harness。

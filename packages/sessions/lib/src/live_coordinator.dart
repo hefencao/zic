@@ -7,6 +7,7 @@ import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
 import 'coordinator.dart';
+import 'decode_refill_policy.dart';
 import 'decode_registry.dart';
 import 'decode_session.dart';
 import 'download_job.dart';
@@ -48,6 +49,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     this.decodes,
     this.uploads,
     this.budgets,
+    this.refillPolicy = const StagedDecodeRefillPolicy(),
     NetLane? net,
     DecodeLane? decode,
     UploadLane? upload,
@@ -82,6 +84,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final DecodeRegistry? decodes;
   final UploadRegistry? uploads;
   final FrameBudgeter? budgets;
+  final StagedDecodeRefillPolicy refillPolicy;
   final NetLane net;
   final DecodeLane decode;
   final UploadLane upload;
@@ -454,10 +457,30 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       final registry = decodes;
       final before = registry?.find(id)?.snapshot;
       final preparedDepth = uploads?.preparedDepth(id) ?? 0;
+      final refill = registry == null ? null : _nextDecodeRefill();
+      if (registry != null) {
+        if (refill == null) {
+          return;
+        }
+        if (refill.id != id) {
+          _wakeDecode(sessionId, refill.id, force: true);
+          return;
+        }
+      }
+      final effectiveDemand = refill == null
+          ? current
+          : DecodeDemand(
+              role: current.role,
+              priority: current.priority,
+              targetWatermark: refill.targetWatermark,
+              reason: '${current.reason}:refill:${refill.stage}',
+              expirationRevision: current.expirationRevision,
+              decisionId: current.decisionId,
+            );
       if (registry != null &&
           !_decodeNeedsFill(
             before,
-            current,
+            effectiveDemand,
             preparedDepth: preparedDepth,
             sourceWake: sourceWake,
             force: force,
@@ -473,6 +496,24 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
 
       final decodeLaneQueueMicros =
           (clock.nowMicros() - submittedAtMicros).clamp(0, 1 << 62).toInt();
+      if (refill != null) {
+        traceSink.record(
+          traceEvent(
+            clock: clock,
+            sessionId: sessionId,
+            kind: TraceEventKind.decodeRefill,
+            identityHash: id.key,
+            revision: demandRevision,
+            payload: <String, Object?>{
+              'role': refill.role.name,
+              'stage': refill.stage,
+              'depth': refill.depth,
+              'threshold': refill.threshold,
+              'target': refill.targetWatermark,
+            },
+          ),
+        );
+      }
       _resourceTrace(
         sessionId,
         TraceEventKind.decodeStarted,
@@ -484,21 +525,27 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         DecodeSnapshot? after;
         final work = onDecode;
         if (work != null) {
-          await work(id, current, token);
+          await work(id, effectiveDemand, token);
         } else if (registry != null) {
           after = await registry.fill(
             id,
-            current,
+            effectiveDemand,
             token,
             revision: demandRevision,
             preparedDepth: preparedDepth,
             laneQueueMicros: decodeLaneQueueMicros,
+            onFrameReady: _uploads.containsKey(id)
+                ? (_) => _wakeUpload(sessionId, id)
+                : null,
           );
         }
         if (work != null || _decodeChangeNeedsUpload(before, after)) {
           _wakeUpload(sessionId, id);
         }
         _enforceBudget(sessionId);
+        if (registry != null) {
+          _wakeNextDecodeRefill(sessionId, except: id);
+        }
       } on Object catch (error) {
         if (error is! Failure || error.code != ErrorCode.cancelled) {
           final failedAtMicros = clock.nowMicros();
@@ -535,6 +582,32 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         return;
       }
     }
+  }
+
+  DecodeRefillDecision? _nextDecodeRefill() {
+    final registry = decodes;
+    if (registry == null) {
+      return null;
+    }
+    return refillPolicy.next(
+      demands: _decodes,
+      depthOf: (id) => registry.find(id)?.snapshot.depth ?? 0,
+      terminalOf: (id) {
+        final snapshot = registry.find(id)?.snapshot;
+        return snapshot != null &&
+            snapshot.state == DecodeState.ended &&
+            snapshot.failure == null &&
+            snapshot.animation.complete;
+      },
+    );
+  }
+
+  void _wakeNextDecodeRefill(String sessionId, {DecodeId? except}) {
+    final decision = _nextDecodeRefill();
+    if (decision == null || decision.id == except) {
+      return;
+    }
+    _wakeDecode(sessionId, decision.id, force: true);
   }
 
   bool _decodeNeedsFill(
@@ -608,7 +681,36 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         entry.value.priority,
         revision: demandRevision,
       );
-      if (onUpload == null && uploads == null) {
+      final uploadRegistry = uploads;
+      if (uploadRegistry != null &&
+          (entry.value.role == PageRole.current ||
+              entry.value.role == PageRole.transition)) {
+        uploadRegistry.resumePlayback(entry.key);
+      }
+      if (entry.value.role == PageRole.last && uploadRegistry != null) {
+        upload.cancel(entry.key.key);
+        final existing = uploadRegistry.find(entry.key);
+        if (existing != null) {
+          existing.freezePlayback();
+          if (existing.snapshot.frameIndex != null) {
+            traceSink.record(
+              traceEvent(
+                clock: clock,
+                sessionId: sessionId,
+                kind: TraceEventKind.lastFrameKept,
+                identityHash: entry.key.key,
+                revision: demandRevision,
+                payload: <String, Object?>{
+                  'frame': existing.snapshot.frameIndex,
+                  'outputBytes': existing.snapshot.outputBytes,
+                },
+              ),
+            );
+            continue;
+          }
+        }
+      }
+      if (onUpload == null && uploadRegistry == null) {
         continue;
       }
       _submitUpload(

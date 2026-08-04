@@ -137,6 +137,26 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
         {
             "t": 22,
             "sessionId": "reader-a",
+            "kind": "decodeRefill",
+            "identityHash": "decode-current",
+            "payload": {
+                "role": "current",
+                "stage": "c>3",
+                "depth": 2,
+                "threshold": 3,
+                "target": 4,
+            },
+        },
+        {
+            "t": 22,
+            "sessionId": "reader-a",
+            "kind": "lastFrameKept",
+            "identityHash": "decode-last",
+            "payload": {"frame": 7, "outputBytes": 4300800},
+        },
+        {
+            "t": 22,
+            "sessionId": "reader-a",
             "kind": "taskFailed",
             "payload": {
                 "lane": "decode",
@@ -192,6 +212,12 @@ assert report["readerSessionLifecycle"]["reader-a"]["handoffDrainMicros"] == 700
 assert report["cacheHandoffActionCounts"] == {"skip-existing": 1}
 assert report["cacheHandoffMicros"]["max"] == 700
 assert report["cacheHandoffs"][0]["bytes"] == 1048576
+assert report["decodeRefillCount"] == 1
+assert report["decodeRefillRoleCounts"] == {"current": 1}
+assert report["decodeRefillStageCounts"] == {"c>3": 1}
+assert report["decodeRefills"][0]["target"] == 4
+assert report["lastFrameKeptCount"] == 1
+assert report["lastFramesKept"][0]["frame"] == 7
 assert report["taskFailureCount"] == 1
 assert report["blitLockFailureCount"] == 1
 assert report["blitFallbackCount"] == 1

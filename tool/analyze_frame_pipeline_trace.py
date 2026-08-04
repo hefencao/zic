@@ -164,6 +164,8 @@ def summarize(path: Path) -> dict[str, Any]:
     failures: list[dict[str, Any]] = []
     source_reads: list[dict[str, Any]] = []
     cache_handoffs: list[dict[str, Any]] = []
+    decode_refills: list[dict[str, Any]] = []
+    last_frames_kept: list[dict[str, Any]] = []
     next_due_by_session: dict[str, int] = {}
     session_lifecycle: dict[str, dict[str, int]] = defaultdict(dict)
 
@@ -336,6 +338,29 @@ def summarize(path: Path) -> dict[str, Any]:
                     "completed": payload.get("completed"),
                 }
             )
+        elif kind == "decodeRefill":
+            decode_refills.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "identityHash": event.get("identityHash"),
+                    "role": payload.get("role"),
+                    "stage": payload.get("stage"),
+                    "depth": _number(payload.get("depth")),
+                    "threshold": _number(payload.get("threshold")),
+                    "target": _number(payload.get("target")),
+                }
+            )
+        elif kind == "lastFrameKept":
+            last_frames_kept.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "identityHash": event.get("identityHash"),
+                    "frame": payload.get("frame"),
+                    "outputBytes": _number(payload.get("outputBytes")),
+                }
+            )
         elif kind == "artifactSource" and payload.get("consumer") == "persistent-cache":
             cache_handoffs.append(
                 {
@@ -453,6 +478,16 @@ def summarize(path: Path) -> dict[str, Any]:
             [row["handoffMicros"] for row in cache_handoffs]
         ),
         "cacheHandoffs": cache_handoffs,
+        "decodeRefillCount": len(decode_refills),
+        "decodeRefillRoleCounts": dict(
+            Counter(str(row["role"]) for row in decode_refills)
+        ),
+        "decodeRefillStageCounts": dict(
+            Counter(str(row["stage"]) for row in decode_refills)
+        ),
+        "decodeRefills": decode_refills,
+        "lastFrameKeptCount": len(last_frames_kept),
+        "lastFramesKept": last_frames_kept,
         "sourceFirstChunkMicros": _stats(
             [row["firstChunkMicros"] for row in source_reads]
         ),
@@ -505,6 +540,13 @@ def main() -> None:
         f"surfaceReconfigures={report['surfaceReconfigureCount']}"
     )
     print(f"reader lifecycle: {report['readerSessionLifecycle']}")
+    print(
+        "decode refills: "
+        f"count={report['decodeRefillCount']} "
+        f"roles={report['decodeRefillRoleCounts']} "
+        f"stages={report['decodeRefillStageCounts']}"
+    )
+    print(f"last frames kept: {report['lastFrameKeptCount']}")
     print(
         f"cache handoff: actions={report['cacheHandoffActionCounts']} "
         f"timing={report['cacheHandoffMicros']}"

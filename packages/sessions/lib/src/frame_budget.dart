@@ -60,12 +60,13 @@ final class FrameBudgetReport {
   int get outputFreed => outputBefore - outputAfter;
 }
 
-/// Enforces frame budgets without sacrificing current-page resources.
+/// Enforces frame budgets without sacrificing visible page outputs.
 ///
-/// Current-page bytes are protected. Non-current resources may use only the
-/// non-reserved portion of each budget and are trimmed in ascending priority.
-/// If the current page alone exceeds the total budget, the report remains over
-/// budget rather than silently dropping the visible frame.
+/// Current decoded bytes are protected. Current, transition and frozen-last
+/// outputs are protected; other resources use only the non-reserved portion
+/// and are trimmed in ascending priority. If protected output alone exceeds
+/// the total budget, the report stays over budget rather than turning a
+/// visible page black.
 final class FrameBudgeter {
   FrameBudgeter({
     required this.decodes,
@@ -94,7 +95,7 @@ final class FrameBudgeter {
         .map((entry) => entry.key)
         .toSet();
     final currentUploadIds = uploadDemands.entries
-        .where((entry) => entry.value.role == PageRole.current)
+        .where((entry) => _protectsOutput(entry.value.role))
         .map((entry) => entry.key)
         .toSet();
 
@@ -142,7 +143,7 @@ final class FrameBudgeter {
 
   void _trimOutputs(Map<DecodeId, UploadDemand> demands) {
     final current = demands.entries
-        .where((entry) => entry.value.role == PageRole.current)
+        .where((entry) => _protectsOutput(entry.value.role))
         .map((entry) => entry.key)
         .toSet();
     final currentBytes = uploads.bytesFor(current);
@@ -181,3 +182,9 @@ final class FrameBudgeter {
     return remaining > 0 ? remaining : 0;
   }
 }
+
+
+bool _protectsOutput(PageRole role) =>
+    role == PageRole.current ||
+    role == PageRole.transition ||
+    role == PageRole.last;

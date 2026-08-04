@@ -9,7 +9,7 @@ import 'package:telemetry/telemetry.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('frame budget preserves current bytes and trims transition bytes', () async {
+  test('frame budget preserves current and last outputs only', () async {
     final temp = await Directory.systemTemp.createTemp('frame_budget_test_');
     final clock = _Clock();
     final downloads = DownloadRegistry(
@@ -31,9 +31,10 @@ void main() {
       clock: clock,
     );
     final current = _decodeId('current');
-    final transition = _decodeId('transition');
+    final last = _decodeId('last');
+    final near = _decodeId('near');
 
-    for (final id in <DecodeId>[current, transition]) {
+    for (final id in <DecodeId>[current, last, near]) {
       downloads.get(id.download).ingress!.append(
         epoch: const SourceEpoch(0),
         offset: 0,
@@ -42,9 +43,9 @@ void main() {
       await decodes.fill(
         id,
         DecodeDemand(
-          role: id == current ? PageRole.current : PageRole.transition,
-          priority: id == current ? 1000 : 900,
-          targetWatermark: id == current ? 3 : 2,
+          role: id == current ? PageRole.current : PageRole.near,
+          priority: id == current ? 1000 : 500,
+          targetWatermark: 2,
           reason: 'test',
           expirationRevision: 1,
         ),
@@ -54,8 +55,16 @@ void main() {
       await uploads.prepare(
         id,
         UploadDemand(
-          role: id == current ? PageRole.current : PageRole.transition,
-          priority: id == current ? 1000 : 900,
+          role: id == current
+              ? PageRole.current
+              : id == last
+                  ? PageRole.last
+                  : PageRole.near,
+          priority: id == current
+              ? 1000
+              : id == last
+                  ? 850
+                  : 500,
           reason: 'test',
           expirationRevision: 1,
         ),
@@ -69,7 +78,7 @@ void main() {
       uploads: uploads,
       limits: const FrameBudget(
         decodedBytes: 250,
-        outputBytes: 300,
+        outputBytes: 450,
         currentDecodedReserve: 100,
         currentOutputReserve: 100,
       ),
@@ -78,14 +87,14 @@ void main() {
         current: const DecodeDemand(
           role: PageRole.current,
           priority: 1000,
-          targetWatermark: 3,
+          targetWatermark: 2,
           reason: 'test',
           expirationRevision: 1,
         ),
-        transition: const DecodeDemand(
-          role: PageRole.transition,
-          priority: 900,
-          targetWatermark: 2,
+        near: const DecodeDemand(
+          role: PageRole.near,
+          priority: 500,
+          targetWatermark: 1,
           reason: 'test',
           expirationRevision: 1,
         ),
@@ -97,9 +106,15 @@ void main() {
           reason: 'test',
           expirationRevision: 1,
         ),
-        transition: const UploadDemand(
-          role: PageRole.transition,
-          priority: 900,
+        last: const UploadDemand(
+          role: PageRole.last,
+          priority: 850,
+          reason: 'test',
+          expirationRevision: 1,
+        ),
+        near: const UploadDemand(
+          role: PageRole.near,
+          priority: 500,
           reason: 'test',
           expirationRevision: 1,
         ),
@@ -107,12 +122,15 @@ void main() {
     );
 
     expect(decodes.find(current)?.bytes, 200);
-    expect(decodes.find(transition)?.bytes, 0);
+    expect(decodes.find(last)?.bytes, 0,
+        reason: 'last keeps the output, not decoded successors');
+    expect(decodes.find(near)?.bytes, 0);
     expect(uploads.find(current)?.outputBytes, 200);
-    expect(uploads.find(transition)?.outputBytes, 0);
+    expect(uploads.find(last)?.outputBytes, 200);
+    expect(uploads.find(near)?.outputBytes, 0);
     expect(report.currentDecoded, 200);
-    expect(report.currentOutput, 200);
-    expect(report.decodedFreed, 100);
+    expect(report.currentOutput, 400);
+    expect(report.decodedFreed, 400);
     expect(report.outputFreed, 200);
 
     uploads.dispose();

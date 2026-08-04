@@ -1,51 +1,38 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.109`  
-**App build：** `0.31.0+109`
+**源码版本：** `0.31.0-dev.110`  
+**App build：** `0.31.0+110`
 
-本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`；单轮 Trace 与命令见 `docs/audits/`。
+本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
-- **Implemented**：源码与引用闭包已核对。
-- **Verified-static**：静态、脚本、stub 或 host 检查通过。
-- **Verified-toolchain**：对应 Flutter/Rust/Android 工具链检查通过。
-- **Verified-device**：修复后已在设备复验。
+## 验证等级
+
+- **Implemented**：源码与引用闭包已建立。
+- **Verified-static**：当前环境的静态、stub 或 host 检查通过。
+- **Verified-toolchain**：对应 Flutter/Rust/Android 工具链通过。
+- **Verified-device**：修复后已经设备复验。
 - **Unverified**：实现存在但对应验证未完成。
-- **Quarantined**：测试目标仍有效但现有形态不稳定。
+- **Quarantined**：测试目标有效，但当前测试形态不稳定。
 
-## 当前所有权
+## 当前实现
 
-| 领域 | 权威所有者 |
-|---|---|
-| 普通网络响应缓存 | `resource_cache` |
-| Reader page-artifact tier 路由、L1 bytes、join 与 write-through | `downloads.ArtifactCacheManager` |
-| partial、seal、promotion 与 backend storage | `storage` + `ArtifactCacheBackend` |
-| Reader demand/session | `pipeline` + `pipeline_runtime` + `sessions` |
-| Reader Presentation | `reader_runtime` |
-| native decode与 Android window/blit | `bridge` + `native/media_core` |
-| SurfaceProducer 与 schedule | `texture_bridge` |
-| composition/navigation | `apps/app` |
-
-## 当前实现快照
-
-- 窗口保持下载 7/3、预解码 2/1、上传 current/transition、lane 5/3/2。
-- 两个 Dart decode isolate 常驻；libwebp 1.6.0 锁定、帧内单线程、current 两个 successor。
-- `ArtifactCacheManager` 内聚 memory tier、LRU、in-flight join、memory→backend lookup、长度校验、write-through 和 invalidation。
-- `ArtifactCacheBackend` 只提供 immutable promoted artifact 的 open/store；普通 response cache 保持独立。
-- Android geometry 与一次 lock retry 内聚在既有 Rust `NativeBlitter.blit` JNI；Kotlin 不再声明独立 configure。
-- Android native 产物使用 source build ID、JNI symbol 检查与 Gradle preBuild gate，拒绝旧 `.so`。
-- quarantine 使用稳定 `Q-xxx` ID；稳定文档遵守 `DOCUMENTATION_POLICY.md`。
-
-以上为 Implemented；工具链与设备验证状态见本轮 audit。
+- 下载窗口保持前 7 / 后 3，lane 保持 5/3/2。
+- decode 使用 staged c/n/m/p 水位上限：c 8、n 6、m 4、p 3；每次只补一个阶段，transition 作为逻辑 n。
+- last 是上一次 current：暂停播放并保留既有 output，不继续下载或解码；重新成为 current/transition 时恢复。
+- current/transition/last output 受 frame budget 保护；last decoded successors 可回收。
+- DecodeSession 每产出一帧即可唤醒 upload，refill 与首帧呈现并行。
+- Pipeline page output 同一 identity 只允许一个 in-flight presentation，首 Surface 不再被后续 frame generation 作废。
+- Artifact cache、native texture、libwebp 与 Android native build identity 维持 dev.109 所有权边界。
 
 ## 验证矩阵
 
 | 检查 | 状态 |
 |---|---|
 | repository/documentation/Dart/Kotlin static gates | Verified-static |
-| dev.75–dev.109 ownership gates | Verified-static |
-| pinned libwebp host prepare/build/smoke | Verified-static（host-native） |
+| dev.75–dev.110 ownership gates | Verified-static |
+| pinned libwebp host build/smoke | Verified-static |
 | Flutter analyzer/tests | Unverified：当前环境无 SDK |
-| Android native/APK debug/release | Unverified：当前环境无 Android toolchain |
-| dev.109 platform presentation/device re-entry | Unverified-device |
+| Android native/APK | Unverified：当前环境无 toolchain |
+| staged waterline / last keep / first Surface | Unverified-device |
 
-完整结果见 `docs/audits/dev109-validation-results.md`。
+完整结果见 `docs/audits/dev110-validation-results.md`。

@@ -1,3 +1,13 @@
+## 0.31.0-dev.110：分阶段解码水位与 last output 保留
+
+- 增加 `last`/`next2` 角色；last 不占 previous/next 槽，只冻结并保留既有 output。
+- 引入 staged c/n/m/p refill；transition 作为逻辑 n，batch 可自然越过阈值。
+- DecodeSession 每产出一帧即唤醒 upload，首帧呈现不等待整批 refill。
+- 串行化同一页面的 presentation，先发布首 Surface，再追到最新 pending frame。
+- current→last 取消 active upload 并冻结，last→current/transition 恢复；frame budget 保护 last output。
+- Trace 增加 `decodeRefill` 与 `lastFrameKept`；更新 owner tests 与静态门禁。
+- README/Architecture/Spec 未修改。
+
 ## 0.31.0-dev.109：Cache tier 内聚与 Android native build identity
 
 - 将 encoded-byte L1、LRU、in-flight join、tier lookup 和 write-through 内聚进 `ArtifactCacheManager`；backend 只保留 open/store。

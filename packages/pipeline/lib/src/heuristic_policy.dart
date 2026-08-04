@@ -66,10 +66,17 @@ final class HeuristicPolicy {
         keep.add(ResourceId.decode(decode));
       }
 
-      if (role == PageRole.current || role == PageRole.transition) {
+      if (role == PageRole.current ||
+          role == PageRole.transition ||
+          role == PageRole.last) {
         uploads[decode] = UploadDemand(
           role: role,
-          priority: role == PageRole.current ? 1000 : 900,
+          priority: switch (role) {
+            PageRole.current => 1000,
+            PageRole.transition => 900,
+            PageRole.last => 850,
+            _ => 0,
+          },
           reason: 'heuristic:${role.name}',
           expirationRevision: revision + 1,
         );
@@ -87,8 +94,10 @@ final class HeuristicPolicy {
 
   int _downloadPriority(PageRole role) => switch (role) {
         PageRole.current => 1000,
+        PageRole.last => 0,
         PageRole.transition => 900,
         PageRole.next => 720,
+        PageRole.next2 => 700,
         PageRole.previous => 680,
         PageRole.near => 520,
         PageRole.far => 400,
@@ -99,16 +108,17 @@ final class HeuristicPolicy {
         PageRole.current => 1000,
         PageRole.transition => 900,
         PageRole.next => decodeWarmPages ? 720 : 0,
+        PageRole.next2 => decodeWarmPages ? 700 : 0,
         PageRole.previous => decodeWarmPages ? 680 : 0,
-        PageRole.near => decodeWarmPages ? 520 : 0,
-        PageRole.far || PageRole.detached => 0,
+        PageRole.last || PageRole.near || PageRole.far || PageRole.detached => 0,
       };
 
   int _decodeWatermark(PageRole role) => switch (role) {
-        PageRole.current => 2,
-        PageRole.transition => 1,
-        PageRole.next || PageRole.previous || PageRole.near =>
-          decodeWarmPages ? 1 : 0,
-        PageRole.far || PageRole.detached => 0,
+        PageRole.current => 8,
+        PageRole.transition => 2,
+        PageRole.next => decodeWarmPages ? 6 : 0,
+        PageRole.next2 => decodeWarmPages ? 4 : 0,
+        PageRole.previous => decodeWarmPages ? 3 : 0,
+        PageRole.last || PageRole.near || PageRole.far || PageRole.detached => 0,
       };
 }

@@ -45,12 +45,22 @@ final class PipelineController {
   int _revision = 0;
   DemandPlan _previous = DemandPlan.empty();
   Map<int, PageRole>? _previousRoles;
+  int? _currentIndex;
+  int? _lastCurrentIndex;
 
   int get revision => _revision;
   DemandPlan get currentPlan => _previous;
 
   void accept(ReaderObs observation) {
-    final window = windowResolver.resolve(chapter, observation);
+    if (_currentIndex != null && _currentIndex != observation.currentIndex) {
+      _lastCurrentIndex = _currentIndex;
+    }
+    _currentIndex = observation.currentIndex;
+    final window = windowResolver.resolve(
+      chapter,
+      observation,
+      previousCurrentIndex: _lastCurrentIndex,
+    );
     if (_sameRoles(_previousRoles, window.roles)) {
       return;
     }

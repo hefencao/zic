@@ -98,7 +98,7 @@ void main() {
       plan.decodes.values.singleWhere(
         (value) => value.role == PageRole.current,
       ).targetWatermark,
-      2,
+      8,
     );
   });
 
@@ -161,7 +161,7 @@ void main() {
 
     expect(plan.downloads, hasLength(11));
     expect(plan.decodes, hasLength(4));
-    expect(window.roleOf(10), PageRole.near);
+    expect(window.roleOf(10), PageRole.next2);
     expect(window.roleOf(11), PageRole.far);
     expect(
       plan.decodes.keys.map((id) => id.download.content.pageId),
@@ -171,6 +171,67 @@ void main() {
       plan.decodes.keys.map((id) => id.download.content.pageId),
       isNot(contains('p11')),
     );
+  });
+
+
+  test('previous current remains last and keeps upload without decode refill', () {
+    final updates = <PipelineDelta>[];
+    final controller = PipelineController(
+      chapter: chapter,
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+      clock: _FakeClock(),
+      windowResolver: const RoleResolver(
+        forwardEncodedPages: 2,
+        backwardEncodedPages: 1,
+        forwardDecodePages: 2,
+        backwardDecodePages: 1,
+        nearRadius: 0,
+      ),
+      policy: const HeuristicPolicy(decodeWarmPages: true),
+      onUpdate: updates.add,
+    );
+
+    controller.accept(observation());
+    final moved = ReaderObs(
+      sessionId: 's1',
+      currentIndex: 3,
+      stableIndex: 3,
+      interaction: Interaction.idle,
+      logicalPosition: 3,
+      velocity: 0,
+      currentCoverage: Coverage(
+        pageIndex: 3,
+        assetKey: 'chapter/p3',
+        fraction: 1,
+      ),
+      direction: ReadingDirection.ltr,
+      timestamp: DateTime.utc(2026, 7, 26),
+      monotonicMicros: 2,
+    );
+    controller.accept(moved);
+    controller.accept(moved);
+
+    final latest = updates.last;
+    expect(latest.window.roleOf(2), PageRole.last);
+    expect(latest.window.roleOf(1), PageRole.previous,
+        reason: 'last must not consume the independent previous slot');
+    expect(
+      latest.plan.uploads.values.where((value) => value.role == PageRole.last),
+      hasLength(1),
+    );
+    expect(
+      latest.plan.decodes.values.where((value) => value.role == PageRole.last),
+      isEmpty,
+    );
+    expect(
+      latest.plan.downloads.values.where((value) => value.role == PageRole.last),
+      isEmpty,
+    );
+    expect(updates, hasLength(2),
+        reason: 'last ownership must persist across unchanged observations');
   });
 
   test('pipeline does not resubmit an unchanged role window', () {

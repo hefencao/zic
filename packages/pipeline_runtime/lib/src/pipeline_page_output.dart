@@ -65,6 +65,7 @@ final class PipelinePageOutputStream {
   PresentClaim? _claim;
   DecodeId? _presentingIdentity;
   int? _presentingFrameIndex;
+  bool _presentationPending = false;
   int _generation = 0;
   bool _disposed = false;
 
@@ -94,6 +95,7 @@ final class PipelinePageOutputStream {
     _generation++;
     _presentingIdentity = null;
     _presentingFrameIndex = null;
+    _presentationPending = false;
     if (identity == null) {
       final prior = _takeClaim();
       _publish(
@@ -151,6 +153,12 @@ final class PipelinePageOutputStream {
               failure: replacementFailure,
             ),
           );
+        }
+        if (_presentingIdentity == identity) {
+          if (_presentingFrameIndex != upload.frameIndex) {
+            _presentationPending = true;
+          }
+          return;
         }
         unawaited(_present(identity, upload));
       case UploadState.failed:
@@ -225,15 +233,16 @@ final class PipelinePageOutputStream {
             _presentingFrameIndex == upload.frameIndex)) {
       return;
     }
-    final generation = ++_generation;
+    final generation = _generation;
     _presentingIdentity = identity;
     _presentingFrameIndex = upload.frameIndex;
     final claim = _uploads.claimPresent(identity);
     if (claim == null) {
-      if (generation == _generation) {
-        _presentingIdentity = null;
-        _presentingFrameIndex = null;
-      }
+      _finishPresentation(
+        identity: identity,
+        frameIndex: upload.frameIndex,
+        generation: generation,
+      );
       return;
     }
     try {
@@ -299,11 +308,42 @@ final class PipelinePageOutputStream {
         );
       }
     } finally {
-      if (generation == _generation) {
-        _presentingIdentity = null;
-        _presentingFrameIndex = null;
-      }
+      _finishPresentation(
+        identity: identity,
+        frameIndex: upload.frameIndex,
+        generation: generation,
+      );
     }
+  }
+
+  void _finishPresentation({
+    required DecodeId identity,
+    required int? frameIndex,
+    required int generation,
+  }) {
+    if (generation != _generation ||
+        _presentingIdentity != identity ||
+        _presentingFrameIndex != frameIndex) {
+      return;
+    }
+    _presentingIdentity = null;
+    _presentingFrameIndex = null;
+    final presentLatest = _presentationPending;
+    _presentationPending = false;
+    if (!presentLatest || _disposed || _identity != identity) {
+      return;
+    }
+    final latest = _uploads.find(identity)?.snapshot;
+    if (latest == null ||
+        latest.state != UploadState.ready ||
+        latest.frameIndex == _snapshot.frameIndex) {
+      return;
+    }
+    scheduleMicrotask(() {
+      if (!_disposed && _identity == identity) {
+        _accept(identity, latest);
+      }
+    });
   }
 
   void _dispose() {
@@ -314,6 +354,7 @@ final class PipelinePageOutputStream {
     _generation++;
     _presentingIdentity = null;
     _presentingFrameIndex = null;
+    _presentationPending = false;
     _releaseClaim();
     for (final claim in _deferredClaims.toList(growable: false)) {
       claim.release();

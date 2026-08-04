@@ -672,7 +672,7 @@ final class PipelineReaderSession {
         decode.state == DecodeState.ended ||
         decode.state == DecodeState.failed ||
         decode.state == DecodeState.disposed ||
-        decode.depth >= 2;
+        decode.depth > 3;
   }
 
   void _releaseStartupArtifactPressure() {

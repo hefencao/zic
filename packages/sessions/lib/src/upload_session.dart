@@ -141,9 +141,9 @@ final class UploadSession {
       return 0;
     }
     // A visible animation frame is presentation state, not a prepared
-    // successor. Keeping decoded successors up to the current watermark lets
-    // the decode lane overlap the frame deadline without widening the page
-    // upload window. dev.96 uses a current watermark of two.
+    // successor. Decoded successors are governed by the staged c/n/m/p
+    // waterlines, allowing decode to overlap the frame deadline without
+    // widening the page upload window.
     return decode.snapshot.animation.frameCount > 1 ? 0 : 1;
   }
   int get outputBytes =>

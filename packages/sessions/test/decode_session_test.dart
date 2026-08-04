@@ -35,6 +35,7 @@ void main() {
       clock: _Clock(),
     );
 
+    final readyDepths = <int>[];
     final result = await session.fill(
       demand: const DecodeDemand(
         role: PageRole.current,
@@ -45,8 +46,11 @@ void main() {
       ),
       revision: 1,
       cancel: CancelToken(),
+      onFrameReady: (snapshot) => readyDepths.add(snapshot.depth),
     );
 
+    expect(readyDepths, <int>[1, 2],
+        reason: 'upload may start after frame 0 while refill continues');
     expect(result.state, DecodeState.ready);
     expect(result.depth, 2);
     expect(factory.created, 1);

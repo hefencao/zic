@@ -4,7 +4,7 @@ import 'demand.dart';
 import 'role_window.dart';
 
 final class PolicyGuard {
-  const PolicyGuard({this.maxDownloadDemands = 7, this.maxFrameWatermark = 4});
+  const PolicyGuard({this.maxDownloadDemands = 7, this.maxFrameWatermark = 8});
 
   final int maxDownloadDemands;
   final int maxFrameWatermark;

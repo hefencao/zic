@@ -33,7 +33,7 @@ for token in (
     "binding.accept(observation);",
     "artifactReadScheduler.holdForegroundPressure()",
     "upload.presentClaims <= 0",
-    "decode.depth >= 2",
+    "decode.depth > 3",
     "_maybeReleaseStartupArtifactPressure();",
     "_releaseStartupArtifactPressure();",
 ):

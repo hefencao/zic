@@ -1,5 +1,6 @@
 export 'src/cache_ops.dart';
 export 'src/coordinator.dart';
+export 'src/decode_refill_policy.dart';
 export 'src/decode_registry.dart';
 export 'src/decode_session.dart';
 export 'src/download_job.dart';

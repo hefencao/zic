@@ -135,6 +135,7 @@ final class DecodeSession {
     required CancelToken cancel,
     int preparedDepth = 0,
     int laneQueueMicros = 0,
+    void Function(DecodeSnapshot snapshot)? onFrameReady,
   }) async {
     _requireOpen();
     if (preparedDepth < 0) {
@@ -336,6 +337,7 @@ final class DecodeSession {
                 'sourceSealed': frameTiming.sourceSealed,
               },
             );
+            onFrameReady?.call(snapshot);
         }
       }
       _setState(DecodeState.ready);

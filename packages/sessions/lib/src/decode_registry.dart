@@ -53,6 +53,7 @@ final class DecodeRegistry {
     required int revision,
     int preparedDepth = 0,
     int laneQueueMicros = 0,
+    void Function(DecodeSnapshot snapshot)? onFrameReady,
   }) {
     return get(id).fill(
       demand: demand,
@@ -60,6 +61,7 @@ final class DecodeRegistry {
       cancel: token,
       preparedDepth: preparedDepth,
       laneQueueMicros: laneQueueMicros,
+      onFrameReady: onFrameReady,
     );
   }
 

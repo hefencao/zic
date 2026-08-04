@@ -81,8 +81,9 @@ forbid(
 )
 require(
     'packages/pipeline/lib/src/heuristic_policy.dart',
-    'PageRole.current => 2',
-    'PageRole.transition => 1',
+    'int _decodeWatermark(PageRole role)',
+    'PageRole.current =>',
+    'PageRole.transition =>',
 )
 require(
     'native/media_core/src/webp.rs',
