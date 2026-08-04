@@ -60,7 +60,7 @@ require(
     "entry.value.role == PageRole.last",
     "upload.cancel(entry.key.key)",
     "TraceEventKind.lastFrameKept",
-    "_wakeDecode(sessionId, refill.id, force: true)",
+    "sourceWake: _hasPendingSourceRevision(refill.id)",
     "uploadRegistry.resumePlayback(entry.key)",
     "onFrameReady: _uploads.containsKey(id)",
 )

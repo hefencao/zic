@@ -48,6 +48,7 @@ enum TraceEventKind {
   uploadState,
   frameUploaded,
   lastFrameKept,
+  staticFrameKept,
   framePresented,
   framePipelineTiming,
   playbackFrameDue,

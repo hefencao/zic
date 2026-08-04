@@ -34,7 +34,7 @@ if runtime.count("final artifactReadMicros =") != 1:
 for token in (
     "final keepVerticalHost =",
     "ReadingDirection.vertical",
-    "(index - widget.controller.currentIndex).abs() <= 4",
+    "(index - widget.controller.currentIndex).abs() <= 7",
     "keepAlive: keepVerticalHost",
 ):
     require(reader, token, "vertical host retention")

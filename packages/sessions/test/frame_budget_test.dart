@@ -139,6 +139,97 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('undemanded output remains until the byte budget is exceeded', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'frame_budget_retained_static_test_',
+    );
+    final clock = _Clock();
+    final downloads = DownloadRegistry(
+      layout: CacheLayout(temp.path),
+      clock: clock,
+      sources: SourcePool(
+        factory: _SourceFactory(),
+        budgetFor: (_) => 4096,
+      ),
+    );
+    final decodes = DecodeRegistry(
+      downloads: downloads,
+      cursors: _CursorFactory(),
+      clock: clock,
+    );
+    final uploads = UploadRegistry(
+      decodes: decodes,
+      uploader: _Uploader(),
+      clock: clock,
+    );
+    final retained = _decodeId('retained');
+    downloads.get(retained.download).ingress!.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    await decodes.fill(
+      retained,
+      const DecodeDemand(
+        role: PageRole.near,
+        priority: 500,
+        targetWatermark: 1,
+        reason: 'retained-static',
+        expirationRevision: 1,
+      ),
+      CancelToken(),
+      revision: 1,
+    );
+    await uploads.prepare(
+      retained,
+      const UploadDemand(
+        role: PageRole.near,
+        priority: 500,
+        reason: 'retained-static',
+        expirationRevision: 1,
+      ),
+      CancelToken(),
+      revision: 1,
+    );
+
+    final withinBudget = FrameBudgeter(
+      decodes: decodes,
+      uploads: uploads,
+      limits: const FrameBudget(
+        decodedBytes: 1024,
+        outputBytes: 256,
+        currentDecodedReserve: 0,
+        currentOutputReserve: 0,
+      ),
+    ).enforce(
+      decodeDemands: const <DecodeId, DecodeDemand>{},
+      uploadDemands: const <DecodeId, UploadDemand>{},
+    );
+    expect(withinBudget.outputFreed, 0);
+    expect(uploads.find(retained)?.outputBytes, 200);
+
+    final overBudget = FrameBudgeter(
+      decodes: decodes,
+      uploads: uploads,
+      limits: const FrameBudget(
+        decodedBytes: 1024,
+        outputBytes: 100,
+        currentDecodedReserve: 0,
+        currentOutputReserve: 0,
+      ),
+    ).enforce(
+      decodeDemands: const <DecodeId, DecodeDemand>{},
+      uploadDemands: const <DecodeId, UploadDemand>{},
+    );
+    expect(overBudget.outputFreed, 200);
+    expect(uploads.find(retained)?.outputBytes, 0);
+
+    uploads.dispose();
+    decodes.dispose();
+    await downloads.dispose();
+    await temp.delete(recursive: true);
+  });
+
   test('invalid current reserve is rejected', () {
     expect(
       () => const FrameBudget(

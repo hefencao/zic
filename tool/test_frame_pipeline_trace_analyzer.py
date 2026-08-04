@@ -194,6 +194,13 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
             "payload": {"frame": 7, "outputBytes": 4300800},
         },
         {
+            "t": 23,
+            "sessionId": "reader-a",
+            "kind": "staticFrameKept",
+            "identityHash": "decode-static",
+            "payload": {"frame": 0, "outputBytes": 7271680},
+        },
+        {
             "t": 22,
             "sessionId": "reader-a",
             "kind": "mediaClassified",
@@ -289,6 +296,8 @@ assert report["runtimeAnimatedClassificationCount"] == 0
 assert report["mediaClassifications"][0]["pageIndex"] == 4
 assert report["lastFrameKeptCount"] == 1
 assert report["lastFramesKept"][0]["frame"] == 7
+assert report["staticFrameKeptCount"] == 1
+assert report["staticFramesKept"][0]["outputBytes"] == 7271680
 assert report["taskFailureCount"] == 1
 assert report["blitLockFailureCount"] == 0
 assert report["blitFallbackCount"] == 0

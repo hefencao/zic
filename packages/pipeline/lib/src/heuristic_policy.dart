@@ -76,11 +76,7 @@ final class HeuristicPolicy {
         keep.add(ResourceId.download(download));
       }
 
-      final runtimeAnimated = runtimeAnimatedPages[entry.key];
-      final visibleStatic = role == PageRole.visible &&
-          runtimeAnimated != true &&
-          (assumeUnresolvedStatic || !page.animatedHint);
-      final staticWarm = staticWarmPages.contains(entry.key) || visibleStatic;
+      final staticWarm = staticWarmPages.contains(entry.key);
       final decodeWatermark = role == PageRole.last
           ? 0
           : staticWarm
@@ -107,7 +103,6 @@ final class HeuristicPolicy {
 
       final primaryUpload = role == PageRole.current ||
           role == PageRole.transition ||
-          role == PageRole.visible ||
           role == PageRole.last;
       if (primaryUpload || staticWarm) {
         uploads[decode] = UploadDemand(
@@ -116,7 +111,6 @@ final class HeuristicPolicy {
               ? switch (role) {
                   PageRole.current => 1000,
                   PageRole.transition => 900,
-                  PageRole.visible => 880,
                   PageRole.last => 850,
                   _ => 0,
                 }
@@ -157,11 +151,6 @@ final class HeuristicPolicy {
       return assumeUnresolvedStatic || !chapter.pages[entry.key].animatedHint;
     }).toList();
     candidates.sort((a, b) {
-      final aVisible = observation.visibleCoverages
-          .any((coverage) => coverage.pageIndex == a.key);
-      final bVisible = observation.visibleCoverages
-          .any((coverage) => coverage.pageIndex == b.key);
-      if (aVisible != bVisible) return aVisible ? -1 : 1;
       final aPriority = _staticPriority(
         a.value,
         pageIndex: a.key,
@@ -178,9 +167,6 @@ final class HeuristicPolicy {
           .abs()
           .compareTo((b.key - observation.currentIndex).abs());
     });
-    final visibleIndexes = observation.visibleCoverages
-        .map((coverage) => coverage.pageIndex)
-        .toSet();
     final selected = <int>{};
     var remaining = staticOutputBudgetBytes;
     for (final entry in candidates) {
@@ -189,8 +175,7 @@ final class HeuristicPolicy {
         decodeTarget,
         vertical: observation.direction == ReadingDirection.vertical,
       );
-      final visible = visibleIndexes.contains(entry.key);
-      if (!visible && selected.isNotEmpty && estimate > remaining) {
+      if (selected.isNotEmpty && estimate > remaining) {
         continue;
       }
       selected.add(entry.key);
@@ -242,7 +227,6 @@ final class HeuristicPolicy {
       switch (role) {
         PageRole.current => 1000,
         PageRole.transition => 900,
-        PageRole.visible => 880,
         PageRole.last => 850,
         PageRole.next => 820,
         PageRole.next2 => 800,
@@ -263,7 +247,6 @@ final class HeuristicPolicy {
       PageRole.current => 1000,
       PageRole.last => 0,
       PageRole.transition => 900,
-      PageRole.visible => 880,
       PageRole.next => 820,
       PageRole.next2 => 800,
       PageRole.previous => 780,
@@ -293,7 +276,6 @@ final class HeuristicPolicy {
   int _decodePriority(PageRole role) => switch (role) {
         PageRole.current => 1000,
         PageRole.transition => 900,
-        PageRole.visible => 0,
         PageRole.next => decodeWarmPages ? 720 : 0,
         PageRole.next2 => decodeWarmPages ? 700 : 0,
         PageRole.previous => decodeWarmPages ? 680 : 0,
@@ -303,7 +285,6 @@ final class HeuristicPolicy {
   int _decodeWatermark(PageRole role) => switch (role) {
         PageRole.current => 8,
         PageRole.transition => 2,
-        PageRole.visible => 0,
         PageRole.next => decodeWarmPages ? 6 : 0,
         PageRole.next2 => decodeWarmPages ? 4 : 0,
         PageRole.previous => decodeWarmPages ? 3 : 0,

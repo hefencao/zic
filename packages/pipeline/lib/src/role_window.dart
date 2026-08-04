@@ -4,7 +4,6 @@ enum PageRole {
   current,
   last,
   transition,
-  visible,
   next,
   next2,
   previous,
@@ -67,17 +66,6 @@ final class RoleResolver {
         target.pageIndex < chapter.pages.length &&
         target.pageIndex != current) {
       _setRole(roles, target.pageIndex, PageRole.transition);
-    }
-    if (observation.direction == ReadingDirection.vertical) {
-      for (final coverage in observation.visibleCoverages) {
-        if (coverage.fraction <= 0 ||
-            coverage.pageIndex == current ||
-            coverage.pageIndex < 0 ||
-            coverage.pageIndex >= chapter.pages.length) {
-          continue;
-        }
-        _setRole(roles, coverage.pageIndex, PageRole.visible);
-      }
     }
 
     var forwardSlot = 0;
@@ -149,8 +137,7 @@ final class RoleResolver {
   int _rank(PageRole role) => switch (role) {
         PageRole.current => 100,
         PageRole.last => 95,
-        PageRole.transition => 94,
-        PageRole.visible => 92,
+        PageRole.transition => 90,
         PageRole.next => 70,
         PageRole.next2 => 68,
         PageRole.previous => 65,

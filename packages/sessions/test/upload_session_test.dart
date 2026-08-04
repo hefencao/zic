@@ -137,6 +137,104 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test(
+    'detached authoritative static output remains until budget trim',
+    () async {
+      final temp = await Directory.systemTemp.createTemp(
+        'upload_static_retention_test_',
+      );
+      addTearDown(() async => temp.delete(recursive: true));
+      final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+      ingress.append(
+        epoch: const SourceEpoch(0),
+        offset: 0,
+        bytes: 'RIFF....WEBPpayload'.codeUnits,
+      );
+      final download = DownloadSession(
+        id: _downloadId(),
+        artifact: Artifact(
+          partialPath: '${temp.path}/page.part',
+          finalPath: '${temp.path}/page.webp',
+        ),
+        clock: _Clock(),
+        ingress: ingress,
+      );
+      final decode = DecodeSession(
+        id: _decodeId(download.id),
+        download: download,
+        cursors: _CursorFactory(
+          duration: Duration.zero,
+          frameLimit: 1,
+          animation: const AnimationInfo(
+            frameCount: 1,
+            loopCount: 1,
+            complete: true,
+          ),
+        ),
+        clock: _Clock(),
+      );
+      await decode.fill(
+        demand: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 1,
+          reason: 'static-retention',
+          expirationRevision: 1,
+        ),
+        revision: 1,
+        cancel: CancelToken(),
+      );
+      final trace = MemoryTraceSink();
+      final uploader = _Uploader();
+      final upload = UploadSession(
+        id: decode.id,
+        decode: decode,
+        uploader: uploader,
+        clock: _Clock(),
+        traceSink: trace,
+      );
+      await upload.prepare(
+        demand: const UploadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'static-retention',
+          expirationRevision: 1,
+        ),
+        revision: 1,
+        cancel: CancelToken(),
+      );
+      final retainedBytes = upload.outputBytes;
+
+      expect(upload.detach(retainStaticOutput: true), isFalse);
+      expect(upload.state, UploadState.ready);
+      expect(upload.outputBytes, retainedBytes);
+      expect(uploader.released, isEmpty);
+      expect(
+        trace.events.any(
+          (event) => event.kind == TraceEventKind.staticFrameKept,
+        ),
+        isTrue,
+      );
+      expect(
+        trace.events.any(
+          (event) => event.kind == TraceEventKind.pageOutputReleased,
+        ),
+        isFalse,
+      );
+
+      upload.trimOutput();
+      expect(upload.outputBytes, 0);
+      final released = trace.events.lastWhere(
+        (event) => event.kind == TraceEventKind.pageOutputReleased,
+      );
+      expect(released.payload['reason'], 'frame-budget');
+
+      upload.dispose();
+      decode.dispose();
+      await download.dispose();
+    },
+  );
+
   test('static zero-duration output remains visible without playback advance', () async {
     final temp = await Directory.systemTemp.createTemp('upload_static_test_');
     final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);

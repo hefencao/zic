@@ -44,39 +44,15 @@ require(
     "readMode: 'direct-read-all'",
 )
 require(
-    "packages/domain/lib/src/reader_observation.dart",
-    "final List<Coverage> visibleCoverages",
-)
-require(
-    "packages/reader/lib/src/reader_view.dart",
-    "geometry.visibleCoverages",
-    "visibleCoveragesOverride: visibleCoverages",
-)
-require(
-    "packages/pipeline/lib/src/role_window.dart",
-    "visible,",
-    "PageRole.visible => 92",
-)
-require(
     "packages/pipeline/lib/src/heuristic_policy.dart",
-    "role == PageRole.visible",
-    "PageRole.visible => 880",
     "_estimatedStaticOutputBytes",
-)
-require(
-    "packages/sessions/lib/src/frame_budget.dart",
-    "role == PageRole.visible",
 )
 
 heuristic = (ROOT / "packages/pipeline/lib/src/heuristic_policy.dart").read_text(
     encoding="utf-8"
 )
 assert "staticOutputBudgetBytes ~/" not in heuristic
-assert "PageRole.visible => 0" in heuristic, (
-    "animated extra-visible pages must not receive speculative multi-frame decode"
-)
-
-print("dev118 local direct ingress and visible output contract: OK")
+print("dev118 local direct ingress contract: OK")
 
 require(
     "packages/sessions/lib/src/download_session.dart",

@@ -37,7 +37,7 @@ require(
 )
 require(
     'packages/sessions/lib/src/upload_session.dart',
-    'bool detach()',
+    'bool detach({bool retainStaticOutput = false})',
     "reason: 'demand-detached'",
     "reason: 'frame-budget'",
     'decode.prepareForOutputLoss()',
@@ -48,7 +48,8 @@ require(
 )
 require(
     'packages/sessions/lib/src/live_coordinator.dart',
-    'final decodeRestarted = uploads?.detach(id) ?? false;',
+    'final retainStaticOutput =',
+    'retainStaticOutput: retainStaticOutput',
     'if (decodeDemanded && decodeRestarted)',
     'after.state == UploadState.waitingFrame',
 )
@@ -73,10 +74,10 @@ require(
 )
 require(
     'packages/sessions/test/live_coordinator_test.dart',
-    'retired output re-primes a consumed static frame before page revisit',
-    'expect(cursors.created, 2);',
-    "expect(released.payload['decodeRestarted'], isTrue);",
-    'expect(uploader.outputs, hasLength(2));',
+    'static output stays resident across a demand gap and page revisit',
+    'expect(cursors.created, 1);',
+    'TraceEventKind.staticFrameKept',
+    "reason: 'revisit reuses the retained static output'",
 )
 forbid(
     'packages/sessions/test/live_coordinator_test.dart',

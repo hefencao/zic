@@ -162,6 +162,24 @@ void main() {
     expect(decision?.stage, 'one>0');
   });
 
+  test('ineligible waiting source does not block a ready neighbor', () {
+    final blockedCurrent = _id('blocked-current');
+    final readyNext = _id('ready-next');
+    final demands = <DecodeId, DecodeDemand>{
+      blockedCurrent: _demand(PageRole.current, 8),
+      readyNext: _demand(PageRole.next, 6),
+    };
+
+    final decision = const StagedDecodeRefillPolicy().next(
+      demands: demands,
+      depthOf: (_) => 0,
+      eligibleOf: (id) => id != blockedCurrent,
+    );
+
+    expect(decision?.id, readyNext);
+    expect(decision?.stage, 'n>1');
+  });
+
   test('transition is the logical next across every staged watermark', () {
     final current = _id('c');
     final transition = _id('transition');

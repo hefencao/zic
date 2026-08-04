@@ -180,9 +180,7 @@ final class _ReaderViewState extends State<ReaderView> {
             final physics = _zoomedPage == null
                 ? const ClampingScrollPhysics()
                 : const NeverScrollableScrollPhysics();
-            final staticChapter =
-                chapter.pages.every((page) => !page.animatedHint);
-            final cacheScreens = staticChapter ? 4 : 2;
+            const cacheScreens = 4;
             final cacheExtent = _viewport.height > 0
                 ? _viewport.height * cacheScreens
                 : null;
@@ -257,7 +255,7 @@ final class _ReaderViewState extends State<ReaderView> {
     final asset = chapter.pages[index];
     final keepVerticalHost =
         widget.controller.direction == ReadingDirection.vertical &&
-            (index - widget.controller.currentIndex).abs() <= 4;
+            (index - widget.controller.currentIndex).abs() <= 7;
     return RotatedBox(
         key: ValueKey<String>('reader-page-rotation:$index'),
         quarterTurns: widget.controller.rotationQuarterTurns,

@@ -30,7 +30,7 @@ for token in (
     "_lastVerticalTravelDirection",
     "_verticalTargetCoverage(",
     "targetCoverageOverride",
-    "staticChapter ? 4 : 2",
+    "const cacheScreens = 4",
 ):
     require(reader, token, "vertical Reader observation")
 for token in (

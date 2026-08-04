@@ -418,7 +418,7 @@ void main() {
     await downloads.dispose();
   });
 
-  test('retired output re-primes a consumed static frame before page revisit',
+  test('static output stays resident across a demand gap and page revisit',
       () async {
     final temp = await Directory.systemTemp.createTemp('live_revisit_test_');
     addTearDown(() async => temp.delete(recursive: true));
@@ -485,7 +485,12 @@ void main() {
       await downloads.dispose();
     });
 
-    DemandPlan plan({required int revision, required bool upload}) => DemandPlan(
+    DemandPlan plan({
+      required int revision,
+      required bool decode,
+      required bool upload,
+    }) =>
+        DemandPlan(
           revision: revision,
           downloads: <DownloadId, DownloadDemand>{
             id: DownloadDemand(
@@ -495,15 +500,17 @@ void main() {
               expirationRevision: revision + 1,
             ),
           },
-          decodes: <DecodeId, DecodeDemand>{
-            decodeId: DecodeDemand(
-              role: PageRole.near,
-              priority: 720,
-              targetWatermark: 1,
-              reason: 'revisit',
-              expirationRevision: revision + 1,
-            ),
-          },
+          decodes: decode
+              ? <DecodeId, DecodeDemand>{
+                  decodeId: DecodeDemand(
+                    role: PageRole.near,
+                    priority: 720,
+                    targetWatermark: 1,
+                    reason: 'revisit',
+                    expirationRevision: revision + 1,
+                  ),
+                }
+              : const <DecodeId, DecodeDemand>{},
           uploads: upload
               ? <DecodeId, UploadDemand>{
                   decodeId: UploadDemand(
@@ -516,12 +523,12 @@ void main() {
               : const <DecodeId, UploadDemand>{},
           keep: <ResourceId>{
             ResourceId.download(id),
-            ResourceId.decode(decodeId),
+            if (decode) ResourceId.decode(decodeId),
           },
         );
 
     var prior = DemandPlan.empty();
-    final visible = plan(revision: 1, upload: true);
+    final visible = plan(revision: 1, decode: true, upload: true);
     coordinator.reconcile(
       'reader',
       PipelineDelta(
@@ -536,26 +543,36 @@ void main() {
     expect(uploader.outputs, hasLength(1));
 
     prior = visible;
-    final predecoded = plan(revision: 2, upload: false);
+    final dormant = plan(revision: 2, decode: false, upload: false);
     coordinator.reconcile(
       'reader',
       PipelineDelta(
-        plan: predecoded,
-        diff: DemandDiff.between(prior, predecoded),
+        plan: dormant,
+        diff: DemandDiff.between(prior, dormant),
         window: RoleWindow(const <int, PageRole>{0: PageRole.near}),
       ),
     );
     await coordinator.idle();
-    expect(decodes.find(decodeId)?.snapshot.depth, 1);
-    expect(cursors.created, 2);
-    final released = trace.events.lastWhere(
-      (event) => event.kind == TraceEventKind.pageOutputReleased,
+    expect(decodes.find(decodeId)?.snapshot.depth, 0);
+    expect(cursors.created, 1);
+    expect(uploads.find(decodeId)?.outputBytes, greaterThan(0));
+    expect(
+      trace.events.any(
+        (event) => event.kind == TraceEventKind.staticFrameKept,
+      ),
+      isTrue,
     );
-    expect(released.payload['reason'], 'demand-detached');
-    expect(released.payload['decodeRestarted'], isTrue);
+    expect(
+      trace.events.any(
+        (event) =>
+            event.kind == TraceEventKind.pageOutputReleased &&
+            event.payload['reason'] == 'demand-detached',
+      ),
+      isFalse,
+    );
 
-    prior = predecoded;
-    final revisited = plan(revision: 3, upload: true);
+    prior = dormant;
+    final revisited = plan(revision: 3, decode: true, upload: true);
     coordinator.reconcile(
       'reader',
       PipelineDelta(
@@ -566,7 +583,8 @@ void main() {
     );
     await coordinator.idle();
     expect(uploads.find(decodeId)?.state, UploadState.ready);
-    expect(uploader.outputs, hasLength(2));
+    expect(uploader.outputs, hasLength(1),
+        reason: 'revisit reuses the retained static output');
   });
 
 }
@@ -681,16 +699,30 @@ final class _StaticCursorFactory implements CursorFactory {
     required int epoch,
   }) {
     created++;
-    return CursorBinding(frames: _StaticCursor(epoch));
+    final cursor = _StaticCursor(epoch);
+    return CursorBinding(frames: cursor, loop: cursor);
   }
 }
 
-final class _StaticCursor implements FrameCursor {
+final class _StaticCursor implements FrameCursor, LoopCursor {
   _StaticCursor(this.epoch);
 
   @override
   final int epoch;
   bool _emitted = false;
+
+  @override
+  AnimationInfo get animation => const AnimationInfo(
+        frameCount: 1,
+        loopCount: 1,
+        complete: true,
+      );
+
+  @override
+  int get cycle => 0;
+
+  @override
+  bool rewind() => false;
 
   @override
   Future<CursorStep> decodeNext() async {

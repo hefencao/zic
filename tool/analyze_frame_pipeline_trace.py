@@ -170,6 +170,7 @@ def summarize(path: Path) -> dict[str, Any]:
     decode_prefix_hints: list[dict[str, Any]] = []
     ranked_downloads: list[dict[str, Any]] = []
     last_frames_kept: list[dict[str, Any]] = []
+    static_frames_kept: list[dict[str, Any]] = []
     cache_resident_commits: list[dict[str, Any]] = []
     texture_presentations: list[dict[str, Any]] = []
     policy_decisions: list[dict[str, Any]] = []
@@ -525,8 +526,13 @@ def summarize(path: Path) -> dict[str, Any]:
                     "target": _number(payload.get("target")),
                 }
             )
-        elif kind == "lastFrameKept":
-            last_frames_kept.append(
+        elif kind in {"lastFrameKept", "staticFrameKept"}:
+            target = (
+                last_frames_kept
+                if kind == "lastFrameKept"
+                else static_frames_kept
+            )
+            target.append(
                 {
                     "t": event.get("t"),
                     "sessionId": event.get("sessionId"),
@@ -682,6 +688,8 @@ def summarize(path: Path) -> dict[str, Any]:
         "rankedDownloads": ranked_downloads,
         "lastFrameKeptCount": len(last_frames_kept),
         "lastFramesKept": last_frames_kept,
+        "staticFrameKeptCount": len(static_frames_kept),
+        "staticFramesKept": static_frames_kept,
         "cacheResidentCommitCount": len(cache_resident_commits),
         "residentSourceCounts": dict(
             Counter(str(row["residentSource"]) for row in cache_resident_commits)
@@ -806,6 +814,7 @@ def main() -> None:
         f"buckets={report['rankedDownloadBucketCounts']}"
     )
     print(f"last frames kept: {report['lastFrameKeptCount']}")
+    print(f"static frames kept: {report['staticFrameKeptCount']}")
     print(
         "media classifications: "
         f"count={report['mediaClassificationCount']} "

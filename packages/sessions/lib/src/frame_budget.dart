@@ -62,8 +62,8 @@ final class FrameBudgetReport {
 
 /// Enforces frame budgets without sacrificing visible page outputs.
 ///
-/// Current decoded bytes are protected. Current, every actually visible page,
-/// transition and frozen-last outputs are protected; other resources use only
+/// Current decoded bytes are protected. Current, transition and frozen-last
+/// outputs are protected; other resources use only
 /// the non-reserved portion
 /// and are trimmed in ascending priority. If protected output alone exceeds
 /// the total budget, the report stays over budget rather than turning a
@@ -188,5 +188,4 @@ final class FrameBudgeter {
 bool _protectsOutput(PageRole role) =>
     role == PageRole.current ||
     role == PageRole.transition ||
-    role == PageRole.visible ||
     role == PageRole.last;

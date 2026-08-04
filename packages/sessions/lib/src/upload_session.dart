@@ -123,6 +123,7 @@ final class UploadSession {
   Future<void> _prepareTail = Future<void>.value();
   int _pendingPrepares = 0;
   bool _releaseUploaderWhenIdle = false;
+  bool _retainedWithoutDemand = false;
   final Map<int, _FramePipelineTiming> _framePipelineTimings =
       <int, _FramePipelineTiming>{};
   int _presentationTimingSamples = 0;
@@ -148,6 +149,13 @@ final class UploadSession {
   }
   int get outputBytes =>
       _slot == null || _slot!.frame.disposed ? 0 : _slot!.frame.byteLength;
+
+  bool get hasRetainableStaticOutput {
+    final animation = decode.snapshot.animation;
+    return outputBytes > 0 &&
+        animation.complete &&
+        animation.frameCount <= 1;
+  }
   PlaybackState get playbackState => _playback.state;
   bool get playbackRunning => _playback.state == PlaybackState.running;
 
@@ -184,10 +192,12 @@ final class UploadSession {
     int laneQueueMicros = 0,
   }) {
     _requireOpen();
+    final wasRetainedWithoutDemand = _retainedWithoutDemand;
+    _retainedWithoutDemand = false;
     _releaseUploaderWhenIdle = false;
     _revision = revision;
     _latestDemandRole = demand.role;
-    return _serializePrepare(
+    final prepared = _serializePrepare(
       () => _prepareNow(
         demand: demand,
         revision: revision,
@@ -195,6 +205,15 @@ final class UploadSession {
         laneQueueMicros: laneQueueMicros,
       ),
     );
+    if (!wasRetainedWithoutDemand) {
+      return prepared;
+    }
+    return prepared.then((snapshot) {
+      if (!_disposed) {
+        _notifySnapshot();
+      }
+      return snapshot;
+    });
   }
 
   Future<UploadSnapshot> _prepareNow({
@@ -448,6 +467,7 @@ final class UploadSession {
     _playback.clear();
     _nextUploadEligibleAtMicros = null;
     _slot = null;
+    _retainedWithoutDemand = false;
     _framePipelineTimings.remove(frameIndex);
     _presentationTimingSamples = 0;
     _startupFrameOrdinals.clear();
@@ -848,11 +868,29 @@ final class UploadSession {
     }
   }
 
-  bool detach() {
+  bool detach({bool retainStaticOutput = false}) {
     _requireOpen();
     _revision++;
     final slot = _slot;
     final hadOutput = slot != null && !slot.frame.disposed;
+    if (retainStaticOutput && hadOutput && hasRetainableStaticOutput) {
+      _latestDemandRole = null;
+      _retainedWithoutDemand = true;
+      _awaitingSuccessor = false;
+      _playback.clear();
+      _nextUploadEligibleAtMicros = null;
+      _setState(UploadState.ready, forceNotify: true);
+      _emit(
+        TraceEventKind.staticFrameKept,
+        <String, Object?>{
+          'frame': slot.frame.index,
+          'outputBytes': slot.frame.byteLength,
+          'presentClaims': slot.claims,
+        },
+      );
+      return false;
+    }
+    _retainedWithoutDemand = false;
     final frameIndex = slot?.frame.index;
     final outputBytes = slot?.frame.byteLength ?? 0;
     final presentClaims = slot?.claims ?? 0;
@@ -878,6 +916,7 @@ final class UploadSession {
   void reset(SourceEpoch epoch) {
     _requireOpen();
     _revision++;
+    _retainedWithoutDemand = false;
     _epoch = epoch;
     _retireCurrent();
     _requestUploaderRelease();
@@ -890,6 +929,7 @@ final class UploadSession {
       return;
     }
     _revision++;
+    _retainedWithoutDemand = false;
     _retireCurrent();
     _requestUploaderRelease();
     _state = UploadState.disposed;

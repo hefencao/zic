@@ -120,6 +120,12 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   Map<DecodeId, UploadDemand> get uploadDemands =>
       Map<DecodeId, UploadDemand>.unmodifiable(_uploads);
 
+  bool _hasPendingSourceRevision(DecodeId id) {
+    final available = _sourceRevisions[id.download] ?? -1;
+    final consumed = _decodeSourceRevisions[id] ?? -1;
+    return available > consumed;
+  }
+
   @override
   void reconcile(String sessionId, PipelineDelta update) {
     _revision = update.plan.revision;
@@ -441,7 +447,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           entry.key,
           token,
           demandRevision: demandRevision,
-          sourceWake: false,
+          sourceWake: _hasPendingSourceRevision(entry.key),
           force: true,
           submittedAtMicros: submittedAtMicros,
         ),
@@ -468,6 +474,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       return;
     }
     final submittedAtMicros = clock.nowMicros();
+    final effectiveSourceWake =
+        sourceWake || _hasPendingSourceRevision(id);
     decode.follow(
       key: id.key,
       priority: demand.priority,
@@ -476,7 +484,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         id,
         token,
         demandRevision: _decodeDemandRevisions[id] ?? _revision,
-        sourceWake: sourceWake,
+        sourceWake: effectiveSourceWake,
         force: force,
         submittedAtMicros: submittedAtMicros,
       ),
@@ -512,7 +520,12 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           return;
         }
         if (refill.id != id) {
-          _wakeDecode(sessionId, refill.id, force: true);
+          _wakeDecode(
+            sessionId,
+            refill.id,
+            sourceWake: _hasPendingSourceRevision(refill.id),
+            force: true,
+          );
           return;
         }
       }
@@ -539,10 +552,6 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         }
         return;
       }
-      if (sourceRevision >= 0) {
-        _decodeSourceRevisions[id] = sourceRevision;
-      }
-
       final decodeLaneQueueMicros =
           (clock.nowMicros() - submittedAtMicros).clamp(0, 1 << 62).toInt();
       if (refill != null) {
@@ -591,6 +600,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
                   }
                 : null,
           );
+        }
+        if (sourceRevision >= 0) {
+          _decodeSourceRevisions[id] = sourceRevision;
         }
         if (after != null &&
             after.state != DecodeState.failed &&
@@ -723,6 +735,16 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             snapshot.failure == null &&
             snapshot.animation.complete;
       },
+      eligibleOf: (id) {
+        final snapshot = registry.find(id)?.snapshot;
+        if (snapshot == null ||
+            snapshot.failure != null ||
+            snapshot.state == DecodeState.failed) {
+          return true;
+        }
+        return snapshot.state != DecodeState.waitingSource ||
+            _hasPendingSourceRevision(id);
+      },
     );
   }
 
@@ -731,7 +753,12 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     if (decision == null || decision.id == except) {
       return;
     }
-    _wakeDecode(sessionId, decision.id, force: true);
+    _wakeDecode(
+      sessionId,
+      decision.id,
+      sourceWake: _hasPendingSourceRevision(decision.id),
+      force: true,
+    );
   }
 
   bool _decodeNeedsFill(
@@ -789,7 +816,14 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       _uploadDemandRevisions.remove(id);
       upload.cancel(id.key);
       final decodeDemanded = _decodes.containsKey(id);
-      final decodeRestarted = uploads?.detach(id) ?? false;
+      final uploadRegistry = uploads;
+      final retainStaticOutput =
+          uploadRegistry?.find(id)?.hasRetainableStaticOutput ?? false;
+      final decodeRestarted = uploadRegistry?.detach(
+            id,
+            retainStaticOutput: retainStaticOutput,
+          ) ??
+          false;
       if (decodeDemanded && decodeRestarted) {
         _wakeDecode(sessionId, id, force: true);
       }

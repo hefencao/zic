@@ -3,6 +3,7 @@ import 'package:pipeline/pipeline.dart';
 
 typedef DecodeDepthLookup = int Function(DecodeId id);
 typedef DecodeTerminalLookup = bool Function(DecodeId id);
+typedef DecodeEligibilityLookup = bool Function(DecodeId id);
 
 /// One deterministic refill selected from the live page waterlines.
 final class DecodeRefillDecision {
@@ -46,11 +47,13 @@ final class StagedDecodeRefillPolicy {
     required Map<DecodeId, DecodeDemand> demands,
     required DecodeDepthLookup depthOf,
     DecodeTerminalLookup terminalOf = _neverTerminal,
+    DecodeEligibilityLookup eligibleOf = _alwaysEligible,
   }) {
     final oneFrame = demands.entries
         .where(
           (entry) =>
               entry.value.targetWatermark == 1 &&
+              eligibleOf(entry.key) &&
               !terminalOf(entry.key) &&
               depthOf(entry.key) < 1,
         )
@@ -103,7 +106,7 @@ final class StagedDecodeRefillPolicy {
     DecodeRefillDecision? stagedDecision;
     for (final step in steps) {
       final id = logical[step.role];
-      if (id == null || terminalOf(id)) {
+      if (id == null || !eligibleOf(id) || terminalOf(id)) {
         continue;
       }
       final demand = demands[id]!;
@@ -146,3 +149,4 @@ final class _RefillStep {
 }
 
 bool _neverTerminal(DecodeId _) => false;
+bool _alwaysEligible(DecodeId _) => true;

@@ -1,6 +1,6 @@
 # ADR 0102：本地不可变资源直连与全部可见页输出所有权
 
-**状态：Provisional**
+**状态：部分被 ADR 0103 取代**
 
 ## 背景
 
@@ -8,6 +8,10 @@
 
 1. `content://` 本地大 WebP 在跳页后仍走普通 staged download：最多 5 个 16–20 MiB 文件并发分块读取，同时写 Reader 临时 artifact。单个约 5.5 MiB 文件可在约 0.12 秒完成；并发后 14–19 MiB 文件上升到约 3.5–4.3 秒。UI 还把该本地复制显示为下载进度。
 2. 纵向视口可同时露出多页，但 Reader observation 只表达 current 与一个 target。其他仍可见静态页作为推测性 warm output，在角色切换时以 `demand-detached` 释放，反向滑动时重新出现 loading。
+
+## 后续状态
+
+本地不可变资源直连、local bucket=2 与本地进度投影继续有效。`PageRole.visible`、全部可见页强制 demand 和可见 output 特殊保护已被 ADR 0103 取代；根因应由预加载 source wake 与静态 output 驻留解决。
 
 ## 决策
 

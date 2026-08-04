@@ -1,3 +1,11 @@
+## 0.31.0-dev.119：预加载 Source Wake 与静态输出驻留
+
+- 修复 `sourceReady` 被更高优先级 staged refill 重定向后永久丢失；waitingSource 页面仅在没有未消费 source revision 时才阻塞，并从全局候选中跳过。
+- 删除 dev.118 `PageRole.visible` 及强制可见页 demand/protection，恢复由 7/3 窗口在进入视口前完成预加载。
+- 权威静态 output 失去 upload demand 后进入无需求驻留态，不再立即 `demand-detached`；实际超过 128 MiB output budget 时由 FrameBudget 以最低优先级回收。
+- 纵向轻量 host 保留半径与前向七页预取对齐；静态预热继续按页面实际尺寸使用 96 MiB 选择预算。
+- 新增 source-wake eligibility、静态 output 驻留/预算回收 owner tests、`staticFrameKept` Trace 与 dev.119 门禁；README、Architecture、Spec 未修改。
+
 ## 0.31.0-dev.118：本地资源直连与纵向全部可见输出
 
 - 本地 `content/file/asset` 完整响应改为 immutable direct ingress，跳过 Reader 临时 artifact 写入；local bucket 从 5 调整为 2，remote/global 保持 5。
