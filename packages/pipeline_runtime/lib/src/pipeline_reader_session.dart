@@ -22,7 +22,6 @@ import 'reader_pipeline_profile.dart';
 
 part 'pipeline_page_output.dart';
 
-const int _startupArtifactNeighborPriorityFloor = 680;
 
 typedef PipelineArtifactBytesLoader = Future<Uint8List> Function(
   PageAsset asset,
@@ -34,18 +33,22 @@ final class PipelineReaderSessionFactory {
     required this.mediaRuntimeFactory,
     this.artifactCacheManager,
     ArtifactCacheReadScheduler? artifactReadScheduler,
+    NetLane? pageDownloadLane,
+    WebpDecodePrefixHints? decodePrefixHints,
     this.loaderSources = const <Uri, LoaderTransportSource>{},
     this.bytesLoader,
-  }) : artifactReadScheduler =
-            artifactReadScheduler ??
-            ArtifactCacheReadScheduler(
-              startupBackgroundPriorityFloor:
-                  _startupArtifactNeighborPriorityFloor,
-            );
+  })  : artifactReadScheduler =
+            artifactReadScheduler ?? ArtifactCacheReadScheduler(),
+        pageDownloadLane =
+            pageDownloadLane ??
+            NetLane(maxActive: ReaderPipelineProfile.stable.networkConcurrency),
+        decodePrefixHints = decodePrefixHints ?? WebpDecodePrefixHints();
 
   final PipelineMediaRuntimeFactory mediaRuntimeFactory;
   final ArtifactCacheManager? artifactCacheManager;
   final ArtifactCacheReadScheduler artifactReadScheduler;
+  final NetLane pageDownloadLane;
+  final WebpDecodePrefixHints decodePrefixHints;
   final Map<Uri, LoaderTransportSource> loaderSources;
   final PipelineArtifactBytesLoader? bytesLoader;
 
@@ -58,6 +61,8 @@ final class PipelineReaderSessionFactory {
         mediaRuntimeFactory: mediaRuntimeFactory,
         artifactCacheManager: artifactCacheManager,
         artifactReadScheduler: artifactReadScheduler,
+        pageDownloadLane: pageDownloadLane,
+        decodePrefixHints: decodePrefixHints,
         loaderSources: <Uri, LoaderTransportSource>{
           ...loaderSources,
           ...sources,
@@ -72,6 +77,8 @@ final class PipelineReaderSessionFactory {
         mediaRuntimeFactory: mediaRuntimeFactory,
         artifactCacheManager: manager,
         artifactReadScheduler: artifactReadScheduler,
+        pageDownloadLane: pageDownloadLane,
+        decodePrefixHints: decodePrefixHints,
         loaderSources: loaderSources,
         bytesLoader: bytesLoader,
       );
@@ -83,6 +90,8 @@ final class PipelineReaderSessionFactory {
         mediaRuntimeFactory: mediaRuntimeFactory,
         artifactCacheManager: artifactCacheManager,
         artifactReadScheduler: artifactReadScheduler,
+        pageDownloadLane: pageDownloadLane,
+        decodePrefixHints: decodePrefixHints,
         loaderSources: loaderSources,
         bytesLoader: loader,
       );
@@ -98,6 +107,8 @@ final class PipelineReaderSessionFactory {
         sessionId: sessionId,
         artifactCacheManager: artifactCacheManager,
         artifactReadScheduler: artifactReadScheduler,
+        pageDownloadLane: pageDownloadLane,
+        decodePrefixHints: decodePrefixHints,
         loaderSources: loaderSources,
         bytesLoader: bytesLoader,
         traceSink: traceSink,
@@ -117,6 +128,8 @@ final class PipelineReaderSession {
     required this.sessionId,
     ArtifactCacheManager? artifactCacheManager,
     required ArtifactCacheReadScheduler artifactReadScheduler,
+    required NetLane pageDownloadLane,
+    required WebpDecodePrefixHints decodePrefixHints,
     Map<Uri, LoaderTransportSource> loaderSources =
         const <Uri, LoaderTransportSource>{},
     PipelineArtifactBytesLoader? bytesLoader,
@@ -191,6 +204,7 @@ final class PipelineReaderSession {
       downloads: _downloads,
       cursors: _media.cursors,
       clock: clock,
+      prefixHints: decodePrefixHints,
       traceSink: trace,
     );
     _uploads = UploadRegistry(
@@ -218,7 +232,9 @@ final class PipelineReaderSession {
       decodes: _decodes,
       uploads: _uploads,
       budgets: _frameBudgets,
-      net: NetLane(maxActive: _profile.networkConcurrency),
+      net: pageDownloadLane,
+      downloadBucketFor: _profile.downloadBucket,
+      downloadBucketLimitFor: _profile.downloadBucketLimit,
       decode: DecodeLane(maxActive: _profile.decodeConcurrency),
       upload: UploadLane(maxActive: _profile.uploadConcurrency),
     );
@@ -678,7 +694,7 @@ final class PipelineReaderSession {
         decode.state == DecodeState.ended ||
         decode.state == DecodeState.failed ||
         decode.state == DecodeState.disposed ||
-        decode.depth > 7;
+        decode.depth > 4;
   }
 
   void _releaseStartupArtifactPressure() {

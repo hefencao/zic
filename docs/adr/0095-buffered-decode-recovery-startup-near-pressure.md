@@ -1,6 +1,8 @@
 # ADR 0095：缓冲帧连续性与启动近邻压力
 
-**状态：Provisional**
+**状态：Superseded**
+
+启动 priority floor 与 c=8 释放条件由 ADR 0096 取代。缓冲 successor 连续播放与有界 decode recovery 决策继续有效。
 
 ## 问题
 

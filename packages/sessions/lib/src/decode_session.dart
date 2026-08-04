@@ -6,6 +6,7 @@ import 'package:telemetry/telemetry.dart';
 import 'download_session.dart';
 import 'frame_holder.dart';
 import 'net_lane.dart';
+import 'webp_decode_prefix_hints.dart';
 
 enum DecodeState { idle, waitingSource, decoding, ready, ended, failed, disposed }
 
@@ -19,6 +20,9 @@ final class DecodeSnapshot {
     required this.revision,
     required this.animation,
     required this.cycle,
+    required this.sourceLength,
+    required this.sourceSealed,
+    required this.requiredSourceLength,
     this.failure,
   });
 
@@ -30,6 +34,9 @@ final class DecodeSnapshot {
   final int revision;
   final AnimationInfo animation;
   final int cycle;
+  final int sourceLength;
+  final bool sourceSealed;
+  final int requiredSourceLength;
   final Failure? failure;
 }
 
@@ -82,14 +89,16 @@ final class DecodeSession {
     required this.download,
     required this.cursors,
     required this.clock,
+    WebpDecodePrefixHints? prefixHints,
     this.traceSink = const NoopTraceSink(),
     this.sessionId = 'decode',
-  });
+  }) : prefixHints = prefixHints ?? WebpDecodePrefixHints();
 
   final DecodeId id;
   final DownloadSession download;
   final CursorFactory cursors;
   final MonoClock clock;
+  final WebpDecodePrefixHints prefixHints;
   final TraceSink traceSink;
   final String sessionId;
 
@@ -103,6 +112,8 @@ final class DecodeSession {
   bool _disposed = false;
   int? _waitingSourceSinceMicros;
   int _cursorCreateMicros = 0;
+  int _nextFrameHintIndex = 0;
+  int _requiredSourceLength = 0;
   final Map<int, DecodedFrameTiming> _frameTimings =
       <int, DecodedFrameTiming>{};
 
@@ -117,17 +128,23 @@ final class DecodeSession {
   DecodedFrameTiming? timingForFrame(int frameIndex) =>
       _frameTimings[frameIndex];
 
-  DecodeSnapshot get snapshot => DecodeSnapshot(
-        id: id,
-        state: _state,
-        epoch: _epoch,
-        depth: _holder?.depth ?? 0,
-        bytes: _holder?.bytes ?? 0,
-        revision: _revision,
-        animation: _animation,
-        cycle: _cycle,
-        failure: _failure,
-      );
+  DecodeSnapshot get snapshot {
+    final source = download.ingress?.source;
+    return DecodeSnapshot(
+      id: id,
+      state: _state,
+      epoch: _epoch,
+      depth: _holder?.depth ?? 0,
+      bytes: _holder?.bytes ?? 0,
+      revision: _revision,
+      animation: _animation,
+      cycle: _cycle,
+      sourceLength: source?.length ?? 0,
+      sourceSealed: source?.sealed ?? false,
+      requiredSourceLength: _requiredSourceLength,
+      failure: _failure,
+    );
+  }
 
   Future<DecodeSnapshot> fill({
     required DecodeDemand demand,
@@ -190,6 +207,18 @@ final class DecodeSession {
         break;
     }
 
+    if (!source.sealed) {
+      final hinted = prefixHints.minimumBytes(id.download, _nextFrameHintIndex);
+      if (hinted > _requiredSourceLength) {
+        _requiredSourceLength = hinted;
+      }
+      if (_requiredSourceLength > 0 && source.length < _requiredSourceLength) {
+        _waitingSourceSinceMicros ??= clock.nowMicros();
+        _setState(DecodeState.waitingSource);
+        return snapshot;
+      }
+    }
+
     try {
       // A growing authoritative source may make a prior decode failure
       // recoverable. The next demand owns the retry; stale failure state must
@@ -247,11 +276,30 @@ final class DecodeSession {
         switch (step.kind) {
           case CursorStepKind.needMoreData:
             _waitingSourceSinceMicros ??= clock.nowMicros();
+            if (!source.sealed) {
+              _requiredSourceLength = prefixHints.recordNeedMoreData(
+                id: id.download,
+                frameIndex: _nextFrameHintIndex,
+                sourceLength: source.length,
+              );
+              _emit(
+                TraceEventKind.retryScheduled,
+                <String, Object?>{
+                  'stage': 'decode-prefix',
+                  'frame': _nextFrameHintIndex,
+                  'sourceLength': source.length,
+                  'nextSourceLength': _requiredSourceLength,
+                  'sealed': false,
+                },
+              );
+            }
             _setState(DecodeState.waitingSource);
             return snapshot;
           case CursorStepKind.end:
             final loop = _cursor!.loop;
             if (loop != null && holder.isEmpty && loop.rewind()) {
+              _nextFrameHintIndex = 0;
+              _requiredSourceLength = 0;
               _emit(
                 TraceEventKind.animationLoop,
                 <String, Object?>{
@@ -272,6 +320,15 @@ final class DecodeSession {
                 message: 'frame cursor returned a frame step without a frame',
               );
             }
+            if (!source.sealed) {
+              prefixHints.recordSuccess(
+                id: id.download,
+                frameIndex: frame.index,
+                sourceLength: source.length,
+              );
+            }
+            _nextFrameHintIndex = frame.index + 1;
+            _requiredSourceLength = 0;
             holder.add(frame);
             final timing = frame is FrameDecodeTiming
                 ? frame as FrameDecodeTiming
@@ -442,8 +499,12 @@ final class DecodeSession {
     _holder?.dispose();
     _cursor = null;
     _holder = null;
+    _nextFrameHintIndex = 0;
+    _requiredSourceLength = 0;
     _frameTimings.clear();
     _cursorCreateMicros = 0;
+    _nextFrameHintIndex = 0;
+    _requiredSourceLength = 0;
   }
 
   void _setState(DecodeState state) {

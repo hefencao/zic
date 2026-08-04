@@ -53,9 +53,14 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     NetLane? net,
     DecodeLane? decode,
     UploadLane? upload,
+    String Function(DownloadId id)? downloadBucketFor,
+    int Function(DownloadId id)? downloadBucketLimitFor,
   })  : net = net ?? NetLane(maxActive: 3),
         decode = decode ?? DecodeLane(maxActive: 2),
-        upload = upload ?? UploadLane(maxActive: 1) {
+        upload = upload ?? UploadLane(maxActive: 1),
+        downloadBucketFor =
+            downloadBucketFor ?? ((id) => 'source:${id.content.sourceId}'),
+        downloadBucketLimitFor = downloadBucketLimitFor ?? ((_) => 5) {
     retry.validate();
     if (onDecode != null && decodes != null) {
       throw ArgumentError('onDecode and decodes are mutually exclusive');
@@ -88,9 +93,12 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final NetLane net;
   final DecodeLane decode;
   final UploadLane upload;
+  final String Function(DownloadId id) downloadBucketFor;
+  final int Function(DownloadId id) downloadBucketLimitFor;
 
   final Map<DownloadId, DownloadDemand> _downloads =
       <DownloadId, DownloadDemand>{};
+  final Map<DownloadId, String> _networkTaskKeys = <DownloadId, String>{};
   final Map<DecodeId, DecodeDemand> _decodes = <DecodeId, DecodeDemand>{};
   final Map<DecodeId, int> _decodeDemandRevisions = <DecodeId, int>{};
   final Map<DecodeId, UploadDemand> _uploads = <DecodeId, UploadDemand>{};
@@ -206,9 +214,13 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _sourceRevisions.clear();
     _sourceWakeLengths.clear();
     _decodeSourceRevisions.clear();
-    // Cancel the lane-owned key sets directly. Registry enumeration can miss
-    // a follow-up task that was queued after a session changed identity.
-    net.cancelAll();
+    // The page-download lane is composition-shared. Cancel only this Reader's
+    // ranked tasks; another active Reader must keep its own transfers.
+    final networkKeys = _networkTaskKeys.values.toList(growable: false);
+    for (final key in networkKeys) {
+      net.cancel(key);
+    }
+    _networkTaskKeys.clear();
     decode.cancelAll();
     upload.cancelAll();
     _downloads.clear();
@@ -216,7 +228,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _decodeDemandRevisions.clear();
     _uploads.clear();
     _uploadDemandRevisions.clear();
-    await idle();
+    await Future.wait<void>(<Future<void>>[
+      net.idleKeys(networkKeys),
+      decode.idle(),
+      upload.idle(),
+    ]);
   }
 
   void _reconcileDownloads(
@@ -225,7 +241,10 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   ) {
     for (final id in diff.removed) {
       _downloads.remove(id);
-      net.cancelQueued(id.key);
+      final taskKey = _networkTaskKeys.remove(id);
+      if (taskKey != null) {
+        net.cancel(taskKey);
+      }
       final session = registry.find(id);
       final listener = _sourceListeners.remove(id);
       if (listener != null) {
@@ -242,9 +261,13 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       _downloads[entry.key] = entry.value;
       final session = registry.get(entry.key)..attach();
       _watchSource(sessionId, entry.key, session);
-      net.submit(
-        key: entry.key.key,
+      final taskKey = '$sessionId:${entry.key.key}';
+      _networkTaskKeys[entry.key] = taskKey;
+      net.submitRanked(
+        key: taskKey,
         priority: entry.value.priority,
+        bucket: downloadBucketFor(entry.key),
+        bucketLimit: downloadBucketLimitFor(entry.key),
         task: (token) => _runDownload(sessionId, entry.key, session, token),
       );
     }
@@ -285,6 +308,28 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     DownloadSession session,
     CancelToken token,
   ) async {
+    final bucket = downloadBucketFor(id);
+    final bucketLimit = downloadBucketLimitFor(id);
+    final initialDemand = _downloads[id];
+    if (initialDemand != null) {
+      traceSink.record(
+        traceEvent(
+          clock: clock,
+          sessionId: sessionId,
+          kind: TraceEventKind.downloadStarted,
+          identityHash: id.key,
+          revision: _revision,
+          payload: <String, Object?>{
+            'priority': initialDemand.priority,
+            'bucket': bucket,
+            'bucketLimit': bucketLimit,
+            'globalActive': net.active,
+            'globalLimit': net.maxActive,
+            'bucketActive': net.activeForBucket(bucket),
+          },
+        ),
+      );
+    }
     for (var attempt = 1; ; attempt++) {
       token.throwIfCancelled();
       final demand = _downloads[id];
@@ -563,6 +608,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       } on Object catch (error) {
         if (error is! Failure || error.code != ErrorCode.cancelled) {
           final failedAtMicros = clock.nowMicros();
+          final failedSnapshot = decodes?.find(id)?.snapshot;
           _error(
             sessionId,
             id.key,
@@ -570,6 +616,13 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             error,
             details: <String, Object?>{
               'role': current.role.name,
+              'sourceLength': failedSnapshot?.sourceLength ?? 0,
+              'sourceSealed': failedSnapshot?.sourceSealed ?? false,
+              'requiredSourceLength':
+                  failedSnapshot?.requiredSourceLength ?? 0,
+              'failureClass': failedSnapshot?.sourceSealed == true
+                  ? 'sealed-source'
+                  : 'partial-source',
               'laneQueueMicros': decodeLaneQueueMicros,
               'executionMicros':
                   (failedAtMicros - submittedAtMicros -

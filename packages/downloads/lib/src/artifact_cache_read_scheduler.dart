@@ -13,16 +13,13 @@ final class ArtifactCacheReadScheduler {
     this.maxActive = 5,
     this.foregroundPriority = 900,
     this.maxBackgroundWhileForeground = 1,
-    this.startupBackgroundPriorityFloor = 0,
   })  : assert(maxActive >= 2),
         assert(maxBackgroundWhileForeground >= 0),
-        assert(maxBackgroundWhileForeground < maxActive),
-        assert(startupBackgroundPriorityFloor >= 0);
+        assert(maxBackgroundWhileForeground < maxActive);
 
   final int maxActive;
   final int foregroundPriority;
   final int maxBackgroundWhileForeground;
-  final int startupBackgroundPriorityFloor;
 
   final List<_PendingRead> _pending = <_PendingRead>[];
   int _active = 0;
@@ -62,7 +59,7 @@ final class ArtifactCacheReadScheduler {
   }) {
     final currentPriority = priority();
     final foreground = _isForeground(currentPriority);
-    if (_canStart(foreground, currentPriority)) {
+    if (_canStart(foreground)) {
       return Future<ArtifactCacheReadLease>.value(
         _start(foreground, currentPriority),
       );
@@ -98,13 +95,9 @@ final class ArtifactCacheReadScheduler {
     return false;
   }
 
-  bool _canStart(bool foreground, int priority) {
+  bool _canStart(bool foreground) {
     if (_active >= maxActive) return false;
     if (foreground) return true;
-    if (_foregroundPressureHolds > 0 &&
-        priority < startupBackgroundPriorityFloor) {
-      return false;
-    }
     if (_hasForegroundPressure) {
       return _activeBackground < maxBackgroundWhileForeground;
     }
@@ -146,7 +139,7 @@ final class ArtifactCacheReadScheduler {
       var selected = -1;
       for (var index = 0; index < _pending.length; index++) {
         final priority = _pending[index].currentPriority;
-        if (_canStart(_isForeground(priority), priority)) {
+        if (_canStart(_isForeground(priority))) {
           selected = index;
           break;
         }

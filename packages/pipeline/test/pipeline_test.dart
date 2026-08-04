@@ -171,6 +171,22 @@ void main() {
       plan.decodes.keys.map((id) => id.download.content.pageId),
       isNot(contains('p11')),
     );
+    final downloadPriorities = <String, int>{
+      for (final entry in plan.downloads.entries)
+        entry.key.content.pageId: entry.value.priority,
+    };
+    expect(downloadPriorities['p8'], 1000);
+    expect(downloadPriorities['p9'], 820);
+    expect(downloadPriorities['p10'], 800);
+    expect(downloadPriorities['p7'], 780);
+    expect(downloadPriorities['p11'], 760);
+    expect(downloadPriorities['p12'], 740);
+    expect(downloadPriorities['p13'], 720);
+    expect(downloadPriorities['p14'], 700);
+    expect(downloadPriorities['p15'], 680);
+    expect(downloadPriorities['p6'], 660);
+    expect(downloadPriorities['p5'], 640);
+    expect(downloadPriorities.values.toSet(), hasLength(11));
   });
 
 

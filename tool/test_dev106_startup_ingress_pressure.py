@@ -33,7 +33,7 @@ for token in (
     "binding.accept(observation);",
     "artifactReadScheduler.holdForegroundPressure()",
     "upload.presentClaims <= 0",
-    "decode.depth > 7",
+    "decode.depth > 4",
     "_maybeReleaseStartupArtifactPressure();",
     "_releaseStartupArtifactPressure();",
 ):
@@ -45,7 +45,7 @@ if pipeline.index("_holdStartupArtifactPressureFor(currentDownload);") > pipelin
 
 require(
     scheduler_test,
-    "startup pressure admits near work but blocks far artifact quanta",
+    "startup pressure admits only one ranked background quantum",
     "scheduler owner test",
 )
 require(check, "test_dev106_startup_ingress_pressure.py", "repository check")

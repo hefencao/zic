@@ -1,3 +1,11 @@
+## 0.31.0-dev.112：全局页面下载排序与自适应 WebP 前缀
+
+- 页面传输改为 composition 共享全局 5 槽，按页面唯一 rank 和 local/remote source bucket 调度。
+- 跨页退出窗口会取消对应 active/queued task；factory clone 保持同一 lane identity。
+- 删除 startup background priority floor，pressure 释放恢复为 current output 已呈现且 `c>4`。
+- partial WebP 按 page/frame key 学习 local 1 MiB、remote 256 KiB 的最小 decode prefix；sealed failure 不增加 chunk。
+- Trace 增加 ranked download 与 decode-prefix 诊断；README、Architecture、Spec 未修改。
+
 ## 0.31.0-dev.111：缓冲解码恢复与启动近邻压力
 
 - startup foreground pressure 只放行 n/m/p 近邻 artifact，far 7/3 demand 保留但延后实际读取。

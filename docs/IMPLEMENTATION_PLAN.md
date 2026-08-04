@@ -2,17 +2,24 @@
 
 本文件只列未完成工作。
 
-## P0：设备闭环
+## P0：全局下载并发设备闭环
 
-- 验证 startup pressure 期间 priority 400 far artifact 不获得 chunk；
-- 比较 frame 0 platform presentation 到 `firstFrameReady` 的间隔；
-- 验证 current decode failure 后出现 `decode-recovery`，buffered successor 持续呈现；
-- 验证切页后不再播放一两帧即停滞。
+- 验证 `downloadStarted.globalActive` 始终不超过 5；
+- 验证 local 与不同 remote `sourceId` bucket 的 active 数不超过来源上限；
+- 快速跨多页时确认退出窗口任务被取消，新窗口按唯一 priority 启动；
+- 比较 scheduler wait、first chunk 和完整 stream 的 p50/p95。
 
-## P0：staged 水位与 last keep
+## P0：WebP 增量解码闭环
 
-- 继续核对 `decodeRefill` c/n/m/p 顺序；
-- 验证纵向 last output 不黑屏、last→current 自动恢复。
+- 验证 partial source 的 `decode-prefix` 按 local 1 MiB / remote 256 KiB 增长；
+- 验证同一 page/frame 重进后复用最小充分前缀；
+- 分离 `partial-source` 与 `sealed-source` failure；
+- 若 sealed failure 持续，扩展 native 错误原因，而不是继续增加 chunk。
+
+## P0：播放与 last keep
+
+- 继续验证 staged refill、切页恢复、纵向 last output 与首帧发布；
+- 检查整体播放恶化是否随旧窗口任务取消而消失。
 
 ## P0：工具链闭包
 

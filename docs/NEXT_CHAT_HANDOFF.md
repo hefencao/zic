@@ -1,6 +1,6 @@
-# dev.111 后续交接
+# dev.112 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.111_buffered-decode-recovery-startup-pressure.zip`。不得使用 dev.110 或更早 ZIP、旧工作树或陈旧 Android `.so`。
+唯一后续基线：`zic_v0.31.0-dev.112_ranked-download-adaptive-webp-prefix.zip`。不得使用 dev.111 或更早 ZIP、旧工作树或陈旧 Android `.so`。
 
 ## 必读
 
@@ -12,20 +12,21 @@
 6. `docs/IMPLEMENTATION_STATUS.md`
 7. `docs/IMPLEMENTATION_PLAN.md`
 8. `docs/adr/0094-staged-decode-waterlines-last-output-retention.md`
-9. `docs/adr/0095-buffered-decode-recovery-startup-near-pressure.md`
-10. `docs/audits/dev111-decode-recovery-startup-pressure-audit.md`
-11. `docs/audits/dev111-validation-results.md`
+9. `docs/adr/0096-ranked-page-download-adaptive-webp-prefix.md`
+10. `docs/audits/dev112-ranked-download-adaptive-prefix-audit.md`
+11. `docs/audits/dev112-validation-results.md`
 
 ## 下一份 Trace
 
 重点检查：
 
-- startup pressure hold 期间 sourceRead priority；
-- frame 0 presented 到 firstFrameReady；
-- `retryScheduled stage=decode-recovery` 的 attempt/bufferedDepth；
-- failure 后 buffered frame 是否继续 `framePresented`；
-- lastFrameKept 与 staged refill。
+- `downloadStarted` 的 priority、bucket、globalActive、bucketActive；
+- 跨页跳转后旧 Reader/旧窗口任务是否停止；
+- sourceRead scheduler wait 与 first chunk；
+- `decode-prefix` 的 frame/sourceLength/nextSourceLength；
+- taskFailed 的 sourceSealed、requiredSourceLength、failureClass；
+- staged refill、lastFrameKept 与首帧发布。
 
 ## 保持边界
 
-7/3、5/3/2、c/n/m/p/l、两个常驻 decode isolate、libwebp 帧内单线程不变；Reader/App 不拥有 retry、cache、session、lane 或 texture。
+7/3、staged c/n/m/p/l、decode/upload 3/2、全局 page download 5、两个常驻 decode isolate、libwebp 帧内单线程不变。Reader/App 不拥有 cache、session、lane、prefix hint 或 texture。

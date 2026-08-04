@@ -37,6 +37,20 @@ void main() {
       ),
       isTrue,
     );
+    expect(
+      identical(
+        factory.pageDownloadLane,
+        factory.withLoaderSources(factory.loaderSources).pageDownloadLane,
+      ),
+      isTrue,
+    );
+    expect(
+      identical(
+        factory.decodePrefixHints,
+        factory.withBytesLoader(null).decodePrefixHints,
+      ),
+      isTrue,
+    );
   });
 
   test('Reader session owns and closes one atomic media runtime', () async {

@@ -146,4 +146,73 @@ void main() {
     expect(lane.active, 0);
   });
 
+  test('ranked page work enforces global and per-source limits', () async {
+    final lane = NetLane(maxActive: 5);
+    final release = Completer<void>();
+    final started = <String>[];
+
+    for (var index = 0; index < 6; index++) {
+      lane.submitRanked(
+        key: 'remote-a-$index',
+        priority: 800 - index,
+        bucket: 'remote:a',
+        bucketLimit: 3,
+        task: (_) async {
+          started.add('a$index');
+          await release.future;
+        },
+      );
+    }
+    for (var index = 0; index < 4; index++) {
+      lane.submitRanked(
+        key: 'remote-b-$index',
+        priority: 700 - index,
+        bucket: 'remote:b',
+        bucketLimit: 5,
+        task: (_) async {
+          started.add('b$index');
+          await release.future;
+        },
+      );
+    }
+
+    await Future<void>.delayed(Duration.zero);
+    expect(lane.active, 5);
+    expect(started.where((value) => value.startsWith('a')), hasLength(3));
+    expect(started.where((value) => value.startsWith('b')), hasLength(2));
+
+    release.complete();
+    await lane.idle();
+  });
+
+  test('idleKeys ignores work owned by another Reader', () async {
+    final lane = NetLane(maxActive: 2);
+    final firstRelease = Completer<void>();
+    final secondRelease = Completer<void>();
+
+    lane.submitRanked(
+      key: 'reader-1:page',
+      priority: 1000,
+      bucket: 'local',
+      bucketLimit: 5,
+      task: (_) async => firstRelease.future,
+    );
+    lane.submitRanked(
+      key: 'reader-2:page',
+      priority: 1000,
+      bucket: 'local',
+      bucketLimit: 5,
+      task: (_) async => secondRelease.future,
+    );
+
+    final firstIdle = lane.idleKeys(<String>['reader-1:page']);
+    lane.cancel('reader-1:page');
+    firstRelease.complete();
+    await firstIdle;
+    expect(lane.active, 1);
+
+    secondRelease.complete();
+    await lane.idle();
+  });
+
 }

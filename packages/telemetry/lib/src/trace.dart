@@ -24,6 +24,7 @@ enum TraceEventKind {
   demandDetached,
   staleWorkRejected,
   downloadState,
+  downloadStarted,
   bytesCommitted,
   artifactSealed,
   artifactPromoted,

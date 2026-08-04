@@ -14,6 +14,8 @@ final class ReaderPipelineProfile {
     required this.policy,
     required this.retry,
     required this.networkConcurrency,
+    required this.localSourceConcurrency,
+    required this.remoteSourceConcurrency,
     required this.decodeConcurrency,
     required this.uploadConcurrency,
   });
@@ -36,6 +38,8 @@ final class ReaderPipelineProfile {
     policy: HeuristicPolicy(decodeWarmPages: true),
     retry: RetryPolicy(),
     networkConcurrency: 5,
+    localSourceConcurrency: 5,
+    remoteSourceConcurrency: 5,
     decodeConcurrency: 3,
     uploadConcurrency: 2,
   );
@@ -44,8 +48,29 @@ final class ReaderPipelineProfile {
   final PolicyGuard guard;
   final HeuristicPolicy policy;
   final RetryPolicy retry;
+  /// Process-composition maximum across every active Reader page transfer.
   final int networkConcurrency;
+
+  /// Per-source caps. Both start at five; source/runtime capability can lower
+  /// them later without changing the 7/3 demand window or Reader policy.
+  final int localSourceConcurrency;
+  final int remoteSourceConcurrency;
   final int decodeConcurrency;
+
+  String downloadBucket(DownloadId id) {
+    final scheme = id.canonicalUri.scheme.toLowerCase();
+    if (scheme == 'file' || scheme == 'content' || scheme == 'asset') {
+      return 'local';
+    }
+    return 'remote:${id.content.sourceId}';
+  }
+
+  int downloadBucketLimit(DownloadId id) {
+    final scheme = id.canonicalUri.scheme.toLowerCase();
+    return scheme == 'file' || scheme == 'content' || scheme == 'asset'
+        ? localSourceConcurrency
+        : remoteSourceConcurrency;
+  }
   final int uploadConcurrency;
 }
 

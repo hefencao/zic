@@ -17,3 +17,4 @@ export 'src/retry_policy.dart';
 export 'src/startup_recovery.dart';
 export 'src/upload_registry.dart';
 export 'src/upload_session.dart';
+export 'src/webp_decode_prefix_hints.dart';

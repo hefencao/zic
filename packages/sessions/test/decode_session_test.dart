@@ -89,6 +89,84 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('partial WebP retries only after the learned per-frame prefix', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'decode_prefix_hint_test_',
+    );
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024 * 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: List<int>.filled(300000, 1),
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final factory = _PrefixCursorFactory();
+    final hints = WebpDecodePrefixHints();
+    final session = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: factory,
+      clock: _Clock(),
+      prefixHints: hints,
+    );
+    const demand = DecodeDemand(
+      role: PageRole.current,
+      priority: 1000,
+      targetWatermark: 1,
+      reason: 'adaptive-prefix',
+      expirationRevision: 1,
+    );
+
+    final first = await session.fill(
+      demand: demand,
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    expect(first.state, DecodeState.waitingSource);
+    expect(first.requiredSourceLength, 524288);
+    expect(factory.cursor.calls, 1);
+
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 300000,
+      bytes: List<int>.filled(100000, 2),
+    );
+    final early = await session.fill(
+      demand: demand,
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    expect(early.state, DecodeState.waitingSource);
+    expect(factory.cursor.calls, 1);
+
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 400000,
+      bytes: List<int>.filled(124288, 3),
+    );
+    final ready = await session.fill(
+      demand: demand,
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    expect(ready.state, DecodeState.ready);
+    expect(ready.depth, 1);
+    expect(factory.cursor.calls, 2);
+    expect(hints.minimumBytes(download.id, 0), 524288);
+
+    session.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
   test('transition decode uses the non-current worker class', () async {
     final temp = await Directory.systemTemp.createTemp('decode_role_test_');
     final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
@@ -980,6 +1058,41 @@ final class _StepCursor implements FrameCursor {
 
   @override
   Future<CursorStep> decodeNext() async => step;
+
+  @override
+  void dispose() {}
+}
+
+
+final class _PrefixCursorFactory implements CursorFactory {
+  late final _PrefixCursor cursor;
+
+  @override
+  CursorBinding create({
+    required DecodeId id,
+    required EncodedSource source,
+    required int epoch,
+  }) {
+    cursor = _PrefixCursor(epoch);
+    return CursorBinding(frames: cursor);
+  }
+}
+
+final class _PrefixCursor implements FrameCursor {
+  _PrefixCursor(this.epoch);
+
+  @override
+  final int epoch;
+  int calls = 0;
+
+  @override
+  Future<CursorStep> decodeNext() async {
+    calls++;
+    if (calls == 1) {
+      return const CursorStep.needMoreData();
+    }
+    return CursorStep.frame(_Frame(epoch, 0));
+  }
 
   @override
   void dispose() {}

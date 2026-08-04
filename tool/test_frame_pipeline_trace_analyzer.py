@@ -163,6 +163,32 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
         {
             "t": 22,
             "sessionId": "reader-a",
+            "kind": "retryScheduled",
+            "identityHash": "decode-current",
+            "payload": {
+                "stage": "decode-prefix",
+                "frame": 2,
+                "sourceLength": 300000,
+                "nextSourceLength": 524288,
+            },
+        },
+        {
+            "t": 22,
+            "sessionId": "reader-a",
+            "kind": "downloadStarted",
+            "identityHash": "download-current",
+            "payload": {
+                "priority": 1000,
+                "bucket": "remote:source",
+                "bucketLimit": 5,
+                "globalActive": 3,
+                "globalLimit": 5,
+                "bucketActive": 2,
+            },
+        },
+        {
+            "t": 22,
+            "sessionId": "reader-a",
             "kind": "lastFrameKept",
             "identityHash": "decode-last",
             "payload": {"frame": 7, "outputBytes": 4300800},
@@ -177,8 +203,11 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
                 "laneQueueMicros": 4000,
                 "executionMicros": 5000,
                 "taskElapsedMicros": 9000,
-                "error": "PlatformException(blit_failed, native blit failed with status 4)",
-                "fallback": "flutterImage",
+                "error": "Failure(decode): frame decode failed",
+                "sourceLength": 1048576,
+                "sourceSealed": False,
+                "requiredSourceLength": 2097152,
+                "failureClass": "partial-source",
             },
         },
     ]
@@ -232,11 +261,18 @@ assert report["decodeRefills"][0]["target"] == 4
 assert report["decodeRecoveryCount"] == 1
 assert report["decodeRecoveryAttemptCounts"] == {"1": 1}
 assert report["decodeRecoveries"][0]["bufferedDepth"] == 7
+assert report["decodePrefixHintCount"] == 1
+assert report["decodePrefixHints"][0]["nextSourceLength"] == 524288
+assert report["rankedDownloadCount"] == 1
+assert report["rankedDownloadMaxGlobalActive"] == 3
+assert report["rankedDownloadBucketCounts"] == {"remote:source": 1}
 assert report["lastFrameKeptCount"] == 1
 assert report["lastFramesKept"][0]["frame"] == 7
 assert report["taskFailureCount"] == 1
-assert report["blitLockFailureCount"] == 1
-assert report["blitFallbackCount"] == 1
+assert report["blitLockFailureCount"] == 0
+assert report["blitFallbackCount"] == 0
+assert report["taskFailures"][0]["failureClass"] == "partial-source"
+assert report["taskFailures"][0]["requiredSourceLength"] == 2097152
 assert report["platformConfigureMicros"]["max"] == 15000
 assert report["blitRetryCount"] == 1
 assert report["surfaceReconfigureCount"] == 1

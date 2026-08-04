@@ -43,7 +43,11 @@ final class HeuristicPolicy {
         renderer: decodeTarget.renderer,
       );
 
-      final downloadPriority = _downloadPriority(role);
+      final downloadPriority = _downloadPriority(
+        role,
+        pageIndex: entry.key,
+        currentIndex: observation.currentIndex,
+      );
       if (downloadPriority > 0) {
         downloads[download] = DownloadDemand(
           role: role,
@@ -92,17 +96,43 @@ final class HeuristicPolicy {
     );
   }
 
-  int _downloadPriority(PageRole role) => switch (role) {
-        PageRole.current => 1000,
-        PageRole.last => 0,
-        PageRole.transition => 900,
-        PageRole.next => 720,
-        PageRole.next2 => 700,
-        PageRole.previous => 680,
-        PageRole.near => 520,
-        PageRole.far => 400,
-        PageRole.detached => 0,
-      };
+  int _downloadPriority(
+    PageRole role, {
+    required int pageIndex,
+    required int currentIndex,
+  }) {
+    return switch (role) {
+      PageRole.current => 1000,
+      PageRole.last => 0,
+      PageRole.transition => 900,
+      PageRole.next => 820,
+      PageRole.next2 => 800,
+      PageRole.previous => 780,
+      PageRole.near || PageRole.far => _distanceDownloadPriority(
+          pageIndex: pageIndex,
+          currentIndex: currentIndex,
+        ),
+      PageRole.detached => 0,
+    };
+  }
+
+  int _distanceDownloadPriority({
+    required int pageIndex,
+    required int currentIndex,
+  }) {
+    final distance = (pageIndex - currentIndex).abs();
+    if (pageIndex > currentIndex) {
+      // Forward slots 3..7 rank 760, 740, 720, 700 and 680.
+      return (760 - (distance - 3).clamp(0, 10) * 20)
+          .clamp(540, 760)
+          .toInt();
+    }
+    // Backward slots 2..3 rank 660 and 640. The immediate previous page has
+    // its dedicated role/priority above.
+    return (660 - (distance - 2).clamp(0, 10) * 20)
+        .clamp(520, 660)
+        .toInt();
+  }
 
   int _decodePriority(PageRole role) => switch (role) {
         PageRole.current => 1000,

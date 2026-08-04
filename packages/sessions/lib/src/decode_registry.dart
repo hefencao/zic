@@ -6,18 +6,21 @@ import 'package:telemetry/telemetry.dart';
 import 'decode_session.dart';
 import 'download_registry.dart';
 import 'net_lane.dart';
+import 'webp_decode_prefix_hints.dart';
 
 final class DecodeRegistry {
   DecodeRegistry({
     required this.downloads,
     required this.cursors,
     required this.clock,
+    WebpDecodePrefixHints? prefixHints,
     this.traceSink = const NoopTraceSink(),
-  });
+  }) : prefixHints = prefixHints ?? WebpDecodePrefixHints();
 
   final DownloadRegistry downloads;
   final CursorFactory cursors;
   final MonoClock clock;
+  final WebpDecodePrefixHints prefixHints;
   final TraceSink traceSink;
   final Map<DecodeId, DecodeSession> _sessions = <DecodeId, DecodeSession>{};
 
@@ -40,6 +43,7 @@ final class DecodeRegistry {
         download: download,
         cursors: cursors,
         clock: clock,
+        prefixHints: prefixHints,
         traceSink: traceSink,
         sessionId: 'decode:${id.key.hashCode}',
       );

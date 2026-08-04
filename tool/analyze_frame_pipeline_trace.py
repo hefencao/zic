@@ -166,6 +166,8 @@ def summarize(path: Path) -> dict[str, Any]:
     cache_handoffs: list[dict[str, Any]] = []
     decode_refills: list[dict[str, Any]] = []
     decode_recoveries: list[dict[str, Any]] = []
+    decode_prefix_hints: list[dict[str, Any]] = []
+    ranked_downloads: list[dict[str, Any]] = []
     last_frames_kept: list[dict[str, Any]] = []
     next_due_by_session: dict[str, int] = {}
     session_lifecycle: dict[str, dict[str, int]] = defaultdict(dict)
@@ -293,6 +295,26 @@ def summarize(path: Path) -> dict[str, Any]:
                     "laneQueueMicros": _number(payload.get("laneQueueMicros")),
                     "executionMicros": _number(payload.get("executionMicros")),
                     "taskElapsedMicros": _number(payload.get("taskElapsedMicros")),
+                    "sourceLength": _number(payload.get("sourceLength")),
+                    "sourceSealed": payload.get("sourceSealed"),
+                    "requiredSourceLength": _number(
+                        payload.get("requiredSourceLength")
+                    ),
+                    "failureClass": payload.get("failureClass"),
+                }
+            )
+        elif kind == "downloadStarted":
+            ranked_downloads.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "identityHash": event.get("identityHash"),
+                    "priority": _number(payload.get("priority")),
+                    "bucket": payload.get("bucket"),
+                    "bucketLimit": _number(payload.get("bucketLimit")),
+                    "globalActive": _number(payload.get("globalActive")),
+                    "globalLimit": _number(payload.get("globalLimit")),
+                    "bucketActive": _number(payload.get("bucketActive")),
                 }
             )
         elif kind == "sourceRead":
@@ -349,6 +371,17 @@ def summarize(path: Path) -> dict[str, Any]:
                     "delayUs": _number(payload.get("delayUs")),
                     "role": payload.get("role"),
                     "bufferedDepth": _number(payload.get("bufferedDepth")),
+                }
+            )
+        elif kind == "retryScheduled" and payload.get("stage") == "decode-prefix":
+            decode_prefix_hints.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "identityHash": event.get("identityHash"),
+                    "frame": _number(payload.get("frame")),
+                    "sourceLength": _number(payload.get("sourceLength")),
+                    "nextSourceLength": _number(payload.get("nextSourceLength")),
                 }
             )
         elif kind == "decodeRefill":
@@ -504,6 +537,17 @@ def summarize(path: Path) -> dict[str, Any]:
             Counter(str(row["attempt"]) for row in decode_recoveries)
         ),
         "decodeRecoveries": decode_recoveries,
+        "decodePrefixHintCount": len(decode_prefix_hints),
+        "decodePrefixHints": decode_prefix_hints,
+        "rankedDownloadCount": len(ranked_downloads),
+        "rankedDownloadMaxGlobalActive": max(
+            (row["globalActive"] for row in ranked_downloads),
+            default=0,
+        ),
+        "rankedDownloadBucketCounts": dict(
+            Counter(str(row["bucket"]) for row in ranked_downloads)
+        ),
+        "rankedDownloads": ranked_downloads,
         "lastFrameKeptCount": len(last_frames_kept),
         "lastFramesKept": last_frames_kept,
         "sourceFirstChunkMicros": _stats(
@@ -569,6 +613,13 @@ def main() -> None:
         f"count={report['decodeRecoveryCount']} "
         f"attempts={report['decodeRecoveryAttemptCounts']}"
     )
+    print(f"decode prefix hints: {report['decodePrefixHintCount']}")
+    print(
+        "ranked downloads: "
+        f"count={report['rankedDownloadCount']} "
+        f"maxGlobal={report['rankedDownloadMaxGlobalActive']} "
+        f"buckets={report['rankedDownloadBucketCounts']}"
+    )
     print(f"last frames kept: {report['lastFrameKeptCount']}")
     print(
         f"cache handoff: actions={report['cacheHandoffActionCounts']} "
@@ -580,7 +631,11 @@ def main() -> None:
             f"t={failure['t']} lane={failure['lane']} role={failure['role']} "
             f"queue={failure['laneQueueMicros']} "
             f"execution={failure['executionMicros']} "
-            f"elapsed={failure['taskElapsedMicros']} error={failure['error']}"
+            f"elapsed={failure['taskElapsedMicros']} "
+            f"failureClass={failure['failureClass']} "
+            f"source={failure['sourceLength']}/"
+            f"{failure['requiredSourceLength']} "
+            f"sealed={failure['sourceSealed']} error={failure['error']}"
         )
     print("frames:")
     for row in report["frames"][: max(0, args.limit)]:

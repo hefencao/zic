@@ -76,8 +76,45 @@ void main() {
       expect(plan.decodes, hasLength(4), reason: scheme);
       expect(plan.uploads, hasLength(1), reason: scheme);
       expect(profile.networkConcurrency, 5, reason: scheme);
+      expect(profile.localSourceConcurrency, 5, reason: scheme);
+      expect(profile.remoteSourceConcurrency, 5, reason: scheme);
       expect(profile.decodeConcurrency, 3, reason: scheme);
       expect(profile.uploadConcurrency, 2, reason: scheme);
     }
   });
+  test('download buckets separate local work and each remote source', () {
+    final profile = ReaderPipelineProfile.stable;
+    final local = _downloadId(
+      sourceId: 'local',
+      uri: Uri.parse('content://reader/page.webp'),
+    );
+    final firstRemote = _downloadId(
+      sourceId: 'mihon-a',
+      uri: Uri.parse('mihon-resource://host/page.webp'),
+    );
+    final secondRemote = _downloadId(
+      sourceId: 'mihon-b',
+      uri: Uri.parse('mihon-resource://host/page.webp'),
+    );
+
+    expect(profile.downloadBucket(local), 'local');
+    expect(profile.downloadBucket(firstRemote), 'remote:mihon-a');
+    expect(profile.downloadBucket(secondRemote), 'remote:mihon-b');
+    expect(profile.downloadBucketLimit(local), 5);
+    expect(profile.downloadBucketLimit(firstRemote), 5);
+  });
+
 }
+
+
+DownloadId _downloadId({required String sourceId, required Uri uri}) =>
+    DownloadId(
+      content: ContentId(
+        sourceId: sourceId,
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: uri,
+    );

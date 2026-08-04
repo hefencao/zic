@@ -77,6 +77,26 @@ final class NetLane implements TaskLane {
   @override
   bool submit({required String key, required int priority, required LaneTask task}) =>
       _core.submit(key: key, priority: priority, task: task);
+
+  bool submitRanked({
+    required String key,
+    required int priority,
+    required String bucket,
+    required int bucketLimit,
+    required LaneTask task,
+  }) =>
+      _core.submit(
+        key: key,
+        priority: priority,
+        bucket: bucket,
+        bucketLimit: bucketLimit,
+        task: task,
+      );
+
+  Future<void> idleKeys(Iterable<String> keys) => _core.idleKeys(keys);
+
+  int activeForBucket(String bucket) => _core.activeForBucket(bucket);
+
   @override
   bool replace({required String key, required int priority, required LaneTask task}) =>
       _core.replace(key: key, priority: priority, task: task);
@@ -198,17 +218,23 @@ final class _Lane {
   final int maxActive;
   final LaneError? onError;
   final Map<String, _Pending> _pending = <String, _Pending>{};
-  final Map<String, CancelToken> _active = <String, CancelToken>{};
+  final Map<String, _ActiveTask> _active = <String, _ActiveTask>{};
+  final Map<String, int> _activeByBucket = <String, int>{};
   final List<Completer<void>> _idleWaiters = <Completer<void>>[];
+  final List<_KeyIdleWaiter> _keyIdleWaiters = <_KeyIdleWaiter>[];
   int _seq = 0;
 
   int get queued => _pending.length;
   int get active => _active.length;
   bool get isIdle => _pending.isEmpty && _active.isEmpty;
 
+  int activeForBucket(String bucket) => _activeByBucket[bucket] ?? 0;
+
   bool submit({
     required String key,
     required int priority,
+    String? bucket,
+    int? bucketLimit,
     required LaneTask task,
   }) {
     if (_active.containsKey(key)) {
@@ -218,6 +244,8 @@ final class _Lane {
       key: key,
       priority: priority,
       seq: _seq++,
+      bucket: bucket,
+      bucketLimit: bucketLimit,
       task: task,
     );
     _pump();
@@ -227,13 +255,17 @@ final class _Lane {
   bool replace({
     required String key,
     required int priority,
+    String? bucket,
+    int? bucketLimit,
     required LaneTask task,
   }) {
-    _active[key]?.cancel();
+    _active[key]?.token.cancel();
     _pending[key] = _Pending(
       key: key,
       priority: priority,
       seq: _seq++,
+      bucket: bucket,
+      bucketLimit: bucketLimit,
       task: task,
     );
     _pump();
@@ -243,12 +275,16 @@ final class _Lane {
   bool follow({
     required String key,
     required int priority,
+    String? bucket,
+    int? bucketLimit,
     required LaneTask task,
   }) {
     _pending[key] = _Pending(
       key: key,
       priority: priority,
       seq: _seq++,
+      bucket: bucket,
+      bucketLimit: bucketLimit,
       task: task,
     );
     _pump();
@@ -259,16 +295,16 @@ final class _Lane {
 
   bool cancel(String key) {
     final queued = cancelQueued(key);
-    final token = _active[key];
-    token?.cancel();
+    final active = _active[key];
+    active?.token.cancel();
     _notifyIdle();
-    return queued || token != null;
+    return queued || active != null;
   }
 
   void cancelAll() {
     _pending.clear();
-    for (final token in _active.values) {
-      token.cancel();
+    for (final active in _active.values) {
+      active.token.cancel();
     }
     _notifyIdle();
   }
@@ -282,10 +318,33 @@ final class _Lane {
     return completer.future;
   }
 
+  Future<void> idleKeys(Iterable<String> keys) {
+    final pendingKeys = keys.toSet();
+    if (!_containsAny(pendingKeys)) {
+      return Future<void>.value();
+    }
+    final completer = Completer<void>();
+    _keyIdleWaiters.add(_KeyIdleWaiter(pendingKeys, completer));
+    return completer.future;
+  }
+
+  bool _containsAny(Set<String> keys) =>
+      keys.any((key) => _pending.containsKey(key) || _active.containsKey(key));
+
+  bool _bucketAvailable(_Pending pending) {
+    final bucket = pending.bucket;
+    final limit = pending.bucketLimit;
+    if (bucket == null || limit == null) return true;
+    return (_activeByBucket[bucket] ?? 0) < limit;
+  }
+
   void _pump() {
     while (_active.length < maxActive && _pending.isNotEmpty) {
       final eligible = _pending.values
-          .where((pending) => !_active.containsKey(pending.key))
+          .where(
+            (pending) =>
+                !_active.containsKey(pending.key) && _bucketAvailable(pending),
+          )
           .toList(growable: false);
       if (eligible.isEmpty) {
         break;
@@ -299,14 +358,27 @@ final class _Lane {
       });
       _pending.remove(next.key);
       final token = CancelToken();
-      _active[next.key] = token;
+      _active[next.key] = _ActiveTask(token: token, bucket: next.bucket);
+      final bucket = next.bucket;
+      if (bucket != null) {
+        _activeByBucket[bucket] = (_activeByBucket[bucket] ?? 0) + 1;
+      }
       unawaited(
         Future<void>.sync(() => next.task(token)).catchError(
           (Object error, StackTrace stack) {
             onError?.call(next.key, error, stack);
           },
         ).whenComplete(() {
-          _active.remove(next.key);
+          final removed = _active.remove(next.key);
+          final removedBucket = removed?.bucket;
+          if (removedBucket != null) {
+            final remaining = (_activeByBucket[removedBucket] ?? 1) - 1;
+            if (remaining <= 0) {
+              _activeByBucket.remove(removedBucket);
+            } else {
+              _activeByBucket[removedBucket] = remaining;
+            }
+          }
           _pump();
           _notifyIdle();
         }),
@@ -316,6 +388,14 @@ final class _Lane {
   }
 
   void _notifyIdle() {
+    for (final waiter in List<_KeyIdleWaiter>.of(_keyIdleWaiters)) {
+      if (!_containsAny(waiter.keys)) {
+        _keyIdleWaiters.remove(waiter);
+        if (!waiter.completer.isCompleted) {
+          waiter.completer.complete();
+        }
+      }
+    }
     if (!isIdle) {
       return;
     }
@@ -334,11 +414,29 @@ final class _Pending {
     required this.key,
     required this.priority,
     required this.seq,
+    required this.bucket,
+    required this.bucketLimit,
     required this.task,
   });
 
   final String key;
   final int priority;
   final int seq;
+  final String? bucket;
+  final int? bucketLimit;
   final LaneTask task;
+}
+
+final class _ActiveTask {
+  const _ActiveTask({required this.token, required this.bucket});
+
+  final CancelToken token;
+  final String? bucket;
+}
+
+final class _KeyIdleWaiter {
+  const _KeyIdleWaiter(this.keys, this.completer);
+
+  final Set<String> keys;
+  final Completer<void> completer;
 }

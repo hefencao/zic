@@ -98,45 +98,26 @@ void main() {
     foreground.release();
   });
 
-  test('startup pressure admits near work but blocks far artifact quanta',
-      () async {
-    final scheduler = ArtifactCacheReadScheduler(
-      maxActive: 3,
-      startupBackgroundPriorityFloor: 680,
-    );
+  test('startup pressure admits only one ranked background quantum', () async {
+    final scheduler = ArtifactCacheReadScheduler(maxActive: 3);
     final pressure = scheduler.holdForegroundPressure();
-    final near = await scheduler.acquire(priority: () => 680);
-    var secondNearStarted = false;
-    final secondNear = scheduler.acquire(priority: () => 720).then(
-      (lease) {
-        secondNearStarted = true;
-        return lease;
-      },
-    );
-    var farStarted = false;
-    final far = scheduler.acquire(priority: () => 400).then((lease) {
-      farStarted = true;
+    final lower = await scheduler.acquire(priority: () => 640);
+    var higherStarted = false;
+    final higher = scheduler.acquire(priority: () => 820).then((lease) {
+      higherStarted = true;
       return lease;
     });
 
     await Future<void>.delayed(Duration.zero);
     expect(scheduler.foregroundPressure, isTrue);
-    expect(scheduler.foregroundPressureHoldCount, 1);
     expect(scheduler.activeBackgroundCount, 1);
-    expect(secondNearStarted, isFalse);
-    expect(farStarted, isFalse);
+    expect(higherStarted, isFalse);
 
-    near.release();
-    final next = await secondNear;
-    expect(secondNearStarted, isTrue);
-    expect(farStarted, isFalse);
+    lower.release();
+    final next = await higher;
+    expect(higherStarted, isTrue);
 
     pressure.release();
-    final farLease = await far;
-    expect(farStarted, isTrue);
-    expect(scheduler.foregroundPressureHoldCount, 0);
-
-    farLease.release();
     next.release();
   });
 }

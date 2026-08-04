@@ -70,10 +70,6 @@ require(
     "role == PageRole.last",
 )
 require(
-    "packages/pipeline_runtime/lib/src/pipeline_reader_session.dart",
-    "decode.depth > 7",
-)
-require(
     "packages/pipeline_runtime/lib/src/pipeline_page_output.dart",
     "_presentationPending",
     "_finishPresentation",
