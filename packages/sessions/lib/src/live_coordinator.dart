@@ -749,34 +749,12 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           : _nextDecodeRefill(only: pendingSourceWake ? id : null);
       if (registry != null) {
         if (refill == null) {
-          // A source-ready page can be temporarily ineligible while another
-          // current page is establishing its startup buffer. The revision has
-          // not been decoded in that case and must remain pending so a later
-          // role change/current promotion can wake the same DecodeId.
-          final startupCurrent = _startupBufferingCurrent();
-          final deferredByStartup =
-              startupCurrent != null && startupCurrent != id;
           if (pendingSourceWake && sourceRevision >= 0) {
-            if (deferredByStartup) {
-              traceSink.record(
-                traceEvent(
-                  clock: clock,
-                  sessionId: sessionId,
-                  kind: TraceEventKind.retryScheduled,
-                  identityHash: id.key,
-                  revision: demandRevision,
-                  payload: <String, Object?>{
-                    'stage': 'decode-startup-deferred',
-                    'sourceRevision': sourceRevision,
-                    'consumedSourceRevision': observedSourceRevision,
-                    'startupCurrent': startupCurrent.key,
-                    'role': current.role.name,
-                  },
-                ),
-              );
-            } else {
-              _decodeSourceRevisions[id] = sourceRevision;
-            }
+            // A revision is consumed only when the target is already satisfied
+            // or terminal. Global policy never makes another page's playback
+            // state an eligibility gate, so a source-ready page cannot lose its
+            // wake merely because a different page is current.
+            _decodeSourceRevisions[id] = sourceRevision;
           }
           return;
         }
@@ -1007,24 +985,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     }());
   }
 
-  DecodeId? _startupBufferingCurrent() {
-    final registry = uploads;
-    if (registry == null) return null;
-    for (final entry in _decodes.entries) {
-      if (entry.value.role == PageRole.current &&
-          registry.isStartupBuffering(entry.key)) {
-        return entry.key;
-      }
-    }
-    return null;
-  }
-
   DecodeRefillDecision? _nextDecodeRefill({DecodeId? only}) {
     final registry = decodes;
     if (registry == null) {
       return null;
     }
-    final startupCurrent = _startupBufferingCurrent();
     return refillPolicy.next(
       demands: _decodes,
       depthOf: (id) => registry.find(id)?.snapshot.depth ?? 0,
@@ -1050,9 +1015,6 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       },
       eligibleOf: (id) {
         if (only != null && id != only) {
-          return false;
-        }
-        if (startupCurrent != null && id != startupCurrent) {
           return false;
         }
         final snapshot = registry.find(id)?.snapshot;
@@ -1081,9 +1043,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   void _wakeNextDecodeRefill(String sessionId, {DecodeId? except}) {
     final decision = _nextDecodeRefill();
     if (decision == null) return;
-    final sameStartupCurrent = decision.id == except &&
-        (uploads?.isStartupBuffering(decision.id) ?? false);
-    if (decision.id == except && !sameStartupCurrent) {
+    if (decision.id == except) {
       return;
     }
     _wakeDecode(

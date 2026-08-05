@@ -131,6 +131,7 @@ final class NativeCursor
   bool _metadataComplete = false;
   bool _decodeInFlight = false;
   bool _disposeRequested = false;
+  final Queue<_NativeDecodeResult> _prefetched = Queue<_NativeDecodeResult>();
 
   bool get disposed => _disposeRequested || _ptr == nullptr;
 
@@ -166,76 +167,94 @@ final class NativeCursor
   Future<CursorStep> decodeNextScheduled(
     DecodeExecutionClass executionClass,
   ) async {
-    final ptr = _requirePtr();
+    _requirePtr();
+    if (_prefetched.isNotEmpty) {
+      return _stepFromResult(_prefetched.removeFirst());
+    }
     if (_decodeInFlight) {
       throw StateError('native cursor already has a decode in flight');
     }
     _decodeInFlight = true;
     try {
-      final result = await _decodePool.decode(
-        cursorAddress: ptr.address,
+      final results = await _decodePool.decodeBatch(
+        cursorAddress: _ptr.address,
         epoch: _epoch,
         executionClass: executionClass,
+        // Match VibeVenera's producer behavior: preserve the fastest possible
+        // first frame, then amortize isolate/FFI dispatch for current playback.
+        maxFrames: _frameCount == 0
+            ? 1
+            : executionClass == DecodeExecutionClass.current
+                ? 2
+                : 1,
       );
-      _frameCount = result.frameCount;
-      _loopCount = result.loopCount;
-      _metadataComplete = result.metadataComplete;
-      _cycle = result.cycle;
-
-      final raw = result.status;
-      if (raw < 0 || raw >= _CursorStatus.values.length) {
-        _releaseWorkerFrame(result.frameAddress);
-        throw StateError('native cursor returned unknown status $raw');
+      if (results.isEmpty) {
+        throw StateError('native decode worker returned an empty batch');
       }
-      final status = _CursorStatus.values[raw];
-      switch (status) {
-        case _CursorStatus.ok:
-          if (result.frameAddress == 0) {
-            throw StateError('native cursor returned OK without a frame');
-          }
-          return CursorStep.frame(
-            NativeFrame._(
-              Pointer<_Frame>.fromAddress(result.frameAddress),
-              _api,
-              nativeDecodeMicros: result.nativeMicros,
-              nativeMetadataMicros: result.nativeMetadataMicros,
-              workerReadyMicros: result.workerReadyMicros,
-              workerQueueMicros: result.workerQueueMicros,
-              workerRoundTripMicros: result.workerRoundTripMicros,
-              workerIndex: result.workerIndex,
-              workerPlacementStatus: result.workerPlacementStatus,
-              dispatchMicros: (result.workerRoundTripMicros -
-                      result.nativeMicros -
-                      result.nativeMetadataMicros)
-                  .clamp(0, 1 << 62)
-                  .toInt(),
-            ),
-          );
-        case _CursorStatus.needMoreData:
-          _releaseWorkerFrame(result.frameAddress);
-          return const CursorStep.needMoreData();
-        case _CursorStatus.end:
-          _releaseWorkerFrame(result.frameAddress);
-          return const CursorStep.end();
-        case _CursorStatus.staleEpoch:
-          _releaseWorkerFrame(result.frameAddress);
-          throw StateError('native cursor rejected a stale epoch');
-        case _CursorStatus.unsupported:
-          _releaseWorkerFrame(result.frameAddress);
-          throw UnsupportedError('native cursor does not support this content');
-        case _CursorStatus.nullPointer:
-          _releaseWorkerFrame(result.frameAddress);
-          throw StateError('native cursor is unavailable');
-        case _CursorStatus.failed:
-          _releaseWorkerFrame(result.frameAddress);
-          if (!_source.sealed) {
-            return const CursorStep.needMoreData();
-          }
-          throw StateError('native cursor decode failed');
-      }
+      _prefetched.addAll(results.skip(1));
+      return _stepFromResult(results.first);
     } finally {
       _decodeInFlight = false;
       _freeIfRequested();
+    }
+  }
+
+  CursorStep _stepFromResult(_NativeDecodeResult result) {
+    _frameCount = result.frameCount;
+    _loopCount = result.loopCount;
+    _metadataComplete = result.metadataComplete;
+    _cycle = result.cycle;
+
+    final raw = result.status;
+    if (raw < 0 || raw >= _CursorStatus.values.length) {
+      _releaseWorkerFrame(result.frameAddress);
+      throw StateError('native cursor returned unknown status $raw');
+    }
+    final status = _CursorStatus.values[raw];
+    switch (status) {
+      case _CursorStatus.ok:
+        if (result.frameAddress == 0) {
+          throw StateError('native cursor returned OK without a frame');
+        }
+        return CursorStep.frame(
+          NativeFrame._(
+            Pointer<_Frame>.fromAddress(result.frameAddress),
+            _api,
+            nativeDecodeMicros: result.nativeMicros,
+            nativeMetadataMicros: result.nativeMetadataMicros,
+            workerReadyMicros: result.workerReadyMicros,
+            workerQueueMicros: result.workerQueueMicros,
+            workerRoundTripMicros: result.workerRoundTripMicros,
+            workerIndex: result.workerIndex,
+            workerPlacementStatus: result.workerPlacementStatus,
+            dispatchMicros: (result.workerRoundTripMicros -
+                    result.nativeMicros -
+                    result.nativeMetadataMicros)
+                .clamp(0, 1 << 62)
+                .toInt(),
+          ),
+        );
+      case _CursorStatus.needMoreData:
+        _releaseWorkerFrame(result.frameAddress);
+        return const CursorStep.needMoreData();
+      case _CursorStatus.end:
+        _releaseWorkerFrame(result.frameAddress);
+        return const CursorStep.end();
+      case _CursorStatus.staleEpoch:
+        _releaseWorkerFrame(result.frameAddress);
+        throw StateError('native cursor rejected a stale epoch');
+      case _CursorStatus.unsupported:
+        _releaseWorkerFrame(result.frameAddress);
+        throw UnsupportedError('native cursor does not support this content');
+      case _CursorStatus.nullPointer:
+        _releaseWorkerFrame(result.frameAddress);
+        throw StateError('native cursor is unavailable');
+      case _CursorStatus.failed:
+        _releaseWorkerFrame(result.frameAddress);
+        if (!_source.sealed) {
+          return const CursorStep.needMoreData();
+        }
+        throw StateError('native cursor decode failed');
     }
   }
 
@@ -245,6 +264,7 @@ final class NativeCursor
     if (_decodeInFlight) {
       throw StateError('native cursor cannot rewind during decode');
     }
+    _releasePrefetched();
     final raw = _api.rewind(ptr, _epoch);
     if (raw < 0 || raw >= _CursorStatus.values.length) {
       throw StateError('native cursor returned unknown rewind status $raw');
@@ -275,6 +295,7 @@ final class NativeCursor
       return;
     }
     _disposeRequested = true;
+    _releasePrefetched();
     _freeIfRequested();
   }
 
@@ -288,6 +309,12 @@ final class NativeCursor
     }
     _ptr = nullptr;
     _api.free(ptr);
+  }
+
+  void _releasePrefetched() {
+    while (_prefetched.isNotEmpty) {
+      _releaseWorkerFrame(_prefetched.removeFirst().frameAddress);
+    }
   }
 
   void _releaseWorkerFrame(int address) {

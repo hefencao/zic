@@ -172,6 +172,17 @@ final class ArtifactCacheTransport implements Transport {
         ? null
         : (_clock!.nowMicros() - openStarted).clamp(0, 1 << 62).toInt();
     final sourceClass = _originSourceClass(uri, fallback);
+    final retainedResponse = id != null &&
+            range == null &&
+            response.statusCode == 200 &&
+            response.rangeStart == 0 &&
+            response.totalLength != null &&
+            _isImmutableLocalSourceClass(sourceClass)
+        ? _retainCompletedOrigin(
+            response,
+            id: id,
+          )
+        : response;
     _recordSource(
       source: 'origin',
       id: id,
@@ -184,13 +195,57 @@ final class ArtifactCacheTransport implements Transport {
       totalLength: response.totalLength,
     );
     return _traceResponse(
-      response,
+      retainedResponse,
       source: 'origin',
       sourceClass: sourceClass,
       id: id,
       uri: uri,
       revision: revision,
       openMicros: openMicros,
+    );
+  }
+
+  ByteResponse _retainCompletedOrigin(
+    ByteResponse response, {
+    required DownloadId id,
+  }) {
+    final expectedLength = response.totalLength!;
+    final builder = BytesBuilder(copy: false);
+    var discarded = false;
+    var completed = false;
+
+    Stream<List<int>> bytes() async* {
+      try {
+        await for (final chunk in response.bytes) {
+          if (!discarded) builder.add(chunk);
+          yield chunk;
+        }
+        completed = true;
+      } finally {
+        if (!discarded && completed) {
+          final retained = builder.takeBytes();
+          if (retained.lengthInBytes == expectedLength) {
+            // Composition-owned hot bytes survive Reader-session recreation.
+            // This mirrors VibeVenera's ByteCache without introducing a
+            // Reader/App private cache or changing durable artifact ownership.
+            _cache.remember(id: id, bytes: retained, durable: false);
+          }
+        }
+      }
+    }
+
+    return ByteResponse(
+      bytes: bytes(),
+      statusCode: response.statusCode,
+      rangeStart: response.rangeStart,
+      totalLength: response.totalLength,
+      validators: response.validators,
+      rangeSupported: response.rangeSupported,
+      disposition: response.disposition,
+      onDiscard: () async {
+        discarded = true;
+        await response.discard();
+      },
     );
   }
 
@@ -535,6 +590,11 @@ final class ArtifactCacheTransport implements Transport {
     );
   }
 }
+
+bool _isImmutableLocalSourceClass(String sourceClass) =>
+    sourceClass == 'local-document' ||
+    sourceClass == 'local-file' ||
+    sourceClass == 'asset';
 
 String _originSourceClass(Uri uri, Transport transport) {
   final scheme = uri.scheme.toLowerCase();

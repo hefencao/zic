@@ -42,7 +42,7 @@ require(
 require(
     'packages/bridge/lib/src/native_cursor.dart',
     '_NativeDecodeWorkerPool.forLibrary(libPath)',
-    'await _decodePool.decode(',
+    'await _decodePool.decodeBatch(',
     'Pointer<_Frame>.fromAddress(result.frameAddress)',
     'decodeNextScheduled(',
     'nativeDecodeMicros: result.nativeMicros',

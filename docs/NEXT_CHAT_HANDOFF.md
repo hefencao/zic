@@ -1,6 +1,6 @@
-# dev.131 后续交接
+# dev.132 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.131_source-wake-retention-playback-rebuffer-closure.zip`。不得使用旧工作树或重放更早 patch。
+唯一后续基线：`zic_v0.31.0-dev.132_vibevenera-holder-playback-local-hot-bytes.zip`。不得使用旧工作树或重放更早 patch。
 
 ## 必读
 
@@ -12,25 +12,24 @@
 6. `docs/IMPLEMENTATION_STATUS.md`
 7. `docs/adr/0112-native-decode-priority-migration.md`
 8. `docs/adr/0113-fresh-reader-texture-performance-core-deadline-wake.md`
-9. `docs/adr/0114-source-wake-retention-and-single-startup-buffer.md`
-10. `docs/audits/dev131-load-starvation-playback-rebuffer-audit.md`
-11. `docs/audits/dev131-validation-results.md`
+9. `docs/adr/0115-vibevenera-holder-playback-local-hot-bytes.md`
 
-## 当前状态
+## 当前实现
 
-- startup buffering gate 暂缓其他 DecodeId 时，source revision 保持 pending，不得标记为已消费。
-- 同一 output 生命周期的 startup buffer 完成状态跨临时 transition/previous 保留；返回 current 不得中途重新缓冲。
-- native active worker 已是 current 时 promotion 必须返回 none。
-- fresh texture、performance-core affinity、partial source-growth、下载 handoff 和 7/5/3/2 水位保持。
-
-## Patch
+- dev.126–dev.131 startup-buffer gate 已由 ADR 0115 取代。播放消费 holder 已有帧；缺帧时保留当前 output，producer 新帧到达后唤醒 upload。
+- NativeCursor 首帧 batch=1，current 后续 batch<=2；两个 native worker 不变。
+- 完整本地不可变页面字节由 composition-owned `ArtifactCacheManager` 保留，跨 Reader session 按 DownloadId 命中；Reader/App 无私有字节缓存。
+- 下载窗口 7/3、staged 水位 7/5/3/2、静态一帧满足、partial source-growth、fresh texture 生命周期保持。
+- Android native identity 仍为 `zic-media-core-dev129-abi6-lib00121200`。
+- 正式 ZIP 不含 `.zic-workspace.json`。Patch 命令直接使用：
 
 ```bash
-git apply --check --index \
-  "$(python3 tool/workspace_config.py patch_dir --absolute)/zic_v0.31.0-dev.130_to_dev.131_source-wake-retention-playback-rebuffer-closure.patch"
-
-git apply --index \
-  "$(python3 tool/workspace_config.py patch_dir --absolute)/zic_v0.31.0-dev.130_to_dev.131_source-wake-retention-playback-rebuffer-closure.patch"
+git apply --index "$(python3 tool/workspace_config.py patch_dir --absolute)/<patch-file>"
 ```
 
-正式 ZIP 不包含 `.zic-workspace.json`，patch 不触碰本地配置。
+## 下一轮设备验证
+
+- 后台重入同页应出现 `artifact-byte-cache`，而不是重新读取完整 `content://` origin。
+- 新运行时不应产生新的 `playbackBuffering` 或 `decode-startup-deferred`。
+- 检查播放饥饿时当前 texture 保持、producer 唤醒后恢复，且无几帧播放后长停顿。
+- 检查 current 双帧批量 decode 后 worker dispatch/round-trip 长尾是否下降。

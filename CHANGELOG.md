@@ -1,3 +1,11 @@
+## 0.31.0-dev.132：迁移 VibeVenera Holder 播放与本地热字节路径
+
+- 根据 `zic-debug-trace-2026-08-05T01-21-36.jsonl` 撤销 dev.126–dev.131 的 startup-buffer gate；播放只消费 holder 中已有帧，缺帧时保留当前 output 并等待 producer 唤醒，不再阻塞其他页面 decode refill。
+- `UploadSession`、`UploadRegistry`、`LiveCoordinator` 与 `PipelineReaderSession` 删除 startup buffering 状态、current-only eligibility、`decode-startup-deferred` 和 upload-to-decode 特例；历史 Trace analyzer 指标保留用于比较旧日志。
+- 参考 VibeVenera worker 批处理：NativeCursor 首帧请求 1 帧，current 后续请求最多 2 帧；额外 native frame 由 cursor 有界持有并在 rewind/dispose 时释放，worker 数量仍为 2。
+- 完整读取的 `content://`、`file://` 与 asset 不可变页面正文写入 composition-owned `ArtifactCacheManager` 内存 LRU；新 Reader 直接命中同一 DownloadId 热字节，不再重复读取大 SAF 文件。
+- 新增 downloads/sessions owner tests、ADR 0115 与 dev.132 静态门禁；7/3 下载窗口、7/5/3/2 staged 水位、fresh texture 生命周期、partial source-growth 和 native ABI 不变。
+
 ## 0.31.0-dev.131：保留被暂缓 Source Wake 并禁止中途再缓冲
 
 - 修复 startup buffering gate 暂缓其他页面 decode 时错误消费其 source revision；被暂缓页面保持 pending wake，之后升为 current 可立即 decode。

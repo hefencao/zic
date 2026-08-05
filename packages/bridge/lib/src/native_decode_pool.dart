@@ -63,16 +63,21 @@ final class _NativeDecodeWorkerPool {
 
   Future<void> prewarm() => _ensureStarted();
 
-  Future<_NativeDecodeResult> decode({
+  Future<List<_NativeDecodeResult>> decodeBatch({
     required int cursorAddress,
     required int epoch,
     required DecodeExecutionClass executionClass,
+    required int maxFrames,
   }) {
-    final completer = Completer<_NativeDecodeResult>();
+    if (maxFrames <= 0 || maxFrames > 2) {
+      throw ArgumentError.value(maxFrames, 'maxFrames', 'must be 1 or 2');
+    }
+    final completer = Completer<List<_NativeDecodeResult>>();
     final pending = _PendingNativeDecode(
       cursorAddress: cursorAddress,
       epoch: epoch,
       executionClass: executionClass,
+      maxFrames: maxFrames,
       completer: completer,
       workerReady: Stopwatch()..start(),
     );
@@ -237,26 +242,44 @@ final class _NativeDecodeWorkerPool {
   ) async {
     try {
       final workerQueueMicros = pending.queued?.elapsedMicroseconds ?? 0;
-      final result = await worker.decode(
+      final results = await worker.decodeBatch(
         cursorAddress: pending.cursorAddress,
         epoch: pending.epoch,
+        maxFrames: pending.maxFrames,
       );
+      final nativeTotal = results.fold<int>(
+        0,
+        (sum, result) =>
+            sum + result.nativeMicros + result.nativeMetadataMicros,
+      );
+      final batchRoundTrip = results.isEmpty
+          ? 0
+          : results.first.workerRoundTripMicros;
+      final sharedDispatch = results.isEmpty
+          ? 0
+          : ((batchRoundTrip - nativeTotal).clamp(0, 1 << 62) ~/
+              results.length);
       pending.completer.complete(
-        _NativeDecodeResult(
-          status: result.status,
-          frameAddress: result.frameAddress,
-          frameCount: result.frameCount,
-          loopCount: result.loopCount,
-          metadataComplete: result.metadataComplete,
-          cycle: result.cycle,
-          nativeMicros: result.nativeMicros,
-          nativeMetadataMicros: result.nativeMetadataMicros,
-          workerRoundTripMicros: result.workerRoundTripMicros,
-          workerReadyMicros: pending.workerReadyMicros,
-          workerQueueMicros: workerQueueMicros,
-          workerIndex: worker.index,
-          workerPlacementStatus: worker.placementStatus,
-        ),
+        <_NativeDecodeResult>[
+          for (var index = 0; index < results.length; index++)
+            _NativeDecodeResult(
+              status: results[index].status,
+              frameAddress: results[index].frameAddress,
+              frameCount: results[index].frameCount,
+              loopCount: results[index].loopCount,
+              metadataComplete: results[index].metadataComplete,
+              cycle: results[index].cycle,
+              nativeMicros: results[index].nativeMicros,
+              nativeMetadataMicros: results[index].nativeMetadataMicros,
+              workerRoundTripMicros: results[index].nativeMicros +
+                  results[index].nativeMetadataMicros +
+                  sharedDispatch,
+              workerReadyMicros: index == 0 ? pending.workerReadyMicros : 0,
+              workerQueueMicros: index == 0 ? workerQueueMicros : 0,
+              workerIndex: worker.index,
+              workerPlacementStatus: worker.placementStatus,
+            ),
+        ],
       );
     } on Object catch (error, stack) {
       pending.completer.completeError(error, stack);
@@ -275,6 +298,7 @@ final class _PendingNativeDecode {
     required this.cursorAddress,
     required this.epoch,
     required this.executionClass,
+    required this.maxFrames,
     required this.completer,
     required this.workerReady,
   });
@@ -282,7 +306,8 @@ final class _PendingNativeDecode {
   final int cursorAddress;
   final int epoch;
   DecodeExecutionClass executionClass;
-  final Completer<_NativeDecodeResult> completer;
+  final int maxFrames;
+  final Completer<List<_NativeDecodeResult>> completer;
   final Stopwatch workerReady;
   int workerReadyMicros = 0;
   Stopwatch? queued;
@@ -313,14 +338,20 @@ final class _NativeDecodeWorker {
     port.send('close');
   }
 
-  Future<_NativeDecodeResult> decode({
+  Future<List<_NativeDecodeResult>> decodeBatch({
     required int cursorAddress,
     required int epoch,
+    required int maxFrames,
   }) async {
     final response = ReceivePort();
     final workerRoundTrip = Stopwatch()..start();
     try {
-      port.send(<Object?>[response.sendPort, cursorAddress, epoch]);
+      port.send(<Object?>[
+        response.sendPort,
+        cursorAddress,
+        epoch,
+        maxFrames,
+      ]);
       final value = await response.first;
       if (value is! List<Object?> || value.isEmpty) {
         throw StateError('invalid native decode worker response: $value');
@@ -330,28 +361,36 @@ final class _NativeDecodeWorker {
           value.length > 1 ? value[1].toString() : 'decode failed',
         );
       }
-      if (value.length < 8) {
-        throw StateError('incomplete native decode worker response: $value');
+      final elapsed = workerRoundTrip.elapsedMicroseconds;
+      final results = <_NativeDecodeResult>[];
+      for (final item in value) {
+        if (item is! List<Object?> || item.length < 8) {
+          throw StateError('incomplete native decode worker response: $item');
+        }
+        results.add(
+          _NativeDecodeResult(
+            status: item[0]! as int,
+            frameAddress: item[1]! as int,
+            frameCount: item[2]! as int,
+            loopCount: item[3]! as int,
+            metadataComplete: item[4] == true,
+            cycle: item[5]! as int,
+            nativeMicros: item[6]! as int,
+            nativeMetadataMicros: item[7]! as int,
+            workerRoundTripMicros: elapsed,
+            workerReadyMicros: 0,
+            workerQueueMicros: 0,
+            workerIndex: index,
+            workerPlacementStatus: placementStatus,
+          ),
+        );
       }
-      return _NativeDecodeResult(
-        status: value[0]! as int,
-        frameAddress: value[1]! as int,
-        frameCount: value[2]! as int,
-        loopCount: value[3]! as int,
-        metadataComplete: value[4] == true,
-        cycle: value[5]! as int,
-        nativeMicros: value[6]! as int,
-        nativeMetadataMicros: value[7]! as int,
-        workerRoundTripMicros: workerRoundTrip.elapsedMicroseconds,
-        workerReadyMicros: 0,
-        workerQueueMicros: 0,
-        workerIndex: index,
-        workerPlacementStatus: placementStatus,
-      );
+      return List<_NativeDecodeResult>.unmodifiable(results);
     } finally {
       response.close();
     }
   }
+
 }
 
 @pragma('vm:entry-point')
@@ -374,39 +413,54 @@ void _nativeDecodeWorkerEntry(List<Object?> arguments) {
       receive.close();
       Isolate.exit();
     }
-    if (message is! List<Object?> || message.length < 3) {
+    if (message is! List<Object?> || message.length < 4) {
       return;
     }
     final reply = message[0]! as SendPort;
     final cursorAddress = message[1]! as int;
     final epoch = message[2]! as int;
+    final maxFrames = message[3]! as int;
     final out = calloc<Pointer<_Frame>>();
-    final stopwatch = Stopwatch()..start();
+    final decoded = <List<Object?>>[];
     try {
-      out.value = nullptr;
       final cursor = Pointer<_Cursor>.fromAddress(cursorAddress);
-      final status = api.decode(cursor, epoch, out);
-      final nativeMicros = stopwatch.elapsedMicroseconds;
-      final metadataStopwatch = Stopwatch()..start();
-      final frameAddress = out.value == nullptr ? 0 : out.value.address;
-      final frameCount = api.frameCount(cursor);
-      final loopCount = api.loopCount(cursor);
-      final metadataComplete = api.metadataComplete(cursor) != 0;
-      final cycle = api.cycle(cursor);
-      final nativeMetadataMicros = metadataStopwatch.elapsedMicroseconds;
-      reply.send(<Object?>[
-        status,
-        frameAddress,
-        frameCount,
-        loopCount,
-        metadataComplete,
-        cycle,
-        nativeMicros,
-        nativeMetadataMicros,
-      ]);
+      for (var index = 0; index < maxFrames; index++) {
+        out.value = nullptr;
+        final stopwatch = Stopwatch()..start();
+        final status = api.decode(cursor, epoch, out);
+        final nativeMicros = stopwatch.elapsedMicroseconds;
+        final metadataStopwatch = Stopwatch()..start();
+        final frameAddress = out.value == nullptr ? 0 : out.value.address;
+        final frameCount = api.frameCount(cursor);
+        final loopCount = api.loopCount(cursor);
+        final metadataComplete = api.metadataComplete(cursor) != 0;
+        final cycle = api.cycle(cursor);
+        final nativeMetadataMicros = metadataStopwatch.elapsedMicroseconds;
+        decoded.add(<Object?>[
+          status,
+          frameAddress,
+          frameCount,
+          loopCount,
+          metadataComplete,
+          cycle,
+          nativeMicros,
+          nativeMetadataMicros,
+        ]);
+        if (status != _CursorStatus.ok.index) {
+          break;
+        }
+      }
+      reply.send(decoded);
     } on Object catch (error) {
+      final released = <int>{};
+      for (final result in decoded) {
+        final address = result[1] as int? ?? 0;
+        if (address != 0 && released.add(address)) {
+          api.frameRelease(Pointer<_Frame>.fromAddress(address));
+        }
+      }
       final frame = out.value;
-      if (frame != nullptr) {
+      if (frame != nullptr && released.add(frame.address)) {
         api.frameRelease(frame);
       }
       reply.send(<Object?>['error', error.toString()]);

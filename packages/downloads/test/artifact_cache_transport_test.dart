@@ -435,6 +435,34 @@ void main() {
     );
   });
 
+  test('completed immutable local origin is hot across Reader sessions',
+      () async {
+    final uri = Uri.parse('content://reader/page-restore.webp');
+    final id = _downloadId(uri, 'page-local-hot');
+    final backend = _MemoryArtifactStore(<DownloadId, Uint8List>{});
+    final manager = ArtifactCacheManager(backend: backend);
+    final fallback = _RecordingTransport(
+      Uint8List.fromList(List<int>.generate(4096, (index) => index & 0xff)),
+    );
+    final first = ArtifactCacheTransport(
+      cache: manager,
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => fallback,
+    );
+
+    expect((await _collect(await first.open(uri))).length, 4096);
+    expect(fallback.opens, 1);
+    expect(manager.lookupMemory(id), isNotNull);
+
+    final second = ArtifactCacheTransport(
+      cache: manager,
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => fallback,
+    );
+    expect((await _collect(await second.open(uri))).length, 4096);
+    expect(fallback.opens, 1);
+  });
+
   test('ambiguous URI identities bypass the artifact cache', () async {
     final uri = Uri.parse('https://example.invalid/shared.bin');
     final first = _downloadId(uri, 'page-a');

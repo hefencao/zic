@@ -1,27 +1,23 @@
 #!/usr/bin/env python3
+"""Guard dev.131 diagnostics while dev.132 removes the cause, not the metrics."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-coordinator = (ROOT / 'packages/sessions/lib/src/live_coordinator.dart').read_text()
-upload = (ROOT / 'packages/sessions/lib/src/upload_session.dart').read_text()
-pool = (ROOT / 'packages/bridge/lib/src/native_decode_pool.dart').read_text()
-analyzer = (ROOT / 'tool/analyze_frame_pipeline_trace.py').read_text()
+coordinator = (ROOT / "packages/sessions/lib/src/live_coordinator.dart").read_text()
+upload = (ROOT / "packages/sessions/lib/src/upload_session.dart").read_text()
+pool = (ROOT / "packages/bridge/lib/src/native_decode_pool.dart").read_text()
+analyzer = (ROOT / "tool/analyze_frame_pipeline_trace.py").read_text()
 
-assert "'stage': 'decode-startup-deferred'" in coordinator
-assert 'final deferredByStartup =' in coordinator
-blocked = coordinator.index('final deferredByStartup =')
-consumed = coordinator.index('_decodeSourceRevisions[id] = sourceRevision;', blocked)
-segment = coordinator[blocked:consumed]
-assert 'if (deferredByStartup)' in segment
-assert '} else {' in segment
-assert "_startupBufferSatisfied = false;\n      _startupBufferTarget = 0;" not in upload[
-    upload.index('if (demand.role != PageRole.current)'):upload.index(
-        'final prepared = _serializePrepare',
-        upload.index('if (demand.role != PageRole.current)'),
-    )
-]
-assert 'temporary\n      // transition/previous role must not arm the same gate again' in upload
-assert 'if (worker.executionClass == DecodeExecutionClass.current)' in pool
-assert 'playbackRebufferCount' in analyzer
-assert 'decodeStartupDeferredCount' in analyzer
-print('dev.131 load starvation/playback rebuffer gate: OK')
+for forbidden in (
+    "decode-startup-deferred",
+    "startupBuffering",
+    "_startupBufferSatisfied",
+):
+    if forbidden in coordinator or forbidden in upload:
+        raise SystemExit(f"dev.132 startup/rebuffer cause remains: {forbidden}")
+if "if (worker.executionClass == DecodeExecutionClass.current)" not in pool:
+    raise SystemExit("native current promotion must remain idempotent")
+for metric in ("playbackRebufferCount", "decodeStartupDeferredCount"):
+    if metric not in analyzer:
+        raise SystemExit(f"historical trace diagnostic was removed: {metric}")
+print("dev.131 diagnostics with dev.132 holder-driven supersession: OK")
