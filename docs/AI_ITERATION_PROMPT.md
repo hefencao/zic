@@ -1,8 +1,6 @@
-# ZIC 后续迭代提示词
+# ZIC 迭代提示词
 
-下面的提示词用于新聊天或长聊天中断后的继续开发。使用时把最新完整项目包和错误日志一并上传，并替换 `<LATEST_ZIP>`、`<TARGET_VERSION>` 与当前任务。
 
-```text
 严格以我本次上传的 `<LATEST_ZIP>` 为唯一代码基线继续迭代，目标交付 `<TARGET_VERSION>`。
 不得回退、混入或覆盖任何更早候选、补丁树或记忆中的源码。Mihon 与 VibeVenera 参考源码默认只读；除非我明确要求，不得修改或并入它们。VibeVenera 中由我们此前自行设计的 Pipeline/流式播放实现可以直接参考或迁移，但必须接入 ZIC 现有所有权边界，不能再建立竞争实现。
 
@@ -37,10 +35,8 @@ Architecture 与所有权原则：
 - 设置与 Debug UI 只能投影和调用已有 facade，不能直接访问插件 Cookie、底层文件、transport 或 session registry。
 
 当前不得随意改变的重要行为：
-- VibeVenera 风格下载窗口保持前 7/后 3，预解码前 2/后 1，只上传 current/transition，lane 为 5/3/2；除非有明确实验、数据和我的批准，不得通过关闭预下载、缩小窗口或降低并发掩盖请求/流量错误。
 - GET/HEAD 必须零 body，不能携带实体 headers。
 - 同一 locator/request plan、下载 session、artifact 和 decode 任务必须按稳定 identity 合并，不得由首页、详情、Reader 各自重复请求。
-- 已完成/promoted/restored 页面不得重新闪烁“连接中”或进度条。
 - 连续 Reader 不裁切漫画内容，不用负位移或页面重叠掩盖接缝；几何单位统一为 `height / width`。
 - 不得为了通过测试随意改变产品逻辑。若测试假设错误，修测试；若产品逻辑错误，修产品并增加正确回归。
 
@@ -77,16 +73,10 @@ Architecture 与所有权原则：
 
 交付要求：
 - 提供清晰版本号和中文提交标题。
-- 提供完整项目 ZIP 和上一版本到本版本的 patch。
+- Release delivery must include a complete ZIP, SHA-256 and a baseline-to-release patch generated for `git apply --index`.
+- Resolve `patch_dir` from `ZIC_PATCH_DIR` or the local `.zic-workspace.json`; do not hard-code a machine-specific directory.
+- `.zic-workspace.json` is machine-local and must not be included in release ZIPs or generated patches.
+- Patch application instructions must use `"$(python3 tool/workspace_config.py patch_dir --absolute)/<patch-file>"` directly; do not introduce a chat-only `PATCH_DIR` variable.
 - 提供二者 SHA-256。
 - ZIP 必须干净，不含 `.git`、`.dart_tool`、`build`、`.gradle`、`__pycache__`、`.pyc`、`.class` 等生成物。
 - 总结实际修改、删除的冗余文件、Architecture/耦合变化、测试结果和未验证项。
-- 不得把“静态字符串检查通过”描述为“Flutter 编译通过”。
-
-当前任务：
-<在这里粘贴本轮错误、设备现象和功能要求>
-```
-
-## 使用建议
-
-新聊天中应同时上传最新完整 ZIP、最新错误日志和必要截图。若需要参考 VibeVenera/Mihon，再上传对应参考包，并明确哪些内容只读、哪些自有模块允许直接迁移。

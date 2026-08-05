@@ -1,6 +1,6 @@
 # ADR 0117：Reader 资源会话保留与 CPU Affinity 移除
 
-**状态：Accepted in dev.134**
+**状态：Accepted**
 
 ## 背景
 

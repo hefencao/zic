@@ -1,6 +1,6 @@
 # ADR 0114：保留被暂缓 Source Wake 与单次启动缓冲
 
-**状态：Superseded by ADR 0115 in dev.132**
+**状态：Superseded**
 
 ## 问题
 

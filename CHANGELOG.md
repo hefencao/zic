@@ -1,3 +1,11 @@
+## 0.31.0-dev.139：当前代码文档重新对齐
+
+- 按 production source 重写 Reader Pipeline、角色/水位、网络、缓存、texture 和 retention 文档。
+- 明确 encoded +7/-3、decode role +2/-1 与 holder 7/5/3/2 是不同层级，并记录 transition 独立首帧。
+- 记录 NetLane 唯一网络权威、16/64 KiB transport 合并、1 MiB/256 KiB prefix hint、单 blit 与 1 项/2 分钟资源会话 retention。
+- 规范近端 ADR 状态，新增 ADR 0122 作为当前 Reader Pipeline 综合入口。
+- 新增 current-code documentation consistency gate；产品运行代码和 native ABI 不变。
+
 ## 0.31.0-dev.138：移除 Current 流量门控并恢复目标页首帧并行
 
 - 删除 dev.137 的 `DownloadFlowGate`、`beforeReadChunk`、`downloadFlowPressure` 和 LiveCoordinator holder-depth 网络资格逻辑；current 继续由 NetLane reserved slot、priority migration 与 preemption 保护。

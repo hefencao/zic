@@ -21,25 +21,28 @@
 ## 仓库结构
 
 ```text
-apps/app/                 Flutter 应用与 composition root
-packages/domain/          领域 identity、值对象和不可变实体
-packages/catalog/         漫画、章节、来源抽象和元数据
-packages/resource_cache/  封面、详情和搜索响应缓存
-packages/downloads/       持久下载、整章/整本调度和下载状态
-packages/sessions/        Download/Decode/Upload session 生命周期
-packages/pipeline/        Reader observation、角色窗口和 demand policy
-packages/pipeline_runtime/ Pipeline-owned Reader 资源运行时
-packages/pipeline_native/  native media capability 的上层组合
-packages/reader_runtime/   Reader Presentation 与 observation 适配
-packages/plugin_host/      插件信任、权限、请求计划和生命周期
-packages/plugin_host_bridge/
-                           Android 隔离进程与插件平台适配
-packages/network_bridge/   Android 浏览器、Cookie 和网络平台能力
-packages/texture_bridge/   Android Flutter texture 呈现
-packages/bridge/           Dart FFI 与 native source/cursor/frame ABI
+apps/app/                  Flutter composition root、导航和产品页面
+packages/domain/           领域 identity、值对象和不可变实体
+packages/catalog/          漫画源、manifest、稳定 catalog/cache identity
+packages/resource_cache/   封面、详情、搜索和元数据响应缓存
+packages/transport/        可取消、可分块 encoded-byte transport 合同
+packages/storage/          partial、seal、promotion、索引和临时 workspace
+packages/downloads/        页面 artifact cache、来源 transport、章节/整本下载
+packages/sessions/         Download/Decode/Upload session、lane、holder、timer
+packages/pipeline/         Reader observation、角色窗口和纯 demand policy
+packages/pipeline_runtime/ Reader 资源会话组合、retention 和只读页面流
+packages/pipeline_native/  native source/cursor/uploader/output 原子能力组合
+packages/media/            encoded source、cursor、frame、output 抽象
+packages/reader/           通用 Reader observation、导航和 Flutter widget
+packages/reader_runtime/   Reader Presentation、交互和 observation 适配
+packages/local_media*/     本地文件/文件夹导入与展示
+packages/plugin_host*/     插件信任、隔离、请求计划和 Android runtime 适配
+packages/network_bridge/   浏览器、Cookie、challenge 和网络平台能力
+packages/texture_bridge/   Android Flutter texture 与 SurfaceProducer 呈现
+packages/bridge/           Dart FFI、native source/cursor/frame ABI 与 worker pool
+packages/*_bridge/         storage、downloads、runtime 等平台组合适配
 native/media_core/         Rust 增量媒体内核
-third_party/source_archives/
-                           锁定的第三方源码归档
+third_party/source_archives/ 锁定第三方源码归档
 tool/                      构建、验证、分析和仓库门禁
 ```
 
@@ -51,9 +54,9 @@ tool/                      构建、验证、分析和仓库门禁
 - Android SDK、NDK、Gradle
 - Rust / Cargo
 - CMake、Ninja、Python 3
-- Kotlin compiler（仅静态 bridge compile gate 需要）
+- Kotlin compiler（静态 bridge compile gate）
 
-缺少工具链时，`tool/check.sh` 会执行可用的结构和静态门禁，并明确输出跳过项；不能把静态门禁当作 Flutter、Android 或真机验证。
+缺少工具链时，`tool/check.sh` 会执行可用的结构和静态门禁并明确输出跳过项；静态门禁不能替代 Flutter、Android 或真机验证。
 
 ## 初始化与运行
 
@@ -104,7 +107,7 @@ make webp-check
 ./tool/build_android.sh release
 ```
 
-release 默认使用 `--split-per-abi`，避免生成包含全部 ABI 的单一 fat APK。
+release 默认使用 `--split-per-abi`，避免生成包含全部 ABI 的单一 fat APK。debug/profile/release 从同一个 `apps/app/android/zic-version.properties` 读取 application version。
 
 ## Native WebP
 
@@ -125,4 +128,4 @@ Debug Trace 是诊断证据，不是产品状态数据库。分析逐帧 Pipelin
 python3 tool/analyze_frame_pipeline_trace.py zic-debug-trace-*.jsonl
 ```
 
-Trace 中的性能结论应记录到 `docs/audits/`，只有经过源码核对和相应验证后，稳定合同才可进入 Architecture 或 Spec。
+Trace 结论应记录到 `docs/audits/`；只有源码核对和对应验证支持的稳定合同才可进入 Architecture 或 Spec。

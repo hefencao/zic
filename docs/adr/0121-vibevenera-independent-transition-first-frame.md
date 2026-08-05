@@ -1,6 +1,6 @@
 # ADR 0121：VibeVenera 独立目标页传输与 Transition 首帧
 
-**状态：Accepted in dev.138**
+**状态：Accepted**
 
 ## 问题
 

@@ -1,6 +1,6 @@
 # ADR 0118：统一应用版本、稳定缓存身份与已验证 Artifact 复用
 
-**状态：Accepted in dev.135**
+**状态：Accepted**
 
 ## 背景
 

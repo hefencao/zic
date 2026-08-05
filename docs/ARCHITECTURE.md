@@ -1,303 +1,247 @@
 # zic Architecture
 
-本文件描述当前稳定的所有权、依赖方向、数据流和生命周期。它不记录版本历史、单轮 Trace 结论、测试通过情况或待办事项。
+本文件描述当前生产代码的稳定所有权、依赖方向、数据流和生命周期。它不记录版本历史、单轮 Trace 数字、测试通过情况或待办事项。
 
 ## 1. 架构目标
 
-- 当前页资源优先，邻页工作不得使 current 饥饿。
-- 同一资源 identity 只有一个权威 session、artifact 和活动 writer。
-- Reader 只提交 observation 与用户命令，不直接操作 transport、session、artifact、decode/upload lane 或 texture。
-- 平台能力从 composition root 注入，核心包不反向依赖 Android、Flutter plugin 或 FFI 实现。
-- 每个可变状态只有一个权威所有者；Presentation 只消费只读投影。
-- 资源创建者负责关闭 owned 对象，外部注入对象不得被错误关闭。
+- current 具有最高资源优先级，但目标页首帧不得依赖 current 的下载完成或 holder 深度。
+- 同一稳定 identity 只有一个权威 request、session、artifact、cursor 和活动 writer。
+- Reader 只提交 observation/用户命令并消费只读输出，不直接操作 transport、session、artifact、lane、frame 或 texture。
+- 下载、解码、上传使用独立 scheduler；一个层的运行时状态不能成为另一层页面的资格门控。
+- 平台能力由 composition root 原子注入；核心包不反向依赖 Widget、Android plugin 或具体 FFI 实现。
+- 创建者关闭 owned 对象；外部注入能力不得被消费方误关闭。
 
-## 2. 分层
+## 2. 分层与依赖
 
 ```text
 Presentation
-  apps/app
-  local_media_ui
-  reader_runtime
+  apps/app, local_media_ui, reader_runtime, reader
         |
-Application / Composition
-  downloads_bridge
-  pipeline_native
-  storage_bridge
-  network_bridge
-  plugin_host_bridge
+Composition / platform adapters
+  pipeline_native, downloads_bridge, storage_bridge,
+  local_media_bridge, network_bridge, plugin_host_bridge,
+  runtime_bridge, texture_bridge
         |
-Policy / Runtime
-  pipeline
-  pipeline_runtime
-  downloads
-  sessions
+Policy / resource runtime
+  pipeline, pipeline_runtime, downloads, sessions
         |
-Domain / Data contracts
-  domain
-  catalog
-  media
-  transport
-  storage
-  resource_cache
-  telemetry
+Domain / contracts
+  domain, catalog, resource_cache, transport, storage,
+  media, telemetry
         |
-Platform / Native implementation
-  bridge
-  texture_bridge
-  runtime_bridge
-  native/media_core
+Native implementation
+  bridge, native/media_core
 ```
 
-依赖必须向下或指向稳定抽象。底层包不得读取 Widget、路由、页面选择或 App controller 状态。
+依赖只能向下或指向稳定抽象。底层包不得读取 Widget、路由、App controller 或页面控件状态。
 
 ## 3. 包所有权
 
 ### `domain`
 
-只定义领域 identity、值对象和不可变实体。不得依赖 UI、插件、网络、缓存、数据库或平台桥。
+领域 identity、值对象和不可变实体。不得依赖 UI、插件、网络、缓存、数据库或平台桥。
 
 ### `catalog`
 
-拥有漫画、章节、来源抽象、manifest 和元数据合同。它不拥有章节正文下载、解码、Reader 控制或页面 artifact。
+漫画源、漫画/章节/page manifest、来源能力和 catalog cache identity。`CachedBrowsableComicSource` 只缓存目录响应；Reader 页面正文仍透传到统一 Pipeline。
 
 ### `resource_cache`
 
-是封面、详情、搜索和其他网络响应缓存的唯一所有者，负责容量、TTL、in-flight 合并和失效。页面正文 artifact 不进入该缓存平面。
+封面、详情、搜索、章节元数据等可重新获取响应的唯一缓存平面，拥有容量、TTL、分类预算、in-flight 合并、持久 byte store 和失效策略。
 
 ### `transport`
 
-定义可取消、可分块的 encoded-byte transport 和内容识别合同，不拥有持久 artifact 或 Reader 策略。
+可取消、可分块的 encoded-byte transport、range、validator 和 response 合同。它不拥有 artifact、Reader demand 或播放状态。
 
 ### `storage`
 
-拥有 partial artifact、校验、seal、原子 promotion 和持久索引。它不决定 Reader demand。
+partial artifact、连续前缀、校验、seal、原子 promotion、索引和临时 workspace。它不决定页面角色或网络优先级。
 
 ### `downloads`
 
-拥有持久下载任务、DownloadSession 投影、resume、整章/整本调度和下载状态。下载算法不得在 App 页面重复实现。
+composition-owned `ArtifactCacheManager`、artifact transport/read scheduler、已验证 alias/rekey、章节/整本持久下载与来源 transport 组合。页面 session 状态本身由 `sessions` 拥有。
 
 ### `media`
 
-定义 encoded source、cursor、frame、output 和只读 timing capability。它不选择页面角色或平台实现。
+encoded source、cursor、frame、output、renderer 和只读 timing capability。它不选择页面角色或 scheduler 策略。
 
 ### `sessions`
 
-拥有 Download/Decode/Upload session、claim、lease、frame holder、播放 timer 和生命周期协调。session 状态不得暴露为 Presentation 可变对象。
+`DownloadSession`、`DecodeSession`、`UploadSession`、registry、claim/lease、frame holder、playback timer、Net/Decode/Upload lane 和 `LiveCoordinator`。它是可变媒体状态的权威所有者。
 
 ### `pipeline`
 
-拥有 `ReaderObs` 到资源角色和 `DemandPlan` 的纯策略与 diff。默认角色窗口和 lane 权重属于该层。
+把 `ReaderObs` 纯计算为角色窗口和 `DemandPlan`。它定义优先级、水位和 keep 集合，但不创建 transport、artifact、cursor 或 texture。
 
 ### `pipeline_runtime`
 
-是 Reader 资源会话的唯一运行时所有者，组合 download、decode、upload、prefetch、retry、进度和 output stream。它创建并按依赖逆序关闭 owned session。
+Reader 章节资源会话的唯一组合所有者。它把 demand reconcile 到 download/decode/upload session，发布 `PipelinePageStream`，管理 frame budget、共享 page download lane、artifact handoff 和短期资源会话 retention。
 
 ### `pipeline_native`
 
-把 `SourceFactory`、native cursor、frame uploader 和 output projector 作为一个原子 capability 注入 `pipeline_runtime`。核心 Pipeline 不直接创建 `NativeSourceFactory`。
+把 native source factory、cursor、frame uploader、output projector 和 prewarmer 作为原子 capability 注入 `pipeline_runtime`。核心 Pipeline 不直接创建具体 FFI 或 Android texture 实现。
 
-### `reader_runtime`
+### `reader_runtime` / `reader`
 
-只负责 Reader Presentation、用户交互、尺寸投影和 `ReaderObs` 适配。它不创建、选择或关闭 Pipeline session。
+`reader` 提供 observation、导航和通用 Flutter Reader；`reader_runtime` 负责产品交互、尺寸投影和 `ReaderObs` 适配。二者都不拥有资源 session、缓存或 native handle。
 
-### `reader`
+### 插件与平台桥
 
-拥有基础 Reader observation 模型和通用 Flutter reader widget，不拥有下载、缓存和 native media。
-
-### `plugin_host`
-
-拥有插件信任、权限、请求计划、身份适配和生命周期。插件不能获得导航、Reader、demand、artifact、缓存或 App 状态权限。
-
-### `plugin_host_bridge`
-
-实现 Android 隔离进程、Mihon/Venera runtime 适配和 IPC。普通图片正文应由宿主 transport 流式进入统一 Pipeline；需要 runtime transform 的响应必须显式声明能力。
-
-### `network_bridge`
-
-拥有 Android 可见浏览器、Cookie/localStorage 快照、challenge 恢复和共享网络平台能力。Debug UI 和插件 UI 只能调用 facade，不读取 Cookie 值或底层文件。
-
-### `bridge`
-
-提供稳定 Dart FFI 入口及 native source/cursor/frame ABI。它拥有进程级 native decode worker pool，但不拥有 Reader 页面角色。
-
-### `texture_bridge`
-
-拥有 Android texture lease、SurfaceProducer、RGBA blit、schedule 和 release。它不拥有播放 timer、页面 demand 或 frame decode。
-
-### `apps/app`
-
-只负责 composition、导航和页面。不得定义缓存算法、下载算法、预取窗口、页面保活、插件传输或解码器。
+- `plugin_host`：信任、权限、请求计划、身份适配和插件生命周期。
+- `plugin_host_bridge`：Android 隔离进程与 Mihon/Venera runtime 适配。
+- `network_bridge`：浏览器、Cookie/localStorage 快照、challenge 恢复和共享网络能力。
+- `bridge`：Dart FFI、native source/cursor/frame ABI 和两个进程常驻 decode isolate。
+- `texture_bridge`：Android texture lease、SurfaceProducer、单 lane RGBA blit、schedule 和 release。
+- `apps/app`：composition、导航和产品页面；不得定义资源算法。
 
 ## 4. Reader 数据流
 
 ```text
 Reader interaction / viewport / presentation size
   -> ReaderObs
-  -> pipeline policy
-  -> DemandPlan
-  -> pipeline_runtime reconcile
-  -> DownloadSession / DecodeSession / UploadSession
+  -> RoleResolver + HeuristicPolicy
+  -> DemandPlan diff
+  -> PipelineReaderSession / LiveCoordinator
+  -> DownloadSession -> DecodeSession -> UploadSession
   -> PipelinePageStream
-  -> reader_runtime presentation
+  -> reader_runtime / Reader presentation
 ```
 
-Reader 可以提交：
+Reader 可以提交 stable page、fractional position、目标页覆盖率、阅读方向、viewport/physical target、interaction/zoom，以及 pause/resume/speed/jump 等命令。
 
-- 当前 fractional position；
-- stable page；
-- 阅读方向和交互状态；
-- presentation 尺寸；
-- pause、resume、speed、jump 等用户命令。
+Reader 只能消费不可变页面状态、进度、错误和 `PipelinePageSurface`。它不得接触 mutable session、transport、artifact store、scheduler、cursor/frame handle 或 texture registry。
 
-Reader 只能消费：
+## 5. 页面角色、窗口与优先级
 
-- `PipelinePageStream`；
-- 只读进度；
-- texture surface 或 ImageProvider；
-- 不可变错误和状态投影。
+`RoleResolver` 使用以下角色：
 
-Reader 不得接触：
+- `current`：stable page；
+- `last`：刚离开 current 的 keep-only output；
+- `transition`：拖动目标页；横向覆盖率达到 0.15，纵向只要真实进入视口即建立；
+- `next`、`next2`、`previous`：深度预解码角色；
+- `near`、`far`：只保留 encoded download 的邻页；
+- `detached`：窗口外。
 
-- mutable session；
-- transport；
-- artifact store；
-- decode/upload lane；
-- native cursor/frame handle；
-- texture registry；
-- retry 或预下载策略。
+稳定 encoded window 为前 7、后 3。深度 decode 角色窗口为前 2、后 1；更远页面仍可下载，但不获得动画深水位。
 
-## 5. Identity 与去重
+网络优先只由 composition-owned `NetLane` 负责：
 
-同一 locator/request plan 必须先规范化为稳定 identity，再创建 session。首页、详情页和 Reader 不得各自重新请求同一正文。
+- 全局正常并发 5；local bucket 2，remote source bucket 5；
+- current priority 1000，保留 1 个高优先级 handoff slot；
+- priority 提升原位迁移，差值达到 40 时可抢占低优先级 active task；
+- DownloadJob 不读取 holder depth、播放状态或页面控件，不存在第二套网络资格门控。
 
-不同层 identity 不可混用：
+## 6. Decode 水位与 Transition 首帧
 
-- catalog identity：漫画、章节和来源定位；
-- download identity：可恢复字节流和 artifact；
-- decode identity：source epoch、格式和目标尺寸；
-- upload identity：decode output 与 renderer；
-- presentation identity：页面位置与只读 output。
+动态页面的 role 最大 holder 深度为：
 
-source reset、重下、真实尺寸变化或 request plan revision 必须改变相应 epoch/revision。旧 epoch 结果不能覆盖新状态。
+```text
+current / logical next / next2 / previous = 7 / 5 / 3 / 2
+```
 
-## 6. 资源角色和默认策略
+`transition` 是拖动期间的 logical next，但它在任何 current 深化之前拥有独立首帧：
 
-默认页面窗口：
+```text
+transition depth 0 -> t>0，目标 1 帧
+```
 
-- 下载：current + 前 7 / 后 3；
-- 页面预解码：current + 前 2 / 后 1；
-- 上传：current 与 transition；
-- scheduler lane 权重：5 / 3 / 2。
+取得首帧后，staged refill 顺序为：
 
-current 必须保留高优先级 decode 能力。策略变化必须由实验、Trace 和设备验证支持，不能通过缩小窗口或降低并发掩盖 identity、流量或生命周期错误。
+```text
+c>2, n>1, m>1, p>1, c>4, n>2, c>6, n>3, m>2, n>4
+```
 
-50% 翻页交接：
+其中阈值是严格水位，实际 batch 可自然越过。高优先级且 `targetWatermark=1` 的 one-frame demand 可与 staged decision 比较优先级，但不得恢复 startup-buffer 或 current-only gate。
 
-- 新 stable page 在 midpoint 成为 current；
-- 旧页在仍可见时保留 transition output；
-- transition 暂停播放，但不能因角色变化产生 targetless demand gap；
-- same-key transition→current 不取消不可中断 native decode/upload，完成后按最新 demand 跟进。
+静态页由 runtime 分类；一帧即满足。推测静态邻页可在 96 MiB 选择预算内获得 decode/upload，实际 decoded/output 回收仍由 `FrameBudgeter` 权威执行，默认 output budget 为 128 MiB。
 
-## 7. Animated WebP 路径
+## 7. 下载、partial 与 source ingress
+
+普通 response 进入 `DownloadJob` 后先合并 transport 的任意小块：首批约 16 KiB，后续按 64 KiB source-progress quantum 提交到 `DownloadSession`。这与 WebP decode-prefix hint 是两个独立概念：
+
+- local/content/file/asset prefix quantum：1 MiB；
+- remote prefix quantum：256 KiB。
+
+`DownloadSession` 保证连续前缀、单 writer、validator/range、seal 和 promotion。已 receiving 且仍有 demand 的传输不会因 observation revision 机械重建；current priority 变化在同一 lane/session 上迁移。
+
+完整 local immutable 或 durable cache response可标记 resident，并经权威 session/source ingress；错误、取消、range response 或长度不一致不得写入完整热字节。
+
+## 8. Animated WebP 生产与播放
 
 ```text
 transport / artifact stream
-  -> media encoded source
-  -> native source ingress
-  -> demux metadata
-  -> Dart decode worker slot
+  -> DownloadSession ingress
+  -> native growing source
+  -> demux metadata / NativeCursor
+  -> process-lifetime Dart decode isolate
   -> libwebp single-thread frame decode
-  -> target-canvas premultiplied RGBA
-  -> retained native frame
+  -> premultiplied target-canvas RGBA
+  -> FrameHolder
   -> UploadSession
-  -> Android texture or Flutter fallback
+  -> Android texture 或 Flutter fallback
 ```
 
 稳定约束：
 
-- 两个 Dart decode isolate 进程期常驻；
-- current 保留一个高优先级槽；
-- libwebp 帧内单线程，不安装额外 persistent `WebPWorkerInterface`；
-- current 保留两个 successor，transition 保留一个；
-- native 输出预乘 RGBA；
-- Android 只复制像素，不重复 alpha 预乘；
-- metadata 未完成且 source 增长时允许刷新 demux；
-- 本地文件和 promoted artifact 默认 1 MiB 分块，普通网络 transport 默认 256 KiB；
-- target 使用 contain，不裁切内容，不用负位移或重叠掩盖接缝；
-- 几何比例统一使用 `height / width`。
+- 两个 decode isolate 在进程期常驻；libwebp 帧内单线程；
+- 首次 native 请求优先单帧，current 后续请求最多批量返回两帧；
+- holder 是 decoded frame 的权威缓冲；可见 output 不计作 successor；
+- 缺少 successor 时保持当前 output，等待 producer 通知，不进入 startup-buffer，也不阻塞其他页面 decode；
+- playback 使用最近 deadline 的 one-shot wake；静态零时长帧不启动 timer；
+- finite animation 到 EOF 保留最后一帧；
+- metadata 未完成且 source 增长时允许刷新 demux；未封缄 `needMoreData` 等待 source revision，不用定时销毁 cursor；
+- target canvas 使用 contain 和 `height / width`，不裁切、不使用负位移或页面重叠掩盖接缝。
 
-## 8. Android texture 生命周期
+## 9. Upload 与 Android texture
 
-`texture_bridge` 创建 texture lease；Upload output 持有 frame claim。replacement 完成前旧 frame 保持有效。最后一个 frame owner 释放后，retired slot 才能释放 producer。
+primary upload 角色为 current、transition 和 last；last 只冻结并保留已有 output，不继续 decode。推测静态邻页可在预算内预上传。
 
-呈现顺序：
+Android 路径使用默认 platform MethodChannel、一个串行 blit lane和普通 `mainHandler.post`：
 
 1. retain native frame；
-2. RGBA blit；
-3. 在 platform thread 执行 `SurfaceProducer.scheduleFrame()`；
-4. 替换 retained frame；
-5. 返回 MethodChannel 结果；
-6. UploadSession 记录 presentation 并推进 playback。
+2. 单 lane 复制预乘 RGBA；
+3. platform thread 调用 `SurfaceProducer.scheduleFrame()`；
+4. 原子替换 output retained frame；
+5. 返回 MethodChannel；
+6. UploadSession 记录 presentation 并推进 deadline。
 
-平台 timing 仅用于诊断。`scheduleFrame` 的排队和调用时间必须分开记录，不能把 platform-thread queue 误写成 schedule API 自身耗时。
+已承载页面 output 的 texture lease 在 output 结束时真实释放，不回到 Reader 间复用池。只有从未呈现过的预热 lease 可短期复用，App 非 resumed 时清理 idle prewarm。platform queue、schedule queue/call、blit 和 channel dispatch 必须分别计时。
 
-## 9. 插件与网络边界
+## 10. Reader 资源会话 retention
 
-插件请求先生成 request plan。GET/HEAD 必须零 body，不能携带实体 headers。普通正文由宿主流式 transport 进入同一 DownloadSession；完整 JSON/Base64 RPC 只允许用于明确需要 runtime transform 且有上限的兼容路径。
+Reader Host 从 `PipelineReaderSessionFactory.acquire` 获取资源会话并在退出时 `release`。退出 Reader 不等于立即驱逐整章资源：
 
-插件和平台桥不得：
+- retention pool 最多保留 1 个 idle 章节会话；TTL 为 2 分钟；
+- key 包含稳定章节/source revision、loader URI/revision 和 composition 能力指纹；临时 loader 对象 identity 不参与；
+- 保留 DownloadRegistry、SourcePool、DecodeRegistry、artifact handoff、media runtime 和 workspace；
+- 释放 Reader binding、page projection、playback wake、present claim 和 used texture；
+- 不同 key、TTL 到期、容量淘汰或 composition shutdown 时才完整逆序 dispose。
 
-- 导航；
-- 创建 Reader；
-- 直接提交 demand；
-- 读写 artifact store；
-- 访问 App controller；
-- 输出 Cookie/token 原文到 Trace。
+这是一条资源 lease，不是 Reader UI 缓存，也不允许跨 Reader 复用 used SurfaceProducer。
 
-## 10. 缓存与 artifact
+## 11. Identity、缓存与 artifact
 
-资源缓存与正文 artifact 是两个平面：
+不同 identity 层不可混用：catalog identity 定位实体；DownloadId 表示确定字节版本；DecodeId 还包含 epoch、target 和 renderer；presentation identity 只表示页面位置/输出。
 
-- `resource_cache`：可重新获取的网络响应；
-- `storage`/`downloads`：章节正文 partial、resume 和 promoted artifact。
+缓存分为两个权威平面：
 
-App 和 Reader 不得建立私有图片字节 LRU。cache hit 也不能共享播放 timer、cursor 或 decode identity。
+- `ResourceCacheCoordinator.responses`：封面、搜索、详情和章节元数据，使用稳定 namespace/identity/revision、weight、TTL 和 in-flight join；
+- `ArtifactCacheManager`：Reader 不可变页面 artifact，默认热字节 10 项/256 MiB、alias 上限 8192，并连接持久 backend。
 
-## 11. Telemetry
+封面 URL/token 不是稳定 comic identity；verified checksum、来源 page key、内容 hash 或用户确认迁移才可注册 artifact alias。App/Reader 不得创建私有图片字节 LRU，也不得让 cache hit 共享 cursor、timer 或 decode identity。
 
-权威事件由状态所有者产生。App 只做有界导出投影。
+## 12. 插件与网络边界
 
-Trace 必须：
+插件先生成 request plan。GET/HEAD 必须零 body且不得携带实体 headers。普通正文由宿主 transport 流式进入统一 Pipeline；完整 JSON/Base64 RPC 只允许用于明确声明 runtime transform 且有大小上限的兼容路径。
 
-- 对长 identity 使用 hash/长度摘要；
-- 不输出完整 Cookie、Mihon/Venera token 或 Base64 payload；
-- 高频事件可合并；
-- 错误、retry、writer rejection 和生命周期边缘不得丢失；
-- 前帧 timing 使用单调时间；
-- overlapping 总时长不得与子阶段同时参与 dominant 归因。
+插件和平台桥不得导航、创建 Reader、提交 demand、直接读写 artifact、访问 App controller，或把 Cookie/token/Base64 payload 原文写入 Trace。
 
-Trace 分析属于 audit 证据，不自动成为 Architecture 事实。
+## 13. Telemetry 与关闭
 
-## 12. 生命周期与关闭顺序
+状态所有者产生权威事件；App 只做有界导出。长 identity 使用 hash/长度摘要，高频事件可合并，但错误、retry、writer rejection、session retain/reuse 和生命周期边缘不得丢失。overlapping total 不得与子阶段重复参与 dominant 归因。
 
-composition root 创建外部平台能力；`pipeline_runtime` 创建 owned session。关闭顺序遵循依赖逆序：
+完整关闭遵循依赖逆序：停止新 demand，关闭 upload/decode/download，释放 frame/output/texture，关闭 runtime scheduler与 workspace，最后由 App 关闭其创建的平台 facade。外部注入 capability 不由消费方关闭。
 
-1. 停止接收新 demand；
-2. freeze/close UploadSession；
-3. 关闭 DecodeSession 和 cursor；
-4. 关闭 DownloadSession writer/transport；
-5. 释放 output/frame/texture claim；
-6. 关闭 runtime-owned scheduler；
-7. App 关闭其创建的平台 facade。
+## 14. 静态门禁
 
-外部注入 capability 不由消费方关闭；owned 对象不得遗漏关闭。
-
-## 13. 静态门禁
-
-静态门禁用于阻止明显的依赖反转、API 泄漏、重复状态和平台反向依赖。它不能替代：
-
-- `flutter analyze`；
-- Dart/Flutter tests；
-- Rust tests；
-- Android debug/release build；
-- 真机性能和生命周期验证。
+静态门禁阻止明显的依赖反转、API 泄漏、重复权威和文档漂移，但不能替代 `flutter analyze`、Dart/Flutter/Rust tests、Android debug/release build 和真机生命周期/性能验证。

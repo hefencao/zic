@@ -1,6 +1,6 @@
 # ADR 0119：Catalog Cache Weight 与无调用兼容层清理
 
-**状态：Accepted in dev.136**
+**状态：Accepted**
 
 ## 背景
 

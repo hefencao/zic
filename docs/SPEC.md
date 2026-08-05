@@ -4,195 +4,120 @@
 
 ## 1. 产品范围
 
-zic MUST 支持：
+zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静态图片、Animated WebP、partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及本地 Debug Trace 导出。
 
-- Android 上的本地和远程漫画阅读；
-- LTR、RTL 和纵向连续阅读；
-- 静态图片与 Animated WebP；
-- 章节下载、partial、resume 和离线 artifact；
-- 漫画源浏览、详情、章节目录和受控插件扩展；
-- 本地 Debug Trace 导出。
-
-当前项目不承诺 DRM 绕过、通用视频播放、社交功能或模型直接控制底层资源生命周期。
+项目不承诺 DRM 绕过、通用视频播放、社交功能或模型直接操作底层资源生命周期。
 
 ## 2. Reader 行为
 
-### 2.1 当前页
+### 2.1 Current 与输出连续性
 
 - current MUST 具有最高 download、decode 和 upload 优先级。
-- current 不得被 near/far 工作阻塞。
-- 当前 output 未被 replacement 前 MUST 保持可见。
-- 页面 loading MUST 绑定到具体媒体区域，Reader 不得用全局 overlay 隐藏已有页面。
+- near/far 工作不得阻塞 current；current 的 holder/播放状态也不得冻结目标页网络。
+- 已有 output 在 replacement 前 MUST 保持可见；缺少动画 successor 时保持当前帧并等待 producer。
+- loading MUST 绑定到具体媒体区域，不得用全局 overlay 隐藏已有页面。
 
 ### 2.2 翻页
 
-- midpoint 默认为 50%。
-- 超过 midpoint 后，新 stable page MUST 成为 current 并开始播放。
-- 旧页在仍可见时 MUST 保持 transition output并暂停播放。
+- stable ownership midpoint 默认为 50%。
+- 横向目标页覆盖率达到 0.15，纵向目标页真实进入视口时，MUST 建立 transition demand。
+- transition 没有 decoded frame 时 MUST 可独立取得一帧，不得等待 current 下载完成、source sealed 或 current holder 达到基础水位。
+- transition 首帧后，current 基础水位 MUST 先于 transition 深水位继续补充。
+- midpoint 后新 stable page MUST 成为 current；旧页在仍可见时保留 last/transition output并暂停播放。
 - 交接不得产生 targetless demand gap、黑屏或重新创建同一 identity。
-- 反向拖动 MUST 使用同一 observation/demand 机制，不得另建命令路径。
 
-### 2.3 连续模式
+### 2.3 连续模式与控制
 
-- 内容 MUST 等比呈现，不裁切漫画正文。
-- 不得用负位移、页面重叠或多套比例公式掩盖接缝。
-- 几何统一使用 `height / width`。
-- 小图可由 renderer 放大显示；codec 不得因 8 px 对齐下限错误放大 intrinsic target。
+- 内容 MUST 等比呈现，统一使用 `height / width`；不得裁切正文，或用负位移、重叠和多套比例公式掩盖接缝。
+- Reader MUST 支持沉浸、跳页、暂停、倍速、方向和布局命令；命令只通过 Reader facade 提交。
+- UI 控件存在性 MUST 来自 capability，不得用静态/动画猜测下载或播放能力。
 
-### 2.4 控制
+## 3. Pipeline 与角色合同
 
-- Reader MUST 默认支持沉浸模式。
-- 页码跳转、暂停、倍速、方向和布局命令只通过 Reader facade 提交。
-- UI 控件存在性 MUST 由 capability 决定，不能由“静态/动画”猜测下载或播放能力。
+`ReaderObs` MUST 表达 stable page、fractional position、current/target coverage、viewport/physical target、阅读方向、interaction/zoom 和单调 revision。
 
-## 3. Pipeline 合同
+默认资源策略：
 
-### 3.1 Observation
+- encoded download window：前 7 / 后 3；
+- 深度 decode 角色：前 2 / 后 1；
+- 动态 holder 最大水位为 current/next/next2/previous：7 / 5 / 3 / 2；
+- upload primary：current、transition、last；
+- lane normal concurrency：network 5、decode 3、upload 2；
+- source bucket：local 2、remote 5。
 
-`ReaderObs` MUST 至少表达：
+Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor 或 texture。静态一帧满足；推测静态预热 MUST 受预算限制。
 
-- stable page；
-- fractional position；
-- viewport/presentation size；
-- 阅读方向；
-- interaction/zoom 状态；
-- 单调 revision。
+## 4. 网络调度
 
-### 3.2 Demand
+- composition-owned `NetLane` MUST 是页面网络的唯一调度权威。
+- current SHOULD 使用 priority 1000、一个高优先级 handoff slot和原位 priority migration；满足差值门槛时 MAY 抢占低优先级 active task。
+- DownloadJob、Reader、UploadSession 和 holder 不得建立第二套网络资格门控。
+- 目标页 receiving transport 不得因 current holder depth、播放 underflow 或页面控件状态被暂停。
+- 不得通过缩小 7/3、关闭预下载或降低播放速度掩盖 identity、重复请求或 producer wake 缺陷。
 
-默认 demand：
+## 5. 下载、partial 与 artifact
 
-- download：前 7 / 后 3；
-- page decode：前 2 / 后 1；
-- upload：current/transition；
-- lane：5 / 3 / 2。
-
-Policy MUST 输出 demand，不得直接创建 transport、artifact、cursor 或 texture。
-
-### 3.3 Identity
-
-- 同一 request plan、DownloadSession、artifact 和 decode task MUST 按稳定 identity 合并。
-- source epoch/revision 变化后，旧结果不得提交。
-- 首页、详情和 Reader 不得分别创建正文请求。
-- canonical comic alias 只用于同源比较，不得替代插件请求 locator。
-
-## 4. 下载与 artifact
-
-- GET/HEAD MUST 零 body。
-- GET/HEAD 不得携带只适用于实体 body 的 headers。
-- partial MUST 是连续前缀并可恢复。
-- 同一 DownloadId 只能有一个 active writer。
-- seal/promotion MUST 原子更新 metadata。
-- cache clear 不得删除 active artifact。
-- promoted local artifact SHOULD 以 1 MiB 分块进入 session；普通网络 transport 默认 256 KiB。
+- GET/HEAD MUST 零 body且不得携带仅适用于实体 body 的 headers。
+- 同一 DownloadId MUST 只有一个 active writer；partial MUST 是连续前缀并可恢复。
+- seal/promotion MUST 原子更新 metadata；cache clear 不得删除 active artifact。
+- 普通 transport 小块 SHOULD 首批约 16 KiB、后续按 64 KiB 合并后进入 session；传输实现的任意 chunk 边界不得放大为数万次 artifact/native append。
+- local 和 remote WebP decode-prefix hint SHOULD 分别使用 1 MiB 和 256 KiB quantum；该 hint 不等同于 transport chunk。
 - 读取失败 MUST 保留可归因错误，不得表现为永久 loading。
 
-## 5. Animated WebP
+## 6. Animated WebP
 
-- 两个 Dart decode isolate MUST 在 App 运行期常驻。
-- current MUST 保留一个高优先级 decode 槽。
-- libwebp 帧内 MUST 使用单线程。
-- 不得安装额外 persistent libwebp worker pool。
-- current SHOULD 保留两个 successor；transition SHOULD 保留一个。
-- transition→current 的 same-key 不可中断任务 MUST 完成后 follow，不能取消并丢弃有效帧。
-- metadata 未完成且 source 增长时 demux MUST 可刷新。
-- native target canvas MUST 生成预乘 RGBA。
-- Android 和 Flutter fallback 不得再次重复预乘。
+- 两个 Dart decode isolate MUST 在 App 运行期常驻；libwebp 帧内 MUST 单线程。
+- 首次 decode SHOULD 优先单帧；current 后续 MAY 每次批量返回最多两帧。
+- holder MUST 是 decoded successor 的权威所有者；可见 output 不得计入 successor depth。
+- transition depth 为 0 时 MUST 在 current 深水位前获得独立一帧；之后恢复 staged current/neighbor refill。
+- 不得存在 startup-buffer、current-only decode gate 或以 playback buffering 控制其他页面 eligibility 的路径。
+- metadata 未完成且 source 增长时 demux MUST 可刷新；未封缄 need-more-data MUST 等待 source revision，而不是定时销毁 cursor。
+- native target canvas MUST 生成预乘 RGBA；Android/Flutter fallback 不得再次预乘。
 - finite animation 到 EOF MUST 保留最后一帧；静态零时长帧不得启动 playback timer。
 
-## 6. Android texture
+## 7. Upload 与 Android texture
 
-- texture lease、SurfaceProducer 和 retained frame 由 `texture_bridge` 拥有。
-- 每帧不得重复设置 Surface 尺寸；仅创建或真实 resize 时配置。
-- blit MUST 复制预乘 RGBA。
-- `scheduleFrame()` 必须在 platform thread 执行。
-- MethodChannel 成功返回不得早于本次 schedule 调用完成。
-- schedule 的 platform-thread queue 和 API call MUST 分别计时。
-- replacement 前旧 frame MUST 保持有效。
-- release MUST 等待最后一个 frame owner 释放。
+- replacement 前旧 frame MUST 保持有效；release MUST 等待最后一个 frame owner。
+- Android MUST 使用一个串行 blit lane；`scheduleFrame()` 和 MethodChannel result 必须在 platform thread有序完成。
+- platform queue、schedule queue/call、blit 和 channel dispatch MUST 分别计时。
+- 已承载 output 的 texture/SurfaceProducer MUST 随 output 释放，不得跨 Reader 会话复用。
+- 只有从未呈现过的 prewarm lease MAY 短期复用；App 非 resumed 时 SHOULD 清理 idle prewarm。
 
-## 7. 插件与来源
+## 8. Reader 资源会话生命周期
 
-- 插件 MUST 在隔离、信任和权限门禁内执行。
-- 插件只能返回 catalog 数据、request plan 或显式 transform 结果。
+- Reader Host MUST 通过 factory acquire/release 资源会话，不能在 Widget dispose 中直接销毁所有章节资源。
+- 实现 MAY 有界保留一个 idle 章节会话最多两分钟，以复用 Download/Source/Decode 状态。
+- retention key MUST 使用稳定章节/source/loader revision，不得依赖临时 loader 对象 identity。
+- retain 时 MUST 释放 Reader binding、page projection、playback wake、present claim和 used texture。
+- TTL、key 变化、容量淘汰或 composition shutdown 时 MUST 完整逆序 dispose。
+- retention 不得成为 Reader 私有正文缓存或 used texture cache。
+
+## 9. Identity 与缓存
+
+- 同一 request plan、DownloadSession、artifact 和 decode task MUST 按稳定 identity 合并；旧 epoch/revision 结果不得提交。
+- 封面、详情、搜索和章节元数据 MUST 由统一 response cache 拥有，key 包含 namespace、稳定 identity 和必要 revision。
+- Reader 页面 artifact MUST 由 `ArtifactCacheManager`/persistent backend 所有，不得进入 catalog response-cache 平面。
+- 页面热字节 MUST 有界；默认可为 10 项/256 MiB。App/Reader 不得创建第二套图片 byte LRU。
+- artifact alias MUST 有 checksum、来源 page key、内容 hash 或用户确认关系等明确证据；标题、URL token 或相同页码不足以证明等价。
+- cache hit 不得共享 playback timer、cursor 或 decode identity。
+
+## 10. 插件与来源
+
+- 插件 MUST 在隔离、信任和权限门禁内执行，只返回 catalog 数据、request plan 或显式有界 transform 结果。
 - 普通图片正文 SHOULD 由宿主 transport 流式下载。
 - 插件不得访问导航、Reader、demand、artifact、App state 或底层缓存。
 - Cookie、token、脚本 payload 和 Base64 正文不得原样写入 Trace。
-- 目录错误不得伪造成“正文”单章节；synthetic 兼容必须由能力缺失和正文预检共同证明。
 
-## 8. 资源缓存
+## 11. Telemetry
 
-- 封面、详情、搜索响应由 `resource_cache` 统一拥有。
-- cache key MUST 包含 namespace、稳定 identity 和必要 revision。
-- in-flight 相同请求 MUST 合并。
-- App/Reader 不得创建私有图片字节 LRU。
-- 页面正文 artifact 不得进入 response-cache 平面。
+Trace MUST 记录 demand/session/writer/source/decode/upload/present/retry/lifecycle 的可归因摘要。前若干不同帧 SHOULD 保留逐帧 timing，至少区分 lane queue、source wait、cursor/worker/native decode、upload backpressure、output prepare、platform/schedule queue、blit/replace和 channel dispatch。
 
-## 9. Telemetry
+identity 超限时使用稳定 hash 与原长度；高频事件 MAY 合并，但错误和生命周期边缘 MUST 保留。Trace 不得成为业务状态权威来源，overlapping total 不得与子阶段重复参与 dominant 归因。
 
-### 9.1 必须记录
+## 12. 测试与发布
 
-- demand attach/detach；
-- session state transition；
-- writer acquire/release；
-- source read 摘要；
-- decode/upload/present failure；
-- output retirement；
-- 前帧端到端 timing；
-- retry 与验证恢复结果。
+- owner test MUST 位于实现所属 package；App 测试不得导入低层 `src/` 或重复低层算法。
+- 异步测试 MUST 使用可控 Future、状态对象或稳定 key，不得固定 pump 猜测完成。
+- quarantine MUST 有稳定 ID、原因、仍运行的 owner 覆盖和解除条件。
 
-### 9.2 前帧 timing
-
-每个 output 激活后，前若干不同帧 SHOULD 保留逐帧 timing；后续仅记录慢帧、deadline miss 和错误。
-
-阶段至少包括：
-
-- decode lane queue；
-- source wait；
-- cursor create；
-- worker ready/slot queue；
-- isolate/native decode；
-- upload backpressure/lane queue；
-- output prepare；
-- platform queue；
-- schedule queue/call；
-- blit/retain/replace；
-- MethodChannel dispatch；
-- fallback decode。
-
-intentional successor lead 不得作为瓶颈。overlapping total 不得与子阶段重复参与 dominant。
-
-### 9.3 隐私与体积
-
-- identity 超过限制时使用稳定 hash 与原长度；
-- 高频投影 MAY 固定窗口合并；
-- 错误和生命周期边缘 MUST 保留；
-- Trace 导出 MUST 有界；
-- Trace 不得作为业务状态权威来源。
-
-## 10. 测试
-
-- 实现单元测试必须位于拥有该实现的 package。
-- App 测试不得导入低层 `src/`。
-- App 不得重复测试低层 identity、classifier 或 scheduler 算法。
-- 异步测试 MUST 使用可控 Future、状态对象或稳定 key。
-- 禁止固定 pump 猜测完成。
-- 禁止对 lazy child 直接 `.single`。
-- 禁止用文本包含匹配作为唯一身份。
-- quarantine MUST 有稳定 ID、原因、仍运行的所有者级覆盖和解除条件。
-- 未登记 skip MUST 使 repository gate 失败。
-
-## 11. 发布门槛
-
-发布候选 MUST：
-
-1. 通过 `flutter analyze`；
-2. 通过受影响 Dart/Flutter package tests；
-3. 通过 App 目标 tests；
-4. 通过 Rust/native tests；
-5. 完成 Android debug 和 release 或明确记录缺失；
-6. 通过 Mihon/Venera/Android 契约；
-7. 从干净 ZIP 独立解压复验；
-8. 不包含 `.git`、`.dart_tool`、`build`、`.gradle`、`.deps`、`target`、`__pycache__`、`.pyc`、`.class`、`.rej` 或 `.orig`。
-
-未执行的门槛 MUST 在 `IMPLEMENTATION_STATUS.md` 和对应 audit 中标记为未验证，不得在 README、Architecture 或 Spec 中宣称通过。
+发布候选 MUST 尽可能完成 analyzer、受影响 package/App tests、native tests、Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，并排除 `.git`、`.dart_tool`、`build`、`.gradle`、`.deps`、`target`、`__pycache__`、`.pyc`、`.class`、`.rej` 和 `.orig`。未执行项 MUST 在 Status/audit 标为 Unverified。
