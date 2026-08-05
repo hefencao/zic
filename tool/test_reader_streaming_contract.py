@@ -31,7 +31,7 @@ for token in (
 ):
     if token not in RUNTIME:
         raise SystemExit(f'Reader projection contract missing: {token}')
-for token in ('final class PipelineReaderSessionHost', 'widget.factory.create(', '_session.dispose()'):
+for token in ('final class PipelineReaderSessionHost', '_ownerFactory.acquire(', '_ownerFactory.release(_session)'):
     if token not in PIPELINE_HOST:
         raise SystemExit(f'Pipeline host ownership contract missing: {token}')
 for forbidden in ('PipelineReaderSessionFactory', 'pipelineFactory', '_pipeline.dispose()', '_pipeline.selectPage', 'transferProgress.select'):

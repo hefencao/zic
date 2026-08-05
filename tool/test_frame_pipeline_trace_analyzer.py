@@ -104,6 +104,27 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
             "payload": {},
         },
         {
+            "t": 6,
+            "sessionId": "reader-a",
+            "kind": "readerSessionRetained",
+            "payload": {
+                "downloadSessions": 9,
+                "decodeSessions": 7,
+                "uploadSessions": 3,
+            },
+        },
+        {
+            "t": 8,
+            "sessionId": "reader-a",
+            "kind": "readerSessionReused",
+            "payload": {
+                "retainedMicros": 2000,
+                "downloadSessions": 9,
+                "decodeSessions": 7,
+                "uploadSessions": 3,
+            },
+        },
+        {
             "t": 23,
             "sessionId": "reader-a",
             "kind": "artifactSource",
@@ -415,6 +436,10 @@ assert report["startupLocalDownloadBucketLimits"] == [1]
 assert report["startupFirstTextureLeaseReuseCount"] == 1
 assert report["startupFirstSurfaceReconfigureCount"] == 1
 
+assert report["readerSessionRetainedCount"] == 1
+assert report["readerSessionReusedCount"] == 1
+assert report["readerSessionReuseIdleMicros"]["max"] == 2000
+assert report["readerSessionReused"][0]["downloadSessions"] == 9
 assert report["readerSessionLifecycle"]["reader-a"]["disposeMicros"] == 6000
 assert report["readerSessionLifecycle"]["reader-a"]["handoffDrainMicros"] == 700
 assert report["cacheHandoffActionCounts"] == {"skip-existing": 1}

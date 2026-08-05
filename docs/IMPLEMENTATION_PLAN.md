@@ -2,21 +2,20 @@
 
 本文件只列未完成工作。
 
-## P0：后台重入设备闭环
+## P0：资源会话后台重入设备闭环
 
-- 确认长后台后新 Reader 的首个已使用 texture 不再来自旧 Reader output；只有未使用 prewarm lease 可显示 `textureLeaseReused=true`。
-- 检查单串行 blit lane 下 `platformScheduleQueueMicros` 与 `channelDispatchMicros` 不再连续维持 100–230 ms；MethodChannel 必须运行于默认 platform thread。
-- 检查前 15 帧 native decode 不再从正常约 52–64 ms 持续退化到约 215–227 ms。
-- 检查 `decodeWorkerPlacementStatusCounts`：异构 Android 预期状态 1；dev.133 已使用实际 TID 并与当前 cpuset 求交。状态 2 表示无可用高性能交集，状态 3 表示系统仍拒绝。
-- 检查首帧仍满足低性能设备约 400 ms 内目标；后台重入同一 DownloadId 应命中 `artifact-byte-cache`、`deliveryMode=memory-direct`、`chunks=1`，不再出现 17–20 MiB origin session-copy 或 18 段 memory replay。
-- 检查 holder-driven playback 缺帧时保持当前 output，恢复后连续播放；新 Trace 中 `decodeStartupDeferredCount` 与 `playbackRebufferCount` 应为 0。
-- 检查 current 后续批量 decode 是否减少 worker round-trip 间隙，且 cursor dispose/rewind 无未释放 native frame。
+- 同一 chapter/source revision 退出 Reader 后应记录 `readerSessionRetained`；2 分钟内重入应记录 `readerSessionReused`，且不出现新的 `readerSessionCreated`。
+- retained 重入时不应再次出现 current 18.3 MiB `memory-direct` ingress、整组 7/3 `downloadStarted` 或新的 native source/cursor 构造。
+- used texture 必须随旧 Reader output 释放；重入仍创建 fresh SurfaceProducer，不能恢复旧 texture。
+- 检查 long-background 首帧和前 15 帧的 source/decode/present 分段；CPU affinity 已删除，不再以 `workerPlacementStatus` 推断瓶颈。
+- 超过 2 分钟、切换另一章节或 source revision 变化时，应完整 dispose retained 会话并正常冷启动。
+- 对照 VibeVenera 验证资源会话保留后，首帧和连续播放仍不达标的剩余差异；不得再增加 Reader 私有缓存或并行 scheduler。
 
 ## P0：资源与 partial 回归
 
-- 确认 DownloadSession、artifact、partial source、native priority migration 不受 fresh texture 生命周期影响。
-- 确认未封缄 failure 仍进入 source-growth wait，sealed corruption 仍进入有界 recovery。
-- 确认旧 `playbackBuffering`/`decode-startup-deferred` 事件不再由新运行时产生；历史 analyzer 指标仅用于比较旧日志。
+- 确认 retained session 在 demand 归零时不会继续上传或持有 used texture。
+- 确认 active transfer、artifact promotion、partial source-growth 和 native priority migration 在 idle/reuse 边界保持同一权威状态。
+- 确认 TTL/容量淘汰只 dispose idle session，不影响 active leased Reader。
 
 ## P1：纵向 build/layout
 

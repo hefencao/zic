@@ -47,7 +47,6 @@ uint32_t zic_abi_version(void);
 uint32_t zic_version(void);
 uint32_t zic_webp_decoder_version(void);
 uint32_t zic_webp_demux_version(void);
-uint32_t zic_prepare_decode_thread(void);
 
 zic_byte_source *zic_source_create(uint64_t epoch, size_t max_bytes);
 void zic_source_free(zic_byte_source *source);

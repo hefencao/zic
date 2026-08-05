@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:media/media.dart';
 import 'package:pipeline_runtime/pipeline_runtime.dart';
 import 'package:telemetry/telemetry.dart';
+import 'package:transport/transport.dart';
 
 void main() {
   test('factory clones retain the composition-owned artifact cache manager', () {
@@ -52,6 +53,69 @@ void main() {
       ),
       isTrue,
     );
+  });
+
+  test('Reader reentry reuses the authoritative resource session', () async {
+    final runtime = _Runtime();
+    final trace = MemoryTraceSink();
+    final base = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(runtime),
+    );
+    final uri = Uri.parse('content://local/page-0.webp');
+    final chapter = _chapter(uri: uri);
+    final firstFactory = base.withLoaderSources(
+      <Uri, LoaderTransportSource>{
+        uri: LoaderTransportSource(
+          revision: 'local-r1',
+          loadBytes: () async => Uint8List.fromList(<int>[1, 2, 3]),
+        ),
+      },
+    );
+    final first = firstFactory.acquire(
+      chapter: chapter,
+      sessionId: 'retained-reader-1',
+      traceSink: trace,
+    );
+
+    firstFactory.release(first);
+
+    final secondFactory = base.withLoaderSources(
+      <Uri, LoaderTransportSource>{
+        uri: LoaderTransportSource(
+          revision: 'local-r1',
+          loadBytes: () async => Uint8List.fromList(<int>[1, 2, 3]),
+        ),
+      },
+    );
+    final second = secondFactory.acquire(
+      chapter: chapter,
+      sessionId: 'retained-reader-2',
+      traceSink: trace,
+    );
+
+    expect(identical(first, second), isTrue);
+    expect(
+      trace.events.where(
+        (event) => event.kind == TraceEventKind.readerSessionCreated,
+      ),
+      hasLength(1),
+    );
+    expect(
+      trace.events.where(
+        (event) => event.kind == TraceEventKind.readerSessionRetained,
+      ),
+      hasLength(1),
+    );
+    expect(
+      trace.events.where(
+        (event) => event.kind == TraceEventKind.readerSessionReused,
+      ),
+      hasLength(1),
+    );
+
+    secondFactory.release(second);
+    await base.disposeRetainedSessions();
+    expect(runtime.closed, isTrue);
   });
 
   test('current output prewarms the exact aligned decode target', () async {
@@ -115,7 +179,7 @@ void main() {
   });
 }
 
-ChapterManifest _chapter({int? width, int? height}) => ChapterManifest(
+ChapterManifest _chapter({int? width, int? height, Uri? uri}) => ChapterManifest(
       sourceId: 'source',
       comicId: 'comic',
       chapter: const Chapter(
@@ -131,7 +195,7 @@ ChapterManifest _chapter({int? width, int? height}) => ChapterManifest(
           pageId: 'page-0',
           chapterId: 'chapter',
           index: 0,
-          uri: Uri.parse('asset:///page-0.webp'),
+          uri: uri ?? Uri.parse('asset:///page-0.webp'),
           width: width,
           height: height,
           contentKindHint: ContentKindHint.webp,

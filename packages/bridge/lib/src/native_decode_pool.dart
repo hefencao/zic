@@ -406,7 +406,7 @@ void _nativeDecodeWorkerEntry(List<Object?> arguments) {
     receive.close();
     return;
   }
-  final placementStatus = api.prepareDecodeThread();
+  const placementStatus = 0;
   ready.send(<Object?>[receive.sendPort, placementStatus]);
   receive.listen((Object? message) {
     if (message == 'close') {

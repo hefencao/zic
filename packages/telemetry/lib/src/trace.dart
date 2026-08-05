@@ -11,6 +11,8 @@ enum TraceEventKind {
   homeCoverSourceReady,
   homeCoverFirstFrame,
   readerSessionCreated,
+  readerSessionRetained,
+  readerSessionReused,
   readerSessionDisposeStarted,
   readerSessionDisposed,
   readerObservation,

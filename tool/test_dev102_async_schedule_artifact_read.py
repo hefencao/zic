@@ -32,8 +32,8 @@ for token in (
         raise SystemExit(f"FAIL: typed central artifact read bridge missing: {token}")
 
 host = read("packages/pipeline_runtime/lib/src/pipeline_reader_host.dart")
-if "unawaited(_disposeSession())" not in host or "await _session.dispose()" not in host:
-    raise SystemExit("FAIL: Reader host disposal must use a typed async guard")
+if "_ownerFactory.acquire(" not in host or "_ownerFactory.release(_session)" not in host:
+    raise SystemExit("FAIL: Reader host must return the resource session to its owner")
 
 kotlin = read(
     "packages/texture_bridge/android/src/main/kotlin/dev/zic/texture/TextureBridgePlugin.kt"

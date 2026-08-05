@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.133`
-**App build：** `0.31.0+133`
+**源码版本：** `0.31.0-dev.134`
+**App build：** `0.31.0+134`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -11,26 +11,24 @@
 
 - 下载前 7 / 后 3，active rank migration 与唯一 current handoff 保持。
 - 动画 staged c/n/m/p 水位为 7/5/3/2；静态一帧即满足。
-- playback 采用 VibeVenera 风格 holder producer/consumer：首帧立即呈现，缺少 successor 时保持当前 output 并等待 producer 唤醒；没有 startup-buffer eligibility gate。
-- NativeCursor 首帧单帧请求，current 后续最多双帧批量 decode；两个常驻 worker、7/5/3/2 staged 水位保持。
-- 完整本地不可变页面正文进入 composition-owned ArtifactCacheManager 10 项/256 MiB 热字节 LRU；current memory hit 以单个 body 直接进入既有 native ingress。
-- deadline lead、partial source-growth 与 native decode priority migration 保持。
-- 已承载页面 output 的 Android texture lease 随 output 生命周期真实释放；进程 texture pool 只复用从未呈现的预热 lease。
-- Android 进入非 resumed 生命周期时清理未使用的 prewarm lease，不恢复旧 Reader 的 platform output。
-- playback 由最近 deadline 的 one-shot timer 唤醒，不再使用 4 ms 周期轮询。
-- 两个进程常驻 native decode worker 使用实际 TID，并将高性能 mask 与当前 Android cpuset 求交后 best-effort 绑定；结果通过 `workerPlacementStatus` 投影到 Trace。
+- playback 使用 holder producer/consumer：缺少 successor 时保持当前 output，producer 新帧到达后继续；没有 startup-buffer gate。
+- NativeCursor 首帧单帧请求，current 后续最多双帧批量 decode；仍为两个常驻 worker。
+- 完整本地不可变页面正文进入 composition-owned ArtifactCacheManager 10 项/256 MiB 热字节 LRU。
+- `PipelineReaderSessionHost` 通过 factory acquire/release 管理章节资源会话；同章同 source revision 最多保留 1 个 idle 会话、TTL 2 分钟。
+- retained 资源会话保留 DownloadRegistry、SourcePool、DecodeRegistry、artifact handoff、media runtime 与 workspace；Reader binding、page projection、playback wake 和 used texture 会释放。
+- 已承载页面 output 的 Android texture lease 随 output 生命周期真实释放；只复用未呈现的 prewarm lease。
+- Android texture bridge 使用默认 platform MethodChannel、单串行 blit lane 与普通主线程 `post`。
+- Android performance-core affinity 已删除；`workerPlacementStatus` 仅保留 Trace schema 兼容并投影为 0。
+- partial source-growth、native decode priority migration、one-shot playback deadline 保持。
 - 正式交付不包含 `.zic-workspace.json`，patch 不触碰本地 patch_dir。
-- Android texture bridge 使用默认 platform MethodChannel、单串行 blit lane 与普通主线程 `post`；不使用 background task queue 或 front-of-queue schedule。
-- Android native build identity：`zic-media-core-dev133-abi6-lib00121300`。
-- Android output projector 已完成 retained output 删除后的编译闭包，只接受 `_AndroidTextureOutputFrame`。
-- native active current promotion 为幂等，避免 observation/source wake 重复记录相同 promotion。
+- Android native build identity：`zic-media-core-dev134-abi6-lib00121400`。
 
 ## 验证矩阵
 
 | 检查 | 状态 |
 |---|---|
 | repository/documentation/Dart static gates | Verified-static |
-| dev.75–dev.133 ownership gates | Verified-static |
+| dev.75–dev.134 ownership gates | Verified-static |
 | Android/Mihon/Venera/Reader/Pipeline/UI contracts | Verified-static / toolchain |
 | pinned libwebp host build/smoke | Verified-toolchain |
 | Rust/Cargo Android target compile | Unverified：当前环境无 Cargo/NDK |

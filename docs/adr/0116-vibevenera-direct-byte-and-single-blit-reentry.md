@@ -1,5 +1,8 @@
 # ADR 0116：VibeVenera 直接热字节与单 Blit 后台重入
 
+> dev.134 注：本文的 affinity/cpuset 决策及“memory hit 重灌新 DownloadSession”的路径已由 ADR 0117 取代；单 platform channel/单 blit lane 决策仍有效。
+
+
 **状态：Accepted in dev.133**
 
 ## 背景

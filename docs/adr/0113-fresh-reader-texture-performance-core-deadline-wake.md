@@ -1,5 +1,8 @@
 # ADR 0113：Fresh Reader Texture、性能核心 Decode 与 Deadline Wake
 
+> dev.134 注：本文的 performance-core affinity 决策已由 ADR 0117 取代；fresh texture 与 deadline wake 决策仍有效。
+
+
 **状态：Provisional**；后台 texture 调度/affinity 或热字节交付部分由 ADR 0116 取代
 
 ## 问题

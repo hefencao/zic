@@ -1,3 +1,12 @@
+## 0.31.0-dev.134：移除解码核绑定并复用 Reader 资源会话
+
+- 根据 `zic-debug-trace-2026-08-05T02-47-39.jsonl` 确认 5 次 Reader 进入创建并销毁 5 套 Pipeline；current 的 18.3 MiB 热字节虽已命中，仍重复灌入新 DownloadSession/native source，耗时约 701/704/710/2865 ms。
+- `PipelineReaderSessionHost` 改用 factory `acquire/release`；同章同 source revision 的权威 DownloadSession、SourcePool、DecodeSession、artifact handoff 与 media runtime 最多保留 1 项、2 分钟，重入只重建 Reader binding 和 presentation output。
+- retention key 使用 loader URI/revision，不使用每次 build 重建的 loader object identity；不同 revision、配置变化、TTL 到期或容量淘汰时完整 dispose。
+- 删除无设备证据支持且目标设备全部失败的 Android performance-core affinity：移除 `sched_setaffinity`、`android_performance.rs`、`zic_prepare_decode_thread` 与 Dart FFI 调用；Trace 字段保留兼容并固定为 0。
+- 保留 dev.133 默认 platform channel/单 blit lane，因为本次 Trace 的 platform present 最大值已较旧路径收敛；不恢复跨 Reader used texture。
+- native identity 更新为 `zic-media-core-dev134-abi6-lib00121400`；新增 ADR 0117、资源会话 owner test、Trace retention 指标和 dev.134 门禁。
+
 ## 0.31.0-dev.133：迁移 VibeVenera 后台重入直接字节与单 Blit 路径
 
 - 根据 `zic-debug-trace-2026-08-05T02-01-59.jsonl` 确认 dev.132 热缓存仅 4 项/96 MiB，会被 7/3 邻页淘汰；即使命中 current memory cache，18 MiB 正文仍按 1 MiB 分段回放约 971 ms。

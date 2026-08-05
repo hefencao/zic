@@ -13,7 +13,6 @@ transport = read("packages/downloads/lib/src/artifact_cache_transport.dart")
 kotlin = read("packages/texture_bridge/android/src/main/kotlin/dev/zic/texture/TextureBridgePlugin.kt")
 download_test = read("packages/downloads/test/artifact_cache_transport_test.dart")
 manager_test = read("packages/downloads/test/artifact_cache_manager_test.dart")
-android_performance = read("native/media_core/src/android_performance.rs")
 native_lib = read("native/media_core/src/lib.rs")
 native_identity = read("native/media_core/ANDROID_NATIVE_BUILD_ID").strip()
 check = read("tool/check.sh")
@@ -41,19 +40,19 @@ for token in (
 ):
     if token not in kotlin:
         raise SystemExit(f"single-lane platform-channel texture contract missing: {token}")
-for token in (
-    "gettid()",
-    "sched_getaffinity",
-    "mask.intersect(&allowed)",
-    "sched_setaffinity(tid",
-    "setpriority(PRIO_PROCESS",
-):
-    if token not in android_performance:
-        raise SystemExit(f"VibeVenera worker placement contract missing: {token}")
-if "pub const LIB_VERSION: u32 = 0x0012_1300" not in native_lib:
-    raise SystemExit("dev.133 native library version missing")
-if native_identity != "zic-media-core-dev133-abi6-lib00121300":
-    raise SystemExit(f"unexpected dev.133 native identity: {native_identity}")
+for production in (native_lib,):
+    for forbidden in (
+        "mod android_performance;",
+        "zic_prepare_decode_thread",
+    ):
+        if forbidden in production:
+            raise SystemExit(
+                f"dev.134 supersedes ineffective worker affinity: {forbidden}"
+            )
+if "pub const LIB_VERSION: u32 = 0x0012_1400" not in native_lib:
+    raise SystemExit("dev.134 superseding native library version missing")
+if native_identity != "zic-media-core-dev134-abi6-lib00121400":
+    raise SystemExit(f"unexpected superseding native identity: {native_identity}")
 for forbidden in (
     "makeBackgroundTaskQueue",
     "StandardMethodCodec.INSTANCE",

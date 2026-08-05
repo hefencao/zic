@@ -1075,8 +1075,8 @@ def check_compile_regressions() -> None:
     ).read_text(encoding='utf-8')
     for required in (
         'final class PipelineReaderSessionHost',
-        'widget.factory.create(',
-        '_session.dispose()',
+        '_ownerFactory.acquire(',
+        '_ownerFactory.release(_session)',
         'PipelineReaderSessionBuilder',
     ):
         if required not in pipeline_host:
@@ -2502,8 +2502,8 @@ def check_native_abi() -> None:
             fail(f'ABI symbol is not represented in Rust/header/Dart: {symbol}')
     if 'pub const ABI_VERSION: u32 = 6;' not in rust:
         fail('native ABI version must be 6 for reserve/commit ingress')
-    if 'pub const LIB_VERSION: u32 = 0x0012_1300;' not in rust:
-        fail('native library version must identify the dev.133 reentry placement release')
+    if 'pub const LIB_VERSION: u32 = 0x0012_1400;' not in rust:
+        fail('native library version must identify the dev.134 resource-session retention release')
     webp_path = ROOT / 'native/media_core/src/webp.rs'
     if not webp_path.is_file():
         fail('native WebP decoder module is missing')

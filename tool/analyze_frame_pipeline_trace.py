@@ -188,6 +188,8 @@ def summarize(path: Path) -> dict[str, Any]:
     media_classifications: list[dict[str, Any]] = []
     first_frame_readies: list[dict[str, Any]] = []
     page_host_disposals: list[dict[str, Any]] = []
+    reader_session_retained: list[dict[str, Any]] = []
+    reader_session_reused: list[dict[str, Any]] = []
     frame_budgets: list[dict[str, Any]] = []
     next_due_by_session: dict[str, int] = {}
     session_lifecycle: dict[str, dict[str, int]] = defaultdict(dict)
@@ -208,6 +210,8 @@ def summarize(path: Path) -> dict[str, Any]:
 
         if kind in {
             "readerSessionCreated",
+            "readerSessionRetained",
+            "readerSessionReused",
             "readerSessionDisposeStarted",
             "readerSessionDisposed",
         }:
@@ -225,6 +229,31 @@ def summarize(path: Path) -> dict[str, Any]:
                     session_lifecycle[session_id][field] = _number(
                         payload.get(field)
                     )
+            elif kind == "readerSessionRetained":
+                reader_session_retained.append(
+                    {
+                        "t": _number(event.get("t")),
+                        "sessionId": session_id,
+                        "downloadSessions": _number(
+                            payload.get("downloadSessions")
+                        ),
+                        "decodeSessions": _number(payload.get("decodeSessions")),
+                        "uploadSessions": _number(payload.get("uploadSessions")),
+                    }
+                )
+            elif kind == "readerSessionReused":
+                reader_session_reused.append(
+                    {
+                        "t": _number(event.get("t")),
+                        "sessionId": session_id,
+                        "retainedMicros": _number(payload.get("retainedMicros")),
+                        "downloadSessions": _number(
+                            payload.get("downloadSessions")
+                        ),
+                        "decodeSessions": _number(payload.get("decodeSessions")),
+                        "uploadSessions": _number(payload.get("uploadSessions")),
+                    }
+                )
         if kind == "policyDecision":
             policy_decisions.append(
                 {
@@ -867,6 +896,13 @@ def summarize(path: Path) -> dict[str, Any]:
         "sourceConcurrencyScope": concurrency_scope,
         "processClock": has_process_clock,
         "readerSessionLifecycle": dict(session_lifecycle),
+        "readerSessionRetainedCount": len(reader_session_retained),
+        "readerSessionReusedCount": len(reader_session_reused),
+        "readerSessionRetained": reader_session_retained,
+        "readerSessionReuseIdleMicros": _stats(
+            [row["retainedMicros"] for row in reader_session_reused]
+        ),
+        "readerSessionReused": reader_session_reused,
         "firstFrameReadyCount": len(first_frame_readies),
         "mountToFirstFrameMicros": _stats(
             [row["mountToFirstFrameMicros"] for row in first_frame_readies]

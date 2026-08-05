@@ -38,8 +38,8 @@ def main() -> None:
     require(app_webp, 'NativePipelineMediaRuntimeFactory()', 'App native composition')
     if 'pipeline_native' in media_ui or 'NativePipelineMediaRuntimeFactory' in media_ui:
         raise SystemExit('local_media_ui must remain platform-composition neutral')
-    require(pipeline_host, 'widget.factory.create(', 'pipeline composition owner')
-    require(pipeline_host, '_session.dispose()', 'pipeline lifecycle owner')
+    require(pipeline_host, '_ownerFactory.acquire(', 'pipeline composition owner')
+    require(pipeline_host, '_ownerFactory.release(_session)', 'pipeline lifecycle owner')
     for forbidden in ('DownloadRegistry', 'LiveCoordinator', 'NetLane', 'DecodeLane', 'UploadLane'):
         if forbidden in runtime:
             raise SystemExit(f'Reader regained pipeline ownership: {forbidden}')

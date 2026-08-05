@@ -22,11 +22,110 @@ import 'reader_pipeline_profile.dart';
 
 part 'pipeline_page_output.dart';
 
-
 typedef PipelineArtifactBytesLoader = Future<Uint8List> Function(
   PageAsset asset,
   MediaLoadToken token,
 );
+
+const Duration _readerSessionRetentionDuration = Duration(minutes: 2);
+const int _maxRetainedReaderSessions = 1;
+
+final class _RetainedReaderSession {
+  _RetainedReaderSession({
+    required this.key,
+    required this.session,
+    required this.retainedAtMicros,
+    required this.expiry,
+  });
+
+  final String key;
+  final PipelineReaderSession session;
+  final int retainedAtMicros;
+  final Timer expiry;
+}
+
+final class _PipelineReaderSessionRetentionPool {
+  final Map<String, _RetainedReaderSession> _idle =
+      <String, _RetainedReaderSession>{};
+  final Map<PipelineReaderSession, String> _leased =
+      <PipelineReaderSession, String>{};
+
+  PipelineReaderSession acquire({
+    required String key,
+    required PipelineReaderSession Function() create,
+  }) {
+    final retained = _idle.remove(key);
+    if (retained != null) {
+      retained.expiry.cancel();
+      final session = retained.session;
+      if (!session.isDisposed) {
+        _leased[session] = key;
+        session.resumeRetainedReaderSession(
+          retainedMicros:
+              session.clock.nowMicros() - retained.retainedAtMicros,
+        );
+        return session;
+      }
+    }
+    final session = create();
+    _leased[session] = key;
+    return session;
+  }
+
+  void release(PipelineReaderSession session) {
+    final key = _leased.remove(session);
+    if (key == null || session.isDisposed) {
+      unawaited(session.dispose());
+      return;
+    }
+    session.retainReaderSession();
+    final prior = _idle.remove(key);
+    if (prior != null && !identical(prior.session, session)) {
+      prior.expiry.cancel();
+      unawaited(prior.session.dispose());
+    }
+    late final Timer expiry;
+    final retainedAtMicros = session.clock.nowMicros();
+    expiry = Timer(_readerSessionRetentionDuration, () {
+      final current = _idle[key];
+      if (current == null || !identical(current.expiry, expiry)) {
+        return;
+      }
+      _idle.remove(key);
+      unawaited(current.session.dispose());
+    });
+    _idle[key] = _RetainedReaderSession(
+      key: key,
+      session: session,
+      retainedAtMicros: retainedAtMicros,
+      expiry: expiry,
+    );
+    _trim();
+  }
+
+  Future<void> disposeAll() async {
+    final sessions = _idle.values.map((entry) => entry.session).toSet();
+    for (final retained in _idle.values) {
+      retained.expiry.cancel();
+    }
+    _idle.clear();
+    for (final session in sessions) {
+      await session.dispose();
+    }
+  }
+
+  void _trim() {
+    while (_idle.length > _maxRetainedReaderSessions) {
+      final oldest = _idle.values.reduce(
+        (left, right) =>
+            left.retainedAtMicros <= right.retainedAtMicros ? left : right,
+      );
+      _idle.remove(oldest.key);
+      oldest.expiry.cancel();
+      unawaited(oldest.session.dispose());
+    }
+  }
+}
 
 final class PipelineReaderSessionFactory {
   PipelineReaderSessionFactory({
@@ -37,7 +136,10 @@ final class PipelineReaderSessionFactory {
     WebpDecodePrefixHints? decodePrefixHints,
     this.loaderSources = const <Uri, LoaderTransportSource>{},
     this.bytesLoader,
-  })  : artifactReadScheduler =
+    _PipelineReaderSessionRetentionPool? retentionPool,
+  })  : _retentionPool =
+            retentionPool ?? _PipelineReaderSessionRetentionPool(),
+        artifactReadScheduler =
             artifactReadScheduler ?? ArtifactCacheReadScheduler(),
         pageDownloadLane =
             pageDownloadLane ??
@@ -51,6 +153,7 @@ final class PipelineReaderSessionFactory {
 
   final PipelineMediaRuntimeFactory mediaRuntimeFactory;
   final ArtifactCacheManager? artifactCacheManager;
+  final _PipelineReaderSessionRetentionPool _retentionPool;
   final ArtifactCacheReadScheduler artifactReadScheduler;
   final NetLane pageDownloadLane;
   final WebpDecodePrefixHints decodePrefixHints;
@@ -73,6 +176,7 @@ final class PipelineReaderSessionFactory {
           ...sources,
         },
         bytesLoader: bytesLoader,
+        retentionPool: _retentionPool,
       );
 
   PipelineReaderSessionFactory withArtifactCacheManager(
@@ -86,6 +190,7 @@ final class PipelineReaderSessionFactory {
         decodePrefixHints: decodePrefixHints,
         loaderSources: loaderSources,
         bytesLoader: bytesLoader,
+        retentionPool: _retentionPool,
       );
 
   PipelineReaderSessionFactory withBytesLoader(
@@ -99,6 +204,7 @@ final class PipelineReaderSessionFactory {
         decodePrefixHints: decodePrefixHints,
         loaderSources: loaderSources,
         bytesLoader: loader,
+        retentionPool: _retentionPool,
       );
 
   PipelineReaderSession create({
@@ -118,6 +224,57 @@ final class PipelineReaderSessionFactory {
         bytesLoader: bytesLoader,
         traceSink: traceSink,
       );
+
+  PipelineReaderSession acquire({
+    required ChapterManifest chapter,
+    required String sessionId,
+    TraceSink? traceSink,
+  }) =>
+      _retentionPool.acquire(
+        key: _retentionKey(chapter, traceSink),
+        create: () => create(
+          chapter: chapter,
+          sessionId: sessionId,
+          traceSink: traceSink,
+        ),
+      );
+
+  void release(PipelineReaderSession session) {
+    _retentionPool.release(session);
+  }
+
+  Future<void> disposeRetainedSessions() => _retentionPool.disposeAll();
+
+  String _retentionKey(ChapterManifest chapter, TraceSink? traceSink) {
+    final orderedSources = loaderSources.entries.toList(growable: false)
+      ..sort(
+        (left, right) =>
+            left.key.toString().compareTo(right.key.toString()),
+      );
+    final loaderFingerprint = Object.hashAll(
+      orderedSources.map(
+        (entry) => Object.hash(
+          entry.key.toString(),
+          entry.value.revision,
+          entry.value.loadBytes != null,
+          entry.value.openResponse != null,
+        ),
+      ),
+    );
+    final configuration = Object.hash(
+      identityHashCode(mediaRuntimeFactory),
+      identityHashCode(artifactCacheManager),
+      identityHashCode(artifactReadScheduler),
+      identityHashCode(pageDownloadLane),
+      identityHashCode(decodePrefixHints),
+      identityHashCode(bytesLoader),
+      identityHashCode(traceSink),
+      loaderFingerprint,
+    );
+    return '${chapter.sourceId}\u0000${chapter.comicId}\u0000'
+        '${chapter.chapter.chapterId}\u0000'
+        '${chapter.chapter.sourceRevision}\u0000$configuration';
+  }
 }
 
 /// Owns the complete resource side of one Reader session.
@@ -279,6 +436,7 @@ final class PipelineReaderSession {
   PromotedArtifactCacheHandoff? _artifactCacheHandoff;
   late final LiveCoordinator _coordinator;
   ReaderBinding? _binding;
+  String? _readerSessionId;
   final Map<String, PipelinePageStream> _pageStreams =
       <String, PipelinePageStream>{};
   final Map<String, PipelinePageOutputStream> _pageOutputs =
@@ -292,12 +450,15 @@ final class PipelineReaderSession {
   DownloadId? _startupArtifactPressureDownload;
   DownloadId? _startupCurrentDownload;
   bool _disposed = false;
+  bool _retainedForReaderReentry = false;
 
+  bool get isDisposed => _disposed;
   int get revision => _binding?.revision ?? 0;
   RendererKind get renderer => _media.renderer;
 
   void attach(DecodeTarget target) {
     _requireOpen();
+    _retainedForReaderReentry = false;
     if (target.renderer != renderer) {
       throw ArgumentError.value(
         target.renderer,
@@ -306,6 +467,7 @@ final class PipelineReaderSession {
             '${renderer.name}',
       );
     }
+    _readerSessionId = null;
     _binding = ReaderBinding(
       chapter: chapter,
       decodeTarget: target,
@@ -321,6 +483,7 @@ final class PipelineReaderSession {
 
   void accept(ReaderObs observation) {
     _requireOpen();
+    _readerSessionId = observation.sessionId;
     final binding = _binding;
     if (binding == null) {
       throw StateError('pipeline Reader session is not attached');
@@ -403,10 +566,64 @@ final class PipelineReaderSession {
   void detach(String readerSessionId) {
     _binding?.detach(readerSessionId);
     _binding = null;
+    _readerSessionId = null;
     _releaseStartupArtifactPressure();
     _releaseStartupCurrentDownload();
     artifactReadScheduler.refresh();
     transferProgress.clear();
+  }
+
+  void retainReaderSession() {
+    _requireOpen();
+    if (_retainedForReaderReentry) {
+      return;
+    }
+    _retainedForReaderReentry = true;
+    _cancelPlaybackWake();
+    final binding = _binding;
+    final readerSessionId = _readerSessionId;
+    _binding = null;
+    _readerSessionId = null;
+    binding?.detach(readerSessionId ?? sessionId);
+    _releaseStartupArtifactPressure();
+    _releaseStartupCurrentDownload();
+    artifactReadScheduler.refresh();
+    transferProgress.clear();
+    for (final output in _pageOutputs.values) {
+      output._dispose();
+    }
+    _pageOutputs.clear();
+    _pageStreams.clear();
+    trace.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.readerSessionRetained,
+        payload: <String, Object?>{
+          'downloadSessions': _downloads.sessions.length,
+          'decodeSessions': _decodes.sessions.length,
+          'uploadSessions': _uploads.sessions.length,
+        },
+      ),
+    );
+  }
+
+  void resumeRetainedReaderSession({required int retainedMicros}) {
+    _requireOpen();
+    _retainedForReaderReentry = false;
+    trace.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.readerSessionReused,
+        payload: <String, Object?>{
+          'retainedMicros': retainedMicros < 0 ? 0 : retainedMicros,
+          'downloadSessions': _downloads.sessions.length,
+          'decodeSessions': _decodes.sessions.length,
+          'uploadSessions': _uploads.sessions.length,
+        },
+      ),
+    );
   }
 
   PipelinePageStream pageStream(PageAsset asset) {
@@ -1012,8 +1229,10 @@ final class PipelineReaderSession {
     _releaseStartupArtifactPressure();
     _startupCurrentDownload = null;
     final binding = _binding;
+    final readerSessionId = _readerSessionId;
     _binding = null;
-    binding?.detach(sessionId);
+    _readerSessionId = null;
+    binding?.detach(readerSessionId ?? sessionId);
     artifactReadScheduler.refresh();
     for (final output in _pageOutputs.values) {
       output._dispose();

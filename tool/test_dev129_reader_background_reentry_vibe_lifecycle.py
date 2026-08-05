@@ -20,7 +20,6 @@ session = read("packages/pipeline_runtime/lib/src/pipeline_reader_session.dart")
 upload = read("packages/sessions/lib/src/upload_session.dart")
 registry = read("packages/sessions/lib/src/upload_registry.dart")
 analyzer = read("tool/analyze_frame_pipeline_trace.py")
-android_performance = read("native/media_core/src/android_performance.rs")
 native_lib = read("native/media_core/src/lib.rs")
 native_header = read("native/media_core/include/media_core.h")
 native_pool = read("packages/bridge/lib/src/native_decode_pool.dart")
@@ -72,25 +71,18 @@ for token in (
 ):
     require(analyzer, token, "reentry texture analyzer")
 
-for token in (
-    "sched_setaffinity",
-    "max_frequency.saturating_mul(8) / 10",
-    "cpuinfo_max_freq",
-    "scaling_max_freq",
-):
-    require(android_performance, token, "Android performance-core placement")
-for token in (
-    "mod android_performance;",
-    "zic_prepare_decode_thread",
-):
-    require(native_lib, token, "native decode-thread ABI")
-require(native_header, "zic_prepare_decode_thread", "native header")
-for token in (
-    "api.prepareDecodeThread()",
-    "workerPlacementStatus",
-):
-    require(native_pool, token, "native decode worker placement")
-require(native_cursor, "prepareDecodeThread", "native cursor ABI")
+for production in (native_lib, native_header, native_pool, native_cursor):
+    for forbidden in (
+        "sched_setaffinity",
+        "android_performance",
+        "zic_prepare_decode_thread",
+        "prepareDecodeThread",
+    ):
+        if forbidden in production:
+            raise SystemExit(
+                f"dev.134 supersedes the ineffective affinity path: {forbidden}"
+            )
+require(native_pool, "const placementStatus = 0", "placement trace compatibility")
 require(frame, "workerPlacementStatus", "frame timing projection")
 require(
     decode_session,

@@ -1,7 +1,4 @@
-import 'dart:async';
-
 import 'package:domain/domain.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:telemetry/telemetry.dart';
 
@@ -39,12 +36,14 @@ final class PipelineReaderSessionHost extends StatefulWidget {
 final class _PipelineReaderSessionHostState
     extends State<PipelineReaderSessionHost> {
   static int _sequence = 0;
+  late final PipelineReaderSessionFactory _ownerFactory;
   late final PipelineReaderSession _session;
 
   @override
   void initState() {
     super.initState();
-    _session = widget.factory.create(
+    _ownerFactory = widget.factory;
+    _session = _ownerFactory.acquire(
       chapter: widget.chapter,
       sessionId: 'pipeline-reader-${++_sequence}',
       traceSink: widget.traceSink,
@@ -67,16 +66,8 @@ final class _PipelineReaderSessionHostState
 
   @override
   void dispose() {
-    unawaited(_disposeSession());
+    _ownerFactory.release(_session);
     super.dispose();
-  }
-
-  Future<void> _disposeSession() async {
-    try {
-      await _session.dispose();
-    } on Object catch (error) {
-      debugPrint('pipeline Reader session dispose failed: $error');
-    }
   }
 }
 

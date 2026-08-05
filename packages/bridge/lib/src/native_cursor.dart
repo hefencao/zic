@@ -28,8 +28,6 @@ typedef _CursorCreateDart = Pointer<_Cursor> Function(
 typedef _CursorFreeNative = Void Function(Pointer<_Cursor> cursor);
 typedef _CursorFreeDart = void Function(Pointer<_Cursor> cursor);
 typedef _CursorEpochNative = Uint64 Function(Pointer<_Cursor> cursor);
-typedef _PrepareDecodeThreadNative = Uint32 Function();
-typedef _PrepareDecodeThreadDart = int Function();
 typedef _CursorEpochDart = int Function(Pointer<_Cursor> cursor);
 typedef _CursorU32Native = Uint32 Function(Pointer<_Cursor> cursor);
 typedef _CursorU32Dart = int Function(Pointer<_Cursor> cursor);
@@ -458,10 +456,6 @@ final class _CursorApi {
         epoch = lib.lookupFunction<_CursorEpochNative, _CursorEpochDart>(
           'zic_cursor_epoch',
         ),
-        prepareDecodeThread =
-            lib.lookupFunction<_PrepareDecodeThreadNative, _PrepareDecodeThreadDart>(
-          'zic_prepare_decode_thread',
-        ),
         decode = lib.lookupFunction<_DecodeNative, _DecodeDart>(
           'zic_cursor_decode_next',
         ),
@@ -520,7 +514,6 @@ final class _CursorApi {
   final _CursorCreateDart create;
   final _CursorFreeDart free;
   final _CursorEpochDart epoch;
-  final _PrepareDecodeThreadDart prepareDecodeThread;
   final _DecodeDart decode;
   final _CursorU32Dart frameCount;
   final _CursorU32Dart loopCount;
