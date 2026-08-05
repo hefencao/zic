@@ -26,27 +26,23 @@ agents = read("AGENTS.md")
 gitignore = read(".gitignore")
 check = read("tool/check.sh")
 
-for token in (
-    "abstract interface class RetainedOutputUploader",
-    "Future<OutputFrame?> restoreRetainedOutput(DecodeId id)",
+# ADR 0113 supersedes and removes cross-Reader retained platform output.
+for forbidden, owner in (
+    ("RetainedOutputUploader", media + upload + runtime),
+    ("restoreRetainedOutput", media + upload + runtime),
+    ("_retainedRestoreAttempted", upload),
+    ("final class _RetainedTextureFrame", runtime),
+    ("final class _RetainedAndroidTextureOutputFrame", runtime),
 ):
-    require(media, token, "media retained-output capability")
+    if forbidden in owner:
+        raise SystemExit(
+            f"cross-Reader retained output was superseded by dev.129: {forbidden}"
+        )
 for token in (
-    "_retainedRestoreAttempted",
-    "restoreRetainedOutput(id)",
-    "'restored': true",
-    "'restoreSource': 'texture-pool'",
+    "await value.lease.release()",
+    "Future<void> releaseIdle() async",
 ):
-    require(upload, token, "UploadSession retained restore")
-for token in (
-    "Future<OutputFrame?> restoreRetainedOutput(DecodeId id)",
-    "final class _RetainedTextureFrame",
-    "retained.id != id",
-    "maxRetainedBytes = 64 * 1024 * 1024",
-    "final class _RetainedAndroidTextureOutputFrame",
-    "await lease.redraw()",
-):
-    require(runtime, token, "Android retained output pool")
+    require(runtime, token, "Android fresh texture lifecycle")
 require(presenter, "Future<void> redraw()", "Android texture presenter")
 for token in ('"redraw" -> redraw(call, result)', "fun redraw()"):
     require(kotlin, token, "Android texture bridge redraw")

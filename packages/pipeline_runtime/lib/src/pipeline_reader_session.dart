@@ -284,6 +284,7 @@ final class PipelineReaderSession {
   final Map<String, PipelinePageOutputStream> _pageOutputs =
       <String, PipelinePageOutputStream>{};
   Timer? _playbackTicker;
+  int? _playbackWakeAtMicros;
   bool _playbackPaused = false;
   final PipelineTransferProgressPublisher transferProgress;
   final ArtifactCacheReadScheduler artifactReadScheduler;
@@ -767,9 +768,7 @@ final class PipelineReaderSession {
     // transition session is frozen and a late current session is resumed before
     // its first presentation deadline is armed.
     _binding?.resyncPlayback();
-    if (snapshot.state == UploadState.ready) {
-      _ensurePlaybackTicker();
-    }
+    _ensurePlaybackTicker();
     _maybeReleaseStartupCurrentDownload();
     _maybeReleaseStartupArtifactPressure();
   }
@@ -949,17 +948,33 @@ final class PipelineReaderSession {
 
   void _ensurePlaybackTicker() {
     final ids = _binding?.pipeline.currentPlan.uploads.keys;
-    final hasRunnablePlayback =
-        ids != null && _uploads.hasRunnablePlayback(ids);
-    if (_playbackPaused || !hasRunnablePlayback || _disposed) {
-      _playbackTicker?.cancel();
-      _playbackTicker = null;
+    final deadline = ids == null
+        ? null
+        : _uploads.earliestPlaybackDeadlineMicros(ids);
+    if (_playbackPaused || deadline == null || _disposed) {
+      _cancelPlaybackWake();
       return;
     }
-    _playbackTicker ??= Timer.periodic(
-      const Duration(milliseconds: 4),
-      (_) => _advanceDueFrames(),
+    if (_playbackTicker != null && _playbackWakeAtMicros == deadline) {
+      return;
+    }
+    _playbackTicker?.cancel();
+    _playbackWakeAtMicros = deadline;
+    final remainingMicros = deadline - clock.nowMicros();
+    _playbackTicker = Timer(
+      Duration(microseconds: remainingMicros > 0 ? remainingMicros : 0),
+      () {
+        _playbackTicker = null;
+        _playbackWakeAtMicros = null;
+        _advanceDueFrames();
+      },
     );
+  }
+
+  void _cancelPlaybackWake() {
+    _playbackTicker?.cancel();
+    _playbackTicker = null;
+    _playbackWakeAtMicros = null;
   }
 
   void _advanceDueFrames() {
@@ -997,8 +1012,7 @@ final class PipelineReaderSession {
         },
       ),
     );
-    _playbackTicker?.cancel();
-    _playbackTicker = null;
+    _cancelPlaybackWake();
     _releaseStartupArtifactPressure();
     _startupCurrentDownload = null;
     final binding = _binding;

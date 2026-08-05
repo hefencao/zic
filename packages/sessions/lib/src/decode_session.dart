@@ -59,6 +59,7 @@ final class DecodedFrameTiming {
     required this.nativeMetadataMicros,
     required this.decodeMicros,
     required this.workerIndex,
+    required this.workerPlacementStatus,
     required this.sourceLength,
     required this.sourceSealed,
   });
@@ -79,6 +80,7 @@ final class DecodedFrameTiming {
   final int nativeMetadataMicros;
   final int decodeMicros;
   final int workerIndex;
+  final int workerPlacementStatus;
   final int sourceLength;
   final bool sourceSealed;
 }
@@ -431,6 +433,7 @@ final class DecodeSession {
               nativeMetadataMicros: timing?.nativeMetadataMicros ?? 0,
               decodeMicros: decodeMicros < 0 ? 0 : decodeMicros,
               workerIndex: timing?.workerIndex ?? -1,
+              workerPlacementStatus: timing?.workerPlacementStatus ?? 0,
               sourceLength: source.length,
               sourceSealed: source.sealed,
             );
@@ -463,6 +466,7 @@ final class DecodeSession {
                 'nativeMetadataMicros': frameTiming.nativeMetadataMicros,
                 'decodeDispatchMicros': frameTiming.dispatchMicros,
                 'workerIndex': frameTiming.workerIndex,
+                'workerPlacementStatus': frameTiming.workerPlacementStatus,
                 'width': frame.width,
                 'height': frame.height,
                 'durationMicros': frame.duration.inMicroseconds,

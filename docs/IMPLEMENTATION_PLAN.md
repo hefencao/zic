@@ -2,23 +2,19 @@
 
 本文件只列未完成工作。
 
-## P0：Native Decode Priority Migration 设备闭环
+## P0：后台重入设备闭环
 
-- 确认页面由 far/next 升为 current 时出现 `decodePriorityPromoted`；
-- 确认 queued promotion 后，同 identity 很快出现 `frameDecoded frame=0`；
-- 确认 source 已 ready 的 current 不再整个 host 生命周期保持 `firstFrameReady=false`；
-- 确认 retained output current 在 authoritative successor ready 后恢复播放；
-- 确认 active promotion 最多等待当前一次 native call，不产生 cursor 重建或 duplicate decode。
+- 确认长后台后新 Reader 的首个已使用 texture 不再来自旧 Reader output；只有未使用 prewarm lease 可显示 `textureLeaseReused=true`。
+- 检查 `textureLeaseReusedBridgeOver100msCount` 不再持续增长，bridge/schedule 不再连续维持 100–230 ms。
+- 检查前 15 帧 native decode 不再从正常约 52–64 ms 持续退化到约 215–227 ms。
+- 检查 `decodeWorkerPlacementStatusCounts`：异构 Android 预期状态 1；状态 2 表示无异构 mask/探测不可用，状态 3 表示系统拒绝。
+- 检查首帧仍满足低性能设备约 400 ms 内目标，且后续播放不以旧 texture 恢复换取首帧。
 
-## P0：动画播放与加载回归
+## P0：资源与 partial 回归
 
-- 检查 `playbackBufferingOutstandingCount=0`；
-- 检查 current ready 后 next/next+1 refill 正常恢复；
-- 不通过增加 worker、扩大长期缓存或 visible demand 掩盖优先级问题。
-
-## P0：后台与 partial 回归
-
-继续验证 retained output 恢复、source-growth wait 与 authoritative frame 替换。
+- 确认 DownloadSession、artifact、partial source、native priority migration 不受 fresh texture 生命周期影响。
+- 确认未封缄 failure 仍进入 source-growth wait，sealed corruption 仍进入有界 recovery。
+- 检查 `playbackBufferingOutstandingCount=0`。
 
 ## P1：纵向 build/layout
 

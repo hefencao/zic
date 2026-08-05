@@ -92,6 +92,10 @@ abstract interface class FrameDecodeTiming {
 
   /// Stable process-lifetime worker slot used for this decode.
   int get workerIndex;
+
+  /// Native worker placement result: 0=host/no-op, 1=Android performance-core
+  /// affinity applied, 2=no heterogeneous mask, 3=platform rejected.
+  int get workerPlacementStatus;
 }
 
 enum CursorStepKind { frame, needMoreData, end }

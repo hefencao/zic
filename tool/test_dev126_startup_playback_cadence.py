@@ -41,11 +41,13 @@ for token in (
     "if (startupCurrent != null && id != startupCurrent)",
 ):
     require(coordinator, token, "LiveCoordinator startup refill gate")
-require(
-    runtime,
-    "const Duration(milliseconds: 4)",
-    "active playback ticker",
-)
+for token in (
+    "_uploads.earliestPlaybackDeadlineMicros(ids)",
+    "Duration(microseconds: remainingMicros > 0 ? remainingMicros : 0)",
+):
+    require(runtime, token, "deadline-driven playback wake")
+if "Timer.periodic(" in runtime:
+    raise SystemExit("periodic playback ticker must remain superseded")
 require(trace, "playbackBuffering,", "Trace event schema")
 for token in (
     '"playbackBufferingCount"',

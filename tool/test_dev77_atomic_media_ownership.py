@@ -82,7 +82,8 @@ require(sessions, 'bool get playbackRunning', 'session-owned playback state proj
 for token in ('required double Function() playbackSpeed', 'required bool Function() playbackPaused'):
     forbid(output, token, 'Presentation-owned playback closure')
 require(media_player, '_schedulePipelineOutputFirstFrame(', 'post-frame first-output readiness')
-require(session, '_uploads.hasRunnablePlayback(ids)', 'runnable playback ticker ownership')
+require(session, '_uploads.earliestPlaybackDeadlineMicros(ids)', 'deadline-driven playback wake ownership')
+forbid(session, 'Timer.periodic(', 'periodic playback polling')
 
 for token in ('packages/pipeline_native',):
     require(workspace, token, 'workspace registration')
@@ -108,7 +109,7 @@ require(native, 'slot.releaseFrame();', 'texture owner release')
 require(native, '_retire(slot);', 'per-identity texture retirement')
 for token in ('Map<DecodeId, Future<AndroidTextureLease>>', '_leases ='):
     forbid(native, token, 'legacy session-long texture lease map')
-for token in ('_pendingReleases', 'await Future.wait<void>(', 'await pool.release('):
+for token in ('_pendingReleases', 'await Future.wait<void>(', 'await pool.releaseIdle('):
     require(native, token, 'claim-safe pooled texture drain')
 
 print('dev.77 atomic Pipeline media ownership: OK')

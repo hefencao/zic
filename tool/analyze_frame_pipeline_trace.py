@@ -177,6 +177,7 @@ def summarize(path: Path) -> dict[str, Any]:
     static_frames_kept: list[dict[str, Any]] = []
     cache_resident_commits: list[dict[str, Any]] = []
     texture_presentations: list[dict[str, Any]] = []
+    decode_worker_placements: list[dict[str, Any]] = []
     retained_output_restores: list[dict[str, Any]] = []
     decode_source_growth_waits: list[dict[str, Any]] = []
     playback_buffering: list[dict[str, Any]] = []
@@ -391,6 +392,19 @@ def summarize(path: Path) -> dict[str, Any]:
                     "durationMicros": _number(payload.get("durationMicros")),
                 }
             )
+        elif kind == "frameDecoded":
+            placement_status = _number(payload.get("workerPlacementStatus"))
+            if placement_status != 0:
+                decode_worker_placements.append(
+                    {
+                        "t": event.get("t"),
+                        "sessionId": event.get("sessionId"),
+                        "identityHash": event.get("identityHash"),
+                        "frame": _number(payload.get("frame")),
+                        "worker": _number(payload.get("worker")),
+                        "workerPlacementStatus": placement_status,
+                    }
+                )
         elif kind == "frameUploaded" and payload.get("restored") is True:
             retained_output_restores.append(
                 {
@@ -412,6 +426,11 @@ def summarize(path: Path) -> dict[str, Any]:
                     "identityHash": event.get("identityHash"),
                     "textureLeaseReused": payload.get("textureLeaseReused"),
                     "uploadMicros": _number(payload.get("uploadMicros")),
+                    "roundTripMicros": _number(payload.get("roundTripMicros")),
+                    "bridgeMicros": _number(payload.get("bridgeMicros")),
+                    "scheduleQueueMicros": _number(
+                        payload.get("scheduleQueueMicros")
+                    ),
                     "surfaceReconfigureCount": _number(
                         payload.get("surfaceReconfigureCount")
                     ),
@@ -939,7 +958,39 @@ def summarize(path: Path) -> dict[str, Any]:
             1 for row in texture_presentations
             if row["textureLeaseReused"] is True
         ),
+        "textureLeaseReusedBridgeOver100msCount": sum(
+            1
+            for row in texture_presentations
+            if row["textureLeaseReused"] is True
+            and row["bridgeMicros"] >= 100000
+        ),
+        "textureLeaseReusedBridgeMicros": _stats(
+            [
+                row["bridgeMicros"]
+                for row in texture_presentations
+                if row["textureLeaseReused"] is True
+            ]
+        ),
+        "textureLeaseReusedScheduleQueueMicros": _stats(
+            [
+                row["scheduleQueueMicros"]
+                for row in texture_presentations
+                if row["textureLeaseReused"] is True
+            ]
+        ),
         "textureLeasePresentations": texture_presentations,
+        "decodeWorkerPlacementStatusCounts": dict(
+            Counter(
+                str(row["workerPlacementStatus"])
+                for row in decode_worker_placements
+            )
+        ),
+        "decodeWorkerAffinityAppliedCount": sum(
+            1
+            for row in decode_worker_placements
+            if row["workerPlacementStatus"] == 1
+        ),
+        "decodeWorkerPlacements": decode_worker_placements,
         "mediaClassificationCount": len(media_classifications),
         "runtimeStaticClassificationCount": sum(
             1 for row in media_classifications if row["animated"] is False

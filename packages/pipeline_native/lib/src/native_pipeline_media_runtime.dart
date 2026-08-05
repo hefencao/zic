@@ -11,12 +11,14 @@ import 'package:telemetry/telemetry.dart';
 import 'package:texture_bridge/texture_bridge.dart';
 
 final class NativePipelineMediaRuntimeFactory
+    with WidgetsBindingObserver
     implements PipelineMediaRuntimeFactory {
   NativePipelineMediaRuntimeFactory() {
     if (AndroidTexturePresenter.isSupported) {
       final presenter = AndroidTexturePresenter(telemetrySink: _routeTelemetry);
       _texturePresenter = presenter;
       _texturePool = _AndroidTextureLeasePool(presenter);
+      WidgetsBinding.instance.addObserver(this);
     }
     unawaited(_prewarmWithoutSurfacingFailure());
   }
@@ -26,6 +28,26 @@ final class NativePipelineMediaRuntimeFactory
   final Map<String, _TextureTraceTarget> _traceTargets =
       <String, _TextureTraceTarget>{};
   Future<void>? _prewarmFuture;
+
+  @override
+  void didChangeAppLifecycleState(ui.AppLifecycleState state) {
+    if (state == ui.AppLifecycleState.resumed) return;
+    final pool = _texturePool;
+    if (pool != null) {
+      unawaited(_releaseIdleWithoutSurfacingFailure(pool));
+    }
+  }
+
+  Future<void> _releaseIdleWithoutSurfacingFailure(
+    _AndroidTextureLeasePool pool,
+  ) async {
+    try {
+      await pool.releaseIdle();
+    } on Object {
+      // Lifecycle cleanup is best-effort. A later create/present remains
+      // authoritative for reporting platform texture failures.
+    }
+  }
 
   Future<void> _prewarmWithoutSurfacingFailure() async {
     try {
@@ -145,8 +167,7 @@ abstract interface class _NativeFrameUploader implements FrameUploader {
   Future<void> close();
 }
 
-final class _AndroidTextureUploader
-    implements _NativeFrameUploader, RetainedOutputUploader {
+final class _AndroidTextureUploader implements _NativeFrameUploader {
   _AndroidTextureUploader(
     this._pool, {
     required this.sessionId,
@@ -185,7 +206,6 @@ final class _AndroidTextureUploader
         width: frame.width,
         height: frame.height,
         reservation: _pool.acquire(width: frame.width, height: frame.height),
-        pool: _pool,
       ),
     );
     if (slot.width != frame.width || slot.height != frame.height) {
@@ -227,36 +247,6 @@ final class _AndroidTextureUploader
   }
 
   @override
-  Future<OutputFrame?> restoreRetainedOutput(DecodeId id) async {
-    if (_closed || _slots.containsKey(id)) return null;
-    final reservation = await _pool.restore(id);
-    final retained = reservation?.retained;
-    if (reservation == null || retained == null) return null;
-    if (_closed || _slots.containsKey(id)) {
-      await _pool.release(
-        reservation.lease,
-        retained: retained,
-      );
-      return null;
-    }
-    final slot = _AndroidTextureSlot(
-      id: id,
-      width: retained.width,
-      height: retained.height,
-      reservation: Future<_TextureReservation>.value(reservation),
-      pool: _pool,
-      retained: retained,
-    );
-    _slots[id] = slot;
-    slot.retainFrame();
-    return _RetainedAndroidTextureOutputFrame(
-      retained: retained,
-      slot: slot,
-      lease: reservation.lease,
-    );
-  }
-
-  @override
   void release(DecodeId id) {
     final slot = _slots.remove(id);
     if (slot != null) _retire(slot);
@@ -286,28 +276,19 @@ final class _AndroidTextureLeasePool {
   _AndroidTextureLeasePool(
     this.presenter, {
     this.maxIdle = 4,
-    this.maxRetainedBytes = 64 * 1024 * 1024,
   });
 
   final AndroidTexturePresenter presenter;
   final int maxIdle;
-  final int maxRetainedBytes;
-  final Map<_TextureSize, List<_IdleTextureLease>> _idle =
-      <_TextureSize, List<_IdleTextureLease>>{};
+  final Map<_TextureSize, List<AndroidTextureLease>> _idle =
+      <_TextureSize, List<AndroidTextureLease>>{};
   final Map<_TextureSize, Future<void>> _prewarming =
       <_TextureSize, Future<void>>{};
   final Set<_TextureSize> _prewarmedSizes = <_TextureSize>{};
+  int _generation = 0;
 
   int get idleCount =>
       _idle.values.fold<int>(0, (sum, leases) => sum + leases.length);
-
-  int get retainedBytes => _idle.values.fold<int>(
-        0,
-        (sum, leases) => sum + leases.fold<int>(
-          0,
-          (inner, entry) => inner + (entry.retained?.byteLength ?? 0),
-        ),
-      );
 
   Future<_TextureReservation> acquire({
     required int width,
@@ -323,10 +304,10 @@ final class _AndroidTextureLeasePool {
       }
     }
     if (leases != null && leases.isNotEmpty) {
-      final entry = leases.removeLast();
+      final lease = leases.removeLast();
       if (leases.isEmpty) _idle.remove(size);
       return _TextureReservation(
-        lease: entry.lease,
+        lease: lease,
         reused: true,
       );
     }
@@ -334,25 +315,6 @@ final class _AndroidTextureLeasePool {
       lease: await presenter.create(width: width, height: height),
       reused: false,
     );
-  }
-
-  Future<_TextureReservation?> restore(DecodeId id) async {
-    for (final entry in _idle.entries.toList(growable: false)) {
-      final leases = entry.value;
-      for (var index = leases.length - 1; index >= 0; index--) {
-        final candidate = leases[index];
-        final retained = candidate.retained;
-        if (retained == null || retained.id != id) continue;
-        leases.removeAt(index);
-        if (leases.isEmpty) _idle.remove(entry.key);
-        return _TextureReservation(
-          lease: candidate.lease,
-          reused: true,
-          retained: retained,
-        );
-      }
-    }
-    return null;
   }
 
   Future<void> prewarm({required int width, required int height}) {
@@ -363,10 +325,15 @@ final class _AndroidTextureLeasePool {
       return Future<void>.value();
     }
     _prewarmedSizes.add(size);
+    final generation = _generation;
     return _prewarming.putIfAbsent(size, () async {
       try {
         final lease = await presenter.create(width: width, height: height);
-        await release(lease);
+        if (generation != _generation || idleCount >= maxIdle) {
+          await lease.release();
+          return;
+        }
+        _idle.putIfAbsent(size, () => <AndroidTextureLease>[]).add(lease);
       } on Object {
         _prewarmedSizes.remove(size);
         rethrow;
@@ -376,61 +343,28 @@ final class _AndroidTextureLeasePool {
     });
   }
 
-  Future<void> release(
-    AndroidTextureLease lease, {
-    _RetainedTextureFrame? retained,
-  }) async {
-    if (lease.released) return;
-    final retainBytes = retained?.byteLength ?? 0;
-    if (idleCount >= maxIdle ||
-        (retainBytes > 0 && retainedBytes + retainBytes > maxRetainedBytes)) {
-      await lease.release();
-      return;
-    }
-    final size = _TextureSize(lease.width, lease.height);
-    _idle.putIfAbsent(size, () => <_IdleTextureLease>[]).add(
-          _IdleTextureLease(lease: lease, retained: retained),
-        );
+  Future<void> releaseIdle() async {
+    _generation++;
+    _prewarmedSizes.clear();
+    final leases = _idle.values
+        .expand((value) => value)
+        .toList(growable: false);
+    _idle.clear();
+    await Future.wait<void>(
+      leases.map((lease) => lease.release()),
+      eagerError: false,
+    );
   }
-}
-
-final class _IdleTextureLease {
-  const _IdleTextureLease({required this.lease, this.retained});
-
-  final AndroidTextureLease lease;
-  final _RetainedTextureFrame? retained;
-}
-
-final class _RetainedTextureFrame {
-  const _RetainedTextureFrame({
-    required this.id,
-    required this.epoch,
-    required this.index,
-    required this.width,
-    required this.height,
-    required this.byteLength,
-    required this.duration,
-  });
-
-  final DecodeId id;
-  final int epoch;
-  final int index;
-  final int width;
-  final int height;
-  final int byteLength;
-  final Duration duration;
 }
 
 final class _TextureReservation {
   const _TextureReservation({
     required this.lease,
     required this.reused,
-    this.retained,
   });
 
   final AndroidTextureLease lease;
   final bool reused;
-  final _RetainedTextureFrame? retained;
 }
 
 final class _TextureSize {
@@ -453,34 +387,18 @@ final class _AndroidTextureSlot {
     required this.width,
     required this.height,
     required this.reservation,
-    required this.pool,
-    _RetainedTextureFrame? retained,
-  }) : _retained = retained;
+  });
 
   final DecodeId id;
   final int width;
   final int height;
   final Future<_TextureReservation> reservation;
-  final _AndroidTextureLeasePool pool;
   final Completer<void> _released = Completer<void>();
   int _frameOwners = 0;
   bool _retired = false;
   bool _releaseStarted = false;
-  _RetainedTextureFrame? _retained;
 
   bool get retired => _retired;
-
-  void markPresented(NativeFrame frame) {
-    _retained = _RetainedTextureFrame(
-      id: id,
-      epoch: frame.epoch,
-      index: frame.index,
-      width: frame.width,
-      height: frame.height,
-      byteLength: frame.byteLength,
-      duration: frame.duration,
-    );
-  }
 
   void retainFrame() {
     if (_retired) throw StateError('Android texture slot is retired');
@@ -511,10 +429,7 @@ final class _AndroidTextureSlot {
   Future<void> _releaseReservation() async {
     try {
       final value = await reservation;
-      await pool.release(
-        value.lease,
-        retained: _retained ?? value.retained,
-      );
+      await value.lease.release();
     } on Object {
       // A failed platform create must not block Reader teardown.
     } finally {
@@ -596,7 +511,6 @@ final class _AndroidTextureOutputFrame
           leaseReused: leaseReused,
         ),
       );
-      slot.markPresented(frame);
       _lastPresentationTiming = FramePresentationTiming(
         channelRoundTripMicros: sample.roundTripMicros,
         platformQueueMicros: sample.queueMicros,
@@ -651,74 +565,6 @@ final class _AndroidTextureOutputFrame
     frame.dispose();
     _fallback?.dispose();
     _fallback = null;
-    slot.releaseFrame();
-  }
-}
-
-final class _RetainedAndroidTextureOutputFrame
-    implements OutputFrame, OutputFrameTiming {
-  _RetainedAndroidTextureOutputFrame({
-    required this.retained,
-    required this.slot,
-    required this.lease,
-  });
-
-  final _RetainedTextureFrame retained;
-  final _AndroidTextureSlot slot;
-  final AndroidTextureLease lease;
-  bool _disposed = false;
-  FramePresentationTiming? _lastPresentationTiming;
-
-  @override
-  int get epoch => retained.epoch;
-  @override
-  int get index => retained.index;
-  @override
-  int get width => retained.width;
-  @override
-  int get height => retained.height;
-  @override
-  int get byteLength => retained.byteLength;
-  @override
-  Duration get duration => retained.duration;
-  @override
-  RendererKind get renderer => RendererKind.androidTexture;
-  @override
-  bool get disposed => _disposed;
-  @override
-  FramePresentationTiming? get lastPresentationTiming =>
-      _lastPresentationTiming;
-
-  @override
-  Future<void> present() async {
-    if (_disposed) {
-      throw StateError('retained Android texture output is disposed');
-    }
-    final elapsed = Stopwatch()..start();
-    await lease.redraw();
-    _lastPresentationTiming = FramePresentationTiming(
-      channelRoundTripMicros: elapsed.elapsedMicroseconds,
-      platformQueueMicros: 0,
-      platformUploadMicros: 0,
-      platformRetainMicros: 0,
-      platformBlitMicros: 0,
-      surfaceReconfigureCount: 0,
-      platformScheduleMicros: 0,
-      platformScheduleQueueMicros: 0,
-      platformScheduleCallMicros: 0,
-      platformReplaceMicros: 0,
-      platformResultDispatchMicros: 0,
-      channelDispatchMicros: 0,
-      fallbackDecodeMicros: 0,
-      deadlineMissMicros: 0,
-      path: FramePresentationPath.platform,
-    );
-  }
-
-  @override
-  void dispose() {
-    if (_disposed) return;
-    _disposed = true;
     slot.releaseFrame();
   }
 }
@@ -834,13 +680,6 @@ final class _AndroidOutputProjector implements PipelineOutputProjector {
 
   @override
   PipelinePageSurface project(OutputFrame frame) {
-    if (frame is _RetainedAndroidTextureOutputFrame) {
-      return _AndroidTextureSurface(
-        lease: frame.lease,
-        width: frame.width,
-        height: frame.height,
-      );
-    }
     if (frame is! _AndroidTextureOutputFrame) {
       throw ArgumentError.value(
         frame,

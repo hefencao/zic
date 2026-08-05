@@ -76,12 +76,3 @@ abstract interface class FrameUploader {
   /// claims; the uploader must defer platform destruction until then.
   void release(DecodeId id);
 }
-
-/// Optional uploader capability for a process-retained renderer output.
-///
-/// A restored output is valid only for the exact [DecodeId]. It is presentation
-/// state, not decoded-frame state: decode and download continue normally and a
-/// later authoritative upload replaces it.
-abstract interface class RetainedOutputUploader {
-  Future<OutputFrame?> restoreRetainedOutput(DecodeId id);
-}

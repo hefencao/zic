@@ -76,6 +76,18 @@ final class UploadRegistry {
     return false;
   }
 
+  int? earliestPlaybackDeadlineMicros(Iterable<DecodeId> ids) {
+    int? earliest;
+    for (final id in ids) {
+      final deadline = _sessions[id]?.playbackDeadlineMicros;
+      if (deadline == null) continue;
+      if (earliest == null || deadline < earliest) {
+        earliest = deadline;
+      }
+    }
+    return earliest;
+  }
+
   UploadSession get(DecodeId id) {
     return _sessions.putIfAbsent(id, () {
       final session = UploadSession(

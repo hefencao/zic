@@ -7,6 +7,7 @@
 
 mod android_texture;
 mod webp;
+mod android_performance;
 
 use std::ptr;
 use std::slice;
@@ -240,6 +241,15 @@ pub extern "C" fn zic_webp_decoder_version() -> u32 {
 #[no_mangle]
 pub extern "C" fn zic_webp_demux_version() -> u32 {
     webp::demux_version()
+}
+
+/// Prepares the calling process-lifetime decode worker for Android foreground
+/// playback. This is best-effort and never changes non-Android placement.
+/// Returns 0=host/no-op, 1=affinity applied, 2=no heterogeneous mask,
+/// 3=platform rejected the request.
+#[no_mangle]
+pub extern "C" fn zic_prepare_decode_thread() -> u32 {
+    android_performance::prepare_current_thread()
 }
 
 #[no_mangle]

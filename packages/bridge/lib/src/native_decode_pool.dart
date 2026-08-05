@@ -16,6 +16,7 @@ final class _NativeDecodeResult {
     required this.workerReadyMicros,
     required this.workerQueueMicros,
     required this.workerIndex,
+    required this.workerPlacementStatus,
   });
 
   final int status;
@@ -30,6 +31,7 @@ final class _NativeDecodeResult {
   final int workerReadyMicros;
   final int workerQueueMicros;
   final int workerIndex;
+  final int workerPlacementStatus;
 }
 
 /// Process-lifetime pool: page/cursor disposal never owns worker shutdown.
@@ -167,10 +169,17 @@ final class _NativeDecodeWorkerPool {
         debugName: 'zic-webp-decode-$index',
       );
       final value = await ready.first;
-      if (value is! SendPort) {
+      if (value is! List<Object?> ||
+          value.length < 2 ||
+          value[0] is! SendPort ||
+          value[1] is! int) {
         throw StateError('native decode worker failed to start: $value');
       }
-      return _NativeDecodeWorker(value, index);
+      return _NativeDecodeWorker(
+        value[0]! as SendPort,
+        index,
+        value[1]! as int,
+      );
     } finally {
       ready.close();
     }
@@ -243,6 +252,7 @@ final class _NativeDecodeWorkerPool {
           workerReadyMicros: pending.workerReadyMicros,
           workerQueueMicros: workerQueueMicros,
           workerIndex: worker.index,
+          workerPlacementStatus: worker.placementStatus,
         ),
       );
     } on Object catch (error, stack) {
@@ -286,10 +296,11 @@ final class _PendingNativeDecode {
 }
 
 final class _NativeDecodeWorker {
-  _NativeDecodeWorker(this.port, this.index);
+  _NativeDecodeWorker(this.port, this.index, this.placementStatus);
 
   final SendPort port;
   final int index;
+  final int placementStatus;
   bool busy = false;
   DecodeExecutionClass? executionClass;
   int? cursorAddress;
@@ -332,6 +343,7 @@ final class _NativeDecodeWorker {
         workerReadyMicros: 0,
         workerQueueMicros: 0,
         workerIndex: index,
+        workerPlacementStatus: placementStatus,
       );
     } finally {
       response.close();
@@ -352,7 +364,8 @@ void _nativeDecodeWorkerEntry(List<Object?> arguments) {
     receive.close();
     return;
   }
-  ready.send(receive.sendPort);
+  final placementStatus = api.prepareDecodeThread();
+  ready.send(<Object?>[receive.sendPort, placementStatus]);
   receive.listen((Object? message) {
     if (message == 'close') {
       receive.close();

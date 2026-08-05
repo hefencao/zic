@@ -1,3 +1,22 @@
+## 0.31.0-dev.130：Retained Output 删除后的编译闭包
+
+- 修复 dev.129 删除 `_RetainedAndroidTextureOutputFrame` 定义后，Android output projector 仍保留该类型判断导致的 Dart 编译失败。
+- 不恢复 retained output 空壳；projector 继续只接受权威 `_AndroidTextureOutputFrame`。
+- 强化 dev.129 所有权门禁，并新增 dev.130 编译闭包门禁，禁止已删除类型在生产源码中以声明、类型判断或构造调用形式重新出现。
+- 不修改 fresh texture 生命周期、性能核心 affinity、下载/解码/播放策略或 native ABI。
+- 正式 ZIP 继续排除 `.zic-workspace.json`；patch 不触碰本地 `patch_dir`。
+
+## 0.31.0-dev.129：Reader 后台重入 Fresh Texture 与性能核心 Decode
+
+- 根据 `zic-debug-trace-2026-08-04T23-49-35.jsonl` 重新区分首帧与后续播放：长后台后首帧仍约 46–90 ms，但前数秒已复用 texture 的 bridge/schedule 与 native decode 均出现约 4 倍退化。
+- 对照 VibeVenera 的实际生命周期，已承载页面 output 的 Android texture lease 不再跨 Reader session 回池；只允许从未呈现的预热 lease 复用，非 resumed 生命周期清理 idle prewarm。
+- 移除 dev.125 跨 Reader retained platform output 恢复；partial source-growth 与 sealed failure 边界保持。
+- 用最近 playback deadline 的一次性 timer 取代 4 ms `Timer.periodic`，仅在下一截止时间到达时唤醒。
+- Android 两个进程常驻 native decode worker 启动时 best-effort 探测最高频核心并调用 `sched_setaffinity`；同构设备、探测失败或系统拒绝时保持默认调度。
+- `frameDecoded` 增加 `workerPlacementStatus`；Trace analyzer 增加性能核心放置与 reused texture bridge/schedule 指标。
+- Rust 导出符号与 native header 已变化，Android native build identity 更新为 `zic-media-core-dev129-abi6-lib00121200`。
+- 正式 ZIP 继续排除 `.zic-workspace.json`；patch 不触碰本地 `patch_dir`。
+
 ## 0.31.0-dev.128：Native Decode 优先级迁移
 
 - 修复已排队 native decode 的 execution class 固定在首次 PageRole：far/next 页面升为 current 时，queued nonCurrent 请求原位迁移到 current 队首。

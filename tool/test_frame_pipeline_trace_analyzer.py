@@ -146,6 +146,17 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
             },
         },
         {
+            "t": 21,
+            "sessionId": "reader-a",
+            "kind": "frameDecoded",
+            "identityHash": "decode-current",
+            "payload": {
+                "frame": 0,
+                "worker": 1,
+                "workerPlacementStatus": 1,
+            },
+        },
+        {
             "t": 22,
             "sessionId": "reader-a",
             "kind": "decodeRefill",
@@ -211,6 +222,9 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
                 "frame": 0,
                 "textureLeaseReused": True,
                 "uploadMicros": 1200,
+                "roundTripMicros": 150000,
+                "bridgeMicros": 120000,
+                "scheduleQueueMicros": 7000,
                 "surfaceReconfigureCount": 0,
             },
         },
@@ -389,6 +403,9 @@ assert report["emptyArtifactEventCount"] == 0
 assert report["emptyArtifactHandoffStoreCount"] == 0
 assert report["cacheResidentCommitCount"] == 0
 assert report["textureLeasePresentationCount"] == 1
+assert report["textureLeaseReusedBridgeOver100msCount"] == 1
+assert report["textureLeaseReusedBridgeMicros"]["max"] == 120000
+assert report["textureLeaseReusedScheduleQueueMicros"]["max"] == 7000
 assert report["sourceReads"][0]["hotCacheEntries"] == 1
 
 assert report["firstFrameReadyCount"] == 1
@@ -404,6 +421,9 @@ assert report["cacheHandoffActionCounts"] == {"skip-existing": 1}
 assert report["cacheHandoffMicros"]["max"] == 700
 assert report["cacheHandoffs"][0]["bytes"] == 1048576
 assert report["decodePriorityPromotionCount"] == 1
+assert report["decodeWorkerPlacementStatusCounts"] == {"1": 1}
+assert report["decodeWorkerAffinityAppliedCount"] == 1
+assert report["decodeWorkerPlacements"][0]["workerPlacementStatus"] == 1
 assert report["decodeQueuedPriorityPromotionCount"] == 1
 assert report["decodeActivePriorityPromotionCount"] == 0
 assert report["decodePriorityPromotions"][0]["role"] == "current"

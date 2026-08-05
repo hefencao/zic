@@ -67,7 +67,7 @@ for token in (
 for token in (
     "_AndroidTextureLeasePool",
     "final Set<_TextureSize> _prewarmedSizes",
-    "await pool.release(",
+    "await pool.releaseIdle()",
     "value.lease",
     "textureLeaseReused",
 ):

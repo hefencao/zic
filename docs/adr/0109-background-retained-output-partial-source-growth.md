@@ -2,6 +2,8 @@
 
 **状态：Provisional**
 
+> 跨 Reader retained platform output 的决策已由 ADR 0113 取代并删除；本 ADR 的 partial source-growth 与 sealed failure 边界继续有效。
+
 ## 问题
 
 dev.124 设备 Trace 中，首次进入 Reader 的首帧通常约 0.23–0.39 秒；切后台约 15 秒后重新进入，同一页面首帧升至约 1.19–1.20 秒。精确 output prewarm 仍命中，恢复后的 `surfaceReconfigureCount=0`，但 source wait、native decode 和 platform present 同时重新进入慢路径。进程级 Android texture pool 已保留 lease 与最后 native frame，新的 Reader session 却只能按尺寸复用 lease，不能按 DecodeId 恢复已有画面。
