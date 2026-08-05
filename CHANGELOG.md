@@ -1,3 +1,12 @@
+## 0.31.0-dev.136：修复 Catalog 缓存权重并清理无调用兼容层
+
+- 为 `CachedBrowsableComicSource` 补齐 search/comic/chapter metadata 的结构化 byte-weight 估算；权重由拥有领域结构的 catalog 计算，`ResourceCacheManager` 继续唯一拥有容量、TTL、LRU 与 in-flight join。
+- 修复 `PromotedArtifactCacheHandoff` 使用无返回值 `Future.catchError` 的运行时类型错误；提交任务改为显式 typed async owner，并保证错误回调失败不会产生第二个失败 Future。
+- 补齐冷 Reader 测试 backend 的 `invalidateArtifact` 当前接口；不恢复旧 Artifact/Prewarmer/Ingress 兼容 facade。
+- 删除全仓无生产/测试 import 的 App `local_webp_folder.dart`、`local_image_folder.dart`，以及旧 WebP-folder typedef、model、screen、picker、key alias；单文件 WebP 与 ImageFolder 当前 API 保留。
+- `WebpLoadToken` 旧别名迁移为直接使用 `MediaLoadToken`；新增 owner tests、ADR 0119、dev.136 编译/死代码门禁和审计。
+- Android debug/profile/release 继续统一 `applicationId=dev.zic.zic`、`versionName=0.31.0`，`versionCode` 更新为 136；native identity 保持 dev.134。
+
 ## 0.31.0-dev.135：统一应用版本并稳定缓存身份与版本复用
 
 - Android debug/profile/release 改为读取同一项目版本文件，统一 `applicationId=dev.zic.zic`、`versionName=0.31.0`、`versionCode=135`，并显式禁止 applicationId/versionName suffix；避免运行模式切换因版本身份漂移触发卸载/降级处理。

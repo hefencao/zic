@@ -187,4 +187,9 @@ final class _ArtifactStore implements ArtifactCacheBackend {
   }) async {
     values[id] = Uint8List.fromList(bytes);
   }
+
+  @override
+  Future<void> invalidateArtifact(DownloadId id) async {
+    values.remove(id);
+  }
 }

@@ -263,36 +263,6 @@ LocalImageFormat _formatFromSourceName(String sourceId) {
   return LocalImageFormat.jpeg;
 }
 
-@Deprecated('Use ImageFolderScreen')
-final class WebpFolderScreen extends StatelessWidget {
-  const WebpFolderScreen({
-    required this.folder,
-    required this.pipelineFactory,
-    this.bytesLoader,
-    this.onPreviewStateChanged,
-    this.initialProgress,
-    this.onProgressChanged,
-    super.key,
-  });
-
-  final PickedImageFolder folder;
-  final PipelineReaderSessionFactory pipelineFactory;
-  final LocalImageBytesLoader? bytesLoader;
-  final ImagePreviewStateChanged? onPreviewStateChanged;
-  final ReadingProgress? initialProgress;
-  final ReaderProgressWriter? onProgressChanged;
-
-  @override
-  Widget build(BuildContext context) => ImageFolderScreen(
-        folder: folder,
-        bytesLoader: bytesLoader,
-        onPreviewStateChanged: onPreviewStateChanged,
-        initialProgress: initialProgress,
-        onProgressChanged: onProgressChanged,
-        pipelineFactory: pipelineFactory,
-      );
-}
-
 final class WebpPlayerScreen extends StatelessWidget {
   const WebpPlayerScreen._({
     required this.title,

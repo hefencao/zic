@@ -19,8 +19,9 @@ content resolver, while a selected directory could be treated as a raw path.
   recursive enumeration and the platform-selection facade.
 - `packages/local_media_bridge` owns Android document-tree selection and content
   URI byte access only.
-- `apps/app` owns presentation, route state and user interaction. Its
-  `local_image_folder.dart` file is a compatibility export, not an I/O module.
+- `apps/app` owns presentation, route state and user interaction. The former
+  `local_image_folder.dart` compatibility export had no production caller and
+  was removed in dev.136; App imports the owning packages directly.
 - Android folder candidates are recognized by header first, then provider MIME
   and filename metadata. A failed probe does not discard an image metadata
   candidate; final parsing/codec validation happens when the page is opened.

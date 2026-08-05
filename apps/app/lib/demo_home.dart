@@ -67,8 +67,6 @@ const bundledWebpEntryKey = ValueKey<String>('demo-entry-bundled-webp');
 const localWebpImportKey = ValueKey<String>('demo-entry-local-webp');
 const localImageFolderImportKey =
     ValueKey<String>('demo-entry-local-image-folder');
-@Deprecated('Use localImageFolderImportKey')
-const localWebpFolderImportKey = localImageFolderImportKey;
 const localWebpPickerProgressKey =
     ValueKey<String>('local-webp-picker-progress');
 const localImageFolderPickerProgressKey =
@@ -114,8 +112,6 @@ Key bookshelfMoveToCategoryKey(String categoryId) =>
     ValueKey<String>('bookshelf-move-to:$categoryId');
 Key chapterReadKey(String sourceId, String chapterId) =>
     ValueKey<String>('chapter-read:$sourceId\u0000$chapterId');
-@Deprecated('Use localImageFolderPickerProgressKey')
-const localWebpFolderPickerProgressKey = localImageFolderPickerProgressKey;
 
 String _comicIdentityTraceHash(
   String sourceId,

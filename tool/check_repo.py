@@ -720,7 +720,7 @@ def check_compile_regressions() -> None:
         if required not in media_load_token:
             fail(f'media byte-load cancellation is incomplete: {required}')
     for required in (
-        'typedef WebpLoadToken = MediaLoadToken',
+        'typedef WebpBytesLoader = Future<Uint8List> Function(MediaLoadToken token)',
         '_loadToken.cancel()',
         'widget.loadBytes(token)',
         '_notifyPreviewObserver(_previewState)',
@@ -765,7 +765,6 @@ def check_compile_regressions() -> None:
         'pickLocalImageFolder(',
         'final class LocalImagePlayer',
         'final class ImageFolderScreen',
-        "@Deprecated('Use ImageFolderScreen')",
         'pageSubtitleBuilder:',
         'ImagePreviewStateRegion',
         'MemoryImage(bytes)',
@@ -776,6 +775,25 @@ def check_compile_regressions() -> None:
     ):
         if required not in webp_demo:
             fail(f'local image folder contract is incomplete: {required}')
+    for forbidden in (
+        'typedef WebpFolderPicker =',
+        'typedef WebpLoadToken =',
+        'final class PickedWebpFolder',
+        'const webpFolderScreenKey =',
+        'pickLocalWebpFolder(',
+        'defaultWebpFolderPicker(',
+        'final class WebpFolderScreen',
+    ):
+        if forbidden in webp_demo:
+            fail(f'dead WebP-folder compatibility API remains: {forbidden}')
+    if (ROOT / 'apps/app/lib/local_webp_folder.dart').exists():
+        fail('dead App local_webp_folder compatibility facade remains')
+    for forbidden in (
+        'localWebpFolderImportKey',
+        'localWebpFolderPickerProgressKey',
+    ):
+        if forbidden in home:
+            fail(f'dead App WebP-folder key alias remains: {forbidden}')
     if 'provider.resolve(createLocalImageConfiguration(context))' in webp_demo:
         fail('local static images must not resolve a second ImageStream')
     folder_io = (
@@ -798,11 +816,8 @@ def check_compile_regressions() -> None:
     image_types = (
         ROOT / 'packages/local_media/lib/src/local_image_model.dart'
     ).read_text(encoding='utf-8')
-    app_folder_facade = (ROOT / 'apps/app/lib/local_image_folder.dart').read_text(
-        encoding='utf-8'
-    )
-    if "export 'package:local_media/local_media.dart';" not in app_folder_facade:
-        fail('app local-image facade must export the local_media package')
+    if (ROOT / 'apps/app/lib/local_image_folder.dart').exists():
+        fail('dead App local_image_folder compatibility facade remains')
     for forbidden_path in (
         'local_image_folder_io.dart',
         'local_image_folder_stub.dart',

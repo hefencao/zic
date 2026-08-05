@@ -79,21 +79,24 @@ final class PromotedArtifactCacheHandoff {
     if (_commits.containsKey(id)) {
       return;
     }
-    late final Future<void> tracked;
-    tracked = _commit(session).catchError(
-      (Object error, StackTrace stackTrace) {
-        if (identical(_commits[id], tracked)) {
-          _commits.remove(id);
-        }
-        try {
-          onError?.call(error, stackTrace);
-        } on Object {
-          // Error reporting must not create another failed cache Future.
-        }
-      },
-    );
+    final tracked = _runCommit(session);
     _commits[id] = tracked;
     unawaited(tracked);
+  }
+
+  Future<void> _runCommit(DownloadSession session) async {
+    final id = session.id;
+    try {
+      await _commit(session);
+    } on Object catch (error, stackTrace) {
+      try {
+        onError?.call(error, stackTrace);
+      } on Object {
+        // Error reporting must not create another failed cache Future.
+      }
+    } finally {
+      _commits.remove(id);
+    }
   }
 
   Future<void> _commit(DownloadSession session) async {

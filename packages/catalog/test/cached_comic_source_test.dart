@@ -38,6 +38,18 @@ void main() {
     expect(cache.stats.forKind(ResourceCacheKind.comicDetails).entries, 1);
     expect(cache.stats.forKind(ResourceCacheKind.chapterMetadata).entries, 1);
     expect(cache.stats.forKind(ResourceCacheKind.searchResults).entries, 1);
+    expect(
+      cache.stats.forKind(ResourceCacheKind.comicDetails).weight,
+      greaterThan(256),
+    );
+    expect(
+      cache.stats.forKind(ResourceCacheKind.chapterMetadata).weight,
+      greaterThan(256),
+    );
+    expect(
+      cache.stats.forKind(ResourceCacheKind.searchResults).weight,
+      greaterThan(256),
+    );
   });
 
   test('cached source preserves the optional comic web URI capability', () {

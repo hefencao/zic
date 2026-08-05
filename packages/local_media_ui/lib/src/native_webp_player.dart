@@ -84,12 +84,12 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   bool _completionPending = false;
   int _generation = 0;
   bool _reportedFirstFrame = false;
-  late final WebpLoadToken _loadToken;
+  late final MediaLoadToken _loadToken;
 
   @override
   void initState() {
     super.initState();
-    _loadToken = WebpLoadToken();
+    _loadToken = MediaLoadToken();
     _engine = widget.initialEngine;
     _playbackSpeed = widget.playback?.value.speed ?? 1;
     _paused = widget.playback?.value.paused ?? false;

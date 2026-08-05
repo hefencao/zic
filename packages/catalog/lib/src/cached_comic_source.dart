@@ -338,6 +338,78 @@ final class CachedBrowsableComicSource
   }
 }
 
+const int _cacheObjectOverhead = 64;
+const int _cacheCollectionOverhead = 24;
+
+int _browseWeight(SourceBrowsePage page) =>
+    _cacheObjectOverhead +
+    _cacheCollectionWeight<SourceComicSummary>(
+      page.items,
+      _sourceComicSummaryWeight,
+    );
+
+int _comicWeight(ComicManifest manifest) =>
+    _cacheObjectOverhead +
+    _comicValueWeight(manifest.comic) +
+    _cacheCollectionWeight<Chapter>(manifest.chapters, _chapterValueWeight);
+
+int _chapterWeight(ChapterManifest manifest) =>
+    _cacheObjectOverhead +
+    _textWeight(manifest.sourceId) +
+    _textWeight(manifest.comicId) +
+    _chapterValueWeight(manifest.chapter) +
+    _cacheCollectionWeight<PageAsset>(manifest.pages, _pageAssetWeight);
+
+int _sourceComicSummaryWeight(SourceComicSummary summary) =>
+    _cacheObjectOverhead +
+    _textWeight(summary.sourceId) +
+    _textWeight(summary.comicId) +
+    _textWeight(summary.title) +
+    _cacheCollectionWeight<String>(summary.authors, _textWeight) +
+    _cacheCollectionWeight<String>(summary.tags, _textWeight) +
+    _uriWeight(summary.coverUri) +
+    _textWeight(summary.description);
+
+int _comicValueWeight(Comic comic) =>
+    _cacheObjectOverhead +
+    _textWeight(comic.comicId) +
+    _textWeight(comic.sourceId) +
+    _textWeight(comic.title) +
+    _cacheCollectionWeight<String>(comic.authors, _textWeight) +
+    _cacheCollectionWeight<String>(comic.tags, _textWeight) +
+    _uriWeight(comic.coverUri) +
+    _textWeight(comic.description);
+
+int _chapterValueWeight(Chapter chapter) =>
+    _cacheObjectOverhead +
+    _textWeight(chapter.chapterId) +
+    _textWeight(chapter.comicId) +
+    _textWeight(chapter.title) +
+    _textWeight(chapter.sourceRevision);
+
+int _pageAssetWeight(PageAsset page) =>
+    _cacheObjectOverhead +
+    _textWeight(page.pageId) +
+    _textWeight(page.chapterId) +
+    _textWeight(page.uri.toString()) +
+    _textWeight(page.checksum);
+
+int _cacheCollectionWeight<T>(
+  Iterable<T> values,
+  int Function(T value) weightOf,
+) {
+  var weight = _cacheCollectionOverhead;
+  for (final value in values) {
+    weight += weightOf(value);
+  }
+  return weight;
+}
+
+int _uriWeight(Uri? uri) => uri == null ? 0 : _textWeight(uri.toString());
+
+int _textWeight(String? value) =>
+    value == null ? 0 : _cacheObjectOverhead + value.length * 2;
+
 Future<Uint8List> loadCachedComicImage({
   required ResourceCacheManager cache,
   required String sourceId,

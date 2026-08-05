@@ -13,10 +13,8 @@ typedef ImageFolderPicker = Future<PickedImageFolder?> Function();
 typedef ImageFolderRefresher = Future<PickedImageFolder> Function(
   ImportedChapterRecord chapter,
 );
-@Deprecated('Use ImageFolderPicker')
-typedef WebpFolderPicker = ImageFolderPicker;
 typedef LocalWebpSelector = Future<XFile?> Function();
-typedef WebpBytesLoader = Future<Uint8List> Function(WebpLoadToken token);
+typedef WebpBytesLoader = Future<Uint8List> Function(MediaLoadToken token);
 typedef LocalImageBytesLoader = Future<Uint8List> Function(PickedImage image);
 typedef LocalImageTokenBytesLoader = Future<Uint8List> Function(
   PickedImage image,
@@ -24,8 +22,6 @@ typedef LocalImageTokenBytesLoader = Future<Uint8List> Function(
 );
 typedef LocalImageDecodeProbe = Future<void> Function(Uint8List bytes);
 
-@Deprecated('Use MediaLoadToken')
-typedef WebpLoadToken = MediaLoadToken;
 
 final class PickedImage {
   factory PickedImage({
@@ -128,44 +124,6 @@ class PickedImageFolder {
   final int unreadableFiles;
 }
 
-@Deprecated('Use PickedImageFolder')
-final class PickedWebpFolder extends PickedImageFolder {
-  factory PickedWebpFolder({
-    required String directoryPath,
-    required List<PickedWebp> files,
-    String? displayName,
-  }) {
-    final explicit = displayName?.trim() ?? '';
-    return PickedWebpFolder._(
-      directoryPath: directoryPath,
-      displayName: explicit.isEmpty
-          ? imageDirectoryDisplayName(directoryPath)
-          : explicit,
-      files: List<PickedImage>.unmodifiable(
-        files.map(
-          (picked) => PickedImage(
-            file: picked.file,
-            format: LocalImageFormat.webp,
-            displayName: picked.displayName,
-          ),
-        ),
-      ),
-    );
-  }
-
-  const PickedWebpFolder._({
-    required String directoryPath,
-    required String displayName,
-    required List<PickedImage> files,
-  }) : super._(
-          directoryPath: directoryPath,
-          displayName: displayName,
-          files: files,
-          scannedFiles: files.length,
-          unreadableFiles: 0,
-        );
-}
-
 final class PickedWebp {
   factory PickedWebp({
     required XFile file,
@@ -227,8 +185,6 @@ const webpFlutterPreviewKey = ValueKey<String>('webp-flutter-preview');
 const webpNativeTextureViewportKey =
     ValueKey<String>('webp-native-texture-viewport');
 const imageFolderScreenKey = ValueKey<String>('webp-folder-screen');
-@Deprecated('Use imageFolderScreenKey')
-const webpFolderScreenKey = imageFolderScreenKey;
 const imageFolderPreviewStateKey =
     ValueKey<String>('image-folder-preview-state');
 const imageFolderPreviewReadyKey =
@@ -354,22 +310,6 @@ Future<PickedImageFolder> defaultImageFolderRefresher(
   ImportedChapterRecord chapter,
 ) =>
     refreshPickedImageFolder(chapter);
-
-@Deprecated('Use pickLocalImageFolder')
-Future<PickedImageFolder?> pickLocalWebpFolder({
-  LocalImageDirectoryContentsPicker? pickDirectoryContents,
-  LocalImageDirectorySelector? selectDirectory,
-  LocalImageDirectoryLoader? listFiles,
-}) =>
-    pickLocalImageFolder(
-      pickDirectoryContents: pickDirectoryContents,
-      selectDirectory: selectDirectory,
-      listFiles: listFiles,
-    );
-
-@Deprecated('Use defaultImageFolderPicker')
-Future<PickedImageFolder?> defaultWebpFolderPicker() =>
-    defaultImageFolderPicker();
 
 String imageDirectoryDisplayName(String path) {
   final normalized = path.trim().replaceAll('\\', '/');
