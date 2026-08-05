@@ -65,26 +65,69 @@ final class _NativeDecodeWorkerPool {
     required int cursorAddress,
     required int epoch,
     required DecodeExecutionClass executionClass,
-  }) async {
-    final ready = Stopwatch()..start();
-    await _ensureStarted();
-    final workerReadyMicros = ready.elapsedMicroseconds;
+  }) {
     final completer = Completer<_NativeDecodeResult>();
     final pending = _PendingNativeDecode(
       cursorAddress: cursorAddress,
       epoch: epoch,
       executionClass: executionClass,
       completer: completer,
-      workerReadyMicros: workerReadyMicros,
-      queued: Stopwatch()..start(),
+      workerReady: Stopwatch()..start(),
     );
-    if (executionClass == DecodeExecutionClass.current) {
+    _enqueue(pending);
+    if (_workers.length == _nativeDecodeWorkerCount) {
+      pending.markWorkersReady();
+      _pump();
+    } else {
+      unawaited(
+        _ensureStarted().catchError((Object error, StackTrace stack) {
+          _removePending(pending);
+          if (!pending.completer.isCompleted) {
+            pending.completer.completeError(error, stack);
+          }
+        }),
+      );
+    }
+    return completer.future;
+  }
+
+  DecodePriorityPromotion promotePendingDecodeToCurrent({
+    required int cursorAddress,
+    required int epoch,
+  }) {
+    for (final pending in List<_PendingNativeDecode>.of(_nonCurrentPending)) {
+      if (pending.cursorAddress != cursorAddress || pending.epoch != epoch) {
+        continue;
+      }
+      _nonCurrentPending.remove(pending);
+      pending.executionClass = DecodeExecutionClass.current;
+      _currentPending.addFirst(pending);
+      _pump();
+      return DecodePriorityPromotion.queued;
+    }
+    for (final worker in _workers) {
+      if (!worker.busy ||
+          worker.cursorAddress != cursorAddress ||
+          worker.epoch != epoch) {
+        continue;
+      }
+      worker.executionClass = DecodeExecutionClass.current;
+      return DecodePriorityPromotion.active;
+    }
+    return DecodePriorityPromotion.none;
+  }
+
+  void _enqueue(_PendingNativeDecode pending) {
+    if (pending.executionClass == DecodeExecutionClass.current) {
       _currentPending.addLast(pending);
     } else {
       _nonCurrentPending.addLast(pending);
     }
-    _pump();
-    return completer.future;
+  }
+
+  void _removePending(_PendingNativeDecode pending) {
+    _currentPending.remove(pending);
+    _nonCurrentPending.remove(pending);
   }
 
   Future<void> _ensureStarted() {
@@ -104,6 +147,8 @@ final class _NativeDecodeWorkerPool {
         started.add(await _spawnWorker(index));
       }
       _workers.addAll(started);
+      _markQueuedWorkersReady();
+      _pump();
     } on Object {
       for (final worker in started) {
         worker.close();
@@ -131,6 +176,15 @@ final class _NativeDecodeWorkerPool {
     }
   }
 
+  void _markQueuedWorkersReady() {
+    for (final pending in <_PendingNativeDecode>[
+      ..._currentPending,
+      ..._nonCurrentPending,
+    ]) {
+      pending.markWorkersReady();
+    }
+  }
+
   void _pump() {
     for (final worker in _workers) {
       if (worker.busy) {
@@ -142,12 +196,14 @@ final class _NativeDecodeWorkerPool {
       }
       worker.busy = true;
       worker.executionClass = pending.executionClass;
+      worker.cursorAddress = pending.cursorAddress;
+      worker.epoch = pending.epoch;
       unawaited(_run(worker, pending));
     }
   }
 
   _PendingNativeDecode? _takePending() {
-    if (_currentPending.isNotEmpty) {
+    if (_currentPending.isNotEmpty && _currentPending.first.workersReady) {
       return _currentPending.removeFirst();
     }
     final nonCurrentBusy = _workers.where(
@@ -156,6 +212,7 @@ final class _NativeDecodeWorkerPool {
           worker.executionClass == DecodeExecutionClass.nonCurrent,
     ).length;
     if (_nonCurrentPending.isNotEmpty &&
+        _nonCurrentPending.first.workersReady &&
         nonCurrentBusy < _nativeDecodeWorkerCount - 1) {
       return _nonCurrentPending.removeFirst();
     }
@@ -167,7 +224,7 @@ final class _NativeDecodeWorkerPool {
     _PendingNativeDecode pending,
   ) async {
     try {
-      final workerQueueMicros = pending.queued.elapsedMicroseconds;
+      final workerQueueMicros = pending.queued?.elapsedMicroseconds ?? 0;
       final result = await worker.decode(
         cursorAddress: pending.cursorAddress,
         epoch: pending.epoch,
@@ -193,27 +250,39 @@ final class _NativeDecodeWorkerPool {
     } finally {
       worker.busy = false;
       worker.executionClass = null;
+      worker.cursorAddress = null;
+      worker.epoch = null;
       _pump();
     }
   }
 }
 
 final class _PendingNativeDecode {
-  const _PendingNativeDecode({
+  _PendingNativeDecode({
     required this.cursorAddress,
     required this.epoch,
     required this.executionClass,
     required this.completer,
-    required this.workerReadyMicros,
-    required this.queued,
+    required this.workerReady,
   });
 
   final int cursorAddress;
   final int epoch;
-  final DecodeExecutionClass executionClass;
+  DecodeExecutionClass executionClass;
   final Completer<_NativeDecodeResult> completer;
-  final int workerReadyMicros;
-  final Stopwatch queued;
+  final Stopwatch workerReady;
+  int workerReadyMicros = 0;
+  Stopwatch? queued;
+  bool workersReady = false;
+
+  void markWorkersReady() {
+    if (workersReady) {
+      return;
+    }
+    workersReady = true;
+    workerReadyMicros = workerReady.elapsedMicroseconds;
+    queued = Stopwatch()..start();
+  }
 }
 
 final class _NativeDecodeWorker {
@@ -223,6 +292,8 @@ final class _NativeDecodeWorker {
   final int index;
   bool busy = false;
   DecodeExecutionClass? executionClass;
+  int? cursorAddress;
+  int? epoch;
 
   void close() {
     port.send('close');

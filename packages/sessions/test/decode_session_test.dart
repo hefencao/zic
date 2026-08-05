@@ -89,6 +89,62 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('promotes an already queued native-style decode when page becomes current',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'decode_priority_promotion_test_',
+    );
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final factory = _PromotableCursorFactory();
+    final session = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: factory,
+      clock: _Clock(),
+    );
+
+    final fill = session.fill(
+      demand: const DecodeDemand(
+        role: PageRole.far,
+        priority: 320,
+        targetWatermark: 1,
+        reason: 'prefetch',
+        expirationRevision: 2,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    await factory.cursor.started.future;
+
+    expect(
+      session.promotePendingDecodeToCurrent(),
+      DecodePriorityPromotion.queued,
+    );
+    expect(factory.cursor.promotions, 1);
+
+    factory.cursor.release.complete();
+    final result = await fill;
+    expect(result.depth, 1);
+
+    session.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
   test('partial WebP retries only after the learned per-frame prefix', () async {
     final temp = await Directory.systemTemp.createTemp(
       'decode_prefix_hint_test_',
@@ -1039,6 +1095,51 @@ final class _Frame implements FrameRef {
   void dispose() => disposed = true;
 }
 
+
+final class _PromotableCursorFactory implements CursorFactory {
+  final _PromotableCursor cursor = _PromotableCursor();
+
+  @override
+  CursorBinding create({
+    required DecodeId id,
+    required EncodedSource source,
+    required int epoch,
+  }) =>
+      CursorBinding(frames: cursor);
+}
+
+final class _PromotableCursor implements PrioritizableScheduledFrameCursor {
+  final Completer<void> started = Completer<void>();
+  final Completer<void> release = Completer<void>();
+  int promotions = 0;
+
+  @override
+  int get epoch => 0;
+
+  @override
+  Future<CursorStep> decodeNext() =>
+      decodeNextScheduled(DecodeExecutionClass.nonCurrent);
+
+  @override
+  Future<CursorStep> decodeNextScheduled(
+    DecodeExecutionClass executionClass,
+  ) async {
+    if (!started.isCompleted) {
+      started.complete();
+    }
+    await release.future;
+    return CursorStep.frame(_Frame(epoch, 0));
+  }
+
+  @override
+  DecodePriorityPromotion promotePendingDecodeToCurrent() {
+    promotions++;
+    return DecodePriorityPromotion.queued;
+  }
+
+  @override
+  void dispose() {}
+}
 
 final class _PartialPrefixCursorFactory implements CursorFactory {
   _PartialPrefixCursorFactory({required this.frameCount});

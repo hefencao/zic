@@ -682,6 +682,129 @@ void main() {
     await downloads.dispose();
   });
 
+  test('role promotion reaches an already active cursor decode request',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'live_decode_priority_promotion_test_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final source = File('${temp.path}/source.webp');
+    await source.writeAsBytes('RIFF....WEBPpayload'.codeUnits);
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'priority',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: source.uri,
+    );
+    final decodeId = DecodeId(
+      download: id,
+      physicalWidth: 8,
+      physicalHeight: 8,
+      pixelFormat: PixelFormat.rgba8888,
+      renderer: RendererKind.flutterImage,
+    );
+    final clock = _Clock();
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+      sources: sources,
+    );
+    final cursors = _RolePromotionCursorFactory();
+    final decodes = DecodeRegistry(
+      downloads: downloads,
+      cursors: cursors,
+      clock: clock,
+    );
+    final trace = MemoryTraceSink();
+    final coordinator = LiveCoordinator(
+      registry: downloads,
+      transportFor: (_) => const FileTransport(),
+      clock: clock,
+      traceSink: trace,
+      decodes: decodes,
+      net: NetLane(maxActive: 1),
+      decode: DecodeLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await coordinator.dispose();
+      decodes.dispose();
+      await downloads.dispose();
+    });
+
+    DemandPlan plan({
+      required int revision,
+      required PageRole role,
+      required int priority,
+    }) =>
+        DemandPlan(
+          revision: revision,
+          downloads: <DownloadId, DownloadDemand>{
+            id: DownloadDemand(
+              role: role,
+              priority: priority,
+              reason: 'priority',
+              expirationRevision: revision + 2,
+            ),
+          },
+          decodes: <DecodeId, DecodeDemand>{
+            decodeId: DecodeDemand(
+              role: role,
+              priority: priority,
+              targetWatermark: 1,
+              reason: 'priority',
+              expirationRevision: revision + 2,
+            ),
+          },
+          uploads: const <DecodeId, UploadDemand>{},
+          keep: <ResourceId>{
+            ResourceId.download(id),
+            ResourceId.decode(decodeId),
+          },
+        );
+
+    final far = plan(revision: 1, role: PageRole.far, priority: 320);
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: far,
+        diff: DemandDiff.between(DemandPlan.empty(), far),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.far}),
+      ),
+    );
+    await cursors.cursor.started.future;
+
+    final current =
+        plan(revision: 2, role: PageRole.current, priority: 1000);
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: current,
+        diff: DemandDiff.between(far, current),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+
+    expect(cursors.cursor.promotions, 1);
+    expect(
+      trace.events.where(
+        (event) => event.kind == TraceEventKind.decodePriorityPromoted,
+      ),
+      hasLength(1),
+    );
+
+    cursors.cursor.release.complete();
+    await coordinator.idle();
+    expect(decodes.find(decodeId)?.snapshot.depth, 1);
+  });
+
   test('source revisions arriving during decode are drained exactly once',
       () async {
     final temp = await Directory.systemTemp.createTemp('live_growth_test_');
@@ -1205,6 +1328,52 @@ final class _TestSource implements EncodedSource {
   SourceStatus seal(int epoch) {
     sealed = true;
     return SourceStatus.ok;
+  }
+
+  @override
+  void dispose() {}
+}
+
+final class _RolePromotionCursorFactory implements CursorFactory {
+  final _RolePromotionCursor cursor = _RolePromotionCursor();
+
+  @override
+  CursorBinding create({
+    required DecodeId id,
+    required EncodedSource source,
+    required int epoch,
+  }) =>
+      CursorBinding(frames: cursor);
+}
+
+final class _RolePromotionCursor
+    implements PrioritizableScheduledFrameCursor {
+  final Completer<void> started = Completer<void>();
+  final Completer<void> release = Completer<void>();
+  int promotions = 0;
+
+  @override
+  int get epoch => 0;
+
+  @override
+  Future<CursorStep> decodeNext() =>
+      decodeNextScheduled(DecodeExecutionClass.nonCurrent);
+
+  @override
+  Future<CursorStep> decodeNextScheduled(
+    DecodeExecutionClass executionClass,
+  ) async {
+    if (!started.isCompleted) {
+      started.complete();
+    }
+    await release.future;
+    return CursorStep.frame(_TestFrame(epoch, 0));
+  }
+
+  @override
+  DecodePriorityPromotion promotePendingDecodeToCurrent() {
+    promotions++;
+    return DecodePriorityPromotion.queued;
   }
 
   @override

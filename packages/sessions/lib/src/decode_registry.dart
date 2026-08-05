@@ -54,6 +54,10 @@ final class DecodeRegistry {
     });
   }
 
+  DecodePriorityPromotion promotePendingDecodeToCurrent(DecodeId id) =>
+      _sessions[id]?.promotePendingDecodeToCurrent() ??
+      DecodePriorityPromotion.none;
+
   Future<DecodeSnapshot> fill(
     DecodeId id,
     DecodeDemand demand,

@@ -136,6 +136,16 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
             },
         },
         {
+            "t": 21,
+            "sessionId": "reader-a",
+            "kind": "decodePriorityPromoted",
+            "identityHash": "decode-current",
+            "payload": {
+                "promotion": "queued",
+                "role": "current",
+            },
+        },
+        {
             "t": 22,
             "sessionId": "reader-a",
             "kind": "decodeRefill",
@@ -393,6 +403,10 @@ assert report["readerSessionLifecycle"]["reader-a"]["handoffDrainMicros"] == 700
 assert report["cacheHandoffActionCounts"] == {"skip-existing": 1}
 assert report["cacheHandoffMicros"]["max"] == 700
 assert report["cacheHandoffs"][0]["bytes"] == 1048576
+assert report["decodePriorityPromotionCount"] == 1
+assert report["decodeQueuedPriorityPromotionCount"] == 1
+assert report["decodeActivePriorityPromotionCount"] == 0
+assert report["decodePriorityPromotions"][0]["role"] == "current"
 assert report["decodeRefillCount"] == 1
 assert report["decodeRefillRoleCounts"] == {"current": 1}
 assert report["decodeRefillStageCounts"] == {"c>3": 1}

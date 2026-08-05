@@ -166,6 +166,7 @@ def summarize(path: Path) -> dict[str, Any]:
     empty_artifact_events: list[dict[str, Any]] = []
     cache_handoffs: list[dict[str, Any]] = []
     decode_refills: list[dict[str, Any]] = []
+    decode_priority_promotions: list[dict[str, Any]] = []
     decode_recoveries: list[dict[str, Any]] = []
     decode_prefix_hints: list[dict[str, Any]] = []
     partial_prefix_loops: list[dict[str, Any]] = []
@@ -615,6 +616,16 @@ def summarize(path: Path) -> dict[str, Any]:
                     "sourceLength": _number(payload.get("sourceLength")),
                 }
             )
+        elif kind == "decodePriorityPromoted":
+            decode_priority_promotions.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "identityHash": event.get("identityHash"),
+                    "promotion": payload.get("promotion"),
+                    "role": payload.get("role"),
+                }
+            )
         elif kind == "decodeRefill":
             decode_refills.append(
                 {
@@ -839,6 +850,18 @@ def summarize(path: Path) -> dict[str, Any]:
             [row["handoffMicros"] for row in cache_handoffs]
         ),
         "cacheHandoffs": cache_handoffs,
+        "decodePriorityPromotionCount": len(decode_priority_promotions),
+        "decodeQueuedPriorityPromotionCount": sum(
+            1
+            for row in decode_priority_promotions
+            if row["promotion"] == "queued"
+        ),
+        "decodeActivePriorityPromotionCount": sum(
+            1
+            for row in decode_priority_promotions
+            if row["promotion"] == "active"
+        ),
+        "decodePriorityPromotions": decode_priority_promotions,
         "decodeRefillCount": len(decode_refills),
         "decodeRefillRoleCounts": dict(
             Counter(str(row["role"]) for row in decode_refills)
@@ -1012,6 +1035,12 @@ def main() -> None:
         f"localLimits={report['startupLocalDownloadBucketLimits']} "
         f"textureReused={report['startupFirstTextureLeaseReuseCount']} "
         f"surfaceReconfigures={report['startupFirstSurfaceReconfigureCount']}"
+    )
+    print(
+        "decode priority promotions: "
+        f"count={report['decodePriorityPromotionCount']} "
+        f"queued={report['decodeQueuedPriorityPromotionCount']} "
+        f"active={report['decodeActivePriorityPromotionCount']}"
     )
     print(
         "decode refills: "

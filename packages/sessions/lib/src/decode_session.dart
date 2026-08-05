@@ -152,6 +152,17 @@ final class DecodeSession {
   DecodedFrameTiming? timingForFrame(int frameIndex) =>
       _frameTimings[frameIndex];
 
+  DecodePriorityPromotion promotePendingDecodeToCurrent() {
+    if (_disposed) {
+      return DecodePriorityPromotion.none;
+    }
+    final frames = _cursor?.frames;
+    if (frames is! PrioritizableScheduledFrameCursor) {
+      return DecodePriorityPromotion.none;
+    }
+    return frames.promotePendingDecodeToCurrent();
+  }
+
   DecodeSnapshot get snapshot {
     final source = download.ingress?.source;
     return DecodeSnapshot(

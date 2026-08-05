@@ -40,6 +40,7 @@ enum TraceEventKind {
   sourceRead,
   pageOutputReleased,
   decodeDemand,
+  decodePriorityPromoted,
   decodeRefill,
   decodeStarted,
   decodeState,

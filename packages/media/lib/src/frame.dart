@@ -113,6 +113,8 @@ final class CursorStep {
 
 enum DecodeExecutionClass { current, nonCurrent }
 
+enum DecodePriorityPromotion { none, queued, active }
+
 /// Optional scheduling capability for cursor implementations backed by a
 /// shared decoder pool. Sessions choose the execution class from PageRole; the
 /// cursor/pool remains the sole owner of worker slots and native execution.
@@ -120,6 +122,16 @@ abstract interface class ScheduledFrameCursor implements FrameCursor {
   Future<CursorStep> decodeNextScheduled(
     DecodeExecutionClass executionClass,
   );
+}
+
+/// Optional capability for a cursor whose already-submitted native request can
+/// outlive the PageRole that originally scheduled it.
+///
+/// Promotion preserves the same cursor, Future, source epoch and partial
+/// progress. It never creates a second decode request.
+abstract interface class PrioritizableScheduledFrameCursor
+    implements ScheduledFrameCursor {
+  DecodePriorityPromotion promotePendingDecodeToCurrent();
 }
 
 abstract interface class FrameCursor {

@@ -107,7 +107,8 @@ final class NativeCursorFactory implements CursorFactory {
   }
 }
 
-final class NativeCursor implements ScheduledFrameCursor, LoopCursor {
+final class NativeCursor
+    implements PrioritizableScheduledFrameCursor, LoopCursor {
   NativeCursor._(
     this._ptr,
     this._api,
@@ -147,6 +148,17 @@ final class NativeCursor implements ScheduledFrameCursor, LoopCursor {
   @override
   Future<CursorStep> decodeNext() =>
       decodeNextScheduled(DecodeExecutionClass.nonCurrent);
+
+  @override
+  DecodePriorityPromotion promotePendingDecodeToCurrent() {
+    if (!_decodeInFlight || disposed) {
+      return DecodePriorityPromotion.none;
+    }
+    return _decodePool.promotePendingDecodeToCurrent(
+      cursorAddress: _ptr.address,
+      epoch: _epoch,
+    );
+  }
 
   @override
   Future<CursorStep> decodeNextScheduled(

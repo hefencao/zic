@@ -626,6 +626,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         entry.value.priority,
         revision: demandRevision,
       );
+      if (entry.value.role == PageRole.current) {
+        _promoteDecodeToCurrent(sessionId, entry.key, demandRevision);
+      }
       if (onDecode == null && decodes == null) {
         continue;
       }
@@ -649,6 +652,31 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     }
   }
 
+  void _promoteDecodeToCurrent(
+    String sessionId,
+    DecodeId id,
+    int revision,
+  ) {
+    final promotion = decodes?.promotePendingDecodeToCurrent(id) ??
+        DecodePriorityPromotion.none;
+    if (promotion == DecodePriorityPromotion.none) {
+      return;
+    }
+    traceSink.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.decodePriorityPromoted,
+        identityHash: id.key,
+        revision: revision,
+        payload: <String, Object?>{
+          'promotion': promotion.name,
+          'role': PageRole.current.name,
+        },
+      ),
+    );
+  }
+
   void _wakeDecodesForSource(String sessionId, DownloadId downloadId) {
     for (final id in _decodes.keys) {
       if (id.download == downloadId) {
@@ -666,6 +694,13 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     final demand = _decodes[id];
     if (demand == null || (onDecode == null && decodes == null)) {
       return;
+    }
+    if (demand.role == PageRole.current) {
+      _promoteDecodeToCurrent(
+        sessionId,
+        id,
+        _decodeDemandRevisions[id] ?? _revision,
+      );
     }
     final submittedAtMicros = clock.nowMicros();
     final effectiveSourceWake =

@@ -1,3 +1,13 @@
+## 0.31.0-dev.128：Native Decode 优先级迁移
+
+- 修复已排队 native decode 的 execution class 固定在首次 PageRole：far/next 页面升为 current 时，queued nonCurrent 请求原位迁移到 current 队首。
+- 迁移保留同一个 cursor、Future、source epoch、partial source 和 completer，不取消或重建 DecodeSession。
+- 已经 active 的 native call 只更新 worker execution class，不强制中断；最多等待当前一次有界 native 调用完成。
+- worker pool 首次启动期间先登记请求，两个 worker 全部 ready 后统一调度，避免 isolate 启动顺序让 nonCurrent 抢先。
+- `LiveCoordinator` 在 demand role 升为 current 以及 current source wake 时触发迁移；新增 `decodePriorityPromoted` Trace 和 analyzer 指标。
+- 修复前设备 Trace 中，page 9 source 提前约 3.7 秒完整 ready，但 current 生命周期结束仍无 frame 0；page 7 retained output 在 current 期间冻结，旧 decode 直到降为 previous 才完成。
+- 正式 ZIP 继续排除 `.zic-workspace.json`；Patch 命令直接使用 `$(python3 tool/workspace_config.py patch_dir --absolute)`。
+
 ## 0.31.0-dev.127：启动缓冲 Refill 闭包
 
 - 修复 dev.126 启动缓冲死锁：current 首档 `c>2` 补到 depth 3 后，可在同一 DecodeId 上继续 `c>4/c>6`，直至达到实际启动目标。

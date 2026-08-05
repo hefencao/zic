@@ -32,8 +32,8 @@ require(
 )
 require(
     'packages/bridge/lib/src/native_decode_pool.dart',
-    'final ready = Stopwatch()..start();',
-    'final workerReadyMicros = ready.elapsedMicroseconds;',
+    'workerReady: Stopwatch()..start(),',
+    'workerReadyMicros = workerReady.elapsedMicroseconds;',
     'debugName: \'zic-webp-decode-$index\'',
     'final metadataStopwatch = Stopwatch()..start();',
 )
