@@ -8,18 +8,14 @@ import 'download_session.dart';
 import 'net_lane.dart';
 import 'source_progress.dart';
 
-typedef DownloadChunkPermit = Future<void> Function(CancelToken? cancel);
-
 final class DownloadJob {
   const DownloadJob({
     required this.transport,
     required this.session,
-    this.beforeReadChunk,
   });
 
   final Transport transport;
   final DownloadSession session;
-  final DownloadChunkPermit? beforeReadChunk;
 
   Future<DownloadSnapshot> run({
     String? expectedChecksum,
@@ -216,7 +212,6 @@ final class DownloadJob {
     StreamIterator<List<int>> iterator,
     CancelToken? cancel,
   ) async {
-    await beforeReadChunk?.call(cancel);
     if (cancel == null) {
       return iterator.moveNext();
     }

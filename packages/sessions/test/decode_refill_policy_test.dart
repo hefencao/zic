@@ -197,6 +197,55 @@ void main() {
     expect(decision?.stage, 'n>1');
   });
 
+  test('transition first frame does not wait for current depth three', () {
+    final current = _id('current-low');
+    final transition = _id('transition-empty');
+    final demands = <DecodeId, DecodeDemand>{
+      current: _demand(PageRole.current, 7),
+      transition: DecodeDemand(
+        role: PageRole.transition,
+        priority: 900,
+        targetWatermark: 5,
+        reason: 'drag-target',
+        expirationRevision: 2,
+      ),
+    };
+
+    final decision = const StagedDecodeRefillPolicy().next(
+      demands: demands,
+      depthOf: (_) => 0,
+    );
+
+    expect(decision?.id, transition);
+    expect(decision?.stage, 't>0');
+    expect(decision?.targetWatermark, 1);
+  });
+
+  test('current deepening resumes after transition has its first frame', () {
+    final current = _id('current-low');
+    final transition = _id('transition-ready');
+    final demands = <DecodeId, DecodeDemand>{
+      current: _demand(PageRole.current, 7),
+      transition: DecodeDemand(
+        role: PageRole.transition,
+        priority: 900,
+        targetWatermark: 5,
+        reason: 'drag-target',
+        expirationRevision: 2,
+      ),
+    };
+    final depth = <DecodeId, int>{current: 0, transition: 1};
+
+    final decision = const StagedDecodeRefillPolicy().next(
+      demands: demands,
+      depthOf: (id) => depth[id]!,
+    );
+
+    expect(decision?.id, current);
+    expect(decision?.stage, 'c>2');
+    expect(decision?.targetWatermark, 3);
+  });
+
   test('transition is the logical next across every staged watermark', () {
     final current = _id('c');
     final transition = _id('transition');
@@ -211,7 +260,7 @@ void main() {
 
     var decision = policy.next(demands: demands, depthOf: (id) => depth[id]!);
     expect(decision?.id, transition);
-    expect(decision?.stage, 'n>1');
+    expect(decision?.stage, 't>0');
     depth[transition] = 2;
     depth[next2] = 2;
     depth[current] = 5;

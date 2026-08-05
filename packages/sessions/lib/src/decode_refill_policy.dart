@@ -32,13 +32,15 @@ final class DecodeRefillDecision {
 /// a depth at or below the threshold refills to the smallest value above it;
 /// cursor batching may overshoot naturally.
 ///
-/// Refill targets are released in this order:
-/// `c3, n2, m2, p2, c5, n3, c7, n4, m3, n5`.
+/// A drag target in `transition` always retains an independent first-frame
+/// bootstrap before current deepening. Deeper refills are then released in
+/// this order: `c3, n2, m2, p2, c5, n3, c7, n4, m3, n5`.
 /// The role maxima are therefore c/n/m/p = 7/5/3/2; last remains keep-only.
 ///
-/// During a drag, `transition` is the logical n. It therefore receives every
-/// n stage instead of a separate one-off transition watermark. `last` never
-/// refills; its existing upload output is frozen and retained.
+/// During a drag, `transition` is the logical n. Its first frame is independent
+/// so page switching cannot wait for current to reach depth three; after that
+/// it receives every n stage. `last` never refills; its existing upload output
+/// is frozen and retained.
 final class StagedDecodeRefillPolicy {
   const StagedDecodeRefillPolicy();
 
@@ -81,6 +83,22 @@ final class StagedDecodeRefillPolicy {
     }
 
     final transition = byRole[PageRole.transition];
+    DecodeRefillDecision? transitionFirstFrameDecision;
+    if (transition != null &&
+        eligibleOf(transition) &&
+        !terminalOf(transition) &&
+        !satisfiedOf(transition) &&
+        depthOf(transition) < 1) {
+      final demand = demands[transition]!;
+      transitionFirstFrameDecision = DecodeRefillDecision(
+        id: transition,
+        role: demand.role,
+        stage: 't>0',
+        depth: depthOf(transition),
+        threshold: 0,
+        targetWatermark: 1,
+      );
+    }
     final logical = <_WaterlineRole, DecodeId?>{
       _WaterlineRole.current: byRole[PageRole.current],
       _WaterlineRole.next: transition ?? byRole[PageRole.next],
@@ -129,6 +147,15 @@ final class StagedDecodeRefillPolicy {
         targetWatermark: (step.threshold + 1).clamp(1, maximum).toInt(),
       );
       break;
+    }
+    if (transitionFirstFrameDecision != null) {
+      if (oneFrameDecision == null) return transitionFirstFrameDecision;
+      final transitionPriority =
+          demands[transitionFirstFrameDecision.id]!.priority;
+      final oneFramePriority = demands[oneFrameDecision.id]!.priority;
+      return oneFramePriority > transitionPriority
+          ? oneFrameDecision
+          : transitionFirstFrameDecision;
     }
     if (oneFrameDecision == null) return stagedDecision;
     if (stagedDecision == null) return oneFrameDecision;

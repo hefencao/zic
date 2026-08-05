@@ -53,13 +53,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     NetLane? net,
     DecodeLane? decode,
     UploadLane? upload,
-    DownloadFlowGate? downloadFlowGate,
     String Function(DownloadId id)? downloadBucketFor,
     int Function(DownloadId id)? downloadBucketLimitFor,
   })  : net = net ?? NetLane(maxActive: 3),
         decode = decode ?? DecodeLane(maxActive: 2),
         upload = upload ?? UploadLane(maxActive: 1),
-        downloadFlowGate = downloadFlowGate ?? DownloadFlowGate(),
         downloadBucketFor =
             downloadBucketFor ?? ((id) => 'source:${id.content.sourceId}'),
         downloadBucketLimitFor = downloadBucketLimitFor ?? ((_) => 5) {
@@ -95,7 +93,6 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final NetLane net;
   final DecodeLane decode;
   final UploadLane upload;
-  final DownloadFlowGate downloadFlowGate;
   final String Function(DownloadId id) downloadBucketFor;
   final int Function(DownloadId id) downloadBucketLimitFor;
 
@@ -219,7 +216,6 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     if (!registry.advance(id, frameIndex)) {
       return false;
     }
-    _refreshDownloadFlowPressure(sessionId);
     // A predecoded successor can be uploaded immediately. If none is ready,
     // the retained output remains visible while decode fills and wakes upload.
     _wakeUpload(sessionId, id);
@@ -229,7 +225,6 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
 
   Future<void> dispose() async {
     _disposed = true;
-    downloadFlowGate.release();
     _playbackGate.clear(
       freeze: (id) {
         if (uploads?.find(id) == null) {
@@ -307,105 +302,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       }
       _watchSource(sessionId, entry.key, session);
     }
-    _refreshDownloadFlowPressure(sessionId);
     for (final entry in toSchedule) {
       _ensureDownloadTask(sessionId, entry.key, registry.get(entry.key));
-    }
-  }
-
-  void _refreshDownloadFlowPressure(String sessionId) {
-    MapEntry<DownloadId, DownloadDemand>? current;
-    for (final entry in _downloads.entries) {
-      if (entry.value.role == PageRole.current) {
-        current = entry;
-        break;
-      }
-    }
-    final id = current?.key;
-    final session = id == null ? null : registry.find(id);
-    final scheme = id?.canonicalUri.scheme.toLowerCase();
-    final remote = scheme != null &&
-        scheme != 'file' &&
-        scheme != 'content' &&
-        scheme != 'asset';
-    DecodeSnapshot? decodeSnapshot;
-    if (id != null) {
-      for (final entry in _decodes.entries) {
-        if (entry.value.role == PageRole.current && entry.key.download == id) {
-          decodeSnapshot = decodes?.find(entry.key)?.snapshot;
-          break;
-        }
-      }
-    }
-    final staticOutput = decodeSnapshot?.animation.complete == true &&
-        decodeSnapshot!.animation.frameCount <= 1;
-    final sourceSealed = session?.state == DownloadState.sealed ||
-        session?.state == DownloadState.promoted ||
-        decodeSnapshot?.sourceSealed == true;
-    final currentFailureCanRetry = session != null &&
-        session.state == DownloadState.failed &&
-        (session.activeRun || _downloadRetryPending.contains(id));
-    final depth = decodeSnapshot?.depth ?? 0;
-    final alreadyHoldingCurrent = id != null &&
-        downloadFlowGate.foregroundKey == id.key;
-    final producerNeedsBytes = decodeSnapshot == null ||
-        decodeSnapshot.state == DecodeState.waitingSource ||
-        depth <= 1 ||
-        (alreadyHoldingCurrent && depth < 3);
-    final needsForegroundBytes = remote &&
-        session != null &&
-        !staticOutput &&
-        !sourceSealed &&
-        session.state != DownloadState.disposed &&
-        (session.state != DownloadState.failed || currentFailureCanRetry) &&
-        producerNeedsBytes;
-    if (needsForegroundBytes) {
-      final bucket = downloadBucketFor(id!);
-      if (downloadFlowGate.hold(foregroundKey: id.key, bucket: bucket)) {
-        traceSink.record(
-          traceEvent(
-            clock: clock,
-            sessionId: sessionId,
-            kind: TraceEventKind.downloadFlowPressure,
-            identityHash: id.key,
-            revision: _revision,
-            payload: <String, Object?>{
-              'state': 'hold',
-              'bucket': bucket,
-              'reason': decodeSnapshot == null
-                  ? 'current-startup'
-                  : decodeSnapshot.state == DecodeState.waitingSource
-                      ? 'waiting-source'
-                      : 'low-decode-depth',
-              'decodeDepth': depth,
-              'releaseDepth': 3,
-              'committedLength': session.committedLength,
-              if (session.totalLength != null) 'totalLength': session.totalLength,
-            },
-          ),
-        );
-      }
-      return;
-    }
-    final releasedKey = downloadFlowGate.foregroundKey;
-    final releasedBucket = downloadFlowGate.bucket;
-    if (downloadFlowGate.release()) {
-      traceSink.record(
-        traceEvent(
-          clock: clock,
-          sessionId: sessionId,
-          kind: TraceEventKind.downloadFlowPressure,
-          identityHash: releasedKey,
-          revision: _revision,
-          payload: <String, Object?>{
-            'state': 'release',
-            if (releasedBucket != null) 'bucket': releasedBucket,
-            'decodeDepth': depth,
-            'sourceSealed': sourceSealed,
-            'staticOutput': staticOutput,
-          },
-        ),
-      );
     }
   }
 
@@ -517,8 +415,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         return;
       }
       _sourceWakeLengths[id] = snapshot.length;
-      _refreshDownloadFlowPressure(sessionId);
-      _wakeDecodesForSource(sessionId, id);
+        _wakeDecodesForSource(sessionId, id);
       if (snapshot.failure != null && _downloads.containsKey(id)) {
         unawaited(() async {
           await Future<void>.delayed(Duration.zero);
@@ -577,11 +474,6 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           await DownloadJob(
             transport: transportFor(id.canonicalUri),
             session: session,
-            beforeReadChunk: (cancel) => downloadFlowGate.wait(
-              key: id.key,
-              bucket: bucket,
-              cancel: cancel,
-            ),
           ).run(cancel: token);
           _downloadRetryRounds.remove(id);
           _downloadRetryPending.remove(id);
@@ -633,8 +525,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         }
       }
     } finally {
-      _refreshDownloadFlowPressure(sessionId);
-      if (_networkTaskKeys[id] == taskKey) {
+        if (_networkTaskKeys[id] == taskKey) {
         _networkTaskKeys.remove(id);
       }
       if (!_downloads.containsKey(id) && !session.activeRun) {
@@ -965,8 +856,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           _wakeUpload(sessionId, id);
         }
         _enforceBudget(sessionId);
-        _refreshDownloadFlowPressure(sessionId);
-        if (registry != null) {
+            if (registry != null) {
           _wakeNextDecodeRefill(sessionId, except: id);
         }
       } on Object catch (error) {

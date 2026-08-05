@@ -32,68 +32,6 @@ final class CancelToken {
 }
 
 
-/// Cooperative transport-consumption gate used by one Reader coordinator.
-///
-/// It never cancels or removes background demands. While an unsealed current
-/// remote page needs bytes, already-active same-source background transfers
-/// stop before pulling their next transport chunk and resume when the current
-/// source seals or the role changes.
-final class DownloadFlowGate {
-  String? _foregroundKey;
-  String? _bucket;
-  Completer<void> _changed = Completer<void>();
-
-  String? get foregroundKey => _foregroundKey;
-  String? get bucket => _bucket;
-  bool get active => _foregroundKey != null && _bucket != null;
-
-  bool hold({required String foregroundKey, required String bucket}) {
-    if (_foregroundKey == foregroundKey && _bucket == bucket) {
-      return false;
-    }
-    _foregroundKey = foregroundKey;
-    _bucket = bucket;
-    _signalChanged();
-    return true;
-  }
-
-  bool release() {
-    if (!active) return false;
-    _foregroundKey = null;
-    _bucket = null;
-    _signalChanged();
-    return true;
-  }
-
-  Future<void> wait({
-    required String key,
-    required String bucket,
-    CancelToken? cancel,
-  }) async {
-    while (_foregroundKey != null &&
-        _foregroundKey != key &&
-        _bucket == bucket) {
-      cancel?.throwIfCancelled();
-      final changed = _changed.future;
-      if (cancel == null) {
-        await changed;
-      } else {
-        await Future.any<void>(<Future<void>>[
-          changed,
-          cancel.whenCancelled,
-        ]);
-        cancel.throwIfCancelled();
-      }
-    }
-  }
-
-  void _signalChanged() {
-    final prior = _changed;
-    _changed = Completer<void>();
-    if (!prior.isCompleted) prior.complete();
-  }
-}
-
 abstract interface class TaskLane {
   int get maxActive;
   int get queued;

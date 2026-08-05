@@ -173,7 +173,6 @@ def summarize(path: Path) -> dict[str, Any]:
     download_recoveries: list[dict[str, Any]] = []
     ranked_downloads: list[dict[str, Any]] = []
     download_priority_changes: list[dict[str, Any]] = []
-    download_flow_pressure: list[dict[str, Any]] = []
     home_service_stages: list[dict[str, Any]] = []
     home_cover_requests: list[dict[str, Any]] = []
     last_frames_kept: list[dict[str, Any]] = []
@@ -520,18 +519,6 @@ def summarize(path: Path) -> dict[str, Any]:
                 {
                     "t": _number(event.get("t")),
                     "identityHash": event.get("identityHash"),
-                }
-            )
-        elif kind == "downloadFlowPressure":
-            download_flow_pressure.append(
-                {
-                    "t": _number(event.get("t")),
-                    "sessionId": event.get("sessionId"),
-                    "identityHash": event.get("identityHash"),
-                    "state": payload.get("state"),
-                    "bucket": payload.get("bucket"),
-                    "committedLength": _number(payload.get("committedLength")),
-                    "totalLength": _number(payload.get("totalLength")),
                 }
             )
         elif kind == "downloadStarted":
@@ -888,14 +875,6 @@ def summarize(path: Path) -> dict[str, Any]:
             (row["t"] for row in home_cover_requests), default=0
         ),
         "homeCoverRequests": home_cover_requests,
-        "downloadFlowPressureCount": len(download_flow_pressure),
-        "downloadFlowPressureHoldCount": sum(
-            1 for row in download_flow_pressure if row["state"] == "hold"
-        ),
-        "downloadFlowPressureReleaseCount": sum(
-            1 for row in download_flow_pressure if row["state"] == "release"
-        ),
-        "downloadFlowPressure": download_flow_pressure,
         "sourceReadCount": len(source_reads),
         "sourceReadMicros": _stats([row["streamMicros"] for row in source_reads]),
         "sourceReadModeCounts": dict(

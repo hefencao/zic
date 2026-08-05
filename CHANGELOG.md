@@ -1,3 +1,10 @@
+## 0.31.0-dev.138：移除 Current 流量门控并恢复目标页首帧并行
+
+- 删除 dev.137 的 `DownloadFlowGate`、`beforeReadChunk`、`downloadFlowPressure` 和 LiveCoordinator holder-depth 网络资格逻辑；current 继续由 NetLane reserved slot、priority migration 与 preemption 保护。
+- transition depth 为 0 时新增独立 `t>0` refill，目标页首帧不再等待 current 达到 depth 3；首帧后恢复既有 staged 水位。
+- 保留首页 primary/enrichment 提前发布和 transport 小块合并；7/3、7/5/3/2、5/3/2、target coverage 0.15 与 fresh texture 不变。
+- 新增 ADR 0121、切页独立性审计、Dart owner tests 与 dev.138 静态门禁；native identity 保持 dev.134。
+
 ## 0.31.0-dev.137：提前发布首页封面并保护 Current 远程流量
 
 - 根据设备 Trace 确认封面缓存/解析不是 1.88 秒延迟主因；`HomeLibrarySession` 并行读取章节投影和 SavedComic 后立即发布可生成封面的 primary 数据，分类、偏好、阅读状态和缺失默认值补写继续 enrichment。
