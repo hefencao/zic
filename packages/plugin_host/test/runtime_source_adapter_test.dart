@@ -196,6 +196,54 @@ void main() {
     );
   });
 
+  test('Venera version capability reads the current page gnd relation',
+      () async {
+    final connection = _FixtureConnection(
+      resource: Uint8List.fromList(
+        utf8.encode(
+          '<div id="gnd">'
+          '<a href="/g/2/new-token/">New &amp; title</a>, '
+          'added 2026-08-01 12:30'
+          '</div>',
+        ),
+      ),
+    );
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single;
+    final currentPayload = base64Url.encode(utf8.encode(
+      jsonEncode(<String, Object?>{
+        'v': 2,
+        'id': 'https://example.invalid/g/1/old-token/',
+      }),
+    )).replaceAll('=', '');
+    final currentId = 'venera:comic:$currentPayload';
+
+    final versionSource = source as ComicVersionSource;
+    final versions = await versionSource.findComicVersions(currentId);
+
+    expect(versionSource.supportsComicVersions, isTrue);
+    expect(versions, hasLength(1));
+    expect(versions.single.sourceId, source.sourceId);
+    expect(versions.single.title, 'New & title');
+    expect(versions.single.date, '2026-08-01 12:30');
+    expect(versions.single.generation, 1);
+    expect(
+      (source as ComicWebUriSource).resolveComicWebUri(versions.single.comicId),
+      Uri.parse('https://example.invalid/g/2/new-token/'),
+    );
+    expect(
+      connection.operations,
+      <ExternalPluginRuntimeOperation>[
+        ExternalPluginRuntimeOperation.loadResource,
+      ],
+    );
+  });
+
   test('Mihon resolves host-streamable request plans and refreshes retry',
       () async {
     final connection = _FixtureConnection();

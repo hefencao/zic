@@ -26,6 +26,15 @@ const comicDetailsCollectedKey =
     ValueKey<String>('comic-details-collected');
 const comicDetailsLikedKey = ValueKey<String>('comic-details-liked');
 const comicDetailsMigrateKey = ValueKey<String>('comic-details-migrate');
+const comicDetailsVersionsKey = ValueKey<String>('comic-details-versions');
+const comicDetailsContinueReadingKey =
+    ValueKey<String>('comic-details-continue-reading');
+const comicDetailsReadingHistoryKey =
+    ValueKey<String>('comic-details-reading-history');
+const comicDetailsChapterCountKey =
+    ValueKey<String>('comic-details-chapter-count');
+const comicDetailsChapterListKey =
+    ValueKey<String>('comic-details-chapter-list');
 const comicDetailsDownloadAllKey =
     ValueKey<String>('comic-details-download-all');
 const comicDetailsOpenWebViewKey =
@@ -127,6 +136,7 @@ typedef ComicDetailsComicPersister = Future<void> Function(
 typedef ComicDetailsMigrationOpener = Future<void> Function(
   LibraryComic comic,
 );
+typedef ComicDetailsVersionsOpener = Future<void> Function();
 
 typedef ComicDetailsSourceWebViewOpener = Future<void> Function();
 typedef ComicDetailsSourceSettingsOpener = Future<void> Function();
@@ -165,6 +175,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
     this.onOpenSourceSettings,
     this.onSearchMetadata,
     this.onMigrateSource,
+    this.onOpenVersions,
     this.traceSink = const NoopTraceSink(),
     super.key,
   });
@@ -188,6 +199,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final ComicDetailsMetadataSearch? onSearchMetadata;
   final ComicDetailsMigrationOpener? onMigrateSource;
+  final ComicDetailsVersionsOpener? onOpenVersions;
   final TraceSink traceSink;
 
   @override
@@ -507,6 +519,43 @@ final class _LocalComicDetailsScreenState
     }
   }
 
+  Future<void> _continueReading() async {
+    final entry = _latestReadingEntry(_library.chapters);
+    if (entry == null) {
+      return;
+    }
+    final identity = comicDetailsChapterIdentity(
+      entry.chapter.sourceId,
+      entry.chapter.chapterId,
+    );
+    if (!_opening.add(identity)) {
+      return;
+    }
+    if (mounted) {
+      setState(() {});
+    }
+    try {
+      await widget.onOpenChapter(
+        () async {
+          if (!_isRead(_library.readStates, entry) && mounted) {
+            await _setRead(entry, true);
+          }
+          return entry;
+        },
+        refreshRemote: false,
+        title: entry.chapter.displayName,
+      );
+    } on Object catch (error, stackTrace) {
+      if (mounted) {
+        _showLocalFailure(error, stackTrace);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _opening.remove(identity));
+      }
+    }
+  }
+
   Future<void> _download(_ChapterViewModel chapter) async {
     final identity = comicDetailsChapterIdentity(
       chapter.sourceId,
@@ -721,11 +770,15 @@ final class _LocalComicDetailsScreenState
       onSearchMetadata: widget.onSearchMetadata,
       onPreferenceChanged: _savePreference,
       progressLabel: _readingProgressLabel(_library.chapters),
+      onContinueReading: _latestReadingEntry(_library.chapters) == null
+          ? null
+          : _continueReading,
       downloadingComic: _downloadingComic,
       onDownloadComic:
           comic.sourceId == 'local-folder' ? null : _downloadComic,
       onReverse: () => setState(() => _descending = !_descending),
       onMigrateSource: onMigrateSource,
+      onOpenVersions: widget.onOpenVersions,
       chapterCount: ordered.length,
       pageCount: catalogPages,
       pageCountPending: pageCountPending,
@@ -763,6 +816,8 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
     this.onSearchMetadata,
+    this.onMigrateSource,
+    this.onOpenVersions,
     this.sameComicIdentity = _exactComicIdentity,
     this.traceSink = const NoopTraceSink(),
     super.key,
@@ -787,6 +842,8 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
   final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final ComicDetailsMetadataSearch? onSearchMetadata;
+  final ComicDetailsVersionsOpener? onMigrateSource;
+  final ComicDetailsVersionsOpener? onOpenVersions;
   final ComicDetailsIdentityMatcher sameComicIdentity;
   final TraceSink traceSink;
 
@@ -1189,6 +1246,43 @@ final class _RemoteComicDetailsScreenState
     }
   }
 
+  Future<void> _continueReading() async {
+    final entry = _latestReadingEntry(_library.chapters);
+    if (entry == null) {
+      return;
+    }
+    final identity = comicDetailsChapterIdentity(
+      entry.chapter.sourceId,
+      entry.chapter.chapterId,
+    );
+    if (!_opening.add(identity)) {
+      return;
+    }
+    if (mounted) {
+      setState(() {});
+    }
+    try {
+      await widget.onOpenChapter(
+        () async {
+          if (!_isRead(_library.readStates, entry) && mounted) {
+            await _setRead(entry, true);
+          }
+          return entry;
+        },
+        refreshRemote: false,
+        title: entry.chapter.displayName,
+      );
+    } on Object catch (error, stackTrace) {
+      if (mounted) {
+        _showRemoteFailure(error, stackTrace);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _opening.remove(identity));
+      }
+    }
+  }
+
   Future<void> _download(Chapter chapter) async {
     final identity = comicDetailsChapterIdentity(
       widget.source.sourceId,
@@ -1353,8 +1447,13 @@ final class _RemoteComicDetailsScreenState
       onOpenSourceWebView: widget.onOpenSourceWebView,
       onOpenSourceSettings: widget.onOpenSourceSettings,
       onSearchMetadata: widget.onSearchMetadata,
+      onMigrateSource: widget.onMigrateSource,
+      onOpenVersions: widget.onOpenVersions,
       onPreferenceChanged: _savePreference,
       progressLabel: _readingProgressLabel(_library.chapters),
+      onContinueReading: _latestReadingEntry(_library.chapters) == null
+          ? null
+          : _continueReading,
       downloadingComic: _downloadingComic,
       onDownloadComic: _downloadComic,
       onReverse: () => setState(() => _descending = !_descending),
@@ -1431,7 +1530,6 @@ final class _ComicDetailsHeader extends StatelessWidget {
     required this.categories,
     required this.onPreferenceChanged,
     this.onSearchMetadata,
-    required this.progressLabel,
     required this.downloadingComic,
     required this.onDownloadComic,
   });
@@ -1446,7 +1544,6 @@ final class _ComicDetailsHeader extends StatelessWidget {
   final List<LibraryCategory> categories;
   final Future<void> Function(ComicPreference preference) onPreferenceChanged;
   final ComicDetailsMetadataSearch? onSearchMetadata;
-  final String? progressLabel;
   final bool downloadingComic;
   final Future<void> Function()? onDownloadComic;
 
@@ -1539,13 +1636,6 @@ final class _ComicDetailsHeader extends StatelessWidget {
             ),
           ],
         ),
-        if (progressLabel != null) ...<Widget>[
-          const SizedBox(height: 12),
-          Chip(
-            avatar: const Icon(Icons.play_arrow_rounded, size: 18),
-            label: Text('继续 · $progressLabel'),
-          ),
-        ],
         const SizedBox(height: 14),
         Text('简介', style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: 4),

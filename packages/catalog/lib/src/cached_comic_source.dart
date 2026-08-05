@@ -22,6 +22,7 @@ final class CachedBrowsableComicSource
         ComicWebUriSource,
         CanonicalComicIdentitySource,
         ComicWebViewRequestSource,
+        ComicVersionSource,
         RefreshableChapterComicSource,
         ResolvableComicResourceSource,
         RetryableComicResourceSource {
@@ -91,6 +92,27 @@ final class CachedBrowsableComicSource
     final ComicWebViewRequestSource? requestSource =
         candidate is ComicWebViewRequestSource ? candidate : null;
     return requestSource?.webViewRequest(url) ?? ComicWebViewRequest(url: url);
+  }
+
+  @override
+  bool get supportsComicVersions {
+    final versionSource = source is ComicVersionSource
+        ? source as ComicVersionSource
+        : null;
+    return versionSource?.supportsComicVersions ?? false;
+  }
+
+  @override
+  Future<List<SourceComicVersion>> findComicVersions(String comicId) {
+    final versionSource = source is ComicVersionSource
+        ? source as ComicVersionSource
+        : null;
+    if (versionSource == null || !versionSource.supportsComicVersions) {
+      return Future<List<SourceComicVersion>>.value(
+        const <SourceComicVersion>[],
+      );
+    }
+    return versionSource.findComicVersions(comicId);
   }
 
   @override

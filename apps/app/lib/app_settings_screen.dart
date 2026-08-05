@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:resource_cache/resource_cache.dart';
 
+import 'dialog_actions.dart';
+
 import 'app_preferences.dart';
 
 const settingsScreenKey = ValueKey<String>('settings-screen');
@@ -187,13 +189,14 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen> {
           '清理响应缓存与可安全移除的页面 artifact。正在使用的资源会由各自 owner 保留。',
         ),
         actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('清理'),
+          AppDialogActions(
+            onClose: () => Navigator.pop(context, false),
+            actions: <Widget>[
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('清理'),
+              ),
+            ],
           ),
         ],
       ),

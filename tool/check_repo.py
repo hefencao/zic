@@ -1445,7 +1445,7 @@ def check_compile_regressions() -> None:
         ROOT / 'packages/storage/lib/src/sqlite_imported_library_store.dart'
     ).read_text(encoding='utf-8')
     for required in (
-        'const _schemaVersion = 6',
+        'const _schemaVersion = 7',
         'PRAGMA user_version = $_schemaVersion',
         'PRIMARY KEY(source_id, chapter_id)',
         'PRIMARY KEY(source_id, comic_id)',
@@ -1462,6 +1462,9 @@ def check_compile_regressions() -> None:
         'saveComicPreference',
         'saveChapterReadState',
         'saveSourcePreference',
+        'comic_version_relation',
+        'saveComicVersionRelation',
+        'listComicVersionPredecessors',
     ):
         if required not in store:
             fail(f'durable bookshelf storage is incomplete: {required}')
@@ -2258,7 +2261,7 @@ def check_compile_regressions() -> None:
         '_loadFailed && oldWidget.loader != widget.loader',
         'encodedResourceImageProvider(source)',
         '_selectSourceMigrationTarget',
-        "label: const Text('搜索同名作品')",
+        "label: Text(sameSource ? '搜索同源版本' : '搜索同名作品')",
         "throw StateError('目标漫画源返回了不匹配的漫画或章节身份')",
         "throw StateError('目标漫画源返回了不匹配的章节详情身份')",
         "label: '漫画源'",

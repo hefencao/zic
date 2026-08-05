@@ -4,7 +4,7 @@ import 'imported_library_store.dart';
 import 'library_comic.dart';
 import 'library_preferences.dart';
 
-/// A conservative cross-source migration plan.
+/// A conservative source migration plan.
 ///
 /// Source-specific chapter/page addresses are never copied. The plan only
 /// carries whole-comic preferences and reports chapter candidates that can be
@@ -22,8 +22,9 @@ final class ComicSourceMigrationPlan {
     required LibraryComic source,
     required ComicManifest target,
   }) {
-    if (source.sourceId == target.comic.sourceId) {
-      throw ArgumentError('source migration requires a different source');
+    if (source.sourceId == target.comic.sourceId &&
+        source.comicId == target.comic.comicId) {
+      throw ArgumentError('source migration requires a different comic');
     }
     final available = target.chapters.toList(growable: false);
     final used = <String>{};
@@ -139,7 +140,7 @@ final class ChapterMigrationMatch {
   final ChapterMigrationConfidence confidence;
 }
 
-/// Read-only evidence shown before a cross-source migration is confirmed.
+/// Read-only evidence shown before a source migration is confirmed.
 ///
 /// The comparison deliberately reports identity and uncertainty rather than
 /// claiming that similarly named works are the same work. It never performs a

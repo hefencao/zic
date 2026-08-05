@@ -40,7 +40,6 @@ final class _ComicDetailsFailureScaffold extends StatelessWidget {
     return Scaffold(
       key: comicDetailsScreenKey,
       appBar: AppBar(
-        title: Text(title),
         actions: <Widget>[
           if (onOpenSourceWebView != null)
             IconButton(
@@ -91,6 +90,7 @@ final class _ComicDetailsScaffold extends StatefulWidget {
     this.onSearchMetadata,
     required this.onPreferenceChanged,
     required this.progressLabel,
+    this.onContinueReading,
     required this.downloadingComic,
     required this.onDownloadComic,
     required this.onReverse,
@@ -99,6 +99,7 @@ final class _ComicDetailsScaffold extends StatefulWidget {
     this.pageCountPending = false,
     required this.chapterList,
     this.onMigrateSource,
+    this.onOpenVersions,
   });
 
   final Key screenKey;
@@ -118,6 +119,7 @@ final class _ComicDetailsScaffold extends StatefulWidget {
   final ComicDetailsMetadataSearch? onSearchMetadata;
   final Future<void> Function(ComicPreference preference) onPreferenceChanged;
   final String? progressLabel;
+  final Future<void> Function()? onContinueReading;
   final bool downloadingComic;
   final Future<void> Function()? onDownloadComic;
   final VoidCallback onReverse;
@@ -126,6 +128,7 @@ final class _ComicDetailsScaffold extends StatefulWidget {
   final bool pageCountPending;
   final Widget chapterList;
   final VoidCallback? onMigrateSource;
+  final ComicDetailsVersionsOpener? onOpenVersions;
 
   @override
   State<_ComicDetailsScaffold> createState() => _ComicDetailsScaffoldState();
@@ -172,7 +175,6 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
     return Scaffold(
       key: comicDetailsScreenKey,
       appBar: AppBar(
-        title: Text(widget.title),
         actions: <Widget>[
           if (widget.onOpenSourceWebView != null)
             IconButton(
@@ -180,6 +182,13 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
               tooltip: '在 WebView 中访问该漫画详情页',
               onPressed: () => unawaited(widget.onOpenSourceWebView!()),
               icon: const Icon(Icons.public),
+            ),
+          if (widget.onOpenVersions != null)
+            IconButton(
+              key: comicDetailsVersionsKey,
+              tooltip: '查看同源版本',
+              onPressed: () => unawaited(widget.onOpenVersions!()),
+              icon: const Icon(Icons.collections_bookmark_outlined),
             ),
           if (widget.onMigrateSource != null)
             IconButton(
@@ -225,42 +234,59 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
                       categories: widget.categories,
                       onPreferenceChanged: widget.onPreferenceChanged,
                       onSearchMetadata: widget.onSearchMetadata,
-                      progressLabel: widget.progressLabel,
                       downloadingComic: widget.downloadingComic,
                       onDownloadComic: widget.onDownloadComic,
                     ),
                   ),
                 ),
+                if (widget.onContinueReading != null)
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                    sliver: SliverToBoxAdapter(
+                      child: _ComicDetailsReadingActions(
+                        onContinueReading: widget.onContinueReading!,
+                        progressLabel: widget.progressLabel,
+                      ),
+                    ),
+                  ),
                 SliverPadding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
                   sliver: SliverToBoxAdapter(
-                    child: Row(
-                      children: <Widget>[
-                        Expanded(
-                          child: Text(
-                            widget.pageCountPending
-                                ? widget.pageCount == 0
-                                    ? '${widget.chapterCount} 章 · 页数待加载'
-                                    : '${widget.chapterCount} 章 · 已知 ${widget.pageCount} 页'
-                                : '${widget.chapterCount} 章 · ${widget.pageCount} 页',
-                            style: Theme.of(context).textTheme.titleMedium,
+                    child: KeyedSubtree(
+                      key: comicDetailsChapterCountKey,
+                      child: Row(
+                        children: <Widget>[
+                          Expanded(
+                            child: Text(
+                              widget.pageCountPending
+                                  ? widget.pageCount == 0
+                                      ? '${widget.chapterCount} 章 · 页数待加载'
+                                      : '${widget.chapterCount} 章 · 已知 ${widget.pageCount} 页'
+                                  : '${widget.chapterCount} 章 · ${widget.pageCount} 页',
+                              style: Theme.of(context).textTheme.titleMedium,
+                            ),
                           ),
-                        ),
-                        IconButton(
-                          key: comicDetailsReverseKey,
-                          tooltip: widget.descending ? '切换正序' : '切换倒序',
-                          onPressed: widget.onReverse,
-                          icon: Icon(
-                            widget.descending
-                                ? Icons.arrow_downward
-                                : Icons.arrow_upward,
+                          IconButton(
+                            key: comicDetailsReverseKey,
+                            tooltip: widget.descending ? '切换正序' : '切换倒序',
+                            onPressed: widget.onReverse,
+                            icon: Icon(
+                              widget.descending
+                                  ? Icons.arrow_downward
+                                  : Icons.arrow_upward,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
-                SliverToBoxAdapter(child: widget.chapterList),
+                SliverToBoxAdapter(
+                  child: KeyedSubtree(
+                    key: comicDetailsChapterListKey,
+                    child: widget.chapterList,
+                  ),
+                ),
                 const SliverPadding(padding: EdgeInsets.only(bottom: 36)),
               ],
             ),
@@ -274,6 +300,52 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
             ),
         ],
       ),
+    );
+  }
+}
+
+final class _ComicDetailsReadingActions extends StatelessWidget {
+  const _ComicDetailsReadingActions({
+    required this.onContinueReading,
+    required this.progressLabel,
+  });
+
+  final Future<void> Function() onContinueReading;
+  final String? progressLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: <Widget>[
+        FilledButton.icon(
+          key: comicDetailsContinueReadingKey,
+          style: FilledButton.styleFrom(
+            shape: const StadiumBorder(),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+          ),
+          onPressed: () => unawaited(onContinueReading()),
+          icon: const Icon(Icons.play_arrow_rounded),
+          label: const Text('继续'),
+        ),
+        if (progressLabel != null) ...<Widget>[
+          const SizedBox(width: 12),
+          Expanded(
+            child: Row(
+              key: comicDetailsReadingHistoryKey,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                const Padding(
+                  padding: EdgeInsets.only(top: 1),
+                  child: Icon(Icons.history, size: 18),
+                ),
+                const SizedBox(width: 6),
+                Expanded(child: Text('阅读历史 · $progressLabel')),
+              ],
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -584,7 +656,9 @@ final class _ExpandableTagRowState extends State<_ExpandableTagRow> {
   }
 }
 
-String? _readingProgressLabel(Iterable<ImportedLibraryEntry> entries) {
+ImportedLibraryEntry? _latestReadingEntry(
+  Iterable<ImportedLibraryEntry> entries,
+) {
   ImportedLibraryEntry? latest;
   for (final entry in entries) {
     final progress = entry.progress;
@@ -596,7 +670,11 @@ String? _readingProgressLabel(Iterable<ImportedLibraryEntry> entries) {
       latest = entry;
     }
   }
-  final entry = latest;
+  return latest;
+}
+
+String? _readingProgressLabel(Iterable<ImportedLibraryEntry> entries) {
+  final entry = _latestReadingEntry(entries);
   final progress = entry?.progress;
   if (entry == null || progress == null) {
     return null;

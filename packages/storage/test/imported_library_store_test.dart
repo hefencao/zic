@@ -8,6 +8,48 @@ import 'package:sqlite3/sqlite3.dart' as sql;
 import 'package:test/test.dart';
 
 void main() {
+  test('sqlite persists discovered comic version predecessors', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-comic-version-relation-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    final path = '${directory.path}/library.sqlite3';
+    final relation = const ComicVersionRelation(
+      sourceId: 'venera:ehentai',
+      predecessorComicId: 'old-comic',
+      successorComicId: 'new-comic',
+      predecessorTitle: '旧版标题',
+    );
+
+    final store = SqliteImportedLibraryStore(path);
+    await store.open();
+    await store.saveComicVersionRelation(relation);
+    await store.close();
+
+    final reopened = SqliteImportedLibraryStore(path);
+    await reopened.open();
+    addTearDown(reopened.close);
+    final predecessors = await reopened.listComicVersionPredecessors(
+      relation.sourceId,
+      relation.successorComicId,
+    );
+    expect(predecessors, hasLength(1));
+    expect(predecessors.single.sourceId, relation.sourceId);
+    expect(
+      predecessors.single.predecessorComicId,
+      relation.predecessorComicId,
+    );
+    expect(predecessors.single.successorComicId, relation.successorComicId);
+    expect(predecessors.single.predecessorTitle, relation.predecessorTitle);
+    final db = sql.sqlite3.open(path);
+    addTearDown(db.dispose);
+    expect(db.select('PRAGMA user_version').single.values.single, 7);
+  });
+
   test('sqlite imported library persists chapter, progress, and cascade delete',
       () async {
     final store = SqliteImportedLibraryStore.memory();
@@ -310,7 +352,7 @@ void main() {
     expect(await store.getComicPreference(saved.sourceId, saved.comicId), isNull);
   });
 
-  test('sqlite migrates schema 3 through composite schema 6', () async {
+  test('sqlite migrates schema 3 through composite schema 7', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-saved-comic-migration-',
     );
@@ -332,7 +374,7 @@ void main() {
     );
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
-    expect(db.select('PRAGMA user_version').single.values.single, 6);
+    expect(db.select('PRAGMA user_version').single.values.single, 7);
   });
 
   test('sqlite schema 5 adds durable migration issue acknowledgement',
@@ -386,7 +428,7 @@ void main() {
 
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
-    expect(db.select('PRAGMA user_version').single.values.single, 6);
+    expect(db.select('PRAGMA user_version').single.values.single, 7);
     expect(
       db.select('PRAGMA table_info(library_migration_issue)')
           .map((row) => row['name'])

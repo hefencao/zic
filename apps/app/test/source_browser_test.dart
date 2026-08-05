@@ -346,6 +346,160 @@ void main() {
     expect(webViewOpens, 1);
   });
 
+  testWidgets('detail continue reading opens the saved chapter', (tester) async {
+    final source = _FixtureSource('mihon:continue', '继续阅读源');
+    final chapterManifest = await source.loadChapter(source._chapterId);
+    final entry = ImportedChapterRecord.remote(
+      comic: source._comic,
+      manifest: chapterManifest,
+    );
+    final libraryEntry = ImportedLibraryEntry(chapter: entry);
+    final library = details.ComicDetailsLibrarySnapshot(
+      chapters: <ImportedLibraryEntry>[
+        ImportedLibraryEntry(
+          chapter: libraryEntry.chapter,
+          progress: ReadingProgress(
+            sourceId: source.sourceId,
+            comicId: source._comicId,
+            chapterId: source._chapterId,
+            pageIndex: 0,
+            subPageOffset: 0,
+            readerMode: ReaderMode.paged,
+            updatedAt: DateTime.utc(2026, 8, 3),
+          ),
+        ),
+      ],
+      sourceComic: source._comic,
+      sourceChapters: <Chapter>[source._chapter],
+      readStates: const <String, ChapterReadState>{},
+      preference: ComicPreference.defaults(
+        sourceId: source.sourceId,
+        comicId: source._comicId,
+      ),
+    );
+    var opened = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: details.RemoteComicDetailsScreen(
+          source: source,
+          summary: SourceComicSummary(
+            sourceId: source.sourceId,
+            comicId: source._comicId,
+            title: source._comic.title,
+            authors: source._comic.authors,
+            tags: source._comic.tags,
+            coverUri: source._comic.coverUri,
+          ),
+          initialLibrary: library,
+          categories: const <LibraryCategory>[],
+          loadCover: ({
+            required String sourceId,
+            required String comicId,
+            required Uri? coverUri,
+            required ImportedLibraryEntry? fallbackChapter,
+          }) async => MemoryEncodedResourceSource(_tinyPng()),
+          reloadLibrary: ({required bool refreshContent}) async => library,
+          ensureSourceChapter: (_, __, ___) async => libraryEntry,
+          persistComic: (_, __) async {},
+          onPreferenceChanged: (_) async {},
+          onReadChanged: (_, __) async {},
+          onOpenChapter: (
+            loadChapter, {
+            required bool refreshRemote,
+            required String title,
+          }) async {
+            opened++;
+            expect(refreshRemote, isFalse);
+            expect(title, '第 1 话');
+            expect((await loadChapter()).chapter.chapterId, source._chapterId);
+          },
+          onDownloadChapter: (_) async {},
+          inspectChapterDownload: (chapter) async =>
+              ChapterDownloadSnapshot.idle(chapter),
+          downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
+          onDownloadComic: (_) async {},
+        ),
+      ),
+    );
+
+    await _pumpUntilFound(
+      tester,
+      find.byKey(details.comicDetailsContinueReadingKey),
+    );
+    expect(find.text('继续'), findsOneWidget);
+    expect(find.text('继续阅读'), findsNothing);
+    expect(find.byKey(details.comicDetailsReadingHistoryKey), findsOneWidget);
+    expect(find.byIcon(Icons.history), findsOneWidget);
+    expect(find.byType(AppBar), findsOneWidget);
+    expect(tester.widget<AppBar>(find.byType(AppBar)).title, isNull);
+    final continueButton = tester.widget<FilledButton>(
+      find.byKey(details.comicDetailsContinueReadingKey),
+    );
+    expect(continueButton.onPressed, isNotNull);
+    expect(
+      tester.getBottomLeft(
+        find.byKey(details.comicDetailsContinueReadingKey),
+      ).dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(details.comicDetailsChapterCountKey)).dy,
+      ),
+    );
+    expect(
+      tester.getBottomLeft(find.byKey(details.comicDetailsChapterCountKey)).dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(details.comicDetailsChapterListKey)).dy,
+      ),
+    );
+
+    await tester.tap(find.byKey(details.comicDetailsContinueReadingKey));
+    await tester.pump();
+    expect(opened, 1);
+  });
+
+  testWidgets('same-source migration lists a stored predecessor version',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    const sourceId = 'fixture-version';
+    await store.saveComicVersionRelation(
+      const ComicVersionRelation(
+        sourceId: sourceId,
+        predecessorComicId: 'fixture-old-comic',
+        successorComicId: '$sourceId-comic',
+        predecessorTitle: '旧版标题',
+      ),
+    );
+    final source = _FixtureSource(
+      sourceId,
+      '版本源',
+      supportsComicVersions: true,
+    );
+
+    await tester.pumpWidget(
+      App(
+        libraryStore: store,
+        comicSources: <BrowsableComicSource>[source],
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.public_outlined));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceComicCardKey(sourceId, '$sourceId-comic')),
+    );
+    await _tapVisible(
+      tester,
+      find.byKey(sourceComicCardKey(sourceId, '$sourceId-comic')),
+    );
+    await _pumpUntilFound(tester, find.byKey(details.remoteComicDetailsScreenKey));
+    await _tapVisible(tester, find.byKey(details.comicDetailsVersionsKey));
+
+    await _pumpUntilFound(tester, find.text('旧版'));
+    expect(find.textContaining('旧版 1 · 旧版标题'), findsOneWidget);
+  });
+
   testWidgets('whole comic shelf and chapter download have separate ownership',
       (tester) async {
     final store = MemoryImportedLibraryStore();
@@ -1096,7 +1250,10 @@ void main() {
 }
 
 final class _FixtureSource
-    implements BrowsableComicSource, RefreshableChapterComicSource {
+    implements
+        BrowsableComicSource,
+        ComicVersionSource,
+        RefreshableChapterComicSource {
   _FixtureSource(
     this.sourceId,
     this.name, {
@@ -1110,6 +1267,8 @@ final class _FixtureSource
     this.comicTags = const <String>[],
     this.firstComicLoadStarted,
     this.firstComicLoadGate,
+    this.supportsComicVersions = false,
+    this.comicVersions = const <SourceComicVersion>[],
   });
 
   @override
@@ -1125,6 +1284,8 @@ final class _FixtureSource
   final List<String> comicTags;
   final Completer<void>? firstComicLoadStarted;
   final Completer<void>? firstComicLoadGate;
+  final bool supportsComicVersions;
+  final List<SourceComicVersion> comicVersions;
   int _comicLoads = 0;
   int _chapterLoads = 0;
   int _chapterRefreshes = 0;
@@ -1205,6 +1366,12 @@ final class _FixtureSource
       offset: offset,
       hasMore: false,
     );
+  }
+
+  @override
+  Future<List<SourceComicVersion>> findComicVersions(String comicId) async {
+    expect(comicId, _comicId);
+    return comicVersions;
   }
 
   @override

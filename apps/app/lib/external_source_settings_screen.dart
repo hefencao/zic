@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:catalog/catalog.dart';
 import 'package:flutter/material.dart';
 
+import 'dialog_actions.dart';
+
 typedef ExternalSourceLoginSnapshot = ({
   Uri currentUrl,
   String title,
@@ -137,13 +139,14 @@ final class _ExternalSourceSettingsScreenState
           ),
         ),
         actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
-            child: const Text('保存'),
+          AppDialogActions(
+            onClose: () => Navigator.pop(context),
+            actions: <Widget>[
+              FilledButton(
+                onPressed: () => Navigator.pop(context, controller.text.trim()),
+                child: const Text('保存'),
+              ),
+            ],
           ),
         ],
       ),
@@ -157,16 +160,27 @@ final class _ExternalSourceSettingsScreenState
   Future<void> _select(ComicSourceSetting setting) async {
     final value = await showDialog<String>(
       context: context,
-      builder: (context) => SimpleDialog(
+      builder: (context) => AlertDialog(
         title: Text(setting.title),
-        children: setting.choices.map((choice) {
-          return RadioListTile<String>(
-            value: choice.value,
-            groupValue: setting.value as String,
-            title: Text(choice.label),
-            onChanged: (value) => Navigator.pop(context, value),
-          );
-        }).toList(growable: false),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: setting.choices.map((choice) {
+              return RadioListTile<String>(
+                value: choice.value,
+                groupValue: setting.value as String,
+                title: Text(choice.label),
+                onChanged: (value) => Navigator.pop(context, value),
+              );
+            }).toList(growable: false),
+          ),
+        ),
+        actions: <Widget>[
+          AppDialogActions(
+            onClose: () => Navigator.pop(context),
+            actions: const <Widget>[],
+          ),
+        ],
       ),
     );
     if (value != null && value != setting.value) {
@@ -222,16 +236,17 @@ final class _ExternalSourceSettingsScreenState
             ),
           ),
           actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(
-                context,
-                selected.toList(growable: false)..sort(),
-              ),
-              child: const Text('保存'),
+            AppDialogActions(
+              onClose: () => Navigator.pop(context),
+              actions: <Widget>[
+                FilledButton(
+                  onPressed: () => Navigator.pop(
+                    context,
+                    selected.toList(growable: false)..sort(),
+                  ),
+                  child: const Text('保存'),
+                ),
+              ],
             ),
           ],
         ),
@@ -294,19 +309,20 @@ final class _ExternalSourceSettingsScreenState
           ),
         ),
         actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final account = accountController.text.trim();
-              final password = passwordController.text;
-              if (account.isNotEmpty && password.isNotEmpty) {
-                Navigator.pop(context, (account, password));
-              }
-            },
-            child: const Text('登录'),
+          AppDialogActions(
+            onClose: () => Navigator.pop(context),
+            actions: <Widget>[
+              FilledButton(
+                onPressed: () {
+                  final account = accountController.text.trim();
+                  final password = passwordController.text;
+                  if (account.isNotEmpty && password.isNotEmpty) {
+                    Navigator.pop(context, (account, password));
+                  }
+                },
+                child: const Text('登录'),
+              ),
+            ],
           ),
         ],
       ),
@@ -346,21 +362,22 @@ final class _ExternalSourceSettingsScreenState
           ),
         ),
         actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final result = <String, String>{
-                for (final entry in controllers.entries)
-                  entry.key: entry.value.text.trim(),
-              };
-              if (result.values.every((value) => value.isNotEmpty)) {
-                Navigator.pop(context, result);
-              }
-            },
-            child: const Text('验证并登录'),
+          AppDialogActions(
+            onClose: () => Navigator.pop(context),
+            actions: <Widget>[
+              FilledButton(
+                onPressed: () {
+                  final result = <String, String>{
+                    for (final entry in controllers.entries)
+                      entry.key: entry.value.text.trim(),
+                  };
+                  if (result.values.every((value) => value.isNotEmpty)) {
+                    Navigator.pop(context, result);
+                  }
+                },
+                child: const Text('验证并登录'),
+              ),
+            ],
           ),
         ],
       ),
@@ -383,15 +400,16 @@ final class _ExternalSourceSettingsScreenState
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('完成网页登录'),
-        content: const Text('返回后确认登录状态。若网页仍未完成登录，请选择取消并重新打开。'),
+        content: const Text('返回后确认登录状态。若网页仍未完成登录，请关闭此面板后重新打开。'),
         actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('验证登录'),
+          AppDialogActions(
+            onClose: () => Navigator.pop(context, false),
+            actions: <Widget>[
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('验证登录'),
+              ),
+            ],
           ),
         ],
       ),

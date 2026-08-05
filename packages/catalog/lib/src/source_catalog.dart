@@ -177,6 +177,63 @@ final class SourceBrowsePage {
   final bool hasMore;
 }
 
+/// A source-owned successor/predecessor relation.
+///
+/// The source adapter returns its opaque [comicId] unchanged so Presentation
+/// can offer a version without parsing plugin identities or guessing from a
+/// title search. A source may expose this capability when it has a stronger
+/// relation than ordinary catalog search (for example E-Hentai's `#gnd`).
+final class SourceComicVersion {
+  const SourceComicVersion({
+    required this.sourceId,
+    required this.comicId,
+    required this.title,
+    required this.generation,
+    this.date,
+    this.isPredecessor = false,
+  });
+
+  final String sourceId;
+  final String comicId;
+  final String title;
+  final int generation;
+  final String? date;
+  final bool isPredecessor;
+}
+
+/// Optional source-owned version discovery capability.
+abstract interface class ComicVersionSource {
+  bool get supportsComicVersions;
+
+  Future<List<SourceComicVersion>> findComicVersions(String comicId);
+}
+
+/// A source-confirmed predecessor/successor relation remembered by the
+/// library so a later detail page can also offer the older version.
+final class ComicVersionRelation {
+  const ComicVersionRelation({
+    required this.sourceId,
+    required this.predecessorComicId,
+    required this.successorComicId,
+    this.predecessorTitle = '',
+  });
+
+  final String sourceId;
+  final String predecessorComicId;
+  final String successorComicId;
+  final String predecessorTitle;
+}
+
+/// Optional durable storage for source-confirmed version relations.
+abstract interface class ComicVersionRelationStore {
+  Future<List<ComicVersionRelation>> listComicVersionPredecessors(
+    String sourceId,
+    String successorComicId,
+  );
+
+  Future<void> saveComicVersionRelation(ComicVersionRelation relation);
+}
+
 /// Resolved source-owned media request. Source runtimes own URL/header
 /// derivation; Reader/download sessions own transport, streaming and artifacts.
 final class ComicResourceRequest {

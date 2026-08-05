@@ -92,6 +92,21 @@ void main() {
     expect(request.userAgent, 'fixture-browser-agent');
   });
 
+  test('cached source preserves the source-owned version capability', () async {
+    final raw = _CountingSource();
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final source = CachedBrowsableComicSource(source: raw, cache: cache);
+
+    expect(source, isA<ComicVersionSource>());
+    final versions = await (source as ComicVersionSource)
+        .findComicVersions('comic');
+
+    expect(source.supportsComicVersions, isTrue);
+    expect(versions.single.comicId, 'version');
+    expect(raw.versionLoads, 1);
+  });
+
   test('comic invalidation clears related detail chapter and artwork only',
       () async {
     final raw = _CountingSource();
@@ -260,11 +275,13 @@ final class _CountingSource implements
         BrowsableComicSource,
         ComicWebUriSource,
         CanonicalComicIdentitySource,
-        ComicWebViewRequestSource {
+        ComicWebViewRequestSource,
+        ComicVersionSource {
   var comicLoads = 0;
   var chapterLoads = 0;
   var browseLoads = 0;
   var resourceLoads = 0;
+  var versionLoads = 0;
   String? lastQuery;
 
   @override
@@ -356,6 +373,22 @@ final class _CountingSource implements
         url: url,
         userAgent: 'fixture-browser-agent',
       );
+
+  @override
+  bool get supportsComicVersions => true;
+
+  @override
+  Future<List<SourceComicVersion>> findComicVersions(String comicId) async {
+    versionLoads++;
+    return const <SourceComicVersion>[
+      SourceComicVersion(
+        sourceId: 'fixture',
+        comicId: 'version',
+        title: 'Version',
+        generation: 1,
+      ),
+    ];
+  }
 
   @override
   Future<Uint8List> loadResource(Uri uri) async {

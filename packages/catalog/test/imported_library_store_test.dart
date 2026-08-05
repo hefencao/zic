@@ -3,6 +3,33 @@ import 'package:domain/domain.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('memory imported library stores comic version predecessors', () async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    const relation = ComicVersionRelation(
+      sourceId: 'venera:ehentai',
+      predecessorComicId: 'old-comic',
+      successorComicId: 'new-comic',
+      predecessorTitle: '旧版标题',
+    );
+
+    await store.saveComicVersionRelation(relation);
+
+    final predecessors = await store.listComicVersionPredecessors(
+      relation.sourceId,
+      relation.successorComicId,
+    );
+    expect(predecessors, hasLength(1));
+    expect(predecessors.single.sourceId, relation.sourceId);
+    expect(
+      predecessors.single.predecessorComicId,
+      relation.predecessorComicId,
+    );
+    expect(predecessors.single.successorComicId, relation.successorComicId);
+    expect(predecessors.single.predecessorTitle, relation.predecessorTitle);
+  });
+
   test('memory imported library stores chapters and latest progress', () async {
     final store = MemoryImportedLibraryStore();
     await store.open();

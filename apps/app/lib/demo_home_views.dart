@@ -317,17 +317,18 @@ extension _DemoHomeViews on _DemoHomeState {
         title: const Text('删除漫画'),
         content: Text('从书架和本地记录中删除“${comic.title}”？此操作不可撤销。'),
         actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.error,
-              foregroundColor: Theme.of(context).colorScheme.onError,
-            ),
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('删除'),
+          AppDialogActions(
+            onClose: () => Navigator.of(context).pop(false),
+            actions: <Widget>[
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                  foregroundColor: Theme.of(context).colorScheme.onError,
+                ),
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('删除'),
+              ),
+            ],
           ),
         ],
       ),
@@ -462,17 +463,18 @@ extension _DemoHomeViews on _DemoHomeState {
         title: Text('删除 ${selected.length} 部漫画？'),
         content: const Text('将删除书架记录、章节元数据与阅读状态；离线文件需在下载管理中单独清理。'),
         actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.error,
-              foregroundColor: Theme.of(context).colorScheme.onError,
-            ),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('删除'),
+          AppDialogActions(
+            onClose: () => Navigator.pop(context, false),
+            actions: <Widget>[
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: Theme.of(context).colorScheme.error,
+                  foregroundColor: Theme.of(context).colorScheme.onError,
+                ),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('删除'),
+              ),
+            ],
           ),
         ],
       ),
@@ -547,15 +549,16 @@ extension _DemoHomeViews on _DemoHomeState {
             ),
           ),
           actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: selected.isEmpty
-                  ? null
-                  : () => Navigator.of(context).pop(true),
-              child: const Text('添加'),
+            AppDialogActions(
+              onClose: () => Navigator.of(context).pop(false),
+              actions: <Widget>[
+                FilledButton(
+                  onPressed: selected.isEmpty
+                      ? null
+                      : () => Navigator.of(context).pop(true),
+                  child: const Text('添加'),
+                ),
+              ],
             ),
           ],
         ),

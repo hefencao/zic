@@ -1096,6 +1096,8 @@ final class SourceComicDetailsScreen extends StatelessWidget {
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
     this.onSearchMetadata,
+    this.onMigrateSource,
+    this.onOpenVersions,
     this.sameComicIdentity,
     this.traceSink = const NoopTraceSink(),
     super.key,
@@ -1120,6 +1122,8 @@ final class SourceComicDetailsScreen extends StatelessWidget {
   final details.ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
   final details.ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final details.ComicDetailsMetadataSearch? onSearchMetadata;
+  final details.ComicDetailsVersionsOpener? onMigrateSource;
+  final details.ComicDetailsVersionsOpener? onOpenVersions;
   final details.ComicDetailsIdentityMatcher? sameComicIdentity;
   final TraceSink traceSink;
 
@@ -1144,6 +1148,8 @@ final class SourceComicDetailsScreen extends StatelessWidget {
       onOpenSourceWebView: onOpenSourceWebView,
       onOpenSourceSettings: onOpenSourceSettings,
       onSearchMetadata: onSearchMetadata,
+      onMigrateSource: onMigrateSource,
+      onOpenVersions: onOpenVersions,
       sameComicIdentity: sameComicIdentity ?? (left, right) => left == right,
       traceSink: traceSink,
     );

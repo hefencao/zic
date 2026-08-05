@@ -107,6 +107,25 @@ URL-derived/canonical app-update key。来源确认过的 canonical identity 写
 首页、书架、来源和杂项页由 lazy indexed page 保持未构建，避免隐藏导航页提前创建第二套
 封面 loader；访问过的页面状态仍由该页面节点保留。
 
+### 详情页与来源迁移组合
+
+`ComicDetails` 只把详情展示、阅读进度和用户命令投影到 Flutter；详情 AppBar 不重复显示
+漫画标题，标题只在详情内容区出现。保存过阅读进度时，继续阅读命令直接调用既有
+`onOpenChapter` facade，按钮和阅读历史是两个独立的 UI 投影，并位于章节总数行上方；详情页不创建第二个阅读器或
+正文缓存。来源浏览、manifest/chapter 身份校验、状态迁移和 artifact 复用由
+`_DemoHomeSourceMigration` 组合 owner 完成。
+
+同源版本入口优先使用来源暴露的 `ComicVersionSource`；Venera 适配器复用自身运行时网络与
+Cookie 会话，按当前详情页 `#gnd` 关系生成版本，不把 Venera 当作标题 `browse` 搜索，避免
+触发浏览器权限错误。来源确认的前后版本关系由 `ComicVersionRelationStore` 持久化，因此当前
+新版详情页也能显示已发现的旧版；没有来源专属版本能力时才回退到普通 `browse` 候选。迁移计划允许相同
+`sourceId` 下不同的原生 `comicId`，因此可处理 E-Hentai URL/gallery locator 变化。迁移只复制
+经过精确章节匹配验证的偏好、阅读位置和已读状态，并先完成目标写入；同源替换随后清理旧漫画
+记录，跨源迁移保留原来源。迁移面板始终展示当前插件和来源，目标可为当前来源或其他已启用来源。
+
+App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭固定为左下角 X，确认、
+保存或删除位于右侧，不再使用“取消”文字按钮。
+
 ### 插件与平台桥
 
 - `plugin_host`：信任、权限、请求计划、身份适配和插件生命周期。

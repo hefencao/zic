@@ -5,9 +5,10 @@ import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:sqlite3/sqlite3.dart' as sql;
 
-const _schemaVersion = 6;
+const _schemaVersion = 7;
 
-final class SqliteImportedLibraryStore implements ImportedLibraryStore {
+final class SqliteImportedLibraryStore
+    implements ImportedLibraryStore, ComicVersionRelationStore {
   SqliteImportedLibraryStore(this.path);
 
   SqliteImportedLibraryStore.memory() : path = null;
@@ -41,6 +42,7 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
           _createSourcePreferenceTables(db);
           _createSavedComicTables(db);
           _createMigrationIssueTable(db);
+          _createComicVersionRelationTable(db);
           db.execute('PRAGMA user_version = $_schemaVersion');
           db.execute('COMMIT');
         } on Object {
@@ -52,6 +54,8 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
         _migrateToCompositeSchema(db, fromVersion: version);
       } else if (version == 5) {
         _migrateMigrationIssueAcknowledgement(db);
+      } else if (version == 6) {
+        _migrateComicVersionRelations(db);
       } else if (version != _schemaVersion) {
         throw StateError(
           'unsupported imported library schema version: $version',
@@ -601,6 +605,56 @@ final class SqliteImportedLibraryStore implements ImportedLibraryStore {
   }
 
   @override
+  Future<List<ComicVersionRelation>> listComicVersionPredecessors(
+    String sourceId,
+    String successorComicId,
+  ) async {
+    final rows = _requireDb().select('''
+      SELECT source_id, predecessor_comic_id, successor_comic_id,
+             predecessor_title
+      FROM comic_version_relation
+      WHERE source_id = ? AND successor_comic_id = ?
+      ORDER BY discovered_us DESC, predecessor_comic_id
+    ''', <Object?>[sourceId, successorComicId]);
+    return rows
+        .map(
+          (row) => ComicVersionRelation(
+            sourceId: row['source_id']! as String,
+            predecessorComicId: row['predecessor_comic_id']! as String,
+            successorComicId: row['successor_comic_id']! as String,
+            predecessorTitle: row['predecessor_title']! as String,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  @override
+  Future<void> saveComicVersionRelation(ComicVersionRelation relation) async {
+    if (relation.sourceId.trim().isEmpty ||
+        relation.predecessorComicId.trim().isEmpty ||
+        relation.successorComicId.trim().isEmpty ||
+        relation.predecessorComicId == relation.successorComicId) {
+      throw ArgumentError.value(relation, 'relation');
+    }
+    _requireDb().execute('''
+      INSERT INTO comic_version_relation (
+        source_id, predecessor_comic_id, successor_comic_id,
+        predecessor_title, discovered_us
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(source_id, predecessor_comic_id, successor_comic_id)
+      DO UPDATE SET
+        predecessor_title = excluded.predecessor_title,
+        discovered_us = excluded.discovered_us
+    ''', <Object?>[
+      relation.sourceId,
+      relation.predecessorComicId,
+      relation.successorComicId,
+      relation.predecessorTitle,
+      DateTime.now().toUtc().microsecondsSinceEpoch,
+    ]);
+  }
+
+  @override
   Future<void> close() async {
     _db?.dispose();
     _db = null;
@@ -777,6 +831,19 @@ void _migrateMigrationIssueAcknowledgement(sql.Database db) {
       CREATE INDEX IF NOT EXISTS library_migration_issue_pending
       ON library_migration_issue(acknowledged_us, issue_id)
     ''');
+    _createComicVersionRelationTable(db);
+    db.execute('PRAGMA user_version = $_schemaVersion');
+    db.execute('COMMIT');
+  } on Object {
+    db.execute('ROLLBACK');
+    rethrow;
+  }
+}
+
+void _migrateComicVersionRelations(sql.Database db) {
+  db.execute('BEGIN IMMEDIATE');
+  try {
+    _createComicVersionRelationTable(db);
     db.execute('PRAGMA user_version = $_schemaVersion');
     db.execute('COMMIT');
   } on Object {
@@ -1092,6 +1159,7 @@ void _migrateToCompositeSchema(
         '${foreignKeyFailures.length}',
       );
     }
+    _createComicVersionRelationTable(db);
     db.execute('PRAGMA user_version = $_schemaVersion');
     db.execute('COMMIT');
   } on Object {
@@ -1407,4 +1475,21 @@ void _createMigrationIssueTable(sql.Database db) {
       ON library_migration_issue(acknowledged_us, issue_id)
     ''');
   }
+}
+
+void _createComicVersionRelationTable(sql.Database db) {
+  db.execute('''
+    CREATE TABLE IF NOT EXISTS comic_version_relation (
+      source_id TEXT NOT NULL,
+      predecessor_comic_id TEXT NOT NULL,
+      successor_comic_id TEXT NOT NULL,
+      predecessor_title TEXT NOT NULL,
+      discovered_us INTEGER NOT NULL,
+      PRIMARY KEY(source_id, predecessor_comic_id, successor_comic_id)
+    )
+  ''');
+  db.execute('''
+    CREATE INDEX IF NOT EXISTS comic_version_relation_successor
+    ON comic_version_relation(source_id, successor_comic_id, discovered_us DESC)
+  ''');
 }

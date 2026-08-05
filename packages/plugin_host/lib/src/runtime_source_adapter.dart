@@ -305,6 +305,7 @@ final class _RuntimeBrowsableComicSource
     implements BrowsableComicSource, ConfigurableComicSource,
         AuthenticatableComicSource, ComicWebUriSource,
         CanonicalComicIdentitySource, ComicWebViewRequestSource,
+        ComicVersionSource,
         ResolvableComicResourceSource, RetryableComicResourceSource {
   _RuntimeBrowsableComicSource({
     required ExternalComicPluginFormat format,
@@ -415,6 +416,31 @@ final class _RuntimeBrowsableComicSource
       items: items,
       offset: resultOffset,
       hasMore: _bool(message, 'hasMore'),
+    );
+  }
+
+  @override
+  bool get supportsComicVersions =>
+      _format == ExternalComicPluginFormat.veneraJavaScript;
+
+  @override
+  Future<List<SourceComicVersion>> findComicVersions(String comicId) async {
+    if (!supportsComicVersions) {
+      return const <SourceComicVersion>[];
+    }
+    final uri = resolveComicWebUri(comicId);
+    if (uri == null) {
+      return const <SourceComicVersion>[];
+    }
+    // VibeVenera discovers E-Hentai successors from the current page's
+    // #gnd relation instead of issuing a title search. Reuse the existing
+    // Venera resource channel so its WebView cookie/session context remains
+    // available, while keeping opaque comic IDs inside this adapter.
+    final html = utf8.decode(await loadResource(uri), allowMalformed: true);
+    return _parseVeneraComicVersions(
+      sourceId: sourceId,
+      baseUri: uri,
+      html: html,
     );
   }
 
@@ -1064,3 +1090,109 @@ SourceContentRating _contentRating(Object? value) {
     throw FormatException('unknown content rating: $value');
   }
 }
+
+List<SourceComicVersion> _parseVeneraComicVersions({
+  required String sourceId,
+  required Uri baseUri,
+  required String html,
+}) {
+  final opening = RegExp(
+    "<([A-Za-z][A-Za-z0-9:-]*)\\b[^>]*\\bid\\s*=\\s*[\\\"']gnd[\\\"'][^>]*>",
+    caseSensitive: false,
+  ).firstMatch(html);
+  if (opening == null) {
+    return const <SourceComicVersion>[];
+  }
+  final tagName = opening.group(1)!;
+  final closing = RegExp(
+    '<(/?)${RegExp.escape(tagName)}\\b[^>]*>',
+    caseSensitive: false,
+  );
+  var depth = 1;
+  var containerEnd = html.length;
+  for (final token in closing.allMatches(html, opening.end)) {
+    if (token.group(1)!.isEmpty) {
+      depth++;
+    } else {
+      depth--;
+      if (depth == 0) {
+        containerEnd = token.start;
+        break;
+      }
+    }
+  }
+  final container = html.substring(opening.end, containerEnd);
+  final anchors = RegExp(
+    r'''<a\b[^>]*>[\s\S]*?</a\s*>''',
+    caseSensitive: false,
+  ).allMatches(container);
+  final dates = RegExp(
+    r'''</a\s*>\s*,\s*added\s+(\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)''',
+    caseSensitive: false,
+  ).allMatches(container).map((match) => match.group(1)).toList();
+  final versions = <SourceComicVersion>[];
+  for (var index = 0; index < anchors.length; index++) {
+    final anchor = anchors.elementAt(index).group(0)!;
+    final href = RegExp(
+      "\\bhref\\s*=\\s*[\\\"']([^\\\"']+)[\\\"']",
+      caseSensitive: false,
+    ).firstMatch(anchor)?.group(1);
+    if (href == null) {
+      continue;
+    }
+    final resolved = Uri.tryParse(
+      baseUri.resolve(_decodeHtmlEntities(href.trim())).toString(),
+    );
+    if (resolved == null || !resolved.path.contains('/g/')) {
+      continue;
+    }
+    final title = _decodeHtmlEntities(
+      anchor
+          .replaceFirst(RegExp(r'^<a\b[^>]*>', caseSensitive: false), '')
+          .replaceFirst(RegExp(r'</a\s*>$', caseSensitive: false), '')
+          .replaceAll(RegExp(r'<[^>]*>'), ' '),
+    ).replaceAll(RegExp(r'\s+'), ' ').trim();
+    versions.add(
+      SourceComicVersion(
+        sourceId: sourceId,
+        comicId: _encodeVeneraComicId(resolved),
+        title: title,
+        generation: index + 1,
+        date: index < dates.length ? dates[index] : null,
+      ),
+    );
+  }
+  return List<SourceComicVersion>.unmodifiable(versions);
+}
+
+String _encodeVeneraComicId(Uri uri) {
+  final payload = base64Url
+      .encode(
+        utf8.encode(
+          jsonEncode(<String, Object?>{
+            'v': 2,
+            'id': uri.toString(),
+          }),
+        ),
+      )
+      .replaceAll('=', '');
+  return 'venera:comic:$payload';
+}
+
+String _decodeHtmlEntities(String value) => value
+    .replaceAll('&amp;', '&')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#39;', "'")
+    .replaceAll('&apos;', "'")
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAllMapped(
+      RegExp(r'&#(\d+);'),
+      (match) => String.fromCharCode(int.parse(match.group(1)!)),
+    )
+    .replaceAllMapped(
+      RegExp(r'&#x([0-9a-f]+);', caseSensitive: false),
+      (match) => String.fromCharCode(
+        int.parse(match.group(1)!, radix: 16),
+      ),
+    );

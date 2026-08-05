@@ -20,6 +20,13 @@
   兼容读取已删除。来源确认过的 canonical comic identity 会持久化到 SavedComic 元数据，
   让冷启动在插件未激活时也能只读归并同源旧/新 raw ID；首页/书架等导航页 lazy 构建，
   首屏不再创建隐藏页面的第二套封面 loader。
+- 详情页 AppBar 不再重复显示漫画标题；保存过进度时提供可操作的药丸形“继续”按钮，
+  阅读历史与按钮同一行并位于章节总数行上方，带时钟图标。详情页提供同源版本入口和迁移入口，Venera 版本入口
+  复用运行时网络/Cookie 按 `#gnd` 关系读取，不再走标题 browse；迁移面板显示当前
+  插件/来源，并允许同一 source 下不同原生 comic ID 的版本替换；目标写入和章节身份校验
+  完成后才清理旧版本记录；已发现的新版关系写入 `ComicVersionRelationStore`，迁移面板会显示旧版。
+- App-owned modal panel 的操作行统一使用左下角 X 关闭，右侧保留确认/保存/删除动作，
+  已移除取消文字按钮。
 - catalog response cache 使用稳定 source/comic/chapter identity 和结构 weight；页面正文不进入该缓存。
 - ArtifactCacheManager 默认热字节 10 项/256 MiB，支持持久 backend、verified alias/rekey 和 foreground read join。
 - Reader encoded window 为前 7/后 3；decode 角色为前 2/后 1；动态 holder 最大水位为 7/5/3/2。
@@ -52,7 +59,7 @@
 | Android/Mihon/Venera/Reader/Pipeline/UI contracts | Verified-static / toolchain |
 | Kotlin texture bridge compile stub | Verified-toolchain |
 | pinned libwebp host build/smoke | Verified-toolchain |
-| 受影响 Flutter owner tests | Verified-toolchain |
+| 受影响 Flutter owner tests | Verified-toolchain：继续阅读、迁移对话框和同源 comic ID 迁移单测通过 |
 | Flutter analyzer | Unverified：App 全量 analyzer 保留 51 个既有 info/warning，整体退出码非零 |
 | Android debug/release split APK | Verified-toolchain：`ZIC_ANDROID_NATIVE=0`；native-enabled path 未验证 |
 | 设备性能与生命周期 | Implemented；待设备复验 |

@@ -74,6 +74,8 @@ void main() {
     expect(find.byKey(sourceMigrationComparisonRisksKey), findsOneWidget);
     expect(find.text('source-a:comic-a'), findsOneWidget);
     expect(find.text('source-b:comic-b'), findsOneWidget);
+    expect(find.byTooltip('关闭'), findsOneWidget);
+    expect(find.text('取消'), findsNothing);
     expect(sourceCoverLoads, 1);
     expect(targetCoverLoads, 1);
 

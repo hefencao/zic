@@ -306,6 +306,11 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
                 : null,
             onSearchMetadata: (query) =>
                 _searchSourceMetadata(source, query),
+            onMigrateSource: () =>
+                _openSourceMigrationForSummary(source, comic),
+            onOpenVersions: _sourceSupportsVersionEntry(source)
+                ? () => _openSourceVersionsForSummary(source, comic)
+                : null,
             sameComicIdentity: (left, right) =>
                 _canonicalComicKey(source.sourceId, left) ==
                 _canonicalComicKey(source.sourceId, right),
@@ -388,6 +393,9 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
           onSearchMetadata: source == null
               ? null
               : (query) => _searchSourceMetadata(source, query),
+          onOpenVersions: source == null || !_sourceSupportsVersionEntry(source)
+              ? null
+              : () => _openSourceVersions(comic),
           traceSink: widget.debugTrace,
           onMigrateSource: comic.sourceId == 'local-folder'
               ? null

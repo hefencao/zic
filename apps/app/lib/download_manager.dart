@@ -7,6 +7,8 @@ import 'package:resource_cache/resource_cache.dart';
 
 import 'package:downloads/downloads.dart';
 
+import 'dialog_actions.dart';
+
 const downloadManagerScreenKey = ValueKey<String>('download-manager-screen');
 const downloadManagerRefreshKey = ValueKey<String>('download-manager-refresh');
 const downloadQueuePolicyKey = ValueKey<String>('download-queue-policy');
@@ -187,13 +189,14 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
         title: const Text('删除离线章节？'),
         content: Text('将删除“${snapshot.title}”的离线页面，阅读记录不会被删除。'),
         actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('删除'),
+          AppDialogActions(
+            onClose: () => Navigator.pop(context, false),
+            actions: <Widget>[
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('删除'),
+              ),
+            ],
           ),
         ],
       ),
@@ -262,14 +265,15 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
           '将删除当前未被下载任务占用的离线页面。漫画、章节、阅读进度和已读状态不会删除。',
         ),
         actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            key: downloadCacheClearKey,
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('清除缓存'),
+          AppDialogActions(
+            onClose: () => Navigator.pop(context, false),
+            actions: <Widget>[
+              FilledButton(
+                key: downloadCacheClearKey,
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('清除缓存'),
+              ),
+            ],
           ),
         ],
       ),
@@ -379,13 +383,14 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
             ),
           ),
           actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, next),
-              child: const Text('保存'),
+            AppDialogActions(
+              onClose: () => Navigator.pop(context),
+              actions: <Widget>[
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, next),
+                  child: const Text('保存'),
+                ),
+              ],
             ),
           ],
         ),

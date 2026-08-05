@@ -4,6 +4,7 @@ import 'imported_chapter.dart';
 import 'library_migration_issue.dart';
 import 'library_preferences.dart';
 import 'saved_comic.dart';
+import 'source_catalog.dart';
 
 String comicLibraryIdentity(String sourceId, String comicId) =>
     '$sourceId\u0000$comicId';
@@ -146,7 +147,8 @@ abstract interface class ImportedLibraryStore {
   Future<void> close();
 }
 
-final class MemoryImportedLibraryStore implements ImportedLibraryStore {
+final class MemoryImportedLibraryStore
+    implements ImportedLibraryStore, ComicVersionRelationStore {
   MemoryImportedLibraryStore({
     Iterable<LibraryMigrationIssue> migrationIssues =
         const <LibraryMigrationIssue>[],
@@ -167,6 +169,8 @@ final class MemoryImportedLibraryStore implements ImportedLibraryStore {
       <String, ChapterReadState>{};
   final Map<String, ComicSourcePreference> _sourcePreferences =
       <String, ComicSourcePreference>{};
+  final Map<String, List<ComicVersionRelation>> _versionRelations =
+      <String, List<ComicVersionRelation>>{};
   final Map<int, LibraryMigrationIssue> _migrationIssues;
   bool _open = false;
 
@@ -467,6 +471,48 @@ final class MemoryImportedLibraryStore implements ImportedLibraryStore {
           acknowledgedAt: acknowledgedAt.toUtc(),
         );
       }
+    }
+  }
+
+  @override
+  Future<List<ComicVersionRelation>> listComicVersionPredecessors(
+    String sourceId,
+    String successorComicId,
+  ) async {
+    _requireOpen();
+    final key = comicLibraryIdentity(sourceId, successorComicId);
+    return List<ComicVersionRelation>.unmodifiable(
+      _versionRelations[key] ?? const <ComicVersionRelation>[],
+    );
+  }
+
+  @override
+  Future<void> saveComicVersionRelation(ComicVersionRelation relation) async {
+    _requireOpen();
+    if (relation.sourceId.trim().isEmpty ||
+        relation.predecessorComicId.trim().isEmpty ||
+        relation.successorComicId.trim().isEmpty ||
+        relation.predecessorComicId == relation.successorComicId) {
+      throw ArgumentError.value(relation, 'relation');
+    }
+    final key = comicLibraryIdentity(
+      relation.sourceId,
+      relation.successorComicId,
+    );
+    final values = <ComicVersionRelation>[...
+      (_versionRelations[key] ?? const <ComicVersionRelation>[]),
+    ];
+    final index = values.indexWhere(
+      (value) => value.predecessorComicId == relation.predecessorComicId,
+    );
+    if (index >= 0) {
+      values[index] = relation;
+    } else {
+      values.add(relation);
+    }
+    _versionRelations[key] = List<ComicVersionRelation>.unmodifiable(values);
+    while (_versionRelations.length > 256) {
+      _versionRelations.remove(_versionRelations.keys.first);
     }
   }
 

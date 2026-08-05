@@ -16,6 +16,7 @@ import 'package:downloads/downloads.dart';
 import 'app_preferences.dart';
 import 'app_settings_screen.dart';
 import 'comic_details.dart' as details;
+import 'dialog_actions.dart';
 import 'debug_trace.dart';
 import 'deferred_reader_route.dart';
 import 'download_manager.dart';
@@ -1242,13 +1243,15 @@ final class _DemoHomeState extends State<DemoHome> {
           onSubmitted: (value) => Navigator.of(context).pop(value.trim()),
         ),
         actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
-            child: const Text('创建'),
+          AppDialogActions(
+            onClose: () => Navigator.of(context).pop(),
+            actions: <Widget>[
+              FilledButton(
+                onPressed: () =>
+                    Navigator.of(context).pop(controller.text.trim()),
+                child: const Text('创建'),
+              ),
+            ],
           ),
         ],
       ),
@@ -1275,13 +1278,14 @@ final class _DemoHomeState extends State<DemoHome> {
         title: const Text('删除分类'),
         content: Text('删除“${category.name}”？漫画本身不会被删除。'),
         actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('删除'),
+          AppDialogActions(
+            onClose: () => Navigator.of(context).pop(false),
+            actions: <Widget>[
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('删除'),
+              ),
+            ],
           ),
         ],
       ),

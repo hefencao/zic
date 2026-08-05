@@ -211,6 +211,35 @@ void main() {
     expect(migrated.customOrder, 9);
   });
 
+  test('same-source migration accepts a changed native comic id', () {
+    final source = LibraryComic.fromEntries(<ImportedLibraryEntry>[
+      ImportedLibraryEntry(
+        chapter: _chapter(
+          chapterId: 'old-source-chapter-1',
+          title: '第 1 话',
+          sequence: 1,
+          importedAt: DateTime.utc(2026, 7, 28),
+        ).copyWith(
+          sourceId: 'ehentai:source',
+          comicId: 'old-url-id',
+        ),
+      ),
+    ]);
+    final target = _remoteManifest(
+      sourceId: 'ehentai:source',
+      comicId: 'new-url-id',
+      chapterTitles: const <String>['第 1 话'],
+    );
+
+    final plan = ComicSourceMigrationPlan.build(
+      source: source,
+      target: target,
+    );
+
+    expect(plan.chapterMatches, hasLength(1));
+    expect(plan.target.comic.comicId, 'new-url-id');
+  });
+
   test('source migration comparison normalizes title and author evidence', () {
     final source = LibraryComic.fromEntries(<ImportedLibraryEntry>[
       ImportedLibraryEntry(

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:plugin_host/plugin_host.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 
+import 'dialog_actions.dart';
 import 'external_plugin_repository_model.dart';
 
 enum _ExternalPluginPage { installed, repository }
@@ -203,9 +204,9 @@ final class _ExternalPluginRepositoryScreenState
           title: Text(title),
           content: SelectableText(error.toString()),
           actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('关闭'),
+            AppDialogActions(
+              onClose: () => Navigator.pop(context),
+              actions: const <Widget>[],
             ),
           ],
         ),
@@ -686,13 +687,14 @@ final class _TrustDialog extends StatelessWidget {
         ),
       ),
       actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.pop(context, false),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(context, true),
-          child: const Text('信任并启用'),
+        AppDialogActions(
+          onClose: () => Navigator.pop(context, false),
+          actions: <Widget>[
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('信任并启用'),
+            ),
+          ],
         ),
       ],
     );

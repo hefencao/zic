@@ -3,6 +3,8 @@ import 'dart:typed_data';
 import 'package:catalog/catalog.dart';
 import 'package:flutter/material.dart';
 
+import 'dialog_actions.dart';
+
 const sourceMigrationComparisonDialogKey =
     ValueKey<String>('source-migration-comparison-dialog');
 const sourceMigrationComparisonConfirmKey =
@@ -25,6 +27,7 @@ Future<bool> showSourceMigrationComparison({
   required ComicSourceMigrationPlan plan,
   required String sourceName,
   required String targetName,
+  bool replaceSource = false,
   SourceMigrationCoverLoader? loadSourceCover,
   SourceMigrationCoverLoader? loadTargetCover,
 }) async {
@@ -34,6 +37,7 @@ Future<bool> showSourceMigrationComparison({
       plan: plan,
       sourceName: sourceName,
       targetName: targetName,
+      replaceSource: replaceSource,
       loadSourceCover: loadSourceCover,
       loadTargetCover: loadTargetCover,
     ),
@@ -46,6 +50,7 @@ final class _SourceMigrationComparisonDialog extends StatefulWidget {
     required this.plan,
     required this.sourceName,
     required this.targetName,
+    required this.replaceSource,
     required this.loadSourceCover,
     required this.loadTargetCover,
   });
@@ -53,6 +58,7 @@ final class _SourceMigrationComparisonDialog extends StatefulWidget {
   final ComicSourceMigrationPlan plan;
   final String sourceName;
   final String targetName;
+  final bool replaceSource;
   final SourceMigrationCoverLoader? loadSourceCover;
   final SourceMigrationCoverLoader? loadTargetCover;
 
@@ -75,7 +81,9 @@ final class _SourceMigrationComparisonDialogState
     return AlertDialog(
       key: sourceMigrationComparisonDialogKey,
       insetPadding: const EdgeInsets.all(24),
-      title: const Text('核对漫画源迁移'),
+      title: Text(
+        widget.replaceSource ? '核对同源版本迁移' : '核对漫画源迁移',
+      ),
       content: SizedBox(
         width: dialogWidth,
         height: dialogHeight,
@@ -141,9 +149,12 @@ final class _SourceMigrationComparisonDialogState
               const SizedBox(height: 12),
               _MigrationChapterSamples(comparison: comparison),
               const SizedBox(height: 12),
-              const Text(
-                '迁移只复制漫画偏好和经过验证的阅读状态。目标源已有状态优先保留；'
-                '来源专属 URL、离线字节和原来源漫画都不会被删除或替换。',
+              Text(
+                widget.replaceSource
+                    ? '迁移只复制漫画偏好和经过验证的阅读状态。新版本已有状态优先保留；'
+                        '旧版本记录会被替换，离线文件需在下载管理中单独清理。'
+                    : '迁移只复制漫画偏好和经过验证的阅读状态。目标源已有状态优先保留；'
+                        '来源专属 URL、离线字节和原来源漫画都不会被删除或替换。',
               ),
               const SizedBox(height: 8),
               CheckboxListTile(
@@ -161,16 +172,19 @@ final class _SourceMigrationComparisonDialogState
         ),
       ),
       actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.pop(context, false),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          key: sourceMigrationComparisonConfirmKey,
-          onPressed: _acknowledgedIdentity
-              ? () => Navigator.pop(context, true)
-              : null,
-          child: const Text('确认复制到目标源'),
+        AppDialogActions(
+          onClose: () => Navigator.pop(context, false),
+          actions: <Widget>[
+            FilledButton(
+              key: sourceMigrationComparisonConfirmKey,
+              onPressed: _acknowledgedIdentity
+                  ? () => Navigator.pop(context, true)
+                  : null,
+              child: Text(
+                widget.replaceSource ? '确认迁移到新版本' : '确认复制到目标源',
+              ),
+            ),
+          ],
         ),
       ],
     );

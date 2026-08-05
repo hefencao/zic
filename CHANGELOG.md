@@ -15,6 +15,11 @@
 - 修复同一漫画源的旧/新 raw `comicId` 在插件未激活时暂时显示两张书架卡片：来源确认过的
   canonical identity 写入 `SavedComicRecord`，冷启动按该比较 identity 先做只读归并，raw
   request/chapter identity 和已验证 artifact/version 迁移保持不变。
+- 详情页移除顶部重复标题，恢复可用的“继续”药丸按钮，并将带时钟图标的阅读历史放到
+  按钮同一行、章节总数行上方；新增同源版本入口和可显示当前插件/来源的迁移面板，允许同源
+  不同原生 ID 的 URL 版本迁移。Venera 版本入口复用运行时网络/Cookie，按 `#gnd` 关系读取，
+  不再把版本检查误走标题 browse。已确认的新版关系持久化后，同源迁移面板也会显示旧版。
+  App-owned modal panel 的关闭操作统一改为左下角 X。
 
 ## 0.31.0-dev.138：移除 Current 流量门控并恢复目标页首帧并行
 
