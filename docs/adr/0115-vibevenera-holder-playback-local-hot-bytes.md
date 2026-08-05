@@ -1,6 +1,6 @@
 # ADR 0115：VibeVenera Holder 驱动播放与本地热字节
 
-**状态：Provisional**
+**状态：Provisional**；后台 texture 调度/affinity 或热字节交付部分由 ADR 0116 取代
 
 ## 问题
 

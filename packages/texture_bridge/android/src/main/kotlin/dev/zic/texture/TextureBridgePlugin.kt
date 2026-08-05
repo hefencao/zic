@@ -4,10 +4,8 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Surface
 import io.flutter.embedding.engine.plugins.FlutterPlugin
-import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
-import io.flutter.plugin.common.StandardMethodCodec
 import io.flutter.view.TextureRegistry
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -50,13 +48,9 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         blitLanes = List(BLIT_LANE_COUNT, ::newBlitLane)
         blitLanes.forEach { lane -> lane.execute {} }
         textures = binding.textureRegistry
-        val taskQueue: BinaryMessenger.TaskQueue =
-            binding.binaryMessenger.makeBackgroundTaskQueue()
         channel = MethodChannel(
             binding.binaryMessenger,
             CHANNEL_NAME,
-            StandardMethodCodec.INSTANCE,
-            taskQueue,
         )
         channel.setMethodCallHandler(this)
     }
@@ -221,28 +215,28 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                     try {
                         val finishedNanos = System.nanoTime()
                         if (failure != null) {
-                            result.error(
+                            error(
+                                result,
                                 "blit_failed",
                                 failure.message ?: failure.toString(),
-                                null,
                             )
                             return
                         }
                         check(presentation != null)
                         if (presentation.failure != null) {
-                            result.error(
+                            error(
+                                result,
                                 "schedule_failed",
                                 presentation.failure.message
                                     ?: presentation.failure.toString(),
-                                null,
                             )
                             return
                         }
                         if (presentation.status != 0) {
-                            result.error(
+                            error(
+                                result,
                                 "blit_failed",
                                 "native blit failed with status ${presentation.status}",
-                                null,
                             )
                             return
                         }
@@ -277,12 +271,12 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                             // immediately after scheduleFrame().
                             "resultDispatchMicros" to 0L,
                         )
-                        result.success(response)
+                        success(result, response)
                     } catch (error: Throwable) {
-                        result.error(
+                        error(
+                            result,
                             "blit_failed",
                             error.message ?: error.toString(),
-                            null,
                         )
                     } finally {
                         queue.addAndGet(-frameBytes)
@@ -395,7 +389,7 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
 
         val submittedNanos = System.nanoTime()
-        return mainHandler.postAtFrontOfQueue {
+        return mainHandler.post {
             schedule((System.nanoTime() - submittedNanos) / 1_000L)
         }
     }
@@ -437,11 +431,19 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
 
     private fun success(result: MethodChannel.Result, value: Any?) {
-        result.success(value)
+        if (Looper.myLooper() == mainHandler.looper) {
+            result.success(value)
+        } else {
+            mainHandler.post { result.success(value) }
+        }
     }
 
     private fun error(result: MethodChannel.Result, code: String, message: String) {
-        result.error(code, message, null)
+        if (Looper.myLooper() == mainHandler.looper) {
+            result.error(code, message, null)
+        } else {
+            mainHandler.post { result.error(code, message, null) }
+        }
     }
 
     private data class ScheduleResult(
@@ -658,7 +660,7 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     private companion object {
         const val CHANNEL_NAME = "dev.zic/texture"
-        const val BLIT_LANE_COUNT = 2
+        const val BLIT_LANE_COUNT = 1
         const val BLIT_OK = 0
         const val BLIT_OK_RECONFIGURED = 6
 

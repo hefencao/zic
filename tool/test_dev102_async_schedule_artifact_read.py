@@ -40,12 +40,17 @@ kotlin = read(
 )
 for token in (
     "complete: (ScheduleResult) -> Unit",
-    "postAtFrontOfQueue",
+    "return mainHandler.post {",
     "output.present(frameAddress, frameBytes) { presentation ->",
 ):
     if token not in kotlin:
         raise SystemExit(f"FAIL: async texture schedule contract missing: {token}")
-for forbidden in ("CountDownLatch", "completed.await()"):
+for forbidden in (
+    "CountDownLatch",
+    "completed.await()",
+    "makeBackgroundTaskQueue",
+    "postAtFrontOfQueue",
+):
     if forbidden in kotlin:
         raise SystemExit(f"FAIL: blit lane still blocks platform schedule: {forbidden}")
 

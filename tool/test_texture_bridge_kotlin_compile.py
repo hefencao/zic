@@ -82,12 +82,14 @@ class StandardMethodCodec private constructor() {
 """,
     "io/flutter/plugin/common/MethodChannel.kt": """
 package io.flutter.plugin.common
-class MethodChannel(
-    messenger: BinaryMessenger,
-    name: String,
-    codec: StandardMethodCodec,
-    taskQueue: BinaryMessenger.TaskQueue,
-) {
+class MethodChannel {
+    constructor(messenger: BinaryMessenger, name: String)
+    constructor(
+        messenger: BinaryMessenger,
+        name: String,
+        codec: StandardMethodCodec,
+        taskQueue: BinaryMessenger.TaskQueue,
+    )
     interface Result {
         fun success(value: Any?)
         fun error(code: String, message: String?, details: Any?)

@@ -254,7 +254,7 @@ void main() {
     );
 
     expect(first, <int>[promotedArtifactReadChunkBytes, 17]);
-    expect(second, first);
+    expect(second, <int>[bytes.lengthInBytes]);
     expect(cache.readAllCalls, 1);
     expect(cache.streamOpens, 1);
     expect(manager.memoryEntryCount, 1);
@@ -274,7 +274,7 @@ void main() {
     );
     expect(reads[0].payload['readSchedulerLeaseThroughStream'], isTrue);
     expect(reads[1].payload['artifactReadMode'], 'memory-hit');
-    expect(reads[1].payload['deliveryMode'], 'startup-segmented');
+    expect(reads[1].payload['deliveryMode'], 'memory-direct');
     expect(reads[1].payload['readSchedulerAcquires'], 1);
   });
 
@@ -454,13 +454,28 @@ void main() {
     expect(fallback.opens, 1);
     expect(manager.lookupMemory(id), isNotNull);
 
+    final trace = MemoryTraceSink();
     final second = ArtifactCacheTransport(
       cache: manager,
       identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
       fallbackFor: (_) => fallback,
+      readScheduler: ArtifactCacheReadScheduler(),
+      demandPriority: (_) => 1000,
+      clock: _Clock(),
+      traceSink: trace,
     );
-    expect((await _collect(await second.open(uri))).length, 4096);
+    final restored = await second.open(uri);
+    expect(restored.disposition, ByteResponseDisposition.durableImmutable);
+    expect(
+      await restored.bytes.map((chunk) => chunk.length).toList(),
+      <int>[4096],
+    );
     expect(fallback.opens, 1);
+    final source = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.artifactSource,
+    );
+    expect(source.payload['source'], 'artifact-byte-cache');
+    expect(source.payload['deliveryMode'], 'memory-direct');
   });
 
   test('ambiguous URI identities bypass the artifact cache', () async {

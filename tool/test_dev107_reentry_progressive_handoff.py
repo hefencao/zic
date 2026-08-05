@@ -15,7 +15,7 @@ for token in ('await cache.containsBackend(', "action: 'skip-existing'", 'final 
     require(handoff, token, 'promoted artifact handoff')
 if handoff.index('await cache.containsBackend(') > handoff.index('final builder = BytesBuilder(copy: false);'):
     raise SystemExit('central presence lookup must precede session artifact materialization')
-for token in ('foregroundStartupSegmented: true', "'deliveryMode': 'startup-segmented'", 'await Future<void>.delayed(Duration.zero);'):
+for token in ('foregroundStartupSegmented: !read.memoryHit', 'directMemoryBody: read.memoryHit', "'startup-segmented'", 'await Future<void>.delayed(Duration.zero);'):
     require(transport, token, 'progressive artifact transport')
 for token in ('_artifactCacheHandoff?.detach();', "'coordinatorDisposeMicros': coordinatorDisposeMicros"):
     require(pipeline, token, 'Reader session disposal')

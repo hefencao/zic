@@ -37,17 +37,22 @@ require(
 )
 require(
     "packages/texture_bridge/android/src/main/kotlin/dev/zic/texture/TextureBridgePlugin.kt",
-    "makeBackgroundTaskQueue()",
-    "StandardMethodCodec.INSTANCE",
-    "BLIT_LANE_COUNT = 2",
+    "channel = MethodChannel(",
+    "BLIT_LANE_COUNT = 1",
     "blitLanes.forEach { lane -> lane.execute {} }",
-    "postAtFrontOfQueue",
+    "return mainHandler.post {",
     "val lane: ExecutorService",
 )
+
 kotlin = read(
     "packages/texture_bridge/android/src/main/kotlin/dev/zic/texture/TextureBridgePlugin.kt"
 )
-for forbidden in ("CountDownLatch", "completed.await()", "private var blitLane:"):
+for forbidden in (
+    "CountDownLatch",
+    "completed.await()",
+    "makeBackgroundTaskQueue",
+    "postAtFrontOfQueue",
+):
     if forbidden in kotlin:
         raise SystemExit(f"FAIL: obsolete global blocking texture lane remains: {forbidden}")
 

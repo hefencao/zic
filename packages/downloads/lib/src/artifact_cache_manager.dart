@@ -10,8 +10,8 @@ import 'artifact_cache_store.dart';
 final class ArtifactCacheManager {
   ArtifactCacheManager({
     required this.backend,
-    this.memoryMaxEntries = 4,
-    this.memoryMaxBytes = 96 * 1024 * 1024,
+    this.memoryMaxEntries = 10,
+    this.memoryMaxBytes = 256 * 1024 * 1024,
   })  : assert(memoryMaxEntries > 0),
         assert(memoryMaxBytes > 0);
 

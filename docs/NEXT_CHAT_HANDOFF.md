@@ -1,6 +1,6 @@
-# dev.132 后续交接
+# dev.133 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.132_vibevenera-holder-playback-local-hot-bytes.zip`。不得使用旧工作树或重放更早 patch。
+唯一后续基线：`zic_v0.31.0-dev.133_vibevenera-direct-byte-single-blit-reentry.zip`。不得使用旧工作树或重放更早 patch。
 
 ## 必读
 
@@ -13,14 +13,16 @@
 7. `docs/adr/0112-native-decode-priority-migration.md`
 8. `docs/adr/0113-fresh-reader-texture-performance-core-deadline-wake.md`
 9. `docs/adr/0115-vibevenera-holder-playback-local-hot-bytes.md`
+10. `docs/adr/0116-vibevenera-direct-byte-and-single-blit-reentry.md`
 
 ## 当前实现
 
 - dev.126–dev.131 startup-buffer gate 已由 ADR 0115 取代。播放消费 holder 已有帧；缺帧时保留当前 output，producer 新帧到达后唤醒 upload。
 - NativeCursor 首帧 batch=1，current 后续 batch<=2；两个 native worker 不变。
-- 完整本地不可变页面字节由 composition-owned `ArtifactCacheManager` 保留，跨 Reader session 按 DownloadId 命中；Reader/App 无私有字节缓存。
+- 完整本地不可变页面字节由 composition-owned `ArtifactCacheManager` 以 10 项/256 MiB 保留；current memory hit 单块进入 native ingress，Reader/App 无私有字节缓存。
 - 下载窗口 7/3、staged 水位 7/5/3/2、静态一帧满足、partial source-growth、fresh texture 生命周期保持。
-- Android native identity 仍为 `zic-media-core-dev129-abi6-lib00121200`。
+- Android texture bridge 已对齐 VibeVenera 的默认 platform channel、单 blit lane 和普通主线程 post。
+- Android native identity 为 `zic-media-core-dev133-abi6-lib00121300`；worker affinity 使用实际 TID 与当前 cpuset 交集。
 - 正式 ZIP 不含 `.zic-workspace.json`。Patch 命令直接使用：
 
 ```bash
@@ -29,7 +31,7 @@ git apply --index "$(python3 tool/workspace_config.py patch_dir --absolute)/<pat
 
 ## 下一轮设备验证
 
-- 后台重入同页应出现 `artifact-byte-cache`，而不是重新读取完整 `content://` origin。
+- 后台重入同页应出现 `artifact-byte-cache`、`deliveryMode=memory-direct`、`chunks=1`，而不是重新读取完整 `content://` origin 或分成 18 段回放。
 - 新运行时不应产生新的 `playbackBuffering` 或 `decode-startup-deferred`。
-- 检查播放饥饿时当前 texture 保持、producer 唤醒后恢复，且无几帧播放后长停顿。
+- 检查单 blit lane 后 `platformScheduleQueueMicros`/`channelDispatchMicros` 长尾，确认无几帧播放后 100–1500 ms 长停顿。
 - 检查 current 双帧批量 decode 后 worker dispatch/round-trip 长尾是否下降。

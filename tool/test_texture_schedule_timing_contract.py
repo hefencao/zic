@@ -23,7 +23,7 @@ require(
     "scheduleQueueMicros",
     "scheduleCallMicros",
     "complete: (ScheduleResult) -> Unit",
-    "postAtFrontOfQueue",
+    "return mainHandler.post {",
 )
 require(
     "packages/texture_bridge/lib/src/android_texture_presenter.dart",
@@ -64,7 +64,15 @@ for marker in (
 kotlin = read(
     "packages/texture_bridge/android/src/main/kotlin/dev/zic/texture/TextureBridgePlugin.kt"
 )
-if "CountDownLatch" in kotlin or "completed.await()" in kotlin:
+if any(
+    token in kotlin
+    for token in (
+        "CountDownLatch",
+        "completed.await()",
+        "makeBackgroundTaskQueue",
+        "postAtFrontOfQueue",
+    )
+):
     raise SystemExit("FAIL: texture blit lane must not block on platform schedule")
 
 print("texture schedule timing and quarantine contract: OK")

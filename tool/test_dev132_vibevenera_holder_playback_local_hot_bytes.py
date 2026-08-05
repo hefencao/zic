@@ -48,7 +48,7 @@ for required in (
 for required in (
     "ByteResponse _retainCompletedOrigin",
     "_isImmutableLocalSourceClass(sourceClass)",
-    "_cache.remember(id: id, bytes: retained, durable: false)",
+    "_cache.remember(id: id, bytes: retained, durable: true)",
 ):
     if required not in transport:
         raise SystemExit(f"local hot-byte retention missing: {required}")

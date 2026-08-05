@@ -6,6 +6,15 @@ import 'package:downloads/downloads.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('defaults retain a VibeVenera-sized ten-page byte window', () {
+    final manager = ArtifactCacheManager(
+      backend: _Backend(<DownloadId, Uint8List>{}),
+    );
+
+    expect(manager.memoryMaxEntries, 10);
+    expect(manager.memoryMaxBytes, 256 * 1024 * 1024);
+  });
+
   test('routes memory before backend and validates exact length', () async {
     final id = _id('memory');
     final backend = _Backend(<DownloadId, Uint8List>{

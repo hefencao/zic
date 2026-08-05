@@ -34,11 +34,26 @@ mod imp {
             }
             self.words[cpu / WORD_BITS] |= 1usize << (cpu % WORD_BITS);
         }
+
+        fn intersect(&mut self, other: &Self) {
+            for (word, allowed) in self.words.iter_mut().zip(other.words) {
+                *word &= allowed;
+            }
+        }
+
+        fn is_empty(&self) -> bool {
+            self.words.iter().all(|word| *word == 0)
+        }
     }
 
     extern "C" {
+        fn gettid() -> i32;
+        fn sched_getaffinity(pid: i32, cpusetsize: usize, mask: *mut CpuSet) -> i32;
         fn sched_setaffinity(pid: i32, cpusetsize: usize, mask: *const CpuSet) -> i32;
+        fn setpriority(which: i32, who: u32, priority: i32) -> i32;
     }
+
+    const PRIO_PROCESS: i32 = 0;
 
     static PERFORMANCE_MASK: OnceLock<Option<CpuSet>> = OnceLock::new();
 
@@ -85,12 +100,38 @@ mod imp {
 
     /// 1=applied, 2=no heterogeneous high-performance mask, 3=OS rejected.
     pub fn prepare_current_thread() -> u32 {
-        let Some(mask) = PERFORMANCE_MASK.get_or_init(compute_mask).as_ref() else {
+        let Some(performance_mask) = PERFORMANCE_MASK.get_or_init(compute_mask).as_ref() else {
             return 2;
         };
-        // Linux pid=0 means the calling thread for sched_setaffinity.
-        let result = unsafe { sched_setaffinity(0, size_of::<CpuSet>(), mask) };
-        if result == 0 { 1 } else { 3 }
+        // Match VibeVenera's native worker placement: target the actual TID,
+        // then intersect with Android's current cpuset before applying the
+        // high-performance mask. The intersection avoids EINVAL when EAS or
+        // a vendor cpuset temporarily excludes an otherwise present core.
+        let tid = unsafe { gettid() };
+        let mut mask = *performance_mask;
+        let mut allowed = CpuSet::empty();
+        let allowed_result = unsafe {
+            sched_getaffinity(tid, size_of::<CpuSet>(), &mut allowed)
+        };
+        if allowed_result == 0 {
+            mask.intersect(&allowed);
+            if mask.is_empty() {
+                return 2;
+            }
+        }
+        let result = unsafe {
+            sched_setaffinity(tid, size_of::<CpuSet>(), &mask)
+        };
+        if result != 0 {
+            return 3;
+        }
+        // VibeVenera also requests foreground decode priority. Android may
+        // reject negative nice values for ordinary apps, so this remains
+        // best-effort and does not change the successful affinity result.
+        unsafe {
+            let _ = setpriority(PRIO_PROCESS, tid as u32, -10);
+        }
+        1
     }
 }
 

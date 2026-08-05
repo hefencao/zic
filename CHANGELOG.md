@@ -1,3 +1,12 @@
+## 0.31.0-dev.133：迁移 VibeVenera 后台重入直接字节与单 Blit 路径
+
+- 根据 `zic-debug-trace-2026-08-05T02-01-59.jsonl` 确认 dev.132 热缓存仅 4 项/96 MiB，会被 7/3 邻页淘汰；即使命中 current memory cache，18 MiB 正文仍按 1 MiB 分段回放约 971 ms。
+- `ArtifactCacheManager` 默认改为 10 项/256 MiB；完整本地不可变 origin 作为进程内 durable immutable 保留，current memory hit 以单个 body 直接进入既有 DownloadSession/native ingress。
+- Android texture bridge 对齐 VibeVenera：默认 platform MethodChannel、一个串行 blit lane、普通 `mainHandler.post` 后 `scheduleFrame`；移除 background task queue、双 lane 与 `postAtFrontOfQueue`。
+- decode worker affinity 改用实际 TID，并与 Android 当前 cpuset 求交后设置高性能核心 mask；成功后 best-effort 请求 VibeVenera 同款线程优先级。
+- Android native identity 更新为 `zic-media-core-dev133-abi6-lib00121300`；下载 7/3、解码水位 7/5/3/2、两个 worker、fresh used-texture 生命周期保持。
+- 新增 owner tests、ADR 0116、dev.133 静态门禁；正式 ZIP 继续排除 `.zic-workspace.json`，patch 不触碰本地 `patch_dir`。
+
 ## 0.31.0-dev.132：迁移 VibeVenera Holder 播放与本地热字节路径
 
 - 根据 `zic-debug-trace-2026-08-05T01-21-36.jsonl` 撤销 dev.126–dev.131 的 startup-buffer gate；播放只消费 holder 中已有帧，缺帧时保留当前 output 并等待 producer 唤醒，不再阻塞其他页面 decode refill。

@@ -228,7 +228,7 @@ final class ArtifactCacheTransport implements Transport {
             // Composition-owned hot bytes survive Reader-session recreation.
             // This mirrors VibeVenera's ByteCache without introducing a
             // Reader/App private cache or changing durable artifact ownership.
-            _cache.remember(id: id, bytes: retained, durable: false);
+            _cache.remember(id: id, bytes: retained, durable: true);
           }
         }
       }
@@ -305,7 +305,8 @@ final class ArtifactCacheTransport implements Transport {
       bytes: bytes,
       range: range,
       validators: validators,
-      foregroundStartupSegmented: true,
+      foregroundStartupSegmented: !read.memoryHit,
+      directMemoryBody: read.memoryHit,
       durable: read.durable,
     );
     if (response == null) {
@@ -336,9 +337,10 @@ final class ArtifactCacheTransport implements Transport {
       'readSchedulerLeaseThroughStream': lease != null,
       'readSchedulerPressureHolds':
           scheduler?.foregroundPressureHoldCount ?? 0,
-      'deliveryMode': 'startup-segmented',
-      'startupChunkBytes': _foregroundStartupChunkBytes,
-      'continuationChunkBytes': _foregroundContinuationChunkBytes,
+      'deliveryMode': read.memoryHit ? 'memory-direct' : 'startup-segmented',
+      if (!read.memoryHit) 'startupChunkBytes': _foregroundStartupChunkBytes,
+      if (!read.memoryHit)
+        'continuationChunkBytes': _foregroundContinuationChunkBytes,
       'hotCacheEntries': _cache.memoryEntryCount,
       'hotCacheBytes': _cache.memoryBytes,
     };
@@ -763,6 +765,7 @@ ByteResponse? _cachedResponse({
   required ByteRange? range,
   required Validators? validators,
   bool foregroundStartupSegmented = false,
+  bool directMemoryBody = false,
   bool durable = true,
 }) {
   final currentValidators = Validators(
@@ -784,12 +787,14 @@ ByteResponse? _cachedResponse({
       : (requestedEnd + 1).clamp(start, bytes.lengthInBytes).toInt();
   final body = Uint8List.sublistView(bytes, start, endExclusive);
   return ByteResponse(
-    bytes: foregroundStartupSegmented
-        ? _startupSegmentedBytes(body)
-        : _chunkedBytes(
-            body,
-            chunkSize: promotedArtifactReadChunkBytes,
-          ),
+    bytes: directMemoryBody
+        ? Stream<List<int>>.value(body)
+        : foregroundStartupSegmented
+            ? _startupSegmentedBytes(body)
+            : _chunkedBytes(
+                body,
+                chunkSize: promotedArtifactReadChunkBytes,
+              ),
     statusCode: canServeRange ? 206 : 200,
     rangeStart: start,
     totalLength: bytes.lengthInBytes,

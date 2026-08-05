@@ -2502,8 +2502,8 @@ def check_native_abi() -> None:
             fail(f'ABI symbol is not represented in Rust/header/Dart: {symbol}')
     if 'pub const ABI_VERSION: u32 = 6;' not in rust:
         fail('native ABI version must be 6 for reserve/commit ingress')
-    if 'pub const LIB_VERSION: u32 = 0x0012_1200;' not in rust:
-        fail('native library version must identify the resident local-WebP playback release')
+    if 'pub const LIB_VERSION: u32 = 0x0012_1300;' not in rust:
+        fail('native library version must identify the dev.133 reentry placement release')
     webp_path = ROOT / 'native/media_core/src/webp.rs'
     if not webp_path.is_file():
         fail('native WebP decoder module is missing')
