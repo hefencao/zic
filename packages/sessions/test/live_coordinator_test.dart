@@ -544,6 +544,254 @@ void main() {
     await downloads.dispose();
   });
 
+
+  test('startup buffering defers but does not consume another source revision',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'live_startup_deferred_source_test_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final currentFile = File('${temp.path}/current.webp');
+    await currentFile.writeAsBytes('RIFF....WEBPcurrent'.codeUnits);
+    final currentId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'current-deferred',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: currentFile.uri,
+    );
+    final nextId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'next-deferred',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/next-deferred.webp'),
+    );
+    DecodeId decodeId(DownloadId id) => DecodeId(
+          download: id,
+          physicalWidth: 8,
+          physicalHeight: 8,
+          pixelFormat: PixelFormat.rgba8888,
+          renderer: RendererKind.flutterImage,
+        );
+    final currentDecode = decodeId(currentId);
+    final nextDecode = decodeId(nextId);
+    final clock = _Clock();
+    final trace = MemoryTraceSink();
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+      sources: SourcePool(
+        factory: _TestSourceFactory(),
+        budgetFor: (_) => 1024,
+      ),
+      traceSink: trace,
+    );
+    final decodes = DecodeRegistry(
+      downloads: downloads,
+      cursors: _StartupAnimationCursorFactory(),
+      clock: clock,
+      traceSink: trace,
+    );
+    final uploads = UploadRegistry(
+      decodes: decodes,
+      uploader: _TestUploader(),
+      clock: clock,
+      traceSink: trace,
+    );
+    final nextTransport = _ControlledTransport();
+    final coordinator = LiveCoordinator(
+      registry: downloads,
+      transportFor: (uri) => uri == nextId.canonicalUri
+          ? nextTransport
+          : const FileTransport(),
+      clock: clock,
+      traceSink: trace,
+      decodes: decodes,
+      uploads: uploads,
+      net: NetLane(maxActive: 2),
+      decode: DecodeLane(maxActive: 2),
+      upload: UploadLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await coordinator.dispose();
+      uploads.dispose();
+      decodes.dispose();
+      await downloads.dispose();
+    });
+
+    final initial = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{
+        currentId: const DownloadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'startup-deferred',
+          expirationRevision: 3,
+        ),
+      },
+      decodes: <DecodeId, DecodeDemand>{
+        currentDecode: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 7,
+          reason: 'startup-deferred',
+          expirationRevision: 3,
+        ),
+      },
+      uploads: <DecodeId, UploadDemand>{
+        currentDecode: const UploadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'startup-deferred',
+          expirationRevision: 3,
+        ),
+      },
+      keep: <ResourceId>{
+        ResourceId.download(currentId),
+        ResourceId.decode(currentDecode),
+      },
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: initial,
+        diff: DemandDiff.between(DemandPlan.empty(), initial),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    await coordinator.idle();
+    final currentUpload = uploads.find(currentDecode);
+    final claim = currentUpload?.claimPresent();
+    expect(claim, isNotNull);
+    await currentUpload!.present(claim!);
+    claim.release();
+    expect(currentUpload.startupBuffering, isTrue);
+
+    final withNext = DemandPlan(
+      revision: 2,
+      downloads: <DownloadId, DownloadDemand>{
+        ...initial.downloads,
+        nextId: const DownloadDemand(
+          role: PageRole.far,
+          priority: 760,
+          reason: 'startup-deferred',
+          expirationRevision: 4,
+        ),
+      },
+      decodes: <DecodeId, DecodeDemand>{
+        ...initial.decodes,
+        nextDecode: const DecodeDemand(
+          role: PageRole.far,
+          priority: 760,
+          targetWatermark: 1,
+          reason: 'startup-deferred',
+          expirationRevision: 4,
+        ),
+      },
+      uploads: initial.uploads,
+      keep: <ResourceId>{
+        ...initial.keep,
+        ResourceId.download(nextId),
+        ResourceId.decode(nextDecode),
+      },
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: withNext,
+        diff: DemandDiff.between(initial, withNext),
+        window: RoleWindow(
+          const <int, PageRole>{0: PageRole.current, 1: PageRole.far},
+        ),
+      ),
+    );
+    nextTransport.add('RIFF....WEBPnext'.codeUnits);
+    await nextTransport.close();
+    await coordinator.idle();
+
+    expect(decodes.find(nextDecode)?.snapshot.depth ?? 0, 0);
+    expect(
+      trace.events.where(
+        (event) =>
+            event.kind == TraceEventKind.retryScheduled &&
+            event.payload['stage'] == 'decode-startup-deferred',
+      ),
+      isNotEmpty,
+    );
+
+    coordinator.refreshDecodeScheduling('reader', only: currentDecode);
+    await coordinator.idle();
+    expect(currentUpload.startupBuffering, isFalse);
+
+    final promoted = DemandPlan(
+      revision: 3,
+      downloads: <DownloadId, DownloadDemand>{
+        currentId: const DownloadDemand(
+          role: PageRole.previous,
+          priority: 680,
+          reason: 'startup-deferred',
+          expirationRevision: 5,
+        ),
+        nextId: const DownloadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'startup-deferred',
+          expirationRevision: 5,
+        ),
+      },
+      decodes: <DecodeId, DecodeDemand>{
+        currentDecode: const DecodeDemand(
+          role: PageRole.previous,
+          priority: 680,
+          targetWatermark: 2,
+          reason: 'startup-deferred',
+          expirationRevision: 5,
+        ),
+        nextDecode: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 7,
+          reason: 'startup-deferred',
+          expirationRevision: 5,
+        ),
+      },
+      uploads: <DecodeId, UploadDemand>{
+        nextDecode: const UploadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'startup-deferred',
+          expirationRevision: 5,
+        ),
+      },
+      keep: <ResourceId>{
+        ResourceId.download(currentId),
+        ResourceId.download(nextId),
+        ResourceId.decode(currentDecode),
+        ResourceId.decode(nextDecode),
+      },
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: promoted,
+        diff: DemandDiff.between(withNext, promoted),
+        window: RoleWindow(
+          const <int, PageRole>{0: PageRole.previous, 1: PageRole.current},
+        ),
+      ),
+    );
+    await coordinator.idle();
+
+    expect(decodes.find(nextDecode)?.snapshot.depth, greaterThan(0));
+  });
+
   test('source-ready prefetch refill is directed to its own decode id',
       () async {
     final temp = await Directory.systemTemp.createTemp(

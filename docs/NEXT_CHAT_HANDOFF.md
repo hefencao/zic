@@ -1,6 +1,6 @@
-# dev.130 后续交接
+# dev.131 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.130_retained-output-projector-compile-closure.zip`。不得使用旧工作树或重放更早 patch。
+唯一后续基线：`zic_v0.31.0-dev.131_source-wake-retention-playback-rebuffer-closure.zip`。不得使用旧工作树或重放更早 patch。
 
 ## 必读
 
@@ -12,25 +12,25 @@
 6. `docs/IMPLEMENTATION_STATUS.md`
 7. `docs/adr/0112-native-decode-priority-migration.md`
 8. `docs/adr/0113-fresh-reader-texture-performance-core-deadline-wake.md`
-9. `docs/audits/dev129-reader-background-reentry-vibe-lifecycle-audit.md`
-10. `docs/audits/dev130-retained-output-projector-compile-closure-audit.md`
-11. `docs/audits/dev130-validation-results.md`
+9. `docs/adr/0114-source-wake-retention-and-single-startup-buffer.md`
+10. `docs/audits/dev131-load-starvation-playback-rebuffer-audit.md`
+11. `docs/audits/dev131-validation-results.md`
 
-## 当前编译闭包
+## 当前状态
 
-- `_RetainedAndroidTextureOutputFrame` 已从所有生产源码中完全移除。
-- Android projector 只接受 `_AndroidTextureOutputFrame`。
-- 不得通过重新定义空壳类型恢复跨 Reader retained output。
-- dev.129 fresh texture、deadline wake 与性能核心 affinity 保持。
+- startup buffering gate 暂缓其他 DecodeId 时，source revision 保持 pending，不得标记为已消费。
+- 同一 output 生命周期的 startup buffer 完成状态跨临时 transition/previous 保留；返回 current 不得中途重新缓冲。
+- native active worker 已是 current 时 promotion 必须返回 none。
+- fresh texture、performance-core affinity、partial source-growth、下载 handoff 和 7/5/3/2 水位保持。
 
 ## Patch
 
 ```bash
 git apply --check --index \
-  "$(python3 tool/workspace_config.py patch_dir --absolute)/zic_v0.31.0-dev.129_to_dev.130_retained-output-projector-compile-closure.patch"
+  "$(python3 tool/workspace_config.py patch_dir --absolute)/zic_v0.31.0-dev.130_to_dev.131_source-wake-retention-playback-rebuffer-closure.patch"
 
 git apply --index \
-  "$(python3 tool/workspace_config.py patch_dir --absolute)/zic_v0.31.0-dev.129_to_dev.130_retained-output-projector-compile-closure.patch"
+  "$(python3 tool/workspace_config.py patch_dir --absolute)/zic_v0.31.0-dev.130_to_dev.131_source-wake-retention-playback-rebuffer-closure.patch"
 ```
 
 正式 ZIP 不包含 `.zic-workspace.json`，patch 不触碰本地配置。

@@ -204,8 +204,11 @@ final class UploadSession {
     _revision = revision;
     _latestDemandRole = demand.role;
     if (demand.role != PageRole.current) {
+      // Leaving current cancels only an in-progress startup wait. Once the
+      // current output has already completed its startup buffer, a temporary
+      // transition/previous role must not arm the same gate again when the
+      // page becomes current later in the same output lifecycle.
       _startupBuffering = false;
-      _startupBufferSatisfied = false;
       _startupBufferTarget = 0;
     }
     final prepared = _serializePrepare(

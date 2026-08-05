@@ -14,7 +14,7 @@
 
 - 确认 DownloadSession、artifact、partial source、native priority migration 不受 fresh texture 生命周期影响。
 - 确认未封缄 failure 仍进入 source-growth wait，sealed corruption 仍进入有界 recovery。
-- 检查 `playbackBufferingOutstandingCount=0`。
+- 检查 `playbackBufferingOutstandingCount=0`、`playbackRebufferCount=0`；被 startup gate 暂缓的页面应出现 `decodeStartupDeferredCount`，之后升为 current 必须完成首帧。
 
 ## P1：纵向 build/layout
 

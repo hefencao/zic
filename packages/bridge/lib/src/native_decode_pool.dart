@@ -113,6 +113,9 @@ final class _NativeDecodeWorkerPool {
           worker.epoch != epoch) {
         continue;
       }
+      if (worker.executionClass == DecodeExecutionClass.current) {
+        return DecodePriorityPromotion.none;
+      }
       worker.executionClass = DecodeExecutionClass.current;
       return DecodePriorityPromotion.active;
     }

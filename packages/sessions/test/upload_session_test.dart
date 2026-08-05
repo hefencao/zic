@@ -423,6 +423,122 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+
+  test('completed startup buffer survives temporary non-current role',
+      () async {
+    final temp =
+        await Directory.systemTemp.createTemp('upload_role_rebuffer_test_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+      ingress: ingress,
+    );
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      cursors: _CursorFactory(
+        frameLimit: 20,
+        animation: const AnimationInfo(
+          frameCount: 20,
+          loopCount: 0,
+          complete: true,
+        ),
+      ),
+      clock: _Clock(),
+    );
+    const decodeDemand = DecodeDemand(
+      role: PageRole.current,
+      priority: 1000,
+      targetWatermark: 7,
+      reason: 'role-rebuffer',
+      expirationRevision: 10,
+    );
+    await decode.fill(
+      demand: decodeDemand,
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    final clock = _Clock();
+    final trace = MemoryTraceSink();
+    final upload = UploadSession(
+      id: decode.id,
+      decode: decode,
+      uploader: _Uploader(),
+      clock: clock,
+      traceSink: trace,
+    );
+    const current = UploadDemand(
+      role: PageRole.current,
+      priority: 1000,
+      reason: 'role-rebuffer',
+      expirationRevision: 10,
+    );
+    await upload.prepare(
+      demand: current,
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    final claim = upload.claimPresent();
+    expect(claim, isNotNull);
+    await upload.present(claim!);
+    claim.release();
+    expect(upload.startupBuffering, isTrue);
+
+    await decode.fill(
+      demand: decodeDemand,
+      revision: 2,
+      cancel: CancelToken(),
+    );
+    await upload.prepare(
+      demand: current,
+      revision: 2,
+      cancel: CancelToken(),
+    );
+    expect(upload.startupBuffering, isFalse);
+    expect(upload.playbackRunning, isTrue);
+
+    const transition = UploadDemand(
+      role: PageRole.transition,
+      priority: 900,
+      reason: 'role-rebuffer',
+      expirationRevision: 10,
+    );
+    await upload.prepare(
+      demand: transition,
+      revision: 3,
+      cancel: CancelToken(),
+    );
+    await upload.prepare(
+      demand: current,
+      revision: 4,
+      cancel: CancelToken(),
+    );
+
+    expect(upload.startupBuffering, isFalse);
+    expect(
+      trace.events
+          .where((event) =>
+              event.kind == TraceEventKind.playbackBuffering &&
+              event.payload['state'] == 'waiting'),
+      hasLength(1),
+    );
+
+    upload.dispose();
+    decode.dispose();
+    await download.dispose();
+  });
+
   test('animated output buffers one successor without early replacement',
       () async {
     final temp = await Directory.systemTemp.createTemp('upload_buffer_test_');

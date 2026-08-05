@@ -1,3 +1,11 @@
+## 0.31.0-dev.131：保留被暂缓 Source Wake 并禁止中途再缓冲
+
+- 修复 startup buffering gate 暂缓其他页面 decode 时错误消费其 source revision；被暂缓页面保持 pending wake，之后升为 current 可立即 decode。
+- `UploadSession` 在同一 output 生命周期内保留已完成的 startup buffer 状态；临时 transition/previous 后返回 current 不再于播放中途重新缓冲。
+- native active decode promotion 改为幂等；已经是 current 的 worker 不再重复报告 active promotion。
+- Trace analyzer 新增 `decodeStartupDeferredCount` 与 `playbackRebufferCount`，可直接识别被启动缓冲暂缓的 source wake 和播放后的再次缓冲。
+- 新增 owner tests 与 dev.131 静态门禁；下载窗口、7/5/3/2 水位、fresh texture、partial source-growth 和 native ABI 不变。
+
 ## 0.31.0-dev.130：Retained Output 删除后的编译闭包
 
 - 修复 dev.129 删除 `_RetainedAndroidTextureOutputFrame` 定义后，Android output projector 仍保留该类型判断导致的 Dart 编译失败。

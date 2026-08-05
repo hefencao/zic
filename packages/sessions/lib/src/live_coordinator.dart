@@ -749,8 +749,34 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           : _nextDecodeRefill(only: pendingSourceWake ? id : null);
       if (registry != null) {
         if (refill == null) {
+          // A source-ready page can be temporarily ineligible while another
+          // current page is establishing its startup buffer. The revision has
+          // not been decoded in that case and must remain pending so a later
+          // role change/current promotion can wake the same DecodeId.
+          final startupCurrent = _startupBufferingCurrent();
+          final deferredByStartup =
+              startupCurrent != null && startupCurrent != id;
           if (pendingSourceWake && sourceRevision >= 0) {
-            _decodeSourceRevisions[id] = sourceRevision;
+            if (deferredByStartup) {
+              traceSink.record(
+                traceEvent(
+                  clock: clock,
+                  sessionId: sessionId,
+                  kind: TraceEventKind.retryScheduled,
+                  identityHash: id.key,
+                  revision: demandRevision,
+                  payload: <String, Object?>{
+                    'stage': 'decode-startup-deferred',
+                    'sourceRevision': sourceRevision,
+                    'consumedSourceRevision': observedSourceRevision,
+                    'startupCurrent': startupCurrent.key,
+                    'role': current.role.name,
+                  },
+                ),
+              );
+            } else {
+              _decodeSourceRevisions[id] = sourceRevision;
+            }
           }
           return;
         }

@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.130`
-**App build：** `0.31.0+130`
+**源码版本：** `0.31.0-dev.131`
+**App build：** `0.31.0+131`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -17,15 +17,17 @@
 - playback 由最近 deadline 的 one-shot timer 唤醒，不再使用 4 ms 周期轮询。
 - 两个进程常驻 native decode worker 在 Android 启动时 best-effort 绑定高性能核心；结果通过 `workerPlacementStatus` 投影到 Trace。
 - 正式交付不包含 `.zic-workspace.json`，patch 不触碰本地 patch_dir。
-- Android native build identity：`zic-media-core-dev129-abi6-lib00121200`（dev.130 未修改 native ABI）。
+- Android native build identity：`zic-media-core-dev129-abi6-lib00121200`（dev.131 未修改 native ABI）。
 - Android output projector 已完成 retained output 删除后的编译闭包，只接受 `_AndroidTextureOutputFrame`。
+- startup buffering 暂缓其他页面时不再消费其 source revision；已完成 startup buffer 的 output 在临时角色变化后不会中途重新缓冲。
+- native active current promotion 为幂等，避免 observation/source wake 重复记录相同 promotion。
 
 ## 验证矩阵
 
 | 检查 | 状态 |
 |---|---|
 | repository/documentation/Dart static gates | Verified-static |
-| dev.75–dev.130 ownership gates | Verified-static |
+| dev.75–dev.131 ownership gates | Verified-static |
 | Android/Mihon/Venera/Reader/Pipeline/UI contracts | Verified-static / toolchain |
 | pinned libwebp host build/smoke | Verified-toolchain |
 | Rust/Cargo Android target compile | Unverified：当前环境无 Cargo/NDK |

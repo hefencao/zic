@@ -180,7 +180,10 @@ def summarize(path: Path) -> dict[str, Any]:
     decode_worker_placements: list[dict[str, Any]] = []
     retained_output_restores: list[dict[str, Any]] = []
     decode_source_growth_waits: list[dict[str, Any]] = []
+    decode_startup_deferred: list[dict[str, Any]] = []
     playback_buffering: list[dict[str, Any]] = []
+    playback_rebuffers: list[dict[str, Any]] = []
+    playback_started: set[tuple[str, str]] = set()
     policy_decisions: list[dict[str, Any]] = []
     media_classifications: list[dict[str, Any]] = []
     first_frame_readies: list[dict[str, Any]] = []
@@ -194,6 +197,15 @@ def summarize(path: Path) -> dict[str, Any]:
         payload = event.get("payload")
         if not isinstance(payload, dict):
             payload = {}
+        event_key = (
+            str(event.get("sessionId", "")),
+            str(event.get("identityHash", "")),
+        )
+        if kind == "framePresented" and payload.get("playbackState") == "running":
+            playback_started.add(event_key)
+        elif kind == "uploadState" and payload.get("state") == "idle":
+            playback_started.discard(event_key)
+
         if kind in {
             "readerSessionCreated",
             "readerSessionDisposeStarted",
@@ -380,18 +392,19 @@ def summarize(path: Path) -> dict[str, Any]:
                 }
             )
         elif kind == "playbackBuffering":
-            playback_buffering.append(
-                {
-                    "t": event.get("t"),
-                    "sessionId": event.get("sessionId"),
-                    "identityHash": event.get("identityHash"),
-                    "state": payload.get("state"),
-                    "frame": _number(payload.get("frame")),
-                    "successorDepth": _number(payload.get("successorDepth")),
-                    "targetDepth": _number(payload.get("targetDepth")),
-                    "durationMicros": _number(payload.get("durationMicros")),
-                }
-            )
+            row = {
+                "t": event.get("t"),
+                "sessionId": event.get("sessionId"),
+                "identityHash": event.get("identityHash"),
+                "state": payload.get("state"),
+                "frame": _number(payload.get("frame")),
+                "successorDepth": _number(payload.get("successorDepth")),
+                "targetDepth": _number(payload.get("targetDepth")),
+                "durationMicros": _number(payload.get("durationMicros")),
+            }
+            playback_buffering.append(row)
+            if row["state"] == "waiting" and event_key in playback_started:
+                playback_rebuffers.append(row)
         elif kind == "frameDecoded":
             placement_status = _number(payload.get("workerPlacementStatus"))
             if placement_status != 0:
@@ -588,6 +601,20 @@ def summarize(path: Path) -> dict[str, Any]:
                     "waitForSourceRevision": bool(
                         payload.get("waitForSourceRevision", False)
                     ),
+                }
+            )
+        elif kind == "retryScheduled" and payload.get("stage") == "decode-startup-deferred":
+            decode_startup_deferred.append(
+                {
+                    "t": event.get("t"),
+                    "sessionId": event.get("sessionId"),
+                    "identityHash": event.get("identityHash"),
+                    "role": payload.get("role"),
+                    "sourceRevision": _number(payload.get("sourceRevision")),
+                    "consumedSourceRevision": _number(
+                        payload.get("consumedSourceRevision")
+                    ),
+                    "startupCurrent": payload.get("startupCurrent"),
                 }
             )
         elif kind == "retryScheduled" and payload.get("stage") == "decode-recovery":
@@ -942,7 +969,11 @@ def summarize(path: Path) -> dict[str, Any]:
         "retainedOutputRestores": retained_output_restores,
         "decodeSourceGrowthWaitCount": len(decode_source_growth_waits),
         "decodeSourceGrowthWaits": decode_source_growth_waits,
+        "decodeStartupDeferredCount": len(decode_startup_deferred),
+        "decodeStartupDeferred": decode_startup_deferred,
         "playbackBufferingCount": len(playback_buffering),
+        "playbackRebufferCount": len(playback_rebuffers),
+        "playbackRebuffers": playback_rebuffers,
         "playbackBufferingReadyCount": sum(
             1 for row in playback_buffering if row["state"] == "ready"
         ),
