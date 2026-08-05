@@ -364,6 +364,46 @@ final class ResourceCacheManager {
     );
   }
 
+  /// Reads one immutable byte entry without invoking a source loader.
+  ///
+  /// Used for one-way migration from a legacy URL-derived key to a stable
+  /// entity/role key. A miss remains a miss; callers must store new network
+  /// bytes only under the stable key so both paths do not compete.
+  Future<Uint8List?> readBytesIfPresent(ResourceCacheKey key) async {
+    _requireOpen();
+    if (key.kind != ResourceCacheKind.imageBytes) {
+      throw ArgumentError.value(
+        key.kind,
+        'key.kind',
+        'only immutable image bytes can be migrated by this path',
+      );
+    }
+    final memory = _read<Uint8List>(key);
+    if (memory != null) {
+      _hits++;
+      return memory;
+    }
+    final persisted = await _readPersistent(key);
+    if (persisted == null) {
+      _persistentMisses++;
+      return null;
+    }
+    _hits++;
+    _persistentHits++;
+    final bytes = persisted.bytes;
+    final policy = _policies[key.kind]!;
+    if (bytes.lengthInBytes <= policy.maxWeight &&
+        bytes.lengthInBytes <= globalMaxWeight) {
+      _storeWithExpiry(
+        key,
+        bytes,
+        bytes.lengthInBytes,
+        persisted.expiresAt,
+      );
+    }
+    return bytes;
+  }
+
   Future<T> getOrLoad<T extends Object>({
     required ResourceCacheKey key,
     required Future<T> Function() loader,

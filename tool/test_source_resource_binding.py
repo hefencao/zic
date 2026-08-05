@@ -51,7 +51,9 @@ def main() -> None:
         "isLegacyVeneraRuntimeLocator",
         "loadArtworkBytes",
         "loadArtworkSource",
-        "_collectArtworkResponse(responseLoaderFor(sourceId, uri))",
+        "ComicResourceCacheIdentity.fromSource(source, comicId)",
+        "_collectArtworkResponse(",
+        "_transports.loaderFor(source, uri)",
     )
     require(
         "apps/app/lib/demo_home.dart",

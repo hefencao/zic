@@ -25,8 +25,11 @@ telemetry = read("packages/telemetry/lib/src/trace.dart")
 analyzer = read("tool/analyze_frame_pipeline_trace.py")
 check = read("tool/check.sh")
 
-if manager.count("await backend.invalidateArtifact(id);") != 2:
-    raise SystemExit("cache manager must call the required backend invalidation primitive")
+if manager.count("await backend.invalidateArtifact(id);") != 1 or \
+        manager.count("await backend.invalidateArtifact(storageId);") != 1:
+    raise SystemExit(
+        "cache manager must invalidate both exact writes and alias-resolved storage"
+    )
 if "ArtifactCacheInvalidationBackend" in manager:
     raise SystemExit("cache manager still contains optional invalidation dispatch")
 if runtime.count("final artifactReadMicros =") != 1:

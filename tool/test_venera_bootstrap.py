@@ -95,6 +95,19 @@ async function checkDirectCoverResource(){
  if(seen.url!=='https://cdn.invalid/cover.jpg'||seen.http_method!=='GET')throw new Error('direct cover request failed '+JSON.stringify(seen));
 }
 
+async function checkStableEntityIds(){
+ const first=__zicComic({id:'https://e-hentai.org/g/1/token/',title:'Old title',subtitle:'A',cover:'https://cdn.invalid/old.jpg',description:'Old'});
+ const second=__zicComic({id:'https://e-hentai.org/g/1/token/',title:'New title',subtitle:'B',cover:'https://cdn.invalid/new.jpg',description:'New'});
+ if(first.comicId!==second.comicId)throw new Error('mutable Venera metadata changed comicId');
+ const payload=__zicUnb64(first.comicId.slice('venera:comic:'.length));
+ if(payload.v!==2||payload.id!=='https://e-hentai.org/g/1/token/'||Object.keys(payload).length!==2)throw new Error('stable comic payload includes mutable fields '+JSON.stringify(payload));
+ const oldChapter=__zicChapterMessage(first.comicId,'ep-1','Old chapter title',9);
+ const newChapter=__zicChapterMessage(first.comicId,'ep-1','New chapter title',1);
+ if(oldChapter.chapterId!==newChapter.chapterId)throw new Error('mutable Venera chapter metadata changed chapterId');
+ const chapterPayload=__zicUnb64(oldChapter.chapterId.slice('venera:chapter:'.length));
+ if(chapterPayload.title!==undefined||chapterPayload.sequence!==undefined)throw new Error('stable chapter payload contains presentation metadata '+JSON.stringify(chapterPayload));
+}
+
 async function checkChapterPageCount(){
  const comicId='venera:comic:'+__zicB64({id:'comic',title:'Comic'});
  const chapter=__zicChapterMessage(comicId,'ep-1','Episode',0);
@@ -341,7 +354,7 @@ async function checkInvokeRequestLifecycle(){
  if(seenRequestId!=='invoke-lifecycle'||completed?.requestId!=='invoke-lifecycle'||finished!=='invoke-lifecycle')throw new Error('invoke lifecycle did not retain the request id '+JSON.stringify({seenRequestId,completed,finished}));
 }
 
-(async()=>{await checkCurrentCategory();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
+(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
 '''
 with tempfile.TemporaryDirectory() as td:
     js=Path(td)/'test.js'; js.write_text(bootstrap+'\n'+test)

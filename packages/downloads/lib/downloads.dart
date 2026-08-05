@@ -1,3 +1,4 @@
+export 'src/artifact_cache_reuse.dart';
 export 'src/artifact_cache_manager.dart';
 export 'src/artifact_cache_read_scheduler.dart';
 export 'src/artifact_cache_store.dart';

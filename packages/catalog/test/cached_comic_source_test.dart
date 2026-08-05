@@ -214,6 +214,34 @@ void main() {
     expect(raw.resourceLoads, 2);
     expect(cache.stats.entries, 0);
   });
+
+
+  test('stable cache-key encoding is delimiter safe', () {
+    final left = encodeStableCacheKey('fixture', <String>['a:b', 'c']);
+    final right = encodeStableCacheKey('fixture', <String>['a', 'b:c']);
+
+    expect(left, isNot(right));
+    expect(left, encodeStableCacheKey('fixture', <String>['a:b', 'c']));
+  });
+
+  test('comic cover cache identity survives locator URL changes', () async {
+    final raw = _CountingSource();
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final source = CachedBrowsableComicSource(source: raw, cache: cache);
+
+    await source.loadImage(
+      Uri.parse('https://cdn.invalid/cover-old.jpg?token=old'),
+      comicId: 'comic',
+    );
+    await source.loadImage(
+      Uri.parse('https://cdn.invalid/cover-new.jpg?token=new'),
+      comicId: 'comic',
+    );
+
+    expect(raw.resourceLoads, 1);
+    expect(cache.stats.forKind(ResourceCacheKind.imageBytes).entries, 1);
+  });
 }
 
 final class _CountingSource implements

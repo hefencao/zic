@@ -1776,14 +1776,17 @@ async function __zicLoadPage(loader,prefixArgs,page,stateKey,requiredCount){
  return {comics:__zicFlatten(state.pages),next:state.next,__zicCursor:true,exhausted:state.exhausted};
 }
 function __zicAbsoluteUrl(value,base){const text=String(value??'').trim();if(!text)return undefined;try{return new URL(text,base||globalThis.__zicSource?.url||'https://zic.runtime.invalid/').toString()}catch(_){return undefined}}
-function __zicComic(item){const rawId=String(item.id??item.comicId??'');const base=/^https?:\/\//i.test(rawId)?rawId:globalThis.__zicSource?.url;const cover=__zicAbsoluteUrl(item.cover,base);return {comicId:'venera:comic:'+__zicB64({id:rawId,title:String(item.title||''),subtitle:String(item.subtitle??item.subTitle??''),cover:String(cover||''),description:String(item.description||'')}),title:String(item.title||'未命名漫画'),authors:[String(item.subtitle??item.subTitle??'')].filter(Boolean),coverUri:cover,description:item.description||undefined,contentRating:'suggestive'}}
+const __zicChapterMeta=new Map();
+function __zicStableComicId(rawId){return 'venera:comic:'+__zicB64({v:2,id:String(rawId??'')})}
+function __zicComicOpaque(comicId){return __zicUnb64(String(comicId).slice('venera:comic:'.length))}
+function __zicComic(item){const rawId=String(item.id??item.comicId??'');const base=/^https?:\/\//i.test(rawId)?rawId:globalThis.__zicSource?.url;const cover=__zicAbsoluteUrl(item.cover,base);return {comicId:__zicStableComicId(rawId),title:String(item.title||'未命名漫画'),authors:[String(item.subtitle??item.subTitle??'')].filter(Boolean),coverUri:cover,description:item.description||undefined,contentRating:'suggestive'}}
 function __zicFlatten(result){
  const isComic=value=>value&&typeof value==='object'&&!Array.isArray(value)&&!(value instanceof Map)&&(value.id!==undefined||value.comicId!==undefined)&&value.title!==undefined;
  const unpack=value=>{if(!value)return[];if(isComic(value))return[value];if(Array.isArray(value))return value.flatMap(unpack);if(value instanceof Map)return Array.from(value.values()).flatMap(unpack);if(typeof value==='object')return Object.values(value).flatMap(unpack);return[]};
  return unpack(result)
 }
 function __zicChapterEntries(raw){const out=[];const visit=(value,fallback)=>{if(value instanceof Map){for(const [k,v] of value.entries())visit(v,k);return}if(Array.isArray(value)){value.forEach((v,i)=>visit(v,String(i)));return}if(value&&typeof value==='object'){if(value.id!==undefined||value.epId!==undefined||value.title!==undefined||value.name!==undefined){out.push([String(value.id??value.epId??fallback),String(value.title??value.name??fallback)]);return}for(const [k,v] of Object.entries(value))visit(v,k);return}out.push([String(fallback),String(value??fallback)])};visit(raw,'0');return out}
-function __zicChapterMessage(comicId,epId,title,index,pageCount=0){const revision=epId==null?'single':String(epId);return {comicId,chapterId:'venera:chapter:'+__zicB64({comicId,comicRawId:__zicUnb64(comicId.slice('venera:comic:'.length)).id,epId:epId==null?null:String(epId),title:String(title),sequence:index}),title:String(title||('第 '+(index+1)+' 话')),sequence:index,pageCount,sourceRevision:revision}}
+function __zicChapterMessage(comicId,epId,title,index,pageCount=0){const opaque=__zicComicOpaque(comicId),comicRawId=String(opaque.id??''),normalizedEpId=epId==null?null:String(epId),revision=normalizedEpId==null?'single':normalizedEpId,chapterId='venera:chapter:'+__zicB64({v:2,comicId,comicRawId,epId:normalizedEpId}),message={comicId,chapterId,title:String(title||('第 '+(index+1)+' 话')),sequence:index,pageCount,sourceRevision:revision};__zicChapterMeta.set(chapterId,{comicId,comicRawId,epId:normalizedEpId,title:message.title,sequence:index});return message}
 function __zicImageKindHint(value){const path=String(value??'').split(/[?#]/,1)[0].toLowerCase();if(path.endsWith('.webp'))return 'webp';if(path.endsWith('.gif'))return 'gif';if(path.endsWith('.png'))return 'png';if(path.endsWith('.jpg')||path.endsWith('.jpeg')||path.endsWith('.jpe'))return 'jpeg';if(path.endsWith('.avif'))return 'avif';return null}
 async function __zicOperation(request){
  const source=globalThis.__zicSource,args=request.arguments||{};
@@ -1799,15 +1802,17 @@ async function __zicOperation(request){
   const maxPage=Number(loaded?.maxPage),hasMore=cursor?all.length>start+items.length||!loaded.exhausted:(Number.isFinite(maxPage)&&maxPage>page)||__zicHasNextToken(__zicNextToken(loaded))||all.length>start+items.length;return {items,offset:args.offset,hasMore};
  }
  if(request.operation==='loadComic'){
-  const opaque=__zicUnb64(args.comicId.slice('venera:comic:'.length));const info=await source.comic.loadInfo(opaque.id);
+  const opaque=__zicComicOpaque(args.comicId);const info=await source.comic.loadInfo(opaque.id);
   const chapters=[];let index=0;for(const [epId,title] of __zicChapterEntries(info.chapters||{}))chapters.push(__zicChapterMessage(args.comicId,epId,title,index++));
   if(chapters.length===0&&typeof source.comic.loadEp==='function'){const maxPage=Number(info.maxPage),pageCount=Number.isFinite(maxPage)&&maxPage>0?Math.floor(maxPage):0;chapters.push(__zicChapterMessage(args.comicId,null,info.chapterTitle||'正文',0,pageCount))}
   const cover=__zicAbsoluteUrl(info.cover||opaque.cover,/^https?:\/\//i.test(String(opaque.id))?String(opaque.id):source.url);return {comic:{comicId:args.comicId,title:String(info.title||opaque.title||'未命名漫画'),authors:[String(info.subtitle??info.subTitle??opaque.subtitle??'')].filter(Boolean),readingDirection:'vertical',coverUri:cover,description:info.description||opaque.description||undefined},chapters};
  }
  if(request.operation==='loadChapter'){
-  const chapter=__zicUnb64(args.chapterId.slice('venera:chapter:'.length));const loaded=await source.comic.loadEp(chapter.comicRawId,chapter.epId);const images=Array.isArray(loaded)?loaded:(loaded?.images||[]);
-  const pages=[];for(let i=0;i<images.length;i++){const image=String(images[i]),config={image,comicId:chapter.comicRawId,epId:chapter.epId,deferredImageConfig:true},kind=__zicImageKindHint(image),page={chapterId:args.chapterId,pageId:String(args.chapterId)+':'+i,index:i,uri:__zicResourceUri(config)};if(kind){page.contentKindHint=kind;page.animatedHint=kind==='webp'||kind==='gif'}pages.push(page)}
-  return {comicId:chapter.comicId,chapter:__zicChapterMessage(chapter.comicId,chapter.epId,chapter.title,chapter.sequence,pages.length),pages,readingDirection:'vertical'};
+  const chapter=__zicUnb64(args.chapterId.slice('venera:chapter:'.length)),comicRawId=String(chapter.comicRawId??''),epId=chapter.epId==null?null:String(chapter.epId);let meta=__zicChapterMeta.get(args.chapterId);
+  if(!meta){let title=chapter.title==null?null:String(chapter.title),sequence=Number.isFinite(Number(chapter.sequence))?Number(chapter.sequence):null,comicId=String(chapter.comicId||__zicStableComicId(comicRawId));if(title==null||sequence==null){const info=await source.comic.loadInfo(comicRawId),entries=__zicChapterEntries(info.chapters||{});for(let i=0;i<entries.length;i++){if(String(entries[i][0])===String(epId)){title=entries[i][1];sequence=i;break}}if(entries.length===0&&epId==null){title=String(info.chapterTitle||'正文');sequence=0}}meta={comicId,comicRawId,epId,title:String(title||'正文'),sequence:Number(sequence??0)};__zicChapterMeta.set(args.chapterId,meta)}
+  const loaded=await source.comic.loadEp(meta.comicRawId,meta.epId);const images=Array.isArray(loaded)?loaded:(loaded?.images||[]);
+  const pages=[];for(let i=0;i<images.length;i++){const image=String(images[i]),config={image,comicId:meta.comicRawId,epId:meta.epId,deferredImageConfig:true},kind=__zicImageKindHint(image),page={chapterId:args.chapterId,pageId:String(args.chapterId)+':'+i,index:i,uri:__zicResourceUri(config)};if(kind){page.contentKindHint=kind;page.animatedHint=kind==='webp'||kind==='gif'}pages.push(page)}
+  return {comicId:meta.comicId,chapter:{comicId:meta.comicId,chapterId:args.chapterId,title:meta.title,sequence:meta.sequence,pageCount:pages.length,sourceRevision:meta.epId==null?'single':String(meta.epId)},pages,readingDirection:'vertical'};
  }
  if(request.operation==='loadSourceAccount')return __zicAccountDescriptor(source);
  if(request.operation==='loginSourceAccount')return await __zicLoginSource(source,String(args.mode||''),args.values||{});

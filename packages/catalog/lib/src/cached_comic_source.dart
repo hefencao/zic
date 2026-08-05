@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:domain/domain.dart';
 import 'package:resource_cache/resource_cache.dart';
 
+import 'cache_identity.dart';
 import 'comic_source.dart';
 import 'source_catalog.dart';
 
@@ -53,8 +54,11 @@ final class CachedBrowsableComicSource
     return cache.getOrLoad<SourceBrowsePage>(
       key: ResourceCacheKey(
         kind: ResourceCacheKind.searchResults,
-        identity: '$sourceId\u0000$normalizedQuery\u0000$offset\u0000$limit',
-        namespace: _sourceNamespace(sourceId),
+        identity: encodeStableCacheKey(
+          'search-results',
+          <String>[sourceId, normalizedQuery, '$offset', '$limit'],
+        ),
+        namespace: sourceResourceCacheNamespace(sourceId),
       ),
       loader: () => source.browse(
         query: normalizedQuery,
@@ -90,17 +94,19 @@ final class CachedBrowsableComicSource
   }
 
   @override
-  Future<ComicManifest> loadComic(String comicId) =>
-      cache
-          .getOrLoad<ComicManifest>(
-            key: _comicKey(sourceId, comicId),
-            loader: () => source.loadComic(comicId),
-            weightOf: _comicWeight,
-          )
-          .then((manifest) {
-        _rememberComic(manifest);
-        return manifest;
-      });
+  Future<ComicManifest> loadComic(String comicId) {
+    final identity = _comicIdentity(comicId);
+    return cache
+        .getOrLoad<ComicManifest>(
+          key: _comicKey(identity),
+          loader: () => source.loadComic(comicId),
+          weightOf: _comicWeight,
+        )
+        .then((manifest) {
+      _rememberComic(manifest);
+      return manifest;
+    });
+  }
 
   @override
   Future<ChapterManifest> loadChapter(String chapterId) {
@@ -109,10 +115,13 @@ final class CachedBrowsableComicSource
         .getOrLoad<ChapterManifest>(
           key: ResourceCacheKey(
             kind: ResourceCacheKind.chapterMetadata,
-            identity: '$sourceId\u0000$chapterId',
+            identity: encodeStableCacheKey(
+              'chapter-metadata',
+              <String>[sourceId, chapterId],
+            ),
             namespace: comicId == null
-                ? _sourceNamespace(sourceId)
-                : comicResourceCacheNamespace(sourceId, comicId),
+                ? sourceResourceCacheNamespace(sourceId)
+                : _comicIdentity(comicId).namespace,
             revision: _chapterMetadataSchemaRevision,
           ),
           loader: () => source.loadChapter(chapterId),
@@ -167,7 +176,10 @@ final class CachedBrowsableComicSource
     cache.invalidateWhere(
       (key) =>
           key.kind == ResourceCacheKind.chapterMetadata &&
-          key.identity == '$sourceId\u0000$chapterId',
+          key.identity == encodeStableCacheKey(
+            'chapter-metadata',
+            <String>[sourceId, chapterId],
+          ),
     );
     _chapterComicIds.remove(chapterId);
     return loadChapter(chapterId);
@@ -196,7 +208,6 @@ final class CachedBrowsableComicSource
     }
     return configurable.updateSetting(key, value);
   }
-
 
   AuthenticatableComicSource get _accountSource {
     final account = source is AuthenticatableComicSource
@@ -245,8 +256,10 @@ final class CachedBrowsableComicSource
       loadCachedComicImage(
         cache: cache,
         sourceId: sourceId,
-        comicId: comicId,
+        comicId: comicId == null ? null : _comicIdentity(comicId).comicId,
+        legacyComicId: comicId,
         imageIdentity: uri.toString(),
+        resourceRole: 'cover',
         revision: revision,
         loader: () => source.loadResource(uri),
       );
@@ -263,14 +276,17 @@ final class CachedBrowsableComicSource
       loadCachedComicImageSource(
         cache: cache,
         sourceId: sourceId,
-        comicId: comicId,
+        comicId: comicId == null ? null : _comicIdentity(comicId).comicId,
+        legacyComicId: comicId,
         imageIdentity: uri.toString(),
+        resourceRole: 'cover',
         revision: revision,
         loader: () => source.loadResource(uri),
       );
 
   void invalidateComic(String comicId) {
-    final cached = cache.peek<ComicManifest>(_comicKey(sourceId, comicId));
+    final identity = _comicIdentity(comicId);
+    final cached = cache.peek<ComicManifest>(_comicKey(identity));
     if (cached != null) {
       _rememberComic(cached);
     }
@@ -278,12 +294,18 @@ final class CachedBrowsableComicSource
         .where((entry) => entry.value == comicId)
         .map((entry) => entry.key)
         .toList(growable: false);
-    cache.invalidateNamespace(comicResourceCacheNamespace(sourceId, comicId));
+    cache.invalidateNamespace(identity.namespace);
+    cache.invalidateNamespace(
+      _legacyComicResourceCacheNamespace(sourceId, comicId),
+    );
     for (final chapterId in chapterIds) {
       cache.invalidateWhere(
         (key) =>
             key.kind == ResourceCacheKind.chapterMetadata &&
-            key.identity == '$sourceId\u0000$chapterId',
+            key.identity == encodeStableCacheKey(
+              'chapter-metadata',
+              <String>[sourceId, chapterId],
+            ),
       );
       _chapterComicIds.remove(chapterId);
     }
@@ -292,7 +314,13 @@ final class CachedBrowsableComicSource
   void invalidateSearch() => cache.invalidateWhere(
         (key) =>
             key.kind == ResourceCacheKind.searchResults &&
-            key.namespace == _sourceNamespace(sourceId),
+            key.namespace == sourceResourceCacheNamespace(sourceId),
+      );
+
+  ComicResourceCacheIdentity _comicIdentity(String comicId) =>
+      ComicResourceCacheIdentity(
+        sourceId: sourceId,
+        comicId: canonicalComicIdentity(comicId),
       );
 
   void _rememberComic(ComicManifest manifest) {
@@ -316,20 +344,31 @@ Future<Uint8List> loadCachedComicImage({
   required String imageIdentity,
   required Future<Uint8List> Function() loader,
   String? comicId,
+  String? legacyComicId,
+  String resourceRole = 'cover',
   String revision = '',
-}) =>
-    cache.getOrLoad<Uint8List>(
-      key: ResourceCacheKey(
-        kind: ResourceCacheKind.imageBytes,
-        identity: '$sourceId\u0000$imageIdentity',
-        namespace: comicId == null
-            ? _sourceNamespace(sourceId)
-            : comicResourceCacheNamespace(sourceId, comicId),
-        revision: revision,
-      ),
-      loader: loader,
-      weightOf: (bytes) => bytes.lengthInBytes,
-    );
+}) {
+  final key = _imageKey(
+    sourceId: sourceId,
+    comicId: comicId,
+    imageIdentity: imageIdentity,
+    resourceRole: resourceRole,
+    revision: revision,
+  );
+  final legacy = _legacyImageKey(
+    sourceId: sourceId,
+    comicId: legacyComicId ?? comicId,
+    imageIdentity: imageIdentity,
+    revision: revision,
+  );
+  return cache.getOrLoad<Uint8List>(
+    key: key,
+    loader: key == legacy
+        ? loader
+        : () async => await cache.readBytesIfPresent(legacy) ?? await loader(),
+    weightOf: (bytes) => bytes.lengthInBytes,
+  );
+}
 
 Future<EncodedResourceSource> loadCachedComicImageSource({
   required ResourceCacheManager cache,
@@ -337,28 +376,46 @@ Future<EncodedResourceSource> loadCachedComicImageSource({
   required String imageIdentity,
   required Future<Uint8List> Function() loader,
   String? comicId,
+  String? legacyComicId,
+  String resourceRole = 'cover',
   String revision = '',
-}) =>
-    cache.getOrLoadEncodedImage(
-      key: ResourceCacheKey(
-        kind: ResourceCacheKind.imageBytes,
-        identity: '$sourceId\u0000$imageIdentity',
-        namespace: comicId == null
-            ? _sourceNamespace(sourceId)
-            : comicResourceCacheNamespace(sourceId, comicId),
-        revision: revision,
-      ),
-      loader: loader,
-    );
+}) {
+  final key = _imageKey(
+    sourceId: sourceId,
+    comicId: comicId,
+    imageIdentity: imageIdentity,
+    resourceRole: resourceRole,
+    revision: revision,
+  );
+  final legacy = _legacyImageKey(
+    sourceId: sourceId,
+    comicId: legacyComicId ?? comicId,
+    imageIdentity: imageIdentity,
+    revision: revision,
+  );
+  return cache.getOrLoadEncodedImage(
+    key: key,
+    loader: key == legacy
+        ? loader
+        : () async => await cache.readBytesIfPresent(legacy) ?? await loader(),
+  );
+}
 
 void invalidateComicResourceCache(
   ResourceCacheManager cache, {
   required String sourceId,
   required String comicId,
-}) =>
-    cache.invalidateNamespace(
-      comicResourceCacheNamespace(sourceId, comicId),
-    );
+}) {
+  cache.invalidateNamespace(
+    ComicResourceCacheIdentity(
+      sourceId: sourceId,
+      comicId: comicId,
+    ).namespace,
+  );
+  cache.invalidateNamespace(
+    _legacyComicResourceCacheNamespace(sourceId, comicId),
+  );
+}
 
 Future<Uint8List> loadCachedSourceImage(
   BrowsableComicSource source,
@@ -394,39 +451,6 @@ Future<EncodedResourceSource> loadCachedSourceImageSource(
       .then<EncodedResourceSource>(MemoryEncodedResourceSource.new);
 }
 
-int _browseWeight(SourceBrowsePage page) =>
-    128 + page.items.fold<int>(0, (sum, item) => sum + _summaryWeight(item));
-
-int _summaryWeight(SourceComicSummary item) =>
-    96 +
-    item.title.length * 2 +
-    item.authors.fold<int>(0, (sum, author) => sum + author.length * 2) +
-    (item.description?.length ?? 0) * 2 +
-    (item.coverUri?.toString().length ?? 0) * 2;
-
-int _comicWeight(ComicManifest manifest) =>
-    256 +
-    manifest.comic.title.length * 2 +
-    manifest.comic.authors
-        .fold<int>(0, (sum, author) => sum + author.length * 2) +
-    (manifest.comic.description?.length ?? 0) * 2 +
-    manifest.chapters.length * 160;
-
-int _chapterWeight(ChapterManifest manifest) =>
-    192 + manifest.pages.length * 192;
-
-ResourceCacheKey _comicKey(String sourceId, String comicId) =>
-    ResourceCacheKey(
-      kind: ResourceCacheKind.comicDetails,
-      identity: '$sourceId\u0000$comicId',
-      namespace: comicResourceCacheNamespace(sourceId, comicId),
-    );
-
-String _sourceNamespace(String sourceId) => 'source:$sourceId';
-
-String comicResourceCacheNamespace(String sourceId, String comicId) =>
-    'comic:$sourceId\u0000$comicId';
-
 void invalidateCachedComic(
   BrowsableComicSource source,
   String comicId,
@@ -441,3 +465,61 @@ void invalidateCachedSearch(BrowsableComicSource source) {
     source.invalidateSearch();
   }
 }
+
+ResourceCacheKey _comicKey(ComicResourceCacheIdentity identity) =>
+    ResourceCacheKey(
+      kind: ResourceCacheKind.comicDetails,
+      identity: identity.response('details'),
+      namespace: identity.namespace,
+    );
+
+ResourceCacheKey _imageKey({
+  required String sourceId,
+  required String? comicId,
+  required String imageIdentity,
+  required String resourceRole,
+  required String revision,
+}) {
+  if (comicId == null) {
+    return _legacyImageKey(
+      sourceId: sourceId,
+      comicId: null,
+      imageIdentity: imageIdentity,
+      revision: revision,
+    );
+  }
+  final identity = ComicResourceCacheIdentity(
+    sourceId: sourceId,
+    comicId: comicId,
+  );
+  return ResourceCacheKey(
+    kind: ResourceCacheKind.imageBytes,
+    identity: identity.response(resourceRole),
+    namespace: identity.namespace,
+    revision: revision,
+  );
+}
+
+ResourceCacheKey _legacyImageKey({
+  required String sourceId,
+  required String? comicId,
+  required String imageIdentity,
+  required String revision,
+}) =>
+    ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: '$sourceId\u0000$imageIdentity',
+      namespace: comicId == null
+          ? 'source:$sourceId'
+          : _legacyComicResourceCacheNamespace(sourceId, comicId),
+      revision: revision,
+    );
+
+String comicResourceCacheNamespace(String sourceId, String comicId) =>
+    ComicResourceCacheIdentity(
+      sourceId: sourceId,
+      comicId: comicId,
+    ).namespace;
+
+String _legacyComicResourceCacheNamespace(String sourceId, String comicId) =>
+    'comic:$sourceId\u0000$comicId';

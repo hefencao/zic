@@ -67,13 +67,19 @@ final class ComicSourceResourceGateway {
     String revision = '',
   }) {
     _requireOpen();
+    final source = _requireSource(sourceId, uri);
+    final identity = ComicResourceCacheIdentity.fromSource(source, comicId);
     return loadCachedComicImage(
       cache: cache,
       sourceId: sourceId,
-      comicId: comicId,
+      comicId: identity.comicId,
+      legacyComicId: comicId,
       imageIdentity: uri.toString(),
+      resourceRole: 'cover',
       revision: _artworkRevision(revision),
-      loader: () => _collectArtworkResponse(responseLoaderFor(sourceId, uri)),
+      loader: () => _collectArtworkResponse(
+        _transports.loaderFor(source, uri),
+      ),
     );
   }
 
@@ -85,13 +91,19 @@ final class ComicSourceResourceGateway {
     String revision = '',
   }) {
     _requireOpen();
+    final source = _requireSource(sourceId, uri);
+    final identity = ComicResourceCacheIdentity.fromSource(source, comicId);
     return loadCachedComicImageSource(
       cache: cache,
       sourceId: sourceId,
-      comicId: comicId,
+      comicId: identity.comicId,
+      legacyComicId: comicId,
       imageIdentity: uri.toString(),
+      resourceRole: 'cover',
       revision: _artworkRevision(revision),
-      loader: () => _collectArtworkResponse(responseLoaderFor(sourceId, uri)),
+      loader: () => _collectArtworkResponse(
+        _transports.loaderFor(source, uri),
+      ),
     );
   }
 

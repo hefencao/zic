@@ -1476,7 +1476,13 @@ def check_compile_regressions() -> None:
     migration = (
         ROOT / 'packages/catalog/lib/src/comic_source_migration.dart'
     ).read_text(encoding='utf-8')
-    app_home = (ROOT / 'apps/app/lib/demo_home.dart').read_text(encoding='utf-8')
+    app_home = '\n'.join(
+        path.read_text(encoding='utf-8')
+        for path in (
+            ROOT / 'apps/app/lib/demo_home.dart',
+            ROOT / 'apps/app/lib/demo_home_source_migration.dart',
+        )
+    )
     for required in (
         'ComicPreference mergePreference',
         'existingTarget?.customOrder',
@@ -1817,6 +1823,7 @@ def check_compile_regressions() -> None:
             home_path,
             ROOT / 'apps/app/lib/demo_home_views.dart',
             ROOT / 'apps/app/lib/demo_home_source_compat.dart',
+            ROOT / 'apps/app/lib/demo_home_source_migration.dart',
             ROOT / 'apps/app/lib/demo_home_reader_route.dart',
             ROOT / 'apps/app/lib/source_resource_gateway.dart',
             ROOT / 'apps/app/lib/home_widgets.dart',
@@ -1828,6 +1835,7 @@ def check_compile_regressions() -> None:
     for required in (
         "part 'demo_home_views.dart';",
         "part 'demo_home_reader_route.dart';",
+        "part 'demo_home_source_migration.dart';",
         'HomeLibrarySession(',
         'ResourceCacheCoordinator',
         'CachedBrowsableComicSource',

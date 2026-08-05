@@ -145,6 +145,81 @@ void main() {
     expect(backend.values[id], bytes);
     expect(manager.lookupMemory(id), bytes);
   });
+
+  test('verified version alias reuses a different exact URL artifact', () async {
+    final oldId = _versionId('old', 'https://e-hentai.org/g/1/old/001.jpg');
+    final newId = _versionId('new', 'https://e-hentai.org/g/2/new/001.jpg');
+    final bytes = Uint8List.fromList(<int>[9, 8, 7, 6]);
+    final backend = _Backend(<DownloadId, Uint8List>{oldId: bytes});
+    final manager = ArtifactCacheManager(backend: backend);
+
+    manager.alias(id: newId, target: oldId);
+    final lookup = await manager.lookup(newId);
+    final read = await manager.readForeground(newId);
+
+    expect(lookup?.id, newId);
+    expect(lookup?.storageId, oldId);
+    expect(read?.bytes, bytes);
+    expect(backend.openCalls, 1);
+    expect(manager.aliasCount, 1);
+  });
+
+  test('artifact aliases chain, reject cycles and detach on new write', () async {
+    final first = _id('first-version');
+    final second = _id('second-version');
+    final third = _id('third-version');
+    final backend = _Backend(<DownloadId, Uint8List>{
+      first: Uint8List.fromList(<int>[1, 2, 3]),
+    });
+    final manager = ArtifactCacheManager(backend: backend);
+
+    manager.alias(id: second, target: first);
+    manager.alias(id: third, target: second);
+    expect(manager.resolveAlias(third), first);
+    expect(
+      () => manager.alias(id: first, target: third),
+      throwsStateError,
+    );
+
+    await manager.storePromotedArtifact(
+      id: third,
+      bytes: Uint8List.fromList(<int>[4, 5, 6]),
+    );
+    expect(manager.resolveAlias(third), third);
+    expect((await manager.readForeground(third))?.bytes, <int>[4, 5, 6]);
+    expect((await manager.readForeground(first))?.bytes, <int>[1, 2, 3]);
+  });
+
+  test('invalidating an alias does not delete its authoritative target',
+      () async {
+    final oldId = _id('old-target');
+    final newId = _id('new-alias');
+    final backend = _InvalidatingBackend(<DownloadId, Uint8List>{
+      oldId: Uint8List.fromList(<int>[3, 2, 1]),
+    });
+    final manager = ArtifactCacheManager(backend: backend);
+    manager.alias(id: newId, target: oldId);
+
+    await manager.invalidate(newId);
+
+    expect(manager.aliasCount, 0);
+    expect(backend.invalidated, isNot(contains(oldId)));
+    expect((await manager.readForeground(oldId))?.bytes, <int>[3, 2, 1]);
+  });
+
+  test('rekey copies authoritative bytes and deletes the old exact key',
+      () async {
+    final oldId = _id('old-key');
+    final newId = _id('new-key');
+    final backend = _InvalidatingBackend(<DownloadId, Uint8List>{
+      oldId: Uint8List.fromList(<int>[5, 5, 5]),
+    });
+    final manager = ArtifactCacheManager(backend: backend);
+
+    expect(await manager.rekey(oldId: oldId, newId: newId), isTrue);
+    expect(backend.values[oldId], isNull);
+    expect(backend.values[newId], <int>[5, 5, 5]);
+  });
 }
 
 DownloadId _id(String page) => DownloadId(
@@ -156,6 +231,17 @@ DownloadId _id(String page) => DownloadId(
       ),
       sourceRevision: 'r1',
       canonicalUri: Uri.parse('memory://$page'),
+    );
+
+DownloadId _versionId(String version, String uri) => DownloadId(
+      content: ContentId(
+        sourceId: 'venera:ehentai',
+        comicId: 'gallery-$version',
+        chapterId: 'chapter-$version',
+        pageId: 'page-0',
+      ),
+      sourceRevision: version,
+      canonicalUri: Uri.parse(uri),
     );
 
 final class _Backend implements ArtifactCacheBackend {
@@ -215,4 +301,6 @@ final class _InvalidatingBackend extends _Backend
     invalidated.add(id);
     values.remove(id);
   }
+
+
 }

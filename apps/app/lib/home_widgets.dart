@@ -41,16 +41,7 @@ final class ComicDownloadProgress {
       : 1;
 }
 
-String _coverRequestIdentity(LibraryComic comic) {
-  final sourceValue = comic.coverSourceId ??
-      comic.coverChapter?.chapter.coverSourceId ??
-      (comic.sourceId != 'local-folder' ||
-              comic.chapters.isEmpty ||
-              comic.chapters.first.chapter.pages.isEmpty
-          ? null
-          : comic.chapters.first.chapter.pages.first.sourceId);
-  return '${comic.identity}\u0000${sourceValue ?? ''}';
-}
+String _coverRequestIdentity(LibraryComic comic) => comic.identity;
 
 final class ComicCoverCard extends StatelessWidget {
   const ComicCoverCard({

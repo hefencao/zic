@@ -1,8 +1,25 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
+
+val zicVersion = Properties().apply {
+    val file = rootProject.file("zic-version.properties")
+    check(file.isFile) { "Missing project-owned Android version file: $file" }
+    file.inputStream().use(::load)
+}
+val zicVersionName = zicVersion.getProperty("versionName")
+    ?.trim()
+    ?.takeIf(String::isNotEmpty)
+    ?: error("zic-version.properties is missing versionName")
+val zicVersionCode = zicVersion.getProperty("versionCode")
+    ?.trim()
+    ?.toIntOrNull()
+    ?.takeIf { it > 0 }
+    ?: error("zic-version.properties has an invalid versionCode")
 
 android {
     namespace = "dev.zic.zic"
@@ -21,11 +38,17 @@ android {
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
-        versionCode = flutter.versionCode
-        versionName = flutter.versionName
+        // All run modes share one package version so switching
+        // debug/profile/release never forces a downgrade uninstall.
+        versionCode = zicVersionCode
+        versionName = zicVersionName
     }
 
     buildTypes {
+        configureEach {
+            applicationIdSuffix = null
+            versionNameSuffix = null
+        }
         release {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.

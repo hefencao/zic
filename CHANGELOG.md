@@ -1,3 +1,13 @@
+## 0.31.0-dev.135：统一应用版本并稳定缓存身份与版本复用
+
+- Android debug/profile/release 改为读取同一项目版本文件，统一 `applicationId=dev.zic.zic`、`versionName=0.31.0`、`versionCode=135`，并显式禁止 applicationId/versionName suffix；避免运行模式切换因版本身份漂移触发卸载/降级处理。
+- 封面缓存 key 改为 `source + canonical comic + cover role`；封面 URL/token 只作为真实请求 locator。首页封面 Future identity 不再混入 URL，旧 URL key 仅做一次单向迁移读取。
+- Venera comic/chapter opaque ID 新格式只保留稳定 raw locator/epId，不再编码 title、cover、description、chapter title 或 sequence；旧 payload 保持兼容。
+- `ArtifactCacheManager` 增加有界 alias/rekey、链解析、循环拒绝和安全 invalidation；`VerifiedArtifactReusePlan` 只按 checksum、E-Hentai image key 或唯一内容 hash 复用不同精确 URL 的页面 artifact，并已接入用户确认的漫画源迁移流程，只为确实存在的旧 artifact 注册 alias。
+- 审计确认统一缓存所有权为：`ResourceCacheCoordinator.responses` 管理目录/封面响应，composition-owned `ArtifactCacheManager` 管理 Reader artifact；不新增 UI 私有缓存或第二套 page cache。
+- 自动识别两个 E-Hentai gallery/version 的可信作品关系仍待来源适配器接入；禁止使用标题、作者或相同页码猜测。
+- 新增 ADR 0118、dev.135 缓存身份审计、Venera bootstrap/cover/artifact reuse tests 与 dev.135 门禁；native identity 保持 dev.134。
+
 ## 0.31.0-dev.134：移除解码核绑定并复用 Reader 资源会话
 
 - 根据 `zic-debug-trace-2026-08-05T02-47-39.jsonl` 确认 5 次 Reader 进入创建并销毁 5 套 Pipeline；current 的 18.3 MiB 热字节虽已命中，仍重复灌入新 DownloadSession/native source，耗时约 701/704/710/2865 ms。
