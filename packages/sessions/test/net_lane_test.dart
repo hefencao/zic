@@ -216,6 +216,49 @@ void main() {
     await lane.idle();
   });
 
+
+  test('foreground flow gate pauses only same-bucket background pulls', () async {
+    final gate = DownloadFlowGate();
+    expect(
+      gate.hold(foregroundKey: 'current', bucket: 'remote:source'),
+      isTrue,
+    );
+    var sameBucketReleased = false;
+    final sameBucket = gate
+        .wait(key: 'next', bucket: 'remote:source')
+        .then((_) => sameBucketReleased = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(sameBucketReleased, isFalse);
+
+    await gate.wait(key: 'current', bucket: 'remote:source');
+    await gate.wait(key: 'other', bucket: 'remote:other');
+    expect(gate.release(), isTrue);
+    await sameBucket;
+    expect(sameBucketReleased, isTrue);
+  });
+
+  test('foreground flow gate cancellation does not wait for release', () async {
+    final gate = DownloadFlowGate()
+      ..hold(foregroundKey: 'current', bucket: 'remote:source');
+    final token = CancelToken();
+    final waiting = gate.wait(
+      key: 'next',
+      bucket: 'remote:source',
+      cancel: token,
+    );
+    token.cancel();
+    await expectLater(
+      waiting,
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+  });
+
 }
 
 // dev.123 current-page migration/preemption contracts.

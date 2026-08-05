@@ -2,25 +2,23 @@
 
 本文件只列未完成工作。
 
-## P0：Flutter 编译闭环
+## P0：首页封面设备闭环
 
-- 在真实 Flutter/Dart SDK 中执行 `flutter analyze`、catalog/downloads/local_media_ui owner tests 和 App target tests。
-- 确认 `_browseWeight/_comicWeight/_chapterWeight` 编译闭合，metadata cache stats 使用非占位权重。
-- 复验 cold Reader artifact 测试不再出现 `Future.catchError` 返回类型异常。
-- 不为旧日志中已被当前 API 取代的方法恢复 compatibility facade。
+- 确认 `home-library-primary` 在第一条 `homeCoverRequested` 前快速完成；对比 primary/enrichment 耗时。
+- 检查首页 SavedComic/ImportedChapter primary 发布后封面请求是否由约 1.88 秒降至存储主查询完成时间。
+- 若 primary 仍慢，继续拆分 `library.list` 与 `listSavedComics` 的真实 SQLite query plan；不得增加第二套封面缓存。
 
-## P0：Android 运行模式身份设备闭环
+## P0：远程 WebP 前台 producer 闭环
 
-- 在同一设备依次运行 debug/profile/release，确认 package、versionName、versionCode 和签名链一致，切换模式不卸载、不清空数据。
-- 记录 `dumpsys package dev.zic.zic` 与安装前后数据目录；若仍卸载，优先检查签名或 Flutter tooling。
+- 检查 `bytesCommitted.chunks` 是否由数十个 1.4 KiB transport chunk 收敛为一次实际 append。
+- 检查 `downloadFlowPressure` 的 hold/release：holder depth≤1 时 hold，depth≥3 后 release；不得长期保持。
+- 验证 current frame cadence、source growth 和同源背景吞吐；不得缩小 7/3 或稳定 lane 数。
 
-## P0：封面冷启动与可信缓存身份
+## P0：Flutter 编译与 owner tests
 
-- 区分 memory hit、persistent file hit、legacy URL migration 和网络 miss，验证 stable cover key 不因 URL/token 更新重建请求。
-- 在 E-Hentai/Venera 来源适配器接入可信旧/新 gallery relation；复用只允许 checksum、image key 或唯一 hash。
-- 检查重复/缺失 image key、页序变化、插页和删除页，歧义页面必须保持 miss。
+- 运行 `flutter analyze`、sessions/home owner tests 和 App target tests。
+- 验证 `BytesBuilder` 合并、flow-gate cancellation、Home primary gated-enrichment tests。
 
-## P1：Reader 与纵向性能回归
+## P1：缓存身份与 Reader 回归
 
-- 继续验证同章资源会话 retention、fresh used texture、holder playback、7/3 与 7/5/3/2 合同。
-- 使用设备 Timeline 验证稳定 page composition 与渐进 host warm；不得新增 Reader 私有图片缓存或竞争 scheduler。
+- 继续验证 dev.135 stable cover/artifact identity 和 dev.134 同章资源会话 retention。

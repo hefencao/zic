@@ -5,6 +5,7 @@ import 'package:catalog/catalog.dart';
 import 'package:flutter/foundation.dart';
 
 import 'package:downloads/downloads.dart';
+import 'package:telemetry/telemetry.dart';
 
 /// Owns the durable library projection and background download subscriptions
 /// used by the home shell. Navigation, dialogs and transient UI selection stay
@@ -18,6 +19,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     required this.ownsLibrary,
     required this.ownsChapterDownloads,
     required this.ownsWholeComicDownloads,
+    this.startupTelemetry,
   }) : _sources = List<BrowsableComicSource>.unmodifiable(sources) {
     _downloadSubscription = chapterDownloads.changes.listen(
       acceptDownloadSnapshot,
@@ -38,6 +40,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   final bool ownsLibrary;
   final bool ownsChapterDownloads;
   final bool ownsWholeComicDownloads;
+  final HomeStartupTelemetry? startupTelemetry;
 
   late final StreamSubscription<ChapterDownloadSnapshot> _downloadSubscription;
   late final StreamSubscription<WholeComicQueueSnapshot> _wholeComicSubscription;
@@ -98,7 +101,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   Future<void> _initialize() async {
     try {
       await library.open();
-      await reload(waitForOpen: false);
+      await _reload(publishPrimary: true);
       await wholeComicDownloads.ready;
       _wholeComicQueueSnapshot = wholeComicDownloads.snapshot;
       _publish();
@@ -113,11 +116,36 @@ final class HomeLibrarySession extends ChangeNotifier {
     if (waitForOpen) {
       await ready;
     }
-    final entries = await library.list();
-    final savedComics = await library.listSavedComics();
-    final categories = await library.listCategories();
-    final storedPreferences = await library.listComicPreferences();
-    final storedSourcePreferences = await library.listSourcePreferences();
+    await _reload(publishPrimary: false);
+  }
+
+  Future<void> _reload({required bool publishPrimary}) async {
+    final primaryStartedAt = startupTelemetry?.nowMicros();
+    final entriesFuture = library.list();
+    final savedComicsFuture = library.listSavedComics();
+    final entries = await entriesFuture;
+    final savedComics = await savedComicsFuture;
+    if (publishPrimary) {
+      _entries = List<ImportedLibraryEntry>.unmodifiable(entries);
+      _savedComics = List<SavedComicRecord>.unmodifiable(savedComics);
+      _error = null;
+      _publish();
+      if (primaryStartedAt != null) {
+        startupTelemetry?.serviceReady(
+          'home-library-primary',
+          startedAtMicros: primaryStartedAt,
+        );
+      }
+    }
+
+    final enrichmentStartedAt = startupTelemetry?.nowMicros();
+    final categoriesFuture = library.listCategories();
+    final preferencesFuture = library.listComicPreferences();
+    final sourcePreferencesFuture = library.listSourcePreferences();
+    final readStatesFuture = library.listAllChapterReadStates();
+    final categories = await categoriesFuture;
+    final storedPreferences = await preferencesFuture;
+    final storedSourcePreferences = await sourcePreferencesFuture;
     final sourcePreferences = <String, ComicSourcePreference>{
       for (final preference in storedSourcePreferences)
         preference.sourceId: preference,
@@ -212,8 +240,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     }
 
     final readStates = <String, ChapterReadState>{
-      for (final state in await library.listAllChapterReadStates())
-        state.identity: state,
+      for (final state in await readStatesFuture) state.identity: state,
     };
 
     _entries = List<ImportedLibraryEntry>.unmodifiable(entries);
@@ -227,6 +254,12 @@ final class HomeLibrarySession extends ChangeNotifier {
     _error = null;
     _loading = false;
     _publish();
+    if (enrichmentStartedAt != null) {
+      startupTelemetry?.serviceReady(
+        'home-library-enrichment',
+        startedAtMicros: enrichmentStartedAt,
+      );
+    }
     unawaited(refreshDownloadSnapshots(entries));
   }
 

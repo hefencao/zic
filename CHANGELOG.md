@@ -1,3 +1,11 @@
+## 0.31.0-dev.137：提前发布首页封面并保护 Current 远程流量
+
+- 根据设备 Trace 确认封面缓存/解析不是 1.88 秒延迟主因；`HomeLibrarySession` 并行读取章节投影和 SavedComic 后立即发布可生成封面的 primary 数据，分类、偏好、阅读状态和缺失默认值补写继续 enrichment。
+- `DownloadJob` 将远程约 1.4 KiB 小块物理合并：首批 16 KiB 尽快启动 decode，之后按 64 KiB 执行 artifact/native ingress；流失败前已收到字节继续形成可恢复 partial。
+- `LiveCoordinator` 增加 current producer 水位驱动的同源 cooperative flow pressure：启动/waitingSource/depth≤1 时背景任务暂停拉取下一块，depth≥3 即恢复；不取消 demand、不缩小 7/3 或 5/3/2。
+- 新增 `downloadFlowPressure` Trace、首页 primary/enrichment 指标、owner tests、ADR 0120 和 dev.137 门禁；native identity 保持 dev.134。
+- Android debug/profile/release versionCode 更新为 137，package/versionName 保持统一。
+
 ## 0.31.0-dev.136：修复 Catalog 缓存权重并清理无调用兼容层
 
 - 为 `CachedBrowsableComicSource` 补齐 search/comic/chapter metadata 的结构化 byte-weight 估算；权重由拥有领域结构的 catalog 计算，`ResourceCacheManager` 继续唯一拥有容量、TTL、LRU 与 in-flight join。

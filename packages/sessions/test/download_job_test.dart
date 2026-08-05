@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:domain/domain.dart';
+import 'package:media/media.dart';
 import 'package:sessions/sessions.dart';
 import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
@@ -196,6 +197,43 @@ void main() {
     expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
   });
 
+
+  test('coalesces tiny transport chunks before native/artifact ingress', () async {
+    final factory = _CountingSourceFactory();
+    final session = DownloadSession(
+      id: DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'coalesced',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('https://example.test/coalesced.webp'),
+      ),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/coalesced.webp',
+        finalPath: '${temp.path}/cache/coalesced.webp',
+      ),
+      clock: FakeMonoClock(),
+      ingress: Ingress(factory: factory, maxBytes: 2 * 1024 * 1024),
+    );
+    final body = <int>[
+      ...'RIFF'.codeUnits,
+      0, 0, 0, 0,
+      ...'WEBP'.codeUnits,
+      ...List<int>.generate(256 * 1024, (index) => index & 0xff),
+    ];
+    final result = await DownloadJob(
+      transport: FakeTransport(bytes: body, chunkSize: 1400),
+      session: session,
+    ).run();
+
+    expect(result.state, DownloadState.promoted);
+    expect(factory.source.appendCalls, lessThanOrEqualTo(6));
+    expect(factory.source.bytes, body);
+  });
+
 }
 
 final class _BlockingTransport implements Transport {
@@ -244,4 +282,64 @@ final class _EmptyTransport implements Transport {
         rangeStart: 0,
         totalLength: advertiseLength ? 0 : null,
       );
+}
+
+
+final class _CountingSourceFactory implements SourceFactory {
+  late final _CountingSource source;
+
+  @override
+  EncodedSource create({required int epoch, required int maxBytes}) {
+    source = _CountingSource(epoch: epoch, maxBytes: maxBytes);
+    return source;
+  }
+}
+
+final class _CountingSource implements EncodedSource {
+  _CountingSource({required this.epoch, required this.maxBytes});
+
+  @override
+  int epoch;
+  final int maxBytes;
+  final List<int> bytes = <int>[];
+  int appendCalls = 0;
+
+  @override
+  int get length => bytes.length;
+  @override
+  bool sealed = false;
+  @override
+  SourceKind get kind => SourceKind.webp;
+
+  @override
+  SourceStatus append({
+    required int epoch,
+    required int offset,
+    required List<int> bytes,
+  }) {
+    if (epoch != this.epoch) return SourceStatus.staleEpoch;
+    if (offset != this.bytes.length) return SourceStatus.invalidOffset;
+    if (this.bytes.length + bytes.length > maxBytes) return SourceStatus.budget;
+    appendCalls++;
+    this.bytes.addAll(bytes);
+    return SourceStatus.ok;
+  }
+
+  @override
+  SourceStatus reset(int epoch) {
+    this.epoch = epoch;
+    bytes.clear();
+    sealed = false;
+    return SourceStatus.ok;
+  }
+
+  @override
+  SourceStatus seal(int epoch) {
+    if (epoch != this.epoch) return SourceStatus.staleEpoch;
+    sealed = true;
+    return SourceStatus.ok;
+  }
+
+  @override
+  void dispose() {}
 }

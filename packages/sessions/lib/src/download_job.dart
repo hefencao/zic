@@ -1,16 +1,25 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
 import 'package:transport/transport.dart';
 
 import 'download_session.dart';
 import 'net_lane.dart';
+import 'source_progress.dart';
+
+typedef DownloadChunkPermit = Future<void> Function(CancelToken? cancel);
 
 final class DownloadJob {
-  const DownloadJob({required this.transport, required this.session});
+  const DownloadJob({
+    required this.transport,
+    required this.session,
+    this.beforeReadChunk,
+  });
 
   final Transport transport;
   final DownloadSession session;
+  final DownloadChunkPermit? beforeReadChunk;
 
   Future<DownloadSnapshot> run({
     String? expectedChecksum,
@@ -147,13 +156,25 @@ final class DownloadJob {
     final writer = session.acquireWriter();
     var offset = session.committedLength;
     final iterator = StreamIterator<List<int>>(response.bytes);
+    final pending = BytesBuilder(copy: false);
+    var flushTarget = 16 * 1024;
+    Future<void> flushPending() async {
+      if (pending.length == 0) return;
+      final bytes = pending.takeBytes();
+      await session.append(writer, offset, bytes);
+      offset += bytes.length;
+      flushTarget = sourceProgressQuantumBytes;
+    }
     try {
       while (await _moveNext(iterator, cancel)) {
         final chunk = iterator.current;
         if (chunk.isEmpty) continue;
-        await session.append(writer, offset, chunk);
-        offset += chunk.length;
+        pending.add(chunk);
+        if (pending.length >= flushTarget) {
+          await flushPending();
+        }
       }
+      await flushPending();
       if (offset <= 0) {
         throw const Failure(
           code: ErrorCode.artifactCorruption,
@@ -167,6 +188,14 @@ final class DownloadJob {
       );
       await session.promote();
     } catch (error) {
+      // Preserve bytes already delivered by the transport so resume semantics
+      // remain independent of the transport's arbitrary chunk size.
+      try {
+        await flushPending();
+      } on Object {
+        // The original failure remains authoritative; session.fail closes the
+        // writer and records the recoverable partial state below.
+      }
       await iterator.cancel();
       if (session.hasWriter) {
         await session.fail(writer, error);
@@ -187,6 +216,7 @@ final class DownloadJob {
     StreamIterator<List<int>> iterator,
     CancelToken? cancel,
   ) async {
+    await beforeReadChunk?.call(cancel);
     if (cancel == null) {
       return iterator.moveNext();
     }

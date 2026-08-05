@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Guard dev.136 metadata weight and dead compatibility cleanup."""
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -88,7 +89,11 @@ if (ROOT / "apps/app/lib/local_webp_folder.dart").exists():
 if (ROOT / "apps/app/lib/local_image_folder.dart").exists():
     raise SystemExit("dead App local_image_folder facade remains")
 
-require(app_pubspec, "version: 0.31.0+136", "dev.136 app version")
-require(android_version, "versionCode=136", "dev.136 Android version")
+app_match = re.search(r"^version: 0\.31\.0\+(\d+)$", app_pubspec, re.MULTILINE)
+if app_match is None or int(app_match.group(1)) < 136:
+    raise SystemExit("dev.136+ app version contract is missing")
+android_match = re.search(r"^versionCode=(\d+)$", android_version, re.MULTILINE)
+if android_match is None or int(android_match.group(1)) != int(app_match.group(1)):
+    raise SystemExit("Android versionCode must match the unified App build version")
 require(check, "test_dev136_catalog_weight_dead_code_compile.py", "repository check")
 print("dev.136 catalog weight/dead-code compile contract: OK")

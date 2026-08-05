@@ -283,6 +283,7 @@ final class _DemoHomeState extends State<DemoHome> {
       ownsLibrary: ownsLibrary,
       ownsChapterDownloads: ownsChapterDownloads,
       ownsWholeComicDownloads: ownsWholeComicDownloads,
+      startupTelemetry: widget.startupTelemetry,
     )..addListener(_handleLibrarySessionChanged);
   }
 
