@@ -69,15 +69,28 @@ final class JsonWholeComicQueueStore implements WholeComicQueueStore {
   Future<void> close() async {}
 }
 
+WholeComicDownloadQueue createPersistentWholeComicDownloadQueue({
+  required String path,
+  required ChapterDownloadService downloads,
+  WholeComicQueueEnvironmentSource? environment,
+  bool ownsEnvironment = false,
+}) =>
+    WholeComicDownloadQueue(
+      downloads: downloads,
+      store: JsonWholeComicQueueStore(path),
+      environment: environment,
+      ownsEnvironment: ownsEnvironment,
+    );
+
 Future<WholeComicDownloadQueue> openPersistentWholeComicDownloadQueue({
   required String path,
   required ChapterDownloadService downloads,
   WholeComicQueueEnvironmentSource? environment,
   bool ownsEnvironment = false,
 }) async {
-  final queue = WholeComicDownloadQueue(
+  final queue = createPersistentWholeComicDownloadQueue(
+    path: path,
     downloads: downloads,
-    store: JsonWholeComicQueueStore(path),
     environment: environment,
     ownsEnvironment: ownsEnvironment,
   );

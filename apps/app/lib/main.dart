@@ -24,12 +24,16 @@ Future<void> zicExternalPluginRuntimeServiceMain() =>
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  runApp(const _BootstrapApp());
+  unawaited(_prewarmMediaInBackground());
+}
+
+Future<void> _prewarmMediaInBackground() async {
   try {
     await prewarmDefaultLocalMediaPipeline();
   } on Object catch (error) {
     debugPrint('native media prewarm unavailable: $error');
   }
-  runApp(const _BootstrapApp());
 }
 
 final class _BootstrapApp extends StatefulWidget {
@@ -214,19 +218,24 @@ Future<_AppServices> _openServices(
       debugPrint('runtime download policy signals unavailable: $error');
     }
     stageStarted = telemetry.nowMicros();
-    wholeComicDownloads = await openPersistentWholeComicDownloadQueue(
+    wholeComicDownloads = createPersistentWholeComicDownloadQueue(
       path: '$root/whole_comic_queue.json',
       downloads: chapterDownloads,
       environment: queueEnvironment,
       ownsEnvironment: platformEnvironment != null,
     );
     telemetry.serviceReady('whole-comic-queue', startedAtMicros: stageStarted);
-    telemetry.servicesReady(startedAtMicros: openedAt);
+    stageStarted = telemetry.nowMicros();
     try {
-      externalPlugins = await ExternalPluginController.open(root);
+      externalPlugins = await ExternalPluginController.openDeferred(root);
+      telemetry.serviceReady(
+        'external-plugin-host',
+        startedAtMicros: stageStarted,
+      );
     } on Object catch (error) {
       debugPrint('external plugin runtime unavailable: $error');
     }
+    telemetry.servicesReady(startedAtMicros: openedAt);
     return _AppServices(
       libraryStore: libraryStore,
       chapterDownloads: chapterDownloads,

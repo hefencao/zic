@@ -57,11 +57,19 @@ cached_source = (
 ).read_text(encoding='utf-8')
 for token in (
     "identity.response(resourceRole)",
-    'readBytesIfPresent(legacy)',
+    "encodeStableCacheKey(\n        'source-image'",
     "resourceRole = 'cover'",
     'canonicalComicIdentity(comicId)',
 ):
     require(cached_source, token, 'stable cover cache route')
+for token in (
+    'legacyComicId',
+    '_legacyImageKey',
+    'readBytesIfPresent',
+    'copyEncodedImage',
+    'mirrorCachedComicImageAlias',
+):
+    reject(cached_source, token, 'obsolete app-update cover-key migration')
 
 home = (ROOT / 'apps/app/lib/home_widgets.dart').read_text(encoding='utf-8')
 require(

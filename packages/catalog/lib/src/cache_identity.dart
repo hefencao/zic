@@ -25,10 +25,13 @@ String encodeStableCacheKey(String family, Iterable<String> components) {
   return out.toString();
 }
 
-/// Stable logical identity for all reusable responses belonging to one comic.
+/// Stable logical identity for reusable responses belonging to one comic.
 ///
-/// [comicId] must be the source's canonical comparison identity. It is not a
-/// request URL unless the source explicitly declares that URL stable.
+/// [comicId] is a stable source identity, not a request URL unless the source
+/// explicitly declares that URL stable. Source-aware metadata may use the
+/// source's canonical comparison identity; foreground cover keys deliberately
+/// use the raw library identity so a warm cover can be read before source
+/// activation.
 final class ComicResourceCacheIdentity {
   const ComicResourceCacheIdentity({
     required this.sourceId,

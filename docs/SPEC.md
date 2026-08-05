@@ -8,6 +8,27 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 
 项目不承诺 DRM 绕过、通用视频播放、社交功能或模型直接操作底层资源生命周期。
 
+### 1.1 首页冷启动
+
+- Home MUST 在本地库的 cover-bearing primary 数据可用后先呈现首页；native media
+  prewarm、持久整本队列 restore、外部插件 activation 和 enrichment 不得成为首封面
+  请求的硬门槛。
+- 外部来源可以在首帧之后 ready；source projection 更新后，因来源暂不可用而失败的
+  封面 loader MUST 能在 loader 改变时重试。
+- 首页每张封面 MUST 独立完成请求和显示；一张封面变慢或 durable response 写入变慢，
+  不得阻塞其它已经取得 encoded bytes 的封面。冷 miss MAY 先使用 memory source，持久化
+  写入由统一 response cache 后台完成；已有 durable file hit MUST 保持文件直读。
+- 首页封面 MUST 先通过 source-independent raw comic stable key 查询统一 response cache；
+  命中时不得解析来源、创建 source transport 或等待插件 activation。raw miss 才可进入
+  source loader，并必须写入当前 raw stable key；生产路径不得读取 dev.135 为 app 更新保留
+  的 URL-derived/canonical 旧 key，也不得建立该兼容 alias。
+- 来源确认过的同源 canonical comic identity SHOULD 持久化在 SavedComic 元数据中，供
+  插件未激活时的书架只读归并使用；原始 comic/chapter request identity MUST 保持不变。
+- 未访问的首页、书架、来源和杂项导航页 MUST 延迟构建；首次访问后页面状态 MAY 保留，
+  但隐藏页面不得为首屏预先创建封面 loader 或重复发起 cover request。
+- Home primary、enrichment 和可选 runtime 的状态仍 MUST 由各自 owner 管理；不得
+  新增 App 私有正文/图片缓存或让 UI 直接调度网络。
+
 ## 2. Reader 行为
 
 ### 2.1 Current 与输出连续性

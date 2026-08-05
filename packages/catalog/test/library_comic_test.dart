@@ -360,12 +360,14 @@ void main() {
         comicId: 'comic-json',
         chapterTitles: const <String>['第一章'],
       ),
+      canonicalComicId: 'https://example.invalid/comic-json',
       savedAt: DateTime.utc(2026, 7, 28),
       updatedAt: DateTime.utc(2026, 7, 28, 2),
     );
 
     final restored = SavedComicRecord.fromJson(saved.toJson());
     expect(restored.toJson(), saved.toJson());
+    expect(restored.canonicalComicId, 'https://example.invalid/comic-json');
     expect(restored.chapters.single.title, '第一章');
     expect(restored.tags, const <String>['剧情', '全彩']);
 

@@ -222,6 +222,52 @@ void main() {
     expect((source as FileEncodedResourceSource).path, '/cache/generated.bin');
   });
 
+  test('foreground encoded image returns before durable persistence', () async {
+    final writeStarted = Completer<void>();
+    final writeGate = Completer<void>();
+    final store = _MemoryResourceByteStore(
+      writeStarted: writeStarted,
+      writeGate: writeGate,
+    );
+    final cache = ResourceCacheManager(byteStore: store);
+    addTearDown(() async {
+      if (!writeGate.isCompleted) {
+        writeGate.complete();
+      }
+      await cache.close();
+    });
+    const previousKey = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'source/previous-foreground-cover',
+    );
+    const key = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'source/foreground-cover',
+    );
+
+    await cache.getOrLoadEncodedImage(
+      key: previousKey,
+      awaitPersistence: false,
+      loader: () async => Uint8List.fromList(<int>[9, 2, 6, 5]),
+    );
+    await writeStarted.future;
+
+    final source = await cache.getOrLoadEncodedImage(
+      key: key,
+      awaitPersistence: false,
+      loader: () async => Uint8List.fromList(<int>[3, 1, 4, 1, 5]),
+    );
+
+    expect(source, isA<MemoryEncodedResourceSource>());
+    expect((source as MemoryEncodedResourceSource).bytes, <int>[3, 1, 4, 1, 5]);
+    expect(store.writes, 1);
+
+    writeGate.complete();
+    await cache.drainPersistence();
+    expect(store.writes, 2);
+    expect(store.values[key]!.bytes, <int>[3, 1, 4, 1, 5]);
+  });
+
   test('close drains active image persistence before store shutdown', () async {
     final store = _MemoryResourceByteStore();
     final cache = ResourceCacheManager(byteStore: store);
@@ -574,6 +620,11 @@ final class _FileResourceByteStore implements ResourceCacheFileByteStore {
 
 final class _MemoryResourceByteStore
     implements ResourceCacheByteStore, ResourceCacheByteStoreMaintenance {
+  _MemoryResourceByteStore({this.writeStarted, this.writeGate});
+
+  final Completer<void>? writeStarted;
+  final Completer<void>? writeGate;
+  int writes = 0;
   final Map<ResourceCacheKey, PersistedResourceBytes> values =
       <ResourceCacheKey, PersistedResourceBytes>{};
 
@@ -587,6 +638,13 @@ final class _MemoryResourceByteStore
     required Uint8List bytes,
     required DateTime expiresAt,
   }) async {
+    writes++;
+    if (writeStarted != null && !writeStarted!.isCompleted) {
+      writeStarted!.complete();
+    }
+    if (writeGate != null) {
+      await writeGate!.future;
+    }
     values[key] = PersistedResourceBytes(
       bytes: Uint8List.fromList(bytes),
       expiresAt: expiresAt,

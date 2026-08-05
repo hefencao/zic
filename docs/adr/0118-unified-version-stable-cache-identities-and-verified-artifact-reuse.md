@@ -17,8 +17,11 @@ Reader artifact 的精确 `DownloadId` 正确表示某一确定字节版本，�
 
 1. Android debug/profile/release 读取同一 `zic-version.properties`，共用 applicationId、versionName 和 versionCode；不使用 build-type suffix。项目内 pubspec 与 Android 版本文件由门禁保持一致。
 2. 实体 ID 只包含来源稳定 locator，不包含标题、封面、简介、排序位置或其他展示字段。
-3. 封面等逻辑资源使用 `source + canonical comic + resource role` 作为稳定缓存 key；请求 URL 只负责 miss 后取数。
-4. 旧 URL-derived image key 只允许单向读取迁移；新网络正文只写稳定 key，禁止同时维护两套权威缓存。
+3. 目录元数据等 source-aware 资源使用 `source + canonical comic + resource role` 作为稳定缓存
+   key；首页封面使用 `source + raw stable comic + cover role`，以便在 source/plugin 未激活
+   时读取已命中的封面；请求 URL 只负责 miss 后取数。
+4. dev.135 的旧 URL-derived image key 只是过渡实现；当前生产代码不再读取、复制或维护该
+   app-update 兼容 key，新的网络结果只写当前 stable key。
 5. 保留现有精确 `DownloadId` 格式，避免令所有历史 Reader artifact 失效。
 6. `ArtifactCacheManager` 增加有界 alias、链解析、循环保护和物理 rekey。新精确 key 写入正文后自动脱离 alias；删除 alias 不删除其 target。
 7. 版本间页面复用只接受明确证据：相同 checksum、E-Hentai `/s/<image-key>/` 或唯一内容 hash。标题、作者、文件名或相同页码不足以证明等价；用户确认的漫画源迁移只为确实存在的旧 artifact 注册 alias。
@@ -30,7 +33,8 @@ Reader artifact 的精确 `DownloadId` 正确表示某一确定字节版本，�
 
 ## 后果
 
-- 同一漫画封面 URL/token 改变时仍可命中稳定 cover key，App 启动不再因 locator 漂移强制重载。
+- 同一 raw comic 的封面 URL/token 改变时仍可命中稳定 cover key，App 启动不再因 locator
+  漂移强制重载；旧 app-update key 不会再进入首屏兼容路径。
 - Venera 展示字段更新不会产生新的 comic/chapter identity；旧 opaque ID 仍可读取。
 - 已验证的新旧页面关系可立即复用 memory/persistent artifact，并可在新版本提交为权威后物理 rekey。
 - 未提供可信版本关系的 E-Hentai gallery 不会自动复用，避免错误图片污染。

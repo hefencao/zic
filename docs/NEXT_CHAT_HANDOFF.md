@@ -15,8 +15,11 @@
 9. `docs/adr/0119-catalog-cache-weight-and-compatibility-cleanup.md`
 10. `docs/adr/0121-vibevenera-independent-transition-first-frame.md`
 11. `docs/adr/0122-current-reader-pipeline-authority-consolidation.md`
-12. `docs/audits/dev139-current-code-documentation-audit.md`
-13. `docs/audits/dev139-validation-results.md`
+12. `docs/adr/0123-home-cold-start-primary-and-optional-runtime-deferral.md`
+13. `docs/adr/0124-home-cover-independent-foreground-completion.md`
+14. `docs/audits/dev139-current-code-documentation-audit.md`
+15. `docs/audits/dev139-validation-results.md`
+16. `docs/audits/home-cold-start-cover-loading-audit.md`
 
 ## 当前代码事实
 
@@ -27,11 +30,24 @@
 - Reader 退出后最多保留 1 个 idle chapter resource session、TTL 2 分钟；used texture 不保留。
 - Android 使用默认 platform channel、单 blit lane和 fresh used texture lifecycle。
 - response cache 与 page artifact cache 是两个权威平面；App/Reader没有私有正文 LRU。
+- Home 先发布 cover-bearing primary 并让出首帧；native media prewarm、整本队列 restore
+  和外部插件 activation 在后台完成，source ready 后增量替换 projection。
+- 首页封面冷 miss 使用独立的 foreground completion：encoded bytes 到达即显示 memory
+  source，durable response write 后台排队；warm durable file hit 仍走文件源。
+- 首页 artwork 先探测 raw stable cache，命中不解析 source/plugin；raw miss 才进入 source
+  loader。dev.135 为 app 更新保留的 URL-derived/canonical 旧 key 兼容读取与 alias 回填已
+  删除。来源确认过的 canonical comic identity 持久化在 SavedComic 元数据中，冷启动可在
+  插件未激活时先归并同源 raw ID。IndexedStack 页面按当前导航 lazy 构建，未访问书架不会
+  创建隐藏封面。
 
 ## 下一步
 
 - 优先完成 `IMPLEMENTATION_PLAN.md` 中的设备与完整工具链闭环。
 - 新 Trace 重点观察 transition first frame、NetLane priority、source growth、holder depth、deadline/present 和 readerSession retain/reuse。
+- 首页冷启动 Trace 重点观察 `homeServicesReady`、`home-library-primary`、插件 ready、
+  `homeCoverRequested`、各封面的 `homeCoverSourceReady` 和 `homeCoverFirstFrame`；需检查
+  raw durable cover hit/source miss 分流、命中时是否零插件资源请求、canonical alias 是否在
+  插件未激活时只读归并，以及慢封面是否仍影响快速封面。
 - 发现实现变化时先更新 Architecture/Spec/Status/Handoff，不允许核心文档继续描述已删除路径。
 
 ## 不可改变的稳定边界
@@ -39,6 +55,7 @@
 - 不缩小 7/3、7/5/3/2 或 5/3/2 来掩盖问题；
 - 不恢复 FlowGate、startup-buffer、跨 Reader used texture 或 CPU affinity；
 - 不在 Reader/App 新增 transport、正文缓存、cursor、frame 或 session 所有权；
+- 不把 native prewarm、queue restore、plugin activation 或 enrichment 重新加回首页首帧门控；
 - 正式 ZIP 不含 `.zic-workspace.json`，Patch 命令直接使用：
 
 ```bash

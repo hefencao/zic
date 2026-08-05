@@ -283,8 +283,13 @@ final class _DemoHomeState extends State<DemoHome> {
       ownsLibrary: ownsLibrary,
       ownsChapterDownloads: ownsChapterDownloads,
       ownsWholeComicDownloads: ownsWholeComicDownloads,
+      waitForPrimaryFrame: () => WidgetsBinding.instance.endOfFrame,
       startupTelemetry: widget.startupTelemetry,
     )..addListener(_handleLibrarySessionChanged);
+    final externalPlugins = widget.externalPlugins;
+    if (externalPlugins != null) {
+      unawaited(_refreshExternalSourcesWhenReady(externalPlugins));
+    }
   }
 
   void _handleAppPreferencesChanged() {
@@ -382,8 +387,26 @@ final class _DemoHomeState extends State<DemoHome> {
               ),
       ),
     );
-    await _librarySession.replaceSources(_sources);
+    await _librarySession.replaceSources(_sources, reloadLibrary: false);
+    final canonicalIdsPersisted = await _persistKnownCanonicalComicIds();
+    if (canonicalIdsPersisted) {
+      await _reloadLibrary();
+    }
     if (mounted) setState(() {});
+  }
+
+  Future<void> _refreshExternalSourcesWhenReady(
+    ExternalPluginController controller,
+  ) async {
+    try {
+      await controller.ready;
+    } on Object {
+      return;
+    }
+    if (!mounted || !identical(widget.externalPlugins, controller)) {
+      return;
+    }
+    await _replaceExternalSources();
   }
 
   Future<void> _openSourceManagement() async {
@@ -999,6 +1022,11 @@ final class _DemoHomeState extends State<DemoHome> {
         await _library.upsertSavedComic(
           SavedComicRecord.fromManifest(
             manifest,
+            canonicalComicId: _canonicalComicIdForPersistence(
+              manifest.comic.sourceId,
+              manifest.comic.comicId,
+              fallback: existing?.canonicalComicId,
+            ),
             savedAt: existing?.savedAt,
             updatedAt: DateTime.now().toUtc(),
           ),
@@ -1059,7 +1087,6 @@ final class _DemoHomeState extends State<DemoHome> {
       cache: _cacheCoordinator.responses,
       sourceId: sourceId,
       comicId: comicId,
-      legacyComicId: comicId,
       imageIdentity: sourceValue,
       resourceRole: 'cover',
       revision: revision,
@@ -1093,12 +1120,11 @@ final class _DemoHomeState extends State<DemoHome> {
       );
     }
     const revision = '';
-    final source = _sourceForId(sourceId);
     final uri = Uri.tryParse(sourceValue);
-    if (source != null && uri != null && uri.hasScheme) {
+    if (sourceId != 'local-folder' && uri != null && uri.hasScheme) {
       return _sourceResources.loadArtworkSource(
         cache: _cacheCoordinator.responses,
-        sourceId: source.sourceId,
+        sourceId: sourceId,
         comicId: comicId,
         uri: uri,
         revision: revision,
@@ -1111,10 +1137,10 @@ final class _DemoHomeState extends State<DemoHome> {
       cache: _cacheCoordinator.responses,
       sourceId: sourceId,
       comicId: comicId,
-      legacyComicId: comicId,
       imageIdentity: sourceValue,
       resourceRole: 'cover',
       revision: revision,
+      awaitPersistence: false,
       loader: () => readLocalImageSource(sourceValue),
     );
   }

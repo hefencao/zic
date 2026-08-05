@@ -8,6 +8,7 @@ import 'package:downloads/downloads.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resource_cache/resource_cache.dart';
+import 'package:telemetry/telemetry.dart';
 import 'package:zic/comic_details.dart' as details;
 import 'package:zic/demo_home.dart';
 import 'package:zic/download_manager.dart';
@@ -165,6 +166,127 @@ void main() {
     expect(tester.getSize(shelfCover), homeCoverSize);
     expect(homeCoverSize.width, ComicCoverCard.cardWidth);
     expect(homeCoverSize.height, ComicCoverCard.cardExtent);
+  });
+
+  testWidgets('inactive bookshelf does not start cover loads', (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final chapter = _chapter(name: '延迟构建漫画');
+    await store.upsertChapter(chapter);
+    final trace = MemoryTraceSink();
+
+    await tester.pumpWidget(
+      App(
+        libraryStore: store,
+        startupTelemetry: HomeStartupTelemetry(
+          clock: const SystemClock(),
+          sink: trace,
+        ),
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+
+    int coverRequests() => trace.events
+        .where((event) => event.kind == TraceEventKind.homeCoverRequested)
+        .length;
+
+    expect(coverRequests(), 1);
+    await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
+    await tester.pump();
+    expect(coverRequests(), 2);
+  });
+
+  testWidgets(
+      'cached remote cover does not require a source or plugin on home',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    await store.upsertSavedComic(
+      SavedComicRecord(
+        sourceId: 'remote:test',
+        comicId: 'cached-comic',
+        title: '缓存远程漫画',
+        coverSourceId: 'https://example.invalid/cached-cover.png',
+        savedAt: DateTime.utc(2026, 7, 28),
+        updatedAt: DateTime.utc(2026, 7, 28),
+      ),
+    );
+
+    final cache = ResourceCacheCoordinator();
+    final identity = ComicResourceCacheIdentity(
+      sourceId: 'remote:test',
+      comicId: 'cached-comic',
+    );
+    await cache.responses.getOrLoadEncodedImage(
+      key: ResourceCacheKey(
+        kind: ResourceCacheKind.imageBytes,
+        identity: identity.response('cover'),
+        namespace: identity.namespace,
+        revision: 'artwork-v2',
+      ),
+      loader: () async => _tinyPng(),
+    );
+
+    await tester.pumpWidget(
+      App(
+        libraryStore: store,
+        comicSources: const <BrowsableComicSource>[],
+        cacheCoordinator: cache,
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await _pumpUntilFound(tester, find.byType(Image));
+
+    expect(find.byType(ComicCoverCard), findsOneWidget);
+    expect(find.byType(Image), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await cache.close();
+  });
+
+  testWidgets(
+      'persisted source identity aliases collapse before plugin activation',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    const sourceId = 'mihon:fixture';
+    const canonicalComicId = 'https://example.invalid/comic/42';
+    for (final comicId in <String>['old-opaque-id', 'new-opaque-id']) {
+      await store.upsertSavedComic(
+        SavedComicRecord(
+          sourceId: sourceId,
+          comicId: comicId,
+          canonicalComicId: canonicalComicId,
+          title: '同名漫画',
+          coverSourceId: 'https://example.invalid/$comicId.png',
+          savedAt: DateTime.utc(2026, 7, 28),
+          updatedAt: DateTime.utc(2026, 7, 28),
+        ),
+      );
+      await store.saveComicPreference(
+        ComicPreference.defaults(sourceId: sourceId, comicId: comicId)
+            .copyWith(inShelf: true),
+      );
+    }
+
+    await tester.pumpWidget(
+      App(
+        libraryStore: store,
+        comicSources: const <BrowsableComicSource>[],
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
+    await tester.pump(const Duration(milliseconds: 320));
+
+    expect(find.byType(ComicCoverCard), findsOneWidget);
+    expect(
+      find.byKey(comicCoverKey(sourceId, 'new-opaque-id')),
+      findsOneWidget,
+    );
+    expect(await store.listSavedComics(), hasLength(2));
   });
 
   testWidgets(
@@ -543,6 +665,116 @@ void main() {
     expect(find.text('第 4 话\n40% · 4/10 页'), findsOneWidget);
     expect(find.text('远程漫画'), findsOneWidget);
     expect(find.textContaining('上次'), findsNothing);
+  });
+
+  testWidgets('cover retries when a failed loader becomes available',
+      (tester) async {
+    final chapter = _chapter(name: '延后来源漫画');
+    final comic = LibraryComic.fromEntries(
+      <ImportedLibraryEntry>[ImportedLibraryEntry(chapter: chapter)],
+    );
+    var available = false;
+    var loadCount = 0;
+
+    Widget buildCard() => MaterialApp(
+          home: Scaffold(
+            body: ComicCoverCard(
+              key: const ValueKey<String>('retry-cover'),
+              comic: comic,
+              preference: ComicPreference.defaults(
+                sourceId: chapter.sourceId,
+                comicId: chapter.comicId,
+                sourceKind: ComicSourceKind.remote,
+              ),
+              coverSource: () async {
+                loadCount++;
+                if (!available) {
+                  throw StateError('source is still activating');
+                }
+                return MemoryEncodedResourceSource(_tinyPng());
+              },
+              onTap: () {},
+            ),
+          ),
+        );
+
+    await tester.pumpWidget(buildCard());
+    await tester.pump();
+    await tester.pump();
+    expect(loadCount, 1);
+
+    available = true;
+    await tester.pumpWidget(buildCard());
+    await tester.pump();
+    await tester.pump();
+    expect(loadCount, 2);
+  });
+
+  testWidgets('home cover cards render independently from a slow cover',
+      (tester) async {
+    final fastChapter = _chapter(name: '快速封面');
+    final slowChapter = _chapter(name: '慢速封面');
+    final fastComic = LibraryComic.fromEntries(
+      <ImportedLibraryEntry>[ImportedLibraryEntry(chapter: fastChapter)],
+    );
+    final slowComic = LibraryComic.fromEntries(
+      <ImportedLibraryEntry>[ImportedLibraryEntry(chapter: slowChapter)],
+    );
+    final slowSource = Completer<EncodedResourceSource>();
+    var fastLoads = 0;
+
+    ComicPreference preference(ImportedChapterRecord chapter) =>
+        ComicPreference.defaults(
+          sourceId: chapter.sourceId,
+          comicId: chapter.comicId,
+          sourceKind: ComicSourceKind.remote,
+        );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            height: 220,
+            child: Row(
+              children: <Widget>[
+                SizedBox(
+                  width: 150,
+                  child: ComicCoverCard(
+                    comic: fastComic,
+                    preference: preference(fastChapter),
+                    coverSource: () async {
+                      fastLoads++;
+                      return MemoryEncodedResourceSource(_tinyPng());
+                    },
+                    onTap: () {},
+                  ),
+                ),
+                SizedBox(
+                  width: 150,
+                  child: ComicCoverCard(
+                    comic: slowComic,
+                    preference: preference(slowChapter),
+                    coverSource: () => slowSource.future,
+                    onTap: () {},
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(fastLoads, 1);
+    expect(find.byType(Image), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    slowSource.complete(MemoryEncodedResourceSource(_tinyPng()));
+    await tester.pump();
+    await tester.pump();
+    expect(find.byType(Image), findsNWidgets(2));
   });
 
   testWidgets('details persists preference and chapter read transitions',

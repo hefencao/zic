@@ -5,6 +5,16 @@
 - 记录 NetLane 唯一网络权威、16/64 KiB transport 合并、1 MiB/256 KiB prefix hint、单 blit 与 1 项/2 分钟资源会话 retention。
 - 规范近端 ADR 状态，新增 ADR 0122 作为当前 Reader Pipeline 综合入口。
 - 新增 current-code documentation consistency gate；产品运行代码和 native ABI 不变。
+- 修复首页冷启动关键路径：先呈现 App 并后台预热 native media，Home 不再等待整本队列恢复或外部插件激活；primary 封面投影先让出首帧，来源延后 ready 后可重试失败封面。
+- 新增 ADR 0123、首页冷启动审计及 Home/plugin/downloads owner tests；目标设备时序仍待复验。
+- 进一步修复首页封面整体等待：前台封面 encoded bytes 到达即返回 memory source，durable response 写入后台排队；新增快慢封面渐进显示测试，保留 warm durable file 直读。
+- 新增 ADR 0124；真实设备上的各封面首帧间隔仍待复验。
+- 修复首页远程封面先解析插件再查缓存的问题：先查 source-independent raw stable key，
+  命中不进入插件资源路径；删除 dev.135 为 app 更新保留的 URL-derived/canonical 旧 key
+  兼容读取和 alias 回填。导航页面改为 lazy 构建，避免隐藏书架重复创建封面 loader。
+- 修复同一漫画源的旧/新 raw `comicId` 在插件未激活时暂时显示两张书架卡片：来源确认过的
+  canonical identity 写入 `SavedComicRecord`，冷启动按该比较 identity 先做只读归并，raw
+  request/chapter identity 和已验证 artifact/version 迁移保持不变。
 
 ## 0.31.0-dev.138：移除 Current 流量门控并恢复目标页首帧并行
 

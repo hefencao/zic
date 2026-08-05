@@ -70,6 +70,7 @@ final class SavedComicRecord {
     required this.sourceId,
     required this.comicId,
     required this.title,
+    this.canonicalComicId,
     Iterable<String> authors = const <String>[],
     Iterable<String> tags = const <String>[],
     this.description,
@@ -100,6 +101,13 @@ final class SavedComicRecord {
         comicId.trim().isEmpty ||
         title.trim().isEmpty) {
       throw ArgumentError('source, comic identity and title must be non-empty');
+    }
+    if (canonicalComicId != null && canonicalComicId!.trim().isEmpty) {
+      throw ArgumentError.value(
+        canonicalComicId,
+        'canonicalComicId',
+        'must be null or non-empty',
+      );
     }
     if (description != null && description!.trim().isEmpty) {
       throw ArgumentError.value(description, 'description', 'must not be blank');
@@ -133,6 +141,7 @@ final class SavedComicRecord {
 
   factory SavedComicRecord.fromManifest(
     ComicManifest manifest, {
+    String? canonicalComicId,
     DateTime? savedAt,
     DateTime? updatedAt,
   }) =>
@@ -140,6 +149,7 @@ final class SavedComicRecord {
         sourceId: manifest.comic.sourceId,
         comicId: manifest.comic.comicId,
         title: manifest.comic.title,
+        canonicalComicId: canonicalComicId,
         authors: manifest.comic.authors,
         tags: manifest.comic.tags,
         description: manifest.comic.description,
@@ -153,6 +163,11 @@ final class SavedComicRecord {
   final String sourceId;
   final String comicId;
   final String title;
+  /// Source-owned comparison identity. The raw [comicId] remains the request
+  /// and chapter-storage identity; this field only lets a cold library
+  /// projection collapse a previously verified source alias before the source
+  /// runtime is activated.
+  final String? canonicalComicId;
   final List<String> authors;
   final List<String> tags;
   final String? description;
@@ -177,6 +192,8 @@ final class SavedComicRecord {
       );
 
   SavedComicRecord copyWith({
+    String? canonicalComicId,
+    bool clearCanonicalComicId = false,
     String? title,
     Iterable<String>? authors,
     Iterable<String>? tags,
@@ -193,6 +210,9 @@ final class SavedComicRecord {
         sourceId: sourceId,
         comicId: comicId,
         title: title ?? this.title,
+        canonicalComicId: clearCanonicalComicId
+            ? null
+            : (canonicalComicId ?? this.canonicalComicId),
         authors: authors ?? this.authors,
         tags: tags ?? this.tags,
         description:
@@ -209,6 +229,7 @@ final class SavedComicRecord {
         'sourceId': sourceId,
         'comicId': comicId,
         'title': title,
+        if (canonicalComicId != null) 'canonicalComicId': canonicalComicId,
         'authors': authors,
         'tags': tags,
         if (description != null) 'description': description,
@@ -238,6 +259,14 @@ final class SavedComicRecord {
     final tags = rawTags == null
         ? const <String>[]
         : (rawTags as List<Object?>).cast<String>();
+    final rawCanonicalComicId = json['canonicalComicId'];
+    if (rawCanonicalComicId != null &&
+        (rawCanonicalComicId is! String ||
+            rawCanonicalComicId.trim().isEmpty)) {
+      throw const FormatException(
+        'canonicalComicId must be a non-empty string',
+      );
+    }
 
     final rawChapters = json['chapters'];
     if (rawChapters != null && rawChapters is! List<Object?>) {
@@ -251,6 +280,7 @@ final class SavedComicRecord {
       sourceId: _requiredString(json, 'sourceId'),
       comicId: _requiredString(json, 'comicId'),
       title: _requiredString(json, 'title'),
+      canonicalComicId: rawCanonicalComicId as String?,
       authors: authors,
       tags: tags,
       description: json['description'] as String?,

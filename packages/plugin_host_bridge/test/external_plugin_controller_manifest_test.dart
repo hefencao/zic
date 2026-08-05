@@ -36,13 +36,17 @@ void main() {
       }),
     );
 
-    final controller = await ExternalPluginController.open(storage.path);
+    final controller = await ExternalPluginController.openDeferred(
+      storage.path,
+    );
     addTearDown(() async {
       await controller.close();
       await outside.delete();
       await storage.delete(recursive: true);
     });
 
+    expect(controller.activeSources, isEmpty);
+    await controller.ready;
     expect(
       controller.installed.map((record) => record.plugin.pluginId),
       orderedEquals(<String>['venera:test-owned']),

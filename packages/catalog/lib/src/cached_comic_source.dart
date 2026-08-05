@@ -256,8 +256,7 @@ final class CachedBrowsableComicSource
       loadCachedComicImage(
         cache: cache,
         sourceId: sourceId,
-        comicId: comicId == null ? null : _comicIdentity(comicId).comicId,
-        legacyComicId: comicId,
+        comicId: comicId,
         imageIdentity: uri.toString(),
         resourceRole: 'cover',
         revision: revision,
@@ -272,15 +271,16 @@ final class CachedBrowsableComicSource
     Uri uri, {
     String? comicId,
     String revision = '',
+    bool awaitPersistence = true,
   }) =>
       loadCachedComicImageSource(
         cache: cache,
         sourceId: sourceId,
-        comicId: comicId == null ? null : _comicIdentity(comicId).comicId,
-        legacyComicId: comicId,
+        comicId: comicId,
         imageIdentity: uri.toString(),
         resourceRole: 'cover',
         revision: revision,
+        awaitPersistence: awaitPersistence,
         loader: () => source.loadResource(uri),
       );
 
@@ -295,9 +295,14 @@ final class CachedBrowsableComicSource
         .map((entry) => entry.key)
         .toList(growable: false);
     cache.invalidateNamespace(identity.namespace);
-    cache.invalidateNamespace(
-      _legacyComicResourceCacheNamespace(sourceId, comicId),
-    );
+    if (identity.comicId != comicId) {
+      cache.invalidateNamespace(
+        ComicResourceCacheIdentity(
+          sourceId: sourceId,
+          comicId: comicId,
+        ).namespace,
+      );
+    }
     for (final chapterId in chapterIds) {
       cache.invalidateWhere(
         (key) =>
@@ -416,31 +421,19 @@ Future<Uint8List> loadCachedComicImage({
   required String imageIdentity,
   required Future<Uint8List> Function() loader,
   String? comicId,
-  String? legacyComicId,
   String resourceRole = 'cover',
   String revision = '',
-}) {
-  final key = _imageKey(
-    sourceId: sourceId,
-    comicId: comicId,
-    imageIdentity: imageIdentity,
-    resourceRole: resourceRole,
-    revision: revision,
-  );
-  final legacy = _legacyImageKey(
-    sourceId: sourceId,
-    comicId: legacyComicId ?? comicId,
-    imageIdentity: imageIdentity,
-    revision: revision,
-  );
-  return cache.getOrLoad<Uint8List>(
-    key: key,
-    loader: key == legacy
-        ? loader
-        : () async => await cache.readBytesIfPresent(legacy) ?? await loader(),
-    weightOf: (bytes) => bytes.lengthInBytes,
-  );
-}
+}) => cache.getOrLoad<Uint8List>(
+      key: _imageKey(
+        sourceId: sourceId,
+        comicId: comicId,
+        imageIdentity: imageIdentity,
+        resourceRole: resourceRole,
+        revision: revision,
+      ),
+      loader: loader,
+      weightOf: (bytes) => bytes.lengthInBytes,
+    );
 
 Future<EncodedResourceSource> loadCachedComicImageSource({
   required ResourceCacheManager cache,
@@ -448,28 +441,44 @@ Future<EncodedResourceSource> loadCachedComicImageSource({
   required String imageIdentity,
   required Future<Uint8List> Function() loader,
   String? comicId,
-  String? legacyComicId,
   String resourceRole = 'cover',
   String revision = '',
-}) {
-  final key = _imageKey(
-    sourceId: sourceId,
-    comicId: comicId,
-    imageIdentity: imageIdentity,
-    resourceRole: resourceRole,
-    revision: revision,
-  );
-  final legacy = _legacyImageKey(
-    sourceId: sourceId,
-    comicId: legacyComicId ?? comicId,
-    imageIdentity: imageIdentity,
-    revision: revision,
-  );
-  return cache.getOrLoadEncodedImage(
-    key: key,
-    loader: key == legacy
-        ? loader
-        : () async => await cache.readBytesIfPresent(legacy) ?? await loader(),
+  bool awaitPersistence = true,
+}) => cache.getOrLoadEncodedImage(
+      key: _imageKey(
+        sourceId: sourceId,
+        comicId: comicId,
+        imageIdentity: imageIdentity,
+        resourceRole: resourceRole,
+        revision: revision,
+      ),
+      awaitPersistence: awaitPersistence,
+      loader: loader,
+    );
+
+/// Probes an artwork cache entry without invoking [loader].
+///
+/// Callers that can operate without a live source should use this before
+/// resolving a plugin. This probes only the current stable key and never
+/// invokes a source loader.
+Future<EncodedResourceSource?> readCachedComicImageSource({
+  required ResourceCacheManager cache,
+  required String sourceId,
+  required String imageIdentity,
+  String? comicId,
+  String resourceRole = 'cover',
+  String revision = '',
+  bool awaitPersistence = true,
+}) async {
+  return cache.getEncodedImageIfPresent(
+    _imageKey(
+      sourceId: sourceId,
+      comicId: comicId,
+      imageIdentity: imageIdentity,
+      resourceRole: resourceRole,
+      revision: revision,
+    ),
+    awaitPersistence: awaitPersistence,
   );
 }
 
@@ -483,9 +492,6 @@ void invalidateComicResourceCache(
       sourceId: sourceId,
       comicId: comicId,
     ).namespace,
-  );
-  cache.invalidateNamespace(
-    _legacyComicResourceCacheNamespace(sourceId, comicId),
   );
 }
 
@@ -553,10 +559,13 @@ ResourceCacheKey _imageKey({
   required String revision,
 }) {
   if (comicId == null) {
-    return _legacyImageKey(
-      sourceId: sourceId,
-      comicId: null,
-      imageIdentity: imageIdentity,
+    return ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: encodeStableCacheKey(
+        'source-image',
+        <String>[sourceId, imageIdentity, resourceRole],
+      ),
+      namespace: sourceResourceCacheNamespace(sourceId),
       revision: revision,
     );
   }
@@ -572,26 +581,8 @@ ResourceCacheKey _imageKey({
   );
 }
 
-ResourceCacheKey _legacyImageKey({
-  required String sourceId,
-  required String? comicId,
-  required String imageIdentity,
-  required String revision,
-}) =>
-    ResourceCacheKey(
-      kind: ResourceCacheKind.imageBytes,
-      identity: '$sourceId\u0000$imageIdentity',
-      namespace: comicId == null
-          ? 'source:$sourceId'
-          : _legacyComicResourceCacheNamespace(sourceId, comicId),
-      revision: revision,
-    );
-
 String comicResourceCacheNamespace(String sourceId, String comicId) =>
     ComicResourceCacheIdentity(
       sourceId: sourceId,
       comicId: comicId,
     ).namespace;
-
-String _legacyComicResourceCacheNamespace(String sourceId, String comicId) =>
-    'comic:$sourceId\u0000$comicId';

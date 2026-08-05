@@ -68,6 +68,7 @@ void main() {
       pageLoader: (_, __) async => Uint8List(1),
     );
     final queue = WholeComicDownloadQueue(downloads: downloads);
+    final primaryFrame = Completer<void>();
     final session = HomeLibrarySession(
       library: library,
       chapterDownloads: downloads,
@@ -76,6 +77,7 @@ void main() {
       ownsLibrary: true,
       ownsChapterDownloads: true,
       ownsWholeComicDownloads: true,
+      waitForPrimaryFrame: () => primaryFrame.future,
     );
     addTearDown(() async {
       await session.close();
@@ -96,6 +98,7 @@ void main() {
     expect(readyCompleted, isFalse);
 
     categories.complete(const <LibraryCategory>[]);
+    primaryFrame.complete();
     await session.ready;
     expect(session.loading, isFalse);
   });

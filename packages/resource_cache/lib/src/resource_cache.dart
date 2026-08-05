@@ -364,46 +364,6 @@ final class ResourceCacheManager {
     );
   }
 
-  /// Reads one immutable byte entry without invoking a source loader.
-  ///
-  /// Used for one-way migration from a legacy URL-derived key to a stable
-  /// entity/role key. A miss remains a miss; callers must store new network
-  /// bytes only under the stable key so both paths do not compete.
-  Future<Uint8List?> readBytesIfPresent(ResourceCacheKey key) async {
-    _requireOpen();
-    if (key.kind != ResourceCacheKind.imageBytes) {
-      throw ArgumentError.value(
-        key.kind,
-        'key.kind',
-        'only immutable image bytes can be migrated by this path',
-      );
-    }
-    final memory = _read<Uint8List>(key);
-    if (memory != null) {
-      _hits++;
-      return memory;
-    }
-    final persisted = await _readPersistent(key);
-    if (persisted == null) {
-      _persistentMisses++;
-      return null;
-    }
-    _hits++;
-    _persistentHits++;
-    final bytes = persisted.bytes;
-    final policy = _policies[key.kind]!;
-    if (bytes.lengthInBytes <= policy.maxWeight &&
-        bytes.lengthInBytes <= globalMaxWeight) {
-      _storeWithExpiry(
-        key,
-        bytes,
-        bytes.lengthInBytes,
-        persisted.expiresAt,
-      );
-    }
-    return bytes;
-  }
-
   Future<T> getOrLoad<T extends Object>({
     required ResourceCacheKey key,
     required Future<T> Function() loader,
@@ -420,10 +380,17 @@ final class ResourceCacheManager {
 
   /// Resolves immutable image bytes without forcing a durable file hit through
   /// `readAsBytes` when the backing store exposes file access.
+  ///
+  /// When [awaitPersistence] is false, a cold image load returns a
+  /// [MemoryEncodedResourceSource] as soon as the source bytes are available.
+  /// The durable write remains owned by this manager and is drained by
+  /// [drainPersistence] and [close]. Warm durable files keep their normal
+  /// file-backed fast path.
   Future<EncodedResourceSource> getOrLoadEncodedImage({
     required ResourceCacheKey key,
     required Future<Uint8List> Function() loader,
     bool forceRefresh = false,
+    bool awaitPersistence = true,
   }) {
     _requireOpen();
     if (key.kind != ResourceCacheKind.imageBytes) {
@@ -455,7 +422,11 @@ final class ResourceCacheManager {
       }
     }
 
-    final future = _resolveEncodedImage(key: key, loader: loader);
+    final future = _resolveEncodedImage(
+      key: key,
+      loader: loader,
+      awaitPersistence: awaitPersistence,
+    );
     _encodedImageInFlight[key] = future;
     return future.whenComplete(() {
       if (identical(_encodedImageInFlight[key], future)) {
@@ -464,11 +435,85 @@ final class ResourceCacheManager {
     });
   }
 
+  /// Returns a warm encoded image without invoking a loader.
+  ///
+  /// This is intentionally a probe rather than a miss-producing variant of
+  /// [getOrLoadEncodedImage]. It lets a caller check a source-independent
+  /// cache alias before resolving an optional source/plugin.
+  Future<EncodedResourceSource?> getEncodedImageIfPresent(
+    ResourceCacheKey key, {
+    bool awaitPersistence = true,
+  }) async {
+    _requireOpen();
+    if (key.kind != ResourceCacheKind.imageBytes) {
+      throw ArgumentError.value(
+        key.kind,
+        'key.kind',
+        'file-backed encoded resources are only valid for image bytes',
+      );
+    }
+    final warmFile = _readFileSource(key);
+    if (warmFile != null) {
+      _hits++;
+      return warmFile;
+    }
+    final memory = _read<Uint8List>(key);
+    if (memory != null) {
+      _hits++;
+      return MemoryEncodedResourceSource(memory);
+    }
+    final pending = _encodedImageInFlight[key];
+    if (pending != null) {
+      _hits++;
+      return pending;
+    }
+
+    final file = await _locatePersistentFile(
+      key,
+      waitForPersistence: awaitPersistence,
+    );
+    if (file != null) {
+      _hits++;
+      _persistentHits++;
+      final source = FileEncodedResourceSource(
+        path: file.path,
+        lengthInBytes: file.byteLength,
+      );
+      _storeFileSource(key, source, file.expiresAt);
+      return source;
+    }
+    if (!awaitPersistence) {
+      return null;
+    }
+    final persisted = await _readPersistent(key);
+    if (persisted == null) {
+      return null;
+    }
+    final bytes = persisted.bytes;
+    final policy = _policies[key.kind]!;
+    if (bytes.lengthInBytes <= policy.maxWeight &&
+        bytes.lengthInBytes <= globalMaxWeight) {
+      _storeWithExpiry(
+        key,
+        bytes,
+        bytes.lengthInBytes,
+        persisted.expiresAt,
+      );
+    }
+    _hits++;
+    _persistentHits++;
+    return MemoryEncodedResourceSource(bytes);
+  }
+
   Future<EncodedResourceSource> _resolveEncodedImage({
     required ResourceCacheKey key,
     required Future<Uint8List> Function() loader,
+    required bool awaitPersistence,
   }) async {
-    final file = await _locatePersistentFile(key);
+    final file = await _locatePersistentFile(
+      key,
+      waitForPersistence: awaitPersistence,
+    );
     if (file != null) {
       _hits++;
       _persistentHits++;
@@ -490,8 +535,13 @@ final class ResourceCacheManager {
       forceRefresh: false,
       // A file-capable store has already been checked without copying. Do not
       // immediately fall back to its legacy full-byte read path on a miss.
-      allowPersistentRead: byteStore is! ResourceCacheByteStoreFileAccess,
+      allowPersistentRead: awaitPersistence &&
+          byteStore is! ResourceCacheByteStoreFileAccess,
+      awaitPersistence: awaitPersistence,
     );
+    if (!awaitPersistence) {
+      return MemoryEncodedResourceSource(bytes);
+    }
     final persisted = await _locatePersistentFile(key);
     if (persisted != null) {
       final source = FileEncodedResourceSource(
@@ -511,6 +561,7 @@ final class ResourceCacheManager {
     required ResourceCacheWeight<T> weightOf,
     required bool forceRefresh,
     required bool allowPersistentRead,
+    bool awaitPersistence = true,
   }) {
     _requireOpen();
     if (!forceRefresh) {
@@ -539,6 +590,7 @@ final class ResourceCacheManager {
       generation: generation,
       epoch: epoch,
       allowPersistentRead: !forceRefresh && allowPersistentRead,
+      awaitPersistence: awaitPersistence,
     );
     final Future<Object> shared = future;
     _inFlight[key] = shared;
@@ -557,6 +609,7 @@ final class ResourceCacheManager {
     required int generation,
     required int epoch,
     required bool allowPersistentRead,
+    required bool awaitPersistence,
   }) async {
     if (allowPersistentRead &&
         byteStore != null &&
@@ -597,7 +650,12 @@ final class ResourceCacheManager {
       final expiresAt = _now().add(policy.ttl);
       _storeWithExpiry(key, value, weight, expiresAt);
       if (key.kind == ResourceCacheKind.imageBytes && value is Uint8List) {
-        await _writePersistent(key, value, expiresAt);
+        final persistence = _writePersistent(key, value, expiresAt);
+        if (awaitPersistence) {
+          await persistence;
+        } else {
+          unawaited(persistence);
+        }
       }
     }
     return value;
@@ -871,15 +929,18 @@ final class ResourceCacheManager {
   }
 
   Future<PersistedResourceFile?> _locatePersistentFile(
-    ResourceCacheKey key,
-  ) async {
+    ResourceCacheKey key, {
+    bool waitForPersistence = true,
+  }) async {
     final store = byteStore;
     if (store is! ResourceCacheFileByteStore) {
       return null;
     }
     final generation = _generationOf(key);
     final epoch = _epoch;
-    await _persistenceTail;
+    if (waitForPersistence) {
+      await _persistenceTail;
+    }
     try {
       final file = await store.locate(key);
       if (file == null ||

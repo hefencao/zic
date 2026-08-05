@@ -68,12 +68,10 @@ final class ComicSourceResourceGateway {
   }) {
     _requireOpen();
     final source = _requireSource(sourceId, uri);
-    final identity = ComicResourceCacheIdentity.fromSource(source, comicId);
     return loadCachedComicImage(
       cache: cache,
       sourceId: sourceId,
-      comicId: identity.comicId,
-      legacyComicId: comicId,
+      comicId: comicId,
       imageIdentity: uri.toString(),
       resourceRole: 'cover',
       revision: _artworkRevision(revision),
@@ -89,22 +87,43 @@ final class ComicSourceResourceGateway {
     required String comicId,
     required Uri uri,
     String revision = '',
-  }) {
+    bool awaitPersistence = false,
+  }) async {
     _requireOpen();
-    final source = _requireSource(sourceId, uri);
-    final identity = ComicResourceCacheIdentity.fromSource(source, comicId);
-    return loadCachedComicImageSource(
+    final cacheRevision = _artworkRevision(revision);
+    // Do not resolve a source before these source-independent cache probes. A
+    // warm cover is an immutable response and must remain available while an
+    // external source/plugin is still being discovered or restored.
+    final cached = await readCachedComicImageSource(
       cache: cache,
       sourceId: sourceId,
-      comicId: identity.comicId,
-      legacyComicId: comicId,
+      comicId: comicId,
       imageIdentity: uri.toString(),
       resourceRole: 'cover',
-      revision: _artworkRevision(revision),
+      revision: cacheRevision,
+      awaitPersistence: awaitPersistence,
+    );
+    if (cached != null) {
+      return cached;
+    }
+
+    final source = _requireSource(sourceId, uri);
+    // Cover entries use the raw durable comic identity. It is available from
+    // the library before an optional source/plugin is activated, so a warm
+    // cover never needs source resolution on the foreground path.
+    final result = await loadCachedComicImageSource(
+      cache: cache,
+      sourceId: sourceId,
+      comicId: comicId,
+      imageIdentity: uri.toString(),
+      resourceRole: 'cover',
+      revision: cacheRevision,
+      awaitPersistence: awaitPersistence,
       loader: () => _collectArtworkResponse(
         _transports.loaderFor(source, uri),
       ),
     );
+    return result;
   }
 
   String _artworkRevision(String revision) => revision.isEmpty

@@ -90,19 +90,44 @@ final class ExternalPluginController {
       recordFor: _installedRecord,
     ),
   ]);
+  late final Future<void> _ready;
   bool _closed = false;
 
   static Future<ExternalPluginController> open(String storageRoot) async {
-    final controller = ExternalPluginController._(storageRoot: storageRoot);
-    await controller._root.create(recursive: true);
-    await controller._readManifest();
-    try {
-      await controller.refreshDeviceMihonExtensions();
-    } on Object {
-      controller._deviceMihonExtensions = const <InstalledMihonExtension>[];
-    }
-    await controller._activateInstalled();
+    final controller = await openDeferred(storageRoot);
+    await controller.ready;
     return controller;
+  }
+
+  /// Opens the controller's durable manifest without activating installed
+  /// runtimes. Activation continues in [ready] so optional plugin work cannot
+  /// delay the first Home projection.
+  static Future<ExternalPluginController> openDeferred(
+    String storageRoot,
+  ) async {
+    final controller = ExternalPluginController._(storageRoot: storageRoot);
+    await controller._prepare();
+    controller._ready = controller._initializeInBackground();
+    return controller;
+  }
+
+  /// Completes after device extension discovery and installed plugin
+  /// activation have finished. Individual activation failures are retained in
+  /// [activationFailures], matching the eager-open behavior.
+  Future<void> get ready => _ready;
+
+  Future<void> _prepare() async {
+    await _root.create(recursive: true);
+    await _readManifest();
+  }
+
+  Future<void> _initializeInBackground() async {
+    try {
+      await refreshDeviceMihonExtensions();
+    } on Object {
+      _deviceMihonExtensions = const <InstalledMihonExtension>[];
+    }
+    await _activateInstalled();
   }
 
   List<InstalledExternalPlugin> get installed =>
@@ -375,6 +400,12 @@ final class ExternalPluginController {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    try {
+      await _ready;
+    } on Object {
+      // Closing still drains any registry work below; background startup
+      // errors must not escape the application shutdown path.
+    }
     await _registry.close();
   }
 

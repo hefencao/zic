@@ -19,6 +19,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     required this.ownsLibrary,
     required this.ownsChapterDownloads,
     required this.ownsWholeComicDownloads,
+    this.waitForPrimaryFrame,
     this.startupTelemetry,
   }) : _sources = List<BrowsableComicSource>.unmodifiable(sources) {
     _downloadSubscription = chapterDownloads.changes.listen(
@@ -40,6 +41,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   final bool ownsLibrary;
   final bool ownsChapterDownloads;
   final bool ownsWholeComicDownloads;
+  final Future<void> Function()? waitForPrimaryFrame;
   final HomeStartupTelemetry? startupTelemetry;
 
   late final StreamSubscription<ChapterDownloadSnapshot> _downloadSubscription;
@@ -136,6 +138,11 @@ final class HomeLibrarySession extends ChangeNotifier {
           startedAtMicros: primaryStartedAt,
         );
       }
+      // Let Flutter present the cover-bearing primary projection before the
+      // synchronous catalog enrichment and default writes continue on the
+      // same isolate.
+      await (waitForPrimaryFrame?.call() ??
+          Future<void>.delayed(const Duration(milliseconds: 16)));
     }
 
     final enrichmentStartedAt = startupTelemetry?.nowMicros();
@@ -302,8 +309,19 @@ final class HomeLibrarySession extends ChangeNotifier {
     _publish();
   }
 
-  Future<void> replaceSources(List<BrowsableComicSource> sources) async {
+  Future<void> replaceSources(
+    List<BrowsableComicSource> sources, {
+    bool reloadLibrary = true,
+  }) async {
     _sources = List<BrowsableComicSource>.unmodifiable(sources);
+    if (!reloadLibrary) {
+      final enabled = enabledSources;
+      if (!enabled.any((source) => source.sourceId == _activeSourceId)) {
+        _activeSourceId = enabled.isEmpty ? null : enabled.first.sourceId;
+      }
+      _publish();
+      return;
+    }
     await reload();
   }
 

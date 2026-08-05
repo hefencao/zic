@@ -201,6 +201,7 @@ final class _CoverImage extends StatefulWidget {
 final class _CoverImageState extends State<_CoverImage> {
   late Future<EncodedResourceSource> _source;
   bool _reportedFirstFrame = false;
+  bool _loadFailed = false;
 
   @override
   void initState() {
@@ -210,15 +211,24 @@ final class _CoverImageState extends State<_CoverImage> {
 
   void _startLoad() {
     _reportedFirstFrame = false;
+    _loadFailed = false;
     widget.startupTelemetry?.coverRequested(widget.cacheIdentity);
-    _source = Future<EncodedResourceSource>.sync(widget.loader).then((source) {
+    _source = _loadSource();
+  }
+
+  Future<EncodedResourceSource> _loadSource() async {
+    try {
+      final source = await widget.loader();
       widget.startupTelemetry?.coverSourceReady(
         widget.cacheIdentity,
         source: source.origin.name,
         byteLength: source.lengthInBytes,
       );
       return source;
-    });
+    } on Object {
+      _loadFailed = true;
+      rethrow;
+    }
   }
 
   void _reportFirstFrame() {
@@ -232,7 +242,8 @@ final class _CoverImageState extends State<_CoverImage> {
   @override
   void didUpdateWidget(covariant _CoverImage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.cacheIdentity != widget.cacheIdentity) {
+    if (oldWidget.cacheIdentity != widget.cacheIdentity ||
+        (_loadFailed && oldWidget.loader != widget.loader)) {
       _startLoad();
     }
   }

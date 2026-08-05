@@ -57,6 +57,11 @@ require(
     "debugPrint('native media prewarm unavailable: $error');",
     'runApp(const _BootstrapApp());',
 )
+main = read('apps/app/lib/main.dart')
+if main.index('runApp(const _BootstrapApp());') > main.index(
+    'await prewarmDefaultLocalMediaPipeline();'
+):
+    raise SystemExit('native media prewarm must not precede the Bootstrap frame')
 require(
     'packages/media/lib/src/frame.dart',
     'enum DecodeExecutionClass { current, nonCurrent }',

@@ -1,14 +1,47 @@
 part of 'demo_home.dart';
 
 extension _DemoHomeCatalogIdentity on _DemoHomeState {
-  String _canonicalComicKey(String sourceId, String comicId) {
+  String? _sourceCanonicalComicId(String sourceId, String comicId) {
     final source = _sourceForId(sourceId);
-    final Object? candidate = source;
-    final CanonicalComicIdentitySource? identitySource =
-        candidate is CanonicalComicIdentitySource ? candidate : null;
-    final sourceIdentity =
-        identitySource?.canonicalComicIdentity(comicId) ?? comicId;
-    return '$sourceId\u0000$sourceIdentity';
+    if (source is! CanonicalComicIdentitySource) {
+      return null;
+    }
+    final canonical =
+        (source as CanonicalComicIdentitySource).canonicalComicIdentity(comicId);
+    return canonical;
+  }
+
+  String? _storedCanonicalComicId(String sourceId, String comicId) {
+    for (final saved in _savedComics) {
+      if (saved.sourceId == sourceId &&
+          saved.comicId == comicId &&
+          saved.canonicalComicId != null) {
+        return saved.canonicalComicId;
+      }
+    }
+    return null;
+  }
+
+  String _canonicalComicId(String sourceId, String comicId) {
+    return _sourceCanonicalComicId(sourceId, comicId) ??
+        _storedCanonicalComicId(sourceId, comicId) ??
+        comicId;
+  }
+
+  String? _canonicalComicIdForPersistence(
+    String sourceId,
+    String comicId, {
+    String? fallback,
+  }) {
+    final sourceCanonical = _sourceCanonicalComicId(sourceId, comicId);
+    if (sourceCanonical == null) {
+      return fallback;
+    }
+    return sourceCanonical == comicId ? null : sourceCanonical;
+  }
+
+  String _canonicalComicKey(String sourceId, String comicId) {
+    return '$sourceId\u0000${_canonicalComicId(sourceId, comicId)}';
   }
 
   Set<String> _canonicalComicAliases(String sourceId, String comicId) {
@@ -86,6 +119,33 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
             !isSyntheticMihonChapterIdentity(chapter.chapterId),
       )
       .length;
+
+  Future<bool> _persistKnownCanonicalComicIds() async {
+    await _ensureLibraryReady();
+    var changed = false;
+    for (final saved in _savedComics) {
+      final sourceCanonical = _sourceCanonicalComicId(
+        saved.sourceId,
+        saved.comicId,
+      );
+      if (sourceCanonical == null) {
+        continue;
+      }
+      final canonical =
+          sourceCanonical == saved.comicId ? null : sourceCanonical;
+      if (canonical == saved.canonicalComicId) {
+        continue;
+      }
+      await _library.upsertSavedComic(
+        saved.copyWith(
+          canonicalComicId: canonical,
+          clearCanonicalComicId: canonical == null,
+        ),
+      );
+      changed = true;
+    }
+    return changed;
+  }
 
   LibraryComic? _libraryComicForSourceIdentity(
     String sourceId,
@@ -187,6 +247,11 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
     await _library.upsertSavedComic(
       SavedComicRecord.fromManifest(
         manifest,
+        canonicalComicId: _canonicalComicIdForPersistence(
+          manifest.comic.sourceId,
+          manifest.comic.comicId,
+          fallback: existing?.canonicalComicId,
+        ),
         savedAt: existing?.savedAt,
         updatedAt: DateTime.now().toUtc(),
       ),

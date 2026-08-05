@@ -85,6 +85,28 @@ Reader 章节资源会话的唯一组合所有者。它把 demand reconcile 到 
 
 `reader` 提供 observation、导航和通用 Flutter Reader；`reader_runtime` 负责产品交互、尺寸投影和 `ReaderObs` 适配。二者都不拥有资源 session、缓存或 native handle。
 
+### Home 冷启动组合
+
+`apps/app` 的 Home 关键路径只等待能产生封面的本地库 primary 数据和内置来源。
+进程级 native media prewarm 在 Bootstrap/App 呈现后后台运行；持久整本下载队列以
+`ready` Future 恢复；已安装外部插件由 `ExternalPluginController.openDeferred` 先完成
+manifest 准备，再在后台完成设备扩展发现和 runtime activation。Home 在插件 ready 后
+增量替换 source projection，不重新拥有或复制资源缓存。
+
+`HomeLibrarySession` 先发布 entries/SavedComic primary，交给 Flutter 完成一个可注入的
+首帧边界，再读取 enrichment 和写入缺失默认值。`ComicCoverCard` 的封面加载失败时，
+只有稳定 identity 或 loader 来源改变才允许重试；普通 Widget rebuild 不产生第二套封面
+请求权威。首页 artwork 的冷 miss 在 encoded bytes 到达后先返回 memory source，durable
+response 写入由 `ResourceCacheManager` 后台排队；同一批封面按卡片独立完成，不等待全部
+封面或全部持久化写入。首页 artwork gateway 只用 source-independent raw stable comic
+key 探测 response cache；命中时不解析 source、不创建 plugin transport。raw miss 才进入
+真实 source loader，且仍写回 raw stable key；当前生产路径不读取 dev.135 的旧
+URL-derived/canonical app-update key。来源确认过的 canonical identity 写入
+`SavedComicRecord`，只用于插件未激活时的书架只读归并，raw request/chapter identity 不被
+改写。未访问的
+首页、书架、来源和杂项页由 lazy indexed page 保持未构建，避免隐藏导航页提前创建第二套
+封面 loader；访问过的页面状态仍由该页面节点保留。
+
 ### 插件与平台桥
 
 - `plugin_host`：信任、权限、请求计划、身份适配和插件生命周期。
@@ -225,7 +247,7 @@ Reader Host 从 `PipelineReaderSessionFactory.acquire` 获取资源会话并在�
 
 缓存分为两个权威平面：
 
-- `ResourceCacheCoordinator.responses`：封面、搜索、详情和章节元数据，使用稳定 namespace/identity/revision、weight、TTL 和 in-flight join；
+- `ResourceCacheCoordinator.responses`：封面、搜索、详情和章节元数据，使用稳定 namespace/identity/revision、weight、TTL 和 in-flight join；封面使用 raw comic stable identity 和 role，source-level artwork 使用版本化 source identity；
 - `ArtifactCacheManager`：Reader 不可变页面 artifact，默认热字节 10 项/256 MiB、alias 上限 8192，并连接持久 backend。
 
 封面 URL/token 不是稳定 comic identity；verified checksum、来源 page key、内容 hash 或用户确认迁移才可注册 artifact alias。App/Reader 不得创建私有图片字节 LRU，也不得让 cache hit 共享 cursor、timer 或 decode identity。

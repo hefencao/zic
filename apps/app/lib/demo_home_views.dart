@@ -86,31 +86,43 @@ extension _DemoHomeViews on _DemoHomeState {
         IndexedStack(
           index: _navigationIndex,
           children: <Widget>[
-            _buildHomePage(),
-            _buildBookshelfPage(),
-            _sourcePageVisited
-                ? ComicSourcesPage(
-                    sources: _enabledSources,
-                    activeSourceId: _activeSourceId,
-                    onSourceSelected: (sourceId) {
-                      _activeSourceId = sourceId;
-                    },
-                    loadCover: _loadSourceBrowseCover,
-                    onOpenComic: _openSourceComic,
-                    onOpenSourceWebView: _openSourceWebView,
-                    traceSink: widget.debugTrace,
-                    requestedQuery: _sourceSearchQuery,
-                    queryRevision: _sourceSearchRevision,
-                  )
-                : const SizedBox.shrink(),
-            MiscPage(
-              preferences: widget.preferences,
-              debugTrace: widget.debugTrace,
-              onOpenSettings: _openSettings,
-              onOpenDownloads: _openDownloadManager,
-              onImportFolder: _picking || _pickingFolder
-                  ? null
-                  : () => unawaited(_importImageFolder()),
+            _LazyIndexedPage(
+              active: _navigationIndex == 0,
+              builder: (_) => _buildHomePage(),
+            ),
+            _LazyIndexedPage(
+              active: _navigationIndex == 1,
+              builder: (_) => _buildBookshelfPage(),
+            ),
+            _LazyIndexedPage(
+              active: _navigationIndex == 2,
+              builder: (_) => _sourcePageVisited
+                  ? ComicSourcesPage(
+                      sources: _enabledSources,
+                      activeSourceId: _activeSourceId,
+                      onSourceSelected: (sourceId) {
+                        _activeSourceId = sourceId;
+                      },
+                      loadCover: _loadSourceBrowseCover,
+                      onOpenComic: _openSourceComic,
+                      onOpenSourceWebView: _openSourceWebView,
+                      traceSink: widget.debugTrace,
+                      requestedQuery: _sourceSearchQuery,
+                      queryRevision: _sourceSearchRevision,
+                    )
+                  : const SizedBox.shrink(),
+            ),
+            _LazyIndexedPage(
+              active: _navigationIndex == 3,
+              builder: (_) => MiscPage(
+                preferences: widget.preferences,
+                debugTrace: widget.debugTrace,
+                onOpenSettings: _openSettings,
+                onOpenDownloads: _openDownloadManager,
+                onImportFolder: _picking || _pickingFolder
+                    ? null
+                    : () => unawaited(_importImageFolder()),
+              ),
             ),
           ],
         ),
@@ -1050,5 +1062,40 @@ extension _DemoHomeViews on _DemoHomeState {
       ],
     );
   }
+}
 
+final class _LazyIndexedPage extends StatefulWidget {
+  const _LazyIndexedPage({
+    required this.active,
+    required this.builder,
+  });
+
+  final bool active;
+  final WidgetBuilder builder;
+
+  @override
+  State<_LazyIndexedPage> createState() => _LazyIndexedPageState();
+}
+
+final class _LazyIndexedPageState extends State<_LazyIndexedPage> {
+  Widget? _child;
+
+  @override
+  Widget build(BuildContext context) {
+    final Widget child;
+    if (widget.active) {
+      child = widget.builder(context);
+      _child = child;
+    } else {
+      final retained = _child;
+      if (retained == null) {
+        return const SizedBox.shrink();
+      }
+      child = retained;
+    }
+    return Offstage(
+      offstage: !widget.active,
+      child: TickerMode(enabled: widget.active, child: child),
+    );
+  }
 }

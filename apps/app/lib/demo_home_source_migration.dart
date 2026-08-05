@@ -305,6 +305,11 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       await _library.upsertSavedComic(
         SavedComicRecord.fromManifest(
           manifest,
+          canonicalComicId: _canonicalComicIdForPersistence(
+            manifest.comic.sourceId,
+            manifest.comic.comicId,
+            fallback: existingSaved?.canonicalComicId,
+          ),
           savedAt: existingSaved?.savedAt,
           updatedAt: migrationTime,
         ),
