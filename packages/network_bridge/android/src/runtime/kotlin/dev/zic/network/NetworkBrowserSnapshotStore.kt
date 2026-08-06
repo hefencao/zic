@@ -94,6 +94,7 @@ internal object NetworkBrowserSnapshotStore {
             "cookies" to parseCookieHeader(snapshot.optString(KEY_COOKIE_HEADER)),
             "localStorage" to parseLocalStorage(snapshot.optString(KEY_LOCAL_STORAGE)),
             "userAgent" to snapshot.optString(KEY_USER_AGENT),
+            "updatedAt" to updatedAt,
         )
     }
 

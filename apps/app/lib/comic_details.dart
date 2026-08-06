@@ -11,6 +11,7 @@ import 'package:storage_bridge/storage_bridge.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'package:downloads/downloads.dart';
+import 'app_pull_to_refresh.dart';
 import 'artwork_placeholder.dart';
 import 'dialog_actions.dart';
 
@@ -172,6 +173,9 @@ typedef ComicDetailsVersionsOpener = Future<void> Function();
 
 typedef ComicDetailsSourceWebViewOpener = Future<void> Function();
 typedef ComicDetailsSourceSettingsOpener = Future<void> Function();
+typedef ComicDetailsSourceResolver = BrowsableComicSource? Function(
+  String sourceId,
+);
 typedef ComicDetailsMetadataSearch = void Function(String query);
 typedef ComicDetailsIdentityMatcher = bool Function(
   String leftComicId,
@@ -940,6 +944,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
     required this.onDownloadComic,
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
+    this.resolveSource,
     this.onSearchMetadata,
     this.onMigrateSource,
     this.onOpenVersions,
@@ -967,6 +972,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
   final ComicDetailsComicDownloader onDownloadComic;
   final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
+  final ComicDetailsSourceResolver? resolveSource;
   final ComicDetailsMetadataSearch? onSearchMetadata;
   final ComicDetailsVersionsOpener? onMigrateSource;
   final ComicDetailsVersionsOpener? onOpenVersions;
@@ -997,6 +1003,9 @@ final class _RemoteComicDetailsScreenState
       <String, Future<ImportedLibraryEntry>>{};
   final Stopwatch _traceClock = Stopwatch()..start();
 
+  BrowsableComicSource get _source =>
+      widget.resolveSource?.call(widget.source.sourceId) ?? widget.source;
+
   void _recordRefreshTrace(
     TraceEventKind kind,
     String stage, {
@@ -1005,7 +1014,7 @@ final class _RemoteComicDetailsScreenState
     widget.traceSink.record(
       TraceEvent(
         monotonicMicros: _traceClock.elapsedMicroseconds,
-        sessionId: 'comic-details:${widget.source.sourceId}',
+        sessionId: 'comic-details:${_source.sourceId}',
         kind: kind,
         payload: <String, Object?>{
           'stage': stage,
@@ -1036,7 +1045,7 @@ final class _RemoteComicDetailsScreenState
 
   void _acceptDownloadSnapshot(ChapterDownloadSnapshot snapshot) {
     if (!mounted ||
-        snapshot.sourceId != widget.source.sourceId ||
+        snapshot.sourceId != _source.sourceId ||
         !widget.sameComicIdentity(
           snapshot.comicId,
           widget.summary.comicId,
@@ -1053,7 +1062,7 @@ final class _RemoteComicDetailsScreenState
 
   Comic get _comic => _manifest?.comic ?? Comic(
         comicId: widget.summary.comicId,
-        sourceId: widget.source.sourceId,
+        sourceId: _source.sourceId,
         title: widget.summary.title,
         authors: widget.summary.authors,
         tags: widget.summary.tags,
@@ -1063,12 +1072,12 @@ final class _RemoteComicDetailsScreenState
       );
 
   ComicPreviewSource? get _previewSource {
-    final Object candidate = widget.source;
+    final Object candidate = _source;
     return candidate is ComicPreviewSource ? candidate : null;
   }
 
   ComicCommentSource? get _commentSource {
-    final Object candidate = widget.source;
+    final Object candidate = _source;
     return candidate is ComicCommentSource ? candidate : null;
   }
 
@@ -1148,7 +1157,7 @@ final class _RemoteComicDetailsScreenState
         final libraryComic = _library.sourceComic?.comicId;
         if (libraryComic != null) identities.add(libraryComic);
         for (final comicId in identities) {
-          invalidateCachedComic(widget.source, comicId);
+          invalidateCachedComic(_source, comicId);
         }
       }
       final library = await widget.reloadLibrary(refreshContent: true);
@@ -1157,7 +1166,7 @@ final class _RemoteComicDetailsScreenState
       final sourceChapters =
           sourceManifest?.chapters ?? library.sourceChapters;
       if (comic == null ||
-          comic.sourceId != widget.source.sourceId ||
+          comic.sourceId != _source.sourceId ||
           !widget.sameComicIdentity(
             comic.comicId,
             widget.summary.comicId,
@@ -1272,7 +1281,7 @@ final class _RemoteComicDetailsScreenState
 
   ImportedLibraryEntry? _localEntry(Chapter chapter) => _chapterEntryFor(
         _library.chapters,
-        sourceId: widget.source.sourceId,
+        sourceId: _source.sourceId,
         comicId: chapter.comicId,
         chapter: chapter,
       );
@@ -1284,7 +1293,7 @@ final class _RemoteComicDetailsScreenState
       return existing;
     }
     final identity = comicDetailsChapterIdentity(
-      widget.source.sourceId,
+      _source.sourceId,
       chapter.chapterId,
     );
     final inFlight = _ensureInFlight[identity];
@@ -1306,7 +1315,7 @@ final class _RemoteComicDetailsScreenState
       await widget.persistComic(manifest, true);
     }
     final entry = await widget.ensureSourceChapter(
-      widget.source,
+      _source,
       _comic,
       chapter,
     );
@@ -1359,7 +1368,7 @@ final class _RemoteComicDetailsScreenState
     int? initialPageIndex,
   }) async {
     final identity = comicDetailsChapterIdentity(
-      widget.source.sourceId,
+      _source.sourceId,
       chapter.chapterId,
     );
     if (!_opening.add(identity)) {
@@ -1448,7 +1457,7 @@ final class _RemoteComicDetailsScreenState
 
   Future<void> _download(Chapter chapter) async {
     final identity = comicDetailsChapterIdentity(
-      widget.source.sourceId,
+      _source.sourceId,
       chapter.chapterId,
     );
     final current = _downloadSnapshots[identity];
@@ -1555,8 +1564,8 @@ final class _RemoteComicDetailsScreenState
       return _ComicDetailsFailureScaffold(
         title: widget.summary.title,
         comicId: widget.summary.comicId,
-        sourceId: widget.source.sourceId,
-        sourceLabel: widget.source.descriptor.name,
+        sourceId: _source.sourceId,
+        sourceLabel: _source.descriptor.name,
         failure: failure,
         refreshing: _refreshing,
         onRetry: () => _ignoreRefreshResult(
@@ -1612,13 +1621,13 @@ final class _RemoteComicDetailsScreenState
       screenKey: remoteComicDetailsScreenKey,
       title: comic.title,
       comicId: comic.comicId,
-      sourceId: widget.source.sourceId,
-      sourceLabel: _comicSourceLabel(widget.source, widget.source.sourceId),
+      sourceId: _source.sourceId,
+      sourceLabel: _comicSourceLabel(_source, _source.sourceId),
       authors: comic.authors,
       tags: comic.tags,
       description: comic.description,
       cover: _ComicDetailCover(
-        sourceId: widget.source.sourceId,
+        sourceId: _source.sourceId,
         comicId: comic.comicId,
         coverUri: comic.coverUri,
         fallbackChapter:
@@ -1649,7 +1658,7 @@ final class _RemoteComicDetailsScreenState
         chapters: <_ChapterViewModel>[
           for (final chapter in ordered)
             _ChapterViewModel(
-              sourceId: widget.source.sourceId,
+              sourceId: _source.sourceId,
               title: chapter.title,
               chapterId: chapter.chapterId,
               sequence: chapter.sequence,
@@ -1661,29 +1670,29 @@ final class _RemoteComicDetailsScreenState
               entry: _localEntry(chapter),
               isRead: _isReadById(
                 _library.readStates,
-                widget.source.sourceId,
+                _source.sourceId,
                 chapter.chapterId,
               ),
               canDownload: true,
               opening: _opening.contains(
                 comicDetailsChapterIdentity(
-                  widget.source.sourceId,
+                  _source.sourceId,
                   chapter.chapterId,
                 ),
               ),
               downloading: _workingDownloads.contains(
                     comicDetailsChapterIdentity(
-                      widget.source.sourceId,
+                      _source.sourceId,
                       chapter.chapterId,
                     ),
                   ) ||
                   _downloadSnapshots[comicDetailsChapterIdentity(
-                        widget.source.sourceId,
+                        _source.sourceId,
                         chapter.chapterId,
                       )]?.isActive ==
                       true,
               downloaded: _downloadSnapshots[comicDetailsChapterIdentity(
-                    widget.source.sourceId,
+                    _source.sourceId,
                     chapter.chapterId,
                   )]?.isComplete ==
                   true,
@@ -1702,7 +1711,7 @@ final class _RemoteComicDetailsScreenState
       previewSection: detailsManifest?.preview != null ||
               previewLoader != null
           ? _ComicDetailsPreviewSection(
-              sourceId: widget.source.sourceId,
+              sourceId: _source.sourceId,
               comicId: comic.comicId,
               title: comic.title,
               maxItemsPerRow: widget.previewMaxItemsPerRow,
@@ -1715,7 +1724,7 @@ final class _RemoteComicDetailsScreenState
       commentsSection: detailsManifest?.comments != null ||
               commentsLoader != null
           ? _ComicDetailsCommentsSection(
-              sourceId: widget.source.sourceId,
+              sourceId: _source.sourceId,
               comicId: comic.comicId,
               sourceSubId: comic.sourceSubId,
               title: comic.title,
@@ -2319,7 +2328,8 @@ final class _ComicDetailCoverState extends State<_ComicDetailCover>
     if (!mounted) return;
     if (resetRetryBudget) _retry.reset();
     setState(() {
-      _failed = false;
+      // Keep the same placeholder while the replacement source is loaded.
+      _failed = true;
       _source = _load();
     });
   }
@@ -2364,9 +2374,8 @@ final class _ComicDetailCoverState extends State<_ComicDetailCover>
             seed: widget.coverUri?.toString() ?? widget.comicId,
           );
         }
-        return const ColoredBox(
-          color: Color(0x14000000),
-          child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+        return _CoverPlaceholder(
+          seed: widget.coverUri?.toString() ?? widget.comicId,
         );
       },
     );

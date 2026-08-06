@@ -9,10 +9,10 @@ import okhttp3.HttpUrl
 /**
  * Shared Android cookie adapter for native and Mihon HTTP clients.
  *
- * The visible browser runs in the App process. Before every request this jar
- * imports the latest process-safe browser snapshot for the same site, so a
- * completed Cloudflare challenge is available to the isolated runtime without
- * relying on WebView's process-local CookieManager cache.
+ * The visible browser runs in the App process. Before a request this jar
+ * offers the latest process-safe browser snapshot for the same site. Each
+ * snapshot revision is imported at most once, so cookies subsequently received
+ * by the isolated runtime are not overwritten by an older browser handoff.
  */
 class AndroidCookieJar(
     context: Context,

@@ -60,9 +60,7 @@ final class SoftArtworkPlaceholder extends StatelessWidget {
 final class ArtworkRetryController {
   ArtworkRetryController({
     this.delays = const <Duration>[
-      Duration(milliseconds: 240),
-      Duration(milliseconds: 720),
-      Duration(milliseconds: 1600),
+      Duration(milliseconds: 900),
     ],
   });
 
@@ -164,13 +162,12 @@ final class _RecoverableArtworkImageState
   }
 
   void _handleFailure() {
-    if (_failed) return;
+    final firstFailure = !_failed;
     _failed = true;
-    widget.onDecodeFailure?.call();
-    unawaited(_effectiveProvider.evict());
+    if (firstFailure) widget.onDecodeFailure?.call();
+    if (_retryTimer?.isActive ?? false) return;
     if (_retryIndex >= _retryDelays.length) return;
     final delay = _retryDelays[_retryIndex++];
-    _retryTimer?.cancel();
     _retryTimer = Timer(delay, _retry);
   }
 
@@ -178,10 +175,13 @@ final class _RecoverableArtworkImageState
     if (!mounted) return;
     if (resetBudget) _retryIndex = 0;
     _retryTimer?.cancel();
+    _retryTimer = null;
     unawaited(_effectiveProvider.evict());
     setState(() {
       _generation++;
-      _failed = false;
+      // Keep the stable placeholder visible until a replacement frame is
+      // actually ready. Re-entering a loading state caused visible flicker.
+      _failed = true;
       _frameReported = false;
     });
   }
@@ -208,9 +208,15 @@ final class _RecoverableArtworkImageState
       frameBuilder: (context, child, frame, synchronous) {
         final ready = frame != null || synchronous;
         if (ready && !_frameReported) {
+          _retryTimer?.cancel();
+          _retryTimer = null;
+          _retryIndex = 0;
           _frameReported = true;
           _failed = false;
           widget.onFrameReady?.call();
+        }
+        if (!ready || _failed) {
+          return SoftArtworkPlaceholder(seed: widget.seed);
         }
         return child;
       },

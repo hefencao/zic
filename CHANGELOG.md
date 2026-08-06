@@ -1,3 +1,12 @@
+## 0.31.0-dev.143：稳定封面恢复、预览行与插件验证会话
+
+- 删除失败封面因 loader closure identity 变化触发的重复请求；source/decoder 重试期间保持同一占位图，成功帧到达后才切换，避免多次闪烁。
+- 详情预览按实际行执行“含横图最多 2 张、纯竖图最多 3 张”；只在相邻三张内做最小局部重排，按可用宽度反算等面积尺寸，并移除内层 Card 与水平 padding。
+- 详情页与漫画源页共用同一顶部边缘下拉刷新交互。
+- 可见浏览器 Cookie 快照按 revision 在每个 runtime 进程只导入一次，避免旧 Cloudflare Cookie 覆盖 runtime 新 Cookie。
+- MethodChannel runtime 对 retryable lifecycle envelope 执行一次原地重新激活，包含 `runtime-closing`；已打开详情页按稳定 source ID 解析当前 active adapter，插件重启后不再调用关闭的旧 session。
+- 新增 ADR 0128、dev.143 审计与静态门禁。
+
 ## 0.31.0-dev.142：铺满详情预览并恢复封面与来源搜索交互
 
 - 详情预览行在最大/最小面积比不超过 1.2 的前提下受限放大，完整行优先贴近屏幕左右边缘。

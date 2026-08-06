@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.142`
-**App build：** `0.31.0+142`
+**源码版本：** `0.31.0-dev.143`
+**App build：** `0.31.0+143`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -9,10 +9,10 @@
 
 ## 当前实现
 
-- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=142`。
+- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=143`。
 - 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
 - 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation
-  不阻塞 Home primary，外部 source ready 后增量接入，失败封面可随 loader 变化重试。
+  不阻塞 Home primary，外部 source ready 后增量接入；失败封面仅按稳定资源 identity、显式 retry revision 或 App resume 恢复，loader closure identity 不参与重试。
 - 首页封面按卡片独立完成；前台 cold miss 在 encoded bytes 到达后立即返回 memory source，
   durable response 写入后台排队，warm durable file hit 仍直接返回文件源。 首页、漫画源卡片与详情封面在 source Future 瞬时失败时使用有界重试；Flutter 解码失败只驱逐对应 provider 并重建 ImageStream，App resume 时可再次恢复，不清空统一 response cache。
 - 首页 artwork 先查 source-independent raw stable key；raw hit 不解析 source/plugin，
@@ -32,13 +32,15 @@
   thumbnails/comments；支持的来源显示预览栏、评论栏、分页评论页和回复页，图片仍走
   统一 artwork cache，未声明能力的来源不会触发对应插件请求。
 - 漫画源浏览页使用来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态仅以 chip 色彩/图标区分。页码位于滚动尾部，左下浮动搜索保留持久历史；展开搜索优先消费返回和垂直滑动手势，Mihon `getFilterList()` 的 CheckBox/TriState/Select/Group 子项以 opaque 过滤标签显示。catalog 缓存先显示、后台刷新且数据不变时不重建；边缘下拉达到阈值后保留当前列表执行强制来源刷新。Mihon 已安装与仓库插件列表继续按声明/source metadata 的规范化语言筛选。
+- 详情页与漫画源页共用同一个可见的顶部边缘下拉刷新组件：`onEdge`、位移 72、保留旧内容后台刷新。
+- Android 可见浏览器 Cookie snapshot 以 `updatedAt` 为 revision，每个 runtime 进程/站点/UA 只导入一次；运行时随后收到的 Cookie 不再被旧 snapshot 每请求覆盖。平台 runtime 对 retryable lifecycle response（包括 `runtime-closing`）原地重新激活并重试一次。已打开的远程详情页按稳定 source ID 解析当前 active adapter，插件重启后预览、评论、章节确保、缓存失效和验证入口不继续使用关闭的旧 session。
 - catalog response cache 使用稳定 source/comic/chapter identity 和结构 weight；页面正文不进入该缓存。
 - Home“更新漫画”已与阅读历史分离：只展示 `inShelf` 漫画并按 `SavedComicRecord.updatedAt`
   排序；Reader 在页码/模式变化、App lifecycle 暂停和 route dispose 时写入进度，
   `HomeLibrarySession` 即时替换内存记录。
 - 详情预览保留完整 URI 作为单项绘制身份，但 artwork role/cache key 使用去 `@x/y` 的 base URI，
   同一原图的不同裁剪共享一份编码字节；Venera `loadThumbnails` 的首批与游标分页
-  不再重复消费 `loadInfo` 缩略图；折叠与展开共用按原顺序生成的等目标面积布局，预览行在面积比不超过 1.2 的约束内受限放大并尽量贴近屏幕左右边缘。阅读设置可限制每行 1–8 项（默认 4），折叠高度取第一行，展开图片区域不超过屏幕高度 80%，居中箭头控制展开；点击预览项会将索引传入既有 Reader 路由；Venera
+  不再重复消费 `loadInfo` 缩略图；折叠与展开共用按原顺序生成的等面积布局；实际行内含横图时最多 2 张、纯竖图时最多 3 张；只在相邻三个候选内做最小局部重排，并受阅读设置的 1–8 项上限约束（默认 4）。每行按可用宽度反算尺寸，预览内部不再叠加 Card 和水平 padding；折叠高度取第一行，展开图片区域不超过屏幕高度 80%，居中箭头控制展开；点击预览项会将索引传入既有 Reader 路由；Venera
   `@x/y` 预览 URI 在保留绘制身份的同时按既有约定以去裁剪 URL 调用 `onThumbnailLoad`，封面、预览
   和来源缩略图失败时统一使用稳定伪随机的柔和纯色占位；预览绘制只显示 `@x/y` 指定的原图区域。
 - ArtifactCacheManager 默认热字节 10 项/256 MiB，支持持久 backend、verified alias/rekey 和 foreground read join。
@@ -68,7 +70,7 @@
 |---|---|
 | repository/documentation/Dart static gates | Verified-static |
 | current-code documentation consistency gate | Verified-static |
-| dev.75–dev.142 ownership gates | Verified-static |
+| dev.75–dev.143 ownership gates | Verified-static |
 | Android/Mihon/Venera/Reader/Pipeline/UI contracts | Verified-static / toolchain |
 | Kotlin texture bridge compile stub | Verified-toolchain |
 | pinned libwebp host build/smoke | Unverified：当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip` |

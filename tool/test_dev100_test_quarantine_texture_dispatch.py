@@ -22,7 +22,10 @@ def forbid(path: str, *tokens: str) -> None:
         raise SystemExit(f"FAIL: {path} contains rejected dev.100 tokens: {found}")
 
 
-require("apps/app/pubspec.yaml", "version: 0.31.0+100")
+import re
+version = re.search(r"^version:\s*0\.31\.0\+(\d+)\s*$", read("apps/app/pubspec.yaml"), re.M)
+if version is None or int(version.group(1)) < 100:
+    raise SystemExit("FAIL: App build must be at least dev.100")
 require(
     "packages/pipeline/lib/src/raster_plan.dart",
     "bool get prefersNearestNeighbor =>",
@@ -44,16 +47,16 @@ forbid(
 )
 require(
     "apps/app/test/source_browser_test.dart",
-    "ZIC-QUARANTINE(dev.100): whole-App legacy runtime route",
-    "ZIC-QUARANTINE(dev.100): persisted legacy route test",
-    "ZIC-QUARANTINE(dev.100): whole-App retry test",
+    "ZIC-QUARANTINE(Q-001): whole-App legacy runtime route",
+    "ZIC-QUARANTINE(Q-002): persisted legacy route test timing",
+    "ZIC-QUARANTINE(Q-003): whole-App retry test bootstrap race",
     "final joined = refresh.show();",
     "expect(source.loadedResources, isEmpty);",
 )
 require(
     "packages/pipeline_native/lib/src/native_pipeline_media_runtime.dart",
     "Future<void>? _prewarmFuture;",
-    "AndroidTexturePresenter().prewarm()",
+    "_texturePresenter!.prewarm()",
 )
 require(
     "packages/texture_bridge/lib/src/android_texture_presenter.dart",
@@ -62,8 +65,8 @@ require(
 )
 require(
     "packages/texture_bridge/android/src/main/kotlin/dev/zic/texture/TextureBridgePlugin.kt",
-    "val completed = CountDownLatch(1)",
-    "completed.await()",
+    "const val BLIT_LANE_COUNT = 1",
+    "mainHandler.post {",
     "resultDispatchMicros\" to 0L",
     "result.success(",
 )
@@ -82,7 +85,9 @@ require(
     "uploadBackpressureMicros",
     "'decodedRole': decoded?.role.name ?? 'unknown'",
     "'uploadBackpressure': timing?.uploadBackpressureMicros ?? 0",
-    'platform.platformUploadMicros -\n                platform.platformQueueMicros -',
+    'platform.platformUploadMicros -',
+    'platform.platformRetainMicros -',
+    'platform.platformBlitMicros -',
 )
 require(
     "tool/analyze_frame_pipeline_trace.py",
@@ -93,8 +98,8 @@ require(
 )
 require(
     "docs/testing/TEST_QUARANTINE.md",
-    "默认测试套件不得用匿名",
-    "dev.100 临时隔离",
+    "默认测试套件不得使用匿名",
+    "ZIC-QUARANTINE(Q-001):",
 )
 require("tool/check.sh", "check_test_quarantine.py")
 require("tool/check.sh", "test_dev100_test_quarantine_texture_dispatch.py")
@@ -112,8 +117,8 @@ require(
     "0.31.0-dev.100",
 )
 require(
-    "docs/NEXT_CHAT_HANDOFF.md",
-    "zic_v0.31.0-dev.100_test-quarantine-texture-schedule.zip",
+    "docs/testing/TEST_QUARANTINE.md",
+    "ZIC-QUARANTINE(Q-001):",
 )
 
 print("dev.100 test quarantine and texture reply ownership: OK")

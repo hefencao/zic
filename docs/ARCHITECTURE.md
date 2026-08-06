@@ -368,3 +368,10 @@ role 相同，因此无需清空或迁移已有 cover 缓存；封面则有一�
 ## 14. 静态门禁
 
 静态门禁阻止明显的依赖反转、API 泄漏、重复权威和文档漂移，但不能替代 `flutter analyze`、Dart/Flutter/Rust tests、Android debug/release build 和真机生命周期/性能验证。
+
+## Artwork、预览与插件验证稳定性
+
+- Artwork source 与 Flutter ImageStream 的恢复不得形成竞争循环。失败期间 presentation 保持稳定占位图；父组件 closure identity 不是资源 identity。
+- 详情预览按实际行分组：含横图最多 2 张、纯竖图最多 3 张；只允许相邻三个候选内最小局部重排；每行从可用宽度反算等面积 tile，详情外层是唯一水平边距。
+- 详情页和漫画源页使用同一 `AppPullToRefresh` 交互。
+- 浏览器 Cookie snapshot 是一次性 revision handoff，不是每请求覆盖 runtime Cookie 的权威存储。MethodChannel runtime lifecycle failure 可原地重新激活一次。

@@ -137,7 +137,6 @@ for token in (
     "_DetailsRefreshState.failure",
     "Colors.green",
     "Icons.close",
-    "RefreshIndicatorTriggerMode.anywhere",
     "onLongPress: () => _toggleSelection(tag)",
     "Clipboard.setData",
     "widget.onSearch?.call(tag)",
@@ -149,6 +148,11 @@ migrate_index = details.index("key: comicDetailsMigrateKey", web_index)
 plugin_index = details.index("_SourceSettingsAction(", migrate_index)
 if not web_index < migrate_index < plugin_index:
     raise SystemExit("FAIL: detail action order must be WebView -> migration -> plugin")
+
+refresh = read("apps/app/lib/app_pull_to_refresh.dart")
+for token in ("RefreshIndicatorTriggerMode.onEdge", "displacement: 72"):
+    require(refresh, token, "shared detail/source refresh contract")
+require(details, "AppPullToRefresh(", "detail shared refresh usage")
 
 source = read("apps/app/lib/source_browser.dart")
 for token in (

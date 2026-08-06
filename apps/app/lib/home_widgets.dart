@@ -214,10 +214,13 @@ final class _CoverImageState extends State<_CoverImage>
     _startLoad();
   }
 
-  void _startLoad({bool resetRetryBudget = false}) {
+  void _startLoad({
+    bool resetRetryBudget = false,
+    bool preserveFailurePlaceholder = false,
+  }) {
     if (resetRetryBudget) _retry.reset();
     _reportedFirstFrame = false;
-    _loadFailed = false;
+    if (!preserveFailurePlaceholder) _loadFailed = false;
     widget.startupTelemetry?.coverRequested(widget.cacheIdentity);
     _source = _loadSource();
   }
@@ -250,7 +253,7 @@ final class _CoverImageState extends State<_CoverImage>
 
   void _restartLoad() {
     if (!mounted) return;
-    setState(() => _startLoad());
+    setState(() => _startLoad(preserveFailurePlaceholder: true));
   }
 
   @override
@@ -271,8 +274,7 @@ final class _CoverImageState extends State<_CoverImage>
   @override
   void didUpdateWidget(covariant _CoverImage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.cacheIdentity != widget.cacheIdentity ||
-        (_loadFailed && oldWidget.loader != widget.loader)) {
+    if (oldWidget.cacheIdentity != widget.cacheIdentity) {
       _startLoad(resetRetryBudget: true);
     }
   }
@@ -318,10 +320,7 @@ final class _CoverImageState extends State<_CoverImage>
                 seed: widget.cacheIdentity,
               );
             }
-            return const ColoredBox(
-              color: Color(0xff20232a),
-              child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-            );
+            return SoftArtworkPlaceholder(seed: widget.cacheIdentity);
           },
         );
       },

@@ -220,13 +220,8 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
         child: Stack(
           alignment: Alignment.topCenter,
           children: <Widget>[
-          RefreshIndicator(
+          AppPullToRefresh(
             key: comicDetailsPullRefreshKey,
-            triggerMode: RefreshIndicatorTriggerMode.anywhere,
-            color: Colors.transparent,
-            backgroundColor: Colors.transparent,
-            elevation: 0,
-            strokeWidth: 0.01,
             onRefresh: _handleRefresh,
             child: CustomScrollView(
               physics: const AlwaysScrollableScrollPhysics(),

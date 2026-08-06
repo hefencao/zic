@@ -182,3 +182,11 @@ identity 超限时使用稳定 hash 与原长度；高频事件 MAY 合并，但
 - quarantine MUST 有稳定 ID、原因、仍运行的 owner 覆盖和解除条件。
 
 发布候选 MUST 尽可能完成 analyzer、受影响 package/App tests、native tests、Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，并排除 `.git`、`.dart_tool`、`build`、`.gradle`、`.deps`、`target`、`__pycache__`、`.pyc`、`.class`、`.rej` 和 `.orig`。未执行项 MUST 在 Status/audit 标为 Unverified。
+
+## Artwork 与插件会话稳定性要求
+
+1. 失败封面不得因父组件 rebuild 或并行 source/decoder timer 反复闪烁；重试期间 MUST 保持稳定占位图。
+2. 实际预览行含横图时 MUST 最多 2 项，纯竖图行 MUST 最多 3 项；为满足该规则 MAY 在相邻三个候选内做一次最小局部重排，并受用户设置的更小上限约束；不得用额外间隔消耗剩余宽度。
+3. 详情与漫画源下拉刷新 MUST 共用相同 edge trigger、位移和可见反馈。
+4. 同一 browser snapshot revision MUST NOT 在每个 HTTP 请求前重复覆盖 runtime Cookie；新 revision 可再次导入。
+5. retryable runtime lifecycle envelope MAY 自动重新激活并重试一次；业务错误和 `source-verification-required` MUST NOT 被当作 runtime 崩溃吞掉。

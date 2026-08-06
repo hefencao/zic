@@ -206,7 +206,15 @@ final class _PlatformExternalPluginRuntimeMessageChannel
     final attemptedProcessId = _processId;
     final attemptedSessionId = _sessionId;
     try {
-      return await _invoke(requestMessage);
+      final response = await _invoke(requestMessage);
+      if (!_closing && _recoverableRuntimeEnvelope(response)) {
+        await _recover(attemptedProcessId, attemptedSessionId);
+        if (_closing) {
+          throw StateError('platform external runtime channel is closing');
+        }
+        return _invoke(requestMessage);
+      }
+      return response;
     } on PlatformException catch (error) {
       if (_closing || !_recoverableRuntimeCodes.contains(error.code)) {
         rethrow;
@@ -304,10 +312,24 @@ final class _PlatformExternalPluginRuntimeMessageChannel
   }
 }
 
+
+bool _recoverableRuntimeEnvelope(Object? raw) {
+  try {
+    final response = ExternalPluginRuntimeResponse.fromMessage(raw);
+    final error = response.error;
+    return error != null &&
+        error.retryable &&
+        _recoverableRuntimeCodes.contains(error.code);
+  } on FormatException {
+    return false;
+  }
+}
+
 const Set<String> _recoverableRuntimeCodes = <String>{
   'runtime-process-mismatch',
   'runtime-session-missing',
   'runtime-service-died',
   'runtime-service-disconnected',
   'native-driver-missing',
+  'runtime-closing',
 };

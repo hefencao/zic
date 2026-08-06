@@ -1,6 +1,6 @@
-# dev.142 后续交接
+# dev.143 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.142_preview-width-cover-recovery-search-filters-refresh.zip`。
+唯一后续基线：`zic_v0.31.0-dev.143_cover-stability-preview-cookie-runtime-refresh.zip`。
 
 ## 必读
 
@@ -18,8 +18,9 @@
 12. `docs/adr/0124-home-cover-independent-foreground-completion.md`
 13. `docs/adr/0126-source-owned-browse-sections-floating-search-and-swr.md`
 14. `docs/adr/0127-preview-width-cover-recovery-search-filters-and-refresh.md`
-15. `docs/audits/dev142-preview-cover-search-refresh-audit.md`
-16. `docs/audits/dev142-validation-results.md`
+15. `docs/adr/0128-cover-stability-preview-rows-cookie-runtime-refresh.md`
+16. `docs/audits/dev143-cover-plugin-preview-refresh-audit.md`
+17. `docs/audits/dev143-validation-results.md`
 
 ## 当前代码事实
 
@@ -29,12 +30,12 @@
 - holder-driven playback 缺帧时保留当前 output；没有 startup-buffer。
 - Reader 退出后最多保留 1 个 idle chapter resource session、TTL 2 分钟；used texture 不保留。
 - response cache 与 page artifact cache 是两个权威平面；App/Reader 没有私有正文 LRU。
-- 首页、漫画源卡片和详情封面分别对 encoded-source Future 做有界重试；`RecoverableArtworkImage` 只驱逐失败 provider 并重建 ImageStream，App resume 会恢复仍失败项。不得通过清空全局 image/response cache 修复单张图。
+- 首页、漫画源卡片和详情封面仅做单次后台 source retry；loader closure identity 不得触发重试。`RecoverableArtworkImage` 重建期间保持稳定占位图，成功帧到达才切换；App resume 可恢复仍失败项。
 - 漫画源页使用来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态仅用 chip 色彩/图标表示。
 - 浮动搜索展开态优先消费返回和垂直拖动/滚动手势；搜索历史持久化。Mihon `getFilterList()` 的 CheckBox/TriState/Select/Group 通过 opaque ID 投影为搜索框上方过滤标签，UI 不持有插件 Filter 对象。
 - 浏览页使用 catalog cache-first/background-refresh；稳定字段无变化时不更新。边缘下拉达到阈值后调用强制刷新，保留现有内容直到新结果到达。
-- 详情预览按原顺序装箱，行缩放跨度受 `sqrt(1.2)` 限制；完整行在面积比不超过 1.2 的前提下尽量利用屏幕宽度。阅读设置每行最大数量默认 4、范围 1–8，预览区域封顶屏幕高度 80%。
-- Android 使用默认 platform channel、单 blit lane 和 fresh used texture lifecycle。
+- 详情预览按原顺序装箱：实际行内含横图则最多 2 张、纯竖图则最多 3 张；只在相邻三个候选内做最小局部重排；设置项仍是更严格上限。行宽直接用于反算等面积 tile，内部无 Card/水平 padding，异常末行仍保持面积比不超过 1.2。
+- Android 使用默认 platform channel、单 blit lane 和 fresh used texture lifecycle。可见浏览器 Cookie snapshot 按 revision 每 runtime/站点/UA 只导入一次；retryable runtime lifecycle envelope 会重新激活并重试一次。远程详情页通过稳定 source ID 获取当前 active adapter，不保留插件重启前的关闭 session。
 - Native identity 保持 `zic-media-core-dev134-abi6-lib00121400`。
 - 当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip`；不得从旧版本偷偷补入，除非用户提供或明确指定来源。
 

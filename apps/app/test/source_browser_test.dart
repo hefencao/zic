@@ -820,15 +820,16 @@ void main() {
       lessThanOrEqualTo(1.2),
     );
     final itemCenters = itemFinders.map(tester.getCenter).toList(growable: false);
+    // Index 1 is landscape, so the actual first row contains exactly two
+    // items. Index 2 begins the next portrait row.
     expect(itemCenters[0].dy, closeTo(itemCenters[1].dy, 1));
-    expect(itemCenters[1].dy, closeTo(itemCenters[2].dy, 1));
+    expect(itemCenters[2].dy, greaterThan(itemCenters[1].dy));
     expect(itemCenters[0].dx, lessThan(itemCenters[1].dx));
-    expect(itemCenters[1].dx, lessThan(itemCenters[2].dx));
     final previewRect = tester.getRect(previewPager);
     final firstRect = tester.getRect(itemFinders.first);
-    final lastRect = tester.getRect(itemFinders.last);
+    final firstRowLastRect = tester.getRect(itemFinders[1]);
     expect(firstRect.left - previewRect.left, lessThanOrEqualTo(16));
-    expect(previewRect.right - lastRect.right, lessThanOrEqualTo(16));
+    expect(previewRect.right - firstRowLastRect.right, lessThanOrEqualTo(16));
     expect(itemSizes[0], collapsedItem0Size);
 
     await tester.runAsync(

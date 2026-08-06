@@ -2,8 +2,6 @@ part of 'comic_details.dart';
 
 const _previewGridGap = 8.0;
 const _previewPageIndicatorHeight = 28.0;
-const _previewMinTargetEdge = 56.0;
-const _previewMaxTargetEdge = 92.0;
 const _previewMinAspect = .45;
 const _previewMaxAspect = 2.2;
 
@@ -186,104 +184,113 @@ final class _ComicDetailsPreviewSectionState
     return aspect.clamp(_previewMinAspect, _previewMaxAspect).toDouble();
   }
 
-  double _previewTargetArea(double maxWidth, double maxHeight) {
-    final edgeForWidth = maxWidth / math.sqrt(_previewMaxAspect);
-    final edgeForHeight = maxHeight * math.sqrt(_previewMinAspect);
-    final maxItems = widget.maxItemsPerRow.clamp(1, 8).toInt();
-    final usableWidth = math.max(
-      1.0,
-      maxWidth - _previewGridGap * (maxItems - 1),
+  bool _isLandscapePreview(int index) => _previewAspect(index) > 1.0;
+
+  List<int> _takePreviewRowIndices(List<int> pending) {
+    final configuredMaximum = widget.maxItemsPerRow.clamp(1, 8).toInt();
+    if (pending.isEmpty) return const <int>[];
+    if (configuredMaximum == 1 || pending.length == 1) {
+      return <int>[pending.removeAt(0)];
+    }
+
+    final first = pending.first;
+    if (_isLandscapePreview(first)) {
+      final count = math.min(2, math.min(configuredMaximum, pending.length));
+      return List<int>.generate(
+        count,
+        (_) => pending.removeAt(0),
+        growable: false,
+      );
+    }
+
+    // A row that actually contains a landscape preview is limited to two
+    // items. When the third pending item is the landscape, pair it with the
+    // first portrait and leave the intervening portrait at the front of the
+    // next row. This is the smallest possible local reorder that satisfies
+    // the 2-landscape / 3-portrait rule while preserving source order as much
+    // as possible.
+    final inspectionCount = math.min(3, pending.length);
+    var landscapeOffset = -1;
+    for (var offset = 1; offset < inspectionCount; offset++) {
+      if (_isLandscapePreview(pending[offset])) {
+        landscapeOffset = offset;
+        break;
+      }
+    }
+    if (landscapeOffset == 1) {
+      return <int>[pending.removeAt(0), pending.removeAt(0)];
+    }
+    if (landscapeOffset == 2 && configuredMaximum >= 2) {
+      final portrait = pending.removeAt(0);
+      final landscape = pending.removeAt(1);
+      return <int>[portrait, landscape];
+    }
+
+    final count = math.min(3, math.min(configuredMaximum, pending.length));
+    return List<int>.generate(
+      count,
+      (_) => pending.removeAt(0),
+      growable: false,
     );
-    final nominalEdge = (usableWidth / maxItems)
-        .clamp(_previewMinTargetEdge, _previewMaxTargetEdge)
-        .toDouble();
-    final edge = math.max(
-      1.0,
-      math.min(nominalEdge, math.min(edgeForWidth, edgeForHeight)),
-    );
-    return edge * edge;
   }
 
-  _ComicDetailsPreviewItemLayout _previewItemLayout(
-    int index,
-    double targetArea,
-  ) {
-    final aspect = _previewAspect(index);
-    return _ComicDetailsPreviewItemLayout(
-      index: index,
-      width: math.sqrt(targetArea * aspect),
-      height: math.sqrt(targetArea / aspect),
-    );
-  }
-
-  List<_ComicDetailsPreviewRow> _previewRows(
+  _ComicDetailsPreviewRow _buildPreviewRow(
+    List<int> indices,
     double maxWidth,
-    double maxHeight,
   ) {
+    final gapWidth = _previewGridGap * math.max(0, indices.length - 1);
+    final availableItemWidth = math.max(1.0, maxWidth - gapWidth);
+    final aspectRoots = indices
+        .map((index) => math.sqrt(_previewAspect(index)))
+        .toList(growable: false);
+    final rootSum = aspectRoots.fold<double>(0, (sum, value) => sum + value);
+    final targetArea = math.pow(availableItemWidth / rootSum, 2).toDouble();
+    final items = <_ComicDetailsPreviewItemLayout>[];
+    var height = 0.0;
+    for (var offset = 0; offset < indices.length; offset++) {
+      final index = indices[offset];
+      final aspect = _previewAspect(index);
+      final item = _ComicDetailsPreviewItemLayout(
+        index: index,
+        width: math.sqrt(targetArea * aspect),
+        height: math.sqrt(targetArea / aspect),
+      );
+      items.add(item);
+      height = math.max(height, item.height);
+    }
+    return _ComicDetailsPreviewRow(
+      items: List<_ComicDetailsPreviewItemLayout>.unmodifiable(items),
+      width: maxWidth,
+      height: height,
+    );
+  }
+
+  List<_ComicDetailsPreviewRow> _previewRows(double maxWidth) {
     if (_items.isEmpty || maxWidth <= 0) {
       return const <_ComicDetailsPreviewRow>[];
     }
-    final targetArea = _previewTargetArea(maxWidth, maxHeight);
-    final naturalRows = <_ComicDetailsPreviewRow>[];
-    var items = <_ComicDetailsPreviewItemLayout>[];
-    var width = 0.0;
-    var height = 0.0;
-
-    void closeNaturalRow() {
-      if (items.isEmpty) return;
-      naturalRows.add(
-        _ComicDetailsPreviewRow(
-          items: List<_ComicDetailsPreviewItemLayout>.unmodifiable(items),
-          width: width,
-          height: height,
-        ),
-      );
-      items = <_ComicDetailsPreviewItemLayout>[];
-      width = 0;
-      height = 0;
+    final rows = <_ComicDetailsPreviewRow>[];
+    final pending = List<int>.generate(_items.length, (index) => index);
+    while (pending.isNotEmpty) {
+      final indices = _takePreviewRowIndices(pending);
+      rows.add(_buildPreviewRow(indices, maxWidth));
     }
 
-    for (var index = 0; index < _items.length; index++) {
-      final item = _previewItemLayout(index, targetArea);
-      final nextWidth = items.isEmpty
-          ? item.width
-          : width + _previewGridGap + item.width;
-      if (items.isNotEmpty &&
-          (nextWidth > maxWidth ||
-              items.length >= widget.maxItemsPerRow.clamp(1, 8).toInt())) {
-        closeNaturalRow();
-      }
-      width = items.isEmpty
-          ? item.width
-          : width + _previewGridGap + item.width;
-      height = math.max(height, item.height);
-      items.add(item);
-    }
-    closeNaturalRow();
-    if (naturalRows.isEmpty) return naturalRows;
-
-    // Justify every row as far as the global equal-area constraint allows.
-    // All natural items have the same area. Scaling one complete row by one
-    // factor preserves equal area inside that row. Capping the largest scale
-    // to sqrt(1.2) times the smallest keeps the global max/min area ratio at
-    // or below 1.2 while still using nearly all portrait-screen width.
-    final desiredScales = naturalRows.map((row) {
-      final itemWidth = row.width - _previewGridGap * (row.items.length - 1);
-      final availableItemWidth = math.max(
-        1.0,
-        maxWidth - _previewGridGap * (row.items.length - 1),
-      );
-      return availableItemWidth / math.max(1.0, itemWidth);
-    }).toList(growable: false);
-    final minimumScale = desiredScales.reduce(math.min);
-    final maximumScale = minimumScale * math.sqrt(1.2);
-
-    return List<_ComicDetailsPreviewRow>.generate(naturalRows.length, (index) {
-      final row = naturalRows[index];
-      final scale = desiredScales[index].clamp(
-        minimumScale,
-        maximumScale,
-      ).toDouble();
+    // Two-landscape and three-portrait rows naturally produce similar tile
+    // areas. Clamp only exceptional rows (usually an incomplete final row) so
+    // the global area ratio stays within 1.2 without converting spare width
+    // into oversized inter-item gaps.
+    final rowAreas = rows
+        .expand((row) => row.items)
+        .map((item) => item.area)
+        .toList(growable: false);
+    if (rowAreas.isEmpty) return rows;
+    final minimumArea = rowAreas.reduce(math.min);
+    final maximumAllowedArea = minimumArea * 1.2;
+    return rows.map((row) {
+      final area = row.items.first.area;
+      if (area <= maximumAllowedArea) return row;
+      final scale = math.sqrt(maximumAllowedArea / area);
       final scaledItems = row.items.map((item) {
         return _ComicDetailsPreviewItemLayout(
           index: item.index,
@@ -291,21 +298,18 @@ final class _ComicDetailsPreviewSectionState
           height: item.height * scale,
         );
       }).toList(growable: false);
-      final scaledWidth = scaledItems.fold<double>(
-            0,
-            (sum, item) => sum + item.width,
-          ) +
-          _previewGridGap * (scaledItems.length - 1);
-      final scaledHeight = scaledItems.fold<double>(
+      final width = scaledItems.fold<double>(0, (sum, item) => sum + item.width) +
+          _previewGridGap * math.max(0, scaledItems.length - 1);
+      final height = scaledItems.fold<double>(
         0,
-        (value, item) => math.max(value, item.height),
+        (current, item) => math.max(current, item.height),
       );
       return _ComicDetailsPreviewRow(
         items: List<_ComicDetailsPreviewItemLayout>.unmodifiable(scaledItems),
-        width: math.min(maxWidth, scaledWidth),
-        height: scaledHeight,
+        width: width,
+        height: height,
       );
-    }, growable: false);
+    }).toList(growable: false);
   }
 
   List<_ComicDetailsPreviewPage> _previewPages(
@@ -328,7 +332,7 @@ final class _ComicDetailsPreviewSectionState
       height = 0;
     }
 
-    for (final row in _previewRows(maxWidth, maxHeight)) {
+    for (final row in _previewRows(maxWidth)) {
       final nextHeight = rows.isEmpty
           ? row.height
           : height + _previewGridGap + row.height;
@@ -396,28 +400,26 @@ final class _ComicDetailsPreviewSectionState
   }
 
   Widget _previewRow(_ComicDetailsPreviewRow row, double maxWidth) {
-    final residual = math.max(0.0, maxWidth - row.width);
-    final extraGap = row.items.length > 1
-        ? residual / (row.items.length - 1)
-        : residual / 2;
     return SizedBox(
       width: maxWidth,
       height: row.height,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: <Widget>[
-          if (row.items.length == 1) SizedBox(width: extraGap),
-          for (var itemIndex = 0;
-              itemIndex < row.items.length;
-              itemIndex++)
-            if (itemIndex == 0)
-              _previewTile(row.items[itemIndex])
-            else ...<Widget>[
-              SizedBox(width: _previewGridGap + extraGap),
-              _previewTile(row.items[itemIndex]),
-            ],
-          if (row.items.length == 1) SizedBox(width: extraGap),
-        ],
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: <Widget>[
+            for (var itemIndex = 0;
+                itemIndex < row.items.length;
+                itemIndex++)
+              if (itemIndex == 0)
+                _previewTile(row.items[itemIndex])
+              else ...<Widget>[
+                const SizedBox(width: _previewGridGap),
+                _previewTile(row.items[itemIndex]),
+              ],
+          ],
+        ),
       ),
     );
   }
@@ -545,11 +547,9 @@ final class _ComicDetailsPreviewSectionState
   Widget build(BuildContext context) {
     final canExpand = _items.isNotEmpty;
     final canLoadInitial = widget.loader != null && _items.isEmpty;
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-        child: Column(
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Row(
@@ -615,8 +615,7 @@ final class _ComicDetailsPreviewSectionState
                   child: const Text('重试'),
                 ),
               ),
-          ],
-        ),
+        ],
       ),
     );
   }

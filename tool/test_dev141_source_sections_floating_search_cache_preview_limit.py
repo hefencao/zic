@@ -89,7 +89,7 @@ for token in (
 require(settings, 'readingPreviewMaxItemsPerRowKey', 'reading settings')
 for token in (
     'maxItemsPerRow: widget.previewMaxItemsPerRow',
-    'items.length >= widget.maxItemsPerRow.clamp(1, 8).toInt()',
+    'final configuredMaximum = widget.maxItemsPerRow.clamp(1, 8).toInt()',
 ):
     require(preview + read('apps/app/lib/comic_details.dart'), token, 'preview layout')
 for token in (

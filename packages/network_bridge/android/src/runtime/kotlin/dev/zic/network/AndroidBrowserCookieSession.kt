@@ -2,6 +2,7 @@ package dev.zic.network
 
 import android.content.Context
 import android.webkit.CookieManager
+import java.net.URI
 
 /**
  * Imports the latest visible-browser cookies into the current process.
@@ -13,6 +14,9 @@ import android.webkit.CookieManager
  * Android network boundary.
  */
 object AndroidBrowserCookieSession {
+    private val importedSnapshotRevisions = mutableMapOf<String, Long>()
+
+    @Synchronized
     fun importCookies(
         context: Context,
         url: String,
@@ -23,9 +27,15 @@ object AndroidBrowserCookieSession {
             url,
             expectedUserAgent = expectedUserAgent,
         ) ?: return 0
+        val revision = (snapshot["updatedAt"] as? Number)?.toLong() ?: return 0
+        val host = runCatching { URI(url).host.orEmpty().lowercase() }
+            .getOrDefault("")
+        if (host.isBlank()) return 0
+        val revisionKey = "$host\u0000${expectedUserAgent.orEmpty()}"
+        val importedRevision = importedSnapshotRevisions[revisionKey] ?: 0L
+        if (revision <= importedRevision) return 0
         @Suppress("UNCHECKED_CAST")
-        val cookies = snapshot["cookies"] as? Map<String, String> ?: return 0
-        if (cookies.isEmpty()) return 0
+        val cookies = snapshot["cookies"] as? Map<String, String> ?: emptyMap()
         val manager = CookieManager.getInstance()
         var imported = 0
         cookies.forEach { (name, value) ->
@@ -35,6 +45,10 @@ object AndroidBrowserCookieSession {
             }
         }
         if (imported > 0) manager.flush()
+        // A browser snapshot is a one-time handoff. Re-importing it before
+        // every request overwrites newer cookies received by the runtime and
+        // can make a solved Cloudflare challenge fail again later.
+        importedSnapshotRevisions[revisionKey] = revision
         return imported
     }
 }

@@ -33,18 +33,19 @@ spec = read('docs/SPEC.md')
 check = read('tool/check.sh')
 
 for token in (
-    'final desiredScales = naturalRows.map',
-    'minimumScale * math.sqrt(1.2)',
-    'residual / (row.items.length - 1)',
+    '_takePreviewRowIndices(',
+    '_buildPreviewRow(',
+    'availableItemWidth',
+    'maximumAllowedArea = minimumArea * 1.2',
     'width: maxWidth',
 ):
     require(preview, token, 'preview width utilization')
 for forbidden in (
-    'Alignment.topCenter,\n      child: Row(',
-    'MainAxisAlignment.center',
+    'residual / (row.items.length - 1)',
+    'final desiredScales = naturalRows.map',
 ):
     if forbidden in preview:
-        raise SystemExit(f'centered preview-row waste remains: {forbidden}')
+        raise SystemExit(f'superseded preview spacing remains: {forbidden}')
 
 for token in (
     'final class ArtworkRetryController',
@@ -110,9 +111,14 @@ for token in (
 ):
     require(source, token, 'source filter chips')
 
+refresh = read('apps/app/lib/app_pull_to_refresh.dart')
 for token in (
     'RefreshIndicatorTriggerMode.onEdge',
     'displacement: 72',
+):
+    require(refresh, token, 'shared pull refresh')
+for token in (
+    'AppPullToRefresh(',
     'onRefresh: () => _reload(forceRefresh: true)',
     'AlwaysScrollableScrollPhysics',
     'if (forceRefresh) _artworkRetryRevision++',
@@ -124,7 +130,7 @@ for token in (
     'tester.binding.handlePopRoute()',
     'find.byKey(comicSourcePullRefreshKey)',
     'firstRect.left - previewRect.left',
-    'previewRect.right - lastRect.right',
+    'previewRect.right - firstRowLastRect.right',
 ):
     require(source_test, token, 'App owner tests')
 for token in (

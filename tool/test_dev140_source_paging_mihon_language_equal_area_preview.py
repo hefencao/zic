@@ -58,7 +58,7 @@ for token in (
 
 for token in (
     'comicDetailsPreviewExpandKey',
-    '_previewTargetArea(',
+    '_buildPreviewRow(',
     'math.sqrt(targetArea * aspect)',
     'math.sqrt(targetArea / aspect)',
     'MediaQuery.sizeOf(context).height * .8',

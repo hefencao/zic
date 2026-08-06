@@ -10,6 +10,7 @@ import 'package:storage_bridge/storage_bridge.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'package:downloads/downloads.dart';
+import 'app_pull_to_refresh.dart';
 import 'artwork_placeholder.dart';
 import 'comic_details.dart' as details;
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
@@ -844,10 +845,8 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   Widget _refreshableStatus(Widget child) {
     return NotificationListener<ScrollNotification>(
       onNotification: _handleSourceScroll,
-      child: RefreshIndicator(
+      child: AppPullToRefresh(
         key: comicSourcePullRefreshKey,
-        triggerMode: RefreshIndicatorTriggerMode.onEdge,
-        displacement: 72,
         onRefresh: () => _reload(forceRefresh: true),
         child: CustomScrollView(
           controller: _scroll,
@@ -907,10 +906,8 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
             ((constraints.maxWidth - used) / 2).clamp(12, 80).toDouble();
         return NotificationListener<ScrollNotification>(
           onNotification: _handleSourceScroll,
-          child: RefreshIndicator(
+          child: AppPullToRefresh(
             key: comicSourcePullRefreshKey,
-            triggerMode: RefreshIndicatorTriggerMode.onEdge,
-            displacement: 72,
             onRefresh: () => _reload(forceRefresh: true),
             child: CustomScrollView(
               controller: _scroll,
@@ -1628,6 +1625,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
     required this.onDownloadComic,
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
+    this.resolveSource,
     this.onSearchMetadata,
     this.onMigrateSource,
     this.onOpenVersions,
@@ -1655,6 +1653,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
   final details.ComicDetailsComicDownloader onDownloadComic;
   final details.ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
   final details.ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
+  final details.ComicDetailsSourceResolver? resolveSource;
   final details.ComicDetailsMetadataSearch? onSearchMetadata;
   final details.ComicDetailsVersionsOpener? onMigrateSource;
   final details.ComicDetailsVersionsOpener? onOpenVersions;
@@ -1682,6 +1681,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
       onDownloadComic: onDownloadComic,
       onOpenSourceWebView: onOpenSourceWebView,
       onOpenSourceSettings: onOpenSourceSettings,
+      resolveSource: resolveSource,
       onSearchMetadata: onSearchMetadata,
       onMigrateSource: onMigrateSource,
       onOpenVersions: onOpenVersions,
@@ -1955,11 +1955,16 @@ final class _RemoteImageState extends State<_RemoteImage>
   bool _canRetry(Object error) =>
       error is! Failure || error.code != ErrorCode.sourceVerificationRequired;
 
-  void _load({bool resetRetryBudget = false}) {
+  void _load({
+    bool resetRetryBudget = false,
+    bool preserveFailurePlaceholder = false,
+  }) {
     if (resetRetryBudget) _retry.reset();
     final uri = widget.uri;
-    _failed = false;
-    _lastError = null;
+    if (!preserveFailurePlaceholder) {
+      _failed = false;
+      _lastError = null;
+    }
     _source = uri == null ? null : _loadSource(uri);
   }
 
@@ -1976,7 +1981,10 @@ final class _RemoteImageState extends State<_RemoteImage>
 
   void _restartLoad({bool resetRetryBudget = false}) {
     if (!mounted) return;
-    setState(() => _load(resetRetryBudget: resetRetryBudget));
+    setState(() => _load(
+          resetRetryBudget: resetRetryBudget,
+          preserveFailurePlaceholder: true,
+        ));
   }
 
   @override
@@ -2045,9 +2053,8 @@ final class _RemoteImageState extends State<_RemoteImage>
                   seed: widget.uri?.toString() ?? 'source-comic-cover',
                 );
         }
-        return const ColoredBox(
-          color: Color(0x08000000),
-          child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+        return SoftArtworkPlaceholder(
+          seed: widget.uri?.toString() ?? 'source-comic-cover',
         );
       },
     );

@@ -268,6 +268,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
               preference: preference,
             ),
             source: source,
+            resolveSource: _sourceForId,
             summary: comic,
             categories: _categories,
             loadCover: _loadCoverSource,
@@ -299,15 +300,23 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
             downloadChanges: _chapterDownloads.changes,
             onDownloadComic: (entries) =>
                 _downloadComicEntries(identity, entries),
-            onOpenSourceWebView: () => _openSourceWebView(
-                  source,
-                  _sourceComicWebUri(source, comic.comicId),
-                ),
+            onOpenSourceWebView: () {
+              final active = _sourceForId(source.sourceId) ?? source;
+              return _openSourceWebView(
+                active,
+                _sourceComicWebUri(active, comic.comicId),
+              );
+            },
             onOpenSourceSettings: sourceSupportsSettings(source)
-                ? () => _openComicSourceSettings(source)
+                ? () {
+                    final active = _sourceForId(source.sourceId) ?? source;
+                    return _openComicSourceSettings(active);
+                  }
                 : null,
-            onSearchMetadata: (query) =>
-                _searchSourceMetadata(source, query),
+            onSearchMetadata: (query) {
+              final active = _sourceForId(source.sourceId) ?? source;
+              _searchSourceMetadata(active, query);
+            },
             onMigrateSource: () =>
                 _openSourceMigrationForSummary(source, comic),
             onOpenVersions: _sourceSupportsVersionEntry(source)
