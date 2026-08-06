@@ -29,6 +29,16 @@ void main() {
       expect(browse.items.single.comicId, 'comic-1');
       final comic = await source.loadComic('comic-1');
       expect(comic.chapters.single.chapterId, 'chapter-1');
+      final previewSource = source as ComicPreviewSource;
+      expect(
+        (await previewSource.loadComicPreview('comic-1')).items,
+        isEmpty,
+      );
+      final commentSource = source as ComicCommentSource;
+      expect(
+        (await commentSource.loadComicComments('comic-1', page: 1)).items,
+        isEmpty,
+      );
       final chapter = await source.loadChapter('chapter-1');
       expect(chapter.pages.single.pageId, 'page-1');
       final bytes = await source.loadResource(
@@ -291,6 +301,8 @@ class _FixtureDriver implements ExternalPluginRuntimeDriver {
           name: 'Fixture',
           language: 'en',
           website: Uri.parse('https://example.invalid'),
+          supportsComicPreview: true,
+          supportsComicComments: true,
         ),
       ];
 
@@ -317,7 +329,7 @@ class _FixtureDriver implements ExternalPluginRuntimeDriver {
           'offset': request.arguments['offset'],
           'hasMore': false,
         },
-      ExternalPluginRuntimeOperation.loadComic => <String, Object?>{
+        ExternalPluginRuntimeOperation.loadComic => <String, Object?>{
           'comic': <String, Object?>{
             'comicId': 'comic-1',
             'title': 'Fixture Comic',
@@ -325,6 +337,17 @@ class _FixtureDriver implements ExternalPluginRuntimeDriver {
             'readingDirection': 'ltr',
           },
           'chapters': <Object?>[_chapter()],
+        },
+      ExternalPluginRuntimeOperation.loadComicPreview =>
+        const <String, Object?>{
+          'items': <Object?>[],
+          'nextToken': null,
+        },
+      ExternalPluginRuntimeOperation.loadComicComments =>
+        <String, Object?>{
+          'page': request.arguments['page'],
+          'comments': const <Object?>[],
+          'maxPage': request.arguments['page'],
         },
       ExternalPluginRuntimeOperation.loadChapter => <String, Object?>{
           'comicId': 'comic-1',

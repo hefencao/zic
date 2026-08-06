@@ -39,6 +39,30 @@ void main() {
     expect((decoded.payload! as Uint8List).toList(), <int>[1, 2, 3]);
   });
 
+  test('source login accepts platform-decoded nested maps', () {
+    final decoded = ExternalPluginRuntimeRequest.fromMessage(
+      <String, Object?>{
+        'schemaVersion': 1,
+        'requestId': 'login-1',
+        'operation': 'loginSourceAccount',
+        'externalSourceId': 'fixture',
+        'arguments': <String, Object?>{
+          'mode': 'web',
+          'values': <Object?, Object?>{
+            'currentUrl': 'https://example.invalid/login',
+            'cookies': <Object?, Object?>{'igneous': 'session'},
+          },
+        },
+      },
+    );
+
+    expect(decoded.operation, ExternalPluginRuntimeOperation.loginSourceAccount);
+    expect(
+      decoded.arguments['values'],
+      isA<Map<Object?, Object?>>(),
+    );
+  });
+
   test('resource request and retry operations share the absolute URI schema',
       () {
     final uri = Uri.parse('venera-resource:durable-page');
@@ -69,6 +93,8 @@ void main() {
       name: 'Fixture',
       language: 'en',
       website: Uri.parse('https://example.invalid'),
+      supportsComicPreview: true,
+      supportsComicComments: true,
       browserUserAgent: 'fixture-browser-agent',
       contentRatings: const <SourceContentRating>{
         SourceContentRating.safe,
@@ -83,6 +109,27 @@ void main() {
     expect(decoded.externalId, 'fixture');
     expect(decoded.browserUserAgent, 'fixture-browser-agent');
     expect(decoded.contentRatings, contains(SourceContentRating.erotica));
+    expect(decoded.supportsComicPreview, isTrue);
+    expect(decoded.supportsComicComments, isTrue);
+  });
+
+  test('detail preview and comment requests validate nullable cursors', () {
+    final preview = ExternalPluginRuntimeRequest.loadComicPreview(
+      requestId: 'preview-1',
+      externalSourceId: 'fixture',
+      comicId: 'comic-1',
+    );
+    final comments = ExternalPluginRuntimeRequest.loadComicComments(
+      requestId: 'comments-1',
+      externalSourceId: 'fixture',
+      comicId: 'comic-1',
+      subId: 'sub-1',
+      page: 2,
+      replyTo: 'comment-1',
+    );
+    expect(preview.operation, ExternalPluginRuntimeOperation.loadComicPreview);
+    expect(comments.operation, ExternalPluginRuntimeOperation.loadComicComments);
+    expect(comments.arguments['page'], 2);
   });
 
   test('operation schema rejects unknown arguments and relative resources', () {

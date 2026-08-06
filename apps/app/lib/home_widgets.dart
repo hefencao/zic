@@ -5,6 +5,8 @@ import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
 import 'package:telemetry/telemetry.dart';
 
+import 'artwork_placeholder.dart';
+
 enum ComicDownloadProgressKind { active, offline }
 
 final class ComicDownloadProgress {
@@ -275,6 +277,9 @@ final class _CoverImageState extends State<_CoverImage> {
                 fit: BoxFit.cover,
                 gaplessPlayback: true,
                 filterQuality: FilterQuality.medium,
+                errorBuilder: (_, __, ___) => SoftArtworkPlaceholder(
+                  seed: widget.cacheIdentity,
+                ),
                 frameBuilder: (context, child, frame, synchronous) {
                   final ready = frame != null || synchronous;
                   if (ready) {
@@ -289,9 +294,8 @@ final class _CoverImageState extends State<_CoverImage> {
               );
             }
             if (snapshot.hasError) {
-              return const ColoredBox(
-                color: Color(0xff20232a),
-                child: Icon(Icons.broken_image_outlined, size: 38),
+              return SoftArtworkPlaceholder(
+                seed: widget.cacheIdentity,
               );
             }
             return const ColoredBox(

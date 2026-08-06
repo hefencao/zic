@@ -107,6 +107,9 @@ URL-derived/canonical app-update key。来源确认过的 canonical identity 写
 首页、书架、来源和杂项页由 lazy indexed page 保持未构建，避免隐藏导航页提前创建第二套
 封面 loader；访问过的页面状态仍由该页面节点保留。
 
+Home 的“更新漫画”投影只取已在书架中的漫画，并按持久化的漫画元数据更新时间排序；阅读历史
+单独按 `ReadingProgress.updatedAt` 投影，阅读进度不会再把非书架漫画或普通阅读行为混入更新列表。
+
 ### 详情页与来源迁移组合
 
 `ComicDetails` 只把详情展示、阅读进度和用户命令投影到 Flutter；详情 AppBar 不重复显示
@@ -122,6 +125,16 @@ Cookie 会话，按当前详情页 `#gnd` 关系生成版本，不把 Venera 当
 `sourceId` 下不同的原生 `comicId`，因此可处理 E-Hentai URL/gallery locator 变化。迁移只复制
 经过精确章节匹配验证的偏好、阅读位置和已读状态，并先完成目标写入；同源替换随后清理旧漫画
 记录，跨源迁移保留原来源。迁移面板始终展示当前插件和来源，目标可为当前来源或其他已启用来源。
+
+详情扩展数据由 source adapter 负责：`ComicManifest` 可携带首批预览缩略图和评论，
+`ComicPreviewSource`/`ComicCommentSource` 只在来源声明能力时提供继续分页。App 只消费
+规范化 URI、评论字段和不透明的 `sourceSubId`/回复 ID；图片仍走统一 artwork cache，
+评论完整列表和回复通过详情次级页加载，不把评论请求或插件 transport 变成章节目录的
+全局门控。Venera 直接复用 `comic.loadThumbnails` 与 `comic.loadComments`，因此已有
+`ComicDetails` 能力的来源可渐进显示预览、评论和回复。预览 URI 保留 Venera 的
+`@x/y` 裁剪标识用于单项身份，但 `onThumbnailLoad` 请求回调接收去掉裁剪标识的原图
+地址，App 解码后只绘制对应裁剪区域；预览失败只显示按资源 identity 生成的柔和
+单色占位，不显示破损图片图标。
 
 App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭固定为左下角 X，确认、
 保存或删除位于右侧，不再使用“取消”文字按钮。
@@ -151,6 +164,9 @@ Reader interaction / viewport / presentation size
 Reader 可以提交 stable page、fractional position、目标页覆盖率、阅读方向、viewport/physical target、interaction/zoom，以及 pause/resume/speed/jump 等命令。
 
 Reader 只能消费不可变页面状态、进度、错误和 `PipelinePageSurface`。它不得接触 mutable session、transport、artifact store、scheduler、cursor/frame handle 或 texture registry。
+`reader_runtime` 在页码/阅读模式改变时通过既有 progress facade 写入进度，并在 App lifecycle
+进入 inactive/paused/detached 或 Reader route dispose 时强制 flush；`HomeLibrarySession` 立即替换
+内存投影，因此退出 Reader 即可刷新历史和相关 Home 投影，不再等待详情父路由销毁。
 
 ## 5. 页面角色、窗口与优先级
 

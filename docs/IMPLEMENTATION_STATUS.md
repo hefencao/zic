@@ -27,7 +27,18 @@
   完成后才清理旧版本记录；已发现的新版关系写入 `ComicVersionRelationStore`，迁移面板会显示旧版。
 - App-owned modal panel 的操作行统一使用左下角 X 关闭，右侧保留确认/保存/删除动作，
   已移除取消文字按钮。
+- Venera 运行时登录请求已兼容 Android 解码后的嵌套 Map，不再把 credentials/cookies/web
+  登录参数错误判为 `runtime-request-invalid`。详情 manifest 已接入 Venera `subId`、首批
+  thumbnails/comments；支持的来源显示预览栏、评论栏、分页评论页和回复页，图片仍走
+  统一 artwork cache，未声明能力的来源不会触发对应插件请求。
 - catalog response cache 使用稳定 source/comic/chapter identity 和结构 weight；页面正文不进入该缓存。
+- Home“更新漫画”已与阅读历史分离：只展示 `inShelf` 漫画并按 `SavedComicRecord.updatedAt`
+  排序；Reader 在页码/模式变化、App lifecycle 暂停和 route dispose 时写入进度，
+  `HomeLibrarySession` 即时替换内存记录。
+- 详情预览按单项 URI 使用独立 artwork role/cache key；Venera `loadThumbnails` 的首批与游标分页
+  不再重复消费 `loadInfo` 缩略图，点击预览项会将索引传入既有 Reader 路由；Venera
+  `@x/y` 预览 URI 在保留身份的同时按既有约定以去裁剪 URL 调用 `onThumbnailLoad`，封面、预览
+  和来源缩略图失败时统一使用稳定伪随机的柔和纯色占位；预览绘制只显示 `@x/y` 指定的原图区域。
 - ArtifactCacheManager 默认热字节 10 项/256 MiB，支持持久 backend、verified alias/rekey 和 foreground read join。
 - Reader encoded window 为前 7/后 3；decode 角色为前 2/后 1；动态 holder 最大水位为 7/5/3/2。
 - transition 覆盖率达到阈值后独立取得一帧，再恢复 current/neighbor staged refill；不存在 DownloadFlowGate、startup-buffer 或 holder-depth 网络资格门控。

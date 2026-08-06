@@ -23,6 +23,8 @@ final class CachedBrowsableComicSource
         CanonicalComicIdentitySource,
         ComicWebViewRequestSource,
         ComicVersionSource,
+        ComicPreviewSource,
+        ComicCommentSource,
         RefreshableChapterComicSource,
         ResolvableComicResourceSource,
         RetryableComicResourceSource {
@@ -113,6 +115,68 @@ final class CachedBrowsableComicSource
       );
     }
     return versionSource.findComicVersions(comicId);
+  }
+
+  @override
+  bool get supportsComicPreview {
+    final previewSource = source is ComicPreviewSource
+        ? source as ComicPreviewSource
+        : null;
+    return previewSource?.supportsComicPreview ?? false;
+  }
+
+  @override
+  Future<ComicPreviewPage> loadComicPreview(
+    String comicId, {
+    String? nextToken,
+  }) {
+    final previewSource = source is ComicPreviewSource
+        ? source as ComicPreviewSource
+        : null;
+    if (previewSource == null || !previewSource.supportsComicPreview) {
+      return Future<ComicPreviewPage>.value(
+        ComicPreviewPage(items: const <ComicPreviewAsset>[]),
+      );
+    }
+    return previewSource.loadComicPreview(
+      comicId,
+      nextToken: nextToken,
+    );
+  }
+
+  @override
+  bool get supportsComicComments {
+    final commentSource = source is ComicCommentSource
+        ? source as ComicCommentSource
+        : null;
+    return commentSource?.supportsComicComments ?? false;
+  }
+
+  @override
+  Future<ComicCommentPage> loadComicComments(
+    String comicId, {
+    String? subId,
+    required int page,
+    String? replyTo,
+  }) {
+    final commentSource = source is ComicCommentSource
+        ? source as ComicCommentSource
+        : null;
+    if (commentSource == null || !commentSource.supportsComicComments) {
+      return Future<ComicCommentPage>.value(
+        ComicCommentPage(
+          page: page,
+          items: const <ComicComment>[],
+          maxPage: page,
+        ),
+      );
+    }
+    return commentSource.loadComicComments(
+      comicId,
+      subId: subId,
+      page: page,
+      replyTo: replyTo,
+    );
   }
 
   @override
@@ -378,7 +442,9 @@ int _browseWeight(SourceBrowsePage page) =>
 int _comicWeight(ComicManifest manifest) =>
     _cacheObjectOverhead +
     _comicValueWeight(manifest.comic) +
-    _cacheCollectionWeight<Chapter>(manifest.chapters, _chapterValueWeight);
+    _cacheCollectionWeight<Chapter>(manifest.chapters, _chapterValueWeight) +
+    _previewWeight(manifest.preview) +
+    _commentPageWeight(manifest.comments);
 
 int _chapterWeight(ChapterManifest manifest) =>
     _cacheObjectOverhead +
@@ -405,7 +471,32 @@ int _comicValueWeight(Comic comic) =>
     _cacheCollectionWeight<String>(comic.authors, _textWeight) +
     _cacheCollectionWeight<String>(comic.tags, _textWeight) +
     _uriWeight(comic.coverUri) +
-    _textWeight(comic.description);
+    _textWeight(comic.description) +
+    _textWeight(comic.sourceSubId);
+
+int _previewWeight(ComicPreviewPage? page) => page == null
+    ? 0
+    : _cacheCollectionWeight<ComicPreviewAsset>(
+        page.items,
+        (asset) =>
+            _cacheObjectOverhead +
+            _uriWeight(asset.uri) +
+            _textWeight(asset.label),
+      ) +
+        _textWeight(page.nextToken);
+
+int _commentPageWeight(ComicCommentPage? page) => page == null
+    ? 0
+    : _cacheCollectionWeight<ComicComment>(
+        page.items,
+        (comment) =>
+            _cacheObjectOverhead +
+            _textWeight(comment.id) +
+            _textWeight(comment.userName) +
+            _uriWeight(comment.avatarUri) +
+            _textWeight(comment.content) +
+            _textWeight(comment.time),
+      );
 
 int _chapterValueWeight(Chapter chapter) =>
     _cacheObjectOverhead +

@@ -11,6 +11,8 @@ import 'package:catalog/catalog.dart';
 enum ExternalPluginRuntimeOperation {
   browse,
   loadComic,
+  loadComicPreview,
+  loadComicComments,
   loadChapter,
   loadResource,
   resolveResource,
@@ -31,6 +33,8 @@ final class ExternalPluginRuntimeSourceDescriptor {
     required this.language,
     required this.website,
     this.supportsSearch = true,
+    this.supportsComicPreview = false,
+    this.supportsComicComments = false,
     this.browserUserAgent,
     Iterable<SourceContentRating> contentRatings = const <SourceContentRating>{
       SourceContentRating.safe,
@@ -54,6 +58,8 @@ final class ExternalPluginRuntimeSourceDescriptor {
   final String language;
   final Uri website;
   final bool supportsSearch;
+  final bool supportsComicPreview;
+  final bool supportsComicComments;
   final String? browserUserAgent;
   final Set<SourceContentRating> contentRatings;
 
@@ -65,6 +71,8 @@ final class ExternalPluginRuntimeSourceDescriptor {
       'language': language,
       'website': website.toString(),
       'supportsSearch': supportsSearch,
+      'supportsComicPreview': supportsComicPreview,
+      'supportsComicComments': supportsComicComments,
       if (browserUserAgent != null) 'browserUserAgent': browserUserAgent,
       'contentRatings': ratings,
     };
@@ -91,6 +99,10 @@ final class ExternalPluginRuntimeSourceDescriptor {
       language: _requiredString(message, 'language'),
       website: website,
       supportsSearch: _requiredBool(message, 'supportsSearch'),
+      supportsComicPreview:
+          _optionalBool(message['supportsComicPreview']) ?? false,
+      supportsComicComments:
+          _optionalBool(message['supportsComicComments']) ?? false,
       browserUserAgent: switch (message['browserUserAgent']) {
         null => null,
         final String value when value.trim().isNotEmpty => value,
@@ -153,6 +165,42 @@ final class ExternalPluginRuntimeRequest {
         operation: ExternalPluginRuntimeOperation.loadComic,
         externalSourceId: externalSourceId,
         arguments: <String, Object?>{'comicId': comicId},
+      );
+
+  factory ExternalPluginRuntimeRequest.loadComicPreview({
+    required String requestId,
+    required String externalSourceId,
+    required String comicId,
+    String? nextToken,
+  }) =>
+      ExternalPluginRuntimeRequest(
+        requestId: requestId,
+        operation: ExternalPluginRuntimeOperation.loadComicPreview,
+        externalSourceId: externalSourceId,
+        arguments: <String, Object?>{
+          'comicId': comicId,
+          'nextToken': nextToken,
+        },
+      );
+
+  factory ExternalPluginRuntimeRequest.loadComicComments({
+    required String requestId,
+    required String externalSourceId,
+    required String comicId,
+    String? subId,
+    required int page,
+    String? replyTo,
+  }) =>
+      ExternalPluginRuntimeRequest(
+        requestId: requestId,
+        operation: ExternalPluginRuntimeOperation.loadComicComments,
+        externalSourceId: externalSourceId,
+        arguments: <String, Object?>{
+          'comicId': comicId,
+          'subId': subId,
+          'page': page,
+          'replyTo': replyTo,
+        },
       );
 
   factory ExternalPluginRuntimeRequest.loadChapter({
@@ -390,6 +438,24 @@ void _validateArguments(
     case ExternalPluginRuntimeOperation.loadComic:
       _expectSingleNonEmptyString(arguments, 'comicId');
       return;
+    case ExternalPluginRuntimeOperation.loadComicPreview:
+      _expectKeys(arguments, const <String>{'comicId', 'nextToken'});
+      _expectNonEmptyString(arguments, 'comicId');
+      _expectNullableString(arguments, 'nextToken');
+      return;
+    case ExternalPluginRuntimeOperation.loadComicComments:
+      _expectKeys(
+        arguments,
+        const <String>{'comicId', 'subId', 'page', 'replyTo'},
+      );
+      _expectNonEmptyString(arguments, 'comicId');
+      _expectNullableString(arguments, 'subId');
+      _expectNullableString(arguments, 'replyTo');
+      final page = arguments['page'];
+      if (page is! int || page < 1) {
+        throw const FormatException('comic comment page is invalid');
+      }
+      return;
     case ExternalPluginRuntimeOperation.loadChapter:
       _expectSingleNonEmptyString(arguments, 'chapterId');
       return;
@@ -428,7 +494,8 @@ void _validateArguments(
       final values = arguments['values'];
       if (mode is! String ||
           !const <String>{'credentials', 'cookies', 'web'}.contains(mode) ||
-          values is! Map<String, Object?>) {
+          values is! Map<Object?, Object?> ||
+          values.keys.any((key) => key is! String)) {
         throw const FormatException('source login arguments are invalid');
       }
       return;
@@ -445,9 +512,20 @@ void _expectKeys(Map<String, Object?> value, Set<String> keys) {
 
 void _expectSingleNonEmptyString(Map<String, Object?> value, String key) {
   _expectKeys(value, <String>{key});
+  _expectNonEmptyString(value, key);
+}
+
+void _expectNonEmptyString(Map<String, Object?> value, String key) {
   final field = value[key];
   if (field is! String || field.trim().isEmpty) {
     throw FormatException('$key must be a non-empty string');
+  }
+}
+
+void _expectNullableString(Map<String, Object?> value, String key) {
+  final field = value[key];
+  if (field != null && field is! String) {
+    throw FormatException('$key must be a string or null');
   }
 }
 
@@ -524,4 +602,12 @@ bool _requiredBool(Map<String, Object?> value, String key) {
     throw FormatException('$key must be a boolean');
   }
   return field;
+}
+
+bool? _optionalBool(Object? value) {
+  if (value == null) return null;
+  if (value is! bool) {
+    throw const FormatException('optional boolean must be a boolean');
+  }
+  return value;
 }

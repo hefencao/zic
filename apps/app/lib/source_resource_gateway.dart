@@ -65,15 +65,17 @@ final class ComicSourceResourceGateway {
     required String comicId,
     required Uri uri,
     String revision = '',
+    String resourceRole = 'cover',
   }) {
     _requireOpen();
     final source = _requireSource(sourceId, uri);
+    final cacheRole = _artworkResourceRole(resourceRole, uri);
     return loadCachedComicImage(
       cache: cache,
       sourceId: sourceId,
       comicId: comicId,
       imageIdentity: uri.toString(),
-      resourceRole: 'cover',
+      resourceRole: cacheRole,
       revision: _artworkRevision(revision),
       loader: () => _collectArtworkResponse(
         _transports.loaderFor(source, uri),
@@ -88,9 +90,11 @@ final class ComicSourceResourceGateway {
     required Uri uri,
     String revision = '',
     bool awaitPersistence = false,
+    String resourceRole = 'cover',
   }) async {
     _requireOpen();
     final cacheRevision = _artworkRevision(revision);
+    final cacheRole = _artworkResourceRole(resourceRole, uri);
     // Do not resolve a source before these source-independent cache probes. A
     // warm cover is an immutable response and must remain available while an
     // external source/plugin is still being discovered or restored.
@@ -99,7 +103,7 @@ final class ComicSourceResourceGateway {
       sourceId: sourceId,
       comicId: comicId,
       imageIdentity: uri.toString(),
-      resourceRole: 'cover',
+      resourceRole: cacheRole,
       revision: cacheRevision,
       awaitPersistence: awaitPersistence,
     );
@@ -116,7 +120,7 @@ final class ComicSourceResourceGateway {
       sourceId: sourceId,
       comicId: comicId,
       imageIdentity: uri.toString(),
-      resourceRole: 'cover',
+      resourceRole: cacheRole,
       revision: cacheRevision,
       awaitPersistence: awaitPersistence,
       loader: () => _collectArtworkResponse(
@@ -129,6 +133,10 @@ final class ComicSourceResourceGateway {
   String _artworkRevision(String revision) => revision.isEmpty
       ? _artworkCacheSchemaRevision
       : '$_artworkCacheSchemaRevision:$revision';
+
+  String _artworkResourceRole(String role, Uri uri) => role == 'cover'
+      ? 'cover'
+      : '$role:${uri.toString()}';
 
   Future<Uint8List> _collectArtworkResponse(
     ExternalPluginResourceResponseLoader loader,

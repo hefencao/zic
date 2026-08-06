@@ -153,7 +153,8 @@ final class ReaderRuntimeScreen extends StatefulWidget {
   State<ReaderRuntimeScreen> createState() => _ReaderRuntimeScreenState();
 }
 
-final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
+final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
+    with WidgetsBindingObserver {
   PipelineReaderSession get _pipeline => widget.pipeline;
   ReaderController? _reader;
   DecodeTarget? _target;
@@ -175,6 +176,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _pageAspectRatios =
         ValueNotifier<Map<String, double>>(const <String, double>{});
     _playback = ReaderPlaybackController()
@@ -352,6 +354,10 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
   }
 
   void _handleReaderProgress() {
+    _writeReaderProgress();
+  }
+
+  void _writeReaderProgress({bool force = false}) {
     final reader = _reader;
     if (reader == null) {
       return;
@@ -361,7 +367,9 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
       return;
     }
     final mode = _readerMode(reader.direction);
-    if (_lastProgressPage == reader.currentIndex && _lastProgressMode == mode) {
+    if (!force &&
+        _lastProgressPage == reader.currentIndex &&
+        _lastProgressMode == mode) {
       return;
     }
     _lastProgressPage = reader.currentIndex;
@@ -380,6 +388,15 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
         debugPrint('reader progress write failed: $error');
       },
     );
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _writeReaderProgress(force: true);
+    }
   }
 
   ReaderMode _readerMode(ReadingDirection direction) =>
@@ -491,6 +508,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen> {
 
   @override
   void dispose() {
+    _writeReaderProgress(force: true);
+    WidgetsBinding.instance.removeObserver(this);
     final reader = _reader;
     if (reader != null) {
       reader.removeListener(_handleReaderProgress);

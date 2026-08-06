@@ -23,6 +23,17 @@ class VeneraNetworkPolicyTest {
     }
 
     @Test
+    fun appendsBrowserCookiesToSourceProvidedCookieHeaders() {
+        assertEquals(
+            "nw=1; ipb_member_id=member",
+            mergeVeneraCookieHeaders("nw=1", "ipb_member_id=member"),
+        )
+        assertEquals("nw=1", mergeVeneraCookieHeaders("nw=1", null))
+        assertEquals("ipb_member_id=member", mergeVeneraCookieHeaders(null, "ipb_member_id=member"))
+        assertEquals(null, mergeVeneraCookieHeaders(" ", " "))
+    }
+
+    @Test
     fun dnsFallbackRejectsLoopbackAndPrivateAnswers() {
         assertFalse(isSafeVeneraPublicAddress(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))))
         assertFalse(isSafeVeneraPublicAddress(InetAddress.getByAddress(byteArrayOf(10, 0, 0, 1))))

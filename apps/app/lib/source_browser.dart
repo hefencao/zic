@@ -10,6 +10,7 @@ import 'package:storage_bridge/storage_bridge.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'package:downloads/downloads.dart';
+import 'artwork_placeholder.dart';
 import 'comic_details.dart' as details;
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 import 'external_plugin_repository_model.dart';
@@ -1427,9 +1428,8 @@ final class _RemoteImageState extends State<_RemoteImage> {
   Widget build(BuildContext context) {
     final source = _source;
     if (source == null) {
-      return const ColoredBox(
-        color: Color(0x11000000),
-        child: Center(child: Icon(Icons.image_not_supported_outlined)),
+      return SoftArtworkPlaceholder(
+        seed: widget.uri?.toString() ?? 'source-comic-cover',
       );
     }
     return FutureBuilder<EncodedResourceSource>(
@@ -1442,8 +1442,8 @@ final class _RemoteImageState extends State<_RemoteImage> {
             fit: BoxFit.cover,
             gaplessPlayback: true,
             filterQuality: FilterQuality.medium,
-            errorBuilder: (_, __, ___) => const Center(
-              child: Icon(Icons.broken_image_outlined),
+            errorBuilder: (_, __, ___) => SoftArtworkPlaceholder(
+              seed: widget.uri?.toString() ?? 'source-comic-cover',
             ),
           );
         }
@@ -1452,19 +1452,21 @@ final class _RemoteImageState extends State<_RemoteImage> {
           final canVerify = error is Failure &&
               error.code == ErrorCode.sourceVerificationRequired &&
               widget.onSourceVerificationRequired != null;
-          return ColoredBox(
-            color: const Color(0x11000000),
-            child: Center(
-              child: canVerify
-                  ? IconButton(
+          return canVerify
+              ? ColoredBox(
+                  color: const Color(0x11000000),
+                  child: Center(
+                    child: IconButton(
                       key: widget.verificationKey,
                       tooltip: '在 WebView 中完成来源验证',
                       onPressed: widget.onSourceVerificationRequired,
                       icon: const Icon(Icons.public),
-                    )
-                  : const Icon(Icons.broken_image_outlined),
-            ),
-          );
+                    ),
+                  ),
+                )
+              : SoftArtworkPlaceholder(
+                  seed: widget.uri?.toString() ?? 'source-comic-cover',
+                );
         }
         return const ColoredBox(
           color: Color(0x08000000),

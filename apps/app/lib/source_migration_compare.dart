@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:catalog/catalog.dart';
 import 'package:flutter/material.dart';
 
+import 'artwork_placeholder.dart';
 import 'dialog_actions.dart';
 
 const sourceMigrationComparisonDialogKey =
@@ -222,7 +223,10 @@ final class _MigrationComicCard extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            _MigrationCover(loadCover: loadCover),
+            _MigrationCover(
+              loadCover: loadCover,
+              seed: '$label:$identity',
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -256,9 +260,10 @@ final class _MigrationComicCard extends StatelessWidget {
 }
 
 final class _MigrationCover extends StatefulWidget {
-  const _MigrationCover({required this.loadCover});
+  const _MigrationCover({required this.loadCover, required this.seed});
 
   final SourceMigrationCoverLoader? loadCover;
+  final String seed;
 
   @override
   State<_MigrationCover> createState() => _MigrationCoverState();
@@ -285,14 +290,14 @@ final class _MigrationCoverState extends State<_MigrationCover> {
   Widget build(BuildContext context) {
     final future = _future;
     if (future == null) {
-      return const _MissingMigrationCover();
+      return _MissingMigrationCover(seed: widget.seed);
     }
     return FutureBuilder<Uint8List>(
       future: future,
       builder: (context, snapshot) {
         final bytes = snapshot.data;
         if (bytes == null || bytes.isEmpty) {
-          return const _MissingMigrationCover();
+          return _MissingMigrationCover(seed: widget.seed);
         }
         return ClipRRect(
           borderRadius: BorderRadius.circular(8),
@@ -301,7 +306,8 @@ final class _MigrationCoverState extends State<_MigrationCover> {
             width: 82,
             height: 116,
             fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => const _MissingMigrationCover(),
+            errorBuilder: (_, __, ___) =>
+                _MissingMigrationCover(seed: widget.seed),
           ),
         );
       },
@@ -310,19 +316,19 @@ final class _MigrationCoverState extends State<_MigrationCover> {
 }
 
 final class _MissingMigrationCover extends StatelessWidget {
-  const _MissingMigrationCover();
+  const _MissingMigrationCover({required this.seed});
+
+  final String seed;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return SizedBox(
       width: 82,
       height: 116,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
+      child: SoftArtworkPlaceholder(
+        seed: seed,
         borderRadius: BorderRadius.circular(8),
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
       ),
-      child: const Icon(Icons.image_not_supported_outlined),
     );
   }
 }

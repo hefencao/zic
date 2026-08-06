@@ -131,7 +131,8 @@ require(
     "apps/app/lib/comic_details.dart",
     "final Comic? sourceComic",
     "widget.reloadLibrary(refreshContent: true)",
-    "final comic = library.sourceComic",
+    "final sourceManifest = library.sourceManifest",
+    "final comic = sourceManifest?.comic ?? library.sourceComic",
 )
 forbid(
     "apps/app/lib/comic_details.dart",

@@ -45,6 +45,7 @@ Widget _localDetailsScreen({
       required String comicId,
       required Uri? coverUri,
       required ImportedLibraryEntry? fallbackChapter,
+      String resourceRole = 'cover',
     }) async =>
         MemoryEncodedResourceSource(_tinyPng()),
     reloadLibrary: ({required bool refreshContent}) async => snapshot,
@@ -54,6 +55,7 @@ Widget _localDetailsScreen({
       loadChapter, {
       required bool refreshRemote,
       required String title,
+      int? initialPageIndex,
     }) async =>
         onOpenChapter(await loadChapter()),
     onDownloadChapter: (_) async {},
@@ -211,6 +213,13 @@ void main() {
         coverSourceId: 'https://example.invalid/cached-cover.png',
         savedAt: DateTime.utc(2026, 7, 28),
         updatedAt: DateTime.utc(2026, 7, 28),
+      ),
+    );
+    await store.saveComicPreference(
+      ComicPreference.defaults(
+        sourceId: 'remote:test',
+        comicId: 'cached-comic',
+        sourceKind: ComicSourceKind.remote,
       ),
     );
 

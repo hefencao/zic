@@ -306,6 +306,7 @@ final class _RuntimeBrowsableComicSource
         AuthenticatableComicSource, ComicWebUriSource,
         CanonicalComicIdentitySource, ComicWebViewRequestSource,
         ComicVersionSource,
+        ComicPreviewSource, ComicCommentSource,
         ResolvableComicResourceSource, RetryableComicResourceSource {
   _RuntimeBrowsableComicSource({
     required ExternalComicPluginFormat format,
@@ -313,6 +314,8 @@ final class _RuntimeBrowsableComicSource
     required _RuntimeInvoke invoke,
   })  : _format = format,
         _browserUserAgent = descriptor.browserUserAgent,
+        _supportsComicPreview = descriptor.supportsComicPreview,
+        _supportsComicComments = descriptor.supportsComicComments,
         _externalId = descriptor.externalId,
         _invoke = invoke,
         sourceId = '${_sourcePrefix(format)}${descriptor.externalId}',
@@ -327,6 +330,8 @@ final class _RuntimeBrowsableComicSource
 
   final ExternalComicPluginFormat _format;
   final String? _browserUserAgent;
+  final bool _supportsComicPreview;
+  final bool _supportsComicComments;
   final String _externalId;
   final _RuntimeInvoke _invoke;
   final Map<Uri, Future<Uint8List>> _resourceLoads =
@@ -445,6 +450,67 @@ final class _RuntimeBrowsableComicSource
   }
 
   @override
+  bool get supportsComicPreview => _supportsComicPreview;
+
+  @override
+  Future<ComicPreviewPage> loadComicPreview(
+    String comicId, {
+    String? nextToken,
+  }) async {
+    if (comicId.trim().isEmpty) {
+      throw ArgumentError.value(comicId, 'comicId');
+    }
+    if (!supportsComicPreview) {
+      return ComicPreviewPage(items: const <ComicPreviewAsset>[]);
+    }
+    final payload = await _invoke(
+      ExternalPluginRuntimeOperation.loadComicPreview,
+      _externalId,
+      <String, Object?>{
+        'comicId': comicId,
+        'nextToken': nextToken,
+      },
+    );
+    return _previewPage(_map(payload, 'comic preview result'));
+  }
+
+  @override
+  bool get supportsComicComments => _supportsComicComments;
+
+  @override
+  Future<ComicCommentPage> loadComicComments(
+    String comicId, {
+    String? subId,
+    required int page,
+    String? replyTo,
+  }) async {
+    if (comicId.trim().isEmpty) {
+      throw ArgumentError.value(comicId, 'comicId');
+    }
+    if (page < 1) {
+      throw ArgumentError.value(page, 'page');
+    }
+    if (!supportsComicComments) {
+      return ComicCommentPage(
+        page: page,
+        items: const <ComicComment>[],
+        maxPage: page,
+      );
+    }
+    final payload = await _invoke(
+      ExternalPluginRuntimeOperation.loadComicComments,
+      _externalId,
+      <String, Object?>{
+        'comicId': comicId,
+        'subId': subId,
+        'page': page,
+        'replyTo': replyTo,
+      },
+    );
+    return _commentPage(_map(payload, 'comic comments result'));
+  }
+
+  @override
   Future<ComicManifest> loadComic(String comicId) async {
     if (comicId.trim().isEmpty) {
       throw ArgumentError.value(comicId, 'comicId');
@@ -469,6 +535,7 @@ final class _RuntimeBrowsableComicSource
       readingDirection: _readingDirection(comicValue['readingDirection']),
       coverUri: _optionalUri(comicValue['coverUri'], 'coverUri'),
       description: _optionalString(comicValue['description'], 'description'),
+      sourceSubId: _optionalString(comicValue['subId'], 'subId'),
       createdAt: _optionalDateTime(comicValue['createdAt'], 'createdAt'),
       updatedAt: _optionalDateTime(comicValue['updatedAt'], 'updatedAt'),
     );
@@ -479,7 +546,12 @@ final class _RuntimeBrowsableComicSource
     if (chapterIds.length != chapters.length) {
       throw const FormatException('runtime comic contains duplicate chapters');
     }
-    return ComicManifest(comic: comic, chapters: chapters);
+    return ComicManifest(
+      comic: comic,
+      chapters: chapters,
+      preview: _optionalPreviewPage(message['preview']),
+      comments: _optionalCommentPage(message['comments']),
+    );
   }
 
   @override
@@ -861,7 +933,60 @@ final class _RuntimeInvocationGate {
 String _sourcePrefix(ExternalComicPluginFormat format) => switch (format) {
       ExternalComicPluginFormat.mihonExtension => 'mihon:',
       ExternalComicPluginFormat.veneraJavaScript => 'venera:',
-    };
+      };
+
+ComicPreviewPage? _optionalPreviewPage(Object? value) {
+  if (value == null) return null;
+  return _previewPage(_map(value, 'comic preview'));
+}
+
+ComicPreviewPage _previewPage(Map<String, Object?> value) {
+  final items = _list(value['items'], 'comic preview items').map((item) {
+    final asset = _map(item, 'comic preview item');
+    return ComicPreviewAsset(
+      uri: _uri(asset['uri'], 'uri'),
+      label: _optionalString(asset['label'], 'label'),
+      width: _optionalPositiveInt(asset['width'], 'width'),
+      height: _optionalPositiveInt(asset['height'], 'height'),
+    );
+  }).toList(growable: false);
+  return ComicPreviewPage(
+    items: items,
+    nextToken: _optionalString(value['nextToken'], 'nextToken'),
+  );
+}
+
+ComicCommentPage? _optionalCommentPage(Object? value) {
+  if (value == null) return null;
+  return _commentPage(_map(value, 'comic comments'));
+}
+
+ComicCommentPage _commentPage(Map<String, Object?> value) {
+  final rawPage = value['page'];
+  final page = rawPage == null ? 1 : _positiveInt(value, 'page');
+  final items = _list(value['comments'], 'comic comments').map((item) {
+    final comment = _map(item, 'comic comment');
+    return ComicComment(
+      id: _optionalString(comment['id'], 'id'),
+      userName: _string(comment, 'userName'),
+      avatarUri: _optionalUri(comment['avatar'], 'avatar'),
+      content: _string(comment, 'content'),
+      time: _optionalString(comment['time'], 'time'),
+      replyCount: _optionalNonNegativeInt(
+        comment['replyCount'],
+        'replyCount',
+      ),
+      score: _optionalInt(comment['score'], 'score'),
+      isLiked: _optionalBool(comment['isLiked']),
+      voteStatus: _optionalInt(comment['voteStatus'], 'voteStatus'),
+    );
+  }).toList(growable: false);
+  return ComicCommentPage(
+    page: page,
+    items: items,
+    maxPage: _optionalPositiveInt(value['maxPage'], 'maxPage'),
+  );
+}
 
 int _wireSize(Object? value, [int depth = 0]) {
   if (depth > 32) {
@@ -986,6 +1111,22 @@ int _nonNegativeInt(Map<String, Object?> value, String key) {
     throw FormatException('$key must be a non-negative integer');
   }
   return field;
+}
+
+int _positiveInt(Map<String, Object?> value, String key) {
+  final field = value[key];
+  if (field is! int || field < 1) {
+    throw FormatException('$key must be a positive integer');
+  }
+  return field;
+}
+
+int? _optionalInt(Object? value, String label) {
+  if (value == null) return null;
+  if (value is! int) {
+    throw FormatException('$label must be an integer');
+  }
+  return value;
 }
 
 int? _optionalPositiveInt(Object? value, String label) {

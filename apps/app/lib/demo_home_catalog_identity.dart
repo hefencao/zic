@@ -223,6 +223,54 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
     );
   }
 
+  bool _manifestContentChanged(
+    SavedComicRecord? existing,
+    ComicManifest incoming,
+  ) {
+    if (existing == null) return true;
+    final comic = incoming.comic;
+    if (existing.title != comic.title ||
+        !_sameStrings(existing.authors, comic.authors) ||
+        !_sameStrings(existing.tags, comic.tags) ||
+        existing.description != comic.description ||
+        existing.coverSourceId != comic.coverUri?.toString() ||
+        existing.readingDirection != comic.readingDirection) {
+      return true;
+    }
+    final chapters = incoming.chapters.toList(growable: false)
+      ..sort(_compareManifestChapters);
+    if (existing.chapters.length != chapters.length) return true;
+    for (var index = 0; index < chapters.length; index++) {
+      final saved = existing.chapters[index];
+      final current = chapters[index];
+      if (saved.chapterId != current.chapterId ||
+          saved.title != current.title ||
+          saved.sequence != current.sequence ||
+          saved.pageCount != current.pageCount ||
+          saved.sourceRevision != current.sourceRevision ||
+          saved.publishedAt != current.publishedAt) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool _sameStrings(Iterable<String> left, Iterable<String> right) {
+    final a = left.toList(growable: false);
+    final b = right.toList(growable: false);
+    if (a.length != b.length) return false;
+    for (var index = 0; index < a.length; index++) {
+      if (a[index] != b[index]) return false;
+    }
+    return true;
+  }
+
+  int _compareManifestChapters(Chapter left, Chapter right) {
+    final sequence = left.sequence.compareTo(right.sequence);
+    if (sequence != 0) return sequence;
+    return left.chapterId.compareTo(right.chapterId);
+  }
+
   Future<void> _persistRemoteComic(
     ComicManifest manifest,
     bool retained,
@@ -244,6 +292,7 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
           manifest.comic.comicId,
         );
     _rejectCatalogRegression(existing: existing, incoming: manifest);
+    final changed = _manifestContentChanged(existing, manifest);
     await _library.upsertSavedComic(
       SavedComicRecord.fromManifest(
         manifest,
@@ -253,7 +302,7 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
           fallback: existing?.canonicalComicId,
         ),
         savedAt: existing?.savedAt,
-        updatedAt: DateTime.now().toUtc(),
+        updatedAt: changed ? DateTime.now().toUtc() : existing?.updatedAt,
       ),
     );
   }

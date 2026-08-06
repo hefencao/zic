@@ -299,6 +299,7 @@ void main() {
             required String comicId,
             required Uri? coverUri,
             required ImportedLibraryEntry? fallbackChapter,
+            String resourceRole = 'cover',
           }) async => MemoryEncodedResourceSource(_tinyPng()),
           reloadLibrary: ({required bool refreshContent}) async {
             if (!refreshContent) {
@@ -319,6 +320,7 @@ void main() {
             _, {
             required bool refreshRemote,
             required String title,
+            int? initialPageIndex,
           }) async {},
           onDownloadChapter: (_) async {},
           inspectChapterDownload: (chapter) async =>
@@ -398,6 +400,7 @@ void main() {
             required String comicId,
             required Uri? coverUri,
             required ImportedLibraryEntry? fallbackChapter,
+            String resourceRole = 'cover',
           }) async => MemoryEncodedResourceSource(_tinyPng()),
           reloadLibrary: ({required bool refreshContent}) async => library,
           ensureSourceChapter: (_, __, ___) async => libraryEntry,
@@ -408,6 +411,7 @@ void main() {
             loadChapter, {
             required bool refreshRemote,
             required String title,
+            int? initialPageIndex,
           }) async {
             opened++;
             expect(refreshRemote, isFalse);
@@ -455,6 +459,305 @@ void main() {
     await tester.tap(find.byKey(details.comicDetailsContinueReadingKey));
     await tester.pump();
     expect(opened, 1);
+  });
+
+  testWidgets('detail exposes source preview and comment reply pages',
+      (tester) async {
+    final source = _FixtureSource(
+      'venera:details-features',
+      '详情能力源',
+      supportsComicPreview: true,
+      supportsComicComments: true,
+    );
+    final library = details.ComicDetailsLibrarySnapshot(
+      chapters: const <ImportedLibraryEntry>[],
+      sourceChapters: const <Chapter>[],
+      readStates: const <String, ChapterReadState>{},
+      preference: ComicPreference.defaults(
+        sourceId: source.sourceId,
+        comicId: source._comicId,
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: details.RemoteComicDetailsScreen(
+          source: source,
+          summary: SourceComicSummary(
+            sourceId: source.sourceId,
+            comicId: source._comicId,
+            title: source._comic.title,
+            authors: source._comic.authors,
+            tags: source._comic.tags,
+            coverUri: source._comic.coverUri,
+          ),
+          initialLibrary: library,
+          categories: const <LibraryCategory>[],
+          loadCover: ({
+            required String sourceId,
+            required String comicId,
+            required Uri? coverUri,
+            required ImportedLibraryEntry? fallbackChapter,
+            String resourceRole = 'cover',
+          }) async => MemoryEncodedResourceSource(_tinyPng()),
+          reloadLibrary: ({required bool refreshContent}) async {
+            if (!refreshContent) return library;
+            final manifest = await source.loadComic(source._comicId);
+            return library.copyWith(
+              sourceComic: manifest.comic,
+              sourceChapters: manifest.chapters,
+              sourceManifest: manifest,
+            );
+          },
+          ensureSourceChapter: (_, __, ___) async =>
+              throw StateError('chapter should not open'),
+          persistComic: (_, __) async {},
+          onPreferenceChanged: (_) async {},
+          onReadChanged: (_, __) async {},
+          onOpenChapter: (
+            _, {
+            required bool refreshRemote,
+            required String title,
+            int? initialPageIndex,
+          }) async {},
+          onDownloadChapter: (_) async {},
+          inspectChapterDownload: (chapter) async =>
+              ChapterDownloadSnapshot.idle(chapter),
+          downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
+          onDownloadComic: (_) async {},
+        ),
+      ),
+    );
+
+    await _pumpUntilFound(
+      tester,
+      find.byKey(details.remoteComicDetailsScreenKey),
+    );
+    await tester.drag(
+      find.byKey(details.remoteComicDetailsScreenKey),
+      const Offset(0, -1200),
+    );
+    await tester.pumpAndSettle();
+    await _pumpUntilFound(tester, find.byKey(details.comicDetailsPreviewKey));
+    expect(find.byKey(details.comicDetailsCommentsKey), findsOneWidget);
+    expect(find.text('预览'), findsOneWidget);
+    expect(find.text('评论'), findsOneWidget);
+
+    await _tapVisible(tester, find.text('查看全部'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(details.comicDetailsCommentsPageKey),
+      findsOneWidget,
+    );
+
+    await _tapVisible(tester, find.text('1 条回复'));
+    await tester.pumpAndSettle();
+    expect(find.text('回复'), findsWidgets);
+  });
+
+  testWidgets('preview pages load incrementally and open the selected reader page',
+      (tester) async {
+    final source = _FixtureSource(
+      'venera:preview-pages',
+      '预览分页源',
+      supportsComicPreview: true,
+      previewPageCount: 3,
+      previewCrops: true,
+      catalogPageCount: 3,
+    );
+    final library = details.ComicDetailsLibrarySnapshot(
+      chapters: const <ImportedLibraryEntry>[],
+      sourceChapters: const <Chapter>[],
+      readStates: const <String, ChapterReadState>{},
+      preference: ComicPreference.defaults(
+        sourceId: source.sourceId,
+        comicId: source._comicId,
+      ),
+    );
+    int? openedPage;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: details.RemoteComicDetailsScreen(
+          source: source,
+          summary: SourceComicSummary(
+            sourceId: source.sourceId,
+            comicId: source._comicId,
+            title: source._comic.title,
+            authors: source._comic.authors,
+            tags: source._comic.tags,
+            coverUri: source._comic.coverUri,
+          ),
+          initialLibrary: library,
+          categories: const <LibraryCategory>[],
+          loadCover: ({
+            required String sourceId,
+            required String comicId,
+            required Uri? coverUri,
+            required ImportedLibraryEntry? fallbackChapter,
+            String resourceRole = 'cover',
+          }) async => MemoryEncodedResourceSource(
+                (await rootBundle.load('assets/demo/pages/001.png'))
+                    .buffer
+                    .asUint8List(),
+              ),
+          reloadLibrary: ({required bool refreshContent}) async {
+            final manifest = await source.loadComic(source._comicId);
+            return library.copyWith(
+              sourceComic: manifest.comic,
+              sourceChapters: manifest.chapters,
+              sourceManifest: manifest,
+            );
+          },
+          ensureSourceChapter: (_, __, ___) async =>
+              throw StateError('chapter should not be prepared in this test'),
+          persistComic: (_, __) async {},
+          onPreferenceChanged: (_) async {},
+          onReadChanged: (_, __) async {},
+          onOpenChapter: (
+            _, {
+            required bool refreshRemote,
+            required String title,
+            int? initialPageIndex,
+          }) async {
+            openedPage = initialPageIndex;
+          },
+          onDownloadChapter: (_) async {},
+          inspectChapterDownload: (chapter) async =>
+              ChapterDownloadSnapshot.idle(chapter),
+          downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
+          onDownloadComic: (_) async {},
+        ),
+      ),
+    );
+
+    await _pumpUntilFound(tester, find.byKey(details.remoteComicDetailsScreenKey));
+    await tester.drag(
+      find.byKey(details.remoteComicDetailsScreenKey),
+      const Offset(0, -1200),
+    );
+    await tester.pumpAndSettle();
+    await _pumpUntilFound(tester, find.byKey(details.comicDetailsPreviewItemKey(0)));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.descendant(
+        of: find.byKey(details.comicDetailsPreviewItemKey(0)),
+        matching: find.byType(CustomPaint),
+      ),
+    );
+    expect(find.byKey(details.comicDetailsPreviewItemKey(1)), findsNothing);
+
+    await _tapVisible(tester, find.text('加载更多'));
+    for (var frame = 0; frame < 80 && source.previewTokens.length < 1; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(source.previewTokens, <String?>[null, '1']);
+    await _pumpUntilFound(tester, find.byKey(details.comicDetailsPreviewItemKey(1)));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 100)),
+    );
+    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.descendant(
+        of: find.byKey(details.comicDetailsPreviewItemKey(1)),
+        matching: find.byType(CustomPaint),
+      ),
+    );
+    await _tapVisible(
+      tester,
+      find.byKey(details.comicDetailsPreviewItemKey(1)),
+    );
+    await tester.pump();
+    expect(openedPage, 1);
+  });
+
+  testWidgets('local details retain source preview and comment sections',
+      (tester) async {
+    final source = _FixtureSource(
+      'venera:local-details-features',
+      '本地详情能力源',
+      supportsComicPreview: true,
+      supportsComicComments: true,
+    );
+    final chapterManifest = await source.loadChapter(source._chapterId);
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord.remote(
+        comic: source._comic,
+        manifest: chapterManifest,
+      ),
+    );
+    final sourceManifest = await source.loadComic(source._comicId);
+    final comic = LibraryComic(
+      sourceId: source.sourceId,
+      comicId: source._comicId,
+      title: source._comic.title,
+      authors: source._comic.authors,
+      tags: source._comic.tags,
+      description: source._comic.description,
+      coverSourceId: source._comic.coverUri?.toString(),
+      readingDirection: source._comic.readingDirection,
+      chapters: <ImportedLibraryEntry>[entry],
+      sourceChapters: sourceManifest.chapters,
+      savedAt: DateTime.utc(2026, 8, 1),
+      metadataUpdatedAt: DateTime.utc(2026, 8, 2),
+    );
+    final library = details.ComicDetailsLibrarySnapshot(
+      chapters: <ImportedLibraryEntry>[entry],
+      sourceComic: source._comic,
+      sourceChapters: sourceManifest.chapters,
+      readStates: const <String, ChapterReadState>{},
+      preference: ComicPreference.defaults(
+        sourceId: source.sourceId,
+        comicId: source._comicId,
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: details.LocalComicDetailsScreen(
+          comic: comic,
+          initialLibrary: library,
+          categories: const <LibraryCategory>[],
+          loadCover: ({
+            required String sourceId,
+            required String comicId,
+            required Uri? coverUri,
+            required ImportedLibraryEntry? fallbackChapter,
+            String resourceRole = 'cover',
+          }) async => MemoryEncodedResourceSource(_tinyPng()),
+          reloadLibrary: ({required bool refreshContent}) async => library,
+          source: source,
+          ensureSourceChapter: (_, __, ___) async => entry,
+          onPreferenceChanged: (_) async {},
+          onReadChanged: (_, __) async {},
+          onOpenChapter: (
+            _, {
+            required bool refreshRemote,
+            required String title,
+            int? initialPageIndex,
+          }) async {},
+          onDownloadChapter: (_) async {},
+          inspectChapterDownload: (chapter) async =>
+              ChapterDownloadSnapshot.idle(chapter),
+          downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
+          onDownloadComic: (_) async {},
+        ),
+      ),
+    );
+
+    await _pumpUntilFound(tester, find.byKey(details.localComicDetailsScreenKey));
+    await tester.drag(
+      find.byKey(details.localComicDetailsScreenKey),
+      const Offset(0, -1200),
+    );
+    await tester.pumpAndSettle();
+    await _pumpUntilFound(tester, find.byKey(details.comicDetailsCommentsKey));
+    expect(find.byKey(details.comicDetailsPreviewKey), findsOneWidget);
   });
 
   testWidgets('same-source migration lists a stored predecessor version',
@@ -1069,6 +1372,7 @@ void main() {
             required String comicId,
             required Uri? coverUri,
             required ImportedLibraryEntry? fallbackChapter,
+            String resourceRole = 'cover',
           }) async => throw StateError('cover not needed'),
           reloadLibrary: ({required bool refreshContent}) async {
             if (!refreshContent) {
@@ -1089,6 +1393,7 @@ void main() {
             _, {
             required bool refreshRemote,
             required String title,
+            int? initialPageIndex,
           }) async {},
           onDownloadChapter: (_) async {},
           inspectChapterDownload: (chapter) async =>
@@ -1169,6 +1474,7 @@ void main() {
             required String comicId,
             required Uri? coverUri,
             required ImportedLibraryEntry? fallbackChapter,
+            String resourceRole = 'cover',
           }) async => throw StateError('cover must not load for failed catalog'),
           reloadLibrary: ({required bool refreshContent}) async {
             if (!refreshContent) {
@@ -1189,6 +1495,7 @@ void main() {
             _, {
             required bool refreshRemote,
             required String title,
+            int? initialPageIndex,
           }) async {},
           onDownloadChapter: (_) async {},
           inspectChapterDownload: (chapter) async =>
@@ -1253,7 +1560,9 @@ final class _FixtureSource
     implements
         BrowsableComicSource,
         ComicVersionSource,
-        RefreshableChapterComicSource {
+        RefreshableChapterComicSource,
+        ComicPreviewSource,
+        ComicCommentSource {
   _FixtureSource(
     this.sourceId,
     this.name, {
@@ -1269,6 +1578,10 @@ final class _FixtureSource
     this.firstComicLoadGate,
     this.supportsComicVersions = false,
     this.comicVersions = const <SourceComicVersion>[],
+    this.supportsComicPreview = false,
+    this.previewPageCount = 1,
+    this.previewCrops = false,
+    this.supportsComicComments = false,
   });
 
   @override
@@ -1286,11 +1599,18 @@ final class _FixtureSource
   final Completer<void>? firstComicLoadGate;
   final bool supportsComicVersions;
   final List<SourceComicVersion> comicVersions;
+  @override
+  final bool supportsComicPreview;
+  final int previewPageCount;
+  final bool previewCrops;
+  @override
+  final bool supportsComicComments;
   int _comicLoads = 0;
   int _chapterLoads = 0;
   int _chapterRefreshes = 0;
   int browseCalls = 0;
   final List<Uri> loadedResources = <Uri>[];
+  final List<String?> previewTokens = <String?>[];
 
   int get comicLoads => _comicLoads;
   int get chapterLoads => _chapterLoads;
@@ -1398,8 +1718,69 @@ final class _FixtureSource
               _chapter,
               if (showSecond) _secondChapter,
             ],
+      preview: supportsComicPreview && previewPageCount == 1
+          ? ComicPreviewPage(
+              items: <ComicPreviewAsset>[
+                ComicPreviewAsset(
+                  uri: Uri.https('example.invalid', '/$sourceId/preview-0.png'),
+                ),
+              ],
+              nextToken: previewPageCount > 1 ? '1' : null,
+            )
+          : null,
+      comments: supportsComicComments
+          ? ComicCommentPage(
+              page: 1,
+              maxPage: 1,
+              items: const <ComicComment>[
+                ComicComment(
+                  id: 'fixture-comment',
+                  userName: '读者',
+                  content: '评论内容',
+                  replyCount: 1,
+                ),
+              ],
+            )
+          : null,
     );
   }
+
+  @override
+  Future<ComicPreviewPage> loadComicPreview(
+    String comicId, {
+    String? nextToken,
+  }) async {
+    expect(comicId, _comicId);
+    previewTokens.add(nextToken);
+    final start = int.tryParse(nextToken ?? '0') ?? 0;
+    final end = (start + 1).clamp(0, previewPageCount).toInt();
+    return ComicPreviewPage(
+      items: <ComicPreviewAsset>[
+        for (var index = start; index < end; index++)
+          ComicPreviewAsset(
+            uri: _previewUri(index),
+          ),
+      ],
+      nextToken: end < previewPageCount ? '$end' : null,
+    );
+  }
+
+  Uri _previewUri(int index) => Uri.parse(
+        'https://example.invalid/$sourceId/preview-$index.png'
+        '${previewCrops ? (index.isEven ? '@x=0-200&y=0-200' : '@x=200-400&y=200-400') : ''}',
+      );
+
+  @override
+  Future<ComicCommentPage> loadComicComments(
+    String comicId, {
+    String? subId,
+    required int page,
+    String? replyTo,
+  }) async => ComicCommentPage(
+        page: page,
+        maxPage: page,
+        items: const <ComicComment>[],
+      );
 
   @override
   Future<ChapterManifest> loadChapter(String chapterId) async {

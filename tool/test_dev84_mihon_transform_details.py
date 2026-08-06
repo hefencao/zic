@@ -13,7 +13,9 @@ source_catalog = read('packages/catalog/lib/src/source_catalog.dart')
 saved = read('packages/catalog/lib/src/saved_comic.dart')
 imported = read('packages/catalog/lib/src/imported_chapter.dart')
 library = read('packages/catalog/lib/src/library_comic.dart')
-details = read('apps/app/lib/comic_details.dart')
+details = read('apps/app/lib/comic_details.dart') + read(
+    'apps/app/lib/comic_details_interactions.dart'
+)
 decode_test = read('packages/pipeline/test/decode_target_test.dart')
 progress_test = read('packages/reader_runtime/test/reader_download_progress_test.dart')
 progress = read('packages/pipeline_runtime/lib/src/pipeline_transfer_progress.dart')
@@ -57,7 +59,8 @@ for token in (
     'tags: sourceMetadata.tags',
     "label: '下载整本'",
     'loading: downloadingComic',
-    "label: Text('继续 · $progressLabel')",
+    "label: const Text('继续')",
+    "阅读历史 · $progressLabel",
     '_knownPageCount(chapter, entry)',
     '_chapterEntryFor(',
     'entry.chapter.sourceRevision != revision',

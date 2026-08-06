@@ -196,6 +196,49 @@ void main() {
     );
   });
 
+  test('runtime adapter exposes detail previews and comment pagination',
+      () async {
+    final connection = _FixtureConnection(
+      supportsComicPreview: true,
+      supportsComicComments: true,
+    );
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single;
+
+    final manifest = await source.loadComic('comic-1');
+    expect(manifest.comic.sourceSubId, 'sub-1');
+    expect(manifest.preview?.items.single.uri.toString(),
+        'https://cdn.invalid/preview-1.jpg');
+    expect(manifest.comments?.items.single.userName, 'reader');
+
+    final preview = await (source as ComicPreviewSource).loadComicPreview(
+      'comic-1',
+      nextToken: 'next-1',
+    );
+    expect(preview.items, isEmpty);
+    final comments = await (source as ComicCommentSource).loadComicComments(
+      'comic-1',
+      subId: 'sub-1',
+      page: 2,
+      replyTo: 'comment-1',
+    );
+    expect(comments.page, 2);
+    expect(comments.maxPage, 2);
+    expect(
+      connection.operations,
+      <ExternalPluginRuntimeOperation>[
+        ExternalPluginRuntimeOperation.loadComic,
+        ExternalPluginRuntimeOperation.loadComicPreview,
+        ExternalPluginRuntimeOperation.loadComicComments,
+      ],
+    );
+  });
+
   test('Venera version capability reads the current page gnd relation',
       () async {
     final connection = _FixtureConnection(
@@ -593,6 +636,8 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
     this.closeBlock,
     this.chapterPageCount = 1,
     this.includeChapterPage = true,
+    this.supportsComicPreview = false,
+    this.supportsComicComments = false,
   }) : resource = resource ?? Uint8List.fromList(<int>[82, 73, 70, 70]);
 
   final bool mismatchRequestId;
@@ -601,6 +646,8 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
   final Future<void>? closeBlock;
   final int chapterPageCount;
   final bool includeChapterPage;
+  final bool supportsComicPreview;
+  final bool supportsComicComments;
   final List<ExternalPluginRuntimeOperation> operations =
       <ExternalPluginRuntimeOperation>[];
   bool closed = false;
@@ -615,6 +662,8 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
           name: 'Fixture',
           language: 'en',
           website: Uri.parse('https://example.invalid'),
+          supportsComicPreview: supportsComicPreview,
+          supportsComicComments: supportsComicComments,
         ),
       ];
 
@@ -653,10 +702,44 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
               'coverUri': 'https://cdn.invalid/cover.jpg',
               'description': 'Description',
               'readingDirection': 'topToBottom',
+              'subId': 'sub-1',
             },
             'chapters': <Object?>[
               _chapter(),
             ],
+            'preview': <String, Object?>{
+              'items': <Object?>[
+                <String, Object?>{
+                  'uri': 'https://cdn.invalid/preview-1.jpg',
+                  'label': '第 1 页',
+                },
+              ],
+              'nextToken': 'next-1',
+            },
+            'comments': <String, Object?>{
+              'page': 1,
+              'comments': <Object?>[
+                <String, Object?>{
+                  'id': 'comment-1',
+                  'userName': 'reader',
+                  'avatar': 'https://cdn.invalid/avatar.jpg',
+                  'content': 'Nice',
+                  'replyCount': 2,
+                },
+              ],
+              'maxPage': 2,
+            },
+          },
+        ExternalPluginRuntimeOperation.loadComicPreview =>
+          const <String, Object?>{
+            'items': <Object?>[],
+            'nextToken': null,
+          },
+        ExternalPluginRuntimeOperation.loadComicComments =>
+          <String, Object?>{
+            'page': request.arguments['page'],
+            'comments': const <Object?>[],
+            'maxPage': request.arguments['page'],
           },
         ExternalPluginRuntimeOperation.loadChapter => <String, Object?>{
             'comicId': 'comic-1',
@@ -797,6 +880,17 @@ final class _SequencedConnection implements ExternalPluginRuntimeConnection {
                 'readingDirection': 'ltr',
               },
               'chapters': <Object?>[],
+            },
+          ExternalPluginRuntimeOperation.loadComicPreview =>
+            const <String, Object?>{
+              'items': <Object?>[],
+              'nextToken': null,
+            },
+          ExternalPluginRuntimeOperation.loadComicComments =>
+            <String, Object?>{
+              'page': request.arguments['page'],
+              'comments': const <Object?>[],
+              'maxPage': request.arguments['page'],
             },
           ExternalPluginRuntimeOperation.loadChapter =>
             throw UnimplementedError(),

@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import 'package:domain/domain.dart';
+
 import 'comic_source.dart';
 
 enum SourceContentRating { safe, suggestive, erotica, pornographic }
@@ -206,6 +208,34 @@ abstract interface class ComicVersionSource {
   bool get supportsComicVersions;
 
   Future<List<SourceComicVersion>> findComicVersions(String comicId);
+}
+
+/// Optional source-owned preview thumbnails for a comic detail page.
+///
+/// The first page may be embedded in [ComicManifest.preview]. This capability
+/// is used only when a source exposes a separate cursor/pagination API.
+abstract interface class ComicPreviewSource {
+  bool get supportsComicPreview;
+
+  Future<ComicPreviewPage> loadComicPreview(
+    String comicId, {
+    String? nextToken,
+  });
+}
+
+/// Optional source-owned comments for a comic detail page.
+///
+/// [subId] and [replyTo] remain source-owned secondary identities. The App
+/// forwards them without interpreting their format.
+abstract interface class ComicCommentSource {
+  bool get supportsComicComments;
+
+  Future<ComicCommentPage> loadComicComments(
+    String comicId, {
+    String? subId,
+    required int page,
+    String? replyTo,
+  });
 }
 
 /// A source-confirmed predecessor/successor relation remembered by the

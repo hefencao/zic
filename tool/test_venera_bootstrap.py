@@ -145,6 +145,34 @@ async function checkSingleVolumeChapter(){
   if(seenEpId!==null||loaded.pages.length!==24||infoLoads!==2)throw new Error('single-volume loadEp ownership failed '+JSON.stringify({seenEpId,infoLoads,loaded}));
 }
 
+async function checkComicPreviewPagination(){
+ const comicId='venera:comic:'+__zicB64({id:'comic-preview',title:'Preview'});
+ const calls=[];
+ globalThis.__zicSource={url:'https://source.invalid/',comic:{
+   loadInfo:async()=>({title:'Preview',chapters:{one:'One'},thumbnails:['https://cdn.invalid/info-1.jpg']}),
+   loadThumbnails:async(id,next)=>{calls.push(next);return next==null?{thumbnails:['/p1.jpg'],next:7}:{thumbnails:['/p2.jpg'],next:null}}
+ }};
+ const detail=await __zicOperation({operation:'loadComic',arguments:{comicId}});
+ if(detail.preview!==null||detail.comic.title!=='Preview')throw new Error('loadThumbnails source consumed the info thumbnails '+JSON.stringify(detail));
+ const first=await __zicOperation({operation:'loadComicPreview',arguments:{comicId,nextToken:null}});
+ if(first.items.length!==1||first.items[0].uri!=='https://source.invalid/p1.jpg'||first.nextToken==null)throw new Error('preview first page failed '+JSON.stringify(first));
+ const second=await __zicOperation({operation:'loadComicPreview',arguments:{comicId,nextToken:first.nextToken}});
+ if(calls[0]!==null||calls[1]!==7||second.items[0].uri!=='https://source.invalid/p2.jpg'||second.nextToken!==null)throw new Error('preview cursor pagination failed '+JSON.stringify({calls,first,second}));
+}
+
+async function checkPreviewCropIdentity(){
+ const comicId='venera:comic:'+__zicB64({id:'comic-preview-crop',title:'Preview crop'});
+ let thumbnailKey=null;
+ globalThis.__zicSource={url:'https://source.invalid/',comic:{
+   loadInfo:async()=>({title:'Preview crop',chapters:{one:'One'},thumbnails:['/source.jpg@x=0-10&y=0-10','/source.jpg@x=10-20&y=0-10']}),
+   onThumbnailLoad:async key=>{thumbnailKey=key;return {url:'https://cdn.invalid/source.jpg'}}
+ }};
+ const detail=await __zicOperation({operation:'loadComic',arguments:{comicId}});
+ const uri=detail.preview.items[1].uri;
+ const request=await __zicOperation({operation:'resolveResource',arguments:{uri}});
+ if(uri!=='https://source.invalid/source.jpg@x=10-20&y=0-10'||thumbnailKey!=='https://source.invalid/source.jpg'||request.url!=='https://cdn.invalid/source.jpg')throw new Error('preview crop identity was lost '+JSON.stringify({uri,thumbnailKey,request}));
+}
+
 async function checkChapterResourceCanBeReadAgain(){
  const comicId='venera:comic:'+__zicB64({id:'retry-comic',title:'Retry'});
  const chapter=__zicChapterMessage(comicId,'ep-retry','Retry episode',0);
@@ -354,7 +382,7 @@ async function checkInvokeRequestLifecycle(){
  if(seenRequestId!=='invoke-lifecycle'||completed?.requestId!=='invoke-lifecycle'||finished!=='invoke-lifecycle')throw new Error('invoke lifecycle did not retain the request id '+JSON.stringify({seenRequestId,completed,finished}));
 }
 
-(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
+(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkComicPreviewPagination();await checkPreviewCropIdentity();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
 '''
 with tempfile.TemporaryDirectory() as td:
     js=Path(td)/'test.js'; js.write_text(bootstrap+'\n'+test)

@@ -100,6 +100,8 @@ final class _ComicDetailsScaffold extends StatefulWidget {
     required this.chapterList,
     this.onMigrateSource,
     this.onOpenVersions,
+    this.previewSection,
+    this.commentsSection,
   });
 
   final Key screenKey;
@@ -129,6 +131,8 @@ final class _ComicDetailsScaffold extends StatefulWidget {
   final Widget chapterList;
   final VoidCallback? onMigrateSource;
   final ComicDetailsVersionsOpener? onOpenVersions;
+  final Widget? previewSection;
+  final Widget? commentsSection;
 
   @override
   State<_ComicDetailsScaffold> createState() => _ComicDetailsScaffoldState();
@@ -205,9 +209,11 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
             ),
         ],
       ),
-      body: Stack(
-        alignment: Alignment.topCenter,
-        children: <Widget>[
+      body: KeyedSubtree(
+        key: widget.screenKey,
+        child: Stack(
+          alignment: Alignment.topCenter,
+          children: <Widget>[
           RefreshIndicator(
             key: comicDetailsPullRefreshKey,
             triggerMode: RefreshIndicatorTriggerMode.anywhere,
@@ -217,7 +223,6 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
             strokeWidth: 0.01,
             onRefresh: _handleRefresh,
             child: CustomScrollView(
-              key: widget.screenKey,
               physics: const AlwaysScrollableScrollPhysics(),
               slivers: <Widget>[
                 SliverPadding(
@@ -287,6 +292,26 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
                     child: widget.chapterList,
                   ),
                 ),
+                if (widget.commentsSection != null)
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                    sliver: SliverToBoxAdapter(
+                      child: KeyedSubtree(
+                        key: comicDetailsCommentsKey,
+                        child: widget.commentsSection!,
+                      ),
+                    ),
+                  ),
+                if (widget.previewSection != null)
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                    sliver: SliverToBoxAdapter(
+                      child: KeyedSubtree(
+                        key: comicDetailsPreviewKey,
+                        child: widget.previewSection!,
+                      ),
+                    ),
+                  ),
                 const SliverPadding(padding: EdgeInsets.only(bottom: 36)),
               ],
             ),
@@ -298,7 +323,8 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
                 child: _DetailsRefreshBadge(state: _refreshState),
               ),
             ),
-        ],
+          ],
+        ),
       ),
     );
   }

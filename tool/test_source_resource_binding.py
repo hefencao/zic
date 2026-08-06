@@ -51,7 +51,8 @@ def main() -> None:
         "isLegacyVeneraRuntimeLocator",
         "loadArtworkBytes",
         "loadArtworkSource",
-        "ComicResourceCacheIdentity.fromSource(source, comicId)",
+        "String resourceRole = 'cover'",
+        "_artworkResourceRole(resourceRole, uri)",
         "_collectArtworkResponse(",
         "_transports.loaderFor(source, uri)",
     )

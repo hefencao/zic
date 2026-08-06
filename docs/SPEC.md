@@ -28,6 +28,8 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
   但隐藏页面不得为首屏预先创建封面 loader 或重复发起 cover request。
 - Home primary、enrichment 和可选 runtime 的状态仍 MUST 由各自 owner 管理；不得
   新增 App 私有正文/图片缓存或让 UI 直接调度网络。
+- “更新漫画” MUST 只显示当前已在书架中的漫画，并按持久化的漫画元数据更新时间排序；阅读历史
+  MUST 单独按 `ReadingProgress.updatedAt` 排序，普通阅读进度不得改变更新漫画集合或更新时间。
 
 ### 1.2 详情页与来源迁移
 
@@ -48,6 +50,15 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
   保留原来源。来源专属 URL 和离线字节不得被当作可直接复制的元数据。
 - App-owned modal panel 的关闭操作 MUST 是左下角 X；确认、保存、删除等正向操作位于
   右侧，不得以“取消”文字按钮替代关闭 X。
+- 来源详情若提供预览能力，详情页 MUST 能先显示 `ComicManifest` 中已经返回的预览项，
+  后续页 MUST 通过 `ComicPreviewSource` 独立加载；预览图片必须复用统一 artwork loader，
+  不得为详情页建立专用图片缓存或等待其它章节/评论请求。Venera 的 `@x/y` 裁剪标识
+  MUST 保留在预览项身份中，同时传给 `onThumbnailLoad` 的 URL MUST 去除该标识；图片失败
+  时 MUST 使用按资源 identity 稳定生成的柔和纯色占位，不得显示破损图片图标；宿主绘制时 MUST 只显示
+  该标识指定的原图区域。
+- 来源详情若提供评论能力，详情页 SHOULD 显示评论栏，并 MUST 支持分页评论次级页；
+  评论存在回复数量和不透明 ID 时，次级页 MUST 能按原 source `subId`/回复 ID 加载回复。
+  这些能力是可选的，来源未声明时不得发起插件请求。
 
 ## 2. Reader 行为
 
@@ -71,6 +82,9 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 
 - 内容 MUST 等比呈现，统一使用 `height / width`；不得裁切正文，或用负位移、重叠和多套比例公式掩盖接缝。
 - Reader MUST 支持沉浸、跳页、暂停、倍速、方向和布局命令；命令只通过 Reader facade 提交。
+- Reader 页码或阅读模式改变后 MUST 通过既有 progress facade 持久化 `ReadingProgress`；App
+  lifecycle 进入 inactive/paused/detached 和 Reader route dispose 时 MUST 强制 flush 最近进度。
+  Home projection MUST 在写入成功后立即更新，不能要求先退出详情页才反映阅读历史。
 - UI 控件存在性 MUST 来自 capability，不得用静态/动画猜测下载或播放能力。
 
 ## 3. Pipeline 与角色合同

@@ -97,10 +97,7 @@ final class LibraryComic {
             .map((entry) => entry.chapter.importedAt)
             .reduce((left, right) => right.isAfter(left) ? right : left);
     final savedAt = savedComic?.savedAt ?? newestChapterAt!;
-    final metadataUpdatedAt = <DateTime>[
-      if (savedComic != null) savedComic.updatedAt,
-      if (newestChapterAt != null) newestChapterAt,
-    ].reduce((left, right) => right.isAfter(left) ? right : left);
+    final metadataUpdatedAt = savedComic?.updatedAt ?? newestChapterAt!;
 
     return LibraryComic(
       sourceId: sourceId,

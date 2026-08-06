@@ -14,6 +14,7 @@ final class Comic {
     this.tags = const <String>[],
     this.coverUri,
     this.description,
+    this.sourceSubId,
     this.createdAt,
     this.updatedAt,
   });
@@ -25,9 +26,79 @@ final class Comic {
   final List<String> tags;
   final Uri? coverUri;
   final String? description;
+  /// Optional source-owned secondary identity used by detail-side APIs.
+  final String? sourceSubId;
   final ReadingDirection readingDirection;
   final DateTime? createdAt;
   final DateTime? updatedAt;
+}
+
+final class ComicPreviewAsset {
+  const ComicPreviewAsset({
+    required this.uri,
+    this.label,
+    this.width,
+    this.height,
+  });
+
+  final Uri uri;
+  final String? label;
+  final int? width;
+  final int? height;
+}
+
+final class ComicPreviewPage {
+  ComicPreviewPage({
+    required Iterable<ComicPreviewAsset> items,
+    this.nextToken,
+  }) : items = List<ComicPreviewAsset>.unmodifiable(items);
+
+  final List<ComicPreviewAsset> items;
+  final String? nextToken;
+
+  bool get hasMore => nextToken != null && nextToken!.isNotEmpty;
+}
+
+final class ComicComment {
+  const ComicComment({
+    required this.userName,
+    required this.content,
+    this.id,
+    this.avatarUri,
+    this.time,
+    this.replyCount,
+    this.score,
+    this.isLiked,
+    this.voteStatus,
+  });
+
+  final String? id;
+  final String userName;
+  final Uri? avatarUri;
+  final String content;
+  final String? time;
+  final int? replyCount;
+  final int? score;
+  final bool? isLiked;
+  final int? voteStatus;
+}
+
+final class ComicCommentPage {
+  ComicCommentPage({
+    required this.page,
+    required Iterable<ComicComment> items,
+    this.maxPage,
+  }) : items = List<ComicComment>.unmodifiable(items) {
+    if (page < 1 || (maxPage != null && maxPage! < page)) {
+      throw ArgumentError('comic comment page is invalid');
+    }
+  }
+
+  final int page;
+  final List<ComicComment> items;
+  final int? maxPage;
+
+  bool get hasMore => maxPage == null || page < maxPage!;
 }
 
 final class Chapter {
@@ -130,10 +201,17 @@ final class ReadingProgress {
 }
 
 final class ComicManifest {
-  const ComicManifest({required this.comic, required this.chapters});
+  const ComicManifest({
+    required this.comic,
+    required this.chapters,
+    this.preview,
+    this.comments,
+  });
 
   final Comic comic;
   final List<Chapter> chapters;
+  final ComicPreviewPage? preview;
+  final ComicCommentPage? comments;
 }
 
 final class ChapterManifest {

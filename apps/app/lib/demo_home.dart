@@ -725,6 +725,11 @@ final class _DemoHomeState extends State<DemoHome> {
     _librarySession.replaceReadState(state);
   }
 
+  Future<void> _saveReaderProgress(ReadingProgress progress) async {
+    await _library.saveProgress(progress);
+    _librarySession.replaceProgress(progress);
+  }
+
   Future<void> _markChapterReadForNavigation(
     ImportedLibraryEntry entry,
   ) async {
@@ -828,6 +833,7 @@ final class _DemoHomeState extends State<DemoHome> {
     Future<ImportedLibraryEntry> Function() loadChapter, {
     required String title,
     bool refreshRemote = true,
+    int? initialPageIndex,
   }) async {
     if (!mounted) return;
     await Navigator.of(context).push(
@@ -837,6 +843,7 @@ final class _DemoHomeState extends State<DemoHome> {
           load: () => _prepareImportedChapter(
             loadChapter,
             refreshRemote: refreshRemote,
+            initialPageIndex: initialPageIndex,
           ),
           builder: (_, prepared) => this._buildImportedChapterScreen(prepared),
         ),
@@ -850,6 +857,7 @@ final class _DemoHomeState extends State<DemoHome> {
   Future<_PreparedImportedChapter> _prepareImportedChapter(
     Future<ImportedLibraryEntry> Function() loadChapter, {
     required bool refreshRemote,
+    int? initialPageIndex,
   }) async {
     final entry = await loadChapter();
     final legacyVenera = _hasLegacyVeneraLocators(entry.chapter);
@@ -887,6 +895,7 @@ final class _DemoHomeState extends State<DemoHome> {
       entry: current,
       byteLoaders: byteLoaders,
       responseLoaders: responseLoaders,
+      initialPageIndex: initialPageIndex,
     );
   }
 
@@ -954,6 +963,7 @@ final class _DemoHomeState extends State<DemoHome> {
   }) async {
     final preferred = _libraryComicForSourceIdentity(sourceId, comicId);
     final effectiveComicId = preferred?.comicId ?? comicId;
+    ComicManifest? sourceManifest;
     if (refreshContent) {
       if (sourceId == 'local-folder') {
         final entries = _libraryEntries
@@ -983,6 +993,7 @@ final class _DemoHomeState extends State<DemoHome> {
           throw StateError('漫画源 $sourceId 当前不可用');
         }
         final manifest = await source.loadComic(effectiveComicId);
+        sourceManifest = manifest;
         final existing = _preferredSavedComicAlias(
               sourceId,
               effectiveComicId,
@@ -1020,6 +1031,7 @@ final class _DemoHomeState extends State<DemoHome> {
           ),
         );
         _rejectCatalogRegression(existing: existing, incoming: manifest);
+        final changed = _manifestContentChanged(existing, manifest);
         await _library.upsertSavedComic(
           SavedComicRecord.fromManifest(
             manifest,
@@ -1029,17 +1041,20 @@ final class _DemoHomeState extends State<DemoHome> {
               fallback: existing?.canonicalComicId,
             ),
             savedAt: existing?.savedAt,
-            updatedAt: DateTime.now().toUtc(),
+            updatedAt: changed ? DateTime.now().toUtc() : existing?.updatedAt,
           ),
         );
       }
     }
     await _reloadLibrary();
-    return _detailsSnapshotForComic(
+    final snapshot = _detailsSnapshotForComic(
       sourceId,
       effectiveComicId,
       preference: fallbackPreference,
     );
+    return sourceManifest == null
+        ? snapshot
+        : snapshot.copyWith(sourceManifest: sourceManifest);
   }
 
   Future<EncodedResourceSource> _loadSourceBrowseCover(
@@ -1100,6 +1115,7 @@ final class _DemoHomeState extends State<DemoHome> {
     required String comicId,
     required Uri? coverUri,
     required ImportedLibraryEntry? fallbackChapter,
+    String resourceRole = 'cover',
   }) async {
     final fallback = fallbackChapter;
     final fallbackPage = sourceId != 'local-folder' ||
@@ -1121,14 +1137,16 @@ final class _DemoHomeState extends State<DemoHome> {
       );
     }
     const revision = '';
+    final source = _sourceForId(sourceId);
     final uri = Uri.tryParse(sourceValue);
-    if (sourceId != 'local-folder' && uri != null && uri.hasScheme) {
+    if (source != null && uri != null && uri.hasScheme) {
       return _sourceResources.loadArtworkSource(
         cache: _cacheCoordinator.responses,
-        sourceId: sourceId,
+        sourceId: source.sourceId,
         comicId: comicId,
         uri: uri,
         revision: revision,
+        resourceRole: resourceRole,
       );
     }
     // Android content URIs cannot be opened by FileImage. Copy them once into

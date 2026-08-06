@@ -98,6 +98,36 @@ void main() {
     expect(results.every((value) => value.lengthInBytes == 4), isTrue);
   });
 
+  test('preview artwork keeps each page in its own cache entry', () async {
+    final source = _ImageSource();
+    final gateway = ComicSourceResourceGateway(
+      sourceForId: (sourceId) => sourceId == source.sourceId ? source : null,
+    );
+    final cache = ResourceCacheManager();
+    addTearDown(gateway.close);
+    addTearDown(cache.close);
+    final firstUri = Uri.parse('mihon:resource:preview-1');
+    final secondUri = Uri.parse('mihon:resource:preview-2');
+
+    await gateway.loadArtworkSource(
+      cache: cache,
+      sourceId: source.sourceId,
+      comicId: 'comic',
+      uri: firstUri,
+      resourceRole: 'preview',
+    );
+    await gateway.loadArtworkSource(
+      cache: cache,
+      sourceId: source.sourceId,
+      comicId: 'comic',
+      uri: secondUri,
+      resourceRole: 'preview',
+    );
+
+    expect(source.loads, 2);
+    expect(source.loadedUris, <Uri>[firstUri, secondUri]);
+  });
+
   test('warm artwork cache does not resolve the source', () async {
     final source = _ImageSource();
     final cache = ResourceCacheManager();
@@ -420,6 +450,7 @@ final class _ImageSource
 
   final String canonicalPrefix;
   int loads = 0;
+  final List<Uri> loadedUris = <Uri>[];
 
   @override
   String get sourceId => 'mihon:test';
@@ -439,6 +470,7 @@ final class _ImageSource
   @override
   Future<Uint8List> loadResource(Uri uri) async {
     loads += 1;
+    loadedUris.add(uri);
     return Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 0xd9]);
   }
 

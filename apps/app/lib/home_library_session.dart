@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:catalog/catalog.dart';
+import 'package:domain/domain.dart';
 import 'package:flutter/foundation.dart';
 
 import 'package:downloads/downloads.dart';
@@ -306,6 +307,26 @@ final class HomeLibrarySession extends ChangeNotifier {
     _readStates = Map<String, ChapterReadState>.unmodifiable(
       <String, ChapterReadState>{..._readStates, state.identity: state},
     );
+    _publish();
+  }
+
+  void replaceProgress(ReadingProgress progress) {
+    var changed = false;
+    final next = <ImportedLibraryEntry>[];
+    for (final entry in _entries) {
+      if (entry.chapter.sourceId == progress.sourceId &&
+          entry.chapter.comicId == progress.comicId &&
+          entry.chapter.chapterId == progress.chapterId) {
+        next.add(entry.copyWith(progress: progress));
+        changed = true;
+      } else {
+        next.add(entry);
+      }
+    }
+    if (!changed) {
+      return;
+    }
+    _entries = List<ImportedLibraryEntry>.unmodifiable(next);
     _publish();
   }
 

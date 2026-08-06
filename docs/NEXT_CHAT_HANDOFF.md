@@ -45,6 +45,17 @@
   同源不同 raw comic ID 的 E-Hentai URL 版本替换，并持久化已确认关系以显示旧版；目标写入并完成章节校验后清理旧版本记录。
 - App-owned modal panel 的关闭统一为左下角 X，正向操作保留在右侧；详情迁移对话框和
   catalog 同源 ID 单测已通过。
+- Venera 登录协议已接受 Android platform channel 解码后的嵌套 Map；`ComicManifest` 已
+  携带可选首批 preview/comments 和 `Comic.sourceSubId`。`ComicPreviewSource`、
+  `ComicCommentSource` 由 runtime/cache adapter 透传，详情页按能力显示预览栏、评论栏，
+  评论支持分页次级页和按不透明回复 ID 的回复页；预览/头像复用现有 artwork loader。
+- Home 更新区只取书架漫画并按元数据更新时间排序，阅读历史独立按进度更新时间排序；Reader
+  在页码/模式变化和退出/生命周期暂停时 flush 进度，`HomeLibrarySession` 即时更新投影。
+- 预览分页由 `loadThumbnails` 独立提供首批和游标，预览 URI 使用独立 artwork role；点击预览项
+  直接复用 Reader 路由并携带对应页索引，远程详情切换为本地投影后仍保留来源预览/评论能力。
+  Venera 预览 URI 的 `@x/y` 标识保留在缓存身份中，但 `onThumbnailLoad` 接收去裁剪 URL；
+  宿主绘制时只显示该标识指定的原图区域；图片失败占位为按 identity 稳定生成的柔和纯色，
+  不再显示破损图标。
 
 ## 下一步
 

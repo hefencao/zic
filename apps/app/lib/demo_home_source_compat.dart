@@ -286,11 +286,13 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
               loadChapter, {
               required bool refreshRemote,
               required String title,
+              int? initialPageIndex,
             }) =>
                 _openImportedChapterLoader(
               loadChapter,
               title: title,
               refreshRemote: refreshRemote,
+              initialPageIndex: initialPageIndex,
             ),
             onDownloadChapter: _downloadChapter,
             inspectChapterDownload: _chapterDownloads.inspect,
@@ -367,11 +369,13 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
             loadChapter, {
             required bool refreshRemote,
             required String title,
+            int? initialPageIndex,
           }) =>
               _openImportedChapterLoader(
             loadChapter,
             title: title,
             refreshRemote: refreshRemote,
+            initialPageIndex: initialPageIndex,
           ),
           onDownloadChapter: _downloadChapter,
           inspectChapterDownload: _chapterDownloads.inspect,

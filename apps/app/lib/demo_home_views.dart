@@ -139,7 +139,17 @@ extension _DemoHomeViews on _DemoHomeState {
   }
 
   Widget _buildHomePage() {
-    final updates = _libraryComics.take(10).toList(growable: false);
+    final updates = _libraryComics
+        .where(
+          (comic) =>
+              _preferenceForComic(comic).inShelf,
+        )
+        .toList(growable: true)
+      ..sort(
+        (left, right) =>
+            right.metadataUpdatedAt.compareTo(left.metadataUpdatedAt),
+      );
+    final visibleUpdates = updates.take(10).toList(growable: false);
     final history = _libraryComics
         .where((comic) => comic.lastReadChapter != null)
         .toList(growable: true)
@@ -159,7 +169,7 @@ extension _DemoHomeViews on _DemoHomeState {
             subtitle: updates.isEmpty ? '导入漫画后会显示最近更新' : null,
           ),
           const SizedBox(height: 10),
-          _buildHorizontalComics(updates),
+          _buildHorizontalComics(visibleUpdates),
           const SizedBox(height: 24),
           HomeSectionTitle(
             key: homeHistorySectionKey,

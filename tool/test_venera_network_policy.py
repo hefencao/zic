@@ -31,6 +31,11 @@ def main() -> int:
         source,
         'normalizeVeneraAcceptEncoding',
     )
+    merge_cookies = extract(
+        r'internal fun mergeVeneraCookieHeaders\(.*?\n\nprivate data class',
+        source,
+        'mergeVeneraCookieHeaders',
+    ).removesuffix('\n\nprivate data class')
     safe_address = extract(
         r'internal fun isSafeVeneraPublicAddress\(.*?\n\s*!address\.isMulticastAddress\n',
         source,
@@ -42,12 +47,19 @@ import java.net.InetAddress
 import java.util.Locale
 
 {normalize}
+{merge_cookies}
 {safe_address}
 
 fun main() {{
     check(normalizeVeneraAcceptEncoding(null) == "gzip, deflate")
     check(normalizeVeneraAcceptEncoding("gzip, deflate, br, zstd") == "gzip, deflate")
     check(normalizeVeneraAcceptEncoding("x-gzip, br") == "gzip")
+    check(mergeVeneraCookieHeaders("nw=1", "ipb_member_id=member") ==
+        "nw=1; ipb_member_id=member")
+    check(mergeVeneraCookieHeaders("nw=1", null) == "nw=1")
+    check(mergeVeneraCookieHeaders(null, "ipb_member_id=member") ==
+        "ipb_member_id=member")
+    check(mergeVeneraCookieHeaders(" ", " ") == null)
     check(!isSafeVeneraPublicAddress(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))))
     check(!isSafeVeneraPublicAddress(InetAddress.getByAddress(byteArrayOf(10, 0, 0, 1))))
     check(isSafeVeneraPublicAddress(InetAddress.getByAddress(byteArrayOf(1, 1, 1, 1))))
