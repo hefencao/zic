@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:catalog/catalog.dart';
@@ -45,6 +46,7 @@ const comicDetailsOpenWebViewKey =
     ValueKey<String>('comic-details-open-webview');
 const comicDetailsSourceSettingsKey =
     ValueKey<String>('comic-details-source-settings');
+const comicDetailsMiscKey = ValueKey<String>('comic-details-misc');
 const comicDetailsRefreshStateKey =
     ValueKey<String>('comic-details-refresh-state');
 const comicDetailsRetryBodyKey =
@@ -824,6 +826,7 @@ final class _LocalComicDetailsScreenState
     if (failure != null && ordered.isEmpty) {
       return _ComicDetailsFailureScaffold(
         title: comic.title,
+        comicId: comic.comicId,
         sourceId: comic.sourceId,
         sourceLabel: sourceLabel,
         failure: failure,
@@ -839,6 +842,7 @@ final class _LocalComicDetailsScreenState
     return _ComicDetailsScaffold(
       screenKey: localComicDetailsScreenKey,
       title: comic.title,
+      comicId: comic.comicId,
       sourceId: comic.sourceId,
       sourceLabel: sourceLabel,
       authors: comic.authors,
@@ -1543,6 +1547,7 @@ final class _RemoteComicDetailsScreenState
     if (failure != null && _manifest == null) {
       return _ComicDetailsFailureScaffold(
         title: widget.summary.title,
+        comicId: widget.summary.comicId,
         sourceId: widget.source.sourceId,
         sourceLabel: widget.source.descriptor.name,
         failure: failure,
@@ -1599,6 +1604,7 @@ final class _RemoteComicDetailsScreenState
     return _ComicDetailsScaffold(
       screenKey: remoteComicDetailsScreenKey,
       title: comic.title,
+      comicId: comic.comicId,
       sourceId: widget.source.sourceId,
       sourceLabel: _comicSourceLabel(widget.source, widget.source.sourceId),
       authors: comic.authors,

@@ -1087,7 +1087,7 @@ final class _DemoHomeState extends State<DemoHome> {
     if (sourceValue == null || sourceValue.trim().isEmpty) {
       throw StateError('漫画详情没有可用封面');
     }
-    const revision = '';
+    const revision = comicArtworkCacheRevision;
     final source = _sourceForId(sourceId);
     final uri = Uri.tryParse(sourceValue);
     if (source != null && uri != null && uri.hasScheme) {
@@ -1136,7 +1136,7 @@ final class _DemoHomeState extends State<DemoHome> {
         origin: EncodedResourceOrigin.localFile,
       );
     }
-    const revision = '';
+    const revision = comicArtworkCacheRevision;
     final source = _sourceForId(sourceId);
     final uri = Uri.tryParse(sourceValue);
     if (source != null && uri != null && uri.hasScheme) {

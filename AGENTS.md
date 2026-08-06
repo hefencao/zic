@@ -18,6 +18,7 @@
 
 - Do not run `dart format`. Make only minimal, manually formatted edits.
 - Distinguish product defects from test defects. Do not restore superseded production behavior merely to satisfy an outdated test.
+- 只有具有基础性、重要性、隐蔽性或长期稳定契约的代码/功能才要求新增回归测试；普通 UI 文案、一次性布局和非稳定实现无需单独新增回归测试。已有测试仍不得因该规则删除或规避真实缺陷。
 - Delete code only after repository-wide production, test, export and documentation reference checks.
 - Run all available repository, documentation, ownership, platform and toolchain checks. Missing Flutter/Android/Rust tools must be reported as unverified, not silently treated as passed.
 

@@ -132,9 +132,13 @@ Cookie 会话，按当前详情页 `#gnd` 关系生成版本，不把 Venera 当
 评论完整列表和回复通过详情次级页加载，不把评论请求或插件 transport 变成章节目录的
 全局门控。Venera 直接复用 `comic.loadThumbnails` 与 `comic.loadComments`，因此已有
 `ComicDetails` 能力的来源可渐进显示预览、评论和回复。预览 URI 保留 Venera 的
-`@x/y` 裁剪标识用于单项身份，但 `onThumbnailLoad` 请求回调接收去掉裁剪标识的原图
-地址，App 解码后只绘制对应裁剪区域；预览失败只显示按资源 identity 生成的柔和
-单色占位，不显示破损图片图标。
+`@x/y` 裁剪标识用于预览项/widget/painter 的单项身份，但 `onThumbnailLoad` 请求回调接收
+去掉裁剪标识的原图地址；该 base URI 也是编码字节缓存身份，App 解码后只绘制对应裁剪区域。
+预览栏默认只展示一行，用户展开后由 `PageView` 左右分页承载固定行布局并继续消费分页，
+不使用纵向 `Wrap`/瀑布流。没有横向图的行按三个纵向槽位排版；横向图占两个槽位，可与一张
+纵向图同排。分页图片区域按屏幕高度 80% 封顶；缩略图使用保持宽高比的 contain 布局，混合
+横纵向图片时允许留白。行规划优先使用 `ComicPreviewAsset.width/height`，缺失时以解码后的
+可见裁剪尺寸回填；预览失败只显示按资源 identity 生成的柔和单色占位，不显示破损图片图标。
 
 App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭固定为左下角 X，确认、
 保存或删除位于右侧，不再使用“取消”文字按钮。
@@ -286,6 +290,69 @@ Reader Host 从 `PipelineReaderSessionFactory.acquire` 获取资源会话并在�
 - `ArtifactCacheManager`：Reader 不可变页面 artifact，默认热字节 10 项/256 MiB、alias 上限 8192，并连接持久 backend。
 
 封面 URL/token 不是稳定 comic identity；verified checksum、来源 page key、内容 hash 或用户确认迁移才可注册 artifact alias。App/Reader 不得创建私有图片字节 LRU，也不得让 cache hit 共享 cursor、timer 或 decode identity。
+
+### 11.1 当前生产代码的 key/id 对照
+
+以下是现有实现中容易被混称为“key”的几组身份。它们的用途不同，不能用标题、显示名或
+图片 URL 互相替代。
+
+| 名称 | 所有者/含义 | 当前组成和用途 |
+| --- | --- | --- |
+| `sourceId` | 来源身份 | 插件/来源的稳定 ID，不是来源显示名；参与 source namespace、漫画 namespace、`ContentId` 和资源请求绑定。 |
+| raw `comicId` | 来源原生漫画身份 | `Comic`、`SavedComicRecord`、`LibraryComic` 和章节存储使用的原始漫画 ID。它可以是 URL 或 Venera 的 opaque locator；是前台封面在 source 未激活时仍可使用的身份。 |
+| `LibraryComic.identity` / Flutter comic key | 书架实体身份 | 当前为 `sourceId\u0000comicId`（UI key 再加各自前缀）；标题、作者和封面 URL 都不参与。两个同名漫画只有在这组身份也相同才会被视为同一个实体。 |
+| `canonicalComicId` | 来源确认的等价身份 | 仅由来源声明/确认的同源等价 ID，用于冷书架投影归并和 source-aware 元数据 namespace；不替换 raw `comicId` 的请求、章节或封面身份。旧 app-update URL-derived key 不属于当前生产读取路径。 |
+| `chapterId` | 来源原生章节身份 | `Chapter`/`ChapterManifest` 的章节身份；章节元数据响应 key 使用 `[sourceId, chapterId]`，并挂到已知漫画 namespace。 |
+| `pageId` / `PageAsset.assetKey` | 章节内页面身份 | `PageAsset` 保留 `pageId` 和 `chapterId`，`assetKey` 为 `chapterId/pageId`；它不是封面/预览响应缓存 key。 |
+| `ContentId` | Reader 内容实体身份 | `[sourceId, comicId, chapterId, pageId]`，用于确定一个漫画章节页面；`ContentId.key` 只服务 Reader/download identity。 |
+| `DownloadId` | 确定字节版本 | `ContentId + sourceRevision + canonicalUri`，用于 Reader 下载/artifact；页面 URL 变化或来源版本变化会形成新的确定字节身份。 |
+| `DecodeId` | 解码输出身份 | `DownloadId + physicalWidth + physicalHeight + pixelFormat + renderer`；不参与首页/详情的图片响应缓存。 |
+| `ResourceCacheKey` | 响应缓存实体身份 | 四元组 `kind + identity + namespace + revision`；四项都参与 equality/hash。图片使用 `kind=imageBytes`，详情/章节/搜索分别使用对应 response kind。 |
+| `coverUri` / `coverSourceId` | 图片 locator | `Comic.coverUri` 或本地/导入记录里的 cover locator，只告诉 loader 去哪里取图；它不是 raw 漫画身份。对 `comicId != null` 的封面响应，当前 key 有意只使用 `[sourceId, comicId, role=cover]`，不把 URL 放入 key。 |
+| `previewUri` | 预览项 locator 和绘制身份 | 详情预览完整 URI（包括 Venera `@x/y` 裁剪后缀）保留在预览项、widget 和 painter 中；编码字节缓存及实际请求使用去掉 `@x/y` 的 base URI。 |
+| `resourceRole` | 漫画图片角色 | 封面为 `cover`；详情预览为 `preview:<base previewUri>`；其他带 URI 的 artwork 角色同样使用 base URI。它与 source/raw comic ID 一起进入图片响应 key。 |
+
+稳定响应 key 的编码由 `encodeStableCacheKey` 负责：使用 `zic-key-v1:` 前缀和长度前缀组件，
+因此 URL 中的 `/`、`:`、`@` 等字符不会造成分隔符碰撞。当前图片 key 的实际关系如下：
+
+```text
+sourceId + raw comicId
+  -> comic namespace
+  -> imageBytes / comic-response(role) / revision
+
+封面:
+  [sourceId, raw comicId, role=cover, revision=artwork-v2]
+
+详情预览:
+  [sourceId, raw comicId, role=preview:<base previewUri>, revision=artwork-v2]
+  完整 previewUri -> cache/request 使用去掉 @x/y 的 base URI
+                    -> App widget/painter 仍按完整 URI 的 @x/y 裁剪
+
+持久化文件:
+  hash(kind + identity + namespace + revision)
+  + 文件记录再次校验完整 ResourceCacheKey
+```
+
+首页/详情 artwork 的缓存层顺序是 memory -> durable file -> source loader。source-independent
+的 warm probe 命中时，首页封面不会解析来源或启动插件；miss 才进入 gateway/source transport。
+因此预览图的完整 URI 仍决定每个 widget 的裁剪区域，但同一 base URL 的编码字节只保留一份，
+避免旧实现按每个 `@x/y` 裁剪重复请求和占用缓存。旧的每裁剪项 role 不会与新的 base
+role 相同，因此无需清空或迁移已有 cover 缓存；封面则有一个刻意的区别：同一 raw `comicId`
+的 cover URL 改变会复用旧 cover key，表现为旧图/陈旧图，而不是 key 碰撞；应通过封面失效
+或 revision 处理 URL 变化。
+
+图片加载失败的判断边界也必须分开：
+
+- cache hit/miss 只说明是否找到完整编码字节，不说明字节一定能被图片解码；
+- source loader 可能拿到失效路径、非图片响应、权限/challenge 页面或空响应，gateway 会在
+  `source artwork response is not an image` 处拒绝；
+- cache miss 后的 source/plugin/transport 错误、URI 失效和 Flutter 解码错误最终都会被首页或
+  详情 artwork widget 转成柔和单色占位，当前 Trace 若没有 artwork 事件，无法仅凭占位图区分；
+- 当前 `.log/log.txt` 的证据是 Venera `loadComic/loadInfo` 在读取页面 DOM 时出现
+  `Cannot read properties of null (reading 'children')`，这会阻断详情 manifest，但不是图片
+  cache miss、图片路径错误或 `ResourceCacheKey` 冲突的证据。要定位单张失败项，Trace 必须同时
+  记录脱敏后的 `sourceId/raw comicId/resourceRole/URI 摘要`、cache origin（memory/file/loader）
+  和 transport/decode 错误。
 
 ## 12. 插件与网络边界
 

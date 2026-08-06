@@ -98,7 +98,7 @@ void main() {
     expect(results.every((value) => value.lengthInBytes == 4), isTrue);
   });
 
-  test('preview artwork keeps each page in its own cache entry', () async {
+  test('preview crops share one encoded cache entry', () async {
     final source = _ImageSource();
     final gateway = ComicSourceResourceGateway(
       sourceForId: (sourceId) => sourceId == source.sourceId ? source : null,
@@ -106,8 +106,12 @@ void main() {
     final cache = ResourceCacheManager();
     addTearDown(gateway.close);
     addTearDown(cache.close);
-    final firstUri = Uri.parse('mihon:resource:preview-1');
-    final secondUri = Uri.parse('mihon:resource:preview-2');
+    final firstUri = Uri.parse(
+      'mihon:resource:preview-base@x=0-200&y=0-200',
+    );
+    final secondUri = Uri.parse(
+      'mihon:resource:preview-base@x=200-400&y=200-400',
+    );
 
     await gateway.loadArtworkSource(
       cache: cache,
@@ -124,8 +128,8 @@ void main() {
       resourceRole: 'preview',
     );
 
-    expect(source.loads, 2);
-    expect(source.loadedUris, <Uri>[firstUri, secondUri]);
+    expect(source.loads, 1);
+    expect(source.loadedUris, <Uri>[Uri.parse('mihon:resource:preview-base')]);
   });
 
   test('warm artwork cache does not resolve the source', () async {

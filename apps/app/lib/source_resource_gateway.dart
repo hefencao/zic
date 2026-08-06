@@ -5,7 +5,7 @@ import 'package:catalog/catalog.dart';
 import 'package:downloads/downloads.dart';
 import 'package:resource_cache/resource_cache.dart';
 
-const _artworkCacheSchemaRevision = 'artwork-v2';
+const comicArtworkCacheRevision = 'artwork-v2';
 
 bool isLegacyVeneraRuntimeLocator(String value) =>
     value.startsWith('venera-resource://');
@@ -68,17 +68,18 @@ final class ComicSourceResourceGateway {
     String resourceRole = 'cover',
   }) {
     _requireOpen();
-    final source = _requireSource(sourceId, uri);
+    final requestUri = _artworkRequestUri(uri);
+    final source = _requireSource(sourceId, requestUri);
     final cacheRole = _artworkResourceRole(resourceRole, uri);
     return loadCachedComicImage(
       cache: cache,
       sourceId: sourceId,
       comicId: comicId,
-      imageIdentity: uri.toString(),
+      imageIdentity: requestUri.toString(),
       resourceRole: cacheRole,
       revision: _artworkRevision(revision),
       loader: () => _collectArtworkResponse(
-        _transports.loaderFor(source, uri),
+        _transports.loaderFor(source, requestUri),
       ),
     );
   }
@@ -93,6 +94,7 @@ final class ComicSourceResourceGateway {
     String resourceRole = 'cover',
   }) async {
     _requireOpen();
+    final requestUri = _artworkRequestUri(uri);
     final cacheRevision = _artworkRevision(revision);
     final cacheRole = _artworkResourceRole(resourceRole, uri);
     // Do not resolve a source before these source-independent cache probes. A
@@ -102,7 +104,7 @@ final class ComicSourceResourceGateway {
       cache: cache,
       sourceId: sourceId,
       comicId: comicId,
-      imageIdentity: uri.toString(),
+      imageIdentity: requestUri.toString(),
       resourceRole: cacheRole,
       revision: cacheRevision,
       awaitPersistence: awaitPersistence,
@@ -111,7 +113,7 @@ final class ComicSourceResourceGateway {
       return cached;
     }
 
-    final source = _requireSource(sourceId, uri);
+    final source = _requireSource(sourceId, requestUri);
     // Cover entries use the raw durable comic identity. It is available from
     // the library before an optional source/plugin is activated, so a warm
     // cover never needs source resolution on the foreground path.
@@ -119,24 +121,24 @@ final class ComicSourceResourceGateway {
       cache: cache,
       sourceId: sourceId,
       comicId: comicId,
-      imageIdentity: uri.toString(),
+      imageIdentity: requestUri.toString(),
       resourceRole: cacheRole,
       revision: cacheRevision,
       awaitPersistence: awaitPersistence,
       loader: () => _collectArtworkResponse(
-        _transports.loaderFor(source, uri),
+        _transports.loaderFor(source, requestUri),
       ),
     );
     return result;
   }
 
   String _artworkRevision(String revision) => revision.isEmpty
-      ? _artworkCacheSchemaRevision
-      : '$_artworkCacheSchemaRevision:$revision';
+      ? comicArtworkCacheRevision
+      : '$comicArtworkCacheRevision:$revision';
 
   String _artworkResourceRole(String role, Uri uri) => role == 'cover'
       ? 'cover'
-      : '$role:${uri.toString()}';
+      : '$role:${_artworkBaseUri(uri)}';
 
   Future<Uint8List> _collectArtworkResponse(
     ExternalPluginResourceResponseLoader loader,
@@ -227,6 +229,23 @@ final class ComicSourceResourceGateway {
       throw StateError('source resource gateway is closed');
     }
   }
+}
+
+Uri _artworkRequestUri(Uri uri) {
+  final base = _artworkBaseUri(uri);
+  return base == uri.toString() ? uri : Uri.parse(base);
+}
+
+/// Venera appends a crop descriptor to preview URLs. The descriptor changes
+/// painting, not the encoded bytes, so all crops of one base URL must share
+/// the response-cache entry and the network request.
+String _artworkBaseUri(Uri uri) {
+  final value = uri.toString();
+  final marker = value.lastIndexOf('@');
+  if (marker <= 0 || marker == value.length - 1) return value;
+  final suffix = value.substring(marker + 1);
+  if (!suffix.startsWith('x=') && !suffix.startsWith('y=')) return value;
+  return value.substring(0, marker);
 }
 
 bool _looksLikeEncodedImage(Uint8List bytes) {

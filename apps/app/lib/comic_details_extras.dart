@@ -1,5 +1,33 @@
 part of 'comic_details.dart';
 
+const _previewGridGap = 8.0;
+const _previewGridSlots = 3;
+const _previewPageIndicatorHeight = 28.0;
+const _previewPortraitAspect = .67;
+const _previewLandscapeAspect = 1.5;
+const _previewMinRowHeight = 96.0;
+const _previewMaxRowHeight = 190.0;
+
+final class _ComicDetailsPreviewRow {
+  const _ComicDetailsPreviewRow({
+    required this.indices,
+    required this.height,
+  });
+
+  final List<int> indices;
+  final double height;
+}
+
+final class _ComicDetailsPreviewPage {
+  const _ComicDetailsPreviewPage({
+    required this.rows,
+    required this.height,
+  });
+
+  final List<_ComicDetailsPreviewRow> rows;
+  final double height;
+}
+
 final class _ComicDetailsPreviewSection extends StatefulWidget {
   const _ComicDetailsPreviewSection({
     required this.sourceId,
@@ -30,6 +58,11 @@ final class _ComicDetailsPreviewSectionState
   String? _nextToken;
   Object? _error;
   bool _loading = false;
+  bool _expanded = false;
+  bool _loadingAll = false;
+  final PageController _previewPageController = PageController();
+  final Map<String, Size> _measuredPreviewSizes = <String, Size>{};
+  int _previewPageIndex = 0;
 
   @override
   void initState() {
@@ -65,6 +98,334 @@ final class _ComicDetailsPreviewSectionState
         _loading = false;
       });
     }
+  }
+
+  Future<void> _toggleExpanded() async {
+    if (_expanded) {
+      setState(() {
+        _expanded = false;
+        _previewPageIndex = 0;
+      });
+      if (_previewPageController.hasClients) {
+        _previewPageController.jumpToPage(0);
+      }
+      return;
+    }
+    setState(() {
+      _expanded = true;
+      _previewPageIndex = 0;
+    });
+    if (_previewPageController.hasClients) {
+      _previewPageController.jumpToPage(0);
+    }
+    await _loadAllPages();
+  }
+
+  Future<void> _loadAllPages() async {
+    if (widget.loader == null || _loadingAll) return;
+    setState(() => _loadingAll = true);
+    try {
+      while (mounted) {
+        if (_loading) {
+          await Future<void>.delayed(const Duration(milliseconds: 16));
+          continue;
+        }
+        final token = _nextToken;
+        if (token == null) return;
+        await _loadNext();
+        if (!mounted || _nextToken == token) return;
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _loadingAll = false);
+      }
+    }
+  }
+
+  void _onPreviewImageSize(ComicPreviewAsset asset, Size size) {
+    if (!mounted || size.width <= 0 || size.height <= 0) return;
+    final key = asset.uri.toString();
+    if (_measuredPreviewSizes[key] == size) return;
+    setState(() => _measuredPreviewSizes[key] = size);
+  }
+
+  Size? _knownPreviewSize(int index) {
+    final asset = _items[index];
+    final measured = _measuredPreviewSizes[asset.uri.toString()];
+    if (measured != null) return measured;
+    final width = asset.width;
+    final height = asset.height;
+    if (width == null || height == null || width <= 0 || height <= 0) {
+      return null;
+    }
+    final sizeWidth = width.toDouble();
+    final sizeHeight = height.toDouble();
+    return Size(sizeWidth, sizeHeight);
+  }
+
+  bool _isLandscape(int index) {
+    final size = _knownPreviewSize(index);
+    return size != null && size.width > size.height;
+  }
+
+  int _previewItemUnits(int index) => _isLandscape(index) ? 2 : 1;
+
+  double _previewCellWidth(double maxWidth, int units) {
+    final slotWidth = math.max(
+      1.0,
+      (maxWidth - (_previewGridSlots - 1) * _previewGridGap) /
+          _previewGridSlots,
+    );
+    return slotWidth + (units - 1) * (slotWidth + _previewGridGap);
+  }
+
+  double _previewAspect(int index) {
+    final size = _knownPreviewSize(index);
+    if (size != null) return size.width / size.height;
+    return _isLandscape(index)
+        ? _previewLandscapeAspect
+        : _previewPortraitAspect;
+  }
+
+  double _previewRowHeight(
+    Iterable<int> indices,
+    double maxWidth,
+    double maxHeight,
+  ) {
+    var height = _previewMinRowHeight;
+    for (final index in indices) {
+      final width = _previewCellWidth(maxWidth, _previewItemUnits(index));
+      height = math.max(height, width / _previewAspect(index));
+    }
+    return math.min(
+      maxHeight,
+      height.clamp(_previewMinRowHeight, _previewMaxRowHeight).toDouble(),
+    );
+  }
+
+  List<_ComicDetailsPreviewRow> _previewRows(
+    double maxWidth,
+    double maxHeight,
+  ) {
+    final rows = <_ComicDetailsPreviewRow>[];
+    var indices = <int>[];
+    var units = 0;
+
+    void closeRow() {
+      if (indices.isEmpty) return;
+      final rowIndices = List<int>.unmodifiable(indices);
+      rows.add(
+        _ComicDetailsPreviewRow(
+          indices: rowIndices,
+          height: _previewRowHeight(rowIndices, maxWidth, maxHeight),
+        ),
+      );
+      indices = <int>[];
+      units = 0;
+    }
+
+    for (var index = 0; index < _items.length; index++) {
+      final itemUnits = _previewItemUnits(index);
+      if (indices.isNotEmpty && units + itemUnits > _previewGridSlots) {
+        closeRow();
+      }
+      indices.add(index);
+      units += itemUnits;
+    }
+    closeRow();
+    return rows;
+  }
+
+  List<_ComicDetailsPreviewPage> _previewPages(
+    double maxWidth,
+    double maxHeight,
+  ) {
+    final pages = <_ComicDetailsPreviewPage>[];
+    var rows = <_ComicDetailsPreviewRow>[];
+    var height = 0.0;
+
+    void closePage() {
+      if (rows.isEmpty) return;
+      pages.add(
+        _ComicDetailsPreviewPage(
+          rows: List<_ComicDetailsPreviewRow>.unmodifiable(rows),
+          height: height,
+        ),
+      );
+      rows = <_ComicDetailsPreviewRow>[];
+      height = 0;
+    }
+
+    for (final row in _previewRows(maxWidth, maxHeight)) {
+      final nextHeight = rows.isEmpty
+          ? row.height
+          : height + _previewGridGap + row.height;
+      if (rows.isNotEmpty && nextHeight > maxHeight) {
+        closePage();
+        rows.add(row);
+        height = row.height;
+      } else {
+        rows.add(row);
+        height = nextHeight;
+      }
+    }
+    closePage();
+    return pages;
+  }
+
+  Widget _previewTile(
+    int index, {
+    required double width,
+    required double height,
+  }) {
+    final asset = _items[index];
+    return SizedBox(
+      width: width,
+      height: height,
+      child: InkWell(
+        key: comicDetailsPreviewItemKey(index),
+        onTap: () => unawaited(_openPreview(index, asset)),
+        borderRadius: BorderRadius.circular(10),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: ColoredBox(
+            color: const Color(0x0A000000),
+            child: _ComicDetailsArtwork(
+              sourceId: widget.sourceId,
+              comicId: widget.comicId,
+              uri: asset.uri,
+              loader: widget.loadArtwork,
+              resourceRole: 'preview',
+              fit: BoxFit.contain,
+              onImageSize: (size) => _onPreviewImageSize(asset, size),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _previewPage(
+    _ComicDetailsPreviewPage page,
+    double maxWidth,
+  ) {
+    return Align(
+      alignment: Alignment.topCenter,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          for (var rowIndex = 0; rowIndex < page.rows.length; rowIndex++)
+            if (rowIndex == 0)
+              _previewRow(page.rows[rowIndex], maxWidth)
+            else ...<Widget>[
+              const SizedBox(height: _previewGridGap),
+              _previewRow(page.rows[rowIndex], maxWidth),
+            ],
+        ],
+      ),
+    );
+  }
+
+  Widget _previewRow(_ComicDetailsPreviewRow row, double maxWidth) {
+    return SizedBox(
+      height: row.height,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          for (var itemIndex = 0; itemIndex < row.indices.length; itemIndex++)
+            if (itemIndex == 0)
+              _previewTile(
+                row.indices[itemIndex],
+                width: _previewCellWidth(
+                  maxWidth,
+                  _previewItemUnits(row.indices[itemIndex]),
+                ),
+                height: row.height,
+              )
+            else ...<Widget>[
+              const SizedBox(width: _previewGridGap),
+              _previewTile(
+                row.indices[itemIndex],
+                width: _previewCellWidth(
+                  maxWidth,
+                  _previewItemUnits(row.indices[itemIndex]),
+                ),
+                height: row.height,
+              ),
+            ],
+        ],
+      ),
+    );
+  }
+
+  Widget _previewItems(BuildContext context) {
+    if (!_expanded) {
+      return SizedBox(
+        height: 190,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: _items.length,
+          separatorBuilder: (_, __) => const SizedBox(width: 8),
+          itemBuilder: (_, index) => _previewTile(
+            index,
+            width: 124,
+            height: 190,
+          ),
+        ),
+      );
+    }
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxPageHeight = MediaQuery.sizeOf(context).height * .8;
+        final maxGridHeight = math.max(
+          1.0,
+          maxPageHeight - _previewPageIndicatorHeight,
+        );
+        final pages = _previewPages(
+          constraints.maxWidth,
+          maxGridHeight,
+        );
+        if (pages.isEmpty) return const SizedBox.shrink();
+        final pageHeight = pages.fold<double>(
+          0,
+          (height, page) => math.max(height, page.height),
+        );
+        final hasPageIndicator = pages.length > 1;
+        return SizedBox(
+          height: pageHeight +
+              (hasPageIndicator ? _previewPageIndicatorHeight : 0),
+          child: Column(
+            children: <Widget>[
+              SizedBox(
+                height: pageHeight,
+                child: PageView.builder(
+                  controller: _previewPageController,
+                  itemCount: pages.length,
+                  onPageChanged: (index) {
+                    if (mounted) setState(() => _previewPageIndex = index);
+                  },
+                  itemBuilder: (_, index) => _previewPage(
+                    pages[index],
+                    constraints.maxWidth,
+                  ),
+                ),
+              ),
+              if (hasPageIndicator)
+                SizedBox(
+                  height: _previewPageIndicatorHeight,
+                  child: Center(
+                    child: Text(
+                      '${_previewPageIndex.clamp(0, pages.length - 1) + 1} / '
+                      '${pages.length}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Future<void> _openPreview(int index, ComicPreviewAsset asset) async {
@@ -122,9 +483,15 @@ final class _ComicDetailsPreviewSectionState
   }
 
   @override
+  void dispose() {
+    _previewPageController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final canLoadMore = widget.loader != null &&
-        (_nextToken != null || _items.isEmpty);
+    final canExpand = _items.isNotEmpty;
+    final canLoadInitial = widget.loader != null && _items.isEmpty;
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
@@ -147,36 +514,7 @@ final class _ComicDetailsPreviewSectionState
             ),
             if (_items.isNotEmpty) ...<Widget>[
               const SizedBox(height: 8),
-              SizedBox(
-                height: 190,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: _items.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
-                  itemBuilder: (context, index) {
-                    final asset = _items[index];
-                    return SizedBox(
-                      width: 124,
-                      child: InkWell(
-                        key: comicDetailsPreviewItemKey(index),
-                        onTap: () => unawaited(_openPreview(index, asset)),
-                        borderRadius: BorderRadius.circular(10),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: _ComicDetailsArtwork(
-                            sourceId: widget.sourceId,
-                            comicId: widget.comicId,
-                            uri: asset.uri,
-                            loader: widget.loadArtwork,
-                            resourceRole: 'preview',
-                            fit: BoxFit.cover,
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
+              _previewItems(context),
             ] else if (_loading)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 20),
@@ -192,12 +530,35 @@ final class _ComicDetailsPreviewSectionState
                 '预览加载失败，请重试',
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
-            if (canLoadMore)
+            if (canExpand)
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _loadingAll
+                      ? null
+                      : () => unawaited(_toggleExpanded()),
+                  icon: Icon(
+                    _expanded ? Icons.expand_less : Icons.expand_more,
+                  ),
+                  label: Text(_expanded ? '收起' : '展开'),
+                ),
+              )
+            else if (canLoadInitial)
               Align(
                 alignment: Alignment.centerRight,
                 child: TextButton(
                   onPressed: _loading ? null : () => unawaited(_loadNext()),
-                  child: Text(_items.isEmpty ? '加载预览' : '加载更多'),
+                  child: Text(_error == null ? '加载预览' : '重试'),
+                ),
+              ),
+            if (_expanded && _error != null && _nextToken != null)
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: _loadingAll
+                      ? null
+                      : () => unawaited(_loadAllPages()),
+                  child: const Text('重试'),
                 ),
               ),
           ],
@@ -700,6 +1061,7 @@ final class _ComicDetailsArtwork extends StatefulWidget {
     required this.loader,
     this.resourceRole = 'cover',
     this.fit = BoxFit.cover,
+    this.onImageSize,
   });
 
   final String sourceId;
@@ -708,6 +1070,7 @@ final class _ComicDetailsArtwork extends StatefulWidget {
   final ComicDetailsCoverLoader loader;
   final String resourceRole;
   final BoxFit fit;
+  final ValueChanged<Size>? onImageSize;
 
   @override
   State<_ComicDetailsArtwork> createState() => _ComicDetailsArtworkState();
@@ -752,6 +1115,7 @@ final class _ComicDetailsArtworkState extends State<_ComicDetailsArtwork> {
             image: encodedResourceImageProvider(source),
             fit: widget.fit,
             part: _comicPreviewImagePart(widget.uri),
+            onImageSize: widget.onImageSize,
             errorBuilder: (_, __, ___) => _CoverPlaceholder(
               seed: '${widget.resourceRole}:${widget.uri}',
             ),
@@ -773,9 +1137,8 @@ final class _ComicDetailsArtworkState extends State<_ComicDetailsArtwork> {
 
 /// Venera represents a thumbnail crop as `${url}@x=start-end&y=start-end`.
 /// The request still uses the base URL, while the host paints only this part
-/// of the decoded image. Keeping this separate from the cache URI is
-/// important: two crops of one source image need different artwork entries
-/// and different paint regions.
+/// of the decoded image. The full URI remains the widget/paint identity, while
+/// the artwork gateway shares encoded bytes for every crop of one base URL.
 final class _ComicPreviewImagePart {
   const _ComicPreviewImagePart({this.x1, this.y1, this.x2, this.y2});
 
@@ -828,11 +1191,13 @@ final class _ComicDetailsDecodedArtwork extends StatefulWidget {
     required this.fit,
     required this.errorBuilder,
     this.part,
+    this.onImageSize,
   });
 
   final ImageProvider<Object> image;
   final BoxFit fit;
   final _ComicPreviewImagePart? part;
+  final ValueChanged<Size>? onImageSize;
   final Widget Function(BuildContext, Object, StackTrace?) errorBuilder;
 
   @override
@@ -856,7 +1221,8 @@ final class _ComicDetailsDecodedArtworkState
   @override
   void didUpdateWidget(covariant _ComicDetailsDecodedArtwork oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.image != widget.image) {
+    if (oldWidget.image != widget.image ||
+        !_samePreviewImagePart(oldWidget.part, widget.part)) {
       _resolveImage();
     }
   }
@@ -872,6 +1238,14 @@ final class _ComicDetailsDecodedArtworkState
     final listener = ImageStreamListener(
       (info, _) {
         if (!mounted) return;
+        final part = _boundedImagePart(widget.part, info.image);
+        final imageWidth = info.image.width.toDouble();
+        final imageHeight = info.image.height.toDouble();
+        final visibleWidth =
+            part == null ? imageWidth : part.x2! - part.x1!;
+        final visibleHeight =
+            part == null ? imageHeight : part.y2! - part.y1!;
+        widget.onImageSize?.call(Size(visibleWidth, visibleHeight));
         setState(() {
           _decodedImage = info.image;
           _error = null;
@@ -934,6 +1308,16 @@ final class _ComicDetailsDecodedArtworkState
       child: const SizedBox.expand(),
     );
   }
+}
+
+bool _samePreviewImagePart(
+  _ComicPreviewImagePart? left,
+  _ComicPreviewImagePart? right,
+) {
+  return left?.x1 == right?.x1 &&
+      left?.y1 == right?.y1 &&
+      left?.x2 == right?.x2 &&
+      left?.y2 == right?.y2;
 }
 
 _ComicPreviewImagePart? _boundedImagePart(

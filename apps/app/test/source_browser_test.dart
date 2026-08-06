@@ -555,14 +555,15 @@ void main() {
     expect(find.text('回复'), findsWidgets);
   });
 
-  testWidgets('preview pages load incrementally and open the selected reader page',
+  testWidgets('preview pages expand into rows and open the selected reader page',
       (tester) async {
     final source = _FixtureSource(
       'venera:preview-pages',
       '预览分页源',
       supportsComicPreview: true,
-      previewPageCount: 3,
+      previewPageCount: 12,
       previewCrops: true,
+      previewLandscapeIndexes: const <int>{1},
       catalogPageCount: 3,
     );
     final library = details.ComicDetailsLibrarySnapshot(
@@ -651,12 +652,52 @@ void main() {
     );
     expect(find.byKey(details.comicDetailsPreviewItemKey(1)), findsNothing);
 
-    await _tapVisible(tester, find.text('加载更多'));
-    for (var frame = 0; frame < 80 && source.previewTokens.length < 1; frame++) {
+    await _tapVisible(tester, find.text('展开'));
+    for (var frame = 0; frame < 160 && source.previewTokens.length < 12; frame++) {
       await tester.pump(const Duration(milliseconds: 16));
     }
-    expect(source.previewTokens, <String?>[null, '1']);
+    expect(
+      source.previewTokens,
+      <String?>[
+        null,
+        '1',
+        '2',
+        '3',
+        '4',
+        '5',
+        '6',
+        '7',
+        '8',
+        '9',
+        '10',
+        '11',
+      ],
+    );
     await _pumpUntilFound(tester, find.byKey(details.comicDetailsPreviewItemKey(1)));
+    expect(
+      find.descendant(
+        of: find.byKey(details.comicDetailsPreviewKey),
+        matching: find.byType(Wrap),
+      ),
+      findsNothing,
+    );
+    final previewPager = find.descendant(
+      of: find.byKey(details.comicDetailsPreviewKey),
+      matching: find.byType(PageView),
+    );
+    expect(previewPager, findsOneWidget);
+    expect(tester.getSize(previewPager).height, lessThanOrEqualTo(480));
+    final item0Center = tester.getCenter(
+      find.byKey(details.comicDetailsPreviewItemKey(0)),
+    );
+    final item1Center = tester.getCenter(
+      find.byKey(details.comicDetailsPreviewItemKey(1)),
+    );
+    final item2Center = tester.getCenter(
+      find.byKey(details.comicDetailsPreviewItemKey(2)),
+    );
+    expect(item0Center.dy, closeTo(item1Center.dy, 1));
+    expect((item2Center.dy - item0Center.dy).abs(), greaterThan(8));
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 100)),
     );
@@ -674,6 +715,9 @@ void main() {
     );
     await tester.pump();
     expect(openedPage, 1);
+    await tester.fling(previewPager, const Offset(-600, 0), 1000);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('2 / '), findsOneWidget);
   });
 
   testWidgets('local details retain source preview and comment sections',
@@ -1581,6 +1625,7 @@ final class _FixtureSource
     this.supportsComicPreview = false,
     this.previewPageCount = 1,
     this.previewCrops = false,
+    this.previewLandscapeIndexes = const <int>{},
     this.supportsComicComments = false,
   });
 
@@ -1603,6 +1648,7 @@ final class _FixtureSource
   final bool supportsComicPreview;
   final int previewPageCount;
   final bool previewCrops;
+  final Set<int> previewLandscapeIndexes;
   @override
   final bool supportsComicComments;
   int _comicLoads = 0;
@@ -1721,9 +1767,7 @@ final class _FixtureSource
       preview: supportsComicPreview && previewPageCount == 1
           ? ComicPreviewPage(
               items: <ComicPreviewAsset>[
-                ComicPreviewAsset(
-                  uri: Uri.https('example.invalid', '/$sourceId/preview-0.png'),
-                ),
+                _previewAsset(0),
               ],
               nextToken: previewPageCount > 1 ? '1' : null,
             )
@@ -1757,9 +1801,7 @@ final class _FixtureSource
     return ComicPreviewPage(
       items: <ComicPreviewAsset>[
         for (var index = start; index < end; index++)
-          ComicPreviewAsset(
-            uri: _previewUri(index),
-          ),
+          _previewAsset(index),
       ],
       nextToken: end < previewPageCount ? '$end' : null,
     );
@@ -1769,6 +1811,15 @@ final class _FixtureSource
         'https://example.invalid/$sourceId/preview-$index.png'
         '${previewCrops ? (index.isEven ? '@x=0-200&y=0-200' : '@x=200-400&y=200-400') : ''}',
       );
+
+  ComicPreviewAsset _previewAsset(int index) {
+    final landscape = previewLandscapeIndexes.contains(index);
+    return ComicPreviewAsset(
+      uri: _previewUri(index),
+      width: landscape ? 1600 : 1200,
+      height: landscape ? 900 : 1600,
+    );
+  }
 
   @override
   Future<ComicCommentPage> loadComicComments(

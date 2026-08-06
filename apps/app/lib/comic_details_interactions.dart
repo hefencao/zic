@@ -15,6 +15,7 @@ IconData _sourcePluginIcon(String sourceId) {
 final class _ComicDetailsFailureScaffold extends StatelessWidget {
   const _ComicDetailsFailureScaffold({
     required this.title,
+    required this.comicId,
     required this.sourceId,
     required this.sourceLabel,
     required this.failure,
@@ -26,6 +27,7 @@ final class _ComicDetailsFailureScaffold extends StatelessWidget {
   });
 
   final String title;
+  final String comicId;
   final String sourceId;
   final String sourceLabel;
   final _DetailFailure failure;
@@ -55,6 +57,7 @@ final class _ComicDetailsFailureScaffold extends StatelessWidget {
               onPressed: onMigrateSource,
               icon: const Icon(Icons.swap_horiz),
             ),
+          _ComicDetailsMiscMenu(comicId: comicId, title: title),
           if (onOpenSourceSettings != null)
             _SourceSettingsAction(
               sourceId: sourceId,
@@ -75,6 +78,7 @@ final class _ComicDetailsScaffold extends StatefulWidget {
   const _ComicDetailsScaffold({
     required this.screenKey,
     required this.title,
+    required this.comicId,
     required this.sourceId,
     required this.sourceLabel,
     required this.authors,
@@ -106,6 +110,7 @@ final class _ComicDetailsScaffold extends StatefulWidget {
 
   final Key screenKey;
   final String title;
+  final String comicId;
   final String sourceId;
   final String sourceLabel;
   final List<String> authors;
@@ -201,6 +206,7 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
               onPressed: widget.onMigrateSource,
               icon: const Icon(Icons.swap_horiz),
             ),
+          _ComicDetailsMiscMenu(comicId: widget.comicId, title: widget.title),
           if (widget.onOpenSourceSettings != null)
             _SourceSettingsAction(
               sourceId: widget.sourceId,
@@ -372,6 +378,60 @@ final class _ComicDetailsReadingActions extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+enum _ComicDetailsMiscCommand { copyId, copyTitle, copyIdAndTitle }
+
+final class _ComicDetailsMiscMenu extends StatelessWidget {
+  const _ComicDetailsMiscMenu({required this.comicId, required this.title});
+
+  final String comicId;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<_ComicDetailsMiscCommand>(
+      key: comicDetailsMiscKey,
+      tooltip: '杂项',
+      icon: const Icon(Icons.more_horiz),
+      onSelected: (command) => unawaited(_copy(context, command)),
+      itemBuilder: (_) => const <PopupMenuEntry<_ComicDetailsMiscCommand>>[
+        PopupMenuItem(
+          value: _ComicDetailsMiscCommand.copyId,
+          child: Text('复制漫画 ID'),
+        ),
+        PopupMenuItem(
+          value: _ComicDetailsMiscCommand.copyTitle,
+          child: Text('复制漫画标题'),
+        ),
+        PopupMenuItem(
+          value: _ComicDetailsMiscCommand.copyIdAndTitle,
+          child: Text('复制 ID 与标题'),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _copy(
+    BuildContext context,
+    _ComicDetailsMiscCommand command,
+  ) async {
+    final value = switch (command) {
+      _ComicDetailsMiscCommand.copyId => comicId,
+      _ComicDetailsMiscCommand.copyTitle => title,
+      _ComicDetailsMiscCommand.copyIdAndTitle => '$title\n$comicId',
+    };
+    await Clipboard.setData(ClipboardData(text: value));
+    if (!context.mounted) return;
+    final label = switch (command) {
+      _ComicDetailsMiscCommand.copyId => '漫画 ID',
+      _ComicDetailsMiscCommand.copyTitle => '漫画标题',
+      _ComicDetailsMiscCommand.copyIdAndTitle => '漫画 ID 与标题',
+    };
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已复制$label')),
     );
   }
 }

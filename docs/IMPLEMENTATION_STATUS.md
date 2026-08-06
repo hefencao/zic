@@ -35,9 +35,11 @@
 - Home“更新漫画”已与阅读历史分离：只展示 `inShelf` 漫画并按 `SavedComicRecord.updatedAt`
   排序；Reader 在页码/模式变化、App lifecycle 暂停和 route dispose 时写入进度，
   `HomeLibrarySession` 即时替换内存记录。
-- 详情预览按单项 URI 使用独立 artwork role/cache key；Venera `loadThumbnails` 的首批与游标分页
-  不再重复消费 `loadInfo` 缩略图，点击预览项会将索引传入既有 Reader 路由；Venera
-  `@x/y` 预览 URI 在保留身份的同时按既有约定以去裁剪 URL 调用 `onThumbnailLoad`，封面、预览
+- 详情预览保留完整 URI 作为单项绘制身份，但 artwork role/cache key 使用去 `@x/y` 的 base URI，
+  同一原图的不同裁剪共享一份编码字节；Venera `loadThumbnails` 的首批与游标分页
+  不再重复消费 `loadInfo` 缩略图；预览默认单行，点击展开后自动分页并以 `PageView` 左右翻页，
+  每行按三槽位固定布局，横向图占两槽位，分页图片区域不超过屏幕高度 80%；缩略图使用 `BoxFit.contain` 保持混合横纵向图片的比例；点击预览项会将索引传入既有 Reader 路由；Venera
+  `@x/y` 预览 URI 在保留绘制身份的同时按既有约定以去裁剪 URL 调用 `onThumbnailLoad`，封面、预览
   和来源缩略图失败时统一使用稳定伪随机的柔和纯色占位；预览绘制只显示 `@x/y` 指定的原图区域。
 - ArtifactCacheManager 默认热字节 10 项/256 MiB，支持持久 backend、verified alias/rekey 和 foreground read join。
 - Reader encoded window 为前 7/后 3；decode 角色为前 2/后 1；动态 holder 最大水位为 7/5/3/2。

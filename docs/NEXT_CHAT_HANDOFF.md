@@ -51,11 +51,9 @@
   评论支持分页次级页和按不透明回复 ID 的回复页；预览/头像复用现有 artwork loader。
 - Home 更新区只取书架漫画并按元数据更新时间排序，阅读历史独立按进度更新时间排序；Reader
   在页码/模式变化和退出/生命周期暂停时 flush 进度，`HomeLibrarySession` 即时更新投影。
-- 预览分页由 `loadThumbnails` 独立提供首批和游标，预览 URI 使用独立 artwork role；点击预览项
-  直接复用 Reader 路由并携带对应页索引，远程详情切换为本地投影后仍保留来源预览/评论能力。
-  Venera 预览 URI 的 `@x/y` 标识保留在缓存身份中，但 `onThumbnailLoad` 接收去裁剪 URL；
-  宿主绘制时只显示该标识指定的原图区域；图片失败占位为按 identity 稳定生成的柔和纯色，
-  不再显示破损图标。
+- 预览分页由 `loadThumbnails` 独立提供首批和游标，完整预览 URI 保留为绘制身份，artwork role/cache key 使用去 `@x/y` 的 base URI，使同一原图的不同裁剪共享编码字节；点击预览项直接复用 Reader 路由。
+  预览默认单行，点击展开后自动消费分页并以 `PageView` 左右分页呈现固定行；纵向图每行三槽位，横向图占两槽位，图片区域封顶屏幕高度 80%；缩略图使用 `BoxFit.contain`，混合横纵向图片时保持比例并允许留白。
+  Venera 预览 URI 的 `@x/y` 标识保留在 widget/painter 身份中，但 `onThumbnailLoad` 接收去裁剪 URL；图片失败占位为按 identity 稳定生成的柔和纯色，不再显示破损图标。
 
 ## 下一步
 
