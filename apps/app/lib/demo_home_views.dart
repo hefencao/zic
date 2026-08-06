@@ -157,6 +157,7 @@ extension _DemoHomeViews on _DemoHomeState {
             right.metadataUpdatedAt.compareTo(left.metadataUpdatedAt),
       );
     final visibleUpdates = updates.take(10).toList(growable: false);
+    final telemetryOwners = <String>{};
     final history = _libraryComics
         .where((comic) => comic.lastReadChapter != null)
         .toList(growable: true)
@@ -176,7 +177,10 @@ extension _DemoHomeViews on _DemoHomeState {
             subtitle: updates.isEmpty ? '导入漫画后会显示最近更新' : null,
           ),
           const SizedBox(height: 10),
-          _buildHorizontalComics(visibleUpdates),
+          _buildHorizontalComics(
+            visibleUpdates,
+            telemetryOwners: telemetryOwners,
+          ),
           const SizedBox(height: 24),
           HomeSectionTitle(
             key: homeHistorySectionKey,
@@ -184,7 +188,11 @@ extension _DemoHomeViews on _DemoHomeState {
             subtitle: history.isEmpty ? '开始阅读后会保留最后位置' : null,
           ),
           const SizedBox(height: 10),
-          _buildHorizontalComics(history, history: true),
+          _buildHorizontalComics(
+            history,
+            history: true,
+            telemetryOwners: telemetryOwners,
+          ),
           const SizedBox(height: 24),
           FilledButton.icon(
             key: localImageFolderImportKey,
@@ -214,6 +222,7 @@ extension _DemoHomeViews on _DemoHomeState {
   Widget _buildHorizontalComics(
     List<LibraryComic> comics, {
     bool history = false,
+    Set<String>? telemetryOwners,
   }) {
     if (comics.isEmpty) {
       return const SizedBox(
@@ -235,7 +244,10 @@ extension _DemoHomeViews on _DemoHomeState {
           return SizedBox(
             width: ComicCoverCard.cardWidth,
             child: ComicCoverCard(
-              key: resume == null
+              key: ValueKey<String>(
+                '${history ? 'home-history' : 'home-update'}:${comic.identity}',
+              ),
+              interactionKey: resume == null
                   ? ValueKey<String>('comic-entry:${comic.identity}')
                   : history
                       ? historyChapterEntryKey(
@@ -250,7 +262,10 @@ extension _DemoHomeViews on _DemoHomeState {
               preference: _preferenceForComic(comic),
               coverSource: _coverSourceLoaderForComic(comic),
               recoveryCoverSource: _coverRecoverySourceLoaderForComic(comic),
-              startupTelemetry: widget.startupTelemetry,
+              startupTelemetry: telemetryOwners == null ||
+                      telemetryOwners.add(comic.identity)
+                  ? widget.startupTelemetry
+                  : null,
               downloadProgress: _downloadProgressForComic(comic),
               onTap: () => unawaited(_openComic(comic)),
               onLongPress: () {

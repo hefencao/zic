@@ -337,6 +337,46 @@ void main() {
     expect(source.browseCalls, greaterThanOrEqualTo(2));
   });
 
+  testWidgets('forced retry falls back to source WebView once',
+      (tester) async {
+    final source = _FixtureSource(
+      'mihon:verification-refresh',
+      '强制刷新验证源',
+      browseError: const Failure(
+        code: ErrorCode.sourceVerificationRequired,
+        message: 'source-verification-required: Cloudflare verification failed',
+      ),
+    );
+    var webViewOpens = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ComicSourcesPage(
+            sources: <BrowsableComicSource>[source],
+            activeSourceId: source.sourceId,
+            onSourceSelected: (_) {},
+            loadCover: (_, __, ___) async =>
+                throw StateError('cover should not load'),
+            onOpenComic: (_, __) async {},
+            onOpenSourceWebView: (_, __) async {
+              webViewOpens++;
+            },
+          ),
+        ),
+      ),
+    );
+
+    await _pumpUntilFound(tester, find.byKey(comicSourceErrorKey));
+    await _tapVisible(tester, find.byIcon(Icons.refresh));
+    for (var frame = 0; frame < 80 && webViewOpens == 0; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+
+    expect(webViewOpens, 1);
+    expect(source.browseCalls, greaterThanOrEqualTo(3));
+  });
+
   testWidgets('cover verification failure exposes its source WebView action',
       (tester) async {
     final source = _FixtureSource('mihon:cover-verification', '封面验证源');

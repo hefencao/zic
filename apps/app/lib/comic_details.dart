@@ -1163,8 +1163,9 @@ final class _RemoteComicDetailsScreenState
   }
 
   Future<ComicPreviewPage> _loadRemotePreview(String? nextToken) async {
-    final source = await _sourceForOperation();
-    if (source is! ComicPreviewSource || !source.supportsComicPreview) {
+    final candidate = await _sourceForOperation();
+    final source = candidate is ComicPreviewSource ? candidate : null;
+    if (source == null || !source.supportsComicPreview) {
       throw StateError('漫画源当前不支持预览');
     }
     return source.loadComicPreview(
@@ -1177,8 +1178,9 @@ final class _RemoteComicDetailsScreenState
     required int page,
     String? replyTo,
   }) async {
-    final source = await _sourceForOperation();
-    if (source is! ComicCommentSource || !source.supportsComicComments) {
+    final candidate = await _sourceForOperation();
+    final source = candidate is ComicCommentSource ? candidate : null;
+    if (source == null || !source.supportsComicComments) {
       throw StateError('漫画源当前不支持评论');
     }
     return source.loadComicComments(

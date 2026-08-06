@@ -18,6 +18,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - 首页每张封面 MUST 独立完成请求和显示；一张封面变慢或 durable response 写入变慢，
   不得阻塞其它已经取得 encoded bytes 的封面。冷 miss MAY 先使用 memory source，持久化
   写入由统一 response cache 后台完成；已有 durable file hit MUST 保持文件直读。
+- 首页封面 Presentation State MUST 以稳定 comic identity 为主，不得因 resume chapter 变化被销毁；同 identity 的同时请求 SHOULD 合并 source/provider。无首帧 watchdog MUST NOT 把离屏或未 paint 直接视为 encoded cache 失效，只能先重建同一 provider stream；只有明确 decoder error恢复耗尽后才可刷新 encoded bytes。
 - 首页、漫画源卡片和详情封面在 encoded-source Future 或 Flutter ImageStream 发生瞬时失败后 MUST 可有界恢复；解码失败 SHOULD 只驱逐对应 provider，不得清空统一 response cache。App resume SHOULD 重试仍失败的封面，`sourceVerificationRequired` MUST 保持显式恢复。
 - 首页封面 MUST 先通过 source-independent raw comic stable key 查询统一 response cache；
   命中时不得解析来源、创建 source transport 或等待插件 activation。raw miss 才可进入
@@ -52,6 +53,8 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - App-owned modal panel 的关闭操作 MUST 是左下角 X；确认、保存、删除等正向操作位于
   右侧，不得以“取消”文字按钮替代关闭 X。
 - 漫画源页 MUST 使用来源自身声明的 browse section；Mihon Popular/Latest 与 Venera explore/category target 均属于来源内部分类。原生/Mihon/Venera 运行时类型 MUST NOT 作为内容分类行，只能以来源 chip 的视觉标识区分。固定大小 catalog page MUST 使用显式上一页/下一页，pager MUST 位于内容滚动尾部；切换来源、section 或外部搜索请求时 MUST 回到第一页。
+- 切换漫画 source 时，Presentation MUST 在同一更新周期将 projection owner 切换为目标 source；MUST 优先显示目标精确请求缓存，其次目标最近缓存，没有目标缓存时显示目标 loading/error。旧 source 页面不得因目标请求失败继续可见。
+- 强制刷新遇到 `sourceVerificationRequired` 且存在 WebView capability 时 MUST 自动进入一次目标 source 验证；验证返回后 MAY 重试一次，但 MUST 防止循环打开。
 - 漫画源搜索 MUST 以来源栏上方的浮动控件进入，展开后 SHOULD 提供可持久化、可删除和可清空的搜索历史。展开搜索面板 MUST 优先消费系统返回手势与垂直拖动/滚动手势，并在这些手势发生时恢复为浮动按钮。Mihon `getFilterList()` 支持的 CheckBox、TriState、Select 与 Group 子项 SHOULD 以不透明 ID 的过滤标签显示在搜索框上方；UI MUST NOT 持有或解释插件 Filter 对象。搜索结果 MUST 使用 catalog/resource-cache 权威：若有缓存，Presentation MUST 先显示缓存并后台刷新；只有稳定字段变化时才替换列表，不得建立页面私有结果缓存。漫画源页 MUST 支持边缘下拉达到阈值后的强制刷新；强制刷新 MUST 绕过 catalog cache，但 SHOULD 保留已有内容直到新结果到达。
 - Mihon 插件的已安装列表和仓库列表 MUST 能按规范化语言分类；语言 SHOULD 优先使用插件声明，缺失时从插件 source metadata 推导。多个语言 MUST 归入多语言，无法可靠确定时归入未知语言，不得从显示名猜测。
 - 来源详情若提供预览能力，详情页 MUST 能先显示 `ComicManifest` 中已经返回的预览项，

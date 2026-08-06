@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.144`
-**App build：** `0.31.0+144`
+**源码版本：** `0.31.0-dev.145`
+**App build：** `0.31.0+145`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -9,7 +9,7 @@
 
 ## 当前实现
 
-- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=144`。
+- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=145`。
 - 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
 - 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation
   不阻塞 Home primary，外部 source ready 后增量接入；失败封面仅按稳定资源 identity、显式 retry revision 或 App resume 恢复，loader closure identity 不参与重试。
@@ -31,7 +31,7 @@
   登录参数错误判为 `runtime-request-invalid`。详情 manifest 已接入 Venera `subId`、首批
   thumbnails/comments；支持的来源显示预览栏、评论栏、分页评论页和回复页，图片仍走
   统一 artwork cache，未声明能力的来源不会触发对应插件请求。
-- 漫画源浏览页使用来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态仅以 chip 色彩/图标区分。页码位于滚动尾部，左下浮动搜索保留持久历史；展开搜索优先消费返回和垂直滑动手势，Mihon `getFilterList()` 的 CheckBox/TriState/Select/Group 子项以 opaque 过滤标签显示。catalog 缓存先显示、后台刷新且数据不变时不重建；边缘下拉达到阈值后保留当前列表执行强制来源刷新。Mihon 已安装与仓库插件列表继续按声明/source metadata 的规范化语言筛选。
+- 漫画源浏览页使用来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态仅以 chip 背景色区分，不显示 JS/插件图标。切换 source 时先按目标请求 identity 投影目标缓存，精确缓存缺失时使用目标 source 最近缓存，绝不保留旧 source 卡片。页码位于滚动尾部，左下浮动搜索保留持久历史；展开搜索优先消费返回和垂直滑动手势，Mihon `getFilterList()` 的 CheckBox/TriState/Select/Group 子项以 opaque 过滤标签显示。catalog 缓存先显示、后台刷新且数据不变时不重建；边缘下拉达到阈值后保留当前列表执行强制来源刷新。Mihon 已安装与仓库插件列表继续按声明/source metadata 的规范化语言筛选。
 - 详情页与漫画源页共用同一个可见的顶部边缘下拉刷新组件：`onEdge`、位移 72、保留旧内容后台刷新。
 - Android 可见浏览器 Cookie snapshot 以 `updatedAt` 为 revision，每个 runtime 进程/站点/UA 只导入一次；运行时随后收到的 Cookie 不再被旧 snapshot 每请求覆盖。平台 runtime 对 retryable lifecycle response（包括 `runtime-closing`）原地重新激活并重试一次。已打开的远程详情页按稳定 source ID 解析当前 active adapter，插件重启后预览、评论、章节确保、缓存失效和验证入口不继续使用关闭的旧 session。
 - catalog response cache 使用稳定 source/comic/chapter identity 和结构 weight；页面正文不进入该缓存。
@@ -64,7 +64,7 @@
   书架页不再产生重复首屏请求。
 - Android APK 构建和真机生命周期验证未在当前环境执行。
 
-- dev.144 为 encoded source 已就绪但 ImageStream 无帧无错误的状态增加 2.5 秒首帧 watchdog；恢复时局部强制重读同一稳定 cover identity 一次，保持占位图，不清空全局缓存。
+- dev.145 将 2.5 秒首帧 watchdog 限制为同一 provider stream 的一次重建；无帧不再等价于 encoded cache 失效。Home 卡片 State 使用 section + comic identity，重复卡片共享 source Future/provider；只有明确 decoder exhaustion 才允许强制重读同一 cover identity。
 - 远程详情现在先显示持久 catalog，再等待当前 active source；预览和评论每次调用重新解析 adapter。真实 Mihon 章节存在时，兼容伪章节在最终 UI 边界也被剔除。
 - 详情和漫画源刷新结果由同一个 `AppPullToRefresh` 定位；简介使用 Card，评论 HTML 换行转为普通文本，“继续”区增加上下间距。
 
@@ -74,7 +74,7 @@
 |---|---|
 | repository/documentation/Dart static gates | Verified-static |
 | current-code documentation consistency gate | Verified-static |
-| dev.75–dev.144 ownership gates | Verified-static |
+| dev.75–dev.145 ownership gates | Verified-static |
 | Android/Mihon/Venera/Reader/Pipeline/UI contracts | Verified-static / toolchain |
 | Kotlin texture bridge compile stub | Verified-toolchain |
 | pinned libwebp host build/smoke | Unverified：当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip` |

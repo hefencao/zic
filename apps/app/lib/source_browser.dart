@@ -77,15 +77,6 @@ Color _comicSourceAccent(BrowsableComicSource source) {
   return Colors.orange;
 }
 
-IconData _comicSourceIcon(BrowsableComicSource source) {
-  if (source.sourceId.startsWith('venera:')) {
-    return Icons.javascript_outlined;
-  }
-  if (source.sourceId.startsWith('mihon:')) {
-    return Icons.extension_outlined;
-  }
-  return Icons.public;
-}
 
 ComicWebViewRequest _browserRequestForSource(
   BrowsableComicSource source,
@@ -196,12 +187,29 @@ final class ComicSourcesPage extends StatefulWidget {
   State<ComicSourcesPage> createState() => _ComicSourcesPageState();
 }
 
+final class _SourceBrowseViewState {
+  const _SourceBrowseViewState({
+    required this.sectionId,
+    required this.query,
+    required this.offset,
+    required this.selectedFilterIds,
+  });
+
+  final String? sectionId;
+  final String query;
+  final int offset;
+  final Set<String> selectedFilterIds;
+}
+
 final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   static const int _pageSize = 24;
 
   final TextEditingController _search = TextEditingController();
   final ScrollController _scroll = ScrollController();
+  final Map<String, _SourceBrowseViewState> _sourceViewStates =
+      <String, _SourceBrowseViewState>{};
   List<SourceComicSummary> _items = const <SourceComicSummary>[];
+  String? _projectionSourceId;
   String _query = '';
   bool _loading = false;
   bool _hasMore = false;
@@ -253,6 +261,75 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     return null;
   }
 
+  void _rememberSourceView(String? sourceId) {
+    if (sourceId == null) return;
+    _sourceViewStates[sourceId] = _SourceBrowseViewState(
+      sectionId: _selectedSectionId,
+      query: _query,
+      offset: _pageOffset,
+      selectedFilterIds: Set<String>.unmodifiable(_selectedFilterIds),
+    );
+  }
+
+  void _restoreTargetProjection(BrowsableComicSource? source) {
+    if (source == null) {
+      setState(() {
+        _projectionSourceId = null;
+        _items = const <SourceComicSummary>[];
+        _loading = false;
+        _refreshing = false;
+        _failure = null;
+      });
+      return;
+    }
+    final remembered = _sourceViewStates[source.sourceId];
+    _query = remembered?.query ?? '';
+    _pageOffset = remembered?.offset ?? 0;
+    _selectedSectionId = remembered?.sectionId;
+    _selectedFilterIds = remembered?.selectedFilterIds ?? const <String>{};
+    _search.value = TextEditingValue(
+      text: _query,
+      selection: TextSelection.collapsed(offset: _query.length),
+    );
+    final cache = source is CachedSourceBrowseProjection
+        ? source as CachedSourceBrowseProjection
+        : null;
+    var cached = cache?.peekBrowsePage(
+      sectionId: _selectedSectionId,
+      query: _query,
+      offset: _pageOffset,
+      limit: _pageSize,
+      selectedFilterIds: _selectedFilterIds,
+    );
+    if (cached == null) {
+      final latest = cache?.peekLatestBrowseProjection();
+      if (latest != null) {
+        _selectedSectionId = latest.sectionId;
+        _query = latest.query;
+        _pageOffset = latest.offset;
+        _selectedFilterIds = latest.selectedFilterIds;
+        _search.value = TextEditingValue(
+          text: _query,
+          selection: TextSelection.collapsed(offset: _query.length),
+        );
+        cached = latest.page;
+      }
+    }
+    setState(() {
+      _projectionSourceId = source.sourceId;
+      _failure = null;
+      _refreshing = cached != null;
+      _loading = cached == null;
+      if (cached == null) {
+        _items = const <SourceComicSummary>[];
+        _hasMore = false;
+        _nextOffset = _pageOffset;
+      } else {
+        _applyBrowsePage(cached!, sourceId: source.sourceId);
+      }
+    });
+  }
+
   @override
   void initState() {
     super.initState();
@@ -274,13 +351,10 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     }
     if (oldWidget.activeSourceId != widget.activeSourceId ||
         !_sameSourceIds(oldWidget.sources, widget.sources)) {
-      _query = '';
-      _pageOffset = 0;
-      _search.clear();
+      _rememberSourceView(oldWidget.activeSourceId);
       _sections = const <SourceBrowseSection>[];
-      _selectedSectionId = null;
       _searchFilters = const <SourceSearchFilterOption>[];
-      _selectedFilterIds = const <String>{};
+      _restoreTargetProjection(_activeSource);
       scheduleMicrotask(() => unawaited(_loadSource()));
     }
   }
@@ -408,8 +482,12 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     );
   }
 
-  void _applyBrowsePage(SourceBrowsePage page) {
+  void _applyBrowsePage(
+    SourceBrowsePage page, {
+    String? sourceId,
+  }) {
     _contentRevision++;
+    _projectionSourceId = sourceId ?? _activeSource?.sourceId;
     _items = page.items;
     _hasMore = page.hasMore;
     _pageOffset = page.offset;
@@ -418,6 +496,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
 
   Future<bool> _reload({
     bool forceRefresh = false,
+    bool allowVerificationFallback = true,
     int? offset,
   }) async {
     if (!mounted) return false;
@@ -425,6 +504,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     final generation = ++_generation;
     if (source == null) {
       setState(() {
+        _projectionSourceId = null;
         _items = const <SourceComicSummary>[];
         _loading = false;
         _refreshing = false;
@@ -449,9 +529,11 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
             selectedFilterIds: _selectedFilterIds,
           );
     final hasCached = cached != null;
-    final hasVisibleItems = _items.isNotEmpty;
+    final projectionMatchesSource = _projectionSourceId == source.sourceId;
+    final hasVisibleItems = projectionMatchesSource && _items.isNotEmpty;
     final cachedChanged = cached != null &&
-        !_sameBrowsePage(_items, _pageOffset, _hasMore, cached);
+        (!projectionMatchesSource ||
+            !_sameBrowsePage(_items, _pageOffset, _hasMore, cached));
     final startedMicros = _traceClock.elapsedMicroseconds;
     _recordSourceTrace(
       TraceEventKind.retryScheduled,
@@ -477,8 +559,9 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       _loading = !hasCached && !hasVisibleItems;
       _refreshing = hasCached || hasVisibleItems;
       if (cached != null && cachedChanged) {
-        _applyBrowsePage(cached);
+        _applyBrowsePage(cached, sourceId: source.sourceId);
       } else if (!hasVisibleItems) {
+        _projectionSourceId = source.sourceId;
         _items = const <SourceComicSummary>[];
         _hasMore = false;
         _pageOffset = requestedOffset;
@@ -509,7 +592,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       );
       setState(() {
         if (changed) {
-          _applyBrowsePage(page);
+          _applyBrowsePage(page, sourceId: source.sourceId);
         }
         _failure = null;
       });
@@ -529,11 +612,8 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       );
     } on Object catch (error, stackTrace) {
       if (!mounted || generation != _generation) return false;
-      if (!hasCached && _items.isEmpty) {
-        setState(() {
-          _failure = _SourceFailure.capture(error, stackTrace);
-        });
-      }
+      final failure = _SourceFailure.capture(error, stackTrace);
+      setState(() => _failure = failure);
       _recordSourceTrace(
         TraceEventKind.taskFailed,
         'browse-failed',
@@ -545,6 +625,13 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
           if (error is Failure) 'errorCode': error.code.name,
         },
       );
+      if (forceRefresh &&
+          allowVerificationFallback &&
+          failure.requiresSourceVerification &&
+          widget.onOpenSourceWebView != null &&
+          !_recoveringSourceAccess) {
+        scheduleMicrotask(() => unawaited(_recoverSourceAccess(source)));
+      }
     } finally {
       if (mounted && generation == _generation) {
         setState(() {
@@ -568,7 +655,10 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     try {
       await open(source, source.descriptor.website);
       if (mounted) {
-        await _reload(forceRefresh: true);
+        await _reload(
+          forceRefresh: true,
+          allowVerificationFallback: false,
+        );
         _recordSourceTrace(
           TraceEventKind.sourceReady,
           'verification-recovery-complete',
@@ -663,6 +753,8 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
 
   Future<void> _goToPage(int offset) async {
     if (_loading || offset < 0) return;
+    _pageOffset = offset;
+    _rememberSourceView(_activeSource?.sourceId);
     await _reload(offset: offset);
     if (_scroll.hasClients) {
       _scroll.jumpTo(0);
@@ -944,6 +1036,18 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                   ),
                 ),
               ),
+            if (failure != null && _items.isNotEmpty)
+              SliverToBoxAdapter(
+                child: _SourceRetainedFailureBanner(
+                  failure: failure,
+                  onRetry: () => unawaited(_reload(forceRefresh: true)),
+                  onOpenWebView: failure.requiresSourceVerification &&
+                          widget.onOpenSourceWebView != null
+                      ? () => unawaited(_recoverSourceAccess(source))
+                      : null,
+                  openingWebView: _recoveringSourceAccess,
+                ),
+              ),
             if (_items.isEmpty)
               SliverFillRemaining(
                 hasScrollBody: false,
@@ -1078,7 +1182,6 @@ final class _SourceSwitcher extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return Material(
       key: comicSourceSwitcherKey,
       elevation: 3,
@@ -1105,18 +1208,15 @@ final class _SourceSwitcher extends StatelessWidget {
                     final selected = source.sourceId == activeSourceId;
                     return ChoiceChip(
                       key: comicSourceChoiceKey(source.sourceId),
-                      avatar: Icon(
-                        _comicSourceIcon(source),
-                        size: 18,
-                        color: selected ? scheme.onPrimary : accent,
-                      ),
                       label: Text(source.descriptor.name),
                       selected: selected,
                       showCheckmark: false,
                       selectedColor: accent,
                       side: BorderSide(color: accent.withValues(alpha: .7)),
                       labelStyle: selected
-                          ? TextStyle(color: scheme.onPrimary)
+                          ? TextStyle(
+                              color: Theme.of(context).colorScheme.onPrimary,
+                            )
                           : TextStyle(color: accent),
                       onSelected: (_) => onSelected(source.sourceId),
                     );
@@ -1768,6 +1868,55 @@ final class _SourceFailure {
   final String guidance;
   final String details;
   final bool requiresSourceVerification;
+}
+
+final class _SourceRetainedFailureBanner extends StatelessWidget {
+  const _SourceRetainedFailureBanner({
+    required this.failure,
+    required this.onRetry,
+    this.onOpenWebView,
+    this.openingWebView = false,
+  });
+
+  final _SourceFailure failure;
+  final VoidCallback onRetry;
+  final VoidCallback? onOpenWebView;
+  final bool openingWebView;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      color: scheme.errorContainer,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+        child: Row(
+          children: <Widget>[
+            Icon(Icons.warning_amber_rounded, color: scheme.onErrorContainer),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                failure.summary,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: scheme.onErrorContainer),
+              ),
+            ),
+            if (onOpenWebView != null)
+              TextButton(
+                onPressed: openingWebView ? null : onOpenWebView,
+                child: Text(openingWebView ? '打开中' : '网页验证'),
+              ),
+            IconButton(
+              tooltip: '重试',
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 final class _SourceFailurePanel extends StatelessWidget {

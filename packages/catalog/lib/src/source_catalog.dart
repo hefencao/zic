@@ -242,12 +242,32 @@ abstract interface class FilterableBrowsableComicSource {
   });
 }
 
+final class CachedSourceBrowseSnapshot {
+  CachedSourceBrowseSnapshot({
+    required this.page,
+    required this.sectionId,
+    required this.query,
+    required this.offset,
+    required this.limit,
+    Set<String> selectedFilterIds = const <String>{},
+  }) : selectedFilterIds = Set<String>.unmodifiable(selectedFilterIds);
+
+  final SourceBrowsePage page;
+  final String? sectionId;
+  final String query;
+  final int offset;
+  final int limit;
+  final Set<String> selectedFilterIds;
+}
+
 /// Optional cache projection used by Presentation for stale-while-revalidate.
 ///
 /// The cache owner remains the catalog/resource-cache layer. Presentation may
 /// show [peekBrowsePage] immediately, then call [refreshBrowsePage] in the
 /// background and update only when the source returns different data.
 abstract interface class CachedSourceBrowseProjection {
+  CachedSourceBrowseSnapshot? peekLatestBrowseProjection();
+
   SourceBrowsePage? peekBrowsePage({
     String? sectionId,
     String query = '',

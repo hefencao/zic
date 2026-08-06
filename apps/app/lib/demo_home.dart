@@ -211,6 +211,8 @@ final class _DemoHomeState extends State<DemoHome> {
   bool _batchManagement = false;
   final Set<String> _managedComicIdentities = <String>{};
   final Set<String> _openingComicIdentities = <String>{};
+  final Map<String, Future<EncodedResourceSource>> _coverSourceInflight =
+      <String, Future<EncodedResourceSource>>{};
   int _navigationIndex = 0;
   bool _sourcePageVisited = false;
   String? _sourceSearchQuery;
@@ -1200,32 +1202,54 @@ final class _DemoHomeState extends State<DemoHome> {
         );
   }
 
+  Future<EncodedResourceSource> _joinCoverSourceLoad(
+    LibraryComic comic, {
+    required bool forceRefresh,
+  }) {
+    final key = '${comic.identity}\u0000${comic.coverSourceId ?? ''}'
+        '\u0000${forceRefresh ? 'recovery' : 'normal'}';
+    final existing = _coverSourceInflight[key];
+    if (existing != null) return existing;
+    final future = _loadCoverSource(
+      sourceId: comic.sourceId,
+      comicId: comic.comicId,
+      coverUri: comic.coverSourceId == null
+          ? null
+          : Uri.tryParse(comic.coverSourceId!),
+      fallbackChapter: comic.coverChapter,
+      forceRefresh: forceRefresh,
+    );
+    _coverSourceInflight[key] = future;
+    unawaited(() async {
+      try {
+        await future;
+      } on Object {
+        // A failed future must be removed immediately. Retaining it would make
+        // the next bounded retry join the same completed failure.
+        if (identical(_coverSourceInflight[key], future)) {
+          _coverSourceInflight.remove(key);
+        }
+        return;
+      }
+      // Keep a very short presentation join window so simultaneous Home cards
+      // share one source/provider without becoming a byte cache owned by App.
+      await Future<void>.delayed(const Duration(seconds: 2));
+      if (identical(_coverSourceInflight[key], future)) {
+        _coverSourceInflight.remove(key);
+      }
+    }());
+    return future;
+  }
+
   Future<EncodedResourceSource> Function() _coverSourceLoaderForComic(
     LibraryComic comic,
-  ) {
-    return () => _loadCoverSource(
-          sourceId: comic.sourceId,
-          comicId: comic.comicId,
-          coverUri: comic.coverSourceId == null
-              ? null
-              : Uri.tryParse(comic.coverSourceId!),
-          fallbackChapter: comic.coverChapter,
-        );
-  }
+  ) =>
+      () => _joinCoverSourceLoad(comic, forceRefresh: false);
 
   Future<EncodedResourceSource> Function() _coverRecoverySourceLoaderForComic(
     LibraryComic comic,
-  ) {
-    return () => _loadCoverSource(
-          sourceId: comic.sourceId,
-          comicId: comic.comicId,
-          coverUri: comic.coverSourceId == null
-              ? null
-              : Uri.tryParse(comic.coverSourceId!),
-          fallbackChapter: comic.coverChapter,
-          forceRefresh: true,
-        );
-  }
+  ) =>
+      () => _joinCoverSourceLoad(comic, forceRefresh: true);
 
   bool _hasDetails(LibraryComic comic) {
     return comic.hasSourceCatalog ||

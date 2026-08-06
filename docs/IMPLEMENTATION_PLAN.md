@@ -1,5 +1,12 @@
 # zic Implementation Plan
 
+## P0：来源投影、Cloudflare 与封面身份设备闭环
+
+- 在 Venera/Mihon 多次切换且目标请求失败时，确认页面在同一帧切换为目标缓存或目标 loading/error，绝不显示旧 source 卡片。
+- 对禁漫天堂执行强制刷新，确认 `sourceVerificationRequired` 自动打开一次正确 host/UA 的 WebView，返回后只重试一次。
+- 让同一漫画同时进入更新与历史，并改变 resume chapter、Home enrichment 和前后台状态；确认封面 State 不被章节 key 销毁，Trace 不再出现同 identity 同时重复 source/first-frame owner。
+- 分别制造离屏未绘制、ImageStream error 和 encoded-source failure，确认 watchdog 只处理 provider stream，只有明确 decode exhaustion 才刷新 encoded bytes。
+
 本文件只列未完成工作。
 
 ## P0：Transition 首帧与切页设备闭环

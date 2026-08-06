@@ -1,3 +1,12 @@
+## 0.31.0-dev.145：原子切换来源缓存并修复封面所有权与验证回退
+
+- 漫画源切换时立即按目标 source 的精确请求缓存或最近缓存替换页面投影；请求失败不再继续显示旧插件结果。
+- Mihon 强制刷新返回 `sourceVerificationRequired` 时自动进入一次 WebView 验证，验证返回后重试一次且禁止循环。
+- 底部来源 chip 删除 JS/插件图标，仅以背景色区分生态。
+- Home 封面 State key 固定到 section + comic identity；重复卡片共享 source Future/provider，失败 Future 立即退出 join。
+- 首帧 watchdog 只重建同一 ImageStream，不再把离屏/未绘制误判为 encoded cache 失效；只有明确 decoder exhaustion 才强制刷新 bytes。
+- 修复详情 Preview/Comment capability 的 Dart 类型提升编译闭包，新增 ADR 0130、owner tests 与 dev.145 门禁。
+
 ## 0.31.0-dev.144：封面首帧恢复、详情来源就绪与排版收口
 
 - 对 encoded source 已就绪但 ImageStream 无帧无错误的封面增加 2.5 秒有界 watchdog；局部强制重读同一稳定 cover cache identity，不清空全局缓存。

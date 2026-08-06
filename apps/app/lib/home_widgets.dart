@@ -54,6 +54,7 @@ final class ComicCoverCard extends StatelessWidget {
     required this.coverSource,
     required this.onTap,
     this.recoveryCoverSource,
+    this.interactionKey,
     this.onLongPress,
     this.downloadProgress,
     this.startupTelemetry,
@@ -69,6 +70,7 @@ final class ComicCoverCard extends StatelessWidget {
   final ComicPreference preference;
   final Future<EncodedResourceSource> Function() coverSource;
   final Future<EncodedResourceSource> Function()? recoveryCoverSource;
+  final Key? interactionKey;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
   final ComicDownloadProgress? downloadProgress;
@@ -96,6 +98,7 @@ final class ComicCoverCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
           clipBehavior: Clip.antiAlias,
           child: InkWell(
+            key: interactionKey,
             onTap: onTap,
             onLongPress: onLongPress,
             child: AspectRatio(
@@ -214,6 +217,7 @@ final class _CoverImageState extends State<_CoverImage>
   bool _loadFailed = false;
   bool _recoveringEncodedSource = false;
   bool _encodedRecoveryAttempted = false;
+  bool _streamWatchdogAttempted = false;
   int _decodeRecoveryGeneration = 0;
   static const _firstFrameTimeout = Duration(milliseconds: 2500);
 
@@ -246,6 +250,7 @@ final class _CoverImageState extends State<_CoverImage>
         source: source.origin.name,
         byteLength: source.lengthInBytes,
       );
+      _streamWatchdogAttempted = false;
       _scheduleFirstFrameWatchdog();
       return source;
     } on Object {
@@ -258,14 +263,13 @@ final class _CoverImageState extends State<_CoverImage>
   void _scheduleFirstFrameWatchdog() {
     _firstFrameWatchdog?.cancel();
     _firstFrameWatchdog = Timer(_firstFrameTimeout, () {
-      if (!mounted || _reportedFirstFrame) return;
-      _loadFailed = true;
-      final recoveryLoader = widget.recoveryLoader;
-      if (recoveryLoader != null) {
-        unawaited(_recoverEncodedSource());
-      } else {
-        _restartLoadWithReset();
-      }
+      if (!mounted || _reportedFirstFrame || _streamWatchdogAttempted) return;
+      _streamWatchdogAttempted = true;
+      // A missing frame callback is not proof that encoded bytes were
+      // invalidated: an offscreen card may simply not have painted. Rebuild
+      // only this provider stream once. Actual decode exhaustion is the only
+      // path allowed to force-refresh the encoded source.
+      setState(() => _decodeRecoveryGeneration++);
     });
   }
 
@@ -277,6 +281,7 @@ final class _CoverImageState extends State<_CoverImage>
     _reportedFirstFrame = true;
     _loadFailed = false;
     _encodedRecoveryAttempted = false;
+    _streamWatchdogAttempted = false;
     _retry.reset();
     widget.startupTelemetry?.coverFirstFrame(widget.cacheIdentity);
   }

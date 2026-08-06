@@ -127,7 +127,7 @@ Cookie 会话，按当前详情页 `#gnd` 关系生成版本，不把 Venera 当
 经过精确章节匹配验证的偏好、阅读位置和已读状态，并先完成目标写入；同源替换随后清理旧漫画
 记录，跨源迁移保留原来源。迁移面板始终展示当前插件和来源，目标可为当前来源或其他已启用来源。
 
-漫画源页使用来源自身声明的 browse section：Mihon 映射 Popular/Latest，Venera 枚举 explore loader 与 category target；原生/Mihon/Venera 仅通过来源 chip 的颜色与图标区分，不占内容分类行。固定大小的 catalog page 仍使用显式上一页/下一页，但 pager 位于内容滚动尾部。左下浮动搜索位于来源栏上方，展开后显示持久化搜索历史；展开面板优先消费返回和垂直滑动手势，收起后才把手势交还页面。Mihon `getFilterList()` 由 runtime adapter 投影为 opaque `SourceSearchFilterOption`，搜索框上方仅显示 CheckBox、TriState、Select 与 Group 子项的过滤标签，UI 不解析插件对象。列表由 catalog response cache 先行投影，后台 refresh 只有在稳定字段发生变化时才更新 Presentation；边缘下拉达到刷新阈值后强制绕过缓存请求来源，但保留当前内容直到新数据到达。Mihon 插件的已安装与仓库列表仍按规范化语言分类。
+漫画源页使用来源自身声明的 browse section：Mihon 映射 Popular/Latest，Venera 枚举 explore loader 与 category target；原生/Mihon/Venera 仅通过来源 chip 的背景色区分，不显示 JS/插件图标，也不占内容分类行。固定大小的 catalog page 仍使用显式上一页/下一页，但 pager 位于内容滚动尾部。左下浮动搜索位于来源栏上方，展开后显示持久化搜索历史；展开面板优先消费返回和垂直滑动手势，收起后才把手势交还页面。Mihon `getFilterList()` 由 runtime adapter 投影为 opaque `SourceSearchFilterOption`，搜索框上方仅显示 CheckBox、TriState、Select 与 Group 子项的过滤标签，UI 不解析插件对象。列表由 catalog response cache 先行投影；source 切换时 projection owner 先原子切换到目标 source，并按精确请求缓存或目标最近缓存立即绘制，旧 source 内容没有展示资格。后台 refresh 只有在稳定字段发生变化时才更新 Presentation；边缘下拉达到刷新阈值后强制绕过缓存请求来源，但保留当前内容直到新数据到达。Mihon 插件的已安装与仓库列表仍按规范化语言分类。
 
 详情扩展数据由 source adapter 负责：`ComicManifest` 可携带首批预览缩略图和评论，
 `ComicPreviewSource`/`ComicCommentSource` 只在来源声明能力时提供继续分页。App 只消费
@@ -378,7 +378,7 @@ role 相同，因此无需清空或迁移已有 cover 缓存；封面则有一�
 
 ### 封面与详情来源恢复
 
-- artwork encoded source 就绪后启动 2.5 秒首帧 watchdog；若 ImageStream 既不出帧也不报错，只对当前 cover identity 强制重读一次并重建流，稳定占位图持续可见。
+- artwork encoded source 就绪后启动 2.5 秒首帧 watchdog；无帧只重建同一 provider stream 一次，因为离屏/尚未 paint 不证明 encoded cache 失效。只有 ImageStream 明确报错且局部恢复耗尽，才允许对当前稳定 cover identity 强制重读 bytes。Home card State 以 section + comic identity 固定，重复 owner 共享 source Future/provider。
 - cover recovery 继续使用 `role=cover` 的稳定 cache identity；`cover-recovery:*` 只是调用意图，不创建第二个长期缓存角色。
 - 远程详情优先投影已保存 manifest；插件 host 未就绪时等待当前 source resolver，不能因后台 refresh 失败丢弃已有详情。
 - 预览、评论、章节确保和刷新在实际调用时解析当前 active adapter，不捕获插件重启前的 source session。

@@ -43,6 +43,7 @@ final class CachedBrowsableComicSource
   static const int _maxChapterIdentityIndex = 512;
   final LinkedHashMap<String, String> _chapterComicIds =
       LinkedHashMap<String, String>();
+  CachedSourceBrowseSnapshot? _latestBrowseProjection;
 
   @override
   String get sourceId => source.sourceId;
@@ -84,7 +85,7 @@ final class CachedBrowsableComicSource
     final sectioned = source is SectionedBrowsableComicSource
         ? source as SectionedBrowsableComicSource
         : null;
-    return cache.getOrLoad<SourceBrowsePage>(
+    final result = cache.getOrLoad<SourceBrowsePage>(
       key: _browseKey(
         normalizedQuery: normalizedQuery,
         offset: offset,
@@ -121,6 +122,17 @@ final class CachedBrowsableComicSource
       weightOf: _browseWeight,
       forceRefresh: forceRefresh,
     );
+    return result.then((page) {
+      _latestBrowseProjection = CachedSourceBrowseSnapshot(
+        page: page,
+        sectionId: sectionId,
+        query: normalizedQuery,
+        offset: offset,
+        limit: limit,
+        selectedFilterIds: selectedFilterIds,
+      );
+      return page;
+    });
   }
 
   @override
@@ -203,22 +215,39 @@ final class CachedBrowsableComicSource
       );
 
   @override
+  CachedSourceBrowseSnapshot? peekLatestBrowseProjection() =>
+      _latestBrowseProjection;
+
+  @override
   SourceBrowsePage? peekBrowsePage({
     String? sectionId,
     String query = '',
     int offset = 0,
     int limit = 24,
     Set<String> selectedFilterIds = const <String>{},
-  }) =>
-      cache.peek<SourceBrowsePage>(
-        _browseKey(
-          normalizedQuery: query.trim(),
-          offset: offset,
-          limit: limit,
-          sectionId: sectionId,
-          selectedFilterIds: selectedFilterIds,
-        ),
+  }) {
+    final normalizedQuery = query.trim();
+    final page = cache.peek<SourceBrowsePage>(
+      _browseKey(
+        normalizedQuery: normalizedQuery,
+        offset: offset,
+        limit: limit,
+        sectionId: sectionId,
+        selectedFilterIds: selectedFilterIds,
+      ),
+    );
+    if (page != null) {
+      _latestBrowseProjection = CachedSourceBrowseSnapshot(
+        page: page,
+        sectionId: sectionId,
+        query: normalizedQuery,
+        offset: offset,
+        limit: limit,
+        selectedFilterIds: selectedFilterIds,
       );
+    }
+    return page;
+  }
 
   @override
   Future<SourceBrowsePage> refreshBrowsePage({

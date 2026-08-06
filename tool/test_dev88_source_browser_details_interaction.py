@@ -157,7 +157,9 @@ for token in (
     "queryRevision",
     "sourceSupportsSettings(source)",
     "await open(source, source.descriptor.website)",
-    "await _reload(forceRefresh: true)",
+    "await _reload(",
+    "forceRefresh: true,",
+    "allowVerificationFallback: false,",
 ):
     require(source, token, "source browse recovery/search")
 forbid(source, "Icons.open_in_browser", "source globe icon migration")

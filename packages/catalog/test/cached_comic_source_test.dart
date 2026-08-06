@@ -71,6 +71,30 @@ void main() {
     expect(raw.sectionLoads, 1);
     expect(raw.browseLoads, 2);
     expect(raw.lastSectionId, 'popular');
+    final latest = source.peekLatestBrowseProjection();
+    expect(latest, isNotNull);
+    expect(latest!.sectionId, 'popular');
+    expect(latest.offset, 0);
+    expect(latest.limit, 24);
+    expect(latest.page.items.single.sourceId, raw.sourceId);
+  });
+
+  test('latest browse projection follows the target source request identity',
+      () async {
+    final raw = _CountingSource();
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final source = CachedBrowsableComicSource(source: raw, cache: cache);
+
+    await source.browseSection('popular', offset: 0, limit: 24);
+    await source.browseSection('latest', offset: 24, limit: 12);
+
+    final latest = source.peekLatestBrowseProjection();
+    expect(latest, isNotNull);
+    expect(latest!.sectionId, 'latest');
+    expect(latest.offset, 24);
+    expect(latest.limit, 12);
+    expect(latest.page.offset, 24);
   });
 
   test('cached source preserves the optional comic web URI capability', () {

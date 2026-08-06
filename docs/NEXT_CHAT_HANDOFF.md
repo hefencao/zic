@@ -1,6 +1,6 @@
-# dev.144 后续交接
+# dev.145 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.144_cover-first-frame-detail-source-layout.zip`。
+唯一后续基线：`zic_v0.31.0-dev.145_target-source-cache-cover-identity-cloudflare.zip`。
 
 ## 必读
 
@@ -19,8 +19,10 @@
 13. `docs/adr/0126-source-owned-browse-sections-floating-search-and-swr.md`
 14. `docs/adr/0127-preview-width-cover-recovery-search-filters-and-refresh.md`
 15. `docs/adr/0128-cover-stability-preview-rows-cookie-runtime-refresh.md`
-16. `docs/audits/dev143-cover-plugin-preview-refresh-audit.md`
-17. `docs/audits/dev143-validation-results.md`
+16. `docs/adr/0129-cover-first-frame-detail-source-and-layout.md`
+17. `docs/adr/0130-target-source-cache-cover-identity-and-cloudflare-fallback.md`
+18. `docs/audits/dev145-target-source-cover-cloudflare-audit.md`
+19. `docs/audits/dev145-validation-results.md`
 
 ## 当前代码事实
 
@@ -30,8 +32,8 @@
 - holder-driven playback 缺帧时保留当前 output；没有 startup-buffer。
 - Reader 退出后最多保留 1 个 idle chapter resource session、TTL 2 分钟；used texture 不保留。
 - response cache 与 page artifact cache 是两个权威平面；App/Reader 没有私有正文 LRU。
-- 首页、漫画源卡片和详情封面仅做单次后台 source retry；loader closure identity 不得触发重试。`RecoverableArtworkImage` 重建期间保持稳定占位图，成功帧到达才切换；App resume 可恢复仍失败项。
-- 漫画源页使用来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态仅用 chip 色彩/图标表示。
+- 首页封面卡片使用 section + comic identity 的稳定 State key；同 identity 的并发 owner 共享 source Future/provider，失败 Future 立即退出 join。无首帧 watchdog 只重建同一 provider stream，不刷新 encoded bytes；明确 decoder exhaustion 才可 force-refresh。
+- 漫画源页使用来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态只用 chip 背景色表示。source 切换立即投影目标精确/最近缓存；目标错误不允许旧 source 内容滞留。强制刷新遇到 `sourceVerificationRequired` 自动打开一次 WebView并重试一次。
 - 浮动搜索展开态优先消费返回和垂直拖动/滚动手势；搜索历史持久化。Mihon `getFilterList()` 的 CheckBox/TriState/Select/Group 通过 opaque ID 投影为搜索框上方过滤标签，UI 不持有插件 Filter 对象。
 - 浏览页使用 catalog cache-first/background-refresh；稳定字段无变化时不更新。边缘下拉达到阈值后调用强制刷新，保留现有内容直到新结果到达。
 - 详情预览按原顺序装箱：实际行内含横图则最多 2 张、纯竖图则最多 3 张；只在相邻三个候选内做最小局部重排；设置项仍是更严格上限。行宽直接用于反算等面积 tile，内部无 Card/水平 padding，完整行铺满媒体宽度，只有稀疏末行允许放大到参考完整行面积的 2.4 倍。
