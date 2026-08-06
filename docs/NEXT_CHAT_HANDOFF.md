@@ -1,6 +1,6 @@
-# dev.139 后续交接
+# dev.140 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.139_current-code-documentation-realignment.zip`。
+唯一后续基线：`zic_v0.31.0-dev.140_source-paging-mihon-language-equal-area-preview.zip`。
 
 ## 必读
 
@@ -52,8 +52,10 @@
 - Home 更新区只取书架漫画并按元数据更新时间排序，阅读历史独立按进度更新时间排序；Reader
   在页码/模式变化和退出/生命周期暂停时 flush 进度，`HomeLibrarySession` 即时更新投影。
 - 预览分页由 `loadThumbnails` 独立提供首批和游标，完整预览 URI 保留为绘制身份，artwork role/cache key 使用去 `@x/y` 的 base URI，使同一原图的不同裁剪共享编码字节；点击预览项直接复用 Reader 路由。
-  预览默认单行，点击展开后自动消费分页并以 `PageView` 左右分页呈现固定行；纵向图每行三槽位，横向图占两槽位，图片区域封顶屏幕高度 80%；缩略图使用 `BoxFit.contain`，混合横纵向图片时保持比例并允许留白。
+  预览折叠/展开共用按原顺序生成的等目标面积布局，最大/最小面积比不超过 1.2；折叠高度取第一行，展开后自动消费分页并以 `PageView` 左右分页，图片区域封顶屏幕高度 80%，中间只保留箭头按钮。
   Venera 预览 URI 的 `@x/y` 标识保留在 widget/painter 身份中，但 `onThumbnailLoad` 接收去裁剪 URL；图片失败占位为按 identity 稳定生成的柔和纯色，不再显示破损图标。
+
+- 漫画源页按原生/Mihon/Venera 分类并显式翻页；Mihon 已安装/仓库插件按规范化语言分类。
 
 ## 下一步
 

@@ -31,6 +31,15 @@ const comicSourceCopyErrorKey = ValueKey<String>('comic-source-copy-error');
 const comicSourceOpenWebViewKey =
     ValueKey<String>('comic-source-open-webview');
 const comicSourceEmptyKey = ValueKey<String>('comic-source-empty');
+const comicSourceCategoryBarKey =
+    ValueKey<String>('comic-source-category-bar');
+const comicSourcePagerKey = ValueKey<String>('comic-source-pager');
+const comicSourcePreviousPageKey =
+    ValueKey<String>('comic-source-previous-page');
+const comicSourceNextPageKey = ValueKey<String>('comic-source-next-page');
+const comicSourcePageLabelKey = ValueKey<String>('comic-source-page-label');
+Key comicSourceCategoryKey(String category) =>
+    ValueKey<String>('comic-source-category:$category');
 Key comicSourceChoiceKey(String sourceId) =>
     ValueKey<String>('comic-source-choice:$sourceId');
 Key sourceComicCardKey(String sourceId, String comicId) =>
@@ -45,6 +54,41 @@ typedef SourceComicCoverLoader = Future<EncodedResourceSource> Function(
   SourceComicSummary comic,
   Uri uri,
 );
+
+enum _ComicSourceCategory { all, native, mihon, venera }
+
+_ComicSourceCategory _comicSourceCategoryOf(BrowsableComicSource source) {
+  if (source.sourceId.startsWith('mihon:')) {
+    return _ComicSourceCategory.mihon;
+  }
+  if (source.sourceId.startsWith('venera:')) {
+    return _ComicSourceCategory.venera;
+  }
+  return _ComicSourceCategory.native;
+}
+
+String _comicSourceCategoryLabel(_ComicSourceCategory category) =>
+    switch (category) {
+      _ComicSourceCategory.all => '全部',
+      _ComicSourceCategory.native => '原生',
+      _ComicSourceCategory.mihon => 'Mihon',
+      _ComicSourceCategory.venera => 'Venera',
+    };
+
+IconData _comicSourceCategoryIcon(_ComicSourceCategory category) =>
+    switch (category) {
+      _ComicSourceCategory.all => Icons.apps_outlined,
+      _ComicSourceCategory.native => Icons.public,
+      _ComicSourceCategory.mihon => Icons.extension_outlined,
+      _ComicSourceCategory.venera => Icons.javascript_outlined,
+    };
+
+bool _comicSourceCategoryContains(
+  _ComicSourceCategory category,
+  BrowsableComicSource source,
+) =>
+    category == _ComicSourceCategory.all ||
+    _comicSourceCategoryOf(source) == category;
 
 ComicWebViewRequest _browserRequestForSource(
   BrowsableComicSource source,
@@ -148,14 +192,17 @@ final class ComicSourcesPage extends StatefulWidget {
 }
 
 final class _ComicSourcesPageState extends State<ComicSourcesPage> {
+  static const int _pageSize = 24;
+
   final TextEditingController _search = TextEditingController();
   final ScrollController _scroll = ScrollController();
   List<SourceComicSummary> _items = const <SourceComicSummary>[];
   String _query = '';
   bool _loading = false;
-  bool _loadingMore = false;
   bool _hasMore = false;
+  int _pageOffset = 0;
   int _nextOffset = 0;
+  _ComicSourceCategory _sourceCategory = _ComicSourceCategory.all;
   _SourceFailure? _failure;
   int _generation = 0;
   bool _recoveringSourceAccess = false;
@@ -196,7 +243,6 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   @override
   void initState() {
     super.initState();
-    _scroll.addListener(_handleScroll);
     scheduleMicrotask(() => unawaited(_reload()));
   }
 
@@ -205,42 +251,44 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.queryRevision != widget.queryRevision) {
       _query = widget.requestedQuery?.trim() ?? '';
+      _pageOffset = 0;
       _search.value = TextEditingValue(
         text: _query,
         selection: TextSelection.collapsed(offset: _query.length),
       );
-      scheduleMicrotask(() => unawaited(_reload()));
+      scheduleMicrotask(() => unawaited(_reload(offset: 0)));
       return;
     }
     if (oldWidget.activeSourceId != widget.activeSourceId ||
         !_sameSourceIds(oldWidget.sources, widget.sources)) {
       _query = '';
+      _pageOffset = 0;
       _search.clear();
+      final active = _activeSource;
+      if (active != null &&
+          !_comicSourceCategoryContains(_sourceCategory, active)) {
+        _sourceCategory = _comicSourceCategoryOf(active);
+      }
+      if (!widget.sources.any(
+        (source) => _comicSourceCategoryContains(_sourceCategory, source),
+      )) {
+        _sourceCategory = _ComicSourceCategory.all;
+      }
       scheduleMicrotask(() => unawaited(_reload()));
     }
   }
 
   @override
   void dispose() {
-    _scroll
-      ..removeListener(_handleScroll)
-      ..dispose();
+    _scroll.dispose();
     _search.dispose();
     super.dispose();
   }
 
-  void _handleScroll() {
-    if (!_scroll.hasClients ||
-        _scroll.position.extentAfter > 520 ||
-        _loading ||
-        _loadingMore ||
-        !_hasMore) {
-      return;
-    }
-    unawaited(_loadMore());
-  }
-
-  Future<void> _reload({bool forceRefresh = false}) async {
+  Future<void> _reload({
+    bool forceRefresh = false,
+    int? offset,
+  }) async {
     if (!mounted) {
       return;
     }
@@ -253,13 +301,14 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       setState(() {
         _items = const <SourceComicSummary>[];
         _loading = false;
-        _loadingMore = false;
         _hasMore = false;
+        _pageOffset = 0;
         _nextOffset = 0;
         _failure = null;
       });
       return;
     }
+    final requestedOffset = (offset ?? _pageOffset).clamp(0, 1 << 30).toInt();
     final startedMicros = _traceClock.elapsedMicroseconds;
     _recordSourceTrace(
       TraceEventKind.retryScheduled,
@@ -268,6 +317,8 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       payload: <String, Object?>{
         'forceRefresh': forceRefresh,
         'queryLength': _query.length,
+        'offset': requestedOffset,
+        'limit': _pageSize,
       },
     );
     if (forceRefresh) {
@@ -275,20 +326,25 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     }
     setState(() {
       _loading = true;
-      _loadingMore = false;
       _failure = null;
       _items = const <SourceComicSummary>[];
       _hasMore = false;
-      _nextOffset = 0;
+      _pageOffset = requestedOffset;
+      _nextOffset = requestedOffset;
     });
     try {
-      final page = await source.browse(query: _query, limit: 24);
+      final page = await source.browse(
+        query: _query,
+        offset: requestedOffset,
+        limit: _pageSize,
+      );
       if (!mounted || generation != _generation) {
         return;
       }
       setState(() {
         _items = page.items;
         _hasMore = page.hasMore;
+        _pageOffset = page.offset;
         _nextOffset = page.offset + page.items.length;
       });
       _recordSourceTrace(
@@ -298,6 +354,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         payload: <String, Object?>{
           'durationMicros': _traceClock.elapsedMicroseconds - startedMicros,
           'itemCount': page.items.length,
+          'offset': page.offset,
           'hasMore': page.hasMore,
         },
       );
@@ -321,55 +378,6 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     } finally {
       if (mounted && generation == _generation) {
         setState(() => _loading = false);
-      }
-    }
-  }
-
-  Future<void> _loadMore() async {
-    final source = _activeSource;
-    if (source == null || !_hasMore || _loadingMore) {
-      return;
-    }
-    final generation = _generation;
-    setState(() => _loadingMore = true);
-    try {
-      final page = await source.browse(
-        query: _query,
-        offset: _nextOffset,
-        limit: 24,
-      );
-      if (!mounted || generation != _generation) {
-        return;
-      }
-      final known = _items.map((item) => item.comicId).toSet();
-      setState(() {
-        _items = <SourceComicSummary>[
-          ..._items,
-          ...page.items.where((item) => known.add(item.comicId)),
-        ];
-        _hasMore = page.hasMore;
-        _nextOffset = page.offset + page.items.length;
-      });
-    } on Object catch (error, stackTrace) {
-      if (mounted && generation == _generation) {
-        final failure = _SourceFailure.capture(error, stackTrace);
-        _showSourceFailureSnackBar(
-          context,
-          prefix: '加载更多失败',
-          failure: failure,
-          actionLabel: failure.requiresSourceVerification &&
-                  widget.onOpenSourceWebView != null
-              ? 'WebView'
-              : null,
-          onAction: failure.requiresSourceVerification &&
-                  widget.onOpenSourceWebView != null
-              ? () => unawaited(_recoverSourceAccess(source))
-              : null,
-        );
-      }
-    } finally {
-      if (mounted && generation == _generation) {
-        setState(() => _loadingMore = false);
       }
     }
   }
@@ -417,7 +425,30 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
 
   void _submitSearch(String value) {
     _query = value.trim();
-    unawaited(_reload());
+    _pageOffset = 0;
+    unawaited(_reload(offset: 0));
+  }
+
+  void _selectSourceCategory(_ComicSourceCategory category) {
+    if (_sourceCategory == category) return;
+    final visibleSources = widget.sources
+        .where((source) => _comicSourceCategoryContains(category, source))
+        .toList(growable: false);
+    if (visibleSources.isEmpty) return;
+    setState(() => _sourceCategory = category);
+    final active = _activeSource;
+    if (active == null ||
+        !visibleSources.any((source) => source.sourceId == active.sourceId)) {
+      widget.onSourceSelected(visibleSources.first.sourceId);
+    }
+  }
+
+  Future<void> _goToPage(int offset) async {
+    if (_loading || offset < 0) return;
+    await _reload(offset: offset);
+    if (_scroll.hasClients) {
+      _scroll.jumpTo(0);
+    }
   }
 
   @override
@@ -457,9 +488,24 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
           ),
         ),
         Expanded(child: _buildBody(source)),
+        if (source != null &&
+            !_loading &&
+            _failure == null &&
+            (_items.isNotEmpty || _pageOffset > 0))
+          _SourcePager(
+            page: (_pageOffset ~/ _pageSize) + 1,
+            hasPrevious: _pageOffset > 0,
+            hasNext: _hasMore,
+            onPrevious: () => unawaited(
+              _goToPage((_pageOffset - _pageSize).clamp(0, 1 << 30).toInt()),
+            ),
+            onNext: () => unawaited(_goToPage(_nextOffset)),
+          ),
         _SourceSwitcher(
           sources: widget.sources,
           activeSourceId: widget.activeSourceId,
+          selectedCategory: _sourceCategory,
+          onCategorySelected: _selectSourceCategory,
           onSelected: widget.onSourceSelected,
         ),
       ],
@@ -518,11 +564,8 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
             crossAxisSpacing: spacing,
             mainAxisSpacing: 12,
           ),
-          itemCount: _items.length + (_loadingMore ? 1 : 0),
+          itemCount: _items.length,
           itemBuilder: (context, index) {
-            if (index >= _items.length) {
-              return const Center(child: CircularProgressIndicator());
-            }
             final comic = _items[index];
             return _SourceComicCard(
               key: sourceComicCardKey(source.sourceId, comic.comicId),
@@ -545,48 +588,162 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   }
 }
 
+final class _SourcePager extends StatelessWidget {
+  const _SourcePager({
+    required this.page,
+    required this.hasPrevious,
+    required this.hasNext,
+    required this.onPrevious,
+    required this.onNext,
+  });
+
+  final int page;
+  final bool hasPrevious;
+  final bool hasNext;
+  final VoidCallback onPrevious;
+  final VoidCallback onNext;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      key: comicSourcePagerKey,
+      elevation: 1,
+      child: SizedBox(
+        height: 48,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            IconButton(
+              key: comicSourcePreviousPageKey,
+              tooltip: '上一页',
+              onPressed: hasPrevious ? onPrevious : null,
+              icon: const Icon(Icons.chevron_left),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text(
+                '第 $page 页',
+                key: comicSourcePageLabelKey,
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+            ),
+            IconButton(
+              key: comicSourceNextPageKey,
+              tooltip: '下一页',
+              onPressed: hasNext ? onNext : null,
+              icon: const Icon(Icons.chevron_right),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 final class _SourceSwitcher extends StatelessWidget {
   const _SourceSwitcher({
     required this.sources,
     required this.activeSourceId,
+    required this.selectedCategory,
+    required this.onCategorySelected,
     required this.onSelected,
   });
 
   final List<BrowsableComicSource> sources;
   final String? activeSourceId;
+  final _ComicSourceCategory selectedCategory;
+  final ValueChanged<_ComicSourceCategory> onCategorySelected;
   final ValueChanged<String> onSelected;
 
   @override
   Widget build(BuildContext context) {
+    final categories = <_ComicSourceCategory>[
+      _ComicSourceCategory.all,
+      for (final category in _ComicSourceCategory.values.skip(1))
+        if (sources.any(
+          (source) => _comicSourceCategoryContains(category, source),
+        ))
+          category,
+    ];
+    final visibleSources = sources
+        .where(
+          (source) => _comicSourceCategoryContains(selectedCategory, source),
+        )
+        .toList(growable: false);
     return Material(
       key: comicSourceSwitcherKey,
       elevation: 3,
       child: SafeArea(
         top: false,
-        child: SizedBox(
-          height: 58,
-          child: sources.isEmpty
-              ? const Center(child: Text('没有已启用的漫画源'))
-              : ListView.separated(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
+        child: sources.isEmpty
+            ? const SizedBox(
+                height: 58,
+                child: Center(child: Text('没有已启用的漫画源')),
+              )
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  SizedBox(
+                    key: comicSourceCategoryBarKey,
+                    height: 48,
+                    child: ListView.separated(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+                      scrollDirection: Axis.horizontal,
+                      itemCount: categories.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      itemBuilder: (context, index) {
+                        final category = categories[index];
+                        final count = category == _ComicSourceCategory.all
+                            ? sources.length
+                            : sources
+                                .where(
+                                  (source) => _comicSourceCategoryContains(
+                                    category,
+                                    source,
+                                  ),
+                                )
+                                .length;
+                        return ChoiceChip(
+                          key: comicSourceCategoryKey(category.name),
+                          avatar: Icon(
+                            _comicSourceCategoryIcon(category),
+                            size: 18,
+                          ),
+                          label: Text(
+                            '${_comicSourceCategoryLabel(category)}（$count）',
+                          ),
+                          selected: category == selectedCategory,
+                          showCheckmark: false,
+                          onSelected: (_) => onCategorySelected(category),
+                        );
+                      },
+                    ),
                   ),
-                  scrollDirection: Axis.horizontal,
-                  itemCount: sources.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
-                  itemBuilder: (context, index) {
-                    final source = sources[index];
-                    return ChoiceChip(
-                      key: comicSourceChoiceKey(source.sourceId),
-                      label: Text(source.descriptor.name),
-                      selected: source.sourceId == activeSourceId,
-                      showCheckmark: false,
-                      onSelected: (_) => onSelected(source.sourceId),
-                    );
-                  },
-                ),
-        ),
+                  const Divider(height: 1),
+                  SizedBox(
+                    height: 58,
+                    child: ListView.separated(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      scrollDirection: Axis.horizontal,
+                      itemCount: visibleSources.length,
+                      separatorBuilder: (_, __) => const SizedBox(width: 8),
+                      itemBuilder: (context, index) {
+                        final source = visibleSources[index];
+                        return ChoiceChip(
+                          key: comicSourceChoiceKey(source.sourceId),
+                          label: Text(source.descriptor.name),
+                          selected: source.sourceId == activeSourceId,
+                          showCheckmark: false,
+                          onSelected: (_) => onSelected(source.sourceId),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
       ),
     );
   }

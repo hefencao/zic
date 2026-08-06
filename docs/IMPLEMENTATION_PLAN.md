@@ -24,6 +24,12 @@
 - 运行 `flutter analyze`、受影响 package owner tests、App tests和 Android debug/release build。
 - 运行 Rust/Android target 与 JNI symbol验证，确认 APK 中 native build identity正确。
 
+## P1：漫画源与详情预览设备闭环
+
+- 验证漫画源分类切换会选择分类内首个来源、重置第一页，并确认上一页/下一页不重复或跳过结果。
+- 验证 Mihon 已安装和仓库语言分类在真实 index.pb、运行时 discovery metadata 上稳定，未知语言不被误分。
+- 在窄屏/宽屏及极端横纵比预览上确认折叠第一行与展开第一行尺寸一致、面积比不超过 1.2、整体不超过屏幕高度 80%。
+
 ## P1：首页与缓存身份
 
 - 设备验证本轮 primary projection 到第一封面请求的时序，并确认 native prewarm、整本

@@ -1,3 +1,10 @@
+## 0.31.0-dev.140：漫画源分类分页与等面积详情预览
+
+- 漫画源页按原生/Mihon/Venera 分类，改为每页 24 项的显式上一页/下一页；搜索、来源和分类切换回到第一页。
+- Mihon 已安装与仓库插件按插件声明或 source metadata 的规范化语言分类，支持多语言和未知语言。
+- 详情预览折叠/展开共用等目标面积布局，保持原始顺序，最大/最小显示面积比不超过 1.2；折叠高度取第一行，展开区域不超过屏幕高度 80%，按钮居中且仅显示箭头。
+- 新增 ADR 0125、owner tests 与 dev.140 静态门禁；Reader Pipeline、native identity 和缓存所有权不变。
+
 ## 0.31.0-dev.139：当前代码文档重新对齐
 
 - 按 production source 重写 Reader Pipeline、角色/水位、网络、缓存、texture 和 retention 文档。

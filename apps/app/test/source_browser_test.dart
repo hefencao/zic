@@ -120,6 +120,75 @@ void main() {
     expect(find.byKey(comicSourceChoiceKey('fixture-a')), findsOneWidget);
   });
 
+  testWidgets('comic source categories and explicit pager preserve source order',
+      (tester) async {
+    final native = _FixtureSource(
+      'fixture-native',
+      '原生源',
+      browseItemCount: 30,
+    );
+    final mihon = _FixtureSource('mihon:fixture-zh', 'Mihon 中文源');
+    final venera = _FixtureSource('venera:fixture-en', 'Venera English');
+    var activeSourceId = native.sourceId;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) => Scaffold(
+            body: ComicSourcesPage(
+              sources: <BrowsableComicSource>[native, mihon, venera],
+              activeSourceId: activeSourceId,
+              onSourceSelected: (sourceId) {
+                setState(() => activeSourceId = sourceId);
+              },
+              loadCover: (_, __, ___) async =>
+                  MemoryEncodedResourceSource(_tinyPng()),
+              onOpenComic: (_, __) async {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceComicCardKey(native.sourceId, '${native.sourceId}-comic-0')),
+    );
+    expect(find.byKey(comicSourceCategoryKey('all')), findsOneWidget);
+    expect(find.byKey(comicSourceCategoryKey('native')), findsOneWidget);
+    expect(find.byKey(comicSourceCategoryKey('mihon')), findsOneWidget);
+    expect(find.byKey(comicSourceCategoryKey('venera')), findsOneWidget);
+    expect(find.byKey(comicSourcePageLabelKey), findsOneWidget);
+    expect(find.text('第 1 页'), findsOneWidget);
+
+    await _tapVisible(tester, find.byKey(comicSourceNextPageKey));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceComicCardKey(native.sourceId, '${native.sourceId}-comic-24')),
+    );
+    expect(find.text('第 2 页'), findsOneWidget);
+    expect(
+      find.byKey(sourceComicCardKey(native.sourceId, '${native.sourceId}-comic-0')),
+      findsNothing,
+    );
+
+    await _tapVisible(tester, find.byKey(comicSourcePreviousPageKey));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceComicCardKey(native.sourceId, '${native.sourceId}-comic-0')),
+    );
+    expect(find.text('第 1 页'), findsOneWidget);
+
+    await _tapVisible(tester, find.byKey(comicSourceCategoryKey('mihon')));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceComicCardKey(mihon.sourceId, mihon._comicId)),
+    );
+    expect(find.byKey(comicSourceChoiceKey(mihon.sourceId)), findsOneWidget);
+    expect(find.byKey(comicSourceChoiceKey(native.sourceId)), findsNothing);
+    expect(find.byKey(comicSourceChoiceKey(venera.sourceId)), findsNothing);
+  });
+
   testWidgets('source network failure exposes selectable copyable details',
       (tester) async {
     final store = MemoryImportedLibraryStore();
@@ -652,7 +721,12 @@ void main() {
     );
     expect(find.byKey(details.comicDetailsPreviewItemKey(1)), findsNothing);
 
-    await _tapVisible(tester, find.text('展开'));
+    final collapsedItem0Size = tester.getSize(
+      find.byKey(details.comicDetailsPreviewItemKey(0)),
+    );
+    expect(find.text('展开'), findsNothing);
+    expect(find.text('收起'), findsNothing);
+    await _tapVisible(tester, find.byKey(details.comicDetailsPreviewExpandKey));
     for (var frame = 0; frame < 160 && source.previewTokens.length < 12; frame++) {
       await tester.pump(const Duration(milliseconds: 16));
     }
@@ -673,31 +747,34 @@ void main() {
         '11',
       ],
     );
-    await _pumpUntilFound(tester, find.byKey(details.comicDetailsPreviewItemKey(1)));
-    expect(
-      find.descendant(
-        of: find.byKey(details.comicDetailsPreviewKey),
-        matching: find.byType(Wrap),
-      ),
-      findsNothing,
-    );
+    await _pumpUntilFound(tester, find.byKey(details.comicDetailsPreviewItemKey(2)));
     final previewPager = find.descendant(
       of: find.byKey(details.comicDetailsPreviewKey),
       matching: find.byType(PageView),
     );
     expect(previewPager, findsOneWidget);
     expect(tester.getSize(previewPager).height, lessThanOrEqualTo(480));
-    final item0Center = tester.getCenter(
-      find.byKey(details.comicDetailsPreviewItemKey(0)),
+
+    final itemFinders = <Finder>[
+      for (var index = 0; index < 3; index++)
+        find.byKey(details.comicDetailsPreviewItemKey(index)),
+    ];
+    final itemSizes = itemFinders.map(tester.getSize).toList(growable: false);
+    final itemAreas = itemSizes
+        .map((size) => size.width * size.height)
+        .toList(growable: false);
+    expect(
+      itemAreas.reduce((left, right) => left > right ? left : right) /
+          itemAreas.reduce((left, right) => left < right ? left : right),
+      lessThanOrEqualTo(1.2),
     );
-    final item1Center = tester.getCenter(
-      find.byKey(details.comicDetailsPreviewItemKey(1)),
-    );
-    final item2Center = tester.getCenter(
-      find.byKey(details.comicDetailsPreviewItemKey(2)),
-    );
-    expect(item0Center.dy, closeTo(item1Center.dy, 1));
-    expect((item2Center.dy - item0Center.dy).abs(), greaterThan(8));
+    final itemCenters = itemFinders.map(tester.getCenter).toList(growable: false);
+    expect(itemCenters[0].dy, closeTo(itemCenters[1].dy, 1));
+    expect(itemCenters[1].dy, closeTo(itemCenters[2].dy, 1));
+    expect(itemCenters[0].dx, lessThan(itemCenters[1].dx));
+    expect(itemCenters[1].dx, lessThan(itemCenters[2].dx));
+    expect(itemSizes[0], collapsedItem0Size);
+
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 100)),
     );
@@ -715,9 +792,14 @@ void main() {
     );
     await tester.pump();
     expect(openedPage, 1);
-    await tester.fling(previewPager, const Offset(-600, 0), 1000);
-    await tester.pumpAndSettle();
-    expect(find.textContaining('2 / '), findsOneWidget);
+
+    await _tapVisible(tester, find.byKey(details.comicDetailsPreviewExpandKey));
+    await tester.pump();
+    expect(previewPager, findsNothing);
+    expect(
+      tester.getSize(find.byKey(details.comicDetailsPreviewItemKey(0))),
+      collapsedItem0Size,
+    );
   });
 
   testWidgets('local details retain source preview and comment sections',
@@ -1616,6 +1698,7 @@ final class _FixtureSource
     this.revealSecondChapterOnRefresh = false,
     this.runtimePageUri = false,
     this.catalogPageCount = 1,
+    this.browseItemCount = 1,
     this.emptyCatalog = false,
     this.comicTags = const <String>[],
     this.firstComicLoadStarted,
@@ -1638,6 +1721,7 @@ final class _FixtureSource
   final bool revealSecondChapterOnRefresh;
   final bool runtimePageUri;
   final int catalogPageCount;
+  final int browseItemCount;
   final bool emptyCatalog;
   final List<String> comicTags;
   final Completer<void>? firstComicLoadStarted;
@@ -1717,20 +1801,26 @@ final class _FixtureSource
     if (error != null) {
       throw error;
     }
-    final summary = SourceComicSummary(
-      sourceId: sourceId,
-      comicId: _comicId,
-      title: _comic.title,
-      authors: _comic.authors,
-      tags: _comic.tags,
-      coverUri: _comic.coverUri,
-    );
+    final all = <SourceComicSummary>[
+      for (var index = 0; index < browseItemCount; index++)
+        SourceComicSummary(
+          sourceId: sourceId,
+          comicId: browseItemCount == 1 ? _comicId : '$sourceId-comic-$index',
+          title: browseItemCount == 1 ? _comic.title : '$name 漫画 $index',
+          authors: _comic.authors,
+          tags: _comic.tags,
+          coverUri: _comic.coverUri,
+        ),
+    ];
+    final matching = query.isEmpty
+        ? all
+        : all.where((summary) => summary.title.contains(query)).toList();
+    final start = offset.clamp(0, matching.length).toInt();
+    final end = (start + limit).clamp(start, matching.length).toInt();
     return SourceBrowsePage(
-      items: query.isEmpty || summary.title.contains(query)
-          ? <SourceComicSummary>[summary]
-          : const <SourceComicSummary>[],
-      offset: offset,
-      hasMore: false,
+      items: matching.sublist(start, end),
+      offset: start,
+      hasMore: end < matching.length,
     );
   }
 

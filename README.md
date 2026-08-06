@@ -1,6 +1,6 @@
 # zic
 
-`zic` 是面向 Android 优先、高性能漫画阅读场景的 Flutter/Rust 工程。项目支持本地与远程章节、静态图片、Animated WebP、持久下载、漫画源扩展和统一 Reader Pipeline。
+`zic` 是面向 Android 优先、高性能漫画阅读场景的 Flutter/Rust 工程。项目支持本地与远程章节、静态图片、Animated WebP、持久下载、带分类/翻页的漫画源浏览、Mihon/Venera 扩展和统一 Reader Pipeline。
 
 本文件只提供项目入口、构建命令和文档导航。版本历史、实验结论和单轮验证结果不写入 README。
 

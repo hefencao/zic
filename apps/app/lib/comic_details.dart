@@ -54,6 +54,8 @@ const comicDetailsRetryBodyKey =
 const comicDetailsPullRefreshKey =
     ValueKey<String>('comic-details-pull-refresh');
 const comicDetailsPreviewKey = ValueKey<String>('comic-details-preview');
+const comicDetailsPreviewExpandKey =
+    ValueKey<String>('comic-details-preview-expand');
 const comicDetailsCommentsKey = ValueKey<String>('comic-details-comments');
 const comicDetailsCommentsPageKey =
     ValueKey<String>('comic-details-comments-page');

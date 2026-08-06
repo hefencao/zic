@@ -1,20 +1,35 @@
 part of 'comic_details.dart';
 
 const _previewGridGap = 8.0;
-const _previewGridSlots = 3;
 const _previewPageIndicatorHeight = 28.0;
-const _previewPortraitAspect = .67;
-const _previewLandscapeAspect = 1.5;
-const _previewMinRowHeight = 96.0;
-const _previewMaxRowHeight = 190.0;
+const _previewMinTargetEdge = 56.0;
+const _previewMaxTargetEdge = 92.0;
+const _previewMinAspect = .45;
+const _previewMaxAspect = 2.2;
 
-final class _ComicDetailsPreviewRow {
-  const _ComicDetailsPreviewRow({
-    required this.indices,
+final class _ComicDetailsPreviewItemLayout {
+  const _ComicDetailsPreviewItemLayout({
+    required this.index,
+    required this.width,
     required this.height,
   });
 
-  final List<int> indices;
+  final int index;
+  final double width;
+  final double height;
+
+  double get area => width * height;
+}
+
+final class _ComicDetailsPreviewRow {
+  const _ComicDetailsPreviewRow({
+    required this.items,
+    required this.width,
+    required this.height,
+  });
+
+  final List<_ComicDetailsPreviewItemLayout> items;
+  final double width;
   final double height;
 }
 
@@ -163,43 +178,34 @@ final class _ComicDetailsPreviewSectionState
     return Size(sizeWidth, sizeHeight);
   }
 
-  bool _isLandscape(int index) {
-    final size = _knownPreviewSize(index);
-    return size != null && size.width > size.height;
-  }
-
-  int _previewItemUnits(int index) => _isLandscape(index) ? 2 : 1;
-
-  double _previewCellWidth(double maxWidth, int units) {
-    final slotWidth = math.max(
-      1.0,
-      (maxWidth - (_previewGridSlots - 1) * _previewGridGap) /
-          _previewGridSlots,
-    );
-    return slotWidth + (units - 1) * (slotWidth + _previewGridGap);
-  }
-
   double _previewAspect(int index) {
     final size = _knownPreviewSize(index);
-    if (size != null) return size.width / size.height;
-    return _isLandscape(index)
-        ? _previewLandscapeAspect
-        : _previewPortraitAspect;
+    final aspect = size == null ? 1.0 : size.width / size.height;
+    return aspect.clamp(_previewMinAspect, _previewMaxAspect).toDouble();
   }
 
-  double _previewRowHeight(
-    Iterable<int> indices,
-    double maxWidth,
-    double maxHeight,
+  double _previewTargetArea(double maxWidth, double maxHeight) {
+    final edgeForWidth = maxWidth / math.sqrt(_previewMaxAspect);
+    final edgeForHeight = maxHeight * math.sqrt(_previewMinAspect);
+    final nominalEdge = (maxWidth / 4.6)
+        .clamp(_previewMinTargetEdge, _previewMaxTargetEdge)
+        .toDouble();
+    final edge = math.max(
+      1.0,
+      math.min(nominalEdge, math.min(edgeForWidth, edgeForHeight)),
+    );
+    return edge * edge;
+  }
+
+  _ComicDetailsPreviewItemLayout _previewItemLayout(
+    int index,
+    double targetArea,
   ) {
-    var height = _previewMinRowHeight;
-    for (final index in indices) {
-      final width = _previewCellWidth(maxWidth, _previewItemUnits(index));
-      height = math.max(height, width / _previewAspect(index));
-    }
-    return math.min(
-      maxHeight,
-      height.clamp(_previewMinRowHeight, _previewMaxRowHeight).toDouble(),
+    final aspect = _previewAspect(index);
+    return _ComicDetailsPreviewItemLayout(
+      index: index,
+      width: math.sqrt(targetArea * aspect),
+      height: math.sqrt(targetArea / aspect),
     );
   }
 
@@ -207,30 +213,42 @@ final class _ComicDetailsPreviewSectionState
     double maxWidth,
     double maxHeight,
   ) {
+    if (_items.isEmpty || maxWidth <= 0) {
+      return const <_ComicDetailsPreviewRow>[];
+    }
+    final targetArea = _previewTargetArea(maxWidth, maxHeight);
     final rows = <_ComicDetailsPreviewRow>[];
-    var indices = <int>[];
-    var units = 0;
+    var items = <_ComicDetailsPreviewItemLayout>[];
+    var width = 0.0;
+    var height = 0.0;
 
     void closeRow() {
-      if (indices.isEmpty) return;
-      final rowIndices = List<int>.unmodifiable(indices);
+      if (items.isEmpty) return;
       rows.add(
         _ComicDetailsPreviewRow(
-          indices: rowIndices,
-          height: _previewRowHeight(rowIndices, maxWidth, maxHeight),
+          items: List<_ComicDetailsPreviewItemLayout>.unmodifiable(items),
+          width: width,
+          height: height,
         ),
       );
-      indices = <int>[];
-      units = 0;
+      items = <_ComicDetailsPreviewItemLayout>[];
+      width = 0;
+      height = 0;
     }
 
     for (var index = 0; index < _items.length; index++) {
-      final itemUnits = _previewItemUnits(index);
-      if (indices.isNotEmpty && units + itemUnits > _previewGridSlots) {
+      final item = _previewItemLayout(index, targetArea);
+      final nextWidth = items.isEmpty
+          ? item.width
+          : width + _previewGridGap + item.width;
+      if (items.isNotEmpty && nextWidth > maxWidth) {
         closeRow();
       }
-      indices.add(index);
-      units += itemUnits;
+      width = items.isEmpty
+          ? item.width
+          : width + _previewGridGap + item.width;
+      height = math.max(height, item.height);
+      items.add(item);
     }
     closeRow();
     return rows;
@@ -262,29 +280,26 @@ final class _ComicDetailsPreviewSectionState
           : height + _previewGridGap + row.height;
       if (rows.isNotEmpty && nextHeight > maxHeight) {
         closePage();
-        rows.add(row);
-        height = row.height;
-      } else {
-        rows.add(row);
-        height = nextHeight;
       }
+      height = rows.isEmpty
+          ? row.height
+          : height + _previewGridGap + row.height;
+      rows.add(row);
     }
     closePage();
     return pages;
   }
 
   Widget _previewTile(
-    int index, {
-    required double width,
-    required double height,
-  }) {
-    final asset = _items[index];
+    _ComicDetailsPreviewItemLayout layout,
+  ) {
+    final asset = _items[layout.index];
     return SizedBox(
-      width: width,
-      height: height,
+      width: layout.width,
+      height: layout.height,
       child: InkWell(
-        key: comicDetailsPreviewItemKey(index),
-        onTap: () => unawaited(_openPreview(index, asset)),
+        key: comicDetailsPreviewItemKey(layout.index),
+        onTap: () => unawaited(_openPreview(layout.index, asset)),
         borderRadius: BorderRadius.circular(10),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(10),
@@ -328,64 +343,49 @@ final class _ComicDetailsPreviewSectionState
 
   Widget _previewRow(_ComicDetailsPreviewRow row, double maxWidth) {
     return SizedBox(
+      width: maxWidth,
       height: row.height,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          for (var itemIndex = 0; itemIndex < row.indices.length; itemIndex++)
-            if (itemIndex == 0)
-              _previewTile(
-                row.indices[itemIndex],
-                width: _previewCellWidth(
-                  maxWidth,
-                  _previewItemUnits(row.indices[itemIndex]),
-                ),
-                height: row.height,
-              )
-            else ...<Widget>[
-              const SizedBox(width: _previewGridGap),
-              _previewTile(
-                row.indices[itemIndex],
-                width: _previewCellWidth(
-                  maxWidth,
-                  _previewItemUnits(row.indices[itemIndex]),
-                ),
-                height: row.height,
-              ),
+      child: Align(
+        alignment: Alignment.topCenter,
+        child: SizedBox(
+          width: math.min(maxWidth, row.width),
+          height: row.height,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: <Widget>[
+              for (var itemIndex = 0;
+                  itemIndex < row.items.length;
+                  itemIndex++)
+                if (itemIndex == 0)
+                  _previewTile(row.items[itemIndex])
+                else ...<Widget>[
+                  const SizedBox(width: _previewGridGap),
+                  _previewTile(row.items[itemIndex]),
+                ],
             ],
-        ],
+          ),
+        ),
       ),
     );
   }
 
   Widget _previewItems(BuildContext context) {
-    if (!_expanded) {
-      return SizedBox(
-        height: 190,
-        child: ListView.separated(
-          scrollDirection: Axis.horizontal,
-          itemCount: _items.length,
-          separatorBuilder: (_, __) => const SizedBox(width: 8),
-          itemBuilder: (_, index) => _previewTile(
-            index,
-            width: 124,
-            height: 190,
-          ),
-        ),
-      );
-    }
     return LayoutBuilder(
       builder: (context, constraints) {
-        final maxPageHeight = MediaQuery.sizeOf(context).height * .8;
+        final maxPreviewHeight = MediaQuery.sizeOf(context).height * .8;
         final maxGridHeight = math.max(
           1.0,
-          maxPageHeight - _previewPageIndicatorHeight,
+          maxPreviewHeight - _previewPageIndicatorHeight,
         );
-        final pages = _previewPages(
-          constraints.maxWidth,
-          maxGridHeight,
-        );
+        final pages = _previewPages(constraints.maxWidth, maxGridHeight);
         if (pages.isEmpty) return const SizedBox.shrink();
+        if (!_expanded) {
+          final firstRow = pages.first.rows.first;
+          return SizedBox(
+            height: firstRow.height,
+            child: _previewRow(firstRow, constraints.maxWidth),
+          );
+        }
         final pageHeight = pages.fold<double>(
           0,
           (height, page) => math.max(height, page.height),
@@ -532,15 +532,16 @@ final class _ComicDetailsPreviewSectionState
               ),
             if (canExpand)
               Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
+                alignment: Alignment.center,
+                child: IconButton(
+                  key: comicDetailsPreviewExpandKey,
+                  tooltip: _expanded ? '收起预览' : '展开预览',
                   onPressed: _loadingAll
                       ? null
                       : () => unawaited(_toggleExpanded()),
                   icon: Icon(
-                    _expanded ? Icons.expand_less : Icons.expand_more,
+                    _expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
                   ),
-                  label: Text(_expanded ? '收起' : '展开'),
                 ),
               )
             else if (canLoadInitial)
@@ -1238,13 +1239,13 @@ final class _ComicDetailsDecodedArtworkState
     final listener = ImageStreamListener(
       (info, _) {
         if (!mounted) return;
-        final part = _boundedImagePart(widget.part, info.image);
+        final crop = _boundedImagePart(widget.part, info.image);
         final imageWidth = info.image.width.toDouble();
         final imageHeight = info.image.height.toDouble();
         final visibleWidth =
-            part == null ? imageWidth : part.x2! - part.x1!;
+            crop == null ? imageWidth : crop.x2! - crop.x1!;
         final visibleHeight =
-            part == null ? imageHeight : part.y2! - part.y1!;
+            crop == null ? imageHeight : crop.y2! - crop.y1!;
         widget.onImageSize?.call(Size(visibleWidth, visibleHeight));
         setState(() {
           _decodedImage = info.image;

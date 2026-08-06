@@ -100,3 +100,92 @@ String externalPluginEntryLanguage(ExternalComicPluginCatalogEntry entry) {
   if (languages.isNotEmpty) return languages.join('/');
   return 'und';
 }
+
+String externalPluginLanguageCategory(
+  ExternalComicPluginCatalogEntry entry,
+) {
+  final explicit = entry.language?.trim();
+  if (explicit != null && explicit.isNotEmpty) {
+    return _normalizeExternalPluginLanguage(explicit);
+  }
+  final languages = entry.sources
+      .map((source) => _normalizeExternalPluginLanguage(source.language))
+      .where((language) => language != 'und')
+      .toSet();
+  if (languages.isEmpty) return 'und';
+  if (languages.length == 1) return languages.single;
+  return 'multi';
+}
+
+List<String> externalPluginLanguageCategories(
+  Iterable<ExternalComicPluginCatalogEntry> entries, {
+  String preferredLanguage = '',
+}) {
+  final categories = entries
+      .map(externalPluginLanguageCategory)
+      .toSet()
+      .toList(growable: false);
+  final preferred = _normalizeExternalPluginLanguage(preferredLanguage);
+  categories.sort((left, right) {
+    final rank = _externalPluginLanguageRank(left, preferred).compareTo(
+      _externalPluginLanguageRank(right, preferred),
+    );
+    if (rank != 0) return rank;
+    return externalPluginLanguageLabel(left).compareTo(
+      externalPluginLanguageLabel(right),
+    );
+  });
+  return List<String>.unmodifiable(categories);
+}
+
+String externalPluginLanguageLabel(String language) {
+  final normalized = _normalizeExternalPluginLanguage(language);
+  return switch (normalized) {
+    'zh' => '中文',
+    'en' => 'English',
+    'ja' => '日本語',
+    'ko' => '한국어',
+    'es' => 'Español',
+    'fr' => 'Français',
+    'de' => 'Deutsch',
+    'ru' => 'Русский',
+    'pt' => 'Português',
+    'id' => 'Bahasa Indonesia',
+    'th' => 'ไทย',
+    'vi' => 'Tiếng Việt',
+    'ar' => 'العربية',
+    'multi' => '多语言',
+    'und' => '未知语言',
+    _ => normalized,
+  };
+}
+
+bool externalPluginMatchesLanguage(
+  ExternalComicPluginCatalogEntry entry,
+  String category,
+) =>
+    category == 'all' || externalPluginLanguageCategory(entry) == category;
+
+String _normalizeExternalPluginLanguage(String language) {
+  final normalized = language.trim().toLowerCase().replaceAll('_', '-');
+  if (normalized.isEmpty || normalized == 'und' || normalized == 'unknown') {
+    return 'und';
+  }
+  if (normalized == 'all' ||
+      normalized == 'mul' ||
+      normalized == 'multi' ||
+      normalized.contains('/') ||
+      normalized.contains(',') ||
+      normalized.contains(';')) {
+    return 'multi';
+  }
+  return normalized.split('-').first;
+}
+
+int _externalPluginLanguageRank(String language, String preferred) {
+  if (language == preferred && preferred != 'und') return 0;
+  if (language == 'multi') return 1;
+  if (language == 'en') return 2;
+  if (language == 'und') return 4;
+  return 3;
+}

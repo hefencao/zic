@@ -45,6 +45,30 @@ final class _Source implements BrowsableComicSource {
   Future<Uint8List> loadResource(Uri uri) => throw UnimplementedError();
 }
 
+
+ExternalComicPluginCatalogEntry _plugin({
+  required String id,
+  String? language,
+  List<String> sourceLanguages = const <String>[],
+}) =>
+    ExternalComicPluginCatalogEntry(
+      format: ExternalComicPluginFormat.mihonExtension,
+      pluginId: id,
+      name: id,
+      version: '1',
+      entrypoint: Uri.https('example.invalid', '/$id.apk'),
+      language: language,
+      sources: <ExternalComicPluginSource>[
+        for (var index = 0; index < sourceLanguages.length; index++)
+          ExternalComicPluginSource(
+            sourceId: '$id:$index',
+            externalId: '$index',
+            name: '$id $index',
+            language: sourceLanguages[index],
+          ),
+      ],
+    );
+
 void main() {
   test('preferred Mihon source language stays visible in source management', () {
     final owners = <String, String>{
@@ -153,6 +177,33 @@ void main() {
       groups.map((group) => group.defaultSource.descriptor.name),
       <String>['Zed', 'Alpha'],
     );
+  });
+
+  test('Mihon plugins derive stable language categories and filtering', () {
+    final zh = _plugin(id: 'zh', language: 'zh-CN');
+    final en = _plugin(id: 'en', sourceLanguages: const <String>['en']);
+    final multi = _plugin(
+      id: 'multi',
+      sourceLanguages: const <String>['ja', 'en'],
+    );
+    final unknown = _plugin(id: 'unknown');
+
+    expect(externalPluginLanguageCategory(zh), 'zh');
+    expect(externalPluginLanguageCategory(en), 'en');
+    expect(externalPluginLanguageCategory(multi), 'multi');
+    expect(externalPluginLanguageCategory(unknown), 'und');
+    expect(
+      externalPluginLanguageCategories(
+        <ExternalComicPluginCatalogEntry>[en, unknown, multi, zh],
+        preferredLanguage: 'zh-Hans',
+      ),
+      <String>['zh', 'multi', 'en', 'und'],
+    );
+    expect(externalPluginLanguageLabel('zh'), '中文');
+    expect(externalPluginLanguageLabel('multi'), '多语言');
+    expect(externalPluginMatchesLanguage(zh, 'zh'), isTrue);
+    expect(externalPluginMatchesLanguage(en, 'zh'), isFalse);
+    expect(externalPluginMatchesLanguage(en, 'all'), isTrue);
   });
 
 }

@@ -10,6 +10,13 @@ import 'external_plugin_repository_model.dart';
 
 enum _ExternalPluginPage { installed, repository }
 
+const externalPluginInstalledLanguageBarKey =
+    ValueKey<String>('external-plugin-installed-language-bar');
+const externalPluginRepositoryLanguageBarKey =
+    ValueKey<String>('external-plugin-repository-language-bar');
+Key externalPluginLanguageChoiceKey(String scope, String language) =>
+    ValueKey<String>('external-plugin-language:$scope:$language');
+
 final class ExternalPluginRepositoryScreen extends StatefulWidget {
   const ExternalPluginRepositoryScreen({
     required this.format,
@@ -45,6 +52,8 @@ final class _ExternalPluginRepositoryScreenState
   Object? _deviceError;
   bool _loadingRepository = false;
   bool _loadingDevice = false;
+  String _installedLanguage = 'all';
+  String _repositoryLanguage = 'all';
 
   String get _ecosystem => switch (widget.format) {
         ExternalComicPluginFormat.mihonExtension => 'Mihon 扩展',
@@ -260,16 +269,25 @@ final class _ExternalPluginRepositoryScreenState
                   onRemove: (installed) => unawaited(_remove(installed)),
                   onInstallDeviceMihon: (extension) =>
                       unawaited(_installDeviceMihon(extension)),
+                  selectedLanguage: _installedLanguage,
+                  onLanguageSelected: (language) {
+                    setState(() => _installedLanguage = language);
+                  },
                   onRefreshDeviceMihon: () =>
                       unawaited(_refreshDeviceMihon()),
                 ),
               _ExternalPluginPage.repository => _RepositoryPane(
+                  format: widget.format,
                   url: _url,
                   entries: _entries,
                   installedPluginIds: _installedPluginIds,
                   working: _working,
                   loading: _loadingRepository,
                   error: _repositoryError,
+                  selectedLanguage: _repositoryLanguage,
+                  onLanguageSelected: (language) {
+                    setState(() => _repositoryLanguage = language);
+                  },
                   onLoad: () => unawaited(_loadRepository()),
                   onInstall: (plugin) => unawaited(_install(plugin)),
                 ),
@@ -294,6 +312,8 @@ final class _InstalledPluginsPane extends StatelessWidget {
     required this.deviceError,
     required this.onRemove,
     required this.onInstallDeviceMihon,
+    required this.selectedLanguage,
+    required this.onLanguageSelected,
     required this.onRefreshDeviceMihon,
   });
 
@@ -308,10 +328,32 @@ final class _InstalledPluginsPane extends StatelessWidget {
   final Object? deviceError;
   final ValueChanged<InstalledExternalPlugin> onRemove;
   final ValueChanged<InstalledMihonExtension> onInstallDeviceMihon;
+  final String selectedLanguage;
+  final ValueChanged<String> onLanguageSelected;
   final VoidCallback onRefreshDeviceMihon;
 
   @override
   Widget build(BuildContext context) {
+    final preferredLanguage = Localizations.localeOf(context).languageCode;
+    final languageCategories = format == ExternalComicPluginFormat.mihonExtension
+        ? externalPluginLanguageCategories(
+            installed.map((item) => item.plugin),
+            preferredLanguage: preferredLanguage,
+          )
+        : const <String>[];
+    final effectiveLanguage = languageCategories.contains(selectedLanguage)
+        ? selectedLanguage
+        : 'all';
+    final visibleInstalled = effectiveLanguage == 'all'
+        ? installed
+        : installed
+            .where(
+              (item) => externalPluginMatchesLanguage(
+                item.plugin,
+                effectiveLanguage,
+              ),
+            )
+            .toList(growable: false);
     return ListView(
       padding: const EdgeInsets.fromLTRB(10, 10, 10, 24),
       children: <Widget>[
@@ -332,17 +374,33 @@ final class _InstalledPluginsPane extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
           child: Text(
-            'ZIC 已安装（${installed.length}）',
+            'ZIC 已安装（${visibleInstalled.length}/${installed.length}）',
             style: Theme.of(context).textTheme.titleMedium,
           ),
         ),
+        if (format == ExternalComicPluginFormat.mihonExtension &&
+            languageCategories.isNotEmpty) ...<Widget>[
+          _MihonLanguageFilterBar(
+            key: externalPluginInstalledLanguageBarKey,
+            scope: 'installed',
+            languages: languageCategories,
+            selectedLanguage: effectiveLanguage,
+            onSelected: onLanguageSelected,
+          ),
+          const SizedBox(height: 4),
+        ],
         if (installed.isEmpty)
           Padding(
             padding: const EdgeInsets.all(24),
             child: Center(child: Text('尚未安装 $ecosystem')),
           )
+        else if (visibleInstalled.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: Text('该语言分类下没有已安装插件')),
+          )
         else
-          for (final item in installed) ...<Widget>[
+          for (final item in visibleInstalled) ...<Widget>[
             _InstalledPluginTile(
               item: item,
               failure: activationFailures[item.plugin.pluginId],
@@ -405,27 +463,53 @@ final class _InstalledPluginTile extends StatelessWidget {
 
 final class _RepositoryPane extends StatelessWidget {
   const _RepositoryPane({
+    required this.format,
     required this.url,
     required this.entries,
     required this.installedPluginIds,
     required this.working,
     required this.loading,
     required this.error,
+    required this.selectedLanguage,
+    required this.onLanguageSelected,
     required this.onLoad,
     required this.onInstall,
   });
 
+  final ExternalComicPluginFormat format;
   final TextEditingController url;
   final List<ExternalComicPluginCatalogEntry> entries;
   final Set<String> installedPluginIds;
   final Set<String> working;
   final bool loading;
   final Object? error;
+  final String selectedLanguage;
+  final ValueChanged<String> onLanguageSelected;
   final VoidCallback onLoad;
   final ValueChanged<ExternalComicPluginCatalogEntry> onInstall;
 
   @override
   Widget build(BuildContext context) {
+    final preferredLanguage = Localizations.localeOf(context).languageCode;
+    final languageCategories = format == ExternalComicPluginFormat.mihonExtension
+        ? externalPluginLanguageCategories(
+            entries,
+            preferredLanguage: preferredLanguage,
+          )
+        : const <String>[];
+    final effectiveLanguage = languageCategories.contains(selectedLanguage)
+        ? selectedLanguage
+        : 'all';
+    final visibleEntries = effectiveLanguage == 'all'
+        ? entries
+        : entries
+            .where(
+              (entry) => externalPluginMatchesLanguage(
+                entry,
+                effectiveLanguage,
+              ),
+            )
+            .toList(growable: false);
     return ListView(
       padding: const EdgeInsets.fromLTRB(10, 12, 10, 24),
       children: <Widget>[
@@ -471,13 +555,29 @@ final class _RepositoryPane extends StatelessWidget {
             ),
           ),
         const SizedBox(height: 10),
+        if (format == ExternalComicPluginFormat.mihonExtension &&
+            languageCategories.isNotEmpty) ...<Widget>[
+          _MihonLanguageFilterBar(
+            key: externalPluginRepositoryLanguageBarKey,
+            scope: 'repository',
+            languages: languageCategories,
+            selectedLanguage: effectiveLanguage,
+            onSelected: onLanguageSelected,
+          ),
+          const SizedBox(height: 8),
+        ],
         if (entries.isEmpty)
           const Padding(
             padding: EdgeInsets.all(24),
             child: Center(child: Text('加载仓库后选择扩展或脚本源')),
           )
+        else if (visibleEntries.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: Text('该语言分类下没有仓库插件')),
+          )
         else
-          for (final plugin in entries) ...<Widget>[
+          for (final plugin in visibleEntries) ...<Widget>[
             _RepositoryPluginTile(
               plugin: plugin,
               active: installedPluginIds.contains(plugin.pluginId),
@@ -487,6 +587,49 @@ final class _RepositoryPane extends StatelessWidget {
             const Divider(height: 1),
           ],
       ],
+    );
+  }
+}
+
+final class _MihonLanguageFilterBar extends StatelessWidget {
+  const _MihonLanguageFilterBar({
+    required this.scope,
+    required this.languages,
+    required this.selectedLanguage,
+    required this.onSelected,
+    super.key,
+  });
+
+  final String scope;
+  final List<String> languages;
+  final String selectedLanguage;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final categories = <String>['all', ...languages];
+    return SizedBox(
+      height: 44,
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+        scrollDirection: Axis.horizontal,
+        itemCount: categories.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final language = categories[index];
+          return ChoiceChip(
+            key: externalPluginLanguageChoiceKey(scope, language),
+            label: Text(
+              language == 'all'
+                  ? '全部'
+                  : externalPluginLanguageLabel(language),
+            ),
+            selected: language == selectedLanguage,
+            showCheckmark: false,
+            onSelected: (_) => onSelected(language),
+          );
+        },
+      ),
     );
   }
 }
