@@ -33,7 +33,7 @@ for token in (
     'final landscape = pending.removeAt(1)',
     'final inspectionCount = math.min(3, pending.length)',
     'targetArea = math.pow(availableItemWidth / rootSum, 2)',
-    'maximumAllowedArea = minimumArea * 1.2',
+    'maximumSparseArea = referenceArea * 2.4',
     'alignment: Alignment.centerLeft',
     'const SizedBox(width: _previewGridGap)',
     'padding: const EdgeInsets.symmetric(vertical: 8)',
@@ -61,7 +61,7 @@ for owner, text in (('home', home), ('source', source), ('details', details)):
 for token in (
     'final class AppPullToRefresh',
     'RefreshIndicatorTriggerMode.onEdge',
-    'displacement: 72',
+    '_displacement = 72',
 ):
     require(refresh, token, 'shared pull refresh')
 require(source, 'AppPullToRefresh(', 'source refresh usage')
@@ -90,9 +90,10 @@ for token in (
 
 for token in (
     'typedef ComicDetailsSourceResolver',
-    'widget.resolveSource?.call(widget.source.sourceId) ?? widget.source',
-    'invalidateCachedComic(_source, comicId)',
-    "widget.ensureSourceChapter(\n      _source,",
+    'Future<BrowsableComicSource> _sourceForOperation() async',
+    'invalidateCachedComic(source, comicId)',
+    "final source = await _sourceForOperation();",
+    "widget.ensureSourceChapter(\n      source,",
 ):
     require(details, token, 'active source resolution')
 require(source_wrapper, 'resolveSource: resolveSource', 'source details forwarding')

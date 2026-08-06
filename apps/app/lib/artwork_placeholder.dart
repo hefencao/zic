@@ -100,6 +100,7 @@ final class RecoverableArtworkImage extends StatefulWidget {
     this.cacheWidth,
     this.onFrameReady,
     this.onDecodeFailure,
+    this.onRecoveryExhausted,
     super.key,
   });
 
@@ -111,6 +112,7 @@ final class RecoverableArtworkImage extends StatefulWidget {
   final int? cacheWidth;
   final VoidCallback? onFrameReady;
   final VoidCallback? onDecodeFailure;
+  final VoidCallback? onRecoveryExhausted;
 
   @override
   State<RecoverableArtworkImage> createState() =>
@@ -130,6 +132,7 @@ final class _RecoverableArtworkImageState
   int _retryIndex = 0;
   bool _failed = false;
   bool _frameReported = false;
+  bool _exhaustionReported = false;
 
   ImageProvider<Object> get _effectiveProvider => widget.cacheWidth == null
       ? widget.image
@@ -151,6 +154,7 @@ final class _RecoverableArtworkImageState
       _retryIndex = 0;
       _failed = false;
       _frameReported = false;
+      _exhaustionReported = false;
     }
   }
 
@@ -166,14 +170,23 @@ final class _RecoverableArtworkImageState
     _failed = true;
     if (firstFailure) widget.onDecodeFailure?.call();
     if (_retryTimer?.isActive ?? false) return;
-    if (_retryIndex >= _retryDelays.length) return;
+    if (_retryIndex >= _retryDelays.length) {
+      if (!_exhaustionReported) {
+        _exhaustionReported = true;
+        scheduleMicrotask(() => widget.onRecoveryExhausted?.call());
+      }
+      return;
+    }
     final delay = _retryDelays[_retryIndex++];
     _retryTimer = Timer(delay, _retry);
   }
 
   void _retry({bool resetBudget = false}) {
     if (!mounted) return;
-    if (resetBudget) _retryIndex = 0;
+    if (resetBudget) {
+      _retryIndex = 0;
+      _exhaustionReported = false;
+    }
     _retryTimer?.cancel();
     _retryTimer = null;
     unawaited(_effectiveProvider.evict());
@@ -213,6 +226,7 @@ final class _RecoverableArtworkImageState
           _retryIndex = 0;
           _frameReported = true;
           _failed = false;
+          _exhaustionReported = false;
           widget.onFrameReady?.call();
         }
         if (!ready || _failed) {

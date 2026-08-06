@@ -61,7 +61,7 @@ for token in (
     '_buildPreviewRow(',
     'math.sqrt(targetArea * aspect)',
     'math.sqrt(targetArea / aspect)',
-    'MediaQuery.sizeOf(context).height * .8',
+    'MediaQuery.sizeOf(context).height * .9',
     'final firstRow = pages.first.rows.first;',
     'height: firstRow.height',
     'Icons.keyboard_arrow_down',
@@ -79,15 +79,15 @@ for forbidden in (
 
 for token in (
     'source-owned sections floating search and bottom pager preserve order',
-    'lessThanOrEqualTo(1.2)',
+    'lessThanOrEqualTo(2.4)',
     'comicDetailsPreviewExpandKey',
 ):
     require(source_test, token, 'App owner tests')
 require(plugin_test, 'Mihon plugins derive stable language categories', 'plugin model tests')
 
 for token in (
-    '等目标面积',
-    '面积比不超过 1.2',
+    '等面积',
+    '稀疏末行',
 ):
     require(architecture + spec, token, 'stable documentation')
 require(check, 'test_dev140_source_paging_mihon_language_equal_area_preview.py', 'repository check')

@@ -1,7 +1,5 @@
 part of 'comic_details.dart';
 
-enum _DetailsRefreshState { idle, refreshing, success, failure }
-
 IconData _sourcePluginIcon(String sourceId) {
   if (sourceId.startsWith('mihon:')) {
     return Icons.extension_outlined;
@@ -144,41 +142,6 @@ final class _ComicDetailsScaffold extends StatefulWidget {
 }
 
 final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
-  _DetailsRefreshState _refreshState = _DetailsRefreshState.idle;
-  Timer? _refreshResultTimer;
-
-  @override
-  void dispose() {
-    _refreshResultTimer?.cancel();
-    super.dispose();
-  }
-
-  Future<void> _handleRefresh() async {
-    if (_refreshState == _DetailsRefreshState.refreshing) {
-      return;
-    }
-    _refreshResultTimer?.cancel();
-    setState(() => _refreshState = _DetailsRefreshState.refreshing);
-    var succeeded = false;
-    try {
-      succeeded = await widget.onRefresh();
-    } on Object {
-      succeeded = false;
-    }
-    if (!mounted) {
-      return;
-    }
-    final resultState = succeeded
-        ? _DetailsRefreshState.success
-        : _DetailsRefreshState.failure;
-    setState(() => _refreshState = resultState);
-    _refreshResultTimer = Timer(const Duration(seconds: 2), () {
-      if (mounted && _refreshState == resultState) {
-        setState(() => _refreshState = _DetailsRefreshState.idle);
-      }
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -217,13 +180,11 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
       ),
       body: KeyedSubtree(
         key: widget.screenKey,
-        child: Stack(
-          alignment: Alignment.topCenter,
-          children: <Widget>[
-          AppPullToRefresh(
-            key: comicDetailsPullRefreshKey,
-            onRefresh: _handleRefresh,
-            child: CustomScrollView(
+        child: AppPullToRefresh(
+          key: comicDetailsPullRefreshKey,
+          resultKey: comicDetailsRefreshStateKey,
+          onRefresh: widget.onRefresh,
+          child: CustomScrollView(
               physics: const AlwaysScrollableScrollPhysics(),
               slivers: <Widget>[
                 SliverPadding(
@@ -247,7 +208,7 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
                 ),
                 if (widget.onContinueReading != null)
                   SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
                     sliver: SliverToBoxAdapter(
                       child: _ComicDetailsReadingActions(
                         onContinueReading: widget.onContinueReading!,
@@ -256,7 +217,7 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
                     ),
                   ),
                 SliverPadding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+                  padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
                   sliver: SliverToBoxAdapter(
                     child: KeyedSubtree(
                       key: comicDetailsChapterCountKey,
@@ -305,7 +266,7 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
                   ),
                 if (widget.previewSection != null)
                   SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                    padding: const EdgeInsets.fromLTRB(0, 8, 0, 0),
                     sliver: SliverToBoxAdapter(
                       child: KeyedSubtree(
                         key: comicDetailsPreviewKey,
@@ -315,16 +276,7 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
                   ),
                 const SliverPadding(padding: EdgeInsets.only(bottom: 36)),
               ],
-            ),
           ),
-          if (_refreshState != _DetailsRefreshState.idle)
-            SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: _DetailsRefreshBadge(state: _refreshState),
-              ),
-            ),
-          ],
         ),
       ),
     );
@@ -349,7 +301,7 @@ final class _ComicDetailsReadingActions extends StatelessWidget {
           key: comicDetailsContinueReadingKey,
           style: FilledButton.styleFrom(
             shape: const StadiumBorder(),
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
           ),
           onPressed: () => unawaited(onContinueReading()),
           icon: const Icon(Icons.play_arrow_rounded),
@@ -449,76 +401,6 @@ final class _SourceSettingsAction extends StatelessWidget {
       tooltip: '设置漫画源：$sourceLabel',
       onPressed: onPressed,
       icon: Icon(_sourcePluginIcon(sourceId)),
-    );
-  }
-}
-
-final class _DetailsRefreshBadge extends StatelessWidget {
-  const _DetailsRefreshBadge({required this.state});
-
-  final _DetailsRefreshState state;
-
-  @override
-  Widget build(BuildContext context) {
-    final (icon, color) = switch (state) {
-      _DetailsRefreshState.refreshing => (
-          const _SpinningRefreshIcon(),
-          Theme.of(context).colorScheme.primary,
-        ),
-      _DetailsRefreshState.success => (
-          const Icon(Icons.check, size: 24),
-          Colors.green,
-        ),
-      _DetailsRefreshState.failure => (
-          const Icon(Icons.close, size: 24),
-          Theme.of(context).colorScheme.error,
-        ),
-      _DetailsRefreshState.idle => (
-          const SizedBox.shrink(),
-          Colors.transparent,
-        ),
-    };
-    return Material(
-      key: comicDetailsRefreshStateKey,
-      elevation: 2,
-      color: Theme.of(context).colorScheme.surface,
-      shape: const CircleBorder(),
-      child: SizedBox.square(
-        dimension: 40,
-        child: IconTheme(
-          data: IconThemeData(color: color),
-          child: Center(child: icon),
-        ),
-      ),
-    );
-  }
-}
-
-final class _SpinningRefreshIcon extends StatefulWidget {
-  const _SpinningRefreshIcon();
-
-  @override
-  State<_SpinningRefreshIcon> createState() => _SpinningRefreshIconState();
-}
-
-final class _SpinningRefreshIconState extends State<_SpinningRefreshIcon>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 720),
-  )..repeat();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return RotationTransition(
-      turns: _controller,
-      child: const Icon(Icons.refresh, size: 24),
     );
   }
 }

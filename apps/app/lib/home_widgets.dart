@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:catalog/catalog.dart';
 import 'package:flutter/material.dart';
 
@@ -51,6 +53,7 @@ final class ComicCoverCard extends StatelessWidget {
     required this.preference,
     required this.coverSource,
     required this.onTap,
+    this.recoveryCoverSource,
     this.onLongPress,
     this.downloadProgress,
     this.startupTelemetry,
@@ -65,6 +68,7 @@ final class ComicCoverCard extends StatelessWidget {
   final LibraryComic comic;
   final ComicPreference preference;
   final Future<EncodedResourceSource> Function() coverSource;
+  final Future<EncodedResourceSource> Function()? recoveryCoverSource;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
   final ComicDownloadProgress? downloadProgress;
@@ -102,6 +106,7 @@ final class ComicCoverCard extends StatelessWidget {
                   _CoverImage(
                     cacheIdentity: _coverRequestIdentity(comic),
                     loader: coverSource,
+                    recoveryLoader: recoveryCoverSource,
                     startupTelemetry: startupTelemetry,
                   ),
                   if (downloadProgress != null)
@@ -189,11 +194,13 @@ final class _CoverImage extends StatefulWidget {
   const _CoverImage({
     required this.cacheIdentity,
     required this.loader,
+    this.recoveryLoader,
     this.startupTelemetry,
   });
 
   final String cacheIdentity;
   final Future<EncodedResourceSource> Function() loader;
+  final Future<EncodedResourceSource> Function()? recoveryLoader;
   final HomeStartupTelemetry? startupTelemetry;
 
   @override
@@ -205,7 +212,13 @@ final class _CoverImageState extends State<_CoverImage>
   late Future<EncodedResourceSource> _source;
   bool _reportedFirstFrame = false;
   bool _loadFailed = false;
+  bool _recoveringEncodedSource = false;
+  bool _encodedRecoveryAttempted = false;
+  int _decodeRecoveryGeneration = 0;
+  static const _firstFrameTimeout = Duration(milliseconds: 2500);
+
   final ArtworkRetryController _retry = ArtworkRetryController();
+  Timer? _firstFrameWatchdog;
 
   @override
   void initState() {
@@ -233,6 +246,7 @@ final class _CoverImageState extends State<_CoverImage>
         source: source.origin.name,
         byteLength: source.lengthInBytes,
       );
+      _scheduleFirstFrameWatchdog();
       return source;
     } on Object {
       _loadFailed = true;
@@ -241,24 +255,74 @@ final class _CoverImageState extends State<_CoverImage>
     }
   }
 
+  void _scheduleFirstFrameWatchdog() {
+    _firstFrameWatchdog?.cancel();
+    _firstFrameWatchdog = Timer(_firstFrameTimeout, () {
+      if (!mounted || _reportedFirstFrame) return;
+      _loadFailed = true;
+      final recoveryLoader = widget.recoveryLoader;
+      if (recoveryLoader != null) {
+        unawaited(_recoverEncodedSource());
+      } else {
+        _restartLoadWithReset();
+      }
+    });
+  }
+
   void _reportFirstFrame() {
     if (_reportedFirstFrame) {
       return;
     }
+    _firstFrameWatchdog?.cancel();
     _reportedFirstFrame = true;
     _loadFailed = false;
+    _encodedRecoveryAttempted = false;
     _retry.reset();
     widget.startupTelemetry?.coverFirstFrame(widget.cacheIdentity);
   }
 
   void _restartLoad() {
     if (!mounted) return;
+    _firstFrameWatchdog?.cancel();
     setState(() => _startLoad(preserveFailurePlaceholder: true));
+  }
+
+  Future<void> _recoverEncodedSource() async {
+    final recoveryLoader = widget.recoveryLoader;
+    if (recoveryLoader == null ||
+        _recoveringEncodedSource ||
+        _encodedRecoveryAttempted) {
+      return;
+    }
+    _recoveringEncodedSource = true;
+    _encodedRecoveryAttempted = true;
+    widget.startupTelemetry?.coverRequested(widget.cacheIdentity);
+    try {
+      final source = await recoveryLoader();
+      widget.startupTelemetry?.coverSourceReady(
+        widget.cacheIdentity,
+        source: source.origin.name,
+        byteLength: source.lengthInBytes,
+      );
+      if (!mounted) return;
+      setState(() {
+        _source = Future<EncodedResourceSource>.value(source);
+        _reportedFirstFrame = false;
+        _loadFailed = true;
+        _decodeRecoveryGeneration++;
+      });
+      _scheduleFirstFrameWatchdog();
+    } on Object {
+      _loadFailed = true;
+    } finally {
+      _recoveringEncodedSource = false;
+    }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && _loadFailed) {
+      _encodedRecoveryAttempted = false;
       _retry.retryNow(
         () => _restartLoadWithReset(),
         resetBudget: true,
@@ -275,6 +339,7 @@ final class _CoverImageState extends State<_CoverImage>
   void didUpdateWidget(covariant _CoverImage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.cacheIdentity != widget.cacheIdentity) {
+      _encodedRecoveryAttempted = false;
       _startLoad(resetRetryBudget: true);
     }
   }
@@ -282,6 +347,7 @@ final class _CoverImageState extends State<_CoverImage>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _firstFrameWatchdog?.cancel();
     _retry.dispose();
     super.dispose();
   }
@@ -305,6 +371,9 @@ final class _CoverImageState extends State<_CoverImage>
             if (source != null) {
               final provider = encodedResourceImageProvider(source);
               return RecoverableArtworkImage(
+                key: ValueKey<String>(
+                  '${widget.cacheIdentity}:$_decodeRecoveryGeneration',
+                ),
                 image: provider,
                 seed: widget.cacheIdentity,
                 cacheWidth: cacheWidth,
@@ -313,6 +382,9 @@ final class _CoverImageState extends State<_CoverImage>
                 onDecodeFailure: () {
                   _loadFailed = true;
                 },
+                onRecoveryExhausted: () => unawaited(
+                  _recoverEncodedSource(),
+                ),
               );
             }
             if (snapshot.hasError) {
@@ -434,6 +506,7 @@ final class ShelfListTile extends StatelessWidget {
     required this.comic,
     required this.preference,
     required this.coverSource,
+    this.recoveryCoverSource,
     required this.downloadProgress,
     required this.selected,
     required this.onTap,
@@ -446,6 +519,7 @@ final class ShelfListTile extends StatelessWidget {
   final LibraryComic comic;
   final ComicPreference preference;
   final Future<EncodedResourceSource> Function() coverSource;
+  final Future<EncodedResourceSource> Function()? recoveryCoverSource;
   final ComicDownloadProgress? downloadProgress;
   final bool selected;
   final VoidCallback onTap;
@@ -473,6 +547,7 @@ final class ShelfListTile extends StatelessWidget {
                   _CoverImage(
                     cacheIdentity: _coverRequestIdentity(comic),
                     loader: coverSource,
+                    recoveryLoader: recoveryCoverSource,
                     startupTelemetry: startupTelemetry,
                   ),
                   if (downloadProgress != null)

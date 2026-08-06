@@ -14,7 +14,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
   prewarm、持久整本队列 restore、外部插件 activation 和 enrichment 不得成为首封面
   请求的硬门槛。
 - 外部来源可以在首帧之后 ready；source projection 更新后，因来源暂不可用而失败的
-  封面 loader MUST 能在 loader 改变时重试。
+  封面 loader MUST 由稳定 artwork identity 和显式 retry revision 驱动；closure 对象变化不得触发重试。
 - 首页每张封面 MUST 独立完成请求和显示；一张封面变慢或 durable response 写入变慢，
   不得阻塞其它已经取得 encoded bytes 的封面。冷 miss MAY 先使用 memory source，持久化
   写入由统一 response cache 后台完成；已有 durable file hit MUST 保持文件直读。
@@ -61,7 +61,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
   去除后的原图 URI MUST 是编码字节缓存和实际请求的身份，使同一原图的不同裁剪只产生一次
   请求/缓存项；宿主绘制时 MUST 只显示该标识指定的原图区域。图片失败时 MUST 使用按资源
   identity 稳定生成的柔和纯色占位，不得显示破损图片图标。
-  预览栏折叠与展开 MUST 使用同一套排版结果：折叠态只显示第一行，高度由该行实际高度决定；展开态继续自动消费来源分页并以 `PageView` 左右分页呈现后续行。预览项 MUST 尽量保持来源原始顺序，并在可读尺寸下放置尽可能多的图片。所有显示项 MUST 使用等目标面积或等价策略，使最大显示面积与最小显示面积之比不得超过 1.2；在该约束内，每个完整预览行 MUST 尽量利用可用屏幕宽度并避免两侧无意义留白，每张图仍按自身宽高比绘制。阅读设置 MUST 提供每行最大数量 1–8，默认 4。图片区域 MUST 不超过屏幕高度的 80%，展开/收起按钮 MUST 居中且只显示箭头，不得显示“展开/收起”文字。不得拉伸、强制裁切或建立详情页专用图片缓存。
+  预览栏折叠与展开 MUST 使用同一套排版结果：折叠态只显示第一行，高度由该行实际高度决定；展开态继续自动消费来源分页并以 `PageView` 左右分页呈现后续行。预览项 MUST 尽量保持来源原始顺序，并在可读尺寸下放置尽可能多的图片。完整行 MUST 直接使用全部媒体宽度反算等面积 tile，不得以外层 Card、重复水平 padding 或扩大 item gap 消耗剩余宽度；只有稀疏末行 MAY 放大到参考完整行面积的 2.4 倍。实际行含横图时最多 2 项，纯竖图行最多 3 项，并受用户设置的更小上限约束。阅读设置 MUST 提供每行最大数量 1–8，默认 4。图片区域 MUST 不超过屏幕高度的 90%，展开/收起按钮 MUST 居中且只显示箭头，不得显示“展开/收起”文字。不得拉伸、强制裁切或建立详情页专用图片缓存。
 - 来源详情若提供评论能力，详情页 SHOULD 显示评论栏，并 MUST 支持分页评论次级页；
   评论存在回复数量和不透明 ID 时，次级页 MUST 能按原 source `subId`/回复 ID 加载回复。
   这些能力是可选的，来源未声明时不得发起插件请求。
@@ -187,6 +187,10 @@ identity 超限时使用稳定 hash 与原长度；高频事件 MAY 合并，但
 
 1. 失败封面不得因父组件 rebuild 或并行 source/decoder timer 反复闪烁；重试期间 MUST 保持稳定占位图。
 2. 实际预览行含横图时 MUST 最多 2 项，纯竖图行 MUST 最多 3 项；为满足该规则 MAY 在相邻三个候选内做一次最小局部重排，并受用户设置的更小上限约束；不得用额外间隔消耗剩余宽度。
-3. 详情与漫画源下拉刷新 MUST 共用相同 edge trigger、位移和可见反馈。
+3. 详情与漫画源下拉刷新 MUST 共用同一个组件拥有 edge trigger、位移、刷新进度和成功/失败反馈；结果图标 MUST 与刷新指示器使用同一落点。
+
+4. encoded artwork source 已就绪但 ImageStream 在有界时间内既无首帧也无错误时，Presentation MUST 对当前 cover identity 执行至多一次局部 source revalidation；不得清空全局 response/image cache或通过父组件 rebuild 重试。
+5. 远程详情 MUST 先显示已有 catalog cache，并等待当前 active source adapter 完成后台刷新；预览、评论及章节操作 MUST 在调用时解析当前 adapter，不得持有插件重启前的关闭 session。
+6. 真实 Mihon 章节目录非空时，兼容 synthetic chapter MUST 从 manifest、持久条目投影和最终章节列表中移除。
 4. 同一 browser snapshot revision MUST NOT 在每个 HTTP 请求前重复覆盖 runtime Cookie；新 revision 可再次导入。
 5. retryable runtime lifecycle envelope MAY 自动重新激活并重试一次；业务错误和 `source-verification-required` MUST NOT 被当作 runtime 崩溃吞掉。

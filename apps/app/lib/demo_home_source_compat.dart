@@ -325,6 +325,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
             sameComicIdentity: (left, right) =>
                 _canonicalComicKey(source.sourceId, left) ==
                 _canonicalComicKey(source.sourceId, right),
+            isCompatibilityChapter: isSyntheticMihonChapterIdentity,
             previewMaxItemsPerRow:
                 widget.preferences.detailsPreviewMaxItemsPerRow,
             traceSink: widget.debugTrace,
@@ -411,6 +412,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
           onOpenVersions: source == null || !_sourceSupportsVersionEntry(source)
               ? null
               : () => _openSourceVersions(comic),
+          isCompatibilityChapter: isSyntheticMihonChapterIdentity,
           previewMaxItemsPerRow:
               widget.preferences.detailsPreviewMaxItemsPerRow,
           traceSink: widget.debugTrace,

@@ -78,23 +78,40 @@ const importedLibraryErrorKey = ValueKey<String>('imported-library-error');
 Key importedChapterEntryKey(String sourceId, String chapterId) =>
     ValueKey<String>('imported-chapter:$sourceId\u0000$chapterId');
 
+List<Chapter> reconcileComicDetailsSourceChapters({
+  required Iterable<Chapter> chapters,
+  required bool Function(String chapterId) isCompatibilityFallback,
+}) {
+  final values = chapters.toList(growable: false);
+  final hasAuthoritativeChapter = values.any(
+    (chapter) => !isCompatibilityFallback(chapter.chapterId),
+  );
+  if (!hasAuthoritativeChapter) {
+    return List<Chapter>.unmodifiable(values);
+  }
+  return List<Chapter>.unmodifiable(
+    values.where(
+      (chapter) => !isCompatibilityFallback(chapter.chapterId),
+    ),
+  );
+}
+
 List<ImportedLibraryEntry> reconcileComicDetailsChapterEntries({
   required Iterable<ImportedLibraryEntry> entries,
   required Iterable<Chapter> sourceChapters,
   required bool Function(String chapterId) isCompatibilityFallback,
 }) {
   final authoritativeChapterIds = sourceChapters
+      .where((chapter) => !isCompatibilityFallback(chapter.chapterId))
       .map((chapter) => chapter.chapterId)
       .toSet();
   if (authoritativeChapterIds.isEmpty) {
     return List<ImportedLibraryEntry>.unmodifiable(entries);
   }
   return List<ImportedLibraryEntry>.unmodifiable(
-    entries.where((entry) {
-      final chapterId = entry.chapter.chapterId;
-      return !isCompatibilityFallback(chapterId) ||
-          authoritativeChapterIds.contains(chapterId);
-    }),
+    entries.where(
+      (entry) => !isCompatibilityFallback(entry.chapter.chapterId),
+    ),
   );
 }
 Key historyChapterEntryKey(String sourceId, String chapterId) =>
@@ -912,14 +929,16 @@ final class _DemoHomeState extends State<DemoHome> {
     );
     final sourceChapters = saved.isEmpty
         ? const <Chapter>[]
-        : saved.first.chapters
-            .map((chapter) => chapter.toChapter(effectiveComicId))
-            .where(
-              (chapter) =>
-                  !isSyntheticMihonChapterIdentity(chapter.chapterId) ||
-                  isCurrentSyntheticMihonChapterIdentity(chapter.chapterId),
-            )
-            .toList(growable: false);
+        : reconcileComicDetailsSourceChapters(
+            chapters: saved.first.chapters
+                .map((chapter) => chapter.toChapter(effectiveComicId))
+                .where(
+                  (chapter) =>
+                      !isSyntheticMihonChapterIdentity(chapter.chapterId) ||
+                      isCurrentSyntheticMihonChapterIdentity(chapter.chapterId),
+                ),
+            isCompatibilityFallback: isSyntheticMihonChapterIdentity,
+          );
     final chapters = reconcileComicDetailsChapterEntries(
       entries: _libraryEntries.where(
         (entry) =>
@@ -1116,6 +1135,7 @@ final class _DemoHomeState extends State<DemoHome> {
     required Uri? coverUri,
     required ImportedLibraryEntry? fallbackChapter,
     String resourceRole = 'cover',
+    bool forceRefresh = false,
   }) async {
     final fallback = fallbackChapter;
     final fallbackPage = sourceId != 'local-folder' ||
@@ -1129,6 +1149,9 @@ final class _DemoHomeState extends State<DemoHome> {
     if (sourceValue == null || sourceValue.trim().isEmpty) {
       throw StateError('漫画详情没有可用封面');
     }
+    final recoveryRequested = forceRefresh ||
+        resourceRole.startsWith('cover-recovery');
+    final cacheResourceRole = recoveryRequested ? 'cover' : resourceRole;
     final directPath = localImageFilePath(sourceValue);
     if (directPath != null) {
       return FileEncodedResourceSource(
@@ -1146,7 +1169,8 @@ final class _DemoHomeState extends State<DemoHome> {
         comicId: comicId,
         uri: uri,
         revision: revision,
-        resourceRole: resourceRole,
+        resourceRole: cacheResourceRole,
+        forceRefresh: recoveryRequested,
       );
     }
     // Android content URIs cannot be opened by FileImage. Copy them once into
@@ -1157,9 +1181,10 @@ final class _DemoHomeState extends State<DemoHome> {
       sourceId: sourceId,
       comicId: comicId,
       imageIdentity: sourceValue,
-      resourceRole: 'cover',
+      resourceRole: cacheResourceRole,
       revision: revision,
       awaitPersistence: false,
+      forceRefresh: recoveryRequested,
       loader: () => readLocalImageSource(sourceValue),
     );
   }
@@ -1185,6 +1210,20 @@ final class _DemoHomeState extends State<DemoHome> {
               ? null
               : Uri.tryParse(comic.coverSourceId!),
           fallbackChapter: comic.coverChapter,
+        );
+  }
+
+  Future<EncodedResourceSource> Function() _coverRecoverySourceLoaderForComic(
+    LibraryComic comic,
+  ) {
+    return () => _loadCoverSource(
+          sourceId: comic.sourceId,
+          comicId: comic.comicId,
+          coverUri: comic.coverSourceId == null
+              ? null
+              : Uri.tryParse(comic.coverSourceId!),
+          fallbackChapter: comic.coverChapter,
+          forceRefresh: true,
         );
   }
 

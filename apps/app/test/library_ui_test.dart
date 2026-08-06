@@ -125,6 +125,31 @@ Future<void> _tapVisible(
 }
 
 void main() {
+  test('real source chapters remove compatibility fallback chapters', () {
+    const synthetic = Chapter(
+      chapterId: 'mihon:chapter:synthetic',
+      comicId: 'mihon:comic',
+      title: '开始阅读',
+      sequence: 0,
+      pageCount: 0,
+      sourceRevision: 'synthetic',
+    );
+    const real = Chapter(
+      chapterId: 'mihon:chapter:real',
+      comicId: 'mihon:comic',
+      title: '第一话',
+      sequence: 1,
+      pageCount: 10,
+      sourceRevision: 'real',
+    );
+    final chapters = reconcileComicDetailsSourceChapters(
+      chapters: const <Chapter>[synthetic, real],
+      isCompatibilityFallback: (chapterId) =>
+          chapterId == synthetic.chapterId,
+    );
+    expect(chapters, const <Chapter>[real]);
+  });
+
   testWidgets('home and bookshelf share the persisted local library',
       (tester) async {
     final store = MemoryImportedLibraryStore();

@@ -1,6 +1,6 @@
-# dev.143 后续交接
+# dev.144 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.143_cover-stability-preview-cookie-runtime-refresh.zip`。
+唯一后续基线：`zic_v0.31.0-dev.144_cover-first-frame-detail-source-layout.zip`。
 
 ## 必读
 
@@ -34,7 +34,7 @@
 - 漫画源页使用来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态仅用 chip 色彩/图标表示。
 - 浮动搜索展开态优先消费返回和垂直拖动/滚动手势；搜索历史持久化。Mihon `getFilterList()` 的 CheckBox/TriState/Select/Group 通过 opaque ID 投影为搜索框上方过滤标签，UI 不持有插件 Filter 对象。
 - 浏览页使用 catalog cache-first/background-refresh；稳定字段无变化时不更新。边缘下拉达到阈值后调用强制刷新，保留现有内容直到新结果到达。
-- 详情预览按原顺序装箱：实际行内含横图则最多 2 张、纯竖图则最多 3 张；只在相邻三个候选内做最小局部重排；设置项仍是更严格上限。行宽直接用于反算等面积 tile，内部无 Card/水平 padding，异常末行仍保持面积比不超过 1.2。
+- 详情预览按原顺序装箱：实际行内含横图则最多 2 张、纯竖图则最多 3 张；只在相邻三个候选内做最小局部重排；设置项仍是更严格上限。行宽直接用于反算等面积 tile，内部无 Card/水平 padding，完整行铺满媒体宽度，只有稀疏末行允许放大到参考完整行面积的 2.4 倍。
 - Android 使用默认 platform channel、单 blit lane 和 fresh used texture lifecycle。可见浏览器 Cookie snapshot 按 revision 每 runtime/站点/UA 只导入一次；retryable runtime lifecycle envelope 会重新激活并重试一次。远程详情页通过稳定 source ID 获取当前 active adapter，不保留插件重启前的关闭 session。
 - Native identity 保持 `zic-media-core-dev134-abi6-lib00121400`。
 - 当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip`；不得从旧版本偷偷补入，除非用户提供或明确指定来源。
@@ -44,7 +44,7 @@
 - 优先执行 `IMPLEMENTATION_PLAN.md` 的真机与完整 Flutter/Android 工具链闭环。
 - 封面问题复验需分别制造 source Future 失败与 Flutter decode 失败，确认自动重试、resume 恢复和局部 provider 驱逐。
 - Mihon 过滤需用真实扩展检查默认 FilterList、Group 嵌套、TriState 与 Select 回传。
-- 预览排版需在不同屏宽和宽高比集合上检查左右边缘利用、面积比、每行上限与 80% 高度约束。
+- 预览排版需在不同屏宽和宽高比集合上检查完整行边缘利用、稀疏末行 2.4 倍上限、每行上限与 90% 高度约束。
 
 ## 不可改变的稳定边界
 
@@ -57,3 +57,8 @@
 ```bash
 git apply --index "$(python3 tool/workspace_config.py patch_dir --absolute)/<patch-file>"
 ```
+
+- encoded source ready 后若 2.5 秒仍没有首帧或错误，封面只允许局部 revalidate 同一 cover identity 一次；不得恢复 loader-closure 重试或清空全局 cache。
+- 远程详情必须先显示缓存 catalog，并通过 `resolveSource(sourceId)` 等待/取得当前 adapter；预览和评论闭包不得捕获旧 runtime source。
+- 真实章节存在时，不得在任何详情页重新显示 compatibility/synthetic “开始阅读/正文”章节。
+- 详情和漫画源刷新进度、勾/叉必须继续由 `AppPullToRefresh` 一套组件拥有。

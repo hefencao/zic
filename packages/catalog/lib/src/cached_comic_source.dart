@@ -730,6 +730,7 @@ Future<EncodedResourceSource> loadCachedComicImageSource({
   String resourceRole = 'cover',
   String revision = '',
   bool awaitPersistence = true,
+  bool forceRefresh = false,
 }) => cache.getOrLoadEncodedImage(
       key: _imageKey(
         sourceId: sourceId,
@@ -739,6 +740,7 @@ Future<EncodedResourceSource> loadCachedComicImageSource({
         revision: revision,
       ),
       awaitPersistence: awaitPersistence,
+      forceRefresh: forceRefresh,
       loader: loader,
     );
 

@@ -804,7 +804,7 @@ void main() {
       matching: find.byType(PageView),
     );
     expect(previewPager, findsOneWidget);
-    expect(tester.getSize(previewPager).height, lessThanOrEqualTo(480));
+    expect(tester.getSize(previewPager).height, lessThanOrEqualTo(540));
 
     final itemFinders = <Finder>[
       for (var index = 0; index < 3; index++)
@@ -817,7 +817,7 @@ void main() {
     expect(
       itemAreas.reduce((left, right) => left > right ? left : right) /
           itemAreas.reduce((left, right) => left < right ? left : right),
-      lessThanOrEqualTo(1.2),
+      lessThanOrEqualTo(2.4),
     );
     final itemCenters = itemFinders.map(tester.getCenter).toList(growable: false);
     // Index 1 is landscape, so the actual first row contains exactly two

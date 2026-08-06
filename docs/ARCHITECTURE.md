@@ -137,7 +137,7 @@ Cookie 会话，按当前详情页 `#gnd` 关系生成版本，不把 Venera 当
 `ComicDetails` 能力的来源可渐进显示预览、评论和回复。预览 URI 保留 Venera 的
 `@x/y` 裁剪标识用于预览项/widget/painter 的单项身份，但 `onThumbnailLoad` 请求回调接收
 去掉裁剪标识的原图地址；该 base URI 也是编码字节缓存身份，App 解码后只绘制对应裁剪区域。
-预览栏折叠与展开共用同一套顺序布局。布局按原始预览顺序逐行装箱，每张缩略图先使用等目标面积并按自身宽高比计算宽高；随后按行受限放大并把剩余空间分配到项间距，使完整预览行尽量贴近屏幕左右边缘而不浪费竖屏宽度。所有行的缩放跨度受 `sqrt(1.2)` 限制，因此同一布局中最大与最小显示面积比不超过 1.2；阅读设置提供每行最大数量 1–8，默认 4。折叠态只裁出该布局第一行，高度直接取第一行高度；展开态继续消费来源分页，并由 `PageView` 左右分页呈现后续行。展开图片区域按屏幕高度 80% 封顶，开关位于中间且只显示上下箭头。行规划优先使用 `ComicPreviewAsset.width/height`，缺失时以解码后的可见裁剪尺寸回填；缩略图使用 `BoxFit.contain`，不拉伸或强制裁切。预览失败只显示按资源 identity 生成的柔和单色占位，不显示破损图片图标。
+预览栏折叠与展开共用同一套顺序布局。实际行含横图时最多 2 张，纯竖图行最多 3 张；只允许在相邻三个候选内做最小局部重排。完整行直接用全部媒体宽度反算等面积 tile，不再把剩余宽度变成外边距或巨大项间距；标题保留普通内容边距，但图片区不叠加 Card 或水平 border/padding。只有稀疏末行允许相对完整行放大，面积上限为参考完整行的 2.4 倍。阅读设置提供每行最大数量 1–8，默认 4。折叠态只显示同一布局第一行，高度取第一行实际高度；展开态继续消费来源分页，并由 `PageView` 左右分页呈现后续行。展开图片区域按屏幕高度 90% 封顶，开关位于中间且只显示上下箭头。行规划优先使用 `ComicPreviewAsset.width/height`，缺失时以解码后的可见裁剪尺寸回填；缩略图使用 `BoxFit.contain`，不拉伸或强制裁切。预览失败只显示按资源 identity 生成的柔和单色占位，不显示破损图片图标。
 
 App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭固定为左下角 X，确认、
 保存或删除位于右侧，不再使用“取消”文字按钮。
@@ -373,5 +373,13 @@ role 相同，因此无需清空或迁移已有 cover 缓存；封面则有一�
 
 - Artwork source 与 Flutter ImageStream 的恢复不得形成竞争循环。失败期间 presentation 保持稳定占位图；父组件 closure identity 不是资源 identity。
 - 详情预览按实际行分组：含横图最多 2 张、纯竖图最多 3 张；只允许相邻三个候选内最小局部重排；每行从可用宽度反算等面积 tile，详情外层是唯一水平边距。
-- 详情页和漫画源页使用同一 `AppPullToRefresh` 交互。
+- 详情页和漫画源页使用同一 `AppPullToRefresh` 统一刷新交互；该组件同时拥有 edge trigger、刷新进度、成功/失败图标、位置和结果寿命，页面不得再叠加自己的勾/叉。
 - 浏览器 Cookie snapshot 是一次性 revision handoff，不是每请求覆盖 runtime Cookie 的权威存储。MethodChannel runtime lifecycle failure 可原地重新激活一次。
+
+### 封面与详情来源恢复
+
+- artwork encoded source 就绪后启动 2.5 秒首帧 watchdog；若 ImageStream 既不出帧也不报错，只对当前 cover identity 强制重读一次并重建流，稳定占位图持续可见。
+- cover recovery 继续使用 `role=cover` 的稳定 cache identity；`cover-recovery:*` 只是调用意图，不创建第二个长期缓存角色。
+- 远程详情优先投影已保存 manifest；插件 host 未就绪时等待当前 source resolver，不能因后台 refresh 失败丢弃已有详情。
+- 预览、评论、章节确保和刷新在实际调用时解析当前 active adapter，不捕获插件重启前的 source session。
+- 真实 Mihon 章节存在时，synthetic/compatibility chapter 在 manifest、library entry 和最终 UI 投影边界全部剔除。

@@ -40,6 +40,8 @@ const comicSourceCategoryBarKey =
 const comicSourcePagerKey = ValueKey<String>('comic-source-pager');
 const comicSourcePullRefreshKey =
     ValueKey<String>('comic-source-pull-refresh');
+const comicSourceRefreshStateKey =
+    ValueKey<String>('comic-source-refresh-state');
 const comicSourceFilterBarKey =
     ValueKey<String>('comic-source-filter-bar');
 const comicSourcePreviousPageKey =
@@ -414,11 +416,11 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     _nextOffset = page.offset + page.items.length;
   }
 
-  Future<void> _reload({
+  Future<bool> _reload({
     bool forceRefresh = false,
     int? offset,
   }) async {
-    if (!mounted) return;
+    if (!mounted) return false;
     final source = _activeSource;
     final generation = ++_generation;
     if (source == null) {
@@ -431,7 +433,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         _nextOffset = 0;
         _failure = null;
       });
-      return;
+      return false;
     }
     final requestedOffset = (offset ?? _pageOffset).clamp(0, 1 << 30).toInt();
     final cache = source is CachedSourceBrowseProjection
@@ -483,6 +485,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         _nextOffset = requestedOffset;
       }
     });
+    var succeeded = false;
     try {
       final page = cache != null
           ? await cache.refreshBrowsePage(
@@ -497,7 +500,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
               offset: requestedOffset,
               forceRefresh: forceRefresh,
             );
-      if (!mounted || generation != _generation) return;
+      if (!mounted || generation != _generation) return false;
       final changed = !_sameBrowsePage(
         _items,
         _pageOffset,
@@ -510,6 +513,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         }
         _failure = null;
       });
+      succeeded = true;
       _recordSourceTrace(
         TraceEventKind.sourceReady,
         'browse-complete',
@@ -524,7 +528,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         },
       );
     } on Object catch (error, stackTrace) {
-      if (!mounted || generation != _generation) return;
+      if (!mounted || generation != _generation) return false;
       if (!hasCached && _items.isEmpty) {
         setState(() {
           _failure = _SourceFailure.capture(error, stackTrace);
@@ -549,6 +553,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         });
       }
     }
+    return succeeded;
   }
 
   Future<void> _recoverSourceAccess(BrowsableComicSource source) async {
@@ -847,6 +852,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       onNotification: _handleSourceScroll,
       child: AppPullToRefresh(
         key: comicSourcePullRefreshKey,
+        resultKey: comicSourceRefreshStateKey,
         onRefresh: () => _reload(forceRefresh: true),
         child: CustomScrollView(
           controller: _scroll,
@@ -908,6 +914,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
           onNotification: _handleSourceScroll,
           child: AppPullToRefresh(
             key: comicSourcePullRefreshKey,
+            resultKey: comicSourceRefreshStateKey,
             onRefresh: () => _reload(forceRefresh: true),
             child: CustomScrollView(
               controller: _scroll,
@@ -1630,6 +1637,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
     this.onMigrateSource,
     this.onOpenVersions,
     this.sameComicIdentity,
+    this.isCompatibilityChapter,
     this.previewMaxItemsPerRow = 4,
     this.traceSink = const NoopTraceSink(),
     super.key,
@@ -1658,6 +1666,8 @@ final class SourceComicDetailsScreen extends StatelessWidget {
   final details.ComicDetailsVersionsOpener? onMigrateSource;
   final details.ComicDetailsVersionsOpener? onOpenVersions;
   final details.ComicDetailsIdentityMatcher? sameComicIdentity;
+  final details.ComicDetailsChapterCompatibilityMatcher?
+      isCompatibilityChapter;
   final int previewMaxItemsPerRow;
   final TraceSink traceSink;
 
@@ -1685,6 +1695,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
       onSearchMetadata: onSearchMetadata,
       onMigrateSource: onMigrateSource,
       onOpenVersions: onOpenVersions,
+      isCompatibilityChapter: isCompatibilityChapter,
       previewMaxItemsPerRow: previewMaxItemsPerRow,
       sameComicIdentity: sameComicIdentity ?? (left, right) => left == right,
       traceSink: traceSink,

@@ -117,8 +117,8 @@ for token in (
     "Future<bool>? _refreshInFlight",
     "local-refresh-joined",
     "remote-refresh-joined",
-    "Timer? _refreshResultTimer",
-    "Timer(const Duration(seconds: 2)",
+    "AppPullToRefresh(",
+    "resultKey: comicDetailsRefreshStateKey",
     "return IconButton(",
     "tooltip: '设置漫画源：$sourceLabel'",
 ):
@@ -126,6 +126,16 @@ for token in (
         raise SystemExit(f"FAIL: detail refresh/action contract missing {token!r}")
 if "return TextButton.icon(" in details:
     raise SystemExit("FAIL: plugin source action must use the same IconButton style")
+
+require(
+    "apps/app/lib/app_pull_to_refresh.dart",
+    "Future<void>? _refreshInFlight",
+    "Timer? _resultTimer",
+    "Timer(const Duration(seconds: 2)",
+    "RefreshIndicatorTriggerMode.onEdge",
+    "Icons.check",
+    "Icons.close",
+)
 
 require(
     "apps/app/lib/comic_details.dart",

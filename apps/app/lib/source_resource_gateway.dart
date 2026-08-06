@@ -91,6 +91,7 @@ final class ComicSourceResourceGateway {
     required Uri uri,
     String revision = '',
     bool awaitPersistence = false,
+    bool forceRefresh = false,
     String resourceRole = 'cover',
   }) async {
     _requireOpen();
@@ -100,15 +101,17 @@ final class ComicSourceResourceGateway {
     // Do not resolve a source before these source-independent cache probes. A
     // warm cover is an immutable response and must remain available while an
     // external source/plugin is still being discovered or restored.
-    final cached = await readCachedComicImageSource(
-      cache: cache,
-      sourceId: sourceId,
-      comicId: comicId,
-      imageIdentity: requestUri.toString(),
-      resourceRole: cacheRole,
-      revision: cacheRevision,
-      awaitPersistence: awaitPersistence,
-    );
+    final cached = forceRefresh
+        ? null
+        : await readCachedComicImageSource(
+            cache: cache,
+            sourceId: sourceId,
+            comicId: comicId,
+            imageIdentity: requestUri.toString(),
+            resourceRole: cacheRole,
+            revision: cacheRevision,
+            awaitPersistence: awaitPersistence,
+          );
     if (cached != null) {
       return cached;
     }
@@ -125,6 +128,7 @@ final class ComicSourceResourceGateway {
       resourceRole: cacheRole,
       revision: cacheRevision,
       awaitPersistence: awaitPersistence,
+      forceRefresh: forceRefresh,
       loader: () => _collectArtworkResponse(
         _transports.loaderFor(source, requestUri),
       ),

@@ -133,10 +133,7 @@ for token in (
     "await open();",
     "await _refresh(announce: false",
     "Icons.swap_horiz",
-    "_DetailsRefreshState.success",
-    "_DetailsRefreshState.failure",
-    "Colors.green",
-    "Icons.close",
+    "resultKey: comicDetailsRefreshStateKey",
     "onLongPress: () => _toggleSelection(tag)",
     "Clipboard.setData",
     "widget.onSearch?.call(tag)",
@@ -150,7 +147,7 @@ if not web_index < migrate_index < plugin_index:
     raise SystemExit("FAIL: detail action order must be WebView -> migration -> plugin")
 
 refresh = read("apps/app/lib/app_pull_to_refresh.dart")
-for token in ("RefreshIndicatorTriggerMode.onEdge", "displacement: 72"):
+for token in ("RefreshIndicatorTriggerMode.onEdge", "displacement: _displacement", "_AppRefreshResult.success", "_AppRefreshResult.failure", "Colors.green", "Icons.close"):
     require(refresh, token, "shared detail/source refresh contract")
 require(details, "AppPullToRefresh(", "detail shared refresh usage")
 

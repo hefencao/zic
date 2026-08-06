@@ -24,11 +24,13 @@ final class _ComicDetailsPreviewRow {
     required this.items,
     required this.width,
     required this.height,
+    required this.complete,
   });
 
   final List<_ComicDetailsPreviewItemLayout> items;
   final double width;
   final double height;
+  final bool complete;
 }
 
 final class _ComicDetailsPreviewPage {
@@ -258,10 +260,16 @@ final class _ComicDetailsPreviewSectionState
       items.add(item);
       height = math.max(height, item.height);
     }
+    final containsLandscape = indices.any(_isLandscapePreview);
+    final preferredCount = math.min(
+      widget.maxItemsPerRow.clamp(1, 8).toInt(),
+      containsLandscape ? 2 : 3,
+    );
     return _ComicDetailsPreviewRow(
       items: List<_ComicDetailsPreviewItemLayout>.unmodifiable(items),
       width: maxWidth,
       height: height,
+      complete: indices.length >= preferredCount,
     );
   }
 
@@ -276,21 +284,22 @@ final class _ComicDetailsPreviewSectionState
       rows.add(_buildPreviewRow(indices, maxWidth));
     }
 
-    // Two-landscape and three-portrait rows naturally produce similar tile
-    // areas. Clamp only exceptional rows (usually an incomplete final row) so
-    // the global area ratio stays within 1.2 without converting spare width
-    // into oversized inter-item gaps.
-    final rowAreas = rows
+    // Complete rows always consume the full width. Only a sparse final row is
+    // capped so one remaining preview does not become arbitrarily larger than
+    // the established complete-row rhythm.
+    final completeAreas = rows
+        .where((row) => row.complete)
         .expand((row) => row.items)
         .map((item) => item.area)
         .toList(growable: false);
-    if (rowAreas.isEmpty) return rows;
-    final minimumArea = rowAreas.reduce(math.min);
-    final maximumAllowedArea = minimumArea * 1.2;
+    if (completeAreas.isEmpty) return rows;
+    final referenceArea = completeAreas.reduce(math.min);
+    final maximumSparseArea = referenceArea * 2.4;
     return rows.map((row) {
-      final area = row.items.first.area;
-      if (area <= maximumAllowedArea) return row;
-      final scale = math.sqrt(maximumAllowedArea / area);
+      if (row.complete || row.items.first.area <= maximumSparseArea) {
+        return row;
+      }
+      final scale = math.sqrt(maximumSparseArea / row.items.first.area);
       final scaledItems = row.items.map((item) {
         return _ComicDetailsPreviewItemLayout(
           index: item.index,
@@ -308,6 +317,7 @@ final class _ComicDetailsPreviewSectionState
         items: List<_ComicDetailsPreviewItemLayout>.unmodifiable(scaledItems),
         width: width,
         height: height,
+        complete: false,
       );
     }).toList(growable: false);
   }
@@ -427,7 +437,7 @@ final class _ComicDetailsPreviewSectionState
   Widget _previewItems(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final maxPreviewHeight = MediaQuery.sizeOf(context).height * .8;
+        final maxPreviewHeight = MediaQuery.sizeOf(context).height * .9;
         final maxGridHeight = math.max(
           1.0,
           maxPreviewHeight - _previewPageIndicatorHeight,
@@ -552,18 +562,21 @@ final class _ComicDetailsPreviewSectionState
       child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Row(
-              children: <Widget>[
-                const Icon(Icons.collections_outlined, size: 20),
-                const SizedBox(width: 8),
-                Text('预览', style: Theme.of(context).textTheme.titleMedium),
-                const Spacer(),
-                if (_loading && _items.isNotEmpty)
-                  const SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-              ],
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: <Widget>[
+                  const Icon(Icons.collections_outlined, size: 20),
+                  const SizedBox(width: 8),
+                  Text('预览', style: Theme.of(context).textTheme.titleMedium),
+                  const Spacer(),
+                  if (_loading && _items.isNotEmpty)
+                    const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                ],
+              ),
             ),
             if (_items.isNotEmpty) ...<Widget>[
               const SizedBox(height: 8),
@@ -996,6 +1009,12 @@ final class _ComicDetailsCommentsPageState
   }
 }
 
+String _plainCommentText(String value) => value
+    .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
+    .replaceAll('&amp;', '&')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>');
+
 final class _ComicDetailsCommentCard extends StatelessWidget {
   const _ComicDetailsCommentCard({
     required this.sourceId,
@@ -1049,7 +1068,7 @@ final class _ComicDetailsCommentCard extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              comment.content,
+              _plainCommentText(comment.content),
               maxLines: 5,
               overflow: TextOverflow.ellipsis,
             ),

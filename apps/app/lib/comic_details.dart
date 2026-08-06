@@ -181,9 +181,27 @@ typedef ComicDetailsIdentityMatcher = bool Function(
   String leftComicId,
   String rightComicId,
 );
+typedef ComicDetailsChapterCompatibilityMatcher = bool Function(
+  String chapterId,
+);
 
 bool _exactComicIdentity(String leftComicId, String rightComicId) =>
     leftComicId == rightComicId;
+
+List<Chapter> _withoutCompatibilityFallback(
+  Iterable<Chapter> chapters,
+  ComicDetailsChapterCompatibilityMatcher? isCompatibilityChapter,
+) {
+  final values = chapters.toList(growable: false);
+  if (isCompatibilityChapter == null) return values;
+  final hasRealChapter = values.any(
+    (chapter) => !isCompatibilityChapter(chapter.chapterId),
+  );
+  if (!hasRealChapter) return values;
+  return values
+      .where((chapter) => !isCompatibilityChapter(chapter.chapterId))
+      .toList(growable: false);
+}
 
 
 void _ignoreRefreshResult(Future<bool> refresh) {
@@ -212,6 +230,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
     this.onSearchMetadata,
     this.onMigrateSource,
     this.onOpenVersions,
+    this.isCompatibilityChapter,
     this.previewMaxItemsPerRow = 4,
     this.traceSink = const NoopTraceSink(),
     super.key,
@@ -237,6 +256,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
   final ComicDetailsMetadataSearch? onSearchMetadata;
   final ComicDetailsMigrationOpener? onMigrateSource;
   final ComicDetailsVersionsOpener? onOpenVersions;
+  final ComicDetailsChapterCompatibilityMatcher? isCompatibilityChapter;
   final int previewMaxItemsPerRow;
   final TraceSink traceSink;
 
@@ -744,7 +764,16 @@ final class _LocalComicDetailsScreenState
   Widget build(BuildContext context) {
     final models = <_ChapterViewModel>[];
     final catalogIdentities = <String>{};
-    for (final chapter in _library.sourceChapters) {
+    final catalogChapters = _withoutCompatibilityFallback(
+      _library.sourceChapters,
+      widget.isCompatibilityChapter,
+    );
+    final isCompatibilityChapter = widget.isCompatibilityChapter;
+    final hasRealCatalogChapter = isCompatibilityChapter != null &&
+        catalogChapters.any(
+          (chapter) => !isCompatibilityChapter(chapter.chapterId),
+        );
+    for (final chapter in catalogChapters) {
       final identity = comicDetailsChapterIdentity(
         widget.comic.sourceId,
         chapter.chapterId,
@@ -771,6 +800,10 @@ final class _LocalComicDetailsScreenState
       );
     }
     for (final entry in _library.chapters) {
+      if (hasRealCatalogChapter &&
+          isCompatibilityChapter!(entry.chapter.chapterId)) {
+        continue;
+      }
       final identity = comicDetailsChapterIdentity(
         entry.chapter.sourceId,
         entry.chapter.chapterId,
@@ -948,6 +981,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
     this.onSearchMetadata,
     this.onMigrateSource,
     this.onOpenVersions,
+    this.isCompatibilityChapter,
     this.previewMaxItemsPerRow = 4,
     this.sameComicIdentity = _exactComicIdentity,
     this.traceSink = const NoopTraceSink(),
@@ -976,6 +1010,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
   final ComicDetailsMetadataSearch? onSearchMetadata;
   final ComicDetailsVersionsOpener? onMigrateSource;
   final ComicDetailsVersionsOpener? onOpenVersions;
+  final ComicDetailsChapterCompatibilityMatcher? isCompatibilityChapter;
   final int previewMaxItemsPerRow;
   final ComicDetailsIdentityMatcher sameComicIdentity;
   final TraceSink traceSink;
@@ -1002,9 +1037,37 @@ final class _RemoteComicDetailsScreenState
   final Map<String, Future<ImportedLibraryEntry>> _ensureInFlight =
       <String, Future<ImportedLibraryEntry>>{};
   final Stopwatch _traceClock = Stopwatch()..start();
+  BrowsableComicSource? _activeSource;
+
+  BrowsableComicSource? get _currentSource {
+    final resolver = widget.resolveSource;
+    if (resolver == null) return widget.source;
+    final current = resolver(widget.source.sourceId);
+    if (current != null) _activeSource = current;
+    return current;
+  }
 
   BrowsableComicSource get _source =>
-      widget.resolveSource?.call(widget.source.sourceId) ?? widget.source;
+      _currentSource ?? _activeSource ?? widget.source;
+
+  Future<BrowsableComicSource> _sourceForOperation() async {
+    final resolver = widget.resolveSource;
+    if (resolver == null) return widget.source;
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (mounted) {
+      final current = resolver(widget.source.sourceId);
+      if (current != null) {
+        _activeSource = current;
+        return current;
+      }
+      if (!DateTime.now().isBefore(deadline)) break;
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    throw Failure(
+      code: ErrorCode.source,
+      message: '漫画源运行时尚未就绪，请稍后重试',
+    );
+  }
 
   void _recordRefreshTrace(
     TraceEventKind kind,
@@ -1014,7 +1077,7 @@ final class _RemoteComicDetailsScreenState
     widget.traceSink.record(
       TraceEvent(
         monotonicMicros: _traceClock.elapsedMicroseconds,
-        sessionId: 'comic-details:${_source.sourceId}',
+        sessionId: 'comic-details:${widget.source.sourceId}',
         kind: kind,
         payload: <String, Object?>{
           'stage': stage,
@@ -1029,6 +1092,24 @@ final class _RemoteComicDetailsScreenState
   void initState() {
     super.initState();
     _library = widget.initialLibrary;
+    final cachedComic = _library.sourceManifest?.comic ?? _library.sourceComic;
+    final cachedChapters = _withoutCompatibilityFallback(
+      _library.sourceManifest?.chapters ?? _library.sourceChapters,
+      widget.isCompatibilityChapter,
+    );
+    if (_library.sourceManifest != null) {
+      _manifest = ComicManifest(
+        comic: _library.sourceManifest!.comic,
+        chapters: cachedChapters,
+      );
+    } else if (cachedComic != null && cachedChapters.isNotEmpty) {
+      _manifest = ComicManifest(
+        comic: cachedComic,
+        chapters: cachedChapters,
+      );
+    }
+    _activeSource = widget.resolveSource?.call(widget.source.sourceId) ??
+        (widget.resolveSource == null ? widget.source : null);
     _downloadSubscription =
         widget.downloadChanges.listen(_acceptDownloadSnapshot);
     scheduleMicrotask(
@@ -1045,7 +1126,7 @@ final class _RemoteComicDetailsScreenState
 
   void _acceptDownloadSnapshot(ChapterDownloadSnapshot snapshot) {
     if (!mounted ||
-        snapshot.sourceId != _source.sourceId ||
+        snapshot.sourceId != widget.source.sourceId ||
         !widget.sameComicIdentity(
           snapshot.comicId,
           widget.summary.comicId,
@@ -1062,7 +1143,7 @@ final class _RemoteComicDetailsScreenState
 
   Comic get _comic => _manifest?.comic ?? Comic(
         comicId: widget.summary.comicId,
-        sourceId: _source.sourceId,
+        sourceId: widget.source.sourceId,
         title: widget.summary.title,
         authors: widget.summary.authors,
         tags: widget.summary.tags,
@@ -1072,13 +1153,40 @@ final class _RemoteComicDetailsScreenState
       );
 
   ComicPreviewSource? get _previewSource {
-    final Object candidate = _source;
+    final Object? candidate = _currentSource;
     return candidate is ComicPreviewSource ? candidate : null;
   }
 
   ComicCommentSource? get _commentSource {
-    final Object candidate = _source;
+    final Object? candidate = _currentSource;
     return candidate is ComicCommentSource ? candidate : null;
+  }
+
+  Future<ComicPreviewPage> _loadRemotePreview(String? nextToken) async {
+    final source = await _sourceForOperation();
+    if (source is! ComicPreviewSource || !source.supportsComicPreview) {
+      throw StateError('漫画源当前不支持预览');
+    }
+    return source.loadComicPreview(
+      _comic.comicId,
+      nextToken: nextToken,
+    );
+  }
+
+  Future<ComicCommentPage> _loadRemoteComments({
+    required int page,
+    String? replyTo,
+  }) async {
+    final source = await _sourceForOperation();
+    if (source is! ComicCommentSource || !source.supportsComicComments) {
+      throw StateError('漫画源当前不支持评论');
+    }
+    return source.loadComicComments(
+      _comic.comicId,
+      subId: _comic.sourceSubId,
+      page: page,
+      replyTo: replyTo,
+    );
   }
 
   Future<void> _loadDownloadStatuses(
@@ -1150,6 +1258,7 @@ final class _RemoteComicDetailsScreenState
     });
     var succeeded = false;
     try {
+      final source = await _sourceForOperation();
       if (forceRefresh) {
         final identities = <String>{widget.summary.comicId};
         final manifestComic = _manifest?.comic.comicId;
@@ -1157,16 +1266,18 @@ final class _RemoteComicDetailsScreenState
         final libraryComic = _library.sourceComic?.comicId;
         if (libraryComic != null) identities.add(libraryComic);
         for (final comicId in identities) {
-          invalidateCachedComic(_source, comicId);
+          invalidateCachedComic(source, comicId);
         }
       }
       final library = await widget.reloadLibrary(refreshContent: true);
       final sourceManifest = library.sourceManifest;
       final comic = sourceManifest?.comic ?? library.sourceComic;
-      final sourceChapters =
-          sourceManifest?.chapters ?? library.sourceChapters;
+      final sourceChapters = _withoutCompatibilityFallback(
+        sourceManifest?.chapters ?? library.sourceChapters,
+        widget.isCompatibilityChapter,
+      );
       if (comic == null ||
-          comic.sourceId != _source.sourceId ||
+          comic.sourceId != source.sourceId ||
           !widget.sameComicIdentity(
             comic.comicId,
             widget.summary.comicId,
@@ -1185,11 +1296,10 @@ final class _RemoteComicDetailsScreenState
           '请打开 WebView 完成站点验证后重试。',
         );
       }
-      final manifest = sourceManifest ??
-          ComicManifest(
-            comic: comic,
-            chapters: sourceChapters,
-          );
+      final manifest = ComicManifest(
+        comic: comic,
+        chapters: sourceChapters,
+      );
       if (!mounted) {
         return false;
       }
@@ -1281,7 +1391,7 @@ final class _RemoteComicDetailsScreenState
 
   ImportedLibraryEntry? _localEntry(Chapter chapter) => _chapterEntryFor(
         _library.chapters,
-        sourceId: _source.sourceId,
+        sourceId: widget.source.sourceId,
         comicId: chapter.comicId,
         chapter: chapter,
       );
@@ -1314,8 +1424,9 @@ final class _RemoteComicDetailsScreenState
     if (manifest != null) {
       await widget.persistComic(manifest, true);
     }
+    final source = await _sourceForOperation();
     final entry = await widget.ensureSourceChapter(
-      _source,
+      source,
       _comic,
       chapter,
     );
@@ -1564,7 +1675,7 @@ final class _RemoteComicDetailsScreenState
       return _ComicDetailsFailureScaffold(
         title: widget.summary.title,
         comicId: widget.summary.comicId,
-        sourceId: _source.sourceId,
+        sourceId: widget.source.sourceId,
         sourceLabel: _source.descriptor.name,
         failure: failure,
         refreshing: _refreshing,
@@ -1591,20 +1702,11 @@ final class _RemoteComicDetailsScreenState
     final commentSource = _commentSource;
     final ComicDetailsPreviewLoader? previewLoader =
         previewSource != null && previewSource.supportsComicPreview
-            ? (String? nextToken) => previewSource.loadComicPreview(
-                  comic.comicId,
-                  nextToken: nextToken,
-                )
+            ? _loadRemotePreview
             : null;
     final ComicDetailsCommentsLoader? commentsLoader =
         commentSource != null && commentSource.supportsComicComments
-            ? ({required int page, String? replyTo}) =>
-                commentSource.loadComicComments(
-                  comic.comicId,
-                  subId: comic.sourceSubId,
-                  page: page,
-                  replyTo: replyTo,
-                )
+            ? _loadRemoteComments
             : null;
     final knownPageCount = ordered.fold<int>(
       0,
@@ -1855,13 +1957,24 @@ final class _ComicDetailsHeader extends StatelessWidget {
             ),
           ],
         ),
-        const SizedBox(height: 14),
-        Text('简介', style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 4),
-        Text(
-          description?.trim().isNotEmpty == true
-              ? description!.trim()
-              : '暂无简介',
+        const SizedBox(height: 12),
+        Card(
+          margin: EdgeInsets.zero,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text('简介', style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 6),
+                Text(
+                  description?.trim().isNotEmpty == true
+                      ? description!.trim()
+                      : '暂无简介',
+                ),
+              ],
+            ),
+          ),
         ),
         if (sourceMetadata.categories.isNotEmpty) ...<Widget>[
           const SizedBox(height: 12),
@@ -2286,7 +2399,13 @@ final class _ComicDetailCoverState extends State<_ComicDetailCover>
     with WidgetsBindingObserver {
   late Future<EncodedResourceSource> _source;
   bool _failed = false;
+  bool _frameReady = false;
+  bool _encodedRecoveryAttempted = false;
+  static const _firstFrameTimeout = Duration(milliseconds: 2500);
+
+  int _decodeRecoveryGeneration = 0;
   final ArtworkRetryController _retry = ArtworkRetryController();
+  Timer? _firstFrameWatchdog;
 
   @override
   void initState() {
@@ -2307,16 +2426,21 @@ final class _ComicDetailCoverState extends State<_ComicDetailCover>
     }
   }
 
-  Future<EncodedResourceSource> _load() async {
+  Future<EncodedResourceSource> _load({bool forceRefresh = false}) async {
     try {
-      return await Future<EncodedResourceSource>.sync(
+      final source = await Future<EncodedResourceSource>.sync(
         () => widget.loader(
           sourceId: widget.sourceId,
           comicId: widget.comicId,
           coverUri: widget.coverUri,
           fallbackChapter: widget.fallbackChapter,
+          resourceRole: forceRefresh
+              ? 'cover-recovery:$_decodeRecoveryGeneration'
+              : 'cover',
         ),
       );
+      _scheduleFirstFrameWatchdog();
+      return source;
     } on Object catch (error, stackTrace) {
       _failed = true;
       _retry.schedule(() => _restartLoad());
@@ -2324,19 +2448,40 @@ final class _ComicDetailCoverState extends State<_ComicDetailCover>
     }
   }
 
-  void _restartLoad({bool resetRetryBudget = false}) {
+  void _scheduleFirstFrameWatchdog() {
+    _firstFrameWatchdog?.cancel();
+    _firstFrameWatchdog = Timer(_firstFrameTimeout, () {
+      if (!mounted || _frameReady) return;
+      _failed = true;
+      _recoverEncodedSource();
+    });
+  }
+
+  void _restartLoad({
+    bool resetRetryBudget = false,
+    bool forceRefresh = false,
+  }) {
     if (!mounted) return;
     if (resetRetryBudget) _retry.reset();
     setState(() {
       // Keep the same placeholder while the replacement source is loaded.
       _failed = true;
-      _source = _load();
+      _frameReady = false;
+      if (forceRefresh) _decodeRecoveryGeneration++;
+      _source = _load(forceRefresh: forceRefresh);
     });
+  }
+
+  void _recoverEncodedSource() {
+    if (_encodedRecoveryAttempted) return;
+    _encodedRecoveryAttempted = true;
+    _restartLoad(forceRefresh: true);
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && _failed) {
+      _encodedRecoveryAttempted = false;
       _retry.retryNow(
         () => _restartLoad(resetRetryBudget: true),
         resetBudget: true,
@@ -2347,6 +2492,7 @@ final class _ComicDetailCoverState extends State<_ComicDetailCover>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _firstFrameWatchdog?.cancel();
     _retry.dispose();
     super.dispose();
   }
@@ -2359,14 +2505,21 @@ final class _ComicDetailCoverState extends State<_ComicDetailCover>
         final source = snapshot.data;
         if (source != null) {
           return RecoverableArtworkImage(
+            key: ValueKey<String>(
+              '${widget.sourceId}:${widget.comicId}:$_decodeRecoveryGeneration',
+            ),
             image: encodedResourceImageProvider(source),
             seed: widget.coverUri?.toString() ?? widget.comicId,
             fit: BoxFit.cover,
             onFrameReady: () {
+              _firstFrameWatchdog?.cancel();
+              _frameReady = true;
               _failed = false;
+              _encodedRecoveryAttempted = false;
               _retry.reset();
             },
             onDecodeFailure: () => _failed = true,
+            onRecoveryExhausted: _recoverEncodedSource,
           );
         }
         if (snapshot.hasError) {

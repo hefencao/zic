@@ -36,7 +36,7 @@ for token in (
     '_takePreviewRowIndices(',
     '_buildPreviewRow(',
     'availableItemWidth',
-    'maximumAllowedArea = minimumArea * 1.2',
+    'maximumSparseArea = referenceArea * 2.4',
     'width: maxWidth',
 ):
     require(preview, token, 'preview width utilization')
@@ -114,7 +114,7 @@ for token in (
 refresh = read('apps/app/lib/app_pull_to_refresh.dart')
 for token in (
     'RefreshIndicatorTriggerMode.onEdge',
-    'displacement: 72',
+    '_displacement = 72',
 ):
     require(refresh, token, 'shared pull refresh')
 for token in (

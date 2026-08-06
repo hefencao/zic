@@ -1,6 +1,6 @@
 # zic
 
-dev.142 让详情预览行在面积比约束内尽量铺满屏幕宽度；封面加载与 Flutter 解码失败可自动恢复，漫画源浮动搜索接入 Mihon 过滤标签、手势优先收起和下拉强制刷新。
+dev.144 为 encoded bytes 已就绪但 Flutter ImageStream 无帧无错误的封面增加有界首帧 watchdog；详情页先显示缓存目录并等待当前插件来源，完整预览行铺满媒体宽度，刷新反馈由统一组件拥有，真实章节目录会剔除兼容伪章节。
 
 
 `zic` 是面向 Android 优先、高性能漫画阅读场景的 Flutter/Rust 工程。项目支持本地与远程章节、静态图片、Animated WebP、持久下载、带分类/翻页的漫画源浏览、Mihon/Venera 扩展和统一 Reader Pipeline。

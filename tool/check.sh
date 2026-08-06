@@ -78,6 +78,7 @@ python3 "$ROOT/tool/test_dev140_source_paging_mihon_language_equal_area_preview.
 python3 "$ROOT/tool/test_dev141_source_sections_floating_search_cache_preview_limit.py"
 python3 "$ROOT/tool/test_dev142_preview_cover_filter_pull_refresh.py"
 python3 "$ROOT/tool/test_dev143_cover_stability_preview_rows_cookie_runtime_refresh.py"
+python3 "$ROOT/tool/test_dev144_cover_preview_refresh_plugin_details.py"
 python3 "$ROOT/tool/check_test_quarantine.py"
 python3 "$ROOT/tool/test_texture_schedule_timing_contract.py"
 python3 "$ROOT/tool/test_texture_bridge_kotlin_compile.py"
