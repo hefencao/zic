@@ -23,8 +23,6 @@ spec = read('docs/SPEC.md')
 check = read('tool/check.sh')
 
 for token in (
-    'enum _ComicSourceCategory { all, native, mihon, venera }',
-    'comicSourceCategoryBarKey',
     'comicSourcePagerKey',
     'comicSourcePreviousPageKey',
     'comicSourceNextPageKey',
@@ -33,9 +31,14 @@ for token in (
     "'第 $page 页'",
 ):
     require(source, token, 'source browser')
-for forbidden in ('_loadMore()', '_handleScroll()', 'extentAfter <= 520'):
+for forbidden in (
+    '_loadMore()',
+    '_handleScroll()',
+    'extentAfter <= 520',
+    'enum _ComicSourceCategory { all, native, mihon, venera }',
+):
     if forbidden in source:
-        raise SystemExit(f'legacy implicit source pagination remains: {forbidden}')
+        raise SystemExit(f'superseded source pagination/category path remains: {forbidden}')
 
 for token in (
     'externalPluginInstalledLanguageBarKey',
@@ -75,7 +78,7 @@ for forbidden in (
         raise SystemExit(f'legacy preview layout remains: {forbidden}')
 
 for token in (
-    'comic source categories and explicit pager preserve source order',
+    'source-owned sections floating search and bottom pager preserve order',
     'lessThanOrEqualTo(1.2)',
     'comicDetailsPreviewExpandKey',
 ):
@@ -83,8 +86,6 @@ for token in (
 require(plugin_test, 'Mihon plugins derive stable language categories', 'plugin model tests')
 
 for token in (
-    '漫画源页按原生、Mihon、Venera 分类',
-    '显式上一页/下一页',
     '等目标面积',
     '面积比不超过 1.2',
 ):

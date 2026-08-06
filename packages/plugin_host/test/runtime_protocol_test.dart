@@ -12,6 +12,7 @@ void main() {
       query: 'history',
       offset: 24,
       limit: 24,
+      sectionId: 'popular',
     );
 
     final decoded = ExternalPluginRuntimeRequest.fromMessage(
@@ -23,6 +24,7 @@ void main() {
     expect(decoded.externalSourceId, '1234567890123456789');
     expect(decoded.arguments['query'], 'history');
     expect(decoded.arguments['offset'], 24);
+    expect(decoded.arguments['sectionId'], 'popular');
   });
 
   test('runtime responses preserve typed binary resources', () {

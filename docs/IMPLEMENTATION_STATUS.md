@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.140`
-**App build：** `0.31.0+140`
+**源码版本：** `0.31.0-dev.141`
+**App build：** `0.31.0+141`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -9,7 +9,7 @@
 
 ## 当前实现
 
-- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=140`。
+- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=141`。
 - 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
 - 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation
   不阻塞 Home primary，外部 source ready 后增量接入，失败封面可随 loader 变化重试。
@@ -31,14 +31,14 @@
   登录参数错误判为 `runtime-request-invalid`。详情 manifest 已接入 Venera `subId`、首批
   thumbnails/comments；支持的来源显示预览栏、评论栏、分页评论页和回复页，图片仍走
   统一 artwork cache，未声明能力的来源不会触发对应插件请求。
-- 漫画源浏览页已按原生/Mihon/Venera 分类，并改为显式上一页/下一页；Mihon 已安装与仓库插件列表按声明/source metadata 的规范化语言筛选。
+- 漫画源浏览页已改为来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态仅以 chip 色彩/图标区分。页码位于滚动尾部，左下浮动搜索保留持久历史；catalog 缓存先显示、后台刷新且数据不变时不重建。Mihon 已安装与仓库插件列表继续按声明/source metadata 的规范化语言筛选。
 - catalog response cache 使用稳定 source/comic/chapter identity 和结构 weight；页面正文不进入该缓存。
 - Home“更新漫画”已与阅读历史分离：只展示 `inShelf` 漫画并按 `SavedComicRecord.updatedAt`
   排序；Reader 在页码/模式变化、App lifecycle 暂停和 route dispose 时写入进度，
   `HomeLibrarySession` 即时替换内存记录。
 - 详情预览保留完整 URI 作为单项绘制身份，但 artwork role/cache key 使用去 `@x/y` 的 base URI，
   同一原图的不同裁剪共享一份编码字节；Venera `loadThumbnails` 的首批与游标分页
-  不再重复消费 `loadInfo` 缩略图；折叠与展开共用按原顺序生成的等目标面积布局，面积比不超过 1.2，折叠高度取第一行，展开图片区域不超过屏幕高度 80%，居中箭头控制展开；点击预览项会将索引传入既有 Reader 路由；Venera
+  不再重复消费 `loadInfo` 缩略图；折叠与展开共用按原顺序生成的等目标面积布局，面积比不超过 1.2，阅读设置可限制每行 1–8 项（默认 4），折叠高度取第一行，展开图片区域不超过屏幕高度 80%，居中箭头控制展开；点击预览项会将索引传入既有 Reader 路由；Venera
   `@x/y` 预览 URI 在保留绘制身份的同时按既有约定以去裁剪 URL 调用 `onThumbnailLoad`，封面、预览
   和来源缩略图失败时统一使用稳定伪随机的柔和纯色占位；预览绘制只显示 `@x/y` 指定的原图区域。
 - ArtifactCacheManager 默认热字节 10 项/256 MiB，支持持久 backend、verified alias/rekey 和 foreground read join。

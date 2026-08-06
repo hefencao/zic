@@ -120,16 +120,21 @@ void main() {
     expect(find.byKey(comicSourceChoiceKey('fixture-a')), findsOneWidget);
   });
 
-  testWidgets('comic source categories and explicit pager preserve source order',
+  testWidgets('source-owned sections floating search and bottom pager preserve order',
       (tester) async {
     final native = _FixtureSource(
       'fixture-native',
       '原生源',
       browseItemCount: 30,
+      browseSections: const <SourceBrowseSection>[
+        SourceBrowseSection(sectionId: 'popular', label: '热门'),
+        SourceBrowseSection(sectionId: 'latest', label: '最新'),
+      ],
     );
     final mihon = _FixtureSource('mihon:fixture-zh', 'Mihon 中文源');
     final venera = _FixtureSource('venera:fixture-en', 'Venera English');
     var activeSourceId = native.sourceId;
+    final searches = <String>[];
 
     await tester.pumpWidget(
       MaterialApp(
@@ -141,6 +146,8 @@ void main() {
               onSourceSelected: (sourceId) {
                 setState(() => activeSourceId = sourceId);
               },
+              searchHistory: const <String>['漫画'],
+              onSearchCommitted: searches.add,
               loadCover: (_, __, ___) async =>
                   MemoryEncodedResourceSource(_tinyPng()),
               onOpenComic: (_, __) async {},
@@ -154,39 +161,39 @@ void main() {
       tester,
       find.byKey(sourceComicCardKey(native.sourceId, '${native.sourceId}-comic-0')),
     );
-    expect(find.byKey(comicSourceCategoryKey('all')), findsOneWidget);
-    expect(find.byKey(comicSourceCategoryKey('native')), findsOneWidget);
-    expect(find.byKey(comicSourceCategoryKey('mihon')), findsOneWidget);
-    expect(find.byKey(comicSourceCategoryKey('venera')), findsOneWidget);
-    expect(find.byKey(comicSourcePageLabelKey), findsOneWidget);
-    expect(find.text('第 1 页'), findsOneWidget);
+    expect(find.byKey(comicSourceCategoryKey('popular')), findsOneWidget);
+    expect(find.byKey(comicSourceCategoryKey('latest')), findsOneWidget);
+    expect(find.byKey(comicSourceCategoryKey('mihon')), findsNothing);
+    expect(find.byKey(comicSourceChoiceKey(native.sourceId)), findsOneWidget);
+    expect(find.byKey(comicSourceChoiceKey(mihon.sourceId)), findsOneWidget);
+    expect(find.byKey(comicSourceChoiceKey(venera.sourceId)), findsOneWidget);
+    expect(find.byKey(comicSourcePagerKey), findsNothing);
 
+    await _tapVisible(tester, find.byKey(comicSourceSearchFabKey));
+    expect(find.byKey(comicSourceSearchKey), findsOneWidget);
+    expect(find.text('漫画'), findsOneWidget);
+    await _tapVisible(tester, find.text('漫画'));
+    expect(searches, <String>['漫画']);
+
+    await tester.scrollUntilVisible(
+      find.byKey(comicSourcePagerKey),
+      500,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('第 1 页'), findsOneWidget);
     await _tapVisible(tester, find.byKey(comicSourceNextPageKey));
     await _pumpUntilFound(
       tester,
       find.byKey(sourceComicCardKey(native.sourceId, '${native.sourceId}-comic-24')),
     );
     expect(find.text('第 2 页'), findsOneWidget);
-    expect(
-      find.byKey(sourceComicCardKey(native.sourceId, '${native.sourceId}-comic-0')),
-      findsNothing,
-    );
 
-    await _tapVisible(tester, find.byKey(comicSourcePreviousPageKey));
+    await _tapVisible(tester, find.byKey(comicSourceCategoryKey('latest')));
     await _pumpUntilFound(
       tester,
       find.byKey(sourceComicCardKey(native.sourceId, '${native.sourceId}-comic-0')),
     );
-    expect(find.text('第 1 页'), findsOneWidget);
-
-    await _tapVisible(tester, find.byKey(comicSourceCategoryKey('mihon')));
-    await _pumpUntilFound(
-      tester,
-      find.byKey(sourceComicCardKey(mihon.sourceId, mihon._comicId)),
-    );
-    expect(find.byKey(comicSourceChoiceKey(mihon.sourceId)), findsOneWidget);
-    expect(find.byKey(comicSourceChoiceKey(native.sourceId)), findsNothing);
-    expect(find.byKey(comicSourceChoiceKey(venera.sourceId)), findsNothing);
+    expect(native.lastBrowseSection, 'latest');
   });
 
   testWidgets('source network failure exposes selectable copyable details',
@@ -1688,7 +1695,8 @@ final class _FixtureSource
         ComicVersionSource,
         RefreshableChapterComicSource,
         ComicPreviewSource,
-        ComicCommentSource {
+        ComicCommentSource,
+        SectionedBrowsableComicSource {
   _FixtureSource(
     this.sourceId,
     this.name, {
@@ -1710,6 +1718,7 @@ final class _FixtureSource
     this.previewCrops = false,
     this.previewLandscapeIndexes = const <int>{},
     this.supportsComicComments = false,
+    this.browseSections = const <SourceBrowseSection>[],
   });
 
   @override
@@ -1735,6 +1744,8 @@ final class _FixtureSource
   final Set<int> previewLandscapeIndexes;
   @override
   final bool supportsComicComments;
+  final List<SourceBrowseSection> browseSections;
+  String? lastBrowseSection;
   int _comicLoads = 0;
   int _chapterLoads = 0;
   int _chapterRefreshes = 0;
@@ -1789,6 +1800,20 @@ final class _FixtureSource
         pageCount: 1,
         sourceRevision: 'fixture-r$sequence',
       );
+
+  @override
+  Future<List<SourceBrowseSection>> loadBrowseSections() async => browseSections;
+
+  @override
+  Future<SourceBrowsePage> browseSection(
+    String sectionId, {
+    String query = '',
+    int offset = 0,
+    int limit = 24,
+  }) {
+    lastBrowseSection = sectionId;
+    return browse(query: query, offset: offset, limit: limit);
+  }
 
   @override
   Future<SourceBrowsePage> browse({

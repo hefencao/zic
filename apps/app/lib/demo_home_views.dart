@@ -101,7 +101,7 @@ extension _DemoHomeViews on _DemoHomeState {
                       sources: _enabledSources,
                       activeSourceId: _activeSourceId,
                       onSourceSelected: (sourceId) {
-                        _activeSourceId = sourceId;
+                        setState(() => _activeSourceId = sourceId);
                       },
                       loadCover: _loadSourceBrowseCover,
                       onOpenComic: _openSourceComic,
@@ -109,6 +109,13 @@ extension _DemoHomeViews on _DemoHomeState {
                       traceSink: widget.debugTrace,
                       requestedQuery: _sourceSearchQuery,
                       queryRevision: _sourceSearchRevision,
+                      searchHistory: widget.preferences.sourceSearchHistory,
+                      onSearchCommitted:
+                          widget.preferences.rememberSourceSearch,
+                      onSearchRemoved:
+                          widget.preferences.removeSourceSearch,
+                      onSearchHistoryCleared:
+                          widget.preferences.clearSourceSearchHistory,
                     )
                   : const SizedBox.shrink(),
             ),

@@ -34,6 +34,8 @@ const dataCacheRefreshKey = ValueKey<String>('data-cache-refresh');
 const readingAdaptiveKey = ValueKey<String>('reading-adaptive');
 const readingVerticalStitchKey =
     ValueKey<String>('reading-vertical-stitch');
+const readingPreviewMaxItemsPerRowKey =
+    ValueKey<String>('reading-preview-max-items-per-row');
 
 final class SettingsScreen extends StatelessWidget {
   const SettingsScreen({
@@ -507,6 +509,21 @@ final class ReadingSettingsScreen extends StatelessWidget {
               subtitle: const Text('纵向连续模式移除页间距；不合并页面文件或缓存身份。'),
               value: preferences.defaultVerticalStitch,
               onChanged: preferences.setDefaultVerticalStitch,
+            ),
+            ListTile(
+              key: readingPreviewMaxItemsPerRowKey,
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('详情页预览每行最多数量'),
+              subtitle: Slider(
+                min: 1,
+                max: 8,
+                divisions: 7,
+                label: '${preferences.detailsPreviewMaxItemsPerRow}',
+                value: preferences.detailsPreviewMaxItemsPerRow.toDouble(),
+                onChanged: (value) =>
+                    preferences.setDetailsPreviewMaxItemsPerRow(value.round()),
+              ),
+              trailing: Text('${preferences.detailsPreviewMaxItemsPerRow}'),
             ),
             const ListTile(
               leading: Icon(Icons.swap_horiz),

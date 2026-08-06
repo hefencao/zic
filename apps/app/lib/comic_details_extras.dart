@@ -49,6 +49,7 @@ final class _ComicDetailsPreviewSection extends StatefulWidget {
     required this.comicId,
     required this.title,
     required this.loadArtwork,
+    this.maxItemsPerRow = 4,
     this.initialPage,
     this.loader,
     this.onOpenPage,
@@ -58,6 +59,7 @@ final class _ComicDetailsPreviewSection extends StatefulWidget {
   final String comicId;
   final String title;
   final ComicDetailsCoverLoader loadArtwork;
+  final int maxItemsPerRow;
   final ComicPreviewPage? initialPage;
   final ComicDetailsPreviewLoader? loader;
   final ComicDetailsPreviewOpener? onOpenPage;
@@ -187,7 +189,12 @@ final class _ComicDetailsPreviewSectionState
   double _previewTargetArea(double maxWidth, double maxHeight) {
     final edgeForWidth = maxWidth / math.sqrt(_previewMaxAspect);
     final edgeForHeight = maxHeight * math.sqrt(_previewMinAspect);
-    final nominalEdge = (maxWidth / 4.6)
+    final maxItems = widget.maxItemsPerRow.clamp(1, 8).toInt();
+    final usableWidth = math.max(
+      1.0,
+      maxWidth - _previewGridGap * (maxItems - 1),
+    );
+    final nominalEdge = (usableWidth / maxItems)
         .clamp(_previewMinTargetEdge, _previewMaxTargetEdge)
         .toDouble();
     final edge = math.max(
@@ -241,7 +248,9 @@ final class _ComicDetailsPreviewSectionState
       final nextWidth = items.isEmpty
           ? item.width
           : width + _previewGridGap + item.width;
-      if (items.isNotEmpty && nextWidth > maxWidth) {
+      if (items.isNotEmpty &&
+          (nextWidth > maxWidth ||
+              items.length >= widget.maxItemsPerRow.clamp(1, 8).toInt())) {
         closeRow();
       }
       width = items.isEmpty

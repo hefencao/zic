@@ -1787,6 +1787,18 @@ function __zicCategoryTarget(source){
  }return null
 }
 async function __zicCategoryOptions(source,target){const config=source.categoryComics||{};if(typeof config.optionLoader==='function'){const loaded=await config.optionLoader(target.category,target.param??null),optionList=Array.isArray(loaded)?loaded:(loaded?.optionList||__zicLoaders(loaded));return __zicOptionDefaults({optionList})}return __zicOptionDefaults(config)}
+function __zicBrowseSections(source){
+ const result=[],explore=__zicLoaders(source.explore).filter(__zicHasLoader);
+ for(let index=0;index<explore.length;index++){const loader=explore[index],label=String(loader?.title??loader?.name??('浏览 '+(index+1)));result.push({sectionId:'venera:'+__zicB64({kind:'explore',index}),label})}
+ const category=source.category||{};for(const part of category.parts||[]){const items=Array.isArray(part?.categories)?part.categories:__zicLoaders(part?.categories),params=Array.isArray(part?.categoryParams)?part.categoryParams:[];
+  for(let index=0;index<items.length;index++){const item=items[index],target=item?.target?.page==='category'?item.target.attributes:null,itemType=item?.itemType??part?.itemType??category.itemType;
+   let categoryValue,param,label;if(target?.category!==undefined){categoryValue=target.category;param=target.param??null;label=item?.title??item?.name??item?.label??categoryValue}
+   else if(itemType==='category'){categoryValue=typeof item==='string'?item:(item?.category??item?.value??item?.title??item?.name);param=params[index]??item?.param??item?.categoryParam??null;label=item?.title??item?.name??item?.label??categoryValue}
+   if(categoryValue!==undefined)result.push({sectionId:'venera:'+__zicB64({kind:'category',category:categoryValue,param}),label:String(label??categoryValue)})}}
+ if(!result.length&&__zicSearchLoader(source))result.push({sectionId:'venera:'+__zicB64({kind:'search'}),label:'浏览'});
+ const seen=new Set();return result.filter(item=>{if(seen.has(item.sectionId))return false;seen.add(item.sectionId);return true})
+}
+function __zicBrowseSectionValue(sectionId){const raw=String(sectionId??'');if(!raw.startsWith('venera:'))return null;try{return __zicUnb64(raw.slice(7))}catch(_){return null}}
 function __zicHasBrowseCapability(source){return !!(__zicExploreLoader(source)||__zicSearchLoader(source)||(__zicCategoryTarget(source)&&__zicHasLoader(source.categoryComics)))}
 function __zicNextToken(result){return result?.next??result?.nextPage??result?.nextToken??result?.cursor??null}
 function __zicHasNextToken(value){return value!==null&&value!==undefined&&value!==false&&String(value)!==''}
@@ -1819,14 +1831,19 @@ function __zicChapterMessage(comicId,epId,title,index,pageCount=0){const opaque=
 function __zicImageKindHint(value){const path=String(value??'').split(/[?#]/,1)[0].toLowerCase();if(path.endsWith('.webp'))return 'webp';if(path.endsWith('.gif'))return 'gif';if(path.endsWith('.png'))return 'png';if(path.endsWith('.jpg')||path.endsWith('.jpeg')||path.endsWith('.jpe'))return 'jpeg';if(path.endsWith('.avif'))return 'avif';return null}
 async function __zicOperation(request){
  const source=globalThis.__zicSource,args=request.arguments||{};
+ if(request.operation==='loadBrowseSections')return __zicBrowseSections(source);
  if(request.operation==='browse'){
   const page=Math.floor(args.offset/args.limit)+1;let loaded;
-  const query=String(args.query||''),explore=__zicExploreLoader(source),search=__zicSearchLoader(source),category=__zicCategoryTarget(source);
+  const query=String(args.query||''),search=__zicSearchLoader(source),selected=__zicBrowseSectionValue(args.sectionId);
   if(query){if(!search)throw new Error('Venera source does not support search');const options=__zicDefaultOptions(source);loaded=await __zicLoadPage(search,[query,options],page,'search:'+query+':'+JSON.stringify(options),args.offset+args.limit)}
-  else if(explore) loaded=await __zicLoadPage(explore,[],page,'explore:'+String(explore.title||'default'),args.offset+args.limit);
-  else if(search){const options=__zicDefaultOptions(source);loaded=await __zicLoadPage(search,['',options],page,'search::'+JSON.stringify(options),args.offset+args.limit)}
-  else if(category&&__zicHasLoader(source.categoryComics)){const options=await __zicCategoryOptions(source,category);loaded=await __zicLoadPage(source.categoryComics,[category.category,category.param??null,options],page,'category:'+String(category.category)+':'+String(category.param??'')+':'+JSON.stringify(options),args.offset+args.limit)}
-  else throw new Error('Venera source exposes no browse capability (keys: '+Object.keys(source).join(', ')+')');
+  else if(selected?.kind==='explore'){const loaders=__zicLoaders(source.explore).filter(__zicHasLoader),explore=loaders[Number(selected.index)];if(!explore)throw new Error('Venera browse section is unavailable');loaded=await __zicLoadPage(explore,[],page,'explore:'+String(selected.index)+':'+String(explore.title||'default'),args.offset+args.limit)}
+  else if(selected?.kind==='category'&&__zicHasLoader(source.categoryComics)){const target={category:selected.category,param:selected.param??null},options=await __zicCategoryOptions(source,target);loaded=await __zicLoadPage(source.categoryComics,[target.category,target.param,options],page,'category:'+String(target.category)+':'+String(target.param??'')+':'+JSON.stringify(options),args.offset+args.limit)}
+  else if(selected?.kind==='search'&&search){const options=__zicDefaultOptions(source);loaded=await __zicLoadPage(search,['',options],page,'search::'+JSON.stringify(options),args.offset+args.limit)}
+  else {const sections=__zicBrowseSections(source),fallback=sections[0],value=__zicBrowseSectionValue(fallback?.sectionId);
+   if(value?.kind==='explore'){const explore=__zicLoaders(source.explore).filter(__zicHasLoader)[Number(value.index)];loaded=await __zicLoadPage(explore,[],page,'explore:'+String(value.index)+':'+String(explore?.title||'default'),args.offset+args.limit)}
+   else if(value?.kind==='category'&&__zicHasLoader(source.categoryComics)){const target={category:value.category,param:value.param??null},options=await __zicCategoryOptions(source,target);loaded=await __zicLoadPage(source.categoryComics,[target.category,target.param,options],page,'category:'+String(target.category)+':'+String(target.param??'')+':'+JSON.stringify(options),args.offset+args.limit)}
+   else if(search){const options=__zicDefaultOptions(source);loaded=await __zicLoadPage(search,['',options],page,'search::'+JSON.stringify(options),args.offset+args.limit)}
+   else throw new Error('Venera source exposes no browse capability (keys: '+Object.keys(source).join(', ')+')')}
   const all=__zicFlatten(loaded),cursor=loaded?.__zicCursor===true,start=cursor?args.offset:args.offset%args.limit,items=all.slice(start,start+args.limit).map(__zicComic);
   const maxPage=Number(loaded?.maxPage),hasMore=cursor?all.length>start+items.length||!loaded.exhausted:(Number.isFinite(maxPage)&&maxPage>page)||__zicHasNextToken(__zicNextToken(loaded))||all.length>start+items.length;return {items,offset:args.offset,hasMore};
  }

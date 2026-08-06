@@ -75,6 +75,8 @@ void main() {
         'readerStartsImmersive': false,
         'adaptiveReaderEnabled': true,
         'defaultVerticalStitch': true,
+        'detailsPreviewMaxItemsPerRow': 6,
+        'sourceSearchHistory': <Object?>['Alpha', 'beta', 'alpha'],
         'comicReaderSettings': <String, Object?>{
           comicReaderSettingsIdentity('source-a', 'comic-a'):
               <String, Object?>{
@@ -105,6 +107,8 @@ void main() {
     expect(controller.readerStartsImmersive, isFalse);
     expect(controller.adaptiveReaderEnabled, isTrue);
     expect(controller.defaultVerticalStitch, isTrue);
+    expect(controller.detailsPreviewMaxItemsPerRow, 6);
+    expect(controller.sourceSearchHistory, <String>['Alpha', 'beta']);
     expect(
       controller.comicReaderSettingsFor('source-a', 'comic-a'),
       const ComicReaderSettings(
@@ -123,6 +127,8 @@ void main() {
 
     controller.setThemeMode(ThemeMode.dark);
     controller.setShelfSortMode(LibrarySortMode.custom);
+    controller.setDetailsPreviewMaxItemsPerRow(4);
+    controller.rememberSourceSearch('Gamma');
     controller.setComicReaderSettings(
       'source-b',
       'comic-b',
@@ -136,6 +142,9 @@ void main() {
 
     expect(written?['themeMode'], 'dark');
     expect(written?['shelfSortMode'], 'custom');
+    expect(written?['version'], 4);
+    expect(written?['detailsPreviewMaxItemsPerRow'], 4);
+    expect((written?['sourceSearchHistory']! as List).first, 'Gamma');
     final comicSettings = written?['comicReaderSettings']! as Map;
     expect(
       (comicSettings[comicReaderSettingsIdentity('source-b', 'comic-b')]

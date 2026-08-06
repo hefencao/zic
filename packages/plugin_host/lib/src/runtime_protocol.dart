@@ -9,6 +9,7 @@ import 'package:catalog/catalog.dart';
 /// navigation, demand, DownloadSession and artifact ownership never cross this
 /// boundary.
 enum ExternalPluginRuntimeOperation {
+  loadBrowseSections,
   browse,
   loadComic,
   loadComicPreview,
@@ -137,12 +138,23 @@ final class ExternalPluginRuntimeRequest {
   final String externalSourceId;
   final Map<String, Object?> arguments;
 
+  factory ExternalPluginRuntimeRequest.loadBrowseSections({
+    required String requestId,
+    required String externalSourceId,
+  }) =>
+      ExternalPluginRuntimeRequest(
+        requestId: requestId,
+        operation: ExternalPluginRuntimeOperation.loadBrowseSections,
+        externalSourceId: externalSourceId,
+      );
+
   factory ExternalPluginRuntimeRequest.browse({
     required String requestId,
     required String externalSourceId,
     required String query,
     required int offset,
     required int limit,
+    String? sectionId,
   }) =>
       ExternalPluginRuntimeRequest(
         requestId: requestId,
@@ -152,6 +164,7 @@ final class ExternalPluginRuntimeRequest {
           'query': query,
           'offset': offset,
           'limit': limit,
+          'sectionId': sectionId,
         },
       );
 
@@ -425,11 +438,19 @@ void _validateArguments(
   Map<String, Object?> arguments,
 ) {
   switch (operation) {
+    case ExternalPluginRuntimeOperation.loadBrowseSections:
+      _expectKeys(arguments, const <String>{});
+      return;
     case ExternalPluginRuntimeOperation.browse:
-      _expectKeys(arguments, const <String>{'query', 'offset', 'limit'});
+      _expectKeys(
+        arguments,
+        const <String>{'query', 'offset', 'limit', 'sectionId'},
+      );
       if (arguments['query'] is! String ||
           arguments['offset'] is! int ||
           arguments['limit'] is! int ||
+          (arguments['sectionId'] != null &&
+              arguments['sectionId'] is! String) ||
           (arguments['offset']! as int) < 0 ||
           (arguments['limit']! as int) <= 0) {
         throw const FormatException('browse arguments are invalid');

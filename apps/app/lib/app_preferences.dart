@@ -120,6 +120,8 @@ final class AppPreferencesController extends ChangeNotifier {
   bool _readerStartsImmersive = true;
   bool _adaptiveReaderEnabled = false;
   bool _defaultVerticalStitch = false;
+  int _detailsPreviewMaxItemsPerRow = 4;
+  List<String> _sourceSearchHistory = <String>[];
   Map<String, ComicReaderSettings> _comicReaderSettings =
       <String, ComicReaderSettings>{};
   Future<void> Function(Map<String, Object?> values)? _write;
@@ -136,6 +138,9 @@ final class AppPreferencesController extends ChangeNotifier {
   bool get readerStartsImmersive => _readerStartsImmersive;
   bool get adaptiveReaderEnabled => _adaptiveReaderEnabled;
   bool get defaultVerticalStitch => _defaultVerticalStitch;
+  int get detailsPreviewMaxItemsPerRow => _detailsPreviewMaxItemsPerRow;
+  List<String> get sourceSearchHistory =>
+      List<String>.unmodifiable(_sourceSearchHistory);
   Map<String, ComicReaderSettings> get comicReaderSettings =>
       Map<String, ComicReaderSettings>.unmodifiable(_comicReaderSettings);
 
@@ -202,6 +207,15 @@ final class AppPreferencesController extends ChangeNotifier {
       values['defaultVerticalStitch'],
       _defaultVerticalStitch,
     );
+    _detailsPreviewMaxItemsPerRow = _intInRange(
+      values['detailsPreviewMaxItemsPerRow'],
+      fallback: _detailsPreviewMaxItemsPerRow,
+      min: 1,
+      max: 8,
+    );
+    _sourceSearchHistory = _decodeSearchHistory(
+      values['sourceSearchHistory'],
+    );
     _comicReaderSettings = _decodeComicReaderSettings(
       values['comicReaderSettings'],
     );
@@ -262,6 +276,45 @@ final class AppPreferencesController extends ChangeNotifier {
     _changed();
   }
 
+  void setDetailsPreviewMaxItemsPerRow(int value) {
+    final normalized = value.clamp(1, 8).toInt();
+    if (_disposed || _detailsPreviewMaxItemsPerRow == normalized) return;
+    _detailsPreviewMaxItemsPerRow = normalized;
+    _changed();
+  }
+
+  void rememberSourceSearch(String value) {
+    final normalized = value.trim();
+    if (_disposed || normalized.isEmpty) return;
+    final next = <String>[
+      normalized,
+      for (final item in _sourceSearchHistory)
+        if (item.toLowerCase() != normalized.toLowerCase()) item,
+    ];
+    if (next.length > 20) {
+      next.removeRange(20, next.length);
+    }
+    if (_sameStrings(next, _sourceSearchHistory)) return;
+    _sourceSearchHistory = next;
+    _changed();
+  }
+
+  void removeSourceSearch(String value) {
+    if (_disposed) return;
+    final next = _sourceSearchHistory
+        .where((item) => item != value)
+        .toList(growable: false);
+    if (_sameStrings(next, _sourceSearchHistory)) return;
+    _sourceSearchHistory = next;
+    _changed();
+  }
+
+  void clearSourceSearchHistory() {
+    if (_disposed || _sourceSearchHistory.isEmpty) return;
+    _sourceSearchHistory = <String>[];
+    _changed();
+  }
+
   void setComicReaderSettings(
     String sourceId,
     String comicId,
@@ -318,7 +371,7 @@ final class AppPreferencesController extends ChangeNotifier {
     final write = _write;
     if (write == null) return;
     await write(<String, Object?>{
-      'version': 3,
+      'version': 4,
       'themeMode': _themeMode.name,
       'debugTraceEnabled': _debugTraceEnabled,
       'shelfSourceFilter': _shelfSourceFilter.name,
@@ -328,6 +381,8 @@ final class AppPreferencesController extends ChangeNotifier {
       'readerStartsImmersive': _readerStartsImmersive,
       'adaptiveReaderEnabled': _adaptiveReaderEnabled,
       'defaultVerticalStitch': _defaultVerticalStitch,
+      'detailsPreviewMaxItemsPerRow': _detailsPreviewMaxItemsPerRow,
+      'sourceSearchHistory': _sourceSearchHistory,
       'comicReaderSettings': <String, Object?>{
         for (final entry in _comicReaderSettings.entries)
           entry.key: entry.value.toJson(),
@@ -382,3 +437,39 @@ Map<String, ComicReaderSettings> _decodeComicReaderSettings(Object? raw) {
 }
 
 bool _boolValue(Object? raw, bool fallback) => raw is bool ? raw : fallback;
+
+
+int _intInRange(
+  Object? raw, {
+  required int fallback,
+  required int min,
+  required int max,
+}) {
+  final value = raw is int ? raw : fallback;
+  return value.clamp(min, max).toInt();
+}
+
+List<String> _decodeSearchHistory(Object? raw) {
+  if (raw is! List) return <String>[];
+  final result = <String>[];
+  for (final value in raw) {
+    if (value is! String) continue;
+    final normalized = value.trim();
+    if (normalized.isEmpty ||
+        result.any((item) => item.toLowerCase() == normalized.toLowerCase())) {
+      continue;
+    }
+    result.add(normalized);
+    if (result.length == 20) break;
+  }
+  return result;
+}
+
+bool _sameStrings(List<String> left, List<String> right) {
+  if (identical(left, right)) return true;
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
+}

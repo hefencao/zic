@@ -126,7 +126,7 @@ Cookie 会话，按当前详情页 `#gnd` 关系生成版本，不把 Venera 当
 经过精确章节匹配验证的偏好、阅读位置和已读状态，并先完成目标写入；同源替换随后清理旧漫画
 记录，跨源迁移保留原来源。迁移面板始终展示当前插件和来源，目标可为当前来源或其他已启用来源。
 
-漫画源页按原生、Mihon、Venera 分类，并在当前来源内使用显式上一页/下一页请求固定大小的 catalog page；UI 不再以滚动到底触发隐式追加。Mihon 插件的已安装与仓库列表按规范化语言分类，语言来自插件声明或其 source metadata；设备 APK 尚未进入 ZIC runtime、无法取得可靠 source language 时不猜测分类。
+漫画源页使用来源自身声明的 browse section：Mihon 映射 Popular/Latest，Venera 枚举 explore loader 与 category target；原生/Mihon/Venera 仅通过来源 chip 的颜色与图标区分，不占内容分类行。固定大小的 catalog page 仍使用显式上一页/下一页，但 pager 位于内容滚动尾部。左下浮动搜索位于来源栏上方，展开后显示持久化搜索历史。列表由 catalog response cache 先行投影，后台 refresh 只有在稳定字段发生变化时才更新 Presentation。Mihon 插件的已安装与仓库列表仍按规范化语言分类。
 
 详情扩展数据由 source adapter 负责：`ComicManifest` 可携带首批预览缩略图和评论，
 `ComicPreviewSource`/`ComicCommentSource` 只在来源声明能力时提供继续分页。App 只消费
@@ -136,7 +136,7 @@ Cookie 会话，按当前详情页 `#gnd` 关系生成版本，不把 Venera 当
 `ComicDetails` 能力的来源可渐进显示预览、评论和回复。预览 URI 保留 Venera 的
 `@x/y` 裁剪标识用于预览项/widget/painter 的单项身份，但 `onThumbnailLoad` 请求回调接收
 去掉裁剪标识的原图地址；该 base URI 也是编码字节缓存身份，App 解码后只绘制对应裁剪区域。
-预览栏折叠与展开共用同一套顺序布局。布局按原始预览顺序逐行装箱，每张缩略图使用等目标面积并按自身宽高比计算宽高，因此同一布局中最大与最小显示面积比不超过 1.2；在可读最小边约束下尽可能增加每页图片数量。折叠态只裁出该布局第一行，高度直接取第一行高度；展开态继续消费来源分页，并由 `PageView` 左右分页呈现后续行。展开图片区域按屏幕高度 80% 封顶，开关位于中间且只显示上下箭头。行规划优先使用 `ComicPreviewAsset.width/height`，缺失时以解码后的可见裁剪尺寸回填；缩略图使用 `BoxFit.contain`，不拉伸或强制裁切。预览失败只显示按资源 identity 生成的柔和单色占位，不显示破损图片图标。
+预览栏折叠与展开共用同一套顺序布局。布局按原始预览顺序逐行装箱，每张缩略图使用等目标面积并按自身宽高比计算宽高，因此同一布局中最大与最小显示面积比不超过 1.2；阅读设置提供每行最大数量 1–8，默认 4，并在该上限与可读最小边约束下尽可能增加每页图片数量。折叠态只裁出该布局第一行，高度直接取第一行高度；展开态继续消费来源分页，并由 `PageView` 左右分页呈现后续行。展开图片区域按屏幕高度 80% 封顶，开关位于中间且只显示上下箭头。行规划优先使用 `ComicPreviewAsset.width/height`，缺失时以解码后的可见裁剪尺寸回填；缩略图使用 `BoxFit.contain`，不拉伸或强制裁切。预览失败只显示按资源 identity 生成的柔和单色占位，不显示破损图片图标。
 
 App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭固定为左下角 X，确认、
 保存或删除位于右侧，不再使用“取消”文字按钮。

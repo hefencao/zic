@@ -52,6 +52,27 @@ void main() {
     );
   });
 
+
+  test('browse sections and pages use stable cache identities with refresh',
+      () async {
+    final raw = _CountingSource();
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final source = CachedBrowsableComicSource(source: raw, cache: cache);
+
+    final sections = await source.loadBrowseSections();
+    await source.loadBrowseSections();
+    final first = await source.browseSection('popular', offset: 0, limit: 24);
+    expect(source.peekBrowsePage(sectionId: 'popular'), same(first));
+    await source.browseSection('popular', offset: 0, limit: 24);
+    await source.refreshBrowsePage(sectionId: 'popular', offset: 0, limit: 24);
+
+    expect(sections.single.sectionId, 'popular');
+    expect(raw.sectionLoads, 1);
+    expect(raw.browseLoads, 2);
+    expect(raw.lastSectionId, 'popular');
+  });
+
   test('cached source preserves the optional comic web URI capability', () {
     final raw = _CountingSource();
     final cache = ResourceCacheManager();
@@ -276,13 +297,16 @@ final class _CountingSource implements
         ComicWebUriSource,
         CanonicalComicIdentitySource,
         ComicWebViewRequestSource,
-        ComicVersionSource {
+        ComicVersionSource,
+        SectionedBrowsableComicSource {
   var comicLoads = 0;
   var chapterLoads = 0;
   var browseLoads = 0;
   var resourceLoads = 0;
   var versionLoads = 0;
+  var sectionLoads = 0;
   String? lastQuery;
+  String? lastSectionId;
 
   @override
   String get sourceId => 'fixture';
@@ -294,6 +318,25 @@ final class _CountingSource implements
         language: 'en',
         website: Uri.parse('https://example.invalid'),
       );
+
+  @override
+  Future<List<SourceBrowseSection>> loadBrowseSections() async {
+    sectionLoads++;
+    return const <SourceBrowseSection>[
+      SourceBrowseSection(sectionId: 'popular', label: '热门'),
+    ];
+  }
+
+  @override
+  Future<SourceBrowsePage> browseSection(
+    String sectionId, {
+    String query = '',
+    int offset = 0,
+    int limit = 24,
+  }) {
+    lastSectionId = sectionId;
+    return browse(query: query, offset: offset, limit: limit);
+  }
 
   @override
   Future<SourceBrowsePage> browse({

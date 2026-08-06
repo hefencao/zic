@@ -307,6 +307,7 @@ final class _RuntimeBrowsableComicSource
         CanonicalComicIdentitySource, ComicWebViewRequestSource,
         ComicVersionSource,
         ComicPreviewSource, ComicCommentSource,
+        SectionedBrowsableComicSource,
         ResolvableComicResourceSource, RetryableComicResourceSource {
   _RuntimeBrowsableComicSource({
     required ExternalComicPluginFormat format,
@@ -382,10 +383,26 @@ final class _RuntimeBrowsableComicSource
       );
 
   @override
-  Future<SourceBrowsePage> browse({
-    String query = '',
-    int offset = 0,
-    int limit = 24,
+  Future<List<SourceBrowseSection>> loadBrowseSections() async {
+    final payload = await _invoke(
+      ExternalPluginRuntimeOperation.loadBrowseSections,
+      _externalId,
+      const <String, Object?>{},
+    );
+    return _list(payload, 'browse sections').map((value) {
+      final section = _map(value, 'browse section');
+      return SourceBrowseSection(
+        sectionId: _string(section, 'sectionId'),
+        label: _string(section, 'label'),
+      );
+    }).toList(growable: false);
+  }
+
+  Future<SourceBrowsePage> _browse({
+    required String query,
+    required int offset,
+    required int limit,
+    String? sectionId,
   }) async {
     if (offset < 0 || limit <= 0) {
       throw ArgumentError('browse offset/limit are invalid');
@@ -397,6 +414,7 @@ final class _RuntimeBrowsableComicSource
         'query': query,
         'offset': offset,
         'limit': limit,
+        'sectionId': sectionId,
       },
     );
     final message = _map(payload, 'browse result');
@@ -423,6 +441,32 @@ final class _RuntimeBrowsableComicSource
       hasMore: _bool(message, 'hasMore'),
     );
   }
+
+  @override
+  Future<SourceBrowsePage> browse({
+    String query = '',
+    int offset = 0,
+    int limit = 24,
+  }) =>
+      _browse(
+        query: query,
+        offset: offset,
+        limit: limit,
+      );
+
+  @override
+  Future<SourceBrowsePage> browseSection(
+    String sectionId, {
+    String query = '',
+    int offset = 0,
+    int limit = 24,
+  }) =>
+      _browse(
+        query: query,
+        offset: offset,
+        limit: limit,
+        sectionId: sectionId,
+      );
 
   @override
   bool get supportsComicVersions =>

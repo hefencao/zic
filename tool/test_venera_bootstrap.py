@@ -17,9 +17,14 @@ async function checkCurrentCategory(){
      load:async(category,param,options,page)=>{seen={category,param,options,page};return {comics:[{id:'1',title:'Current'}],maxPage:2}}
    }
  };
- const value=await __zicOperation({operation:'browse',arguments:{query:'',offset:0,limit:20}});
+ const sections=await __zicOperation({operation:'loadBrowseSections',arguments:{}});
+ if(sections.length!==2||sections[0].label!=='最新'||sections[1].label!=='热门')throw new Error('current category sections '+JSON.stringify(sections));
+ const value=await __zicOperation({operation:'browse',arguments:{query:'',offset:0,limit:20,sectionId:sections[0].sectionId}});
  if(value.items.length!==1||value.items[0].title!=='Current')throw new Error('current category result failed');
  if(JSON.stringify(seen)!==JSON.stringify({category:'最新',param:'new',options:['all'],page:1}))throw new Error('current category arguments '+JSON.stringify(seen));
+ seen=null;
+ await __zicOperation({operation:'browse',arguments:{query:'',offset:0,limit:20,sectionId:sections[1].sectionId}});
+ if(JSON.stringify(seen)!==JSON.stringify({category:'热门',param:'hot',options:['all'],page:1}))throw new Error('selected category arguments '+JSON.stringify(seen));
 }
 async function checkLegacyCategory(){
  let seen=null;

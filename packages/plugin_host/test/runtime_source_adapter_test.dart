@@ -678,6 +678,9 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
     return ExternalPluginRuntimeResponse.success(
       requestId: requestId,
       payload: switch (request.operation) {
+        ExternalPluginRuntimeOperation.loadBrowseSections => <Object?>[
+          <String, Object?>{'sectionId': 'popular', 'label': '热门'},
+        ],
         ExternalPluginRuntimeOperation.browse => <String, Object?>{
             'items': <Object?>[
               <String, Object?>{
@@ -867,7 +870,10 @@ final class _SequencedConnection implements ExternalPluginRuntimeConnection {
       return ExternalPluginRuntimeResponse.success(
         requestId: request.requestId,
         payload: switch (request.operation) {
-          ExternalPluginRuntimeOperation.browse => <String, Object?>{
+          ExternalPluginRuntimeOperation.loadBrowseSections => <Object?>[
+          <String, Object?>{'sectionId': 'popular', 'label': '热门'},
+        ],
+        ExternalPluginRuntimeOperation.browse => <String, Object?>{
               'items': <Object?>[],
               'offset': request.arguments['offset'],
               'hasMore': false,

@@ -208,6 +208,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
     this.onSearchMetadata,
     this.onMigrateSource,
     this.onOpenVersions,
+    this.previewMaxItemsPerRow = 4,
     this.traceSink = const NoopTraceSink(),
     super.key,
   });
@@ -232,6 +233,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
   final ComicDetailsMetadataSearch? onSearchMetadata;
   final ComicDetailsMigrationOpener? onMigrateSource;
   final ComicDetailsVersionsOpener? onOpenVersions;
+  final int previewMaxItemsPerRow;
   final TraceSink traceSink;
 
   @override
@@ -895,6 +897,7 @@ final class _LocalComicDetailsScreenState
               sourceId: comic.sourceId,
               comicId: comic.comicId,
               title: comic.title,
+              maxItemsPerRow: widget.previewMaxItemsPerRow,
               initialPage: detailsManifest?.preview,
               loader: previewLoader,
               loadArtwork: widget.loadCover,
@@ -940,6 +943,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
     this.onSearchMetadata,
     this.onMigrateSource,
     this.onOpenVersions,
+    this.previewMaxItemsPerRow = 4,
     this.sameComicIdentity = _exactComicIdentity,
     this.traceSink = const NoopTraceSink(),
     super.key,
@@ -966,6 +970,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
   final ComicDetailsMetadataSearch? onSearchMetadata;
   final ComicDetailsVersionsOpener? onMigrateSource;
   final ComicDetailsVersionsOpener? onOpenVersions;
+  final int previewMaxItemsPerRow;
   final ComicDetailsIdentityMatcher sameComicIdentity;
   final TraceSink traceSink;
 
@@ -1700,6 +1705,7 @@ final class _RemoteComicDetailsScreenState
               sourceId: widget.source.sourceId,
               comicId: comic.comicId,
               title: comic.title,
+              maxItemsPerRow: widget.previewMaxItemsPerRow,
               initialPage: detailsManifest?.preview,
               loader: previewLoader,
               loadArtwork: widget.loadCover,

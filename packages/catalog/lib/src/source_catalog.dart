@@ -179,6 +179,57 @@ final class SourceBrowsePage {
   final bool hasMore;
 }
 
+
+/// One source-owned browse section.
+///
+/// Sections represent real categories exposed by a source runtime, such as
+/// Mihon's popular/latest endpoints or Venera's explore/category targets.
+/// Runtime ecosystem (native/Mihon/Venera) and search filters are deliberately
+/// not represented as sections.
+final class SourceBrowseSection {
+  const SourceBrowseSection({
+    required this.sectionId,
+    required this.label,
+  })  : assert(sectionId != ''),
+        assert(label != '');
+
+  final String sectionId;
+  final String label;
+}
+
+/// Optional source-owned browse-section capability.
+abstract interface class SectionedBrowsableComicSource {
+  Future<List<SourceBrowseSection>> loadBrowseSections();
+
+  Future<SourceBrowsePage> browseSection(
+    String sectionId, {
+    String query = '',
+    int offset = 0,
+    int limit = 24,
+  });
+}
+
+/// Optional cache projection used by Presentation for stale-while-revalidate.
+///
+/// The cache owner remains the catalog/resource-cache layer. Presentation may
+/// show [peekBrowsePage] immediately, then call [refreshBrowsePage] in the
+/// background and update only when the source returns different data.
+abstract interface class CachedSourceBrowseProjection {
+  SourceBrowsePage? peekBrowsePage({
+    String? sectionId,
+    String query = '',
+    int offset = 0,
+    int limit = 24,
+  });
+
+  Future<SourceBrowsePage> refreshBrowsePage({
+    String? sectionId,
+    String query = '',
+    int offset = 0,
+    int limit = 24,
+  });
+}
+
 /// A source-owned successor/predecessor relation.
 ///
 /// The source adapter returns its opaque [comicId] unchanged so Presentation

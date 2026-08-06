@@ -25,6 +25,8 @@ final class CachedBrowsableComicSource
         ComicVersionSource,
         ComicPreviewSource,
         ComicCommentSource,
+        SectionedBrowsableComicSource,
+        CachedSourceBrowseProjection,
         RefreshableChapterComicSource,
         ResolvableComicResourceSource,
         RetryableComicResourceSource {
@@ -47,30 +49,141 @@ final class CachedBrowsableComicSource
   @override
   ComicSourceDescriptor get descriptor => source.descriptor;
 
+  ResourceCacheKey _browseKey({
+    required String normalizedQuery,
+    required int offset,
+    required int limit,
+    String? sectionId,
+  }) =>
+      ResourceCacheKey(
+        kind: ResourceCacheKind.searchResults,
+        identity: encodeStableCacheKey(
+          'search-results',
+          <String>[
+            sourceId,
+            sectionId ?? '',
+            normalizedQuery,
+            '$offset',
+            '$limit',
+          ],
+        ),
+        namespace: sourceResourceCacheNamespace(sourceId),
+      );
+
+  Future<SourceBrowsePage> _loadBrowsePage({
+    required String normalizedQuery,
+    required int offset,
+    required int limit,
+    String? sectionId,
+    bool forceRefresh = false,
+  }) {
+    final sectioned = source is SectionedBrowsableComicSource
+        ? source as SectionedBrowsableComicSource
+        : null;
+    return cache.getOrLoad<SourceBrowsePage>(
+      key: _browseKey(
+        normalizedQuery: normalizedQuery,
+        offset: offset,
+        limit: limit,
+        sectionId: sectionId,
+      ),
+      loader: () => sectionId != null && sectioned != null
+          ? sectioned.browseSection(
+              sectionId,
+              query: normalizedQuery,
+              offset: offset,
+              limit: limit,
+            )
+          : source.browse(
+              query: normalizedQuery,
+              offset: offset,
+              limit: limit,
+            ),
+      weightOf: _browseWeight,
+      forceRefresh: forceRefresh,
+    );
+  }
+
   @override
   Future<SourceBrowsePage> browse({
     String query = '',
     int offset = 0,
     int limit = 24,
-  }) {
-    final normalizedQuery = query.trim();
-    return cache.getOrLoad<SourceBrowsePage>(
+  }) =>
+      _loadBrowsePage(
+        normalizedQuery: query.trim(),
+        offset: offset,
+        limit: limit,
+      );
+
+  @override
+  Future<List<SourceBrowseSection>> loadBrowseSections() {
+    final sectioned = source is SectionedBrowsableComicSource
+        ? source as SectionedBrowsableComicSource
+        : null;
+    if (sectioned == null) {
+      return Future<List<SourceBrowseSection>>.value(
+        const <SourceBrowseSection>[],
+      );
+    }
+    return cache.getOrLoad<List<SourceBrowseSection>>(
       key: ResourceCacheKey(
         kind: ResourceCacheKind.searchResults,
         identity: encodeStableCacheKey(
-          'search-results',
-          <String>[sourceId, normalizedQuery, '$offset', '$limit'],
+          'browse-sections',
+          <String>[sourceId],
         ),
         namespace: sourceResourceCacheNamespace(sourceId),
       ),
-      loader: () => source.browse(
-        query: normalizedQuery,
-        offset: offset,
-        limit: limit,
-      ),
-      weightOf: _browseWeight,
+      loader: sectioned.loadBrowseSections,
+      weightOf: _browseSectionsWeight,
     );
   }
+
+  @override
+  Future<SourceBrowsePage> browseSection(
+    String sectionId, {
+    String query = '',
+    int offset = 0,
+    int limit = 24,
+  }) =>
+      _loadBrowsePage(
+        normalizedQuery: query.trim(),
+        offset: offset,
+        limit: limit,
+        sectionId: sectionId,
+      );
+
+  @override
+  SourceBrowsePage? peekBrowsePage({
+    String? sectionId,
+    String query = '',
+    int offset = 0,
+    int limit = 24,
+  }) =>
+      cache.peek<SourceBrowsePage>(
+        _browseKey(
+          normalizedQuery: query.trim(),
+          offset: offset,
+          limit: limit,
+          sectionId: sectionId,
+        ),
+      );
+
+  @override
+  Future<SourceBrowsePage> refreshBrowsePage({
+    String? sectionId,
+    String query = '',
+    int offset = 0,
+    int limit = 24,
+  }) =>
+      _loadBrowsePage(
+        normalizedQuery: query.trim(),
+        offset: offset,
+        limit: limit,
+        sectionId: sectionId,
+        forceRefresh: true,
+      );
 
   @override
   Uri resolveComicWebUri(String comicId) {
@@ -431,6 +544,14 @@ final class CachedBrowsableComicSource
 
 const int _cacheObjectOverhead = 64;
 const int _cacheCollectionOverhead = 24;
+
+int _browseSectionsWeight(List<SourceBrowseSection> sections) =>
+    64 +
+    sections.fold<int>(
+      0,
+      (total, section) =>
+          total + 32 + section.sectionId.length * 2 + section.label.length * 2,
+    );
 
 int _browseWeight(SourceBrowsePage page) =>
     _cacheObjectOverhead +

@@ -315,7 +315,10 @@ class _FixtureDriver implements ExternalPluginRuntimeDriver {
     await (block ?? Future<void>.value());
     cancellation.throwIfCancelled();
     return switch (request.operation) {
-      ExternalPluginRuntimeOperation.browse => <String, Object?>{
+      ExternalPluginRuntimeOperation.loadBrowseSections => <Object?>[
+          <String, Object?>{'sectionId': 'popular', 'label': '热门'},
+        ],
+        ExternalPluginRuntimeOperation.browse => <String, Object?>{
           'items': <Object?>[
             <String, Object?>{
               'comicId': 'comic-1',

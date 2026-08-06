@@ -105,6 +105,7 @@ internal class MihonRuntimeDriver private constructor(
                     enforceSourceRequestLimit(sourceId, source)
                 }
                 val payload = when (operation) {
+                    "loadBrowseSections" -> loadBrowseSections(source)
                     "browse" -> browse(source, arguments, requestId)
                     "loadComic" -> loadComic(source, arguments.requireString("comicId"), requestId)
                     "loadChapter" -> loadChapter(source, arguments.requireString("chapterId"), requestId)
@@ -216,22 +217,55 @@ internal class MihonRuntimeDriver private constructor(
         }
     }
 
+    private fun loadBrowseSections(source: Any): List<Map<String, Any?>> {
+        val sections = mutableListOf<Map<String, Any?>>(
+            mapOf(
+                "sectionId" to "popular",
+                "label" to "热门",
+            ),
+        )
+        if (source.readBoolean("supportsLatest", "getSupportsLatest") == true) {
+            sections += mapOf(
+                "sectionId" to "latest",
+                "label" to "最新",
+            )
+        }
+        return sections
+    }
+
     private fun browse(
         source: Any,
         arguments: Map<String, Any?>,
         requestId: String,
     ): Map<String, Any?> {
         val query = arguments["query"] as? String ?: ""
+        val sectionId = arguments["sectionId"] as? String
         val offset = arguments.nonNegativeInt("offset")
         val limit = arguments.positiveInt("limit")
         val page = (offset / limit) + 1
         val pageResult = if (query.isBlank()) {
-            source.invokeFirst(
-                listOf(
-                    Invocation("getPopularManga", listOf(page)),
-                    Invocation("fetchPopularManga", listOf(page)),
-                ),
-            )
+            when (sectionId) {
+                null, "", "popular" -> source.invokeFirst(
+                    listOf(
+                        Invocation("getPopularManga", listOf(page)),
+                        Invocation("fetchPopularManga", listOf(page)),
+                    ),
+                )
+                "latest" -> {
+                    require(
+                        source.readBoolean("supportsLatest", "getSupportsLatest") == true,
+                    ) {
+                        "Mihon source does not support latest updates"
+                    }
+                    source.invokeFirst(
+                        listOf(
+                            Invocation("getLatestUpdates", listOf(page)),
+                            Invocation("fetchLatestUpdates", listOf(page)),
+                        ),
+                    )
+                }
+                else -> error("unknown Mihon browse section: $sectionId")
+            }
         } else {
             val filters = source.invokeOptional("getFilterList") ?: emptyFilterList(source.javaClass.classLoader)
             source.invokeFirst(

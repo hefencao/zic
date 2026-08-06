@@ -54,7 +54,7 @@ def main() -> None:
         "String resourceRole = 'cover'",
         "_artworkResourceRole(resourceRole, uri)",
         "_collectArtworkResponse(",
-        "_transports.loaderFor(source, uri)",
+        "_transports.loaderFor(source, requestUri)",
     )
     require(
         "apps/app/lib/demo_home.dart",

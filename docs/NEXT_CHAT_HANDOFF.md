@@ -1,6 +1,6 @@
-# dev.140 后续交接
+# dev.141 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.140_source-paging-mihon-language-equal-area-preview.zip`。
+唯一后续基线：`zic_v0.31.0-dev.141_source-sections-floating-search-swr-preview-limit.zip`。
 
 ## 必读
 
@@ -43,8 +43,6 @@
   图标。详情页提供同源版本入口和迁移入口；Venera 版本通过来源适配器复用运行时网络/Cookie
   按 `#gnd` 关系读取，避免标题 browse 的浏览器权限错误。迁移面板显示当前插件/来源，允许
   同源不同 raw comic ID 的 E-Hentai URL 版本替换，并持久化已确认关系以显示旧版；目标写入并完成章节校验后清理旧版本记录。
-- App-owned modal panel 的关闭统一为左下角 X，正向操作保留在右侧；详情迁移对话框和
-  catalog 同源 ID 单测已通过。
 - Venera 登录协议已接受 Android platform channel 解码后的嵌套 Map；`ComicManifest` 已
   携带可选首批 preview/comments 和 `Comic.sourceSubId`。`ComicPreviewSource`、
   `ComicCommentSource` 由 runtime/cache adapter 透传，详情页按能力显示预览栏、评论栏，
@@ -54,8 +52,10 @@
 - 预览分页由 `loadThumbnails` 独立提供首批和游标，完整预览 URI 保留为绘制身份，artwork role/cache key 使用去 `@x/y` 的 base URI，使同一原图的不同裁剪共享编码字节；点击预览项直接复用 Reader 路由。
   预览折叠/展开共用按原顺序生成的等目标面积布局，最大/最小面积比不超过 1.2；折叠高度取第一行，展开后自动消费分页并以 `PageView` 左右分页，图片区域封顶屏幕高度 80%，中间只保留箭头按钮。
   Venera 预览 URI 的 `@x/y` 标识保留在 widget/painter 身份中，但 `onThumbnailLoad` 接收去裁剪 URL；图片失败占位为按 identity 稳定生成的柔和纯色，不再显示破损图标。
-
-- 漫画源页按原生/Mihon/Venera 分类并显式翻页；Mihon 已安装/仓库插件按规范化语言分类。
+- 漫画源页使用来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态仅用 chip 色彩/图标表示。页码在滚动尾部，浮动搜索保留持久历史。
+- 浏览页使用 catalog cache-first/background-refresh，稳定字段无变化时不更新；不得在 UI 建第二套缓存。
+- 阅读设置中的详情预览每行最大数量默认 4、范围 1–8；等面积和 80% 高度约束保持。
+- Mihon 已安装/仓库插件继续按规范化语言分类。
 
 ## 下一步
 
