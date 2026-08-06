@@ -1,3 +1,11 @@
+## 0.31.0-dev.142：铺满详情预览并恢复封面与来源搜索交互
+
+- 详情预览行在最大/最小面积比不超过 1.2 的前提下受限放大，完整行优先贴近屏幕左右边缘。
+- 首页、漫画源卡片和详情封面统一支持 source Future 重试、失败 provider 驱逐、ImageStream 重建与 App resume 恢复。
+- 浮动搜索展开态优先消费返回和垂直滑动手势；Mihon `getFilterList()` 投影为搜索框上方过滤标签。
+- 漫画源页新增边缘下拉强制刷新，保留现有内容并绕过 catalog 缓存后台取新数据。
+- 新增 ADR 0127、dev.142 审计、owner tests 与静态门禁。
+
 ## 0.31.0-dev.141：来源自有分类、浮动搜索与缓存后台刷新
 
 - 漫画源页不再按原生/Mihon/Venera 占用分类行；Mihon 使用 Popular/Latest，Venera 枚举 explore/category 入口，来源生态仅以 chip 色彩和图标区分。

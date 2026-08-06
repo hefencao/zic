@@ -13,6 +13,7 @@ void main() {
       offset: 24,
       limit: 24,
       sectionId: 'popular',
+      selectedFilterIds: const <String>['0:check', '1:select:2'],
     );
 
     final decoded = ExternalPluginRuntimeRequest.fromMessage(
@@ -25,6 +26,7 @@ void main() {
     expect(decoded.arguments['query'], 'history');
     expect(decoded.arguments['offset'], 24);
     expect(decoded.arguments['sectionId'], 'popular');
+    expect(decoded.arguments['filterIds'], <String>['0:check', '1:select:2']);
   });
 
   test('runtime responses preserve typed binary resources', () {
@@ -175,5 +177,15 @@ void main() {
       ),
       throwsFormatException,
     );
+  });
+  test('search filter discovery uses an argument-free runtime request', () {
+    final request = ExternalPluginRuntimeRequest.loadSearchFilters(
+      requestId: 'filters-1',
+      externalSourceId: 'fixture',
+    );
+    final decoded = ExternalPluginRuntimeRequest.fromMessage(request.toMessage());
+
+    expect(decoded.operation, ExternalPluginRuntimeOperation.loadSearchFilters);
+    expect(decoded.arguments, isEmpty);
   });
 }

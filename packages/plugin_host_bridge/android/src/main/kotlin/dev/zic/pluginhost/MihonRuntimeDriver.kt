@@ -106,6 +106,7 @@ internal class MihonRuntimeDriver private constructor(
                 }
                 val payload = when (operation) {
                     "loadBrowseSections" -> loadBrowseSections(source)
+                    "loadSearchFilters" -> loadSearchFilters(source)
                     "browse" -> browse(source, arguments, requestId)
                     "loadComic" -> loadComic(source, arguments.requireString("comicId"), requestId)
                     "loadChapter" -> loadChapter(source, arguments.requireString("chapterId"), requestId)
@@ -233,6 +234,12 @@ internal class MihonRuntimeDriver private constructor(
         return sections
     }
 
+    private fun loadSearchFilters(source: Any): List<Map<String, Any?>> {
+        val filters = source.invokeOptional("getFilterList")
+            ?: emptyFilterList(source.javaClass.classLoader)
+        return describeMihonSearchFilters(filters.asObjectList())
+    }
+
     private fun browse(
         source: Any,
         arguments: Map<String, Any?>,
@@ -243,7 +250,8 @@ internal class MihonRuntimeDriver private constructor(
         val offset = arguments.nonNegativeInt("offset")
         val limit = arguments.positiveInt("limit")
         val page = (offset / limit) + 1
-        val pageResult = if (query.isBlank()) {
+        val selectedFilterIds = arguments["filterIds"].asStringList("filterIds").toSet()
+        val pageResult = if (query.isBlank() && selectedFilterIds.isEmpty()) {
             when (sectionId) {
                 null, "", "popular" -> source.invokeFirst(
                     listOf(
@@ -267,7 +275,9 @@ internal class MihonRuntimeDriver private constructor(
                 else -> error("unknown Mihon browse section: $sectionId")
             }
         } else {
-            val filters = source.invokeOptional("getFilterList") ?: emptyFilterList(source.javaClass.classLoader)
+            val filters = source.invokeOptional("getFilterList")
+                ?: emptyFilterList(source.javaClass.classLoader)
+            applyMihonSearchFilters(filters.asObjectList(), selectedFilterIds)
             source.invokeFirst(
                 listOf(
                     Invocation("getSearchMangaList", listOf(page, query, filters)),
@@ -1958,6 +1968,93 @@ private fun emptyFilterList(loader: ClassLoader): Any {
     }
     return type.constructors.first().newInstance(emptyList<Any>())
 }
+
+private fun describeMihonSearchFilters(
+    filters: List<Any>,
+    prefix: String = "",
+): List<Map<String, Any?>> {
+    val result = mutableListOf<Map<String, Any?>>()
+    filters.forEachIndexed { index, filter ->
+        val path = if (prefix.isEmpty()) "$index" else "$prefix.$index"
+        val kind = filter.javaClass.simpleName.lowercase()
+        val name = filter.readString("name", "getName")?.trim().orEmpty()
+        when {
+            "group" in kind -> result += describeMihonSearchFilters(
+                filter.readValue("state", "getState").asObjectList(),
+                path,
+            )
+            "checkbox" in kind && name.isNotEmpty() -> result += mapOf(
+                "filterId" to "$path:check",
+                "label" to name,
+                // Mihon source defaults remain runtime-owned until the user
+                // explicitly selects a ZIC chip. Treating the source default as
+                // an explicit selection would route an empty browse through
+                // search instead of Popular/Latest.
+                "selected" to false,
+            )
+            "tristate" in kind && name.isNotEmpty() -> {
+                result += mapOf(
+                    "filterId" to "$path:include",
+                    "label" to "$name：包含",
+                    "selected" to false,
+                )
+                result += mapOf(
+                    "filterId" to "$path:exclude",
+                    "label" to "$name：排除",
+                    "selected" to false,
+                )
+            }
+            "select" in kind && name.isNotEmpty() -> {
+                val values = filter.readValue("values", "getValues").asObjectList()
+                values.forEachIndexed { valueIndex, value ->
+                    result += mapOf(
+                        "filterId" to "$path:select:$valueIndex",
+                        "label" to "$name：${value}",
+                        "selected" to false,
+                    )
+                }
+            }
+        }
+    }
+    return result
+}
+
+private fun applyMihonSearchFilters(
+    filters: List<Any>,
+    selectedFilterIds: Set<String>,
+    prefix: String = "",
+) {
+    filters.forEachIndexed { index, filter ->
+        val path = if (prefix.isEmpty()) "$index" else "$prefix.$index"
+        val kind = filter.javaClass.simpleName.lowercase()
+        when {
+            "group" in kind -> applyMihonSearchFilters(
+                filter.readValue("state", "getState").asObjectList(),
+                selectedFilterIds,
+                path,
+            )
+            "checkbox" in kind -> filter.writeValue(
+                "state",
+                "$path:check" in selectedFilterIds,
+            )
+            "tristate" in kind -> filter.writeValue(
+                "state",
+                when {
+                    "$path:exclude" in selectedFilterIds -> 2
+                    "$path:include" in selectedFilterIds -> 1
+                    else -> 0
+                },
+            )
+            "select" in kind -> {
+                val selected = selectedFilterIds.firstOrNull {
+                    it.startsWith("$path:select:")
+                }?.substringAfterLast(':')?.toIntOrNull()
+                if (selected != null) filter.writeValue("state", selected)
+            }
+        }
+    }
+}
+
 
 private fun createModel(loader: ClassLoader, className: String, json: JSONObject): Any {
     val type = loader.loadClass(className)

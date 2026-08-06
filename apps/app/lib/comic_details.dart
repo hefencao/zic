@@ -2273,12 +2273,16 @@ final class _ComicDetailCover extends StatefulWidget {
   State<_ComicDetailCover> createState() => _ComicDetailCoverState();
 }
 
-final class _ComicDetailCoverState extends State<_ComicDetailCover> {
+final class _ComicDetailCoverState extends State<_ComicDetailCover>
+    with WidgetsBindingObserver {
   late Future<EncodedResourceSource> _source;
+  bool _failed = false;
+  final ArtworkRetryController _retry = ArtworkRetryController();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _source = _load();
   }
 
@@ -2290,12 +2294,13 @@ final class _ComicDetailCoverState extends State<_ComicDetailCover> {
         oldWidget.coverUri != widget.coverUri ||
         oldWidget.fallbackChapter?.chapter.chapterId !=
             widget.fallbackChapter?.chapter.chapterId) {
-      _source = _load();
+      _restartLoad(resetRetryBudget: true);
     }
   }
 
-  Future<EncodedResourceSource> _load() =>
-      Future<EncodedResourceSource>.sync(
+  Future<EncodedResourceSource> _load() async {
+    try {
+      return await Future<EncodedResourceSource>.sync(
         () => widget.loader(
           sourceId: widget.sourceId,
           comicId: widget.comicId,
@@ -2303,6 +2308,38 @@ final class _ComicDetailCoverState extends State<_ComicDetailCover> {
           fallbackChapter: widget.fallbackChapter,
         ),
       );
+    } on Object catch (error, stackTrace) {
+      _failed = true;
+      _retry.schedule(() => _restartLoad());
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  void _restartLoad({bool resetRetryBudget = false}) {
+    if (!mounted) return;
+    if (resetRetryBudget) _retry.reset();
+    setState(() {
+      _failed = false;
+      _source = _load();
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _failed) {
+      _retry.retryNow(
+        () => _restartLoad(resetRetryBudget: true),
+        resetBudget: true,
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _retry.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2311,13 +2348,15 @@ final class _ComicDetailCoverState extends State<_ComicDetailCover> {
       builder: (context, snapshot) {
         final source = snapshot.data;
         if (source != null) {
-          return Image(
+          return RecoverableArtworkImage(
             image: encodedResourceImageProvider(source),
+            seed: widget.coverUri?.toString() ?? widget.comicId,
             fit: BoxFit.cover,
-            gaplessPlayback: true,
-            errorBuilder: (_, __, ___) => _CoverPlaceholder(
-              seed: widget.coverUri?.toString() ?? widget.comicId,
-            ),
+            onFrameReady: () {
+              _failed = false;
+              _retry.reset();
+            },
+            onDecodeFailure: () => _failed = true,
           );
         }
         if (snapshot.hasError) {

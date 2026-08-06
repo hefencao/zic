@@ -1,6 +1,6 @@
 # zic
 
-dev.141 将漫画源浏览分类改为来源自身的 Mihon Popular/Latest 与 Venera explore/category，来源生态仅以颜色和图标区分；搜索改为左下浮动并持久化历史，列表 cache-first 后台刷新，详情预览每行上限默认 4。
+dev.142 让详情预览行在面积比约束内尽量铺满屏幕宽度；封面加载与 Flutter 解码失败可自动恢复，漫画源浮动搜索接入 Mihon 过滤标签、手势优先收起和下拉强制刷新。
 
 
 `zic` 是面向 Android 优先、高性能漫画阅读场景的 Flutter/Rust 工程。项目支持本地与远程章节、静态图片、Animated WebP、持久下载、带分类/翻页的漫画源浏览、Mihon/Venera 扩展和统一 Reader Pipeline。

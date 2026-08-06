@@ -200,18 +200,22 @@ final class _CoverImage extends StatefulWidget {
   State<_CoverImage> createState() => _CoverImageState();
 }
 
-final class _CoverImageState extends State<_CoverImage> {
+final class _CoverImageState extends State<_CoverImage>
+    with WidgetsBindingObserver {
   late Future<EncodedResourceSource> _source;
   bool _reportedFirstFrame = false;
   bool _loadFailed = false;
+  final ArtworkRetryController _retry = ArtworkRetryController();
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _startLoad();
   }
 
-  void _startLoad() {
+  void _startLoad({bool resetRetryBudget = false}) {
+    if (resetRetryBudget) _retry.reset();
     _reportedFirstFrame = false;
     _loadFailed = false;
     widget.startupTelemetry?.coverRequested(widget.cacheIdentity);
@@ -229,6 +233,7 @@ final class _CoverImageState extends State<_CoverImage> {
       return source;
     } on Object {
       _loadFailed = true;
+      _retry.schedule(_restartLoad);
       rethrow;
     }
   }
@@ -238,7 +243,29 @@ final class _CoverImageState extends State<_CoverImage> {
       return;
     }
     _reportedFirstFrame = true;
+    _loadFailed = false;
+    _retry.reset();
     widget.startupTelemetry?.coverFirstFrame(widget.cacheIdentity);
+  }
+
+  void _restartLoad() {
+    if (!mounted) return;
+    setState(() => _startLoad());
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _loadFailed) {
+      _retry.retryNow(
+        () => _restartLoadWithReset(),
+        resetBudget: true,
+      );
+    }
+  }
+
+  void _restartLoadWithReset() {
+    if (!mounted) return;
+    setState(() => _startLoad(resetRetryBudget: true));
   }
 
   @override
@@ -246,8 +273,15 @@ final class _CoverImageState extends State<_CoverImage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.cacheIdentity != widget.cacheIdentity ||
         (_loadFailed && oldWidget.loader != widget.loader)) {
-      _startLoad();
+      _startLoad(resetRetryBudget: true);
     }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _retry.dispose();
+    super.dispose();
   }
 
   @override
@@ -268,28 +302,14 @@ final class _CoverImageState extends State<_CoverImage> {
             final source = snapshot.data;
             if (source != null) {
               final provider = encodedResourceImageProvider(source);
-              return Image(
-                image: ResizeImage.resizeIfNeeded(
-                  cacheWidth,
-                  null,
-                  provider,
-                ),
+              return RecoverableArtworkImage(
+                image: provider,
+                seed: widget.cacheIdentity,
+                cacheWidth: cacheWidth,
                 fit: BoxFit.cover,
-                gaplessPlayback: true,
-                filterQuality: FilterQuality.medium,
-                errorBuilder: (_, __, ___) => SoftArtworkPlaceholder(
-                  seed: widget.cacheIdentity,
-                ),
-                frameBuilder: (context, child, frame, synchronous) {
-                  final ready = frame != null || synchronous;
-                  if (ready) {
-                    _reportFirstFrame();
-                  }
-                  return AnimatedOpacity(
-                    opacity: ready ? 1 : 0,
-                    duration: const Duration(milliseconds: 90),
-                    child: child,
-                  );
+                onFrameReady: _reportFirstFrame,
+                onDecodeFailure: () {
+                  _loadFailed = true;
                 },
               );
             }

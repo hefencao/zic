@@ -224,14 +224,14 @@ final class _ComicDetailsPreviewSectionState
       return const <_ComicDetailsPreviewRow>[];
     }
     final targetArea = _previewTargetArea(maxWidth, maxHeight);
-    final rows = <_ComicDetailsPreviewRow>[];
+    final naturalRows = <_ComicDetailsPreviewRow>[];
     var items = <_ComicDetailsPreviewItemLayout>[];
     var width = 0.0;
     var height = 0.0;
 
-    void closeRow() {
+    void closeNaturalRow() {
       if (items.isEmpty) return;
-      rows.add(
+      naturalRows.add(
         _ComicDetailsPreviewRow(
           items: List<_ComicDetailsPreviewItemLayout>.unmodifiable(items),
           width: width,
@@ -251,7 +251,7 @@ final class _ComicDetailsPreviewSectionState
       if (items.isNotEmpty &&
           (nextWidth > maxWidth ||
               items.length >= widget.maxItemsPerRow.clamp(1, 8).toInt())) {
-        closeRow();
+        closeNaturalRow();
       }
       width = items.isEmpty
           ? item.width
@@ -259,8 +259,53 @@ final class _ComicDetailsPreviewSectionState
       height = math.max(height, item.height);
       items.add(item);
     }
-    closeRow();
-    return rows;
+    closeNaturalRow();
+    if (naturalRows.isEmpty) return naturalRows;
+
+    // Justify every row as far as the global equal-area constraint allows.
+    // All natural items have the same area. Scaling one complete row by one
+    // factor preserves equal area inside that row. Capping the largest scale
+    // to sqrt(1.2) times the smallest keeps the global max/min area ratio at
+    // or below 1.2 while still using nearly all portrait-screen width.
+    final desiredScales = naturalRows.map((row) {
+      final itemWidth = row.width - _previewGridGap * (row.items.length - 1);
+      final availableItemWidth = math.max(
+        1.0,
+        maxWidth - _previewGridGap * (row.items.length - 1),
+      );
+      return availableItemWidth / math.max(1.0, itemWidth);
+    }).toList(growable: false);
+    final minimumScale = desiredScales.reduce(math.min);
+    final maximumScale = minimumScale * math.sqrt(1.2);
+
+    return List<_ComicDetailsPreviewRow>.generate(naturalRows.length, (index) {
+      final row = naturalRows[index];
+      final scale = desiredScales[index].clamp(
+        minimumScale,
+        maximumScale,
+      ).toDouble();
+      final scaledItems = row.items.map((item) {
+        return _ComicDetailsPreviewItemLayout(
+          index: item.index,
+          width: item.width * scale,
+          height: item.height * scale,
+        );
+      }).toList(growable: false);
+      final scaledWidth = scaledItems.fold<double>(
+            0,
+            (sum, item) => sum + item.width,
+          ) +
+          _previewGridGap * (scaledItems.length - 1);
+      final scaledHeight = scaledItems.fold<double>(
+        0,
+        (value, item) => math.max(value, item.height),
+      );
+      return _ComicDetailsPreviewRow(
+        items: List<_ComicDetailsPreviewItemLayout>.unmodifiable(scaledItems),
+        width: math.min(maxWidth, scaledWidth),
+        height: scaledHeight,
+      );
+    }, growable: false);
   }
 
   List<_ComicDetailsPreviewPage> _previewPages(
@@ -351,29 +396,28 @@ final class _ComicDetailsPreviewSectionState
   }
 
   Widget _previewRow(_ComicDetailsPreviewRow row, double maxWidth) {
+    final residual = math.max(0.0, maxWidth - row.width);
+    final extraGap = row.items.length > 1
+        ? residual / (row.items.length - 1)
+        : residual / 2;
     return SizedBox(
       width: maxWidth,
       height: row.height,
-      child: Align(
-        alignment: Alignment.topCenter,
-        child: SizedBox(
-          width: math.min(maxWidth, row.width),
-          height: row.height,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: <Widget>[
-              for (var itemIndex = 0;
-                  itemIndex < row.items.length;
-                  itemIndex++)
-                if (itemIndex == 0)
-                  _previewTile(row.items[itemIndex])
-                else ...<Widget>[
-                  const SizedBox(width: _previewGridGap),
-                  _previewTile(row.items[itemIndex]),
-                ],
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: <Widget>[
+          if (row.items.length == 1) SizedBox(width: extraGap),
+          for (var itemIndex = 0;
+              itemIndex < row.items.length;
+              itemIndex++)
+            if (itemIndex == 0)
+              _previewTile(row.items[itemIndex])
+            else ...<Widget>[
+              SizedBox(width: _previewGridGap + extraGap),
+              _previewTile(row.items[itemIndex]),
             ],
-          ),
-        ),
+          if (row.items.length == 1) SizedBox(width: extraGap),
+        ],
       ),
     );
   }

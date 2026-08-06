@@ -18,6 +18,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - 首页每张封面 MUST 独立完成请求和显示；一张封面变慢或 durable response 写入变慢，
   不得阻塞其它已经取得 encoded bytes 的封面。冷 miss MAY 先使用 memory source，持久化
   写入由统一 response cache 后台完成；已有 durable file hit MUST 保持文件直读。
+- 首页、漫画源卡片和详情封面在 encoded-source Future 或 Flutter ImageStream 发生瞬时失败后 MUST 可有界恢复；解码失败 SHOULD 只驱逐对应 provider，不得清空统一 response cache。App resume SHOULD 重试仍失败的封面，`sourceVerificationRequired` MUST 保持显式恢复。
 - 首页封面 MUST 先通过 source-independent raw comic stable key 查询统一 response cache；
   命中时不得解析来源、创建 source transport 或等待插件 activation。raw miss 才可进入
   source loader，并必须写入当前 raw stable key；生产路径不得读取 dev.135 为 app 更新保留
@@ -51,7 +52,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - App-owned modal panel 的关闭操作 MUST 是左下角 X；确认、保存、删除等正向操作位于
   右侧，不得以“取消”文字按钮替代关闭 X。
 - 漫画源页 MUST 使用来源自身声明的 browse section；Mihon Popular/Latest 与 Venera explore/category target 均属于来源内部分类。原生/Mihon/Venera 运行时类型 MUST NOT 作为内容分类行，只能以来源 chip 的视觉标识区分。固定大小 catalog page MUST 使用显式上一页/下一页，pager MUST 位于内容滚动尾部；切换来源、section 或外部搜索请求时 MUST 回到第一页。
-- 漫画源搜索 MUST 以来源栏上方的浮动控件进入，展开后 SHOULD 提供可持久化、可删除和可清空的搜索历史。搜索结果 MUST 使用 catalog/resource-cache 权威：若有缓存，Presentation MUST 先显示缓存并后台刷新；只有稳定字段变化时才替换列表，不得建立页面私有结果缓存。
+- 漫画源搜索 MUST 以来源栏上方的浮动控件进入，展开后 SHOULD 提供可持久化、可删除和可清空的搜索历史。展开搜索面板 MUST 优先消费系统返回手势与垂直拖动/滚动手势，并在这些手势发生时恢复为浮动按钮。Mihon `getFilterList()` 支持的 CheckBox、TriState、Select 与 Group 子项 SHOULD 以不透明 ID 的过滤标签显示在搜索框上方；UI MUST NOT 持有或解释插件 Filter 对象。搜索结果 MUST 使用 catalog/resource-cache 权威：若有缓存，Presentation MUST 先显示缓存并后台刷新；只有稳定字段变化时才替换列表，不得建立页面私有结果缓存。漫画源页 MUST 支持边缘下拉达到阈值后的强制刷新；强制刷新 MUST 绕过 catalog cache，但 SHOULD 保留已有内容直到新结果到达。
 - Mihon 插件的已安装列表和仓库列表 MUST 能按规范化语言分类；语言 SHOULD 优先使用插件声明，缺失时从插件 source metadata 推导。多个语言 MUST 归入多语言，无法可靠确定时归入未知语言，不得从显示名猜测。
 - 来源详情若提供预览能力，详情页 MUST 能先显示 `ComicManifest` 中已经返回的预览项，
   后续页 MUST 通过 `ComicPreviewSource` 独立加载；预览图片必须复用统一 artwork loader，
@@ -60,7 +61,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
   去除后的原图 URI MUST 是编码字节缓存和实际请求的身份，使同一原图的不同裁剪只产生一次
   请求/缓存项；宿主绘制时 MUST 只显示该标识指定的原图区域。图片失败时 MUST 使用按资源
   identity 稳定生成的柔和纯色占位，不得显示破损图片图标。
-  预览栏折叠与展开 MUST 使用同一套排版结果：折叠态只显示第一行，高度由该行实际高度决定；展开态继续自动消费来源分页并以 `PageView` 左右分页呈现后续行。预览项 MUST 尽量保持来源原始顺序，并在可读尺寸下放置尽可能多的图片。所有显示项 MUST 使用等目标面积或等价策略，使最大显示面积与最小显示面积之比不得超过 1.2；每张图仍按自身宽高比绘制。阅读设置 MUST 提供每行最大数量 1–8，默认 4。图片区域 MUST 不超过屏幕高度的 80%，展开/收起按钮 MUST 居中且只显示箭头，不得显示“展开/收起”文字。不得拉伸、强制裁切或建立详情页专用图片缓存。
+  预览栏折叠与展开 MUST 使用同一套排版结果：折叠态只显示第一行，高度由该行实际高度决定；展开态继续自动消费来源分页并以 `PageView` 左右分页呈现后续行。预览项 MUST 尽量保持来源原始顺序，并在可读尺寸下放置尽可能多的图片。所有显示项 MUST 使用等目标面积或等价策略，使最大显示面积与最小显示面积之比不得超过 1.2；在该约束内，每个完整预览行 MUST 尽量利用可用屏幕宽度并避免两侧无意义留白，每张图仍按自身宽高比绘制。阅读设置 MUST 提供每行最大数量 1–8，默认 4。图片区域 MUST 不超过屏幕高度的 80%，展开/收起按钮 MUST 居中且只显示箭头，不得显示“展开/收起”文字。不得拉伸、强制裁切或建立详情页专用图片缓存。
 - 来源详情若提供评论能力，详情页 SHOULD 显示评论栏，并 MUST 支持分页评论次级页；
   评论存在回复数量和不透明 ID 时，次级页 MUST 能按原 source `subId`/回复 ID 加载回复。
   这些能力是可选的，来源未声明时不得发起插件请求。

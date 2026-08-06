@@ -10,6 +10,7 @@ import 'package:catalog/catalog.dart';
 /// boundary.
 enum ExternalPluginRuntimeOperation {
   loadBrowseSections,
+  loadSearchFilters,
   browse,
   loadComic,
   loadComicPreview,
@@ -148,6 +149,16 @@ final class ExternalPluginRuntimeRequest {
         externalSourceId: externalSourceId,
       );
 
+  factory ExternalPluginRuntimeRequest.loadSearchFilters({
+    required String requestId,
+    required String externalSourceId,
+  }) =>
+      ExternalPluginRuntimeRequest(
+        requestId: requestId,
+        operation: ExternalPluginRuntimeOperation.loadSearchFilters,
+        externalSourceId: externalSourceId,
+      );
+
   factory ExternalPluginRuntimeRequest.browse({
     required String requestId,
     required String externalSourceId,
@@ -155,6 +166,7 @@ final class ExternalPluginRuntimeRequest {
     required int offset,
     required int limit,
     String? sectionId,
+    Iterable<String> selectedFilterIds = const <String>[],
   }) =>
       ExternalPluginRuntimeRequest(
         requestId: requestId,
@@ -165,6 +177,7 @@ final class ExternalPluginRuntimeRequest {
           'offset': offset,
           'limit': limit,
           'sectionId': sectionId,
+          'filterIds': selectedFilterIds.toList(growable: false),
         },
       );
 
@@ -439,18 +452,22 @@ void _validateArguments(
 ) {
   switch (operation) {
     case ExternalPluginRuntimeOperation.loadBrowseSections:
+    case ExternalPluginRuntimeOperation.loadSearchFilters:
       _expectKeys(arguments, const <String>{});
       return;
     case ExternalPluginRuntimeOperation.browse:
       _expectKeys(
         arguments,
-        const <String>{'query', 'offset', 'limit', 'sectionId'},
+        const <String>{'query', 'offset', 'limit', 'sectionId', 'filterIds'},
       );
       if (arguments['query'] is! String ||
           arguments['offset'] is! int ||
           arguments['limit'] is! int ||
           (arguments['sectionId'] != null &&
               arguments['sectionId'] is! String) ||
+          arguments['filterIds'] is! List<Object?> ||
+          !(arguments['filterIds']! as List<Object?>)
+              .every((value) => value is String && value.isNotEmpty) ||
           (arguments['offset']! as int) < 0 ||
           (arguments['limit']! as int) <= 0) {
         throw const FormatException('browse arguments are invalid');

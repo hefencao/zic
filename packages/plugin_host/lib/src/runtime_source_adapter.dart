@@ -308,6 +308,7 @@ final class _RuntimeBrowsableComicSource
         ComicVersionSource,
         ComicPreviewSource, ComicCommentSource,
         SectionedBrowsableComicSource,
+        FilterableBrowsableComicSource,
         ResolvableComicResourceSource, RetryableComicResourceSource {
   _RuntimeBrowsableComicSource({
     required ExternalComicPluginFormat format,
@@ -398,11 +399,32 @@ final class _RuntimeBrowsableComicSource
     }).toList(growable: false);
   }
 
+  @override
+  Future<List<SourceSearchFilterOption>> loadSearchFilters() async {
+    if (_format != ExternalComicPluginFormat.mihonExtension) {
+      return const <SourceSearchFilterOption>[];
+    }
+    final payload = await _invoke(
+      ExternalPluginRuntimeOperation.loadSearchFilters,
+      _externalId,
+      const <String, Object?>{},
+    );
+    return _list(payload, 'search filters').map((value) {
+      final option = _map(value, 'search filter');
+      return SourceSearchFilterOption(
+        filterId: _string(option, 'filterId'),
+        label: _string(option, 'label'),
+        selected: _optionalBool(option['selected']) ?? false,
+      );
+    }).toList(growable: false);
+  }
+
   Future<SourceBrowsePage> _browse({
     required String query,
     required int offset,
     required int limit,
     String? sectionId,
+    Set<String> selectedFilterIds = const <String>{},
   }) async {
     if (offset < 0 || limit <= 0) {
       throw ArgumentError('browse offset/limit are invalid');
@@ -415,6 +437,7 @@ final class _RuntimeBrowsableComicSource
         'offset': offset,
         'limit': limit,
         'sectionId': sectionId,
+        'filterIds': selectedFilterIds.toList(growable: false),
       },
     );
     final message = _map(payload, 'browse result');
@@ -452,6 +475,22 @@ final class _RuntimeBrowsableComicSource
         query: query,
         offset: offset,
         limit: limit,
+      );
+
+  @override
+  Future<SourceBrowsePage> browseWithFilters({
+    String? sectionId,
+    String query = '',
+    int offset = 0,
+    int limit = 24,
+    Set<String> selectedFilterIds = const <String>{},
+  }) =>
+      _browse(
+        query: query,
+        offset: offset,
+        limit: limit,
+        sectionId: sectionId,
+        selectedFilterIds: selectedFilterIds,
       );
 
   @override

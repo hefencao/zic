@@ -26,6 +26,7 @@ final class CachedBrowsableComicSource
         ComicPreviewSource,
         ComicCommentSource,
         SectionedBrowsableComicSource,
+        FilterableBrowsableComicSource,
         CachedSourceBrowseProjection,
         RefreshableChapterComicSource,
         ResolvableComicResourceSource,
@@ -54,6 +55,7 @@ final class CachedBrowsableComicSource
     required int offset,
     required int limit,
     String? sectionId,
+    Set<String> selectedFilterIds = const <String>{},
   }) =>
       ResourceCacheKey(
         kind: ResourceCacheKind.searchResults,
@@ -65,6 +67,7 @@ final class CachedBrowsableComicSource
             normalizedQuery,
             '$offset',
             '$limit',
+            ...(selectedFilterIds.toList()..sort()),
           ],
         ),
         namespace: sourceResourceCacheNamespace(sourceId),
@@ -75,6 +78,7 @@ final class CachedBrowsableComicSource
     required int offset,
     required int limit,
     String? sectionId,
+    Set<String> selectedFilterIds = const <String>{},
     bool forceRefresh = false,
   }) {
     final sectioned = source is SectionedBrowsableComicSource
@@ -86,8 +90,22 @@ final class CachedBrowsableComicSource
         offset: offset,
         limit: limit,
         sectionId: sectionId,
+        selectedFilterIds: selectedFilterIds,
       ),
-      loader: () => sectionId != null && sectioned != null
+      loader: () {
+        final filterable = source is FilterableBrowsableComicSource
+            ? source as FilterableBrowsableComicSource
+            : null;
+        if (filterable != null && selectedFilterIds.isNotEmpty) {
+          return filterable.browseWithFilters(
+            sectionId: sectionId,
+            query: normalizedQuery,
+            offset: offset,
+            limit: limit,
+            selectedFilterIds: selectedFilterIds,
+          );
+        }
+        return sectionId != null && sectioned != null
           ? sectioned.browseSection(
               sectionId,
               query: normalizedQuery,
@@ -98,7 +116,8 @@ final class CachedBrowsableComicSource
               query: normalizedQuery,
               offset: offset,
               limit: limit,
-            ),
+            );
+      },
       weightOf: _browseWeight,
       forceRefresh: forceRefresh,
     );
@@ -141,6 +160,35 @@ final class CachedBrowsableComicSource
   }
 
   @override
+  Future<List<SourceSearchFilterOption>> loadSearchFilters() {
+    final filterable = source is FilterableBrowsableComicSource
+        ? source as FilterableBrowsableComicSource
+        : null;
+    if (filterable == null) {
+      return Future<List<SourceSearchFilterOption>>.value(
+        const <SourceSearchFilterOption>[],
+      );
+    }
+    return filterable.loadSearchFilters();
+  }
+
+  @override
+  Future<SourceBrowsePage> browseWithFilters({
+    String? sectionId,
+    String query = '',
+    int offset = 0,
+    int limit = 24,
+    Set<String> selectedFilterIds = const <String>{},
+  }) =>
+      _loadBrowsePage(
+        normalizedQuery: query.trim(),
+        offset: offset,
+        limit: limit,
+        sectionId: sectionId,
+        selectedFilterIds: selectedFilterIds,
+      );
+
+  @override
   Future<SourceBrowsePage> browseSection(
     String sectionId, {
     String query = '',
@@ -160,6 +208,7 @@ final class CachedBrowsableComicSource
     String query = '',
     int offset = 0,
     int limit = 24,
+    Set<String> selectedFilterIds = const <String>{},
   }) =>
       cache.peek<SourceBrowsePage>(
         _browseKey(
@@ -167,6 +216,7 @@ final class CachedBrowsableComicSource
           offset: offset,
           limit: limit,
           sectionId: sectionId,
+          selectedFilterIds: selectedFilterIds,
         ),
       );
 
@@ -176,12 +226,14 @@ final class CachedBrowsableComicSource
     String query = '',
     int offset = 0,
     int limit = 24,
+    Set<String> selectedFilterIds = const <String>{},
   }) =>
       _loadBrowsePage(
         normalizedQuery: query.trim(),
         offset: offset,
         limit: limit,
         sectionId: sectionId,
+        selectedFilterIds: selectedFilterIds,
         forceRefresh: true,
       );
 

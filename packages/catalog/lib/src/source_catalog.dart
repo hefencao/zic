@@ -209,6 +209,39 @@ abstract interface class SectionedBrowsableComicSource {
   });
 }
 
+/// One source-owned search filter option suitable for compact chip UI.
+///
+/// [filterId] is opaque outside the source adapter. Presentation may toggle it
+/// and return the selected IDs unchanged, but must not interpret plugin state.
+final class SourceSearchFilterOption {
+  const SourceSearchFilterOption({
+    required this.filterId,
+    required this.label,
+    this.selected = false,
+  })  : assert(filterId != ''),
+        assert(label != '');
+
+  final String filterId;
+  final String label;
+  final bool selected;
+}
+
+/// Optional source-owned search-filter capability.
+///
+/// Mihon adapters may project `getFilterList()` through this interface. Other
+/// runtimes return no capability rather than inventing generic filters.
+abstract interface class FilterableBrowsableComicSource {
+  Future<List<SourceSearchFilterOption>> loadSearchFilters();
+
+  Future<SourceBrowsePage> browseWithFilters({
+    String? sectionId,
+    String query = '',
+    int offset = 0,
+    int limit = 24,
+    Set<String> selectedFilterIds = const <String>{},
+  });
+}
+
 /// Optional cache projection used by Presentation for stale-while-revalidate.
 ///
 /// The cache owner remains the catalog/resource-cache layer. Presentation may
@@ -220,6 +253,7 @@ abstract interface class CachedSourceBrowseProjection {
     String query = '',
     int offset = 0,
     int limit = 24,
+    Set<String> selectedFilterIds = const <String>{},
   });
 
   Future<SourceBrowsePage> refreshBrowsePage({
@@ -227,6 +261,7 @@ abstract interface class CachedSourceBrowseProjection {
     String query = '',
     int offset = 0,
     int limit = 24,
+    Set<String> selectedFilterIds = const <String>{},
   });
 }
 

@@ -681,6 +681,13 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
         ExternalPluginRuntimeOperation.loadBrowseSections => <Object?>[
           <String, Object?>{'sectionId': 'popular', 'label': '热门'},
         ],
+        ExternalPluginRuntimeOperation.loadSearchFilters => <Object?>[
+          <String, Object?>{
+            'filterId': '0:check',
+            'label': '已完结',
+            'selected': false,
+          },
+        ],
         ExternalPluginRuntimeOperation.browse => <String, Object?>{
             'items': <Object?>[
               <String, Object?>{
@@ -872,6 +879,13 @@ final class _SequencedConnection implements ExternalPluginRuntimeConnection {
         payload: switch (request.operation) {
           ExternalPluginRuntimeOperation.loadBrowseSections => <Object?>[
           <String, Object?>{'sectionId': 'popular', 'label': '热门'},
+        ],
+        ExternalPluginRuntimeOperation.loadSearchFilters => <Object?>[
+          <String, Object?>{
+            'filterId': '0:check',
+            'label': '已完结',
+            'selected': false,
+          },
         ],
         ExternalPluginRuntimeOperation.browse => <String, Object?>{
               'items': <Object?>[],

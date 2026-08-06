@@ -24,15 +24,14 @@
 - 运行 `flutter analyze`、受影响 package owner tests、App tests和 Android debug/release build。
 - 运行 Rust/Android target 与 JNI symbol验证，确认 APK 中 native build identity正确。
 
-## P1：漫画源与详情预览设备闭环
+## P1：漫画源、过滤与详情预览设备闭环
 
 - 真机验证 Mihon Popular/Latest 与 Venera 多 explore/category section 的顺序、分页和 section identity。
-- 验证浮动搜索历史持久化、cache-first/background-refresh 与数据未变化时列表不闪烁。
-- 验证预览每行上限 1–8 在窄屏、宽屏和极端宽高比下保持等面积与 80% 高度上限。
-
-- 验证漫画源分类切换会选择分类内首个来源、重置第一页，并确认上一页/下一页不重复或跳过结果。
-- 验证 Mihon 已安装和仓库语言分类在真实 index.pb、运行时 discovery metadata 上稳定，未知语言不被误分。
-- 在窄屏/宽屏及极端横纵比预览上确认折叠第一行与展开第一行尺寸一致、面积比不超过 1.2、整体不超过屏幕高度 80%。
+- 验证浮动搜索历史持久化；展开状态下系统返回、面板上下拖动和内容列表滚动均先收起搜索并释放焦点。
+- 使用真实 Mihon 扩展验证 `getFilterList()` 中 CheckBox、TriState、Select 与 Group 子项的标签、默认值和回传值；未支持的自定义 Filter 不得阻塞普通浏览。
+- 验证漫画源 cache-first/background-refresh 与数据未变化时列表、封面不闪烁；下拉达到阈值后保留现有内容执行强制来源刷新。
+- 在窄屏、常见竖屏、宽屏与极端横纵比预览上确认完整行尽量占满可用宽度、折叠/展开第一行一致、面积比不超过 1.2、每行数量上限和屏幕高度 80% 上限同时成立。
+- 制造 encoded-source Future 失败和 Flutter decoder/ImageStream 失败，确认首页、漫画源卡片和详情封面无需冷启动即可恢复，且不清空其它封面缓存。
 
 ## P1：首页与缓存身份
 

@@ -130,6 +130,21 @@ void main() {
         SourceBrowseSection(sectionId: 'popular', label: '热门'),
         SourceBrowseSection(sectionId: 'latest', label: '最新'),
       ],
+      searchFilters: const <SourceSearchFilterOption>[
+        SourceSearchFilterOption(
+          filterId: 'status:check',
+          label: '已完结',
+        ),
+        SourceSearchFilterOption(
+          filterId: 'sort:select:0',
+          label: '排序：热门',
+          selected: true,
+        ),
+        SourceSearchFilterOption(
+          filterId: 'sort:select:1',
+          label: '排序：最新',
+        ),
+      ],
     );
     final mihon = _FixtureSource('mihon:fixture-zh', 'Mihon 中文源');
     final venera = _FixtureSource('venera:fixture-en', 'Venera English');
@@ -171,9 +186,38 @@ void main() {
 
     await _tapVisible(tester, find.byKey(comicSourceSearchFabKey));
     expect(find.byKey(comicSourceSearchKey), findsOneWidget);
+    expect(find.byKey(comicSourceFilterBarKey), findsOneWidget);
+    expect(find.byKey(comicSourceFilterKey('status:check')), findsOneWidget);
     expect(find.text('漫画'), findsOneWidget);
+    await _tapVisible(tester, find.byKey(comicSourceFilterKey('status:check')));
+    await tester.pump();
+    expect(native.lastSelectedFilterIds, contains('status:check'));
+    expect(native.lastSelectedFilterIds, contains('sort:select:0'));
+
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    expect(find.byKey(comicSourceSearchKey), findsNothing);
+    expect(find.byKey(comicSourceSearchFabKey), findsOneWidget);
+
+    await _tapVisible(tester, find.byKey(comicSourceSearchFabKey));
+    await tester.drag(
+      find.byKey(comicSourceSearchKey),
+      const Offset(0, -80),
+    );
+    await tester.pump();
+    expect(find.byKey(comicSourceSearchKey), findsNothing);
+
+    await _tapVisible(tester, find.byKey(comicSourceSearchFabKey));
     await _tapVisible(tester, find.text('漫画'));
     expect(searches, <String>['漫画']);
+
+    final refresh = tester.state<RefreshIndicatorState>(
+      find.byKey(comicSourcePullRefreshKey),
+    );
+    final browseCallsBeforeRefresh = native.browseCalls;
+    await refresh.show();
+    await tester.pump();
+    expect(native.browseCalls, greaterThan(browseCallsBeforeRefresh));
 
     await tester.scrollUntilVisible(
       find.byKey(comicSourcePagerKey),
@@ -780,6 +824,11 @@ void main() {
     expect(itemCenters[1].dy, closeTo(itemCenters[2].dy, 1));
     expect(itemCenters[0].dx, lessThan(itemCenters[1].dx));
     expect(itemCenters[1].dx, lessThan(itemCenters[2].dx));
+    final previewRect = tester.getRect(previewPager);
+    final firstRect = tester.getRect(itemFinders.first);
+    final lastRect = tester.getRect(itemFinders.last);
+    expect(firstRect.left - previewRect.left, lessThanOrEqualTo(16));
+    expect(previewRect.right - lastRect.right, lessThanOrEqualTo(16));
     expect(itemSizes[0], collapsedItem0Size);
 
     await tester.runAsync(
@@ -1696,7 +1745,8 @@ final class _FixtureSource
         RefreshableChapterComicSource,
         ComicPreviewSource,
         ComicCommentSource,
-        SectionedBrowsableComicSource {
+        SectionedBrowsableComicSource,
+        FilterableBrowsableComicSource {
   _FixtureSource(
     this.sourceId,
     this.name, {
@@ -1719,6 +1769,7 @@ final class _FixtureSource
     this.previewLandscapeIndexes = const <int>{},
     this.supportsComicComments = false,
     this.browseSections = const <SourceBrowseSection>[],
+    this.searchFilters = const <SourceSearchFilterOption>[],
   });
 
   @override
@@ -1745,7 +1796,9 @@ final class _FixtureSource
   @override
   final bool supportsComicComments;
   final List<SourceBrowseSection> browseSections;
+  final List<SourceSearchFilterOption> searchFilters;
   String? lastBrowseSection;
+  Set<String> lastSelectedFilterIds = const <String>{};
   int _comicLoads = 0;
   int _chapterLoads = 0;
   int _chapterRefreshes = 0;
@@ -1812,6 +1865,23 @@ final class _FixtureSource
     int limit = 24,
   }) {
     lastBrowseSection = sectionId;
+    return browse(query: query, offset: offset, limit: limit);
+  }
+
+  @override
+  Future<List<SourceSearchFilterOption>> loadSearchFilters() async =>
+      searchFilters;
+
+  @override
+  Future<SourceBrowsePage> browseWithFilters({
+    String? sectionId,
+    String query = '',
+    int offset = 0,
+    int limit = 24,
+    Set<String> selectedFilterIds = const <String>{},
+  }) {
+    lastBrowseSection = sectionId;
+    lastSelectedFilterIds = Set<String>.unmodifiable(selectedFilterIds);
     return browse(query: query, offset: offset, limit: limit);
   }
 

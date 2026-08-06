@@ -94,8 +94,9 @@ manifest 准备，再在后台完成设备扩展发现和 runtime activation。H
 增量替换 source projection，不重新拥有或复制资源缓存。
 
 `HomeLibrarySession` 先发布 entries/SavedComic primary，交给 Flutter 完成一个可注入的
-首帧边界，再读取 enrichment 和写入缺失默认值。`ComicCoverCard` 的封面加载失败时，
-只有稳定 identity 或 loader 来源改变才允许重试；普通 Widget rebuild 不产生第二套封面
+首帧边界，再读取 enrichment 和写入缺失默认值。封面 encoded-source Future 与 Flutter
+ImageStream 是两个恢复边界：传输失败由卡片有界重试，解码失败只驱逐对应 provider 并重建
+ImageStream；App resume 时失败项可再次恢复。普通 Widget rebuild 不产生第二套封面
 请求权威。首页 artwork 的冷 miss 在 encoded bytes 到达后先返回 memory source，durable
 response 写入由 `ResourceCacheManager` 后台排队；同一批封面按卡片独立完成，不等待全部
 封面或全部持久化写入。首页 artwork gateway 只用 source-independent raw stable comic
@@ -126,7 +127,7 @@ Cookie 会话，按当前详情页 `#gnd` 关系生成版本，不把 Venera 当
 经过精确章节匹配验证的偏好、阅读位置和已读状态，并先完成目标写入；同源替换随后清理旧漫画
 记录，跨源迁移保留原来源。迁移面板始终展示当前插件和来源，目标可为当前来源或其他已启用来源。
 
-漫画源页使用来源自身声明的 browse section：Mihon 映射 Popular/Latest，Venera 枚举 explore loader 与 category target；原生/Mihon/Venera 仅通过来源 chip 的颜色与图标区分，不占内容分类行。固定大小的 catalog page 仍使用显式上一页/下一页，但 pager 位于内容滚动尾部。左下浮动搜索位于来源栏上方，展开后显示持久化搜索历史。列表由 catalog response cache 先行投影，后台 refresh 只有在稳定字段发生变化时才更新 Presentation。Mihon 插件的已安装与仓库列表仍按规范化语言分类。
+漫画源页使用来源自身声明的 browse section：Mihon 映射 Popular/Latest，Venera 枚举 explore loader 与 category target；原生/Mihon/Venera 仅通过来源 chip 的颜色与图标区分，不占内容分类行。固定大小的 catalog page 仍使用显式上一页/下一页，但 pager 位于内容滚动尾部。左下浮动搜索位于来源栏上方，展开后显示持久化搜索历史；展开面板优先消费返回和垂直滑动手势，收起后才把手势交还页面。Mihon `getFilterList()` 由 runtime adapter 投影为 opaque `SourceSearchFilterOption`，搜索框上方仅显示 CheckBox、TriState、Select 与 Group 子项的过滤标签，UI 不解析插件对象。列表由 catalog response cache 先行投影，后台 refresh 只有在稳定字段发生变化时才更新 Presentation；边缘下拉达到刷新阈值后强制绕过缓存请求来源，但保留当前内容直到新数据到达。Mihon 插件的已安装与仓库列表仍按规范化语言分类。
 
 详情扩展数据由 source adapter 负责：`ComicManifest` 可携带首批预览缩略图和评论，
 `ComicPreviewSource`/`ComicCommentSource` 只在来源声明能力时提供继续分页。App 只消费
@@ -136,7 +137,7 @@ Cookie 会话，按当前详情页 `#gnd` 关系生成版本，不把 Venera 当
 `ComicDetails` 能力的来源可渐进显示预览、评论和回复。预览 URI 保留 Venera 的
 `@x/y` 裁剪标识用于预览项/widget/painter 的单项身份，但 `onThumbnailLoad` 请求回调接收
 去掉裁剪标识的原图地址；该 base URI 也是编码字节缓存身份，App 解码后只绘制对应裁剪区域。
-预览栏折叠与展开共用同一套顺序布局。布局按原始预览顺序逐行装箱，每张缩略图使用等目标面积并按自身宽高比计算宽高，因此同一布局中最大与最小显示面积比不超过 1.2；阅读设置提供每行最大数量 1–8，默认 4，并在该上限与可读最小边约束下尽可能增加每页图片数量。折叠态只裁出该布局第一行，高度直接取第一行高度；展开态继续消费来源分页，并由 `PageView` 左右分页呈现后续行。展开图片区域按屏幕高度 80% 封顶，开关位于中间且只显示上下箭头。行规划优先使用 `ComicPreviewAsset.width/height`，缺失时以解码后的可见裁剪尺寸回填；缩略图使用 `BoxFit.contain`，不拉伸或强制裁切。预览失败只显示按资源 identity 生成的柔和单色占位，不显示破损图片图标。
+预览栏折叠与展开共用同一套顺序布局。布局按原始预览顺序逐行装箱，每张缩略图先使用等目标面积并按自身宽高比计算宽高；随后按行受限放大并把剩余空间分配到项间距，使完整预览行尽量贴近屏幕左右边缘而不浪费竖屏宽度。所有行的缩放跨度受 `sqrt(1.2)` 限制，因此同一布局中最大与最小显示面积比不超过 1.2；阅读设置提供每行最大数量 1–8，默认 4。折叠态只裁出该布局第一行，高度直接取第一行高度；展开态继续消费来源分页，并由 `PageView` 左右分页呈现后续行。展开图片区域按屏幕高度 80% 封顶，开关位于中间且只显示上下箭头。行规划优先使用 `ComicPreviewAsset.width/height`，缺失时以解码后的可见裁剪尺寸回填；缩略图使用 `BoxFit.contain`，不拉伸或强制裁切。预览失败只显示按资源 identity 生成的柔和单色占位，不显示破损图片图标。
 
 App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭固定为左下角 X，确认、
 保存或删除位于右侧，不再使用“取消”文字按钮。
