@@ -106,19 +106,10 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
     return right.comicId.compareTo(left.comicId);
   }
 
-  int _savedRealChapterCount(SavedComicRecord comic) => comic.chapters
-      .where(
-        (chapter) =>
-            !isSyntheticMihonChapterIdentity(chapter.chapterId),
-      )
-      .length;
+  int _savedRealChapterCount(SavedComicRecord comic) => comic.chapters.length;
 
-  int _manifestRealChapterCount(ComicManifest manifest) => manifest.chapters
-      .where(
-        (chapter) =>
-            !isSyntheticMihonChapterIdentity(chapter.chapterId),
-      )
-      .length;
+  int _manifestRealChapterCount(ComicManifest manifest) =>
+      manifest.chapters.length;
 
   Future<bool> _persistKnownCanonicalComicIds() async {
     await _ensureLibraryReady();
@@ -147,6 +138,21 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
     return changed;
   }
 
+  LibraryComic? _exactLibraryComicForSourceIdentity(
+    String sourceId,
+    String comicId,
+  ) {
+    for (final comic in aggregateImportedLibrary(
+      _libraryEntries,
+      savedComics: _savedComics,
+    )) {
+      if (comic.sourceId == sourceId && comic.comicId == comicId) {
+        return comic;
+      }
+    }
+    return null;
+  }
+
   LibraryComic? _libraryComicForSourceIdentity(
     String sourceId,
     String comicId,
@@ -161,10 +167,7 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
         .toList(growable: false);
     return aliases.isEmpty
         ? null
-        : preferredLibraryComicAlias(
-            aliases,
-            isCompatibilityChapter: isSyntheticMihonChapterIdentity,
-          );
+        : preferredLibraryComicAlias(aliases);
   }
 
   void _rejectCatalogRegression({
@@ -207,13 +210,6 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
           'previousRealChapterCount': previousRealCount,
           'incomingChapterCount': incoming.chapters.length,
           'incomingRealChapterCount': incomingRealCount,
-          'incomingSyntheticCount': incoming.chapters
-              .where(
-                (chapter) => isSyntheticMihonChapterIdentity(
-                  chapter.chapterId,
-                ),
-              )
-              .length,
         },
       ),
     );
@@ -272,59 +268,12 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
   }
 
 
-  ComicManifest _withoutSyntheticMihonFallback(ComicManifest manifest) {
-    final hasRealChapter = manifest.chapters.any(
-      (chapter) => !isSyntheticMihonChapterIdentity(chapter.chapterId),
-    );
-    if (!hasRealChapter) return manifest;
-    final chapters = manifest.chapters
-        .where(
-          (chapter) => !isSyntheticMihonChapterIdentity(chapter.chapterId),
-        )
-        .toList(growable: false);
-    if (chapters.length == manifest.chapters.length) return manifest;
-    return ComicManifest(
-      comic: manifest.comic,
-      chapters: chapters,
-      preview: manifest.preview,
-      comments: manifest.comments,
-    );
-  }
-
-  Future<void> _removePersistedSyntheticChapters(
-    ComicManifest manifest,
-  ) async {
-    final hasRealChapter = manifest.chapters.any(
-      (chapter) => !isSyntheticMihonChapterIdentity(chapter.chapterId),
-    );
-    if (!hasRealChapter) return;
-    final stale = _libraryEntries.where(
-      (entry) =>
-          entry.chapter.sourceId == manifest.comic.sourceId &&
-          _canonicalComicKey(
-                manifest.comic.sourceId,
-                entry.chapter.comicId,
-              ) ==
-              _canonicalComicKey(
-                manifest.comic.sourceId,
-                manifest.comic.comicId,
-              ) &&
-          isSyntheticMihonChapterIdentity(entry.chapter.chapterId),
-    ).toList(growable: false);
-    for (final entry in stale) {
-      await _library.removeChapter(
-        entry.chapter.sourceId,
-        entry.chapter.chapterId,
-      );
-    }
-  }
 
   Future<void> _persistRemoteComic(
     ComicManifest manifest,
     bool retained,
   ) async {
     await _ensureLibraryReady();
-    manifest = _withoutSyntheticMihonFallback(manifest);
     if (!retained) {
       await _library.removeSavedComic(
         manifest.comic.sourceId,
@@ -332,7 +281,6 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
       );
       return;
     }
-    await _removePersistedSyntheticChapters(manifest);
     final existing = _preferredSavedComicAlias(
           manifest.comic.sourceId,
           manifest.comic.comicId,

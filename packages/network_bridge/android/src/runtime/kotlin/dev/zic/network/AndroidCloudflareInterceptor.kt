@@ -5,13 +5,52 @@ import java.util.Locale
 import okhttp3.Interceptor
 import okhttp3.Response
 
+/** A response that requires the visible shared browser to renew site state. */
+class SourceVerificationRequiredException(
+    val requestUrl: String,
+    val statusCode: Int,
+) : IOException(
+    "Cloudflare verification required for $requestUrl (HTTP $statusCode)",
+)
+
+/**
+ * Classifies only responses that carry evidence of an interactive Cloudflare
+ * challenge. HTTP status or the Cloudflare server header alone are not enough:
+ * ordinary origin/access failures must remain ordinary source failures.
+ */
+internal fun isCloudflareVerificationResponse(
+    statusCode: Int,
+    mitigatedHeader: String?,
+    serverHeader: String?,
+    bodyText: String,
+): Boolean {
+    if (statusCode !in CLOUDFLARE_STATUS_CODES) return false
+    if (mitigatedHeader?.equals("challenge", ignoreCase = true) == true) {
+        return true
+    }
+    val body = bodyText.lowercase(Locale.US)
+    val strongChallengeMarker = body.contains("challenge-platform") ||
+        body.contains("cf-chl-") ||
+        body.contains("cdn-cgi/challenge-platform")
+    if (strongChallengeMarker) return true
+
+    // "Just a moment" is a title, not a protocol marker. Require separate
+    // Cloudflare branding before asking the user to verify in a browser.
+    if (!body.contains("just a moment")) return false
+    val server = serverHeader?.trim()?.lowercase(Locale.US)
+    val cloudflareServer = server in CLOUDFLARE_SERVERS
+    val cloudflareBranding = body.contains("cloudflare") ||
+        body.contains("cdn-cgi/")
+    return cloudflareServer || cloudflareBranding
+}
+
 /**
  * Detects a Cloudflare browser challenge and returns control to the host UI.
  *
  * A runtime interceptor must not create a hidden WebView: the user cannot
  * interact with it, it occupies the plugin invocation permit, and its wait can
  * race the host timeout. The App opens the shared visible source browser after
- * the runtime maps this stable failure to `source-verification-required`.
+ * the runtime maps this typed failure to `source-verification-required`.
  */
 class AndroidCloudflareInterceptor(
     @Suppress("UNUSED_PARAMETER") context: android.content.Context,
@@ -19,28 +58,23 @@ class AndroidCloudflareInterceptor(
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val response = chain.proceed(chain.request())
-        if (!response.isCloudflareChallenge()) return response
-        response.close()
-        throw IOException(
-            "Cloudflare verification failed; open the source page in the browser and retry",
+        val body = if (response.code in CLOUDFLARE_STATUS_CODES) {
+            runCatching { response.peekBody(CLOUDFLARE_BODY_LIMIT).string() }
+                .getOrDefault("")
+        } else {
+            ""
+        }
+        val verificationRequired = isCloudflareVerificationResponse(
+            statusCode = response.code,
+            mitigatedHeader = response.header("cf-mitigated"),
+            serverHeader = response.header("Server"),
+            bodyText = body,
         )
-    }
-
-    private fun Response.isCloudflareChallenge(): Boolean {
-        val server = header("Server")?.lowercase(Locale.US)
-        if (code !in CLOUDFLARE_STATUS_CODES || server !in CLOUDFLARE_SERVERS) {
-            return false
-        }
-        if (header("cf-mitigated")?.equals("challenge", ignoreCase = true) == true) {
-            return true
-        }
-        val body = runCatching { peekBody(CLOUDFLARE_BODY_LIMIT).string() }
-            .getOrDefault("")
-            .lowercase(Locale.US)
-        return body.contains("cf-mitigated") ||
-            body.contains("challenge-platform") ||
-            body.contains("just a moment") ||
-            body.contains("cf-chl-")
+        if (!verificationRequired) return response
+        val requestUrl = response.request.url.toString()
+        val statusCode = response.code
+        response.close()
+        throw SourceVerificationRequiredException(requestUrl, statusCode)
     }
 }
 

@@ -17,12 +17,6 @@ final class _PreparedChapterMigration {
   final VerifiedArtifactReusePlan artifactReuse;
 }
 
-String _sourcePluginLabel(String sourceId) {
-  if (sourceId.startsWith('mihon:')) return 'Mihon 插件';
-  if (sourceId.startsWith('venera:')) return 'Venera 插件';
-  return '内置源适配器';
-}
-
 ComicVersionSource? _sourceVersionCapability(BrowsableComicSource source) {
   final Object candidate = source;
   if (candidate is! ComicVersionSource) return null;
@@ -31,6 +25,13 @@ ComicVersionSource? _sourceVersionCapability(BrowsableComicSource source) {
 
 bool _sourceSupportsVersionEntry(BrowsableComicSource source) =>
     _sourceVersionCapability(source)?.supportsComicVersions == true;
+
+String sourceVersionViewIdentity({
+  required String sourceId,
+  required String currentComicId,
+  required String targetComicId,
+}) =>
+    'source-version-view:$sourceId\u0000$currentComicId\u0000$targetComicId';
 
 extension _DemoHomeSourceMigration on _DemoHomeState {
   ComicVersionRelationStore? _comicVersionRelationStore() {
@@ -64,6 +65,30 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     ];
   }
 
+  Future<List<SourceComicVersion>> _storedSourcePredecessors({
+    required String sourceId,
+    required String successorComicId,
+  }) async {
+    final store = _comicVersionRelationStore();
+    if (store == null) return const <SourceComicVersion>[];
+    final relations = await store.listComicVersionPredecessors(
+      sourceId,
+      successorComicId,
+    );
+    return <SourceComicVersion>[
+      for (var index = 0; index < relations.length; index++)
+        if (relations[index].predecessorComicId.isNotEmpty &&
+            relations[index].predecessorComicId != successorComicId)
+          SourceComicVersion(
+            sourceId: sourceId,
+            comicId: relations[index].predecessorComicId,
+            title: relations[index].predecessorTitle,
+            generation: index + 1,
+            isPredecessor: true,
+          ),
+    ];
+  }
+
   Future<void> _rememberSourceSuccessors({
     required BrowsableComicSource source,
     required String predecessorComicId,
@@ -92,233 +117,22 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     }
   }
 
-  Future<({BrowsableComicSource source, String id})?>
-      _selectSourceMigrationTarget(
-    LibraryComic comic,
-    List<BrowsableComicSource> targets,
-  ) async {
-    var target = targets.first;
-    final currentSource = _sourceForId(comic.sourceId);
-    final controller = TextEditingController();
-    final choice = await showDialog<
-        ({BrowsableComicSource source, String? id, bool search})>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          final sameSource = target.sourceId == comic.sourceId;
-          return AlertDialog(
-            title: Text(sameSource ? '迁移到同源版本' : '迁移到其他漫画源'),
-            content: SizedBox(
-              width: 440,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                Text(
-                  '当前插件：${_sourcePluginLabel(comic.sourceId)}',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  '当前来源：${currentSource?.descriptor.name ?? comic.sourceId}',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: target.sourceId,
-                  decoration: InputDecoration(
-                    labelText: sameSource ? '目标版本来源' : '目标漫画源',
-                  ),
-                  items: <DropdownMenuItem<String>>[
-                    for (final source in targets)
-                      DropdownMenuItem<String>(
-                        value: source.sourceId,
-                        child: Text(source.descriptor.name),
-                      ),
-                  ],
-                  onChanged: (value) {
-                    if (value == null) {
-                      return;
-                    }
-                    setDialogState(() {
-                      target = targets.firstWhere(
-                        (source) => source.sourceId == value,
-                      );
-                    });
-                  },
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: controller,
-                  decoration: InputDecoration(
-                    labelText: sameSource ? '目标版本 ID（可选）' : '目标漫画 ID（可选）',
-                    helperText: sameSource
-                        ? '搜索当前来源中的同名版本；也可手动填写插件原生 ID'
-                        : '通常直接搜索同名作品；仅在搜索不到时手动填写原生 ID',
-                  ),
-                  onChanged: (_) => setDialogState(() {}),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  sameSource
-                      ? '只复制整部漫画偏好和可验证阅读状态；确认后替换旧版本记录，离线字节仍由下载管理单独处理。'
-                      : '只复制整部漫画偏好和可验证阅读状态；不复制来源 URL、离线字节，也不删除原来源。',
-                ),
-                ],
-              ),
-            ),
-            actions: <Widget>[
-              AppDialogActions(
-                onClose: () => Navigator.pop(context),
-                actions: <Widget>[
-                TextButton.icon(
-                  onPressed: (sameSource
-                          ? _sourceSupportsVersionEntry(target)
-                          : target.descriptor.supportsSearch)
-                      ? () => Navigator.pop(
-                            context,
-                            (source: target, id: null, search: true),
-                          )
-                      : null,
-                  icon: const Icon(Icons.search),
-                  label: Text(sameSource ? '搜索同源版本' : '搜索同名作品'),
-                ),
-                FilledButton(
-                  onPressed: controller.text.trim().isEmpty
-                      ? null
-                      : () => Navigator.pop(
-                            context,
-                            (
-                              source: target,
-                              id: controller.text.trim(),
-                              search: false,
-                            ),
-                          ),
-                  child: const Text('使用漫画 ID'),
-                ),
-                ],
-              ),
-            ],
-          );
-        },
-      ),
-    );
-    controller.dispose();
-    if (choice == null || !mounted) {
-      return null;
-    }
-    final manualId = choice.id;
-    if (!choice.search && manualId != null) {
-      return (source: choice.source, id: manualId);
-    }
-
-    if (choice.source.sourceId == comic.sourceId && choice.search) {
-      try {
-        final version = await _loadSourceVersionNotice(
-          choice.source,
-          comic.title,
-          comic.comicId,
-        );
-        return version == null
-            ? null
-            : (source: choice.source, id: version.comicId);
-      } on Object catch (error) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('读取同源版本失败：$error')),
-          );
-        }
-        return null;
-      }
-    }
-
-    try {
-      final page = await choice.source.browse(
-        query: comic.title,
-        limit: 12,
-      );
-      if (!mounted) {
-        return null;
-      }
-      if (page.items.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '${choice.source.descriptor.name} 未找到“${comic.title}”；可重试并手动填写漫画 ID',
-            ),
-          ),
-        );
-        return null;
-      }
-      final candidate = await showDialog<SourceComicSummary>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text('选择 ${choice.source.descriptor.name} 中的目标作品'),
-          content: SizedBox(
-            width: 520,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  for (final item in page.items)
-                    ListTile(
-                      onTap: () => Navigator.pop(context, item),
-                      title: Text(
-                        item.title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      subtitle: Text(
-                        [
-                          if (item.authors.isNotEmpty)
-                            item.authors.join('、'),
-                          item.comicId,
-                        ].join('\n'),
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          actions: <Widget>[
-            AppDialogActions(
-              onClose: () => Navigator.pop(context),
-              actions: const <Widget>[],
-            ),
-          ],
-        ),
-      );
-      if (candidate == null) {
-        return null;
-      }
-      if (candidate.sourceId != choice.source.sourceId) {
-        throw StateError('目标漫画源搜索返回了不匹配的来源身份');
-      }
-      return (source: choice.source, id: candidate.comicId);
-    } on Object catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('搜索目标漫画失败：$error')),
-        );
-      }
-      return null;
-    }
-  }
-
-  Future<SourceComicVersion?> _loadSourceVersionNotice(
+  Future<details.ComicDetailsVersionState> _loadSourceVersionState(
     BrowsableComicSource source,
     String title,
     String currentComicId,
   ) async {
     final versionSource = _sourceVersionCapability(source);
     if (versionSource == null || !versionSource.supportsComicVersions) {
-      return null;
+      return const details.ComicDetailsVersionState();
     }
-    final stored = await _storedSourceSuccessors(
+    final storedSuccessors = await _storedSourceSuccessors(
       sourceId: source.sourceId,
       predecessorComicId: currentComicId,
+    );
+    final storedPredecessors = await _storedSourcePredecessors(
+      sourceId: source.sourceId,
+      successorComicId: currentComicId,
     );
     var discovered = const <SourceComicVersion>[];
     try {
@@ -327,74 +141,113 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         source: source,
         predecessorComicId: currentComicId,
         predecessorTitle: title,
-        successors: discovered,
+        successors: discovered.where((item) => !item.isPredecessor),
       );
     } on Object {
-      if (stored.isEmpty) rethrow;
+      if (storedSuccessors.isEmpty && storedPredecessors.isEmpty) rethrow;
     }
-    final candidates = <SourceComicVersion>[];
-    final identities = <String>{};
-    for (final item in <SourceComicVersion>[...discovered, ...stored]) {
-      if (item.isPredecessor ||
-          item.sourceId != source.sourceId ||
-          item.comicId.isEmpty ||
-          item.comicId == currentComicId ||
-          !identities.add(item.comicId)) {
-        continue;
-      }
-      candidates.add(item);
-    }
-    if (candidates.isEmpty) return null;
-    candidates.sort((left, right) {
-      final generation = right.generation.compareTo(left.generation);
-      if (generation != 0) return generation;
-      return right.comicId.compareTo(left.comicId);
-    });
-    return candidates.first;
-  }
 
-  Future<void> _openSourceVersionNotice(
-    LibraryComic comic,
-    SourceComicVersion version,
-  ) async {
-    final source = _sourceForId(comic.sourceId);
-    if (source == null || version.sourceId != source.sourceId) return;
-    await _applySourceMigration(
-      comic,
-      (source: source, id: version.comicId),
+    List<SourceComicVersion> merge(
+      Iterable<SourceComicVersion> values, {
+      required bool predecessor,
+    }) {
+      final identities = <String>{};
+      final result = <SourceComicVersion>[];
+      for (final item in values) {
+        if (item.isPredecessor != predecessor ||
+            item.sourceId != source.sourceId ||
+            item.comicId.isEmpty ||
+            item.comicId == currentComicId ||
+            !identities.add(item.comicId)) {
+          continue;
+        }
+        result.add(item);
+      }
+      result.sort((left, right) {
+        final generation = predecessor
+            ? left.generation.compareTo(right.generation)
+            : right.generation.compareTo(left.generation);
+        if (generation != 0) return generation;
+        return left.comicId.compareTo(right.comicId);
+      });
+      return List<SourceComicVersion>.unmodifiable(result);
+    }
+
+    return details.ComicDetailsVersionState(
+      successors: merge(
+        <SourceComicVersion>[...discovered, ...storedSuccessors],
+        predecessor: false,
+      ),
+      predecessors: merge(
+        <SourceComicVersion>[...discovered, ...storedPredecessors],
+        predecessor: true,
+      ),
     );
   }
 
-  Future<void> _openSourceVersions(LibraryComic comic) async {
-    final source = _sourceForId(comic.sourceId);
-    if (source == null || !_sourceSupportsVersionEntry(source)) {
+  Future<void> _viewSourceVersion(
+    BrowsableComicSource source,
+    String currentComicId,
+    SourceComicVersion version,
+  ) async {
+    if (version.sourceId != source.sourceId || version.comicId.isEmpty) return;
+    await _openSourceComic(
+      source,
+      SourceComicSummary(
+        sourceId: source.sourceId,
+        comicId: version.comicId,
+        title: version.title.trim().isEmpty ? version.comicId : version.title,
+        authors: const <String>[],
+      ),
+      resolveCanonicalAlias: false,
+      openingIdentity: sourceVersionViewIdentity(
+        sourceId: source.sourceId,
+        currentComicId: currentComicId,
+        targetComicId: version.comicId,
+      ),
+    );
+  }
+
+  Future<void> _migrateSourceVersion(
+    LibraryComic current,
+    SourceComicVersion version,
+  ) async {
+    final source = _sourceForId(current.sourceId);
+    if (source == null || version.sourceId != source.sourceId) return;
+    if (!version.isPredecessor) {
+      await _applySourceMigration(
+        current,
+        (source: source, id: version.comicId),
+      );
       return;
     }
-    try {
-      final version = await _loadSourceVersionNotice(
-        source,
-        comic.title,
-        comic.comicId,
-      );
-      if (version == null || !mounted) return;
-      await _openSourceVersionNotice(comic, version);
-    } on Object catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('读取同源新版本失败：$error')),
-        );
-      }
-    }
+    final predecessor = await _materializeSourceComic(
+      source,
+      SourceComicSummary(
+        sourceId: source.sourceId,
+        comicId: version.comicId,
+        title: version.title.trim().isEmpty ? version.comicId : version.title,
+        authors: const <String>[],
+      ),
+      resolveCanonicalAlias: false,
+    );
+    await _applySourceMigration(
+      predecessor,
+      (source: source, id: current.comicId),
+    );
   }
 
   Future<LibraryComic> _materializeSourceComic(
     BrowsableComicSource source,
-    SourceComicSummary summary,
-  ) async {
-    final existing = _libraryComicForSourceIdentity(
-      source.sourceId,
-      summary.comicId,
-    );
+    SourceComicSummary summary, {
+    bool resolveCanonicalAlias = true,
+  }) async {
+    final existing = resolveCanonicalAlias
+        ? _libraryComicForSourceIdentity(source.sourceId, summary.comicId)
+        : _exactLibraryComicForSourceIdentity(
+            source.sourceId,
+            summary.comicId,
+          );
     if (existing != null) {
       return existing;
     }
@@ -426,64 +279,6 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       savedAt: now,
       metadataUpdatedAt: manifest.comic.updatedAt ?? now,
     );
-  }
-
-  Future<void> _openSourceMigrationForSummary(
-    BrowsableComicSource source,
-    SourceComicSummary summary,
-  ) async {
-    try {
-      final comic = await _materializeSourceComic(source, summary);
-      if (mounted) {
-        await _openSourceMigration(comic);
-      }
-    } on Object catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('准备漫画迁移失败：$error')),
-        );
-      }
-    }
-  }
-
-  Future<void> _openSourceVersionsForSummary(
-    BrowsableComicSource source,
-    SourceComicSummary summary,
-  ) async {
-    try {
-      final version = await _loadSourceVersionNotice(
-        source,
-        summary.title,
-        summary.comicId,
-      );
-      if (version == null || !mounted) return;
-      final comic = await _materializeSourceComic(source, summary);
-      await _openSourceVersionNotice(comic, version);
-    } on Object catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('读取同源新版本失败：$error')),
-        );
-      }
-    }
-  }
-
-  Future<void> _openSourceMigration(LibraryComic comic) async {
-    final targets = _enabledSources.toList(growable: false);
-    if (targets.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('没有已启用漫画源可用于迁移')),
-      );
-      return;
-    }
-    final request = await _selectSourceMigrationTarget(
-      comic,
-      targets,
-    );
-    if (request == null || !mounted) {
-      return;
-    }
-    await _applySourceMigration(comic, request);
   }
 
   Future<void> _applySourceMigration(

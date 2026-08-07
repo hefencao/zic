@@ -1,6 +1,6 @@
-# dev.146 后续交接
+# dev.147 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.146_identity-version-notice-cloudflare-synthetic.zip`。
+唯一后续基线：`zic_v0.31.0-dev.147_reader-progress-version-view-start-action-verification.zip`。
 
 ## 必读
 
@@ -22,7 +22,9 @@
 16. `docs/adr/0129-cover-first-frame-detail-source-and-layout.md`
 17. `docs/adr/0130-target-source-cache-cover-identity-and-cloudflare-fallback.md`
 18. `docs/adr/0131-identity-version-notice-synthetic-and-cloudflare-handoff.md`
-19. `docs/audits/dev146-identity-version-synthetic-cloudflare-audit.md`
+19. `docs/adr/0132-reader-progress-version-view-start-action-verification.md`
+20. `docs/audits/dev147-reader-progress-version-start-action-verification-audit.md`
+21. `docs/audits/dev147-validation-results.md`
 20. `docs/audits/dev146-validation-results.md`
 
 ## 当前代码事实
@@ -39,8 +41,10 @@
 - 浏览页使用 catalog cache-first/background-refresh；稳定字段无变化时不更新。边缘下拉达到阈值后调用强制刷新，保留现有内容直到新结果到达。
 - 详情预览按原顺序装箱：实际行内含横图则最多 2 张、纯竖图则最多 3 张；只在相邻三个候选内做最小局部重排；设置项仍是更严格上限。行宽直接用于反算等面积 tile，内部无 Card/水平 padding，完整行铺满媒体宽度，只有稀疏末行允许放大到参考完整行面积的 2.4 倍。
 - Android 使用默认 platform channel、单 blit lane 和 fresh used texture lifecycle。可见浏览器 Cookie snapshot 按 revision 每 runtime/站点/UA 只导入一次；retryable runtime lifecycle envelope 会重新激活并重试一次。远程详情页通过稳定 source ID 获取当前 active adapter，不保留插件重启前的关闭 session。
-- 同源版本关系按 source/predecessor/successor 复合身份双向查询；详情只显示 successor 更新提示，Reader 仅首次提醒，旧版/迁移 AppBar 按钮已删除。
-- 真实 Mihon 章节存在时，manifest/SavedComic/imported entry/UI 四层都不得保留 synthetic “开始阅读/正文”。
+- 同源版本关系按 source/predecessor/successor 复合身份双向查询；详情正文提供查看新/旧版本和迁移双动作，多个版本先选择。查看路由使用临时 key，但多个版本阅读历史严格按 raw identity 分离；迁移仍走旧比较确认。Reader 仅首次提醒。
+- App 不清理 synthetic“开始阅读/正文”。Mihon adapter 只去除与真实章节并存的独立开始阅读动作；单独 gallery“正文”保留。
+- Reader progress 单 writer 合并，正常退出前等待最终写入，详情 route 返回后立即刷新历史；生命周期 checkpoint 只提供 best effort。
+- `sourceVerificationRequired` 只由统一 typed 403/503 challenge detector 产生；兼容 interceptor 不创建隐藏 WebView。
 - Native identity 保持 `zic-media-core-dev134-abi6-lib00121400`。
 - 当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip`；不得从旧版本偷偷补入，除非用户提供或明确指定来源。
 
@@ -65,5 +69,5 @@ git apply --index "$(python3 tool/workspace_config.py patch_dir --absolute)/<pat
 
 - encoded source ready 后若 2.5 秒仍没有首帧或错误，封面只允许局部 revalidate 同一 cover identity 一次；不得恢复 loader-closure 重试或清空全局 cache。
 - 远程详情必须先显示缓存 catalog，并通过 `resolveSource(sourceId)` 等待/取得当前 adapter；预览和评论闭包不得捕获旧 runtime source。
-- 真实章节存在时，不得在任何详情页重新显示 compatibility/synthetic “开始阅读/正文”章节。
+- 不得在 App 层按 synthetic identity 或标题清理章节；独立开始阅读动作的去重只属于 Mihon adapter。
 - 详情和漫画源刷新进度、勾/叉必须继续由 `AppPullToRefresh` 一套组件拥有。

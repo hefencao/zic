@@ -42,7 +42,7 @@ def main() -> int:
     cloudflare = require(
         'packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/AndroidCloudflareInterceptor.kt',
         'setOf("cloudflare", "cloudflare-nginx")',
-        'Cloudflare verification failed',
+        'SourceVerificationRequiredException',
         'response.close()',
     )
     for forbidden in ('WebView(', 'CLOUDFLARE_WAIT_SECONDS', 'clearClearanceCookie'):
@@ -69,10 +69,11 @@ def main() -> int:
     if 'widget.source.loadComic(widget.summary.comicId)' in details:
         raise SystemExit('remote details must consume the composition refresh result')
     forbid('apps/app/lib/comic_details.dart', 'isSyntheticMihonChapterIdentity')
+    forbid('apps/app/lib/demo_home.dart', 'reconcileComicDetailsChapterEntries')
     require(
-        'apps/app/lib/demo_home.dart',
-        'reconcileComicDetailsChapterEntries',
-        'isCompatibilityFallback: isSyntheticMihonChapterIdentity',
+        'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt',
+        'deduplicateMihonStartReadingEntries(',
+        'sourceChapters = deduplicateMihonStartReadingEntries(',
     )
     require(
         'apps/app/lib/demo_home_source_compat.dart',

@@ -93,14 +93,13 @@ for token in (
     'invalidateCachedComic(source, comicId)',
 ):
     require(details, token, 'active plugin source resolution')
-require(details, '_withoutCompatibilityFallback(', 'generic chapter normalization')
-for token in (
+for stale in (
     'reconcileComicDetailsSourceChapters(',
-    '!isCompatibilityFallback(entry.chapter.chapterId)',
+    '_withoutCompatibilityFallback(',
+    'isCompatibilityFallback:',
 ):
-    require(demo, token, 'compatibility chapter removal')
-require(library_test, 'real source chapters remove compatibility fallback chapters', 'chapter owner test')
-require(demo, 'isCompatibilityFallback: isSyntheticMihonChapterIdentity', 'composition compatibility injection')
+    if stale in details + demo + library_test:
+        raise SystemExit(f'App retains obsolete synthetic chapter cleanup: {stale}')
 
 for token in (
     "Text('简介'",

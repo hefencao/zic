@@ -71,7 +71,7 @@ def main() -> int:
     require(
         'packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/AndroidCloudflareInterceptor.kt',
         'class AndroidCloudflareInterceptor',
-        'Cloudflare verification failed',
+        'SourceVerificationRequiredException',
         'response.close()',
     )
     forbid(

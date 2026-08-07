@@ -1,3 +1,12 @@
+## 0.31.0-dev.147：修复阅读历史提交并恢复版本查看与验证分类
+
+- 修复 Mihon runtime 对 `AndroidBrowserCookieSession` 的缺失 import，闭合 Android 编译。
+- Reader 进度改为串行合并写入；正常返回前等待最终 checkpoint，详情页在 Reader 返回后立即重载阅读历史；inactive/paused/detached 继续强制 checkpoint。
+- 删除 App 对 synthetic“开始阅读/正文”的扫描、过滤和持久清理；Mihon adapter 只去除与真实章节并存的独立“开始阅读”动作。
+- 参考 VibeVenera 恢复“查看新/旧版本”和“迁移”双动作；多个版本先选择，查看使用临时 route identity，持久历史继续按 raw 版本 identity 分离；迁移复用原严格对比确认 UI。
+- Cloudflare 兼容 interceptor 改为统一委托 typed detector；仅严格识别的 403/503 challenge 映射 `sourceVerificationRequired`，删除隐藏 WebView、30 秒等待和错误文本分类。
+- 新增 ADR 0132、dev.147 审计、Reader/章节/版本/验证专项门禁；native identity 不变。
+
 ## 0.31.0-dev.146：统一来源身份并收口同源更新与验证会话
 
 - Preview/Comment capability 调用全部使用局部 `Object` 与显式 `as` 收窄，不依赖 getter/异步闭包自动提升。

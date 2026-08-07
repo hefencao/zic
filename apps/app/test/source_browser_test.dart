@@ -983,7 +983,7 @@ void main() {
     expect(find.byKey(details.comicDetailsPreviewKey), findsOneWidget);
   });
 
-  testWidgets('details shows one same-source new-version notice',
+  testWidgets('details separates same-source version view and migration',
       (tester) async {
     final store = MemoryImportedLibraryStore();
     await store.open();
@@ -1020,10 +1020,16 @@ void main() {
       find.byKey(sourceComicCardKey(sourceId, '$sourceId-comic')),
     );
     await _pumpUntilFound(tester, find.byKey(details.remoteComicDetailsScreenKey));
-    await _pumpUntilFound(tester, find.byKey(details.comicDetailsVersionNoticeKey));
-    expect(find.text('有新版本'), findsOneWidget);
-    expect(find.text('新版标题'), findsOneWidget);
+    await _pumpUntilFound(
+      tester,
+      find.byKey(details.comicDetailsVersionSectionKey),
+    );
     expect(find.byKey(details.comicDetailsVersionActionKey), findsOneWidget);
+    expect(find.byKey(details.comicDetailsVersionViewKey), findsOneWidget);
+    expect(find.byKey(details.comicDetailsVersionMigrateKey), findsOneWidget);
+    expect(find.text('查看新版本'), findsOneWidget);
+    expect(find.text('迁移'), findsOneWidget);
+    expect(find.text('有新版本'), findsNothing);
   });
 
   testWidgets('whole comic shelf and chapter download have separate ownership',

@@ -55,6 +55,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - 漫画源页 MUST 使用来源自身声明的 browse section；Mihon Popular/Latest 与 Venera explore/category target 均属于来源内部分类。原生/Mihon/Venera 运行时类型 MUST NOT 作为内容分类行，只能以来源 chip 的视觉标识区分。固定大小 catalog page MUST 使用显式上一页/下一页，pager MUST 位于内容滚动尾部；切换来源、section 或外部搜索请求时 MUST 回到第一页。
 - 切换漫画 source 时，Presentation MUST 在同一更新周期将 projection owner 切换为目标 source；MUST 优先显示目标精确请求缓存，其次目标最近缓存，没有目标缓存时显示目标 loading/error。旧 source 页面不得因目标请求失败继续可见。
 - 强制刷新遇到 `sourceVerificationRequired` 且存在 WebView capability 时 MUST 自动进入一次目标 source 验证；验证返回后 MAY 重试一次，但 MUST 防止循环打开。
+- `sourceVerificationRequired` MUST 只来自 typed host challenge detector：403/503 加 `cf-mitigated: challenge` 或明确 challenge body marker。普通 HTTP 403、timeout、解析失败和包含 Cloudflare 字样的异常消息 MUST NOT 被重分类。主网络与兼容 interceptor MUST 使用同一 detector，不得使用隐藏 WebView。
 - 漫画源搜索 MUST 以来源栏上方的浮动控件进入，展开后 SHOULD 提供可持久化、可删除和可清空的搜索历史。展开搜索面板 MUST 优先消费系统返回手势与垂直拖动/滚动手势，并在这些手势发生时恢复为浮动按钮。Mihon `getFilterList()` 支持的 CheckBox、TriState、Select 与 Group 子项 SHOULD 以不透明 ID 的过滤标签显示在搜索框上方；UI MUST NOT 持有或解释插件 Filter 对象。搜索结果 MUST 使用 catalog/resource-cache 权威：若有缓存，Presentation MUST 先显示缓存并后台刷新；只有稳定字段变化时才替换列表，不得建立页面私有结果缓存。漫画源页 MUST 支持边缘下拉达到阈值后的强制刷新；强制刷新 MUST 绕过 catalog cache，但 SHOULD 保留已有内容直到新结果到达。
 - Mihon 插件的已安装列表和仓库列表 MUST 能按规范化语言分类；语言 SHOULD 优先使用插件声明，缺失时从插件 source metadata 推导。多个语言 MUST 归入多语言，无法可靠确定时归入未知语言，不得从显示名猜测。
 - 来源详情若提供预览能力，详情页 MUST 能先显示 `ComicManifest` 中已经返回的预览项，
@@ -194,6 +195,6 @@ identity 超限时使用稳定 hash 与原长度；高频事件 MAY 合并，但
 
 4. encoded artwork source 已就绪但 ImageStream 在有界时间内既无首帧也无错误时，Presentation MUST 对当前 cover identity 执行至多一次局部 source revalidation；不得清空全局 response/image cache或通过父组件 rebuild 重试。
 5. 远程详情 MUST 先显示已有 catalog cache，并等待当前 active source adapter 完成后台刷新；预览、评论及章节操作 MUST 在调用时解析当前 adapter，不得持有插件重启前的关闭 session。
-6. 真实 Mihon 章节目录非空时，兼容 synthetic chapter MUST 从 manifest、持久条目投影和最终章节列表中移除。
+6. App MUST NOT 通过 synthetic identity 或标题扫描清理章节。Mihon adapter MAY 在真实章节目录中去除与其他章节并存、标题精确归一为独立“开始阅读”动作的条目；单独的 gallery“正文”兼容章节和名称仅包含相似文字的真实章节 MUST 保留。
 4. 同一 browser snapshot revision MUST NOT 在每个 HTTP 请求前重复覆盖 runtime Cookie；新 revision 可再次导入。
 5. retryable runtime lifecycle envelope MAY 自动重新激活并重试一次；业务错误和 `source-verification-required` MUST NOT 被当作 runtime 崩溃吞掉。

@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.146`
-**App build：** `0.31.0+146`
+**源码版本：** `0.31.0-dev.147`
+**App build：** `0.31.0+147`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -9,7 +9,7 @@
 
 ## 当前实现
 
-- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=146`。
+- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=147`。
 - 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
 - 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation
   不阻塞 Home primary，外部 source ready 后增量接入；失败封面仅按稳定资源 identity、显式 retry revision 或 App resume 恢复，loader closure identity 不参与重试。
@@ -20,7 +20,7 @@
   兼容读取已删除。来源确认过的 canonical comic identity 会持久化到 SavedComic 元数据，
   让冷启动在插件未激活时也能只读归并同源旧/新 raw ID；首页/书架等导航页 lazy 构建，
   首屏不再创建隐藏页面的第二套封面 loader。
-- 详情页 AppBar 不再重复显示漫画标题，也不再保留“查看同源版本/迁移漫画源”旧图标。来源确认 successor 时，正文顶部显示单一“有新版本”提示并进入统一比较确认；predecessor 只作为关系证据。`ComicVersionRelationStore` 支持双向查询，Reader 对每个 source/predecessor/successor 仅首次提醒。迁移允许同一 source 下不同 raw comic ID，但只有精确章节 identity 复制阅读状态，sequence-only 候选不迁移状态。
+- 详情页 AppBar 不再保留旧版本/迁移图标。正文中的版本卡按 VibeVenera 逻辑分别提供“查看新/旧版本”和“迁移”；多个版本先选择。查看使用临时 route identity，持久阅读历史仍按各 raw source/comic identity 分离；迁移继续使用原严格比较确认 UI，只有 exact chapter identity 复制阅读状态。Reader 对每个 source/predecessor/successor 仅首次提醒。
 - App-owned modal panel 的操作行统一使用左下角 X 关闭，右侧保留确认/保存/删除动作，
   已移除取消文字按钮。
 - Venera 运行时登录请求已兼容 Android 解码后的嵌套 Map，不再把 credentials/cookies/web
@@ -30,6 +30,9 @@
 - 漫画源浏览页使用来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态仅以 chip 背景色区分，不显示 JS/插件图标。切换 source 时先按目标请求 identity 投影目标缓存，精确缓存缺失时使用目标 source 最近缓存，绝不保留旧 source 卡片。页码位于滚动尾部，左下浮动搜索保留持久历史；展开搜索优先消费返回和垂直滑动手势，Mihon `getFilterList()` 的 CheckBox/TriState/Select/Group 子项以 opaque 过滤标签显示。catalog 缓存先显示、后台刷新且数据不变时不重建；边缘下拉达到阈值后保留当前列表执行强制来源刷新。Mihon 已安装与仓库插件列表继续按声明/source metadata 的规范化语言筛选。
 - 详情页与漫画源页共用同一个可见的顶部边缘下拉刷新组件：`onEdge`、位移 72、保留旧内容后台刷新。
 - Android 可见浏览器 Cookie snapshot 以 `updatedAt` 为 revision，每个 runtime 进程/站点/UA 只导入一次。WebView 验证返回后目标 source 会重启；新 Mihon runtime 清空进程内 import revision，使第一个真实 request 按实际 host/UA 导入最新同站 snapshot。平台 runtime 对 retryable lifecycle response 原地重新激活并重试一次；已打开详情页按稳定 source ID 解析当前 adapter。
+- Reader 进度使用单 writer 合并队列；正常 route pop 等待最终 checkpoint，详情页返回后立即重新读取 snapshot。页面变化及 inactive/paused/detached 持续 best-effort checkpoint，异常进程终止不承诺绝对完成。
+- App 已删除 synthetic“开始阅读/正文”清理。Mihon adapter 只删除与真实章节并存的独立开始阅读动作，单独“正文”gallery fallback 保留。
+- Cloudflare 主路径与兼容路径统一委托 typed detector；仅严格 403/503 challenge 映射 `sourceVerificationRequired`，没有隐藏 WebView 或消息文本判断。
 - catalog response cache 使用稳定 source/comic/chapter identity 和结构 weight；页面正文不进入该缓存。
 - Home“更新漫画”已与阅读历史分离：只展示 `inShelf` 漫画并按 `SavedComicRecord.updatedAt`
   排序；Reader 在页码/模式变化、App lifecycle 暂停和 route dispose 时写入进度，
@@ -61,7 +64,7 @@
 - Android APK 构建和真机生命周期验证未在当前环境执行。
 
 - dev.145 将 2.5 秒首帧 watchdog 限制为同一 provider stream 的一次重建；无帧不再等价于 encoded cache 失效。Home 卡片 State 使用 section + comic identity，重复卡片共享 source Future/provider；只有明确 decoder exhaustion 才允许强制重读同一 cover identity。
-- 远程详情现在先显示持久 catalog，再等待当前 active source；预览和评论每次调用重新解析 adapter。真实 Mihon 章节存在时，兼容伪章节在最终 UI 边界也被剔除。
+- 远程详情现在先显示持久 catalog，再等待当前 active source；预览和评论每次调用重新解析 adapter。App 不再识别或清理 Mihon synthetic chapter identity；与真实目录并存的独立“开始阅读”动作只在 Mihon adapter 入 Catalog 前去重。
 - 详情和漫画源刷新结果由同一个 `AppPullToRefresh` 定位；简介使用 Card，评论 HTML 换行转为普通文本，“继续”区增加上下间距。
 
 ## 验证矩阵
@@ -70,7 +73,7 @@
 |---|---|
 | repository/documentation/Dart static gates | Verified-static |
 | current-code documentation consistency gate | Verified-static |
-| dev.75–dev.146 ownership gates | Verified-static |
+| dev.75–dev.147 ownership gates | Verified-static |
 | Android/Mihon/Venera/Reader/Pipeline/UI contracts | Verified-static / toolchain |
 | Kotlin texture bridge compile stub | Verified-toolchain |
 | pinned libwebp host build/smoke | Unverified：当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip` |

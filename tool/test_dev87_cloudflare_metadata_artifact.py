@@ -45,7 +45,12 @@ def main() -> None:
         "packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt",
         '"source-verification-required"',
         "isSourceVerificationFailure()",
+        'current is SourceVerificationRequiredException',
+    )
+    reject(
+        "packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt",
         'message.contains("cloudflare verification failed")',
+        'message.contains("just a moment")',
     )
     require(
         "packages/plugin_host/lib/src/runtime_source_adapter.dart",

@@ -27,6 +27,8 @@ def main() -> int:
         'mihonChapterMatches(chapter, encoded)',
         'if (chapters.isEmpty())',
         'MihonChapterSelection(chapters, synthetic = false)',
+        'deduplicateMihonStartReadingEntries(',
+        'normalizeMihonStartReadingTitle(',
         'if (updateChapters.isEmpty() && detailedChapters.isEmpty())',
         'for (candidate in listOf("getChapterList", "fetchChapterList"))',
         'cause is UnsupportedOperationException',
@@ -56,6 +58,13 @@ def main() -> int:
     kotlinc = shutil.which('kotlinc')
     java = shutil.which('java')
     if kotlinc and java:
+        dedupe = re.search(
+            r'internal inline fun <T> deduplicateMihonStartReadingEntries\(.*?'
+            r'private fun normalizeMihonStartReadingTitle\(.*?\n'
+            r'    \.replace\(Regex\(.*?\n',
+            driver,
+            re.DOTALL,
+        )
         match = re.search(
             r'internal data class MihonChapterSelection<T>\(.*?\n\)\n',
             driver,

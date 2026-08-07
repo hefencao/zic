@@ -6,10 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:local_media/local_media.dart';
 import 'package:network_bridge/network_bridge.dart';
-import 'package:plugin_host/plugin_host.dart'
-    show
-        isCurrentSyntheticMihonChapterIdentity,
-        isSyntheticMihonChapterIdentity;
 import 'package:resource_cache/resource_cache.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:downloads/downloads.dart';
@@ -78,42 +74,6 @@ const importedLibraryErrorKey = ValueKey<String>('imported-library-error');
 Key importedChapterEntryKey(String sourceId, String chapterId) =>
     ValueKey<String>('imported-chapter:$sourceId\u0000$chapterId');
 
-List<Chapter> reconcileComicDetailsSourceChapters({
-  required Iterable<Chapter> chapters,
-  required bool Function(String chapterId) isCompatibilityFallback,
-}) {
-  final values = chapters.toList(growable: false);
-  final hasAuthoritativeChapter = values.any(
-    (chapter) => !isCompatibilityFallback(chapter.chapterId),
-  );
-  if (!hasAuthoritativeChapter) {
-    return List<Chapter>.unmodifiable(values);
-  }
-  return List<Chapter>.unmodifiable(
-    values.where(
-      (chapter) => !isCompatibilityFallback(chapter.chapterId),
-    ),
-  );
-}
-
-List<ImportedLibraryEntry> reconcileComicDetailsChapterEntries({
-  required Iterable<ImportedLibraryEntry> entries,
-  required Iterable<Chapter> sourceChapters,
-  required bool Function(String chapterId) isCompatibilityFallback,
-}) {
-  final authoritativeChapterIds = sourceChapters
-      .where((chapter) => !isCompatibilityFallback(chapter.chapterId))
-      .map((chapter) => chapter.chapterId)
-      .toSet();
-  if (authoritativeChapterIds.isEmpty) {
-    return List<ImportedLibraryEntry>.unmodifiable(entries);
-  }
-  return List<ImportedLibraryEntry>.unmodifiable(
-    entries.where(
-      (entry) => !isCompatibilityFallback(entry.chapter.chapterId),
-    ),
-  );
-}
 Key historyChapterEntryKey(String sourceId, String chapterId) =>
     ValueKey<String>('history-chapter:$sourceId\u0000$chapterId');
 Key comicCoverKey(String sourceId, String comicId) =>
@@ -247,7 +207,6 @@ final class _DemoHomeState extends State<DemoHome> {
           savedComics: _savedComics,
         ),
         canonicalIdentity: _canonicalComicKey,
-        isCompatibilityChapter: isSyntheticMihonChapterIdentity,
       );
 
   @override
@@ -922,8 +881,11 @@ final class _DemoHomeState extends State<DemoHome> {
     String sourceId,
     String comicId, {
     ComicPreference? preference,
+    bool resolveCanonicalAlias = true,
   }) {
-    final preferred = _libraryComicForSourceIdentity(sourceId, comicId);
+    final preferred = resolveCanonicalAlias
+        ? _libraryComicForSourceIdentity(sourceId, comicId)
+        : null;
     final effectiveComicId = preferred?.comicId ?? comicId;
     final saved = _savedComics.where(
       (item) =>
@@ -931,29 +893,16 @@ final class _DemoHomeState extends State<DemoHome> {
     );
     final sourceChapters = saved.isEmpty
         ? const <Chapter>[]
-        : reconcileComicDetailsSourceChapters(
-            chapters: saved.first.chapters
-                .map((chapter) => chapter.toChapter(effectiveComicId))
-                .where(
-                  (chapter) =>
-                      !isSyntheticMihonChapterIdentity(chapter.chapterId) ||
-                      isCurrentSyntheticMihonChapterIdentity(chapter.chapterId),
-                ),
-            isCompatibilityFallback: isSyntheticMihonChapterIdentity,
-          );
-    final chapters = reconcileComicDetailsChapterEntries(
-      entries: _libraryEntries.where(
-        (entry) =>
-            entry.chapter.sourceId == sourceId &&
-            entry.chapter.comicId == effectiveComicId &&
-            (!isSyntheticMihonChapterIdentity(entry.chapter.chapterId) ||
-                isCurrentSyntheticMihonChapterIdentity(
-                  entry.chapter.chapterId,
-                )),
-      ),
-      sourceChapters: sourceChapters,
-      isCompatibilityFallback: isSyntheticMihonChapterIdentity,
-    );
+        : saved.first.chapters
+            .map((chapter) => chapter.toChapter(effectiveComicId))
+            .toList(growable: false);
+    final chapters = _libraryEntries
+        .where(
+          (entry) =>
+              entry.chapter.sourceId == sourceId &&
+              entry.chapter.comicId == effectiveComicId,
+        )
+        .toList(growable: false);
     return details.ComicDetailsLibrarySnapshot(
       chapters: chapters,
       sourceChapters: sourceChapters,
@@ -981,8 +930,11 @@ final class _DemoHomeState extends State<DemoHome> {
     String comicId, {
     required bool refreshContent,
     ComicPreference? fallbackPreference,
+    bool resolveCanonicalAlias = true,
   }) async {
-    final preferred = _libraryComicForSourceIdentity(sourceId, comicId);
+    final preferred = resolveCanonicalAlias
+        ? _libraryComicForSourceIdentity(sourceId, comicId)
+        : null;
     final effectiveComicId = preferred?.comicId ?? comicId;
     ComicManifest? sourceManifest;
     if (refreshContent) {
@@ -1015,11 +967,10 @@ final class _DemoHomeState extends State<DemoHome> {
         }
         final manifest = await source.loadComic(effectiveComicId);
         sourceManifest = manifest;
-        final existing = _preferredSavedComicAlias(
-              sourceId,
-              effectiveComicId,
-            ) ??
-            await _library.getSavedComic(sourceId, effectiveComicId);
+        final existing = resolveCanonicalAlias
+            ? _preferredSavedComicAlias(sourceId, effectiveComicId) ??
+                await _library.getSavedComic(sourceId, effectiveComicId)
+            : await _library.getSavedComic(sourceId, effectiveComicId);
         widget.debugTrace.record(
           TraceEvent(
             monotonicMicros: _traceClock.elapsedMicroseconds,
@@ -1041,26 +992,14 @@ final class _DemoHomeState extends State<DemoHome> {
               'previousRealChapterCount':
                   existing == null ? 0 : _savedRealChapterCount(existing),
               'chapterCount': manifest.chapters.length,
-              'syntheticChapterCount': manifest.chapters
-                  .where(
-                    (chapter) => isSyntheticMihonChapterIdentity(
-                      chapter.chapterId,
-                    ),
-                  )
-                  .length,
             },
           ),
         );
-        final persistedManifest = _withoutSyntheticMihonFallback(manifest);
-        _rejectCatalogRegression(
-          existing: existing,
-          incoming: persistedManifest,
-        );
-        await _removePersistedSyntheticChapters(persistedManifest);
-        final changed = _manifestContentChanged(existing, persistedManifest);
+        _rejectCatalogRegression(existing: existing, incoming: manifest);
+        final changed = _manifestContentChanged(existing, manifest);
         await _library.upsertSavedComic(
           SavedComicRecord.fromManifest(
-            persistedManifest,
+            manifest,
             canonicalComicId: _canonicalComicIdForPersistence(
               manifest.comic.sourceId,
               manifest.comic.comicId,
@@ -1077,6 +1016,7 @@ final class _DemoHomeState extends State<DemoHome> {
       sourceId,
       effectiveComicId,
       preference: fallbackPreference,
+      resolveCanonicalAlias: resolveCanonicalAlias,
     );
     return sourceManifest == null
         ? snapshot

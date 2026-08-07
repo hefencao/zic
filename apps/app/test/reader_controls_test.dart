@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -205,6 +207,81 @@ void main() {
       ignoring: true,
     );
     expect(_controlsPointer(tester, bottom).ignoring, isTrue);
+  });
+
+  testWidgets('reader waits for the final progress checkpoint before pop',
+      (tester) async {
+    final firstWrite = Completer<void>();
+    final writes = <ReadingProgress>[];
+    final chapter = _chapter();
+    const launchKey = ValueKey<String>('reader-progress-launch');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: Center(
+              child: FilledButton(
+                key: launchKey,
+                onPressed: () => Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => _pipelineReader(
+                      chapter: chapter,
+                      build: (pipeline) => ReaderRuntimeScreen(
+                        chapter: chapter,
+                        pipeline: pipeline,
+                        screenKey: const ValueKey<String>(
+                          'reader-progress-screen',
+                        ),
+                        onProgressChanged: (progress) async {
+                          writes.add(progress);
+                          if (writes.length == 1) await firstWrite.future;
+                        },
+                        artifactPageBuilder: (
+                          context,
+                          asset,
+                          reportFirstFrame,
+                          runtime,
+                        ) => ColoredBox(
+                          key: ValueKey<String>(
+                            'reader-progress-page:${asset.index}',
+                          ),
+                          color: Colors.black,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                child: const Text('打开 Reader'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(launchKey));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(const ValueKey<String>('reader-progress-screen')),
+    );
+    final slider = tester.widget<Slider>(find.byKey(readerPageSliderKey));
+    slider.onChanged!(2);
+    await tester.pump();
+    expect(writes, isNotEmpty);
+
+    final pop = tester.binding.handlePopRoute();
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey<String>('reader-progress-screen')),
+      findsOneWidget,
+    );
+
+    firstWrite.complete();
+    await pop;
+    await tester.pumpAndSettle();
+    expect(find.byKey(launchKey), findsOneWidget);
+    expect(writes.last.pageIndex, 2);
   });
 
   testWidgets('static images hide playback-only controls', (tester) async {

@@ -125,31 +125,6 @@ Future<void> _tapVisible(
 }
 
 void main() {
-  test('real source chapters remove compatibility fallback chapters', () {
-    const synthetic = Chapter(
-      chapterId: 'mihon:chapter:synthetic',
-      comicId: 'mihon:comic',
-      title: '开始阅读',
-      sequence: 0,
-      pageCount: 0,
-      sourceRevision: 'synthetic',
-    );
-    const real = Chapter(
-      chapterId: 'mihon:chapter:real',
-      comicId: 'mihon:comic',
-      title: '第一话',
-      sequence: 1,
-      pageCount: 10,
-      sourceRevision: 'real',
-    );
-    final chapters = reconcileComicDetailsSourceChapters(
-      chapters: const <Chapter>[synthetic, real],
-      isCompatibilityFallback: (chapterId) =>
-          chapterId == synthetic.chapterId,
-    );
-    expect(chapters, const <Chapter>[real]);
-  });
-
   testWidgets('home and bookshelf share the persisted local library',
       (tester) async {
     final store = MemoryImportedLibraryStore();
@@ -851,88 +826,6 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 320));
     expect(read, isFalse);
-  });
-
-  testWidgets('real Mihon catalog hides a stale synthetic gallery chapter',
-      (tester) async {
-    final syntheticPayload = base64Url
-        .encode(
-          utf8.encode(
-            jsonEncode(<String, Object?>{
-              'kind': 'chapter',
-              'comicId': 'mihon:manga:fixture',
-              'synthetic': true,
-            }),
-          ),
-        )
-        .replaceAll('=', '');
-    final stale = ImportedChapterRecord(
-      directoryId: 'mihon:source:mihon:manga:fixture',
-      displayName: '正文',
-      sourceId: 'mihon:source',
-      comicId: 'mihon:manga:fixture',
-      comicTitle: '远程漫画',
-      chapterId: 'mihon:chapter:$syntheticPayload',
-      sourceRevision: 'synthetic',
-      importedAt: DateTime.utc(2026, 8, 1),
-      pages: const <ImportedPageRecord>[
-        ImportedPageRecord(
-          displayName: '001.jpg',
-          sourceId: 'https://cdn.invalid/stale.jpg',
-          contentKindHint: ContentKindHint.jpeg,
-        ),
-      ],
-    );
-    const real = Chapter(
-      chapterId: 'mihon:chapter:real',
-      comicId: 'mihon:manga:fixture',
-      title: '第一话',
-      sequence: 0,
-      pageCount: 0,
-      sourceRevision: '/photo/1',
-    );
-    final reconciled = reconcileComicDetailsChapterEntries(
-      entries: <ImportedLibraryEntry>[
-        ImportedLibraryEntry(chapter: stale),
-      ],
-      sourceChapters: const <Chapter>[real],
-      isCompatibilityFallback: (chapterId) => chapterId == stale.chapterId,
-    );
-    final comic = LibraryComic(
-      sourceId: 'mihon:source',
-      comicId: 'mihon:manga:fixture',
-      title: '远程漫画',
-      authors: const <String>[],
-      tags: const <String>[],
-      description: null,
-      coverSourceId: null,
-      readingDirection: ReadingDirection.vertical,
-      chapters: reconciled,
-      sourceChapters: const <Chapter>[real],
-      savedAt: DateTime.utc(2026, 8, 1),
-      metadataUpdatedAt: DateTime.utc(2026, 8, 1),
-    );
-
-    await tester.pumpWidget(
-      MaterialApp(
-        home: _localDetailsScreen(
-          comic: comic,
-          preference: ComicPreference.defaults(
-            sourceId: comic.sourceId,
-            comicId: comic.comicId,
-          ),
-          readStates: const <String, ChapterReadState>{},
-          onPreferenceChanged: (_) async {},
-          onReadChanged: (_, __) async {},
-          onOpenChapter: (_) async {},
-        ),
-      ),
-    );
-    await tester.pump();
-
-    expect(find.text('正文'), findsNothing);
-    expect(find.text('第一话'), findsOneWidget);
-    expect(find.text('1 章 · 页数待加载'), findsOneWidget);
   });
 
   testWidgets('details groups chapters and opens the selected chapter',

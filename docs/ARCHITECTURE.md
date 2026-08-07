@@ -122,10 +122,7 @@ Home 的“更新漫画”投影只取已在书架中的漫画，并按持久化
 同源版本入口优先使用来源暴露的 `ComicVersionSource`；Venera 适配器复用自身运行时网络与
 Cookie 会话，按当前详情页 `#gnd` 关系生成版本，不把 Venera 当作标题 `browse` 搜索，避免
 触发浏览器权限错误。来源确认的前后版本关系由 `ComicVersionRelationStore` 持久化，因此当前
-详情页只显示来源确认的 successor “有新版本”提示；不再将 predecessor、标题 browse 候选或旧版列表作为操作入口。迁移计划允许相同
-`sourceId` 下不同的原生 `comicId`，因此可处理 E-Hentai URL/gallery locator 变化。迁移只复制
-经过精确章节匹配验证的偏好、阅读位置和已读状态，并先完成目标写入；同源替换随后清理旧漫画
-记录，跨源迁移保留原来源。迁移面板始终展示当前插件和来源，目标可为当前来源或其他已启用来源。
+详情页采用“查看版本”和“迁移”两个独立动作：successor 与 predecessor 都可直接打开其原始详情，不要求迁移；多个版本先显示选择对话框。查看路由只使用 `source-version-view:<sourceId>\0<currentRawId>\0<targetRawId>` 作为 **temporary route identity** 防止同一路由重复打开，该 key 不写入 SavedComic、阅读历史、版本关系或 artifact。每个版本的持久状态仍严格属于各自 raw `sourceId + comicId`。迁移计划允许相同 `sourceId` 下不同的原生 `comicId`，因此可处理 E-Hentai URL/gallery locator 变化；迁移继续使用原有严格比较确认 UI，只复制经过精确章节匹配验证的偏好、阅读位置和已读状态，并先完成目标写入。sequence-only 候选只展示风险，不复制状态。
 
 漫画源页使用来源自身声明的 browse section：Mihon 映射 Popular/Latest，Venera 枚举 explore loader 与 category target；原生/Mihon/Venera 仅通过来源 chip 的背景色区分，不显示 JS/插件图标，也不占内容分类行。固定大小的 catalog page 仍使用显式上一页/下一页，但 pager 位于内容滚动尾部。左下浮动搜索位于来源栏上方，展开后显示持久化搜索历史；展开面板优先消费返回和垂直滑动手势，收起后才把手势交还页面。Mihon `getFilterList()` 由 runtime adapter 投影为 opaque `SourceSearchFilterOption`，搜索框上方仅显示 CheckBox、TriState、Select 与 Group 子项的过滤标签，UI 不解析插件对象。列表由 catalog response cache 先行投影；source 切换时 projection owner 先原子切换到目标 source，并按精确请求缓存或目标最近缓存立即绘制，旧 source 内容没有展示资格。后台 refresh 只有在稳定字段发生变化时才更新 Presentation；边缘下拉达到刷新阈值后强制绕过缓存请求来源，但保留当前内容直到新数据到达。Mihon 插件的已安装与仓库列表仍按规范化语言分类。
 
@@ -279,6 +276,12 @@ Reader Host 从 `PipelineReaderSessionFactory.acquire` 获取资源会话并在�
 
 这是一条资源 lease，不是 Reader UI 缓存，也不允许跨 Reader 复用 used SurfaceProducer。
 
+## 10.1 Reader progress 与阅读历史
+
+Reader 页面变化产生的 `ReadingProgress` 由 `reader_runtime` 串行合并后写入 App 提供的 progress facade。同一 Reader 同时只有一个 active writer；较新的 pending progress覆盖尚未开始写入的旧值，禁止并行 Future 倒序完成后覆盖新页码。
+
+正常导航返回必须先执行最终 force checkpoint，并循环等待 pending 与 active writer 都为空，之后才允许 route pop。详情页等待 Reader route 返回后立即重新读取本地 library snapshot，因此阅读历史不依赖退出详情页才更新。`inactive`、`paused`、`detached` 和每次稳定页面变化继续 best-effort checkpoint，以降低进程意外终止的损失窗口；操作系统强杀无法提供绝对完成保证，文档和 UI不得声称 crash-safe commit。
+
 ## 11. Identity、缓存与 artifact
 
 不同 identity 层不可混用：catalog identity 定位实体；DownloadId 表示确定字节版本；DecodeId 还包含 epoch、target 和 renderer；presentation identity 只表示页面位置/输出。
@@ -321,7 +324,7 @@ Reader Host 从 `PipelineReaderSessionFactory.acquire` 获取资源会话并在�
 - **chapter/page identity**：章节始终为 `sourceId + chapterId`，Reader 页面为 `sourceId + comicId + chapterId + pageId`。迁移时只有章节原生 identity 精确匹配才复制阅读进度和已读状态；**sequence-only** 匹配仅显示在比较报告中，不复制状态。
 - **presentation identity**：Flutter key、详情提示和 Reader 一次性提醒只能引用上述稳定复合身份；Widget key、当前章节、封面 URL、按钮状态和 runtime adapter 对象都不是持久身份。
 
-同源 successor 发现后先写入 `ComicVersionRelationStore`。详情页只显示一个“有新版本”提示，点击后进入统一比较与确认流程；predecessor 关系只作为历史证据，不生成“旧版”操作按钮。Reader 仅在已保存 successor 关系存在时首次提醒，不在进入 Reader 时联网。确认替换后，新 raw locator 成为新实体；旧版本的离线字节不按 URL 或页码盲目迁移，只有 checksum/source page key/content hash 支持的 artifact 才允许复用。
+同源 successor 发现后先写入 `ComicVersionRelationStore`，并可从 successor 反查多个 predecessor。详情页分别提供“查看新版本/查看旧版本”和“迁移”；查看只打开目标 raw identity 的详情，multiple versions 先选择，不修改版本关系或阅读历史。Reader 仅在已保存 successor 关系存在时首次提醒，不在进入 Reader 时联网。确认迁移后，新 raw locator 成为新实体；旧版本的离线字节不按 URL 或页码盲目迁移，只有 checksum/source page key/content hash 支持的 artifact 才允许复用。
 
 稳定响应 key 的编码由 `encodeStableCacheKey` 负责：使用 `zic-key-v1:` 前缀和长度前缀组件，
 因此 URL 中的 `/`、`:`、`@` 等字符不会造成分隔符碰撞。当前图片 key 的实际关系如下：
@@ -369,6 +372,8 @@ role 相同，因此无需清空或迁移已有 cover 缓存；封面则有一�
 
 插件先生成 request plan。GET/HEAD 必须零 body且不得携带实体 headers。普通正文由宿主 transport 流式进入统一 Pipeline；完整 JSON/Base64 RPC 只允许用于明确声明 runtime transform 且有大小上限的兼容路径。
 
+`sourceVerificationRequired` 只由 host-owned typed `SourceVerificationRequiredException` 产生：HTTP 状态必须为 403/503，且存在 `cf-mitigated: challenge` 或明确 Cloudflare challenge body marker。Mihon 主网络和 ABI 兼容 interceptor 均委托同一个 detector；不得创建隐藏 WebView、等待 challenge 或按异常消息中的 “Cloudflare/Just a moment” 文本猜测。普通 403、解析失败、timeout 与 IOException 保持原错误分类。
+
 插件和平台桥不得导航、创建 Reader、提交 demand、直接读写 artifact、访问 App controller，或把 Cookie/token/Base64 payload 原文写入 Trace。
 
 ## 13. Telemetry 与关闭
@@ -394,4 +399,4 @@ role 相同，因此无需清空或迁移已有 cover 缓存；封面则有一�
 - cover recovery 继续使用 `role=cover` 的稳定 cache identity；`cover-recovery:*` 只是调用意图，不创建第二个长期缓存角色。
 - 远程详情优先投影已保存 manifest；插件 host 未就绪时等待当前 source resolver，不能因后台 refresh 失败丢弃已有详情。
 - 预览、评论、章节确保和刷新在实际调用时解析当前 active adapter，不捕获插件重启前的 source session。
-- 真实 Mihon 章节存在时，synthetic/compatibility chapter 在 manifest、library entry 和最终 UI 投影边界全部剔除。
+- App 不扫描、删除或迁移 synthetic/compatibility chapter。Mihon adapter 在源目录进入 Catalog 前，仅当真实章节与标题精确归一为“开始阅读/开始阅读章节/Start Reading/Read Now”的独立动作并存时去除该动作；单独的 gallery“正文”兼容章节和普通章节名保持。

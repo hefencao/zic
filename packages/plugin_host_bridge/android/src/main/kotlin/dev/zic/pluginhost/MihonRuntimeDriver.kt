@@ -21,6 +21,8 @@ import androidx.preference.PreferenceManager
 import androidx.preference.SwitchPreferenceCompat
 import androidx.preference.TwoStatePreference
 import dalvik.system.DexClassLoader
+import dev.zic.network.AndroidBrowserCookieSession
+import dev.zic.network.SourceVerificationRequiredException
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -142,7 +144,9 @@ internal class MihonRuntimeDriver private constructor(
                         } else {
                             error.mihonDiagnosticMessage()
                         },
-                        retryable = !cancelledRequest && cause.isNetworkFailure(),
+                        retryable = !cancelledRequest &&
+                            !verificationRequired &&
+                            cause.isNetworkFailure(),
                     )
                 }
             }
@@ -308,8 +312,11 @@ internal class MihonRuntimeDriver private constructor(
             ?: error("Mihon source id is missing")
         val transportRevision = mihonTransportRevision(sourceId, source)
         val catalogIdentity = "$sourceId\u0000$comicId"
+        val sourceChapters = deduplicateMihonStartReadingEntries(
+            catalog.chapters,
+        ) { chapter -> chapter.readString("name", "getName") }
         val selectedChapters = selectMihonChapters(
-            chapters = catalog.chapters,
+            chapters = sourceChapters,
             allowSynthetic = !catalog.chapterCatalogAvailable &&
                 !realChapterCatalogs.contains(catalogIdentity),
         ) {
@@ -528,8 +535,11 @@ internal class MihonRuntimeDriver private constructor(
         }
         val catalog = loadMihonComicCatalog(source, comicId, requestId)
         catalog.chapterFailure?.let { throw it }
+        val sourceChapters = deduplicateMihonStartReadingEntries(
+            catalog.chapters,
+        ) { chapter -> chapter.readString("name", "getName") }
         val selectedChapters = selectMihonChapters(
-            chapters = catalog.chapters,
+            chapters = sourceChapters,
             allowSynthetic = !catalog.chapterCatalogAvailable &&
                 !realChapterCatalogs.contains(catalogIdentity),
         ) {
@@ -1210,6 +1220,30 @@ internal data class MihonChapterSelection<T>(
     val synthetic: Boolean,
 )
 
+internal inline fun <T> deduplicateMihonStartReadingEntries(
+    chapters: List<T>,
+    titleOf: (T) -> String?,
+): List<T> {
+    if (chapters.size <= 1) return chapters
+    val redundant = chapters.withIndex().filter { (_, chapter) ->
+        normalizeMihonStartReadingTitle(titleOf(chapter)) in setOf(
+            "开始阅读",
+            "开始阅读章节",
+            "startreading",
+            "readnow",
+        )
+    }
+    if (redundant.isEmpty() || redundant.size == chapters.size) return chapters
+    val redundantIndices = redundant.mapTo(mutableSetOf()) { it.index }
+    return chapters.filterIndexed { index, _ -> index !in redundantIndices }
+}
+
+private fun normalizeMihonStartReadingTitle(value: String?): String = value
+    .orEmpty()
+    .trim()
+    .lowercase()
+    .replace(Regex("[\\s_\\-:：·]+"), "")
+
 internal inline fun <T> selectMihonChapters(
     chapters: List<T>,
     allowSynthetic: Boolean = true,
@@ -1466,6 +1500,7 @@ internal val requiredMihonCommonRuntimeClasses: List<String> = listOf(
     "org.jsoup.Jsoup",
     "com.google.gson.Gson",
     "dev.zic.network.AndroidCloudflareInterceptor",
+    "dev.zic.network.SourceVerificationRequiredException",
     "dev.zic.network.NetworkBrowserSnapshotStore",
     "dev.zic.network.AndroidBrowserCookieSession",
     "dev.zic.network.AndroidCookieJar",
@@ -2361,10 +2396,9 @@ private fun Throwable.isSourceVerificationFailure(): Boolean {
         java.util.IdentityHashMap<Throwable, Boolean>(),
     )
     while (current != null && visited.add(current)) {
-        val message = current.message.orEmpty().lowercase(Locale.US)
-        if (message.contains("cloudflare verification failed") ||
-            message.contains("source verification required") ||
-            message.contains("cf-mitigated")) {
+        if (current is SourceVerificationRequiredException ||
+            current.javaClass.name ==
+                "dev.zic.network.SourceVerificationRequiredException") {
             return true
         }
         current = current.cause

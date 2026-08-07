@@ -160,6 +160,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   DecodeTarget? _target;
   int? _lastProgressPage;
   ReaderMode? _lastProgressMode;
+  ReadingProgress? _pendingProgress;
+  Future<void>? _progressDrain;
   late final ReaderPlaybackController _playback;
   final Map<String, bool> _playbackCapabilities = <String, bool>{};
   late final ValueNotifier<Map<String, double>> _pageAspectRatios;
@@ -354,27 +356,22 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   }
 
   void _handleReaderProgress() {
-    _writeReaderProgress();
+    unawaited(_checkpointReaderProgress());
   }
 
-  void _writeReaderProgress({bool force = false}) {
+  ReadingProgress? _currentReaderProgress({bool force = false}) {
     final reader = _reader;
-    if (reader == null) {
-      return;
-    }
     final writer = widget.onProgressChanged;
-    if (writer == null) {
-      return;
-    }
+    if (reader == null || writer == null) return null;
     final mode = _readerMode(reader.direction);
     if (!force &&
         _lastProgressPage == reader.currentIndex &&
         _lastProgressMode == mode) {
-      return;
+      return null;
     }
     _lastProgressPage = reader.currentIndex;
     _lastProgressMode = mode;
-    final progress = ReadingProgress(
+    return ReadingProgress(
       sourceId: widget.chapter.sourceId,
       comicId: widget.chapter.comicId,
       chapterId: widget.chapter.chapter.chapterId,
@@ -383,11 +380,51 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
       readerMode: mode,
       updatedAt: DateTime.now().toUtc(),
     );
-    Future<void>.sync(() => writer(progress)).catchError(
-      (Object error, StackTrace stackTrace) {
+  }
+
+  Future<void> _checkpointReaderProgress({bool force = false}) {
+    final progress = _currentReaderProgress(force: force);
+    if (progress != null) _pendingProgress = progress;
+    final active = _progressDrain;
+    if (active != null) return active;
+    if (_pendingProgress == null || widget.onProgressChanged == null) {
+      return Future<void>.value();
+    }
+    late final Future<void> drain;
+    drain = _drainReaderProgress().whenComplete(() {
+      if (!identical(_progressDrain, drain)) return;
+      _progressDrain = null;
+      if (_pendingProgress != null) {
+        unawaited(_checkpointReaderProgress());
+      }
+    });
+    _progressDrain = drain;
+    return drain;
+  }
+
+  Future<void> _drainReaderProgress() async {
+    final writer = widget.onProgressChanged;
+    if (writer == null) {
+      _pendingProgress = null;
+      return;
+    }
+    while (_pendingProgress != null) {
+      final progress = _pendingProgress!;
+      _pendingProgress = null;
+      try {
+        await Future<void>.sync(() => writer(progress));
+      } on Object catch (error) {
         debugPrint('reader progress write failed: $error');
-      },
-    );
+      }
+    }
+  }
+
+  Future<bool> _flushProgressBeforePop() async {
+    await _checkpointReaderProgress(force: true);
+    while (_pendingProgress != null || _progressDrain != null) {
+      await _checkpointReaderProgress();
+    }
+    return true;
   }
 
   @override
@@ -395,7 +432,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
-      _writeReaderProgress(force: true);
+      unawaited(_checkpointReaderProgress(force: true));
     }
   }
 
@@ -508,7 +545,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
 
   @override
   void dispose() {
-    _writeReaderProgress(force: true);
+    unawaited(_checkpointReaderProgress(force: true));
     WidgetsBinding.instance.removeObserver(this);
     final reader = _reader;
     if (reader != null) {
@@ -1032,10 +1069,12 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                     : BoxFit.contain,
               ),
             );
-    return Scaffold(
-      key: widget.screenKey,
-      backgroundColor: Colors.black,
-      body: Stack(
+    return WillPopScope(
+      onWillPop: _flushProgressBeforePop,
+      child: Scaffold(
+        key: widget.screenKey,
+        backgroundColor: Colors.black,
+        body: Stack(
         fit: StackFit.expand,
         children: <Widget>[
           ValueListenableBuilder<Map<String, double>>(
@@ -1085,7 +1124,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
               ),
             ),
           ),
-        ],
+          ],
+        ),
       ),
     );
   }

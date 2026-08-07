@@ -238,12 +238,19 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
 
   Future<void> _openSourceComic(
     BrowsableComicSource source,
-    SourceComicSummary comic,
-  ) async {
-    final local = _libraryComicForSourceIdentity(
-      source.sourceId,
-      comic.comicId,
-    );
+    SourceComicSummary comic, {
+    bool resolveCanonicalAlias = true,
+    String? openingIdentity,
+  }) async {
+    final identity = openingIdentity ??
+        comicLibraryIdentity(source.sourceId, comic.comicId);
+    if (!_openingComicIdentities.add(identity)) return;
+    final local = resolveCanonicalAlias
+        ? _libraryComicForSourceIdentity(source.sourceId, comic.comicId)
+        : _exactLibraryComicForSourceIdentity(
+            source.sourceId,
+            comic.comicId,
+          );
     if (local != null) {
       if (local.comicId != comic.comicId) {
         widget.debugTrace.record(
@@ -272,11 +279,11 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
           ),
         );
       }
-      await _openComicDetails(local);
-      return;
-    }
-    final identity = comicLibraryIdentity(source.sourceId, comic.comicId);
-    if (!_openingComicIdentities.add(identity)) {
+      try {
+        await _openComicDetails(local);
+      } finally {
+        _openingComicIdentities.remove(identity);
+      }
       return;
     }
     final preference = _mergedPreferenceFor(
@@ -299,6 +306,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
               source.sourceId,
               comic.comicId,
               preference: preference,
+              resolveCanonicalAlias: resolveCanonicalAlias,
             ),
             source: source,
             resolveSource: _sourceForId,
@@ -311,6 +319,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
               comic.comicId,
               refreshContent: refreshContent,
               fallbackPreference: preference,
+              resolveCanonicalAlias: resolveCanonicalAlias,
             ),
             ensureSourceChapter: _ensureSourceChapter,
             persistComic: _persistRemoteComic,
@@ -350,13 +359,23 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
               final active = _sourceForId(source.sourceId) ?? source;
               _searchSourceMetadata(active, query);
             },
-            loadVersionNotice: _sourceSupportsVersionEntry(source)
+            loadVersionState: _sourceSupportsVersionEntry(source)
                 ? () {
                     final active = _sourceForId(source.sourceId) ?? source;
-                    return _loadSourceVersionNotice(
+                    return _loadSourceVersionState(
                       active,
                       comic.title,
                       comic.comicId,
+                    );
+                  }
+                : null,
+            onViewVersion: _sourceSupportsVersionEntry(source)
+                ? (version) {
+                    final active = _sourceForId(source.sourceId) ?? source;
+                    return _viewSourceVersion(
+                      active,
+                      comic.comicId,
+                      version,
                     );
                   }
                 : null,
@@ -366,14 +385,16 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
                     final materialized = await _materializeSourceComic(
                       active,
                       comic,
+                      resolveCanonicalAlias: false,
                     );
-                    await _openSourceVersionNotice(materialized, version);
+                    await _migrateSourceVersion(materialized, version);
                   }
                 : null,
-            sameComicIdentity: (left, right) =>
-                _canonicalComicKey(source.sourceId, left) ==
-                _canonicalComicKey(source.sourceId, right),
-            isCompatibilityChapter: isSyntheticMihonChapterIdentity,
+            sameComicIdentity: resolveCanonicalAlias
+                ? (left, right) =>
+                    _canonicalComicKey(source.sourceId, left) ==
+                    _canonicalComicKey(source.sourceId, right)
+                : (left, right) => left == right,
             previewMaxItemsPerRow:
                 widget.preferences.detailsPreviewMaxItemsPerRow,
             traceSink: widget.debugTrace,
@@ -457,22 +478,28 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
           onSearchMetadata: source == null
               ? null
               : (query) => _searchSourceMetadata(source, query),
-          loadVersionNotice: source == null ||
+          loadVersionState: source == null ||
                   !_sourceSupportsVersionEntry(source)
               ? null
               : () {
                   final active = _sourceForId(source.sourceId) ?? source;
-                  return _loadSourceVersionNotice(
+                  return _loadSourceVersionState(
                     active,
                     comic.title,
                     comic.comicId,
                   );
                 },
+          onViewVersion: source == null ||
+                  !_sourceSupportsVersionEntry(source)
+              ? null
+              : (version) {
+                  final active = _sourceForId(source.sourceId) ?? source;
+                  return _viewSourceVersion(active, comic.comicId, version);
+                },
           onMigrateVersion: source == null ||
                   !_sourceSupportsVersionEntry(source)
               ? null
-              : (version) => _openSourceVersionNotice(comic, version),
-          isCompatibilityChapter: isSyntheticMihonChapterIdentity,
+              : (version) => _migrateSourceVersion(comic, version),
           previewMaxItemsPerRow:
               widget.preferences.detailsPreviewMaxItemsPerRow,
           traceSink: widget.debugTrace,

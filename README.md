@@ -1,6 +1,6 @@
 # zic
 
-dev.144 为 encoded bytes 已就绪但 Flutter ImageStream 无帧无错误的封面增加有界首帧 watchdog；详情页先显示缓存目录并等待当前插件来源，完整预览行铺满媒体宽度，刷新反馈由统一组件拥有，真实章节目录会剔除兼容伪章节。
+当前 Reader 正常退出前等待最终阅读进度提交；详情页可独立查看或迁移多个同源新旧版本，历史按 raw 版本身份分离。Mihon 仅在插件适配边界去除与真实目录并存的独立“开始阅读”动作，Cloudflare 主/兼容路径统一使用 typed challenge detector。
 
 
 `zic` 是面向 Android 优先、高性能漫画阅读场景的 Flutter/Rust 工程。项目支持本地与远程章节、静态图片、Animated WebP、持久下载、带分类/翻页的漫画源浏览、Mihon/Venera 扩展和统一 Reader Pipeline。

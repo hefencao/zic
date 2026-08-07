@@ -71,7 +71,7 @@ cloudflare = read(
     "packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/"
     "AndroidCloudflareInterceptor.kt"
 )
-require(cloudflare, "Cloudflare verification failed", "typed verification seed")
+require(cloudflare, "SourceVerificationRequiredException", "typed verification seed")
 forbid(cloudflare, "WebView(", "hidden WebView rejection")
 forbid(cloudflare, "Thread.sleep", "challenge wait rejection")
 cookies = read(
@@ -94,8 +94,8 @@ wire = read(
 require(wire, "65_000", "Android IPC timeout envelope")
 
 runtime = read("packages/plugin_host/lib/src/runtime_source_adapter.dart")
-require(runtime, "isCurrentSyntheticMihonChapterIdentity", "synthetic revision API")
-require(runtime, "synthetic_revision", "synthetic revision identity")
+forbid(runtime, "isSyntheticMihonChapterIdentity", "removed App-facing synthetic classifier")
+forbid(runtime, "isCurrentSyntheticMihonChapterIdentity", "removed synthetic revision classifier")
 mihon = read(
     "packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/"
     "MihonRuntimeDriver.kt"
@@ -103,7 +103,7 @@ mihon = read(
 require(mihon, 'put("synthetic_revision", MIHON_SYNTHETIC_REVISION)', "synthetic wire revision")
 require(mihon, "MIHON_SYNTHETIC_REVISION = 3", "synthetic current revision")
 home = read("apps/app/lib/demo_home.dart")
-require(home, "isCurrentSyntheticMihonChapterIdentity", "legacy synthetic eviction")
+forbid(home, "isCurrentSyntheticMihonChapterIdentity", "App synthetic eviction ownership")
 
 cached = read("packages/catalog/lib/src/cached_comic_source.dart")
 require(cached, "ComicWebUriSource", "cached web URI capability")
@@ -132,9 +132,11 @@ for token in (
     "Future<void> _recoverSourceAccess() async",
     "await open();",
     "await _refresh(announce: false",
-    "comicDetailsVersionNoticeKey",
     "comicDetailsVersionActionKey",
-    "有新版本",
+    "ComicDetailsVersionState",
+    "final label = successor ? '新版本' : '旧版本';",
+    "child: Text('查看$label')",
+    "child: const Text('迁移')",
     "resultKey: comicDetailsRefreshStateKey",
     "onLongPress: () => _toggleSelection(tag)",
     "Clipboard.setData",
@@ -143,12 +145,12 @@ for token in (
     require(details, token, "detail interaction contract")
 forbid(details, "Icons.open_in_browser", "globe icon migration")
 for stale in (
-    "key: comicDetailsMigrateKey",
-    "key: comicDetailsVersionsKey",
     "tooltip: '迁移漫画源'",
     "tooltip: '查看同源版本'",
+    "groupLabel('旧版')",
+    "groupLabel('新版')",
 ):
-    forbid(details, stale, "obsolete detail version/migration action")
+    forbid(details, stale, "obsolete detail AppBar version action")
 
 refresh = read("apps/app/lib/app_pull_to_refresh.dart")
 for token in ("RefreshIndicatorTriggerMode.onEdge", "displacement: _displacement", "_AppRefreshResult.success", "_AppRefreshResult.failure", "Colors.green", "Icons.close"):

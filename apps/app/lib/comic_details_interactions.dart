@@ -91,7 +91,8 @@ final class _ComicDetailsScaffold extends StatefulWidget {
     required this.pageCount,
     this.pageCountPending = false,
     required this.chapterList,
-    this.loadVersionNotice,
+    this.loadVersionState,
+    this.onViewVersion,
     this.onMigrateVersion,
     this.previewSection,
     this.commentsSection,
@@ -123,7 +124,8 @@ final class _ComicDetailsScaffold extends StatefulWidget {
   final int pageCount;
   final bool pageCountPending;
   final Widget chapterList;
-  final ComicDetailsVersionNoticeLoader? loadVersionNotice;
+  final ComicDetailsVersionStateLoader? loadVersionState;
+  final ComicDetailsVersionViewer? onViewVersion;
   final ComicDetailsVersionMigrator? onMigrateVersion;
   final Widget? previewSection;
   final Widget? commentsSection;
@@ -183,15 +185,17 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
                     ),
                   ),
                 ),
-                if (widget.loadVersionNotice != null &&
+                if (widget.loadVersionState != null &&
+                    widget.onViewVersion != null &&
                     widget.onMigrateVersion != null)
                   SliverPadding(
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
                     sliver: SliverToBoxAdapter(
-                      child: _ComicDetailsVersionNotice(
-                        key: comicDetailsVersionNoticeKey,
-                        load: widget.loadVersionNotice!,
-                        onOpen: widget.onMigrateVersion!,
+                      child: _ComicDetailsVersionActions(
+                        key: comicDetailsVersionSectionKey,
+                        load: widget.loadVersionState!,
+                        onView: widget.onViewVersion!,
+                        onMigrate: widget.onMigrateVersion!,
                       ),
                     ),
                   ),
@@ -272,63 +276,134 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
   }
 }
 
-final class _ComicDetailsVersionNotice extends StatefulWidget {
-  const _ComicDetailsVersionNotice({
+final class _ComicDetailsVersionActions extends StatefulWidget {
+  const _ComicDetailsVersionActions({
     required this.load,
-    required this.onOpen,
+    required this.onView,
+    required this.onMigrate,
     super.key,
   });
 
-  final ComicDetailsVersionNoticeLoader load;
-  final ComicDetailsVersionMigrator onOpen;
+  final ComicDetailsVersionStateLoader load;
+  final ComicDetailsVersionViewer onView;
+  final ComicDetailsVersionMigrator onMigrate;
 
   @override
-  State<_ComicDetailsVersionNotice> createState() =>
-      _ComicDetailsVersionNoticeState();
+  State<_ComicDetailsVersionActions> createState() =>
+      _ComicDetailsVersionActionsState();
 }
 
-final class _ComicDetailsVersionNoticeState
-    extends State<_ComicDetailsVersionNotice> {
-  late Future<SourceComicVersion?> _notice;
-  bool _opening = false;
+final class _ComicDetailsVersionActionsState
+    extends State<_ComicDetailsVersionActions> {
+  late Future<ComicDetailsVersionState> _state;
+  bool _working = false;
 
   @override
   void initState() {
     super.initState();
-    _notice = widget.load();
+    _state = widget.load();
+  }
+
+  Future<SourceComicVersion?> _chooseVersion(
+    String title,
+    List<SourceComicVersion> versions,
+  ) async {
+    if (versions.isEmpty) return null;
+    if (versions.length == 1) return versions.single;
+    return showDialog<SourceComicVersion>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: Text(title),
+        children: <Widget>[
+          for (final version in versions)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, version),
+              child: ListTile(
+                title: Text(
+                  version.title.trim().isEmpty
+                      ? version.comicId
+                      : version.title.trim(),
+                ),
+                subtitle: Text(<String>[
+                  '版本 ${version.generation}',
+                  if (version.date?.trim().isNotEmpty == true)
+                    version.date!.trim(),
+                ].join(' · ')),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _run(
+    String chooserTitle,
+    List<SourceComicVersion> versions,
+    ComicDetailsVersionViewer action,
+  ) async {
+    final version = await _chooseVersion(chooserTitle, versions);
+    if (version == null || !mounted) return;
+    setState(() => _working = true);
+    try {
+      await action(version);
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  Widget _versionRow({
+    required bool successor,
+    required List<SourceComicVersion> versions,
+  }) {
+    final label = successor ? '新版本' : '旧版本';
+    return Row(
+      children: <Widget>[
+        Expanded(
+          child: FilledButton.tonal(
+            key: successor ? comicDetailsVersionViewKey : null,
+            onPressed: _working
+                ? null
+                : () => _run('选择$label', versions, widget.onView),
+            child: Text('查看$label'),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: FilledButton.tonal(
+            key: successor ? comicDetailsVersionMigrateKey : null,
+            onPressed: _working
+                ? null
+                : () => _run('选择要迁移的$label', versions, widget.onMigrate),
+            child: const Text('迁移'),
+          ),
+        ),
+      ],
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<SourceComicVersion?>(
-      future: _notice,
+    return FutureBuilder<ComicDetailsVersionState>(
+      future: _state,
       builder: (context, snapshot) {
-        final version = snapshot.data;
-        if (version == null) return const SizedBox.shrink();
-        final details = <String>[
-          if (version.title.trim().isNotEmpty) version.title.trim(),
-          if (version.date?.trim().isNotEmpty == true) version.date!.trim(),
-          if (version.title.trim().isEmpty) version.comicId,
-        ];
+        final state = snapshot.data;
+        if (state == null || state.isEmpty) return const SizedBox.shrink();
         return Card(
+          key: comicDetailsVersionActionKey,
           margin: EdgeInsets.zero,
-          child: ListTile(
-            leading: const Icon(Icons.new_releases_outlined),
-            title: const Text('有新版本'),
-            subtitle: details.isEmpty ? null : Text(details.join(' · ')),
-            trailing: FilledButton.tonal(
-              key: comicDetailsVersionActionKey,
-              onPressed: _opening
-                  ? null
-                  : () async {
-                      setState(() => _opening = true);
-                      try {
-                        await widget.onOpen(version);
-                      } finally {
-                        if (mounted) setState(() => _opening = false);
-                      }
-                    },
-              child: const Text('查看更新'),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: <Widget>[
+                if (state.successors.isNotEmpty)
+                  _versionRow(successor: true, versions: state.successors),
+                if (state.successors.isNotEmpty &&
+                    state.predecessors.isNotEmpty)
+                  const SizedBox(height: 8),
+                if (state.predecessors.isNotEmpty)
+                  _versionRow(successor: false, versions: state.predecessors),
+              ],
             ),
           ),
         );

@@ -269,41 +269,47 @@ final class CachedBrowsableComicSource
   @override
   Uri resolveComicWebUri(String comicId) {
     final Object candidate = source;
-    final ComicWebUriSource? webSource =
-        candidate is ComicWebUriSource ? candidate : null;
-    return webSource?.resolveComicWebUri(comicId) ?? descriptor.website;
+    if (candidate is! ComicWebUriSource) return descriptor.website;
+    final webSource = candidate as ComicWebUriSource;
+    return webSource.resolveComicWebUri(comicId);
   }
 
   @override
   String canonicalComicIdentity(String comicId) {
     final Object candidate = source;
-    final CanonicalComicIdentitySource? identitySource =
-        candidate is CanonicalComicIdentitySource ? candidate : null;
-    return identitySource?.canonicalComicIdentity(comicId) ?? comicId;
+    if (candidate is! CanonicalComicIdentitySource) return comicId;
+    final identitySource = candidate as CanonicalComicIdentitySource;
+    return identitySource.canonicalComicIdentity(comicId);
   }
 
   @override
   ComicWebViewRequest webViewRequest(Uri url) {
     final Object candidate = source;
-    final ComicWebViewRequestSource? requestSource =
-        candidate is ComicWebViewRequestSource ? candidate : null;
-    return requestSource?.webViewRequest(url) ?? ComicWebViewRequest(url: url);
+    if (candidate is! ComicWebViewRequestSource) {
+      return ComicWebViewRequest(url: url);
+    }
+    final requestSource = candidate as ComicWebViewRequestSource;
+    return requestSource.webViewRequest(url);
   }
 
   @override
   bool get supportsComicVersions {
-    final versionSource = source is ComicVersionSource
-        ? source as ComicVersionSource
-        : null;
-    return versionSource?.supportsComicVersions ?? false;
+    final Object candidate = source;
+    if (candidate is! ComicVersionSource) return false;
+    final versionSource = candidate as ComicVersionSource;
+    return versionSource.supportsComicVersions;
   }
 
   @override
   Future<List<SourceComicVersion>> findComicVersions(String comicId) {
-    final versionSource = source is ComicVersionSource
-        ? source as ComicVersionSource
-        : null;
-    if (versionSource == null || !versionSource.supportsComicVersions) {
+    final Object candidate = source;
+    if (candidate is! ComicVersionSource) {
+      return Future<List<SourceComicVersion>>.value(
+        const <SourceComicVersion>[],
+      );
+    }
+    final versionSource = candidate as ComicVersionSource;
+    if (!versionSource.supportsComicVersions) {
       return Future<List<SourceComicVersion>>.value(
         const <SourceComicVersion>[],
       );
@@ -313,10 +319,10 @@ final class CachedBrowsableComicSource
 
   @override
   bool get supportsComicPreview {
-    final previewSource = source is ComicPreviewSource
-        ? source as ComicPreviewSource
-        : null;
-    return previewSource?.supportsComicPreview ?? false;
+    final Object candidate = source;
+    if (candidate is! ComicPreviewSource) return false;
+    final previewSource = candidate as ComicPreviewSource;
+    return previewSource.supportsComicPreview;
   }
 
   @override
@@ -324,10 +330,14 @@ final class CachedBrowsableComicSource
     String comicId, {
     String? nextToken,
   }) {
-    final previewSource = source is ComicPreviewSource
-        ? source as ComicPreviewSource
-        : null;
-    if (previewSource == null || !previewSource.supportsComicPreview) {
+    final Object candidate = source;
+    if (candidate is! ComicPreviewSource) {
+      return Future<ComicPreviewPage>.value(
+        ComicPreviewPage(items: const <ComicPreviewAsset>[]),
+      );
+    }
+    final previewSource = candidate as ComicPreviewSource;
+    if (!previewSource.supportsComicPreview) {
       return Future<ComicPreviewPage>.value(
         ComicPreviewPage(items: const <ComicPreviewAsset>[]),
       );
@@ -340,10 +350,10 @@ final class CachedBrowsableComicSource
 
   @override
   bool get supportsComicComments {
-    final commentSource = source is ComicCommentSource
-        ? source as ComicCommentSource
-        : null;
-    return commentSource?.supportsComicComments ?? false;
+    final Object candidate = source;
+    if (candidate is! ComicCommentSource) return false;
+    final commentSource = candidate as ComicCommentSource;
+    return commentSource.supportsComicComments;
   }
 
   @override
@@ -353,10 +363,18 @@ final class CachedBrowsableComicSource
     required int page,
     String? replyTo,
   }) {
-    final commentSource = source is ComicCommentSource
-        ? source as ComicCommentSource
-        : null;
-    if (commentSource == null || !commentSource.supportsComicComments) {
+    final Object candidate = source;
+    if (candidate is! ComicCommentSource) {
+      return Future<ComicCommentPage>.value(
+        ComicCommentPage(
+          page: page,
+          items: const <ComicComment>[],
+          maxPage: page,
+        ),
+      );
+    }
+    final commentSource = candidate as ComicCommentSource;
+    if (!commentSource.supportsComicComments) {
       return Future<ComicCommentPage>.value(
         ComicCommentPage(
           page: page,

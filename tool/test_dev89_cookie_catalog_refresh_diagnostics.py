@@ -32,7 +32,7 @@ require(
     "packages/catalog/lib/src/cached_comic_source.dart",
     "ComicWebViewRequestSource",
     "ComicWebViewRequest webViewRequest(Uri url)",
-    "requestSource?.webViewRequest(url)",
+    "requestSource.webViewRequest(url)",
 )
 require(
     "packages/plugin_host/lib/src/runtime_source_adapter.dart",
@@ -156,9 +156,11 @@ require(
     "Only accept UOE",
     "frame.className == \"eu.kanade.tachiyomi.source.online.HttpSource\"",
 )
-require(
+forbid(
     "packages/plugin_host/lib/src/runtime_source_adapter.dart",
-    "decoded?['synthetic_revision'] == 3",
+    "isSyntheticMihonChapterIdentity",
+    "isCurrentSyntheticMihonChapterIdentity",
+    "synthetic_revision'] == 3",
 )
 home_catalog = read("apps/app/lib/demo_home.dart") + read(
     "apps/app/lib/demo_home_catalog_identity.dart"
@@ -167,7 +169,7 @@ for token in (
     "_rejectCatalogRegression",
     "chapter-catalog-regression-rejected",
     "chapter-catalog-refresh-result",
-    "syntheticChapterCount",
+    "incomingRealCount",
     "本次目录退化为",
 ):
     if token not in home_catalog:

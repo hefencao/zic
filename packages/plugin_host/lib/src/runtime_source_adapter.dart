@@ -109,37 +109,6 @@ String? _canonicalVeneraComicIdentity({
   return uri == null ? null : _canonicalWebIdentity(uri);
 }
 
-Map<String, dynamic>? _decodeMihonChapterIdentity(String chapterId) {
-  const prefix = 'mihon:chapter:';
-  if (!chapterId.startsWith(prefix)) {
-    return null;
-  }
-  try {
-    final payload = chapterId.substring(prefix.length);
-    final decoded = jsonDecode(
-      utf8.decode(base64Url.decode(base64Url.normalize(payload))),
-    );
-    return decoded is Map<String, dynamic> &&
-            decoded['kind'] == 'chapter'
-        ? decoded
-        : null;
-  } on Object {
-    return null;
-  }
-}
-
-bool isSyntheticMihonChapterIdentity(String chapterId) =>
-    _decodeMihonChapterIdentity(chapterId)?['synthetic'] == true;
-
-/// Returns whether [chapterId] was synthesized by the current compatibility
-/// contract. Older synthetic identities are discarded once so a previous
-/// failed catalog load cannot remain visible as a fake single chapter.
-bool isCurrentSyntheticMihonChapterIdentity(String chapterId) {
-  final decoded = _decodeMihonChapterIdentity(chapterId);
-  return decoded?['synthetic'] == true &&
-      decoded?['synthetic_revision'] == 3;
-}
-
 /// Adapts one isolated-runtime connection to ordinary zic catalog sources.
 ///
 /// This is the only layer that understands both the serialized runtime schema

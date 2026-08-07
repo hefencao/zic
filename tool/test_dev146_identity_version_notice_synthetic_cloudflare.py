@@ -47,34 +47,36 @@ for token in (
 ):
     require(details, token, 'explicit capability cast')
 
-for token in (
+for stale in (
     '_withoutSyntheticMihonFallback',
-    'manifest = _withoutSyntheticMihonFallback(manifest);',
+    '_removePersistedSyntheticChapters',
+    'reconcileComicDetailsSourceChapters',
 ):
-    require(identity, token, 'synthetic chapter persistence cleanup')
-require(home, 'final persistedManifest = _withoutSyntheticMihonFallback(manifest);', 'catalog refresh cleanup')
+    forbid(identity + home + details, stale, 'obsolete App synthetic chapter cleanup')
 
 for token in (
-    'comicDetailsVersionNoticeKey',
-    "title: const Text('有新版本')",
-    "child: const Text('查看更新')",
+    'final class ComicDetailsVersionState',
+    'comicDetailsVersionActionKey',
+    "child: Text('查看$label')",
+    "child: const Text('迁移')",
 ):
-    require(details, token, 'detail new-version notice')
+    require(details, token, 'detail version view/migration actions')
 for token in (
-    '_loadSourceVersionNotice(',
+    '_loadSourceVersionState(',
     '_storedSourceSuccessors(',
-    '_openSourceVersionNotice(',
+    '_storedSourcePredecessors(',
+    '_viewSourceVersion(',
+    '_migrateSourceVersion(',
+    'sourceVersionViewIdentity(',
 ):
-    require(migration, token, 'same-source successor discovery')
+    require(migration, token, 'same-source version state and routing')
 for stale in (
-    'key: comicDetailsMigrateKey',
-    'key: comicDetailsVersionsKey',
     "tooltip: '迁移漫画源'",
     "tooltip: '查看同源版本'",
     "groupLabel('旧版')",
     "groupLabel('新版')",
 ):
-    forbid(details + migration, stale, 'obsolete version/migration UI')
+    forbid(details + migration, stale, 'obsolete version AppBar/list UI')
 
 for token in (
     '_ReaderComicVersionNoticeGate',

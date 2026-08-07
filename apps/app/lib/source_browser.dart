@@ -1734,10 +1734,10 @@ final class SourceComicDetailsScreen extends StatelessWidget {
     this.onOpenSourceSettings,
     this.resolveSource,
     this.onSearchMetadata,
-    this.loadVersionNotice,
+    this.loadVersionState,
+    this.onViewVersion,
     this.onMigrateVersion,
     this.sameComicIdentity,
-    this.isCompatibilityChapter,
     this.previewMaxItemsPerRow = 4,
     this.traceSink = const NoopTraceSink(),
     super.key,
@@ -1763,11 +1763,10 @@ final class SourceComicDetailsScreen extends StatelessWidget {
   final details.ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final details.ComicDetailsSourceResolver? resolveSource;
   final details.ComicDetailsMetadataSearch? onSearchMetadata;
-  final details.ComicDetailsVersionNoticeLoader? loadVersionNotice;
+  final details.ComicDetailsVersionStateLoader? loadVersionState;
+  final details.ComicDetailsVersionViewer? onViewVersion;
   final details.ComicDetailsVersionMigrator? onMigrateVersion;
   final details.ComicDetailsIdentityMatcher? sameComicIdentity;
-  final details.ComicDetailsChapterCompatibilityMatcher?
-      isCompatibilityChapter;
   final int previewMaxItemsPerRow;
   final TraceSink traceSink;
 
@@ -1793,9 +1792,9 @@ final class SourceComicDetailsScreen extends StatelessWidget {
       onOpenSourceSettings: onOpenSourceSettings,
       resolveSource: resolveSource,
       onSearchMetadata: onSearchMetadata,
-      loadVersionNotice: loadVersionNotice,
+      loadVersionState: loadVersionState,
+      onViewVersion: onViewVersion,
       onMigrateVersion: onMigrateVersion,
-      isCompatibilityChapter: isCompatibilityChapter,
       previewMaxItemsPerRow: previewMaxItemsPerRow,
       sameComicIdentity: sameComicIdentity ?? (left, right) => left == right,
       traceSink: traceSink,

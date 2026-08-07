@@ -31,10 +31,14 @@ const comicDetailsShelfKey = ValueKey<String>('comic-details-shelf');
 const comicDetailsCollectedKey =
     ValueKey<String>('comic-details-collected');
 const comicDetailsLikedKey = ValueKey<String>('comic-details-liked');
-const comicDetailsVersionNoticeKey =
-    ValueKey<String>('comic-details-version-notice');
+const comicDetailsVersionSectionKey =
+    ValueKey<String>('comic-details-version-section');
 const comicDetailsVersionActionKey =
     ValueKey<String>('comic-details-version-action');
+const comicDetailsVersionViewKey =
+    ValueKey<String>('comic-details-version-view');
+const comicDetailsVersionMigrateKey =
+    ValueKey<String>('comic-details-version-migrate');
 const comicDetailsContinueReadingKey =
     ValueKey<String>('comic-details-continue-reading');
 const comicDetailsReadingHistoryKey =
@@ -168,8 +172,22 @@ typedef ComicDetailsComicPersister = Future<void> Function(
   bool retained,
 );
 
-typedef ComicDetailsVersionNoticeLoader =
-    Future<SourceComicVersion?> Function();
+final class ComicDetailsVersionState {
+  const ComicDetailsVersionState({
+    this.successors = const <SourceComicVersion>[],
+    this.predecessors = const <SourceComicVersion>[],
+  });
+
+  final List<SourceComicVersion> successors;
+  final List<SourceComicVersion> predecessors;
+
+  bool get isEmpty => successors.isEmpty && predecessors.isEmpty;
+}
+
+typedef ComicDetailsVersionStateLoader =
+    Future<ComicDetailsVersionState> Function();
+typedef ComicDetailsVersionViewer =
+    Future<void> Function(SourceComicVersion version);
 typedef ComicDetailsVersionMigrator =
     Future<void> Function(SourceComicVersion version);
 
@@ -183,27 +201,8 @@ typedef ComicDetailsIdentityMatcher = bool Function(
   String leftComicId,
   String rightComicId,
 );
-typedef ComicDetailsChapterCompatibilityMatcher = bool Function(
-  String chapterId,
-);
-
 bool _exactComicIdentity(String leftComicId, String rightComicId) =>
     leftComicId == rightComicId;
-
-List<Chapter> _withoutCompatibilityFallback(
-  Iterable<Chapter> chapters,
-  ComicDetailsChapterCompatibilityMatcher? isCompatibilityChapter,
-) {
-  final values = chapters.toList(growable: false);
-  if (isCompatibilityChapter == null) return values;
-  final hasRealChapter = values.any(
-    (chapter) => !isCompatibilityChapter(chapter.chapterId),
-  );
-  if (!hasRealChapter) return values;
-  return values
-      .where((chapter) => !isCompatibilityChapter(chapter.chapterId))
-      .toList(growable: false);
-}
 
 
 void _ignoreRefreshResult(Future<bool> refresh) {
@@ -230,9 +229,9 @@ final class LocalComicDetailsScreen extends StatefulWidget {
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
     this.onSearchMetadata,
-    this.loadVersionNotice,
+    this.loadVersionState,
+    this.onViewVersion,
     this.onMigrateVersion,
-    this.isCompatibilityChapter,
     this.previewMaxItemsPerRow = 4,
     this.traceSink = const NoopTraceSink(),
     super.key,
@@ -256,9 +255,9 @@ final class LocalComicDetailsScreen extends StatefulWidget {
   final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final ComicDetailsMetadataSearch? onSearchMetadata;
-  final ComicDetailsVersionNoticeLoader? loadVersionNotice;
+  final ComicDetailsVersionStateLoader? loadVersionState;
+  final ComicDetailsVersionViewer? onViewVersion;
   final ComicDetailsVersionMigrator? onMigrateVersion;
-  final ComicDetailsChapterCompatibilityMatcher? isCompatibilityChapter;
   final int previewMaxItemsPerRow;
   final TraceSink traceSink;
 
@@ -601,6 +600,10 @@ final class _LocalComicDetailsScreenState
         title: title,
         initialPageIndex: initialPageIndex,
       );
+      final refreshed = await widget.reloadLibrary(refreshContent: false);
+      if (mounted) {
+        setState(() => _library = refreshed);
+      }
     } on Object catch (error, stackTrace) {
       if (mounted) {
         _showLocalFailure(error, stackTrace);
@@ -768,15 +771,7 @@ final class _LocalComicDetailsScreenState
   Widget build(BuildContext context) {
     final models = <_ChapterViewModel>[];
     final catalogIdentities = <String>{};
-    final catalogChapters = _withoutCompatibilityFallback(
-      _library.sourceChapters,
-      widget.isCompatibilityChapter,
-    );
-    final isCompatibilityChapter = widget.isCompatibilityChapter;
-    final hasRealCatalogChapter = isCompatibilityChapter != null &&
-        catalogChapters.any(
-          (chapter) => !isCompatibilityChapter(chapter.chapterId),
-        );
+    final catalogChapters = _library.sourceChapters;
     for (final chapter in catalogChapters) {
       final identity = comicDetailsChapterIdentity(
         widget.comic.sourceId,
@@ -804,10 +799,6 @@ final class _LocalComicDetailsScreenState
       );
     }
     for (final entry in _library.chapters) {
-      if (hasRealCatalogChapter &&
-          isCompatibilityChapter!(entry.chapter.chapterId)) {
-        continue;
-      }
       final identity = comicDetailsChapterIdentity(
         entry.chapter.sourceId,
         entry.chapter.chapterId,
@@ -914,7 +905,8 @@ final class _LocalComicDetailsScreenState
       onDownloadComic:
           comic.sourceId == 'local-folder' ? null : _downloadComic,
       onReverse: () => setState(() => _descending = !_descending),
-      loadVersionNotice: widget.loadVersionNotice,
+      loadVersionState: widget.loadVersionState,
+      onViewVersion: widget.onViewVersion,
       onMigrateVersion: widget.onMigrateVersion,
       chapterCount: ordered.length,
       pageCount: catalogPages,
@@ -979,9 +971,9 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
     this.onOpenSourceSettings,
     this.resolveSource,
     this.onSearchMetadata,
-    this.loadVersionNotice,
+    this.loadVersionState,
+    this.onViewVersion,
     this.onMigrateVersion,
-    this.isCompatibilityChapter,
     this.previewMaxItemsPerRow = 4,
     this.sameComicIdentity = _exactComicIdentity,
     this.traceSink = const NoopTraceSink(),
@@ -1008,9 +1000,9 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final ComicDetailsSourceResolver? resolveSource;
   final ComicDetailsMetadataSearch? onSearchMetadata;
-  final ComicDetailsVersionNoticeLoader? loadVersionNotice;
+  final ComicDetailsVersionStateLoader? loadVersionState;
+  final ComicDetailsVersionViewer? onViewVersion;
   final ComicDetailsVersionMigrator? onMigrateVersion;
-  final ComicDetailsChapterCompatibilityMatcher? isCompatibilityChapter;
   final int previewMaxItemsPerRow;
   final ComicDetailsIdentityMatcher sameComicIdentity;
   final TraceSink traceSink;
@@ -1093,10 +1085,8 @@ final class _RemoteComicDetailsScreenState
     super.initState();
     _library = widget.initialLibrary;
     final cachedComic = _library.sourceManifest?.comic ?? _library.sourceComic;
-    final cachedChapters = _withoutCompatibilityFallback(
-      _library.sourceManifest?.chapters ?? _library.sourceChapters,
-      widget.isCompatibilityChapter,
-    );
+    final cachedChapters =
+        _library.sourceManifest?.chapters ?? _library.sourceChapters;
     if (_library.sourceManifest != null) {
       _manifest = ComicManifest(
         comic: _library.sourceManifest!.comic,
@@ -1282,10 +1272,8 @@ final class _RemoteComicDetailsScreenState
       final library = await widget.reloadLibrary(refreshContent: true);
       final sourceManifest = library.sourceManifest;
       final comic = sourceManifest?.comic ?? library.sourceComic;
-      final sourceChapters = _withoutCompatibilityFallback(
-        sourceManifest?.chapters ?? library.sourceChapters,
-        widget.isCompatibilityChapter,
-      );
+      final sourceChapters =
+          sourceManifest?.chapters ?? library.sourceChapters;
       if (comic == null ||
           comic.sourceId != source.sourceId ||
           !widget.sameComicIdentity(
@@ -1511,6 +1499,10 @@ final class _RemoteComicDetailsScreenState
         title: chapter.title,
         initialPageIndex: initialPageIndex,
       );
+      final refreshed = await widget.reloadLibrary(refreshContent: false);
+      if (mounted) {
+        setState(() => _library = refreshed);
+      }
     } on Object catch (error, stackTrace) {
       if (mounted) {
         _showRemoteFailure(error, stackTrace);
@@ -1699,10 +1691,7 @@ final class _RemoteComicDetailsScreenState
       );
     }
     final manifest = _manifest;
-    final chapters = _withoutCompatibilityFallback(
-      manifest?.chapters ?? const <Chapter>[],
-      widget.isCompatibilityChapter,
-    );
+    final chapters = manifest?.chapters ?? const <Chapter>[];
     final sortedChapters = chapters.toList(growable: false)
       ..sort(_compareChapters);
     final ordered = _descending
@@ -1755,7 +1744,8 @@ final class _RemoteComicDetailsScreenState
       onOpenSourceWebView: widget.onOpenSourceWebView,
       onOpenSourceSettings: widget.onOpenSourceSettings,
       onSearchMetadata: widget.onSearchMetadata,
-      loadVersionNotice: widget.loadVersionNotice,
+      loadVersionState: widget.loadVersionState,
+      onViewVersion: widget.onViewVersion,
       onMigrateVersion: widget.onMigrateVersion,
       onPreferenceChanged: _savePreference,
       progressLabel: _readingProgressLabel(_library.chapters),

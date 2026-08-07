@@ -8,52 +8,6 @@ import 'package:plugin_host/plugin_host.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('recognizes only explicit synthetic Mihon chapter identities', () {
-    String identity(Map<String, Object?> value) {
-      final payload = base64Url
-          .encode(utf8.encode(jsonEncode(value)))
-          .replaceAll('=', '');
-      return 'mihon:chapter:$payload';
-    }
-
-    expect(
-      isSyntheticMihonChapterIdentity(
-        identity(<String, Object?>{
-          'kind': 'chapter',
-          'comicId': 'mihon:manga:fixture',
-          'synthetic': true,
-        }),
-      ),
-      isTrue,
-    );
-    expect(
-      isSyntheticMihonChapterIdentity(
-        identity(<String, Object?>{
-          'kind': 'chapter',
-          'synthetic': false,
-        }),
-      ),
-      isFalse,
-    );
-    final legacySynthetic = identity(<String, Object?>{
-      'kind': 'chapter',
-      'comicId': 'mihon:manga:fixture',
-      'synthetic': true,
-    });
-    final currentSynthetic = identity(<String, Object?>{
-      'kind': 'chapter',
-      'comicId': 'mihon:manga:fixture',
-      'synthetic': true,
-      'synthetic_revision': 3,
-    });
-    expect(isSyntheticMihonChapterIdentity(legacySynthetic), isTrue);
-    expect(isCurrentSyntheticMihonChapterIdentity(legacySynthetic), isFalse);
-    expect(isCurrentSyntheticMihonChapterIdentity(currentSynthetic), isTrue);
-    expect(isSyntheticMihonChapterIdentity('chapter-1'), isFalse);
-    expect(isCurrentSyntheticMihonChapterIdentity('chapter-1'), isFalse);
-    expect(isSyntheticMihonChapterIdentity('mihon:chapter:broken'), isFalse);
-  });
-
   test('resolves a Mihon manga detail URL without leaking opaque parsing', () {
     final payload = base64Url
         .encode(utf8.encode(jsonEncode(<String, Object?>{
