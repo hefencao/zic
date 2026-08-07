@@ -45,7 +45,12 @@ for token in (
     'AppLifecycleState.detached',
 ):
     require(reader, token, 'Reader progress checkpoint queue')
-require(details, 'final refreshed = await widget.reloadLibrary(refreshContent: false);', 'details history refresh after Reader')
+for token in (
+    'typedef ComicDetailsChapterOpener = Future<ReadingProgress?> Function(',
+    'List<ImportedLibraryEntry> _replaceChapterProgress(',
+):
+    require(details, token, 'details in-memory history projection after Reader')
+forbid(details, 'reloadLibrary(refreshContent: false)', 'post-Reader full library reload')
 
 require(mihon, 'import dev.zic.network.AndroidCookieJar', 'Mihon cookie boundary compile closure')
 forbid(mihon, 'import dev.zic.network.AndroidBrowserCookieSession', 'internal cookie-session coupling')
@@ -56,11 +61,13 @@ for stale in (
 ):
     forbid(mihon, stale, 'Mihon host-action/chapter guessing')
 for token in (
-    'if (update != null)',
-    '"chapters"',
     'for (candidate in listOf("getChapterList", "fetchChapterList"))',
+    'Invocation("getMangaUpdate", listOf(manga, existingChapters, true, true))',
+    'normalizeMihonChapterCatalog(chapters)',
 ):
     require(mihon, token, 'Mihon source chapter interface')
+if mihon.index('for (candidate in listOf("getChapterList", "fetchChapterList"))') >= mihon.index('Invocation("getMangaUpdate"'):
+    raise SystemExit('Mihon combined update runs before explicit chapter catalog')
 for stale in (
     '_withoutSyntheticMihonFallback',
     '_removePersistedSyntheticChapters',

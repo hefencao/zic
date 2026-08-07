@@ -25,7 +25,7 @@
 - 使用真实 Venera/E-Hentai successor 检查详情“有新版本”、统一比较确认和 Reader 首次提醒；确认换 successor 后再次提醒。
 - 验证同源迁移只复制 exact chapter identity；sequence-only 候选不复制阅读状态或 artifact。
 - 在禁漫天堂真机验证两条分支：真实 `challenge-error-*` challenge进入 WebView并完成 handoff；仅含 Cloudflare challenge脚本/普通403的响应不产生 `sourceVerificationRequired`。确认 WebView不会在 Cloudflare尚未完成时因一次 `onPageFinished` 提前返回；Turnstile/JS challenge存在期间持续停留，最终页面连续稳定无 challenge后才自动保存完整 Cookie/UA snapshot并返回，且不要求生成新 `cf_clearance`。
-- 使用真实 Mihon 1.4/1.6扩展验证 `SMangaUpdate.chapters` / `get/fetchChapterList`：目录失败必须显示失败，成功空目录保持空；不得出现宿主“开始阅读”被投影成章节或人工“正文”单章。
+- 使用真实 Mihon 1.4/1.6扩展验证目录能力顺序：有 `get/fetchChapterList` 时只调用一次显式目录；只有能力不存在时才调用一次 combined `get/fetchMangaUpdate` 并保留已知章节顺序。目录失败显示真实失败，成功空目录保持空；不得创建人工单章。用两个完全相同 `SChapter.url` 的 fixture验证仅按 locator折叠，不按标题去重。
 
 ## P0：来源投影、Cloudflare 与封面身份设备闭环
 
@@ -33,11 +33,12 @@
 - 对禁漫天堂执行强制刷新，确认只有真实 Cloudflare challenge 产生 `sourceVerificationRequired`；普通 403/timeout/解析错误保持原分类，主/兼容 interceptor 行为一致。
 - 完成一次手动或自动验证后故意保持 runtime失败，再连续点击刷新/重试，确认不会再次自动跳 WebView；手动“网页验证”仍可重复打开。
 - 验证打开浏览器后立即取消/Activity中断不会擦除此前同站点/同 UA有效 snapshot；确认 snapshot revision仅在成功 capture时前进。
-- 让同一漫画同时进入更新与历史，并改变 resume chapter、Home enrichment 和前后台状态；确认封面 State 不被章节 key 销毁，Trace 不再出现同 identity 同时重复 source/first-frame owner。
-- 分别制造离屏未绘制、ImageStream error 和 encoded-source failure，确认 watchdog 只处理 provider stream，只有明确 decode exhaustion 才刷新 encoded bytes。
+- 让同一漫画同时进入更新、书架和历史，并改变 raw Mihon alias、resume chapter、Home enrichment 和前后台状态；确认 canonical cover State 不被销毁，成功封面不会因 presentation rebuild再次请求。
+- 分别制造 source loader错误与 Flutter decode错误；确认 presentation稳定停在占位且不启动 timer/watchdog/resume retry，也不 `ImageCache.evict`；显式来源刷新后才允许发起新请求。
 
 本文件只列未完成工作。
 
+- 用长阅读会话记录 progress writer事务次数：连续翻页期间不得每页写 SQLite；停止约 8 秒后提交一次，持续活跃最多约 30 秒提交一次。Reader pop动画不得等待该 durable提交；返回后 Home/详情只更新当前 progress投影，不扫描整库。
 ## P0：Transition 首帧与切页设备闭环
 
 - 验证拖动建立 transition 后，即使 current holder 为 0，目标页也先产生独立首帧。
@@ -67,7 +68,7 @@
 - 使用真实 Mihon 扩展验证 `getFilterList()` 中 CheckBox、TriState、Select 与 Group 子项的标签、默认值和回传值；未支持的自定义 Filter 不得阻塞普通浏览。
 - 验证漫画源 cache-first/background-refresh 与数据未变化时列表、封面不闪烁；下拉达到阈值后保留现有内容执行强制来源刷新。
 - 在窄屏、常见竖屏、宽屏与极端横纵比预览上确认完整行尽量占满可用宽度、折叠/展开第一行一致、完整行铺满媒体宽度、稀疏末行面积不超过参考完整行 2.4 倍、每行数量规则和屏幕高度 90% 上限同时成立。
-- 制造 encoded-source Future 失败、明确 decoder 错误及 encoded source 已就绪但 ImageStream 悬挂三种状态，确认首页、漫画源卡片和详情封面无需冷启动即可恢复，且不清空其它封面缓存。
+- 制造 source Future失败、decoder错误和离屏未绘制三种状态，确认 presentation都稳定失败而不自动重启；随后显式刷新来源，确认由统一 gateway重新加载且不会清空其它封面缓存。
 
 ## P1：首页与缓存身份
 

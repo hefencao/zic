@@ -171,8 +171,7 @@ final class _DemoHomeState extends State<DemoHome> {
   bool _batchManagement = false;
   final Set<String> _managedComicIdentities = <String>{};
   final Set<String> _openingComicIdentities = <String>{};
-  final Map<String, Future<EncodedResourceSource>> _coverSourceInflight =
-      <String, Future<EncodedResourceSource>>{};
+  ReadingProgress? _latestReaderProgress;
   int _navigationIndex = 0;
   bool _sourcePageVisited = false;
   String? _sourceSearchQuery;
@@ -704,19 +703,25 @@ final class _DemoHomeState extends State<DemoHome> {
   }
 
   Future<void> _saveReaderProgress(ReadingProgress progress) {
+    _latestReaderProgress = progress;
     final library = _library;
-    if (library is BufferedReadingProgressStore) {
-      (library as BufferedReadingProgressStore).enqueueProgress(progress);
+    if (library is ReaderProgressCheckpointStore) {
+      (library as ReaderProgressCheckpointStore).enqueueProgress(progress);
       return Future<void>.value();
     }
-    return library.saveProgress(progress);
+    // Non-buffered stores are compatibility/test implementations. Do not make
+    // the Reader await their durable completion.
+    unawaited(library.saveProgress(progress));
+    return Future<void>.value();
   }
 
-  Future<void> _flushReaderProgressAfterRoute() async {
-    final library = _library;
-    if (library is BufferedReadingProgressStore) {
-      await (library as BufferedReadingProgressStore).flushProgress();
+  ReadingProgress? _publishReaderProgressAfterRoute() {
+    final progress = _latestReaderProgress;
+    _latestReaderProgress = null;
+    if (progress != null) {
+      _librarySession.replaceProgress(progress);
     }
+    return progress;
   }
 
   Future<void> _markChapterReadForNavigation(
@@ -811,20 +816,22 @@ final class _DemoHomeState extends State<DemoHome> {
   Future<void> _openImportedChapter(
     ImportedLibraryEntry entry, {
     bool refreshRemote = true,
-  }) =>
-      _openImportedChapterLoader(
-        () => Future<ImportedLibraryEntry>.value(entry),
-        title: entry.chapter.displayName,
-        refreshRemote: refreshRemote,
-      );
+  }) async {
+    await _openImportedChapterLoader(
+      () => Future<ImportedLibraryEntry>.value(entry),
+      title: entry.chapter.displayName,
+      refreshRemote: refreshRemote,
+    );
+  }
 
-  Future<void> _openImportedChapterLoader(
+  Future<ReadingProgress?> _openImportedChapterLoader(
     Future<ImportedLibraryEntry> Function() loadChapter, {
     required String title,
     bool refreshRemote = true,
     int? initialPageIndex,
   }) async {
-    if (!mounted) return;
+    if (!mounted) return null;
+    _latestReaderProgress = null;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => DeferredReaderRoute<_PreparedImportedChapter>(
@@ -838,13 +845,12 @@ final class _DemoHomeState extends State<DemoHome> {
         ),
       ),
     );
-    if (mounted) {
-      // The Reader route has already returned, so durable SQLite completion is
-      // no longer on the transition critical path. Flush before reading the
-      // history snapshot so Home observes the final checkpoint exactly once.
-      await _flushReaderProgressAfterRoute();
-      await _reloadLibrary();
-    }
+    // The route transition must never wait for SQLite or a full library
+    // reload. Publish only the final in-memory progress once; the background
+    // writer coalesces durable checkpoints independently. Return the same
+    // projection to an already-mounted details screen so it can update locally
+    // without querying the whole library again.
+    return _publishReaderProgressAfterRoute();
   }
 
   Future<_PreparedImportedChapter> _prepareImportedChapter(
@@ -1004,8 +1010,8 @@ final class _DemoHomeState extends State<DemoHome> {
                 sourceId,
                 effectiveComicId,
               ).length,
-              'previousRealChapterCount':
-                  existing == null ? 0 : _savedRealChapterCount(existing),
+              'previousChapterCount':
+                  existing == null ? 0 : _savedChapterCount(existing),
               'chapterCount': manifest.chapters.length,
             },
           ),
@@ -1097,8 +1103,6 @@ final class _DemoHomeState extends State<DemoHome> {
     required String comicId,
     required Uri? coverUri,
     required ImportedLibraryEntry? fallbackChapter,
-    String resourceRole = 'cover',
-    bool forceRefresh = false,
   }) async {
     final fallback = fallbackChapter;
     final fallbackPage = sourceId != 'local-folder' ||
@@ -1112,9 +1116,6 @@ final class _DemoHomeState extends State<DemoHome> {
     if (sourceValue == null || sourceValue.trim().isEmpty) {
       throw StateError('漫画详情没有可用封面');
     }
-    final recoveryRequested = forceRefresh ||
-        resourceRole.startsWith('cover-recovery');
-    final cacheResourceRole = recoveryRequested ? 'cover' : resourceRole;
     final directPath = localImageFilePath(sourceValue);
     if (directPath != null) {
       return FileEncodedResourceSource(
@@ -1132,8 +1133,7 @@ final class _DemoHomeState extends State<DemoHome> {
         cacheComicId: _canonicalComicId(sourceId, comicId),
         uri: uri,
         revision: revision,
-        resourceRole: cacheResourceRole,
-        forceRefresh: recoveryRequested,
+        resourceRole: 'cover',
       );
     }
     // Android content URIs cannot be opened by FileImage. Copy them once into
@@ -1144,10 +1144,9 @@ final class _DemoHomeState extends State<DemoHome> {
       sourceId: sourceId,
       comicId: comicId,
       imageIdentity: sourceValue,
-      resourceRole: cacheResourceRole,
+      resourceRole: 'cover',
       revision: revision,
       awaitPersistence: false,
-      forceRefresh: recoveryRequested,
       loader: () => readLocalImageSource(sourceValue),
     );
   }
@@ -1163,54 +1162,18 @@ final class _DemoHomeState extends State<DemoHome> {
         );
   }
 
-  Future<EncodedResourceSource> _joinCoverSourceLoad(
-    LibraryComic comic, {
-    required bool forceRefresh,
-  }) {
-    final key = '${comic.identity}\u0000${comic.coverSourceId ?? ''}'
-        '\u0000${forceRefresh ? 'recovery' : 'normal'}';
-    final existing = _coverSourceInflight[key];
-    if (existing != null) return existing;
-    final future = _loadCoverSource(
-      sourceId: comic.sourceId,
-      comicId: comic.comicId,
-      coverUri: comic.coverSourceId == null
-          ? null
-          : Uri.tryParse(comic.coverSourceId!),
-      fallbackChapter: comic.coverChapter,
-      forceRefresh: forceRefresh,
-    );
-    _coverSourceInflight[key] = future;
-    unawaited(() async {
-      try {
-        await future;
-      } on Object {
-        // A failed future must be removed immediately. Retaining it would make
-        // the next bounded retry join the same completed failure.
-        if (identical(_coverSourceInflight[key], future)) {
-          _coverSourceInflight.remove(key);
-        }
-        return;
-      }
-      // Keep a very short presentation join window so simultaneous Home cards
-      // share one source/provider without becoming a byte cache owned by App.
-      await Future<void>.delayed(const Duration(seconds: 2));
-      if (identical(_coverSourceInflight[key], future)) {
-        _coverSourceInflight.remove(key);
-      }
-    }());
-    return future;
-  }
-
   Future<EncodedResourceSource> Function() _coverSourceLoaderForComic(
     LibraryComic comic,
   ) =>
-      () => _joinCoverSourceLoad(comic, forceRefresh: false);
+      () => _loadCoverSource(
+            sourceId: comic.sourceId,
+            comicId: comic.comicId,
+            coverUri: comic.coverSourceId == null
+                ? null
+                : Uri.tryParse(comic.coverSourceId!),
+            fallbackChapter: comic.coverChapter,
+          );
 
-  Future<EncodedResourceSource> Function() _coverRecoverySourceLoaderForComic(
-    LibraryComic comic,
-  ) =>
-      () => _joinCoverSourceLoad(comic, forceRefresh: true);
 
   bool _hasDetails(LibraryComic comic) {
     return comic.hasSourceCatalog ||

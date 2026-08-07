@@ -13,7 +13,7 @@ final class SqliteImportedLibraryStore
     implements
         ImportedLibraryStore,
         ComicVersionRelationStore,
-        BufferedReadingProgressStore {
+        ReaderProgressCheckpointStore {
   SqliteImportedLibraryStore(this.path);
 
   SqliteImportedLibraryStore.memory() : path = null;
@@ -176,11 +176,6 @@ final class SqliteImportedLibraryStore
       return;
     }
     _saveProgressSynchronously(_requireDb(), progress);
-  }
-
-  @override
-  Future<void> flushProgress() async {
-    await _progressWriter?.flush();
   }
 
   void _saveProgressSynchronously(

@@ -13,12 +13,11 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - Home MUST 在本地库的 cover-bearing primary 数据可用后先呈现首页；native media
   prewarm、持久整本队列 restore、外部插件 activation 和 enrichment 不得成为首封面
   请求的硬门槛。
-- 外部来源可以在首帧之后 ready；source projection 更新后，因来源暂不可用而失败的
-  封面 loader MUST 由稳定 artwork identity 和显式 retry revision 驱动；closure 对象变化不得触发重试。
+- 外部来源可以在首帧之后 ready；封面 presentation MUST 使用稳定 canonical artwork identity。因来源暂不可用、transport 或 decode 失败后 MUST 保持稳定占位，不得由定时器、App resume、first-frame watchdog、provider eviction 或 loader closure 变化自动重启请求；只有显式来源刷新、资源 revision 或稳定 identity变化才能重新加载。
 - 首页每张封面 MUST 独立完成请求和显示；一张封面变慢或 durable response 写入变慢，
   不得阻塞其它已经取得 encoded bytes 的封面。冷 miss MAY 先使用 memory source，持久化
   写入由统一 response cache 后台完成；已有 durable file hit MUST 保持文件直读。
-- 首页封面 Presentation State MUST 以稳定 comic identity 为主，不得因 resume chapter 变化被销毁；同 identity 的同时请求 SHOULD 合并 source/provider。无首帧 watchdog MUST NOT 把离屏或未 paint 直接视为 encoded cache 失效，只能先重建同一 provider stream；只有明确 decoder error恢复耗尽后才可刷新 encoded bytes。
+- 首页、书架和详情封面 Presentation State MUST 使用 canonical comic identity，不得因 raw Mihon alias、resume chapter、封面 URL 或 loader closure变化被销毁。Presentation MUST NOT 自己做定时 retry、first-frame watchdog、ImageCache eviction 或短时 Future join；资源重试/缓存所有权唯一属于 `ComicSourceResourceGateway/ResourceCacheManager`。
 - 首页、漫画源卡片和详情封面在 encoded-source Future 或 Flutter ImageStream 发生瞬时失败后 MUST 可有界恢复；解码失败 SHOULD 只驱逐对应 provider，不得清空统一 response cache。App resume SHOULD 重试仍失败的封面，`sourceVerificationRequired` MUST 保持显式恢复。
 - 首页封面 MUST 先通过 source-independent raw comic stable key 查询统一 response cache；
   命中时不得解析来源、创建 source transport 或等待插件 activation。raw miss 才可进入
@@ -206,7 +205,7 @@ identity 超限时使用稳定 hash 与原长度；高频事件 MAY 合并，但
 
 4. encoded artwork source 已就绪但 ImageStream 在有界时间内既无首帧也无错误时，Presentation MUST 对当前 cover identity 执行至多一次局部 source revalidation；不得清空全局 response/image cache或通过父组件 rebuild 重试。
 5. 远程详情 MUST 先显示已有 catalog cache，并等待当前 active source adapter 完成后台刷新；预览、评论及章节操作 MUST 在调用时解析当前 adapter，不得持有插件重启前的关闭 session。
-6. Mihon chapter catalog MUST 只投影插件/source API实际返回的 `SChapter`；MUST NOT 从 manga URL生成兼容单章，也不得按“开始阅读/正文/Start Reading”等标题推断宿主 action并增删章节。目录失败 MUST 保持失败；成功空目录 MUST 保持空目录。
+6. Mihon chapter catalog MUST 只投影插件/source API实际返回的 `SChapter`。若 `getChapterList`/`fetchChapterList` 明确可用，MUST 优先且只使用该目录调用；成功空目录保持空，真实调用错误保持失败。只有该能力明确不存在时，MAY 使用 TachiyomiX 1.6 `getMangaUpdate`/`fetchMangaUpdate`，并 MUST 保留已知章节顺序传入。MUST NOT 从 manga URL生成兼容单章，也不得按“开始阅读/正文/Start Reading”等标题推断章节。完全相同的非空 `SChapter.url` MAY 按 source locator折叠，标题相同或 sequence相同不能作为去重证据。
 7. Reader progress 的有序性与 durable I/O MUST 解耦：SQLite实现 MUST 在非 UI isolate执行同步 sqlite3/章节校验；Reader页面变化只入队最新 checkpoint，不得逐页发布 Home/library projection。正常 Reader route 返回后 composition MUST 等待 progress barrier再一次性刷新历史。
 8. 外部 artwork MUST 统一通过 `ComicSourceResourceGateway`；raw plugin comic locator 与 durable artwork identity MUST 分离。Mihon 等可变 raw locator必须使用 source canonical comic identity构造封面/预览 cache namespace；`mihon:resource:` 等插件 URI不得传给本地文件 loader。
 4. 同一 browser snapshot revision MUST NOT 在每个 HTTP 请求前重复覆盖 runtime Cookie；新 revision 可再次导入。Mihon 首个重试 MUST 能从 snapshot 同步获得 cookie，不得依赖 Android `CookieManager.setCookie()` 的异步持久化时序。

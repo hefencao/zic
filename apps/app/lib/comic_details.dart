@@ -124,7 +124,6 @@ typedef ComicDetailsCoverLoader = Future<EncodedResourceSource> Function({
   required String comicId,
   required Uri? coverUri,
   required ImportedLibraryEntry? fallbackChapter,
-  String resourceRole,
 });
 
 typedef ComicDetailsLibraryReloader = Future<ComicDetailsLibrarySnapshot>
@@ -149,7 +148,7 @@ typedef ComicDetailsChapterEnsurer = Future<ImportedLibraryEntry> Function(
 
 typedef ComicDetailsChapterLoader = Future<ImportedLibraryEntry> Function();
 
-typedef ComicDetailsChapterOpener = Future<void> Function(
+typedef ComicDetailsChapterOpener = Future<ReadingProgress?> Function(
   ComicDetailsChapterLoader loadChapter, {
   required bool refreshRemote,
   required String title,
@@ -589,7 +588,7 @@ final class _LocalComicDetailsScreenState
       setState(() {});
     }
     try {
-      await widget.onOpenChapter(
+      final progress = await widget.onOpenChapter(
         () async {
           final entry = existing ??
               (sourceChapter == null
@@ -604,9 +603,12 @@ final class _LocalComicDetailsScreenState
         title: title,
         initialPageIndex: initialPageIndex,
       );
-      final refreshed = await widget.reloadLibrary(refreshContent: false);
-      if (mounted) {
-        setState(() => _library = refreshed);
+      if (mounted && progress != null) {
+        setState(
+          () => _library = _library.copyWith(
+            chapters: _replaceChapterProgress(_library.chapters, progress),
+          ),
+        );
       }
     } on Object catch (error, stackTrace) {
       if (mounted) {
@@ -976,6 +978,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
     required this.inspectChapterDownload,
     required this.downloadChanges,
     required this.onDownloadComic,
+    this.artworkIdentity,
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
     this.resolveSource,
@@ -1005,6 +1008,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
   final ComicDetailsChapterDownloadInspector inspectChapterDownload;
   final Stream<ChapterDownloadSnapshot> downloadChanges;
   final ComicDetailsComicDownloader onDownloadComic;
+  final String? artworkIdentity;
   final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final ComicDetailsSourceResolver? resolveSource;
@@ -1500,7 +1504,7 @@ final class _RemoteComicDetailsScreenState
       setState(() {});
     }
     try {
-      await widget.onOpenChapter(
+      final progress = await widget.onOpenChapter(
         () async {
           final entry = existing ?? await _ensure(chapter);
           if (!_isRead(_library.readStates, entry) && mounted) {
@@ -1512,9 +1516,12 @@ final class _RemoteComicDetailsScreenState
         title: chapter.title,
         initialPageIndex: initialPageIndex,
       );
-      final refreshed = await widget.reloadLibrary(refreshContent: false);
-      if (mounted) {
-        setState(() => _library = refreshed);
+      if (mounted && progress != null) {
+        setState(
+          () => _library = _library.copyWith(
+            chapters: _replaceChapterProgress(_library.chapters, progress),
+          ),
+        );
       }
     } on Object catch (error, stackTrace) {
       if (mounted) {
@@ -1750,6 +1757,8 @@ final class _RemoteComicDetailsScreenState
       cover: _ComicDetailCover(
         sourceId: _source.sourceId,
         comicId: comic.comicId,
+        presentationIdentity: widget.artworkIdentity ??
+            '${_source.sourceId}\u0000${widget.summary.comicId}',
         coverUri: comic.coverUri,
         fallbackChapter:
             _library.chapters.isEmpty ? null : _library.chapters.first,
@@ -2306,6 +2315,20 @@ List<ImportedLibraryEntry> _replaceChapterEntry(
       replacement,
     ];
 
+List<ImportedLibraryEntry> _replaceChapterProgress(
+  Iterable<ImportedLibraryEntry> entries,
+  ReadingProgress progress,
+) =>
+    <ImportedLibraryEntry>[
+      for (final entry in entries)
+        if (entry.chapter.sourceId == progress.sourceId &&
+            entry.chapter.comicId == progress.comicId &&
+            entry.chapter.chapterId == progress.chapterId)
+          entry.copyWith(progress: progress)
+        else
+          entry,
+    ];
+
 ImportedLibraryEntry? _chapterEntryFor(
   Iterable<ImportedLibraryEntry> entries, {
   required String sourceId,
@@ -2400,6 +2423,7 @@ final class _ComicDetailCover extends StatefulWidget {
   const _ComicDetailCover({
     required this.sourceId,
     required this.comicId,
+    required this.presentationIdentity,
     required this.coverUri,
     required this.fallbackChapter,
     required this.loader,
@@ -2407,6 +2431,7 @@ final class _ComicDetailCover extends StatefulWidget {
 
   final String sourceId;
   final String comicId;
+  final String presentationIdentity;
   final Uri? coverUri;
   final ImportedLibraryEntry? fallbackChapter;
   final ComicDetailsCoverLoader loader;
@@ -2415,22 +2440,12 @@ final class _ComicDetailCover extends StatefulWidget {
   State<_ComicDetailCover> createState() => _ComicDetailCoverState();
 }
 
-final class _ComicDetailCoverState extends State<_ComicDetailCover>
-    with WidgetsBindingObserver {
+final class _ComicDetailCoverState extends State<_ComicDetailCover> {
   late Future<EncodedResourceSource> _source;
-  bool _failed = false;
-  bool _frameReady = false;
-  bool _encodedRecoveryAttempted = false;
-  static const _firstFrameTimeout = Duration(milliseconds: 2500);
-
-  int _decodeRecoveryGeneration = 0;
-  final ArtworkRetryController _retry = ArtworkRetryController();
-  Timer? _firstFrameWatchdog;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _source = _load();
   }
 
@@ -2438,84 +2453,20 @@ final class _ComicDetailCoverState extends State<_ComicDetailCover>
   void didUpdateWidget(covariant _ComicDetailCover oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.sourceId != widget.sourceId ||
-        oldWidget.comicId != widget.comicId ||
-        oldWidget.coverUri != widget.coverUri ||
-        oldWidget.fallbackChapter?.chapter.chapterId !=
-            widget.fallbackChapter?.chapter.chapterId) {
-      _restartLoad(resetRetryBudget: true);
+        oldWidget.presentationIdentity != widget.presentationIdentity) {
+      _source = _load();
     }
   }
 
-  Future<EncodedResourceSource> _load({bool forceRefresh = false}) async {
-    try {
-      final source = await Future<EncodedResourceSource>.sync(
+  Future<EncodedResourceSource> _load() =>
+      Future<EncodedResourceSource>.sync(
         () => widget.loader(
           sourceId: widget.sourceId,
           comicId: widget.comicId,
           coverUri: widget.coverUri,
           fallbackChapter: widget.fallbackChapter,
-          resourceRole: forceRefresh
-              ? 'cover-recovery:$_decodeRecoveryGeneration'
-              : 'cover',
         ),
       );
-      _scheduleFirstFrameWatchdog();
-      return source;
-    } on Object catch (error, stackTrace) {
-      _failed = true;
-      _retry.schedule(() => _restartLoad());
-      Error.throwWithStackTrace(error, stackTrace);
-    }
-  }
-
-  void _scheduleFirstFrameWatchdog() {
-    _firstFrameWatchdog?.cancel();
-    _firstFrameWatchdog = Timer(_firstFrameTimeout, () {
-      if (!mounted || _frameReady) return;
-      _failed = true;
-      _recoverEncodedSource();
-    });
-  }
-
-  void _restartLoad({
-    bool resetRetryBudget = false,
-    bool forceRefresh = false,
-  }) {
-    if (!mounted) return;
-    if (resetRetryBudget) _retry.reset();
-    setState(() {
-      // Keep the same placeholder while the replacement source is loaded.
-      _failed = true;
-      _frameReady = false;
-      if (forceRefresh) _decodeRecoveryGeneration++;
-      _source = _load(forceRefresh: forceRefresh);
-    });
-  }
-
-  void _recoverEncodedSource() {
-    if (_encodedRecoveryAttempted) return;
-    _encodedRecoveryAttempted = true;
-    _restartLoad(forceRefresh: true);
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && _failed) {
-      _encodedRecoveryAttempted = false;
-      _retry.retryNow(
-        () => _restartLoad(resetRetryBudget: true),
-        resetBudget: true,
-      );
-    }
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _firstFrameWatchdog?.cancel();
-    _retry.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -2524,32 +2475,13 @@ final class _ComicDetailCoverState extends State<_ComicDetailCover>
       builder: (context, snapshot) {
         final source = snapshot.data;
         if (source != null) {
-          return RecoverableArtworkImage(
-            key: ValueKey<String>(
-              '${widget.sourceId}:${widget.comicId}:$_decodeRecoveryGeneration',
-            ),
-            image: encodedResourceImageProvider(source),
-            seed: widget.coverUri?.toString() ?? widget.comicId,
+          return StableArtworkImage(
+            source: source,
+            seed: widget.presentationIdentity,
             fit: BoxFit.cover,
-            onFrameReady: () {
-              _firstFrameWatchdog?.cancel();
-              _frameReady = true;
-              _failed = false;
-              _encodedRecoveryAttempted = false;
-              _retry.reset();
-            },
-            onDecodeFailure: () => _failed = true,
-            onRecoveryExhausted: _recoverEncodedSource,
           );
         }
-        if (snapshot.hasError) {
-          return _CoverPlaceholder(
-            seed: widget.coverUri?.toString() ?? widget.comicId,
-          );
-        }
-        return _CoverPlaceholder(
-          seed: widget.coverUri?.toString() ?? widget.comicId,
-        );
+        return _CoverPlaceholder(seed: widget.presentationIdentity);
       },
     );
   }

@@ -78,8 +78,9 @@ final class SqliteProgressWriter {
       'comicId': progress.comicId,
       'chapterId': progress.chapterId,
       'pageIndex': progress.pageIndex,
+      'subPageOffset': progress.subPageOffset,
+      'readerMode': progress.readerMode.name,
       'updatedUs': progress.updatedAt.toUtc().microsecondsSinceEpoch,
-      'progressJson': jsonEncode(progress.toJson()),
     });
   }
 
@@ -161,16 +162,63 @@ void _runSqliteProgressWriter(List<Object?> bootstrap) {
     return;
   }
   parent.send(commands.sendPort);
+  final buffered = <String, Map<Object?, Object?>>{};
+  Timer? idleCommitTimer;
+  Timer? maximumCommitTimer;
   String? bufferedFailure;
+
+  String identityOf(Map message) =>
+      '${message['sourceId']}\u0000${message['chapterId']}';
+
+  void remember(Map message) {
+    final identity = identityOf(message);
+    final previous = buffered[identity];
+    final updatedUs = message['updatedUs'] as int;
+    final previousUpdatedUs = previous?['updatedUs'] as int?;
+    if (previousUpdatedUs == null || updatedUs >= previousUpdatedUs) {
+      buffered[identity] = Map<Object?, Object?>.from(message);
+    }
+  }
+
+  void commitBuffered() {
+    idleCommitTimer?.cancel();
+    idleCommitTimer = null;
+    maximumCommitTimer?.cancel();
+    maximumCommitTimer = null;
+    if (buffered.isEmpty) return;
+    final pending = buffered.values.toList(growable: false);
+    buffered.clear();
+    try {
+      db.execute('BEGIN');
+      for (final message in pending) {
+        _saveProgress(db, message);
+      }
+      db.execute('COMMIT');
+    } on Object catch (error) {
+      runCatchingRollback(db);
+      bufferedFailure ??= error.toString();
+    }
+  }
+
+  void scheduleCommit() {
+    // Reader progress is durability state, not a per-page transaction log.
+    // Reader dwell time commonly exceeds two seconds, so a short debounce still
+    // degenerates into one SQLite transaction per page. Keep the writer quiet
+    // across ordinary page turns and impose only a coarse maximum-latency bound.
+    // Lifecycle/close paths can still request durable completion through the
+    // ordinary store API without putting that barrier on Reader navigation.
+    idleCommitTimer?.cancel();
+    idleCommitTimer = Timer(const Duration(seconds: 8), commitBuffered);
+    maximumCommitTimer ??=
+        Timer(const Duration(seconds: 30), commitBuffered);
+  }
+
   commands.listen((message) {
     if (message is! Map) return;
     final operation = message['op'];
     if (operation == 'save') {
-      try {
-        _saveProgress(db, message);
-      } on Object catch (error) {
-        bufferedFailure ??= error.toString();
-      }
+      remember(message);
+      scheduleCommit();
       return;
     }
     final id = message['id'];
@@ -178,6 +226,7 @@ void _runSqliteProgressWriter(List<Object?> bootstrap) {
     try {
       switch (operation) {
         case 'flush':
+          commitBuffered();
           final failure = bufferedFailure;
           bufferedFailure = null;
           if (failure == null) {
@@ -191,6 +240,7 @@ void _runSqliteProgressWriter(List<Object?> bootstrap) {
           }
           break;
         case 'close':
+          commitBuffered();
           db.dispose();
           parent.send(<String, Object?>{'id': id, 'ok': true});
           commands.close();
@@ -208,13 +258,33 @@ void _runSqliteProgressWriter(List<Object?> bootstrap) {
   });
 }
 
+void runCatchingRollback(sql.Database db) {
+  try {
+    db.execute('ROLLBACK');
+  } on Object {
+    // The write may have failed before BEGIN completed. Preserve the original
+    // error rather than replacing it with a rollback failure.
+  }
+}
+
 void _saveProgress(sql.Database db, Map message) {
   final sourceId = message['sourceId']! as String;
   final comicId = message['comicId']! as String;
   final chapterId = message['chapterId']! as String;
   final pageIndex = message['pageIndex']! as int;
   final updatedUs = message['updatedUs']! as int;
-  final progressJson = message['progressJson']! as String;
+  final progressJson = jsonEncode(<String, Object>{
+    'sourceId': sourceId,
+    'comicId': comicId,
+    'chapterId': chapterId,
+    'pageIndex': pageIndex,
+    'subPageOffset': (message['subPageOffset']! as num).toDouble(),
+    'readerMode': message['readerMode']! as String,
+    'updatedAt': DateTime.fromMicrosecondsSinceEpoch(
+      updatedUs,
+      isUtc: true,
+    ).toIso8601String(),
+  });
 
   final rows = db.select('''
     SELECT comic_id, chapter_json

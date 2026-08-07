@@ -310,6 +310,33 @@ final class HomeLibrarySession extends ChangeNotifier {
     _publish();
   }
 
+  /// Updates the visible Home projection after a Reader route has returned.
+  ///
+  /// Reader page callbacks never call this method. Persistence is owned by the
+  /// library store and may still be completing on its background writer; this
+  /// method only replaces the matching in-memory projection once per route.
+  void replaceProgress(ReadingProgress progress) {
+    var changed = false;
+    final next = <ImportedLibraryEntry>[
+      for (final entry in _entries)
+        if (entry.chapter.sourceId == progress.sourceId &&
+            entry.chapter.chapterId == progress.chapterId &&
+            entry.chapter.comicId == progress.comicId)
+          (() {
+            final current = entry.progress;
+            if (current != null && current.updatedAt.isAfter(progress.updatedAt)) {
+              return entry;
+            }
+            changed = true;
+            return entry.copyWith(progress: progress);
+          })()
+        else
+          entry,
+    ];
+    if (!changed) return;
+    _entries = List<ImportedLibraryEntry>.unmodifiable(next);
+    _publish();
+  }
 
   Future<void> replaceSources(
     List<BrowsableComicSource> sources, {

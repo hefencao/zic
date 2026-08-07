@@ -1,10 +1,10 @@
 import 'dart:collection';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:downloads/downloads.dart';
 import 'package:resource_cache/resource_cache.dart';
+import 'package:storage_bridge/storage_bridge.dart';
 
 const comicArtworkCacheRevision = 'artwork-v2';
 
@@ -78,10 +78,7 @@ final class ComicSourceResourceGateway {
       revision: revision,
       resourceRole: resourceRole,
     );
-    return switch (encoded) {
-      MemoryEncodedResourceSource(:final bytes) => bytes,
-      FileEncodedResourceSource(:final path) => File(path).readAsBytes(),
-    };
+    return readEncodedResourceBytes(encoded);
   }
 
   Future<EncodedResourceSource> loadArtworkSource({

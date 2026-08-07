@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.156`
-**App build：** `0.31.0+156`
+**源码版本：** `0.31.0-dev.157`
+**App build：** `0.31.0+157`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -9,12 +9,10 @@
 
 ## 当前实现
 
-- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=156`。
+- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=157`。
 - 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
-- 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation
-  不阻塞 Home primary，外部 source ready 后增量接入；失败封面仅按稳定资源 identity、显式 retry revision 或 App resume 恢复，loader closure identity 不参与重试。
-- 首页封面按卡片独立完成；前台 cold miss 在 encoded bytes 到达后立即返回 memory source，
-  durable response 写入后台排队，warm durable file hit 仍直接返回文件源。 首页、漫画源卡片与详情封面在 source Future 瞬时失败时使用有界重试；Flutter 解码失败只驱逐对应 provider 并重建 ImageStream，App resume 时可再次恢复，不清空统一 response cache。
+- 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation不阻塞 Home primary，外部 source ready 后增量接入。
+- artwork资源恢复唯一属于 `ComicSourceResourceGateway/ResourceCacheManager`。Home、书架、漫画源和详情 presentation 已删除定时 retry、first-frame watchdog、App resume自动 retry、全局 ImageCache eviction和 App级短时 Future join；同一 encoded source 只创建一个 ImageProvider；失败后保持稳定占位，显式来源刷新/资源 revision/稳定 identity变化才会重新加载。
 - 外部 artwork 的 raw comicId只保留 runtime locator语义；durable cover/preview namespace使用来源 canonical comic identity。Home、漫画源、详情与迁移统一经 `ComicSourceResourceGateway`，`mihon:resource:` 不再误入本地文件 loader；gateway先查 source-independent durable cache，miss后才要求 active source。
 - 详情页 AppBar 不再保留旧版本/迁移图标。正文中的版本卡按 VibeVenera 逻辑分别提供“查看新/旧版本”和“迁移”；多个版本先选择。查看使用临时 route identity，持久阅读历史仍按各 raw source/comic identity 分离；迁移继续使用原严格比较确认 UI，只有 exact chapter identity 复制阅读状态。Reader 对每个 source/predecessor/successor 仅首次提醒。
 - App-owned modal panel 的操作行统一使用左下角 X 关闭，右侧保留确认/保存/删除动作，
@@ -29,14 +27,14 @@
 - Mihon runtime 通过稳定 `AndroidCookieJar.resetBrowserSnapshotImports()` 清理进程内 browser-snapshot revision；`AndroidBrowserCookieSession` 不再是 plugin host直接依赖或 common runtime ABI项。APK metadata reader可解析字符串资源形式的 extensionLib/entry class，并支持多个 entry class分隔。设备发现合并系统包、应用列表与仓库 package name精确探测，逐 APK失败和扫描计数直接显示；页面打开会自动加载默认仓库以提供精确探测 identity。扫描仅覆盖系统共享 APK，Mihon 私有扩展需从 ZIC仓库安装。
 - Mihon common runtime要求的 `SourceVerificationRequiredException` 已加入 network bridge consumer R8 keep规则；动态 ABI和 host在 minified Release中继续以同一原始类名共享 typed验证异常。门禁会从 required network class列表反查 keep覆盖。
 - Catalog 的 `resolveComicWebUri` 装饰器与来源能力保持 `Uri?` 合同；来源无法提供详情 URL 时由调用方继续使用 descriptor website fallback。
-- Reader 进度保持 latest-wins有序 checkpoint，但 SQLite同步查询/章节JSON校验/写入已移到独立 progress isolate + WAL connection。Reader 热路径只入队，不逐页发布 `HomeLibrarySession`；route返回后 composition等待 durable barrier并一次性 reload历史，因此翻页和退出动画不等待磁盘I/O。生命周期 checkpoint仍为 best effort。
+- Reader progress保持 latest-wins有序 checkpoint，SQLite查询/章节JSON校验/写入位于独立 progress isolate + WAL connection。Reader热路径只入队；同章节 checkpoint停止更新约8秒时批量提交，持续阅读最多约30秒提交一次。Reader route不等待 durable barrier；返回后 Home只发布最终 progress内存投影一次，已挂载详情页只替换当前章节，不再全量 reload library。生命周期 checkpoint仍为 best effort。
 - 来源漫画从 source页首次打开并持久化后，再次进入时外层 source route 已持有 raw comic identity；local SavedComic分支直接 `_pushComicDetails`，不再嵌套 `_openComicDetails` 重申请相同锁，因此不会静默吞掉第二次导航。
 - Home阅读历史、详情和漫画源使用同一 external artwork gateway/cache identity；HTTP(S) 与 `mihon:resource:` 等插件 locator即使 source尚未激活也先查 canonical durable cache，只有 miss才解析 source。
 - 外部插件 manifest按记录容错并保留上一代 `.bak`；启动可从 `.bak`、`.part` 或旧 `.invalid`恢复有效记录与旧 sandbox payload路径，再重写主 manifest。恢复失败逐项展示，不再因一个坏记录清空全部插件。
-- Mihon chapter目录不再存在 synthetic/gallery fallback或标题去重：只接受 `SMangaUpdate.chapters` 或 `get/fetchChapterList`实际返回。目录失败保持失败，成功空目录保持空目录；宿主“开始/继续阅读”UI文字不参与 `SChapter` 推断。
+- Mihon chapter目录不再存在 synthetic/gallery fallback或标题去重。bridge先调用明确的 `get/fetchChapterList`；成功（含空）即权威，真实错误直接失败。只有该能力不存在时才调用 TachiyomiX 1.6 combined update，并传入已知章节原顺序。完全相同的非空 `SChapter.url`按 source locator折叠；显示标题不参与判断。
 - Cloudflare 主路径与兼容路径统一委托 typed detector；仅严格 403/503 challenge 映射 `sourceVerificationRequired`，没有隐藏 WebView 或消息文本判断。
 - catalog response cache 使用稳定 source/comic/chapter identity 和结构 weight；页面正文不进入该缓存。
-- Home“更新漫画”与阅读历史分离：更新集合只按 `SavedComicRecord.updatedAt`；Reader checkpoint不再逐页触发 Home rebuild，历史在 Reader route返回后的单次 library reload中更新。
+- Home“更新漫画”与阅读历史分离：更新集合只按 `SavedComicRecord.updatedAt`；Reader checkpoint不逐页触发 Home rebuild，route返回后只用最终 `ReadingProgress`更新匹配的内存历史 entry一次。
 - 详情预览保留完整 URI 作为单项绘制身份，但 artwork role/cache key 使用去 `@x/y` 的 base URI，
   同一原图的不同裁剪共享一份编码字节；Venera `loadThumbnails` 的首批与游标分页
   不再重复消费 `loadInfo` 缩略图；折叠与展开共用按原顺序生成的等面积布局；实际行内含横图时最多 2 张、纯竖图时最多 3 张；只在相邻三个候选内做最小局部重排，并受阅读设置的 1–8 项上限约束（默认 4）。完整行按全部媒体宽度反算尺寸，预览图片区不再叠加 Card 和水平 padding；稀疏末行最多放大到参考完整行面积的 2.4 倍；折叠高度取第一行，展开图片区域不超过屏幕高度 90%，居中箭头控制展开；点击预览项会将索引传入既有 Reader 路由；Venera
@@ -63,8 +61,6 @@
   书架页不再产生重复首屏请求。
 - Android APK 构建和真机生命周期验证未在当前环境执行。
 
-- dev.145 将 2.5 秒首帧 watchdog 限制为同一 provider stream 的一次重建；无帧不再等价于 encoded cache 失效。Home 卡片 State 使用 section + comic identity，重复卡片共享 source Future/provider；只有明确 decoder exhaustion 才允许强制重读同一 cover identity。
-- 远程详情现在先显示持久 catalog，再等待当前 active source；预览和评论每次调用重新解析 adapter。App 不再识别或清理 Mihon synthetic chapter identity；与真实目录并存的独立“开始阅读”动作只在 Mihon adapter 入 Catalog 前去重。
 - 详情和漫画源刷新结果由同一个 `AppPullToRefresh` 定位；简介使用 Card，评论 HTML 换行转为普通文本，“继续”区增加上下间距。
 
 ## 验证矩阵
@@ -73,7 +69,7 @@
 |---|---|
 | repository/documentation/Dart static gates | Verified-static |
 | current-code documentation consistency gate | Verified-static |
-| dev.75–dev.156 ownership gates | Verified-static |
+| dev.75–dev.157 ownership gates | Verified-static |
 | Android/Mihon/Venera/Reader/Pipeline/UI contracts | Verified-static / toolchain |
 | Kotlin texture bridge compile stub | Verified-toolchain |
 | pinned libwebp host build/smoke | Unverified：当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip` |

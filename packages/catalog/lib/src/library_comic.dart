@@ -220,7 +220,6 @@ final class LibraryComic {
 List<LibraryComic> collapseCanonicalLibraryComics(
   Iterable<LibraryComic> comics, {
   required String Function(String sourceId, String comicId) canonicalIdentity,
-  bool Function(String chapterId)? isCompatibilityChapter,
 }) {
   final grouped = <String, List<LibraryComic>>{};
   for (final comic in comics) {
@@ -229,10 +228,7 @@ List<LibraryComic> collapseCanonicalLibraryComics(
   }
   final collapsed = <LibraryComic>[
     for (final aliases in grouped.values)
-      preferredLibraryComicAlias(
-        aliases,
-        isCompatibilityChapter: isCompatibilityChapter,
-      ),
+      preferredLibraryComicAlias(aliases),
   ]
     ..sort((left, right) {
       final recent = right.latestUpdatedAt.compareTo(left.latestUpdatedAt);
@@ -243,23 +239,15 @@ List<LibraryComic> collapseCanonicalLibraryComics(
 
 /// Selects the strongest durable alias without changing its raw identity.
 ///
-/// A richer authoritative catalog wins over a one-chapter or compatibility
-/// projection. Downloaded chapters and page counts are secondary evidence.
-LibraryComic preferredLibraryComicAlias(
-  Iterable<LibraryComic> aliases, {
-  bool Function(String chapterId)? isCompatibilityChapter,
-}) {
+/// A richer authoritative catalog wins over a weaker alias projection.
+/// Downloaded chapters and page counts are secondary evidence.
+LibraryComic preferredLibraryComicAlias(Iterable<LibraryComic> aliases) {
   final values = aliases.toList(growable: false);
   if (values.isEmpty) {
     throw ArgumentError.value(aliases, 'aliases', 'must not be empty');
   }
-  final compatibility = isCompatibilityChapter ?? (_) => false;
   return values.reduce(
-    (left, right) => _compareLibraryComicAliasQuality(
-              left,
-              right,
-              compatibility,
-            ) >=
+    (left, right) => _compareLibraryComicAliasQuality(left, right) >=
             0
         ? left
         : right,
@@ -269,17 +257,8 @@ LibraryComic preferredLibraryComicAlias(
 int _compareLibraryComicAliasQuality(
   LibraryComic left,
   LibraryComic right,
-  bool Function(String chapterId) isCompatibilityChapter,
 ) {
-  final leftReal = left.sourceChapters
-      .where((chapter) => !isCompatibilityChapter(chapter.chapterId))
-      .length;
-  final rightReal = right.sourceChapters
-      .where((chapter) => !isCompatibilityChapter(chapter.chapterId))
-      .length;
-  var result = leftReal.compareTo(rightReal);
-  if (result != 0) return result;
-  result = left.sourceChapters.length.compareTo(right.sourceChapters.length);
+  var result = left.sourceChapters.length.compareTo(right.sourceChapters.length);
   if (result != 0) return result;
   result = left.chapters.length.compareTo(right.chapters.length);
   if (result != 0) return result;

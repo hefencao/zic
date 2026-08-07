@@ -348,6 +348,10 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
             downloadChanges: _chapterDownloads.changes,
             onDownloadComic: (entries) =>
                 _downloadComicEntries(identity, entries),
+            artworkIdentity: _canonicalComicKey(
+              source.sourceId,
+              comic.comicId,
+            ),
             onOpenSourceWebView: ({Uri? verificationUri}) {
               final active = _sourceForId(source.sourceId) ?? source;
               return _openSourceWebView(

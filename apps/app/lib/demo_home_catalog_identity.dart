@@ -93,8 +93,8 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
     SavedComicRecord left,
     SavedComicRecord right,
   ) {
-    final leftReal = _savedRealChapterCount(left);
-    final rightReal = _savedRealChapterCount(right);
+    final leftReal = _savedChapterCount(left);
+    final rightReal = _savedChapterCount(right);
     var result = leftReal.compareTo(rightReal);
     if (result != 0) return result;
     result = left.chapters.length.compareTo(right.chapters.length);
@@ -106,9 +106,9 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
     return right.comicId.compareTo(left.comicId);
   }
 
-  int _savedRealChapterCount(SavedComicRecord comic) => comic.chapters.length;
+  int _savedChapterCount(SavedComicRecord comic) => comic.chapters.length;
 
-  int _manifestRealChapterCount(ComicManifest manifest) =>
+  int _manifestChapterCount(ComicManifest manifest) =>
       manifest.chapters.length;
 
   Future<bool> _persistKnownCanonicalComicIds() async {
@@ -175,12 +175,12 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
     required ComicManifest incoming,
   }) {
     if (existing == null) return;
-    final previousRealCount = _savedRealChapterCount(existing);
-    final incomingRealCount = _manifestRealChapterCount(incoming);
-    final lostRealCatalog = previousRealCount > 0 && incomingRealCount == 0;
+    final previousChapterCount = _savedChapterCount(existing);
+    final incomingChapterCount = _manifestChapterCount(incoming);
+    final lostCatalog = previousChapterCount > 0 && incomingChapterCount == 0;
     final collapsedToSingleChapter =
-        previousRealCount > 1 && incomingRealCount <= 1;
-    if (!lostRealCatalog && !collapsedToSingleChapter) return;
+        previousChapterCount > 1 && incomingChapterCount <= 1;
+    if (!lostCatalog && !collapsedToSingleChapter) return;
     final canonical = _canonicalComicKey(
       incoming.comic.sourceId,
       incoming.comic.comicId,
@@ -197,8 +197,8 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
         ),
         payload: <String, Object?>{
           'stage': 'chapter-catalog-regression-rejected',
-          'reason': lostRealCatalog
-              ? 'lost-real-catalog'
+          'reason': lostCatalog
+              ? 'lost-catalog'
               : 'collapsed-to-single-chapter',
           'comicIdLength': incoming.comic.comicId.length,
           'existingComicIdLength': existing.comicId.length,
@@ -206,15 +206,13 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
             incoming.comic.sourceId,
             incoming.comic.comicId,
           ).length,
-          'previousChapterCount': existing.chapters.length,
-          'previousRealChapterCount': previousRealCount,
-          'incomingChapterCount': incoming.chapters.length,
-          'incomingRealChapterCount': incomingRealCount,
+          'previousChapterCount': previousChapterCount,
+          'incomingChapterCount': incomingChapterCount,
         },
       ),
     );
     throw StateError(
-      '漫画源曾返回多个真实章节，本次目录退化为${incomingRealCount == 0 ? '空目录或兼容单章节' : '单章节'}；'
+      '漫画源曾返回多个章节，本次目录退化为${incomingChapterCount == 0 ? '空目录' : '单章节'}；'
       '已保留原目录，请重新完成站点验证后刷新。',
     );
   }

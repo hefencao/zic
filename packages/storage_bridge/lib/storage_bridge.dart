@@ -21,6 +21,16 @@ ImageProvider<Object> encodedResourceImageProvider(
       FileEncodedResourceSource(:final path) => FileImage(File(path)),
     };
 
+/// Materializes immutable encoded content behind the platform/storage boundary.
+///
+/// App composition should not open durable cache files directly; it consumes
+/// [EncodedResourceSource] while this bridge owns the file-system conversion.
+Future<Uint8List> readEncodedResourceBytes(EncodedResourceSource source) =>
+    switch (source) {
+      MemoryEncodedResourceSource(:final bytes) => Future<Uint8List>.value(bytes),
+      FileEncodedResourceSource(:final path) => File(path).readAsBytes(),
+    };
+
 Future<String> getDefaultZicStorageRoot() async {
   final support = await getApplicationSupportDirectory();
   return '${support.path}/zic';

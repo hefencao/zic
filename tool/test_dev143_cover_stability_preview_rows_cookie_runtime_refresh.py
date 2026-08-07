@@ -48,11 +48,14 @@ for forbidden in (
         raise SystemExit(f'preview width waste remains: {forbidden}')
 
 for token in (
-    'Duration(milliseconds: 900)',
-    'Keep the stable placeholder visible until a replacement frame is',
-    'if (!ready || _failed)',
+    'final class StableArtworkImage',
+    'Presentation does not own retry policy or encoded bytes.',
+    'stays on one stable placeholder instead of starting presentation-owned retry',
 ):
-    require(artwork, token, 'stable cover recovery')
+    require(artwork, token, 'stable cover presentation')
+for stale in ('Timer(', '.evict()', 'ArtworkRetryController', 'RecoverableArtworkImage'):
+    if stale in artwork:
+        raise SystemExit(f'presentation-owned cover recovery remains: {stale}')
 if '(_loadFailed && oldWidget.loader != widget.loader)' in home:
     raise SystemExit('loader closure identity must not restart failed covers')
 for owner, text in (('home', home), ('source', source), ('details', details)):

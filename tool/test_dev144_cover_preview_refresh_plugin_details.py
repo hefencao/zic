@@ -27,27 +27,33 @@ architecture = read('docs/ARCHITECTURE.md')
 spec = read('docs/SPEC.md')
 check = read('tool/check.sh')
 
-for token in (
+require(artwork, 'final class StableArtworkImage', 'stable artwork presentation')
+for forbidden in (
     'onRecoveryExhausted',
-    '_exhaustionReported',
-    'scheduleMicrotask(() => widget.onRecoveryExhausted?.call())',
+    'ArtworkRetryController',
+    'RecoverableArtworkImage',
 ):
-    require(artwork, token, 'decode recovery exhaustion')
+    if forbidden in artwork:
+        raise SystemExit(f'superseded decode recovery remains: {forbidden}')
 for token in (
-    'recoveryCoverSource',
-    '_recoverEncodedSource()',
-    '_encodedRecoveryAttempted',
-    '_decodeRecoveryGeneration',
-    '_firstFrameTimeout = Duration(milliseconds: 2500)',
-    '_scheduleFirstFrameWatchdog()',
+    'required this.coverIdentity',
+    'cacheIdentity: coverIdentity',
+    'StableArtworkImage(',
 ):
-    require(home, token, 'home cover source recovery')
+    require(home, token, 'home cover stable identity')
+for forbidden in (
+    'recoveryCoverSource',
+    '_coverRecoverySourceLoaderForComic(',
+    '_scheduleFirstFrameWatchdog()',
+    '_decodeRecoveryGeneration',
+):
+    if forbidden in home + demo:
+        raise SystemExit(f'superseded home cover recovery remains: {forbidden}')
 for token in (
     'bool forceRefresh = false',
     'forceRefresh: forceRefresh',
 ):
-    require(cached + gateway + demo, token, 'encoded artwork force refresh')
-require(demo, '_coverRecoverySourceLoaderForComic(', 'home recovery composition')
+    require(cached + gateway, token, 'resource-owner explicit refresh')
 
 for token in (
     'required this.complete',
@@ -110,7 +116,7 @@ for token in (
 require(preview, "RegExp(r'<br\\s*/?>'", 'comment line-break normalization')
 for token in ('lessThanOrEqualTo(2.4)', 'lessThanOrEqualTo(540)'):
     require(source_test, token, 'preview owner test')
-for token in ('稀疏末行', '90%', '统一刷新', '首帧 watchdog'):
+for token in ('稀疏末行', '90%', '统一刷新', '封面'):
     require(architecture + spec, token, 'stable documentation')
 require(check, 'test_dev144_cover_preview_refresh_plugin_details.py', 'repository check')
 

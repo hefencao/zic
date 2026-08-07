@@ -1,3 +1,10 @@
+## 0.31.0-dev.157：清理阅读进度热路径并统一章节与封面所有权
+
+- 根据 dev.156 真机回归重新逆向调用图：Reader checkpoint改为 storage isolate 8 秒 idle / 30 秒最大延迟批量提交，route不等待 durable barrier；返回后 Home/详情只更新当前 progress投影，不再全量 reload library。
+- Mihon章节固定为 explicit `get/fetchChapterList` 优先、combined TachiyomiX 1.6仅能力缺失回退；真实目录错误不跨接口掩盖。删除 synthetic/title猜测，完全相同非空 `SChapter.url`仅按 source locator折叠。
+- 删除 Home/详情/漫画源 presentation 层的封面 timer/lifecycle/first-frame retry、ImageCache eviction与 App级 Future join；durable artwork和 presentation State统一使用 canonical comic identity，恢复/cache只由 gateway/resource_cache拥有。
+- 新增 ADR 0142、dev.157 根因/owner审计与静态 ownership gate；历史 ADR保留证据但不再作为当前生产合同。
+
 ## 0.31.0-dev.156：移出 Reader 持久化热路径并统一 Mihon 章节与封面身份
 
 - 根因审计确认 Reader 卡顿来自 UI isolate 上同步 sqlite3/章节 JSON 读取以及逐页 `HomeLibrarySession` 发布，而不是串行顺序本身；新增独立 SQLite progress isolate，Reader 只入队，路由返回后再等待 barrier 并一次性刷新历史。

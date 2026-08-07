@@ -175,7 +175,8 @@ for token in (
     "_rejectCatalogRegression",
     "chapter-catalog-regression-rejected",
     "chapter-catalog-refresh-result",
-    "incomingRealCount",
+    "previousChapterCount",
+    "incomingChapterCount",
     "本次目录退化为",
 ):
     if token not in home_catalog:

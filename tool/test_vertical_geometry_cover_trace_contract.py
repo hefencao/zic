@@ -51,18 +51,22 @@ def main() -> None:
     require(
         "apps/app/lib/source_browser.dart",
         "Future<EncodedResourceSource>",
-        "encodedResourceImageProvider(data)",
-        "oldWidget.reloadToken != widget.reloadToken && _failed",
+        "source: data,",
+        "oldWidget.reloadToken != widget.reloadToken",
+        "StableArtworkImage(",
     )
     reject(
         "apps/app/lib/source_browser.dart",
         "typedef SourceComicCoverLoader = Future<Uint8List>",
         "return Image.memory(\n            data,",
+        "ArtworkRetryController",
+        "RecoverableArtworkImage",
+        "oldWidget.reloadToken != widget.reloadToken && _failed",
     )
     require(
         "apps/app/lib/comic_details.dart",
         "Future<EncodedResourceSource>",
-        "encodedResourceImageProvider(source)",
+        "source: source,",
     )
     require(
         "apps/app/lib/debug_trace.dart",

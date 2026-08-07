@@ -85,17 +85,16 @@ ReadingProgress? reconcileImportedProgress({
   );
 }
 
-/// Optional progress checkpoint buffer for persistence implementations whose
-/// durable writer can run outside Flutter's UI isolate.
+/// Optional Reader checkpoint queue for persistence implementations whose
+/// durable writer runs outside Flutter's UI isolate.
 ///
-/// Reader-facing composition may enqueue checkpoints without waiting for disk
-/// I/O, then await [flushProgress] after the Reader route has returned before
-/// rebuilding history projections. Ordinary [ImportedLibraryStore.saveProgress]
-/// keeps its durable-completion semantics for non-Reader callers.
-abstract interface class BufferedReadingProgressStore {
+/// Reader-facing composition may enqueue latest-wins checkpoints without
+/// waiting for disk I/O. Route transitions and presentation projection updates
+/// must not depend on durable completion. Ordinary
+/// [ImportedLibraryStore.saveProgress] keeps durable-completion semantics for
+/// non-Reader callers.
+abstract interface class ReaderProgressCheckpointStore {
   void enqueueProgress(ReadingProgress progress);
-
-  Future<void> flushProgress();
 }
 
 abstract interface class ImportedLibraryStore {

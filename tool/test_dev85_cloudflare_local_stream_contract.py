@@ -30,10 +30,13 @@ def main() -> int:
     driver = require(
         'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt',
         'catalog.chapterFailure?.let { throw it }',
-        'if (update != null)',
+        'Invocation("getMangaUpdate", listOf(manga, existingChapters, true, true))',
+        'normalizeMihonChapterCatalog(chapters)',
         'for (candidate in listOf("getChapterList", "fetchChapterList"))',
         'Mihon source exposes no compatible chapter-catalog operation',
     )
+    if driver.index('for (candidate in listOf("getChapterList", "fetchChapterList"))') >= driver.index('Invocation("getMangaUpdate"'):
+        raise SystemExit('explicit Mihon chapter catalog must precede combined update fallback')
     for stale in ('createSyntheticMihonChapter', 'selectMihonChapters'):
         if stale in driver:
             raise SystemExit(f'Mihon chapter failure must not synthesize host chapters: {stale}')

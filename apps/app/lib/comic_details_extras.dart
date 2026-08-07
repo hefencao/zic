@@ -1184,7 +1184,7 @@ final class _ComicDetailsArtworkState extends State<_ComicDetailsArtwork> {
         final source = snapshot.data;
         if (source != null) {
           return _ComicDetailsDecodedArtwork(
-            image: encodedResourceImageProvider(source),
+            source: source,
             fit: widget.fit,
             part: _comicPreviewImagePart(widget.uri),
             onImageSize: widget.onImageSize,

@@ -1824,6 +1824,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
     required this.inspectChapterDownload,
     required this.downloadChanges,
     required this.onDownloadComic,
+    this.artworkIdentity,
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
     this.resolveSource,
@@ -1853,6 +1854,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
   final details.ComicDetailsChapterDownloadInspector inspectChapterDownload;
   final Stream<ChapterDownloadSnapshot> downloadChanges;
   final details.ComicDetailsComicDownloader onDownloadComic;
+  final String? artworkIdentity;
   final details.ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
   final details.ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final details.ComicDetailsSourceResolver? resolveSource;
@@ -1882,6 +1884,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
       inspectChapterDownload: inspectChapterDownload,
       downloadChanges: downloadChanges,
       onDownloadComic: onDownloadComic,
+      artworkIdentity: artworkIdentity,
       onOpenSourceWebView: onOpenSourceWebView,
       onOpenSourceSettings: onOpenSourceSettings,
       resolveSource: resolveSource,
@@ -2199,17 +2202,12 @@ final class _RemoteImage extends StatefulWidget {
   State<_RemoteImage> createState() => _RemoteImageState();
 }
 
-final class _RemoteImageState extends State<_RemoteImage>
-    with WidgetsBindingObserver {
+final class _RemoteImageState extends State<_RemoteImage> {
   Future<EncodedResourceSource>? _source;
-  bool _failed = false;
-  Object? _lastError;
-  final ArtworkRetryController _retry = ArtworkRetryController();
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _load();
   }
 
@@ -2217,64 +2215,14 @@ final class _RemoteImageState extends State<_RemoteImage>
   void didUpdateWidget(covariant _RemoteImage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.uri != widget.uri ||
-        (oldWidget.reloadToken != widget.reloadToken && _failed)) {
-      _restartLoad(resetRetryBudget: true);
+        oldWidget.reloadToken != widget.reloadToken) {
+      _load();
     }
   }
 
-  bool _canRetry(Object error) =>
-      error is! Failure || error.code != ErrorCode.sourceVerificationRequired;
-
-  void _load({
-    bool resetRetryBudget = false,
-    bool preserveFailurePlaceholder = false,
-  }) {
-    if (resetRetryBudget) _retry.reset();
+  void _load() {
     final uri = widget.uri;
-    if (!preserveFailurePlaceholder) {
-      _failed = false;
-      _lastError = null;
-    }
-    _source = uri == null ? null : _loadSource(uri);
-  }
-
-  Future<EncodedResourceSource> _loadSource(Uri uri) async {
-    try {
-      return await widget.loadSource(uri);
-    } on Object catch (error, stackTrace) {
-      _failed = true;
-      _lastError = error;
-      if (_canRetry(error)) _retry.schedule(() => _restartLoad());
-      Error.throwWithStackTrace(error, stackTrace);
-    }
-  }
-
-  void _restartLoad({bool resetRetryBudget = false}) {
-    if (!mounted) return;
-    setState(() => _load(
-          resetRetryBudget: resetRetryBudget,
-          preserveFailurePlaceholder: true,
-        ));
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    final error = _lastError;
-    if (state == AppLifecycleState.resumed &&
-        _failed &&
-        (error == null || _canRetry(error))) {
-      _retry.retryNow(
-        () => _restartLoad(resetRetryBudget: true),
-        resetBudget: true,
-      );
-    }
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _retry.dispose();
-    super.dispose();
+    _source = uri == null ? null : widget.loadSource(uri);
   }
 
   @override
@@ -2290,16 +2238,10 @@ final class _RemoteImageState extends State<_RemoteImage>
       builder: (context, snapshot) {
         final data = snapshot.data;
         if (data != null) {
-          return RecoverableArtworkImage(
-            image: encodedResourceImageProvider(data),
+          return StableArtworkImage(
+            source: data,
             seed: widget.uri?.toString() ?? 'source-comic-cover',
             fit: BoxFit.cover,
-            onFrameReady: () {
-              _failed = false;
-              _lastError = null;
-              _retry.reset();
-            },
-            onDecodeFailure: () => _failed = true,
           );
         }
         if (snapshot.hasError) {

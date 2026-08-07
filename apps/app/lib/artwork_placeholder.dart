@@ -1,6 +1,6 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
+import 'package:resource_cache/resource_cache.dart';
+import 'package:storage_bridge/storage_bridge.dart';
 
 /// Returns a stable pseudo-random pastel color for an unavailable artwork.
 ///
@@ -49,50 +49,18 @@ final class SoftArtworkPlaceholder extends StatelessWidget {
   }
 }
 
-/// Rebuilds a Flutter image stream after a transient decoder/cache failure.
+/// Displays one stable artwork image stream for the current encoded source.
 ///
-/// Encoded artwork bytes may already be valid and resident while the engine's
-/// image stream fails during lifecycle churn. A plain [Image.errorBuilder]
-/// leaves that widget permanently on its placeholder until the whole App is
-/// recreated. This wrapper evicts only the failed provider, retries with a new
-/// stream, and retries again when the App resumes. It does not own encoded
-/// bytes and does not create a competing artwork cache.
-final class ArtworkRetryController {
-  ArtworkRetryController({
-    this.delays = const <Duration>[
-      Duration(milliseconds: 900),
-    ],
-  });
-
-  final List<Duration> delays;
-  Timer? _timer;
-  int _attempt = 0;
-
-  bool get hasPendingRetry => _timer?.isActive ?? false;
-
-  void reset() {
-    _timer?.cancel();
-    _attempt = 0;
-  }
-
-  void schedule(VoidCallback retry) {
-    if (hasPendingRetry || _attempt >= delays.length) return;
-    final delay = delays[_attempt++];
-    _timer = Timer(delay, retry);
-  }
-
-  void retryNow(VoidCallback retry, {bool resetBudget = false}) {
-    _timer?.cancel();
-    if (resetBudget) _attempt = 0;
-    retry();
-  }
-
-  void dispose() => _timer?.cancel();
-}
-
-final class RecoverableArtworkImage extends StatefulWidget {
-  const RecoverableArtworkImage({
-    required this.image,
+/// Presentation does not own retry policy or encoded bytes. Network/cache
+/// recovery belongs to ComicSourceResourceGateway/ResourceCacheManager and an
+/// explicit source refresh may provide a new [source]. The ImageProvider is
+/// created once for that immutable encoded source instead of being recreated on
+/// every parent rebuild. A decode failure therefore
+/// stays on one stable placeholder instead of starting presentation-owned retry,
+/// lifecycle, eviction or force-refresh loops.
+final class StableArtworkImage extends StatefulWidget {
+  const StableArtworkImage({
+    required this.source,
     required this.seed,
     this.fit = BoxFit.cover,
     this.filterQuality = FilterQuality.medium,
@@ -100,11 +68,10 @@ final class RecoverableArtworkImage extends StatefulWidget {
     this.cacheWidth,
     this.onFrameReady,
     this.onDecodeFailure,
-    this.onRecoveryExhausted,
     super.key,
   });
 
-  final ImageProvider<Object> image;
+  final EncodedResourceSource source;
   final String seed;
   final BoxFit fit;
   final FilterQuality filterQuality;
@@ -112,127 +79,60 @@ final class RecoverableArtworkImage extends StatefulWidget {
   final int? cacheWidth;
   final VoidCallback? onFrameReady;
   final VoidCallback? onDecodeFailure;
-  final VoidCallback? onRecoveryExhausted;
 
   @override
-  State<RecoverableArtworkImage> createState() =>
-      _RecoverableArtworkImageState();
+  State<StableArtworkImage> createState() => _StableArtworkImageState();
 }
 
-final class _RecoverableArtworkImageState
-    extends State<RecoverableArtworkImage> with WidgetsBindingObserver {
-  static const _retryDelays = <Duration>[
-    Duration(milliseconds: 180),
-    Duration(milliseconds: 480),
-    Duration(milliseconds: 1200),
-  ];
-
-  Timer? _retryTimer;
-  int _generation = 0;
-  int _retryIndex = 0;
-  bool _failed = false;
+final class _StableArtworkImageState extends State<StableArtworkImage> {
+  late ImageProvider<Object> _provider;
   bool _frameReported = false;
-  bool _exhaustionReported = false;
-
-  ImageProvider<Object> get _effectiveProvider => widget.cacheWidth == null
-      ? widget.image
-      : ResizeImage.resizeIfNeeded(widget.cacheWidth, null, widget.image);
+  bool _failureReported = false;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
+    _provider = encodedResourceImageProvider(widget.source);
   }
 
+  ImageProvider<Object> get _effectiveProvider => widget.cacheWidth == null
+      ? _provider
+      : ResizeImage.resizeIfNeeded(widget.cacheWidth, null, _provider);
+
   @override
-  void didUpdateWidget(covariant RecoverableArtworkImage oldWidget) {
+  void didUpdateWidget(covariant StableArtworkImage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.image != widget.image ||
-        oldWidget.cacheWidth != widget.cacheWidth) {
-      _retryTimer?.cancel();
-      _generation++;
-      _retryIndex = 0;
-      _failed = false;
+    if (!identical(oldWidget.source, widget.source)) {
+      _provider = encodedResourceImageProvider(widget.source);
       _frameReported = false;
-      _exhaustionReported = false;
-    }
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && _failed) {
-      _retry(resetBudget: true);
-    }
-  }
-
-  void _handleFailure() {
-    final firstFailure = !_failed;
-    _failed = true;
-    if (firstFailure) widget.onDecodeFailure?.call();
-    if (_retryTimer?.isActive ?? false) return;
-    if (_retryIndex >= _retryDelays.length) {
-      if (!_exhaustionReported) {
-        _exhaustionReported = true;
-        scheduleMicrotask(() => widget.onRecoveryExhausted?.call());
-      }
-      return;
-    }
-    final delay = _retryDelays[_retryIndex++];
-    _retryTimer = Timer(delay, _retry);
-  }
-
-  void _retry({bool resetBudget = false}) {
-    if (!mounted) return;
-    if (resetBudget) {
-      _retryIndex = 0;
-      _exhaustionReported = false;
-    }
-    _retryTimer?.cancel();
-    _retryTimer = null;
-    unawaited(_effectiveProvider.evict());
-    setState(() {
-      _generation++;
-      // Keep the stable placeholder visible until a replacement frame is
-      // actually ready. Re-entering a loading state caused visible flicker.
-      _failed = true;
+      _failureReported = false;
+    } else if (oldWidget.cacheWidth != widget.cacheWidth) {
       _frameReported = false;
-    });
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _retryTimer?.cancel();
-    super.dispose();
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Image(
-      key: ValueKey<int>(_generation),
       image: _effectiveProvider,
       fit: widget.fit,
       gaplessPlayback: widget.gaplessPlayback,
       filterQuality: widget.filterQuality,
       errorBuilder: (_, __, ___) {
-        _handleFailure();
+        if (!_failureReported) {
+          _failureReported = true;
+          widget.onDecodeFailure?.call();
+        }
         return SoftArtworkPlaceholder(seed: widget.seed);
       },
       frameBuilder: (context, child, frame, synchronous) {
         final ready = frame != null || synchronous;
         if (ready && !_frameReported) {
-          _retryTimer?.cancel();
-          _retryTimer = null;
-          _retryIndex = 0;
           _frameReported = true;
-          _failed = false;
-          _exhaustionReported = false;
+          _failureReported = false;
           widget.onFrameReady?.call();
         }
-        if (!ready || _failed) {
-          return SoftArtworkPlaceholder(seed: widget.seed);
-        }
-        return child;
+        return ready ? child : SoftArtworkPlaceholder(seed: widget.seed);
       },
     );
   }

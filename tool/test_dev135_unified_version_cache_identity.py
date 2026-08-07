@@ -72,11 +72,14 @@ for token in (
     reject(cached_source, token, 'obsolete app-update cover-key migration')
 
 home = (ROOT / 'apps/app/lib/home_widgets.dart').read_text(encoding='utf-8')
-require(
-    home,
-    'String _coverRequestIdentity(LibraryComic comic) => comic.identity;',
-    'cover widget identity',
-)
+views = (ROOT / 'apps/app/lib/demo_home_views.dart').read_text(encoding='utf-8')
+for token in (
+    'required this.coverIdentity',
+    'cacheIdentity: coverIdentity',
+):
+    require(home, token, 'canonical cover widget identity')
+require(views, 'final coverIdentity = _canonicalComicKey(', 'canonical cover composition identity')
+reject(home, 'String _coverRequestIdentity(LibraryComic comic) => comic.identity;', 'raw cover widget identity')
 reject(home, "sourceValue ?? ''", 'cover widget identity')
 
 venera = (

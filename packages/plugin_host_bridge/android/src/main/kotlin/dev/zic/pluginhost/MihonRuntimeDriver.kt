@@ -63,7 +63,7 @@ internal class MihonRuntimeDriver private constructor(
     private val executor: ExecutorService,
     private val sourceById: ConcurrentHashMap<String, Any>,
     private val chapterById: ConcurrentHashMap<String, Any>,
-    private val chapterIdsByComic: ConcurrentHashMap<String, Set<String>>,
+    private val chapterIdsByComic: ConcurrentHashMap<String, List<String>>,
     private val payloadContext: Context,
     private val runtimeRoot: File,
     private val maxResponseBytes: Int,
@@ -347,117 +347,198 @@ internal class MihonRuntimeDriver private constructor(
             "eu.kanade.tachiyomi.source.model.SManga",
             encoded,
         )
-        val failures = mutableListOf<Throwable>()
-        val update = try {
-            source.invokeFirst(
-                listOf(
-                    Invocation("getMangaUpdate", listOf(manga, emptyList<Any>(), true, true)),
-                    Invocation("fetchMangaUpdate", listOf(manga, emptyList<Any>(), true, true)),
-                ),
-            ).unwrapAsync()
-        } catch (error: Throwable) {
-            if (error.isMihonCapabilityAbsence()) {
-                null
-            } else {
-                failures += error
-                null
-            }
-        }
-        ensureNotCancelled(requestId)
-        val detailedManga = update?.readValue("manga", "getManga") ?: try {
-            source.invokeFirst(
+
+        // Prefer the explicit manga/chapter operations when the extension
+        // exposes them. That is the stable Tachiyomi 1.4 contract and remains
+        // the compatibility contract for the majority of TachiyomiX 1.6
+        // CatalogueSource/HttpSource extensions. Calling getMangaUpdate first
+        // and then chapterList again duplicates the same network/parser work.
+        var detailedManga = manga
+        try {
+            detailedManga = source.invokeFirst(
                 listOf(
                     Invocation("getMangaDetails", listOf(manga)),
                     Invocation("fetchMangaDetails", listOf(manga)),
                 ),
             ).unwrapAsync()
         } catch (error: Throwable) {
-            if (error.isMihonCapabilityAbsence()) {
-                manga
-            } else {
-                failures += error
-                manga
+            if (!error.isMihonCapabilityAbsence()) {
+                // Detail failure does not prove the chapter catalog is absent.
+                // A source may still load chapters from the browse SManga.
+                detailedManga = manga
             }
         }
         ensureNotCancelled(requestId)
 
-        // tachiyomix 1.6 defines chapters only on SMangaUpdate. SManga itself
-        // has no chapter-list field, and "Start/Continue reading" is a host UI
-        // action rather than an SChapter capability. Never reflect arbitrary
-        // `chapters` properties from SManga and never synthesize an SChapter
-        // from the manga URL when the catalog is empty.
-        if (update != null) {
-            return MihonComicCatalog(
-                manga = detailedManga,
-                chapters = update.readList(
-                    "chapters",
-                    "getChapters",
-                    "newChapters",
-                    "getNewChapters",
-                ),
-                chapterFailure = null,
-            )
-        }
-
-        var chapterCatalogSucceeded = false
-        var chapters = emptyList<Any>()
         val chapterModels = buildList {
             add(detailedManga)
             if (manga !== detailedManga) add(manga)
         }
+        var chapterCapabilitySeen = false
+        val chapterFailures = mutableListOf<Throwable>()
         chapterSearch@ for (chapterModel in chapterModels) {
             for (candidate in listOf("getChapterList", "fetchChapterList")) {
-                val loaded = try {
+                val chapters = try {
                     source.invokeMihonCompatible(candidate, listOf(chapterModel))
                         .unwrapAsync()
                         .asObjectList()
                 } catch (error: Throwable) {
                     if (error.isMihonCapabilityAbsence()) continue
-                    failures += error
-                    continue
+                    chapterCapabilitySeen = true
+                    chapterFailures += error
+                    break@chapterSearch
                 }
-                chapterCatalogSucceeded = true
-                chapters = loaded
+                chapterCapabilitySeen = true
                 ensureNotCancelled(requestId)
-                break@chapterSearch
+                return MihonComicCatalog(
+                    manga = detailedManga,
+                    chapters = normalizeMihonChapterCatalog(chapters),
+                    chapterFailure = null,
+                )
             }
         }
-        val chapterFailure = when {
-            chapterCatalogSucceeded -> null
-            failures.isNotEmpty() -> IllegalStateException(
-                "Mihon chapter catalog failed for ${source.javaClass.name}",
-                failures.first(),
-            ).also { failure ->
-                failures.drop(1).forEach(failure::addSuppressed)
-            }
-            else -> IllegalStateException(
-                "Mihon source exposes no compatible chapter-catalog operation: ${source.javaClass.name}",
+
+        if (chapterCapabilitySeen && chapterFailures.isNotEmpty()) {
+            return MihonComicCatalog(
+                manga = detailedManga,
+                chapters = emptyList(),
+                chapterFailure = mihonChapterCatalogFailure(source, chapterFailures),
             )
         }
+
+        // Pure TachiyomiX 1.6 sources may intentionally expose only the
+        // combined suspend API. Invoke it exactly once, preserving the ordered
+        // host chapter state Mihon passes back to source.getMangaUpdate.
+        val existingChapters = cachedMihonChaptersForComic(comicId)
+        val update = try {
+            source.invokeFirst(
+                listOf(
+                    Invocation("getMangaUpdate", listOf(manga, existingChapters, true, true)),
+                    Invocation("fetchMangaUpdate", listOf(manga, existingChapters, true, true)),
+                ),
+            ).unwrapAsync()
+        } catch (error: Throwable) {
+            return MihonComicCatalog(
+                manga = detailedManga,
+                chapters = emptyList(),
+                chapterFailure = if (error.isMihonCapabilityAbsence()) {
+                    IllegalStateException(
+                        "Mihon source exposes no compatible chapter-catalog operation: ${source.javaClass.name}",
+                    )
+                } else {
+                    mihonChapterCatalogFailure(source, listOf(error))
+                },
+            )
+        }
+        ensureNotCancelled(requestId)
+        val updatedManga = update.readValue("manga", "getManga") ?: detailedManga
+        val chapters = update.readList(
+            "chapters",
+            "getChapters",
+            "newChapters",
+            "getNewChapters",
+        )
         return MihonComicCatalog(
-            manga = detailedManga,
-            chapters = chapters,
-            chapterFailure = chapterFailure,
+            manga = updatedManga,
+            chapters = normalizeMihonChapterCatalog(chapters),
+            chapterFailure = null,
         )
     }
 
+    private fun mihonChapterCatalogFailure(
+        source: Any,
+        failures: List<Throwable>,
+    ): IllegalStateException = IllegalStateException(
+        "Mihon chapter catalog failed for ${source.javaClass.name}",
+        failures.firstOrNull(),
+    ).also { failure -> failures.drop(1).forEach(failure::addSuppressed) }
+
+    /**
+     * Collapses source aliases that cannot address different chapter content.
+     *
+     * SChapter.url is the source-side page-list locator. Two entries with the
+     * same non-empty locator cannot resolve to different chapter requests, so
+     * keeping both creates duplicate first chapters and ambiguous restore keys.
+     * We never inspect display titles. Richer metadata wins; exact ties keep the
+     * later source entry so a leading action/proxy row cannot shadow the real
+     * catalog row that follows it.
+     */
+    private fun normalizeMihonChapterCatalog(chapters: List<Any>): List<Any> {
+        if (chapters.size < 2) return chapters
+        val result = ArrayList<Any>(chapters.size)
+        val indexByLocator = LinkedHashMap<String, Int>()
+        chapters.forEach { chapter ->
+            val locator = chapter.readString("url", "getUrl").orEmpty().trim()
+            if (locator.isEmpty()) {
+                result += chapter
+                return@forEach
+            }
+            val existingIndex = indexByLocator[locator]
+            if (existingIndex == null) {
+                indexByLocator[locator] = result.size
+                result += chapter
+                return@forEach
+            }
+            val existing = result[existingIndex]
+            if (mihonChapterMetadataScore(chapter) >= mihonChapterMetadataScore(existing)) {
+                result[existingIndex] = chapter
+            }
+        }
+        return result
+    }
+
+    private fun mihonChapterMetadataScore(chapter: Any): Int {
+        var score = 0
+        val number = chapter.readValue(
+            "chapter_number",
+            "getChapter_number",
+            "getChapterNumber",
+        ) as? Number
+        if (number != null && number.toDouble() >= 0.0) score += 8
+        val published = chapter.readLong("date_upload", "getDate_upload", "getDateUpload")
+        if (published != null && published > 0L) score += 4
+        if (!chapter.readString("scanlator", "getScanlator").isNullOrBlank()) score += 2
+        if (!chapter.readString("name", "getName").isNullOrBlank()) score += 1
+        if (chapter.readValue("memo", "getMemo") != null) score += 1
+        return score
+    }
+
+
+    private fun mihonComicCatalogKey(comicId: String): String {
+        val encoded = runCatching { decodeOpaque(comicId, "manga") }.getOrNull()
+            ?: return comicId
+        val url = encoded.optString("url").trim()
+        return if (url.isNotEmpty()) "url:$url" else comicId
+    }
+
+    private fun cachedMihonChaptersForComic(comicId: String): List<Any> =
+        synchronized(chapterById) {
+            chapterIdsByComic[mihonComicCatalogKey(comicId)]
+                ?.mapNotNull { chapterId -> chapterById[chapterId] }
+                .orEmpty()
+        }
 
     private fun rememberMihonChapters(
         comicId: String,
         chapters: List<Any>,
         messages: List<Map<String, Any?>>,
     ) {
-        val ids = messages.map { message -> message.getValue("chapterId") as String }.toSet()
+        // Keep source order: TachiyomiX 1.6 passes this host-owned list back to
+        // source.getMangaUpdate on the next refresh. A Set silently weakens the
+        // ordering contract even if today's implementation preserves insertion.
+        val ids = messages.map { message -> message.getValue("chapterId") as String }
+        val catalogKey = mihonComicCatalogKey(comicId)
         synchronized(chapterById) {
-            chapterIdsByComic.put(comicId, ids)
+            chapterIdsByComic.put(catalogKey, ids)
                 ?.filterNot { id -> ids.contains(id) }
                 ?.forEach { id -> chapterById.remove(id) }
             chapters.zip(messages).forEach { (chapter, message) ->
                 chapterById[message.getValue("chapterId") as String] = chapter
             }
             while (chapterById.size > MAX_CACHED_MIHON_CHAPTERS) {
-                val evictedComicId = chapterIdsByComic.keys.firstOrNull { it != comicId } ?: break
-                chapterIdsByComic.remove(evictedComicId)
+                val evictedCatalogKey =
+                    chapterIdsByComic.keys.firstOrNull { it != catalogKey } ?: break
+                chapterIdsByComic.remove(evictedCatalogKey)
                     ?.forEach { id -> chapterById.remove(id) }
             }
         }

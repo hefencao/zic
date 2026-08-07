@@ -52,27 +52,31 @@ for token in (
     require(catalog_test + source_test, token, 'owner tests')
 
 for token in (
-    'this.interactionKey',
-    'key: interactionKey',
-    'bool _streamWatchdogAttempted = false',
-    'setState(() => _decodeRecoveryGeneration++)',
-    'Actual decode exhaustion is the only',
+    'required this.coverIdentity',
+    'cacheIdentity: coverIdentity',
+    'StableArtworkImage(',
 ):
-    require(home, token, 'cover presentation identity')
-watchdog = home[home.index('void _scheduleFirstFrameWatchdog()'):home.index('void _reportFirstFrame()')]
-if '_recoverEncodedSource()' in watchdog or '_restartLoadWithReset()' in watchdog:
-    raise SystemExit('no-frame watchdog still invalidates encoded cover source')
-for token in (
+    require(home, token, 'stable Home artwork presentation')
+for stale in (
+    '_scheduleFirstFrameWatchdog()',
+    '_decodeRecoveryGeneration',
+    'ArtworkRetryController',
+    'RecoverableArtworkImage',
+):
+    if stale in home:
+        raise SystemExit(f'Home retains superseded artwork recovery: {stale}')
+for stale in (
     'final Map<String, Future<EncodedResourceSource>> _coverSourceInflight',
-    'A failed future must be removed immediately',
+    '_coverRecoverySourceLoaderForComic(',
 ):
-    require(demo, token, 'cover source join')
+    if stale in demo:
+        raise SystemExit(f'App retains superseded cover owner: {stale}')
 for token in (
     "'home-history' : 'home-update'",
-    'interactionKey: resume == null',
-    'telemetryOwners.add(comic.identity)',
+    'final coverIdentity = _canonicalComicKey(',
+    'telemetryOwners.add(coverIdentity)',
 ):
-    require(views, token, 'stable Home cover owners')
+    require(views, token, 'canonical Home cover owners')
 for token in (
     'if (candidate is! ComicPreviewSource) return null;',
     'return candidate as ComicPreviewSource;',

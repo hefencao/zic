@@ -47,26 +47,25 @@ for forbidden in (
     if forbidden in preview:
         raise SystemExit(f'superseded preview spacing remains: {forbidden}')
 
-for token in (
-    'final class ArtworkRetryController',
-    'final class RecoverableArtworkImage',
-    'unawaited(_effectiveProvider.evict())',
-    'AppLifecycleState.resumed',
+require(artwork, 'final class StableArtworkImage', 'stable artwork presentation')
+for forbidden in (
+    'ArtworkRetryController',
+    'RecoverableArtworkImage',
+    '.evict()',
     'Duration(milliseconds: 180)',
     'Duration(milliseconds: 1200)',
 ):
-    require(artwork, token, 'recoverable artwork')
+    if forbidden in artwork:
+        raise SystemExit(f'superseded presentation retry remains: {forbidden}')
 for owner, text in (
     ('home cover', home_cover),
     ('source cover', source),
     ('details cover', details_cover),
 ):
-    for token in (
-        'ArtworkRetryController',
-        'WidgetsBindingObserver',
-        'RecoverableArtworkImage',
-    ):
-        require(text, token, owner)
+    require(text, 'StableArtworkImage', owner)
+    for forbidden in ('ArtworkRetryController', 'RecoverableArtworkImage'):
+        if forbidden in text:
+            raise SystemExit(f'{owner} retains presentation retry owner: {forbidden}')
 if 'catchError((Object error, StackTrace' in source + home_cover + details_cover:
     raise SystemExit('typed artwork futures must use async/try-catch, not void catchError')
 

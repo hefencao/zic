@@ -242,11 +242,15 @@ extension _DemoHomeViews on _DemoHomeState {
         itemBuilder: (context, index) {
           final comic = comics[index];
           final resume = comic.resumeChapter;
+          final coverIdentity = _canonicalComicKey(
+            comic.sourceId,
+            comic.comicId,
+          );
           return SizedBox(
             width: ComicCoverCard.cardWidth,
             child: ComicCoverCard(
               key: ValueKey<String>(
-                '${history ? 'home-history' : 'home-update'}:${comic.identity}',
+                '${history ? 'home-history' : 'home-update'}:$coverIdentity',
               ),
               interactionKey: resume == null
                   ? ValueKey<String>('comic-entry:${comic.identity}')
@@ -261,10 +265,10 @@ extension _DemoHomeViews on _DemoHomeState {
                         ),
               comic: comic,
               preference: _preferenceForComic(comic),
+              coverIdentity: coverIdentity,
               coverSource: _coverSourceLoaderForComic(comic),
-              recoveryCoverSource: _coverRecoverySourceLoaderForComic(comic),
               startupTelemetry: telemetryOwners == null ||
-                      telemetryOwners.add(comic.identity)
+                      telemetryOwners.add(coverIdentity)
                   ? widget.startupTelemetry
                   : null,
               downloadProgress: _downloadProgressForComic(comic),
@@ -701,12 +705,14 @@ extension _DemoHomeViews on _DemoHomeState {
 
   Widget _buildGalleryTile(LibraryComic comic) {
     final selected = _managedComicIdentities.contains(comic.identity);
+    final coverIdentity = _canonicalComicKey(comic.sourceId, comic.comicId);
     final card = ComicCoverCard(
-      key: comicCoverKey(comic.sourceId, comic.comicId),
+      key: ValueKey<String>('library-cover:$coverIdentity'),
+      interactionKey: comicCoverKey(comic.sourceId, comic.comicId),
       comic: comic,
       preference: _preferenceForComic(comic),
+      coverIdentity: coverIdentity,
       coverSource: _coverSourceLoaderForComic(comic),
-      recoveryCoverSource: _coverRecoverySourceLoaderForComic(comic),
       startupTelemetry: widget.startupTelemetry,
       downloadProgress: _downloadProgressForComic(comic),
       selected: selected,
@@ -829,50 +835,53 @@ extension _DemoHomeViews on _DemoHomeState {
   }
 
   Widget _buildShelfList(List<LibraryComic> comics) {
-    Widget item(LibraryComic comic, int index) => ShelfListTile(
-          key: ValueKey<String>(comic.identity),
-          comic: comic,
-          preference: _preferenceForComic(comic),
-          coverSource: _coverSourceLoaderForComic(comic),
-          recoveryCoverSource: _coverRecoverySourceLoaderForComic(comic),
-          startupTelemetry: widget.startupTelemetry,
-          downloadProgress: _downloadProgressForComic(comic),
-          selected: _managedComicIdentities.contains(comic.identity),
-          onTap: () => _handleShelfTap(comic),
-          onLongPress: _manageShelf
-              ? () => _startBatchSelection(comic)
-              : () {
-                  final resume = comic.resumeChapter;
-                  if (resume == null || _hasDetails(comic)) {
-                    unawaited(_openComicDetails(comic));
-                  } else {
-                    unawaited(_openImportedChapter(resume));
-                  }
-                },
-          trailing: _manageShelf && !_batchManagement
-              ? Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: <Widget>[
-                    _comicMovePopup(comic),
-                    IconButton(
-                      key: comicDeleteKey(comic.sourceId, comic.comicId),
-                      tooltip: '删除漫画',
-                      color: Theme.of(context).colorScheme.error,
-                      onPressed: () => _confirmRemoveComic(comic),
-                      icon: const Icon(Icons.delete_outline),
-                    ),
-                    if (_sortMode == LibrarySortMode.custom && !_batchManagement)
-                      ReorderableDragStartListener(
-                        index: index,
-                        child: const Padding(
-                          padding: EdgeInsets.all(10),
-                          child: Icon(Icons.drag_handle),
-                        ),
+    Widget item(LibraryComic comic, int index) {
+      final coverIdentity = _canonicalComicKey(comic.sourceId, comic.comicId);
+      return ShelfListTile(
+        key: ValueKey<String>('library-list:$coverIdentity'),
+        comic: comic,
+        preference: _preferenceForComic(comic),
+        coverSource: _coverSourceLoaderForComic(comic),
+        coverIdentity: coverIdentity,
+        startupTelemetry: widget.startupTelemetry,
+        downloadProgress: _downloadProgressForComic(comic),
+        selected: _managedComicIdentities.contains(comic.identity),
+        onTap: () => _handleShelfTap(comic),
+        onLongPress: _manageShelf
+            ? () => _startBatchSelection(comic)
+            : () {
+                final resume = comic.resumeChapter;
+                if (resume == null || _hasDetails(comic)) {
+                  unawaited(_openComicDetails(comic));
+                } else {
+                  unawaited(_openImportedChapter(resume));
+                }
+              },
+        trailing: _manageShelf && !_batchManagement
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  _comicMovePopup(comic),
+                  IconButton(
+                    key: comicDeleteKey(comic.sourceId, comic.comicId),
+                    tooltip: '删除漫画',
+                    color: Theme.of(context).colorScheme.error,
+                    onPressed: () => _confirmRemoveComic(comic),
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+                  if (_sortMode == LibrarySortMode.custom && !_batchManagement)
+                    ReorderableDragStartListener(
+                      index: index,
+                      child: const Padding(
+                        padding: EdgeInsets.all(10),
+                        child: Icon(Icons.drag_handle),
                       ),
-                  ],
-                )
-              : null,
-        );
+                    ),
+                ],
+              )
+            : null,
+      );
+    }
     if (_manageShelf &&
         _sortMode == LibrarySortMode.custom &&
         !_batchManagement) {

@@ -316,7 +316,7 @@ Reader 页面变化产生的 `ReadingProgress` 由 `reader_runtime` 串行合并
 | `ResourceCacheKey` | 响应缓存实体身份 | 四元组 `kind + identity + namespace + revision`；四项都参与 equality/hash。图片使用 `kind=imageBytes`，详情/章节/搜索分别使用对应 response kind。 |
 | `coverUri` / `coverSourceId` | 图片 locator | 只告诉 artwork gateway 去哪里取图；可能是 HTTP(S)、`mihon:resource:` 或本地 locator，本身不参与稳定漫画身份。外部封面响应使用 `[sourceId, canonicalComicId, role=cover]`，URL变化不会分裂 namespace。 |
 | `previewUri` | 预览项 locator 和绘制身份 | 详情预览完整 URI（包括 Venera `@x/y` 裁剪后缀）保留在预览项、widget 和 painter 中；编码字节缓存及实际请求使用去掉 `@x/y` 的 base URI。 |
-| `resourceRole` | 漫画图片角色 | 封面为 `cover`；详情预览为 `preview:<base previewUri>`；其他带 URI 的 artwork 角色同样使用 base URI。它与 source/raw comic ID 一起进入图片响应 key。 |
+| `resourceRole` | 漫画图片角色 | 封面为 `cover`；详情预览为 `preview:<base previewUri>`；其他带 URI 的 artwork 角色同样使用 base URI。外部 artwork 响应 key 使用 source + canonical comic identity + role；raw comic ID 只传给 runtime loader。 |
 
 ### 11.2 同源版本与迁移身份
 
@@ -357,23 +357,16 @@ raw comicId
 首页/详情 artwork 的缓存层顺序是 memory -> durable file -> source loader。source-independent
 的 warm probe 命中时，首页封面不会解析来源或启动插件；miss 才进入 gateway/source transport。
 因此预览图的完整 URI 仍决定每个 widget 的裁剪区域，但同一 base URL 的编码字节只保留一份，
-避免旧实现按每个 `@x/y` 裁剪重复请求和占用缓存。旧的每裁剪项 role 不会与新的 base
-role 相同，因此无需清空或迁移已有 cover 缓存；封面则有一个刻意的区别：同一 raw `comicId`
-的 cover URL 改变会复用旧 cover key，表现为旧图/陈旧图，而不是 key 碰撞；应通过封面失效
-或 revision 处理 URL 变化。
+避免旧实现按每个 `@x/y` 裁剪重复请求和占用缓存。旧的每裁剪项 role 不会与新的 base role 相同，因此无需迁移预览裁剪缓存。封面 durable
+namespace 由 canonical comic identity 固定，raw Mihon `comicId`、封面 URL、详情补全后的 SManga
+字段变化都不得创建第二个 namespace。封面内容版本变化由资源 revision/明确来源刷新处理，不能
+通过 presentation State、provider eviction 或新的 raw alias 隐式换 key。
 
-图片加载失败的判断边界也必须分开：
+图片加载失败的边界必须分开：cache hit/miss 只说明编码字节是否存在；source loader 的失效路径、非图片响应、权限/challenge/空响应由 gateway 拒绝；Flutter decode 错误只影响 presentation。单张失败的 Trace 至少记录脱敏 `sourceId/raw comicId/resourceRole/URI`、cache origin 和 transport/decode 错误，不能仅凭占位图判断缓存冲突。
 
-- cache hit/miss 只说明是否找到完整编码字节，不说明字节一定能被图片解码；
-- source loader 可能拿到失效路径、非图片响应、权限/challenge 页面或空响应，gateway 会在
-  `source artwork response is not an image` 处拒绝；
-- cache miss 后的 source/plugin/transport 错误、URI 失效和 Flutter 解码错误最终都会被首页或
-  详情 artwork widget 转成柔和单色占位，当前 Trace 若没有 artwork 事件，无法仅凭占位图区分；
-- 当前 `.log/log.txt` 的证据是 Venera `loadComic/loadInfo` 在读取页面 DOM 时出现
-  `Cannot read properties of null (reading 'children')`，这会阻断详情 manifest，但不是图片
-  cache miss、图片路径错误或 `ResourceCacheKey` 冲突的证据。要定位单张失败项，Trace 必须同时
-  记录脱敏后的 `sourceId/raw comicId/resourceRole/URI 摘要`、cache origin（memory/file/loader）
-  和 transport/decode 错误。
+### Reader checkpoint 与历史投影边界
+Reader 页面变化只 enqueue 最新 `ReadingProgress`，不得等待 SQLite或逐页发布 Home；storage isolate 对同 source/chapter latest-wins，空闲约 8 秒提交、持续活跃最多约 30 秒提交。显式 `saveProgress()`/store close 可等待内部 durability barrier，但 Reader route API不暴露 barrier。
+Reader 返回后 Home只更新该 route最终 progress一次，已挂载详情只替换当前章节；不得在返回路径读取/重建整库。硬进程终止仍为 best-effort，不宣称最后一页绝对持久化。
 
 ## 12. 插件与网络边界
 
@@ -411,9 +404,9 @@ Cloudflare 可见浏览器的 Cookie 与 User-Agent 必须属于同一个浏览�
 Home、漫画源、详情和迁移的**所有非本地 artwork locator**都必须进入 `ComicSourceResourceGateway`；这包括 HTTP(S) 与 `mihon:resource:` 等插件私有 URI。gateway 先按 canonical comic artwork identity做 source-independent durable probe，只有 cache miss才解析 active source。插件 URI绝不能回落到 `readLocalImageSource`，raw runtime comicId也不得分裂 durable cover namespace。
 
 
-- artwork encoded source 就绪后启动 2.5 秒首帧 watchdog；无帧只重建同一 provider stream 一次，因为离屏/尚未 paint 不证明 encoded cache 失效。只有 ImageStream 明确报错且局部恢复耗尽，才允许对当前稳定 cover identity 强制重读 bytes。Home card State 以 section + comic identity 固定，重复 owner 共享 source Future/provider。
-- cover recovery 继续使用 `role=cover` 的稳定 cache identity；`cover-recovery:*` 只是调用意图，不创建第二个长期缓存角色。
+- artwork 的自动恢复只属于 `ComicSourceResourceGateway/ResourceCacheManager`。Home、漫画源和详情 presentation 不得拥有定时 retry、first-frame watchdog、App lifecycle 自动 retry、全局 ImageCache `evict()` 或短时 Future join。资源失败后 presentation 保持稳定占位；只有显式来源刷新、资源 revision 或稳定 identity 真正变化才重新发起加载。
+- Home/书架/详情封面的 Flutter State key 与 image presentation identity 使用 canonical comic identity；raw Mihon locator、resume chapter、封面 URL 和 loader closure 变化不得销毁已成功的封面 State。
 - 远程详情优先投影已保存 manifest；插件 host 未就绪时等待当前 source resolver，不能因后台 refresh 失败丢弃已有详情。
 - 预览、评论、章节确保和刷新在实际调用时解析当前 active adapter，不捕获插件重启前的 source session。
 - 漫画源浏览页遵循相同生命周期边界：页面持有稳定 `sourceId`、section/query/filter 与缓存投影，不长期拥有 runtime adapter。WebView验证或插件设置重启 runtime 后，section/filter/browse 必须通过 composition resolver取得当前 active source；已关闭的旧 session不得继续调用。
-- Mihon chapter catalog只接受插件/source API返回的真实 `SChapter`：TachiyomiX 1.6 的 `SMangaUpdate.chapters`，或兼容 `getChapterList`/`fetchChapterList`。`SChapter` 没有“开始/继续阅读 action”字段；App/bridge不得从 manga URL人工构造章节，也不得按“开始阅读/正文”等展示文字猜测、增加或删除章节。目录调用失败保持失败；成功返回空目录就保持空目录。
+- Mihon chapter catalog只接受插件/source API返回的真实 `SChapter`。bridge 首选明确的 `getChapterList`/`fetchChapterList` 目录能力；该能力存在时，其成功结果（包括空目录）就是权威，真实网络/解析错误必须原样失败，不能再调用另一目录接口掩盖。只有明确 chapter-list 能力不存在时，才调用 TachiyomiX 1.6 `getMangaUpdate`/`fetchMangaUpdate`，并把已知章节按原顺序传回。App/bridge不得从 manga URL人工构造章节，也不得按“开始阅读/正文”等显示文字猜测章节语义。完全相同且非空的 `SChapter.url` 属于同一 source page-list locator，可折叠为一个条目；不相同的 locator不得仅因标题或序号相似而合并。

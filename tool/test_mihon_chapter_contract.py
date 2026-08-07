@@ -24,11 +24,15 @@ def main() -> int:
         'catalog.chapterFailure?.let { throw it }',
         'chapterById[chapterId]?.let { return it }',
         'mihonChapterMatches(chapter, encoded)',
-        'if (update != null)',
-        'update.readList(',
-        '"chapters"',
         'for (candidate in listOf("getChapterList", "fetchChapterList"))',
-        'chapterCatalogSucceeded = true',
+        'val existingChapters = cachedMihonChaptersForComic(comicId)',
+        'Invocation("getMangaUpdate", listOf(manga, existingChapters, true, true))',
+        'private fun normalizeMihonChapterCatalog(chapters: List<Any>): List<Any>',
+        'val locator = chapter.readString("url", "getUrl")',
+        'mihonChapterMetadataScore(chapter)',
+        'private fun mihonComicCatalogKey(comicId: String): String',
+        'chapterIdsByComic[mihonComicCatalogKey(comicId)]',
+        'val catalogKey = mihonComicCatalogKey(comicId)',
         'Mihon source exposes no compatible chapter-catalog operation',
         'cause is UnsupportedOperationException',
         'loadMihonPageModels(source, chapter, requestId)',
@@ -43,6 +47,11 @@ def main() -> int:
     for token in required:
         if token not in driver:
             raise SystemExit(f'Mihon chapter contract is incomplete: {token}')
+    # The explicit chapter API is the primary path. The combined 1.6 API may
+    # only appear after the explicit chapter loop, otherwise normal legacy
+    # sources perform duplicate or regressed network requests.
+    if driver.index('for (candidate in listOf("getChapterList", "fetchChapterList"))') > driver.index('Invocation("getMangaUpdate", listOf(manga, existingChapters, true, true))'):
+        raise SystemExit('Mihon combined update still suppresses/duplicates explicit chapter loading')
     forbidden = (
         'createSyntheticMihonChapter',
         'deduplicateMihonStartReadingEntries',
@@ -50,6 +59,8 @@ def main() -> int:
         'MihonChapterSelection',
         'MIHON_SYNTHETIC_REVISION',
         'detailedManga.readList("chapters"',
+        'normalizeMihonStartReadingTitle',
+        '开始阅读"',
     )
     for token in forbidden:
         if token in driver:
