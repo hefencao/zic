@@ -1,3 +1,11 @@
+## 0.31.0-dev.154：等待 Cloudflare 验证稳定完成后再返回
+
+- 验证 WebView 不再在单次 `onPageFinished` 后立即判断完成；任何新导航都会使旧 probe失效。
+- 浏览器内部宽探针覆盖 Turnstile、challenge form、running容器、`cf-chl-*`、Cloudflare challenge iframe和 `Just a moment…` 等中间态。
+- 页面必须 `readyState=complete`、progress=100、同站点且连续 3 秒无 challenge证据，才 capture最终 Cookie/UA并自动返回。
+- 网络层 `sourceVerificationRequired` 分类继续保持 dev.153 的严格边界，不因浏览器内部宽探针而扩大。
+- 新增 ADR 0139、dev.154审计和稳定完成门禁。
+
 ## 0.31.0-dev.153：收紧 Cloudflare challenge 并修复验证浏览器状态机
 
 - `sourceVerificationRequired` 的 HTML判定对齐 Mihon 实际 `CloudflareInterceptor`：403/503 还必须有 Cloudflare Server 与 `challenge-error-title`/`challenge-error-text`，仅 `challenge-platform`、`cf-chl-*`、`Just a moment` 或普通 Cloudflare 403不再触发 WebView；`cf-mitigated: challenge` 仍作为明确协议证据。

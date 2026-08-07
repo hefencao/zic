@@ -11,7 +11,7 @@
 
 - 使用真实 Venera/E-Hentai successor 检查详情“有新版本”、统一比较确认和 Reader 首次提醒；确认换 successor 后再次提醒。
 - 验证同源迁移只复制 exact chapter identity；sequence-only 候选不复制阅读状态或 artifact。
-- 在禁漫天堂真机验证两条分支：真实 `challenge-error-*` challenge进入 WebView并完成 handoff；仅含 Cloudflare challenge脚本/普通403的响应不产生 `sourceVerificationRequired`。确认 WebView本来即可正常访问时会自动保存完整 Cookie/UA snapshot并返回，不要求生成新 `cf_clearance`。
+- 在禁漫天堂真机验证两条分支：真实 `challenge-error-*` challenge进入 WebView并完成 handoff；仅含 Cloudflare challenge脚本/普通403的响应不产生 `sourceVerificationRequired`。确认 WebView不会在 Cloudflare尚未完成时因一次 `onPageFinished` 提前返回；Turnstile/JS challenge存在期间持续停留，最终页面连续稳定无 challenge后才自动保存完整 Cookie/UA snapshot并返回，且不要求生成新 `cf_clearance`。
 - 使用真实章节目录检查 SavedComic、ImportedChapter 与远程详情都不再保留“开始阅读/正文”synthetic chapter。
 
 ## P0：来源投影、Cloudflare 与封面身份设备闭环

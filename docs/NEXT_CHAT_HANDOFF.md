@@ -1,6 +1,6 @@
-# dev.153 后续交接
+# dev.154 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.153_mihon-cloudflare-browser-completion-loop-guard.zip`。
+唯一后续基线：`zic_v0.31.0-dev.154_cloudflare-browser-stable-completion.zip`。
 
 ## 必读
 
@@ -25,14 +25,15 @@
 19. `docs/adr/0132-reader-progress-version-view-start-action-verification.md`
 20. `docs/adr/0136-source-verification-runtime-replacement.md`
 21. `docs/adr/0137-mihon-cloudflare-cookie-handoff-and-loop-guard.md`
-22. `docs/audits/dev152-mihon-cloudflare-handoff-audit.md`
-23. `docs/audits/dev152-validation-results.md`
+22. `docs/adr/0138-cloudflare-browser-completion-and-auto-loop-guard.md`
+23. `docs/adr/0139-cloudflare-browser-stable-completion.md`
+24. `docs/audits/dev154-cloudflare-browser-stable-completion-audit.md`
+25. `docs/audits/dev154-validation-results.md`
 
 ## 当前代码事实
 
 - Mihon 设备扫描只覆盖系统共享 APK；页面自动加载默认仓库，并以仓库 package name进行精确探测。Mihon 私有目录扩展必须从 ZIC仓库安装。
 - 扫描结果必须保留枚举数、候选数、精确命中和逐 APK失败阶段；不得恢复 `runCatching(...).getOrNull()` 静默丢弃。
-
 - NetLane 是唯一网络调度权威；不存在 holder/playback 驱动的网络资格门控。
 - encoded window 为前 7/后 3，深度 decode 角色为前 2/后 1，holder 最大水位为 7/5/3/2。
 - transition depth=0 独立执行一帧 bootstrap；获得首帧后恢复 staged current/neighbor refill。
@@ -40,7 +41,7 @@
 - Reader 退出后最多保留 1 个 idle chapter resource session、TTL 2 分钟；used texture 不保留。
 - response cache 与 page artifact cache 是两个权威平面；App/Reader 没有私有正文 LRU。
 - 首页封面卡片使用 section + comic identity 的稳定 State key；同 identity 的并发 owner 共享 source Future/provider，失败 Future 立即退出 join。无首帧 watchdog 只重建同一 provider stream，不刷新 encoded bytes；明确 decoder exhaustion 才可 force-refresh。
-- 漫画源页使用来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态只用 chip背景色表示。source切换立即投影目标精确/最近缓存；目标错误不允许旧 source内容滞留。`sourceVerificationRequired`只由 `cf-mitigated: challenge` 或 Mihon同样识别的真实 `challenge-error-title/text`交互 challenge产生；普通 Cloudflare 403/脚本不触发 WebView。验证浏览器不预删 Cookie，同站点/同 UA snapshot在新 capture前保留；页面已无 challenge DOM即可保存完整 Cookie/UA并返回。任意一次手动或自动 handoff后，普通刷新不会再次自动跳 WebView，成功 browse才清除 guard；手动入口始终可用。WebView返回后按稳定 source ID取得重启后的当前 adapter，重载 section/filter并强制刷新一次，绝不继续调用关闭旧 session。
+- 漫画源页使用来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态只用 chip背景色表示。source切换立即投影目标精确/最近缓存；目标错误不允许旧 source内容滞留。`sourceVerificationRequired`只由 `cf-mitigated: challenge` 或 Mihon同样识别的真实 `challenge-error-title/text`交互 challenge产生；普通 Cloudflare 403/脚本不触发 WebView。验证浏览器不预删 Cookie，同站点/同 UA snapshot在新 capture前保留；`onPageFinished` 只启动持续 probe，页面必须 ready/progress完成并连续 3 秒没有 Turnstile/challenge form/running容器/`cf-chl-*`/challenge iframe或典型验证中间态，才保存完整 Cookie/UA并返回。任意一次手动或自动 handoff后，普通刷新不会再次自动跳 WebView，成功 browse才清除 guard；手动入口始终可用。WebView返回后按稳定 source ID取得重启后的当前 adapter，重载 section/filter并强制刷新一次，绝不继续调用关闭旧 session。
 - 浮动搜索展开态优先消费返回和垂直拖动/滚动手势；搜索历史持久化。Mihon `getFilterList()` 的 CheckBox/TriState/Select/Group 通过 opaque ID 投影为搜索框上方过滤标签，UI 不持有插件 Filter 对象。
 - 浏览页使用 catalog cache-first/background-refresh；稳定字段无变化时不更新。边缘下拉达到阈值后调用强制刷新，保留现有内容直到新结果到达。
 - 详情预览按原顺序装箱：实际行内含横图则最多 2 张、纯竖图则最多 3 张；只在相邻三个候选内做最小局部重排；设置项仍是更严格上限。行宽直接用于反算等面积 tile，内部无 Card/水平 padding，完整行铺满媒体宽度，只有稀疏末行允许放大到参考完整行面积的 2.4 倍。
@@ -61,7 +62,6 @@
 - 封面问题复验需分别制造 source Future 失败与 Flutter decode 失败，确认自动重试、resume 恢复和局部 provider 驱逐。
 - Mihon 过滤需用真实扩展检查默认 FilterList、Group 嵌套、TriState 与 Select 回传。
 - 预览排版需在不同屏宽和宽高比集合上检查完整行边缘利用、稀疏末行 2.4 倍上限、每行上限与 90% 高度约束。
-
 ## 不可改变的稳定边界
 
 - 不缩小 7/3、7/5/3/2 或 5/3/2 来掩盖问题；

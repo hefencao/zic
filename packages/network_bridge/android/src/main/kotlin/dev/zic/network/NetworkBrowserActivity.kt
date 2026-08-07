@@ -3,6 +3,9 @@ package dev.zic.network
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebView
@@ -11,9 +14,12 @@ import org.json.JSONArray
 
 class NetworkBrowserActivity : Activity() {
     private lateinit var webView: WebView
+    private val verificationHandler = Handler(Looper.getMainLooper())
     private var cloudflareVerification = false
     private var completing = false
     private var verificationPageResolved: Boolean? = null
+    private var navigationGeneration = 0
+    private var challengeFreeSinceUptimeMillis: Long? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,22 +63,26 @@ class NetworkBrowserActivity : Activity() {
             settings.domStorageEnabled = true
             settings.databaseEnabled = true
             webViewClient = object : WebViewClient() {
+                override fun onPageStarted(view: WebView, currentUrl: String, favicon: android.graphics.Bitmap?) {
+                    navigationGeneration += 1
+                    verificationPageResolved = null
+                    challengeFreeSinceUptimeMillis = null
+                }
+
                 override fun onPageFinished(view: WebView, currentUrl: String) {
                     captureSnapshot(view, currentUrl)
                     if (!cloudflareVerification) return
                     if (!sameSiteWithRequestedUrl(currentUrl)) {
                         verificationPageResolved = null
+                        challengeFreeSinceUptimeMillis = null
                         return
                     }
-                    view.evaluateJavascript(CLOUDFLARE_CHALLENGE_PROBE) { raw ->
-                        if (isFinishing || isDestroyed || completing) return@evaluateJavascript
-                        val challengeVisible = raw.trim().equals("true", ignoreCase = true)
-                        verificationPageResolved = !challengeVisible
-                        if (!challengeVisible) {
-                            captureSnapshot(view, currentUrl)
-                            completeAndFinish()
-                        }
-                    }
+                    scheduleVerificationProbe(
+                        view = view,
+                        expectedUrl = currentUrl,
+                        expectedGeneration = navigationGeneration,
+                        delayMillis = VERIFICATION_INITIAL_SETTLE_MILLIS,
+                    )
                 }
             }
         }
@@ -83,6 +93,81 @@ class NetworkBrowserActivity : Activity() {
         setContentView(webView)
         webView.loadUrl(url)
     }
+
+    private fun scheduleVerificationProbe(
+        view: WebView,
+        expectedUrl: String,
+        expectedGeneration: Int,
+        delayMillis: Long = VERIFICATION_PROBE_INTERVAL_MILLIS,
+    ) {
+        verificationHandler.postDelayed(
+            {
+                if (isFinishing || isDestroyed || completing) return@postDelayed
+                if (expectedGeneration != navigationGeneration) return@postDelayed
+                val currentUrl = view.url.orEmpty()
+                if (currentUrl.isBlank() || !sameSiteWithRequestedUrl(currentUrl)) {
+                    verificationPageResolved = null
+                    challengeFreeSinceUptimeMillis = null
+                    return@postDelayed
+                }
+                if (currentUrl != expectedUrl) {
+                    verificationPageResolved = null
+                    challengeFreeSinceUptimeMillis = null
+                    scheduleVerificationProbe(
+                        view = view,
+                        expectedUrl = currentUrl,
+                        expectedGeneration = expectedGeneration,
+                    )
+                    return@postDelayed
+                }
+                view.evaluateJavascript(CLOUDFLARE_BROWSER_STATE_PROBE) { raw ->
+                    if (isFinishing || isDestroyed || completing) return@evaluateJavascript
+                    if (expectedGeneration != navigationGeneration) return@evaluateJavascript
+                    val state = parseBrowserVerificationState(raw)
+                    if (!state.ready || view.progress < 100) {
+                        verificationPageResolved = null
+                        challengeFreeSinceUptimeMillis = null
+                        scheduleVerificationProbe(view, expectedUrl, expectedGeneration)
+                        return@evaluateJavascript
+                    }
+                    if (state.challengeVisible) {
+                        verificationPageResolved = false
+                        challengeFreeSinceUptimeMillis = null
+                        scheduleVerificationProbe(view, expectedUrl, expectedGeneration)
+                        return@evaluateJavascript
+                    }
+                    val now = SystemClock.uptimeMillis()
+                    val clearSince = challengeFreeSinceUptimeMillis ?: now.also {
+                        challengeFreeSinceUptimeMillis = it
+                    }
+                    val stableMillis = now - clearSince
+                    if (stableMillis < VERIFICATION_CLEAR_STABLE_MILLIS) {
+                        verificationPageResolved = null
+                        scheduleVerificationProbe(view, expectedUrl, expectedGeneration)
+                        return@evaluateJavascript
+                    }
+                    verificationPageResolved = true
+                    captureSnapshot(view, currentUrl)
+                    completeAndFinish()
+                }
+            },
+            delayMillis,
+        )
+    }
+
+    private fun parseBrowserVerificationState(raw: String): BrowserVerificationState =
+        runCatching {
+            val value = JSONArray(raw)
+            BrowserVerificationState(
+                ready = value.optString(0) == "complete",
+                challengeVisible = value.optBoolean(1, true),
+            )
+        }.getOrDefault(
+            BrowserVerificationState(
+                ready = false,
+                challengeVisible = true,
+            ),
+        )
 
     private fun failAndFinish(message: String) {
         if (completing) return
@@ -160,6 +245,7 @@ class NetworkBrowserActivity : Activity() {
     }
 
     override fun onDestroy() {
+        verificationHandler.removeCallbacksAndMessages(null)
         if (::webView.isInitialized) {
             val currentUrl = webView.url ?: intent.getStringExtra(EXTRA_URL).orEmpty()
             if (currentUrl.isNotBlank()) {
@@ -204,10 +290,36 @@ class NetworkBrowserActivity : Activity() {
         const val EXTRA_USER_AGENT = "userAgent"
         const val EXTRA_ERROR = "error"
         const val EXTRA_CLOUDFLARE_VERIFICATION = "cloudflareVerification"
-        private const val CLOUDFLARE_CHALLENGE_PROBE =
+        private const val VERIFICATION_INITIAL_SETTLE_MILLIS = 1500L
+        private const val VERIFICATION_PROBE_INTERVAL_MILLIS = 500L
+        private const val VERIFICATION_CLEAR_STABLE_MILLIS = 3000L
+        private const val CLOUDFLARE_BROWSER_STATE_PROBE =
             "(function(){" +
-                "return !!document.getElementById('challenge-error-title')||" +
-                "!!document.getElementById('challenge-error-text');" +
+                "var ready=document.readyState==='complete';" +
+                "var visible=function(el){if(!el)return false;" +
+                    "var s=window.getComputedStyle(el);var r=el.getBoundingClientRect();" +
+                    "return s.display!=='none'&&s.visibility!=='hidden'&&" +
+                    "parseFloat(s.opacity||'1')>0&&r.width>0&&r.height>0;};" +
+                "var selectors=['#challenge-error-title','#challenge-error-text'," +
+                    "'#challenge-running','#cf-challenge-running','#challenge-form'," +
+                    "'.challenge-form','.cf-turnstile','[id^=\"cf-chl-\"]'," +
+                    "'input[name=\"cf-turnstile-response\"]'," +
+                    "'iframe[src*=\"challenges.cloudflare.com\"]'," +
+                    "'iframe[src*=\"/cdn-cgi/challenge-platform/\"]'];" +
+                "var challenge=selectors.some(function(sel){" +
+                    "return Array.prototype.some.call(document.querySelectorAll(sel),visible);});" +
+                "var title=(document.title||'').toLowerCase();" +
+                "if(title.indexOf('just a moment')>=0)challenge=true;" +
+                "var body=((document.body&&document.body.innerText)||'').toLowerCase();" +
+                "if(body.indexOf('verify you are human')>=0||" +
+                    "body.indexOf('performing security verification')>=0||" +
+                    "body.indexOf('checking your browser')>=0)challenge=true;" +
+                "return [ready,challenge];" +
             "})()"
     }
+
+    private data class BrowserVerificationState(
+        val ready: Boolean,
+        val challengeVisible: Boolean,
+    )
 }

@@ -37,11 +37,7 @@ require(
     activity,
     'verificationPageResolved',
     'sameSiteWithRequestedUrl(currentUrl)',
-    'CLOUDFLARE_CHALLENGE_PROBE',
-    "document.getElementById('challenge-error-title')",
-    "document.getElementById('challenge-error-text')",
     'mergeCookieHeaders(',
-    'verificationPageResolved = !challengeVisible',
 )
 forbid(
     activity,
