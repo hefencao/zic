@@ -16,10 +16,13 @@ assert '__zicInstallComicInfoCache' not in venera
 assert 'async function __zicInvoke' in venera
 
 home = text('apps/app/lib/demo_home.dart')
-assert home.count('if (source != null && uri != null && uri.hasScheme)') >= 1
-assert "if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https'))" in home
+# dev.156 supersedes the old scheme-specific migration fallback: every
+# non-local artwork URI, including mihon:resource, uses the source gateway.
+assert home.count("if (sourceId != 'local-folder' && uri != null)") >= 2
+assert "if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https'))" not in home
 migration = home[home.index('Future<Uint8List> _loadMigrationCoverBytes'):home.index('Future<EncodedResourceSource> _loadCoverSource')]
-assert "(uri.scheme == 'http' || uri.scheme == 'https')" not in migration
+assert '_sourceResources.loadArtworkBytes(' in migration
+assert 'cacheComicId: _canonicalComicId(sourceId, comicId)' in migration
 
 cache = text('packages/resource_cache/lib/src/resource_cache.dart')
 assert '_encodedImageInFlight' in cache

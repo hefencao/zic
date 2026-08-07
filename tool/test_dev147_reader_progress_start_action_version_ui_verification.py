@@ -49,13 +49,18 @@ require(details, 'final refreshed = await widget.reloadLibrary(refreshContent: f
 
 require(mihon, 'import dev.zic.network.AndroidCookieJar', 'Mihon cookie boundary compile closure')
 forbid(mihon, 'import dev.zic.network.AndroidBrowserCookieSession', 'internal cookie-session coupling')
-for token in (
+for stale in (
     'deduplicateMihonStartReadingEntries(',
-    '"开始阅读"',
-    '"开始阅读章节"',
-    'sourceChapters = deduplicateMihonStartReadingEntries(',
+    'createSyntheticMihonChapter',
+    'selectMihonChapters(',
 ):
-    require(mihon, token, 'Mihon independent start-reading action de-duplication')
+    forbid(mihon, stale, 'Mihon host-action/chapter guessing')
+for token in (
+    'if (update != null)',
+    '"chapters"',
+    'for (candidate in listOf("getChapterList", "fetchChapterList"))',
+):
+    require(mihon, token, 'Mihon source chapter interface')
 for stale in (
     '_withoutSyntheticMihonFallback',
     '_removePersistedSyntheticChapters',
@@ -63,7 +68,7 @@ for stale in (
     'isCompatibilityFallback:',
 ):
     forbid(details + source_wrapper + composition + identity, stale, 'App synthetic chapter cleanup')
-require(chapter_test, 'fun removesOnlyAStandaloneStartReadingActionBesideRealChapters()', 'Mihon start-reading owner test')
+forbid(chapter_test, 'removesOnlyAStandaloneStartReadingActionBesideRealChapters', 'obsolete title-based chapter owner test')
 
 for stale in (
     'isSyntheticMihonChapterIdentity',

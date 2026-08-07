@@ -101,8 +101,8 @@ mihon = read(
     "packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/"
     "MihonRuntimeDriver.kt"
 )
-require(mihon, 'put("synthetic_revision", MIHON_SYNTHETIC_REVISION)', "synthetic wire revision")
-require(mihon, "MIHON_SYNTHETIC_REVISION = 3", "synthetic current revision")
+forbid(mihon, 'synthetic_revision', "removed synthetic chapter wire identity")
+forbid(mihon, 'createSyntheticMihonChapter', "removed synthetic chapter fallback")
 home = read("apps/app/lib/demo_home.dart")
 forbid(home, "isCurrentSyntheticMihonChapterIdentity", "App synthetic eviction ownership")
 

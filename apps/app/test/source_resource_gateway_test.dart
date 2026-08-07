@@ -170,56 +170,46 @@ void main() {
     expect(source.loads, 1);
   });
 
-  test('obsolete artwork cache keys are not consulted', () async {
+  test('canonical artwork identity survives mutable raw comic aliases', () async {
     final source = _ImageSource(canonicalPrefix: 'canonical:');
     final cache = ResourceCacheManager();
-    final oldUrlKey = ResourceCacheKey(
-      kind: ResourceCacheKind.imageBytes,
-      identity: '${source.sourceId}\u0000mihon:resource:canonical-cover',
-      namespace: 'comic:${source.sourceId}\u0000comic',
-      revision: 'artwork-v2',
+    final locator = Uri.parse('mihon:resource:canonical-cover');
+    final firstGateway = ComicSourceResourceGateway(
+      sourceForId: (sourceId) => sourceId == source.sourceId ? source : null,
     );
-    await cache.getOrLoadEncodedImage(
-      key: oldUrlKey,
-      loader: () async => Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 0xd9]),
-    );
-    final oldCanonicalKey = ComicResourceCacheIdentity(
-      sourceId: source.sourceId,
-      comicId: 'canonical:comic',
-    );
-    await cache.getOrLoadEncodedImage(
-      key: ResourceCacheKey(
-        kind: ResourceCacheKind.imageBytes,
-        identity: oldCanonicalKey.response('cover'),
-        namespace: oldCanonicalKey.namespace,
-        revision: 'artwork-v2',
-      ),
-      loader: () async => Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 0xd9]),
-    );
+    addTearDown(firstGateway.close);
     addTearDown(cache.close);
 
-    var resolverCalls = 0;
-    final gateway = ComicSourceResourceGateway(
-      sourceForId: (sourceId) {
-        resolverCalls++;
-        return sourceId == source.sourceId ? source : null;
-      },
-    );
-    addTearDown(gateway.close);
-
-    final loaded = await gateway.loadArtworkSource(
+    await firstGateway.loadArtworkSource(
       cache: cache,
       sourceId: source.sourceId,
-      comicId: 'comic',
-      uri: Uri.parse('mihon:resource:canonical-cover'),
+      comicId: 'mutable-browse-snapshot',
+      cacheComicId: 'canonical:comic',
+      uri: locator,
     );
 
-    expect(loaded.origin, EncodedResourceOrigin.memory);
-    expect(resolverCalls, 1);
+    var resolverCalls = 0;
+    final secondGateway = ComicSourceResourceGateway(
+      sourceForId: (_) {
+        resolverCalls++;
+        return null;
+      },
+    );
+    addTearDown(secondGateway.close);
+    final cached = await secondGateway.loadArtworkSource(
+      cache: cache,
+      sourceId: source.sourceId,
+      comicId: 'mutable-detail-snapshot',
+      cacheComicId: 'canonical:comic',
+      uri: locator,
+    );
+
+    expect(cached.origin, EncodedResourceOrigin.memory);
+    expect(resolverCalls, 0);
     expect(source.loads, 1);
   });
 
-  test('durable raw artwork hit bypasses source resolution', () async {
+  test('durable artwork identity bypasses source resolution', () async {
     final root = await Directory.systemTemp.createTemp('zic-cover-cache-');
     addTearDown(() => root.delete(recursive: true));
     final source = _ImageSource();
@@ -231,7 +221,8 @@ void main() {
     await firstGateway.loadArtworkSource(
       cache: firstCache.responses,
       sourceId: source.sourceId,
-      comicId: 'comic',
+      comicId: 'mutable-browse-snapshot',
+      cacheComicId: 'canonical:comic',
       uri: Uri.parse('mihon:resource:durable-cover'),
     );
     firstGateway.close();
@@ -251,7 +242,8 @@ void main() {
     final cached = await reopenedGateway.loadArtworkSource(
       cache: reopenedCache.responses,
       sourceId: source.sourceId,
-      comicId: 'comic',
+      comicId: 'mutable-detail-snapshot',
+      cacheComicId: 'canonical:comic',
       uri: Uri.parse('mihon:resource:durable-cover'),
     );
 

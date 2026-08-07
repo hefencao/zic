@@ -92,6 +92,7 @@ python3 "$ROOT/tool/test_dev153_mihon_cloudflare_browser_completion_loop_guard.p
 python3 "$ROOT/tool/test_dev154_cloudflare_browser_stable_completion.py"
 python3 "$ROOT/tool/test_dev154_network_browser_activity_kotlin_compile.py"
 python3 "$ROOT/tool/test_dev155_cloudflare_ua_history_plugin_persistence.py"
+python3 "$ROOT/tool/test_dev156_reader_progress_mihon_chapter_artwork_identity.py"
 python3 "$ROOT/tool/check_test_quarantine.py"
 python3 "$ROOT/tool/test_texture_schedule_timing_contract.py"
 python3 "$ROOT/tool/test_texture_bridge_kotlin_compile.py"

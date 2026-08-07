@@ -34,11 +34,13 @@ for token in (
     assert token in driver, token
 assert '"requiresRuntimeTransform" to false' not in driver
 
-combined = driver.index('val updateChapters = update')
-compatibility = driver.index('if (updateChapters.isEmpty() && detailedChapters.isEmpty())')
-selection = driver.index('updateChapters.isNotEmpty() -> updateChapters')
-assert combined < compatibility < selection
+# dev.156 supersedes the old SManga-field merge/synthetic fallback. Current
+# TachiyomiX chapters come from SMangaUpdate or explicit chapter-list APIs.
 assert 'Invocation("getMangaUpdate"' in driver
+assert '"getChapters"' in driver
+assert 'for (candidate in listOf("getChapterList", "fetchChapterList"))' in driver
+assert 'detailedManga.readList("chapters"' not in driver
+assert 'createSyntheticMihonChapter' not in driver
 
 for token in (
     'this.tags = const <String>[]',

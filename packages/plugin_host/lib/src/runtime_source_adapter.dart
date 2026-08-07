@@ -9,11 +9,8 @@ import 'package:domain/domain.dart';
 import 'runtime_limits.dart';
 import 'runtime_protocol.dart';
 
-/// Returns whether [chapterId] is the compatibility chapter synthesized by
-/// the Mihon runtime for a gallery source with no chapter-list operation.
-///
-/// Keeping this parser beside the runtime protocol prevents presentation and
-/// storage layers from depending on Mihon's opaque identity representation.
+/// Decodes one Mihon opaque protocol identity without exposing its payload to
+/// presentation or storage layers.
 Map<String, dynamic>? _decodeOpaqueIdentity(
   String value,
   String prefix,
@@ -52,8 +49,9 @@ Uri? resolveMihonComicWebUri({
 /// Mihon browse/detail models can carry different mutable title, description,
 /// thumbnail and memo fields for the same URL. Those fields must remain in the
 /// opaque locator used by [loadComic], but they must not create two durable
-/// comics in App projections. This key is comparison-only and is never used as
-/// a runtime request locator.
+/// comics or artwork namespaces in App projections. This key is safe for
+/// same-source persistence/cache aliasing and is never used as a runtime
+/// request locator.
 String? canonicalMihonComicIdentity({
   required String comicId,
   required Uri sourceWebsite,

@@ -1,4 +1,5 @@
 import 'dart:collection';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
@@ -63,31 +64,31 @@ final class ComicSourceResourceGateway {
     required ResourceCacheManager cache,
     required String sourceId,
     required String comicId,
+    String? cacheComicId,
     required Uri uri,
     String revision = '',
     String resourceRole = 'cover',
-  }) {
-    _requireOpen();
-    final requestUri = _artworkRequestUri(uri);
-    final source = _requireSource(sourceId, requestUri);
-    final cacheRole = _artworkResourceRole(resourceRole, uri);
-    return loadCachedComicImage(
+  }) async {
+    final encoded = await loadArtworkSource(
       cache: cache,
       sourceId: sourceId,
       comicId: comicId,
-      imageIdentity: requestUri.toString(),
-      resourceRole: cacheRole,
-      revision: _artworkRevision(revision),
-      loader: () => _collectArtworkResponse(
-        _transports.loaderFor(source, requestUri),
-      ),
+      cacheComicId: cacheComicId,
+      uri: uri,
+      revision: revision,
+      resourceRole: resourceRole,
     );
+    return switch (encoded) {
+      MemoryEncodedResourceSource(:final bytes) => bytes,
+      FileEncodedResourceSource(:final path) => File(path).readAsBytes(),
+    };
   }
 
   Future<EncodedResourceSource> loadArtworkSource({
     required ResourceCacheManager cache,
     required String sourceId,
     required String comicId,
+    String? cacheComicId,
     required Uri uri,
     String revision = '',
     bool awaitPersistence = false,
@@ -106,7 +107,7 @@ final class ComicSourceResourceGateway {
         : await readCachedComicImageSource(
             cache: cache,
             sourceId: sourceId,
-            comicId: comicId,
+            comicId: cacheComicId ?? comicId,
             imageIdentity: requestUri.toString(),
             resourceRole: cacheRole,
             revision: cacheRevision,
@@ -117,13 +118,14 @@ final class ComicSourceResourceGateway {
     }
 
     final source = _requireSource(sourceId, requestUri);
-    // Cover entries use the raw durable comic identity. It is available from
-    // the library before an optional source/plugin is activated, so a warm
-    // cover never needs source resolution on the foreground path.
+    // Artwork cache identity is deliberately separate from the runtime comic
+    // locator. External runtimes (notably Mihon) may encode mutable metadata in
+    // comicId; callers pass a persisted/source-derived canonical identity so
+    // browse, details and history share one durable artwork namespace.
     final result = await loadCachedComicImageSource(
       cache: cache,
       sourceId: sourceId,
-      comicId: comicId,
+      comicId: cacheComicId ?? comicId,
       imageIdentity: requestUri.toString(),
       resourceRole: cacheRole,
       revision: cacheRevision,

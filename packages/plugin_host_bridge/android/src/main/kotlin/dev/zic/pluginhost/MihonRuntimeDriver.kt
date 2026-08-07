@@ -75,7 +75,6 @@ internal class MihonRuntimeDriver private constructor(
     private val completions = ConcurrentHashMap<String, CountDownLatch>()
     private val rateLimiters = ConcurrentHashMap<String, SourceRequestLimiter>()
     private val runtimeTransformBySource = ConcurrentHashMap<String, Boolean>()
-    private val realChapterCatalogs = ConcurrentHashMap.newKeySet<String>()
     private val closed = AtomicBoolean(false)
     private val sourcesClosed = AtomicBoolean(false)
     private val runtimeDeleted = AtomicBoolean(false)
@@ -318,49 +317,19 @@ internal class MihonRuntimeDriver private constructor(
 
     private fun loadComic(source: Any, comicId: String, requestId: String): Map<String, Any?> {
         val catalog = loadMihonComicCatalog(source, comicId, requestId)
-        // A failed chapter request is not evidence that this is a gallery with
-        // no chapters. Do not hide a real source/network failure behind the
-        // synthetic single-chapter fallback (this used to make JMComic appear
-        // to have one "正文" chapter while dropping its real catalog).
         catalog.chapterFailure?.let { throw it }
         val sourceId = source.readValue("id", "getId")?.toString()
             ?: error("Mihon source id is missing")
         val transportRevision = mihonTransportRevision(sourceId, source)
-        val catalogIdentity = "$sourceId\u0000$comicId"
-        val sourceChapters = deduplicateMihonStartReadingEntries(
-            catalog.chapters,
-        ) { chapter -> chapter.readString("name", "getName") }
-        val selectedChapters = selectMihonChapters(
-            chapters = sourceChapters,
-            allowSynthetic = !catalog.chapterCatalogAvailable &&
-                !realChapterCatalogs.contains(catalogIdentity),
-        ) {
-            createSyntheticMihonChapter(source, catalog.manga)
-        }
-        if (!selectedChapters.synthetic && selectedChapters.chapters.isNotEmpty()) {
-            realChapterCatalogs += catalogIdentity
-        }
-        val syntheticPageCount = if (selectedChapters.synthetic) {
-            loadMihonPageModels(source, selectedChapters.chapters.single(), requestId).size
-                .also { count ->
-                    require(count > 0) {
-                        "Mihon source exposed neither a chapter catalog nor readable gallery pages"
-                    }
-            }
-        } else {
-            null
-        }
-        val chapterMessages = selectedChapters.chapters.mapIndexed { index, chapter ->
+        val chapterMessages = catalog.chapters.mapIndexed { index, chapter ->
             chapterMessage(
                 chapter = chapter,
                 comicId = comicId,
                 sequence = index,
-                synthetic = selectedChapters.synthetic,
-                pageCount = syntheticPageCount,
                 transportRevision = transportRevision,
             )
         }
-        rememberMihonChapters(comicId, selectedChapters.chapters, chapterMessages)
+        rememberMihonChapters(comicId, catalog.chapters, chapterMessages)
         return mapOf(
             "comic" to comicMessage(source, catalog.manga, comicId),
             "chapters" to chapterMessages,
@@ -390,9 +359,6 @@ internal class MihonRuntimeDriver private constructor(
             if (error.isMihonCapabilityAbsence()) {
                 null
             } else {
-                // Some extensions were built against the combined API but
-                // still only implement the legacy detail/chapter methods.
-                // Keep the failure and try those methods before giving up.
                 failures += error
                 null
             }
@@ -415,86 +381,66 @@ internal class MihonRuntimeDriver private constructor(
         }
         ensureNotCancelled(requestId)
 
-        // Mihon 1.6 exposes details and chapters atomically through
-        // SMangaUpdate. A non-empty combined chapter result is authoritative;
-        // asking the source for the chapter list again duplicates a potentially
-        // non-idempotent extension operation.
-        val updateChapters = update
-            ?.readList("chapters", "getChapters", "newChapters", "getNewChapters")
-            .orEmpty()
-        val detailedChapters = detailedManga
-            .readList("chapters", "getChapters", "chapterList", "getChapterList")
-        val chapterFailures = failures
-        var compatibilityChapters = emptyList<Any>()
-        // A successful combined SMangaUpdate call proves that this source has
-        // an authoritative chapter-catalog capability even when it returns an
-        // empty list. Empty is not evidence for a gallery fallback.
-        var chapterCatalogAvailable = update != null
-        if (updateChapters.isEmpty() && detailedChapters.isEmpty()) {
-            val chapterModels = buildList {
-                add(detailedManga)
-                if (manga !== detailedManga) add(manga)
-            }
-            chapterSearch@ for (chapterModel in chapterModels) {
-                for (candidate in listOf("getChapterList", "fetchChapterList")) {
-                    val loaded = try {
-                        source.invokeMihonCompatible(candidate, listOf(chapterModel))
-                            .unwrapAsync()
-                            .asObjectList()
-                    } catch (error: Throwable) {
-                        if (error.isMihonCapabilityAbsence()) continue
-                        chapterFailures += error
-                        continue
-                    }
-                    chapterCatalogAvailable = true
-                    ensureNotCancelled(requestId)
-                    if (loaded.isNotEmpty()) {
-                        compatibilityChapters = loaded
-                        break@chapterSearch
-                    }
+        // tachiyomix 1.6 defines chapters only on SMangaUpdate. SManga itself
+        // has no chapter-list field, and "Start/Continue reading" is a host UI
+        // action rather than an SChapter capability. Never reflect arbitrary
+        // `chapters` properties from SManga and never synthesize an SChapter
+        // from the manga URL when the catalog is empty.
+        if (update != null) {
+            return MihonComicCatalog(
+                manga = detailedManga,
+                chapters = update.readList(
+                    "chapters",
+                    "getChapters",
+                    "newChapters",
+                    "getNewChapters",
+                ),
+                chapterFailure = null,
+            )
+        }
+
+        var chapterCatalogSucceeded = false
+        var chapters = emptyList<Any>()
+        val chapterModels = buildList {
+            add(detailedManga)
+            if (manga !== detailedManga) add(manga)
+        }
+        chapterSearch@ for (chapterModel in chapterModels) {
+            for (candidate in listOf("getChapterList", "fetchChapterList")) {
+                val loaded = try {
+                    source.invokeMihonCompatible(candidate, listOf(chapterModel))
+                        .unwrapAsync()
+                        .asObjectList()
+                } catch (error: Throwable) {
+                    if (error.isMihonCapabilityAbsence()) continue
+                    failures += error
+                    continue
                 }
+                chapterCatalogSucceeded = true
+                chapters = loaded
+                ensureNotCancelled(requestId)
+                break@chapterSearch
             }
         }
-        val chapters = when {
-            updateChapters.isNotEmpty() -> updateChapters
-            detailedChapters.isNotEmpty() -> detailedChapters
-            compatibilityChapters.isNotEmpty() -> compatibilityChapters
-            else -> emptyList()
-        }
-        val chapterFailure = if (chapters.isEmpty() && chapterFailures.isNotEmpty()) {
-            IllegalStateException(
+        val chapterFailure = when {
+            chapterCatalogSucceeded -> null
+            failures.isNotEmpty() -> IllegalStateException(
                 "Mihon chapter catalog failed for ${source.javaClass.name}",
-                chapterFailures.first(),
+                failures.first(),
             ).also { failure ->
-                chapterFailures.drop(1).forEach(failure::addSuppressed)
+                failures.drop(1).forEach(failure::addSuppressed)
             }
-        } else {
-            null
+            else -> IllegalStateException(
+                "Mihon source exposes no compatible chapter-catalog operation: ${source.javaClass.name}",
+            )
         }
         return MihonComicCatalog(
             manga = detailedManga,
             chapters = chapters,
             chapterFailure = chapterFailure,
-            chapterCatalogAvailable = chapterCatalogAvailable,
         )
     }
 
-    private fun createSyntheticMihonChapter(source: Any, manga: Any): Any {
-        val chapter = createModel(
-            source.javaClass.classLoader,
-            "eu.kanade.tachiyomi.source.model.SChapter",
-            JSONObject()
-                .put("url", manga.readString("url", "getUrl").orEmpty())
-                .put("name", "正文")
-                .put("chapter_number", 1f)
-                .put("date_upload", 0L)
-                .put("scanlator", ""),
-        )
-        runCatching {
-            source.invokeMihonCompatible("prepareNewChapter", listOf(chapter, manga))
-        }
-        return chapter
-    }
 
     private fun rememberMihonChapters(
         comicId: String,
@@ -526,64 +472,28 @@ internal class MihonRuntimeDriver private constructor(
         chapterById[chapterId]?.let { return it }
         val comicId = encoded.optString("comicId")
         require(comicId.isNotBlank()) { "chapter comic identity is missing" }
-        val sourceId = source.readValue("id", "getId")?.toString()
-            ?: error("Mihon source id is missing")
-        val catalogIdentity = "$sourceId\u0000$comicId"
-        if (encoded.optBoolean("synthetic")) {
-            require(!realChapterCatalogs.contains(catalogIdentity)) {
-                "Mihon synthetic chapter is invalid after a real catalog was observed"
-            }
-            val manga = createModel(
-                source.javaClass.classLoader,
-                "eu.kanade.tachiyomi.source.model.SManga",
-                decodeOpaque(comicId, "manga"),
-            )
-            return createModel(
-                source.javaClass.classLoader,
-                "eu.kanade.tachiyomi.source.model.SChapter",
-                encoded,
-            ).also { chapter ->
-                runCatching {
-                    source.invokeMihonCompatible("prepareNewChapter", listOf(chapter, manga))
-                }
-            }
-        }
         val catalog = loadMihonComicCatalog(source, comicId, requestId)
         catalog.chapterFailure?.let { throw it }
-        val sourceChapters = deduplicateMihonStartReadingEntries(
-            catalog.chapters,
-        ) { chapter -> chapter.readString("name", "getName") }
-        val selectedChapters = selectMihonChapters(
-            chapters = sourceChapters,
-            allowSynthetic = !catalog.chapterCatalogAvailable &&
-                !realChapterCatalogs.contains(catalogIdentity),
-        ) {
-            createSyntheticMihonChapter(source, catalog.manga)
-        }
-        if (!selectedChapters.synthetic && selectedChapters.chapters.isNotEmpty()) {
-            realChapterCatalogs += catalogIdentity
-        }
-        val messages = selectedChapters.chapters.mapIndexed { index, chapter ->
+        val messages = catalog.chapters.mapIndexed { index, chapter ->
             chapterMessage(
                 chapter = chapter,
                 comicId = comicId,
                 sequence = index,
-                synthetic = selectedChapters.synthetic,
             )
         }
-        rememberMihonChapters(comicId, selectedChapters.chapters, messages)
+        rememberMihonChapters(comicId, catalog.chapters, messages)
         chapterById[chapterId]?.let { return it }
-        val matches = selectedChapters.chapters.filter { chapter ->
+        val matches = catalog.chapters.filter { chapter ->
             mihonChapterMatches(chapter, encoded)
         }
         require(matches.size == 1) {
             if (matches.isEmpty()) {
                 "Mihon chapter is no longer present in the source catalog"
             } else {
-                "Mihon chapter identity is ambiguous after source refresh"
+                "Mihon chapter identity is ambiguous after catalog refresh"
             }
         }
-        return matches.single().also { chapterById[chapterId] = it }
+        return matches.single()
     }
 
     private fun loadMihonPageModels(
@@ -658,7 +568,6 @@ internal class MihonRuntimeDriver private constructor(
             chapter = chapter,
             comicId = comicId,
             sequence = encoded.optInt("sequence", 0),
-            synthetic = encoded.optBoolean("synthetic"),
             transportRevision = mihonTransportRevision(sourceId, source),
         ).toMutableMap().apply {
             put("chapterId", chapterId)
@@ -1030,17 +939,11 @@ internal class MihonRuntimeDriver private constructor(
         chapter: Any,
         comicId: String,
         sequence: Int,
-        synthetic: Boolean = false,
-        pageCount: Int? = null,
         transportRevision: String? = null,
     ): Map<String, Any?> {
         val json = mihonModelJson(chapter).apply {
             put("comicId", comicId)
             put("sequence", sequence)
-            if (synthetic) {
-                put("synthetic", true)
-                put("synthetic_revision", MIHON_SYNTHETIC_REVISION)
-            }
         }
         val id = encodeOpaque("chapter", json)
         val title = chapter.readString("name", "getName")?.ifBlank { null }
@@ -1050,7 +953,7 @@ internal class MihonRuntimeDriver private constructor(
             "chapterId" to id,
             "title" to title,
             "sequence" to sequence,
-            "pageCount" to (pageCount ?: 0),
+            "pageCount" to 0,
             "sourceRevision" to listOfNotNull(
                 chapter.readString("url", "getUrl")?.takeIf { it.isNotBlank() },
                 chapter.readLong("date_upload", "getDate_upload", "getDateUpload")?.toString(),
@@ -1227,57 +1130,12 @@ private data class MihonComicCatalog(
     val manga: Any,
     val chapters: List<Any>,
     val chapterFailure: Throwable?,
-    val chapterCatalogAvailable: Boolean,
 )
-
-internal data class MihonChapterSelection<T>(
-    val chapters: List<T>,
-    val synthetic: Boolean,
-)
-
-internal inline fun <T> deduplicateMihonStartReadingEntries(
-    chapters: List<T>,
-    titleOf: (T) -> String?,
-): List<T> {
-    if (chapters.size <= 1) return chapters
-    val redundant = chapters.withIndex().filter { (_, chapter) ->
-        normalizeMihonStartReadingTitle(titleOf(chapter)) in setOf(
-            "开始阅读",
-            "开始阅读章节",
-            "startreading",
-            "readnow",
-        )
-    }
-    if (redundant.isEmpty() || redundant.size == chapters.size) return chapters
-    val redundantIndices = redundant.mapTo(mutableSetOf()) { it.index }
-    return chapters.filterIndexed { index, _ -> index !in redundantIndices }
-}
-
-private fun normalizeMihonStartReadingTitle(value: String?): String = value
-    .orEmpty()
-    .trim()
-    .lowercase()
-    .replace(Regex("[\\s_\\-:：·]+"), "")
-
-internal inline fun <T> selectMihonChapters(
-    chapters: List<T>,
-    allowSynthetic: Boolean = true,
-    createSynthetic: () -> T,
-): MihonChapterSelection<T> = if (chapters.isEmpty()) {
-    if (allowSynthetic) {
-        MihonChapterSelection(listOf(createSynthetic()), synthetic = true)
-    } else {
-        MihonChapterSelection(emptyList(), synthetic = false)
-    }
-} else {
-    MihonChapterSelection(chapters, synthetic = false)
-}
 
 private const val MIHON_BROWSER_USER_AGENT =
     "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 " +
         "Chrome/131 Mobile Safari/537.36"
 private const val MAX_CACHED_MIHON_CHAPTERS = 4096
-private const val MIHON_SYNTHETIC_REVISION = 3
 private const val MIHON_RUNTIME_TRANSFORM_REVISION = "mihon-runtime-transform-v1"
 
 internal fun mihonChapterMatches(chapter: Any, encoded: JSONObject): Boolean {
@@ -1925,9 +1783,9 @@ private fun Throwable.isMihonCapabilityAbsence(): Boolean {
     // Mihon 1.6 compatibility interfaces and HttpSource defaults use an
     // UnsupportedOperationException for genuinely absent legacy methods. An
     // extension parser can also throw the same type for a real source/network
-    // failure; treating every UOE as capability absence enabled a false
-    // synthetic single chapter after Cloudflare failures. Only accept UOE
-    // frames owned by the shared Mihon ABI defaults.
+    // failure; treating every UOE as capability absence can hide a real
+    // source/network failure and incorrectly continue through legacy fallback.
+    // Only accept UOE frames owned by the shared Mihon ABI defaults.
     return cause.stackTrace.any { frame ->
         frame.className == "eu.kanade.tachiyomi.source.Source" ||
             frame.className.startsWith("eu.kanade.tachiyomi.source.Source\$") ||

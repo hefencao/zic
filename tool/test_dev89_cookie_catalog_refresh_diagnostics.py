@@ -152,11 +152,15 @@ forbid(
 )
 require(
     "packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt",
-    "realChapterCatalogs",
-    "MIHON_SYNTHETIC_REVISION = 3",
-    "Mihon synthetic chapter is invalid after a real catalog was observed",
     "Only accept UOE",
-    "frame.className == \"eu.kanade.tachiyomi.source.online.HttpSource\"",
+    'frame.className == "eu.kanade.tachiyomi.source.online.HttpSource"',
+    'for (candidate in listOf("getChapterList", "fetchChapterList"))',
+)
+forbid(
+    "packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt",
+    "realChapterCatalogs",
+    "MIHON_SYNTHETIC_REVISION",
+    "createSyntheticMihonChapter",
 )
 forbid(
     "packages/plugin_host/lib/src/runtime_source_adapter.dart",

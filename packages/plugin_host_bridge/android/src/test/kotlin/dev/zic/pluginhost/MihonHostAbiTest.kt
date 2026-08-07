@@ -126,64 +126,6 @@ class MihonHostAbiTest {
     }
 
     @Test
-    fun removesOnlyAStandaloneStartReadingActionBesideRealChapters() {
-        assertEquals(
-            listOf("第一话", "第二话"),
-            deduplicateMihonStartReadingEntries(
-                listOf("开始阅读", "第一话", "第二话"),
-            ) { it },
-        )
-        assertEquals(
-            listOf("正文"),
-            deduplicateMihonStartReadingEntries(listOf("正文")) { it },
-        )
-        assertEquals(
-            listOf("开始阅读"),
-            deduplicateMihonStartReadingEntries(listOf("开始阅读")) { it },
-        )
-        assertEquals(
-            listOf("开始阅读后的故事", "第一话"),
-            deduplicateMihonStartReadingEntries(
-                listOf("开始阅读后的故事", "第一话"),
-            ) { it },
-        )
-    }
-
-    @Test
-    fun preservesEveryRealChapterAndSynthesizesOnlyForAnEmptyCatalog() {
-        var syntheticCalls = 0
-        val real = listOf("chapter-1", "chapter-2", "chapter-3")
-
-        val selected = selectMihonChapters(real) {
-            syntheticCalls++
-            "synthetic"
-        }
-
-        assertEquals(real, selected.chapters)
-        assertFalse(selected.synthetic)
-        assertEquals(0, syntheticCalls)
-
-        val empty = selectMihonChapters(emptyList<String>()) {
-            syntheticCalls++
-            "正文"
-        }
-        assertEquals(listOf("正文"), empty.chapters)
-        assertTrue(empty.synthetic)
-        assertEquals(1, syntheticCalls)
-
-        val authoritativeEmpty = selectMihonChapters(
-            emptyList<String>(),
-            allowSynthetic = false,
-        ) {
-            syntheticCalls++
-            "不应创建"
-        }
-        assertTrue(authoritativeEmpty.chapters.isEmpty())
-        assertFalse(authoritativeEmpty.synthetic)
-        assertEquals(1, syntheticCalls)
-    }
-
-    @Test
     fun matchesRefetchedChaptersByStableExtensionIdentity() {
         val first = object {
             @Suppress("unused")

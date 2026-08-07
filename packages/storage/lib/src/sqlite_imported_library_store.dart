@@ -5,16 +5,22 @@ import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:sqlite3/sqlite3.dart' as sql;
 
+import 'sqlite_progress_writer.dart';
+
 const _schemaVersion = 7;
 
 final class SqliteImportedLibraryStore
-    implements ImportedLibraryStore, ComicVersionRelationStore {
+    implements
+        ImportedLibraryStore,
+        ComicVersionRelationStore,
+        BufferedReadingProgressStore {
   SqliteImportedLibraryStore(this.path);
 
   SqliteImportedLibraryStore.memory() : path = null;
 
   final String? path;
   sql.Database? _db;
+  SqliteProgressWriter? _progressWriter;
 
   @override
   Future<void> open() async {
@@ -60,6 +66,9 @@ final class SqliteImportedLibraryStore
         throw StateError(
           'unsupported imported library schema version: $version',
         );
+      }
+      if (dbPath != null) {
+        _progressWriter = await SqliteProgressWriter.open(dbPath);
       }
       _db = db;
     } on Object {
@@ -151,9 +160,35 @@ final class SqliteImportedLibraryStore
 
   @override
   Future<void> saveProgress(ReadingProgress progress) async {
-    final db = _requireDb();
+    final writer = _progressWriter;
+    if (writer != null) {
+      await writer.save(progress);
+      return;
+    }
+    _saveProgressSynchronously(_requireDb(), progress);
+  }
+
+  @override
+  void enqueueProgress(ReadingProgress progress) {
+    final writer = _progressWriter;
+    if (writer != null) {
+      writer.enqueue(progress);
+      return;
+    }
+    _saveProgressSynchronously(_requireDb(), progress);
+  }
+
+  @override
+  Future<void> flushProgress() async {
+    await _progressWriter?.flush();
+  }
+
+  void _saveProgressSynchronously(
+    sql.Database db,
+    ReadingProgress progress,
+  ) {
     final rows = db.select('''
-      SELECT chapter_json
+      SELECT comic_id, chapter_json
       FROM imported_chapter
       WHERE source_id = ? AND chapter_id = ?
       LIMIT 1
@@ -161,16 +196,17 @@ final class SqliteImportedLibraryStore
     if (rows.isEmpty) {
       throw StateError('cannot save progress for an unknown chapter');
     }
-    final chapter = _decodeChapter(rows.first['chapter_json']! as String);
-    if (progress.sourceId != chapter.sourceId ||
-        progress.comicId != chapter.comicId) {
+    if (rows.first['comic_id'] != progress.comicId) {
       throw StateError('progress identity does not match the chapter');
     }
-    if (progress.pageIndex < 0 || progress.pageIndex >= chapter.pages.length) {
+    final rawChapter = jsonDecode(rows.first['chapter_json']! as String);
+    final pages = rawChapter is Map ? rawChapter['pages'] : null;
+    final pageCount = pages is List ? pages.length : 0;
+    if (progress.pageIndex < 0 || progress.pageIndex >= pageCount) {
       throw RangeError.range(
         progress.pageIndex,
         0,
-        chapter.pages.length - 1,
+        pageCount - 1,
         'progress.pageIndex',
       );
     }
@@ -680,6 +716,9 @@ final class SqliteImportedLibraryStore
 
   @override
   Future<void> close() async {
+    final progressWriter = _progressWriter;
+    _progressWriter = null;
+    await progressWriter?.close();
     _db?.dispose();
     _db = null;
   }

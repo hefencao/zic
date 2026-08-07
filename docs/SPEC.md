@@ -206,6 +206,8 @@ identity 超限时使用稳定 hash 与原长度；高频事件 MAY 合并，但
 
 4. encoded artwork source 已就绪但 ImageStream 在有界时间内既无首帧也无错误时，Presentation MUST 对当前 cover identity 执行至多一次局部 source revalidation；不得清空全局 response/image cache或通过父组件 rebuild 重试。
 5. 远程详情 MUST 先显示已有 catalog cache，并等待当前 active source adapter 完成后台刷新；预览、评论及章节操作 MUST 在调用时解析当前 adapter，不得持有插件重启前的关闭 session。
-6. App MUST NOT 通过 synthetic identity 或标题扫描清理章节。Mihon adapter MAY 在真实章节目录中去除与其他章节并存、标题精确归一为独立“开始阅读”动作的条目；单独的 gallery“正文”兼容章节和名称仅包含相似文字的真实章节 MUST 保留。
+6. Mihon chapter catalog MUST 只投影插件/source API实际返回的 `SChapter`；MUST NOT 从 manga URL生成兼容单章，也不得按“开始阅读/正文/Start Reading”等标题推断宿主 action并增删章节。目录失败 MUST 保持失败；成功空目录 MUST 保持空目录。
+7. Reader progress 的有序性与 durable I/O MUST 解耦：SQLite实现 MUST 在非 UI isolate执行同步 sqlite3/章节校验；Reader页面变化只入队最新 checkpoint，不得逐页发布 Home/library projection。正常 Reader route 返回后 composition MUST 等待 progress barrier再一次性刷新历史。
+8. 外部 artwork MUST 统一通过 `ComicSourceResourceGateway`；raw plugin comic locator 与 durable artwork identity MUST 分离。Mihon 等可变 raw locator必须使用 source canonical comic identity构造封面/预览 cache namespace；`mihon:resource:` 等插件 URI不得传给本地文件 loader。
 4. 同一 browser snapshot revision MUST NOT 在每个 HTTP 请求前重复覆盖 runtime Cookie；新 revision 可再次导入。Mihon 首个重试 MUST 能从 snapshot 同步获得 cookie，不得依赖 Android `CookieManager.setCookie()` 的异步持久化时序。
 5. retryable runtime lifecycle envelope MAY 自动重新激活并重试一次；业务错误和 `source-verification-required` MUST NOT 被当作 runtime 崩溃吞掉。

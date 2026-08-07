@@ -21,22 +21,17 @@ def main() -> int:
         raise SystemExit('Mihon runtime source contains an embedded NUL byte')
     driver = raw_driver.decode()
     required = (
-        'allowSynthetic = !catalog.chapterCatalogAvailable',
         'catalog.chapterFailure?.let { throw it }',
         'chapterById[chapterId]?.let { return it }',
         'mihonChapterMatches(chapter, encoded)',
-        'if (chapters.isEmpty())',
-        'MihonChapterSelection(chapters, synthetic = false)',
-        'deduplicateMihonStartReadingEntries(',
-        'normalizeMihonStartReadingTitle(',
-        'if (updateChapters.isEmpty() && detailedChapters.isEmpty())',
+        'if (update != null)',
+        'update.readList(',
+        '"chapters"',
         'for (candidate in listOf("getChapterList", "fetchChapterList"))',
+        'chapterCatalogSucceeded = true',
+        'Mihon source exposes no compatible chapter-catalog operation',
         'cause is UnsupportedOperationException',
-        'newChapters',
-        'loadMihonPageModels(source, selectedChapters.chapters.single(), requestId)',
-        'Mihon source exposed neither a chapter catalog nor readable gallery pages',
-        'updateChapters.isNotEmpty() -> updateChapters',
-        'detailedChapters.isNotEmpty() -> detailedChapters',
+        'loadMihonPageModels(source, chapter, requestId)',
         'mihonCoverResource(source, manga)',
         'return encodeOpaque("resource", resource)',
         'mihonContentKindHint(resource.optString("url"))',
@@ -48,6 +43,17 @@ def main() -> int:
     for token in required:
         if token not in driver:
             raise SystemExit(f'Mihon chapter contract is incomplete: {token}')
+    forbidden = (
+        'createSyntheticMihonChapter',
+        'deduplicateMihonStartReadingEntries',
+        'selectMihonChapters',
+        'MihonChapterSelection',
+        'MIHON_SYNTHETIC_REVISION',
+        'detailedManga.readList("chapters"',
+    )
+    for token in forbidden:
+        if token in driver:
+            raise SystemExit(f'Mihon chapter contract retains guessed host behavior: {token}')
     if '!chapterProbeCompleted' in driver:
         raise SystemExit('Mihon chapter failures are still hidden behind an empty probe')
     for source in ABI_ROOTS:
@@ -58,37 +64,6 @@ def main() -> int:
     kotlinc = shutil.which('kotlinc')
     java = shutil.which('java')
     if kotlinc and java:
-        dedupe = re.search(
-            r'internal inline fun <T> deduplicateMihonStartReadingEntries\(.*?'
-            r'private fun normalizeMihonStartReadingTitle\(.*?\n'
-            r'    \.replace\(Regex\(.*?\n',
-            driver,
-            re.DOTALL,
-        )
-        match = re.search(
-            r'internal data class MihonChapterSelection<T>\(.*?\n\)\n',
-            driver,
-            re.DOTALL,
-        )
-        function = re.search(
-            r'internal inline fun <T> selectMihonChapters\(.*?\n}\n',
-            driver,
-            re.DOTALL,
-        )
-        if match is None or function is None:
-            raise SystemExit('Mihon chapter selection helper could not be extracted')
-        harness = f'''package dev.zic.pluginhost\n\n{match.group(0)}\n{function.group(0)}\nfun main() {{\n    var syntheticCalls = 0\n    val real = listOf("one", "two")\n    val selected = selectMihonChapters(real) {{ syntheticCalls++; "synthetic" }}\n    check(selected.chapters == real)\n    check(!selected.synthetic)\n    check(syntheticCalls == 0)\n    val empty = selectMihonChapters(emptyList<String>()) {{ syntheticCalls++; "正文" }}\n    check(empty.chapters == listOf("正文"))\n    check(empty.synthetic)\n    check(syntheticCalls == 1)\n}}\n'''
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source = root / 'ChapterContract.kt'
-            jar = root / 'chapter-contract.jar'
-            source.write_text(harness)
-            subprocess.run(
-                [kotlinc, str(source), '-include-runtime', '-d', str(jar)],
-                check=True,
-            )
-            subprocess.run([java, '-jar', str(jar)], check=True)
-
         unwrap = re.search(
             r'private fun Any\?\.unwrapAsync\(\): Any \{.*?\n\}',
             driver,

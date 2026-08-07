@@ -1,3 +1,11 @@
+## 0.31.0-dev.156：移出 Reader 持久化热路径并统一 Mihon 章节与封面身份
+
+- 根因审计确认 Reader 卡顿来自 UI isolate 上同步 sqlite3/章节 JSON 读取以及逐页 `HomeLibrarySession` 发布，而不是串行顺序本身；新增独立 SQLite progress isolate，Reader 只入队，路由返回后再等待 barrier 并一次性刷新历史。
+- 对照当前 TachiyomiX/Mihon API 删除 Mihon 人工 `SChapter`、按“开始阅读”标题猜测去重和 SManga 章节反射；章节只接受 `SMangaUpdate.chapters` 或 `get/fetchChapterList` 的真实返回，失败保持失败、成功空目录保持空目录。
+- 修复 artwork 所有权：`mihon:resource:` 等非本地 locator 全部进入 `ComicSourceResourceGateway`；raw Mihon SManga opaque comicId 仅作 runtime locator，durable artwork key 使用 source canonical identity，browse/details/history 共用同一 namespace。
+- `loadArtworkBytes` 复用 `loadArtworkSource` 的 source-independent durable probe；迁移封面和 cache invalidation也使用同一 canonical artwork identity。
+- 新增 ADR 0141、dev.156 根因审计与 ownership gate。
+
 ## 0.31.0-dev.155：绑定真实 WebView 会话并修复历史/插件持久化
 
 - Cloudflare 验证 WebView 不再伪装成插件静态 User-Agent；Cookie、localStorage 与真实 WebView UA 作为同一浏览器 session snapshot 持久化，Mihon 首次及后续同站点请求逐请求采用该 UA。

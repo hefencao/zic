@@ -27,11 +27,12 @@ String encodeStableCacheKey(String family, Iterable<String> components) {
 
 /// Stable logical identity for reusable responses belonging to one comic.
 ///
-/// [comicId] is a stable source identity, not a request URL unless the source
-/// explicitly declares that URL stable. Source-aware metadata may use the
-/// source's canonical comparison identity; foreground cover keys deliberately
-/// use the raw library identity so a warm cover can be read before source
-/// activation.
+/// [comicId] is the stable durable identity for the comic namespace, not a
+/// mutable runtime locator. Sources whose raw locator embeds mutable metadata
+/// (notably Mihon SManga snapshots) must project their canonical same-source
+/// identity before constructing durable response/artwork keys. The raw locator
+/// remains available separately for plugin invocation and must never partition
+/// one comic's durable artwork cache.
 final class ComicResourceCacheIdentity {
   const ComicResourceCacheIdentity({
     required this.sourceId,

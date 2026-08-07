@@ -1,5 +1,11 @@
 # zic Implementation Plan
 
+## P0：Reader热路径、Mihon章节与Artwork身份设备闭环
+
+- 对比 dev.155 与当前版本的翻页/退出 Reader frame timing：确认每页 checkpoint只发送 isolate消息，不在 UI isolate执行 sqlite3/章节JSON解码，不逐页触发 Home rebuild；route返回后再完成 barrier/reload。
+- 用同一 Mihon漫画在 browse、details、history记录 raw comicId、canonicalComicId和 cover locator；即使 SManga标题/简介/thumbnail/memo变化，三处必须命中同一 canonical artwork namespace。
+- 在 source暂不可用时验证 warm `mihon:resource:`/HTTP(S) durable cover仍能显示；durable miss明确等待 source，绝不能调用 local file loader。
+
 ## P0：Cloudflare会话、详情路由与插件恢复设备闭环
 
 - 在发生“验证接近完成又重新开始”的设备上确认验证 WebView使用 provider真实 UA；导出 handoff snapshot UA与 Mihon首个重试请求 UA，必须一致。若 challenge仍循环，继续检查 TLS/IP/站点策略，不得重新伪造 UA。
@@ -19,7 +25,7 @@
 - 使用真实 Venera/E-Hentai successor 检查详情“有新版本”、统一比较确认和 Reader 首次提醒；确认换 successor 后再次提醒。
 - 验证同源迁移只复制 exact chapter identity；sequence-only 候选不复制阅读状态或 artifact。
 - 在禁漫天堂真机验证两条分支：真实 `challenge-error-*` challenge进入 WebView并完成 handoff；仅含 Cloudflare challenge脚本/普通403的响应不产生 `sourceVerificationRequired`。确认 WebView不会在 Cloudflare尚未完成时因一次 `onPageFinished` 提前返回；Turnstile/JS challenge存在期间持续停留，最终页面连续稳定无 challenge后才自动保存完整 Cookie/UA snapshot并返回，且不要求生成新 `cf_clearance`。
-- 使用真实章节目录检查 SavedComic、ImportedChapter 与远程详情都不再保留“开始阅读/正文”synthetic chapter。
+- 使用真实 Mihon 1.4/1.6扩展验证 `SMangaUpdate.chapters` / `get/fetchChapterList`：目录失败必须显示失败，成功空目录保持空；不得出现宿主“开始阅读”被投影成章节或人工“正文”单章。
 
 ## P0：来源投影、Cloudflare 与封面身份设备闭环
 

@@ -30,14 +30,13 @@ def main() -> int:
     driver = require(
         'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt',
         'catalog.chapterFailure?.let { throw it }',
-        'allowSynthetic = !catalog.chapterCatalogAvailable',
-        'var chapterCatalogAvailable = update != null',
-        'Mihon source exposed neither a chapter catalog nor readable gallery pages',
+        'if (update != null)',
+        'for (candidate in listOf("getChapterList", "fetchChapterList"))',
+        'Mihon source exposes no compatible chapter-catalog operation',
     )
-    if driver.index('catalog.chapterFailure?.let { throw it }') > driver.index(
-        'allowSynthetic = !catalog.chapterCatalogAvailable',
-    ):
-        raise SystemExit('Mihon catalog failure must escape before synthetic selection')
+    for stale in ('createSyntheticMihonChapter', 'selectMihonChapters'):
+        if stale in driver:
+            raise SystemExit(f'Mihon chapter failure must not synthesize host chapters: {stale}')
 
     cloudflare = require(
         'packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/AndroidCloudflareInterceptor.kt',
@@ -71,10 +70,10 @@ def main() -> int:
         raise SystemExit('remote details must consume the composition refresh result')
     forbid('apps/app/lib/comic_details.dart', 'isSyntheticMihonChapterIdentity')
     forbid('apps/app/lib/demo_home.dart', 'reconcileComicDetailsChapterEntries')
-    require(
+    forbid(
         'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt',
         'deduplicateMihonStartReadingEntries(',
-        'sourceChapters = deduplicateMihonStartReadingEntries(',
+        'createSyntheticMihonChapter',
     )
     require(
         'apps/app/lib/demo_home_source_compat.dart',

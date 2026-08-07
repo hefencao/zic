@@ -315,6 +315,10 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
                   cache: _cacheCoordinator.responses,
                   sourceId: request.source.sourceId,
                   comicId: manifest.comic.comicId,
+                  cacheComicId: _canonicalComicId(
+                    request.source.sourceId,
+                    manifest.comic.comicId,
+                  ),
                   uri: manifest.comic.coverUri!,
                 ),
       );

@@ -40,8 +40,11 @@ require(source, 'await _pushComicDetails(local);', 'persisted source comic route
 forbid(source, 'await _openComicDetails(local);', 'nested persisted comic route lock')
 
 home = read('apps/app/lib/demo_home.dart')
-require(home, "uri.scheme == 'http' || uri.scheme == 'https'", 'network history cover detection')
-require(home, 'sourceId: sourceId,', 'source-independent durable artwork probe')
+# dev.156 generalizes dev.155 HTTP-only recovery to every non-local artwork
+# locator (including mihon:resource) and separates raw runtime locator from the
+# canonical durable cache identity.
+require(home, "sourceId != 'local-folder' && uri != null", 'external artwork routing')
+require(home, 'cacheComicId: _canonicalComicId(sourceId, comicId)', 'canonical durable artwork probe')
 
 plugins = read('packages/plugin_host_bridge/lib/src/external_plugin_controller.dart')
 for token in (

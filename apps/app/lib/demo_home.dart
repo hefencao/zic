@@ -703,9 +703,20 @@ final class _DemoHomeState extends State<DemoHome> {
     _librarySession.replaceReadState(state);
   }
 
-  Future<void> _saveReaderProgress(ReadingProgress progress) async {
-    await _library.saveProgress(progress);
-    _librarySession.replaceProgress(progress);
+  Future<void> _saveReaderProgress(ReadingProgress progress) {
+    final library = _library;
+    if (library is BufferedReadingProgressStore) {
+      (library as BufferedReadingProgressStore).enqueueProgress(progress);
+      return Future<void>.value();
+    }
+    return library.saveProgress(progress);
+  }
+
+  Future<void> _flushReaderProgressAfterRoute() async {
+    final library = _library;
+    if (library is BufferedReadingProgressStore) {
+      await (library as BufferedReadingProgressStore).flushProgress();
+    }
   }
 
   Future<void> _markChapterReadForNavigation(
@@ -828,6 +839,10 @@ final class _DemoHomeState extends State<DemoHome> {
       ),
     );
     if (mounted) {
+      // The Reader route has already returned, so durable SQLite completion is
+      // no longer on the transition critical path. Flush before reading the
+      // history snapshot so Home observes the final checkpoint exactly once.
+      await _flushReaderProgressAfterRoute();
       await _reloadLibrary();
     }
   }
@@ -1032,6 +1047,7 @@ final class _DemoHomeState extends State<DemoHome> {
         cache: _cacheCoordinator.responses,
         sourceId: source.sourceId,
         comicId: comic.comicId,
+        cacheComicId: _canonicalComicId(source.sourceId, comic.comicId),
         uri: uri,
       );
 
@@ -1054,13 +1070,13 @@ final class _DemoHomeState extends State<DemoHome> {
       throw StateError('漫画详情没有可用封面');
     }
     const revision = comicArtworkCacheRevision;
-    final source = _sourceForId(sourceId);
     final uri = Uri.tryParse(sourceValue);
-    if (source != null && uri != null && uri.hasScheme) {
+    if (sourceId != 'local-folder' && uri != null) {
       return _sourceResources.loadArtworkBytes(
         cache: _cacheCoordinator.responses,
-        sourceId: source.sourceId,
+        sourceId: sourceId,
         comicId: comicId,
+        cacheComicId: _canonicalComicId(sourceId, comicId),
         uri: uri,
         revision: revision,
       );
@@ -1108,11 +1124,12 @@ final class _DemoHomeState extends State<DemoHome> {
     }
     const revision = comicArtworkCacheRevision;
     final uri = Uri.tryParse(sourceValue);
-    if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
+    if (sourceId != 'local-folder' && uri != null) {
       return _sourceResources.loadArtworkSource(
         cache: _cacheCoordinator.responses,
         sourceId: sourceId,
         comicId: comicId,
+        cacheComicId: _canonicalComicId(sourceId, comicId),
         uri: uri,
         revision: revision,
         resourceRole: cacheResourceRole,
@@ -1248,7 +1265,7 @@ final class _DemoHomeState extends State<DemoHome> {
     invalidateComicResourceCache(
       _cacheCoordinator.responses,
       sourceId: comic.sourceId,
-      comicId: comic.comicId,
+      comicId: _canonicalComicId(comic.sourceId, comic.comicId),
     );
     if (mounted) {
       await _reloadLibrary();

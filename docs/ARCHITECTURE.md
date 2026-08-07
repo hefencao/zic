@@ -164,9 +164,11 @@ Reader interaction / viewport / presentation size
 Reader 可以提交 stable page、fractional position、目标页覆盖率、阅读方向、viewport/physical target、interaction/zoom，以及 pause/resume/speed/jump 等命令。
 
 Reader 只能消费不可变页面状态、进度、错误和 `PipelinePageSurface`。它不得接触 mutable session、transport、artifact store、scheduler、cursor/frame handle 或 texture registry。
-`reader_runtime` 在页码/阅读模式改变时通过既有 progress facade 写入进度，并在 App lifecycle
-进入 inactive/paused/detached 或 Reader route dispose 时强制 flush；`HomeLibrarySession` 立即替换
-内存投影，因此退出 Reader 即可刷新历史和相关 Home 投影，不再等待详情父路由销毁。
+`reader_runtime` 在页码/阅读模式改变时通过既有 progress facade 提交最新 checkpoint。SQLite 实现
+使用独立 progress isolate/WAL connection；Reader 热路径只将 checkpoint 有序入队，不执行同步
+sqlite3、章节 JSON 解码或 `HomeLibrarySession` 发布。Reader route 返回后 composition 再等待
+durable barrier，并一次性 reload library/history 投影；磁盘完成不得成为翻页或退出动画的前置条件。
+inactive/paused/detached 继续主动入队最终 checkpoint，进程被系统直接终止只提供 best effort。
 
 ## 5. 页面角色、窗口与优先级
 
@@ -303,16 +305,16 @@ Reader 页面变化产生的 `ReadingProgress` 由 `reader_runtime` 串行合并
 | 名称 | 所有者/含义 | 当前组成和用途 |
 | --- | --- | --- |
 | `sourceId` | 来源身份 | 插件/来源的稳定 ID，不是来源显示名；参与 source namespace、漫画 namespace、`ContentId` 和资源请求绑定。 |
-| raw `comicId` | 来源原生漫画身份 | `Comic`、`SavedComicRecord`、`LibraryComic` 和章节存储使用的原始漫画 ID。它可以是 URL 或 Venera 的 opaque locator；是前台封面在 source 未激活时仍可使用的身份。 |
+| raw `comicId` | 来源原生 runtime locator | `Comic`、`SavedComicRecord`、`LibraryComic` 与章节归属保留的原始漫画定位值。Mihon 可把可变 SManga 快照编码进该值，因此它只保证“如何再次调用插件”，不得假定为 durable artwork identity。 |
 | `LibraryComic.identity` / Flutter comic key | 书架实体身份 | 当前为 `sourceId\u0000comicId`（UI key 再加各自前缀）；标题、作者和封面 URL 都不参与。两个同名漫画只有在这组身份也相同才会被视为同一个实体。 |
-| `canonicalComicId` | 来源确认的等价身份 | 仅由来源声明/确认的同源等价 ID，用于冷书架投影归并和 source-aware 元数据 namespace；不替换 raw `comicId` 的请求、章节或封面身份。旧 app-update URL-derived key 不属于当前生产读取路径。 |
+| `canonicalComicId` | 来源确认的稳定同源身份 | 由来源从 raw locator 投影的稳定等价值，用于冷书架归并和 durable comic/artwork namespace；不得替换插件请求、章节或 Reader `ContentId` 中的 raw `comicId`。Mihon 当前以规范化漫画 Web URL投影 canonical identity。 |
 | `chapterId` | 来源原生章节身份 | `Chapter`/`ChapterManifest` 的章节身份；章节元数据响应 key 使用 `[sourceId, chapterId]`，并挂到已知漫画 namespace。 |
 | `pageId` / `PageAsset.assetKey` | 章节内页面身份 | `PageAsset` 保留 `pageId` 和 `chapterId`，`assetKey` 为 `chapterId/pageId`；它不是封面/预览响应缓存 key。 |
 | `ContentId` | Reader 内容实体身份 | `[sourceId, comicId, chapterId, pageId]`，用于确定一个漫画章节页面；`ContentId.key` 只服务 Reader/download identity。 |
 | `DownloadId` | 确定字节版本 | `ContentId + sourceRevision + canonicalUri`，用于 Reader 下载/artifact；页面 URL 变化或来源版本变化会形成新的确定字节身份。 |
 | `DecodeId` | 解码输出身份 | `DownloadId + physicalWidth + physicalHeight + pixelFormat + renderer`；不参与首页/详情的图片响应缓存。 |
 | `ResourceCacheKey` | 响应缓存实体身份 | 四元组 `kind + identity + namespace + revision`；四项都参与 equality/hash。图片使用 `kind=imageBytes`，详情/章节/搜索分别使用对应 response kind。 |
-| `coverUri` / `coverSourceId` | 图片 locator | `Comic.coverUri` 或本地/导入记录里的 cover locator，只告诉 loader 去哪里取图；它不是 raw 漫画身份。对 `comicId != null` 的封面响应，当前 key 有意只使用 `[sourceId, comicId, role=cover]`，不把 URL 放入 key。 |
+| `coverUri` / `coverSourceId` | 图片 locator | 只告诉 artwork gateway 去哪里取图；可能是 HTTP(S)、`mihon:resource:` 或本地 locator，本身不参与稳定漫画身份。外部封面响应使用 `[sourceId, canonicalComicId, role=cover]`，URL变化不会分裂 namespace。 |
 | `previewUri` | 预览项 locator 和绘制身份 | 详情预览完整 URI（包括 Venera `@x/y` 裁剪后缀）保留在预览项、widget 和 painter 中；编码字节缓存及实际请求使用去掉 `@x/y` 的 base URI。 |
 | `resourceRole` | 漫画图片角色 | 封面为 `cover`；详情预览为 `preview:<base previewUri>`；其他带 URI 的 artwork 角色同样使用 base URI。它与 source/raw comic ID 一起进入图片响应 key。 |
 
@@ -332,15 +334,18 @@ Reader 页面变化产生的 `ReadingProgress` 由 `reader_runtime` 串行合并
 因此 URL 中的 `/`、`:`、`@` 等字符不会造成分隔符碰撞。当前图片 key 的实际关系如下：
 
 ```text
-sourceId + raw comicId
-  -> comic namespace
+sourceId + canonical comic identity
+  -> durable comic/artwork namespace
   -> imageBytes / comic-response(role) / revision
 
+raw comicId
+  -> plugin runtime locator / chapter ownership / Reader identity only
+
 封面:
-  [sourceId, raw comicId, role=cover, revision=artwork-v2]
+  [sourceId, canonicalComicId, role=cover, revision=artwork-v2]
 
 详情预览:
-  [sourceId, raw comicId, role=preview:<base previewUri>, revision=artwork-v2]
+  [sourceId, canonicalComicId, role=preview:<base previewUri>, revision=artwork-v2]
   完整 previewUri -> cache/request 使用去掉 @x/y 的 base URI
                     -> App widget/painter 仍按完整 URI 的 @x/y 裁剪
 
@@ -403,7 +408,7 @@ Cloudflare 可见浏览器的 Cookie 与 User-Agent 必须属于同一个浏览�
 
 ### 封面与详情来源恢复
 
-Home 的网络 artwork locator 即使对应 source/plugin 暂未激活，也必须进入 `ComicSourceResourceGateway.loadArtworkSource` 的 source-independent durable-cache probe；只有 cache miss 才解析 active source。HTTP(S) locator 绝不能回落到 `readLocalImageSource`。
+Home、漫画源、详情和迁移的**所有非本地 artwork locator**都必须进入 `ComicSourceResourceGateway`；这包括 HTTP(S) 与 `mihon:resource:` 等插件私有 URI。gateway 先按 canonical comic artwork identity做 source-independent durable probe，只有 cache miss才解析 active source。插件 URI绝不能回落到 `readLocalImageSource`，raw runtime comicId也不得分裂 durable cover namespace。
 
 
 - artwork encoded source 就绪后启动 2.5 秒首帧 watchdog；无帧只重建同一 provider stream 一次，因为离屏/尚未 paint 不证明 encoded cache 失效。只有 ImageStream 明确报错且局部恢复耗尽，才允许对当前稳定 cover identity 强制重读 bytes。Home card State 以 section + comic identity 固定，重复 owner 共享 source Future/provider。
@@ -411,4 +416,4 @@ Home 的网络 artwork locator 即使对应 source/plugin 暂未激活，也必�
 - 远程详情优先投影已保存 manifest；插件 host 未就绪时等待当前 source resolver，不能因后台 refresh 失败丢弃已有详情。
 - 预览、评论、章节确保和刷新在实际调用时解析当前 active adapter，不捕获插件重启前的 source session。
 - 漫画源浏览页遵循相同生命周期边界：页面持有稳定 `sourceId`、section/query/filter 与缓存投影，不长期拥有 runtime adapter。WebView验证或插件设置重启 runtime 后，section/filter/browse 必须通过 composition resolver取得当前 active source；已关闭的旧 session不得继续调用。
-- App 不扫描、删除或迁移 synthetic/compatibility chapter。Mihon adapter 在源目录进入 Catalog 前，仅当真实章节与标题精确归一为“开始阅读/开始阅读章节/Start Reading/Read Now”的独立动作并存时去除该动作；单独的 gallery“正文”兼容章节和普通章节名保持。
+- Mihon chapter catalog只接受插件/source API返回的真实 `SChapter`：TachiyomiX 1.6 的 `SMangaUpdate.chapters`，或兼容 `getChapterList`/`fetchChapterList`。`SChapter` 没有“开始/继续阅读 action”字段；App/bridge不得从 manga URL人工构造章节，也不得按“开始阅读/正文”等展示文字猜测、增加或删除章节。目录调用失败保持失败；成功返回空目录就保持空目录。
