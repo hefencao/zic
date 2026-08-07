@@ -1,3 +1,11 @@
+## 0.31.0-dev.153：收紧 Cloudflare challenge 并修复验证浏览器状态机
+
+- `sourceVerificationRequired` 的 HTML判定对齐 Mihon 实际 `CloudflareInterceptor`：403/503 还必须有 Cloudflare Server 与 `challenge-error-title`/`challenge-error-text`，仅 `challenge-platform`、`cf-chl-*`、`Just a moment` 或普通 Cloudflare 403不再触发 WebView；`cf-mitigated: challenge` 仍作为明确协议证据。
+- 可见验证浏览器不再预删 `cf_clearance`；同站点、同 UA且仍在 TTL 内的旧 snapshot 在新页面成功 capture 前保留，空 Cookie capture不会覆盖已有非空 handoff。
+- WebView 同站点页面已经没有实际 challenge DOM时即可完成 snapshot handoff；`cf_clearance` 是 Cookie之一而不是唯一“完成验证”标志。
+- 手动或自动 WebView handoff都会记录 source/request URL验证尝试；失败后后续普通刷新不再自动重复打开 WebView，成功 browse后才清除 guard，手动验证入口始终保留。
+- 修复两处 `ComicDetailsSourceWebViewOpener` named callback编译闭包；新增 dev.153合同并更新 Cloudflare Kotlin正反例。
+
 ## 0.31.0-dev.152：同步 Mihon 验证 Cookie 并阻止重复 Cloudflare 回退
 
 - `sourceVerificationRequired` 结构化携带实际失败 URL、HTTP 状态与请求时 `cf_clearance` 是否存在；漫画源/详情恢复优先打开实际失败 URL。

@@ -50,13 +50,30 @@ private fun expect(value: Boolean, message: String) {
 
 fun main() {
     expect(isCloudflareVerificationResponse(403, "challenge", null, ""), "cf-mitigated challenge")
-    expect(isCloudflareVerificationResponse(403, null, null, "<script src='/cdn-cgi/challenge-platform/x'></script>"), "strong challenge marker")
-    expect(isCloudflareVerificationResponse(503, null, null, "window._cf_chl_opt = {}; cf-chl-test"), "cf-chl marker")
-    expect(isCloudflareVerificationResponse(403, null, "cloudflare", "<title>Just a moment</title>"), "branded interstitial")
-    expect(isCloudflareVerificationResponse(403, null, null, "<title>Just a moment</title><p>Cloudflare</p>"), "body branding")
+    expect(
+        isCloudflareVerificationResponse(
+            403,
+            null,
+            "cloudflare",
+            "<div id='challenge-error-title'>Just a moment</div>",
+        ),
+        "Mihon challenge title",
+    )
+    expect(
+        isCloudflareVerificationResponse(
+            503,
+            null,
+            "cloudflare-nginx",
+            "<div id='challenge-error-text'>Enable JavaScript</div>",
+        ),
+        "Mihon challenge text",
+    )
 
-    expect(!isCloudflareVerificationResponse(200, "challenge", "cloudflare", "challenge-platform"), "status gate")
-    expect(!isCloudflareVerificationResponse(403, null, null, "<title>Just a moment</title>"), "unbranded title")
+    expect(!isCloudflareVerificationResponse(200, "challenge", "cloudflare", "<div id='challenge-error-title'>x</div>"), "status gate")
+    expect(!isCloudflareVerificationResponse(403, null, null, "<div id='challenge-error-title'>x</div>"), "Cloudflare server gate")
+    expect(!isCloudflareVerificationResponse(403, null, "cloudflare", "<script src='/cdn-cgi/challenge-platform/x'></script>"), "challenge script is not an interactive captcha")
+    expect(!isCloudflareVerificationResponse(503, null, "cloudflare", "window._cf_chl_opt = {}; cf-chl-test"), "cf-chl script is not enough")
+    expect(!isCloudflareVerificationResponse(403, null, "cloudflare", "<title>Just a moment</title>"), "title is not enough")
     expect(!isCloudflareVerificationResponse(403, null, "cloudflare", "Forbidden"), "server header alone")
     expect(!isCloudflareVerificationResponse(403, null, null, "Forbidden"), "ordinary 403")
     expect(!isCloudflareVerificationResponse(503, null, null, "Service unavailable"), "ordinary 503")

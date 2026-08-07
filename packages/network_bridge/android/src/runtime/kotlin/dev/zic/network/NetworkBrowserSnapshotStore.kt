@@ -27,13 +27,36 @@ internal object NetworkBrowserSnapshotStore {
     private const val MAX_AGE_MILLIS = 30L * 60L * 1000L
 
     fun begin(context: Context, requestedUrl: String, userAgent: String?) {
-        write(
-            context,
-            JSONObject()
-                .put(KEY_REQUESTED_URL, requestedUrl)
-                .put(KEY_USER_AGENT, userAgent.orEmpty())
-                .put(KEY_UPDATED_AT, System.currentTimeMillis()),
-        )
+        val normalizedUserAgent = userAgent?.trim().orEmpty()
+        val now = System.currentTimeMillis()
+        val existing = readObject(context)
+        val preserveExisting = existing?.let { snapshot ->
+            val updatedAt = snapshot.optLong(KEY_UPDATED_AT, 0L)
+            val existingUrl = snapshot.optString(KEY_REQUESTED_URL).takeIf(String::isNotBlank)
+                ?: snapshot.optString(KEY_CURRENT_URL).takeIf(String::isNotBlank)
+            val existingHost = existingUrl?.let { url ->
+                runCatching { URI(url).host.orEmpty() }.getOrDefault("")
+            }.orEmpty()
+            val requestedHost = runCatching { URI(requestedUrl).host.orEmpty() }
+                .getOrDefault("")
+            updatedAt > 0L &&
+                now - updatedAt <= MAX_AGE_MILLIS &&
+                existingHost.isNotBlank() &&
+                requestedHost.isNotBlank() &&
+                sameSiteHost(existingHost, requestedHost) &&
+                snapshot.optString(KEY_USER_AGENT).trim() == normalizedUserAgent
+        } == true
+
+        val next = if (preserveExisting) existing!! else JSONObject()
+        next
+            .put(KEY_REQUESTED_URL, requestedUrl)
+            .put(KEY_USER_AGENT, normalizedUserAgent)
+        if (!preserveExisting) {
+            next.put(KEY_UPDATED_AT, now)
+        }
+        // Opening a verification browser must not erase a still-valid handoff.
+        // A successful page capture advances updatedAt/revision through update().
+        write(context, next)
     }
 
     fun update(
@@ -48,9 +71,11 @@ internal object NetworkBrowserSnapshotStore {
         snapshot
             .put(KEY_CURRENT_URL, currentUrl)
             .put(KEY_TITLE, title.orEmpty())
-            .put(KEY_COOKIE_HEADER, cookieHeader.orEmpty())
             .put(KEY_USER_AGENT, userAgent.orEmpty())
             .put(KEY_UPDATED_AT, System.currentTimeMillis())
+        if (!cookieHeader.isNullOrBlank() || snapshot.optString(KEY_COOKIE_HEADER).isBlank()) {
+            snapshot.put(KEY_COOKIE_HEADER, cookieHeader.orEmpty())
+        }
         if (localStorageJson != null) {
             snapshot.put(KEY_LOCAL_STORAGE, localStorageJson)
         }

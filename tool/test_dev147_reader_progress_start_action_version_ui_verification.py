@@ -76,9 +76,9 @@ for token in (
     'class SourceVerificationRequiredException(',
     'if (statusCode !in CLOUDFLARE_STATUS_CODES) return false',
     'mitigatedHeader?.equals("challenge", ignoreCase = true)',
-    'val strongChallengeMarker = body.contains("challenge-platform")',
-    'if (!body.contains("just a moment")) return false',
-    'return cloudflareServer || cloudflareBranding',
+    'if (server !in CLOUDFLARE_SERVERS) return false',
+    'challenge-error-title',
+    'challenge-error-text',
 ):
     require(cloudflare, token, 'typed Cloudflare classification')
 for token in (

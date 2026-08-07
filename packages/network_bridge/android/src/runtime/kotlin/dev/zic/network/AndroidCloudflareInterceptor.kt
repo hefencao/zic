@@ -30,20 +30,20 @@ internal fun isCloudflareVerificationResponse(
     if (mitigatedHeader?.equals("challenge", ignoreCase = true) == true) {
         return true
     }
-    val body = bodyText.lowercase(Locale.US)
-    val strongChallengeMarker = body.contains("challenge-platform") ||
-        body.contains("cf-chl-") ||
-        body.contains("cdn-cgi/challenge-platform")
-    if (strongChallengeMarker) return true
 
-    // "Just a moment" is a title, not a protocol marker. Require separate
-    // Cloudflare branding before asking the user to verify in a browser.
-    if (!body.contains("just a moment")) return false
+    // Match Mihon's interactive-challenge boundary rather than treating every
+    // Cloudflare-generated 403/503 page as solvable in WebView. Cloudflare
+    // geo/access blocks can contain challenge scripts even though opening the
+    // same URL in WebView shows a normal page and never creates cf_clearance.
     val server = serverHeader?.trim()?.lowercase(Locale.US)
-    val cloudflareServer = server in CLOUDFLARE_SERVERS
-    val cloudflareBranding = body.contains("cloudflare") ||
-        body.contains("cdn-cgi/")
-    return cloudflareServer || cloudflareBranding
+    if (server !in CLOUDFLARE_SERVERS) return false
+    val body = bodyText.lowercase(Locale.US)
+    return body.contains("id=\"challenge-error-title\"") ||
+        body.contains("id='challenge-error-title'") ||
+        body.contains("id=challenge-error-title") ||
+        body.contains("id=\"challenge-error-text\"") ||
+        body.contains("id='challenge-error-text'") ||
+        body.contains("id=challenge-error-text")
 }
 
 /**

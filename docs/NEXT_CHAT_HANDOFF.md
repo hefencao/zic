@@ -1,6 +1,6 @@
-# dev.152 后续交接
+# dev.153 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.152_mihon-cloudflare-cookie-handoff.zip`。
+唯一后续基线：`zic_v0.31.0-dev.153_mihon-cloudflare-browser-completion-loop-guard.zip`。
 
 ## 必读
 
@@ -40,7 +40,7 @@
 - Reader 退出后最多保留 1 个 idle chapter resource session、TTL 2 分钟；used texture 不保留。
 - response cache 与 page artifact cache 是两个权威平面；App/Reader 没有私有正文 LRU。
 - 首页封面卡片使用 section + comic identity 的稳定 State key；同 identity 的并发 owner 共享 source Future/provider，失败 Future 立即退出 join。无首帧 watchdog 只重建同一 provider stream，不刷新 encoded bytes；明确 decoder exhaustion 才可 force-refresh。
-- 漫画源页使用来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态只用 chip 背景色表示。source 切换立即投影目标精确/最近缓存；目标错误不允许旧 source 内容滞留。`sourceVerificationRequired` 会携带实际失败 URL/status/clearance存在性：仅缺少 clearance时自动打开一次验证 WebView，验证必须得到新 clearance；已有 clearance仍被 challenge时不自动循环。WebView返回后按稳定 source ID取得重启后的当前 adapter，重载 section/filter并强制刷新一次，绝不继续调用关闭的旧 session。
+- 漫画源页使用来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态只用 chip背景色表示。source切换立即投影目标精确/最近缓存；目标错误不允许旧 source内容滞留。`sourceVerificationRequired`只由 `cf-mitigated: challenge` 或 Mihon同样识别的真实 `challenge-error-title/text`交互 challenge产生；普通 Cloudflare 403/脚本不触发 WebView。验证浏览器不预删 Cookie，同站点/同 UA snapshot在新 capture前保留；页面已无 challenge DOM即可保存完整 Cookie/UA并返回。任意一次手动或自动 handoff后，普通刷新不会再次自动跳 WebView，成功 browse才清除 guard；手动入口始终可用。WebView返回后按稳定 source ID取得重启后的当前 adapter，重载 section/filter并强制刷新一次，绝不继续调用关闭旧 session。
 - 浮动搜索展开态优先消费返回和垂直拖动/滚动手势；搜索历史持久化。Mihon `getFilterList()` 的 CheckBox/TriState/Select/Group 通过 opaque ID 投影为搜索框上方过滤标签，UI 不持有插件 Filter 对象。
 - 浏览页使用 catalog cache-first/background-refresh；稳定字段无变化时不更新。边缘下拉达到阈值后调用强制刷新，保留现有内容直到新结果到达。
 - 详情预览按原顺序装箱：实际行内含横图则最多 2 张、纯竖图则最多 3 张；只在相邻三个候选内做最小局部重排；设置项仍是更严格上限。行宽直接用于反算等面积 tile，内部无 Card/水平 padding，完整行铺满媒体宽度，只有稀疏末行允许放大到参考完整行面积的 2.4 倍。

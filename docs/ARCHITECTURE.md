@@ -372,7 +372,7 @@ role 相同，因此无需清空或迁移已有 cover 缓存；封面则有一�
 
 插件先生成 request plan。GET/HEAD 必须零 body且不得携带实体 headers。普通正文由宿主 transport 流式进入统一 Pipeline；完整 JSON/Base64 RPC 只允许用于明确声明 runtime transform 且有大小上限的兼容路径。
 
-`sourceVerificationRequired` 只由 host-owned typed `SourceVerificationRequiredException` 产生：HTTP 状态必须为 403/503，且存在 `cf-mitigated: challenge` 或明确 Cloudflare challenge body marker。异常 envelope 同时携带实际失败 request URL、HTTP 状态和请求时 `cf_clearance` 是否存在；这些字段是恢复路由与诊断数据，不进入持久 identity。Mihon 主网络和 ABI 兼容 interceptor 均委托同一个 detector；不得创建隐藏 WebView、等待 challenge 或按异常消息中的 “Cloudflare/Just a moment” 文本猜测。普通 403、解析失败、timeout 与 IOException 保持原错误分类。
+`sourceVerificationRequired` 只由 host-owned typed `SourceVerificationRequiredException` 产生。`cf-mitigated: challenge` 是明确协议证据；否则 HTTP 状态必须为 403/503、`Server` 必须是 Cloudflare，并且 HTML 必须含 Mihon 同样使用的 `challenge-error-title` 或 `challenge-error-text` 实际交互 challenge DOM。仅出现 `challenge-platform`、`cf-chl-*`、`Just a moment`、Cloudflare Server header或普通 403/503都不足以触发浏览器验证，避免把 geo/access block误分类为可通过 WebView解决的验证码。异常 envelope 同时携带实际失败 request URL、HTTP 状态和请求时 `cf_clearance` 是否存在；这些字段只用于恢复路由和诊断，不进入持久 identity。Mihon 主网络和 ABI兼容 interceptor均委托同一个 detector；不得创建隐藏 WebView、等待 challenge或按异常消息文本猜测。
 
 插件和平台桥不得导航、创建 Reader、提交 demand、直接读写 artifact、访问 App controller，或把 Cookie/token/Base64 payload 原文写入 Trace。
 
@@ -391,7 +391,7 @@ role 相同，因此无需清空或迁移已有 cover 缓存；封面则有一�
 - Artwork source 与 Flutter ImageStream 的恢复不得形成竞争循环。失败期间 presentation 保持稳定占位图；父组件 closure identity 不是资源 identity。
 - 详情预览按实际行分组：含横图最多 2 张、纯竖图最多 3 张；只允许相邻三个候选内最小局部重排；每行从可用宽度反算等面积 tile，详情外层是唯一水平边距。
 - 详情页和漫画源页使用同一 `AppPullToRefresh` 统一刷新交互；该组件同时拥有 edge trigger、刷新进度、成功/失败图标、位置和结果寿命，页面不得再叠加自己的勾/叉。
-- 浏览器 Cookie snapshot 是跨进程的一次性 revision handoff，不是每请求覆盖 runtime Cookie 的长期权威。Mihon 接收方必须先把匹配 host/UA 的 snapshot 同步写入 `AndroidCookieJar` 的进程内 name/value map，首个 OkHttp 重试不得依赖异步 `CookieManager.setCookie()` 完成；CookieManager 只承担 WebView/兼容镜像。Cloudflare 恢复浏览器必须打开 typed failure 中的实际失败 URL，先删除已被拒绝的 `cf_clearance`，并且只有获得新的非空 clearance 后才报告验证成功。若新 runtime 已携带 clearance 仍收到 challenge，Presentation 不得自动再次打开 WebView形成循环，只保留手动恢复。MethodChannel runtime lifecycle failure 可原地重新激活一次。
+- 浏览器 Cookie snapshot 是跨进程的一次性 revision handoff，不是每请求覆盖 runtime Cookie 的长期权威。Mihon 接收方必须先把匹配 host/UA 的 snapshot 同步写入 `AndroidCookieJar` 的进程内 name/value map，首个 OkHttp重试不得依赖异步 `CookieManager.setCookie()` 完成；CookieManager只承担 WebView/兼容镜像。打开验证浏览器本身不得擦除仍有效的同站点/同 UA snapshot：`begin()` 在 TTL 内保留已有 Cookie/localStorage，成功页面 capture才推进 revision，空 Cookie capture不得覆盖已有非空 handoff。验证浏览器打开 typed failure 的实际 URL；同站点页面已不含真实 Cloudflare challenge DOM即可完成 snapshot handoff，`cf_clearance` 只是 Cookie之一而非唯一完成条件。一次手动或自动 browser handoff后，同 source/request URL的普通刷新不得再次自动打开 WebView；成功 browse才清除 guard，用户仍可显式再次打开浏览器。MethodChannel runtime lifecycle failure可原地重新激活一次。
 
 ### 封面与详情来源恢复
 

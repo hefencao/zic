@@ -341,6 +341,10 @@ void main() {
     await _tapVisible(tester, find.byKey(comicSourceOpenWebViewKey));
     expect(webViewOpens, 1);
     expect(source.browseCalls, greaterThanOrEqualTo(2));
+
+    await _tapVisible(tester, find.byIcon(Icons.refresh));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(webViewOpens, 1);
   });
 
   testWidgets('forced retry falls back to source WebView once',
@@ -382,6 +386,16 @@ void main() {
 
     expect(webViewOpens, 1);
     expect(source.browseCalls, greaterThanOrEqualTo(3));
+
+    // The browser handoff itself may be unable to make the runtime transport
+    // acceptable to the site. A later ordinary retry must not automatically
+    // reopen the same browser forever; manual verification remains available.
+    await _tapVisible(tester, find.byIcon(Icons.refresh));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(webViewOpens, 1);
+
+    await _tapVisible(tester, find.byKey(comicSourceOpenWebViewKey));
+    expect(webViewOpens, 2);
   });
 
   testWidgets('clearance rejected by Cloudflare does not auto reopen WebView',

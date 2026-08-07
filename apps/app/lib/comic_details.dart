@@ -873,8 +873,9 @@ final class _LocalComicDetailsScreenState
         onRetry: () => _ignoreRefreshResult(_refresh(announce: false)),
         onOpenSourceWebView: widget.onOpenSourceWebView == null
             ? null
-            : () => _recoverSourceAccess(
-                  verificationUri: failure.verificationUri,
+            : ({Uri? verificationUri}) => _recoverSourceAccess(
+                  verificationUri:
+                      verificationUri ?? failure.verificationUri,
                 ),
         onOpenSourceSettings: widget.onOpenSourceSettings,
       );
@@ -1700,8 +1701,9 @@ final class _RemoteComicDetailsScreenState
         ),
         onOpenSourceWebView: widget.onOpenSourceWebView == null
             ? null
-            : () => _recoverSourceAccess(
-                  verificationUri: failure.verificationUri,
+            : ({Uri? verificationUri}) => _recoverSourceAccess(
+                  verificationUri:
+                      verificationUri ?? failure.verificationUri,
                 ),
         onOpenSourceSettings: widget.onOpenSourceSettings,
       );

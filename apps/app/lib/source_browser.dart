@@ -230,6 +230,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   int _contentRevision = 0;
   int _artworkRetryRevision = 0;
   bool _recoveringSourceAccess = false;
+  final Set<String> _verificationBrowserAttempts = <String>{};
   final Stopwatch _traceClock = Stopwatch()..start();
 
   void _recordSourceTrace(
@@ -261,6 +262,18 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       return resolved;
     }
     return _sourceForId(widget.sources, id);
+  }
+
+  String _verificationAttemptKey(
+    BrowsableComicSource source,
+    Uri? verificationUri,
+  ) =>
+      '${source.sourceId}\u0000${(verificationUri ?? source.descriptor.website).toString()}';
+
+  void _clearVerificationBrowserAttempts(String sourceId) {
+    _verificationBrowserAttempts.removeWhere(
+      (key) => key.startsWith('$sourceId\u0000'),
+    );
   }
 
   void _rememberSourceView(String? sourceId) {
@@ -617,6 +630,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         _failure = null;
       });
       succeeded = true;
+      _clearVerificationBrowserAttempts(source.sourceId);
       _recordSourceTrace(
         TraceEventKind.sourceReady,
         'browse-complete',
@@ -645,16 +659,22 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
           if (error is Failure) 'errorCode': error.code.name,
         },
       );
+      final automaticVerificationKey = _verificationAttemptKey(
+        source,
+        failure.verificationUri,
+      );
       if (forceRefresh &&
           allowVerificationFallback &&
           failure.shouldAutoOpenVerification &&
           widget.onOpenSourceWebView != null &&
-          !_recoveringSourceAccess) {
+          !_recoveringSourceAccess &&
+          _verificationBrowserAttempts.add(automaticVerificationKey)) {
         scheduleMicrotask(
           () => unawaited(
             _recoverSourceAccess(
               source,
               verificationUri: failure.verificationUri,
+              automatic: true,
             ),
           ),
         );
@@ -673,14 +693,22 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   Future<void> _recoverSourceAccess(
     BrowsableComicSource source, {
     Uri? verificationUri,
+    bool automatic = false,
   }) async {
     final open = widget.onOpenSourceWebView;
     if (open == null || _recoveringSourceAccess) return;
+    // Any browser handoff consumes the automatic fallback allowance for this
+    // source/request URL. A manual verification followed by another failed
+    // runtime request must not cause the next refresh to auto-open WebView.
+    _verificationBrowserAttempts.add(
+      _verificationAttemptKey(source, verificationUri),
+    );
     setState(() => _recoveringSourceAccess = true);
     _recordSourceTrace(
       TraceEventKind.retryScheduled,
       'verification-recovery-start',
       source,
+      payload: <String, Object?>{'automatic': automatic},
     );
     try {
       await open(
@@ -712,6 +740,12 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         _recordSourceTrace(
           TraceEventKind.sourceReady,
           'verification-recovery-complete',
+          replacement,
+        );
+      } else if (automatic) {
+        _recordSourceTrace(
+          TraceEventKind.taskFailed,
+          'verification-auto-loop-guarded',
           replacement,
         );
       }
@@ -1899,7 +1933,7 @@ final class _SourceFailure {
         summary: '漫画源需要完成网页验证',
         guidance: error.details['clearanceCookiePresent'] == true
             ? '运行时请求已携带 cf_clearance 但站点仍返回挑战；不会再次自动打开 WebView，可手动重新验证或检查站点会话兼容性。'
-            : '请打开 WebView 完成 Cloudflare 或站点验证；获得新的 cf_clearance 后会自动重新加载当前列表。',
+            : '将自动打开一次 WebView。只要目标页已正常可访问，就同步完整浏览器 Cookie/UA 会话并重试；若仍失败，后续刷新不会反复跳 WebView，可使用手动验证入口。',
         details: details,
         requiresSourceVerification: true,
         verificationUri: switch (error.details['requestUrl']) {

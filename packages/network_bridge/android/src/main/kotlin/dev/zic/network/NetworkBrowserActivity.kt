@@ -13,6 +13,7 @@ class NetworkBrowserActivity : Activity() {
     private lateinit var webView: WebView
     private var cloudflareVerification = false
     private var completing = false
+    private var verificationPageResolved: Boolean? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -33,46 +34,13 @@ class NetworkBrowserActivity : Activity() {
         setResult(RESULT_CANCELED)
         runCatching {
             NetworkBrowserSnapshotStore.begin(this, url, requestedUserAgent)
-            if (cloudflareVerification) {
-                clearCloudflareClearance(url) {
-                    if (!isFinishing && !isDestroyed) {
-                        createBrowser(url, requestedUserAgent)
-                    }
-                }
-            } else {
-                createBrowser(url, requestedUserAgent)
-            }
+            // Do not delete the visible browser session before verification.
+            // The isolated runtime may simply be missing a still-valid browser
+            // cookie; destroying it here creates a verification loop when the
+            // page is already accessible and therefore issues no new token.
+            createBrowser(url, requestedUserAgent)
         }.onFailure { error ->
             failAndFinish(error.message ?: error.javaClass.simpleName)
-        }
-    }
-
-    private fun clearCloudflareClearance(url: String, then: () -> Unit) {
-        val manager = CookieManager.getInstance()
-        manager.setAcceptCookie(true)
-        // Mihon discards the ineffective clearance before opening its WebView.
-        // Delete both the host-only and common domain forms before loading so
-        // an old domain cookie cannot make the visible browser look verified
-        // while the isolated HTTP runtime still receives a rejected session.
-        val host = runCatching { java.net.URI(url).host.orEmpty() }.getOrDefault("")
-        val domains = linkedSetOf<String>()
-        if (host.isNotBlank()) {
-            domains += host
-            if (host.count { it == '.' } >= 2) domains += host.substringAfter('.')
-        }
-        val deletions = mutableListOf("cf_clearance=; Max-Age=0; Path=/")
-        domains.forEach { domain ->
-            deletions += "cf_clearance=; Max-Age=0; Path=/; Domain=$domain"
-        }
-        var remaining = deletions.size
-        deletions.forEach { value ->
-            manager.setCookie(url, value) {
-                remaining--
-                if (remaining == 0) {
-                    manager.flush()
-                    then()
-                }
-            }
         }
     }
 
@@ -90,9 +58,20 @@ class NetworkBrowserActivity : Activity() {
             settings.databaseEnabled = true
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, currentUrl: String) {
-                    val cookieHeader = captureSnapshot(view, currentUrl)
-                    if (cloudflareVerification && hasClearance(cookieHeader)) {
-                        completeAndFinish()
+                    captureSnapshot(view, currentUrl)
+                    if (!cloudflareVerification) return
+                    if (!sameSiteWithRequestedUrl(currentUrl)) {
+                        verificationPageResolved = null
+                        return
+                    }
+                    view.evaluateJavascript(CLOUDFLARE_CHALLENGE_PROBE) { raw ->
+                        if (isFinishing || isDestroyed || completing) return@evaluateJavascript
+                        val challengeVisible = raw.trim().equals("true", ignoreCase = true)
+                        verificationPageResolved = !challengeVisible
+                        if (!challengeVisible) {
+                            captureSnapshot(view, currentUrl)
+                            completeAndFinish()
+                        }
                     }
                 }
             }
@@ -115,9 +94,13 @@ class NetworkBrowserActivity : Activity() {
         finish()
     }
 
-    /** Returns the synchronous cookie header used for verification gating. */
     private fun captureSnapshot(view: WebView, currentUrl: String): String? {
-        val cookieHeader = CookieManager.getInstance().getCookie(currentUrl)
+        val manager = CookieManager.getInstance()
+        val requestedUrl = intent.getStringExtra(EXTRA_URL).orEmpty()
+        val cookieHeader = mergeCookieHeaders(
+            manager.getCookie(requestedUrl),
+            manager.getCookie(currentUrl),
+        )
         NetworkBrowserSnapshotStore.update(
             context = this,
             currentUrl = currentUrl,
@@ -135,20 +118,16 @@ class NetworkBrowserActivity : Activity() {
                 context = this,
                 currentUrl = currentUrl,
                 title = view.title,
-                cookieHeader = CookieManager.getInstance().getCookie(currentUrl),
+                cookieHeader = mergeCookieHeaders(
+                    manager.getCookie(requestedUrl),
+                    manager.getCookie(currentUrl),
+                ),
                 localStorageJson = localStorage,
                 userAgent = view.settings.userAgentString,
             )
         }
         return cookieHeader
     }
-
-    private fun hasClearance(cookieHeader: String?): Boolean =
-        cookieHeader.orEmpty().split(';').any { part ->
-            val value = part.trim()
-            value.startsWith("cf_clearance=") &&
-                value.substringAfter('=', "").isNotBlank()
-        }
 
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
@@ -163,11 +142,11 @@ class NetworkBrowserActivity : Activity() {
         if (completing) return
         if (::webView.isInitialized) {
             val currentUrl = webView.url ?: intent.getStringExtra(EXTRA_URL).orEmpty()
-            val cookieHeader = currentUrl.takeIf(String::isNotBlank)?.let { url ->
+            currentUrl.takeIf(String::isNotBlank)?.let { url ->
                 captureSnapshot(webView, url)
             }
-            if (cloudflareVerification && !hasClearance(cookieHeader)) {
-                failAndFinish("Cloudflare verification did not produce cf_clearance")
+            if (cloudflareVerification && verificationPageResolved != true) {
+                failAndFinish("Cloudflare verification page is still active")
                 return
             }
             CookieManager.getInstance().flush()
@@ -193,10 +172,42 @@ class NetworkBrowserActivity : Activity() {
         super.onDestroy()
     }
 
+    private fun sameSiteWithRequestedUrl(currentUrl: String): Boolean {
+        val requested = intent.getStringExtra(EXTRA_URL).orEmpty()
+        val requestedHost = runCatching { java.net.URI(requested).host.orEmpty() }
+            .getOrDefault("")
+        val currentHost = runCatching { java.net.URI(currentUrl).host.orEmpty() }
+            .getOrDefault("")
+        if (requestedHost.isBlank() || currentHost.isBlank()) return false
+        val left = requestedHost.lowercase().trimEnd('.')
+        val right = currentHost.lowercase().trimEnd('.')
+        return left == right || left.endsWith(".$right") || right.endsWith(".$left")
+    }
+
+    private fun mergeCookieHeaders(vararg headers: String?): String? {
+        val values = linkedMapOf<String, String>()
+        for (header in headers) {
+            for (raw in header.orEmpty().split(';')) {
+                val separator = raw.indexOf('=')
+                if (separator <= 0) continue
+                val name = raw.substring(0, separator).trim()
+                val value = raw.substring(separator + 1).trim()
+                if (name.isNotEmpty()) values[name] = value
+            }
+        }
+        if (values.isEmpty()) return null
+        return values.entries.joinToString("; ") { (name, value) -> "$name=$value" }
+    }
+
     companion object {
         const val EXTRA_URL = "url"
         const val EXTRA_USER_AGENT = "userAgent"
         const val EXTRA_ERROR = "error"
         const val EXTRA_CLOUDFLARE_VERIFICATION = "cloudflareVerification"
+        private const val CLOUDFLARE_CHALLENGE_PROBE =
+            "(function(){" +
+                "return !!document.getElementById('challenge-error-title')||" +
+                "!!document.getElementById('challenge-error-text');" +
+            "})()"
     }
 }

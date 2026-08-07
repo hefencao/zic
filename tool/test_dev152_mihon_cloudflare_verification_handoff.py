@@ -61,9 +61,7 @@ require(
 require(
     'packages/network_bridge/android/src/main/kotlin/dev/zic/network/NetworkBrowserActivity.kt',
     'EXTRA_CLOUDFLARE_VERIFICATION',
-    'clearCloudflareClearance(url)',
-    'if (cloudflareVerification && hasClearance(cookieHeader))',
-    'Cloudflare verification did not produce cf_clearance',
+    'NetworkBrowserSnapshotStore.begin(this, url, requestedUserAgent)',
 )
 require(
     'packages/network_bridge/android/src/main/kotlin/dev/zic/network/NetworkBridgePlugin.kt',
