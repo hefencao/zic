@@ -154,7 +154,8 @@ require(
     "packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt",
     "Only accept UOE",
     'frame.className == "eu.kanade.tachiyomi.source.online.HttpSource"',
-    'for (candidate in listOf("getChapterList", "fetchChapterList"))',
+    '"getMangaUpdate",',
+    'source.invokeMihonCompatible("fetchChapterList", listOf(detailedManga))',
 )
 forbid(
     "packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt",

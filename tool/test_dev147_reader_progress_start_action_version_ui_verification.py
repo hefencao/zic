@@ -61,13 +61,19 @@ for stale in (
 ):
     forbid(mihon, stale, 'Mihon host-action/chapter guessing')
 for token in (
-    'for (candidate in listOf("getChapterList", "fetchChapterList"))',
-    'Invocation("getMangaUpdate", listOf(manga, existingChapters, true, true))',
-    'normalizeMihonChapterCatalog(chapters)',
+    '"getMangaUpdate",',
+    'listOf(manga, existingChapters, true, true)',
+    'source.invokeMihonCompatible("fetchChapterList", listOf(detailedManga))',
+    'source.invokeMihonCompatible("getPageList", listOf(chapter))',
 ):
     require(mihon, token, 'Mihon source chapter interface')
-if mihon.index('for (candidate in listOf("getChapterList", "fetchChapterList"))') >= mihon.index('Invocation("getMangaUpdate"'):
-    raise SystemExit('Mihon combined update runs before explicit chapter catalog')
+for stale in (
+    'for (candidate in listOf("getChapterList", "fetchChapterList"))',
+    'normalizeMihonChapterCatalog(chapters)',
+):
+    forbid(mihon, stale, 'obsolete Mihon chapter interface inference')
+if mihon.index('"getMangaUpdate",') >= mihon.index('source.invokeMihonCompatible("fetchChapterList"'):
+    raise SystemExit('Mihon current getMangaUpdate must precede ABI 1.4 legacy fallback')
 for stale in (
     '_withoutSyntheticMihonFallback',
     '_removePersistedSyntheticChapters',

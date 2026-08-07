@@ -12,6 +12,7 @@ import android.view.LayoutInflater
 import android.os.Build
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Base64
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
 import androidx.preference.MultiSelectListPreference
@@ -329,7 +330,7 @@ internal class MihonRuntimeDriver private constructor(
                 transportRevision = transportRevision,
             )
         }
-        rememberMihonChapters(comicId, catalog.chapters, chapterMessages)
+        rememberMihonChapters(source, comicId, catalog.chapters, chapterMessages)
         return mapOf(
             "comic" to comicMessage(source, catalog.manga, comicId),
             "chapters" to chapterMessages,
@@ -347,76 +348,65 @@ internal class MihonRuntimeDriver private constructor(
             "eu.kanade.tachiyomi.source.model.SManga",
             encoded,
         )
+        val existingChapters = cachedMihonChaptersForComic(source, comicId)
 
-        // Prefer the explicit manga/chapter operations when the extension
-        // exposes them. That is the stable Tachiyomi 1.4 contract and remains
-        // the compatibility contract for the majority of TachiyomiX 1.6
-        // CatalogueSource/HttpSource extensions. Calling getMangaUpdate first
-        // and then chapterList again duplicates the same network/parser work.
-        var detailedManga = manga
-        try {
-            detailedManga = source.invokeFirst(
-                listOf(
-                    Invocation("getMangaDetails", listOf(manga)),
-                    Invocation("fetchMangaDetails", listOf(manga)),
-                ),
+        // Mihon's current host always enters the Source contract through the
+        // combined getMangaUpdate call. CatalogueSource implements that method
+        // by delegating to legacy fetchMangaDetails/fetchChapterList, so the
+        // combined entry point is also the compatibility path for ordinary
+        // 1.6 HttpSource extensions. There is no Source.getChapterList API.
+        val combined = try {
+            source.invokeMihonCompatible(
+                "getMangaUpdate",
+                listOf(manga, existingChapters, true, true),
             ).unwrapAsync()
         } catch (error: Throwable) {
             if (!error.isMihonCapabilityAbsence()) {
-                // Detail failure does not prove the chapter catalog is absent.
-                // A source may still load chapters from the browse SManga.
-                detailedManga = manga
-            }
-        }
-        ensureNotCancelled(requestId)
-
-        val chapterModels = buildList {
-            add(detailedManga)
-            if (manga !== detailedManga) add(manga)
-        }
-        var chapterCapabilitySeen = false
-        val chapterFailures = mutableListOf<Throwable>()
-        chapterSearch@ for (chapterModel in chapterModels) {
-            for (candidate in listOf("getChapterList", "fetchChapterList")) {
-                val chapters = try {
-                    source.invokeMihonCompatible(candidate, listOf(chapterModel))
-                        .unwrapAsync()
-                        .asObjectList()
-                } catch (error: Throwable) {
-                    if (error.isMihonCapabilityAbsence()) continue
-                    chapterCapabilitySeen = true
-                    chapterFailures += error
-                    break@chapterSearch
-                }
-                chapterCapabilitySeen = true
-                ensureNotCancelled(requestId)
                 return MihonComicCatalog(
-                    manga = detailedManga,
-                    chapters = normalizeMihonChapterCatalog(chapters),
-                    chapterFailure = null,
+                    manga = manga,
+                    chapters = emptyList(),
+                    chapterFailure = mihonChapterCatalogFailure(source, listOf(error)),
                 )
             }
+            null
         }
-
-        if (chapterCapabilitySeen && chapterFailures.isNotEmpty()) {
+        if (combined != null) {
+            ensureNotCancelled(requestId)
+            val updatedManga = combined.readValue("manga", "getManga") ?: manga
+            val chapters = combined.readList(
+                "chapters",
+                "getChapters",
+                "newChapters",
+                "getNewChapters",
+            )
             return MihonComicCatalog(
-                manga = detailedManga,
-                chapters = emptyList(),
-                chapterFailure = mihonChapterCatalogFailure(source, chapterFailures),
+                manga = updatedManga,
+                chapters = chapters,
+                chapterFailure = null,
             )
         }
 
-        // Pure TachiyomiX 1.6 sources may intentionally expose only the
-        // combined suspend API. Invoke it exactly once, preserving the ordered
-        // host chapter state Mihon passes back to source.getMangaUpdate.
-        val existingChapters = cachedMihonChaptersForComic(comicId)
-        val update = try {
-            source.invokeFirst(
-                listOf(
-                    Invocation("getMangaUpdate", listOf(manga, existingChapters, true, true)),
-                    Invocation("fetchMangaUpdate", listOf(manga, existingChapters, true, true)),
-                ),
-            ).unwrapAsync()
+        // ABI 1.4 predates the combined suspend method. Fall back only when
+        // that capability is genuinely absent; real parser/network failures
+        // remain authoritative and are never hidden behind another catalog call.
+        val detailedManga = try {
+            source.invokeMihonCompatible("fetchMangaDetails", listOf(manga)).unwrapAsync()
+        } catch (error: Throwable) {
+            if (error.isMihonCapabilityAbsence()) {
+                manga
+            } else {
+                return MihonComicCatalog(
+                    manga = manga,
+                    chapters = emptyList(),
+                    chapterFailure = mihonChapterCatalogFailure(source, listOf(error)),
+                )
+            }
+        }
+        ensureNotCancelled(requestId)
+        val chapters = try {
+            source.invokeMihonCompatible("fetchChapterList", listOf(detailedManga))
+                .unwrapAsync()
+                .asObjectList()
         } catch (error: Throwable) {
             return MihonComicCatalog(
                 manga = detailedManga,
@@ -431,16 +421,9 @@ internal class MihonRuntimeDriver private constructor(
             )
         }
         ensureNotCancelled(requestId)
-        val updatedManga = update.readValue("manga", "getManga") ?: detailedManga
-        val chapters = update.readList(
-            "chapters",
-            "getChapters",
-            "newChapters",
-            "getNewChapters",
-        )
         return MihonComicCatalog(
-            manga = updatedManga,
-            chapters = normalizeMihonChapterCatalog(chapters),
+            manga = detailedManga,
+            chapters = chapters,
             chapterFailure = null,
         )
     }
@@ -453,72 +436,34 @@ internal class MihonRuntimeDriver private constructor(
         failures.firstOrNull(),
     ).also { failure -> failures.drop(1).forEach(failure::addSuppressed) }
 
-    /**
-     * Collapses source aliases that cannot address different chapter content.
-     *
-     * SChapter.url is the source-side page-list locator. Two entries with the
-     * same non-empty locator cannot resolve to different chapter requests, so
-     * keeping both creates duplicate first chapters and ambiguous restore keys.
-     * We never inspect display titles. Richer metadata wins; exact ties keep the
-     * later source entry so a leading action/proxy row cannot shadow the real
-     * catalog row that follows it.
-     */
-    private fun normalizeMihonChapterCatalog(chapters: List<Any>): List<Any> {
-        if (chapters.size < 2) return chapters
-        val result = ArrayList<Any>(chapters.size)
-        val indexByLocator = LinkedHashMap<String, Int>()
-        chapters.forEach { chapter ->
-            val locator = chapter.readString("url", "getUrl").orEmpty().trim()
-            if (locator.isEmpty()) {
-                result += chapter
-                return@forEach
-            }
-            val existingIndex = indexByLocator[locator]
-            if (existingIndex == null) {
-                indexByLocator[locator] = result.size
-                result += chapter
-                return@forEach
-            }
-            val existing = result[existingIndex]
-            if (mihonChapterMetadataScore(chapter) >= mihonChapterMetadataScore(existing)) {
-                result[existingIndex] = chapter
-            }
-        }
-        return result
-    }
+    // Chapter objects are source-owned inputs to getPageList(SChapter). The host
+    // must preserve the full list/order exactly as returned. SChapter.url alone
+    // is not a semantic identity: custom sources may inspect name/number/memo or
+    // other fields when resolving pages, even when two entries share one URL.
 
-    private fun mihonChapterMetadataScore(chapter: Any): Int {
-        var score = 0
-        val number = chapter.readValue(
-            "chapter_number",
-            "getChapter_number",
-            "getChapterNumber",
-        ) as? Number
-        if (number != null && number.toDouble() >= 0.0) score += 8
-        val published = chapter.readLong("date_upload", "getDate_upload", "getDateUpload")
-        if (published != null && published > 0L) score += 4
-        if (!chapter.readString("scanlator", "getScanlator").isNullOrBlank()) score += 2
-        if (!chapter.readString("name", "getName").isNullOrBlank()) score += 1
-        if (chapter.readValue("memo", "getMemo") != null) score += 1
-        return score
-    }
+    private fun mihonSourceCacheKey(source: Any): String =
+        source.readValue("id", "getId")?.toString()?.takeIf(String::isNotBlank)
+            ?: source.javaClass.name
 
-
-    private fun mihonComicCatalogKey(comicId: String): String {
+    private fun mihonComicCatalogKey(source: Any, comicId: String): String {
         val encoded = runCatching { decodeOpaque(comicId, "manga") }.getOrNull()
-            ?: return comicId
-        val url = encoded.optString("url").trim()
-        return if (url.isNotEmpty()) "url:$url" else comicId
+        val locator = encoded?.optString("url")?.trim().orEmpty()
+        val comicKey = if (locator.isNotEmpty()) "url:$locator" else comicId
+        return "${mihonSourceCacheKey(source)}\u0000$comicKey"
     }
 
-    private fun cachedMihonChaptersForComic(comicId: String): List<Any> =
+    private fun mihonChapterCacheKey(source: Any, chapterId: String): String =
+        "${mihonSourceCacheKey(source)}\u0000$chapterId"
+
+    private fun cachedMihonChaptersForComic(source: Any, comicId: String): List<Any> =
         synchronized(chapterById) {
-            chapterIdsByComic[mihonComicCatalogKey(comicId)]
-                ?.mapNotNull { chapterId -> chapterById[chapterId] }
+            chapterIdsByComic[mihonComicCatalogKey(source, comicId)]
+                ?.mapNotNull { cacheKey -> chapterById[cacheKey] }
                 .orEmpty()
         }
 
     private fun rememberMihonChapters(
+        source: Any,
         comicId: String,
         chapters: List<Any>,
         messages: List<Map<String, Any?>>,
@@ -527,13 +472,14 @@ internal class MihonRuntimeDriver private constructor(
         // source.getMangaUpdate on the next refresh. A Set silently weakens the
         // ordering contract even if today's implementation preserves insertion.
         val ids = messages.map { message -> message.getValue("chapterId") as String }
-        val catalogKey = mihonComicCatalogKey(comicId)
+        val cacheKeys = ids.map { id -> mihonChapterCacheKey(source, id) }
+        val catalogKey = mihonComicCatalogKey(source, comicId)
         synchronized(chapterById) {
-            chapterIdsByComic.put(catalogKey, ids)
-                ?.filterNot { id -> ids.contains(id) }
-                ?.forEach { id -> chapterById.remove(id) }
-            chapters.zip(messages).forEach { (chapter, message) ->
-                chapterById[message.getValue("chapterId") as String] = chapter
+            chapterIdsByComic.put(catalogKey, cacheKeys)
+                ?.filterNot { cacheKey -> cacheKeys.contains(cacheKey) }
+                ?.forEach { cacheKey -> chapterById.remove(cacheKey) }
+            chapters.zip(cacheKeys).forEach { (chapter, cacheKey) ->
+                chapterById[cacheKey] = chapter
             }
             while (chapterById.size > MAX_CACHED_MIHON_CHAPTERS) {
                 val evictedCatalogKey =
@@ -550,7 +496,7 @@ internal class MihonRuntimeDriver private constructor(
         encoded: JSONObject,
         requestId: String,
     ): Any {
-        chapterById[chapterId]?.let { return it }
+        chapterById[mihonChapterCacheKey(source, chapterId)]?.let { return it }
         val comicId = encoded.optString("comicId")
         require(comicId.isNotBlank()) { "chapter comic identity is missing" }
         val catalog = loadMihonComicCatalog(source, comicId, requestId)
@@ -562,8 +508,8 @@ internal class MihonRuntimeDriver private constructor(
                 sequence = index,
             )
         }
-        rememberMihonChapters(comicId, catalog.chapters, messages)
-        chapterById[chapterId]?.let { return it }
+        rememberMihonChapters(source, comicId, catalog.chapters, messages)
+        chapterById[mihonChapterCacheKey(source, chapterId)]?.let { return it }
         val matches = catalog.chapters.filter { chapter ->
             mihonChapterMatches(chapter, encoded)
         }
@@ -582,40 +528,44 @@ internal class MihonRuntimeDriver private constructor(
         chapter: Any,
         requestId: String,
     ): List<Any> {
-        val failures = mutableListOf<Throwable>()
-        var completed = false
-        for (candidate in listOf("getPageList", "fetchPageList")) {
-            val pages = try {
-                source.invokeMihonCompatible(candidate, listOf(chapter))
-                    .unwrapAsync()
-                    .asObjectList()
-            } catch (error: Throwable) {
-                val cause = error.rootCause()
-                if (error is NoSuchMethodException ||
-                    cause is NoSuchMethodException ||
-                    cause is UnsupportedOperationException
-                ) {
-                    continue
-                }
-                failures += error
-                continue
+        // Source.getPageList is the current Mihon contract; CatalogueSource
+        // already delegates it to legacy fetchPageList. Successful empty output
+        // is therefore authoritative and must not trigger a second source call.
+        val current = try {
+            source.invokeMihonCompatible("getPageList", listOf(chapter))
+                .unwrapAsync()
+                .asObjectList()
+        } catch (error: Throwable) {
+            if (!error.isMihonCapabilityAbsence()) {
+                throw IllegalStateException(
+                    "Mihon page list failed for ${source.javaClass.name}",
+                    error,
+                )
             }
-            completed = true
-            ensureNotCancelled(requestId)
-            if (pages.isNotEmpty()) return pages
+            null
         }
-        if (failures.isNotEmpty()) {
+        if (current != null) {
+            ensureNotCancelled(requestId)
+            return current
+        }
+        val legacy = try {
+            source.invokeMihonCompatible("fetchPageList", listOf(chapter))
+                .unwrapAsync()
+                .asObjectList()
+        } catch (error: Throwable) {
+            if (error.isMihonCapabilityAbsence()) {
+                throw IllegalStateException(
+                    "Mihon source exposes no compatible page-list operation",
+                    error,
+                )
+            }
             throw IllegalStateException(
                 "Mihon page list failed for ${source.javaClass.name}",
-                failures.first(),
-            ).also { failure ->
-                failures.drop(1).forEach(failure::addSuppressed)
-            }
+                error,
+            )
         }
-        check(completed) {
-            "Mihon source exposes no compatible page-list operation"
-        }
-        return emptyList()
+        ensureNotCancelled(requestId)
+        return legacy
     }
 
     private fun loadChapter(source: Any, chapterId: String, requestId: String): Map<String, Any?> {
@@ -702,16 +652,31 @@ internal class MihonRuntimeDriver private constructor(
         } else {
             resource
         }
-        val resourceUrl = resolvedResource.getString("url")
-        val headers = resolvedResource.optJSONObject("headers").stringMap()
-            .ifEmpty { source.readValue("headers", "getHeaders").stringHeaders() }
-        val requiresRuntimeTransform = mihonTransportRevision(sourceId, source) != null
+        val request = mihonRequestFromResource(source, resolvedResource)
+        val requestUrl = request.readValue("url", "getUrl")
+            ?: error("Mihon request did not expose a URL")
+        val resourceUrl = requestUrl.toString()
+        val method = request.readString("method", "getMethod")
+            ?.trim()
+            ?.uppercase(Locale.US)
+            ?.takeIf(String::isNotEmpty)
+            ?: "GET"
+        val baseHeaders = request.readValue("headers", "getHeaders").stringHeaders()
+        val headers = mihonEffectiveRequestHeaders(source, requestUrl, baseHeaders)
+        val body = if (method == "GET" || method == "HEAD") {
+            null
+        } else {
+            readMihonRequestBodyBytes(
+                source.javaClass.classLoader,
+                request.readValue("body", "getBody"),
+            )
+        }
         return mapOf(
             "url" to resourceUrl,
-            "method" to "GET",
+            "method" to method,
             "headers" to headers,
-            "body" to null,
-            "requiresRuntimeTransform" to requiresRuntimeTransform,
+            "body" to body,
+            "requiresRuntimeTransform" to (mihonTransportRevision(sourceId, source) != null),
         )
     }
 
@@ -729,22 +694,33 @@ internal class MihonRuntimeDriver private constructor(
         } else {
             resource
         }
-        val resourceUrl = resolvedResource.getString("url")
-        val headers = resolvedResource.optJSONObject("headers").stringMap()
-            .ifEmpty { source.readValue("headers", "getHeaders").stringHeaders() }
+        val request = mihonRequestFromResource(source, resolvedResource)
+        val resourceUrl = request.readValue("url", "getUrl")?.toString()
+            ?: error("Mihon request did not expose a URL")
+        val method = request.readString("method", "getMethod")
+            ?.trim()
+            ?.uppercase(Locale.US)
+            ?.takeIf(String::isNotEmpty)
+            ?: "GET"
+        val headers = request.readValue("headers", "getHeaders").stringHeaders()
+        val body = if (method == "GET" || method == "HEAD") {
+            null
+        } else {
+            readMihonRequestBodyBytes(
+                source.javaClass.classLoader,
+                request.readValue("body", "getBody"),
+            )
+        }
         val client = source.readValue("client", "getClient")
         if (client == null) {
-            return loadResourceWithPlatformNetwork(resourceUrl, headers, requestId)
+            return loadResourceWithPlatformNetwork(
+                resourceUrl,
+                method,
+                headers,
+                body,
+                requestId,
+            )
         }
-        val loader = source.javaClass.classLoader
-        val requestBuilderType = Class.forName("okhttp3.Request\$Builder", true, loader)
-        val builder = requestBuilderType.getDeclaredConstructor().newInstance()
-        builder.invokeCompatible("url", listOf(resourceUrl))
-        headers.forEach { (name, value) ->
-            builder.invokeCompatible("header", listOf(name, value))
-        }
-        val request = builder.invokeCompatible("build", emptyList())
-            ?: error("Mihon request builder returned no request")
         val call = client.invokeCompatible("newCall", listOf(request))
             ?: error("Mihon client returned no call")
         calls[requestId] = call
@@ -755,9 +731,9 @@ internal class MihonRuntimeDriver private constructor(
             val successful = response.readBoolean("isSuccessful", "getIsSuccessful") ?: false
             val code = response.readLong("code", "getCode") ?: 0
             if (!successful) error("Mihon resource HTTP $code")
-            val body = response.readValue("body", "getBody")
+            val responseBody = response.readValue("body", "getBody")
                 ?: error("Mihon resource response body is empty")
-            val bytes = body.invokeCompatible("bytes", emptyList()) as? ByteArray
+            val bytes = responseBody.invokeCompatible("bytes", emptyList()) as? ByteArray
                 ?: error("Mihon resource body did not return bytes")
             require(bytes.size <= maxResponseBytes) {
                 "Mihon response exceeds runtime limit"
@@ -916,29 +892,186 @@ internal class MihonRuntimeDriver private constructor(
         } catch (_: NoSuchMethodException) {
             null
         }
-        val requestUrl = imageRequest?.readValue("url", "getUrl")?.toString()
+        val fallbackHeaders = source.readValue("headers", "getHeaders").stringHeaders()
+        val request = imageRequest ?: buildMihonRequest(
+            source.javaClass.classLoader,
+            imageUrl,
+            "GET",
+            fallbackHeaders,
+            null,
+        )
+        return mihonRequestResource(source.javaClass.classLoader, request)
+    }
+
+    private fun mihonRequestResource(loader: ClassLoader, request: Any): JSONObject {
+        val requestUrl = request.readValue("url", "getUrl")?.toString()
             ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
-            ?: imageUrl.takeIf { it.startsWith("http://") || it.startsWith("https://") }
-            ?: error("Mihon image request did not expose an absolute URL")
-        val requestHeaders = imageRequest?.readValue("headers", "getHeaders")
-            ?: source.readValue("headers", "getHeaders")
+            ?: error("Mihon request did not expose an absolute URL")
+        val method = request.readString("method", "getMethod")
+            ?.trim()
+            ?.uppercase(Locale.US)
+            ?.takeIf(String::isNotEmpty)
+            ?: "GET"
+        val requestBody = request.readValue("body", "getBody")
+        val headers = LinkedHashMap(
+            request.readValue("headers", "getHeaders").stringHeaders(),
+        )
+        val body = if (method == "GET" || method == "HEAD") {
+            null
+        } else {
+            requestBody?.invokeOptional("contentType")?.toString()
+                ?.takeIf(String::isNotBlank)
+                ?.let { contentType ->
+                    if (headers.keys.none { it.equals("Content-Type", ignoreCase = true) }) {
+                        headers["Content-Type"] = contentType
+                    }
+                }
+            readMihonRequestBodyBytes(loader, requestBody).also { bytes ->
+                if (bytes != null &&
+                    headers.keys.none { it.equals("Content-Length", ignoreCase = true) }
+                ) {
+                    headers["Content-Length"] = bytes.size.toString()
+                }
+            }
+        }
         return JSONObject()
             .put("url", requestUrl)
-            .put("headers", JSONObject(requestHeaders.stringHeaders()))
+            .put("method", method)
+            .put("headers", JSONObject(headers))
+            .apply {
+                if (body != null && body.isNotEmpty()) {
+                    put("bodyBase64", Base64.encodeToString(body, Base64.NO_WRAP))
+                }
+            }
+    }
+
+    private fun mihonRequestFromResource(source: Any, resource: JSONObject): Any {
+        val url = resource.getString("url")
+        val method = resource.optString("method", "GET")
+            .trim()
+            .uppercase(Locale.US)
+            .ifEmpty { "GET" }
+        val headers = resource.optJSONObject("headers").stringMap()
+            .ifEmpty { source.readValue("headers", "getHeaders").stringHeaders() }
+        val body = resource.optString("bodyBase64")
+            .takeIf(String::isNotBlank)
+            ?.let { Base64.decode(it, Base64.DEFAULT) }
+        return buildMihonRequest(
+            source.javaClass.classLoader,
+            url,
+            method,
+            headers,
+            body,
+        )
+    }
+
+    private fun buildMihonRequest(
+        loader: ClassLoader,
+        url: String,
+        method: String,
+        headers: Map<String, String>,
+        body: ByteArray?,
+    ): Any {
+        val requestBuilderType = Class.forName("okhttp3.Request\$Builder", true, loader)
+        val builder = requestBuilderType.getDeclaredConstructor().newInstance()
+        builder.invokeCompatible("url", listOf(url))
+        headers.forEach { (name, value) ->
+            builder.invokeCompatible("header", listOf(name, value))
+        }
+        val normalizedMethod = method.trim().uppercase(Locale.US).ifEmpty { "GET" }
+        val requestBody = if (normalizedMethod == "GET" || normalizedMethod == "HEAD") {
+            null
+        } else {
+            createMihonRequestBody(loader, body ?: ByteArray(0))
+        }
+        builder.invokeCompatible("method", listOf(normalizedMethod, requestBody))
+        return builder.invokeCompatible("build", emptyList())
+            ?: error("Mihon request builder returned no request")
+    }
+
+    private fun createMihonRequestBody(loader: ClassLoader, bytes: ByteArray): Any {
+        val type = Class.forName("okhttp3.RequestBody", true, loader)
+        val companion = runCatching { type.getField("Companion").get(null) }.getOrNull()
+        if (companion != null) {
+            val create = companion.javaClass.methods.firstOrNull { method ->
+                method.name == "create" &&
+                    method.parameterCount == 2 &&
+                    method.parameterTypes.any { it == ByteArray::class.java }
+            }
+            if (create != null) {
+                val args = create.parameterTypes.map { parameter ->
+                    if (parameter == ByteArray::class.java) bytes else null
+                }.toTypedArray()
+                return create.invoke(companion, *args)
+            }
+        }
+        val create = type.methods.firstOrNull { method ->
+            Modifier.isStatic(method.modifiers) &&
+                method.name == "create" &&
+                method.parameterTypes.any { it == ByteArray::class.java }
+        } ?: error("OkHttp RequestBody.create(byte[]) is unavailable")
+        val args = create.parameterTypes.map { parameter ->
+            if (parameter == ByteArray::class.java) bytes else null
+        }.toTypedArray()
+        return create.invoke(null, *args)
+    }
+
+    private fun readMihonRequestBodyBytes(loader: ClassLoader, body: Any?): ByteArray? {
+        if (body == null) return null
+        val bufferType = Class.forName("okio.Buffer", true, loader)
+        val buffer = bufferType.getDeclaredConstructor().newInstance()
+        body.invokeCompatible("writeTo", listOf(buffer))
+        return buffer.invokeCompatible("readByteArray", emptyList()) as? ByteArray
+            ?: error("Mihon request body could not be serialized")
+    }
+
+    private fun mihonEffectiveRequestHeaders(
+        source: Any,
+        requestUrl: Any,
+        headers: Map<String, String>,
+    ): Map<String, String> {
+        val result = LinkedHashMap(headers)
+        val client = source.readValue("client", "getClient") ?: return result
+        val cookieJar = client.readValue("cookieJar", "getCookieJar") ?: return result
+        val cookies = runCatching {
+            cookieJar.invokeCompatible("loadForRequest", listOf(requestUrl)).asObjectList()
+        }.getOrDefault(emptyList())
+        if (cookies.isNotEmpty()) {
+            val cookieHeader = cookies.mapNotNull { cookie ->
+                val name = cookie.readString("name", "getName")?.takeIf(String::isNotBlank)
+                    ?: return@mapNotNull null
+                val value = cookie.readString("value", "getValue") ?: return@mapNotNull null
+                "$name=$value"
+            }.joinToString("; ")
+            if (cookieHeader.isNotEmpty()) result["Cookie"] = cookieHeader
+        }
+        val browserUserAgent = runCatching {
+            cookieJar.invokeCompatible("browserSessionUserAgent", listOf(requestUrl)) as? String
+        }.getOrNull()?.trim().orEmpty()
+        if (browserUserAgent.isNotEmpty()) {
+            result["User-Agent"] = browserUserAgent
+        }
+        return result
     }
 
     private fun loadResourceWithPlatformNetwork(
         uri: String,
+        method: String,
         headers: Map<String, String>,
+        body: ByteArray?,
         requestId: String,
     ): ByteArray {
         val connection = URL(uri).openConnection() as HttpURLConnection
         connection.instanceFollowRedirects = true
         connection.connectTimeout = 5_000
         connection.readTimeout = 10_000
-        connection.requestMethod = "GET"
+        connection.requestMethod = method
         headers.forEach { (name, value) ->
             connection.setRequestProperty(name, value)
+        }
+        if (method != "GET" && method != "HEAD" && body != null && body.isNotEmpty()) {
+            connection.doOutput = true
+            connection.outputStream.use { it.write(body) }
         }
         calls[requestId] = connection
         try {
@@ -1009,11 +1142,17 @@ internal class MihonRuntimeDriver private constructor(
             }
         }.getOrNull() ?: return null
         val headers = source.readValue("headers", "getHeaders").stringHeaders()
-        val resource = JSONObject().put("url", absolute)
-        if (headers.isNotEmpty()) {
-            resource.put("headers", JSONObject(headers))
-        }
-        return encodeOpaque("resource", resource)
+        val request = buildMihonRequest(
+            source.javaClass.classLoader,
+            absolute,
+            "GET",
+            headers,
+            null,
+        )
+        return encodeOpaque(
+            "resource",
+            mihonRequestResource(source.javaClass.classLoader, request),
+        )
     }
 
     private fun chapterMessage(

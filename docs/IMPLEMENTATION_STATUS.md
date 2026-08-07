@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.158`
-**App build：** `0.31.0+158`
+**源码版本：** `0.31.0-dev.159`
+**App build：** `0.31.0+159`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -9,7 +9,7 @@
 
 ## 当前实现
 
-- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=158`。
+- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=159`。
 - 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
 - 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation不阻塞 Home primary，外部 source ready 后增量接入。
 - artwork资源恢复唯一属于 `ComicSourceResourceGateway/ResourceCacheManager`。Home、书架、漫画源和详情 presentation 已删除定时 retry、first-frame watchdog、App resume自动 retry、全局 ImageCache eviction和 App级短时 Future join；详情统一使用 `ComicDetailsArtworkLoader` 并显式传递 cover/preview/avatar role。普通 artwork直接复用 `StableArtworkImage`；需要裁剪/尺寸测量时只有一个显式 ImageStream listener，不再同时创建第二个 `Image`。
@@ -31,7 +31,8 @@
 - 来源漫画从 source页首次打开并持久化后，再次进入时外层 source route 已持有 raw comic identity；local SavedComic分支直接 `_pushComicDetails`，不再嵌套 `_openComicDetails` 重申请相同锁，因此不会静默吞掉第二次导航。
 - Home阅读历史、详情和漫画源使用同一 external artwork gateway/cache identity；HTTP(S) 与 `mihon:resource:` 等插件 locator即使 source尚未激活也先查 canonical durable cache，只有 miss才解析 source。
 - 外部插件 manifest按记录容错并保留上一代 `.bak`；启动可从 `.bak`、`.part` 或旧 `.invalid`恢复有效记录与旧 sandbox payload路径，再重写主 manifest。恢复失败逐项展示，不再因一个坏记录清空全部插件。
-- Mihon chapter目录不再存在 synthetic/gallery fallback或标题去重。bridge先调用明确的 `get/fetchChapterList`；成功（含空）即权威，真实错误直接失败。只有该能力不存在时才调用 TachiyomiX 1.6 combined update，并传入已知章节原顺序。完全相同的非空 `SChapter.url`按 source locator折叠；显示标题不参与判断。
+- 已激活外部插件的 WebView/settings restart与安装更新采用事务式 runtime replacement：候选先激活/验证，成功后原子替换并关闭旧 session；候选失败保留旧 source。Mihon图片 request plan保留 `imageRequest(page)` 的 method/headers/body，host streaming前同步当前 CookieJar Cookie/browser UA；普通图片仍走统一宿主 transport。
+- Mihon chapter目录不再存在 synthetic/gallery fallback、标题或 URL去重。当前 1.6/current Mihon按宿主接口先调用 combined `getMangaUpdate(..., fetchChapters=true)`；仅 ABI能力缺失才回退 legacy `fetchMangaDetails/fetchChapterList`。正文 `getPageList(SChapter)`同样只在能力缺失时回退 `fetchPageList`。driver章节对象缓存按 sourceId隔离。
 - Cloudflare 主路径与兼容路径统一委托 typed detector；仅严格 403/503 challenge 映射 `sourceVerificationRequired`，没有隐藏 WebView 或消息文本判断。
 - catalog response cache 使用稳定 source/comic/chapter identity 和结构 weight；页面正文不进入该缓存。
 - Home“更新漫画”与阅读历史分离：更新集合只按 `SavedComicRecord.updatedAt`；Reader checkpoint不逐页触发 Home rebuild，route返回后只用最终 `ReadingProgress`更新匹配的内存历史 entry一次。
@@ -69,7 +70,7 @@
 |---|---|
 | repository/documentation/Dart static gates | Verified-static |
 | current-code documentation consistency gate | Verified-static |
-| dev.75–dev.158 ownership gates | Verified-static |
+| dev.75–dev.159 ownership gates | Verified-static |
 | Android/Mihon/Venera/Reader/Pipeline/UI contracts | Verified-static / toolchain |
 | Kotlin texture bridge compile stub | Verified-toolchain |
 | pinned libwebp host build/smoke | Unverified：当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip` |

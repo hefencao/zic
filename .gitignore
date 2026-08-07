@@ -21,6 +21,7 @@ Cargo.lock
 *.iml
 
 # Runtime
+.codegraph/
 *.log
 coverage/
 

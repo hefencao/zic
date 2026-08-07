@@ -368,7 +368,7 @@ Reader 返回后 Home只更新该 route最终 progress一次，已挂载详情�
 
 ## 12. 插件与网络边界
 
-插件先生成 request plan。GET/HEAD 必须零 body且不得携带实体 headers。普通正文由宿主 transport 流式进入统一 Pipeline；完整 JSON/Base64 RPC 只允许用于明确声明 runtime transform 且有大小上限的兼容路径。
+插件先生成 request plan。GET/HEAD 必须零 body且不得携带实体 headers。Mihon 页面资源必须从 `HttpSource.imageRequest(page)`（或等价 source request）保留准确 URL、method、headers和必要的小型 request body；宿主直连前同步投影当前 source OkHttp CookieJar Cookie与同站点 browser-session UA。普通图片正文仍由宿主 transport流式进入统一 Pipeline；只有 source-owned interceptor/response transform无法在宿主重放时才标记既有 `requiresRuntimeTransform`兼容路径，完整图片正文不得因 Cookie/header需求改走 JSON/Base64 RPC。
 
 Cloudflare 可见浏览器的 Cookie 与 User-Agent 必须属于同一个浏览器 session。验证模式下 `NetworkBrowserActivity` 不得把插件/OkHttp 的静态 UA 写入 WebView；WebView 使用当前 Android WebView provider 的真实 UA，并把该 UA 与同站点 Cookie/localStorage 写入同一 snapshot revision。Mihon runtime 读取 snapshot 时不再要求它等于启动前的静态 UA，而是在 OkHttp application interceptor 中对同站点请求逐请求采用 snapshot UA；CookieJar 同步导入同一 revision 的 Cookie。这样避免 `cf_clearance` 来自真实 WebView、HTTP 请求却继续声明另一浏览器/平台所产生的 Cloudflare 指纹不一致。
 
@@ -406,5 +406,5 @@ Home、漫画源、详情和迁移的**所有非本地 artwork locator**都必�
 - Home/书架/详情封面的 Flutter State key 与 image presentation identity 使用 canonical comic identity；raw Mihon locator、resume chapter、封面 URL 和 loader closure 变化不得销毁已成功的封面 State。
 - 远程详情优先投影已保存 manifest；插件 host 未就绪时等待当前 source resolver，不能因后台 refresh 失败丢弃已有详情。
 - 预览、评论、章节确保和刷新在实际调用时解析当前 active adapter，不捕获插件重启前的 source session。
-- 漫画源浏览页遵循相同生命周期边界：页面持有稳定 `sourceId`、section/query/filter 与缓存投影，不长期拥有 runtime adapter。WebView验证或插件设置重启 runtime 后，section/filter/browse 必须通过 composition resolver取得当前 active source；已关闭的旧 session不得继续调用。
-- Mihon chapter catalog只接受插件/source API返回的真实 `SChapter`。bridge 首选明确的 `getChapterList`/`fetchChapterList` 目录能力；该能力存在时，其成功结果（包括空目录）就是权威，真实网络/解析错误必须原样失败，不能再调用另一目录接口掩盖。只有明确 chapter-list 能力不存在时，才调用 TachiyomiX 1.6 `getMangaUpdate`/`fetchMangaUpdate`，并把已知章节按原顺序传回。App/bridge不得从 manga URL人工构造章节，也不得按“开始阅读/正文”等显示文字猜测章节语义。完全相同且非空的 `SChapter.url` 属于同一 source page-list locator，可折叠为一个条目；不相同的 locator不得仅因标题或序号相似而合并。
+- 漫画源浏览页遵循相同生命周期边界：页面持有稳定 `sourceId`、section/query/filter 与缓存投影，不长期拥有 runtime adapter。WebView验证、插件设置重启或同插件更新必须通过 `ExternalPluginRuntimeRegistry.replace`先激活/校验候选 runtime，成功后原子发布 replacement adapter并退休旧 session；候选失败不得先移除当前插件。section/filter/browse随后通过 composition resolver取得当前 active source。
+- Mihon chapter catalog只接受插件/source API返回的真实 `SChapter`。TachiyomiX 1.6与当前 Mihon宿主统一以 `Source.getMangaUpdate(manga, existingChapters, fetchDetails, fetchChapters)` 为主入口；`CatalogueSource` 已在该入口内部兼容 legacy `fetchMangaDetails/fetchChapterList`。只有 ABI明确不存在 combined能力时，ZIC才调用 legacy `fetchMangaDetails/fetchChapterList`，真实网络/解析错误不得跨接口掩盖。正文页以 `getPageList(SChapter)` 为主，能力不存在时才回退 `fetchPageList`；成功空列表保持空。App/bridge不得从 manga URL人工构造章节，也不得按标题、URL、序号推断或合并 `SChapter`：page-list语义属于完整 source object。driver内部 chapter object cache必须按 sourceId作用域隔离。

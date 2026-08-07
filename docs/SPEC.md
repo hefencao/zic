@@ -203,8 +203,10 @@ identity 超限时使用稳定 hash 与原长度；高频事件 MAY 合并，但
 
 4. encoded artwork source 已就绪后，普通 artwork MUST 只创建一个 ImageProvider/解码监听；需要裁剪或尺寸测量的 Presentation MAY 显式监听一个 ImageStream并直接绘制 decoded image，但 MUST NOT 同时构建第二个 `Image`监听同一 provider。
 5. 远程详情 MUST 先显示已有 catalog cache，并等待当前 active source adapter 完成后台刷新；预览、评论及章节操作 MUST 在调用时解析当前 adapter，不得持有插件重启前的关闭 session。
-6. Mihon chapter catalog MUST 只投影插件/source API实际返回的 `SChapter`。若 `getChapterList`/`fetchChapterList` 明确可用，MUST 优先且只使用该目录调用；成功空目录保持空，真实调用错误保持失败。只有该能力明确不存在时，MAY 使用 TachiyomiX 1.6 `getMangaUpdate`/`fetchMangaUpdate`，并 MUST 保留已知章节顺序传入。MUST NOT 从 manga URL生成兼容单章，也不得按“开始阅读/正文/Start Reading”等标题推断章节。完全相同的非空 `SChapter.url` MAY 按 source locator折叠，标题相同或 sequence相同不能作为去重证据。
+6. Mihon chapter catalog MUST 只投影插件/source API实际返回的完整 `SChapter` 列表。TachiyomiX 1.6/current Mihon MUST 先调用 `getMangaUpdate(manga, existingChapters, ..., fetchChapters=true)`；只有 combined能力明确不存在时 MAY回退 legacy `fetchMangaDetails/fetchChapterList`。正文 MUST先调用 `getPageList(SChapter)`，只有能力不存在时 MAY回退 `fetchPageList`。成功空列表是合法结果；真实调用错误保持失败。MUST NOT 从 manga URL生成兼容单章，也不得按标题、`SChapter.url`、number或sequence推断、增加、删除或合并章节。
 7. Reader progress 的有序性与 durable I/O MUST 解耦：SQLite实现 MUST 在非 UI isolate执行同步 sqlite3/章节校验；Reader页面变化只入队 latest checkpoint，不得逐页发布 Home/library projection。Reader route MUST NOT 等待 durable barrier；返回后 Home/详情只发布最终内存 progress投影，storage isolate按自身 batch/生命周期策略完成持久化。
 8. 外部 artwork MUST 统一通过 `ComicSourceResourceGateway`；raw plugin comic locator 与 durable artwork identity MUST 分离。Mihon 等可变 raw locator必须使用 source canonical comic identity构造封面/预览 cache namespace；`mihon:resource:` 等插件 URI不得传给本地文件 loader。
 9. 同一 browser snapshot revision MUST NOT 在每个 HTTP 请求前重复覆盖 runtime Cookie；新 revision可再次导入。Mihon首个重试 MUST能从 snapshot同步获得 cookie，不得依赖 Android `CookieManager.setCookie()` 的异步持久化时序。
 10. retryable runtime lifecycle envelope MAY 自动重新激活并重试一次；业务错误和 `source-verification-required` MUST NOT 被当作 runtime崩溃吞掉。
+11. Mihon/外部插件同 pluginId 的 runtime restart或更新 MUST 使用事务式 replacement：候选 session先完成 activation、source identity/ABI等验证，成功后才能替换当前 source owner并关闭旧 session；候选失败 MUST 保留旧 session。不得先 deactivate再尝试 activate。
+12. Mihon `imageRequest(page)`（或等价 source request）的 URL、method、headers与必要 request body MUST 原样进入 `ComicResourceRequest`；GET/HEAD body MUST 为 null。宿主直连 MAY补 source OkHttp CookieJar的当前 Cookie与 browser-session UA，但不得把普通图片完整 body路由回插件 JSON/Base64 RPC。

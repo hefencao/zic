@@ -23,7 +23,7 @@ progress = read('packages/pipeline_runtime/lib/src/pipeline_transfer_progress.da
 for token in (
     'runtimeTransformBySource.computeIfAbsent(sourceId)',
     'mihonSourceRequiresRuntimeTransform(source)',
-    '"requiresRuntimeTransform" to requiresRuntimeTransform',
+    '"requiresRuntimeTransform" to (mihonTransportRevision(sourceId, source) != null)',
     'capability.javaClass.classLoader === sourceLoader',
     'client.invokeOptional(name)?.let(::add)',
     'normalizedMihonSourceName(',
@@ -34,13 +34,16 @@ for token in (
     assert token in driver, token
 assert '"requiresRuntimeTransform" to false' not in driver
 
-# dev.156 supersedes the old SManga-field merge/synthetic fallback. Current
-# TachiyomiX chapters come from SMangaUpdate or explicit chapter-list APIs.
-assert 'Invocation("getMangaUpdate"' in driver
+# Later Mihon contracts supersede the old SManga-field merge/synthetic fallback.
+# Current TachiyomiX chapters enter through getMangaUpdate; legacy chapter APIs
+# remain capability fallback only and host-side URL/title guessing is forbidden.
+assert '"getMangaUpdate"' in driver
 assert '"getChapters"' in driver
-assert 'for (candidate in listOf("getChapterList", "fetchChapterList"))' in driver
+assert 'source.invokeMihonCompatible("fetchChapterList"' in driver
+assert 'source.invokeMihonCompatible("getChapterList"' not in driver
 assert 'detailedManga.readList("chapters"' not in driver
 assert 'createSyntheticMihonChapter' not in driver
+assert 'normalizeMihonChapterCatalog' not in driver
 
 for token in (
     'this.tags = const <String>[]',

@@ -30,16 +30,21 @@ def main() -> int:
     driver = require(
         'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt',
         'catalog.chapterFailure?.let { throw it }',
-        'Invocation("getMangaUpdate", listOf(manga, existingChapters, true, true))',
-        'normalizeMihonChapterCatalog(chapters)',
-        'for (candidate in listOf("getChapterList", "fetchChapterList"))',
+        '"getMangaUpdate",',
+        'listOf(manga, existingChapters, true, true)',
+        'source.invokeMihonCompatible("fetchChapterList", listOf(detailedManga))',
         'Mihon source exposes no compatible chapter-catalog operation',
     )
-    if driver.index('for (candidate in listOf("getChapterList", "fetchChapterList"))') >= driver.index('Invocation("getMangaUpdate"'):
-        raise SystemExit('explicit Mihon chapter catalog must precede combined update fallback')
-    for stale in ('createSyntheticMihonChapter', 'selectMihonChapters'):
+    if driver.index('"getMangaUpdate",') >= driver.index('source.invokeMihonCompatible("fetchChapterList"'):
+        raise SystemExit('current Mihon getMangaUpdate contract must precede ABI 1.4 legacy fallback')
+    for stale in (
+        'createSyntheticMihonChapter',
+        'selectMihonChapters',
+        'normalizeMihonChapterCatalog',
+        'for (candidate in listOf("getChapterList", "fetchChapterList"))',
+    ):
         if stale in driver:
-            raise SystemExit(f'Mihon chapter failure must not synthesize host chapters: {stale}')
+            raise SystemExit(f'Mihon host must not restore obsolete chapter inference: {stale}')
 
     cloudflare = require(
         'packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/AndroidCloudflareInterceptor.kt',
@@ -62,13 +67,11 @@ def main() -> int:
     details = require(
         'apps/app/lib/comic_details.dart',
         "ValueKey<String>('comic-details-open-webview')",
-        '漫画源未返回可确认的章节目录；这不代表单章节漫画。',
         'onOpenSourceWebView',
+        'chapters: sourceChapters,',
     )
-    if details.index('if (sourceChapters.isEmpty)') > details.index(
-        '_manifest = manifest',
-    ):
-        raise SystemExit('empty catalog must fail before becoming presentation state')
+    if '漫画源未返回可确认的章节目录；这不代表单章节漫画。' in details:
+        raise SystemExit('presentation must not relabel a legal empty Mihon chapter catalog as WebView verification')
     if 'widget.source.loadComic(widget.summary.comicId)' in details:
         raise SystemExit('remote details must consume the composition refresh result')
     forbid('apps/app/lib/comic_details.dart', 'isSyntheticMihonChapterIdentity')

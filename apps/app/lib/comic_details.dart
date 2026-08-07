@@ -1303,12 +1303,6 @@ final class _RemoteComicDetailsScreenState
           )) {
         throw StateError('漫画源详情组合刷新未返回匹配的漫画和章节身份');
       }
-      if (sourceChapters.isEmpty) {
-        throw StateError(
-          '漫画源未返回可确认的章节目录；这不代表单章节漫画。'
-          '请打开 WebView 完成站点验证后重试。',
-        );
-      }
       final manifest = ComicManifest(
         comic: comic,
         chapters: sourceChapters,

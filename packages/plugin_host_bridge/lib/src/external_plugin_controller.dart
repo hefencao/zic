@@ -167,9 +167,8 @@ final class ExternalPluginController {
     if (record == null) {
       throw StateError('external source owner is not installed: $pluginId');
     }
-    await _registry.deactivate(pluginId);
     try {
-      await _registry.activate(record.plugin);
+      await _registry.replace(record.plugin);
       _activationFailures.remove(pluginId);
     } on Object catch (error) {
       _activationFailures[pluginId] = error;
@@ -392,30 +391,45 @@ final class ExternalPluginController {
       entryClasses: preview.inspection.mihonEntryClasses,
       sourceKey: preview.inspection.sourceKey,
     );
-    final previous = _installed[record.plugin.pluginId];
-    if (_registry.isActive(record.plugin.pluginId)) {
-      await _registry.deactivate(record.plugin.pluginId);
-    }
-    _installed[record.plugin.pluginId] = record;
+    final pluginId = record.plugin.pluginId;
+    final previous = _installed[pluginId];
+    final replacingActive = _registry.isActive(pluginId);
+    // Payload resolution for the candidate reads the installed record. Publish
+    // the candidate record in memory, but keep the previous runtime session
+    // authoritative until registry.replace validates the new payload/source set.
+    _installed[pluginId] = record;
+    var runtimeReplaced = false;
     try {
-      final sources = await _registry.activate(record.plugin);
-      _activationFailures.remove(record.plugin.pluginId);
+      final sources = replacingActive
+          ? await _registry.replace(record.plugin)
+          : await _registry.activate(record.plugin);
+      runtimeReplaced = true;
+      _activationFailures.remove(pluginId);
       await _writeManifest();
       if (previous != null && previous.payloadPath != record.payloadPath) {
         await _deleteBestEffort(File(previous.payloadPath));
       }
       return sources;
-    } on Object {
-      await _deleteBestEffort(File(record.payloadPath));
-      if (previous == null) {
-        _installed.remove(record.plugin.pluginId);
-      } else {
-        _installed[record.plugin.pluginId] = previous;
-        try {
-          await _registry.activate(previous.plugin);
-        } on Object {
-          // The original activation error remains authoritative.
+    } on Object catch (error) {
+      if (!runtimeReplaced) {
+        // Transactional registry replacement leaves the old active session
+        // untouched when candidate activation/validation fails. Restore only
+        // the controller's manifest view; there is no session to reactivate.
+        if (previous == null) {
+          _installed.remove(pluginId);
+        } else {
+          _installed[pluginId] = previous;
         }
+        _activationFailures[pluginId] = error;
+        if (previous == null || previous.payloadPath != record.payloadPath) {
+          await _deleteBestEffort(File(record.payloadPath));
+        }
+      } else {
+        // Runtime activation succeeded but persisting the new manifest failed.
+        // Keep the already validated runtime/payload authoritative in memory;
+        // deleting it here would create an active-session/payload mismatch.
+        _installed[pluginId] = record;
+        _activationFailures[pluginId] = error;
       }
       rethrow;
     }

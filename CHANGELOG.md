@@ -1,3 +1,12 @@
+## 0.31.0-dev.159：对齐 Mihon 宿主接口并事务替换插件 runtime
+
+- 以用户上传的当前 Mihon 主仓为接口基准：1.6 章节详情统一从 `Source.getMangaUpdate(manga, existingChapters, true, true)` 获取，`CatalogueSource` 自身负责兼容 legacy `fetchMangaDetails/fetchChapterList`；ABI 1.4 明确缺失 combined 能力时才由 ZIC回退 legacy。页面列表同理以 `getPageList(SChapter)` 为主，只有能力缺失才调用 `fetchPageList`。
+- 删除 dev.157 的 `SChapter.url` 宿主去重。`getPageList` 接收完整 `SChapter`，相同 URL 不能证明两个 source object语义相同；driver内部 chapter object cache改为 sourceId作用域，避免同一 APK多 source串对象。
+- Mihon正文与封面 request plan保存 `HttpSource.imageRequest(page)`/source headers生成的准确 method、headers和小型 request body；GET/HEAD保持零 body。宿主直连 transport解析 plan时同步补当前 OkHttp CookieJar Cookie和 browser-session UA；source-owned interceptor/transform仍通过既有 runtime-transform能力处理，图片正文不改为完整 Base64 RPC。
+- `ExternalPluginRuntimeRegistry.replace` 先激活并校验候选 runtime，再原子替换 source owner并关闭旧 session；WebView/settings restart和已激活插件更新不再先 deactivate。候选激活失败时旧插件继续可用。
+- 详情刷新接受来源成功返回的空章节目录，不再由 UI自行构造“请打开 WebView验证”错误；只有 typed `sourceVerificationRequired` 才进入验证恢复。
+- 新增 ADR 0143、dev.159 Mihon接口/资源/插件生命周期审计与门禁；ADR 0142 的 explicit-first和 URL去重规则标为已取代。
+
 ## 0.31.0-dev.158：闭合详情Artwork接口并清理重复解码路径
 
 - 修复 dev.157 owner-cleanup 未一次迁完的编译闭包：`storage_bridge` 补齐 `Uint8List` 导入，本地详情补稳定 `presentationIdentity`，详情 artwork loader 显式携带 `resourceRole`，preview/avatar 调用方与 decoded-artwork 构造统一到新接口。

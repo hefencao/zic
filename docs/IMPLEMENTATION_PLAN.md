@@ -22,6 +22,8 @@
 
 ## P0：Mihon 插件识别设备闭环
 
+- 绅士漫画用真实 page `imageRequest(page)` 验证 method/Referer/Cookie/body request plan与 Mihon宿主一致；能拿到页数后，host transport必须直接得到可读图片，不得改为完整RPC正文。
+- 已激活插件连续执行 WebView验证、设置修改和同包更新；故意让 replacement activation失败，旧插件必须继续出现在 activeSources并可请求。
 - 使用直接字符串和 `@string/...` metadata 的真实 Mihon APK分别验证 extensionLib、单入口和多入口 class解析。
 - 验证插件重启时 common runtime预检不再要求内部 `AndroidBrowserCookieSession`，并确认 Cookie snapshot reset仍在首个真实 request前生效。
 - 对无法识别的 APK导出 package、metadata key、ABI和 entry class诊断，不能静默表现为“未检测到”。
@@ -31,7 +33,7 @@
 - 使用真实 Venera/E-Hentai successor 检查详情“有新版本”、统一比较确认和 Reader 首次提醒；确认换 successor 后再次提醒。
 - 验证同源迁移只复制 exact chapter identity；sequence-only 候选不复制阅读状态或 artifact。
 - 在禁漫天堂真机验证两条分支：真实 `challenge-error-*` challenge进入 WebView并完成 handoff；仅含 Cloudflare challenge脚本/普通403的响应不产生 `sourceVerificationRequired`。确认 WebView不会在 Cloudflare尚未完成时因一次 `onPageFinished` 提前返回；Turnstile/JS challenge存在期间持续停留，最终页面连续稳定无 challenge后才自动保存完整 Cookie/UA snapshot并返回，且不要求生成新 `cf_clearance`。
-- 使用真实 Mihon 1.4/1.6扩展验证目录能力顺序：有 `get/fetchChapterList` 时只调用一次显式目录；只有能力不存在时才调用一次 combined `get/fetchMangaUpdate` 并保留已知章节顺序。目录失败显示真实失败，成功空目录保持空；不得创建人工单章。用两个完全相同 `SChapter.url` 的 fixture验证仅按 locator折叠，不按标题去重。
+- 使用真实 Mihon 1.4/1.6扩展验证宿主调用顺序：1.6先 `getMangaUpdate(...fetchChapters=true)` / `getPageList(SChapter)`，1.4仅能力缺失时回退 legacy。用禁漫天堂确认 source返回的每个完整 SChapter原样保留且不按相同 URL折叠；Roumanwu原80章不得再因错误入口刷新成0章。
 
 ## P0：来源投影、Cloudflare 与封面身份设备闭环
 

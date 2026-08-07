@@ -49,12 +49,18 @@ require(home_session, "void replaceProgress(ReadingProgress progress)", "single 
 forbid(home, "_flushReaderProgressAfterRoute", "old route flush")
 
 for token in (
-    'for (candidate in listOf("getChapterList", "fetchChapterList"))',
-    'Invocation("getMangaUpdate", listOf(manga, existingChapters, true, true))',
-    'normalizeMihonChapterCatalog(chapters)',
+    '"getMangaUpdate",',
+    'listOf(manga, existingChapters, true, true)',
+    'source.invokeMihonCompatible("fetchChapterList", listOf(detailedManga))',
+    'source.invokeMihonCompatible("getPageList", listOf(chapter))',
     'Mihon source exposes no compatible chapter-catalog operation',
 ):
     require(mihon, token, "Mihon chapter source contract")
+for stale in (
+    'for (candidate in listOf("getChapterList", "fetchChapterList"))',
+    'normalizeMihonChapterCatalog(chapters)',
+):
+    forbid(mihon, stale, "obsolete Mihon chapter source inference")
 for token in (
     "createSyntheticMihonChapter",
     "deduplicateMihonStartReadingEntries",

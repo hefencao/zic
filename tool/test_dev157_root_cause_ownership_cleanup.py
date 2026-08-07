@@ -72,17 +72,13 @@ for token in (
     require(details, token, 'details local progress projection')
 forbid(details, 'reloadLibrary(refreshContent: false)', 'post-Reader full library reload')
 
-# Mihon catalog: explicit chapter API is authoritative; combined 1.6 is capability fallback only.
-explicit = mihon.index('for (candidate in listOf("getChapterList", "fetchChapterList"))')
-combined = mihon.index('Invocation("getMangaUpdate"')
-if explicit >= combined:
-    raise SystemExit('Mihon combined update still runs before explicit chapter catalog')
+# Mihon chapter ownership remains source-defined. The concrete current/legacy
+# API ordering is owned by the latest Mihon contract gate rather than frozen in
+# this historical dev.157 cleanup test.
 for token in (
-    'chapterCapabilitySeen',
-    'if (chapterCapabilitySeen && chapterFailures.isNotEmpty())',
-    'val existingChapters = cachedMihonChaptersForComic(comicId)',
-    'normalizeMihonChapterCatalog(chapters)',
-    'val locator = chapter.readString("url", "getUrl").orEmpty().trim()',
+    'catalog.chapterFailure?.let { throw it }',
+    'val existingChapters = cachedMihonChaptersForComic(source, comicId)',
+    'loadMihonPageModels(source, chapter, requestId)',
 ):
     require(mihon, token, 'Mihon chapter catalog ownership')
 for stale in (

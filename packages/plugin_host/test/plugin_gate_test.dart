@@ -269,6 +269,57 @@ void main() {
     expect(registry.activeSources.single.sourceId, 'venera:shared');
   });
 
+  test('runtime registry replaces only after candidate validation', () async {
+    final plugin = _veneraPlugin();
+    final oldSession = _Session(
+      plugin,
+      <BrowsableComicSource>[_Source('venera:fixture')],
+    );
+    final replacementSession = _Session(
+      plugin,
+      <BrowsableComicSource>[_Source('venera:fixture')],
+    );
+    final registry = ExternalPluginRuntimeRegistry(
+      <ExternalComicPluginHost>[
+        _ScriptedHost(<Object>[oldSession, replacementSession]),
+      ],
+    );
+    addTearDown(registry.close);
+
+    await registry.activate(plugin);
+    final sources = await registry.replace(plugin);
+
+    expect(sources.single.sourceId, 'venera:fixture');
+    expect(oldSession.closed, isTrue);
+    expect(replacementSession.closed, isFalse);
+    expect(registry.activeSources.single, same(replacementSession.sources.single));
+  });
+
+  test('runtime registry keeps old session when replacement activation fails',
+      () async {
+    final plugin = _veneraPlugin();
+    final oldSession = _Session(
+      plugin,
+      <BrowsableComicSource>[_Source('venera:fixture')],
+    );
+    final registry = ExternalPluginRuntimeRegistry(
+      <ExternalComicPluginHost>[
+        _ScriptedHost(<Object>[
+          oldSession,
+          StateError('replacement startup failed'),
+        ]),
+      ],
+    );
+    addTearDown(registry.close);
+
+    await registry.activate(plugin);
+    await expectLater(registry.replace(plugin), throwsStateError);
+
+    expect(oldSession.closed, isFalse);
+    expect(registry.isActive(plugin.pluginId), isTrue);
+    expect(registry.activeSources.single, same(oldSession.sources.single));
+  });
+
   test('runtime registry coalesces concurrent activation', () async {
     final gate = Completer<void>();
     final session = _Session(
@@ -432,6 +483,26 @@ final class _QueueHost implements ExternalComicPluginHost {
     ExternalComicPluginCatalogEntry plugin,
   ) async =>
       _sessions[_index++];
+}
+
+final class _ScriptedHost implements ExternalComicPluginHost {
+  _ScriptedHost(this._results);
+
+  final List<Object> _results;
+  int _index = 0;
+
+  @override
+  ExternalComicPluginFormat get format =>
+      ExternalComicPluginFormat.veneraJavaScript;
+
+  @override
+  Future<ExternalComicPluginSession> activate(
+    ExternalComicPluginCatalogEntry plugin,
+  ) async {
+    final result = _results[_index++];
+    if (result is ExternalComicPluginSession) return result;
+    throw result;
+  }
 }
 
 final class _Inspector implements ExternalPluginInspector {

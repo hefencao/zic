@@ -1,6 +1,6 @@
 # zic
 
-dev.155 将 Cloudflare 验证绑定为真实浏览器会话：可见 WebView 使用自身 User-Agent，Mihon 重试同步采用同 snapshot 的 Cookie/UA；同时修复来源漫画二次进入、历史封面 durable-cache fallback 与插件 manifest 逐记录恢复。
+dev.159 对齐当前 Mihon Source/HttpSource 宿主合同：章节以 `getMangaUpdate/getPageList` 为主入口，图片保留 `imageRequest(page)` 的完整 request plan；插件重启与更新采用事务式 runtime replacement。
 
 
 `zic` 是面向 Android 优先、高性能漫画阅读场景的 Flutter/Rust 工程。项目支持本地与远程章节、静态图片、Animated WebP、持久下载、带分类/翻页的漫画源浏览、Mihon/Venera 扩展和统一 Reader Pipeline。

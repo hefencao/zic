@@ -22,36 +22,39 @@ def main() -> int:
     driver = raw_driver.decode()
     required = (
         'catalog.chapterFailure?.let { throw it }',
-        'chapterById[chapterId]?.let { return it }',
-        'mihonChapterMatches(chapter, encoded)',
-        'for (candidate in listOf("getChapterList", "fetchChapterList"))',
-        'val existingChapters = cachedMihonChaptersForComic(comicId)',
-        'Invocation("getMangaUpdate", listOf(manga, existingChapters, true, true))',
-        'private fun normalizeMihonChapterCatalog(chapters: List<Any>): List<Any>',
-        'val locator = chapter.readString("url", "getUrl")',
-        'mihonChapterMetadataScore(chapter)',
-        'private fun mihonComicCatalogKey(comicId: String): String',
-        'chapterIdsByComic[mihonComicCatalogKey(comicId)]',
-        'val catalogKey = mihonComicCatalogKey(comicId)',
+        'val combined = try',
+        'listOf(manga, existingChapters, true, true)',
+        'source.invokeMihonCompatible("fetchChapterList", listOf(detailedManga))',
+        'source.invokeMihonCompatible("getPageList", listOf(chapter))',
+        'source.invokeMihonCompatible("fetchPageList", listOf(chapter))',
+        'val existingChapters = cachedMihonChaptersForComic(source, comicId)',
+        'private fun mihonSourceCacheKey(source: Any): String',
+        'private fun mihonChapterCacheKey(source: Any, chapterId: String): String',
+        'chapterById[mihonChapterCacheKey(source, chapterId)]',
         'Mihon source exposes no compatible chapter-catalog operation',
-        'cause is UnsupportedOperationException',
+        'Mihon source exposes no compatible page-list operation',
+        'cause !is UnsupportedOperationException',
         'loadMihonPageModels(source, chapter, requestId)',
         'mihonCoverResource(source, manga)',
-        'return encodeOpaque("resource", resource)',
+        'mihonRequestResource(source.javaClass.classLoader, request)',
         'mihonContentKindHint(resource.optString("url"))',
         'put("animatedHint", kind == "webp" || kind == "gif")',
-        'source.invokeMihonCompatible(candidate, listOf(chapterModel))',
         '"blockingGet"',
         '"value"',
     )
     for token in required:
         if token not in driver:
             raise SystemExit(f'Mihon chapter contract is incomplete: {token}')
-    # The explicit chapter API is the primary path. The combined 1.6 API may
-    # only appear after the explicit chapter loop, otherwise normal legacy
-    # sources perform duplicate or regressed network requests.
-    if driver.index('for (candidate in listOf("getChapterList", "fetchChapterList"))') > driver.index('Invocation("getMangaUpdate", listOf(manga, existingChapters, true, true))'):
-        raise SystemExit('Mihon combined update still suppresses/duplicates explicit chapter loading')
+    # Current Source/TachiyomiX 1.6 enters through getMangaUpdate; the legacy
+    # fetchChapterList/fetchPageList APIs are capability fallbacks only.
+    combined = driver.index('val combined = try')
+    legacy_catalog = driver.index('source.invokeMihonCompatible("fetchChapterList"')
+    current_pages = driver.index('source.invokeMihonCompatible("getPageList"')
+    legacy_pages = driver.index('source.invokeMihonCompatible("fetchPageList"')
+    if combined >= legacy_catalog:
+        raise SystemExit('Mihon legacy chapter API still runs before current getMangaUpdate')
+    if current_pages >= legacy_pages:
+        raise SystemExit('Mihon legacy page API still runs before current getPageList')
     forbidden = (
         'createSyntheticMihonChapter',
         'deduplicateMihonStartReadingEntries',
@@ -60,6 +63,11 @@ def main() -> int:
         'MIHON_SYNTHETIC_REVISION',
         'detailedManga.readList("chapters"',
         'normalizeMihonStartReadingTitle',
+        'normalizeMihonChapterCatalog',
+        'mihonChapterMetadataScore',
+        'for (candidate in listOf("getChapterList", "fetchChapterList"))',
+        'source.invokeMihonCompatible("getChapterList"',
+        'fetchMangaUpdate',
         '开始阅读"',
     )
     for token in forbidden:

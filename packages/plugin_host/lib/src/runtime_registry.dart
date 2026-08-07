@@ -61,9 +61,72 @@ final class ExternalPluginRuntimeRegistry {
     }
   }
 
+  Future<List<BrowsableComicSource>> replace(
+    ExternalComicPluginCatalogEntry plugin,
+  ) async {
+    _requireOpen();
+    final existing = _sessions[plugin.pluginId];
+    if (existing == null) return activate(plugin);
+    final pending = _activations[plugin.pluginId];
+    if (pending != null) return pending;
+    final future = _replace(plugin, existing);
+    _activations[plugin.pluginId] = future;
+    try {
+      return await future;
+    } finally {
+      if (identical(_activations[plugin.pluginId], future)) {
+        _activations.remove(plugin.pluginId);
+      }
+    }
+  }
+
   Future<List<BrowsableComicSource>> _activate(
     ExternalComicPluginCatalogEntry plugin,
   ) async {
+    final session = await _activateCandidate(plugin);
+    _installSession(plugin.pluginId, session);
+    return List<BrowsableComicSource>.unmodifiable(session.sources);
+  }
+
+  Future<List<BrowsableComicSource>> _replace(
+    ExternalComicPluginCatalogEntry plugin,
+    ExternalComicPluginSession existing,
+  ) async {
+    // Activate and validate the replacement while the old session remains
+    // authoritative. A transient activation failure must never remove a
+    // previously working imported plugin/source from the App.
+    final replacement = await _activateCandidate(
+      plugin,
+      replacingPluginId: plugin.pluginId,
+    );
+    if (_closed) {
+      await replacement.close();
+      throw StateError('external plugin runtime registry is closed');
+    }
+    if (!identical(_sessions[plugin.pluginId], existing)) {
+      await replacement.close();
+      throw StateError('external plugin runtime session changed during replacement');
+    }
+
+    for (final source in existing.sources) {
+      if (_sourceOwners[source.sourceId] == plugin.pluginId) {
+        _sourceOwners.remove(source.sourceId);
+      }
+    }
+    _installSession(plugin.pluginId, replacement);
+    try {
+      await existing.close();
+    } on Object {
+      // The new validated session is already authoritative. A retired-session
+      // cleanup failure must not roll back to a runtime that is being closed.
+    }
+    return List<BrowsableComicSource>.unmodifiable(replacement.sources);
+  }
+
+  Future<ExternalComicPluginSession> _activateCandidate(
+    ExternalComicPluginCatalogEntry plugin, {
+    String? replacingPluginId,
+  }) async {
     final host = _hosts[plugin.format];
     if (host == null) {
       throw ExternalPluginActivationException(
@@ -108,9 +171,10 @@ final class ExternalPluginRuntimeRegistry {
         },
       );
     }
-    final collisions = uniqueSourceIds
-        .where(_sourceOwners.containsKey)
-        .toSet();
+    final collisions = uniqueSourceIds.where((sourceId) {
+      final owner = _sourceOwners[sourceId];
+      return owner != null && owner != replacingPluginId;
+    }).toSet();
     if (collisions.isNotEmpty) {
       await session.close();
       throw ExternalPluginActivationException(
@@ -123,12 +187,14 @@ final class ExternalPluginRuntimeRegistry {
         ),
       );
     }
+    return session;
+  }
 
-    _sessions[plugin.pluginId] = session;
+  void _installSession(String pluginId, ExternalComicPluginSession session) {
+    _sessions[pluginId] = session;
     for (final source in session.sources) {
-      _sourceOwners[source.sourceId] = plugin.pluginId;
+      _sourceOwners[source.sourceId] = pluginId;
     }
-    return List<BrowsableComicSource>.unmodifiable(session.sources);
   }
 
   Future<void> deactivate(String pluginId) async {
@@ -138,7 +204,8 @@ final class ExternalPluginRuntimeRegistry {
       try {
         await pending;
       } on Object {
-        return;
+        // A failed activation/replacement can leave the previous session
+        // authoritative. Deactivation/removal must still close that session.
       }
     }
     final session = _sessions[pluginId];
