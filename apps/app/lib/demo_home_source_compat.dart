@@ -69,8 +69,9 @@ Future<ChapterManifest> _loadCompatibleSourceChapter(
 extension _DemoHomeSourceResourceActions on _DemoHomeState {
   Future<void> _openSourceWebView(
     BrowsableComicSource source,
-    Uri url,
-  ) async {
+    Uri url, {
+    bool cloudflareVerification = false,
+  }) async {
     final request = _sourceWebViewRequest(source, url);
     widget.debugTrace.record(
       TraceEvent(
@@ -80,6 +81,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
         payload: <String, Object?>{
           'stage': 'source-verification-browser-open',
           'host': request.url.host,
+          'cloudflareVerification': cloudflareVerification,
           'userAgentLength': request.userAgent?.length ?? 0,
         },
       ),
@@ -87,6 +89,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     await widget.networkBridge.openBrowser(
       request.url,
       userAgent: request.userAgent,
+      cloudflareVerification: cloudflareVerification,
     );
     final snapshot = await widget.networkBridge.readBrowserSnapshot(request.url);
     widget.debugTrace.record(
@@ -342,11 +345,12 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
             downloadChanges: _chapterDownloads.changes,
             onDownloadComic: (entries) =>
                 _downloadComicEntries(identity, entries),
-            onOpenSourceWebView: () {
+            onOpenSourceWebView: ({Uri? verificationUri}) {
               final active = _sourceForId(source.sourceId) ?? source;
               return _openSourceWebView(
                 active,
-                _sourceComicWebUri(active, comic.comicId),
+                verificationUri ?? _sourceComicWebUri(active, comic.comicId),
+                cloudflareVerification: true,
               );
             },
             onOpenSourceSettings: sourceSupportsSettings(source)
@@ -467,10 +471,14 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
           ),
           onOpenSourceWebView: source == null
               ? null
-              : () => _openSourceWebView(
-                    source,
-                    _sourceComicWebUri(source, comic.comicId),
-                  ),
+              : ({Uri? verificationUri}) {
+                  final active = _sourceForId(source.sourceId) ?? source;
+                  return _openSourceWebView(
+                    active,
+                    verificationUri ?? _sourceComicWebUri(active, comic.comicId),
+                    cloudflareVerification: true,
+                  );
+                },
           onOpenSourceSettings:
               source != null && sourceSupportsSettings(source)
                   ? () => _openComicSourceSettings(source)

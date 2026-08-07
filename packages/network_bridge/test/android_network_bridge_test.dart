@@ -29,6 +29,25 @@ void main() {
     });
   });
 
+  test('marks a browser request as Cloudflare verification', () async {
+    MethodCall? received;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      received = call;
+      return null;
+    });
+
+    await const AndroidNetworkBridge(channel: channel).openBrowser(
+      Uri.parse('https://18comic.vip/albums?o=mv&page=1'),
+      cloudflareVerification: true,
+    );
+
+    expect(received?.arguments, <String, Object?>{
+      'url': 'https://18comic.vip/albums?o=mv&page=1',
+      'cloudflareVerification': true,
+    });
+  });
+
   test('binds a source-owned user agent to the browser request', () async {
     MethodCall? received;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

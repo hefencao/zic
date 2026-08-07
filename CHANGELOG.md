@@ -1,3 +1,11 @@
+## 0.31.0-dev.152：同步 Mihon 验证 Cookie 并阻止重复 Cloudflare 回退
+
+- `sourceVerificationRequired` 结构化携带实际失败 URL、HTTP 状态与请求时 `cf_clearance` 是否存在；漫画源/详情恢复优先打开实际失败 URL。
+- Cloudflare 验证浏览器先删除已失效 clearance，只有获得新的非空 `cf_clearance` 才返回成功；用户直接关闭或未获得 clearance 不再触发必然失败的自动重试。
+- Mihon `AndroidCookieJar` 将浏览器 snapshot 同步导入进程内 cookie map，首个 OkHttp 重试不再依赖异步 `CookieManager.setCookie()` 完成；CookieManager 仅作为兼容镜像。
+- 新 runtime 若已经携带 `cf_clearance` 仍收到严格 Cloudflare challenge，不再自动打开 WebView循环，只保留错误诊断与手动验证入口。
+- 新增浏览器模式参数 owner test、首请求 Cookie handoff Kotlin 行为门禁、dev.152 静态合同与 ADR 0137。
+
 ## 0.31.0-dev.151：修复验证后旧 runtime source 重试
 
 - 漫画源页新增稳定 source ID resolver；外部插件 runtime 重启后，browse/section/filter 请求使用当前 active adapter，不再调用关闭的旧 session。

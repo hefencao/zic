@@ -25,11 +25,13 @@ final class Failure implements Exception {
     required this.code,
     required this.message,
     this.cause,
+    this.details = const <String, Object?>{},
   });
 
   final ErrorCode code;
   final String message;
   final Object? cause;
+  final Map<String, Object?> details;
 
   @override
   String toString() => 'Failure(${code.name}): $message';

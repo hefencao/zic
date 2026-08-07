@@ -62,12 +62,14 @@ require(
     "packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/AndroidBrowserCookieSession.kt",
     "object AndroidBrowserCookieSession",
     "expectedUserAgent = expectedUserAgent",
+    "internal fun readCookies",
     "manager.setCookie",
 )
 require(
     "packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/AndroidCookieJar.kt",
     "private val userAgentProvider: () -> String",
-    "AndroidBrowserCookieSession.importCookies",
+    "AndroidBrowserCookieSession.readCookies",
+    "memoryByHost",
 )
 require(
     "packages/plugin_host/lib/src/runtime_protocol.dart",

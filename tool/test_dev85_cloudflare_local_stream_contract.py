@@ -51,8 +51,9 @@ def main() -> int:
     for abi in ('mihonRuntime14', 'mihonRuntime16'):
         require(
             f'packages/plugin_host_bridge/android/src/{abi}/kotlin/eu/kanade/tachiyomi/network/RuntimeNetwork.kt',
-            '.cookieJar(AndroidCookieJar(context, ::defaultUserAgentProvider))',
-            'AndroidCloudflareInterceptor(context, ::defaultUserAgentProvider)',
+            'private val cookieJar by lazy',
+            '.cookieJar(cookieJar)',
+            'AndroidCloudflareInterceptor(context, ::defaultUserAgentProvider) { url ->',
             '.callTimeout(45, TimeUnit.SECONDS)',
         )
 

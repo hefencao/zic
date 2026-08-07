@@ -28,7 +28,11 @@ final class AndroidNetworkBridge {
   static const String _channelName = 'dev.zic/network_bridge';
   final MethodChannel _channel;
 
-  Future<void> openBrowser(Uri url, {String? userAgent}) async {
+  Future<void> openBrowser(
+    Uri url, {
+    String? userAgent,
+    bool cloudflareVerification = false,
+  }) async {
     _requireHttpUrl(url);
     final normalizedUserAgent = userAgent?.trim();
     await _channel.invokeMethod<void>(
@@ -37,6 +41,7 @@ final class AndroidNetworkBridge {
         'url': url.toString(),
         if (normalizedUserAgent != null && normalizedUserAgent.isNotEmpty)
           'userAgent': normalizedUserAgent,
+        if (cloudflareVerification) 'cloudflareVerification': true,
       },
     );
   }

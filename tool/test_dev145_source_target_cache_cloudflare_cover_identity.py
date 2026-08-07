@@ -39,7 +39,8 @@ for token in (
     'final latest = cache?.peekLatestBrowseProjection()',
     'final projectionMatchesSource = _projectionSourceId == source.sourceId',
     'allowVerificationFallback',
-    'scheduleMicrotask(() => unawaited(_recoverSourceAccess(source)))',
+    'failure.shouldAutoOpenVerification',
+    'verificationUri: failure.verificationUri',
 ):
     require(source, token, 'source target projection and verification')
 if 'avatar: Icon(' in source:

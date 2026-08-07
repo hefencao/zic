@@ -22,7 +22,12 @@ internal interface NativeExternalPluginDriver : Closeable {
 
 internal interface NativeDriverResult {
     fun success(value: Any)
-    fun error(code: String, message: String, retryable: Boolean = false)
+    fun error(
+        code: String,
+        message: String,
+        retryable: Boolean = false,
+        details: Map<String, Any?> = emptyMap(),
+    )
 }
 
 internal class NativeExternalPluginDriverHost(
@@ -155,9 +160,18 @@ internal class NativeExternalPluginDriverHost(
                     mainHandler.post { result.success(value) }
                 }
 
-                override fun error(code: String, message: String, retryable: Boolean) {
+                override fun error(
+                    code: String,
+                    message: String,
+                    retryable: Boolean,
+                    details: Map<String, Any?>,
+                ) {
                     mainHandler.post {
-                        result.error(code, message, mapOf("retryable" to retryable))
+                        result.error(
+                            code,
+                            message,
+                            mapOf("retryable" to retryable) + details,
+                        )
                     }
                 }
             },

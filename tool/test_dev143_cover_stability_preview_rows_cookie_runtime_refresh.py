@@ -76,8 +76,8 @@ for token in (
 for token in (
     'importedSnapshotRevisions',
     '@Synchronized',
-    'if (revision <= importedRevision) return 0',
-    'importedSnapshotRevisions[revisionKey] = revision',
+    'if (snapshot.revision <= importedRevision) return 0',
+    'importedSnapshotRevisions[revisionKey] = snapshot.revision',
 ):
     require(cookies, token, 'one-shot cookie handoff')
 for token in (

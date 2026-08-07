@@ -71,6 +71,7 @@ class NetworkBridgePlugin :
     private fun openBrowser(call: MethodCall, result: MethodChannel.Result) {
         val url = call.httpUrlOrError(result) ?: return
         val userAgent = call.argument<String>("userAgent")?.trim()?.takeIf(String::isNotEmpty)
+        val cloudflareVerification = call.argument<Boolean>("cloudflareVerification") == true
         val activity = activityBinding?.activity
         if (activity == null) {
             result.error(
@@ -97,6 +98,12 @@ class NetworkBridgePlugin :
                         if (userAgent != null) {
                             putExtra(NetworkBrowserActivity.EXTRA_USER_AGENT, userAgent)
                         }
+                        if (cloudflareVerification) {
+                            putExtra(
+                                NetworkBrowserActivity.EXTRA_CLOUDFLARE_VERIFICATION,
+                                true,
+                            )
+                        }
                     },
                 BROWSER_REQUEST_CODE,
             )
@@ -111,17 +118,19 @@ class NetworkBridgePlugin :
         val result = pendingBrowserResult
         pendingBrowserResult = null
         if (result == null) return true
-        if (resultCode == Activity.RESULT_FIRST_USER) {
-            result.error(
+        when (resultCode) {
+            Activity.RESULT_OK -> result.success(null)
+            Activity.RESULT_FIRST_USER -> result.error(
                 "network-browser-failed",
                 data?.getStringExtra(NetworkBrowserActivity.EXTRA_ERROR)
                     ?: "source browser failed",
                 null,
             )
-        } else {
-            // Closing the browser is the completion boundary. Callers may now
-            // retry the source with the cookies captured by the browser owner.
-            result.success(null)
+            else -> result.error(
+                "network-browser-cancelled",
+                "source browser was closed before verification completed",
+                null,
+            )
         }
         return true
     }

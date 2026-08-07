@@ -18,15 +18,23 @@ class NetworkHelper(context: Context) {
     val cloudflareClient: OkHttpClient
         get() = client
 
+    private val cookieJar by lazy {
+        AndroidCookieJar(context, ::defaultUserAgentProvider)
+    }
+
     private val sharedClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
-            .cookieJar(AndroidCookieJar(context, ::defaultUserAgentProvider))
+            .cookieJar(cookieJar)
             .dns(FallbackDns())
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)
             .callTimeout(45, TimeUnit.SECONDS)
             .addInterceptor(
-                AndroidCloudflareInterceptor(context, ::defaultUserAgentProvider),
+                AndroidCloudflareInterceptor(context, ::defaultUserAgentProvider) { url ->
+                    cookieJar.get(url).any { cookie ->
+                        cookie.name == "cf_clearance" && cookie.value.isNotBlank()
+                    }
+                },
             )
             .build()
     }

@@ -44,7 +44,8 @@ for token in (
     "ActivityResultListener",
     "startActivityForResult",
     "pendingBrowserResult",
-    "Closing the browser is the completion boundary",
+    "RESULT_OK",
+    "EXTRA_CLOUDFLARE_VERIFICATION",
 ):
     require(bridge, token, "browser result lifecycle")
 manifest = read("packages/network_bridge/android/src/main/AndroidManifest.xml")
@@ -78,7 +79,7 @@ cookies = read(
     "packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/"
     "AndroidCookieJar.kt"
 )
-require(cookies, "AndroidBrowserCookieSession.importCookies", "browser-cookie handoff")
+require(cookies, "AndroidBrowserCookieSession.readCookies", "browser-cookie handoff")
 require(cookies, "importBrowserSnapshot(url)", "cookie import before request")
 
 executors = read("packages/plugin_host/lib/src/runtime_executors.dart")
@@ -129,8 +130,8 @@ details = read("apps/app/lib/comic_details.dart") + read(
 for token in (
     "Icons.public",
     "comicDetailsSourceSettingsKey",
-    "Future<void> _recoverSourceAccess() async",
-    "await open();",
+    "Future<void> _recoverSourceAccess({Uri? verificationUri}) async",
+    "await open(verificationUri: verificationUri);",
     "await _refresh(announce: false",
     "comicDetailsVersionActionKey",
     "ComicDetailsVersionState",
@@ -162,7 +163,8 @@ for token in (
     "requestedQuery",
     "queryRevision",
     "sourceSupportsSettings(source)",
-    "await open(source, source.descriptor.website)",
+    "verificationUri ?? source.descriptor.website",
+    "cloudflareVerification: true",
     "await _reload(",
     "forceRefresh: true,",
     "allowVerificationFallback: false,",

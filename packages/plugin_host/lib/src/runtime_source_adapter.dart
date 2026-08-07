@@ -206,6 +206,7 @@ final class ExternalPluginRuntimeSession
             : ErrorCode.source,
         message: '${runtimeError.code}: ${runtimeError.message}',
         cause: runtimeError,
+        details: runtimeError.details,
       );
     }
     final payload = response.payload;

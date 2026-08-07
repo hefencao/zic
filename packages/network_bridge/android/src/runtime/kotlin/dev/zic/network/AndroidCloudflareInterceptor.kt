@@ -9,8 +9,10 @@ import okhttp3.Response
 class SourceVerificationRequiredException(
     val requestUrl: String,
     val statusCode: Int,
+    val clearanceCookiePresent: Boolean = false,
 ) : IOException(
-    "Cloudflare verification required for $requestUrl (HTTP $statusCode)",
+    "Cloudflare verification required for $requestUrl (HTTP $statusCode; " +
+        "cf_clearance=${if (clearanceCookiePresent) "present" else "absent"})",
 )
 
 /**
@@ -55,6 +57,7 @@ internal fun isCloudflareVerificationResponse(
 class AndroidCloudflareInterceptor(
     @Suppress("UNUSED_PARAMETER") context: android.content.Context,
     @Suppress("UNUSED_PARAMETER") defaultUserAgentProvider: () -> String,
+    private val clearanceCookiePresent: (okhttp3.HttpUrl) -> Boolean = { false },
 ) : Interceptor {
     override fun intercept(chain: Interceptor.Chain): Response {
         val response = chain.proceed(chain.request())
@@ -73,8 +76,13 @@ class AndroidCloudflareInterceptor(
         if (!verificationRequired) return response
         val requestUrl = response.request.url.toString()
         val statusCode = response.code
+        val clearancePresent = clearanceCookiePresent(response.request.url)
         response.close()
-        throw SourceVerificationRequiredException(requestUrl, statusCode)
+        throw SourceVerificationRequiredException(
+            requestUrl = requestUrl,
+            statusCode = statusCode,
+            clearanceCookiePresent = clearancePresent,
+        )
     }
 }
 

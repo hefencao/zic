@@ -1,6 +1,6 @@
 # zic
 
-dev.151 修复 Cloudflare WebView 验证后仍调用已关闭 Mihon runtime session：漫画源页按稳定 source ID 解析重启后的当前 adapter，再执行 section/filter 与强制刷新。
+dev.152 修复 Mihon Cloudflare 验证后的 Cookie handoff：浏览器快照同步进入新 runtime 的 OkHttp CookieJar，恢复使用实际失败 URL，并阻止已有 clearance 仍被挑战时自动重复打开 WebView。
 
 
 `zic` 是面向 Android 优先、高性能漫画阅读场景的 Flutter/Rust 工程。项目支持本地与远程章节、静态图片、Animated WebP、持久下载、带分类/翻页的漫画源浏览、Mihon/Venera 扩展和统一 Reader Pipeline。

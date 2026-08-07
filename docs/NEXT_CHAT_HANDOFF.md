@@ -1,6 +1,6 @@
-# dev.151 后续交接
+# dev.152 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.151_source-verification-runtime-replacement.zip`。
+唯一后续基线：`zic_v0.31.0-dev.152_mihon-cloudflare-cookie-handoff.zip`。
 
 ## 必读
 
@@ -24,8 +24,9 @@
 18. `docs/adr/0131-identity-version-notice-synthetic-and-cloudflare-handoff.md`
 19. `docs/adr/0132-reader-progress-version-view-start-action-verification.md`
 20. `docs/adr/0136-source-verification-runtime-replacement.md`
-21. `docs/audits/dev151-source-verification-runtime-replacement-audit.md`
-22. `docs/audits/dev151-validation-results.md`
+21. `docs/adr/0137-mihon-cloudflare-cookie-handoff-and-loop-guard.md`
+22. `docs/audits/dev152-mihon-cloudflare-handoff-audit.md`
+23. `docs/audits/dev152-validation-results.md`
 
 ## 当前代码事实
 
@@ -39,11 +40,11 @@
 - Reader 退出后最多保留 1 个 idle chapter resource session、TTL 2 分钟；used texture 不保留。
 - response cache 与 page artifact cache 是两个权威平面；App/Reader 没有私有正文 LRU。
 - 首页封面卡片使用 section + comic identity 的稳定 State key；同 identity 的并发 owner 共享 source Future/provider，失败 Future 立即退出 join。无首帧 watchdog 只重建同一 provider stream，不刷新 encoded bytes；明确 decoder exhaustion 才可 force-refresh。
-- 漫画源页使用来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态只用 chip 背景色表示。source 切换立即投影目标精确/最近缓存；目标错误不允许旧 source 内容滞留。强制刷新遇到 `sourceVerificationRequired` 自动打开一次 WebView；WebView返回后按稳定 source ID取得重启后的当前 adapter，重载 section/filter并强制刷新一次，绝不继续调用关闭的旧 session。
+- 漫画源页使用来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态只用 chip 背景色表示。source 切换立即投影目标精确/最近缓存；目标错误不允许旧 source 内容滞留。`sourceVerificationRequired` 会携带实际失败 URL/status/clearance存在性：仅缺少 clearance时自动打开一次验证 WebView，验证必须得到新 clearance；已有 clearance仍被 challenge时不自动循环。WebView返回后按稳定 source ID取得重启后的当前 adapter，重载 section/filter并强制刷新一次，绝不继续调用关闭的旧 session。
 - 浮动搜索展开态优先消费返回和垂直拖动/滚动手势；搜索历史持久化。Mihon `getFilterList()` 的 CheckBox/TriState/Select/Group 通过 opaque ID 投影为搜索框上方过滤标签，UI 不持有插件 Filter 对象。
 - 浏览页使用 catalog cache-first/background-refresh；稳定字段无变化时不更新。边缘下拉达到阈值后调用强制刷新，保留现有内容直到新结果到达。
 - 详情预览按原顺序装箱：实际行内含横图则最多 2 张、纯竖图则最多 3 张；只在相邻三个候选内做最小局部重排；设置项仍是更严格上限。行宽直接用于反算等面积 tile，内部无 Card/水平 padding，完整行铺满媒体宽度，只有稀疏末行允许放大到参考完整行面积的 2.4 倍。
-- Android 使用默认 platform channel、单 blit lane 和 fresh used texture lifecycle。可见浏览器 Cookie snapshot 按 revision 每 runtime/站点/UA 只导入一次；retryable runtime lifecycle envelope 会重新激活并重试一次。远程详情页通过稳定 source ID 获取当前 active adapter，不保留插件重启前的关闭 session。
+- Android 使用默认 platform channel、单 blit lane 和 fresh used texture lifecycle。Mihon 的可见浏览器 Cookie snapshot由新 runtime `AndroidCookieJar` 同步导入进程内 cookie map，首请求不等待异步 CookieManager；retryable runtime lifecycle envelope仍只重新激活并重试一次。远程详情页通过稳定 source ID 获取当前 active adapter，不保留插件重启前的关闭 session。
 - 同源版本关系按 source/predecessor/successor 复合身份双向查询；详情正文提供查看新/旧版本和迁移双动作，多个版本先选择。查看路由使用临时 key，但多个版本阅读历史严格按 raw identity 分离；迁移仍走旧比较确认。Reader 仅首次提醒。
 - App 不清理 synthetic“开始阅读/正文”。Mihon adapter 只去除与真实章节并存的独立开始阅读动作；单独 gallery“正文”保留。
 - Reader progress 单 writer 合并，正常退出前等待最终写入，详情 route 返回后立即刷新历史；生命周期 checkpoint 只提供 best effort。

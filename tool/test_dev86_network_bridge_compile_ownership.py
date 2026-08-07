@@ -29,7 +29,7 @@ def forbid(relative: str, *tokens: str) -> None:
 def main() -> int:
     require(
         'apps/app/lib/comic_details.dart',
-        'typedef ComicDetailsSourceWebViewOpener = Future<void> Function();',
+        'typedef ComicDetailsSourceWebViewOpener = Future<void> Function({Uri? verificationUri});',
         'final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;',
     )
     require(
@@ -82,7 +82,8 @@ def main() -> int:
     require(
         'packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/AndroidCookieJar.kt',
         'class AndroidCookieJar(',
-        'AndroidBrowserCookieSession.importCookies(',
+        'AndroidBrowserCookieSession.readCookies(',
+        'memoryByHost',
         'CookieManager.getInstance()',
     )
     require(

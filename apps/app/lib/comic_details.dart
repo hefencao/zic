@@ -191,7 +191,7 @@ typedef ComicDetailsVersionViewer =
 typedef ComicDetailsVersionMigrator =
     Future<void> Function(SourceComicVersion version);
 
-typedef ComicDetailsSourceWebViewOpener = Future<void> Function();
+typedef ComicDetailsSourceWebViewOpener = Future<void> Function({Uri? verificationUri});
 typedef ComicDetailsSourceSettingsOpener = Future<void> Function();
 typedef ComicDetailsSourceResolver = BrowsableComicSource? Function(
   String sourceId,
@@ -439,7 +439,11 @@ final class _LocalComicDetailsScreenState
           failure,
           onOpenSourceWebView: failure.requiresSourceVerification &&
                   widget.onOpenSourceWebView != null
-              ? () => unawaited(_recoverSourceAccess())
+              ? () => unawaited(
+                    _recoverSourceAccess(
+                      verificationUri: failure.verificationUri,
+                    ),
+                  )
               : null,
         );
       }
@@ -747,16 +751,18 @@ final class _LocalComicDetailsScreenState
       failure,
       onOpenSourceWebView: failure.requiresSourceVerification &&
               widget.onOpenSourceWebView != null
-          ? () => unawaited(_recoverSourceAccess())
+          ? () => unawaited(
+                _recoverSourceAccess(verificationUri: failure.verificationUri),
+              )
           : null,
     );
   }
 
-  Future<void> _recoverSourceAccess() async {
+  Future<void> _recoverSourceAccess({Uri? verificationUri}) async {
     final open = widget.onOpenSourceWebView;
     if (open == null) return;
     try {
-      await open();
+      await open(verificationUri: verificationUri);
       if (mounted) {
         await _refresh(announce: false);
       }
@@ -867,7 +873,9 @@ final class _LocalComicDetailsScreenState
         onRetry: () => _ignoreRefreshResult(_refresh(announce: false)),
         onOpenSourceWebView: widget.onOpenSourceWebView == null
             ? null
-            : _recoverSourceAccess,
+            : () => _recoverSourceAccess(
+                  verificationUri: failure.verificationUri,
+                ),
         onOpenSourceSettings: widget.onOpenSourceSettings,
       );
     }
@@ -1339,7 +1347,11 @@ final class _RemoteComicDetailsScreenState
             failure,
             onOpenSourceWebView: failure.requiresSourceVerification &&
                     widget.onOpenSourceWebView != null
-                ? () => unawaited(_recoverSourceAccess())
+                ? () => unawaited(
+                      _recoverSourceAccess(
+                        verificationUri: failure.verificationUri,
+                      ),
+                    )
                 : null,
           );
         }
@@ -1647,16 +1659,18 @@ final class _RemoteComicDetailsScreenState
       failure,
       onOpenSourceWebView: failure.requiresSourceVerification &&
               widget.onOpenSourceWebView != null
-          ? () => unawaited(_recoverSourceAccess())
+          ? () => unawaited(
+                _recoverSourceAccess(verificationUri: failure.verificationUri),
+              )
           : null,
     );
   }
 
-  Future<void> _recoverSourceAccess() async {
+  Future<void> _recoverSourceAccess({Uri? verificationUri}) async {
     final open = widget.onOpenSourceWebView;
     if (open == null) return;
     try {
-      await open();
+      await open(verificationUri: verificationUri);
       if (mounted) {
         await _refresh(announce: false, forceRefresh: true);
       }
@@ -1686,7 +1700,9 @@ final class _RemoteComicDetailsScreenState
         ),
         onOpenSourceWebView: widget.onOpenSourceWebView == null
             ? null
-            : _recoverSourceAccess,
+            : () => _recoverSourceAccess(
+                  verificationUri: failure.verificationUri,
+                ),
         onOpenSourceSettings: widget.onOpenSourceSettings,
       );
     }
@@ -2555,6 +2571,7 @@ final class _DetailFailure {
     required this.summary,
     required this.details,
     this.requiresSourceVerification = false,
+    this.verificationUri,
   });
 
   factory _DetailFailure.capture(Object error, StackTrace stackTrace) {
@@ -2571,12 +2588,19 @@ final class _DetailFailure {
       details: lines.join('\n\n'),
       requiresSourceVerification: error is Failure &&
           error.code == ErrorCode.sourceVerificationRequired,
+      verificationUri: error is Failure
+          ? switch (error.details['requestUrl']) {
+              final String value => Uri.tryParse(value),
+              _ => null,
+            }
+          : null,
     );
   }
 
   final String summary;
   final String details;
   final bool requiresSourceVerification;
+  final Uri? verificationUri;
 }
 
 final class _DetailFailurePanel extends StatelessWidget {

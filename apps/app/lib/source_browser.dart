@@ -174,8 +174,9 @@ final class ComicSourcesPage extends StatefulWidget {
   ) onOpenComic;
   final Future<void> Function(
     BrowsableComicSource source,
-    Uri url,
-  )? onOpenSourceWebView;
+    Uri url, {
+    required bool cloudflareVerification,
+  })? onOpenSourceWebView;
   final BrowsableComicSource? Function(String sourceId)? resolveSource;
   final TraceSink traceSink;
   final String? requestedQuery;
@@ -646,10 +647,17 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       );
       if (forceRefresh &&
           allowVerificationFallback &&
-          failure.requiresSourceVerification &&
+          failure.shouldAutoOpenVerification &&
           widget.onOpenSourceWebView != null &&
           !_recoveringSourceAccess) {
-        scheduleMicrotask(() => unawaited(_recoverSourceAccess(source)));
+        scheduleMicrotask(
+          () => unawaited(
+            _recoverSourceAccess(
+              source,
+              verificationUri: failure.verificationUri,
+            ),
+          ),
+        );
       }
     } finally {
       if (mounted && generation == _generation) {
@@ -662,7 +670,10 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     return succeeded;
   }
 
-  Future<void> _recoverSourceAccess(BrowsableComicSource source) async {
+  Future<void> _recoverSourceAccess(
+    BrowsableComicSource source, {
+    Uri? verificationUri,
+  }) async {
     final open = widget.onOpenSourceWebView;
     if (open == null || _recoveringSourceAccess) return;
     setState(() => _recoveringSourceAccess = true);
@@ -672,7 +683,11 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       source,
     );
     try {
-      await open(source, source.descriptor.website);
+      await open(
+        source,
+        verificationUri ?? source.descriptor.website,
+        cloudflareVerification: true,
+      );
       if (!mounted) return;
       final replacement = _activeSource;
       if (replacement == null || replacement.sourceId != source.sourceId) {
@@ -1020,7 +1035,12 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
           onRetry: () => unawaited(_reload(forceRefresh: true)),
           onOpenWebView: failure.requiresSourceVerification &&
                   widget.onOpenSourceWebView != null
-              ? () => unawaited(_recoverSourceAccess(source))
+              ? () => unawaited(
+                    _recoverSourceAccess(
+                      source,
+                      verificationUri: failure.verificationUri,
+                    ),
+                  )
               : null,
           openingWebView: _recoveringSourceAccess,
         ),
@@ -1078,7 +1098,12 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                   onRetry: () => unawaited(_reload(forceRefresh: true)),
                   onOpenWebView: failure.requiresSourceVerification &&
                           widget.onOpenSourceWebView != null
-                      ? () => unawaited(_recoverSourceAccess(source))
+                      ? () => unawaited(
+                            _recoverSourceAccess(
+                              source,
+                              verificationUri: failure.verificationUri,
+                            ),
+                          )
                       : null,
                   openingWebView: _recoveringSourceAccess,
                 ),
@@ -1843,6 +1868,8 @@ final class _SourceFailure {
     required this.guidance,
     required this.details,
     this.requiresSourceVerification = false,
+    this.verificationUri,
+    this.clearanceCookiePresent,
   });
 
   factory _SourceFailure.capture(
@@ -1870,9 +1897,19 @@ final class _SourceFailure {
         error.code == ErrorCode.sourceVerificationRequired) {
       return _SourceFailure(
         summary: '漫画源需要完成网页验证',
-        guidance: '请打开 WebView 完成 Cloudflare 或站点验证；返回后会自动重新加载当前列表。',
+        guidance: error.details['clearanceCookiePresent'] == true
+            ? '运行时请求已携带 cf_clearance 但站点仍返回挑战；不会再次自动打开 WebView，可手动重新验证或检查站点会话兼容性。'
+            : '请打开 WebView 完成 Cloudflare 或站点验证；获得新的 cf_clearance 后会自动重新加载当前列表。',
         details: details,
         requiresSourceVerification: true,
+        verificationUri: switch (error.details['requestUrl']) {
+          final String value => Uri.tryParse(value),
+          _ => null,
+        },
+        clearanceCookiePresent:
+            error.details['clearanceCookiePresent'] is bool
+                ? error.details['clearanceCookiePresent'] as bool
+                : null,
       );
     }
     if (lower.contains('failed host lookup') ||
@@ -1902,6 +1939,11 @@ final class _SourceFailure {
   final String guidance;
   final String details;
   final bool requiresSourceVerification;
+  final Uri? verificationUri;
+  final bool? clearanceCookiePresent;
+
+  bool get shouldAutoOpenVerification =>
+      requiresSourceVerification && clearanceCookiePresent != true;
 }
 
 final class _SourceRetainedFailureBanner extends StatelessWidget {

@@ -11,7 +11,7 @@
 
 - 使用真实 Venera/E-Hentai successor 检查详情“有新版本”、统一比较确认和 Reader 首次提醒；确认换 successor 后再次提醒。
 - 验证同源迁移只复制 exact chapter identity；sequence-only 候选不复制阅读状态或 artifact。
-- 在禁漫天堂完成 WebView 验证后确认 source restart 的首个实际 request 导入最新 same-site snapshot，且不会因为浏览器页面已经正常而错误跳过 handoff。
+- 在禁漫天堂真机验证：typed failure 的实际 `/albums?...` URL被用于 WebView；旧 clearance被删除并获得新 clearance后，新 runtime首个 OkHttp request立即携带该 token；若带 clearance仍被 challenge，页面不再自动循环打开 WebView。
 - 使用真实章节目录检查 SavedComic、ImportedChapter 与远程详情都不再保留“开始阅读/正文”synthetic chapter。
 
 ## P0：来源投影、Cloudflare 与封面身份设备闭环

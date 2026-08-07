@@ -307,6 +307,11 @@ void main() {
       browseError: const Failure(
         code: ErrorCode.sourceVerificationRequired,
         message: 'source-verification-required: Cloudflare verification failed',
+        details: <String, Object?>{
+          'requestUrl': 'https://18comic.vip/albums?o=mv&page=1',
+          'statusCode': 403,
+          'clearanceCookiePresent': false,
+        },
       ),
     );
     var webViewOpens = 0;
@@ -321,8 +326,9 @@ void main() {
             loadCover: (_, __, ___) async =>
                 throw StateError('cover should not load'),
             onOpenComic: (_, __) async {},
-            onOpenSourceWebView: (_, url) async {
-              expect(url, source.descriptor.website);
+            onOpenSourceWebView: (_, url, {required cloudflareVerification}) async {
+              expect(url, Uri.parse('https://18comic.vip/albums?o=mv&page=1'));
+              expect(cloudflareVerification, isTrue);
               webViewOpens++;
             },
           ),
@@ -359,7 +365,8 @@ void main() {
             loadCover: (_, __, ___) async =>
                 throw StateError('cover should not load'),
             onOpenComic: (_, __) async {},
-            onOpenSourceWebView: (_, __) async {
+            onOpenSourceWebView: (_, __, {required cloudflareVerification}) async {
+              expect(cloudflareVerification, isTrue);
               webViewOpens++;
             },
           ),
@@ -375,6 +382,53 @@ void main() {
 
     expect(webViewOpens, 1);
     expect(source.browseCalls, greaterThanOrEqualTo(3));
+  });
+
+  testWidgets('clearance rejected by Cloudflare does not auto reopen WebView',
+      (tester) async {
+    final source = _FixtureSource(
+      'mihon:verification-clearance-rejected',
+      '已有 clearance 的验证源',
+      browseError: const Failure(
+        code: ErrorCode.sourceVerificationRequired,
+        message: 'source-verification-required: Cloudflare verification required',
+        details: <String, Object?>{
+          'requestUrl': 'https://18comic.vip/albums?o=mv&page=1',
+          'statusCode': 403,
+          'clearanceCookiePresent': true,
+        },
+      ),
+    );
+    var webViewOpens = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ComicSourcesPage(
+            sources: <BrowsableComicSource>[source],
+            activeSourceId: source.sourceId,
+            onSourceSelected: (_) {},
+            loadCover: (_, __, ___) async =>
+                throw StateError('cover should not load'),
+            onOpenComic: (_, __) async {},
+            onOpenSourceWebView: (_, url, {required cloudflareVerification}) async {
+              expect(url, Uri.parse('https://18comic.vip/albums?o=mv&page=1'));
+              expect(cloudflareVerification, isTrue);
+              webViewOpens++;
+            },
+          ),
+        ),
+      ),
+    );
+
+    await _pumpUntilFound(tester, find.byKey(comicSourceErrorKey));
+    await _tapVisible(tester, find.byIcon(Icons.refresh));
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(webViewOpens, 0);
+    expect(find.textContaining('已携带 cf_clearance'), findsOneWidget);
+
+    await _tapVisible(tester, find.byKey(comicSourceOpenWebViewKey));
+    expect(webViewOpens, 1);
   });
 
   testWidgets('verification retry resolves the replacement runtime source',
@@ -403,7 +457,7 @@ void main() {
             loadCover: (_, __, ___) async =>
                 throw StateError('cover should not load'),
             onOpenComic: (_, __) async {},
-            onOpenSourceWebView: (_, __) async {
+            onOpenSourceWebView: (_, __, {required cloudflareVerification}) async {
               current = replacement;
             },
             resolveSource: (sourceId) =>
@@ -442,7 +496,7 @@ void main() {
               message: 'Cloudflare verification failed',
             ),
             onOpenComic: (_, __) async {},
-            onOpenSourceWebView: (_, url) async {
+            onOpenSourceWebView: (_, url, {required cloudflareVerification}) async {
               expect(url, source.descriptor.website);
               webViewOpens++;
             },
@@ -535,7 +589,7 @@ void main() {
               ChapterDownloadSnapshot.idle(chapter),
           downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
           onDownloadComic: (_) async {},
-          onOpenSourceWebView: () async {
+          onOpenSourceWebView: ({verificationUri}) async {
             webViewOpens++;
           },
         ),
@@ -1779,7 +1833,7 @@ void main() {
               ChapterDownloadSnapshot.idle(chapter),
           downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
           onDownloadComic: (_) async {},
-          onOpenSourceWebView: () async {
+          onOpenSourceWebView: ({verificationUri}) async {
             webViewOpens++;
           },
         ),

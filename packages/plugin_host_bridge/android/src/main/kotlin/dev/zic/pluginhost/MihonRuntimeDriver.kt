@@ -132,7 +132,12 @@ internal class MihonRuntimeDriver private constructor(
                 val cause = error.rootCause()
                 val cancelledRequest = cancelled.contains(requestId) || cause is InterruptedException
                 if (responded.compareAndSet(false, true)) {
-                    val verificationRequired = !cancelledRequest && error.isSourceVerificationFailure()
+                    val verification = if (cancelledRequest) {
+                        null
+                    } else {
+                        error.sourceVerificationFailure()
+                    }
+                    val verificationRequired = verification != null
                     result.error(
                         when {
                             cancelledRequest -> "runtime-request-cancelled"
@@ -147,6 +152,16 @@ internal class MihonRuntimeDriver private constructor(
                         retryable = !cancelledRequest &&
                             !verificationRequired &&
                             cause.isNetworkFailure(),
+                        details = if (verification == null) {
+                            emptyMap()
+                        } else {
+                            mapOf(
+                                "requestUrl" to verification.requestUrl,
+                                "statusCode" to verification.statusCode,
+                                "clearanceCookiePresent" to
+                                    verification.clearanceCookiePresent,
+                            )
+                        },
                     )
                 }
             }
@@ -2389,21 +2404,20 @@ private fun Throwable.mihonDiagnosticMessage(): String {
     return (parts.joinToString(" <- ") + location).take(600)
 }
 
-private fun Throwable.isSourceVerificationFailure(): Boolean {
+private fun Throwable.sourceVerificationFailure(): SourceVerificationRequiredException? {
     var current: Throwable? = this
     val visited = java.util.Collections.newSetFromMap(
         java.util.IdentityHashMap<Throwable, Boolean>(),
     )
     while (current != null && visited.add(current)) {
-        if (current is SourceVerificationRequiredException ||
-            current.javaClass.name ==
-                "dev.zic.network.SourceVerificationRequiredException") {
-            return true
-        }
+        if (current is SourceVerificationRequiredException) return current
         current = current.cause
     }
-    return false
+    return null
 }
+
+private fun Throwable.isSourceVerificationFailure(): Boolean =
+    sourceVerificationFailure() != null
 
 private fun Throwable.isNetworkFailure(): Boolean =
     this is java.io.IOException || javaClass.name.contains("Http", ignoreCase = true)
