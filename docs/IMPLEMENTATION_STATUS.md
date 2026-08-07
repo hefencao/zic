@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.157`
-**App build：** `0.31.0+157`
+**源码版本：** `0.31.0-dev.158`
+**App build：** `0.31.0+158`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -9,10 +9,10 @@
 
 ## 当前实现
 
-- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=157`。
+- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=158`。
 - 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
 - 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation不阻塞 Home primary，外部 source ready 后增量接入。
-- artwork资源恢复唯一属于 `ComicSourceResourceGateway/ResourceCacheManager`。Home、书架、漫画源和详情 presentation 已删除定时 retry、first-frame watchdog、App resume自动 retry、全局 ImageCache eviction和 App级短时 Future join；同一 encoded source 只创建一个 ImageProvider；失败后保持稳定占位，显式来源刷新/资源 revision/稳定 identity变化才会重新加载。
+- artwork资源恢复唯一属于 `ComicSourceResourceGateway/ResourceCacheManager`。Home、书架、漫画源和详情 presentation 已删除定时 retry、first-frame watchdog、App resume自动 retry、全局 ImageCache eviction和 App级短时 Future join；详情统一使用 `ComicDetailsArtworkLoader` 并显式传递 cover/preview/avatar role。普通 artwork直接复用 `StableArtworkImage`；需要裁剪/尺寸测量时只有一个显式 ImageStream listener，不再同时创建第二个 `Image`。
 - 外部 artwork 的 raw comicId只保留 runtime locator语义；durable cover/preview namespace使用来源 canonical comic identity。Home、漫画源、详情与迁移统一经 `ComicSourceResourceGateway`，`mihon:resource:` 不再误入本地文件 loader；gateway先查 source-independent durable cache，miss后才要求 active source。
 - 详情页 AppBar 不再保留旧版本/迁移图标。正文中的版本卡按 VibeVenera 逻辑分别提供“查看新/旧版本”和“迁移”；多个版本先选择。查看使用临时 route identity，持久阅读历史仍按各 raw source/comic identity 分离；迁移继续使用原严格比较确认 UI，只有 exact chapter identity 复制阅读状态。Reader 对每个 source/predecessor/successor 仅首次提醒。
 - App-owned modal panel 的操作行统一使用左下角 X 关闭，右侧保留确认/保存/删除动作，
@@ -69,7 +69,7 @@
 |---|---|
 | repository/documentation/Dart static gates | Verified-static |
 | current-code documentation consistency gate | Verified-static |
-| dev.75–dev.157 ownership gates | Verified-static |
+| dev.75–dev.158 ownership gates | Verified-static |
 | Android/Mihon/Venera/Reader/Pipeline/UI contracts | Verified-static / toolchain |
 | Kotlin texture bridge compile stub | Verified-toolchain |
 | pinned libwebp host build/smoke | Unverified：当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip` |

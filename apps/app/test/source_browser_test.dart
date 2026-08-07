@@ -575,8 +575,8 @@ void main() {
             required String comicId,
             required Uri? coverUri,
             required ImportedLibraryEntry? fallbackChapter,
-            String resourceRole = 'cover',
-          }) async => MemoryEncodedResourceSource(_tinyPng()),
+            required String resourceRole,
+                }) async => MemoryEncodedResourceSource(_tinyPng()),
           reloadLibrary: ({required bool refreshContent}) async {
             if (!refreshContent) {
               return library;
@@ -676,8 +676,8 @@ void main() {
             required String comicId,
             required Uri? coverUri,
             required ImportedLibraryEntry? fallbackChapter,
-            String resourceRole = 'cover',
-          }) async => MemoryEncodedResourceSource(_tinyPng()),
+            required String resourceRole,
+                }) async => MemoryEncodedResourceSource(_tinyPng()),
           reloadLibrary: ({required bool refreshContent}) async => library,
           ensureSourceChapter: (_, __, ___) async => libraryEntry,
           persistComic: (_, __) async {},
@@ -774,8 +774,8 @@ void main() {
             required String comicId,
             required Uri? coverUri,
             required ImportedLibraryEntry? fallbackChapter,
-            String resourceRole = 'cover',
-          }) async => MemoryEncodedResourceSource(_tinyPng()),
+            required String resourceRole,
+                }) async => MemoryEncodedResourceSource(_tinyPng()),
           reloadLibrary: ({required bool refreshContent}) async {
             if (!refreshContent) return library;
             final manifest = await source.loadComic(source._comicId);
@@ -872,8 +872,8 @@ void main() {
             required String comicId,
             required Uri? coverUri,
             required ImportedLibraryEntry? fallbackChapter,
-            String resourceRole = 'cover',
-          }) async => MemoryEncodedResourceSource(
+            required String resourceRole,
+                }) async => MemoryEncodedResourceSource(
                 (await rootBundle.load('assets/demo/pages/001.png'))
                     .buffer
                     .asUint8List(),
@@ -1067,8 +1067,8 @@ void main() {
             required String comicId,
             required Uri? coverUri,
             required ImportedLibraryEntry? fallbackChapter,
-            String resourceRole = 'cover',
-          }) async => MemoryEncodedResourceSource(_tinyPng()),
+            required String resourceRole,
+                }) async => MemoryEncodedResourceSource(_tinyPng()),
           reloadLibrary: ({required bool refreshContent}) async => library,
           source: source,
           ensureSourceChapter: (_, __, ___) async => entry,
@@ -1717,8 +1717,8 @@ void main() {
             required String comicId,
             required Uri? coverUri,
             required ImportedLibraryEntry? fallbackChapter,
-            String resourceRole = 'cover',
-          }) async => throw StateError('cover not needed'),
+            required String resourceRole,
+                }) async => throw StateError('cover not needed'),
           reloadLibrary: ({required bool refreshContent}) async {
             if (!refreshContent) {
               return library;
@@ -1819,8 +1819,8 @@ void main() {
             required String comicId,
             required Uri? coverUri,
             required ImportedLibraryEntry? fallbackChapter,
-            String resourceRole = 'cover',
-          }) async => throw StateError('cover must not load for failed catalog'),
+            required String resourceRole,
+                }) async => throw StateError('cover must not load for failed catalog'),
           reloadLibrary: ({required bool refreshContent}) async {
             if (!refreshContent) {
               return library;

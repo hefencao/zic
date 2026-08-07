@@ -1842,7 +1842,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
   final BrowsableComicSource source;
   final SourceComicSummary summary;
   final List<LibraryCategory> categories;
-  final details.ComicDetailsCoverLoader loadCover;
+  final details.ComicDetailsArtworkLoader loadCover;
   final details.ComicDetailsLibraryReloader reloadLibrary;
   final details.ComicDetailsChapterEnsurer ensureSourceChapter;
   final details.ComicDetailsComicPersister persistComic;

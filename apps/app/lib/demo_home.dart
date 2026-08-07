@@ -1103,6 +1103,7 @@ final class _DemoHomeState extends State<DemoHome> {
     required String comicId,
     required Uri? coverUri,
     required ImportedLibraryEntry? fallbackChapter,
+    required String resourceRole,
   }) async {
     final fallback = fallbackChapter;
     final fallbackPage = sourceId != 'local-folder' ||
@@ -1133,7 +1134,7 @@ final class _DemoHomeState extends State<DemoHome> {
         cacheComicId: _canonicalComicId(sourceId, comicId),
         uri: uri,
         revision: revision,
-        resourceRole: 'cover',
+        resourceRole: resourceRole,
       );
     }
     // Android content URIs cannot be opened by FileImage. Copy them once into
@@ -1144,7 +1145,7 @@ final class _DemoHomeState extends State<DemoHome> {
       sourceId: sourceId,
       comicId: comicId,
       imageIdentity: sourceValue,
-      resourceRole: 'cover',
+      resourceRole: resourceRole,
       revision: revision,
       awaitPersistence: false,
       loader: () => readLocalImageSource(sourceValue),
@@ -1172,6 +1173,7 @@ final class _DemoHomeState extends State<DemoHome> {
                 ? null
                 : Uri.tryParse(comic.coverSourceId!),
             fallbackChapter: comic.coverChapter,
+            resourceRole: 'cover',
           );
 
 

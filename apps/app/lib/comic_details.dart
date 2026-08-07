@@ -119,11 +119,12 @@ final class ComicDetailsLibrarySnapshot {
   final ComicManifest? sourceManifest;
 }
 
-typedef ComicDetailsCoverLoader = Future<EncodedResourceSource> Function({
+typedef ComicDetailsArtworkLoader = Future<EncodedResourceSource> Function({
   required String sourceId,
   required String comicId,
   required Uri? coverUri,
   required ImportedLibraryEntry? fallbackChapter,
+  required String resourceRole,
 });
 
 typedef ComicDetailsLibraryReloader = Future<ComicDetailsLibrarySnapshot>
@@ -239,7 +240,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
   final LibraryComic comic;
   final ComicDetailsLibrarySnapshot initialLibrary;
   final List<LibraryCategory> categories;
-  final ComicDetailsCoverLoader loadCover;
+  final ComicDetailsArtworkLoader loadCover;
   final ComicDetailsLibraryReloader reloadLibrary;
   final Future<void> Function(ComicPreference preference) onPreferenceChanged;
   final Future<void> Function(ImportedLibraryEntry chapter, bool isRead)
@@ -894,6 +895,7 @@ final class _LocalComicDetailsScreenState
       cover: _ComicDetailCover(
         sourceId: comic.sourceId,
         comicId: comic.comicId,
+        presentationIdentity: '${comic.sourceId}\u0000${comic.comicId}',
         coverUri: comic.coverSourceId == null
             ? null
             : Uri.tryParse(comic.coverSourceId!),
@@ -996,7 +998,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
   final SourceComicSummary summary;
   final ComicDetailsLibrarySnapshot initialLibrary;
   final List<LibraryCategory> categories;
-  final ComicDetailsCoverLoader loadCover;
+  final ComicDetailsArtworkLoader loadCover;
   final ComicDetailsLibraryReloader reloadLibrary;
   final ComicDetailsChapterEnsurer ensureSourceChapter;
   final ComicDetailsComicPersister persistComic;
@@ -2434,7 +2436,7 @@ final class _ComicDetailCover extends StatefulWidget {
   final String presentationIdentity;
   final Uri? coverUri;
   final ImportedLibraryEntry? fallbackChapter;
-  final ComicDetailsCoverLoader loader;
+  final ComicDetailsArtworkLoader loader;
 
   @override
   State<_ComicDetailCover> createState() => _ComicDetailCoverState();
@@ -2465,6 +2467,7 @@ final class _ComicDetailCoverState extends State<_ComicDetailCover> {
           comicId: widget.comicId,
           coverUri: widget.coverUri,
           fallbackChapter: widget.fallbackChapter,
+          resourceRole: 'cover',
         ),
       );
 

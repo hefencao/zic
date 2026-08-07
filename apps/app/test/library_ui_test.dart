@@ -45,7 +45,7 @@ Widget _localDetailsScreen({
       required String comicId,
       required Uri? coverUri,
       required ImportedLibraryEntry? fallbackChapter,
-      String resourceRole = 'cover',
+      required String resourceRole,
     }) async =>
         MemoryEncodedResourceSource(_tinyPng()),
     reloadLibrary: ({required bool refreshContent}) async => snapshot,

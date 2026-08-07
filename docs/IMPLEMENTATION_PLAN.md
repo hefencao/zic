@@ -1,5 +1,11 @@
 # zic Implementation Plan
 
+## P0：详情Artwork API与重复解码设备闭环
+
+- 真机打开含大量预览/评论头像的详情页，确认普通 artwork每项只有一个 provider listener；裁剪/尺寸测量项只有一个显式 ImageStream listener，build/layout与 decode不因加载占位再挂第二个 Image。
+- 对 cover/preview/avatar分别导出 gateway role/cache key，确认详情 loader显式透传 role且不会全部误写入 cover namespace。
+- 在完整 Flutter工具链运行 analyzer与受影响 details/source-browser owner tests，确认 dev.157 artwork owner-cleanup 的所有调用方已一次迁完。
+
 ## P0：Reader热路径、Mihon章节与Artwork身份设备闭环
 
 - 对比 dev.155 与当前版本的翻页/退出 Reader frame timing：确认每页 checkpoint只发送 isolate消息，不在 UI isolate执行 sqlite3/章节JSON解码，不逐页触发 Home rebuild；route返回后再完成 barrier/reload。

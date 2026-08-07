@@ -94,17 +94,15 @@ manifest 准备，再在后台完成设备扩展发现和 runtime activation。H
 增量替换 source projection，不重新拥有或复制资源缓存。
 
 `HomeLibrarySession` 先发布 entries/SavedComic primary，交给 Flutter 完成一个可注入的
-首帧边界，再读取 enrichment 和写入缺失默认值。封面 encoded-source Future 与 Flutter
-ImageStream 是两个恢复边界：传输失败由卡片有界重试，解码失败只驱逐对应 provider 并重建
-ImageStream；App resume 时失败项可再次恢复。普通 Widget rebuild 不产生第二套封面
-请求权威。首页 artwork 的冷 miss 在 encoded bytes 到达后先返回 memory source，durable
-response 写入由 `ResourceCacheManager` 后台排队；同一批封面按卡片独立完成，不等待全部
-封面或全部持久化写入。首页 artwork gateway 只用 source-independent raw stable comic
-key 探测 response cache；命中时不解析 source、不创建 plugin transport。raw miss 才进入
-真实 source loader，且仍写回 raw stable key；当前生产路径不读取 dev.135 的旧
-URL-derived/canonical app-update key。来源确认过的 canonical identity 写入
-`SavedComicRecord`，只用于插件未激活时的书架只读归并，raw request/chapter identity 不被
-改写。未访问的
+首帧边界，再读取 enrichment 和写入缺失默认值。外部 artwork 的恢复/cache权威只有
+`ComicSourceResourceGateway/ResourceCacheManager`：presentation取得一个不可变
+`EncodedResourceSource` 后只建立一个 ImageProvider；Future/ImageStream失败保持稳定占位，
+普通 rebuild、App resume、timer/watchdog或 ImageCache eviction都不得自动建立第二套请求。
+首页 artwork 的冷 miss 在 encoded bytes 到达后可先返回 memory source，durable response
+写入由 `ResourceCacheManager` 后台排队；同一批封面按卡片独立完成，不等待全部封面或
+全部持久化写入。gateway以 source-confirmed canonical comic identity探测 durable artwork
+namespace；命中时不解析 source、不创建 plugin transport，miss才进入真实 source loader。
+raw Mihon locator继续只用于插件 request/chapter identity，不参与 durable artwork分区。未访问的
 首页、书架、来源和杂项页由 lazy indexed page 保持未构建，避免隐藏导航页提前创建第二套
 封面 loader；访问过的页面状态仍由该页面节点保留。
 

@@ -18,11 +18,9 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
   不得阻塞其它已经取得 encoded bytes 的封面。冷 miss MAY 先使用 memory source，持久化
   写入由统一 response cache 后台完成；已有 durable file hit MUST 保持文件直读。
 - 首页、书架和详情封面 Presentation State MUST 使用 canonical comic identity，不得因 raw Mihon alias、resume chapter、封面 URL 或 loader closure变化被销毁。Presentation MUST NOT 自己做定时 retry、first-frame watchdog、ImageCache eviction 或短时 Future join；资源重试/缓存所有权唯一属于 `ComicSourceResourceGateway/ResourceCacheManager`。
-- 首页、漫画源卡片和详情封面在 encoded-source Future 或 Flutter ImageStream 发生瞬时失败后 MUST 可有界恢复；解码失败 SHOULD 只驱逐对应 provider，不得清空统一 response cache。App resume SHOULD 重试仍失败的封面，`sourceVerificationRequired` MUST 保持显式恢复。
-- 首页封面 MUST 先通过 source-independent raw comic stable key 查询统一 response cache；
-  命中时不得解析来源、创建 source transport 或等待插件 activation。raw miss 才可进入
-  source loader，并必须写入当前 raw stable key；生产路径不得读取 dev.135 为 app 更新保留
-  的 URL-derived/canonical 旧 key，也不得建立该兼容 alias。
+- 外部 artwork MUST 通过 source-confirmed canonical comic identity 查询统一 response cache；
+  命中时不得解析来源、创建 source transport 或等待插件 activation。cache miss 才可进入
+  source loader。raw Mihon/插件 locator只用于 runtime调用与章节身份，不得切分 durable artwork namespace。
 - Home/阅读历史中已经持久化的 HTTP(S) artwork locator MUST 始终先进入统一 `ComicSourceResourceGateway` 的 source-independent durable-cache probe；active source/plugin 暂不可用时不得把网络 URL 交给本地文件 loader。durable miss 后才可要求来源 adapter。
 - 来源确认过的同源 canonical comic identity SHOULD 持久化在 SavedComic 元数据中，供
   插件未激活时的书架只读归并使用；原始 comic/chapter request identity MUST 保持不变。
@@ -199,14 +197,14 @@ identity 超限时使用稳定 hash 与原长度；高频事件 MAY 合并，但
 
 ## Artwork 与插件会话稳定性要求
 
-1. 失败封面不得因父组件 rebuild 或并行 source/decoder timer 反复闪烁；重试期间 MUST 保持稳定占位图。
+1. 失败封面不得因父组件 rebuild、App resume、timer/watchdog或第二个 ImageStream自动重新发起请求；Presentation MUST 保持稳定占位，只有显式来源刷新、资源 revision或稳定 identity变化才允许重新加载。
 2. 实际预览行含横图时 MUST 最多 2 项，纯竖图行 MUST 最多 3 项；为满足该规则 MAY 在相邻三个候选内做一次最小局部重排，并受用户设置的更小上限约束；不得用额外间隔消耗剩余宽度。
 3. 详情与漫画源下拉刷新 MUST 共用同一个组件拥有 edge trigger、位移、刷新进度和成功/失败反馈；结果图标 MUST 与刷新指示器使用同一落点。
 
-4. encoded artwork source 已就绪但 ImageStream 在有界时间内既无首帧也无错误时，Presentation MUST 对当前 cover identity 执行至多一次局部 source revalidation；不得清空全局 response/image cache或通过父组件 rebuild 重试。
+4. encoded artwork source 已就绪后，普通 artwork MUST 只创建一个 ImageProvider/解码监听；需要裁剪或尺寸测量的 Presentation MAY 显式监听一个 ImageStream并直接绘制 decoded image，但 MUST NOT 同时构建第二个 `Image`监听同一 provider。
 5. 远程详情 MUST 先显示已有 catalog cache，并等待当前 active source adapter 完成后台刷新；预览、评论及章节操作 MUST 在调用时解析当前 adapter，不得持有插件重启前的关闭 session。
 6. Mihon chapter catalog MUST 只投影插件/source API实际返回的 `SChapter`。若 `getChapterList`/`fetchChapterList` 明确可用，MUST 优先且只使用该目录调用；成功空目录保持空，真实调用错误保持失败。只有该能力明确不存在时，MAY 使用 TachiyomiX 1.6 `getMangaUpdate`/`fetchMangaUpdate`，并 MUST 保留已知章节顺序传入。MUST NOT 从 manga URL生成兼容单章，也不得按“开始阅读/正文/Start Reading”等标题推断章节。完全相同的非空 `SChapter.url` MAY 按 source locator折叠，标题相同或 sequence相同不能作为去重证据。
-7. Reader progress 的有序性与 durable I/O MUST 解耦：SQLite实现 MUST 在非 UI isolate执行同步 sqlite3/章节校验；Reader页面变化只入队最新 checkpoint，不得逐页发布 Home/library projection。正常 Reader route 返回后 composition MUST 等待 progress barrier再一次性刷新历史。
+7. Reader progress 的有序性与 durable I/O MUST 解耦：SQLite实现 MUST 在非 UI isolate执行同步 sqlite3/章节校验；Reader页面变化只入队 latest checkpoint，不得逐页发布 Home/library projection。Reader route MUST NOT 等待 durable barrier；返回后 Home/详情只发布最终内存 progress投影，storage isolate按自身 batch/生命周期策略完成持久化。
 8. 外部 artwork MUST 统一通过 `ComicSourceResourceGateway`；raw plugin comic locator 与 durable artwork identity MUST 分离。Mihon 等可变 raw locator必须使用 source canonical comic identity构造封面/预览 cache namespace；`mihon:resource:` 等插件 URI不得传给本地文件 loader。
-4. 同一 browser snapshot revision MUST NOT 在每个 HTTP 请求前重复覆盖 runtime Cookie；新 revision 可再次导入。Mihon 首个重试 MUST 能从 snapshot 同步获得 cookie，不得依赖 Android `CookieManager.setCookie()` 的异步持久化时序。
-5. retryable runtime lifecycle envelope MAY 自动重新激活并重试一次；业务错误和 `source-verification-required` MUST NOT 被当作 runtime 崩溃吞掉。
+9. 同一 browser snapshot revision MUST NOT 在每个 HTTP 请求前重复覆盖 runtime Cookie；新 revision可再次导入。Mihon首个重试 MUST能从 snapshot同步获得 cookie，不得依赖 Android `CookieManager.setCookie()` 的异步持久化时序。
+10. retryable runtime lifecycle envelope MAY 自动重新激活并重试一次；业务错误和 `source-verification-required` MUST NOT 被当作 runtime崩溃吞掉。

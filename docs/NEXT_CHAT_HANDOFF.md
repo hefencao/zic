@@ -1,6 +1,6 @@
-# dev.157 后续交接
+# dev.158 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.157_progress-chapter-artwork-owner-cleanup.zip`。
+唯一后续基线：`zic_v0.31.0-dev.158_artwork-loader-compile-blocking-cleanup.zip`。
 
 ## 必读
 
@@ -16,12 +16,14 @@
 10. `docs/adr/0142-reader-checkpoint-mihon-catalog-artwork-presentation-ownership.md`
 11. `docs/audits/dev157-root-cause-owner-cleanup-audit.md`
 12. `docs/audits/dev157-validation-results.md`
+13. `docs/audits/dev158-compile-owner-blocking-audit.md`
+14. `docs/audits/dev158-validation-results.md`
 
 ## 当前代码事实
 
 - Reader页面变化只 enqueue latest progress；SQLite在 storage-owned isolate内按同章节 latest-wins合并，空闲约8秒提交、持续活跃最多约30秒提交。Reader route不等待 durable barrier。返回后 Home只发布最终 progress一次，详情只替换当前章节，不全量 reload library。
 - Mihon章节目录优先 `getChapterList/fetchChapterList`；成功（含空）即权威，真实调用错误直接失败。只有该能力不存在时，才调用一次 TachiyomiX 1.6 combined update并传入已知章节原顺序。禁止 synthetic chapter、按标题猜“开始阅读”；仅完全相同非空 `SChapter.url`按 source locator折叠。
-- `ComicSourceResourceGateway/ResourceCacheManager` 是 external artwork唯一恢复/cache owner。Home、书架、漫画源、详情没有 timer retry、first-frame watchdog、resume retry、ImageCache eviction或 App级短时 Future join。失败 presentation稳定占位，显式刷新/资源 revision/稳定 identity变化才重新加载。
+- `ComicSourceResourceGateway/ResourceCacheManager` 是 external artwork唯一恢复/cache owner。详情统一使用 `ComicDetailsArtworkLoader`，resource role显式穿过 loader；普通 artwork复用 `StableArtworkImage`，裁剪/尺寸测量最多一个显式 ImageStream listener，不得同时构建第二个 Image。Home、书架、漫画源、详情没有 timer retry、first-frame watchdog、resume retry、ImageCache eviction或 App级短时 Future join。
 - Mihon raw comicId只用于 runtime locator；durable artwork与封面 presentation key使用 canonical comic identity。`mihon:resource:` 等插件 URI只走 gateway。
 - Cloudflare可见浏览器沿用 dev.154/dev.155：真实 WebView UA与 Cookie/localStorage同 revision handoff；typed classifier与浏览器完成 probe分离；验证后按稳定 sourceId解析 replacement adapter。
 - 外部插件 manifest按记录容错，可从 `.bak/.part/.invalid`恢复 owned payload；激活仍执行 hash/签名/ABI/entry检查。

@@ -1,3 +1,11 @@
+## 0.31.0-dev.158：闭合详情Artwork接口并清理重复解码路径
+
+- 修复 dev.157 owner-cleanup 未一次迁完的编译闭包：`storage_bridge` 补齐 `Uint8List` 导入，本地详情补稳定 `presentationIdentity`，详情 artwork loader 显式携带 `resourceRole`，preview/avatar 调用方与 decoded-artwork 构造统一到新接口。
+- `ComicDetailsCoverLoader` 更名为 `ComicDetailsArtworkLoader`，同一 loader 明确服务 cover/preview/avatar 并把 role传给唯一 gateway/cache owner；presentation不再持有第二套 encoded-source接口。
+- 普通未裁剪 artwork直接复用 `StableArtworkImage`；仅需要 Venera裁剪或尺寸测量的 artwork保留显式 `ImageStreamListener`，加载阶段不再同时构建第二个 `Image` 监听同一 provider，减少详情预览密集构建时的重复 decode/layout。
+- 审查 Reader/storage/downloads/pipeline 热路径：Reader progress仍只向 storage-owned isolate/WAL队列发送 checkpoint；未新增同步 UI文件I/O。旧 artifact/prewarmer/nullability错误在 dev.157 当前接口中已闭合，不恢复兼容 facade。
+- 清理稳定文档中与 ADR 0142 冲突的 presentation retry/watchdog/raw-cover旧合同；新增 dev.158 compile/ownership/blocking audit与静态 gate。
+
 ## 0.31.0-dev.157：清理阅读进度热路径并统一章节与封面所有权
 
 - 根据 dev.156 真机回归重新逆向调用图：Reader checkpoint改为 storage isolate 8 秒 idle / 30 秒最大延迟批量提交，route不等待 durable barrier；返回后 Home/详情只更新当前 progress投影，不再全量 reload library。

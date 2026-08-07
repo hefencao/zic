@@ -58,7 +58,7 @@ final class _ComicDetailsPreviewSection extends StatefulWidget {
   final String sourceId;
   final String comicId;
   final String title;
-  final ComicDetailsCoverLoader loadArtwork;
+  final ComicDetailsArtworkLoader loadArtwork;
   final int maxItemsPerRow;
   final ComicPreviewPage? initialPage;
   final ComicDetailsPreviewLoader? loader;
@@ -649,7 +649,7 @@ final class _ComicDetailsCommentsSection extends StatefulWidget {
   final String comicId;
   final String? sourceSubId;
   final String title;
-  final ComicDetailsCoverLoader loadArtwork;
+  final ComicDetailsArtworkLoader loadArtwork;
   final ComicCommentPage? initialPage;
   final ComicDetailsCommentsLoader? loader;
 
@@ -853,7 +853,7 @@ final class _ComicDetailsCommentsPage extends StatefulWidget {
   final String comicId;
   final String? sourceSubId;
   final String title;
-  final ComicDetailsCoverLoader loadArtwork;
+  final ComicDetailsArtworkLoader loadArtwork;
   final ComicDetailsCommentsLoader loader;
   final ComicCommentPage? initialPage;
   final String? replyTo;
@@ -1027,7 +1027,7 @@ final class _ComicDetailsCommentCard extends StatelessWidget {
   final String sourceId;
   final String comicId;
   final ComicComment comment;
-  final ComicDetailsCoverLoader loadArtwork;
+  final ComicDetailsArtworkLoader loadArtwork;
   final VoidCallback? onOpenReplies;
 
   @override
@@ -1099,7 +1099,7 @@ final class _ComicDetailsCommentAvatar extends StatelessWidget {
   final String sourceId;
   final String comicId;
   final Uri? uri;
-  final ComicDetailsCoverLoader loader;
+  final ComicDetailsArtworkLoader loader;
 
   @override
   Widget build(BuildContext context) {
@@ -1139,7 +1139,7 @@ final class _ComicDetailsArtwork extends StatefulWidget {
   final String sourceId;
   final String comicId;
   final Uri uri;
-  final ComicDetailsCoverLoader loader;
+  final ComicDetailsArtworkLoader loader;
   final String resourceRole;
   final BoxFit fit;
   final ValueChanged<Size>? onImageSize;
@@ -1183,14 +1183,21 @@ final class _ComicDetailsArtworkState extends State<_ComicDetailsArtwork> {
       builder: (context, snapshot) {
         final source = snapshot.data;
         if (source != null) {
+          final part = _comicPreviewImagePart(widget.uri);
+          final seed = '${widget.resourceRole}:${widget.uri}';
+          if (part == null && widget.onImageSize == null) {
+            return StableArtworkImage(
+              source: source,
+              seed: seed,
+              fit: widget.fit,
+            );
+          }
           return _ComicDetailsDecodedArtwork(
-            source: source,
+            image: encodedResourceImageProvider(source),
             fit: widget.fit,
-            part: _comicPreviewImagePart(widget.uri),
+            part: part,
             onImageSize: widget.onImageSize,
-            errorBuilder: (_, __, ___) => _CoverPlaceholder(
-              seed: '${widget.resourceRole}:${widget.uri}',
-            ),
+            errorBuilder: (_, __, ___) => _CoverPlaceholder(seed: seed),
           );
         }
         if (snapshot.hasError) {
@@ -1356,15 +1363,11 @@ final class _ComicDetailsDecodedArtworkState
     }
     final image = _decodedImage;
     if (image == null) {
-      if (widget.part != null) {
-        return const ColoredBox(color: Color(0x14000000));
-      }
-      return Image(
-        image: widget.image,
-        fit: widget.fit,
-        gaplessPlayback: true,
-        errorBuilder: widget.errorBuilder,
-      );
+      // The explicit ImageStream listener above is already the decode owner for
+      // cropped/size-measured artwork. Building a second Image for the same
+      // provider here adds another listener and can duplicate decode/layout
+      // work during dense preview construction.
+      return const ColoredBox(color: Color(0x14000000));
     }
     final part = _boundedImagePart(widget.part, image);
     if (part == null) {
