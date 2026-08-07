@@ -68,6 +68,38 @@ class MihonHostAbiTest {
     }
 
     @Test
+    fun keepsBrowserSnapshotImplementationOutOfTheCommonRuntimeAbi() {
+        assertTrue(requiredMihonCommonRuntimeClasses.contains("dev.zic.network.AndroidCookieJar"))
+        assertFalse(
+            requiredMihonCommonRuntimeClasses.contains(
+                "dev.zic.network.AndroidBrowserCookieSession",
+            ),
+        )
+    }
+
+    @Test
+    fun parsesResourceBackedMihonEntryMetadataAfterResolution() {
+        assertEquals(
+            listOf(
+                "eu.kanade.tachiyomi.extension.zh.fixture.FirstFactory",
+                "eu.kanade.tachiyomi.extension.zh.fixture.SecondFactory",
+            ),
+            parseMihonEntryClasses(
+                "eu.kanade.tachiyomi.extension.zh.fixture",
+                ".FirstFactory, .SecondFactory; .FirstFactory",
+            ),
+        )
+        assertTrue(
+            runCatching {
+                parseMihonEntryClasses(
+                    "eu.kanade.tachiyomi.extension.zh.fixture",
+                    "not a class",
+                )
+            }.isFailure,
+        )
+    }
+
+    @Test
     fun derivesCurrentExtensionAbiFromVersionNameWhenMetadataIsAbsent() {
         assertEquals("1.6", normalizeMihonExtensionLib(null, "1.6.4"))
         assertEquals("1.6", normalizeMihonExtensionLib("", "1.6.4"))

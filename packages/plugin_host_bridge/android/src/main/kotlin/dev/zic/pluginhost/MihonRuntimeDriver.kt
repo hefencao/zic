@@ -21,7 +21,7 @@ import androidx.preference.PreferenceManager
 import androidx.preference.SwitchPreferenceCompat
 import androidx.preference.TwoStatePreference
 import dalvik.system.DexClassLoader
-import dev.zic.network.AndroidBrowserCookieSession
+import dev.zic.network.AndroidCookieJar
 import dev.zic.network.SourceVerificationRequiredException
 import org.json.JSONArray
 import org.json.JSONObject
@@ -1168,7 +1168,7 @@ internal class MihonRuntimeDriver private constructor(
                 // declared baseUrl. A restarted Mihon process therefore
                 // clears only its in-process handoff revisions and imports the
                 // latest same-site snapshot on the first real request.
-                AndroidBrowserCookieSession.resetAllImports()
+                AndroidCookieJar.resetBrowserSnapshotImports()
                 val descriptors = discovered.map { (id, source) ->
                     val baseUrl = source.readString("baseUrl", "getBaseUrl")
                         ?: runCatching { source.invokeOptional("getHomeUrl") as? String }.getOrNull()
@@ -1502,7 +1502,6 @@ internal val requiredMihonCommonRuntimeClasses: List<String> = listOf(
     "dev.zic.network.AndroidCloudflareInterceptor",
     "dev.zic.network.SourceVerificationRequiredException",
     "dev.zic.network.NetworkBrowserSnapshotStore",
-    "dev.zic.network.AndroidBrowserCookieSession",
     "dev.zic.network.AndroidCookieJar",
     "dev.zic.network.FallbackDns",
 )

@@ -71,6 +71,7 @@ final class ExternalPluginController {
       AndroidMihonApkMetadataReader();
   List<InstalledMihonExtension> _deviceMihonExtensions =
       const <InstalledMihonExtension>[];
+  Object? _deviceMihonDiscoveryError;
   late final ExternalPluginRuntimeRegistry _registry =
       ExternalPluginRuntimeRegistry(<ExternalComicPluginHost>[
     _PinnedExternalPluginHost(
@@ -124,8 +125,9 @@ final class ExternalPluginController {
   Future<void> _initializeInBackground() async {
     try {
       await refreshDeviceMihonExtensions();
-    } on Object {
+    } on Object catch (error) {
       _deviceMihonExtensions = const <InstalledMihonExtension>[];
+      _deviceMihonDiscoveryError = error;
     }
     await _activateInstalled();
   }
@@ -135,6 +137,8 @@ final class ExternalPluginController {
 
   List<InstalledMihonExtension> get deviceMihonExtensions =>
       List<InstalledMihonExtension>.unmodifiable(_deviceMihonExtensions);
+
+  Object? get deviceMihonDiscoveryError => _deviceMihonDiscoveryError;
 
   List<BrowsableComicSource> get activeSources => _registry.activeSources;
 
@@ -167,9 +171,16 @@ final class ExternalPluginController {
     _requireOpen();
     if (!Platform.isAndroid) {
       _deviceMihonExtensions = const <InstalledMihonExtension>[];
+      _deviceMihonDiscoveryError = null;
       return;
     }
-    _deviceMihonExtensions = await _androidMihonMetadata.listInstalled();
+    try {
+      _deviceMihonExtensions = await _androidMihonMetadata.listInstalled();
+      _deviceMihonDiscoveryError = null;
+    } on Object catch (error) {
+      _deviceMihonDiscoveryError = error;
+      rethrow;
+    }
   }
 
   Future<List<ExternalComicPluginCatalogEntry>> loadRepository({

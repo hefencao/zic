@@ -1,5 +1,11 @@
 # zic Implementation Plan
 
+## P0：Mihon 插件识别设备闭环
+
+- 使用直接字符串和 `@string/...` metadata 的真实 Mihon APK分别验证 extensionLib、单入口和多入口 class解析。
+- 验证插件重启时 common runtime预检不再要求内部 `AndroidBrowserCookieSession`，并确认 Cookie snapshot reset仍在首个真实 request前生效。
+- 对无法识别的 APK导出 package、metadata key、ABI和 entry class诊断，不能静默表现为“未检测到”。
+
 ## P0：身份、同源更新与验证设备闭环
 
 - 使用真实 Venera/E-Hentai successor 检查详情“有新版本”、统一比较确认和 Reader 首次提醒；确认换 successor 后再次提醒。

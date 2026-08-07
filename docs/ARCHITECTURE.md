@@ -142,7 +142,7 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
 ### 插件与平台桥
 
 - `plugin_host`：信任、权限、请求计划、身份适配和插件生命周期。
-- `plugin_host_bridge`：Android 隔离进程与 Mihon/Venera runtime 适配。
+- `plugin_host_bridge`：Android 隔离进程与 Mihon/Venera runtime 适配。Mihon APK 候选只按扩展 feature 或标准 package prefix 识别；entry/ABI meta-data 随后从 manifest 原值或字符串资源解析，多个 entry class可用逗号、分号或换行分隔。隔离 runtime 的公共网络 ABI只要求 `AndroidCookieJar` 等稳定适配器，`AndroidBrowserCookieSession` 属于 network bridge内部实现，不得被 plugin host直接 import或列入 common runtime必需类。
 - `network_bridge`：浏览器、Cookie/localStorage 快照、challenge 恢复和共享网络能力。
 - `bridge`：Dart FFI、native source/cursor/frame ABI 和两个进程常驻 decode isolate。
 - `texture_bridge`：Android texture lease、SurfaceProducer、单 lane RGBA blit、schedule 和 release。

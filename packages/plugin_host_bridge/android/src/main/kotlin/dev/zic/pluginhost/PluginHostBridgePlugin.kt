@@ -230,35 +230,24 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             "APK application metadata is missing"
         }
         val metadata = applicationInfo.metaData
-        val declaredExtensionLib = metadataValue(metadata, EXTENSION_LIB_KEYS)
-            ?.toString()
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() }
+        val declaredExtensionLib = metadataText(
+            info = info,
+            apkPath = apkPath,
+            metadata = metadata,
+            keys = EXTENSION_LIB_KEYS,
+        )
         val extensionLib = normalizeMihonExtensionLib(
             declaredExtensionLib,
             info.versionName,
         )
             ?: throw IllegalArgumentException("Mihon extension ABI metadata is missing")
-        val rawEntryClasses = ENTRY_CLASS_KEYS
-            .firstNotNullOfOrNull { key -> metadata?.get(key)?.toString()?.trim() }
-            ?.takeIf { it.isNotEmpty() }
-            ?: throw IllegalArgumentException("Mihon extension entry metadata is missing")
-        val entryClasses = rawEntryClasses
-            .split(';')
-            .map(String::trim)
-            .filter(String::isNotEmpty)
-            .map { value ->
-                val expanded = if (value.startsWith('.')) {
-                    info.packageName + value
-                } else {
-                    value
-                }
-                require(CLASS_NAME.matches(expanded)) {
-                    "Mihon extension entry class is invalid"
-                }
-                expanded
-            }
-            .distinct()
+        val rawEntryClasses = metadataText(
+            info = info,
+            apkPath = apkPath,
+            metadata = metadata,
+            keys = ENTRY_CLASS_KEYS,
+        ) ?: throw IllegalArgumentException("Mihon extension entry metadata is missing")
+        val entryClasses = parseMihonEntryClasses(info.packageName, rawEntryClasses)
         require(entryClasses.isNotEmpty()) { "Mihon extension entry metadata is empty" }
         val signer = signingCertificates(info).singleOrNull()
             ?: throw IllegalArgumentException("APK must have exactly one current signer")
@@ -330,10 +319,32 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
         val hasKnownPackagePrefix =
             info.packageName.startsWith(MIHON_EXTENSION_PACKAGE_PREFIX)
-        val hasEntryMetadata = ENTRY_CLASS_KEYS.any {
-            info.applicationInfo?.metaData?.containsKey(it) == true
+        return hasFeature || hasKnownPackagePrefix
+    }
+
+    private fun metadataText(
+        info: PackageInfo,
+        apkPath: String,
+        metadata: Bundle?,
+        keys: List<String>,
+    ): String? {
+        val raw = metadataValue(metadata, keys) ?: return null
+        val value = when (raw) {
+            is Int -> {
+                if (raw == 0) return null
+                runCatching {
+                    val applicationInfo = requireNotNull(info.applicationInfo).apply {
+                        sourceDir = apkPath
+                        publicSourceDir = apkPath
+                    }
+                    context.packageManager
+                        .getResourcesForApplication(applicationInfo)
+                        .getString(raw)
+                }.getOrNull()
+            }
+            else -> raw.toString()
         }
-        return (hasFeature || hasKnownPackagePrefix) && hasEntryMetadata
+        return value?.trim()?.takeIf(String::isNotEmpty)
     }
 
     @Suppress("DEPRECATION")
@@ -370,9 +381,6 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         private const val MIHON_EXTENSION_PACKAGE_PREFIX =
             "eu.kanade.tachiyomi.extension."
         private const val MAX_MIHON_APK_BYTES = 128L * 1024L * 1024L
-        private val CLASS_NAME = Regex(
-            "[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)+",
-        )
         private val EXTENSION_LIB_KEYS = listOf(
             "tachiyomix.extensionLib",
             "tachiyomi.extensionLib",
@@ -387,6 +395,31 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
 private fun metadataValue(metadata: Bundle?, keys: List<String>): Any? =
     keys.firstNotNullOfOrNull { key -> metadata?.get(key) }
+
+internal fun parseMihonEntryClasses(
+    packageName: String,
+    rawValue: String,
+): List<String> {
+    require(packageName.isNotBlank()) { "Mihon extension package name is missing" }
+    return rawValue
+        .split(Regex("""[;,\r\n]+"""))
+        .map(String::trim)
+        .filter(String::isNotEmpty)
+        .map { value -> if (value.startsWith('.')) packageName + value else value }
+        .onEach { className ->
+            require(MIHON_ENTRY_CLASS_NAME.matches(className)) {
+                "Mihon extension entry class is invalid"
+            }
+        }
+        .distinct()
+        .also { classes ->
+            require(classes.isNotEmpty()) { "Mihon extension entry metadata is empty" }
+        }
+}
+
+private val MIHON_ENTRY_CLASS_NAME = Regex(
+    "[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)+",
+)
 
 internal fun normalizeMihonExtensionLib(
     metadataValue: Any?,

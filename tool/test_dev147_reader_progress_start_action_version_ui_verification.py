@@ -47,7 +47,8 @@ for token in (
     require(reader, token, 'Reader progress checkpoint queue')
 require(details, 'final refreshed = await widget.reloadLibrary(refreshContent: false);', 'details history refresh after Reader')
 
-require(mihon, 'import dev.zic.network.AndroidBrowserCookieSession', 'Mihon cookie session compile closure')
+require(mihon, 'import dev.zic.network.AndroidCookieJar', 'Mihon cookie boundary compile closure')
+forbid(mihon, 'import dev.zic.network.AndroidBrowserCookieSession', 'internal cookie-session coupling')
 for token in (
     'deduplicateMihonStartReadingEntries(',
     '"开始阅读"',

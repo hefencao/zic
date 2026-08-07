@@ -70,6 +70,12 @@ final class _ExternalPluginRepositoryScreenState
       };
 
   @override
+  void initState() {
+    super.initState();
+    _deviceError = widget.controller.deviceMihonDiscoveryError;
+  }
+
+  @override
   void dispose() {
     _url.dispose();
     super.dispose();
@@ -198,7 +204,9 @@ final class _ExternalPluginRepositoryScreenState
     });
     try {
       await widget.controller.refreshDeviceMihonExtensions();
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() => _deviceError = widget.controller.deviceMihonDiscoveryError);
+      }
     } on Object catch (error) {
       if (mounted) setState(() => _deviceError = error);
     } finally {

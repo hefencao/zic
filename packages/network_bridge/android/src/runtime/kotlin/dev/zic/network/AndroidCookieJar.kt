@@ -18,6 +18,14 @@ class AndroidCookieJar(
     context: Context,
     private val userAgentProvider: () -> String = { "" },
 ) : CookieJar {
+    companion object {
+        /** Clears only the in-process browser-snapshot import revisions. */
+        @JvmStatic
+        fun resetBrowserSnapshotImports() {
+            AndroidBrowserCookieSession.resetAllImports()
+        }
+    }
+
     private val application = context.applicationContext
     private val manager: CookieManager
         get() = CookieManager.getInstance()

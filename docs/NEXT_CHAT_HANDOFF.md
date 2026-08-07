@@ -1,6 +1,6 @@
-# dev.147 后续交接
+# dev.148 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.147_reader-progress-version-view-start-action-verification.zip`。
+唯一后续基线：`zic_v0.31.0-dev.148_catalog-uri-mihon-recognition.zip`。
 
 ## 必读
 
@@ -45,6 +45,8 @@
 - App 不清理 synthetic“开始阅读/正文”。Mihon adapter 只去除与真实章节并存的独立开始阅读动作；单独 gallery“正文”保留。
 - Reader progress 单 writer 合并，正常退出前等待最终写入，详情 route 返回后立即刷新历史；生命周期 checkpoint 只提供 best effort。
 - `sourceVerificationRequired` 只由统一 typed 403/503 challenge detector 产生；兼容 interceptor 不创建隐藏 WebView。
+- `CachedBrowsableComicSource.resolveComicWebUri` 保持 `Uri?`；调用方负责 website fallback。
+- Mihon common runtime只预检稳定 `AndroidCookieJar`，不直接依赖内部 `AndroidBrowserCookieSession`。APK metadata可从字符串资源解析，并支持逗号/分号/换行多入口。后台设备扫描错误保存在 controller并由插件页显示，不能再把扫描异常伪装成空列表。
 - Native identity 保持 `zic-media-core-dev134-abi6-lib00121400`。
 - 当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip`；不得从旧版本偷偷补入，除非用户提供或明确指定来源。
 

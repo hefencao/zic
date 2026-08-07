@@ -13,7 +13,7 @@ dev.146 将来源合法的独立“开始阅读”动作与 App synthetic fallba
 3. 同源版本详情采用 VibeVenera 的查看/迁移分离结构。successor 和 predecessor 都可查看；multiple versions 先选择。查看使用 temporary route identity 去重，但持久历史、SavedComic、章节、下载和 artifact继续按 target raw identity。
 4. 迁移不复用查看路径的临时 key，继续进入 ZIC 原严格比较确认 UI；exact chapter identity 才复制状态，sequence-only 不复制。
 5. `sourceVerificationRequired` 只由 typed host detector 产生。403/503 必须有 `cf-mitigated: challenge` 或明确 challenge body marker。主网络和 Mihon ABI 兼容 interceptor 委托同一 detector；删除隐藏 WebView、等待和消息文本猜测。
-6. `MihonRuntimeDriver` 显式 import `dev.zic.network.AndroidBrowserCookieSession`，网络 runtime source set保持唯一类定义。
+6. dev.147 曾让 `MihonRuntimeDriver` 直接 import `AndroidBrowserCookieSession`；该实现依赖已由 ADR 0133 收回 `AndroidCookieJar` 稳定边界，避免内部类成为 plugin common runtime ABI。
 
 ## 后果
 

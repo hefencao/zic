@@ -267,7 +267,7 @@ final class CachedBrowsableComicSource
       );
 
   @override
-  Uri resolveComicWebUri(String comicId) {
+  Uri? resolveComicWebUri(String comicId) {
     final Object candidate = source;
     if (candidate is! ComicWebUriSource) return descriptor.website;
     final webSource = candidate as ComicWebUriSource;

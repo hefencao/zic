@@ -26,6 +26,7 @@ prefs = read('apps/app/lib/app_preferences.dart')
 identity = read('apps/app/lib/demo_home_catalog_identity.dart')
 home = read('apps/app/lib/demo_home.dart')
 cookie = read('packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/AndroidBrowserCookieSession.kt')
+cookie_jar = read('packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/AndroidCookieJar.kt')
 mihon = read('packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt')
 architecture = read('docs/ARCHITECTURE.md')
 check = read('tool/check.sh')
@@ -97,7 +98,8 @@ for token in (
     'importedSnapshotRevisions.clear()',
 ):
     require(cookie, token, 'browser cookie handoff reset')
-require(mihon, 'AndroidBrowserCookieSession.resetAllImports()', 'Mihon browser handoff')
+require(cookie_jar, 'fun resetBrowserSnapshotImports()', 'browser handoff public reset boundary')
+require(mihon, 'AndroidCookieJar.resetBrowserSnapshotImports()', 'Mihon browser handoff')
 
 for token in (
     'raw locator identity',

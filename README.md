@@ -1,6 +1,6 @@
 # zic
 
-当前 Reader 正常退出前等待最终阅读进度提交；详情页可独立查看或迁移多个同源新旧版本，历史按 raw 版本身份分离。Mihon 仅在插件适配边界去除与真实目录并存的独立“开始阅读”动作，Cloudflare 主/兼容路径统一使用 typed challenge detector。
+dev.148 修正 Catalog 可空漫画网页 URI 编译合同，并将 Mihon 浏览器快照重置收回稳定 AndroidCookieJar 边界；APK 识别支持资源型 meta-data 与多入口分隔。
 
 
 `zic` 是面向 Android 优先、高性能漫画阅读场景的 Flutter/Rust 工程。项目支持本地与远程章节、静态图片、Animated WebP、持久下载、带分类/翻页的漫画源浏览、Mihon/Venera 扩展和统一 Reader Pipeline。

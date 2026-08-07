@@ -1,3 +1,11 @@
+## 0.31.0-dev.148：修复 Catalog URI 编译与 Mihon 插件识别
+
+- `CachedBrowsableComicSource.resolveComicWebUri` 恢复与 `ComicWebUriSource` 一致的 `Uri?` 合同，不再从非空方法返回可空值。
+- Mihon runtime 不再直接 import/预检内部 `AndroidBrowserCookieSession`；浏览器快照 revision 重置通过稳定 `AndroidCookieJar.resetBrowserSnapshotImports()` 边界执行。
+- Mihon APK metadata 识别支持 `android:resource` 字符串引用，并兼容逗号、分号与换行分隔的多个 entry class。
+- 已安装扩展候选先按 feature 或标准 package prefix 识别，再执行完整 metadata 校验，避免资源型 entry metadata 在候选阶段被提前过滤。
+- 新增 dev.148 owner/static gate 与 Kotlin entry metadata helper smoke。
+
 ## 0.31.0-dev.147：修复阅读历史提交并恢复版本查看与验证分类
 
 - 修复 Mihon runtime 对 `AndroidBrowserCookieSession` 的缺失 import，闭合 Android 编译。

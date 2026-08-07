@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.147`
-**App build：** `0.31.0+147`
+**源码版本：** `0.31.0-dev.148`
+**App build：** `0.31.0+148`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -9,7 +9,7 @@
 
 ## 当前实现
 
-- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=147`。
+- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=148`。
 - 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
 - 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation
   不阻塞 Home primary，外部 source ready 后增量接入；失败封面仅按稳定资源 identity、显式 retry revision 或 App resume 恢复，loader closure identity 不参与重试。
@@ -30,6 +30,8 @@
 - 漫画源浏览页使用来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态仅以 chip 背景色区分，不显示 JS/插件图标。切换 source 时先按目标请求 identity 投影目标缓存，精确缓存缺失时使用目标 source 最近缓存，绝不保留旧 source 卡片。页码位于滚动尾部，左下浮动搜索保留持久历史；展开搜索优先消费返回和垂直滑动手势，Mihon `getFilterList()` 的 CheckBox/TriState/Select/Group 子项以 opaque 过滤标签显示。catalog 缓存先显示、后台刷新且数据不变时不重建；边缘下拉达到阈值后保留当前列表执行强制来源刷新。Mihon 已安装与仓库插件列表继续按声明/source metadata 的规范化语言筛选。
 - 详情页与漫画源页共用同一个可见的顶部边缘下拉刷新组件：`onEdge`、位移 72、保留旧内容后台刷新。
 - Android 可见浏览器 Cookie snapshot 以 `updatedAt` 为 revision，每个 runtime 进程/站点/UA 只导入一次。WebView 验证返回后目标 source 会重启；新 Mihon runtime 清空进程内 import revision，使第一个真实 request 按实际 host/UA 导入最新同站 snapshot。平台 runtime 对 retryable lifecycle response 原地重新激活并重试一次；已打开详情页按稳定 source ID 解析当前 adapter。
+- Mihon runtime 通过稳定 `AndroidCookieJar.resetBrowserSnapshotImports()` 清理进程内 browser-snapshot revision；`AndroidBrowserCookieSession` 不再是 plugin host直接依赖或 common runtime ABI项。APK metadata reader可解析字符串资源形式的 extensionLib/entry class，并支持多个 entry class分隔。后台设备扩展扫描失败会保留到 `deviceMihonDiscoveryError` 并在插件页显示，手动刷新成功后才清除。
+- Catalog 的 `resolveComicWebUri` 装饰器与来源能力保持 `Uri?` 合同；来源无法提供详情 URL 时由调用方继续使用 descriptor website fallback。
 - Reader 进度使用单 writer 合并队列；正常 route pop 等待最终 checkpoint，详情页返回后立即重新读取 snapshot。页面变化及 inactive/paused/detached 持续 best-effort checkpoint，异常进程终止不承诺绝对完成。
 - App 已删除 synthetic“开始阅读/正文”清理。Mihon adapter 只删除与真实章节并存的独立开始阅读动作，单独“正文”gallery fallback 保留。
 - Cloudflare 主路径与兼容路径统一委托 typed detector；仅严格 403/503 challenge 映射 `sourceVerificationRequired`，没有隐藏 WebView 或消息文本判断。
@@ -73,7 +75,7 @@
 |---|---|
 | repository/documentation/Dart static gates | Verified-static |
 | current-code documentation consistency gate | Verified-static |
-| dev.75–dev.147 ownership gates | Verified-static |
+| dev.75–dev.148 ownership gates | Verified-static |
 | Android/Mihon/Venera/Reader/Pipeline/UI contracts | Verified-static / toolchain |
 | Kotlin texture bridge compile stub | Verified-toolchain |
 | pinned libwebp host build/smoke | Unverified：当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip` |
