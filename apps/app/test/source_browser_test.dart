@@ -983,24 +983,24 @@ void main() {
     expect(find.byKey(details.comicDetailsPreviewKey), findsOneWidget);
   });
 
-  testWidgets('same-source migration lists a stored predecessor version',
+  testWidgets('details shows one same-source new-version notice',
       (tester) async {
     final store = MemoryImportedLibraryStore();
     await store.open();
     addTearDown(store.close);
     const sourceId = 'fixture-version';
-    await store.saveComicVersionRelation(
-      const ComicVersionRelation(
-        sourceId: sourceId,
-        predecessorComicId: 'fixture-old-comic',
-        successorComicId: '$sourceId-comic',
-        predecessorTitle: '旧版标题',
-      ),
-    );
     final source = _FixtureSource(
       sourceId,
       '版本源',
       supportsComicVersions: true,
+      comicVersions: const <SourceComicVersion>[
+        SourceComicVersion(
+          sourceId: sourceId,
+          comicId: 'fixture-version-new-comic',
+          title: '新版标题',
+          generation: 2,
+        ),
+      ],
     );
 
     await tester.pumpWidget(
@@ -1020,10 +1020,10 @@ void main() {
       find.byKey(sourceComicCardKey(sourceId, '$sourceId-comic')),
     );
     await _pumpUntilFound(tester, find.byKey(details.remoteComicDetailsScreenKey));
-    await _tapVisible(tester, find.byKey(details.comicDetailsVersionsKey));
-
-    await _pumpUntilFound(tester, find.text('旧版'));
-    expect(find.textContaining('旧版 1 · 旧版标题'), findsOneWidget);
+    await _pumpUntilFound(tester, find.byKey(details.comicDetailsVersionNoticeKey));
+    expect(find.text('有新版本'), findsOneWidget);
+    expect(find.text('新版标题'), findsOneWidget);
+    expect(find.byKey(details.comicDetailsVersionActionKey), findsOneWidget);
   });
 
   testWidgets('whole comic shelf and chapter download have separate ownership',

@@ -1153,6 +1153,12 @@ internal class MihonRuntimeDriver private constructor(
                     }
                 }
                 require(discovered.isNotEmpty()) { "Mihon extension exposed no Source entries" }
+                // A verified browser snapshot may have been produced for a
+                // Cloudflare redirect/subdomain rather than the extension's
+                // declared baseUrl. A restarted Mihon process therefore
+                // clears only its in-process handoff revisions and imports the
+                // latest same-site snapshot on the first real request.
+                AndroidBrowserCookieSession.resetAllImports()
                 val descriptors = discovered.map { (id, source) ->
                     val baseUrl = source.readString("baseUrl", "getBaseUrl")
                         ?: runCatching { source.invokeOptional("getHomeUrl") as? String }.getOrNull()

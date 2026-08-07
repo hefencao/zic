@@ -6,8 +6,12 @@ Uri _sourceComicWebUri(
   String comicId,
 ) {
   final Object candidate = source;
-  final ComicWebUriSource? webSource =
-      candidate is ComicWebUriSource ? candidate : null;
+  final ComicWebUriSource? webSource;
+  if (candidate is ComicWebUriSource) {
+    webSource = candidate as ComicWebUriSource;
+  } else {
+    webSource = null;
+  }
   return webSource?.resolveComicWebUri(comicId) ?? source.descriptor.website;
 }
 
@@ -16,8 +20,12 @@ ComicWebViewRequest _sourceWebViewRequest(
   Uri url,
 ) {
   final Object candidate = source;
-  final ComicWebViewRequestSource? requestSource =
-      candidate is ComicWebViewRequestSource ? candidate : null;
+  final ComicWebViewRequestSource? requestSource;
+  if (candidate is ComicWebViewRequestSource) {
+    requestSource = candidate as ComicWebViewRequestSource;
+  } else {
+    requestSource = null;
+  }
   return requestSource?.webViewRequest(url) ?? ComicWebViewRequest(url: url);
 }
 
@@ -105,6 +113,31 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
         },
       ),
     );
+    if (snapshot != null &&
+        (source.sourceId.startsWith('mihon:') ||
+            source.sourceId.startsWith('venera:'))) {
+      final controller = widget.externalPlugins;
+      if (controller != null) {
+        await controller.restartSource(source.sourceId);
+        await _replaceExternalSources();
+      }
+      final active = _sourceForId(source.sourceId);
+      final Object? candidate = active;
+      if (candidate is AuthenticatableComicSource) {
+        final accountSource = candidate as AuthenticatableComicSource;
+        try {
+          await accountSource.confirmWebLogin(
+            currentUrl: snapshot.currentUrl.toString(),
+            title: snapshot.title,
+            cookies: snapshot.cookies,
+            localStorage: snapshot.localStorage,
+          );
+        } on Object {
+          // Mihon runtimes do not expose account operations; the restarted
+          // runtime imports the browser snapshot through AndroidCookieJar.
+        }
+      }
+    }
   }
 
   Future<Uint8List> _loadSourceResourceBytes(String sourceId, Uri uri) =>
@@ -317,10 +350,25 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
               final active = _sourceForId(source.sourceId) ?? source;
               _searchSourceMetadata(active, query);
             },
-            onMigrateSource: () =>
-                _openSourceMigrationForSummary(source, comic),
-            onOpenVersions: _sourceSupportsVersionEntry(source)
-                ? () => _openSourceVersionsForSummary(source, comic)
+            loadVersionNotice: _sourceSupportsVersionEntry(source)
+                ? () {
+                    final active = _sourceForId(source.sourceId) ?? source;
+                    return _loadSourceVersionNotice(
+                      active,
+                      comic.title,
+                      comic.comicId,
+                    );
+                  }
+                : null,
+            onMigrateVersion: _sourceSupportsVersionEntry(source)
+                ? (version) async {
+                    final active = _sourceForId(source.sourceId) ?? source;
+                    final materialized = await _materializeSourceComic(
+                      active,
+                      comic,
+                    );
+                    await _openSourceVersionNotice(materialized, version);
+                  }
                 : null,
             sameComicIdentity: (left, right) =>
                 _canonicalComicKey(source.sourceId, left) ==
@@ -409,16 +457,25 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
           onSearchMetadata: source == null
               ? null
               : (query) => _searchSourceMetadata(source, query),
-          onOpenVersions: source == null || !_sourceSupportsVersionEntry(source)
+          loadVersionNotice: source == null ||
+                  !_sourceSupportsVersionEntry(source)
               ? null
-              : () => _openSourceVersions(comic),
+              : () {
+                  final active = _sourceForId(source.sourceId) ?? source;
+                  return _loadSourceVersionNotice(
+                    active,
+                    comic.title,
+                    comic.comicId,
+                  );
+                },
+          onMigrateVersion: source == null ||
+                  !_sourceSupportsVersionEntry(source)
+              ? null
+              : (version) => _openSourceVersionNotice(comic, version),
           isCompatibilityChapter: isSyntheticMihonChapterIdentity,
           previewMaxItemsPerRow:
               widget.preferences.detailsPreviewMaxItemsPerRow,
           traceSink: widget.debugTrace,
-          onMigrateSource: comic.sourceId == 'local-folder'
-              ? null
-              : _openSourceMigration,
         ),
       ),
     );

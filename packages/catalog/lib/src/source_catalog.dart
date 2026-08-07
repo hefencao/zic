@@ -367,6 +367,11 @@ abstract interface class ComicVersionRelationStore {
     String successorComicId,
   );
 
+  Future<List<ComicVersionRelation>> listComicVersionSuccessors(
+    String sourceId,
+    String predecessorComicId,
+  );
+
   Future<void> saveComicVersionRelation(ComicVersionRelation relation);
 }
 

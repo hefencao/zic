@@ -132,7 +132,9 @@ for token in (
     "Future<void> _recoverSourceAccess() async",
     "await open();",
     "await _refresh(announce: false",
-    "Icons.swap_horiz",
+    "comicDetailsVersionNoticeKey",
+    "comicDetailsVersionActionKey",
+    "有新版本",
     "resultKey: comicDetailsRefreshStateKey",
     "onLongPress: () => _toggleSelection(tag)",
     "Clipboard.setData",
@@ -140,11 +142,13 @@ for token in (
 ):
     require(details, token, "detail interaction contract")
 forbid(details, "Icons.open_in_browser", "globe icon migration")
-web_index = details.index("key: comicDetailsOpenWebViewKey")
-migrate_index = details.index("key: comicDetailsMigrateKey", web_index)
-plugin_index = details.index("_SourceSettingsAction(", migrate_index)
-if not web_index < migrate_index < plugin_index:
-    raise SystemExit("FAIL: detail action order must be WebView -> migration -> plugin")
+for stale in (
+    "key: comicDetailsMigrateKey",
+    "key: comicDetailsVersionsKey",
+    "tooltip: '迁移漫画源'",
+    "tooltip: '查看同源版本'",
+):
+    forbid(details, stale, "obsolete detail version/migration action")
 
 refresh = read("apps/app/lib/app_pull_to_refresh.dart")
 for token in ("RefreshIndicatorTriggerMode.onEdge", "displacement: _displacement", "_AppRefreshResult.success", "_AppRefreshResult.failure", "Colors.green", "Icons.close"):

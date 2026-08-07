@@ -487,6 +487,24 @@ final class MemoryImportedLibraryStore
   }
 
   @override
+  Future<List<ComicVersionRelation>> listComicVersionSuccessors(
+    String sourceId,
+    String predecessorComicId,
+  ) async {
+    _requireOpen();
+    final result = <ComicVersionRelation>[];
+    for (final relations in _versionRelations.values) {
+      for (final relation in relations) {
+        if (relation.sourceId == sourceId &&
+            relation.predecessorComicId == predecessorComicId) {
+          result.add(relation);
+        }
+      }
+    }
+    return List<ComicVersionRelation>.unmodifiable(result);
+  }
+
+  @override
   Future<void> saveComicVersionRelation(ComicVersionRelation relation) async {
     _requireOpen();
     if (relation.sourceId.trim().isEmpty ||

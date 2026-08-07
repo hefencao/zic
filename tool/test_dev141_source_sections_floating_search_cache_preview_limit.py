@@ -83,10 +83,11 @@ for token in (
     '_sourceSearchHistory',
     'rememberSourceSearch(',
     'clearSourceSearchHistory(',
-    "'version': 4",
 ):
     require(prefs, token, 'preferences')
 require(settings, 'readingPreviewMaxItemsPerRowKey', 'reading settings')
+if not re.search(r"'version':\s*[4-9][0-9]*", prefs):
+    raise SystemExit('preferences schema must remain at least v4')
 for token in (
     'maxItemsPerRow: widget.previewMaxItemsPerRow',
     'final configuredMaximum = widget.maxItemsPerRow.clamp(1, 8).toInt()',

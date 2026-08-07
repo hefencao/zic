@@ -31,8 +31,10 @@ const comicDetailsShelfKey = ValueKey<String>('comic-details-shelf');
 const comicDetailsCollectedKey =
     ValueKey<String>('comic-details-collected');
 const comicDetailsLikedKey = ValueKey<String>('comic-details-liked');
-const comicDetailsMigrateKey = ValueKey<String>('comic-details-migrate');
-const comicDetailsVersionsKey = ValueKey<String>('comic-details-versions');
+const comicDetailsVersionNoticeKey =
+    ValueKey<String>('comic-details-version-notice');
+const comicDetailsVersionActionKey =
+    ValueKey<String>('comic-details-version-action');
 const comicDetailsContinueReadingKey =
     ValueKey<String>('comic-details-continue-reading');
 const comicDetailsReadingHistoryKey =
@@ -166,10 +168,10 @@ typedef ComicDetailsComicPersister = Future<void> Function(
   bool retained,
 );
 
-typedef ComicDetailsMigrationOpener = Future<void> Function(
-  LibraryComic comic,
-);
-typedef ComicDetailsVersionsOpener = Future<void> Function();
+typedef ComicDetailsVersionNoticeLoader =
+    Future<SourceComicVersion?> Function();
+typedef ComicDetailsVersionMigrator =
+    Future<void> Function(SourceComicVersion version);
 
 typedef ComicDetailsSourceWebViewOpener = Future<void> Function();
 typedef ComicDetailsSourceSettingsOpener = Future<void> Function();
@@ -228,8 +230,8 @@ final class LocalComicDetailsScreen extends StatefulWidget {
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
     this.onSearchMetadata,
-    this.onMigrateSource,
-    this.onOpenVersions,
+    this.loadVersionNotice,
+    this.onMigrateVersion,
     this.isCompatibilityChapter,
     this.previewMaxItemsPerRow = 4,
     this.traceSink = const NoopTraceSink(),
@@ -254,8 +256,8 @@ final class LocalComicDetailsScreen extends StatefulWidget {
   final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final ComicDetailsMetadataSearch? onSearchMetadata;
-  final ComicDetailsMigrationOpener? onMigrateSource;
-  final ComicDetailsVersionsOpener? onOpenVersions;
+  final ComicDetailsVersionNoticeLoader? loadVersionNotice;
+  final ComicDetailsVersionMigrator? onMigrateVersion;
   final ComicDetailsChapterCompatibilityMatcher? isCompatibilityChapter;
   final int previewMaxItemsPerRow;
   final TraceSink traceSink;
@@ -314,12 +316,14 @@ final class _LocalComicDetailsScreenState
 
   ComicPreviewSource? get _previewSource {
     final Object? candidate = widget.source;
-    return candidate is ComicPreviewSource ? candidate : null;
+    if (candidate is! ComicPreviewSource) return null;
+    return candidate as ComicPreviewSource;
   }
 
   ComicCommentSource? get _commentSource {
     final Object? candidate = widget.source;
-    return candidate is ComicCommentSource ? candidate : null;
+    if (candidate is! ComicCommentSource) return null;
+    return candidate as ComicCommentSource;
   }
 
   @override
@@ -861,9 +865,6 @@ final class _LocalComicDetailsScreenState
                 )
             : null;
     final failure = _failure;
-    final onMigrateSource = widget.onMigrateSource == null
-        ? null
-        : () => widget.onMigrateSource!(comic);
     if (failure != null && ordered.isEmpty) {
       return _ComicDetailsFailureScaffold(
         title: comic.title,
@@ -877,7 +878,6 @@ final class _LocalComicDetailsScreenState
             ? null
             : _recoverSourceAccess,
         onOpenSourceSettings: widget.onOpenSourceSettings,
-        onMigrateSource: onMigrateSource,
       );
     }
     return _ComicDetailsScaffold(
@@ -914,8 +914,8 @@ final class _LocalComicDetailsScreenState
       onDownloadComic:
           comic.sourceId == 'local-folder' ? null : _downloadComic,
       onReverse: () => setState(() => _descending = !_descending),
-      onMigrateSource: onMigrateSource,
-      onOpenVersions: widget.onOpenVersions,
+      loadVersionNotice: widget.loadVersionNotice,
+      onMigrateVersion: widget.onMigrateVersion,
       chapterCount: ordered.length,
       pageCount: catalogPages,
       pageCountPending: pageCountPending,
@@ -979,8 +979,8 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
     this.onOpenSourceSettings,
     this.resolveSource,
     this.onSearchMetadata,
-    this.onMigrateSource,
-    this.onOpenVersions,
+    this.loadVersionNotice,
+    this.onMigrateVersion,
     this.isCompatibilityChapter,
     this.previewMaxItemsPerRow = 4,
     this.sameComicIdentity = _exactComicIdentity,
@@ -1008,8 +1008,8 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final ComicDetailsSourceResolver? resolveSource;
   final ComicDetailsMetadataSearch? onSearchMetadata;
-  final ComicDetailsVersionsOpener? onMigrateSource;
-  final ComicDetailsVersionsOpener? onOpenVersions;
+  final ComicDetailsVersionNoticeLoader? loadVersionNotice;
+  final ComicDetailsVersionMigrator? onMigrateVersion;
   final ComicDetailsChapterCompatibilityMatcher? isCompatibilityChapter;
   final int previewMaxItemsPerRow;
   final ComicDetailsIdentityMatcher sameComicIdentity;
@@ -1154,18 +1154,23 @@ final class _RemoteComicDetailsScreenState
 
   ComicPreviewSource? get _previewSource {
     final Object? candidate = _currentSource;
-    return candidate is ComicPreviewSource ? candidate : null;
+    if (candidate is! ComicPreviewSource) return null;
+    return candidate as ComicPreviewSource;
   }
 
   ComicCommentSource? get _commentSource {
     final Object? candidate = _currentSource;
-    return candidate is ComicCommentSource ? candidate : null;
+    if (candidate is! ComicCommentSource) return null;
+    return candidate as ComicCommentSource;
   }
 
   Future<ComicPreviewPage> _loadRemotePreview(String? nextToken) async {
-    final candidate = await _sourceForOperation();
-    final source = candidate is ComicPreviewSource ? candidate : null;
-    if (source == null || !source.supportsComicPreview) {
+    final Object candidate = await _sourceForOperation();
+    if (candidate is! ComicPreviewSource) {
+      throw StateError('漫画源当前不支持预览');
+    }
+    final source = candidate as ComicPreviewSource;
+    if (!source.supportsComicPreview) {
       throw StateError('漫画源当前不支持预览');
     }
     return source.loadComicPreview(
@@ -1178,9 +1183,12 @@ final class _RemoteComicDetailsScreenState
     required int page,
     String? replyTo,
   }) async {
-    final candidate = await _sourceForOperation();
-    final source = candidate is ComicCommentSource ? candidate : null;
-    if (source == null || !source.supportsComicComments) {
+    final Object candidate = await _sourceForOperation();
+    if (candidate is! ComicCommentSource) {
+      throw StateError('漫画源当前不支持评论');
+    }
+    final source = candidate as ComicCommentSource;
+    if (!source.supportsComicComments) {
       throw StateError('漫画源当前不支持评论');
     }
     return source.loadComicComments(
@@ -1691,8 +1699,10 @@ final class _RemoteComicDetailsScreenState
       );
     }
     final manifest = _manifest;
-    final chapters = manifest?.chapters.toList(growable: false) ??
-        const <Chapter>[];
+    final chapters = _withoutCompatibilityFallback(
+      manifest?.chapters ?? const <Chapter>[],
+      widget.isCompatibilityChapter,
+    );
     final sortedChapters = chapters.toList(growable: false)
       ..sort(_compareChapters);
     final ordered = _descending
@@ -1745,8 +1755,8 @@ final class _RemoteComicDetailsScreenState
       onOpenSourceWebView: widget.onOpenSourceWebView,
       onOpenSourceSettings: widget.onOpenSourceSettings,
       onSearchMetadata: widget.onSearchMetadata,
-      onMigrateSource: widget.onMigrateSource,
-      onOpenVersions: widget.onOpenVersions,
+      loadVersionNotice: widget.loadVersionNotice,
+      onMigrateVersion: widget.onMigrateVersion,
       onPreferenceChanged: _savePreference,
       progressLabel: _readingProgressLabel(_library.chapters),
       onContinueReading: _latestReadingEntry(_library.chapters) == null

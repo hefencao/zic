@@ -45,6 +45,12 @@ void main() {
     );
     expect(predecessors.single.successorComicId, relation.successorComicId);
     expect(predecessors.single.predecessorTitle, relation.predecessorTitle);
+    final successors = await reopened.listComicVersionSuccessors(
+      relation.sourceId,
+      relation.predecessorComicId,
+    );
+    expect(successors, hasLength(1));
+    expect(successors.single.successorComicId, relation.successorComicId);
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
     expect(db.select('PRAGMA user_version').single.values.single, 7);

@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.145`
-**App build：** `0.31.0+145`
+**源码版本：** `0.31.0-dev.146`
+**App build：** `0.31.0+146`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -9,7 +9,7 @@
 
 ## 当前实现
 
-- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=145`。
+- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=146`。
 - 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
 - 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation
   不阻塞 Home primary，外部 source ready 后增量接入；失败封面仅按稳定资源 identity、显式 retry revision 或 App resume 恢复，loader closure identity 不参与重试。
@@ -20,11 +20,7 @@
   兼容读取已删除。来源确认过的 canonical comic identity 会持久化到 SavedComic 元数据，
   让冷启动在插件未激活时也能只读归并同源旧/新 raw ID；首页/书架等导航页 lazy 构建，
   首屏不再创建隐藏页面的第二套封面 loader。
-- 详情页 AppBar 不再重复显示漫画标题；保存过进度时提供可操作的药丸形“继续”按钮，
-  阅读历史与按钮同一行并位于章节总数行上方，带时钟图标。详情页提供同源版本入口和迁移入口，Venera 版本入口
-  复用运行时网络/Cookie 按 `#gnd` 关系读取，不再走标题 browse；迁移面板显示当前
-  插件/来源，并允许同一 source 下不同原生 comic ID 的版本替换；目标写入和章节身份校验
-  完成后才清理旧版本记录；已发现的新版关系写入 `ComicVersionRelationStore`，迁移面板会显示旧版。
+- 详情页 AppBar 不再重复显示漫画标题，也不再保留“查看同源版本/迁移漫画源”旧图标。来源确认 successor 时，正文顶部显示单一“有新版本”提示并进入统一比较确认；predecessor 只作为关系证据。`ComicVersionRelationStore` 支持双向查询，Reader 对每个 source/predecessor/successor 仅首次提醒。迁移允许同一 source 下不同 raw comic ID，但只有精确章节 identity 复制阅读状态，sequence-only 候选不迁移状态。
 - App-owned modal panel 的操作行统一使用左下角 X 关闭，右侧保留确认/保存/删除动作，
   已移除取消文字按钮。
 - Venera 运行时登录请求已兼容 Android 解码后的嵌套 Map，不再把 credentials/cookies/web
@@ -33,7 +29,7 @@
   统一 artwork cache，未声明能力的来源不会触发对应插件请求。
 - 漫画源浏览页使用来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态仅以 chip 背景色区分，不显示 JS/插件图标。切换 source 时先按目标请求 identity 投影目标缓存，精确缓存缺失时使用目标 source 最近缓存，绝不保留旧 source 卡片。页码位于滚动尾部，左下浮动搜索保留持久历史；展开搜索优先消费返回和垂直滑动手势，Mihon `getFilterList()` 的 CheckBox/TriState/Select/Group 子项以 opaque 过滤标签显示。catalog 缓存先显示、后台刷新且数据不变时不重建；边缘下拉达到阈值后保留当前列表执行强制来源刷新。Mihon 已安装与仓库插件列表继续按声明/source metadata 的规范化语言筛选。
 - 详情页与漫画源页共用同一个可见的顶部边缘下拉刷新组件：`onEdge`、位移 72、保留旧内容后台刷新。
-- Android 可见浏览器 Cookie snapshot 以 `updatedAt` 为 revision，每个 runtime 进程/站点/UA 只导入一次；运行时随后收到的 Cookie 不再被旧 snapshot 每请求覆盖。平台 runtime 对 retryable lifecycle response（包括 `runtime-closing`）原地重新激活并重试一次。已打开的远程详情页按稳定 source ID 解析当前 active adapter，插件重启后预览、评论、章节确保、缓存失效和验证入口不继续使用关闭的旧 session。
+- Android 可见浏览器 Cookie snapshot 以 `updatedAt` 为 revision，每个 runtime 进程/站点/UA 只导入一次。WebView 验证返回后目标 source 会重启；新 Mihon runtime 清空进程内 import revision，使第一个真实 request 按实际 host/UA 导入最新同站 snapshot。平台 runtime 对 retryable lifecycle response 原地重新激活并重试一次；已打开详情页按稳定 source ID 解析当前 adapter。
 - catalog response cache 使用稳定 source/comic/chapter identity 和结构 weight；页面正文不进入该缓存。
 - Home“更新漫画”已与阅读历史分离：只展示 `inShelf` 漫画并按 `SavedComicRecord.updatedAt`
   排序；Reader 在页码/模式变化、App lifecycle 暂停和 route dispose 时写入进度，
@@ -74,7 +70,7 @@
 |---|---|
 | repository/documentation/Dart static gates | Verified-static |
 | current-code documentation consistency gate | Verified-static |
-| dev.75–dev.145 ownership gates | Verified-static |
+| dev.75–dev.146 ownership gates | Verified-static |
 | Android/Mihon/Venera/Reader/Pipeline/UI contracts | Verified-static / toolchain |
 | Kotlin texture bridge compile stub | Verified-toolchain |
 | pinned libwebp host build/smoke | Unverified：当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip` |

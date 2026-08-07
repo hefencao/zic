@@ -1,5 +1,12 @@
 # zic Implementation Plan
 
+## P0：身份、同源更新与验证设备闭环
+
+- 使用真实 Venera/E-Hentai successor 检查详情“有新版本”、统一比较确认和 Reader 首次提醒；确认换 successor 后再次提醒。
+- 验证同源迁移只复制 exact chapter identity；sequence-only 候选不复制阅读状态或 artifact。
+- 在禁漫天堂完成 WebView 验证后确认 source restart 的首个实际 request 导入最新 same-site snapshot，且不会因为浏览器页面已经正常而错误跳过 handoff。
+- 使用真实章节目录检查 SavedComic、ImportedChapter 与远程详情都不再保留“开始阅读/正文”synthetic chapter。
+
 ## P0：来源投影、Cloudflare 与封面身份设备闭环
 
 - 在 Venera/Mihon 多次切换且目标请求失败时，确认页面在同一帧切换为目标缓存或目标 loading/error，绝不显示旧 source 卡片。

@@ -28,6 +28,12 @@ void main() {
     );
     expect(predecessors.single.successorComicId, relation.successorComicId);
     expect(predecessors.single.predecessorTitle, relation.predecessorTitle);
+    final successors = await store.listComicVersionSuccessors(
+      relation.sourceId,
+      relation.predecessorComicId,
+    );
+    expect(successors, hasLength(1));
+    expect(successors.single.successorComicId, relation.successorComicId);
   });
 
   test('memory imported library stores chapters and latest progress', () async {

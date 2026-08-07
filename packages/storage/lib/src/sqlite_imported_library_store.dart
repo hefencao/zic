@@ -629,6 +629,30 @@ final class SqliteImportedLibraryStore
   }
 
   @override
+  Future<List<ComicVersionRelation>> listComicVersionSuccessors(
+    String sourceId,
+    String predecessorComicId,
+  ) async {
+    final rows = _requireDb().select('''
+      SELECT source_id, predecessor_comic_id, successor_comic_id,
+             predecessor_title
+      FROM comic_version_relation
+      WHERE source_id = ? AND predecessor_comic_id = ?
+      ORDER BY discovered_us DESC, successor_comic_id
+    ''', <Object?>[sourceId, predecessorComicId]);
+    return rows
+        .map(
+          (row) => ComicVersionRelation(
+            sourceId: row['source_id']! as String,
+            predecessorComicId: row['predecessor_comic_id']! as String,
+            successorComicId: row['successor_comic_id']! as String,
+            predecessorTitle: row['predecessor_title']! as String,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  @override
   Future<void> saveComicVersionRelation(ComicVersionRelation relation) async {
     if (relation.sourceId.trim().isEmpty ||
         relation.predecessorComicId.trim().isEmpty ||
@@ -1491,5 +1515,9 @@ void _createComicVersionRelationTable(sql.Database db) {
   db.execute('''
     CREATE INDEX IF NOT EXISTS comic_version_relation_successor
     ON comic_version_relation(source_id, successor_comic_id, discovered_us DESC)
+  ''');
+  db.execute('''
+    CREATE INDEX IF NOT EXISTS comic_version_relation_predecessor
+    ON comic_version_relation(source_id, predecessor_comic_id, discovered_us DESC)
   ''');
 }

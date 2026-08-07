@@ -104,6 +104,13 @@ final class ComicReaderSettings {
 String comicReaderSettingsIdentity(String sourceId, String comicId) =>
     '$sourceId\u0000$comicId';
 
+String comicVersionNoticeIdentity(
+  String sourceId,
+  String predecessorComicId,
+  String successorComicId,
+) =>
+    '$sourceId\u0000$predecessorComicId\u0000$successorComicId';
+
 /// Application-level preferences that are safe for Presentation to observe.
 ///
 /// This controller owns only small user choices. It does not own cache files,
@@ -122,6 +129,7 @@ final class AppPreferencesController extends ChangeNotifier {
   bool _defaultVerticalStitch = false;
   int _detailsPreviewMaxItemsPerRow = 4;
   List<String> _sourceSearchHistory = <String>[];
+  Set<String> _acknowledgedComicVersionNotices = <String>{};
   Map<String, ComicReaderSettings> _comicReaderSettings =
       <String, ComicReaderSettings>{};
   Future<void> Function(Map<String, Object?> values)? _write;
@@ -141,6 +149,8 @@ final class AppPreferencesController extends ChangeNotifier {
   int get detailsPreviewMaxItemsPerRow => _detailsPreviewMaxItemsPerRow;
   List<String> get sourceSearchHistory =>
       List<String>.unmodifiable(_sourceSearchHistory);
+  Set<String> get acknowledgedComicVersionNotices =>
+      Set<String>.unmodifiable(_acknowledgedComicVersionNotices);
   Map<String, ComicReaderSettings> get comicReaderSettings =>
       Map<String, ComicReaderSettings>.unmodifiable(_comicReaderSettings);
 
@@ -215,6 +225,10 @@ final class AppPreferencesController extends ChangeNotifier {
     );
     _sourceSearchHistory = _decodeSearchHistory(
       values['sourceSearchHistory'],
+    );
+    _acknowledgedComicVersionNotices = _decodeIdentitySet(
+      values['acknowledgedComicVersionNotices'],
+      maxItems: 512,
     );
     _comicReaderSettings = _decodeComicReaderSettings(
       values['comicReaderSettings'],
@@ -315,6 +329,39 @@ final class AppPreferencesController extends ChangeNotifier {
     _changed();
   }
 
+  bool hasAcknowledgedComicVersionNotice(
+    String sourceId,
+    String predecessorComicId,
+    String successorComicId,
+  ) =>
+      _acknowledgedComicVersionNotices.contains(
+        comicVersionNoticeIdentity(
+          sourceId,
+          predecessorComicId,
+          successorComicId,
+        ),
+      );
+
+  void acknowledgeComicVersionNotice(
+    String sourceId,
+    String predecessorComicId,
+    String successorComicId,
+  ) {
+    if (_disposed) return;
+    final identity = comicVersionNoticeIdentity(
+      sourceId,
+      predecessorComicId,
+      successorComicId,
+    );
+    if (_acknowledgedComicVersionNotices.contains(identity)) return;
+    final next = <String>{..._acknowledgedComicVersionNotices, identity};
+    while (next.length > 512) {
+      next.remove(next.first);
+    }
+    _acknowledgedComicVersionNotices = next;
+    _changed();
+  }
+
   void setComicReaderSettings(
     String sourceId,
     String comicId,
@@ -371,7 +418,7 @@ final class AppPreferencesController extends ChangeNotifier {
     final write = _write;
     if (write == null) return;
     await write(<String, Object?>{
-      'version': 4,
+      'version': 5,
       'themeMode': _themeMode.name,
       'debugTraceEnabled': _debugTraceEnabled,
       'shelfSourceFilter': _shelfSourceFilter.name,
@@ -383,6 +430,8 @@ final class AppPreferencesController extends ChangeNotifier {
       'defaultVerticalStitch': _defaultVerticalStitch,
       'detailsPreviewMaxItemsPerRow': _detailsPreviewMaxItemsPerRow,
       'sourceSearchHistory': _sourceSearchHistory,
+      'acknowledgedComicVersionNotices':
+          _acknowledgedComicVersionNotices.toList(growable: false),
       'comicReaderSettings': <String, Object?>{
         for (final entry in _comicReaderSettings.entries)
           entry.key: entry.value.toJson(),
@@ -461,6 +510,20 @@ List<String> _decodeSearchHistory(Object? raw) {
     }
     result.add(normalized);
     if (result.length == 20) break;
+  }
+  return result;
+}
+
+Set<String> _decodeIdentitySet(
+  Object? raw, {
+  required int maxItems,
+}) {
+  if (raw is! List) return <String>{};
+  final result = <String>{};
+  for (final value in raw) {
+    if (value is! String || value.isEmpty) continue;
+    result.add(value);
+    if (result.length == maxItems) break;
   }
   return result;
 }

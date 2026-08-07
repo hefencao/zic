@@ -122,7 +122,7 @@ Home 的“更新漫画”投影只取已在书架中的漫画，并按持久化
 同源版本入口优先使用来源暴露的 `ComicVersionSource`；Venera 适配器复用自身运行时网络与
 Cookie 会话，按当前详情页 `#gnd` 关系生成版本，不把 Venera 当作标题 `browse` 搜索，避免
 触发浏览器权限错误。来源确认的前后版本关系由 `ComicVersionRelationStore` 持久化，因此当前
-新版详情页也能显示已发现的旧版；没有来源专属版本能力时才回退到普通 `browse` 候选。迁移计划允许相同
+详情页只显示来源确认的 successor “有新版本”提示；不再将 predecessor、标题 browse 候选或旧版列表作为操作入口。迁移计划允许相同
 `sourceId` 下不同的原生 `comicId`，因此可处理 E-Hentai URL/gallery locator 变化。迁移只复制
 经过精确章节匹配验证的偏好、阅读位置和已读状态，并先完成目标写入；同源替换随后清理旧漫画
 记录，跨源迁移保留原来源。迁移面板始终展示当前插件和来源，目标可为当前来源或其他已启用来源。
@@ -310,6 +310,18 @@ Reader Host 从 `PipelineReaderSessionFactory.acquire` 获取资源会话并在�
 | `coverUri` / `coverSourceId` | 图片 locator | `Comic.coverUri` 或本地/导入记录里的 cover locator，只告诉 loader 去哪里取图；它不是 raw 漫画身份。对 `comicId != null` 的封面响应，当前 key 有意只使用 `[sourceId, comicId, role=cover]`，不把 URL 放入 key。 |
 | `previewUri` | 预览项 locator 和绘制身份 | 详情预览完整 URI（包括 Venera `@x/y` 裁剪后缀）保留在预览项、widget 和 painter 中；编码字节缓存及实际请求使用去掉 `@x/y` 的 base URI。 |
 | `resourceRole` | 漫画图片角色 | 封面为 `cover`；详情预览为 `preview:<base previewUri>`；其他带 URI 的 artwork 角色同样使用 base URI。它与 source/raw comic ID 一起进入图片响应 key。 |
+
+### 11.2 同源版本与迁移身份
+
+同源版本必须区分以下身份，任何一层都不得用标题或 URL 字符串替代：
+
+- **raw locator identity**：`sourceId + raw comicId`，是插件请求、SavedComic、章节归属和迁移前后实体的真实定位身份；同一来源的新旧版本必须保留不同 raw comicId。
+- **canonical comparison identity**：来源确认的同源等价比较值，只用于归并重复投影和比较候选；它不能替换 raw locator，也不能直接改写章节、页面或下载 key。
+- **version relation identity**：`sourceId + predecessorComicId + successorComicId`。关系必须由 `ComicVersionSource` 或已持久化的来源确认结果产生；标题搜索结果不能自动成为版本关系。
+- **chapter/page identity**：章节始终为 `sourceId + chapterId`，Reader 页面为 `sourceId + comicId + chapterId + pageId`。迁移时只有章节原生 identity 精确匹配才复制阅读进度和已读状态；**sequence-only** 匹配仅显示在比较报告中，不复制状态。
+- **presentation identity**：Flutter key、详情提示和 Reader 一次性提醒只能引用上述稳定复合身份；Widget key、当前章节、封面 URL、按钮状态和 runtime adapter 对象都不是持久身份。
+
+同源 successor 发现后先写入 `ComicVersionRelationStore`。详情页只显示一个“有新版本”提示，点击后进入统一比较与确认流程；predecessor 关系只作为历史证据，不生成“旧版”操作按钮。Reader 仅在已保存 successor 关系存在时首次提醒，不在进入 Reader 时联网。确认替换后，新 raw locator 成为新实体；旧版本的离线字节不按 URL 或页码盲目迁移，只有 checksum/source page key/content hash 支持的 artifact 才允许复用。
 
 稳定响应 key 的编码由 `encodeStableCacheKey` 负责：使用 `zic-key-v1:` 前缀和长度前缀组件，
 因此 URL 中的 `/`、`:`、`@` 等字符不会造成分隔符碰撞。当前图片 key 的实际关系如下：

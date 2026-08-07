@@ -1734,8 +1734,8 @@ final class SourceComicDetailsScreen extends StatelessWidget {
     this.onOpenSourceSettings,
     this.resolveSource,
     this.onSearchMetadata,
-    this.onMigrateSource,
-    this.onOpenVersions,
+    this.loadVersionNotice,
+    this.onMigrateVersion,
     this.sameComicIdentity,
     this.isCompatibilityChapter,
     this.previewMaxItemsPerRow = 4,
@@ -1763,8 +1763,8 @@ final class SourceComicDetailsScreen extends StatelessWidget {
   final details.ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final details.ComicDetailsSourceResolver? resolveSource;
   final details.ComicDetailsMetadataSearch? onSearchMetadata;
-  final details.ComicDetailsVersionsOpener? onMigrateSource;
-  final details.ComicDetailsVersionsOpener? onOpenVersions;
+  final details.ComicDetailsVersionNoticeLoader? loadVersionNotice;
+  final details.ComicDetailsVersionMigrator? onMigrateVersion;
   final details.ComicDetailsIdentityMatcher? sameComicIdentity;
   final details.ComicDetailsChapterCompatibilityMatcher?
       isCompatibilityChapter;
@@ -1793,8 +1793,8 @@ final class SourceComicDetailsScreen extends StatelessWidget {
       onOpenSourceSettings: onOpenSourceSettings,
       resolveSource: resolveSource,
       onSearchMetadata: onSearchMetadata,
-      onMigrateSource: onMigrateSource,
-      onOpenVersions: onOpenVersions,
+      loadVersionNotice: loadVersionNotice,
+      onMigrateVersion: onMigrateVersion,
       isCompatibilityChapter: isCompatibilityChapter,
       previewMaxItemsPerRow: previewMaxItemsPerRow,
       sameComicIdentity: sameComicIdentity ?? (left, right) => left == right,

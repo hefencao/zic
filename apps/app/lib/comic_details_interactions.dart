@@ -21,7 +21,6 @@ final class _ComicDetailsFailureScaffold extends StatelessWidget {
     required this.refreshing,
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
-    this.onMigrateSource,
   });
 
   final String title;
@@ -33,7 +32,6 @@ final class _ComicDetailsFailureScaffold extends StatelessWidget {
   final bool refreshing;
   final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
-  final VoidCallback? onMigrateSource;
 
   @override
   Widget build(BuildContext context) {
@@ -47,13 +45,6 @@ final class _ComicDetailsFailureScaffold extends StatelessWidget {
               tooltip: '在 WebView 中访问该漫画详情页',
               onPressed: () => unawaited(onOpenSourceWebView!()),
               icon: const Icon(Icons.public),
-            ),
-          if (onMigrateSource != null)
-            IconButton(
-              key: comicDetailsMigrateKey,
-              tooltip: '迁移漫画源',
-              onPressed: onMigrateSource,
-              icon: const Icon(Icons.swap_horiz),
             ),
           _ComicDetailsMiscMenu(comicId: comicId, title: title),
           if (onOpenSourceSettings != null)
@@ -100,8 +91,8 @@ final class _ComicDetailsScaffold extends StatefulWidget {
     required this.pageCount,
     this.pageCountPending = false,
     required this.chapterList,
-    this.onMigrateSource,
-    this.onOpenVersions,
+    this.loadVersionNotice,
+    this.onMigrateVersion,
     this.previewSection,
     this.commentsSection,
   });
@@ -132,8 +123,8 @@ final class _ComicDetailsScaffold extends StatefulWidget {
   final int pageCount;
   final bool pageCountPending;
   final Widget chapterList;
-  final VoidCallback? onMigrateSource;
-  final ComicDetailsVersionsOpener? onOpenVersions;
+  final ComicDetailsVersionNoticeLoader? loadVersionNotice;
+  final ComicDetailsVersionMigrator? onMigrateVersion;
   final Widget? previewSection;
   final Widget? commentsSection;
 
@@ -154,20 +145,6 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
               tooltip: '在 WebView 中访问该漫画详情页',
               onPressed: () => unawaited(widget.onOpenSourceWebView!()),
               icon: const Icon(Icons.public),
-            ),
-          if (widget.onOpenVersions != null)
-            IconButton(
-              key: comicDetailsVersionsKey,
-              tooltip: '查看同源版本',
-              onPressed: () => unawaited(widget.onOpenVersions!()),
-              icon: const Icon(Icons.collections_bookmark_outlined),
-            ),
-          if (widget.onMigrateSource != null)
-            IconButton(
-              key: comicDetailsMigrateKey,
-              tooltip: '迁移漫画源',
-              onPressed: widget.onMigrateSource,
-              icon: const Icon(Icons.swap_horiz),
             ),
           _ComicDetailsMiscMenu(comicId: widget.comicId, title: widget.title),
           if (widget.onOpenSourceSettings != null)
@@ -206,6 +183,18 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
                     ),
                   ),
                 ),
+                if (widget.loadVersionNotice != null &&
+                    widget.onMigrateVersion != null)
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                    sliver: SliverToBoxAdapter(
+                      child: _ComicDetailsVersionNotice(
+                        key: comicDetailsVersionNoticeKey,
+                        load: widget.loadVersionNotice!,
+                        onOpen: widget.onMigrateVersion!,
+                      ),
+                    ),
+                  ),
                 if (widget.onContinueReading != null)
                   SliverPadding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
@@ -279,6 +268,71 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
           ),
         ),
       ),
+    );
+  }
+}
+
+final class _ComicDetailsVersionNotice extends StatefulWidget {
+  const _ComicDetailsVersionNotice({
+    required this.load,
+    required this.onOpen,
+    super.key,
+  });
+
+  final ComicDetailsVersionNoticeLoader load;
+  final ComicDetailsVersionMigrator onOpen;
+
+  @override
+  State<_ComicDetailsVersionNotice> createState() =>
+      _ComicDetailsVersionNoticeState();
+}
+
+final class _ComicDetailsVersionNoticeState
+    extends State<_ComicDetailsVersionNotice> {
+  late Future<SourceComicVersion?> _notice;
+  bool _opening = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _notice = widget.load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<SourceComicVersion?>(
+      future: _notice,
+      builder: (context, snapshot) {
+        final version = snapshot.data;
+        if (version == null) return const SizedBox.shrink();
+        final details = <String>[
+          if (version.title.trim().isNotEmpty) version.title.trim(),
+          if (version.date?.trim().isNotEmpty == true) version.date!.trim(),
+          if (version.title.trim().isEmpty) version.comicId,
+        ];
+        return Card(
+          margin: EdgeInsets.zero,
+          child: ListTile(
+            leading: const Icon(Icons.new_releases_outlined),
+            title: const Text('有新版本'),
+            subtitle: details.isEmpty ? null : Text(details.join(' · ')),
+            trailing: FilledButton.tonal(
+              key: comicDetailsVersionActionKey,
+              onPressed: _opening
+                  ? null
+                  : () async {
+                      setState(() => _opening = true);
+                      try {
+                        await widget.onOpen(version);
+                      } finally {
+                        if (mounted) setState(() => _opening = false);
+                      }
+                    },
+              child: const Text('查看更新'),
+            ),
+          ),
+        );
+      },
     );
   }
 }

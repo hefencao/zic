@@ -1,6 +1,6 @@
-# dev.145 后续交接
+# dev.146 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.145_target-source-cache-cover-identity-cloudflare.zip`。
+唯一后续基线：`zic_v0.31.0-dev.146_identity-version-notice-cloudflare-synthetic.zip`。
 
 ## 必读
 
@@ -21,8 +21,9 @@
 15. `docs/adr/0128-cover-stability-preview-rows-cookie-runtime-refresh.md`
 16. `docs/adr/0129-cover-first-frame-detail-source-and-layout.md`
 17. `docs/adr/0130-target-source-cache-cover-identity-and-cloudflare-fallback.md`
-18. `docs/audits/dev145-target-source-cover-cloudflare-audit.md`
-19. `docs/audits/dev145-validation-results.md`
+18. `docs/adr/0131-identity-version-notice-synthetic-and-cloudflare-handoff.md`
+19. `docs/audits/dev146-identity-version-synthetic-cloudflare-audit.md`
+20. `docs/audits/dev146-validation-results.md`
 
 ## 当前代码事实
 
@@ -38,6 +39,8 @@
 - 浏览页使用 catalog cache-first/background-refresh；稳定字段无变化时不更新。边缘下拉达到阈值后调用强制刷新，保留现有内容直到新结果到达。
 - 详情预览按原顺序装箱：实际行内含横图则最多 2 张、纯竖图则最多 3 张；只在相邻三个候选内做最小局部重排；设置项仍是更严格上限。行宽直接用于反算等面积 tile，内部无 Card/水平 padding，完整行铺满媒体宽度，只有稀疏末行允许放大到参考完整行面积的 2.4 倍。
 - Android 使用默认 platform channel、单 blit lane 和 fresh used texture lifecycle。可见浏览器 Cookie snapshot 按 revision 每 runtime/站点/UA 只导入一次；retryable runtime lifecycle envelope 会重新激活并重试一次。远程详情页通过稳定 source ID 获取当前 active adapter，不保留插件重启前的关闭 session。
+- 同源版本关系按 source/predecessor/successor 复合身份双向查询；详情只显示 successor 更新提示，Reader 仅首次提醒，旧版/迁移 AppBar 按钮已删除。
+- 真实 Mihon 章节存在时，manifest/SavedComic/imported entry/UI 四层都不得保留 synthetic “开始阅读/正文”。
 - Native identity 保持 `zic-media-core-dev134-abi6-lib00121400`。
 - 当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip`；不得从旧版本偷偷补入，除非用户提供或明确指定来源。
 

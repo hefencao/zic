@@ -1051,11 +1051,16 @@ final class _DemoHomeState extends State<DemoHome> {
             },
           ),
         );
-        _rejectCatalogRegression(existing: existing, incoming: manifest);
-        final changed = _manifestContentChanged(existing, manifest);
+        final persistedManifest = _withoutSyntheticMihonFallback(manifest);
+        _rejectCatalogRegression(
+          existing: existing,
+          incoming: persistedManifest,
+        );
+        await _removePersistedSyntheticChapters(persistedManifest);
+        final changed = _manifestContentChanged(existing, persistedManifest);
         await _library.upsertSavedComic(
           SavedComicRecord.fromManifest(
-            manifest,
+            persistedManifest,
             canonicalComicId: _canonicalComicIdForPersistence(
               manifest.comic.sourceId,
               manifest.comic.comicId,

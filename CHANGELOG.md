@@ -1,3 +1,13 @@
+## 0.31.0-dev.146：统一来源身份并收口同源更新与验证会话
+
+- Preview/Comment capability 调用全部使用局部 `Object` 与显式 `as` 收窄，不依赖 getter/异步闭包自动提升。
+- 真实 Mihon 章节存在时，在远程详情、SavedComic 持久目录和 imported chapter 三层删除“开始阅读/正文”兼容章节。
+- 浏览器验证返回后重启目标 source；Mihon runtime 清空进程内 snapshot-import revision，使实际请求按当前 host/UA 导入最新同站 Cookie。
+- `ComicVersionRelationStore` 增加 predecessor→successor 查询；详情页显示单一“有新版本”提示，Reader 首次提醒，移除旧版/新版列表及 AppBar 迁移按钮。
+- AppPreferences schema v5 持久化每个 source/predecessor/successor 的 Reader 提醒确认。
+- Architecture 补充 raw locator、canonical comparison、version relation、presentation 与 migration identity 对照。
+- 新增 ADR 0131、dev.146 审计与静态门禁。
+
 ## 0.31.0-dev.145：原子切换来源缓存并修复封面所有权与验证回退
 
 - 漫画源切换时立即按目标 source 的精确请求缓存或最近缓存替换页面投影；请求失败不再继续显示旧插件结果。

@@ -73,8 +73,10 @@ for token in (
 ):
     require(views, token, 'stable Home cover owners')
 for token in (
-    'candidate is ComicPreviewSource ? candidate : null',
-    'candidate is ComicCommentSource ? candidate : null',
+    'if (candidate is! ComicPreviewSource) return null;',
+    'return candidate as ComicPreviewSource;',
+    'if (candidate is! ComicCommentSource) return null;',
+    'return candidate as ComicCommentSource;',
 ):
     require(details, token, 'detail capability compile closure')
 require(check, 'test_dev145_source_target_cache_cloudflare_cover_identity.py', 'repository check')

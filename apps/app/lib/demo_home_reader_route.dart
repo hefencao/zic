@@ -7,6 +7,65 @@ typedef _PreparedImportedChapter = ({
   int? initialPageIndex,
 });
 
+final class _ReaderComicVersionNoticeGate extends StatefulWidget {
+  const _ReaderComicVersionNoticeGate({
+    required this.sourceId,
+    required this.comicId,
+    required this.preferences,
+    required this.loadSuccessor,
+    required this.child,
+  });
+
+  final String sourceId;
+  final String comicId;
+  final AppPreferencesController preferences;
+  final Future<ComicVersionRelation?> Function() loadSuccessor;
+  final Widget child;
+
+  @override
+  State<_ReaderComicVersionNoticeGate> createState() =>
+      _ReaderComicVersionNoticeGateState();
+}
+
+final class _ReaderComicVersionNoticeGateState
+    extends State<_ReaderComicVersionNoticeGate> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_check());
+  }
+
+  Future<void> _check() async {
+    final relation = await widget.loadSuccessor();
+    if (!mounted || relation == null) return;
+    if (widget.preferences.hasAcknowledgedComicVersionNotice(
+      widget.sourceId,
+      widget.comicId,
+      relation.successorComicId,
+    )) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      if (messenger == null) return;
+      widget.preferences.acknowledgeComicVersionNotice(
+        widget.sourceId,
+        widget.comicId,
+        relation.successorComicId,
+      );
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('发现同源新版本，可在漫画详情页查看更新'),
+        ),
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
+}
+
 extension _DemoHomeReaderRouteComposition on _DemoHomeState {
   Widget _buildImportedChapterScreen(_PreparedImportedChapter prepared) {
     final current = prepared.entry;
@@ -36,7 +95,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
                 widget.preferences.defaultReaderMode,
             updatedAt: DateTime.now().toUtc(),
           );
-    return ImportedImageChapterScreen(
+    final screen = ImportedImageChapterScreen(
       record: current.chapter,
       byteLoaders: prepared.byteLoaders,
       responseLoaders: prepared.responseLoaders,
@@ -84,6 +143,21 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
           currentPreference.copyWith(collected: favorite),
         );
       },
+    );
+    return _ReaderComicVersionNoticeGate(
+      sourceId: current.chapter.sourceId,
+      comicId: current.chapter.comicId,
+      preferences: widget.preferences,
+      loadSuccessor: () async {
+        final store = _comicVersionRelationStore();
+        if (store == null) return null;
+        final relations = await store.listComicVersionSuccessors(
+          current.chapter.sourceId,
+          current.chapter.comicId,
+        );
+        return relations.isEmpty ? null : relations.first;
+      },
+      child: screen,
     );
   }
 }

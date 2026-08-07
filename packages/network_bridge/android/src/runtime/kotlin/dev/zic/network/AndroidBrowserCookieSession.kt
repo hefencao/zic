@@ -17,6 +17,24 @@ object AndroidBrowserCookieSession {
     private val importedSnapshotRevisions = mutableMapOf<String, Long>()
 
     @Synchronized
+    fun resetAllImports() {
+        importedSnapshotRevisions.clear()
+    }
+
+    @Synchronized
+    fun resetImport(
+        url: String,
+        expectedUserAgent: String? = null,
+    ) {
+        val host = runCatching { URI(url).host.orEmpty().lowercase() }
+            .getOrDefault("")
+        if (host.isBlank()) return
+        importedSnapshotRevisions.remove(
+            "$host\u0000${expectedUserAgent.orEmpty()}",
+        )
+    }
+
+    @Synchronized
     fun importCookies(
         context: Context,
         url: String,

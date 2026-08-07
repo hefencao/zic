@@ -129,6 +129,11 @@ void main() {
     controller.setShelfSortMode(LibrarySortMode.custom);
     controller.setDetailsPreviewMaxItemsPerRow(4);
     controller.rememberSourceSearch('Gamma');
+    controller.acknowledgeComicVersionNotice(
+      'source-a',
+      'comic-old',
+      'comic-new',
+    );
     controller.setComicReaderSettings(
       'source-b',
       'comic-b',
@@ -142,9 +147,15 @@ void main() {
 
     expect(written?['themeMode'], 'dark');
     expect(written?['shelfSortMode'], 'custom');
-    expect(written?['version'], 4);
+    expect(written?['version'], 5);
     expect(written?['detailsPreviewMaxItemsPerRow'], 4);
     expect((written?['sourceSearchHistory']! as List).first, 'Gamma');
+    expect(
+      written?['acknowledgedComicVersionNotices'],
+      contains(
+        comicVersionNoticeIdentity('source-a', 'comic-old', 'comic-new'),
+      ),
+    );
     final comicSettings = written?['comicReaderSettings']! as Map;
     expect(
       (comicSettings[comicReaderSettingsIdentity('source-b', 'comic-b')]
