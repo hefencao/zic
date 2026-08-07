@@ -1,7 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:plugin_host/plugin_host.dart';
 
-
 final class InstalledMihonExtension {
   InstalledMihonExtension({
     required this.packageName,
@@ -26,6 +25,58 @@ final class InstalledMihonExtension {
   final List<String> entryClasses;
 }
 
+
+final class InstalledMihonDiscoveryFailure {
+  const InstalledMihonDiscoveryFailure({
+    required this.packageName,
+    required this.displayName,
+    required this.stage,
+    required this.errorType,
+    required this.message,
+  });
+
+  final String packageName;
+  final String displayName;
+  final String stage;
+  final String errorType;
+  final String message;
+}
+
+final class InstalledMihonScan {
+  const InstalledMihonScan({
+    required this.extensions,
+    required this.failures,
+    required this.enumeratedPackageCount,
+    required this.candidatePackageCount,
+    required this.directProbeCount,
+    required this.directMatchCount,
+    required this.enumerationErrors,
+    required this.visibilityLimited,
+    required this.sharedExtensionOnly,
+  });
+
+  const InstalledMihonScan.empty()
+      : extensions = const <InstalledMihonExtension>[],
+        failures = const <InstalledMihonDiscoveryFailure>[],
+        enumeratedPackageCount = 0,
+        candidatePackageCount = 0,
+        directProbeCount = 0,
+        directMatchCount = 0,
+        enumerationErrors = const <String>[],
+        visibilityLimited = false,
+        sharedExtensionOnly = true;
+
+  final List<InstalledMihonExtension> extensions;
+  final List<InstalledMihonDiscoveryFailure> failures;
+  final int enumeratedPackageCount;
+  final int candidatePackageCount;
+  final int directProbeCount;
+  final int directMatchCount;
+  final List<String> enumerationErrors;
+  final bool visibilityLimited;
+  final bool sharedExtensionOnly;
+}
+
 /// Reads Mihon-compatible APK identity and ABI metadata without class loading.
 final class AndroidMihonApkMetadataReader implements MihonApkMetadataReader {
   const AndroidMihonApkMetadataReader({
@@ -35,13 +86,64 @@ final class AndroidMihonApkMetadataReader implements MihonApkMetadataReader {
   static const String _channelName = 'dev.zic/plugin_host_bridge';
   final MethodChannel _channel;
 
-  Future<List<InstalledMihonExtension>> listInstalled() async {
-    final values = await _channel.invokeListMethod<Object?>(
-      'listInstalledMihonExtensions',
+  Future<List<InstalledMihonExtension>> listInstalled({
+    Iterable<String> knownPackageNames = const <String>[],
+  }) async =>
+      (await scanInstalled(knownPackageNames: knownPackageNames)).extensions;
+
+  Future<InstalledMihonScan> scanInstalled({
+    Iterable<String> knownPackageNames = const <String>[],
+  }) async {
+    final packages = knownPackageNames
+        .map((value) => value.trim())
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList(growable: false)
+      ..sort();
+    final value = await _channel.invokeMapMethod<String, Object?>(
+      'scanInstalledMihonExtensions',
+      <String, Object?>{'knownPackageNames': packages},
     );
-    if (values == null) return const <InstalledMihonExtension>[];
-    return List<InstalledMihonExtension>.unmodifiable(
-      values.map(_installedExtension),
+    if (value == null) {
+      throw const FormatException('Installed Mihon scan response is empty');
+    }
+    final rawExtensions = value['extensions'];
+    final rawFailures = value['failures'];
+    final rawEnumerationErrors = value['enumerationErrors'];
+    if (rawExtensions is! List<Object?> ||
+        rawFailures is! List<Object?> ||
+        rawEnumerationErrors is! List<Object?>) {
+      throw const FormatException('Installed Mihon scan response is invalid');
+    }
+    return InstalledMihonScan(
+      extensions: List<InstalledMihonExtension>.unmodifiable(
+        rawExtensions.map(_installedExtension),
+      ),
+      failures: List<InstalledMihonDiscoveryFailure>.unmodifiable(
+        rawFailures.map(_installedFailure),
+      ),
+      enumeratedPackageCount: _requiredNonNegativeInt(
+        value,
+        'enumeratedPackageCount',
+      ),
+      candidatePackageCount: _requiredNonNegativeInt(
+        value,
+        'candidatePackageCount',
+      ),
+      directProbeCount: _requiredNonNegativeInt(value, 'directProbeCount'),
+      directMatchCount: _requiredNonNegativeInt(value, 'directMatchCount'),
+      enumerationErrors: List<String>.unmodifiable(
+        rawEnumerationErrors.map((item) {
+          if (item is! String || item.trim().isEmpty) {
+            throw const FormatException(
+              'Installed Mihon enumeration error is invalid',
+            );
+          }
+          return item;
+        }),
+      ),
+      visibilityLimited: value['visibilityLimited'] == true,
+      sharedExtensionOnly: value['sharedExtensionOnly'] != false,
     );
   }
 
@@ -159,4 +261,34 @@ InstalledMihonExtension _installedExtension(Object? raw) {
     declaredExtensionLib: declaredExtensionLib as String?,
     entryClasses: entryClasses,
   );
+}
+
+InstalledMihonDiscoveryFailure _installedFailure(Object? raw) {
+  if (raw is! Map<Object?, Object?> ||
+      raw.keys.any((key) => key is! String)) {
+    throw const FormatException('Installed Mihon failure response is invalid');
+  }
+  final value = Map<String, Object?>.from(raw);
+  String field(String key) {
+    final result = value[key];
+    if (result is! String || result.trim().isEmpty) {
+      throw const FormatException('Installed Mihon failure field is invalid');
+    }
+    return result;
+  }
+  return InstalledMihonDiscoveryFailure(
+    packageName: field('packageName'),
+    displayName: field('displayName'),
+    stage: field('stage'),
+    errorType: field('errorType'),
+    message: field('message'),
+  );
+}
+
+int _requiredNonNegativeInt(Map<String, Object?> value, String key) {
+  final result = value[key];
+  if (result is! int || result < 0) {
+    throw const FormatException('Installed Mihon scan count is invalid');
+  }
+  return result;
 }

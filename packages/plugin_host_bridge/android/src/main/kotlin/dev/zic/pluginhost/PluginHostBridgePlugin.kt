@@ -48,6 +48,7 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         when (call.method) {
             "readMihonApkMetadata" -> readMihonApkMetadata(call, result)
             "listInstalledMihonExtensions" -> listInstalledMihonExtensions(result)
+            "scanInstalledMihonExtensions" -> scanInstalledMihonExtensions(call, result)
             "copyInstalledMihonExtension" -> copyInstalledMihonExtension(call, result)
             "activateMihonRuntime",
             "activateVeneraRuntime",
@@ -100,29 +101,153 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     private fun listInstalledMihonExtensions(result: MethodChannel.Result) {
         runInspection(result) {
-            installedPackages()
-                .asSequence()
-                .filter(::isMihonExtension)
-                .mapNotNull { info ->
-                    runCatching {
-                        val apkPath = requireNotNull(info.applicationInfo?.sourceDir) {
-                            "Installed extension APK path is missing"
-                        }
-                        inspectMihonPackage(info, apkPath) + mapOf(
-                            "displayName" to context.packageManager
-                                .getApplicationLabel(requireNotNull(info.applicationInfo))
-                                .toString()
-                                .ifBlank { info.packageName },
-                            "versionName" to info.versionName
-                                ?.takeIf { it.isNotBlank() }
-                                .orEmpty()
-                                .ifBlank { versionCode(info).toString() },
-                        )
-                    }.getOrNull()
-                }
-                .sortedBy { it["displayName"].toString().lowercase() }
-                .toList()
+            @Suppress("UNCHECKED_CAST")
+            (scanInstalledMihonPackages(emptyList())["extensions"] as List<Map<String, Any?>>)
         }
+    }
+
+    private fun scanInstalledMihonExtensions(
+        call: MethodCall,
+        result: MethodChannel.Result,
+    ) {
+        val knownPackageNames = call.argument<List<*>>("knownPackageNames")
+            .orEmpty()
+            .mapNotNull { it as? String }
+            .map { value -> value.trim() }
+            .filter { value -> value.isNotEmpty() }
+            .distinct()
+        runInspection(result) {
+            scanInstalledMihonPackages(knownPackageNames)
+        }
+    }
+
+    private fun scanInstalledMihonPackages(
+        knownPackageNames: List<String>,
+    ): Map<String, Any?> {
+        val candidates = linkedMapOf<String, PackageInfo>()
+        val failures = mutableListOf<Map<String, String>>()
+        val enumerationErrors = mutableListOf<String>()
+        var enumeratedPackageCount = 0
+
+        fun addCandidate(info: PackageInfo) {
+            if (isMihonExtension(info)) {
+                candidates.putIfAbsent(info.packageName, info)
+            }
+        }
+
+        val packageEnumeration = runCatching { installedPackages() }
+        packageEnumeration.onSuccess { packages ->
+            enumeratedPackageCount = packages.size
+            packages.forEach(::addCandidate)
+        }.onFailure { error ->
+            enumerationErrors += "getInstalledPackages: ${error.mihonScanMessage()}"
+        }
+
+        // Some OEM privacy layers filter getInstalledPackages more aggressively
+        // than getInstalledApplications or direct getPackageInfo. Use both as
+        // discovery fallbacks, but keep the full metadata inspection below as
+        // the single authority for accepting an extension.
+        if (candidates.isEmpty()) {
+            runCatching { installedApplications() }
+                .onSuccess { applications ->
+                    applications
+                        .asSequence()
+                        .filter { application ->
+                            application.packageName.startsWith(MIHON_EXTENSION_PACKAGE_PREFIX)
+                        }
+                        .mapNotNull { application ->
+                            installedPackageOrNull(application.packageName)
+                        }
+                        .forEach(::addCandidate)
+                }
+                .onFailure { error ->
+                    enumerationErrors += "getInstalledApplications: ${error.mihonScanMessage()}"
+                }
+        }
+
+        var directProbeCount = 0
+        var directMatchCount = 0
+        knownPackageNames.forEach { packageName ->
+            directProbeCount++
+            val probe = runCatching { installedPackage(packageName) }
+            probe.onSuccess { info ->
+                directMatchCount++
+                if (isMihonExtension(info)) {
+                    candidates[packageName] = info
+                } else {
+                    failures += mihonScanFailure(
+                        packageName = packageName,
+                        displayName = packageName,
+                        stage = "candidate",
+                        error = IllegalArgumentException(
+                            "Installed package does not declare tachiyomi.extension",
+                        ),
+                    )
+                }
+            }.onFailure { error ->
+                if (error !is PackageManager.NameNotFoundException) {
+                    failures += mihonScanFailure(
+                        packageName = packageName,
+                        displayName = packageName,
+                        stage = "direct-package-query",
+                        error = error,
+                    )
+                }
+            }
+        }
+
+        val extensions = candidates.values.mapNotNull { info ->
+            val displayName = runCatching {
+                context.packageManager
+                    .getApplicationLabel(requireNotNull(info.applicationInfo))
+                    .toString()
+                    .ifBlank { info.packageName }
+            }.getOrDefault(info.packageName)
+            runCatching {
+                val apkPath = requireNotNull(info.applicationInfo?.sourceDir) {
+                    "Installed extension APK path is missing"
+                }
+                inspectMihonPackage(info, apkPath) + mapOf(
+                    "displayName" to displayName,
+                    "versionName" to info.versionName
+                        ?.takeIf { it.isNotBlank() }
+                        .orEmpty()
+                        .ifBlank { versionCode(info).toString() },
+                )
+            }.fold(
+                onSuccess = { it },
+                onFailure = { error ->
+                    failures += mihonScanFailure(
+                        packageName = info.packageName,
+                        displayName = displayName,
+                        stage = "metadata",
+                        error = error,
+                    )
+                    null
+                },
+            )
+        }.sortedBy { it["displayName"].toString().lowercase() }
+
+        return mapOf(
+            "extensions" to extensions,
+            "failures" to failures.sortedWith(
+                compareBy<Map<String, String>>(
+                    { it["displayName"].orEmpty().lowercase() },
+                    { it["stage"].orEmpty() },
+                ),
+            ),
+            "enumeratedPackageCount" to enumeratedPackageCount,
+            "candidatePackageCount" to candidates.size,
+            "directProbeCount" to directProbeCount,
+            "directMatchCount" to directMatchCount,
+            "enumerationErrors" to enumerationErrors,
+            "visibilityLimited" to (
+                packageEnumeration.isFailure ||
+                    (enumeratedPackageCount <= MIN_VISIBLE_PACKAGE_COUNT &&
+                        knownPackageNames.isNotEmpty() && directMatchCount == 0)
+                ),
+            "sharedExtensionOnly" to true,
+        )
     }
 
     private fun copyInstalledMihonExtension(
@@ -249,8 +374,11 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         ) ?: throw IllegalArgumentException("Mihon extension entry metadata is missing")
         val entryClasses = parseMihonEntryClasses(info.packageName, rawEntryClasses)
         require(entryClasses.isNotEmpty()) { "Mihon extension entry metadata is empty" }
-        val signer = signingCertificates(info).singleOrNull()
-            ?: throw IllegalArgumentException("APK must have exactly one current signer")
+        val signers = signingCertificates(info)
+        val signer = signers.singleOrNull()
+            ?: throw IllegalArgumentException(
+                "APK must have exactly one current signer; found ${signers.size}",
+            )
         return buildMap {
             put("packageName", info.packageName)
             put("signerSha256", sha256(signer.toByteArray()))
@@ -281,7 +409,7 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     @Suppress("DEPRECATION")
     private fun installedPackage(packageName: String): PackageInfo {
-        val flags = packageInfoFlags() or PackageManager.GET_CONFIGURATIONS
+        val flags = installedPackageInfoFlags()
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.packageManager.getPackageInfo(
                 packageName,
@@ -294,7 +422,7 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
 
     @Suppress("DEPRECATION")
     private fun installedPackages(): List<PackageInfo> {
-        val flags = packageInfoFlags() or PackageManager.GET_CONFIGURATIONS
+        val flags = installedPackageInfoFlags()
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.packageManager.getInstalledPackages(
                 PackageManager.PackageInfoFlags.of(flags.toLong()),
@@ -303,6 +431,33 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             context.packageManager.getInstalledPackages(flags)
         }
     }
+
+    @Suppress("DEPRECATION")
+    private fun installedApplications() =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.packageManager.getInstalledApplications(
+                PackageManager.ApplicationInfoFlags.of(
+                    PackageManager.GET_META_DATA.toLong() or
+                        PackageManager.MATCH_DISABLED_COMPONENTS.toLong(),
+                ),
+            )
+        } else {
+            context.packageManager.getInstalledApplications(
+                PackageManager.GET_META_DATA or PackageManager.MATCH_DISABLED_COMPONENTS,
+            )
+        }
+
+    private fun installedPackageInfoFlags() =
+        packageInfoFlags() or
+            PackageManager.GET_CONFIGURATIONS or
+            PackageManager.MATCH_DISABLED_COMPONENTS
+
+    private fun installedPackageOrNull(packageName: String): PackageInfo? =
+        try {
+            installedPackage(packageName)
+        } catch (_: PackageManager.NameNotFoundException) {
+            null
+        }
 
     private fun packageInfoFlags() =
         PackageManager.GET_META_DATA or
@@ -353,7 +508,7 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             val signingInfo = requireNotNull(info.signingInfo) {
                 "APK signing information is missing"
             }
-            signingInfo.apkContentsSigners.toList()
+            signingInfo.apkContentsSigners.orEmpty().toList()
         } else {
             info.signatures?.toList().orEmpty()
         }
@@ -381,6 +536,9 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         private const val MIHON_EXTENSION_PACKAGE_PREFIX =
             "eu.kanade.tachiyomi.extension."
         private const val MAX_MIHON_APK_BYTES = 128L * 1024L * 1024L
+        // A package list containing only Android/framework entries or the
+        // current App is usually the result of an OEM visibility restriction.
+        private const val MIN_VISIBLE_PACKAGE_COUNT = 1
         private val EXTENSION_LIB_KEYS = listOf(
             "tachiyomix.extensionLib",
             "tachiyomi.extensionLib",
@@ -389,9 +547,30 @@ class PluginHostBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         private val ENTRY_CLASS_KEYS = listOf(
             "tachiyomix.extension.class",
             "tachiyomi.extension.class",
+            // A small number of forks publish only the factory metadata. The
+            // runtime already accepts SourceFactory entries, so use it only as
+            // a final metadata fallback rather than rejecting the APK silently.
+            "tachiyomi.extension.factory",
         )
     }
 }
+
+
+private fun Throwable.mihonScanMessage(): String =
+    message?.trim()?.takeIf(String::isNotEmpty) ?: javaClass.simpleName
+
+private fun mihonScanFailure(
+    packageName: String,
+    displayName: String,
+    stage: String,
+    error: Throwable,
+): Map<String, String> = mapOf(
+    "packageName" to packageName,
+    "displayName" to displayName,
+    "stage" to stage,
+    "errorType" to error.javaClass.name,
+    "message" to error.mihonScanMessage(),
+)
 
 private fun metadataValue(metadata: Bundle?, keys: List<String>): Any? =
     keys.firstNotNullOfOrNull { key -> metadata?.get(key) }

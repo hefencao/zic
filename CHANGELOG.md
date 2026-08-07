@@ -1,3 +1,12 @@
+## 0.31.0-dev.149：端到端诊断并恢复 Mihon 共享扩展发现
+
+- Mihon 页面打开时自动读取默认仓库索引，以仓库 package name执行精确 `getPackageInfo` 探测，不再依赖用户先手动加载仓库。
+- 设备发现合并 `getInstalledPackages`、`getInstalledApplications` 与精确包名探测；每个 APK 的候选、metadata、签名与 ABI失败保留为可见诊断，不再由 `getOrNull()` 静默丢弃。
+- App manifest声明 `QUERY_ALL_PACKAGES`；页面显示枚举、候选、精确探测、命中和逐 APK失败阶段。
+- 明确设备扫描只覆盖系统共享扩展 APK；Mihon 私有目录扩展无法跨 App读取，应直接从 ZIC 仓库安装。
+- 修复 dev.148 扫描协议 Dart闭包：实例 `trim` 调用、package name集合与换行错误；仓库请求失败不再覆盖设备扫描错误。
+- 新增 ADR 0134、dev.149 审计、structured scan owner test与端到端静态门禁。
+
 ## 0.31.0-dev.148：修复 Catalog URI 编译与 Mihon 插件识别
 
 - `CachedBrowsableComicSource.resolveComicWebUri` 恢复与 `ComicWebUriSource` 一致的 `Uri?` 合同，不再从非空方法返回可空值。

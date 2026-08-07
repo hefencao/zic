@@ -1,6 +1,6 @@
 # zic
 
-dev.148 修正 Catalog 可空漫画网页 URI 编译合同，并将 Mihon 浏览器快照重置收回稳定 AndroidCookieJar 边界；APK 识别支持资源型 meta-data 与多入口分隔。
+dev.149 将 Mihon 共享扩展发现改为系统枚举、应用枚举和仓库包名精确探测三路合并，逐 APK显示失败阶段；Mihon 私有目录扩展应从 ZIC 仓库安装。
 
 
 `zic` 是面向 Android 优先、高性能漫画阅读场景的 Flutter/Rust 工程。项目支持本地与远程章节、静态图片、Animated WebP、持久下载、带分类/翻页的漫画源浏览、Mihon/Venera 扩展和统一 Reader Pipeline。

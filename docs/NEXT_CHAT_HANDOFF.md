@@ -1,6 +1,6 @@
-# dev.148 后续交接
+# dev.149 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.148_catalog-uri-mihon-recognition.zip`。
+唯一后续基线：`zic_v0.31.0-dev.149_mihon-end-to-end-discovery.zip`。
 
 ## 必读
 
@@ -28,6 +28,9 @@
 20. `docs/audits/dev146-validation-results.md`
 
 ## 当前代码事实
+
+- Mihon 设备扫描只覆盖系统共享 APK；页面自动加载默认仓库，并以仓库 package name进行精确探测。Mihon 私有目录扩展必须从 ZIC仓库安装。
+- 扫描结果必须保留枚举数、候选数、精确命中和逐 APK失败阶段；不得恢复 `runCatching(...).getOrNull()` 静默丢弃。
 
 - NetLane 是唯一网络调度权威；不存在 holder/playback 驱动的网络资格门控。
 - encoded window 为前 7/后 3，深度 decode 角色为前 2/后 1，holder 最大水位为 7/5/3/2。

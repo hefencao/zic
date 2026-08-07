@@ -83,6 +83,7 @@ python3 "$ROOT/tool/test_dev145_source_target_cache_cloudflare_cover_identity.py
 python3 "$ROOT/tool/test_dev146_identity_version_notice_synthetic_cloudflare.py"
 python3 "$ROOT/tool/test_dev147_reader_progress_start_action_version_ui_verification.py"
 python3 "$ROOT/tool/test_dev148_catalog_uri_mihon_recognition.py"
+python3 "$ROOT/tool/test_dev149_mihon_end_to_end_discovery.py"
 python3 "$ROOT/tool/check_test_quarantine.py"
 python3 "$ROOT/tool/test_texture_schedule_timing_contract.py"
 python3 "$ROOT/tool/test_texture_bridge_kotlin_compile.py"

@@ -69,10 +69,24 @@ final class _ExternalPluginRepositoryScreenState
         for (final item in widget.controller.installed) item.plugin.pluginId,
       };
 
+  Iterable<String> get _knownMihonPackageNames sync* {
+    if (widget.format != ExternalComicPluginFormat.mihonExtension) return;
+    for (final entry in _entries) {
+      final pluginId = entry.pluginId;
+      if (pluginId.startsWith('mihon:')) {
+        final packageName = pluginId.substring('mihon:'.length).trim();
+        if (packageName.isNotEmpty) yield packageName;
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     _deviceError = widget.controller.deviceMihonDiscoveryError;
+    if (widget.format == ExternalComicPluginFormat.mihonExtension) {
+      scheduleMicrotask(_loadRepository);
+    }
   }
 
   @override
@@ -100,6 +114,20 @@ final class _ExternalPluginRepositoryScreenState
       );
       if (!mounted) return;
       setState(() => _entries = entries);
+      if (widget.format == ExternalComicPluginFormat.mihonExtension) {
+        try {
+          await widget.controller.refreshDeviceMihonExtensions(
+            knownPackageNames: _knownMihonPackageNames,
+          );
+          if (mounted) {
+            setState(
+              () => _deviceError = widget.controller.deviceMihonDiscoveryError,
+            );
+          }
+        } on Object catch (error) {
+          if (mounted) setState(() => _deviceError = error);
+        }
+      }
     } on Object catch (error) {
       if (mounted) setState(() => _repositoryError = error);
     } finally {
@@ -203,7 +231,9 @@ final class _ExternalPluginRepositoryScreenState
       _deviceError = null;
     });
     try {
-      await widget.controller.refreshDeviceMihonExtensions();
+      await widget.controller.refreshDeviceMihonExtensions(
+        knownPackageNames: _knownMihonPackageNames,
+      );
       if (mounted) {
         setState(() => _deviceError = widget.controller.deviceMihonDiscoveryError);
       }
@@ -269,6 +299,7 @@ final class _ExternalPluginRepositoryScreenState
                   installed: _installed,
                   deviceMihonExtensions:
                       widget.controller.deviceMihonExtensions,
+                  deviceMihonScan: widget.controller.deviceMihonScan,
                   installedPluginIds: _installedPluginIds,
                   activationFailures: widget.controller.activationFailures,
                   working: _working,
@@ -313,6 +344,7 @@ final class _InstalledPluginsPane extends StatelessWidget {
     required this.ecosystem,
     required this.installed,
     required this.deviceMihonExtensions,
+    required this.deviceMihonScan,
     required this.installedPluginIds,
     required this.activationFailures,
     required this.working,
@@ -329,6 +361,7 @@ final class _InstalledPluginsPane extends StatelessWidget {
   final String ecosystem;
   final List<InstalledExternalPlugin> installed;
   final List<InstalledMihonExtension> deviceMihonExtensions;
+  final InstalledMihonScan deviceMihonScan;
   final Set<String> installedPluginIds;
   final Map<String, Object> activationFailures;
   final Set<String> working;
@@ -368,6 +401,7 @@ final class _InstalledPluginsPane extends StatelessWidget {
         if (format == ExternalComicPluginFormat.mihonExtension) ...<Widget>[
           _DeviceMihonSection(
             extensions: deviceMihonExtensions,
+            scan: deviceMihonScan,
             installedPluginIds: installedPluginIds,
             working: working,
             loading: loadingDevice,
@@ -645,6 +679,7 @@ final class _MihonLanguageFilterBar extends StatelessWidget {
 final class _DeviceMihonSection extends StatelessWidget {
   const _DeviceMihonSection({
     required this.extensions,
+    required this.scan,
     required this.installedPluginIds,
     required this.working,
     required this.loading,
@@ -654,6 +689,7 @@ final class _DeviceMihonSection extends StatelessWidget {
   });
 
   final List<InstalledMihonExtension> extensions;
+  final InstalledMihonScan scan;
   final Set<String> installedPluginIds;
   final Set<String> working;
   final bool loading;
@@ -679,7 +715,7 @@ final class _DeviceMihonSection extends StatelessWidget {
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                   Text(
-                    '确认信任后复制到 ZIC 私有运行目录',
+                    '仅检测系统共享 APK；Mihon 私有扩展请从 ZIC 仓库安装',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
@@ -711,6 +747,53 @@ final class _DeviceMihonSection extends StatelessWidget {
             ),
           ),
         const SizedBox(height: 6),
+        if (scan.visibilityLimited)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Material(
+              color: Theme.of(context).colorScheme.tertiaryContainer,
+              borderRadius: BorderRadius.circular(12),
+              child: const Padding(
+                padding: EdgeInsets.all(10),
+                child: Text(
+                  '系统可能限制了“获取已安装应用信息”。ZIC 已同时使用应用列表和精确包名探测；请在系统隐私/权限设置中允许 ZIC 获取已安装应用信息。',
+                ),
+              ),
+            ),
+          ),
+        if (scan.failures.isNotEmpty)
+          ExpansionTile(
+            tilePadding: const EdgeInsets.symmetric(horizontal: 8),
+            title: Text('识别失败（${scan.failures.length}）'),
+            subtitle: const Text('展开查看每个 APK 的实际失败阶段'),
+            children: <Widget>[
+              for (final failure in scan.failures)
+                ListTile(
+                  dense: true,
+                  title: Text(failure.displayName),
+                  subtitle: SelectableText(
+                    '${failure.packageName}\n'
+                    '${failure.stage}: ${failure.message}',
+                  ),
+                ),
+            ],
+          ),
+        if (scan.enumerationErrors.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: SelectableText(scan.enumerationErrors.join('\n')),
+          ),
+        if (scan.directProbeCount > 0 || scan.enumeratedPackageCount > 0)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(
+              '系统枚举 ${scan.enumeratedPackageCount} 个包 · '
+              '候选 ${scan.candidatePackageCount} · '
+              '精确探测 ${scan.directProbeCount} · '
+              '命中 ${scan.directMatchCount}',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
         if (extensions.isEmpty)
           const ListTile(
             contentPadding: EdgeInsets.symmetric(horizontal: 8),

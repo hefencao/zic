@@ -71,6 +71,7 @@ final class ExternalPluginController {
       AndroidMihonApkMetadataReader();
   List<InstalledMihonExtension> _deviceMihonExtensions =
       const <InstalledMihonExtension>[];
+  InstalledMihonScan _deviceMihonScan = const InstalledMihonScan.empty();
   Object? _deviceMihonDiscoveryError;
   late final ExternalPluginRuntimeRegistry _registry =
       ExternalPluginRuntimeRegistry(<ExternalComicPluginHost>[
@@ -140,6 +141,11 @@ final class ExternalPluginController {
 
   Object? get deviceMihonDiscoveryError => _deviceMihonDiscoveryError;
 
+  InstalledMihonScan get deviceMihonScan => _deviceMihonScan;
+
+  List<InstalledMihonDiscoveryFailure> get deviceMihonDiscoveryFailures =>
+      _deviceMihonScan.failures;
+
   List<BrowsableComicSource> get activeSources => _registry.activeSources;
 
   String? ownerOfSource(String sourceId) => _registry.ownerOfSource(sourceId);
@@ -167,16 +173,30 @@ final class ExternalPluginController {
     }
   }
 
-  Future<void> refreshDeviceMihonExtensions() async {
+  Future<void> refreshDeviceMihonExtensions({
+    Iterable<String> knownPackageNames = const <String>[],
+  }) async {
     _requireOpen();
     if (!Platform.isAndroid) {
       _deviceMihonExtensions = const <InstalledMihonExtension>[];
+      _deviceMihonScan = const InstalledMihonScan.empty();
       _deviceMihonDiscoveryError = null;
       return;
     }
+    final known = <String>{
+      for (final record in _installed.values)
+        if (record.packageName != null) record.packageName!,
+      ...knownPackageNames,
+    };
     try {
-      _deviceMihonExtensions = await _androidMihonMetadata.listInstalled();
-      _deviceMihonDiscoveryError = null;
+      final scan = await _androidMihonMetadata.scanInstalled(
+        knownPackageNames: known,
+      );
+      _deviceMihonScan = scan;
+      _deviceMihonExtensions = scan.extensions;
+      _deviceMihonDiscoveryError = scan.enumerationErrors.isEmpty
+          ? null
+          : StateError(scan.enumerationErrors.join('\n'));
     } on Object catch (error) {
       _deviceMihonDiscoveryError = error;
       rethrow;
