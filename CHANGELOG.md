@@ -1,3 +1,11 @@
+## 0.31.0-dev.155：绑定真实 WebView 会话并修复历史/插件持久化
+
+- Cloudflare 验证 WebView 不再伪装成插件静态 User-Agent；Cookie、localStorage 与真实 WebView UA 作为同一浏览器 session snapshot 持久化，Mihon 首次及后续同站点请求逐请求采用该 UA。
+- 修复已持久化来源漫画再次进入详情时的同 identity 嵌套路由锁：外层 source route 已持锁时直接打开本地详情，不再二次申请同一锁。
+- 首页阅读历史的 HTTP(S) 封面无论插件是否已恢复，都先走统一 artwork durable-cache probe；不再把网络 URL 误交给本地文件 loader。
+- 外部插件 `installed.json` 改为逐记录容错；单个损坏/过时记录不再清空全部插件，旧 sandbox payload 绝对路径可在当前 owned root 按 basename 恢复，旧记录缺 `entryClasses` 时按空列表兼容。
+- 插件页显示 manifest restore 失败诊断；新增 ADR 0140、dev.155 审计与 Cloudflare UA/历史/插件持久化门禁。
+
 ## 0.31.0-dev.154：等待 Cloudflare 验证稳定完成后再返回
 
 - 验证 WebView 不再在单次 `onPageFinished` 后立即判断完成；任何新导航都会使旧 probe失效。

@@ -1,6 +1,6 @@
-# dev.154 后续交接
+# dev.155 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.154_cloudflare-browser-stable-completion.zip`。
+唯一后续基线：`zic_v0.31.0-dev.155_cloudflare-real-ua-history-plugin-recovery.zip`。
 
 ## 必读
 
@@ -27,8 +27,9 @@
 21. `docs/adr/0137-mihon-cloudflare-cookie-handoff-and-loop-guard.md`
 22. `docs/adr/0138-cloudflare-browser-completion-and-auto-loop-guard.md`
 23. `docs/adr/0139-cloudflare-browser-stable-completion.md`
-24. `docs/audits/dev154-cloudflare-browser-stable-completion-audit.md`
-25. `docs/audits/dev154-validation-results.md`
+24. `docs/adr/0140-cloudflare-browser-session-history-and-plugin-persistence.md`
+25. `docs/audits/dev155-cloudflare-history-plugin-persistence-audit.md`
+26. `docs/audits/dev155-validation-results.md`
 
 ## 当前代码事实
 
@@ -41,7 +42,7 @@
 - Reader 退出后最多保留 1 个 idle chapter resource session、TTL 2 分钟；used texture 不保留。
 - response cache 与 page artifact cache 是两个权威平面；App/Reader 没有私有正文 LRU。
 - 首页封面卡片使用 section + comic identity 的稳定 State key；同 identity 的并发 owner 共享 source Future/provider，失败 Future 立即退出 join。无首帧 watchdog 只重建同一 provider stream，不刷新 encoded bytes；明确 decoder exhaustion 才可 force-refresh。
-- 漫画源页使用来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态只用 chip背景色表示。source切换立即投影目标精确/最近缓存；目标错误不允许旧 source内容滞留。`sourceVerificationRequired`只由 `cf-mitigated: challenge` 或 Mihon同样识别的真实 `challenge-error-title/text`交互 challenge产生；普通 Cloudflare 403/脚本不触发 WebView。验证浏览器不预删 Cookie，同站点/同 UA snapshot在新 capture前保留；`onPageFinished` 只启动持续 probe，页面必须 ready/progress完成并连续 3 秒没有 Turnstile/challenge form/running容器/`cf-chl-*`/challenge iframe或典型验证中间态，才保存完整 Cookie/UA并返回。任意一次手动或自动 handoff后，普通刷新不会再次自动跳 WebView，成功 browse才清除 guard；手动入口始终可用。WebView返回后按稳定 source ID取得重启后的当前 adapter，重载 section/filter并强制刷新一次，绝不继续调用关闭旧 session。
+- 漫画源页使用来源自有 section。Cloudflare网络 classifier继续保持严格 challenge边界；验证浏览器保留 dev.154 的稳定完成窗口，但验证模式不得把插件/OkHttp静态 UA写入 WebView。Cookie、localStorage与 WebView provider真实 UA作为同一 snapshot revision handoff；Mihon同站点 OkHttp请求采用该 snapshot UA并同步导入 Cookie。WebView返回后按稳定 source ID取得 replacement adapter。
 - 浮动搜索展开态优先消费返回和垂直拖动/滚动手势；搜索历史持久化。Mihon `getFilterList()` 的 CheckBox/TriState/Select/Group 通过 opaque ID 投影为搜索框上方过滤标签，UI 不持有插件 Filter 对象。
 - 浏览页使用 catalog cache-first/background-refresh；稳定字段无变化时不更新。边缘下拉达到阈值后调用强制刷新，保留现有内容直到新结果到达。
 - 详情预览按原顺序装箱：实际行内含横图则最多 2 张、纯竖图则最多 3 张；只在相邻三个候选内做最小局部重排；设置项仍是更严格上限。行宽直接用于反算等面积 tile，内部无 Card/水平 padding，完整行铺满媒体宽度，只有稀疏末行允许放大到参考完整行面积的 2.4 倍。
@@ -49,6 +50,8 @@
 - 同源版本关系按 source/predecessor/successor 复合身份双向查询；详情正文提供查看新/旧版本和迁移双动作，多个版本先选择。查看路由使用临时 key，但多个版本阅读历史严格按 raw identity 分离；迁移仍走旧比较确认。Reader 仅首次提醒。
 - App 不清理 synthetic“开始阅读/正文”。Mihon adapter 只去除与真实章节并存的独立开始阅读动作；单独 gallery“正文”保留。
 - Reader progress 单 writer 合并，正常退出前等待最终写入，详情 route 返回后立即刷新历史；生命周期 checkpoint 只提供 best effort。
+- 来源详情 route lock不得嵌套申请相同 raw comic identity；source页已持锁时 local SavedComic分支直接 push详情。Home历史 HTTP(S)封面在 source缺失时仍先查统一 durable artwork cache。
+- 外部插件 manifest逐记录恢复，并可从 `.bak`、`.part`、旧 `.invalid`及旧 sandbox basename恢复 owned payload记录；单条坏记录不得清空全部插件，恢复后仍执行 hash/签名/ABI/entry验证。
 - `sourceVerificationRequired` 只由统一 typed 403/503 challenge detector 产生；兼容 interceptor 不创建隐藏 WebView。
 - `CachedBrowsableComicSource.resolveComicWebUri` 保持 `Uri?`；调用方负责 website fallback。
 - Mihon common runtime只预检稳定 `AndroidCookieJar`，不直接依赖内部 `AndroidBrowserCookieSession`。APK metadata可从字符串资源解析，并支持逗号/分号/换行多入口。后台设备扫描错误保存在 controller并由插件页显示，不能再把扫描异常伪装成空列表。
@@ -74,7 +77,4 @@
 git apply --index "$(python3 tool/workspace_config.py patch_dir --absolute)/<patch-file>"
 ```
 
-- encoded source ready 后若 2.5 秒仍没有首帧或错误，封面只允许局部 revalidate 同一 cover identity 一次；不得恢复 loader-closure 重试或清空全局 cache。
-- 远程详情必须先显示缓存 catalog，并通过 `resolveSource(sourceId)` 等待/取得当前 adapter；预览和评论闭包不得捕获旧 runtime source。
-- 不得在 App 层按 synthetic identity 或标题清理章节；独立开始阅读动作的去重只属于 Mihon adapter。
-- 详情和漫画源刷新进度、勾/叉必须继续由 `AppPullToRefresh` 一套组件拥有。
+- 封面 watchdog 只局部 revalidate稳定 identity，不恢复 loader-closure/global-cache重试；远程详情通过 `resolveSource(sourceId)`取当前 adapter；App不清理 synthetic章节；详情与漫画源继续共用 `AppPullToRefresh`。

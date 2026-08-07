@@ -7,6 +7,7 @@ import java.net.URI
 internal data class BrowserCookieSnapshot(
     val revision: Long,
     val cookies: Map<String, String>,
+    val userAgent: String,
 )
 
 /**
@@ -56,6 +57,7 @@ object AndroidBrowserCookieSession {
         return BrowserCookieSnapshot(
             revision = revision,
             cookies = cookies.filterKeys(String::isNotBlank),
+            userAgent = (snapshot["userAgent"] as? String).orEmpty().trim(),
         )
     }
 

@@ -1,6 +1,6 @@
 # zic
 
-dev.154 修复 Cloudflare 验证浏览器过早返回：网络层 challenge 判定继续严格，WebView 内部改为持续探测 Turnstile/challenge form/中间态，并要求页面连续稳定无 challenge 后才自动完成 handoff。
+dev.155 将 Cloudflare 验证绑定为真实浏览器会话：可见 WebView 使用自身 User-Agent，Mihon 重试同步采用同 snapshot 的 Cookie/UA；同时修复来源漫画二次进入、历史封面 durable-cache fallback 与插件 manifest 逐记录恢复。
 
 
 `zic` 是面向 Android 优先、高性能漫画阅读场景的 Flutter/Rust 工程。项目支持本地与远程章节、静态图片、Animated WebP、持久下载、带分类/翻页的漫画源浏览、Mihon/Venera 扩展和统一 Reader Pipeline。

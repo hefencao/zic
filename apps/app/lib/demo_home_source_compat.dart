@@ -283,7 +283,10 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
         );
       }
       try {
-        await _openComicDetails(local);
+        // The outer source route already owns this identity. Re-entering
+        // _openComicDetails would acquire the same lock a second time and
+        // silently drop every subsequent open after the comic was persisted.
+        await _pushComicDetails(local);
       } finally {
         _openingComicIdentities.remove(identity);
       }

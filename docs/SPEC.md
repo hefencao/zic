@@ -24,6 +24,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
   命中时不得解析来源、创建 source transport 或等待插件 activation。raw miss 才可进入
   source loader，并必须写入当前 raw stable key；生产路径不得读取 dev.135 为 app 更新保留
   的 URL-derived/canonical 旧 key，也不得建立该兼容 alias。
+- Home/阅读历史中已经持久化的 HTTP(S) artwork locator MUST 始终先进入统一 `ComicSourceResourceGateway` 的 source-independent durable-cache probe；active source/plugin 暂不可用时不得把网络 URL 交给本地文件 loader。durable miss 后才可要求来源 adapter。
 - 来源确认过的同源 canonical comic identity SHOULD 持久化在 SavedComic 元数据中，供
   插件未激活时的书架只读归并使用；原始 comic/chapter request identity MUST 保持不变。
 - 未访问的首页、书架、来源和杂项导航页 MUST 延迟构建；首次访问后页面状态 MAY 保留，
@@ -39,6 +40,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - 存在阅读进度时，详情页 MUST 提供可操作的“继续”药丸按钮；继续/阅读历史行 MUST 位于
   章节总数行上方，阅读历史 MUST 与按钮位于同一行并放在按钮之后，历史文字之前显示时钟图标。继续 MUST 通过既有
   `onOpenChapter` facade 打开保存的章节，不得等待无关的来源刷新。
+- 来源漫画第一次打开后即使已持久化为 SavedComic，后续再次打开 MUST 复用当前已持有的 comic route identity lock，不得在同一调用链嵌套申请相同 `sourceId + comicId` 锁而静默吞掉导航。
 - 详情页 SHOULD 提供同源版本入口；来源提供 `ComicVersionSource` 时，入口 MUST 使用来源
   自己的版本关系（Venera/E-Hentai 使用详情页 `#gnd`），不得改为标题 browse 或要求浏览器
   页面权限；没有该能力时 MAY 回退到来源 browse 结果。入口展示不同原生 `comicId`，不得把
@@ -56,6 +58,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - 切换漫画 source 时，Presentation MUST 在同一更新周期将 projection owner 切换为目标 source；MUST 优先显示目标精确请求缓存，其次目标最近缓存，没有目标缓存时显示目标 loading/error。旧 source 页面不得因目标请求失败继续可见。
 - 强制刷新遇到 `sourceVerificationRequired` 且存在 WebView capability 时 MAY 自动进入一次目标 source验证。**任何一次**手动或自动验证浏览器 handoff都 MUST 消耗该 `sourceId + request URL` 的自动 fallback机会；若恢复重试仍失败，后续普通刷新 MUST NOT循环打开 WebView，只保留错误诊断和手动恢复。成功 browse后 MAY 清除该 guard。
 - Cloudflare WebView恢复 MUST 优先打开 typed failure中的实际 request URL而非仅打开 source homepage；打开浏览器 MUST NOT预先删除已有 Cookie/snapshot。WebView `onPageFinished` MUST NOT直接等价于验证完成。浏览器内部 SHOULD 使用比网络 classifier更保守的 challenge探针，并且 MUST 要求同站点、`document.readyState=complete`、WebView progress=100以及连续稳定窗口内无可见 Turnstile/challenge form/running容器/`cf-chl-*`/challenge iframe或典型验证中间态，才可完成当前 Cookie/UA snapshot handoff；不得把“必须生成新的 `cf_clearance`”作为唯一成功条件。已有同站点/同 UA snapshot在新页面成功 capture前 MUST 保留，空 Cookie capture MUST NOT破坏已有非空 handoff。
+- Cloudflare 验证浏览器 MUST 使用当前 Android WebView provider 的真实 User-Agent，MUST NOT用插件/OkHttp 的静态 UA覆盖验证 WebView。Cookie、localStorage 与真实 WebView UA MUST 属于同一 snapshot revision；Mihon runtime消费该 snapshot时必须让同站点 OkHttp请求采用同一 snapshot UA，并同步导入其 Cookie。
 - WebView 验证返回后外部 runtime MAY 被重启。详情页与漫画源页的后续操作 MUST 按稳定 source ID重新解析当前 active adapter，MUST NOT继续调用重启前已关闭的 session。漫画源页 MUST 在 replacement source上重新加载 section/filter后再强制刷新，并禁止同一次恢复再次自动打开 WebView。
 - `sourceVerificationRequired` MUST 只来自 typed host challenge detector：`cf-mitigated: challenge` 可直接确认；否则 MUST 同时满足 HTTP 403/503、Cloudflare Server header 与 `challenge-error-title`/`challenge-error-text` 交互 challenge DOM。`challenge-platform`/`cf-chl-*`脚本、`Just a moment`标题、Cloudflare header单独存在、普通 HTTP 403、timeout、解析失败和包含 Cloudflare字样的异常消息 MUST NOT被重分类。主网络与兼容 interceptor MUST使用同一 detector，不得使用隐藏 WebView。
 - 漫画源搜索 MUST 以来源栏上方的浮动控件进入，展开后 SHOULD 提供可持久化、可删除和可清空的搜索历史。展开搜索面板 MUST 优先消费系统返回手势与垂直拖动/滚动手势，并在这些手势发生时恢复为浮动按钮。Mihon `getFilterList()` 支持的 CheckBox、TriState、Select 与 Group 子项 SHOULD 以不透明 ID 的过滤标签显示在搜索框上方；UI MUST NOT 持有或解释插件 Filter 对象。搜索结果 MUST 使用 catalog/resource-cache 权威：若有缓存，Presentation MUST 先显示缓存并后台刷新；只有稳定字段变化时才替换列表，不得建立页面私有结果缓存。漫画源页 MUST 支持边缘下拉达到阈值后的强制刷新；强制刷新 MUST 绕过 catalog cache，但 SHOULD 保留已有内容直到新结果到达。
@@ -64,6 +67,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - Android 上 Mihon 共享扩展发现 MUST 至少合并系统包枚举与已知 package name精确探测；单个 APK 识别失败 MUST 保留 package、阶段和错误信息，不得被转换为空列表。系统包可见性受限时 MUST 向用户显示诊断。Mihon 私有 App目录不属于可访问的系统扩展边界，UI MUST 引导用户从 ZIC仓库安装，而不得声称已读取该目录。
 - plugin host MUST NOT 把 network bridge 的内部 browser-cookie session实现列为 Mihon common runtime ABI。Cookie snapshot reset MUST 通过稳定网络适配器边界调用。
 - Mihon common runtime完整性预检中所有 `dev.zic.network.*` 动态类型 MUST 在 network bridge consumer R8规则中保留原始全限定类名和成员；typed `SourceVerificationRequiredException` 不得被混淆、裁剪或用错误消息字符串替代。
+- 外部插件持久 manifest MUST 逐记录容错；一个坏记录不得清空其它已导入插件。写入 MUST 保留上一代 `.bak`；启动恢复 SHOULD 依次尝试主 manifest、`.bak`、残留 `.part` 和旧 `.invalid`，并允许旧 sandbox绝对 payload路径按 owned-root basename迁移。恢复记录仍 MUST 经过原有 payload hash、签名、ABI和 entry class检查。
 - 来源详情若提供预览能力，详情页 MUST 能先显示 `ComicManifest` 中已经返回的预览项，
   后续页 MUST 通过 `ComicPreviewSource` 独立加载；预览图片必须复用统一 artwork loader，
   不得为详情页建立专用图片缓存或等待其它章节/评论请求。Venera 的 `@x/y` 裁剪标识
@@ -101,6 +105,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - Reader 页码或阅读模式改变后 MUST 通过既有 progress facade 持久化 `ReadingProgress`；App
   lifecycle 进入 inactive/paused/detached 和 Reader route dispose 时 MUST 强制 flush 最近进度。
   Home projection MUST 在写入成功后立即更新，不能要求先退出详情页才反映阅读历史。
+- Reader 正常返回前 MUST 等待最终 progress writer drain；详情页等待 Reader route返回后 MUST 立即重读本地 snapshot。异常进程终止只能依靠持续 checkpoint降低损失窗口，不得宣称绝对 crash-safe。
 - UI 控件存在性 MUST 来自 capability，不得用静态/动画猜测下载或播放能力。
 
 ## 3. Pipeline 与角色合同

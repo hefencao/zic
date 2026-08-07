@@ -39,11 +39,8 @@ class NetworkBrowserActivity : Activity() {
             ?.takeIf(String::isNotEmpty)
         setResult(RESULT_CANCELED)
         runCatching {
-            NetworkBrowserSnapshotStore.begin(this, url, requestedUserAgent)
-            // Do not delete the visible browser session before verification.
-            // The isolated runtime may simply be missing a still-valid browser
-            // cookie; destroying it here creates a verification loop when the
-            // page is already accessible and therefore issues no new token.
+            // Snapshot begin must use the effective WebView UA. For Cloudflare
+            // that UA is only known after the real WebView has been created.
             createBrowser(url, requestedUserAgent)
         }.onFailure { error ->
             failAndFinish(error.message ?: error.javaClass.simpleName)
@@ -57,7 +54,12 @@ class NetworkBrowserActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
             )
             settings.javaScriptEnabled = true
-            if (requestedUserAgent != null) {
+            // Cloudflare clearance is browser-session state. Spoofing the
+            // extension/OkHttp UA inside a real WebView can create a UA/TLS
+            // fingerprint mismatch and make Turnstile restart near success.
+            // Let the visible WebView use its actual platform UA, persist that
+            // UA with the cookies, and make the Mihon retry adopt it.
+            if (!cloudflareVerification && requestedUserAgent != null) {
                 settings.userAgentString = requestedUserAgent
             }
             settings.domStorageEnabled = true
@@ -90,6 +92,11 @@ class NetworkBrowserActivity : Activity() {
             setAcceptCookie(true)
             setAcceptThirdPartyCookies(webView, true)
         }
+        NetworkBrowserSnapshotStore.begin(
+            this,
+            url,
+            webView.settings.userAgentString,
+        )
         setContentView(webView)
         webView.loadUrl(url)
     }

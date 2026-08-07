@@ -46,6 +46,19 @@ class AndroidCookieJar(
 
     override fun loadForRequest(url: HttpUrl): List<Cookie> = get(url)
 
+    /**
+     * Returns the UA captured by the visible same-site browser session.
+     * Cookies and this UA come from the same snapshot revision; Mihon must use
+     * them together for Cloudflare retries instead of pairing a WebView cookie
+     * with the old synthetic OkHttp UA.
+     */
+    fun browserSessionUserAgent(url: HttpUrl): String? =
+        AndroidBrowserCookieSession.readCookies(
+            application,
+            url.toString(),
+            expectedUserAgent = null,
+        )?.userAgent?.takeIf(String::isNotBlank)
+
     fun get(url: HttpUrl): List<Cookie> {
         importBrowserSnapshot(url)
         val merged = linkedMapOf<String, String>()
@@ -66,14 +79,13 @@ class AndroidCookieJar(
     }
 
     private fun importBrowserSnapshot(url: HttpUrl) {
-        val userAgent = userAgentProvider()
         val snapshot = AndroidBrowserCookieSession.readCookies(
             application,
             url.toString(),
-            expectedUserAgent = userAgent,
+            expectedUserAgent = null,
         ) ?: return
         val host = hostOf(url)
-        val revisionKey = "$host\u0000$userAgent"
+        val revisionKey = "$host\u0000${snapshot.userAgent}"
         synchronized(this) {
             val importedRevision = importedSnapshotRevisions[revisionKey] ?: 0L
             if (snapshot.revision <= importedRevision) return

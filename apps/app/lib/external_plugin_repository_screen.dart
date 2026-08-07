@@ -302,6 +302,8 @@ final class _ExternalPluginRepositoryScreenState
                   deviceMihonScan: widget.controller.deviceMihonScan,
                   installedPluginIds: _installedPluginIds,
                   activationFailures: widget.controller.activationFailures,
+                  manifestRestoreFailures:
+                      widget.controller.manifestRestoreFailures,
                   working: _working,
                   loadingDevice: _loadingDevice,
                   deviceError: _deviceError,
@@ -347,6 +349,7 @@ final class _InstalledPluginsPane extends StatelessWidget {
     required this.deviceMihonScan,
     required this.installedPluginIds,
     required this.activationFailures,
+    required this.manifestRestoreFailures,
     required this.working,
     required this.loadingDevice,
     required this.deviceError,
@@ -364,6 +367,7 @@ final class _InstalledPluginsPane extends StatelessWidget {
   final InstalledMihonScan deviceMihonScan;
   final Set<String> installedPluginIds;
   final Map<String, Object> activationFailures;
+  final Map<String, Object> manifestRestoreFailures;
   final Set<String> working;
   final bool loadingDevice;
   final Object? deviceError;
@@ -413,6 +417,17 @@ final class _InstalledPluginsPane extends StatelessWidget {
           const Divider(height: 1),
           const SizedBox(height: 8),
         ],
+        if (manifestRestoreFailures.isNotEmpty)
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                '插件持久记录恢复失败 ${manifestRestoreFailures.length} 项；'
+                '其余有效插件已保留。${manifestRestoreFailures.values.first}',
+              ),
+            ),
+          ),
+        if (manifestRestoreFailures.isNotEmpty) const SizedBox(height: 8),
         Padding(
           padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
           child: Text(

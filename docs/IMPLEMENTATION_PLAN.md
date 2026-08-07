@@ -1,5 +1,12 @@
-- 在完整 Android release工具链中构建 minified APK，并用 `jadx`/`dexdump`确认 `dev.zic.network.SourceVerificationRequiredException` 保持原始名称；随后在真机重新激活 Mihon共享扩展。
 # zic Implementation Plan
+
+## P0：Cloudflare会话、详情路由与插件恢复设备闭环
+
+- 在发生“验证接近完成又重新开始”的设备上确认验证 WebView使用 provider真实 UA；导出 handoff snapshot UA与 Mihon首个重试请求 UA，必须一致。若 challenge仍循环，继续检查 TLS/IP/站点策略，不得重新伪造 UA。
+- 首次从漫画源进入远程详情并退出，再连续进入同一漫画；确认第二次及后续导航不被 comic route identity lock吞掉。Reader返回后详情/首页阅读历史应立即反映最终进度。
+- 在插件 runtime未激活/激活失败时重启 App，确认阅读历史中已有 durable HTTP(S)封面仍可显示；durable miss才等待来源恢复。
+- 使用旧 `installed.json.invalid`、残留 `.part`、上一代 `.bak` 和单条坏记录分别启动，确认有效插件自动恢复，坏记录只产生诊断；恢复后的 payload仍通过 hash、签名、ABI与 entry class验证。
+- 在完整 Android release工具链中构建 minified APK，并用 `jadx`/`dexdump`确认 `dev.zic.network.SourceVerificationRequiredException` 保持原始名称；随后在真机重新激活 Mihon共享扩展。
 
 ## P0：Mihon 插件识别设备闭环
 

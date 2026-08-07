@@ -16,8 +16,10 @@ assert '__zicInstallComicInfoCache' not in venera
 assert 'async function __zicInvoke' in venera
 
 home = text('apps/app/lib/demo_home.dart')
-assert home.count('if (source != null && uri != null && uri.hasScheme)') >= 2
-assert "(uri.scheme == 'http' || uri.scheme == 'https')" not in home[home.index('Future<Uint8List> _loadMigrationCoverBytes'):home.index('Future<ChapterDetailsSnapshot>') if 'Future<ChapterDetailsSnapshot>' in home else len(home)]
+assert home.count('if (source != null && uri != null && uri.hasScheme)') >= 1
+assert "if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https'))" in home
+migration = home[home.index('Future<Uint8List> _loadMigrationCoverBytes'):home.index('Future<EncodedResourceSource> _loadCoverSource')]
+assert "(uri.scheme == 'http' || uri.scheme == 'https')" not in migration
 
 cache = text('packages/resource_cache/lib/src/resource_cache.dart')
 assert '_encodedImageInFlight' in cache

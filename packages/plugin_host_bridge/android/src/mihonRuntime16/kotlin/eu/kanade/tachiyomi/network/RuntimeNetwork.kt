@@ -25,6 +25,18 @@ class NetworkHelper(context: Context) {
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)
             .callTimeout(45, TimeUnit.SECONDS)
+            .addInterceptor { chain ->
+                val request = chain.request()
+                val browserUserAgent = cookieJar.browserSessionUserAgent(request.url)
+                val next = if (browserUserAgent == null) {
+                    request
+                } else {
+                    request.newBuilder()
+                        .header("User-Agent", browserUserAgent)
+                        .build()
+                }
+                chain.proceed(next)
+            }
             .addInterceptor(
                 AndroidCloudflareInterceptor(context, ::defaultUserAgentProvider) { url ->
                     cookieJar.get(url).any { cookie ->

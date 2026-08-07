@@ -59,6 +59,7 @@ final class ExternalPluginController {
       <String, InstalledExternalPlugin>{};
   final Map<String, String> _pendingPayloads = <String, String>{};
   final Map<String, Object> _activationFailures = <String, Object>{};
+  final Map<String, Object> _manifestRestoreFailures = <String, Object>{};
   late final ExternalPluginPayloadLoader _payloads =
       CallbackExternalPluginPayloadLoader(_acquirePinnedPayload);
   late final MihonApkInspector _mihonInspector = MihonApkInspector(
@@ -152,6 +153,9 @@ final class ExternalPluginController {
 
   Map<String, Object> get activationFailures =>
       Map<String, Object>.unmodifiable(_activationFailures);
+
+  Map<String, Object> get manifestRestoreFailures =>
+      Map<String, Object>.unmodifiable(_manifestRestoreFailures);
 
   Future<void> restartSource(String sourceId) async {
     _requireOpen();
@@ -473,41 +477,97 @@ final class ExternalPluginController {
   }
 
   Future<void> _readManifest() async {
-    if (!await _manifest.exists()) return;
-    try {
-      final decoded = jsonDecode(await _manifest.readAsString());
-      if (decoded is! Map<Object?, Object?> || decoded['version'] != 1) {
-        throw const FormatException('external plugin manifest version invalid');
-      }
-      final records = decoded['plugins'];
-      if (records is! List<Object?>) {
-        throw const FormatException('external plugin records invalid');
-      }
-      final canonicalRoot = await _root.resolveSymbolicLinks();
-      for (final raw in records) {
-        final record = _recordFromJson(raw);
-        if (await _isOwnedPayloadFile(record, canonicalRoot)) {
-          _installed[record.plugin.pluginId] = record;
-        }
-      }
-    } on Object {
-      final invalid = File('${_manifest.path}.invalid');
-      if (await invalid.exists()) await invalid.delete();
-      await _manifest.rename(invalid.path);
+    final candidates = <File>[
+      _manifest,
+      File('${_manifest.path}.part'),
+      File('${_manifest.path}.bak'),
+      File('${_manifest.path}.invalid'),
+    ];
+    Object? lastDocumentError;
+    for (final candidate in candidates) {
+      if (!await candidate.exists()) continue;
       _installed.clear();
+      try {
+        final recoveredPath = await _readManifestDocument(candidate);
+        final recoveredDocument = candidate.path != _manifest.path;
+        if (recoveredDocument || recoveredPath) {
+          await _writeManifest(backupCurrent: !recoveredDocument);
+        }
+        return;
+      } on Object catch (error) {
+        lastDocumentError = error;
+        _installed.clear();
+        _manifestRestoreFailures['manifest:${candidate.path}'] = error;
+      }
+    }
+    if (lastDocumentError != null) {
+      _manifestRestoreFailures['manifest'] = lastDocumentError;
     }
   }
 
-  Future<void> _writeManifest() async {
+  Future<bool> _readManifestDocument(File manifest) async {
+    final decoded = jsonDecode(await manifest.readAsString());
+    if (decoded is! Map<Object?, Object?> || decoded['version'] != 1) {
+      throw const FormatException('external plugin manifest version invalid');
+    }
+    final records = decoded['plugins'];
+    if (records is! List<Object?>) {
+      throw const FormatException('external plugin records invalid');
+    }
+    final canonicalRoot = await _root.resolveSymbolicLinks();
+    var recoveredPath = false;
+    for (var index = 0; index < records.length; index++) {
+      final raw = records[index];
+      try {
+        final record = _recordFromJson(raw);
+        final restored = await _restoreOwnedPayloadRecord(
+          record,
+          canonicalRoot,
+        );
+        if (restored == null) {
+          _manifestRestoreFailures[record.plugin.pluginId] = StateError(
+            'external plugin payload is missing from the owned plugin root',
+          );
+          continue;
+        }
+        recoveredPath = recoveredPath || restored.payloadPath != record.payloadPath;
+        _installed[restored.plugin.pluginId] = restored;
+      } on Object catch (error) {
+        // One stale/corrupt record must never invalidate every imported
+        // plugin. Keep all independently valid records and surface the bad
+        // record for diagnostics.
+        _manifestRestoreFailures['manifest-record-$index'] = error;
+      }
+    }
+    if (records.isNotEmpty && _installed.isEmpty) {
+      throw StateError('external plugin manifest has no recoverable records');
+    }
+    return recoveredPath;
+  }
+
+  Future<void> _writeManifest({bool backupCurrent = true}) async {
     await _root.create(recursive: true);
     final partial = File('${_manifest.path}.part');
+    final backup = File('${_manifest.path}.bak');
     final document = jsonEncode(<String, Object?>{
       'version': 1,
       'plugins': _installed.values.map(_recordToJson).toList(),
     });
     await partial.writeAsString(document, flush: true);
-    if (await _manifest.exists()) await _manifest.delete();
-    await partial.rename(_manifest.path);
+    if (backupCurrent && await _manifest.exists()) {
+      if (await backup.exists()) await backup.delete();
+      await _manifest.rename(backup.path);
+    } else if (await _manifest.exists()) {
+      await _manifest.delete();
+    }
+    try {
+      await partial.rename(_manifest.path);
+    } on Object {
+      if (!await _manifest.exists() && await backup.exists()) {
+        await backup.copy(_manifest.path);
+      }
+      rethrow;
+    }
   }
 
   Future<List<int>> _downloadBytes(Uri uri, {required int maxBytes}) async {
@@ -755,7 +815,7 @@ InstalledExternalPlugin _recordFromJson(Object? raw) {
     signerSha256: _optionalString(json['signerSha256']),
     versionCode: json['versionCode'] as int?,
     extensionLib: _optionalString(json['extensionLib']),
-    entryClasses: _stringList(json['entryClasses']),
+    entryClasses: _optionalStringList(json['entryClasses']),
     sourceKey: _optionalString(json['sourceKey']),
   );
 }
@@ -844,6 +904,36 @@ List<String> _stringList(Object? value) {
     throw const FormatException('external plugin string list invalid');
   }
   return List<String>.unmodifiable(value.cast<String>());
+}
+
+List<String> _optionalStringList(Object? value) {
+  if (value == null) return const <String>[];
+  return _stringList(value);
+}
+
+Future<InstalledExternalPlugin?> _restoreOwnedPayloadRecord(
+  InstalledExternalPlugin record,
+  String canonicalRoot,
+) async {
+  if (await _isOwnedPayloadFile(record, canonicalRoot)) return record;
+  final segments = File(record.payloadPath).uri.pathSegments;
+  if (segments.isEmpty) return null;
+  final basename = segments.last;
+  if (basename.isEmpty) return null;
+  final relocatedPath = '${Directory(canonicalRoot).path}${Platform.pathSeparator}$basename';
+  final relocated = InstalledExternalPlugin(
+    plugin: record.plugin,
+    payloadPath: relocatedPath,
+    payloadSha256: record.payloadSha256,
+    repositoryOrigin: record.repositoryOrigin,
+    packageName: record.packageName,
+    signerSha256: record.signerSha256,
+    versionCode: record.versionCode,
+    extensionLib: record.extensionLib,
+    entryClasses: record.entryClasses,
+    sourceKey: record.sourceKey,
+  );
+  return await _isOwnedPayloadFile(relocated, canonicalRoot) ? relocated : null;
 }
 
 Future<bool> _isOwnedPayloadFile(

@@ -276,6 +276,8 @@ Reader Host 从 `PipelineReaderSessionFactory.acquire` 获取资源会话并在�
 
 这是一条资源 lease，不是 Reader UI 缓存，也不允许跨 Reader 复用 used SurfaceProducer。
 
+来源页打开已经持久化为 `LibraryComic` 的同一漫画时，source route lock 是该导航的唯一 presentation lock；不得在持有同一 `sourceId + raw comicId` lock 时再次调用会重复申请该 lock 的入口。路由锁只存在于内存导航生命周期，不写入 library，也不参与持久 identity。
+
 ## 10.1 Reader progress 与阅读历史
 
 Reader 页面变化产生的 `ReadingProgress` 由 `reader_runtime` 串行合并后写入 App 提供的 progress facade。同一 Reader 同时只有一个 active writer；较新的 pending progress覆盖尚未开始写入的旧值，禁止并行 Future 倒序完成后覆盖新页码。
@@ -372,6 +374,8 @@ role 相同，因此无需清空或迁移已有 cover 缓存；封面则有一�
 
 插件先生成 request plan。GET/HEAD 必须零 body且不得携带实体 headers。普通正文由宿主 transport 流式进入统一 Pipeline；完整 JSON/Base64 RPC 只允许用于明确声明 runtime transform 且有大小上限的兼容路径。
 
+Cloudflare 可见浏览器的 Cookie 与 User-Agent 必须属于同一个浏览器 session。验证模式下 `NetworkBrowserActivity` 不得把插件/OkHttp 的静态 UA 写入 WebView；WebView 使用当前 Android WebView provider 的真实 UA，并把该 UA 与同站点 Cookie/localStorage 写入同一 snapshot revision。Mihon runtime 读取 snapshot 时不再要求它等于启动前的静态 UA，而是在 OkHttp application interceptor 中对同站点请求逐请求采用 snapshot UA；CookieJar 同步导入同一 revision 的 Cookie。这样避免 `cf_clearance` 来自真实 WebView、HTTP 请求却继续声明另一浏览器/平台所产生的 Cloudflare 指纹不一致。
+
 `sourceVerificationRequired` 只由 host-owned typed `SourceVerificationRequiredException` 产生。`cf-mitigated: challenge` 是明确协议证据；否则 HTTP 状态必须为 403/503、`Server` 必须是 Cloudflare，并且 HTML 必须含 Mihon 同样使用的 `challenge-error-title` 或 `challenge-error-text` 实际交互 challenge DOM。仅出现 `challenge-platform`、`cf-chl-*`、`Just a moment`、Cloudflare Server header或普通 403/503都不足以触发浏览器验证，避免把 geo/access block误分类为可通过 WebView解决的验证码。异常 envelope 同时携带实际失败 request URL、HTTP 状态和请求时 `cf_clearance` 是否存在；这些字段只用于恢复路由和诊断，不进入持久 identity。Mihon 主网络和 ABI兼容 interceptor均委托同一个 detector；不得创建隐藏 WebView、等待 challenge或按异常消息文本猜测。
 
 插件和平台桥不得导航、创建 Reader、提交 demand、直接读写 artifact、访问 App controller，或把 Cookie/token/Base64 payload 原文写入 Trace。
@@ -393,7 +397,14 @@ role 相同，因此无需清空或迁移已有 cover 缓存；封面则有一�
 - 详情页和漫画源页使用同一 `AppPullToRefresh` 统一刷新交互；该组件同时拥有 edge trigger、刷新进度、成功/失败图标、位置和结果寿命，页面不得再叠加自己的勾/叉。
 - 浏览器 Cookie snapshot 是跨进程的一次性 revision handoff，不是每请求覆盖 runtime Cookie 的长期权威。Mihon 接收方必须先把匹配 host/UA 的 snapshot 同步写入 `AndroidCookieJar` 的进程内 name/value map，首个 OkHttp重试不得依赖异步 `CookieManager.setCookie()` 完成；CookieManager只承担 WebView/兼容镜像。打开验证浏览器本身不得擦除仍有效的同站点/同 UA snapshot：`begin()` 在 TTL 内保留已有 Cookie/localStorage，成功页面 capture才推进 revision，空 Cookie capture不得覆盖已有非空 handoff。验证浏览器打开 typed failure 的实际 URL；网络 classifier与浏览器完成探针是两套边界：前者保持严格以避免误触发，后者更保守地观察 Turnstile、challenge form/running容器、`cf-chl-*`、challenge iframe和典型验证中间态。`onPageFinished` 不是完成信号，页面必须同站点、ready/progress完成并连续 3 秒无 challenge证据才完成 snapshot handoff；`cf_clearance` 只是 Cookie之一而非唯一完成条件。一次手动或自动 browser handoff后，同 source/request URL的普通刷新不得再次自动打开 WebView；成功 browse才清除 guard，用户仍可显式再次打开浏览器。MethodChannel runtime lifecycle failure可原地重新激活一次。
 
+### 外部插件持久化恢复
+
+`$storageRoot/external_plugins/installed.json` 是已导入插件的持久清单，但清单恢复必须按 record 隔离失败：单个旧字段、损坏记录或缺失 payload 不得使其它已安装插件失效，也不得把整份 manifest 改名为 invalid。payload 的运行时绝对路径不是稳定 identity；若 Android sandbox 根发生变化，host 可在当前 owned plugin root 中按原 payload basename 找回文件，随后仍由既有 hash/signature/ABI inspection 验证内容。旧 manifest 缺少后来新增的可选字段（当前包括 `entryClasses`）必须有向后兼容默认值。恢复失败保留为诊断并显示在插件管理页。
+
 ### 封面与详情来源恢复
+
+Home 的网络 artwork locator 即使对应 source/plugin 暂未激活，也必须进入 `ComicSourceResourceGateway.loadArtworkSource` 的 source-independent durable-cache probe；只有 cache miss 才解析 active source。HTTP(S) locator 绝不能回落到 `readLocalImageSource`。
+
 
 - artwork encoded source 就绪后启动 2.5 秒首帧 watchdog；无帧只重建同一 provider stream 一次，因为离屏/尚未 paint 不证明 encoded cache 失效。只有 ImageStream 明确报错且局部恢复耗尽，才允许对当前稳定 cover identity 强制重读 bytes。Home card State 以 section + comic identity 固定，重复 owner 共享 source Future/provider。
 - cover recovery 继续使用 `role=cover` 的稳定 cache identity；`cover-recovery:*` 只是调用意图，不创建第二个长期缓存角色。

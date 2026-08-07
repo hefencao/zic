@@ -1107,12 +1107,11 @@ final class _DemoHomeState extends State<DemoHome> {
       );
     }
     const revision = comicArtworkCacheRevision;
-    final source = _sourceForId(sourceId);
     final uri = Uri.tryParse(sourceValue);
-    if (source != null && uri != null && uri.hasScheme) {
+    if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
       return _sourceResources.loadArtworkSource(
         cache: _cacheCoordinator.responses,
-        sourceId: source.sourceId,
+        sourceId: sourceId,
         comicId: comicId,
         uri: uri,
         revision: revision,

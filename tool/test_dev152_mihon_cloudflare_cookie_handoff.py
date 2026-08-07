@@ -29,6 +29,7 @@ def main() -> int:
 internal data class BrowserCookieSnapshot(
     val revision: Long,
     val cookies: Map<String, String>,
+    val userAgent: String,
 )
 
 internal object AndroidBrowserCookieSession {
@@ -36,10 +37,11 @@ internal object AndroidBrowserCookieSession {
     fun readCookies(
         context: android.content.Context,
         url: String,
-        expectedUserAgent: String,
+        expectedUserAgent: String?,
     ): BrowserCookieSnapshot? = BrowserCookieSnapshot(
         revision = 7L,
         cookies = mapOf("cf_clearance" to "fresh-token", "session" to "abc"),
+        userAgent = "Mozilla/5.0 real-webview",
     )
 }
 '''
@@ -53,6 +55,10 @@ fun main() {
     }
     check(cookies.any { it.name == "session" && it.value == "abc" }) {
         "browser snapshot cookies were not imported into the in-memory jar"
+    }
+    check(jar.browserSessionUserAgent(okhttp3.HttpUrl("https://18comic.vip/albums")) ==
+        "Mozilla/5.0 real-webview") {
+        "browser snapshot UA was not exposed with the cookie session"
     }
 }
 '''

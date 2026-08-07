@@ -61,7 +61,8 @@ require(
 require(
     'packages/network_bridge/android/src/main/kotlin/dev/zic/network/NetworkBrowserActivity.kt',
     'EXTRA_CLOUDFLARE_VERIFICATION',
-    'NetworkBrowserSnapshotStore.begin(this, url, requestedUserAgent)',
+    'NetworkBrowserSnapshotStore.begin(',
+    'webView.settings.userAgentString',
 )
 require(
     'packages/network_bridge/android/src/main/kotlin/dev/zic/network/NetworkBridgePlugin.kt',
