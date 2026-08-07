@@ -55,6 +55,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - 漫画源页 MUST 使用来源自身声明的 browse section；Mihon Popular/Latest 与 Venera explore/category target 均属于来源内部分类。原生/Mihon/Venera 运行时类型 MUST NOT 作为内容分类行，只能以来源 chip 的视觉标识区分。固定大小 catalog page MUST 使用显式上一页/下一页，pager MUST 位于内容滚动尾部；切换来源、section 或外部搜索请求时 MUST 回到第一页。
 - 切换漫画 source 时，Presentation MUST 在同一更新周期将 projection owner 切换为目标 source；MUST 优先显示目标精确请求缓存，其次目标最近缓存，没有目标缓存时显示目标 loading/error。旧 source 页面不得因目标请求失败继续可见。
 - 强制刷新遇到 `sourceVerificationRequired` 且存在 WebView capability 时 MUST 自动进入一次目标 source 验证；验证返回后 MAY 重试一次，但 MUST 防止循环打开。
+- WebView 验证返回后外部 runtime MAY 被重启。详情页与漫画源页的后续操作 MUST 按稳定 source ID重新解析当前 active adapter，MUST NOT继续调用重启前已关闭的 session。漫画源页 MUST 在 replacement source上重新加载 section/filter后再强制刷新，并禁止同一次恢复再次自动打开 WebView。
 - `sourceVerificationRequired` MUST 只来自 typed host challenge detector：403/503 加 `cf-mitigated: challenge` 或明确 challenge body marker。普通 HTTP 403、timeout、解析失败和包含 Cloudflare 字样的异常消息 MUST NOT 被重分类。主网络与兼容 interceptor MUST 使用同一 detector，不得使用隐藏 WebView。
 - 漫画源搜索 MUST 以来源栏上方的浮动控件进入，展开后 SHOULD 提供可持久化、可删除和可清空的搜索历史。展开搜索面板 MUST 优先消费系统返回手势与垂直拖动/滚动手势，并在这些手势发生时恢复为浮动按钮。Mihon `getFilterList()` 支持的 CheckBox、TriState、Select 与 Group 子项 SHOULD 以不透明 ID 的过滤标签显示在搜索框上方；UI MUST NOT 持有或解释插件 Filter 对象。搜索结果 MUST 使用 catalog/resource-cache 权威：若有缓存，Presentation MUST 先显示缓存并后台刷新；只有稳定字段变化时才替换列表，不得建立页面私有结果缓存。漫画源页 MUST 支持边缘下拉达到阈值后的强制刷新；强制刷新 MUST 绕过 catalog cache，但 SHOULD 保留已有内容直到新结果到达。
 - Mihon 插件的已安装列表和仓库列表 MUST 能按规范化语言分类；语言 SHOULD 优先使用插件声明，缺失时从插件 source metadata 推导。多个语言 MUST 归入多语言，无法可靠确定时归入未知语言，不得从显示名猜测。

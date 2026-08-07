@@ -106,6 +106,7 @@ extension _DemoHomeViews on _DemoHomeState {
                       loadCover: _loadSourceBrowseCover,
                       onOpenComic: _openSourceComic,
                       onOpenSourceWebView: _openSourceWebView,
+                      resolveSource: _sourceForId,
                       traceSink: widget.debugTrace,
                       requestedQuery: _sourceSearchQuery,
                       queryRevision: _sourceSearchRevision,

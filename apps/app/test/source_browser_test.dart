@@ -377,6 +377,54 @@ void main() {
     expect(source.browseCalls, greaterThanOrEqualTo(3));
   });
 
+  testWidgets('verification retry resolves the replacement runtime source',
+      (tester) async {
+    final stale = _FixtureSource(
+      'mihon:replacement',
+      '旧运行时',
+      browseError: const Failure(
+        code: ErrorCode.sourceVerificationRequired,
+        message: 'source-verification-required: verification required',
+      ),
+    );
+    final replacement = _FixtureSource(
+      stale.sourceId,
+      '新运行时',
+    );
+    BrowsableComicSource current = stale;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ComicSourcesPage(
+            sources: <BrowsableComicSource>[stale],
+            activeSourceId: stale.sourceId,
+            onSourceSelected: (_) {},
+            loadCover: (_, __, ___) async =>
+                throw StateError('cover should not load'),
+            onOpenComic: (_, __) async {},
+            onOpenSourceWebView: (_, __) async {
+              current = replacement;
+            },
+            resolveSource: (sourceId) =>
+                current.sourceId == sourceId ? current : null,
+          ),
+        ),
+      ),
+    );
+
+    await _pumpUntilFound(tester, find.byKey(comicSourceErrorKey));
+    await _tapVisible(tester, find.byIcon(Icons.refresh));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceComicCardKey(replacement.sourceId, replacement._comicId)),
+    );
+
+    expect(stale.browseCalls, greaterThanOrEqualTo(2));
+    expect(replacement.browseCalls, greaterThanOrEqualTo(1));
+    expect(find.byKey(comicSourceErrorKey), findsNothing);
+  });
+
   testWidgets('cover verification failure exposes its source WebView action',
       (tester) async {
     final source = _FixtureSource('mihon:cover-verification', '封面验证源');

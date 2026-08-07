@@ -153,6 +153,7 @@ final class ComicSourcesPage extends StatefulWidget {
     required this.loadCover,
     required this.onOpenComic,
     this.onOpenSourceWebView,
+    this.resolveSource,
     this.traceSink = const NoopTraceSink(),
     this.requestedQuery,
     this.queryRevision = 0,
@@ -175,6 +176,7 @@ final class ComicSourcesPage extends StatefulWidget {
     BrowsableComicSource source,
     Uri url,
   )? onOpenSourceWebView;
+  final BrowsableComicSource? Function(String sourceId)? resolveSource;
   final TraceSink traceSink;
   final String? requestedQuery;
   final int queryRevision;
@@ -253,12 +255,11 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     if (id == null) {
       return null;
     }
-    for (final source in widget.sources) {
-      if (source.sourceId == id) {
-        return source;
-      }
+    final resolved = widget.resolveSource?.call(id);
+    if (resolved != null) {
+      return resolved;
     }
-    return null;
+    return _sourceForId(widget.sources, id);
   }
 
   void _rememberSourceView(String? sourceId) {
@@ -349,13 +350,21 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       scheduleMicrotask(() => unawaited(_reload(offset: 0)));
       return;
     }
+    final activeSourceReplaced = widget.activeSourceId != null &&
+        !identical(
+          _sourceForId(oldWidget.sources, widget.activeSourceId!),
+          _sourceForId(widget.sources, widget.activeSourceId!),
+        );
     if (oldWidget.activeSourceId != widget.activeSourceId ||
-        !_sameSourceIds(oldWidget.sources, widget.sources)) {
+        !_sameSourceIds(oldWidget.sources, widget.sources) ||
+        activeSourceReplaced) {
       _rememberSourceView(oldWidget.activeSourceId);
       _sections = const <SourceBrowseSection>[];
       _searchFilters = const <SourceSearchFilterOption>[];
       _restoreTargetProjection(_activeSource);
-      scheduleMicrotask(() => unawaited(_loadSource()));
+      if (!_recoveringSourceAccess) {
+        scheduleMicrotask(() => unawaited(_loadSource()));
+      }
     }
   }
 
@@ -366,11 +375,17 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     super.dispose();
   }
 
-  Future<void> _loadSource() async {
+  Future<bool> _loadSource({
+    bool forceRefresh = false,
+    bool allowVerificationFallback = true,
+    int browseOffset = 0,
+  }) async {
     final source = _activeSource;
     if (source == null) {
-      await _reload();
-      return;
+      return _reload(
+        forceRefresh: forceRefresh,
+        allowVerificationFallback: allowVerificationFallback,
+      );
     }
     final generation = ++_generation;
     var sections = const <SourceBrowseSection>[];
@@ -413,7 +428,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         );
       }
     }
-    if (!mounted || generation != _generation) return;
+    if (!mounted || generation != _generation) return false;
     final selected = sections.any(
       (section) => section.sectionId == _selectedSectionId,
     )
@@ -432,7 +447,11 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       _searchFilters = filters;
       _selectedFilterIds = Set<String>.unmodifiable(selectedFilters);
     });
-    await _reload(offset: 0);
+    return _reload(
+      forceRefresh: forceRefresh,
+      allowVerificationFallback: allowVerificationFallback,
+      offset: browseOffset,
+    );
   }
 
   Future<SourceBrowsePage> _loadBrowsePage(
@@ -654,15 +673,31 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     );
     try {
       await open(source, source.descriptor.website);
-      if (mounted) {
-        await _reload(
-          forceRefresh: true,
-          allowVerificationFallback: false,
+      if (!mounted) return;
+      final replacement = _activeSource;
+      if (replacement == null || replacement.sourceId != source.sourceId) {
+        throw StateError(
+          'source verification completed without an active replacement source',
         );
+      }
+      _recordSourceTrace(
+        TraceEventKind.sourceReady,
+        'verification-runtime-replaced',
+        replacement,
+        payload: <String, Object?>{
+          'adapterReplaced': !identical(replacement, source),
+        },
+      );
+      final recovered = await _loadSource(
+        forceRefresh: true,
+        allowVerificationFallback: false,
+        browseOffset: _pageOffset,
+      );
+      if (recovered) {
         _recordSourceTrace(
           TraceEventKind.sourceReady,
           'verification-recovery-complete',
-          source,
+          replacement,
         );
       }
     } on Object catch (error, stackTrace) {
@@ -2254,6 +2289,18 @@ bool _sameStringList(List<String> left, List<String> right) {
     if (left[index] != right[index]) return false;
   }
   return true;
+}
+
+BrowsableComicSource? _sourceForId(
+  List<BrowsableComicSource> sources,
+  String sourceId,
+) {
+  for (final source in sources) {
+    if (source.sourceId == sourceId) {
+      return source;
+    }
+  }
+  return null;
 }
 
 bool _sameSourceIds(

@@ -399,4 +399,5 @@ role 相同，因此无需清空或迁移已有 cover 缓存；封面则有一�
 - cover recovery 继续使用 `role=cover` 的稳定 cache identity；`cover-recovery:*` 只是调用意图，不创建第二个长期缓存角色。
 - 远程详情优先投影已保存 manifest；插件 host 未就绪时等待当前 source resolver，不能因后台 refresh 失败丢弃已有详情。
 - 预览、评论、章节确保和刷新在实际调用时解析当前 active adapter，不捕获插件重启前的 source session。
+- 漫画源浏览页遵循相同生命周期边界：页面持有稳定 `sourceId`、section/query/filter 与缓存投影，不长期拥有 runtime adapter。WebView验证或插件设置重启 runtime 后，section/filter/browse 必须通过 composition resolver取得当前 active source；已关闭的旧 session不得继续调用。
 - App 不扫描、删除或迁移 synthetic/compatibility chapter。Mihon adapter 在源目录进入 Catalog 前，仅当真实章节与标题精确归一为“开始阅读/开始阅读章节/Start Reading/Read Now”的独立动作并存时去除该动作；单独的 gallery“正文”兼容章节和普通章节名保持。

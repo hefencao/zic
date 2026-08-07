@@ -85,6 +85,7 @@ python3 "$ROOT/tool/test_dev147_reader_progress_start_action_version_ui_verifica
 python3 "$ROOT/tool/test_dev148_catalog_uri_mihon_recognition.py"
 python3 "$ROOT/tool/test_dev149_mihon_end_to_end_discovery.py"
 python3 "$ROOT/tool/test_dev150_mihon_runtime_release_keep.py"
+python3 "$ROOT/tool/test_dev151_source_verification_runtime_replacement.py"
 python3 "$ROOT/tool/check_test_quarantine.py"
 python3 "$ROOT/tool/test_texture_schedule_timing_contract.py"
 python3 "$ROOT/tool/test_texture_bridge_kotlin_compile.py"

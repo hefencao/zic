@@ -1,3 +1,10 @@
+## 0.31.0-dev.151：修复验证后旧 runtime source 重试
+
+- 漫画源页新增稳定 source ID resolver；外部插件 runtime 重启后，browse/section/filter 请求使用当前 active adapter，不再调用关闭的旧 session。
+- WebView 验证恢复改为先确认 replacement source 已发布，再在新 adapter 上重载来源 metadata并强制刷新；恢复重试继续禁止二次 WebView fallback。
+- `didUpdateWidget` 识别 source ID不变但 adapter实例已替换的情况，取消旧请求代次并重新加载。
+- 新增直接模拟旧 source验证失败、WebView替换同 ID新 source的 Flutter owner test和 dev.151门禁。
+
 ## 0.31.0-dev.150：修复 Mihon common runtime 的 Release 保留边界
 
 - 为动态加载边界使用的 `SourceVerificationRequiredException` 增加 consumer R8 keep 规则，保留原始类名和成员。
