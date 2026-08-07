@@ -1,5 +1,6 @@
 # Mihon ABI assets reference these through a dynamically loaded NetworkHelper.
 -keep class dev.zic.network.AndroidCloudflareInterceptor { *; }
+-keep class dev.zic.network.SourceVerificationRequiredException { *; }
 -keep class dev.zic.network.NetworkBrowserSnapshotStore { *; }
 -keep class dev.zic.network.AndroidBrowserCookieSession { *; }
 -keep class dev.zic.network.AndroidCookieJar { *; }

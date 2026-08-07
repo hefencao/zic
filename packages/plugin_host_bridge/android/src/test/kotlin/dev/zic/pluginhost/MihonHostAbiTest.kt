@@ -68,6 +68,15 @@ class MihonHostAbiTest {
     }
 
     @Test
+    fun requiresTheTypedVerificationFailureAtTheStableReleaseName() {
+        assertTrue(
+            requiredMihonCommonRuntimeClasses.contains(
+                "dev.zic.network.SourceVerificationRequiredException",
+            ),
+        )
+    }
+
+    @Test
     fun keepsBrowserSnapshotImplementationOutOfTheCommonRuntimeAbi() {
         assertTrue(requiredMihonCommonRuntimeClasses.contains("dev.zic.network.AndroidCookieJar"))
         assertFalse(

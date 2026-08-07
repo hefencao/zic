@@ -1,6 +1,6 @@
-# dev.149 后续交接
+# dev.150 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.149_mihon-end-to-end-discovery.zip`。
+唯一后续基线：`zic_v0.31.0-dev.150_mihon-runtime-release-keep.zip`。
 
 ## 必读
 
@@ -50,6 +50,7 @@
 - `sourceVerificationRequired` 只由统一 typed 403/503 challenge detector 产生；兼容 interceptor 不创建隐藏 WebView。
 - `CachedBrowsableComicSource.resolveComicWebUri` 保持 `Uri?`；调用方负责 website fallback。
 - Mihon common runtime只预检稳定 `AndroidCookieJar`，不直接依赖内部 `AndroidBrowserCookieSession`。APK metadata可从字符串资源解析，并支持逗号/分号/换行多入口。后台设备扫描错误保存在 controller并由插件页显示，不能再把扫描异常伪装成空列表。
+- Mihon common runtime中的 `SourceVerificationRequiredException` 是动态 ABI；network bridge consumer R8规则必须保留其原始类名和成员。不得通过删除完整性预检绕过 Release缺类。
 - Native identity 保持 `zic-media-core-dev134-abi6-lib00121400`。
 - 当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip`；不得从旧版本偷偷补入，除非用户提供或明确指定来源。
 

@@ -1,3 +1,4 @@
+- 在完整 Android release工具链中构建 minified APK，并用 `jadx`/`dexdump`确认 `dev.zic.network.SourceVerificationRequiredException` 保持原始名称；随后在真机重新激活 Mihon共享扩展。
 # zic Implementation Plan
 
 ## P0：Mihon 插件识别设备闭环

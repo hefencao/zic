@@ -1,3 +1,10 @@
+## 0.31.0-dev.150：修复 Mihon common runtime 的 Release 保留边界
+
+- 为动态加载边界使用的 `SourceVerificationRequiredException` 增加 consumer R8 keep 规则，保留原始类名和成员。
+- 保持 Mihon common runtime 对 typed verification exception 的完整性预检；不通过删除预检掩盖 Release APK 缺类。
+- 新增 dev.150 门禁，要求所有 `requiredMihonCommonRuntimeClasses` 中的 `dev.zic.network.*` 类型都有显式 release keep 规则。
+- 新增 Mihon host ABI 断言，确认验证异常仍是稳定 common runtime 边界。
+
 ## 0.31.0-dev.149：端到端诊断并恢复 Mihon 共享扩展发现
 
 - Mihon 页面打开时自动读取默认仓库索引，以仓库 package name执行精确 `getPackageInfo` 探测，不再依赖用户先手动加载仓库。

@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.149`
-**App build：** `0.31.0+149`
+**源码版本：** `0.31.0-dev.150`
+**App build：** `0.31.0+150`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -9,7 +9,7 @@
 
 ## 当前实现
 
-- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=148`。
+- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=150`。
 - 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
 - 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation
   不阻塞 Home primary，外部 source ready 后增量接入；失败封面仅按稳定资源 identity、显式 retry revision 或 App resume 恢复，loader closure identity 不参与重试。
@@ -31,6 +31,7 @@
 - 详情页与漫画源页共用同一个可见的顶部边缘下拉刷新组件：`onEdge`、位移 72、保留旧内容后台刷新。
 - Android 可见浏览器 Cookie snapshot 以 `updatedAt` 为 revision，每个 runtime 进程/站点/UA 只导入一次。WebView 验证返回后目标 source 会重启；新 Mihon runtime 清空进程内 import revision，使第一个真实 request 按实际 host/UA 导入最新同站 snapshot。平台 runtime 对 retryable lifecycle response 原地重新激活并重试一次；已打开详情页按稳定 source ID 解析当前 adapter。
 - Mihon runtime 通过稳定 `AndroidCookieJar.resetBrowserSnapshotImports()` 清理进程内 browser-snapshot revision；`AndroidBrowserCookieSession` 不再是 plugin host直接依赖或 common runtime ABI项。APK metadata reader可解析字符串资源形式的 extensionLib/entry class，并支持多个 entry class分隔。设备发现合并系统包、应用列表与仓库 package name精确探测，逐 APK失败和扫描计数直接显示；页面打开会自动加载默认仓库以提供精确探测 identity。扫描仅覆盖系统共享 APK，Mihon 私有扩展需从 ZIC仓库安装。
+- Mihon common runtime要求的 `SourceVerificationRequiredException` 已加入 network bridge consumer R8 keep规则；动态 ABI和 host在 minified Release中继续以同一原始类名共享 typed验证异常。门禁会从 required network class列表反查 keep覆盖。
 - Catalog 的 `resolveComicWebUri` 装饰器与来源能力保持 `Uri?` 合同；来源无法提供详情 URL 时由调用方继续使用 descriptor website fallback。
 - Reader 进度使用单 writer 合并队列；正常 route pop 等待最终 checkpoint，详情页返回后立即重新读取 snapshot。页面变化及 inactive/paused/detached 持续 best-effort checkpoint，异常进程终止不承诺绝对完成。
 - App 已删除 synthetic“开始阅读/正文”清理。Mihon adapter 只删除与真实章节并存的独立开始阅读动作，单独“正文”gallery fallback 保留。
@@ -75,7 +76,7 @@
 |---|---|
 | repository/documentation/Dart static gates | Verified-static |
 | current-code documentation consistency gate | Verified-static |
-| dev.75–dev.149 ownership gates | Verified-static |
+| dev.75–dev.150 ownership gates | Verified-static |
 | Android/Mihon/Venera/Reader/Pipeline/UI contracts | Verified-static / toolchain |
 | Kotlin texture bridge compile stub | Verified-toolchain |
 | pinned libwebp host build/smoke | Unverified：当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip` |

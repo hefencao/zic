@@ -142,7 +142,7 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
 ### 插件与平台桥
 
 - `plugin_host`：信任、权限、请求计划、身份适配和插件生命周期。
-- `plugin_host_bridge`：Android 隔离进程与 Mihon/Venera runtime 适配。Mihon 设备发现只覆盖作为系统共享 APK安装的扩展，合并 `getInstalledPackages`、`getInstalledApplications` 与已知仓库 package name的精确 `getPackageInfo`；每个候选的 manifest、metadata、签名、ABI与 entry失败必须返回诊断，不得静默丢弃。Mihon App私有 `filesDir` 中的扩展不能跨 App读取，必须从 ZIC 仓库独立安装。APK 候选按扩展 feature 或标准 package prefix识别；entry/ABI meta-data随后从 manifest原值或字符串资源解析，多个 entry class可用逗号、分号或换行分隔。隔离 runtime 的公共网络 ABI只要求 `AndroidCookieJar` 等稳定适配器，`AndroidBrowserCookieSession` 属于 network bridge内部实现，不得被 plugin host直接 import或列入 common runtime必需类。
+- `plugin_host_bridge`：Android 隔离进程与 Mihon/Venera runtime 适配。Mihon 设备发现只覆盖作为系统共享 APK安装的扩展，合并 `getInstalledPackages`、`getInstalledApplications` 与已知仓库 package name的精确 `getPackageInfo`；每个候选的 manifest、metadata、签名、ABI与 entry失败必须返回诊断，不得静默丢弃。Mihon App私有 `filesDir` 中的扩展不能跨 App读取，必须从 ZIC 仓库独立安装。APK 候选按扩展 feature 或标准 package prefix识别；entry/ABI meta-data随后从 manifest原值或字符串资源解析，多个 entry class可用逗号、分号或换行分隔。隔离 runtime 的公共网络 ABI只要求 `AndroidCookieJar` 等稳定适配器，`AndroidBrowserCookieSession` 属于 network bridge内部实现，不得被 plugin host直接 import或列入 common runtime必需类。动态 ABI按原始类名加载 `dev.zic.network.*` common 类型；所有列入完整性预检的网络类型必须由 `network_bridge` consumer R8规则显式保留类名和成员，不能依赖普通源码引用阻止 Release混淆。
 - `network_bridge`：浏览器、Cookie/localStorage 快照、challenge 恢复和共享网络能力。
 - `bridge`：Dart FFI、native source/cursor/frame ABI 和两个进程常驻 decode isolate。
 - `texture_bridge`：Android texture lease、SurfaceProducer、单 lane RGBA blit、schedule 和 release。
