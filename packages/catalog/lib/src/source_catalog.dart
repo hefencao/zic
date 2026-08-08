@@ -209,43 +209,68 @@ abstract interface class SectionedBrowsableComicSource {
   });
 }
 
-/// One source-owned search filter option suitable for compact chip UI.
+/// One normalized source-owned search-filter node.
 ///
-/// [filterId] is opaque outside the source adapter. Presentation may toggle it
-/// and return the selected IDs unchanged, but must not interpret plugin state.
-final class SourceSearchFilterOption {
-  const SourceSearchFilterOption({
-    required this.filterId,
-    required this.label,
-    this.selected = false,
-  })  : assert(filterId != ''),
-        assert(label != '');
-
-  final String filterId;
-  final String label;
-  final bool selected;
+/// Mihon sources return a `FilterList` whose concrete subclasses define the
+/// schema and default state. ZIC preserves that source-owned structure instead
+/// of guessing filter semantics from labels or flattening everything into
+/// toggle chips.
+enum SourceSearchFilterKind {
+  header,
+  separator,
+  select,
+  text,
+  checkBox,
+  triState,
+  group,
+  sort,
 }
+
+final class SourceSearchFilterNode {
+  const SourceSearchFilterNode({
+    required this.filterId,
+    required this.kind,
+    this.label = '',
+    this.options = const <String>[],
+    this.value,
+    this.children = const <SourceSearchFilterNode>[],
+  }) : assert(filterId != '');
+
+  /// Opaque structural path owned by the source adapter.
+  final String filterId;
+  final SourceSearchFilterKind kind;
+  final String label;
+  final List<String> options;
+
+  /// Source-provided default/current state for leaf filters.
+  ///
+  /// Wire-compatible values are bool/int/String/null, or the Sort state map
+  /// `{index: int, ascending: bool}`. Presentation only edits these typed
+  /// values; it never interprets source-specific labels.
+  final Object? value;
+  final List<SourceSearchFilterNode> children;
+}
+
+/// User overrides relative to the source-provided FilterList defaults.
+///
+/// Empty state means the ordinary Popular/Latest browse path remains active.
+typedef SourceSearchFilterState = Map<String, Object?>;
 
 /// Optional source-owned search-filter capability.
 ///
-/// Mihon adapters may project `getFilterList()` through this interface. Other
-/// runtimes return no capability rather than inventing generic filters.
+/// Capability is represented by the actual schema returned by
+/// [loadSearchFilters]. An empty list means this source has no exposed search
+/// filters; there is no separate boolean capability that can drift from the
+/// source's `getFilterList()` result.
 abstract interface class FilterableBrowsableComicSource {
-  /// Whether this source exposes a real search-filter schema.
-  ///
-  /// Capability presence is independent from whether the current schema load
-  /// succeeds or happens to contain zero options. Presentation must not infer
-  /// capability from the last loaded option list.
-  bool get supportsSearchFilters;
-
-  Future<List<SourceSearchFilterOption>> loadSearchFilters();
+  Future<List<SourceSearchFilterNode>> loadSearchFilters();
 
   Future<SourceBrowsePage> browseWithFilters({
     String? sectionId,
     String query = '',
     int offset = 0,
     int limit = 24,
-    Set<String> selectedFilterIds = const <String>{},
+    SourceSearchFilterState filterState = const <String, Object?>{},
   });
 }
 
@@ -256,15 +281,15 @@ final class CachedSourceBrowseSnapshot {
     required this.query,
     required this.offset,
     required this.limit,
-    Set<String> selectedFilterIds = const <String>{},
-  }) : selectedFilterIds = Set<String>.unmodifiable(selectedFilterIds);
+    SourceSearchFilterState filterState = const <String, Object?>{},
+  }) : filterState = Map<String, Object?>.unmodifiable(filterState);
 
   final SourceBrowsePage page;
   final String? sectionId;
   final String query;
   final int offset;
   final int limit;
-  final Set<String> selectedFilterIds;
+  final SourceSearchFilterState filterState;
 }
 
 /// Optional cache projection used by Presentation for stale-while-revalidate.
@@ -280,7 +305,7 @@ abstract interface class CachedSourceBrowseProjection {
     String query = '',
     int offset = 0,
     int limit = 24,
-    Set<String> selectedFilterIds = const <String>{},
+    SourceSearchFilterState filterState = const <String, Object?>{},
   });
 
   Future<SourceBrowsePage> refreshBrowsePage({
@@ -288,7 +313,7 @@ abstract interface class CachedSourceBrowseProjection {
     String query = '',
     int offset = 0,
     int limit = 24,
-    Set<String> selectedFilterIds = const <String>{},
+    SourceSearchFilterState filterState = const <String, Object?>{},
   });
 }
 

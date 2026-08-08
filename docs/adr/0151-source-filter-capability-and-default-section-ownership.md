@@ -1,6 +1,6 @@
 # ADR 0151：Source Filter Capability 与默认 Section 所有权
 
-状态：Accepted
+状态：Superseded（筛选 capability 决策由 ADR 0152 取代；默认 Section 所有权继续有效）
 版本：0.31.0-dev.168
 
 ## 问题

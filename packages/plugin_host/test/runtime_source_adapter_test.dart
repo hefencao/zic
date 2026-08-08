@@ -106,11 +106,6 @@ void main() {
 
     expect(source.sourceId, 'venera:fixture');
     expect(source.descriptor.name, 'Fixture');
-    expect(
-      (source as FilterableBrowsableComicSource).supportsSearchFilters,
-      isFalse,
-    );
-
     final page = await source.browse(query: 'query', offset: 0, limit: 24);
     expect(page.items.single.comicId, 'comic-1');
     expect(page.items.single.sourceId, source.sourceId);
@@ -245,6 +240,32 @@ void main() {
     );
   });
 
+  test('Mihon search filters preserve typed source-owned state', () async {
+    final connection = _FixtureConnection();
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(format: ExternalComicPluginFormat.mihonExtension),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single as FilterableBrowsableComicSource;
+
+    final filters = await source.loadSearchFilters();
+    expect(filters, hasLength(1));
+    expect(filters.single.kind, SourceSearchFilterKind.checkBox);
+    expect(filters.single.filterId, '0');
+    expect(filters.single.value, isFalse);
+
+    await source.browseWithFilters(
+      sectionId: 'latest',
+      filterState: const <String, Object?>{'0': true},
+    );
+    expect(
+      connection.lastRequest?.arguments['filterState'],
+      <String, Object?>{'0': true},
+    );
+  });
+
   test('Mihon resolves host-streamable request plans and refreshes retry',
       () async {
     final connection = _FixtureConnection();
@@ -255,10 +276,6 @@ void main() {
     );
     addTearDown(session.close);
     final source = session.sources.single;
-    expect(
-      (source as FilterableBrowsableComicSource).supportsSearchFilters,
-      isTrue,
-    );
     final locator = Uri.parse('mihon:resource:fixture');
 
     final request = await (source as ResolvableComicResourceSource)
@@ -645,9 +662,10 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
         ],
         ExternalPluginRuntimeOperation.loadSearchFilters => <Object?>[
           <String, Object?>{
-            'filterId': '0:check',
+            'kind': 'checkBox',
+            'filterId': '0',
             'label': '已完结',
-            'selected': false,
+            'value': false,
           },
         ],
         ExternalPluginRuntimeOperation.browse => <String, Object?>{
@@ -844,9 +862,10 @@ final class _SequencedConnection implements ExternalPluginRuntimeConnection {
         ],
         ExternalPluginRuntimeOperation.loadSearchFilters => <Object?>[
           <String, Object?>{
-            'filterId': '0:check',
+            'kind': 'checkBox',
+            'filterId': '0',
             'label': '已完结',
-            'selected': false,
+            'value': false,
           },
         ],
         ExternalPluginRuntimeOperation.browse => <String, Object?>{

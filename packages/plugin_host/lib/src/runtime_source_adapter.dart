@@ -368,27 +368,18 @@ final class _RuntimeBrowsableComicSource
   }
 
   @override
-  bool get supportsSearchFilters =>
-      _format == ExternalComicPluginFormat.mihonExtension;
-
-  @override
-  Future<List<SourceSearchFilterOption>> loadSearchFilters() async {
-    if (!supportsSearchFilters) {
-      return const <SourceSearchFilterOption>[];
+  Future<List<SourceSearchFilterNode>> loadSearchFilters() async {
+    if (_format != ExternalComicPluginFormat.mihonExtension) {
+      return const <SourceSearchFilterNode>[];
     }
     final payload = await _invoke(
       ExternalPluginRuntimeOperation.loadSearchFilters,
       _externalId,
       const <String, Object?>{},
     );
-    return _list(payload, 'search filters').map((value) {
-      final option = _map(value, 'search filter');
-      return SourceSearchFilterOption(
-        filterId: _string(option, 'filterId'),
-        label: _string(option, 'label'),
-        selected: _optionalBool(option['selected']) ?? false,
-      );
-    }).toList(growable: false);
+    return _list(payload, 'search filters')
+        .map(_sourceSearchFilterNode)
+        .toList(growable: false);
   }
 
   Future<SourceBrowsePage> _browse({
@@ -396,7 +387,7 @@ final class _RuntimeBrowsableComicSource
     required int offset,
     required int limit,
     String? sectionId,
-    Set<String> selectedFilterIds = const <String>{},
+    SourceSearchFilterState filterState = const <String, Object?>{},
   }) async {
     if (offset < 0 || limit <= 0) {
       throw ArgumentError('browse offset/limit are invalid');
@@ -409,7 +400,7 @@ final class _RuntimeBrowsableComicSource
         'offset': offset,
         'limit': limit,
         'sectionId': sectionId,
-        'filterIds': selectedFilterIds.toList(growable: false),
+        'filterState': Map<String, Object?>.from(filterState),
       },
     );
     final message = _map(payload, 'browse result');
@@ -455,14 +446,14 @@ final class _RuntimeBrowsableComicSource
     String query = '',
     int offset = 0,
     int limit = 24,
-    Set<String> selectedFilterIds = const <String>{},
+    SourceSearchFilterState filterState = const <String, Object?>{},
   }) =>
       _browse(
         query: query,
         offset: offset,
         limit: limit,
         sectionId: sectionId,
-        selectedFilterIds: selectedFilterIds,
+        filterState: filterState,
       );
 
   @override
@@ -1094,6 +1085,73 @@ Chapter _chapter(Map<String, Object?> value, String comicId) {
     pageCount: _nonNegativeInt(value, 'pageCount'),
     sourceRevision: _string(value, 'sourceRevision'),
     publishedAt: _optionalDateTime(value['publishedAt'], 'publishedAt'),
+  );
+}
+
+SourceSearchFilterNode _sourceSearchFilterNode(Object? value) {
+  final message = _map(value, 'search filter');
+  final kindName = _string(message, 'kind');
+  SourceSearchFilterKind kind;
+  try {
+    kind = SourceSearchFilterKind.values.byName(kindName);
+  } on ArgumentError {
+    throw FormatException('unknown search filter kind: $kindName');
+  }
+  final filterId = _string(message, 'filterId');
+  final label = _optionalString(message['label'], 'search filter label') ?? '';
+  final options = _optionalStringList(
+    message['options'],
+    'search filter options',
+  );
+  final children = message['children'] == null
+      ? const <SourceSearchFilterNode>[]
+      : _list(message['children'], 'search filter children')
+          .map(_sourceSearchFilterNode)
+          .toList(growable: false);
+  final rawValue = message['value'];
+  final normalizedValue = switch (kind) {
+    SourceSearchFilterKind.header ||
+    SourceSearchFilterKind.separator ||
+    SourceSearchFilterKind.group => null,
+    SourceSearchFilterKind.checkBox => _requiredFilterBool(rawValue, filterId),
+    SourceSearchFilterKind.triState || SourceSearchFilterKind.select =>
+      _requiredFilterInt(rawValue, filterId),
+    SourceSearchFilterKind.text =>
+      rawValue is String ? rawValue : throw FormatException(
+        'search filter $filterId must contain a string state',
+      ),
+    SourceSearchFilterKind.sort => _sortFilterValue(rawValue, filterId),
+  };
+  return SourceSearchFilterNode(
+    filterId: filterId,
+    kind: kind,
+    label: label,
+    options: options,
+    value: normalizedValue,
+    children: children,
+  );
+}
+
+bool _requiredFilterBool(Object? value, String filterId) {
+  if (value is bool) return value;
+  throw FormatException('search filter $filterId must contain a bool state');
+}
+
+int _requiredFilterInt(Object? value, String filterId) {
+  if (value is int) return value;
+  throw FormatException('search filter $filterId must contain an int state');
+}
+
+Map<String, Object?>? _sortFilterValue(Object? value, String filterId) {
+  if (value == null) return null;
+  final state = _map(value, 'search sort state');
+  final index = state['index'];
+  final ascending = state['ascending'];
+  if (index is! int || ascending is! bool) {
+    throw FormatException('search filter $filterId has an invalid sort state');
+  }
+  return Map<String, Object?>.unmodifiable(
+    <String, Object?>{'index': index, 'ascending': ascending},
   );
 }
 

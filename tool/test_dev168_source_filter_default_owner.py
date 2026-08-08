@@ -26,33 +26,21 @@ adapter = read('packages/plugin_host/lib/src/runtime_source_adapter.dart')
 source_test = read('apps/app/test/source_browser_test.dart')
 adapter_test = read('packages/plugin_host/test/runtime_source_adapter_test.dart')
 
-# Capability and one schema load result are different state dimensions. The
-# category action must follow capability, not whether the current list is empty.
+# Filter visibility follows the actual source-owned schema. dev.169 supersedes
+# dev.168's separate capability boolean while preserving the default-section
+# ownership introduced here.
 for token in (
-    'bool get supportsSearchFilters;',
-    'Future<List<SourceSearchFilterOption>> loadSearchFilters();',
+    'Future<List<SourceSearchFilterNode>> loadSearchFilters();',
+    'SourceSearchFilterState filterState',
 ):
-    require(catalog, token, 'catalog search-filter capability')
-require(
-    adapter,
-    'bool get supportsSearchFilters =>\n      _format == ExternalComicPluginFormat.mihonExtension;',
-    'runtime format filter capability',
-)
-require(cached, 'return filterable?.supportsSearchFilters ?? false;',
-        'cached capability delegation')
+    require(catalog, token, 'catalog search-filter schema')
 for token in (
-    'bool _supportsSearchFilters = false;',
-    'if (_sections.length > 1 || _supportsSearchFilters)',
-    '(_supportsSearchFilters ? 1 : 0)',
-    'if (!_supportsSearchFilters) return;',
-    '当前漫画源未提供可用筛选项',
+    'if (_sections.length > 1 || _searchFilters.isNotEmpty)',
+    'if (_searchFilters.isEmpty) return;',
 ):
-    require(source, token, 'filter action capability state')
-forbid(
-    source,
-    '(_searchFilters.isEmpty ? 0 : 1)',
-    'filter list as action capability',
-)
+    require(source, token, 'filter action schema state')
+for token in ('supportsSearchFilters', 'SourceSearchFilterOption'):
+    forbid(catalog + cached + adapter + source, token, 'superseded filter capability')
 
 # Browse cache is a data owner, not a navigation/default-state owner. Default
 # selection and visual order must derive from the same ordering function.
@@ -74,19 +62,10 @@ for token in (
 ):
     require(source, token, 'single section ordering/default owner')
 
-# Widget coverage locks visible empty-schema filter capability and first-column
-# default focus. A future custom order only needs to replace the ordering owner.
+# Widget coverage locks empty-schema hiding and first-column default focus.
 for token in (
-    '(source as FilterableBrowsableComicSource).supportsSearchFilters',
-    'isFalse',
-    'isTrue',
-):
-    require(adapter_test, token, 'runtime filter capability tests')
-
-for token in (
-    'filter capability keeps the category action visible with an empty schema',
-    'supportsSearchFilters: true',
-    '当前漫画源未提供可用筛选项',
+    'empty source filter schema does not invent a filter category',
+    "expect(find.byKey(comicSourceFilterActionKey), findsNothing);",
     "tester.widget<ChoiceChip>(\n        find.byKey(comicSourceCategoryKey('latest')),",
     "expect(native.lastBrowseSection, 'latest');",
 ):

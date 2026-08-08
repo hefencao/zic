@@ -120,16 +120,15 @@ void main() {
     expect(find.byKey(comicSourceChoiceKey('fixture-a')), findsOneWidget);
   });
 
-  testWidgets('filter capability keeps the category action visible with an empty schema',
+  testWidgets('empty source filter schema does not invent a filter category',
       (tester) async {
     final source = _FixtureSource(
-      'fixture-filter-capability',
-      '筛选能力源',
+      'fixture-filter-empty',
+      '无筛选源',
       browseSections: const <SourceBrowseSection>[
         SourceBrowseSection(sectionId: 'popular', label: '热门'),
         SourceBrowseSection(sectionId: 'latest', label: '最新'),
       ],
-      supportsSearchFilters: true,
     );
 
     await tester.pumpWidget(
@@ -147,12 +146,8 @@ void main() {
       ),
     );
 
-    await _pumpUntilFound(tester, find.byKey(comicSourceFilterActionKey));
-    expect(find.byKey(comicSourceFilterActionKey), findsOneWidget);
-    await _tapVisible(tester, find.byKey(comicSourceFilterActionKey));
-    await tester.pump();
-    expect(find.byKey(comicSourceFilterSheetKey), findsOneWidget);
-    expect(find.text('当前漫画源未提供可用筛选项'), findsOneWidget);
+    await _pumpUntilFound(tester, find.byKey(comicSourceCategoryKey('latest')));
+    expect(find.byKey(comicSourceFilterActionKey), findsNothing);
   });
 
   testWidgets('source-owned sections floating search and bottom pager preserve order',
@@ -165,19 +160,32 @@ void main() {
         SourceBrowseSection(sectionId: 'popular', label: '热门'),
         SourceBrowseSection(sectionId: 'latest', label: '最新'),
       ],
-      searchFilters: const <SourceSearchFilterOption>[
-        SourceSearchFilterOption(
-          filterId: 'status:check',
+      searchFilters: const <SourceSearchFilterNode>[
+        SourceSearchFilterNode(
+          filterId: 'status',
+          kind: SourceSearchFilterKind.checkBox,
           label: '已完结',
+          value: false,
         ),
-        SourceSearchFilterOption(
-          filterId: 'sort:select:0',
-          label: '排序：热门',
-          selected: true,
+        SourceSearchFilterNode(
+          filterId: 'type',
+          kind: SourceSearchFilterKind.select,
+          label: '类型',
+          options: <String>['全部', '其他', '同人'],
+          value: 0,
         ),
-        SourceSearchFilterOption(
-          filterId: 'sort:select:1',
-          label: '排序：最新',
+        SourceSearchFilterNode(
+          filterId: 'sort',
+          kind: SourceSearchFilterKind.sort,
+          label: '排序',
+          options: <String>['热门', '最新'],
+          value: <String, Object?>{'index': 0, 'ascending': true},
+        ),
+        SourceSearchFilterNode(
+          filterId: 'scope',
+          kind: SourceSearchFilterKind.text,
+          label: '搜索范围',
+          value: '',
         ),
       ],
     );
@@ -235,12 +243,12 @@ void main() {
     await tester.pump();
     expect(find.byKey(comicSourceFilterSheetKey), findsOneWidget);
     expect(find.byKey(comicSourceFilterBarKey), findsOneWidget);
-    expect(find.byKey(comicSourceFilterKey('status:check')), findsOneWidget);
-    await _tapVisible(tester, find.byKey(comicSourceFilterKey('status:check')));
+    expect(find.byKey(comicSourceFilterKey('status')), findsOneWidget);
+    await _tapVisible(tester, find.byKey(comicSourceFilterKey('status')));
     await _tapVisible(tester, find.text('应用'));
     await tester.pump();
-    expect(native.lastSelectedFilterIds, contains('status:check'));
-    expect(native.lastSelectedFilterIds, contains('sort:select:0'));
+    expect(native.lastFilterState['status'], isTrue);
+    expect(native.lastFilterState.containsKey('sort'), isFalse);
 
     await _tapVisible(tester, find.byKey(comicSourceSearchFabKey));
     expect(find.byKey(comicSourceSearchKey), findsOneWidget);
@@ -2038,11 +2046,9 @@ final class _FixtureSource
     this.previewLandscapeIndexes = const <int>{},
     this.supportsComicComments = false,
     this.browseSections = const <SourceBrowseSection>[],
-    this.searchFilters = const <SourceSearchFilterOption>[],
-    bool? supportsSearchFilters,
+    this.searchFilters = const <SourceSearchFilterNode>[],
     this.canonicalComicIdentityOverride,
-  }) : supportsSearchFilters =
-          supportsSearchFilters ?? searchFilters.isNotEmpty;
+  });
 
   @override
   final String sourceId;
@@ -2068,13 +2074,11 @@ final class _FixtureSource
   @override
   final bool supportsComicComments;
   final List<SourceBrowseSection> browseSections;
-  final List<SourceSearchFilterOption> searchFilters;
-  @override
-  final bool supportsSearchFilters;
+  final List<SourceSearchFilterNode> searchFilters;
   final String? canonicalComicIdentityOverride;
   String? browseComicIdOverride;
   String? lastBrowseSection;
-  Set<String> lastSelectedFilterIds = const <String>{};
+  SourceSearchFilterState lastFilterState = const <String, Object?>{};
   int _comicLoads = 0;
   int _chapterLoads = 0;
   int _chapterRefreshes = 0;
@@ -2149,7 +2153,7 @@ final class _FixtureSource
   }
 
   @override
-  Future<List<SourceSearchFilterOption>> loadSearchFilters() async =>
+  Future<List<SourceSearchFilterNode>> loadSearchFilters() async =>
       searchFilters;
 
   @override
@@ -2158,10 +2162,10 @@ final class _FixtureSource
     String query = '',
     int offset = 0,
     int limit = 24,
-    Set<String> selectedFilterIds = const <String>{},
+    SourceSearchFilterState filterState = const <String, Object?>{},
   }) {
     lastBrowseSection = sectionId;
-    lastSelectedFilterIds = Set<String>.unmodifiable(selectedFilterIds);
+    lastFilterState = Map<String, Object?>.unmodifiable(filterState);
     return browse(query: query, offset: offset, limit: limit);
   }
 

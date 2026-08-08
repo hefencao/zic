@@ -320,9 +320,10 @@ class _FixtureDriver implements ExternalPluginRuntimeDriver {
         ],
         ExternalPluginRuntimeOperation.loadSearchFilters => <Object?>[
           <String, Object?>{
-            'filterId': '0:check',
+            'kind': 'checkBox',
+            'filterId': '0',
             'label': '已完结',
-            'selected': false,
+            'value': false,
           },
         ],
         ExternalPluginRuntimeOperation.browse => <String, Object?>{

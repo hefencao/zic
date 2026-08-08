@@ -1,3 +1,11 @@
+## 0.31.0-dev.169：按 Mihon Filter ABI 收口来源筛选 schema/state
+
+- 撤销 dev.168“所有 Mihon 均 `supportsSearchFilters=true`”错误抽象：筛选入口恢复由 source实际非空 `getFilterList()`决定。
+- 将 Mihon Filter转译从 `MihonRuntimeDriver`拆为纯 Kotlin `MihonFilterCodec`；按官方 Filter基类 `isInstance`识别插件自定义子类，不再根据 concrete class simple name猜类型。
+- 完整投影 Header/Separator/Select/Text/CheckBox/TriState/Group/Sort，保留 Group层次；runtime筛选状态由 flat `filterIds`升级为类型化 `filterState` override，支持文本与排序升降序。
+- source筛选面板按 schema类型渲染；恢复默认只清除用户 override，不覆盖插件自己的默认 Filter状态。默认 section仍由当前排序第一项决定。
+- 新增 ADR 0152、dev.169根因审计与可执行 Kotlin Filter codec gate；版本提升到 `0.31.0+169`。
+
 ## 0.31.0-dev.168：收口 Source Filter Capability 与默认 Section 所有权
 
 - 修复 dev.167“筛选入口依赖已加载 filter list 非空”的状态耦合：`FilterableBrowsableComicSource` 显式声明 `supportsSearchFilters`，Mihon runtime声明能力，Venera不伪装；筛选 schema临时为空或加载失败时分类栏入口仍保留。

@@ -209,13 +209,13 @@ final class _SourceBrowseViewState {
     required this.sectionId,
     required this.query,
     required this.offset,
-    required this.selectedFilterIds,
+    required this.filterState,
   });
 
   final String? sectionId;
   final String query;
   final int offset;
-  final Set<String> selectedFilterIds;
+  final SourceSearchFilterState filterState;
 }
 
 final class _ComicSourcesPageState extends State<ComicSourcesPage> {
@@ -234,10 +234,9 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   int _nextOffset = 0;
   List<SourceBrowseSection> _sections = const <SourceBrowseSection>[];
   String? _selectedSectionId;
-  List<SourceSearchFilterOption> _searchFilters =
-      const <SourceSearchFilterOption>[];
-  bool _supportsSearchFilters = false;
-  Set<String> _selectedFilterIds = const <String>{};
+  List<SourceSearchFilterNode> _searchFilters =
+      const <SourceSearchFilterNode>[];
+  SourceSearchFilterState _filterState = const <String, Object?>{};
   bool _searchExpanded = false;
   bool _refreshing = false;
   _SourceFailure? _failure;
@@ -298,7 +297,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       sectionId: _selectedSectionId,
       query: _query,
       offset: _pageOffset,
-      selectedFilterIds: Set<String>.unmodifiable(_selectedFilterIds),
+      filterState: Map<String, Object?>.unmodifiable(_filterState),
     );
   }
 
@@ -317,7 +316,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     _query = remembered?.query ?? '';
     _pageOffset = remembered?.offset ?? 0;
     _selectedSectionId = remembered?.sectionId;
-    _selectedFilterIds = remembered?.selectedFilterIds ?? const <String>{};
+    _filterState = remembered?.filterState ?? const <String, Object?>{};
     _search.value = TextEditingValue(
       text: _query,
       selection: TextSelection.collapsed(offset: _query.length),
@@ -332,7 +331,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
             query: _query,
             offset: _pageOffset,
             limit: _pageSize,
-            selectedFilterIds: _selectedFilterIds,
+            filterState: _filterState,
           );
     setState(() {
       _projectionSourceId = source.sourceId;
@@ -378,8 +377,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         activeSourceReplaced) {
       _rememberSourceView(oldWidget.activeSourceId);
       _sections = const <SourceBrowseSection>[];
-      _searchFilters = const <SourceSearchFilterOption>[];
-      _supportsSearchFilters = false;
+      _searchFilters = const <SourceSearchFilterNode>[];
       _restoreTargetProjection(_activeSource);
       if (!_recoveringSourceAccess) {
         scheduleMicrotask(() => unawaited(_loadSource()));
@@ -408,15 +406,13 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     }
     final generation = ++_generation;
     var sections = const <SourceBrowseSection>[];
-    var filters = const <SourceSearchFilterOption>[];
+    var filters = const <SourceSearchFilterNode>[];
     final sectioned = source is SectionedBrowsableComicSource
         ? source as SectionedBrowsableComicSource
         : null;
     final filterable = source is FilterableBrowsableComicSource
         ? source as FilterableBrowsableComicSource
         : null;
-    final supportsSearchFilters =
-        filterable?.supportsSearchFilters ?? false;
     if (sectioned != null) {
       try {
         sections = await sectioned.loadBrowseSections();
@@ -432,12 +428,12 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         );
       }
     }
-    if (supportsSearchFilters) {
+    if (filterable != null) {
       try {
-        filters = await filterable!.loadSearchFilters();
+        filters = await filterable.loadSearchFilters();
       } on Object catch (error) {
-        // Search filters are optional. A plugin with an unsupported custom
-        // filter subtype must not make its Popular/Latest browse unusable.
+        // Filter discovery is optional to ordinary browse. A broken custom
+        // filter schema must not make Popular/Latest unusable.
         _recordSourceTrace(
           TraceEventKind.taskFailed,
           'search-filters-failed',
@@ -456,19 +452,16 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     )
         ? _selectedSectionId
         : (orderedSections.isEmpty ? null : orderedSections.first.sectionId);
-    final availableFilterIds = filters.map((option) => option.filterId).toSet();
-    final selectedFilters = <String>{
-      ...filters.where((option) => option.selected).map(
-            (option) => option.filterId,
-          ),
-      ..._selectedFilterIds.where(availableFilterIds.contains),
+    final availableFilterIds = _searchFilterNodesById(filters).keys.toSet();
+    final retainedFilterState = <String, Object?>{
+      for (final entry in _filterState.entries)
+        if (availableFilterIds.contains(entry.key)) entry.key: entry.value,
     };
     setState(() {
       _sections = sections;
       _selectedSectionId = selected;
       _searchFilters = filters;
-      _supportsSearchFilters = supportsSearchFilters;
-      _selectedFilterIds = Set<String>.unmodifiable(selectedFilters);
+      _filterState = Map<String, Object?>.unmodifiable(retainedFilterState);
     });
     return _reload(
       forceRefresh: forceRefresh,
@@ -491,19 +484,19 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         query: _query,
         offset: offset,
         limit: _pageSize,
-        selectedFilterIds: _selectedFilterIds,
+        filterState: _filterState,
       );
     }
     final filterable = source is FilterableBrowsableComicSource
         ? source as FilterableBrowsableComicSource
         : null;
-    if (filterable != null && _selectedFilterIds.isNotEmpty) {
+    if (filterable != null && _filterState.isNotEmpty) {
       return filterable.browseWithFilters(
         sectionId: _selectedSectionId,
         query: _query,
         offset: offset,
         limit: _pageSize,
-        selectedFilterIds: _selectedFilterIds,
+        filterState: _filterState,
       );
     }
     final sectioned = source is SectionedBrowsableComicSource
@@ -567,7 +560,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
             query: _query,
             offset: requestedOffset,
             limit: _pageSize,
-            selectedFilterIds: _selectedFilterIds,
+            filterState: _filterState,
           );
     final hasCached = cached != null;
     final projectionMatchesSource = _projectionSourceId == source.sourceId;
@@ -588,7 +581,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         'sectionId': _selectedSectionId,
         'offset': requestedOffset,
         'limit': _pageSize,
-        'filterCount': _selectedFilterIds.length,
+        'filterCount': _filterState.length,
       },
     );
     if (forceRefresh) {
@@ -617,7 +610,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
               query: _query,
               offset: requestedOffset,
               limit: _pageSize,
-              selectedFilterIds: _selectedFilterIds,
+              filterState: _filterState,
             )
           : await _loadBrowsePage(
               source,
@@ -779,14 +772,6 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     }
   }
 
-  String _exclusiveFilterGroup(String filterId) {
-    final select = filterId.indexOf(':select:');
-    if (select >= 0) return filterId.substring(0, select);
-    if (filterId.endsWith(':include') || filterId.endsWith(':exclude')) {
-      return filterId.substring(0, filterId.lastIndexOf(':'));
-    }
-    return filterId;
-  }
 
   String _sourceCoverIdentity(
     BrowsableComicSource source,
@@ -833,24 +818,298 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     }
   }
 
-  Set<String> _filterSelectionAfterToggle(
-    Set<String> current,
-    SourceSearchFilterOption option,
-    bool selected,
+  Map<String, SourceSearchFilterNode> _searchFilterNodesById(
+    List<SourceSearchFilterNode> nodes,
   ) {
-    final next = current.toSet();
-    final group = _exclusiveFilterGroup(option.filterId);
-    if (selected) {
-      next.removeWhere(
-        (filterId) =>
-            filterId != option.filterId &&
-            _exclusiveFilterGroup(filterId) == group,
-      );
-      next.add(option.filterId);
-    } else {
-      next.remove(option.filterId);
+    final result = <String, SourceSearchFilterNode>{};
+    void visit(List<SourceSearchFilterNode> values) {
+      for (final node in values) {
+        result[node.filterId] = node;
+        if (node.children.isNotEmpty) visit(node.children);
+      }
     }
-    return next;
+
+    visit(nodes);
+    return result;
+  }
+
+  bool _filterValueEquals(Object? left, Object? right) {
+    if (identical(left, right) || left == right) return true;
+    if (left is Map<Object?, Object?> && right is Map<Object?, Object?>) {
+      if (left.length != right.length) return false;
+      for (final entry in left.entries) {
+        if (!right.containsKey(entry.key) ||
+            !_filterValueEquals(entry.value, right[entry.key])) {
+          return false;
+        }
+      }
+      return true;
+    }
+    return false;
+  }
+
+  bool _filterStateEquals(
+    SourceSearchFilterState left,
+    SourceSearchFilterState right,
+  ) {
+    if (left.length != right.length) return false;
+    for (final entry in left.entries) {
+      if (!right.containsKey(entry.key) ||
+          !_filterValueEquals(entry.value, right[entry.key])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  Object? _effectiveFilterValue(
+    SourceSearchFilterNode node,
+    SourceSearchFilterState draft,
+  ) =>
+      draft.containsKey(node.filterId) ? draft[node.filterId] : node.value;
+
+  void _setFilterDraftValue(
+    Map<String, Object?> draft,
+    SourceSearchFilterNode node,
+    Object? value,
+  ) {
+    if (_filterValueEquals(value, node.value)) {
+      draft.remove(node.filterId);
+    } else {
+      draft[node.filterId] = value;
+    }
+  }
+
+  List<Widget> _buildSearchFilterControls(
+    BuildContext context,
+    List<SourceSearchFilterNode> nodes,
+    Map<String, Object?> draft,
+    StateSetter setSheetState, {
+    int depth = 0,
+  }) {
+    final widgets = <Widget>[];
+    for (final node in nodes) {
+      final value = _effectiveFilterValue(node, draft);
+      switch (node.kind) {
+        case SourceSearchFilterKind.header:
+          widgets.add(
+            Padding(
+              key: comicSourceFilterKey(node.filterId),
+              padding: EdgeInsets.only(top: depth == 0 ? 8 : 4, bottom: 4),
+              child: Text(
+                node.label,
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+            ),
+          );
+          break;
+        case SourceSearchFilterKind.separator:
+          widgets.add(
+            Divider(key: comicSourceFilterKey(node.filterId)),
+          );
+          break;
+        case SourceSearchFilterKind.group:
+          widgets.add(
+            Padding(
+              key: comicSourceFilterKey(node.filterId),
+              padding: EdgeInsets.only(left: depth * 8.0, top: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  if (node.label.isNotEmpty)
+                    Text(
+                      node.label,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                  ..._buildSearchFilterControls(
+                    context,
+                    node.children,
+                    draft,
+                    setSheetState,
+                    depth: depth + 1,
+                  ),
+                ],
+              ),
+            ),
+          );
+          break;
+        case SourceSearchFilterKind.checkBox:
+          widgets.add(
+            CheckboxListTile(
+              key: comicSourceFilterKey(node.filterId),
+              dense: true,
+              contentPadding: EdgeInsets.only(left: depth * 8.0),
+              title: Text(node.label),
+              value: value is bool ? value : false,
+              onChanged: (next) => setSheetState(() {
+                _setFilterDraftValue(draft, node, next ?? false);
+              }),
+            ),
+          );
+          break;
+        case SourceSearchFilterKind.triState:
+          widgets.add(
+            Padding(
+              key: comicSourceFilterKey(node.filterId),
+              padding: EdgeInsets.only(left: depth * 8.0, top: 6, bottom: 6),
+              child: DropdownButtonFormField<int>(
+                value: value is int ? value : 0,
+                decoration: InputDecoration(labelText: node.label),
+                items: const <DropdownMenuItem<int>>[
+                  DropdownMenuItem<int>(value: 0, child: Text('忽略')),
+                  DropdownMenuItem<int>(value: 1, child: Text('包含')),
+                  DropdownMenuItem<int>(value: 2, child: Text('排除')),
+                ],
+                onChanged: (next) {
+                  if (next == null) return;
+                  setSheetState(() => _setFilterDraftValue(draft, node, next));
+                },
+              ),
+            ),
+          );
+          break;
+        case SourceSearchFilterKind.select:
+          final selectedIndex = value is int &&
+                  value >= 0 &&
+                  value < node.options.length
+              ? value
+              : null;
+          widgets.add(
+            Padding(
+              key: comicSourceFilterKey(node.filterId),
+              padding: EdgeInsets.only(left: depth * 8.0, top: 6, bottom: 6),
+              child: DropdownButtonFormField<int>(
+                value: selectedIndex,
+                decoration: InputDecoration(labelText: node.label),
+                items: <DropdownMenuItem<int>>[
+                  for (var index = 0; index < node.options.length; index++)
+                    DropdownMenuItem<int>(
+                      value: index,
+                      child: Text(node.options[index]),
+                    ),
+                ],
+                onChanged: node.options.isEmpty
+                    ? null
+                    : (next) {
+                        if (next == null) return;
+                        setSheetState(
+                          () => _setFilterDraftValue(draft, node, next),
+                        );
+                      },
+              ),
+            ),
+          );
+          break;
+        case SourceSearchFilterKind.text:
+          final text = value is String ? value : '';
+          widgets.add(
+            Padding(
+              padding: EdgeInsets.only(left: depth * 8.0, top: 6, bottom: 6),
+              child: TextFormField(
+                key: ValueKey<String>(
+                  'source-filter-text:${node.filterId}:$text',
+                ),
+                initialValue: text,
+                decoration: InputDecoration(
+                  labelText: node.label.isEmpty ? null : node.label,
+                ),
+                onChanged: (next) {
+                  _setFilterDraftValue(draft, node, next);
+                },
+              ),
+            ),
+          );
+          break;
+        case SourceSearchFilterKind.sort:
+          final sortState = value is Map<Object?, Object?> ? value : null;
+          final rawIndex = sortState?['index'];
+          final selectedIndex = rawIndex is int &&
+                  rawIndex >= 0 &&
+                  rawIndex < node.options.length
+              ? rawIndex
+              : null;
+          final ascendingValue = sortState?['ascending'];
+          final ascending = ascendingValue is bool ? ascendingValue : true;
+          widgets.add(
+            Padding(
+              key: comicSourceFilterKey(node.filterId),
+              padding: EdgeInsets.only(left: depth * 8.0, top: 6, bottom: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  DropdownButtonFormField<int>(
+                    value: selectedIndex,
+                    decoration: InputDecoration(
+                      labelText: node.label.isEmpty ? '排序' : node.label,
+                    ),
+                    items: <DropdownMenuItem<int>>[
+                      for (var index = 0; index < node.options.length; index++)
+                        DropdownMenuItem<int>(
+                          value: index,
+                          child: Text(node.options[index]),
+                        ),
+                    ],
+                    onChanged: node.options.isEmpty
+                        ? null
+                        : (next) {
+                            if (next == null) return;
+                            setSheetState(() {
+                              _setFilterDraftValue(
+                                draft,
+                                node,
+                                <String, Object?>{
+                                  'index': next,
+                                  'ascending': ascending,
+                                },
+                              );
+                            });
+                          },
+                  ),
+                  if (selectedIndex != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Wrap(
+                        spacing: 8,
+                        children: <Widget>[
+                          ChoiceChip(
+                            label: const Text('升序'),
+                            selected: ascending,
+                            onSelected: (_) => setSheetState(() {
+                              _setFilterDraftValue(
+                                draft,
+                                node,
+                                <String, Object?>{
+                                  'index': selectedIndex,
+                                  'ascending': true,
+                                },
+                              );
+                            }),
+                          ),
+                          ChoiceChip(
+                            label: const Text('降序'),
+                            selected: !ascending,
+                            onSelected: (_) => setSheetState(() {
+                              _setFilterDraftValue(
+                                draft,
+                                node,
+                                <String, Object?>{
+                                  'index': selectedIndex,
+                                  'ascending': false,
+                                },
+                              );
+                            }),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          );
+          break;
+      }
+    }
+    return widgets;
   }
 
   List<SourceBrowseSection> _orderedBrowseSections(
@@ -876,13 +1135,13 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       _orderedBrowseSections(_sections);
 
   Future<void> _openFilterSheet() async {
-    if (!_supportsSearchFilters) return;
-    final initial = _selectedFilterIds.toSet();
-    final selected = await showModalBottomSheet<Set<String>>(
+    if (_searchFilters.isEmpty) return;
+    final initial = Map<String, Object?>.from(_filterState);
+    final selected = await showModalBottomSheet<SourceSearchFilterState>(
       context: context,
       showDragHandle: true,
       builder: (sheetContext) {
-        var draft = initial.toSet();
+        final draft = Map<String, Object?>.from(initial);
         return StatefulBuilder(
           builder: (context, setSheetState) => SafeArea(
             key: comicSourceFilterSheetKey,
@@ -895,32 +1154,17 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                   Text('筛选', style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 12),
                   ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 360),
+                    constraints: const BoxConstraints(maxHeight: 440),
                     child: SingleChildScrollView(
-                      child: Wrap(
-                        key: comicSourceFilterBarKey,
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: <Widget>[
-                          if (_searchFilters.isEmpty)
-                            const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 8),
-                              child: Text('当前漫画源未提供可用筛选项'),
-                            ),
-                          for (final option in _searchFilters)
-                            FilterChip(
-                              key: comicSourceFilterKey(option.filterId),
-                              label: Text(option.label),
-                              selected: draft.contains(option.filterId),
-                              onSelected: (value) => setSheetState(() {
-                                draft = _filterSelectionAfterToggle(
-                                  draft,
-                                  option,
-                                  value,
-                                );
-                              }),
-                            ),
-                        ],
+                      key: comicSourceFilterBarKey,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: _buildSearchFilterControls(
+                          context,
+                          _searchFilters,
+                          draft,
+                          setSheetState,
+                        ),
                       ),
                     ),
                   ),
@@ -931,11 +1175,13 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                         onPressed: draft.isEmpty
                             ? null
                             : () => setSheetState(draft.clear),
-                        child: const Text('清除'),
+                        child: const Text('恢复默认'),
                       ),
                       const Spacer(),
                       FilledButton(
-                        onPressed: () => Navigator.of(sheetContext).pop(draft),
+                        onPressed: () => Navigator.of(sheetContext).pop(
+                          Map<String, Object?>.unmodifiable(draft),
+                        ),
                         child: const Text('应用'),
                       ),
                     ],
@@ -947,14 +1193,11 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         );
       },
     );
-    if (!mounted ||
-        selected == null ||
-        (selected.length == _selectedFilterIds.length &&
-            selected.containsAll(_selectedFilterIds))) {
+    if (!mounted || selected == null || _filterStateEquals(selected, _filterState)) {
       return;
     }
     setState(() {
-      _selectedFilterIds = Set<String>.unmodifiable(selected);
+      _filterState = Map<String, Object?>.unmodifiable(selected);
       _pageOffset = 0;
     });
     unawaited(_reload(offset: 0));
@@ -1239,7 +1482,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
               controller: _scroll,
               physics: const AlwaysScrollableScrollPhysics(),
               slivers: <Widget>[
-            if (_sections.length > 1 || _supportsSearchFilters)
+            if (_sections.length > 1 || _searchFilters.isNotEmpty)
               SliverToBoxAdapter(
                 child: SizedBox(
                   key: comicSourceCategoryBarKey,
@@ -1248,7 +1491,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                     builder: (context) {
                       final sections = _displaySections();
                       final itemCount = sections.length +
-                          (_supportsSearchFilters ? 1 : 0);
+                          (_searchFilters.isNotEmpty ? 1 : 0);
                       return ListView.separated(
                         padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
                         scrollDirection: Axis.horizontal,
@@ -1268,13 +1511,13 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                           }
                           return ActionChip(
                             key: comicSourceFilterActionKey,
-                            avatar: _selectedFilterIds.isEmpty
+                            avatar: _filterState.isEmpty
                                 ? const Icon(Icons.tune, size: 18)
                                 : const Icon(Icons.filter_alt, size: 18),
                             label: Text(
-                              _selectedFilterIds.isEmpty
+                              _filterState.isEmpty
                                   ? '筛选'
-                                  : '筛选 ${_selectedFilterIds.length}',
+                                  : '筛选 ${_filterState.length}',
                             ),
                             onPressed: () => unawaited(_openFilterSheet()),
                           );

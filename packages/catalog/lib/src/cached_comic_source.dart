@@ -8,6 +8,69 @@ import 'cache_identity.dart';
 import 'comic_source.dart';
 import 'source_catalog.dart';
 
+String _canonicalFilterState(SourceSearchFilterState state) {
+  final output = StringBuffer();
+
+  void writeValue(Object? value) {
+    if (value == null) {
+      output.write('n;');
+      return;
+    }
+    if (value is bool) {
+      output.write(value ? 'b1;' : 'b0;');
+      return;
+    }
+    if (value is int) {
+      output
+        ..write('i')
+        ..write(value)
+        ..write(';');
+      return;
+    }
+    if (value is String) {
+      output
+        ..write('s')
+        ..write(value.length)
+        ..write(':')
+        ..write(value)
+        ..write(';');
+      return;
+    }
+    if (value is Map<Object?, Object?>) {
+      final keys = value.keys.cast<String>().toList()..sort();
+      output
+        ..write('m')
+        ..write(keys.length)
+        ..write('{');
+      for (final key in keys) {
+        writeValue(key);
+        writeValue(value[key]);
+      }
+      output.write('}');
+      return;
+    }
+    if (value is List<Object?>) {
+      output
+        ..write('l')
+        ..write(value.length)
+        ..write('[');
+      for (final item in value) {
+        writeValue(item);
+      }
+      output.write(']');
+      return;
+    }
+    throw ArgumentError.value(
+      value,
+      'filterState',
+      'Unsupported search-filter state value.',
+    );
+  }
+
+  writeValue(state);
+  return output.toString();
+}
+
 /// Catalog decorator for reusable source-response caching.
 ///
 /// Search pages, comic details and chapter metadata share one
@@ -57,7 +120,7 @@ final class CachedBrowsableComicSource
     required int offset,
     required int limit,
     String? sectionId,
-    Set<String> selectedFilterIds = const <String>{},
+    SourceSearchFilterState filterState = const <String, Object?>{},
   }) =>
       ResourceCacheKey(
         kind: ResourceCacheKind.searchResults,
@@ -69,7 +132,7 @@ final class CachedBrowsableComicSource
             normalizedQuery,
             '$offset',
             '$limit',
-            ...(selectedFilterIds.toList()..sort()),
+            _canonicalFilterState(filterState),
           ],
         ),
         namespace: sourceResourceCacheNamespace(sourceId),
@@ -80,7 +143,7 @@ final class CachedBrowsableComicSource
     required int offset,
     required int limit,
     String? sectionId,
-    Set<String> selectedFilterIds = const <String>{},
+    SourceSearchFilterState filterState = const <String, Object?>{},
     bool forceRefresh = false,
   }) {
     final sectioned = source is SectionedBrowsableComicSource
@@ -92,19 +155,19 @@ final class CachedBrowsableComicSource
         offset: offset,
         limit: limit,
         sectionId: sectionId,
-        selectedFilterIds: selectedFilterIds,
+        filterState: filterState,
       ),
       loader: () {
         final filterable = source is FilterableBrowsableComicSource
             ? source as FilterableBrowsableComicSource
             : null;
-        if (filterable != null && selectedFilterIds.isNotEmpty) {
+        if (filterable != null && filterState.isNotEmpty) {
           return filterable.browseWithFilters(
             sectionId: sectionId,
             query: normalizedQuery,
             offset: offset,
             limit: limit,
-            selectedFilterIds: selectedFilterIds,
+            filterState: filterState,
           );
         }
         return sectionId != null && sectioned != null
@@ -130,7 +193,7 @@ final class CachedBrowsableComicSource
         query: normalizedQuery,
         offset: offset,
         limit: limit,
-        selectedFilterIds: selectedFilterIds,
+        filterState: filterState,
       );
       return page;
     });
@@ -173,21 +236,13 @@ final class CachedBrowsableComicSource
   }
 
   @override
-  bool get supportsSearchFilters {
+  Future<List<SourceSearchFilterNode>> loadSearchFilters() {
     final filterable = source is FilterableBrowsableComicSource
         ? source as FilterableBrowsableComicSource
         : null;
-    return filterable?.supportsSearchFilters ?? false;
-  }
-
-  @override
-  Future<List<SourceSearchFilterOption>> loadSearchFilters() {
-    final filterable = source is FilterableBrowsableComicSource
-        ? source as FilterableBrowsableComicSource
-        : null;
-    if (filterable == null || !filterable.supportsSearchFilters) {
-      return Future<List<SourceSearchFilterOption>>.value(
-        const <SourceSearchFilterOption>[],
+    if (filterable == null) {
+      return Future<List<SourceSearchFilterNode>>.value(
+        const <SourceSearchFilterNode>[],
       );
     }
     return filterable.loadSearchFilters();
@@ -199,14 +254,14 @@ final class CachedBrowsableComicSource
     String query = '',
     int offset = 0,
     int limit = 24,
-    Set<String> selectedFilterIds = const <String>{},
+    SourceSearchFilterState filterState = const <String, Object?>{},
   }) =>
       _loadBrowsePage(
         normalizedQuery: query.trim(),
         offset: offset,
         limit: limit,
         sectionId: sectionId,
-        selectedFilterIds: selectedFilterIds,
+        filterState: filterState,
       );
 
   @override
@@ -233,7 +288,7 @@ final class CachedBrowsableComicSource
     String query = '',
     int offset = 0,
     int limit = 24,
-    Set<String> selectedFilterIds = const <String>{},
+    SourceSearchFilterState filterState = const <String, Object?>{},
   }) {
     final normalizedQuery = query.trim();
     final page = cache.peek<SourceBrowsePage>(
@@ -242,7 +297,7 @@ final class CachedBrowsableComicSource
         offset: offset,
         limit: limit,
         sectionId: sectionId,
-        selectedFilterIds: selectedFilterIds,
+        filterState: filterState,
       ),
     );
     if (page != null) {
@@ -252,7 +307,7 @@ final class CachedBrowsableComicSource
         query: normalizedQuery,
         offset: offset,
         limit: limit,
-        selectedFilterIds: selectedFilterIds,
+        filterState: filterState,
       );
     }
     return page;
@@ -264,14 +319,14 @@ final class CachedBrowsableComicSource
     String query = '',
     int offset = 0,
     int limit = 24,
-    Set<String> selectedFilterIds = const <String>{},
+    SourceSearchFilterState filterState = const <String, Object?>{},
   }) =>
       _loadBrowsePage(
         normalizedQuery: query.trim(),
         offset: offset,
         limit: limit,
         sectionId: sectionId,
-        selectedFilterIds: selectedFilterIds,
+        filterState: filterState,
         forceRefresh: true,
       );
 

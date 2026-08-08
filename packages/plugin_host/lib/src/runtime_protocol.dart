@@ -166,7 +166,7 @@ final class ExternalPluginRuntimeRequest {
     required int offset,
     required int limit,
     String? sectionId,
-    Iterable<String> selectedFilterIds = const <String>[],
+    SourceSearchFilterState filterState = const <String, Object?>{},
   }) =>
       ExternalPluginRuntimeRequest(
         requestId: requestId,
@@ -177,7 +177,7 @@ final class ExternalPluginRuntimeRequest {
           'offset': offset,
           'limit': limit,
           'sectionId': sectionId,
-          'filterIds': selectedFilterIds.toList(growable: false),
+          'filterState': Map<String, Object?>.from(filterState),
         },
       );
 
@@ -458,16 +458,14 @@ void _validateArguments(
     case ExternalPluginRuntimeOperation.browse:
       _expectKeys(
         arguments,
-        const <String>{'query', 'offset', 'limit', 'sectionId', 'filterIds'},
+        const <String>{'query', 'offset', 'limit', 'sectionId', 'filterState'},
       );
       if (arguments['query'] is! String ||
           arguments['offset'] is! int ||
           arguments['limit'] is! int ||
           (arguments['sectionId'] != null &&
               arguments['sectionId'] is! String) ||
-          arguments['filterIds'] is! List<Object?> ||
-          !(arguments['filterIds']! as List<Object?>)
-              .every((value) => value is String && value.isNotEmpty) ||
+          !_isSearchFilterState(arguments['filterState']) ||
           (arguments['offset']! as int) < 0 ||
           (arguments['limit']! as int) <= 0) {
         throw const FormatException('browse arguments are invalid');
@@ -538,6 +536,27 @@ void _validateArguments(
       }
       return;
   }
+}
+
+bool _isSearchFilterState(Object? value) {
+  if (value is! Map<Object?, Object?>) return false;
+  for (final entry in value.entries) {
+    final key = entry.key;
+    if (key is! String || key.isEmpty) return false;
+    final state = entry.value;
+    if (state == null || state is bool || state is int || state is String) {
+      continue;
+    }
+    if (state is Map<Object?, Object?> &&
+        state.length == 2 &&
+        state.keys.toSet().containsAll(const <String>{'index', 'ascending'}) &&
+        state['index'] is int &&
+        state['ascending'] is bool) {
+      continue;
+    }
+    return false;
+  }
+  return true;
 }
 
 void _expectKeys(Map<String, Object?> value, Set<String> keys) {

@@ -69,18 +69,18 @@ for token in (
     "if (id == 'popular' || label == 'popular' || label == '热门') return 1;",
     'Future<void> _openFilterSheet() async',
     "? '筛选'",
-    "FilterChip(",
-    'selectedFilterIds: _selectedFilterIds',
+    'SourceSearchFilterKind.checkBox',
+    'filterState: _filterState',
 ):
     require(source, token, 'source filter/category presentation')
 for token in (
     'abstract interface class FilterableBrowsableComicSource',
-    'Future<List<SourceSearchFilterOption>> loadSearchFilters()',
+    'Future<List<SourceSearchFilterNode>> loadSearchFilters()',
 ):
     require(catalog, token, 'catalog filter capability')
 for token in (
-    'Future<List<SourceSearchFilterOption>> loadSearchFilters() async',
-    "'filterIds': selectedFilterIds.toList(growable: false)",
+    'Future<List<SourceSearchFilterNode>> loadSearchFilters() async',
+    "'filterState': Map<String, Object?>.from(filterState)",
 ):
     require(adapter, token, 'runtime filter adapter')
 
@@ -88,7 +88,7 @@ for token in (
 for token in (
     'comicSourceFilterActionKey',
     'comicSourceFilterSheetKey',
-    "find.byKey(comicSourceFilterKey('status:check'))",
+    "find.byKey(comicSourceFilterKey('status'))",
     "find.text('应用')",
     "comicSourceCategoryKey('latest')",
     "comicSourceCategoryKey('popular')",

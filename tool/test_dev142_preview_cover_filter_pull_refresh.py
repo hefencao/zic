@@ -79,37 +79,30 @@ for token in (
     require(source, token, 'floating search gesture priority')
 
 for token in (
-    'final class SourceSearchFilterOption',
+    'enum SourceSearchFilterKind',
+    'final class SourceSearchFilterNode',
     'abstract interface class FilterableBrowsableComicSource',
-    'selectedFilterIds',
+    'SourceSearchFilterState filterState',
 ):
     require(catalog + cached, token, 'catalog search filters')
 for token in (
     'loadSearchFilters',
-    "'filterIds': selectedFilterIds.toList(growable: false)",
+    "'filterState': Map<String, Object?>.from(filterState)",
 ):
     require(protocol + adapter, token, 'runtime search filters')
 for token in (
     'getFilterList',
-    'describeMihonSearchFilters',
-    'applyMihonSearchFilters',
-    '"checkbox" in kind',
-    '"tristate" in kind',
-    '"select" in kind',
-    '"group" in kind',
-    '"selected" to false',
+    'MihonFilterCodec.describe',
+    'MihonFilterCodec.apply',
 ):
     require(mihon, token, 'Mihon getFilterList projection')
-if 'selected" to (filter.readBoolean' in mihon or 'selected" to (state ==' in mihon:
-    raise SystemExit('Mihon source defaults must not become explicit ZIC filter selections')
 for token in (
     'comicSourceFilterActionKey',
     'comicSourceFilterBarKey',
-    'comicSourceFilterKey(option.filterId)',
-    'FilterChip(',
+    'comicSourceFilterKey(node.filterId)',
     '_openFilterSheet()',
 ):
-    require(source, token, 'source filter chips')
+    require(source, token, 'source filter controls')
 
 refresh = read('apps/app/lib/app_pull_to_refresh.dart')
 for token in (
@@ -127,7 +120,7 @@ for token in (
 
 for token in (
     'comicSourceFilterActionKey',
-    "comicSourceFilterKey('status:check')",
+    "comicSourceFilterKey('status')",
     'tester.binding.handlePopRoute()',
     'find.byKey(comicSourcePullRefreshKey)',
     'firstRect.left - previewRect.left',
@@ -135,8 +128,8 @@ for token in (
 ):
     require(source_test, token, 'App owner tests')
 for token in (
-    'selectedFilterIds:',
-    "decoded.arguments['filterIds']",
+    'filterState:',
+    "decoded.arguments['filterState']",
     'loadSearchFilters(',
 ):
     require(protocol_test, token, 'runtime protocol tests')

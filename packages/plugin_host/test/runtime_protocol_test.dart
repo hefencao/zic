@@ -13,7 +13,11 @@ void main() {
       offset: 24,
       limit: 24,
       sectionId: 'popular',
-      selectedFilterIds: const <String>['0:check', '1:select:2'],
+      filterState: const <String, Object?>{
+        '0': true,
+        '1': 2,
+        '2': <String, Object?>{'index': 1, 'ascending': false},
+      },
     );
 
     final decoded = ExternalPluginRuntimeRequest.fromMessage(
@@ -26,7 +30,14 @@ void main() {
     expect(decoded.arguments['query'], 'history');
     expect(decoded.arguments['offset'], 24);
     expect(decoded.arguments['sectionId'], 'popular');
-    expect(decoded.arguments['filterIds'], <String>['0:check', '1:select:2']);
+    expect(
+      decoded.arguments['filterState'],
+      <String, Object?>{
+        '0': true,
+        '1': 2,
+        '2': <String, Object?>{'index': 1, 'ascending': false},
+      },
+    );
   });
 
   test('runtime responses preserve typed binary resources', () {
