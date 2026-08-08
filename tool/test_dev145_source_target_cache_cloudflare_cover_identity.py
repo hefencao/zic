@@ -36,13 +36,17 @@ for token in (
 for token in (
     'String? _projectionSourceId',
     '_restoreTargetProjection(_activeSource)',
-    'final latest = cache?.peekLatestBrowseProjection()',
+    'final cached = remembered == null',
     'final projectionMatchesSource = _projectionSourceId == source.sourceId',
     'allowVerificationFallback',
     'failure.shouldAutoOpenVerification',
     'verificationUri: failure.verificationUri',
 ):
     require(source, token, 'source target projection and verification')
+if 'peekLatestBrowseProjection()' in source:
+    raise SystemExit(
+        'source browser must not let latest catalog projection restore UI defaults'
+    )
 if 'avatar: Icon(' in source:
     raise SystemExit('source switcher still wastes chip width on runtime icons')
 for token in (

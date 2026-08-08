@@ -368,8 +368,12 @@ final class _RuntimeBrowsableComicSource
   }
 
   @override
+  bool get supportsSearchFilters =>
+      _format == ExternalComicPluginFormat.mihonExtension;
+
+  @override
   Future<List<SourceSearchFilterOption>> loadSearchFilters() async {
-    if (_format != ExternalComicPluginFormat.mihonExtension) {
+    if (!supportsSearchFilters) {
       return const <SourceSearchFilterOption>[];
     }
     final payload = await _invoke(

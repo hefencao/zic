@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.167`
-**App build：** `0.31.0+167`
+**源码版本：** `0.31.0-dev.168`
+**App build：** `0.31.0+168`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -21,7 +21,7 @@
 - Home“更新漫画”使用独立 `SavedComicRecord.sourceUpdateAt`：仅 shelf + source-confirmed update进入。已有章节目录发生变化或首次发现新 successor/version才推进；阅读 progress、普通 metadata刷新和未入书架浏览不推进。远程无偏好 primary projection默认 `inShelf=false`，首次加入书架清理加入前 update signal。
 - 初次 Venera/Mihon activation 的 Binder generation连续性已下沉到 Android `PluginRuntimeServiceClient`：仅 pending activation可跨一个 `runtime-service-died/disconnected` generation；Dart backend删除初次 activation重放，session invocation与业务失败仍按原 owner处理。
 - Home外部封面继续把 live source readiness作为显式加载依赖：首屏早于 plugin ready且 warm cache miss时，失败 Future只在对应 source从 unavailable→available后重新求值；普通 progress/enrichment rebuild不重试。历史/更新横向 Sliver直接 child使用 `section + canonical comic identity` 稳定 key并提供 reorder index callback。
-- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=167`。
+- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=168`。
 - 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
 - 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation不阻塞 Home primary，外部 source ready 后增量接入。
 - artwork资源恢复唯一属于 `ComicSourceResourceGateway/ResourceCacheManager`。Home、书架、漫画源和详情 presentation 已删除定时 retry、first-frame watchdog、App resume自动 retry、全局 ImageCache eviction和 App级短时 Future join；详情统一使用 `ComicDetailsArtworkLoader` 并显式传递 cover/preview/avatar role。普通 artwork直接复用 `StableArtworkImage`；需要裁剪/尺寸测量时只有一个显式 ImageStream listener，不再同时创建第二个 `Image`。
@@ -33,7 +33,7 @@
   登录参数错误判为 `runtime-request-invalid`。详情 manifest 已接入 Venera `subId`、首批
   thumbnails/comments；支持的来源显示预览栏、评论栏、分页评论页和回复页，图片仍走
   统一 artwork cache，未声明能力的来源不会触发对应插件请求。
-- 漫画源浏览页使用来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态仅以 chip 背景色区分，不显示 JS/插件图标。切换 source 时先按目标请求 identity 投影目标缓存，精确缓存缺失时使用目标 source 最近缓存，绝不保留旧 source 卡片。页码位于滚动尾部，左下浮动搜索只保留 query/持久历史；展开搜索优先消费返回和垂直滑动手势。Mihon `getFilterList()` 的 CheckBox/TriState/Select/Group 子项仍以 opaque ID进入请求，但可见入口位于分类栏末尾，标准顺序为“最新 → 热门 → 筛选”。catalog 缓存先显示、后台刷新且数据不变时不重建 artwork；边缘下拉达到阈值后保留当前列表执行强制来源刷新。Mihon 已安装与仓库插件列表继续按声明/source metadata 的规范化语言筛选。
+- 漫画源浏览页使用来源自有 section：Mihon Popular/Latest、Venera explore/category；来源生态仅以 chip 背景色区分，不显示 JS/插件图标。首次进入来源默认选择 Presentation当前排序的第一项；当前标准排序为“最新 → 热门”，catalog最近 projection不再反向恢复 section/query/filter UI状态，只有当前精确请求缓存可直接投影。页码位于滚动尾部，左下浮动搜索只保留 query/持久历史；展开搜索优先消费返回和垂直滑动手势。`FilterableBrowsableComicSource.supportsSearchFilters` 显式区分能力和已加载 schema：Mihon声明能力后分类栏固定保留“筛选”入口，即使 schema为空/加载失败也不消失；CheckBox/TriState/Select/Group子项仍以 opaque ID进入请求。catalog后台刷新且数据不变时不重建 artwork；边缘下拉达到阈值后保留当前列表执行强制来源刷新。Mihon 已安装与仓库插件列表继续按声明/source metadata 的规范化语言筛选。
 - 详情页与漫画源页共用同一个可见的顶部边缘下拉刷新组件：`onEdge`、位移 72、保留旧内容后台刷新。
 - Android可见浏览器 Cookie snapshot以 `updatedAt` 为 revision。Cloudflare验证模式不再用插件/OkHttp静态 UA覆盖 WebView；当前 Android WebView provider的真实 UA与同站点 Cookie/localStorage写入同一 snapshot revision。Mihon `AndroidCookieJar` 同步导入该 revision的 Cookie，runtime application interceptor对同站点请求逐请求采用 snapshot UA，避免 clearance来自真实浏览器而 HTTP请求仍声明另一浏览器/平台。验证浏览器继续保留 dev.154 的稳定完成窗口与宽 challenge探针；手动或自动验证后若 runtime仍失败，普通刷新不再自动循环打开 WebView。验证返回后按稳定 source ID取得 replacement adapter。
 - Mihon runtime 通过稳定 `AndroidCookieJar.resetBrowserSnapshotImports()` 清理进程内 browser-snapshot revision；`AndroidBrowserCookieSession` 不再是 plugin host直接依赖或 common runtime ABI项。APK metadata reader可解析字符串资源形式的 extensionLib/entry class，并支持多个 entry class分隔。设备发现合并系统包、应用列表与仓库 package name精确探测，逐 APK失败和扫描计数直接显示；页面打开会自动加载默认仓库以提供精确探测 identity。扫描仅覆盖系统共享 APK，Mihon 私有扩展需从 ZIC仓库安装。
@@ -90,7 +90,7 @@
 |---|---|
 | repository/documentation/Dart static gates | Verified-static |
 | current-code documentation consistency gate | Verified-static |
-| dev.75–dev.167 ownership gates | Verified-static |
+| dev.75–dev.168 ownership gates | Verified-static |
 | Android/Mihon/Venera/Reader/Pipeline/UI contracts | Verified-static / toolchain |
 | Kotlin texture bridge + dev.164 PluginRuntimeServiceClient stub compile | Verified-toolchain |
 | pinned libwebp host build/smoke | Unverified：当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip` |

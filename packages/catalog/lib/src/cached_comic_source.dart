@@ -173,11 +173,19 @@ final class CachedBrowsableComicSource
   }
 
   @override
+  bool get supportsSearchFilters {
+    final filterable = source is FilterableBrowsableComicSource
+        ? source as FilterableBrowsableComicSource
+        : null;
+    return filterable?.supportsSearchFilters ?? false;
+  }
+
+  @override
   Future<List<SourceSearchFilterOption>> loadSearchFilters() {
     final filterable = source is FilterableBrowsableComicSource
         ? source as FilterableBrowsableComicSource
         : null;
-    if (filterable == null) {
+    if (filterable == null || !filterable.supportsSearchFilters) {
       return Future<List<SourceSearchFilterOption>>.value(
         const <SourceSearchFilterOption>[],
       );

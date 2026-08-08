@@ -231,6 +231,13 @@ final class SourceSearchFilterOption {
 /// Mihon adapters may project `getFilterList()` through this interface. Other
 /// runtimes return no capability rather than inventing generic filters.
 abstract interface class FilterableBrowsableComicSource {
+  /// Whether this source exposes a real search-filter schema.
+  ///
+  /// Capability presence is independent from whether the current schema load
+  /// succeeds or happens to contain zero options. Presentation must not infer
+  /// capability from the last loaded option list.
+  bool get supportsSearchFilters;
+
   Future<List<SourceSearchFilterOption>> loadSearchFilters();
 
   Future<SourceBrowsePage> browseWithFilters({

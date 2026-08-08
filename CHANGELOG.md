@@ -1,3 +1,11 @@
+## 0.31.0-dev.168：收口 Source Filter Capability 与默认 Section 所有权
+
+- 修复 dev.167“筛选入口依赖已加载 filter list 非空”的状态耦合：`FilterableBrowsableComicSource` 显式声明 `supportsSearchFilters`，Mihon runtime声明能力，Venera不伪装；筛选 schema临时为空或加载失败时分类栏入口仍保留。
+- 筛选面板在当前 schema为空时显示明确空状态，不再通过隐藏入口表达“无能力”；opaque `selectedFilterIds`和原 browse/search request contract保持不变。
+- 删除 source browser 用 `peekLatestBrowseProjection()` 反向恢复 section/query/filter UI状态的行为；cache只提供精确请求投影，不拥有默认导航状态。
+- 默认 section统一由当前 Presentation排序后的第一项决定；当前标准排序为“最新 → 热门”，以后若加入用户自定义排序，只需改变同一个排序 owner，默认焦点自然随第一项变化。
+- 新增 ADR 0151、dev.168根因审计与 owner gate；版本提升到 `0.31.0+168`。
+
 ## 0.31.0-dev.167：解耦 Source Browse 封面 Presentation 与筛选入口
 
 - 根据 `zic-debug-trace-2026-08-08T09-45-09.jsonl` 审计 source browse/details交错刷新：删除把全局 browse projection `_contentRevision` 传给每个 `_RemoteImage` 的错误耦合；目录分页/后台 refresh变化不再强制整页封面重建。

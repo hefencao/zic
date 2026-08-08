@@ -120,6 +120,41 @@ void main() {
     expect(find.byKey(comicSourceChoiceKey('fixture-a')), findsOneWidget);
   });
 
+  testWidgets('filter capability keeps the category action visible with an empty schema',
+      (tester) async {
+    final source = _FixtureSource(
+      'fixture-filter-capability',
+      '筛选能力源',
+      browseSections: const <SourceBrowseSection>[
+        SourceBrowseSection(sectionId: 'popular', label: '热门'),
+        SourceBrowseSection(sectionId: 'latest', label: '最新'),
+      ],
+      supportsSearchFilters: true,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ComicSourcesPage(
+            sources: <BrowsableComicSource>[source],
+            activeSourceId: source.sourceId,
+            onSourceSelected: (_) {},
+            loadCover: (_, __, ___) async =>
+                MemoryEncodedResourceSource(_tinyPng()),
+            onOpenComic: (_, __) async {},
+          ),
+        ),
+      ),
+    );
+
+    await _pumpUntilFound(tester, find.byKey(comicSourceFilterActionKey));
+    expect(find.byKey(comicSourceFilterActionKey), findsOneWidget);
+    await _tapVisible(tester, find.byKey(comicSourceFilterActionKey));
+    await tester.pump();
+    expect(find.byKey(comicSourceFilterSheetKey), findsOneWidget);
+    expect(find.text('当前漫画源未提供可用筛选项'), findsOneWidget);
+  });
+
   testWidgets('source-owned sections floating search and bottom pager preserve order',
       (tester) async {
     final native = _FixtureSource(
@@ -183,6 +218,13 @@ void main() {
       tester.getTopLeft(find.byKey(comicSourceCategoryKey('latest'))).dx,
       lessThan(tester.getTopLeft(find.byKey(comicSourceCategoryKey('popular'))).dx),
     );
+    expect(
+      tester.widget<ChoiceChip>(
+        find.byKey(comicSourceCategoryKey('latest')),
+      ).selected,
+      isTrue,
+    );
+    expect(native.lastBrowseSection, 'latest');
     expect(find.byKey(comicSourceCategoryKey('mihon')), findsNothing);
     expect(find.byKey(comicSourceChoiceKey(native.sourceId)), findsOneWidget);
     expect(find.byKey(comicSourceChoiceKey(mihon.sourceId)), findsOneWidget);
@@ -1997,8 +2039,10 @@ final class _FixtureSource
     this.supportsComicComments = false,
     this.browseSections = const <SourceBrowseSection>[],
     this.searchFilters = const <SourceSearchFilterOption>[],
+    bool? supportsSearchFilters,
     this.canonicalComicIdentityOverride,
-  });
+  }) : supportsSearchFilters =
+          supportsSearchFilters ?? searchFilters.isNotEmpty;
 
   @override
   final String sourceId;
@@ -2025,6 +2069,8 @@ final class _FixtureSource
   final bool supportsComicComments;
   final List<SourceBrowseSection> browseSections;
   final List<SourceSearchFilterOption> searchFilters;
+  @override
+  final bool supportsSearchFilters;
   final String? canonicalComicIdentityOverride;
   String? browseComicIdOverride;
   String? lastBrowseSection;

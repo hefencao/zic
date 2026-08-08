@@ -9,7 +9,7 @@ dev.144 设备 Trace 显示，切换到请求失败的 Mihon 来源时页面继�
 ## 决策
 
 1. Catalog 暴露目标 source 最近一次 `CachedSourceBrowseSnapshot`，包含 page 与 section/query/offset/filter request identity。
-2. source 切换先改变 projection owner；依次使用目标精确缓存、目标最近缓存、目标 loading。目标失败不得保留旧 source 内容。
+2. source 切换先改变 projection owner；目标失败不得保留旧 source 内容。**dev.168 起，ADR 0151 取代本条“目标最近缓存可恢复 UI请求状态”的部分：Presentation只直接使用当前精确请求缓存，最近 projection不得决定默认 section/query/filter。**
 3. 显式强制刷新得到 `sourceVerificationRequired` 时自动打开一次目标 source WebView，关闭后强制重试一次；重试禁止再次自动打开。
 4. 来源 chip 只用背景色区分生态，删除 JS/插件图标。
 5. Home cover card State key 使用 section + comic identity；旧 chapter key 只作为交互定位 key。相同 cover identity 的并发 source 请求合并，失败 Future 立即移出 join。

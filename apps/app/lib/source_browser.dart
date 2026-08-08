@@ -236,6 +236,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   String? _selectedSectionId;
   List<SourceSearchFilterOption> _searchFilters =
       const <SourceSearchFilterOption>[];
+  bool _supportsSearchFilters = false;
   Set<String> _selectedFilterIds = const <String>{};
   bool _searchExpanded = false;
   bool _refreshing = false;
@@ -324,27 +325,15 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     final cache = source is CachedSourceBrowseProjection
         ? source as CachedSourceBrowseProjection
         : null;
-    var cached = cache?.peekBrowsePage(
-      sectionId: _selectedSectionId,
-      query: _query,
-      offset: _pageOffset,
-      limit: _pageSize,
-      selectedFilterIds: _selectedFilterIds,
-    );
-    if (cached == null) {
-      final latest = cache?.peekLatestBrowseProjection();
-      if (latest != null) {
-        _selectedSectionId = latest.sectionId;
-        _query = latest.query;
-        _pageOffset = latest.offset;
-        _selectedFilterIds = latest.selectedFilterIds;
-        _search.value = TextEditingValue(
-          text: _query,
-          selection: TextSelection.collapsed(offset: _query.length),
-        );
-        cached = latest.page;
-      }
-    }
+    final cached = remembered == null
+        ? null
+        : cache?.peekBrowsePage(
+            sectionId: _selectedSectionId,
+            query: _query,
+            offset: _pageOffset,
+            limit: _pageSize,
+            selectedFilterIds: _selectedFilterIds,
+          );
     setState(() {
       _projectionSourceId = source.sourceId;
       _failure = null;
@@ -390,6 +379,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       _rememberSourceView(oldWidget.activeSourceId);
       _sections = const <SourceBrowseSection>[];
       _searchFilters = const <SourceSearchFilterOption>[];
+      _supportsSearchFilters = false;
       _restoreTargetProjection(_activeSource);
       if (!_recoveringSourceAccess) {
         scheduleMicrotask(() => unawaited(_loadSource()));
@@ -425,6 +415,8 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     final filterable = source is FilterableBrowsableComicSource
         ? source as FilterableBrowsableComicSource
         : null;
+    final supportsSearchFilters =
+        filterable?.supportsSearchFilters ?? false;
     if (sectioned != null) {
       try {
         sections = await sectioned.loadBrowseSections();
@@ -440,9 +432,9 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         );
       }
     }
-    if (filterable != null) {
+    if (supportsSearchFilters) {
       try {
-        filters = await filterable.loadSearchFilters();
+        filters = await filterable!.loadSearchFilters();
       } on Object catch (error) {
         // Search filters are optional. A plugin with an unsupported custom
         // filter subtype must not make its Popular/Latest browse unusable.
@@ -458,11 +450,12 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       }
     }
     if (!mounted || generation != _generation) return false;
+    final orderedSections = _orderedBrowseSections(sections);
     final selected = sections.any(
       (section) => section.sectionId == _selectedSectionId,
     )
         ? _selectedSectionId
-        : (sections.isEmpty ? null : sections.first.sectionId);
+        : (orderedSections.isEmpty ? null : orderedSections.first.sectionId);
     final availableFilterIds = filters.map((option) => option.filterId).toSet();
     final selectedFilters = <String>{
       ...filters.where((option) => option.selected).map(
@@ -474,6 +467,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       _sections = sections;
       _selectedSectionId = selected;
       _searchFilters = filters;
+      _supportsSearchFilters = supportsSearchFilters;
       _selectedFilterIds = Set<String>.unmodifiable(selectedFilters);
     });
     return _reload(
@@ -859,8 +853,10 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     return next;
   }
 
-  List<SourceBrowseSection> _displaySections() {
-    final indexed = _sections.indexed.toList(growable: false);
+  List<SourceBrowseSection> _orderedBrowseSections(
+    List<SourceBrowseSection> sections,
+  ) {
+    final indexed = sections.indexed.toList(growable: false);
     indexed.sort((left, right) {
       int rank(SourceBrowseSection section) {
         final id = section.sectionId.toLowerCase();
@@ -876,8 +872,11 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     return indexed.map((entry) => entry.$2).toList(growable: false);
   }
 
+  List<SourceBrowseSection> _displaySections() =>
+      _orderedBrowseSections(_sections);
+
   Future<void> _openFilterSheet() async {
-    if (_searchFilters.isEmpty) return;
+    if (!_supportsSearchFilters) return;
     final initial = _selectedFilterIds.toSet();
     final selected = await showModalBottomSheet<Set<String>>(
       context: context,
@@ -903,6 +902,11 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                         spacing: 8,
                         runSpacing: 8,
                         children: <Widget>[
+                          if (_searchFilters.isEmpty)
+                            const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 8),
+                              child: Text('当前漫画源未提供可用筛选项'),
+                            ),
                           for (final option in _searchFilters)
                             FilterChip(
                               key: comicSourceFilterKey(option.filterId),
@@ -1235,7 +1239,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
               controller: _scroll,
               physics: const AlwaysScrollableScrollPhysics(),
               slivers: <Widget>[
-            if (_sections.length > 1 || _searchFilters.isNotEmpty)
+            if (_sections.length > 1 || _supportsSearchFilters)
               SliverToBoxAdapter(
                 child: SizedBox(
                   key: comicSourceCategoryBarKey,
@@ -1244,7 +1248,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                     builder: (context) {
                       final sections = _displaySections();
                       final itemCount = sections.length +
-                          (_searchFilters.isEmpty ? 0 : 1);
+                          (_supportsSearchFilters ? 1 : 0);
                       return ListView.separated(
                         padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
                         scrollDirection: Axis.horizontal,

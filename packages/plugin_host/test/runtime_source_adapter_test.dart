@@ -106,6 +106,10 @@ void main() {
 
     expect(source.sourceId, 'venera:fixture');
     expect(source.descriptor.name, 'Fixture');
+    expect(
+      (source as FilterableBrowsableComicSource).supportsSearchFilters,
+      isFalse,
+    );
 
     final page = await source.browse(query: 'query', offset: 0, limit: 24);
     expect(page.items.single.comicId, 'comic-1');
@@ -251,6 +255,10 @@ void main() {
     );
     addTearDown(session.close);
     final source = session.sources.single;
+    expect(
+      (source as FilterableBrowsableComicSource).supportsSearchFilters,
+      isTrue,
+    );
     final locator = Uri.parse('mihon:resource:fixture');
 
     final request = await (source as ResolvableComicResourceSource)

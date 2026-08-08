@@ -4,7 +4,7 @@
 
 - 对同一漫画执行“漫画源列表首帧 → 打开详情 → 返回列表 → catalog后台 refresh/普通分页更新”，确认 canonical cover URI未变化时不产生新的 `cover-load-start`，也不出现 presentation decode重启；只有显式来源 artwork刷新或该卡片自身 URI/identity变化可以换 source。
 - 记录 `source-cover:<sourceId>\0<canonicalComicId>` 的 `cover-load-start/source-ready/first-frame/decode-failed` trace，确认 browse projection `changed=true` 与详情 metadata更新不会成为 artwork revision。
-- Mihon存在 `getFilterList()` 时，分类栏按“最新 → 热门 → 筛选”显示；筛选面板应用后 request携带 opaque `selectedFilterIds`，浮动搜索面板不再重复显示筛选标签。
+- Mihon声明 search-filter capability 时，分类栏按“最新 → 热门 → 筛选”显示；即使 filter schema暂时为空或加载失败，“筛选”入口也必须保留并显示明确空状态。首次进入来源默认选中当前展示排序的第一项，catalog最近缓存不得把焦点改回热门；筛选面板应用后 request携带 opaque `selectedFilterIds`，浮动搜索面板不再重复显示筛选标签。
 - 用 raw locator发生变化但 canonical identity不变的 fixture/设备数据确认 Sliver child State不重建；若同一页出现 canonical alias重复，先在 catalog projection解决重复，不回退到 mutable raw locator作为 owner key。
 
 ## P0：Retained Artwork 生命周期与失效边界真机闭环

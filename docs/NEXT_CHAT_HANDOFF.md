@@ -1,6 +1,6 @@
-# dev.167 后续交接
+# dev.168 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.167_source-cover-filter-owner.zip`。
+唯一后续基线：`zic_v0.31.0-dev.168_source-filter-default-section-owner.zip`。
 
 ## 必读
 
@@ -20,19 +20,16 @@
 14. `docs/adr/0148-artwork-source-lifetime-and-home-update-semantics.md`
 15. `docs/adr/0149-retained-artwork-persistence-and-invalidation-boundary.md`
 16. `docs/adr/0150-source-browse-cover-and-filter-presentation-boundary.md`
-18. `docs/audits/dev163-venera-activation-history-cover-root-cause-audit.md`
-19. `docs/audits/dev164-home-projection-artwork-runtime-generation-root-cause-audit.md`
-20. `docs/audits/dev164-validation-results.md`
-21. `docs/audits/dev165-artwork-lifetime-home-update-root-cause-audit.md`
-22. `docs/audits/dev165-validation-results.md`
-23. `docs/audits/dev166-retained-artwork-cache-root-cause-audit.md`
-24. `docs/audits/dev166-validation-results.md`
-25. `docs/audits/dev167-source-cover-filter-root-cause-audit.md`
-26. `docs/audits/dev167-validation-results.md`
+17. `docs/adr/0151-source-filter-capability-and-default-section-ownership.md`
+18. `docs/audits/dev167-source-cover-filter-root-cause-audit.md`
+19. `docs/audits/dev167-validation-results.md`
+20. `docs/audits/dev168-source-filter-default-section-root-cause-audit.md`
+21. `docs/audits/dev168-validation-results.md`
 
 ## 当前代码事实
 
 - 漫画源 browse 内容 revision不再承担 artwork revision：分页、SWR后台刷新、详情回写导致的 browse projection变化都不能全局重建封面 Future/ImageProvider；仅 cover URI自身变化或显式来源 artwork refresh触发重新加载。source card Sliver owner key使用 canonical comic identity，raw plugin locator只用于调用/交互。
+- source filter capability 与 schema load结果已分离：Mihon显式 `supportsSearchFilters=true`，Venera=false，分类栏是否显示“筛选”不再取决于当前 filter list非空。首次进入来源默认选择当前 Presentation排序第一项；catalog最近 projection不得恢复 section/query/filter UI状态，未来自定义排序只需改变同一排序 owner。
 - `FilterableBrowsableComicSource`/runtime `filterIds` contract继续存在；筛选入口固定在分类栏，标准 section排序“最新 → 热门 → 筛选”。筛选不属于 source category，也不再藏在浮动搜索展开层。
 - durable artwork persistence在 `ResourceCacheManager/FileResourceCacheByteStore` 内分为 `transient/retained`：browse/preview为 transient；library/history/details cover在同一 canonical key上晋升 retained。retained不受自动 LRU/TTL/manual transient trim影响，只接受精确 artwork失效、整漫画资源删除或用户清缓存。
 - catalog metadata refresh使用 `invalidateComicMetadata`，不得按 comic namespace连坐 artwork；真正删除漫画时才调用 `invalidateAllComicResources`。
