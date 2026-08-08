@@ -51,6 +51,8 @@ final class ComicCoverCard extends StatelessWidget {
     required this.coverSource,
     required this.coverIdentity,
     required this.onTap,
+    this.sourceAvailable = true,
+    this.telemetryIdentity,
     this.interactionKey,
     this.onLongPress,
     this.downloadProgress,
@@ -67,6 +69,8 @@ final class ComicCoverCard extends StatelessWidget {
   final ComicPreference preference;
   final Future<EncodedResourceSource> Function() coverSource;
   final String coverIdentity;
+  final bool sourceAvailable;
+  final String? telemetryIdentity;
   final Key? interactionKey;
   final VoidCallback onTap;
   final VoidCallback? onLongPress;
@@ -105,6 +109,8 @@ final class ComicCoverCard extends StatelessWidget {
                 children: <Widget>[
                   _CoverImage(
                     cacheIdentity: coverIdentity,
+                    telemetryIdentity: telemetryIdentity ?? coverIdentity,
+                    sourceAvailable: sourceAvailable,
                     loader: coverSource,
                     startupTelemetry: startupTelemetry,
                   ),
@@ -192,11 +198,15 @@ final class _CoverTitleGradient extends StatelessWidget {
 final class _CoverImage extends StatefulWidget {
   const _CoverImage({
     required this.cacheIdentity,
+    required this.telemetryIdentity,
+    required this.sourceAvailable,
     required this.loader,
     this.startupTelemetry,
   });
 
   final String cacheIdentity;
+  final String telemetryIdentity;
+  final bool sourceAvailable;
   final Future<EncodedResourceSource> Function() loader;
   final HomeStartupTelemetry? startupTelemetry;
 
@@ -207,6 +217,8 @@ final class _CoverImage extends StatefulWidget {
 final class _CoverImageState extends State<_CoverImage> {
   late Future<EncodedResourceSource> _source;
   bool _reportedFirstFrame = false;
+  bool _sourceFailed = false;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
@@ -215,26 +227,48 @@ final class _CoverImageState extends State<_CoverImage> {
   }
 
   Future<EncodedResourceSource> _loadSource() async {
-    widget.startupTelemetry?.coverRequested(widget.cacheIdentity);
-    final source = await widget.loader();
-    widget.startupTelemetry?.coverSourceReady(
-      widget.cacheIdentity,
-      source: source.origin.name,
-      byteLength: source.lengthInBytes,
-    );
-    return source;
+    final generation = ++_loadGeneration;
+    final sourceAvailableAtStart = widget.sourceAvailable;
+    _sourceFailed = false;
+    widget.startupTelemetry?.coverRequested(widget.telemetryIdentity);
+    try {
+      final source = await widget.loader();
+      widget.startupTelemetry?.coverSourceReady(
+        widget.telemetryIdentity,
+        source: source.origin.name,
+        byteLength: source.lengthInBytes,
+      );
+      return source;
+    } on Object catch (error) {
+      if (generation == _loadGeneration) {
+        _sourceFailed = true;
+      }
+      widget.startupTelemetry?.coverSourceFailed(
+        widget.telemetryIdentity,
+        errorType: error.runtimeType.toString(),
+        sourceAvailable: sourceAvailableAtStart,
+      );
+      rethrow;
+    }
   }
 
   void _reportFirstFrame() {
     if (_reportedFirstFrame) return;
     _reportedFirstFrame = true;
-    widget.startupTelemetry?.coverFirstFrame(widget.cacheIdentity);
+    widget.startupTelemetry?.coverFirstFrame(widget.telemetryIdentity);
+  }
+
+  void _reportDecodeFailure() {
+    widget.startupTelemetry?.coverDecodeFailed(widget.telemetryIdentity);
   }
 
   @override
   void didUpdateWidget(covariant _CoverImage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.cacheIdentity != widget.cacheIdentity) {
+    final cacheChanged = oldWidget.cacheIdentity != widget.cacheIdentity;
+    final sourceBecameAvailable =
+        !oldWidget.sourceAvailable && widget.sourceAvailable;
+    if (cacheChanged || (_sourceFailed && sourceBecameAvailable)) {
       _reportedFirstFrame = false;
       _source = _loadSource();
     }
@@ -263,6 +297,7 @@ final class _CoverImageState extends State<_CoverImage> {
                 cacheWidth: cacheWidth,
                 fit: BoxFit.cover,
                 onFrameReady: _reportFirstFrame,
+                onDecodeFailure: _reportDecodeFailure,
               );
             }
             return SoftArtworkPlaceholder(seed: widget.cacheIdentity);
@@ -383,6 +418,7 @@ final class ShelfListTile extends StatelessWidget {
     required this.downloadProgress,
     required this.selected,
     required this.onTap,
+    this.sourceAvailable = true,
     this.startupTelemetry,
     this.onLongPress,
     this.trailing,
@@ -393,6 +429,7 @@ final class ShelfListTile extends StatelessWidget {
   final ComicPreference preference;
   final Future<EncodedResourceSource> Function() coverSource;
   final String coverIdentity;
+  final bool sourceAvailable;
   final ComicDownloadProgress? downloadProgress;
   final bool selected;
   final VoidCallback onTap;
@@ -419,6 +456,8 @@ final class ShelfListTile extends StatelessWidget {
                 children: <Widget>[
                   _CoverImage(
                     cacheIdentity: coverIdentity,
+                    telemetryIdentity: coverIdentity,
+                    sourceAvailable: sourceAvailable,
                     loader: coverSource,
                     startupTelemetry: startupTelemetry,
                   ),

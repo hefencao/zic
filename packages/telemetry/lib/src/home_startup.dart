@@ -61,6 +61,25 @@ final class HomeStartupTelemetry {
     );
   }
 
+  void coverSourceFailed(
+    String identity, {
+    required String errorType,
+    bool? sourceAvailable,
+  }) {
+    _record(
+      TraceEventKind.homeCoverSourceFailed,
+      identityHash: identity,
+      payload: <String, Object?>{
+        'errorType': errorType,
+        if (sourceAvailable != null) 'sourceAvailable': sourceAvailable,
+      },
+    );
+  }
+
+  void coverDecodeFailed(String identity) {
+    _record(TraceEventKind.homeCoverDecodeFailed, identityHash: identity);
+  }
+
   void coverFirstFrame(String identity) {
     _record(TraceEventKind.homeCoverFirstFrame, identityHash: identity);
   }

@@ -74,7 +74,7 @@ for stale in (
 for token in (
     "'home-history' : 'home-update'",
     'final coverIdentity = _canonicalComicKey(',
-    'telemetryOwners.add(coverIdentity)',
+    'telemetryOwners.add(presentationIdentity)',
 ):
     require(views, token, 'canonical Home cover owners')
 for token in (

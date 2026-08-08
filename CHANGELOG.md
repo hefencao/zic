@@ -1,3 +1,10 @@
+## 0.31.0-dev.163：修复 Venera 启动期 runtime 丢失与阅读历史封面 State 漂移
+
+- `plugin_host_bridge` 将 `runtime-service-died/disconnected` 的一次性恢复覆盖到**初次 activation**：Android runtime service 已标记旧 binding 丢失后，重新绑定并重放同一 activation 一次；插件 payload/业务错误不进入该恢复路径。
+- 首页“更新漫画/阅读历史”横向列表把稳定 `section + canonical comic identity` key 提升到 Sliver 的直接 child，并提供 reorder index callback；Reader 返回只改变历史排序，不再因为 child state-loss 偶然销毁/重建封面 Future/ImageProvider。
+- Home artwork trace 新增 `homeCoverSourceFailed` 与 `homeCoverDecodeFailed`，并使用 section-aware presentation identity，下一份设备 trace 可区分 source/cache 阶段失败和 Flutter decoder失败；不恢复 timer/watchdog/evict/Future join。
+- 新增 dev.163 owner gate 与 Venera activation tests；版本提升到 `0.31.0+163`。
+
 ## 0.31.0-dev.162：原子化正文资源绑定并删除 Catalog Artwork 旁路
 
 - 修复 dev.161 调用方迁移遗漏：`demo_home_source_compat.dart` 不再调用已删除的 `ComicSourceResourceGateway.loadBytes`，正文完整字节路径改用明确的 `loadPageBytes`。

@@ -1,5 +1,5 @@
 # zic
-dev.162 完成 dev.161 网络/缓存边界的调用方迁移：page-body 全字节与流式读取共用 `ComicSourceResourceGateway` 的同一 response loader，章节下载只接受原子 `ChapterResourceAccess`，catalog 不再暴露 artwork 加载 facade。
+dev.163 修复 Venera 初次 activation 遇到 runtime service 丢失时无法进入既有恢复链的问题，并修复 Home 外部封面在“首屏早于 source ready + warm cache miss”后把 failed Future锁死、只能被历史重排偶然带活的根因；封面 source/decode失败现已分别进入 trace。
 
 
 `zic` 是面向 Android 优先、高性能漫画阅读场景的 Flutter/Rust 工程。项目支持本地与远程章节、静态图片、Animated WebP、持久下载、带分类/翻页的漫画源浏览、Mihon/Venera 扩展和统一 Reader Pipeline。

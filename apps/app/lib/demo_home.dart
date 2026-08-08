@@ -1181,6 +1181,8 @@ final class _DemoHomeState extends State<DemoHome> {
             resourceRole: 'cover',
           );
 
+  bool _coverSourceAvailableForComic(LibraryComic comic) =>
+      comic.sourceId == 'local-folder' || _sourceForId(comic.sourceId) != null;
 
   bool _hasDetails(LibraryComic comic) {
     return comic.hasSourceCatalog ||

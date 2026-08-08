@@ -9,6 +9,12 @@
 
 # zic Implementation Plan
 
+## P0：Venera 启动期与阅读历史封面根因真机闭环
+
+- 冷启动直接打开 `venera:ehentai`，确认若第一次 platform activation 返回 `runtime-service-died/disconnected`，bridge 只重新绑定并重放一次；若第二次仍失败，导出 Android runtime process 崩溃/LMK 日志，不增加第三次重试。
+- 冷启动让历史中至少一个外部封面处于 warm cache miss且 plugin source尚未 ready，确认先出现 `homeCoverSourceFailed{sourceAvailable:false}`，source ready后该 owner只重新求值一次并进入 sourceReady/firstFrame；普通 Home rebuild不重试 failed Future。
+- 对 `home-history:<canonical identity>` 对齐 `homeCoverRequested → homeCoverSourceReady/homeCoverSourceFailed → homeCoverFirstFrame/homeCoverDecodeFailed`。source-ready但无失败/首帧且卡片离屏不判为图片失败。Reader返回造成 progress重排时，同一 presentation key必须保持封面 State，不得借阅读进度变化重建 encoded source Future。
+
 ## P0：Mihon目录、Venera生命周期与图片网络设备闭环
 
 - Roumanwu：记录 `getMangaUpdate` 输入 raw SManga、详情结果和 chapter count；确认 compatibility shim 的 `fetchChapterList` 使用原始 manga，原 80章不会再被旧 durable manifest/错误 request identity刷新为0章。

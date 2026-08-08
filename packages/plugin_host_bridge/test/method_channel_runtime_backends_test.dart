@@ -110,6 +110,72 @@ void main() {
     expect(activation['payloadPath'], '/cache/fixture.js');
   });
 
+  test('Venera activation rebinds once when runtime service dies', () async {
+    final calls = <MethodCall>[];
+    var activations = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return switch (call.method) {
+        ExternalPluginRuntimeServiceMethods.activateVenera =>
+          activations++ == 0
+              ? throw PlatformException(
+                  code: 'runtime-service-died',
+                  message: 'runtime service process died during activation',
+                )
+              : <String, Object?>{
+                  'processId': 'rebound-process',
+                  'sessionId': 'venera-session-2',
+                  'handshake': _handshake('venera-runtime'),
+                },
+        ExternalPluginRuntimeServiceMethods.closeSession => null,
+        _ => throw MissingPluginException(call.method),
+      };
+    });
+
+    final backend = AndroidVeneraSandboxRuntimeBackend(channel: channel);
+    final connection = await backend.activate(_veneraRequest());
+    await connection.close();
+
+    expect(activations, 2);
+    expect(
+      calls.map((call) => call.method),
+      <String>[
+        ExternalPluginRuntimeServiceMethods.activateVenera,
+        ExternalPluginRuntimeServiceMethods.activateVenera,
+        ExternalPluginRuntimeServiceMethods.closeSession,
+      ],
+    );
+  });
+
+  test('Venera activation does not replay plugin activation errors', () async {
+    var activations = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == ExternalPluginRuntimeServiceMethods.activateVenera) {
+        activations++;
+        throw PlatformException(
+          code: 'runtime-request-invalid',
+          message: 'plugin activation payload rejected',
+        );
+      }
+      throw MissingPluginException(call.method);
+    });
+
+    final backend = AndroidVeneraSandboxRuntimeBackend(channel: channel);
+    await expectLater(
+      backend.activate(_veneraRequest()),
+      throwsA(
+        isA<PlatformException>().having(
+          (error) => error.code,
+          'code',
+          'runtime-request-invalid',
+        ),
+      ),
+    );
+    expect(activations, 1);
+  });
+
   test('stale process is reactivated and the invocation is replayed once',
       () async {
     final calls = <MethodCall>[];

@@ -233,11 +233,25 @@ extension _DemoHomeViews on _DemoHomeState {
         ),
       );
     }
+    final section = history ? 'home-history' : 'home-update';
+    final presentationIdentities = <String>[
+      for (final comic in comics)
+        '$section:${_canonicalComicKey(comic.sourceId, comic.comicId)}',
+    ];
+    final itemIndexByKey = <String, int>{
+      for (var index = 0; index < presentationIdentities.length; index++)
+        presentationIdentities[index]: index,
+    };
     return SizedBox(
       height: ComicCoverCard.cardExtent,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         itemCount: comics.length,
+        findChildIndexCallback: (key) {
+          if (key is! ValueKey<String>) return null;
+          final itemIndex = itemIndexByKey[key.value];
+          return itemIndex == null ? null : itemIndex * 2;
+        },
         separatorBuilder: (_, __) => const SizedBox(width: 12),
         itemBuilder: (context, index) {
           final comic = comics[index];
@@ -246,12 +260,11 @@ extension _DemoHomeViews on _DemoHomeState {
             comic.sourceId,
             comic.comicId,
           );
+          final presentationIdentity = presentationIdentities[index];
           return SizedBox(
+            key: ValueKey<String>(presentationIdentity),
             width: ComicCoverCard.cardWidth,
             child: ComicCoverCard(
-              key: ValueKey<String>(
-                '${history ? 'home-history' : 'home-update'}:$coverIdentity',
-              ),
               interactionKey: resume == null
                   ? ValueKey<String>('comic-entry:${comic.identity}')
                   : history
@@ -266,9 +279,11 @@ extension _DemoHomeViews on _DemoHomeState {
               comic: comic,
               preference: _preferenceForComic(comic),
               coverIdentity: coverIdentity,
+              telemetryIdentity: presentationIdentity,
               coverSource: _coverSourceLoaderForComic(comic),
+              sourceAvailable: _coverSourceAvailableForComic(comic),
               startupTelemetry: telemetryOwners == null ||
-                      telemetryOwners.add(coverIdentity)
+                      telemetryOwners.add(presentationIdentity)
                   ? widget.startupTelemetry
                   : null,
               downloadProgress: _downloadProgressForComic(comic),
@@ -713,6 +728,7 @@ extension _DemoHomeViews on _DemoHomeState {
       preference: _preferenceForComic(comic),
       coverIdentity: coverIdentity,
       coverSource: _coverSourceLoaderForComic(comic),
+      sourceAvailable: _coverSourceAvailableForComic(comic),
       startupTelemetry: widget.startupTelemetry,
       downloadProgress: _downloadProgressForComic(comic),
       selected: selected,
@@ -843,6 +859,7 @@ extension _DemoHomeViews on _DemoHomeState {
         preference: _preferenceForComic(comic),
         coverSource: _coverSourceLoaderForComic(comic),
         coverIdentity: coverIdentity,
+        sourceAvailable: _coverSourceAvailableForComic(comic),
         startupTelemetry: widget.startupTelemetry,
         downloadProgress: _downloadProgressForComic(comic),
         selected: _managedComicIdentities.contains(comic.identity),

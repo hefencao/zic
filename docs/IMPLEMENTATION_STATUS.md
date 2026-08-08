@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.162`
-**App build：** `0.31.0+162`
+**源码版本：** `0.31.0-dev.163`
+**App build：** `0.31.0+163`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -9,7 +9,9 @@
 
 ## 当前实现
 
-- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=162`。
+- Venera/Mihon 的初次 platform runtime activation 对 `runtime-service-died/disconnected` 只在 plugin-host bridge 基础设施边界重放一次；普通插件激活错误不自动重试。
+- Home外部封面把 live source readiness作为显式加载依赖：首屏早于 plugin ready且 warm cache miss时，失败 Future只在对应 source从 unavailable→available后重新求值；普通 progress/enrichment rebuild不重试。历史/更新横向 Sliver直接 child使用 `section + canonical comic identity` 稳定 key并提供 reorder index callback，阅读进度只改变排序。Home trace区分 `homeCoverSourceFailed`（含 `sourceAvailable`）、`homeCoverDecodeFailed` 与 first-frame。
+- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=163`。
 - 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
 - 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation不阻塞 Home primary，外部 source ready 后增量接入。
 - artwork资源恢复唯一属于 `ComicSourceResourceGateway/ResourceCacheManager`。Home、书架、漫画源和详情 presentation 已删除定时 retry、first-frame watchdog、App resume自动 retry、全局 ImageCache eviction和 App级短时 Future join；详情统一使用 `ComicDetailsArtworkLoader` 并显式传递 cover/preview/avatar role。普通 artwork直接复用 `StableArtworkImage`；需要裁剪/尺寸测量时只有一个显式 ImageStream listener，不再同时创建第二个 `Image`。
@@ -58,6 +60,8 @@
 
 ## 当前开放问题
 
+- 需用 dev.163 真机 trace验证已定位的 startup链：外部 source尚未 ready且 warm cache miss时应记录 `homeCoverSourceFailed{sourceAvailable:false}`，source ready后同 presentation owner只重新求值一次。对 `homeCoverSourceReady` 后仍无首帧的条目，继续用 `homeCoverDecodeFailed` 区分真实 decoder错误与离屏未绘制；在证据明确前不增加 artwork retry。
+- 需真机确认 Venera `venera:ehentai` 初次 activation 的 `runtime-service-died/disconnected` 能通过一次重新绑定恢复；若第二次仍死亡，应采集 Android runtime process crash/kill 证据，而不是继续叠加重试。
 - 目标设备仍需验证 transition 首帧、远程 WebP frame cadence、后台重入和首页首封面时序。
 - 本轮首页冷启动修复仍需设备对比 `homeServicesReady`、`home-library-primary`、
   `homeCoverRequested`、各封面 `homeCoverSourceReady`/`homeCoverFirstFrame` 的真实间隔，
@@ -73,7 +77,7 @@
 |---|---|
 | repository/documentation/Dart static gates | Verified-static |
 | current-code documentation consistency gate | Verified-static |
-| dev.75–dev.161 ownership gates | Verified-static |
+| dev.75–dev.163 ownership gates | Verified-static |
 | Android/Mihon/Venera/Reader/Pipeline/UI contracts | Verified-static / toolchain |
 | Kotlin texture bridge compile stub | Verified-toolchain |
 | pinned libwebp host build/smoke | Unverified：当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip` |

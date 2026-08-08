@@ -676,13 +676,14 @@ void main() {
     expect(find.textContaining('上次'), findsNothing);
   });
 
-  testWidgets('cover retries when a failed loader becomes available',
+  testWidgets('cover reloads a failed source only when the source becomes available',
       (tester) async {
     final chapter = _chapter(name: '延后来源漫画');
     final comic = LibraryComic.fromEntries(
       <ImportedLibraryEntry>[ImportedLibraryEntry(chapter: chapter)],
     );
     var available = false;
+    var sourceAvailable = false;
     var loadCount = 0;
 
     Widget buildCard() => MaterialApp(
@@ -695,6 +696,8 @@ void main() {
                 comicId: chapter.comicId,
                 sourceKind: ComicSourceKind.remote,
               ),
+              coverIdentity: 'source/comic/retry-cover',
+              sourceAvailable: sourceAvailable,
               coverSource: () async {
                 loadCount++;
                 if (!available) {
@@ -713,6 +716,12 @@ void main() {
     expect(loadCount, 1);
 
     available = true;
+    await tester.pumpWidget(buildCard());
+    await tester.pump();
+    await tester.pump();
+    expect(loadCount, 1);
+
+    sourceAvailable = true;
     await tester.pumpWidget(buildCard());
     await tester.pump();
     await tester.pump();

@@ -9,6 +9,8 @@ enum TraceEventKind {
   homeServicesReady,
   homeCoverRequested,
   homeCoverSourceReady,
+  homeCoverSourceFailed,
+  homeCoverDecodeFailed,
   homeCoverFirstFrame,
   readerSessionCreated,
   readerSessionRetained,

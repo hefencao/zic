@@ -1,6 +1,6 @@
-# dev.162 后续交接
+# dev.163 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.162_source-resource-atomic-catalog-boundary.zip`。
+唯一后续基线：`zic_v0.31.0-dev.163_venera-activation-history-cover-state.zip`。
 
 ## 必读
 
@@ -20,9 +20,12 @@
 14. `docs/audits/dev157-validation-results.md`
 15. `docs/audits/dev158-compile-owner-blocking-audit.md`
 16. `docs/audits/dev158-validation-results.md`
+17. `docs/audits/dev163-venera-activation-history-cover-root-cause-audit.md`
 
 ## 当前代码事实
 
+- 初次 external runtime activation 的 transport/service-loss恢复已经和 session 内 invocation 对齐：仅 `runtime-service-died/disconnected` 在 bridge边界重新绑定并重放一次，业务激活失败不重试。
+- Home外部封面已把 source availability作为显式加载依赖：首屏早于 plugin ready且 warm cache miss导致的 failed Future，只在 source unavailable→available后重新求值；普通 progress/enrichment rebuild不重试。history/update 横向 Sliver直接 child持有 `section + canonical comic identity` key并提供 reorder映射，Reader progress只负责排序/进度投影。`homeCoverSourceFailed`记录 `sourceAvailable`，decode失败单列 `homeCoverDecodeFailed`。
 - Reader页面变化只 enqueue latest progress；SQLite在 storage-owned isolate内按同章节 latest-wins合并，空闲约8秒提交、持续活跃最多约30秒提交。Reader route不等待 durable barrier。返回后 Home只发布最终 progress一次，详情只替换当前章节，不全量 reload library。
 - 全局网络 User-Agent是 composition fallback，默认 Android Chrome 150并可设置；source显式 UA、Mihon browser-session UA优先。App presentation不得创建独立 HTTP client。
 - shared source host replay只允许无状态媒体：禁止自动 redirect；redirect、`Set-Cookie`、非媒体 body或未知 client wrapper立即切 source-owned client。metadata/artwork必须走 `ResourceCacheManager`；`pageResponseLoaderFor/loadPageBytes`仅供 Reader/章节正文，由 DownloadSession/artifact接管。 full-byte 与 streaming 必须复用同一 response loader；章节下载只通过原子 `ChapterResourceAccess` 绑定，禁止恢复 byte/transport 双 setter。

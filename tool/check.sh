@@ -99,6 +99,7 @@ python3 "$ROOT/tool/test_dev159_mihon_host_contract_resource_session_replacement
 python3 "$ROOT/tool/test_dev160_mihon_catalogue_venera_lifecycle_media_fallback.py"
 python3 "$ROOT/tool/test_dev161_network_user_agent_transport_cache_ownership.py"
 python3 "$ROOT/tool/test_dev162_source_resource_atomic_catalog_boundary.py"
+python3 "$ROOT/tool/test_dev163_venera_activation_history_cover_state.py"
 python3 "$ROOT/tool/check_test_quarantine.py"
 python3 "$ROOT/tool/test_texture_schedule_timing_contract.py"
 python3 "$ROOT/tool/test_texture_bridge_kotlin_compile.py"

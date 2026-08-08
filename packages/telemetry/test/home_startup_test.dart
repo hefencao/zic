@@ -19,6 +19,12 @@ void main() {
       source: 'durableCacheFile',
       byteLength: 4096,
     );
+    telemetry.coverDecodeFailed('source/comic/cover');
+    telemetry.coverSourceFailed(
+      'source/comic/other-cover',
+      errorType: 'StateError',
+      sourceAvailable: false,
+    );
     clock.advance(70);
     telemetry.coverFirstFrame('source/comic/cover');
 
@@ -30,6 +36,8 @@ void main() {
         TraceEventKind.homeBootstrapPresented,
         TraceEventKind.homeCoverRequested,
         TraceEventKind.homeCoverSourceReady,
+        TraceEventKind.homeCoverDecodeFailed,
+        TraceEventKind.homeCoverSourceFailed,
         TraceEventKind.homeCoverFirstFrame,
       ],
     );
@@ -40,6 +48,10 @@ void main() {
     expect(sink.events[4].payload, <String, Object?>{
       'source': 'durableCacheFile',
       'byteLength': 4096,
+    });
+    expect(sink.events[6].payload, <String, Object?>{
+      'errorType': 'StateError',
+      'sourceAvailable': false,
     });
   });
 }
