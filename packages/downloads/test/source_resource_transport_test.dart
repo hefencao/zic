@@ -82,6 +82,61 @@ void main() {
     await closed;
   });
 
+  test('default UA reaches directOpen when source omits it', () async {
+    ComicResourceRequest? opened;
+    final source = _FixtureSource(
+      request: ComicResourceRequest(uri: Uri.parse('https://fixture/page')),
+    );
+    final pool = ExternalPluginResourceTransportPool(
+      defaultUserAgentProvider: () => 'fixture-default-ua',
+      directOpen: (request) async {
+        opened = request;
+        return ByteResponse(
+          bytes: Stream<List<int>>.value(<int>[1, 2, 3, 4]),
+          statusCode: HttpStatus.ok,
+          rangeStart: 0,
+          totalLength: 4,
+        );
+      },
+    );
+    addTearDown(pool.close);
+
+    final response = await pool
+        .loaderFor(source, Uri.parse('mihon:resource:default-ua'))();
+
+    expect(await _collect(response.bytes), <int>[1, 2, 3, 4]);
+    expect(opened?.headers[HttpHeaders.userAgentHeader], 'fixture-default-ua');
+  });
+
+  test('source UA wins over the default UA', () async {
+    ComicResourceRequest? opened;
+    final source = _FixtureSource(
+      request: ComicResourceRequest(
+        uri: Uri.parse('https://fixture/page'),
+        headers: const <String, String>{'User-Agent': 'source-owned-ua'},
+      ),
+    );
+    final pool = ExternalPluginResourceTransportPool(
+      defaultUserAgentProvider: () => 'fixture-default-ua',
+      directOpen: (request) async {
+        opened = request;
+        return ByteResponse(
+          bytes: Stream<List<int>>.value(<int>[4, 3, 2, 1]),
+          statusCode: HttpStatus.ok,
+          rangeStart: 0,
+          totalLength: 4,
+        );
+      },
+    );
+    addTearDown(pool.close);
+
+    final response = await pool
+        .loaderFor(source, Uri.parse('mihon:resource:source-ua'))();
+
+    expect(await _collect(response.bytes), <int>[4, 3, 2, 1]);
+    expect(opened?.headers['User-Agent'], 'source-owned-ua');
+  });
+
   test('GET request normalization removes body and entity headers', () async {
     ComicResourceRequest? opened;
     final source = _FixtureSource(

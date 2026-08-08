@@ -1,3 +1,10 @@
+## P0：网络 UA / client / cache ownership 真机闭环
+
+- 在设置中切换自定义 User-Agent后分别验证通用 HTTP、普通 source WebView、Reader fallback与插件仓库请求；确认 source显式 UA和 Mihon browser-session UA仍优先，不被全局值覆盖。
+- 对 Mihon/Venera source记录 host replay / source-owned fallback原因；redirect、`Set-Cookie`、未知 client wrapper和非媒体响应必须在进入 Pipeline前切回 source client，正常无状态媒体仍保持 host streaming。
+- 全仓 trace核对 metadata/artwork只经 `ResourceCacheManager`；Reader page body只经 `pageResponseLoaderFor`进入 DownloadSession/artifact，不得出现新的 presentation裸 transport。
+- 评估下一阶段 source-owned binary stream/file lease：目标是让必须使用 Mihon/Venera client的正文也直接以 pipe/file/stream进入统一 Pipeline，消除当前 runtime fallback整块 `Uint8List` seam；在没有明确二进制生命周期协议前不得把完整正文改成 JSON/Base64默认路径。
+
 # zic Implementation Plan
 
 ## P0：Mihon目录、Venera生命周期与图片网络设备闭环

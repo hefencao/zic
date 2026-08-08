@@ -13,13 +13,14 @@ final class MangaDexSource implements BrowsableComicSource {
     this.translatedLanguage = 'en',
     this.useDataSaver = false,
     this.maxNetworkAttempts = 2,
+    String Function()? userAgentProvider,
   })  : assert(translatedLanguage != ''),
         assert(maxNetworkAttempts > 0 && maxNetworkAttempts <= 3),
         _transport = transport ??
             IoTransport(
               http: HttpTransport(
                 connectionTimeout: const Duration(seconds: 15),
-                userAgent: 'zic-comic-source/1',
+                userAgentProvider: userAgentProvider,
               ),
             );
 

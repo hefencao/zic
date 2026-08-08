@@ -1,5 +1,5 @@
 # zic
-dev.160 修正 Mihon 1.6 CatalogueSource 章节请求身份，Venera/settings 改为原地更新；生产 external runtime 容量提升到 32，并在宿主直连返回非媒体时切回 source-owned 网络语义。
+dev.161 增加网络 User-Agent 设置（默认 Android Chrome 150），并收紧网络/缓存所有权：source 显式 UA 与 client wrapper 优先，宿主直连仅允许无状态媒体响应，正文 transport 绕过 response cache 只属于 Reader/Artifact 路径。
 
 dev.159 对齐当前 Mihon Source/HttpSource 宿主合同：章节以 `getMangaUpdate/getPageList` 为主入口，图片保留 `imageRequest(page)` 的完整 request plan；插件重启与更新采用事务式 runtime replacement。
 

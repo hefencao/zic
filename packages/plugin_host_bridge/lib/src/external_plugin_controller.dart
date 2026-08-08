@@ -50,9 +50,13 @@ final class InstalledExternalPlugin {
 /// [BrowsableComicSource] adapters. Executable payloads remain owned by
 /// plugin_host and its dedicated Android process.
 final class ExternalPluginController {
-  ExternalPluginController._({required this.storageRoot});
+  ExternalPluginController._({
+    required this.storageRoot,
+    this.userAgentProvider,
+  });
 
   final String storageRoot;
+  final String Function()? userAgentProvider;
   late final Directory _root = Directory('$storageRoot/external_plugins');
   late final File _manifest = File('${_root.path}/installed.json');
   final Map<String, InstalledExternalPlugin> _installed =
@@ -96,8 +100,14 @@ final class ExternalPluginController {
   late final Future<void> _ready;
   bool _closed = false;
 
-  static Future<ExternalPluginController> open(String storageRoot) async {
-    final controller = await openDeferred(storageRoot);
+  static Future<ExternalPluginController> open(
+    String storageRoot, {
+    String Function()? userAgentProvider,
+  }) async {
+    final controller = await openDeferred(
+      storageRoot,
+      userAgentProvider: userAgentProvider,
+    );
     await controller.ready;
     return controller;
   }
@@ -106,9 +116,13 @@ final class ExternalPluginController {
   /// runtimes. Activation continues in [ready] so optional plugin work cannot
   /// delay the first Home projection.
   static Future<ExternalPluginController> openDeferred(
-    String storageRoot,
-  ) async {
-    final controller = ExternalPluginController._(storageRoot: storageRoot);
+    String storageRoot, {
+    String Function()? userAgentProvider,
+  }) async {
+    final controller = ExternalPluginController._(
+      storageRoot: storageRoot,
+      userAgentProvider: userAgentProvider,
+    );
     await controller._prepare();
     controller._ready = controller._initializeInBackground();
     return controller;
@@ -652,9 +666,15 @@ final class ExternalPluginController {
       var current = uri;
       for (var redirect = 0; redirect < 6; redirect++) {
         final request = await client.getUrl(current);
+        final configuredUserAgent = userAgentProvider?.call().trim();
         request.headers
           ..set(HttpHeaders.acceptHeader, '*/*')
-          ..set(HttpHeaders.userAgentHeader, 'zic/0.31.0 plugin-host');
+          ..set(
+            HttpHeaders.userAgentHeader,
+            configuredUserAgent != null && configuredUserAgent.isNotEmpty
+                ? configuredUserAgent
+                : 'zic/0.31.0 plugin-host',
+          );
         request.followRedirects = false;
         final response = await request.close();
         if (response.isRedirect) {

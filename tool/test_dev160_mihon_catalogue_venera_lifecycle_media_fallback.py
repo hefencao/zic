@@ -39,13 +39,13 @@ for token in (
 ):
     require(source16, token, 'Mihon 1.6 Source contract')
 for token in (
-    'supervisorScope',
-    'async { fetchMangaDetails(manga).awaitSingleCompat() }',
-    'async { fetchChapterList(manga).awaitSingleCompat() }',
-    'asyncManga?.await() ?: manga',
-    'asyncChapters?.await() ?: chapters',
+    'override val lang: String',
+    'fetchMangaDetails(manga).awaitSingleCompat()',
+    'fetchChapterList(manga).awaitSingleCompat()',
 ):
     require(catalogue16, token, 'Mihon CatalogueSource compatibility')
+for token in ('import kotlinx.coroutines', 'supervisorScope', 'async {'):
+    forbid(catalogue16, token, 'ABI-generator coroutine dependency')
 forbid(catalogue16, 'fetchChapterList(updatedManga)', 'mutated chapter request identity')
 forbid(catalogue16, 'fetchChapterList(detailedManga)', 'mutated chapter request identity')
 require(driver, 'source.invokeMihonCompatible("fetchChapterList", listOf(manga))', 'legacy chapter request identity')

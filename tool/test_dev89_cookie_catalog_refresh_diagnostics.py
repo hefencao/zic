@@ -92,7 +92,8 @@ for abi in ("mihonRuntime14", "mihonRuntime16"):
 require(
     "apps/app/lib/demo_home_source_compat.dart",
     "_sourceWebViewRequest",
-    "userAgent: request.userAgent",
+    "userAgent: effectiveUserAgent",
+    "widget.preferences.networkUserAgent",
     "cookieNames",
     "cookieCount",
     "cfClearancePresent",

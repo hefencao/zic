@@ -666,7 +666,10 @@ final class PersistentChapterDownloadService
         _transport = transport,
         _cacheOps = cacheOps;
 
-  static Future<PersistentChapterDownloadService> open(String root) async {
+  static Future<PersistentChapterDownloadService> open(
+    String root, {
+    String Function()? userAgentProvider,
+  }) async {
     final layout = CacheLayout('$root/offline_chapters');
     final index = SqliteIndex(layout.dbPath);
     await index.open();
@@ -685,7 +688,7 @@ final class PersistentChapterDownloadService
       index: index,
       cacheOps: CacheOps(index: index, registry: registry, clock: clock),
       transport: IoTransport(
-        http: HttpTransport(userAgent: 'zic/0.31.0'),
+        http: HttpTransport(userAgentProvider: userAgentProvider),
       ),
     );
   }

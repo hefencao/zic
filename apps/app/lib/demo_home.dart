@@ -235,7 +235,9 @@ final class _DemoHomeState extends State<DemoHome> {
         );
     final rawSources = widget.comicSources ??
         <BrowsableComicSource>[
-          MangaDexSource(),
+          MangaDexSource(
+            userAgentProvider: () => widget.preferences.networkUserAgent,
+          ),
           ...?widget.externalPlugins?.activeSources,
         ];
     _sources = List<BrowsableComicSource>.unmodifiable(
@@ -248,7 +250,10 @@ final class _DemoHomeState extends State<DemoHome> {
               ),
       ),
     );
-    _sourceResources = ComicSourceResourceGateway(sourceForId: _sourceForId);
+    _sourceResources = ComicSourceResourceGateway(
+      sourceForId: _sourceForId,
+      defaultUserAgentProvider: () => widget.preferences.networkUserAgent,
+    );
     _sourceResources.bindTo(_chapterDownloads);
     final ownsWholeComicDownloads = widget.wholeComicDownloads == null;
     _wholeComicDownloads = widget.wholeComicDownloads ??
@@ -884,7 +889,7 @@ final class _DemoHomeState extends State<DemoHome> {
         ? const <String, ExternalPluginResourceResponseLoader>{}
         : <String, ExternalPluginResourceResponseLoader>{
             for (final page in current.chapter.pages)
-              page.sourceId: _sourceResources.responseLoaderFor(
+              page.sourceId: _sourceResources.pageResponseLoaderFor(
                 current.chapter.sourceId,
                 Uri.parse(page.sourceId),
               ),

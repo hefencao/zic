@@ -1,11 +1,5 @@
 # Project Rules
 
-## Baseline and reading order
-
-- Use only the explicitly named complete ZIP as the code baseline. Do not merge an earlier worktree, patch replay tree or reconstructed candidate.
-- Before editing, read in order: `AGENTS.md`, `docs/NEXT_CHAT_HANDOFF.md`, `docs/ARCHITECTURE.md`, `docs/SPEC.md`, `docs/IMPLEMENTATION_PLAN.md`, `docs/IMPLEMENTATION_STATUS.md`, then the latest relevant ADR/audit and supplied errors or Trace.
-- VibeVenera, Mihon and third-party source archives are read-only references unless the user explicitly requests otherwise.
-
 ## Architecture and documentation
 
 - Reader submits observations and commands and consumes read-only Pipeline output. It must not own transport, page bytes, session, cursor, decoded frame, texture, retry or prefetch state.
@@ -21,10 +15,3 @@
 - 只有具有基础性、重要性、隐蔽性或长期稳定契约的代码/功能才要求新增回归测试；普通 UI 文案、一次性布局和非稳定实现无需单独新增回归测试。已有测试仍不得因该规则删除或规避真实缺陷。
 - Delete code only after repository-wide production, test, export and documentation reference checks.
 - Run all available repository, documentation, ownership, platform and toolchain checks. Missing Flutter/Android/Rust tools must be reported as unverified, not silently treated as passed.
-
-## Delivery
-
-- Release delivery must include a complete ZIP, SHA-256 and a baseline-to-release patch generated for `git apply --index`.
-- Resolve `patch_dir` from `ZIC_PATCH_DIR` or the local `.zic-workspace.json`; do not hard-code a machine-specific directory.
-- `.zic-workspace.json` is machine-local and must not be included in release ZIPs or generated patches.
-- Patch application instructions must use `"$(python3 tool/workspace_config.py patch_dir --absolute)/<patch-file>"` directly; do not introduce a chat-only `PATCH_DIR` variable.

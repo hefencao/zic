@@ -123,10 +123,9 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
       ),
       traceSink: widget.debugTrace,
       onDownloadRequested: () => _downloadChapter(current),
-      pipelineFactory:
-          defaultLocalMediaPipelineFactory.withArtifactCacheManager(
-        _readerArtifactCache,
-      ),
+      pipelineFactory: defaultLocalMediaPipelineFactory
+          .withArtifactCacheManager(_readerArtifactCache)
+          .withUserAgentProvider(() => widget.preferences.networkUserAgent),
       initialFavorite: preference.collected,
       onFavoriteChanged: (favorite) {
         final currentPreference = _preferences[

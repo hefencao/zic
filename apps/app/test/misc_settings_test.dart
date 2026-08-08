@@ -76,6 +76,7 @@ void main() {
         'adaptiveReaderEnabled': true,
         'defaultVerticalStitch': true,
         'detailsPreviewMaxItemsPerRow': 6,
+        'networkUserAgent': 'fixture-network-agent',
         'sourceSearchHistory': <Object?>['Alpha', 'beta', 'alpha'],
         'comicReaderSettings': <String, Object?>{
           comicReaderSettingsIdentity('source-a', 'comic-a'):
@@ -108,6 +109,7 @@ void main() {
     expect(controller.adaptiveReaderEnabled, isTrue);
     expect(controller.defaultVerticalStitch, isTrue);
     expect(controller.detailsPreviewMaxItemsPerRow, 6);
+    expect(controller.networkUserAgent, 'fixture-network-agent');
     expect(controller.sourceSearchHistory, <String>['Alpha', 'beta']);
     expect(
       controller.comicReaderSettingsFor('source-a', 'comic-a'),
@@ -128,6 +130,7 @@ void main() {
     controller.setThemeMode(ThemeMode.dark);
     controller.setShelfSortMode(LibrarySortMode.custom);
     controller.setDetailsPreviewMaxItemsPerRow(4);
+    controller.setNetworkUserAgent('custom-network-agent');
     controller.rememberSourceSearch('Gamma');
     controller.acknowledgeComicVersionNotice(
       'source-a',
@@ -147,8 +150,9 @@ void main() {
 
     expect(written?['themeMode'], 'dark');
     expect(written?['shelfSortMode'], 'custom');
-    expect(written?['version'], 5);
+    expect(written?['version'], 6);
     expect(written?['detailsPreviewMaxItemsPerRow'], 4);
+    expect(written?['networkUserAgent'], 'custom-network-agent');
     expect((written?['sourceSearchHistory']! as List).first, 'Gamma');
     expect(
       written?['acknowledgedComicVersionNotices'],

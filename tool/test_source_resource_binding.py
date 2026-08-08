@@ -59,7 +59,9 @@ def main() -> None:
     require(
         "apps/app/lib/demo_home.dart",
         "ComicSourceResourceGateway _sourceResources",
-        "ComicSourceResourceGateway(sourceForId: _sourceForId)",
+        "_sourceResources = ComicSourceResourceGateway(",
+        "sourceForId: _sourceForId",
+        "defaultUserAgentProvider: () => widget.preferences.networkUserAgent",
         "_sourceResources.bindTo(_chapterDownloads)",
         "_sourceResources.close()",
     )

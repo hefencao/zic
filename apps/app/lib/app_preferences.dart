@@ -9,6 +9,10 @@ enum ShelfSourceFilter { all, local, remote }
 
 enum ShelfViewPreference { gallery, list }
 
+const defaultNetworkUserAgent =
+    'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 '
+    '(KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36';
+
 @immutable
 final class ComicReaderSettings {
   const ComicReaderSettings({
@@ -128,6 +132,7 @@ final class AppPreferencesController extends ChangeNotifier {
   bool _adaptiveReaderEnabled = false;
   bool _defaultVerticalStitch = false;
   int _detailsPreviewMaxItemsPerRow = 4;
+  String _networkUserAgent = defaultNetworkUserAgent;
   List<String> _sourceSearchHistory = <String>[];
   Set<String> _acknowledgedComicVersionNotices = <String>{};
   Map<String, ComicReaderSettings> _comicReaderSettings =
@@ -147,6 +152,7 @@ final class AppPreferencesController extends ChangeNotifier {
   bool get adaptiveReaderEnabled => _adaptiveReaderEnabled;
   bool get defaultVerticalStitch => _defaultVerticalStitch;
   int get detailsPreviewMaxItemsPerRow => _detailsPreviewMaxItemsPerRow;
+  String get networkUserAgent => _networkUserAgent;
   List<String> get sourceSearchHistory =>
       List<String>.unmodifiable(_sourceSearchHistory);
   Set<String> get acknowledgedComicVersionNotices =>
@@ -223,6 +229,10 @@ final class AppPreferencesController extends ChangeNotifier {
       min: 1,
       max: 8,
     );
+    _networkUserAgent = _networkUserAgentValue(
+      values['networkUserAgent'],
+      fallback: _networkUserAgent,
+    );
     _sourceSearchHistory = _decodeSearchHistory(
       values['sourceSearchHistory'],
     );
@@ -296,6 +306,18 @@ final class AppPreferencesController extends ChangeNotifier {
     _detailsPreviewMaxItemsPerRow = normalized;
     _changed();
   }
+
+  void setNetworkUserAgent(String value) {
+    final normalized = _networkUserAgentValue(
+      value,
+      fallback: defaultNetworkUserAgent,
+    );
+    if (_disposed || _networkUserAgent == normalized) return;
+    _networkUserAgent = normalized;
+    _changed();
+  }
+
+  void resetNetworkUserAgent() => setNetworkUserAgent(defaultNetworkUserAgent);
 
   void rememberSourceSearch(String value) {
     final normalized = value.trim();
@@ -418,7 +440,7 @@ final class AppPreferencesController extends ChangeNotifier {
     final write = _write;
     if (write == null) return;
     await write(<String, Object?>{
-      'version': 5,
+      'version': 6,
       'themeMode': _themeMode.name,
       'debugTraceEnabled': _debugTraceEnabled,
       'shelfSourceFilter': _shelfSourceFilter.name,
@@ -429,6 +451,7 @@ final class AppPreferencesController extends ChangeNotifier {
       'adaptiveReaderEnabled': _adaptiveReaderEnabled,
       'defaultVerticalStitch': _defaultVerticalStitch,
       'detailsPreviewMaxItemsPerRow': _detailsPreviewMaxItemsPerRow,
+      'networkUserAgent': _networkUserAgent,
       'sourceSearchHistory': _sourceSearchHistory,
       'acknowledgedComicVersionNotices':
           _acknowledgedComicVersionNotices.toList(growable: false),
@@ -486,6 +509,12 @@ Map<String, ComicReaderSettings> _decodeComicReaderSettings(Object? raw) {
 }
 
 bool _boolValue(Object? raw, bool fallback) => raw is bool ? raw : fallback;
+
+String _networkUserAgentValue(Object? raw, {required String fallback}) {
+  if (raw is! String) return fallback;
+  final normalized = raw.trim();
+  return normalized.isEmpty ? defaultNetworkUserAgent : normalized;
+}
 
 
 int _intInRange(

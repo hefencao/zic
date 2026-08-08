@@ -192,7 +192,10 @@ Future<_AppServices> _openServices(
     libraryStore = await openImportedLibraryStore(root);
     telemetry.serviceReady('library-store', startedAtMicros: stageStarted);
     stageStarted = telemetry.nowMicros();
-    chapterDownloads = await PersistentChapterDownloadService.open(root);
+    chapterDownloads = await PersistentChapterDownloadService.open(
+      root,
+      userAgentProvider: () => preferences.networkUserAgent,
+    );
     telemetry.serviceReady('chapter-downloads', startedAtMicros: stageStarted);
     stageStarted = telemetry.nowMicros();
     cacheCoordinator = createAppResourceCache(
@@ -227,7 +230,10 @@ Future<_AppServices> _openServices(
     telemetry.serviceReady('whole-comic-queue', startedAtMicros: stageStarted);
     stageStarted = telemetry.nowMicros();
     try {
-      externalPlugins = await ExternalPluginController.openDeferred(root);
+      externalPlugins = await ExternalPluginController.openDeferred(
+        root,
+        userAgentProvider: () => preferences.networkUserAgent,
+      );
       telemetry.serviceReady(
         'external-plugin-host',
         startedAtMicros: stageStarted,

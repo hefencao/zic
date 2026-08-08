@@ -12,7 +12,7 @@ class NetworkHelper(context: Context) {
         get() = sharedClient
 
     fun defaultUserAgentProvider(): String =
-        "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Chrome/131 Mobile Safari/537.36"
+        "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36"
 
     @Deprecated("The regular client handles Cloudflare by default")
     val cloudflareClient: OkHttpClient

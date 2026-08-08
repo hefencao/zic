@@ -47,4 +47,28 @@ void main() {
     expect(response.validators.etag, '"fixture-v1"');
     expect(await response.bytes.expand((chunk) => chunk).toList(), bytes.sublist(5));
   });
+
+  test('dynamic user-agent provider is read per request', () async {
+    var userAgent = 'fixture-ua-one';
+    final seen = <String?>[];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    final serving = server.listen((request) async {
+      seen.add(request.headers.value(HttpHeaders.userAgentHeader));
+      request.response
+        ..statusCode = HttpStatus.ok
+        ..add(<int>[1]);
+      await request.response.close();
+    });
+    addTearDown(serving.cancel);
+    final transport = HttpTransport(userAgentProvider: () => userAgent);
+    addTearDown(transport.close);
+    final uri = Uri.parse('http://${server.address.host}:${server.port}/resource');
+
+    await (await transport.open(uri)).bytes.drain<void>();
+    userAgent = 'fixture-ua-two';
+    await (await transport.open(uri)).bytes.drain<void>();
+
+    expect(seen, <String?>['fixture-ua-one', 'fixture-ua-two']);
+  });
 }

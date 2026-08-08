@@ -20,12 +20,16 @@ typedef ComicSourceResolver = BrowsableComicSource? Function(String sourceId);
 /// downloads. Neither Reader nor download widgets can reach source callbacks
 /// or transport-pool lifecycle directly.
 final class ComicSourceResourceGateway {
-  ComicSourceResourceGateway({required ComicSourceResolver sourceForId})
-      : _sourceForId = sourceForId;
+  ComicSourceResourceGateway({
+    required ComicSourceResolver sourceForId,
+    String Function()? defaultUserAgentProvider,
+  })  : _sourceForId = sourceForId,
+        _transports = ExternalPluginResourceTransportPool(
+          defaultUserAgentProvider: defaultUserAgentProvider,
+        );
 
   final ComicSourceResolver _sourceForId;
-  final ExternalPluginResourceTransportPool _transports =
-      ExternalPluginResourceTransportPool();
+  final ExternalPluginResourceTransportPool _transports;
   final Set<ChapterDownloadService> _boundDownloads =
       HashSet<ChapterDownloadService>.identity();
   bool _closed = false;
@@ -33,9 +37,9 @@ final class ComicSourceResourceGateway {
   ChapterResourceAccess get chapterResourceAccess {
     _requireOpen();
     return ChapterResourceAccess(
-      loadBytes: loadBytes,
+      loadBytes: loadPageBytes,
       openResponse: (sourceId, uri, {range, validators}) =>
-          responseLoaderFor(sourceId, uri)(
+          pageResponseLoaderFor(sourceId, uri)(
         range: range,
         validators: validators,
       ),
@@ -52,7 +56,7 @@ final class ComicSourceResourceGateway {
     _setAccess(downloads, null);
   }
 
-  Future<Uint8List> loadBytes(String sourceId, Uri uri) {
+  Future<Uint8List> loadPageBytes(String sourceId, Uri uri) {
     _requireOpen();
     if (isLegacyVeneraRuntimeLocator(uri.toString())) {
       throw StateError('已阻止读取失效的 Venera 运行时资源定位符：$uri');
@@ -169,7 +173,10 @@ final class ComicSourceResourceGateway {
     }
   }
 
-  ExternalPluginResourceResponseLoader responseLoaderFor(
+  /// Raw page-body streaming escape hatch. This intentionally bypasses the
+  /// response cache because Reader/chapter bytes are owned by DownloadSession
+  /// and artifact storage. Metadata/artwork callers must use cached APIs above.
+  ExternalPluginResourceResponseLoader pageResponseLoaderFor(
     String sourceId,
     Uri uri,
   ) {

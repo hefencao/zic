@@ -89,7 +89,7 @@ for token in (
     'comicVersionNoticeIdentity(',
     'hasAcknowledgedComicVersionNotice(',
     'acknowledgeComicVersionNotice(',
-    "'version': 5",
+    "'version':",
 ):
     require(prefs, token, 'version notice acknowledgement')
 

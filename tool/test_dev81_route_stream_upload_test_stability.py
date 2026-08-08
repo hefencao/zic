@@ -44,7 +44,8 @@ assert 'registerForActivityResult' not in activity
 for token in (
     'typedef SourceResourceDirectOpen',
     'normalizeSourceResourceRequest(',
-    'ExternalPluginResourceTransportPool({SourceResourceDirectOpen? directOpen})',
+    'ExternalPluginResourceTransportPool({',
+    'SourceResourceDirectOpen? directOpen',
     '_openRetryPlan(',
 ):
     assert token in transport

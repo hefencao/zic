@@ -73,6 +73,9 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     bool cloudflareVerification = false,
   }) async {
     final request = _sourceWebViewRequest(source, url);
+    final effectiveUserAgent = request.userAgent?.trim().isNotEmpty == true
+        ? request.userAgent!.trim()
+        : widget.preferences.networkUserAgent;
     widget.debugTrace.record(
       TraceEvent(
         monotonicMicros: _traceClock.elapsedMicroseconds,
@@ -82,13 +85,14 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
           'stage': 'source-verification-browser-open',
           'host': request.url.host,
           'cloudflareVerification': cloudflareVerification,
-          'userAgentLength': request.userAgent?.length ?? 0,
+          'userAgentLength': effectiveUserAgent.length,
+          'userAgentFromSource': request.userAgent?.trim().isNotEmpty == true,
         },
       ),
     );
     await widget.networkBridge.openBrowser(
       request.url,
-      userAgent: request.userAgent,
+      userAgent: effectiveUserAgent,
       cloudflareVerification: cloudflareVerification,
     );
     final snapshot = await widget.networkBridge.readBrowserSnapshot(request.url);
@@ -111,8 +115,8 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
               snapshot?.cookies.containsKey('cf_clearance') ?? false,
           'userAgentLength': snapshot?.userAgent?.length ?? 0,
           'userAgentMatched': snapshot != null &&
-              (request.userAgent == null ||
-                  snapshot.userAgent == request.userAgent),
+              (cloudflareVerification ||
+                  snapshot.userAgent == effectiveUserAgent),
         },
       ),
     );

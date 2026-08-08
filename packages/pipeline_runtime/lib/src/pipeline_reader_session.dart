@@ -136,6 +136,7 @@ final class PipelineReaderSessionFactory {
     WebpDecodePrefixHints? decodePrefixHints,
     this.loaderSources = const <Uri, LoaderTransportSource>{},
     this.bytesLoader,
+    this.userAgentProvider,
     _PipelineReaderSessionRetentionPool? retentionPool,
   })  : _retentionPool =
             retentionPool ?? _PipelineReaderSessionRetentionPool(),
@@ -159,6 +160,7 @@ final class PipelineReaderSessionFactory {
   final WebpDecodePrefixHints decodePrefixHints;
   final Map<Uri, LoaderTransportSource> loaderSources;
   final PipelineArtifactBytesLoader? bytesLoader;
+  final String Function()? userAgentProvider;
 
   /// Returns a factory that keeps composition-owned cache/byte loaders while
   /// adding page-local transport sources.
@@ -176,6 +178,7 @@ final class PipelineReaderSessionFactory {
           ...sources,
         },
         bytesLoader: bytesLoader,
+        userAgentProvider: userAgentProvider,
         retentionPool: _retentionPool,
       );
 
@@ -190,6 +193,22 @@ final class PipelineReaderSessionFactory {
         decodePrefixHints: decodePrefixHints,
         loaderSources: loaderSources,
         bytesLoader: bytesLoader,
+        userAgentProvider: userAgentProvider,
+        retentionPool: _retentionPool,
+      );
+
+  PipelineReaderSessionFactory withUserAgentProvider(
+    String Function()? provider,
+  ) =>
+      PipelineReaderSessionFactory(
+        mediaRuntimeFactory: mediaRuntimeFactory,
+        artifactCacheManager: artifactCacheManager,
+        artifactReadScheduler: artifactReadScheduler,
+        pageDownloadLane: pageDownloadLane,
+        decodePrefixHints: decodePrefixHints,
+        loaderSources: loaderSources,
+        bytesLoader: bytesLoader,
+        userAgentProvider: provider,
         retentionPool: _retentionPool,
       );
 
@@ -204,6 +223,7 @@ final class PipelineReaderSessionFactory {
         decodePrefixHints: decodePrefixHints,
         loaderSources: loaderSources,
         bytesLoader: loader,
+        userAgentProvider: userAgentProvider,
         retentionPool: _retentionPool,
       );
 
@@ -222,6 +242,7 @@ final class PipelineReaderSessionFactory {
         decodePrefixHints: decodePrefixHints,
         loaderSources: loaderSources,
         bytesLoader: bytesLoader,
+        userAgentProvider: userAgentProvider,
         traceSink: traceSink,
       );
 
@@ -295,6 +316,7 @@ final class PipelineReaderSession {
     Map<Uri, LoaderTransportSource> loaderSources =
         const <Uri, LoaderTransportSource>{},
     PipelineArtifactBytesLoader? bytesLoader,
+    String Function()? userAgentProvider,
     TraceSink? traceSink,
   })  : artifactReadScheduler = artifactReadScheduler,
         _artifactCacheManager = artifactCacheManager,
@@ -304,7 +326,9 @@ final class PipelineReaderSession {
         _profile = readerPipelineProfileFor(chapter),
         _workspace = EphemeralCacheWorkspace.readerSession(sessionId),
         _assetTransport = AssetBundleTransport(rootBundle),
-        _ioTransport = IoTransport(),
+        _ioTransport = IoTransport(
+          http: HttpTransport(userAgentProvider: userAgentProvider),
+        ),
         _loaderTransport = LoaderTransport(loaderSources),
         transferProgress = PipelineTransferProgressPublisher() {
     trace = MultiTraceSink(<TraceSink>[

@@ -44,18 +44,20 @@ final class HttpTransport implements Transport {
     HttpClient? client,
     Duration connectionTimeout = const Duration(seconds: 15),
     String? userAgent,
+    String Function()? userAgentProvider,
   })  : _client = client ?? HttpClient(),
-        _ownsClient = client == null {
+        _ownsClient = client == null,
+        _fixedUserAgent = userAgent?.trim(),
+        _userAgentProvider = userAgentProvider {
     if (_ownsClient) {
       _client.connectionTimeout = connectionTimeout;
-    }
-    if (userAgent != null && userAgent.trim().isNotEmpty) {
-      _client.userAgent = userAgent.trim();
     }
   }
 
   final HttpClient _client;
   final bool _ownsClient;
+  final String? _fixedUserAgent;
+  final String Function()? _userAgentProvider;
 
   @override
   Future<ByteResponse> open(
@@ -100,6 +102,10 @@ final class HttpTransport implements Transport {
     range?.validate();
 
     final request = await _client.getUrl(uri);
+    final userAgent = _nonEmpty(_fixedUserAgent) ?? _nonEmpty(_userAgentProvider?.call());
+    if (userAgent != null) {
+      request.headers.set(HttpHeaders.userAgentHeader, userAgent);
+    }
     if (range != null) {
       request.headers.set(HttpHeaders.rangeHeader, range.toString());
       final ifRange = validators?.etag ??
@@ -261,4 +267,9 @@ _ContentRange? _parseContentRange(String? value) {
     start: start,
     total: totalValue == '*' ? null : int.parse(totalValue),
   );
+}
+
+String? _nonEmpty(String? value) {
+  final normalized = value?.trim();
+  return normalized == null || normalized.isEmpty ? null : normalized;
 }

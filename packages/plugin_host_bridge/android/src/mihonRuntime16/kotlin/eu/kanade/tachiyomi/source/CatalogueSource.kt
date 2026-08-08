@@ -6,8 +6,6 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
-import kotlinx.coroutines.async
-import kotlinx.coroutines.supervisorScope
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -15,7 +13,7 @@ import kotlin.coroutines.suspendCoroutine
 import rx.Observable
 
 interface CatalogueSource : Source {
-    val lang: String
+    override val lang: String
 
     override suspend fun getPopularManga(page: Int): MangasPage =
         fetchPopularManga(page).awaitSingleCompat()
@@ -34,26 +32,22 @@ interface CatalogueSource : Source {
         chapters: List<SChapter>,
         fetchDetails: Boolean,
         fetchChapters: Boolean,
-    ): SMangaUpdate = supervisorScope {
-        // Match current Mihon/TachiyomiX CatalogueSource exactly: details and
-        // chapters are independent requests over the original SManga. Feeding
-        // the detailed copy back into fetchChapterList changes extension
-        // request identity and can collapse a previously valid catalog to an
-        // empty/incorrect list.
-        val asyncManga = if (fetchDetails) {
-            async { fetchMangaDetails(manga).awaitSingleCompat() }
+    ): SMangaUpdate {
+        // Keep both legacy requests anchored to the original SManga. The ABI
+        // asset is intentionally dependency-light and does not pull
+        // kotlinx.coroutines merely to parallelize two compatibility calls.
+        // Request identity is the contract that matters here.
+        val updatedManga = if (fetchDetails) {
+            fetchMangaDetails(manga).awaitSingleCompat()
         } else {
-            null
+            manga
         }
-        val asyncChapters = if (fetchChapters) {
-            async { fetchChapterList(manga).awaitSingleCompat() }
+        val updatedChapters = if (fetchChapters) {
+            fetchChapterList(manga).awaitSingleCompat()
         } else {
-            null
+            chapters
         }
-        SMangaUpdate(
-            asyncManga?.await() ?: manga,
-            asyncChapters?.await() ?: chapters,
-        )
+        return SMangaUpdate(updatedManga, updatedChapters)
     }
 
     override suspend fun getPageList(chapter: SChapter): List<Page> =

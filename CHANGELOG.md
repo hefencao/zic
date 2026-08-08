@@ -1,3 +1,11 @@
+## 0.31.0-dev.161：统一默认 User-Agent 并收紧网络/缓存所有权
+
+- 网络设置新增可编辑 User-Agent，默认 Android Chrome 150；composition 以动态 provider 注入通用 HttpTransport、Reader fallback、章节下载、插件仓库控制面和 source host transport。source 显式 UA、Mihon browser-session UA优先，不被全局 fallback 覆盖。
+- 修复 dev.160 Mihon 1.6 ABI shim 编译闭包：移除 ABI asset generator 未提供的 `kotlinx.coroutines` 依赖，`CatalogueSource.lang` 正确 override；details/chapters仍基于原始 `SManga`。
+- external source host replay 只允许无状态的一次性媒体响应：禁止自动重定向；响应发生 redirect、`Set-Cookie`、非媒体 body或未知 client wrapper时立即切回 source-owned client，不把错误 client 状态留在 Dart HttpClient。
+- `ComicSourceResourceGateway` 统一接收默认 UA provider；裸 transport API收口为 `loadPageBytes/pageResponseLoaderFor`，只允许 Reader/章节正文绕过 response cache。metadata/artwork继续必须经过 `ResourceCacheManager`。
+- 新增 network/cache ownership gate：App presentation不得创建独立 HTTP client；低层 source transport只能由 gateway构造；生产直连 HTTP owner使用显式白名单。
+
 ## 0.31.0-dev.160：修正 Mihon 目录身份并解除 Venera 运行时重启
 
 - 对照当前 Mihon `CatalogueSource`：1.6 compatibility shim 对原始 `SManga` 并行获取 details/chapters；legacy fallback 同样以原始 manga 调 `fetchChapterList`，不再把补全后的对象作为章节请求身份。

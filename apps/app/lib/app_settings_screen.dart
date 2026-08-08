@@ -82,7 +82,10 @@ final class SettingsScreen extends StatelessWidget {
             subtitle: '网络限制与漫画源请求边界',
             onTap: () => _push(
               context,
-              NetworkSettingsScreen(downloads: downloads),
+              NetworkSettingsScreen(
+                downloads: downloads,
+                preferences: preferences,
+              ),
             ),
           ),
           _SettingsEntry(
@@ -323,10 +326,42 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen> {
   }
 }
 
-final class NetworkSettingsScreen extends StatelessWidget {
-  const NetworkSettingsScreen({required this.downloads, super.key});
+final class NetworkSettingsScreen extends StatefulWidget {
+  const NetworkSettingsScreen({
+    required this.downloads,
+    required this.preferences,
+    super.key,
+  });
 
   final WholeComicDownloadQueue downloads;
+  final AppPreferencesController preferences;
+
+  @override
+  State<NetworkSettingsScreen> createState() => _NetworkSettingsScreenState();
+}
+
+final class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
+  late final TextEditingController _userAgent = TextEditingController(
+    text: widget.preferences.networkUserAgent,
+  );
+
+  @override
+  void dispose() {
+    _userAgent.dispose();
+    super.dispose();
+  }
+
+  void _applyUserAgent() {
+    widget.preferences.setNetworkUserAgent(_userAgent.text);
+    _userAgent.text = widget.preferences.networkUserAgent;
+    _userAgent.selection = TextSelection.collapsed(offset: _userAgent.text.length);
+  }
+
+  void _resetUserAgent() {
+    widget.preferences.resetNetworkUserAgent();
+    _userAgent.text = widget.preferences.networkUserAgent;
+    _userAgent.selection = TextSelection.collapsed(offset: _userAgent.text.length);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -334,18 +369,19 @@ final class NetworkSettingsScreen extends StatelessWidget {
       key: networkSettingsScreenKey,
       appBar: AppBar(title: const Text('网络')),
       body: StreamBuilder<WholeComicQueueSnapshot>(
-        stream: downloads.changes,
-        initialData: downloads.snapshot,
+        stream: widget.downloads.changes,
+        initialData: widget.downloads.snapshot,
         builder: (context, snapshot) {
           final policy = snapshot.requireData.policy;
           return ListView(
+            padding: const EdgeInsets.symmetric(vertical: 8),
             children: <Widget>[
               SwitchListTile(
                 title: const Text('整本下载仅使用非计费网络'),
                 subtitle: const Text('移动网络或计费网络下将进入等待策略状态。'),
                 value: policy.network == WholeComicNetworkPolicy.unmetered,
                 onChanged: (value) => unawaited(
-                  downloads.updatePolicy(
+                  widget.downloads.updatePolicy(
                     policy.copyWith(
                       network: value
                           ? WholeComicNetworkPolicy.unmetered
@@ -355,11 +391,46 @@ final class NetworkSettingsScreen extends StatelessWidget {
                 ),
               ),
               const Divider(),
+              const _SettingsSectionTitle('请求标识'),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                child: TextField(
+                  key: const ValueKey<String>('network-user-agent'),
+                  controller: _userAgent,
+                  minLines: 2,
+                  maxLines: 4,
+                  decoration: const InputDecoration(
+                    labelText: 'User-Agent',
+                    helperText: '作为通用网络请求的默认 UA；来源明确提供 UA 或 Mihon 浏览器会话 UA 时优先使用来源值。',
+                    border: OutlineInputBorder(),
+                  ),
+                  onSubmitted: (_) => _applyUserAgent(),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: <Widget>[
+                    TextButton(
+                      onPressed: _resetUserAgent,
+                      child: const Text('恢复 Chrome 默认值'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton(
+                      key: const ValueKey<String>('network-user-agent-apply'),
+                      onPressed: _applyUserAgent,
+                      child: const Text('应用'),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(),
               const ListTile(
                 leading: Icon(Icons.security_outlined),
                 title: Text('漫画源网络边界'),
                 subtitle: Text(
-                  '内置源、Mihon 与 Venera 继续使用各自受控 transport；设置页不创建网络连接，也不读取插件 Cookie。',
+                  '目录/详情/封面等可重新获取响应必须经过统一缓存；章节正文由 DownloadSession/artifact owner流式处理。来源 Cookie、拦截器和显式 UA不得被全局默认值覆盖。',
                 ),
               ),
             ],

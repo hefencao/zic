@@ -25,10 +25,14 @@ typedef SourceResourceDirectOpen = Future<ByteResponse> Function(
 );
 
 final class ExternalPluginResourceTransportPool {
-  ExternalPluginResourceTransportPool({SourceResourceDirectOpen? directOpen})
-      : _directOpen = directOpen;
+  ExternalPluginResourceTransportPool({
+    SourceResourceDirectOpen? directOpen,
+    String Function()? defaultUserAgentProvider,
+  })  : _directOpen = directOpen,
+        _defaultUserAgentProvider = defaultUserAgentProvider;
 
   final SourceResourceDirectOpen? _directOpen;
+  final String Function()? _defaultUserAgentProvider;
   final Map<String, _SourceResourceTransport> _transports =
       <String, _SourceResourceTransport>{};
 
@@ -39,7 +43,11 @@ final class ExternalPluginResourceTransportPool {
     final sourceId = source.sourceId;
     final transport = _transports.putIfAbsent(
       sourceId,
-      () => _SourceResourceTransport(source, _directOpen),
+      () => _SourceResourceTransport(
+        source,
+        _directOpen,
+        _defaultUserAgentProvider,
+      ),
     );
     transport.updateSource(source);
     return ({ByteRange? range, Validators? validators}) => transport.open(
@@ -58,7 +66,11 @@ final class ExternalPluginResourceTransportPool {
 }
 
 final class _SourceResourceTransport implements Transport {
-  _SourceResourceTransport(this._source, this._directOpen) {
+  _SourceResourceTransport(
+    this._source,
+    this._directOpen,
+    this._defaultUserAgentProvider,
+  ) {
     _client.connectionTimeout = const Duration(seconds: 15);
     _client.autoUncompress = false;
   }
@@ -68,6 +80,7 @@ final class _SourceResourceTransport implements Transport {
 
   BrowsableComicSource _source;
   final SourceResourceDirectOpen? _directOpen;
+  final String Function()? _defaultUserAgentProvider;
   final HttpClient _client = HttpClient();
   final Map<Uri, Future<ComicResourceRequest>> _requestLoads =
       <Uri, Future<ComicResourceRequest>>{};
@@ -259,28 +272,46 @@ final class _SourceResourceTransport implements Transport {
       range: range,
       validators: validators,
     );
+    final effective = _applyDefaultUserAgent(
+      normalized,
+      _defaultUserAgentProvider,
+    );
     final directOpen = _directOpen;
     if (directOpen != null) {
-      return directOpen(normalized);
+      return directOpen(effective);
     }
-    final method = normalized.method;
-    final request = await _client.openUrl(method, normalized.uri);
-    request.followRedirects = true;
-    request.maxRedirects = 8;
-    for (final entry in normalized.headers.entries) {
+    final method = effective.method;
+    final request = await _client.openUrl(method, effective.uri);
+    // Redirect/cookie state belongs to the source client. A host replay is
+    // deliberately one transaction only; stateful responses fall back to the
+    // source-owned compatibility path below.
+    request.followRedirects = false;
+    request.maxRedirects = 0;
+    for (final entry in effective.headers.entries) {
       request.headers.set(entry.key, entry.value);
     }
-    final requestBody = normalized.body;
+    final requestBody = effective.body;
     if (requestBody != null && requestBody.isNotEmpty) {
       request.add(requestBody);
     }
     final response = await request.close();
+    if (response.isRedirect || response.cookies.isNotEmpty) {
+      await _abortHttpResponse(response);
+      throw Failure(
+        code: ErrorCode.network,
+        message: 'source host replay requires source-owned session state for ${effective.uri}',
+        details: const <String, Object?>{
+          'sourceMediaProtocolMismatch': true,
+          'sourceClientStateRequired': true,
+        },
+      );
+    }
     if (response.statusCode != HttpStatus.ok &&
         response.statusCode != HttpStatus.partialContent) {
       await _abortHttpResponse(response);
       throw Failure(
         code: ErrorCode.network,
-        message: 'HTTP ${response.statusCode} for ${normalized.uri}',
+        message: 'HTTP ${response.statusCode} for ${effective.uri}',
       );
     }
     final parsedRange = _parseContentRange(
@@ -353,6 +384,25 @@ final class _SourceResourceTransport implements Transport {
 }
 
 
+ComicResourceRequest _applyDefaultUserAgent(
+  ComicResourceRequest request,
+  String Function()? provider,
+) {
+  if (_hasHeader(request.headers, HttpHeaders.userAgentHeader)) return request;
+  final value = provider?.call().trim();
+  if (value == null || value.isEmpty) return request;
+  return ComicResourceRequest(
+    uri: request.uri,
+    method: request.method,
+    headers: <String, String>{
+      ...request.headers,
+      HttpHeaders.userAgentHeader: value,
+    },
+    body: request.body,
+    requiresRuntimeTransform: request.requiresRuntimeTransform,
+  );
+}
+
 ComicResourceRequest normalizeSourceResourceRequest(
   ComicResourceRequest spec, {
   ByteRange? range,
@@ -394,6 +444,7 @@ ComicResourceRequest normalizeSourceResourceRequest(
     method: method,
     headers: headers,
     body: entityless ? null : spec.body,
+    requiresRuntimeTransform: spec.requiresRuntimeTransform,
   );
 }
 
@@ -628,3 +679,7 @@ Stream<List<int>> _chunkRuntimeBytes(Uint8List bytes) async* {
     yield Uint8List.sublistView(bytes, offset, end);
   }
 }
+
+bool _hasHeader(Map<String, String> headers, String name) => headers.keys.any(
+      (key) => key.toLowerCase() == name.toLowerCase(),
+    );

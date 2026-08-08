@@ -1073,6 +1073,9 @@ internal class MihonRuntimeDriver private constructor(
         headers.forEach { (name, value) ->
             connection.setRequestProperty(name, value)
         }
+        if (headers.keys.none { it.equals("User-Agent", ignoreCase = true) }) {
+            connection.setRequestProperty("User-Agent", MIHON_BROWSER_USER_AGENT)
+        }
         if (method != "GET" && method != "HEAD" && body != null && body.isNotEmpty()) {
             connection.doOutput = true
             connection.outputStream.use { it.write(body) }
@@ -1357,8 +1360,8 @@ private data class MihonComicCatalog(
 )
 
 private const val MIHON_BROWSER_USER_AGENT =
-    "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 " +
-        "Chrome/131 Mobile Safari/537.36"
+    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36"
 private const val MAX_CACHED_MIHON_CHAPTERS = 4096
 private const val MIHON_RUNTIME_TRANSFORM_REVISION = "mihon-runtime-transform-v1"
 
@@ -1963,21 +1966,40 @@ internal fun mihonSourceRequiresRuntimeTransform(source: Any): Boolean {
             "networkInterceptors", "getNetworkInterceptors",
         )) {
             when (val value = client.invokeOptional(name)) {
-                is Iterable<*> -> addAll(value.filterNotNull())
-                is Array<*> -> addAll(value.filterNotNull())
+                is Iterable<*> -> value.filterNotNull().forEach { add("interceptor" to it) }
+                is Array<*> -> value.filterNotNull().forEach { add("interceptor" to it) }
             }
         }
-        for (name in listOf(
-            "cookieJar", "getCookieJar",
-            "authenticator", "getAuthenticator",
-            "proxyAuthenticator", "getProxyAuthenticator",
-            "dns", "getDns",
+        for ((kind, names) in listOf(
+            "cookieJar" to listOf("cookieJar", "getCookieJar"),
+            "authenticator" to listOf("authenticator", "getAuthenticator"),
+            "proxyAuthenticator" to listOf("proxyAuthenticator", "getProxyAuthenticator"),
+            "dns" to listOf("dns", "getDns"),
         )) {
-            client.invokeOptional(name)?.let(::add)
+            names.asSequence()
+                .mapNotNull(client::invokeOptional)
+                .firstOrNull()
+                ?.let { add(kind to it) }
         }
     }
-    return capabilities.any { capability ->
-        capability.javaClass.classLoader === sourceLoader
+    return capabilities.any { (kind, capability) ->
+        capability.javaClass.classLoader === sourceLoader ||
+            !mihonHostReplaySafeClientCapability(kind, capability)
+    }
+}
+
+private fun mihonHostReplaySafeClientCapability(kind: String, capability: Any): Boolean {
+    val name = capability.javaClass.name
+    return when (kind) {
+        "interceptor" ->
+            name == "dev.zic.network.AndroidCloudflareInterceptor" ||
+                name.startsWith("eu.kanade.tachiyomi.network.NetworkHelper")
+        "cookieJar" -> name == "dev.zic.network.AndroidCookieJar"
+        "dns" ->
+            name == "dev.zic.network.FallbackDns" ||
+                name.startsWith("okhttp3.Dns")
+        "authenticator", "proxyAuthenticator" -> name.startsWith("okhttp3.")
+        else -> false
     }
 }
 
