@@ -60,6 +60,9 @@ for token in (
     'sourceComicShelfMarkerKey(',
     'sourceComicShelfDimKey(',
     "label: '已加入书架'",
+    'Icons.library_books',
+    'sourceComicUpdateMarkerKey(',
+    "label: '漫画有更新'",
 ):
     require(browser, token, 'source presentation ownership')
 forbid(browser, 'return ActionChip(\n                            key: comicSourceFilterActionKey', 'non-selectable filter action')

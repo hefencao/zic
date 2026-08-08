@@ -146,7 +146,6 @@ for token in (
     require(details, token, "detail interaction contract")
 forbid(details, "Icons.open_in_browser", "globe icon migration")
 for stale in (
-    "tooltip: '迁移漫画源'",
     "tooltip: '查看同源版本'",
     "groupLabel('旧版')",
     "groupLabel('新版')",

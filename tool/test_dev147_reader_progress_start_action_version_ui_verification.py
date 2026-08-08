@@ -148,21 +148,25 @@ for token in (
     require(composition, token, 'raw version detail route identity')
 
 for stale in (
-    '_selectSourceMigrationTarget(',
     '_openSourceVersions(',
     '_openSourceVersionsForSummary(',
+):
+    forbid(migration, stale, 'obsolete standalone version entry path')
+
+for token in (
+    '_selectSourceMigrationTarget(',
     '_openSourceMigrationForSummary(',
     '_openSourceMigration(',
+    '_applySourceMigration(',
 ):
-    forbid(migration, stale, 'obsolete version/migration entry path')
-
+    require(migration, token, 'restored general migration through current migration owner')
+require(details, "tooltip: '迁移漫画源'", 'restored detail migration action')
 for stale in (
-    "tooltip: '迁移漫画源'",
     "tooltip: '查看同源版本'",
     "groupLabel('旧版')",
     "groupLabel('新版')",
 ):
-    forbid(details + migration, stale, 'obsolete version buttons/list')
+    forbid(details + migration, stale, 'obsolete standalone version buttons/list')
 
 for token in (
     'raw locator identity',

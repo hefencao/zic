@@ -1,12 +1,18 @@
 # zic Implementation Plan
 
+## P0：迁移 / 同源版本 / 更新提示真机闭环
+
+- 在 source card 已入书架时确认左上显示书架图标并变暗；存在 `sourceUpdateAt` 时右上显示独立感叹号。点击同源更新提示应直接打开来源确认的最新 successor，不得把 successor 自动加入书架。
+- 从详情 AppBar 打开“迁移漫画源”：同源只展示 `ComicVersionSource/ComicVersionRelationStore` 已确认版本并提供“查看/迁移”；跨源可搜索同名候选或手填原生 ID。所有迁移必须进入同一个比较确认，sequence-only 不复制状态。
+- E-Hentai/Venera 版本更新验证 raw locator、canonical identity、SavedComic/偏好别名：迁移到 successor 后旧 raw alias不得继续显示书架标志；查看版本不得改写阅读历史/版本关系。
+
 ## P0：Source Browse 封面 owner 与筛选入口真机闭环
 
 - 首先复测 Venera、18comic、roumanwu 普通 browse 与 Mihon filter view：不得再出现 `runtime request arguments do not match operation`；普通 browse应显式传 `useFilters=false`，筛选视图传 true。若仍失败，先检查 operation/arguments wire shape，不绕过 validator或增加 source特判。
 - 对同一漫画执行“漫画源列表首帧 → 打开详情 → 返回列表 → catalog后台 refresh/普通分页更新”，确认 canonical cover URI未变化时不产生新的 `cover-load-start`，也不出现 presentation decode重启；只有显式来源 artwork刷新或该卡片自身 URI/identity变化可以换 source。
 - 记录 `source-cover:<sourceId>\0<canonicalComicId>` 的 `cover-load-start/source-ready/first-frame/decode-failed` trace，确认 browse projection `changed=true` 与详情 metadata更新不会成为 artwork revision。
 - Mihon/source筛选以真实 `getFilterList()` 为唯一 schema owner：非空时分类栏按“最新 → 热门 → 筛选”显示，空列表不发明入口；bridge完整支持官方 8 类 Filter及插件自定义子类，筛选面板以类型化 `filterState`回传 Text/Sort等状态。首次默认 section仍由当前展示排序第一项决定，catalog cache不得恢复导航默认值。
-- 真机验证“热门 → 筛选 → 直接应用默认值/选择最新排序”：焦点必须切到“筛选”，请求必须走 filter mode且 section为空；重新点击“热门/最新”才退出 filter view。验证 source card在详情加入/移出书架后立即投影书签+变暗状态。
+- 真机验证“热门 → 筛选 → 直接应用默认值/选择最新排序”：焦点必须切到“筛选”，请求必须走 filter mode且 section为空；重新点击“热门/最新”才退出 filter view。验证 source card在详情加入/移出书架后立即投影左上书架图标+变暗状态。
 - 对多章节漫画分别执行“只下载单章”和“下载整本”：任意已有 cache不得产生完成勾；单章命令真正完成后只显示空心勾，整本 queue complete后显示绿色实心勾，进入详情后对应临时标记立即消失。
 - 用 raw locator发生变化但 canonical identity不变的 fixture/设备数据确认 Sliver child State不重建；若同一页出现 canonical alias重复，先在 catalog projection解决重复，不回退到 mutable raw locator作为 owner key。
 

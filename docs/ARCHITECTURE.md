@@ -111,9 +111,9 @@ raw Mihon locator继续只用于插件 request/chapter identity，不参与 dura
 封面 loader；访问过的页面状态仍由该页面节点保留。
 
 Home 的“更新漫画”投影只取已在书架且具有 `SavedComicRecord.sourceUpdateAt` 的漫画，并按该
-source-confirmed更新时间排序。`sourceUpdateAt`只在已有章节目录基线发生章节新增/删除/revision变化，
-或首次发现新的同源 successor/version时推进；普通标题/封面元数据刷新、阅读进度与仅浏览记录都不产生
-更新。远程漫画缺少持久偏好时默认不在书架；首次加入书架会清除加入前遗留的 update signal。阅读历史
+source-confirmed更新时间排序。`sourceUpdateAt`只在已有章节目录基线变化或首次发现新的同源 successor/version时推进；
+普通 metadata刷新、阅读进度与仅浏览记录都不产生更新。漫画源卡片从同一 Home/library 投影读取书架与更新事实：
+左上书架标志+变暗只表示当前 raw/canonical comic已入书架；右上感叹号只提示该书架 comic有 source-confirmed update。阅读历史
 单独按 `ReadingProgress.updatedAt` 投影。
 
 ### 详情页与来源迁移组合
@@ -124,10 +124,10 @@ source-confirmed更新时间排序。`sourceUpdateAt`只在已有章节目录基
 正文缓存。来源浏览、manifest/chapter 身份校验、状态迁移和 artifact 复用由
 `_DemoHomeSourceMigration` 组合 owner 完成。
 
-同源版本入口优先使用来源暴露的 `ComicVersionSource`；Venera 适配器复用自身运行时网络与
-Cookie 会话，按当前详情页 `#gnd` 关系生成版本，不把 Venera 当作标题 `browse` 搜索，避免
-触发浏览器权限错误。来源确认的前后版本关系由 `ComicVersionRelationStore` 持久化，因此当前
-详情页采用“查看版本”和“迁移”两个独立动作：successor 与 predecessor 都可直接打开其原始详情，不要求迁移；多个版本先显示选择对话框。查看路由只使用 `source-version-view:<sourceId>\0<currentRawId>\0<targetRawId>` 作为 **temporary route identity** 防止同一路由重复打开，该 key 不写入 SavedComic、阅读历史、版本关系或 artifact。每个版本的持久状态仍严格属于各自 raw `sourceId + comicId`。迁移计划允许相同 `sourceId` 下不同的原生 `comicId`，因此可处理 E-Hentai URL/gallery locator 变化；迁移继续使用原有严格比较确认 UI，只复制经过精确章节匹配验证的偏好、阅读位置和已读状态，并先完成目标写入。sequence-only 候选只展示风险，不复制状态。
+同源版本关系只来自来源 `ComicVersionSource` 或已持久化的 `ComicVersionRelationStore`；Venera/E-Hentai按来源关系生成版本，
+不得用标题 `browse` 推断同源。通用“迁移漫画源”入口允许选择当前来源或其他已启用来源：跨源标题搜索只用于候选发现，
+同源面板只展示来源确认的 successor/predecessor，并同时提供“查看”与“迁移”。查看直接打开目标 raw identity，不改变状态；
+迁移无论同源/跨源都进入唯一 `ComicSourceMigrationPlan + showSourceMigrationComparison`，只有 exact chapter match复制偏好、阅读位置和已读状态。查看路由只使用 `source-version-view` **temporary route identity**；同源替换完成后新 raw locator成为实体并清理旧 alias preference/metadata，离线 artifact只按验证证据复用。
 
 漫画源页使用来源自身声明的 browse section：Mihon 映射 Popular/Latest，标准展示顺序为“最新 → 热门”，Venera 枚举 explore loader 与 category target；首次进入来源时默认 section必须由**当前展示顺序的第一项**决定，不能另写 `popular` 默认值，也不能让最近一次 catalog cache projection反向选择 UI。未来用户自定义排序若改变 Presentation顺序，同一排序 owner自然同时决定默认焦点。原生/Mihon/Venera 仅通过来源 chip 的背景色区分，不显示 JS/插件图标，也不占内容分类行。`FilterableBrowsableComicSource` 只投影来源真实 `FilterList`：空 schema即没有筛选入口，不另设容易漂移的 capability布尔值。Mihon bridge必须按官方 `Filter.Header/Separator/Select/Text/CheckBox/TriState/Group/Sort` 基类继承关系识别插件自定义子类，并保留 Group层次与 Text/Sort状态；用户修改以类型化 filter-state override进入 search request。筛选是否激活是独立 Presentation/request mode：空 override表示使用插件默认 `FilterList` 状态而非“未筛选”，激活后分类栏焦点属于“筛选”且请求不继承 latest/popular section；Catalog cache identity与runtime payload必须显式区分 filter mode和普通 section mode；external browse的 typed factory、wire validator与 adapter payload必须共享同一字段契约，schema v1新增 `useFilters` 可缺省兼容但未知字段仍拒绝。Filter不得伪装为 `SourceBrowseSection`，浮动搜索只拥有 query与搜索历史。browse projection revision 只属于 metadata，不能作为整页 artwork reload token；source card 的 Sliver child owner 使用 canonical comic identity，raw locator变化不得重置封面 State。固定大小的 catalog page 仍使用显式上一页/下一页，pager 位于内容滚动尾部。列表由 catalog response cache先行投影，但 cache只能服务**当前精确 UI 请求**，不得用“最近 projection”改写 section/query/filter默认状态；source切换时 projection owner先原子切换到目标 source，旧 source内容没有展示资格。后台 refresh只有在稳定字段发生变化时才更新 Presentation；边缘下拉达到刷新阈值后强制绕过缓存请求来源，但保留当前内容直到新数据到达。Mihon 插件的已安装与仓库列表仍按规范化语言分类。
 

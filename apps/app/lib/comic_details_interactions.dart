@@ -81,6 +81,7 @@ final class _ComicDetailsScaffold extends StatefulWidget {
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
     this.onSearchMetadata,
+    this.onMigrateSource,
     required this.onPreferenceChanged,
     required this.progressLabel,
     this.onContinueReading,
@@ -114,6 +115,7 @@ final class _ComicDetailsScaffold extends StatefulWidget {
   final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final ComicDetailsMetadataSearch? onSearchMetadata;
+  final ComicDetailsSourceMigrator? onMigrateSource;
   final Future<void> Function(ComicPreference preference) onPreferenceChanged;
   final String? progressLabel;
   final Future<void> Function()? onContinueReading;
@@ -147,6 +149,13 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
               tooltip: '在 WebView 中访问该漫画详情页',
               onPressed: () => unawaited(widget.onOpenSourceWebView!()),
               icon: const Icon(Icons.public),
+            ),
+          if (widget.onMigrateSource != null)
+            IconButton(
+              key: comicDetailsMigrateKey,
+              tooltip: '迁移漫画源',
+              onPressed: () => unawaited(widget.onMigrateSource!()),
+              icon: const Icon(Icons.swap_horiz),
             ),
           _ComicDetailsMiscMenu(comicId: widget.comicId, title: widget.title),
           if (widget.onOpenSourceSettings != null)

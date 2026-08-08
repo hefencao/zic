@@ -66,6 +66,8 @@ Key sourceComicShelfMarkerKey(String sourceId, String comicId) =>
     ValueKey<String>('source-comic-shelf:$sourceId\u0000$comicId');
 Key sourceComicShelfDimKey(String sourceId, String comicId) =>
     ValueKey<String>('source-comic-shelf-dim:$sourceId\u0000$comicId');
+Key sourceComicUpdateMarkerKey(String sourceId, String comicId) =>
+    ValueKey<String>('source-comic-update:$sourceId\u0000$comicId');
 Key sourceChapterKey(String sourceId, String chapterId) =>
     ValueKey<String>('source-chapter:$sourceId\u0000$chapterId');
 
@@ -76,6 +78,16 @@ typedef SourceComicCoverLoader = Future<EncodedResourceSource> Function(
 );
 
 typedef SourceComicShelfResolver = bool Function(
+  BrowsableComicSource source,
+  SourceComicSummary comic,
+);
+
+typedef SourceComicUpdateResolver = bool Function(
+  BrowsableComicSource source,
+  SourceComicSummary comic,
+);
+
+typedef SourceComicUpdateOpener = Future<void> Function(
   BrowsableComicSource source,
   SourceComicSummary comic,
 );
@@ -176,6 +188,8 @@ final class ComicSourcesPage extends StatefulWidget {
     required this.loadCover,
     required this.onOpenComic,
     this.isInShelf,
+    this.hasUpdate,
+    this.onOpenUpdate,
     this.onOpenSourceWebView,
     this.resolveSource,
     this.traceSink = const NoopTraceSink(),
@@ -197,6 +211,8 @@ final class ComicSourcesPage extends StatefulWidget {
     SourceComicSummary comic,
   ) onOpenComic;
   final SourceComicShelfResolver? isInShelf;
+  final SourceComicUpdateResolver? hasUpdate;
+  final SourceComicUpdateOpener? onOpenUpdate;
   final Future<void> Function(
     BrowsableComicSource source,
     Uri url, {
@@ -1607,6 +1623,8 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                         source: source,
                         comic: comic,
                         inShelf: widget.isInShelf?.call(source, comic) ?? false,
+                        hasUpdate:
+                            widget.hasUpdate?.call(source, comic) ?? false,
                         reloadToken: _artworkRetryRevision,
                         loadCover: _loadSourceCardCover,
                         onCoverFrameReady: () => _recordSourceTrace(
@@ -1628,6 +1646,11 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                             widget.onOpenSourceWebView == null
                                 ? null
                                 : () => unawaited(_recoverSourceAccess(source)),
+                        onOpenUpdate: widget.onOpenUpdate == null
+                            ? null
+                            : () => unawaited(
+                                  widget.onOpenUpdate!(source, comic),
+                                ),
                         onTap: () => unawaited(
                           widget.onOpenComic(source, comic),
                         ),
@@ -1782,11 +1805,13 @@ final class _SourceComicCard extends StatelessWidget {
     required this.source,
     required this.comic,
     required this.inShelf,
+    required this.hasUpdate,
     required this.reloadToken,
     required this.loadCover,
     required this.onCoverFrameReady,
     required this.onCoverDecodeFailure,
     required this.onTap,
+    this.onOpenUpdate,
     this.onSourceVerificationRequired,
     super.key,
   });
@@ -1794,11 +1819,13 @@ final class _SourceComicCard extends StatelessWidget {
   final BrowsableComicSource source;
   final SourceComicSummary comic;
   final bool inShelf;
+  final bool hasUpdate;
   final int reloadToken;
   final SourceComicCoverLoader loadCover;
   final VoidCallback onCoverFrameReady;
   final VoidCallback onCoverDecodeFailure;
   final VoidCallback onTap;
+  final VoidCallback? onOpenUpdate;
   final VoidCallback? onSourceVerificationRequired;
 
   @override
@@ -1838,7 +1865,7 @@ final class _SourceComicCard extends StatelessWidget {
                       color: Colors.black.withValues(alpha: 0.34),
                     ),
                     Align(
-                      alignment: Alignment.topRight,
+                      alignment: Alignment.topLeft,
                       child: Semantics(
                         label: '已加入书架',
                         child: Container(
@@ -1853,7 +1880,7 @@ final class _SourceComicCard extends StatelessWidget {
                             shape: BoxShape.circle,
                           ),
                           child: const Icon(
-                            Icons.bookmark,
+                            Icons.library_books,
                             size: 16,
                             color: Colors.white,
                           ),
@@ -1861,6 +1888,40 @@ final class _SourceComicCard extends StatelessWidget {
                       ),
                     ),
                   ],
+                  if (inShelf && hasUpdate)
+                    Align(
+                      alignment: Alignment.topRight,
+                      child: Semantics(
+                        button: onOpenUpdate != null,
+                        label: '漫画有更新',
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: onOpenUpdate,
+                          child: Container(
+                            key: sourceComicUpdateMarkerKey(
+                              source.sourceId,
+                              comic.comicId,
+                            ),
+                            margin: const EdgeInsets.all(6),
+                            padding: const EdgeInsets.all(5),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .tertiaryContainer
+                                  .withValues(alpha: 0.94),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              Icons.priority_high,
+                              size: 16,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onTertiaryContainer,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -2328,6 +2389,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
     this.onOpenSourceSettings,
     this.resolveSource,
     this.onSearchMetadata,
+    this.onMigrateSource,
     this.loadVersionState,
     this.onViewVersion,
     this.onMigrateVersion,
@@ -2358,6 +2420,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
   final details.ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final details.ComicDetailsSourceResolver? resolveSource;
   final details.ComicDetailsMetadataSearch? onSearchMetadata;
+  final details.ComicDetailsSourceMigrator? onMigrateSource;
   final details.ComicDetailsVersionStateLoader? loadVersionState;
   final details.ComicDetailsVersionViewer? onViewVersion;
   final details.ComicDetailsVersionMigrator? onMigrateVersion;
@@ -2388,6 +2451,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
       onOpenSourceSettings: onOpenSourceSettings,
       resolveSource: resolveSource,
       onSearchMetadata: onSearchMetadata,
+      onMigrateSource: onMigrateSource,
       loadVersionState: loadVersionState,
       onViewVersion: onViewVersion,
       onMigrateVersion: onMigrateVersion,

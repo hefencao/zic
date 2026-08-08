@@ -111,6 +111,8 @@ extension _DemoHomeViews on _DemoHomeState {
                         fallbackSourceKind: ComicSourceKind.remote,
                         fallbackInShelf: false,
                       ).inShelf,
+                      hasUpdate: _sourceComicHasUpdate,
+                      onOpenUpdate: _openSourceUpdateForSummary,
                       onOpenSourceWebView: _openSourceWebView,
                       resolveSource: _sourceForId,
                       traceSink: widget.debugTrace,

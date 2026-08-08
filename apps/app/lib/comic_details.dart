@@ -51,6 +51,7 @@ const comicDetailsDownloadAllKey =
     ValueKey<String>('comic-details-download-all');
 const comicDetailsOpenWebViewKey =
     ValueKey<String>('comic-details-open-webview');
+const comicDetailsMigrateKey = ValueKey<String>('comic-details-migrate');
 const comicDetailsSourceSettingsKey =
     ValueKey<String>('comic-details-source-settings');
 const comicDetailsMiscKey = ValueKey<String>('comic-details-misc');
@@ -191,6 +192,8 @@ typedef ComicDetailsVersionViewer =
 typedef ComicDetailsVersionMigrator =
     Future<void> Function(SourceComicVersion version);
 
+typedef ComicDetailsSourceMigrator = Future<void> Function();
+
 typedef ComicDetailsSourceWebViewOpener = Future<void> Function({Uri? verificationUri});
 typedef ComicDetailsSourceSettingsOpener = Future<void> Function();
 typedef ComicDetailsSourceResolver = BrowsableComicSource? Function(
@@ -229,6 +232,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
     this.onSearchMetadata,
+    this.onMigrateSource,
     this.loadVersionState,
     this.onViewVersion,
     this.onMigrateVersion,
@@ -255,6 +259,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
   final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final ComicDetailsMetadataSearch? onSearchMetadata;
+  final ComicDetailsSourceMigrator? onMigrateSource;
   final ComicDetailsVersionStateLoader? loadVersionState;
   final ComicDetailsVersionViewer? onViewVersion;
   final ComicDetailsVersionMigrator? onMigrateVersion;
@@ -909,6 +914,7 @@ final class _LocalComicDetailsScreenState
       onOpenSourceWebView: widget.onOpenSourceWebView,
       onOpenSourceSettings: widget.onOpenSourceSettings,
       onSearchMetadata: widget.onSearchMetadata,
+      onMigrateSource: widget.onMigrateSource,
       onPreferenceChanged: _savePreference,
       progressLabel: _readingProgressLabel(_library.chapters),
       onContinueReading: _latestReadingEntry(_library.chapters) == null
@@ -985,6 +991,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
     this.onOpenSourceSettings,
     this.resolveSource,
     this.onSearchMetadata,
+    this.onMigrateSource,
     this.loadVersionState,
     this.onViewVersion,
     this.onMigrateVersion,
@@ -1015,6 +1022,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
   final ComicDetailsSourceResolver? resolveSource;
   final ComicDetailsMetadataSearch? onSearchMetadata;
+  final ComicDetailsSourceMigrator? onMigrateSource;
   final ComicDetailsVersionStateLoader? loadVersionState;
   final ComicDetailsVersionViewer? onViewVersion;
   final ComicDetailsVersionMigrator? onMigrateVersion;
@@ -1767,6 +1775,7 @@ final class _RemoteComicDetailsScreenState
       onOpenSourceWebView: widget.onOpenSourceWebView,
       onOpenSourceSettings: widget.onOpenSourceSettings,
       onSearchMetadata: widget.onSearchMetadata,
+      onMigrateSource: widget.onMigrateSource,
       loadVersionState: widget.loadVersionState,
       onViewVersion: widget.onViewVersion,
       onMigrateVersion: widget.onMigrateVersion,

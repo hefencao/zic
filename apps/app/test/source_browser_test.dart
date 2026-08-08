@@ -151,7 +151,42 @@ void main() {
       find.byKey(sourceComicShelfMarkerKey(source.sourceId, source._comicId)),
       findsOneWidget,
     );
-    expect(find.byIcon(Icons.bookmark), findsOneWidget);
+    expect(find.byIcon(Icons.library_books), findsOneWidget);
+  });
+
+  testWidgets('source card update marker is projected separately from shelf',
+      (tester) async {
+    final source = _FixtureSource('fixture-update', '更新标记源');
+    var opened = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ComicSourcesPage(
+            sources: <BrowsableComicSource>[source],
+            activeSourceId: source.sourceId,
+            onSourceSelected: (_) {},
+            loadCover: (_, __, ___) async =>
+                MemoryEncodedResourceSource(_tinyPng()),
+            onOpenComic: (_, __) async {},
+            isInShelf: (_, __) => true,
+            hasUpdate: (_, __) => true,
+            onOpenUpdate: (_, __) async {
+              opened = true;
+            },
+          ),
+        ),
+      ),
+    );
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceComicUpdateMarkerKey(source.sourceId, source._comicId)),
+    );
+    expect(find.byIcon(Icons.priority_high), findsOneWidget);
+    await tester.tap(
+      find.byKey(sourceComicUpdateMarkerKey(source.sourceId, source._comicId)),
+    );
+    await tester.pump();
+    expect(opened, isTrue);
   });
 
   testWidgets('empty source filter schema does not invent a filter category',
@@ -1326,6 +1361,7 @@ void main() {
       tester,
       find.byKey(details.comicDetailsVersionSectionKey),
     );
+    expect(find.byKey(details.comicDetailsMigrateKey), findsOneWidget);
     expect(find.byKey(details.comicDetailsVersionActionKey), findsOneWidget);
     expect(find.byKey(details.comicDetailsVersionViewKey), findsOneWidget);
     expect(find.byKey(details.comicDetailsVersionMigrateKey), findsOneWidget);

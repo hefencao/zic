@@ -389,6 +389,10 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
               final active = _sourceForId(source.sourceId) ?? source;
               _searchSourceMetadata(active, query);
             },
+            onMigrateSource: () {
+              final active = _sourceForId(source.sourceId) ?? source;
+              return _openSourceMigrationForSummary(active, comic);
+            },
             loadVersionState: _sourceSupportsVersionEntry(source)
                 ? () {
                     final active = _sourceForId(source.sourceId) ?? source;
@@ -513,6 +517,9 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
           onSearchMetadata: source == null
               ? null
               : (query) => _searchSourceMetadata(source, query),
+          onMigrateSource: source == null || comic.sourceId == 'local-folder'
+              ? null
+              : () => _openSourceMigration(comic),
           loadVersionState: source == null ||
                   !_sourceSupportsVersionEntry(source)
               ? null

@@ -38,7 +38,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
   但隐藏页面不得为首屏预先创建封面 loader 或重复发起 cover request。
 - Home primary、enrichment 和可选 runtime 的状态仍 MUST 由各自 owner 管理；不得
   新增 App 私有正文/图片缓存或让 UI 直接调度网络。
-- “更新漫画” MUST 只显示当前已在书架且存在 source-confirmed update signal 的漫画，并按该 signal 排序。章节目录已有基线后的章节新增/删除/source revision变化或新同源 version MAY 推进该 signal；阅读进度、普通 metadata刷新、仅浏览/阅读记录 MUST NOT 推进它。远程漫画缺少偏好记录时 MUST NOT 默认视为已加入书架；阅读历史 MUST 单独按 `ReadingProgress.updatedAt` 排序。
+- “更新漫画” MUST 只显示当前已在书架且存在 source-confirmed update signal 的漫画，并按该 signal 排序。章节目录已有基线后的章节新增/删除/source revision变化或新同源 version MAY 推进该 signal；阅读进度、普通 metadata刷新、仅浏览/阅读记录 MUST NOT 推进它。漫画源卡片 MAY 投影同一 signal为右上更新感叹号，点击时若存在来源确认 successor MUST 可直接查看该 raw version；该提示不得把 successor伪装成已入书架。远程漫画缺少偏好记录时 MUST NOT 默认视为已加入书架；阅读历史 MUST 单独按 `ReadingProgress.updatedAt` 排序。
 
 ### 1.2 详情页与来源迁移
 
@@ -47,12 +47,12 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
   章节总数行上方，阅读历史 MUST 与按钮位于同一行并放在按钮之后，历史文字之前显示时钟图标。继续 MUST 通过既有
   `onOpenChapter` facade 打开保存的章节，不得等待无关的来源刷新。
 - 来源漫画第一次打开后即使已持久化为 SavedComic，后续再次打开 MUST 复用当前已持有的 comic route identity lock，不得在同一调用链嵌套申请相同 `sourceId + comicId` 锁而静默吞掉导航。
-- 详情页 SHOULD 提供同源版本入口；来源提供 `ComicVersionSource` 时，入口 MUST 使用来源
+- 详情页 SHOULD 同时提供通用“迁移漫画源”入口与同源版本快捷入口；来源提供 `ComicVersionSource` 时，同源候选 MUST 使用来源
   自己的版本关系（Venera/E-Hentai 使用详情页 `#gnd`），不得改为标题 browse 或要求浏览器
   页面权限；没有该能力时 MAY 回退到来源 browse 结果。入口展示不同原生 `comicId`，不得把
   当前版本再次列为迁移目标。来源确认的新版关系 MUST 可持久化，使后续打开新版时也能显示旧版；
   旧版和新版都可作为同源迁移目标。
-- 迁移面板 MUST 显示当前插件和当前来源，目标源 MAY 是当前来源或其他已启用来源。相同
+- 迁移面板 MUST 显示当前插件和当前来源，目标源 MAY 是当前来源或其他已启用来源。相同 `sourceId` 的确认版本 MUST 在同一面板提供直接“查看”和“迁移”；跨源标题搜索只负责发现候选，MUST NOT 建立同源关系。相同
   `sourceId` 下不同 `comicId` 是合法的同源版本迁移，适用于 URL/gallery locator 变化；
   目标漫画及章节身份 MUST 在任何持久写入前校验。
 - 迁移 MUST 只复制整部漫画偏好、精确章节匹配得到的阅读位置/已读状态和有证据的 artifact
@@ -67,7 +67,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - Cloudflare 验证浏览器 MUST 使用当前 Android WebView provider 的真实 User-Agent，MUST NOT用插件/OkHttp 的静态 UA覆盖验证 WebView。Cookie、localStorage 与真实 WebView UA MUST 属于同一 snapshot revision；Mihon runtime消费该 snapshot时必须让同站点 OkHttp请求采用同一 snapshot UA，并同步导入其 Cookie。
 - WebView 验证返回后外部 runtime MAY 被重启。详情页与漫画源页的后续操作 MUST 按稳定 source ID重新解析当前 active adapter，MUST NOT继续调用重启前已关闭的 session。漫画源页 MUST 在 replacement source上重新加载 section/filter后再强制刷新，并禁止同一次恢复再次自动打开 WebView。
 - `sourceVerificationRequired` MUST 只来自 typed host challenge detector：`cf-mitigated: challenge` 可直接确认；否则 MUST 同时满足 HTTP 403/503、Cloudflare Server header 与 `challenge-error-title`/`challenge-error-text` 交互 challenge DOM。`challenge-platform`/`cf-chl-*`脚本、`Just a moment`标题、Cloudflare header单独存在、普通 HTTP 403、timeout、解析失败和包含 Cloudflare字样的异常消息 MUST NOT被重分类。主网络与兼容 interceptor MUST使用同一 detector，不得使用隐藏 WebView。
-- 漫画源搜索 MUST 以来源栏上方的浮动控件进入，展开后 SHOULD 提供可持久化、可删除和可清空的搜索历史。展开搜索面板 MUST 优先消费系统返回手势与垂直拖动/滚动手势，并在这些手势发生时恢复为浮动按钮。Mihon `getFilterList()` 返回的 Header、Separator、Select、Text、CheckBox、TriState、Group 与 Sort MUST 由 bridge按 Mihon基类继承关系完整投影，MUST NOT以插件自定义 concrete class名称猜类型或拍平 Group；空 `FilterList` 表示该 source没有筛选入口。用户修改 MUST 以类型化 filter-state override返回 source search调用，Text字符串与 Sort的 index/ascending不得压缩成 toggle ID。 “筛选” MUST 是可获得焦点的独立浏览视图；点击后即使不修改任何选项，直接应用也 MUST 以 source `FilterList` 默认状态执行 filtered browse。空 override MUST NOT 被解释为 ordinary Latest/Popular。筛选视图激活时 MUST 取消 Latest/Popular焦点，filtered request/cache identity MUST NOT继承先前 section；是否使用筛选 MUST 作为独立 request mode传至 Catalog/runtime。External plugin browse wire validator、typed request factory与 source adapter MUST 对同一参数集合保持一致；同一 schema版本内新增可选字段 MAY 缺省为兼容默认值，但未知字段与错误类型 MUST继续拒绝。标准 section Presentation顺序为“最新 → 热门”，首次进入来源时 MUST 选择当前展示顺序的第一项；catalog最近缓存 MUST NOT反向决定默认 section/query/filter。未来若用户自定义排序，默认项 MUST继续由同一个展示顺序 owner的第一项派生。筛选动作打开 filter 面板，MUST NOT 把插件 Filter伪装成 `SourceBrowseSection`，浮动搜索仅拥有 query/历史。browse metadata projection变化 MUST NOT 作为 artwork reload revision；source card direct-child State MUST 使用 canonical comic identity，raw locator或无关 page projection变化不得重置已就绪封面。 漫画源卡片的“已入书架”视觉状态 MUST 从 Home/library canonical preference projection读取；已入书架封面 MUST 有明确书架标志并降低亮度，source browser MUST NOT维护第二份 shelf membership。搜索结果 MUST 使用 catalog/resource-cache 权威：若有**当前精确请求**缓存，Presentation MUST先显示缓存并后台刷新；只有稳定字段变化时才替换列表，不得建立页面私有结果缓存。漫画源页 MUST 支持边缘下拉达到阈值后的强制刷新；强制刷新 MUST 绕过 catalog cache，但 SHOULD 保留已有内容直到新结果到达。
+- 漫画源搜索 MUST 以来源栏上方的浮动控件进入，展开后 SHOULD 提供可持久化、可删除和可清空的搜索历史。展开搜索面板 MUST 优先消费系统返回手势与垂直拖动/滚动手势，并在这些手势发生时恢复为浮动按钮。Mihon `getFilterList()` 返回的 Header、Separator、Select、Text、CheckBox、TriState、Group 与 Sort MUST 由 bridge按 Mihon基类继承关系完整投影，MUST NOT以插件自定义 concrete class名称猜类型或拍平 Group；空 `FilterList` 表示该 source没有筛选入口。用户修改 MUST 以类型化 filter-state override返回 source search调用，Text字符串与 Sort的 index/ascending不得压缩成 toggle ID。 “筛选” MUST 是可获得焦点的独立浏览视图；点击后即使不修改任何选项，直接应用也 MUST 以 source `FilterList` 默认状态执行 filtered browse。空 override MUST NOT 被解释为 ordinary Latest/Popular。筛选视图激活时 MUST 取消 Latest/Popular焦点，filtered request/cache identity MUST NOT继承先前 section；是否使用筛选 MUST 作为独立 request mode传至 Catalog/runtime。External plugin browse wire validator、typed request factory与 source adapter MUST 对同一参数集合保持一致；同一 schema版本内新增可选字段 MAY 缺省为兼容默认值，但未知字段与错误类型 MUST继续拒绝。标准 section Presentation顺序为“最新 → 热门”，首次进入来源时 MUST 选择当前展示顺序的第一项；catalog最近缓存 MUST NOT反向决定默认 section/query/filter。未来若用户自定义排序，默认项 MUST继续由同一个展示顺序 owner的第一项派生。筛选动作打开 filter 面板，MUST NOT 把插件 Filter伪装成 `SourceBrowseSection`，浮动搜索仅拥有 query/历史。browse metadata projection变化 MUST NOT 作为 artwork reload revision；source card direct-child State MUST 使用 canonical comic identity，raw locator或无关 page projection变化不得重置已就绪封面。 漫画源卡片的“已入书架”视觉状态 MUST 从 Home/library canonical preference projection读取；已入书架封面 MUST 在左上使用明确书本/书架标志并降低亮度，source browser MUST NOT维护第二份 shelf membership；source-confirmed update提示与书架标志 MUST 分离显示在右上。搜索结果 MUST 使用 catalog/resource-cache 权威：若有**当前精确请求**缓存，Presentation MUST先显示缓存并后台刷新；只有稳定字段变化时才替换列表，不得建立页面私有结果缓存。漫画源页 MUST 支持边缘下拉达到阈值后的强制刷新；强制刷新 MUST 绕过 catalog cache，但 SHOULD 保留已有内容直到新结果到达。
 - Mihon 插件的已安装列表和仓库列表 MUST 能按规范化语言分类；语言 SHOULD 优先使用插件声明，缺失时从插件 source metadata 推导。多个语言 MUST 归入多语言，无法可靠确定时归入未知语言，不得从显示名猜测。
 - Mihon APK 识别 MUST 接受 manifest 中直接字符串或字符串资源形式的 extensionLib/entry class metadata；多个 entry class MUST 支持逗号、分号或换行分隔。候选识别 MAY 使用标准 extension feature/package prefix，但加载前仍 MUST 完成 package、signer、version、ABI 与 entry class 校验。
 - Android 上 Mihon 共享扩展发现 MUST 至少合并系统包枚举与已知 package name精确探测；单个 APK 识别失败 MUST 保留 package、阶段和错误信息，不得被转换为空列表。系统包可见性受限时 MUST 向用户显示诊断。Mihon 私有 App目录不属于可访问的系统扩展边界，UI MUST 引导用户从 ZIC仓库安装，而不得声称已读取该目录。

@@ -72,7 +72,6 @@ for token in (
 ):
     require(migration, token, 'same-source version state and routing')
 for stale in (
-    "tooltip: '迁移漫画源'",
     "tooltip: '查看同源版本'",
     "groupLabel('旧版')",
     "groupLabel('新版')",

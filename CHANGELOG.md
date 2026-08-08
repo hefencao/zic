@@ -1,3 +1,11 @@
+## 0.31.0-dev.173：恢复通用漫画源迁移并统一同源版本/更新提示
+
+- 漫画源卡片已入书架状态改为左上 `library_books` 书架标志并变暗；`sourceUpdateAt` 作为独立右上感叹号提示，不再使用书签形态冒充书架。
+- 恢复详情 AppBar“迁移漫画源”入口与通用目标选择器；跨源可标题搜索/原生 ID，同源只使用来源确认的 `ComicVersionSource/ComicVersionRelationStore`，同一面板提供“查看/迁移”。
+- 所有迁移继续统一进入 `ComicSourceMigrationPlan + showSourceMigrationComparison`，只有 exact chapter match迁移阅读状态；同源替换偏好改走 `_savePreference`，避免旧 raw alias继续保持书架状态。
+- 已在书架且存在 source-confirmed update的 source card显示右上感叹号；点击时若有确认 successor则直接查看其 exact raw detail，否则打开当前详情。
+- 新增 ADR 0156、dev.173根因/语义审计与 ownership gate，版本提升到 `0.31.0+173`。
+
 ## 0.31.0-dev.172：修复跨插件 Browse Runtime Protocol 字段漂移
 
 - 根据 `zic-debug-trace-2026-08-08T14-27-09.jsonl` 与错误报告确认 Venera、18comic、roumanwu 均在插件调用前由 Dart `ExternalPluginRuntimeRequest` 校验同步抛出 `FormatException: runtime request arguments do not match operation`；不是三个 source 同时网络失败。
