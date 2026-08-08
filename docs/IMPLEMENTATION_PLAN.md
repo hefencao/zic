@@ -2,6 +2,7 @@
 
 ## P0：Source Browse 封面 owner 与筛选入口真机闭环
 
+- 首先复测 Venera、18comic、roumanwu 普通 browse 与 Mihon filter view：不得再出现 `runtime request arguments do not match operation`；普通 browse应显式传 `useFilters=false`，筛选视图传 true。若仍失败，先检查 operation/arguments wire shape，不绕过 validator或增加 source特判。
 - 对同一漫画执行“漫画源列表首帧 → 打开详情 → 返回列表 → catalog后台 refresh/普通分页更新”，确认 canonical cover URI未变化时不产生新的 `cover-load-start`，也不出现 presentation decode重启；只有显式来源 artwork刷新或该卡片自身 URI/identity变化可以换 source。
 - 记录 `source-cover:<sourceId>\0<canonicalComicId>` 的 `cover-load-start/source-ready/first-frame/decode-failed` trace，确认 browse projection `changed=true` 与详情 metadata更新不会成为 artwork revision。
 - Mihon/source筛选以真实 `getFilterList()` 为唯一 schema owner：非空时分类栏按“最新 → 热门 → 筛选”显示，空列表不发明入口；bridge完整支持官方 8 类 Filter及插件自定义子类，筛选面板以类型化 `filterState`回传 Text/Sort等状态。首次默认 section仍由当前展示排序第一项决定，catalog cache不得恢复导航默认值。

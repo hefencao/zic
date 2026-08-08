@@ -18,6 +18,7 @@ void main() {
         '1': 2,
         '2': <String, Object?>{'index': 1, 'ascending': false},
       },
+      useFilters: true,
     );
 
     final decoded = ExternalPluginRuntimeRequest.fromMessage(
@@ -30,6 +31,7 @@ void main() {
     expect(decoded.arguments['query'], 'history');
     expect(decoded.arguments['offset'], 24);
     expect(decoded.arguments['sectionId'], 'popular');
+    expect(decoded.arguments['useFilters'], isTrue);
     expect(
       decoded.arguments['filterState'],
       <String, Object?>{
@@ -37,6 +39,63 @@ void main() {
         '1': 2,
         '2': <String, Object?>{'index': 1, 'ascending': false},
       },
+    );
+  });
+
+  test('browse schema v1 accepts requests created before useFilters', () {
+    final decoded = ExternalPluginRuntimeRequest.fromMessage(
+      <String, Object?>{
+        'schemaVersion': 1,
+        'requestId': 'legacy-browse-1',
+        'operation': 'browse',
+        'externalSourceId': 'fixture',
+        'arguments': <String, Object?>{
+          'query': '',
+          'offset': 0,
+          'limit': 24,
+          'sectionId': 'popular',
+          'filterState': <String, Object?>{},
+        },
+      },
+    );
+
+    expect(decoded.operation, ExternalPluginRuntimeOperation.browse);
+    expect(decoded.arguments.containsKey('useFilters'), isFalse);
+  });
+
+  test('browse filter mode remains typed and rejects unknown wire fields', () {
+    expect(
+      () => ExternalPluginRuntimeRequest(
+        requestId: 'browse-invalid-filter-mode',
+        operation: ExternalPluginRuntimeOperation.browse,
+        externalSourceId: 'fixture',
+        arguments: <String, Object?>{
+          'query': '',
+          'offset': 0,
+          'limit': 24,
+          'sectionId': 'popular',
+          'filterState': <String, Object?>{},
+          'useFilters': 'yes',
+        },
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => ExternalPluginRuntimeRequest(
+        requestId: 'browse-unknown-field',
+        operation: ExternalPluginRuntimeOperation.browse,
+        externalSourceId: 'fixture',
+        arguments: <String, Object?>{
+          'query': '',
+          'offset': 0,
+          'limit': 24,
+          'sectionId': 'popular',
+          'filterState': <String, Object?>{},
+          'useFilters': false,
+          'unexpected': true,
+        },
+      ),
+      throwsA(isA<FormatException>()),
     );
   });
 

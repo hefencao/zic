@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.171`
-**App build：** `0.31.0+171`
+**源码版本：** `0.31.0-dev.172`
+**App build：** `0.31.0+172`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -9,6 +9,7 @@
 
 ## 当前实现
 
+- External plugin browse wire contract 已与 dev.171 filter mode 对齐：typed factory、runtime validator、source adapter均显式认识 `useFilters`；schema v1旧请求允许缺省该新增字段并按 false解释，但未知字段/错误类型继续严格拒绝。发布 gate在无 Dart SDK环境也检查 protocol/adapter/Mihon driver四端一致。
 - 漫画源筛选拥有独立 filter-view request mode：非空 schema时“筛选”是可选中焦点；直接应用未修改面板也会以插件默认 `FilterList`执行 filtered browse。空 override不再等于普通 section；filter mode的 Catalog key/runtime payload单独编码，且不继承 Latest/Popular section。
 - 漫画源卡片书架状态由 Home canonical `ComicPreference`投影：已入书架封面增加书签并变暗，不建立 source-page shelf store。Home/书架下载完成勾改为显式命令反馈：单章完成空心勾、整本 queue complete绿色实心勾，进入详情消费；持久 chapter cache不再直接生成完成勾。
 - 漫画源 browse projection 与 artwork presentation 已解耦：目录分页/后台刷新只更新 metadata，不再用全局 `_contentRevision` 强制所有 `_RemoteImage` 重新加载；封面只在自身 URI 变化或用户显式来源刷新时更换 source。Sliver child owner key 使用 canonical comic identity，mutable raw locator只保留 source调用/交互定位。
@@ -23,7 +24,7 @@
 - Home“更新漫画”使用独立 `SavedComicRecord.sourceUpdateAt`：仅 shelf + source-confirmed update进入。已有章节目录发生变化或首次发现新 successor/version才推进；阅读 progress、普通 metadata刷新和未入书架浏览不推进。远程无偏好 primary projection默认 `inShelf=false`，首次加入书架清理加入前 update signal。
 - 初次 Venera/Mihon activation 的 Binder generation连续性已下沉到 Android `PluginRuntimeServiceClient`：仅 pending activation可跨一个 `runtime-service-died/disconnected` generation；Dart backend删除初次 activation重放，session invocation与业务失败仍按原 owner处理。
 - Home外部封面继续把 live source readiness作为显式加载依赖：首屏早于 plugin ready且 warm cache miss时，失败 Future只在对应 source从 unavailable→available后重新求值；普通 progress/enrichment rebuild不重试。历史/更新横向 Sliver直接 child使用 `section + canonical comic identity` 稳定 key并提供 reorder index callback。
-- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=171`。
+- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=172`。
 - 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
 - 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation不阻塞 Home primary，外部 source ready 后增量接入。
 - artwork资源恢复唯一属于 `ComicSourceResourceGateway/ResourceCacheManager`。Home、书架、漫画源和详情 presentation 已删除定时 retry、first-frame watchdog、App resume自动 retry、全局 ImageCache eviction和 App级短时 Future join；详情统一使用 `ComicDetailsArtworkLoader` 并显式传递 cover/preview/avatar role。普通 artwork直接复用 `StableArtworkImage`；需要裁剪/尺寸测量时只有一个显式 ImageStream listener，不再同时创建第二个 `Image`。
@@ -76,7 +77,7 @@
 - 需用 dev.167 真机复现 source browse → details → back：browse metadata/background refresh不得令未变化的 card cover重新走 loader；raw locator变化但 canonical identity不变时 card State必须保留。retained cover压力验证继续沿 dev.166规则执行。
 - 需验证 Home updates：未入书架漫画即使有阅读历史也不出现；已入书架但没有 source update signal也不出现；真实新章节/新版本检测后才出现。
 - 需对同一外部漫画执行 browse→details→history，确认 browse已写入的 canonical `artwork-v2` durable cover被后两者直接命中，不再出现第二 revision namespace。source可用但仍 `Failure` 时继续沿真实 request/transport调查，不增加 artwork retry。
-- 需在 dev.171 真机继续验证 WNACG与筛选/下载反馈：列表封面与 Reader正文应不再出现 `CLEARTEXT communication ... not permitted`；同一稳定 page demand的确定性失败不得再产生数百次 download重提。
+- 需在 dev.172 真机先确认 Venera/Mihon普通 browse 已恢复，再继续验证 WNACG与筛选/下载反馈：列表封面与 Reader正文应不再出现 `CLEARTEXT communication ... not permitted`；同一稳定 page demand的确定性失败不得再产生数百次 download重提。
 - 需真机确认 Venera `venera:ehentai` 初次 activation 在 Binder generation死亡时由 Android client保留 pending activation跨一个新 generation；若新 generation仍死亡，应采集 runtime process crash/kill 证据，而不是在 Dart/plugin层叠加重试。
 - 目标设备仍需验证 transition 首帧、远程 WebP frame cadence、后台重入和首页首封面时序。
 - 本轮首页冷启动修复仍需设备对比 `homeServicesReady`、`home-library-primary`、
@@ -93,7 +94,7 @@
 |---|---|
 | repository/documentation/Dart static gates | Verified-static |
 | current-code documentation consistency gate | Verified-static |
-| dev.75–dev.169 ownership gates | Verified-static |
+| dev.75–dev.172 ownership gates | Verified-static |
 | Android/Mihon/Venera/Reader/Pipeline/UI contracts | Verified-static / toolchain |
 | Kotlin texture bridge + dev.164 PluginRuntimeServiceClient stub compile | Verified-toolchain |
 | pinned libwebp host build/smoke | Unverified：当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip` |

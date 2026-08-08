@@ -31,6 +31,15 @@ adapter = read('packages/plugin_host/lib/src/runtime_source_adapter.dart')
 require(adapter, "'useFilters': useFilters", 'runtime filter mode payload')
 require(adapter, 'useFilters: true', 'filtered browse runtime mode')
 
+protocol = read('packages/plugin_host/lib/src/runtime_protocol.dart')
+for token in (
+    'bool useFilters = false,',
+    "'useFilters': useFilters",
+    "optional: const <String>{'useFilters'}",
+    "arguments['useFilters'] is! bool",
+):
+    require(protocol, token, 'runtime browse filter-mode protocol')
+
 mihon = read('packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt')
 for token in (
     'val useFilters = arguments["useFilters"] as? Boolean ?: false',

@@ -167,6 +167,7 @@ final class ExternalPluginRuntimeRequest {
     required int limit,
     String? sectionId,
     SourceSearchFilterState filterState = const <String, Object?>{},
+    bool useFilters = false,
   }) =>
       ExternalPluginRuntimeRequest(
         requestId: requestId,
@@ -178,6 +179,7 @@ final class ExternalPluginRuntimeRequest {
           'limit': limit,
           'sectionId': sectionId,
           'filterState': Map<String, Object?>.from(filterState),
+          'useFilters': useFilters,
         },
       );
 
@@ -459,6 +461,7 @@ void _validateArguments(
       _expectKeys(
         arguments,
         const <String>{'query', 'offset', 'limit', 'sectionId', 'filterState'},
+        optional: const <String>{'useFilters'},
       );
       if (arguments['query'] is! String ||
           arguments['offset'] is! int ||
@@ -466,6 +469,8 @@ void _validateArguments(
           (arguments['sectionId'] != null &&
               arguments['sectionId'] is! String) ||
           !_isSearchFilterState(arguments['filterState']) ||
+          (arguments['useFilters'] != null &&
+              arguments['useFilters'] is! bool) ||
           (arguments['offset']! as int) < 0 ||
           (arguments['limit']! as int) <= 0) {
         throw const FormatException('browse arguments are invalid');
@@ -559,8 +564,14 @@ bool _isSearchFilterState(Object? value) {
   return true;
 }
 
-void _expectKeys(Map<String, Object?> value, Set<String> keys) {
-  if (value.length != keys.length || !value.keys.toSet().containsAll(keys)) {
+void _expectKeys(
+  Map<String, Object?> value,
+  Set<String> keys, {
+  Set<String> optional = const <String>{},
+}) {
+  final actual = value.keys.toSet();
+  if (!actual.containsAll(keys) ||
+      actual.any((key) => !keys.contains(key) && !optional.contains(key))) {
     throw const FormatException(
       'runtime request arguments do not match operation',
     );

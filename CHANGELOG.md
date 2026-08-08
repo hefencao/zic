@@ -1,3 +1,11 @@
+## 0.31.0-dev.172：修复跨插件 Browse Runtime Protocol 字段漂移
+
+- 根据 `zic-debug-trace-2026-08-08T14-27-09.jsonl` 与错误报告确认 Venera、18comic、roumanwu 均在插件调用前由 Dart `ExternalPluginRuntimeRequest` 校验同步抛出 `FormatException: runtime request arguments do not match operation`；不是三个 source 同时网络失败。
+- 修复 dev.171 `useFilters` 协议迁移遗漏：browse typed factory、wire validator 与 adapter payload 现在共同声明 `useFilters`；新请求显式发送 bool，旧 schema v1 请求可缺省并按 runtime 默认 false 解释，未知字段仍严格拒绝。
+- `tool/check.sh` 补接 dev.171 gate 并新增 dev.172 runtime-browse protocol gate；在缺少 Dart/Flutter SDK 的环境也会检查 protocol/factory/adapter/Mihon driver 四端一致，避免新增 wire 字段再次漏迁。
+- 新增 runtime protocol 回归测试：filter mode round-trip、旧 v1 browse 兼容、非法 `useFilters` 类型与未知字段拒绝。
+- 新增 ADR 0155、dev.172 根因审计，版本提升到 `0.31.0+172`。
+
 ## 0.31.0-dev.171：收口筛选视图、书架投影与下载完成反馈
 
 - 根据 `zic-debug-trace-2026-08-08T12-41-26.jsonl` 确认 dev.170 WNACG媒体路径无 `taskFailed`，同时发现筛选请求仍以 `sectionId=latest + filterCount` 表达，没有独立“筛选视图”焦点。
