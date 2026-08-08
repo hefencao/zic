@@ -99,12 +99,23 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     if (store == null) {
       return;
     }
+    final known = <String>{
+      for (final relation in await store.listComicVersionSuccessors(
+        source.sourceId,
+        predecessorComicId,
+      ))
+        relation.successorComicId,
+    };
+    var discoveredNewVersion = false;
     for (final successor in successors) {
       if (successor.isPredecessor ||
           successor.sourceId != source.sourceId ||
           successor.comicId.isEmpty ||
           successor.comicId == predecessorComicId) {
         continue;
+      }
+      if (known.add(successor.comicId)) {
+        discoveredNewVersion = true;
       }
       await store.saveComicVersionRelation(
         ComicVersionRelation(
@@ -115,6 +126,16 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         ),
       );
     }
+    if (!discoveredNewVersion) return;
+    final saved = _preferredSavedComicAlias(
+          source.sourceId,
+          predecessorComicId,
+        ) ??
+        await _library.getSavedComic(source.sourceId, predecessorComicId);
+    if (saved == null) return;
+    await _librarySession.upsertSavedComic(
+      saved.copyWith(sourceUpdateAt: DateTime.now().toUtc()),
+    );
   }
 
   Future<details.ComicDetailsVersionState> _loadSourceVersionState(

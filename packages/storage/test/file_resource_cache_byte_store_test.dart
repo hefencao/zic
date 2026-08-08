@@ -90,7 +90,7 @@ void main() {
     expect(reopened.stats.persistentHits, 1);
   });
 
-  test('encoded image reopen returns durable file origin without source load',
+  test('encoded image reopen returns owned bytes without source load',
       () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-encoded-source-reopen-',
@@ -127,13 +127,13 @@ void main() {
       },
     );
 
-    expect(source, isA<FileEncodedResourceSource>());
-    expect(source.origin, EncodedResourceOrigin.durableCacheFile);
-    expect(source.lengthInBytes, 5);
+    expect(source, isA<MemoryEncodedResourceSource>());
+    expect(source.origin, EncodedResourceOrigin.memory);
+    expect((source as MemoryEncodedResourceSource).bytes, <int>[5, 4, 3, 2, 1]);
     expect(sourceLoads, 0);
   });
 
-  test('file location uses one manifest and batches LRU touches', () async {
+  test('file read uses one manifest and batches LRU touches', () async {
     var now = DateTime.utc(2026, 7, 29, 10);
     final directory = await Directory.systemTemp.createTemp(
       'zic-resource-file-location-',
@@ -164,11 +164,10 @@ void main() {
     final beforeTouch = await manifest.readAsString();
 
     now = now.add(const Duration(minutes: 5));
-    final located = await store.locate(key);
+    final persisted = await store.read(key);
 
-    expect(located, isNotNull);
-    expect(located!.byteLength, 4);
-    expect(await File(located.path).readAsBytes(), <int>[1, 3, 5, 7]);
+    expect(persisted, isNotNull);
+    expect(persisted!.bytes, <int>[1, 3, 5, 7]);
     expect(await manifest.readAsString(), beforeTouch);
 
     await store.close();
@@ -183,7 +182,7 @@ void main() {
     );
   });
 
-  test('reopen locates warm covers without per-entry metadata reads', () async {
+  test('reopen reads warm covers without per-entry metadata reads', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-resource-manifest-reopen-',
     );
@@ -219,10 +218,10 @@ void main() {
 
     final reopened = FileResourceCacheByteStore(directory.path);
     addTearDown(reopened.close);
-    final located = await reopened.locate(key);
+    final persisted = await reopened.read(key);
 
-    expect(located, isNotNull);
-    expect(await File(located!.path).readAsBytes(), <int>[2, 4, 6, 8]);
+    expect(persisted, isNotNull);
+    expect(persisted!.bytes, <int>[2, 4, 6, 8]);
   });
 
   test('missing manifest migrates the legacy per-entry journal once', () async {
@@ -253,7 +252,7 @@ void main() {
 
     final migrated = FileResourceCacheByteStore(directory.path);
     addTearDown(migrated.close);
-    expect(await migrated.locate(key), isNotNull);
+    expect((await migrated.read(key))?.bytes, <int>[9, 7, 5]);
     expect(await manifest.exists(), isTrue);
   });
 
@@ -296,7 +295,7 @@ void main() {
 
     final recovered = FileResourceCacheByteStore(directory.path);
     addTearDown(recovered.close);
-    expect(await recovered.locate(key), isNull);
+    expect(await recovered.read(key), isNull);
     expect(await bytes.exists(), isFalse);
   });
 

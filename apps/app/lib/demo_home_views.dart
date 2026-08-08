@@ -150,12 +150,13 @@ extension _DemoHomeViews on _DemoHomeState {
     final updates = _libraryComics
         .where(
           (comic) =>
-              _preferenceForComic(comic).inShelf,
+              _preferenceForComic(comic).inShelf &&
+              comic.sourceUpdateAt != null,
         )
         .toList(growable: true)
       ..sort(
         (left, right) =>
-            right.metadataUpdatedAt.compareTo(left.metadataUpdatedAt),
+            right.sourceUpdateAt!.compareTo(left.sourceUpdateAt!),
       );
     final visibleUpdates = updates.take(10).toList(growable: false);
     final telemetryOwners = <String>{};
@@ -175,7 +176,7 @@ extension _DemoHomeViews on _DemoHomeState {
           HomeSectionTitle(
             key: homeUpdatesSectionKey,
             title: '更新漫画',
-            subtitle: updates.isEmpty ? '导入漫画后会显示最近更新' : null,
+            subtitle: updates.isEmpty ? '加入书架的漫画有新章节或新版本时显示' : null,
           ),
           const SizedBox(height: 10),
           _buildHorizontalComics(

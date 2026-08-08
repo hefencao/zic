@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.164`
-**App build：** `0.31.0+164`
+**源码版本：** `0.31.0-dev.165`
+**App build：** `0.31.0+165`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -12,9 +12,11 @@
 - Home可见 library projection 与 durable mutation已收成 `HomeLibrarySession` write-through边界：chapter/SavedComic写入后同一次操作立即更新 Home；Reader page callback只 enqueue checkpoint，每个 route局部持有 final progress并在返回后只发布一次，不再依赖详情页退出或整库 reload。
 - `HomeLibrarySession.reload()` 以 projection revision拒绝旧 entries/SavedComic snapshot覆盖 enrichment期间更晚的 write-through更新，避免 history在并发 reload结束时回退。
 - External artwork基础 schema revision唯一属于 `resource_cache/ComicSourceResourceGateway`。browse/details/history使用同一 `artwork-v2` namespace；gateway参数只允许额外 `contentRevision`，Home/详情不再把 `artwork-v2` 重复拼成 `artwork-v2:artwork-v2`。local artwork直接复用同一个 schema revision。
+- response cache不再把可由 LRU/TTL/invalidate删除的持久文件路径暴露给 artwork presentation。durable artwork命中先物化为 `MemoryEncodedResourceSource` 自持有 bytes；`FileEncodedResourceSource` 类型只能表示稳定本地文件。已删除 file-locate/borrow facade，避免已显示首帧在 cache trim后再次 decode 时悬空。
+- Home“更新漫画”使用独立 `SavedComicRecord.sourceUpdateAt`：仅 shelf + source-confirmed update进入。已有章节目录发生变化或首次发现新 successor/version才推进；阅读 progress、普通 metadata刷新和未入书架浏览不推进。远程无偏好 primary projection默认 `inShelf=false`，首次加入书架清理加入前 update signal。
 - 初次 Venera/Mihon activation 的 Binder generation连续性已下沉到 Android `PluginRuntimeServiceClient`：仅 pending activation可跨一个 `runtime-service-died/disconnected` generation；Dart backend删除初次 activation重放，session invocation与业务失败仍按原 owner处理。
 - Home外部封面继续把 live source readiness作为显式加载依赖：首屏早于 plugin ready且 warm cache miss时，失败 Future只在对应 source从 unavailable→available后重新求值；普通 progress/enrichment rebuild不重试。历史/更新横向 Sliver直接 child使用 `section + canonical comic identity` 稳定 key并提供 reorder index callback。
-- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=164`。
+- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=165`。
 - 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
 - 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation不阻塞 Home primary，外部 source ready 后增量接入。
 - artwork资源恢复唯一属于 `ComicSourceResourceGateway/ResourceCacheManager`。Home、书架、漫画源和详情 presentation 已删除定时 retry、first-frame watchdog、App resume自动 retry、全局 ImageCache eviction和 App级短时 Future join；详情统一使用 `ComicDetailsArtworkLoader` 并显式传递 cover/preview/avatar role。普通 artwork直接复用 `StableArtworkImage`；需要裁剪/尺寸测量时只有一个显式 ImageStream listener，不再同时创建第二个 `Image`。
@@ -43,7 +45,7 @@
 - Mihon chapter目录不再 synthetic/标题/URL去重。1.6/current先走 combined `getMangaUpdate`；ZIC `CatalogueSource` shim已对齐当前 Mihon：details与chapters都基于原始 `SManga`独立请求，legacy fallback的 `fetchChapterList`也使用原始 manga。正文 `getPageList(SChapter)`只在能力缺失时回退 `fetchPageList`。Mihon comic/chapter durable metadata升 revision，避免旧错误空/单目录继续命中。
 - Cloudflare 主路径与兼容路径统一委托 typed detector；仅严格 403/503 challenge 映射 `sourceVerificationRequired`，没有隐藏 WebView 或消息文本判断。
 - catalog response cache 使用稳定 source/comic/chapter identity 和结构 weight；页面正文不进入该缓存。
-- Home“更新漫画”与阅读历史分离：更新集合只按 `SavedComicRecord.updatedAt`；Reader checkpoint不逐页触发 Home rebuild，route返回后只用最终 `ReadingProgress`更新匹配的内存历史 entry一次。
+- Home“更新漫画”与阅读历史分离：更新集合只消费 `SavedComicRecord.sourceUpdateAt`，不消费 `updatedAt` 或 `ReadingProgress.updatedAt`；Reader checkpoint不逐页触发 Home rebuild，route返回后只用最终 `ReadingProgress`更新匹配的内存历史 entry一次。
 - 详情预览保留完整 URI 作为单项绘制身份，但 artwork role/cache key 使用去 `@x/y` 的 base URI，
   同一原图的不同裁剪共享一份编码字节；Venera `loadThumbnails` 的首批与游标分页
   不再重复消费 `loadInfo` 缩略图；折叠与展开共用按原顺序生成的等面积布局；实际行内含横图时最多 2 张、纯竖图时最多 3 张；只在相邻三个候选内做最小局部重排，并受阅读设置的 1–8 项上限约束（默认 4）。完整行按全部媒体宽度反算尺寸，预览图片区不再叠加 Card 和水平 padding；稀疏末行最多放大到参考完整行面积的 2.4 倍；折叠高度取第一行，展开图片区域不超过屏幕高度 90%，居中箭头控制展开；点击预览项会将索引传入既有 Reader 路由；Venera
@@ -63,7 +65,9 @@
 
 ## 当前开放问题
 
-- 需用 dev.164 真机确认 Reader route返回后 Home history立即接收 final progress，不依赖详情页或整库 reload；连续 Reader route不得串用 final progress。
+- 需用 dev.165 真机确认 Reader route返回后 Home history立即接收 final progress，不依赖详情页或整库 reload；连续 Reader route不得串用 final progress。
+- 需用 dev.165 真机复现此前封面压力场景，确认 durable cover即使 response cache发生 trim/invalidate，已建立的 ImageProvider仍持有 bytes且不会再次出现“先 FirstFrame、随后批量 DecodeFailed”；source可用但仍 `Failure` 时继续沿真实 request/transport调查，不增加 artwork retry。
+- 需验证 Home updates：未入书架漫画即使有阅读历史也不出现；已入书架但没有 source update signal也不出现；真实新章节/新版本检测后才出现。
 - 需对同一外部漫画执行 browse→details→history，确认 browse已写入的 canonical `artwork-v2` durable cover被后两者直接命中，不再出现第二 revision namespace。source可用但仍 `Failure` 时继续沿真实 request/transport调查，不增加 artwork retry。
 - 需真机确认 Venera `venera:ehentai` 初次 activation 在 Binder generation死亡时由 Android client保留 pending activation跨一个新 generation；若新 generation仍死亡，应采集 runtime process crash/kill 证据，而不是在 Dart/plugin层叠加重试。
 - 目标设备仍需验证 transition 首帧、远程 WebP frame cadence、后台重入和首页首封面时序。
@@ -81,7 +85,7 @@
 |---|---|
 | repository/documentation/Dart static gates | Verified-static |
 | current-code documentation consistency gate | Verified-static |
-| dev.75–dev.164 ownership gates | Verified-static |
+| dev.75–dev.165 ownership gates | Verified-static |
 | Android/Mihon/Venera/Reader/Pipeline/UI contracts | Verified-static / toolchain |
 | Kotlin texture bridge + dev.164 PluginRuntimeServiceClient stub compile | Verified-toolchain |
 | pinned libwebp host build/smoke | Unverified：当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip` |

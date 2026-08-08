@@ -5,25 +5,18 @@ import 'package:resource_cache/resource_cache.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('encoded sources preserve memory and file origin without copying', () {
+  test('encoded sources keep owned memory and stable local-file lifetimes', () {
     final bytes = Uint8List.fromList(<int>[1, 2, 3]);
     final memory = MemoryEncodedResourceSource(bytes);
     const local = FileEncodedResourceSource(
       path: '/tmp/local-cover.webp',
-      origin: EncodedResourceOrigin.localFile,
       lengthInBytes: 42,
     );
-    const durable = FileEncodedResourceSource(
-      path: '/tmp/cache-cover.webp',
-      lengthInBytes: 84,
-    );
-
     expect(memory.bytes, same(bytes));
     expect(memory.origin, EncodedResourceOrigin.memory);
     expect(memory.lengthInBytes, 3);
     expect(local.origin, EncodedResourceOrigin.localFile);
     expect(local.lengthInBytes, 42);
-    expect(durable.origin, EncodedResourceOrigin.durableCacheFile);
   });
 
   test('coalesces concurrent loads across one resource identity', () async {
@@ -153,20 +146,19 @@ void main() {
     expect(reopened.stats.persistentHits, 1);
   });
 
-  test('file-backed warm image hit avoids legacy byte materialization',
-      () async {
+  test('warm persisted image becomes an owned memory snapshot', () async {
     const key = ResourceCacheKey(
       kind: ResourceCacheKind.imageBytes,
-      identity: 'source/file-backed-cover',
+      identity: 'source/persisted-cover',
       namespace: 'comic:source\u0000comic',
       revision: 'cover-r1',
     );
-    final store = _FileResourceByteStore(
-      file: PersistedResourceFile(
-        path: '/cache/cover-r1.webp',
-        byteLength: 4096,
-        expiresAt: DateTime.utc(2026, 8, 1),
-      ),
+    final store = _MemoryResourceByteStore();
+    final expiresAt = DateTime.utc(2026, 8, 1);
+    await store.write(
+      key: key,
+      bytes: Uint8List.fromList(<int>[1, 3, 5, 7]),
+      expiresAt: expiresAt,
     );
     final cache = ResourceCacheManager(
       byteStore: store,
@@ -179,35 +171,35 @@ void main() {
       key: key,
       loader: () async {
         sourceLoads++;
-        return Uint8List.fromList(<int>[1, 2, 3]);
+        return Uint8List.fromList(<int>[9]);
       },
     );
 
-    expect(source, isA<FileEncodedResourceSource>());
-    expect((source as FileEncodedResourceSource).path, '/cache/cover-r1.webp');
-    expect(source.lengthInBytes, 4096);
+    expect(source, isA<MemoryEncodedResourceSource>());
+    expect((source as MemoryEncodedResourceSource).bytes, <int>[1, 3, 5, 7]);
+    expect(source.origin, EncodedResourceOrigin.memory);
     expect(sourceLoads, 0);
-    expect(store.locateCalls, 1);
-    expect(store.readCalls, 0);
+    expect(cache.stats.persistentHits, 1);
+
     final repeated = await cache.getOrLoadEncodedImage(
       key: key,
       loader: () async {
         sourceLoads++;
-        return Uint8List(1);
+        return Uint8List.fromList(<int>[8]);
       },
     );
-    expect(repeated, same(source));
-    expect(store.locateCalls, 1);
+    expect(repeated, isA<MemoryEncodedResourceSource>());
+    expect((repeated as MemoryEncodedResourceSource).bytes, <int>[1, 3, 5, 7]);
     expect(sourceLoads, 0);
   });
 
-  test('new encoded image is persisted then returned as a file source',
+  test('new encoded image persists bytes without lending its cache path',
       () async {
     const key = ResourceCacheKey(
       kind: ResourceCacheKind.imageBytes,
-      identity: 'source/new-file-backed-cover',
+      identity: 'source/new-persisted-cover',
     );
-    final store = _FileResourceByteStore();
+    final store = _MemoryResourceByteStore();
     final cache = ResourceCacheManager(byteStore: store);
     addTearDown(cache.close);
 
@@ -216,10 +208,9 @@ void main() {
       loader: () async => Uint8List.fromList(<int>[8, 6, 4, 2]),
     );
 
-    expect(source, isA<FileEncodedResourceSource>());
-    expect(store.writes, 1);
-    expect(store.readCalls, 0);
-    expect((source as FileEncodedResourceSource).path, '/cache/generated.bin');
+    expect(source, isA<MemoryEncodedResourceSource>());
+    expect((source as MemoryEncodedResourceSource).bytes, <int>[8, 6, 4, 2]);
+    expect(store.values[key]?.bytes, <int>[8, 6, 4, 2]);
   });
 
   test('foreground encoded image returns before durable persistence', () async {
@@ -561,61 +552,6 @@ void main() {
       expect(artifacts.clearCalls, 1);
     },
   );
-}
-
-final class _FileResourceByteStore implements ResourceCacheFileByteStore {
-  _FileResourceByteStore({this.file});
-
-  PersistedResourceFile? file;
-  int locateCalls = 0;
-  int readCalls = 0;
-  int writes = 0;
-
-  @override
-  Future<PersistedResourceFile?> locate(ResourceCacheKey key) async {
-    locateCalls++;
-    return file;
-  }
-
-  @override
-  Future<PersistedResourceBytes?> read(ResourceCacheKey key) async {
-    readCalls++;
-    throw StateError('file-capable image path must not call read');
-  }
-
-  @override
-  Future<void> write({
-    required ResourceCacheKey key,
-    required Uint8List bytes,
-    required DateTime expiresAt,
-  }) async {
-    writes++;
-    file = PersistedResourceFile(
-      path: '/cache/generated.bin',
-      byteLength: bytes.lengthInBytes,
-      expiresAt: expiresAt,
-    );
-  }
-
-  @override
-  Future<void> remove(ResourceCacheKey key) async {
-    file = null;
-  }
-
-  @override
-  Future<void> removeWhere(
-    bool Function(ResourceCacheKey key) predicate,
-  ) async {
-    file = null;
-  }
-
-  @override
-  Future<void> clear() async {
-    file = null;
-  }
-
-  @override
-  Future<void> close() async {}
 }
 
 final class _MemoryResourceByteStore

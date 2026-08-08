@@ -98,7 +98,9 @@ manifest 准备，再在后台完成设备扩展发现和 runtime activation。H
 必须通过该 session write-through：durable store 仍负责持久化，session 在同一次成功写入后立即替换
 可见投影，不能依赖后续详情页或全量 reload 追平第二状态。外部 artwork 的恢复/cache权威只有
 `ComicSourceResourceGateway/ResourceCacheManager`：presentation取得一个不可变
-`EncodedResourceSource` 后只建立一个 ImageProvider；Future/ImageStream失败保持稳定占位，
+`EncodedResourceSource` 后只建立一个 ImageProvider。response cache拥有的持久文件是可撤销实现细节，
+不得把其路径借给 Flutter；跨 cache 边界必须物化为 presentation 自持有的 encoded bytes。只有导入的
+稳定本地文件可使用 `FileEncodedResourceSource/FileImage`。Future/ImageStream失败保持稳定占位，
 普通 rebuild、App resume、timer/watchdog或 ImageCache eviction都不得自动建立第二套请求。
 首页 artwork 的冷 miss 在 encoded bytes 到达后可先返回 memory source，durable response
 写入由 `ResourceCacheManager` 后台排队；同一批封面按卡片独立完成，不等待全部封面或
@@ -108,8 +110,11 @@ raw Mihon locator继续只用于插件 request/chapter identity，不参与 dura
 首页、书架、来源和杂项页由 lazy indexed page 保持未构建，避免隐藏导航页提前创建第二套
 封面 loader；访问过的页面状态仍由该页面节点保留。
 
-Home 的“更新漫画”投影只取已在书架中的漫画，并按持久化的漫画元数据更新时间排序；阅读历史
-单独按 `ReadingProgress.updatedAt` 投影，阅读进度不会再把非书架漫画或普通阅读行为混入更新列表。
+Home 的“更新漫画”投影只取已在书架且具有 `SavedComicRecord.sourceUpdateAt` 的漫画，并按该
+source-confirmed更新时间排序。`sourceUpdateAt`只在已有章节目录基线发生章节新增/删除/revision变化，
+或首次发现新的同源 successor/version时推进；普通标题/封面元数据刷新、阅读进度与仅浏览记录都不产生
+更新。远程漫画缺少持久偏好时默认不在书架；首次加入书架会清除加入前遗留的 update signal。阅读历史
+单独按 `ReadingProgress.updatedAt` 投影。
 
 ### 详情页与来源迁移组合
 
@@ -356,8 +361,10 @@ raw comicId
   + 文件记录再次校验完整 ResourceCacheKey
 ```
 
-首页/详情 artwork 的缓存层顺序是 memory -> durable file -> source loader。source-independent
-的 warm probe 命中时，首页封面不会解析来源或启动插件；miss 才进入 gateway/source transport。
+首页/详情 artwork 的缓存层顺序是 memory -> durable byte store -> source loader。durable命中先读取为
+由 presentation 持有的 `Uint8List`，不会把 cache-managed文件路径交给 `FileImage`；因此后续 LRU trim/
+invalidate只能移除 cache entry，不能让已经创建的 ImageProvider悬空。source-independent warm probe命中时，
+首页封面不会解析来源或启动插件；miss才进入 gateway/source transport。
 因此预览图的完整 URI 仍决定每个 widget 的裁剪区域，但同一 base URL 的编码字节只保留一份，
 避免旧实现按每个 `@x/y` 裁剪重复请求和占用缓存。旧的每裁剪项 role 不会与新的 base role 相同，因此无需迁移预览裁剪缓存。封面 durable
 namespace 由 canonical comic identity 固定，raw Mihon `comicId`、封面 URL、详情补全后的 SManga

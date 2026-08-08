@@ -1,5 +1,12 @@
 # zic Implementation Plan
 
+## P0：dev.165 Artwork 生命周期与更新语义真机闭环
+
+- 使用本轮 trace 中曾“durableCacheFile → FirstFrame → 数分钟后 DecodeFailed”的同一批封面复测；在首页/Reader往返、内存压力和 response cache trim后，既有 ImageProvider必须继续显示，不得因为 cache-owned `.bin` 被删除而悬空。不得恢复 presentation retry/evict/watchdog。
+- 同一 durable cover冷启动命中时确认 gateway仍在 source激活前成功返回；trace可保留 `durableCacheFile`作为来源 provenance，但实际 provider必须是自持有 bytes而非 cache path。
+- Home updates分别验证四类：未入书架+有阅读历史、未入书架+已检测 source变化、已入书架但无 source变化、已入书架且检测到新章节/新版本；只有最后一类显示。阅读进度和普通 metadata刷新不得改变 update signal。
+- 首次把此前未入书架漫画加入书架时，加入前已发现的 version/chapter signal不得被当作“新更新”；之后再次检测到真实 source变化才进入更新。
+
 ## P0：网络 UA / client / cache ownership 真机闭环
 - 在完整 Flutter/Dart 工具链执行 analyzer，确认 dev.161→162 删除 `loadBytes`、split chapter resource setter 与 catalog artwork facade 后没有遗漏调用方；重点覆盖 `demo_home_source_compat`、`source_resource_gateway`、downloads 与 catalog tests。
 - 真机/fixture 同时覆盖完整字节 fallback 与 streaming range path，确认二者使用同一 source-resolved request plan；不得出现 full-byte 直接调用 raw source transport或 metadata/artwork 走 page-body bypass。

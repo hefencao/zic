@@ -79,6 +79,7 @@ final class SavedComicRecord {
     Iterable<SavedChapterRecord> chapters = const <SavedChapterRecord>[],
     DateTime? savedAt,
     DateTime? updatedAt,
+    DateTime? sourceUpdateAt,
   })  : chapters = List<SavedChapterRecord>.unmodifiable(
           chapters.toList(growable: false)..sort(
                 (left, right) => left.sequence.compareTo(right.sequence),
@@ -96,7 +97,8 @@ final class SavedComicRecord {
               .toSet(),
         ),
         savedAt = (savedAt ?? DateTime.now()).toUtc(),
-        updatedAt = (updatedAt ?? DateTime.now()).toUtc() {
+        updatedAt = (updatedAt ?? DateTime.now()).toUtc(),
+        sourceUpdateAt = sourceUpdateAt?.toUtc() {
     if (sourceId.trim().isEmpty ||
         comicId.trim().isEmpty ||
         title.trim().isEmpty) {
@@ -125,6 +127,7 @@ final class SavedComicRecord {
     Comic comic, {
     DateTime? savedAt,
     DateTime? updatedAt,
+    DateTime? sourceUpdateAt,
   }) =>
       SavedComicRecord(
         sourceId: comic.sourceId,
@@ -137,6 +140,7 @@ final class SavedComicRecord {
         readingDirection: comic.readingDirection,
         savedAt: savedAt,
         updatedAt: updatedAt ?? comic.updatedAt,
+        sourceUpdateAt: sourceUpdateAt,
       );
 
   factory SavedComicRecord.fromManifest(
@@ -144,6 +148,7 @@ final class SavedComicRecord {
     String? canonicalComicId,
     DateTime? savedAt,
     DateTime? updatedAt,
+    DateTime? sourceUpdateAt,
   }) =>
       SavedComicRecord(
         sourceId: manifest.comic.sourceId,
@@ -158,6 +163,7 @@ final class SavedComicRecord {
         chapters: manifest.chapters.map(SavedChapterRecord.fromChapter),
         savedAt: savedAt,
         updatedAt: updatedAt ?? manifest.comic.updatedAt,
+        sourceUpdateAt: sourceUpdateAt,
       );
 
   final String sourceId;
@@ -176,6 +182,12 @@ final class SavedComicRecord {
   final List<SavedChapterRecord> chapters;
   final DateTime savedAt;
   final DateTime updatedAt;
+
+  /// Timestamp of a source-confirmed chapter catalog or version change.
+  ///
+  /// This is deliberately independent of reading progress and generic
+  /// metadata refreshes. Home's update feed consumes only this signal.
+  final DateTime? sourceUpdateAt;
 
   String get identity => '$sourceId\u0000$comicId';
 
@@ -205,6 +217,8 @@ final class SavedComicRecord {
     Iterable<SavedChapterRecord>? chapters,
     DateTime? savedAt,
     DateTime? updatedAt,
+    DateTime? sourceUpdateAt,
+    bool clearSourceUpdateAt = false,
   }) =>
       SavedComicRecord(
         sourceId: sourceId,
@@ -223,6 +237,8 @@ final class SavedComicRecord {
         chapters: chapters ?? this.chapters,
         savedAt: savedAt ?? this.savedAt,
         updatedAt: updatedAt ?? this.updatedAt,
+        sourceUpdateAt:
+            clearSourceUpdateAt ? null : (sourceUpdateAt ?? this.sourceUpdateAt),
       );
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -238,6 +254,8 @@ final class SavedComicRecord {
         'chapters': chapters.map((chapter) => chapter.toJson()).toList(),
         'savedAt': savedAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
+        if (sourceUpdateAt != null)
+          'sourceUpdateAt': sourceUpdateAt!.toIso8601String(),
       };
 
   factory SavedComicRecord.fromJson(Map<String, Object?> json) {
@@ -298,6 +316,9 @@ final class SavedComicRecord {
       }),
       savedAt: DateTime.parse(_requiredString(json, 'savedAt')),
       updatedAt: DateTime.parse(_requiredString(json, 'updatedAt')),
+      sourceUpdateAt: json['sourceUpdateAt'] == null
+          ? null
+          : DateTime.parse(json['sourceUpdateAt']! as String),
     );
   }
 }

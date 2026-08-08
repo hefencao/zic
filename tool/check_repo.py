@@ -1888,8 +1888,8 @@ def check_compile_regressions() -> None:
         '_readPersistent(',
         '_writePersistent(',
         'inspectPersistentBytes()',
-        'abstract interface class ResourceCacheByteStoreFileAccess',
         'getOrLoadEncodedImage(',
+        'MemoryEncodedResourceSource',
         'FileEncodedResourceSource',
     ):
         if required not in resource_cache:
@@ -1983,13 +1983,13 @@ def check_compile_regressions() -> None:
     ).read_text(encoding='utf-8')
     for required in (
         'final class FileResourceCacheByteStore',
-        'ResourceCacheFileByteStore,',
+        'ResourceCacheByteStore,',
         'ResourceCacheByteStoreMaintenance',
         'Future<ResourceCacheByteStoreUsage> inspect()',
         'Future<ResourceCacheByteStoreTrimReport> trimTo(',
         'contentHash',
         'lastAccessedAt',
-        'Future<PersistedResourceFile?> locate(',
+        'Future<PersistedResourceBytes?> read(',
         '_pendingTouches',
     ):
         if required not in durable_response_store:
@@ -2618,11 +2618,18 @@ def check_current_iteration() -> None:
             fail(f'Mihon APK entry metadata bridge is incomplete: {required}')
     for required in (
         'enum EncodedResourceOrigin',
-        'abstract interface class ResourceCacheFileByteStore',
-        'if (store is! ResourceCacheFileByteStore)',
+        'final class MemoryEncodedResourceSource',
+        'super(origin: EncodedResourceOrigin.localFile)',
     ):
         if required not in resource_cache:
-            fail(f'dev.43 encoded-resource compile closure is incomplete: {required}')
+            fail(f'encoded-resource lifetime closure is incomplete: {required}')
+    for forbidden in (
+        'abstract interface class ResourceCacheFileByteStore',
+        'abstract interface class ResourceCacheByteStoreFileAccess',
+        'Future<PersistedResourceFile?> locate(',
+    ):
+        if forbidden in resource_cache:
+            fail(f'cache-owned file lifetime leaked through resource API: {forbidden}')
     for required in (
         "response-manifest-v1.json",
         '_pendingTouches',

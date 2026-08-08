@@ -217,20 +217,11 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
     );
   }
 
-  bool _manifestContentChanged(
+  bool _manifestChapterCatalogDiffers(
     SavedComicRecord? existing,
     ComicManifest incoming,
   ) {
     if (existing == null) return true;
-    final comic = incoming.comic;
-    if (existing.title != comic.title ||
-        !_sameStrings(existing.authors, comic.authors) ||
-        !_sameStrings(existing.tags, comic.tags) ||
-        existing.description != comic.description ||
-        existing.coverSourceId != comic.coverUri?.toString() ||
-        existing.readingDirection != comic.readingDirection) {
-      return true;
-    }
     final chapters = incoming.chapters.toList(growable: false)
       ..sort(_compareManifestChapters);
     if (existing.chapters.length != chapters.length) return true;
@@ -247,6 +238,34 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
       }
     }
     return false;
+  }
+
+  bool _manifestChapterCatalogChanged(
+    SavedComicRecord? existing,
+    ComicManifest incoming,
+  ) {
+    // No previous chapter catalog means this load establishes the baseline;
+    // it is not a source update by itself.
+    return existing != null &&
+        existing.chapters.isNotEmpty &&
+        _manifestChapterCatalogDiffers(existing, incoming);
+  }
+
+  bool _manifestContentChanged(
+    SavedComicRecord? existing,
+    ComicManifest incoming,
+  ) {
+    if (existing == null) return true;
+    final comic = incoming.comic;
+    if (existing.title != comic.title ||
+        !_sameStrings(existing.authors, comic.authors) ||
+        !_sameStrings(existing.tags, comic.tags) ||
+        existing.description != comic.description ||
+        existing.coverSourceId != comic.coverUri?.toString() ||
+        existing.readingDirection != comic.readingDirection) {
+      return true;
+    }
+    return _manifestChapterCatalogDiffers(existing, incoming);
   }
 
   bool _sameStrings(Iterable<String> left, Iterable<String> right) {
@@ -288,7 +307,10 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
           manifest.comic.comicId,
         );
     _rejectCatalogRegression(existing: existing, incoming: manifest);
+    final now = DateTime.now().toUtc();
     final changed = _manifestContentChanged(existing, manifest);
+    final chapterCatalogChanged =
+        _manifestChapterCatalogChanged(existing, manifest);
     await _librarySession.upsertSavedComic(
       SavedComicRecord.fromManifest(
         manifest,
@@ -298,7 +320,9 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
           fallback: existing?.canonicalComicId,
         ),
         savedAt: existing?.savedAt,
-        updatedAt: changed ? DateTime.now().toUtc() : existing?.updatedAt,
+        updatedAt: changed ? now : existing?.updatedAt,
+        sourceUpdateAt:
+            chapterCatalogChanged ? now : existing?.sourceUpdateAt,
       ),
     );
   }

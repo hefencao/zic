@@ -392,6 +392,7 @@ void main() {
       canonicalComicId: 'https://example.invalid/comic-json',
       savedAt: DateTime.utc(2026, 7, 28),
       updatedAt: DateTime.utc(2026, 7, 28, 2),
+      sourceUpdateAt: DateTime.utc(2026, 7, 29, 3),
     );
 
     final restored = SavedComicRecord.fromJson(saved.toJson());
@@ -399,9 +400,14 @@ void main() {
     expect(restored.canonicalComicId, 'https://example.invalid/comic-json');
     expect(restored.chapters.single.title, '第一章');
     expect(restored.tags, const <String>['剧情', '全彩']);
+    expect(restored.sourceUpdateAt, DateTime.utc(2026, 7, 29, 3));
 
-    final legacy = Map<String, Object?>.from(saved.toJson())..remove('chapters');
-    expect(SavedComicRecord.fromJson(legacy).chapters, isEmpty);
+    final legacy = Map<String, Object?>.from(saved.toJson())
+      ..remove('chapters')
+      ..remove('sourceUpdateAt');
+    final legacyRestored = SavedComicRecord.fromJson(legacy);
+    expect(legacyRestored.chapters, isEmpty);
+    expect(legacyRestored.sourceUpdateAt, isNull);
   });
 
   test('chapter JSON remains compatible while persisting aggregate metadata', () {

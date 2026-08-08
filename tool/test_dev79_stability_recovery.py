@@ -25,9 +25,12 @@ assert '_sourceResources.loadArtworkBytes(' in migration
 assert 'cacheComicId: _canonicalComicId(sourceId, comicId)' in migration
 
 cache = text('packages/resource_cache/lib/src/resource_cache.dart')
-assert '_encodedImageInFlight' in cache
-assert 'Future<EncodedResourceSource> _resolveEncodedImage' in cache
-assert '..._encodedImageInFlight.keys' in cache
+# dev.165 supersedes the old file-source-specific image join: generic byte
+# in-flight ownership now returns a presentation-owned memory source.
+assert 'Future<EncodedResourceSource> getOrLoadEncodedImage' in cache
+assert 'return MemoryEncodedResourceSource(bytes);' in cache
+assert '_encodedImageInFlight' not in cache
+assert 'Future<EncodedResourceSource> _resolveEncodedImage' not in cache
 
 download = text('packages/sessions/lib/src/download_session.dart')
 assert '(after.sourceReady || after.failure != null)' in download

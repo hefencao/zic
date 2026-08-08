@@ -170,6 +170,48 @@ void main() {
     expect(homeCoverSize.height, ComicCoverCard.cardExtent);
   });
 
+  testWidgets(
+      'home updates require both shelf membership and a source update signal',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    final updateAt = DateTime.utc(2026, 8, 8, 7);
+    for (final fixture in <({String id, bool inShelf, DateTime? updateAt})>[
+      (id: 'unshelved-update', inShelf: false, updateAt: updateAt),
+      (id: 'shelved-no-update', inShelf: true, updateAt: null),
+      (id: 'shelved-update', inShelf: true, updateAt: updateAt),
+    ]) {
+      await store.upsertSavedComic(
+        SavedComicRecord(
+          sourceId: 'remote:update-test',
+          comicId: fixture.id,
+          title: fixture.id,
+          savedAt: DateTime.utc(2026, 8, 1),
+          updatedAt: DateTime.utc(2026, 8, 1),
+          sourceUpdateAt: fixture.updateAt,
+        ),
+      );
+      await store.saveComicPreference(
+        ComicPreference.defaults(
+          sourceId: 'remote:update-test',
+          comicId: fixture.id,
+          sourceKind: ComicSourceKind.remote,
+        ).copyWith(inShelf: fixture.inShelf),
+      );
+    }
+
+    await tester.pumpWidget(
+      App(libraryStore: store, comicSources: const <BrowsableComicSource>[]),
+    );
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+
+    expect(find.byType(ComicCoverCard), findsOneWidget);
+    expect(find.text('shelved-update'), findsOneWidget);
+    expect(find.text('unshelved-update'), findsNothing);
+    expect(find.text('shelved-no-update'), findsNothing);
+  });
+
   testWidgets('inactive bookshelf does not start cover loads', (tester) async {
     final store = MemoryImportedLibraryStore();
     await store.open();

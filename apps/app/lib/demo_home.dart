@@ -586,14 +586,21 @@ final class _DemoHomeState extends State<DemoHome> {
   }
 
   ComicPreference _preferenceForComic(LibraryComic comic) =>
-      _mergedPreferenceFor(comic.sourceId, comic.comicId);
+      _mergedPreferenceFor(
+        comic.sourceId,
+        comic.comicId,
+        fallbackSourceKind: comic.sourceId == 'local-folder'
+            ? ComicSourceKind.local
+            : ComicSourceKind.remote,
+        fallbackInShelf: comic.sourceId == 'local-folder',
+      );
 
   ComicPreference _mergedPreferenceFor(
     String sourceId,
     String comicId, {
     ComicPreference? fallbackPreference,
     ComicSourceKind? fallbackSourceKind,
-    bool fallbackInShelf = true,
+    bool fallbackInShelf = false,
   }) {
     final aliases = _canonicalComicAliases(sourceId, comicId);
     final values = <ComicPreference>[];
@@ -647,8 +654,25 @@ final class _DemoHomeState extends State<DemoHome> {
   }
 
   Future<void> _savePreference(ComicPreference preference) async {
+    final previous = _mergedPreferenceFor(
+      preference.sourceId,
+      preference.comicId,
+      fallbackSourceKind: preference.sourceKind,
+      fallbackInShelf: false,
+    );
     final now = DateTime.now().toUtc();
     final updated = preference.copyWith(updatedAt: now);
+    if (!previous.inShelf && updated.inShelf) {
+      for (final saved in _savedComicAliasesFor(
+        preference.sourceId,
+        preference.comicId,
+      )) {
+        if (saved.sourceUpdateAt == null) continue;
+        await _librarySession.upsertSavedComic(
+          saved.copyWith(clearSourceUpdateAt: true),
+        );
+      }
+    }
     await _library.saveComicPreference(updated);
     _librarySession.replacePreference(updated);
     for (final alias in _canonicalComicAliases(
@@ -933,7 +957,8 @@ final class _DemoHomeState extends State<DemoHome> {
         effectiveComicId,
         fallbackPreference: preference,
         fallbackSourceKind: preference?.sourceKind,
-        fallbackInShelf: preference?.inShelf ?? true,
+        fallbackInShelf:
+            preference?.inShelf ?? sourceId == 'local-folder',
       ),
     );
   }
@@ -1009,7 +1034,10 @@ final class _DemoHomeState extends State<DemoHome> {
           ),
         );
         _rejectCatalogRegression(existing: existing, incoming: manifest);
+        final now = DateTime.now().toUtc();
         final changed = _manifestContentChanged(existing, manifest);
+        final chapterCatalogChanged =
+            _manifestChapterCatalogChanged(existing, manifest);
         await _librarySession.upsertSavedComic(
           SavedComicRecord.fromManifest(
             manifest,
@@ -1019,7 +1047,9 @@ final class _DemoHomeState extends State<DemoHome> {
               fallback: existing?.canonicalComicId,
             ),
             savedAt: existing?.savedAt,
-            updatedAt: changed ? DateTime.now().toUtc() : existing?.updatedAt,
+            updatedAt: changed ? now : existing?.updatedAt,
+            sourceUpdateAt:
+                chapterCatalogChanged ? now : existing?.sourceUpdateAt,
           ),
         );
       }
@@ -1110,7 +1140,6 @@ final class _DemoHomeState extends State<DemoHome> {
     if (directPath != null) {
       return FileEncodedResourceSource(
         path: directPath,
-        origin: EncodedResourceOrigin.localFile,
       );
     }
     final uri = Uri.tryParse(sourceValue);

@@ -1,6 +1,6 @@
-# dev.164 后续交接
+# dev.165 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.164_home-projection-artwork-runtime-generation.zip`。
+唯一后续基线：`zic_v0.31.0-dev.165_artwork-lifetime-home-update-semantics.zip`。
 
 ## 必读
 
@@ -17,6 +17,7 @@
 11. `docs/adr/0145-network-user-agent-and-transport-cache-ownership.md`
 12. `docs/adr/0146-source-resource-atomic-binding-and-catalog-artwork-boundary.md`
 13. `docs/adr/0147-home-projection-artwork-revision-runtime-generation-ownership.md`
+14. `docs/adr/0148-artwork-source-lifetime-and-home-update-semantics.md`
 14. `docs/audits/dev157-root-cause-owner-cleanup-audit.md`
 15. `docs/audits/dev157-validation-results.md`
 16. `docs/audits/dev158-compile-owner-blocking-audit.md`
@@ -24,6 +25,8 @@
 18. `docs/audits/dev163-venera-activation-history-cover-root-cause-audit.md`
 19. `docs/audits/dev164-home-projection-artwork-runtime-generation-root-cause-audit.md`
 20. `docs/audits/dev164-validation-results.md`
+21. `docs/audits/dev165-artwork-lifetime-home-update-root-cause-audit.md`
+22. `docs/audits/dev165-validation-results.md`
 
 ## 当前代码事实
 
@@ -31,7 +34,9 @@
 - session reload具有 projection revision：reload开始时捕获的旧 entries/SavedComic snapshot不得在 enrichment结束时覆盖更晚的 write-through chapter/saved/progress投影。
 - `comicArtworkCacheSchemaRevision` 只有一个 owner。external browse/details/history均由 `ComicSourceResourceGateway`生成 `artwork-v2[:contentRevision]`；调用方不得再把基础 schema revision作为参数传入。local artwork直接使用同一 schema revision。
 - 初次 external runtime activation 的 service-generation continuity属于 Android `PluginRuntimeServiceClient`：只有 pending `activateMihonRuntime/activateVeneraRuntime`可跨一个 died/disconnected Binder generation；Dart backend不再二次调用 activation。业务错误与 established-session invocation不进入该策略。
-- Home外部封面仍把 source availability作为显式加载依赖；history/update Sliver仍持有 `section + canonical comic identity`稳定 key。dev.164不恢复 presentation retry/watchdog/evict。
+- Home外部封面仍把 source availability作为显式加载依赖；history/update Sliver仍持有 `section + canonical comic identity`稳定 key。dev.165不恢复 presentation retry/watchdog/evict。
+- cache-owned durable artwork文件不再跨边界成为 `FileImage`。`ResourceCacheManager`从持久 byte store恢复后交付自持有 memory bytes；只有稳定本地导入文件可使用 `FileEncodedResourceSource`。
+- Home updates不是“最近元数据/最近阅读”：仅已入书架且 `sourceUpdateAt`存在的漫画显示；章节目录已有基线后变化或发现新同源 version才产生 signal。远程无偏好记录默认不在书架。
 - Reader SQLite仍由 storage-owned isolate按同章节 latest-wins合并，空闲约8秒提交、持续活跃最多约30秒提交；route不等待 durable barrier。
 - 全局网络 User-Agent是 composition fallback，默认 Android Chrome 150并可设置；source显式 UA、Mihon browser-session UA优先。App presentation不得创建独立 HTTP client。
 - shared source host replay只允许无状态媒体：禁止自动 redirect；redirect、`Set-Cookie`、非媒体 body或未知 client wrapper立即切 source-owned client。metadata/artwork必须走 `ResourceCacheManager`；`pageResponseLoaderFor/loadPageBytes`仅供 Reader/章节正文，由 DownloadSession/artifact接管。 full-byte 与 streaming 必须复用同一 response loader；章节下载只通过原子 `ChapterResourceAccess` 绑定，禁止恢复 byte/transport 双 setter。
@@ -51,6 +56,7 @@
 - 长会话记录 progress SQLite事务次数和 Reader pop帧时序；不得每页写盘，也不得在退出后整库 reload。
 - 分别用明确 chapterList扩展与 combined-only TachiyomiX 1.6扩展验证目录调用次数/结果；出现空或单项时先看实际 API返回，不恢复 synthetic fallback。
 - 同一 Mihon漫画连续 browse → details → history，多次详情补全/封面 URL变化后，canonical artwork identity必须一致；成功封面普通 rebuild/resume不得重新请求。
+- 重现 response cache trim/Reader往返，确认已经 FirstFrame的封面不因 cache文件回收而 DecodeFailed；确认 Home updates仅由 shelf + sourceUpdateAt驱动。
 
 ## 不可改变的稳定边界
 

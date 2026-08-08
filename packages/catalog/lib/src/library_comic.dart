@@ -24,6 +24,7 @@ final class LibraryComic {
     required Iterable<Chapter> sourceChapters,
     required this.savedAt,
     required this.metadataUpdatedAt,
+    this.sourceUpdateAt,
   })  : authors = List<String>.unmodifiable(authors),
         tags = List<String>.unmodifiable(tags),
         sourceChapters = List<Chapter>.unmodifiable(
@@ -115,6 +116,7 @@ final class LibraryComic {
           const <Chapter>[],
       savedAt: savedAt,
       metadataUpdatedAt: metadataUpdatedAt,
+      sourceUpdateAt: savedComic?.sourceUpdateAt,
     );
   }
 
@@ -136,6 +138,7 @@ final class LibraryComic {
   final List<Chapter> sourceChapters;
   final DateTime savedAt;
   final DateTime metadataUpdatedAt;
+  final DateTime? sourceUpdateAt;
 
   String get identity => '$sourceId\u0000$comicId';
   bool get hasMultipleChapters => chapters.length > 1;

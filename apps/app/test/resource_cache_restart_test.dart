@@ -70,8 +70,8 @@ void main() {
     );
     expect(sourceFile.origin, EncodedResourceOrigin.durableCacheFile);
     expect(detailFile.origin, EncodedResourceOrigin.durableCacheFile);
-    expect(sourceFile, isA<FileEncodedResourceSource>());
-    expect(detailFile, isA<FileEncodedResourceSource>());
+    expect(sourceFile, isA<MemoryEncodedResourceSource>());
+    expect(detailFile, isA<MemoryEncodedResourceSource>());
     expect(reopenedRaw.resourceLoads, 0);
     expect(reopenedCache.responses.stats.persistentHits, 2);
   });

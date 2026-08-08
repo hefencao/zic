@@ -16,7 +16,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - 外部来源可以在首帧之后 ready；封面 presentation MUST 使用稳定 canonical artwork identity。因来源暂不可用、transport 或 decode 失败后 MUST 保持稳定占位，不得由定时器、App resume、first-frame watchdog、provider eviction 或 loader closure 变化自动重启请求；只有显式来源刷新、资源 revision 或稳定 identity变化才能重新加载。
 - 首页每张封面 MUST 独立完成请求和显示；一张封面变慢或 durable response 写入变慢，
   不得阻塞其它已经取得 encoded bytes 的封面。冷 miss MAY 先使用 memory source，持久化
-  写入由统一 response cache 后台完成；已有 durable file hit MUST 保持文件直读。
+  写入由统一 response cache 后台完成；durable hit MUST 先物化为调用方自持有的 encoded bytes。response cache 可 trim/失效的文件路径 MUST NOT 暴露给 `FileImage` 或其它长生命周期 presentation 对象；`FileEncodedResourceSource` 只允许外部稳定本地文件。
 - 首页、书架和详情封面 Presentation State MUST 使用 canonical comic identity，不得因 raw Mihon alias、resume chapter、封面 URL 或 loader closure变化被销毁。Presentation MUST NOT 自己做定时 retry、first-frame watchdog、ImageCache eviction 或短时 Future join；资源重试/缓存所有权唯一属于 `ComicSourceResourceGateway/ResourceCacheManager`。
 - 全局网络 User-Agent MUST 是 composition-owned fallback设置，默认采用稳定 Android Chrome UA并可由用户修改。来源 request plan显式 UA、browser-session UA或 source-owned client策略 MUST 优先；全局 fallback不得覆盖来源权威。
 - App presentation MUST NOT 直接创建 `HttpClient`/`HttpURLConnection`或直接消费 source transport。生产 direct-network owner MUST 被限制在通用 transport、source-resolved host replay、source-owned runtime/client与插件安装 control-plane。
@@ -36,8 +36,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
   但隐藏页面不得为首屏预先创建封面 loader 或重复发起 cover request。
 - Home primary、enrichment 和可选 runtime 的状态仍 MUST 由各自 owner 管理；不得
   新增 App 私有正文/图片缓存或让 UI 直接调度网络。
-- “更新漫画” MUST 只显示当前已在书架中的漫画，并按持久化的漫画元数据更新时间排序；阅读历史
-  MUST 单独按 `ReadingProgress.updatedAt` 排序，普通阅读进度不得改变更新漫画集合或更新时间。
+- “更新漫画” MUST 只显示当前已在书架且存在 source-confirmed update signal 的漫画，并按该 signal 排序。章节目录已有基线后的章节新增/删除/source revision变化或新同源 version MAY 推进该 signal；阅读进度、普通 metadata刷新、仅浏览/阅读记录 MUST NOT 推进它。远程漫画缺少偏好记录时 MUST NOT 默认视为已加入书架；阅读历史 MUST 单独按 `ReadingProgress.updatedAt` 排序。
 
 ### 1.2 详情页与来源迁移
 

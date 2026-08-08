@@ -145,7 +145,6 @@ ImageProvider<Object>? localImageDirectFileProvider(PickedImage image) {
   return encodedResourceImageProvider(
     FileEncodedResourceSource(
       path: path,
-      origin: EncodedResourceOrigin.localFile,
       lengthInBytes: image.byteLength,
     ),
   );

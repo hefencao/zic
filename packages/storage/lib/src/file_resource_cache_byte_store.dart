@@ -6,10 +6,11 @@ import 'package:resource_cache/resource_cache.dart';
 
 /// Atomic, bounded file backing for immutable response bytes such as covers.
 ///
-/// Warm file hits use one compact storage-owned manifest. Per-entry metadata is
-/// retained only as a crash-recovery/migration journal, so a visible shelf does
-/// not parse one JSON file per cover before handing stable files to the engine.
-final class FileResourceCacheByteStore implements ResourceCacheFileByteStore,
+/// Warm byte hits use one compact storage-owned manifest. Per-entry metadata is
+/// retained only as a crash-recovery/migration journal. The file path remains
+/// private to this store; callers receive owned bytes because trim/invalidation
+/// may remove the backing file independently of presentation lifetime.
+final class FileResourceCacheByteStore implements ResourceCacheByteStore,
     ResourceCacheByteStoreMaintenance {
   FileResourceCacheByteStore(
     String rootPath, {
@@ -35,23 +36,6 @@ final class FileResourceCacheByteStore implements ResourceCacheFileByteStore,
   Future<void>? _manifestLoad;
   bool _manifestDirty = false;
   bool _closed = false;
-
-  @override
-  Future<PersistedResourceFile?> locate(ResourceCacheKey key) async {
-    _requireOpen();
-    final paths = _paths(key);
-    final record = await _validatedRecord(paths, key: key);
-    if (record == null) {
-      return null;
-    }
-    final id = _recordId(key);
-    _pendingTouches[id] = record.copyWith(lastAccessedAt: _now());
-    return PersistedResourceFile(
-      path: paths.bytes.path,
-      byteLength: record.byteLength,
-      expiresAt: record.expiresAt,
-    );
-  }
 
   @override
   Future<PersistedResourceBytes?> read(ResourceCacheKey key) async {

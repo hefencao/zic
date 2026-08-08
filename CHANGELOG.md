@@ -1,3 +1,11 @@
+## 0.31.0-dev.165：收口 Artwork 文件生命周期与 Home 更新语义
+
+- 根据 `zic-debug-trace-2026-08-08T07-28-36.jsonl` 收口封面间歇性 decode 失败：response cache 不再把可被 LRU/失效删除的持久 `.bin` 路径借给 Flutter `FileImage`；cache-owned artwork跨边界一律物化为自持有 bytes，`FileEncodedResourceSource` 只允许外部稳定本地文件。
+- 删除 `PersistedResourceFile` / `ResourceCacheByteStoreFileAccess` / `ResourceCacheFileByteStore` / `locate()` 文件借用接口；storage byte store仍拥有磁盘文件、manifest、TTL和 trim，presentation不再拥有其生命周期。
+- Home“更新漫画”改为显式 source-confirmed update projection：只有已在书架且 `SavedComicRecord.sourceUpdateAt != null` 的漫画进入；章节目录已有基线后发生新增/删除/revision变化或发现新的同源 successor/version才推进该时间。阅读进度、普通 metadata刷新和仅浏览/阅读记录不会产生更新。
+- 远程漫画在 Home primary 尚无偏好时默认 `inShelf=false`；本地导入仍默认在书架。未入书架期间发现的 source update在首次加入书架时清零，避免历史浏览状态变成“新更新”。
+- 新增 ADR 0148、dev.165根因审计与 owner gate；版本提升到 `0.31.0+165`。
+
 ## 0.31.0-dev.164：收口 Home 投影、Artwork revision 与 Runtime generation 所有权
 
 - `HomeLibrarySession` 成为已挂载 Home 的 chapter/SavedComic write-through projection owner；详情/来源 materialize/迁移不再直接写 durable store后等待后续 `_reloadLibrary()`。Reader final progress改为 route-local，仅页面 callback enqueue，返回后发布一次内存投影。
