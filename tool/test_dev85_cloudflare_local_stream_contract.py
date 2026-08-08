@@ -32,7 +32,7 @@ def main() -> int:
         'catalog.chapterFailure?.let { throw it }',
         '"getMangaUpdate",',
         'listOf(manga, existingChapters, true, true)',
-        'source.invokeMihonCompatible("fetchChapterList", listOf(detailedManga))',
+        'source.invokeMihonCompatible("fetchChapterList", listOf(manga))',
         'Mihon source exposes no compatible chapter-catalog operation',
     )
     if driver.index('"getMangaUpdate",') >= driver.index('source.invokeMihonCompatible("fetchChapterList"'):

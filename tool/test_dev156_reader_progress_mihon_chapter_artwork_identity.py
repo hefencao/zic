@@ -51,7 +51,7 @@ forbid(home, "_flushReaderProgressAfterRoute", "old route flush")
 for token in (
     '"getMangaUpdate",',
     'listOf(manga, existingChapters, true, true)',
-    'source.invokeMihonCompatible("fetchChapterList", listOf(detailedManga))',
+    'source.invokeMihonCompatible("fetchChapterList", listOf(manga))',
     'source.invokeMihonCompatible("getPageList", listOf(chapter))',
     'Mihon source exposes no compatible chapter-catalog operation',
 ):

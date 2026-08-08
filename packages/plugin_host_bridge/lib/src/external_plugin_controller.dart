@@ -157,8 +157,18 @@ final class ExternalPluginController {
   Map<String, Object> get manifestRestoreFailures =>
       Map<String, Object>.unmodifiable(_manifestRestoreFailures);
 
-  Future<void> restartSource(String sourceId) async {
+  /// Mihon-only runtime refresh used by the existing browser/Cloudflare
+  /// handoff. Runtime settings and Venera login are explicitly in-place and
+  /// must never call this lifecycle operation.
+  Future<void> restartMihonSourceForBrowserHandoff(String sourceId) async {
     _requireOpen();
+    if (!sourceId.startsWith('mihon:')) {
+      throw ArgumentError.value(
+        sourceId,
+        'sourceId',
+        'browser runtime restart is Mihon-only',
+      );
+    }
     final pluginId = _registry.ownerOfSource(sourceId);
     if (pluginId == null) {
       throw StateError('external source is not active: $sourceId');
@@ -166,6 +176,9 @@ final class ExternalPluginController {
     final record = _installed[pluginId];
     if (record == null) {
       throw StateError('external source owner is not installed: $pluginId');
+    }
+    if (record.plugin.format != ExternalComicPluginFormat.mihonExtension) {
+      throw StateError('source owner is not a Mihon extension: $pluginId');
     }
     try {
       await _registry.replace(record.plugin);

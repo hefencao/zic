@@ -60,7 +60,6 @@ final class ExternalPluginResourceTransportPool {
 final class _SourceResourceTransport implements Transport {
   _SourceResourceTransport(this._source, this._directOpen) {
     _client.connectionTimeout = const Duration(seconds: 15);
-    _client.userAgent = 'zic-venera/0.31.0';
     _client.autoUncompress = false;
   }
 
@@ -109,6 +108,18 @@ final class _SourceResourceTransport implements Transport {
     } on Failure catch (error) {
       if (error.code != ErrorCode.network) rethrow;
       _invalidate(uri);
+      if (error.details['sourceMediaProtocolMismatch'] == true) {
+        // The HTTP transaction itself succeeded, but it did not return encoded
+        // media. This is the signature of a source-owned OkHttp interceptor,
+        // authentication/TLS policy or anti-bot response that cannot be
+        // reproduced by the shared Dart HttpClient. Do not issue the same host
+        // request twice; execute the existing source-owned compatibility path.
+        return _openRuntimeFallback(
+          uri,
+          range: range,
+          validators: validators,
+        );
+      }
       final retry = await _retry(uri);
       if (retry == null) rethrow;
       return _openRetryPlan(
@@ -283,10 +294,16 @@ final class _SourceResourceTransport implements Transport {
       );
     }
     final modifiedValue = response.headers.value(HttpHeaders.lastModifiedHeader);
-    final responseBody = _HttpResponseBody(
-      response,
-      onError: () => _failedStreams.add(locator),
-    );
+    final responseBody = parsedRange != null && parsedRange.start > 0
+        ? _HttpResponseBody(
+            response,
+            onError: () => _failedStreams.add(locator),
+          )
+        : await _prefetchEncodedMediaBody(
+            response,
+            locator: locator,
+            onError: () => _failedStreams.add(locator),
+          );
     return ByteResponse(
       bytes: responseBody.stream,
       statusCode: response.statusCode,
@@ -387,7 +404,113 @@ final class _RequestPlanEntry {
   final DateTime resolvedAt;
 }
 
-final class _HttpResponseBody {
+abstract interface class _SourceHttpResponseBody {
+  Stream<List<int>> get stream;
+  Future<void> Function() get abort;
+}
+
+Future<_SourceHttpResponseBody> _prefetchEncodedMediaBody(
+  HttpClientResponse response, {
+  required Uri locator,
+  required void Function() onError,
+}) async {
+  final iterator = StreamIterator<List<int>>(response);
+  final prefetched = <List<int>>[];
+  final prefix = BytesBuilder(copy: false);
+  try {
+    while (prefix.length < 16 && await iterator.moveNext()) {
+      final chunk = iterator.current;
+      if (chunk.isEmpty) continue;
+      prefetched.add(chunk);
+      prefix.add(chunk);
+    }
+  } on Object {
+    onError();
+    await iterator.cancel();
+    rethrow;
+  }
+  final bytes = prefix.takeBytes();
+  if (!_looksLikeEncodedMediaPrefix(bytes)) {
+    await iterator.cancel();
+    throw Failure(
+      code: ErrorCode.network,
+      message: 'source host transport returned non-media bytes for $locator',
+      details: const <String, Object?>{'sourceMediaProtocolMismatch': true},
+    );
+  }
+  return _PrefetchedHttpResponseBody(
+    iterator,
+    prefetched,
+    onError: onError,
+  );
+}
+
+final class _PrefetchedHttpResponseBody implements _SourceHttpResponseBody {
+  _PrefetchedHttpResponseBody(
+    this._iterator,
+    this._prefetched, {
+    required void Function() onError,
+  }) : _onError = onError;
+
+  final StreamIterator<List<int>> _iterator;
+  final List<List<int>> _prefetched;
+  final void Function() _onError;
+  bool _aborted = false;
+
+  @override
+  Stream<List<int>> get stream async* {
+    try {
+      for (final chunk in _prefetched) {
+        if (_aborted) return;
+        yield chunk;
+      }
+      while (!_aborted && await _iterator.moveNext()) {
+        yield _iterator.current;
+      }
+    } on Object {
+      _onError();
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> Function() get abort => _abort;
+
+  Future<void> _abort() async {
+    if (_aborted) return;
+    _aborted = true;
+    await _iterator.cancel();
+  }
+}
+
+bool _looksLikeEncodedMediaPrefix(Uint8List bytes) {
+  bool matches(int offset, List<int> signature) {
+    if (bytes.length < offset + signature.length) return false;
+    for (var index = 0; index < signature.length; index++) {
+      if (bytes[offset + index] != signature[index]) return false;
+    }
+    return true;
+  }
+
+  if (matches(0, const <int>[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) ||
+      matches(0, const <int>[0xff, 0xd8, 0xff]) ||
+      matches(0, const <int>[0x47, 0x49, 0x46, 0x38]) ||
+      matches(0, const <int>[0x42, 0x4d]) ||
+      matches(0, const <int>[0x00, 0x00, 0x01, 0x00])) {
+    return true;
+  }
+  if (matches(0, const <int>[0x52, 0x49, 0x46, 0x46]) &&
+      matches(8, const <int>[0x57, 0x45, 0x42, 0x50])) {
+    return true;
+  }
+  if (matches(4, const <int>[0x66, 0x74, 0x79, 0x70]) && bytes.length >= 12) {
+    final brand = String.fromCharCodes(bytes.sublist(8, 12));
+    return brand == 'avif' || brand == 'avis' || brand == 'heic' || brand == 'heix';
+  }
+  return false;
+}
+
+final class _HttpResponseBody implements _SourceHttpResponseBody {
   _HttpResponseBody(
     HttpClientResponse response, {
     required void Function() onError,
@@ -448,6 +571,7 @@ final class _HttpResponseBody {
     abort = abortUpstream;
   }
 
+  @override
   late final Stream<List<int>> stream;
   late final Future<void> Function() abort;
 }

@@ -404,7 +404,11 @@ internal class MihonRuntimeDriver private constructor(
         }
         ensureNotCancelled(requestId)
         val chapters = try {
-            source.invokeMihonCompatible("fetchChapterList", listOf(detailedManga))
+            // Match Mihon CatalogueSource: chapter-list identity is the original
+            // SManga supplied by the host, not the detailed copy returned by a
+            // separate metadata request. Some extensions keep request-only
+            // state in that original model.
+            source.invokeMihonCompatible("fetchChapterList", listOf(manga))
                 .unwrapAsync()
                 .asObjectList()
         } catch (error: Throwable) {

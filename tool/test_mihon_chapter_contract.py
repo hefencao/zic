@@ -24,7 +24,7 @@ def main() -> int:
         'catalog.chapterFailure?.let { throw it }',
         'val combined = try',
         'listOf(manga, existingChapters, true, true)',
-        'source.invokeMihonCompatible("fetchChapterList", listOf(detailedManga))',
+        'source.invokeMihonCompatible("fetchChapterList", listOf(manga))',
         'source.invokeMihonCompatible("getPageList", listOf(chapter))',
         'source.invokeMihonCompatible("fetchPageList", listOf(chapter))',
         'val existingChapters = cachedMihonChaptersForComic(source, comicId)',
@@ -67,6 +67,7 @@ def main() -> int:
         'mihonChapterMetadataScore',
         'for (candidate in listOf("getChapterList", "fetchChapterList"))',
         'source.invokeMihonCompatible("getChapterList"',
+        'source.invokeMihonCompatible("fetchChapterList", listOf(detailedManga))',
         'fetchMangaUpdate',
         '开始阅读"',
     )

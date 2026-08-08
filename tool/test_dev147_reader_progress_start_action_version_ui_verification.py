@@ -63,7 +63,7 @@ for stale in (
 for token in (
     '"getMangaUpdate",',
     'listOf(manga, existingChapters, true, true)',
-    'source.invokeMihonCompatible("fetchChapterList", listOf(detailedManga))',
+    'source.invokeMihonCompatible("fetchChapterList", listOf(manga))',
     'source.invokeMihonCompatible("getPageList", listOf(chapter))',
 ):
     require(mihon, token, 'Mihon source chapter interface')

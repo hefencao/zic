@@ -1,3 +1,11 @@
+## 0.31.0-dev.160：修正 Mihon 目录身份并解除 Venera 运行时重启
+
+- 对照当前 Mihon `CatalogueSource`：1.6 compatibility shim 对原始 `SManga` 并行获取 details/chapters；legacy fallback 同样以原始 manga 调 `fetchChapterList`，不再把补全后的对象作为章节请求身份。
+- Venera Web 登录与外部 source settings 只调用当前 runtime capability，不再为设置/登录创建 replacement session；通用 `restartSource` API 删除，只保留 Mihon browser handoff 专用 restart。
+- 生产外部 runtime session 安全上限由测试默认 8 显式提升为 32，避免安装较多 Mihon/Venera 插件时后续 session 因进程配额静默激活失败。
+- 共享媒体 transport 删除 `zic-venera/0.31.0` 默认 UA。宿主直连得到 2xx 但前缀不是编码图片时，在字节进入 Pipeline 前转入已有 source-owned runtime network compatibility path。GET/HEAD 仍零 body。
+- Mihon comic-details/chapter metadata cache revision 提升，避免旧错误空目录/单目录 durable manifest 遮蔽修正后的 source contract。Cloudflare 本轮未修改。
+
 ## 0.31.0-dev.159：对齐 Mihon 宿主接口并事务替换插件 runtime
 
 - 以用户上传的当前 Mihon 主仓为接口基准：1.6 章节详情统一从 `Source.getMangaUpdate(manga, existingChapters, true, true)` 获取，`CatalogueSource` 自身负责兼容 legacy `fetchMangaDetails/fetchChapterList`；ABI 1.4 明确缺失 combined 能力时才由 ZIC回退 legacy。页面列表同理以 `getPageList(SChapter)` 为主，只有能力缺失才调用 `fetchPageList`。

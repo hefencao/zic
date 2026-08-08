@@ -1,5 +1,12 @@
 # zic Implementation Plan
 
+## P0：Mihon目录、Venera生命周期与图片网络设备闭环
+
+- Roumanwu：记录 `getMangaUpdate` 输入 raw SManga、详情结果和 chapter count；确认 compatibility shim 的 `fetchChapterList` 使用原始 manga，原 80章不会再被旧 durable manifest/错误 request identity刷新为0章。
+- 禁漫天堂：升级后确认 Mihon details/chapter cache revision触发真实刷新；若 source仍返回单个完整 `SChapter`，保留其原始对象并采集 fresh trace，不再用标题/URL猜测。Cloudflare本轮不调整。
+- 绅士漫画：分别验证 cover/page host直连与 `sourceMediaProtocolMismatch` compatibility fallback；确认非媒体 2xx在进入 decoder前被拒绝，正常媒体仍保持统一 host streaming。
+- Venera：连续修改镜像/设置和完成 Web登录，确认 active source/session不被 replacement；安装超过8个混合外部插件，确认生产32-session上限下不会因第9个开始静默消失。
+
 ## P0：详情Artwork API与重复解码设备闭环
 
 - 真机打开含大量预览/评论头像的详情页，确认普通 artwork每项只有一个 provider listener；裁剪/尺寸测量项只有一个显式 ImageStream listener，build/layout与 decode不因加载占位再挂第二个 Image。

@@ -119,12 +119,19 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     if (snapshot != null &&
         (source.sourceId.startsWith('mihon:') ||
             source.sourceId.startsWith('venera:'))) {
-      final controller = widget.externalPlugins;
-      if (controller != null) {
-        await controller.restartSource(source.sourceId);
-        await _replaceExternalSources();
+      // Venera exposes confirmWebLogin on the already-active runtime; replacing
+      // that runtime after every browser round-trip is both redundant and can
+      // make the source disappear. Mihon browser/Cloudflare handoff keeps its
+      // existing restart behavior for now and is intentionally not changed in
+      // this iteration.
+      if (source.sourceId.startsWith('mihon:')) {
+        final controller = widget.externalPlugins;
+        if (controller != null) {
+          await controller.restartMihonSourceForBrowserHandoff(source.sourceId);
+          await _replaceExternalSources();
+        }
       }
-      final active = _sourceForId(source.sourceId);
+      final active = _sourceForId(source.sourceId) ?? source;
       final Object? candidate = active;
       if (candidate is AuthenticatableComicSource) {
         final accountSource = candidate as AuthenticatableComicSource;
@@ -136,8 +143,8 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
             localStorage: snapshot.localStorage,
           );
         } on Object {
-          // Mihon runtimes do not expose account operations; the restarted
-          // runtime imports the browser snapshot through AndroidCookieJar.
+          // Mihon runtimes do not expose account operations; their existing
+          // browser/Cloudflare handoff imports the snapshot separately.
         }
       }
     }
@@ -212,7 +219,6 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
       context,
       source: source,
       networkBridge: widget.networkBridge,
-      externalPlugins: widget.externalPlugins,
       onExternalSourcesChanged: _replaceExternalSources,
     );
     if (mounted) {

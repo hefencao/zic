@@ -39,7 +39,7 @@ final class CachedBrowsableComicSource
   final BrowsableComicSource source;
   final ResourceCacheManager cache;
   static const String _chapterMetadataSchemaRevision =
-      'chapter-metadata-v2-durable-plugin-locators';
+      'chapter-metadata-v3-source-contract-refresh';
   static const int _maxChapterIdentityIndex = 512;
   final LinkedHashMap<String, String> _chapterComicIds =
       LinkedHashMap<String, String>();
@@ -884,6 +884,13 @@ ResourceCacheKey _comicKey(ComicResourceCacheIdentity identity) =>
       kind: ResourceCacheKind.comicDetails,
       identity: identity.response('details'),
       namespace: identity.namespace,
+      // dev.160 corrects the Mihon 1.6 CatalogueSource host contract. Avoid
+      // serving durable manifests produced by the previous shim, where chapter
+      // discovery could collapse to an empty/invalid catalog. Other source
+      // ecosystems keep their existing cache revision.
+      revision: identity.sourceId.startsWith('mihon:')
+          ? 'mihon-comic-details-v2-host-contract'
+          : '',
     );
 
 ResourceCacheKey _imageKey({

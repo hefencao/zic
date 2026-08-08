@@ -98,7 +98,6 @@ Future<void> openComicSourceSettings(
   BuildContext context, {
   required BrowsableComicSource source,
   required AndroidNetworkBridge networkBridge,
-  ExternalPluginController? externalPlugins,
   Future<void> Function()? onExternalSourcesChanged,
 }) async {
   if (!sourceSupportsSettings(source)) {
@@ -109,11 +108,11 @@ Future<void> openComicSourceSettings(
       builder: (_) => ExternalSourceSettingsScreen(
         source: source,
         onApply: () async {
-          if (externalPlugins != null &&
-              (source.sourceId.startsWith('mihon:') ||
-                  source.sourceId.startsWith('venera:'))) {
-            await externalPlugins.restartSource(source.sourceId);
-          }
+          // updateSetting() already mutated the active runtime. Restarting the
+          // whole plugin here creates a second session and can drop otherwise
+          // healthy Venera/Mihon sources on a transient activation failure.
+          // Refresh projections only; payload install/update remains the
+          // lifecycle owner's responsibility.
           await onExternalSourcesChanged?.call();
         },
         onLogin: source.sourceId.startsWith('mihon:') ||
@@ -1583,7 +1582,6 @@ final class _SourceManagementScreenState
       context,
       source: source,
       networkBridge: widget.networkBridge,
-      externalPlugins: widget.externalPlugins,
       onExternalSourcesChanged: widget.onExternalSourcesChanged,
     );
     final controller = widget.externalPlugins;

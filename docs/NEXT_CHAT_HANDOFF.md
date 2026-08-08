@@ -1,6 +1,6 @@
-# dev.159 后续交接
+# dev.160 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.159_mihon-host-contract-resource-session-replacement.zip`。
+唯一后续基线：`zic_v0.31.0-dev.160_mihon-catalog-venera-runtime-media-fallback.zip`。
 
 ## 必读
 
@@ -13,7 +13,7 @@
 7. `docs/adr/0122-current-reader-pipeline-authority-consolidation.md`
 8. `docs/adr/0118-unified-version-stable-cache-identities-and-verified-artifact-reuse.md`
 9. `docs/adr/0140-cloudflare-browser-session-history-and-plugin-persistence.md`
-10. `docs/adr/0143-mihon-host-contract-resource-plan-runtime-replacement.md`
+10. `docs/adr/0144-mihon-catalogue-venera-lifecycle-media-network.md`
 11. `docs/audits/dev157-root-cause-owner-cleanup-audit.md`
 12. `docs/audits/dev157-validation-results.md`
 13. `docs/audits/dev158-compile-owner-blocking-audit.md`
@@ -22,12 +22,12 @@
 ## 当前代码事实
 
 - Reader页面变化只 enqueue latest progress；SQLite在 storage-owned isolate内按同章节 latest-wins合并，空闲约8秒提交、持续活跃最多约30秒提交。Reader route不等待 durable barrier。返回后 Home只发布最终 progress一次，详情只替换当前章节，不全量 reload library。
-- Mihon当前 1.6宿主章节入口是 `getMangaUpdate(manga, existingChapters, true, true)`；`CatalogueSource`内部兼容 legacy `fetchChapterList`。ZIC只有在 combined能力明确不存在时才回退 1.4 legacy。正文先 `getPageList(SChapter)`，能力缺失才 `fetchPageList`。禁止 synthetic chapter和任何按标题/URL/number推断或合并 SChapter。
+- Mihon 1.6/current章节入口是 `getMangaUpdate(manga, existingChapters, true, true)`；ZIC `CatalogueSource` shim与当前 Mihon一致，details/chapters均使用原始 `SManga`独立请求。combined能力缺失时才回退 legacy，且 `fetchChapterList`仍使用原始 manga。正文先 `getPageList(SChapter)`，能力缺失才 `fetchPageList`；禁止 synthetic和标题/URL/number猜测。
 - `ComicSourceResourceGateway/ResourceCacheManager` 是 external artwork唯一恢复/cache owner。详情统一使用 `ComicDetailsArtworkLoader`，resource role显式穿过 loader；普通 artwork复用 `StableArtworkImage`，裁剪/尺寸测量最多一个显式 ImageStream listener，不得同时构建第二个 Image。Home、书架、漫画源、详情没有 timer retry、first-frame watchdog、resume retry、ImageCache eviction或 App级短时 Future join。
 - Mihon raw comicId只用于 runtime locator；durable artwork与封面 presentation key使用 canonical comic identity。`mihon:resource:` 等插件 URI只走 gateway。
-- Mihon page/cover资源 request plan保留 `imageRequest(page)`/source request 的准确 URL、method、headers和小型 body；GET/HEAD无 body。host streaming补当前 CookieJar Cookie和 browser-session UA，source-owned transform才使用既有有界 runtime fallback。
+- Mihon page/cover request plan保留 `imageRequest(page)` 的 URL/method/headers/body；GET/HEAD无 body。共享 transport无 Venera默认 UA。host直连若 2xx前缀不是编码图片，在进入 Pipeline前使用现有 source-owned runtime network兼容路径；正常图片仍走统一流式 transport。
 - Cloudflare可见浏览器沿用 dev.154/dev.155：真实 WebView UA与 Cookie/localStorage同 revision handoff；typed classifier与浏览器完成 probe分离；验证后按稳定 sourceId解析 replacement adapter。
-- 外部插件 manifest按记录容错，可从 `.bak/.part/.invalid`恢复 owned payload；激活仍执行 hash/签名/ABI/entry检查。已激活插件 restart/update必须先激活/验证候选再原子 replace，失败保留旧 session，禁止 deactivate-first。
+- 外部插件 manifest按记录容错。只有 payload安装/升级走事务式 replacement；settings与Venera Web登录原地更新，不 restart。Mihon浏览器 handoff保留受限 Mihon-only restart。生产 runtime session安全上限32，不能恢复通用8-session用户上限。
 - Reader/Pipeline网络、decode、texture参数未因本轮问题改变：encoded前7/后3，holder 7/5/3/2，decode前2/后1，normal network5/decode3/upload2。
 - Native identity保持 `zic-media-core-dev134-abi6-lib00121400`。
 - 当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip`；不得从旧版本偷偷补入。

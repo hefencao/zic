@@ -6,6 +6,8 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
 import eu.kanade.tachiyomi.source.model.SMangaUpdate
+import kotlinx.coroutines.async
+import kotlinx.coroutines.supervisorScope
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -32,18 +34,26 @@ interface CatalogueSource : Source {
         chapters: List<SChapter>,
         fetchDetails: Boolean,
         fetchChapters: Boolean,
-    ): SMangaUpdate {
-        val updatedManga = if (fetchDetails) {
-            fetchMangaDetails(manga).awaitSingleCompat()
+    ): SMangaUpdate = supervisorScope {
+        // Match current Mihon/TachiyomiX CatalogueSource exactly: details and
+        // chapters are independent requests over the original SManga. Feeding
+        // the detailed copy back into fetchChapterList changes extension
+        // request identity and can collapse a previously valid catalog to an
+        // empty/incorrect list.
+        val asyncManga = if (fetchDetails) {
+            async { fetchMangaDetails(manga).awaitSingleCompat() }
         } else {
-            manga
+            null
         }
-        val updatedChapters = if (fetchChapters) {
-            fetchChapterList(updatedManga).awaitSingleCompat()
+        val asyncChapters = if (fetchChapters) {
+            async { fetchChapterList(manga).awaitSingleCompat() }
         } else {
-            chapters
+            null
         }
-        return SMangaUpdate(updatedManga, updatedChapters)
+        SMangaUpdate(
+            asyncManga?.await() ?: manga,
+            asyncChapters?.await() ?: chapters,
+        )
     }
 
     override suspend fun getPageList(chapter: SChapter): List<Page> =

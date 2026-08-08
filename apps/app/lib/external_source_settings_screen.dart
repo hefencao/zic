@@ -489,7 +489,7 @@ final class _ExternalSourceSettingsScreenState
         actions: <Widget>[
           TextButton(
             onPressed: _changed && !_working ? () => unawaited(_apply()) : null,
-            child: const Text('应用并重启'),
+            child: const Text('应用'),
           ),
         ],
       ),

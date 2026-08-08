@@ -31,7 +31,7 @@ for token in (
     'val combined = try',
     'listOf(manga, existingChapters, true, true)',
     'if (!error.isMihonCapabilityAbsence())',
-    'source.invokeMihonCompatible("fetchChapterList", listOf(detailedManga))',
+    'source.invokeMihonCompatible("fetchChapterList", listOf(manga))',
     'source.invokeMihonCompatible("getPageList", listOf(chapter))',
     'source.invokeMihonCompatible("fetchPageList", listOf(chapter))',
     'val existingChapters = cachedMihonChaptersForComic(source, comicId)',
@@ -90,6 +90,15 @@ for token in (
     require(controller, token, 'controller replacement path')
 approve = controller[controller.index('Future<List<BrowsableComicSource>> approveAndActivate'):controller.index('Future<void> remove(', controller.index('Future<List<BrowsableComicSource>> approveAndActivate'))]
 forbid(approve, '_registry.deactivate(', 'deactivate-before-install')
+
+
+# dev.159 transaction remains the payload/code replacement owner. Runtime
+# settings and Venera browser-login mutation are in-place capabilities and must
+# not be forced through this replacement transaction.
+settings = read('apps/app/lib/source_browser.dart') + read('apps/app/lib/external_source_settings_screen.dart')
+source_compat = read('apps/app/lib/demo_home_source_compat.dart')
+forbid(settings, '应用并重启', 'settings restart UI')
+forbid(source_compat, 'restartSource(', 'generic browser/runtime restart')
 
 # A valid empty chapter catalog is not a Cloudflare signal; only typed lower
 # layer failures may open the verification recovery flow.

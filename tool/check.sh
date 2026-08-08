@@ -96,6 +96,7 @@ python3 "$ROOT/tool/test_dev156_reader_progress_mihon_chapter_artwork_identity.p
 python3 "$ROOT/tool/test_dev157_root_cause_ownership_cleanup.py"
 python3 "$ROOT/tool/test_dev158_artwork_loader_compile_blocking_cleanup.py"
 python3 "$ROOT/tool/test_dev159_mihon_host_contract_resource_session_replacement.py"
+python3 "$ROOT/tool/test_dev160_mihon_catalogue_venera_lifecycle_media_fallback.py"
 python3 "$ROOT/tool/check_test_quarantine.py"
 python3 "$ROOT/tool/test_texture_schedule_timing_contract.py"
 python3 "$ROOT/tool/test_texture_bridge_kotlin_compile.py"

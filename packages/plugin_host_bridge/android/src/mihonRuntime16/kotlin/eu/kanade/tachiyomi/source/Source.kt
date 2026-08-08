@@ -11,6 +11,8 @@ import rx.Observable
 interface Source {
     val id: Long
     val name: String
+    val lang: String
+        get() = ""
     val supportsLatest: Boolean
 
     fun getFilterList(): FilterList = FilterList()

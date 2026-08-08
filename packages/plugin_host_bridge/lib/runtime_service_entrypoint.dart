@@ -7,6 +7,12 @@ import 'package:plugin_host/plugin_host.dart';
 import 'src/native_runtime_drivers.dart';
 import 'src/runtime_service_handler.dart';
 
+// Safety ceiling for the dedicated plugin process, not a user-visible plugin
+// limit. The generic plugin_host default is intentionally small for tests and
+// embeddings; production must accommodate a realistic mixed Mihon/Venera
+// installation without silently dropping entries after the eighth session.
+const int _productionExternalPluginSessionLimit = 32;
+
 /// Creates the Dart-owned endpoint inside the dedicated Android runtime
 /// process and attaches it to the process-local MethodChannel.
 ///
@@ -36,6 +42,7 @@ final class AndroidExternalPluginRuntimeServiceBootstrap {
       processHost: ExternalPluginRuntimeProcessHost(
         factories: factories,
         payloadVerifier: verifier,
+        maxActiveSessions: _productionExternalPluginSessionLimit,
       ),
       processId: processId,
     );
