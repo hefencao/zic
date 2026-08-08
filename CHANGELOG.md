@@ -1,3 +1,11 @@
+## 0.31.0-dev.170：收口 Mihon 明文媒体能力与下载失败重试所有权
+
+- 根据 `zic-debug-trace-2026-08-08T11-55-06.jsonl` 确认 WNACG 目录/详情/章节元数据成功，封面全部 source-load失败，Reader正文则被 Android `CLEARTEXT ... not permitted by network security policy` 在发请求前拒绝；不做 WNACG 域名白名单或 HTTPS改写。
+- Android宿主通过统一 Network Security Configuration允许插件/source实际返回的 HTTP(S)媒体 URL；source/request plan继续拥有准确 URL/headers/client，HTTPS来源不受影响。
+- external runtime `retryable`错误显式映射为 `ErrorCode.network`；`UnknownServiceException` 等确定性 transport capability/policy错误不再伪装成 transient network。
+- `LiveCoordinator` 增加当前 demand内 terminal download failure latch，删除 source-listener 的第二下载重提权；非 retryable失败和网络重试耗尽后不再被 `finally` 热循环重新提交。
+- source-card cover Trace补充 domain error code/message；新增 ADR 0153、dev.170根因审计与 owner gate，版本提升到 `0.31.0+170`。
+
 ## 0.31.0-dev.169：按 Mihon Filter ABI 收口来源筛选 schema/state
 
 - 撤销 dev.168“所有 Mihon 均 `supportsSearchFilters=true`”错误抽象：筛选入口恢复由 source实际非空 `getFilterList()`决定。

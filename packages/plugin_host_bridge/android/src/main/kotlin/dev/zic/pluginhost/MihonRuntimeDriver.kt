@@ -2450,7 +2450,8 @@ private fun Throwable.isSourceVerificationFailure(): Boolean =
     sourceVerificationFailure() != null
 
 private fun Throwable.isNetworkFailure(): Boolean =
-    this is java.io.IOException || javaClass.name.contains("Http", ignoreCase = true)
+    this !is java.net.UnknownServiceException &&
+        (this is java.io.IOException || javaClass.name.contains("Http", ignoreCase = true))
 
 private fun formatInstant(epochMillis: Long): String {
     val formatter = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)

@@ -29,7 +29,8 @@ require(
 )
 require(
     'packages/plugin_host/lib/src/runtime_source_adapter.dart',
-    'details: runtimeError.details',
+    '...runtimeError.details',
+    "'runtimeErrorCode': runtimeError.code",
 )
 require(
     'packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/AndroidCloudflareInterceptor.kt',

@@ -198,13 +198,21 @@ final class ExternalPluginRuntimeSession
     }
     final runtimeError = response.error;
     if (runtimeError != null) {
+      final verificationRequired =
+          runtimeError.code == 'source-verification-required';
       throw Failure(
-        code: runtimeError.code == 'source-verification-required'
+        code: verificationRequired
             ? ErrorCode.sourceVerificationRequired
-            : ErrorCode.source,
+            : runtimeError.retryable
+                ? ErrorCode.network
+                : ErrorCode.source,
         message: '${runtimeError.code}: ${runtimeError.message}',
         cause: runtimeError,
-        details: runtimeError.details,
+        details: <String, Object?>{
+          ...runtimeError.details,
+          'runtimeErrorCode': runtimeError.code,
+          'runtimeRetryable': runtimeError.retryable,
+        },
       );
     }
     final payload = response.payload;

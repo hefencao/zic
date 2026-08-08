@@ -101,6 +101,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final Map<DownloadId, String> _networkTaskKeys = <DownloadId, String>{};
   final Map<DownloadId, int> _downloadRetryRounds = <DownloadId, int>{};
   final Set<DownloadId> _downloadRetryPending = <DownloadId>{};
+  final Set<DownloadId> _downloadTerminalFailures = <DownloadId>{};
   final Map<DecodeId, DecodeDemand> _decodes = <DecodeId, DecodeDemand>{};
   final Map<DecodeId, int> _decodeDemandRevisions = <DecodeId, int>{};
   final Map<DecodeId, UploadDemand> _uploads = <DecodeId, UploadDemand>{};
@@ -250,6 +251,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _networkTaskKeys.clear();
     _downloadRetryRounds.clear();
     _downloadRetryPending.clear();
+    _downloadTerminalFailures.clear();
     decode.cancelAll();
     upload.cancelAll();
     _downloads.clear();
@@ -299,6 +301,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       if (!session.activeRun) {
         _downloadRetryRounds.remove(entry.key);
         _downloadRetryPending.remove(entry.key);
+        _downloadTerminalFailures.remove(entry.key);
       }
       _watchSource(sessionId, entry.key, session);
     }
@@ -360,6 +363,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         session.state == DownloadState.disposed ||
         session.activeRun ||
         _downloadRetryPending.contains(id) ||
+        _downloadTerminalFailures.contains(id) ||
         (_downloadRetryRounds[id] ?? 0) > _maxDownloadRetryRounds) {
       return;
     }
@@ -386,6 +390,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _sourceWakeLengths.remove(id);
     _downloadRetryRounds.remove(id);
     _downloadRetryPending.remove(id);
+    _downloadTerminalFailures.remove(id);
   }
 
   void _watchSource(
@@ -405,6 +410,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       if (priorLength == null || snapshot.length > priorLength) {
         _downloadRetryRounds.remove(id);
         _downloadRetryPending.remove(id);
+        _downloadTerminalFailures.remove(id);
       }
       final shouldWake = onDecode != null ||
           priorLength == null ||
@@ -415,16 +421,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         return;
       }
       _sourceWakeLengths[id] = snapshot.length;
-        _wakeDecodesForSource(sessionId, id);
-      if (snapshot.failure != null && _downloads.containsKey(id)) {
-        unawaited(() async {
-          await Future<void>.delayed(Duration.zero);
-          final demandedSession = registry.find(id);
-          if (demandedSession != null) {
-            _ensureDownloadTask(sessionId, id, demandedSession);
-          }
-        }());
-      }
+      _wakeDecodesForSource(sessionId, id);
     }
     _sourceListeners[id] = listener;
     session.addSourceListener(listener);
@@ -477,6 +474,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           ).run(cancel: token);
           _downloadRetryRounds.remove(id);
           _downloadRetryPending.remove(id);
+          _downloadTerminalFailures.remove(id);
           _wakeDecodesForSource(sessionId, id);
           return;
         } on Object catch (error) {
@@ -498,10 +496,14 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
                         .toInt(),
               },
             );
-            if (_downloads.containsKey(id) &&
-                error is Failure &&
-                error.code == ErrorCode.network) {
-              _scheduleDownloadRetry(sessionId, id, session, error);
+            if (_downloads.containsKey(id) && error is Failure) {
+              final retryScheduled = error.code == ErrorCode.network &&
+                  _scheduleDownloadRetry(sessionId, id, session, error);
+              if (!retryScheduled) {
+                _downloadTerminalFailures.add(id);
+              }
+            } else if (_downloads.containsKey(id)) {
+              _downloadTerminalFailures.add(id);
             }
             return;
           }
@@ -531,6 +533,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       if (!_downloads.containsKey(id) && !session.activeRun) {
         _retireDownloadTracking(id, session);
       } else if (_downloads.containsKey(id) &&
+          !_downloadTerminalFailures.contains(id) &&
           session.state != DownloadState.promoted &&
           session.state != DownloadState.disposed) {
         scheduleMicrotask(() {
@@ -542,7 +545,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     }
   }
 
-  void _scheduleDownloadRetry(
+  bool _scheduleDownloadRetry(
     String sessionId,
     DownloadId id,
     DownloadSession session,
@@ -551,11 +554,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     if (_disposed ||
         _downloadRetryPending.contains(id) ||
         !_downloads.containsKey(id)) {
-      return;
+      return false;
     }
     final round = (_downloadRetryRounds[id] ?? 0) + 1;
     if (round > _maxDownloadRetryRounds) {
-      return;
+      return false;
     }
     _downloadRetryRounds[id] = round;
     _downloadRetryPending.add(id);
@@ -585,6 +588,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       }
       _ensureDownloadTask(sessionId, id, session);
     }());
+    return true;
   }
 
   Future<void> _sleepOrCancel(Duration delay, CancelToken token) async {

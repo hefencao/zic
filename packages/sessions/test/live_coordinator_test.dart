@@ -251,6 +251,92 @@ void main() {
     expect(registry.find(id)?.state, DownloadState.promoted);
   });
 
+  test('terminal source failure is not hot-looped while demand is unchanged',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('live_terminal_failure_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'terminal',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/terminal'),
+    );
+    final index = MemIndex();
+    await index.open();
+    addTearDown(index.close);
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: _Clock(),
+      index: index,
+    );
+    addTearDown(registry.dispose);
+    final transport = _AlwaysFailTransport(
+      const Failure(code: ErrorCode.source, message: 'deterministic source failure'),
+    );
+    final coordinator = LiveCoordinator(
+      registry: registry,
+      transportFor: (_) => transport,
+      clock: _Clock(),
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(coordinator.dispose);
+
+    const demand = DownloadDemand(
+      role: PageRole.current,
+      priority: 1000,
+      reason: 'terminal',
+      expirationRevision: 1,
+    );
+    final first = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{id: demand},
+      decodes: const <DecodeId, DecodeDemand>{},
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{ResourceId.download(id)},
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: first,
+        diff: DemandDiff.between(DemandPlan.empty(), first),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    await coordinator.idle();
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(transport.opens, 1);
+
+    const changedDemand = DownloadDemand(
+      role: PageRole.current,
+      priority: 999,
+      reason: 'explicit-demand-change',
+      expirationRevision: 2,
+    );
+    final second = DemandPlan(
+      revision: 2,
+      downloads: <DownloadId, DownloadDemand>{id: changedDemand},
+      decodes: const <DecodeId, DecodeDemand>{},
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{ResourceId.download(id)},
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: second,
+        diff: DemandDiff.between(first, second),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    await coordinator.idle();
+    await Future<void>.delayed(Duration.zero);
+    expect(transport.opens, 2);
+  });
+
   test('download completion wakes a waiting decode demand', () async {
     final temp = await Directory.systemTemp.createTemp('live_decode_test_');
     final source = File('${temp.path}/source.webp');
@@ -1135,6 +1221,23 @@ final class _ControlledTransport implements Transport {
         validators: const Validators(etag: 'growth'),
         rangeSupported: false,
       );
+}
+
+final class _AlwaysFailTransport implements Transport {
+  _AlwaysFailTransport(this.failure);
+
+  final Failure failure;
+  int opens = 0;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async {
+    opens++;
+    throw failure;
+  }
 }
 
 final class _FlakyTransport implements Transport {

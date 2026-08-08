@@ -21,6 +21,12 @@
 - Home updates分别验证四类：未入书架+有阅读历史、未入书架+已检测 source变化、已入书架但无 source变化、已入书架且检测到新章节/新版本；只有最后一类显示。阅读进度和普通 metadata刷新不得改变 update signal。
 - 首次把此前未入书架漫画加入书架时，加入前已发现的 version/chapter signal不得被当作“新更新”；之后再次检测到真实 source变化才进入更新。
 
+## P0：WNACG HTTP 媒体与终止失败真机闭环
+
+- 用 `mihon:6551136894818591762` 重新打开 WNACG 列表、详情和 Reader，确认 `http://img*.wnimg*.ru/...` 封面与正文由原 source request成功返回；不得新增域名白名单、URL改写或第二 transport。
+- 故意制造一个 non-retryable source failure，确认每个稳定 demand只产生一次 terminal failure，不再出现同一 DownloadId 数百次 `downloadStarted/taskFailed`；再制造 transient `ErrorCode.network` 验证有界 retry后成功/终止。
+- 新 source-card trace应携带 `errorCode/errorMessage`；若封面仍失败，先区分 runtime/network policy与 decoder，不恢复 Presentation retry。
+
 ## P0：网络 UA / client / cache ownership 真机闭环
 - 在完整 Flutter/Dart 工具链执行 analyzer，确认 dev.161→162 删除 `loadBytes`、split chapter resource setter 与 catalog artwork facade 后没有遗漏调用方；重点覆盖 `demo_home_source_compat`、`source_resource_gateway`、downloads 与 catalog tests。
 - 真机/fixture 同时覆盖完整字节 fallback 与 streaming range path，确认二者使用同一 source-resolved request plan；不得出现 full-byte 直接调用 raw source transport或 metadata/artwork 走 page-body bypass。

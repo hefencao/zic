@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Mihon extensions own their resolved media URLs. The host permits the
+         transport capability globally because extension media hosts are dynamic;
+         HTTPS is still used whenever the source returns HTTPS. -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

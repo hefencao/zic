@@ -1,6 +1,6 @@
-# dev.169 后续交接
+# dev.170 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.169_mihon-filter-schema-state.zip`。
+唯一后续基线：`zic_v0.31.0-dev.170_mihon-cleartext-media-retry-owner.zip`。
 
 ## 必读
 
@@ -22,11 +22,14 @@
 16. `docs/adr/0150-source-browse-cover-and-filter-presentation-boundary.md`
 17. `docs/adr/0151-source-filter-capability-and-default-section-ownership.md`
 18. `docs/adr/0152-mihon-source-filter-schema-state-ownership.md`
-19. `docs/audits/dev169-mihon-filter-interface-root-cause-audit.md`
-20. `docs/audits/dev169-validation-results.md`
+19. `docs/adr/0153-mihon-cleartext-media-and-download-retry-ownership.md`
+20. `docs/audits/dev170-mihon-wnacg-media-retry-root-cause-audit.md`
+21. `docs/audits/dev170-validation-results.md`
 
 ## 当前代码事实
 
+- Mihon/source媒体 URL继续由插件 request plan拥有；Android宿主以统一 Network Security Configuration允许 source实际返回的 HTTP(S)媒体，不维护 WNACG/wnimg域名白名单、不擅自 HTTPS改写。
+- external runtime `retryable=true`投影为 domain `ErrorCode.network`；确定性 `UnknownServiceException`不标记 transient。Reader下载 retry唯一属于 `LiveCoordinator`，non-retryable/source失败与网络恢复耗尽在当前 demand内 terminal，source listener/finally不能重新提交。
 - 漫画源 browse 内容 revision不再承担 artwork revision：分页、SWR后台刷新、详情回写导致的 browse projection变化都不能全局重建封面 Future/ImageProvider；仅 cover URI自身变化或显式来源 artwork refresh触发重新加载。source card Sliver owner key使用 canonical comic identity，raw plugin locator只用于调用/交互。
 - source filter唯一能力事实是来源实际 `getFilterList()`：非空才显示分类栏“筛选”，空列表不发明入口；已删除 `supportsSearchFilters`。首次默认 section仍由当前 Presentation排序第一项决定，catalog最近 projection不得恢复 section/query/filter UI状态。
 - Mihon Filter bridge按官方 Header/Separator/Select/Text/CheckBox/TriState/Group/Sort基类识别插件自定义子类，保留 Group树；runtime请求使用类型化 `filterState` override，不能退回 concrete class-name猜测或 flat `filterIds`。
@@ -56,6 +59,7 @@
 
 ## 下一步真机优先验证
 
+- 首先复测 WNACG（`mihon:6551136894818591762`）：列表封面与 Reader正文应能读取 source给出的 `http://img*.wnimg*.ru`；同一稳定 DownloadId若失败不得再出现数百次 `downloadStarted/taskFailed`。
 - 长会话记录 progress SQLite事务次数和 Reader pop帧时序；不得每页写盘，也不得在退出后整库 reload。
 - 分别用明确 chapterList扩展与 combined-only TachiyomiX 1.6扩展验证目录调用次数/结果；出现空或单项时先看实际 API返回，不恢复 synthetic fallback。
 - 同一 Mihon漫画连续 browse → details → back：若 canonical comic identity 与 cover URI未变，source card owner和封面 Future不得因 browse projection/background refresh变化而重建；若 raw locator变化但 canonical identity不变，仍必须保留卡片 State。

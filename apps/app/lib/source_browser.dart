@@ -812,7 +812,11 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         'cover-source-failed',
         source,
         identityHash: identity,
-        payload: <String, Object?>{'errorType': error.runtimeType.toString()},
+        payload: <String, Object?>{
+          'errorType': error.runtimeType.toString(),
+          if (error is Failure) 'errorCode': error.code.name,
+          if (error is Failure) 'errorMessage': error.message,
+        },
       );
       rethrow;
     }
