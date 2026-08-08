@@ -1,3 +1,11 @@
+## 0.31.0-dev.167：解耦 Source Browse 封面 Presentation 与筛选入口
+
+- 根据 `zic-debug-trace-2026-08-08T09-45-09.jsonl` 审计 source browse/details交错刷新：删除把全局 browse projection `_contentRevision` 传给每个 `_RemoteImage` 的错误耦合；目录分页/后台 refresh变化不再强制整页封面重建。
+- source card 的 Sliver direct-child key改用 `sourceId + canonical comic identity`，mutable raw locator仅保留 source调用与交互定位；详情补全或 alias变化不再凭 raw ID销毁封面 State。
+- 新增 source-card artwork trace：按 canonical cover owner记录 load/source-ready/first-frame/source-failure/decode-failure，后续不再依赖 Home cover trace推断漫画源页失败。
+- Mihon/source filters从浮动搜索面板移到分类栏末尾，标准顺序为“最新 → 热门 → 筛选”；筛选仍通过 opaque `selectedFilterIds`进入原 browse/search contract，不建立伪分类或第二过滤状态。
+- 新增 ADR 0150、dev.167根因审计与 owner gate；版本提升到 `0.31.0+167`。
+
 ## 0.31.0-dev.166：拆分 Durable Artwork 保留生命周期并收口失效边界
 
 - 根因确认：`FileResourceCacheByteStore` 原设计每次写入都执行同一 96项/32 MiB LRU/TTL trim，source browse封面、书架/历史封面、preview/avatar全部共享一个持久淘汰平面；maintenance还可把该平面压到24 MiB。dev.165只修复了删除后 FileImage悬空，没有阻止长期封面本身被普通浏览压力删除。

@@ -64,7 +64,7 @@ for token in (
     'child: _SourcePager(',
     '_sameBrowsePage(',
     'cachedChanged',
-    'reloadToken: Object.hash(_contentRevision, _artworkRetryRevision)',
+    'reloadToken: _artworkRetryRevision',
     '_comicSourceAccent(source)',
 ):
     require(source, token, 'source browser UI')

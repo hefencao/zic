@@ -1,5 +1,12 @@
 # zic Implementation Plan
 
+## P0：Source Browse 封面 owner 与筛选入口真机闭环
+
+- 对同一漫画执行“漫画源列表首帧 → 打开详情 → 返回列表 → catalog后台 refresh/普通分页更新”，确认 canonical cover URI未变化时不产生新的 `cover-load-start`，也不出现 presentation decode重启；只有显式来源 artwork刷新或该卡片自身 URI/identity变化可以换 source。
+- 记录 `source-cover:<sourceId>\0<canonicalComicId>` 的 `cover-load-start/source-ready/first-frame/decode-failed` trace，确认 browse projection `changed=true` 与详情 metadata更新不会成为 artwork revision。
+- Mihon存在 `getFilterList()` 时，分类栏按“最新 → 热门 → 筛选”显示；筛选面板应用后 request携带 opaque `selectedFilterIds`，浮动搜索面板不再重复显示筛选标签。
+- 用 raw locator发生变化但 canonical identity不变的 fixture/设备数据确认 Sliver child State不重建；若同一页出现 canonical alias重复，先在 catalog projection解决重复，不回退到 mutable raw locator作为 owner key。
+
 ## P0：Retained Artwork 生命周期与失效边界真机闭环
 
 - 在 source browse 连续加载大量 transient artwork、触发 storage自动容量整理和手动“整理缓存”后，已进入 library/history/details 的 retained cover必须仍能冷命中；统计中 retainedBytes/Entries不得随 transient trim下降。

@@ -103,10 +103,11 @@ for token in (
 if 'selected" to (filter.readBoolean' in mihon or 'selected" to (state ==' in mihon:
     raise SystemExit('Mihon source defaults must not become explicit ZIC filter selections')
 for token in (
+    'comicSourceFilterActionKey',
     'comicSourceFilterBarKey',
     'comicSourceFilterKey(option.filterId)',
     'FilterChip(',
-    '_toggleSearchFilter(option, selected)',
+    '_openFilterSheet()',
 ):
     require(source, token, 'source filter chips')
 
@@ -125,6 +126,7 @@ for token in (
     require(source, token, 'source pull refresh')
 
 for token in (
+    'comicSourceFilterActionKey',
     "comicSourceFilterKey('status:check')",
     'tester.binding.handlePopRoute()',
     'find.byKey(comicSourcePullRefreshKey)',

@@ -44,6 +44,10 @@ const comicSourceRefreshStateKey =
     ValueKey<String>('comic-source-refresh-state');
 const comicSourceFilterBarKey =
     ValueKey<String>('comic-source-filter-bar');
+const comicSourceFilterActionKey =
+    ValueKey<String>('comic-source-filter-action');
+const comicSourceFilterSheetKey =
+    ValueKey<String>('comic-source-filter-sheet');
 const comicSourcePreviousPageKey =
     ValueKey<String>('comic-source-previous-page');
 const comicSourceNextPageKey = ValueKey<String>('comic-source-next-page');
@@ -66,6 +70,17 @@ typedef SourceComicCoverLoader = Future<EncodedResourceSource> Function(
   SourceComicSummary comic,
   Uri uri,
 );
+
+String _stableSourceComicIdentity(
+  BrowsableComicSource source,
+  String comicId,
+) {
+  final Object candidate = source;
+  if (candidate is CanonicalComicIdentitySource) {
+    return candidate.canonicalComicIdentity(comicId);
+  }
+  return comicId;
+}
 
 Color _comicSourceAccent(BrowsableComicSource source) {
   if (source.sourceId.startsWith('venera:')) {
@@ -226,7 +241,6 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   bool _refreshing = false;
   _SourceFailure? _failure;
   int _generation = 0;
-  int _contentRevision = 0;
   int _artworkRetryRevision = 0;
   bool _recoveringSourceAccess = false;
   final Set<String> _verificationBrowserAttempts = <String>{};
@@ -236,6 +250,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     TraceEventKind kind,
     String stage,
     BrowsableComicSource source, {
+    String? identityHash,
     Map<String, Object?> payload = const <String, Object?>{},
   }) {
     widget.traceSink.record(
@@ -243,6 +258,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         monotonicMicros: _traceClock.elapsedMicroseconds,
         sessionId: 'source-browser:${source.sourceId}',
         kind: kind,
+        identityHash: identityHash,
         payload: <String, Object?>{
           'stage': stage,
           ...payload,
@@ -518,7 +534,6 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     SourceBrowsePage page, {
     String? sourceId,
   }) {
-    _contentRevision++;
     _projectionSourceId = sourceId ?? _activeSource?.sourceId;
     _items = page.items;
     _hasMore = page.hasMore;
@@ -779,8 +794,57 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     return filterId;
   }
 
-  void _toggleSearchFilter(SourceSearchFilterOption option, bool selected) {
-    final next = _selectedFilterIds.toSet();
+  String _sourceCoverIdentity(
+    BrowsableComicSource source,
+    SourceComicSummary comic,
+  ) =>
+      'source-cover:${source.sourceId}\u0000${_stableSourceComicIdentity(source, comic.comicId)}';
+
+  Future<EncodedResourceSource> _loadSourceCardCover(
+    BrowsableComicSource source,
+    SourceComicSummary comic,
+    Uri uri,
+  ) async {
+    final identity = _sourceCoverIdentity(source, comic);
+    _recordSourceTrace(
+      TraceEventKind.retryScheduled,
+      'cover-load-start',
+      source,
+      identityHash: identity,
+      payload: <String, Object?>{'uriHash': uri.toString().hashCode},
+    );
+    try {
+      final encoded = await widget.loadCover(source, comic, uri);
+      _recordSourceTrace(
+        TraceEventKind.sourceReady,
+        'cover-source-ready',
+        source,
+        identityHash: identity,
+        payload: <String, Object?>{
+          'source': encoded.origin.name,
+          if (encoded.lengthInBytes != null)
+            'byteLength': encoded.lengthInBytes,
+        },
+      );
+      return encoded;
+    } on Object catch (error) {
+      _recordSourceTrace(
+        TraceEventKind.taskFailed,
+        'cover-source-failed',
+        source,
+        identityHash: identity,
+        payload: <String, Object?>{'errorType': error.runtimeType.toString()},
+      );
+      rethrow;
+    }
+  }
+
+  Set<String> _filterSelectionAfterToggle(
+    Set<String> current,
+    SourceSearchFilterOption option,
+    bool selected,
+  ) {
+    final next = current.toSet();
     final group = _exclusiveFilterGroup(option.filterId);
     if (selected) {
       next.removeWhere(
@@ -792,8 +856,101 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     } else {
       next.remove(option.filterId);
     }
+    return next;
+  }
+
+  List<SourceBrowseSection> _displaySections() {
+    final indexed = _sections.indexed.toList(growable: false);
+    indexed.sort((left, right) {
+      int rank(SourceBrowseSection section) {
+        final id = section.sectionId.toLowerCase();
+        final label = section.label.trim().toLowerCase();
+        if (id == 'latest' || label == 'latest' || label == '最新') return 0;
+        if (id == 'popular' || label == 'popular' || label == '热门') return 1;
+        return 2;
+      }
+
+      final ranked = rank(left.$2).compareTo(rank(right.$2));
+      return ranked != 0 ? ranked : left.$1.compareTo(right.$1);
+    });
+    return indexed.map((entry) => entry.$2).toList(growable: false);
+  }
+
+  Future<void> _openFilterSheet() async {
+    if (_searchFilters.isEmpty) return;
+    final initial = _selectedFilterIds.toSet();
+    final selected = await showModalBottomSheet<Set<String>>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        var draft = initial.toSet();
+        return StatefulBuilder(
+          builder: (context, setSheetState) => SafeArea(
+            key: comicSourceFilterSheetKey,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  Text('筛选', style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 12),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 360),
+                    child: SingleChildScrollView(
+                      child: Wrap(
+                        key: comicSourceFilterBarKey,
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: <Widget>[
+                          for (final option in _searchFilters)
+                            FilterChip(
+                              key: comicSourceFilterKey(option.filterId),
+                              label: Text(option.label),
+                              selected: draft.contains(option.filterId),
+                              onSelected: (value) => setSheetState(() {
+                                draft = _filterSelectionAfterToggle(
+                                  draft,
+                                  option,
+                                  value,
+                                );
+                              }),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: <Widget>[
+                      TextButton(
+                        onPressed: draft.isEmpty
+                            ? null
+                            : () => setSheetState(draft.clear),
+                        child: const Text('清除'),
+                      ),
+                      const Spacer(),
+                      FilledButton(
+                        onPressed: () => Navigator.of(sheetContext).pop(draft),
+                        child: const Text('应用'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+    if (!mounted ||
+        selected == null ||
+        (selected.length == _selectedFilterIds.length &&
+            selected.containsAll(_selectedFilterIds))) {
+      return;
+    }
     setState(() {
-      _selectedFilterIds = Set<String>.unmodifiable(next);
+      _selectedFilterIds = Set<String>.unmodifiable(selected);
       _pageOffset = 0;
     });
     unawaited(_reload(offset: 0));
@@ -960,28 +1117,6 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                   ],
                 ),
               ),
-            if (_searchFilters.isNotEmpty)
-              Container(
-                key: comicSourceFilterBarKey,
-                constraints: const BoxConstraints(maxHeight: 128),
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
-                child: SingleChildScrollView(
-                  child: Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: <Widget>[
-                      for (final option in _searchFilters)
-                        FilterChip(
-                          key: comicSourceFilterKey(option.filterId),
-                          label: Text(option.label),
-                          selected: _selectedFilterIds.contains(option.filterId),
-                          onSelected: (selected) =>
-                              _toggleSearchFilter(option, selected),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
             SearchBar(
               key: comicSourceSearchKey,
               controller: _search,
@@ -1100,25 +1235,46 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
               controller: _scroll,
               physics: const AlwaysScrollableScrollPhysics(),
               slivers: <Widget>[
-            if (_sections.length > 1)
+            if (_sections.length > 1 || _searchFilters.isNotEmpty)
               SliverToBoxAdapter(
                 child: SizedBox(
                   key: comicSourceCategoryBarKey,
                   height: 52,
-                  child: ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-                    scrollDirection: Axis.horizontal,
-                    itemCount: _sections.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 8),
-                    itemBuilder: (context, index) {
-                      final section = _sections[index];
-                      return ChoiceChip(
-                        key: comicSourceCategoryKey(section.sectionId),
-                        label: Text(section.label),
-                        selected: section.sectionId == _selectedSectionId,
-                        showCheckmark: false,
-                        onSelected: (_) =>
-                            _selectBrowseSection(section.sectionId),
+                  child: Builder(
+                    builder: (context) {
+                      final sections = _displaySections();
+                      final itemCount = sections.length +
+                          (_searchFilters.isEmpty ? 0 : 1);
+                      return ListView.separated(
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                        scrollDirection: Axis.horizontal,
+                        itemCount: itemCount,
+                        separatorBuilder: (_, __) => const SizedBox(width: 8),
+                        itemBuilder: (context, index) {
+                          if (index < sections.length) {
+                            final section = sections[index];
+                            return ChoiceChip(
+                              key: comicSourceCategoryKey(section.sectionId),
+                              label: Text(section.label),
+                              selected: section.sectionId == _selectedSectionId,
+                              showCheckmark: false,
+                              onSelected: (_) =>
+                                  _selectBrowseSection(section.sectionId),
+                            );
+                          }
+                          return ActionChip(
+                            key: comicSourceFilterActionKey,
+                            avatar: _selectedFilterIds.isEmpty
+                                ? const Icon(Icons.tune, size: 18)
+                                : const Icon(Icons.filter_alt, size: 18),
+                            label: Text(
+                              _selectedFilterIds.isEmpty
+                                  ? '筛选'
+                                  : '筛选 ${_selectedFilterIds.length}',
+                            ),
+                            onPressed: () => unawaited(_openFilterSheet()),
+                          );
+                        },
                       );
                     },
                   ),
@@ -1163,11 +1319,28 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                     (context, index) {
                       final comic = _items[index];
                       return _SourceComicCard(
-                        key: sourceComicCardKey(source.sourceId, comic.comicId),
+                        key: ValueKey<String>(
+                          'source-comic-owner:${source.sourceId}\u0000${_stableSourceComicIdentity(source, comic.comicId)}',
+                        ),
                         source: source,
                         comic: comic,
-                        reloadToken: Object.hash(_contentRevision, _artworkRetryRevision),
-                        loadCover: widget.loadCover,
+                        reloadToken: _artworkRetryRevision,
+                        loadCover: _loadSourceCardCover,
+                        onCoverFrameReady: () => _recordSourceTrace(
+                          TraceEventKind.firstFrameReady,
+                          'cover-first-frame',
+                          source,
+                          identityHash: _sourceCoverIdentity(source, comic),
+                        ),
+                        onCoverDecodeFailure: () => _recordSourceTrace(
+                          TraceEventKind.taskFailed,
+                          'cover-decode-failed',
+                          source,
+                          identityHash: _sourceCoverIdentity(source, comic),
+                          payload: const <String, Object?>{
+                            'failureLayer': 'presentation-decode',
+                          },
+                        ),
                         onSourceVerificationRequired:
                             widget.onOpenSourceWebView == null
                                 ? null
@@ -1327,6 +1500,8 @@ final class _SourceComicCard extends StatelessWidget {
     required this.comic,
     required this.reloadToken,
     required this.loadCover,
+    required this.onCoverFrameReady,
+    required this.onCoverDecodeFailure,
     required this.onTap,
     this.onSourceVerificationRequired,
     super.key,
@@ -1336,6 +1511,8 @@ final class _SourceComicCard extends StatelessWidget {
   final SourceComicSummary comic;
   final int reloadToken;
   final SourceComicCoverLoader loadCover;
+  final VoidCallback onCoverFrameReady;
+  final VoidCallback onCoverDecodeFailure;
   final VoidCallback onTap;
   final VoidCallback? onSourceVerificationRequired;
 
@@ -1344,6 +1521,7 @@ final class _SourceComicCard extends StatelessWidget {
     return InkWell(
       borderRadius: BorderRadius.circular(12),
       onTap: onTap,
+      key: sourceComicCardKey(source.sourceId, comic.comicId),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
@@ -1354,6 +1532,8 @@ final class _SourceComicCard extends StatelessWidget {
                 uri: comic.coverUri,
                 loadSource: (uri) => loadCover(source, comic, uri),
                 reloadToken: reloadToken,
+                onFrameReady: onCoverFrameReady,
+                onDecodeFailure: onCoverDecodeFailure,
                 verificationKey:
                     sourceComicCoverVerificationKey(
                       source.sourceId,
@@ -2187,6 +2367,8 @@ final class _RemoteImage extends StatefulWidget {
     required this.loadSource,
     required this.reloadToken,
     required this.verificationKey,
+    this.onFrameReady,
+    this.onDecodeFailure,
     this.onSourceVerificationRequired,
   });
 
@@ -2194,6 +2376,8 @@ final class _RemoteImage extends StatefulWidget {
   final Future<EncodedResourceSource> Function(Uri uri) loadSource;
   final int reloadToken;
   final Key verificationKey;
+  final VoidCallback? onFrameReady;
+  final VoidCallback? onDecodeFailure;
   final VoidCallback? onSourceVerificationRequired;
 
   @override
@@ -2240,6 +2424,8 @@ final class _RemoteImageState extends State<_RemoteImage> {
             source: data,
             seed: widget.uri?.toString() ?? 'source-comic-cover',
             fit: BoxFit.cover,
+            onFrameReady: widget.onFrameReady,
+            onDecodeFailure: widget.onDecodeFailure,
           );
         }
         if (snapshot.hasError) {

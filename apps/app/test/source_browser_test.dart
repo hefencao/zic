@@ -178,21 +178,32 @@ void main() {
     );
     expect(find.byKey(comicSourceCategoryKey('popular')), findsOneWidget);
     expect(find.byKey(comicSourceCategoryKey('latest')), findsOneWidget);
+    expect(find.byKey(comicSourceFilterActionKey), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byKey(comicSourceCategoryKey('latest'))).dx,
+      lessThan(tester.getTopLeft(find.byKey(comicSourceCategoryKey('popular'))).dx),
+    );
     expect(find.byKey(comicSourceCategoryKey('mihon')), findsNothing);
     expect(find.byKey(comicSourceChoiceKey(native.sourceId)), findsOneWidget);
     expect(find.byKey(comicSourceChoiceKey(mihon.sourceId)), findsOneWidget);
     expect(find.byKey(comicSourceChoiceKey(venera.sourceId)), findsOneWidget);
     expect(find.byKey(comicSourcePagerKey), findsNothing);
 
-    await _tapVisible(tester, find.byKey(comicSourceSearchFabKey));
-    expect(find.byKey(comicSourceSearchKey), findsOneWidget);
+    await _tapVisible(tester, find.byKey(comicSourceFilterActionKey));
+    await tester.pump();
+    expect(find.byKey(comicSourceFilterSheetKey), findsOneWidget);
     expect(find.byKey(comicSourceFilterBarKey), findsOneWidget);
     expect(find.byKey(comicSourceFilterKey('status:check')), findsOneWidget);
-    expect(find.text('漫画'), findsOneWidget);
     await _tapVisible(tester, find.byKey(comicSourceFilterKey('status:check')));
+    await _tapVisible(tester, find.text('应用'));
     await tester.pump();
     expect(native.lastSelectedFilterIds, contains('status:check'));
     expect(native.lastSelectedFilterIds, contains('sort:select:0'));
+
+    await _tapVisible(tester, find.byKey(comicSourceSearchFabKey));
+    expect(find.byKey(comicSourceSearchKey), findsOneWidget);
+    expect(find.text('漫画'), findsOneWidget);
+    expect(find.byKey(comicSourceFilterBarKey), findsNothing);
 
     await tester.binding.handlePopRoute();
     await tester.pump();
@@ -238,6 +249,58 @@ void main() {
       find.byKey(sourceComicCardKey(native.sourceId, '${native.sourceId}-comic-0')),
     );
     expect(native.lastBrowseSection, 'latest');
+  });
+
+  testWidgets(
+      'browse metadata refresh preserves canonical cover presentation owner',
+      (tester) async {
+    final source = _FixtureSource(
+      'mihon:canonical-owner',
+      'Canonical Owner',
+      canonicalComicIdentityOverride: 'stable-comic',
+    );
+    var queryRevision = 0;
+    var coverLoads = 0;
+    late StateSetter updateHost;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) {
+            updateHost = setState;
+            return ComicSourcesPage(
+              sources: <BrowsableComicSource>[source],
+              activeSourceId: source.sourceId,
+              onSourceSelected: (_) {},
+              queryRevision: queryRevision,
+              requestedQuery: '',
+              loadCover: (_, __, ___) async {
+                coverLoads++;
+                return MemoryEncodedResourceSource(_tinyPng());
+              },
+              onOpenComic: (_, __) async {},
+            );
+          },
+        ),
+      ),
+    );
+
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceComicCardKey(source.sourceId, source._comicId)),
+    );
+    expect(coverLoads, 1);
+
+    source.browseComicIdOverride = '${source.sourceId}-raw-alias';
+    updateHost(() => queryRevision++);
+    await _pumpUntilFound(
+      tester,
+      find.byKey(
+        sourceComicCardKey(source.sourceId, source.browseComicIdOverride!),
+      ),
+    );
+
+    expect(coverLoads, 1);
   });
 
   testWidgets('source network failure exposes selectable copyable details',
@@ -1904,6 +1967,7 @@ void main() {
 final class _FixtureSource
     implements
         BrowsableComicSource,
+        CanonicalComicIdentitySource,
         ComicVersionSource,
         RefreshableChapterComicSource,
         ComicPreviewSource,
@@ -1933,6 +1997,7 @@ final class _FixtureSource
     this.supportsComicComments = false,
     this.browseSections = const <SourceBrowseSection>[],
     this.searchFilters = const <SourceSearchFilterOption>[],
+    this.canonicalComicIdentityOverride,
   });
 
   @override
@@ -1960,6 +2025,8 @@ final class _FixtureSource
   final bool supportsComicComments;
   final List<SourceBrowseSection> browseSections;
   final List<SourceSearchFilterOption> searchFilters;
+  final String? canonicalComicIdentityOverride;
+  String? browseComicIdOverride;
   String? lastBrowseSection;
   Set<String> lastSelectedFilterIds = const <String>{};
   int _comicLoads = 0;
@@ -1976,6 +2043,10 @@ final class _FixtureSource
   String get _comicId => '$sourceId-comic';
   String get _chapterId => '$sourceId-chapter';
   String get _secondChapterId => '$sourceId-chapter-2';
+
+  @override
+  String canonicalComicIdentity(String comicId) =>
+      canonicalComicIdentityOverride ?? comicId;
 
   @override
   ComicSourceDescriptor get descriptor => ComicSourceDescriptor(
@@ -2063,7 +2134,9 @@ final class _FixtureSource
       for (var index = 0; index < browseItemCount; index++)
         SourceComicSummary(
           sourceId: sourceId,
-          comicId: browseItemCount == 1 ? _comicId : '$sourceId-comic-$index',
+          comicId: browseItemCount == 1
+              ? (browseComicIdOverride ?? _comicId)
+              : '$sourceId-comic-$index',
           title: browseItemCount == 1 ? _comic.title : '$name 漫画 $index',
           authors: _comic.authors,
           tags: _comic.tags,

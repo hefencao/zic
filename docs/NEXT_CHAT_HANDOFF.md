@@ -1,6 +1,6 @@
-# dev.166 后续交接
+# dev.167 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.166_retained-artwork-cache-ownership.zip`。
+唯一后续基线：`zic_v0.31.0-dev.167_source-cover-filter-owner.zip`。
 
 ## 必读
 
@@ -19,10 +19,7 @@
 13. `docs/adr/0147-home-projection-artwork-revision-runtime-generation-ownership.md`
 14. `docs/adr/0148-artwork-source-lifetime-and-home-update-semantics.md`
 15. `docs/adr/0149-retained-artwork-persistence-and-invalidation-boundary.md`
-14. `docs/audits/dev157-root-cause-owner-cleanup-audit.md`
-15. `docs/audits/dev157-validation-results.md`
-16. `docs/audits/dev158-compile-owner-blocking-audit.md`
-17. `docs/audits/dev158-validation-results.md`
+16. `docs/adr/0150-source-browse-cover-and-filter-presentation-boundary.md`
 18. `docs/audits/dev163-venera-activation-history-cover-root-cause-audit.md`
 19. `docs/audits/dev164-home-projection-artwork-runtime-generation-root-cause-audit.md`
 20. `docs/audits/dev164-validation-results.md`
@@ -30,9 +27,13 @@
 22. `docs/audits/dev165-validation-results.md`
 23. `docs/audits/dev166-retained-artwork-cache-root-cause-audit.md`
 24. `docs/audits/dev166-validation-results.md`
+25. `docs/audits/dev167-source-cover-filter-root-cause-audit.md`
+26. `docs/audits/dev167-validation-results.md`
 
 ## 当前代码事实
 
+- 漫画源 browse 内容 revision不再承担 artwork revision：分页、SWR后台刷新、详情回写导致的 browse projection变化都不能全局重建封面 Future/ImageProvider；仅 cover URI自身变化或显式来源 artwork refresh触发重新加载。source card Sliver owner key使用 canonical comic identity，raw plugin locator只用于调用/交互。
+- `FilterableBrowsableComicSource`/runtime `filterIds` contract继续存在；筛选入口固定在分类栏，标准 section排序“最新 → 热门 → 筛选”。筛选不属于 source category，也不再藏在浮动搜索展开层。
 - durable artwork persistence在 `ResourceCacheManager/FileResourceCacheByteStore` 内分为 `transient/retained`：browse/preview为 transient；library/history/details cover在同一 canonical key上晋升 retained。retained不受自动 LRU/TTL/manual transient trim影响，只接受精确 artwork失效、整漫画资源删除或用户清缓存。
 - catalog metadata refresh使用 `invalidateComicMetadata`，不得按 comic namespace连坐 artwork；真正删除漫画时才调用 `invalidateAllComicResources`。
 - maintenance统计/trim接口是 storage/cache内部纯契约；`ResourceCacheByteStoreUsage/TrimReport/Maintenance`存在，但任何 `locate()/PersistedResourceFile/FileAccess`借用路径都不得恢复。
@@ -61,7 +62,7 @@
 
 - 长会话记录 progress SQLite事务次数和 Reader pop帧时序；不得每页写盘，也不得在退出后整库 reload。
 - 分别用明确 chapterList扩展与 combined-only TachiyomiX 1.6扩展验证目录调用次数/结果；出现空或单项时先看实际 API返回，不恢复 synthetic fallback。
-- 同一 Mihon漫画连续 browse → details → history，多次详情补全/封面 URL变化后，canonical artwork identity必须一致；成功封面普通 rebuild/resume不得重新请求。
+- 同一 Mihon漫画连续 browse → details → back：若 canonical comic identity 与 cover URI未变，source card owner和封面 Future不得因 browse projection/background refresh变化而重建；若 raw locator变化但 canonical identity不变，仍必须保留卡片 State。
 - 重现 transient response cache持续写入/trim与 Reader往返，确认 retained cover持久记录不被回收且已经 FirstFrame的封面不再 DecodeFailed；确认 Home updates仅由 shelf + sourceUpdateAt驱动。
 
 ## 不可改变的稳定边界
