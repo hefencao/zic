@@ -294,6 +294,14 @@ void main() {
       connection.lastRequest?.arguments['filterState'],
       <String, Object?>{'0': true},
     );
+    expect(connection.lastRequest?.arguments['useFilters'], isTrue);
+
+    await source.browseWithFilters(
+      sectionId: 'latest',
+      filterState: const <String, Object?>{},
+    );
+    expect(connection.lastRequest?.arguments['filterState'], isEmpty);
+    expect(connection.lastRequest?.arguments['useFilters'], isTrue);
   });
 
   test('Mihon resolves host-streamable request plans and refreshes retry',

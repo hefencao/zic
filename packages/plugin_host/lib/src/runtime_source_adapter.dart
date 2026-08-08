@@ -396,6 +396,7 @@ final class _RuntimeBrowsableComicSource
     required int limit,
     String? sectionId,
     SourceSearchFilterState filterState = const <String, Object?>{},
+    bool useFilters = false,
   }) async {
     if (offset < 0 || limit <= 0) {
       throw ArgumentError('browse offset/limit are invalid');
@@ -409,6 +410,7 @@ final class _RuntimeBrowsableComicSource
         'limit': limit,
         'sectionId': sectionId,
         'filterState': Map<String, Object?>.from(filterState),
+        'useFilters': useFilters,
       },
     );
     final message = _map(payload, 'browse result');
@@ -462,6 +464,7 @@ final class _RuntimeBrowsableComicSource
         limit: limit,
         sectionId: sectionId,
         filterState: filterState,
+        useFilters: true,
       );
 
   @override

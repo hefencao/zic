@@ -182,7 +182,14 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
           )
         : entry;
     await _chapterDownloads.download(current);
-    _acceptDownloadSnapshot(await _chapterDownloads.inspect(current));
+    final snapshot = await _chapterDownloads.inspect(current);
+    _acceptDownloadSnapshot(snapshot);
+    if (snapshot.isComplete) {
+      _recordChapterDownloadCompletion(
+        current.chapter.sourceId,
+        current.chapter.comicId,
+      );
+    }
   }
 
   Future<void> _downloadComicEntries(
@@ -213,6 +220,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
       comicTitle: first.comicTitle,
       chapters: chapters,
     );
+    _trackWholeComicDownloadCompletion(first.sourceId, first.comicId);
     _librarySession.refreshWholeComicSnapshot();
   }
 
@@ -258,6 +266,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     final identity = openingIdentity ??
         comicLibraryIdentity(source.sourceId, comic.comicId);
     if (!_openingComicIdentities.add(identity)) return;
+    _clearDownloadCompletionBadge(source.sourceId, comic.comicId);
     final local = resolveCanonicalAlias
         ? _libraryComicForSourceIdentity(source.sourceId, comic.comicId)
         : _exactLibraryComicForSourceIdentity(
@@ -429,6 +438,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
 
 
   Future<void> _pushComicDetails(LibraryComic comic) async {
+    _clearDownloadCompletionBadge(comic.sourceId, comic.comicId);
     final source = _sourceForId(comic.sourceId);
     await Navigator.of(context).push(
       MaterialPageRoute<void>(

@@ -1,3 +1,11 @@
+## 0.31.0-dev.171：收口筛选视图、书架投影与下载完成反馈
+
+- 根据 `zic-debug-trace-2026-08-08T12-41-26.jsonl` 确认 dev.170 WNACG媒体路径无 `taskFailed`，同时发现筛选请求仍以 `sectionId=latest + filterCount` 表达，没有独立“筛选视图”焦点。
+- 将筛选激活从 `filterState` 内容拆为独立 request mode：点击“筛选”后直接应用空 override即使用插件 `FilterList` 默认状态，UI焦点切到“筛选”；filter mode不继承 latest/popular section，Catalog cache与runtime payload显式区分 filtered/section请求。
+- 漫画源卡片从 Home canonical preference projection读取 `inShelf`；已入书架封面增加书签并变暗，source browser不维护第二套书架状态。
+- Home下载右上角勾从 durable chapter cache状态改为显式命令完成反馈：单章节命令完成显示空心勾，整本队列真正 complete显示绿色实心勾；进入详情即消费，任意已缓存章节不再冒充整本/命令完成。
+- 新增 ADR 0154、dev.171根因审计与 owner gate，版本提升到 `0.31.0+171`。
+
 ## 0.31.0-dev.170：收口 Mihon 明文媒体能力与下载失败重试所有权
 
 - 根据 `zic-debug-trace-2026-08-08T11-55-06.jsonl` 确认 WNACG 目录/详情/章节元数据成功，封面全部 source-load失败，Reader正文则被 Android `CLEARTEXT ... not permitted by network security policy` 在发请求前拒绝；不做 WNACG 域名白名单或 HTTPS改写。

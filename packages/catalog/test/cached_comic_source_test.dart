@@ -69,6 +69,42 @@ void main() {
     expect(latest.page.items.single.sourceId, raw.sourceId);
   });
 
+  test('default filter browse has a distinct cache mode from source sections',
+      () async {
+    final raw = _CountingSource();
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final source = CachedBrowsableComicSource(source: raw, cache: cache);
+
+    await source.browseSection('popular', offset: 0, limit: 24);
+    await source.browseWithFilters(
+      sectionId: 'popular',
+      offset: 0,
+      limit: 24,
+      filterState: const <String, Object?>{},
+    );
+
+    expect(raw.sectionBrowseLoads, 1);
+    expect(raw.filterBrowseLoads, 1);
+    expect(
+      source.peekBrowsePage(
+        sectionId: 'popular',
+        offset: 0,
+        limit: 24,
+        useFilters: true,
+      ),
+      isNotNull,
+    );
+    expect(
+      source.peekLatestBrowseProjection()!.useFilters,
+      isTrue,
+    );
+    expect(
+      cache.stats.forKind(ResourceCacheKind.searchResults).entries,
+      2,
+    );
+  });
+
   test('latest browse projection follows the target source request identity',
       () async {
     final raw = _CountingSource();
@@ -348,13 +384,16 @@ final class _CountingSource implements
         CanonicalComicIdentitySource,
         ComicWebViewRequestSource,
         ComicVersionSource,
-        SectionedBrowsableComicSource {
+        SectionedBrowsableComicSource,
+        FilterableBrowsableComicSource {
   var comicLoads = 0;
   var chapterLoads = 0;
   var browseLoads = 0;
   var resourceLoads = 0;
   var versionLoads = 0;
   var sectionLoads = 0;
+  var sectionBrowseLoads = 0;
+  var filterBrowseLoads = 0;
   String? lastQuery;
   String? lastSectionId;
 
@@ -378,12 +417,37 @@ final class _CountingSource implements
   }
 
   @override
+  Future<List<SourceSearchFilterNode>> loadSearchFilters() async =>
+      const <SourceSearchFilterNode>[
+        SourceSearchFilterNode(
+          filterId: 'status',
+          kind: SourceSearchFilterKind.checkBox,
+          label: '状态',
+          value: false,
+        ),
+      ];
+
+  @override
+  Future<SourceBrowsePage> browseWithFilters({
+    String? sectionId,
+    String query = '',
+    int offset = 0,
+    int limit = 24,
+    SourceSearchFilterState filterState = const <String, Object?>{},
+  }) {
+    filterBrowseLoads++;
+    lastSectionId = sectionId;
+    return browse(query: query, offset: offset, limit: limit);
+  }
+
+  @override
   Future<SourceBrowsePage> browseSection(
     String sectionId, {
     String query = '',
     int offset = 0,
     int limit = 24,
   }) {
+    sectionBrowseLoads++;
     lastSectionId = sectionId;
     return browse(query: query, offset: offset, limit: limit);
   }

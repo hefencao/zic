@@ -8,7 +8,7 @@ import 'package:telemetry/telemetry.dart';
 
 import 'artwork_placeholder.dart';
 
-enum ComicDownloadProgressKind { active, offline }
+enum ComicDownloadProgressKind { active, chapterComplete, comicComplete }
 
 final class ComicDownloadProgress {
   const ComicDownloadProgress.active({
@@ -17,23 +17,25 @@ final class ComicDownloadProgress {
     required this.totalPages,
   })  : kind = ComicDownloadProgressKind.active,
         completedPageUnits = completedPageUnits,
-        offlineChapters = 0,
         assert(completedPageUnits >= 0),
         assert(totalPages > 0);
 
-  const ComicDownloadProgress.offline({
-    required this.label,
-    required this.offlineChapters,
-  })  : kind = ComicDownloadProgressKind.offline,
+  const ComicDownloadProgress.chapterComplete({
+    this.label = '单章节下载完成',
+  })  : kind = ComicDownloadProgressKind.chapterComplete,
         completedPageUnits = 0,
-        totalPages = 0,
-        assert(offlineChapters > 0);
+        totalPages = 0;
+
+  const ComicDownloadProgress.comicComplete({
+    this.label = '整本下载完成',
+  })  : kind = ComicDownloadProgressKind.comicComplete,
+        completedPageUnits = 0,
+        totalPages = 0;
 
   final ComicDownloadProgressKind kind;
   final String label;
   final double completedPageUnits;
   final int totalPages;
-  final int offlineChapters;
 
   bool get isActive => kind == ComicDownloadProgressKind.active;
 
@@ -316,6 +318,8 @@ final class _DownloadWatermark extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (!progress.isActive) {
+      final wholeComic =
+          progress.kind == ComicDownloadProgressKind.comicComplete;
       return Semantics(
         label: progress.label,
         child: Align(
@@ -327,12 +331,12 @@ final class _DownloadWatermark extends StatelessWidget {
                 color: Colors.black.withValues(alpha: 0.72),
                 borderRadius: BorderRadius.circular(20),
               ),
-              child: const Padding(
-                padding: EdgeInsets.all(5),
+              child: Padding(
+                padding: const EdgeInsets.all(5),
                 child: Icon(
-                  Icons.download_done,
-                  size: 15,
-                  color: Colors.white,
+                  wholeComic ? Icons.check_circle : Icons.check_circle_outline,
+                  size: 16,
+                  color: wholeComic ? Colors.green : Colors.white,
                 ),
               ),
             ),

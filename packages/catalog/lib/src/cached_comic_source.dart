@@ -121,6 +121,7 @@ final class CachedBrowsableComicSource
     required int limit,
     String? sectionId,
     SourceSearchFilterState filterState = const <String, Object?>{},
+    bool useFilters = false,
   }) =>
       ResourceCacheKey(
         kind: ResourceCacheKind.searchResults,
@@ -132,6 +133,7 @@ final class CachedBrowsableComicSource
             normalizedQuery,
             '$offset',
             '$limit',
+            useFilters ? 'filters' : 'section',
             _canonicalFilterState(filterState),
           ],
         ),
@@ -144,6 +146,7 @@ final class CachedBrowsableComicSource
     required int limit,
     String? sectionId,
     SourceSearchFilterState filterState = const <String, Object?>{},
+    bool useFilters = false,
     bool forceRefresh = false,
   }) {
     final sectioned = source is SectionedBrowsableComicSource
@@ -156,12 +159,13 @@ final class CachedBrowsableComicSource
         limit: limit,
         sectionId: sectionId,
         filterState: filterState,
+        useFilters: useFilters,
       ),
       loader: () {
         final filterable = source is FilterableBrowsableComicSource
             ? source as FilterableBrowsableComicSource
             : null;
-        if (filterable != null && filterState.isNotEmpty) {
+        if (filterable != null && useFilters) {
           return filterable.browseWithFilters(
             sectionId: sectionId,
             query: normalizedQuery,
@@ -194,6 +198,7 @@ final class CachedBrowsableComicSource
         offset: offset,
         limit: limit,
         filterState: filterState,
+        useFilters: useFilters,
       );
       return page;
     });
@@ -262,6 +267,7 @@ final class CachedBrowsableComicSource
         limit: limit,
         sectionId: sectionId,
         filterState: filterState,
+        useFilters: true,
       );
 
   @override
@@ -289,6 +295,7 @@ final class CachedBrowsableComicSource
     int offset = 0,
     int limit = 24,
     SourceSearchFilterState filterState = const <String, Object?>{},
+    bool useFilters = false,
   }) {
     final normalizedQuery = query.trim();
     final page = cache.peek<SourceBrowsePage>(
@@ -298,6 +305,7 @@ final class CachedBrowsableComicSource
         limit: limit,
         sectionId: sectionId,
         filterState: filterState,
+        useFilters: useFilters,
       ),
     );
     if (page != null) {
@@ -308,6 +316,7 @@ final class CachedBrowsableComicSource
         offset: offset,
         limit: limit,
         filterState: filterState,
+        useFilters: useFilters,
       );
     }
     return page;
@@ -320,6 +329,7 @@ final class CachedBrowsableComicSource
     int offset = 0,
     int limit = 24,
     SourceSearchFilterState filterState = const <String, Object?>{},
+    bool useFilters = false,
   }) =>
       _loadBrowsePage(
         normalizedQuery: query.trim(),
@@ -327,6 +337,7 @@ final class CachedBrowsableComicSource
         limit: limit,
         sectionId: sectionId,
         filterState: filterState,
+        useFilters: useFilters,
         forceRefresh: true,
       );
 

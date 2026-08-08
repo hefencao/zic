@@ -253,7 +253,8 @@ final class SourceSearchFilterNode {
 
 /// User overrides relative to the source-provided FilterList defaults.
 ///
-/// Empty state means the ordinary Popular/Latest browse path remains active.
+/// Empty state means "use the source-provided defaults". Whether the request
+/// is a filter browse is a separate mode bit owned by the caller/cache key.
 typedef SourceSearchFilterState = Map<String, Object?>;
 
 /// Optional source-owned search-filter capability.
@@ -282,6 +283,7 @@ final class CachedSourceBrowseSnapshot {
     required this.offset,
     required this.limit,
     SourceSearchFilterState filterState = const <String, Object?>{},
+    this.useFilters = false,
   }) : filterState = Map<String, Object?>.unmodifiable(filterState);
 
   final SourceBrowsePage page;
@@ -290,6 +292,7 @@ final class CachedSourceBrowseSnapshot {
   final int offset;
   final int limit;
   final SourceSearchFilterState filterState;
+  final bool useFilters;
 }
 
 /// Optional cache projection used by Presentation for stale-while-revalidate.
@@ -306,6 +309,7 @@ abstract interface class CachedSourceBrowseProjection {
     int offset = 0,
     int limit = 24,
     SourceSearchFilterState filterState = const <String, Object?>{},
+    bool useFilters = false,
   });
 
   Future<SourceBrowsePage> refreshBrowsePage({
@@ -314,6 +318,7 @@ abstract interface class CachedSourceBrowseProjection {
     int offset = 0,
     int limit = 24,
     SourceSearchFilterState filterState = const <String, Object?>{},
+    bool useFilters = false,
   });
 }
 

@@ -718,6 +718,46 @@ void main() {
     expect(find.textContaining('上次'), findsNothing);
   });
 
+  testWidgets('download completion badges distinguish chapter and whole comic',
+      (tester) async {
+    final chapter = _chapter(name: '下载完成漫画');
+    final comic = LibraryComic.fromEntries(
+      <ImportedLibraryEntry>[ImportedLibraryEntry(chapter: chapter)],
+    );
+    final preference = ComicPreference.defaults(
+      sourceId: chapter.sourceId,
+      comicId: chapter.comicId,
+      sourceKind: ComicSourceKind.remote,
+    );
+
+    Widget build(ComicDownloadProgress progress) => MaterialApp(
+          home: Scaffold(
+            body: ComicCoverCard(
+              comic: comic,
+              preference: preference,
+              coverSource: () async => MemoryEncodedResourceSource(_tinyPng()),
+              downloadProgress: progress,
+              onTap: () {},
+            ),
+          ),
+        );
+
+    await tester.pumpWidget(build(
+      const ComicDownloadProgress.chapterComplete(),
+    ));
+    await tester.pump();
+    expect(find.byIcon(Icons.check_circle_outline), findsOneWidget);
+    expect(find.byIcon(Icons.check_circle), findsNothing);
+
+    await tester.pumpWidget(build(
+      const ComicDownloadProgress.comicComplete(),
+    ));
+    await tester.pump();
+    expect(find.byIcon(Icons.check_circle), findsOneWidget);
+    final icon = tester.widget<Icon>(find.byIcon(Icons.check_circle));
+    expect(icon.color, Colors.green);
+  });
+
   testWidgets('cover reloads a failed source only when the source becomes available',
       (tester) async {
     final chapter = _chapter(name: '延后来源漫画');

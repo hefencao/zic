@@ -120,6 +120,40 @@ void main() {
     expect(find.byKey(comicSourceChoiceKey('fixture-a')), findsOneWidget);
   });
 
+
+  testWidgets('source cards project shelf membership without owning it',
+      (tester) async {
+    final source = _FixtureSource('fixture-shelf', '书架标记源');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ComicSourcesPage(
+            sources: <BrowsableComicSource>[source],
+            activeSourceId: source.sourceId,
+            onSourceSelected: (_) {},
+            loadCover: (_, __, ___) async =>
+                MemoryEncodedResourceSource(_tinyPng()),
+            onOpenComic: (_, __) async {},
+            isInShelf: (_, __) => true,
+          ),
+        ),
+      ),
+    );
+    await _pumpUntilFound(
+      tester,
+      find.byKey(sourceComicCardKey(source.sourceId, source._comicId)),
+    );
+    expect(
+      find.byKey(sourceComicShelfDimKey(source.sourceId, source._comicId)),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(sourceComicShelfMarkerKey(source.sourceId, source._comicId)),
+      findsOneWidget,
+    );
+    expect(find.byIcon(Icons.bookmark), findsOneWidget);
+  });
+
   testWidgets('empty source filter schema does not invent a filter category',
       (tester) async {
     final source = _FixtureSource(
@@ -244,11 +278,50 @@ void main() {
     expect(find.byKey(comicSourceFilterSheetKey), findsOneWidget);
     expect(find.byKey(comicSourceFilterBarKey), findsOneWidget);
     expect(find.byKey(comicSourceFilterKey('status')), findsOneWidget);
+
+    // Applying without edits is a real filter browse using the source defaults.
+    final filteredCallsBeforeDefault = native.filteredBrowseCalls;
+    await _tapVisible(tester, find.text('应用'));
+    await tester.pump();
+    expect(native.filteredBrowseCalls, filteredCallsBeforeDefault + 1);
+    expect(native.lastFilterState, isEmpty);
+    expect(
+      tester.widget<ChoiceChip>(find.byKey(comicSourceFilterActionKey)).selected,
+      isTrue,
+    );
+    expect(
+      tester.widget<ChoiceChip>(
+        find.byKey(comicSourceCategoryKey('latest')),
+      ).selected,
+      isFalse,
+    );
+
+    // A source section is a different view; selecting it exits filter focus.
+    await _tapVisible(tester, find.byKey(comicSourceCategoryKey('popular')));
+    await tester.pump();
+    expect(
+      tester.widget<ChoiceChip>(find.byKey(comicSourceFilterActionKey)).selected,
+      isFalse,
+    );
+
+    await _tapVisible(tester, find.byKey(comicSourceFilterActionKey));
+    await tester.pump();
     await _tapVisible(tester, find.byKey(comicSourceFilterKey('status')));
     await _tapVisible(tester, find.text('应用'));
     await tester.pump();
     expect(native.lastFilterState['status'], isTrue);
     expect(native.lastFilterState.containsKey('sort'), isFalse);
+    expect(native.lastBrowseSection, isNull);
+    expect(
+      tester.widget<ChoiceChip>(find.byKey(comicSourceFilterActionKey)).selected,
+      isTrue,
+    );
+    expect(
+      tester.widget<ChoiceChip>(
+        find.byKey(comicSourceCategoryKey('popular')),
+      ).selected,
+      isFalse,
+    );
 
     await _tapVisible(tester, find.byKey(comicSourceSearchFabKey));
     expect(find.byKey(comicSourceSearchKey), findsOneWidget);
@@ -2083,6 +2156,7 @@ final class _FixtureSource
   int _chapterLoads = 0;
   int _chapterRefreshes = 0;
   int browseCalls = 0;
+  int filteredBrowseCalls = 0;
   final List<Uri> loadedResources = <Uri>[];
   final List<String?> previewTokens = <String?>[];
 
@@ -2164,6 +2238,7 @@ final class _FixtureSource
     int limit = 24,
     SourceSearchFilterState filterState = const <String, Object?>{},
   }) {
+    filteredBrowseCalls++;
     lastBrowseSection = sectionId;
     lastFilterState = Map<String, Object?>.unmodifiable(filterState);
     return browse(query: query, offset: offset, limit: limit);

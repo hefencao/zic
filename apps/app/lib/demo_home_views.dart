@@ -105,6 +105,12 @@ extension _DemoHomeViews on _DemoHomeState {
                       },
                       loadCover: _loadSourceBrowseCover,
                       onOpenComic: _openSourceComic,
+                      isInShelf: (source, comic) => _mergedPreferenceFor(
+                        source.sourceId,
+                        comic.comicId,
+                        fallbackSourceKind: ComicSourceKind.remote,
+                        fallbackInShelf: false,
+                      ).inShelf,
                       onOpenSourceWebView: _openSourceWebView,
                       resolveSource: _sourceForId,
                       traceSink: widget.debugTrace,

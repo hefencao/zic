@@ -153,6 +153,8 @@ final class DemoHome extends StatefulWidget {
   State<DemoHome> createState() => _DemoHomeState();
 }
 
+enum _DownloadCompletionKind { chapter, wholeComic }
+
 final class _DemoHomeState extends State<DemoHome> {
   final Stopwatch _traceClock = Stopwatch()..start();
   late final ImportedLibraryStore _library;
@@ -171,6 +173,10 @@ final class _DemoHomeState extends State<DemoHome> {
   bool _batchManagement = false;
   final Set<String> _managedComicIdentities = <String>{};
   final Set<String> _openingComicIdentities = <String>{};
+  final Map<String, _DownloadCompletionKind> _downloadCompletionBadges =
+      <String, _DownloadCompletionKind>{};
+  final Map<String, String> _pendingWholeComicCompletionBadges =
+      <String, String>{};
   int _navigationIndex = 0;
   bool _sourcePageVisited = false;
   String? _sourceSearchQuery;
@@ -294,8 +300,75 @@ final class _DemoHomeState extends State<DemoHome> {
   }
 
   void _handleLibrarySessionChanged() {
+    _syncWholeComicCompletionBadges();
     if (mounted) {
       setState(() {});
+    }
+  }
+
+  void _syncWholeComicCompletionBadges() {
+    if (_pendingWholeComicCompletionBadges.isEmpty) return;
+    final jobsById = <String, WholeComicQueueJobSnapshot>{
+      for (final job in _wholeComicQueueSnapshot.jobs) job.jobId: job,
+    };
+    final finished = <String>[];
+    for (final entry in _pendingWholeComicCompletionBadges.entries) {
+      final job = jobsById[entry.key];
+      if (job == null) continue;
+      switch (job.phase) {
+        case WholeComicQueuePhase.complete:
+          _downloadCompletionBadges[entry.value] =
+              _DownloadCompletionKind.wholeComic;
+          finished.add(entry.key);
+          break;
+        case WholeComicQueuePhase.failed:
+        case WholeComicQueuePhase.cancelled:
+          finished.add(entry.key);
+          break;
+        case WholeComicQueuePhase.queued:
+        case WholeComicQueuePhase.running:
+        case WholeComicQueuePhase.waitingForPolicy:
+        case WholeComicQueuePhase.paused:
+          break;
+      }
+    }
+    for (final jobId in finished) {
+      _pendingWholeComicCompletionBadges.remove(jobId);
+    }
+  }
+
+  void _recordChapterDownloadCompletion(String sourceId, String comicId) {
+    final identity = _canonicalComicKey(sourceId, comicId);
+    if (!mounted) {
+      _downloadCompletionBadges[identity] = _DownloadCompletionKind.chapter;
+      return;
+    }
+    setState(() {
+      _downloadCompletionBadges[identity] = _DownloadCompletionKind.chapter;
+    });
+  }
+
+  void _trackWholeComicDownloadCompletion(String sourceId, String comicId) {
+    final jobId = comicLibraryIdentity(sourceId, comicId);
+    final canonical = _canonicalComicKey(sourceId, comicId);
+    final job = _wholeComicDownloads.snapshot.jobFor(sourceId, comicId);
+    if (job?.phase == WholeComicQueuePhase.complete) {
+      _downloadCompletionBadges[canonical] =
+          _DownloadCompletionKind.wholeComic;
+      _pendingWholeComicCompletionBadges.remove(jobId);
+      return;
+    }
+    _pendingWholeComicCompletionBadges[jobId] = canonical;
+    _syncWholeComicCompletionBadges();
+  }
+
+  void _clearDownloadCompletionBadge(String sourceId, String comicId) {
+    final identity = _canonicalComicKey(sourceId, comicId);
+    if (!_downloadCompletionBadges.containsKey(identity)) return;
+    if (mounted) {
+      setState(() => _downloadCompletionBadges.remove(identity));
+    } else {
+      _downloadCompletionBadges.remove(identity);
     }
   }
 
@@ -472,7 +545,6 @@ final class _DemoHomeState extends State<DemoHome> {
       }
     }
     final active = snapshots.where((snapshot) => snapshot.isActive).toList();
-    final completed = snapshots.where((snapshot) => snapshot.isComplete).toList();
     final wholeJob = _wholeComicQueueSnapshot.jobFor(
       comic.sourceId,
       comic.comicId,
@@ -511,18 +583,16 @@ final class _DemoHomeState extends State<DemoHome> {
       );
     }
 
-    if (completed.isEmpty) {
-      return null;
-    }
-    final catalogCount = comic.sourceChapters.isNotEmpty
-        ? comic.sourceChapters.length
-        : comic.chapters.length;
-    return ComicDownloadProgress.offline(
-      label: catalogCount > 0 && completed.length >= catalogCount
-          ? '整本已离线'
-          : '${completed.length} 章已离线',
-      offlineChapters: completed.length,
-    );
+    final completion = _downloadCompletionBadges[
+      _canonicalComicKey(comic.sourceId, comic.comicId)
+    ];
+    return switch (completion) {
+      _DownloadCompletionKind.chapter =>
+        const ComicDownloadProgress.chapterComplete(),
+      _DownloadCompletionKind.wholeComic =>
+        const ComicDownloadProgress.comicComplete(),
+      null => null,
+    };
   }
 
   int get _nextCustomOrder => _preferences.values.fold<int>(

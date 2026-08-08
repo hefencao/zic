@@ -270,7 +270,8 @@ internal class MihonRuntimeDriver private constructor(
         val limit = arguments.positiveInt("limit")
         val page = (offset / limit) + 1
         val filterState = arguments["filterState"].asStringAnyMap("filterState")
-        val pageResult = if (query.isBlank() && filterState.isEmpty()) {
+        val useFilters = arguments["useFilters"] as? Boolean ?: false
+        val pageResult = if (!useFilters && query.isBlank()) {
             when (sectionId) {
                 null, "", "popular" -> source.invokeFirst(
                     listOf(

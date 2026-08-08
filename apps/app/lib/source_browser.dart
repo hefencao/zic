@@ -62,6 +62,10 @@ Key sourceComicCardKey(String sourceId, String comicId) =>
     ValueKey<String>('source-comic:$sourceId\u0000$comicId');
 Key sourceComicCoverVerificationKey(String sourceId, String comicId) =>
     ValueKey<String>('source-comic-verify:$sourceId\u0000$comicId');
+Key sourceComicShelfMarkerKey(String sourceId, String comicId) =>
+    ValueKey<String>('source-comic-shelf:$sourceId\u0000$comicId');
+Key sourceComicShelfDimKey(String sourceId, String comicId) =>
+    ValueKey<String>('source-comic-shelf-dim:$sourceId\u0000$comicId');
 Key sourceChapterKey(String sourceId, String chapterId) =>
     ValueKey<String>('source-chapter:$sourceId\u0000$chapterId');
 
@@ -69,6 +73,11 @@ typedef SourceComicCoverLoader = Future<EncodedResourceSource> Function(
   BrowsableComicSource source,
   SourceComicSummary comic,
   Uri uri,
+);
+
+typedef SourceComicShelfResolver = bool Function(
+  BrowsableComicSource source,
+  SourceComicSummary comic,
 );
 
 String _stableSourceComicIdentity(
@@ -166,6 +175,7 @@ final class ComicSourcesPage extends StatefulWidget {
     required this.onSourceSelected,
     required this.loadCover,
     required this.onOpenComic,
+    this.isInShelf,
     this.onOpenSourceWebView,
     this.resolveSource,
     this.traceSink = const NoopTraceSink(),
@@ -186,6 +196,7 @@ final class ComicSourcesPage extends StatefulWidget {
     BrowsableComicSource source,
     SourceComicSummary comic,
   ) onOpenComic;
+  final SourceComicShelfResolver? isInShelf;
   final Future<void> Function(
     BrowsableComicSource source,
     Uri url, {
@@ -210,12 +221,14 @@ final class _SourceBrowseViewState {
     required this.query,
     required this.offset,
     required this.filterState,
+    required this.filterViewActive,
   });
 
   final String? sectionId;
   final String query;
   final int offset;
   final SourceSearchFilterState filterState;
+  final bool filterViewActive;
 }
 
 final class _ComicSourcesPageState extends State<ComicSourcesPage> {
@@ -237,6 +250,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   List<SourceSearchFilterNode> _searchFilters =
       const <SourceSearchFilterNode>[];
   SourceSearchFilterState _filterState = const <String, Object?>{};
+  bool _filterViewActive = false;
   bool _searchExpanded = false;
   bool _refreshing = false;
   _SourceFailure? _failure;
@@ -279,6 +293,9 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     return _sourceForId(widget.sources, id);
   }
 
+  String? get _requestSectionId =>
+      _filterViewActive ? null : _selectedSectionId;
+
   String _verificationAttemptKey(
     BrowsableComicSource source,
     Uri? verificationUri,
@@ -298,6 +315,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       query: _query,
       offset: _pageOffset,
       filterState: Map<String, Object?>.unmodifiable(_filterState),
+      filterViewActive: _filterViewActive,
     );
   }
 
@@ -317,6 +335,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     _pageOffset = remembered?.offset ?? 0;
     _selectedSectionId = remembered?.sectionId;
     _filterState = remembered?.filterState ?? const <String, Object?>{};
+    _filterViewActive = remembered?.filterViewActive ?? false;
     _search.value = TextEditingValue(
       text: _query,
       selection: TextSelection.collapsed(offset: _query.length),
@@ -327,11 +346,12 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     final cached = remembered == null
         ? null
         : cache?.peekBrowsePage(
-            sectionId: _selectedSectionId,
+            sectionId: _requestSectionId,
             query: _query,
             offset: _pageOffset,
             limit: _pageSize,
             filterState: _filterState,
+            useFilters: _filterViewActive,
           );
     setState(() {
       _projectionSourceId = source.sourceId;
@@ -462,6 +482,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       _selectedSectionId = selected;
       _searchFilters = filters;
       _filterState = Map<String, Object?>.unmodifiable(retainedFilterState);
+      if (filters.isEmpty) _filterViewActive = false;
     });
     return _reload(
       forceRefresh: forceRefresh,
@@ -480,19 +501,20 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         : null;
     if (cache != null && forceRefresh) {
       return cache.refreshBrowsePage(
-        sectionId: _selectedSectionId,
+        sectionId: _requestSectionId,
         query: _query,
         offset: offset,
         limit: _pageSize,
         filterState: _filterState,
+        useFilters: _filterViewActive,
       );
     }
     final filterable = source is FilterableBrowsableComicSource
         ? source as FilterableBrowsableComicSource
         : null;
-    if (filterable != null && _filterState.isNotEmpty) {
+    if (filterable != null && _filterViewActive) {
       return filterable.browseWithFilters(
-        sectionId: _selectedSectionId,
+        sectionId: _requestSectionId,
         query: _query,
         offset: offset,
         limit: _pageSize,
@@ -556,11 +578,12 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     final cached = forceRefresh
         ? null
         : cache?.peekBrowsePage(
-            sectionId: _selectedSectionId,
+            sectionId: _requestSectionId,
             query: _query,
             offset: requestedOffset,
             limit: _pageSize,
             filterState: _filterState,
+            useFilters: _filterViewActive,
           );
     final hasCached = cached != null;
     final projectionMatchesSource = _projectionSourceId == source.sourceId;
@@ -578,10 +601,11 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         'cacheHit': hasCached,
         'cacheChanged': cachedChanged,
         'queryLength': _query.length,
-        'sectionId': _selectedSectionId,
+        'sectionId': _requestSectionId,
         'offset': requestedOffset,
         'limit': _pageSize,
         'filterCount': _filterState.length,
+        'filterViewActive': _filterViewActive,
       },
     );
     if (forceRefresh) {
@@ -606,11 +630,12 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     try {
       final page = cache != null
           ? await cache.refreshBrowsePage(
-              sectionId: _selectedSectionId,
+              sectionId: _requestSectionId,
               query: _query,
               offset: requestedOffset,
               limit: _pageSize,
               filterState: _filterState,
+              useFilters: _filterViewActive,
             )
           : await _loadBrowsePage(
               source,
@@ -1197,11 +1222,13 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         );
       },
     );
-    if (!mounted || selected == null || _filterStateEquals(selected, _filterState)) {
-      return;
-    }
+    if (!mounted || selected == null) return;
+    final stateChanged = !_filterStateEquals(selected, _filterState);
+    final viewChanged = !_filterViewActive;
+    if (!stateChanged && !viewChanged) return;
     setState(() {
       _filterState = Map<String, Object?>.unmodifiable(selected);
+      _filterViewActive = true;
       _pageOffset = 0;
     });
     unawaited(_reload(offset: 0));
@@ -1234,9 +1261,10 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   }
 
   void _selectBrowseSection(String sectionId) {
-    if (_selectedSectionId == sectionId) return;
+    if (_selectedSectionId == sectionId && !_filterViewActive) return;
     setState(() {
       _selectedSectionId = sectionId;
+      _filterViewActive = false;
       _pageOffset = 0;
     });
     unawaited(_reload(offset: 0));
@@ -1507,13 +1535,14 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                             return ChoiceChip(
                               key: comicSourceCategoryKey(section.sectionId),
                               label: Text(section.label),
-                              selected: section.sectionId == _selectedSectionId,
+                              selected: !_filterViewActive &&
+                                  section.sectionId == _selectedSectionId,
                               showCheckmark: false,
                               onSelected: (_) =>
                                   _selectBrowseSection(section.sectionId),
                             );
                           }
-                          return ActionChip(
+                          return ChoiceChip(
                             key: comicSourceFilterActionKey,
                             avatar: _filterState.isEmpty
                                 ? const Icon(Icons.tune, size: 18)
@@ -1523,7 +1552,9 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                                   ? '筛选'
                                   : '筛选 ${_filterState.length}',
                             ),
-                            onPressed: () => unawaited(_openFilterSheet()),
+                            selected: _filterViewActive,
+                            showCheckmark: false,
+                            onSelected: (_) => unawaited(_openFilterSheet()),
                           );
                         },
                       );
@@ -1575,6 +1606,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                         ),
                         source: source,
                         comic: comic,
+                        inShelf: widget.isInShelf?.call(source, comic) ?? false,
                         reloadToken: _artworkRetryRevision,
                         loadCover: _loadSourceCardCover,
                         onCoverFrameReady: () => _recordSourceTrace(
@@ -1749,6 +1781,7 @@ final class _SourceComicCard extends StatelessWidget {
   const _SourceComicCard({
     required this.source,
     required this.comic,
+    required this.inShelf,
     required this.reloadToken,
     required this.loadCover,
     required this.onCoverFrameReady,
@@ -1760,6 +1793,7 @@ final class _SourceComicCard extends StatelessWidget {
 
   final BrowsableComicSource source;
   final SourceComicSummary comic;
+  final bool inShelf;
   final int reloadToken;
   final SourceComicCoverLoader loadCover;
   final VoidCallback onCoverFrameReady;
@@ -1779,19 +1813,55 @@ final class _SourceComicCard extends StatelessWidget {
           Expanded(
             child: ClipRRect(
               borderRadius: BorderRadius.circular(10),
-              child: _RemoteImage(
-                uri: comic.coverUri,
-                loadSource: (uri) => loadCover(source, comic, uri),
-                reloadToken: reloadToken,
-                onFrameReady: onCoverFrameReady,
-                onDecodeFailure: onCoverDecodeFailure,
-                verificationKey:
-                    sourceComicCoverVerificationKey(
+              child: Stack(
+                fit: StackFit.expand,
+                children: <Widget>[
+                  _RemoteImage(
+                    uri: comic.coverUri,
+                    loadSource: (uri) => loadCover(source, comic, uri),
+                    reloadToken: reloadToken,
+                    onFrameReady: onCoverFrameReady,
+                    onDecodeFailure: onCoverDecodeFailure,
+                    verificationKey: sourceComicCoverVerificationKey(
                       source.sourceId,
                       comic.comicId,
                     ),
-                onSourceVerificationRequired:
-                    onSourceVerificationRequired,
+                    onSourceVerificationRequired:
+                        onSourceVerificationRequired,
+                  ),
+                  if (inShelf) ...<Widget>[
+                    ColoredBox(
+                      key: sourceComicShelfDimKey(
+                        source.sourceId,
+                        comic.comicId,
+                      ),
+                      color: Colors.black.withValues(alpha: 0.34),
+                    ),
+                    Align(
+                      alignment: Alignment.topRight,
+                      child: Semantics(
+                        label: '已加入书架',
+                        child: Container(
+                          key: sourceComicShelfMarkerKey(
+                            source.sourceId,
+                            comic.comicId,
+                          ),
+                          margin: const EdgeInsets.all(6),
+                          padding: const EdgeInsets.all(5),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.68),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.bookmark,
+                            size: 16,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
           ),
