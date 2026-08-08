@@ -96,7 +96,7 @@ for token in (
     'final cachedComic = _library.sourceManifest?.comic',
     'Future<ComicPreviewPage> _loadRemotePreview',
     'Future<ComicCommentPage> _loadRemoteComments',
-    'invalidateCachedComic(source, comicId)',
+    'invalidateCachedComicMetadata(source, comicId)',
 ):
     require(details, token, 'active plugin source resolution')
 for stale in (

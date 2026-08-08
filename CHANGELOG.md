@@ -1,3 +1,11 @@
+## 0.31.0-dev.166：拆分 Durable Artwork 保留生命周期并收口失效边界
+
+- 根因确认：`FileResourceCacheByteStore` 原设计每次写入都执行同一 96项/32 MiB LRU/TTL trim，source browse封面、书架/历史封面、preview/avatar全部共享一个持久淘汰平面；maintenance还可把该平面压到24 MiB。dev.165只修复了删除后 FileImage悬空，没有阻止长期封面本身被普通浏览压力删除。
+- 在唯一 `ResourceCacheManager/FileResourceCacheByteStore` owner内引入 `transient/retained` persistence lifetime，身份仍是原 `ResourceCacheKey`。browse/preview保持有界；library/history/details cover单调晋升 retained，不参与运行期容量/TTL/maintenance淘汰，显式资源删除与用户清缓存仍有效。
+- catalog刷新从 artwork失效解耦：详情/章节 refresh仅失效 metadata，不能再以整个 comic namespace删除 image bytes；整漫画删除使用独立 `invalidateAllComicResources`。
+- 修复 dev.165 编译闭包：恢复纯 `ResourceCacheByteStoreUsage/TrimReport/Maintenance`维护类型与 storage实现，但不恢复被否决的 cache-file path借用 API。
+- 新增 ADR 0149、dev.166根因审计与 owner gate；版本提升到 `0.31.0+166`。
+
 ## 0.31.0-dev.165：收口 Artwork 文件生命周期与 Home 更新语义
 
 - 根据 `zic-debug-trace-2026-08-08T07-28-36.jsonl` 收口封面间歇性 decode 失败：response cache 不再把可被 LRU/失效删除的持久 `.bin` 路径借给 Flutter `FileImage`；cache-owned artwork跨边界一律物化为自持有 bytes，`FileEncodedResourceSource` 只允许外部稳定本地文件。

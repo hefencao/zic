@@ -521,6 +521,51 @@ void main() {
     expect(store.values, isEmpty);
   });
 
+
+  test('coordinator trim releases transient persistence but preserves retained artwork',
+      () async {
+    final store = _MemoryResourceByteStore();
+    final responses = ResourceCacheManager(byteStore: store);
+    final coordinator = ResourceCacheCoordinator(
+      responses: responses,
+      maintenancePolicy: const ResourceCacheMaintenancePolicy(
+        responseTargetWeight: 0,
+        transientPersistentResponseTargetWeight: 0,
+      ),
+    );
+    addTearDown(coordinator.close);
+    const retainedKey = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'source/retained-cover',
+      namespace: 'comic:source\u0000retained',
+    );
+    const transientKey = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'source/transient-preview',
+      namespace: 'comic:source\u0000transient',
+    );
+
+    await responses.getOrLoadEncodedImage(
+      key: retainedKey,
+      retention: ResourceCacheRetention.retained,
+      loader: () async => Uint8List.fromList(<int>[1, 2, 3, 4]),
+    );
+    await responses.getOrLoadEncodedImage(
+      key: transientKey,
+      loader: () async => Uint8List.fromList(<int>[5, 6]),
+    );
+    await responses.drainPersistence();
+
+    final report = await coordinator.trim();
+    expect(report.persistentResponseReleasedBytes, 2);
+    expect(store.values.containsKey(transientKey), isFalse);
+    expect(store.values.containsKey(retainedKey), isTrue);
+    final usage = await coordinator.inspect();
+    expect(usage.persistentResponses?.bytes, 4);
+    expect(usage.persistentResponses?.retainedBytes, 4);
+    expect(usage.persistentResponses?.transientBytes, 0);
+  });
+
   test(
     'coordinator reports response and artifact planes without taking ownership',
     () async {
@@ -552,6 +597,42 @@ void main() {
       expect(artifacts.clearCalls, 1);
     },
   );
+
+  test('retained image promotes the same durable key without a second namespace',
+      () async {
+    final store = _MemoryResourceByteStore();
+    const key = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'source\u0000cover',
+      namespace: 'comic:source\u0000comic',
+      revision: 'artwork-v2',
+    );
+    final cache = ResourceCacheManager(byteStore: store);
+    addTearDown(cache.close);
+
+    await cache.getOrLoadEncodedImage(
+      key: key,
+      loader: () async => Uint8List.fromList(<int>[1, 2, 3]),
+    );
+    await cache.drainPersistence();
+    expect(store.retentions[key], ResourceCacheRetention.transient);
+
+    final source = await cache.getOrLoadEncodedImage(
+      key: key,
+      retention: ResourceCacheRetention.retained,
+      loader: () async => throw StateError('memory hit must not reload source'),
+    );
+    expect(source, isNotNull);
+    await cache.drainPersistence();
+
+    expect(store.values.keys, <ResourceCacheKey>[key]);
+    expect(store.retentions[key], ResourceCacheRetention.retained);
+    expect(store.values[key]!.expiresAt, isNull);
+    final trim = await store.trimTo(targetBytes: 0);
+    expect(trim.releasedBytes, 0);
+    expect(store.values[key]!.bytes, <int>[1, 2, 3]);
+  });
+
 }
 
 final class _MemoryResourceByteStore
@@ -563,6 +644,8 @@ final class _MemoryResourceByteStore
   int writes = 0;
   final Map<ResourceCacheKey, PersistedResourceBytes> values =
       <ResourceCacheKey, PersistedResourceBytes>{};
+  final Map<ResourceCacheKey, ResourceCacheRetention> retentions =
+      <ResourceCacheKey, ResourceCacheRetention>{};
 
   @override
   Future<PersistedResourceBytes?> read(ResourceCacheKey key) async =>
@@ -572,7 +655,8 @@ final class _MemoryResourceByteStore
   Future<void> write({
     required ResourceCacheKey key,
     required Uint8List bytes,
-    required DateTime expiresAt,
+    required DateTime? expiresAt,
+    ResourceCacheRetention retention = ResourceCacheRetention.transient,
   }) async {
     writes++;
     if (writeStarted != null && !writeStarted!.isCompleted) {
@@ -581,26 +665,48 @@ final class _MemoryResourceByteStore
     if (writeGate != null) {
       await writeGate!.future;
     }
+    retentions[key] = retention;
     values[key] = PersistedResourceBytes(
       bytes: Uint8List.fromList(bytes),
-      expiresAt: expiresAt,
+      expiresAt: retention == ResourceCacheRetention.retained ? null : expiresAt,
+    );
+  }
+
+  @override
+  Future<void> retain(ResourceCacheKey key) async {
+    final value = values[key];
+    if (value == null) {
+      return;
+    }
+    retentions[key] = ResourceCacheRetention.retained;
+    values[key] = PersistedResourceBytes(
+      bytes: value.bytes,
+      expiresAt: null,
     );
   }
 
   @override
   Future<void> remove(ResourceCacheKey key) async {
     values.remove(key);
+    retentions.remove(key);
   }
 
   @override
   Future<void> removeWhere(
     bool Function(ResourceCacheKey key) predicate,
   ) async {
+    final removed = values.keys.where(predicate).toList(growable: false);
     values.removeWhere((key, value) => predicate(key));
+    for (final key in removed) {
+      retentions.remove(key);
+    }
   }
 
   @override
-  Future<void> clear() async => values.clear();
+  Future<void> clear() async {
+    values.clear();
+    retentions.clear();
+  }
 
   @override
   Future<ResourceCacheByteStoreUsage> inspect() async =>
@@ -610,20 +716,41 @@ final class _MemoryResourceByteStore
           (sum, value) => sum + value.bytes.lengthInBytes,
         ),
         entries: values.length,
+        retainedBytes: values.entries
+            .where(
+              (entry) =>
+                  retentions[entry.key] == ResourceCacheRetention.retained,
+            )
+            .fold<int>(
+              0,
+              (sum, entry) => sum + entry.value.bytes.lengthInBytes,
+            ),
+        retainedEntries: retentions.values
+            .where((retention) => retention == ResourceCacheRetention.retained)
+            .length,
       );
 
   @override
   Future<ResourceCacheByteStoreTrimReport> trimTo({
     required int targetBytes,
   }) async {
-    final before = (await inspect()).bytes;
+    final transientKeys = values.keys
+        .where(
+          (key) => retentions[key] != ResourceCacheRetention.retained,
+        )
+        .toList(growable: false);
+    final before = transientKeys.fold<int>(
+      0,
+      (sum, key) => sum + values[key]!.bytes.lengthInBytes,
+    );
     var remaining = before;
     var evicted = 0;
-    for (final key in values.keys.toList(growable: false)) {
+    for (final key in transientKeys) {
       if (remaining <= targetBytes) {
         break;
       }
       remaining -= values.remove(key)!.bytes.lengthInBytes;
+      retentions.remove(key);
       evicted++;
     }
     return ResourceCacheByteStoreTrimReport(

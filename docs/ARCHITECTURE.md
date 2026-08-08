@@ -131,6 +131,8 @@ Cookie 会话，按当前详情页 `#gnd` 关系生成版本，不把 Venera 当
 
 漫画源页使用来源自身声明的 browse section：Mihon 映射 Popular/Latest，Venera 枚举 explore loader 与 category target；原生/Mihon/Venera 仅通过来源 chip 的背景色区分，不显示 JS/插件图标，也不占内容分类行。固定大小的 catalog page 仍使用显式上一页/下一页，但 pager 位于内容滚动尾部。左下浮动搜索位于来源栏上方，展开后显示持久化搜索历史；展开面板优先消费返回和垂直滑动手势，收起后才把手势交还页面。Mihon `getFilterList()` 由 runtime adapter 投影为 opaque `SourceSearchFilterOption`，搜索框上方仅显示 CheckBox、TriState、Select 与 Group 子项的过滤标签，UI 不解析插件对象。列表由 catalog response cache 先行投影；source 切换时 projection owner 先原子切换到目标 source，并按精确请求缓存或目标最近缓存立即绘制，旧 source 内容没有展示资格。后台 refresh 只有在稳定字段发生变化时才更新 Presentation；边缘下拉达到刷新阈值后强制绕过缓存请求来源，但保留当前内容直到新数据到达。Mihon 插件的已安装与仓库列表仍按规范化语言分类。
 
+详情页与漫画源页的统一刷新由 `AppPullToRefresh` 拥有 edge trigger、72 px位移、进行中状态与成功/失败结果图标；页面不得叠加第二套刷新状态。
+
 详情扩展数据由 source adapter 负责：`ComicManifest` 可携带首批预览缩略图和评论，
 `ComicPreviewSource`/`ComicCommentSource` 只在来源声明能力时提供继续分页。App 只消费
 规范化 URI、评论字段和不透明的 `sourceSubId`/回复 ID；图片仍走统一 artwork cache，
@@ -362,17 +364,22 @@ raw comicId
 ```
 
 首页/详情 artwork 的缓存层顺序是 memory -> durable byte store -> source loader。durable命中先读取为
-由 presentation 持有的 `Uint8List`，不会把 cache-managed文件路径交给 `FileImage`；因此后续 LRU trim/
-invalidate只能移除 cache entry，不能让已经创建的 ImageProvider悬空。source-independent warm probe命中时，
-首页封面不会解析来源或启动插件；miss才进入 gateway/source transport。
+由 presentation 持有的 `Uint8List`，不会把 cache-managed文件路径交给 `FileImage`。持久 artwork 的
+**身份**与**保留生命周期**是两个维度：来源 browse/preview 等临时响应属于 `transient`，可受 TTL/LRU/
+maintenance 容量回收；已进入 library/history/details 持久语义的 cover在同一个 `ResourceCacheKey` 上
+单调晋升为 `retained`，不参与运行期容量/TTL淘汰，只能由精确 artwork revision失效、漫画资源显式删除
+或用户清缓存移除。晋升不能创建第二 namespace。内存 response plane仍保持有界，presentation已取得的 bytes
+也不依赖 durable entry继续存在。source-independent warm probe命中时，首页封面不会解析来源或启动插件；
+miss才进入 gateway/source transport。
 因此预览图的完整 URI 仍决定每个 widget 的裁剪区域，但同一 base URL 的编码字节只保留一份，
 避免旧实现按每个 `@x/y` 裁剪重复请求和占用缓存。旧的每裁剪项 role 不会与新的 base role 相同，因此无需迁移预览裁剪缓存。封面 durable
 namespace 由 canonical comic identity 固定，raw Mihon `comicId`、封面 URL、详情补全后的 SManga
 字段变化都不得创建第二个 namespace。`comicArtworkCacheSchemaRevision` 由 resource cache/gateway
 统一拥有；external artwork调用方只能提供可选 content revision，不得再次传入基础 schema revision，
 否则会把 browse 与 details/history 分裂成 `artwork-v2` 和 `artwork-v2:artwork-v2` 两套 namespace。
-封面内容版本变化由 content revision/明确来源刷新处理，不能通过 presentation State、provider eviction
-或新的 raw alias 隐式换 key。
+封面内容版本变化由 content revision/精确 artwork refresh处理，不能通过 presentation State、provider eviction
+或新的 raw alias 隐式换 key。catalog details/chapter刷新只能失效 metadata；不得因共享 comic namespace
+顺带删除 retained artwork。整漫画资源删除是独立的显式生命周期操作。
 
 图片加载失败的边界必须分开：cache hit/miss 只说明编码字节是否存在；source loader 的失效路径、非图片响应、权限/challenge/空响应由 gateway 拒绝；Flutter decode 错误只影响 presentation。单张失败的 Trace 至少记录脱敏 `sourceId/raw comicId/resourceRole/URI`、cache origin 和 transport/decode 错误，不能仅凭占位图判断缓存冲突。
 
@@ -409,26 +416,3 @@ Cloudflare 可见浏览器的 Cookie 与 User-Agent 必须属于同一个浏览�
 ## 14. 静态门禁
 
 静态门禁阻止明显的依赖反转、API 泄漏、重复权威和文档漂移，但不能替代 `flutter analyze`、Dart/Flutter/Rust tests、Android debug/release build 和真机生命周期/性能验证。
-
-## Artwork、预览与插件验证稳定性
-
-- Artwork source 与 Flutter ImageStream 的恢复不得形成竞争循环。失败期间 presentation 保持稳定占位图；父组件 closure identity 不是资源 identity。
-- 详情预览按实际行分组：含横图最多 2 张、纯竖图最多 3 张；只允许相邻三个候选内最小局部重排；每行从可用宽度反算等面积 tile，详情外层是唯一水平边距。
-- 详情页和漫画源页使用同一 `AppPullToRefresh` 统一刷新交互；该组件同时拥有 edge trigger、刷新进度、成功/失败图标、位置和结果寿命，页面不得再叠加自己的勾/叉。
-- 浏览器 Cookie snapshot 是跨进程的一次性 revision handoff，不是每请求覆盖 runtime Cookie 的长期权威。Mihon 接收方必须先把匹配 host/UA 的 snapshot 同步写入 `AndroidCookieJar` 的进程内 name/value map，首个 OkHttp重试不得依赖异步 `CookieManager.setCookie()` 完成；CookieManager只承担 WebView/兼容镜像。打开验证浏览器本身不得擦除仍有效的同站点/同 UA snapshot：`begin()` 在 TTL 内保留已有 Cookie/localStorage，成功页面 capture才推进 revision，空 Cookie capture不得覆盖已有非空 handoff。验证浏览器打开 typed failure 的实际 URL；网络 classifier与浏览器完成探针是两套边界：前者保持严格以避免误触发，后者更保守地观察 Turnstile、challenge form/running容器、`cf-chl-*`、challenge iframe和典型验证中间态。`onPageFinished` 不是完成信号，页面必须同站点、ready/progress完成并连续 3 秒无 challenge证据才完成 snapshot handoff；`cf_clearance` 只是 Cookie之一而非唯一完成条件。一次手动或自动 browser handoff后，同 source/request URL的普通刷新不得再次自动打开 WebView；成功 browse才清除 guard，用户仍可显式再次打开浏览器。初次 external runtime activation若在 session建立前遇到 Binder service died/disconnected，由 Android `PluginRuntimeServiceClient` 保留原 pending activation跨一个新 service generation；Dart backend不得再次调用 activation。已建立 session 的 lifecycle恢复继续走既有 session contract。
-
-### 外部插件持久化恢复
-
-`$storageRoot/external_plugins/installed.json` 是已导入插件的持久清单，但清单恢复必须按 record 隔离失败：单个旧字段、损坏记录或缺失 payload 不得使其它已安装插件失效，也不得把整份 manifest 改名为 invalid。payload 的运行时绝对路径不是稳定 identity；若 Android sandbox 根发生变化，host 可在当前 owned plugin root 中按原 payload basename 找回文件，随后仍由既有 hash/signature/ABI inspection 验证内容。旧 manifest 缺少后来新增的可选字段（当前包括 `entryClasses`）必须有向后兼容默认值。恢复失败保留为诊断并显示在插件管理页。
-
-### 封面与详情来源恢复
-
-Home、漫画源、详情和迁移的**所有非本地 artwork locator**都必须进入 `ComicSourceResourceGateway`；这包括 HTTP(S) 与 `mihon:resource:` 等插件私有 URI。gateway 先按 canonical comic artwork identity做 source-independent durable probe，只有 cache miss才解析 active source。插件 URI绝不能回落到 `readLocalImageSource`，raw runtime comicId也不得分裂 durable cover namespace。
-
-
-- artwork 的自动恢复只属于 `ComicSourceResourceGateway/ResourceCacheManager`。Home、漫画源和详情 presentation 不得拥有定时 retry、first-frame watchdog、App lifecycle 自动 retry、全局 ImageCache `evict()` 或短时 Future join。资源失败后 presentation 保持稳定占位；只有显式来源刷新、资源 revision 或稳定 identity 真正变化才重新发起加载。
-- Home/书架/详情封面的 Flutter State key 与 image presentation identity 使用 canonical comic identity；raw Mihon locator、resume chapter、封面 URL 和 loader closure 变化不得销毁已成功的封面 State。
-- 远程详情优先投影已保存 manifest；插件 host 未就绪时等待当前 source resolver，不能因后台 refresh 失败丢弃已有详情。
-- 预览、评论、章节确保和刷新在实际调用时解析当前 active adapter，不捕获插件重启前的 source session。
-- 漫画源浏览页持有稳定 `sourceId`、section/query/filter 与缓存投影，不长期拥有 runtime adapter。**代码/payload 安装更新**使用 `ExternalPluginRuntimeRegistry.replace`事务式替换；普通 settings mutation 与 Venera Web 登录属于当前 runtime capability，必须原地更新，不得创建 replacement session。Mihon 可见浏览器/Cloudflare handoff暂保留受限的 Mihon-only restart API；页面随后始终通过 composition resolver重新取得 active source。生产外部 runtime进程显式允许最多 32 个 active session，该值是安全上限而非用户插件数量语义。
-- Mihon chapter catalog只接受插件/source API返回的真实 `SChapter`。1.6/current 宿主以 `Source.getMangaUpdate(manga, existingChapters, fetchDetails, fetchChapters)` 为主入口；ZIC 的 `CatalogueSource` compatibility shim必须与当前 Mihon一致：details 与 chapters 均基于**原始 `SManga`**独立获取，不能把补全后的 manga 再传给 `fetchChapterList`。只有 ABI明确不存在 combined能力时才回退 legacy API，legacy chapter调用同样使用原始 manga。正文先 `getPageList(SChapter)`，能力不存在时才回退 `fetchPageList`。不得 synthetic、标题/URL/序号去重或以空目录推断验证。Mihon details/chapter durable metadata带 host-contract revision，接口语义改变时必须失效旧错误 manifest。

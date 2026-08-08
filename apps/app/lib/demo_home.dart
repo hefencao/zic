@@ -1151,11 +1151,14 @@ final class _DemoHomeState extends State<DemoHome> {
         cacheComicId: _canonicalComicId(sourceId, comicId),
         uri: uri,
         resourceRole: resourceRole,
+        retention: resourceRole == 'cover'
+            ? ResourceCacheRetention.retained
+            : ResourceCacheRetention.transient,
       );
     }
-    // Android content URIs cannot be opened by FileImage. Copy them once into
-    // the durable response cache, then use that immutable file on later
-    // launches instead of crossing MethodChannel for every cover build.
+    // Android content URIs cannot be opened by FileImage. Copy them into the
+    // unified response cache; library/history covers are retained durably while
+    // preview-like artwork remains transient.
     return loadCachedComicImageSource(
       cache: _cacheCoordinator.responses,
       sourceId: sourceId,
@@ -1164,6 +1167,9 @@ final class _DemoHomeState extends State<DemoHome> {
       resourceRole: resourceRole,
       revision: comicArtworkCacheSchemaRevision,
       awaitPersistence: false,
+      retention: resourceRole == 'cover'
+          ? ResourceCacheRetention.retained
+          : ResourceCacheRetention.transient,
       loader: () => readLocalImageSource(sourceValue),
     );
   }
@@ -1243,9 +1249,9 @@ final class _DemoHomeState extends State<DemoHome> {
     await _librarySession.removeSavedComic(comic.sourceId, comic.comicId);
     final source = _sourceForId(comic.sourceId);
     if (source != null) {
-      invalidateCachedComic(source, comic.comicId);
+      invalidateCachedComicMetadata(source, comic.comicId);
     }
-    invalidateComicResourceCache(
+    invalidateAllComicResources(
       _cacheCoordinator.responses,
       sourceId: comic.sourceId,
       comicId: _canonicalComicId(comic.sourceId, comic.comicId),

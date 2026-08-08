@@ -78,6 +78,7 @@ final class ComicSourceResourceGateway {
     required Uri uri,
     String contentRevision = '',
     String resourceRole = 'cover',
+    ResourceCacheRetention retention = ResourceCacheRetention.transient,
   }) async {
     final encoded = await loadArtworkSource(
       cache: cache,
@@ -87,6 +88,7 @@ final class ComicSourceResourceGateway {
       uri: uri,
       contentRevision: contentRevision,
       resourceRole: resourceRole,
+      retention: retention,
     );
     return readEncodedResourceBytes(encoded);
   }
@@ -101,6 +103,7 @@ final class ComicSourceResourceGateway {
     bool awaitPersistence = false,
     bool forceRefresh = false,
     String resourceRole = 'cover',
+    ResourceCacheRetention retention = ResourceCacheRetention.transient,
   }) async {
     _requireOpen();
     final requestUri = _artworkRequestUri(uri);
@@ -119,6 +122,7 @@ final class ComicSourceResourceGateway {
             resourceRole: cacheRole,
             revision: cacheRevision,
             awaitPersistence: awaitPersistence,
+            retention: retention,
           );
     if (cached != null) {
       return cached;
@@ -138,6 +142,7 @@ final class ComicSourceResourceGateway {
       revision: cacheRevision,
       awaitPersistence: awaitPersistence,
       forceRefresh: forceRefresh,
+      retention: retention,
       loader: () => _collectArtworkResponse(
         _transports.loaderFor(source, requestUri),
       ),

@@ -94,7 +94,7 @@ for token in (
 for token in (
     'typedef ComicDetailsSourceResolver',
     'Future<BrowsableComicSource> _sourceForOperation() async',
-    'invalidateCachedComic(source, comicId)',
+    'invalidateCachedComicMetadata(source, comicId)',
     "final source = await _sourceForOperation();",
     "widget.ensureSourceChapter(\n      source,",
 ):

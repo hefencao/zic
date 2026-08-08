@@ -234,7 +234,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       }
       final artifactReport = report.artifacts;
       final message = artifactReport == null
-          ? '响应缓存整理完成：释放 ${_formatBytes(report.totalReleasedBytes)}'
+          ? '临时响应缓存整理完成：释放 ${_formatBytes(report.totalReleasedBytes)}'
           : '缓存整理完成：释放 ${_formatBytes(report.totalReleasedBytes)}，'
               'artifact 剩余 ${_formatBytes(artifactReport.remainingBytes)}';
       ScaffoldMessenger.of(context).showSnackBar(
@@ -567,7 +567,9 @@ final class _DownloadCacheSummary extends StatelessWidget {
                   current == null
                       ? '统一统计资源响应内存、持久响应与页面 artifact。'
                       : '内存 ${_formatBytes(current.responses.weight)} · '
-                          '持久响应 ${_formatBytes(current.persistentResponses?.bytes ?? 0)} · '
+                          '持久响应 ${_formatBytes(current.persistentResponses?.bytes ?? 0)} '
+                          '（保留 ${_formatBytes(current.persistentResponses?.retainedBytes ?? 0)} / '
+                          '临时 ${_formatBytes(current.persistentResponses?.transientBytes ?? 0)}） · '
                           'artifact ${_formatBytes(current.artifacts?.bytes ?? 0)}；'
                           '活动需求与写入不会被清理。',
                   style: Theme.of(context).textTheme.bodySmall,
@@ -591,7 +593,7 @@ final class _DownloadCacheSummary extends StatelessWidget {
           else ...<Widget>[
             IconButton(
               key: downloadCacheTrimKey,
-              tooltip: '整理离线缓存',
+              tooltip: '整理可回收缓存',
               onPressed: onTrim,
               icon: const Icon(Icons.auto_delete_outlined),
             ),

@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.165`
-**App build：** `0.31.0+165`
+**源码版本：** `0.31.0-dev.166`
+**App build：** `0.31.0+166`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -9,6 +9,9 @@
 
 ## 当前实现
 
+- durable artwork persistence 已拆分为同一 owner 下的 `transient/retained` 生命周期：source browse/preview继续受 96项/32 MiB transient LRU、TTL及 maintenance target约束；library/history/details cover在同一 canonical `ResourceCacheKey` 上晋升 retained，不再参与容量/TTL淘汰。晋升只改变持久生命周期元数据，不创建第二 cache namespace。
+- comic刷新失效已从 artwork 解耦：`invalidateComicMetadata` 只失效 details/chapter metadata，不再按整个 comic namespace删除 image bytes；只有 `invalidateAllComicResources`、精确 artwork force/revision或用户清缓存可删除 retained cover。
+- dev.165误删的 `ResourceCacheByteStoreUsage/TrimReport/Maintenance` 纯维护契约已恢复；storage maintenance实现继续可统计/整理 transient durable responses，但旧 `PersistedResourceFile/ResourceCacheByteStoreFileAccess/locate()` 文件借用 API保持删除。
 - Home可见 library projection 与 durable mutation已收成 `HomeLibrarySession` write-through边界：chapter/SavedComic写入后同一次操作立即更新 Home；Reader page callback只 enqueue checkpoint，每个 route局部持有 final progress并在返回后只发布一次，不再依赖详情页退出或整库 reload。
 - `HomeLibrarySession.reload()` 以 projection revision拒绝旧 entries/SavedComic snapshot覆盖 enrichment期间更晚的 write-through更新，避免 history在并发 reload结束时回退。
 - External artwork基础 schema revision唯一属于 `resource_cache/ComicSourceResourceGateway`。browse/details/history使用同一 `artwork-v2` namespace；gateway参数只允许额外 `contentRevision`，Home/详情不再把 `artwork-v2` 重复拼成 `artwork-v2:artwork-v2`。local artwork直接复用同一个 schema revision。
@@ -16,7 +19,7 @@
 - Home“更新漫画”使用独立 `SavedComicRecord.sourceUpdateAt`：仅 shelf + source-confirmed update进入。已有章节目录发生变化或首次发现新 successor/version才推进；阅读 progress、普通 metadata刷新和未入书架浏览不推进。远程无偏好 primary projection默认 `inShelf=false`，首次加入书架清理加入前 update signal。
 - 初次 Venera/Mihon activation 的 Binder generation连续性已下沉到 Android `PluginRuntimeServiceClient`：仅 pending activation可跨一个 `runtime-service-died/disconnected` generation；Dart backend删除初次 activation重放，session invocation与业务失败仍按原 owner处理。
 - Home外部封面继续把 live source readiness作为显式加载依赖：首屏早于 plugin ready且 warm cache miss时，失败 Future只在对应 source从 unavailable→available后重新求值；普通 progress/enrichment rebuild不重试。历史/更新横向 Sliver直接 child使用 `section + canonical comic identity` 稳定 key并提供 reorder index callback。
-- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=165`。
+- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=166`。
 - 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
 - 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation不阻塞 Home primary，外部 source ready 后增量接入。
 - artwork资源恢复唯一属于 `ComicSourceResourceGateway/ResourceCacheManager`。Home、书架、漫画源和详情 presentation 已删除定时 retry、first-frame watchdog、App resume自动 retry、全局 ImageCache eviction和 App级短时 Future join；详情统一使用 `ComicDetailsArtworkLoader` 并显式传递 cover/preview/avatar role。普通 artwork直接复用 `StableArtworkImage`；需要裁剪/尺寸测量时只有一个显式 ImageStream listener，不再同时创建第二个 `Image`。
@@ -66,7 +69,7 @@
 ## 当前开放问题
 
 - 需用 dev.165 真机确认 Reader route返回后 Home history立即接收 final progress，不依赖详情页或整库 reload；连续 Reader route不得串用 final progress。
-- 需用 dev.165 真机复现此前封面压力场景，确认 durable cover即使 response cache发生 trim/invalidate，已建立的 ImageProvider仍持有 bytes且不会再次出现“先 FirstFrame、随后批量 DecodeFailed”；source可用但仍 `Failure` 时继续沿真实 request/transport调查，不增加 artwork retry。
+- 需用 dev.166 真机复现此前封面压力场景，确认 retained cover在 transient response cache持续写入/trim后仍存在，且已建立的 ImageProvider不会再次出现“先 FirstFrame、随后批量 DecodeFailed”；source可用但仍 `Failure` 时继续沿真实 request/transport调查，不增加 artwork retry。
 - 需验证 Home updates：未入书架漫画即使有阅读历史也不出现；已入书架但没有 source update signal也不出现；真实新章节/新版本检测后才出现。
 - 需对同一外部漫画执行 browse→details→history，确认 browse已写入的 canonical `artwork-v2` durable cover被后两者直接命中，不再出现第二 revision namespace。source可用但仍 `Failure` 时继续沿真实 request/transport调查，不增加 artwork retry。
 - 需真机确认 Venera `venera:ehentai` 初次 activation 在 Binder generation死亡时由 Android client保留 pending activation跨一个新 generation；若新 generation仍死亡，应采集 runtime process crash/kill 证据，而不是在 Dart/plugin层叠加重试。
@@ -85,7 +88,7 @@
 |---|---|
 | repository/documentation/Dart static gates | Verified-static |
 | current-code documentation consistency gate | Verified-static |
-| dev.75–dev.165 ownership gates | Verified-static |
+| dev.75–dev.166 ownership gates | Verified-static |
 | Android/Mihon/Venera/Reader/Pipeline/UI contracts | Verified-static / toolchain |
 | Kotlin texture bridge + dev.164 PluginRuntimeServiceClient stub compile | Verified-toolchain |
 | pinned libwebp host build/smoke | Unverified：当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip` |

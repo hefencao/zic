@@ -1,6 +1,6 @@
-# dev.165 后续交接
+# dev.166 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.165_artwork-lifetime-home-update-semantics.zip`。
+唯一后续基线：`zic_v0.31.0-dev.166_retained-artwork-cache-ownership.zip`。
 
 ## 必读
 
@@ -18,6 +18,7 @@
 12. `docs/adr/0146-source-resource-atomic-binding-and-catalog-artwork-boundary.md`
 13. `docs/adr/0147-home-projection-artwork-revision-runtime-generation-ownership.md`
 14. `docs/adr/0148-artwork-source-lifetime-and-home-update-semantics.md`
+15. `docs/adr/0149-retained-artwork-persistence-and-invalidation-boundary.md`
 14. `docs/audits/dev157-root-cause-owner-cleanup-audit.md`
 15. `docs/audits/dev157-validation-results.md`
 16. `docs/audits/dev158-compile-owner-blocking-audit.md`
@@ -27,9 +28,14 @@
 20. `docs/audits/dev164-validation-results.md`
 21. `docs/audits/dev165-artwork-lifetime-home-update-root-cause-audit.md`
 22. `docs/audits/dev165-validation-results.md`
+23. `docs/audits/dev166-retained-artwork-cache-root-cause-audit.md`
+24. `docs/audits/dev166-validation-results.md`
 
 ## 当前代码事实
 
+- durable artwork persistence在 `ResourceCacheManager/FileResourceCacheByteStore` 内分为 `transient/retained`：browse/preview为 transient；library/history/details cover在同一 canonical key上晋升 retained。retained不受自动 LRU/TTL/manual transient trim影响，只接受精确 artwork失效、整漫画资源删除或用户清缓存。
+- catalog metadata refresh使用 `invalidateComicMetadata`，不得按 comic namespace连坐 artwork；真正删除漫画时才调用 `invalidateAllComicResources`。
+- maintenance统计/trim接口是 storage/cache内部纯契约；`ResourceCacheByteStoreUsage/TrimReport/Maintenance`存在，但任何 `locate()/PersistedResourceFile/FileAccess`借用路径都不得恢复。
 - `HomeLibrarySession` 是已挂载 Home 的 write-through projection owner：chapter/SavedComic durable mutation成功后立即更新可见投影；详情/来源流程不得靠后续 `_reloadLibrary()` 追平。Reader page只 enqueue checkpoint，每个 route局部持有 final progress并在返回后只发布一次。
 - session reload具有 projection revision：reload开始时捕获的旧 entries/SavedComic snapshot不得在 enrichment结束时覆盖更晚的 write-through chapter/saved/progress投影。
 - `comicArtworkCacheSchemaRevision` 只有一个 owner。external browse/details/history均由 `ComicSourceResourceGateway`生成 `artwork-v2[:contentRevision]`；调用方不得再把基础 schema revision作为参数传入。local artwork直接使用同一 schema revision。
@@ -56,7 +62,7 @@
 - 长会话记录 progress SQLite事务次数和 Reader pop帧时序；不得每页写盘，也不得在退出后整库 reload。
 - 分别用明确 chapterList扩展与 combined-only TachiyomiX 1.6扩展验证目录调用次数/结果；出现空或单项时先看实际 API返回，不恢复 synthetic fallback。
 - 同一 Mihon漫画连续 browse → details → history，多次详情补全/封面 URL变化后，canonical artwork identity必须一致；成功封面普通 rebuild/resume不得重新请求。
-- 重现 response cache trim/Reader往返，确认已经 FirstFrame的封面不因 cache文件回收而 DecodeFailed；确认 Home updates仅由 shelf + sourceUpdateAt驱动。
+- 重现 transient response cache持续写入/trim与 Reader往返，确认 retained cover持久记录不被回收且已经 FirstFrame的封面不再 DecodeFailed；确认 Home updates仅由 shelf + sourceUpdateAt驱动。
 
 ## 不可改变的稳定边界
 

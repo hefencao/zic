@@ -44,17 +44,19 @@ abstract interface class ArtifactCacheMaintenance {
 final class ResourceCacheMaintenancePolicy {
   const ResourceCacheMaintenancePolicy({
     this.responseTargetWeight = 24 * 1024 * 1024,
-    this.persistentResponseTargetWeight = 24 * 1024 * 1024,
+    this.transientPersistentResponseTargetWeight = 24 * 1024 * 1024,
     this.artifactMaxWeight = 512 * 1024 * 1024,
     this.artifactTargetWeight = 384 * 1024 * 1024,
   })  : assert(responseTargetWeight >= 0),
-        assert(persistentResponseTargetWeight >= 0),
+        assert(transientPersistentResponseTargetWeight >= 0),
         assert(artifactMaxWeight >= 0),
         assert(artifactTargetWeight >= 0),
         assert(artifactTargetWeight <= artifactMaxWeight);
 
   final int responseTargetWeight;
-  final int persistentResponseTargetWeight;
+  /// Target for transient durable response bytes only. Retained artwork is not
+  /// capacity-trimmed and remains governed by explicit invalidation/clear.
+  final int transientPersistentResponseTargetWeight;
   final int artifactMaxWeight;
   final int artifactTargetWeight;
 }
@@ -134,7 +136,7 @@ final class ResourceCacheCoordinator {
     final beforeResponses = responses.stats.weight;
     responses.trimTo(targetWeight: maintenancePolicy.responseTargetWeight);
     final persistentReport = await responses.trimPersistentBytesTo(
-      targetBytes: maintenancePolicy.persistentResponseTargetWeight,
+      targetBytes: maintenancePolicy.transientPersistentResponseTargetWeight,
     );
     final artifactMaintenance = artifacts;
     final artifactReport = artifactMaintenance == null

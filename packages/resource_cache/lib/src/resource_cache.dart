@@ -64,7 +64,13 @@ final class PersistedResourceBytes {
   });
 
   final Uint8List bytes;
-  final DateTime expiresAt;
+  /// Expiry owned by the durable byte store.
+  ///
+  /// `null` means the record is retained until explicit invalidation/clear.
+  /// This is intentionally independent from the bounded in-memory response
+  /// cache TTL: a retained cover may leave memory while its durable encoded
+  /// bytes remain reusable across process restarts.
+  final DateTime? expiresAt;
 }
 
 /// Immutable encoded resource presented either from Dart-owned memory or from
@@ -114,6 +120,66 @@ final class FileEncodedResourceSource extends EncodedResourceSource {
   final String path;
 }
 
+/// Persistence lifetime for immutable encoded response bytes.
+///
+/// This is not part of [ResourceCacheKey] identity. The same canonical artwork
+/// can first be observed as a transient source-browse response and later be
+/// promoted when it becomes library/history-owned. Promotion is monotonic for
+/// the current durable record and must never create a second cache namespace.
+enum ResourceCacheRetention {
+  transient,
+  retained,
+}
+
+/// Physical usage reported by an inspectable durable response-byte store.
+final class ResourceCacheByteStoreUsage {
+  const ResourceCacheByteStoreUsage({
+    required this.bytes,
+    required this.entries,
+    this.retainedBytes = 0,
+    this.retainedEntries = 0,
+  })  : assert(bytes >= 0),
+        assert(entries >= 0),
+        assert(retainedBytes >= 0),
+        assert(retainedEntries >= 0),
+        assert(retainedBytes <= bytes),
+        assert(retainedEntries <= entries);
+
+  final int bytes;
+  final int entries;
+  final int retainedBytes;
+  final int retainedEntries;
+
+  int get transientBytes => bytes - retainedBytes;
+  int get transientEntries => entries - retainedEntries;
+}
+
+final class ResourceCacheByteStoreTrimReport {
+  const ResourceCacheByteStoreTrimReport({
+    required this.beforeBytes,
+    required this.releasedBytes,
+    required this.remainingBytes,
+    required this.evictedEntries,
+  });
+
+  final int beforeBytes;
+  final int releasedBytes;
+  final int remainingBytes;
+  final int evictedEntries;
+}
+
+/// Optional maintenance projection for durable response-byte stores.
+///
+/// Capacity trim applies only to transient records. Retained records are
+/// removed only by exact invalidation/namespace invalidation or explicit clear.
+abstract interface class ResourceCacheByteStoreMaintenance {
+  Future<ResourceCacheByteStoreUsage> inspect();
+
+  Future<ResourceCacheByteStoreTrimReport> trimTo({
+    required int targetBytes,
+  });
+}
+
 /// Optional durable backing for byte-valued resource-cache entries.
 ///
 /// Implementations must preserve the full [ResourceCacheKey], including its
@@ -125,8 +191,16 @@ abstract interface class ResourceCacheByteStore {
   Future<void> write({
     required ResourceCacheKey key,
     required Uint8List bytes,
-    required DateTime expiresAt,
+    required DateTime? expiresAt,
+    ResourceCacheRetention retention = ResourceCacheRetention.transient,
   });
+
+  /// Promotes an existing durable record to retained lifetime without changing
+  /// its cache identity or rewriting the encoded payload.
+  ///
+  /// Missing records are a no-op: a later write for a retained request carries
+  /// the retention intent explicitly.
+  Future<void> retain(ResourceCacheKey key);
 
   Future<void> remove(ResourceCacheKey key);
 
@@ -255,6 +329,7 @@ final class ResourceCacheManager {
       <ResourceCacheKey, Future<Object>>{};
   final Map<ResourceCacheKey, int> _generations = <ResourceCacheKey, int>{};
   final Map<ResourceCacheKey, int> _activeLoads = <ResourceCacheKey, int>{};
+  final Set<ResourceCacheKey> _retainedPersistence = <ResourceCacheKey>{};
 
   var _clock = 0;
   var _epoch = 0;
@@ -319,6 +394,7 @@ final class ResourceCacheManager {
     required Future<Uint8List> Function() loader,
     bool forceRefresh = false,
     bool awaitPersistence = true,
+    ResourceCacheRetention retention = ResourceCacheRetention.transient,
   }) async {
     _requireOpen();
     if (key.kind != ResourceCacheKind.imageBytes) {
@@ -335,6 +411,7 @@ final class ResourceCacheManager {
       forceRefresh: forceRefresh,
       allowPersistentRead: true,
       awaitPersistence: awaitPersistence,
+      persistenceRetention: retention,
     );
     return MemoryEncodedResourceSource(bytes);
   }
@@ -347,6 +424,7 @@ final class ResourceCacheManager {
   Future<EncodedResourceSource?> getEncodedImageIfPresent(
     ResourceCacheKey key, {
     bool awaitPersistence = true,
+    ResourceCacheRetention retention = ResourceCacheRetention.transient,
   }) async {
     _requireOpen();
     if (key.kind != ResourceCacheKind.imageBytes) {
@@ -356,6 +434,7 @@ final class ResourceCacheManager {
         'encoded image resources are only valid for image bytes',
       );
     }
+    _notePersistenceRetention(key, retention);
     final memory = _read<Uint8List>(key);
     if (memory != null) {
       _hits++;
@@ -380,13 +459,14 @@ final class ResourceCacheManager {
     }
     final bytes = persisted.bytes;
     final policy = _policies[key.kind]!;
+    final memoryExpiresAt = persisted.expiresAt ?? _now().add(policy.ttl);
     if (bytes.lengthInBytes <= policy.maxWeight &&
         bytes.lengthInBytes <= globalMaxWeight) {
       _storeWithExpiry(
         key,
         bytes,
         bytes.lengthInBytes,
-        persisted.expiresAt,
+        memoryExpiresAt,
       );
     }
     _hits++;
@@ -404,8 +484,12 @@ final class ResourceCacheManager {
     required bool forceRefresh,
     required bool allowPersistentRead,
     bool awaitPersistence = true,
+    ResourceCacheRetention? persistenceRetention,
   }) {
     _requireOpen();
+    if (!forceRefresh && persistenceRetention != null) {
+      _notePersistenceRetention(key, persistenceRetention);
+    }
     if (!forceRefresh) {
       final cached = _read<T>(key);
       if (cached != null) {
@@ -419,6 +503,9 @@ final class ResourceCacheManager {
       }
     } else {
       invalidate(key);
+      if (persistenceRetention != null) {
+        _notePersistenceRetention(key, persistenceRetention);
+      }
     }
 
     _misses++;
@@ -466,10 +553,12 @@ final class ResourceCacheManager {
           final value = bytes as T;
           final weight = weightOf(value);
           final policy = _policies[key.kind]!;
+          final memoryExpiresAt =
+              persisted.expiresAt ?? _now().add(policy.ttl);
           if (weight >= 0 &&
               weight <= policy.maxWeight &&
               weight <= globalMaxWeight) {
-            _storeWithExpiry(key, value, weight, persisted.expiresAt);
+            _storeWithExpiry(key, value, weight, memoryExpiresAt);
           }
           _hits++;
           _persistentHits++;
@@ -547,6 +636,7 @@ final class ResourceCacheManager {
     final keys = <ResourceCacheKey>{
       ..._entries.keys,
       ..._inFlight.keys,
+      ..._retainedPersistence,
     }.where(predicate).toList(growable: false);
     for (final key in keys) {
       _invalidateLocal(key);
@@ -557,6 +647,7 @@ final class ResourceCacheManager {
     _generations[key] = _generationOf(key) + 1;
     _inFlight.remove(key);
     _removeEntry(key);
+    _retainedPersistence.remove(key);
   }
 
   int trimTo({required int targetWeight}) {
@@ -583,6 +674,7 @@ final class ResourceCacheManager {
     _entries.clear();
     _inFlight.clear();
     _generations.clear();
+    _retainedPersistence.clear();
     _weight = 0;
     _queuePersistenceMutation(() async {
       await byteStore?.clear();
@@ -662,6 +754,7 @@ final class ResourceCacheManager {
       _inFlight.clear();
       _generations.clear();
       _activeLoads.clear();
+      _retainedPersistence.clear();
       _weight = 0;
     }
   }
@@ -715,7 +808,8 @@ final class ResourceCacheManager {
       if (persisted == null) {
         return null;
       }
-      if (!persisted.expiresAt.isAfter(_now())) {
+      final expiresAt = persisted.expiresAt;
+      if (expiresAt != null && !expiresAt.isAfter(_now())) {
         _expirations++;
         _queuePersistenceMutation(() => store.remove(key));
         return null;
@@ -734,13 +828,35 @@ final class ResourceCacheManager {
   ) =>
       _queuePersistenceMutation(
         () async {
+          final retention = _persistenceRetentionFor(key);
           await byteStore?.write(
             key: key,
             bytes: bytes,
-            expiresAt: expiresAt,
+            expiresAt: retention == ResourceCacheRetention.retained
+                ? null
+                : expiresAt,
+            retention: retention,
           );
         },
       );
+
+  ResourceCacheRetention _persistenceRetentionFor(ResourceCacheKey key) =>
+      _retainedPersistence.contains(key)
+          ? ResourceCacheRetention.retained
+          : ResourceCacheRetention.transient;
+
+  void _notePersistenceRetention(
+    ResourceCacheKey key,
+    ResourceCacheRetention retention,
+  ) {
+    if (retention != ResourceCacheRetention.retained ||
+        !_retainedPersistence.add(key)) {
+      return;
+    }
+    _queuePersistenceMutation(() async {
+      await byteStore?.retain(key);
+    });
+  }
 
   Future<void> _queuePersistenceMutation(
     Future<void> Function() mutation,

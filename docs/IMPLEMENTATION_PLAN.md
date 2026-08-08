@@ -1,6 +1,13 @@
 # zic Implementation Plan
 
-## P0：dev.165 Artwork 生命周期与更新语义真机闭环
+## P0：Retained Artwork 生命周期与失效边界真机闭环
+
+- 在 source browse 连续加载大量 transient artwork、触发 storage自动容量整理和手动“整理缓存”后，已进入 library/history/details 的 retained cover必须仍能冷命中；统计中 retainedBytes/Entries不得随 transient trim下降。
+- 分别执行详情下拉 metadata refresh、章节目录刷新和 Reader progress更新，确认这些操作不删除 retained cover；只有精确 artwork revision/force refresh、整漫画资源删除或用户显式清缓存可以删除。
+- 对同一封面先由 source browse以 transient写入，再从 history/details请求，确认同一个 canonical key只发生 retention promotion，不创建第二文件、第二 namespace或第二下载。
+- 在完整 Flutter/Dart工具链执行 analyzer和 resource_cache/storage/catalog受影响 tests，重点确认 dev.165误删的 maintenance类型已恢复且没有恢复旧 file-path borrowing API。
+
+## P0：Artwork 生命周期与更新语义真机闭环
 
 - 使用本轮 trace 中曾“durableCacheFile → FirstFrame → 数分钟后 DecodeFailed”的同一批封面复测；在首页/Reader往返、内存压力和 response cache trim后，既有 ImageProvider必须继续显示，不得因为 cache-owned `.bin` 被删除而悬空。不得恢复 presentation retry/evict/watchdog。
 - 同一 durable cover冷启动命中时确认 gateway仍在 source激活前成功返回；trace可保留 `durableCacheFile`作为来源 provenance，但实际 provider必须是自持有 bytes而非 cache path。
@@ -17,7 +24,7 @@
 - 评估下一阶段 source-owned binary stream/file lease：目标是让必须使用 Mihon/Venera client的正文也直接以 pipe/file/stream进入统一 Pipeline，消除当前 runtime fallback整块 `Uint8List` seam；在没有明确二进制生命周期协议前不得把完整正文改成 JSON/Base64默认路径。
 
 
-## P0：dev.164 Home projection、Artwork namespace 与 Runtime generation 真机闭环
+## P0：Home projection、Artwork namespace 与 Runtime generation 真机闭环
 
 - 直接从详情进入 Reader并翻页后退出：Home阅读历史必须在 route返回后立即更新，不等待 SQLite durable barrier、不重新进入详情、不触发整库 reload；连续打开两个 Reader route时各自 final progress不得串位。
 - 同一外部漫画执行 browse → details → history，记录 canonical comic identity与 cache origin；browse已写入的 `artwork-v2` durable cover必须被 details/history直接命中，不得出现 `artwork-v2:artwork-v2` 第二 namespace。

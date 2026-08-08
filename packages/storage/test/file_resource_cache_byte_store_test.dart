@@ -38,7 +38,7 @@ void main() {
 
     expect(restored, isNotNull);
     expect(restored!.bytes, <int>[1, 2, 3, 4]);
-    expect(restored.expiresAt.toUtc(), expiresAt);
+    expect(restored.expiresAt!.toUtc(), expiresAt);
   });
 
   test('resource manager reuses a persisted cover after process reopen',
@@ -460,4 +460,102 @@ void main() {
     expect(await store.read(removed), isNull);
     expect((await store.read(retained))?.bytes, <int>[2]);
   });
+
+  test('retained artwork survives transient capacity pressure and reopen', () async {
+    var now = DateTime.utc(2026, 8, 8, 8);
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-resource-retained-pressure-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    const retained = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'library-cover',
+      namespace: 'comic:source\u0000library',
+      revision: 'artwork-v2',
+    );
+    final store = FileResourceCacheByteStore(
+      directory.path,
+      transientMaxEntries: 1,
+      transientMaxBytes: 3,
+      now: () => now,
+    );
+    await store.write(
+      key: retained,
+      bytes: Uint8List.fromList(<int>[9, 8, 7, 6]),
+      expiresAt: null,
+      retention: ResourceCacheRetention.retained,
+    );
+    for (var index = 0; index < 3; index++) {
+      now = now.add(const Duration(seconds: 1));
+      await store.write(
+        key: ResourceCacheKey(
+          kind: ResourceCacheKind.imageBytes,
+          identity: 'browse-$index',
+        ),
+        bytes: Uint8List.fromList(<int>[index, index + 1, index + 2]),
+        expiresAt: now.add(const Duration(minutes: 1)),
+      );
+    }
+
+    final usage = await store.inspect();
+    expect(usage.retainedBytes, 4);
+    expect(usage.retainedEntries, 1);
+    expect(usage.transientEntries, 1);
+    expect((await store.read(retained))?.bytes, <int>[9, 8, 7, 6]);
+    await store.close();
+
+    now = now.add(const Duration(days: 30));
+    final reopened = FileResourceCacheByteStore(
+      directory.path,
+      transientMaxEntries: 1,
+      transientMaxBytes: 3,
+      now: () => now,
+    );
+    addTearDown(reopened.close);
+    final restored = await reopened.read(retained);
+    expect(restored, isNotNull);
+    expect(restored!.expiresAt, isNull);
+    expect(restored.bytes, <int>[9, 8, 7, 6]);
+
+    final trimmed = await reopened.trimTo(targetBytes: 0);
+    expect(trimmed.remainingBytes, 0);
+    expect((await reopened.read(retained))?.bytes, <int>[9, 8, 7, 6]);
+    await reopened.remove(retained);
+    expect(await reopened.read(retained), isNull);
+  });
+
+
+  test('promotion does not resurrect an already expired transient response', () async {
+    var now = DateTime.utc(2026, 8, 8, 8);
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-resource-expired-promotion-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    const key = ResourceCacheKey(
+      kind: ResourceCacheKind.imageBytes,
+      identity: 'expired-browse-cover',
+    );
+    final store = FileResourceCacheByteStore(directory.path, now: () => now);
+    addTearDown(store.close);
+    await store.write(
+      key: key,
+      bytes: Uint8List.fromList(<int>[1, 2, 3]),
+      expiresAt: now.add(const Duration(minutes: 1)),
+    );
+    now = now.add(const Duration(minutes: 2));
+
+    await store.retain(key);
+
+    expect(await store.read(key), isNull);
+    expect((await store.inspect()).entries, 0);
+  });
+
 }

@@ -4,30 +4,31 @@ import 'dart:typed_data';
 
 import 'package:resource_cache/resource_cache.dart';
 
-/// Atomic, bounded file backing for immutable response bytes such as covers.
+/// Atomic durable backing for immutable response bytes.
 ///
-/// Warm byte hits use one compact storage-owned manifest. Per-entry metadata is
-/// retained only as a crash-recovery/migration journal. The file path remains
-/// private to this store; callers receive owned bytes because trim/invalidation
-/// may remove the backing file independently of presentation lifetime.
+/// Transient records are bounded by LRU/TTL. Retained artwork is outside that
+/// capacity plane and is removed only by explicit invalidation or clear. The
+/// file path remains private to this store; callers always receive owned bytes.
+/// This keeps persistence lifetime independent from presentation lifetime.
 final class FileResourceCacheByteStore implements ResourceCacheByteStore,
     ResourceCacheByteStoreMaintenance {
   FileResourceCacheByteStore(
     String rootPath, {
-    this.maxEntries = 96,
-    this.maxBytes = 32 * 1024 * 1024,
+    this.transientMaxEntries = 96,
+    this.transientMaxBytes = 32 * 1024 * 1024,
     DateTime Function()? now,
-  })  : assert(maxEntries > 0),
-        assert(maxBytes > 0),
+  })  : assert(transientMaxEntries > 0),
+        assert(transientMaxBytes > 0),
         _root = Directory(rootPath),
         _now = now ?? DateTime.now;
 
-  static const int _formatVersion = 1;
+  static const int _formatVersion = 2;
+  static const int _legacyFormatVersion = 1;
   static const String _manifestName = 'response-manifest-v1.json';
 
   final Directory _root;
-  final int maxEntries;
-  final int maxBytes;
+  final int transientMaxEntries;
+  final int transientMaxBytes;
   final DateTime Function() _now;
   final Map<String, _FileResourceRecord> _records =
       <String, _FileResourceRecord>{};
@@ -71,11 +72,13 @@ final class FileResourceCacheByteStore implements ResourceCacheByteStore,
   Future<void> write({
     required ResourceCacheKey key,
     required Uint8List bytes,
-    required DateTime expiresAt,
+    required DateTime? expiresAt,
+    ResourceCacheRetention retention = ResourceCacheRetention.transient,
   }) async {
     _requireOpen();
     await _ensureManifestLoaded();
-    if (!expiresAt.isAfter(_now())) {
+    if (retention == ResourceCacheRetention.transient &&
+        (expiresAt == null || !expiresAt.isAfter(_now()))) {
       await remove(key);
       return;
     }
@@ -87,7 +90,8 @@ final class FileResourceCacheByteStore implements ResourceCacheByteStore,
     final now = _now();
     final record = _FileResourceRecord(
       key: key,
-      expiresAt: expiresAt,
+      expiresAt: retention == ResourceCacheRetention.retained ? null : expiresAt,
+      retention: retention,
       lastAccessedAt: now,
       byteLength: bytes.lengthInBytes,
       contentHash: _contentHash(bytes),
@@ -104,6 +108,45 @@ final class FileResourceCacheByteStore implements ResourceCacheByteStore,
     _records[id] = record;
     _manifestDirty = true;
     await _trim();
+    await _flushManifest();
+  }
+
+  @override
+  Future<void> retain(ResourceCacheKey key) async {
+    _requireOpen();
+    await _ensureManifestLoaded();
+    final id = _recordId(key);
+    final current = _pendingTouches[id] ?? _records[id];
+    if (current == null || current.key != key) {
+      return;
+    }
+    final currentExpiry = current.expiresAt;
+    if (current.retention == ResourceCacheRetention.transient &&
+        currentExpiry != null &&
+        !currentExpiry.isAfter(_now())) {
+      await _removePaths(_paths(key), key: key);
+      await _flushManifest();
+      return;
+    }
+    if (current.retention == ResourceCacheRetention.retained) {
+      return;
+    }
+    _pendingTouches.remove(id);
+    final retained = current.copyWith(
+      retention: ResourceCacheRetention.retained,
+      clearExpiresAt: true,
+      lastAccessedAt: _now(),
+    );
+    _records[id] = retained;
+    _manifestDirty = true;
+    // Retention is lifetime-critical metadata. Keep the per-entry recovery
+    // journal in sync so a crash between manifest generations cannot demote a
+    // retained library/history cover back into the transient eviction plane.
+    final paths = _paths(key);
+    await paths.metadata.parent.create(recursive: true);
+    final temporary = File('${paths.metadata.path}.tmp');
+    await temporary.writeAsString(jsonEncode(retained.toJson()), flush: true);
+    await _replace(temporary, paths.metadata);
     await _flushManifest();
   }
 
@@ -134,9 +177,19 @@ final class FileResourceCacheByteStore implements ResourceCacheByteStore,
   Future<ResourceCacheByteStoreUsage> inspect() async {
     _requireOpen();
     final inventory = await _inventory();
+    var retainedBytes = 0;
+    var retainedEntries = 0;
+    for (final candidate in inventory.records) {
+      if (candidate.record.retention == ResourceCacheRetention.retained) {
+        retainedBytes += candidate.record.byteLength;
+        retainedEntries++;
+      }
+    }
     return ResourceCacheByteStoreUsage(
       bytes: inventory.totalBytes,
       entries: inventory.records.length,
+      retainedBytes: retainedBytes,
+      retainedEntries: retainedEntries,
     );
   }
 
@@ -149,10 +202,19 @@ final class FileResourceCacheByteStore implements ResourceCacheByteStore,
       throw ArgumentError.value(targetBytes, 'targetBytes');
     }
     final inventory = await _inventory();
-    final beforeBytes = inventory.totalBytes;
+    final transient = inventory.records
+        .where(
+          (candidate) =>
+              candidate.record.retention == ResourceCacheRetention.transient,
+        )
+        .toList(growable: false);
+    final beforeBytes = transient.fold<int>(
+      0,
+      (sum, candidate) => sum + candidate.record.byteLength,
+    );
     var remainingBytes = beforeBytes;
     var evictedEntries = 0;
-    for (final candidate in inventory.records) {
+    for (final candidate in transient) {
       if (remainingBytes <= targetBytes) {
         break;
       }
@@ -196,10 +258,19 @@ final class FileResourceCacheByteStore implements ResourceCacheByteStore,
 
   Future<void> _trim() async {
     final inventory = await _inventory();
-    var entries = inventory.records.length;
-    var totalBytes = inventory.totalBytes;
-    for (final candidate in inventory.records) {
-      if (entries <= maxEntries && totalBytes <= maxBytes) {
+    final transient = inventory.records
+        .where(
+          (candidate) =>
+              candidate.record.retention == ResourceCacheRetention.transient,
+        )
+        .toList(growable: false);
+    var entries = transient.length;
+    var totalBytes = transient.fold<int>(
+      0,
+      (sum, candidate) => sum + candidate.record.byteLength,
+    );
+    for (final candidate in transient) {
+      if (entries <= transientMaxEntries && totalBytes <= transientMaxBytes) {
         break;
       }
       await _removePaths(candidate.paths, key: candidate.record.key);
@@ -224,7 +295,8 @@ final class FileResourceCacheByteStore implements ResourceCacheByteStore,
       final id = _recordId(stored.key);
       final record = _pendingTouches[id] ?? stored;
       final paths = _paths(record.key);
-      if (!record.expiresAt.isAfter(now)) {
+      final expiresAt = record.expiresAt;
+      if (expiresAt != null && !expiresAt.isAfter(now)) {
         await _removePaths(paths, key: record.key);
         continue;
       }
@@ -267,7 +339,8 @@ final class FileResourceCacheByteStore implements ResourceCacheByteStore,
     if (record == null || record.key != key) {
       return null;
     }
-    if (!record.expiresAt.isAfter(_now())) {
+    final expiresAt = record.expiresAt;
+    if (expiresAt != null && !expiresAt.isAfter(_now())) {
       await _removePaths(paths, key: key);
       return null;
     }
@@ -308,7 +381,8 @@ final class FileResourceCacheByteStore implements ResourceCacheByteStore,
             ? decoded['records']
             : null;
         if (decoded is Map<Object?, Object?> &&
-            decoded['formatVersion'] == _formatVersion &&
+            (decoded['formatVersion'] == _formatVersion ||
+                decoded['formatVersion'] == _legacyFormatVersion) &&
             records is List) {
           for (final value in records) {
             if (value is! Map<Object?, Object?>) {
@@ -318,6 +392,9 @@ final class FileResourceCacheByteStore implements ResourceCacheByteStore,
               value.cast<String, Object?>(),
             );
             _records[_recordId(record.key)] = record;
+          }
+          if (decoded['formatVersion'] == _legacyFormatVersion) {
+            _manifestDirty = true;
           }
           loaded = true;
         }
@@ -529,21 +606,29 @@ final class _FileResourceRecord {
   const _FileResourceRecord({
     required this.key,
     required this.expiresAt,
+    required this.retention,
     required this.lastAccessedAt,
     required this.byteLength,
     required this.contentHash,
   });
 
   final ResourceCacheKey key;
-  final DateTime expiresAt;
+  final DateTime? expiresAt;
+  final ResourceCacheRetention retention;
   final DateTime lastAccessedAt;
   final int byteLength;
   final String contentHash;
 
-  _FileResourceRecord copyWith({DateTime? lastAccessedAt}) =>
+  _FileResourceRecord copyWith({
+    DateTime? expiresAt,
+    bool clearExpiresAt = false,
+    ResourceCacheRetention? retention,
+    DateTime? lastAccessedAt,
+  }) =>
       _FileResourceRecord(
         key: key,
-        expiresAt: expiresAt,
+        expiresAt: clearExpiresAt ? null : expiresAt ?? this.expiresAt,
+        retention: retention ?? this.retention,
         lastAccessedAt: lastAccessedAt ?? this.lastAccessedAt,
         byteLength: byteLength,
         contentHash: contentHash,
@@ -555,14 +640,17 @@ final class _FileResourceRecord {
         'identity': key.identity,
         'namespace': key.namespace,
         'revision': key.revision,
-        'expiresAt': expiresAt.toUtc().toIso8601String(),
+        'expiresAt': expiresAt?.toUtc().toIso8601String(),
+        'retention': retention.name,
         'lastAccessedAt': lastAccessedAt.toUtc().toIso8601String(),
         'byteLength': byteLength,
         'contentHash': contentHash,
       };
 
   factory _FileResourceRecord.fromJson(Map<String, Object?> json) {
-    if (json['formatVersion'] != FileResourceCacheByteStore._formatVersion) {
+    final formatVersion = json['formatVersion'];
+    if (formatVersion != FileResourceCacheByteStore._formatVersion &&
+        formatVersion != FileResourceCacheByteStore._legacyFormatVersion) {
       throw const FormatException('unsupported resource cache record');
     }
     final kindName = json['kind'];
@@ -570,6 +658,7 @@ final class _FileResourceRecord {
     final namespace = json['namespace'];
     final revision = json['revision'];
     final expiresAt = json['expiresAt'];
+    final retentionName = json['retention'];
     final lastAccessedAt = json['lastAccessedAt'];
     final byteLength = json['byteLength'];
     final contentHash = json['contentHash'];
@@ -577,7 +666,8 @@ final class _FileResourceRecord {
         identity is! String ||
         namespace is! String ||
         revision is! String ||
-        expiresAt is! String ||
+        (expiresAt != null && expiresAt is! String) ||
+        (retentionName != null && retentionName is! String) ||
         lastAccessedAt is! String ||
         byteLength is! int ||
         contentHash is! String) {
@@ -589,6 +679,21 @@ final class _FileResourceRecord {
     if (kind.length != 1 || identity.isEmpty || byteLength < 0) {
       throw const FormatException('invalid resource cache identity');
     }
+    final retentionMatches = retentionName == null
+        ? const <ResourceCacheRetention>[]
+        : ResourceCacheRetention.values
+            .where((candidate) => candidate.name == retentionName)
+            .toList(growable: false);
+    if (retentionName != null && retentionMatches.length != 1) {
+      throw const FormatException('invalid resource cache retention');
+    }
+    final effectiveRetention = retentionName == null
+        ? ResourceCacheRetention.transient
+        : retentionMatches.single;
+    if (effectiveRetention == ResourceCacheRetention.transient &&
+        expiresAt is! String) {
+      throw const FormatException('transient resource cache record needs expiry');
+    }
     return _FileResourceRecord(
       key: ResourceCacheKey(
         kind: kind.single,
@@ -596,7 +701,8 @@ final class _FileResourceRecord {
         namespace: namespace,
         revision: revision,
       ),
-      expiresAt: DateTime.parse(expiresAt),
+      expiresAt: expiresAt is String ? DateTime.parse(expiresAt) : null,
+      retention: effectiveRetention,
       lastAccessedAt: DateTime.parse(lastAccessedAt),
       byteLength: byteLength,
       contentHash: contentHash,

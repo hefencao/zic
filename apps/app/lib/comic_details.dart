@@ -1281,7 +1281,7 @@ final class _RemoteComicDetailsScreenState
         final libraryComic = _library.sourceComic?.comicId;
         if (libraryComic != null) identities.add(libraryComic);
         for (final comicId in identities) {
-          invalidateCachedComic(source, comicId);
+          invalidateCachedComicMetadata(source, comicId);
         }
       }
       final library = await widget.reloadLibrary(refreshContent: true);

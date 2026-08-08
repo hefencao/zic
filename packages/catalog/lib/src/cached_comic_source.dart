@@ -547,7 +547,7 @@ final class CachedBrowsableComicSource
   Future<void> logout() => _accountSource.logout();
 
 
-  void invalidateComic(String comicId) {
+  void invalidateComicMetadata(String comicId) {
     final identity = _comicIdentity(comicId);
     final cached = cache.peek<ComicManifest>(_comicKey(identity));
     if (cached != null) {
@@ -557,15 +557,19 @@ final class CachedBrowsableComicSource
         .where((entry) => entry.value == comicId)
         .map((entry) => entry.key)
         .toList(growable: false);
-    cache.invalidateNamespace(identity.namespace);
-    if (identity.comicId != comicId) {
-      cache.invalidateNamespace(
+    final namespaces = <String>{
+      identity.namespace,
+      if (identity.comicId != comicId)
         ComicResourceCacheIdentity(
           sourceId: sourceId,
           comicId: comicId,
         ).namespace,
-      );
-    }
+    };
+    cache.invalidateWhere(
+      (key) =>
+          namespaces.contains(key.namespace) &&
+          key.kind != ResourceCacheKind.imageBytes,
+    );
     for (final chapterId in chapterIds) {
       cache.invalidateWhere(
         (key) =>
@@ -743,6 +747,7 @@ Future<EncodedResourceSource> loadCachedComicImageSource({
   String revision = '',
   bool awaitPersistence = true,
   bool forceRefresh = false,
+  ResourceCacheRetention retention = ResourceCacheRetention.transient,
 }) => cache.getOrLoadEncodedImage(
       key: _imageKey(
         sourceId: sourceId,
@@ -753,6 +758,7 @@ Future<EncodedResourceSource> loadCachedComicImageSource({
       ),
       awaitPersistence: awaitPersistence,
       forceRefresh: forceRefresh,
+      retention: retention,
       loader: loader,
     );
 
@@ -769,6 +775,7 @@ Future<EncodedResourceSource?> readCachedComicImageSource({
   String resourceRole = 'cover',
   String revision = '',
   bool awaitPersistence = true,
+  ResourceCacheRetention retention = ResourceCacheRetention.transient,
 }) async {
   return cache.getEncodedImageIfPresent(
     _imageKey(
@@ -779,10 +786,11 @@ Future<EncodedResourceSource?> readCachedComicImageSource({
       revision: revision,
     ),
     awaitPersistence: awaitPersistence,
+    retention: retention,
   );
 }
 
-void invalidateComicResourceCache(
+void invalidateAllComicResources(
   ResourceCacheManager cache, {
   required String sourceId,
   required String comicId,
@@ -796,12 +804,12 @@ void invalidateComicResourceCache(
 }
 
 
-void invalidateCachedComic(
+void invalidateCachedComicMetadata(
   BrowsableComicSource source,
   String comicId,
 ) {
   if (source is CachedBrowsableComicSource) {
-    source.invalidateComic(comicId);
+    source.invalidateComicMetadata(comicId);
   }
 }
 

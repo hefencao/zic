@@ -142,7 +142,7 @@ void main() {
     expect(raw.versionLoads, 1);
   });
 
-  test('comic invalidation clears related detail chapter and artwork only',
+  test('comic metadata refresh preserves artwork and search caches',
       () async {
     final raw = _CountingSource();
     final cache = ResourceCacheManager();
@@ -165,7 +165,7 @@ void main() {
       loader: loadCover,
     );
     await source.browse(query: 'query');
-    source.invalidateComic('comic');
+    source.invalidateComicMetadata('comic');
 
     await source.loadComic('comic');
     await source.loadChapter('chapter');
@@ -180,7 +180,7 @@ void main() {
 
     expect(raw.comicLoads, 2);
     expect(raw.chapterLoads, 2);
-    expect(raw.resourceLoads, 2);
+    expect(raw.resourceLoads, 1);
     expect(raw.browseLoads, 1);
   });
 
@@ -210,7 +210,7 @@ void main() {
     );
     expect(loads, 1);
 
-    invalidateComicResourceCache(
+    invalidateAllComicResources(
       cache,
       sourceId: 'fixture',
       comicId: 'comic',

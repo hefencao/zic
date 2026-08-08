@@ -1961,7 +1961,7 @@ def check_compile_regressions() -> None:
     for required in (
         'final class CachedBrowsableComicSource',
         'loadCachedComicImage(',
-        'invalidateComicResourceCache(',
+        'invalidateAllComicResources(',
         'ResourceCacheKind.searchResults',
         'ResourceCacheKind.comicDetails',
         'ResourceCacheKind.chapterMetadata',
