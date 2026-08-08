@@ -1,6 +1,6 @@
-# dev.173 后续交接
+# dev.174 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.173_migration-version-update-badge-owner.zip`。
+唯一后续基线：`zic_v0.31.0-dev.174_current-preemption-saturated-handoff.zip`。
 
 ## 必读
 
@@ -25,7 +25,7 @@
 19. `docs/adr/0154-source-filter-view-shelf-projection-download-feedback.md`
 20. `docs/adr/0155-external-browse-runtime-protocol-field-ownership.md`
 21. `docs/adr/0156-source-migration-version-view-and-update-badge-ownership.md`
-22. `docs/audits/dev173-migration-version-update-badge-root-cause-audit.md`、`docs/audits/dev173-validation-results.md`
+22. `docs/adr/0157-current-preemption-saturated-handoff-ownership.md`、`docs/audits/dev174-vibevenera-current-preemption-root-cause-audit.md`、`docs/audits/dev174-validation-results.md`
 
 ## 当前代码事实
 
@@ -55,7 +55,7 @@
 - Mihon page/cover request plan保留 `imageRequest(page)` 的 URL/method/headers/body；GET/HEAD无 body。共享 transport无 Venera默认 UA。host直连若 2xx前缀不是编码图片，在进入 Pipeline前使用现有 source-owned runtime network兼容路径；正常图片仍走统一流式 transport。
 - Cloudflare可见浏览器沿用 dev.154/dev.155：真实 WebView UA与 Cookie/localStorage同 revision handoff；typed classifier与浏览器完成 probe分离；验证后按稳定 sourceId解析 replacement adapter。
 - 外部插件 manifest按记录容错。只有 payload安装/升级走事务式 replacement；settings与Venera Web登录原地更新，不 restart。Mihon浏览器 handoff保留受限 Mihon-only restart。生产 runtime session安全上限32，不能恢复通用8-session用户上限。
-- Reader/Pipeline网络、decode、texture参数未因本轮问题改变：encoded前7/后3，holder 7/5/3/2，decode前2/后1，normal network5/decode3/upload2。
+- Reader/Pipeline参数仍为 encoded前7/后3、holder 7/5/3/2、decode前2/后1、network5/decode3/upload2。NetLane已对齐 VibeVenera饱和 handoff：reserved1被慢取消占用时，后续 current仍继续请求另一个低 rank prefetch取消；取消中的 task真实退出前不释放 permit。
 - Native identity保持 `zic-media-core-dev134-abi6-lib00121400`。
 - 当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip`；不得从旧版本偷偷补入。
 

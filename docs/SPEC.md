@@ -133,7 +133,7 @@ Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor �
 ## 4. 网络调度
 
 - composition-owned `NetLane` MUST 是页面网络的唯一调度权威。
-- current SHOULD 使用 priority 1000、一个高优先级 handoff slot和原位 priority migration；满足差值门槛时 MAY 抢占低优先级 active task。
+- current SHOULD 使用 priority 1000、一个高优先级 handoff slot和原位 priority migration；满足差值门槛时 MAY 抢占低优先级 active task。handoff slot已被一次异步取消占用时，后续 current MUST仍能对另一条未取消、可抢占且满足优先级差的低 rank transfer发出取消请求；新 current自身 MUST等真实 active task退出后再取得 permit，不得提前释放取消中的 task或突破 `maxActive + reservedHighPrioritySlots`。
 - DownloadJob、Reader、UploadSession 和 holder 不得建立第二套网络资格门控。
 - 目标页 receiving transport 不得因 current holder depth、播放 underflow 或页面控件状态被暂停。
 - 不得通过缩小 7/3、关闭预下载或降低播放速度掩盖 identity、重复请求或 producer wake 缺陷。

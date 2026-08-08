@@ -1,3 +1,11 @@
+## 0.31.0-dev.174：补齐 Current 在饱和 Handoff 下的连续抢占
+
+- 以文件库权威 `vibevenera-master.zip` 只读对照下载调度：两边都保留 network=5、current高优先级、单一 max+1 handoff、active priority migration；关键差异是 VibeVenera在 handoff已占满时仍会让新的 current 请求取消另一个未取消的低优先级 running prefetch，而 ZIC此前会在 eligible过滤阶段直接停止。
+- `NetLane` 在没有可立即启动任务时，会选出最高优先级且被 lane/bucket容量阻塞的 current，并继续调用既有 `_preemptLowestRunningFor`；已取消、不可抢占、优先级差不足的 active task仍不会被重复处理。
+- 不提前释放取消中的 active permit，也不把临时并发提高到 `max+reserved`以上：被抢占 transport仍必须真实退出后才释放 lane/bucket计数，保持单 writer与连接上限。
+- 新增 5+1回归：第一条被抢占 prefetch故意迟迟不退出，第二个 current仍必须继续取消另一条低 rank prefetch，并在真实 permit释放后启动，而不是等待第一条或其它预取自然完成。
+- Reader/Pipeline既有 7/3、2/1、7/5/3/2、network5、current1000、reserved1、threshold40 均未修改；新增 ADR 0157、dev.174 audit/gate，版本提升到 `0.31.0+174`。
+
 ## 0.31.0-dev.173：恢复通用漫画源迁移并统一同源版本/更新提示
 
 - 漫画源卡片已入书架状态改为左上 `library_books` 书架标志并变暗；`sourceUpdateAt` 作为独立右上感叹号提示，不再使用书签形态冒充书架。

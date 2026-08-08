@@ -446,7 +446,19 @@ final class _Lane {
         }
         return _bucketAvailable(pending, handoff: handoff);
       }).toList(growable: false);
-      if (eligible.isEmpty) break;
+      if (eligible.isEmpty) {
+        final blockedHighPriority = _highestBlockedHighPriorityPending();
+        if (blockedHighPriority != null) {
+          // Match the VibeVenera handoff rule: once the single temporary
+          // max+1 slot is occupied, a newer current page must still be able
+          // to ask another lower-ranked running prefetch to unwind. We do
+          // not start the blocked task until a real lane/bucket permit is
+          // released, so the active bound and single-writer invariant stay
+          // intact.
+          _preemptLowestRunningFor(blockedHighPriority);
+        }
+        break;
+      }
       final next = eligible.reduce((a, b) {
         final priority = b.priority.compareTo(a.priority);
         if (priority != 0) {
@@ -491,6 +503,24 @@ final class _Lane {
       );
     }
     _notifyIdle();
+  }
+
+  _Pending? _highestBlockedHighPriorityPending() {
+    _Pending? highest;
+    for (final pending in _pending.values) {
+      if (_active.containsKey(pending.key) ||
+          pending.priority < highPriorityThreshold ||
+          !_needsHandoff(pending)) {
+        continue;
+      }
+      if (highest == null ||
+          pending.priority > highest.priority ||
+          (pending.priority == highest.priority &&
+              pending.seq < highest.seq)) {
+        highest = pending;
+      }
+    }
+    return highest;
   }
 
   bool _needsHandoff(_Pending pending) {

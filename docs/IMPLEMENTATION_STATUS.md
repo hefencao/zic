@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.173`
-**App build：** `0.31.0+173`
+**源码版本：** `0.31.0-dev.174`
+**App build：** `0.31.0+174`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -9,6 +9,7 @@
 
 ## 当前实现
 
+- NetLane current抢占与 VibeVenera的饱和 handoff语义对齐：normal 5 + reserved 1不变；第一条被抢占 transfer仍在异步退出时，新的 current不会因 `active == max+1`直接失去 preemption机会，而会继续请求另一条未取消低 rank prefetch退出；permit只在 task真实完成后释放。
 - External plugin browse wire contract 已与 dev.171 filter mode 对齐：typed factory、runtime validator、source adapter均显式认识 `useFilters`；schema v1旧请求允许缺省该新增字段并按 false解释，但未知字段/错误类型继续严格拒绝。发布 gate在无 Dart SDK环境也检查 protocol/adapter/Mihon driver四端一致。
 - 漫画源筛选拥有独立 filter-view request mode：非空 schema时“筛选”是可选中焦点；直接应用未修改面板也会以插件默认 `FilterList`执行 filtered browse。空 override不再等于普通 section；filter mode的 Catalog key/runtime payload单独编码，且不继承 Latest/Popular section。
 - 漫画源卡片书架状态由 Home canonical `ComicPreference`投影：已入书架封面左上显示书架图标并变暗，不建立 source-page shelf store；`sourceUpdateAt`作为独立右上感叹号提示。Home/书架下载完成勾改为显式命令反馈：单章完成空心勾、整本 queue complete绿色实心勾，进入详情消费；持久 chapter cache不再直接生成完成勾。

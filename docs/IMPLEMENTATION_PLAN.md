@@ -117,6 +117,7 @@
 
 - 对比 transport chunk、64 KiB session append、source revision、decode batch、holder depth、deadline 和 present cadence。
 - 若 current 仍断粮，只在 NetLane ranking、重复 request/source、partial wake、decode producer 或 upload deadline 内定位；不得恢复 FlowGate/startup-buffer、缩小 7/3 或降低速度。
+- 真机连续快速翻页验证 saturated handoff：5条远端 prefetch占满 lane后 current-a可用唯一 handoff；即使首个被取消 transfer退出较慢，current-b也必须继续让另一条低 rank prefetch让位，并在该 victim真实退出后启动，不能等待无关预取自然下载完成。若仍阻塞，再用 trace区分 NetLane未发取消与具体 transport取消后迟迟不退出；不要增加线程数或提前释放 permit。
 
 ## P0：后台重入生命周期
 

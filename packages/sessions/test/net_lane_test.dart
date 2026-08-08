@@ -360,6 +360,99 @@ void _dev123NetLaneTests() {
     await lane.idle();
   });
 
+  test(
+      'blocked current keeps preempting low work while the handoff slot unwinds',
+      () async {
+    final lane = NetLane(
+      maxActive: 5,
+      reservedHighPrioritySlots: 1,
+      highPriorityThreshold: 1000,
+      preemptionThreshold: 40,
+    );
+    final stuckCancelled = Completer<void>();
+    final stuckRelease = Completer<void>();
+    final remainingPrefetchRelease = Completer<void>();
+    final prefetchCancelled = <int, Completer<void>>{
+      for (var index = 1; index < 5; index++) index: Completer<void>(),
+    };
+    final firstCurrentStarted = Completer<void>();
+    final firstCurrentRelease = Completer<void>();
+    final secondCurrentStarted = Completer<void>();
+
+    lane.submitRanked(
+      key: 'prefetch-0',
+      priority: 680,
+      bucket: 'remote:a',
+      bucketLimit: 5,
+      task: (token) async {
+        await token.whenCancelled;
+        stuckCancelled.complete();
+        // Deliberately keep the first preempted transport alive. This models
+        // a socket/request that needs time to unwind after cancellation.
+        await stuckRelease.future;
+      },
+    );
+    for (var index = 1; index < 5; index++) {
+      lane.submitRanked(
+        key: 'prefetch-$index',
+        priority: 680 + index * 20,
+        bucket: 'remote:a',
+        bucketLimit: 5,
+        task: (token) async {
+          await Future.any<void>(<Future<void>>[
+            token.whenCancelled,
+            remainingPrefetchRelease.future,
+          ]);
+          if (token.cancelled) {
+            prefetchCancelled[index]!.complete();
+          }
+        },
+      );
+    }
+    await Future<void>.delayed(Duration.zero);
+    expect(lane.active, 5);
+
+    lane.submitRanked(
+      key: 'current-a',
+      priority: 1000,
+      bucket: 'remote:a',
+      bucketLimit: 5,
+      task: (_) async {
+        firstCurrentStarted.complete();
+        await firstCurrentRelease.future;
+      },
+    );
+    await firstCurrentStarted.future;
+    await stuckCancelled.future;
+    expect(lane.active, 6);
+    expect(lane.handoffActive, 1);
+
+    lane.submitRanked(
+      key: 'current-b',
+      priority: 1000,
+      bucket: 'remote:a',
+      bucketLimit: 5,
+      task: (_) async {
+        secondCurrentStarted.complete();
+      },
+    );
+
+    // At max+1, current-b cannot start yet, but it must still request
+    // cancellation of another non-cancelled low-ranked prefetch. After that
+    // victim exits there are still other low-ranked victims available, so the
+    // normal handoff path preempts one of them and starts current-b without
+    // waiting for prefetch-0's slow cancellation to unwind.
+    await prefetchCancelled[1]!.future;
+    await secondCurrentStarted.future;
+    expect(stuckRelease.isCompleted, isFalse);
+    expect(firstCurrentRelease.isCompleted, isFalse);
+
+    firstCurrentRelease.complete();
+    stuckRelease.complete();
+    remainingPrefetchRelease.complete();
+    await lane.idle();
+  });
+
   test('handoff capacity stays bounded while cancellation unwinds', () async {
     final lane = NetLane(maxActive: 1, reservedHighPrioritySlots: 1);
     final lowRelease = Completer<void>();
