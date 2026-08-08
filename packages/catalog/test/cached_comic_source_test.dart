@@ -6,7 +6,7 @@ import 'package:resource_cache/resource_cache.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('catalog metadata and images share one cache manager', () async {
+  test('catalog metadata shares one cache manager', () async {
     final raw = _CountingSource();
     final cache = ResourceCacheManager();
     addTearDown(cache.close);
@@ -20,21 +20,11 @@ void main() {
     await source.loadChapter('chapter');
     await source.browse(query: ' query ');
     await source.browse(query: 'query');
-    await source.loadImage(
-      Uri.parse('https://example.invalid/cover'),
-      comicId: 'comic',
-    );
-    await source.loadImage(
-      Uri.parse('https://example.invalid/cover'),
-      comicId: 'comic',
-    );
-
     expect(raw.comicLoads, 1);
     expect(raw.chapterLoads, 1);
     expect(raw.browseLoads, 1);
     expect(raw.lastQuery, 'query');
-    expect(raw.resourceLoads, 1);
-    expect(cache.stats.forKind(ResourceCacheKind.imageBytes).entries, 1);
+    expect(raw.resourceLoads, 0);
     expect(cache.stats.forKind(ResourceCacheKind.comicDetails).entries, 1);
     expect(cache.stats.forKind(ResourceCacheKind.chapterMetadata).entries, 1);
     expect(cache.stats.forKind(ResourceCacheKind.searchResults).entries, 1);
@@ -160,15 +150,32 @@ void main() {
     final source = CachedBrowsableComicSource(source: raw, cache: cache);
     final cover = Uri.parse('https://example.invalid/cover');
 
+    Future<Uint8List> loadCover() async {
+      raw.resourceLoads++;
+      return Uint8List.fromList(<int>[9, 8, 7]);
+    }
+
     await source.loadComic('comic');
     await source.loadChapter('chapter');
-    await source.loadImage(cover, comicId: 'comic');
+    await loadCachedComicImage(
+      cache: cache,
+      sourceId: source.sourceId,
+      comicId: 'comic',
+      imageIdentity: cover.toString(),
+      loader: loadCover,
+    );
     await source.browse(query: 'query');
     source.invalidateComic('comic');
 
     await source.loadComic('comic');
     await source.loadChapter('chapter');
-    await source.loadImage(cover, comicId: 'comic');
+    await loadCachedComicImage(
+      cache: cache,
+      sourceId: source.sourceId,
+      comicId: 'comic',
+      imageIdentity: cover.toString(),
+      loader: loadCover,
+    );
     await source.browse(query: 'query');
 
     expect(raw.comicLoads, 2);
@@ -219,17 +226,28 @@ void main() {
   });
 
   test('image revision separates changed cover bytes', () async {
-    final raw = _CountingSource();
     final cache = ResourceCacheManager();
     addTearDown(cache.close);
-    final source = CachedBrowsableComicSource(source: raw, cache: cache);
+    var loads = 0;
     final cover = Uri.parse('https://example.invalid/revisioned-cover');
 
-    await source.loadImage(cover, comicId: 'comic', revision: 'r1');
-    await source.loadImage(cover, comicId: 'comic', revision: 'r1');
-    await source.loadImage(cover, comicId: 'comic', revision: 'r2');
+    Future<Uint8List> load() async {
+      loads++;
+      return Uint8List.fromList(<int>[1, 2, 3]);
+    }
 
-    expect(raw.resourceLoads, 2);
+    for (final revision in <String>['r1', 'r1', 'r2']) {
+      await loadCachedComicImage(
+        cache: cache,
+        sourceId: 'fixture',
+        comicId: 'comic',
+        imageIdentity: cover.toString(),
+        revision: revision,
+        loader: load,
+      );
+    }
+
+    expect(loads, 2);
     expect(cache.stats.forKind(ResourceCacheKind.imageBytes).entries, 2);
   });
 
@@ -297,21 +315,29 @@ void main() {
   });
 
   test('comic cover cache identity survives locator URL changes', () async {
-    final raw = _CountingSource();
     final cache = ResourceCacheManager();
     addTearDown(cache.close);
-    final source = CachedBrowsableComicSource(source: raw, cache: cache);
+    var loads = 0;
 
-    await source.loadImage(
+    Future<Uint8List> load() async {
+      loads++;
+      return Uint8List.fromList(<int>[1, 2, 3]);
+    }
+
+    for (final uri in <Uri>[
       Uri.parse('https://cdn.invalid/cover-old.jpg?token=old'),
-      comicId: 'comic',
-    );
-    await source.loadImage(
       Uri.parse('https://cdn.invalid/cover-new.jpg?token=new'),
-      comicId: 'comic',
-    );
+    ]) {
+      await loadCachedComicImage(
+        cache: cache,
+        sourceId: 'fixture',
+        comicId: 'comic',
+        imageIdentity: uri.toString(),
+        loader: load,
+      );
+    }
 
-    expect(raw.resourceLoads, 1);
+    expect(loads, 1);
     expect(cache.stats.forKind(ResourceCacheKind.imageBytes).entries, 1);
   });
 }

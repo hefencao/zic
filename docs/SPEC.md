@@ -21,7 +21,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - 全局网络 User-Agent MUST 是 composition-owned fallback设置，默认采用稳定 Android Chrome UA并可由用户修改。来源 request plan显式 UA、browser-session UA或 source-owned client策略 MUST 优先；全局 fallback不得覆盖来源权威。
 - App presentation MUST NOT 直接创建 `HttpClient`/`HttpURLConnection`或直接消费 source transport。生产 direct-network owner MUST 被限制在通用 transport、source-resolved host replay、source-owned runtime/client与插件安装 control-plane。
 - host replay MUST 只用于可无状态平铺的单次 source request。遇到 redirect、`Set-Cookie`、未知 client wrapper、认证/session语义或成功 HTTP却非编码媒体响应时 MUST 切回 source-owned client；不得让独立 Dart HTTP client接管来源 Cookie/session状态。
-- metadata/artwork MUST 经过 `ResourceCacheManager`；只有 Reader/章节 page body 与 artifact/download路径 MAY 通过明确命名的 page-body API绕过 response cache。插件仓库/APK/JS下载属于 control-plane，不得伪装成漫画 source response cache。
+- metadata/artwork MUST 经过 `ResourceCacheManager`；只有 Reader/章节 page body 与 artifact/download路径 MAY 通过明确命名的 page-body API绕过 response cache。插件仓库/APK/JS下载属于 control-plane，不得伪装成漫画 source response cache。 `CachedBrowsableComicSource` MUST NOT 暴露 artwork 加载 facade。`loadPageBytes` 与 streaming page loader MUST 共享同一 source-resolved response path；full-byte fallback MUST NOT 直接调用 raw source transport。章节下载的可变资源能力 MUST 作为单一 `ChapterResourceAccess` 原子绑定，不得使用多个 setter 形成半更新状态。
 - 外部 artwork MUST 通过 source-confirmed canonical comic identity 查询统一 response cache；
   命中时不得解析来源、创建 source transport 或等待插件 activation。cache miss 才可进入
   source loader。raw Mihon/插件 locator只用于 runtime调用与章节身份，不得切分 durable artwork namespace。

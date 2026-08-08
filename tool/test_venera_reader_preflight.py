@@ -39,7 +39,7 @@ def main() -> None:
         "await refreshable.refreshChapter(chapterId)",
         "final refreshedImmediately = forceRefresh && refreshable != null",
         "refreshable != null && !refreshedImmediately",
-        "_loadSourceResourceBytes(",
+        "_loadSourcePageBytes(",
     )
     reject(
         "apps/app/lib/demo_home_source_compat.dart",
@@ -61,9 +61,9 @@ def main() -> None:
         "apps/app/lib/source_resource_gateway.dart",
         "ComicSourceResourceGateway",
         "isLegacyVeneraRuntimeLocator",
-        "已阻止读取失效的 Venera 运行时资源定位符",
+        "已阻止打开失效的 Venera 运行时资源定位符",
         "ConfigurableChapterResourceAccess",
-        "setChapterResourceAccess(access)",
+        "setChapterResourceAccess(chapterResourceAccess)",
     )
     require(
         "packages/plugin_host/lib/src/runtime_source_adapter.dart",
@@ -120,7 +120,7 @@ def main() -> None:
     )
     require(
         "packages/downloads/lib/src/chapter_downloads.dart",
-        "ConfigurableChapterResourceTransport",
+        "ConfigurableChapterResourceAccess",
         "openResponse:",
         "totalLength",
     )

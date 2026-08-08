@@ -1,7 +1,5 @@
 # zic
-dev.161 增加网络 User-Agent 设置（默认 Android Chrome 150），并收紧网络/缓存所有权：source 显式 UA 与 client wrapper 优先，宿主直连仅允许无状态媒体响应，正文 transport 绕过 response cache 只属于 Reader/Artifact 路径。
-
-dev.159 对齐当前 Mihon Source/HttpSource 宿主合同：章节以 `getMangaUpdate/getPageList` 为主入口，图片保留 `imageRequest(page)` 的完整 request plan；插件重启与更新采用事务式 runtime replacement。
+dev.162 完成 dev.161 网络/缓存边界的调用方迁移：page-body 全字节与流式读取共用 `ComicSourceResourceGateway` 的同一 response loader，章节下载只接受原子 `ChapterResourceAccess`，catalog 不再暴露 artwork 加载 facade。
 
 
 `zic` 是面向 Android 优先、高性能漫画阅读场景的 Flutter/Rust 工程。项目支持本地与远程章节、静态图片、Animated WebP、持久下载、带分类/翻页的漫画源浏览、Mihon/Venera 扩展和统一 Reader Pipeline。

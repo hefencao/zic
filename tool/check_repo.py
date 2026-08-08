@@ -1960,7 +1960,6 @@ def check_compile_regressions() -> None:
     ).read_text(encoding='utf-8')
     for required in (
         'final class CachedBrowsableComicSource',
-        'loadCachedSourceImage(',
         'loadCachedComicImage(',
         'invalidateComicResourceCache(',
         'ResourceCacheKind.searchResults',
@@ -1970,6 +1969,15 @@ def check_compile_regressions() -> None:
     ):
         if required not in cached_source:
             fail(f'catalog cache adapter is incomplete: {required}')
+    for forbidden in (
+        'Future<Uint8List> loadImage(',
+        'Future<EncodedResourceSource> loadImageSource(',
+        'loadCachedSourceImage(',
+        'loadCachedSourceImageSource(',
+    ):
+        if forbidden in cached_source:
+            fail(f'catalog must not own artwork loading facade: {forbidden}')
+
     durable_response_store = (
         ROOT / 'packages/storage/lib/src/file_resource_cache_byte_store.dart'
     ).read_text(encoding='utf-8')
@@ -2288,7 +2296,7 @@ def check_compile_regressions() -> None:
         'ComicSourceResourceGateway(sourceForId: _sourceForId)',
         '_sourceResources.bindTo(_chapterDownloads)',
         'downloads is ConfigurableChapterResourceAccess',
-        'configurable.setChapterResourceAccess(access)',
+        'configurable.setChapterResourceAccess(chapterResourceAccess)',
     ):
         if required not in home:
             fail(f'dev.71 root/settings compile contract is incomplete: {required}')

@@ -1,3 +1,11 @@
+## 0.31.0-dev.162：原子化正文资源绑定并删除 Catalog Artwork 旁路
+
+- 修复 dev.161 调用方迁移遗漏：`demo_home_source_compat.dart` 不再调用已删除的 `ComicSourceResourceGateway.loadBytes`，正文完整字节路径改用明确的 `loadPageBytes`。
+- `loadPageBytes` 与 Reader/下载流式路径共用 `pageResponseLoaderFor`；完整字节 fallback 不再直接调用 `source.loadResource()` 绕过 shared host transport/request-plan 所有权。
+- `ChapterDownloadService` 删除 `ConfigurableChapterResourceLoader/Transport` 两个可独立更新的兼容 setter，仅保留原子 `ChapterResourceAccess`，避免 loader/streaming transport 半更新状态。
+- 删除仅由测试保活的 `CachedBrowsableComicSource.loadImage/loadImageSource` 与 `loadCachedSourceImage*` facade；catalog 只缓存 browse/details/chapter metadata，external artwork 统一经 `ComicSourceResourceGateway/ResourceCacheManager`。
+- 更新 Venera/source-resource/cache owner tests 与仓库静态门禁；新增 ADR 0146、dev.162 owner audit/gate。
+
 ## 0.31.0-dev.161：统一默认 User-Agent 并收紧网络/缓存所有权
 
 - 网络设置新增可编辑 User-Agent，默认 Android Chrome 150；composition 以动态 provider 注入通用 HttpTransport、Reader fallback、章节下载、插件仓库控制面和 source host transport。source 显式 UA、Mihon browser-session UA优先，不被全局 fallback 覆盖。

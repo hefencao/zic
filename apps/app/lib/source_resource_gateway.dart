@@ -30,8 +30,8 @@ final class ComicSourceResourceGateway {
 
   final ComicSourceResolver _sourceForId;
   final ExternalPluginResourceTransportPool _transports;
-  final Set<ChapterDownloadService> _boundDownloads =
-      HashSet<ChapterDownloadService>.identity();
+  final Set<ConfigurableChapterResourceAccess> _boundDownloads =
+      HashSet<ConfigurableChapterResourceAccess>.identity();
   bool _closed = false;
 
   ChapterResourceAccess get chapterResourceAccess {
@@ -47,21 +47,29 @@ final class ComicSourceResourceGateway {
   }
 
   void bindTo(ChapterDownloadService downloads) {
-    _setAccess(downloads, chapterResourceAccess);
-    _boundDownloads.add(downloads);
+    final configurable = downloads is ConfigurableChapterResourceAccess
+        ? downloads as ConfigurableChapterResourceAccess
+        : null;
+    if (configurable == null) {
+      // Memory/test services receive their page loader atomically at
+      // construction and have no mutable source-resource binding.
+      return;
+    }
+    configurable.setChapterResourceAccess(chapterResourceAccess);
+    _boundDownloads.add(configurable);
   }
 
   void unbindFrom(ChapterDownloadService downloads) {
-    if (!_boundDownloads.remove(downloads)) return;
-    _setAccess(downloads, null);
+    final configurable = downloads is ConfigurableChapterResourceAccess
+        ? downloads as ConfigurableChapterResourceAccess
+        : null;
+    if (configurable == null || !_boundDownloads.remove(configurable)) return;
+    configurable.setChapterResourceAccess(null);
   }
 
   Future<Uint8List> loadPageBytes(String sourceId, Uri uri) {
     _requireOpen();
-    if (isLegacyVeneraRuntimeLocator(uri.toString())) {
-      throw StateError('已阻止读取失效的 Venera 运行时资源定位符：$uri');
-    }
-    return _requireSource(sourceId, uri).loadResource(uri);
+    return _collectResponse(pageResponseLoaderFor(sourceId, uri));
   }
 
   Future<Uint8List> loadArtworkBytes({
@@ -191,7 +199,7 @@ final class ComicSourceResourceGateway {
     if (_closed) return;
     for (final downloads in _boundDownloads.toList(growable: false)) {
       try {
-        _setAccess(downloads, null);
+        downloads.setChapterResourceAccess(null);
       } on StateError {
         // A composition owner may already have closed its download service.
       }
@@ -201,30 +209,6 @@ final class ComicSourceResourceGateway {
     _transports.close();
   }
 
-  void _setAccess(
-    ChapterDownloadService downloads,
-    ChapterResourceAccess? access,
-  ) {
-    final configurable = downloads is ConfigurableChapterResourceAccess
-        ? downloads as ConfigurableChapterResourceAccess
-        : null;
-    if (configurable != null) {
-      configurable.setChapterResourceAccess(access);
-      return;
-    }
-
-    // Compatibility for third-party/test services implementing the older
-    // independent capabilities. Production persistent downloads use the
-    // atomic capability above and never observe a half-bound pair.
-    final loader = downloads is ConfigurableChapterResourceLoader
-        ? downloads as ConfigurableChapterResourceLoader
-        : null;
-    final transport = downloads is ConfigurableChapterResourceTransport
-        ? downloads as ConfigurableChapterResourceTransport
-        : null;
-    loader?.setChapterResourceLoader(access?.loadBytes);
-    transport?.setChapterResourceTransport(access?.openResponse);
-  }
 
   BrowsableComicSource _requireSource(String sourceId, Uri uri) {
     final source = _sourceForId(sourceId);

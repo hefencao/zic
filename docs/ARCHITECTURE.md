@@ -43,7 +43,7 @@ Native implementation
 
 ### `catalog`
 
-漫画源、漫画/章节/page manifest、来源能力和 catalog cache identity。`CachedBrowsableComicSource` 只缓存目录响应；Reader 页面正文仍透传到统一 Pipeline。
+漫画源、漫画/章节/page manifest、来源能力和 catalog cache identity。`CachedBrowsableComicSource` 只缓存 browse/details/chapter metadata，不拥有 artwork 加载；Reader 页面正文仍透传到统一 Pipeline。
 
 ### `resource_cache`
 
@@ -290,7 +290,7 @@ Reader 页面变化产生的 `ReadingProgress` 由 `reader_runtime` 串行合并
 
 缓存分为两个权威平面：
 
-- `ResourceCacheCoordinator.responses`：封面、搜索、详情和章节元数据，使用稳定 namespace/identity/revision、weight、TTL 和 in-flight join；封面使用 raw comic stable identity 和 role，source-level artwork 使用版本化 source identity；
+- `ResourceCacheCoordinator.responses`：封面、搜索、详情和章节元数据，使用稳定 namespace/identity/revision、weight、TTL 和 in-flight join；external artwork 使用 source-confirmed canonical comic identity + role，raw runtime locator 不参与 durable artwork 分区；
 - `ArtifactCacheManager`：Reader 不可变页面 artifact，默认热字节 10 项/256 MiB、alias 上限 8192，并连接持久 backend。
 
 封面 URL/token 不是稳定 comic identity；verified checksum、来源 page key、内容 hash 或用户确认迁移才可注册 artifact alias。App/Reader 不得创建私有图片字节 LRU，也不得让 cache hit 共享 cursor、timer 或 decode identity。
@@ -376,7 +376,7 @@ Reader 返回后 Home只更新该 route最终 progress一次，已挂载详情�
 - **统一 host transport**：仅重放来源已经解析成无状态 request plan 的单次资源请求。host replay关闭自动 redirect，只有无 Cookie 状态变化且直接返回编码媒体时才有资格把字节交给 Pipeline；
 - **control-plane HTTP**：插件仓库索引/APK/JS安装等，不属于漫画 response cache，但仍使用 composition 的默认 UA fallback。
 
-`ResourceCacheManager` 是可重新获取 metadata/artwork response 的唯一缓存 owner。Catalog browse/details、封面、预览不得直接取得 raw source transport。章节正文/Reader page body 明确由 DownloadSession/artifact/Pipeline 管理，因此通过 `ComicSourceResourceGateway.pageResponseLoaderFor/loadPageBytes` 绕过 response cache；该 bypass API不得扩散到 metadata/artwork。
+`ResourceCacheManager` 是可重新获取 metadata/artwork response 的唯一缓存 owner。Catalog browse/details只管理 metadata，`CachedBrowsableComicSource` 不提供 artwork loader facade；封面、预览不得直接取得 raw source transport。章节正文/Reader page body 明确由 DownloadSession/artifact/Pipeline 管理，因此通过 `ComicSourceResourceGateway.pageResponseLoaderFor/loadPageBytes` 绕过 response cache。两者必须复用同一 source-resolved response loader；full-byte fallback不得直接调用 `source.loadResource()`。章节下载侧只接受原子 `ChapterResourceAccess`，不得分别更新 byte loader 与 streaming transport。
 
 插件先生成 request plan。GET/HEAD 必须零 body且不得携带实体 headers。Mihon 页面资源必须从 `HttpSource.imageRequest(page)`（或等价 source request）保留准确 URL、method、headers和必要的小型 request body；共享 transport不得注入 Venera专用默认 UA。宿主直连前同步投影当前 source OkHttp CookieJar Cookie与同站点 browser-session UA。若宿主 HTTP成功但响应前缀不是支持的编码图片，字节不得进入 Pipeline/decoder，而应使用已有 source-owned runtime network兼容路径；普通可重放图片仍由宿主流式 transport进入统一 Pipeline，完整图片正文不得仅因 Cookie/header需求改走 JSON/Base64 RPC。
 

@@ -207,11 +207,15 @@ void main() {
     );
     final service = await PersistentChapterDownloadService.open(directory.path);
     addTearDown(service.close);
-    service.setChapterResourceLoader((sourceId, uri) async {
-      expect(sourceId, 'mihon:test');
-      requested.add(uri);
-      return bytes;
-    });
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(
+        loadBytes: (sourceId, uri) async {
+          expect(sourceId, 'mihon:test');
+          requested.add(uri);
+          return bytes;
+        },
+      ),
+    );
 
     await service.download(entry);
 

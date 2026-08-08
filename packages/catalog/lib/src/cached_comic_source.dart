@@ -10,10 +10,11 @@ import 'source_catalog.dart';
 
 /// Catalog decorator for reusable source-response caching.
 ///
-/// Search pages, comic details, chapter metadata and source artwork share one
-/// [ResourceCacheManager]. [loadResource] deliberately remains a raw
-/// pass-through because Reader page bytes must enter pipeline/session/artifact
-/// ownership instead of being prefetched by the catalog response cache.
+/// Search pages, comic details and chapter metadata share one
+/// [ResourceCacheManager]. Artwork is deliberately not loaded here: App
+/// composition routes external artwork through ComicSourceResourceGateway,
+/// while [loadResource] remains the raw source-owned compatibility capability
+/// consumed only behind that gateway/streaming transport boundary.
 final class CachedBrowsableComicSource
     implements
         BrowsableComicSource,
@@ -545,42 +546,6 @@ final class CachedBrowsableComicSource
   @override
   Future<void> logout() => _accountSource.logout();
 
-  /// Cached source artwork entry used by cover and comparison presentation.
-  Future<Uint8List> loadImage(
-    Uri uri, {
-    String? comicId,
-    String revision = '',
-  }) =>
-      loadCachedComicImage(
-        cache: cache,
-        sourceId: sourceId,
-        comicId: comicId,
-        imageIdentity: uri.toString(),
-        resourceRole: 'cover',
-        revision: revision,
-        loader: () => source.loadResource(uri),
-      );
-
-  /// File-backed artwork path when the durable response store supports it.
-  ///
-  /// The first network load may still arrive as bytes, but subsequent process
-  /// starts can hand the immutable cache file directly to the image decoder.
-  Future<EncodedResourceSource> loadImageSource(
-    Uri uri, {
-    String? comicId,
-    String revision = '',
-    bool awaitPersistence = true,
-  }) =>
-      loadCachedComicImageSource(
-        cache: cache,
-        sourceId: sourceId,
-        comicId: comicId,
-        imageIdentity: uri.toString(),
-        resourceRole: 'cover',
-        revision: revision,
-        awaitPersistence: awaitPersistence,
-        loader: () => source.loadResource(uri),
-      );
 
   void invalidateComic(String comicId) {
     final identity = _comicIdentity(comicId);
@@ -830,39 +795,6 @@ void invalidateComicResourceCache(
   );
 }
 
-Future<Uint8List> loadCachedSourceImage(
-  BrowsableComicSource source,
-  Uri uri, {
-  String? comicId,
-  String revision = '',
-}) {
-  if (source is CachedBrowsableComicSource) {
-    return source.loadImage(
-      uri,
-      comicId: comicId,
-      revision: revision,
-    );
-  }
-  return source.loadResource(uri);
-}
-
-Future<EncodedResourceSource> loadCachedSourceImageSource(
-  BrowsableComicSource source,
-  Uri uri, {
-  String? comicId,
-  String revision = '',
-}) {
-  if (source is CachedBrowsableComicSource) {
-    return source.loadImageSource(
-      uri,
-      comicId: comicId,
-      revision: revision,
-    );
-  }
-  return source
-      .loadResource(uri)
-      .then<EncodedResourceSource>(MemoryEncodedResourceSource.new);
-}
 
 void invalidateCachedComic(
   BrowsableComicSource source,

@@ -6,6 +6,7 @@ import 'package:domain/domain.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
+import 'package:zic/source_resource_gateway.dart';
 
 void main() {
   test('app cache composition restores source and detail covers after restart',
@@ -17,40 +18,54 @@ void main() {
 
     final firstRaw = _CoverSource();
     final firstCache = createAppResourceCache(storageRoot: root.path);
-    final first = CachedBrowsableComicSource(
-      source: firstRaw,
-      cache: firstCache.responses,
+    final firstGateway = ComicSourceResourceGateway(
+      sourceForId: (_) => firstRaw,
     );
+    addTearDown(firstGateway.close);
     expect(
-      await first.loadImage(sourceCover, revision: 'source-r1'),
+      await firstGateway.loadArtworkBytes(
+        cache: firstCache.responses,
+        sourceId: firstRaw.sourceId,
+        comicId: 'source-card',
+        uri: sourceCover,
+        revision: 'source-r1',
+      ),
       _CoverSource.sourceBytes,
     );
     expect(
-      await first.loadImage(
-        detailCover,
+      await firstGateway.loadArtworkBytes(
+        cache: firstCache.responses,
+        sourceId: firstRaw.sourceId,
         comicId: 'comic-1',
+        uri: detailCover,
         revision: 'comic-r1',
       ),
       _CoverSource.detailBytes,
     );
     expect(firstRaw.resourceLoads, 2);
     await firstCache.close();
+    firstGateway.close();
 
     final reopenedRaw = _CoverSource(failResourceLoads: true);
     final reopenedCache = createAppResourceCache(storageRoot: root.path);
     addTearDown(reopenedCache.close);
-    final reopened = CachedBrowsableComicSource(
-      source: reopenedRaw,
-      cache: reopenedCache.responses,
+    final reopenedGateway = ComicSourceResourceGateway(
+      sourceForId: (_) => reopenedRaw,
     );
+    addTearDown(reopenedGateway.close);
 
-    final sourceFile = await reopened.loadImageSource(
-      sourceCover,
+    final sourceFile = await reopenedGateway.loadArtworkSource(
+      cache: reopenedCache.responses,
+      sourceId: reopenedRaw.sourceId,
+      comicId: 'source-card',
+      uri: sourceCover,
       revision: 'source-r1',
     );
-    final detailFile = await reopened.loadImageSource(
-      detailCover,
+    final detailFile = await reopenedGateway.loadArtworkSource(
+      cache: reopenedCache.responses,
+      sourceId: reopenedRaw.sourceId,
       comicId: 'comic-1',
+      uri: detailCover,
       revision: 'comic-r1',
     );
     expect(sourceFile.origin, EncodedResourceOrigin.durableCacheFile);
@@ -62,11 +77,16 @@ void main() {
   });
 }
 
-final class _CoverSource implements BrowsableComicSource {
+final class _CoverSource
+    implements BrowsableComicSource, ResolvableComicResourceSource {
   _CoverSource({this.failResourceLoads = false});
 
-  static final Uint8List sourceBytes = Uint8List.fromList(<int>[1, 2, 3]);
-  static final Uint8List detailBytes = Uint8List.fromList(<int>[4, 5, 6, 7]);
+  static final Uint8List sourceBytes = Uint8List.fromList(<int>[
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3,
+  ]);
+  static final Uint8List detailBytes = Uint8List.fromList(<int>[
+    0xff, 0xd8, 0xff, 0xe0, 4, 5, 6, 7,
+  ]);
 
   final bool failResourceLoads;
   int resourceLoads = 0;
@@ -109,6 +129,11 @@ final class _CoverSource implements BrowsableComicSource {
   @override
   Future<ChapterManifest> loadChapter(String chapterId) =>
       throw UnsupportedError('not used by this fixture');
+
+
+  @override
+  Future<ComicResourceRequest> resolveResource(Uri uri) async =>
+      ComicResourceRequest(uri: uri, requiresRuntimeTransform: true);
 
   @override
   Future<Uint8List> loadResource(Uri uri) async {

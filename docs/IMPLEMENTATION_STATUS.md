@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.161`
-**App build：** `0.31.0+161`
+**源码版本：** `0.31.0-dev.162`
+**App build：** `0.31.0+162`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -9,7 +9,7 @@
 
 ## 当前实现
 
-- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=161`。
+- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=162`。
 - 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
 - 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation不阻塞 Home primary，外部 source ready 后增量接入。
 - artwork资源恢复唯一属于 `ComicSourceResourceGateway/ResourceCacheManager`。Home、书架、漫画源和详情 presentation 已删除定时 retry、first-frame watchdog、App resume自动 retry、全局 ImageCache eviction和 App级短时 Future join；详情统一使用 `ComicDetailsArtworkLoader` 并显式传递 cover/preview/avatar role。普通 artwork直接复用 `StableArtworkImage`；需要裁剪/尺寸测量时只有一个显式 ImageStream listener，不再同时创建第二个 `Image`。
@@ -33,7 +33,7 @@
 - 外部插件 manifest按记录容错并保留上一代 `.bak`；启动可从 `.bak`、`.part` 或旧 `.invalid`恢复有效记录与旧 sandbox payload路径，再重写主 manifest。恢复失败逐项展示，不再因一个坏记录清空全部插件。
 - 外部插件 payload安装/升级使用事务式 runtime replacement；settings mutation 与 Venera Web登录原地作用于当前 runtime，不再创建 replacement session。通用 restart API已收口为 Mihon browser handoff专用能力。生产 external runtime显式允许 32 个 active session，避免测试默认 8成为插件消失上限。共享媒体 transport不再注入 Venera UA；Mihon host直连若 2xx返回非图片前缀，会在进入 Pipeline前改走已有 source-owned runtime network兼容路径。
 - 网络设置提供可编辑的全局 User-Agent fallback，默认 Android Chrome 150；composition 动态注入通用 HttpTransport、Reader/章节下载、插件仓库与 shared source host transport。source request显式 UA、Mihon browser-session UA继续优先。
-- 生产网络 owner已收口：App presentation无直接 HTTP；shared host replay只接受无 redirect/无 `Set-Cookie` 的直接编码媒体，其他情况转 source-owned client。`ComicSourceResourceGateway` 是 raw source transport的唯一 App入口。metadata/artwork必须走 `ResourceCacheManager`；page-body cache bypass只属于 Reader/DownloadSession/artifact。
+- 生产网络 owner已收口：App presentation无直接 HTTP；shared host replay只接受无 redirect/无 `Set-Cookie` 的直接编码媒体，其他情况转 source-owned client。`ComicSourceResourceGateway` 是 raw source transport的唯一 App入口。metadata/artwork必须走 `ResourceCacheManager`；page-body cache bypass只属于 Reader/DownloadSession/artifact。 dev.162 后 full-byte `loadPageBytes` 与 streaming `pageResponseLoaderFor` 共用同一 response loader；章节下载只接受原子 `ChapterResourceAccess`，catalog 不再提供 artwork loader facade。
 - Mihon 1.6 `CatalogueSource` shim不再依赖 `kotlinx.coroutines`，ABI asset generator无需额外 coroutine classpath；`lang`正确 override，details/chapters仍使用原始 SManga。
 - Mihon chapter目录不再 synthetic/标题/URL去重。1.6/current先走 combined `getMangaUpdate`；ZIC `CatalogueSource` shim已对齐当前 Mihon：details与chapters都基于原始 `SManga`独立请求，legacy fallback的 `fetchChapterList`也使用原始 manga。正文 `getPageList(SChapter)`只在能力缺失时回退 `fetchPageList`。Mihon comic/chapter durable metadata升 revision，避免旧错误空/单目录继续命中。
 - Cloudflare 主路径与兼容路径统一委托 typed detector；仅严格 403/503 challenge 映射 `sourceVerificationRequired`，没有隐藏 WebView 或消息文本判断。

@@ -1,4 +1,6 @@
 ## P0：网络 UA / client / cache ownership 真机闭环
+- 在完整 Flutter/Dart 工具链执行 analyzer，确认 dev.161→162 删除 `loadBytes`、split chapter resource setter 与 catalog artwork facade 后没有遗漏调用方；重点覆盖 `demo_home_source_compat`、`source_resource_gateway`、downloads 与 catalog tests。
+- 真机/fixture 同时覆盖完整字节 fallback 与 streaming range path，确认二者使用同一 source-resolved request plan；不得出现 full-byte 直接调用 raw source transport或 metadata/artwork 走 page-body bypass。
 
 - 在设置中切换自定义 User-Agent后分别验证通用 HTTP、普通 source WebView、Reader fallback与插件仓库请求；确认 source显式 UA和 Mihon browser-session UA仍优先，不被全局值覆盖。
 - 对 Mihon/Venera source记录 host replay / source-owned fallback原因；redirect、`Set-Cookie`、未知 client wrapper和非媒体响应必须在进入 Pipeline前切回 source client，正常无状态媒体仍保持 host streaming。

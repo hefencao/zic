@@ -33,7 +33,7 @@ def main() -> None:
         "packages/downloads/lib/src/chapter_downloads.dart",
         "final class ChapterResourceAccess",
         "abstract interface class ConfigurableChapterResourceAccess",
-        "ConfigurableChapterResourceAccess,",
+        "ConfigurableChapterResourceAccess {",
         "ChapterResourceAccess? _resourceAccess",
         "void setChapterResourceAccess(ChapterResourceAccess? access)",
         "final stream = access?.openResponse",
@@ -42,11 +42,12 @@ def main() -> None:
     require(
         "apps/app/lib/source_resource_gateway.dart",
         "final class ComicSourceResourceGateway",
-        "HashSet<ChapterDownloadService>.identity()",
+        "HashSet<ConfigurableChapterResourceAccess>.identity()",
         "downloads is ConfigurableChapterResourceAccess",
         "downloads as ConfigurableChapterResourceAccess",
-        "configurable.setChapterResourceAccess(access)",
-        "_setAccess(downloads, null)",
+        "configurable.setChapterResourceAccess(chapterResourceAccess)",
+        "configurable.setChapterResourceAccess(null)",
+        "return _collectResponse(pageResponseLoaderFor(sourceId, uri));",
         "ExternalPluginResourceTransportPool",
         "isLegacyVeneraRuntimeLocator",
         "loadArtworkBytes",
@@ -77,6 +78,8 @@ def main() -> None:
         "setChapterResourceTransport(",
         "loadCachedSourceImage(",
         "loadCachedSourceImageSource(",
+        "ConfigurableChapterResourceLoader",
+        "ConfigurableChapterResourceTransport",
     )
     require(
         "apps/app/lib/source_browser.dart",

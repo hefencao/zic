@@ -154,8 +154,8 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     }
   }
 
-  Future<Uint8List> _loadSourceResourceBytes(String sourceId, Uri uri) =>
-      _sourceResources.loadBytes(sourceId, uri);
+  Future<Uint8List> _loadSourcePageBytes(String sourceId, Uri uri) =>
+      _sourceResources.loadPageBytes(sourceId, uri);
 
   Future<Uint8List> _loadChapterPageBytes(
     ImportedLibraryEntry entry,
@@ -169,7 +169,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     final source = _sourceForId(entry.chapter.sourceId);
     final uri = Uri.tryParse(page.sourceId);
     if (source != null && uri != null) {
-      return _loadSourceResourceBytes(entry.chapter.sourceId, uri);
+      return _loadSourcePageBytes(entry.chapter.sourceId, uri);
     }
     return readLocalImageSource(page.sourceId);
   }

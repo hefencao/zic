@@ -296,7 +296,7 @@ void main() {
     addTearDown(gateway.close);
 
     expect(
-      () => gateway.loadBytes(
+      () => gateway.loadPageBytes(
         source.sourceId,
         Uri.parse('venera-resource://7'),
       ),

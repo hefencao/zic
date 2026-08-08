@@ -140,25 +140,12 @@ typedef ChapterResourceLoader = Future<Uint8List> Function(
   Uri uri,
 );
 
-/// Optional composition capability for persistent download services that need
-/// access to source-owned resource loading without depending on app/UI types.
-abstract interface class ConfigurableChapterResourceLoader {
-  void setChapterResourceLoader(ChapterResourceLoader? loader);
-}
-
 typedef ChapterResourceTransport = Future<ByteResponse> Function(
   String sourceId,
   Uri uri, {
   ByteRange? range,
   Validators? validators,
 });
-
-/// Streaming counterpart to [ConfigurableChapterResourceLoader]. Persistent
-/// downloads prefer this capability so content length and committed chunks are
-/// observable before the complete image arrives.
-abstract interface class ConfigurableChapterResourceTransport {
-  void setChapterResourceTransport(ChapterResourceTransport? transport);
-}
 
 /// Atomic source-resource binding used by application composition.
 ///
@@ -651,11 +638,7 @@ final class MemoryChapterDownloadService
 }
 
 final class PersistentChapterDownloadService
-    implements
-        ManagedChapterDownloadService,
-        ConfigurableChapterResourceAccess,
-        ConfigurableChapterResourceLoader,
-        ConfigurableChapterResourceTransport {
+    implements ManagedChapterDownloadService, ConfigurableChapterResourceAccess {
   PersistentChapterDownloadService._({
     required DownloadRegistry registry,
     required SqliteIndex index,
@@ -721,30 +704,6 @@ final class PersistentChapterDownloadService
   void setChapterResourceAccess(ChapterResourceAccess? access) {
     _requireOpen();
     _resourceAccess = access;
-  }
-
-  @override
-  void setChapterResourceLoader(ChapterResourceLoader? loader) {
-    _requireOpen();
-    final transport = _resourceAccess?.openResponse;
-    _resourceAccess = loader == null && transport == null
-        ? null
-        : ChapterResourceAccess(
-            loadBytes: loader,
-            openResponse: transport,
-          );
-  }
-
-  @override
-  void setChapterResourceTransport(ChapterResourceTransport? transport) {
-    _requireOpen();
-    final loader = _resourceAccess?.loadBytes;
-    _resourceAccess = loader == null && transport == null
-        ? null
-        : ChapterResourceAccess(
-            loadBytes: loader,
-            openResponse: transport,
-          );
   }
 
   @override
