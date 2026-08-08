@@ -1,3 +1,11 @@
+## 0.31.0-dev.164：收口 Home 投影、Artwork revision 与 Runtime generation 所有权
+
+- `HomeLibrarySession` 成为已挂载 Home 的 chapter/SavedComic write-through projection owner；详情/来源 materialize/迁移不再直接写 durable store后等待后续 `_reloadLibrary()`。Reader final progress改为 route-local，仅页面 callback enqueue，返回后发布一次内存投影。
+- `HomeLibrarySession.reload()` 增加 projection revision：enrichment期间发生 write-through时，旧 entries/SavedComic snapshot不得回写覆盖新的阅读历史；download snapshot跟随最终可见 entries。
+- 修复 browse与详情/历史封面 cache namespace分裂：`comicArtworkCacheSchemaRevision` 统一归 `resource_cache`，external gateway自行添加基础 revision并只接受额外 `contentRevision`；Home/详情不再生成 `artwork-v2:artwork-v2`。
+- 删除 dev.163 Dart `_activatePlatformRuntime` 对 service-loss的二次 activation调用；Binder client只允许初次 pending activation跨一个死亡/断开的 service generation，并用纯 Kotlin policy约束 Venera/Mihon activation、错误类型与次数。
+- 更新 dev.156/dev.157/dev.163历史 owner gates并新增 dev.164 gate、ADR 0147与根因审计；版本提升到 `0.31.0+164`。
+
 ## 0.31.0-dev.163：修复 Venera 启动期 runtime 丢失与阅读历史封面 State 漂移
 
 - `plugin_host_bridge` 将 `runtime-service-died/disconnected` 的一次性恢复覆盖到**初次 activation**：Android runtime service 已标记旧 binding 丢失后，重新绑定并重放同一 activation 一次；插件 payload/业务错误不进入该恢复路径。

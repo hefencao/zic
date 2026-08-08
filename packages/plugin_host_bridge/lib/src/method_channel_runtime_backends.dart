@@ -154,25 +154,10 @@ Future<_PlatformRuntimeActivation> _activatePlatformRuntime(
   String method,
   Map<String, Object?> activation,
 ) async {
-  Map<String, Object?>? response;
-  try {
-    response = await channel.invokeMapMethod<String, Object?>(
-      method,
-      activation,
-    );
-  } on PlatformException catch (error) {
-    if (!_recoverableActivationRuntimeCodes.contains(error.code)) {
-      rethrow;
-    }
-    // PluginRuntimeServiceClient has already marked the dead binding lost. A
-    // fresh MethodChannel request therefore binds a new runtime service. Replay
-    // activation once at this infrastructure boundary; plugin/script failures
-    // are not transport failures and are never retried here.
-    response = await channel.invokeMapMethod<String, Object?>(
-      method,
-      activation,
-    );
-  }
+  final response = await channel.invokeMapMethod<String, Object?>(
+    method,
+    activation,
+  );
   if (response == null) {
     throw const FormatException('platform runtime activation is empty');
   }
@@ -339,11 +324,6 @@ bool _recoverableRuntimeEnvelope(Object? raw) {
     return false;
   }
 }
-
-const Set<String> _recoverableActivationRuntimeCodes = <String>{
-  'runtime-service-died',
-  'runtime-service-disconnected',
-};
 
 const Set<String> _recoverableRuntimeCodes = <String>{
   'runtime-process-mismatch',

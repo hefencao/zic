@@ -117,7 +117,13 @@ internal class PluginRuntimeServiceClient(context: Context) {
             )
             abandonUnresponsiveBindingIfIdle()
         }
-        pending[requestId] = PendingCall(result, timeout)
+        pending[requestId] = PendingCall(
+            requestId = requestId,
+            result = result,
+            timeout = timeout,
+            method = method,
+            payload = encoded,
+        )
         mainHandler.postDelayed(timeout, RuntimeServiceIpc.REQUEST_TIMEOUT_MILLIS)
         val request = OutgoingRequest(requestId, encoded)
         val messenger = serviceMessenger
@@ -350,7 +356,43 @@ internal class PluginRuntimeServiceClient(context: Context) {
         unlinkDeathRecipient(generation)
         safeUnbind(generation)
         packetStore.clear()
+
+        // A Binder generation can disappear while the first runtime activation
+        // request is in flight. The Android client owns that transport
+        // continuity: retain only activation requests across one dead/disconnected
+        // service generation and rebind them with the same request payload.
+        // Established-session invocations are failed normally so the Dart
+        // connection can perform its semantic session recovery; plugin/runtime
+        // business errors never enter this path.
+        if (replayInitialActivationsAfterServiceLoss(code, message)) {
+            ensureBound()
+            return
+        }
         failAll(code, message)
+    }
+
+    private fun replayInitialActivationsAfterServiceLoss(
+        code: String,
+        message: String,
+    ): Boolean {
+        queued.clear()
+        val failures = mutableListOf<PendingCall>()
+        val retained = mutableListOf<OutgoingRequest>()
+        val iterator = pending.entries.iterator()
+        while (iterator.hasNext()) {
+            val (_, call) = iterator.next()
+            if (call.canReplayAcrossServiceGenerationLoss(code)) {
+                call.serviceGenerationReplays += 1
+                retained += OutgoingRequest(call.requestId, call.payload)
+            } else {
+                iterator.remove()
+                mainHandler.removeCallbacks(call.timeout)
+                failures += call
+            }
+        }
+        failures.forEach { call -> call.result.error(code, message, null) }
+        retained.forEach(queued::addLast)
+        return retained.isNotEmpty()
     }
 
     private fun failAll(code: String, message: String) {
@@ -418,9 +460,21 @@ internal class PluginRuntimeServiceClient(context: Context) {
     }
 
     private data class PendingCall(
+        val requestId: Long,
         val result: MethodChannel.Result,
         val timeout: Runnable,
-    )
+        val method: String,
+        val payload: ByteArray,
+        var serviceGenerationReplays: Int = 0,
+    ) {
+        fun canReplayAcrossServiceGenerationLoss(code: String): Boolean =
+            RuntimeServiceRequestLifecyclePolicy
+                .shouldReplayAcrossServiceGenerationLoss(
+                    method = method,
+                    code = code,
+                    completedReplays = serviceGenerationReplays,
+                )
+    }
 
     private data class OutgoingRequest(
         val requestId: Long,

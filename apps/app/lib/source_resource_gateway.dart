@@ -6,8 +6,6 @@ import 'package:downloads/downloads.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
 
-const comicArtworkCacheRevision = 'artwork-v2';
-
 bool isLegacyVeneraRuntimeLocator(String value) =>
     value.startsWith('venera-resource://');
 
@@ -78,7 +76,7 @@ final class ComicSourceResourceGateway {
     required String comicId,
     String? cacheComicId,
     required Uri uri,
-    String revision = '',
+    String contentRevision = '',
     String resourceRole = 'cover',
   }) async {
     final encoded = await loadArtworkSource(
@@ -87,7 +85,7 @@ final class ComicSourceResourceGateway {
       comicId: comicId,
       cacheComicId: cacheComicId,
       uri: uri,
-      revision: revision,
+      contentRevision: contentRevision,
       resourceRole: resourceRole,
     );
     return readEncodedResourceBytes(encoded);
@@ -99,14 +97,14 @@ final class ComicSourceResourceGateway {
     required String comicId,
     String? cacheComicId,
     required Uri uri,
-    String revision = '',
+    String contentRevision = '',
     bool awaitPersistence = false,
     bool forceRefresh = false,
     String resourceRole = 'cover',
   }) async {
     _requireOpen();
     final requestUri = _artworkRequestUri(uri);
-    final cacheRevision = _artworkRevision(revision);
+    final cacheRevision = _artworkRevision(contentRevision);
     final cacheRole = _artworkResourceRole(resourceRole, uri);
     // Do not resolve a source before these source-independent cache probes. A
     // warm cover is an immutable response and must remain available while an
@@ -147,9 +145,9 @@ final class ComicSourceResourceGateway {
     return result;
   }
 
-  String _artworkRevision(String revision) => revision.isEmpty
-      ? comicArtworkCacheRevision
-      : '$comicArtworkCacheRevision:$revision';
+  String _artworkRevision(String contentRevision) => contentRevision.isEmpty
+      ? comicArtworkCacheSchemaRevision
+      : '$comicArtworkCacheSchemaRevision:$contentRevision';
 
   String _artworkResourceRole(String role, Uri uri) => role == 'cover'
       ? 'cover'

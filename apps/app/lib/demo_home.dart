@@ -171,7 +171,6 @@ final class _DemoHomeState extends State<DemoHome> {
   bool _batchManagement = false;
   final Set<String> _managedComicIdentities = <String>{};
   final Set<String> _openingComicIdentities = <String>{};
-  ReadingProgress? _latestReaderProgress;
   int _navigationIndex = 0;
   bool _sourcePageVisited = false;
   String? _sourceSearchQuery;
@@ -547,12 +546,7 @@ final class _DemoHomeState extends State<DemoHome> {
       comic: comic,
       manifest: manifest,
     );
-    await _library.upsertChapter(record);
-    final entry = await _library.get(record.sourceId, record.chapterId);
-    if (entry == null) {
-      throw StateError('漫画章节写入后无法重新读取：${record.chapterId}');
-    }
-    return entry;
+    return _librarySession.upsertChapter(record);
   }
 
   Future<ImportedLibraryEntry> _refreshRemoteEntry(
@@ -588,12 +582,7 @@ final class _DemoHomeState extends State<DemoHome> {
       manifest: manifest,
       importedAt: entry.chapter.importedAt,
     );
-    await _library.upsertChapter(refreshed);
-    return await _library.get(
-          refreshed.sourceId,
-          refreshed.chapterId,
-        ) ??
-        ImportedLibraryEntry(chapter: refreshed, progress: entry.progress);
+    return _librarySession.upsertChapter(refreshed);
   }
 
   ComicPreference _preferenceForComic(LibraryComic comic) =>
@@ -707,8 +696,7 @@ final class _DemoHomeState extends State<DemoHome> {
     _librarySession.replaceReadState(state);
   }
 
-  Future<void> _saveReaderProgress(ReadingProgress progress) {
-    _latestReaderProgress = progress;
+  Future<void> _enqueueReaderProgress(ReadingProgress progress) {
     final library = _library;
     if (library is ReaderProgressCheckpointStore) {
       (library as ReaderProgressCheckpointStore).enqueueProgress(progress);
@@ -720,14 +708,6 @@ final class _DemoHomeState extends State<DemoHome> {
     return Future<void>.value();
   }
 
-  ReadingProgress? _publishReaderProgressAfterRoute() {
-    final progress = _latestReaderProgress;
-    _latestReaderProgress = null;
-    if (progress != null) {
-      _librarySession.replaceProgress(progress);
-    }
-    return progress;
-  }
 
   Future<void> _markChapterReadForNavigation(
     ImportedLibraryEntry entry,
@@ -784,24 +764,21 @@ final class _DemoHomeState extends State<DemoHome> {
       }
       await _ensureLibraryReady();
       final record = imageFolderChapterRecord(folder);
-      await _library.upsertChapter(record);
-      final existingPreference =
-          await _library.getComicPreference(
+      final entry = await _librarySession.upsertChapter(record);
+      final existingPreference = await _library.getComicPreference(
         record.sourceId,
         record.comicId,
       );
       if (existingPreference == null) {
-        await _library.saveComicPreference(
-          ComicPreference.defaults(
-            sourceId: record.sourceId,
-            comicId: record.comicId,
-            customOrder: _preferences.length,
-          ).copyWith(updatedAt: DateTime.now().toUtc()),
-        );
+        final preference = ComicPreference.defaults(
+          sourceId: record.sourceId,
+          comicId: record.comicId,
+          customOrder: _preferences.length,
+        ).copyWith(updatedAt: DateTime.now().toUtc());
+        await _library.saveComicPreference(preference);
+        _librarySession.replacePreference(preference);
       }
-      final entry = await _library.get(record.sourceId, record.chapterId);
-      await _reloadLibrary();
-      if (!mounted || entry == null) {
+      if (!mounted) {
         return;
       }
       await _openImportedChapter(entry);
@@ -836,7 +813,12 @@ final class _DemoHomeState extends State<DemoHome> {
     int? initialPageIndex,
   }) async {
     if (!mounted) return null;
-    _latestReaderProgress = null;
+    ReadingProgress? latestProgress;
+    Future<void> onProgressChanged(ReadingProgress progress) {
+      latestProgress = progress;
+      return _enqueueReaderProgress(progress);
+    }
+
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => DeferredReaderRoute<_PreparedImportedChapter>(
@@ -846,16 +828,21 @@ final class _DemoHomeState extends State<DemoHome> {
             refreshRemote: refreshRemote,
             initialPageIndex: initialPageIndex,
           ),
-          builder: (_, prepared) => this._buildImportedChapterScreen(prepared),
+          builder: (_, prepared) => this._buildImportedChapterScreen(
+            prepared,
+            onProgressChanged: onProgressChanged,
+          ),
         ),
       ),
     );
-    // The route transition must never wait for SQLite or a full library
-    // reload. Publish only the final in-memory progress once; the background
-    // writer coalesces durable checkpoints independently. Return the same
-    // projection to an already-mounted details screen so it can update locally
-    // without querying the whole library again.
-    return _publishReaderProgressAfterRoute();
+    // Reader callbacks only enqueue durable checkpoints. The route owns its
+    // latest visible progress and publishes it to Home exactly once on return,
+    // without waiting for SQLite or a full library reload.
+    final progress = latestProgress;
+    if (progress != null) {
+      _librarySession.replaceProgress(progress);
+    }
+    return progress;
   }
 
   Future<_PreparedImportedChapter> _prepareImportedChapter(
@@ -984,7 +971,7 @@ final class _DemoHomeState extends State<DemoHome> {
             sequence: entry.chapter.sequence,
             importedAt: entry.chapter.importedAt,
           );
-          await _library.upsertChapter(refreshed);
+          await _librarySession.upsertChapter(refreshed);
         }
       } else {
         final source = _sourceForId(sourceId);
@@ -1023,7 +1010,7 @@ final class _DemoHomeState extends State<DemoHome> {
         );
         _rejectCatalogRegression(existing: existing, incoming: manifest);
         final changed = _manifestContentChanged(existing, manifest);
-        await _library.upsertSavedComic(
+        await _librarySession.upsertSavedComic(
           SavedComicRecord.fromManifest(
             manifest,
             canonicalComicId: _canonicalComicIdForPersistence(
@@ -1037,7 +1024,6 @@ final class _DemoHomeState extends State<DemoHome> {
         );
       }
     }
-    await _reloadLibrary();
     final snapshot = _detailsSnapshotForComic(
       sourceId,
       effectiveComicId,
@@ -1080,7 +1066,6 @@ final class _DemoHomeState extends State<DemoHome> {
     if (sourceValue == null || sourceValue.trim().isEmpty) {
       throw StateError('漫画详情没有可用封面');
     }
-    const revision = comicArtworkCacheRevision;
     final uri = Uri.tryParse(sourceValue);
     if (sourceId != 'local-folder' && uri != null) {
       return _sourceResources.loadArtworkBytes(
@@ -1089,7 +1074,6 @@ final class _DemoHomeState extends State<DemoHome> {
         comicId: comicId,
         cacheComicId: _canonicalComicId(sourceId, comicId),
         uri: uri,
-        revision: revision,
       );
     }
     return loadCachedComicImage(
@@ -1098,7 +1082,7 @@ final class _DemoHomeState extends State<DemoHome> {
       comicId: comicId,
       imageIdentity: sourceValue,
       resourceRole: 'cover',
-      revision: revision,
+      revision: comicArtworkCacheSchemaRevision,
       loader: () => readLocalImageSource(sourceValue),
     );
   }
@@ -1129,7 +1113,6 @@ final class _DemoHomeState extends State<DemoHome> {
         origin: EncodedResourceOrigin.localFile,
       );
     }
-    const revision = comicArtworkCacheRevision;
     final uri = Uri.tryParse(sourceValue);
     if (sourceId != 'local-folder' && uri != null) {
       return _sourceResources.loadArtworkSource(
@@ -1138,7 +1121,6 @@ final class _DemoHomeState extends State<DemoHome> {
         comicId: comicId,
         cacheComicId: _canonicalComicId(sourceId, comicId),
         uri: uri,
-        revision: revision,
         resourceRole: resourceRole,
       );
     }
@@ -1151,7 +1133,7 @@ final class _DemoHomeState extends State<DemoHome> {
       comicId: comicId,
       imageIdentity: sourceValue,
       resourceRole: resourceRole,
-      revision: revision,
+      revision: comicArtworkCacheSchemaRevision,
       awaitPersistence: false,
       loader: () => readLocalImageSource(sourceValue),
     );
@@ -1224,12 +1206,12 @@ final class _DemoHomeState extends State<DemoHome> {
   Future<void> _removeComic(LibraryComic comic) async {
     await _ensureLibraryReady();
     for (final entry in comic.chapters) {
-      await _library.removeChapter(
+      await _librarySession.removeChapter(
         entry.chapter.sourceId,
         entry.chapter.chapterId,
       );
     }
-    await _library.removeSavedComic(comic.sourceId, comic.comicId);
+    await _librarySession.removeSavedComic(comic.sourceId, comic.comicId);
     final source = _sourceForId(comic.sourceId);
     if (source != null) {
       invalidateCachedComic(source, comic.comicId);

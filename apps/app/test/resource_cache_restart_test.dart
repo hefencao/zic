@@ -28,7 +28,7 @@ void main() {
         sourceId: firstRaw.sourceId,
         comicId: 'source-card',
         uri: sourceCover,
-        revision: 'source-r1',
+        contentRevision: 'source-r1',
       ),
       _CoverSource.sourceBytes,
     );
@@ -38,7 +38,7 @@ void main() {
         sourceId: firstRaw.sourceId,
         comicId: 'comic-1',
         uri: detailCover,
-        revision: 'comic-r1',
+        contentRevision: 'comic-r1',
       ),
       _CoverSource.detailBytes,
     );
@@ -59,14 +59,14 @@ void main() {
       sourceId: reopenedRaw.sourceId,
       comicId: 'source-card',
       uri: sourceCover,
-      revision: 'source-r1',
+      contentRevision: 'source-r1',
     );
     final detailFile = await reopenedGateway.loadArtworkSource(
       cache: reopenedCache.responses,
       sourceId: reopenedRaw.sourceId,
       comicId: 'comic-1',
       uri: detailCover,
-      revision: 'comic-r1',
+      contentRevision: 'comic-r1',
     );
     expect(sourceFile.origin, EncodedResourceOrigin.durableCacheFile);
     expect(detailFile.origin, EncodedResourceOrigin.durableCacheFile);

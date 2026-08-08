@@ -67,7 +67,10 @@ final class _ReaderComicVersionNoticeGateState
 }
 
 extension _DemoHomeReaderRouteComposition on _DemoHomeState {
-  Widget _buildImportedChapterScreen(_PreparedImportedChapter prepared) {
+  Widget _buildImportedChapterScreen(
+    _PreparedImportedChapter prepared, {
+    required Future<void> Function(ReadingProgress) onProgressChanged,
+  }) {
     final current = prepared.entry;
     final preference = _preferences[
           comicLibraryIdentity(
@@ -109,7 +112,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
             readerMode: widget.preferences.defaultReaderMode,
             updatedAt: DateTime.now().toUtc(),
           ),
-      onProgressChanged: _saveReaderProgress,
+      onProgressChanged: onProgressChanged,
       initiallyImmersive: widget.preferences.readerStartsImmersive,
       initialReaderSettings: widget.preferences.readerSessionSettingsFor(
         current.chapter.sourceId,

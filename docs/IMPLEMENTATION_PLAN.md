@@ -1,3 +1,5 @@
+# zic Implementation Plan
+
 ## P0：网络 UA / client / cache ownership 真机闭环
 - 在完整 Flutter/Dart 工具链执行 analyzer，确认 dev.161→162 删除 `loadBytes`、split chapter resource setter 与 catalog artwork facade 后没有遗漏调用方；重点覆盖 `demo_home_source_compat`、`source_resource_gateway`、downloads 与 catalog tests。
 - 真机/fixture 同时覆盖完整字节 fallback 与 streaming range path，确认二者使用同一 source-resolved request plan；不得出现 full-byte 直接调用 raw source transport或 metadata/artwork 走 page-body bypass。
@@ -7,13 +9,13 @@
 - 全仓 trace核对 metadata/artwork只经 `ResourceCacheManager`；Reader page body只经 `pageResponseLoaderFor`进入 DownloadSession/artifact，不得出现新的 presentation裸 transport。
 - 评估下一阶段 source-owned binary stream/file lease：目标是让必须使用 Mihon/Venera client的正文也直接以 pipe/file/stream进入统一 Pipeline，消除当前 runtime fallback整块 `Uint8List` seam；在没有明确二进制生命周期协议前不得把完整正文改成 JSON/Base64默认路径。
 
-# zic Implementation Plan
 
-## P0：Venera 启动期与阅读历史封面根因真机闭环
+## P0：dev.164 Home projection、Artwork namespace 与 Runtime generation 真机闭环
 
-- 冷启动直接打开 `venera:ehentai`，确认若第一次 platform activation 返回 `runtime-service-died/disconnected`，bridge 只重新绑定并重放一次；若第二次仍失败，导出 Android runtime process 崩溃/LMK 日志，不增加第三次重试。
-- 冷启动让历史中至少一个外部封面处于 warm cache miss且 plugin source尚未 ready，确认先出现 `homeCoverSourceFailed{sourceAvailable:false}`，source ready后该 owner只重新求值一次并进入 sourceReady/firstFrame；普通 Home rebuild不重试 failed Future。
-- 对 `home-history:<canonical identity>` 对齐 `homeCoverRequested → homeCoverSourceReady/homeCoverSourceFailed → homeCoverFirstFrame/homeCoverDecodeFailed`。source-ready但无失败/首帧且卡片离屏不判为图片失败。Reader返回造成 progress重排时，同一 presentation key必须保持封面 State，不得借阅读进度变化重建 encoded source Future。
+- 直接从详情进入 Reader并翻页后退出：Home阅读历史必须在 route返回后立即更新，不等待 SQLite durable barrier、不重新进入详情、不触发整库 reload；连续打开两个 Reader route时各自 final progress不得串位。
+- 同一外部漫画执行 browse → details → history，记录 canonical comic identity与 cache origin；browse已写入的 `artwork-v2` durable cover必须被 details/history直接命中，不得出现 `artwork-v2:artwork-v2` 第二 namespace。
+- 冷启动直接激活 `venera:ehentai`：若首次 Binder generation在 activation完成前 died/disconnected，Android runtime-service client最多保留原 pending activation跨一个新 generation；若新 generation仍死亡，导出 runtime process crash/LMK，不增加第三次重放或 Dart/plugin层 retry。
+- 继续对 `home-history:<canonical identity>` 对齐 source/cache/decode trace。source可用但持续 `Failure` 时沿 request/transport本身调查，不再由 progress rebuild、source-ready retry或 cache namespace分裂掩盖。
 
 ## P0：Mihon目录、Venera生命周期与图片网络设备闭环
 

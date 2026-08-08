@@ -94,7 +94,9 @@ manifest 准备，再在后台完成设备扩展发现和 runtime activation。H
 增量替换 source projection，不重新拥有或复制资源缓存。
 
 `HomeLibrarySession` 先发布 entries/SavedComic primary，交给 Flutter 完成一个可注入的
-首帧边界，再读取 enrichment 和写入缺失默认值。外部 artwork 的恢复/cache权威只有
+首帧边界，再读取 enrichment 和写入缺失默认值。已挂载 Home 的 chapter/SavedComic mutation
+必须通过该 session write-through：durable store 仍负责持久化，session 在同一次成功写入后立即替换
+可见投影，不能依赖后续详情页或全量 reload 追平第二状态。外部 artwork 的恢复/cache权威只有
 `ComicSourceResourceGateway/ResourceCacheManager`：presentation取得一个不可变
 `EncodedResourceSource` 后只建立一个 ImageProvider；Future/ImageStream失败保持稳定占位，
 普通 rebuild、App resume、timer/watchdog或 ImageCache eviction都不得自动建立第二套请求。
@@ -164,8 +166,10 @@ Reader 可以提交 stable page、fractional position、目标页覆盖率、阅
 Reader 只能消费不可变页面状态、进度、错误和 `PipelinePageSurface`。它不得接触 mutable session、transport、artifact store、scheduler、cursor/frame handle 或 texture registry。
 `reader_runtime` 在页码/阅读模式改变时通过既有 progress facade 提交最新 checkpoint。SQLite 实现
 使用独立 progress isolate/WAL connection；Reader 热路径只将 checkpoint 有序入队，不执行同步
-sqlite3、章节 JSON 解码或 `HomeLibrarySession` 发布。Reader route 返回后 composition 再等待
-durable barrier，并一次性 reload library/history 投影；磁盘完成不得成为翻页或退出动画的前置条件。
+sqlite3、章节 JSON 解码或 `HomeLibrarySession` 发布。每个 Reader route 只在 composition 内持有自己的
+latest progress；route 返回后只把该最终 progress 发布到 `HomeLibrarySession` 一次，不等待 durable
+barrier，也不 reload library/history。磁盘完成不得成为翻页或退出动画的前置条件。
+`HomeLibrarySession` 同时记录 library projection revision；reload 在开始阶段捕获的 entries/SavedComic snapshot如果在 enrichment期间已被 write-through mutation超越，结束时不得覆盖更新后的 mounted projection，download snapshot也必须基于最终可见 entries。
 inactive/paused/detached 继续主动入队最终 checkpoint，进程被系统直接终止只提供 best effort。
 
 ## 5. 页面角色、窗口与优先级
@@ -282,7 +286,7 @@ Reader Host 从 `PipelineReaderSessionFactory.acquire` 获取资源会话并在�
 
 Reader 页面变化产生的 `ReadingProgress` 由 `reader_runtime` 串行合并后写入 App 提供的 progress facade。同一 Reader 同时只有一个 active writer；较新的 pending progress覆盖尚未开始写入的旧值，禁止并行 Future 倒序完成后覆盖新页码。
 
-正常导航返回必须先执行最终 force checkpoint，并循环等待 pending 与 active writer 都为空，之后才允许 route pop。详情页等待 Reader route 返回后立即重新读取本地 library snapshot，因此阅读历史不依赖退出详情页才更新。`inactive`、`paused`、`detached` 和每次稳定页面变化继续 best-effort checkpoint，以降低进程意外终止的损失窗口；操作系统强杀无法提供绝对完成保证，文档和 UI不得声称 crash-safe commit。
+正常导航返回不等待 SQLite pending/active writer 清空；Reader callback只 enqueue checkpoint，composition route-local `latestProgress` 在 pop 后立即替换 Home/详情内存投影一次，因此阅读历史不依赖再次进入详情或整库 reload。`inactive`、`paused`、`detached` 和每次稳定页面变化继续 best-effort checkpoint，以降低进程意外终止的损失窗口；操作系统强杀无法提供绝对完成保证，文档和 UI不得声称 crash-safe commit。
 
 ## 11. Identity、缓存与 artifact
 
@@ -357,8 +361,11 @@ raw comicId
 因此预览图的完整 URI 仍决定每个 widget 的裁剪区域，但同一 base URL 的编码字节只保留一份，
 避免旧实现按每个 `@x/y` 裁剪重复请求和占用缓存。旧的每裁剪项 role 不会与新的 base role 相同，因此无需迁移预览裁剪缓存。封面 durable
 namespace 由 canonical comic identity 固定，raw Mihon `comicId`、封面 URL、详情补全后的 SManga
-字段变化都不得创建第二个 namespace。封面内容版本变化由资源 revision/明确来源刷新处理，不能
-通过 presentation State、provider eviction 或新的 raw alias 隐式换 key。
+字段变化都不得创建第二个 namespace。`comicArtworkCacheSchemaRevision` 由 resource cache/gateway
+统一拥有；external artwork调用方只能提供可选 content revision，不得再次传入基础 schema revision，
+否则会把 browse 与 details/history 分裂成 `artwork-v2` 和 `artwork-v2:artwork-v2` 两套 namespace。
+封面内容版本变化由 content revision/明确来源刷新处理，不能通过 presentation State、provider eviction
+或新的 raw alias 隐式换 key。
 
 图片加载失败的边界必须分开：cache hit/miss 只说明编码字节是否存在；source loader 的失效路径、非图片响应、权限/challenge/空响应由 gateway 拒绝；Flutter decode 错误只影响 presentation。单张失败的 Trace 至少记录脱敏 `sourceId/raw comicId/resourceRole/URI`、cache origin 和 transport/decode 错误，不能仅凭占位图判断缓存冲突。
 
@@ -401,7 +408,7 @@ Cloudflare 可见浏览器的 Cookie 与 User-Agent 必须属于同一个浏览�
 - Artwork source 与 Flutter ImageStream 的恢复不得形成竞争循环。失败期间 presentation 保持稳定占位图；父组件 closure identity 不是资源 identity。
 - 详情预览按实际行分组：含横图最多 2 张、纯竖图最多 3 张；只允许相邻三个候选内最小局部重排；每行从可用宽度反算等面积 tile，详情外层是唯一水平边距。
 - 详情页和漫画源页使用同一 `AppPullToRefresh` 统一刷新交互；该组件同时拥有 edge trigger、刷新进度、成功/失败图标、位置和结果寿命，页面不得再叠加自己的勾/叉。
-- 浏览器 Cookie snapshot 是跨进程的一次性 revision handoff，不是每请求覆盖 runtime Cookie 的长期权威。Mihon 接收方必须先把匹配 host/UA 的 snapshot 同步写入 `AndroidCookieJar` 的进程内 name/value map，首个 OkHttp重试不得依赖异步 `CookieManager.setCookie()` 完成；CookieManager只承担 WebView/兼容镜像。打开验证浏览器本身不得擦除仍有效的同站点/同 UA snapshot：`begin()` 在 TTL 内保留已有 Cookie/localStorage，成功页面 capture才推进 revision，空 Cookie capture不得覆盖已有非空 handoff。验证浏览器打开 typed failure 的实际 URL；网络 classifier与浏览器完成探针是两套边界：前者保持严格以避免误触发，后者更保守地观察 Turnstile、challenge form/running容器、`cf-chl-*`、challenge iframe和典型验证中间态。`onPageFinished` 不是完成信号，页面必须同站点、ready/progress完成并连续 3 秒无 challenge证据才完成 snapshot handoff；`cf_clearance` 只是 Cookie之一而非唯一完成条件。一次手动或自动 browser handoff后，同 source/request URL的普通刷新不得再次自动打开 WebView；成功 browse才清除 guard，用户仍可显式再次打开浏览器。MethodChannel runtime lifecycle failure可原地重新激活一次。
+- 浏览器 Cookie snapshot 是跨进程的一次性 revision handoff，不是每请求覆盖 runtime Cookie 的长期权威。Mihon 接收方必须先把匹配 host/UA 的 snapshot 同步写入 `AndroidCookieJar` 的进程内 name/value map，首个 OkHttp重试不得依赖异步 `CookieManager.setCookie()` 完成；CookieManager只承担 WebView/兼容镜像。打开验证浏览器本身不得擦除仍有效的同站点/同 UA snapshot：`begin()` 在 TTL 内保留已有 Cookie/localStorage，成功页面 capture才推进 revision，空 Cookie capture不得覆盖已有非空 handoff。验证浏览器打开 typed failure 的实际 URL；网络 classifier与浏览器完成探针是两套边界：前者保持严格以避免误触发，后者更保守地观察 Turnstile、challenge form/running容器、`cf-chl-*`、challenge iframe和典型验证中间态。`onPageFinished` 不是完成信号，页面必须同站点、ready/progress完成并连续 3 秒无 challenge证据才完成 snapshot handoff；`cf_clearance` 只是 Cookie之一而非唯一完成条件。一次手动或自动 browser handoff后，同 source/request URL的普通刷新不得再次自动打开 WebView；成功 browse才清除 guard，用户仍可显式再次打开浏览器。初次 external runtime activation若在 session建立前遇到 Binder service died/disconnected，由 Android `PluginRuntimeServiceClient` 保留原 pending activation跨一个新 service generation；Dart backend不得再次调用 activation。已建立 session 的 lifecycle恢复继续走既有 session contract。
 
 ### 外部插件持久化恢复
 

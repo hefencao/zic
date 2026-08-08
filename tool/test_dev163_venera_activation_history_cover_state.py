@@ -16,18 +16,48 @@ def forbid(text: str, token: str, label: str) -> None:
         raise SystemExit(f'superseded {label}: {token}')
 
 runtime = read('packages/plugin_host_bridge/lib/src/method_channel_runtime_backends.dart')
-for token in (
+# dev.164 supersedes the dev.163 Dart activation replay: initial Binder
+# generation continuity now belongs to the Android runtime-service client.
+for stale in (
     'const Set<String> _recoverableActivationRuntimeCodes',
-    "'runtime-service-died'",
-    "'runtime-service-disconnected'",
     'if (!_recoverableActivationRuntimeCodes.contains(error.code))',
-    'response = await channel.invokeMapMethod<String, Object?>(',
 ):
-    require(runtime, token, 'initial runtime activation recovery')
+    forbid(runtime, stale, 'Dart-owned initial activation replay')
+
+client = read(
+    'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/'
+    'PluginRuntimeServiceClient.kt'
+)
+policy = read(
+    'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/'
+    'RuntimeServiceRequestLifecyclePolicy.kt'
+)
+for token in (
+    'replayInitialActivationsAfterServiceLoss',
+    'serviceGenerationReplays += 1',
+    'RuntimeServiceRequestLifecyclePolicy',
+):
+    require(client, token, 'Android-owned initial activation continuity')
+for token in (
+    '"activateVeneraRuntime"',
+    '"activateMihonRuntime"',
+    '"runtime-service-died"',
+    '"runtime-service-disconnected"',
+    'completedReplays == 0',
+):
+    require(policy, token, 'bounded service-generation policy')
 
 runtime_test = read('packages/plugin_host_bridge/test/method_channel_runtime_backends_test.dart')
-require(runtime_test, 'Venera activation rebinds once when runtime service dies', 'Venera activation owner test')
-require(runtime_test, 'Venera activation does not replay plugin activation errors', 'non-retry business-error test')
+require(
+    runtime_test,
+    'Venera backend leaves service-generation recovery to Android',
+    'Venera activation ownership test',
+)
+require(
+    runtime_test,
+    'Venera activation does not replay plugin activation errors',
+    'non-retry business-error test',
+)
 
 views = read('apps/app/lib/demo_home_views.dart')
 for token in (

@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.163`
-**App build：** `0.31.0+163`
+**源码版本：** `0.31.0-dev.164`
+**App build：** `0.31.0+164`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -9,9 +9,12 @@
 
 ## 当前实现
 
-- Venera/Mihon 的初次 platform runtime activation 对 `runtime-service-died/disconnected` 只在 plugin-host bridge 基础设施边界重放一次；普通插件激活错误不自动重试。
-- Home外部封面把 live source readiness作为显式加载依赖：首屏早于 plugin ready且 warm cache miss时，失败 Future只在对应 source从 unavailable→available后重新求值；普通 progress/enrichment rebuild不重试。历史/更新横向 Sliver直接 child使用 `section + canonical comic identity` 稳定 key并提供 reorder index callback，阅读进度只改变排序。Home trace区分 `homeCoverSourceFailed`（含 `sourceAvailable`）、`homeCoverDecodeFailed` 与 first-frame。
-- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=163`。
+- Home可见 library projection 与 durable mutation已收成 `HomeLibrarySession` write-through边界：chapter/SavedComic写入后同一次操作立即更新 Home；Reader page callback只 enqueue checkpoint，每个 route局部持有 final progress并在返回后只发布一次，不再依赖详情页退出或整库 reload。
+- `HomeLibrarySession.reload()` 以 projection revision拒绝旧 entries/SavedComic snapshot覆盖 enrichment期间更晚的 write-through更新，避免 history在并发 reload结束时回退。
+- External artwork基础 schema revision唯一属于 `resource_cache/ComicSourceResourceGateway`。browse/details/history使用同一 `artwork-v2` namespace；gateway参数只允许额外 `contentRevision`，Home/详情不再把 `artwork-v2` 重复拼成 `artwork-v2:artwork-v2`。local artwork直接复用同一个 schema revision。
+- 初次 Venera/Mihon activation 的 Binder generation连续性已下沉到 Android `PluginRuntimeServiceClient`：仅 pending activation可跨一个 `runtime-service-died/disconnected` generation；Dart backend删除初次 activation重放，session invocation与业务失败仍按原 owner处理。
+- Home外部封面继续把 live source readiness作为显式加载依赖：首屏早于 plugin ready且 warm cache miss时，失败 Future只在对应 source从 unavailable→available后重新求值；普通 progress/enrichment rebuild不重试。历史/更新横向 Sliver直接 child使用 `section + canonical comic identity` 稳定 key并提供 reorder index callback。
+- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=164`。
 - 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
 - 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation不阻塞 Home primary，外部 source ready 后增量接入。
 - artwork资源恢复唯一属于 `ComicSourceResourceGateway/ResourceCacheManager`。Home、书架、漫画源和详情 presentation 已删除定时 retry、first-frame watchdog、App resume自动 retry、全局 ImageCache eviction和 App级短时 Future join；详情统一使用 `ComicDetailsArtworkLoader` 并显式传递 cover/preview/avatar role。普通 artwork直接复用 `StableArtworkImage`；需要裁剪/尺寸测量时只有一个显式 ImageStream listener，不再同时创建第二个 `Image`。
@@ -60,8 +63,9 @@
 
 ## 当前开放问题
 
-- 需用 dev.163 真机 trace验证已定位的 startup链：外部 source尚未 ready且 warm cache miss时应记录 `homeCoverSourceFailed{sourceAvailable:false}`，source ready后同 presentation owner只重新求值一次。对 `homeCoverSourceReady` 后仍无首帧的条目，继续用 `homeCoverDecodeFailed` 区分真实 decoder错误与离屏未绘制；在证据明确前不增加 artwork retry。
-- 需真机确认 Venera `venera:ehentai` 初次 activation 的 `runtime-service-died/disconnected` 能通过一次重新绑定恢复；若第二次仍死亡，应采集 Android runtime process crash/kill 证据，而不是继续叠加重试。
+- 需用 dev.164 真机确认 Reader route返回后 Home history立即接收 final progress，不依赖详情页或整库 reload；连续 Reader route不得串用 final progress。
+- 需对同一外部漫画执行 browse→details→history，确认 browse已写入的 canonical `artwork-v2` durable cover被后两者直接命中，不再出现第二 revision namespace。source可用但仍 `Failure` 时继续沿真实 request/transport调查，不增加 artwork retry。
+- 需真机确认 Venera `venera:ehentai` 初次 activation 在 Binder generation死亡时由 Android client保留 pending activation跨一个新 generation；若新 generation仍死亡，应采集 runtime process crash/kill 证据，而不是在 Dart/plugin层叠加重试。
 - 目标设备仍需验证 transition 首帧、远程 WebP frame cadence、后台重入和首页首封面时序。
 - 本轮首页冷启动修复仍需设备对比 `homeServicesReady`、`home-library-primary`、
   `homeCoverRequested`、各封面 `homeCoverSourceReady`/`homeCoverFirstFrame` 的真实间隔，
@@ -77,9 +81,9 @@
 |---|---|
 | repository/documentation/Dart static gates | Verified-static |
 | current-code documentation consistency gate | Verified-static |
-| dev.75–dev.163 ownership gates | Verified-static |
+| dev.75–dev.164 ownership gates | Verified-static |
 | Android/Mihon/Venera/Reader/Pipeline/UI contracts | Verified-static / toolchain |
-| Kotlin texture bridge compile stub | Verified-toolchain |
+| Kotlin texture bridge + dev.164 PluginRuntimeServiceClient stub compile | Verified-toolchain |
 | pinned libwebp host build/smoke | Unverified：当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip` |
 | 受影响 Flutter owner tests | Unverified：当前环境没有 Flutter SDK；已补 owner tests，未执行 |
 | Flutter analyzer | Unverified：当前环境没有 Flutter/Dart SDK |

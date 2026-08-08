@@ -1,6 +1,6 @@
-# dev.163 后续交接
+# dev.164 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.163_venera-activation-history-cover-state.zip`。
+唯一后续基线：`zic_v0.31.0-dev.164_home-projection-artwork-runtime-generation.zip`。
 
 ## 必读
 
@@ -16,17 +16,23 @@
 10. `docs/adr/0144-mihon-catalogue-venera-lifecycle-media-network.md`
 11. `docs/adr/0145-network-user-agent-and-transport-cache-ownership.md`
 12. `docs/adr/0146-source-resource-atomic-binding-and-catalog-artwork-boundary.md`
-13. `docs/audits/dev157-root-cause-owner-cleanup-audit.md`
-14. `docs/audits/dev157-validation-results.md`
-15. `docs/audits/dev158-compile-owner-blocking-audit.md`
-16. `docs/audits/dev158-validation-results.md`
-17. `docs/audits/dev163-venera-activation-history-cover-root-cause-audit.md`
+13. `docs/adr/0147-home-projection-artwork-revision-runtime-generation-ownership.md`
+14. `docs/audits/dev157-root-cause-owner-cleanup-audit.md`
+15. `docs/audits/dev157-validation-results.md`
+16. `docs/audits/dev158-compile-owner-blocking-audit.md`
+17. `docs/audits/dev158-validation-results.md`
+18. `docs/audits/dev163-venera-activation-history-cover-root-cause-audit.md`
+19. `docs/audits/dev164-home-projection-artwork-runtime-generation-root-cause-audit.md`
+20. `docs/audits/dev164-validation-results.md`
 
 ## 当前代码事实
 
-- 初次 external runtime activation 的 transport/service-loss恢复已经和 session 内 invocation 对齐：仅 `runtime-service-died/disconnected` 在 bridge边界重新绑定并重放一次，业务激活失败不重试。
-- Home外部封面已把 source availability作为显式加载依赖：首屏早于 plugin ready且 warm cache miss导致的 failed Future，只在 source unavailable→available后重新求值；普通 progress/enrichment rebuild不重试。history/update 横向 Sliver直接 child持有 `section + canonical comic identity` key并提供 reorder映射，Reader progress只负责排序/进度投影。`homeCoverSourceFailed`记录 `sourceAvailable`，decode失败单列 `homeCoverDecodeFailed`。
-- Reader页面变化只 enqueue latest progress；SQLite在 storage-owned isolate内按同章节 latest-wins合并，空闲约8秒提交、持续活跃最多约30秒提交。Reader route不等待 durable barrier。返回后 Home只发布最终 progress一次，详情只替换当前章节，不全量 reload library。
+- `HomeLibrarySession` 是已挂载 Home 的 write-through projection owner：chapter/SavedComic durable mutation成功后立即更新可见投影；详情/来源流程不得靠后续 `_reloadLibrary()` 追平。Reader page只 enqueue checkpoint，每个 route局部持有 final progress并在返回后只发布一次。
+- session reload具有 projection revision：reload开始时捕获的旧 entries/SavedComic snapshot不得在 enrichment结束时覆盖更晚的 write-through chapter/saved/progress投影。
+- `comicArtworkCacheSchemaRevision` 只有一个 owner。external browse/details/history均由 `ComicSourceResourceGateway`生成 `artwork-v2[:contentRevision]`；调用方不得再把基础 schema revision作为参数传入。local artwork直接使用同一 schema revision。
+- 初次 external runtime activation 的 service-generation continuity属于 Android `PluginRuntimeServiceClient`：只有 pending `activateMihonRuntime/activateVeneraRuntime`可跨一个 died/disconnected Binder generation；Dart backend不再二次调用 activation。业务错误与 established-session invocation不进入该策略。
+- Home外部封面仍把 source availability作为显式加载依赖；history/update Sliver仍持有 `section + canonical comic identity`稳定 key。dev.164不恢复 presentation retry/watchdog/evict。
+- Reader SQLite仍由 storage-owned isolate按同章节 latest-wins合并，空闲约8秒提交、持续活跃最多约30秒提交；route不等待 durable barrier。
 - 全局网络 User-Agent是 composition fallback，默认 Android Chrome 150并可设置；source显式 UA、Mihon browser-session UA优先。App presentation不得创建独立 HTTP client。
 - shared source host replay只允许无状态媒体：禁止自动 redirect；redirect、`Set-Cookie`、非媒体 body或未知 client wrapper立即切 source-owned client。metadata/artwork必须走 `ResourceCacheManager`；`pageResponseLoaderFor/loadPageBytes`仅供 Reader/章节正文，由 DownloadSession/artifact接管。 full-byte 与 streaming 必须复用同一 response loader；章节下载只通过原子 `ChapterResourceAccess` 绑定，禁止恢复 byte/transport 双 setter。
 - Mihon 1.6 ABI shim不能依赖 `kotlinx.coroutines`；独立 asset generator必须能用自身 classpath编译。

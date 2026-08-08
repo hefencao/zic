@@ -53,12 +53,15 @@ for token in (
 ):
     require(writer, token, 'background WAL batching')
 for token in (
-    'Future<void> _saveReaderProgress(ReadingProgress progress)',
+    'Future<void> _enqueueReaderProgress(ReadingProgress progress)',
     'enqueueProgress(progress);',
-    'ReadingProgress? _publishReaderProgressAfterRoute()',
+    'ReadingProgress? latestProgress;',
+    'latestProgress = progress;',
     '_librarySession.replaceProgress(progress);',
 ):
-    require(home, token, 'Reader route projection')
+    require(home, token, 'route-local Reader projection')
+for stale in ('_saveReaderProgress', '_publishReaderProgressAfterRoute', '_latestReaderProgress'):
+    forbid(home, stale, 'superseded global Reader projection')
 forbid(home, 'flushProgress(', 'Reader route durable barrier')
 for token in (
     'void replaceProgress(ReadingProgress progress)',

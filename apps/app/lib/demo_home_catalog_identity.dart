@@ -127,7 +127,7 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
       if (canonical == saved.canonicalComicId) {
         continue;
       }
-      await _library.upsertSavedComic(
+      await _librarySession.upsertSavedComic(
         saved.copyWith(
           canonicalComicId: canonical,
           clearCanonicalComicId: canonical == null,
@@ -273,7 +273,7 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
   ) async {
     await _ensureLibraryReady();
     if (!retained) {
-      await _library.removeSavedComic(
+      await _librarySession.removeSavedComic(
         manifest.comic.sourceId,
         manifest.comic.comicId,
       );
@@ -289,7 +289,7 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
         );
     _rejectCatalogRegression(existing: existing, incoming: manifest);
     final changed = _manifestContentChanged(existing, manifest);
-    await _library.upsertSavedComic(
+    await _librarySession.upsertSavedComic(
       SavedComicRecord.fromManifest(
         manifest,
         canonicalComicId: _canonicalComicIdForPersistence(

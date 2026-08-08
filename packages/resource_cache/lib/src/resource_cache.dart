@@ -13,6 +13,13 @@ enum ResourceCacheKind {
   searchResults,
 }
 
+/// Schema revision shared by all durable comic artwork cache entries.
+///
+/// Artwork callers may add a content-specific revision, but must never append
+/// this schema revision themselves. That prevents browse/details/history from
+/// accidentally creating parallel durable namespaces for the same artwork.
+const comicArtworkCacheSchemaRevision = 'artwork-v2';
+
 /// Stable cache identity plus an invalidation namespace.
 ///
 /// [identity] identifies one response. [namespace] groups related responses,

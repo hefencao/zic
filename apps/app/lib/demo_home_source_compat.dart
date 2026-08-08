@@ -422,9 +422,6 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
           ),
         ),
       );
-      if (mounted) {
-        await _reloadLibrary();
-      }
     } finally {
       _openingComicIdentities.remove(identity);
     }
@@ -463,7 +460,10 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
                       entry.chapter.comicId == comic.comicId,
                 );
             if (!retained) {
-              await _library.removeSavedComic(comic.sourceId, comic.comicId);
+              await _librarySession.removeSavedComic(
+                comic.sourceId,
+                comic.comicId,
+              );
             }
           },
           onReadChanged: _setChapterRead,
@@ -531,9 +531,6 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
         ),
       ),
     );
-    if (mounted) {
-      await _reloadLibrary();
-    }
   }
 
 }

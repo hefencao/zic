@@ -44,7 +44,13 @@ for token in (
 ):
     require(progress_writer, token, "off-ui latest-wins progress writer")
 require(home, "enqueueProgress(progress);", "Reader enqueue")
-require(home, "_publishReaderProgressAfterRoute", "post-route memory projection")
+for token in (
+    "ReadingProgress? latestProgress;",
+    "return _enqueueReaderProgress(progress);",
+    "_librarySession.replaceProgress(progress);",
+):
+    require(home, token, "route-local post-route memory projection")
+forbid(home, "_publishReaderProgressAfterRoute", "superseded global post-route progress")
 require(home_session, "void replaceProgress(ReadingProgress progress)", "single Home progress publication")
 forbid(home, "_flushReaderProgressAfterRoute", "old route flush")
 

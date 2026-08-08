@@ -26,6 +26,10 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
   命中时不得解析来源、创建 source transport 或等待插件 activation。cache miss 才可进入
   source loader。raw Mihon/插件 locator只用于 runtime调用与章节身份，不得切分 durable artwork namespace。
 - Home/阅读历史中已经持久化的 HTTP(S) artwork locator MUST 始终先进入统一 `ComicSourceResourceGateway` 的 source-independent durable-cache probe；active source/plugin 暂不可用时不得把网络 URL 交给本地文件 loader。durable miss 后才可要求来源 adapter。
+- 已挂载 Home 的 chapter/SavedComic mutation MUST 通过 `HomeLibrarySession` write-through投影边界完成：durable store写入成功后同一次操作必须更新 session可见投影；不得先直接写 store再依赖详情页退出或 `_reloadLibrary()` 追平。Reader route最终 progress MUST 为 route-local状态，返回后只发布一次；不得用跨 route全局 latest-progress槽。
+- Home library reload MUST NOT 用 mutation 之前捕获的旧 entries/SavedComic snapshot覆盖更新后的 write-through chapter/saved/progress投影。
+- Comic artwork基础 cache schema revision MUST 只有一个 owner。External artwork由 `ComicSourceResourceGateway` 自动添加 `comicArtworkCacheSchemaRevision`；调用方 MAY 只提供 content-specific revision，MUST NOT 再传基础 schema revision形成并行 namespace。
+- 初次 external runtime activation 在 session建立前发生 Binder `runtime-service-died/disconnected` 时，generation continuity MUST 由 Android runtime-service client拥有；最多跨一个 service generation。Dart/plugin activation层 MUST NOT 通过再次调用 activation实现同一恢复，业务/ABI/请求错误 MUST NOT 被重放。
 - 来源确认过的同源 canonical comic identity SHOULD 持久化在 SavedComic 元数据中，供
   插件未激活时的书架只读归并使用；原始 comic/chapter request identity MUST 保持不变。
 - 未访问的首页、书架、来源和杂项导航页 MUST 延迟构建；首次访问后页面状态 MAY 保留，

@@ -393,7 +393,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         updatedAt: migrationTime,
       );
 
-      await _library.upsertSavedComic(
+      await _librarySession.upsertSavedComic(
         SavedComicRecord.fromManifest(
           manifest,
           canonicalComicId: _canonicalComicIdForPersistence(
@@ -414,7 +414,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       var reusedPageArtifacts = 0;
       for (final item in prepared) {
         final targetRecord = item.targetRecord;
-        await _library.upsertChapter(targetRecord);
+        await _librarySession.upsertChapter(targetRecord);
         migratedChapters++;
         final artifactCache = _readerArtifactCache;
         if (artifactCache != null) {
@@ -429,7 +429,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           final pageIndex = sourceProgress.pageIndex
               .clamp(0, targetRecord.pages.length - 1)
               .toInt();
-          await _library.saveProgress(
+          await _librarySession.persistProgress(
             ReadingProgress(
               sourceId: targetRecord.sourceId,
               comicId: targetRecord.comicId,
@@ -463,12 +463,12 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       }
       if (replacingSource) {
         for (final entry in comic.chapters) {
-          await _library.removeChapter(
+          await _librarySession.removeChapter(
             entry.chapter.sourceId,
             entry.chapter.chapterId,
           );
         }
-        await _library.removeSavedComic(comic.sourceId, comic.comicId);
+        await _librarySession.removeSavedComic(comic.sourceId, comic.comicId);
       }
       await _reloadLibrary();
       if (mounted) {

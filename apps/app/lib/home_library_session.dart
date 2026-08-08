@@ -64,6 +64,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   bool _loading = true;
   String? _activeSourceId;
   bool _closed = false;
+  int _libraryProjectionRevision = 0;
 
   List<ImportedLibraryEntry> get entries => _entries;
   List<SavedComicRecord> get savedComics => _savedComics;
@@ -123,14 +124,17 @@ final class HomeLibrarySession extends ChangeNotifier {
   }
 
   Future<void> _reload({required bool publishPrimary}) async {
+    final projectionRevisionAtStart = _libraryProjectionRevision;
     final primaryStartedAt = startupTelemetry?.nowMicros();
     final entriesFuture = library.list();
     final savedComicsFuture = library.listSavedComics();
     final entries = await entriesFuture;
     final savedComics = await savedComicsFuture;
     if (publishPrimary) {
-      _entries = List<ImportedLibraryEntry>.unmodifiable(entries);
-      _savedComics = List<SavedComicRecord>.unmodifiable(savedComics);
+      if (_libraryProjectionRevision == projectionRevisionAtStart) {
+        _entries = List<ImportedLibraryEntry>.unmodifiable(entries);
+        _savedComics = List<SavedComicRecord>.unmodifiable(savedComics);
+      }
       _error = null;
       _publish();
       if (primaryStartedAt != null) {
@@ -207,12 +211,19 @@ final class HomeLibrarySession extends ChangeNotifier {
       (value, preference) =>
           preference.customOrder >= value ? preference.customOrder + 1 : value,
     );
+    // A write-through mutation may land while this reload is doing enrichment.
+    // In that case the mounted projection is newer than the snapshot captured
+    // above and must remain the seed/visible authority.
+    final projectionChanged =
+        _libraryProjectionRevision != projectionRevisionAtStart;
+    final seedEntries = projectionChanged ? _entries : entries;
+    final seedSavedComics = projectionChanged ? _savedComics : savedComics;
     final comicSeeds = <({
       String sourceId,
       String comicId,
       ComicSourceKind sourceKind,
     })>[
-      for (final entry in entries)
+      for (final entry in seedEntries)
         (
           sourceId: entry.chapter.sourceId,
           comicId: entry.chapter.comicId,
@@ -220,7 +231,7 @@ final class HomeLibrarySession extends ChangeNotifier {
               ? ComicSourceKind.local
               : ComicSourceKind.remote,
         ),
-      for (final comic in savedComics)
+      for (final comic in seedSavedComics)
         (
           sourceId: comic.sourceId,
           comicId: comic.comicId,
@@ -251,8 +262,10 @@ final class HomeLibrarySession extends ChangeNotifier {
       for (final state in await readStatesFuture) state.identity: state,
     };
 
-    _entries = List<ImportedLibraryEntry>.unmodifiable(entries);
-    _savedComics = List<SavedComicRecord>.unmodifiable(savedComics);
+    if (_libraryProjectionRevision == projectionRevisionAtStart) {
+      _entries = List<ImportedLibraryEntry>.unmodifiable(entries);
+      _savedComics = List<SavedComicRecord>.unmodifiable(savedComics);
+    }
     _categories = List<LibraryCategory>.unmodifiable(categories);
     _preferences = Map<String, ComicPreference>.unmodifiable(preferences);
     _readStates = Map<String, ChapterReadState>.unmodifiable(readStates);
@@ -268,7 +281,9 @@ final class HomeLibrarySession extends ChangeNotifier {
         startedAtMicros: enrichmentStartedAt,
       );
     }
-    unawaited(refreshDownloadSnapshots(entries));
+    final visibleEntries =
+        _libraryProjectionRevision == projectionRevisionAtStart ? entries : _entries;
+    unawaited(refreshDownloadSnapshots(visibleEntries));
   }
 
   Future<void> ensureReady() async {
@@ -310,31 +325,117 @@ final class HomeLibrarySession extends ChangeNotifier {
     _publish();
   }
 
+  /// Persists a chapter and updates the Home projection in the same owner.
+  ///
+  /// Callers must not write a chapter directly to [library] and wait for a
+  /// later full reload: a newly materialized source chapter can enter Reader
+  /// immediately, so Home needs the same authoritative entry before the route
+  /// returns and publishes progress.
+  Future<ImportedLibraryEntry> upsertChapter(
+    ImportedChapterRecord chapter,
+  ) async {
+    await library.upsertChapter(chapter);
+    final entry = await library.get(chapter.sourceId, chapter.chapterId);
+    if (entry == null) {
+      throw StateError('chapter write completed without a readable entry');
+    }
+    _replaceEntry(entry);
+    return entry;
+  }
+
+  Future<void> removeChapter(String sourceId, String chapterId) async {
+    await library.removeChapter(sourceId, chapterId);
+    final identity = chapterLibraryIdentity(sourceId, chapterId);
+    final next = _entries
+        .where((entry) => entry.identity != identity)
+        .toList(growable: false);
+    if (next.length == _entries.length) return;
+    _entries = List<ImportedLibraryEntry>.unmodifiable(next);
+    _libraryProjectionRevision++;
+    _publish();
+  }
+
+  Future<void> upsertSavedComic(SavedComicRecord comic) async {
+    await library.upsertSavedComic(comic);
+    final stored = await library.getSavedComic(comic.sourceId, comic.comicId);
+    if (stored == null) {
+      throw StateError('saved comic write completed without a readable record');
+    }
+    final next = _savedComics.toList(growable: true);
+    final index = next.indexWhere((current) => current.identity == stored.identity);
+    if (index < 0) {
+      next.add(stored);
+    } else {
+      next[index] = stored;
+    }
+    _savedComics = List<SavedComicRecord>.unmodifiable(next);
+    _libraryProjectionRevision++;
+    _publish();
+  }
+
+  Future<void> removeSavedComic(String sourceId, String comicId) async {
+    await library.removeSavedComic(sourceId, comicId);
+    final identity = comicLibraryIdentity(sourceId, comicId);
+    final next = _savedComics
+        .where((comic) => comic.identity != identity)
+        .toList(growable: false);
+    if (next.length == _savedComics.length) return;
+    _savedComics = List<SavedComicRecord>.unmodifiable(next);
+    _libraryProjectionRevision++;
+    _publish();
+  }
+
+  /// Persists progress for non-Reader mutation flows and updates Home.
+  ///
+  /// Reader callbacks must continue using the checkpoint writer and call
+  /// [replaceProgress] only once when the route returns.
+  Future<void> persistProgress(ReadingProgress progress) async {
+    await library.saveProgress(progress);
+    replaceProgress(progress);
+  }
+
   /// Updates the visible Home projection after a Reader route has returned.
   ///
   /// Reader page callbacks never call this method. Persistence is owned by the
   /// library store and may still be completing on its background writer; this
   /// method only replaces the matching in-memory projection once per route.
   void replaceProgress(ReadingProgress progress) {
-    var changed = false;
-    final next = <ImportedLibraryEntry>[
-      for (final entry in _entries)
-        if (entry.chapter.sourceId == progress.sourceId &&
-            entry.chapter.chapterId == progress.chapterId &&
-            entry.chapter.comicId == progress.comicId)
-          (() {
-            final current = entry.progress;
-            if (current != null && current.updatedAt.isAfter(progress.updatedAt)) {
-              return entry;
-            }
-            changed = true;
-            return entry.copyWith(progress: progress);
-          })()
-        else
-          entry,
-    ];
-    if (!changed) return;
+    final identity = chapterLibraryIdentity(
+      progress.sourceId,
+      progress.chapterId,
+    );
+    final index = _entries.indexWhere((entry) => entry.identity == identity);
+    if (index < 0) return;
+    final entry = _entries[index];
+    final current = entry.progress;
+    if (current != null && current.updatedAt.isAfter(progress.updatedAt)) return;
+    // Chapter identity is source + chapter. Raw comic locators may have a
+    // source-verified alias while the durable chapter remains the same; keep
+    // the entry's comic locator authoritative for the visible projection.
+    final normalized = progress.comicId == entry.chapter.comicId
+        ? progress
+        : ReadingProgress(
+            sourceId: entry.chapter.sourceId,
+            comicId: entry.chapter.comicId,
+            chapterId: entry.chapter.chapterId,
+            pageIndex: progress.pageIndex,
+            subPageOffset: progress.subPageOffset,
+            readerMode: progress.readerMode,
+            updatedAt: progress.updatedAt,
+          );
+    _replaceEntry(entry.copyWith(progress: normalized));
+  }
+
+  void _replaceEntry(ImportedLibraryEntry entry) {
+    final next = _entries.toList(growable: true);
+    final index = next.indexWhere((current) => current.identity == entry.identity);
+    if (index < 0) {
+      next.add(entry);
+    } else {
+      next[index] = entry;
+    }
     _entries = List<ImportedLibraryEntry>.unmodifiable(next);
+    _libraryProjectionRevision++;
     _publish();
   }
 
