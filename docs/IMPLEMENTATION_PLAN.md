@@ -1,5 +1,11 @@
 # zic Implementation Plan
 
+## P0：Current / Previous 真实执行槽真机闭环
+
+- 用快速 N→N+1→N 与反向翻页复测 dev.184：离窗时只有 `DownloadState.receiving` 的 active transfer可以降为 `retained-background=0`；仍在 restore/request-plan/Venera gate/HTTP-open 的 queued/opening task必须收到 TaskControl cancellation，并在物理退出后释放 NetLane/runtime permit。
+- 观察 adjacent previous：policy仍应给 priority 780、behind-1 decode；若 previous仍延迟，记录“previous提权时间 → 普通槽释放 → downloadStarted → Venera request-plan start → HTTP open”，不要先提高 previous priority、扩大5路并发或缩小7/3。
+- current继续验证5+1 bounded handoff与Venera physical-finish规则；本轮修复不能把 receiving logical detach退化为普遍 cancel/reopen。
+
 ## P0：Current 首帧 policy/execution 真机闭环
 
 - 首先验证 current bootstrap：动态 current 未达到3帧前，speculative next/next2/previous 不应产生实际 decode refill；current 等 source 时只允许真实 viewport transition 先取1帧。trace 应显示 staticWarm 不再把 near/far 7/3 encoded页扩成 decode/upload。

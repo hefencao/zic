@@ -127,7 +127,12 @@ version_match = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec, re.MULTIL
 if not version_match or int(version_match.group(1)) < 183:
     raise SystemExit('app version is below dev.183')
 android = read('apps/app/android/zic-version.properties')
-if 'versionCode=183' not in android:
-    raise SystemExit('Android versionCode is not dev.183')
+android_match = re.search(r'^versionCode=(\d+)\s*$', android, re.MULTILINE)
+if (
+    android_match is None
+    or int(android_match.group(1)) < 183
+    or android_match.group(1) != version_match.group(1)
+):
+    raise SystemExit('Android versionCode is below dev.183 or mismatched with App build')
 
 print('dev.183 current bootstrap / execution reservation / physical Venera preemption: OK')

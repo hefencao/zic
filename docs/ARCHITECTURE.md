@@ -196,7 +196,7 @@ network 的 `NetLane` 与 decode/upload lane 都由 composition-owned scheduler 
 
 - normal concurrency 仍为 network 5、decode 3、upload 2；network local bucket 2、remote source bucket 5；
 - current priority 1000；network/decode/upload 各保留 1 个仅 current 可用的高优先级 handoff slot，transition priority 900 不占该保留槽；
-- priority 提升原位迁移，差值达到 40 时可抢占低优先级 active task；handoff 仅允许 `maxActive + 1`，取消中的 task 在真实结束前继续占 permit。普通页面离开 encoded 7/3 时 queued undemanded 可取消、receiving 保留并降为低优先级；只有 current pressure 才抢占。Venera 单上下文的 permit 也必须等被取消 JavaScript invocation **物理 finished** 后才能转交，不能在仅发出 cancel 时提前释放；
+- priority 提升原位迁移，差值达到 40 时可抢占低优先级 active task；handoff 仅允许 `maxActive + 1`，取消中的 task 在真实结束前继续占 permit。普通页面离开 encoded 7/3 时 queued undemanded 可取消、receiving 保留并降为低优先级；`activeRun` 只表示 DownloadJob 已取得 run lease，不能作为 receiving 的替代判据。active 但仍处于 restore/request-plan/runtime-gate/HTTP-open 的 queued/opening 工作在失去 demand 后必须沿同一 `TaskControl` 取消并等待物理退出，让 current/adjacent previous 接管真实 permit；只有已建立 `DownloadState.receiving` 的流才适用 logical-detach retention。Venera 单上下文的 permit 也必须等被取消 JavaScript invocation **物理 finished** 后才能转交，不能在仅发出 cancel 时提前释放；
 - DownloadJob 不读取 holder depth、播放状态或页面控件；远端下载窗口、decode/upload execution reservation 与播放水位分别由唯一 owner 管理。
 
 ## 6. Decode 水位与 Transition 首帧

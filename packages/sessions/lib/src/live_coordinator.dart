@@ -275,7 +275,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       final session = registry.find(id);
       session?.detach();
       final taskKey = _networkTaskKeys[id];
-      if (session?.activeRun == true && taskKey != null) {
+      final taskIsActive = taskKey != null && net.isActive(taskKey);
+      final receiving = session?.state == DownloadState.receiving;
+      if (receiving && taskIsActive) {
         _migrateDownloadPriority(
           sessionId,
           id,
@@ -283,6 +285,15 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           0,
           reason: 'retained-background',
         );
+      } else if (taskKey != null && taskIsActive) {
+        // A run lease starts before restore/request-plan/HTTP open. Treating
+        // every activeRun as "receiving" lets undemanded pre-open work keep a
+        // scarce network/runtime permit at priority 0. Only an established
+        // receiving writer is worth retaining across a logical detach; queued
+        // or opening work must unwind so current/adjacent-previous demand can
+        // inherit the permit. NetLane cancellation keeps the permit occupied
+        // until the controlled transport has physically exited.
+        net.cancel(taskKey);
       } else {
         if (taskKey != null) {
           net.cancelQueued(taskKey);

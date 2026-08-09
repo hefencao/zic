@@ -1,3 +1,10 @@
+## 0.31.0-dev.184：按真实 Receiving 生命周期释放旧槽并恢复 Previous 交棒
+
+- 根据 `zic-debug-trace-2026-08-09T08-58-13.jsonl` 区分 policy 与 execution：previous demand 会按 priority 780 正常生成，但一次 16→17/17→16 邻接切换中，previous 从提权到真正 `downloadStarted` 等待约 3.00 秒；同时 trace 出现 `receivingRetained=false` 后同 identity 仍被迁到 `retained-background=0` 的矛盾。
+- 根因是 `LiveCoordinator` 用 `DownloadSession.activeRun` 近似 receiving；run lease 在 restore、source request-plan、Venera gate 与 HTTP open 之前已经成立，导致尚未建立 writer/字节接收的离窗任务也被长期保活并占 NetLane / Venera 执行资源。
+- logical detach 现在只保留真实 `DownloadState.receiving` 且仍为 NetLane active 的任务；active 但 queued/opening 的任务沿既有 `TaskControl` 调用 `net.cancel()`，等待物理 transport 退出后释放 permit；纯 queued 任务继续 `cancelQueued()`。不新增调度器，不改变 encoded 7/3、decode 2/1、holder 7/5/3/2、normal lanes 5/3/2、current 1000 或 previous 780。
+- 新增“receiving detach 保持原连接”和“pre-open detach 取消后 adjacent previous 获得唯一网络槽”回归；新增 ADR 0167、dev.184 根因审计与 release gate，版本提升到 `0.31.0+184`。
+
 ## 0.31.0-dev.183：Current bootstrap、执行保留槽与 Venera 物理抢占
 
 - 根据 `zic-debug-trace-2026-08-09T08-12-07.jsonl` 纠正首帧根因：首帧解码通常仅几十毫秒，但 policy 经常同时生成约7个 static warm decode 与4–7个 upload；ZIC只有network有current handoff，decode/upload可被预取占满。

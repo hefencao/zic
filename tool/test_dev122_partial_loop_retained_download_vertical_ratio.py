@@ -47,7 +47,8 @@ for token in (
 for token in (
     "net.cancelQueued(taskKey)",
     "session.state == DownloadState.promoted",
-    "session.activeRun",
+    "session?.state == DownloadState.receiving",
+    "net.cancel(taskKey)",
     "_downloadRetryPending.contains(id)",
     "'stage': 'download-recovery'",
 ):

@@ -18,6 +18,8 @@ def forbid(text: str, token: str, label: str) -> None:
 coordinator = read('packages/sessions/lib/src/live_coordinator.dart')
 for token in (
     "reason: 'retained-background'",
+    'final receiving = session?.state == DownloadState.receiving;',
+    'net.cancel(taskKey);',
     'net.cancelQueued(taskKey);',
     '_migrateDownloadPriority(',
 ):

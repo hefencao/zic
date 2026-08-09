@@ -143,6 +143,7 @@ void main() {
     transport.add('RIFF....WEBP'.codeUnits);
     await Future<void>.delayed(Duration.zero);
     expect(registry.find(id)?.activeRun, isTrue);
+    expect(registry.find(id)?.state, DownloadState.receiving);
 
     final detached = DemandPlan(
       revision: 2,
@@ -191,6 +192,105 @@ void main() {
     await coordinator.idle();
     expect(registry.find(id)?.state, DownloadState.promoted);
     expect(transport.opens, 1);
+  });
+
+  test('detached pre-open run yields its slot to adjacent previous', () async {
+    final temp =
+        await Directory.systemTemp.createTemp('live_preopen_detach_test_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final openingId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'opening',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/opening.webp'),
+    );
+    final previousId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'previous',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/previous.webp'),
+    );
+    final index = MemIndex();
+    await index.open();
+    addTearDown(index.close);
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+      index: index,
+    );
+    addTearDown(registry.dispose);
+    final opening = _BlockedControlledTransport();
+    final previous = _BytesTransport('RIFF....WEBPprevious'.codeUnits);
+    final coordinator = LiveCoordinator(
+      registry: registry,
+      transportFor: (uri) => uri == openingId.canonicalUri ? opening : previous,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(coordinator.dispose);
+
+    const openingDemand = DownloadDemand(
+      role: PageRole.next,
+      priority: 820,
+      reason: 'opening-prefetch',
+      expirationRevision: 8,
+    );
+    final first = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{openingId: openingDemand},
+      decodes: const <DecodeId, DecodeDemand>{},
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{ResourceId.download(openingId)},
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: first,
+        diff: DemandDiff.between(DemandPlan.empty(), first),
+        window: RoleWindow(const <int, PageRole>{1: PageRole.next}),
+      ),
+    );
+    await opening.opened.future;
+    final openingSession = registry.find(openingId);
+    expect(openingSession?.activeRun, isTrue);
+    expect(openingSession?.state, DownloadState.queued);
+
+    const previousDemand = DownloadDemand(
+      role: PageRole.previous,
+      priority: 780,
+      reason: 'adjacent-previous',
+      expirationRevision: 9,
+    );
+    final second = DemandPlan(
+      revision: 2,
+      downloads: <DownloadId, DownloadDemand>{previousId: previousDemand},
+      decodes: const <DecodeId, DecodeDemand>{},
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{ResourceId.download(previousId)},
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: second,
+        diff: DemandDiff.between(first, second),
+        window: RoleWindow(const <int, PageRole>{-1: PageRole.previous}),
+      ),
+    );
+
+    await opening.cancelled.future.timeout(const Duration(seconds: 1));
+    await previous.opened.future.timeout(const Duration(seconds: 1));
+    await coordinator.idle();
+    expect(openingSession?.activeRun, isFalse);
+    expect(registry.find(previousId)?.state, DownloadState.promoted);
   });
 
   test('live coordinator retries a demanded network failure', () async {
@@ -1228,6 +1328,69 @@ final class _ControlledTransport implements Transport {
         validators: const Validators(etag: 'growth'),
         rangeSupported: false,
       );
+}
+
+final class _BlockedControlledTransport implements ControlledTransport {
+  final Completer<void> opened = Completer<void>();
+  final Completer<void> cancelled = Completer<void>();
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) =>
+      openControlled(uri, range: range, validators: validators);
+
+  @override
+  Future<ByteResponse> openControlled(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
+  }) async {
+    if (!opened.isCompleted) {
+      opened.complete();
+    }
+    final taskControl = control;
+    if (taskControl == null) {
+      throw StateError('controlled opener requires TaskControl');
+    }
+    await taskControl.whenCancelled;
+    if (!cancelled.isCompleted) {
+      cancelled.complete();
+    }
+    throw const Failure(
+      code: ErrorCode.cancelled,
+      message: 'pre-open request cancelled',
+    );
+  }
+}
+
+final class _BytesTransport implements Transport {
+  _BytesTransport(this.bytes);
+
+  final List<int> bytes;
+  final Completer<void> opened = Completer<void>();
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async {
+    if (!opened.isCompleted) {
+      opened.complete();
+    }
+    return ByteResponse(
+      bytes: Stream<List<int>>.value(bytes),
+      statusCode: 200,
+      rangeStart: 0,
+      totalLength: bytes.length,
+      validators: const Validators(),
+      rangeSupported: false,
+    );
+  }
 }
 
 final class _AlwaysFailTransport implements Transport {

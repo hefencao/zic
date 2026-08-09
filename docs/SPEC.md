@@ -135,7 +135,7 @@ Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor �
 ## 4. 网络调度
 
 - composition-owned `NetLane` MUST 是页面网络的唯一调度权威。
-- current SHOULD 使用 priority 1000、network/decode/upload 各一个 current-only 高优先级 handoff slot和原位 priority migration；满足差值门槛时 MAY 抢占低优先级 active task。handoff严格限制为 `maxActive + reservedHighPrioritySlots`，取消中的 task必须真实退出后才释放 permit。普通 page-window detach MUST NOT取消已经 receiving 的传输；该任务 SHOULD降为低优先级 retained work，queued undemanded任务 MAY取消。只有新的 current/高优先级工作真实受 lane 或 Venera单上下文阻塞时 MAY按rank抢占 receiving；同一 receiving页短时离开又返回 MUST原位恢复priority而不得重建第二个transport。 生产 source-media host HTTP SHOULD由 composition注入可流式、可取消且复用连接的 platform transport；该 transport MUST接收同一 `TaskControl`，MUST NOT另建 retry/prefetch policy，且不得通过缩小7/3窗口改善首播。
+- current SHOULD 使用 priority 1000、network/decode/upload 各一个 current-only 高优先级 handoff slot和原位 priority migration；满足差值门槛时 MAY 抢占低优先级 active task。handoff严格限制为 `maxActive + reservedHighPrioritySlots`，取消中的 task必须真实退出后才释放 permit。普通 page-window detach MUST NOT取消已经 receiving 的传输；该任务 SHOULD降为低优先级 retained work。`activeRun` MUST NOT被解释为 receiving：active 但仍处于 queued/restore/request-plan/runtime-gate/HTTP-open 的 undemanded 工作 MUST 通过同一 scheduler `TaskControl` 请求取消，并在真实退出前继续占 permit；纯 queued undemanded任务 MAY直接从队列移除。只有新的 current/高优先级工作真实受 lane 或 Venera单上下文阻塞时 MAY按rank抢占 receiving；同一 receiving页短时离开又返回 MUST原位恢复priority而不得重建第二个transport。 生产 source-media host HTTP SHOULD由 composition注入可流式、可取消且复用连接的 platform transport；该 transport MUST接收同一 `TaskControl`，MUST NOT另建 retry/prefetch policy，且不得通过缩小7/3窗口改善首播。
 - DownloadJob、Reader、UploadSession 和 holder 不得建立第二套网络资格门控。
 - 目标页 receiving transport 不得因 current holder depth、播放 underflow 或页面控件状态被暂停。
 - 不得通过缩小 7/3、关闭预下载或降低播放速度掩盖 identity、重复请求或 producer wake 缺陷。

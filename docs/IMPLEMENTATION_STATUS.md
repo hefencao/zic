@@ -2,15 +2,18 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.183` / App `0.31.0+183`。
+- 当前版本：`0.31.0-dev.184` / App `0.31.0+184`。
+
+- dev.184 用新 trace 修复 logical-detach 生命周期误判：`activeRun` 不能近似 receiving。只有 `DownloadState.receiving` 的 active transfer离窗后保留为priority 0；active queued/opening工作失去demand后通过同一TaskControl取消，真实退出后释放NetLane/Venera permit。previous仍按780生成，不通过抬高数值或扩大并发解决。
+- 新回归覆盖两条边界：receiving transfer短时detach/reattach仍复用同一transport；pre-open active run detach后必须取消并让唯一网络槽交给adjacent previous。7/3、2/1、7/5/3/2、5/3/2及current1000不变。
 
 - 新设备trace确认首帧抖动主要由 policy/execution 状态差异主导：多轮 `staticWarmDecodes=7` 把远静态页越过稳定decode窗口拉入执行；decode/upload lane此前没有current保留槽；Venera cancel曾在旧JS promise物理退出前释放单上下文permit。
 - far static恢复download-only；动态current先bootstrap至最多3帧，静态current一帧，current等待source时仅真实transition可先取1帧。network/decode/upload均保留1个current-only handoff，normal concurrency仍5/3/2。
 - Venera preemption先断requestId native HTTP，再等待JS `finished`后返回cancelled并释放permit，禁止同一WebView中旧/新async invocation重叠。修复 `ArtifactCacheReadLease?` nullable半迁移编译错误。
 - 当前环境无Flutter/Dart/Android完整SDK；行为测试已加入源码，最终设备构建/性能仍需本地验证。
 
-**源码版本：** `0.31.0-dev.182`
-**App build：** `0.31.0+182`
+**源码版本：** `0.31.0-dev.184`
+**App build：** `0.31.0+184`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
