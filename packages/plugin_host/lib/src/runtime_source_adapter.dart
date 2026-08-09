@@ -128,6 +128,10 @@ final class ExternalPluginRuntimeSession
               plugin.format == ExternalComicPluginFormat.veneraJavaScript
                   ? 780
                   : 1 << 30,
+          dynamicPreemptionPriorityThreshold:
+              plugin.format == ExternalComicPluginFormat.veneraJavaScript
+                  ? 1000
+                  : 1 << 30,
         ) {
     limits.validate();
     final descriptors = connection.sources;
@@ -172,6 +176,7 @@ final class ExternalPluginRuntimeSession
     String externalSourceId,
     Map<String, Object?> arguments, {
     TaskControl? control,
+    void Function(_RuntimeInvocationTiming timing)? onTiming,
   }) async {
     if (_closed) {
       throw StateError('external plugin runtime session is closed');
@@ -185,9 +190,15 @@ final class ExternalPluginRuntimeSession
     );
     late final ExternalPluginRuntimeResponse response;
     var invocationActive = false;
+    final gateWaitWatch = Stopwatch()..start();
+    var gateWaitMicros = 0;
+    var runtimeInvocationMicros = 0;
     try {
       response = await _gate.run(
         () {
+          gateWaitWatch.stop();
+          gateWaitMicros = gateWaitWatch.elapsedMicroseconds;
+          final invocationWatch = Stopwatch()..start();
           _throwIfTaskCancelled(control);
           invocationActive = true;
           final operation = _connection.invoke(request);
@@ -200,13 +211,27 @@ final class ExternalPluginRuntimeSession
             }));
           }
           operation.then<void>(
-            (_) { invocationActive = false; },
-            onError: (Object _, StackTrace __) { invocationActive = false; },
+            (_) {
+              invocationActive = false;
+              invocationWatch.stop();
+              runtimeInvocationMicros = invocationWatch.elapsedMicroseconds;
+            },
+            onError: (Object _, StackTrace __) {
+              invocationActive = false;
+              invocationWatch.stop();
+              runtimeInvocationMicros = invocationWatch.elapsedMicroseconds;
+            },
           );
           return operation;
         },
         control: control,
         onPreempt: () => _cancelInvocation(request.requestId),
+      );
+      onTiming?.call(
+        _RuntimeInvocationTiming(
+          gateWaitMicros: gateWaitMicros,
+          runtimeInvocationMicros: runtimeInvocationMicros,
+        ),
       );
     } on TimeoutException catch (error) {
       unawaited(_cancelInvocation(request.requestId));
@@ -770,13 +795,34 @@ final class _RuntimeBrowsableComicSource
     Uri uri, {
     TaskControl? control,
   }) async {
+    _RuntimeInvocationTiming? invocationTiming;
     final payload = await _invoke(
       ExternalPluginRuntimeOperation.resolveResource,
       _externalId,
       <String, Object?>{'uri': uri.toString()},
       control: control,
+      onTiming: (timing) {
+        invocationTiming = timing;
+      },
     );
-    return _resourceRequestFromPayload(payload, 'runtime resource request');
+    final request = _resourceRequestFromPayload(
+      payload,
+      'runtime resource request',
+    );
+    final timing = invocationTiming;
+    if (timing == null) return request;
+    return ComicResourceRequest(
+      uri: request.uri,
+      method: request.method,
+      headers: request.headers,
+      body: request.body,
+      requiresRuntimeTransform: request.requiresRuntimeTransform,
+      diagnostics: <String, Object?>{
+        ...request.diagnostics,
+        'sourcePlanGateWaitMicros': timing.gateWaitMicros,
+        'sourcePlanRuntimeInvocationMicros': timing.runtimeInvocationMicros,
+      },
+    );
   }
 
   @override
@@ -834,6 +880,10 @@ final class _RuntimeBrowsableComicSource
       String value => Uint8List.fromList(utf8.encode(value)),
       _ => throw const FormatException('runtime resource body is invalid'),
     };
+    final rawDiagnostics = message['__zicDiagnostics'];
+    final diagnostics = rawDiagnostics == null
+        ? const <String, Object?>{}
+        : _map(rawDiagnostics, 'runtime resource diagnostics');
     return ComicResourceRequest(
       uri: url,
       method: _optionalString(message['method'], 'method') ?? 'GET',
@@ -841,6 +891,7 @@ final class _RuntimeBrowsableComicSource
       body: body,
       requiresRuntimeTransform:
           _optionalBool(message['requiresRuntimeTransform']) ?? false,
+      diagnostics: diagnostics,
     );
   }
 
@@ -983,6 +1034,16 @@ void _throwIfTaskCancelled(TaskControl? control) {
   );
 }
 
+final class _RuntimeInvocationTiming {
+  const _RuntimeInvocationTiming({
+    required this.gateWaitMicros,
+    required this.runtimeInvocationMicros,
+  });
+
+  final int gateWaitMicros;
+  final int runtimeInvocationMicros;
+}
+
 final class _RuntimeInvocationWaiter {
   _RuntimeInvocationWaiter({
     required this.control,
@@ -1015,16 +1076,7 @@ final class _RuntimeActiveInvocation {
 
   final TaskControl control;
   final Future<void> Function()? onPreempt;
-  StreamSubscription<int>? prioritySubscription;
   bool preemptRequested = false;
-
-  void disposePrioritySubscription() {
-    final subscription = prioritySubscription;
-    prioritySubscription = null;
-    if (subscription != null) {
-      unawaited(subscription.cancel());
-    }
-  }
 }
 
 final class _RuntimeInvocationGate {
@@ -1032,9 +1084,11 @@ final class _RuntimeInvocationGate {
     this.limits, {
     required this.maxConcurrentInvocations,
     this.controlledPreemptionPriorityFloor = 1 << 30,
+    this.dynamicPreemptionPriorityThreshold = 1 << 30,
     this.preemptionThreshold = 40,
   })  : assert(maxConcurrentInvocations > 0),
         assert(controlledPreemptionPriorityFloor >= 0),
+        assert(dynamicPreemptionPriorityThreshold >= 0),
         assert(
           controlledPreemptionPriorityFloor >= (1 << 30) ||
               maxConcurrentInvocations == 1,
@@ -1043,6 +1097,7 @@ final class _RuntimeInvocationGate {
   final ExternalPluginRuntimeLimits limits;
   final int maxConcurrentInvocations;
   final int controlledPreemptionPriorityFloor;
+  final int dynamicPreemptionPriorityThreshold;
   final int preemptionThreshold;
   final List<_RuntimeInvocationWaiter> _waiters = <_RuntimeInvocationWaiter>[];
   Completer<void>? _drained;
@@ -1069,12 +1124,21 @@ final class _RuntimeInvocationGate {
       _waiters.add(waiter);
       final taskControl = control;
       if (taskControl is PriorityObservableTaskControl) {
-        waiter.prioritySubscription = taskControl.priorityChanges.listen((_) {
-          if (waiter.granted || waiter.abandoned || waiter.ready.isCompleted) {
-            return;
-          }
-          _maybePreemptControlledActive(waiter.control);
-        });
+        var observedPriority = taskControl.priority;
+        waiter.prioritySubscription = taskControl.priorityChanges.listen(
+          (priority) {
+            if (waiter.granted || waiter.abandoned || waiter.ready.isCompleted) {
+              return;
+            }
+            final crossedDynamicThreshold =
+                observedPriority < dynamicPreemptionPriorityThreshold &&
+                    priority >= dynamicPreemptionPriorityThreshold;
+            observedPriority = priority;
+            if (crossedDynamicThreshold) {
+              _maybePreemptControlledActive(waiter.control);
+            }
+          },
+        );
       }
       if (taskControl != null) {
         unawaited(taskControl.whenCancelled.then((_) {
@@ -1114,20 +1178,6 @@ final class _RuntimeInvocationGate {
             : null;
     if (activeInvocation != null) {
       _controlledActive = activeInvocation;
-      final activeControl = activeInvocation.control;
-      if (activeControl is PriorityObservableTaskControl) {
-        activeInvocation.prioritySubscription =
-            activeControl.priorityChanges.listen((_) {
-          if (!identical(_controlledActive, activeInvocation) ||
-              activeInvocation.preemptRequested) {
-            return;
-          }
-          final waiter = _highestPriorityWaiter();
-          if (waiter != null) {
-            _maybePreemptControlledActive(waiter.control);
-          }
-        });
-      }
     }
     late final Future<T> operation;
     try {
@@ -1181,7 +1231,6 @@ final class _RuntimeInvocationGate {
   }
 
   void _release(_RuntimeActiveInvocation? activeInvocation) {
-    activeInvocation?.disposePrioritySubscription();
     if (activeInvocation != null && identical(_controlledActive, activeInvocation)) {
       _controlledActive = null;
     }

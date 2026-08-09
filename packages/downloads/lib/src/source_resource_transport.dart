@@ -162,6 +162,9 @@ final class _SourceResourceTransport implements ControlledTransport {
     final requestPlanWatch = Stopwatch()..start();
     final resolved = await _resolve(uri, control: control);
     var request = resolved.request;
+    final sourcePlanDiagnostics = resolved.cacheHit
+        ? const <String, Object?>{}
+        : request.diagnostics;
     _throwIfTaskCancelled(control);
 
     var retryUsed = false;
@@ -250,6 +253,7 @@ final class _SourceResourceTransport implements ControlledTransport {
       response,
       requestPlanMicros: requestPlanWatch.elapsedMicroseconds,
       requestPlanCacheHit: resolved.cacheHit,
+      sourcePlanDiagnostics: sourcePlanDiagnostics,
       hostOpenMicros: hostOpenWatch.elapsedMicroseconds,
       openPath: openPath,
       retryUsed: retryUsed,
@@ -574,6 +578,7 @@ final class _SourceResourceTransport implements ControlledTransport {
     ByteResponse response, {
     required int requestPlanMicros,
     required bool requestPlanCacheHit,
+    required Map<String, Object?> sourcePlanDiagnostics,
     required int hostOpenMicros,
     required String openPath,
     required bool retryUsed,
@@ -590,6 +595,7 @@ final class _SourceResourceTransport implements ControlledTransport {
         ...response.diagnostics,
         'sourceRequestPlanMicros': requestPlanMicros,
         'sourceRequestPlanCacheHit': requestPlanCacheHit,
+        ...sourcePlanDiagnostics,
         'sourceHostOpenMicros': hostOpenMicros,
         'sourceOpenPath': openPath,
         'sourceRetryUsed': retryUsed,
@@ -633,6 +639,7 @@ ComicResourceRequest _applyDefaultUserAgent(
     },
     body: request.body,
     requiresRuntimeTransform: request.requiresRuntimeTransform,
+    diagnostics: request.diagnostics,
   );
 }
 
@@ -678,6 +685,7 @@ ComicResourceRequest normalizeSourceResourceRequest(
     headers: headers,
     body: entityless ? null : spec.body,
     requiresRuntimeTransform: spec.requiresRuntimeTransform,
+    diagnostics: spec.diagnostics,
   );
 }
 

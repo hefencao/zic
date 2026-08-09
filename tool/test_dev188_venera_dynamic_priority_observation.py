@@ -30,17 +30,14 @@ require(
     "packages/plugin_host/lib/src/runtime_source_adapter.dart",
     "if (taskControl is PriorityObservableTaskControl)",
     "waiter.prioritySubscription = taskControl.priorityChanges.listen",
-    "if (activeControl is PriorityObservableTaskControl)",
-    "activeControl.priorityChanges.listen",
     "_maybePreemptControlledActive(waiter.control)",
-    "final waiter = _highestPriorityWaiter();",
     "disposePrioritySubscription()",
 )
 require(
     "packages/plugin_host/test/runtime_source_adapter_test.dart",
     "queued Venera request promoted to current re-evaluates active preemption",
     "promotedControl.updatePriority(1000)",
-    "active Venera demotion re-evaluates waiting previous pressure",
+    "active Venera demotion does not turn viewport jitter into plan preemption",
     "activeControl.updatePriority(700)",
     "expect(connection.maxActive, 1)",
 )

@@ -51,7 +51,16 @@ void main() {
   test('source open exposes request-plan and host-open stage diagnostics',
       () async {
     final source = _FixtureSource(
-      request: ComicResourceRequest(uri: Uri.parse('https://fixture/staged')),
+      request: ComicResourceRequest(
+        uri: Uri.parse('https://fixture/staged'),
+        diagnostics: const <String, Object?>{
+          'sourcePlanGateWaitMicros': 1200,
+          'sourcePlanRuntimeInvocationMicros': 2400,
+          'sourcePlanHookMicros': 1800,
+          'sourcePlanBridgeNetworkMicros': 900,
+          'sourcePlanBridgeNetworkCalls': 2,
+        },
+      ),
     );
     final pool = ExternalPluginResourceTransportPool(
       directOpen: (_) async => ByteResponse(
@@ -75,6 +84,11 @@ void main() {
       greaterThanOrEqualTo(0),
     );
     expect(first.diagnostics['sourceRequestPlanCacheHit'], isFalse);
+    expect(first.diagnostics['sourcePlanGateWaitMicros'], 1200);
+    expect(first.diagnostics['sourcePlanRuntimeInvocationMicros'], 2400);
+    expect(first.diagnostics['sourcePlanHookMicros'], 1800);
+    expect(first.diagnostics['sourcePlanBridgeNetworkMicros'], 900);
+    expect(first.diagnostics['sourcePlanBridgeNetworkCalls'], 2);
     expect(first.diagnostics['sourceHostOpenMicros'], isA<int>());
     expect(first.diagnostics['sourceOpenPath'], 'direct');
     expect(first.diagnostics['sourceRetryUsed'], isFalse);
@@ -82,6 +96,8 @@ void main() {
     final second = await loader();
     expect(await _collect(second.bytes), <int>[1, 2, 3]);
     expect(second.diagnostics['sourceRequestPlanCacheHit'], isTrue);
+    expect(second.diagnostics.containsKey('sourcePlanGateWaitMicros'), isFalse);
+    expect(second.diagnostics.containsKey('sourcePlanHookMicros'), isFalse);
     expect(source.resolveCalls, 1);
   });
 

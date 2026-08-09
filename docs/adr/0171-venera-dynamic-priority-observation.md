@@ -2,7 +2,7 @@
 
 ## 状态
 
-Accepted。补充 ADR 0166/0169/0170；不改变 Reader 7/3、previous=780、current=1000、network=5+current-only 1，也不增加 Venera JavaScript 并发。
+Superseded by ADR 0172。历史决策保留；不改变 Reader 7/3、previous=780、current=1000、network=5+current-only 1，也不增加 Venera JavaScript 并发。
 
 ## 问题
 

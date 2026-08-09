@@ -3,7 +3,7 @@
 ## P0：Current / Previous 真实执行槽真机闭环
 
 - 复测 dev.186 Venera nested pressure：外层 previous 660→780 到 `downloadStarted` 应继续维持毫秒级；若其随后被单 invocation request-plan gate挡住，780可请求取消至少低40分的 active controlled invocation，但必须等旧 JavaScript `finished(requestId)` 后才开始，`maxActive`始终1。
-- 使用新增 `sourceRequestPlanMicros/sourceRequestPlanCacheHit/sourceHostOpenMicros/sourceOpenPath/sourceRetryUsed` 拆慢页：若主要耗在 request-plan/runtime gate，继续收敛 source-plan；若主要耗在 host open，再追 rhttp/DNS/TLS/源端首包。不得回退到提高previous priority、扩大network/Venera并发、恢复transport framing或缩7/3。
+- 使用 `sourceRequestPlanMicros/sourceRequestPlanCacheHit/sourcePlanGateWaitMicros/sourcePlanRuntimeInvocationMicros/sourcePlanHookMicros/sourcePlanBridgeNetworkMicros/sourcePlanBridgeNetworkCalls/sourceHostOpenMicros` 拆慢页：先判断单invocation排队、JS hook还是hook内部resolver网络；只有host-open重新主导才追 rhttp/DNS/TLS/源端首包。不得回退到提高previous priority、扩大network/Venera并发、恢复transport framing或缩7/3。
 - 同时复测短时 N→N+1→N：没有真实 in-window pressure时，已 receiving 的 retained=0仍应复用原transport，不得因为新增 normal pressure能力退化为每次离窗cancel/reopen；只有真实 previous/更高 normal work等待普通槽时才让槽。
 
 ## P0：Current 首帧 policy/execution 真机闭环
@@ -128,7 +128,7 @@
 
 ## P0：Venera requestId 物理取消闭环
 
-- dev.188真机复测动态priority传播：重点观察已进入NetLane但等待Venera gate的previous在780→900→1000后，是否立即重新触发对低rank active plan的controlled preemption；仍需等待旧JS真实`finished(requestId)`后转交唯一permit。若动态rank已收敛但`sourceRequestPlanMicros`仍有秒级长尾，下一步只增加 Venera invocation-gate wait / `onImageLoad` hook execution / bridge network stage timing，先定位hook内部owner，不预解析整章且不增加第二JS context。
+- dev.189真机复测current-only动态preemption：780↔900 transition抖动不得再触发plan cancel；等待中的任务真正跨入1000时仍应对低rank active plan形成一次pressure，并等待旧JS真实`finished(requestId)`后转交唯一permit。用新增gate/runtime/hook/bridge-network字段直接定位剩余秒级plan owner；不预解析整章且不增加第二JS context。
 - 对取消中的 URLConnection 与 DNS-fallback response body验证 request-scoped `InputStream.close()` 可使 blocking read及时退出；同时验证正常未取消请求完整 body、Cookie/header行为不变。
 - 验证 Venera plugin `delay` Promise 正常计时、cancel立即 reject，且一个 requestId取消不会清除其它 requestId timer。不得恢复 native `Thread.sleep`。
 

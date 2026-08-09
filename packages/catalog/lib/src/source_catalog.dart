@@ -421,8 +421,10 @@ final class ComicResourceRequest {
     Map<String, String> headers = const <String, String>{},
     Uint8List? body,
     this.requiresRuntimeTransform = false,
+    Map<String, Object?> diagnostics = const <String, Object?>{},
   })  : headers = Map<String, String>.unmodifiable(headers),
-        body = body == null ? null : Uint8List.fromList(body) {
+        body = body == null ? null : Uint8List.fromList(body),
+        diagnostics = Map<String, Object?>.unmodifiable(diagnostics) {
     if (!requiresRuntimeTransform &&
         uri.scheme != 'http' &&
         uri.scheme != 'https') {
@@ -438,6 +440,10 @@ final class ComicResourceRequest {
   final Map<String, String> headers;
   final Uint8List? body;
   final bool requiresRuntimeTransform;
+
+  /// Read-only source-plan timing metadata for diagnostics only. Transport,
+  /// cache, retry and scheduling policy must not depend on these values.
+  final Map<String, Object?> diagnostics;
 }
 
 /// Optional capability used by pipeline transports to stream source-owned

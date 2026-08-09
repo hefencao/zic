@@ -704,6 +704,18 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(connection.cancelledRequestIds, isEmpty);
+    promotedControl.updatePriority(900);
+    await Future<void>.delayed(Duration.zero);
+    promotedControl.updatePriority(780);
+    await Future<void>.delayed(Duration.zero);
+    promotedControl.updatePriority(900);
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      connection.cancelledRequestIds,
+      isEmpty,
+      reason: 'transition jitter must not cause irreversible plan cancellation',
+    );
+
     promotedControl.updatePriority(1000);
     await Future<void>.delayed(Duration.zero);
 
@@ -727,15 +739,24 @@ void main() {
         ),
       ),
     );
+    final promotedRequest = await promoted;
     expect(
-      (await promoted).uri,
+      promotedRequest.uri,
       Uri.parse('https://cdn.invalid/promoted-current'),
+    );
+    expect(promotedRequest.diagnostics['sourcePlanHookMicros'], 1200);
+    expect(promotedRequest.diagnostics['sourcePlanBridgeNetworkMicros'], 800);
+    expect(promotedRequest.diagnostics['sourcePlanBridgeNetworkCalls'], 2);
+    expect(promotedRequest.diagnostics['sourcePlanGateWaitMicros'], isA<int>());
+    expect(
+      promotedRequest.diagnostics['sourcePlanRuntimeInvocationMicros'],
+      isA<int>(),
     );
     expect(connection.maxActive, 1);
   });
 
   test(
-      'active Venera demotion re-evaluates waiting previous pressure',
+      'active Venera demotion does not turn viewport jitter into plan preemption',
       () async {
     final connection = _PriorityResolveConnection(releaseOnCancel: false);
     final session = ExternalPluginRuntimeSession(
@@ -764,25 +785,24 @@ void main() {
     activeControl.updatePriority(700);
     await Future<void>.delayed(Duration.zero);
 
-    expect(connection.cancelledRequestIds, hasLength(1));
+    expect(
+      connection.cancelledRequestIds,
+      isEmpty,
+      reason: 'active demotion is reversible viewport state and must not cancel',
+    );
     expect(connection.startedUris, <String>['venera-resource:active-dynamic-820']);
     expect(connection.maxActive, 1);
 
     connection.finishFirst();
-    await expectLater(
-      active,
-      throwsA(
-        isA<Failure>().having(
-          (failure) => failure.code,
-          'code',
-          ErrorCode.cancelled,
-        ),
-      ),
+    expect(
+      (await active).uri,
+      Uri.parse('https://cdn.invalid/active-dynamic-820'),
     );
     expect(
       (await previous).uri,
       Uri.parse('https://cdn.invalid/waiting-previous-780'),
     );
+    expect(connection.cancelledRequestIds, isEmpty);
     expect(connection.maxActive, 1);
   });
 
@@ -1295,6 +1315,11 @@ final class _PriorityResolveConnection
           'headers': <String, Object?>{},
           'body': null,
           'requiresRuntimeTransform': false,
+          '__zicDiagnostics': <String, Object?>{
+            'sourcePlanHookMicros': 1200,
+            'sourcePlanBridgeNetworkMicros': 800,
+            'sourcePlanBridgeNetworkCalls': 2,
+          },
         },
       );
     } finally {

@@ -1,3 +1,10 @@
+## 0.31.0-dev.189：Venera Current-Only 动态抢占与 Plan Stage 分段
+
+- 对照 dev.187/188 真机trace确认 dev.188 体感退化主要是 request-plan tail 放大而非最终图片网络：plan p90约5.421s→9.353s、max约6.935s→12.330s；host-open中位仅约0.331s→0.399s，p90反而下降。
+- supersede ADR 0171 的过度动态触发：保留首次previous=780 pressure与实时priority permit排序，但进入gate后的priority变化只有waiter真正跨入current=1000时才重新触发preemption；780↔900 transition jitter与active invocation demotion不再造成不可逆plan cancellation。单Venera invocation、真实`finished(requestId)`后才转交permit均不变。
+- 新增只读source-plan stage diagnostics：Dart gate wait/runtime invocation、JS hook、hook内部bridge network耗时/调用数，并继续与host-open分离；命中transport request-plan cache时不复用历史hook耗时。diagnostics明确禁止成为scheduler/retry/cache输入。
+- Node Venera bootstrap新增request-scoped bridge-network timing行为验证；补Dart owner tests与dev.189 gate。Reader固定7/3、2/1、7/5/3/2、network/decode/upload 5/3/2、previous780、current1000、reserved1、threshold40均不变。
+
 ## 0.31.0-dev.188：Venera 动态 Priority 传播与 Request-Plan 取消边界澄清
 
 - `zic-debug-trace-2026-08-09T11-04-46.jsonl`确认 dev.187 后 source request-plan仍是主要长尾：21个 origin 样本的 `sourceRequestPlanMicros` 中位约3.467s；更关键的是已有 NetLane task 在等待 Venera 单invocation gate 时可从previous 780升到transition 900再升到current 1000，但 gate此前只在首次入队时判断preemption，后续实时priority变化不会重新触发比较。

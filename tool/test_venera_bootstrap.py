@@ -371,6 +371,29 @@ async function checkNetworkExtraAndCryptoSurface(){
  if(typeof Convert.encryptAesEcb!=='function'||Convert.encryptAesCfb.length!==4||Convert.decryptAesCfb.length!==4)throw new Error('Convert AES surface is incomplete');
 }
 
+async function checkRequestPlanStageDiagnostics(){
+ const requestId='plan-stage-diagnostics';
+ const locator='venera-resource:'+__zicB64({v:1,image:'stage-image',comicId:'comic',epId:'ep'});
+ let completed=null,finished=null;
+ globalThis.__zicSource={comic:{
+   onImageLoad:async image=>{
+     await Network.get('https://resolver.invalid/key');
+     return {url:'https://cdn.invalid/'+image+'.webp'};
+   },
+ }};
+ ZicNative.request=raw=>{
+   const message=__zicDecode(JSON.parse(raw));
+   if(message.method==='cookie'&&message.function==='get')return JSON.stringify({ok:true,value:__zicEncode([])});
+   if(message.method!=='http'||message.requestId!==requestId)throw new Error('plan stage diagnostics lost request-scoped bridge network '+JSON.stringify(message));
+   return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},body:'resolver'})});
+ };
+ ZicNative.complete=(seenRequestId,envelope)=>{completed={seenRequestId,envelope:JSON.parse(envelope)}};
+ ZicNative.finished=seenRequestId=>{finished=seenRequestId};
+ await __zicInvoke({requestId,operation:'resolveResource',arguments:{uri:locator}});
+ const resolved=completed&&__zicDecode(completed.envelope.value),diagnostics=resolved?.__zicDiagnostics;
+ if(completed?.seenRequestId!==requestId||finished!==requestId||resolved?.url!=='https://cdn.invalid/stage-image.webp'||!diagnostics||diagnostics.sourcePlanBridgeNetworkCalls!==1||diagnostics.sourcePlanBridgeNetworkMicros<0||diagnostics.sourcePlanHookMicros<diagnostics.sourcePlanBridgeNetworkMicros||__zicBridgeMetrics.has(requestId))throw new Error('request-plan stage diagnostics failed '+JSON.stringify({completed,finished,resolved,retained:__zicBridgeMetrics.has(requestId)}));
+}
+
 async function checkRequestScopedDelayCancellation(){
  const requestId='delay-cancel';
  __zicActiveRequestId=requestId;
@@ -401,7 +424,7 @@ async function checkInvokeRequestLifecycle(){
  if(seenRequestId!=='invoke-lifecycle'||completed?.requestId!=='invoke-lifecycle'||finished!=='invoke-lifecycle')throw new Error('invoke lifecycle did not retain the request id '+JSON.stringify({seenRequestId,completed,finished}));
 }
 
-(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkComicPreviewPagination();await checkPreviewCropIdentity();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkRequestScopedDelayCancellation();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
+(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkComicPreviewPagination();await checkPreviewCropIdentity();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkRequestPlanStageDiagnostics();await checkRequestScopedDelayCancellation();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
 '''
 with tempfile.TemporaryDirectory() as td:
     js=Path(td)/'test.js'; js.write_text(bootstrap+'\n'+test)
