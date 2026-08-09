@@ -30,7 +30,7 @@ for token in (
 
 lane = read('packages/sessions/lib/src/net_lane.dart')
 for token in (
-    'final class CancelToken implements TaskControl',
+    'final class CancelToken implements PriorityObservableTaskControl',
     'CancelToken({int priority = 0})',
     'void updatePriority(int priority)',
     'activeTask.token.updatePriority(priority);',

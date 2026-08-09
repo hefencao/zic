@@ -141,9 +141,14 @@ internal class VeneraRuntimeDriver private constructor(
     override fun cancel(requestId: String) {
         if (!pending.containsKey(requestId)) return
         cancelledRequests.add(requestId)
-        // Disconnect request-scoped native HTTP synchronously. The JavaScript
-        // promise is still the physical owner of the single Venera context and
-        // must reach `finished` before another invocation receives its permit.
+        // This requestId belongs to the JavaScript request-plan invocation, not
+        // to the final image-body transport. Cancel bridge work that the source
+        // hook itself started (for example Network.* inside onImageLoad), then
+        // mark the JavaScript plan invocation cancelled below. The final image
+        // HTTP response is opened later by SourceResourceTransport under the
+        // scheduler TaskControl and is cancelled by that transport instead.
+        // The JavaScript promise remains the physical owner of the single Venera
+        // context and must reach `finished` before the next invocation gets it.
         bridge.cancel(requestId)
         mainHandler.post {
             webView.evaluateJavascript("__zicCancel(${requestId.jsQuoted()});", null)

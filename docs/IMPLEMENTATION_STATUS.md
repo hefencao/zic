@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.187` / App `0.31.0+187`。
+- 当前版本：`0.31.0-dev.188` / App `0.31.0+188`。
+- dev.188：11:04真机trace确认request-plan长尾仍明显，同时暴露动态rank传播缺口：已在Venera gate等待的download可从780→900→1000，但gate此前只在首次入队时判断preemption。`TaskControl`新增scheduler-owned可选priority change观测，NetLane active token原位迁移时发布事件，Venera waiter/active invocation据此重新应用既有floor=780/threshold=40；runtime仍不能写rank，真实`finished(requestId)`前不释放唯一permit。并明确`__zicCancel(requestId)`只属于JS request-plan/hook及其bridge-scoped工作，最终图片body继续由native `SourceResourceTransport`在同一TaskControl下取消。
 - dev.187：dev.186真机分段观测把剩余 source-open 长尾定位到 Venera request-plan/runtime：18个 origin样本中 `sourceRequestPlanMicros` 中位约3.195s、host open中位约0.367s。Venera request-scoped cancel现同时关闭 active response `InputStream`；bridge `delay`改为 JavaScript async timer并由 `__zicCancel(requestId)`取消，不再用 native `Thread.sleep` 阻塞唯一 invocation。single-invocation 与 real `finished(requestId)` permit transfer保持不变。
 
 - dev.186 用 10:05 trace确认 dev.185 外层 normal-pressure 已收敛：5个可完整匹配的 previous 660→780→`downloadStarted` 样本中位仅6.508ms；剩余 origin response长尾按启动rank仍约2.4–7.7s，因此优化下沉到 Venera 单invocation request-plan gate，并新增 source request-plan/host-open 分段 diagnostics。
@@ -16,8 +17,8 @@
 - Venera preemption先断requestId native HTTP，再等待JS `finished`后返回cancelled并释放permit，禁止同一WebView中旧/新async invocation重叠。修复 `ArtifactCacheReadLease?` nullable半迁移编译错误。
 - 当前环境无Flutter/Dart/Android完整SDK；行为测试已加入源码，最终设备构建/性能仍需本地验证。
 
-**源码版本：** `0.31.0-dev.186`
-**App build：** `0.31.0+187`
+**源码版本：** `0.31.0-dev.188`
+**App build：** `0.31.0+188`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -47,7 +48,7 @@
 - Home“更新漫画”使用独立 `SavedComicRecord.sourceUpdateAt`：仅 shelf + source-confirmed update进入。已有章节目录发生变化或首次发现新 successor/version才推进；阅读 progress、普通 metadata刷新和未入书架浏览不推进。远程无偏好 primary projection默认 `inShelf=false`，首次加入书架清理加入前 update signal。
 - 初次 Venera/Mihon activation 的 Binder generation连续性已下沉到 Android `PluginRuntimeServiceClient`：仅 pending activation可跨一个 `runtime-service-died/disconnected` generation；Dart backend删除初次 activation重放，session invocation与业务失败仍按原 owner处理。
 - Home外部封面继续把 live source readiness作为显式加载依赖：首屏早于 plugin ready且 warm cache miss时，失败 Future只在对应 source从 unavailable→available后重新求值；普通 progress/enrichment rebuild不重试。历史/更新横向 Sliver直接 child使用 `section + canonical comic identity` 稳定 key并提供 reorder index callback。
-- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=187`。
+- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=188`。
 - 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
 - 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation不阻塞 Home primary，外部 source ready 后增量接入。
 - artwork资源恢复唯一属于 `ComicSourceResourceGateway/ResourceCacheManager`。Home、书架、漫画源和详情 presentation 已删除定时 retry、first-frame watchdog、App resume自动 retry、全局 ImageCache eviction和 App级短时 Future join；详情统一使用 `ComicDetailsArtworkLoader` 并显式传递 cover/preview/avatar role。普通 artwork直接复用 `StableArtworkImage`；需要裁剪/尺寸测量时只有一个显式 ImageStream listener，不再同时创建第二个 `Image`。

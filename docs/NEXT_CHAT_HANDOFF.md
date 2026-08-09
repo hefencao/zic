@@ -1,6 +1,6 @@
-# dev.187 后续交接
+# dev.188 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.187_venera-request-scoped-cancel-unwind.zip`。
+唯一后续基线：`zic_v0.31.0-dev.188_venera-dynamic-priority-observation.zip`。
 
 ## 必读
 
@@ -25,7 +25,7 @@
 19. `docs/adr/0154-source-filter-view-shelf-projection-download-feedback.md`
 20. `docs/adr/0155-external-browse-runtime-protocol-field-ownership.md`
 21. `docs/adr/0156-source-migration-version-view-and-update-badge-ownership.md`
-22. `docs/adr/0161-vibevenera-rhttp-startup-transport.md`、`docs/adr/0162-modern-toolchain-rhttp-stream-framing.md`、`docs/adr/0163-openjdk25-relative-window-output-retention.md`、`docs/adr/0164-artifact-readthrough-preserves-task-control.md`、`docs/adr/0165-rhttp-raw-stream-downloadjob-single-framing.md`、`docs/adr/0166-current-bootstrap-execution-and-venera-physical-preemption.md`、`docs/adr/0167-receiving-state-detach-current-previous-handoff.md`、`docs/audits/dev184-current-previous-receiving-state-root-cause-audit.md`、`docs/audits/dev184-validation-results.md`、`docs/adr/0168-adjacent-previous-normal-pressure-preemption.md`、`docs/audits/dev185-adjacent-previous-pressure-root-cause-audit.md`、`docs/audits/dev185-validation-results.md`、`docs/adr/0169-venera-previous-request-plan-pressure-and-source-open-stages.md`、`docs/audits/dev186-venera-request-plan-pressure-root-cause-audit.md`、`docs/audits/dev186-validation-results.md`、`docs/adr/0170-venera-request-scoped-cancel-unwind.md`、`docs/audits/dev187-venera-request-scoped-cancel-root-cause-audit.md`、`docs/audits/dev187-validation-results.md`
+22. `docs/adr/0161-vibevenera-rhttp-startup-transport.md`、`docs/adr/0162-modern-toolchain-rhttp-stream-framing.md`、`docs/adr/0163-openjdk25-relative-window-output-retention.md`、`docs/adr/0164-artifact-readthrough-preserves-task-control.md`、`docs/adr/0165-rhttp-raw-stream-downloadjob-single-framing.md`、`docs/adr/0166-current-bootstrap-execution-and-venera-physical-preemption.md`、`docs/adr/0167-receiving-state-detach-current-previous-handoff.md`、`docs/audits/dev184-current-previous-receiving-state-root-cause-audit.md`、`docs/audits/dev184-validation-results.md`、`docs/adr/0168-adjacent-previous-normal-pressure-preemption.md`、`docs/audits/dev185-adjacent-previous-pressure-root-cause-audit.md`、`docs/audits/dev185-validation-results.md`、`docs/adr/0169-venera-previous-request-plan-pressure-and-source-open-stages.md`、`docs/audits/dev186-venera-request-plan-pressure-root-cause-audit.md`、`docs/audits/dev186-validation-results.md`、`docs/adr/0170-venera-request-scoped-cancel-unwind.md`、`docs/audits/dev187-venera-request-scoped-cancel-root-cause-audit.md`、`docs/audits/dev187-validation-results.md`、`docs/adr/0171-venera-dynamic-priority-observation.md`、`docs/audits/dev188-venera-dynamic-priority-root-cause-audit.md`、`docs/audits/dev188-validation-results.md`
 23. `docs/adr/0158-venera-transport-preemption-and-native-source-lock-ownership.md`、`docs/audits/dev175-venera-transport-native-ingress-root-cause-audit.md`、`docs/audits/dev175-validation-results.md`
 
 ## 当前代码事实
@@ -58,14 +58,14 @@
 - 外部插件 manifest按记录容错。只有 payload安装/升级走事务式 replacement；settings与Venera Web登录原地更新，不 restart。Mihon浏览器 handoff保留受限 Mihon-only restart。生产 runtime session安全上限32，不能恢复通用8-session用户上限。
 - Reader/Pipeline 参数仍为 encoded前7/后3、holder最大7/5/3/2、稳定decode前2/后1、normal network/decode/upload=5/3/2。上一current的output retention与相对role正交；far static不得因静态证据越过稳定decode窗口，真实viewport静态页仍可获得一帧输出。
 - current priority=1000；network/decode/upload各保留1个仅current可用的bounded handoff，transition=900不占保留槽。动态current depth<3时 speculative neighbor refill目标为0；静态current一帧即满足。current等source时仅真实viewport transition可先取1帧。
-- origin `TaskControl`继续贯穿 DownloadJob → ArtifactCacheTransport → Loader/source request-plan → runtime。Venera保持真实单invocation：controlled pressure floor=780且差值至少40才请求requestId cancellation，旧JavaScript触发`finished(requestId)`后才转交唯一permit；previous不得制造第二JS context。dev.187把同一requestId物理取消闭环扩到 active response `InputStream.close()`，并把bridge `delay`改为可按requestId取消的JavaScript async timer，禁止 native `Thread.sleep`阻塞唯一invocation。origin trace的`sourceRequestPlanMicros/sourceRequestPlanCacheHit/sourceHostOpenMicros/sourceOpenPath/sourceRetryUsed`只用于观测。
+- origin `TaskControl`继续贯穿 DownloadJob → ArtifactCacheTransport → Loader/source request-plan → runtime。Venera保持真实单invocation：controlled pressure floor=780且差值至少40；dev.188要求gate观察同一scheduler control的实时priority变化，waiter 780→900→1000或active降级时重新比较，但runtime不能写rank，旧JavaScript真实`finished(requestId)`后才转交唯一permit。`__zicCancel`只取消JS request-plan/hook及其bridge-scoped工作，最终图片body由后续native host transport在同一TaskControl下取消。dev.187的InputStream close与async delay仍有效。
 - logical detach严格按真实 session transport state判定：`activeRun`覆盖restore/request-plan/open等待，不能代表receiving；只有 active `DownloadState.receiving` 可以降为priority 0保留。active queued/opening离窗后必须经NetLane TaskControl取消并等待物理退出。dev.185进一步把Reader previous=780设为normal-slot pressure floor：被普通槽阻塞时可以请求取消至少低40分的active victim，但previous不得使用current-only reserved handoff，必须等victim物理退出；retained receiving=0在无窗口压力时仍保留复用。
 - dev.175–181 的 response abort、native锁/CRC、retained-receiving、controlled read-through继续有效。dev.182 的 raw-stream/single DownloadJob aggregation只属于owner清理；rhttp transport不得再次增加64/256 KiB聚合，不再作为首帧主性能解释；不得继续围绕64/256KiB猜首帧根因。
 - Native identity保持 `zic-media-core-dev134-abi6-lib00121400`。
 ## 下一步真机优先验证
-- 首先复测快速前后翻页：dev.185外层 previous admission应继续保持毫秒级；dev.187后重点量 cancel→active body stream close / async delay reject→旧JS `finished(requestId)`→新current request-plan启动。无真实pressure时`receivingRetained=true` priority0仍应短时复用，不得机械取消。
+- 首先复测快速前后翻页：dev.185外层 previous admission应继续保持毫秒级；dev.188重点量已经在Venera gate等待的previous在780→900→1000后是否立刻触发controlled preemption，并确认旧JS未`finished(requestId)`前新plan绝不并发进入。无真实pressure时`receivingRetained=true` priority0仍应短时复用，不得机械取消。
 - 真机首要复测 current 首帧稳定性：观察 policyDecision 的 staticWarmDecodes/uploads 是否收敛到稳定decode角色/真实可见页，current浅水位期间是否停止 speculative neighbor refill，以及decode/upload current handoff是否避免后台长任务阻塞。
-- Venera慢页继续按stage字段拆 execution：若dev.187后`sourceRequestPlanMicros`仍为秒级，下一步只增加operation/hook/bridge-stage timing，区分JavaScript hook计算、delay与bridge网络；若host open重新成为主导再追rhttp/DNS/TLS/首包。不缩7/3、不增加Venera并发。
+- Venera慢页继续按stage字段拆 execution：若dev.188动态rank已收敛而`sourceRequestPlanMicros`仍为秒级，下一步只增加invocation-gate wait / `onImageLoad` hook / bridge-network timing；不整章预解析`onImageLoad`，若host open重新成为主导再追rhttp/DNS/TLS/首包。不缩7/3、不增加Venera并发。
 ## 不可改变的稳定边界
 
 - 不缩小 Reader 7/3、holder 7/5/3/2、decode 2/1来掩盖性能问题。

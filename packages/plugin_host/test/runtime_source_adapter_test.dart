@@ -678,6 +678,115 @@ void main() {
   });
 
   test(
+      'queued Venera request promoted to current re-evaluates active preemption',
+      () async {
+    final connection = _PriorityResolveConnection(releaseOnCancel: false);
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(maxConcurrentInvocations: 4),
+    );
+    addTearDown(session.close);
+    final source =
+        session.sources.single as ControlledResolvableComicResourceSource;
+    final activeControl = _MutableTaskControl(priority: 760);
+    final promotedControl = _MutableTaskControl(priority: 780);
+
+    final active = source.resolveResourceControlled(
+      Uri.parse('venera-resource:active-dynamic-760'),
+      control: activeControl,
+    );
+    await connection.firstStarted.future;
+    final promoted = source.resolveResourceControlled(
+      Uri.parse('venera-resource:promoted-current'),
+      control: promotedControl,
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(connection.cancelledRequestIds, isEmpty);
+    promotedControl.updatePriority(1000);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(connection.cancelledRequestIds, hasLength(1));
+    expect(
+      connection.startedUris,
+      <String>['venera-resource:active-dynamic-760'],
+      reason: 'priority change requests cancellation but cannot release the '
+          'single Venera permit before physical exit',
+    );
+    expect(connection.maxActive, 1);
+
+    connection.finishFirst();
+    await expectLater(
+      active,
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+    expect(
+      (await promoted).uri,
+      Uri.parse('https://cdn.invalid/promoted-current'),
+    );
+    expect(connection.maxActive, 1);
+  });
+
+  test(
+      'active Venera demotion re-evaluates waiting previous pressure',
+      () async {
+    final connection = _PriorityResolveConnection(releaseOnCancel: false);
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(maxConcurrentInvocations: 4),
+    );
+    addTearDown(session.close);
+    final source =
+        session.sources.single as ControlledResolvableComicResourceSource;
+    final activeControl = _MutableTaskControl(priority: 820);
+    final previousControl = _MutableTaskControl(priority: 780);
+
+    final active = source.resolveResourceControlled(
+      Uri.parse('venera-resource:active-dynamic-820'),
+      control: activeControl,
+    );
+    await connection.firstStarted.future;
+    final previous = source.resolveResourceControlled(
+      Uri.parse('venera-resource:waiting-previous-780'),
+      control: previousControl,
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(connection.cancelledRequestIds, isEmpty);
+    activeControl.updatePriority(700);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(connection.cancelledRequestIds, hasLength(1));
+    expect(connection.startedUris, <String>['venera-resource:active-dynamic-820']);
+    expect(connection.maxActive, 1);
+
+    connection.finishFirst();
+    await expectLater(
+      active,
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+    expect(
+      (await previous).uri,
+      Uri.parse('https://cdn.invalid/waiting-previous-780'),
+    );
+    expect(connection.maxActive, 1);
+  });
+
+  test(
       'controlled Venera preemption keeps the single permit until the physical invocation exits',
       () async {
     final connection = _PriorityResolveConnection(releaseOnCancel: false);
@@ -1096,18 +1205,29 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
   }
 }
 
-final class _MutableTaskControl implements TaskControl {
+final class _MutableTaskControl implements PriorityObservableTaskControl {
   _MutableTaskControl({required this.priority});
 
   final Completer<void> _cancelled = Completer<void>();
+  final StreamController<int> _priorityChanges =
+      StreamController<int>.broadcast(sync: true);
   @override
   int priority;
+
+  @override
+  Stream<int> get priorityChanges => _priorityChanges.stream;
 
   @override
   bool get cancelled => _cancelled.isCompleted;
 
   @override
   Future<void> get whenCancelled => _cancelled.future;
+
+  void updatePriority(int value) {
+    if (priority == value) return;
+    priority = value;
+    _priorityChanges.add(value);
+  }
 
   void cancel() {
     if (!_cancelled.isCompleted) _cancelled.complete();

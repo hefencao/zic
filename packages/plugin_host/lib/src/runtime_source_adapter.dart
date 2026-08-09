@@ -992,10 +992,19 @@ final class _RuntimeInvocationWaiter {
   final TaskControl? control;
   final int sequence;
   final Completer<void> ready = Completer<void>();
+  StreamSubscription<int>? prioritySubscription;
   bool granted = false;
   bool abandoned = false;
 
   int get priority => control?.priority ?? 0;
+
+  void disposePrioritySubscription() {
+    final subscription = prioritySubscription;
+    prioritySubscription = null;
+    if (subscription != null) {
+      unawaited(subscription.cancel());
+    }
+  }
 }
 
 final class _RuntimeActiveInvocation {
@@ -1006,7 +1015,16 @@ final class _RuntimeActiveInvocation {
 
   final TaskControl control;
   final Future<void> Function()? onPreempt;
+  StreamSubscription<int>? prioritySubscription;
   bool preemptRequested = false;
+
+  void disposePrioritySubscription() {
+    final subscription = prioritySubscription;
+    prioritySubscription = null;
+    if (subscription != null) {
+      unawaited(subscription.cancel());
+    }
+  }
 }
 
 final class _RuntimeInvocationGate {
@@ -1050,6 +1068,14 @@ final class _RuntimeInvocationGate {
       );
       _waiters.add(waiter);
       final taskControl = control;
+      if (taskControl is PriorityObservableTaskControl) {
+        waiter.prioritySubscription = taskControl.priorityChanges.listen((_) {
+          if (waiter.granted || waiter.abandoned || waiter.ready.isCompleted) {
+            return;
+          }
+          _maybePreemptControlledActive(waiter.control);
+        });
+      }
       if (taskControl != null) {
         unawaited(taskControl.whenCancelled.then((_) {
           if (waiter.granted || waiter.abandoned || waiter.ready.isCompleted) {
@@ -1057,6 +1083,7 @@ final class _RuntimeInvocationGate {
           }
           waiter.abandoned = true;
           _waiters.remove(waiter);
+          waiter.disposePrioritySubscription();
           waiter.ready.completeError(
             const Failure(
               code: ErrorCode.cancelled,
@@ -1087,6 +1114,20 @@ final class _RuntimeInvocationGate {
             : null;
     if (activeInvocation != null) {
       _controlledActive = activeInvocation;
+      final activeControl = activeInvocation.control;
+      if (activeControl is PriorityObservableTaskControl) {
+        activeInvocation.prioritySubscription =
+            activeControl.priorityChanges.listen((_) {
+          if (!identical(_controlledActive, activeInvocation) ||
+              activeInvocation.preemptRequested) {
+            return;
+          }
+          final waiter = _highestPriorityWaiter();
+          if (waiter != null) {
+            _maybePreemptControlledActive(waiter.control);
+          }
+        });
+      }
     }
     late final Future<T> operation;
     try {
@@ -1125,6 +1166,7 @@ final class _RuntimeInvocationGate {
     while (_waiters.isNotEmpty) {
       final waiter = _waiters.removeLast();
       waiter.abandoned = true;
+      waiter.disposePrioritySubscription();
       if (!waiter.ready.isCompleted) {
         waiter.ready.completeError(
           StateError('external plugin runtime is closing'),
@@ -1139,6 +1181,7 @@ final class _RuntimeInvocationGate {
   }
 
   void _release(_RuntimeActiveInvocation? activeInvocation) {
+    activeInvocation?.disposePrioritySubscription();
     if (activeInvocation != null && identical(_controlledActive, activeInvocation)) {
       _controlledActive = null;
     }
@@ -1162,7 +1205,7 @@ final class _RuntimeInvocationGate {
     }
   }
 
-  _RuntimeInvocationWaiter? _takeHighestPriorityWaiter() {
+  _RuntimeInvocationWaiter? _highestPriorityWaiter() {
     _RuntimeInvocationWaiter? best;
     for (final waiter in _waiters) {
       if (waiter.abandoned || waiter.control?.cancelled == true) {
@@ -1175,11 +1218,20 @@ final class _RuntimeInvocationGate {
         best = waiter;
       }
     }
-    _waiters.removeWhere(
-      (waiter) => waiter.abandoned || waiter.control?.cancelled == true,
-    );
+    return best;
+  }
+
+  _RuntimeInvocationWaiter? _takeHighestPriorityWaiter() {
+    final best = _highestPriorityWaiter();
+    for (final waiter in List<_RuntimeInvocationWaiter>.of(_waiters)) {
+      if (waiter.abandoned || waiter.control?.cancelled == true) {
+        _waiters.remove(waiter);
+        waiter.disposePrioritySubscription();
+      }
+    }
     if (best != null) {
       _waiters.remove(best);
+      best.disposePrioritySubscription();
     }
     return best;
   }

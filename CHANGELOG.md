@@ -1,3 +1,10 @@
+## 0.31.0-dev.188：Venera 动态 Priority 传播与 Request-Plan 取消边界澄清
+
+- `zic-debug-trace-2026-08-09T11-04-46.jsonl`确认 dev.187 后 source request-plan仍是主要长尾：21个 origin 样本的 `sourceRequestPlanMicros` 中位约3.467s；更关键的是已有 NetLane task 在等待 Venera 单invocation gate 时可从previous 780升到transition 900再升到current 1000，但 gate此前只在首次入队时判断preemption，后续实时priority变化不会重新触发比较。
+- `TaskControl`新增scheduler-owned可选 `PriorityObservableTaskControl`；`NetLane.CancelToken`在active same-key原位迁移时发出priority change，Venera gate只订阅该信号并重新比较现有waiter/active invocation，仍无权设置rank或建立第二调度器。queued waiter升级和active invocation降级都会重新执行既有floor=780、差值>=40的controlled preemption规则；真实`finished(requestId)`前仍不释放唯一permit。
+- 明确Venera取消边界：`loadEp`产生章节/page identity，per-image `onImageLoad`可异步生成request plan；最终图片body由`SourceResourceTransport`在native host transport执行。`__zicCancel(requestId)`只标记/打断JavaScript request-plan invocation及该hook通过bridge发起的request-scoped工作，不拥有后续最终图片HTTP。没有整章预解析`onImageLoad`，避免把按需resolver变成全章网络前置。
+- 新增动态priority行为回归、NetLane priority signal回归、ADR 0171、dev.188 audit/gate；固定7/3、2/1、7/5/3/2、network/decode/upload 5/3/2、previous780、current1000、reserved1、threshold40均不变。
+
 ## 0.31.0-dev.187：Venera Request-Scoped Cancel 物理闭环
 
 - `zic-debug-trace-2026-08-09T10-30-21.jsonl`用 dev.186 新分段观测确认剩余 origin-open 长尾主要不在 host HTTP open：18个 origin 样本的 `sourceRequestPlanMicros` 中位约3.195s、`sourceHostOpenMicros` 中位约0.367s，request-plan 占总 `readMicros` 的中位比例约83%。因此不再调整 NetLane 780/1000、network=5、current +1 或 decode/upload。

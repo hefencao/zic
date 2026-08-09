@@ -128,7 +128,7 @@
 
 ## P0：Venera requestId 物理取消闭环
 
-- dev.187真机复测快速大跳页：对被 previous/current pressure取消的 request-plan，记录 `downloadStarted -> sourceRequestPlanMicros`；新 current 不应再继承旧 invocation 的秒级不可取消 delay/body-read wait。若 request-plan仍有秒级长尾，下一步只增加 Venera operation/hook/bridge-stage timing，先区分 JavaScript hook自身耗时与 bridge网络等待，不增加第二 JS context。
+- dev.188真机复测动态priority传播：重点观察已进入NetLane但等待Venera gate的previous在780→900→1000后，是否立即重新触发对低rank active plan的controlled preemption；仍需等待旧JS真实`finished(requestId)`后转交唯一permit。若动态rank已收敛但`sourceRequestPlanMicros`仍有秒级长尾，下一步只增加 Venera invocation-gate wait / `onImageLoad` hook execution / bridge network stage timing，先定位hook内部owner，不预解析整章且不增加第二JS context。
 - 对取消中的 URLConnection 与 DNS-fallback response body验证 request-scoped `InputStream.close()` 可使 blocking read及时退出；同时验证正常未取消请求完整 body、Cookie/header行为不变。
 - 验证 Venera plugin `delay` Promise 正常计时、cancel立即 reject，且一个 requestId取消不会清除其它 requestId timer。不得恢复 native `Thread.sleep`。
 

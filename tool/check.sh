@@ -124,6 +124,7 @@ python3 "$ROOT/tool/test_dev184_receiving_state_detach_current_previous_handoff.
 python3 "$ROOT/tool/test_dev185_adjacent_previous_pressure_preemption.py"
 python3 "$ROOT/tool/test_dev186_venera_previous_pressure_source_open_stages.py"
 python3 "$ROOT/tool/test_dev187_venera_request_scoped_cancel_unwind.py"
+python3 "$ROOT/tool/test_dev188_venera_dynamic_priority_observation.py"
 python3 "$ROOT/tool/check_test_quarantine.py"
 python3 "$ROOT/tool/test_texture_schedule_timing_contract.py"
 python3 "$ROOT/tool/test_texture_bridge_kotlin_compile.py"

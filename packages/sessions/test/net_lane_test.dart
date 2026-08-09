@@ -356,6 +356,44 @@ void _dev123NetLaneTests() {
     expect(runs, 1);
   });
 
+  test('active rank migration emits the scheduler-owned priority signal', () async {
+    final lane = NetLane(maxActive: 1);
+    final started = Completer<void>();
+    final observed = Completer<int>();
+    final release = Completer<void>();
+
+    lane.submitRanked(
+      key: 'page-signal',
+      priority: 780,
+      bucket: 'remote:a',
+      bucketLimit: 5,
+      task: (token) async {
+        token.priorityChanges.listen((priority) {
+          if (!observed.isCompleted) observed.complete(priority);
+        });
+        started.complete();
+        await release.future;
+      },
+    );
+    await started.future;
+
+    expect(
+      lane.submitRanked(
+        key: 'page-signal',
+        priority: 1000,
+        bucket: 'remote:a',
+        bucketLimit: 5,
+        task: (_) async {},
+      ),
+      isFalse,
+    );
+    expect(await observed.future, 1000);
+    expect(lane.priorityOf('page-signal'), 1000);
+
+    release.complete();
+    await lane.idle();
+  });
+
   test('current uses one handoff slot and preempts the lowest ranked transfer',
       () async {
     final lane = NetLane(maxActive: 2, reservedHighPrioritySlots: 1);

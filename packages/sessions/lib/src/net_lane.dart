@@ -6,12 +6,14 @@ import 'package:domain/domain.dart';
 typedef LaneTask = Future<void> Function(CancelToken token);
 typedef LaneError = void Function(String key, Object error, StackTrace stack);
 
-final class CancelToken implements TaskControl {
+final class CancelToken implements PriorityObservableTaskControl {
   CancelToken({int priority = 0}) : _priority = priority;
 
   bool _cancelled = false;
   int _priority;
   final Completer<void> _cancelledSignal = Completer<void>();
+  final StreamController<int> _priorityChanges =
+      StreamController<int>.broadcast(sync: true);
 
   @override
   bool get cancelled => _cancelled;
@@ -19,9 +21,21 @@ final class CancelToken implements TaskControl {
   Future<void> get whenCancelled => _cancelledSignal.future;
   @override
   int get priority => _priority;
+  @override
+  Stream<int> get priorityChanges => _priorityChanges.stream;
 
   void updatePriority(int priority) {
+    if (_priority == priority) return;
     _priority = priority;
+    if (!_priorityChanges.isClosed) {
+      _priorityChanges.add(priority);
+    }
+  }
+
+  void dispose() {
+    if (!_priorityChanges.isClosed) {
+      unawaited(_priorityChanges.close());
+    }
   }
 
   void cancel() {
@@ -542,6 +556,7 @@ final class _Lane {
           },
         ).whenComplete(() {
           final removed = _active.remove(next.key);
+          removed?.token.dispose();
           final removedBucket = removed?.bucket;
           if (removedBucket != null) {
             final remaining = (_activeByBucket[removedBucket] ?? 1) - 1;
