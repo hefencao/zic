@@ -2,6 +2,7 @@
 
 ## P0：Current / Previous 真实执行槽真机闭环
 
+- dev.190 后首次本地 Flutter/Dart 构建优先确认 `runtime_source_adapter.dart` 不再出现 `onTiming` named-parameter 半迁移；若还有 runtime source adapter 编译错误，先检查私有函数类型/constructor 注入的一致性，不把 resource-plan diagnostics 扩到通用 browse/details invoke。
 - 复测 dev.186 Venera nested pressure：外层 previous 660→780 到 `downloadStarted` 应继续维持毫秒级；若其随后被单 invocation request-plan gate挡住，780可请求取消至少低40分的 active controlled invocation，但必须等旧 JavaScript `finished(requestId)` 后才开始，`maxActive`始终1。
 - 使用 `sourceRequestPlanMicros/sourceRequestPlanCacheHit/sourcePlanGateWaitMicros/sourcePlanRuntimeInvocationMicros/sourcePlanHookMicros/sourcePlanBridgeNetworkMicros/sourcePlanBridgeNetworkCalls/sourceHostOpenMicros` 拆慢页：先判断单invocation排队、JS hook还是hook内部resolver网络；只有host-open重新主导才追 rhttp/DNS/TLS/源端首包。不得回退到提高previous priority、扩大network/Venera并发、恢复transport framing或缩7/3。
 - 同时复测短时 N→N+1→N：没有真实 in-window pressure时，已 receiving 的 retained=0仍应复用原transport，不得因为新增 normal pressure能力退化为每次离窗cancel/reopen；只有真实 previous/更高 normal work等待普通槽时才让槽。

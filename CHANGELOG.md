@@ -1,3 +1,9 @@
+## 0.31.0-dev.190：Runtime Resource-Plan Timing 编译闭环与耦合收口
+
+- 修复 dev.189 `runtime_source_adapter.dart` 的真实编译错误：session 私有 `_invoke` 新增 `onTiming`，但 `_RuntimeBrowsableComicSource` 持有的 `_RuntimeInvoke` typedef 未同步，导致经函数类型调用 `onTiming:` 时编译器报“no named parameter”。
+- 不把 `onTiming` 扩散到通用 runtime invoke 契约。普通 browse/details/account 调用继续只依赖 `_RuntimeInvoke`；resource-plan 单独注入 `_RuntimeResolveResourceInvoke`，由 session 内部 `_invokeMeasured` 返回 payload + gate/runtime timing，再由 source adapter 合并到 `ComicResourceRequest.diagnostics`。删除 callback 式 `onTiming` 半迁移面。
+- 收口 observability 耦合：`sourcePlan*` 只允许沿 plugin_host → downloads trace 透传，不允许进入 sessions、pipeline_runtime 或 App policy；新增 dev.190 静态 gate 防止 diagnostics 变成第二调度通道。Reader/Venera 调度参数与 dev.189 行为均不变。
+
 ## 0.31.0-dev.189：Venera Current-Only 动态抢占与 Plan Stage 分段
 
 - 对照 dev.187/188 真机trace确认 dev.188 体感退化主要是 request-plan tail 放大而非最终图片网络：plan p90约5.421s→9.353s、max约6.935s→12.330s；host-open中位仅约0.331s→0.399s，p90反而下降。

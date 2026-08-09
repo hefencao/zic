@@ -152,6 +152,7 @@ final class ExternalPluginRuntimeSession
           format: plugin.format,
           descriptor: descriptor,
           invoke: _invoke,
+          resolveResourceInvoke: _resolveResourceInvocation,
         ),
       ),
     );
@@ -176,7 +177,21 @@ final class ExternalPluginRuntimeSession
     String externalSourceId,
     Map<String, Object?> arguments, {
     TaskControl? control,
-    void Function(_RuntimeInvocationTiming timing)? onTiming,
+  }) async {
+    final invocation = await _invokeMeasured(
+      operation,
+      externalSourceId,
+      arguments,
+      control: control,
+    );
+    return invocation.payload;
+  }
+
+  Future<_RuntimeInvocationResult> _invokeMeasured(
+    ExternalPluginRuntimeOperation operation,
+    String externalSourceId,
+    Map<String, Object?> arguments, {
+    TaskControl? control,
   }) async {
     if (_closed) {
       throw StateError('external plugin runtime session is closed');
@@ -226,12 +241,6 @@ final class ExternalPluginRuntimeSession
         },
         control: control,
         onPreempt: () => _cancelInvocation(request.requestId),
-      );
-      onTiming?.call(
-        _RuntimeInvocationTiming(
-          gateWaitMicros: gateWaitMicros,
-          runtimeInvocationMicros: runtimeInvocationMicros,
-        ),
       );
     } on TimeoutException catch (error) {
       unawaited(_cancelInvocation(request.requestId));
@@ -286,8 +295,24 @@ final class ExternalPluginRuntimeSession
             '$size > ${_limits.maxResponseBytes}',
       );
     }
-    return payload;
+    return _RuntimeInvocationResult(
+      payload: payload,
+      gateWaitMicros: gateWaitMicros,
+      runtimeInvocationMicros: runtimeInvocationMicros,
+    );
   }
+
+  Future<_RuntimeInvocationResult> _resolveResourceInvocation(
+    String externalSourceId,
+    Uri uri, {
+    TaskControl? control,
+  }) =>
+      _invokeMeasured(
+        ExternalPluginRuntimeOperation.resolveResource,
+        externalSourceId,
+        <String, Object?>{'uri': uri.toString()},
+        control: control,
+      );
 
   Future<void> _cancelInvocation(String requestId) async {
     final connection = _connection;
@@ -327,10 +352,19 @@ const mihonBrowserUserAgent =
     'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 '
     'Chrome/131 Mobile Safari/537.36';
 
+// Generic runtime calls do not expose Reader resource-plan diagnostics.
 typedef _RuntimeInvoke = Future<Object> Function(
   ExternalPluginRuntimeOperation operation,
   String externalSourceId,
   Map<String, Object?> arguments, {
+  TaskControl? control,
+});
+
+// Resolve-resource alone may carry session-owned gate/runtime timing.
+typedef _RuntimeResolveResourceInvoke =
+    Future<_RuntimeInvocationResult> Function(
+  String externalSourceId,
+  Uri uri, {
   TaskControl? control,
 });
 
@@ -349,12 +383,14 @@ final class _RuntimeBrowsableComicSource
     required ExternalComicPluginFormat format,
     required ExternalPluginRuntimeSourceDescriptor descriptor,
     required _RuntimeInvoke invoke,
+    required _RuntimeResolveResourceInvoke resolveResourceInvoke,
   })  : _format = format,
         _browserUserAgent = descriptor.browserUserAgent,
         _supportsComicPreview = descriptor.supportsComicPreview,
         _supportsComicComments = descriptor.supportsComicComments,
         _externalId = descriptor.externalId,
         _invoke = invoke,
+        _resolveResourceInvoke = resolveResourceInvoke,
         sourceId = '${_sourcePrefix(format)}${descriptor.externalId}',
         descriptor = ComicSourceDescriptor(
           sourceId: '${_sourcePrefix(format)}${descriptor.externalId}',
@@ -371,6 +407,7 @@ final class _RuntimeBrowsableComicSource
   final bool _supportsComicComments;
   final String _externalId;
   final _RuntimeInvoke _invoke;
+  final _RuntimeResolveResourceInvoke _resolveResourceInvoke;
   final Map<Uri, Future<Uint8List>> _resourceLoads =
       <Uri, Future<Uint8List>>{};
 
@@ -795,22 +832,15 @@ final class _RuntimeBrowsableComicSource
     Uri uri, {
     TaskControl? control,
   }) async {
-    _RuntimeInvocationTiming? invocationTiming;
-    final payload = await _invoke(
-      ExternalPluginRuntimeOperation.resolveResource,
+    final invocation = await _resolveResourceInvoke(
       _externalId,
-      <String, Object?>{'uri': uri.toString()},
+      uri,
       control: control,
-      onTiming: (timing) {
-        invocationTiming = timing;
-      },
     );
     final request = _resourceRequestFromPayload(
-      payload,
+      invocation.payload,
       'runtime resource request',
     );
-    final timing = invocationTiming;
-    if (timing == null) return request;
     return ComicResourceRequest(
       uri: request.uri,
       method: request.method,
@@ -819,8 +849,9 @@ final class _RuntimeBrowsableComicSource
       requiresRuntimeTransform: request.requiresRuntimeTransform,
       diagnostics: <String, Object?>{
         ...request.diagnostics,
-        'sourcePlanGateWaitMicros': timing.gateWaitMicros,
-        'sourcePlanRuntimeInvocationMicros': timing.runtimeInvocationMicros,
+        'sourcePlanGateWaitMicros': invocation.gateWaitMicros,
+        'sourcePlanRuntimeInvocationMicros':
+            invocation.runtimeInvocationMicros,
       },
     );
   }
@@ -1034,12 +1065,14 @@ void _throwIfTaskCancelled(TaskControl? control) {
   );
 }
 
-final class _RuntimeInvocationTiming {
-  const _RuntimeInvocationTiming({
+final class _RuntimeInvocationResult {
+  const _RuntimeInvocationResult({
+    required this.payload,
     required this.gateWaitMicros,
     required this.runtimeInvocationMicros,
   });
 
+  final Object payload;
   final int gateWaitMicros;
   final int runtimeInvocationMicros;
 }
