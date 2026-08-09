@@ -179,7 +179,7 @@ void main() {
     expect(decision?.stage, 'one>0');
   });
 
-  test('ineligible waiting source does not block a ready neighbor', () {
+  test('current source wait suppresses speculative neighbor decode bootstrap', () {
     final blockedCurrent = _id('blocked-current');
     final readyNext = _id('ready-next');
     final demands = <DecodeId, DecodeDemand>{
@@ -193,11 +193,11 @@ void main() {
       eligibleOf: (id) => id != blockedCurrent,
     );
 
-    expect(decision?.id, readyNext);
-    expect(decision?.stage, 'n>1');
+    expect(decision, isNull,
+        reason: 'Vibe-style shallow bootstrap keeps neighbors download-only while current has no source');
   });
 
-  test('transition first frame does not wait for current depth three', () {
+  test('ready current bootstrap outranks transition first frame', () {
     final current = _id('current-low');
     final transition = _id('transition-empty');
     final demands = <DecodeId, DecodeDemand>{
@@ -214,6 +214,31 @@ void main() {
     final decision = const StagedDecodeRefillPolicy().next(
       demands: demands,
       depthOf: (_) => 0,
+    );
+
+    expect(decision?.id, current);
+    expect(decision?.stage, 'c>2');
+    expect(decision?.targetWatermark, 3);
+  });
+
+  test('transition may bootstrap while current is waiting for source', () {
+    final current = _id('current-waiting');
+    final transition = _id('transition-ready');
+    final demands = <DecodeId, DecodeDemand>{
+      current: _demand(PageRole.current, 7),
+      transition: DecodeDemand(
+        role: PageRole.transition,
+        priority: 900,
+        targetWatermark: 5,
+        reason: 'drag-target',
+        expirationRevision: 2,
+      ),
+    };
+
+    final decision = const StagedDecodeRefillPolicy().next(
+      demands: demands,
+      depthOf: (_) => 0,
+      eligibleOf: (id) => id != current,
     );
 
     expect(decision?.id, transition);

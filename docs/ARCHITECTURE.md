@@ -192,12 +192,12 @@ inactive/paused/detached 继续主动入队最终 checkpoint，进程被系统�
 
 稳定 encoded window 为前 7、后 3。深度 decode 角色窗口为前 2、后 1；更远页面仍可下载，但不获得动画深水位。
 
-网络优先只由 composition-owned `NetLane` 负责：
+network 的 `NetLane` 与 decode/upload lane 都由 composition-owned scheduler 负责；current 的前台执行身份必须贯穿三条 lane：
 
-- 全局正常并发 5；local bucket 2，remote source bucket 5；
-- current priority 1000，保留 1 个高优先级 handoff slot；
-- priority 提升原位迁移，差值达到 40 时可抢占低优先级 active task；只有一个 max+1 handoff，取消中的 task在真实结束前继续占用 permit。普通页面离开 encoded 7/3窗口时，queued undemanded任务可取消，但已 receiving 的传输保留并降为低优先级；只有新的 current真实形成pressure时才抢占低rank receiving。Venera单上下文runtime同样执行pressure-only current抢占，不因logical detach直接cancel；
-- DownloadJob 不读取 holder depth、播放状态或页面控件，不存在第二套网络资格门控。
+- normal concurrency 仍为 network 5、decode 3、upload 2；network local bucket 2、remote source bucket 5；
+- current priority 1000；network/decode/upload 各保留 1 个仅 current 可用的高优先级 handoff slot，transition priority 900 不占该保留槽；
+- priority 提升原位迁移，差值达到 40 时可抢占低优先级 active task；handoff 仅允许 `maxActive + 1`，取消中的 task 在真实结束前继续占 permit。普通页面离开 encoded 7/3 时 queued undemanded 可取消、receiving 保留并降为低优先级；只有 current pressure 才抢占。Venera 单上下文的 permit 也必须等被取消 JavaScript invocation **物理 finished** 后才能转交，不能在仅发出 cancel 时提前释放；
+- DownloadJob 不读取 holder depth、播放状态或页面控件；远端下载窗口、decode/upload execution reservation 与播放水位分别由唯一 owner 管理。
 
 ## 6. Decode 水位与 Transition 首帧
 
@@ -207,21 +207,21 @@ inactive/paused/detached 继续主动入队最终 checkpoint，进程被系统�
 current / logical next / next2 / previous = 7 / 5 / 3 / 2
 ```
 
-`transition` 是拖动期间的 logical next，但它在任何 current 深化之前拥有独立首帧：
+current 的浅水位 bootstrap 优先于 speculative neighbor：动态 current depth < 3 时，next/next2/previous 的实际 refill 目标暂为 0；静态 current 只需 1 帧。
 
 ```text
-transition depth 0 -> t>0，目标 1 帧
+current depth < min(3, role max) -> current bootstrap；current 等 source 时，真实 viewport transition 可执行 `t>0` 独立取得 1 帧
 ```
 
-取得首帧后，staged refill 顺序为：
+bootstrap 完成后恢复 staged refill：
 
 ```text
-c>2, n>1, m>1, p>1, c>4, n>2, c>6, n>3, m>2, n>4
+n>1, m>1, p>1, c>4, n>2, c>6, n>3, m>2, n>4（current bootstrap 已覆盖 c>2）
 ```
 
-其中阈值是严格水位，实际 batch 可自然越过。高优先级且 `targetWatermark=1` 的 one-frame demand 可与 staged decision 比较优先级，但不得恢复 startup-buffer 或 current-only gate。
+阈值仍是严格水位，实际 batch 可自然越过。current/source 尚未建立浅水位时不得让 speculative neighbor 绕行 refill；真实 transition 只在 current 暂时无 source 资格时可取一帧，防止拖动目标黑屏。
 
-静态页由 runtime 分类；一帧即满足。推测静态邻页可在 96 MiB 选择预算内获得 decode/upload，实际 decoded/output 回收仍由 `FrameBudgeter` 权威执行，默认 output budget 为 128 MiB。
+静态页一帧即满足，但静态证据只能降低**既有 decode 前2/后1窗口**内页面的成本，不能把 encoded 7/3 的 near/far 扩大成 decode/upload 窗口；真实进入 viewport 的纵向静态页可作为可见输出例外，回收仍由 `FrameBudgeter` 权威执行。
 
 ## 7. 下载、partial 与 source ingress
 

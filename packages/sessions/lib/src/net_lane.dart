@@ -145,8 +145,19 @@ final class NetLane implements TaskLane {
 }
 
 final class DecodeLane implements TaskLane {
-  DecodeLane({required int maxActive, LaneError? onError})
-      : _core = _Lane(maxActive: maxActive, onError: onError);
+  DecodeLane({
+    required int maxActive,
+    int reservedHighPrioritySlots = 0,
+    int highPriorityThreshold = 1 << 30,
+    int preemptionThreshold = 1 << 30,
+    LaneError? onError,
+  }) : _core = _Lane(
+          maxActive: maxActive,
+          reservedHighPrioritySlots: reservedHighPrioritySlots,
+          highPriorityThreshold: highPriorityThreshold,
+          preemptionThreshold: preemptionThreshold,
+          onError: onError,
+        );
 
   final _Lane _core;
 
@@ -178,8 +189,19 @@ final class DecodeLane implements TaskLane {
 }
 
 final class UploadLane implements TaskLane {
-  UploadLane({required int maxActive, LaneError? onError})
-      : _core = _Lane(maxActive: maxActive, onError: onError);
+  UploadLane({
+    required int maxActive,
+    int reservedHighPrioritySlots = 0,
+    int highPriorityThreshold = 1 << 30,
+    int preemptionThreshold = 1 << 30,
+    LaneError? onError,
+  }) : _core = _Lane(
+          maxActive: maxActive,
+          reservedHighPrioritySlots: reservedHighPrioritySlots,
+          highPriorityThreshold: highPriorityThreshold,
+          preemptionThreshold: preemptionThreshold,
+          onError: onError,
+        );
 
   final _Lane _core;
 

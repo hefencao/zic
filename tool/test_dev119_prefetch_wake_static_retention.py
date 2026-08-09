@@ -45,7 +45,7 @@ for text, token, owner in (
     (reader, ".abs() <= 7", "prefetch-aligned host retention"),
     (trace, "staticFrameKept", "telemetry event"),
     (analyzer, '"staticFrameKeptCount"', "trace analyzer"),
-    (refill_test, "ineligible waiting source does not block a ready neighbor", "refill owner test"),
+    (refill_test, "current source wait suppresses speculative neighbor decode bootstrap", "refill owner test"),
     (coordinator_test, "revisit reuses the retained static output", "coordinator owner test"),
     (upload_test, "detached authoritative static output remains until budget trim", "upload owner test"),
     (budget_test, "undemanded output remains until the byte budget is exceeded", "budget owner test"),

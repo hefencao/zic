@@ -1,6 +1,6 @@
-# dev.182 后续交接
+# dev.183 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.182_rhttp-single-framing-first-frame-latency.zip`。
+唯一后续基线：`zic_v0.31.0-dev.183_current-bootstrap-execution-venera-physical-preemption.zip`。
 
 ## 必读
 
@@ -25,7 +25,7 @@
 19. `docs/adr/0154-source-filter-view-shelf-projection-download-feedback.md`
 20. `docs/adr/0155-external-browse-runtime-protocol-field-ownership.md`
 21. `docs/adr/0156-source-migration-version-view-and-update-badge-ownership.md`
-22. `docs/adr/0161-vibevenera-rhttp-startup-transport.md`、`docs/adr/0162-modern-toolchain-rhttp-stream-framing.md`、`docs/adr/0163-openjdk25-relative-window-output-retention.md`、`docs/adr/0164-artifact-readthrough-preserves-task-control.md`、`docs/adr/0165-rhttp-raw-stream-downloadjob-single-framing.md`、`docs/audits/dev182-rhttp-double-framing-root-cause-audit.md`
+22. `docs/adr/0161-vibevenera-rhttp-startup-transport.md`、`docs/adr/0162-modern-toolchain-rhttp-stream-framing.md`、`docs/adr/0163-openjdk25-relative-window-output-retention.md`、`docs/adr/0164-artifact-readthrough-preserves-task-control.md`、`docs/adr/0165-rhttp-raw-stream-downloadjob-single-framing.md`、`docs/adr/0166-current-bootstrap-execution-and-venera-physical-preemption.md`、`docs/audits/dev182-rhttp-double-framing-root-cause-audit.md`
 23. `docs/adr/0158-venera-transport-preemption-and-native-source-lock-ownership.md`、`docs/audits/dev175-venera-transport-native-ingress-root-cause-audit.md`、`docs/audits/dev175-validation-results.md`
 
 ## 当前代码事实
@@ -56,16 +56,16 @@
 - Mihon page/cover request plan保留 `imageRequest(page)` 的 URL/method/headers/body；GET/HEAD无 body。共享 transport无 Venera默认 UA。host直连若 2xx前缀不是编码图片，在进入 Pipeline前使用现有 source-owned runtime network兼容路径；正常图片仍走统一流式 transport。
 - Cloudflare可见浏览器沿用 dev.154/dev.155：真实 WebView UA与 Cookie/localStorage同 revision handoff；typed classifier与浏览器完成 probe分离；验证后按稳定 sourceId解析 replacement adapter。
 - 外部插件 manifest按记录容错。只有 payload安装/升级走事务式 replacement；settings与Venera Web登录原地更新，不 restart。Mihon浏览器 handoff保留受限 Mihon-only restart。生产 runtime session安全上限32，不能恢复通用8-session用户上限。
-- Reader/Pipeline参数仍为 encoded前7/后3、holder7/5/3/2、decode前2/后1、network5/decode3/upload2。上一current的output retention与相对role正交：相邻旧页仍是previous/next并继续download/decode，远离7/3时才仅保output；logical detach receiving仍降为retained-background=0，current pressure才抢占。
-- Reader origin的NetLane `TaskControl`必须贯穿 DownloadJob → `ArtifactCacheTransport` read-through → Loader/source request-plan → external runtime；dev.181修复了cache wrapper曾把controlled capability擦除的生产缺口。Venera仍只有一个invocation context，permit释放按实时priority选waiter，active controlled prefetch取消调用`cancel(requestId)`。
-- dev.175–181的TaskControl、response abort、native锁/CRC、retained-receiving、pressure-preemption与controlled read-through继续有效。生产source-media使用rhttp 0.18.0并保持raw streaming cadence；rhttp transport不得再次增加64/256 KiB聚合。小包aggregation唯一属于DownloadJob（首批约16KiB、后续64KiB source-progress quantum）；downloads仍保留Dart HttpClient非Flutter/test默认，7/3、2/1、5/3/2不变。
-- native `zic_cursor_decode_next()` 只在 source读锁内刷新 demux并复制下一帧压缩 fragment；WebP decode/scale/composite/canvas copy在锁外执行，下载 `zic_source_reserve/commit` 不再等待整帧 decode。
+- Reader/Pipeline 参数仍为 encoded前7/后3、holder最大7/5/3/2、稳定decode前2/后1、normal network/decode/upload=5/3/2。上一current的output retention与相对role正交；far static不得因静态证据越过稳定decode窗口，真实viewport静态页仍可获得一帧输出。
+- current priority=1000；network/decode/upload各保留1个仅current可用的bounded handoff，transition=900不占保留槽。动态current depth<3时 speculative neighbor refill目标为0；静态current一帧即满足。current等source时仅真实viewport transition可先取1帧。
+- origin `TaskControl`继续贯穿 DownloadJob → ArtifactCacheTransport → Loader/source request-plan → runtime。Venera保持真实单invocation：current preemption先按requestId断开旧native HTTP，只有旧JavaScript触发`finished(requestId)`后才返回cancelled并转交permit，不能在仅发cancel时让新JS重叠。
+- dev.175–181 的 response abort、native锁/CRC、retained-receiving、controlled read-through继续有效。dev.182 的 raw-stream/single DownloadJob aggregation只属于owner清理；rhttp transport不得再次增加64/256 KiB聚合，不再作为首帧主性能解释；不得继续围绕64/256KiB猜首帧根因。
 - Native identity保持 `zic-media-core-dev134-abi6-lib00121400`。
 
 ## 下一步真机优先验证
 
-- 首先复测快速前后翻页：current切换后 immediate previous必须仍进入后3下载窗（首位priority780）与后1decode窗，不能因retained last-output错位一页；大跳页则旧current只保output，不得继续网络。
-- dev.182真机优先看current `sourceReady/firstFrame`：origin仍应`controlledFallback=true + priority=1000`，但source growth不应再被transport 64/256KiB二次framing卡住。若去掉双重framing后`openMicros/sourceWait`仍稳定2秒以上，再拆Venera request-plan/runtime与HTTP-open耗时；不做整章plan预解析、不缩7/3或2/1。
+- 真机首要复测 current 首帧稳定性：观察 policyDecision 的 staticWarmDecodes/uploads 是否收敛到稳定decode角色/真实可见页，current浅水位期间是否停止 speculative neighbor refill，以及decode/upload current handoff是否避免后台长任务阻塞。
+- Venera慢页继续拆 execution：若current在上述policy稳定后仍长时间等待origin，记录旧request cancel→native HTTP abort→JS finished→current request-plan start→HTTP open，确认单上下文无物理重叠后再优化source-plan；不缩7/3、不增加Venera并发。
 ## 不可改变的稳定边界
 
 - 不缩小 Reader 7/3、holder 7/5/3/2、decode 2/1来掩盖性能问题。

@@ -104,7 +104,7 @@ for token in (
 for token in (
     "encoded download window：前 7 / 后 3",
     "动态 holder 最大水位为 current/next/next2/previous：7 / 5 / 3 / 2",
-    "transition 没有 decoded frame 时 MUST 可独立取得一帧",
+    "current 浅水位 bootstrap MUST 优先",
     "NetLane` MUST 是页面网络的唯一调度权威",
     "一个 idle 章节会话最多两分钟",
 ):

@@ -60,6 +60,7 @@ internal class VeneraRuntimeDriver private constructor(
 ) : NativeExternalPluginDriver {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val pending = ConcurrentHashMap<String, NativeDriverResult>()
+    private val cancelledRequests = ConcurrentHashMap.newKeySet<String>()
     private val closed = AtomicBoolean(false)
 
     init {
@@ -91,6 +92,29 @@ internal class VeneraRuntimeDriver private constructor(
                 }
             }
         }
+        // Scheduler cancellation is complete only after the JavaScript
+        // invocation has actually unwound. Returning a cancelled result while
+        // the old async promise kept running let a new current request enter
+        // the same WebView context concurrently; the request-scoped Network
+        // bridge then had no safe async-local identity. Abort native I/O first
+        // and return the runtime permit from the `finished` callback instead.
+        bridge.finishedSink = finishedSink@ { requestId ->
+            val result = pending.remove(requestId) ?: run {
+                cancelledRequests.remove(requestId)
+                return@finishedSink
+            }
+            if (cancelledRequests.remove(requestId)) {
+                result.error(
+                    "runtime-request-cancelled",
+                    "Venera request was cancelled",
+                )
+            } else {
+                result.error(
+                    "venera-result-missing",
+                    "Venera invocation finished without a protocol result",
+                )
+            }
+        }
     }
 
     override fun invoke(request: Map<String, Any?>, result: NativeDriverResult) {
@@ -115,9 +139,15 @@ internal class VeneraRuntimeDriver private constructor(
     }
 
     override fun cancel(requestId: String) {
-        pending.remove(requestId)?.error("runtime-request-cancelled", "Venera request was cancelled")
-        mainHandler.post { webView.evaluateJavascript("__zicCancel(${requestId.jsQuoted()});", null) }
+        if (!pending.containsKey(requestId)) return
+        cancelledRequests.add(requestId)
+        // Disconnect request-scoped native HTTP synchronously. The JavaScript
+        // promise is still the physical owner of the single Venera context and
+        // must reach `finished` before another invocation receives its permit.
         bridge.cancel(requestId)
+        mainHandler.post {
+            webView.evaluateJavascript("__zicCancel(${requestId.jsQuoted()});", null)
+        }
     }
 
     override fun close() {
@@ -126,6 +156,7 @@ internal class VeneraRuntimeDriver private constructor(
             it.error("runtime-closing", "Venera runtime is closing")
         }
         pending.clear()
+        cancelledRequests.clear()
         bridge.close()
         if (Looper.myLooper() == Looper.getMainLooper()) {
             destroyWebView()
@@ -352,6 +383,7 @@ private class VeneraNativeBridge(
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
     @Volatile private var dnsFallbackClient: ReflectiveVeneraHttpClient? = null
     @Volatile var resultSink: ((String, JSONObject) -> Unit)? = null
+    @Volatile var finishedSink: ((String) -> Unit)? = null
     @Volatile var activationSink: ((JSONObject) -> Unit)? = null
 
     @JavascriptInterface
@@ -422,6 +454,7 @@ private class VeneraNativeBridge(
     fun finished(requestId: String) {
         cancelled.remove(requestId)
         requestConnections.remove(requestId)
+        finishedSink?.invoke(requestId)
     }
 
     fun cancel(requestId: String) {
@@ -1094,6 +1127,7 @@ private class VeneraNativeBridge(
     override fun close() {
         activationSink = null
         resultSink = null
+        finishedSink = null
         cancelled.clear()
         connections.toList().forEach(::cancelConnection)
         connections.clear()

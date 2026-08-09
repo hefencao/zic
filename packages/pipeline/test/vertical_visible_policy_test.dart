@@ -92,16 +92,12 @@ void main() {
     );
 
     expect(window.roleOf(1), PageRole.transition);
-    expect(window.roleOf(3), PageRole.visible);
-    expect(
-      plan.uploads.values.where((demand) => demand.role == PageRole.visible),
-      hasLength(1),
+    expect(window.roleOf(3), PageRole.next);
+    final visiblePage = plan.uploads.entries.singleWhere(
+      (entry) => entry.key.download.content.pageId == 'p3',
     );
-    expect(
-      plan.decodes.values.singleWhere(
-        (demand) => demand.role == PageRole.visible,
-      ).targetWatermark,
-      1,
-    );
+    expect(visiblePage.value.reason, 'heuristic:static-visible:next');
+    expect(visiblePage.value.priority, greaterThanOrEqualTo(880));
+    expect(plan.decodes[visiblePage.key]!.targetWatermark, 1);
   });
 }

@@ -1,3 +1,10 @@
+## 0.31.0-dev.183：Current bootstrap、执行保留槽与 Venera 物理抢占
+
+- 根据 `zic-debug-trace-2026-08-09T08-12-07.jsonl` 纠正首帧根因：首帧解码通常仅几十毫秒，但 policy 经常同时生成约7个 static warm decode 与4–7个 upload；ZIC只有network有current handoff，decode/upload可被预取占满。
+- 对齐 VibeVenera：动态current浅水位先到最多3帧，静态current一帧；bootstrap期间 speculative next/next2/previous停止实际refill。far static不再越过前2/后1稳定decode窗口，真实viewport静态页保留一帧输出资格。network/decode/upload均新增current-only +1 handoff，normal并发仍5/3/2。
+- 修复Venera抢占的物理生命周期：native cancel先按requestId断开旧HTTP，但不再立即完成Dart invocation；只有旧WebView JavaScript真正`finished`后才返回cancelled并释放唯一runtime permit，避免旧/新async调用重叠并污染全局request identity。
+- 修复dev.182 `ArtifactCacheReadLease?` nullable访问导致的实际编译错误；新增current-bootstrap/lane/Venera物理退出回归和dev.183 release gate。
+
 ## 0.31.0-dev.182：移除 rhttp 双重 framing，恢复 DownloadJob 单一聚合 owner
 
 - 根据 `zic-debug-trace-2026-08-09T05-38-39.jsonl` 确认 dev.181 production control propagation 已生效：origin 已出现 `controlledFallback=true`，current 可携带 priority 1000 到 cache read-through 后的 source path；慢页仍由约 2–16 秒 `sourceWait` 主导，native decode 通常只有几十毫秒。

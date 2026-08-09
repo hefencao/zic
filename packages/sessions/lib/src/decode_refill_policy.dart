@@ -32,15 +32,14 @@ final class DecodeRefillDecision {
 /// a depth at or below the threshold refills to the smallest value above it;
 /// cursor batching may overshoot naturally.
 ///
-/// A drag target in `transition` always retains an independent first-frame
-/// bootstrap before current deepening. Deeper refills are then released in
-/// this order: `c3, n2, m2, p2, c5, n3, c7, n4, m3, n5`.
-/// The role maxima are therefore c/n/m/p = 7/5/3/2; last remains keep-only.
-///
-/// During a drag, `transition` is the logical n. Its first frame is independent
-/// so page switching cannot wait for current to reach depth three; after that
-/// it receives every n stage. `last` never refills; its existing upload output
-/// is frozen and retained.
+/// Current bootstrap is authoritative: until current reaches min(3, its role
+/// maximum), neighbor decode targets are effectively zero, matching
+/// VibeVenera's shallow FrameDepthTable. If current is waiting for source, an
+/// actually visible drag `transition` may still acquire its independent first
+/// frame; speculative next/next2/previous work does not run around a stalled
+/// current. After bootstrap, deeper refills follow
+/// `n2, m2, p2, c5, n3, c7, n4, m3, n5`.
+/// The role maxima remain c/n/m/p = 7/5/3/2; last remains keep-only.
 final class StagedDecodeRefillPolicy {
   const StagedDecodeRefillPolicy();
 
@@ -51,6 +50,58 @@ final class StagedDecodeRefillPolicy {
     DecodeEligibilityLookup eligibleOf = _alwaysEligible,
     DecodeSatisfiedLookup satisfiedOf = _neverSatisfied,
   }) {
+    DecodeId? currentId;
+    DecodeId? transitionId;
+    for (final entry in demands.entries) {
+      if (entry.value.role == PageRole.current) currentId = entry.key;
+      if (entry.value.role == PageRole.transition) transitionId = entry.key;
+    }
+
+    DecodeRefillDecision? transitionFirstFrame() {
+      final id = transitionId;
+      if (id == null ||
+          !eligibleOf(id) ||
+          terminalOf(id) ||
+          satisfiedOf(id) ||
+          depthOf(id) >= 1) {
+        return null;
+      }
+      final demand = demands[id]!;
+      return DecodeRefillDecision(
+        id: id,
+        role: demand.role,
+        stage: 't>0',
+        depth: depthOf(id),
+        threshold: 0,
+        targetWatermark: 1,
+      );
+    }
+
+    final current = currentId;
+    if (current != null &&
+        !terminalOf(current) &&
+        !satisfiedOf(current)) {
+      final demand = demands[current]!;
+      final bootstrapTarget = demand.targetWatermark.clamp(0, 3).toInt();
+      final depth = depthOf(current);
+      if (bootstrapTarget > 0 && depth < bootstrapTarget) {
+        if (eligibleOf(current)) {
+          return DecodeRefillDecision(
+            id: current,
+            role: demand.role,
+            stage: bootstrapTarget == 1 ? 'one>0' : 'c>2',
+            depth: depth,
+            threshold: bootstrapTarget == 1 ? 0 : 2,
+            targetWatermark: bootstrapTarget,
+          );
+        }
+        // A real viewport transition may make progress while current waits on
+        // source ingress. Other neighbors remain download-only until current
+        // bootstrap can resume.
+        return transitionFirstFrame();
+      }
+    }
+
     final oneFrame = demands.entries
         .where(
           (entry) =>
@@ -83,22 +134,7 @@ final class StagedDecodeRefillPolicy {
     }
 
     final transition = byRole[PageRole.transition];
-    DecodeRefillDecision? transitionFirstFrameDecision;
-    if (transition != null &&
-        eligibleOf(transition) &&
-        !terminalOf(transition) &&
-        !satisfiedOf(transition) &&
-        depthOf(transition) < 1) {
-      final demand = demands[transition]!;
-      transitionFirstFrameDecision = DecodeRefillDecision(
-        id: transition,
-        role: demand.role,
-        stage: 't>0',
-        depth: depthOf(transition),
-        threshold: 0,
-        targetWatermark: 1,
-      );
-    }
+    final transitionFirstFrameDecision = transitionFirstFrame();
     final logical = <_WaterlineRole, DecodeId?>{
       _WaterlineRole.current: byRole[PageRole.current],
       _WaterlineRole.next: transition ?? byRole[PageRole.next],

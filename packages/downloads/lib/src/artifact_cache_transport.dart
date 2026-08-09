@@ -310,19 +310,20 @@ final class ArtifactCacheTransport implements ControlledTransport {
     try {
       if (scheduler != null) {
         final wait = Stopwatch()..start();
-        lease = await scheduler.acquire(
+        final acquiredLease = await scheduler.acquire(
           priority: () =>
               _demandPriority?.call(id) ?? control?.priority ?? requestedPriority,
         );
+        lease = acquiredLease;
         if (control?.cancelled == true) {
-          lease.release();
+          acquiredLease.release();
           lease = null;
           _throwIfTaskCancelled(control);
         }
         schedulerWaitMicros = wait.elapsedMicroseconds;
         schedulerAcquires = 1;
-        schedulerForegroundAcquires = lease.foreground ? 1 : 0;
-        acquiredPriority = lease.priority;
+        schedulerForegroundAcquires = acquiredLease.foreground ? 1 : 0;
+        acquiredPriority = acquiredLease.priority;
       }
       read = await _cache.readForegroundLookup(lookup);
       _throwIfTaskCancelled(control);

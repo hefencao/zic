@@ -30,6 +30,11 @@ final class HeuristicPolicy {
     final decodes = <DecodeId, DecodeDemand>{};
     final uploads = <DecodeId, UploadDemand>{};
     final keep = <ResourceId>{};
+    final visibleIndexes = observation.visibleCoverages
+        .where((coverage) => coverage.fraction > 0)
+        .map((coverage) => coverage.pageIndex)
+        .toSet();
+    visibleIndexes.add(observation.currentIndex);
     final staticWarmPages = _staticWarmPages(
       chapter: chapter,
       observation: observation,
@@ -77,20 +82,24 @@ final class HeuristicPolicy {
       }
 
       final staticWarm = staticWarmPages.contains(entry.key);
+      final visibleStatic = staticWarm && visibleIndexes.contains(entry.key);
       final decodeWatermark = staticWarm ? 1 : _decodeWatermark(role);
       if (decodeWatermark > 0) {
         decodes[decode] = DecodeDemand(
           role: role,
           priority: staticWarm
-              ? _staticPriority(
+              ? _staticWarmPriority(
                   role,
+                  visible: visibleStatic,
                   pageIndex: entry.key,
                   currentIndex: observation.currentIndex,
                 )
               : _decodePriority(role),
           targetWatermark: decodeWatermark,
           reason: staticWarm
-              ? 'heuristic:static-warm:${role.name}'
+              ? visibleStatic
+                  ? 'heuristic:static-visible:${role.name}'
+                  : 'heuristic:static-warm:${role.name}'
               : 'heuristic:${role.name}',
           expirationRevision: revision + 1,
         );
@@ -109,13 +118,16 @@ final class HeuristicPolicy {
                   PageRole.last => 850,
                   _ => 0,
                 }
-              : _staticPriority(
+              : _staticWarmPriority(
                   role,
+                  visible: visibleStatic,
                   pageIndex: entry.key,
                   currentIndex: observation.currentIndex,
                 ),
           reason: staticWarm && !primaryUpload
-              ? 'heuristic:static-warm:${role.name}'
+              ? visibleStatic
+                  ? 'heuristic:static-visible:${role.name}'
+                  : 'heuristic:static-warm:${role.name}'
               : 'heuristic:${role.name}',
           expirationRevision: revision + 1,
         );
@@ -175,13 +187,60 @@ final class HeuristicPolicy {
     required Map<int, bool> runtimeAnimatedPages,
     required bool assumeUnresolvedStatic,
   }) {
-    if (staticOutputBudgetBytes <= 0) return const <int>{};
-    final candidates = window.roles.entries.where((entry) {
+    final visibleIndexes = observation.visibleCoverages
+        .where((coverage) => coverage.fraction > 0)
+        .map((coverage) => coverage.pageIndex)
+        .toSet();
+    visibleIndexes.add(observation.currentIndex);
+
+    bool isStaticCandidate(MapEntry<int, PageRole> entry) {
       final runtimeAnimated = runtimeAnimatedPages[entry.key];
       if (runtimeAnimated != null) return !runtimeAnimated;
       return assumeUnresolvedStatic || !chapter.pages[entry.key].animatedHint;
-    }).toList();
-    candidates.sort((a, b) {
+    }
+
+    bool isStableDecodeRole(PageRole role) => switch (role) {
+          PageRole.current ||
+          PageRole.transition ||
+          PageRole.next ||
+          PageRole.next2 ||
+          PageRole.previous => true,
+          PageRole.last ||
+          PageRole.near ||
+          PageRole.far ||
+          PageRole.detached => false,
+        };
+
+    // Static single-frame knowledge may lower the cost of a page that is
+    // already inside the stable +2/-1 decode window, but it must not enlarge
+    // that window. The old policy let every likely-static page in the 7/3
+    // encoded window create decode + upload work; device traces showed 6-7
+    // speculative warm decodes/uploads competing with current execution.
+    // Actually visible vertical pages remain authoritative even if they fall
+    // outside the relative decode window (for example several very short
+    // stitched pages in one viewport).
+    final candidates = window.roles.entries
+        .where(isStaticCandidate)
+        .where(
+          (entry) =>
+              visibleIndexes.contains(entry.key) ||
+              isStableDecodeRole(entry.value),
+        )
+        .toList(growable: false);
+
+    final selected = <int>{};
+    // Visibility is not speculative and therefore does not consume the
+    // speculative output budget. FrameBudget remains the authoritative owner
+    // if actual output dimensions later exceed memory limits.
+    for (final entry in candidates) {
+      if (visibleIndexes.contains(entry.key)) selected.add(entry.key);
+    }
+
+    if (staticOutputBudgetBytes <= 0) return selected;
+    final speculative = candidates
+        .where((entry) => !visibleIndexes.contains(entry.key))
+        .toList(growable: false);
+    speculative.sort((a, b) {
       final aPriority = _staticPriority(
         a.value,
         pageIndex: a.key,
@@ -198,17 +257,14 @@ final class HeuristicPolicy {
           .abs()
           .compareTo((b.key - observation.currentIndex).abs());
     });
-    final selected = <int>{};
     var remaining = staticOutputBudgetBytes;
-    for (final entry in candidates) {
+    for (final entry in speculative) {
       final estimate = _estimatedStaticOutputBytes(
         chapter.pages[entry.key],
         decodeTarget,
         vertical: observation.direction == ReadingDirection.vertical,
       );
-      if (selected.isNotEmpty && estimate > remaining) {
-        continue;
-      }
+      if (selected.isNotEmpty && estimate > remaining) continue;
       selected.add(entry.key);
       remaining = (remaining - estimate)
           .clamp(0, staticOutputBudgetBytes)
@@ -248,6 +304,25 @@ final class HeuristicPolicy {
         .clamp(1, 1 << 20)
         .toInt();
     return projectedWidth * projectedHeight * 4;
+  }
+
+  int _staticWarmPriority(
+    PageRole role, {
+    required bool visible,
+    required int pageIndex,
+    required int currentIndex,
+  }) {
+    final base = _staticPriority(
+      role,
+      pageIndex: pageIndex,
+      currentIndex: currentIndex,
+    );
+    // A non-current page that is already on screen must beat speculative
+    // next/previous output preparation without pretending to be current or a
+    // drag transition.
+    return visible && role != PageRole.current && role != PageRole.transition
+        ? (base < 880 ? 880 : base)
+        : base;
   }
 
   int _staticPriority(

@@ -1,10 +1,11 @@
 # zic Implementation Plan
 
-## P0：VibeVenera 首播时间与 controlled read-through 真机闭环
+## P0：Current 首帧 policy/execution 真机闭环
 
-- 同一Venera漫画/设备记录 Reader mount→source-plan→origin response→DownloadJob首批约16KiB→后续64KiB source growth→可解码前缀→first frame；production rhttp direct transport只做媒体前缀验证与raw streaming，不得再建立64/256KiB第二framing owner。用origin `controlledFallback/priority`确认dev.181控制面仍贯通。
-- 首先验证origin `artifactSource/sourceRead` 对current明确记录 `controlledFallback=true` 且priority=1000；current切换/抢占后Venera request-plan waiter必须收到同一个TaskControl。只有在该不变量成立后`openMicros`仍稳定数秒，才继续拆Venera runtime plan耗时；不得先做整章request-plan预解析。
-- 保持 encoded 7/3、decode 2/1、network/decode/upload 5/3/2与reserved current 1；相邻翻页后 immediate previous必须继续获得 backward download/decode（首 previous priority 780），同时可独立保留旧 output；大跳后远离7/3的 retained旧页不得继续下载。完成本地 `flutter pub get` 后验证rhttp 0.18.0、Flutter3.44+/Dart3.12+、AGP9.3.1/Gradle9.5/OpenJDK25构建环境，Android/Kotlin bytecode仍target17。
+- 首先验证 current bootstrap：动态 current 未达到3帧前，speculative next/next2/previous 不应产生实际 decode refill；current 等 source 时只允许真实 viewport transition 先取1帧。trace 应显示 staticWarm 不再把 near/far 7/3 encoded页扩成 decode/upload。
+- network/decode/upload normal concurrency 继续为5/3/2，三条 lane 各有1个 current-only reserved handoff；transition=900 不占该槽。快速切页时 current 不得等待低优先级高分辨率 decode/upload自然完成。
+- Venera current pressure 取消旧 prefetch 时，先按 requestId 断开 native HTTP；Dart single-context permit 只能在旧 JavaScript `finished(requestId)` 后转交。真机 trace 若 current origin仍长尾，再拆 request-plan/JS/onImageLoad/HTTP-open各阶段，而不是继续修改字节chunk或缩7/3。
+- dev.182 的 rhttp framing 修改仅作为 duplicate-owner 清理记录，不作为首帧性能主解释；`DownloadJob` 继续是唯一 page-body aggregation owner。
 
 ## P0：迁移 / 同源版本 / 更新提示真机闭环
 

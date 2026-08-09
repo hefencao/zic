@@ -422,8 +422,24 @@ final class PipelineReaderSession {
       net: pageDownloadLane,
       downloadBucketFor: _profile.downloadBucket,
       downloadBucketLimitFor: _downloadBucketLimit,
-      decode: DecodeLane(maxActive: _profile.decodeConcurrency),
-      upload: UploadLane(maxActive: _profile.uploadConcurrency),
+      // Match VibeVenera's current-page execution reservation. Download
+      // priority alone cannot make first-frame latency stable if speculative
+      // decode/upload work has already filled every execution slot. Current
+      // work alone may use one temporary handoff slot while a lower-ranked
+      // prefetch observes cancellation and unwinds; permits are released
+      // only when the old task really exits.
+      decode: DecodeLane(
+        maxActive: _profile.decodeConcurrency,
+        reservedHighPrioritySlots: 1,
+        highPriorityThreshold: 1000,
+        preemptionThreshold: 40,
+      ),
+      upload: UploadLane(
+        maxActive: _profile.uploadConcurrency,
+        reservedHighPrioritySlots: 1,
+        highPriorityThreshold: 1000,
+        preemptionThreshold: 40,
+      ),
     );
     trace.record(
       traceEvent(

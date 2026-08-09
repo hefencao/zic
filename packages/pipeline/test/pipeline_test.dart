@@ -558,9 +558,77 @@ final class _FakeClock implements MonoClock {
     expect(updates, isNotEmpty);
     expect(
       controller.currentPlan.uploads.values.where(
-        (demand) => demand.reason.startsWith('heuristic:static-warm'),
+        (demand) => demand.reason.startsWith('heuristic:static-'),
       ).length,
       greaterThanOrEqualTo(2),
+    );
+  });
+
+  test('static evidence does not widen stable decode window into far pages', () {
+    final longChapter = ChapterManifest(
+      sourceId: 'venera:fixture',
+      comicId: 'static-comic',
+      chapter: const Chapter(
+        chapterId: 'static-chapter',
+        comicId: 'static-comic',
+        title: 'Static Chapter',
+        sequence: 1,
+        pageCount: 20,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        20,
+        (index) => PageAsset(
+          pageId: 's$index',
+          chapterId: 'static-chapter',
+          index: index,
+          uri: Uri.parse('venera-resource:static-$index'),
+          animatedHint: false,
+        ),
+      ),
+      readingDirection: ReadingDirection.ltr,
+    );
+    final obs = ReaderObs(
+      sessionId: 'static-window',
+      currentIndex: 8,
+      stableIndex: 8,
+      interaction: Interaction.idle,
+      logicalPosition: 8,
+      velocity: 0,
+      currentCoverage: Coverage(
+        pageIndex: 8,
+        assetKey: longChapter.pages[8].assetKey,
+        fraction: 1,
+      ),
+      direction: ReadingDirection.ltr,
+      timestamp: DateTime.utc(2026, 8, 9),
+      monotonicMicros: 1,
+    );
+    final window = const RoleResolver(
+      forwardEncodedPages: 7,
+      backwardEncodedPages: 3,
+      forwardDecodePages: 2,
+      backwardDecodePages: 1,
+      nearRadius: 0,
+    ).resolve(longChapter, obs);
+    final plan = const HeuristicPolicy(decodeWarmPages: true).createPlan(
+      revision: 1,
+      chapter: longChapter,
+      observation: obs,
+      window: window,
+      decodeTarget: DecodeTarget(physicalWidth: 1080, physicalHeight: 1920),
+    );
+
+    expect(plan.downloads, hasLength(11));
+    expect(plan.decodes, hasLength(4));
+    expect(plan.uploads, hasLength(4));
+    expect(
+      plan.decodes.keys.map((id) => id.download.content.pageId),
+      containsAll(<String>['s7', 's8', 's9', 's10']),
+    );
+    expect(
+      plan.decodes.keys.map((id) => id.download.content.pageId),
+      isNot(contains('s11')),
     );
   });
 
@@ -587,10 +655,10 @@ final class _FakeClock implements MonoClock {
     final staticWarm = plan.uploads.entries.where(
       (entry) => entry.value.reason.startsWith('heuristic:static-warm'),
     ).toList(growable: false);
-    expect(staticWarm, hasLength(2));
+    expect(staticWarm, hasLength(1));
     expect(
       staticWarm.map((entry) => entry.key.download.content.pageId),
-      containsAll(<String>['p0', 'p1']),
+      contains('p1'),
     );
     expect(
       staticWarm.map((entry) => entry.key.download.content.pageId),

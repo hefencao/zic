@@ -1,5 +1,14 @@
 # zic Implementation Status
 
+## 当前发布候选
+
+- 当前版本：`0.31.0-dev.183` / App `0.31.0+183`。
+
+- 新设备trace确认首帧抖动主要由 policy/execution 状态差异主导：多轮 `staticWarmDecodes=7` 把远静态页越过稳定decode窗口拉入执行；decode/upload lane此前没有current保留槽；Venera cancel曾在旧JS promise物理退出前释放单上下文permit。
+- far static恢复download-only；动态current先bootstrap至最多3帧，静态current一帧，current等待source时仅真实transition可先取1帧。network/decode/upload均保留1个current-only handoff，normal concurrency仍5/3/2。
+- Venera preemption先断requestId native HTTP，再等待JS `finished`后返回cancelled并释放permit，禁止同一WebView中旧/新async invocation重叠。修复 `ArtifactCacheReadLease?` nullable半迁移编译错误。
+- 当前环境无Flutter/Dart/Android完整SDK；行为测试已加入源码，最终设备构建/性能仍需本地验证。
+
 **源码版本：** `0.31.0-dev.182`
 **App build：** `0.31.0+182`
 

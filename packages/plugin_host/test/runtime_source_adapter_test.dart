@@ -584,6 +584,62 @@ void main() {
     expect(connection.maxActive, 1);
   });
 
+
+  test(
+      'controlled Venera preemption keeps the single permit until the physical invocation exits',
+      () async {
+    final connection = _PriorityResolveConnection(releaseOnCancel: false);
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(maxConcurrentInvocations: 4),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single as ControlledResolvableComicResourceSource;
+    final prefetchControl = _MutableTaskControl(priority: 10);
+    final currentControl = _MutableTaskControl(priority: 1000);
+
+    final prefetch = source.resolveResourceControlled(
+      Uri.parse('venera-resource:physical-prefetch'),
+      control: prefetchControl,
+    );
+    await connection.firstStarted.future;
+    final current = source.resolveResourceControlled(
+      Uri.parse('venera-resource:physical-current'),
+      control: currentControl,
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(connection.cancelledRequestIds, hasLength(1));
+    expect(
+      connection.startedUris,
+      <String>['venera-resource:physical-prefetch'],
+      reason: 'requesting cancellation must not release the single Venera permit',
+    );
+    expect(connection.maxActive, 1);
+
+    connection.finishFirst();
+    await expectLater(
+      prefetch,
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+    expect((await current).uri, Uri.parse('https://cdn.invalid/physical-current'));
+    expect(
+      connection.startedUris,
+      <String>[
+        'venera-resource:physical-prefetch',
+        'venera-resource:physical-current',
+      ],
+    );
+    expect(connection.maxActive, 1);
+  });
+
   test('Mihon runtime keeps configured parallel invocation capacity', () async {
     final firstGate = Completer<void>();
     final connection = _SequencedConnection(firstGate: firstGate.future);
@@ -968,6 +1024,9 @@ final class _MutableTaskControl implements TaskControl {
 
 final class _PriorityResolveConnection
     implements CancellableExternalPluginRuntimeConnection {
+  _PriorityResolveConnection({this.releaseOnCancel = true});
+
+  final bool releaseOnCancel;
   final Completer<void> firstStarted = Completer<void>();
   final Completer<void> _firstRelease = Completer<void>();
   final List<String> startedUris = <String>[];
@@ -1035,9 +1094,15 @@ final class _PriorityResolveConnection
   Future<void> cancel(String requestId) async {
     cancelledRequestIds.add(requestId);
     _cancelledRequestIds.add(requestId);
-    if (requestId == _firstRequestId && !_firstRelease.isCompleted) {
+    if (releaseOnCancel &&
+        requestId == _firstRequestId &&
+        !_firstRelease.isCompleted) {
       _firstRelease.complete();
     }
+  }
+
+  void finishFirst() {
+    if (!_firstRelease.isCompleted) _firstRelease.complete();
   }
 
   @override

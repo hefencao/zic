@@ -21,7 +21,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - 全局网络 User-Agent MUST 是 composition-owned fallback设置，默认采用稳定 Android Chrome UA并可由用户修改。来源 request plan显式 UA、browser-session UA或 source-owned client策略 MUST 优先；全局 fallback不得覆盖来源权威。
 - Android Mihon宿主 MUST 能执行 extension/source实际返回的 HTTP(S)媒体 URL；cleartext兼容能力 MUST 在统一宿主网络策略提供，MUST NOT按 WNACG等具体域名/插件维护静态白名单，也不得把 source返回的 HTTP URL擅自改写为 HTTPS。
 - Reader页面下载 MUST 只有 Pipeline/`LiveCoordinator` 一个 retry owner。runtime标记 transient/retryable 的失败 MUST 投影为 `ErrorCode.network`并受有界 RetryPolicy控制；非 retryable/source失败与网络重试耗尽 MUST 在当前 demand内终止，source snapshot listener、finally或Presentation MUST NOT另行无界重提。
-- Reader page 的 scheduler cancellation/priority MUST 跨 `DownloadJob -> cache/read-through transport -> source request-plan -> external runtime` 保持同一 task identity。任何透明wrapper在下层支持`ControlledTransport`时 MUST保持该capability与同一个`TaskControl`，cache miss不得退化为无control的`open()`。Venera MAY 为JavaScript安全保持单 invocation context，但其内部排队 MUST在permit transfer时尊重实时priority并丢弃cancelled waiter；active controlled invocation取消 MUST下沉到requestId cancellation。不得用独立FIFO覆盖NetLane决定，也不得增加Venera并发来模拟抢占。
+- Reader page 的 scheduler cancellation/priority MUST 跨 `DownloadJob -> cache/read-through transport -> source request-plan -> external runtime` 保持同一 task identity。任何透明wrapper在下层支持`ControlledTransport`时 MUST保持该capability与同一个`TaskControl`，cache miss不得退化为无control的`open()`。Venera MAY 为JavaScript安全保持单 invocation context，但其内部排队 MUST在permit transfer时尊重实时priority并丢弃cancelled waiter；active controlled invocation取消 MUST下沉到requestId cancellation。Venera native cancellation MUST先中止该requestId所属HTTP连接，但单上下文 invocation permit MUST等JavaScript真正 `finished(requestId)` 后才释放；仅向Dart返回“cancelled”不得提前制造第二个并发JS invocation。不得用独立FIFO覆盖NetLane决定，也不得增加Venera并发来模拟抢占。
 - Native incremental decoder MUST NOT 在完整 WebP decode、scale、composite或 frame copy期间持有 encoded byte source读锁。source lock临界区 MAY 刷新 demux并复制下一帧所需压缩 fragment；耗时像素工作 MUST 在锁外完成，使前台 `reserve/commit` 不被后台整帧 decode阻塞。
 - App presentation MUST NOT 直接创建 `HttpClient`/`HttpURLConnection`或直接消费 source transport。生产 direct-network owner MUST 被限制在通用 transport、source-resolved host replay、source-owned runtime/client与插件安装 control-plane。
 - host replay MUST 只用于可无状态平铺的单次 source request。遇到 redirect、`Set-Cookie`、未知 client wrapper、认证/session语义或成功 HTTP却非编码媒体响应时 MUST 切回 source-owned client；不得让独立 Dart HTTP client接管来源 Cookie/session状态。
@@ -102,8 +102,8 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 
 - stable ownership midpoint 默认为 50%。
 - 横向目标页覆盖率达到 0.15，纵向目标页真实进入视口时，MUST 建立 transition demand。
-- transition 没有 decoded frame 时 MUST 可独立取得一帧，不得等待 current 下载完成、source sealed 或 current holder 达到基础水位。
-- transition 首帧后，current 基础水位 MUST 先于 transition 深水位继续补充。
+- current 浅水位 bootstrap MUST 优先：动态 current holder depth < 3 时，speculative next/next2/previous 不得启动新的 decode refill；静态 current 一帧即满足。若 current 暂时在等待 source，真实已进入 viewport 的 transition MAY 独立取得一帧，避免拖动目标黑屏。
+- current bootstrap 建立后才恢复 next/next2/previous staged refill；transition 不得用深水位抢占 current 的基础播放水位。
 - midpoint 后新 stable page MUST 成为 current；旧 current 的已上传 output MAY 作为独立 retained/last presentation 保留并暂停播放，但该 retention MUST NOT占用或跳过相对 previous/next slot。相邻旧 current仍 MUST按 offset -1/+1参与 encoded/decode window；大跳后若已离开7/3窗口则 retention不得单独制造 download/decode demand。
 - 交接不得产生 targetless demand gap、黑屏或重新创建同一 identity。
 
@@ -127,15 +127,15 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - 深度 decode 角色：前 2 / 后 1；
 - 动态 holder 最大水位为 current/next/next2/previous：7 / 5 / 3 / 2；
 - upload primary：current、transition；上一 current可通过独立 retained-output overlay获得 `last` upload demand，且不得改变其相对 download/decode role；
-- lane normal concurrency：network 5、decode 3、upload 2；
+- lane normal concurrency：network 5、decode 3、upload 2；network/decode/upload 各 MUST 保留 1 个仅 current(priority 1000) 可用的 bounded handoff slot，transition(priority 900)不得占用；
 - source bucket：local 2、remote 5。
 
-Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor 或 texture。静态一帧满足；推测静态预热 MUST 受预算限制。
+Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor 或 texture。静态一帧满足；静态证据 MUST NOT 把 near/far encoded-only 页面提升为 speculative decode/upload，非可见静态预热只能发生在 current/transition/next/next2/previous 稳定 decode 角色内。真实 viewport 可见静态页 MAY 获得一帧输出，且不得重新引入 `PageRole.visible`。
 
 ## 4. 网络调度
 
 - composition-owned `NetLane` MUST 是页面网络的唯一调度权威。
-- current SHOULD 使用 priority 1000、一个高优先级 handoff slot和原位 priority migration；满足差值门槛时 MAY 抢占低优先级 active task。handoff严格限制为 `maxActive + reservedHighPrioritySlots`，取消中的 task必须真实退出后才释放 permit。普通 page-window detach MUST NOT取消已经 receiving 的传输；该任务 SHOULD降为低优先级 retained work，queued undemanded任务 MAY取消。只有新的 current/高优先级工作真实受 lane 或 Venera单上下文阻塞时 MAY按rank抢占 receiving；同一 receiving页短时离开又返回 MUST原位恢复priority而不得重建第二个transport。 生产 source-media host HTTP SHOULD由 composition注入可流式、可取消且复用连接的 platform transport；该 transport MUST接收同一 `TaskControl`，MUST NOT另建 retry/prefetch policy，且不得通过缩小7/3窗口改善首播。
+- current SHOULD 使用 priority 1000、network/decode/upload 各一个 current-only 高优先级 handoff slot和原位 priority migration；满足差值门槛时 MAY 抢占低优先级 active task。handoff严格限制为 `maxActive + reservedHighPrioritySlots`，取消中的 task必须真实退出后才释放 permit。普通 page-window detach MUST NOT取消已经 receiving 的传输；该任务 SHOULD降为低优先级 retained work，queued undemanded任务 MAY取消。只有新的 current/高优先级工作真实受 lane 或 Venera单上下文阻塞时 MAY按rank抢占 receiving；同一 receiving页短时离开又返回 MUST原位恢复priority而不得重建第二个transport。 生产 source-media host HTTP SHOULD由 composition注入可流式、可取消且复用连接的 platform transport；该 transport MUST接收同一 `TaskControl`，MUST NOT另建 retry/prefetch policy，且不得通过缩小7/3窗口改善首播。
 - DownloadJob、Reader、UploadSession 和 holder 不得建立第二套网络资格门控。
 - 目标页 receiving transport 不得因 current holder depth、播放 underflow 或页面控件状态被暂停。
 - 不得通过缩小 7/3、关闭预下载或降低播放速度掩盖 identity、重复请求或 producer wake 缺陷。
@@ -156,8 +156,8 @@ Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor �
 - 两个 Dart decode isolate MUST 在 App 运行期常驻；libwebp 帧内 MUST 单线程。
 - 首次 decode SHOULD 优先单帧；current 后续 MAY 每次批量返回最多两帧。
 - holder MUST 是 decoded successor 的权威所有者；可见 output 不得计入 successor depth。
-- transition depth 为 0 时 MUST 在 current 深水位前获得独立一帧；之后恢复 staged current/neighbor refill。
-- 不得存在 startup-buffer、current-only decode gate 或以 playback buffering 控制其他页面 eligibility 的路径。
+- current bootstrap MUST 先建立静态1帧或动态最多3帧的浅水位；bootstrap 未满足时 speculative neighbor refill MUST 为0。current 等 source 时，真实 transition depth=0 MAY 独立取得1帧；bootstrap完成后恢复 staged current/neighbor refill。
+- 不得恢复独立 startup-buffer 或以 playback timer/underflow 控制网络 eligibility；current bootstrap 只属于 decode refill policy，不创建第二套 Reader gate。
 - metadata 未完成且 source 增长时 demux MUST 可刷新；未封缄 need-more-data MUST 等待 source revision，而不是定时销毁 cursor。
 - native target canvas MUST 生成预乘 RGBA；Android/Flutter fallback 不得再次预乘。
 - finite animation 到 EOF MUST 保留最后一帧；静态零时长帧不得启动 playback timer。

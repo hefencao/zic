@@ -114,6 +114,102 @@ void main() {
     expect(values, <String>['active', 'latest-follow']);
   });
 
+  test('decode lane reserves one handoff for current and preempts lower work', () async {
+    final lane = DecodeLane(
+      maxActive: 3,
+      reservedHighPrioritySlots: 1,
+      highPriorityThreshold: 1000,
+      preemptionThreshold: 40,
+    );
+    final started = <String>[];
+    final release = <String, Completer<void>>{
+      for (var i = 0; i < 3; i++) 'prefetch-$i': Completer<void>(),
+    };
+    final cancelled = Completer<String>();
+
+    for (var i = 0; i < 3; i++) {
+      final key = 'prefetch-$i';
+      lane.submit(
+        key: key,
+        priority: 700 + i * 10,
+        task: (token) async {
+          started.add(key);
+          await Future.any<void>(<Future<void>>[
+            release[key]!.future,
+            token.whenCancelled.then((_) {
+              if (!cancelled.isCompleted) cancelled.complete(key);
+            }),
+          ]);
+        },
+      );
+    }
+    await Future<void>.delayed(Duration.zero);
+    expect(lane.active, 3);
+
+    final currentStarted = Completer<void>();
+    lane.submit(
+      key: 'current',
+      priority: 1000,
+      task: (_) async {
+        started.add('current');
+        currentStarted.complete();
+      },
+    );
+
+    await currentStarted.future;
+    expect(await cancelled.future, 'prefetch-0');
+    expect(started, contains('current'));
+    for (final gate in release.values) {
+      if (!gate.isCompleted) gate.complete();
+    }
+    await lane.idle();
+  });
+
+  test('upload lane keeps reserved handoff exclusive to current priority', () async {
+    final lane = UploadLane(
+      maxActive: 2,
+      reservedHighPrioritySlots: 1,
+      highPriorityThreshold: 1000,
+      preemptionThreshold: 40,
+    );
+    final releases = <Completer<void>>[Completer<void>(), Completer<void>()];
+    for (var i = 0; i < releases.length; i++) {
+      lane.submit(
+        key: 'prefetch-$i',
+        priority: 700 + i * 10,
+        task: (token) => Future.any<void>(<Future<void>>[
+          releases[i].future,
+          token.whenCancelled,
+        ]),
+      );
+    }
+    await Future<void>.delayed(Duration.zero);
+
+    var transitionStarted = false;
+    lane.submit(
+      key: 'transition',
+      priority: 900,
+      task: (_) async => transitionStarted = true,
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(transitionStarted, isFalse,
+        reason: 'Vibe-style reserved execution slot belongs to current, not transition prefetch');
+
+    final currentStarted = Completer<void>();
+    lane.submit(
+      key: 'current',
+      priority: 1000,
+      task: (_) async => currentStarted.complete(),
+    );
+    await currentStarted.future;
+
+    for (final gate in releases) {
+      if (!gate.isCompleted) gate.complete();
+    }
+    await lane.idle();
+    expect(transitionStarted, isTrue);
+  });
+
   test('cancelAll clears pending work and signals active tokens', () async {
     final lane = NetLane(maxActive: 1);
     final started = Completer<void>();

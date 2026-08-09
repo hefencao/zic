@@ -54,7 +54,8 @@ if policy.index("if (transitionFirstFrameDecision != null)") > policy.index(
 ):
     raise SystemExit("transition first frame must resolve before staged current deepening")
 for token in (
-    "transition first frame does not wait for current depth three",
+    "ready current bootstrap outranks transition first frame",
+    "transition may bootstrap while current is waiting for source",
     "current deepening resumes after transition has its first frame",
 ):
     require(policy_test, token, "decode refill owner tests")
