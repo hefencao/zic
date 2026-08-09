@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.180`
-**App build：** `0.31.0+180`
+**源码版本：** `0.31.0-dev.181`
+**App build：** `0.31.0+181`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -11,7 +11,7 @@
 
 - 构建/依赖基线为 Dart>=3.12、Flutter>=3.44、AGP9.3.1、Gradle9.5.0、compileSdk37；Gradle daemon按用户本地环境要求使用OpenJDK25，但Android Java/Kotlin class-file target继续17。workspace直接 `test`约束为`^1.25.0`以兼容Flutter3.44固定的test_api解析。五个本地Android Flutter插件不再自行apply KGP，稳定Flutter兼容层仍保持 `android.builtInKotlin=false/android.newDsl=false`；Mihon ABI兼容依赖继续固定。
 - 外部漫画媒体生产host使用 `downloads_bridge/RhttpSourceResourceDirectTransport` + rhttp 0.18.0：source request-plan、NetLane、DownloadSession/artifact所有权不变；Rust/rhttp只执行已规范化单次请求并观察同一个`TaskControl`。网络packet通过前缀验证后首块聚合约64KiB、后续约256KiB再交给Pipeline，避免1–16KiB小包逐个触发Dart commit；pure `downloads`仍以Dart HttpClient作为非Flutter/test默认。后台首帧后预热rhttp runtime。
-- dev.175 把 current 抢占身份贯穿到真正阻塞的 source/runtime层：`CancelToken`作为只读 `TaskControl`携带 cancellation与动态 priority，Reader page从 DownloadJob、LoaderTransport、source request-plan到 Venera runtime不再丢失该身份。Venera仍单 invocation；permit transfer按实时 priority选择，active prefetch取消下沉到既有 `cancel(requestId)`，不以增加插件并发换延迟。
+- dev.175建立了`DownloadJob/LoaderTransport/source-plan/Venera`的TaskControl能力，但dev.181设备证据与生产composition审计发现外层`ArtifactCacheTransport`仍会擦除该能力。dev.181将read-through cache也升级为`ControlledTransport`，cache miss向controlled fallback传递同一CancelToken；至此生产Reader origin链才真正保持动态priority/cancellation。Venera仍单 invocation，permit transfer按实时priority选择，active prefetch取消下沉到既有`cancel(requestId)`。
 - dev.175 同时收口下载卡顿的 native锁反转：`zic_cursor_decode_next()` 在 source读锁内只准备 demux/单帧压缩 fragment，WebP decode、缩放、合成和 canvas copy移到锁外；Dart主 isolate同步 append不再等待后台 worker完整解码。7/3、2/1、5/3/2及 network5+reserved1均不变。
 - 下载管理页采用 route-first projection：Navigator进入后先显示 Home现有 chapter download snapshot与 whole-comic queue snapshot；`wholeComicDownloads.ready`、`inspectMany()`和 cache usage检查在首帧之后刷新。逐 entry `Future.wait(inspect)`与 initState microtask扫描已删除。
 - dev.176 继续收口 transport/body与artifact热路径：prefetched host response在完整stream生命周期绑定 `TaskControl`，outer consumer取消必须abort底层 `HttpClientResponse`；partial artifact append不再逐chunk同步计算CRC32，seal/restore时在 isolate一次性rehash。checksum完整性、7/3、2/1、5/3/2及network5+reserved1均不变。

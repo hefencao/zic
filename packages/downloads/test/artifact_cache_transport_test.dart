@@ -478,6 +478,58 @@ void main() {
     expect(source.payload['deliveryMode'], 'memory-direct');
   });
 
+  test('cache miss preserves scheduler control into controlled origin fallback',
+      () async {
+    final uri = Uri.parse('venera-resource:current-page');
+    final id = _downloadId(uri, 'page-controlled-origin');
+    final fallback = _ControlledRecordingTransport(
+      Uint8List.fromList(<int>[4, 5, 6]),
+    );
+    final control = _MutableTaskControl(priority: 1000);
+    final transport = ArtifactCacheTransport(
+      cache: ArtifactCacheManager(
+        backend: _MemoryArtifactStore(<DownloadId, Uint8List>{}),
+      ),
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => fallback,
+    );
+
+    final response = await transport.openControlled(uri, control: control);
+
+    expect(await _collect(response), <int>[4, 5, 6]);
+    expect(fallback.controlledOpens, 1);
+    expect(fallback.uncontrolledOpens, 0);
+    expect(identical(fallback.lastControl, control), isTrue);
+    expect(fallback.lastControl?.priority, 1000);
+  });
+
+  test('cancelled controlled cache miss never opens origin fallback', () async {
+    final uri = Uri.parse('venera-resource:cancelled-page');
+    final id = _downloadId(uri, 'page-cancelled-origin');
+    final fallback = _ControlledRecordingTransport(Uint8List.fromList(<int>[7]));
+    final control = _MutableTaskControl(priority: 1000)..cancel();
+    final transport = ArtifactCacheTransport(
+      cache: ArtifactCacheManager(
+        backend: _MemoryArtifactStore(<DownloadId, Uint8List>{}),
+      ),
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => fallback,
+    );
+
+    await expectLater(
+      transport.openControlled(uri, control: control),
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+    expect(fallback.controlledOpens, 0);
+    expect(fallback.uncontrolledOpens, 0);
+  });
+
   test('ambiguous URI identities bypass the artifact cache', () async {
     final uri = Uri.parse('https://example.invalid/shared.bin');
     final first = _downloadId(uri, 'page-a');
@@ -637,6 +689,63 @@ final class _ThrowingArtifactStore implements ArtifactCacheBackend {
 
   @override
   Future<void> invalidateArtifact(DownloadId id) async {}
+}
+
+final class _MutableTaskControl implements TaskControl {
+  _MutableTaskControl({required this.priority});
+
+  final Completer<void> _cancelled = Completer<void>();
+
+  @override
+  int priority;
+
+  @override
+  bool get cancelled => _cancelled.isCompleted;
+
+  @override
+  Future<void> get whenCancelled => _cancelled.future;
+
+  void cancel() {
+    if (!_cancelled.isCompleted) _cancelled.complete();
+  }
+}
+
+final class _ControlledRecordingTransport implements ControlledTransport {
+  _ControlledRecordingTransport(this.body);
+
+  final Uint8List body;
+  int controlledOpens = 0;
+  int uncontrolledOpens = 0;
+  TaskControl? lastControl;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async {
+    uncontrolledOpens++;
+    return _response();
+  }
+
+  @override
+  Future<ByteResponse> openControlled(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
+  }) async {
+    controlledOpens++;
+    lastControl = control;
+    return _response();
+  }
+
+  ByteResponse _response() => ByteResponse(
+        bytes: Stream<List<int>>.value(body),
+        statusCode: 200,
+        rangeStart: 0,
+        totalLength: body.lengthInBytes,
+      );
 }
 
 final class _RecordingTransport implements Transport {

@@ -117,6 +117,7 @@ python3 "$ROOT/tool/test_dev177_vibevenera_retained_preemption_download_manager_
 python3 "$ROOT/tool/test_dev178_vibevenera_rhttp_startup_transport.py"
 python3 "$ROOT/tool/test_dev179_toolchain_rhttp_chunk_owner.py"
 python3 "$ROOT/tool/test_dev180_openjdk25_previous_window_owner.py"
+python3 "$ROOT/tool/test_dev181_artifact_cache_controlled_origin_owner.py"
 python3 "$ROOT/tool/check_test_quarantine.py"
 python3 "$ROOT/tool/test_texture_schedule_timing_contract.py"
 python3 "$ROOT/tool/test_texture_bridge_kotlin_compile.py"

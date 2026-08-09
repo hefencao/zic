@@ -1,9 +1,9 @@
 # zic Implementation Plan
 
-## P0：VibeVenera 首播时间、rhttp framing 与 request-plan 真机闭环
+## P0：VibeVenera 首播时间与 controlled read-through 真机闭环
 
 - 同一Venera漫画/设备记录 Reader mount→source-plan→origin response→首个64KiB逻辑块→约256–300KiB可解码前缀→first frame；生产 rhttp不得再把约1–16KiB网络 packet逐个暴露给 DownloadJob，首块64KiB后续256KiB framing必须保持字节/取消/Range语义。
-- 验证 `RhttpSourceResourceDirectTransport` current取消终止request/body，source显式headers/UA保持，redirect/Set-Cookie/non-media继续回source-owned client；不得同时运行Dart HttpClient与rhttp双下载。若origin `openMicros`仍稳定数秒，下一步只优化Venera request-plan warm/cache。
+- 首先验证origin `artifactSource/sourceRead` 对current明确记录 `controlledFallback=true` 且priority=1000；current切换/抢占后Venera request-plan waiter必须收到同一个TaskControl。只有在该不变量成立后`openMicros`仍稳定数秒，才继续拆Venera runtime plan耗时；不得先做整章request-plan预解析。
 - 保持 encoded 7/3、decode 2/1、network/decode/upload 5/3/2与reserved current 1；相邻翻页后 immediate previous必须继续获得 backward download/decode（首 previous priority 780），同时可独立保留旧 output；大跳后远离7/3的 retained旧页不得继续下载。完成本地 `flutter pub get` 后验证rhttp 0.18.0、Flutter3.44+/Dart3.12+、AGP9.3.1/Gradle9.5/OpenJDK25构建环境，Android/Kotlin bytecode仍target17。
 
 ## P0：迁移 / 同源版本 / 更新提示真机闭环

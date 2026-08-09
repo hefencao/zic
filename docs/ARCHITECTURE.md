@@ -51,7 +51,7 @@ Native implementation
 
 ### `transport`
 
-可取消、可分块的 encoded-byte transport、range、validator 和 response 合同。Reader page 使用可选 `ControlledTransport` 将 scheduler `TaskControl` 贯穿 source-plan/open/response body；transport可中止自身请求但不拥有 priority policy，也不得在请求真实退出前伪释放 lane容量。prefix probe后outer stream取消仍必须abort底层response。它不拥有 artifact、Reader demand 或播放状态。
+可取消、可分块的 encoded-byte transport、range、validator 和 response 合同。Reader page 使用可选 `ControlledTransport` 将 scheduler `TaskControl` 贯穿 cache read-through、source-plan、open与response body；任何transparent/read-through wrapper若下层支持controlled capability都必须保持同一control，不能因cache miss降级为普通`open()`。transport可中止自身请求但不拥有priority policy，也不得在请求真实退出前伪释放lane容量；prefix probe后outer stream取消仍必须abort底层response。它不拥有artifact、Reader demand或播放状态。
 
 ### `storage`
 

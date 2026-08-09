@@ -17,7 +17,7 @@ const int _foregroundContinuationChunkBytes = 1024 * 1024;
 /// Tier lookup is delegated to the composition-owned [ArtifactCacheManager].
 /// This transport only applies authoritative demand priority, foreground read
 /// scheduling and the origin fallback selected by the owning Reader session.
-final class ArtifactCacheTransport implements Transport {
+final class ArtifactCacheTransport implements ControlledTransport {
   ArtifactCacheTransport({
     required ArtifactCacheManager cache,
     required Iterable<MapEntry<Uri, DownloadId>> identities,
@@ -53,7 +53,17 @@ final class ArtifactCacheTransport implements Transport {
     Uri uri, {
     ByteRange? range,
     Validators? validators,
+  }) =>
+      openControlled(uri, range: range, validators: validators);
+
+  @override
+  Future<ByteResponse> openControlled(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
   }) async {
+    _throwIfTaskCancelled(control);
     final revision = _demandRevision?.call();
     range?.validate();
     final id = _identities[uri.toString()];
@@ -61,6 +71,7 @@ final class ArtifactCacheTransport implements Transport {
       final readStarted = _clock?.nowMicros();
       try {
         final lookup = await _cache.lookup(id);
+        _throwIfTaskCancelled(control);
         final readMicros = readStarted == null
             ? null
             : (_clock!.nowMicros() - readStarted)
@@ -74,6 +85,7 @@ final class ArtifactCacheTransport implements Transport {
             validators: validators,
             revision: revision,
             openMicros: readMicros,
+            control: control,
           );
           if (foregroundResponse != null) return foregroundResponse;
 
@@ -89,14 +101,14 @@ final class ArtifactCacheTransport implements Transport {
             var schedulerMaxWaitMicros = 0;
             var schedulerAcquires = 0;
             var schedulerForegroundAcquires = 0;
-            var acquiredPriority = _demandPriority?.call(id) ?? 0;
+            var acquiredPriority = _demandPriority?.call(id) ?? control?.priority ?? 0;
             final readScheduler = _readScheduler;
             final response = readScheduler == null
                 ? cachedResponse
                 : _scheduledArtifactResponse(
                     cachedResponse,
                     scheduler: readScheduler,
-                    priority: () => _demandPriority?.call(id) ?? 0,
+                    priority: () => _demandPriority?.call(id) ?? control?.priority ?? 0,
                     onAcquired: (waitMicros, priority) {
                       schedulerWaitMicros += waitMicros;
                       if (waitMicros > schedulerMaxWaitMicros) {
@@ -151,6 +163,7 @@ final class ArtifactCacheTransport implements Transport {
           }
         }
       } on Object catch (error) {
+        _throwIfTaskCancelled(control);
         _recordCacheFailure(
           id: id,
           uri: uri,
@@ -161,13 +174,26 @@ final class ArtifactCacheTransport implements Transport {
       }
     }
 
+    _throwIfTaskCancelled(control);
     final fallback = _fallbackFor(uri);
+    final controlledFallback = fallback is ControlledTransport;
     final openStarted = _clock?.nowMicros();
-    final response = await fallback.open(
-      uri,
-      range: range,
-      validators: validators,
-    );
+    final response = fallback is ControlledTransport
+        ? await fallback.openControlled(
+            uri,
+            range: range,
+            validators: validators,
+            control: control,
+          )
+        : await fallback.open(
+            uri,
+            range: range,
+            validators: validators,
+          );
+    if (control?.cancelled == true) {
+      await response.discard();
+      _throwIfTaskCancelled(control);
+    }
     final openMicros = openStarted == null
         ? null
         : (_clock!.nowMicros() - openStarted).clamp(0, 1 << 62).toInt();
@@ -193,6 +219,10 @@ final class ArtifactCacheTransport implements Transport {
       sourceClass: sourceClass,
       statusCode: response.statusCode,
       totalLength: response.totalLength,
+      priority: control?.priority,
+      details: <String, Object?>{
+        'controlledFallback': controlledFallback,
+      },
     );
     return _traceResponse(
       retainedResponse,
@@ -202,6 +232,10 @@ final class ArtifactCacheTransport implements Transport {
       uri: uri,
       revision: revision,
       openMicros: openMicros,
+      priority: control == null ? null : () => control.priority,
+      readDetails: () => <String, Object?>{
+        'controlledFallback': controlledFallback,
+      },
     );
   }
 
@@ -256,11 +290,14 @@ final class ArtifactCacheTransport implements Transport {
     required Validators? validators,
     required int? revision,
     required int? openMicros,
+    TaskControl? control,
   }) async {
+    _throwIfTaskCancelled(control);
     final id = lookup.id;
     final scheduler = _readScheduler;
     final foregroundPriority = scheduler?.foregroundPriority ?? 900;
-    final requestedPriority = _demandPriority?.call(id) ?? 0;
+    final requestedPriority =
+        _demandPriority?.call(id) ?? control?.priority ?? 0;
     if (requestedPriority < foregroundPriority) return null;
 
     var schedulerWaitMicros = 0;
@@ -274,16 +311,24 @@ final class ArtifactCacheTransport implements Transport {
       if (scheduler != null) {
         final wait = Stopwatch()..start();
         lease = await scheduler.acquire(
-          priority: () => _demandPriority?.call(id) ?? requestedPriority,
+          priority: () =>
+              _demandPriority?.call(id) ?? control?.priority ?? requestedPriority,
         );
+        if (control?.cancelled == true) {
+          lease.release();
+          lease = null;
+          _throwIfTaskCancelled(control);
+        }
         schedulerWaitMicros = wait.elapsedMicroseconds;
         schedulerAcquires = 1;
         schedulerForegroundAcquires = lease.foreground ? 1 : 0;
         acquiredPriority = lease.priority;
       }
       read = await _cache.readForegroundLookup(lookup);
+      _throwIfTaskCancelled(control);
     } on Object catch (error) {
       lease?.release();
+      _throwIfTaskCancelled(control);
       _recordForegroundReadFailure(
         id: id,
         uri: uri,
@@ -616,6 +661,15 @@ String _originSourceClass(Uri uri, Transport transport) {
     return 'plugin-resource';
   }
   return 'remote';
+}
+
+
+void _throwIfTaskCancelled(TaskControl? control) {
+  if (control?.cancelled != true) return;
+  throw const Failure(
+    code: ErrorCode.cancelled,
+    message: 'artifact cache transport was cancelled by its scheduler owner',
+  );
 }
 
 Map<String, DownloadId> _uniqueIdentities(

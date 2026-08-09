@@ -1,3 +1,11 @@
+## 0.31.0-dev.181：修复生产 Artifact read-through 丢失 current TaskControl
+
+- 新 trace确认 cache/hot页面已可十几到数百毫秒首帧，但origin current即使已以priority 1000进入NetLane 5+1，仍可在`source-loader`等待约8秒；response可用后首帧只需约百毫秒。
+- 根因是生产`PipelineReaderSession`始终把`ArtifactCacheTransport`作为最外层transport，而该wrapper仅实现普通`Transport`；`DownloadJob`因此不调用controlled入口，cache miss又无条件`fallback.open()`，dev.175–177建立的TaskControl在进入Venera前被read-through层擦除。
+- `ArtifactCacheTransport`现实现`ControlledTransport`，普通open委托controlled入口；cache miss向controlled fallback原样传递同一个TaskControl，并在cache/origin边界保持cancellation权威。origin trace新增`controlledFallback`和priority。
+- 对照当前VibeVenera确认其同样在单图下载附近解析image-loading config，因此本轮不引入整章request-plan预解析，不修改7/3、2/1、5/3/2或rhttp framing。
+- 新增ADR 0164、dev.181根因审计、行为回归和release gate。版本提升到`0.31.0+181`。
+
 ## 0.31.0-dev.180：OpenJDK 25 构建环境与 Previous/Last 角色解耦
 
 - 根据 `zic-debug-trace-2026-08-09T04-18-30.jsonl` 定位跳页后 previous 不预下载：current 104→105 时旧 current 的 download 从 priority 1000 直接降为 retained-background 0；`RoleResolver` 同时把旧 current写成独占 `last`并从 backward window跳过，于是 immediate previous 104 被吞掉，103错位成为 priority 780 的 previous。
