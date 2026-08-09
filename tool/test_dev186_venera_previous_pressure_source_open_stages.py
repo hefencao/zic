@@ -93,13 +93,12 @@ require(
     'Venera',
 )
 require(
-    'docs/IMPLEMENTATION_STATUS.md',
-    '`0.31.0-dev.186`',
+    'CHANGELOG.md',
+    '## 0.31.0-dev.186：Venera Previous Request-Plan 压力与 Source-Open 分段观测',
     '`0.31.0+186`',
 )
 require(
     'docs/NEXT_CHAT_HANDOFF.md',
-    'zic_v0.31.0-dev.186_venera-previous-request-plan-pressure-source-open-stages.zip',
     '0169-venera-previous-request-plan-pressure-and-source-open-stages.md',
 )
 require('tool/check.sh', 'test_dev186_venera_previous_pressure_source_open_stages.py')

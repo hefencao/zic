@@ -1,3 +1,11 @@
+## 0.31.0-dev.187：Venera Request-Scoped Cancel 物理闭环
+
+- `zic-debug-trace-2026-08-09T10-30-21.jsonl`用 dev.186 新分段观测确认剩余 origin-open 长尾主要不在 host HTTP open：18个 origin 样本的 `sourceRequestPlanMicros` 中位约3.195s、`sourceHostOpenMicros` 中位约0.367s，request-plan 占总 `readMicros` 的中位比例约83%。因此不再调整 NetLane 780/1000、network=5、current +1 或 decode/upload。
+- 大跳页样本中，旧 previous 在30.733s已进入 request-plan，31.459s 离窗后按 queued/pre-open 路径取消；新 current 在31.460s立即以5+1 handoff进入 NetLane，但其 request-plan仍耗时约3.447s，到35.894s才取得 origin response。外层 admission 已及时，剩余 owner 是 Venera requestId cancellation 到唯一 JavaScript invocation 真正 finished 的物理 unwind。
+- 只读对照 VibeVenera 后发现 ZIC bridge 的 `delay` 仍由 native `Thread.sleep` 同步阻塞，而 VibeVenera 使用异步 delayed Future；同时 ZIC request-scoped cancel 集合此前只登记 HTTP connection/call，不登记正在阻塞读取的 response `InputStream`。前者是不可抢占 bridge wait 风险，后者是明确缺失的 body-read abort seam。
+- Venera bootstrap 现在在 JavaScript 侧用 WebView 原生 timer 实现 request-scoped async delay，`__zicCancel(requestId)`会清 timer 并 reject 对应 Promise；native bridge不再允许 blocking `Thread.sleep` delay。URLConnection 与 DNS-fallback 的 response `InputStream`也登记到同一 requestId cancellation 集合，preemption 时主动 close；单 JavaScript invocation、真实 `finished(requestId)` 才释放 permit 的规则保持不变。新增 ADR 0170、dev.187 audit/gate，版本提升到`0.31.0+187`。
+- 顺手修正两个继承的历史静态gate而不改变生产语义：dev.160不再把source-owned runtime fallback绑死在旧`return _openRuntimeFallback(`语法；dev.186不再要求当前状态/交接文件仍停留在dev.186，只继续冻结ADR 0169、stage diagnostics与版本下限。
+
 ## 0.31.0-dev.186：Venera Previous Request-Plan 压力与 Source-Open 分段观测
 
 - `zic-debug-trace-2026-08-09T10-05-26.jsonl`确认 dev.185 外层 previous admission 已基本收敛：5个可完整匹配的660→780到`downloadStarted`样本仅3.1–14.4ms，中位6.508ms；不再修改NetLane 780/1000、network=5或current +1。

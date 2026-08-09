@@ -371,6 +371,20 @@ async function checkNetworkExtraAndCryptoSurface(){
  if(typeof Convert.encryptAesEcb!=='function'||Convert.encryptAesCfb.length!==4||Convert.decryptAesCfb.length!==4)throw new Error('Convert AES surface is incomplete');
 }
 
+async function checkRequestScopedDelayCancellation(){
+ const requestId='delay-cancel';
+ __zicActiveRequestId=requestId;
+ const started=Date.now();
+ const delayed=sendMessage({method:'delay',time:5000});
+ __zicCancel(requestId);
+ let cancelled=false;
+ try{await delayed}catch(error){cancelled=String(error).includes('cancelled')}
+ const elapsed=Date.now()-started;
+ __zicCancelled.delete(requestId);
+ __zicActiveRequestId=null;
+ if(!cancelled||elapsed>500||__zicDelayWaiters.has(requestId))throw new Error('request-scoped delay did not cancel promptly '+JSON.stringify({cancelled,elapsed,retained:__zicDelayWaiters.has(requestId)}));
+}
+
 async function checkInvokeRequestLifecycle(){
  let seenRequestId=null,completed=null,finished=null;
  globalThis.__zicSource={comic:{onImageLoad:async()=>({url:'https://cdn.invalid/image.jpg',method:'GET',data:'must-not-cross-get'})}};
@@ -387,7 +401,7 @@ async function checkInvokeRequestLifecycle(){
  if(seenRequestId!=='invoke-lifecycle'||completed?.requestId!=='invoke-lifecycle'||finished!=='invoke-lifecycle')throw new Error('invoke lifecycle did not retain the request id '+JSON.stringify({seenRequestId,completed,finished}));
 }
 
-(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkComicPreviewPagination();await checkPreviewCropIdentity();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
+(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkComicPreviewPagination();await checkPreviewCropIdentity();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkRequestScopedDelayCancellation();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
 '''
 with tempfile.TemporaryDirectory() as td:
     js=Path(td)/'test.js'; js.write_text(bootstrap+'\n'+test)

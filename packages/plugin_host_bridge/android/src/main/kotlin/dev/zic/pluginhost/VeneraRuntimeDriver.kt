@@ -402,10 +402,9 @@ private class VeneraNativeBridge(
                 "convert" -> convert(message)
                 "uuid" -> UUID.randomUUID().toString()
                 "random" -> random(message)
-                "delay" -> {
-                    Thread.sleep(message.optLong("time", 0).coerceIn(0, 30_000))
-                    null
-                }
+                "delay" -> error(
+                    "Venera delay must be handled asynchronously by the JavaScript bridge",
+                )
                 "getLocale" -> Locale.getDefault().toLanguageTag().replace('-', '_')
                 "getPlatform" -> "android"
                 "isLogged" -> isLogged()
@@ -612,6 +611,7 @@ private class VeneraNativeBridge(
 
     private fun cancelConnection(connection: Any) {
         when (connection) {
+            is InputStream -> runCatching { connection.close() }
             is HttpURLConnection -> connection.disconnect()
             is ReflectiveVeneraCall -> connection.cancel()
         }
@@ -676,11 +676,16 @@ private class VeneraNativeBridge(
             val status = connection.responseCode
             val stream = if (status >= 400) connection.errorStream else connection.inputStream
             val responseBytes = stream?.let {
-                readDecodedResponseBytes(
-                    it,
-                    connection.getHeaderField("Content-Encoding"),
-                    maxResponseBytes,
-                )
+                registerConnection(requestId, it)
+                try {
+                    readDecodedResponseBytes(
+                        it,
+                        connection.getHeaderField("Content-Encoding"),
+                        maxResponseBytes,
+                    )
+                } finally {
+                    unregisterConnection(requestId, it)
+                }
             } ?: ByteArray(0)
             return veneraResponse(
                 status = status,
@@ -730,7 +735,12 @@ private class VeneraNativeBridge(
                     it.name == "byteStream" && it.parameterCount == 0
                 }?.invoke(body) as? InputStream
                 val responseBytes = stream?.let {
-                    readDecodedResponseBytes(it, contentEncoding, maxResponseBytes)
+                    registerConnection(requestId, it)
+                    try {
+                        readDecodedResponseBytes(it, contentEncoding, maxResponseBytes)
+                    } finally {
+                        unregisterConnection(requestId, it)
+                    }
                 } ?: ByteArray(0)
                 return veneraResponse(status.toInt(), headerMap, responseBytes)
             } finally {
@@ -1667,9 +1677,28 @@ function __zicEncode(value) {
   return value;
 }
 let __zicActiveRequestId=null;
+const __zicBrowserSetTimeout=globalThis.setTimeout.bind(globalThis);
+const __zicBrowserClearTimeout=globalThis.clearTimeout.bind(globalThis);
+const __zicDelayWaiters=new Map();
+function __zicDelay(time,requestId){
+  const duration=Math.max(0,Math.min(30000,Number(time)||0));
+  return new Promise((resolve,reject)=>{
+    const waiter={timer:null,reject};
+    const remove=()=>{if(!requestId)return;const scoped=__zicDelayWaiters.get(requestId);if(!scoped)return;scoped.delete(waiter);if(scoped.size===0)__zicDelayWaiters.delete(requestId)};
+    waiter.timer=__zicBrowserSetTimeout(()=>{remove();if(requestId&&__zicCancelled.has(requestId)){reject(new Error('Venera request was cancelled'));return}resolve(null)},duration);
+    if(requestId){let scoped=__zicDelayWaiters.get(requestId);if(!scoped){scoped=new Set();__zicDelayWaiters.set(requestId,scoped)}scoped.add(waiter)}
+  });
+}
+function __zicCancelDelays(requestId){const scoped=__zicDelayWaiters.get(requestId);if(!scoped)return;__zicDelayWaiters.delete(requestId);for(const waiter of scoped){__zicBrowserClearTimeout(waiter.timer);waiter.reject(new Error('Venera request was cancelled'))}}
 function sendMessage(message) {
-  if(__zicActiveRequestId&&message.requestId==null){message={...message,requestId:__zicActiveRequestId}}
-  if(__zicActiveRequestId&&__zicCancelled.has(__zicActiveRequestId))throw new Error('Venera request was cancelled');
+  const requestId=message.requestId??__zicActiveRequestId;
+  if(requestId&&message.requestId==null){message={...message,requestId}}
+  if(requestId&&__zicCancelled.has(requestId)){
+    const error=new Error('Venera request was cancelled');
+    if(message.method==='delay')return Promise.reject(error);
+    throw error;
+  }
+  if(message.method==='delay')return __zicDelay(message.time,requestId);
   const envelope = JSON.parse(ZicNative.request(JSON.stringify(__zicEncode(message))));
   if (!envelope.ok) throw new Error(envelope.error || 'Venera bridge failed');
   return __zicDecode(envelope.value);
@@ -1923,5 +1952,5 @@ async function __zicOperation(request){
  throw new Error('Unsupported Venera operation');
 }
 async function __zicInvoke(raw){const request=typeof raw==='string'?JSON.parse(raw):raw,previousRequestId=__zicActiveRequestId;__zicActiveRequestId=request.requestId;try{const value=await __zicOperation(request);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:true,value:__zicEncode(value)}))}catch(error){const message=__zicErrorMessage(error,request.operation),retryable=/timeout|timed out|connect|network|dns|temporar|HTTP 5\d\d/i.test(message);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:false,code:'venera-operation-failed',message,retryable}))}finally{__zicCancelled.delete(request.requestId);__zicActiveRequestId=previousRequestId;ZicNative.finished(request.requestId)}}
-function __zicCancel(requestId){__zicCancelled.add(requestId)}
+function __zicCancel(requestId){__zicCancelled.add(requestId);__zicCancelDelays(requestId)}
 """

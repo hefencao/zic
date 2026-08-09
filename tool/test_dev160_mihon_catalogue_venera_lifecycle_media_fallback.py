@@ -75,7 +75,7 @@ for token in (
 forbid(transport, "_client.userAgent = 'zic-venera/0.31.0'", 'cross-source default user agent')
 for token in (
     "error.details['sourceMediaProtocolMismatch'] == true",
-    'return _openRuntimeFallback(',
+    '_openRuntimeFallback(',
     'await _prefetchEncodedMediaBody(',
     "'sourceMediaProtocolMismatch': true",
     '_looksLikeEncodedMediaPrefix',
