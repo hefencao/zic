@@ -204,7 +204,7 @@ def check_animated_demo() -> None:
         fail(f'Animated WebP fixtures must stay ordered as {expected}')
 
     pubspec = (app / 'pubspec.yaml').read_text(encoding='utf-8')
-    if 'file_selector: ^1.0.3' not in pubspec:
+    if 'file_selector: ^1.1.0' not in pubspec:
         fail('local import must use the SDK-compatible file_selector release')
     if 'file_selector_android:' in pubspec:
         fail('app must not depend on the raw-path Android directory selector implementation')

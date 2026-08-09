@@ -1,11 +1,12 @@
 name: zic
 description: zic Flutter application.
 publish_to: none
-version: 0.31.0+178
+version: 0.31.0+179
 resolution: workspace
 
 environment:
-  sdk: '>=3.6.0 <4.0.0'
+  sdk: '>=3.12.0 <4.0.0'
+  flutter: '>=3.44.0'
 
 dependencies:
   flutter:
@@ -32,7 +33,7 @@ dependencies:
     path: ../../packages/pipeline_native
   pipeline_runtime:
     path: ../../packages/pipeline_runtime
-  file_selector: ^1.0.3
+  file_selector: ^1.1.0
   resource_cache:
     path: ../../packages/resource_cache
   reader_runtime:
@@ -53,7 +54,7 @@ dev_dependencies:
     path: ../../packages/transport
   flutter_test:
     sdk: flutter
-  flutter_lints: ^5.0.0
+  flutter_lints: ^6.0.0
 
 flutter:
   uses-material-design: true

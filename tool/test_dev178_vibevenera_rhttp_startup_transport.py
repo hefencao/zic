@@ -29,7 +29,7 @@ forbid(core, "package:rhttp", 'rhttp dependency in pure downloads core')
 
 bridge_pubspec = read('packages/downloads_bridge/pubspec.yaml')
 downloads_public = read('packages/downloads/lib/downloads.dart')
-require(bridge_pubspec, 'rhttp: 0.13.0', 'Dart 3.6-compatible rhttp pin')
+require(bridge_pubspec, 'rhttp: 0.18.0', 'current compatible rhttp pin')
 bridge = read('packages/downloads_bridge/lib/src/rhttp_source_resource_transport.dart')
 for token in (
     'implements SourceResourceDirectTransport',
@@ -69,8 +69,8 @@ if policy:
 
 version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
 android = re.search(r'^versionCode=(\d+)\s*$', read('apps/app/android/zic-version.properties'), re.M)
-if version is None or version.group(1) != '178' or android is None or android.group(1) != '178':
-    raise SystemExit('dev.178 version mismatch')
+if version is None or int(version.group(1)) < 178 or android is None or android.group(1) != version.group(1):
+    raise SystemExit('dev.178+ version mismatch')
 
 
 for token in (

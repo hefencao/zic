@@ -5,17 +5,17 @@ publish_to: none
 resolution: workspace
 
 environment:
-  sdk: '>=3.6.0 <4.0.0'
-  flutter: '>=3.27.0'
+  sdk: '>=3.12.0 <4.0.0'
+  flutter: '>=3.44.0'
 
 dependencies:
   downloads:
     path: ../downloads
-  rhttp: 0.13.0
+  rhttp: 0.18.0
   runtime_bridge:
     path: ../runtime_bridge
   storage_bridge:
     path: ../storage_bridge
 
 dev_dependencies:
-  test: ^1.25.0
+  test: ^1.31.2

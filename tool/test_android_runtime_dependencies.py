@@ -40,8 +40,8 @@ def main() -> int:
         'leaked onto the App runtime classpath',
     )
     _must_fail(
-        gradle.replace('    runtimeOnly "com.google.code.gson:gson:2.11.0"\n',
-                       '    runtimeOnly "com.google.code.gson:gson:2.11.0"\n'
+        gradle.replace('    runtimeOnly "com.google.code.gson:gson:2.14.0"\n',
+                       '    runtimeOnly "com.google.code.gson:gson:2.14.0"\n'
                        '    runtimeOnly "androidx.preference:preference-ktx:1.2.1"\n'),
         rules,
         'duplicate host provider',

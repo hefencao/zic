@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'package:downloads/downloads.dart';
 import 'package:rhttp/rhttp.dart' as rhttp;
 
+import 'rhttp_chunk_coalescer.dart';
+
 Future<void>? _rhttpInitialization;
 
 /// Prewarms the Rust HTTP runtime without blocking the first application frame.
@@ -215,13 +217,23 @@ Future<_RhttpResponseBody> _prefetchEncodedMediaBody(
   }
   Stream<List<int>> body() async* {
     var completed = false;
+    final coalescer = RhttpChunkCoalescer();
     try {
       for (final chunk in prefetched) {
         if (aborted) return;
-        yield chunk;
+        final ready = coalescer.add(chunk);
+        if (ready != null) yield ready;
       }
       while (!aborted && await iterator.moveNext()) {
-        yield iterator.current;
+        if (aborted) return;
+        final chunk = iterator.current;
+        if (chunk.isEmpty) continue;
+        final ready = coalescer.add(chunk);
+        if (ready != null) yield ready;
+      }
+      if (!aborted) {
+        final tail = coalescer.flush();
+        if (tail != null) yield tail;
       }
       completed = true;
     } finally {

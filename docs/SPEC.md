@@ -191,7 +191,7 @@ Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor �
 ## 10. 插件与来源
 
 - 插件 MUST 在隔离、信任和权限门禁内执行，只返回 catalog 数据、request plan 或显式有界 transform 结果。
-- 普通图片正文 SHOULD 由宿主 transport 流式下载。
+- 普通图片正文 SHOULD 由宿主 transport 流式下载。平台 transport MAY 将底层网络小包聚合为面向 Pipeline 的较大逻辑块，以降低 Dart 调度/commit 开销；首播块 SHOULD 小于持续传输块，聚合不得改变字节顺序、取消、Range/validator、artifact或重试所有权。
 - 插件不得访问导航、Reader、demand、artifact、App state 或底层缓存。
 - Cookie、token、脚本 payload 和 Base64 正文不得原样写入 Trace。
 

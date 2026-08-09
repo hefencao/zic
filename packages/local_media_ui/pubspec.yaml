@@ -5,7 +5,8 @@ publish_to: none
 resolution: workspace
 
 environment:
-  sdk: '>=3.6.0 <4.0.0'
+  sdk: '>=3.12.0 <4.0.0'
+  flutter: '>=3.44.0'
 
 dependencies:
   flutter:
@@ -16,7 +17,7 @@ dependencies:
     path: ../catalog
   domain:
     path: ../domain
-  file_selector: ^1.0.3
+  file_selector: ^1.1.0
   local_media:
     path: ../local_media
   media:
@@ -41,4 +42,4 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^5.0.0
+  flutter_lints: ^6.0.0

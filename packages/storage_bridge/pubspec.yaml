@@ -5,14 +5,15 @@ publish_to: none
 resolution: workspace
 
 environment:
-  sdk: '>=3.6.0 <4.0.0'
+  sdk: '>=3.12.0 <4.0.0'
+  flutter: '>=3.44.0'
 
 dependencies:
   flutter:
     sdk: flutter
   catalog:
     path: ../catalog
-  path_provider: ^2.1.5
+  path_provider: ^2.1.6
   resource_cache:
     path: ../resource_cache
   storage:

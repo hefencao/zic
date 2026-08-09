@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.178`
-**App build：** `0.31.0+178`
+**源码版本：** `0.31.0-dev.179`
+**App build：** `0.31.0+179`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -9,7 +9,8 @@
 
 ## 当前实现
 
-- dev.178把外部漫画媒体的生产host HTTP engine迁到 `downloads_bridge/RhttpSourceResourceDirectTransport`：source request-plan、NetLane、DownloadSession/artifact所有权不变；Rust/rhttp只执行已规范化单次请求，复用client/keep-alive并观察同一个`TaskControl`。pure `downloads`仍以Dart HttpClient作为非Flutter/test默认。后台在首帧后预热rhttp runtime，避免Reader首次请求承担native初始化。
+- 构建/依赖基线提升为 Dart>=3.12、Flutter>=3.44、AGP9.1.1、Gradle9.3.1、compileSdk37、JDK17 daemon criteria；五个本地Android Flutter插件不再自行apply KGP，改用 `kotlin.compilerOptions`。稳定Flutter兼容层仍保持 `android.builtInKotlin=false/android.newDsl=false`，待Flutter3.47+稳定后再切换Built-in Kotlin。普通Dart/Maven直接依赖更新到当前兼容稳定版本；Mihon ABI/extension兼容SHA、Injekt、QuickJS、RxJava1及兼容编译器/stdlib继续固定。
+- 外部漫画媒体生产host使用 `downloads_bridge/RhttpSourceResourceDirectTransport` + rhttp 0.18.0：source request-plan、NetLane、DownloadSession/artifact所有权不变；Rust/rhttp只执行已规范化单次请求并观察同一个`TaskControl`。网络packet通过前缀验证后首块聚合约64KiB、后续约256KiB再交给Pipeline，避免1–16KiB小包逐个触发Dart commit；pure `downloads`仍以Dart HttpClient作为非Flutter/test默认。后台首帧后预热rhttp runtime。
 - dev.175 把 current 抢占身份贯穿到真正阻塞的 source/runtime层：`CancelToken`作为只读 `TaskControl`携带 cancellation与动态 priority，Reader page从 DownloadJob、LoaderTransport、source request-plan到 Venera runtime不再丢失该身份。Venera仍单 invocation；permit transfer按实时 priority选择，active prefetch取消下沉到既有 `cancel(requestId)`，不以增加插件并发换延迟。
 - dev.175 同时收口下载卡顿的 native锁反转：`zic_cursor_decode_next()` 在 source读锁内只准备 demux/单帧压缩 fragment，WebP decode、缩放、合成和 canvas copy移到锁外；Dart主 isolate同步 append不再等待后台 worker完整解码。7/3、2/1、5/3/2及 network5+reserved1均不变。
 - 下载管理页采用 route-first projection：Navigator进入后先显示 Home现有 chapter download snapshot与 whole-comic queue snapshot；`wholeComicDownloads.ready`、`inspectMany()`和 cache usage检查在首帧之后刷新。逐 entry `Future.wait(inspect)`与 initState microtask扫描已删除。
@@ -30,7 +31,7 @@
 - Home“更新漫画”使用独立 `SavedComicRecord.sourceUpdateAt`：仅 shelf + source-confirmed update进入。已有章节目录发生变化或首次发现新 successor/version才推进；阅读 progress、普通 metadata刷新和未入书架浏览不推进。远程无偏好 primary projection默认 `inShelf=false`，首次加入书架清理加入前 update signal。
 - 初次 Venera/Mihon activation 的 Binder generation连续性已下沉到 Android `PluginRuntimeServiceClient`：仅 pending activation可跨一个 `runtime-service-died/disconnected` generation；Dart backend删除初次 activation重放，session invocation与业务失败仍按原 owner处理。
 - Home外部封面继续把 live source readiness作为显式加载依赖：首屏早于 plugin ready且 warm cache miss时，失败 Future只在对应 source从 unavailable→available后重新求值；普通 progress/enrichment rebuild不重试。历史/更新横向 Sliver直接 child使用 `section + canonical comic identity` 稳定 key并提供 reorder index callback。
-- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=177`。
+- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=179`。
 - 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
 - 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation不阻塞 Home primary，外部 source ready 后增量接入。
 - artwork资源恢复唯一属于 `ComicSourceResourceGateway/ResourceCacheManager`。Home、书架、漫画源和详情 presentation 已删除定时 retry、first-frame watchdog、App resume自动 retry、全局 ImageCache eviction和 App级短时 Future join；详情统一使用 `ComicDetailsArtworkLoader` 并显式传递 cover/preview/avatar role。普通 artwork直接复用 `StableArtworkImage`；需要裁剪/尺寸测量时只有一个显式 ImageStream listener，不再同时创建第二个 `Image`。
@@ -102,7 +103,7 @@
 |---|---|
 | repository/documentation/Dart static gates | Verified-static |
 | current-code documentation consistency gate | Verified-static |
-| dev.135–dev.177 受影响 ownership gates | Verified-static |
+| dev.135–dev.179 受影响 ownership gates | Verified-static |
 | Android/Mihon/Venera/Reader/Pipeline/UI contracts | Verified-static / toolchain |
 | Kotlin texture bridge + dev.164 PluginRuntimeServiceClient stub compile | Verified-toolchain |
 | pinned libwebp host build/smoke | Unverified：当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip` |

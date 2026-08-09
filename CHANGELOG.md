@@ -1,3 +1,11 @@
+## 0.31.0-dev.179：稳定工具链升级与 rhttp 流量整形
+
+- 根据 `zic-debug-trace-2026-08-09T02-48-10.jsonl` 继续拆首播：25条 origin source read 的 `openMicros` 中位约6.20s、p90约8.11s；rhttp 已进入生产路径，但一张15.64MB媒体被直接上抛为10,713个约1.2–1.46KB小包，造成 Dart Stream/commit/artifact/native/status高频调度。
+- 对照权威 `vibevenera-master.zip` 补齐 rhttp stream framing：通过前16字节媒体校验后，首个逻辑块聚合到64KiB、后续聚合到256KiB再交给 DownloadJob，尾块完整刷新；不改变7/3、2/1、5/3/2、NetLane/TaskControl、artifact或重试所有权。
+- rhttp 升至0.18.0；全workspace最低环境提升至 Dart 3.12 / Flutter 3.44，并把直接 Dart依赖更新到当前兼容稳定版本。`plugin_host_bridge`同步更新 Gson 2.14.0、kotlinx serialization/coroutines 1.11.0和测试 `org.json` 20260522；Mihon ABI SHA/Injekt/QuickJS/RxJava1及兼容编译器/stdlib继续按extension ABI固定，不做机械升级。
+- Android构建链固定在兼容稳定 AGP 9.1.1 + Gradle 9.3.1 + compileSdk 37 + JDK17；新增 daemon JVM 17 criteria。五个本地Flutter Android插件移除自行应用KGP与legacy `kotlinOptions`，改用 `kotlin.compilerOptions`，为Built-in Kotlin迁移准备；稳定Flutter 3.44阶段仍保留 `android.builtInKotlin=false`，不为消 warning切到3.47 beta。
+- 新增 ADR 0162、dev.179工具链/stream-framing审计与release gate，版本提升到 `0.31.0+179`。当前环境无Flutter/Dart，不能重算 `pubspec.lock`；本地首次应用后必须运行 `flutter pub get`。
+
 ## 0.31.0-dev.178：VibeVenera Rust Streaming Transport 首播路径
 
 - 根据 `zic-debug-trace-2026-08-09T01-44-16.jsonl` 重新拆分首播延迟：remote current 的 first-frame decode/upload只有几十毫秒，主要时间在 source/request-plan/open 约2–4秒，以及首个约250–300 KiB可解码前缀在5路Dart HttpClient传输下继续等待数秒；cached页仍能在约30–220ms显示。

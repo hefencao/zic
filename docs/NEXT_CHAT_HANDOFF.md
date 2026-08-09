@@ -1,6 +1,6 @@
-# dev.178 后续交接
+# dev.179 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.178_vibevenera-rhttp-startup-transport.zip`。
+唯一后续基线：`zic_v0.31.0-dev.179_modern-toolchain-rhttp-stream-framing.zip`。
 
 ## 必读
 
@@ -25,7 +25,7 @@
 19. `docs/adr/0154-source-filter-view-shelf-projection-download-feedback.md`
 20. `docs/adr/0155-external-browse-runtime-protocol-field-ownership.md`
 21. `docs/adr/0156-source-migration-version-view-and-update-badge-ownership.md`
-22. `docs/adr/0161-vibevenera-rhttp-startup-transport.md`、`docs/audits/dev178-vibevenera-startup-latency-root-cause-audit.md`、`docs/audits/dev178-validation-results.md`
+22. `docs/adr/0161-vibevenera-rhttp-startup-transport.md`、`docs/adr/0162-modern-toolchain-rhttp-stream-framing.md`、`docs/audits/dev179-toolchain-rhttp-stream-framing-audit.md`、`docs/audits/dev179-validation-results.md`
 23. `docs/adr/0158-venera-transport-preemption-and-native-source-lock-ownership.md`、`docs/audits/dev175-venera-transport-native-ingress-root-cause-audit.md`、`docs/audits/dev175-validation-results.md`
 
 ## 当前代码事实
@@ -58,14 +58,14 @@
 - 外部插件 manifest按记录容错。只有 payload安装/升级走事务式 replacement；settings与Venera Web登录原地更新，不 restart。Mihon浏览器 handoff保留受限 Mihon-only restart。生产 runtime session安全上限32，不能恢复通用8-session用户上限。
 - Reader/Pipeline参数仍为 encoded前7/后3、holder 7/5/3/2、decode前2/后1、network5/decode3/upload2。按VibeVenera语义，logical detach保留receiving并降为retained-background=0，queued undemanded可取消；current真实pressure才抢占低rank receiving。dev.174 bounded saturated victim推进保留，取消task真实退出前仍不释放permit。
 - Reader page 的 NetLane `TaskControl` 已贯穿 DownloadJob → controlled transport → source request-plan → external runtime。Venera仍只有一个 invocation context；permit释放时按实时 priority选择 waiter，active controlled prefetch被取消会调用 runtime `cancel(requestId)`，controlled request-plan不复用其它 task 的 in-flight Future。
-- dev.175–177的TaskControl、response abort、native锁/CRC、retained-receiving与pressure-preemption继续有效。dev.178只替换生产source-media host HTTP engine：`downloads_bridge`用可取消Rust/rhttp streaming transport复用client/keep-alive，pure downloads仍保留Dart HttpClient默认；不改变7/3、2/1、5/3/2。下载管理继续route-first。
+- dev.175–177的TaskControl、response abort、native锁/CRC、retained-receiving与pressure-preemption继续有效。生产source-media使用rhttp 0.18.0，并在媒体前缀校验后按首64KiB/后续256KiB聚合Rust网络小包；framing不拥有调度、缓存或重试。downloads仍保留Dart HttpClient非Flutter/test默认，7/3、2/1、5/3/2不变。
 - native `zic_cursor_decode_next()` 只在 source读锁内刷新 demux并复制下一帧压缩 fragment；WebP decode/scale/composite/canvas copy在锁外执行，下载 `zic_source_reserve/commit` 不再等待整帧 decode。
 - Native identity保持 `zic-media-core-dev134-abi6-lib00121400`。
 
 ## 下一步真机优先验证
 
-- 首先在同一Venera漫画/设备复测首播：记录mount→source-plan→origin response→首个约256–300 KiB前缀→first frame；生产路径应由rhttp transport执行并保持TaskControl取消。目标是显著缩小ZIC常见4–8秒与VibeVenera约2秒内的差距。
-- 若rhttp后source-plan仍占2秒以上，继续优化Venera request-plan warm/cache；若origin已快但前缀仍慢，查真实网络吞吐/HTTP版本。不得缩7/3、2/1或恢复detach即cancel。
+- 首先在同一Venera漫画/设备复测首播：记录mount→source-plan→origin response→首64KiB逻辑块→约256–300KiB可解码前缀→first frame；确认rhttp不再把1–16KiB packet逐个交给Pipeline，并保持TaskControl取消。
+- 若stream framing后 `openMicros`仍稳定2秒以上，下一步只优化Venera request-plan warm/cache；若open已快而首前缀仍慢，再查真实吞吐/HTTP版本。不得缩7/3、2/1或恢复detach即cancel。构建前先 `flutter pub get` 更新lock。
 ## 不可改变的稳定边界
 
 - 不缩小 Reader 7/3、holder 7/5/3/2、decode 2/1来掩盖性能问题。
