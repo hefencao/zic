@@ -226,6 +226,61 @@ void main() {
     expect(await _collect(response.bytes), <int>[1, 2, 3, 4]);
   });
 
+  test('controlled cancellation aborts an already streaming host response',
+      () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    final secondWrite = Completer<void>();
+    unawaited(server.forEach((request) async {
+      request.response.statusCode = HttpStatus.ok;
+      request.response.add(const <int>[
+        0x52, 0x49, 0x46, 0x46,
+        0x00, 0x00, 0x00, 0x00,
+        0x57, 0x45, 0x42, 0x50,
+        0x56, 0x50, 0x38, 0x20,
+      ]);
+      await request.response.flush();
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      try {
+        request.response.add(List<int>.filled(4096, 7));
+        await request.response.flush();
+      } on Object {
+        // The expected scheduler cancellation can close the client first.
+      } finally {
+        if (!secondWrite.isCompleted) secondWrite.complete();
+        try {
+          await request.response.close();
+        } on Object {
+          // Client cancellation already owns the close.
+        }
+      }
+    }));
+
+    final control = _MutableTaskControl(priority: 1000);
+    final source = _FixtureSource(
+      request: ComicResourceRequest(
+        uri: Uri.parse(
+          'http://${server.address.address}:${server.port}/stream.webp',
+        ),
+      ),
+    );
+    final pool = ExternalPluginResourceTransportPool();
+    addTearDown(pool.close);
+    final response = await pool
+        .controlledLoaderFor(source, Uri.parse('venera-resource:stream'))(
+      control: control,
+    );
+    final iterator = StreamIterator<List<int>>(response.bytes);
+    expect(await iterator.moveNext(), isTrue);
+
+    control.cancel();
+    expect(
+      await iterator.moveNext().timeout(const Duration(milliseconds: 150)),
+      isFalse,
+    );
+    await secondWrite.future;
+  });
+
   test('failed direct retry falls back to the source-owned byte transform',
       () async {
     final failed = Uri.parse('https://fixture/failed');

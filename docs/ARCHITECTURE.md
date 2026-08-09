@@ -51,11 +51,11 @@ Native implementation
 
 ### `transport`
 
-可取消、可分块的 encoded-byte transport、range、validator 和 response 合同。Reader page 使用可选 `ControlledTransport` 将 scheduler `TaskControl` 贯穿 source-plan/open；transport可中止自身请求但不拥有 priority policy，也不得在请求真实退出前伪释放 lane容量。它不拥有 artifact、Reader demand 或播放状态。
+可取消、可分块的 encoded-byte transport、range、validator 和 response 合同。Reader page 使用可选 `ControlledTransport` 将 scheduler `TaskControl` 贯穿 source-plan/open/response body；transport可中止自身请求但不拥有 priority policy，也不得在请求真实退出前伪释放 lane容量。prefix probe后outer stream取消仍必须abort底层response。它不拥有 artifact、Reader demand 或播放状态。
 
 ### `storage`
 
-partial artifact、连续前缀、校验、seal、原子 promotion、索引和临时 workspace。它不决定页面角色或网络优先级。
+partial artifact、连续前缀、校验、seal、原子 promotion、索引和临时 workspace。partial append只写入并推进长度，不在UI isolate逐chunk计算CRC；seal/restore在isolate rehash后提交权威checksum。它不决定页面角色或网络优先级。
 
 ### `downloads`
 

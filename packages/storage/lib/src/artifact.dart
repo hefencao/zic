@@ -46,12 +46,16 @@ final class Artifact {
   ArtifactState _state = ArtifactState.empty;
   IOSink? _sink;
   Crc32 _crc = Crc32();
+  bool _checksumDirty = false;
   int _committed = 0;
   Future<void> _writeTail = Future<void>.value();
 
   ArtifactState get state => _state;
   int get committedLength => _committed;
-  String get checksum => _crc.hex;
+  /// A checksum is authoritative only after the current file contents have
+  /// been hashed. Partial hot-path appends deliberately defer CRC work so
+  /// network ingress does not run a byte-by-byte Dart loop on the UI isolate.
+  String get checksum => _checksumDirty ? '' : _crc.hex;
   bool get hasOpenWriter => _sink != null;
 
   ArtifactSnapshot get snapshot => ArtifactSnapshot(
@@ -94,6 +98,7 @@ final class Artifact {
 
     await partial.parent.create(recursive: true);
     _crc = Crc32();
+    _checksumDirty = false;
     _committed = 0;
     _state = ArtifactState.partial;
     return snapshot;
@@ -128,8 +133,8 @@ final class Artifact {
     }
     final writer = await _writer();
     writer.add(bytes);
-    _crc.add(bytes);
     _committed += bytes.length;
+    _checksumDirty = true;
   }
 
   Future<void> flush() async {
@@ -152,6 +157,10 @@ final class Artifact {
     _requireState(ArtifactState.partial);
     await flush();
     await _closeWriter();
+
+    if (_checksumDirty) {
+      await _rehash(File(partialPath));
+    }
 
     if (expectedLength != null && expectedLength != _committed) {
       throw Failure(
@@ -348,6 +357,7 @@ final class Artifact {
       }
     }
     _crc = Crc32();
+    _checksumDirty = false;
     _committed = 0;
     _state = ArtifactState.empty;
   }
@@ -375,7 +385,7 @@ final class Artifact {
         'artifactState': state,
         'path': partialPath,
         'bytes': _committed,
-        'checksum': checksum,
+        if (checksum.isNotEmpty) 'checksum': checksum,
         'touchedUs': now,
         'createdUs': existing['createdUs'] is int ? existing['createdUs'] : now,
       },
@@ -470,6 +480,7 @@ final class Artifact {
     }
     if (await file.length() != bytes) return false;
     _crc = Crc32.fromHex(checksum);
+    _checksumDirty = false;
     _committed = bytes;
     return true;
   }
@@ -512,14 +523,29 @@ final class Artifact {
   }
 
   Future<void> _rehash(File file) async {
-    final crc = Crc32();
-    var length = 0;
-    await for (final chunk in file.openRead()) {
-      crc.add(chunk);
-      length += chunk.length;
-    }
-    _crc = crc;
-    _committed = length;
+    final path = file.path;
+    final result = await Isolate.run<(int, String)>(() {
+      final crc = Crc32();
+      var length = 0;
+      final reader = File(path).openSync();
+      final buffer = Uint8List(256 * 1024);
+      try {
+        while (true) {
+          final count = reader.readIntoSync(buffer);
+          if (count <= 0) break;
+          crc.add(count == buffer.length
+              ? buffer
+              : Uint8List.sublistView(buffer, 0, count));
+          length += count;
+        }
+      } finally {
+        reader.closeSync();
+      }
+      return (length, crc.hex);
+    });
+    _crc = Crc32.fromHex(result.$2);
+    _checksumDirty = false;
+    _committed = result.$1;
   }
 
   Future<IOSink> _writer() async {

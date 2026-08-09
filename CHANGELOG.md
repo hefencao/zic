@@ -1,3 +1,10 @@
+## 0.31.0-dev.176：收口被抢占 Response 生命周期与 Artifact CRC 热路径
+
+- 新 trace确认 dev.175 已把 current推进到 network handoff，但 origin `openMicros`仍出现约5–19秒等待；被取消的 prefetch在 Pipeline已失败后仍可能保留底层 HTTP response。
+- source host transport现在把 `TaskControl.whenCancelled`绑定到整个 prefetched response body，async* consumer取消也在 `finally`中 cancel底层 `HttpClientResponse` iterator；Pipeline取消不再只停在 request/prefix阶段。
+- 下载卡顿主导项从 dev.175前的 native source锁竞争转为 artifact commit CPU；partial append移除主 isolate逐块 CRC32，seal/restore边界在 isolate一次性校验文件，checksum完整性与promotion语义不变。
+- Reader 7/3、decode 2/1、network/decode/upload 5/3/2、reserved current 1均不变。新增 ADR 0159、dev.176 audit/gate，版本提升到 `0.31.0+176`。
+
 ## 0.31.0-dev.174：补齐 Current 在饱和 Handoff 下的连续抢占
 
 - 以文件库权威 `vibevenera-master.zip` 只读对照下载调度：两边都保留 network=5、current高优先级、单一 max+1 handoff、active priority migration；关键差异是 VibeVenera在 handoff已占满时仍会让新的 current 请求取消另一个未取消的低优先级 running prefetch，而 ZIC此前会在 eligible过滤阶段直接停止。

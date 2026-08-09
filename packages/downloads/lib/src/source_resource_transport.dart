@@ -635,11 +635,19 @@ Future<_SourceHttpResponseBody> _prefetchEncodedMediaBody(
       details: const <String, Object?>{'sourceMediaProtocolMismatch': true},
     );
   }
-  return _PrefetchedHttpResponseBody(
+  final body = _PrefetchedHttpResponseBody(
     iterator,
     prefetched,
     onError: onError,
   );
+  // Cancellation must stay bound for the entire response lifetime, not just
+  // while request.close()/the media-prefix probe is pending. Otherwise an
+  // outer DownloadJob can become cancelled while the underlying HttpClient
+  // response keeps consuming a socket and bandwidth in the background.
+  if (taskControl != null) {
+    unawaited(taskControl.whenCancelled.then((_) => body.abort()));
+  }
+  return body;
 }
 
 final class _PrefetchedHttpResponseBody implements _SourceHttpResponseBody {
@@ -656,6 +664,7 @@ final class _PrefetchedHttpResponseBody implements _SourceHttpResponseBody {
 
   @override
   Stream<List<int>> get stream async* {
+    var completed = false;
     try {
       for (final chunk in _prefetched) {
         if (_aborted) return;
@@ -664,9 +673,17 @@ final class _PrefetchedHttpResponseBody implements _SourceHttpResponseBody {
       while (!_aborted && await _iterator.moveNext()) {
         yield _iterator.current;
       }
+      completed = true;
     } on Object {
       _onError();
       rethrow;
+    } finally {
+      // StreamIterator.cancel() on this async* body must propagate to the
+      // HttpClientResponse iterator. Do not leave a preempted prefetch socket
+      // alive merely because the wrapper stream itself stopped listening.
+      if (!completed) {
+        await _abort();
+      }
     }
   }
 

@@ -102,6 +102,22 @@ void main() {
     await artifact.seal(expectedLength: 4);
   });
 
+  test('partial append defers crc until seal outside the download hot path',
+      () async {
+    final artifact = createArtifact();
+    final bytes = '123456789'.codeUnits;
+    await artifact.restore();
+
+    await artifact.append(0, bytes);
+    expect(artifact.snapshot.checksum, isEmpty);
+
+    final sealed = await artifact.seal(
+      expectedLength: bytes.length,
+      expectedChecksum: 'cbf43926',
+    );
+    expect(sealed.checksum, 'cbf43926');
+  });
+
   test('readPrefix awaits the read before closing the file', () async {
     final artifact = createArtifact();
     await artifact.restore();
