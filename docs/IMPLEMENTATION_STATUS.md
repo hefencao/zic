@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.181`
-**App build：** `0.31.0+181`
+**源码版本：** `0.31.0-dev.182`
+**App build：** `0.31.0+182`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -10,7 +10,7 @@
 ## 当前实现
 
 - 构建/依赖基线为 Dart>=3.12、Flutter>=3.44、AGP9.3.1、Gradle9.5.0、compileSdk37；Gradle daemon按用户本地环境要求使用OpenJDK25，但Android Java/Kotlin class-file target继续17。workspace直接 `test`约束为`^1.25.0`以兼容Flutter3.44固定的test_api解析。五个本地Android Flutter插件不再自行apply KGP，稳定Flutter兼容层仍保持 `android.builtInKotlin=false/android.newDsl=false`；Mihon ABI兼容依赖继续固定。
-- 外部漫画媒体生产host使用 `downloads_bridge/RhttpSourceResourceDirectTransport` + rhttp 0.18.0：source request-plan、NetLane、DownloadSession/artifact所有权不变；Rust/rhttp只执行已规范化单次请求并观察同一个`TaskControl`。网络packet通过前缀验证后首块聚合约64KiB、后续约256KiB再交给Pipeline，避免1–16KiB小包逐个触发Dart commit；pure `downloads`仍以Dart HttpClient作为非Flutter/test默认。后台首帧后预热rhttp runtime。
+- 外部漫画媒体生产host使用 `downloads_bridge/RhttpSourceResourceDirectTransport` + rhttp 0.18.0：source request-plan、NetLane、DownloadSession/artifact所有权不变；Rust/rhttp只执行已规范化单次请求并观察同一个`TaskControl`。dev.182移除dev.179误加的transport层64/256KiB二次framing；媒体前缀验证后保持raw stream，唯一aggregation回到`DownloadJob`的首批约16KiB/后续64KiB source-progress quantum。pure `downloads`仍以Dart HttpClient作为非Flutter/test默认，后台首帧后预热rhttp runtime。
 - dev.175建立了`DownloadJob/LoaderTransport/source-plan/Venera`的TaskControl能力，但dev.181设备证据与生产composition审计发现外层`ArtifactCacheTransport`仍会擦除该能力。dev.181将read-through cache也升级为`ControlledTransport`，cache miss向controlled fallback传递同一CancelToken；至此生产Reader origin链才真正保持动态priority/cancellation。Venera仍单 invocation，permit transfer按实时priority选择，active prefetch取消下沉到既有`cancel(requestId)`。
 - dev.175 同时收口下载卡顿的 native锁反转：`zic_cursor_decode_next()` 在 source读锁内只准备 demux/单帧压缩 fragment，WebP decode、缩放、合成和 canvas copy移到锁外；Dart主 isolate同步 append不再等待后台 worker完整解码。7/3、2/1、5/3/2及 network5+reserved1均不变。
 - 下载管理页采用 route-first projection：Navigator进入后先显示 Home现有 chapter download snapshot与 whole-comic queue snapshot；`wholeComicDownloads.ready`、`inspectMany()`和 cache usage检查在首帧之后刷新。逐 entry `Future.wait(inspect)`与 initState microtask扫描已删除。
@@ -81,7 +81,7 @@
 ## 当前开放问题
 
 - 需在 dev.180 真机复测快速前后跨页：current N→N+1后N必须立即进入previous下载角色（首位priority780）与后1decode窗，同时可保留last output；反向切页同理。大跳页后远离7/3的旧current只能保output，不得继续生成download/decode。继续记录current pressure/preemption，但本轮不再改其策略。
-- 需继续验证下载管理入口首帧与下载压力：点击首页“下载管理”应立即进入 route，后台 bulk/cache refresh只更新随后帧；Reader下载仍观察 `nativeIngressMicros/artifactWriteMicros/UI frame`，不恢复热路径CRC、不缩预下载窗口。
+- 需继续验证下载管理入口首帧与Reader source wait：下载管理仍须route-first；dev.182后current origin应保持`controlledFallback=true + priority=1000`，source growth由DownloadJob 16/64KiB单一framing产生。若`openMicros/sourceWait`仍秒级，再拆Venera request-plan/runtime与HTTP-open，不恢复transport 64/256KiB buffer或缩预下载窗口。
 - 需用 dev.165 真机确认 Reader route返回后 Home history立即接收 final progress，不依赖详情页或整库 reload；连续 Reader route不得串用 final progress。
 - 需用 dev.167 真机复现 source browse → details → back：browse metadata/background refresh不得令未变化的 card cover重新走 loader；raw locator变化但 canonical identity不变时 card State必须保留。retained cover压力验证继续沿 dev.166规则执行。
 - 需验证 Home updates：未入书架漫画即使有阅读历史也不出现；已入书架但没有 source update signal也不出现；真实新章节/新版本检测后才出现。

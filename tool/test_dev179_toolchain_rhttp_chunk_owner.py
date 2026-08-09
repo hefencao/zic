@@ -79,22 +79,25 @@ for token in (
 ):
     require(plugin_host_gradle, token, 'safe Maven dependency upgrade')
 
-# rhttp packet framing belongs only to the direct transport adapter: it reduces
-# Dart hot-path scheduling without becoming another scheduler/cache layer.
+# dev.182 proved transport-level 64/256 KiB framing was a duplicate owner.
+# rhttp must expose streaming packets to DownloadJob, which already owns the
+# sole 16 KiB startup / source-progress-quantum aggregation boundary.
 transport = read('packages/downloads_bridge/lib/src/rhttp_source_resource_transport.dart')
-require(transport, 'final coalescer = RhttpChunkCoalescer();', 'rhttp packet coalescer use')
-forbid(transport, 'yield iterator.current;', 'raw Rust packet forwarding')
-coalescer = read('packages/downloads_bridge/lib/src/rhttp_chunk_coalescer.dart')
+require(transport, 'yield chunk;', 'raw rhttp stream forwarding to DownloadJob')
+forbid(transport, 'RhttpChunkCoalescer', 'duplicate rhttp packet coalescer')
+if (ROOT / 'packages/downloads_bridge/lib/src/rhttp_chunk_coalescer.dart').exists():
+    raise SystemExit('superseded rhttp chunk coalescer implementation still exists')
+if (ROOT / 'packages/downloads_bridge/test/rhttp_chunk_coalescer_test.dart').exists():
+    raise SystemExit('superseded rhttp chunk coalescer regression still exists')
+job = read('packages/sessions/lib/src/download_job.dart')
 for token in (
-    'rhttpStartupStreamChunkBytes = 64 * 1024',
-    'rhttpContinuationStreamChunkBytes = 256 * 1024',
-    'BytesBuilder(copy: false)',
-    'Uint8List? flush()',
+    'var flushTarget = 16 * 1024;',
+    'flushTarget = sourceProgressQuantumBytes;',
+    'final pending = BytesBuilder(copy: false);',
 ):
-    require(coalescer, token, 'VibeVenera stream framing')
-coalescer_test = read('packages/downloads_bridge/test/rhttp_chunk_coalescer_test.dart')
-require(coalescer_test, 'coalesces small packets into VibeVenera-sized stream chunks', 'coalescer regression')
-require(coalescer_test, 'does not emit an incomplete startup chunk until final flush', 'coalescer tail regression')
+    require(job, token, 'single DownloadJob framing owner')
+job_test = read('packages/sessions/test/download_job_test.dart')
+require(job_test, 'coalesces tiny transport chunks before native/artifact ingress', 'DownloadJob framing regression')
 
 version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
 android = re.search(r'^versionCode=(\d+)\s*$', read('apps/app/android/zic-version.properties'), re.M)

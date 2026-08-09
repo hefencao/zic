@@ -146,7 +146,7 @@ Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor �
 - GET/HEAD MUST 零 body且不得携带仅适用于实体 body 的 headers。
 - 同一 DownloadId MUST 只有一个 active writer；partial MUST 是连续前缀并可恢复。
 - seal/promotion MUST 原子更新 metadata；cache clear 不得删除 active artifact。
-- 普通 transport 小块 SHOULD 首批约 16 KiB、后续按 64 KiB 合并后进入 session；传输实现的任意 chunk 边界不得放大为数万次 artifact/native append。 scheduler cancellation MUST 覆盖 response完整生命周期；request已返回并开始stream后，consumer/task取消仍 MUST abort底层source/HTTP response，不得让逻辑上cancelled的prefetch继续占socket或带宽。partial artifact append MUST NOT在UI isolate逐chunk执行checksum CPU循环；checksum MAY延迟到seal/restore边界计算，但seal/promotion前 MUST成为权威且通过expected checksum验证。
+- `DownloadJob` MUST 是 page-body transport chunk aggregation的唯一owner：任意底层小块先形成首批约16KiB，之后按64KiB `sourceProgressQuantumBytes`提交session。production rhttp direct transport在媒体前缀验证后 MUST保持raw streaming cadence，MUST NOT再次增加64/256KiB framing；底层packet边界也不得直接放大为数万次artifact/native append。scheduler cancellation MUST覆盖response完整生命周期；request已返回并开始stream后，consumer/task取消仍 MUST abort底层source/HTTP response。partial artifact append MUST NOT在UI isolate逐chunk执行checksum CPU循环；checksum MAY延迟到seal/restore边界计算，但seal/promotion前 MUST成为权威且通过expected checksum验证。
 - local 和 remote WebP decode-prefix hint SHOULD 分别使用 1 MiB 和 256 KiB quantum；该 hint 不等同于 transport chunk。
 - 读取失败 MUST 保留可归因错误，不得表现为永久 loading。
 - Home/书架漫画卡片的下载完成勾 MUST 由本次显式下载命令完成事件驱动，而不是由任意 durable chapter cache命中推导。单章节命令完成 MUST 使用与整本完成可区分的空心标记；整本下载仅在 whole-comic queue进入 complete后 MAY 显示绿色实心标记。完成标记 MUST 为临时 Presentation状态，并在进入该漫画详情时清除；durable离线事实继续属于 downloads/artifact。

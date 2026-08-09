@@ -1,3 +1,10 @@
+## 0.31.0-dev.182：移除 rhttp 双重 framing，恢复 DownloadJob 单一聚合 owner
+
+- 根据 `zic-debug-trace-2026-08-09T05-38-39.jsonl` 确认 dev.181 production control propagation 已生效：origin 已出现 `controlledFallback=true`，current 可携带 priority 1000 到 cache read-through 后的 source path；慢页仍由约 2–16 秒 `sourceWait` 主导，native decode 通常只有几十毫秒。
+- 重新只读对照权威 `vibevenera-master.zip` 后确认，VibeVenera Reader 的 `streamOnly` 媒体路径直接转发 rhttp stream；其 64 KiB/256 KiB coalescing 属于非 direct-stream 分支。dev.179 把该 framing 错迁到 ZIC production rhttp transport，叠加了 `DownloadJob` 已有的 16 KiB startup / 64 KiB source-progress aggregation。
+- 删除 `RhttpChunkCoalescer` 及其独立回归；`RhttpSourceResourceDirectTransport` 通过媒体前缀验证后保持 raw streaming cadence，chunk aggregation 唯一属于 `DownloadJob`。这样仍阻止约 1–2 KiB packet 逐个进入 native/artifact，同时不再额外等待 64/256 KiB transport buffer 才产生 source growth。
+- dev.181 TaskControl read-through、Venera single-invocation priority、rhttp cancellation、retained receiving、7/3、2/1、5/3/2 全部保留；不引入整章 request-plan 预解析。新增 ADR 0165、dev.182 根因审计和 release gate，版本提升到 `0.31.0+182`。
+
 ## 0.31.0-dev.181：修复生产 Artifact read-through 丢失 current TaskControl
 
 - 新 trace确认 cache/hot页面已可十几到数百毫秒首帧，但origin current即使已以priority 1000进入NetLane 5+1，仍可在`source-loader`等待约8秒；response可用后首帧只需约百毫秒。

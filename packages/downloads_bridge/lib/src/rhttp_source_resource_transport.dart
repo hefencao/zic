@@ -5,7 +5,6 @@ import 'dart:typed_data';
 import 'package:downloads/downloads.dart';
 import 'package:rhttp/rhttp.dart' as rhttp;
 
-import 'rhttp_chunk_coalescer.dart';
 
 Future<void>? _rhttpInitialization;
 
@@ -217,23 +216,21 @@ Future<_RhttpResponseBody> _prefetchEncodedMediaBody(
   }
   Stream<List<int>> body() async* {
     var completed = false;
-    final coalescer = RhttpChunkCoalescer();
     try {
+      // Preserve rhttp's streaming cadence here. DownloadJob is the single
+      // framing owner for Reader/page-body ingress (16 KiB startup, then the
+      // shared source-progress quantum). A second 64/256 KiB buffer here
+      // delays source growth and first-frame decode without reducing any work
+      // that DownloadJob would not already coalesce.
       for (final chunk in prefetched) {
         if (aborted) return;
-        final ready = coalescer.add(chunk);
-        if (ready != null) yield ready;
+        if (chunk.isNotEmpty) yield chunk;
       }
       while (!aborted && await iterator.moveNext()) {
         if (aborted) return;
         final chunk = iterator.current;
         if (chunk.isEmpty) continue;
-        final ready = coalescer.add(chunk);
-        if (ready != null) yield ready;
-      }
-      if (!aborted) {
-        final tail = coalescer.flush();
-        if (tail != null) yield tail;
+        yield chunk;
       }
       completed = true;
     } finally {
