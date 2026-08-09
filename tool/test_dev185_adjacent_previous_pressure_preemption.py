@@ -83,8 +83,7 @@ require(
 )
 require(
     'docs/IMPLEMENTATION_STATUS.md',
-    '`0.31.0-dev.185`',
-    '`0.31.0+185`',
+    'dev.185',
     'pressurePreemptionPriorityFloor=780',
 )
 require(
@@ -95,7 +94,6 @@ require(
 )
 require(
     'docs/NEXT_CHAT_HANDOFF.md',
-    'zic_v0.31.0-dev.185_adjacent-previous-pressure-preemption.zip',
     '0168-adjacent-previous-normal-pressure-preemption.md',
 )
 require('tool/check.sh', 'test_dev185_adjacent_previous_pressure_preemption.py')

@@ -81,8 +81,10 @@ final class ByteResponse {
     this.validators = const Validators(),
     this.rangeSupported = false,
     this.disposition = ByteResponseDisposition.staged,
+    Map<String, Object?> diagnostics = const <String, Object?>{},
     Future<void> Function()? onDiscard,
-  })  : _onDiscard = onDiscard,
+  })  : diagnostics = Map<String, Object?>.unmodifiable(diagnostics),
+        _onDiscard = onDiscard,
         assert(statusCode >= 100),
         assert(rangeStart >= 0),
         assert(totalLength == null || totalLength >= 0);
@@ -94,6 +96,12 @@ final class ByteResponse {
   final Validators validators;
   final bool rangeSupported;
   final ByteResponseDisposition disposition;
+
+  /// Transport-stage timing/route diagnostics for trace consumers.
+  ///
+  /// This is observational metadata only. Scheduling, retry and cache policy
+  /// must never branch on these values.
+  final Map<String, Object?> diagnostics;
   final Future<void> Function()? _onDiscard;
 
   bool get isPartial => statusCode == 206;

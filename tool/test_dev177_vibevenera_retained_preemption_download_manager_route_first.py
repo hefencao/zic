@@ -48,8 +48,9 @@ for token in (
 
 adapter = read('packages/plugin_host/lib/src/runtime_source_adapter.dart')
 for token in (
-    'preemptControlledActiveForCurrent:',
-    'currentPriorityThreshold = 1000',
+    'controlledPreemptionPriorityFloor:',
+    '? 780',
+    'incoming.priority < controlledPreemptionPriorityFloor',
     'incoming.priority - active.control.priority < preemptionThreshold',
     'active.preemptRequested = true;',
     "runtimeError.code == 'runtime-request-cancelled'",

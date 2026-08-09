@@ -586,6 +586,98 @@ void main() {
 
 
   test(
+      'controlled Venera previous pressure preempts lower request-plan work without parallel contexts',
+      () async {
+    final connection = _PriorityResolveConnection();
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(maxConcurrentInvocations: 4),
+    );
+    addTearDown(session.close);
+    final source =
+        session.sources.single as ControlledResolvableComicResourceSource;
+    final activeControl = _MutableTaskControl(priority: 700);
+    final queuedControl = _MutableTaskControl(priority: 740);
+    final previousControl = _MutableTaskControl(priority: 780);
+
+    final active = source.resolveResourceControlled(
+      Uri.parse('venera-resource:active-700'),
+      control: activeControl,
+    );
+    await connection.firstStarted.future;
+    final queued = source.resolveResourceControlled(
+      Uri.parse('venera-resource:queued-740'),
+      control: queuedControl,
+    );
+    final previous = source.resolveResourceControlled(
+      Uri.parse('venera-resource:previous-780'),
+      control: previousControl,
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    await expectLater(
+      active,
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+    expect((await previous).uri, Uri.parse('https://cdn.invalid/previous-780'));
+    expect((await queued).uri, Uri.parse('https://cdn.invalid/queued-740'));
+    expect(
+      connection.startedUris,
+      <String>[
+        'venera-resource:active-700',
+        'venera-resource:previous-780',
+        'venera-resource:queued-740',
+      ],
+    );
+    expect(connection.cancelledRequestIds, hasLength(1));
+    expect(connection.maxActive, 1);
+  });
+
+  test(
+      'controlled Venera previous pressure respects the forty point preemption threshold',
+      () async {
+    final connection = _PriorityResolveConnection(releaseOnCancel: false);
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(maxConcurrentInvocations: 4),
+    );
+    addTearDown(session.close);
+    final source =
+        session.sources.single as ControlledResolvableComicResourceSource;
+    final activeControl = _MutableTaskControl(priority: 760);
+    final previousControl = _MutableTaskControl(priority: 780);
+
+    final active = source.resolveResourceControlled(
+      Uri.parse('venera-resource:active-760'),
+      control: activeControl,
+    );
+    await connection.firstStarted.future;
+    final previous = source.resolveResourceControlled(
+      Uri.parse('venera-resource:previous-threshold-780'),
+      control: previousControl,
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(connection.cancelledRequestIds, isEmpty);
+    expect(connection.startedUris, <String>['venera-resource:active-760']);
+    connection.finishFirst();
+    expect((await active).uri, Uri.parse('https://cdn.invalid/active-760'));
+    expect(
+      (await previous).uri,
+      Uri.parse('https://cdn.invalid/previous-threshold-780'),
+    );
+    expect(connection.maxActive, 1);
+  });
+
+  test(
       'controlled Venera preemption keeps the single permit until the physical invocation exits',
       () async {
     final connection = _PriorityResolveConnection(releaseOnCancel: false);

@@ -1,3 +1,10 @@
+## 0.31.0-dev.186：Venera Previous Request-Plan 压力与 Source-Open 分段观测
+
+- `zic-debug-trace-2026-08-09T10-05-26.jsonl`确认 dev.185 外层 previous admission 已基本收敛：5个可完整匹配的660→780到`downloadStarted`样本仅3.1–14.4ms，中位6.508ms；不再修改NetLane 780/1000、network=5或current +1。
+- 剩余长尾位于 origin open：按`downloadStarted` rank分组，1000/820/800/780 到origin response的中位约2.41/3.27/6.17/5.13s。Venera单invocation gate此前只有current=1000可主动preempt低rank request-plan work。
+- Venera gate改为 controlled pressure floor=780，并继续要求40分差值、单次preempt request和旧JavaScript `finished(requestId)`后才转交唯一permit；previous不能制造第二个JS context。
+- `ByteResponse`新增只读diagnostics，source transport拆出`sourceRequestPlanMicros/sourceRequestPlanCacheHit/sourceHostOpenMicros/sourceOpenPath/sourceRetryUsed`并透传到origin trace；仅增强观测，不改变retry/cache/framing。新增ADR 0169、dev.186 audit/gate，版本提升到`0.31.0+186`。
+
 ## 0.31.0-dev.185：Adjacent Previous 普通槽压力抢占
 
 - `zic-debug-trace-2026-08-09T09-43-55.jsonl` 验证 dev.184 的 receiving 判据修复有效：current 多次在提权后约 0–44 ms 内进入 `downloadStarted`；但 previous=780 仍可在普通槽饱和时等待约 1.866 s，另一次在整个 previous 阶段都未启动，直到后续升级为 current 才借 current-only handoff 运行。

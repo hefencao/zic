@@ -124,8 +124,10 @@ final class ExternalPluginRuntimeSession
               plugin.format == ExternalComicPluginFormat.veneraJavaScript
                   ? 1
                   : limits.maxConcurrentInvocations,
-          preemptControlledActiveForCurrent:
-              plugin.format == ExternalComicPluginFormat.veneraJavaScript,
+          controlledPreemptionPriorityFloor:
+              plugin.format == ExternalComicPluginFormat.veneraJavaScript
+                  ? 780
+                  : 1 << 30,
         ) {
     limits.validate();
     final descriptors = connection.sources;
@@ -1011,16 +1013,18 @@ final class _RuntimeInvocationGate {
   _RuntimeInvocationGate(
     this.limits, {
     required this.maxConcurrentInvocations,
-    this.preemptControlledActiveForCurrent = false,
-    this.currentPriorityThreshold = 1000,
+    this.controlledPreemptionPriorityFloor = 1 << 30,
     this.preemptionThreshold = 40,
   })  : assert(maxConcurrentInvocations > 0),
-        assert(!preemptControlledActiveForCurrent || maxConcurrentInvocations == 1);
+        assert(controlledPreemptionPriorityFloor >= 0),
+        assert(
+          controlledPreemptionPriorityFloor >= (1 << 30) ||
+              maxConcurrentInvocations == 1,
+        );
 
   final ExternalPluginRuntimeLimits limits;
   final int maxConcurrentInvocations;
-  final bool preemptControlledActiveForCurrent;
-  final int currentPriorityThreshold;
+  final int controlledPreemptionPriorityFloor;
   final int preemptionThreshold;
   final List<_RuntimeInvocationWaiter> _waiters = <_RuntimeInvocationWaiter>[];
   Completer<void>? _drained;
@@ -1077,9 +1081,10 @@ final class _RuntimeInvocationGate {
     } else {
       _active++;
     }
-    final activeInvocation = preemptControlledActiveForCurrent && control != null
-        ? _RuntimeActiveInvocation(control: control, onPreempt: onPreempt)
-        : null;
+    final activeInvocation =
+        controlledPreemptionPriorityFloor < (1 << 30) && control != null
+            ? _RuntimeActiveInvocation(control: control, onPreempt: onPreempt)
+            : null;
     if (activeInvocation != null) {
       _controlledActive = activeInvocation;
     }
@@ -1099,8 +1104,10 @@ final class _RuntimeInvocationGate {
   }
 
   void _maybePreemptControlledActive(TaskControl? incoming) {
-    if (!preemptControlledActiveForCurrent || incoming == null) return;
-    if (incoming.priority < currentPriorityThreshold) return;
+    if (incoming == null ||
+        incoming.priority < controlledPreemptionPriorityFloor) {
+      return;
+    }
     final active = _controlledActive;
     if (active == null || active.preemptRequested) return;
     if (incoming.priority - active.control.priority < preemptionThreshold) return;

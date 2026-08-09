@@ -48,6 +48,43 @@ void main() {
     expect(source.loadCalls, 0);
   });
 
+  test('source open exposes request-plan and host-open stage diagnostics',
+      () async {
+    final source = _FixtureSource(
+      request: ComicResourceRequest(uri: Uri.parse('https://fixture/staged')),
+    );
+    final pool = ExternalPluginResourceTransportPool(
+      directOpen: (_) async => ByteResponse(
+        bytes: Stream<List<int>>.value(<int>[1, 2, 3]),
+        statusCode: HttpStatus.ok,
+        rangeStart: 0,
+        totalLength: 3,
+      ),
+    );
+    addTearDown(pool.close);
+    final loader = pool.loaderFor(
+      source,
+      Uri.parse('venera-resource:staged-diagnostics'),
+    );
+
+    final first = await loader();
+    expect(await _collect(first.bytes), <int>[1, 2, 3]);
+    expect(first.diagnostics['sourceRequestPlanMicros'], isA<int>());
+    expect(
+      first.diagnostics['sourceRequestPlanMicros'] as int,
+      greaterThanOrEqualTo(0),
+    );
+    expect(first.diagnostics['sourceRequestPlanCacheHit'], isFalse);
+    expect(first.diagnostics['sourceHostOpenMicros'], isA<int>());
+    expect(first.diagnostics['sourceOpenPath'], 'direct');
+    expect(first.diagnostics['sourceRetryUsed'], isFalse);
+
+    final second = await loader();
+    expect(await _collect(second.bytes), <int>[1, 2, 3]);
+    expect(second.diagnostics['sourceRequestPlanCacheHit'], isTrue);
+    expect(source.resolveCalls, 1);
+  });
+
   test('a replacement source identity does not discard an active response',
       () async {
     final body = _ControlledBody();

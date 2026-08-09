@@ -222,6 +222,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
       priority: control?.priority,
       details: <String, Object?>{
         'controlledFallback': controlledFallback,
+        ...response.diagnostics,
       },
     );
     return _traceResponse(
@@ -235,6 +236,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
       priority: control == null ? null : () => control.priority,
       readDetails: () => <String, Object?>{
         'controlledFallback': controlledFallback,
+        ...response.diagnostics,
       },
     );
   }
@@ -276,6 +278,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
       validators: response.validators,
       rangeSupported: response.rangeSupported,
       disposition: response.disposition,
+      diagnostics: response.diagnostics,
       onDiscard: () async {
         discarded = true;
         await response.discard();
@@ -634,6 +637,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
       validators: response.validators,
       rangeSupported: response.rangeSupported,
       disposition: response.disposition,
+      diagnostics: response.diagnostics,
       onDiscard: response.discard,
     );
   }

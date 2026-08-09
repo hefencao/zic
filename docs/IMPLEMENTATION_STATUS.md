@@ -2,8 +2,10 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.185` / App `0.31.0+185`。
+- 当前版本：`0.31.0-dev.186` / App `0.31.0+186`。
 
+- dev.186 用 10:05 trace确认 dev.185 外层 normal-pressure 已收敛：5个可完整匹配的 previous 660→780→`downloadStarted` 样本中位仅6.508ms；剩余 origin response长尾按启动rank仍约2.4–7.7s，因此优化下沉到 Venera 单invocation request-plan gate，并新增 source request-plan/host-open 分段 diagnostics。
+- Venera controlled gate现以780为pressure floor，仍要求40分差值且必须等待旧 JavaScript物理`finished(requestId)`后转交唯一permit；`ByteResponse.diagnostics`只用于trace，source transport输出`sourceRequestPlanMicros/sourceRequestPlanCacheHit/sourceHostOpenMicros/sourceOpenPath/sourceRetryUsed`，不参与调度/cache/retry。
 - dev.185 用 09:43 新 trace确认 dev.184 receiving生命周期修复有效但 NetLane admission仍不完整：current抢占已明显收敛，previous=780却能被 priority0 retained receiving或740/760 active speculative work挡在普通槽外，典型等待约1.866s直到低rank任务自然完成。
 - Reader network新增 `pressurePreemptionPriorityFloor=780`。blocked previous/更高normal work可按既有40分差值请求取消一个低rank active victim，但不借current reserved handoff，必须等待victim物理退出后才占原5路普通槽；current1000的5+1 bounded handoff语义不变。receiving retained=0在无真实窗口压力时仍保留复用，有previous压力时才让槽。
 - dev.184 的真实 receiving detach判据继续有效：active queued/opening离窗仍沿同一TaskControl取消；新回归额外冻结“normal previous pressure不突破maxActive”和“retained receiving在previous压力下让槽”。7/3、2/1、7/5/3/2、5/3/2、previous780、current1000、reserved1、threshold40均不变。
@@ -13,7 +15,7 @@
 - Venera preemption先断requestId native HTTP，再等待JS `finished`后返回cancelled并释放permit，禁止同一WebView中旧/新async invocation重叠。修复 `ArtifactCacheReadLease?` nullable半迁移编译错误。
 - 当前环境无Flutter/Dart/Android完整SDK；行为测试已加入源码，最终设备构建/性能仍需本地验证。
 
-**源码版本：** `0.31.0-dev.185`
+**源码版本：** `0.31.0-dev.186`
 **App build：** `0.31.0+185`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。

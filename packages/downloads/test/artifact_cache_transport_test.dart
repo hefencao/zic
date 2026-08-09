@@ -373,7 +373,15 @@ void main() {
     final cache = _MemoryArtifactStore(<DownloadId, Uint8List>{
       id: Uint8List.fromList(<int>[1, 2, 3]),
     });
-    final fallback = _RecordingTransport(Uint8List.fromList(<int>[8, 9]));
+    final fallback = _RecordingTransport(
+      Uint8List.fromList(<int>[8, 9]),
+      diagnostics: const <String, Object?>{
+        'sourceRequestPlanMicros': 1200,
+        'sourceRequestPlanCacheHit': false,
+        'sourceHostOpenMicros': 3400,
+        'sourceOpenPath': 'direct',
+      },
+    );
     final trace = MemoryTraceSink();
     final transport = ArtifactCacheTransport(
       cache: ArtifactCacheManager(backend: cache),
@@ -397,11 +405,19 @@ void main() {
     );
     expect(source.revision, 9);
     expect(source.payload['source'], 'origin');
+    expect(source.payload['sourceRequestPlanMicros'], 1200);
+    expect(source.payload['sourceRequestPlanCacheHit'], isFalse);
+    expect(source.payload['sourceHostOpenMicros'], 3400);
+    expect(source.payload['sourceOpenPath'], 'direct');
     final read = trace.events.singleWhere(
       (event) => event.kind == TraceEventKind.sourceRead,
     );
     expect(read.payload['source'], 'origin');
     expect(read.payload['sourceClass'], 'remote');
+    expect(read.payload['sourceRequestPlanMicros'], 1200);
+    expect(read.payload['sourceRequestPlanCacheHit'], isFalse);
+    expect(read.payload['sourceHostOpenMicros'], 3400);
+    expect(read.payload['sourceOpenPath'], 'direct');
     expect(read.payload['bytes'], 2);
     expect(read.payload['completed'], isTrue);
   });
@@ -749,9 +765,13 @@ final class _ControlledRecordingTransport implements ControlledTransport {
 }
 
 final class _RecordingTransport implements Transport {
-  _RecordingTransport(this.body);
+  _RecordingTransport(
+    this.body, {
+    this.diagnostics = const <String, Object?>{},
+  });
 
   final Uint8List body;
+  final Map<String, Object?> diagnostics;
   int opens = 0;
 
   @override
@@ -766,6 +786,7 @@ final class _RecordingTransport implements Transport {
       statusCode: 200,
       rangeStart: 0,
       totalLength: body.lengthInBytes,
+      diagnostics: diagnostics,
     );
   }
 }

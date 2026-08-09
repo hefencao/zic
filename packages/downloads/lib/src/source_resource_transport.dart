@@ -158,70 +158,102 @@ final class _SourceResourceTransport implements ControlledTransport {
   }) async {
     range?.validate();
     _throwIfTaskCancelled(control);
-    var request = await _resolve(uri, control: control);
+
+    final requestPlanWatch = Stopwatch()..start();
+    final resolved = await _resolve(uri, control: control);
+    var request = resolved.request;
     _throwIfTaskCancelled(control);
+
+    var retryUsed = false;
     if (_failedStreams.remove(uri)) {
+      retryUsed = true;
       request = await _retry(uri, control: control) ?? request;
       _throwIfTaskCancelled(control);
     }
+    requestPlanWatch.stop();
+
+    final hostOpenWatch = Stopwatch()..start();
+    var openPath = request.requiresRuntimeTransform
+        ? 'runtime-transform'
+        : 'direct';
+    late final ByteResponse response;
     if (request.requiresRuntimeTransform) {
-      return _openRuntimeFallback(
+      response = await _openRuntimeFallback(
         uri,
         range: range,
         validators: validators,
         control: control,
       );
-    }
-    try {
-      return await _openDirect(
-        uri,
-        request,
-        range: range,
-        validators: validators,
-        control: control,
-      );
-    } on Failure catch (error) {
-      if (error.code == ErrorCode.cancelled) rethrow;
-      if (error.code != ErrorCode.network) rethrow;
-      _invalidate(uri);
-      if (error.details['sourceMediaProtocolMismatch'] == true) {
-        return _openRuntimeFallback(
+    } else {
+      try {
+        response = await _openDirect(
           uri,
+          request,
           range: range,
           validators: validators,
           control: control,
         );
+      } on Failure catch (error) {
+        if (error.code == ErrorCode.cancelled) rethrow;
+        if (error.code != ErrorCode.network) rethrow;
+        _invalidate(uri);
+        if (error.details['sourceMediaProtocolMismatch'] == true) {
+          openPath = 'protocol-runtime-fallback';
+          response = await _openRuntimeFallback(
+            uri,
+            range: range,
+            validators: validators,
+            control: control,
+          );
+        } else {
+          retryUsed = true;
+          final retry = await _retry(uri, control: control);
+          _throwIfTaskCancelled(control);
+          if (retry == null) rethrow;
+          final retried = await _openRetryPlan(
+            uri,
+            retry,
+            range: range,
+            validators: validators,
+            control: control,
+          );
+          response = retried.response;
+          openPath = retried.openPath;
+        }
+      } on IOException catch (error) {
+        _throwIfTaskCancelled(control);
+        _invalidate(uri);
+        retryUsed = true;
+        final retry = await _retry(uri, control: control);
+        _throwIfTaskCancelled(control);
+        if (retry != null) {
+          final retried = await _openRetryPlan(
+            uri,
+            retry,
+            range: range,
+            validators: validators,
+            control: control,
+          );
+          response = retried.response;
+          openPath = retried.openPath;
+        } else {
+          throw Failure(
+            code: ErrorCode.network,
+            message: 'source resource transport failure for ${request.uri}',
+            cause: error,
+          );
+        }
       }
-      final retry = await _retry(uri, control: control);
-      _throwIfTaskCancelled(control);
-      if (retry == null) rethrow;
-      return _openRetryPlan(
-        uri,
-        retry,
-        range: range,
-        validators: validators,
-        control: control,
-      );
-    } on IOException catch (error) {
-      _throwIfTaskCancelled(control);
-      _invalidate(uri);
-      final retry = await _retry(uri, control: control);
-      _throwIfTaskCancelled(control);
-      if (retry != null) {
-        return _openRetryPlan(
-          uri,
-          retry,
-          range: range,
-          validators: validators,
-          control: control,
-        );
-      }
-      throw Failure(
-        code: ErrorCode.network,
-        message: 'source resource transport failure for ${request.uri}',
-        cause: error,
-      );
     }
+    hostOpenWatch.stop();
+    return _withSourceOpenDiagnostics(
+      response,
+      requestPlanMicros: requestPlanWatch.elapsedMicroseconds,
+      requestPlanCacheHit: resolved.cacheHit,
+      hostOpenMicros: hostOpenWatch.elapsedMicroseconds,
+      openPath: openPath,
+      retryUsed: retryUsed,
+    );
   }
 
   Future<ComicResourceRequest?> _retry(
@@ -244,19 +276,21 @@ final class _SourceResourceTransport implements ControlledTransport {
     return replacement;
   }
 
-  Future<ComicResourceRequest> _resolve(
+  Future<({ComicResourceRequest request, bool cacheHit})> _resolve(
     Uri locator, {
     TaskControl? control,
-  }) {
+  }) async {
     _throwIfTaskCancelled(control);
     final cached = _cached(locator);
-    if (cached != null) return Future<ComicResourceRequest>.value(cached);
+    if (cached != null) return (request: cached, cacheHit: true);
     // Controlled work must keep its own scheduler identity. Reusing another
     // task's in-flight source-plan Future would reintroduce FIFO inheritance
     // after NetLane has already promoted/cancelled roles.
     if (control == null) {
       final active = _requestLoads[locator];
-      if (active != null) return active;
+      if (active != null) {
+        return (request: await active, cacheHit: false);
+      }
     }
     final source = _source;
     final controlled = source is ControlledResolvableComicResourceSource
@@ -267,22 +301,21 @@ final class _SourceResourceTransport implements ControlledTransport {
         : null;
     if (controlled == null && resolvable == null) {
       final direct = locator.scheme == 'http' || locator.scheme == 'https';
-      return Future<ComicResourceRequest>.value(
-        ComicResourceRequest(
+      return (
+        request: ComicResourceRequest(
           uri: locator,
           requiresRuntimeTransform: !direct,
         ),
+        cacheHit: false,
       );
     }
     if (control != null) {
-      final load = controlled != null
+      final request = await (controlled != null
           ? controlled.resolveResourceControlled(locator, control: control)
-          : resolvable!.resolveResource(locator);
-      return load.then((request) {
-        _throwIfTaskCancelled(control);
-        _remember(locator, request);
-        return request;
-      });
+          : resolvable!.resolveResource(locator));
+      _throwIfTaskCancelled(control);
+      _remember(locator, request);
+      return (request: request, cacheHit: false);
     }
     late final Future<ComicResourceRequest> load;
     load = (controlled != null
@@ -297,7 +330,7 @@ final class _SourceResourceTransport implements ControlledTransport {
       }
     });
     _requestLoads[locator] = load;
-    return load;
+    return (request: await load, cacheHit: false);
   }
 
   ComicResourceRequest? _cached(Uri locator) {
@@ -325,7 +358,7 @@ final class _SourceResourceTransport implements ControlledTransport {
     _requestPlans.remove(locator);
   }
 
-  Future<ByteResponse> _openRetryPlan(
+  Future<({ByteResponse response, String openPath})> _openRetryPlan(
     Uri locator,
     ComicResourceRequest request, {
     ByteRange? range,
@@ -334,20 +367,26 @@ final class _SourceResourceTransport implements ControlledTransport {
   }) async {
     _throwIfTaskCancelled(control);
     if (request.requiresRuntimeTransform) {
-      return _openRuntimeFallback(
-        locator,
-        range: range,
-        validators: validators,
-        control: control,
+      return (
+        response: await _openRuntimeFallback(
+          locator,
+          range: range,
+          validators: validators,
+          control: control,
+        ),
+        openPath: 'retry-runtime-fallback',
       );
     }
     try {
-      return await _openDirect(
-        locator,
-        request,
-        range: range,
-        validators: validators,
-        control: control,
+      return (
+        response: await _openDirect(
+          locator,
+          request,
+          range: range,
+          validators: validators,
+          control: control,
+        ),
+        openPath: 'retry-direct',
       );
     } on Failure catch (error) {
       if (error.code != ErrorCode.network) rethrow;
@@ -356,11 +395,14 @@ final class _SourceResourceTransport implements ControlledTransport {
       // the host request unusable. Preserve complete-body compatibility only
       // after the streaming request plan has actually failed.
     }
-    return _openRuntimeFallback(
-      locator,
-      range: range,
-      validators: validators,
-      control: control,
+    return (
+      response: await _openRuntimeFallback(
+        locator,
+        range: range,
+        validators: validators,
+        control: control,
+      ),
+      openPath: 'retry-runtime-fallback',
     );
   }
 
@@ -525,6 +567,34 @@ final class _SourceResourceTransport implements ControlledTransport {
       totalLength: bytes.length,
       validators: current,
       rangeSupported: true,
+    );
+  }
+
+  ByteResponse _withSourceOpenDiagnostics(
+    ByteResponse response, {
+    required int requestPlanMicros,
+    required bool requestPlanCacheHit,
+    required int hostOpenMicros,
+    required String openPath,
+    required bool retryUsed,
+  }) {
+    return ByteResponse(
+      bytes: response.bytes,
+      statusCode: response.statusCode,
+      rangeStart: response.rangeStart,
+      totalLength: response.totalLength,
+      validators: response.validators,
+      rangeSupported: response.rangeSupported,
+      disposition: response.disposition,
+      diagnostics: <String, Object?>{
+        ...response.diagnostics,
+        'sourceRequestPlanMicros': requestPlanMicros,
+        'sourceRequestPlanCacheHit': requestPlanCacheHit,
+        'sourceHostOpenMicros': hostOpenMicros,
+        'sourceOpenPath': openPath,
+        'sourceRetryUsed': retryUsed,
+      },
+      onDiscard: response.discard,
     );
   }
 
