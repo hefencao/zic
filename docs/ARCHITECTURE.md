@@ -39,7 +39,7 @@ Native implementation
 
 ### `domain`
 
-领域 identity、值对象和不可变实体。不得依赖 UI、插件、网络、缓存、数据库或平台桥。
+领域 identity、值对象和不可变实体。`TaskControl` 是 scheduler-owned work 跨层只读控制合同，只暴露 cancellation 与 priority；消费层不得借此拥有调度策略。不得依赖 UI、插件、网络、缓存、数据库或平台桥。
 
 ### `catalog`
 
@@ -51,7 +51,7 @@ Native implementation
 
 ### `transport`
 
-可取消、可分块的 encoded-byte transport、range、validator 和 response 合同。它不拥有 artifact、Reader demand 或播放状态。
+可取消、可分块的 encoded-byte transport、range、validator 和 response 合同。Reader page 使用可选 `ControlledTransport` 将 scheduler `TaskControl` 贯穿 source-plan/open；transport可中止自身请求但不拥有 priority policy，也不得在请求真实退出前伪释放 lane容量。它不拥有 artifact、Reader demand 或播放状态。
 
 ### `storage`
 

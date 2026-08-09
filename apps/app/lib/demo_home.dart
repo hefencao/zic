@@ -967,10 +967,10 @@ final class _DemoHomeState extends State<DemoHome> {
           }
         : const <String, LocalImageFileBytesLoader>{};
     final responseLoaders = hasOfflineBytes || source == null
-        ? const <String, ExternalPluginResourceResponseLoader>{}
-        : <String, ExternalPluginResourceResponseLoader>{
+        ? const <String, ExternalPluginControlledResourceResponseLoader>{}
+        : <String, ExternalPluginControlledResourceResponseLoader>{
             for (final page in current.chapter.pages)
-              page.sourceId: _sourceResources.pageResponseLoaderFor(
+              page.sourceId: _sourceResources.pageControlledResponseLoaderFor(
                 current.chapter.sourceId,
                 Uri.parse(page.sourceId),
               ),

@@ -446,6 +446,15 @@ abstract interface class ResolvableComicResourceSource {
   Future<ComicResourceRequest> resolveResource(Uri uri);
 }
 
+/// Optional controlled variant used by Reader/download transport. The source
+/// observes scheduler cancellation/priority but does not own scheduling policy.
+abstract interface class ControlledResolvableComicResourceSource {
+  Future<ComicResourceRequest> resolveResourceControlled(
+    Uri uri, {
+    TaskControl? control,
+  });
+}
+
 /// Optional companion capability for source-defined failure recovery.
 ///
 /// The initial request remains streamable by the host. Only after that request
@@ -455,6 +464,20 @@ abstract interface class ResolvableComicResourceSource {
 /// image body through the plugin runtime.
 abstract interface class RetryableComicResourceSource {
   Future<ComicResourceRequest?> retryResource(Uri uri);
+}
+
+abstract interface class ControlledRetryableComicResourceSource {
+  Future<ComicResourceRequest?> retryResourceControlled(
+    Uri uri, {
+    TaskControl? control,
+  });
+}
+
+abstract interface class ControlledComicResourceSource {
+  Future<Uint8List> loadResourceControlled(
+    Uri uri, {
+    TaskControl? control,
+  });
 }
 
 abstract interface class BrowsableComicSource implements ComicSource {

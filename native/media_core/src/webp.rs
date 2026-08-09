@@ -189,6 +189,17 @@ pub(crate) struct DecodedFrame {
     pub(crate) bytes: Vec<u8>,
 }
 
+pub(crate) struct PreparedFrame {
+    source_width: usize,
+    source_height: usize,
+    background: [u8; 4],
+    source_rect: Rect,
+    duration_ms: u64,
+    dispose_background: bool,
+    blend: bool,
+    fragment: Vec<u8>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct Rect {
     x: usize,
@@ -349,9 +360,10 @@ pub(crate) struct Decoder {
     ended: bool,
     reset_canvas_before_decode: bool,
     // Cache frame descriptors and offsets across frames, rebuilding only when
-    // the incremental source grows or becomes sealed. The authoritative source
-    // read lock keeps those offsets stable during decode, so no second full
-    // compressed-byte snapshot is retained.
+    // the incremental source grows or becomes sealed. Source locking is owned
+    // only by frame preparation: the exact compressed fragment for the next
+    // frame is copied while the source read lock is held, then the expensive
+    // decode/scale/composite work runs after that lock is released.
     demux: Option<DemuxSnapshot>,
     #[cfg(test)]
     demux_builds: usize,
@@ -385,6 +397,15 @@ impl Decoder {
         bytes: &[u8],
         sealed: bool,
     ) -> Result<DecodedFrame, DecodeError> {
+        let prepared = self.prepare_next(bytes, sealed)?;
+        self.decode_prepared(prepared)
+    }
+
+    pub(crate) fn prepare_next(
+        &mut self,
+        bytes: &[u8],
+        sealed: bool,
+    ) -> Result<PreparedFrame, DecodeError> {
         if bytes.len() < 12 {
             return Err(if sealed {
                 DecodeError::Failed
@@ -443,7 +464,34 @@ impl Decoder {
         {
             return Err(DecodeError::Failed);
         }
-        self.ensure_canvas(background, source_width, source_height)?;
+        let fragment_end = fragment_offset
+            .checked_add(fragment_length)
+            .ok_or(DecodeError::Failed)?;
+        if fragment_length == 0 || fragment_end > bytes.len() {
+            return Err(DecodeError::Failed);
+        }
+
+        Ok(PreparedFrame {
+            source_width,
+            source_height,
+            background,
+            source_rect,
+            duration_ms: descriptor.duration_ms,
+            dispose_background: descriptor.dispose_background,
+            blend: descriptor.blend,
+            fragment: bytes[fragment_offset..fragment_end].to_vec(),
+        })
+    }
+
+    pub(crate) fn decode_prepared(
+        &mut self,
+        prepared: PreparedFrame,
+    ) -> Result<DecodedFrame, DecodeError> {
+        self.ensure_canvas(
+            prepared.background,
+            prepared.source_width,
+            prepared.source_height,
+        )?;
         if self.reset_canvas_before_decode {
             fill_rect(
                 &mut self.canvas,
@@ -461,26 +509,19 @@ impl Decoder {
         }
 
         let target_rect = map_rect_endpoints(
-            source_rect,
-            source_width,
-            source_height,
+            prepared.source_rect,
+            prepared.source_width,
+            prepared.source_height,
             self.target_width,
             self.target_height,
         )?;
         let target_fragment_len = rgba_len(target_rect.width, target_rect.height)?;
-        let fragment_end = fragment_offset
-            .checked_add(fragment_length)
-            .ok_or(DecodeError::Failed)?;
-        if target_fragment_len > MAX_WORKING_BYTES
-            || fragment_length == 0
-            || fragment_end > bytes.len()
-        {
+        if target_fragment_len > MAX_WORKING_BYTES {
             return Err(DecodeError::Failed);
         }
-        let fragment_ptr = unsafe { bytes.as_ptr().add(fragment_offset) };
         let target_fragment = decode_rgba_scaled_single_threaded(
-            fragment_ptr,
-            fragment_length,
+            prepared.fragment.as_ptr(),
+            prepared.fragment.len(),
             target_rect.width,
             target_rect.height,
         )?;
@@ -502,13 +543,13 @@ impl Decoder {
             self.target_height,
             target_rect,
             &target_fragment,
-            descriptor.blend,
+            prepared.blend,
         )?;
 
-        let duration_us = descriptor.duration_ms.saturating_mul(1_000);
+        let duration_us = prepared.duration_ms.saturating_mul(1_000);
         self.previous = Some(PreviousFrame {
             rect: target_rect,
-            dispose_background: descriptor.dispose_background,
+            dispose_background: prepared.dispose_background,
         });
         self.next_frame_number = self.next_frame_number.saturating_add(1);
         self.ended = false;

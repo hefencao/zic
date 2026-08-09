@@ -66,7 +66,7 @@ final class DownloadJob {
       start = 0;
     }
     cancel?.throwIfCancelled();
-    var response = await _open(start);
+    var response = await _open(start, cancel);
     await _discardIfCancelled(cancel, response);
     if (start > 0 &&
         response.disposition == ByteResponseDisposition.durableImmutable) {
@@ -76,7 +76,7 @@ final class DownloadJob {
       session.queue();
       start = 0;
       cancel?.throwIfCancelled();
-      response = await _open(0);
+      response = await _open(0, cancel);
       await _discardIfCancelled(cancel, response);
     }
     if (start > 0) {
@@ -97,7 +97,7 @@ final class DownloadJob {
         session.queue();
         start = 0;
         cancel?.throwIfCancelled();
-        response = await _open(0);
+        response = await _open(0, cancel);
         await _discardIfCancelled(cancel, response);
       }
     }
@@ -237,12 +237,29 @@ final class DownloadJob {
     }
   }
 
-  Future<ByteResponse> _open(int start) {
+  Future<ByteResponse> _open(int start, CancelToken? cancel) {
+    final controlled = transport is ControlledTransport
+        ? transport as ControlledTransport
+        : null;
     if (start > 0 && session.validators.canResume) {
+      if (controlled != null) {
+        return controlled.openControlled(
+          session.id.canonicalUri,
+          range: ByteRange(start: start),
+          validators: session.validators,
+          control: cancel,
+        );
+      }
       return transport.open(
         session.id.canonicalUri,
         range: ByteRange(start: start),
         validators: session.validators,
+      );
+    }
+    if (controlled != null) {
+      return controlled.openControlled(
+        session.id.canonicalUri,
+        control: cancel,
       );
     }
     return transport.open(session.id.canonicalUri);

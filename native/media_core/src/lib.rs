@@ -475,42 +475,58 @@ pub unsafe extern "C" fn zic_cursor_decode_next(
     if epoch != cursor.epoch {
         return CursorStatus::StaleEpoch as u32;
     }
-    let Ok(source) = cursor.source.read() else {
-        return CursorStatus::Failed as u32;
-    };
-    if source.epoch != epoch {
-        return CursorStatus::StaleEpoch as u32;
-    }
-    match source.sniff() {
-        ContainerKind::Unknown => CursorStatus::NeedMoreData as u32,
-        ContainerKind::Gif | ContainerKind::Other => CursorStatus::Unsupported as u32,
-        ContainerKind::Webp => match cursor.decoder.decode_next(source.committed_bytes(), source.sealed) {
-            Ok(decoded) => {
-                let frame = FrameHandle {
-                    data: Arc::new(FrameData {
-                        epoch,
-                        index: cursor.next_index,
-                        cycle: cursor.cycle,
-                        width: decoded.width,
-                        height: decoded.height,
-                        duration_us: decoded.duration_us,
-                        format: PixelFormat::Rgba8888,
-                        bytes: decoded.bytes,
-                    }),
-                };
-                cursor.next_index = cursor.next_index.saturating_add(1);
-                *out_frame = Box::into_raw(Box::new(frame));
-                CursorStatus::Ok as u32
+    let (prepared, source_sealed) = {
+        let Ok(source) = cursor.source.read() else {
+            return CursorStatus::Failed as u32;
+        };
+        if source.epoch != epoch {
+            return CursorStatus::StaleEpoch as u32;
+        }
+        match source.sniff() {
+            ContainerKind::Unknown => return CursorStatus::NeedMoreData as u32,
+            ContainerKind::Gif | ContainerKind::Other => {
+                return CursorStatus::Unsupported as u32;
             }
-            Err(webp::DecodeError::NeedMoreData) => CursorStatus::NeedMoreData as u32,
-            Err(webp::DecodeError::End) => CursorStatus::End as u32,
-            // A partially delivered WebP can expose an incomplete chunk as a
-            // decoder failure before libwebp has enough bytes to distinguish
-            // it from malformed input. A byte source becomes authoritative at
-            // seal time, so defer terminal failure until then.
-            Err(webp::DecodeError::Failed) if !source.sealed => CursorStatus::NeedMoreData as u32,
-            Err(webp::DecodeError::Failed) => CursorStatus::Failed as u32,
-        },
+            ContainerKind::Webp => (
+                cursor
+                    .decoder
+                    .prepare_next(source.committed_bytes(), source.sealed),
+                source.sealed,
+            ),
+        }
+    };
+
+    // Preparing a frame owns the source read lock only long enough to refresh
+    // demux metadata and copy the exact compressed fragment required next.
+    // The expensive WebP decode, scaling, canvas composite and frame copy run
+    // after the lock is released so streaming ingress never waits behind a
+    // whole-frame decode on the UI/Dart isolate.
+    match prepared.and_then(|frame| cursor.decoder.decode_prepared(frame)) {
+        Ok(decoded) => {
+            let frame = FrameHandle {
+                data: Arc::new(FrameData {
+                    epoch,
+                    index: cursor.next_index,
+                    cycle: cursor.cycle,
+                    width: decoded.width,
+                    height: decoded.height,
+                    duration_us: decoded.duration_us,
+                    format: PixelFormat::Rgba8888,
+                    bytes: decoded.bytes,
+                }),
+            };
+            cursor.next_index = cursor.next_index.saturating_add(1);
+            *out_frame = Box::into_raw(Box::new(frame));
+            CursorStatus::Ok as u32
+        }
+        Err(webp::DecodeError::NeedMoreData) => CursorStatus::NeedMoreData as u32,
+        Err(webp::DecodeError::End) => CursorStatus::End as u32,
+        // A partially delivered WebP can expose an incomplete chunk as a
+        // decoder failure before libwebp has enough bytes to distinguish
+        // it from malformed input. A byte source becomes authoritative at
+        // seal time, so defer terminal failure until then.
+        Err(webp::DecodeError::Failed) if !source_sealed => CursorStatus::NeedMoreData as u32,
+        Err(webp::DecodeError::Failed) => CursorStatus::Failed as u32,
     }
 }
 

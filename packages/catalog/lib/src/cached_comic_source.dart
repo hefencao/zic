@@ -94,7 +94,10 @@ final class CachedBrowsableComicSource
         CachedSourceBrowseProjection,
         RefreshableChapterComicSource,
         ResolvableComicResourceSource,
-        RetryableComicResourceSource {
+        ControlledResolvableComicResourceSource,
+        RetryableComicResourceSource,
+        ControlledRetryableComicResourceSource,
+        ControlledComicResourceSource {
   CachedBrowsableComicSource({
     required this.source,
     required this.cache,
@@ -511,7 +514,32 @@ final class CachedBrowsableComicSource
   Future<Uint8List> loadResource(Uri uri) => source.loadResource(uri);
 
   @override
-  Future<ComicResourceRequest> resolveResource(Uri uri) {
+  Future<Uint8List> loadResourceControlled(
+    Uri uri, {
+    TaskControl? control,
+  }) {
+    final controlled = source is ControlledComicResourceSource
+        ? source as ControlledComicResourceSource
+        : null;
+    return controlled?.loadResourceControlled(uri, control: control) ??
+        source.loadResource(uri);
+  }
+
+  @override
+  Future<ComicResourceRequest> resolveResource(Uri uri) =>
+      resolveResourceControlled(uri);
+
+  @override
+  Future<ComicResourceRequest> resolveResourceControlled(
+    Uri uri, {
+    TaskControl? control,
+  }) {
+    final controlled = source is ControlledResolvableComicResourceSource
+        ? source as ControlledResolvableComicResourceSource
+        : null;
+    if (controlled != null) {
+      return controlled.resolveResourceControlled(uri, control: control);
+    }
     final resolvable = source is ResolvableComicResourceSource
         ? source as ResolvableComicResourceSource
         : null;
@@ -528,7 +556,20 @@ final class CachedBrowsableComicSource
   }
 
   @override
-  Future<ComicResourceRequest?> retryResource(Uri uri) {
+  Future<ComicResourceRequest?> retryResource(Uri uri) =>
+      retryResourceControlled(uri);
+
+  @override
+  Future<ComicResourceRequest?> retryResourceControlled(
+    Uri uri, {
+    TaskControl? control,
+  }) {
+    final controlled = source is ControlledRetryableComicResourceSource
+        ? source as ControlledRetryableComicResourceSource
+        : null;
+    if (controlled != null) {
+      return controlled.retryResourceControlled(uri, control: control);
+    }
     final retryable = source is RetryableComicResourceSource
         ? source as RetryableComicResourceSource
         : null;

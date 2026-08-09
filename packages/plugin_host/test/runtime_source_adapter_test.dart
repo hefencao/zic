@@ -525,6 +525,62 @@ void main() {
     expect(connection.maxActive, 1);
   });
 
+  test(
+      'controlled Venera resource work cancels active prefetch and admits current before queued prefetch',
+      () async {
+    final connection = _PriorityResolveConnection();
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(maxConcurrentInvocations: 4),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single as ControlledResolvableComicResourceSource;
+    final firstControl = _MutableTaskControl(priority: 10);
+    final secondControl = _MutableTaskControl(priority: 20);
+    final currentControl = _MutableTaskControl(priority: 1000);
+
+    final first = source.resolveResourceControlled(
+      Uri.parse('venera-resource:prefetch-a'),
+      control: firstControl,
+    );
+    await connection.firstStarted.future;
+    final second = source.resolveResourceControlled(
+      Uri.parse('venera-resource:prefetch-b'),
+      control: secondControl,
+    );
+    final current = source.resolveResourceControlled(
+      Uri.parse('venera-resource:current'),
+      control: currentControl,
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(connection.startedUris, <String>['venera-resource:prefetch-a']);
+    firstControl.cancel();
+    await expectLater(
+      first,
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+    expect((await current).uri, Uri.parse('https://cdn.invalid/current'));
+    expect((await second).uri, Uri.parse('https://cdn.invalid/prefetch-b'));
+    expect(
+      connection.startedUris,
+      <String>[
+        'venera-resource:prefetch-a',
+        'venera-resource:current',
+        'venera-resource:prefetch-b',
+      ],
+    );
+    expect(connection.cancelledRequestIds, hasLength(1));
+    expect(connection.maxActive, 1);
+  });
+
   test('Mihon runtime keeps configured parallel invocation capacity', () async {
     final firstGate = Completer<void>();
     final connection = _SequencedConnection(firstGate: firstGate.future);
@@ -886,6 +942,93 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
     closeCalls++;
     await (closeBlock ?? Future<void>.value());
     closed = true;
+  }
+}
+
+final class _MutableTaskControl implements TaskControl {
+  _MutableTaskControl({required this.priority});
+
+  final Completer<void> _cancelled = Completer<void>();
+  @override
+  int priority;
+
+  @override
+  bool get cancelled => _cancelled.isCompleted;
+
+  @override
+  Future<void> get whenCancelled => _cancelled.future;
+
+  void cancel() {
+    if (!_cancelled.isCompleted) _cancelled.complete();
+  }
+}
+
+final class _PriorityResolveConnection
+    implements CancellableExternalPluginRuntimeConnection {
+  final Completer<void> firstStarted = Completer<void>();
+  final Completer<void> _firstRelease = Completer<void>();
+  final List<String> startedUris = <String>[];
+  final List<String> cancelledRequestIds = <String>[];
+  String? _firstRequestId;
+  int active = 0;
+  int maxActive = 0;
+
+  @override
+  List<ExternalPluginRuntimeSourceDescriptor> get sources =>
+      <ExternalPluginRuntimeSourceDescriptor>[
+        ExternalPluginRuntimeSourceDescriptor(
+          externalId: 'fixture',
+          name: 'Fixture',
+          language: 'en',
+          website: Uri.parse('https://example.invalid'),
+        ),
+      ];
+
+  @override
+  Future<ExternalPluginRuntimeResponse> invoke(
+    ExternalPluginRuntimeRequest request,
+  ) async {
+    final rawUri = request.arguments['uri'];
+    if (request.operation != ExternalPluginRuntimeOperation.resolveResource ||
+        rawUri is! String) {
+      throw StateError('priority fixture accepts resolveResource only');
+    }
+    startedUris.add(rawUri);
+    active++;
+    if (active > maxActive) maxActive = active;
+    try {
+      if (_firstRequestId == null) {
+        _firstRequestId = request.requestId;
+        firstStarted.complete();
+        await _firstRelease.future;
+      }
+      final suffix = Uri.parse(rawUri).path.split(':').last;
+      return ExternalPluginRuntimeResponse.success(
+        requestId: request.requestId,
+        payload: <String, Object?>{
+          'url': 'https://cdn.invalid/$suffix',
+          'method': 'GET',
+          'headers': <String, Object?>{},
+          'body': null,
+          'requiresRuntimeTransform': false,
+        },
+      );
+    } finally {
+      active--;
+    }
+  }
+
+  @override
+  Future<void> cancel(String requestId) async {
+    cancelledRequestIds.add(requestId);
+    if (requestId == _firstRequestId && !_firstRelease.isCompleted) {
+      _firstRelease.complete();
+    }
+  }
+
+  @override
+  Future<void> close() async {
+    if (!_firstRelease.isCompleted) _firstRelease.complete();
   }
 }
 

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -167,11 +166,13 @@ final class ExternalPluginRuntimeSession
   Future<Object> _invoke(
     ExternalPluginRuntimeOperation operation,
     String externalSourceId,
-    Map<String, Object?> arguments,
-  ) async {
+    Map<String, Object?> arguments, {
+    TaskControl? control,
+  }) async {
     if (_closed) {
       throw StateError('external plugin runtime session is closed');
     }
+    _throwIfTaskCancelled(control);
     final request = ExternalPluginRuntimeRequest(
       requestId: 'request-${_nextRequestId++}',
       operation: operation,
@@ -179,8 +180,29 @@ final class ExternalPluginRuntimeSession
       arguments: arguments,
     );
     late final ExternalPluginRuntimeResponse response;
+    var invocationActive = false;
     try {
-      response = await _gate.run(() => _connection.invoke(request));
+      response = await _gate.run(
+        () {
+          _throwIfTaskCancelled(control);
+          invocationActive = true;
+          final operation = _connection.invoke(request);
+          final taskControl = control;
+          if (taskControl != null) {
+            unawaited(taskControl.whenCancelled.then((_) async {
+              if (invocationActive) {
+                await _cancelInvocation(request.requestId);
+              }
+            }));
+          }
+          operation.then<void>(
+            (_) { invocationActive = false; },
+            onError: (Object _, StackTrace __) { invocationActive = false; },
+          );
+          return operation;
+        },
+        control: control,
+      );
     } on TimeoutException catch (error) {
       unawaited(_cancelInvocation(request.requestId));
       throw Failure(
@@ -190,6 +212,7 @@ final class ExternalPluginRuntimeSession
         cause: error,
       );
     }
+    _throwIfTaskCancelled(control);
     if (response.requestId != request.requestId) {
       throw Failure(
         code: ErrorCode.source,
@@ -274,8 +297,9 @@ const mihonBrowserUserAgent =
 typedef _RuntimeInvoke = Future<Object> Function(
   ExternalPluginRuntimeOperation operation,
   String externalSourceId,
-  Map<String, Object?> arguments,
-);
+  Map<String, Object?> arguments, {
+  TaskControl? control,
+});
 
 final class _RuntimeBrowsableComicSource
     implements BrowsableComicSource, ConfigurableComicSource,
@@ -285,7 +309,9 @@ final class _RuntimeBrowsableComicSource
         ComicPreviewSource, ComicCommentSource,
         SectionedBrowsableComicSource,
         FilterableBrowsableComicSource,
-        ResolvableComicResourceSource, RetryableComicResourceSource {
+        ResolvableComicResourceSource, ControlledResolvableComicResourceSource,
+        RetryableComicResourceSource, ControlledRetryableComicResourceSource,
+        ControlledComicResourceSource {
   _RuntimeBrowsableComicSource({
     required ExternalComicPluginFormat format,
     required ExternalPluginRuntimeSourceDescriptor descriptor,
@@ -671,7 +697,14 @@ final class _RuntimeBrowsableComicSource
   }
 
   @override
-  Future<Uint8List> loadResource(Uri uri) {
+  Future<Uint8List> loadResource(Uri uri) =>
+      loadResourceControlled(uri);
+
+  @override
+  Future<Uint8List> loadResourceControlled(
+    Uri uri, {
+    TaskControl? control,
+  }) {
     if (!uri.hasScheme) {
       throw ArgumentError.value(uri, 'uri', 'must be absolute');
     }
@@ -680,6 +713,13 @@ final class _RuntimeBrowsableComicSource
       throw StateError(
         'legacy Venera runtime locator must be refreshed before resource load',
       );
+    }
+    _throwIfTaskCancelled(control);
+    // Controlled Reader/download work is never coalesced with another task's
+    // runtime Future. A current page must not inherit a prefetch task's
+    // cancellation or its place in the single Venera invocation queue.
+    if (control != null) {
+      return _loadResource(uri, control: control);
     }
     final existing = _resourceLoads[uri];
     if (existing != null) {
@@ -695,11 +735,15 @@ final class _RuntimeBrowsableComicSource
     return load;
   }
 
-  Future<Uint8List> _loadResource(Uri uri) async {
+  Future<Uint8List> _loadResource(
+    Uri uri, {
+    TaskControl? control,
+  }) async {
     final payload = await _invoke(
       ExternalPluginRuntimeOperation.loadResource,
       _externalId,
       <String, Object?>{'uri': uri.toString()},
+      control: control,
     );
     if (payload is! Uint8List) {
       throw const FormatException(
@@ -710,27 +754,43 @@ final class _RuntimeBrowsableComicSource
   }
 
   @override
-  Future<ComicResourceRequest> resolveResource(Uri uri) async {
+  Future<ComicResourceRequest> resolveResource(Uri uri) =>
+      resolveResourceControlled(uri);
+
+  @override
+  Future<ComicResourceRequest> resolveResourceControlled(
+    Uri uri, {
+    TaskControl? control,
+  }) async {
     final payload = await _invoke(
       ExternalPluginRuntimeOperation.resolveResource,
       _externalId,
       <String, Object?>{'uri': uri.toString()},
+      control: control,
     );
     return _resourceRequestFromPayload(payload, 'runtime resource request');
   }
 
   @override
-  Future<ComicResourceRequest?> retryResource(Uri uri) async {
+  Future<ComicResourceRequest?> retryResource(Uri uri) =>
+      retryResourceControlled(uri);
+
+  @override
+  Future<ComicResourceRequest?> retryResourceControlled(
+    Uri uri, {
+    TaskControl? control,
+  }) async {
     if (_format == ExternalComicPluginFormat.mihonExtension) {
       // A failed host-side stream can mean that a deferred Mihon page URL or
       // source header has expired. Resolve a fresh request plan while keeping
       // the image body on the shared host transport path.
-      return resolveResource(uri);
+      return resolveResourceControlled(uri, control: control);
     }
     final payload = await _invoke(
       ExternalPluginRuntimeOperation.retryResource,
       _externalId,
       <String, Object?>{'uri': uri.toString()},
+      control: control,
     );
     final message = _map(payload, 'runtime resource retry');
     if (_optionalBool(message['available']) != true) {
@@ -907,6 +967,29 @@ final class _RuntimeBrowsableComicSource
   }
 }
 
+void _throwIfTaskCancelled(TaskControl? control) {
+  if (control?.cancelled != true) return;
+  throw const Failure(
+    code: ErrorCode.cancelled,
+    message: 'external plugin invocation was cancelled by its scheduler owner',
+  );
+}
+
+final class _RuntimeInvocationWaiter {
+  _RuntimeInvocationWaiter({
+    required this.control,
+    required this.sequence,
+  });
+
+  final TaskControl? control;
+  final int sequence;
+  final Completer<void> ready = Completer<void>();
+  bool granted = false;
+  bool abandoned = false;
+
+  int get priority => control?.priority ?? 0;
+}
+
 final class _RuntimeInvocationGate {
   _RuntimeInvocationGate(
     this.limits, {
@@ -915,30 +998,61 @@ final class _RuntimeInvocationGate {
 
   final ExternalPluginRuntimeLimits limits;
   final int maxConcurrentInvocations;
-  final Queue<Completer<void>> _waiters = Queue<Completer<void>>();
+  final List<_RuntimeInvocationWaiter> _waiters = <_RuntimeInvocationWaiter>[];
   Completer<void>? _drained;
   int _active = 0;
+  int _nextWaiterSequence = 0;
   bool _closing = false;
 
-  Future<T> run<T>(Future<T> Function() action) async {
+  Future<T> run<T>(
+    Future<T> Function() action, {
+    TaskControl? control,
+  }) async {
     if (_closing) {
       throw StateError('external plugin runtime is closing');
     }
+    _throwIfTaskCancelled(control);
     if (_active >= maxConcurrentInvocations) {
-      final waiter = Completer<void>();
+      final waiter = _RuntimeInvocationWaiter(
+        control: control,
+        sequence: _nextWaiterSequence++,
+      );
       _waiters.add(waiter);
-      await waiter.future;
+      final taskControl = control;
+      if (taskControl != null) {
+        unawaited(taskControl.whenCancelled.then((_) {
+          if (waiter.granted || waiter.abandoned || waiter.ready.isCompleted) {
+            return;
+          }
+          waiter.abandoned = true;
+          _waiters.remove(waiter);
+          waiter.ready.completeError(
+            const Failure(
+              code: ErrorCode.cancelled,
+              message: 'queued external plugin invocation was cancelled',
+            ),
+          );
+        }));
+      }
+      await waiter.ready.future;
       if (_closing) {
         // The released invocation transferred its permit to this waiter.
         // Return it before rejecting work that lost the close race.
         _release();
         throw StateError('external plugin runtime is closing');
       }
+      if (control?.cancelled == true) {
+        // Cancellation may race with permit transfer. The permit remains real
+        // until this waiter explicitly hands it on or returns it.
+        _release();
+        _throwIfTaskCancelled(control);
+      }
     } else {
       _active++;
     }
     late final Future<T> operation;
     try {
+      _throwIfTaskCancelled(control);
       operation = action();
     } on Object {
       _release();
@@ -957,9 +1071,13 @@ final class _RuntimeInvocationGate {
     }
     _closing = true;
     while (_waiters.isNotEmpty) {
-      _waiters.removeFirst().completeError(
-            StateError('external plugin runtime is closing'),
-          );
+      final waiter = _waiters.removeLast();
+      waiter.abandoned = true;
+      if (!waiter.ready.isCompleted) {
+        waiter.ready.completeError(
+          StateError('external plugin runtime is closing'),
+        );
+      }
     }
     if (_active == 0) {
       return Future<void>.value();
@@ -969,12 +1087,15 @@ final class _RuntimeInvocationGate {
   }
 
   void _release() {
-    if (!_closing && _waiters.isNotEmpty) {
-      // Transfer the active permit directly to the oldest waiter. Keeping
-      // [_active] unchanged prevents a newly arriving call from stealing the
-      // slot before the waiter resumes.
-      _waiters.removeFirst().complete();
-      return;
+    if (!_closing) {
+      final waiter = _takeHighestPriorityWaiter();
+      if (waiter != null) {
+        // Transfer the active permit directly. [_active] remains unchanged, so
+        // a newly arriving invocation cannot steal the sole Venera context.
+        waiter.granted = true;
+        waiter.ready.complete();
+        return;
+      }
     }
     _active--;
     if (_active < 0) {
@@ -984,6 +1105,28 @@ final class _RuntimeInvocationGate {
       _drained?.complete();
       _drained = null;
     }
+  }
+
+  _RuntimeInvocationWaiter? _takeHighestPriorityWaiter() {
+    _RuntimeInvocationWaiter? best;
+    for (final waiter in _waiters) {
+      if (waiter.abandoned || waiter.control?.cancelled == true) {
+        continue;
+      }
+      if (best == null ||
+          waiter.priority > best.priority ||
+          (waiter.priority == best.priority &&
+              waiter.sequence < best.sequence)) {
+        best = waiter;
+      }
+    }
+    _waiters.removeWhere(
+      (waiter) => waiter.abandoned || waiter.control?.cancelled == true,
+    );
+    if (best != null) {
+      _waiters.remove(best);
+    }
+    return best;
   }
 }
 

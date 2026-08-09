@@ -201,6 +201,31 @@ void main() {
     await body.done;
   });
 
+  test('controlled Reader loader preserves scheduler control through source resolution',
+      () async {
+    final control = _MutableTaskControl(priority: 1000);
+    final source = _FixtureSource(
+      request: ComicResourceRequest(uri: Uri.parse('https://fixture/current')),
+    );
+    final pool = ExternalPluginResourceTransportPool(
+      directOpen: (_) async => ByteResponse(
+        bytes: Stream<List<int>>.value(<int>[1, 2, 3, 4]),
+        statusCode: HttpStatus.ok,
+        rangeStart: 0,
+        totalLength: 4,
+      ),
+    );
+    addTearDown(pool.close);
+
+    final response = await pool
+        .controlledLoaderFor(source, Uri.parse('venera-resource:current'))(
+      control: control,
+    );
+
+    expect(identical(source.lastResolveControl, control), isTrue);
+    expect(await _collect(response.bytes), <int>[1, 2, 3, 4]);
+  });
+
   test('failed direct retry falls back to the source-owned byte transform',
       () async {
     final failed = Uri.parse('https://fixture/failed');
@@ -338,11 +363,32 @@ final class _ControlledBody {
   }
 }
 
+final class _MutableTaskControl implements TaskControl {
+  _MutableTaskControl({required this.priority});
+
+  final Completer<void> _cancelled = Completer<void>();
+  @override
+  int priority;
+
+  @override
+  bool get cancelled => _cancelled.isCompleted;
+
+  @override
+  Future<void> get whenCancelled => _cancelled.future;
+
+  void cancel() {
+    if (!_cancelled.isCompleted) _cancelled.complete();
+  }
+}
+
 final class _FixtureSource
     implements
         BrowsableComicSource,
         ResolvableComicResourceSource,
-        RetryableComicResourceSource {
+        ControlledResolvableComicResourceSource,
+        RetryableComicResourceSource,
+        ControlledRetryableComicResourceSource,
+        ControlledComicResourceSource {
   _FixtureSource({
     required this.request,
     this.retryRequest,
@@ -355,6 +401,7 @@ final class _FixtureSource
   int resolveCalls = 0;
   int retryCalls = 0;
   int loadCalls = 0;
+  TaskControl? lastResolveControl;
 
   @override
   String get sourceId => 'venera:fixture';
@@ -368,19 +415,41 @@ final class _FixtureSource
       );
 
   @override
-  Future<ComicResourceRequest> resolveResource(Uri uri) async {
+  Future<ComicResourceRequest> resolveResource(Uri uri) =>
+      resolveResourceControlled(uri);
+
+  @override
+  Future<ComicResourceRequest> resolveResourceControlled(
+    Uri uri, {
+    TaskControl? control,
+  }) async {
     resolveCalls++;
+    lastResolveControl = control;
     return request;
   }
 
   @override
-  Future<ComicResourceRequest?> retryResource(Uri uri) async {
+  Future<ComicResourceRequest?> retryResource(Uri uri) =>
+      retryResourceControlled(uri);
+
+  @override
+  Future<ComicResourceRequest?> retryResourceControlled(
+    Uri uri, {
+    TaskControl? control,
+  }) async {
     retryCalls++;
     return retryRequest;
   }
 
   @override
-  Future<Uint8List> loadResource(Uri uri) async {
+  Future<Uint8List> loadResource(Uri uri) =>
+      loadResourceControlled(uri);
+
+  @override
+  Future<Uint8List> loadResourceControlled(
+    Uri uri, {
+    TaskControl? control,
+  }) async {
     loadCalls++;
     return runtimeBytes;
   }

@@ -3,7 +3,7 @@ part of 'demo_home.dart';
 typedef _PreparedImportedChapter = ({
   ImportedLibraryEntry entry,
   Map<String, LocalImageFileBytesLoader> byteLoaders,
-  Map<String, ExternalPluginResourceResponseLoader> responseLoaders,
+  Map<String, ExternalPluginControlledResourceResponseLoader> responseLoaders,
   int? initialPageIndex,
 });
 

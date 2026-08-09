@@ -116,7 +116,9 @@ def main() -> None:
         "ResolvableComicResourceSource",
         "HttpHeaders.acceptEncodingHeader",
         "response.contentLength",
-        "_source.loadResource(uri)",
+        "ControlledComicResourceSource",
+        ".loadResourceControlled(uri, control: control)",
+        "source.loadResource(uri)",
     )
     require(
         "packages/downloads/lib/src/chapter_downloads.dart",

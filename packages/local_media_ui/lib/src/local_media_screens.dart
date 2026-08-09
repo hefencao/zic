@@ -60,7 +60,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
   const ImportedImageChapterScreen({
     required this.record,
     this.byteLoaders = const <String, LocalImageFileBytesLoader>{},
-    this.responseLoaders = const <String, TransportResponseLoader>{},
+    this.responseLoaders = const <String, ControlledTransportResponseLoader>{},
     this.onPreviewStateChanged,
     this.initialProgress,
     this.onProgressChanged,
@@ -77,7 +77,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
 
   final ImportedChapterRecord record;
   final Map<String, LocalImageFileBytesLoader> byteLoaders;
-  final Map<String, TransportResponseLoader> responseLoaders;
+  final Map<String, ControlledTransportResponseLoader> responseLoaders;
   final ImagePreviewStateChanged? onPreviewStateChanged;
   final ReadingProgress? initialProgress;
   final ReaderProgressWriter? onProgressChanged;
@@ -103,15 +103,17 @@ final class ImportedImageChapterScreen extends StatelessWidget {
         sources[uri] = LoaderTransportSource(
           revision: '${record.sourceRevision}:$index',
           loadBytes: loader,
-          openResponse: responseLoader ??
-              (loader == null && uri.scheme == 'content'
-                  ? ({ByteRange? range, Validators? validators}) =>
-                      _openLocalMediaResponse(
-                        page.sourceId,
-                        range: range,
-                        validators: validators,
-                      )
-                  : null),
+          openControlledResponse: responseLoader,
+          openResponse: responseLoader == null &&
+                  loader == null &&
+                  uri.scheme == 'content'
+              ? ({ByteRange? range, Validators? validators}) =>
+                  _openLocalMediaResponse(
+                    page.sourceId,
+                    range: range,
+                    validators: validators,
+                  )
+              : null,
         );
       }
     }

@@ -4,6 +4,8 @@
 
 - Reader submits observations and commands and consumes read-only Pipeline output. It must not own transport, page bytes, session, cursor, decoded frame, texture, retry or prefetch state.
 - `NetLane` is the only network scheduling authority. Do not add a holder-depth, playback-state or UI-owned network eligibility gate.
+- Scheduler cancellation/priority MUST remain observable through Reader page transport, source request-plan and runtime invocation boundaries; adapters must not replace it with an independent FIFO or release capacity before cancelled work actually exits.
+- Native encoded-byte ingress MUST NOT wait on a source lock held across frame decode/scale/composite work; keep source-lock critical sections limited to byte/demux preparation.
 - Stable documentation must describe current production code, not a superseded experiment. Historical attempts belong in `CHANGELOG.md`, ADRs and `docs/audits/`.
 - When ownership, lifecycle, default policy or public contracts change, update `docs/ARCHITECTURE.md`, `docs/SPEC.md`, `docs/IMPLEMENTATION_STATUS.md` and `docs/NEXT_CHAT_HANDOFF.md` in the same change.
 - ADR status must be exactly Proposed, Provisional, Accepted, Superseded or Rejected. Do not use ambiguous combined status text.

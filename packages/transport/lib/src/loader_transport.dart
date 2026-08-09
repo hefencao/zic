@@ -11,21 +11,33 @@ typedef TransportResponseLoader = Future<ByteResponse> Function({
   Validators? validators,
 });
 
+typedef ControlledTransportResponseLoader = Future<ByteResponse> Function({
+  ByteRange? range,
+  Validators? validators,
+  TaskControl? control,
+});
+
 final class LoaderTransportSource {
   const LoaderTransportSource({
     this.loadBytes,
     this.openResponse,
+    this.openControlledResponse,
     required this.revision,
-  }) : assert(loadBytes != null || openResponse != null);
+  }) : assert(
+          loadBytes != null ||
+              openResponse != null ||
+              openControlledResponse != null,
+        );
 
   final TransportByteLoader? loadBytes;
   final TransportResponseLoader? openResponse;
+  final ControlledTransportResponseLoader? openControlledResponse;
   final String revision;
 }
 
 /// Adapts platform-owned or in-memory byte loaders to the same range/resume
 /// contract used by Reader download sessions.
-final class LoaderTransport implements Transport {
+final class LoaderTransport implements ControlledTransport {
   LoaderTransport(Map<Uri, LoaderTransportSource> sources)
       : _sources = Map<String, LoaderTransportSource>.unmodifiable(
           sources.map(
@@ -45,6 +57,15 @@ final class LoaderTransport implements Transport {
     Uri uri, {
     ByteRange? range,
     Validators? validators,
+  }) =>
+      openControlled(uri, range: range, validators: validators);
+
+  @override
+  Future<ByteResponse> openControlled(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
   }) async {
     range?.validate();
     final source = _sources[uri.toString()];
@@ -55,6 +76,14 @@ final class LoaderTransport implements Transport {
       );
     }
 
+    final openControlledResponse = source.openControlledResponse;
+    if (openControlledResponse != null) {
+      return openControlledResponse(
+        range: range,
+        validators: validators,
+        control: control,
+      );
+    }
     final openResponse = source.openResponse;
     if (openResponse != null) {
       return openResponse(range: range, validators: validators);

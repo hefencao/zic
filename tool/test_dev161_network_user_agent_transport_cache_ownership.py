@@ -43,7 +43,7 @@ require(
     'apps/app/lib/demo_home.dart',
     'userAgentProvider: () => widget.preferences.networkUserAgent',
     'defaultUserAgentProvider: () => widget.preferences.networkUserAgent',
-    '_sourceResources.pageResponseLoaderFor(',
+    '_sourceResources.pageControlledResponseLoaderFor(',
 )
 forbid('apps/app/lib/demo_home.dart', '_sourceResources.responseLoaderFor(')
 require(
@@ -63,7 +63,7 @@ require(
     "'sourceClientStateRequired': true",
     'response.isRedirect || response.cookies.isNotEmpty',
     'request.followRedirects = false;',
-    'return directOpen(effective);',
+    'final response = await directOpen(effective);',
     '_applyDefaultUserAgent(',
     'String Function()? defaultUserAgentProvider',
     'if (_hasHeader(request.headers, HttpHeaders.userAgentHeader)) return request;',
@@ -73,6 +73,7 @@ require(
     'defaultUserAgentProvider: defaultUserAgentProvider',
     'Future<Uint8List> loadPageBytes(',
     'ExternalPluginResourceResponseLoader pageResponseLoaderFor(',
+    'pageControlledResponseLoaderFor(',
     'Raw page-body streaming escape hatch.',
     'loadCachedComicImageSource(',
 )
@@ -135,7 +136,7 @@ for path in ROOT.rglob('*.dart'):
     if '/test/' in f'/{rel}' or rel == 'packages/downloads/lib/src/source_resource_transport.dart':
         continue
     text = path.read_text(encoding='utf-8')
-    if '.loaderFor(' in text and rel != 'apps/app/lib/source_resource_gateway.dart':
+    if any(token in text for token in ('.loaderFor(', '.controlledLoaderFor(')) and rel != 'apps/app/lib/source_resource_gateway.dart':
         raise SystemExit(f'FAIL: raw source transport bypasses gateway: {rel}')
 
 
@@ -184,7 +185,7 @@ for path in ROOT.rglob('*.dart'):
         raise SystemExit(f'FAIL: source transport pool bypasses gateway: {rel}')
     if '.loadResource(' in text and rel.startswith('apps/app/lib/') and rel != 'apps/app/lib/source_resource_gateway.dart':
         raise SystemExit(f'FAIL: App bypasses source resource gateway: {rel}')
-    if '.pageResponseLoaderFor(' in text and rel not in {
+    if any(token in text for token in ('.pageResponseLoaderFor(', '.pageControlledResponseLoaderFor(')) and rel not in {
         'apps/app/lib/source_resource_gateway.dart',
         'apps/app/lib/demo_home.dart',
     }:

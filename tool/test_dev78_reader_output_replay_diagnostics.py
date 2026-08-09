@@ -48,7 +48,7 @@ for token in (
     'fn fit_dimensions(',
     'self.max_width,',
     'self.max_height,',
-    'self.ensure_canvas(background, source_width, source_height)?;',
+    'self.ensure_canvas(\n            prepared.background,\n            prepared.source_width,\n            prepared.source_height,\n        )?;',
 ):
     require(webp, token, 'aspect-preserving native decode')
 for token in (

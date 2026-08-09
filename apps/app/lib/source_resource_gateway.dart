@@ -187,6 +187,18 @@ final class ComicSourceResourceGateway {
   /// Raw page-body streaming escape hatch. This intentionally bypasses the
   /// response cache because Reader/chapter bytes are owned by DownloadSession
   /// and artifact storage. Metadata/artwork callers must use cached APIs above.
+  ExternalPluginControlledResourceResponseLoader
+      pageControlledResponseLoaderFor(
+    String sourceId,
+    Uri uri,
+  ) {
+    _requireOpen();
+    if (isLegacyVeneraRuntimeLocator(uri.toString())) {
+      throw StateError('已阻止打开失效的 Venera 运行时资源定位符：$uri');
+    }
+    return _transports.controlledLoaderFor(_requireSource(sourceId, uri), uri);
+  }
+
   ExternalPluginResourceResponseLoader pageResponseLoaderFor(
     String sourceId,
     Uri uri,

@@ -1,6 +1,6 @@
-# dev.174 后续交接
+# dev.175 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.174_current-preemption-saturated-handoff.zip`。
+唯一后续基线：`zic_v0.31.0-dev.175_venera-transport-native-ingress-preemption.zip`。
 
 ## 必读
 
@@ -26,6 +26,7 @@
 20. `docs/adr/0155-external-browse-runtime-protocol-field-ownership.md`
 21. `docs/adr/0156-source-migration-version-view-and-update-badge-ownership.md`
 22. `docs/adr/0157-current-preemption-saturated-handoff-ownership.md`、`docs/audits/dev174-vibevenera-current-preemption-root-cause-audit.md`、`docs/audits/dev174-validation-results.md`
+23. `docs/adr/0158-venera-transport-preemption-and-native-source-lock-ownership.md`、`docs/audits/dev175-venera-transport-native-ingress-root-cause-audit.md`、`docs/audits/dev175-validation-results.md`
 
 ## 当前代码事实
 
@@ -56,11 +57,15 @@
 - Cloudflare可见浏览器沿用 dev.154/dev.155：真实 WebView UA与 Cookie/localStorage同 revision handoff；typed classifier与浏览器完成 probe分离；验证后按稳定 sourceId解析 replacement adapter。
 - 外部插件 manifest按记录容错。只有 payload安装/升级走事务式 replacement；settings与Venera Web登录原地更新，不 restart。Mihon浏览器 handoff保留受限 Mihon-only restart。生产 runtime session安全上限32，不能恢复通用8-session用户上限。
 - Reader/Pipeline参数仍为 encoded前7/后3、holder 7/5/3/2、decode前2/后1、network5/decode3/upload2。NetLane已对齐 VibeVenera饱和 handoff：reserved1被慢取消占用时，后续 current仍继续请求另一个低 rank prefetch取消；取消中的 task真实退出前不释放 permit。
+- Reader page 的 NetLane `TaskControl` 已贯穿 DownloadJob → controlled transport → source request-plan → external runtime。Venera仍只有一个 invocation context；permit释放时按实时 priority选择 waiter，active controlled prefetch被取消会调用 runtime `cancel(requestId)`，controlled request-plan不复用其它 task 的 in-flight Future。
+- native `zic_cursor_decode_next()` 只在 source读锁内刷新 demux并复制下一帧压缩 fragment；WebP decode/scale/composite/canvas copy在锁外执行，下载 `zic_source_reserve/commit` 不再等待整帧 decode。
 - Native identity保持 `zic-media-core-dev134-abi6-lib00121400`。
 - 当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip`；不得从旧版本偷偷补入。
 
 ## 下一步真机优先验证
 
+- 首先复测连续快速翻页与下载压力：current 在 NetLane 进入 5+1 handoff 后，不得再在 Venera 单 invocation FIFO 中等待旧 prefetch；被抢占的 active Venera request 应收到同一 scheduler cancel，唯一 permit释放后按实时 priority移交。
+- 同时观察 `bytesCommitted.nativeIngressMicros`：后台 WebP decode期间 source reserve/commit 不应再等待整帧 decode；若仍有 >10 ms 尖峰，先区分 native ingress、artifact I/O 和 source/runtime等待，不调整 7/3、2/1、5/3/2。
 - 首先复测 WNACG（`mihon:6551136894818591762`）：列表封面与 Reader正文应能读取 source给出的 `http://img*.wnimg*.ru`；同一稳定 DownloadId若失败不得再出现数百次 `downloadStarted/taskFailed`。
 - 长会话记录 progress SQLite事务次数和 Reader pop帧时序；不得每页写盘，也不得在退出后整库 reload。
 - 分别用明确 chapterList扩展与 combined-only TachiyomiX 1.6扩展验证目录调用次数/结果；出现空或单项时先看实际 API返回，不恢复 synthetic fallback。

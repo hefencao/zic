@@ -116,6 +116,20 @@ abstract interface class Transport {
   });
 }
 
+
+/// Optional transport capability for scheduler-owned cancellation and priority.
+///
+/// [control] is observational: transports may abort/sequence their own request
+/// work from it, but scheduling policy remains owned by the caller's lane.
+abstract interface class ControlledTransport implements Transport {
+  Future<ByteResponse> openControlled(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
+  });
+}
+
 void requireResumeResponse({
   required int expectedStart,
   required Validators expectedValidators,

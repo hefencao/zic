@@ -1,5 +1,11 @@
 # zic Implementation Plan
 
+## P0：dev.175 current source-plan 抢占与下载卡顿设备闭环
+
+- 在远程 Venera 漫画上让 5 路 prefetch 饱和后连续快速翻页；确认 current 取得 NetLane handoff后不再在 Venera source-plan FIFO等待数秒。若仍慢，Trace必须区分 runtime request cancel发出、原 invocation退出和 current resolve开始，而不是继续调 lane参数。
+- 对比 `bytesCommitted.nativeIngressMicros` 与 frame timing：下载并发期间同步 native ingress不得再出现因 WebP worker持 source读锁导致的十几/几十毫秒尖峰。
+- 保持 encoded 7/3、decode 2/1、network/decode/upload 5/3/2与 reserved current 1；设备验证失败时继续沿 transport/runtime或 native lock证据下钻，不缩窗口。
+
 ## P0：迁移 / 同源版本 / 更新提示真机闭环
 
 - 在 source card 已入书架时确认左上显示书架图标并变暗；存在 `sourceUpdateAt` 时右上显示独立感叹号。点击同源更新提示应直接打开来源确认的最新 successor，不得把 successor 自动加入书架。

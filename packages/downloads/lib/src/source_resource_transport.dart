@@ -14,6 +14,8 @@ import 'package:transport/transport.dart';
 /// while a shared transport streams the response into the authoritative
 /// DownloadSession. Complete image bodies never cross the plugin RPC fast path.
 typedef ExternalPluginResourceResponseLoader = TransportResponseLoader;
+typedef ExternalPluginControlledResourceResponseLoader =
+    ControlledTransportResponseLoader;
 
 /// Optional host transport capability after request normalization.
 ///
@@ -40,6 +42,29 @@ final class ExternalPluginResourceTransportPool {
     BrowsableComicSource source,
     Uri locator,
   ) {
+    final transport = _transportFor(source);
+    return ({ByteRange? range, Validators? validators}) => transport.open(
+          locator,
+          range: range,
+          validators: validators,
+        );
+  }
+
+  ExternalPluginControlledResourceResponseLoader controlledLoaderFor(
+    BrowsableComicSource source,
+    Uri locator,
+  ) {
+    final transport = _transportFor(source);
+    return ({ByteRange? range, Validators? validators, TaskControl? control}) =>
+        transport.openControlled(
+          locator,
+          range: range,
+          validators: validators,
+          control: control,
+        );
+  }
+
+  _SourceResourceTransport _transportFor(BrowsableComicSource source) {
     final sourceId = source.sourceId;
     final transport = _transports.putIfAbsent(
       sourceId,
@@ -50,11 +75,7 @@ final class ExternalPluginResourceTransportPool {
       ),
     );
     transport.updateSource(source);
-    return ({ByteRange? range, Validators? validators}) => transport.open(
-          locator,
-          range: range,
-          validators: validators,
-        );
+    return transport;
   }
 
   void close() {
@@ -65,7 +86,7 @@ final class ExternalPluginResourceTransportPool {
   }
 }
 
-final class _SourceResourceTransport implements Transport {
+final class _SourceResourceTransport implements ControlledTransport {
   _SourceResourceTransport(
     this._source,
     this._directOpen,
@@ -102,14 +123,31 @@ final class _SourceResourceTransport implements Transport {
     Uri uri, {
     ByteRange? range,
     Validators? validators,
+  }) =>
+      openControlled(uri, range: range, validators: validators);
+
+  @override
+  Future<ByteResponse> openControlled(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
   }) async {
     range?.validate();
-    var request = await _resolve(uri);
+    _throwIfTaskCancelled(control);
+    var request = await _resolve(uri, control: control);
+    _throwIfTaskCancelled(control);
     if (_failedStreams.remove(uri)) {
-      request = await _retry(uri) ?? request;
+      request = await _retry(uri, control: control) ?? request;
+      _throwIfTaskCancelled(control);
     }
     if (request.requiresRuntimeTransform) {
-      return _openRuntimeFallback(uri, range: range, validators: validators);
+      return _openRuntimeFallback(
+        uri,
+        range: range,
+        validators: validators,
+        control: control,
+      );
     }
     try {
       return await _openDirect(
@@ -117,39 +155,42 @@ final class _SourceResourceTransport implements Transport {
         request,
         range: range,
         validators: validators,
+        control: control,
       );
     } on Failure catch (error) {
+      if (error.code == ErrorCode.cancelled) rethrow;
       if (error.code != ErrorCode.network) rethrow;
       _invalidate(uri);
       if (error.details['sourceMediaProtocolMismatch'] == true) {
-        // The HTTP transaction itself succeeded, but it did not return encoded
-        // media. This is the signature of a source-owned OkHttp interceptor,
-        // authentication/TLS policy or anti-bot response that cannot be
-        // reproduced by the shared Dart HttpClient. Do not issue the same host
-        // request twice; execute the existing source-owned compatibility path.
         return _openRuntimeFallback(
           uri,
           range: range,
           validators: validators,
+          control: control,
         );
       }
-      final retry = await _retry(uri);
+      final retry = await _retry(uri, control: control);
+      _throwIfTaskCancelled(control);
       if (retry == null) rethrow;
       return _openRetryPlan(
         uri,
         retry,
         range: range,
         validators: validators,
+        control: control,
       );
     } on IOException catch (error) {
+      _throwIfTaskCancelled(control);
       _invalidate(uri);
-      final retry = await _retry(uri);
+      final retry = await _retry(uri, control: control);
+      _throwIfTaskCancelled(control);
       if (retry != null) {
         return _openRetryPlan(
           uri,
           retry,
           range: range,
           validators: validators,
+          control: control,
         );
       }
       throw Failure(
@@ -160,27 +201,48 @@ final class _SourceResourceTransport implements Transport {
     }
   }
 
-  Future<ComicResourceRequest?> _retry(Uri locator) async {
+  Future<ComicResourceRequest?> _retry(
+    Uri locator, {
+    TaskControl? control,
+  }) async {
+    _throwIfTaskCancelled(control);
     final source = _source;
-    final retryable = source is RetryableComicResourceSource
-        ? source as RetryableComicResourceSource
+    final controlled = source is ControlledRetryableComicResourceSource
+        ? source as ControlledRetryableComicResourceSource
         : null;
-    if (retryable == null) return null;
-    final replacement = await retryable.retryResource(locator);
+    final replacement = controlled != null
+        ? await controlled.retryResourceControlled(locator, control: control)
+        : source is RetryableComicResourceSource
+            ? await (source as RetryableComicResourceSource)
+                .retryResource(locator)
+            : null;
+    _throwIfTaskCancelled(control);
     if (replacement != null) _remember(locator, replacement);
     return replacement;
   }
 
-  Future<ComicResourceRequest> _resolve(Uri locator) {
+  Future<ComicResourceRequest> _resolve(
+    Uri locator, {
+    TaskControl? control,
+  }) {
+    _throwIfTaskCancelled(control);
     final cached = _cached(locator);
     if (cached != null) return Future<ComicResourceRequest>.value(cached);
-    final active = _requestLoads[locator];
-    if (active != null) return active;
+    // Controlled work must keep its own scheduler identity. Reusing another
+    // task's in-flight source-plan Future would reintroduce FIFO inheritance
+    // after NetLane has already promoted/cancelled roles.
+    if (control == null) {
+      final active = _requestLoads[locator];
+      if (active != null) return active;
+    }
     final source = _source;
+    final controlled = source is ControlledResolvableComicResourceSource
+        ? source as ControlledResolvableComicResourceSource
+        : null;
     final resolvable = source is ResolvableComicResourceSource
         ? source as ResolvableComicResourceSource
         : null;
-    if (resolvable == null) {
+    if (controlled == null && resolvable == null) {
       final direct = locator.scheme == 'http' || locator.scheme == 'https';
       return Future<ComicResourceRequest>.value(
         ComicResourceRequest(
@@ -189,8 +251,21 @@ final class _SourceResourceTransport implements Transport {
         ),
       );
     }
+    if (control != null) {
+      final load = controlled != null
+          ? controlled.resolveResourceControlled(locator, control: control)
+          : resolvable!.resolveResource(locator);
+      return load.then((request) {
+        _throwIfTaskCancelled(control);
+        _remember(locator, request);
+        return request;
+      });
+    }
     late final Future<ComicResourceRequest> load;
-    load = resolvable.resolveResource(locator).then((request) {
+    load = (controlled != null
+            ? controlled.resolveResourceControlled(locator)
+            : resolvable!.resolveResource(locator))
+        .then((request) {
       _remember(locator, request);
       return request;
     }).whenComplete(() {
@@ -232,12 +307,15 @@ final class _SourceResourceTransport implements Transport {
     ComicResourceRequest request, {
     ByteRange? range,
     Validators? validators,
+    TaskControl? control,
   }) async {
+    _throwIfTaskCancelled(control);
     if (request.requiresRuntimeTransform) {
       return _openRuntimeFallback(
         locator,
         range: range,
         validators: validators,
+        control: control,
       );
     }
     try {
@@ -246,6 +324,7 @@ final class _SourceResourceTransport implements Transport {
         request,
         range: range,
         validators: validators,
+        control: control,
       );
     } on Failure catch (error) {
       if (error.code != ErrorCode.network) rethrow;
@@ -258,6 +337,7 @@ final class _SourceResourceTransport implements Transport {
       locator,
       range: range,
       validators: validators,
+      control: control,
     );
   }
 
@@ -266,7 +346,9 @@ final class _SourceResourceTransport implements Transport {
     ComicResourceRequest spec, {
     ByteRange? range,
     Validators? validators,
+    TaskControl? control,
   }) async {
+    _throwIfTaskCancelled(control);
     final normalized = normalizeSourceResourceRequest(
       spec,
       range: range,
@@ -278,10 +360,19 @@ final class _SourceResourceTransport implements Transport {
     );
     final directOpen = _directOpen;
     if (directOpen != null) {
-      return directOpen(effective);
+      final response = await directOpen(effective);
+      if (control?.cancelled == true) {
+        await response.discard();
+        _throwIfTaskCancelled(control);
+      }
+      return response;
     }
     final method = effective.method;
     final request = await _client.openUrl(method, effective.uri);
+    if (control?.cancelled == true) {
+      request.abort(_taskCancelledFailure());
+      _throwIfTaskCancelled(control);
+    }
     // Redirect/cookie state belongs to the source client. A host replay is
     // deliberately one transaction only; stateful responses fall back to the
     // source-owned compatibility path below.
@@ -294,7 +385,25 @@ final class _SourceResourceTransport implements Transport {
     if (requestBody != null && requestBody.isNotEmpty) {
       request.add(requestBody);
     }
-    final response = await request.close();
+    var requestPending = true;
+    final taskControl = control;
+    if (taskControl != null) {
+      unawaited(taskControl.whenCancelled.then((_) {
+        if (requestPending) {
+          request.abort(_taskCancelledFailure());
+        }
+      }));
+    }
+    late final HttpClientResponse response;
+    try {
+      response = await request.close();
+    } finally {
+      requestPending = false;
+    }
+    if (control?.cancelled == true) {
+      await _abortHttpResponse(response);
+      _throwIfTaskCancelled(control);
+    }
     if (response.isRedirect || response.cookies.isNotEmpty) {
       await _abortHttpResponse(response);
       throw Failure(
@@ -334,6 +443,7 @@ final class _SourceResourceTransport implements Transport {
             response,
             locator: locator,
             onError: () => _failedStreams.add(locator),
+            control: control,
           );
     return ByteResponse(
       bytes: responseBody.stream,
@@ -356,8 +466,15 @@ final class _SourceResourceTransport implements Transport {
     Uri uri, {
     ByteRange? range,
     Validators? validators,
+    TaskControl? control,
   }) async {
-    final bytes = await _source.loadResource(uri);
+    _throwIfTaskCancelled(control);
+    final source = _source;
+    final bytes = source is ControlledComicResourceSource
+        ? await (source as ControlledComicResourceSource)
+            .loadResourceControlled(uri, control: control)
+        : await source.loadResource(uri);
+    _throwIfTaskCancelled(control);
     final current = Validators(etag: '"runtime-${bytes.length}-${_fnv(bytes)}"');
     final canRange = range != null &&
         range.start <= bytes.length &&
@@ -383,6 +500,17 @@ final class _SourceResourceTransport implements Transport {
   }
 }
 
+
+
+Failure _taskCancelledFailure() => const Failure(
+      code: ErrorCode.cancelled,
+      message: 'source transport request was cancelled by its scheduler owner',
+    );
+
+void _throwIfTaskCancelled(TaskControl? control) {
+  if (control?.cancelled != true) return;
+  throw _taskCancelledFailure();
+}
 
 ComicResourceRequest _applyDefaultUserAgent(
   ComicResourceRequest request,
@@ -464,21 +592,39 @@ Future<_SourceHttpResponseBody> _prefetchEncodedMediaBody(
   HttpClientResponse response, {
   required Uri locator,
   required void Function() onError,
+  TaskControl? control,
 }) async {
   final iterator = StreamIterator<List<int>>(response);
   final prefetched = <List<int>>[];
   final prefix = BytesBuilder(copy: false);
+  var preparing = true;
+  final taskControl = control;
+  if (taskControl != null) {
+    unawaited(taskControl.whenCancelled.then((_) async {
+      if (preparing) {
+        await iterator.cancel();
+      }
+    }));
+  }
   try {
     while (prefix.length < 16 && await iterator.moveNext()) {
+      _throwIfTaskCancelled(control);
       final chunk = iterator.current;
       if (chunk.isEmpty) continue;
       prefetched.add(chunk);
       prefix.add(chunk);
     }
+    _throwIfTaskCancelled(control);
+  } on Failure catch (error) {
+    await iterator.cancel();
+    if (error.code != ErrorCode.cancelled) onError();
+    rethrow;
   } on Object {
     onError();
     await iterator.cancel();
     rethrow;
+  } finally {
+    preparing = false;
   }
   final bytes = prefix.takeBytes();
   if (!_looksLikeEncodedMediaPrefix(bytes)) {

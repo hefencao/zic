@@ -55,7 +55,9 @@ transport = (ROOT / 'packages/downloads/lib/src/source_resource_transport.dart')
 )
 for token in (
     'RetryableComicResourceSource',
-    'retryable.retryResource(locator)',
+    'ControlledRetryableComicResourceSource',
+    '.retryResource(locator)',
+    'controlled.retryResourceControlled(locator, control: control)',
     '_client.autoUncompress = false',
 ):
     if token not in transport:
