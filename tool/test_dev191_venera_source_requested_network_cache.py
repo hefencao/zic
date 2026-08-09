@@ -5,7 +5,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 VENERA = (ROOT / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraRuntimeDriver.kt').read_text(encoding='utf-8')
 CHANGELOG = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8')
-STATUS = (ROOT / 'docs/IMPLEMENTATION_STATUS.md').read_text(encoding='utf-8')
 ADR = ROOT / 'docs/adr/0174-venera-source-requested-network-cache.md'
 AUDIT = ROOT / 'docs/audits/dev191-venera-network-cache-root-cause-audit.md'
 
@@ -39,12 +38,16 @@ for relative in ('packages/sessions/lib', 'packages/pipeline_runtime/lib', 'apps
             if key in body:
                 raise SystemExit(f'dev.191 cache diagnostics leaked into policy layer: {path.relative_to(ROOT)}')
 
-if 'version: 0.31.0+191' not in (ROOT / 'apps/app/pubspec.yaml').read_text(encoding='utf-8'):
-    raise SystemExit('dev.191 app version missing')
-if 'versionCode=191' not in (ROOT / 'apps/app/android/zic-version.properties').read_text(encoding='utf-8'):
-    raise SystemExit('dev.191 Android version missing')
-if '0.31.0-dev.191' not in CHANGELOG or '0.31.0-dev.191' not in STATUS:
-    raise SystemExit('dev.191 stable documentation missing')
+pubspec = (ROOT / 'apps/app/pubspec.yaml').read_text(encoding='utf-8')
+android_version = (ROOT / 'apps/app/android/zic-version.properties').read_text(encoding='utf-8')
+app_match = __import__('re').search(r'^version: 0\.31\.0\+(\d+)$', pubspec, __import__('re').MULTILINE)
+android_match = __import__('re').search(r'^versionCode=(\d+)$', android_version, __import__('re').MULTILINE)
+if app_match is None or int(app_match.group(1)) < 191:
+    raise SystemExit('dev.191 app version floor missing')
+if android_match is None or int(android_match.group(1)) < 191:
+    raise SystemExit('dev.191 Android version floor missing')
+if '0.31.0-dev.191' not in CHANGELOG:
+    raise SystemExit('dev.191 historical changelog missing')
 if not ADR.exists() or not AUDIT.exists():
     raise SystemExit('dev.191 ADR/audit missing')
 

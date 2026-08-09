@@ -94,6 +94,22 @@ with tempfile.TemporaryDirectory(prefix="zic-frame-trace-") as directory:
                 "streamMicros": 3000,
                 "maxChunkGapMicros": 2000,
                 "maxChunkBytes": 1048576,
+                "sourceHostHttpVersion": "http2",
+                "sourceHostRemoteIpHash": "0123456789abcdef",
+                "sourceRhttpProgressEvents": 4,
+                "sourceRhttpProgressBytes": 1048576,
+                "sourceRhttpProgressTotalBytes": 1048576,
+                "sourceRhttpProgressFirstMicros": 1200,
+                "sourceRhttpProgressMaxGapMicros": 900,
+                "sourceRhttpProgressMaxDeltaBytes": 524288,
+                "sourceRhttpBodyEvents": 3,
+                "sourceRhttpBodyBytes": 1048576,
+                "sourceRhttpBodyFirstMicros": 1300,
+                "sourceRhttpBodyMaxGapMicros": 1000,
+                "sourceRhttpBodyMinChunkBytes": 16384,
+                "sourceRhttpBodyMaxChunkBytes": 524288,
+                "sourceRhttpProgressLeadBytesMax": 262144,
+                "sourceRhttpProgressLeadBytesFinal": 0,
                 "completed": True,
             },
         },
@@ -420,6 +436,12 @@ assert report["sourceReadSchedulerPressureHolds"]["max"] == 1
 assert report["sourceMemoryCacheHits"] == 0
 assert report["sourceMemoryCacheJoins"] == 0
 assert report["sourceArtifactMaterializeMicros"]["max"] == 1500
+assert report["sourceRhttpHttpVersionCounts"] == {"http2": 1}
+assert report["sourceRhttpProgressMaxGapMicros"]["max"] == 900
+assert report["sourceRhttpBodyMaxGapMicros"]["max"] == 1000
+assert report["sourceRhttpProgressLeadBytesMax"]["max"] == 262144
+assert report["sourceRhttpProgressEvents"]["max"] == 4
+assert report["sourceRhttpBodyEvents"]["max"] == 3
 assert report["emptyArtifactEventCount"] == 0
 assert report["emptyArtifactHandoffStoreCount"] == 0
 assert report["cacheResidentCommitCount"] == 0

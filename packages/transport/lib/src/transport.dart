@@ -72,6 +72,15 @@ enum ByteResponseDisposition {
   durableImmutable,
 }
 
+/// Optional live transport-read diagnostics attached to a byte response.
+///
+/// Implementations may update their counters while [ByteResponse.bytes] is
+/// consumed. [snapshot] is observation-only: scheduling, retry and cache
+/// policy must never branch on these values.
+abstract interface class ByteResponseReadDiagnostics {
+  Map<String, Object?> snapshot();
+}
+
 final class ByteResponse {
   ByteResponse({
     required this.bytes,
@@ -82,6 +91,7 @@ final class ByteResponse {
     this.rangeSupported = false,
     this.disposition = ByteResponseDisposition.staged,
     Map<String, Object?> diagnostics = const <String, Object?>{},
+    this.readDiagnostics,
     Future<void> Function()? onDiscard,
   })  : diagnostics = Map<String, Object?>.unmodifiable(diagnostics),
         _onDiscard = onDiscard,
@@ -102,6 +112,7 @@ final class ByteResponse {
   /// This is observational metadata only. Scheduling, retry and cache policy
   /// must never branch on these values.
   final Map<String, Object?> diagnostics;
+  final ByteResponseReadDiagnostics? readDiagnostics;
   final Future<void> Function()? _onDiscard;
 
   bool get isPartial => statusCode == 206;

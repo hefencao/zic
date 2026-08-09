@@ -600,6 +600,7 @@ final class _SourceResourceTransport implements ControlledTransport {
         'sourceOpenPath': openPath,
         'sourceRetryUsed': retryUsed,
       },
+      readDiagnostics: response.readDiagnostics,
       onDiscard: response.discard,
     );
   }

@@ -7,6 +7,8 @@ import 'package:rhttp/rhttp.dart' as rhttp;
 
 
 Future<void>? _rhttpInitialization;
+const bool _rhttpTransferDiagnosticsEnabled =
+    !bool.fromEnvironment('dart.vm.product');
 
 /// Prewarms the Rust HTTP runtime without blocking the first application frame.
 Future<void> prewarmPlatformSourceResourceTransport() =>
@@ -61,6 +63,9 @@ final class RhttpSourceResourceDirectTransport
       unawaited(taskControl.whenCancelled.then((_) => cancelToken.cancel()));
     }
     final body = request.body;
+    final readDiagnostics = _rhttpTransferDiagnosticsEnabled
+        ? _RhttpReadDiagnostics()
+        : null;
     late final rhttp.HttpStreamResponse response;
     try {
       response = await client.requestStream(
@@ -71,6 +76,7 @@ final class RhttpSourceResourceDirectTransport
             ? null
             : rhttp.HttpBody.bytes(Uint8List.fromList(body)),
         cancelToken: cancelToken,
+        onReceiveProgress: readDiagnostics?.recordReceiveProgress,
       );
     } on rhttp.RhttpCancelException catch (error) {
       throw Failure(
@@ -125,6 +131,7 @@ final class RhttpSourceResourceDirectTransport
       request.uri,
       cancelToken,
       control,
+      readDiagnostics,
     );
     final contentLength = int.tryParse(
       _headerValue(headers, HttpHeaders.contentLengthHeader) ?? '',
@@ -144,6 +151,15 @@ final class RhttpSourceResourceDirectTransport
                   ?.toLowerCase()
                   .contains('bytes') ==
               true,
+      diagnostics: <String, Object?>{
+        if (_rhttpTransferDiagnosticsEnabled)
+          'sourceHostHttpVersion': _httpVersionName(response.version),
+        if (_rhttpTransferDiagnosticsEnabled &&
+            response.remoteIp != null &&
+            response.remoteIp!.isNotEmpty)
+          'sourceHostRemoteIpHash': _stableDiagnosticHash(response.remoteIp!),
+      },
+      readDiagnostics: readDiagnostics,
       onDiscard: responseBody.abort,
     );
   }
@@ -174,6 +190,7 @@ Future<_RhttpResponseBody> _prefetchEncodedMediaBody(
   Uri locator,
   rhttp.CancelToken cancelToken,
   TaskControl? control,
+  _RhttpReadDiagnostics? readDiagnostics,
 ) async {
   final iterator = StreamIterator<Uint8List>(source);
   final prefetched = <Uint8List>[];
@@ -183,6 +200,7 @@ Future<_RhttpResponseBody> _prefetchEncodedMediaBody(
       _throwIfCancelled(control);
       final chunk = iterator.current;
       if (chunk.isEmpty) continue;
+      readDiagnostics?.recordBodyChunk(chunk.lengthInBytes);
       prefetched.add(chunk);
       prefix.add(chunk);
     }
@@ -230,6 +248,7 @@ Future<_RhttpResponseBody> _prefetchEncodedMediaBody(
         if (aborted) return;
         final chunk = iterator.current;
         if (chunk.isEmpty) continue;
+        readDiagnostics?.recordBodyChunk(chunk.lengthInBytes);
         yield chunk;
       }
       completed = true;
@@ -239,6 +258,101 @@ Future<_RhttpResponseBody> _prefetchEncodedMediaBody(
   }
 
   return _RhttpResponseBody(body(), abort);
+}
+
+final class _RhttpReadDiagnostics implements ByteResponseReadDiagnostics {
+  _RhttpReadDiagnostics() : _clock = Stopwatch()..start();
+
+  final Stopwatch _clock;
+  var _progressEvents = 0;
+  var _progressBytes = 0;
+  var _progressTotalBytes = -1;
+  var _progressFirstMicros = 0;
+  var _progressLastMicros = 0;
+  var _progressMaxGapMicros = 0;
+  var _progressMaxDeltaBytes = 0;
+  var _bodyEvents = 0;
+  var _bodyBytes = 0;
+  var _bodyFirstMicros = 0;
+  var _bodyLastMicros = 0;
+  var _bodyMaxGapMicros = 0;
+  var _bodyMinChunkBytes = 0;
+  var _bodyMaxChunkBytes = 0;
+  var _progressLeadBytesMax = 0;
+
+  void recordReceiveProgress(int count, int total) {
+    final now = _clock.elapsedMicroseconds;
+    final previousBytes = _progressBytes;
+    if (_progressEvents == 0) {
+      _progressFirstMicros = now;
+    } else {
+      final gap = now - _progressLastMicros;
+      if (gap > _progressMaxGapMicros) _progressMaxGapMicros = gap;
+    }
+    final delta = count - previousBytes;
+    if (delta > _progressMaxDeltaBytes) _progressMaxDeltaBytes = delta;
+    _progressEvents++;
+    _progressBytes = count;
+    _progressTotalBytes = total;
+    _progressLastMicros = now;
+    _recordProgressLead();
+  }
+
+  void recordBodyChunk(int bytes) {
+    final now = _clock.elapsedMicroseconds;
+    if (_bodyEvents == 0) {
+      _bodyFirstMicros = now;
+      _bodyMinChunkBytes = bytes;
+    } else {
+      final gap = now - _bodyLastMicros;
+      if (gap > _bodyMaxGapMicros) _bodyMaxGapMicros = gap;
+      if (bytes < _bodyMinChunkBytes) _bodyMinChunkBytes = bytes;
+    }
+    if (bytes > _bodyMaxChunkBytes) _bodyMaxChunkBytes = bytes;
+    _bodyEvents++;
+    _bodyBytes += bytes;
+    _bodyLastMicros = now;
+    _recordProgressLead();
+  }
+
+  void _recordProgressLead() {
+    final lead = _progressBytes - _bodyBytes;
+    if (lead > _progressLeadBytesMax) _progressLeadBytesMax = lead;
+  }
+
+  @override
+  Map<String, Object?> snapshot() => <String, Object?>{
+        'sourceRhttpProgressEvents': _progressEvents,
+        'sourceRhttpProgressBytes': _progressBytes,
+        'sourceRhttpProgressTotalBytes': _progressTotalBytes,
+        'sourceRhttpProgressFirstMicros': _progressFirstMicros,
+        'sourceRhttpProgressMaxGapMicros': _progressMaxGapMicros,
+        'sourceRhttpProgressMaxDeltaBytes': _progressMaxDeltaBytes,
+        'sourceRhttpBodyEvents': _bodyEvents,
+        'sourceRhttpBodyBytes': _bodyBytes,
+        'sourceRhttpBodyFirstMicros': _bodyFirstMicros,
+        'sourceRhttpBodyMaxGapMicros': _bodyMaxGapMicros,
+        'sourceRhttpBodyMinChunkBytes': _bodyMinChunkBytes,
+        'sourceRhttpBodyMaxChunkBytes': _bodyMaxChunkBytes,
+        'sourceRhttpProgressLeadBytesMax': _progressLeadBytesMax,
+        'sourceRhttpProgressLeadBytesFinal':
+            (_progressBytes - _bodyBytes).clamp(0, 1 << 62).toInt(),
+      };
+}
+
+String _httpVersionName(rhttp.HttpVersion version) {
+  final value = version.toString();
+  final dot = value.lastIndexOf('.');
+  return dot < 0 ? value : value.substring(dot + 1);
+}
+
+String _stableDiagnosticHash(String value) {
+  var hash = 0xcbf29ce484222325;
+  for (final unit in value.codeUnits) {
+    hash ^= unit;
+    hash = (hash * 0x100000001b3) & 0xffffffffffffffff;
+  }
+  return hash.toRadixString(16).padLeft(16, '0');
 }
 
 void _throwIfCancelled(TaskControl? control) {

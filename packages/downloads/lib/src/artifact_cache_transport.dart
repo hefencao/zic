@@ -279,6 +279,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
       rangeSupported: response.rangeSupported,
       disposition: response.disposition,
       diagnostics: response.diagnostics,
+      readDiagnostics: response.readDiagnostics,
       onDiscard: () async {
         discarded = true;
         await response.discard();
@@ -612,6 +613,8 @@ final class ArtifactCacheTransport implements ControlledTransport {
               if (schedulerPressureHolds != null)
                 'readSchedulerPressureHolds': schedulerPressureHolds(),
               if (readDetails != null) ...readDetails(),
+              if (response.readDiagnostics != null)
+                ...response.readDiagnostics!.snapshot(),
               'firstChunkMicros': firstChunkMicros,
               'streamMicros':
                   (clock.nowMicros() - streamStarted).clamp(0, 1 << 62).toInt(),
@@ -638,6 +641,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
       rangeSupported: response.rangeSupported,
       disposition: response.disposition,
       diagnostics: response.diagnostics,
+      readDiagnostics: response.readDiagnostics,
       onDiscard: response.discard,
     );
   }
@@ -723,6 +727,8 @@ ByteResponse _leaseBoundResponse(
     validators: response.validators,
     rangeSupported: response.rangeSupported,
     disposition: response.disposition,
+    diagnostics: response.diagnostics,
+    readDiagnostics: response.readDiagnostics,
     onDiscard: () async {
       try {
         await response.discard();
@@ -778,6 +784,8 @@ ByteResponse _scheduledArtifactResponse(
     validators: response.validators,
     rangeSupported: response.rangeSupported,
     disposition: response.disposition,
+    diagnostics: response.diagnostics,
+    readDiagnostics: response.readDiagnostics,
     onDiscard: response.discard,
   );
 }

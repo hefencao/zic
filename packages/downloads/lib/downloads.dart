@@ -1,6 +1,6 @@
 export 'package:catalog/catalog.dart' show ComicResourceRequest;
 export 'package:domain/domain.dart' show ErrorCode, Failure, TaskControl;
-export 'package:transport/transport.dart' show ByteResponse, Validators;
+export 'package:transport/transport.dart' show ByteResponse, ByteResponseReadDiagnostics, Validators;
 
 export 'src/artifact_cache_reuse.dart';
 export 'src/artifact_cache_manager.dart';

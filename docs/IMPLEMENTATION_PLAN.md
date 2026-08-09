@@ -2,10 +2,11 @@
 
 ## P0：Current / Previous 真实执行槽真机闭环
 
-- dev.191 真机首要验证 E-Hentai request-plan warm-up：首个page允许`loadThumbnails/getKey/thumbnail-page`产生origin GET，但后续同gallery/page-group逻辑`Network.*`调用应出现`sourcePlanBridgeNetworkCacheHits`，真正`sourcePlanBridgeNetworkOriginCalls`应主要收敛到page-specific API POST；若4次逻辑调用仍全部origin，先检查cache identity/Cookie/header或响应大小，不增加Venera并发。
+- dev.192 真机首要比较`sourceRhttpProgressMaxGapMicros/sourceRhttpProgressLeadBytesMax`与`sourceRhttpBodyMaxGapMicros/maxChunkGapMicros`：若receive-progress与raw body同时长gap，优先归因源/CDN/HTTP链路；若progress持续前进但body长期滞后且lead显著扩大，再调查rhttp FFI/Dart Stream delivery/backpressure。不得用该diagnostics直接驱动scheduler。
+- dev.191 cache已在15:08 trace明显命中：多数page为4次逻辑bridge call中的3 hit/1 origin。后续只有cache hit重新退化时才回查identity/Cookie/header；当前主线转向最终图片body持续传输。
 - dev.190 后首次本地 Flutter/Dart 构建仍需确认 `runtime_source_adapter.dart` 不再出现 `onTiming` named-parameter 半迁移；若还有 runtime source adapter 编译错误，先检查私有函数类型/constructor 注入的一致性，不把 resource-plan diagnostics 扩到通用 browse/details invoke。
 - 复测 dev.186 Venera nested pressure：外层 previous 660→780 到 `downloadStarted` 应继续维持毫秒级；若其随后被单 invocation request-plan gate挡住，780可请求取消至少低40分的 active controlled invocation，但必须等旧 JavaScript `finished(requestId)` 后才开始，`maxActive`始终1。
-- 使用 `sourceRequestPlanMicros/sourceRequestPlanCacheHit/sourcePlanGateWaitMicros/sourcePlanRuntimeInvocationMicros/sourcePlanHookMicros/sourcePlanBridgeNetworkMicros/sourcePlanBridgeNetworkCalls/sourcePlanBridgeNetworkCacheHits/sourcePlanBridgeNetworkOriginCalls/sourceHostOpenMicros` 拆慢页：先判断单invocation排队、JS hook还是hook内部resolver网络；只有host-open重新主导才追 rhttp/DNS/TLS/源端首包。不得回退到提高previous priority、扩大network/Venera并发、恢复transport framing或缩7/3。
+- 使用plan/cache/host-open字段继续确认连接阶段；持续传输阶段新增`sourceHostHttpVersion/sourceHostRemoteIpHash/sourceRhttpProgress*/sourceRhttpBody*`与现有`sourceRead` bytes/chunks/gap。只有设备证据同时证明并发active streams损害current且底层pause能真实形成网络backpressure，才考虑NetLane-owned transfer pressure；不得建立Reader bandwidth scheduler。
 - 同时复测短时 N→N+1→N：没有真实 in-window pressure时，已 receiving 的 retained=0仍应复用原transport，不得因为新增 normal pressure能力退化为每次离窗cancel/reopen；只有真实 previous/更高 normal work等待普通槽时才让槽。
 
 ## P0：Current 首帧 policy/execution 真机闭环

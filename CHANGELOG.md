@@ -1,3 +1,10 @@
+## 0.31.0-dev.192：rhttp 持续传输分段观测，不提前增加带宽调度
+
+- `zic-debug-trace-2026-08-09T15-08-46.jsonl`确认dev.191 resolver cache明显生效：16个已结束origin read中cache hit中位3、origin resolver call中位1，hook中位约0.393s、host-open中位约0.433s；剩余长尾移到最终图片body，stream中位约3.004s、p90约9.428s，且存在近似单流仍约0.42MiB/s的慢样本。
+- 当前origin body没有ArtifactCacheReadScheduler字节配额或其它bandwidth scheduler；NetLane只拥有admission/concurrency/preemption。current=1000并不稳定获得最高持续吞吐，但单流慢样本说明不能据此直接新增current带宽token bucket。
+- rhttp direct bridge新增纯观测分段：使用rhttp `onReceiveProgress`记录receive-progress，并在最靠近`HttpStreamResponse.body`边界记录raw body event；`ByteResponseReadDiagnostics`只在现有`sourceRead`结束/取消时snapshot。新增HTTP version、匿名remote-IP hash、progress/body event/gap/chunk及progress领先body字节等字段，用于区分源/CDN/rhttp接收慢与Dart body交付/backpressure。
+- 不恢复64/256KiB transport framing、不改变DownloadJob 16/64KiB单一aggregation、不新增Reader/Pipeline带宽scheduler。`sourceRhttp*`继续只读并由dev.192 gate禁止进入sessions/pipeline_runtime/App policy。新增ADR 0175与dev.192 audit。
+
 ## 0.31.0-dev.191：补齐 Venera source-requested Network Cache 语义
 
 - `zic-debug-trace-2026-08-09T14-12-27.jsonl` 的18个origin样本显示：request-plan中位约3.016s，其中gate wait中位约1.742s、hook中位约1.392s、hook内部bridge network中位约1.368s；18/18页都恰好执行4次bridge network。一个host-open 17.424s异常样本属于真实网络长尾，但整体结构性瓶颈在plan resolver。

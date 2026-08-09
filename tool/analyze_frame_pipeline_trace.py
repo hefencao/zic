@@ -591,6 +591,50 @@ def summarize(path: Path) -> dict[str, Any]:
                     "streamMicros": _number(payload.get("streamMicros")),
                     "maxChunkGapMicros": _number(payload.get("maxChunkGapMicros")),
                     "maxChunkBytes": _number(payload.get("maxChunkBytes")),
+                    "sourceHostHttpVersion": payload.get("sourceHostHttpVersion"),
+                    "sourceHostRemoteIpHash": payload.get("sourceHostRemoteIpHash"),
+                    "sourceRhttpProgressEvents": _number(
+                        payload.get("sourceRhttpProgressEvents")
+                    ),
+                    "sourceRhttpProgressBytes": _number(
+                        payload.get("sourceRhttpProgressBytes")
+                    ),
+                    "sourceRhttpProgressTotalBytes": _number(
+                        payload.get("sourceRhttpProgressTotalBytes")
+                    ),
+                    "sourceRhttpProgressFirstMicros": _number(
+                        payload.get("sourceRhttpProgressFirstMicros")
+                    ),
+                    "sourceRhttpProgressMaxGapMicros": _number(
+                        payload.get("sourceRhttpProgressMaxGapMicros")
+                    ),
+                    "sourceRhttpProgressMaxDeltaBytes": _number(
+                        payload.get("sourceRhttpProgressMaxDeltaBytes")
+                    ),
+                    "sourceRhttpBodyEvents": _number(
+                        payload.get("sourceRhttpBodyEvents")
+                    ),
+                    "sourceRhttpBodyBytes": _number(
+                        payload.get("sourceRhttpBodyBytes")
+                    ),
+                    "sourceRhttpBodyFirstMicros": _number(
+                        payload.get("sourceRhttpBodyFirstMicros")
+                    ),
+                    "sourceRhttpBodyMaxGapMicros": _number(
+                        payload.get("sourceRhttpBodyMaxGapMicros")
+                    ),
+                    "sourceRhttpBodyMinChunkBytes": _number(
+                        payload.get("sourceRhttpBodyMinChunkBytes")
+                    ),
+                    "sourceRhttpBodyMaxChunkBytes": _number(
+                        payload.get("sourceRhttpBodyMaxChunkBytes")
+                    ),
+                    "sourceRhttpProgressLeadBytesMax": _number(
+                        payload.get("sourceRhttpProgressLeadBytesMax")
+                    ),
+                    "sourceRhttpProgressLeadBytesFinal": _number(
+                        payload.get("sourceRhttpProgressLeadBytesFinal")
+                    ),
                     "completed": payload.get("completed"),
                 }
             source_reads.append(source_read)
@@ -914,6 +958,28 @@ def summarize(path: Path) -> dict[str, Any]:
         ),
         "sourceReadSchedulerPressureHolds": _stats(
             [row["readSchedulerPressureHolds"] for row in source_reads]
+        ),
+        "sourceRhttpHttpVersionCounts": dict(
+            Counter(
+                str(row["sourceHostHttpVersion"])
+                for row in source_reads
+                if row["sourceHostHttpVersion"] is not None
+            )
+        ),
+        "sourceRhttpProgressMaxGapMicros": _stats(
+            [row["sourceRhttpProgressMaxGapMicros"] for row in source_reads]
+        ),
+        "sourceRhttpBodyMaxGapMicros": _stats(
+            [row["sourceRhttpBodyMaxGapMicros"] for row in source_reads]
+        ),
+        "sourceRhttpProgressLeadBytesMax": _stats(
+            [row["sourceRhttpProgressLeadBytesMax"] for row in source_reads]
+        ),
+        "sourceRhttpProgressEvents": _stats(
+            [row["sourceRhttpProgressEvents"] for row in source_reads]
+        ),
+        "sourceRhttpBodyEvents": _stats(
+            [row["sourceRhttpBodyEvents"] for row in source_reads]
         ),
         "sourceMaxConcurrentReads": max_concurrent_reads,
         "sourceConcurrencyScope": concurrency_scope,
@@ -1291,7 +1357,13 @@ def main() -> None:
             f"pressureHolds={row['readSchedulerPressureHolds']} "
             f"delivery={row['deliveryMode']} "
             f"firstChunk={row['firstChunkMicros']} stream={row['streamMicros']} "
-            f"maxGap={row['maxChunkGapMicros']} maxChunk={row['maxChunkBytes']}"
+            f"maxGap={row['maxChunkGapMicros']} maxChunk={row['maxChunkBytes']} "
+            f"http={row['sourceHostHttpVersion']} "
+            f"rhttpProgressEvents={row['sourceRhttpProgressEvents']} "
+            f"rhttpProgressGap={row['sourceRhttpProgressMaxGapMicros']} "
+            f"rhttpBodyEvents={row['sourceRhttpBodyEvents']} "
+            f"rhttpBodyGap={row['sourceRhttpBodyMaxGapMicros']} "
+            f"rhttpLead={row['sourceRhttpProgressLeadBytesMax']}"
         )
 
 

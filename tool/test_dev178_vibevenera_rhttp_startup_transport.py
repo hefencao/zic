@@ -76,9 +76,15 @@ if version is None or int(version.group(1)) < 178 or android is None or android.
 for token in (
     "export 'package:catalog/catalog.dart' show ComicResourceRequest;",
     "export 'package:domain/domain.dart' show ErrorCode, Failure, TaskControl;",
-    "export 'package:transport/transport.dart' show ByteResponse, Validators;",
+    "export 'package:transport/transport.dart' show ",
 ):
     require(downloads_public, token, 'downloads public direct-transport type surface')
+transport_export = next(
+    line for line in downloads_public.splitlines()
+    if line.startswith("export 'package:transport/transport.dart' show ")
+)
+for token in ('ByteResponse', 'Validators'):
+    require(transport_export, token, 'downloads public direct-transport type surface')
 for forbidden in ("package:catalog/catalog.dart", "package:domain/domain.dart", "package:transport/transport.dart"):
     if forbidden in bridge:
         raise SystemExit(f'downloads_bridge bypasses downloads capability surface: {forbidden}')
