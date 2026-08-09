@@ -1,3 +1,10 @@
+## 0.31.0-dev.191：补齐 Venera source-requested Network Cache 语义
+
+- `zic-debug-trace-2026-08-09T14-12-27.jsonl` 的18个origin样本显示：request-plan中位约3.016s，其中gate wait中位约1.742s、hook中位约1.392s、hook内部bridge network中位约1.368s；18/18页都恰好执行4次bridge network。一个host-open 17.424s异常样本属于真实网络长尾，但整体结构性瓶颈在plan resolver。
+- 对照当前 Venera E-Hentai source 与 Venera Network实现确认：`loadThumbnails`/`getKey`显式依赖`cache-time: long`与`prevent-parallel: true`，但ZIC native bridge此前把这两个控制字段当普通HTTP header发送且完全忽略cache语义，导致每张图重复执行本应复用的gallery/key GET；单JS invocation再把重复resolver串成gate阶梯。
+- `VeneraNativeBridge`现在实现runtime-owned、source-requested GET cache：`long` 6小时、短命中5秒、单entry<1MiB、总量10MiB；cache identity比较真实请求headers并保留Cookie差异，命中响应标记`venera-cache:true`。`cache-time`/`prevent-parallel`只作为Venera Network控制字段，不发送给origin；当前单invocation已经提供比same-path prevent-parallel更强的物理串行保证。该cache不进入Pipeline/artifact/Reader所有权。
+- source-plan diagnostics新增`sourcePlanBridgeNetworkCacheHits/sourcePlanBridgeNetworkOriginCalls`，用于区分4次逻辑`Network.*`调用中真正出网与runtime cache命中；字段继续只读，不得成为scheduler/cache/retry policy输入。新增ADR 0174、dev.191 audit/gate与可执行Kotlin cache helper contract。Reader固定7/3、2/1、7/5/3/2、network/decode/upload 5/3/2、previous780/current1000均不变。
+
 ## 0.31.0-dev.190：Runtime Resource-Plan Timing 编译闭环与耦合收口
 
 - 修复 dev.189 `runtime_source_adapter.dart` 的真实编译错误：session 私有 `_invoke` 新增 `onTiming`，但 `_RuntimeBrowsableComicSource` 持有的 `_RuntimeInvoke` typedef 未同步，导致经函数类型调用 `onTiming:` 时编译器报“no named parameter”。

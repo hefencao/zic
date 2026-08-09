@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.190` / App `0.31.0+190`。
+- 当前版本：`0.31.0-dev.191` / App `0.31.0+191`。
+- dev.191：14:12真机trace把Venera慢plan收敛到source resolver兼容层：18个origin样本request-plan中位约3.016s，gate wait约1.742s，hook内bridge network约1.368s，且18/18每页固定4次bridge call。当前E-Hentai source的`loadThumbnails/getKey`明确请求`cache-time: long`/`prevent-parallel`，ZIC此前却未实现该Network控制语义。native bridge现以runtime-owned有界GET cache对齐source-requested复用，并剥离pseudo headers；diagnostics新增cache-hit/origin-call计数。Reader/Pipeline调度不变。
 - dev.190：修复 dev.189 resource-plan stage diagnostics 的编译半迁移：`_RuntimeBrowsableComicSource` 通过窄化 `_RuntimeInvoke` 调用 session `_invoke(... onTiming:)`，函数类型本身没有该命名参数。现删除 callback 式 timing seam；普通 runtime 调用保持原 `_RuntimeInvoke`，仅 resolve-resource 注入 `_RuntimeResolveResourceInvoke`，session 内 `_invokeMeasured` 返回 payload + gate/runtime timing。`sourcePlan*` 仍只读透传至 downloads trace，并由静态 gate 禁止进入 sessions/pipeline_runtime/App policy。调度行为与 dev.189 不变。
 - dev.189：11:42 dev.188真机trace确认体感退化主要位于request-plan而非最终图片host-open：plan中位约3.989s、p90约9.353s、最大12.330s；host-open中位约0.399s、p90约1.460s。对照dev.187的plan p90约5.421s，ADR 0171把可逆780↔900/active demotion直接接到不可逆cancel造成抖动放大。现保留首次previous=780 pressure与实时permit排序，但动态preemption仅允许waiter真正跨入current=1000时触发；active demotion不再取消。新增gate wait/runtime invocation/JS hook/hook bridge-network只读stage diagnostics，ADR 0172 supersede ADR 0171的触发规则。
 - dev.188：11:04真机trace确认request-plan长尾仍明显，同时暴露动态rank传播缺口：已在Venera gate等待的download可从780→900→1000，但gate此前只在首次入队时判断preemption。`TaskControl`新增scheduler-owned可选priority change观测，NetLane active token原位迁移时发布事件，Venera waiter/active invocation据此重新应用既有floor=780/threshold=40；runtime仍不能写rank，真实`finished(requestId)`前不释放唯一permit。并明确`__zicCancel(requestId)`只属于JS request-plan/hook及其bridge-scoped工作，最终图片body继续由native `SourceResourceTransport`在同一TaskControl下取消。
@@ -19,8 +20,8 @@
 - Venera preemption先断requestId native HTTP，再等待JS `finished`后返回cancelled并释放permit，禁止同一WebView中旧/新async invocation重叠。修复 `ArtifactCacheReadLease?` nullable半迁移编译错误。
 - 当前环境无Flutter/Dart/Android完整SDK；行为测试已加入源码，最终设备构建/性能仍需本地验证。
 
-**源码版本：** `0.31.0-dev.190`
-**App build：** `0.31.0+190`
+**源码版本：** `0.31.0-dev.191`
+**App build：** `0.31.0+191`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 

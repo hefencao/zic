@@ -385,6 +385,7 @@ private class VeneraNativeBridge(
     private val nextImageKey = AtomicInteger(1)
     private val nativeBytes = LinkedHashMap<String, ByteArray>()
     private val cookieManager = CookieManager.getInstance()
+    private val networkCache = VeneraHttpCache()
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
     @Volatile private var dnsFallbackClient: ReflectiveVeneraHttpClient? = null
     @Volatile var resultSink: ((String, JSONObject) -> Unit)? = null
@@ -493,10 +494,20 @@ private class VeneraNativeBridge(
         }
         var target = URL(rawUrl)
         var method = message.optString("http_method", "GET").uppercase(Locale.US)
+        val rawHeaders = message.optJSONObject("headers")
+        val cacheTime = rawHeaders.veneraControlHeader("cache-time")
+        // `cache-time` and `prevent-parallel` are Venera Network.* control
+        // fields, not origin HTTP headers. The source runtime is physically
+        // single-invocation, so prevent-parallel is already stronger than the
+        // upstream same-path exclusion contract; strip both controls before
+        // opening native HTTP.
         val forwardHeaders = veneraRequestHeaders(
-            message.optJSONObject("headers"),
+            rawHeaders,
             defaultUserAgent,
         )
+        val cacheUrl = target.toExternalForm()
+        val cacheEligible = method == "GET"
+        var cacheRequestHeaders: Map<String, String>? = null
         val data = decodeWireValue(message.opt("data"))
         var bodyBytes = when (data) {
             null -> ByteArray(0)
@@ -545,6 +556,14 @@ private class VeneraNativeBridge(
                     requestHeaders[cookieHeader ?: "Cookie"] = mergedCookies
                 }
             }
+            if (cacheEligible && redirectCount == 0) {
+                cacheRequestHeaders = LinkedHashMap(requestHeaders)
+                networkCache.lookup(
+                    url = cacheUrl,
+                    requestHeaders = requestHeaders,
+                    cacheTime = cacheTime,
+                )?.let { return it }
+            }
             val result = executeHttpRequest(
                 target = target,
                 method = method,
@@ -560,6 +579,11 @@ private class VeneraNativeBridge(
             if (result.status !in VENERA_HTTP_REDIRECT_STATUSES ||
                 location.isEmpty()
             ) {
+                if (cacheEligible) {
+                    cacheRequestHeaders?.let { headers ->
+                        networkCache.store(cacheUrl, headers, result)
+                    }
+                }
                 return result
             }
             require(redirectCount < VENERA_HTTP_MAX_REDIRECTS) {
@@ -1150,6 +1174,7 @@ private class VeneraNativeBridge(
         dnsFallbackClient?.close()
         dnsFallbackClient = null
         synchronized(nativeBytes) { nativeBytes.clear() }
+        networkCache.clear()
         releaseImages()
     }
 }
@@ -1208,13 +1233,20 @@ internal fun normalizeVeneraAcceptEncoding(value: String?): String {
         ?.joinToString(", ") ?: "gzip, deflate"
 }
 
+private fun JSONObject?.veneraControlHeader(name: String): String? =
+    this?.keys()?.asSequence()?.firstOrNull {
+        it.equals(name, ignoreCase = true)
+    }?.let { key -> optString(key).trim().takeIf(String::isNotEmpty) }
+
 private fun veneraRequestHeaders(
     raw: JSONObject?,
     defaultUserAgent: String,
 ): LinkedHashMap<String, String> {
     val headers = LinkedHashMap<String, String>()
     raw?.keys()?.forEach { name ->
-        if (!name.equals("accept-encoding", ignoreCase = true)) {
+        if (!name.equals("accept-encoding", ignoreCase = true) &&
+            name.lowercase(Locale.US) !in VENERA_NETWORK_CONTROL_HEADERS
+        ) {
             headers[name] = raw.optString(name)
         }
     }
@@ -1275,6 +1307,103 @@ private fun JSONObject?.veneraHeaderValue(name: String): String? {
     val key = keys().asSequence().firstOrNull { it.equals(name, ignoreCase = true) }
         ?: return null
     return optString(key).takeIf { it.isNotBlank() }
+}
+
+private data class VeneraHttpCacheEntry(
+    val requestHeaders: Map<String, String>,
+    val response: VeneraHttpResponse,
+    val storedAtNanos: Long,
+    val size: Int,
+)
+
+private class VeneraHttpCache {
+    private val entries = LinkedHashMap<String, VeneraHttpCacheEntry>()
+    private var size = 0
+
+    @Synchronized
+    fun lookup(
+        url: String,
+        requestHeaders: Map<String, String>,
+        cacheTime: String?,
+        nowNanos: Long = System.nanoTime(),
+    ): VeneraHttpResponse? {
+        val entry = entries[url] ?: return null
+        if (!veneraCacheHeadersMatch(requestHeaders, entry.requestHeaders)) {
+            return null
+        }
+        if (cacheTime.equals("no", ignoreCase = true)) {
+            remove(url)
+            return null
+        }
+        val age = nowNanos - entry.storedAtNanos
+        val fresh = if (cacheTime.equals("long", ignoreCase = true)) {
+            age in 0 until VENERA_NETWORK_LONG_CACHE_NANOS
+        } else {
+            age in 0 until VENERA_NETWORK_SHORT_CACHE_NANOS
+        }
+        if (!fresh) return null
+        return entry.response.withVeneraCacheHit()
+    }
+
+    @Synchronized
+    fun store(
+        url: String,
+        requestHeaders: Map<String, String>,
+        response: VeneraHttpResponse,
+        nowNanos: Long = System.nanoTime(),
+    ) {
+        if (response.status >= 400 ||
+            response.body.isEmpty() ||
+            response.body.size >= VENERA_NETWORK_MAX_CACHE_ENTRY_BYTES
+        ) {
+            return
+        }
+        remove(url)
+        while (entries.isNotEmpty() &&
+            size + response.body.size > VENERA_NETWORK_MAX_CACHE_BYTES
+        ) {
+            remove(entries.keys.first())
+        }
+        if (response.body.size > VENERA_NETWORK_MAX_CACHE_BYTES) return
+        entries[url] = VeneraHttpCacheEntry(
+            requestHeaders = LinkedHashMap(requestHeaders),
+            response = response.copy(
+                headers = JSONObject(response.headers.toString()),
+                body = response.body.copyOf(),
+            ),
+            storedAtNanos = nowNanos,
+            size = response.body.size,
+        )
+        size += response.body.size
+    }
+
+    @Synchronized
+    fun clear() {
+        entries.clear()
+        size = 0
+    }
+
+    private fun remove(url: String) {
+        entries.remove(url)?.let { size -= it.size }
+    }
+}
+
+internal fun veneraCacheHeadersMatch(
+    first: Map<String, String>,
+    second: Map<String, String>,
+): Boolean = veneraComparableCacheHeaders(first) ==
+    veneraComparableCacheHeaders(second)
+
+private fun veneraComparableCacheHeaders(
+    headers: Map<String, String>,
+): Map<String, String> = headers.entries
+    .filterNot { it.key.lowercase(Locale.US) in VENERA_CACHE_IGNORED_HEADERS }
+    .associate { it.key.lowercase(Locale.US) to it.value }
+
+private fun VeneraHttpResponse.withVeneraCacheHit(): VeneraHttpResponse {
+    val cacheHeaders = JSONObject(headers.toString())
+    cacheHeaders.put("venera-cache", "true")
+    return copy(headers = cacheHeaders, body = body.copyOf())
 }
 
 private fun MutableMap<String, String>.removeVeneraHeader(name: String) {
@@ -1378,6 +1507,28 @@ private const val VENERA_HTTP_CALL_TIMEOUT_MILLIS = 50_000L
 private const val VENERA_HTTP_MAX_REDIRECTS = 8
 private const val VENERA_HTTP_MAX_REQUEST_BYTES = 2 * 1024 * 1024
 private const val VENERA_MAX_NATIVE_BYTE_PAYLOADS = 2
+private const val VENERA_NETWORK_MAX_CACHE_BYTES = 10 * 1024 * 1024
+private const val VENERA_NETWORK_MAX_CACHE_ENTRY_BYTES = 1024 * 1024
+private const val VENERA_NETWORK_SHORT_CACHE_NANOS = 5L * 1_000_000_000L
+private const val VENERA_NETWORK_LONG_CACHE_NANOS = 6L * 60L * 60L * 1_000_000_000L
+private val VENERA_NETWORK_CONTROL_HEADERS = setOf("cache-time", "prevent-parallel")
+private val VENERA_CACHE_IGNORED_HEADERS = setOf(
+    "cache-time",
+    "prevent-parallel",
+    "date",
+    "x-varnish",
+    "cf-ray",
+    "connection",
+    "vary",
+    "content-encoding",
+    "report-to",
+    "server-timing",
+    "token",
+    "set-cookie",
+    "cf-cache-status",
+    "cf-request-id",
+    "authorization",
+)
 private val VENERA_HTTP_REDIRECT_STATUSES = setOf(301, 302, 303, 307, 308)
 private const val VENERA_DOH_TIMEOUT_MILLIS = 1_500
 private val veneraDnsCache = ConcurrentHashMap<String, VeneraDnsCacheEntry>()
@@ -1684,8 +1835,9 @@ function __zicEncode(value) {
 let __zicActiveRequestId=null;
 const __zicBridgeMetrics=new Map();
 function __zicNowMicros(){const clock=globalThis.performance?.now?.bind(globalThis.performance);return Math.round((clock?clock():Date.now())*1000)}
-function __zicBridgeMetric(requestId){if(!requestId)return {networkMicros:0,networkCalls:0};let metric=__zicBridgeMetrics.get(requestId);if(!metric){metric={networkMicros:0,networkCalls:0};__zicBridgeMetrics.set(requestId,metric)}return metric}
-function __zicBridgeNetworkSnapshot(requestId){const metric=requestId?__zicBridgeMetrics.get(requestId):null;return {networkMicros:Number(metric?.networkMicros||0),networkCalls:Number(metric?.networkCalls||0)}}
+function __zicBridgeMetric(requestId){if(!requestId)return {networkMicros:0,networkCalls:0,networkCacheHits:0,networkOriginCalls:0};let metric=__zicBridgeMetrics.get(requestId);if(!metric){metric={networkMicros:0,networkCalls:0,networkCacheHits:0,networkOriginCalls:0};__zicBridgeMetrics.set(requestId,metric)}return metric}
+function __zicBridgeNetworkSnapshot(requestId){const metric=requestId?__zicBridgeMetrics.get(requestId):null;return {networkMicros:Number(metric?.networkMicros||0),networkCalls:Number(metric?.networkCalls||0),networkCacheHits:Number(metric?.networkCacheHits||0),networkOriginCalls:Number(metric?.networkOriginCalls||0)}}
+function __zicBridgeCacheHit(value){const headers=value?.headers;if(!headers||typeof headers!=='object')return false;for(const [name,raw] of Object.entries(headers)){if(String(name).toLowerCase()==='venera-cache'&&String(raw).toLowerCase()==='true')return true}return false}
 const __zicBrowserSetTimeout=globalThis.setTimeout.bind(globalThis);
 const __zicBrowserClearTimeout=globalThis.clearTimeout.bind(globalThis);
 const __zicDelayWaiters=new Map();
@@ -1710,12 +1862,14 @@ function sendMessage(message) {
   if(message.method==='delay')return __zicDelay(message.time,requestId);
   const networkCall=message.method==='http'||message.method==='http_binary';
   const networkStarted=networkCall?__zicNowMicros():0;
+  let decodedValue;
   try {
     const envelope = JSON.parse(ZicNative.request(JSON.stringify(__zicEncode(message))));
     if (!envelope.ok) throw new Error(envelope.error || 'Venera bridge failed');
-    return __zicDecode(envelope.value);
+    decodedValue=__zicDecode(envelope.value);
+    return decodedValue;
   } finally {
-    if(networkCall&&requestId){const metric=__zicBridgeMetric(requestId);metric.networkMicros+=Math.max(0,__zicNowMicros()-networkStarted);metric.networkCalls++}
+    if(networkCall&&requestId){const metric=__zicBridgeMetric(requestId);metric.networkMicros+=Math.max(0,__zicNowMicros()-networkStarted);metric.networkCalls++;if(__zicBridgeCacheHit(decodedValue))metric.networkCacheHits++;else metric.networkOriginCalls++}
   }
 }
 function Cookie({name,value,domain}) { this.name=name; this.value=value; this.domain=domain; }
@@ -1956,7 +2110,7 @@ async function __zicOperation(request){
   else if(/^https?:\/\//i.test(uri)){config=await __zicResolveHttpArtworkConfig(uri,source)}
   else throw new Error('Venera resource URI must be a source locator or HTTP(S) URL');
   const bridgeAfter=__zicBridgeNetworkSnapshot(request.requestId),described=__zicDescribeResourceRequest(config);
-  described.__zicDiagnostics={sourcePlanHookMicros:Math.max(0,__zicNowMicros()-planStarted),sourcePlanBridgeNetworkMicros:Math.max(0,bridgeAfter.networkMicros-bridgeBefore.networkMicros),sourcePlanBridgeNetworkCalls:Math.max(0,bridgeAfter.networkCalls-bridgeBefore.networkCalls)};
+  described.__zicDiagnostics={sourcePlanHookMicros:Math.max(0,__zicNowMicros()-planStarted),sourcePlanBridgeNetworkMicros:Math.max(0,bridgeAfter.networkMicros-bridgeBefore.networkMicros),sourcePlanBridgeNetworkCalls:Math.max(0,bridgeAfter.networkCalls-bridgeBefore.networkCalls),sourcePlanBridgeNetworkCacheHits:Math.max(0,bridgeAfter.networkCacheHits-bridgeBefore.networkCacheHits),sourcePlanBridgeNetworkOriginCalls:Math.max(0,bridgeAfter.networkOriginCalls-bridgeBefore.networkOriginCalls)};
   return described;
  }
  if(request.operation==='retryResource')return await __zicRetryResourceConfig(String(args.uri||''),source);

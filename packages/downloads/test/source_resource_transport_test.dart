@@ -59,6 +59,8 @@ void main() {
           'sourcePlanHookMicros': 1800,
           'sourcePlanBridgeNetworkMicros': 900,
           'sourcePlanBridgeNetworkCalls': 2,
+          'sourcePlanBridgeNetworkCacheHits': 1,
+          'sourcePlanBridgeNetworkOriginCalls': 1,
         },
       ),
     );
@@ -89,6 +91,8 @@ void main() {
     expect(first.diagnostics['sourcePlanHookMicros'], 1800);
     expect(first.diagnostics['sourcePlanBridgeNetworkMicros'], 900);
     expect(first.diagnostics['sourcePlanBridgeNetworkCalls'], 2);
+    expect(first.diagnostics['sourcePlanBridgeNetworkCacheHits'], 1);
+    expect(first.diagnostics['sourcePlanBridgeNetworkOriginCalls'], 1);
     expect(first.diagnostics['sourceHostOpenMicros'], isA<int>());
     expect(first.diagnostics['sourceOpenPath'], 'direct');
     expect(first.diagnostics['sourceRetryUsed'], isFalse);

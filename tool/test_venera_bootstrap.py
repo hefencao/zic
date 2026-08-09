@@ -391,7 +391,7 @@ async function checkRequestPlanStageDiagnostics(){
  ZicNative.finished=seenRequestId=>{finished=seenRequestId};
  await __zicInvoke({requestId,operation:'resolveResource',arguments:{uri:locator}});
  const resolved=completed&&__zicDecode(completed.envelope.value),diagnostics=resolved?.__zicDiagnostics;
- if(completed?.seenRequestId!==requestId||finished!==requestId||resolved?.url!=='https://cdn.invalid/stage-image.webp'||!diagnostics||diagnostics.sourcePlanBridgeNetworkCalls!==1||diagnostics.sourcePlanBridgeNetworkMicros<0||diagnostics.sourcePlanHookMicros<diagnostics.sourcePlanBridgeNetworkMicros||__zicBridgeMetrics.has(requestId))throw new Error('request-plan stage diagnostics failed '+JSON.stringify({completed,finished,resolved,retained:__zicBridgeMetrics.has(requestId)}));
+ if(completed?.seenRequestId!==requestId||finished!==requestId||resolved?.url!=='https://cdn.invalid/stage-image.webp'||!diagnostics||diagnostics.sourcePlanBridgeNetworkCalls!==1||diagnostics.sourcePlanBridgeNetworkCacheHits!==0||diagnostics.sourcePlanBridgeNetworkOriginCalls!==1||diagnostics.sourcePlanBridgeNetworkMicros<0||diagnostics.sourcePlanHookMicros<diagnostics.sourcePlanBridgeNetworkMicros||__zicBridgeMetrics.has(requestId))throw new Error('request-plan stage diagnostics failed '+JSON.stringify({completed,finished,resolved,retained:__zicBridgeMetrics.has(requestId)}));
 }
 
 async function checkRequestScopedDelayCancellation(){
