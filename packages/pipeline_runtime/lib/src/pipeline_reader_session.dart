@@ -149,6 +149,7 @@ final class PipelineReaderSessionFactory {
               reservedHighPrioritySlots: 1,
               highPriorityThreshold: 1000,
               preemptionThreshold: 40,
+              pressurePreemptionPriorityFloor: 780,
             ),
         decodePrefixHints = decodePrefixHints ?? WebpDecodePrefixHints();
 

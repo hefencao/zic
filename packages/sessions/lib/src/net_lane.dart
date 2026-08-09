@@ -79,12 +79,14 @@ final class NetLane implements TaskLane {
     int reservedHighPrioritySlots = 0,
     int highPriorityThreshold = 1000,
     int preemptionThreshold = 40,
+    int pressurePreemptionPriorityFloor = 1 << 30,
     LaneError? onError,
   }) : _core = _Lane(
           maxActive: maxActive,
           reservedHighPrioritySlots: reservedHighPrioritySlots,
           highPriorityThreshold: highPriorityThreshold,
           preemptionThreshold: preemptionThreshold,
+          pressurePreemptionPriorityFloor: pressurePreemptionPriorityFloor,
           onError: onError,
         );
 
@@ -271,15 +273,18 @@ final class _Lane {
     this.reservedHighPrioritySlots = 0,
     this.highPriorityThreshold = 1 << 30,
     this.preemptionThreshold = 1 << 30,
+    this.pressurePreemptionPriorityFloor = 1 << 30,
     this.onError,
   })  : assert(maxActive > 0),
         assert(reservedHighPrioritySlots >= 0),
-        assert(preemptionThreshold >= 0);
+        assert(preemptionThreshold >= 0),
+        assert(pressurePreemptionPriorityFloor >= 0);
 
   final int maxActive;
   final int reservedHighPrioritySlots;
   final int highPriorityThreshold;
   final int preemptionThreshold;
+  final int pressurePreemptionPriorityFloor;
   final LaneError? onError;
   final Map<String, _Pending> _pending = <String, _Pending>{};
   final Map<String, _ActiveTask> _active = <String, _ActiveTask>{};
@@ -491,6 +496,20 @@ final class _Lane {
           // released, so the active bound and single-writer invariant stay
           // intact.
           _preemptLowestRunningFor(blockedHighPriority);
+        } else if (handoffActive == 0 && !_hasCancellingActive) {
+          final blockedPressure = _highestBlockedPressurePending();
+          if (blockedPressure != null) {
+            // Adjacent previous/near work is normal-lane work and therefore
+            // must never borrow the current-only max+1 handoff. It may,
+            // however, create real pressure on lower-ranked speculative or
+            // retained-background transfers. Ask exactly one lower-ranked
+            // victim to unwind, keep every permit occupied until that task
+            // physically exits, then let the normal slot go to the queued
+            // in-window task. This prevents priority=0 retained receiving
+            // work from starving previous=780 while preserving the bounded
+            // current handoff contract.
+            _preemptLowestRunningFor(blockedPressure);
+          }
         }
         break;
       }
@@ -545,6 +564,28 @@ final class _Lane {
     for (final pending in _pending.values) {
       if (_active.containsKey(pending.key) ||
           pending.priority < highPriorityThreshold ||
+          !_needsHandoff(pending)) {
+        continue;
+      }
+      if (highest == null ||
+          pending.priority > highest.priority ||
+          (pending.priority == highest.priority &&
+              pending.seq < highest.seq)) {
+        highest = pending;
+      }
+    }
+    return highest;
+  }
+
+  bool get _hasCancellingActive =>
+      _active.values.any((task) => task.token.cancelled);
+
+  _Pending? _highestBlockedPressurePending() {
+    _Pending? highest;
+    for (final pending in _pending.values) {
+      if (_active.containsKey(pending.key) ||
+          pending.priority < pressurePreemptionPriorityFloor ||
+          pending.priority >= highPriorityThreshold ||
           !_needsHandoff(pending)) {
         continue;
       }

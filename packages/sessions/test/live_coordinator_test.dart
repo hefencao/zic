@@ -194,6 +194,132 @@ void main() {
     expect(transport.opens, 1);
   });
 
+  test('detached receiving yields to adjacent previous pressure', () async {
+    final temp =
+        await Directory.systemTemp.createTemp('live_receiving_pressure_test_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final retainedId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'retained-pressure',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/retained-pressure.webp'),
+    );
+    final previousId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'previous-pressure',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/previous-pressure.webp'),
+    );
+    final index = MemIndex();
+    await index.open();
+    addTearDown(index.close);
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+      index: index,
+    );
+    addTearDown(registry.dispose);
+    final retained = _RetainedStreamTransport();
+    final previous = _BytesTransport('RIFF....WEBPprevious'.codeUnits);
+    final coordinator = LiveCoordinator(
+      registry: registry,
+      transportFor: (uri) => uri == retainedId.canonicalUri ? retained : previous,
+      clock: clock,
+      net: NetLane(
+        maxActive: 1,
+        reservedHighPrioritySlots: 1,
+        highPriorityThreshold: 1000,
+        preemptionThreshold: 40,
+        pressurePreemptionPriorityFloor: 780,
+      ),
+    );
+    addTearDown(coordinator.dispose);
+
+    const retainedDemand = DownloadDemand(
+      role: PageRole.current,
+      priority: 1000,
+      reason: 'receiving-before-detach',
+      expirationRevision: 8,
+    );
+    final first = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{retainedId: retainedDemand},
+      decodes: const <DecodeId, DecodeDemand>{},
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{ResourceId.download(retainedId)},
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: first,
+        diff: DemandDiff.between(DemandPlan.empty(), first),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    await retained.opened.future;
+    retained.add('RIFF....WEBP'.codeUnits);
+    await Future<void>.delayed(Duration.zero);
+    final retainedSession = registry.find(retainedId);
+    expect(retainedSession?.state, DownloadState.receiving);
+    expect(retainedSession?.activeRun, isTrue);
+
+    final detached = DemandPlan(
+      revision: 2,
+      downloads: const <DownloadId, DownloadDemand>{},
+      decodes: const <DecodeId, DecodeDemand>{},
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: const <ResourceId>{},
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: detached,
+        diff: DemandDiff.between(first, detached),
+        window: const RoleWindow(<int, PageRole>{}),
+      ),
+    );
+    expect(coordinator.net.priorityOf('reader:${retainedId.key}'), 0);
+    expect(retainedSession?.activeRun, isTrue);
+
+    const previousDemand = DownloadDemand(
+      role: PageRole.previous,
+      priority: 780,
+      reason: 'adjacent-previous-pressure',
+      expirationRevision: 9,
+    );
+    final pressured = DemandPlan(
+      revision: 3,
+      downloads: <DownloadId, DownloadDemand>{previousId: previousDemand},
+      decodes: const <DecodeId, DecodeDemand>{},
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{ResourceId.download(previousId)},
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: pressured,
+        diff: DemandDiff.between(detached, pressured),
+        window: RoleWindow(const <int, PageRole>{-1: PageRole.previous}),
+      ),
+    );
+
+    await previous.opened.future.timeout(const Duration(seconds: 1));
+    await coordinator.idle();
+    expect(retainedSession?.activeRun, isFalse);
+    expect(registry.find(previousId)?.state, DownloadState.promoted);
+    expect(retained.opens, 1);
+    await retained.close();
+  });
+
   test('detached pre-open run yields its slot to adjacent previous', () async {
     final temp =
         await Directory.systemTemp.createTemp('live_preopen_detach_test_');

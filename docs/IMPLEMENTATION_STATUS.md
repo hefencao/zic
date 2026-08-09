@@ -2,18 +2,19 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.184` / App `0.31.0+184`。
+- 当前版本：`0.31.0-dev.185` / App `0.31.0+185`。
 
-- dev.184 用新 trace 修复 logical-detach 生命周期误判：`activeRun` 不能近似 receiving。只有 `DownloadState.receiving` 的 active transfer离窗后保留为priority 0；active queued/opening工作失去demand后通过同一TaskControl取消，真实退出后释放NetLane/Venera permit。previous仍按780生成，不通过抬高数值或扩大并发解决。
-- 新回归覆盖两条边界：receiving transfer短时detach/reattach仍复用同一transport；pre-open active run detach后必须取消并让唯一网络槽交给adjacent previous。7/3、2/1、7/5/3/2、5/3/2及current1000不变。
+- dev.185 用 09:43 新 trace确认 dev.184 receiving生命周期修复有效但 NetLane admission仍不完整：current抢占已明显收敛，previous=780却能被 priority0 retained receiving或740/760 active speculative work挡在普通槽外，典型等待约1.866s直到低rank任务自然完成。
+- Reader network新增 `pressurePreemptionPriorityFloor=780`。blocked previous/更高normal work可按既有40分差值请求取消一个低rank active victim，但不借current reserved handoff，必须等待victim物理退出后才占原5路普通槽；current1000的5+1 bounded handoff语义不变。receiving retained=0在无真实窗口压力时仍保留复用，有previous压力时才让槽。
+- dev.184 的真实 receiving detach判据继续有效：active queued/opening离窗仍沿同一TaskControl取消；新回归额外冻结“normal previous pressure不突破maxActive”和“retained receiving在previous压力下让槽”。7/3、2/1、7/5/3/2、5/3/2、previous780、current1000、reserved1、threshold40均不变。
 
 - 新设备trace确认首帧抖动主要由 policy/execution 状态差异主导：多轮 `staticWarmDecodes=7` 把远静态页越过稳定decode窗口拉入执行；decode/upload lane此前没有current保留槽；Venera cancel曾在旧JS promise物理退出前释放单上下文permit。
 - far static恢复download-only；动态current先bootstrap至最多3帧，静态current一帧，current等待source时仅真实transition可先取1帧。network/decode/upload均保留1个current-only handoff，normal concurrency仍5/3/2。
 - Venera preemption先断requestId native HTTP，再等待JS `finished`后返回cancelled并释放permit，禁止同一WebView中旧/新async invocation重叠。修复 `ArtifactCacheReadLease?` nullable半迁移编译错误。
 - 当前环境无Flutter/Dart/Android完整SDK；行为测试已加入源码，最终设备构建/性能仍需本地验证。
 
-**源码版本：** `0.31.0-dev.184`
-**App build：** `0.31.0+184`
+**源码版本：** `0.31.0-dev.185`
+**App build：** `0.31.0+185`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -43,7 +44,7 @@
 - Home“更新漫画”使用独立 `SavedComicRecord.sourceUpdateAt`：仅 shelf + source-confirmed update进入。已有章节目录发生变化或首次发现新 successor/version才推进；阅读 progress、普通 metadata刷新和未入书架浏览不推进。远程无偏好 primary projection默认 `inShelf=false`，首次加入书架清理加入前 update signal。
 - 初次 Venera/Mihon activation 的 Binder generation连续性已下沉到 Android `PluginRuntimeServiceClient`：仅 pending activation可跨一个 `runtime-service-died/disconnected` generation；Dart backend删除初次 activation重放，session invocation与业务失败仍按原 owner处理。
 - Home外部封面继续把 live source readiness作为显式加载依赖：首屏早于 plugin ready且 warm cache miss时，失败 Future只在对应 source从 unavailable→available后重新求值；普通 progress/enrichment rebuild不重试。历史/更新横向 Sliver直接 child使用 `section + canonical comic identity` 稳定 key并提供 reorder index callback。
-- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=179`。
+- debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=185`。
 - 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
 - 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation不阻塞 Home primary，外部 source ready 后增量接入。
 - artwork资源恢复唯一属于 `ComicSourceResourceGateway/ResourceCacheManager`。Home、书架、漫画源和详情 presentation 已删除定时 retry、first-frame watchdog、App resume自动 retry、全局 ImageCache eviction和 App级短时 Future join；详情统一使用 `ComicDetailsArtworkLoader` 并显式传递 cover/preview/avatar role。普通 artwork直接复用 `StableArtworkImage`；需要裁剪/尺寸测量时只有一个显式 ImageStream listener，不再同时创建第二个 `Image`。

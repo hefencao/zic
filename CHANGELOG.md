@@ -1,3 +1,10 @@
+## 0.31.0-dev.185：Adjacent Previous 普通槽压力抢占
+
+- `zic-debug-trace-2026-08-09T09-43-55.jsonl` 验证 dev.184 的 receiving 判据修复有效：current 多次在提权后约 0–44 ms 内进入 `downloadStarted`；但 previous=780 仍可在普通槽饱和时等待约 1.866 s，另一次在整个 previous 阶段都未启动，直到后续升级为 current 才借 current-only handoff 运行。
+- 剩余根因位于 `NetLane` admission：priority 780 的 previous policy 正常生成，但只有 current/high-priority 阻塞任务能触发 active victim preemption；priority 0 retained receiving 或 740/760 speculative active work可长期占满 normal 5 slots。
+- Reader network lane 新增 `pressurePreemptionPriorityFloor=780`：被普通槽阻塞的 previous/更高 in-window normal work在与 victim 差值至少40时可请求取消一个更低 rank active task，但绝不借 current 的 max+1 handoff，必须等待 victim 物理退出后才进入原 normal slot；current=1000 的 bounded handoff 保持不变。
+- receiving detach仍优先保留原连接：没有真实窗口压力时继续 priority 0运行；只有 adjacent previous 或更高 normal pressure真实等待时才让出槽。新增 NetLane normal-pressure 与 LiveCoordinator retained-receiving→previous 回归；固定7/3、2/1、7/5/3/2、network/decode/upload 5/3/2、current1000、previous780、reserved1、threshold40均不变。新增 ADR 0168、dev.185 根因审计与 release gate，版本提升到 `0.31.0+185`。
+
 ## 0.31.0-dev.184：按真实 Receiving 生命周期释放旧槽并恢复 Previous 交棒
 
 - 根据 `zic-debug-trace-2026-08-09T08-58-13.jsonl` 区分 policy 与 execution：previous demand 会按 priority 780 正常生成，但一次 16→17/17→16 邻接切换中，previous 从提权到真正 `downloadStarted` 等待约 3.00 秒；同时 trace 出现 `receivingRetained=false` 后同 identity 仍被迁到 `retained-background=0` 的矛盾。

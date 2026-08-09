@@ -2,9 +2,9 @@
 
 ## P0：Current / Previous 真实执行槽真机闭环
 
-- 用快速 N→N+1→N 与反向翻页复测 dev.184：离窗时只有 `DownloadState.receiving` 的 active transfer可以降为 `retained-background=0`；仍在 restore/request-plan/Venera gate/HTTP-open 的 queued/opening task必须收到 TaskControl cancellation，并在物理退出后释放 NetLane/runtime permit。
-- 观察 adjacent previous：policy仍应给 priority 780、behind-1 decode；若 previous仍延迟，记录“previous提权时间 → 普通槽释放 → downloadStarted → Venera request-plan start → HTTP open”，不要先提高 previous priority、扩大5路并发或缩小7/3。
-- current继续验证5+1 bounded handoff与Venera physical-finish规则；本轮修复不能把 receiving logical detach退化为普遍 cancel/reopen。
+- 用快速 N→N+1→N 与反向翻页复测 dev.185：current仍使用唯一5+1 handoff；adjacent previous=780若被5个普通槽阻塞，应对低至少40分的 speculative/retained active victim发出 normal-pressure cancellation，但 previous自身不得在 victim退出前启动，也不得让 `handoffActive` 增加。
+- 专门记录“previous提权 → victim cancellation/failure → victim物理退出 → previous downloadStarted → Venera request-plan/open”。dev.185目标是消除 trace 中约1.866s等待低rank任务自然完成的情况；如果 cancellation已发出但 previous仍长尾，下一步只追 Venera/HTTP physical unwind，不提高 previous priority、不扩大5路并发、不缩小7/3。
+- 同时复测短时 N→N+1→N：没有真实 in-window pressure时，已 receiving 的 retained=0仍应复用原transport，不得因为新增 normal pressure能力退化为每次离窗cancel/reopen；只有真实 previous/更高 normal work等待普通槽时才让槽。
 
 ## P0：Current 首帧 policy/execution 真机闭环
 

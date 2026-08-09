@@ -549,6 +549,94 @@ void _dev123NetLaneTests() {
     await lane.idle();
   });
 
+  test(
+      'previous pressure preempts one lower task without borrowing current handoff',
+      () async {
+    final lane = NetLane(
+      maxActive: 3,
+      reservedHighPrioritySlots: 1,
+      highPriorityThreshold: 1000,
+      preemptionThreshold: 40,
+      pressurePreemptionPriorityFloor: 780,
+    );
+    final lowestCancelled = Completer<void>();
+    final lowestExit = Completer<void>();
+    final secondLowCancelled = Completer<void>();
+    final secondLowRelease = Completer<void>();
+    final otherRelease = Completer<void>();
+    final previousStarted = Completer<void>();
+    final previousRelease = Completer<void>();
+
+    lane.submitRanked(
+      key: 'low-prefetch-720',
+      priority: 720,
+      bucket: 'remote:a',
+      bucketLimit: 3,
+      task: (token) async {
+        await token.whenCancelled;
+        lowestCancelled.complete();
+        // Cancellation is only a request. The normal permit remains occupied
+        // until the underlying transfer has physically unwound.
+        await lowestExit.future;
+      },
+    );
+    lane.submitRanked(
+      key: 'low-prefetch-740',
+      priority: 740,
+      bucket: 'remote:a',
+      bucketLimit: 3,
+      task: (token) async {
+        await Future.any<void>(<Future<void>>[
+          token.whenCancelled,
+          secondLowRelease.future,
+        ]);
+        if (token.cancelled) {
+          secondLowCancelled.complete();
+        }
+      },
+    );
+    lane.submitRanked(
+      key: 'near-work',
+      priority: 820,
+      bucket: 'remote:a',
+      bucketLimit: 3,
+      task: (_) async => otherRelease.future,
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(lane.active, 3);
+
+    lane.submitRanked(
+      key: 'adjacent-previous',
+      priority: 780,
+      bucket: 'remote:a',
+      bucketLimit: 3,
+      task: (_) async {
+        previousStarted.complete();
+        await previousRelease.future;
+      },
+    );
+
+    await lowestCancelled.future.timeout(const Duration(seconds: 1));
+    // Re-pump while the first cancellation is still physically unwinding.
+    // Normal previous pressure must not cascade into cancelling a second slot.
+    lane.updatePriority('adjacent-previous', 781);
+    await Future<void>.delayed(Duration.zero);
+    expect(secondLowCancelled.isCompleted, isFalse);
+    expect(previousStarted.isCompleted, isFalse);
+    expect(lane.active, 3);
+    expect(lane.handoffActive, 0);
+
+    lowestExit.complete();
+    await previousStarted.future.timeout(const Duration(seconds: 1));
+    expect(lane.active, 3);
+    expect(lane.handoffActive, 0);
+
+    previousRelease.complete();
+    secondLowRelease.complete();
+    otherRelease.complete();
+    await lane.idle();
+  });
+
   test('handoff capacity stays bounded while cancellation unwinds', () async {
     final lane = NetLane(maxActive: 1, reservedHighPrioritySlots: 1);
     final lowRelease = Completer<void>();

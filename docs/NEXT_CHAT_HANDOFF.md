@@ -1,6 +1,6 @@
-# dev.184 后续交接
+# dev.185 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.184_receiving-state-detach-current-previous-handoff.zip`。
+唯一后续基线：`zic_v0.31.0-dev.185_adjacent-previous-pressure-preemption.zip`。
 
 ## 必读
 
@@ -25,7 +25,7 @@
 19. `docs/adr/0154-source-filter-view-shelf-projection-download-feedback.md`
 20. `docs/adr/0155-external-browse-runtime-protocol-field-ownership.md`
 21. `docs/adr/0156-source-migration-version-view-and-update-badge-ownership.md`
-22. `docs/adr/0161-vibevenera-rhttp-startup-transport.md`、`docs/adr/0162-modern-toolchain-rhttp-stream-framing.md`、`docs/adr/0163-openjdk25-relative-window-output-retention.md`、`docs/adr/0164-artifact-readthrough-preserves-task-control.md`、`docs/adr/0165-rhttp-raw-stream-downloadjob-single-framing.md`、`docs/adr/0166-current-bootstrap-execution-and-venera-physical-preemption.md`、`docs/adr/0167-receiving-state-detach-current-previous-handoff.md`、`docs/audits/dev184-current-previous-receiving-state-root-cause-audit.md`、`docs/audits/dev184-validation-results.md`
+22. `docs/adr/0161-vibevenera-rhttp-startup-transport.md`、`docs/adr/0162-modern-toolchain-rhttp-stream-framing.md`、`docs/adr/0163-openjdk25-relative-window-output-retention.md`、`docs/adr/0164-artifact-readthrough-preserves-task-control.md`、`docs/adr/0165-rhttp-raw-stream-downloadjob-single-framing.md`、`docs/adr/0166-current-bootstrap-execution-and-venera-physical-preemption.md`、`docs/adr/0167-receiving-state-detach-current-previous-handoff.md`、`docs/audits/dev184-current-previous-receiving-state-root-cause-audit.md`、`docs/audits/dev184-validation-results.md`、`docs/adr/0168-adjacent-previous-normal-pressure-preemption.md`、`docs/audits/dev185-adjacent-previous-pressure-root-cause-audit.md`、`docs/audits/dev185-validation-results.md`
 23. `docs/adr/0158-venera-transport-preemption-and-native-source-lock-ownership.md`、`docs/audits/dev175-venera-transport-native-ingress-root-cause-audit.md`、`docs/audits/dev175-validation-results.md`
 
 ## 当前代码事实
@@ -59,11 +59,11 @@
 - Reader/Pipeline 参数仍为 encoded前7/后3、holder最大7/5/3/2、稳定decode前2/后1、normal network/decode/upload=5/3/2。上一current的output retention与相对role正交；far static不得因静态证据越过稳定decode窗口，真实viewport静态页仍可获得一帧输出。
 - current priority=1000；network/decode/upload各保留1个仅current可用的bounded handoff，transition=900不占保留槽。动态current depth<3时 speculative neighbor refill目标为0；静态current一帧即满足。current等source时仅真实viewport transition可先取1帧。
 - origin `TaskControl`继续贯穿 DownloadJob → ArtifactCacheTransport → Loader/source request-plan → runtime。Venera保持真实单invocation：current preemption先按requestId断开旧native HTTP，只有旧JavaScript触发`finished(requestId)`后才返回cancelled并转交permit，不能在仅发cancel时让新JS重叠。
-- logical detach严格按真实 session transport state判定：`activeRun`覆盖restore/request-plan/open等待，不能代表receiving；只有 active `DownloadState.receiving` 可以降为priority 0保留。active queued/opening离窗后必须经NetLane TaskControl取消并等待物理退出，避免占住current/adjacent previous的真实执行位。
+- logical detach严格按真实 session transport state判定：`activeRun`覆盖restore/request-plan/open等待，不能代表receiving；只有 active `DownloadState.receiving` 可以降为priority 0保留。active queued/opening离窗后必须经NetLane TaskControl取消并等待物理退出。dev.185进一步把Reader previous=780设为normal-slot pressure floor：被普通槽阻塞时可以请求取消至少低40分的active victim，但previous不得使用current-only reserved handoff，必须等victim物理退出；retained receiving=0在无窗口压力时仍保留复用。
 - dev.175–181 的 response abort、native锁/CRC、retained-receiving、controlled read-through继续有效。dev.182 的 raw-stream/single DownloadJob aggregation只属于owner清理；rhttp transport不得再次增加64/256 KiB聚合，不再作为首帧主性能解释；不得继续围绕64/256KiB猜首帧根因。
 - Native identity保持 `zic-media-core-dev134-abi6-lib00121400`。
 ## 下一步真机优先验证
-- 首先复测快速前后翻页：确认 `demandDetached.receivingRetained=false` 的 identity不再随后出现 active `retained-background=0`；previous 780应在旧queued/opening任务物理退出后立即获得普通slot。
+- 首先复测快速前后翻页：确认previous 780受阻时会促使低至少40分的active speculative/retained victim进入cancelled/physical-exit，previous仅在真实普通slot释放后立即 `downloadStarted`；它不得占current-only handoff。09:43 trace中约1.866s等待低rank任务自然完成的模式应消失；同时确认无previous/更高normal pressure时，`receivingRetained=true` 的priority0 transfer仍能短时detach/reattach复用原transport；不得为了积极previous把所有retained receiving机械取消。
 - 真机首要复测 current 首帧稳定性：观察 policyDecision 的 staticWarmDecodes/uploads 是否收敛到稳定decode角色/真实可见页，current浅水位期间是否停止 speculative neighbor refill，以及decode/upload current handoff是否避免后台长任务阻塞。
 - Venera慢页继续拆 execution：若current在上述policy稳定后仍长时间等待origin，记录旧request cancel→native HTTP abort→JS finished→current request-plan start→HTTP open，确认单上下文无物理重叠后再优化source-plan；不缩7/3、不增加Venera并发。
 ## 不可改变的稳定边界
