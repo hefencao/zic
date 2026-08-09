@@ -1,3 +1,11 @@
+## 0.31.0-dev.178：VibeVenera Rust Streaming Transport 首播路径
+
+- 根据 `zic-debug-trace-2026-08-09T01-44-16.jsonl` 重新拆分首播延迟：remote current 的 first-frame decode/upload只有几十毫秒，主要时间在 source/request-plan/open 约2–4秒，以及首个约250–300 KiB可解码前缀在5路Dart HttpClient传输下继续等待数秒；cached页仍能在约30–220ms显示。
+- 对照权威 `vibevenera-master.zip`：保留 encoded 7/3、decode 2/1、network/decode/upload 5/3/2与 retained-receiving/preemption，不用缩窗口换首帧；把生产 source media HTTP engine迁到 `downloads_bridge` 的 Rust/rhttp streaming transport。
+- `downloads` 新增 composition-owned `SourceResourceDirectTransport` 控制面，平台实现必须接收同一个 `TaskControl`且由 transport pool关闭；pure downloads仍保留 Dart HttpClient作为非Flutter/test默认，不依赖rhttp。
+- `RhttpSourceResourceDirectTransport` 固定 rhttp 0.13.0以保持 Dart>=3.6；后台预热Rust runtime，复用单一client与60s keep-alive，关闭自动redirect/status throw，保留source headers/body、range/validator、媒体前缀校验、Set-Cookie/source-owned fallback与完整response取消。
+- 新增 dev.178 owner gate和 controlled platform transport regression；版本提升到 `0.31.0+178`。由于当前环境无 Dart/Flutter，`pubspec.lock` 无法由 pub重新解析，依赖锁需在用户本地 `flutter pub get` 时生成。
+
 ## 0.31.0-dev.177：VibeVenera Retained Receiving、嵌套 Current 抢占与下载管理 Route-First
 
 - 重新只读对照权威 `vibevenera-master.zip`，撤销未冻结的“离开7/3即直接cancel active transfer”候选：receiving transport普通logical detach继续保留并降为priority 0，queued undemanded仍可取消；短时前后切页原位恢复priority，不反复断线/重下。

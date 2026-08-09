@@ -396,7 +396,7 @@ Reader 返回后 Home只更新该 route最终 progress一次，已挂载详情�
 网络执行只有三类合法 owner：
 
 - **source-owned client**：Mihon/Venera 等来源的 CookieJar/interceptor/auth/DNS/TLS/session 语义；未知 client wrapper、重定向、`Set-Cookie` 或无法无状态平铺的响应必须留在这里执行；
-- **统一 host transport**：仅重放来源已经解析成无状态 request plan 的单次资源请求。host replay关闭自动 redirect，只有无 Cookie 状态变化且直接返回编码媒体时才有资格把字节交给 Pipeline；
+- **统一 host transport**：仅重放来源已经解析成无状态 request plan 的单次资源请求。生产 Flutter composition由 `downloads_bridge` 注入可取消的 Rust/rhttp streaming transport并复用client/keep-alive；pure `downloads` 的 Dart HttpClient只作为非Flutter/test默认。两者都关闭自动redirect，只有无 Cookie状态变化且直接返回编码媒体时才有资格把字节交给 Pipeline，且平台 transport必须观察同一个 `TaskControl`；
 - **control-plane HTTP**：插件仓库索引/APK/JS安装等，不属于漫画 response cache，但仍使用 composition 的默认 UA fallback。
 
 `ResourceCacheManager` 是可重新获取 metadata/artwork response 的唯一缓存 owner。Catalog browse/details只管理 metadata，`CachedBrowsableComicSource` 不提供 artwork loader facade；封面、预览不得直接取得 raw source transport。章节正文/Reader page body 明确由 DownloadSession/artifact/Pipeline 管理，因此通过 `ComicSourceResourceGateway.pageResponseLoaderFor/loadPageBytes` 绕过 response cache。两者必须复用同一 source-resolved response loader；full-byte fallback不得直接调用 `source.loadResource()`。章节下载侧只接受原子 `ChapterResourceAccess`，不得分别更新 byte loader 与 streaming transport。

@@ -26,13 +26,32 @@ typedef SourceResourceDirectOpen = Future<ByteResponse> Function(
   ComicResourceRequest request,
 );
 
+/// Platform-owned direct media transport used after the source has resolved
+/// an immutable request plan.
+///
+/// The scheduler remains the sole cancellation/priority owner. Implementations
+/// must bind [control] for the complete response lifetime and must not create
+/// their own retry or prefetch policy.
+abstract interface class SourceResourceDirectTransport {
+  Future<ByteResponse> open(
+    ComicResourceRequest request, {
+    TaskControl? control,
+  });
+
+  void close();
+}
+
 final class ExternalPluginResourceTransportPool {
   ExternalPluginResourceTransportPool({
+    SourceResourceDirectTransport? directTransport,
     SourceResourceDirectOpen? directOpen,
     String Function()? defaultUserAgentProvider,
-  })  : _directOpen = directOpen,
+  })  : assert(directTransport == null || directOpen == null),
+        _directTransport = directTransport,
+        _directOpen = directOpen,
         _defaultUserAgentProvider = defaultUserAgentProvider;
 
+  final SourceResourceDirectTransport? _directTransport;
   final SourceResourceDirectOpen? _directOpen;
   final String Function()? _defaultUserAgentProvider;
   final Map<String, _SourceResourceTransport> _transports =
@@ -70,6 +89,7 @@ final class ExternalPluginResourceTransportPool {
       sourceId,
       () => _SourceResourceTransport(
         source,
+        _directTransport,
         _directOpen,
         _defaultUserAgentProvider,
       ),
@@ -83,12 +103,14 @@ final class ExternalPluginResourceTransportPool {
       transport.close();
     }
     _transports.clear();
+    _directTransport?.close();
   }
 }
 
 final class _SourceResourceTransport implements ControlledTransport {
   _SourceResourceTransport(
     this._source,
+    this._directTransport,
     this._directOpen,
     this._defaultUserAgentProvider,
   ) {
@@ -100,6 +122,7 @@ final class _SourceResourceTransport implements ControlledTransport {
   static const _maxRequestPlans = 256;
 
   BrowsableComicSource _source;
+  final SourceResourceDirectTransport? _directTransport;
   final SourceResourceDirectOpen? _directOpen;
   final String Function()? _defaultUserAgentProvider;
   final HttpClient _client = HttpClient();
@@ -358,6 +381,18 @@ final class _SourceResourceTransport implements ControlledTransport {
       normalized,
       _defaultUserAgentProvider,
     );
+    final directTransport = _directTransport;
+    if (directTransport != null) {
+      final response = await directTransport.open(
+        effective,
+        control: control,
+      );
+      if (control?.cancelled == true) {
+        await response.discard();
+        _throwIfTaskCancelled(control);
+      }
+      return response;
+    }
     final directOpen = _directOpen;
     if (directOpen != null) {
       final response = await directOpen(effective);

@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.177`
-**App build：** `0.31.0+177`
+**源码版本：** `0.31.0-dev.178`
+**App build：** `0.31.0+178`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -9,6 +9,7 @@
 
 ## 当前实现
 
+- dev.178把外部漫画媒体的生产host HTTP engine迁到 `downloads_bridge/RhttpSourceResourceDirectTransport`：source request-plan、NetLane、DownloadSession/artifact所有权不变；Rust/rhttp只执行已规范化单次请求，复用client/keep-alive并观察同一个`TaskControl`。pure `downloads`仍以Dart HttpClient作为非Flutter/test默认。后台在首帧后预热rhttp runtime，避免Reader首次请求承担native初始化。
 - dev.175 把 current 抢占身份贯穿到真正阻塞的 source/runtime层：`CancelToken`作为只读 `TaskControl`携带 cancellation与动态 priority，Reader page从 DownloadJob、LoaderTransport、source request-plan到 Venera runtime不再丢失该身份。Venera仍单 invocation；permit transfer按实时 priority选择，active prefetch取消下沉到既有 `cancel(requestId)`，不以增加插件并发换延迟。
 - dev.175 同时收口下载卡顿的 native锁反转：`zic_cursor_decode_next()` 在 source读锁内只准备 demux/单帧压缩 fragment，WebP decode、缩放、合成和 canvas copy移到锁外；Dart主 isolate同步 append不再等待后台 worker完整解码。7/3、2/1、5/3/2及 network5+reserved1均不变。
 - 下载管理页采用 route-first projection：Navigator进入后先显示 Home现有 chapter download snapshot与 whole-comic queue snapshot；`wholeComicDownloads.ready`、`inspectMany()`和 cache usage检查在首帧之后刷新。逐 entry `Future.wait(inspect)`与 initState microtask扫描已删除。

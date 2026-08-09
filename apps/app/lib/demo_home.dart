@@ -9,6 +9,7 @@ import 'package:network_bridge/network_bridge.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:downloads/downloads.dart';
+import 'package:downloads_bridge/downloads_bridge.dart';
 import 'app_preferences.dart';
 import 'app_settings_screen.dart';
 import 'comic_details.dart' as details;
@@ -257,6 +258,7 @@ final class _DemoHomeState extends State<DemoHome> {
     );
     _sourceResources = ComicSourceResourceGateway(
       sourceForId: _sourceForId,
+      directTransport: RhttpSourceResourceDirectTransport(),
       defaultUserAgentProvider: () => widget.preferences.networkUserAgent,
     );
     _sourceResources.bindTo(_chapterDownloads);

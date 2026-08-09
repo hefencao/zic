@@ -29,6 +29,9 @@ Future<void> main() async {
 }
 
 Future<void> _prewarmMediaInBackground() async {
+  unawaited(prewarmPlatformSourceResourceTransport().catchError((Object error) {
+    debugPrint('source media transport prewarm unavailable: $error');
+  }));
   try {
     await prewarmDefaultLocalMediaPipeline();
   } on Object catch (error) {

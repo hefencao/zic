@@ -226,6 +226,29 @@ void main() {
     expect(await _collect(response.bytes), <int>[1, 2, 3, 4]);
   });
 
+  test('platform direct transport receives the same scheduler control', () async {
+    final control = _MutableTaskControl(priority: 1000);
+    final direct = _FixtureDirectTransport();
+    final source = _FixtureSource(
+      request: ComicResourceRequest(uri: Uri.parse('https://fixture/current')),
+    );
+    final pool = ExternalPluginResourceTransportPool(
+      directTransport: direct,
+    );
+    addTearDown(pool.close);
+
+    final response = await pool
+        .controlledLoaderFor(source, Uri.parse('venera-resource:platform'))(
+      control: control,
+    );
+
+    expect(identical(source.lastResolveControl, control), isTrue);
+    expect(identical(direct.lastControl, control), isTrue);
+    expect(await _collect(response.bytes), <int>[1, 2, 3, 4]);
+    pool.close();
+    expect(direct.closed, isTrue);
+  });
+
   test('controlled cancellation aborts an already streaming host response',
       () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -433,6 +456,30 @@ final class _MutableTaskControl implements TaskControl {
 
   void cancel() {
     if (!_cancelled.isCompleted) _cancelled.complete();
+  }
+}
+
+final class _FixtureDirectTransport implements SourceResourceDirectTransport {
+  TaskControl? lastControl;
+  bool closed = false;
+
+  @override
+  Future<ByteResponse> open(
+    ComicResourceRequest request, {
+    TaskControl? control,
+  }) async {
+    lastControl = control;
+    return ByteResponse(
+      bytes: Stream<List<int>>.value(<int>[1, 2, 3, 4]),
+      statusCode: HttpStatus.ok,
+      rangeStart: 0,
+      totalLength: 4,
+    );
+  }
+
+  @override
+  void close() {
+    closed = true;
   }
 }
 

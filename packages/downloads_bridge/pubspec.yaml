@@ -11,14 +11,11 @@ environment:
 dependencies:
   downloads:
     path: ../downloads
+  rhttp: 0.13.0
   runtime_bridge:
     path: ../runtime_bridge
   storage_bridge:
     path: ../storage_bridge
 
 dev_dependencies:
-  catalog:
-    path: ../catalog
-  domain:
-    path: ../domain
   test: ^1.25.0

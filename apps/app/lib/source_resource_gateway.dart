@@ -20,9 +20,11 @@ typedef ComicSourceResolver = BrowsableComicSource? Function(String sourceId);
 final class ComicSourceResourceGateway {
   ComicSourceResourceGateway({
     required ComicSourceResolver sourceForId,
+    SourceResourceDirectTransport? directTransport,
     String Function()? defaultUserAgentProvider,
   })  : _sourceForId = sourceForId,
         _transports = ExternalPluginResourceTransportPool(
+          directTransport: directTransport,
           defaultUserAgentProvider: defaultUserAgentProvider,
         );
 

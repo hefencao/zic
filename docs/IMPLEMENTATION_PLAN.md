@@ -1,10 +1,10 @@
 # zic Implementation Plan
 
-## P0：Response取消与下载卡顿设备闭环
+## P0：VibeVenera 首播时间与 Rust transport 真机闭环
 
-- 在远程Venera漫画上让5路prefetch饱和后连续快速翻页；确认被抢占任务在Pipeline进入cancelled后，其host response/socket也迅速结束，current origin open不再等待旧prefetch自然收尾。若仍慢，继续区分host connect/首包，不再调lane参数。
-- 对比 `bytesCommitted.nativeIngressMicros/artifactWriteMicros` 与frame timing：native锁尖峰应保持收口；partial artifact append不再逐64KiB执行Dart CRC，seal/restore隔离rehash不得造成交互期卡顿。
-- 保持 encoded 7/3、decode 2/1、network/decode/upload 5/3/2与 reserved current 1；设备验证失败时继续沿 transport/runtime或 native lock证据下钻，不缩窗口。
+- 同一Venera漫画/设备对比 ZIC 与 VibeVenera：记录 Reader mount→source-plan→origin response→首个约256–300 KiB前缀→first frame；dev.178目标是把remote首次播放从常见4–8秒明显压向2秒级，而不是只优化几十毫秒decode。
+- 验证生产 `RhttpSourceResourceDirectTransport` 实际命中：current取消必须终止rhttp request/body，Range resume与source显式headers/UA保持，redirect/Set-Cookie/non-media继续回source-owned client；不得同时运行Dart HttpClient与rhttp双下载。
+- 保持 encoded 7/3、decode 2/1、network/decode/upload 5/3/2与reserved current 1；若source-plan仍占2秒以上，下一步优化Venera request-plan warm/cache，不以减少prefetch掩盖。
 
 ## P0：迁移 / 同源版本 / 更新提示真机闭环
 
