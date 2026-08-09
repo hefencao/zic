@@ -135,13 +135,14 @@ Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor �
 ## 4. 网络调度
 
 - composition-owned `NetLane` MUST 是页面网络的唯一调度权威。
-- current SHOULD 使用 priority 1000、一个高优先级 handoff slot和原位 priority migration；满足差值门槛时 MAY 抢占低优先级 active task。handoff slot已被一次异步取消占用时，后续 current MUST仍能对另一条未取消、可抢占且满足优先级差的低 rank transfer发出取消请求；新 current自身 MUST等真实 active task退出后再取得 permit，不得提前释放取消中的 task或突破 `maxActive + reservedHighPrioritySlots`。
+- current SHOULD 使用 priority 1000、一个高优先级 handoff slot和原位 priority migration；满足差值门槛时 MAY 抢占低优先级 active task。handoff严格限制为 `maxActive + reservedHighPrioritySlots`，取消中的 task必须真实退出后才释放 permit。普通 page-window detach MUST NOT取消已经 receiving 的传输；该任务 SHOULD降为低优先级 retained work，queued undemanded任务 MAY取消。只有新的 current/高优先级工作真实受 lane 或 Venera单上下文阻塞时 MAY按rank抢占 receiving；同一 receiving页短时离开又返回 MUST原位恢复priority而不得重建第二个transport。
 - DownloadJob、Reader、UploadSession 和 holder 不得建立第二套网络资格门控。
 - 目标页 receiving transport 不得因 current holder depth、播放 underflow 或页面控件状态被暂停。
 - 不得通过缩小 7/3、关闭预下载或降低播放速度掩盖 identity、重复请求或 producer wake 缺陷。
 
 ## 5. 下载、partial 与 artifact
 
+- 下载管理 Presentation MUST 先由 Home 已有 download/whole-queue projection构造首帧；durable artifact/cache全量检查 MUST 在 route首帧之后异步刷新，并优先使用 bulk inspection，不得以逐章节扫描阻塞 Navigator route首次绘制。
 - GET/HEAD MUST 零 body且不得携带仅适用于实体 body 的 headers。
 - 同一 DownloadId MUST 只有一个 active writer；partial MUST 是连续前缀并可恢复。
 - seal/promotion MUST 原子更新 metadata；cache clear 不得删除 active artifact。

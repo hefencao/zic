@@ -49,7 +49,8 @@ for token in (
     '_openRetryPlan(',
 ):
     assert token in transport
-assert 'HttpServer.bind' not in transport_test
+assert transport_test.count('HttpServer.bind') == 1
+assert 'controlled cancellation aborts an already streaming host response' in transport_test
 assert 'Duration(seconds: 30)' not in transport_test
 assert '_ControlledBody' in transport_test
 assert 'failed direct retry falls back' in transport_test
@@ -118,7 +119,6 @@ for token in (
     assert token in mihon_driver
 
 for text, label in (
-    (transport_test, 'downloads transport'),
     (upload_test, 'upload session'),
     (deferred_test, 'deferred Reader route'),
     (gateway_test, 'source resource gateway'),
@@ -131,6 +131,15 @@ for text, label in (
         'Duration(seconds: 30)',
     ):
         assert unstable not in text, f'{label} test retains unstable {unstable}'
+for unstable in (
+    'ServerSocket.bind',
+    'Future.delayed',
+    'pumpAndSettle',
+    'Duration(seconds: 30)',
+):
+    assert unstable not in transport_test, (
+        f'downloads transport test retains unstable {unstable}'
+    )
 assert 'package:flutter_test/flutter_test.dart' not in geometry_test
 for token in ('_ResolvedSource', 'source.resolveCalls', 'source.loads'):
     assert token in gateway_test

@@ -1,6 +1,6 @@
-# dev.176 后续交接
+# dev.177 后续交接
 
-唯一后续基线：`zic_v0.31.0-dev.176_response-abort-artifact-crc-hotpath.zip`。
+唯一后续基线：`zic_v0.31.0-dev.177_vibevenera-retained-preemption-download-manager-route-first.zip`。
 
 ## 必读
 
@@ -25,7 +25,7 @@
 19. `docs/adr/0154-source-filter-view-shelf-projection-download-feedback.md`
 20. `docs/adr/0155-external-browse-runtime-protocol-field-ownership.md`
 21. `docs/adr/0156-source-migration-version-view-and-update-badge-ownership.md`
-22. `docs/adr/0157-current-preemption-saturated-handoff-ownership.md`、`docs/audits/dev174-vibevenera-current-preemption-root-cause-audit.md`、`docs/audits/dev174-validation-results.md`
+22. `docs/adr/0160-vibevenera-retained-receiving-current-pressure-and-download-manager-route-first.md`、`docs/audits/dev177-vibevenera-retained-preemption-download-manager-root-cause-audit.md`、`docs/audits/dev177-validation-results.md`
 23. `docs/adr/0158-venera-transport-preemption-and-native-source-lock-ownership.md`、`docs/audits/dev175-venera-transport-native-ingress-root-cause-audit.md`、`docs/audits/dev175-validation-results.md`
 
 ## 当前代码事实
@@ -56,15 +56,15 @@
 - Mihon page/cover request plan保留 `imageRequest(page)` 的 URL/method/headers/body；GET/HEAD无 body。共享 transport无 Venera默认 UA。host直连若 2xx前缀不是编码图片，在进入 Pipeline前使用现有 source-owned runtime network兼容路径；正常图片仍走统一流式 transport。
 - Cloudflare可见浏览器沿用 dev.154/dev.155：真实 WebView UA与 Cookie/localStorage同 revision handoff；typed classifier与浏览器完成 probe分离；验证后按稳定 sourceId解析 replacement adapter。
 - 外部插件 manifest按记录容错。只有 payload安装/升级走事务式 replacement；settings与Venera Web登录原地更新，不 restart。Mihon浏览器 handoff保留受限 Mihon-only restart。生产 runtime session安全上限32，不能恢复通用8-session用户上限。
-- Reader/Pipeline参数仍为 encoded前7/后3、holder 7/5/3/2、decode前2/后1、network5/decode3/upload2。NetLane已对齐 VibeVenera饱和 handoff：reserved1被慢取消占用时，后续 current仍继续请求另一个低 rank prefetch取消；取消中的 task真实退出前不释放 permit。
+- Reader/Pipeline参数仍为 encoded前7/后3、holder 7/5/3/2、decode前2/后1、network5/decode3/upload2。按VibeVenera语义，logical detach保留receiving并降为retained-background=0，queued undemanded可取消；current真实pressure才抢占低rank receiving。dev.174 bounded saturated victim推进保留，取消task真实退出前仍不释放permit。
 - Reader page 的 NetLane `TaskControl` 已贯穿 DownloadJob → controlled transport → source request-plan → external runtime。Venera仍只有一个 invocation context；permit释放时按实时 priority选择 waiter，active controlled prefetch被取消会调用 runtime `cancel(requestId)`，controlled request-plan不复用其它 task 的 in-flight Future。
-- dev.176继续把同一cancel绑定到host response完整生命周期：prefix probe后stream取消也必须abort底层HTTP iterator；partial artifact append不再在主isolate逐chunk跑CRC，seal/restore在isolate计算权威checksum。
+- dev.175/176继续保证TaskControl贯穿Venera/host response、native锁缩短与CRC off-hot-path。dev.177新增Venera唯一permit的pressure-only active preemption；普通detach不触发cancel，避免前后翻页反复重下。下载管理首帧使用Home现有snapshot，bulk/cache扫描只在首帧后执行。
 - native `zic_cursor_decode_next()` 只在 source读锁内刷新 demux并复制下一帧压缩 fragment；WebP decode/scale/composite/canvas copy在锁外执行，下载 `zic_source_reserve/commit` 不再等待整帧 decode。
 - Native identity保持 `zic-media-core-dev134-abi6-lib00121400`。
 
 ## 下一步真机优先验证
 
-- 首先复测连续快速翻页+下载压力：current进入5+1 handoff后，被cancel的旧prefetch其Venera invocation和host response都应迅速结束；若origin open仍有秒级长尾，只继续看连接/服务器首包。
+- 首先复测快速跨页+下载压力：`demandDetached`的旧current/prefetch必须精确cancel并结束Venera/host response，不能转priority0后台跑；同时从首页点“下载管理”应立即显示route，bulk/cache refresh只能随后更新。
 - 同时观察 `nativeIngressMicros/artifactWriteMicros` 与UI frame：native锁和逐chunk CRC都已移出热路径；剩余卡顿只继续查文件I/O/通知密度，不调整7/3、2/1、5/3/2。
 ## 不可改变的稳定边界
 

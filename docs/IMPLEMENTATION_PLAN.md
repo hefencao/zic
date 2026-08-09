@@ -123,7 +123,11 @@
 
 - 对比 transport chunk、64 KiB session append、source revision、decode batch、holder depth、deadline 和 present cadence。
 - 若 current 仍断粮，只在 NetLane ranking、重复 request/source、partial wake、decode producer 或 upload deadline 内定位；不得恢复 FlowGate/startup-buffer、缩小 7/3 或降低速度。
-- 真机连续快速翻页验证 saturated handoff：5条远端 prefetch占满 lane后 current-a可用唯一 handoff；即使首个被取消 transfer退出较慢，current-b也必须继续让另一条低 rank prefetch让位，并在该 victim真实退出后启动，不能等待无关预取自然下载完成。若仍阻塞，再用 trace区分 NetLane未发取消与具体 transport取消后迟迟不退出；不要增加线程数或提前释放 permit。
+- 真机连续快速前后翻页验证 VibeVenera retained-receiving语义：离开 encoded 7/3的 active receiving只降为priority 0，短时返回必须复用同一transport；queued undemanded可取消。新的current真正受阻时，NetLane bounded saturated preemption与Venera单上下文pressure-preemption应使低rank receiving让路。若仍阻塞，沿“current等待→实际占用Venera permit的requestId→runtime cancel→host response退出”定位，不再用detach即cancel制造重复下载。
+
+## P0：下载管理 Route-First
+
+- 从首页点击“下载管理”必须先绘制页面，再做 whole queue ready、chapter `inspectMany()`与 cache usage检查；已有 Home snapshot应立即可见。用阻塞 bulk-inspect fixture验证首帧不依赖扫描完成。
 
 ## P0：后台重入生命周期
 

@@ -556,7 +556,10 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(connection.startedUris, <String>['venera-resource:prefetch-a']);
-    firstControl.cancel();
+    // The current request itself preempts the lower-ranked active Venera
+    // invocation. Logical page detach does not cancel receiving downloads;
+    // cancellation happens only when real current pressure reaches this
+    // single-context bottleneck.
     await expectLater(
       first,
       throwsA(
@@ -969,6 +972,7 @@ final class _PriorityResolveConnection
   final Completer<void> _firstRelease = Completer<void>();
   final List<String> startedUris = <String>[];
   final List<String> cancelledRequestIds = <String>[];
+  final Set<String> _cancelledRequestIds = <String>{};
   String? _firstRequestId;
   int active = 0;
   int maxActive = 0;
@@ -1002,6 +1006,15 @@ final class _PriorityResolveConnection
         firstStarted.complete();
         await _firstRelease.future;
       }
+      if (_cancelledRequestIds.contains(request.requestId)) {
+        return ExternalPluginRuntimeResponse.failure(
+          requestId: request.requestId,
+          error: ExternalPluginRuntimeError(
+            code: 'runtime-request-cancelled',
+            message: 'fixture request was preempted',
+          ),
+        );
+      }
       final suffix = Uri.parse(rawUri).path.split(':').last;
       return ExternalPluginRuntimeResponse.success(
         requestId: request.requestId,
@@ -1021,6 +1034,7 @@ final class _PriorityResolveConnection
   @override
   Future<void> cancel(String requestId) async {
     cancelledRequestIds.add(requestId);
+    _cancelledRequestIds.add(requestId);
     if (requestId == _firstRequestId && !_firstRelease.isCompleted) {
       _firstRelease.complete();
     }

@@ -1,3 +1,12 @@
+## 0.31.0-dev.177：VibeVenera Retained Receiving、嵌套 Current 抢占与下载管理 Route-First
+
+- 重新只读对照权威 `vibevenera-master.zip`，撤销未冻结的“离开7/3即直接cancel active transfer”候选：receiving transport普通logical detach继续保留并降为priority 0，queued undemanded仍可取消；短时前后切页原位恢复priority，不反复断线/重下。
+- 恢复并保留dev.174与VibeVenera一致的bounded saturated preemption：normal5 + reserved1已占满时，新的current仍可推动另一个尚未取消的低rank victim退出，但真实task结束前不释放permit。
+- ZIC额外存在Venera单上下文runtime bottleneck：新增pressure-only active invocation preemption。只有scheduler-controlled current(priority 1000)相对低rank active invocation满足门槛时才cancel该runtime request；普通detach不cancel。`runtime-request-cancelled`映射为domain cancelled。
+- 下载管理页改为route-first：首帧直接使用Home现有chapter snapshot和whole-comic queue snapshot；durable/cache刷新移到首帧后，并统一使用`inspectMany()`，不再在route首帧前逐章节inspect。
+- dev.175 TaskControl/native lock与dev.176 response lifetime abort/CRC off-hot-path均保留；不新增cancel防抖timer或第二套prefetch状态机。
+- 新增ADR 0160、dev.177根因审计与release gate，版本保持`0.31.0+177`。
+
 ## 0.31.0-dev.176：收口被抢占 Response 生命周期与 Artifact CRC 热路径
 
 - 新 trace确认 dev.175 已把 current推进到 network handoff，但 origin `openMicros`仍出现约5–19秒等待；被取消的 prefetch在 Pipeline已失败后仍可能保留底层 HTTP response。

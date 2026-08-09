@@ -196,7 +196,7 @@ inactive/paused/detached 继续主动入队最终 checkpoint，进程被系统�
 
 - 全局正常并发 5；local bucket 2，remote source bucket 5；
 - current priority 1000，保留 1 个高优先级 handoff slot；
-- priority 提升原位迁移，差值达到 40 时可抢占低优先级 active task；单一 max+1 handoff 已占用时，后续 current仍可继续请求另一个未取消低 rank prefetch退出，但取消中的 task在真实结束前继续占用 permit，绝不提前释放或突破并发上限；
+- priority 提升原位迁移，差值达到 40 时可抢占低优先级 active task；只有一个 max+1 handoff，取消中的 task在真实结束前继续占用 permit。普通页面离开 encoded 7/3窗口时，queued undemanded任务可取消，但已 receiving 的传输保留并降为低优先级；只有新的 current真实形成pressure时才抢占低rank receiving。Venera单上下文runtime同样执行pressure-only current抢占，不因logical detach直接cancel；
 - DownloadJob 不读取 holder depth、播放状态或页面控件，不存在第二套网络资格门控。
 
 ## 6. Decode 水位与 Transition 首帧

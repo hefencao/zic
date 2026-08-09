@@ -124,6 +124,8 @@ final class ExternalPluginRuntimeSession
               plugin.format == ExternalComicPluginFormat.veneraJavaScript
                   ? 1
                   : limits.maxConcurrentInvocations,
+          preemptControlledActiveForCurrent:
+              plugin.format == ExternalComicPluginFormat.veneraJavaScript,
         ) {
     limits.validate();
     final descriptors = connection.sources;
@@ -202,6 +204,7 @@ final class ExternalPluginRuntimeSession
           return operation;
         },
         control: control,
+        onPreempt: () => _cancelInvocation(request.requestId),
       );
     } on TimeoutException catch (error) {
       unawaited(_cancelInvocation(request.requestId));
@@ -223,12 +226,15 @@ final class ExternalPluginRuntimeSession
     if (runtimeError != null) {
       final verificationRequired =
           runtimeError.code == 'source-verification-required';
+      final runtimeCancelled = runtimeError.code == 'runtime-request-cancelled';
       throw Failure(
         code: verificationRequired
             ? ErrorCode.sourceVerificationRequired
-            : runtimeError.retryable
-                ? ErrorCode.network
-                : ErrorCode.source,
+            : runtimeCancelled
+                ? ErrorCode.cancelled
+                : runtimeError.retryable
+                    ? ErrorCode.network
+                    : ErrorCode.source,
         message: '${runtimeError.code}: ${runtimeError.message}',
         cause: runtimeError,
         details: <String, Object?>{
@@ -990,29 +996,50 @@ final class _RuntimeInvocationWaiter {
   int get priority => control?.priority ?? 0;
 }
 
+final class _RuntimeActiveInvocation {
+  _RuntimeActiveInvocation({
+    required this.control,
+    required this.onPreempt,
+  });
+
+  final TaskControl control;
+  final Future<void> Function()? onPreempt;
+  bool preemptRequested = false;
+}
+
 final class _RuntimeInvocationGate {
   _RuntimeInvocationGate(
     this.limits, {
     required this.maxConcurrentInvocations,
-  }) : assert(maxConcurrentInvocations > 0);
+    this.preemptControlledActiveForCurrent = false,
+    this.currentPriorityThreshold = 1000,
+    this.preemptionThreshold = 40,
+  })  : assert(maxConcurrentInvocations > 0),
+        assert(!preemptControlledActiveForCurrent || maxConcurrentInvocations == 1);
 
   final ExternalPluginRuntimeLimits limits;
   final int maxConcurrentInvocations;
+  final bool preemptControlledActiveForCurrent;
+  final int currentPriorityThreshold;
+  final int preemptionThreshold;
   final List<_RuntimeInvocationWaiter> _waiters = <_RuntimeInvocationWaiter>[];
   Completer<void>? _drained;
   int _active = 0;
   int _nextWaiterSequence = 0;
   bool _closing = false;
+  _RuntimeActiveInvocation? _controlledActive;
 
   Future<T> run<T>(
     Future<T> Function() action, {
     TaskControl? control,
+    Future<void> Function()? onPreempt,
   }) async {
     if (_closing) {
       throw StateError('external plugin runtime is closing');
     }
     _throwIfTaskCancelled(control);
     if (_active >= maxConcurrentInvocations) {
+      _maybePreemptControlledActive(control);
       final waiter = _RuntimeInvocationWaiter(
         control: control,
         sequence: _nextWaiterSequence++,
@@ -1038,31 +1065,49 @@ final class _RuntimeInvocationGate {
       if (_closing) {
         // The released invocation transferred its permit to this waiter.
         // Return it before rejecting work that lost the close race.
-        _release();
+        _release(null);
         throw StateError('external plugin runtime is closing');
       }
       if (control?.cancelled == true) {
         // Cancellation may race with permit transfer. The permit remains real
         // until this waiter explicitly hands it on or returns it.
-        _release();
+        _release(null);
         _throwIfTaskCancelled(control);
       }
     } else {
       _active++;
+    }
+    final activeInvocation = preemptControlledActiveForCurrent && control != null
+        ? _RuntimeActiveInvocation(control: control, onPreempt: onPreempt)
+        : null;
+    if (activeInvocation != null) {
+      _controlledActive = activeInvocation;
     }
     late final Future<T> operation;
     try {
       _throwIfTaskCancelled(control);
       operation = action();
     } on Object {
-      _release();
+      _release(activeInvocation);
       rethrow;
     }
     operation.then<void>(
-      (_) => _release(),
-      onError: (Object _, StackTrace __) => _release(),
+      (_) => _release(activeInvocation),
+      onError: (Object _, StackTrace __) => _release(activeInvocation),
     );
     return operation.timeout(limits.invocationTimeout);
+  }
+
+  void _maybePreemptControlledActive(TaskControl? incoming) {
+    if (!preemptControlledActiveForCurrent || incoming == null) return;
+    if (incoming.priority < currentPriorityThreshold) return;
+    final active = _controlledActive;
+    if (active == null || active.preemptRequested) return;
+    if (incoming.priority - active.control.priority < preemptionThreshold) return;
+    final callback = active.onPreempt;
+    if (callback == null) return;
+    active.preemptRequested = true;
+    unawaited(callback());
   }
 
   Future<void> beginClose() {
@@ -1086,7 +1131,10 @@ final class _RuntimeInvocationGate {
     return _drained!.future;
   }
 
-  void _release() {
+  void _release(_RuntimeActiveInvocation? activeInvocation) {
+    if (activeInvocation != null && identical(_controlledActive, activeInvocation)) {
+      _controlledActive = null;
+    }
     if (!_closing) {
       final waiter = _takeHighestPriorityWaiter();
       if (waiter != null) {

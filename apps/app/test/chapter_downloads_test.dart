@@ -9,6 +9,67 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zic/download_manager.dart';
 
 void main() {
+  testWidgets('download manager paints before durable bulk refresh completes',
+      (tester) async {
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:route-first-download-manager',
+        displayName: '首帧章节',
+        sourceId: 'route-first-source',
+        comicId: 'route-first-comic',
+        comicTitle: '首帧漫画',
+        chapterId: 'route-first-chapter',
+        sourceRevision: 'route-first-r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '1.bin',
+            sourceId: 'memory://route-first-1',
+            pageId: 'route-first-page-1',
+            contentKindHint: ContentKindHint.unknown,
+            byteLength: 4,
+          ),
+        ],
+      ),
+    );
+    final delegate = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(4),
+    );
+    await delegate.download(entry);
+    final initial = await delegate.inspect(entry);
+    final releaseRefresh = Completer<void>();
+    final service = _BlockingInspectManyDownloadService(
+      delegate,
+      releaseRefresh.future,
+    );
+    final queue = WholeComicDownloadQueue(downloads: service);
+    await queue.ready;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DownloadManagerScreen(
+          entries: <ImportedLibraryEntry>[entry],
+          downloads: service,
+          wholeComicDownloads: queue,
+          initialSnapshots: <ChapterDownloadSnapshot>[initial],
+        ),
+      ),
+    );
+
+    // The first frame is already the download route even though the
+    // post-frame durable refresh is intentionally blocked.
+    expect(find.byKey(downloadManagerScreenKey), findsOneWidget);
+    expect(find.text('首帧章节'), findsOneWidget);
+    expect(service.inspectManyStarted, isTrue);
+    expect(releaseRefresh.isCompleted, isFalse);
+
+    releaseRefresh.complete();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pumpWidget(const SizedBox.shrink());
+    unawaited(queue.close());
+    unawaited(service.close());
+  });
+
   testWidgets('download manager exposes completed task and durable delete',
       (tester) async {
     final entry = ImportedLibraryEntry(
@@ -157,4 +218,52 @@ void main() {
     unawaited(environment.close());
     unawaited(service.close());
   });
+}
+
+final class _BlockingInspectManyDownloadService
+    implements ChapterDownloadService {
+  _BlockingInspectManyDownloadService(this._delegate, this._release);
+
+  final ChapterDownloadService _delegate;
+  final Future<void> _release;
+  bool inspectManyStarted = false;
+
+  @override
+  Stream<ChapterDownloadSnapshot> get changes => _delegate.changes;
+
+  @override
+  Future<void> download(ImportedLibraryEntry entry) => _delegate.download(entry);
+
+  @override
+  Future<void> retry(ImportedLibraryEntry entry) => _delegate.retry(entry);
+
+  @override
+  Future<void> cancel(ImportedLibraryEntry entry) => _delegate.cancel(entry);
+
+  @override
+  Future<void> delete(ImportedLibraryEntry entry) => _delegate.delete(entry);
+
+  @override
+  Future<ChapterDownloadSnapshot> inspect(ImportedLibraryEntry entry) =>
+      _delegate.inspect(entry);
+
+  @override
+  Future<List<ChapterDownloadSnapshot>> inspectMany(
+    Iterable<ImportedLibraryEntry> entries,
+  ) async {
+    inspectManyStarted = true;
+    await _release;
+    return _delegate.inspectMany(entries);
+  }
+
+  @override
+  Future<bool> isDownloaded(ImportedLibraryEntry entry) =>
+      _delegate.isDownloaded(entry);
+
+  @override
+  Future<Uint8List> readPage(ImportedLibraryEntry entry, int pageIndex) =>
+      _delegate.readPage(entry, pageIndex);
+
+  @override
+  Future<void> close() => _delegate.close();
 }

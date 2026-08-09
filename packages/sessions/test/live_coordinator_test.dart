@@ -160,13 +160,12 @@ void main() {
       ),
     );
     expect(registry.find(id)?.demanded, isFalse);
+    expect(coordinator.net.priorityOf('reader:${id.key}'), 0);
 
-    transport.add('payload'.codeUnits);
-    await transport.close();
-    await coordinator.idle();
-    expect(registry.find(id)?.state, DownloadState.promoted);
-    expect(transport.opens, 1);
-
+    // A short forward/back gesture must reuse the same receiving transport,
+    // not cancel and reopen it. This matches VibeVenera's logical-detach
+    // policy: receiving work is retained until real priority pressure needs
+    // the slot.
     final revisited = DemandPlan(
       revision: 3,
       downloads: <DownloadId, DownloadDemand>{id: demand},
@@ -182,7 +181,15 @@ void main() {
         window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
       ),
     );
+    await Future<void>.delayed(Duration.zero);
+    expect(registry.find(id)?.demanded, isTrue);
+    expect(coordinator.net.priorityOf('reader:${id.key}'), 1000);
+    expect(transport.opens, 1);
+
+    transport.add('payload'.codeUnits);
+    await transport.close();
     await coordinator.idle();
+    expect(registry.find(id)?.state, DownloadState.promoted);
     expect(transport.opens, 1);
   });
 

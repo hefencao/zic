@@ -489,6 +489,10 @@ final class _DemoHomeState extends State<DemoHome> {
           entries: List<ImportedLibraryEntry>.unmodifiable(_libraryEntries),
           downloads: _chapterDownloads,
           wholeComicDownloads: _wholeComicDownloads,
+          initialSnapshots: List<ChapterDownloadSnapshot>.unmodifiable(
+            _downloadSnapshots.values,
+          ),
+          initialWholeComicSnapshot: _wholeComicQueueSnapshot,
           cacheCoordinator: _cacheCoordinator,
         ),
       ),

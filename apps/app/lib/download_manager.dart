@@ -43,6 +43,8 @@ final class DownloadManagerScreen extends StatefulWidget {
     required this.entries,
     required this.downloads,
     required this.wholeComicDownloads,
+    this.initialSnapshots = const <ChapterDownloadSnapshot>[],
+    this.initialWholeComicSnapshot,
     this.cacheCoordinator,
     super.key,
   });
@@ -50,6 +52,8 @@ final class DownloadManagerScreen extends StatefulWidget {
   final List<ImportedLibraryEntry> entries;
   final ChapterDownloadService downloads;
   final WholeComicDownloadQueue wholeComicDownloads;
+  final List<ChapterDownloadSnapshot> initialSnapshots;
+  final WholeComicQueueSnapshot? initialWholeComicSnapshot;
   final ResourceCacheCoordinator? cacheCoordinator;
 
   @override
@@ -64,7 +68,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   StreamSubscription<ChapterDownloadSnapshot>? _subscription;
   StreamSubscription<WholeComicQueueSnapshot>? _wholeComicSubscription;
   late WholeComicQueueSnapshot _wholeComicSnapshot;
-  bool _loading = true;
+  bool _loading = false;
   bool _cacheBusy = false;
   ResourceCacheUsage? _cacheUsage;
 
@@ -74,8 +78,14 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     for (final entry in widget.entries) {
       _entries[_identity(entry)] = entry;
     }
+    for (final snapshot in widget.initialSnapshots) {
+      if (_entries.containsKey(snapshot.identity)) {
+        _snapshots[snapshot.identity] = snapshot;
+      }
+    }
     _subscription = widget.downloads.changes.listen(_acceptSnapshot);
-    _wholeComicSnapshot = widget.wholeComicDownloads.snapshot;
+    _wholeComicSnapshot =
+        widget.initialWholeComicSnapshot ?? widget.wholeComicDownloads.snapshot;
     _wholeComicSubscription = widget.wholeComicDownloads.changes.listen(
       (snapshot) {
         if (mounted) {
@@ -83,15 +93,16 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
         }
       },
     );
-    scheduleMicrotask(() async {
-      await widget.wholeComicDownloads.ready;
-      if (mounted) {
-        setState(() {
-          _wholeComicSnapshot = widget.wholeComicDownloads.snapshot;
-        });
+    // Route-first ownership: the download screen must paint from the already
+    // projected Home/queue snapshot before any durable/cache inspection starts.
+    // Microtasks run before the next frame, so doing filesystem-backed
+    // inspection here makes the previous Home route appear stuck after tap.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) {
+        return;
       }
+      unawaited(_refreshAfterFirstFrame());
     });
-    scheduleMicrotask(_reload);
   }
 
   @override
@@ -108,15 +119,27 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     setState(() => _snapshots[snapshot.identity] = snapshot);
   }
 
+  Future<void> _refreshAfterFirstFrame() async {
+    final queueReady = widget.wholeComicDownloads.ready.then((_) {
+      if (mounted) {
+        setState(() {
+          _wholeComicSnapshot = widget.wholeComicDownloads.snapshot;
+        });
+      }
+    });
+    await Future.wait<void>(<Future<void>>[
+      queueReady,
+      _reload(),
+    ]);
+  }
+
   Future<void> _reload() async {
     if (mounted) {
       setState(() => _loading = true);
     }
     try {
       final usageFuture = widget.cacheCoordinator?.inspect();
-      final snapshots = await Future.wait<ChapterDownloadSnapshot>(
-        _entries.values.map(widget.downloads.inspect),
-      );
+      final snapshots = await widget.downloads.inspectMany(_entries.values);
       final usage = usageFuture == null ? null : await usageFuture;
       if (!mounted) {
         return;
