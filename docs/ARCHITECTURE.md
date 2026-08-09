@@ -184,7 +184,7 @@ inactive/paused/detached 继续主动入队最终 checkpoint，进程被系统�
 `RoleResolver` 使用以下角色：
 
 - `current`：stable page；
-- `last`：刚离开 current 的 keep-only output；
+- `last`：仅用于 upload/output retention 的叠加标记，不占用相对页窗口；刚离开 current 的相邻页仍按 `previous/next` 参与 download/decode；
 - `transition`：拖动目标页；横向覆盖率达到 0.15，纵向只要真实进入视口即建立；
 - `next`、`next2`、`previous`：深度预解码角色；
 - `near`、`far`：只保留 encoded download 的邻页；
@@ -264,7 +264,7 @@ transport / artifact stream
 
 ## 9. Upload 与 Android texture
 
-primary upload 角色为 current、transition 和 last；last 只冻结并保留已有 output，不继续 decode。推测静态邻页可在预算内预上传。
+primary upload 角色为 current、transition；上一 current 的 output retention通过独立 `retainedIndex`叠加 `last` upload demand，不改变该页的相对 previous/next 网络与解码角色。远离7/3窗口时 retention只保 output，不产生 download/decode。推测静态邻页可在预算内预上传。
 
 Android 路径使用默认 platform MethodChannel、一个串行 blit lane和普通 `mainHandler.post`：
 

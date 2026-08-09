@@ -104,7 +104,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - 横向目标页覆盖率达到 0.15，纵向目标页真实进入视口时，MUST 建立 transition demand。
 - transition 没有 decoded frame 时 MUST 可独立取得一帧，不得等待 current 下载完成、source sealed 或 current holder 达到基础水位。
 - transition 首帧后，current 基础水位 MUST 先于 transition 深水位继续补充。
-- midpoint 后新 stable page MUST 成为 current；旧页在仍可见时保留 last/transition output并暂停播放。
+- midpoint 后新 stable page MUST 成为 current；旧 current 的已上传 output MAY 作为独立 retained/last presentation 保留并暂停播放，但该 retention MUST NOT占用或跳过相对 previous/next slot。相邻旧 current仍 MUST按 offset -1/+1参与 encoded/decode window；大跳后若已离开7/3窗口则 retention不得单独制造 download/decode demand。
 - 交接不得产生 targetless demand gap、黑屏或重新创建同一 identity。
 
 ### 2.3 连续模式与控制
@@ -126,7 +126,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - encoded download window：前 7 / 后 3；
 - 深度 decode 角色：前 2 / 后 1；
 - 动态 holder 最大水位为 current/next/next2/previous：7 / 5 / 3 / 2；
-- upload primary：current、transition、last；
+- upload primary：current、transition；上一 current可通过独立 retained-output overlay获得 `last` upload demand，且不得改变其相对 download/decode role；
 - lane normal concurrency：network 5、decode 3、upload 2；
 - source bucket：local 2、remote 5。
 

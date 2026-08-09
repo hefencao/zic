@@ -1,6 +1,6 @@
 # ADR 0162：稳定工具链现代化与 rhttp Stream Framing
 
-状态：Accepted
+状态：Accepted（第4项工具链版本由 ADR 0163 取代）
 
 ## 背景
 

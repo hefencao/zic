@@ -4,7 +4,7 @@
 
 - 同一Venera漫画/设备记录 Reader mount→source-plan→origin response→首个64KiB逻辑块→约256–300KiB可解码前缀→first frame；生产 rhttp不得再把约1–16KiB网络 packet逐个暴露给 DownloadJob，首块64KiB后续256KiB framing必须保持字节/取消/Range语义。
 - 验证 `RhttpSourceResourceDirectTransport` current取消终止request/body，source显式headers/UA保持，redirect/Set-Cookie/non-media继续回source-owned client；不得同时运行Dart HttpClient与rhttp双下载。若origin `openMicros`仍稳定数秒，下一步只优化Venera request-plan warm/cache。
-- 保持 encoded 7/3、decode 2/1、network/decode/upload 5/3/2与reserved current 1；不得用缩prefetch或detach即cancel掩盖首播延迟。完成本地 `flutter pub get` 后验证rhttp 0.18.0、Flutter3.44+/Dart3.12+与Android AGP9.1.1/Gradle9.3.1/JDK17组合。
+- 保持 encoded 7/3、decode 2/1、network/decode/upload 5/3/2与reserved current 1；相邻翻页后 immediate previous必须继续获得 backward download/decode（首 previous priority 780），同时可独立保留旧 output；大跳后远离7/3的 retained旧页不得继续下载。完成本地 `flutter pub get` 后验证rhttp 0.18.0、Flutter3.44+/Dart3.12+、AGP9.3.1/Gradle9.5/OpenJDK25构建环境，Android/Kotlin bytecode仍target17。
 
 ## P0：迁移 / 同源版本 / 更新提示真机闭环
 

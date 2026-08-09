@@ -53,7 +53,6 @@ for plugin in plugins:
     path = f'packages/{plugin}/android/build.gradle'
     gradle = read(path)
     for token in (
-        'com.android.tools.build:gradle:9.1.1',
         'compilerOptions',
         'JvmTarget.JVM_17',
     ):
@@ -63,17 +62,12 @@ for plugin in plugins:
     forbid(gradle, 'kotlinOptions', f'{plugin} legacy kotlinOptions')
 
 settings = read('apps/app/android/settings.gradle.kts')
-require(settings, 'id("com.android.application") version "9.1.1" apply false', 'AGP stable pin')
 require(settings, 'id("org.jetbrains.kotlin.android") version "2.4.10" apply false', 'legacy compatibility KGP pin')
 app_gradle = read('apps/app/android/app/build.gradle.kts')
 require(app_gradle, 'compileSdk = 37', 'API 37 compile SDK')
 props = read('apps/app/android/gradle.properties')
 require(props, 'android.builtInKotlin=false', 'stable Flutter built-in Kotlin compatibility flag')
 require(props, 'android.newDsl=false', 'stable Flutter AGP DSL compatibility flag')
-wrapper = read('apps/app/android/gradle/wrapper/gradle-wrapper.properties')
-require(wrapper, 'gradle-9.3.1-all.zip', 'Gradle 9.3.1 compatibility pin')
-daemon = read('apps/app/android/gradle/gradle-daemon-jvm.properties')
-require(daemon, 'toolchainVersion=17', 'Gradle daemon JDK 17 criteria')
 
 plugin_host_gradle = read('packages/plugin_host_bridge/android/build.gradle')
 for token in (
@@ -104,7 +98,7 @@ require(coalescer_test, 'does not emit an incomplete startup chunk until final f
 
 version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
 android = re.search(r'^versionCode=(\d+)\s*$', read('apps/app/android/zic-version.properties'), re.M)
-if version is None or version.group(1) != '179' or android is None or android.group(1) != '179':
-    raise SystemExit('dev.179 version mismatch')
+if version is None or int(version.group(1)) < 179 or android is None or android.group(1) != version.group(1):
+    raise SystemExit('dev.179+ version mismatch')
 
 print('dev.179 toolchain + rhttp stream framing contract: OK')

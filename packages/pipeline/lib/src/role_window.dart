@@ -13,12 +13,21 @@ enum PageRole {
 }
 
 final class RoleWindow {
-  RoleWindow(Map<int, PageRole> roles)
-      : roles = Map<int, PageRole>.unmodifiable(roles);
+  RoleWindow(
+    Map<int, PageRole> roles, {
+    this.retainedIndex,
+  }) : roles = Map<int, PageRole>.unmodifiable(roles);
 
   final Map<int, PageRole> roles;
+  /// The immediately previous current page whose already-uploaded output
+  /// should be frozen/retained. Retention is orthogonal to relative role:
+  /// an adjacent retained page is still `previous`/`next` for download and
+  /// decode policy, matching the stable VibeVenera window.
+  final int? retainedIndex;
 
   PageRole roleOf(int pageIndex) => roles[pageIndex] ?? PageRole.detached;
+
+  bool retains(int pageIndex) => retainedIndex == pageIndex;
 }
 
 final class RoleResolver {
@@ -48,12 +57,12 @@ final class RoleResolver {
         .clamp(0, chapter.pages.length - 1)
         .toInt();
     _setRole(roles, current, PageRole.current);
-    if (previousCurrentIndex != null &&
+    final retainedIndex = previousCurrentIndex != null &&
         previousCurrentIndex >= 0 &&
         previousCurrentIndex < chapter.pages.length &&
-        previousCurrentIndex != current) {
-      _setRole(roles, previousCurrentIndex, PageRole.last);
-    }
+        previousCurrentIndex != current
+        ? previousCurrentIndex
+        : null;
 
     final target = observation.targetCoverage;
     final targetIsVisible = target != null &&
@@ -73,9 +82,6 @@ final class RoleResolver {
       final index = current + offset;
       if (index >= chapter.pages.length) {
         break;
-      }
-      if (roles[index] == PageRole.last) {
-        continue;
       }
       forwardSlot++;
       _setRole(
@@ -99,9 +105,6 @@ final class RoleResolver {
       if (index < 0) {
         break;
       }
-      if (roles[index] == PageRole.last) {
-        continue;
-      }
       backwardSlot++;
       _setRole(
         roles,
@@ -124,7 +127,7 @@ final class RoleResolver {
         _setRole(roles, after, PageRole.near);
       }
     }
-    return RoleWindow(roles);
+    return RoleWindow(roles, retainedIndex: retainedIndex);
   }
 
   void _setRole(Map<int, PageRole> roles, int index, PageRole role) {

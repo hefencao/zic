@@ -45,6 +45,7 @@ final class PipelineController {
   int _revision = 0;
   DemandPlan _previous = DemandPlan.empty();
   Map<int, PageRole>? _previousRoles;
+  int? _previousRetainedIndex;
   int? _currentIndex;
   int? _lastCurrentIndex;
   ReaderObs? _lastObservation;
@@ -90,10 +91,13 @@ final class PipelineController {
       observation,
       previousCurrentIndex: _lastCurrentIndex,
     );
-    if (!force && _sameRoles(_previousRoles, window.roles)) {
+    if (!force &&
+        _sameRoles(_previousRoles, window.roles) &&
+        _previousRetainedIndex == window.retainedIndex) {
       return;
     }
     _previousRoles = Map<int, PageRole>.unmodifiable(window.roles);
+    _previousRetainedIndex = window.retainedIndex;
     _revision++;
     final proposal = policy.createPlan(
       revision: _revision,
@@ -133,6 +137,7 @@ final class PipelineController {
           'assumeUnresolvedStatic': _assumeUnresolvedStatic,
           'currentIndex': observation.currentIndex,
           'targetIndex': observation.targetCoverage?.pageIndex,
+          'retainedIndex': window.retainedIndex,
         },
       ),
     );

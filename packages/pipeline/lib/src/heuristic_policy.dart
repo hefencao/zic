@@ -77,11 +77,7 @@ final class HeuristicPolicy {
       }
 
       final staticWarm = staticWarmPages.contains(entry.key);
-      final decodeWatermark = role == PageRole.last
-          ? 0
-          : staticWarm
-              ? 1
-              : _decodeWatermark(role);
+      final decodeWatermark = staticWarm ? 1 : _decodeWatermark(role);
       if (decodeWatermark > 0) {
         decodes[decode] = DecodeDemand(
           role: role,
@@ -102,8 +98,7 @@ final class HeuristicPolicy {
       }
 
       final primaryUpload = role == PageRole.current ||
-          role == PageRole.transition ||
-          role == PageRole.last;
+          role == PageRole.transition;
       if (primaryUpload || staticWarm) {
         uploads[decode] = UploadDemand(
           role: role,
@@ -125,6 +120,42 @@ final class HeuristicPolicy {
           expirationRevision: revision + 1,
         );
       }
+    }
+
+    final retainedIndex = window.retainedIndex;
+    if (retainedIndex != null &&
+        retainedIndex >= 0 &&
+        retainedIndex < chapter.pages.length &&
+        retainedIndex != observation.currentIndex) {
+      final page = chapter.pages[retainedIndex];
+      final content = ContentId(
+        sourceId: chapter.sourceId,
+        comicId: chapter.comicId,
+        chapterId: chapter.chapter.chapterId,
+        pageId: page.pageId,
+      );
+      final download = DownloadId(
+        content: content,
+        sourceRevision: chapter.chapter.sourceRevision,
+        canonicalUri: page.uri,
+      );
+      final decode = DecodeId(
+        download: download,
+        physicalWidth: decodeTarget.physicalWidth,
+        physicalHeight: decodeTarget.physicalHeight,
+        pixelFormat: decodeTarget.pixelFormat,
+        renderer: decodeTarget.renderer,
+      );
+      // Retaining the previous current output is independent from its
+      // relative network/decode role. If it is still inside the 7/3 window,
+      // the regular loop above keeps downloading/decoding it as previous or
+      // next. This upload-only overlay freezes the already-presented output.
+      uploads[decode] = UploadDemand(
+        role: PageRole.last,
+        priority: 850,
+        reason: 'heuristic:last-output-retained',
+        expirationRevision: revision + 1,
+      );
     }
 
     return DemandPlan(

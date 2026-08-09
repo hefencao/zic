@@ -192,7 +192,7 @@ void main() {
   });
 
 
-  test('previous current remains last and keeps upload without decode refill', () {
+  test('previous current stays in previous window while its output is retained', () {
     final updates = <PipelineDelta>[];
     final controller = PipelineController(
       chapter: chapter,
@@ -233,23 +233,96 @@ void main() {
     controller.accept(moved);
 
     final latest = updates.last;
-    expect(latest.window.roleOf(2), PageRole.last);
-    expect(latest.window.roleOf(1), PageRole.previous,
-        reason: 'last must not consume the independent previous slot');
+    expect(latest.window.roleOf(2), PageRole.previous);
+    expect(latest.window.retainedIndex, 2,
+        reason: 'output retention must not replace the relative previous role');
+    expect(latest.window.roleOf(1), PageRole.detached,
+        reason: 'the single backward slot belongs to the adjacent previous page');
     expect(
       latest.plan.uploads.values.where((value) => value.role == PageRole.last),
       hasLength(1),
     );
     expect(
-      latest.plan.decodes.values.where((value) => value.role == PageRole.last),
-      isEmpty,
+      latest.plan.decodes.values.where((value) => value.role == PageRole.previous),
+      hasLength(1),
     );
     expect(
-      latest.plan.downloads.values.where((value) => value.role == PageRole.last),
-      isEmpty,
+      latest.plan.downloads.values.where((value) => value.role == PageRole.previous),
+      hasLength(1),
+    );
+    expect(
+      latest.plan.downloads.values
+          .singleWhere((value) => value.role == PageRole.previous)
+          .priority,
+      780,
     );
     expect(updates, hasLength(2),
         reason: 'last ownership must persist across unchanged observations');
+  });
+
+  test('far previous current retains output without redundant download', () {
+    final updates = <PipelineDelta>[];
+    final controller = PipelineController(
+      chapter: chapter,
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+      clock: _FakeClock(),
+      windowResolver: const RoleResolver(
+        forwardEncodedPages: 2,
+        backwardEncodedPages: 1,
+        forwardDecodePages: 2,
+        backwardDecodePages: 1,
+        nearRadius: 0,
+      ),
+      policy: const HeuristicPolicy(decodeWarmPages: true),
+      onUpdate: updates.add,
+    );
+
+    controller.accept(observation());
+    controller.accept(
+      ReaderObs(
+        sessionId: 's1',
+        currentIndex: 5,
+        stableIndex: 5,
+        interaction: Interaction.idle,
+        logicalPosition: 5,
+        velocity: 0,
+        currentCoverage: Coverage(
+          pageIndex: 5,
+          assetKey: 'chapter/p5',
+          fraction: 1,
+        ),
+        direction: ReadingDirection.ltr,
+        timestamp: DateTime.utc(2026, 7, 26),
+        monotonicMicros: 2,
+      ),
+    );
+
+    final latest = updates.last;
+    expect(latest.window.retainedIndex, 2);
+    expect(latest.window.roleOf(2), PageRole.detached,
+        reason: 'retention must not pull a far old current back into the window');
+    expect(
+      latest.plan.downloads.keys
+          .map((id) => id.content.pageId),
+      isNot(contains('p2')),
+      reason: 'a far retained output must not create redundant network demand',
+    );
+    expect(
+      latest.plan.decodes.keys
+          .map((id) => id.download.content.pageId),
+      isNot(contains('p2')),
+      reason: 'a far retained output must not create redundant decode demand',
+    );
+    expect(
+      latest.plan.uploads.entries.singleWhere(
+        (entry) => entry.key.download.content.pageId == 'p2',
+      ).value.role,
+      PageRole.last,
+      reason: 'the already-presented output is retained independently',
+    );
   });
 
   test('pipeline does not resubmit an unchanged role window', () {

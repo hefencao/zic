@@ -1,3 +1,11 @@
+## 0.31.0-dev.180：OpenJDK 25 构建环境与 Previous/Last 角色解耦
+
+- 根据 `zic-debug-trace-2026-08-09T04-18-30.jsonl` 定位跳页后 previous 不预下载：current 104→105 时旧 current 的 download 从 priority 1000 直接降为 retained-background 0；`RoleResolver` 同时把旧 current写成独占 `last`并从 backward window跳过，于是 immediate previous 104 被吞掉，103错位成为 priority 780 的 previous。
+- 对照权威 VibeVenera窗口语义，将“保留上一张已上传 output”从相对 page role中拆出为 `retainedIndex`：相邻旧 current仍按 offset -1/-+1参与 previous/next download/decode，同时叠加 upload-only `last` retention；大跳页后旧 current若离开7/3窗口则只保留 output，不产生冗余 download/decode。
+- 按用户本地 Flutter 3.44 resolver证据把 workspace直接 `test` 约束改为 `^1.25.0`，避免 `^1.31.2`强迫不兼容的 `test_api 0.7.13`；不手工改 lock，仍由本地 `flutter pub get` 权威解析。
+- 恢复用户已验证构建链 AGP 9.3.1 + Gradle 9.5.0 + compileSdk 37；Gradle daemon criteria改为 OpenJDK 25。Android Java/Kotlin产物仍 target 17：构建JDK与class-file target分离，避免仅因开发机JDK25就抬高Android运行时要求。
+- ADR 0162 的工具链部分由 ADR 0163取代；rhttp 0.18.0、64KiB/256KiB framing与Built-in Kotlin迁移准备继续有效。版本提升到 `0.31.0+180`。
+
 ## 0.31.0-dev.179：稳定工具链升级与 rhttp 流量整形
 
 - 根据 `zic-debug-trace-2026-08-09T02-48-10.jsonl` 继续拆首播：25条 origin source read 的 `openMicros` 中位约6.20s、p90约8.11s；rhttp 已进入生产路径，但一张15.64MB媒体被直接上抛为10,713个约1.2–1.46KB小包，造成 Dart Stream/commit/artifact/native/status高频调度。

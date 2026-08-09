@@ -23,9 +23,15 @@ require(
     "PageRole.last",
     "PageRole.next2",
     "previousCurrentIndex",
-    "roles[index] == PageRole.last",
+    "final int? retainedIndex",
+    "return RoleWindow(roles, retainedIndex: retainedIndex)",
     "forwardSlot < forwardEncodedPages",
     "backwardSlot < backwardEncodedPages",
+)
+forbid(
+    "packages/pipeline/lib/src/role_window.dart",
+    "roles[index] == PageRole.last",
+    "_setRole(roles, previousCurrentIndex, PageRole.last)",
 )
 require(
     "packages/pipeline/lib/src/pipeline_controller.dart",
@@ -39,7 +45,8 @@ require(
     "PageRole.next => decodeWarmPages ? 5 : 0",
     "PageRole.next2 => decodeWarmPages ? 3 : 0",
     "PageRole.previous => decodeWarmPages ? 2 : 0",
-    "role == PageRole.last",
+    "final retainedIndex = window.retainedIndex",
+    "reason: 'heuristic:last-output-retained'",
     "PageRole.last => 0",
 )
 require(
@@ -92,6 +99,7 @@ require(
 )
 require(
     "packages/pipeline/test/pipeline_test.dart",
-    "previous current remains last and keeps upload without decode refill",
+    "previous current stays in previous window while its output is retained",
+    "far previous current retains output without redundant download",
 )
 print("dev.110 staged waterline/last-frame contract: OK")

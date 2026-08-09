@@ -1,7 +1,7 @@
 # zic Implementation Status
 
-**源码版本：** `0.31.0-dev.179`
-**App build：** `0.31.0+179`
+**源码版本：** `0.31.0-dev.180`
+**App build：** `0.31.0+180`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -9,13 +9,13 @@
 
 ## 当前实现
 
-- 构建/依赖基线提升为 Dart>=3.12、Flutter>=3.44、AGP9.1.1、Gradle9.3.1、compileSdk37、JDK17 daemon criteria；五个本地Android Flutter插件不再自行apply KGP，改用 `kotlin.compilerOptions`。稳定Flutter兼容层仍保持 `android.builtInKotlin=false/android.newDsl=false`，待Flutter3.47+稳定后再切换Built-in Kotlin。普通Dart/Maven直接依赖更新到当前兼容稳定版本；Mihon ABI/extension兼容SHA、Injekt、QuickJS、RxJava1及兼容编译器/stdlib继续固定。
+- 构建/依赖基线为 Dart>=3.12、Flutter>=3.44、AGP9.3.1、Gradle9.5.0、compileSdk37；Gradle daemon按用户本地环境要求使用OpenJDK25，但Android Java/Kotlin class-file target继续17。workspace直接 `test`约束为`^1.25.0`以兼容Flutter3.44固定的test_api解析。五个本地Android Flutter插件不再自行apply KGP，稳定Flutter兼容层仍保持 `android.builtInKotlin=false/android.newDsl=false`；Mihon ABI兼容依赖继续固定。
 - 外部漫画媒体生产host使用 `downloads_bridge/RhttpSourceResourceDirectTransport` + rhttp 0.18.0：source request-plan、NetLane、DownloadSession/artifact所有权不变；Rust/rhttp只执行已规范化单次请求并观察同一个`TaskControl`。网络packet通过前缀验证后首块聚合约64KiB、后续约256KiB再交给Pipeline，避免1–16KiB小包逐个触发Dart commit；pure `downloads`仍以Dart HttpClient作为非Flutter/test默认。后台首帧后预热rhttp runtime。
 - dev.175 把 current 抢占身份贯穿到真正阻塞的 source/runtime层：`CancelToken`作为只读 `TaskControl`携带 cancellation与动态 priority，Reader page从 DownloadJob、LoaderTransport、source request-plan到 Venera runtime不再丢失该身份。Venera仍单 invocation；permit transfer按实时 priority选择，active prefetch取消下沉到既有 `cancel(requestId)`，不以增加插件并发换延迟。
 - dev.175 同时收口下载卡顿的 native锁反转：`zic_cursor_decode_next()` 在 source读锁内只准备 demux/单帧压缩 fragment，WebP decode、缩放、合成和 canvas copy移到锁外；Dart主 isolate同步 append不再等待后台 worker完整解码。7/3、2/1、5/3/2及 network5+reserved1均不变。
 - 下载管理页采用 route-first projection：Navigator进入后先显示 Home现有 chapter download snapshot与 whole-comic queue snapshot；`wholeComicDownloads.ready`、`inspectMany()`和 cache usage检查在首帧之后刷新。逐 entry `Future.wait(inspect)`与 initState microtask扫描已删除。
 - dev.176 继续收口 transport/body与artifact热路径：prefetched host response在完整stream生命周期绑定 `TaskControl`，outer consumer取消必须abort底层 `HttpClientResponse`；partial artifact append不再逐chunk同步计算CRC32，seal/restore时在 isolate一次性rehash。checksum完整性、7/3、2/1、5/3/2及network5+reserved1均不变。
-- dev.177重新以权威VibeVenera源码校正下载生命周期：普通logical detach不取消receiving，active任务降为`retained-background=0`并可在短时回切时原位提权；queued undemanded才取消。恢复dev.174 bounded saturated preemption，并在ZIC额外的Venera单上下文gate加入pressure-only current抢占，只有current真实竞争时才cancel低rank active invocation。
+- dev.177保留VibeVenera receiving生命周期：普通logical detach不取消active transfer，短时回切原位提权；current pressure才抢占。dev.180进一步把“上一current output retention”从相对role拆出：相邻旧current仍按真实offset成为previous/next并继续download/decode，`retainedIndex`只叠加last-output upload；大跳后若旧页已离开7/3窗口则只保output，不制造冗余网络/解码。
 - External plugin browse wire contract 已与 dev.171 filter mode 对齐：typed factory、runtime validator、source adapter均显式认识 `useFilters`；schema v1旧请求允许缺省该新增字段并按 false解释，但未知字段/错误类型继续严格拒绝。发布 gate在无 Dart SDK环境也检查 protocol/adapter/Mihon driver四端一致。
 - 漫画源筛选拥有独立 filter-view request mode：非空 schema时“筛选”是可选中焦点；直接应用未修改面板也会以插件默认 `FilterList`执行 filtered browse。空 override不再等于普通 section；filter mode的 Catalog key/runtime payload单独编码，且不继承 Latest/Popular section。
 - 漫画源卡片书架状态由 Home canonical `ComicPreference`投影：已入书架封面左上显示书架图标并变暗，不建立 source-page shelf store；`sourceUpdateAt`作为独立右上感叹号提示。Home/书架下载完成勾改为显式命令反馈：单章完成空心勾、整本 queue complete绿色实心勾，进入详情消费；持久 chapter cache不再直接生成完成勾。
@@ -80,8 +80,8 @@
 
 ## 当前开放问题
 
-- 需在 dev.177 真机复测快速前后跨页：`demandDetached`后的receiving允许出现`retained-background=0`，但短时返回必须同task原位恢复且不得重复open；当新的current真实等待时，实际占用Venera单上下文的低rank invocation必须被pressure-preempt并尽快退出。继续记录current open等待、runtime requestId cancel和transport结束时间。
-- 需在 dev.177 真机同时验证下载管理入口首帧与下载压力：点击首页“下载管理”应立即进入 route，后台 bulk/cache refresh只更新随后帧；Reader下载仍观察 `nativeIngressMicros/artifactWriteMicros/UI frame`，不恢复热路径CRC、不缩预下载窗口。
+- 需在 dev.180 真机复测快速前后跨页：current N→N+1后N必须立即进入previous下载角色（首位priority780）与后1decode窗，同时可保留last output；反向切页同理。大跳页后远离7/3的旧current只能保output，不得继续生成download/decode。继续记录current pressure/preemption，但本轮不再改其策略。
+- 需继续验证下载管理入口首帧与下载压力：点击首页“下载管理”应立即进入 route，后台 bulk/cache refresh只更新随后帧；Reader下载仍观察 `nativeIngressMicros/artifactWriteMicros/UI frame`，不恢复热路径CRC、不缩预下载窗口。
 - 需用 dev.165 真机确认 Reader route返回后 Home history立即接收 final progress，不依赖详情页或整库 reload；连续 Reader route不得串用 final progress。
 - 需用 dev.167 真机复现 source browse → details → back：browse metadata/background refresh不得令未变化的 card cover重新走 loader；raw locator变化但 canonical identity不变时 card State必须保留。retained cover压力验证继续沿 dev.166规则执行。
 - 需验证 Home updates：未入书架漫画即使有阅读历史也不出现；已入书架但没有 source update signal也不出现；真实新章节/新版本检测后才出现。
@@ -103,7 +103,7 @@
 |---|---|
 | repository/documentation/Dart static gates | Verified-static |
 | current-code documentation consistency gate | Verified-static |
-| dev.135–dev.179 受影响 ownership gates | Verified-static |
+| dev.135–dev.180 受影响 ownership gates | Verified-static |
 | Android/Mihon/Venera/Reader/Pipeline/UI contracts | Verified-static / toolchain |
 | Kotlin texture bridge + dev.164 PluginRuntimeServiceClient stub compile | Verified-toolchain |
 | pinned libwebp host build/smoke | Unverified：当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip` |
