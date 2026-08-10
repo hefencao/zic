@@ -1,3 +1,10 @@
+## 0.31.0-dev.205：Reader partial durable handoff 与 decode cursor 重入
+
+- 12:24 真机trace确认两类长期 partial 生命周期缺口：新 Reader session 的 current 以 committedLength=0 从 origin 重下，而相邻已 promoted 页面可直接从 persistent artifact 命中；未 promoted partial此前只活在短期 Reader session/workspace，真正 dispose 后没有 durable owner。
+- 新增独立 `PartialArtifactCacheBackend/Handoff`，复用现有 `PersistentChapterDownloadService` 的 DownloadRegistry/Artifact/CacheIndex 保存精确 DownloadId 的未完成前缀、validators 与 totalLength；partial 不进入 promoted immutable cache，也不建立第二个 Reader/App cache owner。Reader retain 异步 checkpoint，最终 dispose 再 drain；下次 session 在网络前恢复。
+- 修复 Animated WebP 重入黑屏：holder 已空且要求 cursor restart 时，必须先释放旧 cursor/旧 later-frame `requiredSourceLength`，再做 partial prefix gate；现有 playable partial 可立即从 frame0 重建，而不是等待 full-body catch-up 超过旧 frame25 hint。
+- 明确网络边界：最终 media host replay 已由 rhttp 统一；Venera `Network.*` resolver bridge 目前仍是 plugin-host `HttpURLConnection` source-owned client，这是未完成的 client consolidation 债务，不是第二 scheduler。dev.205 不在 partial 修复中混做跨 runtime transport 迁移。
+
 ## 0.31.0-dev.204：部分恢复 Headroom Retention，并复用 Venera Resolver HTTP 连接
 
 - 11:48真机trace确认dev.203典型首帧已恢复，但request-plan cold miss仍是尾延迟主因；用户指出dev.203对dev.202 retention回滚过度。NetLane现取1/3 bounded + 2/3 headroom固定插值，相对dev.202只回滚约1/3；admission priority与1000 current安全margin不变。

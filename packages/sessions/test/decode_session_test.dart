@@ -614,6 +614,78 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test(
+    'detached exhausted partial cursor drops stale next-frame prefix gate',
+    () async {
+      final temp = await Directory.systemTemp.createTemp(
+        'decode_partial_reentry_prefix_test_',
+      );
+      final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024 * 1024);
+      ingress.append(
+        epoch: const SourceEpoch(0),
+        offset: 0,
+        bytes: List<int>.filled(300000, 1),
+      );
+      final download = DownloadSession(
+        id: _downloadId(),
+        artifact: Artifact(
+          partialPath: '${temp.path}/page.part',
+          finalPath: '${temp.path}/page.webp',
+        ),
+        clock: _Clock(),
+        ingress: ingress,
+      );
+      final cursors = _PartialPrefixCursorFactory(frameCount: 1);
+      final hints = WebpDecodePrefixHints();
+      final decode = DecodeSession(
+        id: _decodeId(download.id),
+        download: download,
+        cursors: cursors,
+        clock: _Clock(),
+        prefixHints: hints,
+      );
+      const continuationDemand = DecodeDemand(
+        role: PageRole.current,
+        priority: 1000,
+        targetWatermark: 2,
+        reason: 'consume-prefix-before-detach',
+        expirationRevision: 8,
+      );
+
+      final waiting = await decode.fill(
+        demand: continuationDemand,
+        revision: 1,
+        cancel: CancelToken(),
+      );
+      expect(waiting.state, DecodeState.waitingSource);
+      expect(waiting.depth, 1);
+      expect(waiting.requiredSourceLength, greaterThan(ingress.source!.length));
+      expect(decode.holder!.consume(0), isTrue);
+      decode.detach(retainDepth: 0);
+
+      final replayed = await decode.fill(
+        demand: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 1,
+          reason: 'reenter-from-existing-partial',
+          expirationRevision: 9,
+        ),
+        revision: 2,
+        cancel: CancelToken(),
+      );
+      expect(replayed.state, DecodeState.ready);
+      expect(replayed.depth, 1);
+      expect(replayed.requiredSourceLength, 0);
+      expect(decode.holder!.frames.single.index, 0);
+      expect(cursors.created, 2);
+
+      decode.dispose();
+      await download.dispose();
+      await temp.delete(recursive: true);
+    },
+  );
+
   test('retained frame detach preserves cursor continuation', () async {
     final temp = await Directory.systemTemp.createTemp('decode_retain_test_');
     final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);

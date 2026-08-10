@@ -638,7 +638,10 @@ final class MemoryChapterDownloadService
 }
 
 final class PersistentChapterDownloadService
-    implements ManagedChapterDownloadService, ConfigurableChapterResourceAccess {
+    implements
+        ManagedChapterDownloadService,
+        PartialArtifactCacheBackend,
+        ConfigurableChapterResourceAccess {
   PersistentChapterDownloadService._({
     required DownloadRegistry registry,
     required SqliteIndex index,
@@ -1101,6 +1104,88 @@ final class PersistentChapterDownloadService
     }
     final restored = await artifact.restore(verifyPromotedChecksum: false);
     return restored.state == ArtifactState.promoted ? artifact : null;
+  }
+
+  @override
+  Future<PartialArtifactCacheEntry?> openPartialArtifact(DownloadId id) async {
+    _requireOpen();
+    final session = _registry.get(id);
+    if (session.activeRun || session.hasWriter) return null;
+    await session.restore(verifyPromotedChecksum: false);
+    if (session.state == DownloadState.promoted ||
+        session.artifact.committedLength <= 0) {
+      return null;
+    }
+    final length = session.artifact.committedLength;
+    return PartialArtifactCacheEntry(
+      length: length,
+      validators: session.validators,
+      totalLength: session.totalLength,
+      open: ({required int start}) => session.artifact.readChunks(start: start),
+    );
+  }
+
+  @override
+  Future<void> storePartialArtifact({
+    required DownloadId id,
+    required PartialArtifactCacheEntry entry,
+  }) async {
+    _requireOpen();
+    if (entry.length <= 0) return;
+    final session = _registry.get(id);
+    if (session.activeRun || session.hasWriter) {
+      throw const Failure(
+        code: ErrorCode.sessionBusy,
+        message: 'partial artifact cache destination is busy',
+      );
+    }
+    await session.restore(verifyPromotedChecksum: false);
+    if (session.state == DownloadState.promoted ||
+        session.artifact.committedLength >= entry.length) {
+      return;
+    }
+    await session.bindResponse(
+      validators: entry.validators,
+      totalLength: entry.totalLength,
+    );
+    final writer = session.acquireWriter();
+    var offset = session.artifact.committedLength;
+    try {
+      await for (final chunk in entry.open(start: offset)) {
+        if (chunk.isEmpty) continue;
+        await session.append(writer, offset, chunk);
+        offset += chunk.length;
+      }
+      if (offset != entry.length) {
+        throw StateError(
+          'partial artifact length changed while storing ${id.key}: '
+          '$offset/${entry.length}',
+        );
+      }
+    } on Object catch (error) {
+      await session.fail(writer, error);
+      rethrow;
+    }
+    await session.pause(writer);
+  }
+
+  @override
+  Future<void> invalidatePartialArtifact(DownloadId id) async {
+    _requireOpen();
+    final session = _registry.find(id);
+    if (session != null && (session.activeRun || session.hasWriter)) {
+      throw const Failure(
+        code: ErrorCode.sessionBusy,
+        message: 'partial artifact cache destination is busy',
+      );
+    }
+    if (session != null && session.state != DownloadState.promoted) {
+      await session.artifact.reset();
+    }
+    final record = await _index.get(id.key);
+    if (record?.state == CacheState.partial) {
+      await _index.remove(id.key);
+    }
   }
 
   @override

@@ -33,6 +33,7 @@ typedef UploadWork = Future<void> Function(
   CancelToken token,
 );
 typedef Sleep = Future<void> Function(Duration delay);
+typedef DownloadPrepare = Future<void> Function(DownloadSession session);
 
 Future<void> _defaultSleep(Duration delay) => Future<void>.delayed(delay);
 
@@ -50,6 +51,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     this.uploads,
     this.budgets,
     this.refillPolicy = const StagedDecodeRefillPolicy(),
+    this.prepareDownload,
     NetLane? net,
     DecodeLane? decode,
     UploadLane? upload,
@@ -90,6 +92,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final UploadRegistry? uploads;
   final FrameBudgeter? budgets;
   final StagedDecodeRefillPolicy refillPolicy;
+  final DownloadPrepare? prepareDownload;
   final NetLane net;
   final DecodeLane decode;
   final UploadLane upload;
@@ -472,6 +475,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     final taskKey = '$sessionId:${id.key}';
     final bucket = downloadBucketFor(id);
     final bucketLimit = downloadBucketLimitFor(id);
+    final prepare = prepareDownload;
+    if (prepare != null && session.committedLength == 0) {
+      await prepare(session);
+      token.throwIfCancelled();
+    }
     final initialDemand = _downloads[id];
     if (initialDemand != null) {
       traceSink.record(

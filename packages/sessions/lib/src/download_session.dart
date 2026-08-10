@@ -531,6 +531,27 @@ final class DownloadSession {
     return snapshot;
   }
 
+  /// Pauses an authoritative partial writer without converting the partial
+  /// into a failure or a promoted artifact.
+  ///
+  /// Durable Reader-session handoff uses this after importing an existing
+  /// partial into the long-lived artifact owner. Network scheduling remains
+  /// outside this primitive.
+  Future<DownloadSnapshot> pause(WriterLease lease) async {
+    _requireWriter(lease);
+    try {
+      await artifact.pause();
+    } finally {
+      _writer = null;
+      _state = DownloadState.idle;
+      _failure = null;
+    }
+    _flushCommittedTrace();
+    await _syncCache(CacheState.partial);
+    _notifySnapshot();
+    return snapshot;
+  }
+
   Future<void> fail(WriterLease lease, Object error) async {
     _requireWriter(lease);
     try {

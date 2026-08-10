@@ -251,6 +251,15 @@ final class DecodeSession {
         break;
     }
 
+    // A detached/retired holder may leave a cursor parked at a later frame
+    // with a prefix requirement that only applies to that old continuation.
+    // Re-entry with no retained frame must restart from frame zero before that
+    // stale requirement is allowed to gate the authoritative playable prefix.
+    if (_restartCursorWhenHolderEmpty && (_holder?.depth ?? 0) == 0) {
+      _releaseBinding();
+      _restartCursorWhenHolderEmpty = false;
+    }
+
     if (!source.sealed) {
       final hinted = prefixHints.minimumBytes(id.download, _nextFrameHintIndex);
       if (hinted > _requiredSourceLength) {
@@ -268,12 +277,6 @@ final class DecodeSession {
       // recoverable. The next demand owns the retry; stale failure state must
       // not survive a successful frame from the same source epoch.
       _failure = null;
-      if (_restartCursorWhenHolderEmpty) {
-        if ((_holder?.depth ?? 0) == 0) {
-          _releaseBinding();
-          _restartCursorWhenHolderEmpty = false;
-        }
-      }
       _cursorCreateMicros = _bind(source, epoch);
       var holder = _holder!;
       final targetDepth = demand.targetWatermark > preparedDepth

@@ -379,6 +379,15 @@ final class PipelineReaderSession {
         traceSink: trace,
         sessionId: sessionId,
       );
+      if (artifactCacheManager.supportsPartialArtifacts) {
+        _partialArtifactCacheHandoff = PartialArtifactCacheHandoff(
+          cache: artifactCacheManager,
+          onError: (error, stackTrace) {},
+          clock: clock,
+          traceSink: trace,
+          sessionId: sessionId,
+        );
+      }
     }
     _downloads = DownloadRegistry(
       layout: _workspace.layout,
@@ -420,6 +429,7 @@ final class PipelineReaderSession {
       decodes: _decodes,
       uploads: _uploads,
       budgets: _frameBudgets,
+      prepareDownload: _partialArtifactCacheHandoff?.restoreInto,
       net: pageDownloadLane,
       downloadBucketFor: _profile.downloadBucket,
       downloadBucketLimitFor: _downloadBucketLimit,
@@ -475,6 +485,8 @@ final class PipelineReaderSession {
   late final UploadRegistry _uploads;
   late final FrameBudgeter _frameBudgets;
   PromotedArtifactCacheHandoff? _artifactCacheHandoff;
+  PartialArtifactCacheHandoff? _partialArtifactCacheHandoff;
+  Future<void> _partialArtifactCheckpoint = Future<void>.value();
   late final LiveCoordinator _coordinator;
   ReaderBinding? _binding;
   String? _readerSessionId;
@@ -635,6 +647,7 @@ final class PipelineReaderSession {
     }
     _pageOutputs.clear();
     _pageStreams.clear();
+    _queuePartialArtifactCheckpoint();
     trace.record(
       traceEvent(
         clock: clock,
@@ -647,6 +660,22 @@ final class PipelineReaderSession {
         },
       ),
     );
+  }
+
+  void _queuePartialArtifactCheckpoint() {
+    final handoff = _partialArtifactCacheHandoff;
+    if (handoff == null) return;
+    final prior = _partialArtifactCheckpoint;
+    _partialArtifactCheckpoint = () async {
+      try {
+        await prior;
+      } on Object {
+        // Handoff reports its own errors and must not poison later checkpoints.
+      }
+      if (_disposed) return;
+      await handoff.checkpoint(_downloads.sessions);
+    }();
+    unawaited(_partialArtifactCheckpoint);
   }
 
   void resumeRetainedReaderSession({required int retainedMicros}) {
@@ -1287,7 +1316,13 @@ final class PipelineReaderSession {
     final coordinatorDisposeMicros =
         clock.nowMicros() - coordinatorDisposeStartedAtMicros;
     final handoffDrainStartedAtMicros = clock.nowMicros();
+    try {
+      await _partialArtifactCheckpoint;
+    } on Object {
+      // Partial handoff errors are best-effort and already reported.
+    }
     await _artifactCacheHandoff?.drain(_downloads.sessions);
+    await _partialArtifactCacheHandoff?.drain(_downloads.sessions);
     final handoffDrainMicros = clock.nowMicros() - handoffDrainStartedAtMicros;
     _uploads.dispose();
     _decodes.dispose();

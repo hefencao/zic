@@ -116,6 +116,50 @@ void main() {
     expect(reopened.materializedSessionCount, 0);
   });
 
+  test('persistent partial artifact survives Reader service reopen without promotion',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-reader-partial-cache-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final id = _readerArtifactId('persistent-partial-page');
+    final bytes = Uint8List.fromList(
+      List<int>.generate(384, (index) => index & 0xff),
+    );
+
+    final first = await PersistentChapterDownloadService.open(directory.path);
+    await first.storePartialArtifact(
+      id: id,
+      entry: PartialArtifactCacheEntry(
+        length: bytes.lengthInBytes,
+        validators: const Validators(etag: '"partial-v1"'),
+        totalLength: 2048,
+        open: ({required int start}) async* {
+          yield Uint8List.sublistView(bytes, start);
+        },
+      ),
+    );
+    expect(await first.openArtifactStream(id), isNull);
+    final beforeClose = await first.openPartialArtifact(id);
+    expect(beforeClose, isNotNull);
+    expect(beforeClose!.length, bytes.lengthInBytes);
+    await first.close();
+
+    final reopened =
+        await PersistentChapterDownloadService.open(directory.path);
+    addTearDown(reopened.close);
+    expect(await reopened.openArtifactStream(id), isNull);
+    final partial = await reopened.openPartialArtifact(id);
+    expect(partial, isNotNull);
+    expect(partial!.length, bytes.lengthInBytes);
+    expect(partial.validators.etag, '"partial-v1"');
+    expect(partial.totalLength, 2048);
+    expect(
+      await partial.open(start: 0).expand((chunk) => chunk).toList(),
+      bytes,
+    );
+  });
+
   test('persistent artifact store survives Reader service reopen', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-reader-artifact-cache-',

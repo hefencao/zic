@@ -173,6 +173,34 @@ final class ArtifactCacheManager {
         loader: loader,
       );
 
+  bool get supportsPartialArtifacts => backend is PartialArtifactCacheBackend;
+
+  Future<PartialArtifactCacheEntry?> lookupPartial(DownloadId id) async {
+    final partialBackend = backend;
+    if (partialBackend is! PartialArtifactCacheBackend) return null;
+    final entry = await partialBackend.openPartialArtifact(resolveAlias(id));
+    if (entry == null || entry.length <= 0) return null;
+    return entry;
+  }
+
+  Future<void> storePartialArtifact({
+    required DownloadId id,
+    required PartialArtifactCacheEntry entry,
+  }) async {
+    final partialBackend = backend;
+    if (partialBackend is! PartialArtifactCacheBackend || entry.length <= 0) {
+      return;
+    }
+    _aliases.remove(id);
+    await partialBackend.storePartialArtifact(id: id, entry: entry);
+  }
+
+  Future<void> invalidatePartialArtifact(DownloadId id) async {
+    final partialBackend = backend;
+    if (partialBackend is! PartialArtifactCacheBackend) return;
+    await partialBackend.invalidatePartialArtifact(resolveAlias(id));
+  }
+
   Future<void> storePromotedArtifact({
     required DownloadId id,
     required Uint8List bytes,
