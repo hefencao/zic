@@ -1,3 +1,10 @@
+## 0.31.0-dev.195：从 dev.192 重做 partial authority，网络重启不得让可播放数据倒退
+
+- 明确废弃 dev.193/dev.194 的续传实验线；dev.195 直接从权威 dev.192 ZIP 重做，不 cherry-pick 后两轮 overlap/catch-up 或 DecodeSession 修改。
+- 修复 dev.192 的基础生命周期错误：无 validator、Range 被拒绝或 resume fallback 不再 `session.reset()` 已有 partial。网络可从 byte 0 重新读取完整响应，但旧 artifact/Ingress 保持可播放；收到的 `[0, oldCommittedLength)` 完整 CRC32 与现有权威 partial 一致后，才从旧 boundary 继续 append。catch-up mismatch/取消/提前EOF只失败当前 attempt，不删除旧 partial。
+- `DownloadSession.restore()` 若当前 Ingress 的 epoch/length/kind/sealed 已与 artifact 一致则不重建 native encoded source；网络 task 重启不再顺带重启播放器 source。损坏/缺失 resume metadata 只清除 validator/total-length 知识，除明确 DownloadId owner mismatch 外不删除 committed media。
+- 不修改 DecodeSession、Reader/Pipeline、NetLane、network=5、1000/780、7/3/2/1/7/5/3/2，也不新增 bandwidth scheduler 或 rhttp transport framing。新增 ADR 0176、dev.195 root-cause audit/gate。
+
 ## 0.31.0-dev.192：rhttp 持续传输分段观测，不提前增加带宽调度
 
 - `zic-debug-trace-2026-08-09T15-08-46.jsonl`确认dev.191 resolver cache明显生效：16个已结束origin read中cache hit中位3、origin resolver call中位1，hook中位约0.393s、host-open中位约0.433s；剩余长尾移到最终图片body，stream中位约3.004s、p90约9.428s，且存在近似单流仍约0.42MiB/s的慢样本。

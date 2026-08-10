@@ -71,11 +71,17 @@ for relative in ('packages/sessions/lib', 'packages/pipeline_runtime/lib', 'apps
                 f'dev.192 rhttp diagnostics leaked into policy layer: {path.relative_to(ROOT)}'
             )
 
-if 'version: 0.31.0+192' not in (ROOT / 'apps/app/pubspec.yaml').read_text(encoding='utf-8'):
-    raise SystemExit('dev.192 app version missing')
-if 'versionCode=192' not in (ROOT / 'apps/app/android/zic-version.properties').read_text(encoding='utf-8'):
-    raise SystemExit('dev.192 Android version missing')
-if '0.31.0-dev.192' not in CHANGELOG or '0.31.0-dev.192' not in STATUS:
+import re
+
+pubspec = (ROOT / 'apps/app/pubspec.yaml').read_text(encoding='utf-8')
+properties = (ROOT / 'apps/app/android/zic-version.properties').read_text(encoding='utf-8')
+pubspec_match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.MULTILINE)
+properties_match = re.search(r'^versionCode=(\d+)$', properties, re.MULTILINE)
+if pubspec_match is None or int(pubspec_match.group(1)) < 192:
+    raise SystemExit('dev.192-or-newer app version missing')
+if properties_match is None or int(properties_match.group(1)) < 192:
+    raise SystemExit('dev.192-or-newer Android version missing')
+if '0.31.0-dev.192' not in CHANGELOG or 'dev.192' not in STATUS:
     raise SystemExit('dev.192 stable documentation missing')
 if not ADR.exists() or not AUDIT.exists():
     raise SystemExit('dev.192 ADR/audit missing')

@@ -82,7 +82,7 @@ void main() {
     expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
   });
 
-  test('validator mismatch discards the partial and restarts from zero', () async {
+  test('validator mismatch catches up full body without shrinking partial', () async {
     final bytes = List<int>.generate(20, (index) => index);
     final session = createSession();
     final broken = FakeTransport(
@@ -94,6 +94,7 @@ void main() {
       DownloadJob(transport: broken, session: session).run(),
       throwsA(isA<Failure>()),
     );
+    final preserved = session.committedLength;
 
     final changed = FakeTransport(
       bytes: bytes,
@@ -103,10 +104,114 @@ void main() {
 
     expect(result.state, DownloadState.promoted);
     expect(changed.requests, hasLength(2));
-    expect(changed.requests.first.range?.start, 6);
+    expect(changed.requests.first.range?.start, preserved);
     expect(changed.requests.last.range, isNull);
     expect(changed.discardCount, 1);
-    expect(result.epoch, const SourceEpoch(1));
+    expect(result.epoch, const SourceEpoch(0));
+    expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
+  });
+
+  test('validatorless restart keeps playable ingress while full body catches up', () async {
+    final factory = _CountingSourceFactory();
+    final bytes = <int>[
+      ...'RIFF'.codeUnits,
+      0, 0, 0, 0,
+      ...'WEBP'.codeUnits,
+      ...List<int>.generate(256 * 1024, (index) => index & 0xff),
+    ];
+    final session = DownloadSession(
+      id: DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'validatorless',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('https://example.test/validatorless.webp'),
+      ),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/validatorless.webp',
+        finalPath: '${temp.path}/cache/validatorless.webp',
+      ),
+      clock: FakeMonoClock(),
+      ingress: Ingress(factory: factory, maxBytes: 2 * 1024 * 1024),
+    );
+    final broken = FakeTransport(
+      bytes: bytes,
+      chunkSize: 4096,
+      failAfterBytes: 96 * 1024,
+      validators: const Validators(),
+    );
+    await expectLater(
+      DownloadJob(transport: broken, session: session).run(),
+      throwsA(isA<Failure>()),
+    );
+    final preservedLength = session.committedLength;
+    final preservedRevision = session.ingress!.snapshot.revision;
+    final sourceCreates = factory.createCount;
+    expect(preservedLength, greaterThan(0));
+
+    final resumed = FakeTransport(
+      bytes: bytes,
+      chunkSize: 4096,
+      validators: const Validators(),
+    );
+    final result = await DownloadJob(transport: resumed, session: session).run();
+
+    expect(resumed.requests, hasLength(1));
+    expect(resumed.requests.single.range, isNull);
+    expect(result.epoch, const SourceEpoch(0));
+    expect(result.state, DownloadState.promoted);
+    expect(factory.createCount, sourceCreates);
+    expect(session.ingress!.snapshot.revision, greaterThan(preservedRevision));
+    expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
+  });
+
+  test('full body mismatch preserves the existing playable partial', () async {
+    final bytes = <int>[
+      ...'RIFF'.codeUnits,
+      0, 0, 0, 0,
+      ...'WEBP'.codeUnits,
+      ...List<int>.generate(128 * 1024, (index) => index & 0xff),
+    ];
+    final session = createSession();
+    final broken = FakeTransport(
+      bytes: bytes,
+      chunkSize: 4096,
+      failAfterBytes: 64 * 1024,
+      validators: const Validators(),
+    );
+    await expectLater(
+      DownloadJob(transport: broken, session: session).run(),
+      throwsA(isA<Failure>()),
+    );
+    final preservedLength = session.committedLength;
+    final preservedBytes = await File(session.artifact.partialPath).readAsBytes();
+    final changed = List<int>.of(bytes);
+    changed[32] ^= 0xff;
+
+    await expectLater(
+      DownloadJob(
+        transport: FakeTransport(
+          bytes: changed,
+          chunkSize: 4096,
+          validators: const Validators(),
+        ),
+        session: session,
+      ).run(),
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          ErrorCode.resumeRejected,
+        ),
+      ),
+    );
+
+    expect(session.committedLength, preservedLength);
+    expect(session.epoch, const SourceEpoch(0));
+    expect(await File(session.artifact.partialPath).readAsBytes(), preservedBytes);
   });
   test('explicit cancellation closes a stalled response stream', () async {
     final session = createSession();
@@ -286,10 +391,12 @@ final class _EmptyTransport implements Transport {
 
 
 final class _CountingSourceFactory implements SourceFactory {
-  late final _CountingSource source;
+  late _CountingSource source;
+  int createCount = 0;
 
   @override
   EncodedSource create({required int epoch, required int maxBytes}) {
+    createCount++;
     source = _CountingSource(epoch: epoch, maxBytes: maxBytes);
     return source;
   }

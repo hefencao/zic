@@ -239,7 +239,7 @@ final class DownloadSession {
     _networkStartLength = restored.committedLength;
 
     if (restored.state == ArtifactState.promoted) {
-      await _rebuildIngress(sealed: true);
+      await _restoreIngressIfNeeded(sealed: true);
       _state = DownloadState.promoted;
       await _syncCache(CacheState.ready);
       _notifySnapshot();
@@ -248,18 +248,23 @@ final class DownloadSession {
 
     if (restored.committedLength > 0) {
       var validMeta = false;
+      var wrongOwner = false;
       try {
         final meta = await artifact.readMeta();
-        if (meta != null && _metaMatches(meta)) {
-          final rawValidators = meta['validators'];
-          final rawLength = meta['totalLength'];
-          if (rawValidators is Map &&
-              (rawLength == null || rawLength is int)) {
-            _validators = Validators.fromJson(
-              Map<String, Object?>.from(rawValidators),
-            );
-            _totalLength = rawLength as int?;
-            validMeta = true;
+        if (meta != null) {
+          if (_metaMatches(meta)) {
+            final rawValidators = meta['validators'];
+            final rawLength = meta['totalLength'];
+            if (rawValidators is Map &&
+                (rawLength == null || rawLength is int)) {
+              _validators = Validators.fromJson(
+                Map<String, Object?>.from(rawValidators),
+              );
+              _totalLength = rawLength as int?;
+              validMeta = true;
+            }
+          } else {
+            wrongOwner = _metaExplicitlyClaimsDifferentOwner(meta);
           }
         }
       } on Failure catch (error) {
@@ -267,18 +272,21 @@ final class DownloadSession {
           rethrow;
         }
       } on FormatException {
-        // Invalid validators make the partial unsafe to resume.
+        // Broken resume metadata does not prove that committed media bytes are
+        // corrupt. Preserve the playable prefix and rebuild network knowledge.
       }
       if (!validMeta) {
-        await _restartArtifact();
-        _prefix = <int>[];
-        _contentKind = ContentKind.unknown;
         _validators = const Validators();
         _totalLength = null;
+        if (wrongOwner) {
+          await _restartArtifact();
+          _prefix = <int>[];
+          _contentKind = ContentKind.unknown;
+        }
       }
     }
 
-    await _rebuildIngress(sealed: false);
+    await _restoreIngressIfNeeded(sealed: false);
     _state = DownloadState.idle;
     _failure = null;
     await _syncCache(CacheState.partial);
@@ -550,12 +558,21 @@ final class DownloadSession {
     _notifySnapshot();
   }
 
-  void recordResume({required bool restarted}) {
+  void recordResume({
+    required bool restarted,
+    String? strategy,
+    bool playablePrefixPreserved = false,
+  }) {
     _emit(
       restarted
           ? TraceEventKind.resumeRestarted
           : TraceEventKind.resumeAccepted,
-      <String, Object?>{'committedLength': committedLength},
+      <String, Object?>{
+        'committedLength': committedLength,
+        if (strategy != null) 'strategy': strategy,
+        if (playablePrefixPreserved)
+          'playablePrefixPreserved': true,
+      },
     );
   }
 
@@ -696,6 +713,25 @@ final class DownloadSession {
     _pendingMaxArtifactWriteMicros = 0;
   }
 
+  Future<void> _restoreIngressIfNeeded({required bool sealed}) async {
+    final target = ingress;
+    if (target == null) {
+      return;
+    }
+    final current = target.snapshot;
+    final expectedLength = artifact.committedLength;
+    final alreadyAuthoritative =
+        current.epoch == _epoch &&
+        current.length == expectedLength &&
+        current.kind == _contentKind &&
+        current.sealed == sealed &&
+        current.failure == null;
+    if (alreadyAuthoritative) {
+      return;
+    }
+    await _rebuildIngress(sealed: sealed);
+  }
+
   Future<void> _rebuildIngress({required bool sealed}) async {
     final target = ingress;
     if (target == null) {
@@ -777,6 +813,24 @@ final class DownloadSession {
     try {
       return DownloadId.fromJson(Map<String, Object?>.from(raw)) == id;
     } on Object {
+      return false;
+    }
+  }
+
+  bool _metaExplicitlyClaimsDifferentOwner(Map<String, Object?> meta) {
+    final key = meta['downloadKey'];
+    if (key is String) {
+      return key != id.key;
+    }
+    final raw = meta['download'];
+    if (raw is! Map) {
+      return false;
+    }
+    try {
+      return DownloadId.fromJson(Map<String, Object?>.from(raw)) != id;
+    } on Object {
+      // Malformed network metadata is not proof that the media bytes belong to
+      // another DownloadId. Preserve the authoritative partial.
       return false;
     }
   }

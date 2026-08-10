@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
+import 'package:storage/storage.dart';
 import 'package:transport/transport.dart';
 
 import 'download_session.dart';
@@ -58,51 +59,64 @@ final class DownloadJob {
     session.attach();
     session.queue();
 
-    var start = session.committedLength;
-    if (start > 0 && !session.validators.canResume) {
-      session.recordResume(restarted: true);
-      await session.reset();
-      session.queue();
-      start = 0;
-    }
+    final preservedLength = session.committedLength;
+    var start = preservedLength;
+    var fullBodyCatchup = false;
+    ByteResponse response;
     cancel?.throwIfCancelled();
-    var response = await _open(start, cancel);
-    await _discardIfCancelled(cancel, response);
-    if (start > 0 &&
-        response.disposition == ByteResponseDisposition.durableImmutable) {
-      await response.discard();
-      session.recordResume(restarted: true);
-      await session.reset();
-      session.queue();
-      start = 0;
-      cancel?.throwIfCancelled();
+    if (start > 0 && !session.validators.canResume) {
       response = await _open(0, cancel);
+      fullBodyCatchup = true;
+      session.recordResume(
+        restarted: true,
+        strategy: 'full-body-prefix-catchup',
+        playablePrefixPreserved: true,
+      );
+    } else {
+      response = await _open(start, cancel);
       await _discardIfCancelled(cancel, response);
-    }
-    if (start > 0) {
-      try {
-        requireResumeResponse(
-          expectedStart: start,
-          expectedValidators: session.validators,
-          response: response,
-        );
-        session.recordResume(restarted: false);
-      } on Failure catch (error) {
-        if (error.code != ErrorCode.resumeRejected) {
-          rethrow;
-        }
+      if (start > 0 &&
+          response.disposition == ByteResponseDisposition.durableImmutable) {
         await response.discard();
-        session.recordResume(restarted: true);
-        await session.reset();
-        session.queue();
-        start = 0;
         cancel?.throwIfCancelled();
         response = await _open(0, cancel);
-        await _discardIfCancelled(cancel, response);
+        fullBodyCatchup = true;
+        session.recordResume(
+          restarted: true,
+          strategy: 'full-body-prefix-catchup',
+          playablePrefixPreserved: true,
+        );
+      } else if (start > 0) {
+        try {
+          requireResumeResponse(
+            expectedStart: start,
+            expectedValidators: session.validators,
+            response: response,
+          );
+          session.recordResume(
+            restarted: false,
+            strategy: 'strong-validator-range',
+            playablePrefixPreserved: true,
+          );
+        } on Failure catch (error) {
+          if (error.code != ErrorCode.resumeRejected) {
+            rethrow;
+          }
+          await response.discard();
+          cancel?.throwIfCancelled();
+          response = await _open(0, cancel);
+          fullBodyCatchup = true;
+          session.recordResume(
+            restarted: true,
+            strategy: 'full-body-prefix-catchup',
+            playablePrefixPreserved: true,
+          );
+        }
       }
     }
+    await _discardIfCancelled(cancel, response);
 
-    if (start == 0 && response.rangeStart != 0) {
+    if ((start == 0 || fullBodyCatchup) && response.rangeStart != 0) {
       await response.discard();
       throw const Failure(
         code: ErrorCode.resumeRejected,
@@ -145,14 +159,41 @@ final class DownloadJob {
       }
     }
 
+    final writer = session.acquireWriter();
+    var offset = session.committedLength;
+    final iterator = StreamIterator<List<int>>(response.bytes);
+    List<int> catchupRemainder = const <int>[];
+    if (fullBodyCatchup) {
+      try {
+        catchupRemainder = await _verifyFullBodyPrefix(
+          iterator: iterator,
+          preservedLength: preservedLength,
+          expectedChecksum: session.artifact.checksum,
+          expectedTotalLength: response.totalLength,
+          cancel: cancel,
+        );
+      } catch (error) {
+        await iterator.cancel();
+        if (session.hasWriter) {
+          await session.fail(writer, error);
+        }
+        rethrow;
+      }
+      session.recordResume(
+        restarted: false,
+        strategy: 'full-body-prefix-catchup',
+        playablePrefixPreserved: true,
+      );
+    }
+
     await session.bindResponse(
       validators: response.validators,
       totalLength: response.totalLength,
     );
-    final writer = session.acquireWriter();
-    var offset = session.committedLength;
-    final iterator = StreamIterator<List<int>>(response.bytes);
     final pending = BytesBuilder(copy: false);
+    if (catchupRemainder.isNotEmpty) {
+      pending.add(catchupRemainder);
+    }
     var flushTarget = 16 * 1024;
     Future<void> flushPending() async {
       if (pending.length == 0) return;
@@ -198,6 +239,64 @@ final class DownloadJob {
       }
       rethrow;
     }
+  }
+
+
+  Future<List<int>> _verifyFullBodyPrefix({
+    required StreamIterator<List<int>> iterator,
+    required int preservedLength,
+    required String expectedChecksum,
+    required int? expectedTotalLength,
+    CancelToken? cancel,
+  }) async {
+    if (preservedLength <= 0) {
+      return const <int>[];
+    }
+    if (expectedChecksum.isEmpty) {
+      throw const Failure(
+        code: ErrorCode.resumeRejected,
+        message: 'partial checksum unavailable; preserved the existing partial',
+      );
+    }
+    if (expectedTotalLength != null && expectedTotalLength < preservedLength) {
+      throw const Failure(
+        code: ErrorCode.resumeRejected,
+        message: 'full response is shorter than the existing partial',
+      );
+    }
+
+    final checksum = Crc32();
+    var remaining = preservedLength;
+    while (remaining > 0) {
+      final available = await _moveNext(iterator, cancel);
+      if (!available) {
+        throw const Failure(
+          code: ErrorCode.resumeRejected,
+          message: 'full response ended before the existing partial boundary',
+        );
+      }
+      final chunk = iterator.current;
+      if (chunk.isEmpty) {
+        continue;
+      }
+      final take = chunk.length < remaining ? chunk.length : remaining;
+      checksum.add(take == chunk.length ? chunk : chunk.sublist(0, take));
+      remaining -= take;
+      if (remaining == 0) {
+        if (checksum.hex != expectedChecksum) {
+          throw const Failure(
+            code: ErrorCode.resumeRejected,
+            message:
+                'full response prefix differs from the existing playable partial',
+          );
+        }
+        return take == chunk.length
+            ? const <int>[]
+            : chunk.sublist(take);
+      }
+      await Future<void>.delayed(Duration.zero);
+    }
+    return const <int>[];
   }
 
 

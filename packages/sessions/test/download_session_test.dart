@@ -260,7 +260,7 @@ void main() {
     expect(states.last, DownloadState.disposed);
   });
 
-  test('corrupt resume metadata discards the partial safely', () async {
+  test('corrupt resume metadata preserves committed media bytes', () async {
     await session.dispose();
     final partial = File('${temp.path}/partial/page.webp');
     await partial.parent.create(recursive: true);
@@ -277,8 +277,59 @@ void main() {
     );
     final restored = await session.restore();
 
-    expect(restored.committedLength, 0);
+    expect(restored.committedLength, 3);
+    expect(restored.validators.isEmpty, isTrue);
+    expect(restored.totalLength, isNull);
     expect(restored.state, DownloadState.idle);
+  });
+
+
+  test('malformed owner metadata does not discard committed media bytes', () async {
+    await session.dispose();
+    final partial = File('${temp.path}/partial/page.webp');
+    await partial.parent.create(recursive: true);
+    await partial.writeAsBytes(<int>[1, 2, 3, 4]);
+    await File('${partial.path}.meta').writeAsString(
+      '{"download":"not-a-download-id","validators":{}}',
+    );
+
+    session = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: partial.path,
+        finalPath: '${temp.path}/cache/page.webp',
+      ),
+      clock: FakeMonoClock(),
+    );
+    final restored = await session.restore();
+
+    expect(restored.committedLength, 4);
+    expect(restored.validators.isEmpty, isTrue);
+    expect(restored.totalLength, isNull);
+  });
+
+  test('explicit different download owner invalidates the partial', () async {
+    await session.dispose();
+    final partial = File('${temp.path}/partial/page.webp');
+    await partial.parent.create(recursive: true);
+    await partial.writeAsBytes(<int>[1, 2, 3, 4]);
+    await File('${partial.path}.meta').writeAsString(
+      '{"downloadKey":"different-owner","validators":{}}',
+    );
+
+    session = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: partial.path,
+        finalPath: '${temp.path}/cache/page.webp',
+      ),
+      clock: FakeMonoClock(),
+    );
+    final restored = await session.restore();
+
+    expect(restored.committedLength, 0);
+    expect(restored.validators.isEmpty, isTrue);
+    expect(restored.totalLength, isNull);
   });
 }
 

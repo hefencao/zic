@@ -1,5 +1,8 @@
 # zic Implementation Plan
 
+## P0：Partial authority 单调性真机闭环
+- dev.195 必须直接以 dev.192 为代码基线；dev.193/dev.194 是已否决实验线，不得 cherry-pick overlap/catch-up/DecodeSession 修改。真机制造已有 partial 后重启网络：`committedLength`、Ingress/source length 与 epoch 在 full-body catch-up 期间不得下降或重建；`resumeRestarted strategy=full-body-prefix-catchup playablePrefixPreserved=true` 后，只有完整旧前缀校验通过才可 `resumeAccepted` 并从旧 boundary 继续增长。
+- catch-up 在旧 boundary 前取消、EOF 或 checksum mismatch 只能失败当前 network attempt，旧 partial/Ingress必须保持；metadata损坏只丢 validator/total-length 知识，明确 owner mismatch 才清理。若 sourceLength稳定仍停播，再单独审计dev.192既有partial-loop；本轮不改DecodeSession、network=5、1000/780、7/3、2/1、7/5/3/2，不增加bandwidth scheduler/framing。
 ## P0：Current / Previous 真实执行槽真机闭环
 
 - dev.192 真机首要比较`sourceRhttpProgressMaxGapMicros/sourceRhttpProgressLeadBytesMax`与`sourceRhttpBodyMaxGapMicros/maxChunkGapMicros`：若receive-progress与raw body同时长gap，优先归因源/CDN/HTTP链路；若progress持续前进但body长期滞后且lead显著扩大，再调查rhttp FFI/Dart Stream delivery/backpressure。不得用该diagnostics直接驱动scheduler。

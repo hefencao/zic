@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.192` / App `0.31.0+192`。
+- 当前版本：`0.31.0-dev.195` / App `0.31.0+195`。
+- dev.195：明确放弃 dev.193/dev.194 续传实验线并直接从 dev.192 重做。01:56 trace 证明后两轮把网络 resume rejection 与 playback authority 纠缠，形成多条 `full-body-overlap-catchup`/terminal resume 状态；本轮只修 dev.192 的两个基础生命周期错误：普通 resume fallback 不再 `session.reset()` 已有 partial，改为从0读取完整响应并以现有 artifact 权威 CRC32 校验整个旧前缀，验证前不写 artifact/Ingress、验证后只从旧 boundary 单调 append；`DownloadSession.restore()` 在 Ingress 已与 artifact 一致时不再重建 encoded source。resume metadata 缺失/损坏不再等价于 media corruption。DecodeSession、NetLane、Reader/Pipeline policy 与带宽策略完全保持 dev.192。
 - dev.192：15:08 dev.191真机trace确认resolver cache已明显命中，16个已结束origin read中bridge cache hit中位3、origin call中位1，hook中位约0.393s、host-open中位约0.433s；剩余body stream中位约3.004s、p90约9.428s，且存在近似单流仍约0.42MiB/s的慢样本。当前没有字节级bandwidth scheduler，故本轮不调并发/水位，而在rhttp direct bridge增加receive-progress vs raw-body纯观测，记录HTTP version、匿名endpoint hash、progress/body gap与领先字节；不恢复transport framing，不让`sourceRhttp*`进入policy。
 - dev.191：14:12真机trace把Venera慢plan收敛到source resolver兼容层：18个origin样本request-plan中位约3.016s，gate wait约1.742s，hook内bridge network约1.368s，且18/18每页固定4次bridge call。当前E-Hentai source的`loadThumbnails/getKey`明确请求`cache-time: long`/`prevent-parallel`，ZIC此前却未实现该Network控制语义。native bridge现以runtime-owned有界GET cache对齐source-requested复用，并剥离pseudo headers；diagnostics新增cache-hit/origin-call计数。Reader/Pipeline调度不变。
 - dev.190：修复 dev.189 resource-plan stage diagnostics 的编译半迁移：`_RuntimeBrowsableComicSource` 通过窄化 `_RuntimeInvoke` 调用 session `_invoke(... onTiming:)`，函数类型本身没有该命名参数。现删除 callback 式 timing seam；普通 runtime 调用保持原 `_RuntimeInvoke`，仅 resolve-resource 注入 `_RuntimeResolveResourceInvoke`，session 内 `_invokeMeasured` 返回 payload + gate/runtime timing。`sourcePlan*` 仍只读透传至 downloads trace，并由静态 gate 禁止进入 sessions/pipeline_runtime/App policy。调度行为与 dev.189 不变。
@@ -21,8 +22,8 @@
 - Venera preemption先断requestId native HTTP，再等待JS `finished`后返回cancelled并释放permit，禁止同一WebView中旧/新async invocation重叠。修复 `ArtifactCacheReadLease?` nullable半迁移编译错误。
 - 当前环境无Flutter/Dart/Android完整SDK；行为测试已加入源码，最终设备构建/性能仍需本地验证。
 
-**源码版本：** `0.31.0-dev.192`
-**App build：** `0.31.0+192`
+**源码版本：** `0.31.0-dev.195`
+**App build：** `0.31.0+195`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 

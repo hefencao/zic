@@ -55,7 +55,7 @@ Native implementation
 
 ### `storage`
 
-partial artifact、连续前缀、校验、seal、原子 promotion、索引和临时 workspace。partial append只写入并推进长度，不在UI isolate逐chunk计算CRC；seal/restore在isolate rehash后提交权威checksum。它不决定页面角色或网络优先级。
+partial artifact、连续前缀、校验、seal、原子 promotion、索引和临时 workspace。对稳定 DownloadId，已经提交并成为 playback authority 的 partial prefix 单调不减；网络 attempt 重启、validator 缺失或 Range 被拒绝都不能删除、缩短或重建该 prefix。partial append只写入并推进长度，不在UI isolate逐chunk计算CRC；seal/restore在isolate rehash后提交权威checksum。它不决定页面角色或网络优先级。
 
 ### `downloads`
 
@@ -230,7 +230,7 @@ n>1, m>1, p>1, c>4, n>2, c>6, n>3, m>2, n>4（current bootstrap 已覆盖 c>2）
 - local/content/file/asset prefix quantum：1 MiB；
 - remote prefix quantum：256 KiB。
 
-`DownloadSession` 保证连续前缀、单 writer、validator/range、seal 和 promotion。已 receiving 且仍有 demand 的传输不会因 observation revision 机械重建；current priority 变化在同一 lane/session 上迁移。
+`DownloadSession` 保证连续前缀、单 writer、validator/range、seal 和 promotion。网络 attempt 生命周期与 playback artifact authority 分离：已有 committed partial 在 transport restart、无 validator 或 Range 拒绝时保持原文件、epoch 与匹配的内存 Ingress；若不能证明 byte-range resume，`DownloadJob` 可从 byte 0 重新读取当前完整响应，但在收到的前缀完整匹配现有 authoritative partial checksum 之前不得写 artifact 或推进 Ingress，匹配后只从旧 committed boundary 继续单调 append。前缀不一致、catch-up 未完成即取消或失败只终止本次网络 attempt，不使旧 playable prefix 倒退。只有明确 DownloadId/owner 不匹配、artifact corruption、显式 evict/清缓存才允许减少 committed playback bytes。`restore()` 在现有 Ingress 的 epoch/length/kind/sealed 与 artifact 已一致时不得重建 encoded source。已 receiving 且仍有 demand 的传输不会因 observation revision 机械重建；current priority 变化在同一 lane/session 上迁移。
 
 完整 local immutable 或 durable cache response可标记 resident，并经权威 session/source ingress；错误、取消、range response 或长度不一致不得写入完整热字节。
 
