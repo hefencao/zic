@@ -132,6 +132,7 @@ final class RhttpSourceResourceDirectTransport
       cancelToken,
       control,
       readDiagnostics,
+      validatePrefix: parsedRange == null || parsedRange.start == 0,
     );
     final contentLength = int.tryParse(
       _headerValue(headers, HttpHeaders.contentLengthHeader) ?? '',
@@ -190,34 +191,37 @@ Future<_RhttpResponseBody> _prefetchEncodedMediaBody(
   Uri locator,
   rhttp.CancelToken cancelToken,
   TaskControl? control,
-  _RhttpReadDiagnostics? readDiagnostics,
-) async {
+  _RhttpReadDiagnostics? readDiagnostics, {
+  bool validatePrefix = true,
+}) async {
   final iterator = StreamIterator<Uint8List>(source);
   final prefetched = <Uint8List>[];
-  final prefix = BytesBuilder(copy: false);
-  try {
-    while (prefix.length < 16 && await iterator.moveNext()) {
+  if (validatePrefix) {
+    final prefix = BytesBuilder(copy: false);
+    try {
+      while (prefix.length < 16 && await iterator.moveNext()) {
+        _throwIfCancelled(control);
+        final chunk = iterator.current;
+        if (chunk.isEmpty) continue;
+        readDiagnostics?.recordBodyChunk(chunk.lengthInBytes);
+        prefetched.add(chunk);
+        prefix.add(chunk);
+      }
       _throwIfCancelled(control);
-      final chunk = iterator.current;
-      if (chunk.isEmpty) continue;
-      readDiagnostics?.recordBodyChunk(chunk.lengthInBytes);
-      prefetched.add(chunk);
-      prefix.add(chunk);
+    } on Object {
+      cancelToken.cancel();
+      await iterator.cancel();
+      rethrow;
     }
-    _throwIfCancelled(control);
-  } on Object {
-    cancelToken.cancel();
-    await iterator.cancel();
-    rethrow;
-  }
-  if (!_looksLikeEncodedMediaPrefix(prefix.takeBytes())) {
-    cancelToken.cancel();
-    await iterator.cancel();
-    throw Failure(
-      code: ErrorCode.network,
-      message: 'source host transport returned non-media bytes for $locator',
-      details: const <String, Object?>{'sourceMediaProtocolMismatch': true},
-    );
+    if (!_looksLikeEncodedMediaPrefix(prefix.takeBytes())) {
+      cancelToken.cancel();
+      await iterator.cancel();
+      throw Failure(
+        code: ErrorCode.network,
+        message: 'source host transport returned non-media bytes for $locator',
+        details: const <String, Object?>{'sourceMediaProtocolMismatch': true},
+      );
+    }
   }
 
   var aborted = false;

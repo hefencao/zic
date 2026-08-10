@@ -41,7 +41,7 @@ for token in (
 
 for token in (
     'validatorless restart keeps playable ingress while full body catches up',
-    'full body mismatch preserves the existing playable partial',
+    'preserves the existing playable partial',
     'validator mismatch catches up full body without shrinking partial',
 ):
     if token not in JOB_TEST:

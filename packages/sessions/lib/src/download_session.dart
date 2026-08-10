@@ -562,6 +562,7 @@ final class DownloadSession {
     required bool restarted,
     String? strategy,
     bool playablePrefixPreserved = false,
+    Map<String, Object?> diagnostics = const <String, Object?>{},
   }) {
     _emit(
       restarted
@@ -572,6 +573,7 @@ final class DownloadSession {
         if (strategy != null) 'strategy': strategy,
         if (playablePrefixPreserved)
           'playablePrefixPreserved': true,
+        ...diagnostics,
       },
     );
   }

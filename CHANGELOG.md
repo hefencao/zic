@@ -1,3 +1,11 @@
+## 0.31.0-dev.196：validatorless Range continuity probe，消除 full-prefix 重复流量常态
+
+- dev.195 真机03:12 trace的36条origin body约182.70MB，其中12次full-body prefix catch-up至少30.20MB（16.5%）只是在重新验证已存在partial；一张14.59MB页面实际从origin读取27.74MB。
+- 根因有两层：dev.195在validators为空时主动不传Range；同时production rhttp direct对合法206中段仍做完整图片magic-prefix检查，中段不含文件头会误触发runtime fallback。dev.196在已知totalLength的validatorless partial上先请求最多64KiB尾部Range，并让rhttp对`Content-Range.start>0`跳过完整媒体头检查；只有精确206/start/length和逐字节overlap一致才从旧boundary继续。
+- Range被服务器忽略并返回200时直接复用该response进入现有full-prefix CRC fallback；strong-validator Range被200拒绝时也复用同一body，不再仅为fallback再开第二条full request。
+- `resumeAccepted/resumeRestarted`新增只读`resumeProbeStart/resumeProbeBytes/resumeProbeStatusCode/resumeProbeAccepted/duplicatePrefixBytes/fullBodyResponseReused`观测；不得成为调度、retry或cache输入。
+- dev.195的playable-partial单调性、幂等Ingress restore保持；不改DecodeSession、Reader/Pipeline、NetLane、network=5或带宽策略。新增ADR0177、dev.196审计与gate。
+
 ## 0.31.0-dev.195：从 dev.192 重做 partial authority，网络重启不得让可播放数据倒退
 
 - 明确废弃 dev.193/dev.194 的续传实验线；dev.195 直接从权威 dev.192 ZIP 重做，不 cherry-pick 后两轮 overlap/catch-up 或 DecodeSession 修改。

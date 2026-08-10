@@ -103,10 +103,9 @@ void main() {
     final result = await DownloadJob(transport: changed, session: session).run();
 
     expect(result.state, DownloadState.promoted);
-    expect(changed.requests, hasLength(2));
-    expect(changed.requests.first.range?.start, preserved);
-    expect(changed.requests.last.range, isNull);
-    expect(changed.discardCount, 1);
+    expect(changed.requests, hasLength(1));
+    expect(changed.requests.single.range?.start, preserved);
+    expect(changed.discardCount, 0);
     expect(result.epoch, const SourceEpoch(0));
     expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
   });
@@ -160,7 +159,9 @@ void main() {
     final result = await DownloadJob(transport: resumed, session: session).run();
 
     expect(resumed.requests, hasLength(1));
-    expect(resumed.requests.single.range, isNull);
+    final expectedProbeStart = preservedLength - 64 * 1024;
+    expect(resumed.requests.single.range?.start, expectedProbeStart);
+    expect(resumed.requests.single.validators, isNull);
     expect(result.epoch, const SourceEpoch(0));
     expect(result.state, DownloadState.promoted);
     expect(factory.createCount, sourceCreates);
@@ -168,7 +169,49 @@ void main() {
     expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
   });
 
-  test('full body mismatch preserves the existing playable partial', () async {
+  test('validatorless range ignored reuses the same full response for catchup', () async {
+    final bytes = <int>[
+      ...'RIFF'.codeUnits,
+      0, 0, 0, 0,
+      ...'WEBP'.codeUnits,
+      ...List<int>.generate(256 * 1024, (index) => index & 0xff),
+    ];
+    final session = createSession();
+    final broken = FakeTransport(
+      bytes: bytes,
+      chunkSize: 4096,
+      failAfterBytes: 96 * 1024,
+      validators: const Validators(),
+    );
+    await expectLater(
+      DownloadJob(transport: broken, session: session).run(),
+      throwsA(isA<Failure>()),
+    );
+    final preservedLength = session.committedLength;
+
+    final ignoredRange = FakeTransport(
+      bytes: bytes,
+      chunkSize: 4096,
+      rangeSupported: false,
+      validators: const Validators(),
+    );
+    final result = await DownloadJob(
+      transport: ignoredRange,
+      session: session,
+    ).run();
+
+    expect(result.state, DownloadState.promoted);
+    expect(ignoredRange.requests, hasLength(1));
+    expect(
+      ignoredRange.requests.single.range?.start,
+      preservedLength - 64 * 1024,
+    );
+    expect(ignoredRange.discardCount, 0);
+    expect(result.epoch, const SourceEpoch(0));
+    expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
+  });
+
+  test('validatorless overlap mismatch preserves the existing playable partial', () async {
     final bytes = <int>[
       ...'RIFF'.codeUnits,
       0, 0, 0, 0,
