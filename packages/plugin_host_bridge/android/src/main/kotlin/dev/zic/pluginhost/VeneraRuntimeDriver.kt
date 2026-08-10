@@ -19,17 +19,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.Closeable
 import java.io.File
-import java.io.InputStream
-import java.net.ConnectException
-import java.net.HttpURLConnection
-import java.net.InetAddress
-import java.net.NoRouteToHostException
-import java.net.SocketException
-import java.net.SocketTimeoutException
 import java.net.URL
-import java.net.UnknownHostException
-import java.lang.reflect.InvocationHandler
-import java.lang.reflect.Proxy
 import java.security.KeyFactory
 import java.security.MessageDigest
 import java.util.Locale
@@ -38,15 +28,12 @@ import java.security.spec.PKCS8EncodedKeySpec
 import java.security.spec.X509EncodedKeySpec
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import javax.crypto.Cipher
 import javax.crypto.Mac
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
-import java.util.zip.GZIPInputStream
-import java.util.zip.InflaterInputStream
 
 /** Venera JavaScript runtime hosted by a process-private, UI-less WebView. */
 internal class VeneraRuntimeDriver private constructor(
@@ -157,6 +144,7 @@ internal class VeneraRuntimeDriver private constructor(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        pending.keys.toList().forEach(bridge::cancel)
         pending.values.forEach {
             it.error("runtime-closing", "Venera runtime is closing")
         }
@@ -196,6 +184,7 @@ internal class VeneraRuntimeDriver private constructor(
             payloadPath: String,
             payloadLength: Long,
             payloadSha256: String,
+            resolverHttp: VeneraResolverHttpTransport,
             callback: (Result<VeneraRuntimeDriver>) -> Unit,
         ) {
             check(Looper.myLooper() == Looper.getMainLooper())
@@ -233,6 +222,7 @@ internal class VeneraRuntimeDriver private constructor(
                     capabilities = capabilities,
                     maxResponseBytes = maxResponseBytes,
                     defaultUserAgent = webView.settings.userAgentString.orEmpty(),
+                    resolverHttp = resolverHttp,
                 )
                 webView.addJavascriptInterface(bridge, BRIDGE_NAME)
                 VeneraActivation(
@@ -372,22 +362,19 @@ private class VeneraNativeBridge(
     private val capabilities: Set<String>,
     private val maxResponseBytes: Int,
     private val defaultUserAgent: String,
+    private val resolverHttp: VeneraResolverHttpTransport,
 ) : Closeable {
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences(
         "zic_venera_${sourceKey.replace(Regex("[^A-Za-z0-9_.-]"), "_")}",
         Context.MODE_PRIVATE,
     )
-    private val connections = ConcurrentHashMap.newKeySet<Any>()
-    private val requestConnections =
-        ConcurrentHashMap<String, MutableSet<Any>>()
     private val images = ConcurrentHashMap<Int, Bitmap>()
     private val nextImageKey = AtomicInteger(1)
     private val nativeBytes = LinkedHashMap<String, ByteArray>()
     private val cookieManager = CookieManager.getInstance()
     private val networkCache = VeneraHttpCache()
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
-    @Volatile private var dnsFallbackClient: ReflectiveVeneraHttpClient? = null
     @Volatile var resultSink: ((String, JSONObject) -> Unit)? = null
     @Volatile var finishedSink: ((String) -> Unit)? = null
     @Volatile var activationSink: ((JSONObject) -> Unit)? = null
@@ -458,13 +445,12 @@ private class VeneraNativeBridge(
     @JavascriptInterface
     fun finished(requestId: String) {
         cancelled.remove(requestId)
-        requestConnections.remove(requestId)
         finishedSink?.invoke(requestId)
     }
 
     fun cancel(requestId: String) {
         cancelled.add(requestId)
-        requestConnections[requestId]?.toList()?.forEach(::cancelConnection)
+        resolverHttp.cancel(requestId)
     }
 
     private fun http(message: JSONObject): Any =
@@ -599,11 +585,8 @@ private class VeneraNativeBridge(
                 forwardHeaders.removeVeneraHeader("authorization")
                 forwardHeaders.removeVeneraHeader("cookie")
             }
-            if (result.status == HttpURLConnection.HTTP_SEE_OTHER ||
-                (result.status in setOf(
-                    HttpURLConnection.HTTP_MOVED_PERM,
-                    HttpURLConnection.HTTP_MOVED_TEMP,
-                ) && method !in setOf("GET", "HEAD"))
+            if (result.status == 303 ||
+                (result.status in setOf(301, 302) && method !in setOf("GET", "HEAD"))
             ) {
                 method = "GET"
                 bodyBytes = ByteArray(0)
@@ -614,36 +597,6 @@ private class VeneraNativeBridge(
             target = next
         }
         error("Venera HTTP redirect state escaped its bounded loop")
-    }
-
-    private fun registerConnection(requestId: String?, connection: Any) {
-        connections.add(connection)
-        if (requestId == null) return
-        requestConnections
-            .computeIfAbsent(requestId) { ConcurrentHashMap.newKeySet() }
-            .add(connection)
-        if (cancelled.contains(requestId)) {
-            cancelConnection(connection)
-        }
-    }
-
-    private fun unregisterConnection(requestId: String?, connection: Any) {
-        connections.remove(connection)
-        if (requestId == null) return
-        requestConnections[requestId]?.let { scoped ->
-            scoped.remove(connection)
-            if (scoped.isEmpty()) {
-                requestConnections.remove(requestId, scoped)
-            }
-        }
-    }
-
-    private fun cancelConnection(connection: Any) {
-        when (connection) {
-            is InputStream -> runCatching { connection.close() }
-            is HttpURLConnection -> connection.disconnect()
-            is ReflectiveVeneraCall -> connection.cancel()
-        }
     }
 
     private fun retainNativeBytes(bytes: ByteArray): String {
@@ -668,138 +621,19 @@ private class VeneraNativeBridge(
         bodyBytes: ByteArray,
         requestId: String?,
     ): VeneraHttpResponse {
-        return if (shouldUseVeneraDnsFallback(target) ||
-            prefersVeneraDnsFallback(target.host)
-        ) {
-            httpWithDnsFallback(target, method, headers, bodyBytes, requestId)
-                .also { rememberVeneraDnsFallback(target.host) }
-        } else {
-            runCatching {
-                httpWithUrlConnection(target, method, headers, bodyBytes, requestId)
-            }.recoverCatching { error ->
-                if (!shouldRetryVeneraWithDnsFallback(error, target, method)) throw error
-                httpWithDnsFallback(target, method, headers, bodyBytes, requestId)
-                    .also { rememberVeneraDnsFallback(target.host) }
-            }.getOrThrow()
-        }
-    }
-
-    private fun httpWithUrlConnection(
-        target: URL,
-        method: String,
-        headers: Map<String, String>,
-        bodyBytes: ByteArray,
-        requestId: String?,
-    ): VeneraHttpResponse {
-        val connection = target.openConnection() as HttpURLConnection
-        connection.instanceFollowRedirects = false
-        connection.connectTimeout = VENERA_HTTP_CONNECT_TIMEOUT_MILLIS
-        connection.readTimeout = VENERA_HTTP_READ_TIMEOUT_MILLIS
-        connection.requestMethod = method
-        connection.useCaches = false
-        headers.forEach(connection::setRequestProperty)
-        if (method !in setOf("GET", "HEAD")) connection.doOutput = true
-        registerConnection(requestId, connection)
-        var responseFullyConsumed = false
-        try {
-            if (connection.doOutput) connection.outputStream.use { it.write(bodyBytes) }
-            val status = connection.responseCode
-            val stream = if (status >= 400) connection.errorStream else connection.inputStream
-            val responseBytes = stream?.let {
-                registerConnection(requestId, it)
-                try {
-                    it.use { body ->
-                        readDecodedResponseBytes(
-                            body,
-                            connection.getHeaderField("Content-Encoding"),
-                            maxResponseBytes,
-                        )
-                    }
-                } finally {
-                    unregisterConnection(requestId, it)
-                }
-            } ?: ByteArray(0)
-            responseFullyConsumed = true
-            return veneraResponse(
-                status = status,
-                headers = connection.headerFields,
-                body = responseBytes,
-            )
-        } finally {
-            unregisterConnection(requestId, connection)
-            // A fully consumed/closed HTTP/1.1 response can return its socket
-            // to Android's underlying connection pool. Explicit disconnect()
-            // here defeated that reuse across the several sequential
-            // Network.* calls in one Venera resolver. Cancellation/error still
-            // disconnects immediately through the request-scoped owner.
-            if (!responseFullyConsumed) connection.disconnect()
-        }
-    }
-
-    private fun httpWithDnsFallback(
-        target: URL,
-        method: String,
-        headers: Map<String, String>,
-        bodyBytes: ByteArray,
-        requestId: String?,
-    ): VeneraHttpResponse {
-        val resolved = resolveVeneraPublicAddresses(target.host)
-        require(resolved.isNotEmpty()) {
-            "Venera public DNS fallback returned no safe address for ${target.host}"
-        }
-        val call = getDnsFallbackClient().newCall(target, method, headers, bodyBytes)
-        registerConnection(requestId, call)
-        try {
-            val response = call.execute()
-                ?: error("Venera DNS fallback returned no response")
-            try {
-                val status = response.javaClass.methods.first {
-                    it.name in setOf("code", "getCode") && it.parameterCount == 0
-                }.invoke(response) as Number
-                val responseHeaders = response.javaClass.methods.first {
-                    it.name in setOf("headers", "getHeaders") && it.parameterCount == 0
-                }.invoke(response)
-                @Suppress("UNCHECKED_CAST")
-                val headerMap = responseHeaders.javaClass.methods.first {
-                    it.name == "toMultimap" && it.parameterCount == 0
-                }.invoke(responseHeaders) as Map<String, List<String>>
-                val contentEncoding = headerMap.entries.firstOrNull {
-                    it.key.equals("content-encoding", ignoreCase = true)
-                }?.value?.joinToString(",")
-                val body = response.javaClass.methods.first {
-                    it.name in setOf("body", "getBody") && it.parameterCount == 0
-                }.invoke(response)
-                val stream = body?.javaClass?.methods?.firstOrNull {
-                    it.name == "byteStream" && it.parameterCount == 0
-                }?.invoke(body) as? InputStream
-                val responseBytes = stream?.let {
-                    registerConnection(requestId, it)
-                    try {
-                        readDecodedResponseBytes(it, contentEncoding, maxResponseBytes)
-                    } finally {
-                        unregisterConnection(requestId, it)
-                    }
-                } ?: ByteArray(0)
-                return veneraResponse(status.toInt(), headerMap, responseBytes)
-            } finally {
-                runCatching {
-                    response.javaClass.methods.first {
-                        it.name == "close" && it.parameterCount == 0
-                    }.invoke(response)
-                }
-            }
-        } finally {
-            unregisterConnection(requestId, call)
-            call.close()
-        }
-    }
-
-    private fun getDnsFallbackClient(): ReflectiveVeneraHttpClient {
-        dnsFallbackClient?.let { return it }
-        synchronized(this) {
-            dnsFallbackClient?.let { return it }
-            return createReflectiveVeneraHttpClient().also { dnsFallbackClient = it }
-        }
+        val result = resolverHttp.execute(
+            target = target,
+            method = method,
+            headers = headers,
+            bodyBytes = bodyBytes,
+            requestId = requestId,
+            maxResponseBytes = maxResponseBytes,
+        )
+        return veneraResponse(
+            status = result.status,
+            headers = result.headers,
+            body = result.body,
+        )
     }
 
     private fun persistResponseCookies(url: String, headers: JSONObject?) {
@@ -1177,11 +1011,6 @@ private class VeneraNativeBridge(
         resultSink = null
         finishedSink = null
         cancelled.clear()
-        connections.toList().forEach(::cancelConnection)
-        connections.clear()
-        requestConnections.clear()
-        dnsFallbackClient?.close()
-        dnsFallbackClient = null
         synchronized(nativeBytes) { nativeBytes.clear() }
         networkCache.clear()
         releaseImages()
@@ -1216,20 +1045,6 @@ private fun decodeWireValue(value: Any?): Any? = when (value) {
     }
     is JSONArray -> List(value.length()) { index -> decodeWireValue(value.opt(index)) }
     else -> value
-}
-
-private fun java.io.InputStream.readBytesBounded(maxBytes: Int): ByteArray {
-    val output = java.io.ByteArrayOutputStream(minOf(maxBytes, 64 * 1024))
-    val buffer = ByteArray(16 * 1024)
-    var total = 0
-    while (true) {
-        val count = read(buffer)
-        if (count < 0) break
-        total += count
-        require(total <= maxBytes) { "Venera response exceeds runtime limit" }
-        output.write(buffer, 0, count)
-    }
-    return output.toByteArray()
 }
 
 internal fun normalizeVeneraAcceptEncoding(value: String?): String {
@@ -1432,87 +1247,6 @@ private fun URL.veneraEffectivePort(): Int = when {
     else -> 80
 }
 
-private fun isPublicVeneraHost(host: String): Boolean {
-    if (host.isBlank() || !host.contains('.') || host.equals("localhost", true)) return false
-    if (looksLikeNumericAddress(host) &&
-        (host.contains(':') || host.count { it == '.' } == 3)
-    ) {
-        return false
-    }
-    return !host.endsWith(".local", true) && !host.endsWith(".localhost", true)
-}
-
-internal fun isSafeVeneraPublicAddress(address: InetAddress): Boolean =
-    !address.isAnyLocalAddress && !address.isLoopbackAddress &&
-        !address.isLinkLocalAddress && !address.isSiteLocalAddress &&
-        !address.isMulticastAddress
-
-internal fun shouldUseVeneraDnsFallback(target: URL): Boolean {
-    if (!isPublicVeneraHost(target.host)) return false
-    val addresses = runCatching { InetAddress.getAllByName(target.host).toList() }.getOrElse {
-        return it is UnknownHostException
-    }
-    return addresses.isNotEmpty() && addresses.none(::isSafeVeneraPublicAddress)
-}
-
-internal fun shouldRetryVeneraWithDnsFallback(
-    error: Throwable,
-    target: URL,
-    method: String,
-): Boolean {
-    if (!isPublicVeneraHost(target.host)) return false
-    val idempotent = method in setOf("GET", "HEAD", "OPTIONS")
-    var current: Throwable? = error
-    while (current != null) {
-        if (current is UnknownHostException) return true
-        if (idempotent && current is ConnectException) return true
-        if (idempotent && current is NoRouteToHostException) return true
-        if (idempotent && current is SocketTimeoutException) return true
-        val message = current.message.orEmpty().lowercase(Locale.US)
-        if (message.contains("/127.0.0.1") || message.contains("/0:0:0:0:0:0:0:1")) return true
-        if (idempotent && current is SocketException &&
-            (message.contains("connection reset") ||
-                message.contains("network is unreachable") ||
-                message.contains("failed to connect"))
-        ) {
-            return true
-        }
-        current = current.cause
-    }
-    return false
-}
-
-internal fun parseVeneraDnsJson(raw: String): List<InetAddress> {
-    val answers = runCatching { JSONObject(raw).optJSONArray("Answer") }.getOrNull()
-        ?: return emptyList()
-    val result = LinkedHashMap<String, InetAddress>()
-    repeat(answers.length()) { index ->
-        val answer = answers.optJSONObject(index) ?: return@repeat
-        if (answer.optInt("type") !in setOf(1, 28)) return@repeat
-        val value = answer.optString("data").trim()
-        if (!looksLikeNumericAddress(value)) return@repeat
-        runCatching { InetAddress.getByName(value) }.getOrNull()
-            ?.takeIf(::isSafeVeneraPublicAddress)
-            ?.let { result[it.hostAddress] = it }
-    }
-    return result.values.toList()
-}
-
-private fun looksLikeNumericAddress(value: String): Boolean =
-    value.isNotBlank() && value.all { character ->
-        character.isDigit() || character in setOf('.', ':') ||
-            character.lowercaseChar() in 'a'..'f'
-    }
-
-private data class VeneraDnsCacheEntry(
-    val addresses: List<InetAddress>,
-    val expiresAtNanos: Long,
-)
-
-private const val VENERA_DNS_CACHE_NANOS = 5L * 60L * 1_000_000_000L
-private const val VENERA_HTTP_CONNECT_TIMEOUT_MILLIS = 10_000
-private const val VENERA_HTTP_READ_TIMEOUT_MILLIS = 45_000
-private const val VENERA_HTTP_CALL_TIMEOUT_MILLIS = 50_000L
 private const val VENERA_HTTP_MAX_REDIRECTS = 8
 private const val VENERA_HTTP_MAX_REQUEST_BYTES = 2 * 1024 * 1024
 private const val VENERA_MAX_NATIVE_BYTE_PAYLOADS = 2
@@ -1539,243 +1273,6 @@ private val VENERA_CACHE_IGNORED_HEADERS = setOf(
     "authorization",
 )
 private val VENERA_HTTP_REDIRECT_STATUSES = setOf(301, 302, 303, 307, 308)
-private const val VENERA_DOH_TIMEOUT_MILLIS = 1_500
-private val veneraDnsCache = ConcurrentHashMap<String, VeneraDnsCacheEntry>()
-private val veneraDnsFallbackPreferences = ConcurrentHashMap<String, Long>()
-
-private fun prefersVeneraDnsFallback(host: String): Boolean {
-    val cacheKey = host.lowercase(Locale.US)
-    val expiry = veneraDnsFallbackPreferences[cacheKey] ?: return false
-    if (expiry - System.nanoTime() > 0) return true
-    veneraDnsFallbackPreferences.remove(cacheKey, expiry)
-    return false
-}
-
-private fun rememberVeneraDnsFallback(host: String) {
-    veneraDnsFallbackPreferences[host.lowercase(Locale.US)] =
-        System.nanoTime() + VENERA_DNS_CACHE_NANOS
-}
-
-private fun resolveVeneraPublicAddresses(host: String): List<InetAddress> {
-    require(isPublicVeneraHost(host)) { "Venera DNS fallback requires a public hostname" }
-    val cacheKey = host.lowercase(Locale.US)
-    val now = System.nanoTime()
-    veneraDnsCache[cacheKey]?.takeIf { it.expiresAtNanos - now > 0 }?.let {
-        return it.addresses
-    }
-    val encodedHost = java.net.URLEncoder.encode(host, "UTF-8")
-    for (recordType in listOf("A", "AAAA")) {
-        val endpoints = listOf(
-            "https://cloudflare-dns.com/dns-query?name=$encodedHost&type=$recordType",
-            "https://dns.google/resolve?name=$encodedHost&type=$recordType",
-            "https://dns.alidns.com/resolve?name=$encodedHost&type=$recordType",
-            "https://doh.pub/dns-query?name=$encodedHost&type=$recordType",
-        )
-        for (endpoint in endpoints) {
-            val connection = URL(endpoint).openConnection() as HttpURLConnection
-            connection.connectTimeout = VENERA_DOH_TIMEOUT_MILLIS
-            connection.readTimeout = VENERA_DOH_TIMEOUT_MILLIS
-            connection.setRequestProperty("Accept", "application/dns-json")
-            val addresses = runCatching {
-                if (connection.responseCode !in 200..299) {
-                    emptyList()
-                } else {
-                    parseVeneraDnsJson(
-                        connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() },
-                    )
-                }
-            }.getOrDefault(emptyList())
-            connection.disconnect()
-            if (addresses.isNotEmpty()) {
-                veneraDnsCache[cacheKey] = VeneraDnsCacheEntry(
-                    addresses = addresses,
-                    expiresAtNanos = System.nanoTime() + VENERA_DNS_CACHE_NANOS,
-                )
-                return addresses
-            }
-        }
-    }
-    return emptyList()
-}
-
-private class ReflectiveVeneraHttpClient(
-    private val client: Any,
-) : Closeable {
-    fun newCall(
-        target: URL,
-        method: String,
-        headers: Map<String, String>,
-        bodyBytes: ByteArray,
-    ): ReflectiveVeneraCall =
-        createReflectiveOkHttpCall(client, target, method, headers, bodyBytes)
-
-    override fun close() {
-        runCatching {
-            val pool = client.javaClass.methods.firstOrNull {
-                it.name in setOf("connectionPool", "getConnectionPool") && it.parameterCount == 0
-            }?.invoke(client)
-            pool?.javaClass?.methods?.firstOrNull {
-                it.name == "evictAll" && it.parameterCount == 0
-            }?.invoke(pool)
-        }
-        runCatching {
-            val dispatcher = client.javaClass.methods.firstOrNull {
-                it.name in setOf("dispatcher", "getDispatcher") && it.parameterCount == 0
-            }?.invoke(client)
-            val executor = dispatcher?.javaClass?.methods?.firstOrNull {
-                it.name in setOf("executorService", "getExecutorService") && it.parameterCount == 0
-            }?.invoke(dispatcher) as? java.util.concurrent.ExecutorService
-            executor?.shutdown()
-        }
-    }
-}
-
-private class ReflectiveVeneraCall(
-    private val call: Any,
-) : Closeable {
-    fun execute(): Any = call.javaClass.methods.first {
-        it.name == "execute" && it.parameterCount == 0
-    }.invoke(call) ?: error("Venera DNS fallback returned no response")
-
-    fun cancel() {
-        runCatching {
-            call.javaClass.methods.firstOrNull {
-                it.name == "cancel" && it.parameterCount == 0
-            }?.invoke(call)
-        }
-    }
-
-    override fun close() {
-        cancel()
-    }
-}
-
-private fun createReflectiveVeneraHttpClient(): ReflectiveVeneraHttpClient {
-    val loader = requireNotNull(VeneraRuntimeDriver::class.java.classLoader) {
-        "Venera runtime class loader is unavailable"
-    }
-    val dnsType = loader.loadClass("okhttp3.Dns")
-    val dns = Proxy.newProxyInstance(loader, arrayOf(dnsType), InvocationHandler { proxy, invoked, args ->
-        when (invoked.name) {
-            "lookup" -> {
-                val hostname = args?.firstOrNull()?.toString().orEmpty()
-                val addresses = if (isPublicVeneraHost(hostname)) {
-                    resolveVeneraPublicAddresses(hostname)
-                } else {
-                    InetAddress.getAllByName(hostname).toList()
-                }
-                addresses.ifEmpty {
-                    throw UnknownHostException("No safe Venera DNS answer for $hostname")
-                }
-            }
-            "toString" -> "ZicVeneraDns"
-            "hashCode" -> System.identityHashCode(proxy)
-            "equals" -> args?.firstOrNull() === proxy
-            else -> null
-        }
-    })
-    val clientBuilderType = loader.loadClass("okhttp3.OkHttpClient${'$'}Builder")
-    val clientBuilder = clientBuilderType.getDeclaredConstructor().newInstance()
-    clientBuilderType.methods.first { it.name == "dns" && it.parameterCount == 1 }
-        .invoke(clientBuilder, dns)
-    clientBuilderType.methods.firstOrNull {
-        it.name == "followRedirects" && it.parameterCount == 1
-    }?.invoke(clientBuilder, false)
-    clientBuilderType.methods.firstOrNull {
-        it.name == "followSslRedirects" && it.parameterCount == 1
-    }?.invoke(clientBuilder, false)
-    clientBuilderType.methods.first {
-        it.name == "connectTimeout" && it.parameterCount == 2
-    }.invoke(
-        clientBuilder,
-        VENERA_HTTP_CONNECT_TIMEOUT_MILLIS.toLong(),
-        TimeUnit.MILLISECONDS,
-    )
-    clientBuilderType.methods.first {
-        it.name == "readTimeout" && it.parameterCount == 2
-    }.invoke(
-        clientBuilder,
-        VENERA_HTTP_READ_TIMEOUT_MILLIS.toLong(),
-        TimeUnit.MILLISECONDS,
-    )
-    clientBuilderType.methods.first {
-        it.name == "callTimeout" && it.parameterCount == 2
-    }.invoke(
-        clientBuilder,
-        VENERA_HTTP_CALL_TIMEOUT_MILLIS,
-        TimeUnit.MILLISECONDS,
-    )
-    val client = requireNotNull(
-        clientBuilderType.methods.first { it.name == "build" && it.parameterCount == 0 }
-            .invoke(clientBuilder),
-    ) { "Venera DNS fallback client build returned null" }
-    return ReflectiveVeneraHttpClient(client)
-}
-
-private fun createReflectiveOkHttpCall(
-    client: Any,
-    target: URL,
-    method: String,
-    headers: Map<String, String>,
-    bodyBytes: ByteArray,
-): ReflectiveVeneraCall {
-    val loader = requireNotNull(VeneraRuntimeDriver::class.java.classLoader) {
-        "Venera runtime class loader is unavailable"
-    }
-    val requestBuilderType = loader.loadClass("okhttp3.Request${'$'}Builder")
-    val requestBuilder = requestBuilderType.getDeclaredConstructor().newInstance()
-    requestBuilderType.methods.first { it.name == "url" && it.parameterTypes.contentEquals(arrayOf(String::class.java)) }
-        .invoke(requestBuilder, target.toString())
-    val addHeader = requestBuilderType.methods.first {
-        it.name == "addHeader" && it.parameterCount == 2
-    }
-    headers.forEach { (name, value) -> addHeader.invoke(requestBuilder, name, value) }
-    val body = if (method in setOf("GET", "HEAD")) null else reflectiveRequestBody(loader, bodyBytes)
-    requestBuilderType.methods.first { it.name == "method" && it.parameterCount == 2 }
-        .invoke(requestBuilder, method, body)
-    val request = requestBuilderType.methods.first { it.name == "build" && it.parameterCount == 0 }
-        .invoke(requestBuilder)
-    val call = client.javaClass.methods.first { it.name == "newCall" && it.parameterCount == 1 }
-        .invoke(client, request)
-    return ReflectiveVeneraCall(call)
-}
-
-private fun reflectiveRequestBody(loader: ClassLoader, bytes: ByteArray): Any {
-    val type = loader.loadClass("okhttp3.RequestBody")
-    val companion = type.getField("Companion").get(null)
-    val create = companion.javaClass.methods.firstOrNull { method ->
-        method.name == "create" && method.parameterCount == 2 &&
-            method.parameterTypes.any { it == ByteArray::class.java }
-    } ?: error("OkHttp RequestBody.create(byte[]) is unavailable")
-    val arguments = create.parameterTypes.map { parameter ->
-        when {
-            parameter == ByteArray::class.java -> bytes
-            else -> null
-        }
-    }.toTypedArray()
-    return create.invoke(companion, *arguments)
-}
-
-internal fun readDecodedResponseBytes(
-    input: InputStream,
-    contentEncoding: String?,
-    maxBytes: Int,
-): ByteArray {
-    val encodings = contentEncoding.orEmpty()
-        .split(',')
-        .map { it.trim().lowercase(Locale.US) }
-        .filter { it.isNotEmpty() && it != "identity" }
-    val decoded = encodings.asReversed().fold(input) { stream, encoding ->
-        when (encoding) {
-            "gzip", "x-gzip" -> GZIPInputStream(stream)
-            "deflate" -> InflaterInputStream(stream)
-            else -> throw IllegalArgumentException(
-                "Unsupported Venera response content encoding: $encoding",
-            )
-        }
-    }
-    return decoded.use { it.readBytesBounded(maxBytes) }
-}
 
 private fun verifyVeneraPayload(file: File, expectedLength: Long, expectedSha256: String) {
     require(file.isFile) { "Venera payload is missing" }

@@ -32,6 +32,7 @@ internal interface NativeDriverResult {
 
 internal class NativeExternalPluginDriverHost(
     private val context: Context,
+    private val veneraResolverHttp: VeneraResolverHttpTransport,
 ) : Closeable {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val worker: ExecutorService = Executors.newCachedThreadPool { runnable ->
@@ -114,6 +115,7 @@ internal class NativeExternalPluginDriverHost(
                         payloadPath = payloadPath,
                         payloadLength = payloadLength,
                         payloadSha256 = payloadSha256,
+                        resolverHttp = veneraResolverHttp,
                     ) { driverResult ->
                         driverResult.fold(
                             onSuccess = { driver ->
@@ -218,6 +220,7 @@ internal class NativeExternalPluginDriverHost(
         val values = drivers.values.toList()
         drivers.clear()
         values.forEach { runCatching { it.close() } }
+        veneraResolverHttp.close()
         worker.shutdownNow()
     }
 

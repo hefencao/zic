@@ -131,6 +131,7 @@ final class PipelineReaderSessionFactory {
   PipelineReaderSessionFactory({
     required this.mediaRuntimeFactory,
     this.artifactCacheManager,
+    this.partialDownloadStore,
     ArtifactCacheReadScheduler? artifactReadScheduler,
     NetLane? pageDownloadLane,
     WebpDecodePrefixHints? decodePrefixHints,
@@ -155,6 +156,7 @@ final class PipelineReaderSessionFactory {
 
   final PipelineMediaRuntimeFactory mediaRuntimeFactory;
   final ArtifactCacheManager? artifactCacheManager;
+  final PartialDownloadStore? partialDownloadStore;
   final _PipelineReaderSessionRetentionPool _retentionPool;
   final ArtifactCacheReadScheduler artifactReadScheduler;
   final NetLane pageDownloadLane;
@@ -171,6 +173,7 @@ final class PipelineReaderSessionFactory {
       PipelineReaderSessionFactory(
         mediaRuntimeFactory: mediaRuntimeFactory,
         artifactCacheManager: artifactCacheManager,
+        partialDownloadStore: partialDownloadStore,
         artifactReadScheduler: artifactReadScheduler,
         pageDownloadLane: pageDownloadLane,
         decodePrefixHints: decodePrefixHints,
@@ -189,6 +192,23 @@ final class PipelineReaderSessionFactory {
       PipelineReaderSessionFactory(
         mediaRuntimeFactory: mediaRuntimeFactory,
         artifactCacheManager: manager,
+        partialDownloadStore: partialDownloadStore,
+        artifactReadScheduler: artifactReadScheduler,
+        pageDownloadLane: pageDownloadLane,
+        decodePrefixHints: decodePrefixHints,
+        loaderSources: loaderSources,
+        bytesLoader: bytesLoader,
+        userAgentProvider: userAgentProvider,
+        retentionPool: _retentionPool,
+      );
+
+  PipelineReaderSessionFactory withPartialDownloadStore(
+    PartialDownloadStore? store,
+  ) =>
+      PipelineReaderSessionFactory(
+        mediaRuntimeFactory: mediaRuntimeFactory,
+        artifactCacheManager: artifactCacheManager,
+        partialDownloadStore: store,
         artifactReadScheduler: artifactReadScheduler,
         pageDownloadLane: pageDownloadLane,
         decodePrefixHints: decodePrefixHints,
@@ -204,6 +224,7 @@ final class PipelineReaderSessionFactory {
       PipelineReaderSessionFactory(
         mediaRuntimeFactory: mediaRuntimeFactory,
         artifactCacheManager: artifactCacheManager,
+        partialDownloadStore: partialDownloadStore,
         artifactReadScheduler: artifactReadScheduler,
         pageDownloadLane: pageDownloadLane,
         decodePrefixHints: decodePrefixHints,
@@ -219,6 +240,7 @@ final class PipelineReaderSessionFactory {
       PipelineReaderSessionFactory(
         mediaRuntimeFactory: mediaRuntimeFactory,
         artifactCacheManager: artifactCacheManager,
+        partialDownloadStore: partialDownloadStore,
         artifactReadScheduler: artifactReadScheduler,
         pageDownloadLane: pageDownloadLane,
         decodePrefixHints: decodePrefixHints,
@@ -238,6 +260,7 @@ final class PipelineReaderSessionFactory {
         mediaRuntimeFactory: mediaRuntimeFactory,
         sessionId: sessionId,
         artifactCacheManager: artifactCacheManager,
+        partialDownloadStore: partialDownloadStore,
         artifactReadScheduler: artifactReadScheduler,
         pageDownloadLane: pageDownloadLane,
         decodePrefixHints: decodePrefixHints,
@@ -311,6 +334,7 @@ final class PipelineReaderSession {
     required PipelineMediaRuntimeFactory mediaRuntimeFactory,
     required this.sessionId,
     ArtifactCacheManager? artifactCacheManager,
+    PartialDownloadStore? partialDownloadStore,
     required ArtifactCacheReadScheduler artifactReadScheduler,
     required NetLane pageDownloadLane,
     required WebpDecodePrefixHints decodePrefixHints,
@@ -321,6 +345,7 @@ final class PipelineReaderSession {
     TraceSink? traceSink,
   })  : artifactReadScheduler = artifactReadScheduler,
         _artifactCacheManager = artifactCacheManager,
+        _partialDownloadStore = partialDownloadStore,
         _bytesLoader = bytesLoader,
         clock = SystemClock(),
         _memoryTrace = MemoryTraceSink(),
@@ -379,15 +404,15 @@ final class PipelineReaderSession {
         traceSink: trace,
         sessionId: sessionId,
       );
-      if (artifactCacheManager.supportsPartialArtifacts) {
-        _partialArtifactCacheHandoff = PartialArtifactCacheHandoff(
-          cache: artifactCacheManager,
-          onError: (error, stackTrace) {},
-          clock: clock,
-          traceSink: trace,
-          sessionId: sessionId,
-        );
-      }
+    }
+    if (partialDownloadStore != null) {
+      _partialDownloadHandoff = PartialDownloadHandoff(
+        store: partialDownloadStore,
+        onError: (error, stackTrace) {},
+        clock: clock,
+        traceSink: trace,
+        sessionId: sessionId,
+      );
     }
     _downloads = DownloadRegistry(
       layout: _workspace.layout,
@@ -429,7 +454,7 @@ final class PipelineReaderSession {
       decodes: _decodes,
       uploads: _uploads,
       budgets: _frameBudgets,
-      prepareDownload: _partialArtifactCacheHandoff?.restoreInto,
+      prepareDownload: _partialDownloadHandoff?.restoreInto,
       net: pageDownloadLane,
       downloadBucketFor: _profile.downloadBucket,
       downloadBucketLimitFor: _downloadBucketLimit,
@@ -478,6 +503,7 @@ final class PipelineReaderSession {
   final IoTransport _ioTransport;
   final LoaderTransport _loaderTransport;
   final ArtifactCacheManager? _artifactCacheManager;
+  final PartialDownloadStore? _partialDownloadStore;
   ArtifactCacheTransport? _artifactCacheTransport;
   late final SourcePool _streamingSources;
   late final DownloadRegistry _downloads;
@@ -485,8 +511,7 @@ final class PipelineReaderSession {
   late final UploadRegistry _uploads;
   late final FrameBudgeter _frameBudgets;
   PromotedArtifactCacheHandoff? _artifactCacheHandoff;
-  PartialArtifactCacheHandoff? _partialArtifactCacheHandoff;
-  Future<void> _partialArtifactCheckpoint = Future<void>.value();
+  PartialDownloadHandoff? _partialDownloadHandoff;
   late final LiveCoordinator _coordinator;
   ReaderBinding? _binding;
   String? _readerSessionId;
@@ -647,7 +672,6 @@ final class PipelineReaderSession {
     }
     _pageOutputs.clear();
     _pageStreams.clear();
-    _queuePartialArtifactCheckpoint();
     trace.record(
       traceEvent(
         clock: clock,
@@ -660,22 +684,6 @@ final class PipelineReaderSession {
         },
       ),
     );
-  }
-
-  void _queuePartialArtifactCheckpoint() {
-    final handoff = _partialArtifactCacheHandoff;
-    if (handoff == null) return;
-    final prior = _partialArtifactCheckpoint;
-    _partialArtifactCheckpoint = () async {
-      try {
-        await prior;
-      } on Object {
-        // Handoff reports its own errors and must not poison later checkpoints.
-      }
-      if (_disposed) return;
-      await handoff.checkpoint(_downloads.sessions);
-    }();
-    unawaited(_partialArtifactCheckpoint);
   }
 
   void resumeRetainedReaderSession({required int retainedMicros}) {
@@ -1316,13 +1324,8 @@ final class PipelineReaderSession {
     final coordinatorDisposeMicros =
         clock.nowMicros() - coordinatorDisposeStartedAtMicros;
     final handoffDrainStartedAtMicros = clock.nowMicros();
-    try {
-      await _partialArtifactCheckpoint;
-    } on Object {
-      // Partial handoff errors are best-effort and already reported.
-    }
     await _artifactCacheHandoff?.drain(_downloads.sessions);
-    await _partialArtifactCacheHandoff?.drain(_downloads.sessions);
+    await _partialDownloadHandoff?.drain(_downloads.sessions);
     final handoffDrainMicros = clock.nowMicros() - handoffDrainStartedAtMicros;
     _uploads.dispose();
     _decodes.dispose();

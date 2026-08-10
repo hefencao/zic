@@ -128,6 +128,11 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
       onDownloadRequested: () => _downloadChapter(current),
       pipelineFactory: defaultLocalMediaPipelineFactory
           .withArtifactCacheManager(_readerArtifactCache)
+          .withPartialDownloadStore(
+            _chapterDownloads is PartialDownloadStore
+                ? _chapterDownloads as PartialDownloadStore
+                : null,
+          )
           .withUserAgentProvider(() => widget.preferences.networkUserAgent),
       initialFavorite: preference.collected,
       onFavoriteChanged: (favorite) {

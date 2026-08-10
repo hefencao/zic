@@ -2,7 +2,7 @@
 
 ## 状态
 
-Accepted。
+Superseded by ADR 0188；不再优化 Kotlin HttpURLConnection，resolver HTTP owner 已迁到 rhttp。
 
 ## 背景
 

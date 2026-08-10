@@ -156,7 +156,7 @@
 
 ## P0：Flutter/Android 工具链闭环
 
-- 真机优先验证 dev.205：退出 Reader 后未 promoted partial 应在新 session 的 `downloadStarted` 前经 `session-partial-handoff` 恢复，page reentry 在 holder 为空时不得被旧 later-frame requiredSourceLength 阻塞首帧；同时确认 checkpoint 不阻塞 route 返回、promoted cache identity 不受影响。
+- 真机优先验证 dev.206 ownership：快速退出/重进同chapter应直接复用retained PipelineReaderSession，不出现partial durable store/restore；只有session真实evict/dispose后新session才出现`session-partial-handoff` restored且`downloadStarted.committedLength>0`。已有partial动画重入必须从frame0立即播放，约30帧循环继续只属于DecodeSession。Venera cold resolver应不再出现Kotlin HttpURLConnection owner，并验证requestId cancel、Cookie/manual redirect与resolver rhttp复用。
 - 运行 Rust/Android target 与 JNI symbol验证，确认 APK 中 native build identity正确。
 
 ## P1：漫画源、过滤与详情预览设备闭环

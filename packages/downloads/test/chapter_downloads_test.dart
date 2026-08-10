@@ -128,9 +128,9 @@ void main() {
     );
 
     final first = await PersistentChapterDownloadService.open(directory.path);
-    await first.storePartialArtifact(
+    await first.storePartialDownload(
       id: id,
-      entry: PartialArtifactCacheEntry(
+      entry: PartialDownloadEntry(
         length: bytes.lengthInBytes,
         validators: const Validators(etag: '"partial-v1"'),
         totalLength: 2048,
@@ -140,7 +140,7 @@ void main() {
       ),
     );
     expect(await first.openArtifactStream(id), isNull);
-    final beforeClose = await first.openPartialArtifact(id);
+    final beforeClose = await first.openPartialDownload(id);
     expect(beforeClose, isNotNull);
     expect(beforeClose!.length, bytes.lengthInBytes);
     await first.close();
@@ -149,7 +149,7 @@ void main() {
         await PersistentChapterDownloadService.open(directory.path);
     addTearDown(reopened.close);
     expect(await reopened.openArtifactStream(id), isNull);
-    final partial = await reopened.openPartialArtifact(id);
+    final partial = await reopened.openPartialDownload(id);
     expect(partial, isNotNull);
     expect(partial!.length, bytes.lengthInBytes);
     expect(partial.validators.etag, '"partial-v1"');

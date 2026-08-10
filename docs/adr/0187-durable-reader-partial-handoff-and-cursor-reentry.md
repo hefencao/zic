@@ -2,7 +2,7 @@
 
 ## 状态
 
-Accepted。
+Superseded by ADR 0188；cursor-reentry correctness 保留，route-retain checkpoint 与 ArtifactCache partial wiring 被替换。
 
 ## 背景
 
@@ -14,7 +14,7 @@ Accepted。
 
 ## 决策
 
-1. 未 promoted partial 与 promoted immutable cache 必须类型分离。新增可选 `PartialArtifactCacheBackend`，不得把 partial 伪装成 cache hit/promotion。
+1. 未 promoted partial 与 promoted immutable cache 必须类型分离。新增可选 `PartialDownloadStore`，不得把 partial 伪装成 cache hit/promotion。
 2. durable partial backend 复用现有长期 `PersistentChapterDownloadService` 的 DownloadRegistry/Artifact/CacheIndex；不建立第二套 Reader/App partial 文件树。
 3. Reader route retain 时异步 checkpoint 当前稳定 committed prefix，固定 `endExclusive`，不阻塞 route 返回；真正 dispose 前等待已发 checkpoint并做最终 drain，再删除 ephemeral workspace。
 4. 下一 Reader session 在网络打开前按精确 DownloadId 恢复 partial、validators 与 totalLength 到自己的 authoritative DownloadSession/Ingress。

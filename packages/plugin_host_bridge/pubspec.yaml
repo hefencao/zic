@@ -15,6 +15,7 @@ dependencies:
     path: ../network_bridge
   plugin_host:
     path: ../plugin_host
+  rhttp: 0.18.0
 
 dev_dependencies:
   flutter_test:

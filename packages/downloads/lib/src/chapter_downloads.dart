@@ -12,6 +12,7 @@ import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
 import 'artifact_cache_store.dart';
+import 'partial_download_store.dart';
 
 enum ChapterDownloadPhase {
   idle,
@@ -640,7 +641,7 @@ final class MemoryChapterDownloadService
 final class PersistentChapterDownloadService
     implements
         ManagedChapterDownloadService,
-        PartialArtifactCacheBackend,
+        PartialDownloadStore,
         ConfigurableChapterResourceAccess {
   PersistentChapterDownloadService._({
     required DownloadRegistry registry,
@@ -1107,7 +1108,7 @@ final class PersistentChapterDownloadService
   }
 
   @override
-  Future<PartialArtifactCacheEntry?> openPartialArtifact(DownloadId id) async {
+  Future<PartialDownloadEntry?> openPartialDownload(DownloadId id) async {
     _requireOpen();
     final session = _registry.get(id);
     if (session.activeRun || session.hasWriter) return null;
@@ -1117,7 +1118,7 @@ final class PersistentChapterDownloadService
       return null;
     }
     final length = session.artifact.committedLength;
-    return PartialArtifactCacheEntry(
+    return PartialDownloadEntry(
       length: length,
       validators: session.validators,
       totalLength: session.totalLength,
@@ -1126,9 +1127,9 @@ final class PersistentChapterDownloadService
   }
 
   @override
-  Future<void> storePartialArtifact({
+  Future<void> storePartialDownload({
     required DownloadId id,
-    required PartialArtifactCacheEntry entry,
+    required PartialDownloadEntry entry,
   }) async {
     _requireOpen();
     if (entry.length <= 0) return;
@@ -1136,7 +1137,7 @@ final class PersistentChapterDownloadService
     if (session.activeRun || session.hasWriter) {
       throw const Failure(
         code: ErrorCode.sessionBusy,
-        message: 'partial artifact cache destination is busy',
+        message: 'partial download store destination is busy',
       );
     }
     await session.restore(verifyPromotedChecksum: false);
@@ -1170,13 +1171,13 @@ final class PersistentChapterDownloadService
   }
 
   @override
-  Future<void> invalidatePartialArtifact(DownloadId id) async {
+  Future<void> invalidatePartialDownload(DownloadId id) async {
     _requireOpen();
     final session = _registry.find(id);
     if (session != null && (session.activeRun || session.hasWriter)) {
       throw const Failure(
         code: ErrorCode.sessionBusy,
-        message: 'partial artifact cache destination is busy',
+        message: 'partial download store destination is busy',
       );
     }
     if (session != null && session.state != DownloadState.promoted) {

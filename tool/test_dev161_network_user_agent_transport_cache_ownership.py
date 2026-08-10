@@ -161,7 +161,6 @@ allowed_url_connection_kotlin = {
     'packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/FallbackDns.kt',
     'packages/plugin_host_bridge/android/src/mihonRuntimeCommon/kotlin/dev/zic/mihonruntime/FallbackDns.kt',
     'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt',
-    'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraRuntimeDriver.kt',
 }
 for path in ROOT.rglob('*.kt'):
     rel = path.relative_to(ROOT).as_posix()

@@ -21,6 +21,26 @@ def reject(path: str, *tokens: str) -> None:
         raise SystemExit(f"{path} contains blocking/superseded dev.187 token: {present}")
 
 venera_path = "packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraRuntimeDriver.kt"
+
+pubspec_now = read("apps/app/pubspec.yaml")
+build_now = int(re.search(r"^version:\s*0\.31\.0\+(\d+)\s*$", pubspec_now, re.MULTILINE).group(1))
+if build_now >= 206:
+    require(
+        venera_path,
+        "resolverHttp.cancel(requestId)",
+        "function __zicCancelDelays(requestId)",
+        "function __zicCancel(requestId){__zicCancelled.add(requestId);__zicCancelDelays(requestId)}",
+        "bridge.cancel(requestId)",
+        "finishedSink?.invoke(requestId)",
+    )
+    resolver = read("packages/plugin_host_bridge/lib/src/venera_resolver_http_service.dart")
+    for token in ("final cancelToken = rhttp.CancelToken()", "active.cancelToken.cancel()", "requestStream("):
+        if token not in resolver:
+            raise SystemExit(f"dev.187 superseded cancellation contract missing: {token}")
+    require("packages/plugin_host/lib/src/runtime_executors.dart", "maxConcurrentInvocations: 1")
+    require("tool/test_venera_bootstrap.py", "checkRequestScopedDelayCancellation", "elapsed>500")
+    print("dev.187 request-scoped cancel semantics: superseded transport verified by dev.206")
+    raise SystemExit(0)
 require(
     venera_path,
     "is InputStream -> runCatching { connection.close() }",

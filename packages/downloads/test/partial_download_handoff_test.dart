@@ -28,8 +28,7 @@ void main() {
       canonicalUri: Uri.parse('https://example.test/page.webp'),
     );
     final backend = _PartialStore();
-    final cache = ArtifactCacheManager(backend: backend);
-    final handoff = PartialArtifactCacheHandoff(cache: cache);
+    final handoff = PartialDownloadHandoff(store: backend);
     final first = DownloadRegistry(
       layout: CacheLayout(firstRoot.path),
       clock: SystemClock(),
@@ -55,7 +54,6 @@ void main() {
     await source.pause(writer);
 
     await handoff.drain(<DownloadSession>[source]);
-    expect(backend.promoted, isEmpty);
     expect(backend.partial[id]?.bytes, bytes);
 
     final restored = target.get(id);
@@ -68,34 +66,15 @@ void main() {
   });
 }
 
-final class _PartialStore
-    implements ArtifactCacheBackend, PartialArtifactCacheBackend {
-  final Map<DownloadId, Uint8List> promoted = <DownloadId, Uint8List>{};
+final class _PartialStore implements PartialDownloadStore {
   final Map<DownloadId, _StoredPartial> partial =
       <DownloadId, _StoredPartial>{};
 
   @override
-  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async =>
-      null;
-
-  @override
-  Future<void> storePromotedArtifact({
-    required DownloadId id,
-    required Uint8List bytes,
-  }) async {
-    promoted[id] = Uint8List.fromList(bytes);
-  }
-
-  @override
-  Future<void> invalidateArtifact(DownloadId id) async {
-    promoted.remove(id);
-  }
-
-  @override
-  Future<PartialArtifactCacheEntry?> openPartialArtifact(DownloadId id) async {
+  Future<PartialDownloadEntry?> openPartialDownload(DownloadId id) async {
     final stored = partial[id];
     if (stored == null) return null;
-    return PartialArtifactCacheEntry(
+    return PartialDownloadEntry(
       length: stored.bytes.lengthInBytes,
       validators: stored.validators,
       totalLength: stored.totalLength,
@@ -106,9 +85,9 @@ final class _PartialStore
   }
 
   @override
-  Future<void> storePartialArtifact({
+  Future<void> storePartialDownload({
     required DownloadId id,
-    required PartialArtifactCacheEntry entry,
+    required PartialDownloadEntry entry,
   }) async {
     final builder = BytesBuilder(copy: false);
     await for (final chunk in entry.open(start: 0)) {
@@ -122,7 +101,7 @@ final class _PartialStore
   }
 
   @override
-  Future<void> invalidatePartialArtifact(DownloadId id) async {
+  Future<void> invalidatePartialDownload(DownloadId id) async {
     partial.remove(id);
   }
 }

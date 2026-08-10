@@ -41,6 +41,18 @@ for marker in (
     if marker not in TEST:
         raise SystemExit(f'dev.204 NetLane test contract missing: {marker}')
 
+build = int(re.search(r'version:\s*0\.31\.0\+(\d+)', PUBSPEC).group(1))
+if build >= 206:
+    resolver = (ROOT / 'packages/plugin_host_bridge/lib/src/venera_resolver_http_service.dart').read_text()
+    kotlin = (ROOT / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraResolverHttpTransport.kt').read_text()
+    for marker in ('rhttp.RhttpClient.create', 'keepAliveTimeout: Duration(seconds: 60)', 'requestStream('):
+        if marker not in resolver:
+            raise SystemExit(f'dev.204 connection-reuse semantics missing from dev.206 rhttp owner: {marker}')
+    if 'HttpURLConnection' in kotlin:
+        raise SystemExit('dev.204 supersession regressed to a Kotlin HTTP client')
+    print('dev.204 retention + connection-reuse semantics: superseded by dev.206 rhttp resolver')
+    raise SystemExit(0)
+
 http_start = VENERA.index('private fun httpWithUrlConnection(')
 http_end = VENERA.index('private fun httpWithDnsFallback(', http_start)
 http_block = VENERA[http_start:http_end]

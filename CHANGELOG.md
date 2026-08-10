@@ -1,7 +1,13 @@
+## 0.31.0-dev.206：Download owner partial 收口与 Venera resolver rhttp 统一
+
+- 纠正 dev.205 的 partial ownership：普通 Reader detach/reentry 继续复用 retained `PipelineReaderSession` 内同一 DownloadRegistry/DownloadSession/DecodeSession，不再在 route retain 时 checkpoint；只有 session 真正 dispose/evict 时，unfinished prefix 才由 Download-owned `PartialDownloadHandoff` 交给 `PersistentChapterDownloadService`。`ArtifactCacheManager` 回到仅负责 promoted immutable artifact，消除 dev.205 `ArtifactCacheBackend` partial capability 编译错误。
+- 保留 dev.205 decode cursor-reentry 修复与 ZIC 特有的 partial/约30帧循环能力；30帧水位/循环只属于 DecodeSession/playback，不参与 durable cache、网络 resume 或 Download owner 选择。
+- Venera `Network.*` resolver 的实际 HTTP 从 Kotlin `HttpURLConnection`/旧 DoH+reflective OkHttp fallback 迁到 isolated plugin Dart process 的 reusable rhttp/reqwest client。Kotlin/WebView继续拥有同步 JS contract、Cookie、manual redirect、`cache-time`、`prevent-parallel`与requestId grouping，但不再拥有第二HTTP连接池；最终 media replay 与 resolver 现在统一 client family，因进程隔离仍各自维护 owner-local reusable client instance。
+
 ## 0.31.0-dev.205：Reader partial durable handoff 与 decode cursor 重入
 
 - 12:24 真机trace确认两类长期 partial 生命周期缺口：新 Reader session 的 current 以 committedLength=0 从 origin 重下，而相邻已 promoted 页面可直接从 persistent artifact 命中；未 promoted partial此前只活在短期 Reader session/workspace，真正 dispose 后没有 durable owner。
-- 新增独立 `PartialArtifactCacheBackend/Handoff`，复用现有 `PersistentChapterDownloadService` 的 DownloadRegistry/Artifact/CacheIndex 保存精确 DownloadId 的未完成前缀、validators 与 totalLength；partial 不进入 promoted immutable cache，也不建立第二个 Reader/App cache owner。Reader retain 异步 checkpoint，最终 dispose 再 drain；下次 session 在网络前恢复。
+- 新增独立 `PartialDownloadStore/Handoff`，复用现有 `PersistentChapterDownloadService` 的 DownloadRegistry/Artifact/CacheIndex 保存精确 DownloadId 的未完成前缀、validators 与 totalLength；partial 不进入 promoted immutable cache，也不建立第二个 Reader/App cache owner。Reader retain 异步 checkpoint，最终 dispose 再 drain；下次 session 在网络前恢复。
 - 修复 Animated WebP 重入黑屏：holder 已空且要求 cursor restart 时，必须先释放旧 cursor/旧 later-frame `requiredSourceLength`，再做 partial prefix gate；现有 playable partial 可立即从 frame0 重建，而不是等待 full-body catch-up 超过旧 frame25 hint。
 - 明确网络边界：最终 media host replay 已由 rhttp 统一；Venera `Network.*` resolver bridge 目前仍是 plugin-host `HttpURLConnection` source-owned client，这是未完成的 client consolidation 债务，不是第二 scheduler。dev.205 不在 partial 修复中混做跨 runtime transport 迁移。
 

@@ -36,20 +36,12 @@ def main() -> int:
         source,
         'mergeVeneraCookieHeaders',
     ).removesuffix('\n\nprivate data class')
-    safe_address = extract(
-        r'internal fun isSafeVeneraPublicAddress\(.*?\n\s*!address\.isMulticastAddress\n',
-        source,
-        'isSafeVeneraPublicAddress',
-    )
     kotlin = f'''package dev.zic.pluginhost
 
-import java.net.InetAddress
 import java.util.Locale
 
 {normalize}
 {merge_cookies}
-{safe_address}
-
 fun main() {{
     check(normalizeVeneraAcceptEncoding(null) == "gzip, deflate")
     check(normalizeVeneraAcceptEncoding("gzip, deflate, br, zstd") == "gzip, deflate")
@@ -60,9 +52,6 @@ fun main() {{
     check(mergeVeneraCookieHeaders(null, "ipb_member_id=member") ==
         "ipb_member_id=member")
     check(mergeVeneraCookieHeaders(" ", " ") == null)
-    check(!isSafeVeneraPublicAddress(InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))))
-    check(!isSafeVeneraPublicAddress(InetAddress.getByAddress(byteArrayOf(10, 0, 0, 1))))
-    check(isSafeVeneraPublicAddress(InetAddress.getByAddress(byteArrayOf(1, 1, 1, 1))))
     println("Venera network policy helpers: OK")
 }}
 '''

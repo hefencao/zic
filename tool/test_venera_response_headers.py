@@ -27,9 +27,7 @@ for token in (
     'persistResponseCookies(targetIdentity, result.headers)',
     '.veneraHeaderValue("location")',
     'forwardHeaders.removeVeneraHeader("authorization")',
-    'connection.instanceFollowRedirects = false',
-    'it.name == "followRedirects"',
-    'it.name == "followSslRedirects"',
+    'resolverHttp.execute(',
 ):
     if token not in source:
         raise SystemExit(

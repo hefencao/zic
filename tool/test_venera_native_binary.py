@@ -21,18 +21,21 @@ required = (
     'bodyBytes = ByteArray(0)',
     'forwardHeaders.removeVeneraHeader("content-length")',
     'VENERA_HTTP_MAX_REQUEST_BYTES',
-    'VENERA_HTTP_READ_TIMEOUT_MILLIS = 45_000',
-    'VENERA_HTTP_CALL_TIMEOUT_MILLIS = 50_000L',
-    'private val requestConnections =',
-    'requestConnections[requestId]?.toList()?.forEach(::cancelConnection)',
-    'registerConnection(requestId, connection)',
-    'unregisterConnection(requestId, connection)',
     'let __zicActiveRequestId=null;',
     'ZicNative.finished(request.requestId)',
 )
 for token in required:
     if token not in text:
         raise SystemExit(f'Venera native binary contract is missing: {token}')
+
+resolver = (ROOT / 'packages/plugin_host_bridge/lib/src/venera_resolver_http_service.dart').read_text(encoding='utf-8')
+resolver_transport = (ROOT / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraResolverHttpTransport.kt').read_text(encoding='utf-8')
+for token in ('rhttp.RhttpClient.create', 'requestStream(', 'final cancelToken = rhttp.CancelToken()'):
+    if token not in resolver:
+        raise SystemExit(f'Venera native binary resolver rhttp contract missing: {token}')
+for token in ('VENERA_RESOLVER_RPC_TIMEOUT_SECONDS = 55L', 'veneraResolverHttpCancel'):
+    if token not in resolver_transport:
+        raise SystemExit(f'Venera native binary resolver bound missing: {token}')
 
 load_resource = text.split("if(request.operation==='loadResource')", 1)[1]
 load_resource = load_resource.split("throw new Error('Unsupported Venera operation')", 1)[0]

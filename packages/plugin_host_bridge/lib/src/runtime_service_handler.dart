@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:plugin_host/plugin_host.dart';
 
+import 'venera_resolver_http_service.dart';
+
 /// Dart-side MethodChannel handler intended for the dedicated Android runtime
 /// FlutterEngine/service process.
 ///
@@ -13,14 +15,17 @@ final class AndroidExternalPluginRuntimeServiceHandler {
   AndroidExternalPluginRuntimeServiceHandler({
     required ExternalPluginRuntimeServiceEndpoint endpoint,
     MethodChannel channel = const MethodChannel(defaultChannelName),
+    VeneraResolverHttpService? veneraResolverHttp,
   })  : _endpoint = endpoint,
-        _channel = channel;
+        _channel = channel,
+        _veneraResolverHttp = veneraResolverHttp ?? VeneraResolverHttpService();
 
   static const String defaultChannelName =
       'dev.zic/plugin_host_runtime_bridge';
 
   final ExternalPluginRuntimeServiceEndpoint _endpoint;
   final MethodChannel _channel;
+  final VeneraResolverHttpService _veneraResolverHttp;
 
   bool _attached = false;
   Future<void>? _detachFuture;
@@ -46,6 +51,10 @@ final class AndroidExternalPluginRuntimeServiceHandler {
       );
     }
     try {
+      if (call.method == 'veneraResolverHttpRequest' ||
+          call.method == 'veneraResolverHttpCancel') {
+        return await _veneraResolverHttp.dispatch(call);
+      }
       return await _endpoint.handle(call.method, call.arguments);
     } on ExternalPluginRuntimeServiceException catch (error) {
       throw PlatformException(code: error.code, message: error.message);
@@ -69,6 +78,7 @@ final class AndroidExternalPluginRuntimeServiceHandler {
   Future<void> _detach() async {
     _attached = false;
     _channel.setMethodCallHandler(null);
+    await _veneraResolverHttp.close();
     await _endpoint.close();
   }
 }

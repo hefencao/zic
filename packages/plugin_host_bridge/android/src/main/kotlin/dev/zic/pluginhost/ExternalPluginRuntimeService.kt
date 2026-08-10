@@ -42,7 +42,6 @@ class ExternalPluginRuntimeService : Service() {
         super.onCreate()
         AndroidWebViewProcess.configureDataDirectorySuffix("zic_plugin_runtime")
         packetStore = RuntimeServicePacketStore(applicationContext)
-        nativeDrivers = NativeExternalPluginDriverHost(applicationContext)
         packetStore.clear()
         bootstrapEngine()
     }
@@ -64,7 +63,7 @@ class ExternalPluginRuntimeService : Service() {
             "isolated plugin runtime service terminated",
         )
         runtimeChannel?.setMethodCallHandler(null)
-        nativeDrivers.close()
+        if (::nativeDrivers.isInitialized) nativeDrivers.close()
         runtimeChannel = null
         engine?.destroy()
         engine = null
@@ -82,6 +81,10 @@ class ExternalPluginRuntimeService : Service() {
             val channel = MethodChannel(
                 flutterEngine.dartExecutor.binaryMessenger,
                 RUNTIME_CHANNEL_NAME,
+            )
+            nativeDrivers = NativeExternalPluginDriverHost(
+                applicationContext,
+                veneraResolverHttp = DartRhttpVeneraResolverTransport(channel),
             )
             channel.setMethodCallHandler { call, result ->
                 when {
