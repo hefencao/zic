@@ -11,14 +11,24 @@ import 'source_progress.dart';
 
 const int _validatorlessResumeProbeBytes = 64 * 1024;
 
+typedef FullBodyCatchupPermission = bool Function(int preservedLength);
+
+final class DownloadCatchupDeferred implements Exception {
+  const DownloadCatchupDeferred({required this.preservedLength});
+
+  final int preservedLength;
+}
+
 final class DownloadJob {
   const DownloadJob({
     required this.transport,
     required this.session,
+    this.allowFullBodyCatchup,
   });
 
   final Transport transport;
   final DownloadSession session;
+  final FullBodyCatchupPermission? allowFullBodyCatchup;
 
   Future<DownloadSnapshot> run({
     String? expectedChecksum,
@@ -71,7 +81,8 @@ final class DownloadJob {
     ByteResponse response;
     cancel?.throwIfCancelled();
     if (start > 0 && !session.validators.canResume) {
-      if (preservedTotalLength != null && preservedTotalLength >= start) {
+      if (preservedTotalLength != null &&
+          preservedTotalLength >= start) {
         probeBytes = start < _validatorlessResumeProbeBytes
             ? start
             : _validatorlessResumeProbeBytes;
@@ -84,6 +95,18 @@ final class DownloadJob {
         if (usableProbe) {
           validatorlessRangeProbe = true;
         } else if (response.statusCode == 200 && response.rangeStart == 0) {
+          await _deferCostlyFullBodyCatchupIfNeeded(
+            preservedLength: preservedLength,
+            cancel: cancel,
+            response: response,
+            diagnostics: <String, Object?>{
+              'resumeProbeStart': probeStart,
+              'resumeProbeBytes': probeBytes,
+              'resumeProbeStatusCode': response.statusCode,
+              'resumeProbeAccepted': false,
+              'fullBodyResponseReused': true,
+            },
+          );
           fullBodyCatchup = true;
           session.recordResume(
             restarted: true,
@@ -102,6 +125,16 @@ final class DownloadJob {
           final probeStatusCode = response.statusCode;
           await response.discard();
           cancel?.throwIfCancelled();
+          await _deferCostlyFullBodyCatchupIfNeeded(
+            preservedLength: preservedLength,
+            cancel: cancel,
+            diagnostics: <String, Object?>{
+              'resumeProbeStart': probeStart,
+              'resumeProbeBytes': probeBytes,
+              'resumeProbeStatusCode': probeStatusCode,
+              'resumeProbeAccepted': false,
+            },
+          );
           response = await _open(0, cancel);
           fullBodyCatchup = true;
           session.recordResume(
@@ -119,6 +152,13 @@ final class DownloadJob {
           );
         }
       } else {
+        await _deferCostlyFullBodyCatchupIfNeeded(
+          preservedLength: preservedLength,
+          cancel: cancel,
+          diagnostics: const <String, Object?>{
+            'resumeProbeAttempted': false,
+          },
+        );
         response = await _open(0, cancel);
         fullBodyCatchup = true;
         session.recordResume(
@@ -137,6 +177,15 @@ final class DownloadJob {
       if (start > 0 &&
           response.disposition == ByteResponseDisposition.durableImmutable) {
         if (response.statusCode == 200 && response.rangeStart == 0) {
+          await _deferCostlyFullBodyCatchupIfNeeded(
+            preservedLength: preservedLength,
+            cancel: cancel,
+            response: response,
+            diagnostics: const <String, Object?>{
+              'strongRangeRejected': true,
+              'fullBodyResponseReused': true,
+            },
+          );
           fullBodyCatchup = true;
           session.recordResume(
             restarted: true,
@@ -151,6 +200,13 @@ final class DownloadJob {
         } else {
           await response.discard();
           cancel?.throwIfCancelled();
+          await _deferCostlyFullBodyCatchupIfNeeded(
+            preservedLength: preservedLength,
+            cancel: cancel,
+            diagnostics: const <String, Object?>{
+              'strongRangeRejected': true,
+            },
+          );
           response = await _open(0, cancel);
           fullBodyCatchup = true;
           session.recordResume(
@@ -184,6 +240,15 @@ final class DownloadJob {
             rethrow;
           }
           if (response.statusCode == 200 && response.rangeStart == 0) {
+            await _deferCostlyFullBodyCatchupIfNeeded(
+              preservedLength: preservedLength,
+              cancel: cancel,
+              response: response,
+              diagnostics: const <String, Object?>{
+                'strongRangeRejected': true,
+                'fullBodyResponseReused': true,
+              },
+            );
             fullBodyCatchup = true;
             session.recordResume(
               restarted: true,
@@ -198,6 +263,13 @@ final class DownloadJob {
           } else {
             await response.discard();
             cancel?.throwIfCancelled();
+            await _deferCostlyFullBodyCatchupIfNeeded(
+              preservedLength: preservedLength,
+              cancel: cancel,
+              diagnostics: const <String, Object?>{
+                'strongRangeRejected': true,
+              },
+            );
             response = await _open(0, cancel);
             fullBodyCatchup = true;
             session.recordResume(
@@ -526,6 +598,34 @@ final class DownloadJob {
     return const <int>[];
   }
 
+
+  Future<void> _deferCostlyFullBodyCatchupIfNeeded({
+    required int preservedLength,
+    CancelToken? cancel,
+    ByteResponse? response,
+    Map<String, Object?> diagnostics = const <String, Object?>{},
+  }) async {
+    final allowed = allowFullBodyCatchup?.call(preservedLength) ?? true;
+    if (allowed) {
+      return;
+    }
+    if (response != null) {
+      await response.discard();
+    }
+    session.recordResume(
+      restarted: true,
+      strategy: 'full-body-prefix-catchup-deferred',
+      playablePrefixPreserved: true,
+      diagnostics: <String, Object?>{
+        'deferredPrefixBytes': preservedLength,
+        if (cancel != null) 'deferredPriority': cancel.priority,
+        'duplicatePrefixBytes': 0,
+        ...diagnostics,
+      },
+    );
+    session.deferNetwork(reason: 'costly-full-body-catchup');
+    throw DownloadCatchupDeferred(preservedLength: preservedLength);
+  }
 
   String _residentSourceFor(Uri uri) {
     final scheme = uri.scheme.toLowerCase();

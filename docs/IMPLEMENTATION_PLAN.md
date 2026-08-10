@@ -1,6 +1,6 @@
 # zic Implementation Plan
 
-- dev.198 以 dev.197 为唯一基线，只恢复product-safe rhttp观测：普通release默认输出HTTP version、匿名remote-IP hash与receive-progress-enabled标记；高频`onReceiveProgress`仍默认关闭，仅`ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS=1`诊断构建显式启用。下一份普通trace先按endpoint比较current/background吞吐；只有同endpoint仍异常时才使用progress诊断构建区分native receive与Dart delivery。不得据此直接改变NetLane、network=5、Range/resume或transport framing。
+- dev.199 以 dev.198 为唯一基线，只收敛服务器忽略Range后的高成本full-body catch-up：Range probe继续允许；当必须full-body、已保留partial>=1MiB且动态TaskControl priority<820时，由sessions/LiveCoordinator defer网络attempt并原样保留artifact/Ingress；priority升到>=820后重新提交。不得持久化endpoint Range能力，也不得读取endpoint hash、`duplicatePrefixBytes`或播放状态形成policy；network=5、Reader窗口、Range continuity与播放authority保持。
 ## P0：Partial authority 单调性真机闭环
 - dev.195 的playable partial单调性继续冻结：Range probe/full-body catch-up的取消、EOF或mismatch只能失败当前 network attempt，旧partial/Ingress不变；metadata损坏只丢网络知识。dev.196不改DownloadSession authority、DecodeSession、NetLane、network=5、1000/780、7/3、2/1、7/5/3/2，也不增加bandwidth scheduler/framing。
 ## P0：Current / Previous 真实执行槽真机闭环

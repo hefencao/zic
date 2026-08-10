@@ -1,6 +1,6 @@
-# dev.198 后续交接
-唯一后续基线：`zic_v0.31.0-dev.198_product-safe-rhttp-endpoint-diagnostics.zip`。
-`dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197只压缩Debug Trace导出；dev.198仅恢复product-safe rhttp endpoint观测与显式receive-progress诊断构建，不改变下载、播放或NetLane策略。
+# dev.199 后续交接
+唯一后续基线：`zic_v0.31.0-dev.199_cost-aware-full-body-catchup-admission.zip`。
+`dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197只压缩Debug Trace导出，dev.198恢复product-safe rhttp endpoint观测；dev.199只在sessions内defer低优先级大partial的高成本full-body catch-up，不改变播放authority、Reader/Pipeline或NetLane并发策略。
 ## 必读
 1. `AGENTS.md`
 2. 本文件
@@ -19,7 +19,7 @@
 15. `docs/adr/0149-retained-artwork-persistence-and-invalidation-boundary.md`
 16. `docs/adr/0150-source-browse-cover-and-filter-presentation-boundary.md`
 17. `docs/adr/0152-mihon-source-filter-schema-state-ownership.md`
-18. `docs/adr/0153-mihon-cleartext-media-and-download-retry-ownership.md`、`docs/adr/0178-semantic-debug-trace-export-compaction.md`、`docs/audits/dev197-trace-volume-root-cause-audit.md`、`docs/audits/dev197-validation-results.md`、`docs/adr/0179-product-safe-rhttp-endpoint-diagnostics.md`、`docs/audits/dev198-rhttp-endpoint-diagnostics-root-cause-audit.md`、`docs/audits/dev198-validation-results.md`
+18. `docs/adr/0153-mihon-cleartext-media-and-download-retry-ownership.md`、`docs/adr/0178-semantic-debug-trace-export-compaction.md`、`docs/audits/dev197-trace-volume-root-cause-audit.md`、`docs/adr/0179-product-safe-rhttp-endpoint-diagnostics.md`、`docs/audits/dev198-rhttp-endpoint-diagnostics-root-cause-audit.md`、`docs/adr/0180-cost-aware-full-body-catchup-admission.md`、`docs/audits/dev199-full-body-catchup-root-cause-audit.md`、`docs/audits/dev199-validation-results.md`
 19. `docs/adr/0154-source-filter-view-shelf-projection-download-feedback.md`
 20. `docs/adr/0155-external-browse-runtime-protocol-field-ownership.md`
 21. `docs/adr/0156-source-migration-version-view-and-update-badge-ownership.md`
@@ -60,8 +60,8 @@
 - Native identity保持 `zic-media-core-dev134-abi6-lib00121400`。
 - production rhttp direct在普通release默认记录每response一次的HTTP version、匿名remote-IP hash与receive-progress-enabled标记；高频`onReceiveProgress`仅non-product或显式`ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS=1`诊断构建启用。该观测不得反馈给NetLane/Reader/retry/cache/framing。
 ## 下一步真机优先验证
-- dev.197 后续真机trace优先先用`python3 tool/filter_debug_trace.py <trace.jsonl> --profile network -o <trace.network.jsonl>`裁剪网络证据；若分析播放则用`--profile playback`，错误定位可用`--profile failures`。原始trace仍保留，过滤结果不是业务事实来源。
-- dev.196 Range修复在05:28 trace已确认：可归账origin body约177.60MB、`duplicatePrefixBytes`约3.00MB（1.7%），3次strong-validator resume均direct 206；剩余大额fallback来自服务器忽略Range且随后用户远跳，旧catch-up被迅速取消。除非新证据显示重复重新放大，不新增restart-cost scheduler。
+- dev.199 后续真机trace仍优先用`python3 tool/filter_debug_trace.py <trace.jsonl> --profile network -o <trace.network.jsonl>`裁剪；重点看`full-body-prefix-catchup-deferred`是否只出现在partial>=1MiB且priority<820，以及需求升到820+后是否重新probe/继续下载。过滤结果不是业务事实来源。
+- 07:51 dev.198 trace已确认Range成功路径仍正确，但full-body fallback重复重新放大到约19.2MiB/123.2MiB（15.6%），多数发生在760/780/800背景角色；dev.199只阻止这类低优先级大partial从0反复重读。820/900/1000、小partial和合法206必须保持原行为，不把defer扩展成通用restart-cost scheduler。
 - 首先复测快速前后翻页：dev.185外层previous admission应继续保持毫秒级；dev.189应确认780↔900不再导致plan取消，只有waiter真正晋升current=1000时才触发动态pressure，并确认旧JS未`finished(requestId)`前新plan绝不并发进入。无真实pressure时`receivingRetained=true` priority0仍应短时复用。
 - 真机首要复测 current 首帧稳定性：观察 policyDecision 的 staticWarmDecodes/uploads 是否收敛到稳定decode角色/真实可见页，current浅水位期间是否停止 speculative neighbor refill，以及decode/upload current handoff是否避免后台长任务阻塞。
 - 最终图片慢流先用普通release按`sourceHostHttpVersion/sourceHostRemoteIpHash`分组比较`streamMicros/maxChunkGapMicros`；若同endpoint仍无法解释current异常，再用`ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS=1`诊断构建比较`sourceRhttpProgressMaxGapMicros/sourceRhttpProgressLeadBytesMax/sourceRhttpBodyMaxGapMicros`。progress与body同步长gap优先视为源/CDN/HTTP；progress明显领先body才下钻rhttp→Dart delivery/backpressure。只有确认并发active streams伤害current且pause真实反压网络后，才设计NetLane-owned transfer pressure。

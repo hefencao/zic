@@ -211,6 +211,72 @@ void main() {
     expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
   });
 
+  test('large background full-body catchup defers after range is ignored',
+      () async {
+    final bytes = <int>[
+      ...'RIFF'.codeUnits,
+      0, 0, 0, 0,
+      ...'WEBP'.codeUnits,
+      ...List<int>.generate(2 * 1024 * 1024, (index) => index & 0xff),
+    ];
+    final session = createSession();
+    final broken = FakeTransport(
+      bytes: bytes,
+      chunkSize: 16 * 1024,
+      failAfterBytes: 1536 * 1024,
+      validators: const Validators(),
+    );
+    await expectLater(
+      DownloadJob(transport: broken, session: session).run(),
+      throwsA(isA<Failure>()),
+    );
+    final preservedLength = session.committedLength;
+    expect(preservedLength, greaterThanOrEqualTo(1024 * 1024));
+
+    final ignoredRange = FakeTransport(
+      bytes: bytes,
+      chunkSize: 16 * 1024,
+      rangeSupported: false,
+      validators: const Validators(),
+    );
+    await expectLater(
+      DownloadJob(
+        transport: ignoredRange,
+        session: session,
+        allowFullBodyCatchup: (_) => false,
+      ).run(cancel: CancelToken(priority: 800)),
+      throwsA(isA<DownloadCatchupDeferred>()),
+    );
+
+    expect(ignoredRange.requests, hasLength(1));
+    expect(
+      ignoredRange.requests.single.range?.start,
+      preservedLength - 64 * 1024,
+    );
+    expect(ignoredRange.discardCount, 1);
+    expect(session.committedLength, preservedLength);
+    expect(session.state, DownloadState.idle);
+
+    final foreground = FakeTransport(
+      bytes: bytes,
+      chunkSize: 16 * 1024,
+      rangeSupported: false,
+      validators: const Validators(),
+    );
+    final result = await DownloadJob(
+      transport: foreground,
+      session: session,
+      allowFullBodyCatchup: (_) => true,
+    ).run(cancel: CancelToken(priority: 820));
+    expect(foreground.requests, hasLength(1));
+    expect(
+      foreground.requests.single.range?.start,
+      preservedLength - 64 * 1024,
+    );
+    expect(result.state, DownloadState.promoted);
+    expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
+  });
+
   test('validatorless overlap mismatch preserves the existing playable partial', () async {
     final bytes = <int>[
       ...'RIFF'.codeUnits,

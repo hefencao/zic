@@ -1,3 +1,10 @@
+## 0.31.0-dev.199：大 partial 的成本感知 full-body catch-up admission
+
+- 07:51 dev.198 trace 中 strong-validator Range 仍保持 direct 206 且重复前缀为0，但服务器忽略 Range 后的 full-body catch-up 再次把重复前缀推高到约19.2MiB/123.2MiB（15.6%）；多数高成本 fallback 在 priority 760/780/800 的背景或邻近预取角色启动。
+- sessions 现在只对“必须 full-body 且已保留 partial >=1MiB”的高重启成本路径增加 admission：动态 TaskControl priority <820 时保留 artifact/Ingress 并 defer，不读取 full body；priority 升到 next/visible/current 的 >=820 后由同一 LiveCoordinator 重新提交。小于1MiB的 partial 继续允许背景 catch-up。
+- Range probe 本身仍允许，且不持久化“endpoint不支持Range”能力：低优先级首次 probe 返回200后 defer；升到820+后重新 probe，若路由/endpoint 已能206则直接Range续传，否则复用同一个200 response做dev.196既有 full-prefix CRC catch-up。defer不建立第二个scheduler、不改变network=5/Reader窗口/播放authority，也不读取endpoint hash、`duplicatePrefixBytes`等诊断形成policy。
+- 新增 ADR0180、dev.199 root-cause/validation audit与 DownloadJob/LiveCoordinator 回归契约；`tool/check.sh`同时补回既有dev.198 gate并加入dev.199 gate。
+
 ## 0.31.0-dev.198：product-safe rhttp endpoint 观测与显式 receive-progress 诊断构建
 
 - 06:36 dev.197 trace已缩到约1.27MB/3287 events；可归账origin body约101.6MiB，`duplicatePrefixBytes`约4.32MiB（4.25%）。2次strong-validator resume仍为direct 206；剩余重复来自服务器忽略Range后的full-prefix fallback。current=1000的Venera gate wait中位接近0，且body并发越高聚合吞吐仍上升，因此不降低network=5、不新增current独占带宽。

@@ -102,6 +102,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final Map<DownloadId, int> _downloadRetryRounds = <DownloadId, int>{};
   final Set<DownloadId> _downloadRetryPending = <DownloadId>{};
   final Set<DownloadId> _downloadTerminalFailures = <DownloadId>{};
+  final Set<DownloadId> _downloadDeferred = <DownloadId>{};
   final Map<DecodeId, DecodeDemand> _decodes = <DecodeId, DecodeDemand>{};
   final Map<DecodeId, int> _decodeDemandRevisions = <DecodeId, int>{};
   final Map<DecodeId, UploadDemand> _uploads = <DecodeId, UploadDemand>{};
@@ -252,6 +253,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _downloadRetryRounds.clear();
     _downloadRetryPending.clear();
     _downloadTerminalFailures.clear();
+    _downloadDeferred.clear();
     decode.cancelAll();
     upload.cancelAll();
     _downloads.clear();
@@ -313,6 +315,12 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         _downloadRetryRounds.remove(entry.key);
         _downloadRetryPending.remove(entry.key);
         _downloadTerminalFailures.remove(entry.key);
+        if (_allowsCostlyFullBodyCatchup(
+          priority: entry.value.priority,
+          preservedLength: session.committedLength,
+        )) {
+          _downloadDeferred.remove(entry.key);
+        }
       }
       _watchSource(sessionId, entry.key, session);
     }
@@ -375,6 +383,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         session.activeRun ||
         _downloadRetryPending.contains(id) ||
         _downloadTerminalFailures.contains(id) ||
+        _downloadDeferred.contains(id) ||
         (_downloadRetryRounds[id] ?? 0) > _maxDownloadRetryRounds) {
       return;
     }
@@ -402,6 +411,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _downloadRetryRounds.remove(id);
     _downloadRetryPending.remove(id);
     _downloadTerminalFailures.remove(id);
+    _downloadDeferred.remove(id);
   }
 
   void _watchSource(
@@ -482,11 +492,28 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           await DownloadJob(
             transport: transportFor(id.canonicalUri),
             session: session,
+            allowFullBodyCatchup: (preservedLength) =>
+                _allowsCostlyFullBodyCatchup(
+              priority: token.priority,
+              preservedLength: preservedLength,
+            ),
           ).run(cancel: token);
           _downloadRetryRounds.remove(id);
           _downloadRetryPending.remove(id);
           _downloadTerminalFailures.remove(id);
           _wakeDecodesForSource(sessionId, id);
+          return;
+        } on DownloadCatchupDeferred {
+          final currentDemand = _downloads[id];
+          if (currentDemand != null &&
+              _allowsCostlyFullBodyCatchup(
+                priority: currentDemand.priority,
+                preservedLength: session.committedLength,
+              )) {
+            _downloadDeferred.remove(id);
+          } else {
+            _downloadDeferred.add(id);
+          }
           return;
         } on Object catch (error) {
           if (!retry.allows(error, attempt)) {
@@ -554,6 +581,16 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         });
       }
     }
+  }
+
+  bool _allowsCostlyFullBodyCatchup({
+    required int priority,
+    required int preservedLength,
+  }) {
+    const largePrefixBytes = 1024 * 1024;
+    const foregroundAdjacentPriorityFloor = 820;
+    return preservedLength < largePrefixBytes ||
+        priority >= foregroundAdjacentPriorityFloor;
   }
 
   bool _scheduleDownloadRetry(

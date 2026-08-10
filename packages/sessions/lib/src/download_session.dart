@@ -558,6 +558,24 @@ final class DownloadSession {
     _notifySnapshot();
   }
 
+  void deferNetwork({required String reason}) {
+    _requireNotDisposed();
+    _requireState(<DownloadState>{DownloadState.queued});
+    _flushCommittedTrace();
+    _state = DownloadState.idle;
+    _failure = null;
+    _emit(
+      TraceEventKind.downloadState,
+      <String, Object?>{
+        'state': _state.name,
+        'deferred': true,
+        'reason': reason,
+        'committedLength': committedLength,
+      },
+    );
+    _notifySnapshot();
+  }
+
   void recordResume({
     required bool restarted,
     String? strategy,
