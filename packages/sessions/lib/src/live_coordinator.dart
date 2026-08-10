@@ -102,7 +102,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final Map<DownloadId, int> _downloadRetryRounds = <DownloadId, int>{};
   final Set<DownloadId> _downloadRetryPending = <DownloadId>{};
   final Set<DownloadId> _downloadTerminalFailures = <DownloadId>{};
-  final Set<DownloadId> _downloadDeferred = <DownloadId>{};
+  final Map<DownloadId, int> _downloadDeferredAtLength = <DownloadId, int>{};
   final Map<DecodeId, DecodeDemand> _decodes = <DecodeId, DecodeDemand>{};
   final Map<DecodeId, int> _decodeDemandRevisions = <DecodeId, int>{};
   final Map<DecodeId, UploadDemand> _uploads = <DecodeId, UploadDemand>{};
@@ -253,7 +253,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _downloadRetryRounds.clear();
     _downloadRetryPending.clear();
     _downloadTerminalFailures.clear();
-    _downloadDeferred.clear();
+    _downloadDeferredAtLength.clear();
     decode.cancelAll();
     upload.cancelAll();
     _downloads.clear();
@@ -315,11 +315,15 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         _downloadRetryRounds.remove(entry.key);
         _downloadRetryPending.remove(entry.key);
         _downloadTerminalFailures.remove(entry.key);
-        if (_allowsCostlyFullBodyCatchup(
-          priority: entry.value.priority,
-          preservedLength: session.committedLength,
-        )) {
-          _downloadDeferred.remove(entry.key);
+        final deferredAtLength = _downloadDeferredAtLength[entry.key];
+        final deferredStillMatches =
+            deferredAtLength == session.committedLength;
+        if (!deferredStillMatches ||
+            _allowsCostlyFullBodyCatchup(
+              priority: entry.value.priority,
+              preservedLength: session.committedLength,
+            )) {
+          _downloadDeferredAtLength.remove(entry.key);
         }
       }
       _watchSource(sessionId, entry.key, session);
@@ -383,7 +387,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         session.activeRun ||
         _downloadRetryPending.contains(id) ||
         _downloadTerminalFailures.contains(id) ||
-        _downloadDeferred.contains(id) ||
+        (_downloadDeferredAtLength[id] == session.committedLength &&
+            !_allowsCostlyFullBodyCatchup(
+              priority: demand.priority,
+              preservedLength: session.committedLength,
+            )) ||
         (_downloadRetryRounds[id] ?? 0) > _maxDownloadRetryRounds) {
       return;
     }
@@ -411,7 +419,14 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _downloadRetryRounds.remove(id);
     _downloadRetryPending.remove(id);
     _downloadTerminalFailures.remove(id);
-    _downloadDeferred.remove(id);
+    final deferredAtLength = _downloadDeferredAtLength[id];
+    final preserveDeferred =
+        session != null &&
+        session.state == DownloadState.idle &&
+        deferredAtLength == session.committedLength;
+    if (!preserveDeferred) {
+      _downloadDeferredAtLength.remove(id);
+    }
   }
 
   void _watchSource(
@@ -501,6 +516,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           _downloadRetryRounds.remove(id);
           _downloadRetryPending.remove(id);
           _downloadTerminalFailures.remove(id);
+          _downloadDeferredAtLength.remove(id);
           _wakeDecodesForSource(sessionId, id);
           return;
         } on DownloadCatchupDeferred {
@@ -510,9 +526,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
                 priority: currentDemand.priority,
                 preservedLength: session.committedLength,
               )) {
-            _downloadDeferred.remove(id);
+            _downloadDeferredAtLength.remove(id);
           } else {
-            _downloadDeferred.add(id);
+            _downloadDeferredAtLength[id] = session.committedLength;
           }
           return;
         } on Object catch (error) {
@@ -588,9 +604,16 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     required int preservedLength,
   }) {
     const largePrefixBytes = 1024 * 1024;
+    const veryLargePrefixBytes = 8 * 1024 * 1024;
     const foregroundAdjacentPriorityFloor = 820;
-    return preservedLength < largePrefixBytes ||
-        priority >= foregroundAdjacentPriorityFloor;
+    const visibleTransitionPriorityFloor = 900;
+    if (preservedLength < largePrefixBytes) {
+      return true;
+    }
+    if (preservedLength >= veryLargePrefixBytes) {
+      return priority >= visibleTransitionPriorityFloor;
+    }
+    return priority >= foregroundAdjacentPriorityFloor;
   }
 
   bool _scheduleDownloadRetry(

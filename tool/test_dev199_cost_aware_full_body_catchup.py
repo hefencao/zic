@@ -36,8 +36,8 @@ for token in (
         raise SystemExit(f'dev.199 DownloadSession defer contract missing: {token}')
 
 for token in (
-    'final Set<DownloadId> _downloadDeferred = <DownloadId>{};',
-    '_downloadDeferred.contains(id)',
+    'final Map<DownloadId, int> _downloadDeferredAtLength = <DownloadId, int>{};',
+    '_downloadDeferredAtLength[id] == session.committedLength',
     'on DownloadCatchupDeferred',
     'const largePrefixBytes = 1024 * 1024;',
     'const foregroundAdjacentPriorityFloor = 820;',

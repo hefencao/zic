@@ -1,6 +1,6 @@
-# dev.199 后续交接
-唯一后续基线：`zic_v0.31.0-dev.199_cost-aware-full-body-catchup-admission.zip`。
-`dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197只压缩Debug Trace导出，dev.198恢复product-safe rhttp endpoint观测；dev.199只在sessions内defer低优先级大partial的高成本full-body catch-up，不改变播放authority、Reader/Pipeline或NetLane并发策略。
+# dev.200 后续交接
+唯一后续基线：`zic_v0.31.0-dev.200_deferred-catchup-memory-two-tier-cost.zip`。
+`dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`
 2. 本文件
@@ -19,7 +19,7 @@
 15. `docs/adr/0149-retained-artwork-persistence-and-invalidation-boundary.md`
 16. `docs/adr/0150-source-browse-cover-and-filter-presentation-boundary.md`
 17. `docs/adr/0152-mihon-source-filter-schema-state-ownership.md`
-18. `docs/adr/0153-mihon-cleartext-media-and-download-retry-ownership.md`、`docs/adr/0178-semantic-debug-trace-export-compaction.md`、`docs/audits/dev197-trace-volume-root-cause-audit.md`、`docs/adr/0179-product-safe-rhttp-endpoint-diagnostics.md`、`docs/audits/dev198-rhttp-endpoint-diagnostics-root-cause-audit.md`、`docs/adr/0180-cost-aware-full-body-catchup-admission.md`、`docs/audits/dev199-full-body-catchup-root-cause-audit.md`、`docs/audits/dev199-validation-results.md`
+18. `docs/adr/0153-mihon-cleartext-media-and-download-retry-ownership.md`、`docs/adr/0178-semantic-debug-trace-export-compaction.md`、`docs/audits/dev197-trace-volume-root-cause-audit.md`、`docs/adr/0179-product-safe-rhttp-endpoint-diagnostics.md`、`docs/audits/dev198-rhttp-endpoint-diagnostics-root-cause-audit.md`、`docs/adr/0180-cost-aware-full-body-catchup-admission.md`、`docs/audits/dev199-full-body-catchup-root-cause-audit.md`、`docs/audits/dev199-validation-results.md`、`docs/adr/0181-deferred-catchup-memory-and-two-tier-cost.md`、`docs/audits/dev200-dev199-defer-lifetime-two-tier-cost-audit.md`、`docs/audits/dev200-validation-results.md`
 19. `docs/adr/0154-source-filter-view-shelf-projection-download-feedback.md`
 20. `docs/adr/0155-external-browse-runtime-protocol-field-ownership.md`
 21. `docs/adr/0156-source-migration-version-view-and-update-badge-ownership.md`

@@ -1,3 +1,10 @@
+## 0.31.0-dev.200：defer跨demand记忆与very-large partial两级成本
+
+- 08:46 dev.199真机trace中45条origin body约245.59MiB，重复前缀约40.96MiB（16.68%）；6次strong-validator Range继续206/direct/duplicate=0。dev.199低priority defer已能阻止full body，但同一5.43MiB page在三个独立780 demand窗口仍重复probe→200→defer，11.95MiB page也出现两次，说明defer随tracking retire被遗忘。
+- `_downloadDeferred`改为`DownloadId -> committedLength`：idle partial未增长时，低priority demand完整detach/re-add仍保持defer，不再重新联网；partial增长、成功/promotion/dispose或priority达到当前成本门槛时清除并重新probe。它不是endpoint能力，不写入disk。
+- full-body admission改为两级：1–8MiB partial仍允许next=820；>=8MiB very-large partial必须transition/current的>=900。当前trace中820路径约18.86MiB重复里，单个9.14MiB partial的abort+完成贡献约13.57MiB；该路径在dev.200会等到900+再承担整段重读。
+- DownloadJob Range/CRC continuity、DownloadSession playable authority、Reader/Pipeline、NetLane/network=5、Venera/Mihon与endpoint diagnostics均不改变。新增ADR0181、dev.200 audit/gate与detach/re-add、8MiB两级行为回归。
+
 ## 0.31.0-dev.199：大 partial 的成本感知 full-body catch-up admission
 
 - 07:51 dev.198 trace 中 strong-validator Range 仍保持 direct 206 且重复前缀为0，但服务器忽略 Range 后的 full-body catch-up 再次把重复前缀推高到约19.2MiB/123.2MiB（15.6%）；多数高成本 fallback 在 priority 760/780/800 的背景或邻近预取角色启动。

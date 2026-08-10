@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
 import 'package:media/media.dart';
@@ -196,6 +197,42 @@ void main() {
     await coordinator.idle();
     expect(transport.requests, hasLength(1));
 
+    final detached = DemandPlan(
+      revision: 3,
+      downloads: const <DownloadId, DownloadDemand>{},
+      decodes: const <DecodeId, DecodeDemand>{},
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: const <ResourceId>{},
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: detached,
+        diff: DemandDiff.between(stillBackground, detached),
+        window: RoleWindow(const <int, PageRole>{}),
+      ),
+    );
+    await coordinator.idle();
+    expect(transport.requests, hasLength(1));
+
+    final readdedBackground = DemandPlan(
+      revision: 4,
+      downloads: const <DownloadId, DownloadDemand>{id: stillBackgroundDemand},
+      decodes: const <DecodeId, DecodeDemand>{},
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: const <ResourceId>{ResourceId.download(id)},
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: readdedBackground,
+        diff: DemandDiff.between(detached, readdedBackground),
+        window: RoleWindow(const <int, PageRole>{-1: PageRole.previous}),
+      ),
+    );
+    await coordinator.idle();
+    expect(transport.requests, hasLength(1));
+
     const foregroundDemand = DownloadDemand(
       role: PageRole.next,
       priority: 820,
@@ -203,7 +240,7 @@ void main() {
       expirationRevision: 10,
     );
     final foreground = DemandPlan(
-      revision: 3,
+      revision: 5,
       downloads: <DownloadId, DownloadDemand>{id: foregroundDemand},
       decodes: const <DecodeId, DecodeDemand>{},
       uploads: const <DecodeId, UploadDemand>{},
@@ -213,7 +250,7 @@ void main() {
       'reader',
       PipelineDelta(
         plan: foreground,
-        diff: DemandDiff.between(stillBackground, foreground),
+        diff: DemandDiff.between(readdedBackground, foreground),
         window: RoleWindow(const <int, PageRole>{1: PageRole.next}),
       ),
     );
@@ -223,6 +260,116 @@ void main() {
       transport.requests[1].range?.start,
       preservedLength - 64 * 1024,
     );
+    expect(session.state, DownloadState.promoted);
+    expect(await File(session.artifact.finalPath).readAsBytes(), bytes);
+  });
+
+  test('very large unsupported-range partial waits for transition demand',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('live_catchup_tier_test_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'catchup-tier',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/catchup-tier.webp'),
+    );
+    final index = MemIndex();
+    await index.open();
+    addTearDown(index.close);
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+      index: index,
+    );
+    addTearDown(registry.dispose);
+    final session = registry.get(id);
+    final bytes = Uint8List(9 * 1024 * 1024 + 256 * 1024);
+    bytes.setAll(0, 'RIFF'.codeUnits);
+    bytes.setAll(8, 'WEBP'.codeUnits);
+    await expectLater(
+      DownloadJob(
+        transport: FakeTransport(
+          bytes: bytes,
+          chunkSize: 256 * 1024,
+          failAfterBytes: 8 * 1024 * 1024 + 128 * 1024,
+          validators: const Validators(),
+        ),
+        session: session,
+      ).run(),
+      throwsA(isA<Failure>()),
+    );
+    final preservedLength = session.committedLength;
+    expect(preservedLength, greaterThanOrEqualTo(8 * 1024 * 1024));
+
+    final transport = FakeTransport(
+      bytes: bytes,
+      chunkSize: 256 * 1024,
+      rangeSupported: false,
+      validators: const Validators(),
+    );
+    final coordinator = LiveCoordinator(
+      registry: registry,
+      transportFor: (_) => transport,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(coordinator.dispose);
+
+    const nextDemand = DownloadDemand(
+      role: PageRole.next,
+      priority: 820,
+      reason: 'very-large-catchup-next',
+      expirationRevision: 8,
+    );
+    final next = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{id: nextDemand},
+      decodes: const <DecodeId, DecodeDemand>{},
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{ResourceId.download(id)},
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: next,
+        diff: DemandDiff.between(DemandPlan.empty(), next),
+        window: RoleWindow(const <int, PageRole>{1: PageRole.next}),
+      ),
+    );
+    await coordinator.idle();
+    expect(transport.requests, hasLength(1));
+    expect(session.state, DownloadState.idle);
+    expect(session.committedLength, preservedLength);
+
+    const transitionDemand = DownloadDemand(
+      role: PageRole.transition,
+      priority: 900,
+      reason: 'very-large-catchup-transition',
+      expirationRevision: 9,
+    );
+    final transition = DemandPlan(
+      revision: 2,
+      downloads: <DownloadId, DownloadDemand>{id: transitionDemand},
+      decodes: const <DecodeId, DecodeDemand>{},
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{ResourceId.download(id)},
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: transition,
+        diff: DemandDiff.between(next, transition),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.transition}),
+      ),
+    );
+    await coordinator.idle();
+    expect(transport.requests, hasLength(2));
     expect(session.state, DownloadState.promoted);
     expect(await File(session.artifact.finalPath).readAsBytes(), bytes);
   });
