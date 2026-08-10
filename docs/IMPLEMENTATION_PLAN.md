@@ -1,4 +1,4 @@
-- dev.202 以dev.201真机`downloadPreempted`验证restart-cost economics：固定+100在base=0时失真，改为0..1成本score按比例占据base→current-safe ceiling的剩余rank空间。先验证高成本retained-background会让位于更便宜victim而非自动被杀，同时1000 current不退化；另行分析request-plan cache miss首帧尾延迟，不在本轮叠加网络策略。
+- dev.203 撤销 dev.202 的 base→current-safe headroom retention，恢复 dev.201 已获较好真机体感的 bounded +100 restart-cost victim bonus；先验证体感恢复。11:26 Trace 的 6.84s 首帧尾延迟明确属于 sourceWait/request-plan/host-open 独立问题，本轮不混改 Venera。
 # zic Implementation Plan
 
 ## P0：Partial authority 单调性真机闭环

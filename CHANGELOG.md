@@ -1,3 +1,9 @@
+## 0.31.0-dev.203：bounded restart-cost retention rollback
+
+- 真机反馈显示dev.202体感较dev.201退化；对照Trace中典型首帧中位未恶化，但最坏尾部由约2.86s扩大到6.84s，主导为current sourceWait/request-plan/host-open。
+- 撤销dev.202的base→current-safe headroom投影，精确恢复dev.201时间最多+60/流量最多+40的bounded restart-cost victim bonus；admission priority、restart-cost事实与downloadPreempted观测保持。
+- dev.202 ADR标记Superseded；Venera source-plan/host-open冷尾延迟单独记录，dev.203不混改第二条因果链。
+
 ## 0.31.0-dev.202：restart-cost headroom retention
 
 - dev.201固定最多+100的victim bonus改为0..1 restart-cost score占据base→current-safe ceiling的剩余rank空间，修复logical detach降base=0后高重做成本仍几乎无保护的问题。

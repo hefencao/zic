@@ -2,7 +2,7 @@
 
 ## 状态
 
-Accepted。替代 ADR 0182 中“时间最多+60、流量最多+40，固定最多+100”的 rank 投影方式；ADR 0182 的 ownership、事实来源、admission/retention 分层与 current-safe 原则继续有效。
+Superseded by ADR 0184。保留 dev.202 的实验与失败证据；production 已恢复 ADR 0182 的 bounded +100 retention 投影。
 
 ## 问题
 

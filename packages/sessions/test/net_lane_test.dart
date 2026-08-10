@@ -745,72 +745,6 @@ void _dev123NetLaneTests() {
     await lane.idle();
   });
 
-  test('restart cost remains economically meaningful after priority drops to zero',
-      () async {
-    final clock = FakeMonoClock();
-    final lane = NetLane(
-      maxActive: 2,
-      highPriorityThreshold: 1000,
-      preemptionThreshold: 40,
-      pressurePreemptionPriorityFloor: 780,
-      clock: clock,
-    );
-    late CancelToken retainedToken;
-    late CancelToken cheapToken;
-    final retainedRelease = Completer<void>();
-    final cheapCancelled = Completer<void>();
-    final incomingStarted = Completer<void>();
-
-    lane.submitRanked(
-      key: 'retained-invested',
-      priority: 780,
-      bucket: 'remote:a',
-      bucketLimit: 2,
-      task: (token) async {
-        retainedToken = token;
-        token.beginRestartCost();
-        token.recordRestartCostBytes(6292600);
-        await Future.any<void>(<Future<void>>[
-          token.whenCancelled,
-          retainedRelease.future,
-        ]);
-      },
-    );
-    lane.submitRanked(
-      key: 'cheap-640',
-      priority: 640,
-      bucket: 'remote:a',
-      bucketLimit: 2,
-      task: (token) async {
-        cheapToken = token;
-        await token.whenCancelled;
-        cheapCancelled.complete();
-      },
-    );
-    await Future<void>.delayed(Duration.zero);
-    clock.advance(const Duration(microseconds: 5879524));
-    expect(lane.updatePriority('retained-invested', 0), isTrue);
-
-    lane.submitRanked(
-      key: 'incoming-800',
-      priority: 800,
-      bucket: 'remote:a',
-      bucketLimit: 2,
-      task: (_) async {
-        incomingStarted.complete();
-      },
-    );
-
-    await cheapCancelled.future.timeout(const Duration(seconds: 1));
-    await incomingStarted.future.timeout(const Duration(seconds: 1));
-    expect(retainedToken.cancelled, isFalse);
-    expect(cheapToken.preemptionSnapshot?.basePriority, 640);
-    expect(cheapToken.preemptionSnapshot?.retentionBonus, 0);
-
-    retainedRelease.complete();
-    await lane.idle();
-  });
-
   test('current preempts even a saturated restart-cost victim', () async {
     final clock = FakeMonoClock();
     final lane = NetLane(
@@ -853,8 +787,8 @@ void _dev123NetLaneTests() {
 
     await investedCancelled.future.timeout(const Duration(seconds: 1));
     await currentStarted.future.timeout(const Duration(seconds: 1));
-    expect(investedToken.preemptionSnapshot?.retentionPriority, 960);
-    expect(investedToken.preemptionSnapshot?.retentionBonus, 180);
+    expect(investedToken.preemptionSnapshot?.retentionPriority, 880);
+    expect(investedToken.preemptionSnapshot?.retentionBonus, 100);
     await lane.idle();
   });
 
