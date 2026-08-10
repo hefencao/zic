@@ -11,6 +11,9 @@ FILTER = (ROOT / 'tool/filter_debug_trace.py').read_text()
 PUBSPEC = (ROOT / 'apps/app/pubspec.yaml').read_text()
 ANDROID = (ROOT / 'apps/app/android/zic-version.properties').read_text()
 
+build_match = re.search(r'version:\s*0\.31\.0\+(\d+)', PUBSPEC)
+build = int(build_match.group(1)) if build_match else 0
+
 required_net = (
     'beginRestartCost()',
     'recordRestartCostBytes',
@@ -18,8 +21,6 @@ required_net = (
     'restartCostBytes',
     'timeScaleMicros = 5 * 1000 * 1000',
     'byteScale = 4 * 1024 * 1024',
-    'maxTimeBonus = 60.0',
-    'maxTrafficBonus = 40.0',
     'math.exp(',
     'incoming.priority - retentionPriority < preemptionThreshold',
     'highPriorityThreshold - preemptionThreshold',
@@ -28,6 +29,14 @@ required_net = (
 for marker in required_net:
     if marker not in NET:
         raise SystemExit(f'dev.201 NetLane contract missing: {marker}')
+if build <= 203:
+    for marker in ('maxTimeBonus = 60.0', 'maxTrafficBonus = 40.0'):
+        if marker not in NET:
+            raise SystemExit(f'dev.201 bounded marker missing: {marker}')
+else:
+    for marker in ('boundedMaxBonus = 100.0', 'headroomWeight = 2.0 / 3.0'):
+        if marker not in NET:
+            raise SystemExit(f'dev.201 supersession marker missing: {marker}')
 
 for marker in (
     'if (fullBodyCatchup)',

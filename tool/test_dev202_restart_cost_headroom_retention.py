@@ -29,10 +29,7 @@ if build <= 202:
     ):
         if marker not in block:
             raise SystemExit(f'dev.202 headroom retention marker missing: {marker}')
-else:
-    # dev.203 device evidence superseded the headroom experiment. Preserve the
-    # historical docs but require the explicit rollback contract rather than
-    # forcing superseded runtime text back into production.
+elif build == 203:
     for marker in (
         'maxTimeBonus = 60.0',
         'maxTrafficBonus = 40.0',
@@ -42,6 +39,19 @@ else:
             raise SystemExit(f'dev.202 supersession rollback marker missing: {marker}')
     if not (ROOT / 'docs/adr/0184-revert-headroom-retention-and-isolate-source-tail.md').exists():
         raise SystemExit('dev.202 supersession ADR0184 missing')
+else:
+    for marker in (
+        'timeWeight = 0.60',
+        'trafficWeight = 0.40',
+        'boundedMaxBonus = 100.0',
+        'headroomWeight = 2.0 / 3.0',
+        'headroomRetention',
+        'highPriorityThreshold - preemptionThreshold',
+    ):
+        if marker not in block:
+            raise SystemExit(f'dev.202 partial restoration marker missing: {marker}')
+    if not (ROOT / 'docs/adr/0185-partial-headroom-retention-restoration.md').exists():
+        raise SystemExit('dev.202 partial restoration ADR0185 missing')
 for forbidden in (
     'sourceHostRemoteIpHash', 'sourceRhttp', 'duplicatePrefixBytes',
     'decode', 'playback', 'throughput', 'bandwidth',

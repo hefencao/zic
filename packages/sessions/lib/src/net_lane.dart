@@ -724,21 +724,32 @@ final class _Lane {
 
     const timeScaleMicros = 5 * 1000 * 1000;
     const byteScale = 4 * 1024 * 1024;
-    const maxTimeBonus = 60.0;
-    const maxTrafficBonus = 40.0;
-    final timeBonus =
-        maxTimeBonus * (1 - math.exp(-elapsed / timeScaleMicros));
-    final trafficBonus =
-        maxTrafficBonus * (1 - math.exp(-bytes / byteScale));
-    final raw = task.priority + (timeBonus + trafficBonus).round();
+    const timeWeight = 0.60;
+    const trafficWeight = 0.40;
+    const boundedMaxBonus = 100.0;
+    const headroomWeight = 2.0 / 3.0;
+    final timeCost = 1 - math.exp(-elapsed / timeScaleMicros);
+    final trafficCost = 1 - math.exp(-bytes / byteScale);
+    final costScore =
+        (timeWeight * timeCost + trafficWeight * trafficCost)
+            .clamp(0.0, 1.0);
+    final bounded = task.priority + (boundedMaxBonus * costScore).round();
 
-    // Retention affects victim selection only. A current task at
-    // highPriorityThreshold always keeps the configured preemption margin
-    // over every lower-ranked preemptible transfer.
-    if (highPriorityThreshold >= 1 << 29) return raw;
+    // dev.204 keeps two thirds of the headroom projection that dev.202
+    // introduced and one third of dev.201's bounded retention. Restart cost
+    // therefore remains economically meaningful after logical detach, but a
+    // demand-less transfer cannot jump almost all the way to current solely
+    // because its past work was expensive.
+    if (highPriorityThreshold >= 1 << 29) return bounded;
     final currentSafeCeiling =
         math.max(task.priority, highPriorityThreshold - preemptionThreshold);
-    return math.min(raw, currentSafeCeiling);
+    final boundedSafe = math.min(bounded, currentSafeCeiling);
+    final headroom = currentSafeCeiling - task.priority;
+    final headroomRetention =
+        task.priority + (headroom * costScore).round();
+    final blended = boundedSafe +
+        ((headroomRetention - boundedSafe) * headroomWeight).round();
+    return math.min(math.max(blended, task.priority), currentSafeCeiling);
   }
 
   void _notifyIdle() {

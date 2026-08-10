@@ -1,3 +1,8 @@
+## 0.31.0-dev.204：部分恢复 Headroom Retention，并复用 Venera Resolver HTTP 连接
+
+- 11:48真机trace确认dev.203典型首帧已恢复，但request-plan cold miss仍是尾延迟主因；用户指出dev.203对dev.202 retention回滚过度。NetLane现取1/3 bounded + 2/3 headroom固定插值，相对dev.202只回滚约1/3；admission priority与1000 current安全margin不变。
+- Venera `Network.*` bridge的正常完整HTTP response不再无条件`disconnect()`：显式关闭InputStream后允许平台HTTP/1.1连接池复用；异常/requestId取消仍物理disconnect。cache/cookie/header identity、single JS invocation与Reader/Pipeline ownership不变。
+
 ## 0.31.0-dev.203：bounded restart-cost retention rollback
 
 - 真机反馈显示dev.202体感较dev.201退化；对照Trace中典型首帧中位未恶化，但最坏尾部由约2.86s扩大到6.84s，主导为current sourceWait/request-plan/host-open。

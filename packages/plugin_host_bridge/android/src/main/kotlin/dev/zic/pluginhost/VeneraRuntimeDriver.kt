@@ -700,6 +700,7 @@ private class VeneraNativeBridge(
         headers.forEach(connection::setRequestProperty)
         if (method !in setOf("GET", "HEAD")) connection.doOutput = true
         registerConnection(requestId, connection)
+        var responseFullyConsumed = false
         try {
             if (connection.doOutput) connection.outputStream.use { it.write(bodyBytes) }
             val status = connection.responseCode
@@ -707,15 +708,18 @@ private class VeneraNativeBridge(
             val responseBytes = stream?.let {
                 registerConnection(requestId, it)
                 try {
-                    readDecodedResponseBytes(
-                        it,
-                        connection.getHeaderField("Content-Encoding"),
-                        maxResponseBytes,
-                    )
+                    it.use { body ->
+                        readDecodedResponseBytes(
+                            body,
+                            connection.getHeaderField("Content-Encoding"),
+                            maxResponseBytes,
+                        )
+                    }
                 } finally {
                     unregisterConnection(requestId, it)
                 }
             } ?: ByteArray(0)
+            responseFullyConsumed = true
             return veneraResponse(
                 status = status,
                 headers = connection.headerFields,
@@ -723,7 +727,12 @@ private class VeneraNativeBridge(
             )
         } finally {
             unregisterConnection(requestId, connection)
-            connection.disconnect()
+            // A fully consumed/closed HTTP/1.1 response can return its socket
+            // to Android's underlying connection pool. Explicit disconnect()
+            // here defeated that reuse across the several sequential
+            // Network.* calls in one Venera resolver. Cancellation/error still
+            // disconnects immediately through the request-scoped owner.
+            if (!responseFullyConsumed) connection.disconnect()
         }
     }
 

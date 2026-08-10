@@ -787,8 +787,52 @@ void _dev123NetLaneTests() {
 
     await investedCancelled.future.timeout(const Duration(seconds: 1));
     await currentStarted.future.timeout(const Duration(seconds: 1));
-    expect(investedToken.preemptionSnapshot?.retentionPriority, 880);
-    expect(investedToken.preemptionSnapshot?.retentionBonus, 100);
+    expect(investedToken.preemptionSnapshot?.retentionPriority, 933);
+    expect(investedToken.preemptionSnapshot?.retentionBonus, 153);
+    await lane.idle();
+  });
+
+  test('partial headroom keeps detached restart cost meaningful without blocking current', () async {
+    final clock = FakeMonoClock();
+    final lane = NetLane(
+      maxActive: 1,
+      highPriorityThreshold: 1000,
+      preemptionThreshold: 40,
+      clock: clock,
+    );
+    late CancelToken investedToken;
+    final investedCancelled = Completer<void>();
+    final currentStarted = Completer<void>();
+
+    lane.submitRanked(
+      key: 'detached-invested',
+      priority: 0,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (token) async {
+        investedToken = token;
+        token.beginRestartCost();
+        token.recordRestartCostBytes(64 * 1024 * 1024);
+        await token.whenCancelled;
+        investedCancelled.complete();
+      },
+    );
+    await Future<void>.delayed(Duration.zero);
+    clock.advance(const Duration(minutes: 2));
+
+    lane.submitRanked(
+      key: 'current-1000-after-detach',
+      priority: 1000,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (_) async { currentStarted.complete(); },
+    );
+
+    await investedCancelled.future.timeout(const Duration(seconds: 1));
+    await currentStarted.future.timeout(const Duration(seconds: 1));
+    expect(investedToken.preemptionSnapshot?.basePriority, 0);
+    expect(investedToken.preemptionSnapshot?.retentionPriority, 673);
+    expect(investedToken.preemptionSnapshot?.retentionBonus, 673);
     await lane.idle();
   });
 

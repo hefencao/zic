@@ -1,4 +1,4 @@
-- dev.203 撤销 dev.202 的 base→current-safe headroom retention，恢复 dev.201 已获较好真机体感的 bounded +100 restart-cost victim bonus；先验证体感恢复。11:26 Trace 的 6.84s 首帧尾延迟明确属于 sourceWait/request-plan/host-open 独立问题，本轮不混改 Venera。
+- dev.204：相对dev.202只回滚约1/3 retention headroom（1/3 bounded + 2/3 headroom），同时独立修复Venera cold resolver完整response后无条件disconnect导致的连接复用损失；不改JS并发、cache identity、Reader/Pipeline或NetLane admission。
 # zic Implementation Plan
 
 ## P0：Partial authority 单调性真机闭环

@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.203` / App `0.31.0+203`。
+- 当前版本：`0.31.0-dev.204` / App `0.31.0+204`。
+- dev.204：11:48 dev.203 trace中20次首帧中位约70ms、p90约1.56s、最坏约2.33s；30条origin中request-plan cache miss 21/hit 9，miss plan中位约1.34s而hit约0.014ms，current miss gate wait已很低，cold tail主要属于自身resolver Network调用。按用户真机反馈修正dev.203过度回滚：retention改为1/3 dev.201 bounded + 2/3 dev.202 headroom；另修Venera native bridge完整response后无条件disconnect，改为显式关闭stream并保留平台HTTP连接池复用机会，异常/取消仍物理disconnect。两条策略互不读取诊断，不改JS并发、cache identity、Reader/Pipeline、Range/defer或network=5。
 - dev.203：dev.202 headroom retention在真机上降低了preemption churn，但用户体感较dev.201退化，且11:26 Trace的最坏首帧约6.84s主要由current自身sourceWait/request-plan/host-open造成，未证明更强headroom保护值得保留。production恢复dev.201的时间5s/+60、流量4MiB/+40连续饱和bounded bonus（合计渐近+100），仍只影响victim selection且保留1000 current的40点margin。Venera source-plan/host-open尾延迟保持独立开放问题。
 - dev.200：08:46 dev.199 trace共45条origin body约245.59MiB，`duplicatePrefixBytes`约40.96MiB（16.68%）；6次strong-validator Range继续206/direct/duplicate=0。dev.199 defer已阻止单一demand内的低priority full-body，但`_retireDownloadTracking()`在detach时遗忘defer，同一5.43MiB page出现3次780 probe→200→defer，11.95MiB page出现2次；同时priority820路径贡献约18.86MiB重复，其中9.14MiB very-large partial一次abort+一次完成合计约13.57MiB。dev.200将defer改为DownloadId+committedLength内存记忆，并采用两级成本：1–8MiB需>=820，>=8MiB需>=900；length变化或升到门槛即重新probe。DownloadJob/Session authority、Reader/Pipeline、NetLane/network=5与Range协议不变。
 - dev.199：07:51 dev.198 trace中5次strong-validator resume继续direct 206且`duplicatePrefixBytes=0`，但14次服务器忽略Range的full-body fallback把可归账重复前缀推高到约19.2MiB/123.2MiB（15.6%），多数启动于760/780/800背景角色。sessions新增成本感知admission：只有在必须full-body、保留partial>=1MiB且动态priority<820时defer当前attempt并保留artifact/Ingress；小partial或priority>=820继续原逻辑。defer只属于LiveCoordinator任务生命周期，不持久化endpoint能力；升到820+后重新probe，206可直接续传，仍返回200则复用同一response做既有CRC catch-up。Reader/Pipeline/NetLane参数、network=5、播放authority与诊断字段的observation-only边界不变。
