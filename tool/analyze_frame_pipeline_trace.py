@@ -593,6 +593,9 @@ def summarize(path: Path) -> dict[str, Any]:
                     "maxChunkBytes": _number(payload.get("maxChunkBytes")),
                     "sourceHostHttpVersion": payload.get("sourceHostHttpVersion"),
                     "sourceHostRemoteIpHash": payload.get("sourceHostRemoteIpHash"),
+                    "sourceRhttpReceiveProgressEnabled": payload.get(
+                        "sourceRhttpReceiveProgressEnabled"
+                    ),
                     "sourceRhttpProgressEvents": _number(
                         payload.get("sourceRhttpProgressEvents")
                     ),
@@ -964,6 +967,20 @@ def summarize(path: Path) -> dict[str, Any]:
                 str(row["sourceHostHttpVersion"])
                 for row in source_reads
                 if row["sourceHostHttpVersion"] is not None
+            )
+        ),
+        "sourceRhttpRemoteIpHashCounts": dict(
+            Counter(
+                str(row["sourceHostRemoteIpHash"])
+                for row in source_reads
+                if row["sourceHostRemoteIpHash"] is not None
+            )
+        ),
+        "sourceRhttpReceiveProgressEnabledCounts": dict(
+            Counter(
+                str(row["sourceRhttpReceiveProgressEnabled"]).lower()
+                for row in source_reads
+                if row["sourceRhttpReceiveProgressEnabled"] is not None
             )
         ),
         "sourceRhttpProgressMaxGapMicros": _stats(

@@ -7,8 +7,11 @@ import 'package:rhttp/rhttp.dart' as rhttp;
 
 
 Future<void>? _rhttpInitialization;
-const bool _rhttpTransferDiagnosticsEnabled =
-    !bool.fromEnvironment('dart.vm.product');
+const bool _rhttpReceiveProgressDiagnosticsRequested =
+    bool.fromEnvironment('ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS');
+const bool _rhttpReceiveProgressDiagnosticsEnabled =
+    !bool.fromEnvironment('dart.vm.product') ||
+    _rhttpReceiveProgressDiagnosticsRequested;
 
 /// Prewarms the Rust HTTP runtime without blocking the first application frame.
 Future<void> prewarmPlatformSourceResourceTransport() =>
@@ -63,7 +66,9 @@ final class RhttpSourceResourceDirectTransport
       unawaited(taskControl.whenCancelled.then((_) => cancelToken.cancel()));
     }
     final body = request.body;
-    final readDiagnostics = _rhttpTransferDiagnosticsEnabled
+    final receiveProgressDiagnosticsEnabled =
+        _rhttpReceiveProgressDiagnosticsEnabled;
+    final readDiagnostics = receiveProgressDiagnosticsEnabled
         ? _RhttpReadDiagnostics()
         : null;
     late final rhttp.HttpStreamResponse response;
@@ -153,12 +158,11 @@ final class RhttpSourceResourceDirectTransport
                   .contains('bytes') ==
               true,
       diagnostics: <String, Object?>{
-        if (_rhttpTransferDiagnosticsEnabled)
-          'sourceHostHttpVersion': _httpVersionName(response.version),
-        if (_rhttpTransferDiagnosticsEnabled &&
-            response.remoteIp != null &&
-            response.remoteIp!.isNotEmpty)
+        'sourceHostHttpVersion': _httpVersionName(response.version),
+        if (response.remoteIp != null && response.remoteIp!.isNotEmpty)
           'sourceHostRemoteIpHash': _stableDiagnosticHash(response.remoteIp!),
+        'sourceRhttpReceiveProgressEnabled':
+            receiveProgressDiagnosticsEnabled,
       },
       readDiagnostics: readDiagnostics,
       onDiscard: responseBody.abort,

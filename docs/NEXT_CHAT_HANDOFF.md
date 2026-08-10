@@ -1,6 +1,6 @@
-# dev.197 后续交接
-唯一后续基线：`zic_v0.31.0-dev.197_semantic-trace-export-compaction.zip`。
-`dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196把重复前缀流量收敛到约1.7%，dev.197只压缩Debug Trace导出与增加流式过滤，不改变下载、播放或NetLane策略。
+# dev.198 后续交接
+唯一后续基线：`zic_v0.31.0-dev.198_product-safe-rhttp-endpoint-diagnostics.zip`。
+`dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197只压缩Debug Trace导出；dev.198仅恢复product-safe rhttp endpoint观测与显式receive-progress诊断构建，不改变下载、播放或NetLane策略。
 ## 必读
 1. `AGENTS.md`
 2. 本文件
@@ -19,15 +19,13 @@
 15. `docs/adr/0149-retained-artwork-persistence-and-invalidation-boundary.md`
 16. `docs/adr/0150-source-browse-cover-and-filter-presentation-boundary.md`
 17. `docs/adr/0152-mihon-source-filter-schema-state-ownership.md`
-18. `docs/adr/0153-mihon-cleartext-media-and-download-retry-ownership.md`、`docs/adr/0178-semantic-debug-trace-export-compaction.md`、`docs/audits/dev197-trace-volume-root-cause-audit.md`、`docs/audits/dev197-validation-results.md`
+18. `docs/adr/0153-mihon-cleartext-media-and-download-retry-ownership.md`、`docs/adr/0178-semantic-debug-trace-export-compaction.md`、`docs/audits/dev197-trace-volume-root-cause-audit.md`、`docs/audits/dev197-validation-results.md`、`docs/adr/0179-product-safe-rhttp-endpoint-diagnostics.md`、`docs/audits/dev198-rhttp-endpoint-diagnostics-root-cause-audit.md`、`docs/audits/dev198-validation-results.md`
 19. `docs/adr/0154-source-filter-view-shelf-projection-download-feedback.md`
 20. `docs/adr/0155-external-browse-runtime-protocol-field-ownership.md`
 21. `docs/adr/0156-source-migration-version-view-and-update-badge-ownership.md`
 22. `docs/adr/0161-vibevenera-rhttp-startup-transport.md`、`docs/adr/0162-modern-toolchain-rhttp-stream-framing.md`、`docs/adr/0163-openjdk25-relative-window-output-retention.md`、`docs/adr/0164-artifact-readthrough-preserves-task-control.md`、`docs/adr/0165-rhttp-raw-stream-downloadjob-single-framing.md`、`docs/adr/0166-current-bootstrap-execution-and-venera-physical-preemption.md`、`docs/adr/0167-receiving-state-detach-current-previous-handoff.md`、`docs/audits/dev184-current-previous-receiving-state-root-cause-audit.md`、`docs/audits/dev184-validation-results.md`、`docs/adr/0168-adjacent-previous-normal-pressure-preemption.md`、`docs/audits/dev185-adjacent-previous-pressure-root-cause-audit.md`、`docs/audits/dev185-validation-results.md`、`docs/adr/0169-venera-previous-request-plan-pressure-and-source-open-stages.md`、`docs/audits/dev186-venera-request-plan-pressure-root-cause-audit.md`、`docs/audits/dev186-validation-results.md`、`docs/adr/0170-venera-request-scoped-cancel-unwind.md`、`docs/audits/dev187-venera-request-scoped-cancel-root-cause-audit.md`、`docs/audits/dev187-validation-results.md`、`docs/adr/0171-venera-dynamic-priority-observation.md`、`docs/audits/dev188-venera-dynamic-priority-root-cause-audit.md`、`docs/audits/dev188-validation-results.md`、`docs/adr/0172-venera-current-only-dynamic-preemption-and-plan-stage-observation.md`、`docs/audits/dev189-venera-plan-churn-root-cause-audit.md`、`docs/audits/dev189-validation-results.md`、`docs/adr/0173-runtime-resource-plan-timing-boundary.md`、`docs/audits/dev190-runtime-resource-plan-timing-compile-coupling-audit.md`、`docs/audits/dev190-validation-results.md`、`docs/adr/0174-venera-source-requested-network-cache.md`、`docs/audits/dev191-venera-network-cache-root-cause-audit.md`、`docs/audits/dev191-validation-results.md`、`docs/adr/0175-rhttp-transfer-stage-observation.md`、`docs/audits/dev192-rhttp-transfer-stage-root-cause-audit.md`、`docs/audits/dev192-validation-results.md`、`docs/adr/0176-monotonic-playable-partial-full-body-prefix-catchup.md`、`docs/audits/dev195-dev192-restart-playable-partial-root-cause-audit.md`、`docs/audits/dev195-validation-results.md`、`docs/adr/0177-validatorless-range-probe-duplicate-traffic.md`、`docs/audits/dev196-duplicate-traffic-root-cause-audit.md`、`docs/audits/dev196-validation-results.md`
 23. `docs/adr/0158-venera-transport-preemption-and-native-source-lock-ownership.md`、`docs/audits/dev175-venera-transport-native-ingress-root-cause-audit.md`、`docs/audits/dev175-validation-results.md`
-
 ## 当前代码事实
-
 - Mihon/source媒体 URL继续由插件 request plan拥有；Android宿主以统一 Network Security Configuration允许 source实际返回的 HTTP(S)媒体，不维护 WNACG/wnimg域名白名单、不擅自 HTTPS改写。
 - external runtime `retryable=true`投影为 domain `ErrorCode.network`；确定性 `UnknownServiceException`不标记 transient。Reader下载 retry唯一属于 `LiveCoordinator`，non-retryable/source失败与网络恢复耗尽在当前 demand内 terminal，source listener/finally不能重新提交。
 - 漫画源 browse 内容 revision不再承担 artwork revision：分页、SWR后台刷新、详情回写导致的 browse projection变化都不能全局重建封面 Future/ImageProvider；仅 cover URI自身变化或显式来源 artwork refresh触发重新加载。source card Sliver owner key使用 canonical comic identity，raw plugin locator只用于调用/交互。
@@ -60,14 +58,14 @@
 - logical detach严格按真实 session transport state判定：`activeRun`覆盖restore/request-plan/open等待，不能代表receiving；只有 active `DownloadState.receiving` 可以降为priority 0保留。active queued/opening离窗后必须经NetLane TaskControl取消并等待物理退出。dev.185进一步把Reader previous=780设为normal-slot pressure floor：被普通槽阻塞时可以请求取消至少低40分的active victim，但previous不得使用current-only reserved handoff，必须等victim物理退出；retained receiving=0在无窗口压力时仍保留复用。
 - dev.175–181 的 response abort、native锁/CRC、retained-receiving、controlled read-through继续有效。dev.182 的 raw-stream/single DownloadJob aggregation继续冻结：rhttp transport不得再次增加64/256 KiB聚合。当前也没有字节级bandwidth scheduler；在dev.192证据证明Dart delivery/backpressure或active-stream竞争前，不新增Reader/transport带宽调度。 dev.197只在App export projection合并`framePipelineTiming/decodeRefill`高频诊断，并提供`tool/filter_debug_trace.py --profile network|playback|failures`流式裁剪；原始运行时事件与网络/resume/error/lifecycle边缘不受影响。
 - Native identity保持 `zic-media-core-dev134-abi6-lib00121400`。
+- production rhttp direct在普通release默认记录每response一次的HTTP version、匿名remote-IP hash与receive-progress-enabled标记；高频`onReceiveProgress`仅non-product或显式`ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS=1`诊断构建启用。该观测不得反馈给NetLane/Reader/retry/cache/framing。
 ## 下一步真机优先验证
 - dev.197 后续真机trace优先先用`python3 tool/filter_debug_trace.py <trace.jsonl> --profile network -o <trace.network.jsonl>`裁剪网络证据；若分析播放则用`--profile playback`，错误定位可用`--profile failures`。原始trace仍保留，过滤结果不是业务事实来源。
 - dev.196 Range修复在05:28 trace已确认：可归账origin body约177.60MB、`duplicatePrefixBytes`约3.00MB（1.7%），3次strong-validator resume均direct 206；剩余大额fallback来自服务器忽略Range且随后用户远跳，旧catch-up被迅速取消。除非新证据显示重复重新放大，不新增restart-cost scheduler。
 - 首先复测快速前后翻页：dev.185外层previous admission应继续保持毫秒级；dev.189应确认780↔900不再导致plan取消，只有waiter真正晋升current=1000时才触发动态pressure，并确认旧JS未`finished(requestId)`前新plan绝不并发进入。无真实pressure时`receivingRetained=true` priority0仍应短时复用。
 - 真机首要复测 current 首帧稳定性：观察 policyDecision 的 staticWarmDecodes/uploads 是否收敛到稳定decode角色/真实可见页，current浅水位期间是否停止 speculative neighbor refill，以及decode/upload current handoff是否避免后台长任务阻塞。
-- 最终图片慢流优先比较`sourceRhttpProgressMaxGapMicros/sourceRhttpProgressLeadBytesMax/sourceRhttpBodyMaxGapMicros/maxChunkGapMicros`并按`sourceHostHttpVersion/sourceHostRemoteIpHash`分组：progress与body同步长gap优先视为源/CDN/HTTP；progress明显领先body才下钻rhttp→Dart delivery/backpressure。只有确认并发active streams伤害current且pause真实反压网络后，才设计NetLane-owned transfer pressure。
+- 最终图片慢流先用普通release按`sourceHostHttpVersion/sourceHostRemoteIpHash`分组比较`streamMicros/maxChunkGapMicros`；若同endpoint仍无法解释current异常，再用`ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS=1`诊断构建比较`sourceRhttpProgressMaxGapMicros/sourceRhttpProgressLeadBytesMax/sourceRhttpBodyMaxGapMicros`。progress与body同步长gap优先视为源/CDN/HTTP；progress明显领先body才下钻rhttp→Dart delivery/backpressure。只有确认并发active streams伤害current且pause真实反压网络后，才设计NetLane-owned transfer pressure。
 ## 不可改变的稳定边界
-
 - 不缩小 Reader 7/3、holder 7/5/3/2、decode 2/1来掩盖性能问题。
 - 不恢复 FlowGate、startup-buffer、跨 Reader used texture。
 - 不在 App/Reader新增 transport、正文缓存、frame/session owner。

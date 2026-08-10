@@ -1,3 +1,10 @@
+## 0.31.0-dev.198：product-safe rhttp endpoint 观测与显式 receive-progress 诊断构建
+
+- 06:36 dev.197 trace已缩到约1.27MB/3287 events；可归账origin body约101.6MiB，`duplicatePrefixBytes`约4.32MiB（4.25%）。2次strong-validator resume仍为direct 206；剩余重复来自服务器忽略Range后的full-prefix fallback。current=1000的Venera gate wait中位接近0，且body并发越高聚合吞吐仍上升，因此不降低network=5、不新增current独占带宽。
+- 普通product/release现在始终记录每个rhttp response一次的HTTP version、匿名remote-IP hash和`sourceRhttpReceiveProgressEnabled`；这些低开销字段用于按endpoint分组CDN差异，不进入policy。
+- 高频`onReceiveProgress`仍默认不在product/release注册；`tool/build_android.sh`新增`ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS=1`显式诊断开关，仅在需要比较native receive与Dart body delivery时附加dart-define。
+- trace analyzer新增匿名endpoint hash计数。rhttp raw cadence、DownloadJob 16/64KiB单一aggregation、Range/resume、playable partial、Reader/Pipeline与NetLane全部不变。新增ADR0179、dev.198 audit/gate。
+
 ## 0.31.0-dev.197：Debug Trace 语义导出压缩与流式过滤
 
 - 05:28 dev.196真机trace共5502条、约1.79MB；Range continuity已经把可归账origin body中的重复前缀压到约2,996,334/177,601,680=1.7%，3次strong-validator resume均direct 206。剩余最大重复来自服务器忽略Range后用户远跳，旧catch-up随detach迅速取消，因此本轮不扩大NetLane/下载状态机。

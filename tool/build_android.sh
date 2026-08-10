@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="$ROOT/apps/app"
 MODE="${1:-release}"
 NATIVE="${ZIC_ANDROID_NATIVE:-1}"
+RHTTP_RECEIVE_DIAGNOSTICS="${ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS:-0}"
 
 case "$MODE" in
   debug|profile|release) ;;
@@ -13,6 +14,10 @@ esac
 case "$NATIVE" in
   0|1) ;;
   *) echo "ZIC_ANDROID_NATIVE must be 0 or 1" >&2; exit 64 ;;
+esac
+case "$RHTTP_RECEIVE_DIAGNOSTICS" in
+  0|1) ;;
+  *) echo "ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS must be 0 or 1" >&2; exit 64 ;;
 esac
 
 if [[ ! -d "$APP/android" ]]; then
@@ -30,4 +35,8 @@ else
 fi
 
 cd "$APP"
-flutter build apk "--$MODE" --split-per-abi
+FLUTTER_ARGS=("--$MODE" --split-per-abi)
+if [[ "$RHTTP_RECEIVE_DIAGNOSTICS" == 1 ]]; then
+  FLUTTER_ARGS+=(--dart-define=ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS=true)
+fi
+flutter build apk "${FLUTTER_ARGS[@]}"
