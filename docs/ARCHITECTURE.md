@@ -411,7 +411,7 @@ Cloudflare 可见浏览器的 Cookie 与 User-Agent 必须属于同一个浏览�
 
 ## 13. Telemetry 与关闭
 
-状态所有者产生权威事件；App 只做有界导出。长 identity 使用 hash/长度摘要，高频事件可合并，但错误、retry、writer rejection、session retain/reuse 和生命周期边缘不得丢失。overlapping total 不得与子阶段重复参与 dominant 归因。
+状态所有者产生权威事件；App 只做有界导出。长 identity 使用 hash/长度摘要；导出投影可按稳定语义桶合并高频诊断样本，例如 `framePipelineTiming` 按 trace reason / dominant stage / role，`decodeRefill` 按 role / stage / source-wake 分桶，并保留 first/last、count 与关键 timing/source revision 的 min/max。该合并只属于导出观测，不改变运行时事件或策略；错误、retry、writer rejection、resume/source read、session retain/reuse 和生命周期边缘不得因导出压缩丢失。overlapping total 不得与子阶段重复参与 dominant 归因。
 
 完整关闭遵循依赖逆序：停止新 demand，关闭 upload/decode/download，释放 frame/output/texture，关闭 runtime scheduler与 workspace，最后由 App 关闭其创建的平台 facade。外部注入 capability 不由消费方关闭。
 

@@ -1,7 +1,7 @@
 # zic Implementation Plan
 
 ## P0：Partial authority 单调性真机闭环
-- dev.196 以 dev.195 为唯一基线，只优化重复流量：已有partial无validator且totalLength已知时先发最多64KiB尾部Range probe；精确206/start/length + byte-exact overlap通过才直接续写。服务器返回200时复用同一body做现有full-prefix CRC catch-up，不得额外再开full response；`duplicatePrefixBytes`必须直接量化每次continuity proof的重复流量。
+- dev.197 以 dev.196 为唯一基线，只收敛 Debug Trace 导出体积：`framePipelineTiming` 与 `decodeRefill` 仅在 export projection 内按稳定语义桶合并，保留 first/last/coalescedCount 与关键 timing/source revision min/max；错误、retry/resume、`sourceRead`、download lifecycle/priority 边缘继续逐条保留。新增流式 `tool/filter_debug_trace.py` 提供 network/playback/failures 诊断视图，不进入运行时策略。dev.196 Range/partial authority、NetLane、DecodeSession、Reader/Pipeline 全部冻结。
 - dev.195 的playable partial单调性继续冻结：Range probe/full-body catch-up的取消、EOF或mismatch只能失败当前 network attempt，旧partial/Ingress不变；metadata损坏只丢网络知识。dev.196不改DownloadSession authority、DecodeSession、NetLane、network=5、1000/780、7/3、2/1、7/5/3/2，也不增加bandwidth scheduler/framing。
 ## P0：Current / Previous 真实执行槽真机闭环
 

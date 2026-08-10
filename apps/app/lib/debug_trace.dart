@@ -77,6 +77,8 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     TraceEventKind.uploadState,
     TraceEventKind.frameUploaded,
     TraceEventKind.framePresented,
+    TraceEventKind.framePipelineTiming,
+    TraceEventKind.decodeRefill,
     TraceEventKind.playbackFrameDue,
   };
 
@@ -95,6 +97,9 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     'decodeLaneQueueMicros',
     'sourceWaitMicros',
     'cursorCreateMicros',
+    'sourceLength',
+    'sourceRevision',
+    'consumedSourceRevision',
     'decodedToUploadMicros',
     'decodedLeadMicros',
     'uploadBackpressureMicros',
@@ -240,6 +245,13 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
       TraceEventKind.pageTransition =>
         '${event.payload['currentIndex']}|${event.payload['targetIndex']}|'
             '${event.payload['interaction']}',
+      TraceEventKind.framePipelineTiming =>
+        '${event.payload['traceReason']}|${event.payload['dominantStage']}|'
+            '${event.payload['role']}|${event.payload['decodedRole']}|'
+            '${event.payload['uploadRole']}',
+      TraceEventKind.decodeRefill =>
+        '${event.payload['role']}|${event.payload['stage']}|'
+            '${event.payload['sourceWake']}',
       _ => null,
     };
     return '${event.kind.name}|${event.sessionId}|'
@@ -250,6 +262,7 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
         TraceEventKind.frameDecoded ||
         TraceEventKind.frameUploaded ||
         TraceEventKind.framePresented ||
+        TraceEventKind.framePipelineTiming ||
         TraceEventKind.playbackFrameDue => _exportFrameWindowMicros,
         TraceEventKind.readerObservation ||
         TraceEventKind.pageTransition => _exportScrollWindowMicros,

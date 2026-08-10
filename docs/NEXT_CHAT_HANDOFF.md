@@ -1,6 +1,6 @@
-# dev.196 后续交接
-唯一后续基线：`zic_v0.31.0-dev.196_validatorless-range-probe-duplicate-traffic.zip`。
-`dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195 是从 dev.192 重做的 playable-partial authority 基础，dev.196 只在其上收敛重复流量，不恢复失败实验线的播放/多状态机修改。
+# dev.197 后续交接
+唯一后续基线：`zic_v0.31.0-dev.197_semantic-trace-export-compaction.zip`。
+`dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196把重复前缀流量收敛到约1.7%，dev.197只压缩Debug Trace导出与增加流式过滤，不改变下载、播放或NetLane策略。
 ## 必读
 1. `AGENTS.md`
 2. 本文件
@@ -19,7 +19,7 @@
 15. `docs/adr/0149-retained-artwork-persistence-and-invalidation-boundary.md`
 16. `docs/adr/0150-source-browse-cover-and-filter-presentation-boundary.md`
 17. `docs/adr/0152-mihon-source-filter-schema-state-ownership.md`
-18. `docs/adr/0153-mihon-cleartext-media-and-download-retry-ownership.md`
+18. `docs/adr/0153-mihon-cleartext-media-and-download-retry-ownership.md`、`docs/adr/0178-semantic-debug-trace-export-compaction.md`、`docs/audits/dev197-trace-volume-root-cause-audit.md`、`docs/audits/dev197-validation-results.md`
 19. `docs/adr/0154-source-filter-view-shelf-projection-download-feedback.md`
 20. `docs/adr/0155-external-browse-runtime-protocol-field-ownership.md`
 21. `docs/adr/0156-source-migration-version-view-and-update-badge-ownership.md`
@@ -58,11 +58,11 @@
 - current priority=1000；network/decode/upload各保留1个仅current可用的bounded handoff，transition=900不占保留槽。动态current depth<3时 speculative neighbor refill目标为0；静态current一帧即满足。current等source时仅真实viewport transition可先取1帧。
 - origin `TaskControl`继续贯穿 DownloadJob → ArtifactCacheTransport → Loader/source request-plan → runtime。Venera保持真实单invocation：首次controlled pressure floor=780且差值至少40；进入gate后的动态priority只有waiter真正跨入current=1000才再次触发preemption，780↔900与active demotion不得触发cancel，但permit transfer仍按实时priority。旧JavaScript真实`finished(requestId)`后才转交唯一permit。`__zicCancel`只取消JS request-plan/hook及其bridge-scoped工作，最终图片body由native host transport在同一TaskControl下取消。通用 `_RuntimeInvoke` 不暴露timing；只有resolve-resource私有seam交付只读`sourcePlan*`。dev.191补齐Venera `Network.*` source-requested GET cache：`cache-time`/`prevent-parallel`不进入origin header，runtime cache不得外溢成Reader/Pipeline cache或scheduler。 dev.192在最终图片rhttp raw stream只增加`ByteResponseReadDiagnostics`：receive-progress/body event、HTTP version与匿名endpoint hash只在`sourceRead`结束/取消时snapshot，不提供pause/quota/priority，也不得成为policy输入。 dev.196另修rhttp direct的Range中段边界：合法206且`Content-Range.start>0`不得再做完整媒体magic-prefix检查或因此误入runtime fallback；rangeStart=0仍必须验证媒体头。
 - logical detach严格按真实 session transport state判定：`activeRun`覆盖restore/request-plan/open等待，不能代表receiving；只有 active `DownloadState.receiving` 可以降为priority 0保留。active queued/opening离窗后必须经NetLane TaskControl取消并等待物理退出。dev.185进一步把Reader previous=780设为normal-slot pressure floor：被普通槽阻塞时可以请求取消至少低40分的active victim，但previous不得使用current-only reserved handoff，必须等victim物理退出；retained receiving=0在无窗口压力时仍保留复用。
-- dev.175–181 的 response abort、native锁/CRC、retained-receiving、controlled read-through继续有效。dev.182 的 raw-stream/single DownloadJob aggregation继续冻结：rhttp transport不得再次增加64/256 KiB聚合。当前也没有字节级bandwidth scheduler；在dev.192证据证明Dart delivery/backpressure或active-stream竞争前，不新增Reader/transport带宽调度。
+- dev.175–181 的 response abort、native锁/CRC、retained-receiving、controlled read-through继续有效。dev.182 的 raw-stream/single DownloadJob aggregation继续冻结：rhttp transport不得再次增加64/256 KiB聚合。当前也没有字节级bandwidth scheduler；在dev.192证据证明Dart delivery/backpressure或active-stream竞争前，不新增Reader/transport带宽调度。 dev.197只在App export projection合并`framePipelineTiming/decodeRefill`高频诊断，并提供`tool/filter_debug_trace.py --profile network|playback|failures`流式裁剪；原始运行时事件与网络/resume/error/lifecycle边缘不受影响。
 - Native identity保持 `zic-media-core-dev134-abi6-lib00121400`。
 ## 下一步真机优先验证
-- dev.196 首要真机验证：已有validatorless partial重启后优先看到`resumeAccepted strategy=validatorless-range-probe`，`duplicatePrefixBytes`通常≤65536；若服务器忽略Range，必须看到`fullBodyResponseReused=true`且仍只有同一条200 body，旧committed artifact/Ingress/epoch继续不倒退。
-- dev.195 的full-prefix CRC fallback仍是Range probe不可用时的安全兜底；03:12 trace中30.20MB重复流量不得再作为常态。dev.193/dev.194的播放/多分支状态机仍不得恢复。
+- dev.197 后续真机trace优先先用`python3 tool/filter_debug_trace.py <trace.jsonl> --profile network -o <trace.network.jsonl>`裁剪网络证据；若分析播放则用`--profile playback`，错误定位可用`--profile failures`。原始trace仍保留，过滤结果不是业务事实来源。
+- dev.196 Range修复在05:28 trace已确认：可归账origin body约177.60MB、`duplicatePrefixBytes`约3.00MB（1.7%），3次strong-validator resume均direct 206；剩余大额fallback来自服务器忽略Range且随后用户远跳，旧catch-up被迅速取消。除非新证据显示重复重新放大，不新增restart-cost scheduler。
 - 首先复测快速前后翻页：dev.185外层previous admission应继续保持毫秒级；dev.189应确认780↔900不再导致plan取消，只有waiter真正晋升current=1000时才触发动态pressure，并确认旧JS未`finished(requestId)`前新plan绝不并发进入。无真实pressure时`receivingRetained=true` priority0仍应短时复用。
 - 真机首要复测 current 首帧稳定性：观察 policyDecision 的 staticWarmDecodes/uploads 是否收敛到稳定decode角色/真实可见页，current浅水位期间是否停止 speculative neighbor refill，以及decode/upload current handoff是否避免后台长任务阻塞。
 - 最终图片慢流优先比较`sourceRhttpProgressMaxGapMicros/sourceRhttpProgressLeadBytesMax/sourceRhttpBodyMaxGapMicros/maxChunkGapMicros`并按`sourceHostHttpVersion/sourceHostRemoteIpHash`分组：progress与body同步长gap优先视为源/CDN/HTTP；progress明显领先body才下钻rhttp→Dart delivery/backpressure。只有确认并发active streams伤害current且pause真实反压网络后，才设计NetLane-owned transfer pressure。

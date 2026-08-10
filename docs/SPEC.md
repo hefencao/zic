@@ -199,7 +199,7 @@ Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor �
 
 Trace MUST 记录 demand/session/writer/source/decode/upload/present/retry/lifecycle 的可归因摘要。前若干不同帧 SHOULD 保留逐帧 timing，至少区分 lane queue、source wait、cursor/worker/native decode、upload backpressure、output prepare、platform/schedule queue、blit/replace和 channel dispatch。
 
-identity 超限时使用稳定 hash 与原长度；高频事件 MAY 合并，但错误和生命周期边缘 MUST 保留。Trace 不得成为业务状态权威来源，overlapping total 不得与子阶段重复参与 dominant 归因。
+identity 超限时使用稳定 hash 与原长度；高频事件 MAY 在导出投影按语义分桶合并。`framePipelineTiming` 的合并 MUST 至少区分 trace reason、dominant stage 与角色，`decodeRefill` 的合并 MUST 至少区分 role、stage 与 source-wake，并保留 first/last、coalesced count 以及关键 timing/source length/revision 的 min/max；错误和生命周期边缘、retry/resume、`sourceRead` 与网络任务边缘 MUST 保留。Trace 不得成为业务状态权威来源，导出压缩 MUST NOT 驱动调度、重试或缓存，overlapping total 不得与子阶段重复参与 dominant 归因。
 
 ## 12. 测试与发布
 

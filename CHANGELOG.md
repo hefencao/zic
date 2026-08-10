@@ -1,3 +1,10 @@
+## 0.31.0-dev.197：Debug Trace 语义导出压缩与流式过滤
+
+- 05:28 dev.196真机trace共5502条、约1.79MB；Range continuity已经把可归账origin body中的重复前缀压到约2,996,334/177,601,680=1.7%，3次strong-validator resume均direct 206。剩余最大重复来自服务器忽略Range后用户远跳，旧catch-up随detach迅速取消，因此本轮不扩大NetLane/下载状态机。
+- App Debug Trace只在export projection把高频`framePipelineTiming`与`decodeRefill`按稳定语义桶合并；保留first/last/coalescedCount以及关键timing/source length/revision的min/max。错误、retry/resume、`sourceRead`、download lifecycle/priority等权威边缘继续逐条导出，运行时Trace生产与policy不变。
+- 新增流式`tool/filter_debug_trace.py`，支持`network/playback/failures/all` profile与identity/session筛选；处理大JSONL时不把整文件加载进内存。按05:28 trace实测，network profile从约1.79MB降到约476KB。
+- 新增ADR0178、dev.197 root-cause/validation audit、导出语义回归与filter工具测试；不改DownloadJob/DownloadSession/DecodeSession/Reader/Pipeline/NetLane、Range策略或带宽策略。
+
 ## 0.31.0-dev.196：validatorless Range continuity probe，消除 full-prefix 重复流量常态
 
 - dev.195 真机03:12 trace的36条origin body约182.70MB，其中12次full-body prefix catch-up至少30.20MB（16.5%）只是在重新验证已存在partial；一张14.59MB页面实际从origin读取27.74MB。

@@ -459,18 +459,24 @@ void main() {
     expect(log.exportEvents.last.kind, TraceEventKind.taskFailed);
   });
 
-  test('frame pipeline timing remains exact in export', () {
+  test('frame pipeline timing export folds only matching semantic buckets', () {
     final log = DebugTraceLog(maxEvents: 4);
     addTearDown(log.dispose);
     for (var index = 0; index < 3; index++) {
       log.record(
         TraceEvent(
-          monotonicMicros: index * 1000,
+          monotonicMicros: index * 100000,
           sessionId: 'frame-pipeline',
           kind: TraceEventKind.framePipelineTiming,
+          identityHash: 'page-a',
           payload: <String, Object?>{
             'frame': index,
-            'presentationOrdinal': index,
+            'traceReason': 'startup',
+            'dominantStage': 'nativeDecode',
+            'role': 'current',
+            'decodedRole': 'current',
+            'uploadRole': 'current',
+            'sourceLength': 1000 + index * 100,
             'nativeDecodeMicros': 100 + index,
             'decodedLeadMicros': 150 + index,
             'uploadBackpressureMicros': 175 + index,
@@ -479,13 +485,87 @@ void main() {
         ),
       );
     }
-
-    expect(log.exportEvents, hasLength(3));
-    expect(log.exportCoalescedCount, 0);
-    expect(
-      log.exportEvents.map((event) => event.payload['frame']),
-      <Object?>[0, 1, 2],
+    log.record(
+      TraceEvent(
+        monotonicMicros: 250000,
+        sessionId: 'frame-pipeline',
+        kind: TraceEventKind.framePipelineTiming,
+        identityHash: 'page-a',
+        payload: <String, Object?>{
+          'frame': 3,
+          'traceReason': 'stall',
+          'dominantStage': 'sourceWait',
+          'role': 'current',
+          'decodedRole': 'current',
+          'uploadRole': 'current',
+          'sourceLength': 1300,
+          'sourceWaitMicros': 9000,
+        },
+      ),
     );
+
+    expect(log.exportEvents, hasLength(2));
+    expect(log.exportCoalescedCount, 2);
+    final folded = log.exportEvents.first;
+    expect(folded.payload['coalescedCount'], 3);
+    expect(folded.payload['firstFrameIndex'], 0);
+    expect(folded.payload['lastFrameIndex'], 2);
+    expect(folded.payload['minSourceLength'], 1000);
+    expect(folded.payload['maxSourceLength'], 1200);
+    expect(folded.payload['minNativeDecodeMicros'], 100);
+    expect(folded.payload['maxNativeDecodeMicros'], 102);
+    expect(log.exportEvents.last.payload['dominantStage'], 'sourceWait');
+  });
+
+  test('decode refill export folds same role stage and source-wake bucket', () {
+    final log = DebugTraceLog(maxEvents: 4);
+    addTearDown(log.dispose);
+    for (var index = 0; index < 3; index++) {
+      log.record(
+        TraceEvent(
+          monotonicMicros: index * 100000,
+          sessionId: 'decode-refill',
+          kind: TraceEventKind.decodeRefill,
+          identityHash: 'page-a',
+          payload: <String, Object?>{
+            'role': 'current',
+            'stage': 'one>0',
+            'sourceWake': true,
+            'sourceRevision': index + 1,
+            'consumedSourceRevision': index,
+            'depth': 0,
+            'target': 1,
+          },
+        ),
+      );
+    }
+    log.record(
+      TraceEvent(
+        monotonicMicros: 250000,
+        sessionId: 'decode-refill',
+        kind: TraceEventKind.decodeRefill,
+        identityHash: 'page-a',
+        payload: <String, Object?>{
+          'role': 'current',
+          'stage': 'one>0',
+          'sourceWake': false,
+          'sourceRevision': 4,
+          'consumedSourceRevision': 3,
+          'depth': 0,
+          'target': 1,
+        },
+      ),
+    );
+
+    expect(log.exportEvents, hasLength(2));
+    expect(log.exportCoalescedCount, 2);
+    final folded = log.exportEvents.first;
+    expect(folded.payload['coalescedCount'], 3);
+    expect(folded.payload['minSourceRevision'], 1);
+    expect(folded.payload['maxSourceRevision'], 3);
+    expect(folded.payload['minConsumedSourceRevision'], 0);
+    expect(folded.payload['maxConsumedSourceRevision'], 2);
+    expect(log.exportEvents.last.payload['sourceWake'], isFalse);
   });
 
   testWidgets('debug trace notifications are deferred past build',
