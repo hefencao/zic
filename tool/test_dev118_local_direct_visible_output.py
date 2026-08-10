@@ -34,7 +34,8 @@ require(
 require(
     "packages/sessions/lib/src/download_job.dart",
     "response.disposition == ByteResponseDisposition.durableImmutable",
-    "session.recordResume(restarted: true)",
+    "session.recordResume(",
+    "restarted: true",
     "residentSource: _residentSourceFor",
 )
 require(

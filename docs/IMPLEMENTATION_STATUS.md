@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.206` / App `0.31.0+206`。
+- 当前版本：`0.31.0-dev.207` / App `0.31.0+207`。
+- dev.207：confirmed同源 successor relation不再是一次性“首次发现”事件：持久relation可重建缺失 `sourceUpdateAt`，修复旧版 source card `!`不出现。查看新版进入Reader前使用既有 source request-plan解析强媒体identity，以首/中/末锚点证明页面offset后在 `ArtifactCacheManager` 注册临时 new→old DownloadId alias；只复用已存在artifact，不迁移/复制durable状态。纵向Reader取消 pageAspectRatios异步更新触发的anchor jump，保留真实viewport/DPR/stitch与显式导航anchor。
 - dev.206：对照VibeVenera所有权后纠正dev.205方向：普通Reader detach/reentry本来就由2分钟retention pool复用整个PipelineReaderSession，因此hot partial不再route-checkpoint，也不再经过ArtifactCacheManager。只有session真实evict/dispose才由Download-owned PartialDownloadHandoff→PersistentChapterDownloadService冷持久化；dev.205 cursor-reentry/partial playback修复与约30帧循环保留在DecodeSession。Venera resolver `Network.*`实际HTTP从Kotlin HttpURLConnection/DoH/reflective OkHttp迁到isolated plugin Dart reusable rhttp client；Cookie/manual redirect/cache-time/prevent-parallel/requestId仍属于source runtime。
 - dev.205（已被0188部分取代）：12:24 trace确认未promoted partial真实dispose后无durable owner，以及旧later-frame prefix hint阻塞frame0重入；其cursor顺序修复保留，route-retain checkpoint/ArtifactCache partial wiring在dev.206撤销。
 - dev.204：11:48 dev.203 trace中20次首帧中位约70ms、p90约1.56s、最坏约2.33s；30条origin中request-plan cache miss 21/hit 9，miss plan中位约1.34s而hit约0.014ms，current miss gate wait已很低，cold tail主要属于自身resolver Network调用。按用户真机反馈修正dev.203过度回滚：retention改为1/3 dev.201 bounded + 2/3 dev.202 headroom；另修Venera native bridge完整response后无条件disconnect，改为显式关闭stream并保留平台HTTP连接池复用机会，异常/取消仍物理disconnect。两条策略互不读取诊断，不改JS并发、cache identity、Reader/Pipeline、Range/defer或network=5。
@@ -31,7 +32,7 @@
 - Venera preemption先断requestId native HTTP，再等待JS `finished`后返回cancelled并释放permit，禁止同一WebView中旧/新async invocation重叠。修复 `ArtifactCacheReadLease?` nullable半迁移编译错误。
 - 当前环境无Flutter/Dart/Android完整SDK；行为测试已加入源码，最终设备构建/性能仍需本地验证。
 
-**源码版本：** `0.31.0-dev.206`
+**源码版本：** `0.31.0-dev.207`
 **App build：** `0.31.0+206`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。

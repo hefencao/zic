@@ -93,6 +93,100 @@ void main() {
 
     expect(plan.aliases, isEmpty);
   });
+
+  test('resolved anchor identities prepare temporary offset aliases', () async {
+    final oldChapter = _chapter(
+      comicId: 'old',
+      revision: 'old',
+      urls: const <String>[
+        'venera-resource:old-0',
+        'venera-resource:old-1',
+        'venera-resource:old-2',
+      ],
+    );
+    final newChapter = _chapter(
+      comicId: 'new',
+      revision: 'new',
+      urls: const <String>[
+        'venera-resource:new-cover',
+        'venera-resource:new-0',
+        'venera-resource:new-1',
+        'venera-resource:new-2',
+      ],
+    );
+    final identities = <String, String>{
+      'venera-resource:old-0': 'eh:a',
+      'venera-resource:old-1': 'eh:b',
+      'venera-resource:old-2': 'eh:c',
+      'venera-resource:new-0': 'eh:a',
+      'venera-resource:new-1': 'eh:b',
+      'venera-resource:new-2': 'eh:c',
+    };
+
+    final plan = await VerifiedArtifactReusePlan.matchResolvedOffset(
+      oldChapter: oldChapter,
+      newChapter: newChapter,
+      resolveIdentity: (page) async => identities[page.uri.toString()],
+    );
+
+    expect(plan.aliases, hasLength(3));
+    expect(
+      plan.aliases[readerPageDownloadId(newChapter, newChapter.pages[1])],
+      readerPageDownloadId(oldChapter, oldChapter.pages[0]),
+    );
+  });
+
+  test('resolved offset requires verified anchor agreement', () async {
+    final oldChapter = _chapter(
+      comicId: 'old',
+      revision: 'old',
+      urls: const <String>[
+        'venera-resource:old-0',
+        'venera-resource:old-1',
+        'venera-resource:old-2',
+      ],
+    );
+    final newChapter = _chapter(
+      comicId: 'new',
+      revision: 'new',
+      urls: const <String>[
+        'venera-resource:new-0',
+        'venera-resource:new-1',
+        'venera-resource:new-2',
+      ],
+    );
+
+    final plan = await VerifiedArtifactReusePlan.matchResolvedOffset(
+      oldChapter: oldChapter,
+      newChapter: newChapter,
+      resolveIdentity: (page) async => page.uri.toString(),
+    );
+
+    expect(plan.aliases, isEmpty);
+  });
+
+  test('resource reuse identity accepts only strong media keys', () {
+    expect(
+      verifiedComicResourceIdentity(
+        Uri.parse('https://e-hentai.org/s/AaBbCc/1-1'),
+      ),
+      'eh:aabbcc',
+    );
+    expect(
+      verifiedComicResourceIdentity(
+        Uri.parse(
+          'https://cdn.invalid/0123456789abcdef0123456789abcdef.jpg',
+        ),
+      ),
+      'hash:0123456789abcdef0123456789abcdef',
+    );
+    expect(
+      verifiedComicResourceIdentity(
+        Uri.parse('https://cdn.invalid/page-1.jpg'),
+      ),
+      isNull,
+    );
+  });
 }
 
 ChapterManifest _chapter({

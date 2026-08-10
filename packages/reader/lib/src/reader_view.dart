@@ -129,8 +129,7 @@ final class _ReaderViewState extends State<ReaderView> {
         oldWidget.clock != widget.clock) {
       _pageSlots = _createPageSlots();
     }
-    if (oldWidget.verticalStitch != widget.verticalStitch ||
-        oldWidget.pageAspectRatios != widget.pageAspectRatios) {
+    if (oldWidget.verticalStitch != widget.verticalStitch) {
       _preserveVerticalAnchor(
         oldRatios: oldWidget.pageAspectRatios,
         oldStitch: oldWidget.verticalStitch,

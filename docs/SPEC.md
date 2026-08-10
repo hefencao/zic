@@ -40,7 +40,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
   但隐藏页面不得为首屏预先创建封面 loader 或重复发起 cover request。
 - Home primary、enrichment 和可选 runtime 的状态仍 MUST 由各自 owner 管理；不得
   新增 App 私有正文/图片缓存或让 UI 直接调度网络。
-- “更新漫画” MUST 只显示当前已在书架且存在 source-confirmed update signal 的漫画，并按该 signal 排序。章节目录已有基线后的章节新增/删除/source revision变化或新同源 version MAY 推进该 signal；阅读进度、普通 metadata刷新、仅浏览/阅读记录 MUST NOT 推进它。漫画源卡片 MAY 投影同一 signal为右上更新感叹号，点击时若存在来源确认 successor MUST 可直接查看该 raw version；该提示不得把 successor伪装成已入书架。远程漫画缺少偏好记录时 MUST NOT 默认视为已加入书架；阅读历史 MUST 单独按 `ReadingProgress.updatedAt` 排序。
+- “更新漫画” MUST 只显示当前已在书架且存在 source-confirmed update signal 的漫画，并按该 signal 排序。章节目录已有基线后的章节新增/删除/source revision变化 MAY推进该 signal；confirmed同源 successor/version是持续关系事实，若其signal因入架时序或历史状态缺失，MUST可从 `ComicVersionRelationStore`重建，而不是只在首次发现时产生。阅读进度、普通 metadata刷新、仅浏览/阅读记录 MUST NOT 推进它。漫画源卡片 MAY 投影同一 signal为右上更新感叹号，点击时若存在来源确认 successor MUST 可直接查看该 raw version；该提示不得把 successor伪装成已入书架。远程漫画缺少偏好记录时 MUST NOT 默认视为已加入书架；阅读历史 MUST 单独按 `ReadingProgress.updatedAt` 排序。
 
 ### 1.2 详情页与来源迁移
 
@@ -185,8 +185,9 @@ Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor �
 - 封面、详情、搜索和章节元数据 MUST 由统一 response cache 拥有，key 包含 namespace、稳定 identity 和必要 revision。
 - Promoted Reader artifact MUST由`ArtifactCacheManager`/persistent cache backend拥有；未 promoted partial MUST与该immutable cache分离。hot partial的owner是retained `PipelineReaderSession`内的DownloadRegistry/DownloadSession：普通route detach/reentry MUST复用同一session且 MUST NOT checkpoint/copy partial。只有session真正dispose/evict时，Download-owned `PartialDownloadHandoff` MAY把unfinished prefix交给`PersistentChapterDownloadService`的`PartialDownloadStore`；新session SHOULD在origin open前恢复同DownloadId partial/validators/totalLength，restore不得宣称promoted/cache-resident。Animated WebP holder为空且cursor restart已请求时 MUST在later-frame hint gate前释放旧cursor/requirement，从现有partial重建frame0。约30帧循环/水位 MUST只属于DecodeSession/playback，不得成为cache persistence、network resume/admission或Download ownership输入。
 - 页面热字节 MUST 有界；默认可为 10 项/256 MiB。App/Reader 不得创建第二套图片 byte LRU。
-- artifact alias MUST 有 checksum、来源 page key、内容 hash 或用户确认关系等明确证据；标题、URL token 或相同页码不足以证明等价。
+- artifact alias MUST 有 checksum、来源 page key、内容 hash 或用户确认/来源确认关系上的强对应证据；标题、URL token 或相同页码不足以证明等价。已确认同源版本 MAY 在不迁移实体的情况下注册有界临时 alias：opaque locator必须先经既有 source request-plan owner解析，首/中/末强媒体identity证明稳定offset后才可映射新版精确 DownloadId到已存在旧artifact；临时 alias不得复制字节、不得 rekey durable library state，新精确artifact写入后仍覆盖alias。
 - cache hit 不得共享 playback timer、cursor 或 decode identity。
+- 纵向 Reader 的异步 `pageAspectRatios` 更新 MUST NOT触发 post-frame anchor `jumpTo` 修正用户滚动；真实 viewport/DPR/stitch变化与显式导航仍 MAY保留/恢复anchor。
 
 ## 10. 插件与来源
 

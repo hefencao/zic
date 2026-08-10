@@ -156,6 +156,8 @@
 
 ## P0：Flutter/Android 工具链闭环
 
+- 真机验证 dev.207：E-Hentai旧版在书架且已有confirmed successor时，旧版source card必须出现右上`!`，即使relation早于入架或本次版本查询未产生“新关系”。不迁移直接查看新版并进入Reader，首/中/末offset证据通过后，同一旧图片必须从artifact alias命中而非origin重下；trace应出现`version-artifact-alias-prepared`。
+- 纵向静态图片持续上下拖动时，异步页面比例收敛不得再触发anchor `jumpTo`造成短距离回拉；旋转、真实viewport/DPR变化、vertical stitch切换与显式跳页仍需验证位置连续。
 - 真机优先验证 dev.206 ownership：快速退出/重进同chapter应直接复用retained PipelineReaderSession，不出现partial durable store/restore；只有session真实evict/dispose后新session才出现`session-partial-handoff` restored且`downloadStarted.committedLength>0`。已有partial动画重入必须从frame0立即播放，约30帧循环继续只属于DecodeSession。Venera cold resolver应不再出现Kotlin HttpURLConnection owner，并验证requestId cancel、Cookie/manual redirect与resolver rhttp复用。
 - 运行 Rust/Android target 与 JNI symbol验证，确认 APK 中 native build identity正确。
 
@@ -170,10 +172,8 @@
 
 ## P1：首页与缓存身份
 
-- 设备验证本轮 primary projection 到第一封面请求的时序，并确认 native prewarm、整本
-  队列 restore、外部插件 activation 不再位于 Home 首帧关键路径。
-- 设备验证首页多封面快慢混合时的渐进显示：确认 `homeCoverFirstFrame` 按封面独立推进，
-  不被 durable response 串行写入或其它慢封面形成全局等待。
+- 设备验证本轮 primary projection 到第一封面请求的时序，并确认 native prewarm、整本队列 restore、外部插件 activation 不再位于 Home 首帧关键路径。
+- 设备验证首页多封面快慢混合时的渐进显示：确认 `homeCoverFirstFrame` 按封面独立推进，不被 durable response 串行写入或其它慢封面形成全局等待。
 - 验证封面 URL/token 变化仍命中 stable cover key，verified artifact alias不会污染无证据页面。
 - 设备验证已有 raw durable cover hit 时的 source-independent 分流：首屏不触发插件资源
   请求；同时确认已持久化 canonical alias 的同源 raw ID 在插件未激活时只显示一张书架卡片，

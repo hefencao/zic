@@ -739,10 +739,22 @@ final class _DemoHomeState extends State<DemoHome> {
     final now = DateTime.now().toUtc();
     final updated = preference.copyWith(updatedAt: now);
     if (!previous.inShelf && updated.inShelf) {
+      final hasConfirmedSuccessor = await _hasConfirmedSourceSuccessor(
+        preference.sourceId,
+        preference.comicId,
+      );
       for (final saved in _savedComicAliasesFor(
         preference.sourceId,
         preference.comicId,
       )) {
+        if (hasConfirmedSuccessor) {
+          if (saved.sourceUpdateAt == null) {
+            await _librarySession.upsertSavedComic(
+              saved.copyWith(sourceUpdateAt: now),
+            );
+          }
+          continue;
+        }
         if (saved.sourceUpdateAt == null) continue;
         await _librarySession.upsertSavedComic(
           saved.copyWith(clearSourceUpdateAt: true),
@@ -962,6 +974,7 @@ final class _DemoHomeState extends State<DemoHome> {
         'Venera 章节仍包含已失效的运行时资源定位符，已阻止进入 Reader',
       );
     }
+    await _prepareSourceVersionArtifactReuse(current);
     final hasOfflineBytes = current.chapter.sourceId != 'local-folder' &&
         await _chapterDownloads.isDownloaded(current);
     final source = _sourceForId(current.chapter.sourceId);

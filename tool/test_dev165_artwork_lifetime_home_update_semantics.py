@@ -63,10 +63,13 @@ for token in (
 ):
     require(catalog_identity + home, token, 'chapter-catalog update detection')
 for token in (
-    'discoveredNewVersion',
+    'Future<void> _reconcileConfirmedSourceUpdateSignal(',
+    'if (storedSuccessors.isNotEmpty) {',
     'saved.copyWith(sourceUpdateAt: DateTime.now().toUtc())',
 ):
-    require(migration, token, 'version update detection')
+    require(migration, token, 'confirmed-version update reconciliation')
+forbid(migration, 'if (!discoveredNewVersion) return;',
+       'one-shot version update detection')
 for token in (
     '_preferenceForComic(comic).inShelf &&',
     'comic.sourceUpdateAt != null',

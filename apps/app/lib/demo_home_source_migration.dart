@@ -133,7 +133,6 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       ))
         relation.successorComicId,
     };
-    var discoveredNewVersion = false;
     for (final successor in successors) {
       if (successor.isPredecessor ||
           successor.sourceId != source.sourceId ||
@@ -141,9 +140,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           successor.comicId == predecessorComicId) {
         continue;
       }
-      if (known.add(successor.comicId)) {
-        discoveredNewVersion = true;
-      }
+      known.add(successor.comicId);
       await store.saveComicVersionRelation(
         ComicVersionRelation(
           sourceId: source.sourceId,
@@ -153,16 +150,104 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         ),
       );
     }
-    if (!discoveredNewVersion) return;
-    final saved = _preferredSavedComicAlias(
-          source.sourceId,
-          predecessorComicId,
-        ) ??
-        await _library.getSavedComic(source.sourceId, predecessorComicId);
-    if (saved == null) return;
+    // A confirmed successor is a current relationship, not a one-shot event.
+    // The relation may have been discovered before this comic was added to
+    // the shelf, or persisted while sourceUpdateAt was later cleared. Reconcile
+    // the visible update signal whenever the confirmed relation is observed.
+    if (known.isEmpty) return;
+    await _reconcileConfirmedSourceUpdateSignal(
+      source.sourceId,
+      predecessorComicId,
+    );
+  }
+
+  Future<void> _reconcileConfirmedSourceUpdateSignal(
+    String sourceId,
+    String predecessorComicId,
+  ) async {
+    final saved = _preferredSavedComicAlias(sourceId, predecessorComicId) ??
+        await _library.getSavedComic(sourceId, predecessorComicId);
+    if (saved == null || saved.sourceUpdateAt != null) return;
     await _librarySession.upsertSavedComic(
       saved.copyWith(sourceUpdateAt: DateTime.now().toUtc()),
     );
+  }
+
+  Future<bool> _hasConfirmedSourceSuccessor(
+    String sourceId,
+    String comicId,
+  ) async {
+    final store = _comicVersionRelationStore();
+    if (store == null) return false;
+    for (final alias in _canonicalComicAliases(sourceId, comicId)) {
+      final relations = await store.listComicVersionSuccessors(
+        sourceId,
+        alias,
+      );
+      if (relations.any(
+        (relation) => relation.successorComicId.isNotEmpty &&
+            relation.successorComicId != alias,
+      )) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Future<int> _prepareSourceVersionArtifactReuse(
+    ImportedLibraryEntry current,
+  ) async {
+    final artifactCache = _readerArtifactCache;
+    final store = _comicVersionRelationStore();
+    if (artifactCache == null ||
+        store == null ||
+        _sourceForId(current.chapter.sourceId) == null) {
+      return 0;
+    }
+    final relations = await store.listComicVersionPredecessors(
+      current.chapter.sourceId,
+      current.chapter.comicId,
+    );
+    if (relations.isEmpty) return 0;
+
+    var reused = 0;
+    var candidateChapters = 0;
+    for (final relation in relations) {
+      final oldEntries = _libraryEntries.where(
+        (entry) =>
+            entry.chapter.sourceId == current.chapter.sourceId &&
+            entry.chapter.comicId == relation.predecessorComicId &&
+            entry.chapter.sequence == current.chapter.sequence,
+      );
+      for (final oldEntry in oldEntries) {
+        candidateChapters++;
+        final plan = await VerifiedArtifactReusePlan.matchResolvedOffset(
+          oldChapter: oldEntry.chapter.toManifest(),
+          newChapter: current.chapter.toManifest(),
+          resolveIdentity: (page) =>
+              _sourceResources.verifiedPageReuseIdentity(
+            sourceId: current.chapter.sourceId,
+            locator: page.uri,
+          ),
+        );
+        reused += await plan.applyExisting(artifactCache);
+      }
+    }
+    widget.debugTrace.record(
+      TraceEvent(
+        monotonicMicros: _traceClock.elapsedMicroseconds,
+        sessionId: 'source-version-reuse:${current.chapter.sourceId}',
+        kind: TraceEventKind.artifactSource,
+        identityHash: '${current.chapter.sourceId}\u0000${current.chapter.chapterId}',
+        payload: <String, Object?>{
+          'stage': 'version-artifact-alias-prepared',
+          'relationCount': relations.length,
+          'candidateChapters': candidateChapters,
+          'reusedPages': reused,
+        },
+      ),
+    );
+    return reused;
   }
 
   Future<details.ComicDetailsVersionState> _loadSourceVersionState(
@@ -182,6 +267,12 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       sourceId: source.sourceId,
       successorComicId: currentComicId,
     );
+    if (storedSuccessors.isNotEmpty) {
+      await _reconcileConfirmedSourceUpdateSignal(
+        source.sourceId,
+        currentComicId,
+      );
+    }
     var discovered = const <SourceComicVersion>[];
     try {
       discovered = await versionSource.findComicVersions(currentComicId);

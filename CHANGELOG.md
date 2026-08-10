@@ -1,3 +1,11 @@
+## 0.31.0-dev.207：同源版本更新提醒、临时 artifact alias 与纵向 anchor 收口
+
+- 修复旧版卡右上更新感叹号缺失：confirmed successor/version 是持续 relation事实，不再只在“本轮首次发现”时推进 `sourceUpdateAt`；已持久化 relation即使早于入架或本次版本查询失败，也可重建书架漫画的 update signal。
+- 参考 VibeVenera 临时 key mapping，但复用 ZIC 既有 `ArtifactCacheManager.alias` owner：查看/进入已确认同源新版 Reader 前，先用 source-owned request plan解析首/中/末强媒体 identity，证明页面offset后把新版精确 DownloadId临时映射到旧版已存在 artifact；不迁移、不复制、不 rekey durable library state。
+- Venera/E-Hentai opaque `venera-resource:` locator 的复用 identity通过既有 `ComicSourceResourceGateway → source transport request-plan`解析，不增加第二网络/缓存路径；只接受 `/s/<image-key>/` 或32–64位内容hash等强 identity。
+- 纵向静态阅读取消 `pageAspectRatios` 异步变化触发的 top-anchor post-frame `jumpTo`，避免用户上下滑动时被比例收敛拉回；vertical stitch、真实 viewport/DPR变化和显式导航仍保留 anchor。
+- 新增 dev.207 ownership gate与 artifact reuse回归测试；版本提升到 `0.31.0+207`。
+
 ## 0.31.0-dev.206：Download owner partial 收口与 Venera resolver rhttp 统一
 
 - 纠正 dev.205 的 partial ownership：普通 Reader detach/reentry 继续复用 retained `PipelineReaderSession` 内同一 DownloadRegistry/DownloadSession/DecodeSession，不再在 route retain 时 checkpoint；只有 session 真正 dispose/evict 时，unfinished prefix 才由 Download-owned `PartialDownloadHandoff` 交给 `PersistentChapterDownloadService`。`ArtifactCacheManager` 回到仅负责 promoted immutable artifact，消除 dev.205 `ArtifactCacheBackend` partial capability 编译错误。

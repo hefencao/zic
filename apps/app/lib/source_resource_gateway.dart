@@ -212,6 +212,18 @@ final class ComicSourceResourceGateway {
     return _transports.loaderFor(_requireSource(sourceId, uri), uri);
   }
 
+  Future<String?> verifiedPageReuseIdentity({
+    required String sourceId,
+    required Uri locator,
+  }) {
+    _requireOpen();
+    if (isLegacyVeneraRuntimeLocator(locator.toString())) {
+      return Future<String?>.value(null);
+    }
+    final source = _requireSource(sourceId, locator);
+    return _transports.verifiedReuseIdentityFor(source, locator);
+  }
+
   void close() {
     if (_closed) return;
     for (final downloads in _boundDownloads.toList(growable: false)) {

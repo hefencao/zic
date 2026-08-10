@@ -3,6 +3,10 @@ import 'package:domain/domain.dart';
 import 'artifact_cache_manager.dart';
 import 'reader_page_identity.dart';
 
+typedef VerifiedPageReuseIdentityResolver = Future<String?> Function(
+  PageAsset page,
+);
+
 /// Verified page-artifact reuse between two explicitly related comic versions.
 ///
 /// The planner never uses title, author, sequence or raw page index alone. A
@@ -29,6 +33,65 @@ final class VerifiedArtifactReusePlan {
       ] = readerPageDownloadId(oldChapter, oldPage);
     }
     return VerifiedArtifactReusePlan._(aliases);
+  }
+
+  /// Builds a temporary new-version -> old-version alias map without
+  /// migrating any durable library state.
+  ///
+  /// Some sources (notably Venera/E-Hentai) expose opaque page locators in the
+  /// chapter manifest, so the direct stable identity is unavailable until the
+  /// source-owned request plan is resolved. This follows VibeVenera's bounded
+  /// version-reuse rule: prove a stable positional offset using first/middle/
+  /// last resolved media identities, then alias the corresponding exact page
+  /// DownloadIds. The alias remains in ArtifactCacheManager memory only.
+  static Future<VerifiedArtifactReusePlan> matchResolvedOffset({
+    required ChapterManifest oldChapter,
+    required ChapterManifest newChapter,
+    required VerifiedPageReuseIdentityResolver resolveIdentity,
+  }) async {
+    final direct = VerifiedArtifactReusePlan.match(
+      oldChapter: oldChapter,
+      newChapter: newChapter,
+    );
+    if (direct.aliases.isNotEmpty ||
+        oldChapter.pages.isEmpty ||
+        newChapter.pages.length < oldChapter.pages.length) {
+      return direct;
+    }
+
+    final oldPages = oldChapter.pages;
+    final newPages = newChapter.pages;
+    final anchors = oldPages.length == 1
+        ? const <int>[0]
+        : <int>{0, oldPages.length ~/ 2, oldPages.length - 1}.toList();
+    final oldIdentities = await Future.wait(
+      anchors.map((index) => resolveIdentity(oldPages[index])),
+    );
+    if (oldIdentities.any((identity) => identity == null)) return direct;
+
+    final delta = newPages.length - oldPages.length;
+    final offsets = <int>{delta, 0}.where(
+      (offset) => offset >= 0 && oldPages.length + offset <= newPages.length,
+    );
+    for (final offset in offsets) {
+      final newIdentities = await Future.wait(
+        anchors.map((index) => resolveIdentity(newPages[index + offset])),
+      );
+      var matches = 0;
+      for (var index = 0; index < anchors.length; index++) {
+        final oldIdentity = oldIdentities[index];
+        final newIdentity = newIdentities[index];
+        if (oldIdentity != null && oldIdentity == newIdentity) matches++;
+      }
+      final required = anchors.length == 1 ? 1 : 2;
+      if (matches < required) continue;
+      return VerifiedArtifactReusePlan._(<DownloadId, DownloadId>{
+        for (var index = 0; index < oldPages.length; index++)
+          readerPageDownloadId(newChapter, newPages[index + offset]):
+              readerPageDownloadId(oldChapter, oldPages[index]),
+      });
+    }
+    return direct;
   }
 
   /// New exact artifact identity -> old authoritative artifact identity.

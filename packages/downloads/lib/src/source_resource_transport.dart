@@ -83,6 +83,12 @@ final class ExternalPluginResourceTransportPool {
         );
   }
 
+  Future<String?> verifiedReuseIdentityFor(
+    BrowsableComicSource source,
+    Uri locator,
+  ) =>
+      _transportFor(source).verifiedReuseIdentity(locator);
+
   _SourceResourceTransport _transportFor(BrowsableComicSource source) {
     final sourceId = source.sourceId;
     final transport = _transports.putIfAbsent(
@@ -148,6 +154,11 @@ final class _SourceResourceTransport implements ControlledTransport {
     Validators? validators,
   }) =>
       openControlled(uri, range: range, validators: validators);
+
+  Future<String?> verifiedReuseIdentity(Uri locator) async {
+    final resolved = await _resolve(locator);
+    return verifiedComicResourceIdentity(resolved.request.uri);
+  }
 
   @override
   Future<ByteResponse> openControlled(
@@ -610,6 +621,23 @@ final class _SourceResourceTransport implements ControlledTransport {
     _requestPlans.clear();
     _client.close(force: true);
   }
+}
+
+/// Stable media identity that is strong enough for temporary cross-version
+/// artifact aliasing. Titles, page numbers and filenames are deliberately not
+/// accepted as evidence.
+String? verifiedComicResourceIdentity(Uri uri) {
+  final segments = uri.pathSegments;
+  final marker = segments.indexOf('s');
+  if (marker >= 0 && marker + 1 < segments.length) {
+    final imageKey = segments[marker + 1].trim().toLowerCase();
+    if (imageKey.isNotEmpty) return 'eh:$imageKey';
+  }
+  final hash = RegExp(r'[a-fA-F0-9]{32,64}')
+      .firstMatch(uri.toString())
+      ?.group(0)
+      ?.toLowerCase();
+  return hash == null ? null : 'hash:$hash';
 }
 
 
