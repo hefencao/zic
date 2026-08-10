@@ -724,21 +724,26 @@ final class _Lane {
 
     const timeScaleMicros = 5 * 1000 * 1000;
     const byteScale = 4 * 1024 * 1024;
-    const maxTimeBonus = 60.0;
-    const maxTrafficBonus = 40.0;
-    final timeBonus =
-        maxTimeBonus * (1 - math.exp(-elapsed / timeScaleMicros));
-    final trafficBonus =
-        maxTrafficBonus * (1 - math.exp(-bytes / byteScale));
-    final raw = task.priority + (timeBonus + trafficBonus).round();
+    const timeWeight = 0.60;
+    const trafficWeight = 0.40;
+    final timeCost = 1 - math.exp(-elapsed / timeScaleMicros);
+    final trafficCost = 1 - math.exp(-bytes / byteScale);
+    final costScore =
+        (timeWeight * timeCost + trafficWeight * trafficCost)
+            .clamp(0.0, 1.0);
 
-    // Retention affects victim selection only. A current task at
-    // highPriorityThreshold always keeps the configured preemption margin
-    // over every lower-ranked preemptible transfer.
-    if (highPriorityThreshold >= 1 << 29) return raw;
+    // Restart cost occupies a fraction of the safe victim-retention
+    // headroom instead of adding a fixed number of rank points. This keeps
+    // already-paid work economically meaningful after a logical detach
+    // lowers base priority to retained-background=0, while admission/pending
+    // priority remains unchanged.
+    if (highPriorityThreshold >= 1 << 29) {
+      return task.priority + (100 * costScore).round();
+    }
     final currentSafeCeiling =
         math.max(task.priority, highPriorityThreshold - preemptionThreshold);
-    return math.min(raw, currentSafeCeiling);
+    final headroom = currentSafeCeiling - task.priority;
+    return task.priority + (headroom * costScore).round();
   }
 
   void _notifyIdle() {

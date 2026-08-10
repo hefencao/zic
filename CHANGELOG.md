@@ -1,3 +1,9 @@
+## 0.31.0-dev.202：restart-cost headroom retention
+
+- dev.201固定最多+100的victim bonus改为0..1 restart-cost score占据base→current-safe ceiling的剩余rank空间，修复logical detach降base=0后高重做成本仍几乎无保护的问题。
+- 时间/流量仍分别用5s/4MiB指数饱和，0.60/0.40仅作为成本权重；不读取网速、endpoint、decode/playback或Trace派生字段。
+- pending/admission priority保持不变，1000 current继续保留40点preemption margin；新增base=0真实成本回归场景。
+
 ## 0.31.0-dev.201：restart-cost retention victim ranking
 
 - full-body成本控制从开始前admission扩展到开始后的preemption economics：不可恢复response已投入wall time与consumed bytes只提升active victim retention rank，不提升admission priority。

@@ -1,4 +1,4 @@
-- dev.201 在dev.200完整ZIP上补齐restart-cost retention：admission仍决定是否启动高成本full-body；一旦开始，只有取消后必须重付的attempt wall time与response consumed bytes进入NetLane victim selection的连续饱和bonus。pending/admission priority、network=5、current handoff、40点threshold、Range/playable authority不变；先真机验证cheap victim优先被取消且1000 current不受阻，再考虑是否推广到其它不可恢复网络attempt。
+- dev.202 以dev.201真机`downloadPreempted`验证restart-cost economics：固定+100在base=0时失真，改为0..1成本score按比例占据base→current-safe ceiling的剩余rank空间。先验证高成本retained-background会让位于更便宜victim而非自动被杀，同时1000 current不退化；另行分析request-plan cache miss首帧尾延迟，不在本轮叠加网络策略。
 # zic Implementation Plan
 
 ## P0：Partial authority 单调性真机闭环
