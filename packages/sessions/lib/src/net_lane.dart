@@ -2,15 +2,26 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:domain/domain.dart';
+import 'package:telemetry/telemetry.dart';
 
 typedef LaneTask = Future<void> Function(CancelToken token);
 typedef LaneError = void Function(String key, Object error, StackTrace stack);
 
 final class CancelToken implements PriorityObservableTaskControl {
-  CancelToken({int priority = 0}) : _priority = priority;
+  CancelToken({
+    int priority = 0,
+    MonoClock clock = const SystemClock(),
+  })  : _priority = priority,
+        _clock = clock,
+        _activatedAtMicros = clock.nowMicros();
 
+  final MonoClock _clock;
+  final int _activatedAtMicros;
   bool _cancelled = false;
   int _priority;
+  int? _restartCostStartedAtMicros;
+  int _restartCostBytes = 0;
+  TaskPreemptionSnapshot? _preemptionSnapshot;
   final Completer<void> _cancelledSignal = Completer<void>();
   final StreamController<int> _priorityChanges =
       StreamController<int>.broadcast(sync: true);
@@ -23,6 +34,31 @@ final class CancelToken implements PriorityObservableTaskControl {
   int get priority => _priority;
   @override
   Stream<int> get priorityChanges => _priorityChanges.stream;
+
+
+  int get restartCostElapsedMicros {
+    final startedAt = _restartCostStartedAtMicros;
+    if (startedAt == null) return 0;
+    return (_clock.nowMicros() - startedAt).clamp(0, 1 << 62).toInt();
+  }
+
+  int get restartCostBytes => _restartCostBytes;
+  TaskPreemptionSnapshot? get preemptionSnapshot => _preemptionSnapshot;
+
+  void beginRestartCost() {
+    _restartCostStartedAtMicros ??= _activatedAtMicros;
+  }
+
+  void recordRestartCostBytes(int totalBytes) {
+    if (totalBytes <= _restartCostBytes) return;
+    _restartCostBytes = totalBytes;
+  }
+
+  void cancelForPreemption(TaskPreemptionSnapshot snapshot) {
+    if (_cancelled) return;
+    _preemptionSnapshot = snapshot;
+    cancel();
+  }
 
   void updatePriority(int priority) {
     if (_priority == priority) return;
@@ -54,6 +90,25 @@ final class CancelToken implements PriorityObservableTaskControl {
       );
     }
   }
+}
+
+
+final class TaskPreemptionSnapshot {
+  const TaskPreemptionSnapshot({
+    required this.incomingPriority,
+    required this.basePriority,
+    required this.retentionPriority,
+    required this.retentionBonus,
+    required this.restartCostElapsedMicros,
+    required this.restartCostBytes,
+  });
+
+  final int incomingPriority;
+  final int basePriority;
+  final int retentionPriority;
+  final int retentionBonus;
+  final int restartCostElapsedMicros;
+  final int restartCostBytes;
 }
 
 
@@ -94,6 +149,7 @@ final class NetLane implements TaskLane {
     int highPriorityThreshold = 1000,
     int preemptionThreshold = 40,
     int pressurePreemptionPriorityFloor = 1 << 30,
+    MonoClock clock = const SystemClock(),
     LaneError? onError,
   }) : _core = _Lane(
           maxActive: maxActive,
@@ -101,6 +157,7 @@ final class NetLane implements TaskLane {
           highPriorityThreshold: highPriorityThreshold,
           preemptionThreshold: preemptionThreshold,
           pressurePreemptionPriorityFloor: pressurePreemptionPriorityFloor,
+          clock: clock,
           onError: onError,
         );
 
@@ -288,6 +345,7 @@ final class _Lane {
     this.highPriorityThreshold = 1 << 30,
     this.preemptionThreshold = 1 << 30,
     this.pressurePreemptionPriorityFloor = 1 << 30,
+    this.clock = const SystemClock(),
     this.onError,
   })  : assert(maxActive > 0),
         assert(reservedHighPrioritySlots >= 0),
@@ -299,6 +357,7 @@ final class _Lane {
   final int highPriorityThreshold;
   final int preemptionThreshold;
   final int pressurePreemptionPriorityFloor;
+  final MonoClock clock;
   final LaneError? onError;
   final Map<String, _Pending> _pending = <String, _Pending>{};
   final Map<String, _ActiveTask> _active = <String, _ActiveTask>{};
@@ -537,7 +596,7 @@ final class _Lane {
       final handoff = _needsHandoff(next);
       if (handoff && !_preemptLowestRunningFor(next)) break;
       _pending.remove(next.key);
-      final token = CancelToken(priority: next.priority);
+      final token = CancelToken(priority: next.priority, clock: clock);
       _active[next.key] = _ActiveTask(
         token: token,
         bucket: next.bucket,
@@ -630,17 +689,56 @@ final class _Lane {
         incomingBucketLimit != null &&
         (_activeByBucket[incomingBucket] ?? 0) >= incomingBucketLimit;
     _ActiveTask? lowest;
+    var lowestRetentionPriority = 1 << 30;
     for (final task in _active.values) {
       if (!task.preemptible || task.token.cancelled) continue;
       if (bucketFull && task.bucket != incomingBucket) continue;
-      if (incoming.priority - task.priority < preemptionThreshold) continue;
-      if (lowest == null || task.priority < lowest.priority) {
+      final retentionPriority = _retentionPriority(task);
+      if (incoming.priority - retentionPriority < preemptionThreshold) continue;
+      if (lowest == null || retentionPriority < lowestRetentionPriority) {
         lowest = task;
+        lowestRetentionPriority = retentionPriority;
       }
     }
     if (lowest == null) return false;
-    lowest.token.cancel();
+    final elapsed = lowest.token.restartCostElapsedMicros;
+    final bytes = lowest.token.restartCostBytes;
+    final bonus = lowestRetentionPriority - lowest.priority;
+    lowest.token.cancelForPreemption(
+      TaskPreemptionSnapshot(
+        incomingPriority: incoming.priority,
+        basePriority: lowest.priority,
+        retentionPriority: lowestRetentionPriority,
+        retentionBonus: bonus,
+        restartCostElapsedMicros: elapsed,
+        restartCostBytes: bytes,
+      ),
+    );
     return true;
+  }
+
+  int _retentionPriority(_ActiveTask task) {
+    final elapsed = task.token.restartCostElapsedMicros;
+    final bytes = task.token.restartCostBytes;
+    if (elapsed <= 0 && bytes <= 0) return task.priority;
+
+    const timeScaleMicros = 5 * 1000 * 1000;
+    const byteScale = 4 * 1024 * 1024;
+    const maxTimeBonus = 60.0;
+    const maxTrafficBonus = 40.0;
+    final timeBonus =
+        maxTimeBonus * (1 - math.exp(-elapsed / timeScaleMicros));
+    final trafficBonus =
+        maxTrafficBonus * (1 - math.exp(-bytes / byteScale));
+    final raw = task.priority + (timeBonus + trafficBonus).round();
+
+    // Retention affects victim selection only. A current task at
+    // highPriorityThreshold always keeps the configured preemption margin
+    // over every lower-ranked preemptible transfer.
+    if (highPriorityThreshold >= 1 << 29) return raw;
+    final currentSafeCeiling =
+        math.max(task.priority, highPriorityThreshold - preemptionThreshold);
+    return math.min(raw, currentSafeCeiling);
   }
 
   void _notifyIdle() {

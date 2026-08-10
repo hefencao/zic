@@ -1,6 +1,6 @@
+- dev.201 在dev.200完整ZIP上补齐restart-cost retention：admission仍决定是否启动高成本full-body；一旦开始，只有取消后必须重付的attempt wall time与response consumed bytes进入NetLane victim selection的连续饱和bonus。pending/admission priority、network=5、current handoff、40点threshold、Range/playable authority不变；先真机验证cheap victim优先被取消且1000 current不受阻，再考虑是否推广到其它不可恢复网络attempt。
 # zic Implementation Plan
 
-- dev.200 以dev.199完整ZIP为唯一基线，收口cost-aware full-body admission的两个真机缺口：defer以DownloadId+committedLength跨低优先级demand detach/re-add保留；1–8MiB partial继续要求priority>=820，>=8MiB very-large partial要求priority>=900。Range probe、playable authority、NetLane/network=5、Reader窗口与诊断observation-only边界不变。
 ## P0：Partial authority 单调性真机闭环
 - dev.195 的playable partial单调性继续冻结：Range probe/full-body catch-up的取消、EOF或mismatch只能失败当前 network attempt，旧partial/Ingress不变；metadata损坏只丢网络知识。dev.196不改DownloadSession authority、DecodeSession、NetLane、network=5、1000/780、7/3、2/1、7/5/3/2，也不增加bandwidth scheduler/framing。
 ## P0：Current / Previous 真实执行槽真机闭环

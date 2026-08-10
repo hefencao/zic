@@ -15,6 +15,7 @@ NETWORK_KINDS = frozenset({
     'demandDetached',
     'downloadStarted',
     'downloadPriorityChanged',
+    'downloadPreempted',
     'downloadState',
     'artifactSealed',
     'artifactPromoted',

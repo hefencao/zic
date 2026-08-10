@@ -195,12 +195,14 @@ void main() {
       rangeSupported: false,
       validators: const Validators(),
     );
+    final token = CancelToken(priority: 820);
     final result = await DownloadJob(
       transport: ignoredRange,
       session: session,
-    ).run();
+    ).run(cancel: token);
 
     expect(result.state, DownloadState.promoted);
+    expect(token.restartCostBytes, bytes.length);
     expect(ignoredRange.requests, hasLength(1));
     expect(
       ignoredRange.requests.single.range?.start,
@@ -239,15 +241,17 @@ void main() {
       rangeSupported: false,
       validators: const Validators(),
     );
+    final deferredToken = CancelToken(priority: 800);
     await expectLater(
       DownloadJob(
         transport: ignoredRange,
         session: session,
         allowFullBodyCatchup: (_) => false,
-      ).run(cancel: CancelToken(priority: 800)),
+      ).run(cancel: deferredToken),
       throwsA(isA<DownloadCatchupDeferred>()),
     );
 
+    expect(deferredToken.restartCostBytes, 0);
     expect(ignoredRange.requests, hasLength(1));
     expect(
       ignoredRange.requests.single.range?.start,

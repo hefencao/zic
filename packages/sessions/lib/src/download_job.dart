@@ -331,10 +331,15 @@ final class DownloadJob {
       }
     }
 
+    if (fullBodyCatchup) {
+      cancel?.beginRestartCost();
+    }
+
     final writer = session.acquireWriter();
     var offset = session.committedLength;
     final iterator = StreamIterator<List<int>>(response.bytes);
     List<int> catchupRemainder = const <int>[];
+    var restartCostBytes = 0;
     if (validatorlessRangeProbe) {
       var duplicatePrefixBytes = 0;
       try {
@@ -389,6 +394,8 @@ final class DownloadJob {
           cancel: cancel,
           onDuplicateBytes: (value) {
             duplicatePrefixBytes = value;
+            restartCostBytes = value;
+            cancel?.recordRestartCostBytes(restartCostBytes);
           },
         );
       } catch (error) {
@@ -414,6 +421,10 @@ final class DownloadJob {
           'duplicatePrefixBytes': duplicatePrefixBytes,
         },
       );
+      if (catchupRemainder.isNotEmpty) {
+        restartCostBytes += catchupRemainder.length;
+        cancel?.recordRestartCostBytes(restartCostBytes);
+      }
     }
 
     await session.bindResponse(
@@ -436,6 +447,10 @@ final class DownloadJob {
       while (await _moveNext(iterator, cancel)) {
         final chunk = iterator.current;
         if (chunk.isEmpty) continue;
+        if (fullBodyCatchup) {
+          restartCostBytes += chunk.length;
+          cancel?.recordRestartCostBytes(restartCostBytes);
+        }
         pending.add(chunk);
         if (pending.length >= flushTarget) {
           await flushPending();

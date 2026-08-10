@@ -1,3 +1,10 @@
+## 0.31.0-dev.201：restart-cost retention victim ranking
+
+- full-body成本控制从开始前admission扩展到开始后的preemption economics：不可恢复response已投入wall time与consumed bytes只提升active victim retention rank，不提升admission priority。
+- NetLane使用5s/+60与4MiB/+40的连续指数饱和bonus，并以current-safe cap保证1000 current始终保留40点preemption margin。
+- DownloadJob只报告restart-cost事实；普通Range resume、endpoint hash、HTTP version、网速与decode/playback状态不参与retention policy。
+- 新增`downloadPreempted` Trace，记录实际preemption时incoming/base/retention rank、bonus与restart-cost事实。
+
 ## 0.31.0-dev.200：defer跨demand记忆与very-large partial两级成本
 
 - 08:46 dev.199真机trace中45条origin body约245.59MiB，重复前缀约40.96MiB（16.68%）；6次strong-validator Range继续206/direct/duplicate=0。dev.199低priority defer已能阻止full body，但同一5.43MiB page在三个独立780 demand窗口仍重复probe→200→defer，11.95MiB page也出现两次，说明defer随tracking retire被遗忘。

@@ -31,12 +31,18 @@ for token in (
 lane = read('packages/sessions/lib/src/net_lane.dart')
 for token in (
     'final class CancelToken implements PriorityObservableTaskControl',
-    'CancelToken({int priority = 0})',
+    'int priority = 0,',
     'void updatePriority(int priority)',
     'activeTask.token.updatePriority(priority);',
-    'CancelToken(priority: next.priority)',
+    'final token = CancelToken(',
+    'priority: next.priority',
 ):
     require(lane, token, 'lane-owned mutable task priority')
+if not re.search(
+    r'CancelToken\(\{?\s*\n?\s*int priority = 0,?',
+    lane,
+):
+    raise SystemExit('CancelToken must retain default mutable priority=0')
 
 transport = read('packages/transport/lib/src/transport.dart')
 loader_transport = read('packages/transport/lib/src/loader_transport.dart')

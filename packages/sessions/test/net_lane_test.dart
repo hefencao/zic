@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:sessions/sessions.dart';
 import 'package:test/test.dart';
+import 'package:testkit/testkit.dart';
 
 void main() {
   _dev123NetLaneTests();
@@ -672,6 +673,122 @@ void _dev123NetLaneTests() {
     previousRelease.complete();
     secondLowRelease.complete();
     otherRelease.complete();
+    await lane.idle();
+  });
+
+
+  test('restart-cost retention changes victim choice but not admission rank',
+      () async {
+    final clock = FakeMonoClock();
+    final lane = NetLane(
+      maxActive: 2,
+      highPriorityThreshold: 1000,
+      preemptionThreshold: 40,
+      pressurePreemptionPriorityFloor: 780,
+      clock: clock,
+    );
+    late CancelToken investedToken;
+    late CancelToken cheapToken;
+    final investedRelease = Completer<void>();
+    final cheapCancelled = Completer<void>();
+    final incomingStarted = Completer<void>();
+
+    lane.submitRanked(
+      key: 'invested-780',
+      priority: 780,
+      bucket: 'remote:a',
+      bucketLimit: 2,
+      task: (token) async {
+        investedToken = token;
+        token.beginRestartCost();
+        token.recordRestartCostBytes(8 * 1024 * 1024);
+        await Future.any<void>(<Future<void>>[
+          token.whenCancelled,
+          investedRelease.future,
+        ]);
+      },
+    );
+    lane.submitRanked(
+      key: 'cheap-800',
+      priority: 800,
+      bucket: 'remote:a',
+      bucketLimit: 2,
+      task: (token) async {
+        cheapToken = token;
+        await token.whenCancelled;
+        cheapCancelled.complete();
+      },
+    );
+    await Future<void>.delayed(Duration.zero);
+    clock.advance(const Duration(seconds: 10));
+
+    expect(lane.priorityOf('invested-780'), 780);
+    expect(investedToken.restartCostBytes, 8 * 1024 * 1024);
+
+    lane.submitRanked(
+      key: 'transition-900',
+      priority: 900,
+      bucket: 'remote:a',
+      bucketLimit: 2,
+      task: (_) async {
+        incomingStarted.complete();
+      },
+    );
+
+    await cheapCancelled.future.timeout(const Duration(seconds: 1));
+    await incomingStarted.future.timeout(const Duration(seconds: 1));
+    expect(investedToken.cancelled, isFalse);
+    expect(cheapToken.preemptionSnapshot?.retentionBonus, 0);
+    expect(cheapToken.preemptionSnapshot?.incomingPriority, 900);
+
+    investedRelease.complete();
+    await lane.idle();
+  });
+
+  test('current preempts even a saturated restart-cost victim', () async {
+    final clock = FakeMonoClock();
+    final lane = NetLane(
+      maxActive: 1,
+      highPriorityThreshold: 1000,
+      preemptionThreshold: 40,
+      clock: clock,
+    );
+    late CancelToken investedToken;
+    final investedCancelled = Completer<void>();
+    final currentStarted = Completer<void>();
+
+    lane.submitRanked(
+      key: 'invested-780',
+      priority: 780,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (token) async {
+        investedToken = token;
+        token.beginRestartCost();
+        token.recordRestartCostBytes(64 * 1024 * 1024);
+        await token.whenCancelled;
+        investedCancelled.complete();
+      },
+    );
+    await Future<void>.delayed(Duration.zero);
+    clock.advance(const Duration(minutes: 2));
+
+    expect(lane.priorityOf('invested-780'), 780);
+
+    lane.submitRanked(
+      key: 'current-1000',
+      priority: 1000,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (_) async {
+        currentStarted.complete();
+      },
+    );
+
+    await investedCancelled.future.timeout(const Duration(seconds: 1));
+    await currentStarted.future.timeout(const Duration(seconds: 1));
+    expect(investedToken.preemptionSnapshot?.retentionPriority, 880);
+    expect(investedToken.preemptionSnapshot?.retentionBonus, 100);
     await lane.idle();
   });
 

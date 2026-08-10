@@ -534,6 +534,28 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         } on Object catch (error) {
           if (!retry.allows(error, attempt)) {
             if (error is Failure && error.code == ErrorCode.cancelled) {
+              final preemption = token.preemptionSnapshot;
+              if (preemption != null) {
+                traceSink.record(
+                  traceEvent(
+                    clock: clock,
+                    sessionId: sessionId,
+                    kind: TraceEventKind.downloadPreempted,
+                    identityHash: id.key,
+                    revision: _revision,
+                    payload: <String, Object?>{
+                      'incomingPriority': preemption.incomingPriority,
+                      'basePriority': preemption.basePriority,
+                      'retentionPriority': preemption.retentionPriority,
+                      'retentionBonus': preemption.retentionBonus,
+                      'restartCostElapsedMicros':
+                          preemption.restartCostElapsedMicros,
+                      'restartCostBytes': preemption.restartCostBytes,
+                      'committedLength': session.committedLength,
+                    },
+                  ),
+                );
+              }
               return;
             }
             final failedAtMicros = clock.nowMicros();
