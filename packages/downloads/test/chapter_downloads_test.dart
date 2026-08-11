@@ -338,10 +338,12 @@ void main() {
     );
     final service = await PersistentChapterDownloadService.open(directory.path);
     final oldTransport = _SharedGateTransport(bytes);
+    final physicalTrace = MemoryTraceSink();
     final reader = service.transferRuntime.attachConsumer(
       scopeId: 'reader-like-version-a',
       transportFor: (_) => oldTransport,
       consumerTraceSink: const NoopTraceSink(),
+      localPhysicalTraceSink: physicalTrace,
     );
     var readerDisposed = false;
     var serviceClosed = false;
@@ -374,11 +376,29 @@ void main() {
       isTrue,
     );
     expect(oldTransport.opens, 1);
+    expect(
+      physicalTrace.events.where(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.payload['stage'] == 'verified-transfer-acquire-alias' &&
+            event.payload['action'] == 'joined-existing-physical',
+      ),
+      isNotEmpty,
+    );
 
     oldTransport.release.complete();
     await Future.wait<void>(<Future<void>>[reader.idle(), chapterRun]);
 
     expect(oldTransport.opens, 1);
+    expect(
+      physicalTrace.events.where(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.payload['stage'] ==
+                'verified-equivalent-promotion-takeover',
+      ),
+      isEmpty,
+    );
     expect(await service.artifactStore.openArtifactStream(newId), isNotNull);
     expect(await service.readPage(entry, 0), bytes);
     expect((await service.inspect(entry)).phase, ChapterDownloadPhase.complete);

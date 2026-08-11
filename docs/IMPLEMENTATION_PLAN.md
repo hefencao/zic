@@ -1,6 +1,6 @@
 # zic Implementation Plan
 ## P0：Image Transfer ownership 正式迁移
-- P0：dev.225在dev.224编译闭包基础上推进verified transfer identity Phase C1：direct verified equivalence仅在新exact demand尚未创建session时，于acquire前加入唯一既有且有物理authority的transfer；claim保留exact URI/source bucket，physical session保留首个exact ID作为hot artifact anchor，章节required completion仍materialize自己的exact durable ID。两个已存在session不merge，source-resident非cache body不跨版本join；先真机验证跨版本Reader/章节只出现一次physical transport，再继续扩大cold partial/更一般TransferKey覆盖。
+- P0：dev.226开始Phase E证据化收缩：dev.225 acquire-time alias保留；删除无生产调用者的Reader/consumer late-takeover委托，composition promotion listener只针对`findExact`独立physical session，alias后的同一session不再参与legacy扫描。新增`verified-transfer-acquire-alias` join/ambiguous诊断与legacy compatibility标记；15:01真机Trace显示late takeover=0而physical→durable partial/artifact persistence仍真实命中，故后者继续保留。下一步用新诊断确认acquire join覆盖率与legacy path命中率，再决定是否删除最终late takeover；不把cold partial persistence误判成旧Reader handoff。
 - 上述共享transfer经真机确认后，再把source-confirmed relation + persisted verified page mapping + strong media identity归一为verified TransferKey-before-acquire，使已证明等价版本页在建立physical session前合流；覆盖与冷启动证据未闭环前保留durable partial、artifact equivalence与session/takeover兼容路径，覆盖后逐项删除旧补偿。
 ## P0：Partial authority 单调性真机闭环
 - dev.195 的playable partial单调性继续冻结：Range probe/full-body catch-up的取消、EOF或mismatch只能失败当前 network attempt，旧partial/Ingress不变；metadata损坏只丢网络知识。dev.196不改DownloadSession authority、DecodeSession、NetLane、network=5、1000/780、7/3、2/1、7/5/3/2，也不增加bandwidth scheduler/framing。

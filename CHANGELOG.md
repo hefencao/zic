@@ -1,3 +1,8 @@
+## 0.31.0-dev.226：Phase E late-takeover contraction and alias observability
+- 依据15:01真机Trace收缩verified-equivalence补偿：删除无生产调用者的Reader/consumer late-takeover委托，仅在composition owner保留独立exact session的legacy compatibility takeover。
+- promotion listener改为`findExact`独立session检查，acquire-time physical alias不再被late compatibility扫描；新增`verified-transfer-acquire-alias` join/ambiguous诊断和compatibility scope标记。
+- 保留physical transfer→durable partial/artifact persistence：本轮Trace仍实际命中12次partial stored与48次artifact persistence，不能因历史`session-handoff`命名机械删除。
+
 ## 0.31.0-dev.225：Verified equivalent physical transfer alias before acquire
 - 在composition physical owner中新增acquire-time verified alias：新exact identity尚无session且direct verified equivalence唯一命中已有有authority的physical session时，claim在创建session前加入该transfer；不做事后session merge。
 - `DownloadTransferOwner`按physical identity聚合claim，同时保留每个claim的exact `DownloadId`作为provider URI/source bucket；source-resident非artifact-cache body禁止跨版本join，避免把可重开source误当成共享encoded body。

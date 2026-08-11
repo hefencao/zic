@@ -173,13 +173,6 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   Map<DecodeId, UploadDemand> get uploadDemands =>
       Map<DecodeId, UploadDemand>.unmodifiable(_uploads);
 
-  /// Lets the composition physical owner reopen an incomplete exact transfer
-  /// after a verified immutable local artifact becomes available.
-  void refreshDownloadForLocalArtifact(String sessionId, DownloadId id) {
-    if (_disposed || !_downloads.containsKey(id)) return;
-    _downloadTransfer.refreshForLocalArtifact(id);
-  }
-
   int _availableSourceRevision(DownloadId id) {
     var available = _sourceRevisions[id] ?? -1;
     final projectionRevision = ingresses?.find(id)?.snapshot.revision ?? -1;

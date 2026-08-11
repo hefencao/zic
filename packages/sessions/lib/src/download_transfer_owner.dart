@@ -246,10 +246,16 @@ final class DownloadTransferOwner {
     return consumer;
   }
 
-  void refreshForLocalArtifact(DownloadId id, {String? sessionId}) {
-    if (_disposed) return;
-    final physicalId = registry.resolvePhysicalId(id);
-    final session = registry.find(physicalId);
+  /// Legacy Phase-E compatibility path for an independently-created exact
+  /// physical session whose directly verified equivalent has just become
+  /// durable. Acquire-time aliases never enter this method.
+  void refreshIndependentExactForPromotedEquivalent(
+    DownloadId id, {
+    String? sessionId,
+  }) {
+    if (_disposed || registry.resolvePhysicalId(id) != id) return;
+    final physicalId = id;
+    final session = registry.findExact(id);
     if (session == null ||
         session.state == DownloadState.promoted ||
         session.state == DownloadState.disposed ||
@@ -269,6 +275,8 @@ final class DownloadTransferOwner {
       id: physicalId,
       payload: <String, Object?>{
         'stage': 'verified-equivalent-promotion-takeover',
+        'compatibilityPath': true,
+        'compatibilityScope': 'independent-exact-session',
         'committedLength': session.committedLength,
         'taskState': taskKey == null
             ? 'absent'
@@ -1158,9 +1166,6 @@ final class DownloadTransferConsumer {
       owner._replaceDemands(this, sessionId, revision, desired);
 
   void refreshScheduling() => owner._refreshScheduling(this);
-
-  void refreshForLocalArtifact(DownloadId id) =>
-      owner.refreshForLocalArtifact(id, sessionId: _sessionId);
 
   Future<void> idle() => owner._idleFor(this);
 

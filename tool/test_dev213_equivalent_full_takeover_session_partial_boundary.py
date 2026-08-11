@@ -19,6 +19,13 @@ def forbid(text: str, token: str, label: str) -> None:
         raise SystemExit(f'forbidden {label}: {token}')
 
 
+
+version = read('apps/app/pubspec.yaml')
+build_match = re.search(r'^version:\s*0\.31\.0\+(\d+)$', version, re.M)
+if build_match is None:
+    raise SystemExit('dev.213 app version missing')
+build = int(build_match.group(1))
+
 cache = read('packages/downloads/lib/src/artifact_cache_manager.dart')
 for token in (
     'typedef ArtifactPromotionListener = void Function(DownloadId id);',
@@ -34,15 +41,26 @@ session = read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
 transfer_runtime_path = ROOT / 'packages/downloads/lib/src/composition_download_transfer_runtime.dart'
 if transfer_runtime_path.exists():
     transfer_runtime = transfer_runtime_path.read_text(encoding='utf-8')
-    for token in (
-        'artifactPromotionListener = listener;',
-        'cache.addPromotionListener(listener);',
-        'cache.directEquivalents(promoted)',
-        'registry.find(equivalent) == null',
-        'owner.refreshForLocalArtifact(equivalent);',
-        'artifactCacheManager?.removePromotionListener(promotionListener);',
-    ):
-        require(transfer_runtime, token, 'composition late-equivalent takeover wiring')
+    if build >= 226:
+        for token in (
+            'artifactPromotionListener = listener;',
+            'cache.addPromotionListener(listener);',
+            'cache.directEquivalents(promoted)',
+            'registry.findExact(equivalent)',
+            'owner.refreshIndependentExactForPromotedEquivalent(equivalent);',
+            'artifactCacheManager?.removePromotionListener(promotionListener);',
+        ):
+            require(transfer_runtime, token, 'composition late-equivalent compatibility wiring')
+    else:
+        for token in (
+            'artifactPromotionListener = listener;',
+            'cache.addPromotionListener(listener);',
+            'cache.directEquivalents(promoted)',
+            'registry.find(equivalent) == null',
+            'owner.refreshForLocalArtifact(equivalent);',
+            'artifactCacheManager?.removePromotionListener(promotionListener);',
+        ):
+            require(transfer_runtime, token, 'composition late-equivalent takeover wiring')
 elif '_PipelineDownloadTransferRuntime' in session:
     for token in (
         'artifactPromotionListener = listener;',
@@ -73,7 +91,23 @@ for token in (
     'session.committedLength',
 ):
     require(takeover_owner, token, 'local artifact takeover without session reset')
-require(coordinator, 'void refreshDownloadForLocalArtifact(String sessionId, DownloadId id)', 'Reader takeover delegation')
+if build >= 226:
+    forbid(
+        coordinator,
+        'refreshDownloadForLocalArtifact',
+        'dead Reader takeover delegation after composition ownership',
+    )
+    require(
+        takeover_owner,
+        "'compatibilityScope': 'independent-exact-session'",
+        'late takeover compatibility scope',
+    )
+else:
+    require(
+        coordinator,
+        'void refreshDownloadForLocalArtifact(String sessionId, DownloadId id)',
+        'Reader takeover delegation',
+    )
 
 migration = read('apps/app/lib/demo_home_source_migration.dart')
 for token in (
@@ -123,12 +157,10 @@ require(
     'release gate wiring',
 )
 
-version = read('apps/app/pubspec.yaml')
-build_match = re.search(r'^version:\s*0\.31\.0\+(\d+)$', version, re.M)
-if build_match is None or int(build_match.group(1)) < 213:
+if build < 213:
     raise SystemExit('dev.213 app version regressed')
 android = read('apps/app/android/zic-version.properties')
-if f'versionCode={build_match.group(1)}' not in android:
+if f'versionCode={build}' not in android:
     raise SystemExit('dev.213 Android versionCode mismatch')
 
 print('dev.213 equivalent-full takeover/session-partial boundary: OK')

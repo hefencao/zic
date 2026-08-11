@@ -74,10 +74,17 @@ final class CompositionDownloadTransferRuntime {
       void listener(DownloadId promoted) {
         if (_disposed) return;
         for (final equivalent in cache.directEquivalents(promoted)) {
-          if (equivalent == promoted || registry.find(equivalent) == null) {
+          if (equivalent == promoted) continue;
+          // Phase C1 aliases already share the promoted physical session and
+          // must not be re-scanned by the legacy late-takeover compatibility
+          // path. Only an independently-created exact session can still need
+          // late takeover.
+          final independent = registry.findExact(equivalent);
+          if (independent == null ||
+              registry.resolvePhysicalId(equivalent) != equivalent) {
             continue;
           }
-          owner.refreshForLocalArtifact(equivalent);
+          owner.refreshIndependentExactForPromotedEquivalent(equivalent);
         }
       }
       artifactPromotionListener = listener;
@@ -119,13 +126,54 @@ final class CompositionDownloadTransferRuntime {
         // Never merge already-distinct physical sessions after the fact. A new
         // exact identity remains separate when proof points at more than one
         // existing physical owner.
+        _recordAcquireAlias(
+          exactId,
+          action: 'rejected-ambiguous-existing-owners',
+          candidate: physicalId,
+        );
         return exactId;
       }
       candidate = physicalId;
     }
     if (candidate == null) return exactId;
+    final session = registry.find(candidate);
     registry.aliasPhysical(id: exactId, target: candidate);
+    _recordAcquireAlias(
+      exactId,
+      action: 'joined-existing-physical',
+      candidate: candidate,
+      session: session,
+    );
     return candidate;
+  }
+
+  void _recordAcquireAlias(
+    DownloadId exactId, {
+    required String action,
+    required DownloadId candidate,
+    DownloadSession? session,
+  }) {
+    try {
+      traceHub.record(
+        traceEvent(
+          clock: clock,
+          sessionId: 'composition-transfer-owner',
+          kind: TraceEventKind.artifactSource,
+          identityHash: exactId.key,
+          payload: <String, Object?>{
+            'stage': 'verified-transfer-acquire-alias',
+            'action': action,
+            'physicalToken': workspace.layout.tokenFor(candidate),
+            if (session != null) 'physicalState': session.state.name,
+            if (session != null)
+              'physicalCommittedLength': session.committedLength,
+            'phase': 'acquire-before-physical-session',
+          },
+        ),
+      );
+    } on Object {
+      // Identity diagnostics must never alter physical acquisition.
+    }
   }
 
   bool _canJoinEquivalentSession(DownloadSession session) {
