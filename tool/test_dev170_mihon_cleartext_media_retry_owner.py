@@ -48,6 +48,9 @@ mihon = read('packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/plugin
 require(mihon, 'this !is java.net.UnknownServiceException', 'deterministic network-policy classification')
 
 coordinator = read('packages/sessions/lib/src/live_coordinator.dart')
+transfer_owner_path = ROOT / 'packages/sessions/lib/src/download_transfer_owner.dart'
+physical_owner = (transfer_owner_path.read_text(encoding='utf-8')
+                  if transfer_owner_path.exists() else coordinator)
 for token in (
     'final Set<DownloadId> _downloadTerminalFailures',
     '_downloadTerminalFailures.contains(id)',
@@ -56,12 +59,13 @@ for token in (
     'return false;',
     'return true;',
 ):
-    require(coordinator, token, 'single-owner terminal download retry contract')
+    require(physical_owner, token, 'single-owner terminal download retry contract')
 # Source snapshots may wake decode, but must not own a second download retry path.
 watch_start = coordinator.index('  void _watchSource(')
-watch_end = coordinator.index('  Future<void> _runDownload(', watch_start)
+watch_end = coordinator.index('  void _reconcileDecodes(', watch_start)
 watch = coordinator[watch_start:watch_end]
 forbid(watch, '_ensureDownloadTask(', 'source-listener download resubmission')
+forbid(watch, '_scheduleDownloadRetry(', 'source-listener retry ownership')
 
 source_browser = read('apps/app/lib/source_browser.dart')
 for token in (

@@ -31,24 +31,37 @@ for token in (
     require(cache, token, 'artifact promotion observer')
 
 session = read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
-for token in (
-    '_artifactPromotionListener = promotionListener;',
-    'artifactCacheManager.addPromotionListener(promotionListener);',
-    'artifactCacheManager.directEquivalents(',
-    '_downloads.find(equivalent) == null',
-    '_coordinator.refreshDownloadForLocalArtifact(',
-    '_artifactCacheManager?.removePromotionListener(promotionListener);',
-):
-    require(session, token, 'Reader late-equivalent takeover wiring')
+if '_PipelineDownloadTransferRuntime' in session:
+    for token in (
+        'artifactPromotionListener = listener;',
+        'cache.addPromotionListener(listener);',
+        'cache.directEquivalents(promoted)',
+        'registry.find(equivalent) == null',
+        'owner.refreshForLocalArtifact(equivalent);',
+        'artifactCacheManager?.removePromotionListener(promotionListener);',
+    ):
+        require(session, token, 'composition late-equivalent takeover wiring')
+else:
+    for token in (
+        '_artifactPromotionListener = promotionListener;',
+        'artifactCacheManager.addPromotionListener(promotionListener);',
+        'artifactCacheManager.directEquivalents(',
+        '_downloads.find(equivalent) == null',
+        '_coordinator.refreshDownloadForLocalArtifact(',
+        '_artifactCacheManager?.removePromotionListener(promotionListener);',
+    ):
+        require(session, token, 'Reader late-equivalent takeover wiring')
 
 coordinator = read('packages/sessions/lib/src/live_coordinator.dart')
+owner_path = ROOT / 'packages/sessions/lib/src/download_transfer_owner.dart'
+takeover_owner = owner_path.read_text(encoding='utf-8') if owner_path.exists() else coordinator
 for token in (
-    'void refreshDownloadForLocalArtifact(String sessionId, DownloadId id)',
     "'stage': 'verified-equivalent-promotion-takeover'",
     'net.cancel(taskKey);',
     'session.committedLength',
 ):
-    require(coordinator, token, 'local artifact takeover without session reset')
+    require(takeover_owner, token, 'local artifact takeover without session reset')
+require(coordinator, 'void refreshDownloadForLocalArtifact(String sessionId, DownloadId id)', 'Reader takeover delegation')
 
 migration = read('apps/app/lib/demo_home_source_migration.dart')
 for token in (

@@ -71,9 +71,11 @@ for token in (
 ):
     require(regression, token, 'late projection join/detach regression')
 
-# dev.215 deliberately splits native ingress before physical registry/retry lift.
+# Later phases may lift the physical registry/retry owner, but Reader-native
+# ingress/decode ownership must remain local after that lift.
 for token in ('GlobalDownloadRegistry', 'static final DownloadRegistry', 'CompositionDownloadRegistry'):
-    forbid(pipe + session + registry, token, 'premature global physical transfer owner')
+    forbid(pipe + session + registry, token, 'parallel/second physical transfer owner')
+require(pipe, '_ingresses = DownloadIngressProjectionRegistry(', 'Reader-local ingress survives registry lift')
 
 for rel in (
     'docs/adr/0196-reader-local-ingress-projection-before-transfer-registry-lift.md',
@@ -83,6 +85,10 @@ for rel in (
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.215 governance file missing: {rel}')
 
-require(read('apps/app/pubspec.yaml'), 'version: 0.31.0+215', 'dev.215 app version')
-require(read('apps/app/android/zic-version.properties'), 'versionCode=215', 'dev.215 Android version')
+pubspec = read('apps/app/pubspec.yaml')
+version_props = read('apps/app/android/zic-version.properties')
+if not any(f'version: 0.31.0+{build}' in pubspec for build in range(215, 1000)):
+    raise SystemExit('dev.215 requires app build >= 215')
+if not any(f'versionCode={build}' in version_props for build in range(215, 1000)):
+    raise SystemExit('dev.215 requires Android versionCode >= 215')
 print('dev.215 download ingress projection split: OK')

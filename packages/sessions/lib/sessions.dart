@@ -8,6 +8,7 @@ export 'src/download_ingress_registry.dart';
 export 'src/download_job.dart';
 export 'src/download_registry.dart';
 export 'src/download_session.dart';
+export 'src/download_transfer_owner.dart';
 export 'src/frame_budget.dart';
 export 'src/frame_holder.dart';
 export 'src/live_coordinator.dart';

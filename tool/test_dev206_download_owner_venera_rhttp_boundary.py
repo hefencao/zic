@@ -48,11 +48,30 @@ for forbidden in ('PartialDownload', 'partialDownload', 'checkpoint', '.drain(')
         raise SystemExit(f'ordinary Reader retain leaked durable partial work: {forbidden}')
 if '_readerSessionRetentionDuration = Duration(minutes: 2)' not in pipe:
     raise SystemExit('hot PipelineReaderSession retention owner missing')
-dispose = pipe[pipe.index('Future<void> dispose() async'):]
-if 'await _partialDownloadHandoff?.drain(_downloads.sessions)' not in dispose:
-    raise SystemExit('true session disposal does not cold-drain unfinished partials')
-if 'prepareDownload: _partialDownloadHandoff?.restoreInto' not in pipe:
-    raise SystemExit('cold partial is not restored before network prepare')
+transfer_owner_path = ROOT / 'packages/sessions/lib/src/download_transfer_owner.dart'
+if transfer_owner_path.exists():
+    transfer_owner = transfer_owner_path.read_text(encoding='utf-8')
+    for marker in (
+        'persistUnclaimed',
+        'Future<void> _persistUnclaimed(DownloadSession session) async',
+        'final flush = callback(session);',
+        'await flush;',
+    ):
+        if marker not in transfer_owner:
+            raise SystemExit(f'composition physical owner lost durable partial final-drain: {marker}')
+    for marker in (
+        'prepareDownload: partialDownloadHandoff?.restoreInto',
+        'persistUnclaimed: partialDownloadHandoff == null',
+        "partialDownloadHandoff!.drain(<DownloadSession>[session])",
+    ):
+        if marker not in pipe:
+            raise SystemExit(f'composition physical runtime partial handoff missing: {marker}')
+else:
+    dispose = pipe[pipe.index('Future<void> dispose() async'):]
+    if 'await _partialDownloadHandoff?.drain(_downloads.sessions)' not in dispose:
+        raise SystemExit('true session disposal does not cold-drain unfinished partials')
+    if 'prepareDownload: _partialDownloadHandoff?.restoreInto' not in pipe:
+        raise SystemExit('cold partial is not restored before network prepare')
 if '.withPartialDownloadStore(' not in app:
     raise SystemExit('composition does not wire Download-owned partial store')
 

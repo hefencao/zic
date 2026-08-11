@@ -38,11 +38,11 @@ for token in (
     "_releaseStartupCurrentDownload();",
 ):
     require(session, token, "Pipeline startup current-source gate")
-for token in (
-    "void refreshDownloadScheduling(String sessionId)",
-    "_ensureDownloadTask(sessionId, entry.key, session)",
-):
-    require(coordinator, token, "download scheduling refresh")
+require(coordinator, "void refreshDownloadScheduling(String sessionId)", "download scheduling refresh")
+if "download_transfer_owner.dart" in read("packages/sessions/lib/sessions.dart"):
+    require(coordinator, "_downloadTransfer.refreshScheduling();", "composition download scheduling refresh")
+else:
+    require(coordinator, "_ensureDownloadTask(sessionId, entry.key, session)", "Reader-local download scheduling refresh")
 for token in (
     "localSourceConcurrency: 2",
     "remoteSourceConcurrency: 5",

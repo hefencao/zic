@@ -1,3 +1,10 @@
+## 0.31.0-dev.216：Composition Physical Transfer Owner
+
+- `DownloadTransferOwner`提升为exact `DownloadId`的composition physical owner：共享`DownloadRegistry`、active writer/network task、retry/terminal/defer与scoped claims；`LiveCoordinator`只保留Reader demand/decode/upload协调。
+- `PipelineReaderSessionFactory`所有clone共享transfer-runtime pool，runtime key按artifact cache manager + partial store + shared NetLane的真实owner identity组成；loader/UA/Reader transport只作为consumer provider，不产生第二physical owner。
+- 两个Reader请求同一exact id时复用一个session/writer。active provider退出会先取消并等待其task真实退出，再由remaining consumer以自己的transport继续；Reader-local ingress projection/decode/upload仍隔离。
+- 最后claim消失且已有committed partial时，physical owner在writer退出后通过现有`PartialDownloadHandoff`立即持久化，避免composition runtime继续存活造成冷启动partial丢失。新增ADR 0197、dev.216审计/ownership gate与三组Dart行为测试；App提升到`0.31.0+216`。verified跨版本TransferKey与chapter/whole-comic/prefetch claims留待下一阶段。
+
 ## 0.31.0-dev.215：Reader-local Ingress Projection 所有权拆分
 
 - physical `DownloadSession`移除唯一Reader native `Ingress`/source-listener所有权；新增Reader-local `DownloadIngressProjection`与registry，DecodeSession显式消费本Reader source，artifact/writer/resume仍归physical session。

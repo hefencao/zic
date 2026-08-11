@@ -1,7 +1,7 @@
 # zic Implementation Plan
 ## P0：Image Transfer ownership 正式迁移
-- dev.214 已完成 scoped consumer claims；dev.215 已把 Reader-native `Ingress`/source listener拆为 `DownloadIngressProjection`，physical `DownloadSession`不再拥有单一native source，并建立late committed-prefix稳定边界回放协议。
-- 下一阶段把network task/retry/terminal与physical `DownloadRegistry`/稳定workspace提升到composition owner，先验证exact DownloadId跨Reader只有一个writer；再做verified TransferKey-before-acquire与chapter/whole-comic/prefetch demand aggregation。新路径覆盖前保留durable partial/artifact owner与既有兼容handoff。
+- dev.214完成scoped consumer claims；dev.215拆出Reader-local ingress projection；dev.216将physical `DownloadRegistry`、network/retry/terminal/defer、workspace与partial final-drain提升到composition `DownloadTransferOwner`，同一runtime key下exact `DownloadId`跨Reader只保留一个session/writer，provider Reader退出有物理task barrier。
+- 下一阶段先把source-confirmed relation + persisted verified page mapping + strong media identity归一为verified TransferKey-before-acquire，使已证明等价版本页在建立physical session前合流；再把chapter/whole-comic/prefetch改成同一owner上的demand aggregation。覆盖与冷启动证据未闭环前保留durable partial、artifact equivalence与session/takeover兼容路径。
 ## P0：Partial authority 单调性真机闭环
 - dev.195 的playable partial单调性继续冻结：Range probe/full-body catch-up的取消、EOF或mismatch只能失败当前 network attempt，旧partial/Ingress不变；metadata损坏只丢网络知识。dev.196不改DownloadSession authority、DecodeSession、NetLane、network=5、1000/780、7/3、2/1、7/5/3/2，也不增加bandwidth scheduler/framing。
 ## P0：Current / Previous 真实执行槽真机闭环

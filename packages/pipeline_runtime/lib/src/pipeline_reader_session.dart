@@ -45,6 +45,8 @@ final class _RetainedReaderSession {
 }
 
 final class _PipelineReaderSessionRetentionPool {
+  bool get hasLeased => _leased.isNotEmpty;
+
   final Map<String, _RetainedReaderSession> _idle =
       <String, _RetainedReaderSession>{};
   final Map<PipelineReaderSession, String> _leased =
@@ -127,6 +129,225 @@ final class _PipelineReaderSessionRetentionPool {
   }
 }
 
+
+final class _TransferTraceHub implements TraceSink {
+  final Set<TraceSink> _sinks = <TraceSink>{};
+
+  void attach(TraceSink sink) => _sinks.add(sink);
+
+  void detach(TraceSink sink) => _sinks.remove(sink);
+
+  @override
+  void record(TraceEvent event) {
+    for (final sink in _sinks.toList(growable: false)) {
+      try {
+        sink.record(event);
+      } on Object {
+        // A Reader diagnostics sink cannot break physical transfer ownership.
+      }
+    }
+  }
+}
+
+final class _TransferRuntimeKey {
+  const _TransferRuntimeKey({
+    required this.artifactCacheManager,
+    required this.partialDownloadStore,
+    required this.net,
+  });
+
+  final ArtifactCacheManager? artifactCacheManager;
+  final PartialDownloadStore? partialDownloadStore;
+  final NetLane net;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _TransferRuntimeKey &&
+      identical(artifactCacheManager, other.artifactCacheManager) &&
+      identical(partialDownloadStore, other.partialDownloadStore) &&
+      identical(net, other.net);
+
+  @override
+  int get hashCode => Object.hash(
+        identityHashCode(artifactCacheManager),
+        identityHashCode(partialDownloadStore),
+        identityHashCode(net),
+      );
+}
+
+final class _PipelineDownloadTransferRuntimePool {
+  final Map<_TransferRuntimeKey, _PipelineDownloadTransferRuntime> _entries =
+      <_TransferRuntimeKey, _PipelineDownloadTransferRuntime>{};
+
+  _PipelineDownloadTransferRuntime get({
+    required ArtifactCacheManager? artifactCacheManager,
+    required PartialDownloadStore? partialDownloadStore,
+    required NetLane net,
+  }) {
+    final key = _TransferRuntimeKey(
+      artifactCacheManager: artifactCacheManager,
+      partialDownloadStore: partialDownloadStore,
+      net: net,
+    );
+    return _entries.putIfAbsent(
+      key,
+      () => _PipelineDownloadTransferRuntime(
+        artifactCacheManager: artifactCacheManager,
+        partialDownloadStore: partialDownloadStore,
+        net: net,
+      ),
+    );
+  }
+
+  bool get hasConsumers => _entries.values.any((runtime) => runtime.hasConsumers);
+
+  Future<void> disposeIdle() async {
+    final idleKeys = <_TransferRuntimeKey>[
+      for (final entry in _entries.entries)
+        if (!entry.value.hasConsumers) entry.key,
+    ];
+    for (final key in idleKeys) {
+      final runtime = _entries.remove(key);
+      if (runtime != null) {
+        await runtime.dispose();
+      }
+    }
+  }
+
+  Future<void> disposeAll() async {
+    if (hasConsumers) {
+      throw StateError('cannot dispose physical transfers with active consumers');
+    }
+    final runtimes = _entries.values.toList(growable: false);
+    _entries.clear();
+    for (final runtime in runtimes) {
+      await runtime.dispose();
+    }
+  }
+}
+
+final class _PipelineDownloadTransferRuntime {
+  _PipelineDownloadTransferRuntime({
+    required this.artifactCacheManager,
+    required this.partialDownloadStore,
+    required NetLane net,
+  })  : clock = const SystemClock(),
+        traceHub = _TransferTraceHub(),
+        workspace = EphemeralCacheWorkspace.readerSession(
+          'physical-transfer-owner-${++_sequence}',
+        ) {
+    final cache = artifactCacheManager;
+    final partialStore = partialDownloadStore;
+    if (cache != null) {
+      artifactCacheHandoff = PromotedArtifactCacheHandoff(
+        cache: cache,
+        onError: (error, stackTrace) {},
+        clock: clock,
+        traceSink: traceHub,
+        sessionId: 'physical-transfer-owner',
+      );
+    }
+    if (partialStore != null) {
+      partialDownloadHandoff = PartialDownloadHandoff(
+        store: partialStore,
+        onError: (error, stackTrace) {},
+        clock: clock,
+        traceSink: traceHub,
+        sessionId: 'physical-transfer-owner',
+      );
+    }
+    registry = DownloadRegistry(
+      layout: workspace.layout,
+      clock: clock,
+      traceSink: traceHub,
+      onSessionCreated: (session) {
+        artifactCacheHandoff?.observe(session);
+      },
+    );
+    owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      prepareDownload: partialDownloadHandoff?.restoreInto,
+      persistUnclaimed: partialDownloadHandoff == null
+          ? null
+          : (session) => partialDownloadHandoff!.drain(<DownloadSession>[session]),
+      net: net,
+    );
+    if (cache != null) {
+      void listener(DownloadId promoted) {
+        if (_disposed) return;
+        for (final equivalent in cache.directEquivalents(promoted)) {
+          if (equivalent == promoted || registry.find(equivalent) == null) {
+            continue;
+          }
+          owner.refreshForLocalArtifact(equivalent);
+        }
+      }
+      artifactPromotionListener = listener;
+      cache.addPromotionListener(listener);
+    }
+  }
+
+  static int _sequence = 0;
+
+  final ArtifactCacheManager? artifactCacheManager;
+  final PartialDownloadStore? partialDownloadStore;
+  final MonoClock clock;
+  final _TransferTraceHub traceHub;
+  final EphemeralCacheWorkspace workspace;
+  PromotedArtifactCacheHandoff? artifactCacheHandoff;
+  PartialDownloadHandoff? partialDownloadHandoff;
+  late final DownloadRegistry registry;
+  late final DownloadTransferOwner owner;
+  ArtifactPromotionListener? artifactPromotionListener;
+  bool _disposed = false;
+
+  bool get hasConsumers => owner.consumers.isNotEmpty;
+
+  DownloadTransferConsumer attachReader({
+    required String scopeId,
+    required TransferTransportPick transportFor,
+    required TraceSink traceSink,
+    required RetryPolicy retry,
+    required String Function(DownloadId id) downloadBucketFor,
+    required int Function(DownloadId id) downloadBucketLimitFor,
+  }) {
+    if (_disposed) {
+      throw StateError('physical transfer runtime is disposed');
+    }
+    traceHub.attach(traceSink);
+    return owner.attachConsumer(
+      scopeId: scopeId,
+      transportFor: transportFor,
+      traceSink: traceSink,
+      retry: retry,
+      downloadBucketFor: downloadBucketFor,
+      downloadBucketLimitFor: downloadBucketLimitFor,
+    );
+  }
+
+  void detachReaderTrace(TraceSink traceSink) => traceHub.detach(traceSink);
+
+  Future<Uint8List> readArtifact(Artifact artifact) =>
+      workspace.readArtifact(artifact);
+
+  Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    final promotionListener = artifactPromotionListener;
+    artifactPromotionListener = null;
+    if (promotionListener != null) {
+      artifactCacheManager?.removePromotionListener(promotionListener);
+    }
+    await owner.dispose();
+    await artifactCacheHandoff?.drain(registry.sessions);
+    artifactCacheHandoff?.detach();
+    await partialDownloadHandoff?.drain(registry.sessions);
+    await registry.dispose();
+    await workspace.dispose();
+  }
+}
+
 final class PipelineReaderSessionFactory {
   PipelineReaderSessionFactory({
     required this.mediaRuntimeFactory,
@@ -139,8 +360,11 @@ final class PipelineReaderSessionFactory {
     this.bytesLoader,
     this.userAgentProvider,
     _PipelineReaderSessionRetentionPool? retentionPool,
+    _PipelineDownloadTransferRuntimePool? transferRuntimePool,
   })  : _retentionPool =
             retentionPool ?? _PipelineReaderSessionRetentionPool(),
+        _transferRuntimePool = transferRuntimePool ??
+            _PipelineDownloadTransferRuntimePool(),
         artifactReadScheduler =
             artifactReadScheduler ?? ArtifactCacheReadScheduler(),
         pageDownloadLane =
@@ -158,6 +382,7 @@ final class PipelineReaderSessionFactory {
   final ArtifactCacheManager? artifactCacheManager;
   final PartialDownloadStore? partialDownloadStore;
   final _PipelineReaderSessionRetentionPool _retentionPool;
+  final _PipelineDownloadTransferRuntimePool _transferRuntimePool;
   final ArtifactCacheReadScheduler artifactReadScheduler;
   final NetLane pageDownloadLane;
   final WebpDecodePrefixHints decodePrefixHints;
@@ -184,6 +409,7 @@ final class PipelineReaderSessionFactory {
         bytesLoader: bytesLoader,
         userAgentProvider: userAgentProvider,
         retentionPool: _retentionPool,
+        transferRuntimePool: _transferRuntimePool,
       );
 
   PipelineReaderSessionFactory withArtifactCacheManager(
@@ -200,6 +426,7 @@ final class PipelineReaderSessionFactory {
         bytesLoader: bytesLoader,
         userAgentProvider: userAgentProvider,
         retentionPool: _retentionPool,
+        transferRuntimePool: _transferRuntimePool,
       );
 
   PipelineReaderSessionFactory withPartialDownloadStore(
@@ -216,6 +443,7 @@ final class PipelineReaderSessionFactory {
         bytesLoader: bytesLoader,
         userAgentProvider: userAgentProvider,
         retentionPool: _retentionPool,
+        transferRuntimePool: _transferRuntimePool,
       );
 
   PipelineReaderSessionFactory withUserAgentProvider(
@@ -232,6 +460,7 @@ final class PipelineReaderSessionFactory {
         bytesLoader: bytesLoader,
         userAgentProvider: provider,
         retentionPool: _retentionPool,
+        transferRuntimePool: _transferRuntimePool,
       );
 
   PipelineReaderSessionFactory withBytesLoader(
@@ -248,27 +477,34 @@ final class PipelineReaderSessionFactory {
         bytesLoader: loader,
         userAgentProvider: userAgentProvider,
         retentionPool: _retentionPool,
+        transferRuntimePool: _transferRuntimePool,
       );
 
   PipelineReaderSession create({
     required ChapterManifest chapter,
     required String sessionId,
     TraceSink? traceSink,
-  }) =>
-      PipelineReaderSession(
-        chapter: chapter,
-        mediaRuntimeFactory: mediaRuntimeFactory,
-        sessionId: sessionId,
-        artifactCacheManager: artifactCacheManager,
-        partialDownloadStore: partialDownloadStore,
-        artifactReadScheduler: artifactReadScheduler,
-        pageDownloadLane: pageDownloadLane,
-        decodePrefixHints: decodePrefixHints,
-        loaderSources: loaderSources,
-        bytesLoader: bytesLoader,
-        userAgentProvider: userAgentProvider,
-        traceSink: traceSink,
-      );
+  }) {
+    final transferRuntime = _transferRuntimePool.get(
+      artifactCacheManager: artifactCacheManager,
+      partialDownloadStore: partialDownloadStore,
+      net: pageDownloadLane,
+    );
+    return PipelineReaderSession._(
+      chapter: chapter,
+      mediaRuntimeFactory: mediaRuntimeFactory,
+      sessionId: sessionId,
+      artifactCacheManager: artifactCacheManager,
+      artifactReadScheduler: artifactReadScheduler,
+      pageDownloadLane: pageDownloadLane,
+      decodePrefixHints: decodePrefixHints,
+      loaderSources: loaderSources,
+      bytesLoader: bytesLoader,
+      userAgentProvider: userAgentProvider,
+      traceSink: traceSink,
+      transferRuntime: transferRuntime,
+    );
+  }
 
   PipelineReaderSession acquire({
     required ChapterManifest chapter,
@@ -288,7 +524,21 @@ final class PipelineReaderSessionFactory {
     _retentionPool.release(session);
   }
 
-  Future<void> disposeRetainedSessions() => _retentionPool.disposeAll();
+  Future<void> disposeRetainedSessions() async {
+    await _retentionPool.disposeAll();
+    // `create()` callers are not represented in the retention pool. Dispose
+    // only runtimes that prove they have no live transfer consumers.
+    await _transferRuntimePool.disposeIdle();
+  }
+
+  /// Explicit composition shutdown for tests/app teardown after every active
+  /// Reader/command consumer has detached from the physical transfer owner.
+  Future<void> disposeTransferRuntimes() async {
+    if (_transferRuntimePool.hasConsumers) {
+      throw StateError('cannot dispose physical transfers with active consumers');
+    }
+    await _transferRuntimePool.disposeAll();
+  }
 
   String _retentionKey(ChapterManifest chapter, TraceSink? traceSink) {
     final orderedSources = loaderSources.entries.toList(growable: false)
@@ -309,6 +559,7 @@ final class PipelineReaderSessionFactory {
     final configuration = Object.hash(
       identityHashCode(mediaRuntimeFactory),
       identityHashCode(artifactCacheManager),
+      identityHashCode(partialDownloadStore),
       identityHashCode(artifactReadScheduler),
       identityHashCode(pageDownloadLane),
       identityHashCode(decodePrefixHints),
@@ -329,12 +580,11 @@ final class PipelineReaderSessionFactory {
 /// projections. Download scheduling, request transport, artifact promotion,
 /// decode/upload lanes and transfer progress remain behind this boundary.
 final class PipelineReaderSession {
-  PipelineReaderSession({
+  PipelineReaderSession._({
     required this.chapter,
     required PipelineMediaRuntimeFactory mediaRuntimeFactory,
     required this.sessionId,
     ArtifactCacheManager? artifactCacheManager,
-    PartialDownloadStore? partialDownloadStore,
     required ArtifactCacheReadScheduler artifactReadScheduler,
     required NetLane pageDownloadLane,
     required WebpDecodePrefixHints decodePrefixHints,
@@ -343,14 +593,14 @@ final class PipelineReaderSession {
     PipelineArtifactBytesLoader? bytesLoader,
     String Function()? userAgentProvider,
     TraceSink? traceSink,
+    required _PipelineDownloadTransferRuntime transferRuntime,
   })  : artifactReadScheduler = artifactReadScheduler,
         _artifactCacheManager = artifactCacheManager,
-        _partialDownloadStore = partialDownloadStore,
+        _transferRuntime = transferRuntime,
         _bytesLoader = bytesLoader,
         clock = SystemClock(),
         _memoryTrace = MemoryTraceSink(),
         _profile = readerPipelineProfileFor(chapter),
-        _workspace = EphemeralCacheWorkspace.readerSession(sessionId),
         _assetTransport = AssetBundleTransport(rootBundle),
         _ioTransport = IoTransport(
           http: HttpTransport(userAgentProvider: userAgentProvider),
@@ -397,32 +647,19 @@ final class PipelineReaderSession {
         sessionId: sessionId,
         demandRevision: () => revision,
       );
-      _artifactCacheHandoff = PromotedArtifactCacheHandoff(
-        cache: artifactCacheManager,
-        onError: (error, stackTrace) {},
-        clock: clock,
-        traceSink: trace,
-        sessionId: sessionId,
-      );
-    }
-    if (partialDownloadStore != null) {
-      _partialDownloadHandoff = PartialDownloadHandoff(
-        store: partialDownloadStore,
-        onError: (error, stackTrace) {},
-        clock: clock,
-        traceSink: trace,
-        sessionId: sessionId,
-      );
     }
     _ingresses = DownloadIngressProjectionRegistry(
       sources: _streamingSources,
       scopePrefix: 'reader:$sessionId',
     );
-    _downloads = DownloadRegistry(
-      layout: _workspace.layout,
-      clock: clock,
+    _downloads = _transferRuntime.registry;
+    _downloadTransfer = _transferRuntime.attachReader(
+      scopeId: 'reader:$sessionId',
+      transportFor: _transportFor,
       traceSink: trace,
-      onSessionCreated: _observeDownloadSession,
+      retry: _profile.retry,
+      downloadBucketFor: _profile.downloadBucket,
+      downloadBucketLimitFor: _downloadBucketLimit,
     );
     _decodes = DecodeRegistry(
       downloads: _downloads,
@@ -459,7 +696,8 @@ final class PipelineReaderSession {
       decodes: _decodes,
       uploads: _uploads,
       budgets: _frameBudgets,
-      prepareDownload: _partialDownloadHandoff?.restoreInto,
+      downloadTransfer: _downloadTransfer,
+      onDownloadObserved: _observeDownloadSession,
       net: pageDownloadLane,
       downloadBucketFor: _profile.downloadBucket,
       downloadBucketLimitFor: _downloadBucketLimit,
@@ -482,25 +720,6 @@ final class PipelineReaderSession {
         preemptionThreshold: 40,
       ),
     );
-    if (artifactCacheManager != null) {
-      void promotionListener(DownloadId promoted) {
-        if (_disposed) return;
-        for (final equivalent in artifactCacheManager.directEquivalents(
-          promoted,
-        )) {
-          if (equivalent == promoted || _downloads.find(equivalent) == null) {
-            continue;
-          }
-          _coordinator.refreshDownloadForLocalArtifact(
-            sessionId,
-            equivalent,
-          );
-        }
-      }
-
-      _artifactPromotionListener = promotionListener;
-      artifactCacheManager.addPromotionListener(promotionListener);
-    }
     trace.record(
       traceEvent(
         clock: clock,
@@ -522,22 +741,19 @@ final class PipelineReaderSession {
   final ReaderPipelineProfile _profile;
   late final PipelineMediaRuntime _media;
   final PipelineArtifactBytesLoader? _bytesLoader;
-  final EphemeralCacheWorkspace _workspace;
   final AssetBundleTransport _assetTransport;
   final IoTransport _ioTransport;
   final LoaderTransport _loaderTransport;
   final ArtifactCacheManager? _artifactCacheManager;
-  final PartialDownloadStore? _partialDownloadStore;
   ArtifactCacheTransport? _artifactCacheTransport;
   late final SourcePool _streamingSources;
   late final DownloadIngressProjectionRegistry _ingresses;
+  final _PipelineDownloadTransferRuntime _transferRuntime;
   late final DownloadRegistry _downloads;
+  late final DownloadTransferConsumer _downloadTransfer;
   late final DecodeRegistry _decodes;
   late final UploadRegistry _uploads;
   late final FrameBudgeter _frameBudgets;
-  PromotedArtifactCacheHandoff? _artifactCacheHandoff;
-  PartialDownloadHandoff? _partialDownloadHandoff;
-  ArtifactPromotionListener? _artifactPromotionListener;
   late final LiveCoordinator _coordinator;
   ReaderBinding? _binding;
   String? _readerSessionId;
@@ -843,13 +1059,13 @@ final class PipelineReaderSession {
         : await cache.readSessionArtifact(
             id: id,
             length: session.artifact.committedLength,
-            loader: () => _workspace.readArtifact(session.artifact),
+            loader: () => _transferRuntime.readArtifact(session.artifact),
           );
     final Uint8List bytes;
     if (cacheRead != null) {
       bytes = cacheRead.bytes;
     } else {
-      bytes = await _workspace.readArtifact(session.artifact);
+      bytes = await _transferRuntime.readArtifact(session.artifact);
     }
     token.throwIfCancelled();
     final artifactReadMicros = clock.nowMicros() - artifactReadStarted;
@@ -1040,7 +1256,6 @@ final class PipelineReaderSession {
 
   void _observeDownloadSession(DownloadSession session) {
     _ingresses.attach(session);
-    _artifactCacheHandoff?.observe(session);
     transferProgress.observe(session);
   }
 
@@ -1316,11 +1531,6 @@ final class PipelineReaderSession {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
-    final promotionListener = _artifactPromotionListener;
-    _artifactPromotionListener = null;
-    if (promotionListener != null) {
-      _artifactCacheManager?.removePromotionListener(promotionListener);
-    }
     final disposeStartedAtMicros = clock.nowMicros();
     trace.record(
       traceEvent(
@@ -1329,7 +1539,9 @@ final class PipelineReaderSession {
         kind: TraceEventKind.readerSessionDisposeStarted,
         revision: revision,
         payload: <String, Object?>{
-          'downloadSessions': _downloads.sessions.length,
+          'downloadSessions': _ingresses.projections.length,
+          'physicalDownloadSessions': _downloads.sessions.length,
+          'physicalTransferOwnerShared': true,
           'decodeSessions': _decodes.sessions.length,
           'uploadSessions': _uploads.sessions.length,
         },
@@ -1350,15 +1562,14 @@ final class PipelineReaderSession {
     _pageOutputs.clear();
     transferProgress.dispose();
     _uploads.removeListener(_handleUploadSnapshot);
-    _artifactCacheHandoff?.detach();
     final coordinatorDisposeStartedAtMicros = clock.nowMicros();
+    // The coordinator removes this Reader's transfer consumer and waits for any
+    // active task that captured this Reader-owned transport to exit. Only after
+    // this barrier is it safe to close _ioTransport.
     await _coordinator.dispose();
     final coordinatorDisposeMicros =
         clock.nowMicros() - coordinatorDisposeStartedAtMicros;
-    final handoffDrainStartedAtMicros = clock.nowMicros();
-    await _artifactCacheHandoff?.drain(_downloads.sessions);
-    await _partialDownloadHandoff?.drain(_downloads.sessions);
-    final handoffDrainMicros = clock.nowMicros() - handoffDrainStartedAtMicros;
+    _transferRuntime.detachReaderTrace(trace);
     _uploads.dispose();
     _decodes.dispose();
     _ingresses.dispose(_downloads.sessions);
@@ -1366,15 +1577,7 @@ final class PipelineReaderSession {
     final mediaCloseStartedAtMicros = clock.nowMicros();
     await _media.close();
     final mediaCloseMicros = clock.nowMicros() - mediaCloseStartedAtMicros;
-    final downloadsDisposeStartedAtMicros = clock.nowMicros();
-    await _downloads.dispose();
-    final downloadsDisposeMicros =
-        clock.nowMicros() - downloadsDisposeStartedAtMicros;
     _ioTransport.close(force: true);
-    final workspaceDisposeStartedAtMicros = clock.nowMicros();
-    await _workspace.dispose();
-    final workspaceDisposeMicros =
-        clock.nowMicros() - workspaceDisposeStartedAtMicros;
     _pageStreams.clear();
     trace.record(
       traceEvent(
@@ -1384,10 +1587,14 @@ final class PipelineReaderSession {
         payload: <String, Object?>{
           'disposeMicros': clock.nowMicros() - disposeStartedAtMicros,
           'coordinatorDisposeMicros': coordinatorDisposeMicros,
-          'handoffDrainMicros': handoffDrainMicros,
+          // Preserved diagnostic keys now explicitly mean no Reader-local
+          // physical-owner teardown. The shared runtime drains/disposes only at
+          // composition shutdown.
+          'handoffDrainMicros': 0,
           'mediaCloseMicros': mediaCloseMicros,
-          'downloadsDisposeMicros': downloadsDisposeMicros,
-          'workspaceDisposeMicros': workspaceDisposeMicros,
+          'downloadsDisposeMicros': 0,
+          'workspaceDisposeMicros': 0,
+          'physicalTransferOwnerShared': true,
         },
       ),
     );

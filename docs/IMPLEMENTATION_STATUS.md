@@ -2,7 +2,9 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.215` / App `0.31.0+215`。
+- 当前版本：`0.31.0-dev.216` / App `0.31.0+216`。
+- dev.216：physical `DownloadRegistry`、network task/retry/terminal/defer与transfer workspace提升到composition `_PipelineDownloadTransferRuntime/DownloadTransferOwner`。所有Factory clone共享runtime pool并按artifact cache manager + partial store + shared NetLane的真实owner组合取runtime；loader/UA仅作为consumer transport provider。两个Reader exact `DownloadId`加入同一session/writer，provider退出只撤销自身claim并等待其task退出，剩余consumer可用自身transport续跑；最后claim消失的committed partial在writer退出后由physical owner持久化。
+- dev.216验证新增跨consumer单writer、provider迁移与final-unclaimed partial持久化行为测试；当前环境无Dart/Flutter，行为测试源码已审计但不能宣称执行通过。完整验证等级见`docs/audits/dev216-validation-results.md`。
 - dev.212：02:25真机trace确认dev.211 equivalence已真实命中：Reader前可恢复3个mapping/1113个等价页，后续`sourceRead`出现`verifiedEquivalentReuse=true`；因此不再扩大cache fallback。错误报告同时发现`ComicVersionPageMapping.fromJson`把`Object? verifiedAt`直接传给`DateTime.parse`导致Dart编译失败，现改为类型收窄+`DateTime.tryParse`严格解码。trace约94秒内重复15次mapping warm，多数无新增等价页；版本发现保持每次入口异步，已验证mapping在10分钟freshness内跳过昂贵page identity重验证，新relation/无时间戳/过期mapping仍验证。partial owner与overlap续传不变。
 - dev.211：02:00真机trace确认dev.210 mapping并未缺失：再次进入371页旧版前已有3个persistent mappings，但只复用当时已promote的13页；相关377页版本之后继续完成的artifact不会被一次性`applyExisting`看见。verified mapping现在登记为`ArtifactCacheManager` symmetric equivalence fallback，lookup exact-first、相关版本fallback second，未来迟到promote也可被另一版本后续demand命中；写入继续保持exact DownloadId，hard alias/migration语义不变。partial仍只复用durable inactive prefix，不共享hot session。
 - dev.210：01:09真机trace确认冷启动旧版Reader的长等待发生在Reader创建前：版本alias准备同步解析source request-plan约十余秒，Reader创建后约0.27s即首帧。参考VibeVenera改为详情/Reader入口异步检查版本并持久化verified chapter page-offset mapping；Reader只本地恢复mapping→artifact alias，不再等待source identity resolver。confirmed relation的旧版`!`按raw/canonical predecessor匹配，successor当前版本不误报。verified mapping还可异步复制durable inactive partial到目标DownloadId，清空跨版本validator并保留DownloadJob overlap probe。
@@ -37,12 +39,12 @@
 - Venera preemption先断requestId native HTTP，再等待JS `finished`后返回cancelled并释放permit，禁止同一WebView中旧/新async invocation重叠。修复 `ArtifactCacheReadLease?` nullable半迁移编译错误。
 - 当前环境无Flutter/Dart/Android完整SDK；行为测试已加入源码，最终设备构建/性能仍需本地验证。
 
-**源码版本：** `0.31.0-dev.215`
+**源码版本：** `0.31.0-dev.216`
 - dev.215：physical `DownloadSession`移除唯一Reader native `Ingress`；新增Reader-local `DownloadIngressProjectionRegistry`，Decode/Live source listener显式消费本Reader projection。late projection先在live fan-out外按revision/epoch/committed boundary同步，再无await附着，避免与active writer offset交错。physical registry/network/retry仍未提升到composition。
 - dev.215静态验证：documentation/structure/Reader streaming/demand stability/dev.177、184、199–215 gates通过；完整`bash tool/check.sh`仍停在基线缺失pinned libwebp archive；Flutter/Dart不可用。详见`docs/audits/dev215-validation-results.md`。
 - dev.214：下载需求正式改为 scoped `DownloadDemandLease`；同一 session 的 effective priority为最大claim，Reader detach只移除自身claim。物理 registry/retry/native ingress仍未跨Reader共享。
 - dev.214静态验证：ownership/Reader streaming/demand stability/dev.177、184、199–214 gates通过；完整`bash tool/check.sh`停在基线缺失`third_party/source_archives/libwebp-1.6.0.zip`，未偷补；Flutter/Dart仍不可用。详见`docs/audits/dev214-validation-results.md`。
-**App build：** `0.31.0+214`
+**App build：** `0.31.0+216`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 

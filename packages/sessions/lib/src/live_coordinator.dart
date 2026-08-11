@@ -12,9 +12,9 @@ import 'decode_registry.dart';
 import 'decode_session.dart';
 import 'download_ingress_projection.dart';
 import 'download_ingress_registry.dart';
-import 'download_job.dart';
 import 'download_registry.dart';
 import 'download_session.dart';
+import 'download_transfer_owner.dart';
 import 'frame_budget.dart';
 import 'net_lane.dart';
 import 'playback_gate.dart';
@@ -36,17 +36,18 @@ typedef UploadWork = Future<void> Function(
 );
 typedef Sleep = Future<void> Function(Duration delay);
 typedef DownloadPrepare = Future<void> Function(DownloadSession session);
+typedef DownloadObserve = void Function(DownloadSession session);
 
 Future<void> _defaultSleep(Duration delay) => Future<void>.delayed(delay);
 
 final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   LiveCoordinator({
     required this.registry,
-    required this.transportFor,
+    required TransportPick transportFor,
     this.ingresses,
     required this.clock,
     this.traceSink = const NoopTraceSink(),
-    this.retry = const RetryPolicy(),
+    RetryPolicy retry = const RetryPolicy(),
     this.sleep = _defaultSleep,
     this.onDecode,
     this.onUpload,
@@ -54,18 +55,17 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     this.uploads,
     this.budgets,
     this.refillPolicy = const StagedDecodeRefillPolicy(),
-    this.prepareDownload,
+    DownloadPrepare? prepareDownload,
+    DownloadObserve? onDownloadObserved,
+    DownloadTransferConsumer? downloadTransfer,
     NetLane? net,
     DecodeLane? decode,
     UploadLane? upload,
     String Function(DownloadId id)? downloadBucketFor,
     int Function(DownloadId id)? downloadBucketLimitFor,
-  })  : net = net ?? NetLane(maxActive: 3),
-        decode = decode ?? DecodeLane(maxActive: 2),
+  })  : decode = decode ?? DecodeLane(maxActive: 2),
         upload = upload ?? UploadLane(maxActive: 1),
-        downloadBucketFor =
-            downloadBucketFor ?? ((id) => 'source:${id.content.sourceId}'),
-        downloadBucketLimitFor = downloadBucketLimitFor ?? ((_) => 5) {
+        onDownloadObserved = onDownloadObserved {
     retry.validate();
     if (onDecode != null && decodes != null) {
       throw ArgumentError('onDecode and decodes are mutually exclusive');
@@ -81,14 +81,46 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         'budgets must use the coordinator decode and upload registries',
       );
     }
+    final external = downloadTransfer;
+    if (external != null) {
+      if (!identical(external.registry, registry)) {
+        throw ArgumentError(
+          'downloadTransfer must use the coordinator DownloadRegistry',
+        );
+      }
+      if (net != null && !identical(net, external.net)) {
+        throw ArgumentError(
+          'net must be the physical owner lane when downloadTransfer is set',
+        );
+      }
+      _downloadTransfer = external;
+      this.net = external.net;
+    } else {
+      final localNet = net ?? NetLane(maxActive: 3);
+      final owner = DownloadTransferOwner(
+        registry: registry,
+        clock: clock,
+        prepareDownload: prepareDownload,
+        net: localNet,
+      );
+      _ownedDownloadTransferOwner = owner;
+      _downloadTransfer = owner.attachConsumer(
+        scopeId: 'live-coordinator:${++_fallbackTransferScopeSequence}',
+        transportFor: transportFor,
+        traceSink: traceSink,
+        retry: retry,
+        sleep: sleep,
+        downloadBucketFor: downloadBucketFor,
+        downloadBucketLimitFor: downloadBucketLimitFor,
+      );
+      this.net = localNet;
+    }
   }
 
   final DownloadRegistry registry;
-  final TransportPick transportFor;
   final DownloadIngressProjectionRegistry? ingresses;
   final MonoClock clock;
   final TraceSink traceSink;
-  final RetryPolicy retry;
   final Sleep sleep;
   final DecodeWork? onDecode;
   final UploadWork? onUpload;
@@ -96,22 +128,16 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final UploadRegistry? uploads;
   final FrameBudgeter? budgets;
   final StagedDecodeRefillPolicy refillPolicy;
-  final DownloadPrepare? prepareDownload;
-  final NetLane net;
+  final DownloadObserve? onDownloadObserved;
+  late final DownloadTransferConsumer _downloadTransfer;
+  DownloadTransferOwner? _ownedDownloadTransferOwner;
+  late final NetLane net;
   final DecodeLane decode;
   final UploadLane upload;
-  final String Function(DownloadId id) downloadBucketFor;
-  final int Function(DownloadId id) downloadBucketLimitFor;
+  static int _fallbackTransferScopeSequence = 0;
 
   final Map<DownloadId, DownloadDemand> _downloads =
       <DownloadId, DownloadDemand>{};
-  final Map<DownloadId, DownloadDemandLease> _downloadClaims =
-      <DownloadId, DownloadDemandLease>{};
-  final Map<DownloadId, String> _networkTaskKeys = <DownloadId, String>{};
-  final Map<DownloadId, int> _downloadRetryRounds = <DownloadId, int>{};
-  final Set<DownloadId> _downloadRetryPending = <DownloadId>{};
-  final Set<DownloadId> _downloadTerminalFailures = <DownloadId>{};
-  final Map<DownloadId, int> _downloadDeferredAtLength = <DownloadId, int>{};
   final Map<DecodeId, DecodeDemand> _decodes = <DecodeId, DecodeDemand>{};
   final Map<DecodeId, int> _decodeDemandRevisions = <DecodeId, int>{};
   final Map<DecodeId, UploadDemand> _uploads = <DecodeId, UploadDemand>{};
@@ -124,26 +150,22 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final Map<DecodeId, int> _decodeRecoveryAttempts = <DecodeId, int>{};
   final Set<DecodeId> _decodeRecoveryPending = <DecodeId>{};
   final PlaybackGate _playbackGate = PlaybackGate();
-  static const int _maxDownloadRetryRounds = 4;
   int _revision = 0;
   bool _disposed = false;
 
   Map<DownloadId, DownloadDemand> get demands =>
       Map<DownloadId, DownloadDemand>.unmodifiable(_downloads);
 
-  /// Re-applies dynamic transport bucket limits without changing demand.
-  ///
-  /// Reader startup uses this when the current first output releases its
-  /// foreground-only local-source gate. Existing active work is not restarted;
-  /// queued tasks migrate their bucket limit in place.
+  /// Current physical task key for diagnostics/tests. Task identity belongs to
+  /// the composition transfer owner rather than to a Reader scope.
+  String? downloadTaskKeyFor(DownloadId id) =>
+      _downloadTransfer.owner.taskKeyFor(id);
+
+  /// Re-applies dynamic physical-transfer scheduling without changing this
+  /// Reader's demand claims.
   void refreshDownloadScheduling(String sessionId) {
     if (_disposed) return;
-    for (final entry in _downloads.entries) {
-      final session = registry.find(entry.key);
-      if (session != null) {
-        _ensureDownloadTask(sessionId, entry.key, session);
-      }
-    }
+    _downloadTransfer.refreshScheduling();
   }
 
   Map<DecodeId, DecodeDemand> get decodeDemands =>
@@ -151,63 +173,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   Map<DecodeId, UploadDemand> get uploadDemands =>
       Map<DecodeId, UploadDemand>.unmodifiable(_uploads);
 
-  /// Restarts an incomplete demanded download after a newly promoted local
-  /// artifact can satisfy the same logical media through the outer transport.
-  ///
-  /// The existing DownloadSession remains authoritative and keeps its current
-  /// committed prefix. Only the active/queued network attempt is replaced; the
-  /// next DownloadJob open therefore resumes from the preserved boundary and
-  /// can consume an immutable cache response instead of continuing origin I/O.
+  /// Lets the composition physical owner reopen an incomplete exact transfer
+  /// after a verified immutable local artifact becomes available.
   void refreshDownloadForLocalArtifact(String sessionId, DownloadId id) {
     if (_disposed || !_downloads.containsKey(id)) return;
-    final session = registry.find(id);
-    if (session == null ||
-        session.state == DownloadState.promoted ||
-        session.state == DownloadState.disposed ||
-        session.residentCacheBacked) {
-      return;
-    }
-    // A newly available immutable local source is stronger evidence than a
-    // prior network terminal/defer decision for the same unchanged demand.
-    // Keep the committed prefix, but allow the existing DownloadJob to reopen
-    // against ArtifactCacheTransport immediately.
-    _downloadRetryRounds.remove(id);
-    _downloadRetryPending.remove(id);
-    _downloadTerminalFailures.remove(id);
-    _downloadDeferredAtLength.remove(id);
-    final taskKey = _networkTaskKeys[id];
-    traceSink.record(
-      traceEvent(
-        clock: clock,
-        sessionId: sessionId,
-        kind: TraceEventKind.artifactSource,
-        identityHash: id.key,
-        revision: _revision,
-        payload: <String, Object?>{
-          'stage': 'verified-equivalent-promotion-takeover',
-          'committedLength': session.committedLength,
-          'taskState': taskKey == null
-              ? 'absent'
-              : net.isActive(taskKey)
-                  ? 'active'
-                  : 'queued',
-        },
-      ),
-    );
-    if (taskKey == null) {
-      _ensureDownloadTask(sessionId, id, session);
-      return;
-    }
-    if (net.cancelQueued(taskKey)) {
-      if (_networkTaskKeys[id] == taskKey) {
-        _networkTaskKeys.remove(id);
-      }
-      _ensureDownloadTask(sessionId, id, session);
-      return;
-    }
-    // Active cancellation preserves DownloadSession/artifact state. The
-    // running task's finally path resubmits while demand remains attached.
-    net.cancel(taskKey);
+    _downloadTransfer.refreshForLocalArtifact(id);
   }
 
   bool _hasPendingSourceRevision(DecodeId id) {
@@ -227,11 +197,12 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
 
   Future<void> idle() async {
     while (true) {
-      await net.idle();
+      await _downloadTransfer.idle();
       await decode.idle();
       await upload.idle();
       await Future<void>.delayed(Duration.zero);
-      if (net.isIdle && decode.isIdle && upload.isIdle) {
+      if (decode.isIdle && upload.isIdle) {
+        await _downloadTransfer.idle();
         return;
       }
     }
@@ -311,33 +282,16 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _sourceRevisions.clear();
     _sourceWakeLengths.clear();
     _decodeSourceRevisions.clear();
-    // Logical Reader teardown removes only this scope's claims. If another
-    // consumer still claims the same physical transfer, do not cancel it.
-    for (final claim in _downloadClaims.values) {
-      claim.detach();
+    // This barrier removes only this Reader/command consumer from the
+    // composition physical owner. If an active task captured this Reader's
+    // transport, dispose waits for that task to physically exit before the
+    // Reader may close the transport. Other consumers are not cancelled.
+    await _downloadTransfer.dispose();
+    final ownedOwner = _ownedDownloadTransferOwner;
+    _ownedDownloadTransferOwner = null;
+    if (ownedOwner != null) {
+      await ownedOwner.dispose();
     }
-    _downloadClaims.clear();
-    final networkKeys = <String>[];
-    for (final entry in _networkTaskKeys.entries) {
-      final session = registry.find(entry.key);
-      if (session != null && session.demanded) {
-        _migrateDownloadPriority(
-          'transfer-owner',
-          entry.key,
-          entry.value,
-          session.effectivePriority,
-          reason: 'remaining-consumer',
-        );
-        continue;
-      }
-      networkKeys.add(entry.value);
-      net.cancel(entry.value);
-    }
-    _networkTaskKeys.removeWhere((id, key) => networkKeys.contains(key));
-    _downloadRetryRounds.clear();
-    _downloadRetryPending.clear();
-    _downloadTerminalFailures.clear();
-    _downloadDeferredAtLength.clear();
     decode.cancelAll();
     upload.cancelAll();
     _downloads.clear();
@@ -346,7 +300,6 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _uploads.clear();
     _uploadDemandRevisions.clear();
     await Future.wait<void>(<Future<void>>[
-      net.idleKeys(networkKeys),
       decode.idle(),
       upload.idle(),
     ]);
@@ -358,178 +311,23 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   ) {
     for (final id in diff.removed) {
       _downloads.remove(id);
-      final session = registry.find(id);
-      _downloadClaims.remove(id)?.detach();
-      final taskKey = _networkTaskKeys[id];
-      final taskIsActive = taskKey != null && net.isActive(taskKey);
-      final receiving = session?.state == DownloadState.receiving;
-      if (session != null && session.demanded && taskKey != null) {
-        _migrateDownloadPriority(
-          sessionId,
-          id,
-          taskKey,
-          session.effectivePriority,
-          reason: 'remaining-consumer',
-        );
-      } else if (receiving && taskIsActive) {
-        _migrateDownloadPriority(
-          sessionId,
-          id,
-          taskKey,
-          0,
-          reason: 'retained-background',
-        );
-      } else if (taskKey != null && taskIsActive) {
-        // A run lease starts before restore/request-plan/HTTP open. Treating
-        // every activeRun as "receiving" lets undemanded pre-open work keep a
-        // scarce network/runtime permit at priority 0. Only an established
-        // receiving writer is worth retaining across a logical detach; queued
-        // or opening work must unwind so current/adjacent-previous demand can
-        // inherit the permit. NetLane cancellation keeps the permit occupied
-        // until the controlled transport has physically exited.
-        net.cancel(taskKey);
-      } else {
-        if (taskKey != null) {
-          net.cancelQueued(taskKey);
-        }
-        _networkTaskKeys.remove(id);
-        _retireDownloadTracking(id, session);
-      }
     }
-    final toSchedule = <MapEntry<DownloadId, DownloadDemand>>[
+    final observed = <MapEntry<DownloadId, DownloadDemand>>[
       ...diff.added.entries,
       ...diff.changed.entries,
     ];
-    for (final entry in toSchedule) {
+    for (final entry in observed) {
       _downloads[entry.key] = entry.value;
+    }
+    _downloadTransfer.reconcile(sessionId, _revision, diff);
+    for (final entry in observed) {
       final session = registry.get(entry.key);
-      final claim = _downloadClaims[entry.key];
-      if (claim == null || !claim.attached) {
-        _downloadClaims[entry.key] = session.attachDemand(
-          scopeId: sessionId,
-          priority: entry.value.priority,
-        );
-      } else {
-        claim.updatePriority(entry.value.priority);
-      }
-      if (!session.activeRun) {
-        _downloadRetryRounds.remove(entry.key);
-        _downloadRetryPending.remove(entry.key);
-        _downloadTerminalFailures.remove(entry.key);
-        final deferredAtLength = _downloadDeferredAtLength[entry.key];
-        final deferredStillMatches =
-            deferredAtLength == session.committedLength;
-        if (!deferredStillMatches ||
-            _allowsCostlyFullBodyCatchup(
-              priority: entry.value.priority,
-              preservedLength: session.committedLength,
-            )) {
-          _downloadDeferredAtLength.remove(entry.key);
-        }
+      try {
+        onDownloadObserved?.call(session);
+      } on Object {
+        // Reader-local observers cannot break physical transfer ownership.
       }
       _watchSource(sessionId, entry.key, session);
-    }
-    for (final entry in toSchedule) {
-      _ensureDownloadTask(sessionId, entry.key, registry.get(entry.key));
-    }
-  }
-
-  void _migrateDownloadPriority(
-    String sessionId,
-    DownloadId id,
-    String taskKey,
-    int priority, {
-    required String reason,
-  }) {
-    final oldPriority = net.priorityOf(taskKey);
-    final active = net.isActive(taskKey);
-    if (!net.updatePriority(taskKey, priority) ||
-        oldPriority == null ||
-        oldPriority == priority) {
-      return;
-    }
-    traceSink.record(
-      traceEvent(
-        clock: clock,
-        sessionId: sessionId,
-        kind: TraceEventKind.downloadPriorityChanged,
-        identityHash: id.key,
-        revision: _revision,
-        payload: <String, Object?>{
-          'oldPriority': oldPriority,
-          'newPriority': priority,
-          'active': active,
-          'reason': reason,
-        },
-      ),
-    );
-  }
-
-  void _ensureDownloadTask(
-    String sessionId,
-    DownloadId id,
-    DownloadSession session,
-  ) {
-    final demand = _downloads[id];
-    if (demand == null && !session.demanded) return;
-    final effectivePriority = session.demanded
-        ? session.effectivePriority
-        : (demand?.priority ?? 0);
-    final existingTaskKey = _networkTaskKeys[id];
-    if (existingTaskKey != null) {
-      _migrateDownloadPriority(
-        sessionId,
-        id,
-        existingTaskKey,
-        effectivePriority,
-        reason: session.demandCount > 1 ? 'consumer-aggregate' : 'demand-role',
-      );
-    }
-    if (_disposed ||
-        session.state == DownloadState.promoted ||
-        session.state == DownloadState.disposed ||
-        session.activeRun ||
-        _downloadRetryPending.contains(id) ||
-        _downloadTerminalFailures.contains(id) ||
-        (_downloadDeferredAtLength[id] == session.committedLength &&
-            !_allowsCostlyFullBodyCatchup(
-              priority: effectivePriority,
-              preservedLength: session.committedLength,
-            )) ||
-        (_downloadRetryRounds[id] ?? 0) > _maxDownloadRetryRounds) {
-      return;
-    }
-    final taskKey = '$sessionId:${id.key}';
-    _networkTaskKeys[id] = taskKey;
-    net.submitRanked(
-      key: taskKey,
-      priority: effectivePriority,
-      bucket: downloadBucketFor(id),
-      bucketLimit: downloadBucketLimitFor(id),
-      task: (token) => _runDownload(sessionId, id, session, token),
-    );
-  }
-
-  void _retireDownloadTracking(
-    DownloadId id,
-    DownloadSession? session,
-  ) {
-    final listener = _sourceListeners.remove(id);
-    if (listener != null) {
-      ingresses?.find(id)?.removeSourceListener(listener);
-    }
-    _sourceRevisions.remove(id);
-    _sourceWakeLengths.remove(id);
-    _downloadRetryRounds.remove(id);
-    _downloadRetryPending.remove(id);
-    _downloadTerminalFailures.remove(id);
-    final deferredAtLength = _downloadDeferredAtLength[id];
-    final preserveDeferred =
-        session != null &&
-        session.state == DownloadState.idle &&
-        deferredAtLength == session.committedLength;
-    if (!preserveDeferred) {
-      _downloadDeferredAtLength.remove(id);
     }
   }
 
@@ -542,16 +340,10 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       return;
     }
     void listener(IngressSnap snapshot) {
-      // Source revision remains authoritative, but tiny network chunks are not
-      // independent decode work. The first ready source, each 64 KiB growth
-      // quantum, seal and failure wake the same decode demand.
+      // Physical retry/terminal state is owned by DownloadTransferOwner. This
+      // Reader-local listener only projects source growth into decode wakeups.
       _sourceRevisions[id] = snapshot.revision;
       final priorLength = _sourceWakeLengths[id];
-      if (priorLength == null || snapshot.length > priorLength) {
-        _downloadRetryRounds.remove(id);
-        _downloadRetryPending.remove(id);
-        _downloadTerminalFailures.remove(id);
-      }
       final shouldWake = onDecode != null ||
           priorLength == null ||
           snapshot.failure != null ||
@@ -569,249 +361,6 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     }
     _sourceListeners[id] = listener;
     projection.addSourceListener(listener);
-  }
-
-  Future<void> _runDownload(
-    String sessionId,
-    DownloadId id,
-    DownloadSession session,
-    CancelToken token,
-  ) async {
-    final taskKey = '$sessionId:${id.key}';
-    final bucket = downloadBucketFor(id);
-    final bucketLimit = downloadBucketLimitFor(id);
-    final prepare = prepareDownload;
-    if (prepare != null && session.committedLength == 0) {
-      await prepare(session);
-      token.throwIfCancelled();
-    }
-    final initialDemand = _downloads[id];
-    if (initialDemand != null) {
-      traceSink.record(
-        traceEvent(
-          clock: clock,
-          sessionId: sessionId,
-          kind: TraceEventKind.downloadStarted,
-          identityHash: id.key,
-          revision: _revision,
-          payload: <String, Object?>{
-            'priority': session.effectivePriority,
-            'bucket': bucket,
-            'bucketLimit': bucketLimit,
-            'globalActive': net.active,
-            'globalLimit': net.maxActive,
-            'handoffActive': net.handoffActive,
-            'effectivePriority': net.priorityOf(taskKey),
-            'bucketActive': net.activeForBucket(bucket),
-            'committedLength': session.committedLength,
-          },
-        ),
-      );
-    }
-    try {
-      for (var attempt = 1; ; attempt++) {
-        token.throwIfCancelled();
-        final demand = _downloads[id];
-        if (demand == null && !session.activeRun) {
-          return;
-        }
-        final attemptStartedAtMicros = clock.nowMicros();
-        try {
-          await DownloadJob(
-            transport: transportFor(id.canonicalUri),
-            session: session,
-            attachLegacyDemand: false,
-            allowFullBodyCatchup: (preservedLength) =>
-                _allowsCostlyFullBodyCatchup(
-              priority: token.priority,
-              preservedLength: preservedLength,
-            ),
-          ).run(cancel: token);
-          _downloadRetryRounds.remove(id);
-          _downloadRetryPending.remove(id);
-          _downloadTerminalFailures.remove(id);
-          _downloadDeferredAtLength.remove(id);
-          _wakeDecodesForSource(sessionId, id);
-          return;
-        } on DownloadCatchupDeferred {
-          final currentDemand = _downloads[id];
-          final remainingPriority = currentDemand?.priority ??
-              (session.demanded ? session.effectivePriority : null);
-          if (remainingPriority != null &&
-              _allowsCostlyFullBodyCatchup(
-                priority: remainingPriority,
-                preservedLength: session.committedLength,
-              )) {
-            _downloadDeferredAtLength.remove(id);
-          } else {
-            _downloadDeferredAtLength[id] = session.committedLength;
-          }
-          return;
-        } on Object catch (error) {
-          if (!retry.allows(error, attempt)) {
-            if (error is Failure && error.code == ErrorCode.cancelled) {
-              final preemption = token.preemptionSnapshot;
-              if (preemption != null) {
-                traceSink.record(
-                  traceEvent(
-                    clock: clock,
-                    sessionId: sessionId,
-                    kind: TraceEventKind.downloadPreempted,
-                    identityHash: id.key,
-                    revision: _revision,
-                    payload: <String, Object?>{
-                      'incomingPriority': preemption.incomingPriority,
-                      'basePriority': preemption.basePriority,
-                      'retentionPriority': preemption.retentionPriority,
-                      'retentionBonus': preemption.retentionBonus,
-                      'restartCostElapsedMicros':
-                          preemption.restartCostElapsedMicros,
-                      'restartCostBytes': preemption.restartCostBytes,
-                      'committedLength': session.committedLength,
-                    },
-                  ),
-                );
-              }
-              return;
-            }
-            final failedAtMicros = clock.nowMicros();
-            _error(
-              sessionId,
-              id.key,
-              'network',
-              error,
-              details: <String, Object?>{
-                'attempt': attempt,
-                'executionMicros':
-                    (failedAtMicros - attemptStartedAtMicros)
-                        .clamp(0, 1 << 62)
-                        .toInt(),
-              },
-            );
-            if (session.demanded && error is Failure) {
-              final retryScheduled = error.code == ErrorCode.network &&
-                  _scheduleDownloadRetry(sessionId, id, session, error);
-              if (!retryScheduled) {
-                _downloadTerminalFailures.add(id);
-              }
-            } else if (session.demanded) {
-              _downloadTerminalFailures.add(id);
-            }
-            return;
-          }
-          final delay = retry.delayAfter(attempt);
-          traceSink.record(
-            traceEvent(
-              clock: clock,
-              sessionId: sessionId,
-              kind: TraceEventKind.retryScheduled,
-              identityHash: id.key,
-              revision: _revision,
-              payload: <String, Object?>{
-                'stage': 'download-attempt',
-                'attempt': attempt + 1,
-                'delayUs': delay.inMicroseconds,
-                'error': '$error',
-              },
-            ),
-          );
-          await _sleepOrCancel(delay, token);
-        }
-      }
-    } finally {
-      if (_networkTaskKeys[id] == taskKey) {
-        _networkTaskKeys.remove(id);
-      }
-      if (!_downloads.containsKey(id) &&
-          !session.demanded &&
-          !session.activeRun) {
-        _retireDownloadTracking(id, session);
-      } else if ((_downloads.containsKey(id) || session.demanded) &&
-          !_downloadTerminalFailures.contains(id) &&
-          session.state != DownloadState.promoted &&
-          session.state != DownloadState.disposed) {
-        scheduleMicrotask(() {
-          if (!_disposed && (_downloads.containsKey(id) || session.demanded)) {
-            _ensureDownloadTask(sessionId, id, session);
-          }
-        });
-      }
-    }
-  }
-
-  bool _allowsCostlyFullBodyCatchup({
-    required int priority,
-    required int preservedLength,
-  }) {
-    const largePrefixBytes = 1024 * 1024;
-    const veryLargePrefixBytes = 8 * 1024 * 1024;
-    const foregroundAdjacentPriorityFloor = 820;
-    const visibleTransitionPriorityFloor = 900;
-    if (preservedLength < largePrefixBytes) {
-      return true;
-    }
-    if (preservedLength >= veryLargePrefixBytes) {
-      return priority >= visibleTransitionPriorityFloor;
-    }
-    return priority >= foregroundAdjacentPriorityFloor;
-  }
-
-  bool _scheduleDownloadRetry(
-    String sessionId,
-    DownloadId id,
-    DownloadSession session,
-    Failure failure,
-  ) {
-    if (_disposed ||
-        _downloadRetryPending.contains(id) ||
-        !session.demanded) {
-      return false;
-    }
-    final round = (_downloadRetryRounds[id] ?? 0) + 1;
-    if (round > _maxDownloadRetryRounds) {
-      return false;
-    }
-    _downloadRetryRounds[id] = round;
-    _downloadRetryPending.add(id);
-    final delay = retry.delayAfter(round);
-    traceSink.record(
-      traceEvent(
-        clock: clock,
-        sessionId: sessionId,
-        kind: TraceEventKind.retryScheduled,
-        identityHash: id.key,
-        revision: _revision,
-        payload: <String, Object?>{
-          'stage': 'download-recovery',
-          'attempt': round,
-          'delayUs': delay.inMicroseconds,
-          'committedLength': session.committedLength,
-          'error': '$failure',
-        },
-      ),
-    );
-    unawaited(() async {
-      await sleep(delay);
-      await Future<void>.delayed(Duration.zero);
-      _downloadRetryPending.remove(id);
-      if (_disposed || !session.demanded) {
-        return;
-      }
-      _ensureDownloadTask(sessionId, id, session);
-    }());
-    return true;
-  }
-
-  Future<void> _sleepOrCancel(Duration delay, CancelToken token) async {
-    if (delay == Duration.zero) {
-      token.throwIfCancelled();
-      return;
-    }
-    await Future.any<void>(<Future<void>>[
-      sleep(delay),
-      token.whenCancelled,
-    ]);
-    token.throwIfCancelled();
   }
 
   void _reconcileDecodes(

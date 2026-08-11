@@ -16,6 +16,9 @@ def require(text: str, token: str, owner: str) -> None:
 
 lane = read("packages/sessions/lib/src/net_lane.dart")
 coordinator = read("packages/sessions/lib/src/live_coordinator.dart")
+transfer_owner_path = ROOT / "packages/sessions/lib/src/download_transfer_owner.dart"
+physical_owner = (transfer_owner_path.read_text(encoding="utf-8")
+                  if transfer_owner_path.exists() else coordinator)
 composition = read("packages/pipeline_runtime/lib/src/pipeline_reader_session.dart")
 lane_test = read("packages/sessions/test/net_lane_test.dart")
 reader = read("packages/reader/lib/src/reader_view.dart")
@@ -41,14 +44,14 @@ for token in (
 ):
     require(composition, token, "Pipeline network handoff composition")
 for token in (
-    "reason: 'demand-role'",
+    "'demand-role'",
     "_migrateDownloadPriority(",
     "reason: 'retained-background'",
     "TraceEventKind.downloadPriorityChanged",
     "'handoffActive': net.handoffActive",
     "'effectivePriority': net.priorityOf(taskKey)",
 ):
-    require(coordinator, token, "download plan migration")
+    require(physical_owner, token, "download plan migration")
 for token in (
     "active same-key promotion updates rank without restarting transfer",
     "current uses one handoff slot and preempts the lowest ranked transfer",

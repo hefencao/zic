@@ -5,6 +5,8 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 LIVE = (ROOT / 'packages/sessions/lib/src/live_coordinator.dart').read_text(encoding='utf-8')
+OWNER_PATH = ROOT / 'packages/sessions/lib/src/download_transfer_owner.dart'
+OWNER = OWNER_PATH.read_text(encoding='utf-8') if OWNER_PATH.exists() else LIVE
 TEST = (ROOT / 'packages/sessions/test/live_coordinator_test.dart').read_text(encoding='utf-8')
 ARCH = (ROOT / 'docs/ARCHITECTURE.md').read_text(encoding='utf-8')
 SPEC = (ROOT / 'docs/SPEC.md').read_text(encoding='utf-8')
@@ -23,8 +25,8 @@ for token in (
     'const visibleTransitionPriorityFloor = 900;',
     'priority >= visibleTransitionPriorityFloor',
 ):
-    if token not in LIVE:
-        raise SystemExit(f'dev.200 coordinator contract missing: {token}')
+    if token not in OWNER:
+        raise SystemExit(f'dev.200 physical owner contract missing: {token}')
 
 for token in (
     'readdedBackground',
@@ -42,7 +44,7 @@ for token in (
 # outside this block and must not be mistaken for a new admission dependency.
 policy_match = re.search(
     r'bool _allowsCostlyFullBodyCatchup\(\{.*?^  \}',
-    LIVE,
+    OWNER,
     re.MULTILINE | re.DOTALL,
 )
 if policy_match is None:

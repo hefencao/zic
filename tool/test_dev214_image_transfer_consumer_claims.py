@@ -32,26 +32,44 @@ for token in ('this.attachLegacyDemand = true', 'if (attachLegacyDemand)'):
     require(job, token, 'legacy direct-download compatibility boundary')
 
 live = read('packages/sessions/lib/src/live_coordinator.dart')
+transfer_owner_path = ROOT / 'packages/sessions/lib/src/download_transfer_owner.dart'
+transfer_owner = transfer_owner_path.read_text(encoding='utf-8') if transfer_owner_path.exists() else ''
+claim_owner = live + transfer_owner
 for token in (
-    'final Map<DownloadId, DownloadDemandLease> _downloadClaims',
     'session.attachDemand(',
-    'claim.updatePriority(entry.value.priority);',
-    '_downloadClaims.remove(id)?.detach();',
-    "reason: 'remaining-consumer'",
     'session.effectivePriority',
     'attachLegacyDemand: false',
 ):
-    require(live, token, 'Reader claim integration')
+    require(claim_owner, token, 'Reader claim integration')
+if transfer_owner:
+    for token in (
+        'final Map<DownloadId, Map<String, _TransferClaim>> _claims',
+        'existing.lease.updatePriority(demand.priority);',
+        'claim?.lease.detach();',
+        "reason: 'remaining-consumer'",
+    ):
+        require(transfer_owner, token, 'composition transfer claim integration')
+else:
+    for token in (
+        'final Map<DownloadId, DownloadDemandLease> _downloadClaims',
+        'claim.updatePriority(entry.value.priority);',
+        '_downloadClaims.remove(id)?.detach();',
+        "reason: 'remaining-consumer'",
+    ):
+        require(live, token, 'Reader-local claim integration')
 
 regression = read('packages/sessions/test/download_session_test.dart')
 require(regression, 'consumer demand claims use max priority and detach independently', 'claim regression')
 live_test = read('packages/sessions/test/live_coordinator_test.dart')
 require(live_test, 'remaining consumer claim keeps transfer and downgrades priority', 'cancel/priority regression')
 
-# dev.214 is deliberately not the registry-lift phase. Do not accidentally claim
-# or create a second global transfer/cache owner before native ingress is split.
+# Later phases may lift the physical registry, but dev.214's contract remains:
+# there is still one scoped claim per consumer and no second cache/download stack.
 pipe = read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
-require(pipe, '_downloads = DownloadRegistry(', 'deliberate Reader-local registry boundary')
+if transfer_owner:
+    require(pipe, '_downloads = _transferRuntime.registry;', 'lifted physical registry boundary')
+else:
+    require(pipe, '_downloads = DownloadRegistry(', 'dev.214 Reader-local registry boundary')
 forbidden_global = (
     'GlobalDownloadRegistry',
     'static final DownloadRegistry',
@@ -59,7 +77,7 @@ forbidden_global = (
     'aliasDownloadSession',
 )
 for token in forbidden_global:
-    forbid(pipe + session + registry, token, 'premature global transfer owner')
+    forbid(pipe + session + registry + transfer_owner, token, 'second/premature transfer owner')
 
 for rel in (
     'docs/adr/0195-image-transfer-consumer-claims-before-registry-lift.md',

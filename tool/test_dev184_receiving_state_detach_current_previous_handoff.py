@@ -24,8 +24,13 @@ def reject(path: str, *tokens: str) -> None:
         raise SystemExit(f'{path} contains superseded dev.184 token: {present}')
 
 
+physical_owner_path = (
+    'packages/sessions/lib/src/download_transfer_owner.dart'
+    if (ROOT / 'packages/sessions/lib/src/download_transfer_owner.dart').exists()
+    else 'packages/sessions/lib/src/live_coordinator.dart'
+)
 require(
-    'packages/sessions/lib/src/live_coordinator.dart',
+    physical_owner_path,
     'final taskIsActive = taskKey != null && net.isActive(taskKey);',
     'final receiving = session?.state == DownloadState.receiving;',
     'if (receiving && taskIsActive) {',
@@ -35,7 +40,7 @@ require(
     'net.cancelQueued(taskKey);',
 )
 reject(
-    'packages/sessions/lib/src/live_coordinator.dart',
+    physical_owner_path,
     'if (session?.activeRun == true && taskKey != null) {',
 )
 

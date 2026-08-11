@@ -16,6 +16,9 @@ def require(text: str, token: str, owner: str) -> None:
 
 net = read("packages/sessions/lib/src/net_lane.dart")
 coordinator = read("packages/sessions/lib/src/live_coordinator.dart")
+transfer_owner_path = ROOT / "packages/sessions/lib/src/download_transfer_owner.dart"
+physical_owner = (transfer_owner_path.read_text(encoding="utf-8")
+                  if transfer_owner_path.exists() else coordinator)
 profile = read("packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart")
 session = read("packages/pipeline_runtime/lib/src/pipeline_reader_session.dart")
 policy = read("packages/pipeline/lib/src/heuristic_policy.dart")
@@ -51,11 +54,11 @@ for token in (
 for token in (
     "net.submitRanked",
     "net.cancelQueued(taskKey)",
-    "net.idleKeys(networkKeys)",
+    "net.idleKeys(",
     "TraceEventKind.downloadStarted",
     "'globalActive': net.active",
 ):
-    require(coordinator, token, "ranked download coordination")
+    require(physical_owner, token, "ranked download coordination")
 for token in (
     "PageRole.next => 820",
     "PageRole.next2 => 800",

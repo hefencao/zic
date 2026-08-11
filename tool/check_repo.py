@@ -1187,20 +1187,40 @@ def check_compile_regressions() -> None:
         if required not in asset_transport:
             fail(f'AssetBundle transport is incomplete: {required}')
     pipeline_runtime = (ROOT / 'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart').read_text(encoding='utf-8')
-    for required in (
+    common_pipeline_requirements = (
         'LiveCoordinator(',
         'DownloadRegistry(',
         'EphemeralCacheWorkspace.readerSession(',
-        'layout: _workspace.layout',
-        '_workspace.readArtifact(',
-        'await _workspace.dispose()',
         'addSnapshotListener(acceptSnapshot',
         '_binding?.detach(',
         'AssetBundleTransport(rootBundle)',
         'LoaderTransport(loaderSources)',
-    ):
+    )
+    for required in common_pipeline_requirements:
         if required not in pipeline_runtime:
             fail(f'Pipeline runtime live artifact path is incomplete: {required}')
+    if 'final class _PipelineDownloadTransferRuntime' in pipeline_runtime:
+        for required in (
+            'layout: workspace.layout',
+            'workspace.readArtifact(artifact)',
+            'await workspace.dispose()',
+            '_transferRuntime.readArtifact(',
+            '_downloads = _transferRuntime.registry;',
+        ):
+            if required not in pipeline_runtime:
+                fail(f'composition transfer runtime artifact path is incomplete: {required}')
+        reader_runtime_start = pipeline_runtime.index('final class PipelineReaderSession {')
+        reader_runtime_body = pipeline_runtime[reader_runtime_start:]
+        if '_workspace.dispose()' in reader_runtime_body:
+            fail('Reader session must not dispose composition physical workspace')
+    else:
+        for required in (
+            'layout: _workspace.layout',
+            '_workspace.readArtifact(',
+            'await _workspace.dispose()',
+        ):
+            if required not in pipeline_runtime:
+                fail(f'Pipeline runtime live artifact path is incomplete: {required}')
     if 'FakeCoordinator(' in static_demo or 'FakeCoordinator(' in reader_runtime:
         fail('Reader app runtime must not use the fake coordinator')
     imported_chapter = (

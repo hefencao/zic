@@ -6,6 +6,8 @@ ROOT = Path(__file__).resolve().parents[1]
 NET = (ROOT / 'packages/sessions/lib/src/net_lane.dart').read_text()
 JOB = (ROOT / 'packages/sessions/lib/src/download_job.dart').read_text()
 LIVE = (ROOT / 'packages/sessions/lib/src/live_coordinator.dart').read_text()
+OWNER_PATH = ROOT / 'packages/sessions/lib/src/download_transfer_owner.dart'
+OWNER = OWNER_PATH.read_text() if OWNER_PATH.exists() else LIVE
 TRACE = (ROOT / 'packages/telemetry/lib/src/trace.dart').read_text()
 FILTER = (ROOT / 'tool/filter_debug_trace.py').read_text()
 PUBSPEC = (ROOT / 'apps/app/pubspec.yaml').read_text()
@@ -57,7 +59,7 @@ for forbidden in (
     if forbidden in retention_block:
         raise SystemExit(f'dev.201 retention policy leaked observation/presentation input: {forbidden}')
 
-if 'downloadPreempted' not in TRACE or 'TraceEventKind.downloadPreempted' not in LIVE:
+if 'downloadPreempted' not in TRACE or 'TraceEventKind.downloadPreempted' not in OWNER:
     raise SystemExit('dev.201 preemption trace contract missing')
 if "'downloadPreempted'" not in FILTER:
     raise SystemExit('dev.201 network trace profile missing downloadPreempted')

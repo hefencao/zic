@@ -16,6 +16,9 @@ def forbid(text: str, token: str, label: str) -> None:
         raise SystemExit(f'superseded {label}: {token}')
 
 coordinator = read('packages/sessions/lib/src/live_coordinator.dart')
+transfer_owner_path = ROOT / 'packages/sessions/lib/src/download_transfer_owner.dart'
+physical_owner = (transfer_owner_path.read_text(encoding='utf-8')
+                  if transfer_owner_path.exists() else coordinator)
 for token in (
     "reason: 'retained-background'",
     'final receiving = session?.state == DownloadState.receiving;',
@@ -23,8 +26,8 @@ for token in (
     'net.cancelQueued(taskKey);',
     '_migrateDownloadPriority(',
 ):
-    require(coordinator, token, 'VibeVenera logical-detach retention')
-forbid(coordinator, 'final wasActive = net.isActive(taskKey);', 'exact detach cancellation')
+    require(physical_owner, token, 'VibeVenera logical-detach retention')
+forbid(physical_owner, 'final wasActive = net.isActive(taskKey);', 'exact detach cancellation')
 
 lane = read('packages/sessions/lib/src/net_lane.dart')
 for token in (
@@ -40,8 +43,9 @@ require(lane_test, 'blocked current keeps preempting low work while the handoff 
 coordinator_test = read('packages/sessions/test/live_coordinator_test.dart')
 for token in (
     'active nonresumable transfer survives window detach and is not reopened',
-    "expect(coordinator.net.priorityOf('reader:${id.key}'), 0);",
-    "expect(coordinator.net.priorityOf('reader:${id.key}'), 1000);",
+    'coordinator.downloadTaskKeyFor(id)!',
+    'expect(coordinator.net.priorityOf(coordinator.downloadTaskKeyFor(id)!), 0);',
+    'expect(coordinator.net.priorityOf(coordinator.downloadTaskKeyFor(id)!), 1000);',
     'expect(transport.opens, 1);',
 ):
     require(coordinator_test, token, 'quick detach/reattach no-redownload regression')

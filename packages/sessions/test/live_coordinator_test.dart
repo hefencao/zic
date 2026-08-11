@@ -451,7 +451,7 @@ void main() {
       ),
     );
     expect(registry.find(id)?.demanded, isFalse);
-    expect(coordinator.net.priorityOf('reader:${id.key}'), 0);
+    expect(coordinator.net.priorityOf(coordinator.downloadTaskKeyFor(id)!), 0);
 
     // A short forward/back gesture must reuse the same receiving transport,
     // not cancel and reopen it. This matches VibeVenera's logical-detach
@@ -474,7 +474,7 @@ void main() {
     );
     await Future<void>.delayed(Duration.zero);
     expect(registry.find(id)?.demanded, isTrue);
-    expect(coordinator.net.priorityOf('reader:${id.key}'), 1000);
+    expect(coordinator.net.priorityOf(coordinator.downloadTaskKeyFor(id)!), 1000);
     expect(transport.opens, 1);
 
     transport.add('payload'.codeUnits);
@@ -558,7 +558,7 @@ void main() {
     expect(session.demanded, isTrue);
     expect(session.demandCount, 1);
     expect(session.effectivePriority, 700);
-    expect(coordinator.net.priorityOf('reader-a:${id.key}'), 700);
+    expect(coordinator.net.priorityOf(coordinator.downloadTaskKeyFor(id)!), 700);
     expect(transport.opens, 1);
 
     transport.add('payload'.codeUnits);
@@ -665,7 +665,10 @@ void main() {
         window: const RoleWindow(<int, PageRole>{}),
       ),
     );
-    expect(coordinator.net.priorityOf('reader:${retainedId.key}'), 0);
+    expect(
+      coordinator.net.priorityOf(coordinator.downloadTaskKeyFor(retainedId)!),
+      0,
+    );
     expect(retainedSession?.activeRun, isTrue);
 
     const previousDemand = DownloadDemand(
