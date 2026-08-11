@@ -477,6 +477,25 @@ final class PipelineReaderSession {
         preemptionThreshold: 40,
       ),
     );
+    if (artifactCacheManager != null) {
+      void promotionListener(DownloadId promoted) {
+        if (_disposed) return;
+        for (final equivalent in artifactCacheManager.directEquivalents(
+          promoted,
+        )) {
+          if (equivalent == promoted || _downloads.find(equivalent) == null) {
+            continue;
+          }
+          _coordinator.refreshDownloadForLocalArtifact(
+            sessionId,
+            equivalent,
+          );
+        }
+      }
+
+      _artifactPromotionListener = promotionListener;
+      artifactCacheManager.addPromotionListener(promotionListener);
+    }
     trace.record(
       traceEvent(
         clock: clock,
@@ -512,6 +531,7 @@ final class PipelineReaderSession {
   late final FrameBudgeter _frameBudgets;
   PromotedArtifactCacheHandoff? _artifactCacheHandoff;
   PartialDownloadHandoff? _partialDownloadHandoff;
+  ArtifactPromotionListener? _artifactPromotionListener;
   late final LiveCoordinator _coordinator;
   ReaderBinding? _binding;
   String? _readerSessionId;
@@ -1289,6 +1309,11 @@ final class PipelineReaderSession {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    final promotionListener = _artifactPromotionListener;
+    _artifactPromotionListener = null;
+    if (promotionListener != null) {
+      _artifactCacheManager?.removePromotionListener(promotionListener);
+    }
     final disposeStartedAtMicros = clock.nowMicros();
     trace.record(
       traceEvent(

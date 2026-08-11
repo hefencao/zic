@@ -2,7 +2,7 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.212` / App `0.31.0+212`。
+- 当前版本：`0.31.0-dev.213` / App `0.31.0+213`。
 - dev.212：02:25真机trace确认dev.211 equivalence已真实命中：Reader前可恢复3个mapping/1113个等价页，后续`sourceRead`出现`verifiedEquivalentReuse=true`；因此不再扩大cache fallback。错误报告同时发现`ComicVersionPageMapping.fromJson`把`Object? verifiedAt`直接传给`DateTime.parse`导致Dart编译失败，现改为类型收窄+`DateTime.tryParse`严格解码。trace约94秒内重复15次mapping warm，多数无新增等价页；版本发现保持每次入口异步，已验证mapping在10分钟freshness内跳过昂贵page identity重验证，新relation/无时间戳/过期mapping仍验证。partial owner与overlap续传不变。
 - dev.211：02:00真机trace确认dev.210 mapping并未缺失：再次进入371页旧版前已有3个persistent mappings，但只复用当时已promote的13页；相关377页版本之后继续完成的artifact不会被一次性`applyExisting`看见。verified mapping现在登记为`ArtifactCacheManager` symmetric equivalence fallback，lookup exact-first、相关版本fallback second，未来迟到promote也可被另一版本后续demand命中；写入继续保持exact DownloadId，hard alias/migration语义不变。partial仍只复用durable inactive prefix，不共享hot session。
 - dev.210：01:09真机trace确认冷启动旧版Reader的长等待发生在Reader创建前：版本alias准备同步解析source request-plan约十余秒，Reader创建后约0.27s即首帧。参考VibeVenera改为详情/Reader入口异步检查版本并持久化verified chapter page-offset mapping；Reader只本地恢复mapping→artifact alias，不再等待source identity resolver。confirmed relation的旧版`!`按raw/canonical predecessor匹配，successor当前版本不误报。verified mapping还可异步复制durable inactive partial到目标DownloadId，清空跨版本validator并保留DownloadJob overlap probe。
@@ -37,8 +37,8 @@
 - Venera preemption先断requestId native HTTP，再等待JS `finished`后返回cancelled并释放permit，禁止同一WebView中旧/新async invocation重叠。修复 `ArtifactCacheReadLease?` nullable半迁移编译错误。
 - 当前环境无Flutter/Dart/Android完整SDK；行为测试已加入源码，最终设备构建/性能仍需本地验证。
 
-**源码版本：** `0.31.0-dev.210`
-**App build：** `0.31.0+206`
+**源码版本：** `0.31.0-dev.213`
+**App build：** `0.31.0+213`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 
@@ -46,6 +46,7 @@
 
 ## 当前实现
 
+- dev.213：同源版本full artifact迟到promote现在可主动通知仍在origin的等价Reader demand；目标DownloadSession保留committed prefix，仅替换network attempt并从equivalent full继续。VibeVenera的alias-before-DownloadIdentity会有效共享in-flight/session partial，但ZIC暂不把独立Reader的hot writer提升为全局owner；只保留durable inactive partial跨版本复制。dev.212 stale mapping现在真正strong revalidate并刷新verifiedAt；origin trace输出`verifiedEquivalentCandidates`用于区分mapping缺边和候选尚无full。
 - 构建/依赖基线为 Dart>=3.12、Flutter>=3.44、AGP9.3.1、Gradle9.5.0、compileSdk37；Gradle daemon按用户本地环境要求使用OpenJDK25，但Android Java/Kotlin class-file target继续17。workspace直接 `test`约束为`^1.25.0`以兼容Flutter3.44固定的test_api解析。五个本地Android Flutter插件不再自行apply KGP，稳定Flutter兼容层仍保持 `android.builtInKotlin=false/android.newDsl=false`；Mihon ABI兼容依赖继续固定。
 - 外部漫画媒体生产host使用 `downloads_bridge/RhttpSourceResourceDirectTransport` + rhttp 0.18.0：source request-plan、NetLane、DownloadSession/artifact所有权不变；Rust/rhttp只执行已规范化单次请求并观察同一个`TaskControl`。dev.182移除dev.179误加的transport层64/256KiB二次framing；媒体前缀验证后保持raw stream，唯一aggregation回到`DownloadJob`的首批约16KiB/后续64KiB source-progress quantum。pure `downloads`仍以Dart HttpClient作为非Flutter/test默认，后台首帧后预热rhttp runtime。 dev.192在该raw stream边界增加`onReceiveProgress`与body-event只读diagnostics；`ByteResponseReadDiagnostics`只有snapshot能力，不提供pause/priority/quota。逐事件采样仅在非product构建启用，product/release不注册额外progress callback。
 - dev.175建立了`DownloadJob/LoaderTransport/source-plan/Venera`的TaskControl能力，但dev.181设备证据与生产composition审计发现外层`ArtifactCacheTransport`仍会擦除该能力。dev.181将read-through cache也升级为`ControlledTransport`，cache miss向controlled fallback传递同一CancelToken；至此生产Reader origin链才真正保持动态priority/cancellation。Venera仍单 invocation，permit transfer按实时priority选择，active prefetch取消下沉到既有`cancel(requestId)`。

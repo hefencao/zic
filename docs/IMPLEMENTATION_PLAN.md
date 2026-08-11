@@ -155,7 +155,7 @@
 - 验证 TTL、source revision变化和第二章节淘汰后的完整 dispose。
 ## P0：Flutter/Android 工具链闭环
 
-- dev.212真机验证：继续确认 `verifiedEquivalentReuse=true` 命中率；短时间反复进入同一详情/Reader时版本 discovery 仍可运行，但fresh mapping不应反复出现完整 `version-page-mapping-warmed`/request-plan重验证。超过freshness窗口或发现新relation后应重新验证mapping。
+- dev.212真机验证：继续确认 `verifiedEquivalentReuse=true` 命中率；短时间反复进入同一详情/Reader时版本 discovery 仍可运行，但fresh mapping不应反复出现完整 `version-page-mapping-warmed`/request-plan重验证。超过freshness窗口或发现新relation后应重新验证mapping。 dev.213真机压力验证：在版本A仍有active partial/origin时让等价版本B完成full；A若该页`verifiedEquivalentCandidates>0`，应出现`verified-equivalent-promotion-takeover`并从原committed boundary转本地equivalent full，不应继续把尾部从origin下载。若重复下载页的`verifiedEquivalentCandidates=0`，转入page mapping/offset覆盖审计，不升级为session partial共享。
 - dev.211真机验证：冷启动Reader继续不得等待source-version resolver；已有mapping时应先出现`version-artifact-equivalence-restored`。让相关版本在另一Reader仍存活时继续promote新artifact，旧版后续未启动页应出现`verifiedEquivalentReuse=true`并直接走artifact cache，不要求退出重进再次扫描。E-Hentai旧版confirmed successor的`!`继续验证。partial保持durable inactive边界，并在续传trace看到validatorless overlap验证而非继承旧ETag。
 - 纵向静态图片持续上下拖动时，异步页面比例收敛不得再触发anchor `jumpTo`造成短距离回拉；旋转、真实viewport/DPR变化、vertical stitch切换与显式跳页仍需验证位置连续。
 - 真机优先验证 dev.206 ownership：快速退出/重进同chapter应直接复用retained PipelineReaderSession，不出现partial durable store/restore；只有session真实evict/dispose后新session才出现`session-partial-handoff` restored且`downloadStarted.committedLength>0`。已有partial动画重入必须从frame0立即播放，约30帧循环继续只属于DecodeSession。Venera cold resolver应不再出现Kotlin HttpURLConnection owner，并验证requestId cancel、Cookie/manual redirect与resolver rhttp复用。

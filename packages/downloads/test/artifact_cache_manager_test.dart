@@ -196,6 +196,35 @@ void main() {
     expect((await manager.readForeground(newer))?.bytes, <int>[4, 4, 4]);
   });
 
+  test('promotion listeners expose late verified-equivalent availability',
+      () async {
+    final older = _id('promotion-listener-older');
+    final newer = _id('promotion-listener-newer');
+    final manager = ArtifactCacheManager(
+      backend: _Backend(<DownloadId, Uint8List>{}),
+    );
+    manager.linkEquivalent(first: older, second: newer);
+    final promoted = <DownloadId>[];
+    void listener(DownloadId id) => promoted.add(id);
+    manager.addPromotionListener(listener);
+
+    await manager.storePromotedArtifact(
+      id: newer,
+      bytes: Uint8List.fromList(<int>[6, 6, 6]),
+    );
+
+    expect(promoted, <DownloadId>[newer]);
+    expect(manager.directEquivalents(newer), contains(older));
+    expect((await manager.readForeground(older))?.bytes, <int>[6, 6, 6]);
+
+    manager.removePromotionListener(listener);
+    await manager.storePromotedArtifact(
+      id: older,
+      bytes: Uint8List.fromList(<int>[7, 7, 7]),
+    );
+    expect(promoted, <DownloadId>[newer]);
+  });
+
   test('verified equivalence does not satisfy exact backend ownership',
       () async {
     final older = _id('older-owner');

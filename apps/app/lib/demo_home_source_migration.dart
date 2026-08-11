@@ -28,16 +28,23 @@ bool _sourceSupportsVersionEntry(BrowsableComicSource source) =>
 
 const Duration _versionPageMappingRevalidationInterval = Duration(minutes: 10);
 
+bool _versionPageMappingIsFresh(
+  ComicVersionPageMapping mapping,
+  DateTime now,
+) {
+  final verifiedAt = mapping.verifiedAt;
+  if (verifiedAt == null) return false;
+  final age = now.difference(verifiedAt.toUtc());
+  return !age.isNegative && age <= _versionPageMappingRevalidationInterval;
+}
+
 bool _versionPageMappingsAreFresh(
   ComicVersionRelation relation,
   DateTime now,
 ) {
   if (relation.pageMappings.isEmpty) return false;
   for (final mapping in relation.pageMappings) {
-    final verifiedAt = mapping.verifiedAt;
-    if (verifiedAt == null) return false;
-    final age = now.difference(verifiedAt.toUtc());
-    if (age.isNegative || age > _versionPageMappingRevalidationInterval) {
+    if (!_versionPageMappingIsFresh(mapping, now)) {
       return false;
     }
   }
@@ -317,7 +324,8 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     BrowsableComicSource source,
     ComicVersionRelation relation,
   ) async {
-    if (_versionPageMappingsAreFresh(relation, DateTime.now().toUtc())) {
+    final revalidationNow = DateTime.now().toUtc();
+    if (_versionPageMappingsAreFresh(relation, revalidationNow)) {
       return;
     }
     final predecessorComic = await source.loadComic(relation.predecessorComicId);
@@ -346,11 +354,16 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
             mapping.predecessorChapterId == predecessorChapter.chapterId &&
             mapping.successorChapterId == matchedSuccessorChapter.chapterId,
       );
-      if (existing.any(
-        (mapping) =>
-            mapping.predecessorPageCount == predecessorChapter.pageCount &&
-            mapping.successorPageCount == matchedSuccessorChapter.pageCount,
-      )) {
+      ComicVersionPageMapping? currentMapping;
+      for (final mapping in existing) {
+        if (mapping.predecessorPageCount == predecessorChapter.pageCount &&
+            mapping.successorPageCount == matchedSuccessorChapter.pageCount) {
+          currentMapping = mapping;
+          break;
+        }
+      }
+      if (currentMapping != null &&
+          _versionPageMappingIsFresh(currentMapping, revalidationNow)) {
         verifiedMappings++;
         continue;
       }

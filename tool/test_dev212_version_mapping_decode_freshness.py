@@ -31,7 +31,7 @@ migration = read('apps/app/lib/demo_home_source_migration.dart')
 for token in (
     'const Duration _versionPageMappingRevalidationInterval = Duration(minutes: 10);',
     'bool _versionPageMappingsAreFresh(',
-    'if (_versionPageMappingsAreFresh(relation, DateTime.now().toUtc())) {',
+    'if (_versionPageMappingsAreFresh(relation, revalidationNow)) {',
     'final versions = await versionSource.findComicVersions(comicId);',
     'await _reuseSourceVersionDurablePartials(entry);',
 ):

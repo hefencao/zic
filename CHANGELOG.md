@@ -1,3 +1,12 @@
+## 0.31.0-dev.213：等价 Full Promotion Takeover 与 Session Partial 边界
+
+- 对照 `zic-debug-trace-2026-08-11T03-35-42.jsonl` 与 `vibevenera-master.zip`，确认VibeVenera通过alias-before-DownloadIdentity使版本页共享同一 `_loadingImages` / `_PartialImageCache` / DownloadSession identity，等效具备session/in-flight partial复用；ZIC不直接提升为跨Reader共享writer。
+- 新增immutable artifact promotion observer：相关版本full迟到落盘时，活跃等价DownloadSession保留自己的committed prefix，仅替换当前network attempt；下一次DownloadJob open从ArtifactCacheTransport读取equivalent full剩余range。
+- local full出现可解除旧network terminal/retry/defer记忆；cache-resident session不重复takeover。
+- 修复dev.212 stale mapping仅因页数未变就跳过strong revalidation、导致`verifiedAt`永远不刷新的错误。
+- origin/read trace新增`verifiedEquivalentCandidates`，区分mapping覆盖缺失与“候选存在但尚无full”。durable inactive partial规则不变，不共享hot writer。
+- 新增ADR 0194、dev.213审计/owner gate和promotion-listener regression，版本提升到`0.31.0+213`。
+
 ## 0.31.0-dev.212：版本 mapping 严格解码与后台重验证收口
 
 - 修复 dev.210/211 新增 `ComicVersionPageMapping.verifiedAt` 的 Dart 静态类型遗漏：JSON 原值先收窄为 `String?`，再用 `DateTime.tryParse` 严格验证并转 UTC；非法类型/非法时间继续抛 `FormatException`，不使用宽泛 cast 绕过。

@@ -67,6 +67,9 @@ final class ArtifactCacheTransport implements ControlledTransport {
     final revision = _demandRevision?.call();
     range?.validate();
     final id = _identities[uri.toString()];
+    final verifiedEquivalentCandidates = id == null
+        ? 0
+        : _cache.directEquivalents(id).length;
     if (id != null) {
       final readStarted = _clock?.nowMicros();
       try {
@@ -129,6 +132,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
               'memoryCacheHit': lookup.tier == ArtifactCacheTier.memory,
               'verifiedEquivalentReuse':
                   lookup.storageId != _cache.resolveAlias(id),
+              'verifiedEquivalentCandidates': verifiedEquivalentCandidates,
               'hotCacheEntries': _cache.memoryEntryCount,
               'hotCacheBytes': _cache.memoryBytes,
             };
@@ -224,6 +228,8 @@ final class ArtifactCacheTransport implements ControlledTransport {
       priority: control?.priority,
       details: <String, Object?>{
         'controlledFallback': controlledFallback,
+        if (id != null)
+          'verifiedEquivalentCandidates': verifiedEquivalentCandidates,
         ...response.diagnostics,
       },
     );
@@ -238,6 +244,8 @@ final class ArtifactCacheTransport implements ControlledTransport {
       priority: control == null ? null : () => control.priority,
       readDetails: () => <String, Object?>{
         'controlledFallback': controlledFallback,
+        if (id != null)
+          'verifiedEquivalentCandidates': verifiedEquivalentCandidates,
         ...response.diagnostics,
       },
     );

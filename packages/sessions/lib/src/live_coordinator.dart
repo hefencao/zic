@@ -145,6 +145,65 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   Map<DecodeId, UploadDemand> get uploadDemands =>
       Map<DecodeId, UploadDemand>.unmodifiable(_uploads);
 
+  /// Restarts an incomplete demanded download after a newly promoted local
+  /// artifact can satisfy the same logical media through the outer transport.
+  ///
+  /// The existing DownloadSession remains authoritative and keeps its current
+  /// committed prefix. Only the active/queued network attempt is replaced; the
+  /// next DownloadJob open therefore resumes from the preserved boundary and
+  /// can consume an immutable cache response instead of continuing origin I/O.
+  void refreshDownloadForLocalArtifact(String sessionId, DownloadId id) {
+    if (_disposed || !_downloads.containsKey(id)) return;
+    final session = registry.find(id);
+    if (session == null ||
+        session.state == DownloadState.promoted ||
+        session.state == DownloadState.disposed ||
+        session.residentCacheBacked) {
+      return;
+    }
+    // A newly available immutable local source is stronger evidence than a
+    // prior network terminal/defer decision for the same unchanged demand.
+    // Keep the committed prefix, but allow the existing DownloadJob to reopen
+    // against ArtifactCacheTransport immediately.
+    _downloadRetryRounds.remove(id);
+    _downloadRetryPending.remove(id);
+    _downloadTerminalFailures.remove(id);
+    _downloadDeferredAtLength.remove(id);
+    final taskKey = _networkTaskKeys[id];
+    traceSink.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.artifactSource,
+        identityHash: id.key,
+        revision: _revision,
+        payload: <String, Object?>{
+          'stage': 'verified-equivalent-promotion-takeover',
+          'committedLength': session.committedLength,
+          'taskState': taskKey == null
+              ? 'absent'
+              : net.isActive(taskKey)
+                  ? 'active'
+                  : 'queued',
+        },
+      ),
+    );
+    if (taskKey == null) {
+      _ensureDownloadTask(sessionId, id, session);
+      return;
+    }
+    if (net.cancelQueued(taskKey)) {
+      if (_networkTaskKeys[id] == taskKey) {
+        _networkTaskKeys.remove(id);
+      }
+      _ensureDownloadTask(sessionId, id, session);
+      return;
+    }
+    // Active cancellation preserves DownloadSession/artifact state. The
+    // running task's finally path resubmits while demand remains attached.
+    net.cancel(taskKey);
+  }
+
   bool _hasPendingSourceRevision(DecodeId id) {
     final available = _sourceRevisions[id.download] ?? -1;
     final consumed = _decodeSourceRevisions[id] ?? -1;
