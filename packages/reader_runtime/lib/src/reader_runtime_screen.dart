@@ -939,38 +939,12 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
-                  Row(
-                    children: <Widget>[
-                      Text(
-                        reader.direction == ReadingDirection.rtl
-                            ? '$pages'
-                            : '${reader.currentIndex + 1}',
-                      ),
-                      Expanded(
-                        child: Directionality(
-                          textDirection: reader.direction == ReadingDirection.rtl
-                              ? TextDirection.rtl
-                              : TextDirection.ltr,
-                          child: Slider(
-                            key: readerPageSliderKey,
-                            value: (reader.requestedIndex ?? reader.currentIndex)
-                                .clamp(0, math.max(1, pages - 1))
-                                .toDouble(),
-                            min: 0,
-                            max: math.max(1, pages - 1).toDouble(),
-                            divisions: pages > 1 ? pages - 1 : null,
-                            onChanged: pages <= 1
-                                ? null
-                                : (value) => reader.requestPage(value.round()),
-                          ),
-                        ),
-                      ),
-                      Text(
-                        reader.direction == ReadingDirection.rtl
-                            ? '${reader.currentIndex + 1}'
-                            : '$pages',
-                      ),
-                    ],
+                  _ReaderPageScrubber(
+                    pages: pages,
+                    direction: reader.direction,
+                    currentIndex: reader.currentIndex,
+                    requestedIndex: reader.requestedIndex,
+                    onCommitted: reader.requestPage,
                   ),
                   ValueListenableBuilder<ReaderPlaybackState>(
                     valueListenable: _playback,
@@ -1134,6 +1108,88 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
           ],
         ),
       ),
+    );
+  }
+}
+
+/// UI-local page scrub preview.
+///
+/// Dragging a Slider is presentation state, not Reader navigation. A scrub may
+/// cross hundreds of page indices in one gesture; publishing every intermediate
+/// index as [ReaderController.requestPage] would force PageView jumps and full
+/// demand replans for positions the user never committed to. Keep the thumb and
+/// preview label local while dragging and emit exactly one navigation command
+/// when the gesture ends.
+final class _ReaderPageScrubber extends StatefulWidget {
+  const _ReaderPageScrubber({
+    required this.pages,
+    required this.direction,
+    required this.currentIndex,
+    required this.requestedIndex,
+    required this.onCommitted,
+  });
+
+  final int pages;
+  final ReadingDirection direction;
+  final int currentIndex;
+  final int? requestedIndex;
+  final ValueChanged<int> onCommitted;
+
+  @override
+  State<_ReaderPageScrubber> createState() => _ReaderPageScrubberState();
+}
+
+final class _ReaderPageScrubberState extends State<_ReaderPageScrubber> {
+  int? _previewIndex;
+
+  int get _displayIndex =>
+      _previewIndex ?? widget.requestedIndex ?? widget.currentIndex;
+
+  void _preview(double value) {
+    final index = value.round().clamp(0, widget.pages - 1).toInt();
+    if (_previewIndex == index) return;
+    setState(() => _previewIndex = index);
+  }
+
+  void _commit(double value) {
+    final index = value.round().clamp(0, widget.pages - 1).toInt();
+    widget.onCommitted(index);
+    if (!mounted) return;
+    setState(() => _previewIndex = null);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pages = widget.pages;
+    final displayIndex = _displayIndex
+        .clamp(0, math.max(0, pages - 1))
+        .toInt();
+    final currentLabel = '${displayIndex + 1}';
+    return Row(
+      children: <Widget>[
+        Text(
+          widget.direction == ReadingDirection.rtl ? '$pages' : currentLabel,
+        ),
+        Expanded(
+          child: Directionality(
+            textDirection: widget.direction == ReadingDirection.rtl
+                ? TextDirection.rtl
+                : TextDirection.ltr,
+            child: Slider(
+              key: readerPageSliderKey,
+              value: displayIndex.toDouble(),
+              min: 0,
+              max: math.max(1, pages - 1).toDouble(),
+              divisions: pages > 1 ? pages - 1 : null,
+              onChanged: pages <= 1 ? null : _preview,
+              onChangeEnd: pages <= 1 ? null : _commit,
+            ),
+          ),
+        ),
+        Text(
+          widget.direction == ReadingDirection.rtl ? currentLabel : '$pages',
+        ),
+      ],
     );
   }
 }

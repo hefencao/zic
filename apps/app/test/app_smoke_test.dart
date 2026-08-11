@@ -475,6 +475,7 @@ void main() {
 
     final slider = tester.widget<Slider>(find.byKey(readerPageSliderKey));
     slider.onChanged!(1);
+    slider.onChangeEnd!(1);
     await _pumpUntilKeyText(
       tester,
       readerPageSubtitleKey,

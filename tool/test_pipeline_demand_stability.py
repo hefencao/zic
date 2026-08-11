@@ -20,11 +20,17 @@ binding = (ROOT / 'packages/sessions/lib/src/reader_binding.dart').read_text(
     encoding='utf-8'
 )
 for token in (
-    'pipeline.accept(observation);\n    _syncViewport(observation);',
+    'final viewport = _viewportResolver.resolve(',
+    '_viewport = viewport;',
+    'pipeline.accept(observation);',
+    '} finally {',
     '_playback.syncPlayback(viewport, _uploadIds(pipeline.currentPlan))',
 ):
     if token not in binding:
         raise SystemExit(f'viewport/demand separation contract is missing: {token}')
+accept = binding[binding.index('  void accept(ReaderObs observation)'):binding.index('\n  bool classifyPage')]
+if accept.index('_viewport = viewport;') > accept.index('pipeline.accept(observation);'):
+    raise SystemExit('Reader-local viewport fact must be committed before demand reconcile')
 
 if 'for (final id in plan.uploads.keys)' not in binding:
     raise SystemExit('viewport playback must bind only current/transition upload identities')

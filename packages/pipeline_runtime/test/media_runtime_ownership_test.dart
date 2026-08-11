@@ -118,6 +118,61 @@ void main() {
     expect(runtime.closed, isTrue);
   });
 
+  test('shared physical trace sink emits each demand once across Readers', () async {
+    final sharedTrace = MemoryTraceSink();
+    final factory = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: const _FreshFactory(),
+    );
+    final chapter = _chapter();
+    final first = factory.create(
+      chapter: chapter,
+      sessionId: 'trace-reader-a',
+      traceSink: sharedTrace,
+    );
+    final second = factory.create(
+      chapter: chapter,
+      sessionId: 'trace-reader-b',
+      traceSink: sharedTrace,
+    );
+    final target = DecodeTarget(physicalWidth: 320, physicalHeight: 480);
+    first.attach(target);
+    second.attach(target);
+
+    ReaderObs observation(String sessionId) => ReaderObs(
+          sessionId: sessionId,
+          currentIndex: 0,
+          stableIndex: 0,
+          interaction: Interaction.idle,
+          logicalPosition: 0,
+          velocity: 0,
+          currentCoverage: Coverage(
+            pageIndex: 0,
+            assetKey: chapter.pages.single.assetKey,
+            fraction: 1,
+          ),
+          direction: ReadingDirection.ltr,
+          timestamp: DateTime.utc(2026),
+          monotonicMicros: 1,
+        );
+
+    first.accept(observation('trace-reader-a'));
+    second.accept(observation('trace-reader-b'));
+    await Future<void>.delayed(Duration.zero);
+
+    int physicalDemandCount(String scopeId) => sharedTrace.events.where((event) {
+          if (event.kind != TraceEventKind.demandApplied) return false;
+          return event.payload['lane'] == 'download' &&
+              event.payload['scopeId'] == scopeId;
+        }).length;
+
+    expect(physicalDemandCount('reader:trace-reader-a'), 1);
+    expect(physicalDemandCount('reader:trace-reader-b'), 1);
+
+    await first.dispose();
+    await second.dispose();
+    await factory.disposeTransferRuntimes();
+  });
+
   test('current output prewarms the exact aligned decode target', () async {
     final runtime = _Runtime();
     final session = PipelineReaderSessionFactory(
@@ -203,6 +258,18 @@ ChapterManifest _chapter({int? width, int? height, Uri? uri}) => ChapterManifest
       ],
       readingDirection: ReadingDirection.ltr,
     );
+
+final class _FreshFactory implements PipelineMediaRuntimeFactory {
+  const _FreshFactory();
+
+  @override
+  PipelineMediaRuntime create({
+    required String sessionId,
+    required MonoClock clock,
+    required TraceSink traceSink,
+  }) =>
+      _Runtime();
+}
 
 final class _Factory implements PipelineMediaRuntimeFactory {
   _Factory(this.runtime);

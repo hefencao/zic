@@ -23,7 +23,7 @@ LIBRARY = (ROOT / 'apps/app/lib/demo_home_views.dart').read_text()
 for token in (
     'required this.pipeline',
     'PipelineReaderSession get _pipeline => widget.pipeline',
-    '_pipeline.accept',
+    '_pipeline.enqueueObservation',
     '_pipeline.loadBytes(asset, token)',
     '_pipeline.pageStream(asset)',
     '_pipeline.pageOutput(asset)',
@@ -34,6 +34,8 @@ for token in (
 for token in ('final class PipelineReaderSessionHost', '_ownerFactory.acquire(', '_ownerFactory.release(_session)'):
     if token not in PIPELINE_HOST:
         raise SystemExit(f'Pipeline host ownership contract missing: {token}')
+if 'onObservation: _pipeline.accept' in RUNTIME:
+    raise SystemExit('Reader runtime must not synchronously reconcile Pipeline from UI observation callbacks')
 for forbidden in ('PipelineReaderSessionFactory', 'pipelineFactory', '_pipeline.dispose()', '_pipeline.selectPage', 'transferProgress.select'):
     if forbidden in RUNTIME:
         raise SystemExit(f'Reader retained pipeline composition: {forbidden}')

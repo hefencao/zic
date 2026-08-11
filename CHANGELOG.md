@@ -1,3 +1,8 @@
+## 0.31.0-dev.220：Reader scrub intent / physical trace fan-out closure
+
+- 09:44 真机Trace确认dev.219 late Reader decode/upload已恢复，但一次slider 148→248拖动仍在约0.4s内提交23次pageCurrent、23次policy replan和157次download priority重排；现slider拖动改为UI-local scrub preview，只有gesture end提交一次Reader navigation request，避免PageView/Pipeline/physical demand被中间索引逐格驱动。
+- ReaderBinding先推进Reader-local viewport fact，并在pipeline reconcile成败后都同步playback projection；physical `_TransferTraceHub`改为Reader memory sink逐Reader保留 + shared App/export sink identity引用计数，消除overlap Reader把同一physical event重复写入全局Trace。App提升到`0.31.0+220`；NetLane/水位/retry/cache/transport/verified TransferKey均不改。
+
 ## 0.31.0-dev.219：Reader / Pipeline observation-projection boundary
 
 - 08:19真机Trace确认共享physical owner后的关键跨层回归：Reader3 plan有11 download/4 decode/4 upload，但late Reader对已有committed session同步attach native ingress时异常截断reconcile，最终本Reader decode/upload session均为0，current页21秒无首帧。

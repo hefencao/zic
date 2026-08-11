@@ -195,9 +195,13 @@ void main() {
     );
     await gesture.moveTo(Offset(slider.right - 24, slider.center.dy));
     await tester.pump();
-    // The controlled slider must retain the requested target while ReaderView
-    // is still reconciling/acknowledging the actual current page.
+    // Slider dragging is UI-local scrub preview. Intermediate thumb positions
+    // must not issue Reader navigation commands or churn Pipeline demand.
     expect(tester.widget<Slider>(sliderFinder).value, greaterThan(1));
+    expect(
+      find.byKey(const ValueKey<String>('reader-page-rotation:0')),
+      findsOneWidget,
+    );
     await gesture.up();
     await tester.pump();
     await tester.pump();
@@ -276,6 +280,7 @@ void main() {
     );
     final slider = tester.widget<Slider>(find.byKey(readerPageSliderKey));
     slider.onChanged!(2);
+    slider.onChangeEnd!(2);
     await tester.pump();
     expect(writes, isNotEmpty);
 

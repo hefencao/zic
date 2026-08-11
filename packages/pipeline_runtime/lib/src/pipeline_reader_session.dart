@@ -131,15 +131,25 @@ final class _PipelineReaderSessionRetentionPool {
 
 
 final class _TransferTraceHub implements TraceSink {
-  final Set<TraceSink> _sinks = <TraceSink>{};
+  final Map<TraceSink, int> _sinks = <TraceSink, int>{};
 
-  void attach(TraceSink sink) => _sinks.add(sink);
+  void attach(TraceSink sink) {
+    _sinks.update(sink, (count) => count + 1, ifAbsent: () => 1);
+  }
 
-  void detach(TraceSink sink) => _sinks.remove(sink);
+  void detach(TraceSink sink) {
+    final count = _sinks[sink];
+    if (count == null) return;
+    if (count <= 1) {
+      _sinks.remove(sink);
+      return;
+    }
+    _sinks[sink] = count - 1;
+  }
 
   @override
   void record(TraceEvent event) {
-    for (final sink in _sinks.toList(growable: false)) {
+    for (final sink in _sinks.keys.toList(growable: false)) {
       try {
         sink.record(event);
       } on Object {
@@ -307,7 +317,9 @@ final class _PipelineDownloadTransferRuntime {
   DownloadTransferConsumer attachReader({
     required String scopeId,
     required TransferTransportPick transportFor,
-    required TraceSink traceSink,
+    required TraceSink consumerTraceSink,
+    required TraceSink readerPhysicalTraceSink,
+    TraceSink? sharedPhysicalTraceSink,
     required RetryPolicy retry,
     required String Function(DownloadId id) downloadBucketFor,
     required int Function(DownloadId id) downloadBucketLimitFor,
@@ -315,18 +327,32 @@ final class _PipelineDownloadTransferRuntime {
     if (_disposed) {
       throw StateError('physical transfer runtime is disposed');
     }
-    traceHub.attach(traceSink);
+    // Physical events are composition-owned. Each Reader keeps its own memory
+    // projection, while the shared app/export sink is reference-counted so the
+    // same physical event is emitted globally only once.
+    traceHub.attach(readerPhysicalTraceSink);
+    if (sharedPhysicalTraceSink != null) {
+      traceHub.attach(sharedPhysicalTraceSink);
+    }
     return owner.attachConsumer(
       scopeId: scopeId,
       transportFor: transportFor,
-      traceSink: traceSink,
+      traceSink: consumerTraceSink,
       retry: retry,
       downloadBucketFor: downloadBucketFor,
       downloadBucketLimitFor: downloadBucketLimitFor,
     );
   }
 
-  void detachReaderTrace(TraceSink traceSink) => traceHub.detach(traceSink);
+  void detachReaderTrace({
+    required TraceSink readerPhysicalTraceSink,
+    TraceSink? sharedPhysicalTraceSink,
+  }) {
+    traceHub.detach(readerPhysicalTraceSink);
+    if (sharedPhysicalTraceSink != null) {
+      traceHub.detach(sharedPhysicalTraceSink);
+    }
+  }
 
   Future<Uint8List> readArtifact(Artifact artifact) =>
       workspace.readArtifact(artifact);
@@ -597,6 +623,7 @@ final class PipelineReaderSession {
   })  : artifactReadScheduler = artifactReadScheduler,
         _artifactCacheManager = artifactCacheManager,
         _transferRuntime = transferRuntime,
+        _sharedTraceSink = traceSink,
         _bytesLoader = bytesLoader,
         clock = SystemClock(),
         _memoryTrace = MemoryTraceSink(),
@@ -656,7 +683,9 @@ final class PipelineReaderSession {
     _downloadTransfer = _transferRuntime.attachReader(
       scopeId: 'reader:$sessionId',
       transportFor: _transportFor,
-      traceSink: trace,
+      consumerTraceSink: trace,
+      readerPhysicalTraceSink: _memoryTrace,
+      sharedPhysicalTraceSink: _sharedTraceSink,
       retry: _profile.retry,
       downloadBucketFor: _profile.downloadBucket,
       downloadBucketLimitFor: _downloadBucketLimit,
@@ -738,6 +767,7 @@ final class PipelineReaderSession {
   final MonoClock clock;
   final MemoryTraceSink _memoryTrace;
   late final TraceSink trace;
+  final TraceSink? _sharedTraceSink;
   final ReaderPipelineProfile _profile;
   late final PipelineMediaRuntime _media;
   final PipelineArtifactBytesLoader? _bytesLoader;
@@ -1661,7 +1691,10 @@ final class PipelineReaderSession {
     await _coordinator.dispose();
     final coordinatorDisposeMicros =
         clock.nowMicros() - coordinatorDisposeStartedAtMicros;
-    _transferRuntime.detachReaderTrace(trace);
+    _transferRuntime.detachReaderTrace(
+      readerPhysicalTraceSink: _memoryTrace,
+      sharedPhysicalTraceSink: _sharedTraceSink,
+    );
     _uploads.dispose();
     _decodes.dispose();
     _ingresses.dispose();

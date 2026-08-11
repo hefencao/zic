@@ -4,7 +4,7 @@
 - current 具有最高资源优先级，但目标页首帧不得依赖 current 的下载完成或 holder 深度。
 - 同一稳定 identity 只有一个权威 request、session、artifact、cursor 和活动 writer。
 - Download demand是consumer claim，不是物理transfer ownership：composition-owned `DownloadTransferOwner`按exact `DownloadId`唯一拥有 `DownloadRegistry`、writer、network task、retry/terminal/defer与transfer workspace；同一exact id在queued/active期间保持同一physical task key，policy revision只能原位迁移priority，多个Reader只持有scoped claim/transport provider。native `Ingress`、source listener、decode/upload必须保持Reader-local；新Reader加入已有committed physical session时先发布空`DownloadIngressProjection`并异步synchronized replay，late replay不得阻断download→decode→upload demand reconcile，也不得把projection失败写回physical authority。verified跨版本等价尚未进入TransferKey-before-acquire，不得用弱证据合并transfer。
-- Reader navigation只提交 observation/用户命令并消费只读输出，不直接操作 transport/session/artifact/lane/frame/texture；observation到pipeline必须经过enqueue/latest-wins边界，pipeline reconcile异常不得反向unwind ScrollNotification/page request。`ReaderController`与requested/current page属于route/navigation owner，`DecodeTarget`只属于pipeline/media projection；MediaQuery/system UI导致target变化时只更新PipelineController target并在enqueue observation中从既有DemandPlan做增量diff，不得detach binding、清空download demand或重建navigation controller。
+- Reader navigation只提交 observation/已提交用户命令并消费只读输出，不直接操作 transport/session/artifact/lane/frame/texture；slider拖动中的scrub preview属于UI-local presentation，只在gesture end提交一次page request，禁止每个中间索引驱动PageView/Pipeline。observation到pipeline必须经过enqueue/latest-wins边界，pipeline reconcile异常不得反向unwind ScrollNotification/page request；ReaderBinding必须先推进Reader-local viewport fact，并在reconcile成败后独立同步playback projection。`ReaderController`与requested/current page属于route/navigation owner，`DecodeTarget`只属于pipeline/media projection；MediaQuery/system UI导致target变化时只更新PipelineController target并在enqueue observation中从既有DemandPlan做增量diff，不得detach binding、清空download demand或重建navigation controller。
 - 下载、解码、上传使用独立 scheduler；一个层的运行时状态不能成为另一层页面的资格门控。
 - 平台能力由 composition root 原子注入；核心包不反向依赖 Widget、Android plugin 或具体 FFI 实现。
 - 创建者关闭 owned 对象；外部注入能力不得被消费方误关闭。
@@ -411,7 +411,7 @@ Cloudflare 可见浏览器的 Cookie 与 User-Agent 必须属于同一个浏览�
 
 ## 13. Telemetry 与关闭
 
-状态所有者产生权威事件；App 只做有界导出。长 identity 使用 hash/长度摘要；导出投影可按稳定语义桶合并高频诊断样本，例如 `framePipelineTiming` 按 trace reason / dominant stage / role，`decodeRefill` 按 role / stage / source-wake 分桶，并保留 first/last、count 与关键 timing/source revision 的 min/max。该合并只属于导出观测，不改变运行时事件或策略；错误、retry、writer rejection、resume/source read、session retain/reuse 和生命周期边缘不得因导出压缩丢失。overlapping total 不得与子阶段重复参与 dominant 归因。 production rhttp 的HTTP version与匿名endpoint hash属于每response低开销观测；高频native receive-progress只允许non-product或显式诊断构建启用，且不得改变transport cadence或成为调度输入。
+状态所有者产生权威事件；App 只做有界导出。composition physical transfer事件对共享App/export sink只能写一次；每Reader可保留独立memory trace projection，但不得经多个Reader wrapper把同一physical event重复写入同一全局sink。长 identity 使用 hash/长度摘要；导出投影可按稳定语义桶合并高频诊断样本，例如 `framePipelineTiming` 按 trace reason / dominant stage / role，`decodeRefill` 按 role / stage / source-wake 分桶，并保留 first/last、count 与关键 timing/source revision 的 min/max。该合并只属于导出观测，不改变运行时事件或策略；错误、retry、writer rejection、resume/source read、session retain/reuse 和生命周期边缘不得因导出压缩丢失。overlapping total 不得与子阶段重复参与 dominant 归因。 production rhttp 的HTTP version与匿名endpoint hash属于每response低开销观测；高频native receive-progress只允许non-product或显式诊断构建启用，且不得改变transport cadence或成为调度输入。
 
 完整关闭遵循依赖逆序：停止新 demand，关闭 upload/decode/download，释放 frame/output/texture，关闭 runtime scheduler与 workspace，最后由 App 关闭其创建的平台 facade。外部注入 capability 不由消费方关闭。
 

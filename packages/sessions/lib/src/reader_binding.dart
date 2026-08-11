@@ -55,8 +55,19 @@ final class ReaderBinding {
       throw StateError('reader binding is detached');
     }
     _observation = observation;
-    pipeline.accept(observation);
-    _syncViewport(observation);
+    final viewport = _viewportResolver.resolve(
+      observation,
+      discretePages: discretePages,
+    );
+    _viewport = viewport;
+    try {
+      pipeline.accept(observation);
+    } finally {
+      // Viewport/presentation is Reader-local consumer state. A demand-lane
+      // reconciliation failure may still be reported by the caller, but it
+      // must not prevent the visible viewport/playback projection advancing.
+      _playback.syncPlayback(viewport, _uploadIds(pipeline.currentPlan));
+    }
   }
 
   bool classifyPage({required int pageIndex, required bool animated}) {
@@ -113,15 +124,6 @@ final class ReaderBinding {
     if (_detached || viewport == null) {
       return;
     }
-    _playback.syncPlayback(viewport, _uploadIds(pipeline.currentPlan));
-  }
-
-  void _syncViewport(ReaderObs observation) {
-    final viewport = _viewportResolver.resolve(
-      observation,
-      discretePages: discretePages,
-    );
-    _viewport = viewport;
     _playback.syncPlayback(viewport, _uploadIds(pipeline.currentPlan));
   }
 

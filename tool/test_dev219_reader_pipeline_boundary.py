@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -86,8 +87,10 @@ for rel in (
 
 pubspec = read('apps/app/pubspec.yaml')
 version_props = read('apps/app/android/zic-version.properties')
-if 'version: 0.31.0+219' not in pubspec:
-    raise SystemExit('dev.219 app version mismatch')
-if 'versionCode=219' not in version_props:
-    raise SystemExit('dev.219 Android version mismatch')
+pub_match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
+android_match = re.search(r'^versionCode=(\d+)$', version_props, re.M)
+if pub_match is None or int(pub_match.group(1)) < 219:
+    raise SystemExit('dev.219+ app version mismatch')
+if android_match is None or int(android_match.group(1)) < 219:
+    raise SystemExit('dev.219+ Android version mismatch')
 print('dev.219 Reader/pipeline observation-projection boundary: OK')
