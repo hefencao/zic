@@ -602,6 +602,7 @@ final class _SourceResourceTransport implements ControlledTransport {
       validators: response.validators,
       rangeSupported: response.rangeSupported,
       disposition: response.disposition,
+      bodyAuthority: response.bodyAuthority,
       diagnostics: <String, Object?>{
         ...response.diagnostics,
         'sourceRequestPlanMicros': requestPlanMicros,

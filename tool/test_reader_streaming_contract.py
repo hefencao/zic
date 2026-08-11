@@ -40,13 +40,16 @@ for forbidden in ('PipelineReaderSessionFactory', 'pipelineFactory', '_pipeline.
     if forbidden in RUNTIME:
         raise SystemExit(f'Reader retained pipeline composition: {forbidden}')
 for token in (
-    'DownloadRegistry(', 'LiveCoordinator(', 'SourcePool(', 'DecodeRegistry(',
+    'LiveCoordinator(', 'SourcePool(', 'DecodeRegistry(',
     'UploadRegistry(', 'FrameBudgeter(', 'ReaderBinding(',
     'PipelinePageStream.fromSession', 'PipelinePageOutputStream._(',
     'PipelineTransferProgressPublisher()', 'transferProgress.select(',
 ):
     if token not in PIPELINE_RUNTIME:
         raise SystemExit(f'Pipeline runtime ownership contract missing: {token}')
+for token in ('CompositionDownloadTransferRuntime', '_downloads = _transferRuntime.registry;'):
+    if token not in PIPELINE_RUNTIME:
+        raise SystemExit(f'Pipeline physical-transfer consumer boundary missing: {token}')
 for forbidden in ('DownloadRegistry', 'DownloadSession', 'LiveCoordinator', 'NetLane(', 'DecodeLane(', 'UploadLane(', "package:downloads/", "package:sessions/", "package:storage/", "package:transport/", "package:media/"):
     if forbidden in RUNTIME:
         raise SystemExit(f'Reader regained pipeline ownership: {forbidden}')

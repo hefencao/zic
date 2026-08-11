@@ -22,6 +22,7 @@ owner = read('packages/sessions/lib/src/download_transfer_owner.dart')
 exports = read('packages/sessions/lib/sessions.dart')
 live = read('packages/sessions/lib/src/live_coordinator.dart')
 pipe = read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
+runtime = read('packages/downloads/lib/src/composition_download_transfer_runtime.dart')
 test = read('packages/sessions/test/download_transfer_owner_test.dart')
 
 require(exports, "export 'src/download_transfer_owner.dart';", 'composition transfer owner export')
@@ -51,27 +52,30 @@ for token in (
     forbid(live, token, 'Reader-local duplicate physical owner')
 for token in (
     'DownloadTransferConsumer? downloadTransfer',
-    '_downloadTransfer.reconcile(sessionId, _revision, diff);',
+    '_downloadTransfer.replaceDemands(',
     'await _downloadTransfer.dispose();',
     '_downloadTransfer.refreshScheduling();',
 ):
     require(live, token, 'LiveCoordinator consumer delegation')
 
 for token in (
-    'final class _TransferRuntimeKey',
+    'final class CompositionDownloadTransferRuntimePool',
     'identical(artifactCacheManager, other.artifactCacheManager)',
     'identical(partialDownloadStore, other.partialDownloadStore)',
     'identical(net, other.net)',
-    'final class _PipelineDownloadTransferRuntimePool',
-    'final class _PipelineDownloadTransferRuntime',
+    'final class CompositionDownloadTransferRuntime',
     'owner = DownloadTransferOwner(',
     'persistUnclaimed: partialDownloadHandoff == null',
+):
+    require(runtime, token, 'composition runtime ownership')
+for token in (
     '_downloads = _transferRuntime.registry;',
-    '_downloadTransfer = _transferRuntime.attachReader(',
+    '_downloadTransfer = _transferRuntime.attachConsumer(',
     'await _transferRuntimePool.disposeIdle();',
     "throw StateError('cannot dispose physical transfers with active consumers')",
 ):
-    require(pipe, token, 'composition runtime ownership')
+    require(pipe, token, 'Reader attachment to composition runtime')
+forbid(pipe, '_PipelineDownloadTransferRuntime', 'obsolete Reader-private composition runtime')
 if pipe.count('transferRuntimePool: _transferRuntimePool,') < 5:
     raise SystemExit('factory clones do not consistently share transfer-runtime pool')
 

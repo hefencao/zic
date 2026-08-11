@@ -129,9 +129,13 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
       pipelineFactory: defaultLocalMediaPipelineFactory
           .withArtifactCacheManager(_readerArtifactCache)
           .withPartialDownloadStore(
-            _chapterDownloads is PartialDownloadStore
-                ? _chapterDownloads as PartialDownloadStore
-                : null,
+            _downloadComposition?.artifactStore ??
+                (_chapterDownloads is PartialDownloadStore
+                    ? _chapterDownloads as PartialDownloadStore
+                    : null),
+          )
+          .withTransferRuntime(
+            _downloadComposition?.transferRuntime,
           )
           .withUserAgentProvider(() => widget.preferences.networkUserAgent),
       initialFavorite: preference.collected,

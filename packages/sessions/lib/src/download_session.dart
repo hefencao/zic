@@ -130,8 +130,8 @@ final class DownloadSession {
   int? _totalLength;
   int _networkStartLength = 0;
   int? _residentLength;
-  bool _residentCacheBacked = false;
-  String? _residentSource;
+  bool _residentBodyBacked = false;
+  ByteResponseBodyAuthority? _residentBodyAuthority;
   Failure? _failure;
   List<int> _prefix = <int>[];
   int _pendingCommitTraceBytes = 0;
@@ -149,7 +149,20 @@ final class DownloadSession {
   DownloadState get state => _state;
   SourceEpoch get epoch => _epoch;
   int get committedLength => _residentLength ?? artifact.committedLength;
-  bool get residentCacheBacked => _residentCacheBacked;
+  bool get residentBodyBacked => _residentBodyBacked;
+
+  /// Compatibility alias for pre-dev.223 callers. This does not imply that
+  /// ArtifactCacheManager owns the resident body.
+  bool get residentCacheBacked => residentBodyBacked;
+  ByteResponseBodyAuthority? get residentBodyAuthority =>
+      _residentBodyBacked ? _residentBodyAuthority : null;
+
+  /// Compatibility/diagnostic label; behavior must use [residentBodyAuthority].
+  String? get residentSource => switch (residentBodyAuthority) {
+        ByteResponseBodyAuthority.artifactCache => 'durable-artifact-cache',
+        ByteResponseBodyAuthority.source => 'reopenable-immutable-source',
+        null => null,
+      };
   Validators get validators => _validators;
   int? get totalLength => _totalLength;
   int get networkStartLength => _networkStartLength;
@@ -235,8 +248,8 @@ final class DownloadSession {
     _requireNotDisposed();
     _ingressProjectionRevision++;
     _residentLength = null;
-    _residentCacheBacked = false;
-    _residentSource = null;
+    _residentBodyBacked = false;
+    _residentBodyAuthority = null;
     if (_writer != null) {
       throw const Failure(
         code: ErrorCode.writerBusy,
@@ -342,10 +355,10 @@ final class DownloadSession {
     _notifySnapshot();
   }
 
-  void beginDurableCachedIngress({
+  void beginResidentImmutableIngress({
     required Validators validators,
     required int totalLength,
-    String residentSource = 'durable-cache',
+    ByteResponseBodyAuthority bodyAuthority = ByteResponseBodyAuthority.source,
   }) {
     _requireNotDisposed();
     _ingressProjectionRevision++;
@@ -358,11 +371,11 @@ final class DownloadSession {
       throw ArgumentError.value(
         totalLength,
         'totalLength',
-        'durable cache sources must contain image bytes',
+        'resident immutable sources must contain image bytes',
       );
     }
-    _residentCacheBacked = true;
-    _residentSource = residentSource;
+    _residentBodyBacked = true;
+    _residentBodyAuthority = bodyAuthority;
     _residentLength = 0;
     _validators = validators;
     _totalLength = totalLength;
@@ -378,18 +391,21 @@ final class DownloadSession {
       <String, Object?>{
         'state': _state.name,
         'cacheResident': true,
-        'residentSource': _residentSource,
+        'residentBodyBacked': true,
+        if (residentBodyAuthority != null)
+          'residentBodyAuthority': residentBodyAuthority!.name,
+        if (residentSource != null) 'residentSource': residentSource,
       },
     );
   }
 
-  void appendDurableCachedIngress(int offset, List<int> bytes) {
+  void appendResidentImmutableIngress(int offset, List<int> bytes) {
     _requireNotDisposed();
     _ingressProjectionRevision++;
-    if (!_residentCacheBacked || _state != DownloadState.receiving) {
+    if (!_residentBodyBacked || _state != DownloadState.receiving) {
       throw const Failure(
         code: ErrorCode.invalidState,
-        message: 'session is not receiving a durable cache source',
+        message: 'session is not receiving a resident immutable source',
       );
     }
     if (offset != (_residentLength ?? 0)) {
@@ -416,20 +432,20 @@ final class DownloadSession {
     _recordCommittedChunk(chunk.length);
   }
 
-  DownloadSnapshot sealDurableCachedIngress() {
+  DownloadSnapshot sealResidentImmutableIngress() {
     _requireNotDisposed();
     _ingressProjectionRevision++;
-    if (!_residentCacheBacked || _state != DownloadState.receiving) {
+    if (!_residentBodyBacked || _state != DownloadState.receiving) {
       throw const Failure(
         code: ErrorCode.invalidState,
-        message: 'session is not receiving a durable cache source',
+        message: 'session is not receiving a resident immutable source',
       );
     }
     final expected = _totalLength;
     if (expected != null && expected != committedLength) {
       throw Failure(
         code: ErrorCode.artifactCorruption,
-        message: 'durable cache length $committedLength does not match $expected',
+        message: 'resident immutable length $committedLength does not match $expected',
       );
     }
     _sealIngressProjections(_epoch);
@@ -437,7 +453,7 @@ final class DownloadSession {
     if (committedLength <= 0 || _contentKind == ContentKind.unknown) {
       throw const Failure(
         code: ErrorCode.artifactCorruption,
-        message: 'durable cache source has no recognizable image body',
+        message: 'resident immutable source has no recognizable image body',
       );
     }
     _state = DownloadState.promoted;
@@ -445,10 +461,35 @@ final class DownloadSession {
     _emit(TraceEventKind.artifactPromoted, <String, Object?>{
       'length': committedLength,
       'cacheResident': true,
-      'residentSource': _residentSource,
+      'residentBodyBacked': true,
+      if (residentBodyAuthority != null)
+        'residentBodyAuthority': residentBodyAuthority!.name,
+      if (residentSource != null) 'residentSource': residentSource,
     });
     return snapshot;
   }
+
+  /// Compatibility alias retained while historical callers migrate.
+  void beginDurableCachedIngress({
+    required Validators validators,
+    required int totalLength,
+    String residentSource = 'durable-cache',
+  }) =>
+      beginResidentImmutableIngress(
+        validators: validators,
+        totalLength: totalLength,
+        bodyAuthority: residentSource == 'durable-cache' ||
+                residentSource == 'durable-artifact-cache'
+            ? ByteResponseBodyAuthority.artifactCache
+            : ByteResponseBodyAuthority.source,
+      );
+
+  /// Compatibility alias retained while historical callers migrate.
+  void appendDurableCachedIngress(int offset, List<int> bytes) =>
+      appendResidentImmutableIngress(offset, bytes);
+
+  /// Compatibility alias retained while historical callers migrate.
+  DownloadSnapshot sealDurableCachedIngress() => sealResidentImmutableIngress();
 
   WriterLease acquireWriter() {
     _requireNotDisposed();
@@ -712,8 +753,8 @@ final class DownloadSession {
     _totalLength = null;
     _networkStartLength = 0;
     _residentLength = null;
-    _residentCacheBacked = false;
-    _residentSource = null;
+    _residentBodyBacked = false;
+    _residentBodyAuthority = null;
     _contentKind = ContentKind.unknown;
     _prefix = <int>[];
     _failure = null;
@@ -745,8 +786,8 @@ final class DownloadSession {
     _totalLength = null;
     _networkStartLength = 0;
     _residentLength = null;
-    _residentCacheBacked = false;
-    _residentSource = null;
+    _residentBodyBacked = false;
+    _residentBodyAuthority = null;
     _contentKind = ContentKind.unknown;
     _prefix = <int>[];
     await index?.remove(id.key);
@@ -813,8 +854,11 @@ final class DownloadSession {
         'chunks': _pendingCommitTraceChunks,
         'committedLength': committedLength,
         'kind': _contentKind.name,
-        'cacheResident': _residentCacheBacked,
-        if (_residentSource != null) 'residentSource': _residentSource,
+        'cacheResident': _residentBodyBacked,
+        'residentBodyBacked': _residentBodyBacked,
+        if (residentBodyAuthority != null)
+          'residentBodyAuthority': residentBodyAuthority!.name,
+        if (residentSource != null) 'residentSource': residentSource,
         'nativeIngressMicros': _pendingNativeIngressMicros,
         'artifactWriteMicros': _pendingArtifactWriteMicros,
         'maxNativeIngressMicros': _pendingMaxNativeIngressMicros,
@@ -885,7 +929,7 @@ final class DownloadSession {
       projection.expectLength(totalLength);
       final before = projection.snapshot;
       final Stream<List<int>> chunks;
-      if (_residentCacheBacked) {
+      if (_residentBodyBacked) {
         final replay = residentReplayChunks;
         if (replay == null) {
           throw const Failure(

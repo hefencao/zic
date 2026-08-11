@@ -72,6 +72,17 @@ enum ByteResponseDisposition {
   durableImmutable,
 }
 
+/// Identifies who already owns the immutable response body durably.
+///
+/// [ByteResponseDisposition.durableImmutable] only states that the body may be
+/// consumed as resident immutable ingress without copying it into the
+/// transfer's hot artifact. It does not imply that the persistent artifact
+/// cache already owns those bytes.
+enum ByteResponseBodyAuthority {
+  source,
+  artifactCache,
+}
+
 /// Optional live transport-read diagnostics attached to a byte response.
 ///
 /// Implementations may update their counters while [ByteResponse.bytes] is
@@ -90,6 +101,7 @@ final class ByteResponse {
     this.validators = const Validators(),
     this.rangeSupported = false,
     this.disposition = ByteResponseDisposition.staged,
+    this.bodyAuthority = ByteResponseBodyAuthority.source,
     Map<String, Object?> diagnostics = const <String, Object?>{},
     this.readDiagnostics,
     Future<void> Function()? onDiscard,
@@ -106,6 +118,7 @@ final class ByteResponse {
   final Validators validators;
   final bool rangeSupported;
   final ByteResponseDisposition disposition;
+  final ByteResponseBodyAuthority bodyAuthority;
 
   /// Transport-stage timing/route diagnostics for trace consumers.
   ///

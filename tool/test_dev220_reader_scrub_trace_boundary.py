@@ -24,6 +24,7 @@ reader_controls_test = read('apps/app/test/reader_controls_test.dart')
 app_smoke_test = read('apps/app/test/app_smoke_test.dart')
 binding = read('packages/sessions/lib/src/reader_binding.dart')
 pipe = read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
+transfer_runtime = read('packages/downloads/lib/src/composition_download_transfer_runtime.dart')
 media_test = read('packages/pipeline_runtime/test/media_runtime_ownership_test.dart')
 architecture = read('docs/ARCHITECTURE.md')
 spec = read('docs/SPEC.md')
@@ -73,14 +74,17 @@ for token in (
     '_sinks.update(sink, (count) => count + 1, ifAbsent: () => 1);',
     'for (final sink in _sinks.keys.toList(growable: false))',
     'required TraceSink consumerTraceSink,',
-    'required TraceSink readerPhysicalTraceSink,',
+    'TraceSink? localPhysicalTraceSink,',
     'TraceSink? sharedPhysicalTraceSink,',
-    'traceSink: consumerTraceSink,',
-    'readerPhysicalTraceSink: _memoryTrace,',
+):
+    require(transfer_runtime, token, 'physical trace composition ownership')
+for token in (
+    'consumerTraceSink: trace,',
+    'localPhysicalTraceSink: _memoryTrace,',
     'sharedPhysicalTraceSink: _sharedTraceSink,',
 ):
-    require(pipe, token, 'physical trace composition ownership')
-forbid(pipe, 'final Set<TraceSink> _sinks', 'unrefcounted physical trace fan-out')
+    require(pipe, token, 'Reader physical trace projection')
+forbid(transfer_runtime, 'final Set<TraceSink> _sinks', 'unrefcounted physical trace fan-out')
 require(media_test, 'shared physical trace sink emits each demand once across Readers', 'cross-Reader trace fan-out regression')
 require(media_test, "expect(physicalDemandCount('reader:trace-reader-a'), 1);", 'Reader A trace de-dup assertion')
 require(media_test, "expect(physicalDemandCount('reader:trace-reader-b'), 1);", 'Reader B trace de-dup assertion')

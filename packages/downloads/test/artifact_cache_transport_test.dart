@@ -36,6 +36,10 @@ void main() {
       response.disposition,
       ByteResponseDisposition.durableImmutable,
     );
+    expect(
+      response.bodyAuthority,
+      ByteResponseBodyAuthority.artifactCache,
+    );
     expect(fallback.opens, 0);
     final source = trace.events.singleWhere(
       (event) => event.kind == TraceEventKind.artifactSource,

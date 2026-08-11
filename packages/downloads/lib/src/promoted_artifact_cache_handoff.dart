@@ -4,12 +4,18 @@ import 'dart:typed_data';
 import 'package:domain/domain.dart';
 import 'package:sessions/sessions.dart';
 import 'package:telemetry/telemetry.dart';
+import 'package:transport/transport.dart';
 
 import 'artifact_cache_manager.dart';
 
 typedef ArtifactCacheHandoffError = void Function(
   Object error,
   StackTrace stackTrace,
+);
+
+typedef ResidentArtifactReplaySource = Future<Stream<List<int>>> Function(
+  DownloadSession session,
+  int endExclusive,
 );
 
 /// Commits only fully promoted session artifacts to the persistent cache tier.
@@ -24,6 +30,7 @@ final class PromotedArtifactCacheHandoff {
     this.clock,
     this.traceSink = const NoopTraceSink(),
     this.sessionId = 'artifact-cache-handoff',
+    this.residentReplaySource,
   });
 
   final ArtifactCacheManager cache;
@@ -31,6 +38,7 @@ final class PromotedArtifactCacheHandoff {
   final MonoClock? clock;
   final TraceSink traceSink;
   final String sessionId;
+  final ResidentArtifactReplaySource? residentReplaySource;
   final Map<DownloadSession, DownloadSnapshotListener> _listeners =
       <DownloadSession, DownloadSnapshotListener>{};
   final Map<DownloadId, Future<void>> _commits =
@@ -67,6 +75,21 @@ final class PromotedArtifactCacheHandoff {
     }
   }
 
+  /// Ensures a promoted transfer has a durable cache-owned body.
+  ///
+  /// Ordinary promotion observation does not materialize a reopenable source
+  /// body merely because a Reader displayed it. Explicit durable commands call
+  /// this barrier when their completion semantics require persistent bytes.
+  Future<void> persist(DownloadSession session) async {
+    if (session.state != DownloadState.promoted) return;
+    while (true) {
+      final pending = _commits[session.id];
+      if (pending == null) break;
+      await pending;
+    }
+    await _commit(session, requireExactDurableBody: true);
+  }
+
   void detach() {
     for (final entry in _listeners.entries) {
       entry.key.removeSnapshotListener(entry.value);
@@ -99,16 +122,107 @@ final class PromotedArtifactCacheHandoff {
     }
   }
 
-  Future<void> _commit(DownloadSession session) async {
+  Future<void> _commit(
+    DownloadSession session, {
+    bool requireExactDurableBody = false,
+  }) async {
     if (session.state != DownloadState.promoted) {
       return;
     }
     final startedAtMicros = clock?.nowMicros();
-    if (session.residentCacheBacked) {
+    if (session.residentBodyBacked) {
+      final expectedLength = session.committedLength;
+      if (expectedLength <= 0) {
+        throw StateError(
+          'resident promoted transfer has no body for ${session.id.key}',
+        );
+      }
+      final alreadyDurable = requireExactDurableBody
+          ? await cache.containsBackendExact(
+              id: session.id,
+              expectedLength: expectedLength,
+            )
+          : await cache.containsBackend(
+              id: session.id,
+              expectedLength: expectedLength,
+            );
+      if (alreadyDurable) {
+        _recordCommit(
+          session,
+          action: 'skip-cache-resident',
+          bytes: expectedLength,
+          startedAtMicros: startedAtMicros,
+        );
+        return;
+      }
+
+      final lookup = await cache.lookup(session.id);
+      if (lookup != null &&
+          lookup.entry.length == expectedLength &&
+          (lookup.durable || requireExactDurableBody)) {
+        final read = await cache.readForegroundLookup(lookup);
+        if (read.bytes.lengthInBytes != expectedLength) {
+          throw StateError(
+            'resident cache replay length changed for ${session.id.key}',
+          );
+        }
+        await cache.storePromotedArtifact(id: session.id, bytes: read.bytes);
+        _recordCommit(
+          session,
+          action: 'stored-resident-cache-authority',
+          bytes: expectedLength,
+          startedAtMicros: startedAtMicros,
+        );
+        return;
+      }
+
+      if (!requireExactDurableBody) {
+        _recordCommit(
+          session,
+          action: 'defer-resident-source',
+          bytes: expectedLength,
+          startedAtMicros: startedAtMicros,
+        );
+        return;
+      }
+      if (session.residentBodyAuthority ==
+          ByteResponseBodyAuthority.artifactCache) {
+        throw StateError(
+          'durable artifact-cache authority disappeared before persistence for '
+          '${session.id.key}',
+        );
+      }
+      final replay = residentReplaySource;
+      if (replay == null) {
+        throw StateError(
+          'resident source materialization authority is unavailable for '
+          '${session.id.key}',
+        );
+      }
+      final builder = BytesBuilder(copy: false);
+      var received = 0;
+      await for (final chunk in await replay(session, expectedLength)) {
+        if (chunk.isEmpty) continue;
+        received += chunk.length;
+        if (received > expectedLength) {
+          throw StateError(
+            'resident source replay exceeded $expectedLength for ${session.id.key}',
+          );
+        }
+        builder.add(chunk);
+      }
+      final bytes = builder.takeBytes();
+      if (bytes.lengthInBytes != expectedLength) {
+        throw StateError(
+          'resident source replay was short for ${session.id.key}: '
+          '${bytes.lengthInBytes}/$expectedLength',
+        );
+      }
+      await cache.storePromotedArtifact(id: session.id, bytes: bytes);
       _recordCommit(
         session,
-        action: 'skip-cache-resident',
-        bytes: session.committedLength,
+        action: 'stored-resident-source',
+        bytes: bytes.lengthInBytes,
         startedAtMicros: startedAtMicros,
       );
       return;
@@ -123,10 +237,16 @@ final class PromotedArtifactCacheHandoff {
       );
       return;
     }
-    if (await cache.containsBackend(
-      id: session.id,
-      expectedLength: expectedLength,
-    )) {
+    final alreadyDurable = requireExactDurableBody
+        ? await cache.containsBackendExact(
+            id: session.id,
+            expectedLength: expectedLength,
+          )
+        : await cache.containsBackend(
+            id: session.id,
+            expectedLength: expectedLength,
+          );
+    if (alreadyDurable) {
       _recordCommit(
         session,
         action: 'skip-existing',

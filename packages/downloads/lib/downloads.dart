@@ -7,6 +7,7 @@ export 'src/artifact_cache_manager.dart';
 export 'src/artifact_cache_read_scheduler.dart';
 export 'src/artifact_cache_store.dart';
 export 'src/artifact_cache_transport.dart';
+export 'src/composition_download_transfer_runtime.dart';
 export 'src/promoted_artifact_cache_handoff.dart';
 export 'src/partial_download_handoff.dart';
 export 'src/partial_download_store.dart';

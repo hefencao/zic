@@ -99,7 +99,7 @@ void main() {
     expect(backend.values[id], bytes);
   });
 
-  test('cache-resident promoted sessions never write empty artifacts back',
+  test('source-resident promotion defers durable materialization until required',
       () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-promoted-cache-handoff-resident-',
@@ -116,6 +116,10 @@ void main() {
       sourceRevision: 'r1',
       canonicalUri: uri,
     );
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x08, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+    ]);
     final backend = _RecordingArtifactStore();
     final cache = ArtifactCacheManager(backend: backend);
     final trace = MemoryTraceSink();
@@ -123,6 +127,8 @@ void main() {
       cache: cache,
       clock: SystemClock(),
       traceSink: trace,
+      residentReplaySource: (session, endExclusive) async =>
+          Stream<List<int>>.value(bytes.sublist(0, endExclusive)),
     );
     final registry = DownloadRegistry(
       layout: CacheLayout(directory.path),
@@ -134,10 +140,6 @@ void main() {
       await registry.dispose();
     });
     final session = registry.get(id);
-    final bytes = Uint8List.fromList(<int>[
-      0x52, 0x49, 0x46, 0x46, 0x08, 0, 0, 0,
-      0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
-    ]);
 
     await DownloadJob(
       transport: _ResidentTransport(bytes),
@@ -146,10 +148,21 @@ void main() {
     await handoff.drain(registry.sessions);
 
     expect(session.residentCacheBacked, isTrue);
+    expect(session.residentSource, 'reopenable-immutable-source');
+    expect(session.artifact.committedLength, 0);
     expect(backend.values, isEmpty);
     expect(
       trace.events.any(
-        (event) => event.payload['action'] == 'skip-cache-resident',
+        (event) => event.payload['action'] == 'defer-resident-source',
+      ),
+      isTrue,
+    );
+
+    await handoff.persist(session);
+    expect(backend.values[id], bytes);
+    expect(
+      trace.events.any(
+        (event) => event.payload['action'] == 'stored-resident-source',
       ),
       isTrue,
     );

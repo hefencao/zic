@@ -81,7 +81,7 @@ final class DownloadIngressProjectionRegistry {
 
     final attachment = session.attachSynchronizedIngressProjection(
       projection,
-      residentReplayChunks: session.residentCacheBacked
+      residentReplayChunks: session.residentBodyBacked
           ? (endExclusive) {
               final replay = residentReplaySource;
               if (replay == null) {

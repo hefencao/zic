@@ -112,6 +112,7 @@ final class _BootstrapAppState extends State<_BootstrapApp> {
       ),
       libraryStore: services?.libraryStore,
       chapterDownloads: services?.chapterDownloads,
+      downloadComposition: services?.downloadComposition,
       wholeComicDownloads: services?.wholeComicDownloads,
       cacheCoordinator: services?.cacheCoordinator,
       externalPlugins: services?.externalPlugins,
@@ -127,6 +128,7 @@ final class _AppServices {
   _AppServices({
     this.libraryStore,
     this.chapterDownloads,
+    this.downloadComposition,
     this.wholeComicDownloads,
     this.cacheCoordinator,
     this.externalPlugins,
@@ -135,6 +137,7 @@ final class _AppServices {
 
   final ImportedLibraryStore? libraryStore;
   final ManagedChapterDownloadService? chapterDownloads;
+  final PersistentDownloadComposition? downloadComposition;
   final WholeComicDownloadQueue? wholeComicDownloads;
   final ResourceCacheCoordinator? cacheCoordinator;
   final ExternalPluginController? externalPlugins;
@@ -148,11 +151,20 @@ final class _AppServices {
     _closed = true;
     Object? firstError;
     StackTrace? firstStackTrace;
+    try {
+      await defaultLocalMediaPipelineFactory.disposeRetainedSessions();
+    } on Object catch (error, stackTrace) {
+      firstError ??= error;
+      firstStackTrace ??= stackTrace;
+    }
     for (final close in <Future<void> Function()>[
       if (wholeComicDownloads != null) wholeComicDownloads!.close,
-      if (externalPlugins != null) externalPlugins!.close,
       if (cacheCoordinator != null) cacheCoordinator!.close,
-      if (chapterDownloads != null) chapterDownloads!.close,
+      if (downloadComposition != null)
+        downloadComposition!.close
+      else if (chapterDownloads != null)
+        chapterDownloads!.close,
+      if (externalPlugins != null) externalPlugins!.close,
       if (libraryStore != null) libraryStore!.close,
     ]) {
       try {
@@ -174,6 +186,7 @@ Future<_AppServices> _openServices(
 ) async {
   ImportedLibraryStore? libraryStore;
   ManagedChapterDownloadService? chapterDownloads;
+  PersistentDownloadComposition? downloadComposition;
   WholeComicDownloadQueue? wholeComicDownloads;
   ResourceCacheCoordinator? cacheCoordinator;
   ExternalPluginController? externalPlugins;
@@ -195,15 +208,17 @@ Future<_AppServices> _openServices(
     libraryStore = await openImportedLibraryStore(root);
     telemetry.serviceReady('library-store', startedAtMicros: stageStarted);
     stageStarted = telemetry.nowMicros();
-    chapterDownloads = await PersistentChapterDownloadService.open(
+    downloadComposition = await PersistentDownloadComposition.open(
       root,
       userAgentProvider: () => preferences.networkUserAgent,
+      transferNet: defaultLocalMediaPipelineFactory.pageDownloadLane,
     );
+    chapterDownloads = downloadComposition.chapterDownloads;
     telemetry.serviceReady('chapter-downloads', startedAtMicros: stageStarted);
     stageStarted = telemetry.nowMicros();
     cacheCoordinator = createAppResourceCache(
       storageRoot: root,
-      artifacts: chapterDownloads,
+      artifacts: downloadComposition.artifactStore,
       onPersistenceError: (error, stackTrace) {
         debugPrint('durable response cache failed: $error');
       },
@@ -248,6 +263,7 @@ Future<_AppServices> _openServices(
     return _AppServices(
       libraryStore: libraryStore,
       chapterDownloads: chapterDownloads,
+      downloadComposition: downloadComposition,
       wholeComicDownloads: wholeComicDownloads,
       cacheCoordinator: cacheCoordinator,
       externalPlugins: externalPlugins,
@@ -258,7 +274,11 @@ Future<_AppServices> _openServices(
     await wholeComicDownloads?.close();
     await externalPlugins?.close();
     await cacheCoordinator?.close();
-    await chapterDownloads?.close();
+    if (downloadComposition != null) {
+      await downloadComposition.close();
+    } else {
+      await chapterDownloads?.close();
+    }
     await libraryStore?.close();
     return _AppServices();
   }
@@ -271,6 +291,7 @@ final class App extends StatefulWidget {
     this.folderRefresher = defaultImageFolderRefresher,
     this.libraryStore,
     this.chapterDownloads,
+    this.downloadComposition,
     this.wholeComicDownloads,
     this.comicSources,
     this.cacheCoordinator,
@@ -292,6 +313,7 @@ final class App extends StatefulWidget {
   final ImageFolderRefresher folderRefresher;
   final ImportedLibraryStore? libraryStore;
   final ChapterDownloadService? chapterDownloads;
+  final ChapterDownloadTransferRuntimeProvider? downloadComposition;
   final WholeComicDownloadQueue? wholeComicDownloads;
   final List<BrowsableComicSource>? comicSources;
   final ResourceCacheCoordinator? cacheCoordinator;
@@ -359,6 +381,7 @@ final class _AppState extends State<App> {
           folderRefresher: widget.folderRefresher,
           libraryStore: widget.libraryStore,
           chapterDownloads: widget.chapterDownloads,
+          downloadComposition: widget.downloadComposition,
           wholeComicDownloads: widget.wholeComicDownloads,
           comicSources: widget.comicSources,
           externalPlugins: widget.externalPlugins,

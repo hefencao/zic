@@ -36,7 +36,7 @@ require(
     "response.disposition == ByteResponseDisposition.durableImmutable",
     "session.recordResume(",
     "restarted: true",
-    "residentSource: _residentSourceFor",
+    "bodyAuthority: response.bodyAuthority",
 )
 require(
     "packages/pipeline_runtime/lib/src/pipeline_reader_session.dart",
@@ -57,7 +57,7 @@ print("dev118 local direct ingress contract: OK")
 
 require(
     "packages/sessions/lib/src/download_session.dart",
-    "'residentSource': _residentSource",
+    "'residentSource': residentSource",
 )
 require(
     "tool/analyze_frame_pipeline_trace.py",

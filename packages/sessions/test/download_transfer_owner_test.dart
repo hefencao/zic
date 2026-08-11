@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:domain/domain.dart';
-import 'package:pipeline/pipeline.dart';
 import 'package:sessions/sessions.dart';
 import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
@@ -49,12 +48,12 @@ void main() {
       traceSink: const NoopTraceSink(),
     );
 
-    a.reconcile('reader-a', 1, _added(id, priority: 1000, role: PageRole.current));
+    a.replaceDemands('reader-a', 1, _desired(id, priority: 1000));
     await transportA.opened.future;
     final session = registry.get(id);
     expect(session.activeRun, isTrue);
 
-    b.reconcile('reader-b', 1, _added(id, priority: 700, role: PageRole.next));
+    b.replaceDemands('reader-b', 1, _desired(id, priority: 700));
     expect(registry.sessions, hasLength(1));
     expect(identical(registry.get(id), session), isTrue);
     expect(owner.claimCount(id), 2);
@@ -111,29 +110,29 @@ void main() {
       traceSink: const NoopTraceSink(),
     );
 
-    consumer.reconcile(
+    consumer.replaceDemands(
       'reader-queued',
       1,
-      _added(id, priority: 700, role: PageRole.next),
+      _desired(id, priority: 700),
     );
     final taskKey = owner.taskKeyFor(id);
     expect(taskKey, isNotNull);
     expect(net.queued, 1);
 
-    consumer.reconcile(
+    consumer.replaceDemands(
       'reader-queued',
       2,
-      _changed(id, priority: 720, role: PageRole.next),
+      _desired(id, priority: 720),
     );
-    consumer.reconcile(
+    consumer.replaceDemands(
       'reader-queued',
       3,
-      _changed(id, priority: 780, role: PageRole.previous),
+      _desired(id, priority: 780),
     );
-    consumer.reconcile(
+    consumer.replaceDemands(
       'reader-queued',
       4,
-      _changed(id, priority: 1000, role: PageRole.current),
+      _desired(id, priority: 1000),
     );
 
     expect(owner.taskKeyFor(id), taskKey);
@@ -144,6 +143,174 @@ void main() {
     await consumer.idle();
     expect(transport.opens, 1);
     expect(registry.get(id).state, DownloadState.promoted);
+  });
+
+  test('transfer checksum constraints aggregate across consumers atomically',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('transfer_owner_checksum_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final net = NetLane(maxActive: 1);
+    final blockerStarted = Completer<void>();
+    final blockerRelease = Completer<void>();
+    net.submitRanked(
+      key: 'checksum-blocker',
+      priority: 1000,
+      bucket: 'blocker',
+      bucketLimit: 1,
+      task: (_) async {
+        blockerStarted.complete();
+        await blockerRelease.future;
+      },
+    );
+    await blockerStarted.future;
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: net,
+    );
+    addTearDown(() async {
+      if (!blockerRelease.isCompleted) blockerRelease.complete();
+      await owner.dispose();
+      await registry.dispose();
+    });
+    final id = _id('checksum-shared');
+    final transport = _CountingBytesTransport('RIFF....WEBPchecksum'.codeUnits);
+    final reader = owner.attachConsumer(
+      scopeId: 'reader-checksum',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+    final chapter = owner.attachConsumer(
+      scopeId: 'chapter-checksum',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+    final conflicting = owner.attachConsumer(
+      scopeId: 'chapter-conflict',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+
+    reader.replaceDemands(
+      'reader-checksum',
+      1,
+      _desired(id, priority: 1000),
+    );
+    chapter.replaceDemands(
+      'chapter-checksum',
+      1,
+      <DownloadId, TransferDemand>{
+        id: const TransferDemand(
+          priority: 120,
+          reason: 'chapter-command',
+          expectedChecksum: 'checksum-a',
+        ),
+      },
+    );
+    expect(owner.claimCount(id), 2);
+    expect(registry.sessions, hasLength(1));
+
+    expect(
+      () => conflicting.replaceDemands(
+        'chapter-conflict',
+        1,
+        <DownloadId, TransferDemand>{
+          id: const TransferDemand(
+            priority: 120,
+            reason: 'chapter-command',
+            expectedChecksum: 'checksum-b',
+          ),
+        },
+      ),
+      throwsStateError,
+    );
+    expect(conflicting.demands, isEmpty);
+    expect(owner.claimCount(id), 2);
+    expect(registry.sessions, hasLength(1));
+  });
+
+  test('required completion claim can finish a costly full-body catchup', () async {
+    final temp = await Directory.systemTemp.createTemp('transfer_owner_required_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final id = _id('required-completion');
+    final fullBytes = List<int>.generate(
+      2 * 1024 * 1024,
+      (index) => index & 0xff,
+      growable: false,
+    );
+    final preservedLength = 1200 * 1024;
+    final session = registry.get(id);
+    await session.restore();
+    await session.bindResponse(
+      validators: const Validators(),
+      totalLength: fullBytes.length,
+    );
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, fullBytes.sublist(0, preservedLength));
+    await session.fail(
+      writer,
+      const Failure(code: ErrorCode.network, message: 'simulated partial'),
+    );
+
+    final transport = _CountingBytesTransport(fullBytes);
+    final opportunistic = owner.attachConsumer(
+      scopeId: 'prefetch-low',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+    opportunistic.replaceDemands(
+      'prefetch-low',
+      1,
+      <DownloadId, TransferDemand>{
+        id: const TransferDemand(
+          priority: 120,
+          reason: 'opportunistic-prefetch',
+        ),
+      },
+    );
+    await opportunistic.idle();
+    expect(session.state, isNot(DownloadState.promoted));
+    expect(session.committedLength, preservedLength);
+
+    final required = owner.attachConsumer(
+      scopeId: 'chapter-required',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+    required.replaceDemands(
+      'chapter-required',
+      1,
+      <DownloadId, TransferDemand>{
+        id: const TransferDemand(
+          priority: 120,
+          reason: 'chapter-download-command',
+          completionIntent: TransferCompletionIntent.required,
+        ),
+      },
+    );
+    await required.idle();
+    expect(session.state, DownloadState.promoted);
+    expect(session.committedLength, fullBytes.length);
   });
 
   test('final consumer detach persists committed physical partial after writer exits',
@@ -178,10 +345,10 @@ void main() {
       transportFor: (_) => transport,
       traceSink: const NoopTraceSink(),
     );
-    consumer.reconcile(
+    consumer.replaceDemands(
       'reader-partial',
       1,
-      _added(id, priority: 1000, role: PageRole.current),
+      _desired(id, priority: 1000),
     );
     final session = registry.get(id);
     final committed = Completer<void>();
@@ -234,9 +401,9 @@ void main() {
       traceSink: const NoopTraceSink(),
     );
 
-    a.reconcile('reader-a', 1, _added(id, priority: 1000, role: PageRole.current));
+    a.replaceDemands('reader-a', 1, _desired(id, priority: 1000));
     await transportA.opened.future;
-    b.reconcile('reader-b', 1, _added(id, priority: 700, role: PageRole.next));
+    b.replaceDemands('reader-b', 1, _desired(id, priority: 700));
     final session = registry.get(id);
     expect(owner.activeProviderScope(id), 'reader-a');
     expect(owner.claimCount(id), 2);
@@ -268,41 +435,16 @@ DownloadId _id(String pageId) => DownloadId(
       canonicalUri: Uri.parse('https://example.test/$pageId.webp'),
     );
 
-MapDiff<DownloadId, DownloadDemand> _added(
+Map<DownloadId, TransferDemand> _desired(
   DownloadId id, {
   required int priority,
-  required PageRole role,
 }) =>
-    MapDiff<DownloadId, DownloadDemand>(
-      added: <DownloadId, DownloadDemand>{
-        id: DownloadDemand(
-          role: role,
-          priority: priority,
-          reason: 'test',
-          expirationRevision: 4,
-        ),
-      },
-      changed: const <DownloadId, DownloadDemand>{},
-      removed: const <DownloadId>{},
-    );
-
-MapDiff<DownloadId, DownloadDemand> _changed(
-  DownloadId id, {
-  required int priority,
-  required PageRole role,
-}) =>
-    MapDiff<DownloadId, DownloadDemand>(
-      added: const <DownloadId, DownloadDemand>{},
-      changed: <DownloadId, DownloadDemand>{
-        id: DownloadDemand(
-          role: role,
-          priority: priority,
-          reason: 'test-priority-change',
-          expirationRevision: 8,
-        ),
-      },
-      removed: const <DownloadId>{},
-    );
+    <DownloadId, TransferDemand>{
+      id: TransferDemand(
+        priority: priority,
+        reason: 'test',
+      ),
+    };
 
 final class _GateBytesTransport implements Transport {
   _GateBytesTransport(this.bytes);

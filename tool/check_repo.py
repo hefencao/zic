@@ -1045,15 +1045,23 @@ def check_compile_regressions() -> None:
     chapter_downloads = (
         ROOT / 'packages/downloads/lib/src/chapter_downloads.dart'
     ).read_text(encoding='utf-8')
+    managed_start = chapter_downloads.index(
+        'abstract interface class ManagedChapterDownloadService'
+    )
+    managed_end = chapter_downloads.index('/// Resolves bytes owned', managed_start)
+    managed_contract = chapter_downloads[managed_start:managed_end]
     for required in (
         'abstract interface class ManagedChapterDownloadService',
-        'ChapterDownloadService,',
-        'ArtifactCacheMaintenance,',
-        'ArtifactCacheBackend {}',
-        'implements ManagedChapterDownloadService',
+        'implements ChapterDownloadService {}',
+        'final class PersistentDownloadArtifactStore',
+        'final class PersistentDownloadComposition',
+        'final class PersistentChapterDownloadService',
     ):
         if required not in chapter_downloads:
-            fail(f'Managed chapter artifact capability is incomplete: {required}')
+            fail(f'Chapter command/store composition is incomplete: {required}')
+    for forbidden in ('ArtifactCacheMaintenance', 'ArtifactCacheBackend'):
+        if forbidden in managed_contract:
+            fail(f'Chapter command contract regained cache ownership: {forbidden}')
 
     reader_runtime_path = (
         ROOT / 'packages/reader_runtime/lib/src/reader_runtime_screen.dart'
@@ -1065,7 +1073,7 @@ def check_compile_regressions() -> None:
         'final class ReaderRuntimeScreen',
         'required this.pipeline',
         'PipelineReaderSession get _pipeline => widget.pipeline',
-        '_pipeline.accept',
+        '_pipeline.enqueueObservation',
         '_pipeline.loadBytes(asset, token)',
         '_pipeline.pageStream(asset)',
         'SystemUiMode.immersiveSticky',
@@ -1186,41 +1194,40 @@ def check_compile_regressions() -> None:
     ):
         if required not in asset_transport:
             fail(f'AssetBundle transport is incomplete: {required}')
-    pipeline_runtime = (ROOT / 'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart').read_text(encoding='utf-8')
+    pipeline_runtime = (
+        ROOT / 'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart'
+    ).read_text(encoding='utf-8')
+    transfer_runtime = (
+        ROOT / 'packages/downloads/lib/src/composition_download_transfer_runtime.dart'
+    ).read_text(encoding='utf-8')
     common_pipeline_requirements = (
         'LiveCoordinator(',
-        'DownloadRegistry(',
-        'EphemeralCacheWorkspace.readerSession(',
         'addSnapshotListener(acceptSnapshot',
         '_binding?.detach(',
         'AssetBundleTransport(rootBundle)',
         'LoaderTransport(loaderSources)',
+        '_downloads = _transferRuntime.registry;',
+        '_transferRuntime.readArtifact(',
     )
     for required in common_pipeline_requirements:
         if required not in pipeline_runtime:
             fail(f'Pipeline runtime live artifact path is incomplete: {required}')
-    if 'final class _PipelineDownloadTransferRuntime' in pipeline_runtime:
-        for required in (
-            'layout: workspace.layout',
-            'workspace.readArtifact(artifact)',
-            'await workspace.dispose()',
-            '_transferRuntime.readArtifact(',
-            '_downloads = _transferRuntime.registry;',
-        ):
-            if required not in pipeline_runtime:
-                fail(f'composition transfer runtime artifact path is incomplete: {required}')
-        reader_runtime_start = pipeline_runtime.index('final class PipelineReaderSession {')
-        reader_runtime_body = pipeline_runtime[reader_runtime_start:]
-        if '_workspace.dispose()' in reader_runtime_body:
-            fail('Reader session must not dispose composition physical workspace')
-    else:
-        for required in (
-            'layout: _workspace.layout',
-            '_workspace.readArtifact(',
-            'await _workspace.dispose()',
-        ):
-            if required not in pipeline_runtime:
-                fail(f'Pipeline runtime live artifact path is incomplete: {required}')
+    for required in (
+        'final class CompositionDownloadTransferRuntime',
+        'EphemeralCacheWorkspace.readerSession(',
+        'registry = DownloadRegistry(',
+        'layout: workspace.layout',
+        'workspace.readArtifact(artifact)',
+        'await workspace.dispose()',
+    ):
+        if required not in transfer_runtime:
+            fail(f'composition transfer runtime artifact path is incomplete: {required}')
+    if '_PipelineDownloadTransferRuntime' in pipeline_runtime:
+        fail('Reader-private physical transfer runtime must not return')
+    reader_runtime_start = pipeline_runtime.index('final class PipelineReaderSession {')
+    reader_runtime_body = pipeline_runtime[reader_runtime_start:]
+    if '_workspace.dispose()' in reader_runtime_body:
+        fail('Reader session must not dispose composition physical workspace')
     if 'FakeCoordinator(' in static_demo or 'FakeCoordinator(' in reader_runtime:
         fail('Reader app runtime must not use the fake coordinator')
     imported_chapter = (
@@ -1319,8 +1326,8 @@ def check_compile_regressions() -> None:
         if required not in webp_demo:
             fail(f'persistent local chapter Reader path is incomplete: {required}')
     for required in (
-        '_library.upsertChapter(record)',
-        '_library.saveProgress',
+        '_librarySession.upsertChapter(record)',
+        '_enqueueReaderProgress',
         'ImportedImageChapterScreen(',
         '_buildHorizontalComics(',
         'ComicCoverCard(',

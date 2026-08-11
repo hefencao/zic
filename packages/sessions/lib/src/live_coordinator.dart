@@ -329,7 +329,17 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     for (final entry in observed) {
       _downloads[entry.key] = entry.value;
     }
-    _downloadTransfer.reconcile(sessionId, _revision, diff);
+    _downloadTransfer.replaceDemands(
+      sessionId,
+      _revision,
+      <DownloadId, TransferDemand>{
+        for (final entry in update.plan.downloads.entries)
+          entry.key: TransferDemand(
+            priority: entry.value.priority,
+            reason: entry.value.reason,
+          ),
+      },
+    );
     for (final entry in observed) {
       final session = registry.get(entry.key);
       try {

@@ -1,3 +1,9 @@
+## 0.31.0-dev.223：Composition transfer runtime / chapter command claim migration
+
+- dev.222真机scrub边界验证稳定后，将physical transfer runtime从Reader私有实现提升到downloads/App级composition owner；Reader、prefetch与显式章节下载对exact `DownloadId`共享单registry/writer/network/retry/hot-partial，whole-comic继续只聚合章节命令。
+- 拆出`PersistentDownloadArtifactStore`与`PersistentDownloadComposition`，command contract不再等于cache owner；显式下载完成需等待promoted artifact真正handoff到唯一durable store。`TransferDemand`新增required completion intent，使低优先级离线命令不被Reader机会性full-body catch-up admission永久defer。
+- 迁移时进一步拆开resident immutability与durable body ownership：新增`ByteResponseBodyAuthority`，生产代码改用`residentBodyBacked/residentBodyAuthority`；source-resident只在显式required-completion时经composition consumer/source replay materialize到唯一ArtifactCacheManager/store，避免local immutable被误判为cache-owned。
+
 ## 0.31.0-dev.222：Live slider scrub / foreground demand boundary
 
 - slider拖动实时跳页，scrub期间Pipeline只保current foreground demand；松手恢复正常窗口。

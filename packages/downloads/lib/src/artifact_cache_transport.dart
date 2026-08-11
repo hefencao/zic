@@ -288,6 +288,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
       validators: response.validators,
       rangeSupported: response.rangeSupported,
       disposition: response.disposition,
+    bodyAuthority: response.bodyAuthority,
       diagnostics: response.diagnostics,
       readDiagnostics: response.readDiagnostics,
       onDiscard: () async {
@@ -650,6 +651,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
       validators: response.validators,
       rangeSupported: response.rangeSupported,
       disposition: response.disposition,
+    bodyAuthority: response.bodyAuthority,
       diagnostics: response.diagnostics,
       readDiagnostics: response.readDiagnostics,
       onDiscard: response.discard,
@@ -737,6 +739,7 @@ ByteResponse _leaseBoundResponse(
     validators: response.validators,
     rangeSupported: response.rangeSupported,
     disposition: response.disposition,
+    bodyAuthority: response.bodyAuthority,
     diagnostics: response.diagnostics,
     readDiagnostics: response.readDiagnostics,
     onDiscard: () async {
@@ -794,6 +797,7 @@ ByteResponse _scheduledArtifactResponse(
     validators: response.validators,
     rangeSupported: response.rangeSupported,
     disposition: response.disposition,
+    bodyAuthority: response.bodyAuthority,
     diagnostics: response.diagnostics,
     readDiagnostics: response.readDiagnostics,
     onDiscard: response.discard,
@@ -833,6 +837,9 @@ ByteResponse? _streamedCachedResponse({
     disposition: durable
         ? ByteResponseDisposition.durableImmutable
         : ByteResponseDisposition.staged,
+    bodyAuthority: durable
+        ? ByteResponseBodyAuthority.artifactCache
+        : ByteResponseBodyAuthority.source,
   );
 }
 
@@ -880,6 +887,9 @@ ByteResponse? _cachedResponse({
     disposition: durable
         ? ByteResponseDisposition.durableImmutable
         : ByteResponseDisposition.staged,
+    bodyAuthority: durable
+        ? ByteResponseBodyAuthority.artifactCache
+        : ByteResponseBodyAuthority.source,
   );
 }
 

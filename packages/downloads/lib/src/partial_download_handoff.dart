@@ -68,7 +68,7 @@ final class PartialDownloadHandoff {
   /// a second live writer.
   Future<void> drain(Iterable<DownloadSession> sessions) async {
     for (final session in sessions) {
-      if (session.state == DownloadState.promoted || session.residentCacheBacked) {
+      if (session.state == DownloadState.promoted || session.residentBodyBacked) {
         continue;
       }
       final length = session.artifact.committedLength;

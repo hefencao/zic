@@ -122,6 +122,7 @@ final class DemoHome extends StatefulWidget {
     this.folderRefresher = defaultImageFolderRefresher,
     this.libraryStore,
     this.chapterDownloads,
+    this.downloadComposition,
     this.wholeComicDownloads,
     this.comicSources,
     this.externalPlugins,
@@ -141,6 +142,7 @@ final class DemoHome extends StatefulWidget {
   final ImageFolderRefresher folderRefresher;
   final ImportedLibraryStore? libraryStore;
   final ChapterDownloadService? chapterDownloads;
+  final ChapterDownloadTransferRuntimeProvider? downloadComposition;
   final WholeComicDownloadQueue? wholeComicDownloads;
   final List<BrowsableComicSource>? comicSources;
   final ExternalPluginController? externalPlugins;
@@ -160,6 +162,7 @@ final class _DemoHomeState extends State<DemoHome> {
   final Stopwatch _traceClock = Stopwatch()..start();
   late final ImportedLibraryStore _library;
   late final ChapterDownloadService _chapterDownloads;
+  late final ChapterDownloadTransferRuntimeProvider? _downloadComposition;
   late final ArtifactCacheManager? _readerArtifactCache;
   late final ComicSourceResourceGateway _sourceResources;
   late final WholeComicDownloadQueue _wholeComicDownloads;
@@ -229,18 +232,24 @@ final class _DemoHomeState extends State<DemoHome> {
     final ownsChapterDownloads = widget.chapterDownloads == null;
     _chapterDownloads = widget.chapterDownloads ??
         MemoryChapterDownloadService(pageLoader: _loadChapterPageBytes);
-    _readerArtifactCache = _chapterDownloads is ArtifactCacheBackend
-        ? ArtifactCacheManager(
-            backend: _chapterDownloads as ArtifactCacheBackend,
-          )
-        : null;
+    _downloadComposition = widget.downloadComposition ??
+        (_chapterDownloads is ChapterDownloadTransferRuntimeProvider
+            ? _chapterDownloads as ChapterDownloadTransferRuntimeProvider
+            : null);
+    _readerArtifactCache = _downloadComposition?.artifactCacheManager ??
+        (_chapterDownloads is ArtifactCacheBackend
+            ? ArtifactCacheManager(
+                backend: _chapterDownloads as ArtifactCacheBackend,
+              )
+            : null);
     final suppliedCache = widget.cacheCoordinator;
     _ownsCacheCoordinator = suppliedCache == null;
     _cacheCoordinator = suppliedCache ??
         ResourceCacheCoordinator(
-          artifacts: _chapterDownloads is ArtifactCacheMaintenance
-              ? _chapterDownloads as ArtifactCacheMaintenance
-              : null,
+          artifacts: _downloadComposition?.artifactStore ??
+              (_chapterDownloads is ArtifactCacheMaintenance
+                  ? _chapterDownloads as ArtifactCacheMaintenance
+                  : null),
         );
     final rawSources = widget.comicSources ??
         <BrowsableComicSource>[

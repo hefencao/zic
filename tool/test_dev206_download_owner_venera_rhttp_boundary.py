@@ -24,6 +24,7 @@ partial_store = read('packages/downloads/lib/src/partial_download_store.dart')
 handoff = read('packages/downloads/lib/src/partial_download_handoff.dart')
 chapter = read('packages/downloads/lib/src/chapter_downloads.dart')
 pipe = read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
+composition_runtime = read('packages/downloads/lib/src/composition_download_transfer_runtime.dart')
 decode = read('packages/sessions/lib/src/decode_session.dart')
 app = read('apps/app/lib/demo_home_reader_route.dart')
 
@@ -36,9 +37,9 @@ for marker in ('abstract interface class PartialDownloadStore', 'final class Par
 for marker in ('final class PartialDownloadHandoff', 'restoreInto(DownloadSession session)', 'drain(Iterable<DownloadSession> sessions)'):
     if marker not in handoff:
         raise SystemExit(f'partial handoff contract missing: {marker}')
-for marker in ('PersistentChapterDownloadService', 'PartialDownloadStore', 'openPartialDownload', 'storePartialDownload'):
+for marker in ('PersistentDownloadArtifactStore', 'PartialDownloadStore', 'openPartialDownload', 'storePartialDownload'):
     if marker not in chapter:
-        raise SystemExit(f'ChapterDownloads durable partial owner missing: {marker}')
+        raise SystemExit(f'download artifact store durable partial owner missing: {marker}')
 
 retain_start = pipe.index('void retainReaderSession()')
 retain_end = pipe.index('void resumeRetainedReaderSession', retain_start)
@@ -64,7 +65,7 @@ if transfer_owner_path.exists():
         'persistUnclaimed: partialDownloadHandoff == null',
         "partialDownloadHandoff!.drain(<DownloadSession>[session])",
     ):
-        if marker not in pipe:
+        if marker not in composition_runtime:
             raise SystemExit(f'composition physical runtime partial handoff missing: {marker}')
 else:
     dispose = pipe[pipe.index('Future<void> dispose() async'):]

@@ -45,14 +45,14 @@ for token in (
 ):
     require(chapter, token, "chapter artifact backends")
 for token in (
-    "session.residentCacheBacked",
+    "session.residentBodyBacked",
     "skip-cache-resident",
     "skip-empty",
 ):
     require(handoff, token, "promoted artifact handoff")
 for token in (
     "totalLength <= 0",
-    "durable cache source has no recognizable image body",
+    "resident immutable source has no recognizable image body",
 ):
     require(download, token, "durable cached ingress")
 for token in (
@@ -80,7 +80,7 @@ for path, token in (
     ),
     (
         "packages/downloads/test/promoted_artifact_cache_handoff_test.dart",
-        "cache-resident promoted sessions never write empty artifacts back",
+        "source-resident promotion defers durable materialization until required",
     ),
     (
         "packages/sessions/test/download_job_test.dart",

@@ -228,6 +228,14 @@ final class ArtifactCacheManager {
     return entry != null && entry.length == expectedLength;
   }
 
+  Future<bool> containsBackendExact({
+    required DownloadId id,
+    required int expectedLength,
+  }) async {
+    final entry = await backend.openArtifactStream(id);
+    return entry != null && entry.length == expectedLength;
+  }
+
   Future<ArtifactCacheRead> readForegroundLookup(
     ArtifactCacheLookup lookup,
   ) async {

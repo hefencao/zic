@@ -12,10 +12,10 @@ registry=read('packages/sessions/lib/src/download_ingress_registry.dart')
 pipe=read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
 test=read('packages/sessions/test/download_session_test.dart')
 live=read('packages/sessions/test/live_coordinator_test.dart')
-for token in ('typedef DownloadIngressReplayChunks', 'residentReplayChunks', 'if (_residentCacheBacked)', 'chunks = await replay(targetLength);', 'chunks = artifact.readChunks(endExclusive: targetLength);'):
+for token in ('typedef DownloadIngressReplayChunks', 'residentReplayChunks', 'if (_residentBodyBacked)', 'chunks = await replay(targetLength);', 'chunks = artifact.readChunks(endExclusive: targetLength);'):
     req(session, token, 'physical/replay split')
 forbid(session, 'package:downloads/', 'sessions depending on durable cache implementation')
-for token in ('typedef ResidentIngressReplaySource', 'this.residentReplaySource', 'session.residentCacheBacked', 'return replay(session, endExclusive);'):
+for token in ('typedef ResidentIngressReplaySource', 'this.residentReplaySource', 'session.residentBodyBacked', 'return replay(session, endExclusive);'):
     req(registry, token, 'Reader-local replay authority injection')
 for token in ('residentReplaySource: _openResidentReplaySource', 'final cache = _artifactCacheManager;', 'await cache.lookup(session.id)', '_isDirectImmutableLocalUri(uri)', 'artifactReadScheduler.acquire(', '_boundedResidentReplay(', '_scheduledResidentReplay('):
     req(pipe, token, 'composition replay routing')

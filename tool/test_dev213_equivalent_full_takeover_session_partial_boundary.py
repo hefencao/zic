@@ -31,7 +31,19 @@ for token in (
     require(cache, token, 'artifact promotion observer')
 
 session = read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
-if '_PipelineDownloadTransferRuntime' in session:
+transfer_runtime_path = ROOT / 'packages/downloads/lib/src/composition_download_transfer_runtime.dart'
+if transfer_runtime_path.exists():
+    transfer_runtime = transfer_runtime_path.read_text(encoding='utf-8')
+    for token in (
+        'artifactPromotionListener = listener;',
+        'cache.addPromotionListener(listener);',
+        'cache.directEquivalents(promoted)',
+        'registry.find(equivalent) == null',
+        'owner.refreshForLocalArtifact(equivalent);',
+        'artifactCacheManager?.removePromotionListener(promotionListener);',
+    ):
+        require(transfer_runtime, token, 'composition late-equivalent takeover wiring')
+elif '_PipelineDownloadTransferRuntime' in session:
     for token in (
         'artifactPromotionListener = listener;',
         'cache.addPromotionListener(listener);',

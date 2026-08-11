@@ -311,10 +311,10 @@ final class DownloadJob {
     if (start == 0 &&
         response.disposition == ByteResponseDisposition.durableImmutable &&
         response.totalLength != null) {
-      session.beginDurableCachedIngress(
+      session.beginResidentImmutableIngress(
         validators: response.validators,
         totalLength: response.totalLength!,
-        residentSource: _residentSourceFor(session.id.canonicalUri),
+        bodyAuthority: response.bodyAuthority,
       );
       var residentOffset = 0;
       final residentIterator = StreamIterator<List<int>>(response.bytes);
@@ -322,11 +322,11 @@ final class DownloadJob {
         while (await _moveNext(residentIterator, cancel)) {
           final chunk = residentIterator.current;
           if (chunk.isEmpty) continue;
-          session.appendDurableCachedIngress(residentOffset, chunk);
+          session.appendResidentImmutableIngress(residentOffset, chunk);
           residentOffset += chunk.length;
           await Future<void>.delayed(Duration.zero);
         }
-        session.sealDurableCachedIngress();
+        session.sealResidentImmutableIngress();
         return;
       } catch (_) {
         await residentIterator.cancel();
@@ -644,13 +644,6 @@ final class DownloadJob {
     );
     session.deferNetwork(reason: 'costly-full-body-catchup');
     throw DownloadCatchupDeferred(preservedLength: preservedLength);
-  }
-
-  String _residentSourceFor(Uri uri) {
-    final scheme = uri.scheme.toLowerCase();
-    return scheme == 'file' || scheme == 'content' || scheme == 'asset'
-        ? 'local-immutable'
-        : 'durable-cache';
   }
 
   Future<bool> _moveNext(

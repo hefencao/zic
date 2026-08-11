@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:domain/domain.dart';
-import 'package:pipeline/pipeline.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
@@ -12,6 +11,38 @@ import 'net_lane.dart';
 import 'retry_policy.dart';
 
 typedef TransferTransportPick = Transport Function(Uri uri);
+
+enum TransferCompletionIntent {
+  opportunistic,
+  required,
+}
+
+final class TransferDemand {
+  const TransferDemand({
+    required this.priority,
+    required this.reason,
+    this.expectedChecksum,
+    this.completionIntent = TransferCompletionIntent.opportunistic,
+  }) : assert(priority >= 0);
+
+  final int priority;
+  final String reason;
+  final String? expectedChecksum;
+  final TransferCompletionIntent completionIntent;
+
+  @override
+  bool operator ==(Object other) =>
+      other is TransferDemand &&
+      priority == other.priority &&
+      reason == other.reason &&
+      expectedChecksum == other.expectedChecksum &&
+      completionIntent == other.completionIntent;
+
+  @override
+  int get hashCode =>
+      Object.hash(priority, reason, expectedChecksum, completionIntent);
+}
+
 typedef TransferPrepare = Future<void> Function(DownloadSession session);
 typedef TransferSleep = Future<void> Function(Duration delay);
 typedef TransferPersistUnclaimed = Future<void> Function(DownloadSession session);
@@ -70,6 +101,110 @@ final class DownloadTransferOwner {
 
   String? taskKeyFor(DownloadId id) => _networkTaskKeys[id];
 
+  /// Reopens a resident immutable body through a currently attached consumer
+  /// without transferring ownership of the durable artifact to that consumer.
+  ///
+  /// This is used only when the physical session intentionally has no hot
+  /// artifact copy. The authoritative transfer validates the replay boundary
+  /// and source validators before exposing bytes to composition-level durable
+  /// materialization.
+  Future<Stream<List<int>>> openResidentReplay(
+    DownloadId id, {
+    required int endExclusive,
+  }) async {
+    if (_disposed) {
+      throw StateError('download transfer owner is disposed');
+    }
+    final session = registry.find(id);
+    if (session == null ||
+        session.state != DownloadState.promoted ||
+        !session.residentBodyBacked) {
+      throw const Failure(
+        code: ErrorCode.invalidState,
+        message: 'resident replay requires a promoted resident transfer',
+      );
+    }
+    if (endExclusive <= 0 || endExclusive > session.committedLength) {
+      throw Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'invalid resident replay boundary $endExclusive/'
+            '${session.committedLength}',
+      );
+    }
+    final claim = _preferredClaim(id);
+    if (claim == null) {
+      throw const Failure(
+        code: ErrorCode.invalidState,
+        message: 'resident replay requires an attached transfer consumer',
+      );
+    }
+    final response = await claim.consumer.transportFor(id.canonicalUri).open(
+          id.canonicalUri,
+          range: ByteRange(start: 0, end: endExclusive - 1),
+          validators: session.validators,
+        );
+    try {
+      if (response.rangeStart != 0) {
+        throw Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'resident replay started at ${response.rangeStart}, expected 0',
+        );
+      }
+      final expectedTotal = session.totalLength;
+      if (expectedTotal != null &&
+          response.totalLength != null &&
+          response.totalLength != expectedTotal) {
+        throw Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'resident replay source length changed: '
+              '${response.totalLength}/$expectedTotal',
+        );
+      }
+      if (session.validators.canResume &&
+          !session.validators.matches(response.validators)) {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'resident replay source validators changed',
+        );
+      }
+    } on Object {
+      await response.discard();
+      rethrow;
+    }
+    return _boundedResidentReplay(response, endExclusive, id);
+  }
+
+  Stream<List<int>> _boundedResidentReplay(
+    ByteResponse response,
+    int endExclusive,
+    DownloadId id,
+  ) async* {
+    var emitted = 0;
+    final iterator = StreamIterator<List<int>>(response.bytes);
+    try {
+      while (emitted < endExclusive && await iterator.moveNext()) {
+        final chunk = iterator.current;
+        if (chunk.isEmpty) continue;
+        final remaining = endExclusive - emitted;
+        final part = chunk.length <= remaining
+            ? chunk
+            : chunk.sublist(0, remaining);
+        emitted += part.length;
+        if (part.isNotEmpty) yield part;
+      }
+      if (emitted != endExclusive) {
+        throw Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'resident replay was short for ${id.key}: '
+              '$emitted/$endExclusive',
+        );
+      }
+    } finally {
+      await iterator.cancel();
+      await response.discard();
+    }
+  }
+
   DownloadTransferConsumer attachConsumer({
     required String scopeId,
     required TransferTransportPick transportFor,
@@ -107,7 +242,7 @@ final class DownloadTransferOwner {
     if (session == null ||
         session.state == DownloadState.promoted ||
         session.state == DownloadState.disposed ||
-        session.residentCacheBacked) {
+        session.residentBodyBacked) {
       return;
     }
     _downloadRetryRounds.remove(id);
@@ -184,25 +319,27 @@ final class DownloadTransferOwner {
     _claims.clear();
   }
 
-  void _reconcile(
+  void _replaceDemands(
     DownloadTransferConsumer consumer,
     String sessionId,
     int revision,
-    MapDiff<DownloadId, DownloadDemand> diff,
+    Map<DownloadId, TransferDemand> desired,
   ) {
     if (_disposed || consumer._disposed) return;
+    _validateDemandChecksums(consumer, desired);
     consumer._sessionId = sessionId;
     consumer._revision = revision;
-    for (final id in diff.removed) {
+    final removed = consumer._demands.keys
+        .where((id) => !desired.containsKey(id))
+        .toList(growable: false);
+    for (final id in removed) {
       consumer._demands.remove(id);
       _removeClaim(consumer, id, sessionId: sessionId);
     }
-    final toSchedule = <MapEntry<DownloadId, DownloadDemand>>[
-      ...diff.added.entries,
-      ...diff.changed.entries,
-    ];
-    for (final entry in toSchedule) {
-      consumer._demands[entry.key] = entry.value;
+    final toSchedule = <MapEntry<DownloadId, TransferDemand>>[];
+    for (final entry in desired.entries) {
+      final prior = consumer._demands[entry.key];
+      if (prior == entry.value) continue;
       _upsertClaim(
         consumer,
         entry.key,
@@ -210,22 +347,59 @@ final class DownloadTransferOwner {
         sessionId: sessionId,
         revision: revision,
       );
+      consumer._demands[entry.key] = entry.value;
+      toSchedule.add(entry);
     }
     for (final entry in toSchedule) {
       _ensureDownloadTask(entry.key, registry.get(entry.key));
     }
   }
 
+  void _validateDemandChecksums(
+    DownloadTransferConsumer consumer,
+    Map<DownloadId, TransferDemand> desired,
+  ) {
+    for (final entry in desired.entries) {
+      final checksum = entry.value.expectedChecksum;
+      if (checksum == null) continue;
+      final byScope = _claims[entry.key];
+      if (byScope == null) continue;
+      for (final claim in byScope.values) {
+        if (identical(claim.consumer, consumer)) continue;
+        final other = claim.demand.expectedChecksum;
+        if (other != null && other != checksum) {
+          throw StateError(
+            'conflicting checksums for physical transfer ${entry.key.key}: '
+            '$other != $checksum',
+          );
+        }
+      }
+    }
+  }
+
   void _upsertClaim(
     DownloadTransferConsumer consumer,
     DownloadId id,
-    DownloadDemand demand, {
+    TransferDemand demand, {
     required String sessionId,
     required int revision,
   }) {
     final session = registry.get(id);
     _watchSession(session);
     final byScope = _claims.putIfAbsent(id, () => <String, _TransferClaim>{});
+    final checksum = demand.expectedChecksum;
+    if (checksum != null) {
+      for (final claim in byScope.values) {
+        if (identical(claim.consumer, consumer)) continue;
+        final other = claim.demand.expectedChecksum;
+        if (other != null && other != checksum) {
+          throw StateError(
+            'conflicting checksums for physical transfer ${id.key}: '
+            '$other != $checksum',
+          );
+        }
+      }
+    }
     final existing = byScope[consumer.scopeId];
     if (existing == null) {
       final lease = session.attachDemand(
@@ -254,6 +428,7 @@ final class DownloadTransferOwner {
       final deferredStillMatches = deferredAtLength == session.committedLength;
       if (!deferredStillMatches ||
           _allowsCostlyFullBodyCatchup(
+            id: id,
             priority: demand.priority,
             preservedLength: session.committedLength,
           )) {
@@ -406,9 +581,17 @@ final class DownloadTransferOwner {
       for (final id in ids) {
         final session = registry.find(id);
         if (session == null) continue;
+        final deferredForCurrentClaims =
+            _downloadDeferredAtLength[id] == session.committedLength &&
+                !_allowsCostlyFullBodyCatchup(
+                  id: id,
+                  priority: session.effectivePriority,
+                  preservedLength: session.committedLength,
+                );
         if (_networkTaskKeys.containsKey(id) ||
             _downloadRetryPending.contains(id) ||
             (session.demanded &&
+                !deferredForCurrentClaims &&
                 session.state != DownloadState.promoted &&
                 session.state != DownloadState.failed &&
                 session.state != DownloadState.disposed &&
@@ -454,6 +637,7 @@ final class DownloadTransferOwner {
         _downloadTerminalFailures.contains(id) ||
         (_downloadDeferredAtLength[id] == session.committedLength &&
             !_allowsCostlyFullBodyCatchup(
+              id: id,
               priority: effectivePriority,
               preservedLength: session.committedLength,
             )) ||
@@ -521,10 +705,14 @@ final class DownloadTransferOwner {
             attachLegacyDemand: false,
             allowFullBodyCatchup: (preservedLength) =>
                 _allowsCostlyFullBodyCatchup(
+              id: id,
               priority: token.priority,
               preservedLength: preservedLength,
             ),
-          ).run(cancel: token);
+          ).run(
+            expectedChecksum: _expectedChecksum(id),
+            cancel: token,
+          );
           _downloadRetryRounds.remove(id);
           _downloadRetryPending.remove(id);
           _downloadTerminalFailures.remove(id);
@@ -535,6 +723,7 @@ final class DownloadTransferOwner {
               session.demanded ? session.effectivePriority : null;
           if (remainingPriority != null &&
               _allowsCostlyFullBodyCatchup(
+                id: id,
                 priority: remainingPriority,
                 preservedLength: session.committedLength,
               )) {
@@ -674,7 +863,7 @@ final class DownloadTransferOwner {
         session.activeRun ||
         session.state == DownloadState.promoted ||
         session.state == DownloadState.disposed ||
-        session.residentCacheBacked ||
+        session.residentBodyBacked ||
         session.committedLength <= 0) {
       return;
     }
@@ -751,6 +940,19 @@ final class DownloadTransferOwner {
     );
   }
 
+  String? _expectedChecksum(DownloadId id) {
+    String? checksum;
+    for (final claim in _claims[id]?.values ?? const <_TransferClaim>[]) {
+      final candidate = claim.demand.expectedChecksum;
+      if (candidate == null) continue;
+      if (checksum != null && checksum != candidate) {
+        throw StateError('conflicting checksums for physical transfer ${id.key}');
+      }
+      checksum = candidate;
+    }
+    return checksum;
+  }
+
   _TransferClaim? _preferredClaim(DownloadId id) {
     final values = _claims[id]?.values;
     if (values == null || values.isEmpty) return null;
@@ -763,10 +965,18 @@ final class DownloadTransferOwner {
     });
   }
 
+  bool _requiresCompletion(DownloadId id) =>
+      (_claims[id]?.values ?? const <_TransferClaim>[]).any(
+        (claim) =>
+            claim.demand.completionIntent == TransferCompletionIntent.required,
+      );
+
   bool _allowsCostlyFullBodyCatchup({
+    required DownloadId id,
     required int priority,
     required int preservedLength,
   }) {
+    if (_requiresCompletion(id)) return true;
     const largePrefixBytes = 1024 * 1024;
     const veryLargePrefixBytes = 8 * 1024 * 1024;
     const foregroundAdjacentPriorityFloor = 820;
@@ -858,8 +1068,8 @@ final class DownloadTransferConsumer {
   final TransferSleep sleep;
   final String Function(DownloadId id) downloadBucketFor;
   final int Function(DownloadId id) downloadBucketLimitFor;
-  final Map<DownloadId, DownloadDemand> _demands =
-      <DownloadId, DownloadDemand>{};
+  final Map<DownloadId, TransferDemand> _demands =
+      <DownloadId, TransferDemand>{};
   String? _sessionId;
   int _revision = 0;
   bool _disposed = false;
@@ -867,15 +1077,15 @@ final class DownloadTransferConsumer {
   DownloadRegistry get registry => owner.registry;
   NetLane get net => owner.net;
   bool get disposed => _disposed;
-  Map<DownloadId, DownloadDemand> get demands =>
-      Map<DownloadId, DownloadDemand>.unmodifiable(_demands);
+  Map<DownloadId, TransferDemand> get demands =>
+      Map<DownloadId, TransferDemand>.unmodifiable(_demands);
 
-  void reconcile(
+  void replaceDemands(
     String sessionId,
     int revision,
-    MapDiff<DownloadId, DownloadDemand> diff,
+    Map<DownloadId, TransferDemand> desired,
   ) =>
-      owner._reconcile(this, sessionId, revision, diff);
+      owner._replaceDemands(this, sessionId, revision, desired);
 
   void refreshScheduling() => owner._refreshScheduling(this);
 
@@ -899,7 +1109,7 @@ final class _TransferClaim {
 
   final DownloadTransferConsumer consumer;
   final DownloadDemandLease lease;
-  DownloadDemand demand;
+  TransferDemand demand;
   String sessionId;
   int revision;
   final int sequence;

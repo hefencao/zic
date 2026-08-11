@@ -6,6 +6,8 @@ import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:resource_cache/resource_cache.dart';
+import 'package:sessions/sessions.dart';
+import 'package:telemetry/telemetry.dart';
 import 'package:test/test.dart';
 import 'package:transport/transport.dart';
 
@@ -14,17 +16,18 @@ void main() {
     expect(ChapterResourceAccess.new, throwsArgumentError);
   });
 
-  test('managed chapter service is a cache-maintenance capability', () async {
-    final ManagedChapterDownloadService service =
-        MemoryChapterDownloadService(
+  test('chapter command contract does not own the cache capability', () async {
+    final service = MemoryChapterDownloadService(
       pageLoader: (_, __) async => Uint8List(0),
     );
-    addTearDown(service.close);
+    final ManagedChapterDownloadService command = service;
+    addTearDown(command.close);
 
     final coordinator = ResourceCacheCoordinator(artifacts: service);
     addTearDown(coordinator.close);
     final usage = await coordinator.inspect();
 
+    expect(command, isA<ChapterDownloadService>());
     expect(usage.artifacts, isNotNull);
     expect(usage.artifacts!.entries, 0);
   });
@@ -179,6 +182,198 @@ void main() {
     expect(await _readBackendArtifact(reopened, id), bytes);
   });
 
+  test('persistent composition owns runtime independently of chapter command',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-download-composition-owner-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final composition = await PersistentDownloadComposition.open(directory.path);
+
+    await composition.chapterDownloads.close();
+
+    expect(composition.transferRuntime.disposed, isFalse);
+    expect((await composition.artifactStore.inspectArtifacts()).entries, 0);
+
+    await composition.close();
+    expect(composition.transferRuntime.disposed, isTrue);
+  });
+
+  test('chapter command joins an existing composition physical transfer',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-shared-chapter-transfer-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final uri = Uri.parse('https://example.test/shared-page.webp');
+    final bytes = Uint8List.fromList('RIFF....WEBPshared'.codeUnits);
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:shared-comic',
+        displayName: '共享传输章节',
+        sourceId: 'fixture-source',
+        comicId: 'shared-comic',
+        comicTitle: '共享传输测试',
+        chapterId: 'shared-chapter',
+        sourceRevision: 'shared-r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '1.webp',
+            sourceId: uri.toString(),
+            pageId: 'shared-page',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: bytes.lengthInBytes,
+          ),
+        ],
+      ),
+    );
+    final service = await PersistentChapterDownloadService.open(directory.path);
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'fixture-source',
+        comicId: 'shared-comic',
+        chapterId: 'shared-chapter',
+        pageId: 'shared-page',
+      ),
+      sourceRevision: 'shared-r1',
+      canonicalUri: uri,
+    );
+    final readerTransport = _SharedGateTransport(bytes);
+    final reader = service.transferRuntime.attachConsumer(
+      scopeId: 'reader-like-shared',
+      transportFor: (_) => readerTransport,
+      consumerTraceSink: const NoopTraceSink(),
+    );
+    var readerDisposed = false;
+    var serviceClosed = false;
+    addTearDown(() async {
+      if (!readerTransport.release.isCompleted) {
+        readerTransport.release.complete();
+      }
+      if (!readerDisposed) {
+        await reader.dispose();
+      }
+      if (!serviceClosed) {
+        await service.close();
+      }
+    });
+
+    reader.replaceDemands(
+      'reader-like-shared',
+      1,
+      <DownloadId, TransferDemand>{
+        id: const TransferDemand(priority: 1000, reason: 'reader-current'),
+      },
+    );
+    await readerTransport.opened.future;
+    final chapterRun = service.download(entry);
+    await _waitUntil(() => service.transferRuntime.owner.claimCount(id) == 2);
+
+    expect(service.transferRuntime.registry.sessions, hasLength(1));
+    expect(readerTransport.opens, 1);
+    expect(service.transferRuntime.owner.claimCount(id), 2);
+
+    readerTransport.release.complete();
+    await Future.wait<void>(<Future<void>>[reader.idle(), chapterRun]);
+
+    expect(readerTransport.opens, 1);
+    expect(service.transferRuntime.registry.sessions, hasLength(1));
+    expect(await service.readPage(entry, 0), bytes);
+    expect((await service.inspect(entry)).phase, ChapterDownloadPhase.complete);
+
+    await reader.dispose();
+    readerDisposed = true;
+    await service.close();
+    serviceClosed = true;
+  });
+
+  test('chapter cancellation removes only its composition transfer claim',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-shared-chapter-cancel-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final uri = Uri.parse('https://example.test/shared-cancel.webp');
+    final bytes = Uint8List.fromList('RIFF....WEBPcancel'.codeUnits);
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:cancel-shared',
+        displayName: '共享取消章节',
+        sourceId: 'fixture-source',
+        comicId: 'cancel-shared-comic',
+        comicTitle: '共享取消测试',
+        chapterId: 'cancel-shared-chapter',
+        sourceRevision: 'cancel-shared-r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '1.webp',
+            sourceId: uri.toString(),
+            pageId: 'cancel-shared-page',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: bytes.lengthInBytes,
+          ),
+        ],
+      ),
+    );
+    final service = await PersistentChapterDownloadService.open(directory.path);
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'fixture-source',
+        comicId: 'cancel-shared-comic',
+        chapterId: 'cancel-shared-chapter',
+        pageId: 'cancel-shared-page',
+      ),
+      sourceRevision: 'cancel-shared-r1',
+      canonicalUri: uri,
+    );
+    final readerTransport = _SharedGateTransport(bytes);
+    final reader = service.transferRuntime.attachConsumer(
+      scopeId: 'reader-like-cancel',
+      transportFor: (_) => readerTransport,
+      consumerTraceSink: const NoopTraceSink(),
+    );
+    var readerDisposed = false;
+    var serviceClosed = false;
+    addTearDown(() async {
+      if (!readerTransport.release.isCompleted) {
+        readerTransport.release.complete();
+      }
+      if (!readerDisposed) {
+        await reader.dispose();
+      }
+      if (!serviceClosed) {
+        await service.close();
+      }
+    });
+
+    reader.replaceDemands(
+      'reader-like-cancel',
+      1,
+      <DownloadId, TransferDemand>{
+        id: const TransferDemand(priority: 1000, reason: 'reader-current'),
+      },
+    );
+    await readerTransport.opened.future;
+    final chapterRun = service.download(entry);
+    await _waitUntil(() => service.transferRuntime.owner.claimCount(id) == 2);
+
+    await service.cancel(entry);
+    await chapterRun;
+    expect(service.transferRuntime.owner.claimCount(id), 1);
+    expect(service.transferRuntime.registry.get(id).demandCount, 1);
+    expect((await service.inspect(entry)).phase, ChapterDownloadPhase.cancelled);
+
+    readerTransport.release.complete();
+    await reader.idle();
+    expect(service.transferRuntime.registry.get(id).state, DownloadState.promoted);
+    expect(readerTransport.opens, 1);
+
+    await reader.dispose();
+    readerDisposed = true;
+    await service.close();
+    serviceClosed = true;
+  });
+
   test('persistent chapter download survives reopen and serves page bytes',
       () async {
     final directory = await Directory.systemTemp.createTemp(
@@ -186,7 +381,10 @@ void main() {
     );
     addTearDown(() => directory.delete(recursive: true));
     final source = File('${directory.path}/source.bin');
-    final bytes = Uint8List.fromList(<int>[1, 2, 3, 4, 5, 6]);
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x08, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+    ]);
     await source.writeAsBytes(bytes, flush: true);
     final entry = ImportedLibraryEntry(
       chapter: ImportedChapterRecord(
@@ -212,6 +410,22 @@ void main() {
     final first = await PersistentChapterDownloadService.open(directory.path);
     expect(await first.isDownloaded(entry), isFalse);
     await first.download(entry);
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'fixture-source',
+        comicId: 'fixture-comic',
+        chapterId: 'fixture-chapter',
+        pageId: 'fixture-page-1',
+      ),
+      sourceRevision: 'fixture-r1',
+      canonicalUri: source.uri,
+    );
+    final physical = first.transferRuntime.registry.get(id);
+    expect(physical.residentCacheBacked, isTrue);
+    expect(physical.residentBodyAuthority, ByteResponseBodyAuthority.source);
+    expect(physical.residentSource, 'reopenable-immutable-source');
+    expect(physical.artifact.committedLength, 0);
+    expect(await first.artifactStore.openArtifactStream(id), isNotNull);
     expect(await first.isDownloaded(entry), isTrue);
     expect(await first.readPage(entry, 0), bytes);
     await first.close();
@@ -524,6 +738,59 @@ Future<Uint8List?> _readBackendArtifact(
     builder.add(chunk);
   }
   return builder.takeBytes();
+}
+
+Future<void> _waitUntil(bool Function() condition) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 2));
+  while (!condition()) {
+    if (DateTime.now().isAfter(deadline)) {
+      throw TimeoutException('condition did not become true');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+  }
+}
+
+final class _SharedGateTransport implements ControlledTransport {
+  _SharedGateTransport(this.bytes);
+
+  final Uint8List bytes;
+  final Completer<void> opened = Completer<void>();
+  final Completer<void> release = Completer<void>();
+  int opens = 0;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) =>
+      openControlled(uri, range: range, validators: validators);
+
+  @override
+  Future<ByteResponse> openControlled(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
+  }) async {
+    opens++;
+    if (!opened.isCompleted) opened.complete();
+    await release.future;
+    if (control?.cancelled ?? false) {
+      throw const Failure(
+        code: ErrorCode.cancelled,
+        message: 'shared transfer cancelled',
+      );
+    }
+    return ByteResponse(
+      bytes: Stream<List<int>>.value(bytes),
+      statusCode: 200,
+      rangeStart: 0,
+      totalLength: bytes.lengthInBytes,
+      validators: const Validators(etag: 'shared-transfer'),
+      rangeSupported: false,
+    );
+  }
 }
 
 DownloadId _readerArtifactId(String pageId) => DownloadId(

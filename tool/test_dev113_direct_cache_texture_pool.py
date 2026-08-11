@@ -53,7 +53,7 @@ for token in (
     require(download, token, "authoritative cache-resident DownloadSession")
 for token in (
     "response.disposition == ByteResponseDisposition.durableImmutable",
-    "session.appendDurableCachedIngress",
+    "session.appendResidentImmutableIngress",
     "await session.reset();",
 ):
     require(job, token, "direct durable ingress job")
