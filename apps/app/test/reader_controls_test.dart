@@ -188,8 +188,17 @@ void main() {
     expect(downloadRequested, isTrue);
     expect(find.byTooltip('本章已缓存'), findsOneWidget);
 
-    final slider = tester.getRect(find.byKey(readerPageSliderKey));
-    await tester.tapAt(Offset(slider.right - 2, slider.center.dy));
+    final sliderFinder = find.byKey(readerPageSliderKey);
+    final slider = tester.getRect(sliderFinder);
+    final gesture = await tester.startGesture(
+      Offset(slider.left + 24, slider.center.dy),
+    );
+    await gesture.moveTo(Offset(slider.right - 24, slider.center.dy));
+    await tester.pump();
+    // The controlled slider must retain the requested target while ReaderView
+    // is still reconciling/acknowledging the actual current page.
+    expect(tester.widget<Slider>(sliderFinder).value, greaterThan(1));
+    await gesture.up();
     await tester.pump();
     await tester.pump();
     expect(

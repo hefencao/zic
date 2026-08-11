@@ -1,3 +1,9 @@
+## 0.31.0-dev.218：Source-wake / slider closure
+
+- 07:34真机Trace确认dev.217网络单task修复有效：本轮无`sessionBusy/writerBusy`且存在15次`downloadPreempted`。黑页根因转为decode wake：页面334的physical source/artifact已就绪，但其DecodeSession在此前`waitingSource`后46.28秒未首帧。
+- 修复`LiveCoordinator`把staged refill的null误当作source已消费：current bootstrap暂时门控next/next2时保留pending source revision，只有实际fill或DecodeSession明确无需fill才consume；同时直接读取Reader-local ingress projection当前revision作为edge-loss兜底，角色晋升current后可从已就绪source恢复。
+- Reader slider受控值从`currentIndex`改为`requestedIndex ?? currentIndex`，避免拖动期间request尚未acknowledge时被旧current rebuild拉回。新增source-ready prefetch被门控后晋升current的Dart行为回归、真实slider gesture回归、dev.218静态gate/审计。App提升到`0.31.0+218`；verified TransferKey继续暂停。
+
 ## 0.31.0-dev.217：Prefetch single-transfer task closure
 
 - 真机`zic-debug-trace-2026-08-11T05-59-23.jsonl`确认dev.216并非单纯prefetch policy退化：出现51次`Failure(sessionBusy)`、2次`writerBusy`，并由`sessionBusy`产生114次`download-attempt` retry。根因是`DownloadTransferOwner._ensureDownloadTask()`发现既有task key后只迁移priority却未返回，policy revision会为同一exact `DownloadId`持续制造不同NetLane key并并发撞击同一DownloadSession。

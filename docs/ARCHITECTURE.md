@@ -258,7 +258,7 @@ transport / artifact stream
 - 缺少 successor 时保持当前 output，等待 producer 通知，不进入 startup-buffer，也不阻塞其他页面 decode；
 - playback 使用最近 deadline 的 one-shot wake；静态零时长帧不启动 timer；
 - finite animation 到 EOF 保留最后一帧；
-- metadata 未完成且 source 增长时允许刷新 demux；未封缄 `needMoreData` 等待 source revision，不用定时销毁 cursor；
+- metadata 未完成且 source 增长时允许刷新 demux；未封缄 `needMoreData` 等待 source revision，不用定时销毁 cursor；source revision 是 Reader-local projection 的状态事实，只有实际 decode fill 或 DecodeSession 已证明无需 fill 后才能记为 consumed，current-bootstrap 暂时门控邻页不得吞掉其 pending source wake；
 - target canvas 使用 contain 和 `height / width`，不裁切、不使用负位移或页面重叠掩盖接缝。
 
 ## 9. Upload 与 Android texture

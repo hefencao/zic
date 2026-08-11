@@ -1271,6 +1271,199 @@ void main() {
     await downloads.dispose();
   });
 
+  test('gated source revision survives until prefetch is promoted current',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'live_gated_source_revision_test_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final blockedId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'blocked-current',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/blocked-current.webp'),
+    );
+    final promotedId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'promoted-prefetch',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/promoted-prefetch.webp'),
+    );
+    DecodeId decodeId(DownloadId id) => DecodeId(
+          download: id,
+          physicalWidth: 8,
+          physicalHeight: 8,
+          pixelFormat: PixelFormat.rgba8888,
+          renderer: RendererKind.flutterImage,
+        );
+    final blockedDecode = decodeId(blockedId);
+    final promotedDecode = decodeId(promotedId);
+    final clock = _Clock();
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'test',
+    );
+    final cursors = _StaticCursorFactory();
+    final decodes = DecodeRegistry(
+      downloads: downloads,
+      ingresses: ingresses,
+      cursors: cursors,
+      clock: clock,
+    );
+    const prefetchedDemand = DecodeDemand(
+      role: PageRole.next2,
+      priority: 780,
+      targetWatermark: 3,
+      reason: 'prefetch-next2',
+      expirationRevision: 2,
+    );
+
+    // Reproduce the device failure shape: this decode holder already exists
+    // and is waitingSource before the physical prefetch becomes sourceReady.
+    final waiting = await decodes.fill(
+      promotedDecode,
+      prefetchedDemand,
+      CancelToken(),
+      revision: 0,
+    );
+    expect(waiting.state, DecodeState.waitingSource);
+
+    final blockedTransport = _BlockedControlledTransport();
+    final promotedBytes = 'RIFF....WEBPpromoted'.codeUnits;
+    final coordinator = LiveCoordinator(
+      registry: downloads,
+      ingresses: ingresses,
+      transportFor: (uri) => uri == blockedId.canonicalUri
+          ? blockedTransport
+          : _ImmediateTransport(promotedBytes),
+      clock: clock,
+      decodes: decodes,
+      net: NetLane(maxActive: 2),
+      decode: DecodeLane(maxActive: 2),
+    );
+    final initial = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{
+        blockedId: const DownloadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'blocked-current',
+          expirationRevision: 2,
+        ),
+        promotedId: const DownloadDemand(
+          role: PageRole.next2,
+          priority: 780,
+          reason: 'prefetch-next2',
+          expirationRevision: 2,
+        ),
+      },
+      decodes: <DecodeId, DecodeDemand>{
+        blockedDecode: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 7,
+          reason: 'blocked-current',
+          expirationRevision: 2,
+        ),
+        promotedDecode: prefetchedDemand,
+      },
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{
+        ResourceId.download(blockedId),
+        ResourceId.download(promotedId),
+        ResourceId.decode(blockedDecode),
+        ResourceId.decode(promotedDecode),
+      },
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: initial,
+        diff: DemandDiff.between(DemandPlan.empty(), initial),
+        window: RoleWindow(
+          const <int, PageRole>{
+            0: PageRole.current,
+            2: PageRole.next2,
+          },
+        ),
+      ),
+    );
+    await blockedTransport.opened.future;
+
+    final deadline = DateTime.now().add(const Duration(seconds: 1));
+    while (!(ingresses.find(promotedId)?.snapshot.sourceReady ?? false)) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail('prefetched source never became ready');
+      }
+      await Future<void>.delayed(Duration.zero);
+    }
+    // Let the directed source-wake task run while current bootstrap gates it.
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(decodes.find(promotedDecode)?.snapshot.state, DecodeState.waitingSource);
+    expect(decodes.find(promotedDecode)?.snapshot.depth, 0);
+
+    final promoted = DemandPlan(
+      revision: 2,
+      downloads: <DownloadId, DownloadDemand>{
+        promotedId: const DownloadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'promoted-current',
+          expirationRevision: 3,
+        ),
+      },
+      decodes: <DecodeId, DecodeDemand>{
+        promotedDecode: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 7,
+          reason: 'promoted-current',
+          expirationRevision: 3,
+        ),
+      },
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{
+        ResourceId.download(promotedId),
+        ResourceId.decode(promotedDecode),
+      },
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: promoted,
+        diff: DemandDiff.between(initial, promoted),
+        window: RoleWindow(const <int, PageRole>{2: PageRole.current}),
+      ),
+    );
+
+    await coordinator.idle();
+    final afterPromotion = decodes.find(promotedDecode)!.snapshot;
+    expect(afterPromotion.depth, greaterThanOrEqualTo(1));
+    expect(afterPromotion.state, isNot(DecodeState.waitingSource));
+    expect(cursors.created, 1);
+
+    await coordinator.dispose();
+    decodes.dispose();
+    await downloads.dispose();
+  });
+
   test('role promotion reaches an already active cursor decode request',
       () async {
     final temp = await Directory.systemTemp.createTemp(

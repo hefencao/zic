@@ -180,8 +180,18 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _downloadTransfer.refreshForLocalArtifact(id);
   }
 
+  int _availableSourceRevision(DownloadId id) {
+    var available = _sourceRevisions[id] ?? -1;
+    final projectionRevision = ingresses?.find(id)?.snapshot.revision ?? -1;
+    if (projectionRevision > available) {
+      available = projectionRevision;
+      _sourceRevisions[id] = projectionRevision;
+    }
+    return available;
+  }
+
   bool _hasPendingSourceRevision(DecodeId id) {
-    final available = _sourceRevisions[id.download] ?? -1;
+    final available = _availableSourceRevision(id.download);
     final consumed = _decodeSourceRevisions[id] ?? -1;
     return available > consumed;
   }
@@ -498,7 +508,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       if (current == null || current.expirationRevision < _revision) {
         return;
       }
-      final sourceRevision = _sourceRevisions[id.download] ?? -1;
+      final sourceRevision = _availableSourceRevision(id.download);
       final observedSourceRevision = _decodeSourceRevisions[id] ?? -1;
       final pendingSourceWake = sourceRevision > observedSourceRevision;
       if (sourceWake && !pendingSourceWake) {
@@ -513,11 +523,20 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           : _nextDecodeRefill(only: pendingSourceWake ? id : null);
       if (registry != null) {
         if (refill == null) {
-          if (pendingSourceWake && sourceRevision >= 0) {
-            // A revision is consumed only when the target is already satisfied
-            // or terminal. Global policy never makes another page's playback
-            // state an eligibility gate, so a source-ready page cannot lose its
-            // wake merely because a different page is current.
+          // A null staged-refill decision is not proof that this decode has
+          // consumed the latest source revision. During current bootstrap the
+          // policy intentionally gates neighbor work and can return null even
+          // while this exact DecodeSession is waitingSource. Keep that revision
+          // pending unless the session itself proves that no fill is needed.
+          if (pendingSourceWake &&
+              sourceRevision >= 0 &&
+              !_decodeNeedsFill(
+                before,
+                current,
+                preparedDepth: preparedDepth,
+                sourceWake: true,
+                force: true,
+              )) {
             _decodeSourceRevisions[id] = sourceRevision;
           }
           return;
@@ -684,7 +703,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       if (!pendingSourceWake) {
         return;
       }
-      final latestSourceRevision = _sourceRevisions[id.download] ?? -1;
+      final latestSourceRevision = _availableSourceRevision(id.download);
       final consumedSourceRevision = _decodeSourceRevisions[id] ?? -1;
       if (consumedSourceRevision >= latestSourceRevision) {
         return;

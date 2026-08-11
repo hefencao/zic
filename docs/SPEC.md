@@ -112,6 +112,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 
 - 内容 MUST 等比呈现，统一使用 `height / width`；不得裁切正文，或用负位移、重叠和多套比例公式掩盖接缝。
 - Reader MUST 支持沉浸、跳页、暂停、倍速、方向和布局命令；命令只通过 Reader facade 提交。
+- Reader slider 在跳页请求尚未被 viewport acknowledge 时 MUST 以 pending requested page 作为受控显示值；不得因旧 `currentIndex` 的中间 rebuild 把 thumb 拉回，从而使连续拖动失效。
 - Reader 页码或阅读模式改变后 MUST 通过既有 progress facade 持久化 `ReadingProgress`；App
   lifecycle 进入 inactive/paused/detached 和 Reader route dispose 时 MUST 强制 flush 最近进度。
   Home projection MUST 在写入成功后立即更新，不能要求先退出详情页才反映阅读历史。
@@ -160,6 +161,7 @@ Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor �
 - current bootstrap MUST 先建立静态1帧或动态最多3帧的浅水位；bootstrap 未满足时 speculative neighbor refill MUST 为0。current 等 source 时，真实 transition depth=0 MAY 独立取得1帧；bootstrap完成后恢复 staged current/neighbor refill。
 - 不得恢复独立 startup-buffer 或以 playback timer/underflow 控制网络 eligibility；current bootstrap 只属于 decode refill policy，不创建第二套 Reader gate。
 - metadata 未完成且 source 增长时 demux MUST 可刷新；未封缄 need-more-data MUST 等待 source revision，而不是定时销毁 cursor。
+- source revision MUST 保持 pending，直到对应 DecodeSession 实际执行 fill，或其当前 snapshot 明确证明无需 fill；staged refill policy 因 current bootstrap 暂时返回空决策 MUST NOT 被解释为 source 已消费。角色晋升为 current 后 MUST 能从 projection 当前 revision/state 重新发现已就绪 source。
 - native target canvas MUST 生成预乘 RGBA；Android/Flutter fallback 不得再次预乘。
 - finite animation 到 EOF MUST 保留最后一帧；静态零时长帧不得启动 playback timer。
 

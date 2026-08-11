@@ -948,7 +948,9 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                               : TextDirection.ltr,
                           child: Slider(
                             key: readerPageSliderKey,
-                            value: reader.currentIndex.toDouble(),
+                            value: (reader.requestedIndex ?? reader.currentIndex)
+                                .clamp(0, math.max(1, pages - 1))
+                                .toDouble(),
                             min: 0,
                             max: math.max(1, pages - 1).toDouble(),
                             divisions: pages > 1 ? pages - 1 : null,
