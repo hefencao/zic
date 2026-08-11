@@ -3,7 +3,7 @@
 ## 1. 架构目标
 - current 具有最高资源优先级，但目标页首帧不得依赖 current 的下载完成或 holder 深度。
 - 同一稳定 identity 只有一个权威 request、session、artifact、cursor 和活动 writer。
-- Download demand是consumer claim，不是物理transfer ownership：composition-owned `DownloadTransferOwner`按exact `DownloadId`唯一拥有 `DownloadRegistry`、writer、network task、retry/terminal/defer与transfer workspace；多个Reader只持有scoped claim和各自transport provider，effective priority取最大claim。provider Reader退出先撤销自己的claim并等待其物理task退出，剩余claim可在同一session续跑；native `Ingress`、source listener、decode/upload仍通过Reader-local `DownloadIngressProjection`隔离。verified跨版本等价尚未进入TransferKey-before-acquire，不得用弱证据合并transfer。
+- Download demand是consumer claim，不是物理transfer ownership：composition-owned `DownloadTransferOwner`按exact `DownloadId`唯一拥有 `DownloadRegistry`、writer、network task、retry/terminal/defer与transfer workspace；同一exact id在queued/active期间必须保持同一个physical task key，policy revision只能原位迁移priority，lane已退休该key后才能重新submit。多个Reader只持有scoped claim和各自transport provider，effective priority取最大claim；provider退出只撤销自身claim并等待其物理task退出，剩余claim可在同一session续跑。native `Ingress`、source listener、decode/upload仍通过Reader-local `DownloadIngressProjection`隔离；verified跨版本等价尚未进入TransferKey-before-acquire，不得用弱证据合并transfer。
 - Reader 只提交 observation/用户命令并消费只读输出，不直接操作 transport、session、artifact、lane、frame 或 texture。
 - 下载、解码、上传使用独立 scheduler；一个层的运行时状态不能成为另一层页面的资格门控。
 - 平台能力由 composition root 原子注入；核心包不反向依赖 Widget、Android plugin 或具体 FFI 实现。

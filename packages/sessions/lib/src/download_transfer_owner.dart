@@ -427,17 +427,29 @@ final class DownloadTransferOwner {
     final effectivePriority = session.effectivePriority;
     final existingTaskKey = _networkTaskKeys[id];
     if (existingTaskKey != null) {
-      _migrateDownloadPriority(
-        id,
-        existingTaskKey,
-        effectivePriority,
-        reason: session.demandCount > 1 ? 'consumer-aggregate' : 'demand-role',
-      );
+      // A DownloadId has one physical task identity while that task is queued
+      // or active. Policy revisions only migrate its priority; they must not
+      // manufacture a second task key for the same DownloadSession.
+      if (net.priorityOf(existingTaskKey) != null) {
+        _migrateDownloadPriority(
+          id,
+          existingTaskKey,
+          effectivePriority,
+          reason: session.demandCount > 1 ? 'consumer-aggregate' : 'demand-role',
+        );
+        return;
+      }
+      // Defensive stale-key recovery: the lane has already retired this key.
+      // Only then may this exact DownloadId acquire a new physical task key.
+      if (_networkTaskKeys[id] == existingTaskKey) {
+        _networkTaskKeys.remove(id);
+      }
     }
     if (_disposed ||
         session.state == DownloadState.promoted ||
         session.state == DownloadState.disposed ||
         session.activeRun ||
+        session.hasWriter ||
         _downloadRetryPending.contains(id) ||
         _downloadTerminalFailures.contains(id) ||
         (_downloadDeferredAtLength[id] == session.committedLength &&
@@ -465,6 +477,10 @@ final class DownloadTransferOwner {
     String taskKey,
     CancelToken token,
   ) async {
+    // A queued task can become stale only if its physical identity was
+    // explicitly retired/replaced. Never let a stale lane entry begin a
+    // second run against the authoritative DownloadSession.
+    if (_networkTaskKeys[id] != taskKey) return;
     final claim = _preferredClaim(id);
     if (claim == null) return;
     final provider = claim.consumer;

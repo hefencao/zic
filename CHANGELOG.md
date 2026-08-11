@@ -1,3 +1,9 @@
+## 0.31.0-dev.217：Prefetch single-transfer task closure
+
+- 真机`zic-debug-trace-2026-08-11T05-59-23.jsonl`确认dev.216并非单纯prefetch policy退化：出现51次`Failure(sessionBusy)`、2次`writerBusy`，并由`sessionBusy`产生114次`download-attempt` retry。根因是`DownloadTransferOwner._ensureDownloadTask()`发现既有task key后只迁移priority却未返回，policy revision会为同一exact `DownloadId`持续制造不同NetLane key并并发撞击同一DownloadSession。
+- 修复为queued/active exact id的task identity稳定：existing key仍在NetLane时只原位更新priority并返回；只有lane已退休stale key才允许重新submit。`_runDownload`增加stale-key start guard，调度前同时拒绝`activeRun/hasWriter`，避免第二physical run。
+- 新增“lane被占用时连续700→720→780→1000 revision仍只有一个queued task key、最终只open一次transport”的Dart回归；新增dev.217静态gate/审计。verified TransferKey与chapter/whole-comic迁移暂停，先完成预下载/切页真机复验。App提升到`0.31.0+217`。
+
 ## 0.31.0-dev.216：Composition Physical Transfer Owner
 
 - `DownloadTransferOwner`提升为exact `DownloadId`的composition physical owner：共享`DownloadRegistry`、active writer/network task、retry/terminal/defer与scoped claims；`LiveCoordinator`只保留Reader demand/decode/upload协调。

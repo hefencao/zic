@@ -107,6 +107,13 @@ for rel in (
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.216 governance file missing: {rel}')
 
-require(read('apps/app/pubspec.yaml'), 'version: 0.31.0+216', 'dev.216 app version')
-require(read('apps/app/android/zic-version.properties'), 'versionCode=216', 'dev.216 Android version')
+import re
+pubspec = read('apps/app/pubspec.yaml')
+version_props = read('apps/app/android/zic-version.properties')
+version_match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.MULTILINE)
+android_match = re.search(r'^versionCode=(\d+)$', version_props, re.MULTILINE)
+if version_match is None or int(version_match.group(1)) < 216:
+    raise SystemExit('dev.216 app version regression')
+if android_match is None or int(android_match.group(1)) < 216:
+    raise SystemExit('dev.216 Android version regression')
 print('dev.216 composition physical transfer owner: OK')

@@ -59,7 +59,8 @@ require(
     'pressurePreemptionPriorityFloor: 780,',
     "reason: 'adjacent-previous-pressure'",
     'expect(retainedSession?.state, DownloadState.receiving);',
-    'expect(coordinator.net.priorityOf(\'reader:${retainedId.key}\'), 0);',
+    'coordinator.net.priorityOf(coordinator.downloadTaskKeyFor(retainedId)!)',
+    '0,',
     'await previous.opened.future.timeout',
     'expect(retainedSession?.activeRun, isFalse);',
 )

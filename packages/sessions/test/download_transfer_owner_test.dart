@@ -71,6 +71,81 @@ void main() {
     expect(registry.sessions, hasLength(1));
   });
 
+  test('queued priority revisions keep one physical transfer task identity', () async {
+    final temp = await Directory.systemTemp.createTemp('transfer_owner_queue_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final net = NetLane(maxActive: 1);
+    final blockerStarted = Completer<void>();
+    final blockerRelease = Completer<void>();
+    net.submitRanked(
+      key: 'blocker',
+      priority: 1000,
+      bucket: 'blocker',
+      bucketLimit: 1,
+      task: (_) async {
+        blockerStarted.complete();
+        await blockerRelease.future;
+      },
+    );
+    await blockerStarted.future;
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: net,
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final id = _id('queued-priority');
+    final transport = _CountingBytesTransport('RIFF....WEBPqueued'.codeUnits);
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-queued',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+
+    consumer.reconcile(
+      'reader-queued',
+      1,
+      _added(id, priority: 700, role: PageRole.next),
+    );
+    final taskKey = owner.taskKeyFor(id);
+    expect(taskKey, isNotNull);
+    expect(net.queued, 1);
+
+    consumer.reconcile(
+      'reader-queued',
+      2,
+      _changed(id, priority: 720, role: PageRole.next),
+    );
+    consumer.reconcile(
+      'reader-queued',
+      3,
+      _changed(id, priority: 780, role: PageRole.previous),
+    );
+    consumer.reconcile(
+      'reader-queued',
+      4,
+      _changed(id, priority: 1000, role: PageRole.current),
+    );
+
+    expect(owner.taskKeyFor(id), taskKey);
+    expect(net.queued, 1);
+    expect(net.priorityOf(taskKey!), 1000);
+
+    blockerRelease.complete();
+    await consumer.idle();
+    expect(transport.opens, 1);
+    expect(registry.get(id).state, DownloadState.promoted);
+  });
+
   test('final consumer detach persists committed physical partial after writer exits',
       () async {
     final temp = await Directory.systemTemp.createTemp('transfer_owner_partial_');
@@ -208,6 +283,24 @@ MapDiff<DownloadId, DownloadDemand> _added(
         ),
       },
       changed: const <DownloadId, DownloadDemand>{},
+      removed: const <DownloadId>{},
+    );
+
+MapDiff<DownloadId, DownloadDemand> _changed(
+  DownloadId id, {
+  required int priority,
+  required PageRole role,
+}) =>
+    MapDiff<DownloadId, DownloadDemand>(
+      added: const <DownloadId, DownloadDemand>{},
+      changed: <DownloadId, DownloadDemand>{
+        id: DownloadDemand(
+          role: role,
+          priority: priority,
+          reason: 'test-priority-change',
+          expirationRevision: 8,
+        ),
+      },
       removed: const <DownloadId>{},
     );
 
