@@ -1,3 +1,11 @@
+## 0.31.0-dev.214：Image Transfer Consumer Claim 所有权前置重构
+
+- 重新审查 dev.213 与 VibeVenera 后确认：ZIC 不能只把 Reader-local `DownloadRegistry` 提升为 global map。当前 `DownloadSession` 同时绑定 Reader-local native `Ingress`，而 `LiveCoordinator` 还拥有 network task/retry/terminal 状态；机械共享会把 A Reader 的 cancel/retry 泄漏到 B，或把 decode ingress错误全局化。
+- `DownloadSession` 新增 scope-based `DownloadDemandLease`：多个 consumer 独立 attach/update/detach，`effectivePriority` 取最大 claim 而非求和；legacy direct `DownloadJob` demand 仅保留为兼容入口。
+- `LiveCoordinator` 的 Reader demand 改为 claim：离开只撤销本 Reader claim；若仍有其它 consumer，活动 transfer 不取消，并按剩余最高 priority 降级。`DownloadJob` 在 Reader path 不再偷偷重新建立 legacy demand。
+- 本轮故意不宣称跨 Reader hot partial 已完成：物理 registry、network retry owner 与 Reader-local native ingress projection 仍需下一阶段拆分后才能安全提升到 composition。现有 durable partial、verified artifact equivalence 与 dev.213 late full takeover 保持兼容。
+- 新增 ADR 0195、dev.214 ownership audit/gate 与多 consumer claim regression；App版本提升到 `0.31.0+214`。
+
 ## 0.31.0-dev.213：等价 Full Promotion Takeover 与 Session Partial 边界
 
 - 对照 `zic-debug-trace-2026-08-11T03-35-42.jsonl` 与 `vibevenera-master.zip`，确认VibeVenera通过alias-before-DownloadIdentity使版本页共享同一 `_loadingImages` / `_PartialImageCache` / DownloadSession identity，等效具备session/in-flight partial复用；ZIC不直接提升为跨Reader共享writer。

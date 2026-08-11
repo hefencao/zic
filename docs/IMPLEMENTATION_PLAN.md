@@ -1,10 +1,10 @@
-- dev.204：相对dev.202只回滚约1/3 retention headroom（1/3 bounded + 2/3 headroom），同时独立修复Venera cold resolver完整response后无条件disconnect导致的连接复用损失；不改JS并发、cache identity、Reader/Pipeline或NetLane admission。
 # zic Implementation Plan
-
+## P0：Image Transfer ownership 正式迁移
+- dev.214 已完成 scoped consumer claims：Reader只撤销自己的claim，priority取max；尚未共享物理registry。
+- 下一阶段依次拆 Reader-local native `Ingress` projection 与 physical transfer、把network/retry/registry提升到composition owner，再做verified TransferKey-before-acquire和chapter/whole-comic/prefetch demand aggregation；新路径覆盖前保留durable partial/artifact owner。
 ## P0：Partial authority 单调性真机闭环
 - dev.195 的playable partial单调性继续冻结：Range probe/full-body catch-up的取消、EOF或mismatch只能失败当前 network attempt，旧partial/Ingress不变；metadata损坏只丢网络知识。dev.196不改DownloadSession authority、DecodeSession、NetLane、network=5、1000/780、7/3、2/1、7/5/3/2，也不增加bandwidth scheduler/framing。
 ## P0：Current / Previous 真实执行槽真机闭环
-
 - dev.192 真机首要比较`sourceRhttpProgressMaxGapMicros/sourceRhttpProgressLeadBytesMax`与`sourceRhttpBodyMaxGapMicros/maxChunkGapMicros`：若receive-progress与raw body同时长gap，优先归因源/CDN/HTTP链路；若progress持续前进但body长期滞后且lead显著扩大，再调查rhttp FFI/Dart Stream delivery/backpressure。不得用该diagnostics直接驱动scheduler。
 - dev.191 cache已在15:08 trace明显命中：多数page为4次逻辑bridge call中的3 hit/1 origin。后续只有cache hit重新退化时才回查identity/Cookie/header；当前主线转向最终图片body持续传输。
 - dev.190 后首次本地 Flutter/Dart 构建仍需确认 `runtime_source_adapter.dart` 不再出现 `onTiming` named-parameter 半迁移；若还有 runtime source adapter 编译错误，先检查私有函数类型/constructor 注入的一致性，不把 resource-plan diagnostics 扩到通用 browse/details invoke。

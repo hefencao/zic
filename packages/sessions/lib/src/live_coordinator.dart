@@ -101,6 +101,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
 
   final Map<DownloadId, DownloadDemand> _downloads =
       <DownloadId, DownloadDemand>{};
+  final Map<DownloadId, DownloadDemandLease> _downloadClaims =
+      <DownloadId, DownloadDemandLease>{};
   final Map<DownloadId, String> _networkTaskKeys = <DownloadId, String>{};
   final Map<DownloadId, int> _downloadRetryRounds = <DownloadId, int>{};
   final Set<DownloadId> _downloadRetryPending = <DownloadId>{};
@@ -305,13 +307,29 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _sourceRevisions.clear();
     _sourceWakeLengths.clear();
     _decodeSourceRevisions.clear();
-    // The page-download lane is composition-shared. Cancel only this Reader's
-    // ranked tasks; another active Reader must keep its own transfers.
-    final networkKeys = _networkTaskKeys.values.toList(growable: false);
-    for (final key in networkKeys) {
-      net.cancel(key);
+    // Logical Reader teardown removes only this scope's claims. If another
+    // consumer still claims the same physical transfer, do not cancel it.
+    for (final claim in _downloadClaims.values) {
+      claim.detach();
     }
-    _networkTaskKeys.clear();
+    _downloadClaims.clear();
+    final networkKeys = <String>[];
+    for (final entry in _networkTaskKeys.entries) {
+      final session = registry.find(entry.key);
+      if (session != null && session.demanded) {
+        _migrateDownloadPriority(
+          'transfer-owner',
+          entry.key,
+          entry.value,
+          session.effectivePriority,
+          reason: 'remaining-consumer',
+        );
+        continue;
+      }
+      networkKeys.add(entry.value);
+      net.cancel(entry.value);
+    }
+    _networkTaskKeys.removeWhere((id, key) => networkKeys.contains(key));
     _downloadRetryRounds.clear();
     _downloadRetryPending.clear();
     _downloadTerminalFailures.clear();
@@ -337,11 +355,19 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     for (final id in diff.removed) {
       _downloads.remove(id);
       final session = registry.find(id);
-      session?.detach();
+      _downloadClaims.remove(id)?.detach();
       final taskKey = _networkTaskKeys[id];
       final taskIsActive = taskKey != null && net.isActive(taskKey);
       final receiving = session?.state == DownloadState.receiving;
-      if (receiving && taskIsActive) {
+      if (session != null && session.demanded && taskKey != null) {
+        _migrateDownloadPriority(
+          sessionId,
+          id,
+          taskKey,
+          session.effectivePriority,
+          reason: 'remaining-consumer',
+        );
+      } else if (receiving && taskIsActive) {
         _migrateDownloadPriority(
           sessionId,
           id,
@@ -372,7 +398,16 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     ];
     for (final entry in toSchedule) {
       _downloads[entry.key] = entry.value;
-      final session = registry.get(entry.key)..attach();
+      final session = registry.get(entry.key);
+      final claim = _downloadClaims[entry.key];
+      if (claim == null || !claim.attached) {
+        _downloadClaims[entry.key] = session.attachDemand(
+          scopeId: sessionId,
+          priority: entry.value.priority,
+        );
+      } else {
+        claim.updatePriority(entry.value.priority);
+      }
       if (!session.activeRun) {
         _downloadRetryRounds.remove(entry.key);
         _downloadRetryPending.remove(entry.key);
@@ -432,15 +467,18 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     DownloadSession session,
   ) {
     final demand = _downloads[id];
-    if (demand == null) return;
+    if (demand == null && !session.demanded) return;
+    final effectivePriority = session.demanded
+        ? session.effectivePriority
+        : (demand?.priority ?? 0);
     final existingTaskKey = _networkTaskKeys[id];
     if (existingTaskKey != null) {
       _migrateDownloadPriority(
         sessionId,
         id,
         existingTaskKey,
-        demand.priority,
-        reason: 'demand-role',
+        effectivePriority,
+        reason: session.demandCount > 1 ? 'consumer-aggregate' : 'demand-role',
       );
     }
     if (_disposed ||
@@ -451,7 +489,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         _downloadTerminalFailures.contains(id) ||
         (_downloadDeferredAtLength[id] == session.committedLength &&
             !_allowsCostlyFullBodyCatchup(
-              priority: demand.priority,
+              priority: effectivePriority,
               preservedLength: session.committedLength,
             )) ||
         (_downloadRetryRounds[id] ?? 0) > _maxDownloadRetryRounds) {
@@ -461,7 +499,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _networkTaskKeys[id] = taskKey;
     net.submitRanked(
       key: taskKey,
-      priority: demand.priority,
+      priority: effectivePriority,
       bucket: downloadBucketFor(id),
       bucketLimit: downloadBucketLimitFor(id),
       task: (token) => _runDownload(sessionId, id, session, token),
@@ -549,7 +587,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           identityHash: id.key,
           revision: _revision,
           payload: <String, Object?>{
-            'priority': initialDemand.priority,
+            'priority': session.effectivePriority,
             'bucket': bucket,
             'bucketLimit': bucketLimit,
             'globalActive': net.active,
@@ -574,6 +612,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           await DownloadJob(
             transport: transportFor(id.canonicalUri),
             session: session,
+            attachLegacyDemand: false,
             allowFullBodyCatchup: (preservedLength) =>
                 _allowsCostlyFullBodyCatchup(
               priority: token.priority,
@@ -588,9 +627,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           return;
         } on DownloadCatchupDeferred {
           final currentDemand = _downloads[id];
-          if (currentDemand != null &&
+          final remainingPriority = currentDemand?.priority ??
+              (session.demanded ? session.effectivePriority : null);
+          if (remainingPriority != null &&
               _allowsCostlyFullBodyCatchup(
-                priority: currentDemand.priority,
+                priority: remainingPriority,
                 preservedLength: session.committedLength,
               )) {
             _downloadDeferredAtLength.remove(id);
@@ -639,13 +680,13 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
                         .toInt(),
               },
             );
-            if (_downloads.containsKey(id) && error is Failure) {
+            if (session.demanded && error is Failure) {
               final retryScheduled = error.code == ErrorCode.network &&
                   _scheduleDownloadRetry(sessionId, id, session, error);
               if (!retryScheduled) {
                 _downloadTerminalFailures.add(id);
               }
-            } else if (_downloads.containsKey(id)) {
+            } else if (session.demanded) {
               _downloadTerminalFailures.add(id);
             }
             return;
@@ -670,17 +711,19 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         }
       }
     } finally {
-        if (_networkTaskKeys[id] == taskKey) {
+      if (_networkTaskKeys[id] == taskKey) {
         _networkTaskKeys.remove(id);
       }
-      if (!_downloads.containsKey(id) && !session.activeRun) {
+      if (!_downloads.containsKey(id) &&
+          !session.demanded &&
+          !session.activeRun) {
         _retireDownloadTracking(id, session);
-      } else if (_downloads.containsKey(id) &&
+      } else if ((_downloads.containsKey(id) || session.demanded) &&
           !_downloadTerminalFailures.contains(id) &&
           session.state != DownloadState.promoted &&
           session.state != DownloadState.disposed) {
         scheduleMicrotask(() {
-          if (!_disposed && _downloads.containsKey(id)) {
+          if (!_disposed && (_downloads.containsKey(id) || session.demanded)) {
             _ensureDownloadTask(sessionId, id, session);
           }
         });
@@ -713,7 +756,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   ) {
     if (_disposed ||
         _downloadRetryPending.contains(id) ||
-        !_downloads.containsKey(id)) {
+        !session.demanded) {
       return false;
     }
     final round = (_downloadRetryRounds[id] ?? 0) + 1;
@@ -743,7 +786,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       await sleep(delay);
       await Future<void>.delayed(Duration.zero);
       _downloadRetryPending.remove(id);
-      if (_disposed || !_downloads.containsKey(id)) {
+      if (_disposed || !session.demanded) {
         return;
       }
       _ensureDownloadTask(sessionId, id, session);

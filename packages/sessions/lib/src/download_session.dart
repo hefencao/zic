@@ -19,6 +19,28 @@ final class RunLease {
   final int id;
 }
 
+final class DownloadDemandLease {
+  DownloadDemandLease._(this._session, this.scopeId);
+
+  DownloadSession? _session;
+  final String scopeId;
+
+  bool get attached => _session != null;
+
+  void updatePriority(int priority) {
+    final session = _session;
+    if (session == null) return;
+    session._setDemandPriority(scopeId, priority);
+  }
+
+  void detach() {
+    final session = _session;
+    if (session == null) return;
+    _session = null;
+    session._detachDemand(scopeId);
+  }
+}
+
 final class WriterLease {
   const WriterLease._({required this.id, required this.epoch});
 
@@ -38,6 +60,8 @@ final class DownloadSnapshot {
     required this.networkStartLength,
     required this.contentKind,
     required this.demanded,
+    this.demandCount = 0,
+    this.effectivePriority = 0,
     required this.hasWriter,
     required this.activeRun,
     required this.artifact,
@@ -54,6 +78,8 @@ final class DownloadSnapshot {
   final int networkStartLength;
   final ContentKind contentKind;
   final bool demanded;
+  final int demandCount;
+  final int effectivePriority;
   final bool hasWriter;
   final bool activeRun;
   final ArtifactSnapshot artifact;
@@ -72,7 +98,8 @@ final class DownloadSession {
     this.sessionId = 'download',
     this.index,
     this.ingress,
-  });
+    bool initiallyDemanded = true,
+  }) : _legacyDemanded = initiallyDemanded;
 
   final DownloadId id;
   final Artifact artifact;
@@ -88,7 +115,8 @@ final class DownloadSession {
   RunLease? _run;
   int _writerSeq = 0;
   int _runSeq = 0;
-  bool _demanded = true;
+  bool _legacyDemanded;
+  final Map<String, int> _demandPriorities = <String, int>{};
   ContentKind _contentKind = ContentKind.unknown;
   Validators _validators = const Validators();
   int? _totalLength;
@@ -117,7 +145,13 @@ final class DownloadSession {
   int get networkStartLength => _networkStartLength;
   ContentKind get contentKind => _contentKind;
   bool get hasWriter => _writer != null;
-  bool get demanded => _demanded;
+  bool get demanded => _legacyDemanded || _demandPriorities.isNotEmpty;
+  int get demandCount => _demandPriorities.length + (_legacyDemanded ? 1 : 0);
+  int get effectivePriority {
+    if (_demandPriorities.isEmpty) return 0;
+    return _demandPriorities.values.reduce((left, right) =>
+        left >= right ? left : right);
+  }
   bool get activeRun => _run != null;
   bool get canEvict =>
       _writer == null && _run == null && _state != DownloadState.disposed;
@@ -129,7 +163,9 @@ final class DownloadSession {
         committedLength: committedLength,
         networkStartLength: _networkStartLength,
         contentKind: _contentKind,
-        demanded: _demanded,
+        demanded: demanded,
+        demandCount: demandCount,
+        effectivePriority: effectivePriority,
         hasWriter: hasWriter,
         activeRun: activeRun,
         artifact: artifact.snapshot,
@@ -571,11 +607,62 @@ final class DownloadSession {
     await _syncCache(CacheState.partial);
   }
 
+  /// Legacy single-consumer demand used by direct DownloadJob callers.
+  /// Reader/prefetch/download composition should use [attachDemand] instead.
   void attach() {
-    if (_demanded) {
+    if (_legacyDemanded) {
       return;
     }
-    _demanded = true;
+    _legacyDemanded = true;
+    _notifySnapshot();
+  }
+
+  DownloadDemandLease attachDemand({
+    required String scopeId,
+    required int priority,
+  }) {
+    _requireNotDisposed();
+    if (scopeId.isEmpty) {
+      throw ArgumentError.value(scopeId, 'scopeId', 'must not be empty');
+    }
+    _setDemandPriority(scopeId, priority);
+    return DownloadDemandLease._(this, scopeId);
+  }
+
+  void _setDemandPriority(String scopeId, int priority) {
+    _requireNotDisposed();
+    if (priority < 0) {
+      throw ArgumentError.value(priority, 'priority', 'must not be negative');
+    }
+    final previous = _demandPriorities[scopeId];
+    if (previous == priority) return;
+    _demandPriorities[scopeId] = priority;
+    _emit(
+      TraceEventKind.demandApplied,
+      <String, Object?>{
+        'lane': 'download',
+        'scopeId': scopeId,
+        'priority': priority,
+        'effectivePriority': effectivePriority,
+        'demandCount': demandCount,
+      },
+    );
+    _notifySnapshot();
+  }
+
+  void _detachDemand(String scopeId) {
+    if (_demandPriorities.remove(scopeId) == null) return;
+    _flushCommittedTrace();
+    _emit(
+      TraceEventKind.demandDetached,
+      <String, Object?>{
+        'lane': 'download',
+        'scopeId': scopeId,
+        'effectivePriority': effectivePriority,
+        'demandCount': demandCount,
+        'receivingRetained': _state == DownloadState.receiving,
+      },
+    );
     _notifySnapshot();
   }
 
@@ -618,15 +705,20 @@ final class DownloadSession {
   }
 
   void detach() {
+    if (!_legacyDemanded) return;
     _flushCommittedTrace();
-    _demanded = false;
+    _legacyDemanded = false;
     _emit(
       TraceEventKind.demandDetached,
       <String, Object?>{
         'lane': 'download',
+        'scopeId': 'legacy',
+        'effectivePriority': effectivePriority,
+        'demandCount': demandCount,
         'receivingRetained': _state == DownloadState.receiving,
       },
     );
+    _notifySnapshot();
   }
 
   Future<void> reset() async {
@@ -695,6 +787,8 @@ final class DownloadSession {
       );
     }
     _sourceListeners.clear();
+    _demandPriorities.clear();
+    _legacyDemanded = false;
     ingress?.dispose();
     await artifact.dispose();
     _state = DownloadState.disposed;

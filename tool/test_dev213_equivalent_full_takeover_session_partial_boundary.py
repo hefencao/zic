@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -98,8 +99,11 @@ require(
 )
 
 version = read('apps/app/pubspec.yaml')
-require(version, 'version: 0.31.0+213', 'dev.213 app version')
+build_match = re.search(r'^version:\s*0\.31\.0\+(\d+)$', version, re.M)
+if build_match is None or int(build_match.group(1)) < 213:
+    raise SystemExit('dev.213 app version regressed')
 android = read('apps/app/android/zic-version.properties')
-require(android, 'versionCode=213', 'dev.213 Android version')
+if f'versionCode={build_match.group(1)}' not in android:
+    raise SystemExit('dev.213 Android versionCode mismatch')
 
 print('dev.213 equivalent-full takeover/session-partial boundary: OK')

@@ -75,6 +75,29 @@ void main() {
     await session.seal(writer, expectedLength: 3);
     expect(session.state, DownloadState.sealed);
   });
+
+  test('consumer demand claims use max priority and detach independently', () {
+    session.detach();
+    final current = session.attachDemand(scopeId: 'reader-a', priority: 1000);
+    final preload = session.attachDemand(scopeId: 'reader-b', priority: 700);
+
+    expect(session.demandCount, 2);
+    expect(session.effectivePriority, 1000);
+    expect(session.demanded, isTrue);
+
+    current.detach();
+    expect(session.demandCount, 1);
+    expect(session.effectivePriority, 700);
+    expect(session.demanded, isTrue);
+
+    preload.updatePriority(820);
+    expect(session.effectivePriority, 820);
+
+    preload.detach();
+    expect(session.demandCount, 0);
+    expect(session.effectivePriority, 0);
+    expect(session.demanded, isFalse);
+  });
   test('source listeners are notified as an incremental source grows',
       () async {
     await session.dispose();

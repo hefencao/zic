@@ -37,6 +37,7 @@ final class DownloadRegistry {
         sessionId: 'download:${layout.tokenFor(id)}',
         index: index,
         ingress: sources?.get(id),
+        initiallyDemanded: false,
       );
       try {
         onSessionCreated?.call(session);

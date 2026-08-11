@@ -484,6 +484,94 @@ void main() {
     expect(transport.opens, 1);
   });
 
+  test('remaining consumer claim keeps transfer and downgrades priority',
+      () async {
+    final temp = await Directory.systemTemp
+        .createTemp('live_multi_consumer_claim_test_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'multi-consumer',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/multi-consumer.webp'),
+    );
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final transport = _RetainedStreamTransport();
+    final coordinator = LiveCoordinator(
+      registry: registry,
+      transportFor: (_) => transport,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+    );
+
+    const demand = DownloadDemand(
+      role: PageRole.current,
+      priority: 1000,
+      reason: 'reader-a',
+      expirationRevision: 2,
+    );
+    final first = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{id: demand},
+      decodes: const <DecodeId, DecodeDemand>{},
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{ResourceId.download(id)},
+    );
+    coordinator.reconcile(
+      'reader-a',
+      PipelineDelta(
+        plan: first,
+        diff: DemandDiff.between(DemandPlan.empty(), first),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    await transport.opened.future;
+    transport.add('RIFF....WEBP'.codeUnits);
+    await Future<void>.delayed(Duration.zero);
+
+    final session = registry.get(id);
+    final other = session.attachDemand(scopeId: 'reader-b', priority: 700);
+    final detached = DemandPlan(
+      revision: 2,
+      downloads: const <DownloadId, DownloadDemand>{},
+      decodes: const <DecodeId, DecodeDemand>{},
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: const <ResourceId>{},
+    );
+    coordinator.reconcile(
+      'reader-a',
+      PipelineDelta(
+        plan: detached,
+        diff: DemandDiff.between(first, detached),
+        window: const RoleWindow(<int, PageRole>{}),
+      ),
+    );
+
+    expect(session.demanded, isTrue);
+    expect(session.demandCount, 1);
+    expect(session.effectivePriority, 700);
+    expect(coordinator.net.priorityOf('reader-a:${id.key}'), 700);
+    expect(transport.opens, 1);
+
+    transport.add('payload'.codeUnits);
+    await transport.close();
+    await coordinator.idle();
+    expect(session.state, DownloadState.promoted);
+    expect(transport.opens, 1);
+
+    other.detach();
+    await coordinator.dispose();
+    await registry.dispose();
+  });
+
   test('detached receiving yields to adjacent previous pressure', () async {
     final temp =
         await Directory.systemTemp.createTemp('live_receiving_pressure_test_');

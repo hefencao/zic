@@ -24,11 +24,13 @@ final class DownloadJob {
     required this.transport,
     required this.session,
     this.allowFullBodyCatchup,
+    this.attachLegacyDemand = true,
   });
 
   final Transport transport;
   final DownloadSession session;
   final FullBodyCatchupPermission? allowFullBodyCatchup;
+  final bool attachLegacyDemand;
 
   Future<DownloadSnapshot> run({
     String? expectedChecksum,
@@ -68,7 +70,9 @@ final class DownloadJob {
       return;
     }
 
-    session.attach();
+    if (attachLegacyDemand) {
+      session.attach();
+    }
     session.queue();
 
     final preservedLength = session.committedLength;
