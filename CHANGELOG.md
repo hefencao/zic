@@ -1,3 +1,7 @@
+## 0.31.0-dev.227：Provider exact request identity closure after physical alias
+- 15:29真机Trace确认dev.225 Phase C1真实命中13次acquire-time alias，其中6次加入可恢复failed partial；但随后43次network task全部因`unsupported URI scheme: venera-resource`失败。根因是owner按provider exact URI选择transport后，`DownloadJob`仍用physical `session.id.canonicalUri`执行open，跨版本alias时把旧anchor URI泄漏进新Reader transport。
+- `DownloadJob`新增显式`requestUri`：artifact/writer/resume/validator状态继续属于physical session，所有source open/range probe/resume请求只使用当前provider exact URI；legacy caller默认仍用session URI。新增failed partial + verified-equivalent provider URI行为回归和dev.227闭包gate；本轮暂停继续删除late compatibility path。
+
 ## 0.31.0-dev.226：Phase E late-takeover contraction and alias observability
 - 依据15:01真机Trace收缩verified-equivalence补偿：删除无生产调用者的Reader/consumer late-takeover委托，仅在composition owner保留独立exact session的legacy compatibility takeover。
 - promotion listener改为`findExact`独立session检查，acquire-time physical alias不再被late compatibility扫描；新增`verified-transfer-acquire-alias` join/ambiguous诊断和compatibility scope标记。

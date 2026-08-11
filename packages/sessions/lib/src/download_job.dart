@@ -23,12 +23,24 @@ final class DownloadJob {
   const DownloadJob({
     required this.transport,
     required this.session,
+    this.requestUri,
     this.allowFullBodyCatchup,
     this.attachLegacyDemand = true,
   });
 
   final Transport transport;
   final DownloadSession session;
+
+  /// Exact source request identity selected by the active consumer.
+  ///
+  /// The physical [DownloadSession] may be anchored to a different, directly
+  /// verified equivalent [DownloadId]. Physical artifact/writer/resume state
+  /// stays on [session], while transport opens MUST use this exact provider URI.
+  /// Legacy callers default to the session anchor URI.
+  final Uri? requestUri;
+
+  Uri get _requestUri => requestUri ?? session.id.canonicalUri;
+
   final FullBodyCatchupPermission? allowFullBodyCatchup;
   final bool attachLegacyDemand;
 
@@ -682,13 +694,13 @@ final class DownloadJob {
     final range = ByteRange(start: start);
     if (controlled != null) {
       return controlled.openControlled(
-        session.id.canonicalUri,
+        _requestUri,
         range: range,
         control: cancel,
       );
     }
     return transport.open(
-      session.id.canonicalUri,
+      _requestUri,
       range: range,
     );
   }
@@ -700,25 +712,25 @@ final class DownloadJob {
     if (start > 0 && session.validators.canResume) {
       if (controlled != null) {
         return controlled.openControlled(
-          session.id.canonicalUri,
+          _requestUri,
           range: ByteRange(start: start),
           validators: session.validators,
           control: cancel,
         );
       }
       return transport.open(
-        session.id.canonicalUri,
+        _requestUri,
         range: ByteRange(start: start),
         validators: session.validators,
       );
     }
     if (controlled != null) {
       return controlled.openControlled(
-        session.id.canonicalUri,
+        _requestUri,
         control: cancel,
       );
     }
-    return transport.open(session.id.canonicalUri);
+    return transport.open(_requestUri);
   }
 }
 

@@ -1,5 +1,5 @@
-# dev.226 后续交接
-- dev.226：在dev.225 Phase C1基础上开始Phase E收缩。15:01真机Trace无`taskFailed/sessionBusy/writerBusy`且25个page host全部有首帧；legacy equivalent promotion takeover=0，但physical→durable partial persistence仍12次stored、artifact persistence仍48次，因此不删除durable边界。已删除无生产调用者的`LiveCoordinator/DownloadTransferConsumer` late-takeover委托；composition promotion listener只对独立`findExact` session保留最后compatibility takeover，acquire-time alias不再被扫描。新增`verified-transfer-acquire-alias` join/ambiguous诊断和legacy compatibility标记；下一轮优先以真机证据判断最终late takeover能否删除，再考虑cold-partial/更一般TransferKey。
+# dev.227 后续交接
+- dev.227：15:29真机Trace证明Phase C1 acquire alias已真实工作，但同时暴露source request identity半迁移：13次alias中6次加入failed partial，随后43次taskFailed全部为`unsupported URI scheme: venera-resource`；owner虽然按new exact URI选择transport，DownloadJob却仍用old physical anchor URI执行open。dev.227新增独立`requestUri`并由claim exact identity显式传入，所有full/range/resume request都不再读取physical session URI；physical artifact/writer/resume state仍由anchor session拥有。先本地验证跨版本scrub/failed-partial reactivation恢复，再决定是否继续删除最终late takeover。
 `dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`

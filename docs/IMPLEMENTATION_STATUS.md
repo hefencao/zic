@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.226` / App `0.31.0+226`。
+- 当前版本：`0.31.0-dev.227` / App `0.31.0+227`。
+- dev.227：15:29真机Trace中`verified-transfer-acquire-alias`真实命中13次（5 promoted / 1 receiving / 1 idle / 6 failed），但出现43次`Failure(source): unsupported URI scheme: venera-resource`，60个page host中33个dispose前无首帧。根因不是failed partial本身，而是Phase C1只把provider exact identity用于transport选择，`DownloadJob`真正open仍硬编码physical anchor `session.id.canonicalUri`。现将physical session identity与source request identity彻底拆开：owner显式传`requestUri=claim.exactId.canonicalUri`，DownloadJob所有full/range/resume open均用requestUri；physical artifact/writer/resume state仍保持anchor session。Phase E最终late takeover删除继续暂停，先验证跨版本failed-partial reactivation。
 - dev.226：15:01真机Trace中25个page host全部在dispose前得到首帧、无`taskFailed/sessionBusy/writerBusy`；legacy `verified-equivalent-promotion-takeover`命中0次，而composition physical→durable的partial persistence仍12次stored、artifact promotion persistence仍48次（5 stored/43 skip-existing），因此Phase E只删除已经死亡的Reader/consumer late-takeover委托，不删除仍承担durable边界的partial/artifact handoff。promotion listener仅检查`findExact`独立session，acquire-time alias不会再进入legacy扫描；新增`verified-transfer-acquire-alias`诊断区分join与ambiguous rejection，legacy takeover继续明确标记compatibility scope，待后续Trace证明0命中覆盖后再删除最终compatibility path。
 - dev.225：verified transfer identity推进到acquire-time Phase C1。`ArtifactCacheManager`已有direct verified equivalence只作为proof输入；新exact demand仅在自身尚无session且唯一等价candidate已有active/committed/promoted physical authority时绑定到该session。claim保留exact provider URI/source bucket，两个已存在session不事后merge，source-resident非cache body不跨版本join；章节通过共享physical transfer完成后仍复制/materialize自己的exact durable artifact。late equivalent-full takeover/session partial handoff继续作为未覆盖路径的兼容层。
 - dev.224：修复dev.223迁移后的三处Dart编译闭包：durable store漏迁`_artifactWrites`字段、`LiveCoordinator._reconcileDownloads`错误引用上层`update`、`advanceDueFrame`重复声明`frameIndex`。新增专项gate检查字段归属、旧变量残留与相邻重复局部声明；physical/runtime/chapter claim语义不变。

@@ -1,6 +1,6 @@
 # zic Implementation Plan
 ## P0：Image Transfer ownership 正式迁移
-- P0：dev.226开始Phase E证据化收缩：dev.225 acquire-time alias保留；删除无生产调用者的Reader/consumer late-takeover委托，composition promotion listener只针对`findExact`独立physical session，alias后的同一session不再参与legacy扫描。新增`verified-transfer-acquire-alias` join/ambiguous诊断与legacy compatibility标记；15:01真机Trace显示late takeover=0而physical→durable partial/artifact persistence仍真实命中，故后者继续保留。下一步用新诊断确认acquire join覆盖率与legacy path命中率，再决定是否删除最终late takeover；不把cold partial persistence误判成旧Reader handoff。
+- P0：dev.227先修Phase C1 source-request identity半迁移：15:29 Trace中acquire alias命中13次但43次taskFailed全部为`unsupported URI scheme: venera-resource`；physical session anchor与当前provider exact request URI必须正交，DownloadJob所有open/range/resume只用claim exact URI，artifact/writer/resume state继续属于physical session。Phase E最终late takeover删除暂停，先验证跨版本failed-partial reactivation与Reader首帧恢复；partial/artifact durable persistence继续保留。
 - 上述共享transfer经真机确认后，再把source-confirmed relation + persisted verified page mapping + strong media identity归一为verified TransferKey-before-acquire，使已证明等价版本页在建立physical session前合流；覆盖与冷启动证据未闭环前保留durable partial、artifact equivalence与session/takeover兼容路径，覆盖后逐项删除旧补偿。
 ## P0：Partial authority 单调性真机闭环
 - dev.195 的playable partial单调性继续冻结：Range probe/full-body catch-up的取消、EOF或mismatch只能失败当前 network attempt，旧partial/Ingress不变；metadata损坏只丢网络知识。dev.196不改DownloadSession authority、DecodeSession、NetLane、network=5、1000/780、7/3、2/1、7/5/3/2，也不增加bandwidth scheduler/framing。

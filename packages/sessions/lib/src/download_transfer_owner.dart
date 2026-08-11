@@ -778,6 +778,7 @@ final class DownloadTransferOwner {
           await DownloadJob(
             transport: provider.transportFor(sourceId.canonicalUri),
             session: session,
+            requestUri: sourceId.canonicalUri,
             attachLegacyDemand: false,
             allowFullBodyCatchup: (preservedLength) =>
                 _allowsCostlyFullBodyCatchup(

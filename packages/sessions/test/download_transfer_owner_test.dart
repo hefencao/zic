@@ -368,6 +368,91 @@ void main() {
     expect(persistedBytes, session.committedLength);
   });
 
+  test('equivalent failed partial resumes through provider exact request URI', () async {
+    final temp = await Directory.systemTemp.createTemp('transfer_owner_alias_source_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final physical = _id('physical-old');
+    final exact = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic-new',
+        chapterId: 'chapter-new',
+        pageId: 'exact-new',
+      ),
+      sourceRevision: 'r2',
+      canonicalUri: Uri.parse('custom-resource:exact-new'),
+    );
+    final bytes = <int>[
+      ...'RIFF'.codeUnits,
+      0, 0, 0, 0,
+      ...'WEBP'.codeUnits,
+      ...List<int>.generate(128, (index) => index & 0xff),
+    ];
+    final session = registry.get(physical);
+    await session.restore();
+    await session.bindResponse(
+      validators: const Validators(etag: 'shared-v1'),
+      totalLength: bytes.length,
+    );
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, bytes.sublist(0, 32));
+    await session.fail(
+      writer,
+      const Failure(code: ErrorCode.network, message: 'old provider failed'),
+    );
+    expect(session.state, DownloadState.failed);
+    expect(session.committedLength, 32);
+
+    final transport = _ExactUriRangeTransport(
+      expectedUri: exact.canonicalUri,
+      bytes: bytes,
+    );
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+      resolveTransferId: (id) {
+        if (id == exact) {
+          registry.aliasPhysical(id: exact, target: physical);
+          return physical;
+        }
+        return id;
+      },
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-new-version',
+      transportFor: (uri) {
+        expect(uri, exact.canonicalUri);
+        return transport;
+      },
+      traceSink: const NoopTraceSink(),
+    );
+
+    consumer.replaceDemands(
+      'reader-new-version',
+      1,
+      _desired(exact, priority: 1000),
+    );
+    await consumer.idle();
+
+    expect(session.state, DownloadState.promoted);
+    expect(session.id, physical);
+    expect(registry.resolvePhysicalId(exact), physical);
+    expect(transport.openedUris, isNotEmpty);
+    expect(transport.openedUris, everyElement(exact.canonicalUri));
+    expect(transport.ranges.first?.start, 32);
+    expect(await File(session.artifact.finalPath).readAsBytes(), bytes);
+  });
+
   test('disposing active provider preserves remaining consumer and reopens once',
       () async {
     final temp = await Directory.systemTemp.createTemp('transfer_owner_detach_');
@@ -494,6 +579,45 @@ final class _CountingBytesTransport implements Transport {
       totalLength: bytes.length,
       validators: const Validators(etag: 'counting'),
       rangeSupported: false,
+    );
+  }
+}
+
+
+final class _ExactUriRangeTransport implements Transport {
+  _ExactUriRangeTransport({required this.expectedUri, required this.bytes});
+
+  final Uri expectedUri;
+  final List<int> bytes;
+  final List<Uri> openedUris = <Uri>[];
+  final List<ByteRange?> ranges = <ByteRange?>[];
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async {
+    openedUris.add(uri);
+    ranges.add(range);
+    if (uri != expectedUri) {
+      throw Failure(
+        code: ErrorCode.source,
+        message: 'unexpected provider URI: $uri',
+      );
+    }
+    const current = Validators(etag: 'shared-v1');
+    final canRange = range != null &&
+        range.start <= bytes.length &&
+        (validators == null || validators.isEmpty || validators.matches(current));
+    final start = canRange ? range!.start : 0;
+    return ByteResponse(
+      bytes: Stream<List<int>>.value(bytes.sublist(start)),
+      statusCode: canRange ? 206 : 200,
+      rangeStart: start,
+      totalLength: bytes.length,
+      validators: current,
+      rangeSupported: true,
     );
   }
 }
