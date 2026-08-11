@@ -153,6 +153,7 @@ final class PipelineController {
           'currentIndex': observation.currentIndex,
           'targetIndex': observation.targetCoverage?.pageIndex,
           'retainedIndex': window.retainedIndex,
+          'interaction': observation.interaction.name,
         },
       ),
     );

@@ -114,7 +114,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 
 - 内容 MUST 等比呈现，统一使用 `height / width`；不得裁切正文，或用负位移、重叠和多套比例公式掩盖接缝。
 - Reader MUST 支持沉浸、跳页、暂停、倍速、方向和布局命令；命令只通过 Reader facade 提交。
-- Reader slider 拖动中的索引 MUST 由UI-local scrub preview拥有；`onChanged`不得逐格调用`ReaderController.requestPage()`或驱动PageView/Pipeline demand，gesture end才提交一次目标页。提交后在viewport acknowledge前，slider MUST以pending requested page作为受控显示值；不得因旧`currentIndex`的中间rebuild把thumb拉回。
+- Reader slider MUST实时跟随拖动跳页：`onChanged`更新UI preview并通过Reader-owned scrub navigation推进PageView/current page；不得等到`onChangeEnd`才改变可见页。scrub observation MUST显式标记`Interaction.scrubbing`，其Pipeline计划只能包含当前页foreground download/decode/upload，不得逐格展开7/3 prefetch窗口；`onChangeEnd` MUST在最终页结束scrub并恢复正常完整窗口。viewport acknowledge前slider仍以preview/requested page作为受控显示值，不得被旧`currentIndex`回拉。
 - Reader 页码或阅读模式改变后 MUST 通过既有 progress facade 持久化 `ReadingProgress`；App
   lifecycle 进入 inactive/paused/detached 和 Reader route dispose 时 MUST 强制 flush 最近进度。
   Home projection MUST 在写入成功后立即更新，不能要求先退出详情页才反映阅读历史。

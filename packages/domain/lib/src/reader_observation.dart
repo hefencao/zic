@@ -1,6 +1,6 @@
 import 'models.dart';
 
-enum Interaction { idle, dragging, scrolling, jumping, settling }
+enum Interaction { idle, dragging, scrolling, scrubbing, jumping, settling }
 
 final class Coverage {
   const Coverage({

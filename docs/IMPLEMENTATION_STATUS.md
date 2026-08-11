@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.221` / App `0.31.0+221`。
+- 当前版本：`0.31.0-dev.222` / App `0.31.0+222`。
+- dev.222：11:35真机Trace证明dev.221 resident replay已明显收口：只有6个`firstFrameReady=false` page host且生命周期均<0.64s，`decodeState`无failed，相邻重复physical Trace也未再出现。剩余主要问题是dev.220把slider scrub过度降成release-only commit，拖动时viewport不实时变化。现新增显式`Interaction.scrubbing`：slider `onChanged`实时驱动Reader navigation，但RoleWindow在scrub期只保current，形成1 download/1 decode/1 upload foreground plan；gesture end强制发布非scrub planning revision并恢复正常7/3窗口。NetLane/水位/retry/resident replay不变。
 - dev.221：10:30真机Trace确认新的长黑页主因不是network抢占：`residentCacheBacked` session可拥有11MiB+ authoritative committedLength但session artifact为0字节；首Reader实时消费cache stream正常，late Reader却从空artifact做synchronized replay并得到sealed空projection。现将physical residency与Reader encoded-source replay拆开：resident replay由`ArtifactCacheManager`或可重开immutable local source提供严格有界prefix，并继续经过共享artifact-read scheduler；不改NetLane/水位/retry/TransferKey。
 - dev.220：09:44真机Trace确认dev.219 late Reader断链已恢复（reader3退出时decode/upload=7/7），但slider scrub仍把每个中间索引当正式navigation commit：约0.4s的148→248拖动产生23次pageCurrent、23次policy replan、157次download priority重排和大量短命page host。现scrub preview改为UI-local，gesture end才提交一次request；ReaderBinding viewport/playback从demand reconcile成败中独立推进。另确认overlap Reader导致1120组逐字段完全相同physical Trace，现physical hub对shared App/export sink按identity引用计数，只保留一次全局事件，各Reader memory trace仍独立。调度/水位/retry/cache/transport不变。
 - dev.219：依据08:19真机Trace重新审计跨层ownership：Reader3首个plan有downloads=11/decodes=4/uploads=4，却因late Reader对已有committed physical session仍走同步`attachIngressProjection`而在download reconcile中抛错，最终decode/upload sessions均为0。现Reader-local projection先返回再异步synchronized replay；Reader observation改为enqueue/latest-wins，pipeline错误不再进入UI导航栈；DecodeTarget变化不再detach binding或清空download demand，仅更新PipelineController target并从既有plan增量替换decode/upload identity，ReaderController/requested page保持route ownership。verified TransferKey继续冻结。

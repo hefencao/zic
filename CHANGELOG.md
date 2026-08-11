@@ -1,3 +1,7 @@
+## 0.31.0-dev.222：Live slider scrub / foreground demand boundary
+
+- slider拖动实时跳页，scrub期间Pipeline只保current foreground demand；松手恢复正常窗口。
+
 ## 0.31.0-dev.221：resident encoded-source replay authority 收口
 
 - 修复composition physical transfer提升后的late Reader黑页：`residentCacheBacked` session不再从可能为空的session artifact重放；Reader-local projection由独立replay authority从`ArtifactCacheManager`或可重开immutable local source重建authoritative prefix。

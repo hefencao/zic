@@ -449,6 +449,29 @@ void main() {
     expect(controller.navigationRevision, revision + 1);
   });
 
+  test('page scrub updates navigation live and ends with a planning revision', () {
+    final chapter = _chapter(pageCount: 4);
+    final controller = ReaderController(
+      sessionId: 'reader-scrub-test',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: FakeClock(),
+    );
+    addTearDown(controller.dispose);
+
+    controller.beginPageScrub();
+    controller.scrubToPage(2);
+    expect(controller.pageScrubbing, isTrue);
+    expect(controller.requestedIndex, 2);
+    final scrubRevision = controller.navigationRevision;
+
+    controller.acknowledgePageRequest(scrubRevision);
+    expect(controller.requestedIndex, isNull);
+    controller.endPageScrub(2);
+    expect(controller.pageScrubbing, isFalse);
+    expect(controller.navigationRevision, scrubRevision + 1);
+  });
+
   testWidgets(
     'vertical current changes rebuild only page shells whose state changed',
     (tester) async {

@@ -489,6 +489,20 @@ final class _ReaderViewState extends State<ReaderView> {
     final requested = controller.requestedIndex;
     if (requested == null) {
       _handledNavigationRevision = revision;
+      if (_interaction == Interaction.scrubbing && !controller.pageScrubbing) {
+        _interaction = Interaction.idle;
+        if (controller.direction == ReadingDirection.vertical &&
+            _verticalController.hasClients &&
+            _verticalController.position.hasContentDimensions) {
+          _emitFromVerticalMetrics(_verticalController.position);
+        } else {
+          _emitObservation(
+            controller.currentIndex.toDouble(),
+            0,
+            stableIndex: controller.currentIndex,
+          );
+        }
+      }
       return;
     }
     if (controller.direction == ReadingDirection.vertical) {
@@ -499,7 +513,9 @@ final class _ReaderViewState extends State<ReaderView> {
         return;
       }
       _handledNavigationRevision = revision;
-      _interaction = Interaction.jumping;
+      _interaction = controller.pageScrubbing
+          ? Interaction.scrubbing
+          : Interaction.jumping;
       _zoomedPage = null;
       final maxExtent = _verticalController.position.maxScrollExtent;
       _verticalController.jumpTo(
@@ -514,7 +530,9 @@ final class _ReaderViewState extends State<ReaderView> {
       return;
     }
     _handledNavigationRevision = revision;
-    _interaction = Interaction.jumping;
+    _interaction = controller.pageScrubbing
+        ? Interaction.scrubbing
+        : Interaction.jumping;
     _zoomedPage = null;
     _pageController.jumpToPage(requested);
     controller.acknowledgePageRequest(revision);
@@ -557,7 +575,9 @@ final class _ReaderViewState extends State<ReaderView> {
         return;
       }
       _lastLogicalPosition = requested.toDouble();
-      _interaction = Interaction.jumping;
+      _interaction = widget.controller.pageScrubbing
+          ? Interaction.scrubbing
+          : Interaction.jumping;
       _emitObservation(
         requested.toDouble(),
         0,
@@ -605,16 +625,22 @@ final class _ReaderViewState extends State<ReaderView> {
     if (notification.depth != 0) return false;
     if (notification is ScrollStartNotification) {
       _pendingVerticalAnchor = null;
-      _interaction = notification.dragDetails == null
-          ? Interaction.scrolling
-          : Interaction.dragging;
+      _interaction = widget.controller.pageScrubbing
+          ? Interaction.scrubbing
+          : notification.dragDetails == null
+              ? Interaction.scrolling
+              : Interaction.dragging;
       _emitFromPageMetrics(notification.metrics);
     } else if (notification is ScrollUpdateNotification) {
       _pendingVerticalAnchor = null;
-      _interaction = Interaction.scrolling;
+      _interaction = widget.controller.pageScrubbing
+          ? Interaction.scrubbing
+          : Interaction.scrolling;
       _emitFromPageMetrics(notification.metrics);
     } else if (notification is ScrollEndNotification) {
-      _interaction = Interaction.idle;
+      _interaction = widget.controller.pageScrubbing
+          ? Interaction.scrubbing
+          : Interaction.idle;
       _emitFromPageMetrics(notification.metrics);
     }
     return false;
@@ -624,16 +650,22 @@ final class _ReaderViewState extends State<ReaderView> {
     if (notification.depth != 0) return false;
     if (notification is ScrollStartNotification) {
       _pendingVerticalAnchor = null;
-      _interaction = notification.dragDetails == null
-          ? Interaction.scrolling
-          : Interaction.dragging;
+      _interaction = widget.controller.pageScrubbing
+          ? Interaction.scrubbing
+          : notification.dragDetails == null
+              ? Interaction.scrolling
+              : Interaction.dragging;
       _emitFromVerticalMetrics(notification.metrics);
     } else if (notification is ScrollUpdateNotification) {
       _pendingVerticalAnchor = null;
-      _interaction = Interaction.scrolling;
+      _interaction = widget.controller.pageScrubbing
+          ? Interaction.scrubbing
+          : Interaction.scrolling;
       _emitFromVerticalMetrics(notification.metrics);
     } else if (notification is ScrollEndNotification) {
-      _interaction = Interaction.idle;
+      _interaction = widget.controller.pageScrubbing
+          ? Interaction.scrubbing
+          : Interaction.idle;
       _emitFromVerticalMetrics(notification.metrics);
     }
     return false;
@@ -760,7 +792,9 @@ final class _ReaderViewState extends State<ReaderView> {
         .clamp(0.0, widget.controller.chapter.pages.length - 1.0)
         .toDouble();
     _lastLogicalPosition = handoffPosition;
-    _interaction = Interaction.settling;
+    _interaction = widget.controller.pageScrubbing
+        ? Interaction.scrubbing
+        : Interaction.settling;
     // PageView changes its stable page when the drag crosses 50%. Preserve the
     // actual fractional position so the outgoing page remains transition-owned
     // until it leaves the viewport. Emitting the integer page here briefly

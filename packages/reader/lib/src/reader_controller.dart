@@ -28,6 +28,7 @@ final class ReaderController extends ChangeNotifier {
   int _stableIndex;
   ReadingDirection _direction;
   int? _requestedIndex;
+  bool _pageScrubbing = false;
   int _navigationRevision = 0;
   int _rotationQuarterTurns = 0;
   ReaderObs? _lastObservation;
@@ -36,6 +37,7 @@ final class ReaderController extends ChangeNotifier {
   int get stableIndex => _stableIndex;
   ReadingDirection get direction => _direction;
   int? get requestedIndex => _requestedIndex;
+  bool get pageScrubbing => _pageScrubbing;
   int get navigationRevision => _navigationRevision;
   int get rotationQuarterTurns => _rotationQuarterTurns;
   ReaderObs? get lastObservation => _lastObservation;
@@ -62,11 +64,34 @@ final class ReaderController extends ChangeNotifier {
   }
 
   void requestPage(int index) {
+    _pageScrubbing = false;
+    _requestPage(index, forceRevision: false);
+  }
+
+  void beginPageScrub() {
+    _pageScrubbing = true;
+  }
+
+  void scrubToPage(int index) {
+    _pageScrubbing = true;
+    _requestPage(index, forceRevision: false);
+  }
+
+  void endPageScrub(int index) {
+    _pageScrubbing = false;
+    // Ending a scrub is a planning boundary even when ReaderView has already
+    // acknowledged the final visible page. Force one navigation revision so
+    // the view can publish a non-scrub observation and restore the normal
+    // encoded/decode/upload windows without another page jump.
+    _requestPage(index, forceRevision: true);
+  }
+
+  void _requestPage(int index, {required bool forceRevision}) {
     if (index < 0 || index >= chapter.pages.length) {
       throw RangeError.range(index, 0, chapter.pages.length - 1, 'index');
     }
     if (_currentIndex == index) {
-      if (_requestedIndex == null) {
+      if (_requestedIndex == null && !forceRevision) {
         return;
       }
       _requestedIndex = null;
@@ -74,7 +99,7 @@ final class ReaderController extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    if (_requestedIndex == index) {
+    if (_requestedIndex == index && !forceRevision) {
       return;
     }
     _requestedIndex = index;

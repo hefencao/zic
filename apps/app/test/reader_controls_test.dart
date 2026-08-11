@@ -195,11 +195,12 @@ void main() {
     );
     await gesture.moveTo(Offset(slider.right - 24, slider.center.dy));
     await tester.pump();
-    // Slider dragging is UI-local scrub preview. Intermediate thumb positions
-    // must not issue Reader navigation commands or churn Pipeline demand.
+    // Slider dragging is live Reader navigation. The viewport follows the
+    // thumb before release; Pipeline marks these observations as scrubbing so
+    // only foreground-current demand moves with the gesture.
     expect(tester.widget<Slider>(sliderFinder).value, greaterThan(1));
     expect(
-      find.byKey(const ValueKey<String>('reader-page-rotation:0')),
+      find.byKey(const ValueKey<String>('reader-page-rotation:2')),
       findsOneWidget,
     );
     await gesture.up();

@@ -944,7 +944,9 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                     direction: reader.direction,
                     currentIndex: reader.currentIndex,
                     requestedIndex: reader.requestedIndex,
-                    onCommitted: reader.requestPage,
+                    onScrubStarted: reader.beginPageScrub,
+                    onScrubbed: reader.scrubToPage,
+                    onScrubEnded: reader.endPageScrub,
                   ),
                   ValueListenableBuilder<ReaderPlaybackState>(
                     valueListenable: _playback,
@@ -1112,28 +1114,31 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   }
 }
 
-/// UI-local page scrub preview.
+/// Reader page scrub control.
 ///
-/// Dragging a Slider is presentation state, not Reader navigation. A scrub may
-/// cross hundreds of page indices in one gesture; publishing every intermediate
-/// index as [ReaderController.requestPage] would force PageView jumps and full
-/// demand replans for positions the user never committed to. Keep the thumb and
-/// preview label local while dragging and emit exactly one navigation command
-/// when the gesture ends.
+/// The thumb and Reader navigation move together while dragging so page number
+/// and viewport remain live. The pipeline distinguishes the resulting
+/// `Interaction.scrubbing` observations and keeps only foreground-current
+/// demand until the gesture ends, avoiding a full prefetch-window replan for
+/// every intermediate index.
 final class _ReaderPageScrubber extends StatefulWidget {
   const _ReaderPageScrubber({
     required this.pages,
     required this.direction,
     required this.currentIndex,
     required this.requestedIndex,
-    required this.onCommitted,
+    required this.onScrubStarted,
+    required this.onScrubbed,
+    required this.onScrubEnded,
   });
 
   final int pages;
   final ReadingDirection direction;
   final int currentIndex;
   final int? requestedIndex;
-  final ValueChanged<int> onCommitted;
+  final VoidCallback onScrubStarted;
+  final ValueChanged<int> onScrubbed;
+  final ValueChanged<int> onScrubEnded;
 
   @override
   State<_ReaderPageScrubber> createState() => _ReaderPageScrubberState();
@@ -1145,15 +1150,21 @@ final class _ReaderPageScrubberState extends State<_ReaderPageScrubber> {
   int get _displayIndex =>
       _previewIndex ?? widget.requestedIndex ?? widget.currentIndex;
 
+  void _start(double value) {
+    widget.onScrubStarted();
+    _preview(value);
+  }
+
   void _preview(double value) {
     final index = value.round().clamp(0, widget.pages - 1).toInt();
     if (_previewIndex == index) return;
     setState(() => _previewIndex = index);
+    widget.onScrubbed(index);
   }
 
   void _commit(double value) {
     final index = value.round().clamp(0, widget.pages - 1).toInt();
-    widget.onCommitted(index);
+    widget.onScrubEnded(index);
     if (!mounted) return;
     setState(() => _previewIndex = null);
   }
@@ -1181,6 +1192,7 @@ final class _ReaderPageScrubberState extends State<_ReaderPageScrubber> {
               min: 0,
               max: math.max(1, pages - 1).toDouble(),
               divisions: pages > 1 ? pages - 1 : null,
+              onChangeStart: pages <= 1 ? null : _start,
               onChanged: pages <= 1 ? null : _preview,
               onChangeEnd: pages <= 1 ? null : _commit,
             ),

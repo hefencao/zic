@@ -1,7 +1,8 @@
 # ADR 0201：Reader scrub intent 与 physical trace fan-out 边界
 
-- Status: Accepted
+- Status: Superseded
 - Version: 0.31.0-dev.220
+- Superseded by ADR 0203：physical trace/ReaderBinding决定继续有效；“scrub仅release提交”被dev.222撤销。
 
 ## Context
 

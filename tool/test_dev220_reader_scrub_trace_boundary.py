@@ -35,24 +35,23 @@ changelog = read('CHANGELOG.md')
 for token in (
     'final class _ReaderPageScrubber extends StatefulWidget',
     'int? _previewIndex;',
+    'onChangeStart: pages <= 1 ? null : _start,',
     'onChanged: pages <= 1 ? null : _preview,',
     'onChangeEnd: pages <= 1 ? null : _commit,',
-    'onCommitted: reader.requestPage,',
     '_previewIndex ?? widget.requestedIndex ?? widget.currentIndex',
 ):
-    require(runtime, token, 'UI-local scrub preview / commit boundary')
+    require(runtime, token, 'scrub presentation/navigation boundary')
 
 scrubber = runtime[runtime.index('final class _ReaderPageScrubber'):]
-forbid(scrubber, 'onChanged: (value)', 'per-tick direct page request')
-forbid(scrubber, 'onChanged: reader.requestPage', 'per-tick navigation commit')
+forbid(scrubber, 'onChanged: reader.requestPage', 'UI bypassing Reader scrub navigation API')
 for token in (
-    'Slider dragging is UI-local scrub preview',
-    "find.byKey(const ValueKey<String>('reader-page-rotation:0'))",
+    'Slider dragging is live Reader navigation',
+    "find.byKey(const ValueKey<String>('reader-page-rotation:2'))",
     'await gesture.up();',
     'slider.onChangeEnd!(2);',
 ):
     require(reader_controls_test, token, 'real gesture scrub regression')
-require(app_smoke_test, 'slider.onChangeEnd!(1);', 'smoke test release commit')
+require(app_smoke_test, 'slider.onChangeEnd!(1);', 'smoke test scrub completion')
 
 accept_start = binding.index('  void accept(ReaderObs observation)')
 accept_end = binding.index('\n  bool classifyPage', accept_start)
