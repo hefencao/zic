@@ -17,13 +17,8 @@ def forbid(text: str, token: str, label: str) -> None:
 
 migration = read('apps/app/lib/demo_home_source_migration.dart')
 for token in (
-    'Future<void> _reconcileConfirmedSourceUpdateSignal(',
-    'if (storedSuccessors.isNotEmpty) {',
-    'Future<bool> _hasConfirmedSourceSuccessor(',
-    'if (known.isEmpty) return;',
-    'saved.copyWith(sourceUpdateAt: DateTime.now().toUtc())',
     'Future<int> _prepareSourceVersionArtifactReuse(',
-    'VerifiedArtifactReusePlan.matchResolvedOffset(',
+    'VerifiedArtifactReusePlan.matchResolvedRelated(',
     '_sourceResources.verifiedPageReuseIdentity(',
     'version-artifact-alias-prepared',
     "'candidateChapters': candidateChapters",
@@ -31,6 +26,7 @@ for token in (
 ):
     require(migration, token, 'confirmed-version update/reuse owner')
 forbid(migration, 'if (!discoveredNewVersion) return;', 'one-shot successor update gate')
+forbid(migration, 'Future<void> _reconcileConfirmedSourceUpdateSignal(', 'superseded version-to-sourceUpdateAt mirroring')
 
 home = read('apps/app/lib/demo_home.dart')
 for token in (

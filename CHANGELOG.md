@@ -1,3 +1,10 @@
+## 0.31.0-dev.208：版本关系投影与双向 artifact reuse 收口
+
+- 修复dev.207旧版右上`!`仍缺失：confirmed version relation正式进入`HomeLibrarySession`同步投影，source browser/Home不再依赖详情页把版本关系镜像成`SavedComicRecord.sourceUpdateAt`；章节更新与版本更新保持两个独立事实源。
+- `ComicVersionRelation`记录首次`discoveredAt`，SQLite重复确认relation只更新标题、不刷新发现时间；Home更新排序可直接合并章节`sourceUpdateAt`与版本`discoveredAt`。
+- 修复新版缓存→旧版不能复用：版本artifact matcher同时消费predecessor与successor relation，版本方向不再决定alias方向；只在相关版本真实artifact已存在且target缺失时注册target→最终storage alias，并避免形成反向alias环。
+- 新增Home relation projection、SQLite all-relations、双向offset reuse与alias-cycle回归，以及dev.208 ownership gate；版本提升到`0.31.0+208`。
+
 ## 0.31.0-dev.207：同源版本更新提醒、临时 artifact alias 与纵向 anchor 收口
 
 - 修复旧版卡右上更新感叹号缺失：confirmed successor/version 是持续 relation事实，不再只在“本轮首次发现”时推进 `sourceUpdateAt`；已持久化 relation即使早于入架或本次版本查询失败，也可重建书架漫画的 update signal。

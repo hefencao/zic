@@ -124,6 +124,54 @@ void main() {
     expect(session.entries, isEmpty);
   });
 
+  test('confirmed version relations are a write-through Home projection',
+      () async {
+    final library = MemoryImportedLibraryStore();
+    await library.open();
+    await library.saveComicVersionRelation(
+      ComicVersionRelation(
+        sourceId: 'venera:ehentai',
+        predecessorComicId: 'old-gallery',
+        successorComicId: 'new-gallery',
+        discoveredAt: DateTime.utc(2026, 8, 11),
+      ),
+    );
+    await library.close();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+
+    await session.ready;
+    expect(session.versionRelations, hasLength(1));
+    expect(session.versionRelations.single.predecessorComicId, 'old-gallery');
+
+    await session.upsertVersionRelation(
+      ComicVersionRelation(
+        sourceId: 'venera:ehentai',
+        predecessorComicId: 'new-gallery',
+        successorComicId: 'newest-gallery',
+        discoveredAt: DateTime.utc(2026, 8, 11, 1),
+      ),
+    );
+    expect(session.versionRelations, hasLength(2));
+    final durable = await library.listAllComicVersionRelations();
+    expect(durable, hasLength(2));
+  });
+
   test('stale reload snapshot cannot overwrite a write-through chapter',
       () async {
     final delegate = MemoryImportedLibraryStore();

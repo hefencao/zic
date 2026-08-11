@@ -487,6 +487,22 @@ final class MemoryImportedLibraryStore
   }
 
   @override
+  Future<List<ComicVersionRelation>> listAllComicVersionRelations() async {
+    _requireOpen();
+    final result = <ComicVersionRelation>[
+      for (final relations in _versionRelations.values) ...relations,
+    ]..sort((left, right) {
+        final source = left.sourceId.compareTo(right.sourceId);
+        if (source != 0) return source;
+        final predecessor =
+            left.predecessorComicId.compareTo(right.predecessorComicId);
+        if (predecessor != 0) return predecessor;
+        return left.successorComicId.compareTo(right.successorComicId);
+      });
+    return List<ComicVersionRelation>.unmodifiable(result);
+  }
+
+  @override
   Future<List<ComicVersionRelation>> listComicVersionPredecessors(
     String sourceId,
     String successorComicId,
@@ -536,7 +552,14 @@ final class MemoryImportedLibraryStore
       (value) => value.predecessorComicId == relation.predecessorComicId,
     );
     if (index >= 0) {
-      values[index] = relation;
+      final previous = values[index];
+      values[index] = ComicVersionRelation(
+        sourceId: relation.sourceId,
+        predecessorComicId: relation.predecessorComicId,
+        successorComicId: relation.successorComicId,
+        predecessorTitle: relation.predecessorTitle,
+        discoveredAt: previous.discoveredAt ?? relation.discoveredAt,
+      );
     } else {
       values.add(relation);
     }

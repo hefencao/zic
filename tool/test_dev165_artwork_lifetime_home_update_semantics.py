@@ -62,18 +62,14 @@ for token in (
     'chapterCatalogChanged ? now : existing?.sourceUpdateAt',
 ):
     require(catalog_identity + home, token, 'chapter-catalog update detection')
-for token in (
-    'Future<void> _reconcileConfirmedSourceUpdateSignal(',
-    'if (storedSuccessors.isNotEmpty) {',
-    'saved.copyWith(sourceUpdateAt: DateTime.now().toUtc())',
-):
-    require(migration, token, 'confirmed-version update reconciliation')
+forbid(migration, 'Future<void> _reconcileConfirmedSourceUpdateSignal(',
+       'superseded version-to-chapter-signal mirroring')
 forbid(migration, 'if (!discoveredNewVersion) return;',
        'one-shot version update detection')
 for token in (
     '_preferenceForComic(comic).inShelf &&',
-    'comic.sourceUpdateAt != null',
-    'right.sourceUpdateAt!.compareTo(left.sourceUpdateAt!)',
+    '_sourceUpdateAtForComic(comic) != null',
+    '_sourceUpdateAtForComic(right)!',
     '加入书架的漫画有新章节或新版本时显示',
 ):
     require(views, token, 'Home update feed semantics')

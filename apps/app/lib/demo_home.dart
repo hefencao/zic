@@ -197,6 +197,8 @@ final class _DemoHomeState extends State<DemoHome> {
       _librarySession.readStates;
   Map<String, ComicSourcePreference> get _sourcePreferences =>
       _librarySession.sourcePreferences;
+  List<ComicVersionRelation> get _versionRelations =>
+      _librarySession.versionRelations;
   Map<String, ChapterDownloadSnapshot> get _downloadSnapshots =>
       _librarySession.downloadSnapshots;
   WholeComicQueueSnapshot get _wholeComicQueueSnapshot =>

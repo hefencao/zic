@@ -35,6 +35,83 @@ final class VerifiedArtifactReusePlan {
     return VerifiedArtifactReusePlan._(aliases);
   }
 
+  /// Builds a temporary target-version -> source-version alias map for two
+  /// source-confirmed related versions, independent of version direction.
+  ///
+  /// [sourceChapter] is the side whose existing artifact may be reused;
+  /// [targetChapter] is the side currently being opened. Page-count delta is
+  /// evidence for an edge insertion/removal on either side, not an ordering
+  /// rule: a newer cached version may therefore satisfy an older target too.
+  static Future<VerifiedArtifactReusePlan> matchResolvedRelated({
+    required ChapterManifest sourceChapter,
+    required ChapterManifest targetChapter,
+    required VerifiedPageReuseIdentityResolver resolveIdentity,
+  }) async {
+    final direct = VerifiedArtifactReusePlan.match(
+      oldChapter: sourceChapter,
+      newChapter: targetChapter,
+    );
+    if (direct.aliases.isNotEmpty ||
+        sourceChapter.pages.isEmpty ||
+        targetChapter.pages.isEmpty) {
+      return direct;
+    }
+
+    final sourcePages = sourceChapter.pages;
+    final targetPages = targetChapter.pages;
+    final shifts = <int>[
+      sourcePages.length - targetPages.length,
+      0,
+    ].toSet();
+    for (final shift in shifts) {
+      final targetStart = shift < 0 ? -shift : 0;
+      final targetEndCandidate = sourcePages.length - shift;
+      final targetEnd = targetEndCandidate < targetPages.length
+          ? targetEndCandidate
+          : targetPages.length;
+      if (targetStart >= targetEnd) continue;
+      final overlap = targetEnd - targetStart;
+      final anchorTargets = overlap == 1
+          ? <int>[targetStart]
+          : <int>{
+              targetStart,
+              targetStart + overlap ~/ 2,
+              targetEnd - 1,
+            }.toList(growable: false);
+      final sourceIdentities = await Future.wait(
+        anchorTargets.map(
+          (targetIndex) =>
+              resolveIdentity(sourcePages[targetIndex + shift]),
+        ),
+      );
+      if (sourceIdentities.any((identity) => identity == null)) continue;
+      final targetIdentities = await Future.wait(
+        anchorTargets.map((index) => resolveIdentity(targetPages[index])),
+      );
+      var matches = 0;
+      for (var index = 0; index < anchorTargets.length; index++) {
+        final sourceIdentity = sourceIdentities[index];
+        final targetIdentity = targetIdentities[index];
+        if (sourceIdentity != null && sourceIdentity == targetIdentity) {
+          matches++;
+        }
+      }
+      final required = anchorTargets.length == 1 ? 1 : 2;
+      if (matches < required) continue;
+      return VerifiedArtifactReusePlan._(<DownloadId, DownloadId>{
+        for (var targetIndex = targetStart;
+            targetIndex < targetEnd;
+            targetIndex++)
+          readerPageDownloadId(targetChapter, targetPages[targetIndex]):
+              readerPageDownloadId(
+                sourceChapter,
+                sourcePages[targetIndex + shift],
+              ),
+      });
+    }
+    return direct;
+  }
+
   /// Builds a temporary new-version -> old-version alias map without
   /// migrating any durable library state.
   ///
@@ -112,8 +189,15 @@ final class VerifiedArtifactReusePlan {
   Future<int> applyExisting(ArtifactCacheManager cache) async {
     var applied = 0;
     for (final entry in aliases.entries) {
-      if (await cache.lookup(entry.value) == null) continue;
-      cache.alias(id: entry.key, target: entry.value);
+      final source = await cache.lookup(entry.value);
+      if (source == null) continue;
+      final targetStorage = cache.resolveAlias(entry.key);
+      if (targetStorage == source.storageId) {
+        applied++;
+        continue;
+      }
+      if (await cache.lookup(entry.key) != null) continue;
+      cache.alias(id: entry.key, target: source.storageId);
       applied++;
     }
     return applied;

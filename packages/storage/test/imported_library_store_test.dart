@@ -18,11 +18,12 @@ void main() {
       }
     });
     final path = '${directory.path}/library.sqlite3';
-    final relation = const ComicVersionRelation(
+    final relation = ComicVersionRelation(
       sourceId: 'venera:ehentai',
       predecessorComicId: 'old-comic',
       successorComicId: 'new-comic',
       predecessorTitle: '旧版标题',
+      discoveredAt: DateTime.utc(2026, 8, 11, 1),
     );
 
     final store = SqliteImportedLibraryStore(path);
@@ -45,6 +46,11 @@ void main() {
     );
     expect(predecessors.single.successorComicId, relation.successorComicId);
     expect(predecessors.single.predecessorTitle, relation.predecessorTitle);
+    expect(predecessors.single.discoveredAt, relation.discoveredAt);
+    final all = await reopened.listAllComicVersionRelations();
+    expect(all, hasLength(1));
+    expect(all.single.successorComicId, relation.successorComicId);
+    expect(all.single.discoveredAt, relation.discoveredAt);
     final successors = await reopened.listComicVersionSuccessors(
       relation.sourceId,
       relation.predecessorComicId,

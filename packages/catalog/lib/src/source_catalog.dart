@@ -389,16 +389,20 @@ final class ComicVersionRelation {
     required this.predecessorComicId,
     required this.successorComicId,
     this.predecessorTitle = '',
+    this.discoveredAt,
   });
 
   final String sourceId;
   final String predecessorComicId;
   final String successorComicId;
   final String predecessorTitle;
+  final DateTime? discoveredAt;
 }
 
 /// Optional durable storage for source-confirmed version relations.
 abstract interface class ComicVersionRelationStore {
+  Future<List<ComicVersionRelation>> listAllComicVersionRelations();
+
   Future<List<ComicVersionRelation>> listComicVersionPredecessors(
     String sourceId,
     String successorComicId,

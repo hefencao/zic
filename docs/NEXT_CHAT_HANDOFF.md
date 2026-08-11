@@ -1,5 +1,5 @@
-# dev.207 后续交接
-唯一后续基线：`zic_v0.31.0-dev.207_version-artifact-alias-vertical-anchor.zip`。
+# dev.208 后续交接
+唯一后续基线：`zic_v0.31.0-dev.208_version-relation-projection-bidirectional-artifact-reuse.zip`。
 `dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`
@@ -32,7 +32,7 @@
 - 漫画源 browse 内容 revision不再承担 artwork revision：分页、SWR后台刷新、详情回写导致的 browse projection变化都不能全局重建封面 Future/ImageProvider；仅 cover URI自身变化或显式来源 artwork refresh触发重新加载。source card Sliver owner key使用 canonical comic identity，raw plugin locator只用于调用/交互。
 - source filter唯一 schema事实是来源实际 `getFilterList()`：非空才显示“筛选”，空列表不发明入口。`filterState`只保存用户 override；独立 filter-view/useFilters mode决定是否执行筛选。direct apply空 override执行插件默认 FilterList且“筛选”获得焦点；filtered request不继承 Latest/Popular section。external browse typed factory/validator/adapter必须共享字段契约：schema v1新增 `useFilters` 可缺省为 false，未知字段仍严格拒绝。首次普通 section仍由当前 Presentation排序第一项决定。
 - Mihon Filter bridge按官方 Header/Separator/Select/Text/CheckBox/TriState/Group/Sort基类识别插件自定义子类，保留 Group树；runtime请求使用类型化 `filterState` override，不能退回 concrete class-name猜测或 flat `filterIds`。
-- source card只投影 Home事实：已入书架左上书架图标+变暗；confirmed successor relation是持续update事实，缺失`sourceUpdateAt`可由relation store重建，右上`!`不再依赖“首次发现”。查看已确认同源新版进入Reader前可用source request-plan强媒体identity证明offset，并在既有`ArtifactCacheManager`临时alias到旧artifact；不迁移/rekey实体。纵向ratio异步更新不得触发anchor jump。
+- source card只投影 Home事实：已入书架左上书架图标+变暗；confirmed successor relation由 `HomeLibrarySession.versionRelations` 同步投影，右上`!`不依赖`sourceUpdateAt`或详情页副作用。查看任一已确认同源版本进入Reader前可用source request-plan强媒体identity证明offset，并在既有`ArtifactCacheManager`从当前缺失target临时alias到相关版本已有artifact；旧→新与新→旧均可，但必须保持alias无环且不迁移/rekey实体。纵向ratio异步更新不得触发anchor jump。
 - durable artwork persistence在 `ResourceCacheManager/FileResourceCacheByteStore` 内分为 `transient/retained`：browse/preview为 transient；library/history/details cover在同一 canonical key上晋升 retained。retained不受自动 LRU/TTL/manual transient trim影响，只接受精确 artwork失效、整漫画资源删除或用户清缓存。
 - catalog metadata refresh使用 `invalidateComicMetadata`，不得按 comic namespace连坐 artwork；真正删除漫画时才调用 `invalidateAllComicResources`。
 - maintenance统计/trim接口是 storage/cache内部纯契约；`ResourceCacheByteStoreUsage/TrimReport/Maintenance`存在，但任何 `locate()/PersistedResourceFile/FileAccess`借用路径都不得恢复。
@@ -42,7 +42,7 @@
 - 初次 external runtime activation 的 service-generation continuity属于 Android `PluginRuntimeServiceClient`：只有 pending `activateMihonRuntime/activateVeneraRuntime`可跨一个 died/disconnected Binder generation；Dart backend不再二次调用 activation。业务错误与 established-session invocation不进入该策略。
 - Home外部封面仍把 source availability作为显式加载依赖；history/update Sliver仍持有 `section + canonical comic identity`稳定 key。dev.165不恢复 presentation retry/watchdog/evict。
 - cache-owned durable artwork文件不再跨边界成为 `FileImage`。`ResourceCacheManager`从持久 byte store恢复后交付自持有 memory bytes；只有稳定本地导入文件可使用 `FileEncodedResourceSource`。
-- Home updates不是“最近元数据/最近阅读”：仅已入书架且 `sourceUpdateAt`存在的漫画显示；章节目录已有基线后变化或发现新同源 version才产生 signal。远程无偏好记录默认不在书架。
+- Home updates不是“最近元数据/最近阅读”：仅已入书架且具有章节 `sourceUpdateAt` 或 projected confirmed successor relation 的漫画显示；两类事实独立，不通过互相写回制造signal。远程无偏好记录默认不在书架。
 - Reader SQLite仍由 storage-owned isolate按同章节 latest-wins合并，空闲约8秒提交、持续活跃最多约30秒提交；route不等待 durable barrier。
 - 全局网络 User-Agent是 composition fallback，默认 Android Chrome 150并可设置；source显式 UA、Mihon browser-session UA优先。App presentation不得创建独立 HTTP client。
 - shared source host replay只允许无状态媒体：禁止自动 redirect；redirect、`Set-Cookie`、非媒体 body或未知 client wrapper立即切 source-owned client。metadata/artwork必须走 `ResourceCacheManager`；`pageResponseLoaderFor/loadPageBytes`仅供 Reader/章节正文，由 DownloadSession/artifact接管。 full-byte 与 streaming 必须复用同一 response loader；章节下载只通过原子 `ChapterResourceAccess` 绑定，禁止恢复 byte/transport 双 setter。
@@ -61,7 +61,7 @@
 - Native identity保持 `zic-media-core-dev134-abi6-lib00121400`。
 - production rhttp direct在普通release默认记录每response一次的HTTP version、匿名remote-IP hash与receive-progress-enabled标记；高频`onReceiveProgress`仅non-product或显式`ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS=1`诊断构建启用。该观测不得反馈给NetLane/Reader/retry/cache/framing。
 ## 下一步真机优先验证
-- 下一轮真机先验证dev.207：旧版confirmed successor右上`!`必须稳定；不迁移直接查看新版时同页应先命中temporary artifact alias而非origin重下；纵向静态图片上下滑动不再因ratio收敛短距离回拉。同时保留dev.206 hot-session/真实evict partial handoff与Venera rhttp resolver边界。
+- 下一轮真机先验证dev.208：已有持久confirmed successor的旧版source card无需再次进入详情即可稳定显示右上`!`；分别从旧版缓存打开新版、从新版缓存打开旧版，强身份匹配页面都应命中temporary artifact alias而非origin重下。继续观察dev.207纵向静态图ratio-anchor修复，同时保留dev.206 hot-session/真实evict partial handoff与Venera rhttp resolver边界。
 - 07:51 dev.198 trace已确认Range成功路径仍正确，但full-body fallback重复重新放大到约19.2MiB/123.2MiB（15.6%），多数发生在760/780/800背景角色；dev.199只阻止这类低优先级大partial从0反复重读。820/900/1000、小partial和合法206必须保持原行为，不把defer扩展成通用restart-cost scheduler。
 - 首先复测快速前后翻页：dev.185外层previous admission应继续保持毫秒级；dev.189应确认780↔900不再导致plan取消，只有waiter真正晋升current=1000时才触发动态pressure，并确认旧JS未`finished(requestId)`前新plan绝不并发进入。无真实pressure时`receivingRetained=true` priority0仍应短时复用。
 - 真机首要复测 current 首帧稳定性：观察 policyDecision 的 staticWarmDecodes/uploads 是否收敛到稳定decode角色/真实可见页，current浅水位期间是否停止 speculative neighbor refill，以及decode/upload current handoff是否避免后台长任务阻塞。

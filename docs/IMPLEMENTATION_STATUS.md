@@ -2,8 +2,9 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.207` / App `0.31.0+207`。
-- dev.207：confirmed同源 successor relation不再是一次性“首次发现”事件：持久relation可重建缺失 `sourceUpdateAt`，修复旧版 source card `!`不出现。查看新版进入Reader前使用既有 source request-plan解析强媒体identity，以首/中/末锚点证明页面offset后在 `ArtifactCacheManager` 注册临时 new→old DownloadId alias；只复用已存在artifact，不迁移/复制durable状态。纵向Reader取消 pageAspectRatios异步更新触发的anchor jump，保留真实viewport/DPR/stitch与显式导航anchor。
+- 当前版本：`0.31.0-dev.208` / App `0.31.0+208`。
+- dev.208：修正dev.207仍未闭环的两个方向性问题。`ComicVersionRelationStore.listAllComicVersionRelations()` 进入 `HomeLibrarySession` write-through投影，source browser/Home直接由confirmed predecessor→successor relation判断版本更新，不再要求详情页先重建`sourceUpdateAt`。artifact reuse同时查询predecessor/successor，版本方向仅证明相关；实际临时alias从当前缺失的target精确DownloadId指向相关版本中已有的最终storage artifact，并避免反向alias环。
+- dev.207：首次引入 source-confirmed version artifact临时alias并删除 pageAspectRatios异步anchor jump；真机随后证明两个局部设计仍不足：版本提醒仍依赖详情页把relation镜像进`sourceUpdateAt`，artifact reuse也只覆盖predecessor→successor。两点均由dev.208 supersede；纵向anchor决策继续有效。
 - dev.206：对照VibeVenera所有权后纠正dev.205方向：普通Reader detach/reentry本来就由2分钟retention pool复用整个PipelineReaderSession，因此hot partial不再route-checkpoint，也不再经过ArtifactCacheManager。只有session真实evict/dispose才由Download-owned PartialDownloadHandoff→PersistentChapterDownloadService冷持久化；dev.205 cursor-reentry/partial playback修复与约30帧循环保留在DecodeSession。Venera resolver `Network.*`实际HTTP从Kotlin HttpURLConnection/DoH/reflective OkHttp迁到isolated plugin Dart reusable rhttp client；Cookie/manual redirect/cache-time/prevent-parallel/requestId仍属于source runtime。
 - dev.205（已被0188部分取代）：12:24 trace确认未promoted partial真实dispose后无durable owner，以及旧later-frame prefix hint阻塞frame0重入；其cursor顺序修复保留，route-retain checkpoint/ArtifactCache partial wiring在dev.206撤销。
 - dev.204：11:48 dev.203 trace中20次首帧中位约70ms、p90约1.56s、最坏约2.33s；30条origin中request-plan cache miss 21/hit 9，miss plan中位约1.34s而hit约0.014ms，current miss gate wait已很低，cold tail主要属于自身resolver Network调用。按用户真机反馈修正dev.203过度回滚：retention改为1/3 dev.201 bounded + 2/3 dev.202 headroom；另修Venera native bridge完整response后无条件disconnect，改为显式关闭stream并保留平台HTTP连接池复用机会，异常/取消仍物理disconnect。两条策略互不读取诊断，不改JS并发、cache identity、Reader/Pipeline、Range/defer或network=5。
@@ -32,7 +33,7 @@
 - Venera preemption先断requestId native HTTP，再等待JS `finished`后返回cancelled并释放permit，禁止同一WebView中旧/新async invocation重叠。修复 `ArtifactCacheReadLease?` nullable半迁移编译错误。
 - 当前环境无Flutter/Dart/Android完整SDK；行为测试已加入源码，最终设备构建/性能仍需本地验证。
 
-**源码版本：** `0.31.0-dev.207`
+**源码版本：** `0.31.0-dev.208`
 **App build：** `0.31.0+206`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
@@ -50,7 +51,7 @@
 - dev.177保留VibeVenera receiving生命周期：普通logical detach不取消active transfer，短时回切原位提权；current pressure才抢占。dev.180进一步把“上一current output retention”从相对role拆出：相邻旧current仍按真实offset成为previous/next并继续download/decode，`retainedIndex`只叠加last-output upload；大跳后若旧页已离开7/3窗口则只保output，不制造冗余网络/解码。
 - External plugin browse wire contract 已与 dev.171 filter mode 对齐：typed factory、runtime validator、source adapter均显式认识 `useFilters`；schema v1旧请求允许缺省该新增字段并按 false解释，但未知字段/错误类型继续严格拒绝。发布 gate在无 Dart SDK环境也检查 protocol/adapter/Mihon driver四端一致。
 - 漫画源筛选拥有独立 filter-view request mode：非空 schema时“筛选”是可选中焦点；直接应用未修改面板也会以插件默认 `FilterList`执行 filtered browse。空 override不再等于普通 section；filter mode的 Catalog key/runtime payload单独编码，且不继承 Latest/Popular section。
-- 漫画源卡片书架状态由 Home canonical `ComicPreference`投影：已入书架封面左上显示书架图标并变暗，不建立 source-page shelf store；`sourceUpdateAt`作为独立右上感叹号提示。Home/书架下载完成勾改为显式命令反馈：单章完成空心勾、整本 queue complete绿色实心勾，进入详情消费；持久 chapter cache不再直接生成完成勾。
+- 漫画源卡片书架状态由 Home canonical `ComicPreference`投影：已入书架封面左上显示书架图标并变暗，不建立 source-page shelf store；右上感叹号由章节 `sourceUpdateAt` 与 `HomeLibrarySession.versionRelations` 的 confirmed successor事实共同投影，不依赖详情页先写副作用。Home/书架下载完成勾是显式命令反馈：单章完成空心勾、整本 queue complete绿色实心勾，进入详情消费；持久 chapter cache不直接生成完成勾。
 - 漫画源 browse projection 与 artwork presentation 已解耦：目录分页/后台刷新只更新 metadata，不再用全局 `_contentRevision` 强制所有 `_RemoteImage` 重新加载；封面只在自身 URI 变化或用户显式来源刷新时更换 source。Sliver child owner key 使用 canonical comic identity，mutable raw locator只保留 source调用/交互定位。
 - 漫画源筛选改为来源真实 `FilterList` schema/state contract：Mihon bridge按官方 Filter基类识别插件自定义子类，完整保留 Header/Separator/Select/Text/CheckBox/TriState/Group/Sort与 Group层次；只有非空 schema才显示“筛选”，用户修改以类型化 `filterState` override进入 search request。
 - durable artwork persistence 已拆分为同一 owner 下的 `transient/retained` 生命周期：source browse/preview继续受 96项/32 MiB transient LRU、TTL及 maintenance target约束；library/history/details cover在同一 canonical `ResourceCacheKey` 上晋升 retained，不再参与容量/TTL淘汰。晋升只改变持久生命周期元数据，不创建第二 cache namespace。
@@ -60,7 +61,7 @@
 - `HomeLibrarySession.reload()` 以 projection revision拒绝旧 entries/SavedComic snapshot覆盖 enrichment期间更晚的 write-through更新，避免 history在并发 reload结束时回退。
 - External artwork基础 schema revision唯一属于 `resource_cache/ComicSourceResourceGateway`。browse/details/history使用同一 `artwork-v2` namespace；gateway参数只允许额外 `contentRevision`，Home/详情不再把 `artwork-v2` 重复拼成 `artwork-v2:artwork-v2`。local artwork直接复用同一个 schema revision。
 - response cache不再把可由 LRU/TTL/invalidate删除的持久文件路径暴露给 artwork presentation。durable artwork命中先物化为 `MemoryEncodedResourceSource` 自持有 bytes；`FileEncodedResourceSource` 类型只能表示稳定本地文件。已删除 file-locate/borrow facade，避免已显示首帧在 cache trim后再次 decode 时悬空。
-- Home“更新漫画”使用独立 `SavedComicRecord.sourceUpdateAt`：仅 shelf + source-confirmed update进入。已有章节目录发生变化或首次发现新 successor/version才推进；阅读 progress、普通 metadata刷新和未入书架浏览不推进。远程无偏好 primary projection默认 `inShelf=false`，首次加入书架清理加入前 update signal。
+- Home“更新漫画”合并两类独立 source-confirmed事实：章节/目录变化读取 `SavedComicRecord.sourceUpdateAt`；同源版本变化读取 projected `ComicVersionRelation.discoveredAt`。仅 shelf comic进入；版本relation不再镜像写回`sourceUpdateAt`。阅读 progress、普通 metadata刷新和未入书架浏览不推进。远程无偏好 primary projection默认 `inShelf=false`。
 - 初次 Venera/Mihon activation 的 Binder generation连续性已下沉到 Android `PluginRuntimeServiceClient`：仅 pending activation可跨一个 `runtime-service-died/disconnected` generation；Dart backend删除初次 activation重放，session invocation与业务失败仍按原 owner处理。
 - Home外部封面继续把 live source readiness作为显式加载依赖：首屏早于 plugin ready且 warm cache miss时，失败 Future只在对应 source从 unavailable→available后重新求值；普通 progress/enrichment rebuild不重试。历史/更新横向 Sliver直接 child使用 `section + canonical comic identity` 稳定 key并提供 reorder index callback。
 - debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=192`。
@@ -68,7 +69,7 @@
 - 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation不阻塞 Home primary，外部 source ready 后增量接入。
 - artwork资源恢复唯一属于 `ComicSourceResourceGateway/ResourceCacheManager`。Home、书架、漫画源和详情 presentation 已删除定时 retry、first-frame watchdog、App resume自动 retry、全局 ImageCache eviction和 App级短时 Future join；详情统一使用 `ComicDetailsArtworkLoader` 并显式传递 cover/preview/avatar role。普通 artwork直接复用 `StableArtworkImage`；需要裁剪/尺寸测量时只有一个显式 ImageStream listener，不再同时创建第二个 `Image`。
 - 外部 artwork 的 raw comicId只保留 runtime locator语义；durable cover/preview namespace使用来源 canonical comic identity。Home、漫画源、详情与迁移统一经 `ComicSourceResourceGateway`，`mihon:resource:` 不再误入本地文件 loader；gateway先查 source-independent durable cache，miss后才要求 active source。
-- 详情页恢复通用“迁移漫画源”AppBar入口，并与现有同源版本能力统一到一个迁移 owner：同源确认版本在迁移面板提供“查看/迁移”，跨源标题搜索只发现候选；所有迁移继续进入严格比较确认且只复制 exact chapter状态。漫画源卡片左上书架图标+变暗只投影 shelf membership，右上感叹号投影 `sourceUpdateAt`；点击确认同源更新可直接查看 successor。
+- 详情页通用“迁移漫画源”AppBar入口与同源版本能力统一到一个迁移 owner：同源确认版本在迁移面板提供“查看/迁移”，跨源标题搜索只发现候选；所有迁移继续进入严格比较确认且只复制 exact chapter状态。漫画源卡片左上书架图标+变暗只投影 shelf membership，右上感叹号直接消费章节更新或 projected confirmed successor；点击确认同源更新可直接查看 successor。
 - App-owned modal panel 的操作行统一使用左下角 X 关闭，右侧保留确认/保存/删除动作，
   已移除取消文字按钮。
 - Venera 运行时登录请求已兼容 Android 解码后的嵌套 Map，不再把 credentials/cookies/web
@@ -92,7 +93,7 @@
 - Mihon chapter目录不再 synthetic/标题/URL去重。1.6/current先走 combined `getMangaUpdate`；ZIC `CatalogueSource` shim已对齐当前 Mihon：details与chapters都基于原始 `SManga`独立请求，legacy fallback的 `fetchChapterList`也使用原始 manga。正文 `getPageList(SChapter)`只在能力缺失时回退 `fetchPageList`。Mihon comic/chapter durable metadata升 revision，避免旧错误空/单目录继续命中。
 - Cloudflare 主路径与兼容路径统一委托 typed detector；仅严格 403/503 challenge 映射 `sourceVerificationRequired`，没有隐藏 WebView 或消息文本判断。
 - catalog response cache 使用稳定 source/comic/chapter identity 和结构 weight；页面正文不进入该缓存。
-- Home“更新漫画”与阅读历史分离：更新集合只消费 `SavedComicRecord.sourceUpdateAt`，不消费 `updatedAt` 或 `ReadingProgress.updatedAt`；Reader checkpoint不逐页触发 Home rebuild，route返回后只用最终 `ReadingProgress`更新匹配的内存历史 entry一次。
+- Home“更新漫画”与阅读历史分离：更新集合只消费章节 `SavedComicRecord.sourceUpdateAt` 与 projected confirmed-version `discoveredAt`，不消费普通 `updatedAt` 或 `ReadingProgress.updatedAt`；Reader checkpoint不逐页触发 Home rebuild，route返回后只用最终 `ReadingProgress`更新匹配的内存历史 entry一次。
 - 详情预览保留完整 URI 作为单项绘制身份，但 artwork role/cache key 使用去 `@x/y` 的 base URI，
   同一原图的不同裁剪共享一份编码字节；Venera `loadThumbnails` 的首批与游标分页
   不再重复消费 `loadInfo` 缩略图；折叠与展开共用按原顺序生成的等面积布局；实际行内含横图时最多 2 张、纯竖图时最多 3 张；只在相邻三个候选内做最小局部重排，并受阅读设置的 1–8 项上限约束（默认 4）。完整行按全部媒体宽度反算尺寸，预览图片区不再叠加 Card 和水平 padding；稀疏末行最多放大到参考完整行面积的 2.4 倍；折叠高度取第一行，展开图片区域不超过屏幕高度 90%，居中箭头控制展开；点击预览项会将索引传入既有 Reader 路由；Venera

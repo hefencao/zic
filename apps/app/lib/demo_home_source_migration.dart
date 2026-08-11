@@ -126,13 +126,6 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     if (store == null) {
       return;
     }
-    final known = <String>{
-      for (final relation in await store.listComicVersionSuccessors(
-        source.sourceId,
-        predecessorComicId,
-      ))
-        relation.successorComicId,
-    };
     for (final successor in successors) {
       if (successor.isPredecessor ||
           successor.sourceId != source.sourceId ||
@@ -140,43 +133,66 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           successor.comicId == predecessorComicId) {
         continue;
       }
-      known.add(successor.comicId);
-      await store.saveComicVersionRelation(
+      await _librarySession.upsertVersionRelation(
         ComicVersionRelation(
           sourceId: source.sourceId,
           predecessorComicId: predecessorComicId,
           successorComicId: successor.comicId,
           predecessorTitle: predecessorTitle,
+          discoveredAt: DateTime.now().toUtc(),
         ),
       );
     }
-    // A confirmed successor is a current relationship, not a one-shot event.
-    // The relation may have been discovered before this comic was added to
-    // the shelf, or persisted while sourceUpdateAt was later cleared. Reconcile
-    // the visible update signal whenever the confirmed relation is observed.
-    if (known.isEmpty) return;
-    await _reconcileConfirmedSourceUpdateSignal(
-      source.sourceId,
-      predecessorComicId,
-    );
+    // The relation itself is the durable version-update fact. Do not mirror it
+    // into SavedComicRecord.sourceUpdateAt: that field remains chapter/catalog
+    // update state, while Home/source presentation reads version relations from
+    // HomeLibrarySession's synchronous projection.
   }
 
-  Future<void> _reconcileConfirmedSourceUpdateSignal(
+  DateTime? _projectedConfirmedSourceUpdateAt(
     String sourceId,
-    String predecessorComicId,
-  ) async {
-    final saved = _preferredSavedComicAlias(sourceId, predecessorComicId) ??
-        await _library.getSavedComic(sourceId, predecessorComicId);
-    if (saved == null || saved.sourceUpdateAt != null) return;
-    await _librarySession.upsertSavedComic(
-      saved.copyWith(sourceUpdateAt: DateTime.now().toUtc()),
+    String comicId,
+  ) {
+    final aliases = _canonicalComicAliases(sourceId, comicId);
+    DateTime? latest;
+    for (final relation in _versionRelations) {
+      if (relation.sourceId != sourceId ||
+          !aliases.contains(relation.predecessorComicId) ||
+          relation.successorComicId.isEmpty ||
+          aliases.contains(relation.successorComicId)) {
+        continue;
+      }
+      final discoveredAt = relation.discoveredAt;
+      if (discoveredAt != null &&
+          (latest == null || discoveredAt.isAfter(latest))) {
+        latest = discoveredAt;
+      } else if (discoveredAt == null && latest == null) {
+        latest = DateTime.fromMicrosecondsSinceEpoch(1, isUtc: true);
+      }
+    }
+    return latest;
+  }
+
+  DateTime? _sourceUpdateAtForComic(LibraryComic comic) {
+    final versionUpdateAt = _projectedConfirmedSourceUpdateAt(
+      comic.sourceId,
+      comic.comicId,
     );
+    final catalogUpdateAt = comic.sourceUpdateAt;
+    if (versionUpdateAt == null) return catalogUpdateAt;
+    if (catalogUpdateAt == null || versionUpdateAt.isAfter(catalogUpdateAt)) {
+      return versionUpdateAt;
+    }
+    return catalogUpdateAt;
   }
 
   Future<bool> _hasConfirmedSourceSuccessor(
     String sourceId,
     String comicId,
   ) async {
+    if (_projectedConfirmedSourceUpdateAt(sourceId, comicId) != null) {
+      return true;
+    }
     final store = _comicVersionRelationStore();
     if (store == null) return false;
     for (final alias in _canonicalComicAliases(sourceId, comicId)) {
@@ -204,26 +220,40 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         _sourceForId(current.chapter.sourceId) == null) {
       return 0;
     }
-    final relations = await store.listComicVersionPredecessors(
+    final predecessorRelations = await store.listComicVersionPredecessors(
       current.chapter.sourceId,
       current.chapter.comicId,
     );
-    if (relations.isEmpty) return 0;
+    final successorRelations = await store.listComicVersionSuccessors(
+      current.chapter.sourceId,
+      current.chapter.comicId,
+    );
+    final relatedComicIds = <String>{
+      for (final relation in predecessorRelations)
+        if (relation.predecessorComicId.isNotEmpty &&
+            relation.predecessorComicId != current.chapter.comicId)
+          relation.predecessorComicId,
+      for (final relation in successorRelations)
+        if (relation.successorComicId.isNotEmpty &&
+            relation.successorComicId != current.chapter.comicId)
+          relation.successorComicId,
+    };
+    if (relatedComicIds.isEmpty) return 0;
 
     var reused = 0;
     var candidateChapters = 0;
-    for (final relation in relations) {
-      final oldEntries = _libraryEntries.where(
+    for (final relatedComicId in relatedComicIds) {
+      final sourceEntries = _libraryEntries.where(
         (entry) =>
             entry.chapter.sourceId == current.chapter.sourceId &&
-            entry.chapter.comicId == relation.predecessorComicId &&
+            entry.chapter.comicId == relatedComicId &&
             entry.chapter.sequence == current.chapter.sequence,
       );
-      for (final oldEntry in oldEntries) {
+      for (final sourceEntry in sourceEntries) {
         candidateChapters++;
-        final plan = await VerifiedArtifactReusePlan.matchResolvedOffset(
-          oldChapter: oldEntry.chapter.toManifest(),
-          newChapter: current.chapter.toManifest(),
+        final plan = await VerifiedArtifactReusePlan.matchResolvedRelated(
+          sourceChapter: sourceEntry.chapter.toManifest(),
+          targetChapter: current.chapter.toManifest(),
           resolveIdentity: (page) =>
               _sourceResources.verifiedPageReuseIdentity(
             sourceId: current.chapter.sourceId,
@@ -241,7 +271,9 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         identityHash: '${current.chapter.sourceId}\u0000${current.chapter.chapterId}',
         payload: <String, Object?>{
           'stage': 'version-artifact-alias-prepared',
-          'relationCount': relations.length,
+          'relationCount': relatedComicIds.length,
+          'predecessorRelations': predecessorRelations.length,
+          'successorRelations': successorRelations.length,
           'candidateChapters': candidateChapters,
           'reusedPages': reused,
         },
@@ -335,6 +367,13 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       fallbackInShelf: false,
     ).inShelf;
     if (!inShelf) return false;
+    if (_projectedConfirmedSourceUpdateAt(
+          source.sourceId,
+          summary.comicId,
+        ) !=
+        null) {
+      return true;
+    }
     return _savedComicAliasesFor(source.sourceId, summary.comicId)
         .any((saved) => saved.sourceUpdateAt != null);
   }

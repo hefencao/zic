@@ -159,12 +159,12 @@ extension _DemoHomeViews on _DemoHomeState {
         .where(
           (comic) =>
               _preferenceForComic(comic).inShelf &&
-              comic.sourceUpdateAt != null,
+              _sourceUpdateAtForComic(comic) != null,
         )
         .toList(growable: true)
       ..sort(
-        (left, right) =>
-            right.sourceUpdateAt!.compareTo(left.sourceUpdateAt!),
+        (left, right) => _sourceUpdateAtForComic(right)!
+            .compareTo(_sourceUpdateAtForComic(left)!),
       );
     final visibleUpdates = updates.take(10).toList(growable: false);
     final telemetryOwners = <String>{};

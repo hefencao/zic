@@ -57,6 +57,8 @@ final class HomeLibrarySession extends ChangeNotifier {
       const <String, ChapterReadState>{};
   Map<String, ComicSourcePreference> _sourcePreferences =
       const <String, ComicSourcePreference>{};
+  List<ComicVersionRelation> _versionRelations =
+      const <ComicVersionRelation>[];
   Map<String, ChapterDownloadSnapshot> _downloadSnapshots =
       const <String, ChapterDownloadSnapshot>{};
   late WholeComicQueueSnapshot _wholeComicQueueSnapshot;
@@ -73,6 +75,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   Map<String, ChapterReadState> get readStates => _readStates;
   Map<String, ComicSourcePreference> get sourcePreferences =>
       _sourcePreferences;
+  List<ComicVersionRelation> get versionRelations => _versionRelations;
   Map<String, ChapterDownloadSnapshot> get downloadSnapshots =>
       _downloadSnapshots;
   WholeComicQueueSnapshot get wholeComicQueueSnapshot =>
@@ -155,6 +158,14 @@ final class HomeLibrarySession extends ChangeNotifier {
     final preferencesFuture = library.listComicPreferences();
     final sourcePreferencesFuture = library.listSourcePreferences();
     final readStatesFuture = library.listAllChapterReadStates();
+    final versionRelationStore = library is ComicVersionRelationStore
+        ? library as ComicVersionRelationStore
+        : null;
+    final versionRelationsFuture = versionRelationStore == null
+        ? Future<List<ComicVersionRelation>>.value(
+            const <ComicVersionRelation>[],
+          )
+        : versionRelationStore.listAllComicVersionRelations();
     final categories = await categoriesFuture;
     final storedPreferences = await preferencesFuture;
     final storedSourcePreferences = await sourcePreferencesFuture;
@@ -261,10 +272,13 @@ final class HomeLibrarySession extends ChangeNotifier {
     final readStates = <String, ChapterReadState>{
       for (final state in await readStatesFuture) state.identity: state,
     };
+    final versionRelations = await versionRelationsFuture;
 
     if (_libraryProjectionRevision == projectionRevisionAtStart) {
       _entries = List<ImportedLibraryEntry>.unmodifiable(entries);
       _savedComics = List<SavedComicRecord>.unmodifiable(savedComics);
+      _versionRelations =
+          List<ComicVersionRelation>.unmodifiable(versionRelations);
     }
     _categories = List<LibraryCategory>.unmodifiable(categories);
     _preferences = Map<String, ComicPreference>.unmodifiable(preferences);
@@ -306,6 +320,42 @@ final class HomeLibrarySession extends ChangeNotifier {
       _loading = false;
       _publish();
     }
+  }
+
+  Future<void> upsertVersionRelation(ComicVersionRelation relation) async {
+    final store = library is ComicVersionRelationStore
+        ? library as ComicVersionRelationStore
+        : null;
+    if (store == null) {
+      throw StateError('library does not persist comic version relations');
+    }
+    await store.saveComicVersionRelation(relation);
+    replaceVersionRelation(relation);
+  }
+
+  void replaceVersionRelation(ComicVersionRelation relation) {
+    final next = _versionRelations.toList(growable: true);
+    final index = next.indexWhere(
+      (current) =>
+          current.sourceId == relation.sourceId &&
+          current.predecessorComicId == relation.predecessorComicId &&
+          current.successorComicId == relation.successorComicId,
+    );
+    if (index < 0) {
+      next.add(relation);
+    } else {
+      final previous = next[index];
+      next[index] = ComicVersionRelation(
+        sourceId: relation.sourceId,
+        predecessorComicId: relation.predecessorComicId,
+        successorComicId: relation.successorComicId,
+        predecessorTitle: relation.predecessorTitle,
+        discoveredAt: previous.discoveredAt ?? relation.discoveredAt,
+      );
+    }
+    _versionRelations = List<ComicVersionRelation>.unmodifiable(next);
+    _libraryProjectionRevision++;
+    _publish();
   }
 
   void replacePreference(ComicPreference preference) {

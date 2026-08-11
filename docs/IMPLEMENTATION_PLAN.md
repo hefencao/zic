@@ -21,7 +21,7 @@
 
 ## P0：迁移 / 同源版本 / 更新提示真机闭环
 
-- 在 source card 已入书架时确认左上显示书架图标并变暗；存在 `sourceUpdateAt` 时右上显示独立感叹号。点击同源更新提示应直接打开来源确认的最新 successor，不得把 successor 自动加入书架。
+- 在 source card 已入书架时确认左上显示书架图标并变暗；存在章节 `sourceUpdateAt` 或 projected confirmed successor relation 时右上显示独立感叹号。点击同源更新提示应直接打开来源确认的最新 successor，不得把 successor 自动加入书架。
 - 从详情 AppBar 打开“迁移漫画源”：同源只展示 `ComicVersionSource/ComicVersionRelationStore` 已确认版本并提供“查看/迁移”；跨源可搜索同名候选或手填原生 ID。所有迁移必须进入同一个比较确认，sequence-only 不复制状态。
 - E-Hentai/Venera 版本更新验证 raw locator、canonical identity、SavedComic/偏好别名：迁移到 successor 后旧 raw alias不得继续显示书架标志；查看版本不得改写阅读历史/版本关系。
 
@@ -156,7 +156,7 @@
 
 ## P0：Flutter/Android 工具链闭环
 
-- 真机验证 dev.207：E-Hentai旧版在书架且已有confirmed successor时，旧版source card必须出现右上`!`，即使relation早于入架或本次版本查询未产生“新关系”。不迁移直接查看新版并进入Reader，首/中/末offset证据通过后，同一旧图片必须从artifact alias命中而非origin重下；trace应出现`version-artifact-alias-prepared`。
+- 真机验证 dev.208：E-Hentai旧版在书架且已有持久confirmed successor时，Home/source browser无需再次进入详情即可由 `HomeLibrarySession.versionRelations` 直接显示右上`!`。分别验证旧缓存→新版与新版缓存→旧版：强identity/offset证据通过后，目标页面必须命中相关版本已有artifact而非origin重下；trace的`version-artifact-alias-prepared`应同时报告 predecessor/successor relation数与`reusedPages`。
 - 纵向静态图片持续上下拖动时，异步页面比例收敛不得再触发anchor `jumpTo`造成短距离回拉；旋转、真实viewport/DPR变化、vertical stitch切换与显式跳页仍需验证位置连续。
 - 真机优先验证 dev.206 ownership：快速退出/重进同chapter应直接复用retained PipelineReaderSession，不出现partial durable store/restore；只有session真实evict/dispose后新session才出现`session-partial-handoff` restored且`downloadStarted.committedLength>0`。已有partial动画重入必须从frame0立即播放，约30帧循环继续只属于DecodeSession。Venera cold resolver应不再出现Kotlin HttpURLConnection owner，并验证requestId cancel、Cookie/manual redirect与resolver rhttp复用。
 - 运行 Rust/Android target 与 JNI symbol验证，确认 APK 中 native build identity正确。

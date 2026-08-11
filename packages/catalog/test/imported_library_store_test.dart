@@ -28,6 +28,10 @@ void main() {
     );
     expect(predecessors.single.successorComicId, relation.successorComicId);
     expect(predecessors.single.predecessorTitle, relation.predecessorTitle);
+    final all = await store.listAllComicVersionRelations();
+    expect(all, hasLength(1));
+    expect(all.single.predecessorComicId, relation.predecessorComicId);
+
     final successors = await store.listComicVersionSuccessors(
       relation.sourceId,
       relation.predecessorComicId,

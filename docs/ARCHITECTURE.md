@@ -107,8 +107,7 @@ raw Mihon locator继续只用于插件 request/chapter identity，不参与 dura
 首页、书架、来源和杂项页由 lazy indexed page 保持未构建，避免隐藏导航页提前创建第二套
 封面 loader；访问过的页面状态仍由该页面节点保留。
 
-Home 的“更新漫画”投影只取已在书架且具有 `SavedComicRecord.sourceUpdateAt` 的漫画，并按该
-source-confirmed更新时间排序。`sourceUpdateAt`在已有章节目录基线变化时推进；confirmed同源 successor/version属于持续 relation事实，若signal缺失必须可由`ComicVersionRelationStore`重建，而不是只依赖“首次发现”瞬时事件。
+Home 的“更新漫画”投影只取已在书架且具有 source-confirmed update 的漫画。章节/目录更新由 `SavedComicRecord.sourceUpdateAt` 表示；同源版本更新由 `HomeLibrarySession.versionRelations` 中 source-confirmed predecessor→successor relation 的首次 `discoveredAt` 表示。两者是并列事实源，presentation 只读合并后的有效更新时间；版本关系不得再镜像写回 `sourceUpdateAt`，阅读进度也不得推进任一更新事实。
 普通 metadata刷新、阅读进度与仅浏览记录都不产生更新。漫画源卡片从同一 Home/library 投影读取书架与更新事实：
 左上书架标志+变暗只表示当前 raw/canonical comic已入书架；右上感叹号只提示该书架 comic有 source-confirmed update。阅读历史
 单独按 `ReadingProgress.updatedAt` 投影。
@@ -124,7 +123,7 @@ source-confirmed更新时间排序。`sourceUpdateAt`在已有章节目录基线
 同源版本关系只来自来源 `ComicVersionSource` 或已持久化的 `ComicVersionRelationStore`；Venera/E-Hentai按来源关系生成版本，
 不得用标题 `browse` 推断同源。通用“迁移漫画源”入口允许选择当前来源或其他已启用来源：跨源标题搜索只用于候选发现，
 同源面板只展示来源确认的 successor/predecessor，并同时提供“查看”与“迁移”。查看直接打开目标 raw identity，不改变状态；
-迁移无论同源/跨源都进入唯一 `ComicSourceMigrationPlan + showSourceMigrationComparison`，只有 exact chapter match复制偏好、阅读位置和已读状态。查看路由只使用 `source-version-view` **temporary route identity**；同源替换完成后新 raw locator成为实体并清理旧 alias preference/metadata。已确认同源版本在“仅查看”时也可先以强 page identity + bounded offset证据建立 `ArtifactCacheManager` 临时 alias，命中旧 artifact后复用字节；这不迁移/rekey durable实体。
+迁移无论同源/跨源都进入唯一 `ComicSourceMigrationPlan + showSourceMigrationComparison`，只有 exact chapter match复制偏好、阅读位置和已读状态。查看路由只使用 `source-version-view` **temporary route identity**；同源替换完成后新 raw locator成为实体并清理旧 alias preference/metadata。已确认同源版本在“仅查看”时也可先以强 page identity + bounded offset证据建立 `ArtifactCacheManager` 临时 alias：版本方向只证明两侧相关，真正的 alias 方向由“哪一侧已有真实 artifact、哪一侧当前缺失”决定，因此旧→新与新→旧都可复用。alias 图必须解析到最终 storage ID 并保持无环；这不迁移/rekey durable实体。
 
 漫画源页使用来源自身声明的 browse section：Mihon 映射 Popular/Latest，标准展示顺序为“最新 → 热门”，Venera 枚举 explore loader 与 category target；首次进入来源时默认 section必须由**当前展示顺序的第一项**决定，不能另写 `popular` 默认值，也不能让最近一次 catalog cache projection反向选择 UI。未来用户自定义排序若改变 Presentation顺序，同一排序 owner自然同时决定默认焦点。原生/Mihon/Venera 仅通过来源 chip 的背景色区分，不显示 JS/插件图标，也不占内容分类行。`FilterableBrowsableComicSource` 只投影来源真实 `FilterList`：空 schema即没有筛选入口，不另设容易漂移的 capability布尔值。Mihon bridge必须按官方 `Filter.Header/Separator/Select/Text/CheckBox/TriState/Group/Sort` 基类继承关系识别插件自定义子类，并保留 Group层次与 Text/Sort状态；用户修改以类型化 filter-state override进入 search request。筛选是否激活是独立 Presentation/request mode：空 override表示使用插件默认 `FilterList` 状态而非“未筛选”，激活后分类栏焦点属于“筛选”且请求不继承 latest/popular section；Catalog cache identity与runtime payload必须显式区分 filter mode和普通 section mode；external browse的 typed factory、wire validator与 adapter payload必须共享同一字段契约，schema v1新增 `useFilters` 可缺省兼容但未知字段仍拒绝。Filter不得伪装为 `SourceBrowseSection`，浮动搜索只拥有 query与搜索历史。browse projection revision 只属于 metadata，不能作为整页 artwork reload token；source card 的 Sliver child owner 使用 canonical comic identity，raw locator变化不得重置封面 State。固定大小的 catalog page 仍使用显式上一页/下一页，pager 位于内容滚动尾部。列表由 catalog response cache先行投影，但 cache只能服务**当前精确 UI 请求**，不得用“最近 projection”改写 section/query/filter默认状态；source切换时 projection owner先原子切换到目标 source，旧 source内容没有展示资格。后台 refresh只有在稳定字段发生变化时才更新 Presentation；边缘下拉达到刷新阈值后强制绕过缓存请求来源，但保留当前内容直到新数据到达。Mihon 插件的已安装与仓库列表仍按规范化语言分类。
 
@@ -338,7 +337,7 @@ Reader 页面变化产生的 `ReadingProgress` 由 `reader_runtime` 串行合并
 - **chapter/page identity**：章节始终为 `sourceId + chapterId`，Reader 页面为 `sourceId + comicId + chapterId + pageId`。迁移时只有章节原生 identity 精确匹配才复制阅读进度和已读状态；**sequence-only** 匹配仅显示在比较报告中，不复制状态。
 - **presentation identity**：Flutter key、详情提示和 Reader 一次性提醒只能引用上述稳定复合身份；Widget key、当前章节、封面 URL、按钮状态和 runtime adapter 对象都不是持久身份。
 
-同源 successor 发现后先写入 `ComicVersionRelationStore`，并可从 successor 反查多个 predecessor。详情页分别提供“查看新版本/查看旧版本”和“迁移”；查看只打开目标 raw identity 的详情，multiple versions先选择，不修改版本关系或阅读历史。Reader仅在已保存 successor关系存在时首次提醒，不在进入Reader时联网；书架update signal可从已保存relation重建。确认relation后的新版查看可用来源request-plan解析的`/s/<image-key>/`/内容hash锚点证明offset，并仅对已有旧artifact注册有界临时alias；确认迁移后才允许实体替换/rekey语义。
+同源 successor 发现后写入 `ComicVersionRelationStore`；`HomeLibrarySession` 在 enrichment 时一次加载全部 relation，并在新 relation 写入时同步更新内存投影，因此 Home/source browser 无需依赖详情页副作用即可同步判断“旧版有确认 successor”。详情页分别提供“查看新版本/查看旧版本”和“迁移”；查看只打开目标 raw identity 的详情，multiple versions先选择，不修改版本关系或阅读历史。版本 `discoveredAt` 保留首次确认时间，不因重复查看刷新。Reader不为版本提醒主动联网；进入任一已确认相关版本时，可用来源 request-plan 解析的 `/s/<image-key>/`/内容 hash 锚点证明有界 offset，然后从相关版本中选择已经存在的真实 artifact 作为临时 alias target，双向复用且禁止 alias 环；确认迁移后才允许实体替换/rekey语义。
 
 稳定响应 key 的编码由 `encodeStableCacheKey` 负责：使用 `zic-key-v1:` 前缀和长度前缀组件，
 因此 URL 中的 `/`、`:`、`@` 等字符不会造成分隔符碰撞。当前图片 key 的实际关系如下：

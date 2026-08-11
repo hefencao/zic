@@ -636,27 +636,30 @@ final class SqliteImportedLibraryStore
   }
 
   @override
+  Future<List<ComicVersionRelation>> listAllComicVersionRelations() async {
+    final rows = _requireDb().select('''
+      SELECT source_id, predecessor_comic_id, successor_comic_id,
+             predecessor_title, discovered_us
+      FROM comic_version_relation
+      ORDER BY discovered_us DESC, source_id, predecessor_comic_id,
+               successor_comic_id
+    ''');
+    return rows.map(_comicVersionRelationFromRow).toList(growable: false);
+  }
+
+  @override
   Future<List<ComicVersionRelation>> listComicVersionPredecessors(
     String sourceId,
     String successorComicId,
   ) async {
     final rows = _requireDb().select('''
       SELECT source_id, predecessor_comic_id, successor_comic_id,
-             predecessor_title
+             predecessor_title, discovered_us
       FROM comic_version_relation
       WHERE source_id = ? AND successor_comic_id = ?
       ORDER BY discovered_us DESC, predecessor_comic_id
     ''', <Object?>[sourceId, successorComicId]);
-    return rows
-        .map(
-          (row) => ComicVersionRelation(
-            sourceId: row['source_id']! as String,
-            predecessorComicId: row['predecessor_comic_id']! as String,
-            successorComicId: row['successor_comic_id']! as String,
-            predecessorTitle: row['predecessor_title']! as String,
-          ),
-        )
-        .toList(growable: false);
+    return rows.map(_comicVersionRelationFromRow).toList(growable: false);
   }
 
   @override
@@ -666,21 +669,12 @@ final class SqliteImportedLibraryStore
   ) async {
     final rows = _requireDb().select('''
       SELECT source_id, predecessor_comic_id, successor_comic_id,
-             predecessor_title
+             predecessor_title, discovered_us
       FROM comic_version_relation
       WHERE source_id = ? AND predecessor_comic_id = ?
       ORDER BY discovered_us DESC, successor_comic_id
     ''', <Object?>[sourceId, predecessorComicId]);
-    return rows
-        .map(
-          (row) => ComicVersionRelation(
-            sourceId: row['source_id']! as String,
-            predecessorComicId: row['predecessor_comic_id']! as String,
-            successorComicId: row['successor_comic_id']! as String,
-            predecessorTitle: row['predecessor_title']! as String,
-          ),
-        )
-        .toList(growable: false);
+    return rows.map(_comicVersionRelationFromRow).toList(growable: false);
   }
 
   @override
@@ -698,16 +692,27 @@ final class SqliteImportedLibraryStore
       ) VALUES (?, ?, ?, ?, ?)
       ON CONFLICT(source_id, predecessor_comic_id, successor_comic_id)
       DO UPDATE SET
-        predecessor_title = excluded.predecessor_title,
-        discovered_us = excluded.discovered_us
+        predecessor_title = excluded.predecessor_title
     ''', <Object?>[
       relation.sourceId,
       relation.predecessorComicId,
       relation.successorComicId,
       relation.predecessorTitle,
-      DateTime.now().toUtc().microsecondsSinceEpoch,
+      (relation.discoveredAt ?? DateTime.now().toUtc()).microsecondsSinceEpoch,
     ]);
   }
+
+  ComicVersionRelation _comicVersionRelationFromRow(sql.Row row) =>
+      ComicVersionRelation(
+        sourceId: row['source_id']! as String,
+        predecessorComicId: row['predecessor_comic_id']! as String,
+        successorComicId: row['successor_comic_id']! as String,
+        predecessorTitle: row['predecessor_title']! as String,
+        discoveredAt: DateTime.fromMicrosecondsSinceEpoch(
+          row['discovered_us']! as int,
+          isUtc: true,
+        ),
+      );
 
   @override
   Future<void> close() async {

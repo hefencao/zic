@@ -136,6 +136,82 @@ void main() {
     );
   });
 
+  test('resolved related reuse is bidirectional across an inserted page',
+      () async {
+    final older = _chapter(
+      comicId: 'older',
+      revision: 'older',
+      urls: const <String>[
+        'venera-resource:older-0',
+        'venera-resource:older-1',
+        'venera-resource:older-2',
+      ],
+    );
+    final newer = _chapter(
+      comicId: 'newer',
+      revision: 'newer',
+      urls: const <String>[
+        'venera-resource:newer-cover',
+        'venera-resource:newer-0',
+        'venera-resource:newer-1',
+        'venera-resource:newer-2',
+      ],
+    );
+    final identities = <String, String>{
+      'venera-resource:older-0': 'eh:a',
+      'venera-resource:older-1': 'eh:b',
+      'venera-resource:older-2': 'eh:c',
+      'venera-resource:newer-0': 'eh:a',
+      'venera-resource:newer-1': 'eh:b',
+      'venera-resource:newer-2': 'eh:c',
+    };
+
+    final plan = await VerifiedArtifactReusePlan.matchResolvedRelated(
+      sourceChapter: newer,
+      targetChapter: older,
+      resolveIdentity: (page) async => identities[page.uri.toString()],
+    );
+
+    expect(plan.aliases, hasLength(3));
+    expect(
+      plan.aliases[readerPageDownloadId(older, older.pages.first)],
+      readerPageDownloadId(newer, newer.pages[1]),
+    );
+  });
+
+  test('reverse reuse never creates an alias cycle', () async {
+    final older = _chapter(
+      comicId: 'older',
+      revision: 'older',
+      urls: const <String>[
+        'https://e-hentai.org/s/aaaaaaaaaaaaaaaa/1-1',
+      ],
+    );
+    final newer = _chapter(
+      comicId: 'newer',
+      revision: 'newer',
+      urls: const <String>[
+        'https://e-hentai.org/s/aaaaaaaaaaaaaaaa/2-1',
+      ],
+    );
+    final olderId = readerPageDownloadId(older, older.pages.single);
+    final newerId = readerPageDownloadId(newer, newer.pages.single);
+    final cache = ArtifactCacheManager(
+      backend: _Backend(<DownloadId, Uint8List>{
+        olderId: Uint8List.fromList(<int>[9, 9, 9]),
+      }),
+    );
+    cache.alias(id: newerId, target: olderId);
+    final reverse = VerifiedArtifactReusePlan.match(
+      oldChapter: newer,
+      newChapter: older,
+    );
+
+    expect(await reverse.applyExisting(cache), 1);
+    expect(cache.resolveAlias(olderId), olderId);
+    expect(cache.resolveAlias(newerId), olderId);
+  });
+
   test('resolved offset requires verified anchor agreement', () async {
     final oldChapter = _chapter(
       comicId: 'old',
