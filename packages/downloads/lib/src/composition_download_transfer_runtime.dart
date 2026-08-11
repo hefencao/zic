@@ -70,26 +70,6 @@ final class CompositionDownloadTransferRuntime {
       net: net,
       resolveTransferId: _resolveTransferIdForAcquire,
     );
-    if (cache != null) {
-      void listener(DownloadId promoted) {
-        if (_disposed) return;
-        for (final equivalent in cache.directEquivalents(promoted)) {
-          if (equivalent == promoted) continue;
-          // Phase C1 aliases already share the promoted physical session and
-          // must not be re-scanned by the legacy late-takeover compatibility
-          // path. Only an independently-created exact session can still need
-          // late takeover.
-          final independent = registry.findExact(equivalent);
-          if (independent == null ||
-              registry.resolvePhysicalId(equivalent) != equivalent) {
-            continue;
-          }
-          owner.refreshIndependentExactForPromotedEquivalent(equivalent);
-        }
-      }
-      artifactPromotionListener = listener;
-      cache.addPromotionListener(listener);
-    }
   }
 
   static int _sequence = 0;
@@ -104,7 +84,6 @@ final class CompositionDownloadTransferRuntime {
   PartialDownloadHandoff? partialDownloadHandoff;
   late final DownloadRegistry registry;
   late final DownloadTransferOwner owner;
-  ArtifactPromotionListener? artifactPromotionListener;
   bool _disposed = false;
 
   bool get disposed => _disposed;
@@ -281,11 +260,6 @@ final class CompositionDownloadTransferRuntime {
       throw StateError('cannot dispose composition transfer with active consumers');
     }
     _disposed = true;
-    final promotionListener = artifactPromotionListener;
-    artifactPromotionListener = null;
-    if (promotionListener != null) {
-      artifactCacheManager?.removePromotionListener(promotionListener);
-    }
     await owner.dispose();
     await artifactCacheHandoff?.drain(registry.sessions);
     artifactCacheHandoff?.detach();

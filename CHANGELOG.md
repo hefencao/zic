@@ -1,3 +1,8 @@
+## 0.31.0-dev.228：Remove late equivalent-promotion takeover
+- 15:57真机Trace确认dev.227后18次verified acquire alias（含8个failed partial）不再产生`unsupported URI scheme`或task/decode failure，legacy `verified-equivalent-promotion-takeover`继续0命中。
+- 删除composition artifact-promotion listener、`DownloadTransferOwner.refreshIndependentExactForPromotedEquivalent`以及ArtifactCacheManager promotion observer API；verified relation对physical identity的唯一实时副作用收口到demand acquire。
+- 保留direct verified equivalence registry与physical→durable partial/artifact persistence；两个已经独立创建的physical session仍不事后merge。
+
 ## 0.31.0-dev.227：Provider exact request identity closure after physical alias
 - 15:29真机Trace确认dev.225 Phase C1真实命中13次acquire-time alias，其中6次加入可恢复failed partial；但随后43次network task全部因`unsupported URI scheme: venera-resource`失败。根因是owner按provider exact URI选择transport后，`DownloadJob`仍用physical `session.id.canonicalUri`执行open，跨版本alias时把旧anchor URI泄漏进新Reader transport。
 - `DownloadJob`新增显式`requestUri`：artifact/writer/resume/validator状态继续属于physical session，所有source open/range probe/resume请求只使用当前provider exact URI；legacy caller默认仍用session URI。新增failed partial + verified-equivalent provider URI行为回归和dev.227闭包gate；本轮暂停继续删除late compatibility path。

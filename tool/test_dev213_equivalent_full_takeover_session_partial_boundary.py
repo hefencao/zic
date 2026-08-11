@@ -28,20 +28,47 @@ build = int(build_match.group(1))
 
 cache = read('packages/downloads/lib/src/artifact_cache_manager.dart')
 for token in (
-    'typedef ArtifactPromotionListener = void Function(DownloadId id);',
-    'void addPromotionListener(ArtifactPromotionListener listener)',
-    'void removePromotionListener(ArtifactPromotionListener listener)',
     'Iterable<DownloadId> directEquivalents(DownloadId id)',
     'await backend.storePromotedArtifact(id: id, bytes: bytes);',
-    'listener(id);',
 ):
-    require(cache, token, 'artifact promotion observer')
+    require(cache, token, 'verified artifact equivalence')
+if build >= 228:
+    for token in (
+        'typedef ArtifactPromotionListener = void Function(DownloadId id);',
+        'void addPromotionListener(ArtifactPromotionListener listener)',
+        'void removePromotionListener(ArtifactPromotionListener listener)',
+        '_promotionListeners',
+    ):
+        forbid(cache, token, 'retired late-promotion observer API')
+else:
+    for token in (
+        'typedef ArtifactPromotionListener = void Function(DownloadId id);',
+        'void addPromotionListener(ArtifactPromotionListener listener)',
+        'void removePromotionListener(ArtifactPromotionListener listener)',
+        'listener(id);',
+    ):
+        require(cache, token, 'artifact promotion observer')
 
 session = read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
 transfer_runtime_path = ROOT / 'packages/downloads/lib/src/composition_download_transfer_runtime.dart'
 if transfer_runtime_path.exists():
     transfer_runtime = transfer_runtime_path.read_text(encoding='utf-8')
-    if build >= 226:
+    if build >= 228:
+        for token in (
+            'artifactPromotionListener',
+            'cache.addPromotionListener(listener);',
+            'cache.directEquivalents(promoted)',
+            'owner.refreshIndependentExactForPromotedEquivalent(equivalent);',
+            'removePromotionListener',
+        ):
+            forbid(transfer_runtime, token, 'retired composition late-takeover wiring')
+        for token in (
+            'cache.directEquivalents(exactId)',
+            'registry.aliasPhysical(id: exactId, target: candidate);',
+            "'stage': 'verified-transfer-acquire-alias'",
+        ):
+            require(transfer_runtime, token, 'acquire-time verified transfer identity')
+    elif build >= 226:
         for token in (
             'artifactPromotionListener = listener;',
             'cache.addPromotionListener(listener);',
@@ -85,29 +112,42 @@ else:
 coordinator = read('packages/sessions/lib/src/live_coordinator.dart')
 owner_path = ROOT / 'packages/sessions/lib/src/download_transfer_owner.dart'
 takeover_owner = owner_path.read_text(encoding='utf-8') if owner_path.exists() else coordinator
-for token in (
-    "'stage': 'verified-equivalent-promotion-takeover'",
-    'net.cancel(taskKey);',
-    'session.committedLength',
-):
-    require(takeover_owner, token, 'local artifact takeover without session reset')
-if build >= 226:
+if build >= 228:
+    for token in (
+        "'stage': 'verified-equivalent-promotion-takeover'",
+        'refreshIndependentExactForPromotedEquivalent',
+        "'compatibilityScope': 'independent-exact-session'",
+    ):
+        forbid(takeover_owner, token, 'retired late-equivalent takeover')
     forbid(
         coordinator,
         'refreshDownloadForLocalArtifact',
         'dead Reader takeover delegation after composition ownership',
     )
-    require(
-        takeover_owner,
-        "'compatibilityScope': 'independent-exact-session'",
-        'late takeover compatibility scope',
-    )
 else:
-    require(
-        coordinator,
-        'void refreshDownloadForLocalArtifact(String sessionId, DownloadId id)',
-        'Reader takeover delegation',
-    )
+    for token in (
+        "'stage': 'verified-equivalent-promotion-takeover'",
+        'net.cancel(taskKey);',
+        'session.committedLength',
+    ):
+        require(takeover_owner, token, 'local artifact takeover without session reset')
+    if build >= 226:
+        forbid(
+            coordinator,
+            'refreshDownloadForLocalArtifact',
+            'dead Reader takeover delegation after composition ownership',
+        )
+        require(
+            takeover_owner,
+            "'compatibilityScope': 'independent-exact-session'",
+            'late takeover compatibility scope',
+        )
+    else:
+        require(
+            coordinator,
+            'void refreshDownloadForLocalArtifact(String sessionId, DownloadId id)',
+            'Reader takeover delegation',
+        )
 
 migration = read('apps/app/lib/demo_home_source_migration.dart')
 for token in (
@@ -132,11 +172,18 @@ require(
 )
 
 manager_test = read('packages/downloads/test/artifact_cache_manager_test.dart')
-require(
-    manager_test,
-    'promotion listeners expose late verified-equivalent availability',
-    'promotion-listener Dart regression',
-)
+if build >= 228:
+    forbid(
+        manager_test,
+        'promotion listeners expose late verified-equivalent availability',
+        'retired promotion-listener Dart regression',
+    )
+else:
+    require(
+        manager_test,
+        'promotion listeners expose late verified-equivalent availability',
+        'promotion-listener Dart regression',
+    )
 
 # The deliberate boundary: session-partial sharing is not introduced. Cross-version
 # partial reuse remains durable/inactive and owned by PartialDownloadStore.

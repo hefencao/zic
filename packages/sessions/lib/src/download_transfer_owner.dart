@@ -246,65 +246,6 @@ final class DownloadTransferOwner {
     return consumer;
   }
 
-  /// Legacy Phase-E compatibility path for an independently-created exact
-  /// physical session whose directly verified equivalent has just become
-  /// durable. Acquire-time aliases never enter this method.
-  void refreshIndependentExactForPromotedEquivalent(
-    DownloadId id, {
-    String? sessionId,
-  }) {
-    if (_disposed || registry.resolvePhysicalId(id) != id) return;
-    final physicalId = id;
-    final session = registry.findExact(id);
-    if (session == null ||
-        session.state == DownloadState.promoted ||
-        session.state == DownloadState.disposed ||
-        session.residentBodyBacked) {
-      return;
-    }
-    _downloadRetryRounds.remove(physicalId);
-    _downloadRetryPending.remove(physicalId);
-    _downloadTerminalFailures.remove(physicalId);
-    _downloadDeferredAtLength.remove(physicalId);
-    final claim = _preferredClaim(physicalId);
-    final taskKey = _networkTaskKeys[physicalId];
-    _record(
-      claim,
-      sessionId: sessionId,
-      kind: TraceEventKind.artifactSource,
-      id: physicalId,
-      payload: <String, Object?>{
-        'stage': 'verified-equivalent-promotion-takeover',
-        'compatibilityPath': true,
-        'compatibilityScope': 'independent-exact-session',
-        'committedLength': session.committedLength,
-        'taskState': taskKey == null
-            ? 'absent'
-            : net.isActive(taskKey)
-                ? 'active'
-                : 'queued',
-      },
-    );
-    if (!session.demanded) {
-      return;
-    }
-    if (taskKey == null) {
-      _ensureDownloadTask(physicalId, session);
-      return;
-    }
-    if (net.cancelQueued(taskKey)) {
-      if (_networkTaskKeys[physicalId] == taskKey) {
-        _networkTaskKeys.remove(id);
-      }
-      _ensureDownloadTask(physicalId, session);
-      return;
-    }
-    // Active cancellation preserves the authoritative physical session and
-    // writer prefix. The task finally path reopens under the strongest
-    // remaining consumer context.
-    net.cancel(taskKey);
-  }
-
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;

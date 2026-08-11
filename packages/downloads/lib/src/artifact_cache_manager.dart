@@ -6,8 +6,6 @@ import 'package:domain/domain.dart';
 
 import 'artifact_cache_store.dart';
 
-typedef ArtifactPromotionListener = void Function(DownloadId id);
-
 /// Composition-owned multi-level router for immutable Reader page artifacts.
 final class ArtifactCacheManager {
   ArtifactCacheManager({
@@ -34,22 +32,12 @@ final class ArtifactCacheManager {
       LinkedHashMap<DownloadId, LinkedHashSet<DownloadId>>();
   final LinkedHashSet<_ArtifactEquivalencePair> _equivalenceOrder =
       LinkedHashSet<_ArtifactEquivalencePair>();
-  final Set<ArtifactPromotionListener> _promotionListeners =
-      <ArtifactPromotionListener>{};
   int _memoryBytes = 0;
 
   int get memoryEntryCount => _memory.length;
   int get memoryBytes => _memoryBytes;
   int get aliasCount => _aliases.length;
   int get equivalenceCount => _equivalenceOrder.length;
-
-  void addPromotionListener(ArtifactPromotionListener listener) {
-    _promotionListeners.add(listener);
-  }
-
-  void removePromotionListener(ArtifactPromotionListener listener) {
-    _promotionListeners.remove(listener);
-  }
 
   Iterable<DownloadId> directEquivalents(DownloadId id) =>
       List<DownloadId>.unmodifiable(
@@ -281,14 +269,6 @@ final class ArtifactCacheManager {
     }
     await backend.storePromotedArtifact(id: id, bytes: bytes);
     remember(id: id, bytes: bytes, durable: true);
-    for (final listener in _promotionListeners.toList(growable: false)) {
-      try {
-        listener(id);
-      } on Object {
-        // Read-side optimization observers must never break the authoritative
-        // promoted-artifact commit.
-      }
-    }
   }
 
   void remember({
