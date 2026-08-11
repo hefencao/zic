@@ -25,12 +25,17 @@ void main() {
         finalPath: '${temp.path}/page.webp',
       ),
       clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${download.id.key}',
       ingress: ingress,
     );
+    download.attachIngressProjection(projection);
     final cursorFactory = _CursorFactory();
     final decode = DecodeSession(
       id: _decodeId(download.id),
       download: download,
+      ingress: projection,
       cursors: cursorFactory,
       clock: _Clock(),
     );
@@ -160,11 +165,16 @@ void main() {
           finalPath: '${temp.path}/page.webp',
         ),
         clock: _Clock(),
+      );
+      final projection = DownloadIngressProjection(
+        scopeId: 'test:${download.id.key}',
         ingress: ingress,
       );
+      download.attachIngressProjection(projection);
       final decode = DecodeSession(
         id: _decodeId(download.id),
         download: download,
+        ingress: projection,
         cursors: _CursorFactory(
           duration: Duration.zero,
           frameLimit: 1,
@@ -253,11 +263,16 @@ void main() {
         finalPath: '${temp.path}/page.webp',
       ),
       clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${download.id.key}',
       ingress: ingress,
     );
+    download.attachIngressProjection(projection);
     final decode = DecodeSession(
       id: _decodeId(download.id),
       download: download,
+      ingress: projection,
       cursors: _CursorFactory(
         duration: Duration.zero,
         frameLimit: 1,
@@ -337,11 +352,16 @@ void main() {
         finalPath: '${temp.path}/page.webp',
       ),
       clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${download.id.key}',
       ingress: ingress,
     );
+    download.attachIngressProjection(projection);
     final decode = DecodeSession(
       id: _decodeId(download.id),
       download: download,
+      ingress: projection,
       cursors: _CursorFactory(
         frameLimit: 10,
         animation: const AnimationInfo(
@@ -436,11 +456,16 @@ void main() {
         finalPath: '${temp.path}/page.webp',
       ),
       clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${download.id.key}',
       ingress: ingress,
     );
+    download.attachIngressProjection(projection);
     final decode = DecodeSession(
       id: _decodeId(download.id),
       download: download,
+      ingress: projection,
       cursors: _CursorFactory(
         frameLimit: 2,
         animation: const AnimationInfo(
@@ -538,11 +563,16 @@ void main() {
         finalPath: '${temp.path}/page.webp',
       ),
       clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${download.id.key}',
       ingress: ingress,
     );
+    download.attachIngressProjection(projection);
     final decode = DecodeSession(
       id: _decodeId(download.id),
       download: download,
+      ingress: projection,
       cursors: _CursorFactory(
         frameLimit: 1,
         animation: const AnimationInfo(
@@ -634,11 +664,16 @@ void main() {
         finalPath: '${temp.path}/page.webp',
       ),
       clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${download.id.key}',
       ingress: ingress,
     );
+    download.attachIngressProjection(projection);
     final decode = DecodeSession(
       id: _decodeId(download.id),
       download: download,
+      ingress: projection,
       cursors: _CursorFactory(width: 4, height: 8),
       clock: _Clock(),
     );
@@ -697,11 +732,16 @@ void main() {
         finalPath: '${temp.path}/page.webp',
       ),
       clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${download.id.key}',
       ingress: ingress,
     );
+    download.attachIngressProjection(projection);
     final decode = DecodeSession(
       id: _decodeId(download.id),
       download: download,
+      ingress: projection,
       cursors: _CursorFactory(),
       clock: _Clock(),
     );
@@ -773,11 +813,16 @@ void main() {
         finalPath: '${temp.path}/page.webp',
       ),
       clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${download.id.key}',
       ingress: ingress,
     );
+    download.attachIngressProjection(projection);
     final decode = DecodeSession(
       id: _decodeId(download.id),
       download: download,
+      ingress: projection,
       cursors: _CursorFactory(),
       clock: _Clock(),
     );
@@ -866,11 +911,16 @@ void main() {
         finalPath: '${temp.path}/page.webp',
       ),
       clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${download.id.key}',
       ingress: ingress,
     );
+    download.attachIngressProjection(projection);
     final decode = DecodeSession(
       id: _decodeId(download.id),
       download: download,
+      ingress: projection,
       cursors: _BufferedFailureCursorFactory(),
       clock: _Clock(),
     );
@@ -945,11 +995,16 @@ void main() {
         finalPath: '${temp.path}/page.webp',
       ),
       clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${download.id.key}',
       ingress: ingress,
     );
+    download.attachIngressProjection(projection);
     final decode = DecodeSession(
       id: _decodeId(download.id),
       download: download,
+      ingress: projection,
       cursors: _CursorFactory(),
       clock: _Clock(),
     );

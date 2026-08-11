@@ -6,11 +6,11 @@ import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
+import 'download_ingress_projection.dart';
 import 'source_progress.dart';
 
 enum DownloadState { idle, queued, receiving, sealed, promoted, failed, disposed }
 
-typedef SourceListener = void Function(IngressSnap snapshot);
 typedef DownloadSnapshotListener = void Function(DownloadSnapshot snapshot);
 
 final class RunLease {
@@ -68,7 +68,7 @@ final class DownloadSnapshot {
     this.validators = const Validators(),
     this.totalLength,
     this.failure,
-    this.ingress,
+    this.ingressProjectionCount = 0,
   });
 
   final DownloadId id;
@@ -86,7 +86,7 @@ final class DownloadSnapshot {
   final Validators validators;
   final int? totalLength;
   final Failure? failure;
-  final IngressSnap? ingress;
+  final int ingressProjectionCount;
 }
 
 final class DownloadSession {
@@ -97,7 +97,6 @@ final class DownloadSession {
     this.traceSink = const NoopTraceSink(),
     this.sessionId = 'download',
     this.index,
-    this.ingress,
     bool initiallyDemanded = true,
   }) : _legacyDemanded = initiallyDemanded;
 
@@ -107,7 +106,6 @@ final class DownloadSession {
   final TraceSink traceSink;
   final String sessionId;
   final CacheIndex? index;
-  final Ingress? ingress;
 
   DownloadState _state = DownloadState.idle;
   SourceEpoch _epoch = const SourceEpoch(0);
@@ -132,7 +130,9 @@ final class DownloadSession {
   int _pendingArtifactWriteMicros = 0;
   int _pendingMaxNativeIngressMicros = 0;
   int _pendingMaxArtifactWriteMicros = 0;
-  final Set<SourceListener> _sourceListeners = <SourceListener>{};
+  final Map<String, DownloadIngressProjection> _ingressProjections =
+      <String, DownloadIngressProjection>{};
+  int _ingressProjectionRevision = 0;
   final Set<DownloadSnapshotListener> _snapshotListeners =
       <DownloadSnapshotListener>{};
 
@@ -172,36 +172,8 @@ final class DownloadSession {
         validators: _validators,
         totalLength: _totalLength,
         failure: _failure,
-        ingress: ingress?.snapshot,
+        ingressProjectionCount: _ingressProjections.length,
       );
-
-  void addSourceListener(
-    SourceListener listener, {
-    bool fireImmediately = true,
-  }) {
-    _requireNotDisposed();
-    _sourceListeners.add(listener);
-    final current = ingress?.snapshot;
-    if (fireImmediately &&
-        current != null &&
-        (current.sourceReady || current.failure != null)) {
-      try {
-        listener(current);
-      } on Object catch (error) {
-        _emit(
-          TraceEventKind.taskFailed,
-          <String, Object?>{
-            'lane': 'source-listener',
-            'error': '$error',
-          },
-        );
-      }
-    }
-  }
-
-  void removeSourceListener(SourceListener listener) {
-    _sourceListeners.remove(listener);
-  }
 
   void addSnapshotListener(
     DownloadSnapshotListener listener, {
@@ -251,6 +223,7 @@ final class DownloadSession {
     bool verifyPromotedChecksum = true,
   }) async {
     _requireNotDisposed();
+    _ingressProjectionRevision++;
     _residentLength = null;
     _residentCacheBacked = false;
     _residentSource = null;
@@ -342,9 +315,10 @@ final class DownloadSession {
     int? totalLength,
   }) async {
     _requireNotDisposed();
+    _ingressProjectionRevision++;
     _validators = validators;
     _totalLength = totalLength;
-    ingress?.expectLength(totalLength);
+    _expectIngressLength(totalLength);
     await artifact.writeMeta(<String, Object?>{
       'version': 2,
       'downloadKey': id.key,
@@ -364,6 +338,7 @@ final class DownloadSession {
     String residentSource = 'durable-cache',
   }) {
     _requireNotDisposed();
+    _ingressProjectionRevision++;
     _requireState(<DownloadState>{
       DownloadState.idle,
       DownloadState.queued,
@@ -385,8 +360,8 @@ final class DownloadSession {
     _prefix = <int>[];
     _contentKind = ContentKind.unknown;
     _failure = null;
-    ingress?.reset(_epoch);
-    ingress?.expectLength(totalLength);
+    _resetIngressProjections(_epoch);
+    _expectIngressLength(totalLength);
     _state = DownloadState.receiving;
     _emit(
       TraceEventKind.downloadState,
@@ -400,6 +375,7 @@ final class DownloadSession {
 
   void appendDurableCachedIngress(int offset, List<int> bytes) {
     _requireNotDisposed();
+    _ingressProjectionRevision++;
     if (!_residentCacheBacked || _state != DownloadState.receiving) {
       throw const Failure(
         code: ErrorCode.invalidState,
@@ -432,6 +408,7 @@ final class DownloadSession {
 
   DownloadSnapshot sealDurableCachedIngress() {
     _requireNotDisposed();
+    _ingressProjectionRevision++;
     if (!_residentCacheBacked || _state != DownloadState.receiving) {
       throw const Failure(
         code: ErrorCode.invalidState,
@@ -445,12 +422,7 @@ final class DownloadSession {
         message: 'durable cache length $committedLength does not match $expected',
       );
     }
-    final targetIngress = ingress;
-    if (targetIngress != null) {
-      final before = targetIngress.snapshot;
-      targetIngress.seal(_epoch);
-      _traceIngress(before, targetIngress.snapshot);
-    }
+    _sealIngressProjections(_epoch);
     _contentKind = sniffContent(_prefix, finalChunk: true);
     if (committedLength <= 0 || _contentKind == ContentKind.unknown) {
       throw const Failure(
@@ -498,6 +470,7 @@ final class DownloadSession {
 
   Future<void> append(WriterLease lease, int offset, List<int> bytes) async {
     _requireWriter(lease);
+    _ingressProjectionRevision++;
     final chunk = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
     final artifactStarted = clock.nowMicros();
     final artifactWrite = artifact.appendOwned(offset, chunk);
@@ -526,16 +499,12 @@ final class DownloadSession {
     String? expectedChecksum,
   }) async {
     _requireWriter(lease);
+    _ingressProjectionRevision++;
     final sealed = await artifact.seal(
       expectedLength: expectedLength,
       expectedChecksum: expectedChecksum,
     );
-    final targetIngress = ingress;
-    if (targetIngress != null) {
-      final before = targetIngress.snapshot;
-      targetIngress.seal(lease.epoch);
-      _traceIngress(before, targetIngress.snapshot);
-    }
+    _sealIngressProjections(lease.epoch);
     _writer = null;
     _state = DownloadState.sealed;
     _contentKind = sniffContent(_prefix, finalChunk: true);
@@ -554,6 +523,7 @@ final class DownloadSession {
 
   Future<DownloadSnapshot> promote() async {
     _requireState(<DownloadState>{DownloadState.sealed});
+    _ingressProjectionRevision++;
     final promoted = await artifact.promote();
     _state = DownloadState.promoted;
     _emit(
@@ -723,10 +693,11 @@ final class DownloadSession {
 
   Future<void> reset() async {
     _requireNotDisposed();
+    _ingressProjectionRevision++;
     _flushCommittedTrace();
     _writer = null;
     _epoch = _epoch.next();
-    ingress?.reset(_epoch);
+    _resetIngressProjections(_epoch);
     _validators = const Validators();
     _totalLength = null;
     _networkStartLength = 0;
@@ -747,6 +718,7 @@ final class DownloadSession {
 
   Future<int> evict() async {
     _requireNotDisposed();
+    _ingressProjectionRevision++;
     _flushCommittedTrace();
     if (!canEvict) {
       throw const Failure(
@@ -756,7 +728,7 @@ final class DownloadSession {
     }
     final released = artifact.committedLength;
     _epoch = _epoch.next();
-    ingress?.reset(_epoch);
+    _resetIngressProjections(_epoch);
     await artifact.deleteAll();
     _state = DownloadState.idle;
     _validators = const Validators();
@@ -786,10 +758,9 @@ final class DownloadSession {
         message: 'cannot dispose while work is active',
       );
     }
-    _sourceListeners.clear();
+    _ingressProjections.clear();
     _demandPriorities.clear();
     _legacyDemanded = false;
-    ingress?.dispose();
     await artifact.dispose();
     _state = DownloadState.disposed;
     _notifySnapshot();
@@ -848,50 +819,155 @@ final class DownloadSession {
     _pendingMaxArtifactWriteMicros = 0;
   }
 
-  Future<void> _restoreIngressIfNeeded({required bool sealed}) async {
-    final target = ingress;
-    if (target == null) {
-      return;
+  void attachIngressProjection(DownloadIngressProjection projection) {
+    _requireNotDisposed();
+    final existing = _ingressProjections[projection.scopeId];
+    if (existing != null && !identical(existing, projection)) {
+      throw ArgumentError.value(
+        projection.scopeId,
+        'projection.scopeId',
+        'already attached to another ingress projection',
+      );
     }
-    final current = target.snapshot;
-    final expectedLength = artifact.committedLength;
-    final alreadyAuthoritative =
-        current.epoch == _epoch &&
-        current.length == expectedLength &&
-        current.kind == _contentKind &&
-        current.sealed == sealed &&
-        current.failure == null;
-    if (alreadyAuthoritative) {
-      return;
+    if (identical(existing, projection)) return;
+    if (committedLength != 0) {
+      throw const Failure(
+        code: ErrorCode.invalidState,
+        message: 'late ingress projection requires synchronized attachment',
+      );
     }
-    await _rebuildIngress(sealed: sealed);
+    _ingressProjections[projection.scopeId] = projection;
+    projection.expectLength(_totalLength);
+    _notifySnapshot();
   }
 
-  Future<void> _rebuildIngress({required bool sealed}) async {
-    final target = ingress;
-    if (target == null) {
+  /// Atomically joins a late Reader-local ingress projection to this physical
+  /// transfer at an authoritative committed boundary.
+  ///
+  /// The projection stays outside the live fan-out while replay is in flight.
+  /// Any append/reset/seal/bind that starts during replay advances
+  /// [_ingressProjectionRevision], forcing another bounded replay. The final
+  /// state check and map insertion contain no await, so a writer cannot slip a
+  /// chunk between the verified boundary and attachment on the Dart isolate.
+  Future<void> attachSynchronizedIngressProjection(
+    DownloadIngressProjection projection,
+  ) async {
+    _requireNotDisposed();
+    final existing = _ingressProjections[projection.scopeId];
+    if (existing != null && !identical(existing, projection)) {
+      throw ArgumentError.value(
+        projection.scopeId,
+        'projection.scopeId',
+        'already attached to another ingress projection',
+      );
+    }
+    if (identical(existing, projection)) return;
+
+    while (true) {
+      _requireNotDisposed();
+      final revision = _ingressProjectionRevision;
+      final epoch = _epoch;
+      final targetLength = committedLength;
+      final totalLength = _totalLength;
+      final sealed = _state == DownloadState.sealed ||
+          _state == DownloadState.promoted;
+      projection.expectLength(totalLength);
+      final before = projection.snapshot;
+      await projection.rebuild(
+        epoch: epoch,
+        chunks: artifact.readChunks(endExclusive: targetLength),
+        sealed: sealed,
+      );
+      _traceIngressProjection(projection.scopeId, before, projection.snapshot);
+
+      final stillSealed = _state == DownloadState.sealed ||
+          _state == DownloadState.promoted;
+      if (_ingressProjectionRevision != revision ||
+          _epoch != epoch ||
+          committedLength != targetLength ||
+          _totalLength != totalLength ||
+          stillSealed != sealed) {
+        continue;
+      }
+
+      // No await after the state check: later physical mutations see this
+      // projection in the live fan-out before they can append/reset/seal it.
+      _ingressProjections[projection.scopeId] = projection;
+      _notifySnapshot();
       return;
     }
-    final before = target.snapshot;
-    await target.rebuild(
+  }
+
+  bool detachIngressProjection(String scopeId) {
+    final removed = _ingressProjections.remove(scopeId);
+    if (removed == null) return false;
+    _notifySnapshot();
+    return true;
+  }
+
+  Future<void> _restoreIngressIfNeeded({required bool sealed}) async {
+    for (final projection in _ingressProjections.values) {
+      final current = projection.snapshot;
+      final expectedLength = artifact.committedLength;
+      final alreadyAuthoritative =
+          current.epoch == _epoch &&
+          current.length == expectedLength &&
+          current.kind == _contentKind &&
+          current.sealed == sealed &&
+          current.failure == null;
+      if (alreadyAuthoritative) continue;
+      await _rebuildIngressProjection(projection, sealed: sealed);
+    }
+  }
+
+  Future<void> _rebuildIngressProjection(
+    DownloadIngressProjection projection, {
+    required bool sealed,
+  }) async {
+    final before = projection.snapshot;
+    await projection.rebuild(
       epoch: _epoch,
       chunks: artifact.readChunks(),
       sealed: sealed,
     );
-    _traceIngress(before, target.snapshot);
+    _traceIngressProjection(projection.scopeId, before, projection.snapshot);
+  }
+
+  void _expectIngressLength(int? length) {
+    for (final projection in _ingressProjections.values) {
+      projection.expectLength(length);
+    }
+  }
+
+  void _resetIngressProjections(SourceEpoch epoch) {
+    for (final projection in _ingressProjections.values) {
+      final before = projection.snapshot;
+      projection.reset(epoch);
+      _traceIngressProjection(projection.scopeId, before, projection.snapshot);
+    }
+  }
+
+  void _sealIngressProjections(SourceEpoch epoch) {
+    for (final projection in _ingressProjections.values) {
+      final before = projection.snapshot;
+      projection.seal(epoch);
+      _traceIngressProjection(projection.scopeId, before, projection.snapshot);
+    }
   }
 
   void _appendIngress(SourceEpoch epoch, int offset, List<int> bytes) {
-    final target = ingress;
-    if (target == null) {
-      return;
+    for (final projection in _ingressProjections.values) {
+      final before = projection.snapshot;
+      projection.append(epoch: epoch, offset: offset, bytes: bytes);
+      _traceIngressProjection(projection.scopeId, before, projection.snapshot);
     }
-    final before = target.snapshot;
-    target.append(epoch: epoch, offset: offset, bytes: bytes);
-    _traceIngress(before, target.snapshot);
   }
 
-  void _traceIngress(IngressSnap before, IngressSnap after) {
+  void _traceIngressProjection(
+    String scopeId,
+    IngressSnap before,
+    IngressSnap after,
+  ) {
     final sourceBecameReady = !before.sourceReady && after.sourceReady;
     if (sourceBecameReady) {
       _emit(
@@ -899,31 +975,9 @@ final class DownloadSession {
         <String, Object?>{
           'kind': after.kind.name,
           'length': after.length,
+          'projectionScope': scopeId,
         },
       );
-    }
-    final sourceChanged =
-        (after.sourceReady || after.failure != null) &&
-        (sourceBecameReady ||
-            before.revision != after.revision ||
-            before.length != after.length ||
-            before.sealed != after.sealed ||
-            before.kind != after.kind ||
-            before.failure != after.failure);
-    if (sourceChanged) {
-      for (final listener in List<SourceListener>.of(_sourceListeners)) {
-        try {
-          listener(after);
-        } on Object catch (error) {
-          _emit(
-            TraceEventKind.taskFailed,
-            <String, Object?>{
-              'lane': 'source-listener',
-              'error': '$error',
-            },
-          );
-        }
-      }
     }
     if (before.failure == null && after.failure != null) {
       _emit(
@@ -932,6 +986,7 @@ final class DownloadSession {
           'kind': after.kind.name,
           'length': after.length,
           'error': '${after.failure}',
+          'projectionScope': scopeId,
         },
       );
     }

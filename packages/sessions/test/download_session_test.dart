@@ -109,11 +109,15 @@ void main() {
         finalPath: '${temp.path}/cache/stream.webp',
       ),
       clock: FakeMonoClock(),
+    );
+    final projection1 = DownloadIngressProjection(
+      scopeId: 'test-1:${session.id.key}',
       ingress: ingress,
     );
+    session.attachIngressProjection(projection1);
     await session.restore();
     final lengths = <int>[];
-    session.addSourceListener((snapshot) => lengths.add(snapshot.length));
+    projection1.addSourceListener((snapshot) => lengths.add(snapshot.length));
 
     final writer = session.acquireWriter();
     await session.append(writer, 0, 'RIFF....WEBP'.codeUnits);
@@ -134,11 +138,15 @@ void main() {
         finalPath: '${temp.path}/cache/failed.webp',
       ),
       clock: FakeMonoClock(),
+    );
+    final projection2 = DownloadIngressProjection(
+      scopeId: 'test-2:${session.id.key}',
       ingress: ingress,
     );
+    session.attachIngressProjection(projection2);
     await session.restore();
     final snapshots = <IngressSnap>[];
-    session.addSourceListener(snapshots.add);
+    projection2.addSourceListener(snapshots.add);
 
     final writer = session.acquireWriter();
     await session.append(writer, 0, 'RIFF....WEBP'.codeUnits);
@@ -148,7 +156,7 @@ void main() {
     expect(snapshots.last.failure?.code, ErrorCode.source);
 
     final lateSnapshots = <IngressSnap>[];
-    session.addSourceListener(lateSnapshots.add);
+    projection2.addSourceListener(lateSnapshots.add);
     expect(lateSnapshots, hasLength(1));
     expect(lateSnapshots.single.failure?.code, ErrorCode.source);
   });
@@ -163,18 +171,62 @@ void main() {
         finalPath: '${temp.path}/cache/sealed.webp',
       ),
       clock: FakeMonoClock(),
+    );
+    final projection3 = DownloadIngressProjection(
+      scopeId: 'test-3:${session.id.key}',
       ingress: ingress,
     );
+    session.attachIngressProjection(projection3);
     await session.restore();
     final writer = session.acquireWriter();
     await session.append(writer, 0, 'RIFF....WEBP'.codeUnits);
 
     final snapshots = <IngressSnap>[];
-    session.addSourceListener(snapshots.add);
+    projection3.addSourceListener(snapshots.add);
     await session.seal(writer, expectedLength: 12);
 
     expect(snapshots.first.sourceReady, isTrue);
     expect(snapshots.last.sealed, isTrue);
+  });
+
+  test('late Reader ingress projections replay and then diverge independently',
+      () async {
+    await session.dispose();
+    session = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/shared.webp',
+        finalPath: '${temp.path}/cache/shared.webp',
+      ),
+      clock: FakeMonoClock(),
+    );
+    await session.restore();
+    final writer = session.acquireWriter();
+    final first = <int>[...'RIFF....WEBP'.codeUnits, 1, 2, 3, 4];
+    await session.append(writer, 0, first);
+
+    final projectionA = DownloadIngressProjection(
+      scopeId: 'reader-a',
+      ingress: Ingress(factory: _TestSourceFactory(), maxBytes: 1024),
+    );
+    final projectionB = DownloadIngressProjection(
+      scopeId: 'reader-b',
+      ingress: Ingress(factory: _TestSourceFactory(), maxBytes: 1024),
+    );
+    await session.attachSynchronizedIngressProjection(projectionA);
+    final joinB = session.attachSynchronizedIngressProjection(projectionB);
+    await session.append(writer, first.length, <int>[5, 6, 7, 8]);
+    await joinB;
+
+    expect(session.snapshot.ingressProjectionCount, 2);
+    expect(projectionA.snapshot.length, first.length + 4);
+    expect(projectionB.snapshot.length, first.length + 4);
+
+    expect(session.detachIngressProjection('reader-a'), isTrue);
+    await session.append(writer, first.length + 4, <int>[9, 10]);
+    expect(projectionA.snapshot.length, first.length + 4);
+    expect(projectionB.snapshot.length, first.length + 6);
+    expect(session.snapshot.ingressProjectionCount, 1);
   });
 
   test('snapshot owns the resume baseline for one network run', () async {

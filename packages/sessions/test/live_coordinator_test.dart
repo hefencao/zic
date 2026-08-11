@@ -978,11 +978,15 @@ void main() {
     final downloads = DownloadRegistry(
       layout: CacheLayout('${temp.path}/cache'),
       clock: clock,
-      sources: sources,
       traceSink: trace,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'test',
     );
     final decodes = DecodeRegistry(
       downloads: downloads,
+      ingresses: ingresses,
       cursors: _TestCursorFactory(),
       clock: clock,
       traceSink: trace,
@@ -996,6 +1000,7 @@ void main() {
     );
     final coordinator = LiveCoordinator(
       registry: downloads,
+      ingresses: ingresses,
       transportFor: (_) => const FileTransport(),
       clock: clock,
       traceSink: trace,
@@ -1163,7 +1168,10 @@ void main() {
     final downloads = DownloadRegistry(
       layout: CacheLayout('${temp.path}/cache'),
       clock: clock,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
       sources: sources,
+      scopePrefix: 'test',
     );
     final currentDecodeStarted = Completer<void>();
     final releaseCurrentDecode = Completer<void>();
@@ -1175,6 +1183,7 @@ void main() {
     );
     final decodes = DecodeRegistry(
       downloads: downloads,
+      ingresses: ingresses,
       cursors: cursors,
       clock: clock,
     );
@@ -1182,6 +1191,7 @@ void main() {
     final currentBytes = 'RIFF....WEBPcurrent'.codeUnits;
     final coordinator = LiveCoordinator(
       registry: downloads,
+      ingresses: ingresses,
       transportFor: (uri) => uri == prefetchId.canonicalUri
           ? prefetchTransport
           : _ImmediateTransport(currentBytes),
@@ -1291,17 +1301,22 @@ void main() {
     final downloads = DownloadRegistry(
       layout: CacheLayout('${temp.path}/cache'),
       clock: clock,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
       sources: sources,
+      scopePrefix: 'test',
     );
     final cursors = _RolePromotionCursorFactory();
     final decodes = DecodeRegistry(
       downloads: downloads,
+      ingresses: ingresses,
       cursors: cursors,
       clock: clock,
     );
     final trace = MemoryTraceSink();
     final coordinator = LiveCoordinator(
       registry: downloads,
+      ingresses: ingresses,
       transportFor: (_) => const FileTransport(),
       clock: clock,
       traceSink: trace,
@@ -1410,7 +1425,10 @@ void main() {
     final downloads = DownloadRegistry(
       layout: CacheLayout('${temp.path}/cache'),
       clock: clock,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
       sources: sources,
+      scopePrefix: 'test',
     );
     final transport = _ControlledTransport();
     final initialStarted = Completer<void>();
@@ -1420,6 +1438,7 @@ void main() {
     var decodeCalls = 0;
     final coordinator = LiveCoordinator(
       registry: downloads,
+      ingresses: ingresses,
       transportFor: (_) => transport,
       clock: clock,
       net: NetLane(maxActive: 1),
@@ -1523,12 +1542,16 @@ void main() {
     final downloads = DownloadRegistry(
       layout: CacheLayout('${temp.path}/cache'),
       clock: clock,
-      sources: sources,
       traceSink: trace,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'test',
     );
     final cursors = _StaticCursorFactory();
     final decodes = DecodeRegistry(
       downloads: downloads,
+      ingresses: ingresses,
       cursors: cursors,
       clock: clock,
       traceSink: trace,
@@ -1542,6 +1565,7 @@ void main() {
     );
     final coordinator = LiveCoordinator(
       registry: downloads,
+      ingresses: ingresses,
       transportFor: (_) => const FileTransport(),
       clock: clock,
       traceSink: trace,

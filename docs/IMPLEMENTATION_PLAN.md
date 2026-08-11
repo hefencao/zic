@@ -1,7 +1,7 @@
 # zic Implementation Plan
 ## P0：Image Transfer ownership 正式迁移
-- dev.214 已完成 scoped consumer claims：Reader只撤销自己的claim，priority取max；尚未共享物理registry。
-- 下一阶段依次拆 Reader-local native `Ingress` projection 与 physical transfer、把network/retry/registry提升到composition owner，再做verified TransferKey-before-acquire和chapter/whole-comic/prefetch demand aggregation；新路径覆盖前保留durable partial/artifact owner。
+- dev.214 已完成 scoped consumer claims；dev.215 已把 Reader-native `Ingress`/source listener拆为 `DownloadIngressProjection`，physical `DownloadSession`不再拥有单一native source，并建立late committed-prefix稳定边界回放协议。
+- 下一阶段把network task/retry/terminal与physical `DownloadRegistry`/稳定workspace提升到composition owner，先验证exact DownloadId跨Reader只有一个writer；再做verified TransferKey-before-acquire与chapter/whole-comic/prefetch demand aggregation。新路径覆盖前保留durable partial/artifact owner与既有兼容handoff。
 ## P0：Partial authority 单调性真机闭环
 - dev.195 的playable partial单调性继续冻结：Range probe/full-body catch-up的取消、EOF或mismatch只能失败当前 network attempt，旧partial/Ingress不变；metadata损坏只丢网络知识。dev.196不改DownloadSession authority、DecodeSession、NetLane、network=5、1000/780、7/3、2/1、7/5/3/2，也不增加bandwidth scheduler/framing。
 ## P0：Current / Previous 真实执行槽真机闭环

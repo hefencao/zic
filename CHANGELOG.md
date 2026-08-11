@@ -1,3 +1,9 @@
+## 0.31.0-dev.215：Reader-local Ingress Projection 所有权拆分
+
+- physical `DownloadSession`移除唯一Reader native `Ingress`/source-listener所有权；新增Reader-local `DownloadIngressProjection`与registry，DecodeSession显式消费本Reader source，artifact/writer/resume仍归physical session。
+- late consumer对已有committed prefix使用revision/epoch/length/sealed稳定回放后无await附着；回放期间physical mutation会使本轮失效重试，避免active writer与native ingress replay发生offset交错。
+- physical `DownloadRegistry`、network task/retry/terminal仍保持Reader-local；本轮不宣称cross-Reader active transfer已启用。新增ADR 0196、dev.215 ownership audit/gate，App提升到`0.31.0+215`。
+
 ## 0.31.0-dev.214：Image Transfer Consumer Claim 所有权前置重构
 
 - 重新审查 dev.213 与 VibeVenera 后确认：ZIC 不能只把 Reader-local `DownloadRegistry` 提升为 global map。当前 `DownloadSession` 同时绑定 Reader-local native `Ingress`，而 `LiveCoordinator` 还拥有 network task/retry/terminal 状态；机械共享会把 A Reader 的 cancel/retry 泄漏到 B，或把 decode ingress错误全局化。

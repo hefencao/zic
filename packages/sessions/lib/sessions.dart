@@ -3,6 +3,8 @@ export 'src/coordinator.dart';
 export 'src/decode_refill_policy.dart';
 export 'src/decode_registry.dart';
 export 'src/decode_session.dart';
+export 'src/download_ingress_projection.dart';
+export 'src/download_ingress_registry.dart';
 export 'src/download_job.dart';
 export 'src/download_registry.dart';
 export 'src/download_session.dart';

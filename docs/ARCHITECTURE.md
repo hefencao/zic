@@ -3,7 +3,7 @@
 ## 1. 架构目标
 - current 具有最高资源优先级，但目标页首帧不得依赖 current 的下载完成或 holder 深度。
 - 同一稳定 identity 只有一个权威 request、session、artifact、cursor 和活动 writer。
-- Download demand是consumer claim，不是物理transfer ownership：同一 `DownloadSession` 的 scoped claims独立attach/update/detach，effective priority取最大claim；Reader detach只撤销自己的claim。dev.214仍保留Reader-local registry，因为物理session尚耦合单一Reader native `Ingress` 与Reader-local retry owner，禁止把它机械提升成global Map。
+- Download demand是consumer claim，不是物理transfer ownership：同一 `DownloadSession` 的 scoped claims独立attach/update/detach，effective priority取最大claim；Reader detach只撤销自己的claim。physical `DownloadSession` 只拥有artifact/writer/resume/content-kind，并向多个consumer `DownloadIngressProjection`投影 committed/reset/seal；native `Ingress`、source listener、decode/upload保持Reader-local。当前 physical `DownloadRegistry` 与network/retry owner仍是Reader-local，禁止在它们迁移前机械提升成global Map。
 - Reader 只提交 observation/用户命令并消费只读输出，不直接操作 transport、session、artifact、lane、frame 或 texture。
 - 下载、解码、上传使用独立 scheduler；一个层的运行时状态不能成为另一层页面的资格门控。
 - 平台能力由 composition root 原子注入；核心包不反向依赖 Widget、Android plugin 或具体 FFI 实现。

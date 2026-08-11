@@ -83,7 +83,7 @@ final class PipelinePageStream {
         state: _state(snapshot.state),
         committedLength: snapshot.committedLength,
         totalLength: snapshot.totalLength,
-        kind: _contentKind(snapshot.ingress?.kind),
+        kind: _contentKind(snapshot.contentKind),
         failure: snapshot.failure,
       );
 }

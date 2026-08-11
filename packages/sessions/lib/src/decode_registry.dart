@@ -4,6 +4,7 @@ import 'package:pipeline/pipeline.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'decode_session.dart';
+import 'download_ingress_registry.dart';
 import 'download_registry.dart';
 import 'net_lane.dart';
 import 'webp_decode_prefix_hints.dart';
@@ -11,6 +12,7 @@ import 'webp_decode_prefix_hints.dart';
 final class DecodeRegistry {
   DecodeRegistry({
     required this.downloads,
+    required this.ingresses,
     required this.cursors,
     required this.clock,
     WebpDecodePrefixHints? prefixHints,
@@ -19,6 +21,7 @@ final class DecodeRegistry {
   }) : prefixHints = prefixHints ?? WebpDecodePrefixHints();
 
   final DownloadRegistry downloads;
+  final DownloadIngressProjectionRegistry ingresses;
   final CursorFactory cursors;
   final MonoClock clock;
   final WebpDecodePrefixHints prefixHints;
@@ -41,9 +44,11 @@ final class DecodeRegistry {
   DecodeSession get(DecodeId id) {
     return _sessions.putIfAbsent(id, () {
       final download = downloads.get(id.download);
+      final ingress = ingresses.get(download);
       return DecodeSession(
         id: id,
         download: download,
+        ingress: ingress,
         cursors: cursors,
         clock: clock,
         prefixHints: prefixHints,

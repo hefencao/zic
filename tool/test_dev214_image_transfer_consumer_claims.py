@@ -70,6 +70,11 @@ for rel in (
 
 version = read('apps/app/pubspec.yaml')
 android = read('apps/app/android/zic-version.properties')
-require(version, 'version: 0.31.0+214', 'dev.214 app version')
-require(android, 'versionCode=214', 'dev.214 Android version')
+import re
+version_match = re.search(r'^version: 0\.31\.0\+(\d+)$', version, re.MULTILINE)
+android_match = re.search(r'^versionCode=(\d+)$', android, re.MULTILINE)
+if version_match is None or int(version_match.group(1)) < 214:
+    raise SystemExit('dev.214 app version regression')
+if android_match is None or int(android_match.group(1)) < 214:
+    raise SystemExit('dev.214 Android version regression')
 print('dev.214 image-transfer consumer claims: OK')

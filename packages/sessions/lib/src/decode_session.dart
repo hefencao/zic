@@ -3,6 +3,7 @@ import 'package:media/media.dart';
 import 'package:pipeline/pipeline.dart';
 import 'package:telemetry/telemetry.dart';
 
+import 'download_ingress_projection.dart';
 import 'download_session.dart';
 import 'frame_holder.dart';
 import 'net_lane.dart';
@@ -89,6 +90,7 @@ final class DecodeSession {
   DecodeSession({
     required this.id,
     required this.download,
+    required this.ingress,
     required this.cursors,
     required this.clock,
     WebpDecodePrefixHints? prefixHints,
@@ -100,6 +102,7 @@ final class DecodeSession {
 
   final DecodeId id;
   final DownloadSession download;
+  final DownloadIngressProjection ingress;
   final CursorFactory cursors;
   final MonoClock clock;
   final WebpDecodePrefixHints prefixHints;
@@ -166,7 +169,7 @@ final class DecodeSession {
   }
 
   DecodeSnapshot get snapshot {
-    final source = download.ingress?.source;
+    final source = ingress.source;
     return DecodeSnapshot(
       id: id,
       state: _state,
@@ -207,14 +210,13 @@ final class DecodeSession {
       );
     }
     _revision = revision;
-    final ingress = download.ingress;
-    final ingressSnapshot = ingress?.snapshot;
-    final ingressFailure = ingressSnapshot?.failure;
+    final ingressSnapshot = ingress.snapshot;
+    final ingressFailure = ingressSnapshot.failure;
     if (ingressFailure != null) {
       _setFailure(ingressFailure);
       return snapshot;
     }
-    final source = ingress?.source;
+    final source = ingress.source;
     if (source == null) {
       _waitingSourceSinceMicros ??= clock.nowMicros();
       _setState(DecodeState.waitingSource);

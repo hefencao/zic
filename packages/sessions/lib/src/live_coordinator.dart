@@ -10,6 +10,8 @@ import 'coordinator.dart';
 import 'decode_refill_policy.dart';
 import 'decode_registry.dart';
 import 'decode_session.dart';
+import 'download_ingress_projection.dart';
+import 'download_ingress_registry.dart';
 import 'download_job.dart';
 import 'download_registry.dart';
 import 'download_session.dart';
@@ -41,6 +43,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   LiveCoordinator({
     required this.registry,
     required this.transportFor,
+    this.ingresses,
     required this.clock,
     this.traceSink = const NoopTraceSink(),
     this.retry = const RetryPolicy(),
@@ -82,6 +85,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
 
   final DownloadRegistry registry;
   final TransportPick transportFor;
+  final DownloadIngressProjectionRegistry? ingresses;
   final MonoClock clock;
   final TraceSink traceSink;
   final RetryPolicy retry;
@@ -301,7 +305,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       },
     );
     for (final entry in _sourceListeners.entries) {
-      registry.find(entry.key)?.removeSourceListener(entry.value);
+      ingresses?.find(entry.key)?.removeSourceListener(entry.value);
     }
     _sourceListeners.clear();
     _sourceRevisions.clear();
@@ -512,7 +516,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   ) {
     final listener = _sourceListeners.remove(id);
     if (listener != null) {
-      session?.removeSourceListener(listener);
+      ingresses?.find(id)?.removeSourceListener(listener);
     }
     _sourceRevisions.remove(id);
     _sourceWakeLengths.remove(id);
@@ -559,8 +563,12 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       _sourceWakeLengths[id] = snapshot.length;
       _wakeDecodesForSource(sessionId, id);
     }
+    final projection = ingresses?.get(session);
+    if (projection == null) {
+      return;
+    }
     _sourceListeners[id] = listener;
-    session.addSourceListener(listener);
+    projection.addSourceListener(listener);
   }
 
   Future<void> _runDownload(

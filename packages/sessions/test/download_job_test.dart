@@ -118,6 +118,7 @@ void main() {
       ...'WEBP'.codeUnits,
       ...List<int>.generate(256 * 1024, (index) => index & 0xff),
     ];
+    final ingress = Ingress(factory: factory, maxBytes: 2 * 1024 * 1024);
     final session = DownloadSession(
       id: DownloadId(
         content: const ContentId(
@@ -134,8 +135,12 @@ void main() {
         finalPath: '${temp.path}/cache/validatorless.webp',
       ),
       clock: FakeMonoClock(),
-      ingress: Ingress(factory: factory, maxBytes: 2 * 1024 * 1024),
     );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${session.id.key}',
+      ingress: ingress,
+    );
+    session.attachIngressProjection(projection);
     final broken = FakeTransport(
       bytes: bytes,
       chunkSize: 4096,
@@ -147,7 +152,7 @@ void main() {
       throwsA(isA<Failure>()),
     );
     final preservedLength = session.committedLength;
-    final preservedRevision = session.ingress!.snapshot.revision;
+    final preservedRevision = projection.snapshot.revision;
     final sourceCreates = factory.createCount;
     expect(preservedLength, greaterThan(0));
 
@@ -165,7 +170,7 @@ void main() {
     expect(result.epoch, const SourceEpoch(0));
     expect(result.state, DownloadState.promoted);
     expect(factory.createCount, sourceCreates);
-    expect(session.ingress!.snapshot.revision, greaterThan(preservedRevision));
+    expect(projection.snapshot.revision, greaterThan(preservedRevision));
     expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
   });
 
@@ -418,6 +423,7 @@ void main() {
 
   test('coalesces tiny transport chunks before native/artifact ingress', () async {
     final factory = _CountingSourceFactory();
+    final ingress = Ingress(factory: factory, maxBytes: 2 * 1024 * 1024);
     final session = DownloadSession(
       id: DownloadId(
         content: const ContentId(
@@ -434,8 +440,12 @@ void main() {
         finalPath: '${temp.path}/cache/coalesced.webp',
       ),
       clock: FakeMonoClock(),
-      ingress: Ingress(factory: factory, maxBytes: 2 * 1024 * 1024),
     );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${session.id.key}',
+      ingress: ingress,
+    );
+    session.attachIngressProjection(projection);
     final body = <int>[
       ...'RIFF'.codeUnits,
       0, 0, 0, 0,

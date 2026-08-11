@@ -12,16 +12,23 @@ void main() {
   test('frame budget preserves current and last outputs only', () async {
     final temp = await Directory.systemTemp.createTemp('frame_budget_test_');
     final clock = _Clock();
-    final downloads = DownloadRegistry(
+    final sources = SourcePool(
+      factory: _SourceFactory(),
+      budgetFor: (_) => 4096,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'test',
+    );
+    late final DownloadRegistry downloads;
+    downloads = DownloadRegistry(
       layout: CacheLayout(temp.path),
       clock: clock,
-      sources: SourcePool(
-        factory: _SourceFactory(),
-        budgetFor: (_) => 4096,
-      ),
+      onSessionCreated: ingresses.attach,
     );
     final decodes = DecodeRegistry(
       downloads: downloads,
+      ingresses: ingresses,
       cursors: _CursorFactory(),
       clock: clock,
     );
@@ -35,7 +42,7 @@ void main() {
     final near = _decodeId('near');
 
     for (final id in <DecodeId>[current, last, near]) {
-      downloads.get(id.download).ingress!.append(
+      ingresses.get(downloads.get(id.download)).ingress.append(
         epoch: const SourceEpoch(0),
         offset: 0,
         bytes: 'RIFF....WEBPpayload'.codeUnits,
@@ -135,6 +142,8 @@ void main() {
 
     uploads.dispose();
     decodes.dispose();
+    ingresses.dispose(downloads.sessions);
+    sources.dispose();
     await downloads.dispose();
     await temp.delete(recursive: true);
   });
@@ -144,16 +153,23 @@ void main() {
       'frame_budget_retained_static_test_',
     );
     final clock = _Clock();
-    final downloads = DownloadRegistry(
+    final sources = SourcePool(
+      factory: _SourceFactory(),
+      budgetFor: (_) => 4096,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'test',
+    );
+    late final DownloadRegistry downloads;
+    downloads = DownloadRegistry(
       layout: CacheLayout(temp.path),
       clock: clock,
-      sources: SourcePool(
-        factory: _SourceFactory(),
-        budgetFor: (_) => 4096,
-      ),
+      onSessionCreated: ingresses.attach,
     );
     final decodes = DecodeRegistry(
       downloads: downloads,
+      ingresses: ingresses,
       cursors: _CursorFactory(),
       clock: clock,
     );
@@ -163,7 +179,7 @@ void main() {
       clock: clock,
     );
     final retained = _decodeId('retained');
-    downloads.get(retained.download).ingress!.append(
+    ingresses.get(downloads.get(retained.download)).ingress.append(
       epoch: const SourceEpoch(0),
       offset: 0,
       bytes: 'RIFF....WEBPpayload'.codeUnits,
@@ -226,6 +242,8 @@ void main() {
 
     uploads.dispose();
     decodes.dispose();
+    ingresses.dispose(downloads.sessions);
+    sources.dispose();
     await downloads.dispose();
     await temp.delete(recursive: true);
   });

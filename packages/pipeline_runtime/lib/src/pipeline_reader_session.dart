@@ -414,15 +414,19 @@ final class PipelineReaderSession {
         sessionId: sessionId,
       );
     }
+    _ingresses = DownloadIngressProjectionRegistry(
+      sources: _streamingSources,
+      scopePrefix: 'reader:$sessionId',
+    );
     _downloads = DownloadRegistry(
       layout: _workspace.layout,
       clock: clock,
       traceSink: trace,
-      sources: _streamingSources,
       onSessionCreated: _observeDownloadSession,
     );
     _decodes = DecodeRegistry(
       downloads: _downloads,
+      ingresses: _ingresses,
       cursors: _media.cursors,
       clock: clock,
       prefixHints: decodePrefixHints,
@@ -448,6 +452,7 @@ final class PipelineReaderSession {
     _coordinator = LiveCoordinator(
       registry: _downloads,
       transportFor: _transportFor,
+      ingresses: _ingresses,
       clock: clock,
       traceSink: trace,
       retry: _profile.retry,
@@ -525,6 +530,7 @@ final class PipelineReaderSession {
   final PartialDownloadStore? _partialDownloadStore;
   ArtifactCacheTransport? _artifactCacheTransport;
   late final SourcePool _streamingSources;
+  late final DownloadIngressProjectionRegistry _ingresses;
   late final DownloadRegistry _downloads;
   late final DecodeRegistry _decodes;
   late final UploadRegistry _uploads;
@@ -1033,6 +1039,7 @@ final class PipelineReaderSession {
       _artifactCacheTransport ?? _baseTransportFor(uri);
 
   void _observeDownloadSession(DownloadSession session) {
+    _ingresses.attach(session);
     _artifactCacheHandoff?.observe(session);
     transferProgress.observe(session);
   }
@@ -1354,6 +1361,8 @@ final class PipelineReaderSession {
     final handoffDrainMicros = clock.nowMicros() - handoffDrainStartedAtMicros;
     _uploads.dispose();
     _decodes.dispose();
+    _ingresses.dispose(_downloads.sessions);
+    _streamingSources.dispose();
     final mediaCloseStartedAtMicros = clock.nowMicros();
     await _media.close();
     final mediaCloseMicros = clock.nowMicros() - mediaCloseStartedAtMicros;
@@ -1361,7 +1370,6 @@ final class PipelineReaderSession {
     await _downloads.dispose();
     final downloadsDisposeMicros =
         clock.nowMicros() - downloadsDisposeStartedAtMicros;
-    _streamingSources.dispose();
     _ioTransport.close(force: true);
     final workspaceDisposeStartedAtMicros = clock.nowMicros();
     await _workspace.dispose();

@@ -34,8 +34,12 @@ void main() {
         finalPath: '${temp.path}/cache/page.webp',
       ),
       clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test-1:${session.id.key}',
       ingress: ingress,
     );
+    session.attachIngressProjection(projection);
 
     await DownloadJob(transport: const FileTransport(), session: session).run();
 
@@ -71,8 +75,12 @@ void main() {
         finalPath: '${temp.path}/cache/page.webp',
       ),
       clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test-2:${session.id.key}',
       ingress: ingress,
     );
+    session.attachIngressProjection(projection);
 
     final result = await DownloadJob(
       transport: _DurableTransport(bytes),
@@ -108,8 +116,12 @@ void main() {
         finalPath: '${temp.path}/cache/page.webp',
       ),
       clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test-3:${session.id.key}',
       ingress: ingress,
     );
+    session.attachIngressProjection(projection);
 
     await expectLater(
       DownloadJob(
@@ -148,9 +160,13 @@ void main() {
         finalPath: '${temp.path}/cache/page.webp',
       ),
       clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test-4:${session.id.key}',
       ingress: ingress,
     );
-    session.addSourceListener((_) => throw StateError('listener failed'));
+    session.attachIngressProjection(projection);
+    projection.addSourceListener((_) => throw StateError('listener failed'));
 
     final result = await DownloadJob(
       transport: const FileTransport(),
@@ -190,8 +206,12 @@ void main() {
         finalPath: finalPath,
       ),
       clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test-5:${session.id.key}',
       ingress: ingress,
     );
+    session.attachIngressProjection(projection);
 
     await session.restore();
 
