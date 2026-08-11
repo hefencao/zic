@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.218` / App `0.31.0+218`。
+- 当前版本：`0.31.0-dev.219` / App `0.31.0+219`。
+- dev.219：依据08:19真机Trace重新审计跨层ownership：Reader3首个plan有downloads=11/decodes=4/uploads=4，却因late Reader对已有committed physical session仍走同步`attachIngressProjection`而在download reconcile中抛错，最终decode/upload sessions均为0。现Reader-local projection先返回再异步synchronized replay；Reader observation改为enqueue/latest-wins，pipeline错误不再进入UI导航栈；DecodeTarget变化不再detach binding或清空download demand，仅更新PipelineController target并从既有plan增量替换decode/upload identity，ReaderController/requested page保持route ownership。verified TransferKey继续冻结。
 - dev.218：依据07:34真机Trace收口“图片physical source已ready但DecodeSession永久waitingSource”回归：staged current-bootstrap门控返回空决策时不再消费邻页source revision，并以Reader-local ingress projection当前revision作为状态兜底；该页后续晋升current可重新decode。Reader slider受控值改为`requestedIndex ?? currentIndex`，拖动请求在viewport acknowledge前不再被旧current拉回。dev.217的network task-key修复保持，verified TransferKey继续暂停到本轮真机复验。
 - dev.217：修复dev.216 physical owner的基础task identity竞态。真机Trace出现51次`sessionBusy`与114次由其触发的download-attempt retry，根因是已有queued/active `_networkTaskKeys[id]`时仅迁移priority却继续生成新task key。现在existing lane task必须原位priority migration并立即返回；只有lane已退休key才可清理并重建，同时`session.hasWriter`与stale-task start guard阻止第二run。verified TransferKey暂停，先复验预下载调度。
 - dev.216：physical `DownloadRegistry`、network task/retry/terminal/defer与transfer workspace提升到composition `_PipelineDownloadTransferRuntime/DownloadTransferOwner`。所有Factory clone共享runtime pool并按artifact cache manager + partial store + shared NetLane的真实owner组合取runtime；loader/UA仅作为consumer transport provider。两个Reader exact `DownloadId`加入同一session/writer，provider退出只撤销自身claim并等待其task退出，剩余consumer可用自身transport续跑；最后claim消失的committed partial在writer退出后由physical owner持久化。
@@ -41,12 +42,12 @@
 - Venera preemption先断requestId native HTTP，再等待JS `finished`后返回cancelled并释放permit，禁止同一WebView中旧/新async invocation重叠。修复 `ArtifactCacheReadLease?` nullable半迁移编译错误。
 - 当前环境无Flutter/Dart/Android完整SDK；行为测试已加入源码，最终设备构建/性能仍需本地验证。
 
-**源码版本：** `0.31.0-dev.218`
+**源码版本：** `0.31.0-dev.219`
 - dev.215：physical `DownloadSession`移除唯一Reader native `Ingress`；新增Reader-local `DownloadIngressProjectionRegistry`，Decode/Live source listener显式消费本Reader projection。late projection先在live fan-out外按revision/epoch/committed boundary同步，再无await附着，避免与active writer offset交错。physical registry/network/retry仍未提升到composition。
 - dev.215静态验证：documentation/structure/Reader streaming/demand stability/dev.177、184、199–215 gates通过；完整`bash tool/check.sh`仍停在基线缺失pinned libwebp archive；Flutter/Dart不可用。详见`docs/audits/dev215-validation-results.md`。
 - dev.214：下载需求正式改为 scoped `DownloadDemandLease`；同一 session 的 effective priority为最大claim，Reader detach只移除自身claim。物理 registry/retry/native ingress仍未跨Reader共享。
 - dev.214静态验证：ownership/Reader streaming/demand stability/dev.177、184、199–214 gates通过；完整`bash tool/check.sh`停在基线缺失`third_party/source_archives/libwebp-1.6.0.zip`，未偷补；Flutter/Dart仍不可用。详见`docs/audits/dev214-validation-results.md`。
-**App build：** `0.31.0+218`
+**App build：** `0.31.0+219`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。
 

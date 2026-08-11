@@ -325,6 +325,48 @@ void main() {
     );
   });
 
+  test('decode target update preserves download demand ownership', () {
+    final updates = <PipelineDelta>[];
+    final controller = PipelineController(
+      chapter: chapter,
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+      clock: _FakeClock(),
+      onUpdate: updates.add,
+    );
+
+    final obs = observation();
+    controller.accept(obs);
+    final before = controller.currentPlan;
+    final beforeDownloads = before.downloads.keys.toSet();
+
+    controller.updateDecodeTarget(
+      DecodeTarget(
+        physicalWidth: 720,
+        physicalHeight: 1280,
+      ),
+    );
+    controller.accept(obs);
+
+    expect(updates, hasLength(2));
+    final retarget = updates.last;
+    expect(retarget.diff.downloads.isEmpty, isTrue,
+        reason: 'viewport raster changes must not withdraw physical downloads');
+    expect(retarget.plan.downloads.keys.toSet(), beforeDownloads);
+    expect(retarget.diff.decodes.added, isNotEmpty);
+    expect(retarget.diff.decodes.removed, isNotEmpty);
+    expect(retarget.diff.uploads.added, isNotEmpty);
+    expect(retarget.diff.uploads.removed, isNotEmpty);
+    expect(
+      retarget.plan.decodes.keys.every(
+        (id) => id.physicalWidth == 720 && id.physicalHeight == 1280,
+      ),
+      isTrue,
+    );
+  });
+
   test('pipeline does not resubmit an unchanged role window', () {
     final updates = <PipelineDelta>[];
     final controller = PipelineController(

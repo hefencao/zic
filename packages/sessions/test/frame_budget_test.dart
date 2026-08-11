@@ -142,7 +142,7 @@ void main() {
 
     uploads.dispose();
     decodes.dispose();
-    ingresses.dispose(downloads.sessions);
+    ingresses.dispose();
     sources.dispose();
     await downloads.dispose();
     await temp.delete(recursive: true);
@@ -242,7 +242,7 @@ void main() {
 
     uploads.dispose();
     decodes.dispose();
-    ingresses.dispose(downloads.sessions);
+    ingresses.dispose();
     sources.dispose();
     await downloads.dispose();
     await temp.delete(recursive: true);

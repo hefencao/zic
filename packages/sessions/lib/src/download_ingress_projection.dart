@@ -83,6 +83,12 @@ final class DownloadIngressProjection {
     _notify(before, ingress.snapshot);
   }
 
+  void fail(Failure failure) {
+    final before = ingress.snapshot;
+    ingress.fail(failure);
+    _notify(before, ingress.snapshot);
+  }
+
   void detach() {
     _listeners.clear();
   }

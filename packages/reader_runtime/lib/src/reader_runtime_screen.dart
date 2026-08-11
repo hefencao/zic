@@ -248,36 +248,41 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     if (_target == target) {
       return;
     }
-    final previous = _reader;
-    final initialProgress = _matchingInitialProgress();
-    final currentIndex = previous?.currentIndex ??
-        (initialProgress?.pageIndex ?? 0)
-            .clamp(0, widget.chapter.pages.length - 1)
-            .toInt();
-    final direction = previous?.direction ?? _resolveInitialDirection(
-      initialProgress,
-    );
-    if (previous != null) {
-      previous.removeListener(_handleReaderProgress);
-      _pipeline.detach(previous.sessionId);
-      previous.dispose();
+    final reader = _reader;
+    if (reader != null) {
+      // Decode target belongs to the pipeline/media projection, not Reader
+      // navigation. System-UI/MediaQuery changes must not destroy current or
+      // pending page commands. Update only decode-target configuration and
+      // replay the latest viewport fact through the enqueue boundary.
+      _pipeline.updateDecodeTarget(target);
+      _target = target;
+      final observation = reader.lastObservation;
+      if (observation != null) {
+        _pipeline.enqueueObservation(observation);
+      }
+      return;
     }
 
+    final initialProgress = _matchingInitialProgress();
+    final currentIndex = (initialProgress?.pageIndex ?? 0)
+        .clamp(0, widget.chapter.pages.length - 1)
+        .toInt();
+    final direction = _resolveInitialDirection(initialProgress);
     _pipeline.attach(target);
-    final reader = ReaderController(
+    final created = ReaderController(
       sessionId: _pipeline.sessionId,
       chapter: widget.chapter,
       initialPage: currentIndex,
-      onObservation: _pipeline.accept,
+      onObservation: _pipeline.enqueueObservation,
       clock: _pipeline.clock,
       traceSink: _pipeline.trace,
     );
-    reader.setDirection(direction);
-    reader.addListener(_handleReaderProgress);
+    created.setDirection(direction);
+    created.addListener(_handleReaderProgress);
     _target = target;
-    _reader = reader;
-    _lastProgressPage = reader.currentIndex;
-    _lastProgressMode = _readerMode(reader.direction);
+    _reader = created;
+    _lastProgressPage = created.currentIndex;
+    _lastProgressMode = _readerMode(created.direction);
   }
 
   ReadingDirection _resolveInitialDirection(ReadingProgress? progress) {

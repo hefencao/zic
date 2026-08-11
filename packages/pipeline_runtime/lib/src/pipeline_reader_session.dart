@@ -771,6 +771,9 @@ final class PipelineReaderSession {
   DownloadId? _startupCurrentDownload;
   bool _disposed = false;
   bool _retainedForReaderReentry = false;
+  ReaderObs? _pendingObservation;
+  bool _observationDrainScheduled = false;
+  int _observationGeneration = 0;
 
   bool get isDisposed => _disposed;
   int get revision => _binding?.revision ?? 0;
@@ -778,6 +781,7 @@ final class PipelineReaderSession {
 
   void attach(DecodeTarget target) {
     _requireOpen();
+    _invalidateObservationQueue();
     _retainedForReaderReentry = false;
     if (target.renderer != renderer) {
       throw ArgumentError.value(
@@ -799,6 +803,91 @@ final class PipelineReaderSession {
       policy: _profile.policy,
       policyGuard: _profile.guard,
     );
+  }
+
+  /// Changes only decode/upload raster identity for an attached Reader.
+  /// Download demands remain diffed against the existing plan; this method must
+  /// not detach the binding or touch Reader navigation state. Reconciliation is
+  /// deferred until the next enqueued observation.
+  void updateDecodeTarget(DecodeTarget target) {
+    _requireOpen();
+    if (target.renderer != renderer) {
+      throw ArgumentError.value(
+        target.renderer,
+        'target.renderer',
+        'must match the atomically injected Pipeline media renderer '
+            '${renderer.name}',
+      );
+    }
+    final binding = _binding;
+    if (binding == null) {
+      throw StateError('pipeline Reader session is not attached');
+    }
+    binding.updateDecodeTarget(target);
+  }
+
+  /// Enqueues the latest Reader viewport observation behind the UI/navigation
+  /// callback boundary. ReaderView must never synchronously execute demand,
+  /// transfer or decode reconciliation. Rapid scroll updates are latest-wins
+  /// within one microtask turn; page identity/current transitions remain in the
+  /// observation itself and are reconciled before the next frame.
+  void enqueueObservation(ReaderObs observation) {
+    if (_disposed || _retainedForReaderReentry) {
+      return;
+    }
+    _pendingObservation = observation;
+    _scheduleObservationDrain();
+  }
+
+  void _scheduleObservationDrain() {
+    if (_observationDrainScheduled) return;
+    _observationDrainScheduled = true;
+    final generation = _observationGeneration;
+    scheduleMicrotask(() => _drainObservation(generation));
+  }
+
+  void _drainObservation(int generation) {
+    if (generation != _observationGeneration ||
+        _disposed ||
+        _retainedForReaderReentry) {
+      _observationDrainScheduled = false;
+      if (_pendingObservation != null &&
+          !_disposed &&
+          !_retainedForReaderReentry) {
+        _scheduleObservationDrain();
+      }
+      return;
+    }
+    final observation = _pendingObservation;
+    _pendingObservation = null;
+    _observationDrainScheduled = false;
+    if (observation == null) return;
+    try {
+      accept(observation);
+    } on Object catch (error, stackTrace) {
+      trace.record(
+        traceEvent(
+          clock: clock,
+          sessionId: sessionId,
+          kind: TraceEventKind.taskFailed,
+          revision: revision,
+          payload: <String, Object?>{
+            'stage': 'reader-observation-reconcile',
+            'errorType': error.runtimeType.toString(),
+            'error': error.toString(),
+            'stackType': stackTrace.runtimeType.toString(),
+          },
+        ),
+      );
+    }
+    if (_pendingObservation != null) {
+      _scheduleObservationDrain();
+    }
+  }
+
+  void _invalidateObservationQueue() {
+    _observationGeneration++;
+    _pendingObservation = null;
   }
 
   void accept(ReaderObs observation) {
@@ -884,6 +973,7 @@ final class PipelineReaderSession {
   }
 
   void detach(String readerSessionId) {
+    _invalidateObservationQueue();
     _binding?.detach(readerSessionId);
     _binding = null;
     _readerSessionId = null;
@@ -898,6 +988,7 @@ final class PipelineReaderSession {
     if (_retainedForReaderReentry) {
       return;
     }
+    _invalidateObservationQueue();
     _retainedForReaderReentry = true;
     _cancelPlaybackWake();
     final binding = _binding;
@@ -1530,6 +1621,7 @@ final class PipelineReaderSession {
 
   Future<void> dispose() async {
     if (_disposed) return;
+    _invalidateObservationQueue();
     _disposed = true;
     final disposeStartedAtMicros = clock.nowMicros();
     trace.record(
@@ -1572,7 +1664,7 @@ final class PipelineReaderSession {
     _transferRuntime.detachReaderTrace(trace);
     _uploads.dispose();
     _decodes.dispose();
-    _ingresses.dispose(_downloads.sessions);
+    _ingresses.dispose();
     _streamingSources.dispose();
     final mediaCloseStartedAtMicros = clock.nowMicros();
     await _media.close();

@@ -1706,6 +1706,147 @@ void main() {
     await downloads.dispose();
   });
 
+  test(
+      'late Reader joins promoted physical download without blocking decode/upload reconcile',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('live_late_reader_test_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final source = File('${temp.path}/source.webp');
+    final bytes = 'RIFF....WEBPpromoted-reader-reentry'.codeUnits;
+    await source.writeAsBytes(bytes);
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'late-reader',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: source.uri,
+    );
+    final decodeId = DecodeId(
+      download: id,
+      physicalWidth: 8,
+      physicalHeight: 8,
+      pixelFormat: PixelFormat.rgba8888,
+      renderer: RendererKind.flutterImage,
+    );
+    final clock = _Clock();
+    final trace = MemoryTraceSink();
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+      traceSink: trace,
+    );
+    final physical = downloads.get(id);
+    await DownloadJob(
+      transport: const FileTransport(),
+      session: physical,
+    ).run();
+    expect(physical.state, DownloadState.promoted);
+    expect(physical.committedLength, bytes.length);
+
+    // This SourcePool/ingress registry represents a later Reader. The physical
+    // transfer already contains bytes, so projection replay must be async
+    // consumer work and must not abort the demand reconciliation pass.
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'late-reader',
+    );
+    final decodes = DecodeRegistry(
+      downloads: downloads,
+      ingresses: ingresses,
+      cursors: _StaticCursorFactory(),
+      clock: clock,
+      traceSink: trace,
+    );
+    final uploader = _TestUploader();
+    final uploads = UploadRegistry(
+      decodes: decodes,
+      uploader: uploader,
+      clock: clock,
+      traceSink: trace,
+    );
+    final coordinator = LiveCoordinator(
+      registry: downloads,
+      ingresses: ingresses,
+      transportFor: (_) => const FileTransport(),
+      clock: clock,
+      traceSink: trace,
+      decodes: decodes,
+      uploads: uploads,
+      net: NetLane(maxActive: 1),
+      decode: DecodeLane(maxActive: 1),
+      upload: UploadLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await coordinator.dispose();
+      ingresses.dispose();
+      sources.dispose();
+      uploads.dispose();
+      decodes.dispose();
+      await downloads.dispose();
+    });
+
+    const downloadDemand = DownloadDemand(
+      role: PageRole.current,
+      priority: 1000,
+      reason: 'late-reader',
+      expirationRevision: 2,
+    );
+    const decodeDemand = DecodeDemand(
+      role: PageRole.current,
+      priority: 1000,
+      targetWatermark: 1,
+      reason: 'late-reader',
+      expirationRevision: 2,
+    );
+    const uploadDemand = UploadDemand(
+      role: PageRole.current,
+      priority: 1000,
+      reason: 'late-reader',
+      expirationRevision: 2,
+    );
+    final plan = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{id: downloadDemand},
+      decodes: <DecodeId, DecodeDemand>{decodeId: decodeDemand},
+      uploads: <DecodeId, UploadDemand>{decodeId: uploadDemand},
+      keep: <ResourceId>{
+        ResourceId.download(id),
+        ResourceId.decode(decodeId),
+      },
+    );
+
+    expect(
+      () => coordinator.reconcile(
+        'late-reader',
+        PipelineDelta(
+          plan: plan,
+          diff: DemandDiff.between(DemandPlan.empty(), plan),
+          window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+        ),
+      ),
+      returnsNormally,
+      reason: 'physical prefix replay must not abort decode/upload reconcile',
+    );
+
+    final projection = ingresses.find(id);
+    expect(projection, isNotNull);
+    await ingresses.settled(id);
+    await coordinator.idle();
+
+    expect(projection!.snapshot.length, bytes.length);
+    expect(projection.snapshot.sourceReady, isTrue);
+    expect(decodes.find(decodeId), isNotNull);
+    expect(uploads.find(decodeId)?.state, UploadState.ready);
+    expect(uploader.outputs, hasLength(1));
+  });
+
   test('static output stays resident across a demand gap and page revisit',
       () async {
     final temp = await Directory.systemTemp.createTemp('live_revisit_test_');

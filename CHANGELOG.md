@@ -1,3 +1,9 @@
+## 0.31.0-dev.219：Reader / Pipeline observation-projection boundary
+
+- 08:19真机Trace确认共享physical owner后的关键跨层回归：Reader3 plan有11 download/4 decode/4 upload，但late Reader对已有committed session同步attach native ingress时异常截断reconcile，最终本Reader decode/upload session均为0，current页21秒无首帧。
+- Reader-local ingress registry现在对已有prefix先返回consumer projection，再异步`synchronized` replay；replay失败仅标记本地projection，detach可自清理late fan-out，不枚举/拥有composition physical registry。
+- Reader observation改为enqueue/latest-wins microtask seam，pipeline reconcile不再同步处于scroll/page-request栈；DecodeTarget变化不再detach/attach binding，而只更新PipelineController target并在下一条observation中从既有plan增量diff，physical download demand保持连续，ReaderController/requested page不重建。App提升到`0.31.0+219`；verified TransferKey继续冻结。
+
 ## 0.31.0-dev.218：Source-wake / slider closure
 
 - 07:34真机Trace确认dev.217网络单task修复有效：本轮无`sessionBusy/writerBusy`且存在15次`downloadPreempted`。黑页根因转为decode wake：页面334的physical source/artifact已就绪，但其DecodeSession在此前`waitingSource`后46.28秒未首帧。

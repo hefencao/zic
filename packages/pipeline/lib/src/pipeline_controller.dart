@@ -24,17 +24,18 @@ typedef PipelineCallback = void Function(PipelineDelta update);
 final class PipelineController {
   PipelineController({
     required this.chapter,
-    required this.decodeTarget,
+    required DecodeTarget decodeTarget,
     required this.clock,
     required PipelineCallback onUpdate,
     this.traceSink = const NoopTraceSink(),
     this.windowResolver = const RoleResolver(),
     this.policy = const HeuristicPolicy(),
     this.guard = const PolicyGuard(),
-  }) : _onUpdate = onUpdate;
+  })  : _decodeTarget = decodeTarget,
+        _onUpdate = onUpdate;
 
   final ChapterManifest chapter;
-  final DecodeTarget decodeTarget;
+  DecodeTarget _decodeTarget;
   final MonoClock clock;
   final TraceSink traceSink;
   final RoleResolver windowResolver;
@@ -43,6 +44,7 @@ final class PipelineController {
   final PipelineCallback _onUpdate;
 
   int _revision = 0;
+  bool _decodeTargetDirty = false;
   DemandPlan _previous = DemandPlan.empty();
   Map<int, PageRole>? _previousRoles;
   int? _previousRetainedIndex;
@@ -53,6 +55,17 @@ final class PipelineController {
 
   int get revision => _revision;
   DemandPlan get currentPlan => _previous;
+  DecodeTarget get decodeTarget => _decodeTarget;
+
+  /// Updates only the decode/upload projection target. Physical download
+  /// identity and Reader navigation are independent from viewport raster size.
+  /// The next observation performs one incremental diff from the existing plan
+  /// rather than detaching all demand to empty first.
+  void updateDecodeTarget(DecodeTarget target) {
+    if (_decodeTarget == target) return;
+    _decodeTarget = target;
+    _decodeTargetDirty = true;
+  }
 
   void accept(ReaderObs observation) {
     if (_currentIndex != null && _currentIndex != observation.currentIndex) {
@@ -92,6 +105,7 @@ final class PipelineController {
       previousCurrentIndex: _lastCurrentIndex,
     );
     if (!force &&
+        !_decodeTargetDirty &&
         _sameRoles(_previousRoles, window.roles) &&
         _previousRetainedIndex == window.retainedIndex) {
       return;
@@ -104,13 +118,14 @@ final class PipelineController {
       chapter: chapter,
       observation: observation,
       window: window,
-      decodeTarget: decodeTarget,
+      decodeTarget: _decodeTarget,
       runtimeAnimatedPages: _runtimeAnimatedPages,
       assumeUnresolvedStatic: _assumeUnresolvedStatic,
     );
     final plan = guard.enforce(proposal);
     final diff = DemandDiff.between(_previous, plan);
     _previous = plan;
+    _decodeTargetDirty = false;
 
     traceSink.record(
       traceEvent(

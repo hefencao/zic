@@ -223,6 +223,14 @@ final class Ingress {
     _revision++;
   }
 
+  /// Marks this Reader-local source projection as failed without mutating the
+  /// physical download. Used when a late consumer cannot replay the physical
+  /// committed prefix into its own native source.
+  void fail(Failure failure) {
+    _requireOpen();
+    _disable(failure);
+  }
+
   void dispose() {
     if (_disposed) {
       return;

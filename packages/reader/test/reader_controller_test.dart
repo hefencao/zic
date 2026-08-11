@@ -95,6 +95,74 @@ void main() {
     controller.dispose();
   });
 
+  test('pipeline observation failure cannot roll back visible navigation', () {
+    final chapter = ChapterManifest(
+      sourceId: 'local',
+      comicId: 'comic',
+      chapter: const Chapter(
+        chapterId: 'chapter',
+        comicId: 'comic',
+        title: 'Chapter',
+        sequence: 1,
+        pageCount: 2,
+        sourceRevision: 'r1',
+      ),
+      pages: <PageAsset>[
+        PageAsset(
+          pageId: 'p0',
+          chapterId: 'chapter',
+          index: 0,
+          uri: Uri.parse('assets/p0.png'),
+        ),
+        PageAsset(
+          pageId: 'p1',
+          chapterId: 'chapter',
+          index: 1,
+          uri: Uri.parse('assets/p1.png'),
+        ),
+      ],
+      readingDirection: ReadingDirection.ltr,
+    );
+    final reportedErrors = <FlutterErrorDetails>[];
+    final priorErrorHandler = FlutterError.onError;
+    FlutterError.onError = reportedErrors.add;
+    addTearDown(() => FlutterError.onError = priorErrorHandler);
+    var notifications = 0;
+    final controller = ReaderController(
+      sessionId: 'navigation-isolation',
+      chapter: chapter,
+      onObservation: (_) => throw StateError('pipeline failed'),
+      clock: _Clock(),
+    )..addListener(() => notifications++);
+    addTearDown(controller.dispose);
+
+    final observation = ReaderObs(
+      sessionId: 'navigation-isolation',
+      currentIndex: 1,
+      stableIndex: 1,
+      interaction: Interaction.settling,
+      logicalPosition: 1,
+      velocity: 0,
+      currentCoverage: Coverage(
+        pageIndex: 1,
+        assetKey: 'chapter/p1',
+        fraction: 1,
+      ),
+      direction: ReadingDirection.ltr,
+      timestamp: DateTime.utc(2026, 8, 11),
+      monotonicMicros: 3,
+    );
+
+    expect(() => controller.report(observation), returnsNormally);
+    expect(controller.currentIndex, 1);
+    expect(controller.stableIndex, 1);
+    expect(controller.lastObservation, same(observation));
+    expect(notifications, 1,
+        reason: 'visible navigation publishes before pipeline consumption');
+    expect(reportedErrors, hasLength(1));
+    expect(reportedErrors.single.exception, isA<StateError>());
+  });
+
   testWidgets('custom media page reports first frame exactly once', (
     tester,
   ) async {

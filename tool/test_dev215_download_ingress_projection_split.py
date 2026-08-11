@@ -59,7 +59,7 @@ for token in (
     '_ingresses = DownloadIngressProjectionRegistry(',
     'ingresses: _ingresses,',
     '_ingresses.attach(session);',
-    '_ingresses.dispose(_downloads.sessions);',
+    '_ingresses.dispose();',
 ):
     require(pipe, token, 'Reader composition owns ingress projections')
 require(page_stream, 'kind: _contentKind(snapshot.contentKind)', 'page kind comes from physical transfer')

@@ -64,6 +64,13 @@ final class ReaderBinding {
     return pipeline.classifyPage(pageIndex: pageIndex, animated: animated);
   }
 
+  void updateDecodeTarget(DecodeTarget target) {
+    if (_detached) {
+      throw StateError('reader binding is detached');
+    }
+    pipeline.updateDecodeTarget(target);
+  }
+
   /// Reconciles every outstanding demand to empty before this binding is
   /// replaced or the reader session leaves the widget tree.
   ///

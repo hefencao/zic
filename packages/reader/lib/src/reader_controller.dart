@@ -30,6 +30,7 @@ final class ReaderController extends ChangeNotifier {
   int? _requestedIndex;
   int _navigationRevision = 0;
   int _rotationQuarterTurns = 0;
+  ReaderObs? _lastObservation;
 
   int get currentIndex => _currentIndex;
   int get stableIndex => _stableIndex;
@@ -37,6 +38,7 @@ final class ReaderController extends ChangeNotifier {
   int? get requestedIndex => _requestedIndex;
   int get navigationRevision => _navigationRevision;
   int get rotationQuarterTurns => _rotationQuarterTurns;
+  ReaderObs? get lastObservation => _lastObservation;
 
   void setDirection(ReadingDirection value) {
     if (_direction == value) {
@@ -94,6 +96,7 @@ final class ReaderController extends ChangeNotifier {
     final visibleStateChanged =
         _currentIndex != observation.currentIndex ||
         _stableIndex != observation.stableIndex;
+    _lastObservation = observation;
     _currentIndex = observation.currentIndex;
     _stableIndex = observation.stableIndex;
     _traceSink.record(
@@ -114,9 +117,23 @@ final class ReaderController extends ChangeNotifier {
         },
       ),
     );
-    _onObservation(observation);
     if (visibleStateChanged) {
       notifyListeners();
+    }
+    try {
+      _onObservation(observation);
+    } on Object catch (error, stackTrace) {
+      // Reader navigation/presentation owns the visible page state. A pipeline
+      // observation consumer may report an error, but it must never unwind a
+      // ScrollNotification or page-request acknowledgement back into the UI.
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'reader',
+          context: ErrorDescription('while publishing a Reader observation'),
+        ),
+      );
     }
   }
 }

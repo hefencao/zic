@@ -229,6 +229,37 @@ void main() {
     expect(session.snapshot.ingressProjectionCount, 1);
   });
 
+  test('Reader-local ingress registry joins an existing physical prefix asynchronously',
+      () async {
+    final writer = session.acquireWriter();
+    final first = <int>[...'RIFF....WEBP'.codeUnits, 1, 2, 3, 4];
+    await session.append(writer, 0, first);
+
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'reader-late',
+    );
+
+    // Late consumer projection creation is intentionally synchronous and cheap:
+    // it must not throw merely because the composition physical transfer has
+    // already committed bytes. Prefix replay happens behind this call.
+    final projection = ingresses.get(session);
+    expect(projection.snapshot.length, 0);
+
+    await ingresses.settled(session.id);
+    expect(projection.snapshot.length, first.length);
+    expect(projection.snapshot.sourceReady, isTrue);
+    expect(session.snapshot.ingressProjectionCount, 1);
+
+    ingresses.dispose();
+    sources.dispose();
+    expect(session.snapshot.ingressProjectionCount, 0);
+  });
+
   test('snapshot owns the resume baseline for one network run', () async {
     var writer = session.acquireWriter();
     expect(session.snapshot.networkStartLength, 0);
