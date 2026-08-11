@@ -1,5 +1,5 @@
-# dev.223 后续交接
-- dev.223：dev.222真机已确认live scrub实时导航+foreground-only 1/1/1 planning有效；当前完成下一阶段physical ownership迁移：public `CompositionDownloadTransferRuntime`由App-level `PersistentDownloadComposition`拥有，Reader/prefetch/chapter/whole-comic对exact DownloadId只作为claims/aggregation，durable store与chapter command拆开，required completion与priority分离；resident immutability与durable body authority也已拆开，source-resident required completion经composition replay materialize。verified TransferKey-before-acquire仍冻结等待共享transfer真机复验。
+# dev.224 后续交接
+- dev.224：修复dev.223章节迁移的Dart编译闭包：`PersistentDownloadArtifactStore`恢复durable-write single-flight `_artifactWrites` owner，`LiveCoordinator`改用自身`_downloads`全集投影transfer claims并删除重复`frameIndex`声明；不改变dev.223 ownership设计，先真机/Flutter编译复验再继续verified TransferKey。dev.223此前基于dev.222真机已确认live scrub实时导航+foreground-only 1/1/1 planning有效；当前完成下一阶段physical ownership迁移：public `CompositionDownloadTransferRuntime`由App-level `PersistentDownloadComposition`拥有，Reader/prefetch/chapter/whole-comic对exact DownloadId只作为claims/aggregation，durable store与chapter command拆开，required completion与priority分离；resident immutability与durable body authority也已拆开，source-resident required completion经composition replay materialize。verified TransferKey-before-acquire仍冻结等待共享transfer真机复验。
 `dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`

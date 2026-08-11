@@ -1,3 +1,8 @@
+## 0.31.0-dev.224：Chapter migration compile closure
+- 修复`PersistentDownloadArtifactStore`漏迁的durable artifact write single-flight字段，保持store而非command拥有写入去重与close barrier。
+- 修复`LiveCoordinator`迁移残留的越作用域`update.plan`引用，改为从coordinator当前`_downloads`全集投影`TransferDemand`；删除`advanceDueFrame`重复局部声明。
+- 新增dev.224迁移编译闭包gate；不改变dev.223 composition transfer/chapter claim架构。
+
 ## 0.31.0-dev.223：Composition transfer runtime / chapter command claim migration
 
 - dev.222真机scrub边界验证稳定后，将physical transfer runtime从Reader私有实现提升到downloads/App级composition owner；Reader、prefetch与显式章节下载对exact `DownloadId`共享单registry/writer/network/retry/hot-partial，whole-comic继续只聚合章节命令。

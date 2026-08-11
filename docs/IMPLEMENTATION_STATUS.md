@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.223` / App `0.31.0+223`。
+- 当前版本：`0.31.0-dev.224` / App `0.31.0+224`。
+- dev.224：修复dev.223迁移后的三处Dart编译闭包：durable store漏迁`_artifactWrites`字段、`LiveCoordinator._reconcileDownloads`错误引用上层`update`、`advanceDueFrame`重复声明`frameIndex`。新增专项gate检查字段归属、旧变量残留与相邻重复局部声明；physical/runtime/chapter claim语义不变。
 - dev.223：12:28真机Trace确认dev.222 live scrub已按设计工作：132个`interaction=scrubbing` policy plan全部严格为1 download/1 decode/1 upload，且无`decodeState=failed`、`sessionBusy/writerBusy`或此前resident late-join长黑页，因此冻结Reader scrub/resident replay并继续physical ownership迁移。composition runtime已从Reader私有实现提升为downloads/App级`CompositionDownloadTransferRuntime`；persistent chapter command与whole-comic不再拥有source/network `DownloadRegistry/DownloadJob`，而与Reader/prefetch对exact `DownloadId`共享scoped transfer claims。
 - dev.223：durable storage从command拆为`PersistentDownloadArtifactStore`，生产生命周期由`PersistentDownloadComposition`统一拥有store + ArtifactCacheManager + physical runtime + chapter command；`ManagedChapterDownloadService`缩回command-only contract。`TransferDemand`新增completion intent；另将`durableImmutable`与durable body ownership拆开为`ByteResponseBodyAuthority`，生产判断迁移到`residentBodyBacked/residentBodyAuthority`。source-resident显式章节只有在composition replay校验并materialize到唯一store的exact DownloadId后才完成，verified alias可读不等于offline exact完成；verified TransferKey仍未实现。
 - dev.222：11:35真机Trace证明dev.221 resident replay已明显收口：只有6个`firstFrameReady=false` page host且生命周期均<0.64s，`decodeState`无failed，相邻重复physical Trace也未再出现。剩余主要问题是dev.220把slider scrub过度降成release-only commit，拖动时viewport不实时变化。现新增显式`Interaction.scrubbing`：slider `onChanged`实时驱动Reader navigation，但RoleWindow在scrub期只保current，形成1 download/1 decode/1 upload foreground plan；gesture end强制发布非scrub planning revision并恢复正常7/3窗口。NetLane/水位/retry/resident replay不变。

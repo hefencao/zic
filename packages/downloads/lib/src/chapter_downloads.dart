@@ -675,6 +675,8 @@ final class PersistentDownloadArtifactStore
   final DownloadRegistry _registry;
   final SqliteIndex _index;
   final CacheOps _cacheOps;
+  final Map<DownloadId, Future<void>> _artifactWrites =
+      <DownloadId, Future<void>>{};
   bool _closed = false;
 
   int get materializedSessionCount => _registry.sessions.length;

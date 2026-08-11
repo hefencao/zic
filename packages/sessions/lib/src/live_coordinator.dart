@@ -333,7 +333,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       sessionId,
       _revision,
       <DownloadId, TransferDemand>{
-        for (final entry in update.plan.downloads.entries)
+        for (final entry in _downloads.entries)
           entry.key: TransferDemand(
             priority: entry.value.priority,
             reason: entry.value.reason,
