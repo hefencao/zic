@@ -1,3 +1,11 @@
+## 0.31.0-dev.212：版本 mapping 严格解码与后台重验证收口
+
+- 修复 dev.210/211 新增 `ComicVersionPageMapping.verifiedAt` 的 Dart 静态类型遗漏：JSON 原值先收窄为 `String?`，再用 `DateTime.tryParse` 严格验证并转 UTC；非法类型/非法时间继续抛 `FormatException`，不使用宽泛 cast 绕过。
+- 结合 `zic-debug-trace-2026-08-11T02-25-52.jsonl` 确认 dev.211 verified-equivalence 已真实工作：Reader 前恢复 3 个 mapping / 1113 个等价页，后续多次 `sourceRead` 明确 `verifiedEquivalentReuse=true`；不再改 full-artifact fallback。
+- 同一 trace 同时显示已持久 mapping 在约94秒内重复产生15次 `version-page-mapping-warmed`，多数没有新增 equivalent page。版本发现仍每次详情/Reader异步执行，但最近10分钟内所有 page mapping 都有有效 `verifiedAt` 时跳过昂贵的 `loadComic + strong page identity` 重验证；新 relation、缺时间戳或过期 mapping仍重新验证。
+- durable inactive partial 复用与 DownloadJob overlap probe保持不变；trace已显示该路径实际复用并成功 resume。
+- 新增 ADR 0193、dev.212根因审计/owner gate与 mapping JSON regression test，版本提升到 `0.31.0+212`。
+
 ## 0.31.0-dev.211：版本 artifact 等价 fallback 与迟到缓存复用
 
 - 结合 `zic-debug-trace-2026-08-11T02-00-30.jsonl` 确认 dev.210 的 mapping 已完成但 full reuse仍是一次性快照：再次进入371页旧版前已有3个 persistent mappings，却只 `reusedPages=13`；相关377页版本随后继续完成的 immutable artifact不会再进入旧版。

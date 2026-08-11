@@ -420,7 +420,7 @@ final class ComicVersionPageMapping {
     final predecessorPageCount = json['predecessorPageCount'];
     final successorPageCount = json['successorPageCount'];
     final successorOffset = json['successorOffset'];
-    final verifiedAt = json['verifiedAt'];
+    final verifiedAtValue = json['verifiedAt'];
     if (predecessorChapterId is! String ||
         predecessorChapterId.isEmpty ||
         successorChapterId is! String ||
@@ -430,8 +430,16 @@ final class ComicVersionPageMapping {
         successorPageCount is! int ||
         successorPageCount <= 0 ||
         successorOffset is! int ||
-        (verifiedAt != null && verifiedAt is! String)) {
+        (verifiedAtValue != null && verifiedAtValue is! String)) {
       throw const FormatException('invalid comic version page mapping');
+    }
+    DateTime? verifiedAt;
+    if (verifiedAtValue is String) {
+      final parsed = DateTime.tryParse(verifiedAtValue);
+      if (parsed == null) {
+        throw const FormatException('invalid comic version page mapping');
+      }
+      verifiedAt = parsed.toUtc();
     }
     return ComicVersionPageMapping(
       predecessorChapterId: predecessorChapterId,
@@ -439,7 +447,7 @@ final class ComicVersionPageMapping {
       predecessorPageCount: predecessorPageCount,
       successorPageCount: successorPageCount,
       successorOffset: successorOffset,
-      verifiedAt: verifiedAt == null ? null : DateTime.parse(verifiedAt).toUtc(),
+      verifiedAt: verifiedAt,
     );
   }
 }

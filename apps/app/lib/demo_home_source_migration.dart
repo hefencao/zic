@@ -26,6 +26,24 @@ ComicVersionSource? _sourceVersionCapability(BrowsableComicSource source) {
 bool _sourceSupportsVersionEntry(BrowsableComicSource source) =>
     _sourceVersionCapability(source)?.supportsComicVersions == true;
 
+const Duration _versionPageMappingRevalidationInterval = Duration(minutes: 10);
+
+bool _versionPageMappingsAreFresh(
+  ComicVersionRelation relation,
+  DateTime now,
+) {
+  if (relation.pageMappings.isEmpty) return false;
+  for (final mapping in relation.pageMappings) {
+    final verifiedAt = mapping.verifiedAt;
+    if (verifiedAt == null) return false;
+    final age = now.difference(verifiedAt.toUtc());
+    if (age.isNegative || age > _versionPageMappingRevalidationInterval) {
+      return false;
+    }
+  }
+  return true;
+}
+
 String sourceVersionViewIdentity({
   required String sourceId,
   required String currentComicId,
@@ -299,6 +317,9 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     BrowsableComicSource source,
     ComicVersionRelation relation,
   ) async {
+    if (_versionPageMappingsAreFresh(relation, DateTime.now().toUtc())) {
+      return;
+    }
     final predecessorComic = await source.loadComic(relation.predecessorComicId);
     final successorComic = await source.loadComic(relation.successorComicId);
     if (predecessorComic.comic.sourceId != source.sourceId ||

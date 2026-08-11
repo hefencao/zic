@@ -3,6 +3,46 @@ import 'package:domain/domain.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('comic version page mapping parses verified time strictly', () {
+    final mapping = ComicVersionPageMapping.fromJson(
+      <String, Object?>{
+        'predecessorChapterId': 'old-chapter',
+        'successorChapterId': 'new-chapter',
+        'predecessorPageCount': 370,
+        'successorPageCount': 371,
+        'successorOffset': 1,
+        'verifiedAt': '2026-08-11T02:00:00+08:00',
+      },
+    );
+    expect(mapping.verifiedAt, DateTime.utc(2026, 8, 10, 18));
+    expect(
+      () => ComicVersionPageMapping.fromJson(
+        <String, Object?>{
+          'predecessorChapterId': 'old-chapter',
+          'successorChapterId': 'new-chapter',
+          'predecessorPageCount': 370,
+          'successorPageCount': 371,
+          'successorOffset': 1,
+          'verifiedAt': 123,
+        },
+      ),
+      throwsFormatException,
+    );
+    expect(
+      () => ComicVersionPageMapping.fromJson(
+        <String, Object?>{
+          'predecessorChapterId': 'old-chapter',
+          'successorChapterId': 'new-chapter',
+          'predecessorPageCount': 370,
+          'successorPageCount': 371,
+          'successorOffset': 1,
+          'verifiedAt': 'not-a-date',
+        },
+      ),
+      throwsFormatException,
+    );
+  });
+
   test('memory imported library stores comic version predecessors', () async {
     final store = MemoryImportedLibraryStore();
     await store.open();

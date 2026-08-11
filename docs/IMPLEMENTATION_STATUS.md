@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.211` / App `0.31.0+211`。
+- 当前版本：`0.31.0-dev.212` / App `0.31.0+212`。
+- dev.212：02:25真机trace确认dev.211 equivalence已真实命中：Reader前可恢复3个mapping/1113个等价页，后续`sourceRead`出现`verifiedEquivalentReuse=true`；因此不再扩大cache fallback。错误报告同时发现`ComicVersionPageMapping.fromJson`把`Object? verifiedAt`直接传给`DateTime.parse`导致Dart编译失败，现改为类型收窄+`DateTime.tryParse`严格解码。trace约94秒内重复15次mapping warm，多数无新增等价页；版本发现保持每次入口异步，已验证mapping在10分钟freshness内跳过昂贵page identity重验证，新relation/无时间戳/过期mapping仍验证。partial owner与overlap续传不变。
 - dev.211：02:00真机trace确认dev.210 mapping并未缺失：再次进入371页旧版前已有3个persistent mappings，但只复用当时已promote的13页；相关377页版本之后继续完成的artifact不会被一次性`applyExisting`看见。verified mapping现在登记为`ArtifactCacheManager` symmetric equivalence fallback，lookup exact-first、相关版本fallback second，未来迟到promote也可被另一版本后续demand命中；写入继续保持exact DownloadId，hard alias/migration语义不变。partial仍只复用durable inactive prefix，不共享hot session。
 - dev.210：01:09真机trace确认冷启动旧版Reader的长等待发生在Reader创建前：版本alias准备同步解析source request-plan约十余秒，Reader创建后约0.27s即首帧。参考VibeVenera改为详情/Reader入口异步检查版本并持久化verified chapter page-offset mapping；Reader只本地恢复mapping→artifact alias，不再等待source identity resolver。confirmed relation的旧版`!`按raw/canonical predecessor匹配，successor当前版本不误报。verified mapping还可异步复制durable inactive partial到目标DownloadId，清空跨版本validator并保留DownloadJob overlap probe。
 - dev.209：只收口 dev.208 的编译/发布门禁残留。`_loadSourceVersionState()` 删除对已移除 `_reconcileConfirmedSourceUpdateSignal` 的调用；不恢复 relation→`sourceUpdateAt` 镜像。dev.208 gate 改为禁止该符号在迁移生产代码出现，并由新增 dev.209 closure gate 接入 `tool/check.sh`。
