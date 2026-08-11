@@ -31,7 +31,7 @@ spec = read('docs/SPEC.md')
 
 for token in (
     'if (session.committedLength == 0)',
-    'session.attachSynchronizedIngressProjection(projection)',
+    'session.attachSynchronizedIngressProjection(',
     '_entries[session.id] = entry;',
     'Future<void> settled(DownloadId id)',
     'session.detachIngressProjection(projection.scopeId);',

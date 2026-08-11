@@ -13,6 +13,16 @@ enum DownloadState { idle, queued, receiving, sealed, promoted, failed, disposed
 
 typedef DownloadSnapshotListener = void Function(DownloadSnapshot snapshot);
 
+/// Supplies the authoritative encoded-byte prefix for a late Reader projection.
+///
+/// Physical DownloadSession owns transfer state, but promoted resident-cache
+/// sessions intentionally do not duplicate immutable cache bytes into the
+/// session artifact. Their late-join replay must therefore be provided by the
+/// durable artifact owner rather than inferred from [Artifact].
+typedef DownloadIngressReplayChunks = Future<Stream<List<int>>> Function(
+  int endExclusive,
+);
+
 final class RunLease {
   const RunLease._(this.id);
 
@@ -850,8 +860,9 @@ final class DownloadSession {
   /// state check and map insertion contain no await, so a writer cannot slip a
   /// chunk between the verified boundary and attachment on the Dart isolate.
   Future<void> attachSynchronizedIngressProjection(
-    DownloadIngressProjection projection,
-  ) async {
+    DownloadIngressProjection projection, {
+    DownloadIngressReplayChunks? residentReplayChunks,
+  }) async {
     _requireNotDisposed();
     final existing = _ingressProjections[projection.scopeId];
     if (existing != null && !identical(existing, projection)) {
@@ -873,9 +884,22 @@ final class DownloadSession {
           _state == DownloadState.promoted;
       projection.expectLength(totalLength);
       final before = projection.snapshot;
+      final Stream<List<int>> chunks;
+      if (_residentCacheBacked) {
+        final replay = residentReplayChunks;
+        if (replay == null) {
+          throw const Failure(
+            code: ErrorCode.invalidState,
+            message: 'resident-cache projection replay requires durable byte authority',
+          );
+        }
+        chunks = await replay(targetLength);
+      } else {
+        chunks = artifact.readChunks(endExclusive: targetLength);
+      }
       await projection.rebuild(
         epoch: epoch,
-        chunks: artifact.readChunks(endExclusive: targetLength),
+        chunks: chunks,
         sealed: sealed,
       );
       _traceIngressProjection(projection.scopeId, before, projection.snapshot);

@@ -1,6 +1,6 @@
 # zic Implementation Plan
 ## P0：Image Transfer ownership 正式迁移
-- P0：dev.220继续Reader/pipeline边界收口：slider scrub preview只留在UI，gesture end才提交一次navigation；Reader-local viewport/playback不得因demand reconcile失败停滞；composition physical Trace对shared App/export sink只投递一次。复测远距slider jump时不应再逐页重排download window；真机稳定前继续冻结verified TransferKey。
+- P0：dev.221继续Reader/pipeline/source边界收口：修复`residentCacheBacked` physical session在late Reader中被错误从空session artifact重放的问题；physical transfer只声明residency，Reader projection通过独立replay authority从`ArtifactCacheManager`或可重开immutable local source获得严格有界encoded prefix，并服从共享artifact-read scheduler。真机复测cache-resident大图跨Reader重入/current晋升是否稳定sourceReady；verified TransferKey继续冻结。
 - 上述回归经真机确认后，再把source-confirmed relation + persisted verified page mapping + strong media identity归一为verified TransferKey-before-acquire，使已证明等价版本页在建立physical session前合流；再把chapter/whole-comic/prefetch改成同一owner上的demand aggregation。覆盖与冷启动证据未闭环前保留durable partial、artifact equivalence与session/takeover兼容路径。
 ## P0：Partial authority 单调性真机闭环
 - dev.195 的playable partial单调性继续冻结：Range probe/full-body catch-up的取消、EOF或mismatch只能失败当前 network attempt，旧partial/Ingress不变；metadata损坏只丢网络知识。dev.196不改DownloadSession authority、DecodeSession、NetLane、network=5、1000/780、7/3、2/1、7/5/3/2，也不增加bandwidth scheduler/framing。

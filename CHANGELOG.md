@@ -1,3 +1,8 @@
+## 0.31.0-dev.221：resident encoded-source replay authority 收口
+
+- 修复composition physical transfer提升后的late Reader黑页：`residentCacheBacked` session不再从可能为空的session artifact重放；Reader-local projection由独立replay authority从`ArtifactCacheManager`或可重开immutable local source重建authoritative prefix。
+- resident replay继续使用共享`ArtifactCacheReadScheduler`，避免Reader重入把durable/local encoded reads扩成旁路I/O并发；NetLane、水位、retry、cache ownership与verified TransferKey均不变。
+
 ## 0.31.0-dev.220：Reader scrub intent / physical trace fan-out closure
 
 - 09:44 真机Trace确认dev.219 late Reader decode/upload已恢复，但一次slider 148→248拖动仍在约0.4s内提交23次pageCurrent、23次policy replan和157次download priority重排；现slider拖动改为UI-local scrub preview，只有gesture end提交一次Reader navigation request，避免PageView/Pipeline/physical demand被中间索引逐格驱动。

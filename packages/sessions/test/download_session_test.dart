@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:domain/domain.dart';
@@ -258,6 +259,46 @@ void main() {
     ingresses.dispose();
     sources.dispose();
     expect(session.snapshot.ingressProjectionCount, 0);
+  });
+
+  test('resident-cache late Reader replays from external byte authority',
+      () async {
+    final bytes = <int>[...'RIFF....WEBP'.codeUnits, 1, 2, 3, 4, 5, 6];
+    session.beginDurableCachedIngress(
+      validators: const Validators(),
+      totalLength: bytes.length,
+    );
+    session.appendDurableCachedIngress(0, bytes);
+    session.sealDurableCachedIngress();
+
+    expect(session.residentCacheBacked, isTrue);
+    expect(session.committedLength, bytes.length);
+    expect(session.artifact.committedLength, 0);
+
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'reader-resident',
+      residentReplaySource: (physical, endExclusive) async {
+        expect(identical(physical, session), isTrue);
+        return Stream<List<int>>.value(bytes.sublist(0, endExclusive));
+      },
+    );
+
+    final projection = ingresses.get(session);
+    expect(projection.snapshot.length, 0);
+    await ingresses.settled(session.id);
+
+    expect(projection.snapshot.length, bytes.length);
+    expect(projection.snapshot.sourceReady, isTrue);
+    expect(projection.snapshot.sealed, isTrue);
+    expect(session.artifact.committedLength, 0);
+
+    ingresses.dispose();
+    sources.dispose();
   });
 
   test('snapshot owns the resume baseline for one network run', () async {

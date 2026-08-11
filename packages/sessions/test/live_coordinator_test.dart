@@ -1756,6 +1756,10 @@ void main() {
     final ingresses = DownloadIngressProjectionRegistry(
       sources: sources,
       scopePrefix: 'late-reader',
+      residentReplaySource: (physical, endExclusive) async {
+        expect(identical(physical, downloads.get(id)), isTrue);
+        return source.openRead(0, endExclusive);
+      },
     );
     final decodes = DecodeRegistry(
       downloads: downloads,

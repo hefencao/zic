@@ -678,6 +678,7 @@ final class PipelineReaderSession {
     _ingresses = DownloadIngressProjectionRegistry(
       sources: _streamingSources,
       scopePrefix: 'reader:$sessionId',
+      residentReplaySource: _openResidentReplaySource,
     );
     _downloads = _transferRuntime.registry;
     _downloadTransfer = _transferRuntime.attachReader(
@@ -1090,6 +1091,144 @@ final class PipelineReaderSession {
     );
     output._bind(_activeUploadIdentity(id));
     return output;
+  }
+
+  Future<Stream<List<int>>> _openResidentReplaySource(
+    DownloadSession session,
+    int endExclusive,
+  ) async {
+    if (endExclusive <= 0 || endExclusive > session.committedLength) {
+      throw Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'invalid resident replay boundary $endExclusive/'
+            '${session.committedLength}',
+      );
+    }
+
+    final cache = _artifactCacheManager;
+    if (cache != null) {
+      final lookup = await cache.lookup(session.id);
+      if (lookup != null) {
+        final expectedTotal = session.totalLength;
+        if ((expectedTotal == null || lookup.entry.length == expectedTotal) &&
+            lookup.entry.length >= endExclusive) {
+          return _scheduledResidentReplay(
+            lookup.entry.open(
+              start: 0,
+              endExclusive: endExclusive,
+            ),
+            session.id,
+          );
+        }
+      }
+    }
+
+    final uri = session.id.canonicalUri;
+    if (_isDirectImmutableLocalUri(uri)) {
+      final response = await _baseTransportFor(uri).open(
+        uri,
+        range: ByteRange(start: 0, end: endExclusive - 1),
+        validators: session.validators,
+      );
+      final expectedTotal = session.totalLength;
+      if (expectedTotal != null &&
+          response.totalLength != null &&
+          response.totalLength != expectedTotal) {
+        await response.discard();
+        throw Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'resident immutable source length changed: '
+              '${response.totalLength}/$expectedTotal',
+        );
+      }
+      if (session.validators.canResume &&
+          !session.validators.matches(response.validators)) {
+        await response.discard();
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'resident immutable source validators changed',
+        );
+      }
+      return _boundedResidentReplay(
+        response,
+        endExclusive,
+        session.id,
+      );
+    }
+
+    throw Failure(
+      code: ErrorCode.artifactCorruption,
+      message: 'resident encoded-byte replay authority is unavailable for '
+          '${session.id.key}',
+    );
+  }
+
+  Stream<List<int>> _boundedResidentReplay(
+    ByteResponse response,
+    int endExclusive,
+    DownloadId id,
+  ) async* {
+    var emitted = 0;
+    final iterator = StreamIterator<List<int>>(response.bytes);
+    try {
+      while (emitted < endExclusive) {
+        final lease = await artifactReadScheduler.acquire(
+          priority: () => _artifactReadPriority(id),
+        );
+        final bool hasChunk;
+        try {
+          hasChunk = await iterator.moveNext();
+        } finally {
+          lease.release();
+        }
+        if (!hasChunk) break;
+        final chunk = iterator.current;
+        final remaining = endExclusive - emitted;
+        if (chunk.length <= remaining) {
+          emitted += chunk.length;
+          if (chunk.isNotEmpty) yield chunk;
+        } else {
+          final prefix = chunk.sublist(0, remaining);
+          emitted += prefix.length;
+          if (prefix.isNotEmpty) yield prefix;
+        }
+      }
+      if (emitted != endExclusive) {
+        throw Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'resident immutable source replay was short: '
+              '$emitted/$endExclusive',
+        );
+      }
+    } finally {
+      await iterator.cancel();
+      await response.discard();
+    }
+  }
+
+  Stream<List<int>> _scheduledResidentReplay(
+    Stream<List<int>> chunks,
+    DownloadId id,
+  ) async* {
+    final iterator = StreamIterator<List<int>>(chunks);
+    try {
+      while (true) {
+        final lease = await artifactReadScheduler.acquire(
+          priority: () => _artifactReadPriority(id),
+        );
+        final bool hasChunk;
+        try {
+          hasChunk = await iterator.moveNext();
+        } finally {
+          lease.release();
+        }
+        if (!hasChunk) break;
+        final chunk = iterator.current;
+        if (chunk.isNotEmpty) yield chunk;
+      }
+    } finally {
+      await iterator.cancel();
+    }
   }
 
   Future<Uint8List> loadBytes(

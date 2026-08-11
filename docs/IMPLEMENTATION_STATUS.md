@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.220` / App `0.31.0+220`。
+- 当前版本：`0.31.0-dev.221` / App `0.31.0+221`。
+- dev.221：10:30真机Trace确认新的长黑页主因不是network抢占：`residentCacheBacked` session可拥有11MiB+ authoritative committedLength但session artifact为0字节；首Reader实时消费cache stream正常，late Reader却从空artifact做synchronized replay并得到sealed空projection。现将physical residency与Reader encoded-source replay拆开：resident replay由`ArtifactCacheManager`或可重开immutable local source提供严格有界prefix，并继续经过共享artifact-read scheduler；不改NetLane/水位/retry/TransferKey。
 - dev.220：09:44真机Trace确认dev.219 late Reader断链已恢复（reader3退出时decode/upload=7/7），但slider scrub仍把每个中间索引当正式navigation commit：约0.4s的148→248拖动产生23次pageCurrent、23次policy replan、157次download priority重排和大量短命page host。现scrub preview改为UI-local，gesture end才提交一次request；ReaderBinding viewport/playback从demand reconcile成败中独立推进。另确认overlap Reader导致1120组逐字段完全相同physical Trace，现physical hub对shared App/export sink按identity引用计数，只保留一次全局事件，各Reader memory trace仍独立。调度/水位/retry/cache/transport不变。
 - dev.219：依据08:19真机Trace重新审计跨层ownership：Reader3首个plan有downloads=11/decodes=4/uploads=4，却因late Reader对已有committed physical session仍走同步`attachIngressProjection`而在download reconcile中抛错，最终decode/upload sessions均为0。现Reader-local projection先返回再异步synchronized replay；Reader observation改为enqueue/latest-wins，pipeline错误不再进入UI导航栈；DecodeTarget变化不再detach binding或清空download demand，仅更新PipelineController target并从既有plan增量替换decode/upload identity，ReaderController/requested page保持route ownership。verified TransferKey继续冻结。
 - dev.218：依据07:34真机Trace收口“图片physical source已ready但DecodeSession永久waitingSource”回归：staged current-bootstrap门控返回空决策时不再消费邻页source revision，并以Reader-local ingress projection当前revision作为状态兜底；该页后续晋升current可重新decode。Reader slider受控值改为`requestedIndex ?? currentIndex`，拖动请求在viewport acknowledge前不再被旧current拉回。dev.217的network task-key修复保持，verified TransferKey继续暂停到本轮真机复验。
@@ -43,7 +44,7 @@
 - Venera preemption先断requestId native HTTP，再等待JS `finished`后返回cancelled并释放permit，禁止同一WebView中旧/新async invocation重叠。修复 `ArtifactCacheReadLease?` nullable半迁移编译错误。
 - 当前环境无Flutter/Dart/Android完整SDK；行为测试已加入源码，最终设备构建/性能仍需本地验证。
 
-**源码版本：** `0.31.0-dev.220`
+**源码版本：** `0.31.0-dev.221`
 - dev.215：physical `DownloadSession`移除唯一Reader native `Ingress`；新增Reader-local `DownloadIngressProjectionRegistry`，Decode/Live source listener显式消费本Reader projection。late projection先在live fan-out外按revision/epoch/committed boundary同步，再无await附着，避免与active writer offset交错。physical registry/network/retry仍未提升到composition。
 - dev.215静态验证：documentation/structure/Reader streaming/demand stability/dev.177、184、199–215 gates通过；完整`bash tool/check.sh`仍停在基线缺失pinned libwebp archive；Flutter/Dart不可用。详见`docs/audits/dev215-validation-results.md`。
 - dev.214：下载需求正式改为 scoped `DownloadDemandLease`；同一 session 的 effective priority为最大claim，Reader detach只移除自身claim。物理 registry/retry/native ingress仍未跨Reader共享。
