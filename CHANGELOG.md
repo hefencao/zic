@@ -1,3 +1,8 @@
+## 0.31.0-dev.225：Verified equivalent physical transfer alias before acquire
+- 在composition physical owner中新增acquire-time verified alias：新exact identity尚无session且direct verified equivalence唯一命中已有有authority的physical session时，claim在创建session前加入该transfer；不做事后session merge。
+- `DownloadTransferOwner`按physical identity聚合claim，同时保留每个claim的exact `DownloadId`作为provider URI/source bucket；source-resident非artifact-cache body禁止跨版本join，避免把可重开source误当成共享encoded body。
+- 章节command改为先提交claim再获取session；通过等价physical transfer完成后仍materialize章节自己的exact durable artifact。late takeover/session-partial兼容路径暂保留。
+
 ## 0.31.0-dev.224：Chapter migration compile closure
 - 修复`PersistentDownloadArtifactStore`漏迁的durable artifact write single-flight字段，保持store而非command拥有写入去重与close barrier。
 - 修复`LiveCoordinator`迁移残留的越作用域`update.plan`引用，改为从coordinator当前`_downloads`全集投影`TransferDemand`；删除`advanceDueFrame`重复局部声明。

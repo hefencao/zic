@@ -287,6 +287,146 @@ void main() {
     serviceClosed = true;
   });
 
+  test('verified equivalent chapter joins existing physical transfer before acquire',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-equivalent-chapter-transfer-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final oldUri = Uri.parse('https://example.test/version-a.webp');
+    final newUri = Uri.parse('https://example.test/version-b.webp');
+    final bytes = Uint8List.fromList('RIFF....WEBPequivalent'.codeUnits);
+    final oldId = DownloadId(
+      content: const ContentId(
+        sourceId: 'fixture-source',
+        comicId: 'version-a-comic',
+        chapterId: 'version-a-chapter',
+        pageId: 'version-a-page',
+      ),
+      sourceRevision: 'version-a-r1',
+      canonicalUri: oldUri,
+    );
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:version-b-comic',
+        displayName: '等价版本章节',
+        sourceId: 'fixture-source',
+        comicId: 'version-b-comic',
+        comicTitle: '等价传输测试',
+        chapterId: 'version-b-chapter',
+        sourceRevision: 'version-b-r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '1.webp',
+            sourceId: newUri.toString(),
+            pageId: 'version-b-page',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: bytes.lengthInBytes,
+          ),
+        ],
+      ),
+    );
+    final newId = DownloadId(
+      content: const ContentId(
+        sourceId: 'fixture-source',
+        comicId: 'version-b-comic',
+        chapterId: 'version-b-chapter',
+        pageId: 'version-b-page',
+      ),
+      sourceRevision: 'version-b-r1',
+      canonicalUri: newUri,
+    );
+    final service = await PersistentChapterDownloadService.open(directory.path);
+    final oldTransport = _SharedGateTransport(bytes);
+    final reader = service.transferRuntime.attachConsumer(
+      scopeId: 'reader-like-version-a',
+      transportFor: (_) => oldTransport,
+      consumerTraceSink: const NoopTraceSink(),
+    );
+    var readerDisposed = false;
+    var serviceClosed = false;
+    addTearDown(() async {
+      if (!oldTransport.release.isCompleted) oldTransport.release.complete();
+      if (!readerDisposed) await reader.dispose();
+      if (!serviceClosed) await service.close();
+    });
+    service.artifactCacheManager.linkEquivalent(first: oldId, second: newId);
+
+    reader.replaceDemands(
+      'reader-like-version-a',
+      1,
+      <DownloadId, TransferDemand>{
+        oldId: const TransferDemand(priority: 1000, reason: 'reader-current'),
+      },
+    );
+    await oldTransport.opened.future;
+    final chapterRun = service.download(entry);
+    await _waitUntil(
+      () => service.transferRuntime.owner.claimCount(newId) == 2,
+    );
+
+    expect(service.transferRuntime.registry.sessions, hasLength(1));
+    expect(
+      identical(
+        service.transferRuntime.registry.get(oldId),
+        service.transferRuntime.registry.get(newId),
+      ),
+      isTrue,
+    );
+    expect(oldTransport.opens, 1);
+
+    oldTransport.release.complete();
+    await Future.wait<void>(<Future<void>>[reader.idle(), chapterRun]);
+
+    expect(oldTransport.opens, 1);
+    expect(await service.artifactStore.openArtifactStream(newId), isNotNull);
+    expect(await service.readPage(entry, 0), bytes);
+    expect((await service.inspect(entry)).phase, ChapterDownloadPhase.complete);
+
+    await reader.dispose();
+    readerDisposed = true;
+    await service.close();
+    serviceClosed = true;
+  });
+
+  test('verified equivalence never merges two already-created physical sessions',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-no-late-session-merge-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(directory.path);
+    addTearDown(service.close);
+    final first = _readerArtifactId('existing-equivalent-a');
+    final second = _readerArtifactId('existing-equivalent-b');
+    service.transferRuntime.registry.get(first);
+    service.transferRuntime.registry.get(second);
+    service.artifactCacheManager.linkEquivalent(first: first, second: second);
+
+    final consumer = service.transferRuntime.attachConsumer(
+      scopeId: 'existing-session-proof',
+      transportFor: (_) => _ImmediateTransport(<int>[1, 2, 3, 4]),
+      consumerTraceSink: const NoopTraceSink(),
+    );
+    addTearDown(consumer.dispose);
+    consumer.replaceDemands(
+      'existing-session-proof',
+      1,
+      <DownloadId, TransferDemand>{
+        second: const TransferDemand(priority: 1, reason: 'proof'),
+      },
+    );
+
+    expect(service.transferRuntime.registry.sessions, hasLength(2));
+    expect(
+      identical(
+        service.transferRuntime.registry.get(first),
+        service.transferRuntime.registry.get(second),
+      ),
+      isFalse,
+    );
+  });
+
   test('chapter cancellation removes only its composition transfer claim',
       () async {
     final directory = await Directory.systemTemp.createTemp(
@@ -748,6 +888,27 @@ Future<void> _waitUntil(bool Function() condition) async {
     }
     await Future<void>.delayed(const Duration(milliseconds: 1));
   }
+}
+
+final class _ImmediateTransport implements Transport {
+  _ImmediateTransport(List<int> bytes) : bytes = Uint8List.fromList(bytes);
+
+  final Uint8List bytes;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async =>
+      ByteResponse(
+        bytes: Stream<List<int>>.value(bytes),
+        statusCode: 200,
+        rangeStart: 0,
+        totalLength: bytes.lengthInBytes,
+        validators: const Validators(etag: 'immediate'),
+        rangeSupported: false,
+      );
 }
 
 final class _SharedGateTransport implements ControlledTransport {

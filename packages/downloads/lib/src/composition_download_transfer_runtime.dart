@@ -68,6 +68,7 @@ final class CompositionDownloadTransferRuntime {
           ? null
           : (session) => partialDownloadHandoff!.drain(<DownloadSession>[session]),
       net: net,
+      resolveTransferId: _resolveTransferIdForAcquire,
     );
     if (cache != null) {
       void listener(DownloadId promoted) {
@@ -101,6 +102,48 @@ final class CompositionDownloadTransferRuntime {
 
   bool get disposed => _disposed;
   bool get hasConsumers => owner.consumers.isNotEmpty;
+
+  DownloadId _resolveTransferIdForAcquire(DownloadId exactId) {
+    final resolved = registry.resolvePhysicalId(exactId);
+    if (resolved != exactId) return resolved;
+    if (registry.findExact(exactId) != null) return exactId;
+    final cache = artifactCacheManager;
+    if (cache == null) return exactId;
+
+    DownloadId? candidate;
+    for (final equivalent in cache.directEquivalents(exactId)) {
+      final physicalId = registry.resolvePhysicalId(equivalent);
+      final session = registry.find(physicalId);
+      if (session == null || !_canJoinEquivalentSession(session)) continue;
+      if (candidate != null && candidate != physicalId) {
+        // Never merge already-distinct physical sessions after the fact. A new
+        // exact identity remains separate when proof points at more than one
+        // existing physical owner.
+        return exactId;
+      }
+      candidate = physicalId;
+    }
+    if (candidate == null) return exactId;
+    registry.aliasPhysical(id: exactId, target: candidate);
+    return candidate;
+  }
+
+  bool _canJoinEquivalentSession(DownloadSession session) {
+    if (session.state == DownloadState.disposed) return false;
+    if (session.residentBodyBacked &&
+        session.residentBodyAuthority !=
+            ByteResponseBodyAuthority.artifactCache) {
+      // A source-resident body has no physical encoded copy to replay through
+      // another version safely. Keep it exact until durable cache authority
+      // exists; hot/session artifacts can share immediately.
+      return false;
+    }
+    return session.demanded ||
+        session.activeRun ||
+        session.hasWriter ||
+        session.committedLength > 0 ||
+        session.state == DownloadState.promoted;
+  }
 
   DownloadTransferConsumer attachConsumer({
     required String scopeId,
@@ -149,7 +192,39 @@ final class CompositionDownloadTransferRuntime {
   Future<void> persistPromoted(DownloadId id) async {
     final session = registry.find(id);
     if (session == null || session.state != DownloadState.promoted) return;
-    await artifactCacheHandoff?.persist(session);
+    final handoff = artifactCacheHandoff;
+    final cache = artifactCacheManager;
+    if (handoff == null || cache == null) return;
+    await handoff.persist(session);
+    if (id == session.id) return;
+
+    final expectedLength = session.committedLength;
+    if (expectedLength <= 0 ||
+        await cache.containsBackendExact(
+          id: id,
+          expectedLength: expectedLength,
+        )) {
+      return;
+    }
+    if (!registry.isPhysicalAlias(id, session.id)) {
+      throw StateError(
+        'exact durable materialization requires an acquire-time verified '
+        'physical alias',
+      );
+    }
+    final source = await cache.lookupAuthoritative(session.id);
+    if (source == null || source.entry.length != expectedLength) {
+      throw StateError(
+        'physical transfer artifact is unavailable for exact materialization',
+      );
+    }
+    final read = await cache.readForegroundLookup(source);
+    if (read.bytes.lengthInBytes != expectedLength) {
+      throw StateError(
+        'physical transfer artifact length changed before exact materialization',
+      );
+    }
+    await cache.storePromotedArtifact(id: id, bytes: read.bytes);
   }
 
   Future<void> dispose() async {

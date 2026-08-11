@@ -11,6 +11,9 @@ import 'net_lane.dart';
 import 'retry_policy.dart';
 
 typedef TransferTransportPick = Transport Function(Uri uri);
+typedef TransferIdentityResolver = DownloadId Function(DownloadId exactId);
+
+DownloadId _identityTransferId(DownloadId id) => id;
 
 enum TransferCompletionIntent {
   opportunistic,
@@ -63,6 +66,7 @@ final class DownloadTransferOwner {
     this.prepareDownload,
     this.persistUnclaimed,
     required this.net,
+    this.resolveTransferId = _identityTransferId,
   });
 
   final DownloadRegistry registry;
@@ -70,6 +74,7 @@ final class DownloadTransferOwner {
   final TransferPrepare? prepareDownload;
   final TransferPersistUnclaimed? persistUnclaimed;
   final NetLane net;
+  final TransferIdentityResolver resolveTransferId;
 
   final Map<DownloadId, Map<String, _TransferClaim>> _claims =
       <DownloadId, Map<String, _TransferClaim>>{};
@@ -95,11 +100,14 @@ final class DownloadTransferOwner {
   Iterable<DownloadTransferConsumer> get consumers =>
       List<DownloadTransferConsumer>.unmodifiable(_consumers);
 
-  int claimCount(DownloadId id) => _claims[id]?.length ?? 0;
+  int claimCount(DownloadId id) =>
+      _claims[registry.resolvePhysicalId(id)]?.length ?? 0;
 
-  String? activeProviderScope(DownloadId id) => _activeProviderScopes[id];
+  String? activeProviderScope(DownloadId id) =>
+      _activeProviderScopes[registry.resolvePhysicalId(id)];
 
-  String? taskKeyFor(DownloadId id) => _networkTaskKeys[id];
+  String? taskKeyFor(DownloadId id) =>
+      _networkTaskKeys[registry.resolvePhysicalId(id)];
 
   /// Reopens a resident immutable body through a currently attached consumer
   /// without transferring ownership of the durable artifact to that consumer.
@@ -115,7 +123,8 @@ final class DownloadTransferOwner {
     if (_disposed) {
       throw StateError('download transfer owner is disposed');
     }
-    final session = registry.find(id);
+    final physicalId = registry.resolvePhysicalId(id);
+    final session = registry.find(physicalId);
     if (session == null ||
         session.state != DownloadState.promoted ||
         !session.residentBodyBacked) {
@@ -131,15 +140,16 @@ final class DownloadTransferOwner {
             '${session.committedLength}',
       );
     }
-    final claim = _preferredClaim(id);
+    final claim = _preferredClaim(physicalId);
     if (claim == null) {
       throw const Failure(
         code: ErrorCode.invalidState,
         message: 'resident replay requires an attached transfer consumer',
       );
     }
-    final response = await claim.consumer.transportFor(id.canonicalUri).open(
-          id.canonicalUri,
+    final sourceId = claim.exactId;
+    final response = await claim.consumer.transportFor(sourceId.canonicalUri).open(
+          sourceId.canonicalUri,
           range: ByteRange(start: 0, end: endExclusive - 1),
           validators: session.validators,
         );
@@ -238,24 +248,25 @@ final class DownloadTransferOwner {
 
   void refreshForLocalArtifact(DownloadId id, {String? sessionId}) {
     if (_disposed) return;
-    final session = registry.find(id);
+    final physicalId = registry.resolvePhysicalId(id);
+    final session = registry.find(physicalId);
     if (session == null ||
         session.state == DownloadState.promoted ||
         session.state == DownloadState.disposed ||
         session.residentBodyBacked) {
       return;
     }
-    _downloadRetryRounds.remove(id);
-    _downloadRetryPending.remove(id);
-    _downloadTerminalFailures.remove(id);
-    _downloadDeferredAtLength.remove(id);
-    final claim = _preferredClaim(id);
-    final taskKey = _networkTaskKeys[id];
+    _downloadRetryRounds.remove(physicalId);
+    _downloadRetryPending.remove(physicalId);
+    _downloadTerminalFailures.remove(physicalId);
+    _downloadDeferredAtLength.remove(physicalId);
+    final claim = _preferredClaim(physicalId);
+    final taskKey = _networkTaskKeys[physicalId];
     _record(
       claim,
       sessionId: sessionId,
       kind: TraceEventKind.artifactSource,
-      id: id,
+      id: physicalId,
       payload: <String, Object?>{
         'stage': 'verified-equivalent-promotion-takeover',
         'committedLength': session.committedLength,
@@ -270,14 +281,14 @@ final class DownloadTransferOwner {
       return;
     }
     if (taskKey == null) {
-      _ensureDownloadTask(id, session);
+      _ensureDownloadTask(physicalId, session);
       return;
     }
     if (net.cancelQueued(taskKey)) {
-      if (_networkTaskKeys[id] == taskKey) {
+      if (_networkTaskKeys[physicalId] == taskKey) {
         _networkTaskKeys.remove(id);
       }
-      _ensureDownloadTask(id, session);
+      _ensureDownloadTask(physicalId, session);
       return;
     }
     // Active cancellation preserves the authoritative physical session and
@@ -326,41 +337,92 @@ final class DownloadTransferOwner {
     Map<DownloadId, TransferDemand> desired,
   ) {
     if (_disposed || consumer._disposed) return;
-    _validateDemandChecksums(consumer, desired);
+    final normalized = _normalizeDemands(desired);
+    _validateDemandChecksums(consumer, normalized);
     consumer._sessionId = sessionId;
     consumer._revision = revision;
-    final removed = consumer._demands.keys
-        .where((id) => !desired.containsKey(id))
+    final removed = consumer._physicalDemands.keys
+        .where((id) => !normalized.containsKey(id))
         .toList(growable: false);
     for (final id in removed) {
-      consumer._demands.remove(id);
+      consumer._physicalDemands.remove(id);
       _removeClaim(consumer, id, sessionId: sessionId);
     }
-    final toSchedule = <MapEntry<DownloadId, TransferDemand>>[];
-    for (final entry in desired.entries) {
-      final prior = consumer._demands[entry.key];
+    final toSchedule = <DownloadId>[];
+    for (final entry in normalized.entries) {
+      final prior = consumer._physicalDemands[entry.key];
       if (prior == entry.value) continue;
       _upsertClaim(
         consumer,
         entry.key,
-        entry.value,
+        entry.value.exactId,
+        entry.value.demand,
         sessionId: sessionId,
         revision: revision,
       );
-      consumer._demands[entry.key] = entry.value;
-      toSchedule.add(entry);
+      consumer._physicalDemands[entry.key] = entry.value;
+      toSchedule.add(entry.key);
     }
-    for (final entry in toSchedule) {
-      _ensureDownloadTask(entry.key, registry.get(entry.key));
+    consumer._demands
+      ..clear()
+      ..addAll(desired);
+    for (final physicalId in toSchedule) {
+      _ensureDownloadTask(physicalId, registry.get(physicalId));
     }
+  }
+
+  Map<DownloadId, _ConsumerPhysicalDemand> _normalizeDemands(
+    Map<DownloadId, TransferDemand> desired,
+  ) {
+    final normalized = <DownloadId, _ConsumerPhysicalDemand>{};
+    for (final entry in desired.entries) {
+      final physicalId = resolveTransferId(entry.key);
+      final candidate = _ConsumerPhysicalDemand(
+        exactId: entry.key,
+        demand: entry.value,
+      );
+      final existing = normalized[physicalId];
+      if (existing == null) {
+        normalized[physicalId] = candidate;
+        continue;
+      }
+      final leftChecksum = existing.demand.expectedChecksum;
+      final rightChecksum = candidate.demand.expectedChecksum;
+      if (leftChecksum != null &&
+          rightChecksum != null &&
+          leftChecksum != rightChecksum) {
+        throw StateError(
+          'conflicting checksums for physical transfer ${physicalId.key}: '
+          '$leftChecksum != $rightChecksum',
+        );
+      }
+      final selected = candidate.demand.priority > existing.demand.priority
+          ? candidate
+          : existing;
+      final required = existing.demand.completionIntent ==
+              TransferCompletionIntent.required ||
+          candidate.demand.completionIntent == TransferCompletionIntent.required;
+      normalized[physicalId] = _ConsumerPhysicalDemand(
+        exactId: selected.exactId,
+        demand: TransferDemand(
+          priority: selected.demand.priority,
+          reason: selected.demand.reason,
+          expectedChecksum: leftChecksum ?? rightChecksum,
+          completionIntent: required
+              ? TransferCompletionIntent.required
+              : TransferCompletionIntent.opportunistic,
+        ),
+      );
+    }
+    return normalized;
   }
 
   void _validateDemandChecksums(
     DownloadTransferConsumer consumer,
-    Map<DownloadId, TransferDemand> desired,
+    Map<DownloadId, _ConsumerPhysicalDemand> desired,
   ) {
     for (final entry in desired.entries) {
-      final checksum = entry.value.expectedChecksum;
+      final checksum = entry.value.demand.expectedChecksum;
       if (checksum == null) continue;
       final byScope = _claims[entry.key];
       if (byScope == null) continue;
@@ -380,6 +442,7 @@ final class DownloadTransferOwner {
   void _upsertClaim(
     DownloadTransferConsumer consumer,
     DownloadId id,
+    DownloadId exactId,
     TransferDemand demand, {
     required String sessionId,
     required int revision,
@@ -408,6 +471,7 @@ final class DownloadTransferOwner {
       );
       byScope[consumer.scopeId] = _TransferClaim(
         consumer: consumer,
+        exactId: exactId,
         lease: lease,
         demand: demand,
         sessionId: sessionId,
@@ -415,6 +479,7 @@ final class DownloadTransferOwner {
         sequence: ++_claimSequence,
       );
     } else {
+      existing.exactId = exactId;
       existing.demand = demand;
       existing.sessionId = sessionId;
       existing.revision = revision;
@@ -494,7 +559,7 @@ final class DownloadTransferOwner {
   Future<void> _disposeConsumer(DownloadTransferConsumer consumer) async {
     if (consumer._disposed) return;
     consumer._disposed = true;
-    final releasedIds = consumer._demands.keys.toList(growable: false);
+    final releasedIds = consumer._physicalDemands.keys.toList(growable: false);
     final providerKeys = <String>[];
     for (final entry in _activeProviderScopes.entries.toList(growable: false)) {
       if (entry.value != consumer.scopeId) continue;
@@ -530,8 +595,9 @@ final class DownloadTransferOwner {
     DownloadTransferConsumer consumer, {
     required bool consumerDisposing,
   }) {
-    final ids = consumer._demands.keys.toList(growable: false);
+    final ids = consumer._physicalDemands.keys.toList(growable: false);
     consumer._demands.clear();
+    consumer._physicalDemands.clear();
     for (final id in ids) {
       _removeClaim(
         consumer,
@@ -555,7 +621,7 @@ final class DownloadTransferOwner {
 
   void _refreshScheduling(DownloadTransferConsumer consumer) {
     if (_disposed || consumer._disposed) return;
-    for (final id in consumer._demands.keys) {
+    for (final id in consumer._physicalDemands.keys) {
       final session = registry.find(id);
       if (session != null) {
         _ensureDownloadTask(id, session);
@@ -565,7 +631,7 @@ final class DownloadTransferOwner {
 
   Future<void> _idleFor(DownloadTransferConsumer consumer) async {
     while (!_disposed && !consumer._disposed) {
-      final ids = consumer._demands.keys.toList(growable: false);
+      final ids = consumer._physicalDemands.keys.toList(growable: false);
       final keys = <String>{};
       for (final id in ids) {
         final key = _networkTaskKeys[id];
@@ -649,8 +715,8 @@ final class DownloadTransferOwner {
     net.submitRanked(
       key: taskKey,
       priority: effectivePriority,
-      bucket: claim.consumer.downloadBucketFor(id),
-      bucketLimit: claim.consumer.downloadBucketLimitFor(id),
+      bucket: claim.consumer.downloadBucketFor(claim.exactId),
+      bucketLimit: claim.consumer.downloadBucketLimitFor(claim.exactId),
       task: (token) => _runDownload(id, session, taskKey, token),
     );
   }
@@ -670,8 +736,9 @@ final class DownloadTransferOwner {
     final provider = claim.consumer;
     _activeProviderScopes[id] = provider.scopeId;
     try {
-      final bucket = provider.downloadBucketFor(id);
-      final bucketLimit = provider.downloadBucketLimitFor(id);
+      final sourceId = claim.exactId;
+      final bucket = provider.downloadBucketFor(sourceId);
+      final bucketLimit = provider.downloadBucketLimitFor(sourceId);
       final prepare = prepareDownload;
       if (prepare != null && session.committedLength == 0) {
         await prepare(session);
@@ -693,6 +760,7 @@ final class DownloadTransferOwner {
           'committedLength': session.committedLength,
           'physicalOwner': true,
           'providerScope': provider.scopeId,
+          'providerExactId': sourceId.key,
         },
       );
       for (var attempt = 1; ; attempt++) {
@@ -700,7 +768,7 @@ final class DownloadTransferOwner {
         final attemptStartedAtMicros = clock.nowMicros();
         try {
           await DownloadJob(
-            transport: provider.transportFor(id.canonicalUri),
+            transport: provider.transportFor(sourceId.canonicalUri),
             session: session,
             attachLegacyDemand: false,
             allowFullBodyCatchup: (preservedLength) =>
@@ -1070,6 +1138,8 @@ final class DownloadTransferConsumer {
   final int Function(DownloadId id) downloadBucketLimitFor;
   final Map<DownloadId, TransferDemand> _demands =
       <DownloadId, TransferDemand>{};
+  final Map<DownloadId, _ConsumerPhysicalDemand> _physicalDemands =
+      <DownloadId, _ConsumerPhysicalDemand>{};
   String? _sessionId;
   int _revision = 0;
   bool _disposed = false;
@@ -1097,9 +1167,29 @@ final class DownloadTransferConsumer {
   Future<void> dispose() => owner._disposeConsumer(this);
 }
 
+final class _ConsumerPhysicalDemand {
+  const _ConsumerPhysicalDemand({
+    required this.exactId,
+    required this.demand,
+  });
+
+  final DownloadId exactId;
+  final TransferDemand demand;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _ConsumerPhysicalDemand &&
+      exactId == other.exactId &&
+      demand == other.demand;
+
+  @override
+  int get hashCode => Object.hash(exactId, demand);
+}
+
 final class _TransferClaim {
   _TransferClaim({
     required this.consumer,
+    required this.exactId,
     required this.lease,
     required this.demand,
     required this.sessionId,
@@ -1108,6 +1198,7 @@ final class _TransferClaim {
   });
 
   final DownloadTransferConsumer consumer;
+  DownloadId exactId;
   final DownloadDemandLease lease;
   TransferDemand demand;
   String sessionId;

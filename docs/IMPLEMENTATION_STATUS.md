@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.224` / App `0.31.0+224`。
+- 当前版本：`0.31.0-dev.225` / App `0.31.0+225`。
+- dev.225：verified transfer identity推进到acquire-time Phase C1。`ArtifactCacheManager`已有direct verified equivalence只作为proof输入；新exact demand仅在自身尚无session且唯一等价candidate已有active/committed/promoted physical authority时绑定到该session。claim保留exact provider URI/source bucket，两个已存在session不事后merge，source-resident非cache body不跨版本join；章节通过共享physical transfer完成后仍复制/materialize自己的exact durable artifact。late equivalent-full takeover/session partial handoff继续作为未覆盖路径的兼容层。
 - dev.224：修复dev.223迁移后的三处Dart编译闭包：durable store漏迁`_artifactWrites`字段、`LiveCoordinator._reconcileDownloads`错误引用上层`update`、`advanceDueFrame`重复声明`frameIndex`。新增专项gate检查字段归属、旧变量残留与相邻重复局部声明；physical/runtime/chapter claim语义不变。
 - dev.223：12:28真机Trace确认dev.222 live scrub已按设计工作：132个`interaction=scrubbing` policy plan全部严格为1 download/1 decode/1 upload，且无`decodeState=failed`、`sessionBusy/writerBusy`或此前resident late-join长黑页，因此冻结Reader scrub/resident replay并继续physical ownership迁移。composition runtime已从Reader私有实现提升为downloads/App级`CompositionDownloadTransferRuntime`；persistent chapter command与whole-comic不再拥有source/network `DownloadRegistry/DownloadJob`，而与Reader/prefetch对exact `DownloadId`共享scoped transfer claims。
 - dev.223：durable storage从command拆为`PersistentDownloadArtifactStore`，生产生命周期由`PersistentDownloadComposition`统一拥有store + ArtifactCacheManager + physical runtime + chapter command；`ManagedChapterDownloadService`缩回command-only contract。`TransferDemand`新增completion intent；另将`durableImmutable`与durable body ownership拆开为`ByteResponseBodyAuthority`，生产判断迁移到`residentBodyBacked/residentBodyAuthority`。source-resident显式章节只有在composition replay校验并materialize到唯一store的exact DownloadId后才完成，verified alias可读不等于offline exact完成；verified TransferKey仍未实现。

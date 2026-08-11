@@ -1180,24 +1180,27 @@ final class PersistentChapterDownloadService
           );
           continue;
         }
+        consumer.replaceDemands(
+          identity,
+          ++revision,
+          <DownloadId, TransferDemand>{
+            id: TransferDemand(
+              priority: 120,
+              reason: 'chapter-download-command',
+              expectedChecksum: page.checksum,
+              completionIntent: TransferCompletionIntent.required,
+            ),
+          },
+        );
+        // Acquire the physical session only after the claim has passed through
+        // the composition resolver. Creating an exact session first would
+        // permanently defeat verified transfer-key aliasing for this command.
         final session = transferRuntime.registry.get(id);
         void listener(DownloadSnapshot _) {
           progress.schedule();
         }
         session.addSnapshotListener(listener);
         try {
-          consumer.replaceDemands(
-            identity,
-            ++revision,
-            <DownloadId, TransferDemand>{
-              id: TransferDemand(
-                priority: 120,
-                reason: 'chapter-download-command',
-                expectedChecksum: page.checksum,
-                completionIntent: TransferCompletionIntent.required,
-              ),
-            },
-          );
           consumer.refreshScheduling();
           await consumer.idle();
           token.throwIfCancelled();
