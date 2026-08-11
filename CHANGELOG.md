@@ -1,3 +1,9 @@
+## 0.31.0-dev.209：删除版本更新旧 reconcile 残留调用并闭合发布门禁
+
+- 修复 dev.208 编译错误：`demo_home_source_migration.dart::_loadSourceVersionState()` 仍调用已删除的 `_reconcileConfirmedSourceUpdateSignal`。该调用是 dev.207“版本 relation 镜像到 `sourceUpdateAt`”旧路径的半删除残留，直接移除，不恢复旧方法。
+- dev.208 ownership gate 从“禁止旧方法定义”加强为“迁移生产代码中禁止该符号出现”，并新增 dev.209 closure gate；`tool/check.sh` 正式接入 dev.209 gate，缺少 Dart/Flutter SDK 时也能阻止同类半删除接口交付。
+- dev.208 的 Home relation projection、双向 artifact alias、纵向 ratio-anchor 修复均保持不变；版本提升到 `0.31.0+209`。
+
 ## 0.31.0-dev.208：版本关系投影与双向 artifact reuse 收口
 
 - 修复dev.207旧版右上`!`仍缺失：confirmed version relation正式进入`HomeLibrarySession`同步投影，source browser/Home不再依赖详情页把版本关系镜像成`SavedComicRecord.sourceUpdateAt`；章节更新与版本更新保持两个独立事实源。

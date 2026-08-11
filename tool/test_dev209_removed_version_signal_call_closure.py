@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+from pathlib import Path
+import re
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def read(path: str) -> str:
+    return (ROOT / path).read_text(encoding="utf-8")
+
+
+migration = read("apps/app/lib/demo_home_source_migration.dart")
+if "_reconcileConfirmedSourceUpdateSignal" in migration:
+    raise SystemExit(
+        "removed version-to-sourceUpdateAt reconcile symbol still referenced in migration path"
+    )
+
+required = (
+    "final storedSuccessors = await _storedSourceSuccessors(",
+    "final storedPredecessors = await _storedSourcePredecessors(",
+    "await _rememberSourceSuccessors(",
+    "await _librarySession.upsertVersionRelation(",
+    "DateTime? _projectedConfirmedSourceUpdateAt(",
+)
+for token in required:
+    if token not in migration:
+        raise SystemExit(f"missing current version relation owner contract: {token}")
+
+# Do not reintroduce the dev.207 mirror from confirmed version relation into the
+# chapter/directory update signal. Chapter sourceUpdateAt writes elsewhere are
+# still valid and are intentionally not prohibited globally.
+if "saved.copyWith(sourceUpdateAt: DateTime.now().toUtc())" in migration:
+    raise SystemExit("migration path mirrors version relation into sourceUpdateAt")
+
+check = read("tool/check.sh")
+if "test_dev209_removed_version_signal_call_closure.py" not in check:
+    raise SystemExit("dev.209 closure gate is not wired into tool/check.sh")
+
+version = re.search(
+    r"^version:\s*0\.31\.0\+(\d+)\s*$",
+    read("apps/app/pubspec.yaml"),
+    re.M,
+)
+if version is None or int(version.group(1)) < 209:
+    raise SystemExit("App build must be at least 209")
+android = re.search(
+    r"^versionCode=(\d+)\s*$",
+    read("apps/app/android/zic-version.properties"),
+    re.M,
+)
+if android is None or android.group(1) != version.group(1):
+    raise SystemExit("Android versionCode must match App build")
+
+print("dev.209 removed version-signal call closure: OK")

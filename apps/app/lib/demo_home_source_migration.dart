@@ -299,12 +299,6 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       sourceId: source.sourceId,
       successorComicId: currentComicId,
     );
-    if (storedSuccessors.isNotEmpty) {
-      await _reconcileConfirmedSourceUpdateSignal(
-        source.sourceId,
-        currentComicId,
-      );
-    }
     var discovered = const <SourceComicVersion>[];
     try {
       discovered = await versionSource.findComicVersions(currentComicId);

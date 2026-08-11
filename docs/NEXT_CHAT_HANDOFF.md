@@ -1,5 +1,5 @@
-# dev.208 后续交接
-唯一后续基线：`zic_v0.31.0-dev.208_version-relation-projection-bidirectional-artifact-reuse.zip`。
+# dev.209 后续交接
+唯一后续基线：`zic_v0.31.0-dev.209_removed-version-signal-call-closure.zip`。
 `dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`
@@ -61,7 +61,7 @@
 - Native identity保持 `zic-media-core-dev134-abi6-lib00121400`。
 - production rhttp direct在普通release默认记录每response一次的HTTP version、匿名remote-IP hash与receive-progress-enabled标记；高频`onReceiveProgress`仅non-product或显式`ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS=1`诊断构建启用。该观测不得反馈给NetLane/Reader/retry/cache/framing。
 ## 下一步真机优先验证
-- 下一轮真机先验证dev.208：已有持久confirmed successor的旧版source card无需再次进入详情即可稳定显示右上`!`；分别从旧版缓存打开新版、从新版缓存打开旧版，强身份匹配页面都应命中temporary artifact alias而非origin重下。继续观察dev.207纵向静态图ratio-anchor修复，同时保留dev.206 hot-session/真实evict partial handoff与Venera rhttp resolver边界。
+- dev.209仅闭合dev.208半删除接口：`_reconcileConfirmedSourceUpdateSignal` 在迁移生产代码中必须为0引用，不能通过补回旧方法修编译。真机继续验证dev.208：confirmed successor旧版卡无需再进详情即可显示`!`；旧缓存→新版和新版缓存→旧版都应命中temporary artifact alias；继续观察dev.207纵向静态图ratio-anchor修复。
 - 07:51 dev.198 trace已确认Range成功路径仍正确，但full-body fallback重复重新放大到约19.2MiB/123.2MiB（15.6%），多数发生在760/780/800背景角色；dev.199只阻止这类低优先级大partial从0反复重读。820/900/1000、小partial和合法206必须保持原行为，不把defer扩展成通用restart-cost scheduler。
 - 首先复测快速前后翻页：dev.185外层previous admission应继续保持毫秒级；dev.189应确认780↔900不再导致plan取消，只有waiter真正晋升current=1000时才触发动态pressure，并确认旧JS未`finished(requestId)`前新plan绝不并发进入。无真实pressure时`receivingRetained=true` priority0仍应短时复用。
 - 真机首要复测 current 首帧稳定性：观察 policyDecision 的 staticWarmDecodes/uploads 是否收敛到稳定decode角色/真实可见页，current浅水位期间是否停止 speculative neighbor refill，以及decode/upload current handoff是否避免后台长任务阻塞。

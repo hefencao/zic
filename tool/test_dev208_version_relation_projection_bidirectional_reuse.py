@@ -52,7 +52,7 @@ forbid(
     "predecessor-only reuse early return",
 )
 for token in (
-    "Future<void> _reconcileConfirmedSourceUpdateSignal(",
+    "_reconcileConfirmedSourceUpdateSignal",
     "saved.copyWith(sourceUpdateAt: DateTime.now().toUtc())",
 ):
     forbid(migration, token, "version relation mirrored into chapter update signal")
