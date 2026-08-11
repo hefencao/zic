@@ -1445,7 +1445,7 @@ def check_compile_regressions() -> None:
         ROOT / 'packages/storage/lib/src/sqlite_imported_library_store.dart'
     ).read_text(encoding='utf-8')
     for required in (
-        'const _schemaVersion = 7',
+        'const _schemaVersion = 8',
         'PRAGMA user_version = $_schemaVersion',
         'PRIMARY KEY(source_id, chapter_id)',
         'PRIMARY KEY(source_id, comic_id)',

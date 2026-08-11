@@ -24,6 +24,16 @@ void main() {
       successorComicId: 'new-comic',
       predecessorTitle: '旧版标题',
       discoveredAt: DateTime.utc(2026, 8, 11, 1),
+      pageMappings: <ComicVersionPageMapping>[
+        ComicVersionPageMapping(
+          predecessorChapterId: 'old-chapter',
+          successorChapterId: 'new-chapter',
+          predecessorPageCount: 370,
+          successorPageCount: 371,
+          successorOffset: 1,
+          verifiedAt: DateTime.utc(2026, 8, 11, 1, 1),
+        ),
+      ],
     );
 
     final store = SqliteImportedLibraryStore(path);
@@ -47,6 +57,8 @@ void main() {
     expect(predecessors.single.successorComicId, relation.successorComicId);
     expect(predecessors.single.predecessorTitle, relation.predecessorTitle);
     expect(predecessors.single.discoveredAt, relation.discoveredAt);
+    expect(predecessors.single.pageMappings, hasLength(1));
+    expect(predecessors.single.pageMappings.single.successorOffset, 1);
     final all = await reopened.listAllComicVersionRelations();
     expect(all, hasLength(1));
     expect(all.single.successorComicId, relation.successorComicId);
@@ -59,7 +71,7 @@ void main() {
     expect(successors.single.successorComicId, relation.successorComicId);
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
-    expect(db.select('PRAGMA user_version').single.values.single, 7);
+    expect(db.select('PRAGMA user_version').single.values.single, 8);
   });
 
   test('sqlite imported library persists chapter, progress, and cascade delete',
@@ -364,7 +376,7 @@ void main() {
     expect(await store.getComicPreference(saved.sourceId, saved.comicId), isNull);
   });
 
-  test('sqlite migrates schema 3 through composite schema 7', () async {
+  test('sqlite migrates schema 3 through composite schema 8', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-saved-comic-migration-',
     );
@@ -386,7 +398,7 @@ void main() {
     );
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
-    expect(db.select('PRAGMA user_version').single.values.single, 7);
+    expect(db.select('PRAGMA user_version').single.values.single, 8);
   });
 
   test('sqlite schema 5 adds durable migration issue acknowledgement',
@@ -440,12 +452,60 @@ void main() {
 
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
-    expect(db.select('PRAGMA user_version').single.values.single, 7);
+    expect(db.select('PRAGMA user_version').single.values.single, 8);
     expect(
       db.select('PRAGMA table_info(library_migration_issue)')
           .map((row) => row['name'])
           .toSet(),
       contains('acknowledged_us'),
+    );
+  });
+
+  test('sqlite schema 7 adds durable version page mappings', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-version-page-mapping-migration-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final path = '${directory.path}/library.sqlite3';
+    final legacy = sql.sqlite3.open(path);
+    legacy.execute('''
+      CREATE TABLE comic_version_relation (
+        source_id TEXT NOT NULL,
+        predecessor_comic_id TEXT NOT NULL,
+        successor_comic_id TEXT NOT NULL,
+        predecessor_title TEXT NOT NULL,
+        discovered_us INTEGER NOT NULL,
+        PRIMARY KEY(source_id, predecessor_comic_id, successor_comic_id)
+      )
+    ''');
+    legacy.execute(
+      'INSERT INTO comic_version_relation VALUES (?, ?, ?, ?, ?)',
+      <Object?>[
+        'venera:ehentai',
+        'old-gallery',
+        'new-gallery',
+        '旧版',
+        DateTime.utc(2026, 8, 11).microsecondsSinceEpoch,
+      ],
+    );
+    legacy.execute('PRAGMA user_version = 7');
+    legacy.dispose();
+
+    final store = SqliteImportedLibraryStore(path);
+    await store.open();
+    addTearDown(store.close);
+    final relations = await store.listAllComicVersionRelations();
+    expect(relations, hasLength(1));
+    expect(relations.single.pageMappings, isEmpty);
+
+    final db = sql.sqlite3.open(path);
+    addTearDown(db.dispose);
+    expect(db.select('PRAGMA user_version').single.values.single, 8);
+    expect(
+      db.select('PRAGMA table_info(comic_version_relation)')
+          .map((row) => row['name'])
+          .toSet(),
+      contains('page_mappings_json'),
     );
   });
 

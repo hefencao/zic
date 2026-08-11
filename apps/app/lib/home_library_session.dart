@@ -351,6 +351,9 @@ final class HomeLibrarySession extends ChangeNotifier {
         successorComicId: relation.successorComicId,
         predecessorTitle: relation.predecessorTitle,
         discoveredAt: previous.discoveredAt ?? relation.discoveredAt,
+        pageMappings: relation.pageMappings.isEmpty
+            ? previous.pageMappings
+            : relation.pageMappings,
       );
     }
     _versionRelations = List<ComicVersionRelation>.unmodifiable(next);

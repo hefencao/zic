@@ -381,6 +381,69 @@ abstract interface class ComicCommentSource {
   });
 }
 
+/// A source-confirmed page-position mapping between one predecessor chapter
+/// and its successor chapter.
+///
+/// [successorOffset] means `successorIndex = predecessorIndex + offset` for
+/// every page in the verified overlap. The mapping is durable metadata only;
+/// it never owns image bytes, transport validators or cache files.
+final class ComicVersionPageMapping {
+  const ComicVersionPageMapping({
+    required this.predecessorChapterId,
+    required this.successorChapterId,
+    required this.predecessorPageCount,
+    required this.successorPageCount,
+    required this.successorOffset,
+    this.verifiedAt,
+  });
+
+  final String predecessorChapterId;
+  final String successorChapterId;
+  final int predecessorPageCount;
+  final int successorPageCount;
+  final int successorOffset;
+  final DateTime? verifiedAt;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'predecessorChapterId': predecessorChapterId,
+        'successorChapterId': successorChapterId,
+        'predecessorPageCount': predecessorPageCount,
+        'successorPageCount': successorPageCount,
+        'successorOffset': successorOffset,
+        if (verifiedAt != null)
+          'verifiedAt': verifiedAt!.toUtc().toIso8601String(),
+      };
+
+  factory ComicVersionPageMapping.fromJson(Map<String, Object?> json) {
+    final predecessorChapterId = json['predecessorChapterId'];
+    final successorChapterId = json['successorChapterId'];
+    final predecessorPageCount = json['predecessorPageCount'];
+    final successorPageCount = json['successorPageCount'];
+    final successorOffset = json['successorOffset'];
+    final verifiedAt = json['verifiedAt'];
+    if (predecessorChapterId is! String ||
+        predecessorChapterId.isEmpty ||
+        successorChapterId is! String ||
+        successorChapterId.isEmpty ||
+        predecessorPageCount is! int ||
+        predecessorPageCount <= 0 ||
+        successorPageCount is! int ||
+        successorPageCount <= 0 ||
+        successorOffset is! int ||
+        (verifiedAt != null && verifiedAt is! String)) {
+      throw const FormatException('invalid comic version page mapping');
+    }
+    return ComicVersionPageMapping(
+      predecessorChapterId: predecessorChapterId,
+      successorChapterId: successorChapterId,
+      predecessorPageCount: predecessorPageCount,
+      successorPageCount: successorPageCount,
+      successorOffset: successorOffset,
+      verifiedAt: verifiedAt == null ? null : DateTime.parse(verifiedAt).toUtc(),
+    );
+  }
+}
+
 /// A source-confirmed predecessor/successor relation remembered by the
 /// library so a later detail page can also offer the older version.
 final class ComicVersionRelation {
@@ -390,6 +453,7 @@ final class ComicVersionRelation {
     required this.successorComicId,
     this.predecessorTitle = '',
     this.discoveredAt,
+    this.pageMappings = const <ComicVersionPageMapping>[],
   });
 
   final String sourceId;
@@ -397,6 +461,7 @@ final class ComicVersionRelation {
   final String successorComicId;
   final String predecessorTitle;
   final DateTime? discoveredAt;
+  final List<ComicVersionPageMapping> pageMappings;
 }
 
 /// Optional durable storage for source-confirmed version relations.

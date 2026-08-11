@@ -153,15 +153,21 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     String sourceId,
     String comicId,
   ) {
-    final aliases = _canonicalComicAliases(sourceId, comicId);
+    final currentKey = _canonicalComicKey(sourceId, comicId);
     DateTime? latest;
     for (final relation in _versionRelations) {
       if (relation.sourceId != sourceId ||
-          !aliases.contains(relation.predecessorComicId) ||
           relation.successorComicId.isEmpty ||
-          aliases.contains(relation.successorComicId)) {
+          relation.predecessorComicId == relation.successorComicId) {
         continue;
       }
+      final predecessorMatches = relation.predecessorComicId == comicId ||
+          _canonicalComicKey(sourceId, relation.predecessorComicId) ==
+              currentKey;
+      final successorIsCurrent = relation.successorComicId == comicId ||
+          _canonicalComicKey(sourceId, relation.successorComicId) ==
+              currentKey;
+      if (!predecessorMatches || successorIsCurrent) continue;
       final discoveredAt = relation.discoveredAt;
       if (discoveredAt != null &&
           (latest == null || discoveredAt.isAfter(latest))) {
@@ -186,79 +192,322 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     return catalogUpdateAt;
   }
 
-  Future<bool> _hasConfirmedSourceSuccessor(
+
+  List<ComicVersionRelation> _sourceVersionRelationsForComic(
     String sourceId,
     String comicId,
-  ) async {
-    if (_projectedConfirmedSourceUpdateAt(sourceId, comicId) != null) {
-      return true;
-    }
-    final store = _comicVersionRelationStore();
-    if (store == null) return false;
-    for (final alias in _canonicalComicAliases(sourceId, comicId)) {
-      final relations = await store.listComicVersionSuccessors(
-        sourceId,
-        alias,
-      );
-      if (relations.any(
-        (relation) => relation.successorComicId.isNotEmpty &&
-            relation.successorComicId != alias,
-      )) {
-        return true;
+  ) =>
+      _versionRelations
+          .where(
+            (relation) =>
+                relation.sourceId == sourceId &&
+                (relation.predecessorComicId == comicId ||
+                    relation.successorComicId == comicId),
+          )
+          .toList(growable: false);
+
+  ImportedLibraryEntry? _exactChapterEntry(
+    String sourceId,
+    String chapterId,
+  ) {
+    for (final entry in _libraryEntries) {
+      if (entry.chapter.sourceId == sourceId &&
+          entry.chapter.chapterId == chapterId) {
+        return entry;
       }
     }
-    return false;
+    return null;
   }
 
-  Future<int> _prepareSourceVersionArtifactReuse(
+  ComicVersionPageMapping? _verifiedPageMappingFromPlan({
+    required ChapterManifest predecessor,
+    required ChapterManifest successor,
+    required VerifiedArtifactReusePlan plan,
+  }) {
+    if (plan.aliases.isEmpty) return null;
+    final predecessorIndexes = <DownloadId, int>{
+      for (var index = 0; index < predecessor.pages.length; index++)
+        readerPageDownloadId(predecessor, predecessor.pages[index]): index,
+    };
+    final successorIndexes = <DownloadId, int>{
+      for (var index = 0; index < successor.pages.length; index++)
+        readerPageDownloadId(successor, successor.pages[index]): index,
+    };
+    final offsets = <int>{};
+    for (final alias in plan.aliases.entries) {
+      final successorIndex = successorIndexes[alias.key];
+      final predecessorIndex = predecessorIndexes[alias.value];
+      if (successorIndex == null || predecessorIndex == null) return null;
+      offsets.add(successorIndex - predecessorIndex);
+      if (offsets.length > 1) return null;
+    }
+    if (offsets.isEmpty) return null;
+    return ComicVersionPageMapping(
+      predecessorChapterId: predecessor.chapter.chapterId,
+      successorChapterId: successor.chapter.chapterId,
+      predecessorPageCount: predecessor.pages.length,
+      successorPageCount: successor.pages.length,
+      successorOffset: offsets.single,
+      verifiedAt: DateTime.now().toUtc(),
+    );
+  }
+
+  List<ComicVersionPageMapping> _replaceVersionPageMapping(
+    List<ComicVersionPageMapping> existing,
+    ComicVersionPageMapping mapping,
+  ) {
+    final next = existing.toList(growable: true);
+    final index = next.indexWhere(
+      (current) =>
+          current.predecessorChapterId == mapping.predecessorChapterId &&
+          current.successorChapterId == mapping.successorChapterId,
+    );
+    if (index < 0) {
+      next.add(mapping);
+    } else {
+      next[index] = mapping;
+    }
+    return List<ComicVersionPageMapping>.unmodifiable(next);
+  }
+
+  Future<ImportedLibraryEntry> _loadVersionChapterEntry(
+    BrowsableComicSource source,
+    Comic comic,
+    Chapter chapter,
+  ) async {
+    final existing = _exactChapterEntry(source.sourceId, chapter.chapterId);
+    if (existing != null &&
+        existing.chapter.pages.isNotEmpty &&
+        !_hasLegacyVeneraLocators(existing.chapter)) {
+      return existing;
+    }
+    final manifest = await source.loadChapter(chapter.chapterId);
+    if (manifest.sourceId != source.sourceId ||
+        manifest.comicId != chapter.comicId ||
+        manifest.chapter.chapterId != chapter.chapterId) {
+      throw StateError('同源版本章节返回了不匹配的身份');
+    }
+    return _librarySession.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: comic,
+        manifest: manifest,
+      ),
+    );
+  }
+
+  Future<void> _warmVersionRelationPageMappings(
+    BrowsableComicSource source,
+    ComicVersionRelation relation,
+  ) async {
+    final predecessorComic = await source.loadComic(relation.predecessorComicId);
+    final successorComic = await source.loadComic(relation.successorComicId);
+    if (predecessorComic.comic.sourceId != source.sourceId ||
+        successorComic.comic.sourceId != source.sourceId ||
+        predecessorComic.comic.comicId != relation.predecessorComicId ||
+        successorComic.comic.comicId != relation.successorComicId) {
+      throw StateError('同源版本漫画返回了不匹配的身份');
+    }
+    var updatedRelation = relation;
+    var verifiedMappings = 0;
+    for (final predecessorChapter in predecessorComic.chapters) {
+      Chapter? successorChapter;
+      for (final candidate in successorComic.chapters) {
+        if (candidate.sequence == predecessorChapter.sequence) {
+          successorChapter = candidate;
+          break;
+        }
+      }
+      final matchedSuccessorChapter = successorChapter;
+      if (matchedSuccessorChapter == null) continue;
+      final existing = updatedRelation.pageMappings.where(
+        (mapping) =>
+            mapping.predecessorChapterId == predecessorChapter.chapterId &&
+            mapping.successorChapterId == matchedSuccessorChapter.chapterId,
+      );
+      if (existing.any(
+        (mapping) =>
+            mapping.predecessorPageCount == predecessorChapter.pageCount &&
+            mapping.successorPageCount == matchedSuccessorChapter.pageCount,
+      )) {
+        verifiedMappings++;
+        continue;
+      }
+      final predecessorEntry = await _loadVersionChapterEntry(
+        source,
+        predecessorComic.comic,
+        predecessorChapter,
+      );
+      final successorEntry = await _loadVersionChapterEntry(
+        source,
+        successorComic.comic,
+        matchedSuccessorChapter,
+      );
+      final predecessorManifest = predecessorEntry.chapter.toManifest();
+      final successorManifest = successorEntry.chapter.toManifest();
+      final plan = await VerifiedArtifactReusePlan.matchResolvedRelated(
+        sourceChapter: predecessorManifest,
+        targetChapter: successorManifest,
+        resolveIdentity: (page) => _sourceResources.verifiedPageReuseIdentity(
+          sourceId: source.sourceId,
+          locator: page.uri,
+        ),
+      );
+      final mapping = _verifiedPageMappingFromPlan(
+        predecessor: predecessorManifest,
+        successor: successorManifest,
+        plan: plan,
+      );
+      if (mapping == null) continue;
+      verifiedMappings++;
+      updatedRelation = ComicVersionRelation(
+        sourceId: relation.sourceId,
+        predecessorComicId: relation.predecessorComicId,
+        successorComicId: relation.successorComicId,
+        predecessorTitle: relation.predecessorTitle,
+        discoveredAt: relation.discoveredAt,
+        pageMappings: _replaceVersionPageMapping(
+          updatedRelation.pageMappings,
+          mapping,
+        ),
+      );
+      await _librarySession.upsertVersionRelation(updatedRelation);
+    }
+    widget.debugTrace.record(
+      TraceEvent(
+        monotonicMicros: _traceClock.elapsedMicroseconds,
+        sessionId: 'source-version-reuse:${source.sourceId}',
+        kind: TraceEventKind.artifactSource,
+        identityHash:
+            '${source.sourceId}\u0000${relation.predecessorComicId}\u0000${relation.successorComicId}',
+        payload: <String, Object?>{
+          'stage': 'version-page-mapping-warmed',
+          'verifiedMappings': verifiedMappings,
+          'persistedMappings': updatedRelation.pageMappings.length,
+        },
+      ),
+    );
+  }
+
+  void _scheduleVersionReuseWarmup(
+    BrowsableComicSource source,
+    String comicId, {
+    bool refreshVersions = true,
+  }) {
+    final key = '${source.sourceId}\u0000$comicId';
+    if (_versionReuseWarmups.containsKey(key)) return;
+    late Future<void> future;
+    future = Future<void>(() async {
+      final versionSource = _sourceVersionCapability(source);
+      if (refreshVersions &&
+          versionSource != null &&
+          versionSource.supportsComicVersions) {
+        try {
+          final versions = await versionSource.findComicVersions(comicId);
+          await _rememberSourceSuccessors(
+            source: source,
+            predecessorComicId: comicId,
+            predecessorTitle:
+                _exactLibraryComicForSourceIdentity(source.sourceId, comicId)
+                        ?.title ??
+                    comicId,
+            successors: versions.where((item) => !item.isPredecessor),
+          );
+        } on Object {
+          // Persisted relations remain usable when source refresh is offline.
+        }
+      }
+      final relations = _sourceVersionRelationsForComic(source.sourceId, comicId);
+      for (final relation in relations) {
+        try {
+          await _warmVersionRelationPageMappings(source, relation);
+        } on Object catch (error) {
+          widget.debugTrace.record(
+            TraceEvent(
+              monotonicMicros: _traceClock.elapsedMicroseconds,
+              sessionId: 'source-version-reuse:${source.sourceId}',
+              kind: TraceEventKind.taskFailed,
+              identityHash:
+                  '${source.sourceId}\u0000${relation.predecessorComicId}\u0000${relation.successorComicId}',
+              payload: <String, Object?>{
+                'stage': 'version-page-mapping-warm-failed',
+                'errorType': error.runtimeType.toString(),
+              },
+            ),
+          );
+        }
+      }
+      final currentEntries = _libraryEntries.where(
+        (entry) =>
+            entry.chapter.sourceId == source.sourceId &&
+            entry.chapter.comicId == comicId,
+      );
+      for (final entry in currentEntries) {
+        try {
+          await _reuseSourceVersionDurablePartials(entry);
+        } on Object {
+          // Partial reuse is opportunistic. Reader/network remains authoritative.
+        }
+      }
+    });
+    _versionReuseWarmups[key] = future;
+    unawaited(
+      future.whenComplete(() {
+        if (identical(_versionReuseWarmups[key], future)) {
+          _versionReuseWarmups.remove(key);
+        }
+      }),
+    );
+  }
+
+  Future<int> _restoreSourceVersionArtifactReuse(
     ImportedLibraryEntry current,
   ) async {
     final artifactCache = _readerArtifactCache;
-    final store = _comicVersionRelationStore();
-    if (artifactCache == null ||
-        store == null ||
-        _sourceForId(current.chapter.sourceId) == null) {
-      return 0;
-    }
-    final predecessorRelations = await store.listComicVersionPredecessors(
+    if (artifactCache == null) return 0;
+    final relations = _sourceVersionRelationsForComic(
       current.chapter.sourceId,
       current.chapter.comicId,
     );
-    final successorRelations = await store.listComicVersionSuccessors(
-      current.chapter.sourceId,
-      current.chapter.comicId,
-    );
-    final relatedComicIds = <String>{
-      for (final relation in predecessorRelations)
-        if (relation.predecessorComicId.isNotEmpty &&
-            relation.predecessorComicId != current.chapter.comicId)
-          relation.predecessorComicId,
-      for (final relation in successorRelations)
-        if (relation.successorComicId.isNotEmpty &&
-            relation.successorComicId != current.chapter.comicId)
-          relation.successorComicId,
-    };
-    if (relatedComicIds.isEmpty) return 0;
-
     var reused = 0;
-    var candidateChapters = 0;
-    for (final relatedComicId in relatedComicIds) {
-      final sourceEntries = _libraryEntries.where(
-        (entry) =>
-            entry.chapter.sourceId == current.chapter.sourceId &&
-            entry.chapter.comicId == relatedComicId &&
-            entry.chapter.sequence == current.chapter.sequence,
-      );
-      for (final sourceEntry in sourceEntries) {
-        candidateChapters++;
-        final plan = await VerifiedArtifactReusePlan.matchResolvedRelated(
+    var mappings = 0;
+    for (final relation in relations) {
+      final currentIsSuccessor =
+          relation.successorComicId == current.chapter.comicId;
+      final currentIsPredecessor =
+          relation.predecessorComicId == current.chapter.comicId;
+      if (!currentIsSuccessor && !currentIsPredecessor) continue;
+      for (final mapping in relation.pageMappings) {
+        final targetChapterId = currentIsSuccessor
+            ? mapping.successorChapterId
+            : mapping.predecessorChapterId;
+        if (targetChapterId != current.chapter.chapterId) continue;
+        final sourceChapterId = currentIsSuccessor
+            ? mapping.predecessorChapterId
+            : mapping.successorChapterId;
+        final sourceEntry = _exactChapterEntry(
+          current.chapter.sourceId,
+          sourceChapterId,
+        );
+        if (sourceEntry == null) continue;
+        if (currentIsSuccessor &&
+            (mapping.successorPageCount != current.chapter.pages.length ||
+                mapping.predecessorPageCount !=
+                    sourceEntry.chapter.pages.length)) {
+          continue;
+        }
+        if (currentIsPredecessor &&
+            (mapping.predecessorPageCount != current.chapter.pages.length ||
+                mapping.successorPageCount !=
+                    sourceEntry.chapter.pages.length)) {
+          continue;
+        }
+        mappings++;
+        final plan = VerifiedArtifactReusePlan.fromVerifiedOffset(
           sourceChapter: sourceEntry.chapter.toManifest(),
           targetChapter: current.chapter.toManifest(),
-          resolveIdentity: (page) =>
-              _sourceResources.verifiedPageReuseIdentity(
-            sourceId: current.chapter.sourceId,
-            locator: page.uri,
-          ),
+          targetOffsetFromSource: currentIsSuccessor
+              ? mapping.successorOffset
+              : -mapping.successorOffset,
         );
         reused += await plan.applyExisting(artifactCache);
       }
@@ -268,17 +517,77 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         monotonicMicros: _traceClock.elapsedMicroseconds,
         sessionId: 'source-version-reuse:${current.chapter.sourceId}',
         kind: TraceEventKind.artifactSource,
-        identityHash: '${current.chapter.sourceId}\u0000${current.chapter.chapterId}',
+        identityHash:
+            '${current.chapter.sourceId}\u0000${current.chapter.chapterId}',
         payload: <String, Object?>{
-          'stage': 'version-artifact-alias-prepared',
-          'relationCount': relatedComicIds.length,
-          'predecessorRelations': predecessorRelations.length,
-          'successorRelations': successorRelations.length,
-          'candidateChapters': candidateChapters,
+          'stage': 'version-artifact-alias-restored',
+          'persistentMappings': mappings,
           'reusedPages': reused,
         },
       ),
     );
+    return reused;
+  }
+
+  Future<int> _reuseSourceVersionDurablePartials(
+    ImportedLibraryEntry current,
+  ) async {
+    final store = _chapterDownloads is PartialDownloadStore
+        ? _chapterDownloads as PartialDownloadStore
+        : null;
+    if (store == null) return 0;
+    final relations = _sourceVersionRelationsForComic(
+      current.chapter.sourceId,
+      current.chapter.comicId,
+    );
+    var reused = 0;
+    for (final relation in relations) {
+      final currentIsSuccessor =
+          relation.successorComicId == current.chapter.comicId;
+      final currentIsPredecessor =
+          relation.predecessorComicId == current.chapter.comicId;
+      if (!currentIsSuccessor && !currentIsPredecessor) continue;
+      for (final mapping in relation.pageMappings) {
+        final targetChapterId = currentIsSuccessor
+            ? mapping.successorChapterId
+            : mapping.predecessorChapterId;
+        if (targetChapterId != current.chapter.chapterId) continue;
+        final sourceEntry = _exactChapterEntry(
+          current.chapter.sourceId,
+          currentIsSuccessor
+              ? mapping.predecessorChapterId
+              : mapping.successorChapterId,
+        );
+        if (sourceEntry == null) continue;
+        final plan = VerifiedArtifactReusePlan.fromVerifiedOffset(
+          sourceChapter: sourceEntry.chapter.toManifest(),
+          targetChapter: current.chapter.toManifest(),
+          targetOffsetFromSource: currentIsSuccessor
+              ? mapping.successorOffset
+              : -mapping.successorOffset,
+        );
+        try {
+          reused += await plan.applyDurablePartials(store);
+        } on Failure catch (error) {
+          if (error.code != ErrorCode.sessionBusy) rethrow;
+        }
+      }
+    }
+    if (reused > 0) {
+      widget.debugTrace.record(
+        TraceEvent(
+          monotonicMicros: _traceClock.elapsedMicroseconds,
+          sessionId: 'source-version-reuse:${current.chapter.sourceId}',
+          kind: TraceEventKind.artifactSource,
+          identityHash:
+              '${current.chapter.sourceId}\u0000${current.chapter.chapterId}',
+          payload: <String, Object?>{
+            'stage': 'version-durable-partial-reused',
+            'reusedPartials': reused,
+          },
+        ),
+      );
+    }
     return reused;
   }
 
@@ -338,6 +647,11 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       return List<SourceComicVersion>.unmodifiable(result);
     }
 
+    _scheduleVersionReuseWarmup(
+      source,
+      currentComicId,
+      refreshVersions: false,
+    );
     return details.ComicDetailsVersionState(
       successors: merge(
         <SourceComicVersion>[...discovered, ...storedSuccessors],

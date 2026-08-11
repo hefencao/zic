@@ -17,24 +17,24 @@ def forbid(text: str, token: str, label: str) -> None:
 
 migration = read('apps/app/lib/demo_home_source_migration.dart')
 for token in (
-    'Future<int> _prepareSourceVersionArtifactReuse(',
     'VerifiedArtifactReusePlan.matchResolvedRelated(',
     '_sourceResources.verifiedPageReuseIdentity(',
-    'version-artifact-alias-prepared',
-    "'candidateChapters': candidateChapters",
-    "'reusedPages': reused",
+    "'stage': 'version-page-mapping-warmed'",
 ):
-    require(migration, token, 'confirmed-version update/reuse owner')
+    require(migration, token, 'background confirmed-version reuse proof')
+for token in (
+    'await _restoreSourceVersionArtifactReuse(current);',
+    '_scheduleVersionReuseWarmup(versionSource, current.chapter.comicId);',
+):
+    require(read('apps/app/lib/demo_home.dart'), token, 'Reader persisted-map reuse composition')
+forbid(
+    read('apps/app/lib/demo_home.dart'),
+    'await _prepareSourceVersionArtifactReuse(current);',
+    'synchronous source-resolved Reader reuse preparation',
+)
 forbid(migration, 'if (!discoveredNewVersion) return;', 'one-shot successor update gate')
 forbid(migration, 'Future<void> _reconcileConfirmedSourceUpdateSignal(', 'superseded version-to-sourceUpdateAt mirroring')
 
-home = read('apps/app/lib/demo_home.dart')
-for token in (
-    'final hasConfirmedSuccessor = await _hasConfirmedSourceSuccessor(',
-    'if (hasConfirmedSuccessor) {',
-    'await _prepareSourceVersionArtifactReuse(current);',
-):
-    require(home, token, 'shelf/update and reader reuse composition')
 
 reuse = read('packages/downloads/lib/src/artifact_cache_reuse.dart')
 for token in (

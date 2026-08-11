@@ -38,12 +38,11 @@ for token in (
     "await _librarySession.upsertVersionRelation(",
     "DateTime? _projectedConfirmedSourceUpdateAt(",
     "_versionRelations",
-    "Future<int> _prepareSourceVersionArtifactReuse(",
-    "final predecessorRelations = await store.listComicVersionPredecessors(",
-    "final successorRelations = await store.listComicVersionSuccessors(",
+    "Future<int> _restoreSourceVersionArtifactReuse(",
+    "_sourceVersionRelationsForComic(",
+    "VerifiedArtifactReusePlan.fromVerifiedOffset(",
     "VerifiedArtifactReusePlan.matchResolvedRelated(",
-    "'predecessorRelations': predecessorRelations.length",
-    "'successorRelations': successorRelations.length",
+    "'stage': 'version-artifact-alias-restored'",
 ):
     require(migration, token, "version projection / bidirectional reuse composition")
 forbid(

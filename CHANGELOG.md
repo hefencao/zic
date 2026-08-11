@@ -1,3 +1,12 @@
+## 0.31.0-dev.210：版本映射预热、Reader 快速恢复与 verified partial 复用
+
+- 结合 01:09 真机 trace 与 VibeVenera 参考实现确认 dev.207–209 把 source request-plan page identity 验证放在 Reader 前置 await：Home 首帧约1.07s后直到约13.96s才完成 alias preparation，Reader约14.08s才创建；Reader创建后约0.27s即首帧。
+- confirmed version relation 新增按章节持久化 `ComicVersionPageMapping`（章节ID、页数、verified offset、验证时间），SQLite schema升至8并提供v7迁移；详情页和Reader只异步刷新版本/强identity mapping。
+- Reader关键路径只从 durable relation/page mapping 恢复现有 promoted artifact alias，不再调用 `verifiedPageReuseIdentity`/source request-plan；无mapping时直接正常进入Reader，后台预热供后续复用。
+- verified mapping下支持 durable inactive partial 前缀复用；不碰hot DownloadSession，跨版本validators清空，真实续传继续由DownloadJob validatorless Range overlap逐字节验证。
+- source card更新判断按 predecessor/successor canonical identity匹配confirmed relation，不再因alias集合包含successor而吞掉旧版`!`；首次入架继续清理陈旧章节`sourceUpdateAt`，版本relation不镜像该字段。
+- 新增 ADR 0191、dev.210根因审计/owner gate与storage/reuse回归，版本提升到`0.31.0+210`。
+
 ## 0.31.0-dev.209：删除版本更新旧 reconcile 残留调用并闭合发布门禁
 
 - 修复 dev.208 编译错误：`demo_home_source_migration.dart::_loadSourceVersionState()` 仍调用已删除的 `_reconcileConfirmedSourceUpdateSignal`。该调用是 dev.207“版本 relation 镜像到 `sourceUpdateAt`”旧路径的半删除残留，直接移除，不恢复旧方法。

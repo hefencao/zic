@@ -7,7 +7,7 @@ import 'package:sqlite3/sqlite3.dart' as sql;
 
 import 'sqlite_progress_writer.dart';
 
-const _schemaVersion = 7;
+const _schemaVersion = 8;
 
 final class SqliteImportedLibraryStore
     implements
@@ -62,6 +62,8 @@ final class SqliteImportedLibraryStore
         _migrateMigrationIssueAcknowledgement(db);
       } else if (version == 6) {
         _migrateComicVersionRelations(db);
+      } else if (version == 7) {
+        _migrateComicVersionPageMappings(db);
       } else if (version != _schemaVersion) {
         throw StateError(
           'unsupported imported library schema version: $version',
@@ -639,7 +641,7 @@ final class SqliteImportedLibraryStore
   Future<List<ComicVersionRelation>> listAllComicVersionRelations() async {
     final rows = _requireDb().select('''
       SELECT source_id, predecessor_comic_id, successor_comic_id,
-             predecessor_title, discovered_us
+             predecessor_title, discovered_us, page_mappings_json
       FROM comic_version_relation
       ORDER BY discovered_us DESC, source_id, predecessor_comic_id,
                successor_comic_id
@@ -654,7 +656,7 @@ final class SqliteImportedLibraryStore
   ) async {
     final rows = _requireDb().select('''
       SELECT source_id, predecessor_comic_id, successor_comic_id,
-             predecessor_title, discovered_us
+             predecessor_title, discovered_us, page_mappings_json
       FROM comic_version_relation
       WHERE source_id = ? AND successor_comic_id = ?
       ORDER BY discovered_us DESC, predecessor_comic_id
@@ -669,7 +671,7 @@ final class SqliteImportedLibraryStore
   ) async {
     final rows = _requireDb().select('''
       SELECT source_id, predecessor_comic_id, successor_comic_id,
-             predecessor_title, discovered_us
+             predecessor_title, discovered_us, page_mappings_json
       FROM comic_version_relation
       WHERE source_id = ? AND predecessor_comic_id = ?
       ORDER BY discovered_us DESC, successor_comic_id
@@ -688,17 +690,25 @@ final class SqliteImportedLibraryStore
     _requireDb().execute('''
       INSERT INTO comic_version_relation (
         source_id, predecessor_comic_id, successor_comic_id,
-        predecessor_title, discovered_us
-      ) VALUES (?, ?, ?, ?, ?)
+        predecessor_title, discovered_us, page_mappings_json
+      ) VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(source_id, predecessor_comic_id, successor_comic_id)
       DO UPDATE SET
-        predecessor_title = excluded.predecessor_title
+        predecessor_title = excluded.predecessor_title,
+        page_mappings_json = CASE
+          WHEN excluded.page_mappings_json = '[]'
+          THEN comic_version_relation.page_mappings_json
+          ELSE excluded.page_mappings_json
+        END
     ''', <Object?>[
       relation.sourceId,
       relation.predecessorComicId,
       relation.successorComicId,
       relation.predecessorTitle,
       (relation.discoveredAt ?? DateTime.now().toUtc()).microsecondsSinceEpoch,
+      jsonEncode(
+        relation.pageMappings.map((mapping) => mapping.toJson()).toList(),
+      ),
     ]);
   }
 
@@ -711,6 +721,9 @@ final class SqliteImportedLibraryStore
         discoveredAt: DateTime.fromMicrosecondsSinceEpoch(
           row['discovered_us']! as int,
           isUtc: true,
+        ),
+        pageMappings: _comicVersionPageMappingsFromJson(
+          row['page_mappings_json']! as String,
         ),
       );
 
@@ -907,6 +920,28 @@ void _migrateComicVersionRelations(sql.Database db) {
   db.execute('BEGIN IMMEDIATE');
   try {
     _createComicVersionRelationTable(db);
+    db.execute('PRAGMA user_version = $_schemaVersion');
+    db.execute('COMMIT');
+  } on Object {
+    db.execute('ROLLBACK');
+    rethrow;
+  }
+}
+
+void _migrateComicVersionPageMappings(sql.Database db) {
+  db.execute('BEGIN IMMEDIATE');
+  try {
+    _createComicVersionRelationTable(db);
+    final columns = db
+        .select('PRAGMA table_info(comic_version_relation)')
+        .map((row) => row['name'] as String)
+        .toSet();
+    if (!columns.contains('page_mappings_json')) {
+      db.execute("""
+        ALTER TABLE comic_version_relation
+        ADD COLUMN page_mappings_json TEXT NOT NULL DEFAULT '[]'
+      """);
+    }
     db.execute('PRAGMA user_version = $_schemaVersion');
     db.execute('COMMIT');
   } on Object {
@@ -1540,6 +1575,29 @@ void _createMigrationIssueTable(sql.Database db) {
   }
 }
 
+List<ComicVersionPageMapping> _comicVersionPageMappingsFromJson(
+  String raw,
+) {
+  final value = jsonDecode(raw);
+  if (value is! List) {
+    throw const FormatException(
+      'stored comic version page mappings must be a list',
+    );
+  }
+  return List<ComicVersionPageMapping>.unmodifiable(
+    value.map((item) {
+      if (item is! Map) {
+        throw const FormatException(
+          'stored comic version page mapping must be an object',
+        );
+      }
+      return ComicVersionPageMapping.fromJson(
+        Map<String, Object?>.from(item),
+      );
+    }),
+  );
+}
+
 void _createComicVersionRelationTable(sql.Database db) {
   db.execute('''
     CREATE TABLE IF NOT EXISTS comic_version_relation (
@@ -1548,6 +1606,7 @@ void _createComicVersionRelationTable(sql.Database db) {
       successor_comic_id TEXT NOT NULL,
       predecessor_title TEXT NOT NULL,
       discovered_us INTEGER NOT NULL,
+      page_mappings_json TEXT NOT NULL DEFAULT '[]',
       PRIMARY KEY(source_id, predecessor_comic_id, successor_comic_id)
     )
   ''');

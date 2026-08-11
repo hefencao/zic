@@ -134,6 +134,15 @@ void main() {
         predecessorComicId: 'old-gallery',
         successorComicId: 'new-gallery',
         discoveredAt: DateTime.utc(2026, 8, 11),
+        pageMappings: const <ComicVersionPageMapping>[
+          ComicVersionPageMapping(
+            predecessorChapterId: 'old-chapter',
+            successorChapterId: 'new-chapter',
+            predecessorPageCount: 370,
+            successorPageCount: 371,
+            successorOffset: 1,
+          ),
+        ],
       ),
     );
     await library.close();
@@ -158,6 +167,7 @@ void main() {
     await session.ready;
     expect(session.versionRelations, hasLength(1));
     expect(session.versionRelations.single.predecessorComicId, 'old-gallery');
+    expect(session.versionRelations.single.pageMappings, hasLength(1));
 
     await session.upsertVersionRelation(
       ComicVersionRelation(

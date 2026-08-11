@@ -156,7 +156,7 @@
 
 ## P0：Flutter/Android 工具链闭环
 
-- dev.209 本地编译首先确认 `demo_home_source_migration.dart` 不再存在 `_reconcileConfirmedSourceUpdateSignal` 未定义错误。随后继续真机验证 dev.208 产品语义：E-Hentai旧版在书架且已有持久confirmed successor时，无需再次进入详情即可显示右上`!`；分别验证旧缓存→新版与新版缓存→旧版，强identity/offset证据通过后应命中temporary artifact alias而非origin重下。
+- dev.210真机验证：冷启动直接进入旧版Reader不得再在route前等待source-version resolver；详情页/Reader入口异步产生`version-page-mapping-warmed`后，后续进入应先出现`version-artifact-alias-restored`且无需origin重下。E-Hentai旧版在书架且有confirmed successor时漫画源卡右上必须显示`!`，successor自身不得误报。制造可续传partial后切换同源版本，只有durable inactive partial允许复用，并在续传trace看到validatorless overlap验证而非继承旧ETag。
 - 纵向静态图片持续上下拖动时，异步页面比例收敛不得再触发anchor `jumpTo`造成短距离回拉；旋转、真实viewport/DPR变化、vertical stitch切换与显式跳页仍需验证位置连续。
 - 真机优先验证 dev.206 ownership：快速退出/重进同chapter应直接复用retained PipelineReaderSession，不出现partial durable store/restore；只有session真实evict/dispose后新session才出现`session-partial-handoff` restored且`downloadStarted.committedLength>0`。已有partial动画重入必须从frame0立即播放，约30帧循环继续只属于DecodeSession。Venera cold resolver应不再出现Kotlin HttpURLConnection owner，并验证requestId cancel、Cookie/manual redirect与resolver rhttp复用。
 - 运行 Rust/Android target 与 JNI symbol验证，确认 APK 中 native build identity正确。

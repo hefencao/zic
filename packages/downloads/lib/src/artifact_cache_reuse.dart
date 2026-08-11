@@ -1,6 +1,8 @@
 import 'package:domain/domain.dart';
+import 'package:transport/transport.dart';
 
 import 'artifact_cache_manager.dart';
+import 'partial_download_store.dart';
 import 'reader_page_identity.dart';
 
 typedef VerifiedPageReuseIdentityResolver = Future<String?> Function(
@@ -171,6 +173,29 @@ final class VerifiedArtifactReusePlan {
     return direct;
   }
 
+  /// Rebuilds a plan from a previously source-verified positional mapping.
+  ///
+  /// No source request, URL resolution or media identity lookup is performed.
+  /// This is the cold-Reader path: expensive proof must have been persisted
+  /// earlier by the detail/version background updater.
+  factory VerifiedArtifactReusePlan.fromVerifiedOffset({
+    required ChapterManifest sourceChapter,
+    required ChapterManifest targetChapter,
+    required int targetOffsetFromSource,
+  }) {
+    final sourcePages = sourceChapter.pages;
+    final targetPages = targetChapter.pages;
+    final aliases = <DownloadId, DownloadId>{};
+    for (var sourceIndex = 0; sourceIndex < sourcePages.length; sourceIndex++) {
+      final targetIndex = sourceIndex + targetOffsetFromSource;
+      if (targetIndex < 0 || targetIndex >= targetPages.length) continue;
+      aliases[
+        readerPageDownloadId(targetChapter, targetPages[targetIndex])
+      ] = readerPageDownloadId(sourceChapter, sourcePages[sourceIndex]);
+    }
+    return VerifiedArtifactReusePlan._(aliases);
+  }
+
   /// New exact artifact identity -> old authoritative artifact identity.
   final Map<DownloadId, DownloadId> aliases;
 
@@ -198,6 +223,33 @@ final class VerifiedArtifactReusePlan {
       }
       if (await cache.lookup(entry.key) != null) continue;
       cache.alias(id: entry.key, target: source.storageId);
+      applied++;
+    }
+    return applied;
+  }
+
+  /// Reuses only durable, inactive partial prefixes for verified page pairs.
+  ///
+  /// Cross-version ETag/Last-Modified values are deliberately discarded. The
+  /// target DownloadJob therefore resumes with its existing validatorless
+  /// overlap probe and compares response bytes against the preserved prefix
+  /// before accepting any continuation. Hot Reader sessions are excluded by
+  /// [PartialDownloadStore.openPartialDownload].
+  Future<int> applyDurablePartials(PartialDownloadStore store) async {
+    var applied = 0;
+    for (final entry in aliases.entries) {
+      if (await store.openPartialDownload(entry.key) != null) continue;
+      final source = await store.openPartialDownload(entry.value);
+      if (source == null || source.length <= 0) continue;
+      await store.storePartialDownload(
+        id: entry.key,
+        entry: PartialDownloadEntry(
+          length: source.length,
+          validators: const Validators(),
+          totalLength: source.totalLength,
+          open: source.open,
+        ),
+      );
       applied++;
     }
     return applied;

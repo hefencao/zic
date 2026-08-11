@@ -225,3 +225,5 @@ identity 超限时使用稳定 hash 与原长度；高频事件 MAY 在导出投
 10. retryable runtime lifecycle envelope MAY 自动重新激活并重试一次；业务错误和 `source-verification-required` MUST NOT 被当作 runtime崩溃吞掉。
 11. Mihon/外部插件同 pluginId 的 runtime restart或更新 MUST 使用事务式 replacement：候选 session先完成 activation、source identity/ABI等验证，成功后才能替换当前 source owner并关闭旧 session；候选失败 MUST 保留旧 session。不得先 deactivate再尝试 activate。
 12. Mihon `imageRequest(page)`（或等价 source request）的 URL、method、headers与必要 request body MUST 原样进入 `ComicResourceRequest`；GET/HEAD body MUST 为 null。宿主直连 MAY补 source OkHttp CookieJar的当前 Cookie与 browser-session UA，但不得把普通图片完整 body路由回插件 JSON/Base64 RPC。
+
+- 同源版本媒体复用 MUST 将强identity/offset验证放在非阻塞后台并持久化chapter mapping；Reader route前 MAY读取本地mapping并恢复promoted artifact alias，但 MUST NOT等待source request-plan或网络解析。source-card版本提醒 MUST区分relation predecessor与successor的raw/canonical identity。partial只允许复用已持久化、inactive且mapping已验证的前缀；跨版本ETag/Last-Modified MUST丢弃，续传仍 MUST通过validatorless overlap字节验证。

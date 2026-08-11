@@ -174,6 +174,7 @@ final class _DemoHomeState extends State<DemoHome> {
   bool _batchManagement = false;
   final Set<String> _managedComicIdentities = <String>{};
   final Set<String> _openingComicIdentities = <String>{};
+  final Map<String, Future<void>> _versionReuseWarmups = <String, Future<void>>{};
   final Map<String, _DownloadCompletionKind> _downloadCompletionBadges =
       <String, _DownloadCompletionKind>{};
   final Map<String, String> _pendingWholeComicCompletionBadges =
@@ -741,22 +742,10 @@ final class _DemoHomeState extends State<DemoHome> {
     final now = DateTime.now().toUtc();
     final updated = preference.copyWith(updatedAt: now);
     if (!previous.inShelf && updated.inShelf) {
-      final hasConfirmedSuccessor = await _hasConfirmedSourceSuccessor(
-        preference.sourceId,
-        preference.comicId,
-      );
       for (final saved in _savedComicAliasesFor(
         preference.sourceId,
         preference.comicId,
       )) {
-        if (hasConfirmedSuccessor) {
-          if (saved.sourceUpdateAt == null) {
-            await _librarySession.upsertSavedComic(
-              saved.copyWith(sourceUpdateAt: now),
-            );
-          }
-          continue;
-        }
         if (saved.sourceUpdateAt == null) continue;
         await _librarySession.upsertSavedComic(
           saved.copyWith(clearSourceUpdateAt: true),
@@ -976,7 +965,17 @@ final class _DemoHomeState extends State<DemoHome> {
         'Venera 章节仍包含已失效的运行时资源定位符，已阻止进入 Reader',
       );
     }
-    await _prepareSourceVersionArtifactReuse(current);
+    await _restoreSourceVersionArtifactReuse(current);
+    final versionSource = _sourceForId(current.chapter.sourceId);
+    if (versionSource != null) {
+      _scheduleVersionReuseWarmup(versionSource, current.chapter.comicId);
+    }
+    unawaited(
+      _reuseSourceVersionDurablePartials(current).then<void>(
+        (_) {},
+        onError: (Object _, StackTrace __) {},
+      ),
+    );
     final hasOfflineBytes = current.chapter.sourceId != 'local-folder' &&
         await _chapterDownloads.isDownloaded(current);
     final source = _sourceForId(current.chapter.sourceId);

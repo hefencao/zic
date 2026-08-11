@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:test/test.dart';
+import 'package:transport/transport.dart';
 
 void main() {
   test('E-Hentai version URLs reuse only matching unique image keys', () async {
@@ -212,6 +213,86 @@ void main() {
     expect(cache.resolveAlias(newerId), olderId);
   });
 
+  test('persisted verified offset restores aliases without a resolver', () {
+    final older = _chapter(
+      comicId: 'older',
+      revision: 'older',
+      urls: const <String>[
+        'venera-resource:older-0',
+        'venera-resource:older-1',
+      ],
+    );
+    final newer = _chapter(
+      comicId: 'newer',
+      revision: 'newer',
+      urls: const <String>[
+        'venera-resource:new-cover',
+        'venera-resource:newer-0',
+        'venera-resource:newer-1',
+      ],
+    );
+
+    final forward = VerifiedArtifactReusePlan.fromVerifiedOffset(
+      sourceChapter: older,
+      targetChapter: newer,
+      targetOffsetFromSource: 1,
+    );
+    final reverse = VerifiedArtifactReusePlan.fromVerifiedOffset(
+      sourceChapter: newer,
+      targetChapter: older,
+      targetOffsetFromSource: -1,
+    );
+
+    expect(forward.aliases, hasLength(2));
+    expect(reverse.aliases, hasLength(2));
+    expect(
+      forward.aliases[readerPageDownloadId(newer, newer.pages[1])],
+      readerPageDownloadId(older, older.pages[0]),
+    );
+    expect(
+      reverse.aliases[readerPageDownloadId(older, older.pages[0])],
+      readerPageDownloadId(newer, newer.pages[1]),
+    );
+  });
+
+  test('verified partial reuse clears cross-version validators', () async {
+    final older = _chapter(
+      comicId: 'older',
+      revision: 'older',
+      urls: const <String>['venera-resource:older-0'],
+    );
+    final newer = _chapter(
+      comicId: 'newer',
+      revision: 'newer',
+      urls: const <String>['venera-resource:newer-0'],
+    );
+    final oldId = readerPageDownloadId(older, older.pages.single);
+    final newId = readerPageDownloadId(newer, newer.pages.single);
+    final bytes = Uint8List.fromList(<int>[1, 2, 3, 4]);
+    final store = _PartialStore(<DownloadId, PartialDownloadEntry>{
+      oldId: PartialDownloadEntry(
+        length: bytes.length,
+        validators: const Validators(etag: '"old-version"'),
+        totalLength: 12,
+        open: ({required int start}) async* {
+          yield Uint8List.sublistView(bytes, start);
+        },
+      ),
+    });
+    final plan = VerifiedArtifactReusePlan.fromVerifiedOffset(
+      sourceChapter: older,
+      targetChapter: newer,
+      targetOffsetFromSource: 0,
+    );
+
+    expect(await plan.applyDurablePartials(store), 1);
+    final restored = await store.openPartialDownload(newId);
+    expect(restored, isNotNull);
+    expect(restored!.length, bytes.length);
+    expect(restored.validators.isEmpty, isTrue);
+    expect(restored.totalLength, 12);
+  });
+
   test('resolved offset requires verified anchor agreement', () async {
     final oldChapter = _chapter(
       comicId: 'old',
@@ -327,6 +408,29 @@ final class _Backend implements ArtifactCacheBackend {
 
   @override
   Future<void> invalidateArtifact(DownloadId id) async {
+    values.remove(id);
+  }
+}
+
+final class _PartialStore implements PartialDownloadStore {
+  _PartialStore(this.values);
+
+  final Map<DownloadId, PartialDownloadEntry> values;
+
+  @override
+  Future<PartialDownloadEntry?> openPartialDownload(DownloadId id) async =>
+      values[id];
+
+  @override
+  Future<void> storePartialDownload({
+    required DownloadId id,
+    required PartialDownloadEntry entry,
+  }) async {
+    values[id] = entry;
+  }
+
+  @override
+  Future<void> invalidatePartialDownload(DownloadId id) async {
     values.remove(id);
   }
 }

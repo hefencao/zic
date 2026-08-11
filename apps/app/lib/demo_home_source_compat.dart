@@ -267,6 +267,9 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
         comicLibraryIdentity(source.sourceId, comic.comicId);
     if (!_openingComicIdentities.add(identity)) return;
     _clearDownloadCompletionBadge(source.sourceId, comic.comicId);
+    if (_sourceSupportsVersionEntry(source)) {
+      _scheduleVersionReuseWarmup(source, comic.comicId);
+    }
     final local = resolveCanonicalAlias
         ? _libraryComicForSourceIdentity(source.sourceId, comic.comicId)
         : _exactLibraryComicForSourceIdentity(
@@ -444,6 +447,9 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
   Future<void> _pushComicDetails(LibraryComic comic) async {
     _clearDownloadCompletionBadge(comic.sourceId, comic.comicId);
     final source = _sourceForId(comic.sourceId);
+    if (source != null && _sourceSupportsVersionEntry(source)) {
+      _scheduleVersionReuseWarmup(source, comic.comicId);
+    }
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => details.LocalComicDetailsScreen(

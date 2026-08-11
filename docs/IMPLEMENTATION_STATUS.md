@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.209` / App `0.31.0+209`。
+- 当前版本：`0.31.0-dev.210` / App `0.31.0+210`。
+- dev.210：01:09真机trace确认冷启动旧版Reader的长等待发生在Reader创建前：版本alias准备同步解析source request-plan约十余秒，Reader创建后约0.27s即首帧。参考VibeVenera改为详情/Reader入口异步检查版本并持久化verified chapter page-offset mapping；Reader只本地恢复mapping→artifact alias，不再等待source identity resolver。confirmed relation的旧版`!`按raw/canonical predecessor匹配，successor当前版本不误报。verified mapping还可异步复制durable inactive partial到目标DownloadId，清空跨版本validator并保留DownloadJob overlap probe。
 - dev.209：只收口 dev.208 的编译/发布门禁残留。`_loadSourceVersionState()` 删除对已移除 `_reconcileConfirmedSourceUpdateSignal` 的调用；不恢复 relation→`sourceUpdateAt` 镜像。dev.208 gate 改为禁止该符号在迁移生产代码出现，并由新增 dev.209 closure gate 接入 `tool/check.sh`。
 - dev.208：修正dev.207仍未闭环的两个方向性问题。`ComicVersionRelationStore.listAllComicVersionRelations()` 进入 `HomeLibrarySession` write-through投影，source browser/Home直接由confirmed predecessor→successor relation判断版本更新，不再要求详情页先重建`sourceUpdateAt`。artifact reuse同时查询predecessor/successor，版本方向仅证明相关；实际临时alias从当前缺失的target精确DownloadId指向相关版本中已有的最终storage artifact，并避免反向alias环。
 - dev.207：首次引入 source-confirmed version artifact临时alias并删除 pageAspectRatios异步anchor jump；真机随后证明两个局部设计仍不足：版本提醒仍依赖详情页把relation镜像进`sourceUpdateAt`，artifact reuse也只覆盖predecessor→successor。两点均由dev.208 supersede；纵向anchor决策继续有效。
@@ -34,7 +35,7 @@
 - Venera preemption先断requestId native HTTP，再等待JS `finished`后返回cancelled并释放permit，禁止同一WebView中旧/新async invocation重叠。修复 `ArtifactCacheReadLease?` nullable半迁移编译错误。
 - 当前环境无Flutter/Dart/Android完整SDK；行为测试已加入源码，最终设备构建/性能仍需本地验证。
 
-**源码版本：** `0.31.0-dev.209`
+**源码版本：** `0.31.0-dev.210`
 **App build：** `0.31.0+206`
 
 本文件只描述当前源码快照和验证等级。历史见 `CHANGELOG.md`，单轮证据见 `docs/audits/`。

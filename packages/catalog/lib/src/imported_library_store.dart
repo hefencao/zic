@@ -559,6 +559,9 @@ final class MemoryImportedLibraryStore
         successorComicId: relation.successorComicId,
         predecessorTitle: relation.predecessorTitle,
         discoveredAt: previous.discoveredAt ?? relation.discoveredAt,
+        pageMappings: relation.pageMappings.isEmpty
+            ? previous.pageMappings
+            : relation.pageMappings,
       );
     } else {
       values.add(relation);

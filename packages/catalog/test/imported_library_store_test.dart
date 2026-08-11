@@ -12,6 +12,15 @@ void main() {
       predecessorComicId: 'old-comic',
       successorComicId: 'new-comic',
       predecessorTitle: '旧版标题',
+      pageMappings: <ComicVersionPageMapping>[
+        ComicVersionPageMapping(
+          predecessorChapterId: 'old-chapter',
+          successorChapterId: 'new-chapter',
+          predecessorPageCount: 370,
+          successorPageCount: 371,
+          successorOffset: 1,
+        ),
+      ],
     );
 
     await store.saveComicVersionRelation(relation);
@@ -28,6 +37,8 @@ void main() {
     );
     expect(predecessors.single.successorComicId, relation.successorComicId);
     expect(predecessors.single.predecessorTitle, relation.predecessorTitle);
+    expect(predecessors.single.pageMappings, hasLength(1));
+    expect(predecessors.single.pageMappings.single.successorOffset, 1);
     final all = await store.listAllComicVersionRelations();
     expect(all, hasLength(1));
     expect(all.single.predecessorComicId, relation.predecessorComicId);
