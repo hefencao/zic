@@ -23,7 +23,7 @@ for token in (
 ):
     require(migration, token, 'background confirmed-version reuse proof')
 for token in (
-    'await _restoreSourceVersionArtifactReuse(current);',
+    'await _restoreSourceVersionArtifactEquivalences(current);',
     '_scheduleVersionReuseWarmup(versionSource, current.chapter.comicId);',
 ):
     require(read('apps/app/lib/demo_home.dart'), token, 'Reader persisted-map reuse composition')

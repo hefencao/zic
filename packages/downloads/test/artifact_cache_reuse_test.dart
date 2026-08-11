@@ -255,6 +255,47 @@ void main() {
     );
   });
 
+  test('persisted offset registers symmetric future-artifact equivalence',
+      () async {
+    final older = _chapter(
+      comicId: 'older',
+      revision: 'older',
+      urls: const <String>[
+        'venera-resource:older-0',
+        'venera-resource:older-1',
+      ],
+    );
+    final newer = _chapter(
+      comicId: 'newer',
+      revision: 'newer',
+      urls: const <String>[
+        'venera-resource:new-cover',
+        'venera-resource:newer-0',
+        'venera-resource:newer-1',
+      ],
+    );
+    final oldFirst = readerPageDownloadId(older, older.pages.first);
+    final newFirst = readerPageDownloadId(newer, newer.pages[1]);
+    final cache = ArtifactCacheManager(
+      backend: _Backend(<DownloadId, Uint8List>{}),
+    );
+    final plan = VerifiedArtifactReusePlan.fromVerifiedOffset(
+      sourceChapter: older,
+      targetChapter: newer,
+      targetOffsetFromSource: 1,
+    );
+
+    expect(plan.registerEquivalences(cache), 2);
+    expect(cache.equivalenceCount, 2);
+    expect(await cache.lookup(oldFirst), isNull);
+
+    await cache.storePromotedArtifact(
+      id: newFirst,
+      bytes: Uint8List.fromList(<int>[6, 6, 6]),
+    );
+    expect((await cache.readForeground(oldFirst))?.bytes, <int>[6, 6, 6]);
+  });
+
   test('verified partial reuse clears cross-version validators', () async {
     final older = _chapter(
       comicId: 'older',

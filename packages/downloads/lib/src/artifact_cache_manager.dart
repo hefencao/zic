@@ -28,11 +28,16 @@ final class ArtifactCacheManager {
   final Set<_ArtifactByteKey> _durableMemory = <_ArtifactByteKey>{};
   final LinkedHashMap<DownloadId, DownloadId> _aliases =
       LinkedHashMap<DownloadId, DownloadId>();
+  final LinkedHashMap<DownloadId, LinkedHashSet<DownloadId>> _equivalents =
+      LinkedHashMap<DownloadId, LinkedHashSet<DownloadId>>();
+  final LinkedHashSet<_ArtifactEquivalencePair> _equivalenceOrder =
+      LinkedHashSet<_ArtifactEquivalencePair>();
   int _memoryBytes = 0;
 
   int get memoryEntryCount => _memory.length;
   int get memoryBytes => _memoryBytes;
   int get aliasCount => _aliases.length;
+  int get equivalenceCount => _equivalenceOrder.length;
 
   /// Resolves an explicitly verified artifact alias.
   ///
@@ -72,8 +77,60 @@ final class ArtifactCacheManager {
 
   bool removeAlias(DownloadId id) => _aliases.remove(id) != null;
 
-  Uint8List? lookupMemory(DownloadId id, {int? length}) =>
-      _lookupMemoryExact(resolveAlias(id), length: length);
+  /// Registers a source-verified immutable-artifact equivalence.
+  ///
+  /// Unlike [alias], equivalence is a lookup fallback rather than a storage
+  /// redirect. Both exact identities remain authoritative for writes. A later
+  /// artifact promoted under either version therefore becomes immediately
+  /// reusable by the other version without creating a directed alias cycle.
+  void linkEquivalent({
+    required DownloadId first,
+    required DownloadId second,
+  }) {
+    if (first == second) return;
+    final pair = _ArtifactEquivalencePair(first, second);
+    _equivalenceOrder.remove(pair);
+    _equivalenceOrder.add(pair);
+    _equivalents
+        .putIfAbsent(first, () => LinkedHashSet<DownloadId>())
+        .add(second);
+    _equivalents
+        .putIfAbsent(second, () => LinkedHashSet<DownloadId>())
+        .add(first);
+    while (_equivalenceOrder.length > aliasMaxEntries) {
+      final oldest = _equivalenceOrder.first;
+      _equivalenceOrder.remove(oldest);
+      _removeEquivalentEdge(oldest.first, oldest.second);
+      _removeEquivalentEdge(oldest.second, oldest.first);
+    }
+  }
+
+  void _removeEquivalentEdge(DownloadId first, DownloadId second) {
+    final values = _equivalents[first];
+    if (values == null) return;
+    values.remove(second);
+    if (values.isEmpty) _equivalents.remove(first);
+  }
+
+  Iterable<DownloadId> _lookupCandidates(DownloadId id) sync* {
+    final seen = <DownloadId>{};
+    final primary = resolveAlias(id);
+    if (seen.add(primary)) yield primary;
+    final equivalents = _equivalents[id];
+    if (equivalents == null) return;
+    for (final equivalent in equivalents) {
+      final candidate = resolveAlias(equivalent);
+      if (seen.add(candidate)) yield candidate;
+    }
+  }
+
+  Uint8List? lookupMemory(DownloadId id, {int? length}) {
+    for (final candidate in _lookupCandidates(id)) {
+      final bytes = _lookupMemoryExact(candidate, length: length);
+      if (bytes != null) return bytes;
+    }
+    return null;
+  }
 
   Uint8List? _lookupMemoryExact(DownloadId id, {int? length}) {
     _ArtifactByteKey? selected;
@@ -94,40 +151,56 @@ final class ArtifactCacheManager {
     return bytes;
   }
 
-  Future<ArtifactCacheLookup?> lookup(DownloadId id) async {
-    final storageId = resolveAlias(id);
-    final memory = _lookupMemoryExact(storageId);
-    if (memory != null) {
-      final key = _ArtifactByteKey(storageId, memory.lengthInBytes);
+  Future<ArtifactCacheLookup?> lookup(DownloadId id) =>
+      _lookupCandidatesInOrder(id, _lookupCandidates(id));
+
+  /// Looks up only the identity's authoritative hard-alias storage.
+  ///
+  /// Verified equivalence is intentionally excluded. Promotion, rekey and
+  /// other durable ownership checks must not mistake a related version's
+  /// artifact for this exact DownloadId's own persisted artifact.
+  Future<ArtifactCacheLookup?> lookupAuthoritative(DownloadId id) =>
+      _lookupCandidatesInOrder(id, <DownloadId>[resolveAlias(id)]);
+
+  Future<ArtifactCacheLookup?> _lookupCandidatesInOrder(
+    DownloadId id,
+    Iterable<DownloadId> candidates,
+  ) async {
+    for (final storageId in candidates) {
+      final memory = _lookupMemoryExact(storageId);
+      if (memory != null) {
+        final key = _ArtifactByteKey(storageId, memory.lengthInBytes);
+        return ArtifactCacheLookup(
+          id: id,
+          storageId: storageId,
+          entry: _memoryEntry(memory),
+          tier: ArtifactCacheTier.memory,
+          durable: _durableMemory.contains(key),
+        );
+      }
+      final entry = await backend.openArtifactStream(storageId);
+      if (entry == null) continue;
+      if (entry.length <= 0) {
+        await backend.invalidateArtifact(storageId);
+        continue;
+      }
       return ArtifactCacheLookup(
         id: id,
         storageId: storageId,
-        entry: _memoryEntry(memory),
-        tier: ArtifactCacheTier.memory,
-        durable: _durableMemory.contains(key),
+        entry: entry,
+        tier: ArtifactCacheTier.persistent,
+        durable: true,
       );
     }
-    final entry = await backend.openArtifactStream(storageId);
-    if (entry == null) return null;
-    if (entry.length <= 0) {
-      await backend.invalidateArtifact(storageId);
-      return null;
-    }
-    return ArtifactCacheLookup(
-      id: id,
-      storageId: storageId,
-      entry: entry,
-      tier: ArtifactCacheTier.persistent,
-      durable: true,
-    );
+    return null;
   }
 
   Future<bool> contains({
     required DownloadId id,
     required int expectedLength,
   }) async {
-    if (lookupMemory(id, length: expectedLength) != null) return true;
-    return containsBackend(id: id, expectedLength: expectedLength);
+    final lookup = await this.lookup(id);
+    return lookup != null && lookup.entry.length == expectedLength;
   }
 
   Future<bool> containsBackend({
@@ -257,7 +330,7 @@ final class ArtifactCacheManager {
         await backend.openArtifactStream(newId) != null) {
       return true;
     }
-    final oldLookup = await lookup(oldId);
+    final oldLookup = await lookupAuthoritative(oldId);
     if (oldLookup == null) return false;
     final read = await readForegroundLookup(oldLookup);
     await storePromotedArtifact(id: newId, bytes: read.bytes);
@@ -269,6 +342,8 @@ final class ArtifactCacheManager {
     _memory.clear();
     _durableMemory.clear();
     _aliases.clear();
+    _equivalents.clear();
+    _equivalenceOrder.clear();
     _memoryBytes = 0;
   }
 
@@ -398,6 +473,22 @@ final class ArtifactCacheRead {
   final bool memoryHit;
   final bool joined;
   final bool durable;
+}
+
+final class _ArtifactEquivalencePair {
+  const _ArtifactEquivalencePair(this.first, this.second);
+
+  final DownloadId first;
+  final DownloadId second;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _ArtifactEquivalencePair &&
+      ((other.first == first && other.second == second) ||
+          (other.first == second && other.second == first));
+
+  @override
+  int get hashCode => first.hashCode ^ second.hashCode;
 }
 
 final class _ArtifactByteKey {

@@ -38,9 +38,10 @@ for token in (
     'Future<void> _warmVersionRelationPageMappings(',
     'VerifiedArtifactReusePlan.matchResolvedRelated(',
     '_sourceResources.verifiedPageReuseIdentity(',
-    'Future<int> _restoreSourceVersionArtifactReuse(',
+    'Future<int> _restoreSourceVersionArtifactEquivalences(',
     'VerifiedArtifactReusePlan.fromVerifiedOffset(',
-    "'stage': 'version-artifact-alias-restored'",
+    'plan.registerEquivalences(artifactCache)',
+    "'stage': 'version-artifact-equivalence-restored'",
     "'stage': 'version-page-mapping-warmed'",
     'Future<int> _reuseSourceVersionDurablePartials(',
     "'stage': 'version-durable-partial-reused'",
@@ -54,7 +55,7 @@ forbid(
 
 home = read('apps/app/lib/demo_home.dart')
 for token in (
-    'await _restoreSourceVersionArtifactReuse(current);',
+    'await _restoreSourceVersionArtifactEquivalences(current);',
     '_scheduleVersionReuseWarmup(versionSource, current.chapter.comicId);',
 ):
     require(home, token, 'Reader fast local restore + async refresh')

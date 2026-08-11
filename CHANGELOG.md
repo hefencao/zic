@@ -1,3 +1,11 @@
+## 0.31.0-dev.211：版本 artifact 等价 fallback 与迟到缓存复用
+
+- 结合 `zic-debug-trace-2026-08-11T02-00-30.jsonl` 确认 dev.210 的 mapping 已完成但 full reuse仍是一次性快照：再次进入371页旧版前已有3个 persistent mappings，却只 `reusedPages=13`；相关377页版本随后继续完成的 immutable artifact不会再进入旧版。
+- 对照 VibeVenera 临时 image-key alias 语义，将 verified page mapping 从“仅对当前已存在文件注册 directed alias”升级为 `ArtifactCacheManager` 的 symmetric verified-equivalence fallback：登记时不要求任一侧已有 artifact，lookup exact-first，miss后才查已验证相关版本；任一侧未来才promote的artifact也能被另一侧后续demand复用。
+- equivalence只影响 immutable artifact lookup，不重定向写入、不改变 `resolveAlias`、不形成双向alias环；目标版本已有自己的exact artifact时永远优先。Trace新增 `verifiedEquivalentReuse` 与 `version-artifact-equivalence-restored`。
+- partial结论保持dev.210的保守边界：新trace已证明durable partial跨版本复用实际发生，hot Reader/DownloadSession partial仍禁止共享；本轮不扩大partial owner。
+- 新增 ADR 0192、dev.211根因审计/owner gate与late-promotion回归测试，版本提升到`0.31.0+211`。
+
 ## 0.31.0-dev.210：版本映射预热、Reader 快速恢复与 verified partial 复用
 
 - 结合 01:09 真机 trace 与 VibeVenera 参考实现确认 dev.207–209 把 source request-plan page identity 验证放在 Reader 前置 await：Home 首帧约1.07s后直到约13.96s才完成 alias preparation，Reader约14.08s才创建；Reader创建后约0.27s即首帧。

@@ -127,6 +127,8 @@ final class ArtifactCacheTransport implements ControlledTransport {
             final details = <String, Object?>{
               'cacheTier': lookup.tier.name,
               'memoryCacheHit': lookup.tier == ArtifactCacheTier.memory,
+              'verifiedEquivalentReuse':
+                  lookup.storageId != _cache.resolveAlias(id),
               'hotCacheEntries': _cache.memoryEntryCount,
               'hotCacheBytes': _cache.memoryBytes,
             };

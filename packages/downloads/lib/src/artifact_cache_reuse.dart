@@ -206,6 +206,20 @@ final class VerifiedArtifactReusePlan {
     return aliases.length;
   }
 
+  /// Registers verified page pairs as symmetric lookup fallbacks.
+  ///
+  /// Registration does not require either artifact to exist yet. Exact writes
+  /// stay exact, while a later promoted artifact on either version can satisfy
+  /// the other version's subsequent lookup. This is the durable-mapping
+  /// counterpart of VibeVenera's temporary image-key mapping, without turning
+  /// the artifact backend into a second cache or creating directed alias cycles.
+  int registerEquivalences(ArtifactCacheManager cache) {
+    for (final entry in aliases.entries) {
+      cache.linkEquivalent(first: entry.key, second: entry.value);
+    }
+    return aliases.length;
+  }
+
   /// Registers aliases only when the old authoritative artifact exists.
   ///
   /// This matches the VibeVenera reuse boundary: page equivalence alone does
@@ -214,14 +228,14 @@ final class VerifiedArtifactReusePlan {
   Future<int> applyExisting(ArtifactCacheManager cache) async {
     var applied = 0;
     for (final entry in aliases.entries) {
-      final source = await cache.lookup(entry.value);
+      final source = await cache.lookupAuthoritative(entry.value);
       if (source == null) continue;
       final targetStorage = cache.resolveAlias(entry.key);
       if (targetStorage == source.storageId) {
         applied++;
         continue;
       }
-      if (await cache.lookup(entry.key) != null) continue;
+      if (await cache.lookupAuthoritative(entry.key) != null) continue;
       cache.alias(id: entry.key, target: source.storageId);
       applied++;
     }

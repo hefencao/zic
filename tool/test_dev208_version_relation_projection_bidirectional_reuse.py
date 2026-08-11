@@ -38,11 +38,11 @@ for token in (
     "await _librarySession.upsertVersionRelation(",
     "DateTime? _projectedConfirmedSourceUpdateAt(",
     "_versionRelations",
-    "Future<int> _restoreSourceVersionArtifactReuse(",
+    "Future<int> _restoreSourceVersionArtifactEquivalences(",
     "_sourceVersionRelationsForComic(",
     "VerifiedArtifactReusePlan.fromVerifiedOffset(",
     "VerifiedArtifactReusePlan.matchResolvedRelated(",
-    "'stage': 'version-artifact-alias-restored'",
+    "'stage': 'version-artifact-equivalence-restored'",
 ):
     require(migration, token, "version projection / bidirectional reuse composition")
 forbid(
@@ -66,9 +66,8 @@ for token in (
     "required ChapterManifest targetChapter,",
     "sourcePages.length - targetPages.length",
     "readerPageDownloadId(targetChapter, targetPages[targetIndex])",
-    "final targetStorage = cache.resolveAlias(entry.key);",
-    "if (targetStorage == source.storageId)",
-    "if (await cache.lookup(entry.key) != null) continue;",
+    "int registerEquivalences(ArtifactCacheManager cache) {",
+    "cache.linkEquivalent(first: entry.key, second: entry.value);",
 ):
     require(reuse, token, "symmetric acyclic artifact alias contract")
 

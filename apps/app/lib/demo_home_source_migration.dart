@@ -309,6 +309,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     }
     var updatedRelation = relation;
     var verifiedMappings = 0;
+    var registeredEquivalentPages = 0;
     for (final predecessorChapter in predecessorComic.chapters) {
       Chapter? successorChapter;
       for (final candidate in successorComic.chapters) {
@@ -359,6 +360,11 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       );
       if (mapping == null) continue;
       verifiedMappings++;
+      final artifactCache = _readerArtifactCache;
+      final equivalentPages = artifactCache == null
+          ? 0
+          : plan.registerEquivalences(artifactCache);
+      registeredEquivalentPages += equivalentPages;
       updatedRelation = ComicVersionRelation(
         sourceId: relation.sourceId,
         predecessorComicId: relation.predecessorComicId,
@@ -383,6 +389,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           'stage': 'version-page-mapping-warmed',
           'verifiedMappings': verifiedMappings,
           'persistedMappings': updatedRelation.pageMappings.length,
+          'registeredEquivalentPages': registeredEquivalentPages,
         },
       ),
     );
@@ -459,7 +466,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     );
   }
 
-  Future<int> _restoreSourceVersionArtifactReuse(
+  Future<int> _restoreSourceVersionArtifactEquivalences(
     ImportedLibraryEntry current,
   ) async {
     final artifactCache = _readerArtifactCache;
@@ -509,7 +516,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
               ? mapping.successorOffset
               : -mapping.successorOffset,
         );
-        reused += await plan.applyExisting(artifactCache);
+        reused += plan.registerEquivalences(artifactCache);
       }
     }
     widget.debugTrace.record(
@@ -520,9 +527,9 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         identityHash:
             '${current.chapter.sourceId}\u0000${current.chapter.chapterId}',
         payload: <String, Object?>{
-          'stage': 'version-artifact-alias-restored',
+          'stage': 'version-artifact-equivalence-restored',
           'persistentMappings': mappings,
-          'reusedPages': reused,
+          'equivalentPages': reused,
         },
       ),
     );

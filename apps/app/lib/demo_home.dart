@@ -965,7 +965,7 @@ final class _DemoHomeState extends State<DemoHome> {
         'Venera 章节仍包含已失效的运行时资源定位符，已阻止进入 Reader',
       );
     }
-    await _restoreSourceVersionArtifactReuse(current);
+    await _restoreSourceVersionArtifactEquivalences(current);
     final versionSource = _sourceForId(current.chapter.sourceId);
     if (versionSource != null) {
       _scheduleVersionReuseWarmup(versionSource, current.chapter.comicId);

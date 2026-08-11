@@ -164,6 +164,58 @@ void main() {
     expect(manager.aliasCount, 1);
   });
 
+  test('verified equivalence observes artifacts promoted after registration',
+      () async {
+    final older = _id('older-equivalent');
+    final newer = _id('newer-equivalent');
+    final backend = _Backend(<DownloadId, Uint8List>{});
+    final manager = ArtifactCacheManager(backend: backend);
+
+    manager.linkEquivalent(first: older, second: newer);
+    expect(manager.equivalenceCount, 1);
+    expect(await manager.readForeground(older), isNull);
+    expect(await manager.readForeground(newer), isNull);
+
+    await manager.storePromotedArtifact(
+      id: newer,
+      bytes: Uint8List.fromList(<int>[4, 4, 4]),
+    );
+
+    final reused = await manager.lookup(older);
+    expect(reused?.id, older);
+    expect(reused?.storageId, newer);
+    expect((await manager.readForeground(older))?.bytes, <int>[4, 4, 4]);
+    expect(manager.resolveAlias(older), older);
+    expect(manager.resolveAlias(newer), newer);
+
+    await manager.storePromotedArtifact(
+      id: older,
+      bytes: Uint8List.fromList(<int>[8, 8, 8]),
+    );
+    expect((await manager.readForeground(older))?.bytes, <int>[8, 8, 8]);
+    expect((await manager.readForeground(newer))?.bytes, <int>[4, 4, 4]);
+  });
+
+  test('verified equivalence does not satisfy exact backend ownership',
+      () async {
+    final older = _id('older-owner');
+    final newer = _id('newer-owner');
+    final backend = _Backend(<DownloadId, Uint8List>{
+      newer: Uint8List.fromList(<int>[3, 3, 3]),
+    });
+    final manager = ArtifactCacheManager(backend: backend);
+    manager.linkEquivalent(first: older, second: newer);
+
+    expect(await manager.contains(id: older, expectedLength: 3), isTrue);
+    expect(
+      await manager.containsBackend(id: older, expectedLength: 3),
+      isFalse,
+    );
+    expect(await manager.lookupAuthoritative(older), isNull);
+    expect(await manager.rekey(oldId: older, newId: _id('migrated')), isFalse);
+    expect(backend.values[newer], <int>[3, 3, 3]);
+  });
+
   test('artifact aliases chain, reject cycles and detach on new write', () async {
     final first = _id('first-version');
     final second = _id('second-version');
