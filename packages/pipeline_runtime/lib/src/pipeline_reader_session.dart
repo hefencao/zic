@@ -489,6 +489,7 @@ final class PipelineReaderSession {
     _downloadTransfer = _transferRuntime.attachConsumer(
       scopeId: 'reader:$sessionId',
       transportFor: _transportFor,
+      retainedTransportFor: _retainedTransferTransportFor,
       consumerTraceSink: trace,
       localPhysicalTraceSink: _memoryTrace,
       sharedPhysicalTraceSink: _sharedTraceSink,
@@ -1320,6 +1321,15 @@ final class PipelineReaderSession {
 
   Transport _transportFor(Uri uri) =>
       _artifactCacheTransport ?? _baseTransportFor(uri);
+
+  /// Returns only transports whose lifetime is independent of this Reader.
+  /// LoaderTransport is immutable and owns no closeable socket/client; its
+  /// source callbacks are composition-provided capabilities. The returned
+  /// read-through transport may therefore be retained by one admitted physical
+  /// task after this Reader consumer is disposed. Reader-owned IoTransport is
+  /// intentionally excluded and remains protected by the dispose barrier.
+  Transport? _retainedTransferTransportFor(Uri uri) =>
+      _loaderTransport.contains(uri) ? _transportFor(uri) : null;
 
   void _observeDownloadSession(DownloadSession session) {
     _ingresses.attach(session);

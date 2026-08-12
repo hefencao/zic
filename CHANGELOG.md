@@ -1,3 +1,9 @@
+## 0.31.0-dev.239：Task-retained loader transport lease
+
+- 05:09真机Trace共1176条事件，dev.238已消除claim orphaning导致的provider churn：`taskFailed=0`、无orphan handoff、无`full-body-prefix-catchup-aborted`，resume duplicate仅一次65,536-byte overlap proof。剩余断点是Reader consumer真实dispose仍取消loader-backed active task，4–8MiB hot partial随后必须重新resume；其中4,064,640-byte partial因服务器Range→200进入full-body catch-up。
+- transport lifetime现显式分为consumer-bound与task-retained。`DownloadTransferConsumer`可提供通用`retainedTransportFor(uri)`；active task启动时取得独立lease后可越过provider consumer dispose继续同一physical session/writer/committed prefix。consumer dispose仍cancel+idle所有consumer-bound lease。
+- Pipeline只对`LoaderTransport`实际拥有的URI提供retained capability；其controlled loader来自composition/source gateway且无Reader closeable client。Reader-owned`IoTransport`明确排除。sessions/downloads不感知Venera/Mihon/source类型，也不建立第二transport registry。新增`providerTransportLifetime`诊断与行为回归，同时保留consumer-bound transport dispose→cancel→remaining provider reopen的旧安全合同。
+
 ## 0.31.0-dev.238：Retain admitted provider attempt across claim orphaning
 
 - 04:46 真机 Trace 共943条事件，dev.237 provider handoff真实命中8次且全部是`providerOrphaned=true`；没有一次来自live provider被更高priority claim压过。Trace中的resume duplicate约2,237,360 bytes，其中1,909,680 bytes直接来自一次`full-body-prefix-catchup-aborted`。

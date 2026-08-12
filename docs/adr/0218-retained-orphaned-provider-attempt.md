@@ -1,8 +1,9 @@
 # ADR 0218：claim orphaning 与 admitted provider attempt 生命周期分离
 
-- 状态：Accepted
+- 状态：Superseded
 - 版本：ZIC 0.31.0-dev.238
 - Supersedes ADR 0217 中“active provider claim orphaned 即取消并 rebind”的规则；ADR 0217 的 task-scoped provider lease、strict higher-priority live handoff 与 single physical owner 继续有效。
+- 被 ADR 0219 部分取代：claim orphaning 规则继续有效，但“provider consumer dispose 必然取消 attempt”改为由 transport capability 的真实 lifetime 决定。
 
 ## 背景
 

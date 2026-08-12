@@ -219,6 +219,7 @@ final class CompositionDownloadTransferRuntime {
   DownloadTransferConsumer attachConsumer({
     required String scopeId,
     required TransferTransportPick transportFor,
+    TransferRetainedTransportPick? retainedTransportFor,
     required TraceSink consumerTraceSink,
     TraceSink? localPhysicalTraceSink,
     TraceSink? sharedPhysicalTraceSink,
@@ -238,6 +239,7 @@ final class CompositionDownloadTransferRuntime {
     return owner.attachConsumer(
       scopeId: scopeId,
       transportFor: transportFor,
+      retainedTransportFor: retainedTransportFor,
       traceSink: consumerTraceSink,
       retry: retry,
       downloadBucketFor: downloadBucketFor,

@@ -11,6 +11,7 @@ import 'net_lane.dart';
 import 'retry_policy.dart';
 
 typedef TransferTransportPick = Transport Function(Uri uri);
+typedef TransferRetainedTransportPick = Transport? Function(Uri uri);
 typedef TransferIdentityResolver = DownloadId Function(DownloadId exactId);
 
 DownloadId _identityTransferId(DownloadId id) => id;
@@ -270,6 +271,7 @@ final class DownloadTransferOwner {
   DownloadTransferConsumer attachConsumer({
     required String scopeId,
     required TransferTransportPick transportFor,
+    TransferRetainedTransportPick? retainedTransportFor,
     required TraceSink traceSink,
     RetryPolicy retry = const RetryPolicy(),
     TransferSleep sleep = _defaultTransferSleep,
@@ -287,6 +289,7 @@ final class DownloadTransferOwner {
       owner: this,
       scopeId: scopeId,
       transportFor: transportFor,
+      retainedTransportFor: retainedTransportFor,
       traceSink: traceSink,
       retry: retry,
       sleep: sleep,
@@ -569,21 +572,23 @@ final class DownloadTransferOwner {
     consumer._disposed = true;
     final providerKeys = <String>[];
     for (final entry in _activeProviderLeases.entries.toList(growable: false)) {
-      if (entry.value.scopeId != consumer.scopeId) continue;
+      if (entry.value.scopeId != consumer.scopeId ||
+          entry.value.transportRetainedBeyondConsumer) {
+        continue;
+      }
       final key = _networkTaskKeys[entry.key];
       if (key != null) {
         providerKeys.add(key);
       }
     }
-    // Only the provider consumer's real disposal boundary revokes a retained
-    // orphaned provider attempt. _detachClaims performs the single NetLane
-    // cancellation; do not cancel once here and again below.
+    // Consumer disposal revokes only active attempts whose transport is still
+    // consumer-bound. A task-retained transport has its own lifetime lease and
+    // deliberately stays outside this Reader close barrier.
     _detachClaims(consumer, consumerDisposing: true);
     _consumers.remove(consumer);
-    // A Reader-owned transport may be closed immediately after this Future.
+    // A consumer-bound transport may be closed immediately after this Future.
     // Wait until every active task that captured that transport has physically
-    // exited. New work uses a fresh task key and the strongest remaining
-    // consumer, so it is intentionally not part of this barrier.
+    // exited. Task-retained transports are intentionally absent from providerKeys.
     if (providerKeys.isNotEmpty) {
       await net.idleKeys(providerKeys);
       await Future<void>.delayed(Duration.zero);
@@ -606,12 +611,14 @@ final class DownloadTransferOwner {
     }
     if (!consumerDisposing) return;
     // Claim detach alone deliberately retains an admitted provider attempt.
-    // Once the provider consumer itself is disposing, however, its transport
-    // owner may close immediately after this barrier. Cancel exactly here; the
-    // hot physical prefix remains in the composition registry for the next
-    // consumer to resume.
+    // Consumer disposal cancels only leases that still depend on that consumer's
+    // transport owner. Explicit task-retained transports survive this boundary;
+    // the physical prefix and writer remain composition-owned in either case.
     for (final entry in _activeProviderLeases.entries.toList(growable: false)) {
-      if (entry.value.scopeId != consumer.scopeId) continue;
+      if (entry.value.scopeId != consumer.scopeId ||
+          entry.value.transportRetainedBeyondConsumer) {
+        continue;
+      }
       final key = _networkTaskKeys[entry.key];
       if (key != null) {
         net.cancel(key);
@@ -735,11 +742,16 @@ final class DownloadTransferOwner {
     if (claim == null) return;
     final provider = claim.consumer;
     final sourceId = claim.exactId;
+    final retainedTransport =
+        provider.retainedTransportFor?.call(sourceId.canonicalUri);
+    final taskTransport =
+        retainedTransport ?? provider.transportFor(sourceId.canonicalUri);
     final providerLease = _ActiveProviderLease(
       taskKey: taskKey,
       scopeId: provider.scopeId,
       exactId: sourceId,
       claimSequence: claim.sequence,
+      transportRetainedBeyondConsumer: retainedTransport != null,
     );
     _activeProviderLeases[id] = providerLease;
     try {
@@ -767,6 +779,9 @@ final class DownloadTransferOwner {
           'physicalOwner': true,
           'providerScope': provider.scopeId,
           'providerExactId': sourceId.key,
+          'providerTransportLifetime': retainedTransport != null
+              ? 'task-retained'
+              : 'consumer-bound',
         },
       );
       for (var attempt = 1; ; attempt++) {
@@ -774,7 +789,7 @@ final class DownloadTransferOwner {
         final attemptStartedAtMicros = clock.nowMicros();
         try {
           await DownloadJob(
-            transport: provider.transportFor(sourceId.canonicalUri),
+            transport: taskTransport,
             session: session,
             requestUri: sourceId.canonicalUri,
             attachLegacyDemand: false,
@@ -1160,6 +1175,7 @@ final class DownloadTransferConsumer {
     required this.owner,
     required this.scopeId,
     required this.transportFor,
+    required this.retainedTransportFor,
     required this.traceSink,
     required this.retry,
     required this.sleep,
@@ -1170,6 +1186,7 @@ final class DownloadTransferConsumer {
   final DownloadTransferOwner owner;
   final String scopeId;
   final TransferTransportPick transportFor;
+  final TransferRetainedTransportPick? retainedTransportFor;
   final TraceSink traceSink;
   final RetryPolicy retry;
   final TransferSleep sleep;
@@ -1209,12 +1226,14 @@ final class _ActiveProviderLease {
     required this.scopeId,
     required this.exactId,
     required this.claimSequence,
+    required this.transportRetainedBeyondConsumer,
   });
 
   final String taskKey;
   final String scopeId;
   final DownloadId exactId;
   final int claimSequence;
+  final bool transportRetainedBeyondConsumer;
 }
 
 final class _ConsumerPhysicalDemand {

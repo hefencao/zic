@@ -26,9 +26,15 @@ require(m2 is not None and int(m2.group(1)) == int(m.group(1)), "Android version
 require("final providerOrphaned = activeClaim == null;" in owner, "provider claim orphaning must remain explicit")
 require("if (providerOrphaned) return false;" in owner, "claim orphaning alone must not revoke an admitted provider task")
 require("preferred.demand.priority > activeClaim.demand.priority" in owner, "live provider handoff must remain strict-priority only")
-require("Only the provider consumer's real disposal boundary" in owner, "provider transport-owner disposal boundary must be explicit")
-require(owner.count("net.cancel(key);") >= 1, "provider consumer disposal must still cancel transport before close")
-require("providerKeys.add(key);\n      }\n    }\n    // Only the provider consumer's real disposal boundary" in owner, "dispose key collection must not duplicate the cancellation")
+build = int(m.group(1))
+if build >= 239:
+    require("transportRetainedBeyondConsumer" in owner, "dev.239+ must make transport lifetime explicit")
+    require("consumer-bound transport" in owner, "dev.239+ must keep the consumer-bound close barrier explicit")
+    require("entry.value.transportRetainedBeyondConsumer" in owner, "dev.239+ disposal must exempt only explicit task-retained leases")
+else:
+    require("Only the provider consumer's real disposal boundary" in owner, "provider transport-owner disposal boundary must be explicit")
+    require("providerKeys.add(key);\n      }\n    }\n    // Only the provider consumer's real disposal boundary" in owner, "dispose key collection must not duplicate the cancellation")
+require(owner.count("net.cancel(key);") >= 1, "consumer-bound provider disposal must still cancel transport before close")
 
 require("orphaned provider claim stays on the admitted task until provider disposal" in owner_test, "retained orphan provider behavior regression is required")
 require("expect(newTransport.opened.isCompleted, isFalse);" in owner_test, "new exact provider must not open merely because the old claim detached")

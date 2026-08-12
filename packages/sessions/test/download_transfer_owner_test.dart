@@ -564,6 +564,112 @@ void main() {
     expect(session.state, DownloadState.promoted);
   });
 
+
+  test(
+      'task-retained transport survives provider consumer disposal on shared partial',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('transfer_owner_retained_transport_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final physical = _id('retained-transport-physical');
+    final exact = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic-v2',
+        chapterId: 'chapter-v2',
+        pageId: 'retained-transport-exact',
+      ),
+      sourceRevision: 'r2',
+      canonicalUri: Uri.parse('https://example.test/retained-transport-exact.webp'),
+    );
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+      resolveTransferId: (id) {
+        if (id == exact) {
+          registry.aliasPhysical(id: exact, target: physical);
+          return physical;
+        }
+        return id;
+      },
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final fullBytes = <int>[
+      ...'RIFF....WEBP'.codeUnits,
+      ...List<int>.filled(96 * 1024, 11),
+    ];
+    final retainedTransport = _RetainedGateControlledTransport(
+      prefix: fullBytes.sublist(0, 32 * 1024),
+      suffix: fullBytes.sublist(32 * 1024),
+    );
+    final replacementTransport = _GateBytesTransport(fullBytes);
+    final oldReader = owner.attachConsumer(
+      scopeId: 'reader-retained-provider',
+      transportFor: (_) => throw StateError('retained transport must win'),
+      retainedTransportFor: (_) => retainedTransport,
+      traceSink: const NoopTraceSink(),
+    );
+    final newReader = owner.attachConsumer(
+      scopeId: 'reader-replacement-provider',
+      transportFor: (_) => replacementTransport,
+      traceSink: const NoopTraceSink(),
+    );
+
+    oldReader.replaceDemands(
+      'reader-retained-provider',
+      1,
+      _desired(physical, priority: 1000),
+    );
+    final session = registry.get(physical);
+    await retainedTransport.prefixSent.future;
+    final committed = Completer<void>();
+    void listener(DownloadSnapshot snapshot) {
+      if (snapshot.committedLength > 0 && !committed.isCompleted) {
+        committed.complete();
+      }
+    }
+    session.addSnapshotListener(listener);
+    if (session.committedLength == 0) await committed.future;
+    session.removeSnapshotListener(listener);
+    final prefixLength = session.committedLength;
+    expect(prefixLength, greaterThan(0));
+
+    oldReader.replaceDemands(
+      'reader-retained-provider',
+      2,
+      const <DownloadId, TransferDemand>{},
+    );
+    newReader.replaceDemands(
+      'reader-replacement-provider',
+      1,
+      _desired(exact, priority: 1000),
+    );
+    await oldReader.dispose();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(retainedTransport.cancelled.isCompleted, isFalse);
+    expect(replacementTransport.opened.isCompleted, isFalse);
+    expect(registry.resolvePhysicalId(exact), physical);
+    expect(identical(registry.find(exact), session), isTrue);
+    expect(session.committedLength, prefixLength);
+
+    retainedTransport.release.complete();
+    await newReader.idle();
+    expect(retainedTransport.cancelled.isCompleted, isFalse);
+    expect(replacementTransport.opened.isCompleted, isFalse);
+    expect(session.state, DownloadState.promoted);
+    expect(session.committedLength, fullBytes.length);
+  });
+
   test('disposing active provider preserves remaining consumer and reopens once',
       () async {
     final temp = await Directory.systemTemp.createTemp('transfer_owner_detach_');
@@ -775,6 +881,66 @@ final class _PrefixThenBlockTransport implements ControlledTransport {
   Stream<List<int>> _body(TaskControl control) async* {
     yield prefix;
     await control.whenCancelled;
+  }
+}
+
+
+final class _RetainedGateControlledTransport implements ControlledTransport {
+  _RetainedGateControlledTransport({
+    required this.prefix,
+    required this.suffix,
+  });
+
+  final List<int> prefix;
+  final List<int> suffix;
+  final Completer<void> prefixSent = Completer<void>();
+  final Completer<void> release = Completer<void>();
+  final Completer<void> cancelled = Completer<void>();
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) =>
+      openControlled(uri, range: range, validators: validators);
+
+  @override
+  Future<ByteResponse> openControlled(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
+  }) async {
+    final taskControl = control;
+    if (taskControl == null) {
+      throw StateError('physical scheduler must pass TaskControl');
+    }
+    return ByteResponse(
+      bytes: _body(taskControl),
+      statusCode: 200,
+      rangeStart: 0,
+      totalLength: prefix.length + suffix.length,
+      validators: const Validators(etag: 'retained-task-transport'),
+      rangeSupported: false,
+    );
+  }
+
+  Stream<List<int>> _body(TaskControl control) async* {
+    yield prefix;
+    if (!prefixSent.isCompleted) prefixSent.complete();
+    await Future.any<void>(<Future<void>>[
+      release.future,
+      control.whenCancelled,
+    ]);
+    if (control.cancelled) {
+      if (!cancelled.isCompleted) cancelled.complete();
+      throw const Failure(
+        code: ErrorCode.cancelled,
+        message: 'retained task transport cancelled',
+      );
+    }
+    yield suffix;
   }
 }
 

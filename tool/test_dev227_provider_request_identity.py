@@ -36,11 +36,26 @@ forbid(open_region, 'session.id.canonicalUri', 'physical anchor URI in transport
 
 for token in (
     'final sourceId = claim.exactId;',
-    'transport: provider.transportFor(sourceId.canonicalUri),',
     'requestUri: sourceId.canonicalUri,',
     "'providerExactId': sourceId.key",
 ):
     require(owner, token, 'owner provider request identity projection')
+
+pubspec = read('apps/app/pubspec.yaml')
+props = read('apps/app/android/zic-version.properties')
+pub = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
+android = re.search(r'^versionCode=(\d+)$', props, re.M)
+if pub is None or int(pub.group(1)) < 227:
+    raise SystemExit('dev.227 app version mismatch')
+if android is None or int(android.group(1)) < 227:
+    raise SystemExit('dev.227 Android version mismatch')
+build = int(pub.group(1))
+if build >= 239:
+    require(owner, 'final taskTransport =', 'dev.239+ task transport selection')
+    require(owner, 'provider.transportFor(sourceId.canonicalUri)', 'dev.239+ fallback provider exact URI')
+    require(owner, 'transport: taskTransport,', 'dev.239+ selected task transport')
+else:
+    require(owner, 'transport: provider.transportFor(sourceId.canonicalUri),', 'owner provider exact transport projection')
 
 for token in (
     'equivalent failed partial resumes through provider exact request URI',
@@ -59,14 +74,5 @@ for rel in (
 ):
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.227 missing governance: {rel}')
-
-pubspec = read('apps/app/pubspec.yaml')
-props = read('apps/app/android/zic-version.properties')
-pub = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
-android = re.search(r'^versionCode=(\d+)$', props, re.M)
-if pub is None or int(pub.group(1)) < 227:
-    raise SystemExit('dev.227 app version mismatch')
-if android is None or int(android.group(1)) < 227:
-    raise SystemExit('dev.227 Android version mismatch')
 
 print('dev.227 provider request identity closure: OK')

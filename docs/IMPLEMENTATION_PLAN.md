@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：dev.238收口claim lifetime与已admit provider attempt lifetime：真机确认Reader generation切换、旧provider claim orphaned时不再立即`cancel-and-rebind`，同一physical partial继续增长；只有live strict-higher provider或真实provider consumer dispose才允许切换。继续量化真实`Range -> 200` full-body fallback、独立追踪unsealed `partial-source` decode failure，并继续dev.231 `stored-required-exact-alias`设备验证。
+- P0：dev.239继续拆transport lifetime：真机验证loader-backed active task在Reader consumer dispose后继续沿同一physical session/committed prefix增长，不因route切换进入Range resume/full-body catch-up；`IoTransport`仍必须在consumer dispose时cancel+idle。继续量化真实`Range -> 200` fallback、追踪unsealed `partial-source` decode failure，并继续dev.231 `stored-required-exact-alias`设备验证。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环
