@@ -1,3 +1,11 @@
+## 0.31.0-dev.238：Retain admitted provider attempt across claim orphaning
+
+- 04:46 真机 Trace 共943条事件，dev.237 provider handoff真实命中8次且全部是`providerOrphaned=true`；没有一次来自live provider被更高priority claim压过。Trace中的resume duplicate约2,237,360 bytes，其中1,909,680 bytes直接来自一次`full-body-prefix-catchup-aborted`。
+- 根因收窄：physical partial、progress与provider exact identity已经分层，但dev.237仍把“provider claim撤销”错误等同于“已admit provider transport失效”。Reader generation切换会立即取消仍有效的active response，白白丢弃已经支付的source-open/full-body catch-up工作。
+- `DownloadTransferOwner`现在允许active provider lease在claim detach后成为retained-orphaned lease：只迁移同一个NetLane task priority，不因logical claim消失切换provider。只有provider claim仍live且新的preferred claim priority严格更高，或provider consumer真正dispose、其transport owner即将关闭时，才取消旧attempt。
+- consumer dispose路径删除重复`net.cancel()`：provider key先收集用于idle barrier，唯一取消发生在`_detachClaims(... consumerDisposing: true)`。physical session/writer/committed prefix、provider-scoped validator、durable partial与progress authority均不变。
+- 行为回归改为证明：old claim detach + new exact alias demand不会打开第二provider；physical session/committed prefix保持；只有old provider consumer实际dispose后才reopen remaining exact provider。
+
 ## 0.31.0-dev.237：Active provider lease handoff on shared physical partial
 - 04:17真机Trace确认dev.236进度projection已指向physical session，但“切换session后partial进度不增长”并非publisher漏通知：physical `committedLength`在full-body catch-up重读旧前缀期间本就保持不变。关键冗余是active network task仍被最初启动它的Reader provider钉住；新current claim只把同一NetLane task priority抬到1000，却不切换provider exact URI/transport。
 - `DownloadTransferOwner`现把active source provider建模为task-scoped lease（task key + consumer scope + exact provider + claim sequence）。active provider claim已撤销，或另一个live claim以严格更高priority成为preferred时，旧attempt由同一NetLane取消；旧writer退出后在同一physical `DownloadSession`/artifact/prefix上由preferred exact provider重新开task。equal-priority不抖动，queued task仍在真正run时选择preferred claim。

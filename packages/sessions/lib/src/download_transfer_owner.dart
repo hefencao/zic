@@ -573,9 +573,11 @@ final class DownloadTransferOwner {
       final key = _networkTaskKeys[entry.key];
       if (key != null) {
         providerKeys.add(key);
-        net.cancel(key);
       }
     }
+    // Only the provider consumer's real disposal boundary revokes a retained
+    // orphaned provider attempt. _detachClaims performs the single NetLane
+    // cancellation; do not cancel once here and again below.
     _detachClaims(consumer, consumerDisposing: true);
     _consumers.remove(consumer);
     // A Reader-owned transport may be closed immediately after this Future.
@@ -603,10 +605,11 @@ final class DownloadTransferOwner {
       );
     }
     if (!consumerDisposing) return;
-    // A retained background transfer may no longer have a claim but can still
-    // be running under this consumer's transport. It cannot outlive the
-    // transport owner, so cancel it now. The hot physical prefix stays in the
-    // composition registry and is reusable by a later consumer.
+    // Claim detach alone deliberately retains an admitted provider attempt.
+    // Once the provider consumer itself is disposing, however, its transport
+    // owner may close immediately after this barrier. Cancel exactly here; the
+    // hot physical prefix remains in the composition registry for the next
+    // consumer to resume.
     for (final entry in _activeProviderLeases.entries.toList(growable: false)) {
       if (entry.value.scopeId != consumer.scopeId) continue;
       final key = _networkTaskKeys[entry.key];
@@ -984,9 +987,16 @@ final class DownloadTransferOwner {
       }
     }
     final providerOrphaned = activeClaim == null;
-    final preferredOutranks = activeClaim != null &&
+    // Claim lifetime and an already admitted provider attempt are different
+    // authorities. Detaching the Reader claim must not revoke a transport
+    // that is still physically running: the provider consumer remains alive
+    // until its own dispose boundary, while NetLane priority can migrate to
+    // the remaining claims. Rebinding an orphaned-but-live attempt would throw
+    // away full-body catch-up work without gaining a new physical owner.
+    if (providerOrphaned) return false;
+    final preferredOutranks =
         preferred.demand.priority > activeClaim.demand.priority;
-    if (!providerOrphaned && !preferredOutranks) return false;
+    if (!preferredOutranks) return false;
     _record(
       preferred,
       kind: TraceEventKind.artifactSource,

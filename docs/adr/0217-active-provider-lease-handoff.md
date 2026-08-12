@@ -1,7 +1,8 @@
 # ADR 0217：Shared physical transfer 的 active provider lease handoff
 
-- 状态：Accepted
+- 状态：Superseded
 - 版本：ZIC 0.31.0-dev.237
+- 被 ADR 0218 取代：orphaned claim 不再单独触发 active provider 取消。
 
 ## 背景
 

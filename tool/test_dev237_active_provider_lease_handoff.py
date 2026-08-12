@@ -33,11 +33,16 @@ require("'stage': 'active-provider-handoff'" in owner, "handoff must be trace-vi
 require("_activeProviderScopes" not in owner, "scope-only provider state must be removed")
 require("activeProviderExactId" in owner, "tests/diagnostics must expose the active exact provider")
 
-require("new exact demand rebinds an orphaned retained provider to the shared partial" in owner_test, "orphaned retained provider behavior regression is required")
+build = int(m.group(1))
+if build >= 238:
+    require("orphaned provider claim stays on the admitted task until provider disposal" in owner_test, "dev.238+ must retain an admitted provider across claim orphaning")
+    require("if (providerOrphaned) return false;" in owner, "dev.238+ must not cancel only because a claim orphaned")
+else:
+    require("new exact demand rebinds an orphaned retained provider to the shared partial" in owner_test, "dev.237 orphaned-provider behavior regression is required")
 require("expect(identical(registry.find(exact), session), isTrue);" in owner_test, "test must prove physical session is preserved")
 require("expect(session.committedLength, greaterThan(0));" in owner_test, "test must prove handoff retains partial bytes")
-require("expect(owner.activeProviderScope(physical), 'reader-new-provider');" in owner_test, "test must prove provider scope rebind")
-require("expect(owner.activeProviderExactId(physical), exact);" in owner_test, "test must prove provider exact identity rebind")
+require("expect(owner.activeProviderScope(physical), 'reader-new-provider');" in owner_test, "test must prove eventual provider scope rebind")
+require("expect(owner.activeProviderExactId(physical), exact);" in owner_test, "test must prove eventual provider exact identity rebind")
 
 require("await session.append(" in progress_test and "1024 + 64 * 1024" in progress_test, "progress behavior test must prove future committed growth propagates after physical selection")
 

@@ -449,10 +449,10 @@ void main() {
   });
 
   test(
-      'new exact demand rebinds an orphaned retained provider to the shared partial',
+      'orphaned provider claim stays on the admitted task until provider disposal',
       () async {
     final temp = await Directory.systemTemp.createTemp(
-      'transfer_owner_provider_rebind_',
+      'transfer_owner_provider_retain_',
     );
     addTearDown(() async => temp.delete(recursive: true));
     final clock = _Clock();
@@ -460,16 +460,16 @@ void main() {
       layout: CacheLayout('${temp.path}/cache'),
       clock: clock,
     );
-    final physical = _id('provider-rebind-old');
+    final physical = _id('provider-retain-old');
     final exact = DownloadId(
       content: const ContentId(
         sourceId: 'source',
         comicId: 'comic-new',
         chapterId: 'chapter-new',
-        pageId: 'provider-rebind-new',
+        pageId: 'provider-retain-new',
       ),
       sourceRevision: 'r2',
-      canonicalUri: Uri.parse('https://example.test/provider-rebind-new.webp'),
+      canonicalUri: Uri.parse('https://example.test/provider-retain-new.webp'),
     );
     final owner = DownloadTransferOwner(
       registry: registry,
@@ -541,13 +541,23 @@ void main() {
       1,
       _desired(exact, priority: 1000),
     );
-    await newTransport.opened.future;
+    await Future<void>.delayed(Duration.zero);
 
     expect(registry.resolvePhysicalId(exact), physical);
     expect(identical(registry.find(exact), session), isTrue);
+    expect(newTransport.opened.isCompleted, isFalse);
+    expect(owner.activeProviderScope(physical), 'reader-old-provider');
+    expect(owner.activeProviderExactId(physical), physical);
+    expect(session.committedLength, greaterThan(0));
+    expect(session.effectivePriority, 1000);
+
+    // The old Reader claim is already gone, but its transport owner is still
+    // alive. Only disposing that provider consumer is allowed to revoke the
+    // admitted attempt and reopen on the remaining exact provider.
+    await oldReader.dispose();
+    await newTransport.opened.future;
     expect(owner.activeProviderScope(physical), 'reader-new-provider');
     expect(owner.activeProviderExactId(physical), exact);
-    expect(session.committedLength, greaterThan(0));
 
     newTransport.release.complete();
     await newReader.idle();
