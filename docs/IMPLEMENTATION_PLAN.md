@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：dev.236收口physical partial进度authority：真机确认acquire-time alias页首次可见进度直接继承resolved physical session的`committedLength/totalLength`，不得按logical exact ID另起0进度；继续拆分03:34 Trace中19,782,164 `duplicatePrefixBytes`的真实200 full-body fallback与正常64KiB overlap成本，独立追踪1次unsealed `partial-source` decode failure，并继续dev.231 `stored-required-exact-alias`设备验证。
+- P0：dev.237收口shared physical partial的active provider lease：真机确认新current/更高priority exact claim接管既有physical owner时，旧provider attempt会取消并在同一committed prefix上rebind到preferred exact URI，不再只迁移旧task priority；visible progress仍只取authoritative committed bytes，不计duplicate catch-up。继续量化剩余真实200 full-body fallback，独立追踪unsealed `partial-source` decode failure，并继续dev.231 `stored-required-exact-alias`设备验证。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环

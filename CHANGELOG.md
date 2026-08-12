@@ -1,3 +1,8 @@
+## 0.31.0-dev.237：Active provider lease handoff on shared physical partial
+- 04:17真机Trace确认dev.236进度projection已指向physical session，但“切换session后partial进度不增长”并非publisher漏通知：physical `committedLength`在full-body catch-up重读旧前缀期间本就保持不变。关键冗余是active network task仍被最初启动它的Reader provider钉住；新current claim只把同一NetLane task priority抬到1000，却不切换provider exact URI/transport。
+- `DownloadTransferOwner`现把active source provider建模为task-scoped lease（task key + consumer scope + exact provider + claim sequence）。active provider claim已撤销，或另一个live claim以严格更高priority成为preferred时，旧attempt由同一NetLane取消；旧writer退出后在同一physical `DownloadSession`/artifact/prefix上由preferred exact provider重新开task。equal-priority不抖动，queued task仍在真正run时选择preferred claim。
+- 不把duplicate catch-up bytes计入可见progress，不复制partial，不late-merge session，也不改变NetLane/full-body admission。补行为回归覆盖“retained orphan provider → 新exact current provider”在已有prefix上rebind，以及dev.236 publisher对同一physical session后续committed增长持续推送。
+
 ## 0.31.0-dev.236：Physical partial progress projection closure
 - 03:34真机Trace确认physical partial字节复用真实存在：15次verified acquire alias继续join既有owner；current page 303直接继承1,946,180 bytes，page 300直接继承3,314,200 bytes。但Reader进度仍“各走各的”，根因是`PipelineTransferProgressPublisher`另建按exact `DownloadId.key`索引的session表，而acquire-time alias的logical exact key与physical session key不同。
 - 删除exact-key progress表与`observe(session)` fan-out；`PipelineReaderSession`先完成`binding.accept`建立physical alias，再由`DownloadRegistry.find(currentDownload)`解析唯一physical `DownloadSession`并直接交给publisher。进度只监听当前physical session snapshot，不复制committed state，不在Reader建立第二份进度cache。

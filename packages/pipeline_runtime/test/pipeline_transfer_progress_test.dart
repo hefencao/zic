@@ -62,7 +62,7 @@ void main() {
           metaPath: '/tmp/partial.meta',
           finalMetaPath: '/tmp/final.meta',
         ),
-        totalLength: 4096,
+        totalLength: 128 * 1024,
       ),
     );
 
@@ -103,7 +103,7 @@ void main() {
     final writer = session.acquireWriter();
     await session.bindResponse(
       validators: const Validators(),
-      totalLength: 4096,
+      totalLength: 128 * 1024,
     );
     await session.append(writer, 0, List<int>.filled(1024, 0));
 
@@ -113,7 +113,15 @@ void main() {
     expect(registry.find(aliasId), same(session));
     expect(publisher.notifier.value.active, isTrue);
     expect(publisher.notifier.value.committedBytes, 1024);
-    expect(publisher.notifier.value.totalBytes, 4096);
+    expect(publisher.notifier.value.totalBytes, 128 * 1024);
+
+    await session.append(
+      writer,
+      1024,
+      List<int>.filled(64 * 1024, 1),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(publisher.notifier.value.committedBytes, 1024 + 64 * 1024);
 
     publisher.dispose();
     await session.reset();

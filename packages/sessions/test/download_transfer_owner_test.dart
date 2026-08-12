@@ -448,6 +448,112 @@ void main() {
     expect(await File(session.artifact.finalPath).readAsBytes(), bytes);
   });
 
+  test(
+      'new exact demand rebinds an orphaned retained provider to the shared partial',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_provider_rebind_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final physical = _id('provider-rebind-old');
+    final exact = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic-new',
+        chapterId: 'chapter-new',
+        pageId: 'provider-rebind-new',
+      ),
+      sourceRevision: 'r2',
+      canonicalUri: Uri.parse('https://example.test/provider-rebind-new.webp'),
+    );
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+      resolveTransferId: (id) {
+        if (id == exact) {
+          registry.aliasPhysical(id: exact, target: physical);
+          return physical;
+        }
+        return id;
+      },
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final fullBytes = <int>[
+      ...'RIFF....WEBP'.codeUnits,
+      ...List<int>.filled(24 * 1024, 7),
+    ];
+    final oldTransport = _PrefixThenBlockTransport(
+      fullBytes.sublist(0, 20 * 1024),
+    );
+    final newTransport = _GateBytesTransport(fullBytes);
+    final oldReader = owner.attachConsumer(
+      scopeId: 'reader-old-provider',
+      transportFor: (_) => oldTransport,
+      traceSink: const NoopTraceSink(),
+    );
+    final newReader = owner.attachConsumer(
+      scopeId: 'reader-new-provider',
+      transportFor: (uri) {
+        expect(uri, exact.canonicalUri);
+        return newTransport;
+      },
+      traceSink: const NoopTraceSink(),
+    );
+
+    oldReader.replaceDemands(
+      'reader-old-provider',
+      1,
+      _desired(physical, priority: 1000),
+    );
+    final session = registry.get(physical);
+    final committed = Completer<void>();
+    void listener(DownloadSnapshot snapshot) {
+      if (snapshot.committedLength > 0 && !committed.isCompleted) {
+        committed.complete();
+      }
+    }
+    session.addSnapshotListener(listener);
+    await committed.future;
+    session.removeSnapshotListener(listener);
+    expect(owner.activeProviderScope(physical), 'reader-old-provider');
+    expect(owner.activeProviderExactId(physical), physical);
+
+    oldReader.replaceDemands(
+      'reader-old-provider',
+      2,
+      const <DownloadId, TransferDemand>{},
+    );
+    expect(session.demandCount, 0);
+    expect(session.activeRun, isTrue);
+
+    newReader.replaceDemands(
+      'reader-new-provider',
+      1,
+      _desired(exact, priority: 1000),
+    );
+    await newTransport.opened.future;
+
+    expect(registry.resolvePhysicalId(exact), physical);
+    expect(identical(registry.find(exact), session), isTrue);
+    expect(owner.activeProviderScope(physical), 'reader-new-provider');
+    expect(owner.activeProviderExactId(physical), exact);
+    expect(session.committedLength, greaterThan(0));
+
+    newTransport.release.complete();
+    await newReader.idle();
+    expect(session.state, DownloadState.promoted);
+  });
+
   test('disposing active provider preserves remaining consumer and reopens once',
       () async {
     final temp = await Directory.systemTemp.createTemp('transfer_owner_detach_');
@@ -620,6 +726,10 @@ final class _ExactUriRangeTransport implements Transport {
 }
 
 final class _PrefixThenBlockTransport implements ControlledTransport {
+  _PrefixThenBlockTransport([List<int>? prefix])
+      : prefix = prefix ?? List<int>.filled(20 * 1024, 7);
+
+  final List<int> prefix;
   final Completer<void> opened = Completer<void>();
 
   @override
@@ -653,7 +763,7 @@ final class _PrefixThenBlockTransport implements ControlledTransport {
   }
 
   Stream<List<int>> _body(TaskControl control) async* {
-    yield List<int>.filled(20 * 1024, 7);
+    yield prefix;
     await control.whenCancelled;
   }
 }

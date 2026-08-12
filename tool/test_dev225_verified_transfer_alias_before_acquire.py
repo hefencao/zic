@@ -55,10 +55,22 @@ for token in (
 # already-established registry alias. The mutating resolver belongs to acquire.
 for token in (
     '_claims[registry.resolvePhysicalId(id)]',
-    '_activeProviderScopes[registry.resolvePhysicalId(id)]',
     '_networkTaskKeys[registry.resolvePhysicalId(id)]',
 ):
     require(owner, token, 'side-effect-free transfer introspection')
+if build >= 237:
+    require(
+        owner,
+        '_activeProviderLeases[registry.resolvePhysicalId(id)]',
+        'side-effect-free task-scoped provider introspection',
+    )
+    forbid(owner, '_activeProviderScopes', 'superseded scope-only provider state')
+else:
+    require(
+        owner,
+        '_activeProviderScopes[registry.resolvePhysicalId(id)]',
+        'historical side-effect-free provider scope introspection',
+    )
 
 for token in (
     'resolveTransferId: _resolveTransferIdForAcquire,',

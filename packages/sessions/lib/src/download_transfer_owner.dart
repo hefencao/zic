@@ -80,7 +80,11 @@ final class DownloadTransferOwner {
   final Set<DownloadId> _downloadRetryPending = <DownloadId>{};
   final Set<DownloadId> _downloadTerminalFailures = <DownloadId>{};
   final Map<DownloadId, int> _downloadDeferredAtLength = <DownloadId, int>{};
-  final Map<DownloadId, String> _activeProviderScopes = <DownloadId, String>{};
+  // The physical session owns bytes/writer state, while the source provider is
+  // only a lease for one currently executing NetLane task. A later preferred
+  // exact claim may revoke this lease without replacing the physical session.
+  final Map<DownloadId, _ActiveProviderLease> _activeProviderLeases =
+      <DownloadId, _ActiveProviderLease>{};
   final Map<DownloadId, int> _progressLengths = <DownloadId, int>{};
   final Map<DownloadId, DownloadSnapshotListener> _sessionListeners =
       <DownloadId, DownloadSnapshotListener>{};
@@ -110,7 +114,10 @@ final class DownloadTransferOwner {
   }
 
   String? activeProviderScope(DownloadId id) =>
-      _activeProviderScopes[registry.resolvePhysicalId(id)];
+      _activeProviderLeases[registry.resolvePhysicalId(id)]?.scopeId;
+
+  DownloadId? activeProviderExactId(DownloadId id) =>
+      _activeProviderLeases[registry.resolvePhysicalId(id)]?.exactId;
 
   String? taskKeyFor(DownloadId id) =>
       _networkTaskKeys[registry.resolvePhysicalId(id)];
@@ -138,7 +145,7 @@ final class DownloadTransferOwner {
       net.cancelQueued(taskKey);
       _networkTaskKeys.remove(physicalId);
     }
-    if (_activeProviderScopes.containsKey(physicalId)) return false;
+    if (_activeProviderLeases.containsKey(physicalId)) return false;
 
     final retired = registry.takeIdlePhysical(physicalId);
     if (!identical(retired, session)) return false;
@@ -309,7 +316,7 @@ final class DownloadTransferOwner {
     _downloadRetryPending.clear();
     _downloadTerminalFailures.clear();
     _downloadDeferredAtLength.clear();
-    _activeProviderScopes.clear();
+    _activeProviderLeases.clear();
     for (final entry in _sessionListeners.entries) {
       registry.find(entry.key)?.removeSnapshotListener(entry.value);
     }
@@ -489,6 +496,13 @@ final class DownloadTransferOwner {
       }
     }
     final taskKey = _networkTaskKeys[id];
+    if (_handoffActiveProviderIfNeeded(
+      id,
+      session,
+      reason: 'preferred-claim-changed',
+    )) {
+      return;
+    }
     if (taskKey != null) {
       _migrateDownloadPriority(
         id,
@@ -514,6 +528,15 @@ final class DownloadTransferOwner {
     final taskKey = _networkTaskKeys[id];
     final taskIsActive = taskKey != null && net.isActive(taskKey);
     final receiving = session?.state == DownloadState.receiving;
+    if (session != null &&
+        session.demanded &&
+        _handoffActiveProviderIfNeeded(
+          id,
+          session,
+          reason: 'provider-claim-detached',
+        )) {
+      return;
+    }
     if (session != null && session.demanded && taskKey != null) {
       _migrateDownloadPriority(
         id,
@@ -545,8 +568,8 @@ final class DownloadTransferOwner {
     if (consumer._disposed) return;
     consumer._disposed = true;
     final providerKeys = <String>[];
-    for (final entry in _activeProviderScopes.entries.toList(growable: false)) {
-      if (entry.value != consumer.scopeId) continue;
+    for (final entry in _activeProviderLeases.entries.toList(growable: false)) {
+      if (entry.value.scopeId != consumer.scopeId) continue;
       final key = _networkTaskKeys[entry.key];
       if (key != null) {
         providerKeys.add(key);
@@ -584,8 +607,8 @@ final class DownloadTransferOwner {
     // be running under this consumer's transport. It cannot outlive the
     // transport owner, so cancel it now. The hot physical prefix stays in the
     // composition registry and is reusable by a later consumer.
-    for (final entry in _activeProviderScopes.entries.toList(growable: false)) {
-      if (entry.value != consumer.scopeId) continue;
+    for (final entry in _activeProviderLeases.entries.toList(growable: false)) {
+      if (entry.value.scopeId != consumer.scopeId) continue;
       final key = _networkTaskKeys[entry.key];
       if (key != null) {
         net.cancel(key);
@@ -708,9 +731,15 @@ final class DownloadTransferOwner {
     final claim = _preferredClaim(id);
     if (claim == null) return;
     final provider = claim.consumer;
-    _activeProviderScopes[id] = provider.scopeId;
+    final sourceId = claim.exactId;
+    final providerLease = _ActiveProviderLease(
+      taskKey: taskKey,
+      scopeId: provider.scopeId,
+      exactId: sourceId,
+      claimSequence: claim.sequence,
+    );
+    _activeProviderLeases[id] = providerLease;
     try {
-      final sourceId = claim.exactId;
       final bucket = provider.downloadBucketFor(sourceId);
       final bucketLimit = provider.downloadBucketLimitFor(sourceId);
       final prepare = prepareDownload;
@@ -837,8 +866,8 @@ final class DownloadTransferOwner {
         }
       }
     } finally {
-      if (_activeProviderScopes[id] == provider.scopeId) {
-        _activeProviderScopes.remove(id);
+      if (_activeProviderLeases[id]?.taskKey == taskKey) {
+        _activeProviderLeases.remove(id);
       }
       if (_networkTaskKeys[id] == taskKey) {
         _networkTaskKeys.remove(id);
@@ -927,6 +956,58 @@ final class DownloadTransferOwner {
     if (!preserveDeferred) {
       _downloadDeferredAtLength.remove(id);
     }
+  }
+
+  bool _handoffActiveProviderIfNeeded(
+    DownloadId id,
+    DownloadSession session, {
+    required String reason,
+  }) {
+    final lease = _activeProviderLeases[id];
+    final taskKey = _networkTaskKeys[id];
+    if (lease == null || taskKey == null || !net.isActive(taskKey)) {
+      return false;
+    }
+    final preferred = _preferredClaim(id);
+    if (preferred == null) return false;
+    if (lease.scopeId == preferred.consumer.scopeId &&
+        lease.exactId == preferred.exactId) {
+      return false;
+    }
+    _TransferClaim? activeClaim;
+    for (final claim in _claims[id]?.values ?? const <_TransferClaim>[]) {
+      if (claim.consumer.scopeId == lease.scopeId &&
+          claim.sequence == lease.claimSequence &&
+          claim.exactId == lease.exactId) {
+        activeClaim = claim;
+        break;
+      }
+    }
+    final providerOrphaned = activeClaim == null;
+    final preferredOutranks = activeClaim != null &&
+        preferred.demand.priority > activeClaim.demand.priority;
+    if (!providerOrphaned && !preferredOutranks) return false;
+    _record(
+      preferred,
+      kind: TraceEventKind.artifactSource,
+      id: id,
+      payload: <String, Object?>{
+        'stage': 'active-provider-handoff',
+        'action': 'cancel-and-rebind',
+        'reason': reason,
+        'fromProviderScope': lease.scopeId,
+        'fromProviderExactId': lease.exactId.key,
+        'toProviderScope': preferred.consumer.scopeId,
+        'toProviderExactId': preferred.exactId.key,
+        'providerOrphaned': providerOrphaned,
+        if (activeClaim != null)
+          'fromPriority': activeClaim.demand.priority,
+        'toPriority': preferred.demand.priority,
+        'committedLength': session.committedLength,
+      },
+    );
+    net.cancel(taskKey);
+    return true;
   }
 
   void _migrateDownloadPriority(
@@ -1110,6 +1191,20 @@ final class DownloadTransferConsumer {
   Future<void> idle() => owner._idleFor(this);
 
   Future<void> dispose() => owner._disposeConsumer(this);
+}
+
+final class _ActiveProviderLease {
+  const _ActiveProviderLease({
+    required this.taskKey,
+    required this.scopeId,
+    required this.exactId,
+    required this.claimSequence,
+  });
+
+  final String taskKey;
+  final String scopeId;
+  final DownloadId exactId;
+  final int claimSequence;
 }
 
 final class _ConsumerPhysicalDemand {
