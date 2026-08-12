@@ -1,5 +1,5 @@
-# dev.246 后续交接
-- dev.246：12:15真机Trace中dev.245 normal-pressure preempt已归零，但67次preempt全部仍由current触发；只形成28个<=50ms burst，39次是同burst额外victim，17/28 burst在100ms内current又变化并覆盖46/67 cancel。现撤销victim-side 200ms demotion grace：free/reserved current仍立即admit，真正需要cancel时blocked high-priority candidate必须稳定100ms；同一NetLane最多一个preemption victim未物理退出，其他current只排队/更新rank。双进度、physical partial、admitted provider稳定与统一NetPolicyRank继续保留。
+# dev.247 后续交接
+- dev.247：13:06 Trace显示dev.246 cancellation已明显收敛（21次preempt，均为稳定current1000/约100ms），当前更大的成本源是动画WebP仍无条件展开11个download demand。现明确拆开逻辑窗口与network admission：`RoleResolver`继续previous3/next7并负责跳页/retention“仍在窗口内”语义；动画或provisional WebP current只network-admit previous2/next4硬下界，decode水位`c>4/n>2/c>6/n>3`依次尝试开放next5/previous3/next6/next7，默认50MiB可设置预算只约束外层扩张。runtime static恢复完整3/7。
 `dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`
@@ -63,13 +63,13 @@
 - Native identity保持 `zic-media-core-dev134-abi6-lib00121400`。
 - production rhttp direct在普通release默认记录每response一次的HTTP version、匿名remote-IP hash与receive-progress-enabled标记；高频`onReceiveProgress`仅non-product或显式`ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS=1`诊断构建启用。该观测不得反馈给NetLane/Reader/retry/cache/framing。
 ## 下一步真机优先验证
-- dev.246后重点验证：`downloadPreempted`仍只允许真正5+1饱和后的current1000，且每次必须记录`incomingWaitMicros>=100000`；快速scrub的中间current不应再触发cancel，一个preemption victim未物理退出前不得出现第二个scheduler victim。第一个current仍应以`handoffActive=1`直接启动；若稳定current最终preempt，双进度直线必须保持partial且波浪只表现单次attempt重开。
+- dev.247后重点验证：动画current的`policyDecision`初始应为7个download demand并保留11个逻辑role；随`decodeRefill`达到`c>4/n>2/c>6/n>3`只在预算允许时逐层扩张，绝不得超过previous3/next7。快速跳页回到仍属逻辑3/7的页面必须复用physical partial，不得因它此前被network admission裁掉而视为detached；static分类后应恢复11 downloads。同步继续观察dev.246 `downloadPreempted.incomingWaitMicros>=100000`/single-flight是否保持。
 - 07:51 dev.198 trace已确认Range成功路径仍正确，但full-body fallback重复重新放大到约19.2MiB/123.2MiB（15.6%），多数发生在760/780/800背景角色；dev.199只阻止这类低优先级大partial从0反复重读。820/900/1000、小partial和合法206必须保持原行为，不把defer扩展成通用restart-cost scheduler。
 - 首先复测快速前后翻页：dev.185外层previous admission应继续保持毫秒级；dev.189应确认780↔900不再导致plan取消，只有waiter真正晋升current=1000时才触发动态pressure，并确认旧JS未`finished(requestId)`前新plan绝不并发进入。无真实pressure时`receivingRetained=true` priority0仍应短时复用。
 - 真机首要复测 current 首帧稳定性：观察 policyDecision 的 staticWarmDecodes/uploads 是否收敛到稳定decode角色/真实可见页，current浅水位期间是否停止 speculative neighbor refill，以及decode/upload current handoff是否避免后台长任务阻塞。
 - 最终图片慢流先用普通release按`sourceHostHttpVersion/sourceHostRemoteIpHash`分组比较`streamMicros/maxChunkGapMicros`；若同endpoint仍无法解释current异常，再用`ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS=1`诊断构建比较`sourceRhttpProgressMaxGapMicros/sourceRhttpProgressLeadBytesMax/sourceRhttpBodyMaxGapMicros`。progress与body同步长gap优先视为源/CDN/HTTP；progress明显领先body才下钻rhttp→Dart delivery/backpressure。只有确认并发active streams伤害current且pause真实反压网络后，才设计NetLane-owned transfer pressure。
 ## 不可改变的稳定边界
-- 不缩小 Reader 7/3、holder 7/5/3/2、decode 2/1来掩盖性能问题。
+- 不缩小 Reader**逻辑/retention** 7/3、holder 7/5/3/2、decode 2/1来掩盖性能问题；dev.247只允许动画WebP的network-admission子集在2/4下界与3/7上界之间按水位/预算变化。
 - 不恢复 FlowGate、startup-buffer、跨 Reader used texture。
 - 不在 App/Reader新增 transport、正文缓存、frame/session owner。
 - 不恢复 synthetic Mihon chapter、标题/URL启发式目录去重，也不反转回 explicit chapterList-first；不得并行/重复调用两套章节API。

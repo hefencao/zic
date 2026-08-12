@@ -37,6 +37,10 @@ typedef UploadWork = Future<void> Function(
 typedef Sleep = Future<void> Function(Duration delay);
 typedef DownloadPrepare = Future<void> Function(DownloadSession session);
 typedef DownloadObserve = void Function(DownloadSession session);
+typedef DecodeRefillObserve = void Function(
+  DecodeRefillDecision decision,
+  int demandRevision,
+);
 
 Future<void> _defaultSleep(Duration delay) => Future<void>.delayed(delay);
 
@@ -57,6 +61,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     this.refillPolicy = const StagedDecodeRefillPolicy(),
     DownloadPrepare? prepareDownload,
     DownloadObserve? onDownloadObserved,
+    this.onDecodeRefillObserved,
     DownloadTransferConsumer? downloadTransfer,
     NetLane? net,
     DecodeLane? decode,
@@ -129,6 +134,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final FrameBudgeter? budgets;
   final StagedDecodeRefillPolicy refillPolicy;
   final DownloadObserve? onDownloadObserved;
+  final DecodeRefillObserve? onDecodeRefillObserved;
   late final DownloadTransferConsumer _downloadTransfer;
   DownloadTransferOwner? _ownedDownloadTransferOwner;
   late final NetLane net;
@@ -637,6 +643,16 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             after.failure == null) {
           _decodeRecoveryAttempts.remove(id);
           _decodeRecoveryPending.remove(id);
+          final completedPreparedDepth =
+              uploads?.preparedDepth(id) ?? preparedDepth;
+          if (refill != null &&
+              after.depth + completedPreparedDepth >= refill.targetWatermark) {
+            try {
+              onDecodeRefillObserved?.call(refill, demandRevision);
+            } on Object {
+              // Read-only policy observers cannot break decode execution.
+            }
+          }
         }
         if (work != null || _decodeChangeNeedsUpload(before, after)) {
           _wakeUpload(sessionId, id);

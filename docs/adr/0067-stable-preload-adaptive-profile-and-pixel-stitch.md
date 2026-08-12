@@ -1,5 +1,8 @@
 # ADR 0067：统一稳定预下载、每漫画自适应证据与物理像素拼接
 
+> dev.247：ADR 0227保留本ADR统一previous3/next7逻辑窗口，但允许动画/保守WebP network demand从previous2/next4按水位与预算渐进扩到3/7；WebP提示仍不是runtime animation事实。
+
+
 ## 状态
 
 Accepted。预下载决策取代按 Venera URI scheme 选择窗口的实现；自适应部分取代 ADR 0063 中临时的 source-direction/runtime-animation 覆盖逻辑；拼接部分补充 ADR 0064 的统一栅格要求。

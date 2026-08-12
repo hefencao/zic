@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：真机优先验证dev.246 destructive-preemption transaction：normal 780/800/820/900继续不得产生最终图片`downloadPreempted`；第一个current仍直接借第6槽；只有5+1持续饱和且同一个blocked current稳定>=100ms后才允许一次policy preemption，`incomingWaitMicros`应>=100000。同一时刻不得出现多个preemption victim未退出，快速scrub中间current应在稳定窗口内被后续rank更新淘汰而不cancel连接。继续用双进度区分authoritative partial直线与transport波浪。
+- P0：真机优先验证dev.247动画WebP分层预下载：`RoleWindow`必须始终保持previous3/next7逻辑/retention上界；动画或provisional WebP current的network demand初始只允许current+previous2+next4，`policyDecision.downloads`通常应为7。只有成功decode refill水位`c>4/n>2/c>6/n>3`按顺序开放next5/previous3/next6/next7，且额外页面必须通过用户可设置的encoded speculative budget（默认50MiB）；下界本身超预算时仍保2/4并记录`animatedPrefetchMinimumExceededBudget=true`。跳页后位于逻辑3/7但暂未network-admitted的页面不得被当作detached/evict，成为current/进入下界时必须复用已有physical partial。dev.246 stable destructive-preemption transaction继续冻结，不因缩窗重新引入normal cancel。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环

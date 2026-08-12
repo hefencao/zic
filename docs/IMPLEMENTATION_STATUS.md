@@ -2,8 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.246` / App `0.31.0+246`。
-- dev.246：12:15真机Trace确认dev.245 normal-pressure cancel已归零，但仍有67次current preempt；它们只形成28个<=50ms burst，39次是同burst额外victim，17/28 burst在100ms内current又变化并覆盖46/67 cancel。现撤销victim-side 200ms demotion grace，破坏性preemption改由blocked high-priority candidate连续稳定100ms后才可发生；free/reserved admission不等待。每个NetLane同时最多一个preemption victim在物理退出，其他current只排队/更新rank；退出后再pump。统一`NetPolicyRank`、normal5+reserved1、partial/progress/provider authority不变，Trace新增`incomingWaitMicros`。
+- 当前版本：`0.31.0-dev.247` / App `0.31.0+247`。
+- dev.247：13:06真机Trace中dev.246 preempt已降至21次且全部为稳定current1000，说明继续调cancel收益变小；但idle policy仍固定11个download demand，而154帧动画WebP单页常达十几MiB，完整3/7潜在encoded体量可轻易超过100MiB。现保持`RoleResolver` previous3/next7作为逻辑/retention上界，只把动画/保守WebP network admission改为previous2/next4硬下界；成功decode水位按`c>4→next5`、`n>2→previous3`、`c>6→next6`、`n>3→next7`逐层开放，外层受可配置默认50MiB speculative budget约束；WebP/content hint只作成本提示，runtime static事实会恢复完整3/7。dev.246的100ms稳定candidate+single-flight destructive preemption继续有效。
 - dev.245：10:54 Trace删除normal 780/800/820/900主动preemption并让第一个current先借reserved第6槽；其victim-side 200ms demotion grace已由dev.246 incoming-candidate稳定窗口取代。
 - dev.244：09:47真机Trace确认physical alias继续统一，但55,743,710 bytes duplicate prefix中44,741,284来自full-body catch-up、10,412,602来自catch-up被取消后的白读；两次rank-based provider handoff发生在同一shared physical partial内部。现删除logical exact/rank驱动的active provider replacement：admitted provider绑定task lifetime，current只迁移physical NetLane priority，真实consumer-bound dispose/attempt失败才结束provider。DownloadSession新增transient network cursor，Pipeline双投影authoritative partial与当前transport；Reader按实际VibeVenera speed色将当前transport画为波浪、最大partial保留不同颜色直线，从UI直接看见prefix replay/restart而不伪造committed增长。
 - dev.242：07:51真机Trace定位到current presentation在transfer acquire前调用`DownloadRegistry.get(exact)`，提前制造exact physical owner，导致同一verified-equivalent图片出现不同partial/progress并把跨session rank拆成多个独立task。现presentation/read-only路径全部改为non-creating `find`，`PipelinePageStream`在reconcile后绑定resolved physical owner；同时unsealed且尚无成功帧的WebP decode exception按prefix growth等待而非立即failed，sealed/post-frame错误仍终局失败。

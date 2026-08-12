@@ -75,6 +75,17 @@ final class ReaderBinding {
     return pipeline.classifyPage(pageIndex: pageIndex, animated: animated);
   }
 
+  bool observeDecodeWaterline({
+    required int planRevision,
+    required String stage,
+  }) {
+    if (_detached) return false;
+    return pipeline.observeDecodeWaterline(
+      planRevision: planRevision,
+      stage: stage,
+    );
+  }
+
   void updateDecodeTarget(DecodeTarget target) {
     if (_detached) {
       throw StateError('reader binding is detached');

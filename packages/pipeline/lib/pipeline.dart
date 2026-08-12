@@ -1,3 +1,4 @@
+export 'src/animated_prefetch_policy.dart';
 export 'src/aligned_raster_size.dart';
 export 'src/decode_target.dart';
 

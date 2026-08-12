@@ -75,9 +75,32 @@ final class ReaderPipelineProfile {
   final int uploadConcurrency;
 }
 
-ReaderPipelineProfile readerPipelineProfileFor(ChapterManifest chapter) {
-  // Keep the manifest parameter in the composition API because future
-  // transport capabilities may be selected atomically here. They must not
-  // change the Reader demand window.
-  return ReaderPipelineProfile.stable;
+ReaderPipelineProfile readerPipelineProfileFor(
+  ChapterManifest chapter, {
+  int animatedPrefetchBudgetBytes = defaultAnimatedWebpPrefetchBudgetBytes,
+}) {
+  // The logical Reader window remains the stable previous3/next7 envelope.
+  // Only the policy's network-admission subset is configurable for expensive
+  // animated WebP media.
+  if (animatedPrefetchBudgetBytes ==
+      defaultAnimatedWebpPrefetchBudgetBytes) {
+    return ReaderPipelineProfile.stable;
+  }
+  final stable = ReaderPipelineProfile.stable;
+  return ReaderPipelineProfile(
+    windowResolver: stable.windowResolver,
+    guard: stable.guard,
+    policy: HeuristicPolicy(
+      decodeWarmPages: true,
+      animatedPrefetchPolicy: AnimatedPrefetchPolicy(
+        maxSpeculativeBytes: animatedPrefetchBudgetBytes,
+      ),
+    ),
+    retry: stable.retry,
+    networkConcurrency: stable.networkConcurrency,
+    localSourceConcurrency: stable.localSourceConcurrency,
+    remoteSourceConcurrency: stable.remoteSourceConcurrency,
+    decodeConcurrency: stable.decodeConcurrency,
+    uploadConcurrency: stable.uploadConcurrency,
+  );
 }

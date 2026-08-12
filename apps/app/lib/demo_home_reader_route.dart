@@ -137,7 +137,10 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
           .withTransferRuntime(
             _downloadComposition?.transferRuntime,
           )
-          .withUserAgentProvider(() => widget.preferences.networkUserAgent),
+          .withUserAgentProvider(() => widget.preferences.networkUserAgent)
+          .withAnimatedPrefetchBudgetBytes(
+            widget.preferences.animatedWebpPrefetchBudgetMiB * 1024 * 1024,
+          ),
       initialFavorite: preference.collected,
       onFavoriteChanged: (favorite) {
         final currentPreference = _preferences[

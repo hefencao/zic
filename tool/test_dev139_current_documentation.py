@@ -101,14 +101,24 @@ for token in (
     "NetLane",
 ):
     require(architecture, token, "Architecture")
+pubspec_for_spec = read("apps/app/pubspec.yaml")
+spec_version = re.search(r"^version:\s*0\.31\.0\+(\d+)$", pubspec_for_spec, re.M)
+spec_build = int(spec_version.group(1)) if spec_version is not None else 0
+spec_window_token = (
+    "encoded逻辑/retention window：前 7 / 后 3"
+    if spec_build >= 247
+    else "encoded download window：前 7 / 后 3"
+)
 for token in (
-    "encoded download window：前 7 / 后 3",
+    spec_window_token,
     "动态 holder 最大水位为 current/next/next2/previous：7 / 5 / 3 / 2",
     "current 浅水位 bootstrap MUST 优先",
     "NetLane` MUST 是页面网络的唯一调度权威",
     "一个 idle 章节会话最多两分钟",
 ):
     require(spec, token, "Spec")
+if spec_build >= 247:
+    require(spec, "network下界previous2/next4", "Spec")
 
 for forbidden in (
     "DownloadFlowGate",

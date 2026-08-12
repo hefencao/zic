@@ -1,6 +1,7 @@
 import 'package:domain/domain.dart';
 import 'package:telemetry/telemetry.dart';
 
+import 'animated_prefetch_policy.dart';
 import 'demand.dart';
 import 'decode_target.dart';
 import 'heuristic_policy.dart';
@@ -52,6 +53,7 @@ final class PipelineController {
   int? _lastCurrentIndex;
   ReaderObs? _lastObservation;
   final Map<int, bool> _runtimeAnimatedPages = <int, bool>{};
+  int _animatedPrefetchStage = 0;
 
   int get revision => _revision;
   DemandPlan get currentPlan => _previous;
@@ -70,6 +72,7 @@ final class PipelineController {
   void accept(ReaderObs observation) {
     if (_currentIndex != null && _currentIndex != observation.currentIndex) {
       _lastCurrentIndex = _currentIndex;
+      _animatedPrefetchStage = 0;
     }
     _currentIndex = observation.currentIndex;
     _lastObservation = observation;
@@ -78,15 +81,62 @@ final class PipelineController {
 
   bool classifyPage({required int pageIndex, required bool animated}) {
     if (pageIndex < 0 || pageIndex >= chapter.pages.length) return false;
-    final current = _runtimeAnimatedPages[pageIndex] ??
-        chapter.pages[pageIndex].animatedHint;
+    final beforePrefetchActive = pageIndex == _currentIndex
+        ? _animatedPrefetchActiveFor(pageIndex)
+        : false;
+    final current = _runtimeAnimatedPages[pageIndex];
     if (current == animated) return false;
     _runtimeAnimatedPages[pageIndex] = animated;
+    if (pageIndex == _currentIndex &&
+        beforePrefetchActive != _animatedPrefetchActiveFor(pageIndex)) {
+      _animatedPrefetchStage = 0;
+    }
     final observation = _lastObservation;
     if (observation != null) {
       _replan(observation, force: true);
     }
     return true;
+  }
+
+  /// Advances the animated-WebP network admission window from completed decode
+  /// waterline evidence. The callback is revision-scoped so stale work from a
+  /// previous page/session cannot reopen speculative downloads after a jump.
+  bool observeDecodeWaterline({
+    required int planRevision,
+    required String stage,
+  }) {
+    final observation = _lastObservation;
+    final current = _currentIndex;
+    if (observation == null ||
+        current == null ||
+        planRevision != _revision ||
+        !_animatedPrefetchActiveFor(current)) {
+      return false;
+    }
+    final requested = policy.animatedPrefetchPolicy
+        .expansionStageForWaterline(stage);
+    if (requested <= _animatedPrefetchStage) return false;
+    _animatedPrefetchStage = requested;
+    _replan(observation, force: true);
+    return true;
+  }
+
+  bool _animatedPrefetchActiveFor(int pageIndex) {
+    if (pageIndex < 0 || pageIndex >= chapter.pages.length) return false;
+    final runtime = _runtimeAnimatedPages[pageIndex];
+    if (runtime != null) return runtime;
+    final page = chapter.pages[pageIndex];
+    if (page.animatedHint) return true;
+    // URI/content-kind WebP is only a conservative network-cost hint here; it
+    // is not promoted to runtime animation truth. An actual static decode
+    // immediately restores the full static-oriented 3/7 admission window.
+    if (page.contentKindHint == ContentKindHint.webp ||
+        page.uri.path.toLowerCase().endsWith('.webp')) {
+      return true;
+    }
+    // Once this Reader has proved an animated page, unresolved neighbors are
+    // conservatively treated as expensive until their own decode says static.
+    return _runtimeAnimatedPages.values.any((animated) => animated);
   }
 
   bool get _assumeUnresolvedStatic {
@@ -113,6 +163,15 @@ final class PipelineController {
     _previousRoles = Map<int, PageRole>.unmodifiable(window.roles);
     _previousRetainedIndex = window.retainedIndex;
     _revision++;
+    final animatedPrefetchActive =
+        _animatedPrefetchActiveFor(observation.currentIndex);
+    final animatedPrefetchAdmission = policy.animatedPrefetchPolicy.admit(
+      chapter: chapter,
+      observation: observation,
+      window: window,
+      active: animatedPrefetchActive,
+      expansionStage: _animatedPrefetchStage,
+    );
     final proposal = policy.createPlan(
       revision: _revision,
       chapter: chapter,
@@ -121,6 +180,7 @@ final class PipelineController {
       decodeTarget: _decodeTarget,
       runtimeAnimatedPages: _runtimeAnimatedPages,
       assumeUnresolvedStatic: _assumeUnresolvedStatic,
+      downloadAdmission: animatedPrefetchAdmission,
     );
     final plan = guard.enforce(proposal);
     final diff = DemandDiff.between(_previous, plan);
@@ -150,6 +210,17 @@ final class PipelineController {
               .where((animated) => !animated)
               .length,
           'assumeUnresolvedStatic': _assumeUnresolvedStatic,
+          'animatedPrefetchActive': animatedPrefetchAdmission.active,
+          'animatedPrefetchStage': animatedPrefetchAdmission.expansionStage,
+          'animatedPrefetchBudgetBytes':
+              policy.animatedPrefetchPolicy.maxSpeculativeBytes,
+          'animatedPrefetchEstimatedBytes':
+              animatedPrefetchAdmission.estimatedSpeculativeBytes,
+          'animatedPrefetchMinimumExceededBudget':
+              animatedPrefetchAdmission.minimumExceedsBudget,
+          'animatedPrefetchAdmittedIndexes':
+              animatedPrefetchAdmission.admittedIndexes.toList(growable: false)
+                ..sort(),
           'currentIndex': observation.currentIndex,
           'targetIndex': observation.targetCoverage?.pageIndex,
           'retainedIndex': window.retainedIndex,

@@ -1,5 +1,6 @@
 import 'package:domain/domain.dart';
 
+import 'animated_prefetch_policy.dart';
 import 'decode_target.dart';
 import 'demand.dart';
 import 'role_window.dart';
@@ -8,9 +9,11 @@ final class HeuristicPolicy {
   const HeuristicPolicy({
     this.decodeWarmPages = false,
     this.staticOutputBudgetBytes = 96 * 1024 * 1024,
+    this.animatedPrefetchPolicy = const AnimatedPrefetchPolicy(),
   });
 
   final bool decodeWarmPages;
+  final AnimatedPrefetchPolicy animatedPrefetchPolicy;
 
   /// Budget available to speculative static-page outputs. The session-level
   /// [FrameBudgeter] remains authoritative and may trim lower-priority outputs
@@ -25,6 +28,7 @@ final class HeuristicPolicy {
     required DecodeTarget decodeTarget,
     Map<int, bool> runtimeAnimatedPages = const <int, bool>{},
     bool assumeUnresolvedStatic = false,
+    AnimatedPrefetchAdmission? downloadAdmission,
   }) {
     final downloads = <DownloadId, DownloadDemand>{};
     final decodes = <DecodeId, DecodeDemand>{};
@@ -71,7 +75,8 @@ final class HeuristicPolicy {
         pageIndex: entry.key,
         currentIndex: observation.currentIndex,
       );
-      if (downloadPriority > 0) {
+      if (downloadPriority > 0 &&
+          (downloadAdmission == null || downloadAdmission.allows(entry.key))) {
         downloads[download] = DownloadDemand(
           role: role,
           priority: downloadPriority,

@@ -129,7 +129,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 
 默认资源策略：
 
-- encoded download window：前 7 / 后 3；
+- encoded逻辑/retention window：前 7 / 后 3；静态页默认network admission仍为完整3/7。animated或尚未判定的高成本WebP current采用network下界previous2/next4，外层只可由decode staged waterline逐步开放且受可配置speculative byte budget约束；该裁剪不得改变`RoleWindow`成员关系、跳页“仍在窗口内”判断、retained output或physical partial identity；runtime确认static后MUST恢复完整3/7；
 - 深度 decode 角色：前 2 / 后 1；
 - 动态 holder 最大水位为 current/next/next2/previous：7 / 5 / 3 / 2；
 - upload primary：current、transition；上一 current可通过独立 retained-output overlay获得 `last` upload demand，且不得改变其相对 download/decode role；
@@ -144,7 +144,7 @@ Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor �
 - current SHOULD 使用 priority 1000；network/decode/upload可各有一个current-only bounded handoff。network `NetLane`在normal 5槽满时 MUST先用唯一reserved槽直接admit current，MUST NOT仅为借该槽先取消running task；只有normal+reserved均饱和且current仍blocked时 MAY按统一effective rank与40分margin preempt。priority 780/800/820/900的normal work MUST NOT主动取消receiving task来抢普通槽，只能按rank等待自然permit释放。破坏性network preemption MUST具有NetLane-owned incoming candidate stability：Reader当前100ms；candidate未连续保持high-priority blocked至窗口结束前 MUST NOT cancel active victim，但free/reserved slot admission MUST仍立即发生。每个NetLane MUST最多允许一个scheduler-preemption victim处于cancelled但尚未物理退出状态；该victim退出前其他blocked current MUST只排队/更新rank，不得继续cancel更多active transport。already-admitted task在logical claim归零后 MUST迁移rank0而不是由Reader/session直接cancel；queued且从未admit的undemanded work MAY直接移除。普通可Range-resume的committed partial不得仅因字节较多自动变成不可抢占sunk cost；victim经济性仍由统一`NetPolicyRank`的真实不可恢复restart cost决定。consumer-bound transport真实dispose、任务错误、显式用户取消仍可硬终止。
 - DownloadJob、Reader、UploadSession 和 holder 不得建立第二套网络资格门控。
 - 目标页 receiving transport 不得因 current holder depth、播放 underflow 或页面控件状态被暂停。
-- 不得通过缩小 7/3、关闭预下载或降低播放速度掩盖 identity、重复请求或 producer wake 缺陷。
+- 不得缩小**逻辑/retention 7/3**、关闭预下载或降低播放速度掩盖 identity、重复请求或 producer wake 缺陷；ADR0227允许对已知/保守判定为高成本动画WebP的**network admission子集**采用2/4下界+水位/字节预算渐进扩张，但3/7逻辑上界必须保持。
 
 ## 5. 下载、partial 与 artifact
 

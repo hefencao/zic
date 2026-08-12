@@ -1,3 +1,9 @@
+## 0.31.0-dev.247：Animated WebP layered prefetch window
+
+- 保持 Reader previous3/next7 逻辑/retention窗口，动画/保守WebP只把network admission下界收为previous2/next4；既有decode水位按 c>4 / n>2 / c>6 / n>3 逐层开放next5 / previous3 / next6 / next7。
+- 新增默认50MiB、可在网络设置调整的动画WebP speculative encoded预算；2/4硬下界优先，外层扩张受预算约束。
+- decode refill只向Pipeline回报revision-scoped完成milestone，跳页后的stale refill不得重新扩张新current窗口；runtime static事实立即恢复完整3/7。
+
 ## 0.31.0-dev.246：Stable destructive preemption candidate 与 single-flight cancellation
 
 - 12:15真机Trace中dev.245已将normal-pressure preemption清零，但仍有67次`downloadPreempted`且全部来自current=1000；它们只形成28个<=50ms burst，39次属于同一burst中的额外victim，最大66ms内连续cancel 6条。30个victim已有committed partial，合计约246.7MiB，最大约16.6MiB。

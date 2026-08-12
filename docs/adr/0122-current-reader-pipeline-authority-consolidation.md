@@ -1,5 +1,8 @@
 # ADR 0122：当前 Reader Pipeline 权威与生命周期收口
 
+> dev.247：ADR 0227仅细化昂贵动画WebP的network-admission子集；本ADR的previous3/next7逻辑RoleWindow与decode/holder所有权继续有效。
+
+
 **状态：Accepted**
 
 ## 背景

@@ -218,7 +218,7 @@ n>1, m>1, p>1, c>4, n>2, c>6, n>3, m>2, n>4（current bootstrap 已覆盖 c>2）
 
 阈值仍是严格水位，实际 batch 可自然越过。current/source 尚未建立浅水位时不得让 speculative neighbor 绕行 refill；真实 transition 只在 current 暂时无 source 资格时可取一帧，防止拖动目标黑屏。
 
-静态页一帧即满足，但静态证据只能降低**既有 decode 前2/后1窗口**内页面的成本，不能把 encoded 7/3 的 near/far 扩大成 decode/upload 窗口；真实进入 viewport 的纵向静态页可作为可见输出例外，回收仍由 `FrameBudgeter` 权威执行。
+静态页一帧即满足，但静态证据只能降低**既有 decode 前2/后1窗口**内页面的成本，不能把 encoded 7/3 的 near/far 扩大成 decode/upload 窗口；真实进入 viewport 的纵向静态页可作为可见输出例外，回收仍由 `FrameBudgeter` 权威执行。encoded previous3/next7继续是逻辑/retention上界而非所有媒体的无条件network admission：当前页被runtime判定animated，或尚未判定但WebP/animated hint提示高成本时，network下界为previous2/next4；只有既有decode水位完成`c>4→next5`、`n>2→previous3`、`c>6→next6`、`n>3→next7`且speculative byte budget允许才逐层扩张，runtime证明static后立即恢复完整3/7。
 
 ## 7. 下载、partial 与 source ingress
 
