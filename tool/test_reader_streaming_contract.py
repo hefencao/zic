@@ -42,7 +42,7 @@ for forbidden in ('PipelineReaderSessionFactory', 'pipelineFactory', '_pipeline.
 for token in (
     'LiveCoordinator(', 'SourcePool(', 'DecodeRegistry(',
     'UploadRegistry(', 'FrameBudgeter(', 'ReaderBinding(',
-    'PipelinePageStream.fromSession', 'PipelinePageOutputStream._(',
+    'PipelinePageStream.forDownload', '_syncPageStreams();', 'PipelinePageOutputStream._(',
     'PipelineTransferProgressPublisher()', 'transferProgress.select(',
 ):
     if token not in PIPELINE_RUNTIME:
@@ -50,10 +50,12 @@ for token in (
 for token in ('CompositionDownloadTransferRuntime', '_downloads = _transferRuntime.registry;'):
     if token not in PIPELINE_RUNTIME:
         raise SystemExit(f'Pipeline physical-transfer consumer boundary missing: {token}')
+if '_downloads.get' in PIPELINE_RUNTIME:
+    raise SystemExit('Pipeline presentation/read-only paths must not create physical download sessions')
 for forbidden in ('DownloadRegistry', 'DownloadSession', 'LiveCoordinator', 'NetLane(', 'DecodeLane(', 'UploadLane(', "package:downloads/", "package:sessions/", "package:storage/", "package:transport/", "package:media/"):
     if forbidden in RUNTIME:
         raise SystemExit(f'Reader regained pipeline ownership: {forbidden}')
-for token in ('final class PipelinePageStream', 'PipelinePageStreamSnapshot', 'Future<Uint8List> readPrefix'):
+for token in ('final class PipelinePageStream', 'PipelinePageStreamSnapshot', 'Future<Uint8List> readPrefix', 'void refreshBinding()', 'required DownloadSession? Function() resolvePhysical'):
     if token not in PAGE_STREAM:
         raise SystemExit(f'Pipeline page-stream projection missing: {token}')
 for forbidden in ('final EncodedSource', 'EncodedSource? get source', ' get source'):

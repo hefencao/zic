@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：dev.241真机验证provider handoff只由`policy-rank`决定：跨新旧版本切换时记录candidate priority、incumbent base/effective rank、restart-cost bonus与margin；current应自然凭rank接管，已支付工作可凭retention rank保留，不再出现orphan/high-priority/strict-higher专用分支。并继续量化真实`Range -> 200` full-body duplicate、追踪unsealed `partial-source` decode failure与dev.231 `stored-required-exact-alias`。
+- P0：dev.242真机首先验证同一verified-equivalent图片跨版本current/neighbor只剩一个physical session与一致committed progress；`pageStream`创建不得新增exact session，alias必须发生在transfer acquire/reconcile。同步验证unsealed首帧decode exception出现`decode-provisional-prefix-failure`后随source增长恢复且不再投影failed；跨session rank只在physical dedup成立后评估，不新增role/situation分支。继续量化真实`Range -> 200` duplicate与dev.231 `stored-required-exact-alias`。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环

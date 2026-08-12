@@ -1026,6 +1026,7 @@ void main() {
       offset: 0,
       bytes: 'RIFF....WEBPpayload'.codeUnits,
     );
+    ingress.seal(const SourceEpoch(0));
     final download = DownloadSession(
       id: _downloadId(),
       artifact: Artifact(
@@ -1088,6 +1089,79 @@ void main() {
     expect(projected.failure?.code, ErrorCode.decode);
 
     upload.dispose();
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
+  test(
+      'unsealed first-frame decode error waits for source growth instead of failing',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'decode_unsealed_provisional_failure_test_',
+    );
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024 * 1024);
+    final initial = 'RIFF....WEBPpayload'.codeUnits;
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: initial,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${download.id.key}',
+      ingress: ingress,
+    );
+    download.attachIngressProjection(projection);
+    final cursors = _GrowingPrefixFailureCursorFactory(minimumBytes: 256 * 1024);
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      ingress: projection,
+      cursors: cursors,
+      clock: _Clock(),
+    );
+    const demand = DecodeDemand(
+      role: PageRole.current,
+      priority: 1000,
+      targetWatermark: 1,
+      reason: 'growing-prefix',
+      expirationRevision: 2,
+    );
+
+    final waiting = await decode.fill(
+      demand: demand,
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    expect(waiting.state, DecodeState.waitingSource);
+    expect(waiting.failure, isNull);
+    expect(waiting.requiredSourceLength, greaterThan(initial.length));
+
+    final target = waiting.requiredSourceLength;
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: initial.length,
+      bytes: List<int>.filled(target - initial.length, 0),
+    );
+    final recovered = await decode.fill(
+      demand: demand,
+      revision: 2,
+      cancel: CancelToken(),
+    );
+    expect(recovered.state, DecodeState.ready);
+    expect(recovered.depth, 1);
+    expect(recovered.failure, isNull);
+    expect(cursors.created, 2,
+        reason: 'the provisional failure must restart on the grown prefix');
+
     decode.dispose();
     await download.dispose();
     await temp.delete(recursive: true);
@@ -1589,6 +1663,53 @@ final class _TransientCursor implements FrameCursor {
       throw StateError('transient decode failure');
     }
     return CursorStep.frame(_Frame(epoch, call > 1 ? call - 1 : call));
+  }
+
+  @override
+  void dispose() {}
+}
+
+final class _GrowingPrefixFailureCursorFactory implements CursorFactory {
+  _GrowingPrefixFailureCursorFactory({required this.minimumBytes});
+
+  final int minimumBytes;
+  int created = 0;
+
+  @override
+  CursorBinding create({
+    required DecodeId id,
+    required EncodedSource source,
+    required int epoch,
+  }) {
+    created++;
+    return CursorBinding(
+      frames: _GrowingPrefixFailureCursor(
+        epoch: epoch,
+        source: source,
+        minimumBytes: minimumBytes,
+      ),
+    );
+  }
+}
+
+final class _GrowingPrefixFailureCursor implements FrameCursor {
+  _GrowingPrefixFailureCursor({
+    required this.epoch,
+    required this.source,
+    required this.minimumBytes,
+  });
+
+  @override
+  final int epoch;
+  final EncodedSource source;
+  final int minimumBytes;
+
+  @override
+  Future<CursorStep> decodeNext() async {
+    if (source.length < minimumBytes) {
+      throw StateError('prefix is not yet decodable');
+    }
+    return CursorStep.frame(_Frame(epoch, 0));
   }
 
   @override

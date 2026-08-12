@@ -7,6 +7,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:media/media.dart';
 import 'package:pipeline_runtime/pipeline_runtime.dart';
+import 'package:sessions/sessions.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
@@ -116,6 +117,89 @@ void main() {
     secondFactory.release(second);
     await base.disposeRetainedSessions();
     expect(runtime.closed, isTrue);
+  });
+
+  test(
+      'presentation pageStream cannot precreate an exact physical session before verified acquire',
+      () async {
+    final cache = ArtifactCacheManager(backend: _Backend());
+    final net = NetLane(maxActive: 2);
+    final transferRuntime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: cache,
+      partialDownloadStore: null,
+      net: net,
+    );
+    final newUri = Uri.parse('https://example.invalid/new.webp');
+    final oldUri = Uri.parse('https://example.invalid/old.webp');
+    final chapter = _chapter(uri: newUri);
+    final newId = readerPageDownloadId(chapter, chapter.pages.single);
+    final oldId = DownloadId(
+      content: newId.content,
+      sourceRevision: 'old-r0',
+      canonicalUri: oldUri,
+    );
+    cache.linkEquivalent(first: oldId, second: newId);
+
+    final physical = transferRuntime.registry.get(oldId);
+    await physical.restore();
+    final writer = physical.acquireWriter();
+    await physical.bindResponse(
+      validators: const Validators(),
+      totalLength: 128 * 1024,
+    );
+    await physical.append(writer, 0, List<int>.filled(4096, 1));
+    await physical.pause(writer);
+
+    final factory = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: const _FreshFactory(),
+    ).withTransferRuntime(transferRuntime).withLoaderSources(
+      <Uri, LoaderTransportSource>{
+        newUri: LoaderTransportSource(
+          revision: 'new-r1',
+          loadBytes: () async => Uint8List(128 * 1024),
+        ),
+      },
+    );
+    final reader = factory.create(
+      chapter: chapter,
+      sessionId: 'late-bound-page-stream',
+    );
+
+    final stream = reader.pageStream(chapter.pages.single);
+    expect(transferRuntime.registry.findExact(newId), isNull,
+        reason: 'presentation projection must not acquire physical ownership');
+    expect(stream.identity, newId);
+    expect(stream.committedLength, 0);
+
+    reader.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+    reader.accept(
+      ReaderObs(
+        sessionId: 'late-bound-reader',
+        currentIndex: 0,
+        stableIndex: 0,
+        interaction: Interaction.idle,
+        logicalPosition: 0,
+        velocity: 0,
+        currentCoverage: Coverage(
+          pageIndex: 0,
+          assetKey: chapter.pages.single.assetKey,
+          fraction: 1,
+        ),
+        direction: ReadingDirection.ltr,
+        timestamp: DateTime.utc(2026),
+        monotonicMicros: 1,
+      ),
+    );
+
+    expect(transferRuntime.registry.resolvePhysicalId(newId), oldId);
+    expect(transferRuntime.registry.find(newId), same(physical));
+    expect(transferRuntime.registry.findExact(newId), isNull);
+    expect(stream.committedLength, 4096,
+        reason: 'logical stream must project the resolved physical partial');
+    expect(transferRuntime.registry.sessions, hasLength(1));
+
+    await reader.dispose();
+    await transferRuntime.dispose();
   });
 
   test('shared physical trace sink emits each demand once across Readers', () async {

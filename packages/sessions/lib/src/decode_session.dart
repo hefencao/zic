@@ -486,12 +486,20 @@ final class DecodeSession {
       _setState(DecodeState.ready);
       return snapshot;
     } on Failure catch (error) {
+      if (error.code != ErrorCode.cancelled &&
+          error.code == ErrorCode.decode &&
+          _deferUnsealedInitialDecodeFailure(source)) {
+        return snapshot;
+      }
       if (error.code != ErrorCode.cancelled) {
         _restartCursorWhenHolderEmpty = true;
         _setFailure(error);
       }
       rethrow;
     } on Object catch (error) {
+      if (_deferUnsealedInitialDecodeFailure(source)) {
+        return snapshot;
+      }
       final failure = Failure(
         code: ErrorCode.decode,
         message: 'frame decode failed',
@@ -501,6 +509,32 @@ final class DecodeSession {
       _setFailure(failure);
       throw failure;
     }
+  }
+
+
+  bool _deferUnsealedInitialDecodeFailure(EncodedSource source) {
+    if (source.sealed || (_holder?.depth ?? 0) > 0) return false;
+    _waitingSourceSinceMicros ??= clock.nowMicros();
+    _restartCursorWhenHolderEmpty = true;
+    _requiredSourceLength = prefixHints.recordNeedMoreData(
+      id: id.download,
+      frameIndex: _nextFrameHintIndex,
+      sourceLength: source.length,
+    );
+    _failure = null;
+    _emit(
+      TraceEventKind.retryScheduled,
+      <String, Object?>{
+        'stage': 'decode-provisional-prefix-failure',
+        'frame': _nextFrameHintIndex,
+        'sourceLength': source.length,
+        'nextSourceLength': _requiredSourceLength,
+        'sealed': false,
+        'decodedPrefixFrames': _maxDecodedPrefixFrames,
+      },
+    );
+    _setState(DecodeState.waitingSource);
+    return true;
   }
 
   int trimBytes(int maxBytes, {int minDepth = 0}) {

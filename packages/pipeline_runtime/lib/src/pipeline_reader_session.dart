@@ -761,6 +761,7 @@ final class PipelineReaderSession {
     }
     _holdStartupArtifactPressureFor(currentDownload);
     binding.accept(observation);
+    _syncPageStreams();
     transferProgress.select(_downloads.find(currentDownload));
     _syncStartupArtifactPressure();
     artifactReadScheduler.refresh();
@@ -841,6 +842,9 @@ final class PipelineReaderSession {
       output._dispose();
     }
     _pageOutputs.clear();
+    for (final stream in _pageStreams.values) {
+      stream.dispose();
+    }
     _pageStreams.clear();
     trace.record(
       traceEvent(
@@ -879,7 +883,10 @@ final class PipelineReaderSession {
     final id = readerPageDownloadId(chapter, asset);
     return _pageStreams.putIfAbsent(
       id.key,
-      () => PipelinePageStream.fromSession(_downloads.get(id)),
+      () => PipelinePageStream.forDownload(
+        id,
+        resolvePhysical: () => _downloads.find(id),
+      )..refreshBinding(),
     );
   }
 
@@ -1062,8 +1069,9 @@ final class PipelineReaderSession {
       return hotBytes;
     }
 
-    final session = _downloads.get(id);
-    if ((session.state != DownloadState.promoted ||
+    final session = _downloads.find(id);
+    if ((session == null ||
+            session.state != DownloadState.promoted ||
             session.residentBodyBacked) &&
         cache != null) {
       final readStarted = clock.nowMicros();
@@ -1087,7 +1095,7 @@ final class PipelineReaderSession {
             readMicros: readMicros,
             memoryHit: cached.memoryHit,
             joined: cached.joined,
-            sessionState: session.state.name,
+            sessionState: session?.state.name,
           );
           return cached.bytes;
         }
@@ -1112,13 +1120,19 @@ final class PipelineReaderSession {
       }
     }
 
+    if (session == null) {
+      throw const Failure(
+        code: ErrorCode.invalidState,
+        message: 'presentation requested bytes before transfer acquisition',
+      );
+    }
     if (session.state != DownloadState.promoted) {
       await _waitForPromotion(session, token);
     }
     token.throwIfCancelled();
     if (session.residentBodyBacked &&
         _isDirectImmutableLocalUri(asset.uri)) {
-      return _readDirectImmutableSource(asset, id, token);
+      return _readDirectImmutableSource(asset, id, session, token);
     }
     final artifactReadStarted = clock.nowMicros();
     final cacheRead = cache == null
@@ -1158,10 +1172,10 @@ final class PipelineReaderSession {
   Future<Uint8List> _readDirectImmutableSource(
     PageAsset asset,
     DownloadId id,
+    DownloadSession session,
     MediaLoadToken token,
   ) async {
     final started = clock.nowMicros();
-    final session = _downloads.get(id);
     final resumeValidators = session.resumeValidatorsFor(asset.uri);
     final response = await _baseTransportFor(asset.uri).open(
       asset.uri,
@@ -1470,7 +1484,9 @@ final class PipelineReaderSession {
   }
 
   bool _startupFirstOutputReady(DecodeId id) {
-    final download = _downloads.get(id.download).snapshot;
+    final session = _downloads.find(id.download);
+    if (session == null) return false;
+    final download = session.snapshot;
     if (download.state == DownloadState.failed ||
         download.state == DownloadState.disposed) {
       return true;
@@ -1483,7 +1499,9 @@ final class PipelineReaderSession {
   }
 
   bool _startupOutputReady(DecodeId id) {
-    final download = _downloads.get(id.download).snapshot;
+    final session = _downloads.find(id.download);
+    if (session == null) return false;
+    final download = session.snapshot;
     if (download.state == DownloadState.failed ||
         download.state == DownloadState.disposed) {
       return true;
@@ -1547,6 +1565,12 @@ final class PipelineReaderSession {
       }
     }
     return null;
+  }
+
+  void _syncPageStreams() {
+    for (final stream in _pageStreams.values) {
+      stream.refreshBinding();
+    }
   }
 
   void _syncPageOutputs() {
@@ -1658,6 +1682,9 @@ final class PipelineReaderSession {
     await _media.close();
     final mediaCloseMicros = clock.nowMicros() - mediaCloseStartedAtMicros;
     _ioTransport.close(force: true);
+    for (final stream in _pageStreams.values) {
+      stream.dispose();
+    }
     _pageStreams.clear();
     trace.record(
       traceEvent(

@@ -1,3 +1,9 @@
+## 0.31.0-dev.242：Acquire-before-projection physical closure + provisional WebP prefix decode
+
+- 07:51真机Trace确认“同图不同progress”不是progress widget问题：current页面在demand reconcile前由`PipelinePageStream`调用`DownloadRegistry.get(exact)`提前创建exact physical session，使composition verified-equivalence resolver命中`findExact(exact)`后无法acquire-time alias；neighbor/prefetch因没有该presentation副作用反而能复用旧partial。现Pipeline所有presentation/read-only路径只允许`find`，physical session只能由transfer acquire/reconcile创建；PageStream先以logical identity存在，reconcile完成后再refresh到resolved physical owner。
+- `PipelinePageStream`不暴露session注入API，只持有Pipeline-owned non-creating resolver；Reader retain/dispose会显式解除其snapshot listener。`loadBytes`、direct immutable read与startup readiness同步删除隐式`_downloads.get()`，避免其他presentation fallback再次制造exact owner。
+- 同一Trace唯一decode `taskFailed`发生在current WebP首帧、source=786432且unsealed，后续同一图片source增长到8,380,120后可连续解码。DecodeSession现仅对“unsealed + 尚无成功帧”的decode exception沿既有prefix-hint/source-wake路径降级为provisional wait；sealed source或已有成功帧后的异常仍保持authoritative failure。跨session rank不再新增策略分支：verified-equivalent current先统一到一个physical task后继续使用dev.241统一rank。
+
 ## 0.31.0-dev.241：Unified transfer policy rank
 
 - 收口dev.237–240逐步堆出的provider handoff情况分支：`orphaned/high-priority/strict-higher/restart-cost`不再各自决定控制流。Pipeline仍只产出semantic demand priority；NetLane现公开`NetPolicyRank`，用同一restart-cost retention曲线计算incumbent effective rank并拥有rank margin比较；provider owner只提交candidate priority与incumbent base priority。

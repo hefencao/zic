@@ -4,8 +4,11 @@ import 'package:domain/domain.dart';
 import 'package:sessions/sessions.dart';
 import 'package:transport/transport.dart' show ContentKind;
 
-/// Presentation-safe transfer projection for one Pipeline-owned page.
+/// Presentation-safe transfer projection for one Pipeline-owned logical page.
 ///
+/// The logical [identity] is stable across presentation rebuilds, while the
+/// bound physical [DownloadSession] is selected only after transfer demand
+/// reconciliation has had a chance to resolve verified-equivalent aliases.
 /// EncodedSource, cursor, artifact and session objects never cross this
 /// boundary. WebP rendering is exposed separately through
 /// PipelinePageOutputStream.
@@ -46,39 +49,106 @@ typedef PipelinePageStreamListener = void Function(
 );
 
 final class PipelinePageStream {
-  PipelinePageStream._(this._session);
+  PipelinePageStream.forDownload(
+    this.identity, {
+    required DownloadSession? Function() resolvePhysical,
+  }) : _resolvePhysical = resolvePhysical;
 
-  final DownloadSession _session;
-  final Map<PipelinePageStreamListener, DownloadSnapshotListener> _listeners =
-      <PipelinePageStreamListener, DownloadSnapshotListener>{};
+  final DownloadId identity;
+  final DownloadSession? Function() _resolvePhysical;
+  DownloadSession? _session;
+  final Set<PipelinePageStreamListener> _listeners =
+      <PipelinePageStreamListener>{};
 
-  static PipelinePageStream fromSession(DownloadSession session) =>
-      PipelinePageStream._(session);
+  static const PipelinePageStreamSnapshot _idle = PipelinePageStreamSnapshot(
+    state: PipelinePageTransferState.idle,
+    committedLength: 0,
+    totalLength: null,
+    kind: null,
+    failure: null,
+  );
 
-  PipelinePageStreamSnapshot get snapshot => _project(_session.snapshot);
-  int get committedLength => _session.committedLength;
-  PipelinePageTransferState get state => _state(_session.state);
-  DownloadId get identity => _session.id;
+  PipelinePageStreamSnapshot get snapshot {
+    final session = _session;
+    return session == null ? _idle : _project(session.snapshot);
+  }
 
-  Future<Uint8List> readPrefix(int maxBytes) async =>
-      Uint8List.fromList(await _session.artifact.readPrefix(maxBytes));
+  int get committedLength => _session?.committedLength ?? 0;
+  PipelinePageTransferState get state {
+    final session = _session;
+    return session == null
+        ? PipelinePageTransferState.idle
+        : _state(session.state);
+  }
+
+  Future<Uint8List> readPrefix(int maxBytes) async {
+    final session = _session;
+    if (session == null || maxBytes <= 0) return Uint8List(0);
+    return Uint8List.fromList(await session.artifact.readPrefix(maxBytes));
+  }
 
   void addListener(
     PipelinePageStreamListener listener, {
     bool fireImmediately = true,
   }) {
-    if (_listeners.containsKey(listener)) return;
-    void wrapped(DownloadSnapshot snapshot) => listener(_project(snapshot));
-    _listeners[listener] = wrapped;
-    _session.addSnapshotListener(wrapped, fireImmediately: fireImmediately);
+    if (!_listeners.add(listener)) return;
+    if (_listeners.length == 1) {
+      _session?.addSnapshotListener(
+        _handleSessionSnapshot,
+        fireImmediately: false,
+      );
+    }
+    if (fireImmediately) listener(snapshot);
   }
 
   void removeListener(PipelinePageStreamListener listener) {
-    final wrapped = _listeners.remove(listener);
-    if (wrapped != null) _session.removeSnapshotListener(wrapped);
+    if (!_listeners.remove(listener)) return;
+    if (_listeners.isEmpty) {
+      _session?.removeSnapshotListener(_handleSessionSnapshot);
+    }
   }
 
-  PipelinePageStreamSnapshot _project(DownloadSnapshot snapshot) =>
+  /// Rebinds this logical projection to the already-resolved physical owner.
+  ///
+  /// This method deliberately accepts `null`: presentation may exist before a
+  /// transfer demand is reconciled, but that must never create a physical
+  /// session as a side effect. A later observation binds the same logical
+  /// projection to whichever physical session the transfer owner selected.
+  void refreshBinding() {
+    final session = _resolvePhysical();
+    if (identical(_session, session)) return;
+    final observing = _listeners.isNotEmpty;
+    if (observing) {
+      _session?.removeSnapshotListener(_handleSessionSnapshot);
+    }
+    _session = session;
+    if (observing) {
+      session?.addSnapshotListener(
+        _handleSessionSnapshot,
+        fireImmediately: false,
+      );
+      _broadcast(snapshot);
+    }
+  }
+
+  void dispose() {
+    if (_listeners.isNotEmpty) {
+      _session?.removeSnapshotListener(_handleSessionSnapshot);
+    }
+    _listeners.clear();
+    _session = null;
+  }
+
+  void _handleSessionSnapshot(DownloadSnapshot snapshot) =>
+      _broadcast(_project(snapshot));
+
+  void _broadcast(PipelinePageStreamSnapshot snapshot) {
+    for (final listener in _listeners.toList(growable: false)) {
+      listener(snapshot);
+    }
+  }
+
+  static PipelinePageStreamSnapshot _project(DownloadSnapshot snapshot) =>
       PipelinePageStreamSnapshot(
         state: _state(snapshot.state),
         committedLength: snapshot.committedLength,
