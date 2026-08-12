@@ -1,3 +1,8 @@
+## 0.31.0-dev.232：Same-epoch encoded source rebind
+- 00:38真机Trace出现3次decode `partial-source taskFailed`，但对应页面随后随source增长恢复；根因不是libwebp终局损坏，而是Reader-local `Ingress.rebuild()`可在同一SourceEpoch内替换EncodedSource，DecodeSession却只按epoch复用旧cursor。
+- DecodeSession现在把cursor binding收口为`SourceEpoch + EncodedSource实例identity`；same-epoch source replacement会释放旧cursor/holder并绑定当前authoritative source，不增加外层retry、不吞未sealed异常。
+- 新增same-epoch projection rebuild行为回归与dev.232 ownership gate；本Trace未命中`stored-required-exact-alias`，因此dev.231 required exact设备验证仍保持待验证。
+
 ## 0.31.0-dev.231：Required exact durable target without physical-anchor copy
 - 00:19真机Trace确认dev.230 equivalence-only artifact ownership稳定：43次acquire alias、无task/session/writer failure，cold partial等价恢复继续命中；普通Reader已有等价durable body时出现`skip-verified-equivalent-durable`。
 - required offline completion不再先materialize physical anchor再复制到consumer exact ID；promotion handoff读取physical owner的required exact targets，直接把hot/resident bytes落到required exact identity。普通Reader无required target时保持原physical exact/verified-equivalent skip语义。

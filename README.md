@@ -28,7 +28,7 @@ packages/resource_cache/   封面、详情、搜索和元数据响应缓存
 packages/transport/        可取消、可分块 encoded-byte transport 合同
 packages/storage/          partial、seal、promotion、索引和临时 workspace
 packages/downloads/        页面 artifact cache、来源 transport、章节/整本下载
-packages/sessions/         Download/Decode/Upload session、lane、holder、timer
+packages/sessions/         Download/Decode/Upload session、Reader-local decode source binding、lane、holder、timer
 packages/pipeline/         Reader observation、角色窗口和纯 demand policy
 packages/pipeline_runtime/ Reader 资源会话组合、retention 和只读页面流
 packages/pipeline_native/  native source/cursor/uploader/output 原子能力组合

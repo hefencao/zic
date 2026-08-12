@@ -94,6 +94,84 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('rebinds when ingress replaces encoded source inside the same epoch',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'decode_same_epoch_source_rebind_test_',
+    );
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPold'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${download.id.key}',
+      ingress: ingress,
+    );
+    download.attachIngressProjection(projection);
+    final factory = _CursorFactory();
+    final session = DecodeSession(
+      id: _decodeId(download.id),
+      download: download,
+      ingress: projection,
+      cursors: factory,
+      clock: _Clock(),
+    );
+
+    final first = await session.fill(
+      demand: const DecodeDemand(
+        role: PageRole.current,
+        priority: 1000,
+        targetWatermark: 1,
+        reason: 'initial-source',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    final firstSource = projection.source;
+    expect(first.depth, 1);
+    expect(factory.created, 1);
+
+    await projection.rebuild(
+      epoch: download.epoch,
+      chunks: Stream<List<int>>.value('RIFF....WEBPnew'.codeUnits),
+      sealed: false,
+    );
+    expect(projection.source, isNot(same(firstSource)));
+    expect(download.epoch, const SourceEpoch(0));
+
+    final second = await session.fill(
+      demand: const DecodeDemand(
+        role: PageRole.current,
+        priority: 1000,
+        targetWatermark: 1,
+        reason: 'replacement-source',
+        expirationRevision: 2,
+      ),
+      revision: 2,
+      cancel: CancelToken(),
+    );
+
+    expect(second.epoch, const SourceEpoch(0));
+    expect(second.depth, 1);
+    expect(factory.created, 2,
+        reason: 'same-epoch source replacement must invalidate the old cursor');
+
+    session.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
   test('promotes an already queued native-style decode when page becomes current',
       () async {
     final temp = await Directory.systemTemp.createTemp(

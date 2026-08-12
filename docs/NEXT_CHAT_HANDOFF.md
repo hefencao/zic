@@ -1,5 +1,5 @@
-# dev.231 后续交接
-- dev.231：00:19真机Trace确认dev.230 hard alias删除稳定，43次acquire alias无task/session/writer failure；现收口required offline durable target：physical A被required exact B共享时，promotion handoff直接materialize B，不再先写A再复制B。`stored-required-exact-alias`用于审计；普通Reader无required target仍保持physical exact/verified-equivalent skip。下一步用chapter+Reader同transfer真机验证A不会因B required command新增exact durable副本，并继续观察ambiguous owners/proof晚恢复。
+# dev.232 后续交接
+- dev.232：00:38 Trace的3次`partial-source taskFailed`定位为same-epoch encoded source replacement后DecodeSession仍复用旧cursor；现binding要求SourceEpoch与EncodedSource实例identity同时一致，projection rebuild换source会重绑。下一步真机确认这3类failure归零，并补做dev.231 `stored-required-exact-alias` Reader+required chapter共享physical transfer场景。
 `dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`

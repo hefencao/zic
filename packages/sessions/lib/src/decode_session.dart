@@ -119,6 +119,7 @@ final class DecodeSession {
   DecodeState _state = DecodeState.idle;
   SourceEpoch _epoch = const SourceEpoch(0);
   CursorBinding? _cursor;
+  EncodedSource? _boundSource;
   FrameHolder? _holder;
   Failure? _failure;
   int _revision = 0;
@@ -553,6 +554,7 @@ final class DecodeSession {
     _cursor?.frames.dispose();
     _holder?.dispose();
     _cursor = null;
+    _boundSource = null;
     _holder = null;
     _nextFrameHintIndex = 0;
     _requiredSourceLength = 0;
@@ -560,6 +562,7 @@ final class DecodeSession {
     _frameTimings.clear();
     final startedAt = clock.nowMicros();
     _cursor = cursors.create(id: id, source: source, epoch: epoch.value);
+    _boundSource = source;
     final elapsed = clock.nowMicros() - startedAt;
     _holder = FrameHolder(epoch: epoch);
     _failure = null;
@@ -588,13 +591,16 @@ final class DecodeSession {
   }
 
   int _bind(EncodedSource source, SourceEpoch epoch) {
-    if (_cursor != null && _epoch == epoch) {
+    if (_cursor != null &&
+        _epoch == epoch &&
+        identical(_boundSource, source)) {
       return 0;
     }
     _releaseBinding();
     _epoch = epoch;
     final startedAt = clock.nowMicros();
     _cursor = cursors.create(id: id, source: source, epoch: epoch.value);
+    _boundSource = source;
     final elapsed = clock.nowMicros() - startedAt;
     _holder = FrameHolder(epoch: epoch);
     _failure = null;
@@ -605,6 +611,7 @@ final class DecodeSession {
     _cursor?.frames.dispose();
     _holder?.dispose();
     _cursor = null;
+    _boundSource = null;
     _holder = null;
     _nextFrameHintIndex = 0;
     _requiredSourceLength = 0;

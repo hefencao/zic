@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.231` / App `0.31.0+231`。
+- 当前版本：`0.31.0-dev.232` / App `0.31.0+232`。
+- dev.232：00:38真机Trace出现3次可随source增长恢复的`partial-source taskFailed`。根因是projection可在同一SourceEpoch内rebuild并替换EncodedSource，而DecodeSession只按epoch复用cursor；现cursor binding要求epoch+source实例identity一致，同epoch换source会重绑。新Trace未覆盖`stored-required-exact-alias`，dev.231 required exact设备验证继续待完成。
 - dev.231：00:19真机Trace确认dev.230 hard alias/rekey删除稳定，43次acquire alias且无task/session/writer failure。现将required durable target从physical session anchor拆出：promotion handoff读取physical owner的required exact claims并直接写目标exact ID；`persistPromoted`不再先强制persist physical anchor再二次copy。新增`stored-required-exact-alias`诊断与chapter行为断言，普通Reader durable语义不变。
 - dev.230：23:45真机Trace确认dev.229 cold-partial迁移已生效：`version-durable-partial-reused`为0、`restored-equivalent`真实命中，25次`verified-transfer-acquire-alias`继续工作且无`taskFailed/sessionBusy/writerBusy`；现移除ArtifactCacheManager directed hard alias/rekey及ReusePlan apply/applyExisting/rekeyExisting，显式迁移只登记symmetric verified equivalence。ordinary Reader promotion已有等价durable artifact时不再复制exact body；显式required-completion仍materialize exact durable ID。
 - dev.229：23:03真机Trace确认dev.228删除late takeover后9次`verified-transfer-acquire-alias`继续命中（4 promoted / 4 receiving / 1 failed），无`taskFailed/sessionBusy/writerBusy`或亚秒重复physical start；同时版本warmup仍4次执行旧`version-durable-partial-reused`复制。现将cold partial reuse迁到`PartialDownloadHandoff.restoreInto`：exact partial优先，exact miss才查询direct verified equivalents并选择最长prefix直接恢复，跨版本validators清空；删除`VerifiedArtifactReusePlan.applyDurablePartials`和Home/version warmup partial复制。

@@ -1,6 +1,6 @@
 # zic Implementation Plan
+- P0：dev.232收口Reader-local decode source binding：same-epoch projection rebuild替换EncodedSource时必须重建cursor；复测Trace中的partial-source taskFailed归零，同时继续执行dev.231 Reader+required chapter同physical transfer设备验证。
 ## P0：Image Transfer ownership 正式迁移
-- P0：dev.231继续Phase C durable ownership收口：00:19真机Trace确认dev.230后43次acquire alias无task/session/writer failure。required offline completion改为claim-driven exact durable target，physical A服务required B时直接materialize B，不再先写A再复制B；普通Reader无required target仍按physical exact/verified-equivalent skip。
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环
 - dev.195 的playable partial单调性继续冻结：Range probe/full-body catch-up的取消、EOF或mismatch只能失败当前 network attempt，旧partial/Ingress不变；metadata损坏只丢网络知识。dev.196不改DownloadSession authority、DecodeSession、NetLane、network=5、1000/780、7/3、2/1、7/5/3/2，也不增加bandwidth scheduler/framing。
