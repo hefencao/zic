@@ -1,3 +1,9 @@
+## 0.31.0-dev.250：ByteResponse flow-control capability API 闭包修复
+
+- 修复dev.249真实Flutter/Dart编译回归：`ByteResponse`构造函数已接收`flowControl`，但类体漏声明instance field，导致downloads wrapper与DownloadJob的`response.flowControl`全部无法解析；`downloads_bridge`同时因downloads facade未导出`ByteResponseFlowControl`而无法解析enum。
+- capability ownership不变：`ByteResponseFlowControl`与字段唯一属于transport；downloads只在既有ByteResponse facade export中补导出该enum给downloads_bridge，不新增extension、diagnostics字符串分支或downloads_bridge→transport第二依赖。dev.249的3/7 frame-credit/backpressure policy与所有水位、NetLane、partial/progress行为完全不改。
+- 新增dev.250 API-closure gate，同时检查enum、constructor parameter、instance field、facade export、direct transport赋值、wrapper透传与DownloadJob消费，避免无Dart环境下再次出现“符号字符串存在但公共API未闭合”的假通过。
+
 ## 0.31.0-dev.249：Animated WebP frame-flow backpressure inside stable 3/7
 
 - 14:13真机Trace确认dev.247/248虽把preempt降到13次，但动画正常scrolling/idle期间46次policyDecision只保7个download demand；这优化了极端partial复用，却退化了更常见的“只看几帧就切页”3/7前瞻浏览。撤销previous2/next4 network eligibility与50MiB whole-body weighted admission：RoleWindow与实际DownloadDemand都恢复完整previous3/next7。

@@ -1,5 +1,5 @@
-# dev.249 后续交接
-- dev.249：14:13 Trace确认dev.247/248虽然把preempt降到13，却把动画normal浏览从完整3/7的11 demand缩到2/4的7 demand，牺牲了更常见的快速浏览。现恢复3/7全部DownloadDemand，删除50MiB whole-body weighted admission；动画只限制每task response-body frame credit：next/next2/previous=5/3/2，远端1帧，水位逐层升到2帧。只有显式stream-backpressure response会暂停`moveNext()`，同一task/response/partial原地resume；连接数本轮仍5+current reserved1。
+# dev.250 后续交接
+- dev.250：修复dev.249真实编译闭包：`ByteResponse.flowControl`现在是transport-owned typed instance field，downloads facade同步导出`ByteResponseFlowControl`给downloads_bridge；所有wrapper继续只透传capability，DownloadJob仍是唯一frame-credit消费方。没有修改3/7、frame水位、NetLane、partial/progress/provider lifetime。新增API闭包gate防止constructor参数/字段/导出半迁移。
 `dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`

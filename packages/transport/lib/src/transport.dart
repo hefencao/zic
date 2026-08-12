@@ -129,6 +129,13 @@ final class ByteResponse {
   final ByteResponseDisposition disposition;
   final ByteResponseBodyAuthority bodyAuthority;
 
+  /// Whether downstream demand suspension on [bytes] is a real upstream
+  /// transport backpressure boundary. This is a transport capability, not a
+  /// scheduling decision; callers may only use it to decide whether pausing
+  /// reads preserves the live response instead of buffering an already
+  /// materialized body.
+  final ByteResponseFlowControl flowControl;
+
   /// Transport-stage timing/route diagnostics for trace consumers.
   ///
   /// This is observational metadata only. Scheduling, retry and cache policy
