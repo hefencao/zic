@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.242` / App `0.31.0+242`。
+- 当前版本：`0.31.0-dev.243` / App `0.31.0+243`。
+- dev.243：09:03真机Trace确认dev.242已让同图partial/progress一致，但late Reader synchronized replay在physical prefix继续增长时反复rebuild同epoch ingress，`reset()`会dispose刚被decode绑定的native source；12次task failure中11次为`native source is disposed`。现late replay追平期间source不发布，同epoch只append artifact suffix，稳定加入fan-out后一次publish。另删除最后claim detach时receiving/pre-open双策略：任何already-admitted active task统一降rank 0，由NetLane唯一policy决定抢占；queued未admit仍可cancelQueued。
 - dev.242：07:51真机Trace定位到current presentation在transfer acquire前调用`DownloadRegistry.get(exact)`，提前制造exact physical owner，导致同一verified-equivalent图片出现不同partial/progress并把跨session rank拆成多个独立task。现presentation/read-only路径全部改为non-creating `find`，`PipelinePageStream`在reconcile后绑定resolved physical owner；同时unsealed且尚无成功帧的WebP decode exception按prefix growth等待而非立即failed，sealed/post-frame错误仍终局失败。
 - dev.241：进一步审查确认dev.237–240把同一网络竞争规则拆成provider orphan/high-priority/strict-higher等重复情况判断。现Pipeline仍只给semantic priority，NetLane公开统一`NetPolicyRank`并以incumbent base priority + restart-cost retention计算effective rank；provider takeover只比较candidate rank与该effective rank。claim live/orphan只决定incumbent base来源，same-exact与transport dispose保留为identity/lifecycle invariant。full-body catch-up也收为`TransferRankPolicy`的demand-rank vs cost-rank比较，owner不再散落1MiB/8MiB、820/900条件。
 - dev.239：05:09真机Trace确认dev.238已消除claim orphaning造成的provider churn：无orphan handoff、无`full-body-prefix-catchup-aborted`，duplicate prefix仅一次64KiB overlap proof；但Reader consumer真实dispose仍取消loader-backed active task，4.064/4.764/7.995MiB hot partial随后需重新resume，其中4.064MiB因服务器Range→200进入full-body catch-up。现active task可显式取得task-retained transport lease；loader-backed URI的controlled loader由composition/source gateway拥有且无Reader closeable transport，因此可越过Reader dispose继续同一physical writer/partial；`IoTransport`继续consumer-bound cancel barrier。sessions只认识通用transport capability，不感知source类型。

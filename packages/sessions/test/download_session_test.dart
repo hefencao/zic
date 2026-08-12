@@ -223,9 +223,12 @@ void main() {
     expect(session.snapshot.ingressProjectionCount, 2);
     expect(projectionA.snapshot.length, first.length + 4);
     expect(projectionB.snapshot.length, first.length + 4);
+    final projectionBSource = projectionB.source;
+    expect(projectionBSource, isNotNull);
 
     expect(session.detachIngressProjection('reader-a'), isTrue);
     await session.append(writer, first.length + 4, <int>[9, 10]);
+    expect(identical(projectionB.source, projectionBSource), isTrue);
     expect(projectionA.snapshot.length, first.length + 4);
     expect(projectionB.snapshot.length, first.length + 6);
     expect(session.snapshot.ingressProjectionCount, 1);
@@ -260,6 +263,44 @@ void main() {
     ingresses.dispose();
     sources.dispose();
     expect(session.snapshot.ingressProjectionCount, 0);
+  });
+
+  test('late Reader projection stays unpublished until replay is authoritative',
+      () async {
+    final bytes = <int>[...'RIFF....WEBP'.codeUnits, 1, 2, 3, 4, 5, 6];
+    session.beginResidentImmutableIngress(
+      validators: const Validators(),
+      totalLength: bytes.length,
+    );
+    session.appendResidentImmutableIngress(0, bytes);
+    session.sealResidentImmutableIngress();
+
+    final controller = StreamController<List<int>>();
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'reader-staged',
+      residentReplaySource: (_, __) async => controller.stream,
+    );
+
+    final projection = ingresses.get(session);
+    controller.add(bytes.sublist(0, 12));
+    await Future<void>.delayed(Duration.zero);
+    expect(projection.source, isNull);
+    expect(projection.snapshot.sourceReady, isFalse);
+
+    controller.add(bytes.sublist(12));
+    await controller.close();
+    await ingresses.settled(session.id);
+    expect(projection.source, isNotNull);
+    expect(projection.snapshot.sourceReady, isTrue);
+    expect(projection.snapshot.length, bytes.length);
+
+    ingresses.dispose();
+    sources.dispose();
   });
 
   test('resident-cache late Reader replays from external byte authority',

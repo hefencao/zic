@@ -29,32 +29,59 @@ physical_owner_path = (
     if (ROOT / 'packages/sessions/lib/src/download_transfer_owner.dart').exists()
     else 'packages/sessions/lib/src/live_coordinator.dart'
 )
-require(
-    physical_owner_path,
-    'final taskIsActive = taskKey != null && net.isActive(taskKey);',
-    'final receiving = session?.state == DownloadState.receiving;',
-    'if (receiving && taskIsActive) {',
-    "reason: 'retained-background'",
-    'else if (taskKey != null && taskIsActive) {',
-    'net.cancel(taskKey);',
-    'net.cancelQueued(taskKey);',
-)
+pubspec_text = read('apps/app/pubspec.yaml')
+build_match = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec_text, re.MULTILINE)
+build = int(build_match.group(1)) if build_match is not None else 0
+if build < 243:
+    require(
+        physical_owner_path,
+        'final taskIsActive = taskKey != null && net.isActive(taskKey);',
+        'final receiving = session?.state == DownloadState.receiving;',
+        'if (receiving && taskIsActive) {',
+        "reason: 'retained-background'",
+        'else if (taskKey != null && taskIsActive) {',
+        'net.cancel(taskKey);',
+        'net.cancelQueued(taskKey);',
+    )
+else:
+    require(
+        physical_owner_path,
+        'final taskIsActive = taskKey != null && net.isActive(taskKey);',
+        'taskKey != null && taskIsActive',
+        "reason: 'retained-background'",
+        'Logical demand detachment never decides whether already-admitted work',
+        'net.cancelQueued(taskKey);',
+    )
+    reject(
+        physical_owner_path,
+        'final receiving = session?.state == DownloadState.receiving;',
+        'A pre-open run is not worth retaining',
+    )
 reject(
     physical_owner_path,
     'if (session?.activeRun == true && taskKey != null) {',
 )
 
-require(
-    'packages/sessions/test/live_coordinator_test.dart',
+live_test_tokens = [
     'active nonresumable transfer survives window detach and is not reopened',
     'expect(registry.find(id)?.state, DownloadState.receiving);',
-    'detached pre-open run yields its slot to adjacent previous',
     'expect(openingSession?.state, DownloadState.queued);',
     'await opening.cancelled.future.timeout',
     'await previous.opened.future.timeout',
     'role: PageRole.previous,',
     'priority: 780,',
+]
+live_test_tokens.append(
+    'detached pre-open run yields its slot to adjacent previous'
+    if build < 243 else
+    'detached pre-open run drops to rank zero and yields its slot by policy'
 )
+if build >= 243:
+    live_test_tokens.extend((
+        'expect(coordinator.net.priorityOf(openingKey), 0);',
+        'expect(opening.cancelled.isCompleted, isFalse);',
+    ))
+require('packages/sessions/test/live_coordinator_test.dart', *live_test_tokens)
 
 require(
     'packages/pipeline/lib/src/heuristic_policy.dart',

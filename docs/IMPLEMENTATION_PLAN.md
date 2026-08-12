@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：dev.242真机首先验证同一verified-equivalent图片跨版本current/neighbor只剩一个physical session与一致committed progress；`pageStream`创建不得新增exact session，alias必须发生在transfer acquire/reconcile。同步验证unsealed首帧decode exception出现`decode-provisional-prefix-failure`后随source增长恢复且不再投影failed；跨session rank只在physical dedup成立后评估，不新增role/situation分支。继续量化真实`Range -> 200` duplicate与dev.231 `stored-required-exact-alias`。
+- P0：dev.243真机首先验证late Reader加入增长中的shared physical partial时不再出现`native source is disposed`，projection在replay追平期间保持source不可见、attach后同epoch持续append且source identity稳定，Animated WebP恢复边下边播；同时验证跨session短暂demand gap只把already-admitted active task降到rank 0，由NetLane按dev.241统一policy真正抢占，不能由DownloadState/pre-open分支直接cancel。继续量化真实`Range -> 200` duplicate与dev.231 `stored-required-exact-alias`。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环

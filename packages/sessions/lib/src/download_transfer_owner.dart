@@ -533,7 +533,6 @@ final class DownloadTransferOwner {
     final session = registry.find(id);
     final taskKey = _networkTaskKeys[id];
     final taskIsActive = taskKey != null && net.isActive(taskKey);
-    final receiving = session?.state == DownloadState.receiving;
     if (session != null &&
         session.demanded &&
         _handoffActiveProviderIfNeeded(
@@ -550,17 +549,17 @@ final class DownloadTransferOwner {
         session.effectivePriority,
         reason: 'remaining-consumer',
       );
-    } else if (receiving && taskIsActive) {
+    } else if (taskKey != null && taskIsActive) {
+      // Logical demand detachment never decides whether already-admitted work
+      // deserves to keep its slot. Source planning, transport open and receiving
+      // are all paid active work; lower the task to the same rank-0 background
+      // policy and let NetLane preempt it when a better-ranked candidate exists.
       _migrateDownloadPriority(
         id,
-        taskKey!,
+        taskKey,
         0,
         reason: 'retained-background',
       );
-    } else if (taskKey != null && taskIsActive) {
-      // A pre-open run is not worth retaining after its final logical demand
-      // disappears. An established receiving writer may finish at priority 0.
-      net.cancel(taskKey);
     } else {
       if (taskKey != null) {
         net.cancelQueued(taskKey);

@@ -70,6 +70,58 @@ void main() {
     expect(registry.sessions, hasLength(1));
   });
 
+  test('detached active pre-open work drops to rank zero and yields by NetLane policy',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('transfer_owner_preopen_rank_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final net = NetLane(maxActive: 1);
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: net,
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final openingId = _id('opening-rank-zero');
+    final nextId = _id('next-preempts-opening');
+    final opening = _BlockedControlledTransport();
+    final next = _CountingBytesTransport('RIFF....WEBPnext'.codeUnits);
+    final a = owner.attachConsumer(
+      scopeId: 'reader-opening',
+      transportFor: (_) => opening,
+      traceSink: const NoopTraceSink(),
+    );
+    final b = owner.attachConsumer(
+      scopeId: 'reader-next',
+      transportFor: (_) => next,
+      traceSink: const NoopTraceSink(),
+    );
+
+    a.replaceDemands('reader-opening', 1, _desired(openingId, priority: 820));
+    await opening.opened.future;
+    final openingKey = owner.taskKeyFor(openingId)!;
+    expect(net.isActive(openingKey), isTrue);
+
+    a.replaceDemands('reader-opening', 2, const <DownloadId, TransferDemand>{});
+    expect(net.isActive(openingKey), isTrue);
+    expect(net.priorityOf(openingKey), 0);
+    expect(opening.cancelled.isCompleted, isFalse);
+
+    b.replaceDemands('reader-next', 1, _desired(nextId, priority: 780));
+    await opening.cancelled.future.timeout(const Duration(seconds: 1));
+    await b.idle();
+    expect(next.opens, 1);
+    expect(registry.get(nextId).state, DownloadState.promoted);
+  });
+
   test('queued priority revisions keep one physical transfer task identity', () async {
     final temp = await Directory.systemTemp.createTemp('transfer_owner_queue_');
     addTearDown(() async => temp.delete(recursive: true));

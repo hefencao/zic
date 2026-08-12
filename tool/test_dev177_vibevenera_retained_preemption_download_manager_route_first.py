@@ -19,14 +19,27 @@ coordinator = read('packages/sessions/lib/src/live_coordinator.dart')
 transfer_owner_path = ROOT / 'packages/sessions/lib/src/download_transfer_owner.dart'
 physical_owner = (transfer_owner_path.read_text(encoding='utf-8')
                   if transfer_owner_path.exists() else coordinator)
-for token in (
+build_match = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
+build = int(build_match.group(1)) if build_match is not None else 0
+retention_tokens = [
     "reason: 'retained-background'",
-    'final receiving = session?.state == DownloadState.receiving;',
-    'net.cancel(taskKey);',
     'net.cancelQueued(taskKey);',
     '_migrateDownloadPriority(',
-):
+]
+if build < 243:
+    retention_tokens.extend((
+        'final receiving = session?.state == DownloadState.receiving;',
+        'net.cancel(taskKey);',
+    ))
+else:
+    retention_tokens.extend((
+        'taskKey != null && taskIsActive',
+        'Logical demand detachment never decides whether already-admitted work',
+    ))
+for token in retention_tokens:
     require(physical_owner, token, 'VibeVenera logical-detach retention')
+if build >= 243:
+    forbid(physical_owner, 'final receiving = session?.state == DownloadState.receiving;', 'state-taxonomy detach retention')
 forbid(physical_owner, 'final wasActive = net.isActive(taskKey);', 'exact detach cancellation')
 
 lane = read('packages/sessions/lib/src/net_lane.dart')

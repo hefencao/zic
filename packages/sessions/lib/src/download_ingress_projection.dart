@@ -23,16 +23,47 @@ final class DownloadIngressProjection {
   final String scopeId;
   final Ingress ingress;
   final Set<SourceListener> _listeners = <SourceListener>{};
+  bool _synchronizedReplayPending = false;
 
-  IngressSnap get snapshot => ingress.snapshot;
-  EncodedSource? get source => ingress.source;
+  IngressSnap get snapshot {
+    final current = ingress.snapshot;
+    if (!_synchronizedReplayPending) return current;
+    return IngressSnap(
+      epoch: current.epoch,
+      length: current.length,
+      kind: current.kind,
+      sealed: current.sealed,
+      sourceReady: false,
+      revision: current.revision,
+      failure: current.failure,
+    );
+  }
+
+  EncodedSource? get source =>
+      _synchronizedReplayPending ? null : ingress.source;
+
+  /// Hides a late-join source while an authoritative physical prefix is being
+  /// replayed into it. Decode must not bind to an intermediate source that may
+  /// still need a same-epoch catch-up or rebuild before physical attachment.
+  void beginSynchronizedReplay() {
+    _synchronizedReplayPending = true;
+  }
+
+  /// Publishes the replayed source only after the physical committed boundary
+  /// has been verified and this projection has joined the live fan-out.
+  void finishSynchronizedReplay() {
+    if (!_synchronizedReplayPending) return;
+    final before = snapshot;
+    _synchronizedReplayPending = false;
+    _notify(before, snapshot);
+  }
 
   void addSourceListener(
     SourceListener listener, {
     bool fireImmediately = true,
   }) {
     _listeners.add(listener);
-    final current = ingress.snapshot;
+    final current = snapshot;
     if (fireImmediately &&
         (current.sourceReady || current.failure != null)) {
       try {
@@ -52,9 +83,9 @@ final class DownloadIngressProjection {
   }
 
   void reset(SourceEpoch epoch) {
-    final before = ingress.snapshot;
+    final before = snapshot;
     ingress.reset(epoch);
-    _notify(before, ingress.snapshot);
+    _notify(before, snapshot);
   }
 
   void append({
@@ -62,15 +93,15 @@ final class DownloadIngressProjection {
     required int offset,
     required List<int> bytes,
   }) {
-    final before = ingress.snapshot;
+    final before = snapshot;
     ingress.append(epoch: epoch, offset: offset, bytes: bytes);
-    _notify(before, ingress.snapshot);
+    _notify(before, snapshot);
   }
 
   void seal(SourceEpoch epoch) {
-    final before = ingress.snapshot;
+    final before = snapshot;
     ingress.seal(epoch);
-    _notify(before, ingress.snapshot);
+    _notify(before, snapshot);
   }
 
   Future<void> rebuild({
@@ -78,15 +109,16 @@ final class DownloadIngressProjection {
     required Stream<List<int>> chunks,
     required bool sealed,
   }) async {
-    final before = ingress.snapshot;
+    final before = snapshot;
     await ingress.rebuild(epoch: epoch, chunks: chunks, sealed: sealed);
-    _notify(before, ingress.snapshot);
+    _notify(before, snapshot);
   }
 
   void fail(Failure failure) {
-    final before = ingress.snapshot;
+    final before = snapshot;
     ingress.fail(failure);
-    _notify(before, ingress.snapshot);
+    _synchronizedReplayPending = false;
+    _notify(before, snapshot);
   }
 
   void detach() {

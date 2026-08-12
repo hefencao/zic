@@ -934,51 +934,90 @@ final class DownloadSession {
     }
     if (identical(existing, projection)) return;
 
-    while (true) {
-      _requireNotDisposed();
-      final revision = _ingressProjectionRevision;
-      final epoch = _epoch;
-      final targetLength = committedLength;
-      final totalLength = _totalLength;
-      final sealed = _state == DownloadState.sealed ||
-          _state == DownloadState.promoted;
-      projection.expectLength(totalLength);
-      final before = projection.snapshot;
-      final Stream<List<int>> chunks;
-      if (_residentBodyBacked) {
-        final replay = residentReplayChunks;
-        if (replay == null) {
-          throw const Failure(
-            code: ErrorCode.invalidState,
-            message: 'resident-cache projection replay requires durable byte authority',
+    projection.beginSynchronizedReplay();
+    try {
+      while (true) {
+        _requireNotDisposed();
+        final revision = _ingressProjectionRevision;
+        final epoch = _epoch;
+        final targetLength = committedLength;
+        final totalLength = _totalLength;
+        final sealed = _state == DownloadState.sealed ||
+            _state == DownloadState.promoted;
+        projection.expectLength(totalLength);
+        final before = projection.snapshot;
+        final current = projection.snapshot;
+
+        // A late projection is unpublished while replay is in flight. Build it
+        // once, then catch up same-epoch growth by appending only the newly
+        // committed artifact suffix. Rebuilding from byte zero on every moving
+        // boundary would dispose a native source that decode may already have
+        // observed and also turns streaming catch-up into quadratic local I/O.
+        final canAppendSuffix = !_residentBodyBacked &&
+            current.epoch == epoch &&
+            current.length > 0 &&
+            current.length <= targetLength &&
+            !current.sealed &&
+            current.failure == null;
+        if (canAppendSuffix) {
+          var offset = current.length;
+          await for (final chunk in artifact.readChunks(
+            start: offset,
+            endExclusive: targetLength,
+          )) {
+            projection.append(epoch: epoch, offset: offset, bytes: chunk);
+            offset += chunk.length;
+          }
+          if (sealed) {
+            projection.seal(epoch);
+          }
+        } else {
+          final Stream<List<int>> chunks;
+          if (_residentBodyBacked) {
+            final replay = residentReplayChunks;
+            if (replay == null) {
+              throw const Failure(
+                code: ErrorCode.invalidState,
+                message: 'resident-cache projection replay requires durable byte authority',
+              );
+            }
+            chunks = await replay(targetLength);
+          } else {
+            chunks = artifact.readChunks(endExclusive: targetLength);
+          }
+          await projection.rebuild(
+            epoch: epoch,
+            chunks: chunks,
+            sealed: sealed,
           );
+          projection.expectLength(totalLength);
         }
-        chunks = await replay(targetLength);
-      } else {
-        chunks = artifact.readChunks(endExclusive: targetLength);
-      }
-      await projection.rebuild(
-        epoch: epoch,
-        chunks: chunks,
-        sealed: sealed,
-      );
-      _traceIngressProjection(projection.scopeId, before, projection.snapshot);
+        _traceIngressProjection(projection.scopeId, before, projection.snapshot);
 
-      final stillSealed = _state == DownloadState.sealed ||
-          _state == DownloadState.promoted;
-      if (_ingressProjectionRevision != revision ||
-          _epoch != epoch ||
-          committedLength != targetLength ||
-          _totalLength != totalLength ||
-          stillSealed != sealed) {
-        continue;
-      }
+        final stillSealed = _state == DownloadState.sealed ||
+            _state == DownloadState.promoted;
+        if (_ingressProjectionRevision != revision ||
+            _epoch != epoch ||
+            committedLength != targetLength ||
+            _totalLength != totalLength ||
+            stillSealed != sealed) {
+          continue;
+        }
 
-      // No await after the state check: later physical mutations see this
-      // projection in the live fan-out before they can append/reset/seal it.
-      _ingressProjections[projection.scopeId] = projection;
-      _notifySnapshot();
-      return;
+        // No await after the state check: later physical mutations see this
+        // projection in the live fan-out before they can append/reset/seal it.
+        // Publish the source only after the fan-out edge exists, so decode can
+        // never bind to an intermediate replay source.
+        _ingressProjections[projection.scopeId] = projection;
+        projection.finishSynchronizedReplay();
+        _notifySnapshot();
+        return;
+      }
+    } catch (error) {
+      // A failed late replay is surfaced by the Reader-local registry. Keeping
+      // the source unpublished prevents a half-replayed native source from
+      // becoming decode authority while that failure is projected.
+      rethrow;
     }
   }
 

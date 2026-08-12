@@ -701,7 +701,7 @@ void main() {
     await retained.close();
   });
 
-  test('detached pre-open run yields its slot to adjacent previous', () async {
+  test('detached pre-open run drops to rank zero and yields its slot by policy', () async {
     final temp =
         await Directory.systemTemp.createTemp('live_preopen_detach_test_');
     addTearDown(() async => temp.delete(recursive: true));
@@ -771,6 +771,26 @@ void main() {
     expect(openingSession?.activeRun, isTrue);
     expect(openingSession?.state, DownloadState.queued);
 
+    final detached = DemandPlan(
+      revision: 2,
+      downloads: const <DownloadId, DownloadDemand>{},
+      decodes: const <DecodeId, DecodeDemand>{},
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: const <ResourceId>{},
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: detached,
+        diff: DemandDiff.between(first, detached),
+        window: RoleWindow(const <int, PageRole>{}),
+      ),
+    );
+    final openingKey = coordinator.downloadTaskKeyFor(openingId)!;
+    expect(coordinator.net.isActive(openingKey), isTrue);
+    expect(coordinator.net.priorityOf(openingKey), 0);
+    expect(opening.cancelled.isCompleted, isFalse);
+
     const previousDemand = DownloadDemand(
       role: PageRole.previous,
       priority: 780,
@@ -778,7 +798,7 @@ void main() {
       expirationRevision: 9,
     );
     final second = DemandPlan(
-      revision: 2,
+      revision: 3,
       downloads: <DownloadId, DownloadDemand>{previousId: previousDemand},
       decodes: const <DecodeId, DecodeDemand>{},
       uploads: const <DecodeId, UploadDemand>{},
@@ -788,7 +808,7 @@ void main() {
       'reader',
       PipelineDelta(
         plan: second,
-        diff: DemandDiff.between(first, second),
+        diff: DemandDiff.between(detached, second),
         window: RoleWindow(const <int, PageRole>{-1: PageRole.previous}),
       ),
     );

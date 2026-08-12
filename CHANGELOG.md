@@ -1,3 +1,9 @@
+## 0.31.0-dev.243：Atomic late ingress publication + active rank-zero retention
+
+- 09:03真机Trace在dev.242 physical partial/progress统一后暴露新的流式回归：12次task failure中11次是`Bad state: native source is disposed`，全部发生在unsealed decode；根因是late Reader synchronized replay在physical committed boundary继续增长时反复`rebuild -> Ingress.reset -> source.dispose`。现late replay在追平期间保持source unpublished，同epoch移动边界只从artifact追加新suffix，稳定接入live fan-out后才一次性publish source。
+- cross-session短暂demand gap仍有一条绕过统一rank的旧控制流：最后claim消失时receiving active会降priority 0，但pre-open/source-plan active却直接`net.cancel()`。现所有already-admitted active task统一降为`retained-background=0`，由NetLane统一policy rank决定何时抢占；只有从未admit的queued task可`cancelQueued`。这也避免直接cancel产生cancelling-active窗口后阻塞普通pressure arbitration。
+- 新增late replay不可见/稳定source identity、pre-open active rank-zero retention与NetLane policy preemption回归；dev.177/dev.184历史gate改为版本感知，不为旧源码形状恢复receiving/pre-open分支。
+
 ## 0.31.0-dev.242：Acquire-before-projection physical closure + provisional WebP prefix decode
 
 - 07:51真机Trace确认“同图不同progress”不是progress widget问题：current页面在demand reconcile前由`PipelinePageStream`调用`DownloadRegistry.get(exact)`提前创建exact physical session，使composition verified-equivalence resolver命中`findExact(exact)`后无法acquire-time alias；neighbor/prefetch因没有该presentation副作用反而能复用旧partial。现Pipeline所有presentation/read-only路径只允许`find`，physical session只能由transfer acquire/reconcile创建；PageStream先以logical identity存在，reconcile完成后再refresh到resolved physical owner。
