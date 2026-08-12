@@ -400,6 +400,17 @@ void main() {
       isEmpty,
     );
     expect(await service.artifactStore.openArtifactStream(newId), isNotNull);
+    expect(await service.artifactStore.openArtifactStream(oldId), isNull);
+    expect(
+      physicalTrace.events.where(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.identityHash == newId.key &&
+            event.payload['action'] == 'stored-required-exact-alias' &&
+            event.payload['physicalIdentityHash'] == oldId.key,
+      ),
+      isNotEmpty,
+    );
     expect(await service.readPage(entry, 0), bytes);
     expect((await service.inspect(entry)).phase, ChapterDownloadPhase.complete);
 

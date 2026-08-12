@@ -1,7 +1,7 @@
 # zic Implementation Plan
 ## P0：Image Transfer ownership 正式迁移
-- P0：dev.230继续Phase C/Phase E收口：23:45真机Trace确认dev.229后`version-durable-partial-reused`归零、`restored-equivalent`真实命中且25次acquire alias无task/session/writer failure。现删除ArtifactCacheManager directed hard alias/rekey与迁移`applyExisting`快照；显式迁移只登记verified equivalence，Reader promotion已有等价durable body时不复制exact副本，required offline completion仍必须materialize exact identity。
-- 后续继续观察`rejected-ambiguous-existing-owners`、equivalence proof恢复时序与exact durable completion：不得为了提高复用率做已存在physical session事后merge，也不得把durable store I/O塞入同步Reader planning；若普通Reader仍大量产生exact duplicate artifact，再从handoff trace定位proof缺失而不是恢复hard alias。
+- P0：dev.231继续Phase C durable ownership收口：00:19真机Trace确认dev.230后43次acquire alias无task/session/writer failure。required offline completion改为claim-driven exact durable target，physical A服务required B时直接materialize B，不再先写A再复制B；普通Reader无required target仍按physical exact/verified-equivalent skip。
+- 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环
 - dev.195 的playable partial单调性继续冻结：Range probe/full-body catch-up的取消、EOF或mismatch只能失败当前 network attempt，旧partial/Ingress不变；metadata损坏只丢网络知识。dev.196不改DownloadSession authority、DecodeSession、NetLane、network=5、1000/780、7/3、2/1、7/5/3/2，也不增加bandwidth scheduler/framing。
 ## P0：Current / Previous 真实执行槽真机闭环

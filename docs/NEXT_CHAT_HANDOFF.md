@@ -1,5 +1,5 @@
-# dev.230 后续交接
-- dev.230：23:45真机Trace确认dev.229迁移闭环：`version-durable-partial-reused`归零、`session-partial-handoff/restored-equivalent`真实命中，25次acquire alias无task/session/writer failure；未首帧host中位仅约34ms、最长约1.53s，主要为快速scrub。现删除ArtifactCacheManager directed hard alias/rekey和ReusePlan apply/applyExisting/rekeyExisting；显式迁移只登记verified equivalence，普通Reader已有等价durable artifact时不复制exact副本，required offline completion仍materialize exact ID。下一步观察ambiguous owners/proof恢复和exact durable副本命中，不恢复hard alias。
+# dev.231 后续交接
+- dev.231：00:19真机Trace确认dev.230 hard alias删除稳定，43次acquire alias无task/session/writer failure；现收口required offline durable target：physical A被required exact B共享时，promotion handoff直接materialize B，不再先写A再复制B。`stored-required-exact-alias`用于审计；普通Reader无required target仍保持physical exact/verified-equivalent skip。下一步用chapter+Reader同transfer真机验证A不会因B required command新增exact durable副本，并继续观察ambiguous owners/proof晚恢复。
 `dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`

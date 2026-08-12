@@ -67,12 +67,16 @@ for token in (
     require(runtime, token, 'verified existing-transfer acquire resolver')
 
 for token in (
-    'await handoff.persist(session);',
-    'if (id == session.id) return;',
     'registry.isPhysicalAlias(id, session.id)',
-    'await cache.storePromotedArtifact(id: id, bytes: read.bytes);',
+    'await handoff.persist(session, exactId: id);',
+    'required exact durable artifact was not materialized',
 ):
     require(runtime, token, 'exact durable materialization after shared transfer')
+forbid(
+    runtime,
+    'physical transfer artifact is unavailable for exact materialization',
+    'superseded physical-anchor durable copy bridge',
+)
 
 replace_pos = chapter.index('consumer.replaceDemands(\n          identity,')
 get_pos = chapter.index('final session = transferRuntime.registry.get(id);', replace_pos)

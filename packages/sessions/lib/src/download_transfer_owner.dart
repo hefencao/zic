@@ -103,6 +103,17 @@ final class DownloadTransferOwner {
   int claimCount(DownloadId id) =>
       _claims[registry.resolvePhysicalId(id)]?.length ?? 0;
 
+  Iterable<DownloadId> requiredExactDurableTargets(DownloadId id) {
+    final physicalId = registry.resolvePhysicalId(id);
+    final targets = <DownloadId>{};
+    for (final claim in _claims[physicalId]?.values ?? const <_TransferClaim>[]) {
+      if (claim.demand.completionIntent == TransferCompletionIntent.required) {
+        targets.add(claim.exactId);
+      }
+    }
+    return List<DownloadId>.unmodifiable(targets);
+  }
+
   String? activeProviderScope(DownloadId id) =>
       _activeProviderScopes[registry.resolvePhysicalId(id)];
 

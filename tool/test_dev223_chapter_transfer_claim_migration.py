@@ -150,12 +150,13 @@ for token in (
 require(cache_manager, 'Future<bool> containsBackendExact(', 'exact durable identity probe')
 
 for token in (
-    'Future<void> persist(DownloadSession session)',
+    'Future<void> persist(',
     'requireExactDurableBody: true',
     'cache.containsBackendExact(',
     "action: 'defer-resident-source'",
-    "action: 'stored-resident-source'",
+    "'stored-resident-source'",
     'residentReplaySource',
+    'requiredExactTargets',
 ):
     require(handoff, token, 'resident durable materialization barrier')
 for token in (

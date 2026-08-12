@@ -41,6 +41,8 @@ final class CompositionDownloadTransferRuntime {
           session.id,
           endExclusive: endExclusive,
         ),
+        requiredExactTargets: (session) =>
+            owner.requiredExactDurableTargets(session.id),
       );
     }
     if (partialStore != null) {
@@ -223,36 +225,23 @@ final class CompositionDownloadTransferRuntime {
     final handoff = artifactCacheHandoff;
     final cache = artifactCacheManager;
     if (handoff == null || cache == null) return;
-    await handoff.persist(session);
-    if (id == session.id) return;
-
-    final expectedLength = session.committedLength;
-    if (expectedLength <= 0 ||
-        await cache.containsBackendExact(
-          id: id,
-          expectedLength: expectedLength,
-        )) {
-      return;
-    }
-    if (!registry.isPhysicalAlias(id, session.id)) {
+    if (id != session.id && !registry.isPhysicalAlias(id, session.id)) {
       throw StateError(
         'exact durable materialization requires an acquire-time verified '
         'physical alias',
       );
     }
-    final source = await cache.lookupAuthoritative(session.id);
-    if (source == null || source.entry.length != expectedLength) {
+    await handoff.persist(session, exactId: id);
+    final expectedLength = session.committedLength;
+    if (expectedLength > 0 &&
+        !await cache.containsBackendExact(
+          id: id,
+          expectedLength: expectedLength,
+        )) {
       throw StateError(
-        'physical transfer artifact is unavailable for exact materialization',
+        'required exact durable artifact was not materialized for ${id.key}',
       );
     }
-    final read = await cache.readForegroundLookup(source);
-    if (read.bytes.lengthInBytes != expectedLength) {
-      throw StateError(
-        'physical transfer artifact length changed before exact materialization',
-      );
-    }
-    await cache.storePromotedArtifact(id: id, bytes: read.bytes);
   }
 
   Future<void> dispose() async {

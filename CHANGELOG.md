@@ -1,3 +1,8 @@
+## 0.31.0-dev.231：Required exact durable target without physical-anchor copy
+- 00:19真机Trace确认dev.230 equivalence-only artifact ownership稳定：43次acquire alias、无task/session/writer failure，cold partial等价恢复继续命中；普通Reader已有等价durable body时出现`skip-verified-equivalent-durable`。
+- required offline completion不再先materialize physical anchor再复制到consumer exact ID；promotion handoff读取physical owner的required exact targets，直接把hot/resident bytes落到required exact identity。普通Reader无required target时保持原physical exact/verified-equivalent skip语义。
+- `persistPromoted(exactId)`只验证acquire-time alias并等待/确保该exact durable target；共享physical A服务required B时新增`stored-required-exact-alias`诊断，B完成后A不会仅因B命令被额外持久化。
+
 ## 0.31.0-dev.230：Equivalence-only artifact ownership
 - 23:45真机Trace确认dev.229迁移生效：`version-durable-partial-reused`归零，`session-partial-handoff/restored-equivalent`真实命中，25次acquire alias继续工作且无`taskFailed/sessionBusy/writerBusy`；版本等价proof已足以承担full/cold复用，不再需要directed hard artifact alias/rekey。
 - 删除`ArtifactCacheManager` hard alias map、resolve/alias/rekey API及`VerifiedArtifactReusePlan.apply/applyExisting/rekeyExisting`；显式漫画源迁移改为登记symmetric verified equivalence，exact DownloadId始终保持durable write authority。

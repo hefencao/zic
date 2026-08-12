@@ -18,6 +18,10 @@ typedef ResidentArtifactReplaySource = Future<Stream<List<int>>> Function(
   int endExclusive,
 );
 
+typedef RequiredArtifactTargets = Iterable<DownloadId> Function(
+  DownloadSession session,
+);
+
 /// Commits only fully promoted session artifacts to the persistent cache tier.
 ///
 /// This observer does not create demand, start downloads or choose retention.
@@ -31,6 +35,7 @@ final class PromotedArtifactCacheHandoff {
     this.traceSink = const NoopTraceSink(),
     this.sessionId = 'artifact-cache-handoff',
     this.residentReplaySource,
+    this.requiredExactTargets,
   });
 
   final ArtifactCacheManager cache;
@@ -39,6 +44,7 @@ final class PromotedArtifactCacheHandoff {
   final TraceSink traceSink;
   final String sessionId;
   final ResidentArtifactReplaySource? residentReplaySource;
+  final RequiredArtifactTargets? requiredExactTargets;
   final Map<DownloadSession, DownloadSnapshotListener> _listeners =
       <DownloadSession, DownloadSnapshotListener>{};
   final Map<DownloadId, Future<void>> _commits =
@@ -80,14 +86,21 @@ final class PromotedArtifactCacheHandoff {
   /// Ordinary promotion observation does not materialize a reopenable source
   /// body merely because a Reader displayed it. Explicit durable commands call
   /// this barrier when their completion semantics require persistent bytes.
-  Future<void> persist(DownloadSession session) async {
+  Future<void> persist(
+    DownloadSession session, {
+    DownloadId? exactId,
+  }) async {
     if (session.state != DownloadState.promoted) return;
     while (true) {
       final pending = _commits[session.id];
       if (pending == null) break;
       await pending;
     }
-    await _commit(session, requireExactDurableBody: true);
+    await _commitTarget(
+      session,
+      exactId ?? session.id,
+      requireExactDurableBody: true,
+    );
   }
 
   void detach() {
@@ -110,7 +123,19 @@ final class PromotedArtifactCacheHandoff {
   Future<void> _runCommit(DownloadSession session) async {
     final id = session.id;
     try {
-      await _commit(session);
+      final targets = requiredExactTargets?.call(session).toSet() ??
+          <DownloadId>{};
+      if (targets.isEmpty) {
+        await _commitTarget(session, session.id);
+      } else {
+        for (final target in targets) {
+          await _commitTarget(
+            session,
+            target,
+            requireExactDurableBody: true,
+          );
+        }
+      }
     } on Object catch (error, stackTrace) {
       try {
         onError?.call(error, stackTrace);
@@ -122,8 +147,9 @@ final class PromotedArtifactCacheHandoff {
     }
   }
 
-  Future<void> _commit(
-    DownloadSession session, {
+  Future<void> _commitTarget(
+    DownloadSession session,
+    DownloadId targetId, {
     bool requireExactDurableBody = false,
   }) async {
     if (session.state != DownloadState.promoted) {
@@ -138,12 +164,13 @@ final class PromotedArtifactCacheHandoff {
         );
       }
       final alreadyDurable = await cache.containsBackendExact(
-        id: session.id,
+        id: targetId,
         expectedLength: expectedLength,
       );
       if (alreadyDurable) {
         _recordCommit(
           session,
+          targetId: targetId,
           action: 'skip-cache-resident',
           bytes: expectedLength,
           startedAtMicros: startedAtMicros,
@@ -151,13 +178,14 @@ final class PromotedArtifactCacheHandoff {
         return;
       }
 
-      final lookup = await cache.lookup(session.id);
+      final lookup = await cache.lookup(targetId);
       if (lookup != null && lookup.entry.length == expectedLength) {
-        if (lookup.storageId != session.id &&
+        if (lookup.storageId != targetId &&
             lookup.durable &&
             !requireExactDurableBody) {
           _recordCommit(
             session,
+            targetId: targetId,
             action: 'skip-verified-equivalent-durable',
             bytes: expectedLength,
             startedAtMicros: startedAtMicros,
@@ -167,6 +195,7 @@ final class PromotedArtifactCacheHandoff {
         if (!lookup.durable && !requireExactDurableBody) {
           _recordCommit(
             session,
+            targetId: targetId,
             action: 'defer-resident-source',
             bytes: expectedLength,
             startedAtMicros: startedAtMicros,
@@ -176,13 +205,16 @@ final class PromotedArtifactCacheHandoff {
         final read = await cache.readForegroundLookup(lookup);
         if (read.bytes.lengthInBytes != expectedLength) {
           throw StateError(
-            'resident cache replay length changed for ${session.id.key}',
+            'resident cache replay length changed for ${targetId.key}',
           );
         }
-        await cache.storePromotedArtifact(id: session.id, bytes: read.bytes);
+        await cache.storePromotedArtifact(id: targetId, bytes: read.bytes);
         _recordCommit(
           session,
-          action: 'stored-resident-cache-authority',
+          targetId: targetId,
+          action: targetId == session.id
+              ? 'stored-resident-cache-authority'
+              : 'stored-required-exact-alias',
           bytes: expectedLength,
           startedAtMicros: startedAtMicros,
         );
@@ -192,6 +224,7 @@ final class PromotedArtifactCacheHandoff {
       if (!requireExactDurableBody) {
         _recordCommit(
           session,
+          targetId: targetId,
           action: 'defer-resident-source',
           bytes: expectedLength,
           startedAtMicros: startedAtMicros,
@@ -231,10 +264,13 @@ final class PromotedArtifactCacheHandoff {
           '${bytes.lengthInBytes}/$expectedLength',
         );
       }
-      await cache.storePromotedArtifact(id: session.id, bytes: bytes);
+      await cache.storePromotedArtifact(id: targetId, bytes: bytes);
       _recordCommit(
         session,
-        action: 'stored-resident-source',
+        targetId: targetId,
+        action: targetId == session.id
+            ? 'stored-resident-source'
+            : 'stored-required-exact-alias',
         bytes: bytes.lengthInBytes,
         startedAtMicros: startedAtMicros,
       );
@@ -244,6 +280,7 @@ final class PromotedArtifactCacheHandoff {
     if (expectedLength <= 0) {
       _recordCommit(
         session,
+        targetId: targetId,
         action: 'skip-empty',
         bytes: 0,
         startedAtMicros: startedAtMicros,
@@ -251,12 +288,13 @@ final class PromotedArtifactCacheHandoff {
       return;
     }
     final alreadyDurable = await cache.containsBackendExact(
-      id: session.id,
+      id: targetId,
       expectedLength: expectedLength,
     );
     if (alreadyDurable) {
       _recordCommit(
         session,
+        targetId: targetId,
         action: 'skip-existing',
         bytes: expectedLength,
         startedAtMicros: startedAtMicros,
@@ -264,13 +302,14 @@ final class PromotedArtifactCacheHandoff {
       return;
     }
     if (!requireExactDurableBody) {
-      final equivalent = await cache.lookup(session.id);
+      final equivalent = await cache.lookup(targetId);
       if (equivalent != null &&
-          equivalent.storageId != session.id &&
+          equivalent.storageId != targetId &&
           equivalent.durable &&
           equivalent.entry.length == expectedLength) {
         _recordCommit(
           session,
+          targetId: targetId,
           action: 'skip-verified-equivalent-durable',
           bytes: expectedLength,
           startedAtMicros: startedAtMicros,
@@ -286,6 +325,7 @@ final class PromotedArtifactCacheHandoff {
     if (bytes.isEmpty) {
       _recordCommit(
         session,
+        targetId: targetId,
         action: 'skip-empty',
         bytes: 0,
         startedAtMicros: startedAtMicros,
@@ -293,12 +333,15 @@ final class PromotedArtifactCacheHandoff {
       return;
     }
     await cache.storePromotedArtifact(
-      id: session.id,
+      id: targetId,
       bytes: bytes,
     );
     _recordCommit(
       session,
-      action: 'stored',
+      targetId: targetId,
+      action: targetId == session.id
+          ? 'stored'
+          : 'stored-required-exact-alias',
       bytes: bytes.lengthInBytes,
       startedAtMicros: startedAtMicros,
     );
@@ -306,6 +349,7 @@ final class PromotedArtifactCacheHandoff {
 
   void _recordCommit(
     DownloadSession session, {
+    required DownloadId targetId,
     required String action,
     required int bytes,
     required int? startedAtMicros,
@@ -317,12 +361,13 @@ final class PromotedArtifactCacheHandoff {
         clock: sourceClock,
         sessionId: sessionId,
         kind: TraceEventKind.artifactSource,
-        identityHash: session.id.key,
+        identityHash: targetId.key,
         payload: <String, Object?>{
           'source': 'session-artifact-handoff',
           'consumer': 'persistent-cache',
           'action': action,
           'bytes': bytes,
+          if (targetId != session.id) 'physicalIdentityHash': session.id.key,
           if (startedAtMicros != null)
             'handoffMicros': (sourceClock.nowMicros() - startedAtMicros)
                 .clamp(0, 1 << 62)
