@@ -64,6 +64,60 @@ void main() {
     expect(restored.totalLength, 1024);
     expect(await restored.artifact.readBytes(), bytes);
   });
+
+  test('verified equivalent cold partial restores without copying exact entry',
+      () async {
+    final root = await Directory.systemTemp.createTemp('partial-equivalent-');
+    addTearDown(() async => root.delete(recursive: true));
+    final oldId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'old',
+        chapterId: 'chapter-old',
+        pageId: 'page-old',
+      ),
+      sourceRevision: 'old',
+      canonicalUri: Uri.parse('https://example.test/old.webp'),
+    );
+    final newId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'new',
+        chapterId: 'chapter-new',
+        pageId: 'page-new',
+      ),
+      sourceRevision: 'new',
+      canonicalUri: Uri.parse('https://example.test/new.webp'),
+    );
+    final bytes = Uint8List.fromList(List<int>.generate(384, (i) => i & 0xff));
+    final backend = _PartialStore();
+    backend.partial[oldId] = _StoredPartial(
+      bytes: bytes,
+      validators: const Validators(etag: 'old-version-etag'),
+      totalLength: 1024,
+    );
+    final handoff = PartialDownloadHandoff(
+      store: backend,
+      equivalentCandidates: (id) => id == newId
+          ? <DownloadId>[oldId]
+          : const <DownloadId>[],
+    );
+    final registry = DownloadRegistry(
+      layout: CacheLayout(root.path),
+      clock: SystemClock(),
+    );
+    addTearDown(registry.dispose);
+
+    final session = registry.get(newId);
+    await handoff.restoreInto(session);
+
+    expect(session.committedLength, bytes.lengthInBytes);
+    expect(session.validators.isEmpty, isTrue);
+    expect(session.totalLength, 1024);
+    expect(await session.artifact.readBytes(), bytes);
+    expect(backend.partial.containsKey(newId), isFalse);
+    expect(backend.partial.containsKey(oldId), isTrue);
+  });
 }
 
 final class _PartialStore implements PartialDownloadStore {

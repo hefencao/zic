@@ -1,5 +1,5 @@
-# dev.228 后续交接
-- dev.228：15:57真机Trace验证dev.227修复有效：18次acquire alias（8个failed partial）无`unsupported URI scheme`、`taskFailed/sessionBusy/writerBusy`或decode failed，legacy late takeover仍0命中。已删除最后的artifact-promotion late takeover event path与ArtifactCacheManager promotion observer API；verified equivalence只允许在新demand acquire时改变physical identity。partial/artifact handoff仍是composition physical→durable store的正常边界，后续不要按历史名称删除。下一步优先审查TransferKey proof coverage/ambiguous existing owners/cold partial，不恢复late observer。
+# dev.229 后续交接
+- dev.229：23:03真机Trace确认dev.228 Phase E稳定：9次acquire alias正常、无task/session/writer failure；6个未首帧host均可归因短驻留/慢source prefix，没有新的decode deadlock。真正仍命中的旧补偿是4次`version-durable-partial-reused`。现删除版本warmup/Reader入口的cross-version durable partial复制，composition `PartialDownloadHandoff`在physical prepare时exact-first、verified-equivalent fallback并选择最长cold prefix直接恢复；跨版本validator清空，continuity仍由DownloadJob overlap proof决定。下一步继续观察`restored-equivalent`命中、ambiguous owners与proof恢复时序，不把durable lookup塞进同步Reader planning。
 `dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`

@@ -30,9 +30,19 @@ reuse = read('packages/downloads/lib/src/artifact_cache_reuse.dart')
 for token in (
     'int registerEquivalences(ArtifactCacheManager cache) {',
     'cache.linkEquivalent(first: entry.key, second: entry.value);',
-    'Future<int> applyDurablePartials(PartialDownloadStore store) async {',
 ):
     require(reuse, token, 'verified mapping reuse plan')
+
+version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
+if version is None or int(version.group(1)) < 211:
+    raise SystemExit('App build must be at least 211')
+build = int(version.group(1))
+if build >= 229:
+    handoff = read('packages/downloads/lib/src/partial_download_handoff.dart')
+    require(handoff, 'final PartialEquivalentCandidates? equivalentCandidates;', 'verified cold partial reuse boundary')
+    forbid(reuse, 'applyDurablePartials', 'eager durable partial copy')
+else:
+    require(reuse, 'Future<int> applyDurablePartials(PartialDownloadStore store) async {', 'legacy verified partial copy')
 
 migration = read('apps/app/lib/demo_home_source_migration.dart')
 for token in (
@@ -66,9 +76,6 @@ for token in (
 check = read('tool/check.sh')
 require(check, 'test_dev211_version_equivalence_late_artifact_reuse.py', 'release gate wiring')
 
-version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
-if version is None or int(version.group(1)) < 211:
-    raise SystemExit('App build must be at least 211')
 android = re.search(r'^versionCode=(\d+)\s*$', read('apps/app/android/zic-version.properties'), re.M)
 if android is None or android.group(1) != version.group(1):
     raise SystemExit('Android versionCode must match App build')

@@ -979,12 +979,6 @@ final class _DemoHomeState extends State<DemoHome> {
     if (versionSource != null) {
       _scheduleVersionReuseWarmup(versionSource, current.chapter.comicId);
     }
-    unawaited(
-      _reuseSourceVersionDurablePartials(current).then<void>(
-        (_) {},
-        onError: (Object _, StackTrace __) {},
-      ),
-    );
     final hasOfflineBytes = current.chapter.sourceId != 'local-folder' &&
         await _chapterDownloads.isDownloaded(current);
     final source = _sourceForId(current.chapter.sourceId);

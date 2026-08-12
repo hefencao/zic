@@ -1,3 +1,8 @@
+## 0.31.0-dev.229：Equivalence-aware cold partial restore
+- 23:03真机Trace确认dev.228删除late takeover后9次acquire alias（4 receiving / 1 failed）继续工作，`taskFailed/sessionBusy/writerBusy`为0；同时版本warmup仍有4次`version-durable-partial-reused`，证明旧的跨版本cold partial复制补偿仍在实际命中。
+- 删除version warmup/Reader入口的`applyDurablePartials`复制路径；`PartialDownloadHandoff`改为physical prepare时exact-first、direct verified-equivalent fallback，并从候选中选择最长cold partial直接恢复，不提前创建目标exact durable partial副本。
+- 跨版本cold partial恢复清空ETag/Last-Modified，继续由DownloadJob validatorless overlap proof决定是否接受resume；live physical acquire alias、NetLane、retry、水位、artifact durability不变。
+
 ## 0.31.0-dev.228：Remove late equivalent-promotion takeover
 - 15:57真机Trace确认dev.227后18次verified acquire alias（含8个failed partial）不再产生`unsupported URI scheme`或task/decode failure，legacy `verified-equivalent-promotion-takeover`继续0命中。
 - 删除composition artifact-promotion listener、`DownloadTransferOwner.refreshIndependentExactForPromotedEquivalent`以及ArtifactCacheManager promotion observer API；verified relation对physical identity的唯一实时副作用收口到demand acquire。

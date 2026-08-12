@@ -1,11 +1,16 @@
+import 'package:domain/domain.dart';
 import 'package:sessions/sessions.dart';
 import 'package:telemetry/telemetry.dart';
+import 'package:transport/transport.dart';
 
 import 'partial_download_store.dart';
 
 typedef PartialDownloadHandoffError = void Function(
   Object error,
   StackTrace stackTrace,
+);
+typedef PartialEquivalentCandidates = Iterable<DownloadId> Function(
+  DownloadId id,
 );
 
 /// Bridges a truly evicted hot DownloadSession to the chapter-owned durable
@@ -15,6 +20,7 @@ final class PartialDownloadHandoff {
   PartialDownloadHandoff({
     required this.store,
     this.onError,
+    this.equivalentCandidates,
     this.clock,
     this.traceSink = const NoopTraceSink(),
     this.sessionId = 'partial-download-handoff',
@@ -22,6 +28,7 @@ final class PartialDownloadHandoff {
 
   final PartialDownloadStore store;
   final PartialDownloadHandoffError? onError;
+  final PartialEquivalentCandidates? equivalentCandidates;
   final MonoClock? clock;
   final TraceSink traceSink;
   final String sessionId;
@@ -33,12 +40,15 @@ final class PartialDownloadHandoff {
         session.artifact.committedLength > 0) {
       return;
     }
-    final entry = await store.openPartialDownload(session.id);
-    if (entry == null || entry.length <= 0) return;
+    final candidate = await _restoreCandidate(session.id);
+    if (candidate == null || candidate.entry.length <= 0) return;
+    final entry = candidate.entry;
 
     final startedAtMicros = clock?.nowMicros();
     await session.bindResponse(
-      validators: entry.validators,
+      validators: candidate.equivalent
+          ? const Validators()
+          : entry.validators,
       totalLength: entry.totalLength,
     );
     final writer = session.acquireWriter();
@@ -60,7 +70,45 @@ final class PartialDownloadHandoff {
       rethrow;
     }
     await session.pause(writer);
-    _record(session, action: 'restored', bytes: offset, startedAtMicros: startedAtMicros);
+    _record(
+      session,
+      action: candidate.equivalent ? 'restored-equivalent' : 'restored',
+      bytes: offset,
+      startedAtMicros: startedAtMicros,
+      equivalent: candidate.equivalent,
+      equivalentCandidatesChecked: candidate.candidatesChecked,
+    );
+  }
+
+
+  Future<_PartialRestoreCandidate?> _restoreCandidate(DownloadId id) async {
+    final exact = await store.openPartialDownload(id);
+    if (exact != null && exact.length > 0) {
+      return _PartialRestoreCandidate(
+        entry: exact,
+        equivalent: false,
+        candidatesChecked: 0,
+      );
+    }
+    final candidates = equivalentCandidates;
+    if (candidates == null) return null;
+    PartialDownloadEntry? selected;
+    var checked = 0;
+    for (final equivalent in candidates(id)) {
+      if (equivalent == id) continue;
+      checked++;
+      final entry = await store.openPartialDownload(equivalent);
+      if (entry == null || entry.length <= 0) continue;
+      if (selected == null || entry.length > selected.length) {
+        selected = entry;
+      }
+    }
+    if (selected == null) return null;
+    return _PartialRestoreCandidate(
+      entry: selected,
+      equivalent: true,
+      candidatesChecked: checked,
+    );
   }
 
   /// Stores each unfinished authoritative prefix exactly once when the hot
@@ -94,7 +142,14 @@ final class PartialDownloadHandoff {
     }
   }
 
-  void _record(DownloadSession session, {required String action, required int bytes, required int? startedAtMicros}) {
+  void _record(
+    DownloadSession session, {
+    required String action,
+    required int bytes,
+    required int? startedAtMicros,
+    bool equivalent = false,
+    int equivalentCandidatesChecked = 0,
+  }) {
     final sourceClock = clock;
     if (sourceClock == null) return;
     traceSink.record(traceEvent(
@@ -107,9 +162,24 @@ final class PartialDownloadHandoff {
         'consumer': 'durable-partial',
         'action': action,
         'bytes': bytes,
+        if (equivalent) 'verifiedEquivalentReuse': true,
+        if (equivalent)
+          'equivalentCandidatesChecked': equivalentCandidatesChecked,
         if (startedAtMicros != null)
           'handoffMicros': (sourceClock.nowMicros() - startedAtMicros).clamp(0, 1 << 62).toInt(),
       },
     ));
   }
+}
+
+final class _PartialRestoreCandidate {
+  const _PartialRestoreCandidate({
+    required this.entry,
+    required this.equivalent,
+    required this.candidatesChecked,
+  });
+
+  final PartialDownloadEntry entry;
+  final bool equivalent;
+  final int candidatesChecked;
 }

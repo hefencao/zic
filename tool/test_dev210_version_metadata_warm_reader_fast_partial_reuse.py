@@ -43,8 +43,6 @@ for token in (
     'plan.registerEquivalences(artifactCache)',
     "'stage': 'version-artifact-equivalence-restored'",
     "'stage': 'version-page-mapping-warmed'",
-    'Future<int> _reuseSourceVersionDurablePartials(',
-    "'stage': 'version-durable-partial-reused'",
 ):
     require(migration, token, 'version metadata warm/restore owner')
 forbid(
@@ -69,8 +67,6 @@ forbid(home, 'hasConfirmedSuccessor', 'version relation mirrored into sourceUpda
 reuse = read('packages/downloads/lib/src/artifact_cache_reuse.dart')
 for token in (
     'factory VerifiedArtifactReusePlan.fromVerifiedOffset({',
-    'Future<int> applyDurablePartials(PartialDownloadStore store) async {',
-    'validators: const Validators(),',
 ):
     require(reuse, token, 'persisted mapping / validatorless durable partial reuse')
 
@@ -85,16 +81,39 @@ for token in (
 reuse_test = read('packages/downloads/test/artifact_cache_reuse_test.dart')
 for token in (
     'persisted verified offset restores aliases without a resolver',
-    'verified partial reuse clears cross-version validators',
 ):
     require(reuse_test, token, 'dev.210 reuse regression coverage')
-
-check = read('tool/check.sh')
-require(check, 'test_dev210_version_metadata_warm_reader_fast_partial_reuse.py', 'release gate wiring')
 
 version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
 if version is None or int(version.group(1)) < 210:
     raise SystemExit('App build must be at least 210')
+build = int(version.group(1))
+if build >= 229:
+    handoff = read('packages/downloads/lib/src/partial_download_handoff.dart')
+    for token in (
+        'this.equivalentCandidates,',
+        'final PartialEquivalentCandidates? equivalentCandidates;',
+        "action: candidate.equivalent ? 'restored-equivalent' : 'restored'",
+        '? const Validators()',
+    ):
+        require(handoff, token, 'equivalence-aware cold partial restore')
+    forbid(migration, '_reuseSourceVersionDurablePartials', 'eager cross-version partial copy')
+    forbid(reuse, 'applyDurablePartials', 'reuse-plan durable partial copy')
+    require(
+        reuse_test + read('packages/downloads/test/partial_download_handoff_test.dart'),
+        'verified equivalent cold partial restores without copying exact entry',
+        'dev.229 cold partial restore regression coverage',
+    )
+else:
+    require(migration, 'Future<int> _reuseSourceVersionDurablePartials(', 'legacy durable partial copy')
+    require(migration, "'stage': 'version-durable-partial-reused'", 'legacy durable partial trace')
+    require(reuse, 'Future<int> applyDurablePartials(PartialDownloadStore store) async {', 'legacy durable partial reuse')
+    require(reuse, 'validators: const Validators(),', 'legacy cross-version validator clearing')
+    require(reuse_test, 'verified partial reuse clears cross-version validators', 'legacy partial reuse regression coverage')
+
+check = read('tool/check.sh')
+require(check, 'test_dev210_version_metadata_warm_reader_fast_partial_reuse.py', 'release gate wiring')
+
 android = re.search(r'^versionCode=(\d+)\s*$', read('apps/app/android/zic-version.properties'), re.M)
 if android is None or android.group(1) != version.group(1):
     raise SystemExit('Android versionCode must match App build')

@@ -185,10 +185,18 @@ else:
         'promotion-listener Dart regression',
     )
 
-# The deliberate boundary: session-partial sharing is not introduced. Cross-version
-# partial reuse remains durable/inactive and owned by PartialDownloadStore.
+# The deliberate boundary: cross-version cold partial reuse remains durable/inactive.
+# dev.229 migrates it from version-warmup copying into the physical prepare
+# boundary, without sharing/merging already-existing hot sessions.
 reuse = read('packages/downloads/lib/src/artifact_cache_reuse.dart')
-require(reuse, 'openPartialDownload', 'durable partial reuse boundary')
+if build >= 229:
+    handoff = read('packages/downloads/lib/src/partial_download_handoff.dart')
+    require(handoff, 'final exact = await store.openPartialDownload(id);', 'exact cold partial priority')
+    require(handoff, 'for (final equivalent in candidates(id)) {', 'verified cold partial fallback')
+    require(handoff, '? const Validators()', 'cross-version validator clearing')
+    forbid(reuse, 'applyDurablePartials', 'retired durable partial copy')
+else:
+    require(reuse, 'openPartialDownload', 'legacy durable partial reuse boundary')
 for path in (
     'packages/downloads/lib/src/artifact_cache_manager.dart',
     'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',

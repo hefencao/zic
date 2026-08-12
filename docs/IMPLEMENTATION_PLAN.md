@@ -1,7 +1,7 @@
 # zic Implementation Plan
 ## P0：Image Transfer ownership 正式迁移
-- P0：dev.228完成Phase E最终late takeover删除：15:57真机Trace中18次acquire alias（含8个failed partial）仍正常，`unsupported URI scheme`、`taskFailed/sessionBusy/writerBusy`、decode failed均为0，legacy `verified-equivalent-promotion-takeover`继续0命中；删除composition promotion listener、owner late takeover method及ArtifactCacheManager promotion observer API。partial/artifact durable persistence继续保留。
-- 后续Phase C继续只扩展可证明的TransferKey coverage，而不恢复late artifact side effect：重点审查ambiguous existing owners、cold durable partial与direct proof coverage；两个已存在physical session不事后merge，source-resident非cache body不跨版本join。
+- P0：dev.229迁移cold partial reuse：23:03真机Trace确认dev.228后9次acquire alias继续正常、无task/session/writer failure，但版本warmup仍4次命中`version-durable-partial-reused`旧复制路径。现删除warmup/Reader入口的cross-version partial copy，physical prepare exact miss时直接从direct verified equivalents选择最长durable inactive prefix恢复，跨版本validator清空并继续由DownloadJob overlap proof验证continuity。
+- 后续Phase C继续只扩展可证明的TransferKey coverage，而不把durable I/O塞进同步`replaceDemands`：重点审查ambiguous existing owners、proof恢复时序与cold partial生命周期；两个已存在physical session不事后merge，source-resident非cache body不跨版本join，也不恢复late artifact observer。
 ## P0：Partial authority 单调性真机闭环
 - dev.195 的playable partial单调性继续冻结：Range probe/full-body catch-up的取消、EOF或mismatch只能失败当前 network attempt，旧partial/Ingress不变；metadata损坏只丢网络知识。dev.196不改DownloadSession authority、DecodeSession、NetLane、network=5、1000/780、7/3、2/1、7/5/3/2，也不增加bandwidth scheduler/framing。
 ## P0：Current / Previous 真实执行槽真机闭环

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -33,9 +34,18 @@ for token in (
     'bool _versionPageMappingsAreFresh(',
     'if (_versionPageMappingsAreFresh(relation, revalidationNow)) {',
     'final versions = await versionSource.findComicVersions(comicId);',
-    'await _reuseSourceVersionDurablePartials(entry);',
 ):
     require(migration, token, 'version mapping freshness ownership')
+
+version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
+if version is None or int(version.group(1)) < 212:
+    raise SystemExit('App build must be at least 212')
+if int(version.group(1)) >= 229:
+    forbid(migration, '_reuseSourceVersionDurablePartials', 'eager cold partial copy during mapping warmup')
+    handoff = read('packages/downloads/lib/src/partial_download_handoff.dart')
+    require(handoff, 'equivalentCandidates', 'cold partial reuse at physical prepare boundary')
+else:
+    require(migration, 'await _reuseSourceVersionDurablePartials(entry);', 'legacy mapping partial warmup')
 
 catalog_test = read('packages/catalog/test/imported_library_store_test.dart')
 for token in (

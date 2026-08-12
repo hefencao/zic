@@ -2,7 +2,6 @@ import 'package:domain/domain.dart';
 import 'package:transport/transport.dart';
 
 import 'artifact_cache_manager.dart';
-import 'partial_download_store.dart';
 import 'reader_page_identity.dart';
 
 typedef VerifiedPageReuseIdentityResolver = Future<String?> Function(
@@ -237,33 +236,6 @@ final class VerifiedArtifactReusePlan {
       }
       if (await cache.lookupAuthoritative(entry.key) != null) continue;
       cache.alias(id: entry.key, target: source.storageId);
-      applied++;
-    }
-    return applied;
-  }
-
-  /// Reuses only durable, inactive partial prefixes for verified page pairs.
-  ///
-  /// Cross-version ETag/Last-Modified values are deliberately discarded. The
-  /// target DownloadJob therefore resumes with its existing validatorless
-  /// overlap probe and compares response bytes against the preserved prefix
-  /// before accepting any continuation. Hot Reader sessions are excluded by
-  /// [PartialDownloadStore.openPartialDownload].
-  Future<int> applyDurablePartials(PartialDownloadStore store) async {
-    var applied = 0;
-    for (final entry in aliases.entries) {
-      if (await store.openPartialDownload(entry.key) != null) continue;
-      final source = await store.openPartialDownload(entry.value);
-      if (source == null || source.length <= 0) continue;
-      await store.storePartialDownload(
-        id: entry.key,
-        entry: PartialDownloadEntry(
-          length: source.length,
-          validators: const Validators(),
-          totalLength: source.totalLength,
-          open: source.open,
-        ),
-      );
       applied++;
     }
     return applied;

@@ -477,18 +477,6 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           );
         }
       }
-      final currentEntries = _libraryEntries.where(
-        (entry) =>
-            entry.chapter.sourceId == source.sourceId &&
-            entry.chapter.comicId == comicId,
-      );
-      for (final entry in currentEntries) {
-        try {
-          await _reuseSourceVersionDurablePartials(entry);
-        } on Object {
-          // Partial reuse is opportunistic. Reader/network remains authoritative.
-        }
-      }
     });
     _versionReuseWarmups[key] = future;
     unawaited(
@@ -567,68 +555,6 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         },
       ),
     );
-    return reused;
-  }
-
-  Future<int> _reuseSourceVersionDurablePartials(
-    ImportedLibraryEntry current,
-  ) async {
-    final store = _chapterDownloads is PartialDownloadStore
-        ? _chapterDownloads as PartialDownloadStore
-        : null;
-    if (store == null) return 0;
-    final relations = _sourceVersionRelationsForComic(
-      current.chapter.sourceId,
-      current.chapter.comicId,
-    );
-    var reused = 0;
-    for (final relation in relations) {
-      final currentIsSuccessor =
-          relation.successorComicId == current.chapter.comicId;
-      final currentIsPredecessor =
-          relation.predecessorComicId == current.chapter.comicId;
-      if (!currentIsSuccessor && !currentIsPredecessor) continue;
-      for (final mapping in relation.pageMappings) {
-        final targetChapterId = currentIsSuccessor
-            ? mapping.successorChapterId
-            : mapping.predecessorChapterId;
-        if (targetChapterId != current.chapter.chapterId) continue;
-        final sourceEntry = _exactChapterEntry(
-          current.chapter.sourceId,
-          currentIsSuccessor
-              ? mapping.predecessorChapterId
-              : mapping.successorChapterId,
-        );
-        if (sourceEntry == null) continue;
-        final plan = VerifiedArtifactReusePlan.fromVerifiedOffset(
-          sourceChapter: sourceEntry.chapter.toManifest(),
-          targetChapter: current.chapter.toManifest(),
-          targetOffsetFromSource: currentIsSuccessor
-              ? mapping.successorOffset
-              : -mapping.successorOffset,
-        );
-        try {
-          reused += await plan.applyDurablePartials(store);
-        } on Failure catch (error) {
-          if (error.code != ErrorCode.sessionBusy) rethrow;
-        }
-      }
-    }
-    if (reused > 0) {
-      widget.debugTrace.record(
-        TraceEvent(
-          monotonicMicros: _traceClock.elapsedMicroseconds,
-          sessionId: 'source-version-reuse:${current.chapter.sourceId}',
-          kind: TraceEventKind.artifactSource,
-          identityHash:
-              '${current.chapter.sourceId}\u0000${current.chapter.chapterId}',
-          payload: <String, Object?>{
-            'stage': 'version-durable-partial-reused',
-            'reusedPartials': reused,
-          },
-        ),
-      );
-    }
     return reused;
   }
 

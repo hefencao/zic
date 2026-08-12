@@ -296,44 +296,6 @@ void main() {
     expect((await cache.readForeground(oldFirst))?.bytes, <int>[6, 6, 6]);
   });
 
-  test('verified partial reuse clears cross-version validators', () async {
-    final older = _chapter(
-      comicId: 'older',
-      revision: 'older',
-      urls: const <String>['venera-resource:older-0'],
-    );
-    final newer = _chapter(
-      comicId: 'newer',
-      revision: 'newer',
-      urls: const <String>['venera-resource:newer-0'],
-    );
-    final oldId = readerPageDownloadId(older, older.pages.single);
-    final newId = readerPageDownloadId(newer, newer.pages.single);
-    final bytes = Uint8List.fromList(<int>[1, 2, 3, 4]);
-    final store = _PartialStore(<DownloadId, PartialDownloadEntry>{
-      oldId: PartialDownloadEntry(
-        length: bytes.length,
-        validators: const Validators(etag: '"old-version"'),
-        totalLength: 12,
-        open: ({required int start}) async* {
-          yield Uint8List.sublistView(bytes, start);
-        },
-      ),
-    });
-    final plan = VerifiedArtifactReusePlan.fromVerifiedOffset(
-      sourceChapter: older,
-      targetChapter: newer,
-      targetOffsetFromSource: 0,
-    );
-
-    expect(await plan.applyDurablePartials(store), 1);
-    final restored = await store.openPartialDownload(newId);
-    expect(restored, isNotNull);
-    expect(restored!.length, bytes.length);
-    expect(restored.validators.isEmpty, isTrue);
-    expect(restored.totalLength, 12);
-  });
-
   test('resolved offset requires verified anchor agreement', () async {
     final oldChapter = _chapter(
       comicId: 'old',

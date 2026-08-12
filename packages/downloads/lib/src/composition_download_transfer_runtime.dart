@@ -46,6 +46,7 @@ final class CompositionDownloadTransferRuntime {
     if (partialStore != null) {
       partialDownloadHandoff = PartialDownloadHandoff(
         store: partialStore,
+        equivalentCandidates: cache?.directEquivalents,
         onError: (error, stackTrace) {},
         clock: clock,
         traceSink: traceHub,
