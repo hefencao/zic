@@ -32,6 +32,8 @@ final class PartialDownloadHandoff {
   final MonoClock? clock;
   final TraceSink traceSink;
   final String sessionId;
+  final Map<DownloadSession, Future<bool>> _stores =
+      <DownloadSession, Future<bool>>{};
 
   Future<void> restoreInto(DownloadSession session) async {
     if (session.committedLength > 0) return;
@@ -111,34 +113,71 @@ final class PartialDownloadHandoff {
     );
   }
 
-  /// Stores each unfinished authoritative prefix exactly once when the hot
-  /// session is really being destroyed. This is not a per-route checkpoint or
-  /// a second live writer.
+  /// Persists one unfinished authoritative prefix before its hot physical
+  /// session is actually retired.
+  ///
+  /// The caller owns the retirement policy. This class only owns the durable
+  /// partial representation and coalesces concurrent writes for the same hot
+  /// session.
+  Future<bool> persist(
+    DownloadSession session, {
+    String reason = 'physical-retirement',
+  }) {
+    final running = _stores[session];
+    if (running != null) return running;
+    late final Future<bool> tracked;
+    tracked = _persist(session, reason: reason).whenComplete(() {
+      if (identical(_stores[session], tracked)) _stores.remove(session);
+    });
+    _stores[session] = tracked;
+    return tracked;
+  }
+
+  Future<bool> _persist(
+    DownloadSession session, {
+    required String reason,
+  }) async {
+    if (session.state == DownloadState.promoted || session.residentBodyBacked) {
+      return true;
+    }
+    final length = session.artifact.committedLength;
+    if (length <= 0) return true;
+    final startedAtMicros = clock?.nowMicros();
+    try {
+      await store.storePartialDownload(
+        id: session.id,
+        entry: PartialDownloadEntry(
+          length: length,
+          validators: session.validators,
+          totalLength: session.totalLength,
+          open: ({required int start}) => session.artifact.readChunks(
+            start: start,
+            endExclusive: length,
+          ),
+        ),
+      );
+      _record(
+        session,
+        action: 'stored',
+        bytes: length,
+        startedAtMicros: startedAtMicros,
+        reason: reason,
+      );
+      return true;
+    } on Object catch (error, stackTrace) {
+      try {
+        onError?.call(error, stackTrace);
+      } on Object {}
+      return false;
+    }
+  }
+
+  /// Stores every unfinished authoritative prefix when the entire physical
+  /// runtime is shutting down. Ordinary Reader detach/reentry never calls
+  /// this path.
   Future<void> drain(Iterable<DownloadSession> sessions) async {
     for (final session in sessions) {
-      if (session.state == DownloadState.promoted || session.residentBodyBacked) {
-        continue;
-      }
-      final length = session.artifact.committedLength;
-      if (length <= 0) continue;
-      final startedAtMicros = clock?.nowMicros();
-      try {
-        await store.storePartialDownload(
-          id: session.id,
-          entry: PartialDownloadEntry(
-            length: length,
-            validators: session.validators,
-            totalLength: session.totalLength,
-            open: ({required int start}) => session.artifact.readChunks(
-              start: start,
-              endExclusive: length,
-            ),
-          ),
-        );
-        _record(session, action: 'stored', bytes: length, startedAtMicros: startedAtMicros);
-      } on Object catch (error, stackTrace) {
-        try { onError?.call(error, stackTrace); } on Object {}
-      }
+      await persist(session, reason: 'runtime-dispose');
     }
   }
 
@@ -149,6 +188,7 @@ final class PartialDownloadHandoff {
     required int? startedAtMicros,
     bool equivalent = false,
     int equivalentCandidatesChecked = 0,
+    String? reason,
   }) {
     final sourceClock = clock;
     if (sourceClock == null) return;
@@ -162,6 +202,7 @@ final class PartialDownloadHandoff {
         'consumer': 'durable-partial',
         'action': action,
         'bytes': bytes,
+        if (reason != null) 'reason': reason,
         if (equivalent) 'verifiedEquivalentReuse': true,
         if (equivalent)
           'equivalentCandidatesChecked': equivalentCandidatesChecked,

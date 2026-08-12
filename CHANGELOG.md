@@ -1,3 +1,8 @@
+## 0.31.0-dev.234：Bounded physical transfer retention
+- 01:41真机Trace确认dev.233 multi-owner收口生效：38次verified acquire alias中4次`candidateOwners=2`全部选择`preferred-existing-owner`，`rejected-ambiguous-existing-owners`与`taskFailed`均为0；promotion自动handoff重复probe仅剩2次`skip-existing`。同时4次Reader dispose时共享physical registry规模从43→50→100→107持续增长，说明logical claim detach不再错误cold-store之后，composition hot owner缺少自己的有界退休策略。
+- 新增downloads层`PhysicalTransferRetention`：idle promoted session先等待既有ordinary artifact handoff收敛后机械退休；unfinished idle partial仅在composition hot预算超过32 sessions或256 MiB时由既有`PartialDownloadHandoff`cold-store，再退休physical session。cold-store失败必须保留hot owner，不得为预算丢prefix。
+- sessions层只新增无持久化语义的idle physical retirement primitive，retire同时清理acquire-time physical aliases；Reader/Pipeline不持有retention budget。`PartialDownloadHandoff.persist`负责同session写入合并并返回成功语义，runtime dispose仍作为最终cold handoff边界。
+
 ## 0.31.0-dev.233：Physical reuse and handoff lifecycle consolidation
 - 01:05真机Trace确认dev.232的`partial-source taskFailed`归零，但28次verified acquire alias中仍有2次`rejected-ambiguous-existing-owners`；ambiguous fallback会让fresh exact identity再创建第三个physical owner。现对direct verified existing candidates做authority排序，优先复用promoted/active/demanded/longer-prefix既有owner，绝不事后merge两个已存在session。
 - 删除`sessions/DownloadTransferOwner.persistUnclaimed`及其flush状态：logical demand detach只释放调度claim，hot partial继续属于composition runtime；只有runtime真实retire/dispose才由downloads层`PartialDownloadHandoff`写cold partial，durable策略不再反向注入sessions。

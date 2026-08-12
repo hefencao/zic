@@ -115,6 +115,44 @@ final class DownloadTransferOwner {
   String? taskKeyFor(DownloadId id) =>
       _networkTaskKeys[registry.resolvePhysicalId(id)];
 
+  /// Retires one idle physical session after the composition owner has moved
+  /// any bytes that must survive beyond the hot registry.
+  ///
+  /// This method owns only scheduler/session bookkeeping. It intentionally
+  /// does not know whether the caller persisted a partial, reused a durable
+  /// artifact, or discarded an empty session.
+  Future<bool> retireIdlePhysical(DownloadId id) async {
+    if (_disposed) return false;
+    final physicalId = registry.resolvePhysicalId(id);
+    final session = registry.findExact(physicalId);
+    if (session == null ||
+        (_claims[physicalId]?.isNotEmpty ?? false) ||
+        session.demanded ||
+        session.activeRun ||
+        session.hasWriter) {
+      return false;
+    }
+    final taskKey = _networkTaskKeys[physicalId];
+    if (taskKey != null) {
+      if (net.isActive(taskKey)) return false;
+      net.cancelQueued(taskKey);
+      _networkTaskKeys.remove(physicalId);
+    }
+    if (_activeProviderScopes.containsKey(physicalId)) return false;
+
+    final retired = registry.takeIdlePhysical(physicalId);
+    if (!identical(retired, session)) return false;
+
+    final listener = _sessionListeners.remove(physicalId);
+    if (listener != null) {
+      session.removeSnapshotListener(listener);
+    }
+    _progressLengths.remove(physicalId);
+    _retireDownloadTracking(physicalId, session);
+    await session.dispose();
+    return true;
+  }
+
   /// Reopens a resident immutable body through a currently attached consumer
   /// without transferring ownership of the durable artifact to that consumer.
   ///

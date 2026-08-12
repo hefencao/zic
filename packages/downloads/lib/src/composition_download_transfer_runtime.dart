@@ -9,6 +9,7 @@ import 'package:transport/transport.dart';
 import 'artifact_cache_manager.dart';
 import 'partial_download_handoff.dart';
 import 'partial_download_store.dart';
+import 'physical_transfer_retention.dart';
 import 'promoted_artifact_cache_handoff.dart';
 
 /// Composition-level owner for physical image transfer state.
@@ -23,6 +24,8 @@ final class CompositionDownloadTransferRuntime {
     required this.artifactCacheManager,
     required this.partialDownloadStore,
     required this.net,
+    this.maxIdlePartialSessions = 32,
+    this.maxIdlePartialBytes = 256 * 1024 * 1024,
   })  : clock = const SystemClock(),
         traceHub = _CompositionTransferTraceHub(),
         workspace = EphemeralCacheWorkspace.readerSession(
@@ -61,6 +64,7 @@ final class CompositionDownloadTransferRuntime {
       traceSink: traceHub,
       onSessionCreated: (session) {
         artifactCacheHandoff?.observe(session);
+        _physicalTransferRetention?.observe(session);
       },
     );
     owner = DownloadTransferOwner(
@@ -70,6 +74,16 @@ final class CompositionDownloadTransferRuntime {
       net: net,
       resolveTransferId: _resolveTransferIdForAcquire,
     );
+    _physicalTransferRetention = PhysicalTransferRetention(
+      registry: registry,
+      owner: owner,
+      clock: clock,
+      traceSink: traceHub,
+      artifactHandoff: artifactCacheHandoff,
+      partialHandoff: partialDownloadHandoff,
+      maxIdlePartialSessions: maxIdlePartialSessions,
+      maxIdlePartialBytes: maxIdlePartialBytes,
+    );
   }
 
   static int _sequence = 0;
@@ -77,11 +91,14 @@ final class CompositionDownloadTransferRuntime {
   final ArtifactCacheManager? artifactCacheManager;
   final PartialDownloadStore? partialDownloadStore;
   final NetLane net;
+  final int maxIdlePartialSessions;
+  final int maxIdlePartialBytes;
   final MonoClock clock;
   final _CompositionTransferTraceHub traceHub;
   final EphemeralCacheWorkspace workspace;
   PromotedArtifactCacheHandoff? artifactCacheHandoff;
   PartialDownloadHandoff? partialDownloadHandoff;
+  PhysicalTransferRetention? _physicalTransferRetention;
   late final DownloadRegistry registry;
   late final DownloadTransferOwner owner;
   bool _disposed = false;
@@ -243,6 +260,10 @@ final class CompositionDownloadTransferRuntime {
   Future<Uint8List> readArtifact(Artifact artifact) =>
       workspace.readArtifact(artifact);
 
+  Future<void> settlePhysicalRetention() async {
+    await _physicalTransferRetention?.settle();
+  }
+
   Future<void> persistPromoted(DownloadId id) async {
     final session = registry.find(id);
     if (session == null || session.state != DownloadState.promoted) return;
@@ -274,6 +295,7 @@ final class CompositionDownloadTransferRuntime {
       throw StateError('cannot dispose composition transfer with active consumers');
     }
     _disposed = true;
+    await _physicalTransferRetention?.dispose();
     await owner.dispose();
     await artifactCacheHandoff?.drain(registry.sessions);
     artifactCacheHandoff?.detach();

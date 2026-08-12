@@ -82,6 +82,23 @@ final class PromotedArtifactCacheHandoff {
     }
   }
 
+  /// Waits for the ordinary automatic promotion policy for one immutable
+  /// session without upgrading it to an exact-durable requirement.
+  ///
+  /// This is used before composition-level physical-session retirement. A
+  /// verified equivalent durable body may therefore remain the storage
+  /// authority, preserving the equivalence-only policy from dev.230.
+  Future<bool> settleAutomatic(DownloadSession session) async {
+    if (session.state != DownloadState.promoted) return false;
+    _submit(session);
+    while (true) {
+      final pending = _commits[session.id];
+      if (pending == null) break;
+      await pending;
+    }
+    return _completedAutomaticCommits.contains(session.id);
+  }
+
   /// Ensures a promoted transfer has a durable cache-owned body.
   ///
   /// Ordinary promotion observation does not materialize a reopenable source
@@ -110,6 +127,13 @@ final class PromotedArtifactCacheHandoff {
     }
     _listeners.clear();
     _completedAutomaticCommits.clear();
+  }
+
+  void unobserve(DownloadSession session) {
+    final listener = _listeners.remove(session);
+    if (listener != null) {
+      session.removeSnapshotListener(listener);
+    }
   }
 
   void _submit(DownloadSession session) {

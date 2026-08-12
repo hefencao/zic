@@ -95,6 +95,35 @@ final class DownloadRegistry {
 
   DownloadSession? find(DownloadId id) => _sessions[resolvePhysicalId(id)];
 
+  /// Removes an idle physical session from the registry without choosing any
+  /// persistence policy.
+  ///
+  /// Higher-level composition owners may first hand hot bytes to their
+  /// durable owner, then use this mechanical retirement primitive. The
+  /// registry deliberately knows nothing about partial stores, artifact
+  /// caches, Reader retention or eviction budgets.
+  DownloadSession? takeIdlePhysical(DownloadId id) {
+    final physicalId = resolvePhysicalId(id);
+    final session = _sessions[physicalId];
+    if (session == null ||
+        session.demanded ||
+        session.activeRun ||
+        session.hasWriter ||
+        session.state == DownloadState.disposed) {
+      return null;
+    }
+    final aliases = <DownloadId>[];
+    for (final alias in _physicalAliases.keys) {
+      if (resolvePhysicalId(alias) == physicalId) aliases.add(alias);
+    }
+    _sessions.remove(physicalId);
+    for (final alias in aliases) {
+      _physicalAliases.remove(alias);
+    }
+    _physicalAliases.remove(physicalId);
+    return session;
+  }
+
   Set<String> get activePaths => <String>{
         for (final session in _sessions.values)
           if (session.activeRun || session.hasWriter)
