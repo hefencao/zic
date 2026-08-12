@@ -1,3 +1,8 @@
+## 0.31.0-dev.236：Physical partial progress projection closure
+- 03:34真机Trace确认physical partial字节复用真实存在：15次verified acquire alias继续join既有owner；current page 303直接继承1,946,180 bytes，page 300直接继承3,314,200 bytes。但Reader进度仍“各走各的”，根因是`PipelineTransferProgressPublisher`另建按exact `DownloadId.key`索引的session表，而acquire-time alias的logical exact key与physical session key不同。
+- 删除exact-key progress表与`observe(session)` fan-out；`PipelineReaderSession`先完成`binding.accept`建立physical alias，再由`DownloadRegistry.find(currentDownload)`解析唯一physical `DownloadSession`并直接交给publisher。进度只监听当前physical session snapshot，不复制committed state，不在Reader建立第二份进度cache。
+- Reader-local ingress诊断scope改用physical `sessionId`，不再把旧physical anchor的exact identity伪装成当前projection identity。网络/partial/cold-store/provider URI/NetLane语义不变；本Trace剩余19,782,164 duplicatePrefixBytes属于真实200 full-body catch-up/overlap成本，另有1次unsealed partial-source decode failure，继续独立追踪。
+
 ## 0.31.0-dev.235：Provider-scoped resume validators
 - 02:58真机Trace确认partial复用不是缺失：15次verified acquire alias全部join既有physical owner，4次multi-owner全部`preferred-existing-owner`；dev.234 retention后Reader dispose的physical session规模稳定为41→41→41→42。与此同时4次full-body prefix catch-up累计13,466,264 duplicate bytes。
 - 对照dev.227 provider-exact request identity后定位冗余下载根因：physical session共享committed prefix是正确的，但ETag/Last-Modified没有记录产生它的provider URI；跨版本B借用physical A时会把A validator发给B，Trace中704,512-byte A partial切到B后`strongRangeRejected→200 full-body`，随后切回A URI又能206。

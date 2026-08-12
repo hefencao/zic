@@ -1,4 +1,3 @@
-import 'package:domain/domain.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:sessions/sessions.dart';
@@ -89,8 +88,8 @@ PipelineTransferProgress pipelineTransferProgressFor(
 
 /// Pipeline-owned current-page projection copied from VibeVenera's progress-publisher shape.
 ///
-/// DownloadSession remains authoritative. The publisher only selects one
-/// identity, coalesces chunk notifications to a frame, and immediately hides
+/// DownloadSession remains authoritative. The publisher selects the resolved
+/// physical session, coalesces chunk notifications to a frame, and immediately hides
 /// promoted artifacts so cached page changes never flash a network indicator.
 final class PipelineTransferProgressPublisher {
   PipelineTransferProgressPublisher()
@@ -99,33 +98,34 @@ final class PipelineTransferProgressPublisher {
         );
 
   final ValueNotifier<PipelineTransferProgress> notifier;
-  final Map<String, DownloadSession> _sessions = <String, DownloadSession>{};
-  final Map<DownloadSession, DownloadSnapshotListener> _listeners =
-      <DownloadSession, DownloadSnapshotListener>{};
-  String? _currentKey;
+  DownloadSession? _selectedSession;
+  DownloadSnapshotListener? _selectedListener;
   bool _scheduled = false;
   bool _disposed = false;
 
-  void observe(DownloadSession session) {
-    if (_disposed || _listeners.containsKey(session)) return;
-    _sessions[session.id.key] = session;
-    void listener(DownloadSnapshot _) => _requestPublish();
-    _listeners[session] = listener;
-    session.addSnapshotListener(listener);
-    _requestPublish();
-  }
-
-  void select(DownloadId id) {
-    if (_disposed || _currentKey == id.key) return;
-    _currentKey = id.key;
+  /// Selects the authoritative physical transfer for the current page.
+  ///
+  /// Exact Reader identities may be acquire-time aliases of an older physical
+  /// [DownloadSession]. Progress therefore follows the resolved session itself
+  /// rather than keeping a second exact-id keyed projection table.
+  void select(DownloadSession? session) {
+    if (_disposed || identical(_selectedSession, session)) return;
+    final previous = _selectedSession;
+    final previousListener = _selectedListener;
+    if (previous != null && previousListener != null) {
+      previous.removeSnapshotListener(previousListener);
+    }
+    _selectedSession = session;
+    _selectedListener = null;
+    if (session != null) {
+      void listener(DownloadSnapshot _) => _requestPublish();
+      _selectedListener = listener;
+      session.addSnapshotListener(listener, fireImmediately: false);
+    }
     _requestPublish(preferImmediate: true);
   }
 
-  void clear() {
-    if (_disposed) return;
-    _currentKey = null;
-    _requestPublish(preferImmediate: true);
-  }
+  void clear() => select(null);
 
   void _requestPublish({bool preferImmediate = false}) {
     if (_disposed) return;
@@ -147,7 +147,7 @@ final class PipelineTransferProgressPublisher {
   }
 
   void _publishNow() {
-    final session = _sessions[_currentKey];
+    final session = _selectedSession;
     if (session == null) {
       _set(const PipelineTransferProgress());
       return;
@@ -162,11 +162,13 @@ final class PipelineTransferProgressPublisher {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    for (final entry in _listeners.entries) {
-      entry.key.removeSnapshotListener(entry.value);
+    final session = _selectedSession;
+    final listener = _selectedListener;
+    if (session != null && listener != null) {
+      session.removeSnapshotListener(listener);
     }
-    _listeners.clear();
-    _sessions.clear();
+    _selectedSession = null;
+    _selectedListener = null;
     notifier.dispose();
   }
 }

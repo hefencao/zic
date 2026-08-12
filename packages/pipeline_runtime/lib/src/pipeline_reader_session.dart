@@ -758,9 +758,9 @@ final class PipelineReaderSession {
     } else if (_startupCurrentDownload == currentDownload) {
       _releaseStartupCurrentDownload();
     }
-    transferProgress.select(currentDownload);
     _holdStartupArtifactPressureFor(currentDownload);
     binding.accept(observation);
+    transferProgress.select(_downloads.find(currentDownload));
     _syncStartupArtifactPressure();
     artifactReadScheduler.refresh();
     _syncPageOutputs();
@@ -1323,7 +1323,6 @@ final class PipelineReaderSession {
 
   void _observeDownloadSession(DownloadSession session) {
     _ingresses.attach(session);
-    transferProgress.observe(session);
   }
 
   void _handleAnimationResolved(DecodeId id, AnimationInfo animation) {

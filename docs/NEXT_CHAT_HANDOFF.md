@@ -1,5 +1,5 @@
-# dev.235 后续交接
-- dev.235：02:58 Trace确认partial本身确实复用、dev.234 physical retention已收敛到约41–42 sessions，但4次full-body catch-up累计13,466,264 duplicatePrefixBytes。核心根因是provider exact URI已在dev.227拆出，而ETag/Last-Modified仍挂physical session未带request URI scope；现validator authority绑定实际provider URI，跨版本alias仅共享partial bytes，foreign validator不得发strong Range，改走既有<=64KiB overlap proof。下一步真机确认`providerValidatorMismatch`命中并显著压低duplicate prefix。
+# dev.236 后续交接
+- dev.236：03:34 Trace确认physical partial本身跨版本共享，但进度projection仍按logical exact ID分裂：page 303/300分别直接继承1,946,180/3,314,200 bytes，publisher却用logical key查physical-key session表。现删除该第二映射，demand reconcile后直接选择resolved physical `DownloadSession`作为唯一进度authority；下一轮真机确认alias页面首次显示即继承同一committed fraction。dev.235 provider-scoped validator也已真实命中6次且均为64KiB overlap 206。
 `dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`
@@ -63,7 +63,7 @@
 - Native identity保持 `zic-media-core-dev134-abi6-lib00121400`。
 - production rhttp direct在普通release默认记录每response一次的HTTP version、匿名remote-IP hash与receive-progress-enabled标记；高频`onReceiveProgress`仅non-product或显式`ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS=1`诊断构建启用。该观测不得反馈给NetLane/Reader/retry/cache/framing。
 ## 下一步真机优先验证
-- dev.235后重点验证跨版本alias后的resume网络事实：存在foreign validator时应出现`providerValidatorMismatch=true`并进入`validatorless-range-probe`，不得再出现由该scope错误导致的`strongRangeRejected`；继续观察physical registry受界、partial cold-store只来自hot-retention-pressure/runtime-dispose，并补做dev.231 `stored-required-exact-alias`。
+- dev.236后重点验证UI/Trace同一事实：acquire-time alias页的进度必须直接反映resolved physical session既有`committedLength/totalLength`，不得从0形成logical独立进度；继续量化本轮19,782,164 `duplicatePrefixBytes`中的真实200 full-body catch-up，追踪1次unsealed `partial-source` decode failure，并补做dev.231 `stored-required-exact-alias`。
 - 07:51 dev.198 trace已确认Range成功路径仍正确，但full-body fallback重复重新放大到约19.2MiB/123.2MiB（15.6%），多数发生在760/780/800背景角色；dev.199只阻止这类低优先级大partial从0反复重读。820/900/1000、小partial和合法206必须保持原行为，不把defer扩展成通用restart-cost scheduler。
 - 首先复测快速前后翻页：dev.185外层previous admission应继续保持毫秒级；dev.189应确认780↔900不再导致plan取消，只有waiter真正晋升current=1000时才触发动态pressure，并确认旧JS未`finished(requestId)`前新plan绝不并发进入。无真实pressure时`receivingRetained=true` priority0仍应短时复用。
 - 真机首要复测 current 首帧稳定性：观察 policyDecision 的 staticWarmDecodes/uploads 是否收敛到稳定decode角色/真实可见页，current浅水位期间是否停止 speculative neighbor refill，以及decode/upload current handoff是否避免后台长任务阻塞。

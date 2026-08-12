@@ -2,8 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.235` / App `0.31.0+235`。
-- dev.235：02:58真机Trace确认partial physical复用与dev.234 retention均有效：15次verified acquire alias全部join既有owner（4次multi-owner均择优），Reader dispose时physical session规模41→41→41→42；但resume事件仍产生13,466,264 bytes重复prefix。源码与Trace对照定位为validator scope泄漏：physical A的ETag/Last-Modified会随共享session用于provider exact B，触发错误strong Range rejection/full-body catch-up。现partial bytes继续physical共享，validator改为provider exact URI scoped；scope不匹配保留prefix并走既有validatorless overlap。同步删除仅测试引用的resident旧兼容别名。
+- 当前版本：`0.31.0-dev.236` / App `0.31.0+236`。
+- dev.236：03:34真机Trace确认partial physical字节共享有效但进度authority未收口：alias current page 303/300分别从既有1,946,180/3,314,200 bytes继续，然而`PipelineTransferProgressPublisher`仍维护exact-key→session第二映射，logical alias key无法稳定命中physical key。现publisher只持有当前resolved physical `DownloadSession`并监听其snapshot，selection移到demand reconcile/alias建立之后；Reader继续只消费只读notifier。ingress projection scope同步改用physical session lifecycle ID。
 - dev.234：01:41真机Trace确认dev.233 multi-owner复用已闭环：38次verified acquire alias中4次multi-owner全部择优复用，ambiguous rejection/task failure均为0；但连续Reader dispose时共享physical session数43→50→100→107，证明App级hot registry缺乏composition-owned retirement。现新增有界idle physical retention：promoted在ordinary artifact authority收敛后退休，partial仅在32-session/256MiB hot预算受压时cold-store再退休；失败写入保留hot owner。sessions只负责机械retire与alias清理，不感知durable policy。
 - dev.233：01:05真机Trace中dev.232对应`partial-source taskFailed`为0；28次verified acquire alias有26次join、2次multi-owner ambiguity，且所有25次failed download state都是cancel/preemption。现fresh exact demand在多个direct verified existing owner间按promoted→active writer/run→demanded→committed partial及长度/priority稳定选择既有owner，不再创建第三个session；logical claim detach不再从sessions层checkpoint cold partial，promoted immutable自动handoff成功一次后也不再因snapshot churn重复backend probe。`stored-required-exact-alias`设备场景仍未在本Trace命中。
 - dev.232：00:38真机Trace出现3次可随source增长恢复的`partial-source taskFailed`。根因是projection可在同一SourceEpoch内rebuild并替换EncodedSource，而DecodeSession只按epoch复用cursor；现cursor binding要求epoch+source实例identity一致，同epoch换source会重绑。新Trace未覆盖`stored-required-exact-alias`，dev.231 required exact设备验证继续待完成。

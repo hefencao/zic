@@ -99,6 +99,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - current MUST 具有最高 download、decode 和 upload 优先级。
 - near/far 工作不得阻塞 current；current 的 holder/播放状态也不得冻结目标页网络。
 - verified-equivalent physical alias MUST只共享physical artifact/writer/retry状态；当前consumer选择source transport后，实际full/range/resume request MUST使用该consumer的exact `DownloadId.canonicalUri`，MUST NOT把physical anchor URI泄漏到另一个版本consumer的transport。
+- acquire-time verified physical alias的Reader网络进度 MUST直接投影resolved physical `DownloadSession`的`networkStartLength/committedLength/totalLength`；Pipeline MUST NOT按logical exact `DownloadId`建立第二份authoritative progress session表，Reader MUST只消费只读进度projection。
 - 已有 output 在 replacement 前 MUST 保持可见；缺少动画 successor 时保持当前帧并等待 producer。
 - loading MUST 绑定到具体媒体区域，不得用全局 overlay 隐藏已有页面。
 

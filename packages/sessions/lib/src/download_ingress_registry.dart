@@ -56,7 +56,7 @@ final class DownloadIngressProjectionRegistry {
     if (existing != null) return existing.projection;
 
     final projection = DownloadIngressProjection(
-      scopeId: '$scopePrefix:${session.id.key}',
+      scopeId: '$scopePrefix:physical:${session.sessionId}',
       ingress: sources.get(session.id),
     );
     final entry = _IngressProjectionEntry(
