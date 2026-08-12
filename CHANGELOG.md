@@ -1,3 +1,10 @@
+## 0.31.0-dev.248：Animated speculative byte-weighted NetLane admission
+
+- 14:13 真机 Trace 证明 dev.247 的 previous2/next4 demand 窗口已生效且 preempt 降至13次，但动画 floor 的未知页估算固定约72MiB，默认50MiB预算只报警、不约束执行；水位扩张也因此几乎失效。
+- 保持 previous3/next7 逻辑/retention 上界与 previous2/next4 最低预下载资格窗口；预算不再从 Pipeline 删除 eligible demand，而由 NetLane 对 active speculative encoded work 做通用 byte-weighted admission。
+- current/visible transition 以 rank>=900 绕过 speculative budget，但保留估算成本；任务一旦降为 background，同一 physical task 立即计入预算，不 cancel/recreate。默认未知动画页12MiB，因此50MiB通常同时运行最多4个 speculative transfer；单个超预算页面允许独占预算以避免永久饥饿。
+- 水位 c>4/n>2/c>6/n>3 继续把 outer page 加入候选队列；它们只在 active speculative byte budget 允许时进入执行。NetLane count concurrency、current reserved slot、dev.246 stable destructive-preemption transaction 均保持。
+
 ## 0.31.0-dev.247：Animated WebP layered prefetch window
 
 - 保持 Reader previous3/next7 逻辑/retention窗口，动画/保守WebP只把network admission下界收为previous2/next4；既有decode水位按 c>4 / n>2 / c>6 / n>3 逐层开放next5 / previous3 / next6 / next7。

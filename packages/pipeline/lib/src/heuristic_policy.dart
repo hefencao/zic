@@ -77,11 +77,19 @@ final class HeuristicPolicy {
       );
       if (downloadPriority > 0 &&
           (downloadAdmission == null || downloadAdmission.allows(entry.key))) {
+        final animatedBudgeted = downloadAdmission?.active ?? false;
         downloads[download] = DownloadDemand(
           role: role,
           priority: downloadPriority,
           reason: 'heuristic:${role.name}',
           expirationRevision: revision + 1,
+          estimatedTransferBytes: animatedBudgeted
+              ? downloadAdmission!.estimatedBytesFor(entry.key)
+              : 0,
+          speculativeBudgetBytes: animatedBudgeted
+              ? animatedPrefetchPolicy.maxSpeculativeBytes
+              : 0,
+          speculativeBudgetExemptPriority: animatedBudgeted ? 900 : 1 << 30,
         );
         keep.add(ResourceId.download(download));
       }

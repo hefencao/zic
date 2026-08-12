@@ -81,13 +81,23 @@ require(
     '动画 WebP 预下载预算',
     'previous 2 / next 4',
 )
-require(
-    'packages/pipeline/test/animated_prefetch_policy_test.dart',
-    'preserves logical 3/7 window',
-    'waterlines progressively open outer network pages',
-    'byte budget never shrinks mandatory 2/4 floor',
-    'resets staged expansion on jump',
-)
+prefetch_test = 'packages/pipeline/test/animated_prefetch_policy_test.dart'
+if int(m.group(1)) < 248:
+    require(
+        prefetch_test,
+        'preserves logical 3/7 window',
+        'waterlines progressively open outer network pages',
+        'byte budget never shrinks mandatory 2/4 floor',
+        'resets staged expansion on jump',
+    )
+else:
+    require(
+        prefetch_test,
+        'preserves logical 3/7 window',
+        'waterlines progressively open outer network pages',
+        'byte budget does not remove eligible 2/4 or waterline pages',
+        'resets staged expansion on jump',
+    )
 for path in (
     'docs/adr/0227-animated-webp-layered-prefetch-window.md',
     'docs/audits/dev247-animated-prefetch-window-root-cause-audit.md',
@@ -95,7 +105,10 @@ for path in (
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.247 governance file: {path}')
-require('docs/SPEC.md', 'encoded逻辑/retention window', 'network下界previous2/next4')
+if int(m.group(1)) < 248:
+    require('docs/SPEC.md', 'encoded逻辑/retention window', 'network下界previous2/next4')
+else:
+    require('docs/SPEC.md', 'encoded逻辑/retention window', '最低预下载资格窗口')
 require('docs/ARCHITECTURE.md', 'previous2/next4', 'c>4→next5')
 require('tool/check.sh', 'test_dev247_animated_prefetch_window.py')
 print('dev.247 animated WebP layered prefetch window: OK')

@@ -26,12 +26,21 @@ final class TransferDemand {
   const TransferDemand({
     required this.priority,
     required this.reason,
+    this.estimatedTransferBytes = 0,
+    this.speculativeBudgetBytes = 0,
+    this.speculativeBudgetExemptPriority = 1 << 30,
     this.expectedChecksum,
     this.completionIntent = TransferCompletionIntent.opportunistic,
-  }) : assert(priority >= 0);
+  })  : assert(priority >= 0),
+        assert(estimatedTransferBytes >= 0),
+        assert(speculativeBudgetBytes >= 0),
+        assert(speculativeBudgetExemptPriority >= 0);
 
   final int priority;
   final String reason;
+  final int estimatedTransferBytes;
+  final int speculativeBudgetBytes;
+  final int speculativeBudgetExemptPriority;
   final String? expectedChecksum;
   final TransferCompletionIntent completionIntent;
 
@@ -40,12 +49,23 @@ final class TransferDemand {
       other is TransferDemand &&
       priority == other.priority &&
       reason == other.reason &&
+      estimatedTransferBytes == other.estimatedTransferBytes &&
+      speculativeBudgetBytes == other.speculativeBudgetBytes &&
+      speculativeBudgetExemptPriority ==
+          other.speculativeBudgetExemptPriority &&
       expectedChecksum == other.expectedChecksum &&
       completionIntent == other.completionIntent;
 
   @override
-  int get hashCode =>
-      Object.hash(priority, reason, expectedChecksum, completionIntent);
+  int get hashCode => Object.hash(
+        priority,
+        reason,
+        estimatedTransferBytes,
+        speculativeBudgetBytes,
+        speculativeBudgetExemptPriority,
+        expectedChecksum,
+        completionIntent,
+      );
 }
 
 typedef TransferPrepare = Future<void> Function(DownloadSession session);
@@ -408,6 +428,10 @@ final class DownloadTransferOwner {
         demand: TransferDemand(
           priority: selected.demand.priority,
           reason: selected.demand.reason,
+          estimatedTransferBytes: selected.demand.estimatedTransferBytes,
+          speculativeBudgetBytes: selected.demand.speculativeBudgetBytes,
+          speculativeBudgetExemptPriority:
+              selected.demand.speculativeBudgetExemptPriority,
           expectedChecksum: leftChecksum ?? rightChecksum,
           completionIntent: required
               ? TransferCompletionIntent.required
@@ -710,6 +734,10 @@ final class DownloadTransferOwner {
       priority: effectivePriority,
       bucket: claim.consumer.downloadBucketFor(claim.exactId),
       bucketLimit: claim.consumer.downloadBucketLimitFor(claim.exactId),
+      estimatedTransferBytes: claim.demand.estimatedTransferBytes,
+      speculativeBudgetBytes: claim.demand.speculativeBudgetBytes,
+      speculativeBudgetExemptPriority:
+          claim.demand.speculativeBudgetExemptPriority,
       task: (token) => _runDownload(id, session, taskKey, token),
     );
   }
@@ -762,6 +790,10 @@ final class DownloadTransferOwner {
           'handoffActive': net.handoffActive,
           'effectivePriority': net.priorityOf(taskKey),
           'bucketActive': net.activeForBucket(bucket),
+          'speculativeActiveBytes': net.speculativeActiveBytes,
+          'speculativeActiveTasks': net.speculativeActiveTasks,
+          'estimatedTransferBytes': claim.demand.estimatedTransferBytes,
+          'speculativeBudgetBytes': claim.demand.speculativeBudgetBytes,
           'committedLength': session.committedLength,
           'physicalOwner': true,
           'providerScope': provider.scopeId,
@@ -970,6 +1002,16 @@ final class DownloadTransferOwner {
     int priority, {
     required String reason,
   }) {
+    final claim = _preferredClaim(id);
+    if (claim != null) {
+      net.updateSpeculativeBudget(
+        taskKey,
+        estimatedTransferBytes: claim.demand.estimatedTransferBytes,
+        speculativeBudgetBytes: claim.demand.speculativeBudgetBytes,
+        speculativeBudgetExemptPriority:
+            claim.demand.speculativeBudgetExemptPriority,
+      );
+    }
     final oldPriority = net.priorityOf(taskKey);
     final active = net.isActive(taskKey);
     if (!net.updatePriority(taskKey, priority) ||

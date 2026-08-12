@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：真机优先验证dev.247动画WebP分层预下载：`RoleWindow`必须始终保持previous3/next7逻辑/retention上界；动画或provisional WebP current的network demand初始只允许current+previous2+next4，`policyDecision.downloads`通常应为7。只有成功decode refill水位`c>4/n>2/c>6/n>3`按顺序开放next5/previous3/next6/next7，且额外页面必须通过用户可设置的encoded speculative budget（默认50MiB）；下界本身超预算时仍保2/4并记录`animatedPrefetchMinimumExceededBudget=true`。跳页后位于逻辑3/7但暂未network-admitted的页面不得被当作detached/evict，成为current/进入下界时必须复用已有physical partial。dev.246 stable destructive-preemption transaction继续冻结，不因缩窗重新引入normal cancel。
+- P0：真机优先验证dev.248动画WebP weighted admission：`RoleWindow`始终previous3/next7；previous2/next4始终作为最低预下载资格，水位`c>4/n>2/c>6/n>3`只把outer page加入候选队列。默认50MiB预算由NetLane限制同时active的speculative encoded bytes，未知页12MiB时通常最多4个speculative task；current/visible transition绕过预算但降级后立即计入。不得为了预算删除2/4 demand、改变3/7窗口判断或physical partial identity；dev.246 stable destructive-preemption transaction继续冻结。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环

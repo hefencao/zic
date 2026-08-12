@@ -400,7 +400,7 @@ final class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
                   children: <Widget>[
                     Text(
                       '${widget.preferences.animatedWebpPrefetchBudgetMiB} MiB · '
-                      '动画网络下界 previous 2 / next 4；只有水位充足且预算允许时才逐步扩到 previous 3 / next 7。',
+                      '动画最低预下载资格 previous 2 / next 4；水位逐步扩到 previous 3 / next 7，实际同时运行的动画 speculative bytes 受此预算约束。',
                     ),
                     Slider(
                       min: 16,

@@ -117,7 +117,10 @@ for token in (
     "一个 idle 章节会话最多两分钟",
 ):
     require(spec, token, "Spec")
-if spec_build >= 247:
+if spec_build >= 248:
+    require(spec, "previous2/next4作为最低预下载资格窗口", "Spec")
+    require(spec, "speculative byte budget MUST由NetLane约束同时active的动画encoded工作", "Spec")
+elif spec_build >= 247:
     require(spec, "network下界previous2/next4", "Spec")
 
 for forbidden in (

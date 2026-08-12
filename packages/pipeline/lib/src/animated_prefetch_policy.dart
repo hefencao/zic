@@ -8,10 +8,12 @@ const int defaultAnimatedWebpPrefetchBudgetBytes = 50 * 1024 * 1024;
 /// conservatively suspected to be animated WebP.
 ///
 /// This policy never changes [RoleWindow]. The stable Reader logical/retention
-/// envelope remains previous 3 / next 7; this class selects only the subset
-/// that is allowed to create network download demand. The mandatory network
-/// floor is previous 2 / next 4. Waterline evidence may progressively admit
-/// the four outer positions, subject to the speculative byte budget.
+/// envelope remains previous 3 / next 7; this class selects the subset that
+/// is eligible for network prefetch demand. The mandatory eligibility floor is
+/// previous 2 / next 4. Waterline evidence progressively admits the four outer
+/// positions. The speculative byte budget is carried with those demands and
+/// enforced by NetLane as an execution budget, so eligible pages may queue
+/// without all becoming active transports at once.
 final class AnimatedPrefetchPolicy {
   const AnimatedPrefetchPolicy({
     this.minimumForwardPages = 4,
@@ -27,12 +29,9 @@ final class AnimatedPrefetchPolicy {
   final int maximumForwardPages;
   final int maximumBackwardPages;
 
-  /// Budget for speculative encoded bytes excluding the current page.
-  ///
-  /// The previous2/next4 floor is a hard count lower bound. If that floor is
-  /// already larger than the byte budget, it remains admitted and the result
-  /// reports [AnimatedPrefetchAdmission.minimumExceedsBudget]; no outer page
-  /// will be admitted until the estimate fits again.
+  /// Budget for concurrently active speculative encoded work, excluding
+  /// foreground current/visible-transition execution. Pipeline attaches this
+  /// value and the per-page estimate to download demand; NetLane enforces it.
   final int maxSpeculativeBytes;
 
   /// Conservative cost for sources that do not expose a page byte length.
@@ -63,6 +62,7 @@ final class AnimatedPrefetchPolicy {
         expansionStage: 4,
         estimatedSpeculativeBytes: 0,
         minimumExceedsBudget: false,
+        estimatedPageBytes: const <int, int>{},
       );
     }
 
@@ -105,6 +105,11 @@ final class AnimatedPrefetchPolicy {
     );
     final minimumExceedsBudget = maxSpeculativeBytes > 0 &&
         estimated > maxSpeculativeBytes;
+    final estimatedPageBytes = <int, int>{
+      for (final index in admitted)
+        if (index != current) index: _estimatedPageBytes(chapter.pages[index]),
+      current: _estimatedPageBytes(chapter.pages[current]),
+    };
 
     // The upper-envelope openings are monotonic and intentionally asymmetric:
     // next5 first, then previous3, then next6 and next7. This preserves the
@@ -128,10 +133,8 @@ final class AnimatedPrefetchPolicy {
         continue;
       }
       final cost = _estimatedPageBytes(chapter.pages[index]);
-      if (maxSpeculativeBytes > 0 && estimated + cost > maxSpeculativeBytes) {
-        continue;
-      }
       admitted.add(index);
+      estimatedPageBytes[index] = cost;
       estimated += cost;
     }
 
@@ -141,6 +144,7 @@ final class AnimatedPrefetchPolicy {
       expansionStage: expansionStage.clamp(0, 4).toInt(),
       estimatedSpeculativeBytes: estimated,
       minimumExceedsBudget: minimumExceedsBudget,
+      estimatedPageBytes: estimatedPageBytes,
     );
   }
 
@@ -173,13 +177,21 @@ final class AnimatedPrefetchAdmission {
     required this.expansionStage,
     required this.estimatedSpeculativeBytes,
     required this.minimumExceedsBudget,
-  }) : admittedIndexes = Set<int>.unmodifiable(admittedIndexes);
+    required Map<int, int> estimatedPageBytes,
+  })  : admittedIndexes = Set<int>.unmodifiable(admittedIndexes),
+        estimatedPageBytes = Map<int, int>.unmodifiable(estimatedPageBytes);
 
   final bool active;
+
+  /// Pages eligible for prefetch demand. This is intentionally distinct from
+  /// the set of transfers currently active in NetLane.
   final Set<int> admittedIndexes;
   final int expansionStage;
   final int estimatedSpeculativeBytes;
   final bool minimumExceedsBudget;
+  final Map<int, int> estimatedPageBytes;
 
   bool allows(int pageIndex) => admittedIndexes.contains(pageIndex);
+
+  int estimatedBytesFor(int pageIndex) => estimatedPageBytes[pageIndex] ?? 0;
 }

@@ -120,7 +120,7 @@ void main() {
     expect(full.admittedIndexes, containsAll(<int>[9, 17, 18, 19]));
   });
 
-  test('byte budget never shrinks mandatory 2/4 floor', () {
+  test('byte budget does not remove eligible 2/4 or waterline pages', () {
     final manifest = chapter(pageBytes: 10 * 1024 * 1024);
     final obs = observation(12);
     final window = resolver.resolve(manifest, obs);
@@ -135,8 +135,10 @@ void main() {
     );
 
     expect(admission.minimumExceedsBudget, isTrue);
-    expect(admission.estimatedSpeculativeBytes, 60 * 1024 * 1024);
-    expect(admission.admittedIndexes, <int>{10, 11, 12, 13, 14, 15, 16});
+    expect(admission.estimatedSpeculativeBytes, 100 * 1024 * 1024);
+    expect(admission.admittedIndexes, hasLength(11));
+    expect(admission.admittedIndexes, containsAll(<int>[9, 17, 18, 19]));
+    expect(admission.estimatedBytesFor(13), 10 * 1024 * 1024);
   });
 
   test('controller resets staged expansion on jump and restores static 3/7', () {

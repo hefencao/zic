@@ -1101,4 +1101,127 @@ void _dev123NetLaneTests() {
     firstCurrentRelease.complete();
     await lane.idle();
   });
+
+  test('speculative byte budget queues eligible animation work without consuming every slot', () async {
+    final lane = NetLane(maxActive: 6, highPriorityThreshold: 1000);
+    final releases = <String, Completer<void>>{};
+    final started = <String>[];
+
+    void submitSpec(String key, int priority) {
+      final release = Completer<void>();
+      releases[key] = release;
+      lane.submitRanked(
+        key: key,
+        priority: priority,
+        bucket: 'remote:a',
+        bucketLimit: 6,
+        estimatedTransferBytes: 12 * 1024 * 1024,
+        speculativeBudgetBytes: 50 * 1024 * 1024,
+        speculativeBudgetExemptPriority: 900,
+        task: (_) async {
+          started.add(key);
+          await release.future;
+        },
+      );
+    }
+
+    submitSpec('next', 820);
+    submitSpec('next2', 800);
+    submitSpec('previous', 780);
+    submitSpec('near-a', 760);
+    submitSpec('near-b', 740);
+    submitSpec('near-c', 720);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(started, hasLength(4));
+    expect(lane.speculativeActiveTasks, 4);
+    expect(lane.speculativeActiveBytes, 48 * 1024 * 1024);
+    expect(lane.queued, 2);
+    expect(lane.active, 4);
+
+    final currentRelease = Completer<void>();
+    var currentStarted = false;
+    lane.submitRanked(
+      key: 'current',
+      priority: 1000,
+      bucket: 'remote:a',
+      bucketLimit: 6,
+      estimatedTransferBytes: 12 * 1024 * 1024,
+      speculativeBudgetBytes: 50 * 1024 * 1024,
+      speculativeBudgetExemptPriority: 900,
+      task: (_) async {
+        currentStarted = true;
+        await currentRelease.future;
+      },
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(currentStarted, isTrue);
+    expect(lane.active, 5);
+    expect(lane.speculativeActiveBytes, 48 * 1024 * 1024);
+
+    currentRelease.complete();
+    for (final release in releases.values) {
+      if (!release.isCompleted) release.complete();
+    }
+    await lane.idle();
+  });
+
+  test('foreground task keeps speculative cost metadata when it demotes', () async {
+    final lane = NetLane(maxActive: 6, highPriorityThreshold: 1000);
+    final releases = <String, Completer<void>>{};
+
+    Future<void> submit(String key, int priority) async {
+      final release = Completer<void>();
+      releases[key] = release;
+      lane.submitRanked(
+        key: key,
+        priority: priority,
+        bucket: 'remote:a',
+        bucketLimit: 6,
+        estimatedTransferBytes: 12 * 1024 * 1024,
+        speculativeBudgetBytes: 50 * 1024 * 1024,
+        speculativeBudgetExemptPriority: 900,
+        task: (_) => release.future,
+      );
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    await submit('current', 1000);
+    await submit('a', 820);
+    await submit('b', 800);
+    await submit('c', 780);
+    await submit('d', 760);
+    expect(lane.active, 5);
+    expect(lane.speculativeActiveBytes, 48 * 1024 * 1024);
+
+    expect(lane.updatePriority('current', 0), isTrue);
+    expect(lane.speculativeActiveBytes, 60 * 1024 * 1024);
+
+    var laterStarted = false;
+    lane.submitRanked(
+      key: 'later',
+      priority: 740,
+      bucket: 'remote:a',
+      bucketLimit: 6,
+      estimatedTransferBytes: 12 * 1024 * 1024,
+      speculativeBudgetBytes: 50 * 1024 * 1024,
+      speculativeBudgetExemptPriority: 900,
+      task: (_) async { laterStarted = true; },
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(laterStarted, isFalse);
+
+    releases['a']!.complete();
+    releases['b']!.complete();
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(laterStarted, isTrue);
+
+    for (final release in releases.values) {
+      if (!release.isCompleted) release.complete();
+    }
+    await lane.idle();
+  });
+
 }

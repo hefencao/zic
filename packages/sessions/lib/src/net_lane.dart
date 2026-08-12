@@ -206,6 +206,9 @@ final class NetLane implements TaskLane {
     required String bucket,
     required int bucketLimit,
     bool preemptible = true,
+    int estimatedTransferBytes = 0,
+    int speculativeBudgetBytes = 0,
+    int speculativeBudgetExemptPriority = 1 << 30,
     required LaneTask task,
   }) =>
       _core.submit(
@@ -214,6 +217,9 @@ final class NetLane implements TaskLane {
         bucket: bucket,
         bucketLimit: bucketLimit,
         preemptible: preemptible,
+        estimatedTransferBytes: estimatedTransferBytes,
+        speculativeBudgetBytes: speculativeBudgetBytes,
+        speculativeBudgetExemptPriority: speculativeBudgetExemptPriority,
         task: task,
       );
 
@@ -221,6 +227,8 @@ final class NetLane implements TaskLane {
 
   int activeForBucket(String bucket) => _core.activeForBucket(bucket);
   int get handoffActive => _core.handoffActive;
+  int get speculativeActiveBytes => _core.speculativeActiveBytes;
+  int get speculativeActiveTasks => _core.speculativeActiveTasks;
   int? priorityOf(String key) => _core.priorityOf(key);
   bool isActive(String key) => _core.isActive(key);
   NetPolicyRank? activePolicyRank(
@@ -232,6 +240,18 @@ final class NetLane implements TaskLane {
       _core.incomingOutranks(incomingPriority, incumbent);
   bool updatePriority(String key, int priority) =>
       _core.updatePriority(key, priority);
+  bool updateSpeculativeBudget(
+    String key, {
+    required int estimatedTransferBytes,
+    required int speculativeBudgetBytes,
+    required int speculativeBudgetExemptPriority,
+  }) =>
+      _core.updateSpeculativeBudget(
+        key,
+        estimatedTransferBytes: estimatedTransferBytes,
+        speculativeBudgetBytes: speculativeBudgetBytes,
+        speculativeBudgetExemptPriority: speculativeBudgetExemptPriority,
+      );
 
   @override
   bool replace({required String key, required int priority, required LaneTask task}) =>
@@ -418,6 +438,78 @@ final class _Lane {
     }
     return excess;
   }
+
+  int get speculativeActiveBytes => _active.values.fold<int>(
+        0,
+        (total, task) =>
+            total +
+            _speculativeCostValues(
+              priority: task.priority,
+              estimatedTransferBytes: task.estimatedTransferBytes,
+              speculativeBudgetBytes: task.speculativeBudgetBytes,
+              speculativeBudgetExemptPriority:
+                  task.speculativeBudgetExemptPriority,
+            ),
+      );
+
+  int get speculativeActiveTasks => _active.values
+      .where(
+        (task) =>
+            _speculativeCostValues(
+              priority: task.priority,
+              estimatedTransferBytes: task.estimatedTransferBytes,
+              speculativeBudgetBytes: task.speculativeBudgetBytes,
+              speculativeBudgetExemptPriority:
+                  task.speculativeBudgetExemptPriority,
+            ) >
+            0,
+      )
+      .length;
+
+  int _speculativeCostValues({
+    required int priority,
+    required int estimatedTransferBytes,
+    required int speculativeBudgetBytes,
+    required int speculativeBudgetExemptPriority,
+  }) {
+    if (speculativeBudgetBytes <= 0 ||
+        estimatedTransferBytes <= 0 ||
+        priority >= speculativeBudgetExemptPriority) {
+      return 0;
+    }
+    return estimatedTransferBytes;
+  }
+
+  int _pendingSpeculativeCost(_Pending pending) => _speculativeCostValues(
+        priority: pending.priority,
+        estimatedTransferBytes: pending.estimatedTransferBytes,
+        speculativeBudgetBytes: pending.speculativeBudgetBytes,
+        speculativeBudgetExemptPriority:
+            pending.speculativeBudgetExemptPriority,
+      );
+
+  int _activeSpeculativeCost(_ActiveTask task) => _speculativeCostValues(
+        priority: task.priority,
+        estimatedTransferBytes: task.estimatedTransferBytes,
+        speculativeBudgetBytes: task.speculativeBudgetBytes,
+        speculativeBudgetExemptPriority:
+            task.speculativeBudgetExemptPriority,
+      );
+
+  bool _speculativeBudgetAvailable(_Pending pending) {
+    final cost = _pendingSpeculativeCost(pending);
+    final limit = pending.speculativeBudgetBytes;
+    if (cost <= 0 || limit <= 0) return true;
+    final activeBytes = speculativeActiveBytes;
+    if (activeBytes == 0 && cost > limit) {
+      // A single oversized eligible page must not starve forever. Admit one
+      // such speculative transfer, then block further budgeted work until it
+      // exits or becomes foreground.
+      return true;
+    }
+    return activeBytes + cost <= limit;
+  }
+
   bool get isIdle => _pending.isEmpty && _active.isEmpty;
 
   int activeForBucket(String bucket) => _activeByBucket[bucket] ?? 0;
@@ -443,25 +535,41 @@ final class _Lane {
     String? bucket,
     int? bucketLimit,
     bool preemptible = true,
+    int estimatedTransferBytes = 0,
+    int speculativeBudgetBytes = 0,
+    int speculativeBudgetExemptPriority = 1 << 30,
     required LaneTask task,
   }) {
+    assert(estimatedTransferBytes >= 0);
+    assert(speculativeBudgetBytes >= 0);
     final activeTask = _active[key];
     if (activeTask != null) {
       final increased = _updateActivePriority(activeTask, priority);
+      final budgetFreed = _updateActiveSpeculativeBudget(
+        activeTask,
+        estimatedTransferBytes: estimatedTransferBytes,
+        speculativeBudgetBytes: speculativeBudgetBytes,
+        speculativeBudgetExemptPriority: speculativeBudgetExemptPriority,
+      );
       activeTask.preemptible = preemptible;
-      if (increased) _pump();
+      if (increased || budgetFreed) _pump();
       return false;
     }
     final pending = _pending[key];
     if (pending != null) {
+      final oldCost = _pendingSpeculativeCost(pending);
       final increased = priority > pending.priority;
       _updatePendingPriority(pending, priority);
       pending
         ..bucket = bucket
         ..bucketLimit = bucketLimit
         ..preemptible = preemptible
+        ..estimatedTransferBytes = estimatedTransferBytes
+        ..speculativeBudgetBytes = speculativeBudgetBytes
+        ..speculativeBudgetExemptPriority = speculativeBudgetExemptPriority
         ..task = task;
-      if (increased) _pump();
+      final budgetFreed = _pendingSpeculativeCost(pending) < oldCost;
+      if (increased || budgetFreed) _pump();
       return false;
     }
     _pending[key] = _Pending(
@@ -471,6 +579,9 @@ final class _Lane {
       bucket: bucket,
       bucketLimit: bucketLimit,
       preemptible: preemptible,
+      estimatedTransferBytes: estimatedTransferBytes,
+      speculativeBudgetBytes: speculativeBudgetBytes,
+      speculativeBudgetExemptPriority: speculativeBudgetExemptPriority,
       task: task,
       highPrioritySinceMicros:
           priority >= highPriorityThreshold ? clock.nowMicros() : null,
@@ -492,6 +603,50 @@ final class _Lane {
     _updatePendingPriority(pending, priority);
     if (increased) _pump();
     return true;
+  }
+
+  bool updateSpeculativeBudget(
+    String key, {
+    required int estimatedTransferBytes,
+    required int speculativeBudgetBytes,
+    required int speculativeBudgetExemptPriority,
+  }) {
+    assert(estimatedTransferBytes >= 0);
+    assert(speculativeBudgetBytes >= 0);
+    final activeTask = _active[key];
+    if (activeTask != null) {
+      final budgetFreed = _updateActiveSpeculativeBudget(
+        activeTask,
+        estimatedTransferBytes: estimatedTransferBytes,
+        speculativeBudgetBytes: speculativeBudgetBytes,
+        speculativeBudgetExemptPriority: speculativeBudgetExemptPriority,
+      );
+      if (budgetFreed) _pump();
+      return true;
+    }
+    final pending = _pending[key];
+    if (pending == null) return false;
+    final oldCost = _pendingSpeculativeCost(pending);
+    pending
+      ..estimatedTransferBytes = estimatedTransferBytes
+      ..speculativeBudgetBytes = speculativeBudgetBytes
+      ..speculativeBudgetExemptPriority = speculativeBudgetExemptPriority;
+    if (_pendingSpeculativeCost(pending) < oldCost) _pump();
+    return true;
+  }
+
+  bool _updateActiveSpeculativeBudget(
+    _ActiveTask task, {
+    required int estimatedTransferBytes,
+    required int speculativeBudgetBytes,
+    required int speculativeBudgetExemptPriority,
+  }) {
+    final oldCost = _activeSpeculativeCost(task);
+    task
+      ..estimatedTransferBytes = estimatedTransferBytes
+      ..speculativeBudgetBytes = speculativeBudgetBytes
+      ..speculativeBudgetExemptPriority = speculativeBudgetExemptPriority;
+    return _activeSpeculativeCost(task) < oldCost;
   }
 
   void _updatePendingPriority(_Pending pending, int priority) {
@@ -528,6 +683,9 @@ final class _Lane {
       bucket: bucket,
       bucketLimit: bucketLimit,
       preemptible: true,
+      estimatedTransferBytes: 0,
+      speculativeBudgetBytes: 0,
+      speculativeBudgetExemptPriority: 1 << 30,
       task: task,
       highPrioritySinceMicros:
           priority >= highPriorityThreshold ? clock.nowMicros() : null,
@@ -550,6 +708,9 @@ final class _Lane {
       bucket: bucket,
       bucketLimit: bucketLimit,
       preemptible: true,
+      estimatedTransferBytes: 0,
+      speculativeBudgetBytes: 0,
+      speculativeBudgetExemptPriority: 1 << 30,
       task: task,
       highPrioritySinceMicros:
           priority >= highPriorityThreshold ? clock.nowMicros() : null,
@@ -616,7 +777,8 @@ final class _Lane {
         final handoff = highPriority && _needsHandoff(pending);
         if (!handoff &&
             (running >= maxActive ||
-                !_bucketAvailable(pending, handoff: false))) {
+                !_bucketAvailable(pending, handoff: false) ||
+                !_speculativeBudgetAvailable(pending))) {
           return false;
         }
         if (handoff &&
@@ -654,6 +816,10 @@ final class _Lane {
         bucketLimit: next.bucketLimit,
         priority: next.priority,
         preemptible: next.preemptible,
+        estimatedTransferBytes: next.estimatedTransferBytes,
+        speculativeBudgetBytes: next.speculativeBudgetBytes,
+        speculativeBudgetExemptPriority:
+            next.speculativeBudgetExemptPriority,
       );
       final bucket = next.bucket;
       if (bucket != null) {
@@ -880,6 +1046,9 @@ final class _Pending {
     required this.bucket,
     required this.bucketLimit,
     required this.preemptible,
+    required this.estimatedTransferBytes,
+    required this.speculativeBudgetBytes,
+    required this.speculativeBudgetExemptPriority,
     required this.task,
     required this.highPrioritySinceMicros,
   });
@@ -890,6 +1059,9 @@ final class _Pending {
   String? bucket;
   int? bucketLimit;
   bool preemptible;
+  int estimatedTransferBytes;
+  int speculativeBudgetBytes;
+  int speculativeBudgetExemptPriority;
   LaneTask task;
   int? highPrioritySinceMicros;
 }
@@ -901,6 +1073,9 @@ final class _ActiveTask {
     required this.bucketLimit,
     required this.priority,
     required this.preemptible,
+    required this.estimatedTransferBytes,
+    required this.speculativeBudgetBytes,
+    required this.speculativeBudgetExemptPriority,
   });
 
   final CancelToken token;
@@ -908,6 +1083,9 @@ final class _ActiveTask {
   final int? bucketLimit;
   int priority;
   bool preemptible;
+  int estimatedTransferBytes;
+  int speculativeBudgetBytes;
+  int speculativeBudgetExemptPriority;
 }
 
 final class _KeyIdleWaiter {
