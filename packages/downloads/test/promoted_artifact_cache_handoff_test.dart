@@ -223,6 +223,77 @@ void main() {
     );
     expect(event.payload['bytes'], bytes.lengthInBytes);
   });
+  test('verified equivalent durable artifact avoids Reader-side exact copy',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-promoted-cache-handoff-equivalent-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final oldId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'old-comic',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'old',
+      canonicalUri: Uri.parse('memory://old-equivalent-page'),
+    );
+    final newId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'new-comic',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'new',
+      canonicalUri: Uri.parse('memory://new-equivalent-page'),
+    );
+    final bytes = Uint8List.fromList(<int>[8, 6, 7, 5, 3, 0, 9]);
+    final backend = _RecordingArtifactStore()
+      ..values[oldId] = Uint8List.fromList(bytes);
+    final cache = ArtifactCacheManager(backend: backend)
+      ..linkEquivalent(first: oldId, second: newId);
+    final trace = MemoryTraceSink();
+    final handoff = PromotedArtifactCacheHandoff(
+      cache: cache,
+      clock: SystemClock(),
+      traceSink: trace,
+    );
+    final registry = DownloadRegistry(
+      layout: CacheLayout(directory.path),
+      clock: SystemClock(),
+      onSessionCreated: handoff.observe,
+    );
+    addTearDown(() async {
+      handoff.detach();
+      await registry.dispose();
+    });
+    final session = registry.get(newId);
+    final transport = LoaderTransport(<Uri, LoaderTransportSource>{
+      newId.canonicalUri: LoaderTransportSource(
+        revision: 'fixture-new',
+        loadBytes: () async => bytes,
+      ),
+    });
+
+    await DownloadJob(transport: transport, session: session).run();
+    await handoff.drain(registry.sessions);
+
+    expect(backend.values[newId], isNull);
+    expect((await cache.readForeground(newId))?.bytes, bytes);
+    expect(
+      trace.events.any(
+        (event) =>
+            event.payload['action'] == 'skip-verified-equivalent-durable',
+      ),
+      isTrue,
+    );
+
+    await handoff.persist(session);
+    expect(backend.values[newId], bytes);
+  });
+
 }
 
 final class _RecordingArtifactStore implements ArtifactCacheBackend {

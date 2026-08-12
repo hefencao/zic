@@ -35,12 +35,13 @@ void main() {
       newChapter: newChapter,
     );
 
-    expect(plan.aliases, <DownloadId, DownloadId>{newId: oldId});
-    expect(plan.apply(cache), 1);
+    expect(plan.mappings, <DownloadId, DownloadId>{newId: oldId});
+    expect(plan.registerEquivalences(cache), 1);
     expect((await cache.readForeground(newId))?.bytes, <int>[1, 2, 3]);
   });
 
-  test('applyExisting aliases only pages with an existing old artifact', () async {
+  test('equivalence registration is independent of current artifact existence',
+      () async {
     final oldChapter = _chapter(
       comicId: 'old',
       revision: 'old',
@@ -70,9 +71,9 @@ void main() {
       newChapter: newChapter,
     );
 
-    expect(await plan.applyExisting(cache), 1);
-    expect(cache.resolveAlias(newFirst), oldFirst);
-    expect(cache.resolveAlias(newSecond), newSecond);
+    expect(plan.registerEquivalences(cache), 2);
+    expect((await cache.readForeground(newFirst))?.bytes, <int>[7, 7, 7]);
+    expect(await cache.readForeground(newSecond), isNull);
   });
 
   test('page index or title similarity alone never creates reuse aliases', () {
@@ -92,7 +93,7 @@ void main() {
       newChapter: newChapter,
     );
 
-    expect(plan.aliases, isEmpty);
+    expect(plan.mappings, isEmpty);
   });
 
   test('resolved anchor identities prepare temporary offset aliases', () async {
@@ -130,9 +131,9 @@ void main() {
       resolveIdentity: (page) async => identities[page.uri.toString()],
     );
 
-    expect(plan.aliases, hasLength(3));
+    expect(plan.mappings, hasLength(3));
     expect(
-      plan.aliases[readerPageDownloadId(newChapter, newChapter.pages[1])],
+      plan.mappings[readerPageDownloadId(newChapter, newChapter.pages[1])],
       readerPageDownloadId(oldChapter, oldChapter.pages[0]),
     );
   });
@@ -173,14 +174,15 @@ void main() {
       resolveIdentity: (page) async => identities[page.uri.toString()],
     );
 
-    expect(plan.aliases, hasLength(3));
+    expect(plan.mappings, hasLength(3));
     expect(
-      plan.aliases[readerPageDownloadId(older, older.pages.first)],
+      plan.mappings[readerPageDownloadId(older, older.pages.first)],
       readerPageDownloadId(newer, newer.pages[1]),
     );
   });
 
-  test('reverse reuse never creates an alias cycle', () async {
+  test('reverse proof registration reuses one symmetric equivalence edge',
+      () async {
     final older = _chapter(
       comicId: 'older',
       revision: 'older',
@@ -202,15 +204,19 @@ void main() {
         olderId: Uint8List.fromList(<int>[9, 9, 9]),
       }),
     );
-    cache.alias(id: newerId, target: olderId);
+    final forward = VerifiedArtifactReusePlan.match(
+      oldChapter: older,
+      newChapter: newer,
+    );
     final reverse = VerifiedArtifactReusePlan.match(
       oldChapter: newer,
       newChapter: older,
     );
 
-    expect(await reverse.applyExisting(cache), 1);
-    expect(cache.resolveAlias(olderId), olderId);
-    expect(cache.resolveAlias(newerId), olderId);
+    expect(forward.registerEquivalences(cache), 1);
+    expect(reverse.registerEquivalences(cache), 1);
+    expect(cache.equivalenceCount, 1);
+    expect((await cache.readForeground(newerId))?.bytes, <int>[9, 9, 9]);
   });
 
   test('persisted verified offset restores aliases without a resolver', () {
@@ -243,14 +249,14 @@ void main() {
       targetOffsetFromSource: -1,
     );
 
-    expect(forward.aliases, hasLength(2));
-    expect(reverse.aliases, hasLength(2));
+    expect(forward.mappings, hasLength(2));
+    expect(reverse.mappings, hasLength(2));
     expect(
-      forward.aliases[readerPageDownloadId(newer, newer.pages[1])],
+      forward.mappings[readerPageDownloadId(newer, newer.pages[1])],
       readerPageDownloadId(older, older.pages[0]),
     );
     expect(
-      reverse.aliases[readerPageDownloadId(older, older.pages[0])],
+      reverse.mappings[readerPageDownloadId(older, older.pages[0])],
       readerPageDownloadId(newer, newer.pages[1]),
     );
   });
@@ -322,7 +328,7 @@ void main() {
       resolveIdentity: (page) async => page.uri.toString(),
     );
 
-    expect(plan.aliases, isEmpty);
+    expect(plan.mappings, isEmpty);
   });
 
   test('resource reuse identity accepts only strong media keys', () {

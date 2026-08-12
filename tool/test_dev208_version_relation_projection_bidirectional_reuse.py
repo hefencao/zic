@@ -72,11 +72,26 @@ for token in (
     require(reuse, token, "symmetric acyclic artifact alias contract")
 
 reuse_test = read("packages/downloads/test/artifact_cache_reuse_test.dart")
-for token in (
+require(
+    reuse_test,
     "resolved related reuse is bidirectional across an inserted page",
-    "reverse reuse never creates an alias cycle",
-):
-    require(reuse_test, token, "bidirectional reuse regression coverage")
+    "bidirectional reuse regression coverage",
+)
+version = re.search(r"^version:\s*0\.31\.0\+(\d+)\s*$", read("apps/app/pubspec.yaml"), re.M)
+if version is None or int(version.group(1)) < 208:
+    raise SystemExit("App build must be at least 208")
+if int(version.group(1)) >= 230:
+    require(
+        reuse_test,
+        "reverse proof registration reuses one symmetric equivalence edge",
+        "bidirectional equivalence regression coverage",
+    )
+else:
+    require(
+        reuse_test,
+        "reverse reuse never creates an alias cycle",
+        "bidirectional alias regression coverage",
+    )
 
 storage = read("packages/storage/lib/src/sqlite_imported_library_store.dart")
 for token in (
@@ -90,9 +105,6 @@ forbid(storage, "discovered_us = excluded.discovered_us", "relation rediscovery 
 check = read("tool/check.sh")
 require(check, "test_dev208_version_relation_projection_bidirectional_reuse.py", "release gate wiring")
 
-version = re.search(r"^version:\s*0\.31\.0\+(\d+)\s*$", read("apps/app/pubspec.yaml"), re.M)
-if version is None or int(version.group(1)) < 208:
-    raise SystemExit("App build must be at least 208")
 android = re.search(r"^versionCode=(\d+)\s*$", read("apps/app/android/zic-version.properties"), re.M)
 if android is None or android.group(1) != version.group(1):
     raise SystemExit("Android versionCode must match App build")

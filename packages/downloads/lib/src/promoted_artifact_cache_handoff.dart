@@ -137,15 +137,10 @@ final class PromotedArtifactCacheHandoff {
           'resident promoted transfer has no body for ${session.id.key}',
         );
       }
-      final alreadyDurable = requireExactDurableBody
-          ? await cache.containsBackendExact(
-              id: session.id,
-              expectedLength: expectedLength,
-            )
-          : await cache.containsBackend(
-              id: session.id,
-              expectedLength: expectedLength,
-            );
+      final alreadyDurable = await cache.containsBackendExact(
+        id: session.id,
+        expectedLength: expectedLength,
+      );
       if (alreadyDurable) {
         _recordCommit(
           session,
@@ -157,9 +152,27 @@ final class PromotedArtifactCacheHandoff {
       }
 
       final lookup = await cache.lookup(session.id);
-      if (lookup != null &&
-          lookup.entry.length == expectedLength &&
-          (lookup.durable || requireExactDurableBody)) {
+      if (lookup != null && lookup.entry.length == expectedLength) {
+        if (lookup.storageId != session.id &&
+            lookup.durable &&
+            !requireExactDurableBody) {
+          _recordCommit(
+            session,
+            action: 'skip-verified-equivalent-durable',
+            bytes: expectedLength,
+            startedAtMicros: startedAtMicros,
+          );
+          return;
+        }
+        if (!lookup.durable && !requireExactDurableBody) {
+          _recordCommit(
+            session,
+            action: 'defer-resident-source',
+            bytes: expectedLength,
+            startedAtMicros: startedAtMicros,
+          );
+          return;
+        }
         final read = await cache.readForegroundLookup(lookup);
         if (read.bytes.lengthInBytes != expectedLength) {
           throw StateError(
@@ -237,15 +250,10 @@ final class PromotedArtifactCacheHandoff {
       );
       return;
     }
-    final alreadyDurable = requireExactDurableBody
-        ? await cache.containsBackendExact(
-            id: session.id,
-            expectedLength: expectedLength,
-          )
-        : await cache.containsBackend(
-            id: session.id,
-            expectedLength: expectedLength,
-          );
+    final alreadyDurable = await cache.containsBackendExact(
+      id: session.id,
+      expectedLength: expectedLength,
+    );
     if (alreadyDurable) {
       _recordCommit(
         session,
@@ -254,6 +262,21 @@ final class PromotedArtifactCacheHandoff {
         startedAtMicros: startedAtMicros,
       );
       return;
+    }
+    if (!requireExactDurableBody) {
+      final equivalent = await cache.lookup(session.id);
+      if (equivalent != null &&
+          equivalent.storageId != session.id &&
+          equivalent.durable &&
+          equivalent.entry.length == expectedLength) {
+        _recordCommit(
+          session,
+          action: 'skip-verified-equivalent-durable',
+          bytes: expectedLength,
+          startedAtMicros: startedAtMicros,
+        );
+        return;
+      }
     }
     final builder = BytesBuilder(copy: false);
     await for (final chunk in session.artifact.readChunks()) {

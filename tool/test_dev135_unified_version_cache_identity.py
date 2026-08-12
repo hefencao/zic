@@ -107,24 +107,43 @@ reject(
 artifact = (
     ROOT / 'packages/downloads/lib/src/artifact_cache_manager.dart'
 ).read_text(encoding='utf-8')
-for token in (
-    'LinkedHashMap<DownloadId, DownloadId> _aliases',
-    'DownloadId resolveAlias(DownloadId id)',
-    'void alias({',
-    'Future<bool> rekey({',
-    'circular artifact cache alias',
-    'final DownloadId storageId;',
-):
-    require(artifact, token, 'artifact alias/rekey')
-
 reuse = (
     ROOT / 'packages/downloads/lib/src/artifact_cache_reuse.dart'
 ).read_text(encoding='utf-8')
+build = int(version_code.group(1))
+if build >= 230:
+    for token in (
+        'LinkedHashMap<DownloadId, LinkedHashSet<DownloadId>> _equivalents',
+        'void linkEquivalent({',
+        'final DownloadId storageId;',
+        'final Map<DownloadId, DownloadId> mappings;',
+        'int registerEquivalences(ArtifactCacheManager cache) {',
+    ):
+        require(artifact + reuse, token, 'verified equivalence cache reuse')
+    for token in (
+        'LinkedHashMap<DownloadId, DownloadId> _aliases',
+        'DownloadId resolveAlias(DownloadId id)',
+        'void alias({',
+        'Future<bool> rekey({',
+        'Future<int> rekeyExisting',
+        'Future<int> applyExisting',
+    ):
+        reject(artifact + reuse, token, 'superseded hard artifact alias/rekey')
+else:
+    for token in (
+        'LinkedHashMap<DownloadId, DownloadId> _aliases',
+        'DownloadId resolveAlias(DownloadId id)',
+        'void alias({',
+        'Future<bool> rekey({',
+        'circular artifact cache alias',
+        'final DownloadId storageId;',
+    ):
+        require(artifact, token, 'artifact alias/rekey')
+    require(reuse, 'Future<int> rekeyExisting', 'verified E-Hentai-style cache reuse')
 for token in (
     'VerifiedArtifactReusePlan',
     "segments.indexOf('s')",
     "'checksum:$checksum'",
-    'Future<int> rekeyExisting',
 ):
     require(reuse, token, 'verified E-Hentai-style cache reuse')
 for unsafe in ('title ==', 'authors', 'page.index'):

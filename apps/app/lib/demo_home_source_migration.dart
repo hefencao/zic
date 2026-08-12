@@ -249,7 +249,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     required ChapterManifest successor,
     required VerifiedArtifactReusePlan plan,
   }) {
-    if (plan.aliases.isEmpty) return null;
+    if (plan.mappings.isEmpty) return null;
     final predecessorIndexes = <DownloadId, int>{
       for (var index = 0; index < predecessor.pages.length; index++)
         readerPageDownloadId(predecessor, predecessor.pages[index]): index,
@@ -259,7 +259,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         readerPageDownloadId(successor, successor.pages[index]): index,
     };
     final offsets = <int>{};
-    for (final alias in plan.aliases.entries) {
+    for (final alias in plan.mappings.entries) {
       final successorIndex = successorIndexes[alias.key];
       final predecessorIndex = predecessorIndexes[alias.value];
       if (successorIndex == null || predecessorIndex == null) return null;
@@ -1255,15 +1255,15 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       var migratedProgress = 0;
       var migratedReadStates = 0;
       var preservedTargetStates = 0;
-      var reusedPageArtifacts = 0;
+      var registeredPageEquivalences = 0;
       for (final item in prepared) {
         final targetRecord = item.targetRecord;
         await _librarySession.upsertChapter(targetRecord);
         migratedChapters++;
         final artifactCache = _readerArtifactCache;
         if (artifactCache != null) {
-          reusedPageArtifacts +=
-              await item.artifactReuse.applyExisting(artifactCache);
+          registeredPageEquivalences +=
+              item.artifactReuse.registerEquivalences(artifactCache);
         }
 
         final sourceProgress = item.sourceProgress;
@@ -1337,8 +1337,8 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           if (migratedReadStates > 0) '$migratedReadStates 个已读状态',
           if (preservedTargetStates > 0)
             '保留 $preservedTargetStates 项目标源已有状态',
-          if (reusedPageArtifacts > 0)
-            '复用 $reusedPageArtifacts 页已验证缓存',
+          if (registeredPageEquivalences > 0)
+            '登记 $registeredPageEquivalences 页已验证媒体等价关系',
           if (replacingSource)
             '旧版本记录已替换，离线文件需在下载管理中单独清理'
           else

@@ -57,13 +57,20 @@ forbid(migration, 'reused += await plan.applyExisting(artifactCache);', 'snapsho
 
 
 promoted = read('packages/downloads/lib/src/promoted_artifact_cache_handoff.dart')
-require(promoted, 'cache.containsBackend(', 'promoted exact backend ownership')
-require(manager, 'backend.openArtifactStream(resolveAlias(id))', 'containsBackend excludes equivalence fallback')
-require(manager, 'final oldLookup = await lookupAuthoritative(oldId);', 'rekey excludes equivalence fallback')
-
 transport = read('packages/downloads/lib/src/artifact_cache_transport.dart')
 require(transport, "'verifiedEquivalentReuse':", 'equivalent reuse trace attribution')
-require(transport, "lookup.storageId != _cache.resolveAlias(id)", 'equivalent reuse trace attribution')
+if build >= 230:
+    require(promoted, 'cache.containsBackendExact(', 'promoted exact backend ownership')
+    require(promoted, "action: 'skip-verified-equivalent-durable'", 'equivalent durable no-copy boundary')
+    require(manager, 'backend.openArtifactStream(id)', 'exact backend ownership')
+    require(transport, 'lookup.storageId != id', 'equivalent reuse trace attribution')
+    for token in ('resolveAlias(', 'Future<bool> rekey({', 'Future<bool> containsBackend({'):
+        forbid(manager, token, 'superseded hard alias/rekey backend')
+else:
+    require(promoted, 'cache.containsBackend(', 'promoted exact backend ownership')
+    require(manager, 'backend.openArtifactStream(resolveAlias(id))', 'containsBackend excludes equivalence fallback')
+    require(manager, 'final oldLookup = await lookupAuthoritative(oldId);', 'rekey excludes equivalence fallback')
+    require(transport, "lookup.storageId != _cache.resolveAlias(id)", 'equivalent reuse trace attribution')
 
 tests = read('packages/downloads/test/artifact_cache_manager_test.dart') + read('packages/downloads/test/artifact_cache_reuse_test.dart')
 for token in (

@@ -1,3 +1,8 @@
+## 0.31.0-dev.230：Equivalence-only artifact ownership
+- 23:45真机Trace确认dev.229迁移生效：`version-durable-partial-reused`归零，`session-partial-handoff/restored-equivalent`真实命中，25次acquire alias继续工作且无`taskFailed/sessionBusy/writerBusy`；版本等价proof已足以承担full/cold复用，不再需要directed hard artifact alias/rekey。
+- 删除`ArtifactCacheManager` hard alias map、resolve/alias/rekey API及`VerifiedArtifactReusePlan.apply/applyExisting/rekeyExisting`；显式漫画源迁移改为登记symmetric verified equivalence，exact DownloadId始终保持durable write authority。
+- 普通Reader promotion若已有direct verified-equivalent durable artifact则直接复用，不复制第二份exact durable body；只有显式required-completion barrier才materialize exact durable identity。
+
 ## 0.31.0-dev.229：Equivalence-aware cold partial restore
 - 23:03真机Trace确认dev.228删除late takeover后9次acquire alias（4 receiving / 1 failed）继续工作，`taskFailed/sessionBusy/writerBusy`为0；同时版本warmup仍有4次`version-durable-partial-reused`，证明旧的跨版本cold partial复制补偿仍在实际命中。
 - 删除version warmup/Reader入口的`applyDurablePartials`复制路径；`PartialDownloadHandoff`改为physical prepare时exact-first、direct verified-equivalent fallback，并从候选中选择最长cold partial直接恢复，不提前创建目标exact durable partial副本。

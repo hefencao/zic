@@ -1,7 +1,7 @@
 # zic Implementation Plan
 ## P0：Image Transfer ownership 正式迁移
-- P0：dev.229迁移cold partial reuse：23:03真机Trace确认dev.228后9次acquire alias继续正常、无task/session/writer failure，但版本warmup仍4次命中`version-durable-partial-reused`旧复制路径。现删除warmup/Reader入口的cross-version partial copy，physical prepare exact miss时直接从direct verified equivalents选择最长durable inactive prefix恢复，跨版本validator清空并继续由DownloadJob overlap proof验证continuity。
-- 后续Phase C继续只扩展可证明的TransferKey coverage，而不把durable I/O塞进同步`replaceDemands`：重点审查ambiguous existing owners、proof恢复时序与cold partial生命周期；两个已存在physical session不事后merge，source-resident非cache body不跨版本join，也不恢复late artifact observer。
+- P0：dev.230继续Phase C/Phase E收口：23:45真机Trace确认dev.229后`version-durable-partial-reused`归零、`restored-equivalent`真实命中且25次acquire alias无task/session/writer failure。现删除ArtifactCacheManager directed hard alias/rekey与迁移`applyExisting`快照；显式迁移只登记verified equivalence，Reader promotion已有等价durable body时不复制exact副本，required offline completion仍必须materialize exact identity。
+- 后续继续观察`rejected-ambiguous-existing-owners`、equivalence proof恢复时序与exact durable completion：不得为了提高复用率做已存在physical session事后merge，也不得把durable store I/O塞入同步Reader planning；若普通Reader仍大量产生exact duplicate artifact，再从handoff trace定位proof缺失而不是恢复hard alias。
 ## P0：Partial authority 单调性真机闭环
 - dev.195 的playable partial单调性继续冻结：Range probe/full-body catch-up的取消、EOF或mismatch只能失败当前 network attempt，旧partial/Ingress不变；metadata损坏只丢网络知识。dev.196不改DownloadSession authority、DecodeSession、NetLane、network=5、1000/780、7/3、2/1、7/5/3/2，也不增加bandwidth scheduler/framing。
 ## P0：Current / Previous 真实执行槽真机闭环
@@ -174,7 +174,7 @@
 
 - 设备验证本轮 primary projection 到第一封面请求的时序，并确认 native prewarm、整本队列 restore、外部插件 activation 不再位于 Home 首帧关键路径。
 - 设备验证首页多封面快慢混合时的渐进显示：确认 `homeCoverFirstFrame` 按封面独立推进，不被 durable response 串行写入或其它慢封面形成全局等待。
-- 验证封面 URL/token 变化仍命中 stable cover key，verified artifact alias不会污染无证据页面。
+- 验证封面 URL/token 变化仍命中 stable cover key，verified artifact equivalence不会污染无证据页面。
 - 设备验证已有 raw durable cover hit 时的 source-independent 分流：首屏不触发插件资源
   请求；同时确认已持久化 canonical alias 的同源 raw ID 在插件未激活时只显示一张书架卡片，
   且未访问书架页不创建额外 cover loader。

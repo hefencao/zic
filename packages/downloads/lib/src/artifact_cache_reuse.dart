@@ -16,8 +16,8 @@ typedef VerifiedPageReuseIdentityResolver = Future<String?> Function(
 /// hash in the resolved URI. This is the conservative portion of
 /// VibeVenera's version-cache migration model.
 final class VerifiedArtifactReusePlan {
-  VerifiedArtifactReusePlan._(Map<DownloadId, DownloadId> aliases)
-      : aliases = Map<DownloadId, DownloadId>.unmodifiable(aliases);
+  VerifiedArtifactReusePlan._(Map<DownloadId, DownloadId> mappings)
+      : mappings = Map<DownloadId, DownloadId>.unmodifiable(mappings);
 
   factory VerifiedArtifactReusePlan.match({
     required ChapterManifest oldChapter,
@@ -25,18 +25,18 @@ final class VerifiedArtifactReusePlan {
   }) {
     final oldByIdentity = _uniquePages(oldChapter);
     final newByIdentity = _uniquePages(newChapter);
-    final aliases = <DownloadId, DownloadId>{};
+    final mappings = <DownloadId, DownloadId>{};
     for (final entry in newByIdentity.entries) {
       final oldPage = oldByIdentity[entry.key];
       if (oldPage == null) continue;
-      aliases[
+      mappings[
         readerPageDownloadId(newChapter, entry.value)
       ] = readerPageDownloadId(oldChapter, oldPage);
     }
-    return VerifiedArtifactReusePlan._(aliases);
+    return VerifiedArtifactReusePlan._(mappings);
   }
 
-  /// Builds a temporary target-version -> source-version alias map for two
+  /// Builds a target-version -> source-version verified page mapping for two
   /// source-confirmed related versions, independent of version direction.
   ///
   /// [sourceChapter] is the side whose existing artifact may be reused;
@@ -52,7 +52,7 @@ final class VerifiedArtifactReusePlan {
       oldChapter: sourceChapter,
       newChapter: targetChapter,
     );
-    if (direct.aliases.isNotEmpty ||
+    if (direct.mappings.isNotEmpty ||
         sourceChapter.pages.isEmpty ||
         targetChapter.pages.isEmpty) {
       return direct;
@@ -113,15 +113,15 @@ final class VerifiedArtifactReusePlan {
     return direct;
   }
 
-  /// Builds a temporary new-version -> old-version alias map without
+  /// Builds a new-version -> old-version verified page mapping without
   /// migrating any durable library state.
   ///
   /// Some sources (notably Venera/E-Hentai) expose opaque page locators in the
   /// chapter manifest, so the direct stable identity is unavailable until the
   /// source-owned request plan is resolved. This follows VibeVenera's bounded
   /// version-reuse rule: prove a stable positional offset using first/middle/
-  /// last resolved media identities, then alias the corresponding exact page
-  /// DownloadIds. The alias remains in ArtifactCacheManager memory only.
+  /// last resolved media identities, then map the corresponding exact page
+  /// DownloadIds. The proof is registered as symmetric cache equivalence.
   static Future<VerifiedArtifactReusePlan> matchResolvedOffset({
     required ChapterManifest oldChapter,
     required ChapterManifest newChapter,
@@ -131,7 +131,7 @@ final class VerifiedArtifactReusePlan {
       oldChapter: oldChapter,
       newChapter: newChapter,
     );
-    if (direct.aliases.isNotEmpty ||
+    if (direct.mappings.isNotEmpty ||
         oldChapter.pages.isEmpty ||
         newChapter.pages.length < oldChapter.pages.length) {
       return direct;
@@ -184,26 +184,19 @@ final class VerifiedArtifactReusePlan {
   }) {
     final sourcePages = sourceChapter.pages;
     final targetPages = targetChapter.pages;
-    final aliases = <DownloadId, DownloadId>{};
+    final mappings = <DownloadId, DownloadId>{};
     for (var sourceIndex = 0; sourceIndex < sourcePages.length; sourceIndex++) {
       final targetIndex = sourceIndex + targetOffsetFromSource;
       if (targetIndex < 0 || targetIndex >= targetPages.length) continue;
-      aliases[
+      mappings[
         readerPageDownloadId(targetChapter, targetPages[targetIndex])
       ] = readerPageDownloadId(sourceChapter, sourcePages[sourceIndex]);
     }
-    return VerifiedArtifactReusePlan._(aliases);
+    return VerifiedArtifactReusePlan._(mappings);
   }
 
-  /// New exact artifact identity -> old authoritative artifact identity.
-  final Map<DownloadId, DownloadId> aliases;
-
-  int apply(ArtifactCacheManager cache) {
-    for (final entry in aliases.entries) {
-      cache.alias(id: entry.key, target: entry.value);
-    }
-    return aliases.length;
-  }
+  /// Target exact identity -> source exact identity verified as the same media.
+  final Map<DownloadId, DownloadId> mappings;
 
   /// Registers verified page pairs as symmetric lookup fallbacks.
   ///
@@ -211,50 +204,14 @@ final class VerifiedArtifactReusePlan {
   /// stay exact, while a later promoted artifact on either version can satisfy
   /// the other version's subsequent lookup. This is the durable-mapping
   /// counterpart of VibeVenera's temporary image-key mapping, without turning
-  /// the artifact backend into a second cache or creating directed alias cycles.
+  /// the artifact backend into a second cache or redirecting durable writes.
   int registerEquivalences(ArtifactCacheManager cache) {
-    for (final entry in aliases.entries) {
+    for (final entry in mappings.entries) {
       cache.linkEquivalent(first: entry.key, second: entry.value);
     }
-    return aliases.length;
+    return mappings.length;
   }
 
-  /// Registers aliases only when the old authoritative artifact exists.
-  ///
-  /// This matches the VibeVenera reuse boundary: page equivalence alone does
-  /// not fabricate a cache hit. A missing old artifact remains a normal miss
-  /// for the new exact identity.
-  Future<int> applyExisting(ArtifactCacheManager cache) async {
-    var applied = 0;
-    for (final entry in aliases.entries) {
-      final source = await cache.lookupAuthoritative(entry.value);
-      if (source == null) continue;
-      final targetStorage = cache.resolveAlias(entry.key);
-      if (targetStorage == source.storageId) {
-        applied++;
-        continue;
-      }
-      if (await cache.lookupAuthoritative(entry.key) != null) continue;
-      cache.alias(id: entry.key, target: source.storageId);
-      applied++;
-    }
-    return applied;
-  }
-
-  /// Physically migrates every artifact that currently exists.
-  ///
-  /// Use this after the application has committed the newer comic version as
-  /// authoritative. Missing old artifacts are skipped; no network request is
-  /// triggered by the migration itself.
-  Future<int> rekeyExisting(ArtifactCacheManager cache) async {
-    var migrated = 0;
-    for (final entry in aliases.entries) {
-      if (await cache.rekey(oldId: entry.value, newId: entry.key)) {
-        migrated++;
-      }
-    }
-    return migrated;
-  }
 }
 
 Map<String, PageAsset> _uniquePages(ChapterManifest chapter) {

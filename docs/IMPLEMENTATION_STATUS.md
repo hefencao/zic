@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.229` / App `0.31.0+229`。
+- 当前版本：`0.31.0-dev.230` / App `0.31.0+230`。
+- dev.230：23:45真机Trace确认dev.229 cold-partial迁移已生效：`version-durable-partial-reused`为0、`restored-equivalent`真实命中，25次`verified-transfer-acquire-alias`继续工作且无`taskFailed/sessionBusy/writerBusy`；现移除ArtifactCacheManager directed hard alias/rekey及ReusePlan apply/applyExisting/rekeyExisting，显式迁移只登记symmetric verified equivalence。ordinary Reader promotion已有等价durable artifact时不再复制exact body；显式required-completion仍materialize exact durable ID。
 - dev.229：23:03真机Trace确认dev.228删除late takeover后9次`verified-transfer-acquire-alias`继续命中（4 promoted / 4 receiving / 1 failed），无`taskFailed/sessionBusy/writerBusy`或亚秒重复physical start；同时版本warmup仍4次执行旧`version-durable-partial-reused`复制。现将cold partial reuse迁到`PartialDownloadHandoff.restoreInto`：exact partial优先，exact miss才查询direct verified equivalents并选择最长prefix直接恢复，跨版本validators清空；删除`VerifiedArtifactReusePlan.applyDurablePartials`和Home/version warmup partial复制。
 - dev.228：15:57真机Trace验证dev.227 provider-exact request identity已恢复：18次`verified-transfer-acquire-alias`中8次加入failed partial，`unsupported URI scheme`/`taskFailed/sessionBusy/writerBusy`/decode failed均为0；legacy `verified-equivalent-promotion-takeover`继续0命中。Phase E因此删除最后的composition promotion listener、`refreshIndependentExactForPromotedEquivalent`及ArtifactCacheManager promotion observer API；verified equivalence仍作为acquire-time proof，physical→durable partial/artifact handoff继续保留。
 - dev.227：15:29真机Trace中`verified-transfer-acquire-alias`真实命中13次（5 promoted / 1 receiving / 1 idle / 6 failed），但出现43次`Failure(source): unsupported URI scheme: venera-resource`，60个page host中33个dispose前无首帧。根因不是failed partial本身，而是Phase C1只把provider exact identity用于transport选择，`DownloadJob`真正open仍硬编码physical anchor `session.id.canonicalUri`。现将physical session identity与source request identity彻底拆开：owner显式传`requestUri=claim.exactId.canonicalUri`，DownloadJob所有full/range/resume open均用requestUri；physical artifact/writer/resume state仍保持anchor session。Phase E最终late takeover删除继续暂停，先验证跨版本failed-partial reactivation。
@@ -124,7 +125,7 @@
   不再重复消费 `loadInfo` 缩略图；折叠与展开共用按原顺序生成的等面积布局；实际行内含横图时最多 2 张、纯竖图时最多 3 张；只在相邻三个候选内做最小局部重排，并受阅读设置的 1–8 项上限约束（默认 4）。完整行按全部媒体宽度反算尺寸，预览图片区不再叠加 Card 和水平 padding；稀疏末行最多放大到参考完整行面积的 2.4 倍；折叠高度取第一行，展开图片区域不超过屏幕高度 90%，居中箭头控制展开；点击预览项会将索引传入既有 Reader 路由；Venera
   `@x/y` 预览 URI 在保留绘制身份的同时按既有约定以去裁剪 URL 调用 `onThumbnailLoad`，封面、预览
   和来源缩略图失败时统一使用稳定伪随机的柔和纯色占位；预览绘制只显示 `@x/y` 指定的原图区域。
-- ArtifactCacheManager 默认热字节 10 项/256 MiB，支持持久 backend、verified alias/rekey 和 foreground read join。
+- ArtifactCacheManager 默认热字节 10 项/256 MiB，持久 backend只以exact DownloadId写入；verified equivalence仅提供direct lookup/acquire proof，不存在directed hard alias/rekey；foreground read join保持。
 - Reader encoded window 为前 7/后 3；decode 角色为前 2/后 1；动态 holder 最大水位为 7/5/3/2。
 - transition 覆盖率达到阈值后独立取得一帧，再恢复 current/neighbor staged refill；不存在 DownloadFlowGate、startup-buffer 或 holder-depth 网络资格门控。
 - 页面网络由共享 NetLane 唯一调度：normal 5、current 高优先级保留槽 1、priority migration/preemption；local bucket 2、remote bucket 5。

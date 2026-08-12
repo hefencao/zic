@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Guard unified Reader artifact routing and Android native ABI closure."""
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -19,11 +20,17 @@ def forbid(path: str, *tokens: str) -> None:
     if found:
         raise SystemExit(f"FAIL: {path} contains rejected dev.109 tokens: {found}")
 
+
+version_text = read('apps/app/pubspec.yaml')
+version_match = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', version_text, re.M)
+build = int(version_match.group(1)) if version_match is not None else 0
+backend_probe = 'Future<bool> containsBackendExact(' if build >= 230 else 'Future<bool> containsBackend('
+handoff_probe = 'cache.containsBackendExact(' if build >= 230 else 'cache.containsBackend('
 require(
     "packages/downloads/lib/src/artifact_cache_manager.dart",
     "final class ArtifactCacheManager",
     "LinkedHashMap<_ArtifactByteKey, Uint8List>",
-    "Future<bool> containsBackend(",
+    backend_probe,
     "readForegroundLookup(",
     "readSessionArtifact(",
 )
@@ -47,7 +54,7 @@ for deleted in (
         raise SystemExit(f"FAIL: obsolete cache layer remains: {deleted}")
 require(
     "packages/downloads/lib/src/promoted_artifact_cache_handoff.dart",
-    "cache.containsBackend(",
+    handoff_probe,
 )
 require(
     "native/media_core/src/android_texture.rs",
