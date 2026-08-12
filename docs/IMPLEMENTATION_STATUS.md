@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.232` / App `0.31.0+232`。
+- 当前版本：`0.31.0-dev.233` / App `0.31.0+233`。
+- dev.233：01:05真机Trace中dev.232对应`partial-source taskFailed`为0；28次verified acquire alias有26次join、2次multi-owner ambiguity，且所有25次failed download state都是cancel/preemption。现fresh exact demand在多个direct verified existing owner间按promoted→active writer/run→demanded→committed partial及长度/priority稳定选择既有owner，不再创建第三个session；logical claim detach不再从sessions层checkpoint cold partial，promoted immutable自动handoff成功一次后也不再因snapshot churn重复backend probe。`stored-required-exact-alias`设备场景仍未在本Trace命中。
 - dev.232：00:38真机Trace出现3次可随source增长恢复的`partial-source taskFailed`。根因是projection可在同一SourceEpoch内rebuild并替换EncodedSource，而DecodeSession只按epoch复用cursor；现cursor binding要求epoch+source实例identity一致，同epoch换source会重绑。新Trace未覆盖`stored-required-exact-alias`，dev.231 required exact设备验证继续待完成。
 - dev.231：00:19真机Trace确认dev.230 hard alias/rekey删除稳定，43次acquire alias且无task/session/writer failure。现将required durable target从physical session anchor拆出：promotion handoff读取physical owner的required exact claims并直接写目标exact ID；`persistPromoted`不再先强制persist physical anchor再二次copy。新增`stored-required-exact-alias`诊断与chapter行为断言，普通Reader durable语义不变。
 - dev.230：23:45真机Trace确认dev.229 cold-partial迁移已生效：`version-durable-partial-reused`为0、`restored-equivalent`真实命中，25次`verified-transfer-acquire-alias`继续工作且无`taskFailed/sessionBusy/writerBusy`；现移除ArtifactCacheManager directed hard alias/rekey及ReusePlan apply/applyExisting/rekeyExisting，显式迁移只登记symmetric verified equivalence。ordinary Reader promotion已有等价durable artifact时不再复制exact body；显式required-completion仍materialize exact durable ID。

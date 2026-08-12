@@ -52,21 +52,38 @@ if '_readerSessionRetentionDuration = Duration(minutes: 2)' not in pipe:
 transfer_owner_path = ROOT / 'packages/sessions/lib/src/download_transfer_owner.dart'
 if transfer_owner_path.exists():
     transfer_owner = transfer_owner_path.read_text(encoding='utf-8')
-    for marker in (
-        'persistUnclaimed',
-        'Future<void> _persistUnclaimed(DownloadSession session) async',
-        'final flush = callback(session);',
-        'await flush;',
-    ):
-        if marker not in transfer_owner:
-            raise SystemExit(f'composition physical owner lost durable partial final-drain: {marker}')
-    for marker in (
-        'prepareDownload: partialDownloadHandoff?.restoreInto',
-        'persistUnclaimed: partialDownloadHandoff == null',
-        "partialDownloadHandoff!.drain(<DownloadSession>[session])",
-    ):
-        if marker not in composition_runtime:
-            raise SystemExit(f'composition physical runtime partial handoff missing: {marker}')
+    if build >= 233:
+        for marker in (
+            'persistUnclaimed',
+            'Future<void> _persistUnclaimed(DownloadSession session) async',
+            '_unclaimedFlushes',
+        ):
+            if marker in transfer_owner:
+                raise SystemExit(f'sessions owner leaked durable partial policy after dev.233: {marker}')
+        for marker in (
+            'prepareDownload: partialDownloadHandoff?.restoreInto',
+            'await partialDownloadHandoff?.drain(registry.sessions);',
+        ):
+            if marker not in composition_runtime:
+                raise SystemExit(f'composition physical runtime partial retirement missing: {marker}')
+        if 'persistUnclaimed:' in composition_runtime:
+            raise SystemExit('composition runtime still injects per-unclaimed durable policy into sessions')
+    else:
+        for marker in (
+            'persistUnclaimed',
+            'Future<void> _persistUnclaimed(DownloadSession session) async',
+            'final flush = callback(session);',
+            'await flush;',
+        ):
+            if marker not in transfer_owner:
+                raise SystemExit(f'composition physical owner lost durable partial final-drain: {marker}')
+        for marker in (
+            'prepareDownload: partialDownloadHandoff?.restoreInto',
+            'persistUnclaimed: partialDownloadHandoff == null',
+            "partialDownloadHandoff!.drain(<DownloadSession>[session])",
+        ):
+            if marker not in composition_runtime:
+                raise SystemExit(f'composition physical runtime partial handoff missing: {marker}')
 else:
     dispose = pipe[pipe.index('Future<void> dispose() async'):]
     if 'await _partialDownloadHandoff?.drain(_downloads.sessions)' not in dispose:

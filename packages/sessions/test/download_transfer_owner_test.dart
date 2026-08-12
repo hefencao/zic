@@ -313,7 +313,7 @@ void main() {
     expect(session.committedLength, fullBytes.length);
   });
 
-  test('final consumer detach persists committed physical partial after writer exits',
+  test('final consumer detach retains hot physical partial for later reuse',
       () async {
     final temp = await Directory.systemTemp.createTemp('transfer_owner_partial_');
     addTearDown(() async => temp.delete(recursive: true));
@@ -322,16 +322,10 @@ void main() {
       layout: CacheLayout('${temp.path}/cache'),
       clock: clock,
     );
-    var persistedBytes = 0;
-    var persistCalls = 0;
     final owner = DownloadTransferOwner(
       registry: registry,
       clock: clock,
       net: NetLane(maxActive: 1),
-      persistUnclaimed: (session) async {
-        persistCalls++;
-        persistedBytes = session.committedLength;
-      },
     );
     addTearDown(() async {
       await owner.dispose();
@@ -364,8 +358,8 @@ void main() {
     await consumer.dispose();
     expect(session.activeRun, isFalse);
     expect(session.committedLength, greaterThan(0));
-    expect(persistCalls, 1);
-    expect(persistedBytes, session.committedLength);
+    expect(registry.sessions, hasLength(1));
+    expect(identical(registry.findExact(id), session), isTrue);
   });
 
   test('equivalent failed partial resumes through provider exact request URI', () async {

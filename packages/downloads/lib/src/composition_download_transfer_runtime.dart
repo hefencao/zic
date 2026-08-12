@@ -67,9 +67,6 @@ final class CompositionDownloadTransferRuntime {
       registry: registry,
       clock: clock,
       prepareDownload: partialDownloadHandoff?.restoreInto,
-      persistUnclaimed: partialDownloadHandoff == null
-          ? null
-          : (session) => partialDownloadHandoff!.drain(<DownloadSession>[session]),
       net: net,
       resolveTransferId: _resolveTransferIdForAcquire,
     );
@@ -99,34 +96,26 @@ final class CompositionDownloadTransferRuntime {
     final cache = artifactCacheManager;
     if (cache == null) return exactId;
 
-    DownloadId? candidate;
+    final candidates = <DownloadId, DownloadSession>{};
     for (final equivalent in cache.directEquivalents(exactId)) {
       final physicalId = registry.resolvePhysicalId(equivalent);
       final session = registry.find(physicalId);
       if (session == null || !_canJoinEquivalentSession(session)) continue;
-      if (candidate != null && candidate != physicalId) {
-        // Never merge already-distinct physical sessions after the fact. A new
-        // exact identity remains separate when proof points at more than one
-        // existing physical owner.
-        _recordAcquireAlias(
-          exactId,
-          action: 'rejected-ambiguous-existing-owners',
-          candidate: physicalId,
-        );
-        return exactId;
-      }
-      candidate = physicalId;
+      candidates[physicalId] = session;
     }
-    if (candidate == null) return exactId;
-    final session = registry.find(candidate);
-    registry.aliasPhysical(id: exactId, target: candidate);
+    if (candidates.isEmpty) return exactId;
+    final ordered = candidates.entries.toList(growable: false)
+      ..sort(_compareEquivalentPhysicalCandidates);
+    final selected = ordered.first;
+    registry.aliasPhysical(id: exactId, target: selected.key);
     _recordAcquireAlias(
       exactId,
       action: 'joined-existing-physical',
-      candidate: candidate,
-      session: session,
+      candidate: selected.key,
+      session: selected.value,
+      candidateOwners: ordered.length,
     );
-    return candidate;
+    return selected.key;
   }
 
   void _recordAcquireAlias(
@@ -134,6 +123,7 @@ final class CompositionDownloadTransferRuntime {
     required String action,
     required DownloadId candidate,
     DownloadSession? session,
+    int candidateOwners = 1,
   }) {
     try {
       traceHub.record(
@@ -149,6 +139,10 @@ final class CompositionDownloadTransferRuntime {
             if (session != null) 'physicalState': session.state.name,
             if (session != null)
               'physicalCommittedLength': session.committedLength,
+            'candidateOwners': candidateOwners,
+            'selection': candidateOwners > 1
+                ? 'preferred-existing-owner'
+                : 'unique-existing-owner',
             'phase': 'acquire-before-physical-session',
           },
         ),
@@ -156,6 +150,36 @@ final class CompositionDownloadTransferRuntime {
     } on Object {
       // Identity diagnostics must never alter physical acquisition.
     }
+  }
+
+  int _compareEquivalentPhysicalCandidates(
+    MapEntry<DownloadId, DownloadSession> left,
+    MapEntry<DownloadId, DownloadSession> right,
+  ) {
+    final authority = _physicalReuseAuthority(right.value)
+        .compareTo(_physicalReuseAuthority(left.value));
+    if (authority != 0) return authority;
+    final committed = right.value.committedLength
+        .compareTo(left.value.committedLength);
+    if (committed != 0) return committed;
+    final demand = right.value.demandCount.compareTo(left.value.demandCount);
+    if (demand != 0) return demand;
+    final priority = right.value.effectivePriority
+        .compareTo(left.value.effectivePriority);
+    if (priority != 0) return priority;
+    return left.key.key.compareTo(right.key.key);
+  }
+
+  int _physicalReuseAuthority(DownloadSession session) {
+    if (session.state == DownloadState.promoted) return 4;
+    if (session.hasWriter ||
+        session.activeRun ||
+        session.state == DownloadState.receiving) {
+      return 3;
+    }
+    if (session.demanded || session.state == DownloadState.queued) return 2;
+    if (session.committedLength > 0) return 1;
+    return 0;
   }
 
   bool _canJoinEquivalentSession(DownloadSession session) {

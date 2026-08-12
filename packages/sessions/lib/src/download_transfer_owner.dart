@@ -48,7 +48,6 @@ final class TransferDemand {
 
 typedef TransferPrepare = Future<void> Function(DownloadSession session);
 typedef TransferSleep = Future<void> Function(Duration delay);
-typedef TransferPersistUnclaimed = Future<void> Function(DownloadSession session);
 
 Future<void> _defaultTransferSleep(Duration delay) =>
     Future<void>.delayed(delay);
@@ -64,7 +63,6 @@ final class DownloadTransferOwner {
     required this.registry,
     required this.clock,
     this.prepareDownload,
-    this.persistUnclaimed,
     required this.net,
     this.resolveTransferId = _identityTransferId,
   });
@@ -72,7 +70,6 @@ final class DownloadTransferOwner {
   final DownloadRegistry registry;
   final MonoClock clock;
   final TransferPrepare? prepareDownload;
-  final TransferPersistUnclaimed? persistUnclaimed;
   final NetLane net;
   final TransferIdentityResolver resolveTransferId;
 
@@ -85,8 +82,6 @@ final class DownloadTransferOwner {
   final Map<DownloadId, int> _downloadDeferredAtLength = <DownloadId, int>{};
   final Map<DownloadId, String> _activeProviderScopes = <DownloadId, String>{};
   final Map<DownloadId, int> _progressLengths = <DownloadId, int>{};
-  final Map<DownloadId, Future<void>> _unclaimedFlushes =
-      <DownloadId, Future<void>>{};
   final Map<DownloadId, DownloadSnapshotListener> _sessionListeners =
       <DownloadId, DownloadSnapshotListener>{};
   final Set<DownloadTransferConsumer> _consumers =
@@ -270,11 +265,6 @@ final class DownloadTransferOwner {
       net.cancel(key);
     }
     await net.idleKeys(keys);
-    if (_unclaimedFlushes.isNotEmpty) {
-      await Future.wait<void>(
-        _unclaimedFlushes.values.toList(growable: false),
-      );
-    }
     _networkTaskKeys.clear();
     _downloadRetryRounds.clear();
     _downloadRetryPending.clear();
@@ -286,7 +276,6 @@ final class DownloadTransferOwner {
     }
     _sessionListeners.clear();
     _progressLengths.clear();
-    _unclaimedFlushes.clear();
     _claims.clear();
   }
 
@@ -509,9 +498,6 @@ final class DownloadTransferOwner {
         net.cancelQueued(taskKey);
       }
       _networkTaskKeys.remove(id);
-      if (session != null && !session.demanded) {
-        unawaited(_persistUnclaimed(session));
-      }
       _retireDownloadTracking(id, session);
     }
   }
@@ -519,7 +505,6 @@ final class DownloadTransferOwner {
   Future<void> _disposeConsumer(DownloadTransferConsumer consumer) async {
     if (consumer._disposed) return;
     consumer._disposed = true;
-    final releasedIds = consumer._physicalDemands.keys.toList(growable: false);
     final providerKeys = <String>[];
     for (final entry in _activeProviderScopes.entries.toList(growable: false)) {
       if (entry.value != consumer.scopeId) continue;
@@ -538,16 +523,6 @@ final class DownloadTransferOwner {
     if (providerKeys.isNotEmpty) {
       await net.idleKeys(providerKeys);
       await Future<void>.delayed(Duration.zero);
-    }
-    final pendingFlushes = <Future<void>>[];
-    for (final id in releasedIds) {
-      final flush = _unclaimedFlushes[id];
-      if (flush != null) {
-        pendingFlushes.add(flush);
-      }
-    }
-    if (pendingFlushes.isNotEmpty) {
-      await Future.wait<void>(pendingFlushes);
     }
   }
 
@@ -830,7 +805,6 @@ final class DownloadTransferOwner {
         _networkTaskKeys.remove(id);
       }
       if (!session.demanded && !session.activeRun) {
-        await _persistUnclaimed(session);
         _retireDownloadTracking(id, session);
       } else if (session.demanded &&
           !_downloadTerminalFailures.contains(id) &&
@@ -885,32 +859,6 @@ final class DownloadTransferOwner {
   }
 
 
-  Future<void> _persistUnclaimed(DownloadSession session) async {
-    final callback = persistUnclaimed;
-    if (callback == null ||
-        session.demanded ||
-        session.activeRun ||
-        session.state == DownloadState.promoted ||
-        session.state == DownloadState.disposed ||
-        session.residentBodyBacked ||
-        session.committedLength <= 0) {
-      return;
-    }
-    final existing = _unclaimedFlushes[session.id];
-    if (existing != null) {
-      await existing;
-      return;
-    }
-    final flush = callback(session);
-    _unclaimedFlushes[session.id] = flush;
-    try {
-      await flush;
-    } finally {
-      if (identical(_unclaimedFlushes[session.id], flush)) {
-        _unclaimedFlushes.remove(session.id);
-      }
-    }
-  }
 
   void _watchSession(DownloadSession session) {
     final id = session.id;

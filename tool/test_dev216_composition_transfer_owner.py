@@ -18,6 +18,15 @@ def forbid(text: str, token: str, label: str) -> None:
         raise SystemExit(f'forbidden {label}: {token}')
 
 
+import re
+pubspec = read('apps/app/pubspec.yaml')
+version_props = read('apps/app/android/zic-version.properties')
+version_match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.MULTILINE)
+android_match = re.search(r'^versionCode=(\d+)$', version_props, re.MULTILINE)
+if version_match is None or android_match is None:
+    raise SystemExit('dev.216 app version missing')
+build = int(version_match.group(1))
+
 owner = read('packages/sessions/lib/src/download_transfer_owner.dart')
 exports = read('packages/sessions/lib/sessions.dart')
 live = read('packages/sessions/lib/src/live_coordinator.dart')
@@ -37,9 +46,6 @@ for token in (
     'attachLegacyDemand: false',
     "reason: 'remaining-consumer'",
     'await net.idleKeys(providerKeys);',
-    'Future<void> _persistUnclaimed(DownloadSession session) async',
-    'final flush = callback(session);',
-    'await flush;',
 ):
     require(owner, token, 'single physical transfer owner')
 
@@ -65,7 +71,6 @@ for token in (
     'identical(net, other.net)',
     'final class CompositionDownloadTransferRuntime',
     'owner = DownloadTransferOwner(',
-    'persistUnclaimed: partialDownloadHandoff == null',
 ):
     require(runtime, token, 'composition runtime ownership')
 for token in (
@@ -93,12 +98,26 @@ for token in ('_downloads.dispose()', '_workspace.dispose()'):
 for token in (
     'two consumers join one exact physical transfer and writer',
     'disposing active provider preserves remaining consumer and reopens once',
-    'final consumer detach persists committed physical partial after writer exits',
     'expect(registry.sessions, hasLength(1));',
     'expect(owner.claimCount(id), 2);',
-    'expect(persistCalls, 1);',
 ):
     require(test, token, 'dev.216 behavioral ownership regression')
+if build >= 233:
+    require(
+        test,
+        'final consumer detach retains hot physical partial for later reuse',
+        'dev.233 hot partial retention regression',
+    )
+    for token in ('persistUnclaimed', '_unclaimedFlushes', '_persistUnclaimed'):
+        forbid(owner, token, 'sessions durable partial policy after dev.233')
+    require(runtime, 'await partialDownloadHandoff?.drain(registry.sessions);', 'true runtime retirement partial handoff')
+    forbid(runtime, 'persistUnclaimed:', 'per-unclaimed persistence injection after dev.233')
+else:
+    for token in (
+        'final consumer detach persists committed physical partial after writer exits',
+        'expect(persistCalls, 1);',
+    ):
+        require(test, token, 'dev.216 durable partial ownership regression')
 
 for token in ('GlobalDownloadRegistry', 'CompositionDownloadRegistry', 'static final DownloadRegistry'):
     forbid(pipe + owner, token, 'parallel ad-hoc physical registry')
@@ -111,12 +130,7 @@ for rel in (
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.216 governance file missing: {rel}')
 
-import re
-pubspec = read('apps/app/pubspec.yaml')
-version_props = read('apps/app/android/zic-version.properties')
-version_match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.MULTILINE)
-android_match = re.search(r'^versionCode=(\d+)$', version_props, re.MULTILINE)
-if version_match is None or int(version_match.group(1)) < 216:
+if build < 216:
     raise SystemExit('dev.216 app version regression')
 if android_match is None or int(android_match.group(1)) < 216:
     raise SystemExit('dev.216 Android version regression')

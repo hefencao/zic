@@ -197,6 +197,7 @@ void main() {
     final registry = DownloadRegistry(
       layout: CacheLayout(directory.path),
       clock: SystemClock(),
+      onSessionCreated: handoff.observe,
     );
     addTearDown(() async {
       handoff.detach();
@@ -211,11 +212,20 @@ void main() {
       ),
     });
 
-    await DownloadJob(transport: transport, session: session).run();
     backend.existing = Uint8List(bytes.lengthInBytes);
+    await DownloadJob(transport: transport, session: session).run();
+    await handoff.drain(<DownloadSession>[session]);
     await handoff.drain(<DownloadSession>[session]);
 
     expect(backend.storeCalls, 0);
+    expect(
+      trace.events.where(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.payload['action'] == 'skip-existing',
+      ),
+      hasLength(1),
+    );
     final event = trace.events.singleWhere(
       (event) =>
           event.kind == TraceEventKind.artifactSource &&

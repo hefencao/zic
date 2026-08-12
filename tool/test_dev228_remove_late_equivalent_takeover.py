@@ -35,7 +35,7 @@ for token in (
 
 for token in (
     'cache.directEquivalents(exactId)',
-    'registry.aliasPhysical(id: exactId, target: candidate);',
+    'registry.aliasPhysical(id: exactId, target:',
     "'stage': 'verified-transfer-acquire-alias'",
     "'action': action",
     "'phase': 'acquire-before-physical-session'",

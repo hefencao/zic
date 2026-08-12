@@ -20,6 +20,13 @@ owner = read('packages/sessions/lib/src/download_transfer_owner.dart')
 runtime = read('packages/downloads/lib/src/composition_download_transfer_runtime.dart')
 chapter = read('packages/downloads/lib/src/chapter_downloads.dart')
 test = read('packages/downloads/test/chapter_downloads_test.dart')
+pubspec = read('apps/app/pubspec.yaml')
+props = read('apps/app/android/zic-version.properties')
+pub = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
+android = re.search(r'^versionCode=(\d+)$', props, re.M)
+if pub is None or android is None:
+    raise SystemExit('dev.225 app version missing')
+build = int(pub.group(1))
 
 for token in (
     'final Map<DownloadId, DownloadId> _physicalAliases',
@@ -58,13 +65,28 @@ for token in (
     'DownloadId _resolveTransferIdForAcquire(DownloadId exactId)',
     'for (final equivalent in cache.directEquivalents(exactId))',
     'if (registry.findExact(exactId) != null) return exactId;',
-    'registry.aliasPhysical(id: exactId, target: candidate);',
     'bool _canJoinEquivalentSession(DownloadSession session)',
     'session.residentBodyAuthority !=',
     'ByteResponseBodyAuthority.artifactCache',
-    'if (candidate != null && candidate != physicalId)',
 ):
     require(runtime, token, 'verified existing-transfer acquire resolver')
+
+if build >= 233:
+    for token in (
+        'final candidates = <DownloadId, DownloadSession>{};',
+        '..sort(_compareEquivalentPhysicalCandidates);',
+        'registry.aliasPhysical(id: exactId, target: selected.key);',
+        "'preferred-existing-owner'",
+        "'candidateOwners': candidateOwners",
+    ):
+        require(runtime, token, 'preferred existing verified physical owner selection')
+    forbid(runtime, 'rejected-ambiguous-existing-owners', 'third-owner ambiguity fallback')
+else:
+    for token in (
+        'registry.aliasPhysical(id: exactId, target: candidate);',
+        'if (candidate != null && candidate != physicalId)',
+    ):
+        require(runtime, token, 'historical ambiguous existing-owner rejection')
 
 for token in (
     'registry.isPhysicalAlias(id, session.id)',
@@ -91,6 +113,13 @@ for token in (
     'service.artifactStore.openArtifactStream(newId)',
 ):
     require(test, token, 'verified transfer alias behavior regression')
+if build >= 233:
+    for token in (
+        'fresh verified identity reuses preferred existing physical owner',
+        "expect(alias.payload['candidateOwners'], 2);",
+        "expect(alias.payload['selection'], 'preferred-existing-owner');",
+    ):
+        require(test, token, 'multi-owner verified transfer reuse regression')
 
 for rel in (
     'docs/adr/0205-verified-equivalent-transfer-alias-before-acquire.md',
@@ -100,13 +129,9 @@ for rel in (
     if not (ROOT / rel).exists():
         raise SystemExit(f'dev.225 missing governance: {rel}')
 
-pubspec = read('apps/app/pubspec.yaml')
-props = read('apps/app/android/zic-version.properties')
-pub = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
-android = re.search(r'^versionCode=(\d+)$', props, re.M)
-if pub is None or int(pub.group(1)) < 225:
+if build < 225:
     raise SystemExit('dev.225 app version mismatch')
-if android is None or int(android.group(1)) < 225:
+if int(android.group(1)) < 225:
     raise SystemExit('dev.225 Android version mismatch')
 
 print('dev.225 verified transfer alias before acquire: OK')

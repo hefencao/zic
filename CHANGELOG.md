@@ -1,3 +1,8 @@
+## 0.31.0-dev.233：Physical reuse and handoff lifecycle consolidation
+- 01:05真机Trace确认dev.232的`partial-source taskFailed`归零，但28次verified acquire alias中仍有2次`rejected-ambiguous-existing-owners`；ambiguous fallback会让fresh exact identity再创建第三个physical owner。现对direct verified existing candidates做authority排序，优先复用promoted/active/demanded/longer-prefix既有owner，绝不事后merge两个已存在session。
+- 删除`sessions/DownloadTransferOwner.persistUnclaimed`及其flush状态：logical demand detach只释放调度claim，hot partial继续属于composition runtime；只有runtime真实retire/dispose才由downloads层`PartialDownloadHandoff`写cold partial，durable策略不再反向注入sessions。
+- `PromotedArtifactCacheHandoff`对同一promoted immutable session的自动commit成功后记账，后续demand/snapshot抖动不再重复做`skip-existing/skip-verified-equivalent-durable` backend probe；显式`persist(exactId)`仍始终执行required durable barrier。
+
 ## 0.31.0-dev.232：Same-epoch encoded source rebind
 - 00:38真机Trace出现3次decode `partial-source taskFailed`，但对应页面随后随source增长恢复；根因不是libwebp终局损坏，而是Reader-local `Ingress.rebuild()`可在同一SourceEpoch内替换EncodedSource，DecodeSession却只按epoch复用旧cursor。
 - DecodeSession现在把cursor binding收口为`SourceEpoch + EncodedSource实例identity`；same-epoch source replacement会释放旧cursor/holder并绑定当前authoritative source，不增加外层retry、不吞未sealed异常。

@@ -458,6 +458,85 @@ void main() {
     );
   });
 
+  test('fresh verified identity reuses preferred existing physical owner',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-preferred-existing-owner-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(directory.path);
+    addTearDown(service.close);
+    final promotedId = _readerArtifactId('preferred-promoted');
+    final failedId = _readerArtifactId('alternate-failed');
+    final freshId = _readerArtifactId('fresh-equivalent');
+    final bytes = Uint8List.fromList('RIFF....WEBPpreferred'.codeUnits);
+
+    final promoted = service.transferRuntime.registry.get(promotedId);
+    await promoted.restore();
+    await promoted.bindResponse(
+      validators: const Validators(etag: 'preferred'),
+      totalLength: bytes.lengthInBytes,
+    );
+    final promotedWriter = promoted.acquireWriter();
+    await promoted.append(promotedWriter, 0, bytes);
+    await promoted.seal(promotedWriter, expectedLength: bytes.lengthInBytes);
+    await promoted.promote();
+
+    final failed = service.transferRuntime.registry.get(failedId);
+    await failed.restore();
+    await failed.bindResponse(
+      validators: const Validators(etag: 'failed'),
+      totalLength: bytes.lengthInBytes,
+    );
+    final failedWriter = failed.acquireWriter();
+    await failed.append(failedWriter, 0, bytes.sublist(0, 8));
+    await failed.fail(
+      failedWriter,
+      const Failure(code: ErrorCode.cancelled, message: 'fixture preemption'),
+    );
+
+    service.artifactCacheManager.linkEquivalent(
+      first: freshId,
+      second: promotedId,
+    );
+    service.artifactCacheManager.linkEquivalent(
+      first: freshId,
+      second: failedId,
+    );
+    final trace = MemoryTraceSink();
+    final consumer = service.transferRuntime.attachConsumer(
+      scopeId: 'preferred-existing-owner',
+      transportFor: (_) => _ImmediateTransport(bytes),
+      consumerTraceSink: const NoopTraceSink(),
+      localPhysicalTraceSink: trace,
+    );
+    addTearDown(consumer.dispose);
+
+    consumer.replaceDemands(
+      'preferred-existing-owner',
+      1,
+      <DownloadId, TransferDemand>{
+        freshId: const TransferDemand(priority: 1000, reason: 'reader-current'),
+      },
+    );
+
+    expect(service.transferRuntime.registry.sessions, hasLength(2));
+    expect(
+      identical(service.transferRuntime.registry.get(freshId), promoted),
+      isTrue,
+    );
+    final alias = trace.events.singleWhere(
+      (event) =>
+          event.kind == TraceEventKind.artifactSource &&
+          event.payload['stage'] == 'verified-transfer-acquire-alias' &&
+          event.identityHash == freshId.key,
+    );
+    expect(alias.payload['action'], 'joined-existing-physical');
+    expect(alias.payload['candidateOwners'], 2);
+    expect(alias.payload['selection'], 'preferred-existing-owner');
+    expect(alias.payload['physicalState'], DownloadState.promoted.name);
+  });
+
   test('chapter cancellation removes only its composition transfer claim',
       () async {
     final directory = await Directory.systemTemp.createTemp(

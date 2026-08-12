@@ -64,7 +64,7 @@ if transfer_runtime_path.exists():
             forbid(transfer_runtime, token, 'retired composition late-takeover wiring')
         for token in (
             'cache.directEquivalents(exactId)',
-            'registry.aliasPhysical(id: exactId, target: candidate);',
+            'registry.aliasPhysical(id: exactId, target:',
             "'stage': 'verified-transfer-acquire-alias'",
         ):
             require(transfer_runtime, token, 'acquire-time verified transfer identity')

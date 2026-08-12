@@ -49,6 +49,7 @@ final class PromotedArtifactCacheHandoff {
       <DownloadSession, DownloadSnapshotListener>{};
   final Map<DownloadId, Future<void>> _commits =
       <DownloadId, Future<void>>{};
+  final Set<DownloadId> _completedAutomaticCommits = <DownloadId>{};
 
   void observe(DownloadSession session) {
     if (_listeners.containsKey(session)) {
@@ -108,11 +109,12 @@ final class PromotedArtifactCacheHandoff {
       entry.key.removeSnapshotListener(entry.value);
     }
     _listeners.clear();
+    _completedAutomaticCommits.clear();
   }
 
   void _submit(DownloadSession session) {
     final id = session.id;
-    if (_commits.containsKey(id)) {
+    if (_completedAutomaticCommits.contains(id) || _commits.containsKey(id)) {
       return;
     }
     final tracked = _runCommit(session);
@@ -136,6 +138,7 @@ final class PromotedArtifactCacheHandoff {
           );
         }
       }
+      _completedAutomaticCommits.add(id);
     } on Object catch (error, stackTrace) {
       try {
         onError?.call(error, stackTrace);
