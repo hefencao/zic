@@ -1,5 +1,5 @@
-# dev.240 后续交接
-- dev.240：05:35 Trace确认跨版本current抢占问题不是NetLane queued/active reprioritize失效，而是dev.238/239 orphan-retention把active provider exact authority保留在旧Reader；physical task虽已迁到1000，provider仍可能是reader-1。现不同exact provider的NetLane high-priority demand会reclaim orphaned lease；普通低优先级orphan继续保留，same-exact task-retained provider不重开。下一轮真机重点确认current provider handoff与partial identity连续。
+# dev.241 后续交接
+- dev.241：收口dev.237–240 provider handoff情况树。Pipeline只产出semantic demand priority；NetLane现以统一`NetPolicyRank`把incumbent base priority与restart cost合成effective rank，并用同一preemption margin决定provider takeover。claim live/orphan仅决定base rank来源；same-exact、consumer-bound dispose等继续是identity/lifecycle invariant。costly full-body catch-up同步收为`TransferRankPolicy`的demand-rank vs cost-rank。下一轮真机重点验证`takeoverClass=policy-rank`与current自然接管。
 `dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`
@@ -63,7 +63,7 @@
 - Native identity保持 `zic-media-core-dev134-abi6-lib00121400`。
 - production rhttp direct在普通release默认记录每response一次的HTTP version、匿名remote-IP hash与receive-progress-enabled标记；高频`onReceiveProgress`仅non-product或显式`ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS=1`诊断构建启用。该观测不得反馈给NetLane/Reader/retry/cache/framing。
 ## 下一步真机优先验证
-- dev.240后重点验证：跨新旧版本current=1000且preferred exact与retained orphan provider不同，应先出现`takeoverClass=high-priority-orphan-reclaim`再以当前exact provider重开；physical session/committed prefix不得变化。低优先级orphan与same-exact retained transport仍应继续原attempt。继续量化真实200 full-body fallback、追踪unsealed partial-source decode failure，并补做dev.231 `stored-required-exact-alias`。
+- dev.241后重点验证：跨新旧版本切换时provider handoff只应出现`takeoverClass=policy-rank`，并记录`fromPriority/fromEffectiveRank/retentionBonus/toPriority/rankMargin`；current无需专用分支即可接管，已支付低rank attempt则由restart-cost rank决定是否保留。继续量化真实200 full-body fallback、追踪unsealed partial-source decode failure，并补做dev.231 `stored-required-exact-alias`。
 - 07:51 dev.198 trace已确认Range成功路径仍正确，但full-body fallback重复重新放大到约19.2MiB/123.2MiB（15.6%），多数发生在760/780/800背景角色；dev.199只阻止这类低优先级大partial从0反复重读。820/900/1000、小partial和合法206必须保持原行为，不把defer扩展成通用restart-cost scheduler。
 - 首先复测快速前后翻页：dev.185外层previous admission应继续保持毫秒级；dev.189应确认780↔900不再导致plan取消，只有waiter真正晋升current=1000时才触发动态pressure，并确认旧JS未`finished(requestId)`前新plan绝不并发进入。无真实pressure时`receivingRetained=true` priority0仍应短时复用。
 - 真机首要复测 current 首帧稳定性：观察 policyDecision 的 staticWarmDecodes/uploads 是否收敛到稳定decode角色/真实可见页，current浅水位期间是否停止 speculative neighbor refill，以及decode/upload current handoff是否避免后台长任务阻塞。

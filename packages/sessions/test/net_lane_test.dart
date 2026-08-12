@@ -745,6 +745,53 @@ void _dev123NetLaneTests() {
     await lane.idle();
   });
 
+  test('provider decisions reuse the scheduler restart-cost policy rank',
+      () async {
+    final clock = FakeMonoClock();
+    final lane = NetLane(
+      maxActive: 1,
+      highPriorityThreshold: 1000,
+      preemptionThreshold: 40,
+      clock: clock,
+    );
+    late CancelToken token;
+    final release = Completer<void>();
+
+    lane.submitRanked(
+      key: 'provider-rank',
+      priority: 820,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (activeToken) async {
+        token = activeToken;
+        await release.future;
+      },
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    final initial = lane.activePolicyRank(
+      'provider-rank',
+      basePriority: 820,
+    )!;
+    expect(initial.effectivePriority, 820);
+    expect(lane.incomingOutranks(850, initial), isFalse);
+    expect(lane.incomingOutranks(860, initial), isTrue);
+
+    token.beginRestartCost();
+    token.recordRestartCostBytes(64 * 1024 * 1024);
+    clock.advance(const Duration(minutes: 2));
+    final invested = lane.activePolicyRank(
+      'provider-rank',
+      basePriority: 820,
+    )!;
+    expect(invested.effectivePriority, greaterThan(820));
+    expect(lane.incomingOutranks(900, invested), isFalse);
+    expect(lane.incomingOutranks(1000, invested), isTrue);
+
+    release.complete();
+    await lane.idle();
+  });
+
   test('current preempts even a saturated restart-cost victim', () async {
     final clock = FakeMonoClock();
     final lane = NetLane(

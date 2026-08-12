@@ -112,6 +112,29 @@ final class TaskPreemptionSnapshot {
 }
 
 
+/// Scheduler-owned effective rank for one active network task.
+///
+/// [basePriority] is the semantic rank supplied by the caller that owns the
+/// competing policy choice. [effectivePriority] adds only NetLane-owned
+/// restart-cost retention. Consumers compare candidates against this value
+/// rather than reproducing current/orphan/restart-cost cases themselves.
+final class NetPolicyRank {
+  const NetPolicyRank({
+    required this.basePriority,
+    required this.effectivePriority,
+    required this.retentionBonus,
+    required this.restartCostElapsedMicros,
+    required this.restartCostBytes,
+  });
+
+  final int basePriority;
+  final int effectivePriority;
+  final int retentionBonus;
+  final int restartCostElapsedMicros;
+  final int restartCostBytes;
+}
+
+
 abstract interface class TaskLane {
   int get maxActive;
   int get queued;
@@ -198,7 +221,13 @@ final class NetLane implements TaskLane {
   int get handoffActive => _core.handoffActive;
   int? priorityOf(String key) => _core.priorityOf(key);
   bool isActive(String key) => _core.isActive(key);
-  bool isHighPriority(int priority) => priority >= _core.highPriorityThreshold;
+  NetPolicyRank? activePolicyRank(
+    String key, {
+    required int basePriority,
+  }) =>
+      _core.activePolicyRank(key, basePriority: basePriority);
+  bool incomingOutranks(int incomingPriority, NetPolicyRank incumbent) =>
+      _core.incomingOutranks(incomingPriority, incumbent);
   bool updatePriority(String key, int priority) =>
       _core.updatePriority(key, priority);
 
@@ -391,6 +420,18 @@ final class _Lane {
   bool isActive(String key) => _active.containsKey(key);
   int? priorityOf(String key) =>
       _active[key]?.priority ?? _pending[key]?.priority;
+
+  NetPolicyRank? activePolicyRank(
+    String key, {
+    required int basePriority,
+  }) {
+    final task = _active[key];
+    if (task == null) return null;
+    return _policyRank(task, basePriority: basePriority);
+  }
+
+  bool incomingOutranks(int incomingPriority, NetPolicyRank incumbent) =>
+      incomingPriority - incumbent.effectivePriority >= preemptionThreshold;
 
   bool submit({
     required String key,
@@ -694,11 +735,11 @@ final class _Lane {
     for (final task in _active.values) {
       if (!task.preemptible || task.token.cancelled) continue;
       if (bucketFull && task.bucket != incomingBucket) continue;
-      final retentionPriority = _retentionPriority(task);
-      if (incoming.priority - retentionPriority < preemptionThreshold) continue;
-      if (lowest == null || retentionPriority < lowestRetentionPriority) {
+      final rank = _policyRank(task, basePriority: task.priority);
+      if (!incomingOutranks(incoming.priority, rank)) continue;
+      if (lowest == null || rank.effectivePriority < lowestRetentionPriority) {
         lowest = task;
-        lowestRetentionPriority = retentionPriority;
+        lowestRetentionPriority = rank.effectivePriority;
       }
     }
     if (lowest == null) return false;
@@ -718,10 +759,21 @@ final class _Lane {
     return true;
   }
 
-  int _retentionPriority(_ActiveTask task) {
+  NetPolicyRank _policyRank(
+    _ActiveTask task, {
+    required int basePriority,
+  }) {
     final elapsed = task.token.restartCostElapsedMicros;
     final bytes = task.token.restartCostBytes;
-    if (elapsed <= 0 && bytes <= 0) return task.priority;
+    if (elapsed <= 0 && bytes <= 0) {
+      return NetPolicyRank(
+        basePriority: basePriority,
+        effectivePriority: basePriority,
+        retentionBonus: 0,
+        restartCostElapsedMicros: elapsed,
+        restartCostBytes: bytes,
+      );
+    }
 
     const timeScaleMicros = 5 * 1000 * 1000;
     const byteScale = 4 * 1024 * 1024;
@@ -734,24 +786,37 @@ final class _Lane {
     final costScore =
         (timeWeight * timeCost + trafficWeight * trafficCost)
             .clamp(0.0, 1.0);
-    final bounded = task.priority + (boundedMaxBonus * costScore).round();
+    final bounded = basePriority + (boundedMaxBonus * costScore).round();
 
-    // dev.204 keeps two thirds of the headroom projection that dev.202
-    // introduced and one third of dev.201's bounded retention. Restart cost
-    // therefore remains economically meaningful after logical detach, but a
-    // demand-less transfer cannot jump almost all the way to current solely
-    // because its past work was expensive.
-    if (highPriorityThreshold >= 1 << 29) return bounded;
-    final currentSafeCeiling =
-        math.max(task.priority, highPriorityThreshold - preemptionThreshold);
-    final boundedSafe = math.min(bounded, currentSafeCeiling);
-    final headroom = currentSafeCeiling - task.priority;
-    final headroomRetention =
-        task.priority + (headroom * costScore).round();
-    final blended = boundedSafe +
-        ((headroomRetention - boundedSafe) * headroomWeight).round();
-    return math.min(math.max(blended, task.priority), currentSafeCeiling);
+    int effectivePriority;
+    if (highPriorityThreshold >= 1 << 29) {
+      effectivePriority = bounded;
+    } else {
+      // Keep restart-cost protection below the scheduler's current-safe
+      // ceiling. A current-ranked candidate can therefore always displace a
+      // saturated lower-ranked incumbent by the normal preemption margin.
+      final currentSafeCeiling =
+          math.max(basePriority, highPriorityThreshold - preemptionThreshold);
+      final boundedSafe = math.min(bounded, currentSafeCeiling);
+      final headroom = currentSafeCeiling - basePriority;
+      final headroomRetention =
+          basePriority + (headroom * costScore).round();
+      final blended = boundedSafe +
+          ((headroomRetention - boundedSafe) * headroomWeight).round();
+      effectivePriority = math.min(
+        math.max(blended, basePriority),
+        currentSafeCeiling,
+      );
+    }
+    return NetPolicyRank(
+      basePriority: basePriority,
+      effectivePriority: effectivePriority,
+      retentionBonus: effectivePriority - basePriority,
+      restartCostElapsedMicros: elapsed,
+      restartCostBytes: bytes,
+    );
   }
+
 
   void _notifyIdle() {
     for (final waiter in List<_KeyIdleWaiter>.of(_keyIdleWaiters)) {

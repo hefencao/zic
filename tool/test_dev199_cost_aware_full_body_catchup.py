@@ -9,6 +9,7 @@ SESSION = (ROOT / 'packages/sessions/lib/src/download_session.dart').read_text(e
 LIVE = (ROOT / 'packages/sessions/lib/src/live_coordinator.dart').read_text(encoding='utf-8')
 OWNER_PATH = ROOT / 'packages/sessions/lib/src/download_transfer_owner.dart'
 OWNER = OWNER_PATH.read_text(encoding='utf-8') if OWNER_PATH.exists() else LIVE
+RANK_POLICY = (ROOT / 'packages/sessions/lib/src/transfer_rank_policy.dart').read_text(encoding='utf-8') if (ROOT / 'packages/sessions/lib/src/transfer_rank_policy.dart').exists() else ''
 JOB_TEST = (ROOT / 'packages/sessions/test/download_job_test.dart').read_text(encoding='utf-8')
 LIVE_TEST = (ROOT / 'packages/sessions/test/live_coordinator_test.dart').read_text(encoding='utf-8')
 ARCH = (ROOT / 'docs/ARCHITECTURE.md').read_text(encoding='utf-8')
@@ -16,6 +17,16 @@ SPEC = (ROOT / 'docs/SPEC.md').read_text(encoding='utf-8')
 STATUS = (ROOT / 'docs/IMPLEMENTATION_STATUS.md').read_text(encoding='utf-8')
 HANDOFF = (ROOT / 'docs/NEXT_CHAT_HANDOFF.md').read_text(encoding='utf-8')
 CHANGELOG = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8')
+
+pubspec = (ROOT / 'apps/app/pubspec.yaml').read_text(encoding='utf-8')
+properties = (ROOT / 'apps/app/android/zic-version.properties').read_text(encoding='utf-8')
+app = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.MULTILINE)
+android = re.search(r'^versionCode=(\d+)$', properties, re.MULTILINE)
+if app is None or int(app.group(1)) < 199:
+    raise SystemExit('dev.199-or-newer app build missing')
+if android is None or int(android.group(1)) < 199:
+    raise SystemExit('dev.199-or-newer Android version missing')
+build = int(app.group(1))
 
 for token in (
     'typedef FullBodyCatchupPermission = bool Function(int preservedLength);',
@@ -41,13 +52,36 @@ for token in (
     'final Map<DownloadId, int> _downloadDeferredAtLength = <DownloadId, int>{};',
     '_downloadDeferredAtLength[id] == session.committedLength',
     'on DownloadCatchupDeferred',
-    'const largePrefixBytes = 1024 * 1024;',
-    'const foregroundAdjacentPriorityFloor = 820;',
     'priority: token.priority',
     'preservedLength: session.committedLength',
 ):
     if token not in OWNER:
         raise SystemExit(f'dev.199 physical admission owner missing: {token}')
+
+if build >= 241:
+    for token in (
+        'this.largePrefixBytes = 1024 * 1024',
+        'this.largePrefixCatchupRank = 820',
+        'bool allowsFullBodyCatchup',
+        'demandRank(',
+        'fullBodyCatchupCostRank(preservedLength)',
+    ):
+        if token not in RANK_POLICY:
+            raise SystemExit(f'dev.241 rank policy no longer preserves dev.199 cost contract: {token}')
+    for token in (
+        'rankPolicy.allowsFullBodyCatchup(',
+        'priority: priority',
+        'preservedLength: preservedLength',
+    ):
+        if token not in OWNER:
+            raise SystemExit(f'dev.241 owner no longer delegates dev.199 admission contract: {token}')
+else:
+    for token in (
+        'const largePrefixBytes = 1024 * 1024;',
+        'const foregroundAdjacentPriorityFloor = 820;',
+    ):
+        if token not in OWNER:
+            raise SystemExit(f'dev.199 physical admission owner missing: {token}')
 
 # A low-priority role change must not re-open a deferred full-body catchup;
 # promotion to next/visible/current must make it schedulable again.
@@ -84,18 +118,10 @@ for relative in ('apps/app/lib', 'packages/pipeline_runtime/lib'):
             )
 
 for body, name in ((ARCH, 'architecture'), (SPEC, 'spec')):
-    for token in ('1 MiB', '820', 'full-body', 'defer'):
+    tokens = ('policy rank', 'full-body', 'defer') if build >= 241 else ('1 MiB', '820', 'full-body', 'defer')
+    for token in tokens:
         if token not in body:
             raise SystemExit(f'dev.199 stable contract missing from {name}: {token}')
-
-pubspec = (ROOT / 'apps/app/pubspec.yaml').read_text(encoding='utf-8')
-properties = (ROOT / 'apps/app/android/zic-version.properties').read_text(encoding='utf-8')
-app = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.MULTILINE)
-android = re.search(r'^versionCode=(\d+)$', properties, re.MULTILINE)
-if app is None or int(app.group(1)) < 199:
-    raise SystemExit('dev.199-or-newer app build missing')
-if android is None or int(android.group(1)) < 199:
-    raise SystemExit('dev.199-or-newer Android version missing')
 
 for body, name in ((STATUS, 'status'), (HANDOFF, 'handoff'), (CHANGELOG, 'changelog')):
     if 'dev.199' not in body:

@@ -1,8 +1,8 @@
 # ADR 0220：current high-priority reclaim orphaned provider authority
 
-- 状态：Accepted
+- 状态：Superseded
 - 版本：ZIC 0.31.0-dev.240
-- Refines ADR 0218/0219 的orphaned provider retention；不撤销task-retained transport、single physical owner或普通低优先级orphan保留规则。
+- Refines ADR 0218/0219 的orphaned provider retention；其“high-priority orphan / strict-live”情况分支由 ADR 0221 统一为policy-rank比较。task-retained transport与single physical owner仍有效。
 
 ## 背景
 

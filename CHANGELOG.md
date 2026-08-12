@@ -1,3 +1,9 @@
+## 0.31.0-dev.241：Unified transfer policy rank
+
+- 收口dev.237–240逐步堆出的provider handoff情况分支：`orphaned/high-priority/strict-higher/restart-cost`不再各自决定控制流。Pipeline仍只产出semantic demand priority；NetLane现公开`NetPolicyRank`，用同一restart-cost retention曲线计算incumbent effective rank并拥有rank margin比较；provider owner只提交candidate priority与incumbent base priority。
+- active provider claim存活时使用其当前priority作为incumbent base；claim orphan后沿用lease admission priority。same-exact仅作为“request authority无需更换”的identity no-op，transport retainability/consumer dispose继续是lifecycle capability/invariant。provider takeover Trace统一为`takeoverClass=policy-rank`并记录effective rank、retention bonus、restart cost与margin。
+- costly full-body catch-up的1MiB/8MiB与820/900条件也从`DownloadTransferOwner`移出到`TransferRankPolicy`：required completion只提升demand rank，最终统一做`demand rank >= cost rank`。新增NetLane rank、provider margin和catch-up rank行为回归；删除sessions中的high-priority/orphan/strict-higher重复policy判断。
+
 ## 0.31.0-dev.240：Current reclaims orphaned cross-version provider authority
 
 - 05:35真机Trace共4553条事件，跨新旧版本切换时physical task的aggregate priority会正确迁到current=1000，但active provider exact URI可继续停在更早Reader的task-retained orphaned lease；代表性physical transfer在reader-2/reader-3已成为current时仍由reader-1 provider服务，整份Trace `active-provider-handoff=0`。因此表面是“current无法抢占”，实际不是NetLane reprioritize失效，而是request/provider authority未随high-priority demand迁移。

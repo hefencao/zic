@@ -678,6 +678,108 @@ void main() {
 
 
   test(
+      'provider handoff follows NetLane rank margin instead of situation branches',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_policy_rank_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final physical = _id('policy-rank-old');
+    final exact = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic-policy-rank-v2',
+        chapterId: 'chapter-policy-rank-v2',
+        pageId: 'policy-rank-new',
+      ),
+      sourceRevision: 'r2',
+      canonicalUri: Uri.parse('https://example.test/policy-rank-new.webp'),
+    );
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(
+        maxActive: 1,
+        highPriorityThreshold: 1000,
+        preemptionThreshold: 40,
+      ),
+      resolveTransferId: (id) {
+        if (id == exact) {
+          registry.aliasPhysical(id: exact, target: physical);
+          return physical;
+        }
+        return id;
+      },
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final fullBytes = <int>[
+      ...'RIFF....WEBP'.codeUnits,
+      ...List<int>.filled(48 * 1024, 17),
+    ];
+    final oldTransport = _RetainedGateControlledTransport(
+      prefix: fullBytes.sublist(0, 20 * 1024),
+      suffix: fullBytes.sublist(20 * 1024),
+    );
+    final newTransport = _GateBytesTransport(fullBytes);
+    final oldReader = owner.attachConsumer(
+      scopeId: 'reader-policy-old',
+      transportFor: (_) => throw StateError('retained transport must win'),
+      retainedTransportFor: (_) => oldTransport,
+      traceSink: const NoopTraceSink(),
+    );
+    final newReader = owner.attachConsumer(
+      scopeId: 'reader-policy-new',
+      transportFor: (_) => newTransport,
+      traceSink: const NoopTraceSink(),
+    );
+
+    oldReader.replaceDemands(
+      'reader-policy-old',
+      1,
+      _desired(physical, priority: 820),
+    );
+    await oldTransport.prefixSent.future;
+    final session = registry.get(physical);
+    final prefixLength = session.committedLength;
+    expect(prefixLength, greaterThan(0));
+
+    newReader.replaceDemands(
+      'reader-policy-new',
+      1,
+      _desired(exact, priority: 850),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(oldTransport.cancelled.isCompleted, isFalse);
+    expect(newTransport.opened.isCompleted, isFalse);
+    expect(owner.activeProviderExactId(physical), physical);
+
+    newReader.replaceDemands(
+      'reader-policy-new',
+      2,
+      _desired(exact, priority: 860),
+    );
+    await oldTransport.cancelled.future;
+    await newTransport.opened.future;
+    expect(identical(registry.find(exact), session), isTrue);
+    expect(session.committedLength, prefixLength);
+    expect(owner.activeProviderExactId(physical), exact);
+
+    newTransport.release.complete();
+    await newReader.idle();
+    expect(session.state, DownloadState.promoted);
+  });
+
+
+  test(
       'task-retained transport survives provider consumer disposal on shared partial',
       () async {
     final temp = await Directory.systemTemp.createTemp('transfer_owner_retained_transport_');

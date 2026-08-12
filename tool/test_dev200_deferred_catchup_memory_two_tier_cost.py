@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 LIVE = (ROOT / 'packages/sessions/lib/src/live_coordinator.dart').read_text(encoding='utf-8')
 OWNER_PATH = ROOT / 'packages/sessions/lib/src/download_transfer_owner.dart'
 OWNER = OWNER_PATH.read_text(encoding='utf-8') if OWNER_PATH.exists() else LIVE
+RANK_POLICY = (ROOT / 'packages/sessions/lib/src/transfer_rank_policy.dart').read_text(encoding='utf-8') if (ROOT / 'packages/sessions/lib/src/transfer_rank_policy.dart').exists() else ''
 TEST = (ROOT / 'packages/sessions/test/live_coordinator_test.dart').read_text(encoding='utf-8')
 ARCH = (ROOT / 'docs/ARCHITECTURE.md').read_text(encoding='utf-8')
 SPEC = (ROOT / 'docs/SPEC.md').read_text(encoding='utf-8')
@@ -14,19 +15,48 @@ STATUS = (ROOT / 'docs/IMPLEMENTATION_STATUS.md').read_text(encoding='utf-8')
 HANDOFF = (ROOT / 'docs/NEXT_CHAT_HANDOFF.md').read_text(encoding='utf-8')
 CHANGELOG = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8')
 
+pubspec = (ROOT / 'apps/app/pubspec.yaml').read_text(encoding='utf-8')
+properties = (ROOT / 'apps/app/android/zic-version.properties').read_text(encoding='utf-8')
+app = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.MULTILINE)
+android = re.search(r'^versionCode=(\d+)$', properties, re.MULTILINE)
+if app is None or int(app.group(1)) < 200:
+    raise SystemExit('dev.200-or-newer app build missing')
+if android is None or int(android.group(1)) < 200:
+    raise SystemExit('dev.200-or-newer Android version missing')
+build = int(app.group(1))
+
 for token in (
     'final Map<DownloadId, int> _downloadDeferredAtLength = <DownloadId, int>{};',
     'deferredAtLength == session.committedLength',
     'final preserveDeferred =',
     'session.state == DownloadState.idle',
-    'const largePrefixBytes = 1024 * 1024;',
-    'const veryLargePrefixBytes = 8 * 1024 * 1024;',
-    'const foregroundAdjacentPriorityFloor = 820;',
-    'const visibleTransitionPriorityFloor = 900;',
-    'priority >= visibleTransitionPriorityFloor',
 ):
     if token not in OWNER:
         raise SystemExit(f'dev.200 physical owner contract missing: {token}')
+
+if build >= 241:
+    for token in (
+        'this.largePrefixBytes = 1024 * 1024',
+        'this.veryLargePrefixBytes = 8 * 1024 * 1024',
+        'this.largePrefixCatchupRank = 820',
+        'this.veryLargePrefixCatchupRank = 900',
+        'fullBodyCatchupCostRank(int preservedLength)',
+        'bool allowsFullBodyCatchup',
+    ):
+        if token not in RANK_POLICY:
+            raise SystemExit(f'dev.241 rank policy no longer preserves dev.200 two-tier cost contract: {token}')
+    if 'rankPolicy.allowsFullBodyCatchup(' not in OWNER:
+        raise SystemExit('dev.241 owner no longer delegates dev.200 two-tier admission contract')
+else:
+    for token in (
+        'const largePrefixBytes = 1024 * 1024;',
+        'const veryLargePrefixBytes = 8 * 1024 * 1024;',
+        'const foregroundAdjacentPriorityFloor = 820;',
+        'const visibleTransitionPriorityFloor = 900;',
+        'priority >= visibleTransitionPriorityFloor',
+    ):
+        if token not in OWNER:
+            raise SystemExit(f'dev.200 physical owner contract missing: {token}')
 
 for token in (
     'readdedBackground',
@@ -65,18 +95,11 @@ for forbidden in (
         )
 
 for body, name in ((ARCH, 'architecture'), (SPEC, 'spec')):
-    for token in ('1MiB', '8MiB', '820', '900', 'committedLength'):
-        if token not in body.replace(' ', ''):
+    tokens = ('policyrank', 'full-body', 'committedLength') if build >= 241 else ('1MiB', '8MiB', '820', '900', 'committedLength')
+    normalized = body.replace(' ', '')
+    for token in tokens:
+        if token not in normalized:
             raise SystemExit(f'dev.200 stable contract missing from {name}: {token}')
-
-pubspec = (ROOT / 'apps/app/pubspec.yaml').read_text(encoding='utf-8')
-properties = (ROOT / 'apps/app/android/zic-version.properties').read_text(encoding='utf-8')
-app = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.MULTILINE)
-android = re.search(r'^versionCode=(\d+)$', properties, re.MULTILINE)
-if app is None or int(app.group(1)) < 200:
-    raise SystemExit('dev.200-or-newer app build missing')
-if android is None or int(android.group(1)) < 200:
-    raise SystemExit('dev.200-or-newer Android version missing')
 
 for body, name in ((STATUS, 'status'), (HANDOFF, 'handoff'), (CHANGELOG, 'changelog')):
     if 'dev.200' not in body:

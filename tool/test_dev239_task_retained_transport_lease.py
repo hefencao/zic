@@ -24,6 +24,7 @@ m = re.search(r"^version:\s*0\.31\.0\+(\d+)\s*$", pubspec, re.M)
 require(m is not None and int(m.group(1)) >= 239, "App build must be >=239")
 m2 = re.search(r"^versionCode=(\d+)\s*$", props, re.M)
 require(m2 is not None and int(m2.group(1)) == int(m.group(1)), "Android versionCode must match App build")
+build = int(m.group(1))
 
 require("typedef TransferRetainedTransportPick = Transport? Function(Uri uri);" in owner, "sessions must expose a generic retainable transport capability")
 require("TransferRetainedTransportPick? retainedTransportFor" in owner, "consumer attach must accept retainable transport resolver")
@@ -50,7 +51,10 @@ require("await transportA.cancelled.future;" in owner_test and "expect(transport
 require("task-retainable transport capability" in spec, "SPEC must define the retainable transport contract")
 require("Reader-owned `IoTransport` MUST始终属于此类" in spec, "SPEC must preserve the Reader IO close barrier")
 require("retainedTransportFor(uri)" in architecture, "Architecture must name the generic retained transport capability")
-require("sessions不得知道Venera/Mihon/source类型" in architecture, "Architecture must prohibit source-specific branching in sessions")
+if build >= 241:
+    require("sessions不得知道Reader role、1000、Venera/Mihon/source类型" in architecture, "Architecture must prohibit role/source-specific scheduling branches in sessions")
+else:
+    require("sessions不得知道Venera/Mihon/source类型" in architecture, "Architecture must prohibit source-specific branching in sessions")
 
 for path in (
     "docs/adr/0219-task-retained-loader-transport-lease.md",

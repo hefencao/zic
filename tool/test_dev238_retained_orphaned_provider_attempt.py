@@ -25,13 +25,19 @@ require(m2 is not None and int(m2.group(1)) == int(m.group(1)), "Android version
 
 require("final providerOrphaned = activeClaim == null;" in owner, "provider claim orphaning must remain explicit")
 build = int(m.group(1))
-if build >= 240:
-    require("if (providerOrphaned) {" in owner, "dev.240+ must branch orphan retention explicitly")
+if build >= 241:
+    require("if (providerOrphaned)" not in owner, "dev.241+ must not branch scheduling policy on orphan taxonomy")
+    require("lease.exactId == preferred.exactId" in owner, "same-exact request authority must remain a no-op identity invariant")
+    require("lease.admittedPriority" in owner and "activeClaim?.demand.priority" in owner, "orphan/live provider state must feed one incumbent rank")
+    require("net.activePolicyRank(" in owner and "net.incomingOutranks(" in owner, "provider retention/takeover must be one NetLane rank comparison")
+elif build >= 240:
+    require("if (providerOrphaned) {" in owner, "dev.240 must branch orphan retention explicitly")
     require("!net.isHighPriority(preferred.demand.priority)" in owner, "ordinary orphaned work must stay retained while high-priority demand may reclaim")
     require("retainedSameExact" in owner, "same-exact retained provider must not churn on Reader generation changes")
+    require("preferred.demand.priority > activeClaim.demand.priority" in owner, "dev.240 live provider handoff must remain strict-priority only")
 else:
     require("if (providerOrphaned) return false;" in owner, "claim orphaning alone must not revoke an admitted provider task")
-require("preferred.demand.priority > activeClaim.demand.priority" in owner, "live provider handoff must remain strict-priority only")
+    require("preferred.demand.priority > activeClaim.demand.priority" in owner, "live provider handoff must remain strict-priority only")
 if build >= 239:
     require("transportRetainedBeyondConsumer" in owner, "dev.239+ must make transport lifetime explicit")
     require("consumer-bound transport" in owner, "dev.239+ must keep the consumer-bound close barrier explicit")
@@ -49,7 +55,10 @@ require("expect(identical(registry.find(exact), session), isTrue);" in owner_tes
 require("expect(session.committedLength, greaterThan(0));" in owner_test, "provider disposal handoff must preserve committed partial bytes")
 
 require("logical provider claim撤销 MUST NOT单独取消" in spec, "SPEC must separate claim and admitted-attempt lifetime")
-require("claim lifetime不得再冒充transport lifetime" in architecture, "Architecture must name the corrected ownership boundary")
+if build >= 241:
+    require("logical claim lifetime、transport lifetime与request/provider选择彼此分离" in architecture, "Architecture must preserve the claim/transport/provider lifetime split")
+else:
+    require("claim lifetime不得再冒充transport lifetime" in architecture, "Architecture must name the corrected ownership boundary")
 
 for path in (
     "docs/adr/0218-retained-orphaned-provider-attempt.md",

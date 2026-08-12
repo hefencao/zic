@@ -27,16 +27,19 @@ require("final Map<DownloadId, _ActiveProviderLease> _activeProviderLeases" in o
 require("claimSequence" in owner and "taskKey" in owner, "provider lease must identify task and claim generation")
 require("_handoffActiveProviderIfNeeded(" in owner, "claim changes must evaluate provider handoff")
 require("providerOrphaned" in owner, "orphaned provider claim must be detected")
-require("preferred.demand.priority > activeClaim.demand.priority" in owner, "live provider handoff must require strict priority improvement")
 require("net.cancel(taskKey);" in owner, "handoff must unwind old attempt through the one NetLane")
 require("'stage': 'active-provider-handoff'" in owner, "handoff must be trace-visible")
 require("_activeProviderScopes" not in owner, "scope-only provider state must be removed")
 require("activeProviderExactId" in owner, "tests/diagnostics must expose the active exact provider")
 
 build = int(m.group(1))
-if build >= 240:
+if build >= 241:
+    require("orphaned provider claim stays on the admitted task until provider disposal" in owner_test, "dev.238+ must retain economically ranked orphaned provider work")
+    require("net.activePolicyRank(" in owner and "net.incomingOutranks(" in owner, "dev.241+ provider handoff must reuse NetLane policy rank")
+    require("provider handoff follows NetLane rank margin instead of situation branches" in owner_test, "dev.241 policy-rank provider regression is required")
+elif build >= 240:
     require("orphaned provider claim stays on the admitted task until provider disposal" in owner_test, "dev.238+ must retain ordinary orphaned provider work")
-    require("if (providerOrphaned) {" in owner and "net.isHighPriority(preferred.demand.priority)" in owner, "dev.240+ must let high-priority demand reclaim an orphaned provider")
+    require("if (providerOrphaned) {" in owner and "net.isHighPriority(preferred.demand.priority)" in owner, "dev.240 must let high-priority demand reclaim an orphaned provider")
     require("current exact demand reclaims an orphaned retained provider" in owner_test, "dev.240 current-provider reclaim regression is required")
 elif build >= 238:
     require("orphaned provider claim stays on the admitted task until provider disposal" in owner_test, "dev.238+ must retain an admitted provider across claim orphaning")

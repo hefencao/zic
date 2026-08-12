@@ -9,6 +9,7 @@ import 'download_registry.dart';
 import 'download_session.dart';
 import 'net_lane.dart';
 import 'retry_policy.dart';
+import 'transfer_rank_policy.dart';
 
 typedef TransferTransportPick = Transport Function(Uri uri);
 typedef TransferRetainedTransportPick = Transport? Function(Uri uri);
@@ -66,6 +67,7 @@ final class DownloadTransferOwner {
     this.prepareDownload,
     required this.net,
     this.resolveTransferId = _identityTransferId,
+    this.rankPolicy = const TransferRankPolicy(),
   });
 
   final DownloadRegistry registry;
@@ -73,6 +75,7 @@ final class DownloadTransferOwner {
   final TransferPrepare? prepareDownload;
   final NetLane net;
   final TransferIdentityResolver resolveTransferId;
+  final TransferRankPolicy rankPolicy;
 
   final Map<DownloadId, Map<String, _TransferClaim>> _claims =
       <DownloadId, Map<String, _TransferClaim>>{};
@@ -751,6 +754,7 @@ final class DownloadTransferOwner {
       scopeId: provider.scopeId,
       exactId: sourceId,
       claimSequence: claim.sequence,
+      admittedPriority: claim.demand.priority,
       transportRetainedBeyondConsumer: retainedTransport != null,
     );
     _activeProviderLeases[id] = providerLease;
@@ -1002,23 +1006,29 @@ final class DownloadTransferOwner {
       }
     }
     final providerOrphaned = activeClaim == null;
-    final retainedSameExact = lease.transportRetainedBeyondConsumer &&
-        lease.exactId == preferred.exactId;
-    if (retainedSameExact) return false;
-    // Claim lifetime and an already admitted provider attempt are different
-    // authorities. Ordinary adjacent/background claims must not revoke an
-    // orphaned task merely because the Reader generation changed. The one
-    // exception is the scheduler's high-priority class: a new current demand
-    // for a different exact provider must regain provider/request authority,
-    // just as current can preempt restart-cost-protected lower network work.
-    // Keep the classification owned by NetLane rather than teaching sessions
-    // any Reader role or magic priority value.
-    if (providerOrphaned) {
-      if (!net.isHighPriority(preferred.demand.priority)) return false;
-    } else {
-      final preferredOutranks =
-          preferred.demand.priority > activeClaim.demand.priority;
-      if (!preferredOutranks) return false;
+    // Same exact request authority is already correct. Scope/Reader generation
+    // changes are not a scheduling reason to restart an admitted transport.
+    if (lease.exactId == preferred.exactId) return false;
+
+    // Provider replacement is a rank decision, not a taxonomy of Reader
+    // situations. The incumbent keeps the priority it was admitted with when
+    // its logical claim later disappears; NetLane then applies the same
+    // restart-cost retention curve used for ordinary task preemption. The
+    // incoming claim carries the Pipeline policy rank. Current, previous,
+    // orphaning and paid restart work therefore remain parameters of one rank
+    // comparison instead of separate control-flow cases.
+    final incumbentBasePriority =
+        activeClaim?.demand.priority ?? lease.admittedPriority;
+    final incumbentRank = net.activePolicyRank(
+      taskKey,
+      basePriority: incumbentBasePriority,
+    );
+    if (incumbentRank == null ||
+        !net.incomingOutranks(
+          preferred.demand.priority,
+          incumbentRank,
+        )) {
+      return false;
     }
     _record(
       preferred,
@@ -1033,12 +1043,15 @@ final class DownloadTransferOwner {
         'toProviderScope': preferred.consumer.scopeId,
         'toProviderExactId': preferred.exactId.key,
         'providerOrphaned': providerOrphaned,
-        'takeoverClass': providerOrphaned
-            ? 'high-priority-orphan-reclaim'
-            : 'strict-live-priority',
-        if (activeClaim != null)
-          'fromPriority': activeClaim.demand.priority,
+        'takeoverClass': 'policy-rank',
+        'fromPriority': incumbentBasePriority,
+        'fromEffectiveRank': incumbentRank.effectivePriority,
+        'retentionBonus': incumbentRank.retentionBonus,
+        'restartCostElapsedMicros': incumbentRank.restartCostElapsedMicros,
+        'restartCostBytes': incumbentRank.restartCostBytes,
         'toPriority': preferred.demand.priority,
+        'rankMargin':
+            preferred.demand.priority - incumbentRank.effectivePriority,
         'committedLength': session.committedLength,
       },
     );
@@ -1108,18 +1121,12 @@ final class DownloadTransferOwner {
     required DownloadId id,
     required int priority,
     required int preservedLength,
-  }) {
-    if (_requiresCompletion(id)) return true;
-    const largePrefixBytes = 1024 * 1024;
-    const veryLargePrefixBytes = 8 * 1024 * 1024;
-    const foregroundAdjacentPriorityFloor = 820;
-    const visibleTransitionPriorityFloor = 900;
-    if (preservedLength < largePrefixBytes) return true;
-    if (preservedLength >= veryLargePrefixBytes) {
-      return priority >= visibleTransitionPriorityFloor;
-    }
-    return priority >= foregroundAdjacentPriorityFloor;
-  }
+  }) =>
+      rankPolicy.allowsFullBodyCatchup(
+        priority: priority,
+        completionRequired: _requiresCompletion(id),
+        preservedLength: preservedLength,
+      );
 
   Future<void> _sleepOrCancel(
     Duration delay,
@@ -1237,6 +1244,7 @@ final class _ActiveProviderLease {
     required this.scopeId,
     required this.exactId,
     required this.claimSequence,
+    required this.admittedPriority,
     required this.transportRetainedBeyondConsumer,
   });
 
@@ -1244,6 +1252,7 @@ final class _ActiveProviderLease {
   final String scopeId;
   final DownloadId exactId;
   final int claimSequence;
+  final int admittedPriority;
   final bool transportRetainedBeyondConsumer;
 }
 

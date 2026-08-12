@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：dev.240真机验证跨新旧版本切换时current high-priority demand会出现`active-provider-handoff.takeoverClass=high-priority-orphan-reclaim`，随后新`downloadStarted`使用当前exact provider，同时physical session/committed prefix保持；普通820/780 orphan与same-exact task-retained attempt仍不得因Reader generation变化抖动。继续量化真实`Range -> 200` fallback、追踪unsealed `partial-source` decode failure与dev.231 `stored-required-exact-alias`。
+- P0：dev.241真机验证provider handoff只由`policy-rank`决定：跨新旧版本切换时记录candidate priority、incumbent base/effective rank、restart-cost bonus与margin；current应自然凭rank接管，已支付工作可凭retention rank保留，不再出现orphan/high-priority/strict-higher专用分支。并继续量化真实`Range -> 200` full-body duplicate、追踪unsealed `partial-source` decode failure与dev.231 `stored-required-exact-alias`。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环
