@@ -1002,16 +1002,24 @@ final class DownloadTransferOwner {
       }
     }
     final providerOrphaned = activeClaim == null;
+    final retainedSameExact = lease.transportRetainedBeyondConsumer &&
+        lease.exactId == preferred.exactId;
+    if (retainedSameExact) return false;
     // Claim lifetime and an already admitted provider attempt are different
-    // authorities. Detaching the Reader claim must not revoke a transport
-    // that is still physically running: the provider consumer remains alive
-    // until its own dispose boundary, while NetLane priority can migrate to
-    // the remaining claims. Rebinding an orphaned-but-live attempt would throw
-    // away full-body catch-up work without gaining a new physical owner.
-    if (providerOrphaned) return false;
-    final preferredOutranks =
-        preferred.demand.priority > activeClaim.demand.priority;
-    if (!preferredOutranks) return false;
+    // authorities. Ordinary adjacent/background claims must not revoke an
+    // orphaned task merely because the Reader generation changed. The one
+    // exception is the scheduler's high-priority class: a new current demand
+    // for a different exact provider must regain provider/request authority,
+    // just as current can preempt restart-cost-protected lower network work.
+    // Keep the classification owned by NetLane rather than teaching sessions
+    // any Reader role or magic priority value.
+    if (providerOrphaned) {
+      if (!net.isHighPriority(preferred.demand.priority)) return false;
+    } else {
+      final preferredOutranks =
+          preferred.demand.priority > activeClaim.demand.priority;
+      if (!preferredOutranks) return false;
+    }
     _record(
       preferred,
       kind: TraceEventKind.artifactSource,
@@ -1025,6 +1033,9 @@ final class DownloadTransferOwner {
         'toProviderScope': preferred.consumer.scopeId,
         'toProviderExactId': preferred.exactId.key,
         'providerOrphaned': providerOrphaned,
+        'takeoverClass': providerOrphaned
+            ? 'high-priority-orphan-reclaim'
+            : 'strict-live-priority',
         if (activeClaim != null)
           'fromPriority': activeClaim.demand.priority,
         'toPriority': preferred.demand.priority,

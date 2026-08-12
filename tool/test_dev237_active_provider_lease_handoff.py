@@ -34,9 +34,13 @@ require("_activeProviderScopes" not in owner, "scope-only provider state must be
 require("activeProviderExactId" in owner, "tests/diagnostics must expose the active exact provider")
 
 build = int(m.group(1))
-if build >= 238:
+if build >= 240:
+    require("orphaned provider claim stays on the admitted task until provider disposal" in owner_test, "dev.238+ must retain ordinary orphaned provider work")
+    require("if (providerOrphaned) {" in owner and "net.isHighPriority(preferred.demand.priority)" in owner, "dev.240+ must let high-priority demand reclaim an orphaned provider")
+    require("current exact demand reclaims an orphaned retained provider" in owner_test, "dev.240 current-provider reclaim regression is required")
+elif build >= 238:
     require("orphaned provider claim stays on the admitted task until provider disposal" in owner_test, "dev.238+ must retain an admitted provider across claim orphaning")
-    require("if (providerOrphaned) return false;" in owner, "dev.238+ must not cancel only because a claim orphaned")
+    require("if (providerOrphaned) return false;" in owner, "dev.238/239 must not cancel only because a claim orphaned")
 else:
     require("new exact demand rebinds an orphaned retained provider to the shared partial" in owner_test, "dev.237 orphaned-provider behavior regression is required")
 require("expect(identical(registry.find(exact), session), isTrue);" in owner_test, "test must prove physical session is preserved")

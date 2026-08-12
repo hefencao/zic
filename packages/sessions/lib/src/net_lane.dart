@@ -198,6 +198,7 @@ final class NetLane implements TaskLane {
   int get handoffActive => _core.handoffActive;
   int? priorityOf(String key) => _core.priorityOf(key);
   bool isActive(String key) => _core.isActive(key);
+  bool isHighPriority(int priority) => priority >= _core.highPriorityThreshold;
   bool updatePriority(String key, int priority) =>
       _core.updatePriority(key, priority);
 

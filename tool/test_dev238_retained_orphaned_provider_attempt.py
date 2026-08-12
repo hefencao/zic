@@ -24,9 +24,14 @@ m2 = re.search(r"^versionCode=(\d+)\s*$", props, re.M)
 require(m2 is not None and int(m2.group(1)) == int(m.group(1)), "Android versionCode must match App build")
 
 require("final providerOrphaned = activeClaim == null;" in owner, "provider claim orphaning must remain explicit")
-require("if (providerOrphaned) return false;" in owner, "claim orphaning alone must not revoke an admitted provider task")
-require("preferred.demand.priority > activeClaim.demand.priority" in owner, "live provider handoff must remain strict-priority only")
 build = int(m.group(1))
+if build >= 240:
+    require("if (providerOrphaned) {" in owner, "dev.240+ must branch orphan retention explicitly")
+    require("!net.isHighPriority(preferred.demand.priority)" in owner, "ordinary orphaned work must stay retained while high-priority demand may reclaim")
+    require("retainedSameExact" in owner, "same-exact retained provider must not churn on Reader generation changes")
+else:
+    require("if (providerOrphaned) return false;" in owner, "claim orphaning alone must not revoke an admitted provider task")
+require("preferred.demand.priority > activeClaim.demand.priority" in owner, "live provider handoff must remain strict-priority only")
 if build >= 239:
     require("transportRetainedBeyondConsumer" in owner, "dev.239+ must make transport lifetime explicit")
     require("consumer-bound transport" in owner, "dev.239+ must keep the consumer-bound close barrier explicit")

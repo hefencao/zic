@@ -3,6 +3,7 @@
 - 状态：Accepted
 - 版本：ZIC 0.31.0-dev.239
 - Supersedes ADR 0218 中“provider consumer真实dispose必然取消active attempt”的无条件规则；ADR 0218 的claim orphaning、strict higher-priority handoff与single physical owner继续有效。
+- ADR 0220进一步细化claim orphaning：普通低优先级orphan retention继续有效，但不同exact provider的NetLane high-priority demand可reclaim request/provider authority。
 
 ## 背景
 

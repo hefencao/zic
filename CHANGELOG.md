@@ -1,3 +1,9 @@
+## 0.31.0-dev.240：Current reclaims orphaned cross-version provider authority
+
+- 05:35真机Trace共4553条事件，跨新旧版本切换时physical task的aggregate priority会正确迁到current=1000，但active provider exact URI可继续停在更早Reader的task-retained orphaned lease；代表性physical transfer在reader-2/reader-3已成为current时仍由reader-1 provider服务，整份Trace `active-provider-handoff=0`。因此表面是“current无法抢占”，实际不是NetLane reprioritize失效，而是request/provider authority未随high-priority demand迁移。
+- provider handoff现区分普通orphan retention与high-priority reclaim：低于NetLane high-priority threshold的adjacent/background demand继续保留已admit orphaned attempt；不同exact provider的high-priority demand必须取消旧provider attempt并在同一physical `DownloadSession`/writer/committed prefix上由preferred exact provider重开。判定只调用NetLane的`isHighPriority()`，sessions不认识Reader role或硬编码1000。
+- task-retained且provider exact与preferred exact相同的attempt不因Reader generation变化重开；live provider仍维持strict-higher priority handoff。新增current跨版本orphan reclaim行为回归、dev.240 ownership gate与ADR 0220。
+
 ## 0.31.0-dev.239：Task-retained loader transport lease
 
 - 05:09真机Trace共1176条事件，dev.238已消除claim orphaning导致的provider churn：`taskFailed=0`、无orphan handoff、无`full-body-prefix-catchup-aborted`，resume duplicate仅一次65,536-byte overlap proof。剩余断点是Reader consumer真实dispose仍取消loader-backed active task，4–8MiB hot partial随后必须重新resume；其中4,064,640-byte partial因服务器Range→200进入full-body catch-up。
