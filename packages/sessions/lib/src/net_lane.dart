@@ -171,7 +171,7 @@ final class NetLane implements TaskLane {
     int reservedHighPrioritySlots = 0,
     int highPriorityThreshold = 1000,
     int preemptionThreshold = 40,
-    int pressurePreemptionPriorityFloor = 1 << 30,
+    Duration demotionPreemptionGrace = Duration.zero,
     MonoClock clock = const SystemClock(),
     LaneError? onError,
   }) : _core = _Lane(
@@ -179,7 +179,7 @@ final class NetLane implements TaskLane {
           reservedHighPrioritySlots: reservedHighPrioritySlots,
           highPriorityThreshold: highPriorityThreshold,
           preemptionThreshold: preemptionThreshold,
-          pressurePreemptionPriorityFloor: pressurePreemptionPriorityFloor,
+          demotionPreemptionGrace: demotionPreemptionGrace,
           clock: clock,
           onError: onError,
         );
@@ -374,19 +374,19 @@ final class _Lane {
     this.reservedHighPrioritySlots = 0,
     this.highPriorityThreshold = 1 << 30,
     this.preemptionThreshold = 1 << 30,
-    this.pressurePreemptionPriorityFloor = 1 << 30,
+    this.demotionPreemptionGrace = Duration.zero,
     this.clock = const SystemClock(),
     this.onError,
   })  : assert(maxActive > 0),
         assert(reservedHighPrioritySlots >= 0),
         assert(preemptionThreshold >= 0),
-        assert(pressurePreemptionPriorityFloor >= 0);
+        assert(!demotionPreemptionGrace.isNegative);
 
   final int maxActive;
   final int reservedHighPrioritySlots;
   final int highPriorityThreshold;
   final int preemptionThreshold;
-  final int pressurePreemptionPriorityFloor;
+  final Duration demotionPreemptionGrace;
   final MonoClock clock;
   final LaneError? onError;
   final Map<String, _Pending> _pending = <String, _Pending>{};
@@ -394,6 +394,8 @@ final class _Lane {
   final Map<String, int> _activeByBucket = <String, int>{};
   final List<Completer<void>> _idleWaiters = <Completer<void>>[];
   final List<_KeyIdleWaiter> _keyIdleWaiters = <_KeyIdleWaiter>[];
+  Timer? _demotionWake;
+  int? _demotionWakeAtMicros;
   int _seq = 0;
 
   int get queued => _pending.length;
@@ -443,11 +445,8 @@ final class _Lane {
   }) {
     final activeTask = _active[key];
     if (activeTask != null) {
-      final increased = priority > activeTask.priority;
-      activeTask
-        ..priority = priority
-        ..preemptible = preemptible;
-      activeTask.token.updatePriority(priority);
+      final increased = _updateActivePriority(activeTask, priority);
+      activeTask.preemptible = preemptible;
       if (increased) _pump();
       return false;
     }
@@ -479,9 +478,7 @@ final class _Lane {
   bool updatePriority(String key, int priority) {
     final activeTask = _active[key];
     if (activeTask != null) {
-      final increased = priority > activeTask.priority;
-      activeTask.priority = priority;
-      activeTask.token.updatePriority(priority);
+      final increased = _updateActivePriority(activeTask, priority);
       if (increased) _pump();
       return true;
     }
@@ -491,6 +488,20 @@ final class _Lane {
     pending.priority = priority;
     if (increased) _pump();
     return true;
+  }
+
+  bool _updateActivePriority(_ActiveTask task, int priority) {
+    final previous = task.priority;
+    if (previous == priority) return false;
+    task.priority = priority;
+    task.token.updatePriority(priority);
+    if (priority < previous && demotionPreemptionGrace.inMicroseconds > 0) {
+      task.preemptionProtectedUntilMicros =
+          clock.nowMicros() + demotionPreemptionGrace.inMicroseconds;
+    } else if (priority > previous) {
+      task.preemptionProtectedUntilMicros = null;
+    }
+    return priority > previous;
   }
 
   bool replace({
@@ -604,26 +615,12 @@ final class _Lane {
       if (eligible.isEmpty) {
         final blockedHighPriority = _highestBlockedHighPriorityPending();
         if (blockedHighPriority != null) {
-          // Match the VibeVenera handoff rule: once the single temporary
-          // max+1 slot is occupied, a newer current page must still be able
-          // to ask another lower-ranked running prefetch to unwind. We do
-          // not start the blocked task until a real lane/bucket permit is
-          // released, so the active bound and single-writer invariant stay
-          // intact.
-          _preemptLowestRunningFor(blockedHighPriority);
-        } else if (handoffActive == 0 && !_hasCancellingActive) {
-          final blockedPressure = _highestBlockedPressurePending();
-          if (blockedPressure != null) {
-            // Adjacent previous/near work is normal-lane work and therefore
-            // must never borrow the current-only max+1 handoff. It may,
-            // however, create real pressure on lower-ranked speculative or
-            // retained-background transfers. Ask exactly one lower-ranked
-            // victim to unwind, keep every permit occupied until that task
-            // physically exits, then let the normal slot go to the queued
-            // in-window task. This prevents priority=0 retained receiving
-            // work from starving previous=780 while preserving the bounded
-            // current handoff contract.
-            _preemptLowestRunningFor(blockedPressure);
+          // The reserved current headroom is admission capacity, not a
+          // mandatory cancellation slot. Only once normal + reserved capacity
+          // is genuinely saturated may another blocked current ask the lowest
+          // effective-rank running task to unwind.
+          if (!_preemptLowestRunningFor(blockedHighPriority)) {
+            _scheduleDemotionProtectionWake();
           }
         }
         break;
@@ -636,7 +633,6 @@ final class _Lane {
         return a.seq <= b.seq ? a : b;
       });
       final handoff = _needsHandoff(next);
-      if (handoff && !_preemptLowestRunningFor(next)) break;
       _pending.remove(next.key);
       final token = CancelToken(priority: next.priority, clock: clock);
       _active[next.key] = _ActiveTask(
@@ -675,33 +671,35 @@ final class _Lane {
     _notifyIdle();
   }
 
+  void _scheduleDemotionProtectionWake() {
+    if (demotionPreemptionGrace.inMicroseconds <= 0) return;
+    final now = clock.nowMicros();
+    int? earliest;
+    for (final task in _active.values) {
+      final until = task.preemptionProtectedUntilMicros;
+      if (until == null || until <= now) continue;
+      if (earliest == null || until < earliest) earliest = until;
+    }
+    if (earliest == null) return;
+    final scheduledAt = _demotionWakeAtMicros;
+    if (scheduledAt != null && scheduledAt <= earliest) return;
+    _demotionWake?.cancel();
+    _demotionWakeAtMicros = earliest;
+    _demotionWake = Timer(
+      Duration(microseconds: math.max(1, earliest - now)),
+      () {
+        _demotionWake = null;
+        _demotionWakeAtMicros = null;
+        _pump();
+      },
+    );
+  }
+
   _Pending? _highestBlockedHighPriorityPending() {
     _Pending? highest;
     for (final pending in _pending.values) {
       if (_active.containsKey(pending.key) ||
           pending.priority < highPriorityThreshold ||
-          !_needsHandoff(pending)) {
-        continue;
-      }
-      if (highest == null ||
-          pending.priority > highest.priority ||
-          (pending.priority == highest.priority &&
-              pending.seq < highest.seq)) {
-        highest = pending;
-      }
-    }
-    return highest;
-  }
-
-  bool get _hasCancellingActive =>
-      _active.values.any((task) => task.token.cancelled);
-
-  _Pending? _highestBlockedPressurePending() {
-    _Pending? highest;
-    for (final pending in _pending.values) {
-      if (_active.containsKey(pending.key) ||
-          pending.priority < pressurePreemptionPriorityFloor ||
-          pending.priority >= highPriorityThreshold ||
           !_needsHandoff(pending)) {
         continue;
       }
@@ -765,11 +763,21 @@ final class _Lane {
   }) {
     final elapsed = task.token.restartCostElapsedMicros;
     final bytes = task.token.restartCostBytes;
+    final protectedUntil = task.preemptionProtectedUntilMicros;
+    final demotionProtected = protectedUntil != null &&
+        protectedUntil > clock.nowMicros() &&
+        highPriorityThreshold < (1 << 29);
+    final demotionFloor = demotionProtected
+        ? math.max(
+            basePriority,
+            highPriorityThreshold - preemptionThreshold + 1,
+          )
+        : basePriority;
     if (elapsed <= 0 && bytes <= 0) {
       return NetPolicyRank(
         basePriority: basePriority,
-        effectivePriority: basePriority,
-        retentionBonus: 0,
+        effectivePriority: demotionFloor,
+        retentionBonus: demotionFloor - basePriority,
         restartCostElapsedMicros: elapsed,
         restartCostBytes: bytes,
       );
@@ -808,6 +816,7 @@ final class _Lane {
         currentSafeCeiling,
       );
     }
+    effectivePriority = math.max(effectivePriority, demotionFloor);
     return NetPolicyRank(
       basePriority: basePriority,
       effectivePriority: effectivePriority,
@@ -830,6 +839,9 @@ final class _Lane {
     if (!isIdle) {
       return;
     }
+    _demotionWake?.cancel();
+    _demotionWake = null;
+    _demotionWakeAtMicros = null;
     final waiters = List<Completer<void>>.of(_idleWaiters);
     _idleWaiters.clear();
     for (final waiter in waiters) {
@@ -874,6 +886,7 @@ final class _ActiveTask {
   final int? bucketLimit;
   int priority;
   bool preemptible;
+  int? preemptionProtectedUntilMicros;
 }
 
 final class _KeyIdleWaiter {

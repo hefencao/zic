@@ -395,10 +395,11 @@ void _dev123NetLaneTests() {
     await lane.idle();
   });
 
-  test('current uses one handoff slot and preempts the lowest ranked transfer',
+  test('current borrows one handoff slot without cancelling active transfers',
       () async {
     final lane = NetLane(maxActive: 2, reservedHighPrioritySlots: 1);
     final lowCancelled = Completer<void>();
+    final lowRelease = Completer<void>();
     final mediumRelease = Completer<void>();
     final currentStarted = Completer<void>();
     final currentRelease = Completer<void>();
@@ -409,8 +410,11 @@ void _dev123NetLaneTests() {
       bucket: 'remote:a',
       bucketLimit: 2,
       task: (token) async {
-        await token.whenCancelled;
-        lowCancelled.complete();
+        await Future.any<void>(<Future<void>>[
+          token.whenCancelled,
+          lowRelease.future,
+        ]);
+        if (token.cancelled) lowCancelled.complete();
       },
     );
     lane.submitRanked(
@@ -436,19 +440,19 @@ void _dev123NetLaneTests() {
     await currentStarted.future;
     expect(lane.active, 3);
     expect(lane.handoffActive, 1);
-    await lowCancelled.future;
-    await Future<void>.delayed(Duration.zero);
-    expect(lane.active, 2);
+    expect(lowCancelled.isCompleted, isFalse);
 
     currentRelease.complete();
+    lowRelease.complete();
     mediumRelease.complete();
     await lane.idle();
   });
 
-  test('current preempts inside a full source bucket before global saturation',
+  test('current borrows source bucket headroom before cancelling a transfer',
       () async {
     final lane = NetLane(maxActive: 5, reservedHighPrioritySlots: 1);
     final firstCancelled = Completer<void>();
+    final firstRelease = Completer<void>();
     final secondRelease = Completer<void>();
     final currentStarted = Completer<void>();
     final currentRelease = Completer<void>();
@@ -459,8 +463,11 @@ void _dev123NetLaneTests() {
       bucket: 'remote:a',
       bucketLimit: 2,
       task: (token) async {
-        await token.whenCancelled;
-        firstCancelled.complete();
+        await Future.any<void>(<Future<void>>[
+          token.whenCancelled,
+          firstRelease.future,
+        ]);
+        if (token.cancelled) firstCancelled.complete();
       },
     );
     lane.submitRanked(
@@ -488,15 +495,16 @@ void _dev123NetLaneTests() {
     expect(lane.active, 3);
     expect(lane.activeForBucket('remote:a'), 3);
     expect(lane.handoffActive, 1);
-    await firstCancelled.future;
+    expect(firstCancelled.isCompleted, isFalse);
 
     currentRelease.complete();
+    firstRelease.complete();
     secondRelease.complete();
     await lane.idle();
   });
 
   test(
-      'blocked current keeps preempting low work while the handoff slot unwinds',
+      'blocked current preempts only after reserved headroom is occupied',
       () async {
     final lane = NetLane(
       maxActive: 5,
@@ -504,12 +512,8 @@ void _dev123NetLaneTests() {
       highPriorityThreshold: 1000,
       preemptionThreshold: 40,
     );
-    final stuckCancelled = Completer<void>();
-    final stuckRelease = Completer<void>();
-    final remainingPrefetchRelease = Completer<void>();
-    final prefetchCancelled = <int, Completer<void>>{
-      for (var index = 1; index < 5; index++) index: Completer<void>(),
-    };
+    final lowestCancelled = Completer<void>();
+    final otherRelease = Completer<void>();
     final firstCurrentStarted = Completer<void>();
     final firstCurrentRelease = Completer<void>();
     final secondCurrentStarted = Completer<void>();
@@ -521,10 +525,7 @@ void _dev123NetLaneTests() {
       bucketLimit: 5,
       task: (token) async {
         await token.whenCancelled;
-        stuckCancelled.complete();
-        // Deliberately keep the first preempted transport alive. This models
-        // a socket/request that needs time to unwind after cancellation.
-        await stuckRelease.future;
+        lowestCancelled.complete();
       },
     );
     for (var index = 1; index < 5; index++) {
@@ -533,15 +534,7 @@ void _dev123NetLaneTests() {
         priority: 680 + index * 20,
         bucket: 'remote:a',
         bucketLimit: 5,
-        task: (token) async {
-          await Future.any<void>(<Future<void>>[
-            token.whenCancelled,
-            remainingPrefetchRelease.future,
-          ]);
-          if (token.cancelled) {
-            prefetchCancelled[index]!.complete();
-          }
-        },
+        task: (_) async => otherRelease.future,
       );
     }
     await Future<void>.delayed(Duration.zero);
@@ -558,9 +551,9 @@ void _dev123NetLaneTests() {
       },
     );
     await firstCurrentStarted.future;
-    await stuckCancelled.future;
     expect(lane.active, 6);
     expect(lane.handoffActive, 1);
+    expect(lowestCancelled.isCompleted, isFalse);
 
     lane.submitRanked(
       key: 'current-b',
@@ -572,35 +565,96 @@ void _dev123NetLaneTests() {
       },
     );
 
-    // At max+1, current-b cannot start yet, but it must still request
-    // cancellation of another non-cancelled low-ranked prefetch. After that
-    // victim exits there are still other low-ranked victims available, so the
-    // normal handoff path preempts one of them and starts current-b without
-    // waiting for prefetch-0's slow cancellation to unwind.
-    await prefetchCancelled[1]!.future;
-    await secondCurrentStarted.future;
-    expect(stuckRelease.isCompleted, isFalse);
+    await lowestCancelled.future.timeout(const Duration(seconds: 1));
+    await secondCurrentStarted.future.timeout(const Duration(seconds: 1));
     expect(firstCurrentRelease.isCompleted, isFalse);
 
     firstCurrentRelease.complete();
-    stuckRelease.complete();
-    remainingPrefetchRelease.complete();
+    otherRelease.complete();
     await lane.idle();
   });
 
   test(
-      'previous pressure preempts one lower task without borrowing current handoff',
+      'recent demotion defers saturated current preemption until grace expires',
+      () async {
+    final lane = NetLane(
+      maxActive: 1,
+      reservedHighPrioritySlots: 1,
+      highPriorityThreshold: 1000,
+      preemptionThreshold: 40,
+      demotionPreemptionGrace: const Duration(milliseconds: 30),
+    );
+    final retainedCancelled = Completer<void>();
+    final firstCurrentStarted = Completer<void>();
+    final firstCurrentRelease = Completer<void>();
+    final secondCurrentStarted = Completer<void>();
+
+    lane.submitRanked(
+      key: 'recently-demoted',
+      priority: 780,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (token) async {
+        await token.whenCancelled;
+        retainedCancelled.complete();
+      },
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    lane.submitRanked(
+      key: 'current-a',
+      priority: 1000,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (_) async {
+        firstCurrentStarted.complete();
+        await firstCurrentRelease.future;
+      },
+    );
+    await firstCurrentStarted.future;
+    expect(lane.active, 2);
+    expect(lane.handoffActive, 1);
+
+    expect(lane.updatePriority('recently-demoted', 0), isTrue);
+    final protected = lane.activePolicyRank(
+      'recently-demoted',
+      basePriority: 0,
+    );
+    expect(protected, isNotNull);
+    expect(protected!.effectivePriority, 961);
+
+    lane.submitRanked(
+      key: 'current-b',
+      priority: 1000,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (_) async {
+        secondCurrentStarted.complete();
+      },
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    expect(retainedCancelled.isCompleted, isFalse);
+    expect(secondCurrentStarted.isCompleted, isFalse);
+
+    await retainedCancelled.future.timeout(const Duration(seconds: 1));
+    await secondCurrentStarted.future.timeout(const Duration(seconds: 1));
+
+    firstCurrentRelease.complete();
+    await lane.idle();
+  });
+
+  test(
+      'previous waits for a normal slot without cancelling retained receiving',
       () async {
     final lane = NetLane(
       maxActive: 3,
       reservedHighPrioritySlots: 1,
       highPriorityThreshold: 1000,
       preemptionThreshold: 40,
-      pressurePreemptionPriorityFloor: 780,
     );
     final lowestCancelled = Completer<void>();
-    final lowestExit = Completer<void>();
-    final secondLowCancelled = Completer<void>();
+    final lowestRelease = Completer<void>();
     final secondLowRelease = Completer<void>();
     final otherRelease = Completer<void>();
     final previousStarted = Completer<void>();
@@ -612,11 +666,11 @@ void _dev123NetLaneTests() {
       bucket: 'remote:a',
       bucketLimit: 3,
       task: (token) async {
-        await token.whenCancelled;
-        lowestCancelled.complete();
-        // Cancellation is only a request. The normal permit remains occupied
-        // until the underlying transfer has physically unwound.
-        await lowestExit.future;
+        await Future.any<void>(<Future<void>>[
+          token.whenCancelled,
+          lowestRelease.future,
+        ]);
+        if (token.cancelled) lowestCancelled.complete();
       },
     );
     lane.submitRanked(
@@ -624,15 +678,7 @@ void _dev123NetLaneTests() {
       priority: 740,
       bucket: 'remote:a',
       bucketLimit: 3,
-      task: (token) async {
-        await Future.any<void>(<Future<void>>[
-          token.whenCancelled,
-          secondLowRelease.future,
-        ]);
-        if (token.cancelled) {
-          secondLowCancelled.complete();
-        }
-      },
+      task: (_) async => secondLowRelease.future,
     );
     lane.submitRanked(
       key: 'near-work',
@@ -655,18 +701,15 @@ void _dev123NetLaneTests() {
       },
     );
 
-    await lowestCancelled.future.timeout(const Duration(seconds: 1));
-    // Re-pump while the first cancellation is still physically unwinding.
-    // Normal previous pressure must not cascade into cancelling a second slot.
-    lane.updatePriority('adjacent-previous', 781);
     await Future<void>.delayed(Duration.zero);
-    expect(secondLowCancelled.isCompleted, isFalse);
+    expect(lowestCancelled.isCompleted, isFalse);
     expect(previousStarted.isCompleted, isFalse);
     expect(lane.active, 3);
     expect(lane.handoffActive, 0);
 
-    lowestExit.complete();
+    lowestRelease.complete();
     await previousStarted.future.timeout(const Duration(seconds: 1));
+    expect(lowestCancelled.isCompleted, isFalse);
     expect(lane.active, 3);
     expect(lane.handoffActive, 0);
 
@@ -684,7 +727,6 @@ void _dev123NetLaneTests() {
       maxActive: 2,
       highPriorityThreshold: 1000,
       preemptionThreshold: 40,
-      pressurePreemptionPriorityFloor: 780,
       clock: clock,
     );
     late CancelToken investedToken;
@@ -726,8 +768,8 @@ void _dev123NetLaneTests() {
     expect(investedToken.restartCostBytes, 8 * 1024 * 1024);
 
     lane.submitRanked(
-      key: 'transition-900',
-      priority: 900,
+      key: 'current-1000-victim-choice',
+      priority: 1000,
       bucket: 'remote:a',
       bucketLimit: 2,
       task: (_) async {
@@ -739,7 +781,7 @@ void _dev123NetLaneTests() {
     await incomingStarted.future.timeout(const Duration(seconds: 1));
     expect(investedToken.cancelled, isFalse);
     expect(cheapToken.preemptionSnapshot?.retentionBonus, 0);
-    expect(cheapToken.preemptionSnapshot?.incomingPriority, 900);
+    expect(cheapToken.preemptionSnapshot?.incomingPriority, 1000);
 
     investedRelease.complete();
     await lane.idle();

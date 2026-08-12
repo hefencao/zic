@@ -51,7 +51,13 @@ for token in (
     require(lane, token, 'bounded saturated current preemption')
 
 lane_test = read('packages/sessions/test/net_lane_test.dart')
-require(lane_test, 'blocked current keeps preempting low work while the handoff slot unwinds', '5+1 handoff regression')
+require(
+    lane_test,
+    ('blocked current preempts only after reserved headroom is occupied'
+     if build >= 245 else
+     'blocked current keeps preempting low work while the handoff slot unwinds'),
+    '5+1 handoff regression',
+)
 
 coordinator_test = read('packages/sessions/test/live_coordinator_test.dart')
 for token in (

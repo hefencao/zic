@@ -1036,7 +1036,6 @@ Future<_PersistentDownloadAuthorities> _openPersistentDownloadAuthorities(
           reservedHighPrioritySlots: 1,
           highPriorityThreshold: 1000,
           preemptionThreshold: 40,
-          pressurePreemptionPriorityFloor: 780,
         ),
   );
   return (

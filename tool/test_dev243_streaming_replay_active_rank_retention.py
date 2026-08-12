@@ -27,6 +27,7 @@ m = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec, re.M)
 require(m is not None and int(m.group(1)) >= 243, 'App build must be >=243')
 m2 = re.search(r'^versionCode=(\d+)\s*$', props, re.M)
 require(m2 is not None and m2.group(1) == m.group(1), 'Android versionCode must match App build')
+build = int(m.group(1))
 
 require('_synchronizedReplayPending' in projection, 'late ingress replay must have an unpublished staging state')
 require('EncodedSource? get source =>' in projection and '? null : ingress.source' in projection,
@@ -60,8 +61,12 @@ require('detached active pre-open work drops to rank zero and yields by NetLane 
 require('expect(net.priorityOf(openingKey), 0);' in owner_test and
         'expect(opening.cancelled.isCompleted, isFalse);' in owner_test,
         'logical detach must not itself cancel an active pre-open task')
-require('detached pre-open run drops to rank zero and yields its slot by policy' in live_test,
-        'live coordinator regression must preserve cross-session rank handoff')
+require(
+    (('detached pre-open run drops to rank zero and yields only to current' in live_test)
+     if build >= 245 else
+     ('detached pre-open run drops to rank zero and yields its slot by policy' in live_test)),
+    'live coordinator regression must preserve cross-session rank handoff',
+)
 
 require('unpublished' in arch and '同一SourceEpoch' in arch,
         'Architecture must freeze atomic late-replay publication/catch-up ownership')

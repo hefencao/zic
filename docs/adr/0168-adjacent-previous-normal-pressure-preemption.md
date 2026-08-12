@@ -2,7 +2,7 @@
 
 ## 状态
 
-Accepted。补充 ADR 0167 的 logical-detach 生命周期语义；不取代 current=1000 的 bounded handoff，也不改变 previous=780、normal network=5 或 preemption threshold=40。
+Superseded by ADR 0225。补充 ADR 0167 的 logical-detach 生命周期语义；不取代 current=1000 的 bounded handoff，也不改变 previous=780、normal network=5 或 preemption threshold=40。
 
 ## 证据
 

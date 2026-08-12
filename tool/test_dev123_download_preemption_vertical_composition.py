@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Guard dev.123 active-rank download handoff and vertical composition reuse."""
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -13,6 +14,13 @@ def require(text: str, token: str, owner: str) -> None:
     if token not in text:
         raise SystemExit(f"{owner} is missing dev.123 contract: {token}")
 
+
+build_match = re.search(
+    r'^version:\s*0\.31\.0\+(\d+)\s*$',
+    read('apps/app/pubspec.yaml'),
+    re.M,
+)
+build = int(build_match.group(1)) if build_match is not None else 0
 
 lane = read("packages/sessions/lib/src/net_lane.dart")
 coordinator = read("packages/sessions/lib/src/live_coordinator.dart")
@@ -28,14 +36,19 @@ geometry_test = read("packages/reader/test/vertical_reader_geometry_test.dart")
 analyzer = read("tool/analyze_frame_pipeline_trace.py")
 check = read("tool/check.sh")
 
-for token in (
+lane_tokens = [
     "reservedHighPrioritySlots = 0",
     "highPriorityThreshold = 1000",
     "bool updatePriority(String key, int priority)",
-    "activeTask.priority = priority",
-    "_preemptLowestRunningFor(next)",
     "maxActive + reservedHighPrioritySlots",
-):
+]
+lane_tokens.extend(
+    ("_updateActivePriority(activeTask, priority)",
+     "_preemptLowestRunningFor(blockedHighPriority)")
+    if build >= 245 else
+    ("activeTask.priority = priority", "_preemptLowestRunningFor(next)")
+)
+for token in lane_tokens:
     require(lane, token, "network lane priority migration")
 for token in (
     "reservedHighPrioritySlots: 1",
@@ -52,12 +65,18 @@ for token in (
     "'effectivePriority': net.priorityOf(taskKey)",
 ):
     require(physical_owner, token, "download plan migration")
-for token in (
+lane_test_tokens = [
     "active same-key promotion updates rank without restarting transfer",
-    "current uses one handoff slot and preempts the lowest ranked transfer",
-    "current preempts inside a full source bucket before global saturation",
     "handoff capacity stays bounded while cancellation unwinds",
-):
+]
+lane_test_tokens.extend(
+    ("current borrows one handoff slot without cancelling active transfers",
+     "current borrows source bucket headroom before cancelling a transfer")
+    if build >= 245 else
+    ("current uses one handoff slot and preempts the lowest ranked transfer",
+     "current preempts inside a full source bucket before global saturation")
+)
+for token in lane_test_tokens:
     require(lane_test, token, "network lane owner tests")
 for token in (
     "late List<Widget> _pageSlots",

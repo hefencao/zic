@@ -572,7 +572,7 @@ void main() {
     await registry.dispose();
   });
 
-  test('detached receiving yields to adjacent previous pressure', () async {
+  test('detached receiving survives adjacent previous pressure', () async {
     final temp =
         await Directory.systemTemp.createTemp('live_receiving_pressure_test_');
     addTearDown(() async => temp.delete(recursive: true));
@@ -617,7 +617,6 @@ void main() {
         reservedHighPrioritySlots: 1,
         highPriorityThreshold: 1000,
         preemptionThreshold: 40,
-        pressurePreemptionPriorityFloor: 780,
       ),
     );
     addTearDown(coordinator.dispose);
@@ -693,15 +692,20 @@ void main() {
       ),
     );
 
+    await Future<void>.delayed(Duration.zero);
+    expect(previous.opened.isCompleted, isFalse);
+    expect(retainedSession?.activeRun, isTrue);
+    expect(retained.cancelled.isCompleted, isFalse);
+
+    await retained.close();
     await previous.opened.future.timeout(const Duration(seconds: 1));
     await coordinator.idle();
     expect(retainedSession?.activeRun, isFalse);
     expect(registry.find(previousId)?.state, DownloadState.promoted);
     expect(retained.opens, 1);
-    await retained.close();
   });
 
-  test('detached pre-open run drops to rank zero and yields its slot by policy', () async {
+  test('detached pre-open run drops to rank zero and yields only to current', () async {
     final temp =
         await Directory.systemTemp.createTemp('live_preopen_detach_test_');
     addTearDown(() async => temp.delete(recursive: true));
@@ -792,9 +796,9 @@ void main() {
     expect(opening.cancelled.isCompleted, isFalse);
 
     const previousDemand = DownloadDemand(
-      role: PageRole.previous,
-      priority: 780,
-      reason: 'adjacent-previous',
+      role: PageRole.current,
+      priority: 1000,
+      reason: 'current-pressure',
       expirationRevision: 9,
     );
     final second = DemandPlan(
@@ -809,7 +813,7 @@ void main() {
       PipelineDelta(
         plan: second,
         diff: DemandDiff.between(detached, second),
-        window: RoleWindow(const <int, PageRole>{-1: PageRole.previous}),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
       ),
     );
 

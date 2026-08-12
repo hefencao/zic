@@ -14,10 +14,17 @@ def require(text: str, token: str, label: str) -> None:
         raise SystemExit(f'missing {label}: {token}')
 
 
+version_match = re.search(
+    r'^version:\s*0\.31\.0\+(\d+)\s*$',
+    read('apps/app/pubspec.yaml'),
+    re.M,
+)
+build = int(version_match.group(1)) if version_match is not None else 0
+
 lane = read('packages/sessions/lib/src/net_lane.dart')
 for token in (
     'final blockedHighPriority = _highestBlockedHighPriorityPending();',
-    '_preemptLowestRunningFor(blockedHighPriority);',
+    '_preemptLowestRunningFor(blockedHighPriority)',
     '_Pending? _highestBlockedHighPriorityPending()',
     'pending.priority < highPriorityThreshold',
     '!_needsHandoff(pending)',
@@ -39,17 +46,30 @@ require(
 )
 
 test = read('packages/sessions/test/net_lane_test.dart')
-for token in (
-    'blocked current keeps preempting low work while the handoff slot unwinds',
-    'maxActive: 5,',
-    'reservedHighPrioritySlots: 1,',
-    "key: 'current-a'",
-    "key: 'current-b'",
-    'await prefetchCancelled[1]!.future;',
-    'await secondCurrentStarted.future;',
-    'expect(stuckRelease.isCompleted, isFalse);',
-):
-    require(test, token, '5+1 current-preemption regression')
+if build >= 245:
+    for token in (
+        'blocked current preempts only after reserved headroom is occupied',
+        'maxActive: 5,',
+        'reservedHighPrioritySlots: 1,',
+        "key: 'current-a'",
+        "key: 'current-b'",
+        'await lowestCancelled.future.timeout',
+        'await secondCurrentStarted.future.timeout',
+        'expect(firstCurrentRelease.isCompleted, isFalse);',
+    ):
+        require(test, token, 'borrow-first saturated current regression')
+else:
+    for token in (
+        'blocked current keeps preempting low work while the handoff slot unwinds',
+        'maxActive: 5,',
+        'reservedHighPrioritySlots: 1,',
+        "key: 'current-a'",
+        "key: 'current-b'",
+        'await prefetchCancelled[1]!.future;',
+        'await secondCurrentStarted.future;',
+        'expect(stuckRelease.isCompleted, isFalse);',
+    ):
+        require(test, token, '5+1 current-preemption regression')
 
 profile = read('packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart')
 require(profile, 'networkConcurrency: 5', 'stable network concurrency')

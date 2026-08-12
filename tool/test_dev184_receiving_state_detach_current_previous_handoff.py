@@ -71,11 +71,16 @@ live_test_tokens = [
     'role: PageRole.previous,',
     'priority: 780,',
 ]
-live_test_tokens.append(
-    'detached pre-open run yields its slot to adjacent previous'
-    if build < 243 else
-    'detached pre-open run drops to rank zero and yields its slot by policy'
-)
+if build >= 245:
+    live_test_tokens.append(
+        'detached pre-open run drops to rank zero and yields only to current'
+    )
+elif build >= 243:
+    live_test_tokens.append(
+        'detached pre-open run drops to rank zero and yields its slot by policy'
+    )
+else:
+    live_test_tokens.append('detached pre-open run yields its slot to adjacent previous')
 if build >= 243:
     live_test_tokens.extend((
         'expect(coordinator.net.priorityOf(openingKey), 0);',

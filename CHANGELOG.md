@@ -1,3 +1,9 @@
+## 0.31.0-dev.245：Current borrow-first 与 bounded demotion rank hysteresis
+
+- 10:54真机Trace中87次`downloadPreempted`导致24/24 download failure均为cancelled；59次由current1000触发、28次由780/800/820/900 normal pressure触发。current victim全部已经detach为base0，detach→preempt中位约93ms、75%约196ms。
+- 最终图片NetLane删除normal-pressure preemption：normal work只排序等待普通slot；normal5满时current先直接借唯一reserved第6槽，只有5+1真实饱和才允许统一rank preempt。
+- Reader active priority下调增加200ms NetLane-owned demotion-preemption grace；窗口内effective victim rank保持在current margin之外，重新获得demand立即清除保护，窗口到期自动repump。restart-cost曲线与Venera单context gate不变，不恢复dev.202 headroom实验。
+
 ## 0.31.0-dev.244：Admitted provider stability + transport cursor dual progress
 
 - 09:47真机Trace中verified-equivalent acquire继续复用既有physical owner，但仍记录55,743,710 bytes重复prefix：44,741,284来自Range→200后的full-body catch-up，10,412,602来自catch-up尚未越过已有partial前又被取消/抢占。两次`active-provider-handoff`还会仅因logical exact/current变化在同一shared physical partial内取消已admit provider并改用另一等价URI，属于可避免的transport churn。
