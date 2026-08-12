@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：真机优先验证NetLane cancellation是否从“每次role/session切换”收敛到“normal+reserved真实饱和且200ms demotion grace到期后的current policy preemption”：normal 780/800/820/900不得再产生`downloadPreempted`，第一个blocked current应直接借第6槽且不cancel；快速切换中recently-demoted active task先获得bounded rank hysteresis，若200ms内重新获得demand则原位提权。继续用双进度区分authoritative partial直线与transport波浪，量化剩余Range→200 replay/attempt restart。
+- P0：真机优先验证dev.246 destructive-preemption transaction：normal 780/800/820/900继续不得产生最终图片`downloadPreempted`；第一个current仍直接借第6槽；只有5+1持续饱和且同一个blocked current稳定>=100ms后才允许一次policy preemption，`incomingWaitMicros`应>=100000。同一时刻不得出现多个preemption victim未退出，快速scrub中间current应在稳定窗口内被后续rank更新淘汰而不cancel连接。继续用双进度区分authoritative partial直线与transport波浪。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环
@@ -10,7 +10,7 @@
 - dev.190 后首次本地 Flutter/Dart 构建仍需确认 `runtime_source_adapter.dart` 不再出现 `onTiming` named-parameter 半迁移；若还有 runtime source adapter 编译错误，先检查私有函数类型/constructor 注入的一致性，不把 resource-plan diagnostics 扩到通用 browse/details invoke。
 - 复测 dev.186 Venera nested pressure：外层 previous 660→780 到 `downloadStarted` 应继续维持毫秒级；若其随后被单 invocation request-plan gate挡住，780可请求取消至少低40分的 active controlled invocation，但必须等旧 JavaScript `finished(requestId)` 后才开始，`maxActive`始终1。
 - 使用plan/cache/host-open字段继续确认连接阶段；持续传输阶段新增`sourceHostHttpVersion/sourceHostRemoteIpHash/sourceRhttpProgress*/sourceRhttpBody*`与现有`sourceRead` bytes/chunks/gap。只有设备证据同时证明并发active streams损害current且底层pause能真实形成网络backpressure，才考虑NetLane-owned transfer pressure；不得建立Reader bandwidth scheduler。
-- 同时复测短时N→N+1→N与跨session跳页：already-admitted task离开demand只降rank0，normal neighbor不得主动cancel；new current先借reserved槽，只有reserved也满且demotion grace过期后才允许统一rank preempt。若仍出现波浪重置，必须由`downloadPreempted`、consumer-bound dispose或真实failure明确归因，不得恢复normal pressure floor。
+- 同时复测短时N→N+1→N与跨session跳页：already-admitted task离开demand只降rank0，normal neighbor不得主动cancel；new current先借reserved槽。reserved也满时先保持pending，只有candidate稳定100ms且没有已有preemption in-flight才允许统一rank选择一个victim；若仍出现波浪重置，必须由单次`downloadPreempted`、consumer-bound dispose或真实failure明确归因，不得恢复normal pressure floor或victim-side demotion特判。
 
 ## P0：Current 首帧 policy/execution 真机闭环
 

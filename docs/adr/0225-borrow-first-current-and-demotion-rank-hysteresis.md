@@ -1,6 +1,8 @@
 # ADR 0225：current borrow-first 与 demotion rank hysteresis
 
-状态：Accepted
+状态：Superseded
+
+> dev.246由 ADR 0226 继承normal-pressure删除与borrow-first规则，并以incoming candidate稳定窗口取代本ADR的victim-side demotion grace。
 
 ## 问题
 

@@ -826,6 +826,7 @@ final class DownloadTransferOwner {
                     'restartCostElapsedMicros':
                         preemption.restartCostElapsedMicros,
                     'restartCostBytes': preemption.restartCostBytes,
+                    'incomingWaitMicros': preemption.incomingWaitMicros,
                     'committedLength': session.committedLength,
                   },
                 );

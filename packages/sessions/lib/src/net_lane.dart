@@ -101,6 +101,7 @@ final class TaskPreemptionSnapshot {
     required this.retentionBonus,
     required this.restartCostElapsedMicros,
     required this.restartCostBytes,
+    required this.incomingWaitMicros,
   });
 
   final int incomingPriority;
@@ -109,6 +110,7 @@ final class TaskPreemptionSnapshot {
   final int retentionBonus;
   final int restartCostElapsedMicros;
   final int restartCostBytes;
+  final int incomingWaitMicros;
 }
 
 
@@ -171,7 +173,7 @@ final class NetLane implements TaskLane {
     int reservedHighPrioritySlots = 0,
     int highPriorityThreshold = 1000,
     int preemptionThreshold = 40,
-    Duration demotionPreemptionGrace = Duration.zero,
+    Duration preemptionCandidateGrace = Duration.zero,
     MonoClock clock = const SystemClock(),
     LaneError? onError,
   }) : _core = _Lane(
@@ -179,7 +181,7 @@ final class NetLane implements TaskLane {
           reservedHighPrioritySlots: reservedHighPrioritySlots,
           highPriorityThreshold: highPriorityThreshold,
           preemptionThreshold: preemptionThreshold,
-          demotionPreemptionGrace: demotionPreemptionGrace,
+          preemptionCandidateGrace: preemptionCandidateGrace,
           clock: clock,
           onError: onError,
         );
@@ -374,19 +376,19 @@ final class _Lane {
     this.reservedHighPrioritySlots = 0,
     this.highPriorityThreshold = 1 << 30,
     this.preemptionThreshold = 1 << 30,
-    this.demotionPreemptionGrace = Duration.zero,
+    this.preemptionCandidateGrace = Duration.zero,
     this.clock = const SystemClock(),
     this.onError,
   })  : assert(maxActive > 0),
         assert(reservedHighPrioritySlots >= 0),
         assert(preemptionThreshold >= 0),
-        assert(!demotionPreemptionGrace.isNegative);
+        assert(!preemptionCandidateGrace.isNegative);
 
   final int maxActive;
   final int reservedHighPrioritySlots;
   final int highPriorityThreshold;
   final int preemptionThreshold;
-  final Duration demotionPreemptionGrace;
+  final Duration preemptionCandidateGrace;
   final MonoClock clock;
   final LaneError? onError;
   final Map<String, _Pending> _pending = <String, _Pending>{};
@@ -394,8 +396,8 @@ final class _Lane {
   final Map<String, int> _activeByBucket = <String, int>{};
   final List<Completer<void>> _idleWaiters = <Completer<void>>[];
   final List<_KeyIdleWaiter> _keyIdleWaiters = <_KeyIdleWaiter>[];
-  Timer? _demotionWake;
-  int? _demotionWakeAtMicros;
+  Timer? _preemptionWake;
+  int? _preemptionWakeAtMicros;
   int _seq = 0;
 
   int get queued => _pending.length;
@@ -453,8 +455,8 @@ final class _Lane {
     final pending = _pending[key];
     if (pending != null) {
       final increased = priority > pending.priority;
+      _updatePendingPriority(pending, priority);
       pending
-        ..priority = priority
         ..bucket = bucket
         ..bucketLimit = bucketLimit
         ..preemptible = preemptible
@@ -470,6 +472,8 @@ final class _Lane {
       bucketLimit: bucketLimit,
       preemptible: preemptible,
       task: task,
+      highPrioritySinceMicros:
+          priority >= highPriorityThreshold ? clock.nowMicros() : null,
     );
     _pump();
     return true;
@@ -485,9 +489,20 @@ final class _Lane {
     final pending = _pending[key];
     if (pending == null) return false;
     final increased = priority > pending.priority;
-    pending.priority = priority;
+    _updatePendingPriority(pending, priority);
     if (increased) _pump();
     return true;
+  }
+
+  void _updatePendingPriority(_Pending pending, int priority) {
+    final previous = pending.priority;
+    pending.priority = priority;
+    if (priority >= highPriorityThreshold &&
+        previous < highPriorityThreshold) {
+      pending.highPrioritySinceMicros = clock.nowMicros();
+    } else if (priority < highPriorityThreshold) {
+      pending.highPrioritySinceMicros = null;
+    }
   }
 
   bool _updateActivePriority(_ActiveTask task, int priority) {
@@ -495,12 +510,6 @@ final class _Lane {
     if (previous == priority) return false;
     task.priority = priority;
     task.token.updatePriority(priority);
-    if (priority < previous && demotionPreemptionGrace.inMicroseconds > 0) {
-      task.preemptionProtectedUntilMicros =
-          clock.nowMicros() + demotionPreemptionGrace.inMicroseconds;
-    } else if (priority > previous) {
-      task.preemptionProtectedUntilMicros = null;
-    }
     return priority > previous;
   }
 
@@ -520,6 +529,8 @@ final class _Lane {
       bucketLimit: bucketLimit,
       preemptible: true,
       task: task,
+      highPrioritySinceMicros:
+          priority >= highPriorityThreshold ? clock.nowMicros() : null,
     );
     _pump();
     return true;
@@ -540,6 +551,8 @@ final class _Lane {
       bucketLimit: bucketLimit,
       preemptible: true,
       task: task,
+      highPrioritySinceMicros:
+          priority >= highPriorityThreshold ? clock.nowMicros() : null,
     );
     _pump();
     return true;
@@ -620,7 +633,7 @@ final class _Lane {
           // is genuinely saturated may another blocked current ask the lowest
           // effective-rank running task to unwind.
           if (!_preemptLowestRunningFor(blockedHighPriority)) {
-            _scheduleDemotionProtectionWake();
+            _schedulePreemptionCandidateWake(blockedHighPriority);
           }
         }
         break;
@@ -671,25 +684,39 @@ final class _Lane {
     _notifyIdle();
   }
 
-  void _scheduleDemotionProtectionWake() {
-    if (demotionPreemptionGrace.inMicroseconds <= 0) return;
+  bool get _hasPreemptionInFlight => _active.values.any(
+        (task) =>
+            task.token.cancelled && task.token.preemptionSnapshot != null,
+      );
+
+  int _preemptionCandidateAgeMicros(_Pending pending) {
+    final since = pending.highPrioritySinceMicros;
+    if (since == null) return 0;
+    return (clock.nowMicros() - since).clamp(0, 1 << 62).toInt();
+  }
+
+  bool _preemptionCandidateReady(_Pending pending) {
+    if (preemptionCandidateGrace.inMicroseconds <= 0) return true;
+    return _preemptionCandidateAgeMicros(pending) >=
+        preemptionCandidateGrace.inMicroseconds;
+  }
+
+  void _schedulePreemptionCandidateWake(_Pending pending) {
+    if (preemptionCandidateGrace.inMicroseconds <= 0) return;
+    final since = pending.highPrioritySinceMicros;
+    if (since == null) return;
     final now = clock.nowMicros();
-    int? earliest;
-    for (final task in _active.values) {
-      final until = task.preemptionProtectedUntilMicros;
-      if (until == null || until <= now) continue;
-      if (earliest == null || until < earliest) earliest = until;
-    }
-    if (earliest == null) return;
-    final scheduledAt = _demotionWakeAtMicros;
-    if (scheduledAt != null && scheduledAt <= earliest) return;
-    _demotionWake?.cancel();
-    _demotionWakeAtMicros = earliest;
-    _demotionWake = Timer(
-      Duration(microseconds: math.max(1, earliest - now)),
+    final eligibleAt = since + preemptionCandidateGrace.inMicroseconds;
+    if (eligibleAt <= now) return;
+    final scheduledAt = _preemptionWakeAtMicros;
+    if (scheduledAt != null && scheduledAt <= eligibleAt) return;
+    _preemptionWake?.cancel();
+    _preemptionWakeAtMicros = eligibleAt;
+    _preemptionWake = Timer(
+      Duration(microseconds: math.max(1, eligibleAt - now)),
       () {
-        _demotionWake = null;
-        _demotionWakeAtMicros = null;
+        _preemptionWake = null;
+        _preemptionWakeAtMicros = null;
         _pump();
       },
     );
@@ -723,6 +750,9 @@ final class _Lane {
   }
 
   bool _preemptLowestRunningFor(_Pending incoming) {
+    if (_hasPreemptionInFlight || !_preemptionCandidateReady(incoming)) {
+      return false;
+    }
     final incomingBucket = incoming.bucket;
     final incomingBucketLimit = incoming.bucketLimit;
     final bucketFull = incomingBucket != null &&
@@ -752,6 +782,7 @@ final class _Lane {
         retentionBonus: bonus,
         restartCostElapsedMicros: elapsed,
         restartCostBytes: bytes,
+        incomingWaitMicros: _preemptionCandidateAgeMicros(incoming),
       ),
     );
     return true;
@@ -763,21 +794,11 @@ final class _Lane {
   }) {
     final elapsed = task.token.restartCostElapsedMicros;
     final bytes = task.token.restartCostBytes;
-    final protectedUntil = task.preemptionProtectedUntilMicros;
-    final demotionProtected = protectedUntil != null &&
-        protectedUntil > clock.nowMicros() &&
-        highPriorityThreshold < (1 << 29);
-    final demotionFloor = demotionProtected
-        ? math.max(
-            basePriority,
-            highPriorityThreshold - preemptionThreshold + 1,
-          )
-        : basePriority;
     if (elapsed <= 0 && bytes <= 0) {
       return NetPolicyRank(
         basePriority: basePriority,
-        effectivePriority: demotionFloor,
-        retentionBonus: demotionFloor - basePriority,
+        effectivePriority: basePriority,
+        retentionBonus: 0,
         restartCostElapsedMicros: elapsed,
         restartCostBytes: bytes,
       );
@@ -816,7 +837,6 @@ final class _Lane {
         currentSafeCeiling,
       );
     }
-    effectivePriority = math.max(effectivePriority, demotionFloor);
     return NetPolicyRank(
       basePriority: basePriority,
       effectivePriority: effectivePriority,
@@ -839,9 +859,9 @@ final class _Lane {
     if (!isIdle) {
       return;
     }
-    _demotionWake?.cancel();
-    _demotionWake = null;
-    _demotionWakeAtMicros = null;
+    _preemptionWake?.cancel();
+    _preemptionWake = null;
+    _preemptionWakeAtMicros = null;
     final waiters = List<Completer<void>>.of(_idleWaiters);
     _idleWaiters.clear();
     for (final waiter in waiters) {
@@ -861,6 +881,7 @@ final class _Pending {
     required this.bucketLimit,
     required this.preemptible,
     required this.task,
+    required this.highPrioritySinceMicros,
   });
 
   final String key;
@@ -870,6 +891,7 @@ final class _Pending {
   int? bucketLimit;
   bool preemptible;
   LaneTask task;
+  int? highPrioritySinceMicros;
 }
 
 final class _ActiveTask {
@@ -886,7 +908,6 @@ final class _ActiveTask {
   final int? bucketLimit;
   int priority;
   bool preemptible;
-  int? preemptionProtectedUntilMicros;
 }
 
 final class _KeyIdleWaiter {

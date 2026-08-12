@@ -1,3 +1,9 @@
+## 0.31.0-dev.246：Stable destructive preemption candidate 与 single-flight cancellation
+
+- 12:15真机Trace中dev.245已将normal-pressure preemption清零，但仍有67次`downloadPreempted`且全部来自current=1000；它们只形成28个<=50ms burst，39次属于同一burst中的额外victim，最大66ms内连续cancel 6条。30个victim已有committed partial，合计约246.7MiB，最大约16.6MiB。
+- 快速scrub的`pageCurrent`间隔明显双峰：中位约10.6ms、85%约88ms、90%已跃升到约594ms；17/28个preemption burst在100ms内current又变化，覆盖46/67次cancel。故撤销dev.245 victim-side 200ms demotion grace，改为NetLane-owned 100ms blocked high-priority candidate grace：free/reserved slot仍立即admit current，只有真正需要破坏性cancel时才要求incoming current稳定。
+- destructive preemption改为single-flight transaction：已有preemption victim尚未物理退出时禁止再cancel第二个active task；退出后统一重新pump。victim仍只由`NetPolicyRank`/restart-cost选择，不把普通可恢复`committedLength`误当不可恢复sunk cost。`downloadPreempted`新增`incomingWaitMicros`便于真机验证。
+
 ## 0.31.0-dev.245：Current borrow-first 与 bounded demotion rank hysteresis
 
 - 10:54真机Trace中87次`downloadPreempted`导致24/24 download failure均为cancelled；59次由current1000触发、28次由780/800/820/900 normal pressure触发。current victim全部已经detach为base0，detach→preempt中位约93ms、75%约196ms。

@@ -156,7 +156,7 @@ final class PipelineReaderSessionFactory {
               reservedHighPrioritySlots: 1,
               highPriorityThreshold: 1000,
               preemptionThreshold: 40,
-              demotionPreemptionGrace: const Duration(milliseconds: 200),
+              preemptionCandidateGrace: const Duration(milliseconds: 100),
             ),
         decodePrefixHints = decodePrefixHints ?? WebpDecodePrefixHints();
 

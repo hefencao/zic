@@ -70,19 +70,36 @@ else:
     require(
         'packages/sessions/lib/src/net_lane.dart',
         'final blockedHighPriority = _highestBlockedHighPriorityPending();',
-        '_scheduleDemotionProtectionWake();',
-        'highPriorityThreshold - preemptionThreshold + 1',
     )
-    require(
-        'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',
-        'demotionPreemptionGrace: const Duration(milliseconds: 200)',
-    )
-    require(
-        'packages/sessions/test/net_lane_test.dart',
-        'previous waits for a normal slot without cancelling retained receiving',
-        'current borrows one handoff slot without cancelling active transfers',
-        'recent demotion defers saturated current preemption until grace expires',
-    )
+    if build < 246:
+        require(
+            'packages/sessions/lib/src/net_lane.dart',
+            '_scheduleDemotionProtectionWake();',
+            'highPriorityThreshold - preemptionThreshold + 1',
+        )
+        require(
+            'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',
+            'demotionPreemptionGrace: const Duration(milliseconds: 200)',
+        )
+        require(
+            'packages/sessions/test/net_lane_test.dart',
+            'recent demotion defers saturated current preemption until grace expires',
+        )
+    else:
+        require(
+            'packages/sessions/lib/src/net_lane.dart',
+            '_schedulePreemptionCandidateWake(blockedHighPriority);',
+            '_hasPreemptionInFlight',
+        )
+        require(
+            'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',
+            'preemptionCandidateGrace: const Duration(milliseconds: 100)',
+        )
+        require(
+            'packages/sessions/test/net_lane_test.dart',
+            'transient blocked current does not destructively preempt before candidate grace',
+            'only one destructive preemption may be in flight',
+        )
     require(
         'packages/sessions/test/live_coordinator_test.dart',
         'detached receiving survives adjacent previous pressure',

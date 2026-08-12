@@ -575,14 +575,79 @@ void _dev123NetLaneTests() {
   });
 
   test(
-      'recent demotion defers saturated current preemption until grace expires',
+      'transient blocked current does not destructively preempt before candidate grace',
       () async {
     final lane = NetLane(
       maxActive: 1,
       reservedHighPrioritySlots: 1,
       highPriorityThreshold: 1000,
       preemptionThreshold: 40,
-      demotionPreemptionGrace: const Duration(milliseconds: 30),
+      preemptionCandidateGrace: const Duration(milliseconds: 30),
+    );
+    final retainedCancelled = Completer<void>();
+    final retainedRelease = Completer<void>();
+    final firstCurrentStarted = Completer<void>();
+    final firstCurrentRelease = Completer<void>();
+    final transientStarted = Completer<void>();
+
+    lane.submitRanked(
+      key: 'retained',
+      priority: 0,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (token) async {
+        await Future.any<void>(<Future<void>>[
+          token.whenCancelled,
+          retainedRelease.future,
+        ]);
+        if (token.cancelled) retainedCancelled.complete();
+      },
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    lane.submitRanked(
+      key: 'current-a',
+      priority: 1000,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (_) async {
+        firstCurrentStarted.complete();
+        await firstCurrentRelease.future;
+      },
+    );
+    await firstCurrentStarted.future;
+    expect(lane.active, 2);
+    expect(lane.handoffActive, 1);
+
+    lane.submitRanked(
+      key: 'transient-current',
+      priority: 1000,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (_) async => transientStarted.complete(),
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    expect(retainedCancelled.isCompleted, isFalse);
+    expect(transientStarted.isCompleted, isFalse);
+
+    expect(lane.updatePriority('transient-current', 820), isTrue);
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    expect(retainedCancelled.isCompleted, isFalse);
+    expect(transientStarted.isCompleted, isFalse);
+
+    firstCurrentRelease.complete();
+    retainedRelease.complete();
+    await lane.idle();
+  });
+
+  test('stable blocked current preempts after candidate grace', () async {
+    final lane = NetLane(
+      maxActive: 1,
+      reservedHighPrioritySlots: 1,
+      highPriorityThreshold: 1000,
+      preemptionThreshold: 40,
+      preemptionCandidateGrace: const Duration(milliseconds: 30),
     );
     final retainedCancelled = Completer<void>();
     final firstCurrentStarted = Completer<void>();
@@ -590,8 +655,8 @@ void _dev123NetLaneTests() {
     final secondCurrentStarted = Completer<void>();
 
     lane.submitRanked(
-      key: 'recently-demoted',
-      priority: 780,
+      key: 'retained',
+      priority: 0,
       bucket: 'remote:a',
       bucketLimit: 1,
       task: (token) async {
@@ -612,25 +677,13 @@ void _dev123NetLaneTests() {
       },
     );
     await firstCurrentStarted.future;
-    expect(lane.active, 2);
-    expect(lane.handoffActive, 1);
-
-    expect(lane.updatePriority('recently-demoted', 0), isTrue);
-    final protected = lane.activePolicyRank(
-      'recently-demoted',
-      basePriority: 0,
-    );
-    expect(protected, isNotNull);
-    expect(protected!.effectivePriority, 961);
 
     lane.submitRanked(
       key: 'current-b',
       priority: 1000,
       bucket: 'remote:a',
       bucketLimit: 1,
-      task: (_) async {
-        secondCurrentStarted.complete();
-      },
+      task: (_) async => secondCurrentStarted.complete(),
     );
 
     await Future<void>.delayed(const Duration(milliseconds: 5));
@@ -641,6 +694,81 @@ void _dev123NetLaneTests() {
     await secondCurrentStarted.future.timeout(const Duration(seconds: 1));
 
     firstCurrentRelease.complete();
+    await lane.idle();
+  });
+
+  test('only one destructive preemption may be in flight', () async {
+    final lane = NetLane(
+      maxActive: 2,
+      highPriorityThreshold: 1000,
+      preemptionThreshold: 40,
+    );
+    final firstCancelled = Completer<void>();
+    final firstExit = Completer<void>();
+    final secondCancelled = Completer<void>();
+    final secondExit = Completer<void>();
+    final currentAStarted = Completer<void>();
+    final currentARelease = Completer<void>();
+    final currentBStarted = Completer<void>();
+    final currentBRelease = Completer<void>();
+
+    lane.submitRanked(
+      key: 'low-a',
+      priority: 0,
+      bucket: 'remote:a',
+      bucketLimit: 2,
+      task: (token) async {
+        await token.whenCancelled;
+        firstCancelled.complete();
+        await firstExit.future;
+      },
+    );
+    lane.submitRanked(
+      key: 'low-b',
+      priority: 0,
+      bucket: 'remote:a',
+      bucketLimit: 2,
+      task: (token) async {
+        await token.whenCancelled;
+        secondCancelled.complete();
+        await secondExit.future;
+      },
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    lane.submitRanked(
+      key: 'current-a',
+      priority: 1000,
+      bucket: 'remote:a',
+      bucketLimit: 2,
+      task: (_) async {
+        currentAStarted.complete();
+        await currentARelease.future;
+      },
+    );
+    await firstCancelled.future.timeout(const Duration(seconds: 1));
+
+    lane.submitRanked(
+      key: 'current-b',
+      priority: 1000,
+      bucket: 'remote:a',
+      bucketLimit: 2,
+      task: (_) async {
+        currentBStarted.complete();
+        await currentBRelease.future;
+      },
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    expect(secondCancelled.isCompleted, isFalse);
+    expect(currentBStarted.isCompleted, isFalse);
+
+    firstExit.complete();
+    await currentAStarted.future.timeout(const Duration(seconds: 1));
+    await secondCancelled.future.timeout(const Duration(seconds: 1));
+    secondExit.complete();
+    await currentBStarted.future.timeout(const Duration(seconds: 1));
+    currentARelease.complete();
+    currentBRelease.complete();
     await lane.idle();
   });
 
