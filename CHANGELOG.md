@@ -1,3 +1,11 @@
+## 0.31.0-dev.244：Admitted provider stability + transport cursor dual progress
+
+- 09:47真机Trace中verified-equivalent acquire继续复用既有physical owner，但仍记录55,743,710 bytes重复prefix：44,741,284来自Range→200后的full-body catch-up，10,412,602来自catch-up尚未越过已有partial前又被取消/抢占。两次`active-provider-handoff`还会仅因logical exact/current变化在同一shared physical partial内取消已admit provider并改用另一等价URI，属于可避免的transport churn。
+- 删除rank驱动的active provider replacement：logical claim只迁移同一physical NetLane task的priority；provider exact/request URI固定为admitted task lifetime事实，直到完成、失败或真实consumer-bound transport lifetime失效。NetLane统一policy rank仍只负责physical slot/preemption，不再顺带决定等价provider URI。
+- `DownloadSession`新增只读transient network cursor/attempt sequence，由`DownloadJob`按实际response消费推进，和authoritative committed partial严格分离。Pipeline progress只从同一个resolved physical session投影两者，并按VibeVenera实际Reader实现采用128KiB/s→8MiB/s对数红/琥珀/绿速度色及0.7/0.3平滑。
+- Reader下载提示改为双层：已有/最大authoritative partial保持theme secondary直线；当前transport cursor使用速度着色波浪线。transport落后于partial时明确表示prefix replay，不把重读字节伪装成partial增长，也不让UI参与下载控制。
+- 新增dev.244 ownership gate、provider-stability行为回归、transport-cursor/progress行为回归、ADR 0224与Trace根因审计；历史dev.237/238/240/241 gate改为版本感知，不保留已删除的provider takeover兼容控制流。
+
 ## 0.31.0-dev.243：Atomic late ingress publication + active rank-zero retention
 
 - 09:03真机Trace在dev.242 physical partial/progress统一后暴露新的流式回归：12次task failure中11次是`Bad state: native source is disposed`，全部发生在unsealed decode；根因是late Reader synchronized replay在physical committed boundary继续增长时反复`rebuild -> Ingress.reset -> source.dispose`。现late replay在追平期间保持source unpublished，同epoch移动边界只从artifact追加新suffix，稳定接入live fan-out后才一次性publish source。

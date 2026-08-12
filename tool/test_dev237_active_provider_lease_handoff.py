@@ -25,18 +25,18 @@ require(m2 is not None and int(m2.group(1)) == int(m.group(1)), "Android version
 require("_ActiveProviderLease" in owner, "active provider must be explicit task-scoped lease")
 require("final Map<DownloadId, _ActiveProviderLease> _activeProviderLeases" in owner, "owner must keep one physical-id provider lease map")
 require("claimSequence" in owner and "taskKey" in owner, "provider lease must identify task and claim generation")
-require("_handoffActiveProviderIfNeeded(" in owner, "claim changes must evaluate provider handoff")
-require("providerOrphaned" in owner, "orphaned provider claim must be detected")
-require("net.cancel(taskKey);" in owner, "handoff must unwind old attempt through the one NetLane")
-require("'stage': 'active-provider-handoff'" in owner, "handoff must be trace-visible")
 require("_activeProviderScopes" not in owner, "scope-only provider state must be removed")
 require("activeProviderExactId" in owner, "tests/diagnostics must expose the active exact provider")
 
 build = int(m.group(1))
-if build >= 241:
+if build >= 244:
+    require("orphaned provider claim stays on the admitted task until provider disposal" in owner_test, "provider disposal remains the consumer-bound hard lifetime boundary")
+    require("_handoffActiveProviderIfNeeded" not in owner and "'active-provider-handoff'" not in owner, "dev.244+ logical exact/rank changes must not replace an admitted equivalent provider")
+    require("current exact demand migrates physical rank without replacing the admitted equivalent provider" in owner_test, "dev.244 stable-provider regression is required")
+elif build >= 241:
     require("orphaned provider claim stays on the admitted task until provider disposal" in owner_test, "dev.238+ must retain economically ranked orphaned provider work")
-    require("net.activePolicyRank(" in owner and "net.incomingOutranks(" in owner, "dev.241+ provider handoff must reuse NetLane policy rank")
-    require("provider handoff follows NetLane rank margin instead of situation branches" in owner_test, "dev.241 policy-rank provider regression is required")
+    require("net.activePolicyRank(" in owner and "net.incomingOutranks(" in owner, "dev.241-243 provider handoff must reuse NetLane policy rank")
+    require("provider handoff follows NetLane rank margin instead of situation branches" in owner_test, "dev.241-243 policy-rank provider regression is required")
 elif build >= 240:
     require("orphaned provider claim stays on the admitted task until provider disposal" in owner_test, "dev.238+ must retain ordinary orphaned provider work")
     require("if (providerOrphaned) {" in owner and "net.isHighPriority(preferred.demand.priority)" in owner, "dev.240 must let high-priority demand reclaim an orphaned provider")
@@ -48,8 +48,8 @@ else:
     require("new exact demand rebinds an orphaned retained provider to the shared partial" in owner_test, "dev.237 orphaned-provider behavior regression is required")
 require("expect(identical(registry.find(exact), session), isTrue);" in owner_test, "test must prove physical session is preserved")
 require("expect(session.committedLength, greaterThan(0));" in owner_test, "test must prove handoff retains partial bytes")
-require("expect(owner.activeProviderScope(physical), 'reader-new-provider');" in owner_test, "test must prove eventual provider scope rebind")
-require("expect(owner.activeProviderExactId(physical), exact);" in owner_test, "test must prove eventual provider exact identity rebind")
+require("expect(owner.activeProviderScope(physical), 'reader-new-provider');" in owner_test, "consumer-bound provider disposal must still permit eventual provider scope rebind")
+require("expect(owner.activeProviderExactId(physical), exact);" in owner_test, "consumer-bound provider disposal must still permit eventual exact provider rebind")
 
 require("await session.append(" in progress_test and "1024 + 64 * 1024" in progress_test, "progress behavior test must prove future committed growth propagates after physical selection")
 

@@ -21,22 +21,25 @@ void main() {
     }
   });
 
-  test('receiving projection preserves the network resume baseline', () {
+  test('receiving projection separates physical partial from transport cursor', () {
     final progress = pipelineTransferProgressFor(
       _snapshot(
         DownloadState.receiving,
         committedLength: 96,
         networkStartLength: 64,
         totalLength: 128,
+        networkAttemptActive: true,
+        networkCursorLength: 32,
       ),
     );
 
     expect(progress.active, isTrue);
-    expect(progress.phase, PipelineTransferPhase.receiving);
-    expect(progress.existingBytes, 64);
-    expect(progress.receivedBytes, 32);
+    expect(progress.phase, PipelineTransferPhase.replayingPrefix);
+    expect(progress.partialBytes, 96);
+    expect(progress.transportBytes, 32);
     expect(progress.totalBytes, 128);
   });
+
 }
 
 DownloadSnapshot _snapshot(
@@ -44,6 +47,8 @@ DownloadSnapshot _snapshot(
   int committedLength = 3,
   int networkStartLength = 3,
   int? totalLength = 3,
+  bool networkAttemptActive = false,
+  int networkCursorLength = 0,
 }) =>
     DownloadSnapshot(
       id: _id(),
@@ -65,6 +70,8 @@ DownloadSnapshot _snapshot(
         finalMetaPath: '/final/page.webp.meta',
       ),
       totalLength: totalLength,
+      networkAttemptActive: networkAttemptActive,
+      networkCursorLength: networkCursorLength,
     );
 
 DownloadId _id() => DownloadId(

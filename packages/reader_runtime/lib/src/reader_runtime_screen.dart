@@ -12,6 +12,7 @@ import 'package:telemetry/telemetry.dart';
 
 import 'reader_session_settings.dart';
 import 'reader_settings_fields.dart';
+import 'reader_transfer_progress_indicator.dart';
 
 const readerTopControlsKey = ValueKey<String>('reader-top-controls');
 const readerBottomControlsKey = ValueKey<String>('reader-bottom-controls');
@@ -863,54 +864,12 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                 ),
                 ValueListenableBuilder<PipelineTransferProgress>(
                   valueListenable: _pipeline.transferProgress.notifier,
-                  builder: (context, progress, _) {
-                    if (!progress.active) return const SizedBox(height: 3);
-                    final committed = progress.committedFraction;
-                    final existing = progress.existingFraction;
-                    if (committed == null) {
-                      final receiving = progress.phase ==
-                          PipelineTransferPhase.receiving;
-                      return Semantics(
-                        label: receiving ? '正在接收页面数据' : '正在连接页面资源',
-                        value: receiving
-                            ? '${progress.receivedBytes} bytes'
-                            : null,
-                        child: LinearProgressIndicator(
-                          key: readerNetworkProgressKey,
-                          minHeight: 3,
-                          color: receiving
-                              ? Theme.of(context).colorScheme.primary
-                              : Theme.of(context).colorScheme.outline,
-                        ),
-                      );
-                    }
-                    return SizedBox(
-                      height: 3,
-                      child: Stack(
-                        fit: StackFit.expand,
-                        alignment: Alignment.centerLeft,
-                        children: <Widget>[
-                          FractionallySizedBox(
-                            key: readerNetworkProgressKey,
-                            widthFactor: committed,
-                            alignment: Alignment.centerLeft,
-                            child: ColoredBox(
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                          ),
-                          if (existing != null && existing > 0)
-                            FractionallySizedBox(
-                              key: readerExistingProgressKey,
-                              widthFactor: existing,
-                              alignment: Alignment.centerLeft,
-                              child: ColoredBox(
-                                color: Theme.of(context).colorScheme.secondary,
-                              ),
-                            ),
-                        ],
-                      ),
-                    );
-                  },
+                  builder: (context, progress, _) =>
+                      ReaderTransferProgressIndicator(
+                    progress: progress,
+                    networkKey: readerNetworkProgressKey,
+                    partialKey: readerExistingProgressKey,
+                  ),
                 ),
               ],
             ),

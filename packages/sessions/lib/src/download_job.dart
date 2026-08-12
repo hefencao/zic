@@ -53,6 +53,7 @@ final class DownloadJob {
       cancel?.throwIfCancelled();
       await _run(expectedChecksum: expectedChecksum, cancel: cancel);
     } finally {
+      session.endNetworkAttemptProgress();
       session.endRun(lease);
     }
     return session.snapshot;
@@ -328,6 +329,9 @@ final class DownloadJob {
       );
     }
 
+    session.beginNetworkAttemptProgress(response.rangeStart);
+    var networkCursor = response.rangeStart;
+
     if (start == 0 &&
         response.disposition == ByteResponseDisposition.durableImmutable &&
         response.totalLength != null) {
@@ -345,6 +349,8 @@ final class DownloadJob {
           if (chunk.isEmpty) continue;
           session.appendResidentImmutableIngress(residentOffset, chunk);
           residentOffset += chunk.length;
+          networkCursor += chunk.length;
+          session.advanceNetworkAttemptProgress(networkCursor);
           await Future<void>.delayed(Duration.zero);
         }
         session.sealResidentImmutableIngress();
@@ -375,6 +381,8 @@ final class DownloadJob {
           cancel: cancel,
           onDuplicateBytes: (value) {
             duplicatePrefixBytes = value;
+            networkCursor = probeStart + value;
+            session.advanceNetworkAttemptProgress(networkCursor);
           },
         );
       } catch (error) {
@@ -397,6 +405,8 @@ final class DownloadJob {
         }
         rethrow;
       }
+      networkCursor = probeStart + probeBytes + catchupRemainder.length;
+      session.advanceNetworkAttemptProgress(networkCursor, force: true);
       session.recordResume(
         restarted: false,
         strategy: 'validatorless-range-probe',
@@ -422,6 +432,8 @@ final class DownloadJob {
           onDuplicateBytes: (value) {
             duplicatePrefixBytes = value;
             restartCostBytes = value;
+            networkCursor = value;
+            session.advanceNetworkAttemptProgress(networkCursor);
             cancel?.recordRestartCostBytes(restartCostBytes);
           },
         );
@@ -451,7 +463,12 @@ final class DownloadJob {
       );
       if (catchupRemainder.isNotEmpty) {
         restartCostBytes += catchupRemainder.length;
+        networkCursor = preservedLength + catchupRemainder.length;
+        session.advanceNetworkAttemptProgress(networkCursor, force: true);
         cancel?.recordRestartCostBytes(restartCostBytes);
+      } else {
+        networkCursor = preservedLength;
+        session.advanceNetworkAttemptProgress(networkCursor, force: true);
       }
     }
 
@@ -480,6 +497,8 @@ final class DownloadJob {
           restartCostBytes += chunk.length;
           cancel?.recordRestartCostBytes(restartCostBytes);
         }
+        networkCursor += chunk.length;
+        session.advanceNetworkAttemptProgress(networkCursor);
         pending.add(chunk);
         if (pending.length >= flushTarget) {
           await flushPending();

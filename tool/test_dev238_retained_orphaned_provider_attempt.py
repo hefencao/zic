@@ -23,9 +23,13 @@ require(m is not None and int(m.group(1)) >= 238, "App build must be >=238")
 m2 = re.search(r"^versionCode=(\d+)\s*$", props, re.M)
 require(m2 is not None and int(m2.group(1)) == int(m.group(1)), "Android versionCode must match App build")
 
-require("final providerOrphaned = activeClaim == null;" in owner, "provider claim orphaning must remain explicit")
 build = int(m.group(1))
-if build >= 241:
+if build >= 244:
+    require("providerOrphaned" not in owner, "dev.244+ provider claim taxonomy must not drive admitted task lifetime")
+    require("_handoffActiveProviderIfNeeded" not in owner, "dev.244+ must remove logical provider takeover control flow")
+    require("activeProviderExactId" in owner, "task-lifetime provider diagnostics must remain available")
+elif build >= 241:
+    require("final providerOrphaned = activeClaim == null;" in owner, "dev.241-243 provider claim orphaning remains a rank input")
     require("if (providerOrphaned)" not in owner, "dev.241+ must not branch scheduling policy on orphan taxonomy")
     require("lease.exactId == preferred.exactId" in owner, "same-exact request authority must remain a no-op identity invariant")
     require("lease.admittedPriority" in owner and "activeClaim?.demand.priority" in owner, "orphan/live provider state must feed one incumbent rank")
@@ -55,7 +59,9 @@ require("expect(identical(registry.find(exact), session), isTrue);" in owner_tes
 require("expect(session.committedLength, greaterThan(0));" in owner_test, "provider disposal handoff must preserve committed partial bytes")
 
 require("logical provider claim撤销 MUST NOT单独取消" in spec, "SPEC must separate claim and admitted-attempt lifetime")
-if build >= 241:
+if build >= 244:
+    require("provider exact" in architecture and "task lifetime" in architecture, "Architecture must bind provider request authority to admitted task lifetime")
+elif build >= 241:
     require("logical claim lifetime、transport lifetime与request/provider选择彼此分离" in architecture, "Architecture must preserve the claim/transport/provider lifetime split")
 else:
     require("claim lifetime不得再冒充transport lifetime" in architecture, "Architecture must name the corrected ownership boundary")

@@ -502,13 +502,6 @@ final class DownloadTransferOwner {
       }
     }
     final taskKey = _networkTaskKeys[id];
-    if (_handoffActiveProviderIfNeeded(
-      id,
-      session,
-      reason: 'preferred-claim-changed',
-    )) {
-      return;
-    }
     if (taskKey != null) {
       _migrateDownloadPriority(
         id,
@@ -533,15 +526,6 @@ final class DownloadTransferOwner {
     final session = registry.find(id);
     final taskKey = _networkTaskKeys[id];
     final taskIsActive = taskKey != null && net.isActive(taskKey);
-    if (session != null &&
-        session.demanded &&
-        _handoffActiveProviderIfNeeded(
-          id,
-          session,
-          reason: 'provider-claim-detached',
-        )) {
-      return;
-    }
     if (session != null && session.demanded && taskKey != null) {
       _migrateDownloadPriority(
         id,
@@ -977,85 +961,6 @@ final class DownloadTransferOwner {
     if (!preserveDeferred) {
       _downloadDeferredAtLength.remove(id);
     }
-  }
-
-  bool _handoffActiveProviderIfNeeded(
-    DownloadId id,
-    DownloadSession session, {
-    required String reason,
-  }) {
-    final lease = _activeProviderLeases[id];
-    final taskKey = _networkTaskKeys[id];
-    if (lease == null || taskKey == null || !net.isActive(taskKey)) {
-      return false;
-    }
-    final preferred = _preferredClaim(id);
-    if (preferred == null) return false;
-    if (lease.scopeId == preferred.consumer.scopeId &&
-        lease.exactId == preferred.exactId) {
-      return false;
-    }
-    _TransferClaim? activeClaim;
-    for (final claim in _claims[id]?.values ?? const <_TransferClaim>[]) {
-      if (claim.consumer.scopeId == lease.scopeId &&
-          claim.sequence == lease.claimSequence &&
-          claim.exactId == lease.exactId) {
-        activeClaim = claim;
-        break;
-      }
-    }
-    final providerOrphaned = activeClaim == null;
-    // Same exact request authority is already correct. Scope/Reader generation
-    // changes are not a scheduling reason to restart an admitted transport.
-    if (lease.exactId == preferred.exactId) return false;
-
-    // Provider replacement is a rank decision, not a taxonomy of Reader
-    // situations. The incumbent keeps the priority it was admitted with when
-    // its logical claim later disappears; NetLane then applies the same
-    // restart-cost retention curve used for ordinary task preemption. The
-    // incoming claim carries the Pipeline policy rank. Current, previous,
-    // orphaning and paid restart work therefore remain parameters of one rank
-    // comparison instead of separate control-flow cases.
-    final incumbentBasePriority =
-        activeClaim?.demand.priority ?? lease.admittedPriority;
-    final incumbentRank = net.activePolicyRank(
-      taskKey,
-      basePriority: incumbentBasePriority,
-    );
-    if (incumbentRank == null ||
-        !net.incomingOutranks(
-          preferred.demand.priority,
-          incumbentRank,
-        )) {
-      return false;
-    }
-    _record(
-      preferred,
-      kind: TraceEventKind.artifactSource,
-      id: id,
-      payload: <String, Object?>{
-        'stage': 'active-provider-handoff',
-        'action': 'cancel-and-rebind',
-        'reason': reason,
-        'fromProviderScope': lease.scopeId,
-        'fromProviderExactId': lease.exactId.key,
-        'toProviderScope': preferred.consumer.scopeId,
-        'toProviderExactId': preferred.exactId.key,
-        'providerOrphaned': providerOrphaned,
-        'takeoverClass': 'policy-rank',
-        'fromPriority': incumbentBasePriority,
-        'fromEffectiveRank': incumbentRank.effectivePriority,
-        'retentionBonus': incumbentRank.retentionBonus,
-        'restartCostElapsedMicros': incumbentRank.restartCostElapsedMicros,
-        'restartCostBytes': incumbentRank.restartCostBytes,
-        'toPriority': preferred.demand.priority,
-        'rankMargin':
-            preferred.demand.priority - incumbentRank.effectivePriority,
-        'committedLength': session.committedLength,
-      },
-    );
-    net.cancel(taskKey);
-    return true;
   }
 
   void _migrateDownloadPriority(

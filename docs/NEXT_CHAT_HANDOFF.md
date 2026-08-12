@@ -1,5 +1,5 @@
-# dev.243 后续交接
-- dev.243：09:03真机Trace确认dev.242 physical partial/progress统一有效，但late Reader synchronized replay在physical writer继续增长时会反复`rebuild→reset→dispose native source`，11次decode failure均为`native source is disposed`；现replay追平期间source保持unpublished，同epoch只增量读artifact suffix，稳定attach后才publish。跨session另发现最后claim归零时receiving active降0、pre-open active却直接cancel的旧双策略；现所有already-admitted active task统一rank 0交由NetLane policy抢占，queued未admit才直接移除。
+# dev.244 后续交接
+- dev.244：09:47真机Trace确认同图physical alias仍在工作，但单一committed进度掩盖了大量Range→200 prefix replay/restart：duplicate prefix合计55.74MiB，其中10.41MiB在catch-up途中被取消。两次`active-provider-handoff`仅因shared physical上的logical exact/rank变化切URI，因此现删除provider rank takeover；admitted provider稳定到attempt完成/失败/真实consumer-bound dispose，current只迁移physical task rank。DownloadSession新增transient network cursor，Pipeline/Reader双层只读显示：authoritative max partial为secondary直线，current transport为波浪并采用实际VibeVenera的speed红→amber→绿语义。
 `dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`
@@ -63,7 +63,7 @@
 - Native identity保持 `zic-media-core-dev134-abi6-lib00121400`。
 - production rhttp direct在普通release默认记录每response一次的HTTP version、匿名remote-IP hash与receive-progress-enabled标记；高频`onReceiveProgress`仅non-product或显式`ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS=1`诊断构建启用。该观测不得反馈给NetLane/Reader/retry/cache/framing。
 ## 下一步真机优先验证
-- dev.243后重点验证：late Reader加入增长中的shared partial时不得再出现`native source is disposed`，应先waiting source、replay稳定后sourceReady并持续同一source identity流式增量；跨session跳页时active pre-open/source-plan不得仅因claim gap直接cancel，应先priority→0并由后续较高rank task触发`downloadPreempted`。同图physical/progress继续保持唯一owner；随后再评估真正Range→200 duplicate与dev.231 `stored-required-exact-alias`。
+- dev.244后重点验证：verified-equivalent/current切换只迁移physical NetLane priority，不再出现rank驱动provider handoff；双进度中partial直线保持monotonic且跨版本一致，current transport波浪能直接暴露Range→200 replay、attempt reset与真实新增bytes。若波浪重置，继续按`downloadPreempted`/consumer dispose/network failure区分原因，不从UI猜测；同时复核late ingress流式播放与dev.231 `stored-required-exact-alias`。
 - 07:51 dev.198 trace已确认Range成功路径仍正确，但full-body fallback重复重新放大到约19.2MiB/123.2MiB（15.6%），多数发生在760/780/800背景角色；dev.199只阻止这类低优先级大partial从0反复重读。820/900/1000、小partial和合法206必须保持原行为，不把defer扩展成通用restart-cost scheduler。
 - 首先复测快速前后翻页：dev.185外层previous admission应继续保持毫秒级；dev.189应确认780↔900不再导致plan取消，只有waiter真正晋升current=1000时才触发动态pressure，并确认旧JS未`finished(requestId)`前新plan绝不并发进入。无真实pressure时`receivingRetained=true` priority0仍应短时复用。
 - 真机首要复测 current 首帧稳定性：观察 policyDecision 的 staticWarmDecodes/uploads 是否收敛到稳定decode角色/真实可见页，current浅水位期间是否停止 speculative neighbor refill，以及decode/upload current handoff是否避免后台长任务阻塞。

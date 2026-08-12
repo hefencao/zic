@@ -2,46 +2,66 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:sessions/sessions.dart';
 
-enum PipelineTransferPhase { idle, connecting, receiving }
+enum PipelineTransferPhase {
+  idle,
+  connecting,
+  replayingPrefix,
+  receiving,
+}
 
 @immutable
 final class PipelineTransferProgress {
   const PipelineTransferProgress({
     this.active = false,
-    this.existingBytes = 0,
-    this.committedBytes = 0,
+    this.partialBytes = 0,
+    this.transportBytes = 0,
     this.totalBytes,
+    this.transportAttemptSequence = 0,
+    this.transportAttemptActive = false,
+    this.speedBytesPerSecond = 0,
   });
 
-  final bool active;
-  final int existingBytes;
-  final int committedBytes;
+  /// Authoritative physical partial already safe for decode/resume.
+  ///
+  /// This is the straight progress layer. It is monotonic within a physical
+  /// DownloadSession and is never inferred from transport activity.
+  final int partialBytes;
+
+  /// Absolute byte cursor consumed by the current physical transport attempt.
+  ///
+  /// This may restart behind [partialBytes] when Range is ignored and a
+  /// full-body response must replay the existing prefix. It is deliberately a
+  /// transient projection, not a second partial or resume authority.
+  final int transportBytes;
   final int? totalBytes;
+  final int transportAttemptSequence;
+  final bool transportAttemptActive;
+  final double speedBytesPerSecond;
+  final bool active;
 
   PipelineTransferPhase get phase {
-    if (!active) {
-      return PipelineTransferPhase.idle;
+    if (!active) return PipelineTransferPhase.idle;
+    if (!transportAttemptActive) return PipelineTransferPhase.connecting;
+    if (transportBytes < partialBytes) {
+      return PipelineTransferPhase.replayingPrefix;
     }
-    return committedBytes > existingBytes
-        ? PipelineTransferPhase.receiving
-        : PipelineTransferPhase.connecting;
+    return PipelineTransferPhase.receiving;
   }
 
-  int get receivedBytes =>
-      (committedBytes - existingBytes).clamp(0, committedBytes).toInt();
+  bool get replayingPrefix => phase == PipelineTransferPhase.replayingPrefix;
 
-  double? get existingFraction {
+  double? get partialFraction {
     final total = totalBytes;
     return total == null || total <= 0
         ? null
-        : (existingBytes / total).clamp(0.0, 1.0).toDouble();
+        : (partialBytes / total).clamp(0.0, 1.0).toDouble();
   }
 
-  double? get committedFraction {
+  double? get transportFraction {
     final total = totalBytes;
     return total == null || total <= 0
         ? null
-        : (committedBytes / total).clamp(0.0, 1.0).toDouble();
+        : (transportBytes / total).clamp(0.0, 1.0).toDouble();
   }
 
   @override
@@ -49,18 +69,29 @@ final class PipelineTransferProgress {
       identical(this, other) ||
       other is PipelineTransferProgress &&
           active == other.active &&
-          existingBytes == other.existingBytes &&
-          committedBytes == other.committedBytes &&
-          totalBytes == other.totalBytes;
+          partialBytes == other.partialBytes &&
+          transportBytes == other.transportBytes &&
+          totalBytes == other.totalBytes &&
+          transportAttemptSequence == other.transportAttemptSequence &&
+          transportAttemptActive == other.transportAttemptActive &&
+          speedBytesPerSecond == other.speedBytesPerSecond;
 
   @override
-  int get hashCode =>
-      Object.hash(active, existingBytes, committedBytes, totalBytes);
+  int get hashCode => Object.hash(
+        active,
+        partialBytes,
+        transportBytes,
+        totalBytes,
+        transportAttemptSequence,
+        transportAttemptActive,
+        speedBytesPerSecond,
+      );
 }
 
 PipelineTransferProgress pipelineTransferProgressFor(
-  DownloadSnapshot snapshot,
-) {
+  DownloadSnapshot snapshot, {
+  double speedBytesPerSecond = 0,
+}) {
   final scheme = snapshot.id.canonicalUri.scheme.toLowerCase();
   if (scheme == 'file' || scheme == 'content' || scheme == 'asset') {
     return const PipelineTransferProgress();
@@ -78,19 +109,21 @@ PipelineTransferProgress pipelineTransferProgressFor(
   }
   return PipelineTransferProgress(
     active: true,
-    existingBytes: snapshot.networkStartLength
-        .clamp(0, snapshot.committedLength)
-        .toInt(),
-    committedBytes: snapshot.committedLength,
+    partialBytes: snapshot.committedLength,
+    transportBytes: snapshot.networkCursorLength,
     totalBytes: snapshot.totalLength,
+    transportAttemptSequence: snapshot.networkAttemptSequence,
+    transportAttemptActive: snapshot.networkAttemptActive,
+    speedBytesPerSecond: speedBytesPerSecond,
   );
 }
 
-/// Pipeline-owned current-page projection copied from VibeVenera's progress-publisher shape.
+/// Pipeline-owned current-page transfer projection.
 ///
-/// DownloadSession remains authoritative. The publisher selects the resolved
-/// physical session, coalesces chunk notifications to a frame, and immediately hides
-/// promoted artifacts so cached page changes never flash a network indicator.
+/// DownloadSession remains authoritative for both the durable/playable partial
+/// and the transient transport cursor. This publisher selects only the
+/// resolved physical session and adds VibeVenera-style smoothed transport
+/// speed for presentation; it never owns download or resume state.
 final class PipelineTransferProgressPublisher {
   PipelineTransferProgressPublisher()
       : notifier = ValueNotifier<PipelineTransferProgress>(
@@ -102,12 +135,12 @@ final class PipelineTransferProgressPublisher {
   DownloadSnapshotListener? _selectedListener;
   bool _scheduled = false;
   bool _disposed = false;
+  int? _sampleAttemptSequence;
+  int _sampleBytes = 0;
+  int _sampleMs = 0;
+  double _speedBytesPerSecond = 0;
 
   /// Selects the authoritative physical transfer for the current page.
-  ///
-  /// Exact Reader identities may be acquire-time aliases of an older physical
-  /// [DownloadSession]. Progress therefore follows the resolved session itself
-  /// rather than keeping a second exact-id keyed projection table.
   void select(DownloadSession? session) {
     if (_disposed || identical(_selectedSession, session)) return;
     final previous = _selectedSession;
@@ -117,6 +150,7 @@ final class PipelineTransferProgressPublisher {
     }
     _selectedSession = session;
     _selectedListener = null;
+    _resetSpeedSample();
     if (session != null) {
       void listener(DownloadSnapshot _) => _requestPublish();
       _selectedListener = listener;
@@ -152,7 +186,47 @@ final class PipelineTransferProgressPublisher {
       _set(const PipelineTransferProgress());
       return;
     }
-    _set(pipelineTransferProgressFor(session.snapshot));
+    final snapshot = session.snapshot;
+    _sampleSpeed(snapshot);
+    _set(
+      pipelineTransferProgressFor(
+        snapshot,
+        speedBytesPerSecond: _speedBytesPerSecond,
+      ),
+    );
+  }
+
+  void _sampleSpeed(DownloadSnapshot snapshot) {
+    if (!snapshot.networkAttemptActive) {
+      _resetSpeedSample();
+      return;
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final sequence = snapshot.networkAttemptSequence;
+    final cursor = snapshot.networkCursorLength;
+    if (_sampleAttemptSequence != sequence || cursor < _sampleBytes) {
+      _sampleAttemptSequence = sequence;
+      _sampleBytes = cursor;
+      _sampleMs = now;
+      _speedBytesPerSecond = 0;
+      return;
+    }
+    if (cursor == _sampleBytes || now <= _sampleMs) {
+      return;
+    }
+    final instant = (cursor - _sampleBytes) * 1000.0 / (now - _sampleMs);
+    _speedBytesPerSecond = _speedBytesPerSecond <= 0
+        ? instant
+        : _speedBytesPerSecond * 0.7 + instant * 0.3;
+    _sampleBytes = cursor;
+    _sampleMs = now;
+  }
+
+  void _resetSpeedSample() {
+    _sampleAttemptSequence = null;
+    _sampleBytes = 0;
+    _sampleMs = 0;
+    _speedBytesPerSecond = 0;
   }
 
   void _set(PipelineTransferProgress value) {
@@ -169,6 +243,7 @@ final class PipelineTransferProgressPublisher {
     }
     _selectedSession = null;
     _selectedListener = null;
+    _resetSpeedSample();
     notifier.dispose();
   }
 }

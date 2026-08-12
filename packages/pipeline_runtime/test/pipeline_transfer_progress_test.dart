@@ -12,24 +12,33 @@ import 'package:transport/transport.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('unknown-length transfer distinguishes connecting from receiving', () {
+  test('unknown-length transfer distinguishes connecting, replay and receiving', () {
     const connecting = PipelineTransferProgress(
       active: true,
-      existingBytes: 64,
-      committedBytes: 64,
+      partialBytes: 64,
+      transportBytes: 0,
+    );
+    const replaying = PipelineTransferProgress(
+      active: true,
+      partialBytes: 128,
+      transportBytes: 64,
+      transportAttemptActive: true,
     );
     const receiving = PipelineTransferProgress(
       active: true,
-      existingBytes: 64,
-      committedBytes: 128,
+      partialBytes: 64,
+      transportBytes: 128,
+      transportAttemptActive: true,
     );
 
     expect(connecting.phase, PipelineTransferPhase.connecting);
-    expect(connecting.receivedBytes, 0);
+    expect(replaying.phase, PipelineTransferPhase.replayingPrefix);
+    expect(replaying.replayingPrefix, isTrue);
     expect(receiving.phase, PipelineTransferPhase.receiving);
-    expect(receiving.receivedBytes, 64);
-    expect(receiving.committedFraction, isNull);
+    expect(receiving.partialFraction, isNull);
+    expect(receiving.transportFraction, isNull);
   });
+
 
   test('local immutable reads are not presented as downloads', () {
     final id = DownloadId(
@@ -107,21 +116,27 @@ void main() {
     );
     await session.append(writer, 0, List<int>.filled(1024, 0));
 
+    session.beginNetworkAttemptProgress(0);
+    session.advanceNetworkAttemptProgress(512, force: true);
     final publisher = PipelineTransferProgressPublisher();
     publisher.select(registry.find(aliasId));
 
     expect(registry.find(aliasId), same(session));
     expect(publisher.notifier.value.active, isTrue);
-    expect(publisher.notifier.value.committedBytes, 1024);
+    expect(publisher.notifier.value.partialBytes, 1024);
+    expect(publisher.notifier.value.transportBytes, 512);
+    expect(publisher.notifier.value.phase, PipelineTransferPhase.replayingPrefix);
     expect(publisher.notifier.value.totalBytes, 128 * 1024);
 
+    session.advanceNetworkAttemptProgress(1024 + 64 * 1024, force: true);
     await session.append(
       writer,
       1024,
       List<int>.filled(64 * 1024, 1),
     );
     await Future<void>.delayed(Duration.zero);
-    expect(publisher.notifier.value.committedBytes, 1024 + 64 * 1024);
+    expect(publisher.notifier.value.partialBytes, 1024 + 64 * 1024);
+    expect(publisher.notifier.value.transportBytes, 1024 + 64 * 1024);
 
     publisher.dispose();
     await session.reset();

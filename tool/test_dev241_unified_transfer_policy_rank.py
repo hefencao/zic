@@ -32,13 +32,18 @@ require("final class NetPolicyRank" in net, "NetLane must own effective network 
 require("NetPolicyRank? activePolicyRank(" in net, "NetLane must expose active rank projection")
 require("bool incomingOutranks(" in net, "NetLane must own the rank-margin comparison")
 require("_policyRank(task, basePriority: task.priority)" in net, "ordinary victim preemption must use the same policy rank")
-require("net.activePolicyRank(" in owner and "net.incomingOutranks(" in owner, "provider takeover must reuse NetLane rank")
-require("activeClaim?.demand.priority ?? lease.admittedPriority" in owner, "live/orphan provider state must only choose incumbent base rank")
-require("if (providerOrphaned)" not in owner, "provider scheduling must not branch on orphan taxonomy")
+build = int(m.group(1))
+if build >= 244:
+    require("_handoffActiveProviderIfNeeded" not in owner, "dev.244+ provider request authority must no longer be a scheduler-policy decision")
+    require("net.activePolicyRank(" not in owner and "net.incomingOutranks(" not in owner, "dev.244+ DownloadTransferOwner must not duplicate NetLane slot rank for provider replacement")
+else:
+    require("net.activePolicyRank(" in owner and "net.incomingOutranks(" in owner, "dev.241-243 provider takeover must reuse NetLane rank")
+    require("activeClaim?.demand.priority ?? lease.admittedPriority" in owner, "live/orphan provider state must only choose incumbent base rank")
+    require("if (providerOrphaned)" not in owner, "provider scheduling must not branch on orphan taxonomy")
+    require("lease.exactId == preferred.exactId" in owner, "same exact request authority remains a no-op identity invariant")
+    require("'takeoverClass': 'policy-rank'" in owner and "'fromEffectiveRank'" in owner and "'rankMargin'" in owner, "rank inputs/results must be trace-visible")
 require("net.isHighPriority" not in owner, "provider scheduling must not branch on high-priority class")
 require("preferred.demand.priority > activeClaim.demand.priority" not in owner, "provider scheduling must not carry a strict-higher duplicate policy")
-require("lease.exactId == preferred.exactId" in owner, "same exact request authority remains a no-op identity invariant")
-require("'takeoverClass': 'policy-rank'" in owner and "'fromEffectiveRank'" in owner and "'rankMargin'" in owner, "rank inputs/results must be trace-visible")
 
 require("final class TransferRankPolicy" in rank_policy, "cost admission rank policy must be explicit")
 require("fullBodyCatchupCostRank" in rank_policy and "demandRank" in rank_policy, "full-body admission must compare demand rank with cost rank")
@@ -46,8 +51,11 @@ require("rankPolicy.allowsFullBodyCatchup(" in owner, "DownloadTransferOwner mus
 for stale in ("foregroundAdjacentPriorityFloor", "visibleTransitionPriorityFloor", "const largePrefixBytes", "const veryLargePrefixBytes"):
     require(stale not in owner, f"scattered catchup policy must be removed: {stale}")
 
-require("provider handoff follows NetLane rank margin instead of situation branches" in owner_test, "provider behavior rank regression is required")
-require("_desired(exact, priority: 850)" in owner_test and "_desired(exact, priority: 860)" in owner_test, "provider behavior test must prove preemption margin, not role taxonomy")
+if build >= 244:
+    require("provider exact selection is task lifetime state rather than scheduler policy" in owner_test, "dev.244+ provider task-lifetime regression is required")
+else:
+    require("provider handoff follows NetLane rank margin instead of situation branches" in owner_test, "provider behavior rank regression is required")
+    require("_desired(exact, priority: 850)" in owner_test and "_desired(exact, priority: 860)" in owner_test, "provider behavior test must prove preemption margin, not role taxonomy")
 require("provider decisions reuse the scheduler restart-cost policy rank" in net_test, "NetLane rank projection regression is required")
 require("lane.incomingOutranks(900, invested), isFalse" in net_test and "lane.incomingOutranks(1000, invested), isTrue" in net_test, "restart cost and current must be parameters of the same rank")
 require("full-body catchup is one demand-rank versus cost-rank comparison" in rank_test, "catchup rank regression is required")

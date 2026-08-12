@@ -618,10 +618,10 @@ void main() {
 
 
   test(
-      'current exact demand reclaims an orphaned retained provider without replacing the physical partial',
+      'current exact demand migrates physical rank without replacing the admitted equivalent provider',
       () async {
     final temp = await Directory.systemTemp.createTemp(
-      'transfer_owner_current_orphan_reclaim_',
+      'transfer_owner_current_provider_stable_',
     );
     addTearDown(() async => temp.delete(recursive: true));
     final clock = _Clock();
@@ -629,16 +629,16 @@ void main() {
       layout: CacheLayout('${temp.path}/cache'),
       clock: clock,
     );
-    final physical = _id('current-orphan-old');
+    final physical = _id('current-provider-old');
     final exact = DownloadId(
       content: const ContentId(
         sourceId: 'source',
         comicId: 'comic-current-v2',
         chapterId: 'chapter-current-v2',
-        pageId: 'current-orphan-new',
+        pageId: 'current-provider-new',
       ),
       sourceRevision: 'r2',
-      canonicalUri: Uri.parse('https://example.test/current-orphan-new.webp'),
+      canonicalUri: Uri.parse('https://example.test/current-provider-new.webp'),
     );
     final net = NetLane(maxActive: 1, highPriorityThreshold: 1000);
     final owner = DownloadTransferOwner(
@@ -675,10 +675,7 @@ void main() {
     );
     final currentReader = owner.attachConsumer(
       scopeId: 'reader-current-version',
-      transportFor: (uri) {
-        expect(uri, exact.canonicalUri);
-        return currentTransport;
-      },
+      transportFor: (_) => currentTransport,
       traceSink: const NoopTraceSink(),
     );
 
@@ -689,51 +686,42 @@ void main() {
     );
     final session = registry.get(physical);
     await retainedOldTransport.prefixSent.future;
-    final committed = Completer<void>();
-    void listener(DownloadSnapshot snapshot) {
-      if (snapshot.committedLength > 0 && !committed.isCompleted) {
-        committed.complete();
-      }
-    }
-    session.addSnapshotListener(listener);
-    if (session.committedLength == 0) await committed.future;
-    session.removeSnapshotListener(listener);
     final prefixLength = session.committedLength;
+    expect(prefixLength, greaterThan(0));
 
     oldReader.replaceDemands(
       'reader-old-version',
       2,
       const <DownloadId, TransferDemand>{},
     );
-    expect(owner.activeProviderScope(physical), 'reader-old-version');
-    expect(owner.activeProviderExactId(physical), physical);
-
     currentReader.replaceDemands(
       'reader-current-version',
       1,
       _desired(exact, priority: 1000),
     );
-    await retainedOldTransport.cancelled.future;
-    await currentTransport.opened.future;
+    await Future<void>.delayed(Duration.zero);
 
     expect(registry.resolvePhysicalId(exact), physical);
     expect(identical(registry.find(exact), session), isTrue);
     expect(session.committedLength, prefixLength);
-    expect(owner.activeProviderScope(physical), 'reader-current-version');
-    expect(owner.activeProviderExactId(physical), exact);
     expect(session.effectivePriority, 1000);
+    expect(owner.activeProviderScope(physical), 'reader-old-version');
+    expect(owner.activeProviderExactId(physical), physical);
+    expect(retainedOldTransport.cancelled.isCompleted, isFalse);
+    expect(currentTransport.opened.isCompleted, isFalse);
 
-    currentTransport.release.complete();
+    retainedOldTransport.release.complete();
     await currentReader.idle();
     expect(session.state, DownloadState.promoted);
+    expect(currentTransport.opened.isCompleted, isFalse);
   });
 
 
   test(
-      'provider handoff follows NetLane rank margin instead of situation branches',
+      'provider exact selection is task lifetime state rather than scheduler policy',
       () async {
     final temp = await Directory.systemTemp.createTemp(
-      'transfer_owner_policy_rank_',
+      'transfer_owner_provider_task_lifetime_',
     );
     addTearDown(() async => temp.delete(recursive: true));
     final clock = _Clock();
@@ -741,16 +729,16 @@ void main() {
       layout: CacheLayout('${temp.path}/cache'),
       clock: clock,
     );
-    final physical = _id('policy-rank-old');
+    final physical = _id('provider-task-old');
     final exact = DownloadId(
       content: const ContentId(
         sourceId: 'source',
-        comicId: 'comic-policy-rank-v2',
-        chapterId: 'chapter-policy-rank-v2',
-        pageId: 'policy-rank-new',
+        comicId: 'comic-provider-v2',
+        chapterId: 'chapter-provider-v2',
+        pageId: 'provider-task-new',
       ),
       sourceRevision: 'r2',
-      canonicalUri: Uri.parse('https://example.test/policy-rank-new.webp'),
+      canonicalUri: Uri.parse('https://example.test/provider-task-new.webp'),
     );
     final owner = DownloadTransferOwner(
       registry: registry,
@@ -783,19 +771,19 @@ void main() {
     );
     final newTransport = _GateBytesTransport(fullBytes);
     final oldReader = owner.attachConsumer(
-      scopeId: 'reader-policy-old',
+      scopeId: 'reader-provider-old',
       transportFor: (_) => throw StateError('retained transport must win'),
       retainedTransportFor: (_) => oldTransport,
       traceSink: const NoopTraceSink(),
     );
     final newReader = owner.attachConsumer(
-      scopeId: 'reader-policy-new',
+      scopeId: 'reader-provider-new',
       transportFor: (_) => newTransport,
       traceSink: const NoopTraceSink(),
     );
 
     oldReader.replaceDemands(
-      'reader-policy-old',
+      'reader-provider-old',
       1,
       _desired(physical, priority: 820),
     );
@@ -805,29 +793,22 @@ void main() {
     expect(prefixLength, greaterThan(0));
 
     newReader.replaceDemands(
-      'reader-policy-new',
+      'reader-provider-new',
       1,
-      _desired(exact, priority: 850),
+      _desired(exact, priority: 1000),
     );
     await Future<void>.delayed(Duration.zero);
+
+    expect(session.effectivePriority, 1000);
+    expect(session.committedLength, prefixLength);
     expect(oldTransport.cancelled.isCompleted, isFalse);
     expect(newTransport.opened.isCompleted, isFalse);
     expect(owner.activeProviderExactId(physical), physical);
 
-    newReader.replaceDemands(
-      'reader-policy-new',
-      2,
-      _desired(exact, priority: 860),
-    );
-    await oldTransport.cancelled.future;
-    await newTransport.opened.future;
-    expect(identical(registry.find(exact), session), isTrue);
-    expect(session.committedLength, prefixLength);
-    expect(owner.activeProviderExactId(physical), exact);
-
-    newTransport.release.complete();
+    oldTransport.release.complete();
     await newReader.idle();
     expect(session.state, DownloadState.promoted);
+    expect(newTransport.opened.isCompleted, isFalse);
   });
 
 

@@ -25,9 +25,13 @@ m2 = re.search(r"^versionCode=(\d+)\s*$", props, re.M)
 require(m2 is not None and int(m2.group(1)) == int(m.group(1)), "Android versionCode must match App build")
 
 build = int(m.group(1))
-if build >= 241:
+if build >= 244:
+    require("final class NetPolicyRank" in net, "NetLane must retain scheduler-owned restart-cost rank")
+    require("_handoffActiveProviderIfNeeded" not in owner and "'takeoverClass': 'policy-rank'" not in owner, "dev.244+ current rank must migrate the physical task without provider restart")
+    require("net.isHighPriority" not in owner and "priority == 1000" not in owner, "sessions must not classify Reader current")
+elif build >= 241:
     require("final class NetPolicyRank" in net, "dev.241+ NetLane must expose scheduler-owned policy rank")
-    require("activePolicyRank(" in net and "incomingOutranks(" in net, "dev.241+ provider reclaim must use the scheduler rank API")
+    require("activePolicyRank(" in net and "incomingOutranks(" in net, "dev.241-243 provider reclaim must use the scheduler rank API")
     require("net.isHighPriority" not in owner, "sessions must not classify high-priority situations after rank unification")
     require("if (providerOrphaned)" not in owner, "orphan taxonomy must not drive provider scheduling after rank unification")
     require("preferred.demand.priority > activeClaim.demand.priority" not in owner, "strict-higher branch must be replaced by rank margin")
@@ -52,18 +56,27 @@ require("orphaned provider claim stays on the admitted task until provider dispo
         "ordinary orphan retention regression must remain")
 require("_desired(exact, priority: 820)" in owner_test,
         "ordinary lower-priority orphan must remain retained")
-require("current exact demand reclaims an orphaned retained provider without replacing the physical partial" in owner_test,
-        "current orphan-provider reclaim behavior regression is required")
-require("await retainedOldTransport.cancelled.future;" in owner_test and "await currentTransport.opened.future;" in owner_test,
-        "current reclaim test must prove old attempt cancellation and preferred provider open")
+if build >= 244:
+    require("current exact demand migrates physical rank without replacing the admitted equivalent provider" in owner_test,
+            "current exact demand must migrate physical rank without provider churn")
+    require("expect(retainedOldTransport.cancelled.isCompleted, isFalse);" in owner_test and "expect(currentTransport.opened.isCompleted, isFalse);" in owner_test,
+            "current exact switch must keep the admitted equivalent provider attempt")
+else:
+    require("current exact demand reclaims an orphaned retained provider without replacing the physical partial" in owner_test,
+            "current orphan-provider reclaim behavior regression is required")
+    require("await retainedOldTransport.cancelled.future;" in owner_test and "await currentTransport.opened.future;" in owner_test,
+            "current reclaim test must prove old attempt cancellation and preferred provider open")
 require("expect(identical(registry.find(exact), session), isTrue);" in owner_test,
-        "current provider reclaim must preserve the physical session")
+        "current provider policy must preserve the physical session")
 require("expect(session.committedLength, prefixLength);" in owner_test,
-        "current provider reclaim must preserve committed partial bytes")
+        "current provider policy must preserve committed partial bytes")
 require("expect(session.effectivePriority, 1000);" in owner_test,
-        "reclaimed physical task must remain current priority")
+        "physical task must migrate to current priority")
 
-if build >= 241:
+if build >= 244:
+    require("provider exact" in spec and "admitted" in spec, "SPEC must separate provider task lifetime from scheduler rank")
+    require("provider exact" in architecture and "task lifetime" in architecture, "Architecture must separate provider task lifetime from scheduler rank")
+elif build >= 241:
     require("policy rank" in spec, "SPEC must describe provider takeover as rank comparison")
     require("policy rank" in architecture, "Architecture must assign provider takeover rank to NetLane")
 else:

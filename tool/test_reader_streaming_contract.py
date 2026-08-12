@@ -64,7 +64,7 @@ for forbidden in ('final EncodedSource', 'EncodedSource? get source', ' get sour
 for token in ('final class PipelinePageOutputStream', 'PipelinePageSurface?', '_uploads.claimPresent(', '_outputs.project('):
     if token not in PAGE_OUTPUT:
         raise SystemExit(f'Pipeline page-output projection missing: {token}')
-for token in ('final class PipelineTransferProgressPublisher', 'snapshot.state == DownloadState.promoted', 'committedBytes: snapshot.committedLength', 'totalBytes: snapshot.totalLength', 'addPostFrameCallback'):
+for token in ('final class PipelineTransferProgressPublisher', 'snapshot.state == DownloadState.promoted', 'partialBytes: snapshot.committedLength', 'transportBytes: snapshot.networkCursorLength', 'totalBytes: snapshot.totalLength', 'addPostFrameCallback'):
     if token not in PROGRESS:
         raise SystemExit(f'Pipeline progress publisher contract missing: {token}')
 if 'snapshot.committedLength > 0' in PROGRESS:

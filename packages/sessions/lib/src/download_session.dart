@@ -79,6 +79,9 @@ final class DownloadSnapshot {
     this.totalLength,
     this.failure,
     this.ingressProjectionCount = 0,
+    this.networkAttemptSequence = 0,
+    this.networkAttemptActive = false,
+    this.networkCursorLength = 0,
   });
 
   final DownloadId id;
@@ -97,6 +100,19 @@ final class DownloadSnapshot {
   final int? totalLength;
   final Failure? failure;
   final int ingressProjectionCount;
+
+  /// Monotonic identifier for the currently observed physical network attempt.
+  ///
+  /// This is transient telemetry/projection state only. It must never
+  /// participate in resume, durable identity, aliasing or scheduler rank.
+  final int networkAttemptSequence;
+  final bool networkAttemptActive;
+
+  /// Absolute byte position consumed by the current transport attempt.
+  ///
+  /// Unlike [committedLength], this may restart behind an existing playable
+  /// partial when a server ignores Range and the task must re-read the prefix.
+  final int networkCursorLength;
 }
 
 final class DownloadSession {
@@ -130,6 +146,10 @@ final class DownloadSession {
   Uri? _validatorRequestUri;
   int? _totalLength;
   int _networkStartLength = 0;
+  int _networkAttemptSequence = 0;
+  bool _networkAttemptActive = false;
+  int _networkCursorLength = 0;
+  int _networkCursorPublishedLength = 0;
   int? _residentLength;
   bool _residentBodyBacked = false;
   ByteResponseBodyAuthority? _residentBodyAuthority;
@@ -180,6 +200,9 @@ final class DownloadSession {
 
   int? get totalLength => _totalLength;
   int get networkStartLength => _networkStartLength;
+  int get networkAttemptSequence => _networkAttemptSequence;
+  bool get networkAttemptActive => _networkAttemptActive;
+  int get networkCursorLength => _networkCursorLength;
   ContentKind get contentKind => _contentKind;
   bool get hasWriter => _writer != null;
   bool get demanded => _legacyDemanded || _demandPriorities.isNotEmpty;
@@ -210,6 +233,9 @@ final class DownloadSession {
         totalLength: _totalLength,
         failure: _failure,
         ingressProjectionCount: _ingressProjections.length,
+        networkAttemptSequence: _networkAttemptSequence,
+        networkAttemptActive: _networkAttemptActive,
+        networkCursorLength: _networkCursorLength,
       );
 
   void addSnapshotListener(
@@ -350,6 +376,64 @@ final class DownloadSession {
     await _syncCache(CacheState.partial);
     _notifySnapshot();
     return snapshot;
+  }
+
+  /// Publishes the transport cursor for one physical network attempt.
+  ///
+  /// The cursor is deliberately separate from [committedLength]: a resumed
+  /// request may have to re-read an old prefix before it can append new
+  /// authoritative bytes. Reader progress can therefore expose re-downloads
+  /// without inventing a second partial owner.
+  void beginNetworkAttemptProgress(int startOffset) {
+    _requireNotDisposed();
+    if (startOffset < 0) {
+      throw ArgumentError.value(
+        startOffset,
+        'startOffset',
+        'must not be negative',
+      );
+    }
+    _networkAttemptSequence++;
+    _networkAttemptActive = true;
+    _networkCursorLength = startOffset;
+    _networkCursorPublishedLength = startOffset;
+    _notifySnapshot();
+  }
+
+  void advanceNetworkAttemptProgress(
+    int absoluteOffset, {
+    bool force = false,
+  }) {
+    _requireNotDisposed();
+    if (!_networkAttemptActive) {
+      return;
+    }
+    if (absoluteOffset < _networkCursorLength) {
+      throw Failure(
+        code: ErrorCode.invalidOffset,
+        message: 'network cursor moved backwards: '
+            '$_networkCursorLength -> $absoluteOffset',
+      );
+    }
+    if (absoluteOffset == _networkCursorLength && !force) {
+      return;
+    }
+    _networkCursorLength = absoluteOffset;
+    if (force ||
+        absoluteOffset - _networkCursorPublishedLength >=
+            sourceProgressQuantumBytes) {
+      _networkCursorPublishedLength = absoluteOffset;
+      _notifySnapshot();
+    }
+  }
+
+  void endNetworkAttemptProgress() {
+    if (!_networkAttemptActive) {
+      return;
+    }
+    _networkAttemptActive = false;
+    _networkCursorPublishedLength = _networkCursorLength;
+    _notifySnapshot();
   }
 
   void queue() {
@@ -767,6 +851,9 @@ final class DownloadSession {
     _validatorRequestUri = null;
     _totalLength = null;
     _networkStartLength = 0;
+    _networkAttemptActive = false;
+    _networkCursorLength = 0;
+    _networkCursorPublishedLength = 0;
     _residentLength = null;
     _residentBodyBacked = false;
     _residentBodyAuthority = null;
@@ -801,6 +888,9 @@ final class DownloadSession {
     _validatorRequestUri = null;
     _totalLength = null;
     _networkStartLength = 0;
+    _networkAttemptActive = false;
+    _networkCursorLength = 0;
+    _networkCursorPublishedLength = 0;
     _residentLength = null;
     _residentBodyBacked = false;
     _residentBodyAuthority = null;

@@ -39,7 +39,12 @@ require("scopeId: '$scopePrefix:${session.id.key}'" not in ingress, "ingress sco
 require("publisher follows resolved physical session for an exact alias" in test, "alias progress behavior regression is required")
 require("publisher.select(registry.find(aliasId));" in test, "test must select registry-resolved physical session")
 require("expect(registry.find(aliasId), same(session));" in test, "test must prove alias resolves to the physical session")
-require("expect(publisher.notifier.value.committedBytes, 1024);" in test, "test must prove inherited committed progress")
+build = int(m.group(1))
+if build >= 244:
+    require("expect(publisher.notifier.value.partialBytes, 1024);" in test, "test must prove inherited authoritative partial progress")
+    require("expect(publisher.notifier.value.transportBytes, 512);" in test, "test must keep transient transport cursor distinct from inherited partial")
+else:
+    require("expect(publisher.notifier.value.committedBytes, 1024);" in test, "test must prove inherited committed progress")
 
 for path in (
     "docs/adr/0216-physical-partial-progress-projection.md",

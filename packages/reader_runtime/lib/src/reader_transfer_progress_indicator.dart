@@ -1,0 +1,144 @@
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+import 'package:pipeline_runtime/pipeline_runtime.dart';
+
+final class ReaderTransferProgressIndicator extends StatelessWidget {
+  const ReaderTransferProgressIndicator({
+    super.key,
+    required this.progress,
+    required this.networkKey,
+    required this.partialKey,
+  });
+
+  final PipelineTransferProgress progress;
+  final Key networkKey;
+  final Key partialKey;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!progress.active) {
+      return const SizedBox(height: 6);
+    }
+    final total = progress.totalBytes;
+    final partial = progress.partialFraction;
+    final transport = progress.transportFraction;
+    final theme = Theme.of(context);
+    final waveColor = _downloadSpeedColor(progress.speedBytesPerSecond);
+
+    if (total == null || total <= 0 || partial == null || transport == null) {
+      final receiving = progress.transportAttemptActive;
+      return Semantics(
+        label: receiving ? '正在接收页面数据' : '正在连接页面资源',
+        value: receiving ? '${progress.transportBytes} bytes' : null,
+        child: LinearProgressIndicator(
+          key: networkKey,
+          minHeight: 3,
+          color: receiving ? waveColor : theme.colorScheme.outline,
+          backgroundColor: Colors.transparent,
+        ),
+      );
+    }
+
+    final semanticsLabel = switch (progress.phase) {
+      PipelineTransferPhase.replayingPrefix => '正在重读已有页面前缀',
+      PipelineTransferPhase.receiving => '正在接收页面数据',
+      PipelineTransferPhase.connecting => '正在连接页面资源',
+      PipelineTransferPhase.idle => '页面下载空闲',
+    };
+    return Semantics(
+      label: semanticsLabel,
+      value: '${progress.transportBytes}/$total bytes；'
+          '已有partial ${progress.partialBytes}/$total bytes',
+      child: SizedBox(
+        height: 6,
+        child: Stack(
+          fit: StackFit.expand,
+          alignment: Alignment.centerLeft,
+          children: <Widget>[
+            if (partial > 0)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: FractionallySizedBox(
+                  key: partialKey,
+                  widthFactor: partial,
+                  child: SizedBox(
+                    height: 1.5,
+                    child: ColoredBox(color: theme.colorScheme.secondary),
+                  ),
+                ),
+              ),
+            if (progress.transportAttemptActive && transport > 0)
+              CustomPaint(
+                key: networkKey,
+                painter: _TransferWavePainter(
+                  fraction: transport,
+                  color: waveColor,
+                ),
+              )
+            else
+              SizedBox(key: networkKey),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// VibeVenera's Reader progress uses a logarithmic speed ramp so low-rate
+/// transfers remain visibly red while useful throughput moves through amber
+/// toward green. ZIC applies that presentation only to the transient transport
+/// wave; the authoritative partial remains a separate theme-secondary line.
+Color _downloadSpeedColor(double bytesPerSecond) {
+  const base = 128 * 1024.0;
+  const max = 8 * 1024 * 1024.0;
+  final t = (math.log(1 + bytesPerSecond / base) /
+          math.log(1 + max / base))
+      .clamp(0.0, 1.0);
+  return t < 0.7
+      ? Color.lerp(Colors.red, Colors.amber, t / 0.7)!
+      : Color.lerp(Colors.amber, Colors.green, (t - 0.7) / 0.3)!;
+}
+
+final class _TransferWavePainter extends CustomPainter {
+  const _TransferWavePainter({
+    required this.fraction,
+    required this.color,
+  });
+
+  final double fraction;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 0 || size.height <= 0 || fraction <= 0) return;
+    final endX = size.width * fraction.clamp(0.0, 1.0);
+    if (endX <= 0) return;
+    const wavelength = 12.0;
+    final amplitude = math.min(1.4, size.height * 0.28);
+    final centerY = size.height / 2;
+    final path = Path()..moveTo(0, centerY);
+    for (var x = 1.0; x <= endX; x += 1.0) {
+      final y = centerY +
+          math.sin((x / wavelength) * math.pi * 2) * amplitude;
+      path.lineTo(x, y);
+    }
+    if (endX % 1.0 != 0) {
+      final y = centerY +
+          math.sin((endX / wavelength) * math.pi * 2) * amplitude;
+      path.lineTo(endX, y);
+    }
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = color
+        ..strokeWidth = 1.7
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _TransferWavePainter oldDelegate) =>
+      oldDelegate.fraction != fraction || oldDelegate.color != color;
+}
