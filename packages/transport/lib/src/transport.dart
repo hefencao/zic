@@ -83,6 +83,14 @@ enum ByteResponseBodyAuthority {
   artifactCache,
 }
 
+/// Whether delaying subscription demand on [ByteResponse.bytes] propagates
+/// backpressure to an upstream live transport instead of merely delaying a
+/// body that has already been materialized in memory/storage.
+enum ByteResponseFlowControl {
+  none,
+  streamBackpressure,
+}
+
 /// Optional live transport-read diagnostics attached to a byte response.
 ///
 /// Implementations may update their counters while [ByteResponse.bytes] is
@@ -102,6 +110,7 @@ final class ByteResponse {
     this.rangeSupported = false,
     this.disposition = ByteResponseDisposition.staged,
     this.bodyAuthority = ByteResponseBodyAuthority.source,
+    this.flowControl = ByteResponseFlowControl.none,
     Map<String, Object?> diagnostics = const <String, Object?>{},
     this.readDiagnostics,
     Future<void> Function()? onDiscard,

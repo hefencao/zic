@@ -105,7 +105,9 @@ pubspec_for_spec = read("apps/app/pubspec.yaml")
 spec_version = re.search(r"^version:\s*0\.31\.0\+(\d+)$", pubspec_for_spec, re.M)
 spec_build = int(spec_version.group(1)) if spec_version is not None else 0
 spec_window_token = (
-    "encoded逻辑/retention window：前 7 / 后 3"
+    "encoded逻辑/retention与network-demand window：前 7 / 后 3"
+    if spec_build >= 249
+    else "encoded逻辑/retention window：前 7 / 后 3"
     if spec_build >= 247
     else "encoded download window：前 7 / 后 3"
 )
@@ -117,7 +119,10 @@ for token in (
     "一个 idle 章节会话最多两分钟",
 ):
     require(spec, token, "Spec")
-if spec_build >= 248:
+if spec_build >= 249:
+    require(spec, "encoded逻辑/retention与network-demand window：前 7 / 后 3", "Spec")
+    require(spec, "streamBackpressure", "Spec")
+elif spec_build >= 248:
     require(spec, "previous2/next4作为最低预下载资格窗口", "Spec")
     require(spec, "speculative byte budget MUST由NetLane约束同时active的动画encoded工作", "Spec")
 elif spec_build >= 247:

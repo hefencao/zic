@@ -336,10 +336,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           entry.key: TransferDemand(
             priority: entry.value.priority,
             reason: entry.value.reason,
-            estimatedTransferBytes: entry.value.estimatedTransferBytes,
-            speculativeBudgetBytes: entry.value.speculativeBudgetBytes,
-            speculativeBudgetExemptPriority:
-                entry.value.speculativeBudgetExemptPriority,
+            flowTargetFrames: entry.value.flowTargetFrames,
           ),
       },
     );

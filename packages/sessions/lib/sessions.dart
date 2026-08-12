@@ -22,3 +22,4 @@ export 'src/transfer_rank_policy.dart';
 export 'src/upload_registry.dart';
 export 'src/upload_session.dart';
 export 'src/webp_decode_prefix_hints.dart';
+export 'src/webp_frame_prefix_tracker.dart';

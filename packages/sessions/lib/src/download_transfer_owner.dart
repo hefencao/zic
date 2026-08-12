@@ -26,21 +26,15 @@ final class TransferDemand {
   const TransferDemand({
     required this.priority,
     required this.reason,
-    this.estimatedTransferBytes = 0,
-    this.speculativeBudgetBytes = 0,
-    this.speculativeBudgetExemptPriority = 1 << 30,
+    this.flowTargetFrames = 0,
     this.expectedChecksum,
     this.completionIntent = TransferCompletionIntent.opportunistic,
   })  : assert(priority >= 0),
-        assert(estimatedTransferBytes >= 0),
-        assert(speculativeBudgetBytes >= 0),
-        assert(speculativeBudgetExemptPriority >= 0);
+        assert(flowTargetFrames >= 0);
 
   final int priority;
   final String reason;
-  final int estimatedTransferBytes;
-  final int speculativeBudgetBytes;
-  final int speculativeBudgetExemptPriority;
+  final int flowTargetFrames;
   final String? expectedChecksum;
   final TransferCompletionIntent completionIntent;
 
@@ -49,10 +43,7 @@ final class TransferDemand {
       other is TransferDemand &&
       priority == other.priority &&
       reason == other.reason &&
-      estimatedTransferBytes == other.estimatedTransferBytes &&
-      speculativeBudgetBytes == other.speculativeBudgetBytes &&
-      speculativeBudgetExemptPriority ==
-          other.speculativeBudgetExemptPriority &&
+      flowTargetFrames == other.flowTargetFrames &&
       expectedChecksum == other.expectedChecksum &&
       completionIntent == other.completionIntent;
 
@@ -60,9 +51,7 @@ final class TransferDemand {
   int get hashCode => Object.hash(
         priority,
         reason,
-        estimatedTransferBytes,
-        speculativeBudgetBytes,
-        speculativeBudgetExemptPriority,
+        flowTargetFrames,
         expectedChecksum,
         completionIntent,
       );
@@ -428,10 +417,7 @@ final class DownloadTransferOwner {
         demand: TransferDemand(
           priority: selected.demand.priority,
           reason: selected.demand.reason,
-          estimatedTransferBytes: selected.demand.estimatedTransferBytes,
-          speculativeBudgetBytes: selected.demand.speculativeBudgetBytes,
-          speculativeBudgetExemptPriority:
-              selected.demand.speculativeBudgetExemptPriority,
+          flowTargetFrames: selected.demand.flowTargetFrames,
           expectedChecksum: leftChecksum ?? rightChecksum,
           completionIntent: required
               ? TransferCompletionIntent.required
@@ -734,10 +720,7 @@ final class DownloadTransferOwner {
       priority: effectivePriority,
       bucket: claim.consumer.downloadBucketFor(claim.exactId),
       bucketLimit: claim.consumer.downloadBucketLimitFor(claim.exactId),
-      estimatedTransferBytes: claim.demand.estimatedTransferBytes,
-      speculativeBudgetBytes: claim.demand.speculativeBudgetBytes,
-      speculativeBudgetExemptPriority:
-          claim.demand.speculativeBudgetExemptPriority,
+      flowTargetFrames: claim.demand.flowTargetFrames,
       task: (token) => _runDownload(id, session, taskKey, token),
     );
   }
@@ -790,10 +773,7 @@ final class DownloadTransferOwner {
           'handoffActive': net.handoffActive,
           'effectivePriority': net.priorityOf(taskKey),
           'bucketActive': net.activeForBucket(bucket),
-          'speculativeActiveBytes': net.speculativeActiveBytes,
-          'speculativeActiveTasks': net.speculativeActiveTasks,
-          'estimatedTransferBytes': claim.demand.estimatedTransferBytes,
-          'speculativeBudgetBytes': claim.demand.speculativeBudgetBytes,
+          'flowTargetFrames': claim.demand.flowTargetFrames,
           'committedLength': session.committedLength,
           'physicalOwner': true,
           'providerScope': provider.scopeId,
@@ -1004,13 +984,7 @@ final class DownloadTransferOwner {
   }) {
     final claim = _preferredClaim(id);
     if (claim != null) {
-      net.updateSpeculativeBudget(
-        taskKey,
-        estimatedTransferBytes: claim.demand.estimatedTransferBytes,
-        speculativeBudgetBytes: claim.demand.speculativeBudgetBytes,
-        speculativeBudgetExemptPriority:
-            claim.demand.speculativeBudgetExemptPriority,
-      );
+      net.updateFlowTargetFrames(taskKey, claim.demand.flowTargetFrames);
     }
     final oldPriority = net.priorityOf(taskKey);
     final active = net.isActive(taskKey);

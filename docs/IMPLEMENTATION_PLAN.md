@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：真机优先验证dev.248动画WebP weighted admission：`RoleWindow`始终previous3/next7；previous2/next4始终作为最低预下载资格，水位`c>4/n>2/c>6/n>3`只把outer page加入候选队列。默认50MiB预算由NetLane限制同时active的speculative encoded bytes，未知页12MiB时通常最多4个speculative task；current/visible transition绕过预算但降级后立即计入。不得为了预算删除2/4 demand、改变3/7窗口判断或physical partial identity；dev.246 stable destructive-preemption transaction继续冻结。
+- P0：真机优先验证dev.249动画WebP frame-flow backpressure：logical与DownloadDemand均保持previous3/next7；current/可见transition无限流，next/next2/previous按5/3/2完整ANMF帧，远端默认1帧并由`c>4/n>2/c>6/n>3`把对应外层提高到2帧。达到credit后必须保持同一physical task/HTTP response并出现`transport-flow-control paused`，role/waterline提升后同一response `resumed`；不得恢复2/4 eligibility、50MiB estimated-body admission或cancel/reopen式假流控。连接上限本轮仍5+reserved1，先用设备证据评估是否需要独立bounded paused-connection pool。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环

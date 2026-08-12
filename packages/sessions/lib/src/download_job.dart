@@ -8,6 +8,7 @@ import 'package:transport/transport.dart';
 import 'download_session.dart';
 import 'net_lane.dart';
 import 'source_progress.dart';
+import 'webp_frame_prefix_tracker.dart';
 
 const int _validatorlessResumeProbeBytes = 64 * 1024;
 
@@ -331,6 +332,11 @@ final class DownloadJob {
 
     session.beginNetworkAttemptProgress(response.rangeStart);
     var networkCursor = response.rangeStart;
+    final _WebpNetworkFlowGate? flowGate =
+        response.flowControl == ByteResponseFlowControl.streamBackpressure &&
+                response.bodyAuthority == ByteResponseBodyAuthority.source
+            ? _WebpNetworkFlowGate(session: session, cancel: cancel)
+            : null;
 
     if (start == 0 &&
         response.disposition == ByteResponseDisposition.durableImmutable &&
@@ -379,6 +385,8 @@ final class DownloadJob {
           probeStart: probeStart,
           preservedLength: preservedLength,
           cancel: cancel,
+          flowGate: flowGate,
+          networkCursor: () => networkCursor,
           onDuplicateBytes: (value) {
             duplicatePrefixBytes = value;
             networkCursor = probeStart + value;
@@ -429,6 +437,8 @@ final class DownloadJob {
           expectedChecksum: session.artifact.checksum,
           expectedTotalLength: response.totalLength,
           cancel: cancel,
+          flowGate: flowGate,
+          networkCursor: () => networkCursor,
           onDuplicateBytes: (value) {
             duplicatePrefixBytes = value;
             restartCostBytes = value;
@@ -472,6 +482,10 @@ final class DownloadJob {
       }
     }
 
+    if (catchupRemainder.isNotEmpty) {
+      flowGate?.addAuthoritativeBytes(catchupRemainder);
+    }
+
     await session.bindResponse(
       validators: response.validators,
       totalLength: response.totalLength,
@@ -490,9 +504,21 @@ final class DownloadJob {
       flushTarget = sourceProgressQuantumBytes;
     }
     try {
-      while (await _moveNext(iterator, cancel)) {
+      while (true) {
+        if (flowGate != null &&
+            (flowGate.needsArtifactSynchronization || flowGate.blocked)) {
+          await flushPending();
+        }
+        final available = await _moveNext(
+          iterator,
+          cancel,
+          flowGate: flowGate,
+          networkCursor: networkCursor,
+        );
+        if (!available) break;
         final chunk = iterator.current;
         if (chunk.isEmpty) continue;
+        flowGate?.addAuthoritativeBytes(chunk);
         if (fullBodyCatchup) {
           restartCostBytes += chunk.length;
           cancel?.recordRestartCostBytes(restartCostBytes);
@@ -541,6 +567,8 @@ final class DownloadJob {
     required int preservedLength,
     required void Function(int duplicateBytes) onDuplicateBytes,
     CancelToken? cancel,
+    _WebpNetworkFlowGate? flowGate,
+    int Function()? networkCursor,
   }) async {
     final expectedLength = preservedLength - probeStart;
     if (expectedLength <= 0 || expectedLength > _validatorlessResumeProbeBytes) {
@@ -567,7 +595,12 @@ final class DownloadJob {
 
     var matched = 0;
     while (matched < expected.length) {
-      final available = await _moveNext(iterator, cancel);
+      final available = await _moveNext(
+        iterator,
+        cancel,
+        flowGate: flowGate,
+        networkCursor: networkCursor?.call() ?? 0,
+      );
       if (!available) {
         throw const Failure(
           code: ErrorCode.resumeRejected,
@@ -607,6 +640,8 @@ final class DownloadJob {
     required int? expectedTotalLength,
     required void Function(int duplicateBytes) onDuplicateBytes,
     CancelToken? cancel,
+    _WebpNetworkFlowGate? flowGate,
+    int Function()? networkCursor,
   }) async {
     if (preservedLength <= 0) {
       return const <int>[];
@@ -628,7 +663,12 @@ final class DownloadJob {
     var remaining = preservedLength;
     var consumed = 0;
     while (remaining > 0) {
-      final available = await _moveNext(iterator, cancel);
+      final available = await _moveNext(
+        iterator,
+        cancel,
+        flowGate: flowGate,
+        networkCursor: networkCursor?.call() ?? 0,
+      );
       if (!available) {
         throw const Failure(
           code: ErrorCode.resumeRejected,
@@ -692,8 +732,13 @@ final class DownloadJob {
 
   Future<bool> _moveNext(
     StreamIterator<List<int>> iterator,
-    CancelToken? cancel,
-  ) async {
+    CancelToken? cancel, {
+    _WebpNetworkFlowGate? flowGate,
+    int networkCursor = 0,
+  }) async {
+    if (flowGate != null) {
+      await flowGate.waitBeforeRead(networkCursor: networkCursor);
+    }
     if (cancel == null) {
       return iterator.moveNext();
     }
@@ -764,6 +809,76 @@ final class DownloadJob {
       );
     }
     return transport.open(_requestUri);
+  }
+}
+
+final class _WebpNetworkFlowGate {
+  _WebpNetworkFlowGate({required this.session, required this.cancel});
+
+  final DownloadSession session;
+  final CancelToken? cancel;
+  WebpFramePrefixTracker? _tracker;
+  bool _initializing = false;
+  bool _paused = false;
+
+  bool get needsArtifactSynchronization =>
+      (cancel?.flowTargetFrames ?? 0) > 0 && _tracker == null;
+
+  bool get blocked {
+    final control = cancel;
+    final tracker = _tracker;
+    return control != null &&
+        tracker != null &&
+        !tracker.unsupported &&
+        control.flowBlockedAt(tracker.completedFrames);
+  }
+
+  Future<void> _ensureInitialized() async {
+    if (_tracker != null || _initializing) return;
+    _initializing = true;
+    try {
+      final tracker = WebpFramePrefixTracker();
+      await for (final chunk in session.artifact.readChunks(
+        endExclusive: session.committedLength,
+      )) {
+        tracker.add(chunk);
+      }
+      _tracker = tracker;
+    } finally {
+      _initializing = false;
+    }
+  }
+
+  Future<void> waitBeforeRead({required int networkCursor}) async {
+    final control = cancel;
+    if (control == null || control.flowTargetFrames <= 0) return;
+    await _ensureInitialized();
+    final tracker = _tracker;
+    if (tracker == null || tracker.unsupported) return;
+    if (!control.flowBlockedAt(tracker.completedFrames)) return;
+    if (!_paused) {
+      _paused = true;
+      session.recordFlowControl(
+        action: 'paused',
+        targetFrames: control.flowTargetFrames,
+        completedFrames: tracker.completedFrames,
+        networkCursor: networkCursor,
+      );
+    }
+    await control.waitForFlowCredit(tracker.completedFrames);
+    if (_paused) {
+      _paused = false;
+      session.recordFlowControl(
+        action: 'resumed',
+        targetFrames: control.flowTargetFrames,
+        completedFrames: tracker.completedFrames,
+        networkCursor: networkCursor,
+      );
+    }
+  }
+
+  void addAuthoritativeBytes(List<int> bytes) {
+    _tracker?.add(bytes);
   }
 }
 

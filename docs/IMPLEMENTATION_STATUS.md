@@ -2,8 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.248` / App `0.31.0+248`。
-- dev.248：14:13 Trace显示dev.247已将动画policy从11 demand降到7且preempt降至13，但2/4未知页成本固定约72MiB>默认50MiB，预算只报警且outer水位几乎无法生效。现纠正为三层：`RoleResolver`仍previous3/next7逻辑/retention；动画previous2/next4为最低预下载资格且水位逐层扩到3/7；50MiB预算由NetLane做通用byte-weighted active admission。current/visible transition绕过预算但保留成本元数据，降为background后同一physical task立即计入；未知页12MiB时通常最多4个speculative transfer同时active。dev.246 stable destructive-preemption不变。
+- 当前版本：`0.31.0-dev.249` / App `0.31.0+249`。
+- dev.249：14:13 Trace显示dev.247/248把动画normal浏览从11 demand缩到7，虽降低preempt却本末倒置；当前主场景是用户只看几帧就切页。现恢复完整previous3/next7 DownloadDemand，删除2/4 eligibility与50MiB estimated-body active admission；动画流量改由task-local frame credit约束：current/visible unlimited，next/next2/previous=5/3/2帧，远端1帧并随`c>4/n>2/c>6/n>3`升到2帧。DownloadJob仅在response声明stream-backpressure capability时停止请求下一chunk，保持同一task/response/writer/partial并由水位/role更新原地resume；连接上限仍normal5+current-reserved1。dev.248 weighted admission已由ADR0229取代。
 - dev.245：10:54 Trace删除normal 780/800/820/900主动preemption并让第一个current先借reserved第6槽；其victim-side 200ms demotion grace已由dev.246 incoming-candidate稳定窗口取代。
 - dev.244：09:47真机Trace确认physical alias继续统一，但55,743,710 bytes duplicate prefix中44,741,284来自full-body catch-up、10,412,602来自catch-up被取消后的白读；两次rank-based provider handoff发生在同一shared physical partial内部。现删除logical exact/rank驱动的active provider replacement：admitted provider绑定task lifetime，current只迁移physical NetLane priority，真实consumer-bound dispose/attempt失败才结束provider。DownloadSession新增transient network cursor，Pipeline双投影authoritative partial与当前transport；Reader按实际VibeVenera speed色将当前transport画为波浪、最大partial保留不同颜色直线，从UI直接看见prefix replay/restart而不伪造committed增长。
 - dev.242：07:51真机Trace定位到current presentation在transfer acquire前调用`DownloadRegistry.get(exact)`，提前制造exact physical owner，导致同一verified-equivalent图片出现不同partial/progress并把跨session rank拆成多个独立task。现presentation/read-only路径全部改为non-creating `find`，`PipelinePageStream`在reconcile后绑定resolved physical owner；同时unsealed且尚无成功帧的WebP decode exception按prefix growth等待而非立即failed，sealed/post-frame错误仍终局失败。

@@ -1,3 +1,9 @@
+## 0.31.0-dev.249：Animated WebP frame-flow backpressure inside stable 3/7
+
+- 14:13真机Trace确认dev.247/248虽把preempt降到13次，但动画正常scrolling/idle期间46次policyDecision只保7个download demand；这优化了极端partial复用，却退化了更常见的“只看几帧就切页”3/7前瞻浏览。撤销previous2/next4 network eligibility与50MiB whole-body weighted admission：RoleWindow与实际DownloadDemand都恢复完整previous3/next7。
+- 动画成本改为per-task frame flow credit而非page/count/estimated-body admission。current/可见transition unlimited；next/next2/previous分别5/3/2帧；其余3/7远端先1帧，并由既有`c>4/n>2/c>6/n>3`水位把对应外层提高到2帧。static/non-WebP不受该cap限制。
+- `DownloadJob`新增轻量RIFF/ANMF边界计数，只在transport显式声明`streamBackpressure`时生效；达到credit后停止请求下一个response chunk，保留同一NetLane task、HTTP response、physical writer与partial，水位/role提升后原地resume。HttpClient/rhttp direct声明该capability；artifact-cache/resident/整包runtime fallback不做假流控。网络连接上限本轮仍为normal5+current-reserved1，不同时提高retained socket数量。
+
 ## 0.31.0-dev.248：Animated speculative byte-weighted NetLane admission
 
 - 14:13 真机 Trace 证明 dev.247 的 previous2/next4 demand 窗口已生效且 preempt 降至13次，但动画 floor 的未知页估算固定约72MiB，默认50MiB预算只报警、不约束执行；水位扩张也因此几乎失效。

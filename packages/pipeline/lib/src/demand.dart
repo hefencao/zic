@@ -8,32 +8,19 @@ final class DownloadDemand {
     required this.priority,
     required this.reason,
     required this.expirationRevision,
-    this.estimatedTransferBytes = 0,
-    this.speculativeBudgetBytes = 0,
-    this.speculativeBudgetExemptPriority = 1 << 30,
+    this.flowTargetFrames = 0,
     this.decisionId,
-  })  : assert(estimatedTransferBytes >= 0),
-        assert(speculativeBudgetBytes >= 0),
-        assert(speculativeBudgetExemptPriority >= 0);
+  }) : assert(flowTargetFrames >= 0);
 
   final PageRole role;
   final int priority;
   final String reason;
   final int expirationRevision;
 
-  /// Estimated encoded body cost used only by generic network admission.
-  /// A zero value means that this demand is not byte-budgeted.
-  final int estimatedTransferBytes;
-
-  /// Maximum concurrently admitted speculative encoded bytes. The Pipeline
-  /// supplies the policy value; NetLane owns enforcement. Foreground rank is
-  /// allowed to bypass this budget without losing the retained cost metadata.
-  final int speculativeBudgetBytes;
-
-  /// Priority at or above which this demand is foreground and bypasses the
-  /// speculative byte budget. The cost remains attached so a later demotion
-  /// starts counting immediately without recreating the physical task.
-  final int speculativeBudgetExemptPriority;
+  /// Maximum complete animated WebP frames this speculative transport may
+  /// read before backpressuring its existing response body. Zero means
+  /// unlimited. This is scheduling metadata, not animation truth.
+  final int flowTargetFrames;
 
   final String? decisionId;
 
@@ -45,10 +32,7 @@ final class DownloadDemand {
           priority == other.priority &&
           reason == other.reason &&
           expirationRevision == other.expirationRevision &&
-          estimatedTransferBytes == other.estimatedTransferBytes &&
-          speculativeBudgetBytes == other.speculativeBudgetBytes &&
-          speculativeBudgetExemptPriority ==
-              other.speculativeBudgetExemptPriority &&
+          flowTargetFrames == other.flowTargetFrames &&
           decisionId == other.decisionId;
 
   @override
@@ -57,9 +41,7 @@ final class DownloadDemand {
         priority,
         reason,
         expirationRevision,
-        estimatedTransferBytes,
-        speculativeBudgetBytes,
-        speculativeBudgetExemptPriority,
+        flowTargetFrames,
         decisionId,
       );
 }

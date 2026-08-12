@@ -104,17 +104,13 @@ void main() {
     expect(profile.downloadBucketLimit(firstRemote), 5);
   });
 
-  test('animated prefetch budget is composition-configurable without shrinking logical window', () {
+  test('stable profile keeps logical 3/7 while animation flow is policy-owned', () {
     final chapter = manifest('https');
-    final profile = readerPipelineProfileFor(
-      chapter,
-      animatedPrefetchBudgetBytes: 32 * 1024 * 1024,
-    );
+    final profile = readerPipelineProfileFor(chapter);
     final window = profile.windowResolver.resolve(chapter, observation(chapter));
 
     expect(window.roles, hasLength(11));
-    expect(profile.policy.animatedPrefetchPolicy.maxSpeculativeBytes,
-        32 * 1024 * 1024);
+    expect(profile.policy.animatedPrefetchPolicy, isA<AnimatedPrefetchPolicy>());
     expect(profile.guard.maxDownloadDemands, 11);
   });
 

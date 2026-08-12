@@ -28,7 +28,7 @@ final class HeuristicPolicy {
     required DecodeTarget decodeTarget,
     Map<int, bool> runtimeAnimatedPages = const <int, bool>{},
     bool assumeUnresolvedStatic = false,
-    AnimatedPrefetchAdmission? downloadAdmission,
+    AnimatedPrefetchFlow? downloadFlow,
   }) {
     final downloads = <DownloadId, DownloadDemand>{};
     final decodes = <DecodeId, DecodeDemand>{};
@@ -75,21 +75,13 @@ final class HeuristicPolicy {
         pageIndex: entry.key,
         currentIndex: observation.currentIndex,
       );
-      if (downloadPriority > 0 &&
-          (downloadAdmission == null || downloadAdmission.allows(entry.key))) {
-        final animatedBudgeted = downloadAdmission?.active ?? false;
+      if (downloadPriority > 0) {
         downloads[download] = DownloadDemand(
           role: role,
           priority: downloadPriority,
           reason: 'heuristic:${role.name}',
           expirationRevision: revision + 1,
-          estimatedTransferBytes: animatedBudgeted
-              ? downloadAdmission!.estimatedBytesFor(entry.key)
-              : 0,
-          speculativeBudgetBytes: animatedBudgeted
-              ? animatedPrefetchPolicy.maxSpeculativeBytes
-              : 0,
-          speculativeBudgetExemptPriority: animatedBudgeted ? 900 : 1 << 30,
+          flowTargetFrames: downloadFlow?.targetFramesFor(entry.key) ?? 0,
         );
         keep.add(ResourceId.download(download));
       }

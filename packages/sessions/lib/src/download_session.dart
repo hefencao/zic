@@ -803,6 +803,25 @@ final class DownloadSession {
     _notifySnapshot();
   }
 
+  void recordFlowControl({
+    required String action,
+    required int targetFrames,
+    required int completedFrames,
+    required int networkCursor,
+  }) {
+    _emit(
+      TraceEventKind.artifactSource,
+      <String, Object?>{
+        'stage': 'transport-flow-control',
+        'action': action,
+        'targetFrames': targetFrames,
+        'completedFrames': completedFrames,
+        'networkCursor': networkCursor,
+        'committedLength': committedLength,
+      },
+    );
+  }
+
   void recordResume({
     required bool restarted,
     String? strategy,

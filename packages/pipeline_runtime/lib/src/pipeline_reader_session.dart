@@ -140,8 +140,6 @@ final class PipelineReaderSessionFactory {
     this.loaderSources = const <Uri, LoaderTransportSource>{},
     this.bytesLoader,
     this.userAgentProvider,
-    this.animatedPrefetchBudgetBytes =
-        defaultAnimatedWebpPrefetchBudgetBytes,
     _PipelineReaderSessionRetentionPool? retentionPool,
     CompositionDownloadTransferRuntimePool? transferRuntimePool,
     this.transferRuntime,
@@ -174,7 +172,6 @@ final class PipelineReaderSessionFactory {
   final Map<Uri, LoaderTransportSource> loaderSources;
   final PipelineArtifactBytesLoader? bytesLoader;
   final String Function()? userAgentProvider;
-  final int animatedPrefetchBudgetBytes;
 
   /// Returns a factory that keeps composition-owned cache/byte loaders while
   /// adding page-local transport sources.
@@ -194,7 +191,6 @@ final class PipelineReaderSessionFactory {
         },
         bytesLoader: bytesLoader,
         userAgentProvider: userAgentProvider,
-        animatedPrefetchBudgetBytes: animatedPrefetchBudgetBytes,
         retentionPool: _retentionPool,
         transferRuntimePool: _transferRuntimePool,
         transferRuntime: transferRuntime,
@@ -213,7 +209,6 @@ final class PipelineReaderSessionFactory {
         loaderSources: loaderSources,
         bytesLoader: bytesLoader,
         userAgentProvider: userAgentProvider,
-        animatedPrefetchBudgetBytes: animatedPrefetchBudgetBytes,
         retentionPool: _retentionPool,
         transferRuntimePool: _transferRuntimePool,
         transferRuntime: transferRuntime,
@@ -232,7 +227,6 @@ final class PipelineReaderSessionFactory {
         loaderSources: loaderSources,
         bytesLoader: bytesLoader,
         userAgentProvider: userAgentProvider,
-        animatedPrefetchBudgetBytes: animatedPrefetchBudgetBytes,
         retentionPool: _retentionPool,
         transferRuntimePool: _transferRuntimePool,
         transferRuntime: transferRuntime,
@@ -251,26 +245,6 @@ final class PipelineReaderSessionFactory {
         loaderSources: loaderSources,
         bytesLoader: bytesLoader,
         userAgentProvider: provider,
-        animatedPrefetchBudgetBytes: animatedPrefetchBudgetBytes,
-        retentionPool: _retentionPool,
-        transferRuntimePool: _transferRuntimePool,
-        transferRuntime: transferRuntime,
-      );
-
-  PipelineReaderSessionFactory withAnimatedPrefetchBudgetBytes(
-    int bytes,
-  ) =>
-      PipelineReaderSessionFactory(
-        mediaRuntimeFactory: mediaRuntimeFactory,
-        artifactCacheManager: artifactCacheManager,
-        partialDownloadStore: partialDownloadStore,
-        artifactReadScheduler: artifactReadScheduler,
-        pageDownloadLane: pageDownloadLane,
-        decodePrefixHints: decodePrefixHints,
-        loaderSources: loaderSources,
-        bytesLoader: bytesLoader,
-        userAgentProvider: userAgentProvider,
-        animatedPrefetchBudgetBytes: bytes.clamp(0, 512 * 1024 * 1024).toInt(),
         retentionPool: _retentionPool,
         transferRuntimePool: _transferRuntimePool,
         transferRuntime: transferRuntime,
@@ -289,7 +263,6 @@ final class PipelineReaderSessionFactory {
         loaderSources: loaderSources,
         bytesLoader: loader,
         userAgentProvider: userAgentProvider,
-        animatedPrefetchBudgetBytes: animatedPrefetchBudgetBytes,
         retentionPool: _retentionPool,
         transferRuntimePool: _transferRuntimePool,
         transferRuntime: transferRuntime,
@@ -313,7 +286,6 @@ final class PipelineReaderSessionFactory {
         loaderSources: loaderSources,
         bytesLoader: bytesLoader,
         userAgentProvider: userAgentProvider,
-        animatedPrefetchBudgetBytes: animatedPrefetchBudgetBytes,
         retentionPool: _retentionPool,
         transferRuntimePool: _transferRuntimePool,
         transferRuntime: runtime,
@@ -358,7 +330,6 @@ final class PipelineReaderSessionFactory {
       loaderSources: loaderSources,
       bytesLoader: bytesLoader,
       userAgentProvider: userAgentProvider,
-      animatedPrefetchBudgetBytes: animatedPrefetchBudgetBytes,
       traceSink: traceSink,
       transferRuntime: transferRuntime,
     );
@@ -424,7 +395,6 @@ final class PipelineReaderSessionFactory {
       identityHashCode(bytesLoader),
       identityHashCode(traceSink),
       identityHashCode(transferRuntime),
-      animatedPrefetchBudgetBytes,
       loaderFingerprint,
     );
     return '${chapter.sourceId}\u0000${chapter.comicId}\u0000'
@@ -453,7 +423,6 @@ final class PipelineReaderSession {
         const <Uri, LoaderTransportSource>{},
     PipelineArtifactBytesLoader? bytesLoader,
     String Function()? userAgentProvider,
-    int animatedPrefetchBudgetBytes = defaultAnimatedWebpPrefetchBudgetBytes,
     TraceSink? traceSink,
     required CompositionDownloadTransferRuntime transferRuntime,
   })  : artifactReadScheduler = artifactReadScheduler,
@@ -465,8 +434,7 @@ final class PipelineReaderSession {
         _memoryTrace = MemoryTraceSink(),
         _profile = readerPipelineProfileFor(
           chapter,
-          animatedPrefetchBudgetBytes: animatedPrefetchBudgetBytes,
-        ),
+          ),
         _assetTransport = AssetBundleTransport(rootBundle),
         _ioTransport = IoTransport(
           http: HttpTransport(userAgentProvider: userAgentProvider),

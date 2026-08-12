@@ -77,7 +77,7 @@ void main() {
         'defaultVerticalStitch': true,
         'detailsPreviewMaxItemsPerRow': 6,
         'networkUserAgent': 'fixture-network-agent',
-        'animatedWebpPrefetchBudgetMiB': 72,
+        'animatedWebpPrefetchBudgetMiB': 72, // ignored legacy dev.247/248 key
         'sourceSearchHistory': <Object?>['Alpha', 'beta', 'alpha'],
         'comicReaderSettings': <String, Object?>{
           comicReaderSettingsIdentity('source-a', 'comic-a'):
@@ -111,7 +111,6 @@ void main() {
     expect(controller.defaultVerticalStitch, isTrue);
     expect(controller.detailsPreviewMaxItemsPerRow, 6);
     expect(controller.networkUserAgent, 'fixture-network-agent');
-    expect(controller.animatedWebpPrefetchBudgetMiB, 72);
     expect(controller.sourceSearchHistory, <String>['Alpha', 'beta']);
     expect(
       controller.comicReaderSettingsFor('source-a', 'comic-a'),
@@ -133,7 +132,6 @@ void main() {
     controller.setShelfSortMode(LibrarySortMode.custom);
     controller.setDetailsPreviewMaxItemsPerRow(4);
     controller.setNetworkUserAgent('custom-network-agent');
-    controller.setAnimatedWebpPrefetchBudgetMiB(48);
     controller.rememberSourceSearch('Gamma');
     controller.acknowledgeComicVersionNotice(
       'source-a',
@@ -156,7 +154,7 @@ void main() {
     expect(written?['version'], 6);
     expect(written?['detailsPreviewMaxItemsPerRow'], 4);
     expect(written?['networkUserAgent'], 'custom-network-agent');
-    expect(written?['animatedWebpPrefetchBudgetMiB'], 48);
+    expect(written?.containsKey('animatedWebpPrefetchBudgetMiB'), isFalse);
     expect((written?['sourceSearchHistory']! as List).first, 'Gamma');
     expect(
       written?['acknowledgedComicVersionNotices'],

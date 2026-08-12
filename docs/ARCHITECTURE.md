@@ -218,7 +218,7 @@ n>1, m>1, p>1, c>4, n>2, c>6, n>3, m>2, n>4（current bootstrap 已覆盖 c>2）
 
 阈值仍是严格水位，实际 batch 可自然越过。current/source 尚未建立浅水位时不得让 speculative neighbor 绕行 refill；真实 transition 只在 current 暂时无 source 资格时可取一帧，防止拖动目标黑屏。
 
-静态页一帧即满足，但静态证据只能降低**既有 decode 前2/后1窗口**内页面的成本，不能把 encoded 7/3 的 near/far 扩大成 decode/upload 窗口；真实进入 viewport 的纵向静态页可作为可见输出例外，回收仍由 `FrameBudgeter` 权威执行。encoded previous3/next7继续是逻辑/retention上界；动画/高成本WebP的previous2/next4是最低**预下载资格**窗口，既有decode水位`c>4→next5`、`n>2→previous3`、`c>6→next6`、`n>3→next7`只扩大候选集合。可配置speculative byte budget不再删除eligible demand，而由NetLane限制同时active的动画encoded工作；current/可见transition绕过预算但降为background后同一physical task立即计入。runtime证明static后恢复完整3/7。
+静态页一帧即满足，但静态证据只能降低**既有 decode 前2/后1窗口**内页面的成本，不能把 encoded 7/3 的 near/far 扩大成 decode/upload 窗口；真实进入 viewport 的纵向静态页可作为可见输出例外，回收仍由 `FrameBudgeter` 权威执行。encoded previous3/next7同时是逻辑/retention与DownloadDemand窗口，动画不得再缩成2/4。动画/未决WebP只附加task-local response-body frame credit：current/可见transition无限流，next/next2/previous为5/3/2完整ANMF帧，其余远端先1帧；既有decode水位`c>4`、`n>2`、`c>6`、`n>3`只把对应外层credit升到2帧。`DownloadJob`只在`ByteResponseFlowControl.streamBackpressure`能力存在时停止请求下一chunk，保留同一NetLane task、response、writer与partial；credit提升原地resume。artifact-cache/resident/整包fallback不得做假流控；network仍5+current-reserved1，本轮不提高paused连接上限。
 
 ## 7. 下载、partial 与 source ingress
 

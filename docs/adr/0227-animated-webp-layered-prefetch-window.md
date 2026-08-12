@@ -1,6 +1,6 @@
 # ADR 0227：动画 WebP 分层 network admission 与稳定 3/7 逻辑窗口
 
-状态：Accepted。细化 ADR 0067/0122 中“encoded 7/3”的 network-admission 部分；**不**取代其 RoleWindow、decode 2/1、holder 7/5/3/2 与 lane 所有权。
+状态：Superseded。细化 ADR 0067/0122 中“encoded 7/3”的 network-admission 部分；**不**取代其 RoleWindow、decode 2/1、holder 7/5/3/2 与 lane 所有权。
 
 ## 背景
 

@@ -76,31 +76,6 @@ final class ReaderPipelineProfile {
 }
 
 ReaderPipelineProfile readerPipelineProfileFor(
-  ChapterManifest chapter, {
-  int animatedPrefetchBudgetBytes = defaultAnimatedWebpPrefetchBudgetBytes,
-}) {
-  // The logical Reader window remains the stable previous3/next7 envelope.
-  // Only the policy's network-admission subset is configurable for expensive
-  // animated WebP media.
-  if (animatedPrefetchBudgetBytes ==
-      defaultAnimatedWebpPrefetchBudgetBytes) {
-    return ReaderPipelineProfile.stable;
-  }
-  final stable = ReaderPipelineProfile.stable;
-  return ReaderPipelineProfile(
-    windowResolver: stable.windowResolver,
-    guard: stable.guard,
-    policy: HeuristicPolicy(
-      decodeWarmPages: true,
-      animatedPrefetchPolicy: AnimatedPrefetchPolicy(
-        maxSpeculativeBytes: animatedPrefetchBudgetBytes,
-      ),
-    ),
-    retry: stable.retry,
-    networkConcurrency: stable.networkConcurrency,
-    localSourceConcurrency: stable.localSourceConcurrency,
-    remoteSourceConcurrency: stable.remoteSourceConcurrency,
-    decodeConcurrency: stable.decodeConcurrency,
-    uploadConcurrency: stable.uploadConcurrency,
-  );
-}
+  ChapterManifest chapter,
+) =>
+    ReaderPipelineProfile.stable;

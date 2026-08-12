@@ -1,5 +1,5 @@
-# dev.248 后续交接
-- dev.248：14:13 Trace显示dev.247确有改善（preempt=13、动画demand=7），但previous2/next4未知页估算72MiB已超过默认50MiB，说明“预算只裁外层”没有真正限制执行。现保持previous3/next7逻辑/retention与previous2/next4最低预下载资格，水位只扩大eligible候选；50MiB由NetLane限制同时active的speculative encoded bytes。current/visible transition绕过预算，降为background后同一physical task立即计入。
+# dev.249 后续交接
+- dev.249：14:13 Trace确认dev.247/248虽然把preempt降到13，却把动画normal浏览从完整3/7的11 demand缩到2/4的7 demand，牺牲了更常见的快速浏览。现恢复3/7全部DownloadDemand，删除50MiB whole-body weighted admission；动画只限制每task response-body frame credit：next/next2/previous=5/3/2，远端1帧，水位逐层升到2帧。只有显式stream-backpressure response会暂停`moveNext()`，同一task/response/partial原地resume；连接数本轮仍5+current reserved1。
 `dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`
@@ -63,13 +63,13 @@
 - Native identity保持 `zic-media-core-dev134-abi6-lib00121400`。
 - production rhttp direct在普通release默认记录每response一次的HTTP version、匿名remote-IP hash与receive-progress-enabled标记；高频`onReceiveProgress`仅non-product或显式`ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS=1`诊断构建启用。该观测不得反馈给NetLane/Reader/retry/cache/framing。
 ## 下一步真机优先验证
-- dev.248后重点验证：动画current仍保11个逻辑role且previous2/next4至少有eligible demand；未知页12MiB/50MiB默认下，`downloadStarted.speculativeActiveBytes`通常不得超过48MiB（单个oversize例外），第5个speculative应保持queued而给current handoff留余量。水位可把候选扩到3/7但不能突破active byte budget；快速跳页回到逻辑3/7必须复用physical partial。同步观察dev.246 `incomingWaitMicros>=100000`/single-flight。
+- dev.249后重点验证：动画scrolling/idle的`policyDecision.downloads`应重新保持11；远端task应出现`stage=transport-flow-control/action=paused`且`completedFrames>=targetFrames`，随后同一session/attempt因水位或变current出现`resumed`，期间不应产生对应cancel/reopen。static/runtime fallback不得因无ANMF或无stream-backpressure capability被假暂停。继续观察dev.246 `incomingWaitMicros>=100000`/single-flight；若5个paused连接长期占满normal slot导致近端排队，再单独评估bounded paused-connection pool，不与本轮流控混改。
 - 07:51 dev.198 trace已确认Range成功路径仍正确，但full-body fallback重复重新放大到约19.2MiB/123.2MiB（15.6%），多数发生在760/780/800背景角色；dev.199只阻止这类低优先级大partial从0反复重读。820/900/1000、小partial和合法206必须保持原行为，不把defer扩展成通用restart-cost scheduler。
 - 首先复测快速前后翻页：dev.185外层previous admission应继续保持毫秒级；dev.189应确认780↔900不再导致plan取消，只有waiter真正晋升current=1000时才触发动态pressure，并确认旧JS未`finished(requestId)`前新plan绝不并发进入。无真实pressure时`receivingRetained=true` priority0仍应短时复用。
 - 真机首要复测 current 首帧稳定性：观察 policyDecision 的 staticWarmDecodes/uploads 是否收敛到稳定decode角色/真实可见页，current浅水位期间是否停止 speculative neighbor refill，以及decode/upload current handoff是否避免后台长任务阻塞。
 - 最终图片慢流先用普通release按`sourceHostHttpVersion/sourceHostRemoteIpHash`分组比较`streamMicros/maxChunkGapMicros`；若同endpoint仍无法解释current异常，再用`ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS=1`诊断构建比较`sourceRhttpProgressMaxGapMicros/sourceRhttpProgressLeadBytesMax/sourceRhttpBodyMaxGapMicros`。progress与body同步长gap优先视为源/CDN/HTTP；progress明显领先body才下钻rhttp→Dart delivery/backpressure。只有确认并发active streams伤害current且pause真实反压网络后，才设计NetLane-owned transfer pressure。
 ## 不可改变的稳定边界
-- 不缩小 Reader**逻辑/retention** 7/3、holder 7/5/3/2、decode 2/1；动画2/4→3/7只控制预下载资格，50MiB只控制NetLane active speculative bytes，禁止再用删window member或延长cancel grace达成预算。
+- 不缩小 Reader**逻辑/retention** 7/3、DownloadDemand 7/3、holder 7/5/3/2、decode 2/1；动画流量只能通过physical task内frame credit/backpressure限制，不再用2/4 eligibility、estimated whole-body budget、删window member或延长cancel grace实现。
 - 不恢复 FlowGate、startup-buffer、跨 Reader used texture。
 - 不在 App/Reader新增 transport、正文缓存、frame/session owner。
 - 不恢复 synthetic Mihon chapter、标题/URL启发式目录去重，也不反转回 explicit chapterList-first；不得并行/重复调用两套章节API。

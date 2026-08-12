@@ -133,7 +133,6 @@ final class AppPreferencesController extends ChangeNotifier {
   bool _defaultVerticalStitch = false;
   int _detailsPreviewMaxItemsPerRow = 4;
   String _networkUserAgent = defaultNetworkUserAgent;
-  int _animatedWebpPrefetchBudgetMiB = 50;
   List<String> _sourceSearchHistory = <String>[];
   Set<String> _acknowledgedComicVersionNotices = <String>{};
   Map<String, ComicReaderSettings> _comicReaderSettings =
@@ -154,7 +153,6 @@ final class AppPreferencesController extends ChangeNotifier {
   bool get defaultVerticalStitch => _defaultVerticalStitch;
   int get detailsPreviewMaxItemsPerRow => _detailsPreviewMaxItemsPerRow;
   String get networkUserAgent => _networkUserAgent;
-  int get animatedWebpPrefetchBudgetMiB => _animatedWebpPrefetchBudgetMiB;
   List<String> get sourceSearchHistory =>
       List<String>.unmodifiable(_sourceSearchHistory);
   Set<String> get acknowledgedComicVersionNotices =>
@@ -234,12 +232,6 @@ final class AppPreferencesController extends ChangeNotifier {
     _networkUserAgent = _networkUserAgentValue(
       values['networkUserAgent'],
       fallback: _networkUserAgent,
-    );
-    _animatedWebpPrefetchBudgetMiB = _intInRange(
-      values['animatedWebpPrefetchBudgetMiB'],
-      fallback: _animatedWebpPrefetchBudgetMiB,
-      min: 16,
-      max: 256,
     );
     _sourceSearchHistory = _decodeSearchHistory(
       values['sourceSearchHistory'],
@@ -326,13 +318,6 @@ final class AppPreferencesController extends ChangeNotifier {
   }
 
   void resetNetworkUserAgent() => setNetworkUserAgent(defaultNetworkUserAgent);
-
-  void setAnimatedWebpPrefetchBudgetMiB(int value) {
-    final normalized = value.clamp(16, 256).toInt();
-    if (_disposed || _animatedWebpPrefetchBudgetMiB == normalized) return;
-    _animatedWebpPrefetchBudgetMiB = normalized;
-    _changed();
-  }
 
   void rememberSourceSearch(String value) {
     final normalized = value.trim();
@@ -467,7 +452,6 @@ final class AppPreferencesController extends ChangeNotifier {
       'defaultVerticalStitch': _defaultVerticalStitch,
       'detailsPreviewMaxItemsPerRow': _detailsPreviewMaxItemsPerRow,
       'networkUserAgent': _networkUserAgent,
-      'animatedWebpPrefetchBudgetMiB': _animatedWebpPrefetchBudgetMiB,
       'sourceSearchHistory': _sourceSearchHistory,
       'acknowledgedComicVersionNotices':
           _acknowledgedComicVersionNotices.toList(growable: false),

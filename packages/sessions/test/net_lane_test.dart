@@ -1102,125 +1102,63 @@ void _dev123NetLaneTests() {
     await lane.idle();
   });
 
-  test('speculative byte budget queues eligible animation work without consuming every slot', () async {
-    final lane = NetLane(maxActive: 6, highPriorityThreshold: 1000);
-    final releases = <String, Completer<void>>{};
-    final started = <String>[];
+  test('flow target updates reach the same active token without resubmission', () async {
+    final lane = NetLane(maxActive: 1);
+    final started = Completer<CancelToken>();
+    final release = Completer<void>();
 
-    void submitSpec(String key, int priority) {
-      final release = Completer<void>();
-      releases[key] = release;
-      lane.submitRanked(
-        key: key,
-        priority: priority,
-        bucket: 'remote:a',
-        bucketLimit: 6,
-        estimatedTransferBytes: 12 * 1024 * 1024,
-        speculativeBudgetBytes: 50 * 1024 * 1024,
-        speculativeBudgetExemptPriority: 900,
-        task: (_) async {
-          started.add(key);
-          await release.future;
-        },
-      );
-    }
-
-    submitSpec('next', 820);
-    submitSpec('next2', 800);
-    submitSpec('previous', 780);
-    submitSpec('near-a', 760);
-    submitSpec('near-b', 740);
-    submitSpec('near-c', 720);
-    await Future<void>.delayed(Duration.zero);
-
-    expect(started, hasLength(4));
-    expect(lane.speculativeActiveTasks, 4);
-    expect(lane.speculativeActiveBytes, 48 * 1024 * 1024);
-    expect(lane.queued, 2);
-    expect(lane.active, 4);
-
-    final currentRelease = Completer<void>();
-    var currentStarted = false;
     lane.submitRanked(
-      key: 'current',
-      priority: 1000,
+      key: 'animated',
+      priority: 780,
       bucket: 'remote:a',
-      bucketLimit: 6,
-      estimatedTransferBytes: 12 * 1024 * 1024,
-      speculativeBudgetBytes: 50 * 1024 * 1024,
-      speculativeBudgetExemptPriority: 900,
-      task: (_) async {
-        currentStarted = true;
-        await currentRelease.future;
+      bucketLimit: 1,
+      flowTargetFrames: 1,
+      task: (token) async {
+        started.complete(token);
+        await release.future;
       },
     );
-    await Future<void>.delayed(Duration.zero);
+    final token = await started.future;
+    expect(token.flowTargetFrames, 1);
 
-    expect(currentStarted, isTrue);
-    expect(lane.active, 5);
-    expect(lane.speculativeActiveBytes, 48 * 1024 * 1024);
+    expect(lane.updateFlowTargetFrames('animated', 5), isTrue);
+    expect(token.flowTargetFrames, 5);
+    expect(lane.active, 1);
 
-    currentRelease.complete();
-    for (final release in releases.values) {
-      if (!release.isCompleted) release.complete();
-    }
+    expect(lane.updateFlowTargetFrames('animated', 0), isTrue);
+    expect(token.flowTargetFrames, 0);
+    expect(lane.active, 1);
+
+    release.complete();
     await lane.idle();
   });
 
-  test('foreground task keeps speculative cost metadata when it demotes', () async {
-    final lane = NetLane(maxActive: 6, highPriorityThreshold: 1000);
-    final releases = <String, Completer<void>>{};
+  test('flow target can change while queued without changing admission rank', () async {
+    final lane = NetLane(maxActive: 1);
+    final blocker = Completer<void>();
+    final started = Completer<CancelToken>();
 
-    Future<void> submit(String key, int priority) async {
-      final release = Completer<void>();
-      releases[key] = release;
-      lane.submitRanked(
-        key: key,
-        priority: priority,
-        bucket: 'remote:a',
-        bucketLimit: 6,
-        estimatedTransferBytes: 12 * 1024 * 1024,
-        speculativeBudgetBytes: 50 * 1024 * 1024,
-        speculativeBudgetExemptPriority: 900,
-        task: (_) => release.future,
-      );
-      await Future<void>.delayed(Duration.zero);
-    }
-
-    await submit('current', 1000);
-    await submit('a', 820);
-    await submit('b', 800);
-    await submit('c', 780);
-    await submit('d', 760);
-    expect(lane.active, 5);
-    expect(lane.speculativeActiveBytes, 48 * 1024 * 1024);
-
-    expect(lane.updatePriority('current', 0), isTrue);
-    expect(lane.speculativeActiveBytes, 60 * 1024 * 1024);
-
-    var laterStarted = false;
     lane.submitRanked(
-      key: 'later',
-      priority: 740,
+      key: 'blocker',
+      priority: 900,
       bucket: 'remote:a',
-      bucketLimit: 6,
-      estimatedTransferBytes: 12 * 1024 * 1024,
-      speculativeBudgetBytes: 50 * 1024 * 1024,
-      speculativeBudgetExemptPriority: 900,
-      task: (_) async { laterStarted = true; },
+      bucketLimit: 1,
+      task: (_) => blocker.future,
     );
-    await Future<void>.delayed(Duration.zero);
-    expect(laterStarted, isFalse);
+    lane.submitRanked(
+      key: 'animated',
+      priority: 780,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      flowTargetFrames: 1,
+      task: (token) async => started.complete(token),
+    );
+    expect(lane.updateFlowTargetFrames('animated', 3), isTrue);
+    expect(lane.priorityOf('animated'), 780);
 
-    releases['a']!.complete();
-    releases['b']!.complete();
-    await Future<void>.delayed(Duration.zero);
-    await Future<void>.delayed(Duration.zero);
-    expect(laterStarted, isTrue);
-
-    for (final release in releases.values) {
-      if (!release.isCompleted) release.complete();
-    }
+    blocker.complete();
+    final token = await started.future;
+    expect(token.flowTargetFrames, 3);
     await lane.idle();
   });
 

@@ -391,36 +391,6 @@ final class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
                 ),
               ),
               const Divider(),
-              const _SettingsSectionTitle('Reader 预下载'),
-              ListTile(
-                key: const ValueKey<String>('animated-webp-prefetch-budget'),
-                title: const Text('动画 WebP 预下载预算'),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      '${widget.preferences.animatedWebpPrefetchBudgetMiB} MiB · '
-                      '动画最低预下载资格 previous 2 / next 4；水位逐步扩到 previous 3 / next 7，实际同时运行的动画 speculative bytes 受此预算约束。',
-                    ),
-                    Slider(
-                      min: 16,
-                      max: 256,
-                      divisions: 240,
-                      label: '${widget.preferences.animatedWebpPrefetchBudgetMiB} MiB',
-                      value: widget.preferences.animatedWebpPrefetchBudgetMiB
-                          .toDouble(),
-                      onChanged: (value) {
-                        setState(() {
-                          widget.preferences.setAnimatedWebpPrefetchBudgetMiB(
-                            value.round(),
-                          );
-                        });
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              const Divider(),
               const _SettingsSectionTitle('请求标识'),
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),

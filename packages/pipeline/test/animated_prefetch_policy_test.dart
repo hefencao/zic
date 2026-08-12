@@ -4,7 +4,7 @@ import 'package:telemetry/telemetry.dart';
 import 'package:test/test.dart';
 
 void main() {
-  ChapterManifest chapter({int pageBytes = 2 * 1024 * 1024}) => ChapterManifest(
+  ChapterManifest chapter() => ChapterManifest(
         sourceId: 'source',
         comicId: 'comic',
         chapter: const Chapter(
@@ -22,7 +22,6 @@ void main() {
             chapterId: 'chapter',
             index: index,
             uri: Uri.parse('https://example.test/$index.webp'),
-            byteLength: pageBytes,
             contentKindHint: ContentKindHint.webp,
           ),
         ),
@@ -54,11 +53,11 @@ void main() {
     nearRadius: 0,
   );
 
-  test('animated admission narrows network but preserves logical 3/7 window', () {
+  test('animation keeps all logical 3/7 downloads and assigns frame flow credits', () {
     final manifest = chapter();
     final obs = observation(12);
     final window = resolver.resolve(manifest, obs);
-    final admission = const AnimatedPrefetchPolicy().admit(
+    final flow = const AnimatedPrefetchPolicy().plan(
       chapter: manifest,
       observation: obs,
       window: window,
@@ -67,81 +66,65 @@ void main() {
     );
 
     expect(window.roles, hasLength(11));
-    expect(window.roleOf(9), isNot(PageRole.detached));
-    expect(window.roleOf(19), isNot(PageRole.detached));
-    expect(admission.admittedIndexes, <int>{10, 11, 12, 13, 14, 15, 16});
-    expect(admission.admittedIndexes, hasLength(7));
+    expect(flow.targetFramesByIndex, hasLength(11));
+    expect(flow.targetFramesFor(12), 0); // current is unlimited
+    expect(flow.targetFramesFor(13), 5);
+    expect(flow.targetFramesFor(14), 3);
+    expect(flow.targetFramesFor(11), 2);
+    expect(flow.targetFramesFor(9), 1);
+    expect(flow.targetFramesFor(15), 1);
+    expect(flow.targetFramesFor(19), 1);
   });
 
-  test('waterlines progressively open outer network pages to 3/7 maximum', () {
+  test('waterlines raise far frame credits without changing 3/7 membership', () {
     final manifest = chapter();
     final obs = observation(12);
     final window = resolver.resolve(manifest, obs);
     const policy = AnimatedPrefetchPolicy();
 
-    expect(
-      policy.admit(
-        chapter: manifest,
-        observation: obs,
-        window: window,
-        active: true,
-        expansionStage: 1,
-      ).admittedIndexes,
-      contains(17),
+    final stage1 = policy.plan(
+      chapter: manifest,
+      observation: obs,
+      window: window,
+      active: true,
+      expansionStage: 1,
     );
-    expect(
-      policy.admit(
-        chapter: manifest,
-        observation: obs,
-        window: window,
-        active: true,
-        expansionStage: 2,
-      ).admittedIndexes,
-      containsAll(<int>[9, 17]),
+    expect(stage1.targetFramesFor(15), 2);
+    expect(stage1.targetFramesFor(16), 2);
+    expect(stage1.targetFramesFor(9), 1);
+
+    final stage2 = policy.plan(
+      chapter: manifest,
+      observation: obs,
+      window: window,
+      active: true,
+      expansionStage: 2,
     );
-    expect(
-      policy.admit(
-        chapter: manifest,
-        observation: obs,
-        window: window,
-        active: true,
-        expansionStage: 3,
-      ).admittedIndexes,
-      containsAll(<int>[9, 17, 18]),
+    expect(stage2.targetFramesFor(10), 2);
+    expect(stage2.targetFramesFor(9), 2);
+
+    final stage3 = policy.plan(
+      chapter: manifest,
+      observation: obs,
+      window: window,
+      active: true,
+      expansionStage: 3,
     );
-    final full = policy.admit(
+    expect(stage3.targetFramesFor(17), 2);
+    expect(stage3.targetFramesFor(18), 2);
+
+    final stage4 = policy.plan(
       chapter: manifest,
       observation: obs,
       window: window,
       active: true,
       expansionStage: 4,
     );
-    expect(full.admittedIndexes, hasLength(11));
-    expect(full.admittedIndexes, containsAll(<int>[9, 17, 18, 19]));
+    expect(stage4.targetFramesFor(19), 2);
+    expect(stage4.targetFramesByIndex, hasLength(11));
   });
 
-  test('byte budget does not remove eligible 2/4 or waterline pages', () {
-    final manifest = chapter(pageBytes: 10 * 1024 * 1024);
-    final obs = observation(12);
-    final window = resolver.resolve(manifest, obs);
-    final admission = const AnimatedPrefetchPolicy(
-      maxSpeculativeBytes: 50 * 1024 * 1024,
-    ).admit(
-      chapter: manifest,
-      observation: obs,
-      window: window,
-      active: true,
-      expansionStage: 4,
-    );
-
-    expect(admission.minimumExceedsBudget, isTrue);
-    expect(admission.estimatedSpeculativeBytes, 100 * 1024 * 1024);
-    expect(admission.admittedIndexes, hasLength(11));
-    expect(admission.admittedIndexes, containsAll(<int>[9, 17, 18, 19]));
-    expect(admission.estimatedBytesFor(13), 10 * 1024 * 1024);
-  });
-
-  test('controller resets staged expansion on jump and restores static 3/7', () {
+  test('static classification restores unlimited 3/7 flow', () {
     final manifest = chapter();
     PipelineDelta? latest;
     final controller = PipelineController(
@@ -149,18 +132,17 @@ void main() {
       decodeTarget: DecodeTarget(physicalWidth: 1080, physicalHeight: 1920),
       clock: _TestClock(),
       windowResolver: resolver,
-      policy: const HeuristicPolicy(
-        decodeWarmPages: true,
-        animatedPrefetchPolicy: AnimatedPrefetchPolicy(
-          maxSpeculativeBytes: 50 * 1024 * 1024,
-        ),
-      ),
+      policy: const HeuristicPolicy(decodeWarmPages: true),
       guard: const PolicyGuard(maxDownloadDemands: 11),
       onUpdate: (update) => latest = update,
     );
 
     controller.accept(observation(12));
-    expect(latest!.plan.downloads, hasLength(7));
+    expect(latest!.plan.downloads, hasLength(11));
+    expect(
+      latest!.plan.downloads.values.where((demand) => demand.flowTargetFrames > 0),
+      isNotEmpty,
+    );
     final firstRevision = controller.revision;
     expect(
       controller.observeDecodeWaterline(
@@ -169,15 +151,17 @@ void main() {
       ),
       isTrue,
     );
-    expect(latest!.plan.downloads, hasLength(8));
-
-    controller.accept(observation(13));
-    expect(latest!.plan.downloads, hasLength(7));
-    expect(controller.classifyPage(pageIndex: 13, animated: false), isTrue);
     expect(latest!.plan.downloads, hasLength(11));
 
-    // Stale refill evidence from the previous plan cannot reopen animation
-    // prefetch after the jump/classification revision has moved on.
+    controller.accept(observation(13));
+    expect(latest!.plan.downloads, hasLength(11));
+    expect(controller.classifyPage(pageIndex: 13, animated: false), isTrue);
+    expect(latest!.plan.downloads, hasLength(11));
+    expect(
+      latest!.plan.downloads.values.every((demand) => demand.flowTargetFrames == 0),
+      isTrue,
+    );
+
     expect(
       controller.observeDecodeWaterline(
         planRevision: firstRevision,

@@ -550,6 +550,7 @@ final class _SourceResourceTransport implements ControlledTransport {
       rangeSupported:
           response.statusCode == HttpStatus.partialContent ||
               response.headers.value(HttpHeaders.acceptRangesHeader) == 'bytes',
+      flowControl: ByteResponseFlowControl.streamBackpressure,
       onDiscard: responseBody.abort,
     );
   }
@@ -603,6 +604,7 @@ final class _SourceResourceTransport implements ControlledTransport {
       rangeSupported: response.rangeSupported,
       disposition: response.disposition,
       bodyAuthority: response.bodyAuthority,
+      flowControl: response.flowControl,
       diagnostics: <String, Object?>{
         ...response.diagnostics,
         'sourceRequestPlanMicros': requestPlanMicros,

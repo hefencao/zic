@@ -154,6 +154,7 @@ final class HttpTransport implements Transport {
       validators: Validators(etag: etag, lastModified: modified),
       rangeSupported:
           acceptsRanges || response.statusCode == HttpStatus.partialContent,
+      flowControl: ByteResponseFlowControl.streamBackpressure,
       onDiscard: () => response.drain<void>(),
     );
   }

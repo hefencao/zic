@@ -1,6 +1,6 @@
 # ADR 0228：动画 speculative encoded work 的 byte-weighted NetLane admission
 
-状态：Accepted。细化 ADR 0227 的 50MiB 预算语义；不改变 RoleWindow、2/4 最低资格、3/7 上界、水位顺序或 ADR0226 destructive-preemption transaction。
+状态：Superseded。细化 ADR 0227 的 50MiB 预算语义；不改变 RoleWindow、2/4 最低资格、3/7 上界、水位顺序或 ADR0226 destructive-preemption transaction。
 
 ## 问题
 
