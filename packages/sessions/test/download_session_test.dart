@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:domain/domain.dart';
@@ -264,14 +265,14 @@ void main() {
   test('resident-cache late Reader replays from external byte authority',
       () async {
     final bytes = <int>[...'RIFF....WEBP'.codeUnits, 1, 2, 3, 4, 5, 6];
-    session.beginDurableCachedIngress(
+    session.beginResidentImmutableIngress(
       validators: const Validators(),
       totalLength: bytes.length,
     );
-    session.appendDurableCachedIngress(0, bytes);
-    session.sealDurableCachedIngress();
+    session.appendResidentImmutableIngress(0, bytes);
+    session.sealResidentImmutableIngress();
 
-    expect(session.residentCacheBacked, isTrue);
+    expect(session.residentBodyBacked, isTrue);
     expect(session.committedLength, bytes.length);
     expect(session.artifact.committedLength, 0);
 
@@ -405,6 +406,36 @@ void main() {
     await session.dispose();
 
     expect(states.last, DownloadState.disposed);
+  });
+
+  test('legacy unscoped resume validators are discarded but length survives',
+      () async {
+    await session.dispose();
+    final partial = File('${temp.path}/partial/page.webp');
+    await partial.parent.create(recursive: true);
+    await partial.writeAsBytes(<int>[1, 2, 3, 4]);
+    await File('${partial.path}.meta').writeAsString(jsonEncode(<String, Object?>{
+      'version': 2,
+      'downloadKey': _id().key,
+      'download': _id().toJson(),
+      'validators': const Validators(etag: 'legacy-v2').toJson(),
+      'totalLength': 100,
+    }));
+
+    session = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: partial.path,
+        finalPath: '${temp.path}/cache/page.webp',
+      ),
+      clock: FakeMonoClock(),
+    );
+    final restored = await session.restore();
+
+    expect(restored.committedLength, 4);
+    expect(restored.validators.isEmpty, isTrue);
+    expect(session.validatorRequestUri, isNull);
+    expect(restored.totalLength, 100);
   });
 
   test('corrupt resume metadata preserves committed media bytes', () async {

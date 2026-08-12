@@ -147,7 +147,7 @@ void main() {
     ).run();
     await handoff.drain(registry.sessions);
 
-    expect(session.residentCacheBacked, isTrue);
+    expect(session.residentBodyBacked, isTrue);
     expect(session.residentSource, 'reopenable-immutable-source');
     expect(session.artifact.committedLength, 0);
     expect(backend.values, isEmpty);

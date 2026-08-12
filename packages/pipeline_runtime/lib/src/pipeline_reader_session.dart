@@ -930,10 +930,11 @@ final class PipelineReaderSession {
 
     final uri = session.id.canonicalUri;
     if (_isDirectImmutableLocalUri(uri)) {
+      final resumeValidators = session.resumeValidatorsFor(uri);
       final response = await _baseTransportFor(uri).open(
         uri,
         range: ByteRange(start: 0, end: endExclusive - 1),
-        validators: session.validators,
+        validators: resumeValidators.canResume ? resumeValidators : null,
       );
       final expectedTotal = session.totalLength;
       if (expectedTotal != null &&
@@ -946,8 +947,8 @@ final class PipelineReaderSession {
               '${response.totalLength}/$expectedTotal',
         );
       }
-      if (session.validators.canResume &&
-          !session.validators.matches(response.validators)) {
+      if (resumeValidators.canResume &&
+          !resumeValidators.matches(response.validators)) {
         await response.discard();
         throw const Failure(
           code: ErrorCode.artifactCorruption,
@@ -1160,12 +1161,13 @@ final class PipelineReaderSession {
   ) async {
     final started = clock.nowMicros();
     final session = _downloads.get(id);
+    final resumeValidators = session.resumeValidatorsFor(asset.uri);
     final response = await _baseTransportFor(asset.uri).open(
       asset.uri,
-      validators: session.validators,
+      validators: resumeValidators.canResume ? resumeValidators : null,
     );
-    if (session.validators.canResume &&
-        !session.validators.matches(response.validators)) {
+    if (resumeValidators.canResume &&
+        !resumeValidators.matches(response.validators)) {
       await response.discard();
       throw const Failure(
         code: ErrorCode.artifactCorruption,

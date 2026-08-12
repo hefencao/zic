@@ -148,7 +148,7 @@ final class PartialDownloadHandoff {
         id: session.id,
         entry: PartialDownloadEntry(
           length: length,
-          validators: session.validators,
+          validators: session.resumeValidatorsFor(session.id.canonicalUri),
           totalLength: session.totalLength,
           open: ({required int start}) => session.artifact.readChunks(
             start: start,

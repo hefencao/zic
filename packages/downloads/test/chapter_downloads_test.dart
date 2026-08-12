@@ -671,7 +671,7 @@ void main() {
       canonicalUri: source.uri,
     );
     final physical = first.transferRuntime.registry.get(id);
-    expect(physical.residentCacheBacked, isTrue);
+    expect(physical.residentBodyBacked, isTrue);
     expect(physical.residentBodyAuthority, ByteResponseBodyAuthority.source);
     expect(physical.residentSource, 'reopenable-immutable-source');
     expect(physical.artifact.committedLength, 0);

@@ -65,6 +65,47 @@ void main() {
     expect(await restored.artifact.readBytes(), bytes);
   });
 
+  test('physical partial never persists validators from an aliased provider',
+      () async {
+    final root = await Directory.systemTemp.createTemp('partial-validator-scope-');
+    addTearDown(() async => root.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'physical',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'old',
+      canonicalUri: Uri.parse('https://example.test/old.webp'),
+    );
+    final aliasedUri = Uri.parse('https://example.test/new.webp');
+    final registry = DownloadRegistry(
+      layout: CacheLayout(root.path),
+      clock: SystemClock(),
+    );
+    addTearDown(registry.dispose);
+    final session = registry.get(id);
+    await session.restore();
+    await session.bindResponse(
+      validators: const Validators(etag: 'new-provider-v2'),
+      validatorRequestUri: aliasedUri,
+      totalLength: 1024,
+    );
+    final writer = session.acquireWriter();
+    final bytes = Uint8List.fromList(List<int>.generate(320, (i) => i & 0xff));
+    await session.append(writer, 0, bytes);
+    await session.pause(writer);
+
+    final backend = _PartialStore();
+    final handoff = PartialDownloadHandoff(store: backend);
+    expect(await handoff.persist(session), isTrue);
+
+    expect(backend.partial[id]?.bytes, bytes);
+    expect(backend.partial[id]?.validators.isEmpty, isTrue);
+    expect(backend.partial[id]?.totalLength, 1024);
+  });
+
   test('verified equivalent cold partial restores without copying exact entry',
       () async {
     final root = await Directory.systemTemp.createTemp('partial-equivalent-');

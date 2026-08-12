@@ -192,10 +192,11 @@ final class DownloadTransferOwner {
       );
     }
     final sourceId = claim.exactId;
+    final resumeValidators = session.resumeValidatorsFor(sourceId.canonicalUri);
     final response = await claim.consumer.transportFor(sourceId.canonicalUri).open(
           sourceId.canonicalUri,
           range: ByteRange(start: 0, end: endExclusive - 1),
-          validators: session.validators,
+          validators: resumeValidators.canResume ? resumeValidators : null,
         );
     try {
       if (response.rangeStart != 0) {
@@ -214,8 +215,8 @@ final class DownloadTransferOwner {
               '${response.totalLength}/$expectedTotal',
         );
       }
-      if (session.validators.canResume &&
-          !session.validators.matches(response.validators)) {
+      if (resumeValidators.canResume &&
+          !resumeValidators.matches(response.validators)) {
         throw const Failure(
           code: ErrorCode.artifactCorruption,
           message: 'resident replay source validators changed',

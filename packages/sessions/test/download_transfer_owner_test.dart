@@ -390,7 +390,7 @@ void main() {
     final session = registry.get(physical);
     await session.restore();
     await session.bindResponse(
-      validators: const Validators(etag: 'shared-v1'),
+      validators: const Validators(etag: 'old-provider-v1'),
       totalLength: bytes.length,
     );
     final writer = session.acquireWriter();
@@ -443,7 +443,8 @@ void main() {
     expect(registry.resolvePhysicalId(exact), physical);
     expect(transport.openedUris, isNotEmpty);
     expect(transport.openedUris, everyElement(exact.canonicalUri));
-    expect(transport.ranges.first?.start, 32);
+    expect(transport.ranges.first?.start, 0);
+    expect(transport.validatorsSeen.first, isNull);
     expect(await File(session.artifact.finalPath).readAsBytes(), bytes);
   });
 
@@ -585,6 +586,7 @@ final class _ExactUriRangeTransport implements Transport {
   final List<int> bytes;
   final List<Uri> openedUris = <Uri>[];
   final List<ByteRange?> ranges = <ByteRange?>[];
+  final List<Validators?> validatorsSeen = <Validators?>[];
 
   @override
   Future<ByteResponse> open(
@@ -594,13 +596,14 @@ final class _ExactUriRangeTransport implements Transport {
   }) async {
     openedUris.add(uri);
     ranges.add(range);
+    validatorsSeen.add(validators);
     if (uri != expectedUri) {
       throw Failure(
         code: ErrorCode.source,
         message: 'unexpected provider URI: $uri',
       );
     }
-    const current = Validators(etag: 'shared-v1');
+    const current = Validators(etag: 'new-provider-v2');
     final canRange = range != null &&
         range.start <= bytes.length &&
         (validators == null || validators.isEmpty || validators.matches(current));

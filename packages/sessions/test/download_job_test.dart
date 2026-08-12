@@ -82,6 +82,50 @@ void main() {
     expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
   });
 
+  test('equivalent provider URI never reuses foreign resume validators', () async {
+    final bytes = <int>[
+      ...'RIFF'.codeUnits,
+      0, 0, 0, 0,
+      ...'WEBP'.codeUnits,
+      ...List<int>.generate(128 * 1024, (index) => index & 0xff),
+    ];
+    final session = createSession();
+    final oldProvider = FakeTransport(
+      bytes: bytes,
+      chunkSize: 4096,
+      failAfterBytes: 96 * 1024,
+      validators: const Validators(etag: 'old-provider-v1'),
+    );
+    await expectLater(
+      DownloadJob(transport: oldProvider, session: session).run(),
+      throwsA(isA<Failure>()),
+    );
+    final preservedLength = session.committedLength;
+    expect(session.validatorRequestUri, session.id.canonicalUri);
+
+    final newUri = Uri.parse('https://example.test/new-version.webp');
+    final newProvider = FakeTransport(
+      bytes: bytes,
+      chunkSize: 4096,
+      validators: const Validators(etag: 'new-provider-v2'),
+    );
+    final result = await DownloadJob(
+      transport: newProvider,
+      session: session,
+      requestUri: newUri,
+    ).run();
+
+    expect(result.state, DownloadState.promoted);
+    expect(newProvider.requests, hasLength(1));
+    expect(
+      newProvider.requests.single.range?.start,
+      preservedLength - 64 * 1024,
+    );
+    expect(newProvider.requests.single.validators, isNull);
+    expect(session.validatorRequestUri, newUri);
+    expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
+  });
+
   test('validator mismatch catches up full body without shrinking partial', () async {
     final bytes = List<int>.generate(20, (index) => index);
     final session = createSession();

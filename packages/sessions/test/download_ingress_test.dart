@@ -44,7 +44,7 @@ void main() {
     await DownloadJob(transport: const FileTransport(), session: session).run();
 
     expect(session.state, DownloadState.promoted);
-    expect(session.residentCacheBacked, isTrue);
+    expect(session.residentBodyBacked, isTrue);
     expect(File(session.artifact.partialPath).existsSync(), isFalse);
     expect(File(session.artifact.finalPath).existsSync(), isFalse);
     expect(factory.created.single.bytes, bytes);
@@ -89,7 +89,7 @@ void main() {
 
     expect(result.state, DownloadState.promoted);
     expect(result.committedLength, bytes.length);
-    expect(session.residentCacheBacked, isTrue);
+    expect(session.residentBodyBacked, isTrue);
     expect(factory.created.single.bytes, bytes);
     expect(factory.created.single.sealed, isTrue);
     expect(File(session.artifact.partialPath).existsSync(), isFalse);
@@ -133,7 +133,7 @@ void main() {
 
     expect(session.state, DownloadState.idle);
     expect(session.committedLength, 0);
-    expect(session.residentCacheBacked, isFalse);
+    expect(session.residentBodyBacked, isFalse);
   });
 
   test('source listener failures do not fail the authoritative download', () async {
@@ -174,7 +174,7 @@ void main() {
     ).run();
 
     expect(result.state, DownloadState.promoted);
-    expect(session.residentCacheBacked, isTrue);
+    expect(session.residentBodyBacked, isTrue);
     expect(File(result.artifact.partialPath).existsSync(), isFalse);
     expect(File(result.artifact.finalPath).existsSync(), isFalse);
     await session.dispose();

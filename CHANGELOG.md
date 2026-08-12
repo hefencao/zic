@@ -1,3 +1,8 @@
+## 0.31.0-dev.235：Provider-scoped resume validators
+- 02:58真机Trace确认partial复用不是缺失：15次verified acquire alias全部join既有physical owner，4次multi-owner全部`preferred-existing-owner`；dev.234 retention后Reader dispose的physical session规模稳定为41→41→41→42。与此同时4次full-body prefix catch-up累计13,466,264 duplicate bytes。
+- 对照dev.227 provider-exact request identity后定位冗余下载根因：physical session共享committed prefix是正确的，但ETag/Last-Modified没有记录产生它的provider URI；跨版本B借用physical A时会把A validator发给B，Trace中704,512-byte A partial切到B后`strongRangeRejected→200 full-body`，随后切回A URI又能206。
+- `DownloadSession`现将validator与actual provider request URI绑定；`DownloadJob`、resident replay、Pipeline immutable replay与cold partial handoff统一经`resumeValidatorsFor(uri)`取strong validator。scope mismatch保留partial/totalLength并走既有validatorless overlap，不再错误发送foreign `If-Range`。v2无scope metadata只丢validator知识、不丢partial或totalLength。删除仅测试仍引用的`residentCacheBacked/begin|append|sealDurableCachedIngress`兼容别名。
+
 ## 0.31.0-dev.234：Bounded physical transfer retention
 - 01:41真机Trace确认dev.233 multi-owner收口生效：38次verified acquire alias中4次`candidateOwners=2`全部选择`preferred-existing-owner`，`rejected-ambiguous-existing-owners`与`taskFailed`均为0；promotion自动handoff重复probe仅剩2次`skip-existing`。同时4次Reader dispose时共享physical registry规模从43→50→100→107持续增长，说明logical claim detach不再错误cold-store之后，composition hot owner缺少自己的有界退休策略。
 - 新增downloads层`PhysicalTransferRetention`：idle promoted session先等待既有ordinary artifact handoff收敛后机械退休；unfinished idle partial仅在composition hot预算超过32 sessions或256 MiB时由既有`PartialDownloadHandoff`cold-store，再退休physical session。cold-store失败必须保留hot owner，不得为预算丢prefix。

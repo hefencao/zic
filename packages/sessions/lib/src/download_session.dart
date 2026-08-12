@@ -127,6 +127,7 @@ final class DownloadSession {
   final Map<String, int> _demandPriorities = <String, int>{};
   ContentKind _contentKind = ContentKind.unknown;
   Validators _validators = const Validators();
+  Uri? _validatorRequestUri;
   int? _totalLength;
   int _networkStartLength = 0;
   int? _residentLength;
@@ -151,9 +152,6 @@ final class DownloadSession {
   int get committedLength => _residentLength ?? artifact.committedLength;
   bool get residentBodyBacked => _residentBodyBacked;
 
-  /// Compatibility alias for pre-dev.223 callers. This does not imply that
-  /// ArtifactCacheManager owns the resident body.
-  bool get residentCacheBacked => residentBodyBacked;
   ByteResponseBodyAuthority? get residentBodyAuthority =>
       _residentBodyBacked ? _residentBodyAuthority : null;
 
@@ -163,7 +161,23 @@ final class DownloadSession {
         ByteResponseBodyAuthority.source => 'reopenable-immutable-source',
         null => null,
       };
+  /// Last validators observed from a transport response. Network resume logic
+  /// MUST use [resumeValidatorsFor] so validators cannot cross provider URIs
+  /// when a physical session is shared by verified-equivalent exact requests.
   Validators get validators => _validators;
+  Uri? get validatorRequestUri =>
+      _validators.isEmpty ? null : _validatorRequestUri;
+
+  Validators resumeValidatorsFor(Uri requestUri) {
+    if (_validators.isEmpty || _validatorRequestUri != requestUri) {
+      return const Validators();
+    }
+    return _validators;
+  }
+
+  bool hasValidatorsForOtherRequest(Uri requestUri) =>
+      _validators.canResume && _validatorRequestUri != requestUri;
+
   int? get totalLength => _totalLength;
   int get networkStartLength => _networkStartLength;
   ContentKind get contentKind => _contentKind;
@@ -289,9 +303,20 @@ final class DownloadSession {
             final rawLength = meta['totalLength'];
             if (rawValidators is Map &&
                 (rawLength == null || rawLength is int)) {
-              _validators = Validators.fromJson(
+              final restoredValidators = Validators.fromJson(
                 Map<String, Object?>.from(rawValidators),
               );
+              final rawValidatorRequestUri = meta['validatorRequestUri'];
+              final restoredValidatorRequestUri = rawValidatorRequestUri is String
+                  ? Uri.tryParse(rawValidatorRequestUri)
+                  : null;
+              _validators = restoredValidators.isEmpty ||
+                      restoredValidatorRequestUri == null
+                  ? const Validators()
+                  : restoredValidators;
+              _validatorRequestUri = _validators.isEmpty
+                  ? null
+                  : restoredValidatorRequestUri;
               _totalLength = rawLength as int?;
               validMeta = true;
             }
@@ -309,6 +334,7 @@ final class DownloadSession {
       }
       if (!validMeta) {
         _validators = const Validators();
+        _validatorRequestUri = null;
         _totalLength = null;
         if (wrongOwner) {
           await _restartArtifact();
@@ -336,19 +362,25 @@ final class DownloadSession {
   Future<void> bindResponse({
     required Validators validators,
     int? totalLength,
+    Uri? validatorRequestUri,
   }) async {
     _requireNotDisposed();
     _ingressProjectionRevision++;
     _validators = validators;
+    _validatorRequestUri = validators.isEmpty
+        ? null
+        : (validatorRequestUri ?? id.canonicalUri);
     _totalLength = totalLength;
     _expectIngressLength(totalLength);
     await artifact.writeMeta(<String, Object?>{
-      'version': 2,
+      'version': 3,
       'downloadKey': id.key,
       'download': id.toJson(),
       'uri': id.canonicalUri.toString(),
       'sourceRevision': id.sourceRevision,
       'validators': validators.toJson(),
+      if (_validatorRequestUri != null)
+        'validatorRequestUri': _validatorRequestUri.toString(),
       if (totalLength != null) 'totalLength': totalLength,
     });
     await _syncCache(CacheState.partial);
@@ -358,6 +390,7 @@ final class DownloadSession {
   void beginResidentImmutableIngress({
     required Validators validators,
     required int totalLength,
+    Uri? validatorRequestUri,
     ByteResponseBodyAuthority bodyAuthority = ByteResponseBodyAuthority.source,
   }) {
     _requireNotDisposed();
@@ -378,6 +411,9 @@ final class DownloadSession {
     _residentBodyAuthority = bodyAuthority;
     _residentLength = 0;
     _validators = validators;
+    _validatorRequestUri = validators.isEmpty
+        ? null
+        : (validatorRequestUri ?? id.canonicalUri);
     _totalLength = totalLength;
     _networkStartLength = 0;
     _prefix = <int>[];
@@ -468,28 +504,6 @@ final class DownloadSession {
     });
     return snapshot;
   }
-
-  /// Compatibility alias retained while historical callers migrate.
-  void beginDurableCachedIngress({
-    required Validators validators,
-    required int totalLength,
-    String residentSource = 'durable-cache',
-  }) =>
-      beginResidentImmutableIngress(
-        validators: validators,
-        totalLength: totalLength,
-        bodyAuthority: residentSource == 'durable-cache' ||
-                residentSource == 'durable-artifact-cache'
-            ? ByteResponseBodyAuthority.artifactCache
-            : ByteResponseBodyAuthority.source,
-      );
-
-  /// Compatibility alias retained while historical callers migrate.
-  void appendDurableCachedIngress(int offset, List<int> bytes) =>
-      appendResidentImmutableIngress(offset, bytes);
-
-  /// Compatibility alias retained while historical callers migrate.
-  DownloadSnapshot sealDurableCachedIngress() => sealResidentImmutableIngress();
 
   WriterLease acquireWriter() {
     _requireNotDisposed();
@@ -750,6 +764,7 @@ final class DownloadSession {
     _epoch = _epoch.next();
     _resetIngressProjections(_epoch);
     _validators = const Validators();
+    _validatorRequestUri = null;
     _totalLength = null;
     _networkStartLength = 0;
     _residentLength = null;
@@ -783,6 +798,7 @@ final class DownloadSession {
     await artifact.deleteAll();
     _state = DownloadState.idle;
     _validators = const Validators();
+    _validatorRequestUri = null;
     _totalLength = null;
     _networkStartLength = 0;
     _residentLength = null;

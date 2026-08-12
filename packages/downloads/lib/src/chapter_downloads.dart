@@ -760,7 +760,7 @@ final class PersistentDownloadArtifactStore
     final length = session.artifact.committedLength;
     return PartialDownloadEntry(
       length: length,
-      validators: session.validators,
+      validators: session.resumeValidatorsFor(id.canonicalUri),
       totalLength: session.totalLength,
       open: ({required int start}) => session.artifact.readChunks(start: start),
     );

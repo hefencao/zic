@@ -44,10 +44,10 @@ for token in (
 ):
     require(cache_transport, token, "artifact cache transport")
 for token in (
-    "beginDurableCachedIngress",
-    "appendDurableCachedIngress",
-    "sealDurableCachedIngress",
-    "residentCacheBacked",
+    "beginResidentImmutableIngress",
+    "appendResidentImmutableIngress",
+    "sealResidentImmutableIngress",
+    "residentBodyBacked",
     "'cacheResident': true",
 ):
     require(download, token, "authoritative cache-resident DownloadSession")

@@ -133,7 +133,7 @@ for token in (
     require(transport, token, 'immutable body authority split')
 for token in (
     'bool get residentBodyBacked',
-    'bool get residentCacheBacked => residentBodyBacked;',
+    'bool get residentBodyBacked',
     'ByteResponseBodyAuthority? get residentBodyAuthority',
     'void beginResidentImmutableIngress(',
     'void appendResidentImmutableIngress(',

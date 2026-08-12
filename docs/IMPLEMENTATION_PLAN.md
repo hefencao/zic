@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：dev.234新增composition-owned有界physical retention：真机确认共享physical registry不再随Reader轮次43→50→100→107式无界增长，ordinary claim churn仍不触发cold partial，只有`hot-retention-pressure`/runtime dispose会产生partial handoff；同时继续执行dev.231 Reader+required chapter同physical transfer的`stored-required-exact-alias`设备验证。
+- P0：dev.235将partial bytes与resume validator authority拆开：真机确认跨版本physical alias后`providerValidatorMismatch=true`只触发<=64KiB validatorless overlap、不得再因foreign ETag/Last-Modified出现`strongRangeRejected→200 full-body`；同时量化`duplicatePrefixBytes`是否从本轮13,466,264 bytes显著下降，并继续执行dev.231 `stored-required-exact-alias`设备验证。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环

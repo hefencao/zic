@@ -89,6 +89,9 @@ final class DownloadJob {
 
     final preservedLength = session.committedLength;
     final preservedTotalLength = session.totalLength;
+    final resumeValidators = session.resumeValidatorsFor(_requestUri);
+    final providerValidatorMismatch = preservedLength > 0 &&
+        session.hasValidatorsForOtherRequest(_requestUri);
     var start = preservedLength;
     var fullBodyCatchup = false;
     var validatorlessRangeProbe = false;
@@ -96,7 +99,7 @@ final class DownloadJob {
     var probeBytes = 0;
     ByteResponse response;
     cancel?.throwIfCancelled();
-    if (start > 0 && !session.validators.canResume) {
+    if (start > 0 && !resumeValidators.canResume) {
       if (preservedTotalLength != null &&
           preservedTotalLength >= start) {
         probeBytes = start < _validatorlessResumeProbeBytes
@@ -121,6 +124,7 @@ final class DownloadJob {
               'resumeProbeStatusCode': response.statusCode,
               'resumeProbeAccepted': false,
               'fullBodyResponseReused': true,
+              if (providerValidatorMismatch) 'providerValidatorMismatch': true,
             },
           );
           fullBodyCatchup = true;
@@ -135,6 +139,7 @@ final class DownloadJob {
               'resumeProbeAccepted': false,
               'duplicatePrefixBytes': 0,
               'fullBodyResponseReused': true,
+              if (providerValidatorMismatch) 'providerValidatorMismatch': true,
             },
           );
         } else {
@@ -164,6 +169,7 @@ final class DownloadJob {
               'resumeProbeAccepted': false,
               'duplicatePrefixBytes': 0,
               'fullBodyResponseReused': false,
+              if (providerValidatorMismatch) 'providerValidatorMismatch': true,
             },
           );
         }
@@ -171,8 +177,9 @@ final class DownloadJob {
         await _deferCostlyFullBodyCatchupIfNeeded(
           preservedLength: preservedLength,
           cancel: cancel,
-          diagnostics: const <String, Object?>{
+          diagnostics: <String, Object?>{
             'resumeProbeAttempted': false,
+            if (providerValidatorMismatch) 'providerValidatorMismatch': true,
           },
         );
         response = await _open(0, cancel);
@@ -181,9 +188,10 @@ final class DownloadJob {
           restarted: true,
           strategy: 'full-body-prefix-catchup',
           playablePrefixPreserved: true,
-          diagnostics: const <String, Object?>{
+          diagnostics: <String, Object?>{
             'resumeProbeAttempted': false,
             'duplicatePrefixBytes': 0,
+            if (providerValidatorMismatch) 'providerValidatorMismatch': true,
           },
         );
       }
@@ -240,7 +248,7 @@ final class DownloadJob {
         try {
           requireResumeResponse(
             expectedStart: start,
-            expectedValidators: session.validators,
+            expectedValidators: resumeValidators,
             response: response,
           );
           session.recordResume(
@@ -326,6 +334,7 @@ final class DownloadJob {
       session.beginResidentImmutableIngress(
         validators: response.validators,
         totalLength: response.totalLength!,
+        validatorRequestUri: _requestUri,
         bodyAuthority: response.bodyAuthority,
       );
       var residentOffset = 0;
@@ -379,6 +388,7 @@ final class DownloadJob {
             'resumeProbeStatusCode': response.statusCode,
             'resumeProbeAccepted': false,
             'duplicatePrefixBytes': duplicatePrefixBytes,
+            if (providerValidatorMismatch) 'providerValidatorMismatch': true,
           },
         );
         await iterator.cancel();
@@ -397,6 +407,7 @@ final class DownloadJob {
           'resumeProbeStatusCode': response.statusCode,
           'resumeProbeAccepted': true,
           'duplicatePrefixBytes': duplicatePrefixBytes,
+          if (providerValidatorMismatch) 'providerValidatorMismatch': true,
         },
       );
     } else if (fullBodyCatchup) {
@@ -421,6 +432,7 @@ final class DownloadJob {
           playablePrefixPreserved: true,
           diagnostics: <String, Object?>{
             'duplicatePrefixBytes': duplicatePrefixBytes,
+            if (providerValidatorMismatch) 'providerValidatorMismatch': true,
           },
         );
         await iterator.cancel();
@@ -446,6 +458,7 @@ final class DownloadJob {
     await session.bindResponse(
       validators: response.validators,
       totalLength: response.totalLength,
+      validatorRequestUri: _requestUri,
     );
     final pending = BytesBuilder(copy: false);
     if (catchupRemainder.isNotEmpty) {
@@ -709,19 +722,20 @@ final class DownloadJob {
     final controlled = transport is ControlledTransport
         ? transport as ControlledTransport
         : null;
-    if (start > 0 && session.validators.canResume) {
+    final validators = session.resumeValidatorsFor(_requestUri);
+    if (start > 0 && validators.canResume) {
       if (controlled != null) {
         return controlled.openControlled(
           _requestUri,
           range: ByteRange(start: start),
-          validators: session.validators,
+          validators: validators,
           control: cancel,
         );
       }
       return transport.open(
         _requestUri,
         range: ByteRange(start: start),
-        validators: session.validators,
+        validators: validators,
       );
     }
     if (controlled != null) {
