@@ -560,6 +560,55 @@ void main() {
     expect(actions, containsAllInOrder(<Object?>['paused', 'resumed', 'paused', 'resumed']));
   });
 
+
+  test('consumer-paced frame credit pseudo-pauses without reopen', () async {
+    final trace = MemoryTraceSink();
+    final bytes = _flowAnimatedWebp(<int>[48, 48, 48]);
+    final session = DownloadSession(
+      id: DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'pseudo-flow-controlled',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('runtime://flow.webp'),
+      ),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/pseudo-flow.webp',
+        finalPath: '${temp.path}/cache/pseudo-flow.webp',
+      ),
+      clock: FakeMonoClock(),
+      traceSink: trace,
+    );
+    final transport = _ConsumerPacedBodyTransport(bytes, chunkSize: 17);
+    final token = CancelToken(flowTargetFrames: 1);
+    final run = DownloadJob(transport: transport, session: session).run(
+      cancel: token,
+    );
+
+    await _waitForFlowAction(trace, 'pseudo-paused', targetFrames: 1);
+    expect(transport.openCount, 1);
+    expect(session.state, DownloadState.receiving);
+
+    token.updateFlowTargetFrames(0);
+    final result = await run.timeout(const Duration(seconds: 2));
+    expect(result.state, DownloadState.promoted);
+    expect(transport.openCount, 1);
+    expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
+    expect(
+      trace.events.any(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.payload['stage'] == 'transport-flow-control' &&
+            event.payload['action'] == 'pseudo-resumed' &&
+            event.payload['mode'] == 'consumerPacing',
+      ),
+      isTrue,
+    );
+  });
+
 }
 
 
@@ -639,6 +688,40 @@ List<int> _flowU32(int value) => <int>[
       (value >> 16) & 0xff,
       (value >> 24) & 0xff,
     ];
+
+
+final class _ConsumerPacedBodyTransport implements Transport {
+  _ConsumerPacedBodyTransport(this.bytes, {required this.chunkSize});
+
+  final List<int> bytes;
+  final int chunkSize;
+  int openCount = 0;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async {
+    openCount++;
+    final start = range?.start ?? 0;
+    Stream<List<int>> body() async* {
+      for (var offset = start; offset < bytes.length; offset += chunkSize) {
+        final end = (offset + chunkSize).clamp(0, bytes.length).toInt();
+        yield bytes.sublist(offset, end);
+      }
+    }
+    return ByteResponse(
+      bytes: body(),
+      statusCode: start == 0 ? HttpStatus.ok : HttpStatus.partialContent,
+      rangeStart: start,
+      totalLength: bytes.length,
+      rangeSupported: true,
+      flowControl: ByteResponseFlowControl.consumerPacing,
+      validators: const Validators(etag: 'pseudo-flow-v1'),
+    );
+  }
+}
 
 final class _BlockingTransport implements Transport {
   final Completer<void> firstChunk = Completer<void>();

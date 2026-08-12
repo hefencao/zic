@@ -112,6 +112,7 @@ final class LoaderTransport implements ControlledTransport {
       totalLength: bytes.length,
       validators: currentValidators,
       rangeSupported: true,
+      flowControl: ByteResponseFlowControl.consumerPacing,
     );
   }
 }

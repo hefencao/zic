@@ -1,3 +1,9 @@
+## 0.31.0-dev.251：unsupported transport consumer-pacing伪pause收口
+
+- 16:42真机Trace中3/7 frame credit已产生35次真实`paused`/22次`resumed`，说明direct HttpClient/rhttp backpressure主路径成立；limited但未pause的远端候选主要是persistent artifact-cache本地读取，不应为了视觉一致性阻塞。新增typed `ByteResponseFlowControl.consumerPacing`，只给已知可安全分块消费但不能承诺上游网络pause的source body使用。
+- `DownloadJob`对source body统一消费`none / consumerPacing / streamBackpressure` capability：streamBackpressure继续记录`paused/resumed`；consumerPacing达到同一frame credit后记录`pseudo-paused/pseudo-resumed`并停止继续迭代同一response，credit提升后原地继续。伪pause不声称节省已materialize的上游流量，不cancel/reopen、不创建第二task/session。
+- runtime fallback与generic `LoaderTransport`显式声明`consumerPacing`；artifact-cache/resident仍保持`none`/既有resident路径并快速完成。没有提高NetLane连接上限，也没有引入paused-connection pool；16:42 Trace中9/9 preemption victim均曾flow-paused的问题单独保留，避免本轮把resume permit arbitration半实现进来。
+
 ## 0.31.0-dev.250：ByteResponse flow-control capability API 闭包修复
 
 - 修复dev.249真实Flutter/Dart编译回归：`ByteResponse`构造函数已接收`flowControl`，但类体漏声明instance field，导致downloads wrapper与DownloadJob的`response.flowControl`全部无法解析；`downloads_bridge`同时因downloads facade未导出`ByteResponseFlowControl`而无法解析enum。

@@ -18,6 +18,7 @@ pubspec = read('apps/app/pubspec.yaml')
 m = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec, re.M)
 if m is None or int(m.group(1)) < 250:
     raise SystemExit('App build must be >=250')
+build = int(m.group(1))
 require('apps/app/android/zic-version.properties', f'versionCode={m.group(1)}')
 
 transport = read('packages/transport/lib/src/transport.dart')
@@ -51,9 +52,16 @@ for path in (
     'packages/downloads/lib/src/source_resource_transport.dart',
 ):
     require(path, 'flowControl: response.flowControl')
-require(
-    'packages/sessions/lib/src/download_job.dart',
-    'response.flowControl == ByteResponseFlowControl.streamBackpressure',
-)
+if build >= 251:
+    require(
+        'packages/sessions/lib/src/download_job.dart',
+        'response.flowControl != ByteResponseFlowControl.none',
+        'capability: response.flowControl',
+    )
+else:
+    require(
+        'packages/sessions/lib/src/download_job.dart',
+        'response.flowControl == ByteResponseFlowControl.streamBackpressure',
+    )
 require('tool/check.sh', 'test_dev250_byte_response_flow_control_api_closure.py')
 print('dev.250 ByteResponse flow-control API closure: OK')

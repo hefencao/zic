@@ -333,9 +333,13 @@ final class DownloadJob {
     session.beginNetworkAttemptProgress(response.rangeStart);
     var networkCursor = response.rangeStart;
     final _WebpNetworkFlowGate? flowGate =
-        response.flowControl == ByteResponseFlowControl.streamBackpressure &&
+        response.flowControl != ByteResponseFlowControl.none &&
                 response.bodyAuthority == ByteResponseBodyAuthority.source
-            ? _WebpNetworkFlowGate(session: session, cancel: cancel)
+            ? _WebpNetworkFlowGate(
+                session: session,
+                cancel: cancel,
+                capability: response.flowControl,
+              )
             : null;
 
     if (start == 0 &&
@@ -813,10 +817,15 @@ final class DownloadJob {
 }
 
 final class _WebpNetworkFlowGate {
-  _WebpNetworkFlowGate({required this.session, required this.cancel});
+  _WebpNetworkFlowGate({
+    required this.session,
+    required this.cancel,
+    required this.capability,
+  });
 
   final DownloadSession session;
   final CancelToken? cancel;
+  final ByteResponseFlowControl capability;
   WebpFramePrefixTracker? _tracker;
   bool _initializing = false;
   bool _paused = false;
@@ -859,7 +868,10 @@ final class _WebpNetworkFlowGate {
     if (!_paused) {
       _paused = true;
       session.recordFlowControl(
-        action: 'paused',
+        action: capability == ByteResponseFlowControl.streamBackpressure
+            ? 'paused'
+            : 'pseudo-paused',
+        mode: capability.name,
         targetFrames: control.flowTargetFrames,
         completedFrames: tracker.completedFrames,
         networkCursor: networkCursor,
@@ -869,7 +881,10 @@ final class _WebpNetworkFlowGate {
     if (_paused) {
       _paused = false;
       session.recordFlowControl(
-        action: 'resumed',
+        action: capability == ByteResponseFlowControl.streamBackpressure
+            ? 'resumed'
+            : 'pseudo-resumed',
+        mode: capability.name,
         targetFrames: control.flowTargetFrames,
         completedFrames: tracker.completedFrames,
         networkCursor: networkCursor,

@@ -88,6 +88,13 @@ enum ByteResponseBodyAuthority {
 /// body that has already been materialized in memory/storage.
 enum ByteResponseFlowControl {
   none,
+
+  /// Consumer iteration may be paused safely, but the upstream body may have
+  /// already been materialized or buffered. This provides scheduler-visible
+  /// pseudo-pause semantics without claiming network-byte savings.
+  consumerPacing,
+
+  /// Suspending consumer demand propagates to the live upstream transport.
   streamBackpressure,
 }
 
@@ -129,11 +136,11 @@ final class ByteResponse {
   final ByteResponseDisposition disposition;
   final ByteResponseBodyAuthority bodyAuthority;
 
-  /// Whether downstream demand suspension on [bytes] is a real upstream
-  /// transport backpressure boundary. This is a transport capability, not a
-  /// scheduling decision; callers may only use it to decide whether pausing
-  /// reads preserves the live response instead of buffering an already
-  /// materialized body.
+  /// How downstream flow suspension behaves for [bytes]. This is a typed
+  /// transport capability, not a scheduling decision. [consumerPacing]
+  /// provides a safe pseudo-pause for already-materialized/cooperative bodies;
+  /// [streamBackpressure] additionally preserves real upstream network
+  /// backpressure.
   final ByteResponseFlowControl flowControl;
 
   /// Transport-stage timing/route diagnostics for trace consumers.

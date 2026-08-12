@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：真机优先验证dev.249动画WebP frame-flow backpressure：logical与DownloadDemand均保持previous3/next7；current/可见transition无限流，next/next2/previous按5/3/2完整ANMF帧，远端默认1帧并由`c>4/n>2/c>6/n>3`把对应外层提高到2帧。达到credit后必须保持同一physical task/HTTP response并出现`transport-flow-control paused`，role/waterline提升后同一response `resumed`；不得恢复2/4 eligibility、50MiB estimated-body admission或cancel/reopen式假流控。连接上限本轮仍5+reserved1，先用设备证据评估是否需要独立bounded paused-connection pool。
+- P0：真机优先验证dev.251 typed flow control：3/7与5/3/2/1帧credit不变；direct HttpClient/rhttp应继续出现`paused/resumed`，runtime fallback/LoaderTransport若命中动画credit应出现`pseudo-paused/pseudo-resumed`且同一task/response不reopen。artifact-cache/resident不得被伪pause。继续统计paused task是否长期占满5个body slot；若仍导致current preempt，下一轮必须独立设计paused-connection pool + resume permit arbitration，不能只把paused task从active计数里排除。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环

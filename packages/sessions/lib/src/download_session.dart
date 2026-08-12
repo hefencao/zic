@@ -805,6 +805,7 @@ final class DownloadSession {
 
   void recordFlowControl({
     required String action,
+    String? mode,
     required int targetFrames,
     required int completedFrames,
     required int networkCursor,
@@ -814,6 +815,7 @@ final class DownloadSession {
       <String, Object?>{
         'stage': 'transport-flow-control',
         'action': action,
+        if (mode != null) 'mode': mode,
         'targetFrames': targetFrames,
         'completedFrames': completedFrames,
         'networkCursor': networkCursor,

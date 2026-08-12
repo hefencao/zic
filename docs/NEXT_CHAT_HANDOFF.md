@@ -1,5 +1,5 @@
-# dev.250 后续交接
-- dev.250：修复dev.249真实编译闭包：`ByteResponse.flowControl`现在是transport-owned typed instance field，downloads facade同步导出`ByteResponseFlowControl`给downloads_bridge；所有wrapper继续只透传capability，DownloadJob仍是唯一frame-credit消费方。没有修改3/7、frame水位、NetLane、partial/progress/provider lifetime。新增API闭包gate防止constructor参数/字段/导出半迁移。
+# dev.251 后续交接
+- dev.251：16:42真机Trace确认direct `streamBackpressure`主路径已真实pause/resume；新增transport-owned `consumerPacing`作为unsupported-but-safe source body的伪pause能力。runtime fallback/LoaderTransport达到同一frame credit后停止迭代同一response，credit提升原地继续，Trace用`pseudo-paused/pseudo-resumed`明确不等同真实上游pause。artifact-cache/resident不做伪pause；3/7、帧水位、NetLane与连接数不变。9/9 current preempt victim均曾flow-paused，paused-connection pool/resume permit仍是独立待验证项，本轮未半实现。
 `dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`

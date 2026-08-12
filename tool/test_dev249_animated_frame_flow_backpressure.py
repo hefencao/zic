@@ -24,6 +24,7 @@ pubspec = read('apps/app/pubspec.yaml')
 m = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec, re.M)
 if m is None or int(m.group(1)) < 249:
     raise SystemExit('App build must be >=249')
+build = int(m.group(1))
 require('apps/app/android/zic-version.properties', f'versionCode={m.group(1)}')
 
 require(
@@ -62,19 +63,37 @@ require(
     "'ANMF'",
     'completedFrames',
 )
-require(
-    'packages/sessions/lib/src/download_job.dart',
-    'ByteResponseFlowControl.streamBackpressure',
-    'waitBeforeRead',
-    'addAuthoritativeBytes',
-    "action: 'paused'",
-    "action: 'resumed'",
-)
-require(
-    'packages/transport/lib/src/transport.dart',
-    'enum ByteResponseFlowControl',
-    'streamBackpressure',
-)
+if build >= 251:
+    require(
+        'packages/sessions/lib/src/download_job.dart',
+        'response.flowControl != ByteResponseFlowControl.none',
+        'waitBeforeRead',
+        'addAuthoritativeBytes',
+        "? 'paused'",
+        ": 'pseudo-paused'",
+        "? 'resumed'",
+        ": 'pseudo-resumed'",
+    )
+    require(
+        'packages/transport/lib/src/transport.dart',
+        'enum ByteResponseFlowControl',
+        'consumerPacing',
+        'streamBackpressure',
+    )
+else:
+    require(
+        'packages/sessions/lib/src/download_job.dart',
+        'ByteResponseFlowControl.streamBackpressure',
+        'waitBeforeRead',
+        'addAuthoritativeBytes',
+        "action: 'paused'",
+        "action: 'resumed'",
+    )
+    require(
+        'packages/transport/lib/src/transport.dart',
+        'enum ByteResponseFlowControl',
+        'streamBackpressure',
+    )
 require('packages/transport/lib/src/io_transport.dart', 'ByteResponseFlowControl.streamBackpressure')
 require('packages/downloads/lib/src/source_resource_transport.dart', 'ByteResponseFlowControl.streamBackpressure')
 require('packages/downloads_bridge/lib/src/rhttp_source_resource_transport.dart', 'ByteResponseFlowControl.streamBackpressure')

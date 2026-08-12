@@ -583,6 +583,7 @@ final class _SourceResourceTransport implements ControlledTransport {
       totalLength: bytes.length,
       validators: current,
       rangeSupported: true,
+      flowControl: ByteResponseFlowControl.consumerPacing,
     );
   }
 

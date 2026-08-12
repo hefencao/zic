@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.250` / App `0.31.0+250`。
+- 当前版本：`0.31.0-dev.251` / App `0.31.0+251`。
+- dev.251：16:42真机Trace确认direct streamBackpressure可正常paused/resumed，但unsupported source body没有frame-credit fallback。现新增transport-owned `consumerPacing` capability：runtime fallback/LoaderTransport达到同一frame credit后在同一response上consumer-side伪pause，credit提升原地resume；Trace区分`pseudo-paused/pseudo-resumed`，不声称节省已materialize上游流量。artifact-cache/resident不做伪pause；3/7、5/3/2/1帧水位、NetLane 5+1、partial/progress/provider lifetime均不变。
 - dev.250：用户本地Flutter/Dart编译暴露dev.249公共API迁移未闭合：`ByteResponse`constructor已有`flowControl`参数但类体漏`final ByteResponseFlowControl flowControl;`，同时downloads facade只导出`ByteResponse`而未导出该enum，导致artifact/source wrappers、rhttp bridge与DownloadJob均编译失败。现仅在transport补唯一instance field，并在downloads既有transport facade export中补enum；不新增extension/兼容层/第二依赖，dev.249完整3/7 frame-credit/backpressure策略不变。
 - dev.245：10:54 Trace删除normal 780/800/820/900主动preemption并让第一个current先借reserved第6槽；其victim-side 200ms demotion grace已由dev.246 incoming-candidate稳定窗口取代。
 - dev.244：09:47真机Trace确认physical alias继续统一，但55,743,710 bytes duplicate prefix中44,741,284来自full-body catch-up、10,412,602来自catch-up被取消后的白读；两次rank-based provider handoff发生在同一shared physical partial内部。现删除logical exact/rank驱动的active provider replacement：admitted provider绑定task lifetime，current只迁移physical NetLane priority，真实consumer-bound dispose/attempt失败才结束provider。DownloadSession新增transient network cursor，Pipeline双投影authoritative partial与当前transport；Reader按实际VibeVenera speed色将当前transport画为波浪、最大partial保留不同颜色直线，从UI直接看见prefix replay/restart而不伪造committed增长。
