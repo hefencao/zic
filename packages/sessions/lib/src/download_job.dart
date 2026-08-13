@@ -428,9 +428,7 @@ final class DownloadJob {
           },
         );
         await iterator.cancel();
-        if (session.hasWriter) {
-          await session.fail(writer, error);
-        }
+        await _finishWriterAfterAttemptError(writer, error);
         rethrow;
       }
       networkCursor = probeStart + probeBytes + catchupRemainder.length;
@@ -478,9 +476,7 @@ final class DownloadJob {
           },
         );
         await iterator.cancel();
-        if (session.hasWriter) {
-          await session.fail(writer, error);
-        }
+        await _finishWriterAfterAttemptError(writer, error);
         rethrow;
       }
       session.recordResume(
@@ -585,13 +581,27 @@ final class DownloadJob {
         // writer and records the recoverable partial state below.
       }
       await iterator.cancel();
-      if (session.hasWriter) {
-        await session.fail(writer, error);
-      }
+      await _finishWriterAfterAttemptError(writer, error);
       rethrow;
     }
   }
 
+
+  Future<void> _finishWriterAfterAttemptError(
+    WriterLease writer,
+    Object error,
+  ) async {
+    if (!session.hasWriter) return;
+    if (error is Failure && error.code == ErrorCode.cancelled) {
+      // Scheduler/lifecycle cancellation ends only this transport attempt.
+      // It is not evidence that the authoritative encoded partial failed.
+      // Preserve committed bytes as an idle resumable partial; composition
+      // policy alone decides whether/when another network attempt runs.
+      await session.pause(writer);
+      return;
+    }
+    await session.fail(writer, error);
+  }
 
   Future<List<int>> _verifyArtifactOverlap({
     required StreamIterator<List<int>> iterator,

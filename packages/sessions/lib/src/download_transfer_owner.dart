@@ -889,6 +889,8 @@ final class DownloadTransferOwner {
                     'restartCostBytes': preemption.restartCostBytes,
                     'incomingWaitMicros': preemption.incomingWaitMicros,
                     'committedLength': session.committedLength,
+                    'partialPreserved': session.committedLength > 0,
+                    'partialState': session.state.name,
                   },
                 );
               }

@@ -378,6 +378,20 @@ void main() {
     sources.dispose();
   });
 
+  test('cancelled writer attempt preserves partial without failed state', () async {
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, <int>[1, 2, 3, 4]);
+    await session.fail(
+      writer,
+      const Failure(code: ErrorCode.cancelled, message: 'scheduler preempted'),
+    );
+
+    expect(session.state, DownloadState.idle);
+    expect(session.snapshot.failure, isNull);
+    expect(session.committedLength, 4);
+    expect(session.artifact.hasOpenWriter, isFalse);
+  });
+
   test('snapshot owns the resume baseline for one network run', () async {
     var writer = session.acquireWriter();
     expect(session.snapshot.networkStartLength, 0);

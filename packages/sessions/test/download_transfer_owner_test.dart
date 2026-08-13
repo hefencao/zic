@@ -122,6 +122,88 @@ void main() {
     expect(registry.get(nextId).state, DownloadState.promoted);
   });
 
+  test('scheduler preemption preserves committed partial as idle state', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_preempt_partial_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final net = NetLane(maxActive: 1);
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: net,
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final victimId = _id('preempted-partial');
+    final incomingId = _id('incoming-current');
+    final victimBytes = _ownerAnimatedWebp(<int>[96 * 1024, 48, 48]);
+    const prefixLength = 64 * 1024;
+    final victim = _RetainedGateControlledTransport(
+      prefix: victimBytes.sublist(0, prefixLength),
+      suffix: victimBytes.sublist(prefixLength),
+    );
+    final incoming = _CountingBytesTransport(
+      _ownerAnimatedWebp(<int>[48]),
+    );
+    final trace = MemoryTraceSink();
+    final oldReader = owner.attachConsumer(
+      scopeId: 'reader-preempt-victim',
+      transportFor: (_) => throw StateError('retained transport must win'),
+      retainedTransportFor: (_) => victim,
+      traceSink: trace,
+    );
+    final currentReader = owner.attachConsumer(
+      scopeId: 'reader-preempt-current',
+      transportFor: (_) => incoming,
+      traceSink: trace,
+    );
+
+    oldReader.replaceDemands(
+      'reader-preempt-victim',
+      1,
+      _desired(victimId, priority: 820),
+    );
+    await victim.prefixSent.future.timeout(const Duration(seconds: 1));
+    final session = registry.get(victimId);
+    await _waitUntil(() => session.committedLength > 0);
+    final preservedLength = session.committedLength;
+
+    oldReader.replaceDemands(
+      'reader-preempt-victim',
+      2,
+      const <DownloadId, TransferDemand>{},
+    );
+    expect(session.effectivePriority, 0);
+
+    currentReader.replaceDemands(
+      'reader-preempt-current',
+      1,
+      _desired(incomingId, priority: 1000),
+    );
+    await victim.cancelled.future.timeout(const Duration(seconds: 1));
+    await currentReader.idle().timeout(const Duration(seconds: 2));
+
+    expect(session.state, DownloadState.idle);
+    expect(session.snapshot.failure, isNull);
+    expect(session.committedLength, preservedLength);
+    final preemption = trace.events.lastWhere(
+      (event) =>
+          event.kind == TraceEventKind.downloadPreempted &&
+          event.identityHash == victimId.key,
+    );
+    expect(preemption.payload['partialPreserved'], isTrue);
+    expect(preemption.payload['partialState'], DownloadState.idle.name);
+  });
+
   test('queued priority revisions keep one physical transfer task identity', () async {
     final temp = await Directory.systemTemp.createTemp('transfer_owner_queue_');
     addTearDown(() async => temp.delete(recursive: true));

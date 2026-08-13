@@ -607,6 +607,34 @@ void main() {
     expect(transport.openCount, 1);
   });
 
+  test('cancelled transport attempt preserves an idle resumable partial', () async {
+    final session = createSession();
+    final transport = _BlockingTransport();
+    final token = CancelToken();
+    final run = DownloadJob(transport: transport, session: session).run(
+      cancel: token,
+    );
+
+    await transport.firstChunk.future.timeout(const Duration(seconds: 1));
+    await Future<void>.delayed(Duration.zero);
+    token.cancel();
+
+    await expectLater(
+      run.timeout(const Duration(seconds: 1)),
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+    expect(session.state, DownloadState.idle);
+    expect(session.snapshot.failure, isNull);
+    expect(session.committedLength, 3);
+    expect(session.artifact.hasOpenWriter, isFalse);
+  });
+
   test('consumer-paced frame credit suspends partial instead of draining forever',
       () async {
     final trace = MemoryTraceSink();

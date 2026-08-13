@@ -709,6 +709,14 @@ final class DownloadSession {
 
   Future<void> fail(WriterLease lease, Object error) async {
     _requireWriter(lease);
+    if (error is Failure && error.code == ErrorCode.cancelled) {
+      // Cancellation is an attempt-lifecycle outcome, not evidence that the
+      // encoded partial is invalid. Preserve the authoritative bytes as an
+      // idle resumable partial even if a higher-level caller routes the
+      // cancellation through the generic failure closure.
+      await pause(lease);
+      return;
+    }
     try {
       await artifact.pause();
     } finally {

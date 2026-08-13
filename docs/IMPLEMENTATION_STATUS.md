@@ -2,10 +2,10 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.254` / App `0.31.0+254`。
+- 当前版本：`0.31.0-dev.255` / App `0.31.0+255`。
+- dev.255：03:19 Trace中8次`downloadPreempted`的victim均为base rank0；其中5次拥有真实partial的attempt被scheduler cancel后紧接着写成`DownloadState.failed / Failure(cancelled)`，合计约35.67MiB，相同physical partial还在preempt后约364ms/618ms重新获得priority1000/820 demand。现typed cancellation只结束transport attempt：DownloadJob统一flush后pause writer，DownloadSession.fail也机械拒绝把cancelled写成failed；partial保持idle/failure=null/committedLength不变，preemption trace附`partialPreserved/partialState`。3/7、scrubbing、frame credit、NetLane 5+1/current candidate不改。
 - dev.254：02:27 Trace中仍无task/source failure，但有2次DecodeSession silent failed；page335 current后physical partial从约8.36MiB继续到15.1MiB并seal/promote，decode却提前failed。现删除DecodeSession对physical DownloadSession.epoch的第二generation authority，只以Reader-local ingress/source epoch绑定cursor，generation变化机械cancel/rebind；LiveCoordinator不再把returned failed snapshot静默记为source revision已消费。同时consumerPacing不再无限pseudo-drain：100ms未升水位即pseudo-suspend response并正常pause writer，TransferOwner把该frame target记为已满足，只有target提高/current才从authoritative partial恢复。3/7、5/3/2/1、NetLane 5+1不改。
 - dev.253：01:44 Trace中`taskFailed/sourceDisabled=0`，但page81的new physical source已从artifact cache完整获得18,699,622 bytes并promoted，DecodeSession仍从77.92s起永久`waitingSource`且两次current均无first frame。唯一命中“verified alias旧physical→旧owner退休→同logical exact新physical owner”的logical identity正是该页。现LiveCoordinator source watch从logical-id布尔缓存收为logical→physical session/projection/listener binding；generation变化机械解绑旧listener、失效旧decode source consumption/session，并在reconcile完成后从新projection重新wake。Ingress registry对same-id新DownloadSession也替换Reader-local ingress/source generation。
-- dev.252：sealed ingress幂等长度确认、resume catch-up floor与rhttp consumer pacing继续保留；3/7、水位、NetLane与partial owner不变。
 - dev.251：引入transport-owned `consumerPacing`三态capability与pseudo trace；其“无限consumer hold”等待语义已由dev.252改为bounded paced drain，runtime fallback/LoaderTransport仍使用该capability。
 - dev.250：用户本地Flutter/Dart编译暴露dev.249公共API迁移未闭合：`ByteResponse`constructor已有`flowControl`参数但类体漏`final ByteResponseFlowControl flowControl;`，同时downloads facade只导出`ByteResponse`而未导出该enum，导致artifact/source wrappers、rhttp bridge与DownloadJob均编译失败。现仅在transport补唯一instance field，并在downloads既有transport facade export中补enum；不新增extension/兼容层/第二依赖，dev.249完整3/7 frame-credit/backpressure策略不变。
 - dev.245：10:54 Trace删除normal 780/800/820/900主动preemption并让第一个current先借reserved第6槽；其victim-side 200ms demotion grace已由dev.246 incoming-candidate稳定窗口取代。

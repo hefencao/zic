@@ -1,5 +1,5 @@
-# dev.254 后续交接
-- dev.254：02:27 Trace中page335等出现“physical download继续增长/最终promote，但DecodeSession提前silent failed”；同时consumerPacing target=1的远端taskcompletedFrames中位38、最大122，证明pseudo-drain违背帧水位。现DecodeSession只以Reader-local ingress/source epoch作为generation authority，physical session generation由source-watch/ingress registry投影；returned failed snapshot统一进入failure闭包。unsupported pause在100ms内未升水位则`pseudo-suspended`并pause writer，TransferOwner按frame target保持quiescent，只有target提高/current才从partial恢复。3/7、5/3/2/1、NetLane 5+1不改。
+# dev.255 后续交接
+- dev.255：03:19 Trace中8次preempt victim均base0，5次带partial attempt被scheduler cancel后错误写成`failed/Failure(cancelled)`，合计约35.67MiB；同一physical partial在preempt后约364ms/618ms又获1000/820 demand。现typed cancellation统一flush+pause，DownloadSession保持`idle/failure=null/committedLength`，`fail()`自身也守住该不变量；`downloadPreempted`只记录attempt事实。NetLane/3/7/scrubbing/frame credit不改；若连接仍过度preempt，先区分attempt终止与partial bytes/state，再独立审workset/demand ownership。
 `dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`

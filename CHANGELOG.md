@@ -1,3 +1,9 @@
+## 0.31.0-dev.255：scheduler cancellation 与 partial failure 解耦
+
+- 03:19真机Trace中8次`downloadPreempted`全部victim base rank=0；其中5次随后把拥有真实committed partial的`DownloadSession`写成`Failure(cancelled)`，涉及约35.67MiB authoritative partial。相同physical partial还出现preempt后约364ms/618ms重新获得priority1000/820 demand，证明scheduler attempt cancellation被错误晋升成内容failure。
+- `ErrorCode.cancelled`现统一只结束transport attempt：`DownloadJob`先flush已收到bytes并关闭iterator，再由`DownloadSession.pause(writer)`回到`idle/failure=null`；`DownloadSession.fail()`自身也拒绝把typed cancellation写成failed，避免chapter/restore等其他调用方复发。真实network/content/validator错误仍走failed。
+- `downloadPreempted`继续作为NetLane调度事实，但新增`partialPreserved/partialState`诊断；本轮不改scrubbing current-only、3/7、5/3/2/1、NetLane 5+1/100ms candidate与restart-cost。连接仍可被稳定current preempt，但partial authority不得被scheduler cancellation污染。
+
 ## 0.31.0-dev.254：decode ingress epoch ownership 与 bounded flow suspension
 
 - 02:27真机Trace中`taskFailed/sourceDisabled=0`但仍出现2次silent `DecodeState.failed`；page335成为current后physical download已从约8.36MiB原地`pseudo-resumed`并快速增长到15.1MiB、最终seal/promote，DecodeSession却在source继续演化期间直接failed且upload随之failed。根因是DecodeSession同时读取physical `DownloadSession.epoch`与Reader-local ingress/source epoch，generation authority重复；preflight返回failed snapshot又会被LiveCoordinator当成已消费source revision。

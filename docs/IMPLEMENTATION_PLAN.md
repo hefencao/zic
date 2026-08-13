@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：真机验证dev.254双闭包：current/transition decode不得再因physical DownloadSession与Reader-local ingress epoch分叉而silent failed；若projection generation变化，旧decode必须按生命周期cancel并从新source revision重绑，returned failed snapshot不得被记为已消费。consumerPacing远端task达到1/2/3/5帧后最多保留100ms同-response升水位机会，未升级则应出现`pseudo-suspended/flow-satisfied`并保持partial且不自重开；target提高/current=0后才允许新的resume attempt。3/7、NetLane 5+1继续冻结。
+- P0：真机验证dev.255 cancellation/partial闭包：scheduler `downloadPreempted`仍可发生，但不得再出现紧随其后的`DownloadState.failed / Failure(cancelled)`；有committed bytes时preempt trace应显示`partialPreserved=true/partialState=idle`，相同physical exact/verified alias重新demand必须从原committedLength直接resume。继续冻结scrubbing current-only、3/7、5/3/2/1、NetLane 5+1/current candidate/restart-cost；若连接本身仍过度preempt，下一轮只审workset/demand ownership，不把partial validity重新混入rank。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环
