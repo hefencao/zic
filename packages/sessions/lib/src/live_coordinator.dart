@@ -410,12 +410,20 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           .toList(growable: false)) {
         _decodeSourceRevisions.remove(decodeId);
       }
-      for (final decodeId in _decodes.keys
-          .where((decodeId) => decodeId.download == id)
-          .toList(growable: false)) {
+      final reboundDecodeIds = <DecodeId>{
+        ..._decodes.keys.where((decodeId) => decodeId.download == id),
+        ..._uploads.keys.where((decodeId) => decodeId.download == id),
+      };
+      for (final decodeId in reboundDecodeIds) {
         decode.cancel(decodeId.key);
+        upload.cancel(decodeId.key);
       }
-      decodes?.invalidateForDownload(id);
+      // UploadSession holds a concrete DecodeSession for its lifetime. Retire
+      // dependent upload/output sessions before replacing DecodeRegistry's
+      // physical-generation-bound DecodeSessions, otherwise an upload revisit
+      // can remain attached to the disposed holder indefinitely.
+      final invalidatedUploads = uploads?.invalidateForDownload(id) ?? 0;
+      final invalidatedDecodes = decodes?.invalidateForDownload(id) ?? 0;
       _sourceRebindWakes.add(id);
       traceSink.record(
         traceEvent(
@@ -429,6 +437,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             'action': 'physical-generation-changed',
             'fromPhysicalSession': existing.session.sessionId,
             'toPhysicalSession': session.sessionId,
+            'invalidatedUploads': invalidatedUploads,
+            'invalidatedDecodes': invalidatedDecodes,
           },
         ),
       );

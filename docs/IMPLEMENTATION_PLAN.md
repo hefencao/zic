@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：以dev.262真机复测09:59 Trace同类前后振荡：对`responseRangeSupported=false`的page102类identity，达到next2/near正水位后应记录`pseudo-retained(retentionReason=range-resume-unproven)`而不是policy `pseudo-suspended`；随后next2↔next1↔next2及升current只允许同一task `pseudo-resumed`，不得因flow credit出现第二次`downloadStarted/full-body-prefix-catchup`。若仍重开，必须先区分真实`downloadPreempted`/consumer cancellation与新的policy owner，不增加连接数或grace。Range-supported远端页仍必须正常suspend以维持5路轮转。
+- P0：以dev.263真机复测11:13同类page97/page98：发生`physical-generation-changed`时应记录`invalidatedUploads>=1`与对应`invalidatedDecodes>=1`（存在retained session时）；随后新generation decode产帧后必须重新出现`frameUploaded/framePresented/firstFrameReady`，不得继续`uploadStarted→waitingFrame`空转。若仍打不开，先核对新UploadSession是否绑定当前DecodeSession generation及presentation claim生命周期，不回退到重新下载、加holder水位或UI key补丁。dev.262的non-range flow复测同时继续。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环

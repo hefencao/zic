@@ -1523,6 +1523,7 @@ void main() {
       renderer: RendererKind.flutterImage,
     );
     final clock = _Clock();
+    final trace = MemoryTraceSink();
     final downloads = DownloadRegistry(
       layout: CacheLayout('${temp.path}/cache'),
       clock: clock,
@@ -1543,18 +1544,28 @@ void main() {
       cursors: _StaticCursorFactory(),
       clock: clock,
     );
+    final uploader = _TestUploader();
+    final uploads = UploadRegistry(
+      decodes: decodes,
+      uploader: uploader,
+      clock: clock,
+    );
     final bytes = 'RIFF....WEBPsource-watch-rebind'.codeUnits;
     final coordinator = LiveCoordinator(
       registry: downloads,
       ingresses: ingresses,
       transportFor: (_) => _ImmediateTransport(bytes),
       clock: clock,
+      traceSink: trace,
       decodes: decodes,
+      uploads: uploads,
       net: NetLane(maxActive: 1),
       decode: DecodeLane(maxActive: 1),
+      upload: UploadLane(maxActive: 1),
     );
     addTearDown(() async {
       await coordinator.dispose();
+      uploads.dispose();
       decodes.dispose();
       ingresses.dispose();
       sources.dispose();
@@ -1570,9 +1581,27 @@ void main() {
     final first = DemandPlan(
       revision: 1,
       downloads: <DownloadId, DownloadDemand>{logicalId: firstDownload},
-      decodes: const <DecodeId, DecodeDemand>{},
-      uploads: const <DecodeId, UploadDemand>{},
-      keep: <ResourceId>{ResourceId.download(logicalId)},
+      decodes: <DecodeId, DecodeDemand>{
+        decodeId: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 1,
+          reason: 'old-physical-alias',
+          expirationRevision: 2,
+        ),
+      },
+      uploads: <DecodeId, UploadDemand>{
+        decodeId: const UploadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'old-physical-alias',
+          expirationRevision: 2,
+        ),
+      },
+      keep: <ResourceId>{
+        ResourceId.download(logicalId),
+        ResourceId.decode(decodeId),
+      },
     );
     coordinator.reconcile(
       'reader',
@@ -1584,6 +1613,10 @@ void main() {
     );
     await coordinator.idle();
     expect(oldPhysical.state, DownloadState.promoted);
+    expect(uploader.outputs, hasLength(1));
+    final oldUploadSession = uploads.find(decodeId);
+    expect(oldUploadSession, isNotNull);
+    expect(oldUploadSession!.state, UploadState.ready);
 
     final empty = DemandPlan.empty(revision: 2);
     coordinator.reconcile(
@@ -1618,7 +1651,14 @@ void main() {
         ),
       },
       decodes: <DecodeId, DecodeDemand>{decodeId: currentDecode},
-      uploads: const <DecodeId, UploadDemand>{},
+      uploads: <DecodeId, UploadDemand>{
+        decodeId: const UploadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'logical-revisit-current',
+          expirationRevision: 4,
+        ),
+      },
       keep: <ResourceId>{
         ResourceId.download(logicalId),
         ResourceId.decode(decodeId),
@@ -1639,8 +1679,20 @@ void main() {
     expect(newPhysical.state, DownloadState.promoted);
     final decoded = decodes.find(decodeId)?.snapshot;
     expect(decoded, isNotNull);
-    expect(decoded!.depth, greaterThanOrEqualTo(1));
-    expect(decoded.state, isNot(DecodeState.waitingSource));
+    expect(decoded!.depth, 0);
+    expect(decoded.state, DecodeState.ready);
+    expect(uploader.outputs, hasLength(2));
+    final reboundUploadSession = uploads.find(decodeId);
+    expect(reboundUploadSession, isNotNull);
+    expect(reboundUploadSession, isNot(same(oldUploadSession)));
+    expect(reboundUploadSession!.state, UploadState.ready);
+    final generationRebind = trace.events.lastWhere(
+      (event) =>
+          event.kind == TraceEventKind.artifactSource &&
+          event.payload['action'] == 'physical-generation-changed',
+    );
+    expect(generationRebind.payload['invalidatedUploads'], 1);
+    expect(generationRebind.payload['invalidatedDecodes'], 1);
   });
 
   test('role promotion reaches an already active cursor decode request',

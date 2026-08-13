@@ -1,3 +1,10 @@
+## 0.31.0-dev.263：physical-generation rebind 的 Decode/Upload 依赖闭包
+
+- 11:13 dev.262 真机 Trace确认“部分图片打不开”不是网络或decode不足：page98/page97分别在25.192s/25.872s发生`physical-generation-changed`；page97新DecodeSession随后已在31.409s解到depth=7且source完整sealed，但同identity反复`uploadStarted`后始终没有`frameUploaded/firstFrameReady`。
+- 根因是source-watch rebind只`DecodeRegistry.invalidateForDownload()`，而retained UploadSession构造时永久持有旧DecodeSession引用。新generation创建新DecodeSession后，旧UploadSession仍观察已dispose旧holder，因此永久`waitingFrame`。
+- `UploadRegistry`新增按DownloadId的generation invalidation；rebind时先cancel decode/upload lane，再按upload→decode顺序失效依赖链。新frame-ready会按既有demand重新创建绑定新DecodeSession的UploadSession。trace新增`invalidatedUploads/invalidatedDecodes`。
+- 扩展source-watch rebind regression覆盖“旧generation已decode+upload→退休→同logical新physical generation→再次decode+upload”，要求新UploadSession实例与第二次output。网络窗口、水位和dev.262 non-range flow策略不变。
+
 ## 0.31.0-dev.262：无可靠 Range resume 的 bounded-flow response 连续性
 
 - 09:59 真机 Trace确认dev.260/261的 immediate warm-response metadata闭包本身成立，但3/7内仍有另一条必现重开路径：page102作为next2在452,600 bytes/target3达到水位后于9.253s被`pseudo-suspended`；current从100→101后它成为next1，10.173s重新`downloadStarted`。Range probe返回HTTP 200，随后`full-body-prefix-catchup`明确记录`duplicatePrefixBytes=452600`。用户反向切页后，同一page102在751,900 bytes又因next1→next2被再次`pseudo-suspended`。

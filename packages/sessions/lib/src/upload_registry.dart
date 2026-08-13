@@ -166,6 +166,24 @@ final class UploadRegistry {
     return session != null;
   }
 
+  /// Invalidates upload/output sessions that retain DecodeSession instances
+  /// owned by a physical download generation that is being replaced.
+  ///
+  /// UploadSession intentionally holds one DecodeSession for its lifetime. A
+  /// DecodeRegistry generation replacement therefore has to retire dependent
+  /// upload sessions before those DecodeSessions are disposed; otherwise a
+  /// later upload prepare can keep observing the old, empty holder while the
+  /// replacement DecodeSession is already producing frames.
+  int invalidateForDownload(DownloadId id) {
+    final ids = _sessions.keys
+        .where((decodeId) => decodeId.download == id)
+        .toList(growable: false);
+    for (final decodeId in ids) {
+      _sessions.remove(decodeId)?.dispose();
+    }
+    return ids.length;
+  }
+
   void resetFor(DownloadId id, SourceEpoch epoch) {
     for (final entry in _sessions.entries) {
       if (entry.key.download == id) {
