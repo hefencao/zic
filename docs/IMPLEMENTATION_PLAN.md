@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：真机验证dev.260相邻页warm-response闭包：next1/previous1达到5/2帧水位后应出现`pseudo-retained`而非`pseudo-suspended`；若随即成为current/transition，必须同一physical task/response直接`pseudo-resumed`，不得新增`downloadStarted`。角色远离成next2/near/far后应撤销warm bit并允许真正suspend，使3/7 partial继续由有限5路轮转建立。冻结3/7、5/3/2/1、NetLane5+1与frame proof/playable floor。
+- P0：以dev.261重新真机验证dev.260相邻页warm-response闭包：编译闭包仅统一NetLane pending创建，不改变策略；next1/previous1达到5/2帧水位后仍应`pseudo-retained`，随即升current/transition必须同一task/response `pseudo-resumed`且无第二个`downloadStarted`，远离才suspend。冻结3/7、5/3/2/1、NetLane5+1。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环

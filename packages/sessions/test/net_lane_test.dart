@@ -73,7 +73,11 @@ void main() {
     lane.replace(
       key: 'same',
       priority: 2,
-      task: (_) async => values.add('new'),
+      task: (token) async {
+        expect(token.flowTargetFrames, 0);
+        expect(token.retainFlowResponse, isFalse);
+        values.add('new');
+      },
     );
 
     release.complete();
@@ -107,7 +111,11 @@ void main() {
     lane.follow(
       key: 'same',
       priority: 3,
-      task: (_) async => values.add('latest-follow'),
+      task: (token) async {
+        expect(token.flowTargetFrames, 0);
+        expect(token.retainFlowResponse, isFalse);
+        values.add('latest-follow');
+      },
     );
 
     release.complete();

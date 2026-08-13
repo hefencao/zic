@@ -1,3 +1,9 @@
+## 0.31.0-dev.261：NetLane pending metadata 构造闭包
+
+- 用户本地编译确认dev.260存在公共调度元数据迁移未闭合：`_Pending.retainFlowResponse`已改为required，但`_Lane.replace()`与`_Lane.follow()`仍直接构造`_Pending`且漏传该字段，导致Dart编译失败；warm-response策略本身不变。
+- `_Pending`创建现统一收口到`_Lane._createPending()`：submit/replace/follow不再各自复制构造字段；generic replace/follow显式继承唯一默认`flowTargetFrames=0 / retainFlowResponse=false`，Reader ranked submit仍传入真实flow metadata。
+- 既有replace/follow Dart测试补充CancelToken默认flow metadata断言，并新增dev.261静态gate要求production只有一个`_Pending`实例化点，防止以后新增required task metadata再次遗漏旁路构造。3/7、5/3/2/1、warm adjacent response、NetLane 5+1全部冻结。
+
 ## 0.31.0-dev.260：相邻页 warm response 与 bounded flow 解耦
 
 - 09:00 真机 Trace确认 dev.259 已激活5/3/2/1，但暴露 dev.254 consumerPacing suspension 的直接回归：page99 作为 next1 在491,520 bytes/target5于8.840s主动 `pseudo-suspended`，约99ms后成为current，8.944s即从同一partial重新 `downloadStarted`。这不是5路NetLane挤掉连接，而是bounded flow满足后主动关闭了最可能马上切入的相邻response。

@@ -549,18 +549,15 @@ final class _Lane {
       if (increased) _pump();
       return false;
     }
-    _pending[key] = _Pending(
+    _pending[key] = _createPending(
       key: key,
       priority: priority,
-      seq: _seq++,
       bucket: bucket,
       bucketLimit: bucketLimit,
       preemptible: preemptible,
       flowTargetFrames: flowTargetFrames,
       retainFlowResponse: retainFlowResponse,
       task: task,
-      highPrioritySinceMicros:
-          priority >= highPriorityThreshold ? clock.nowMicros() : null,
     );
     _pump();
     return true;
@@ -629,6 +626,32 @@ final class _Lane {
     return priority > previous;
   }
 
+  _Pending _createPending({
+    required String key,
+    required int priority,
+    String? bucket,
+    int? bucketLimit,
+    bool preemptible = true,
+    int flowTargetFrames = 0,
+    bool retainFlowResponse = false,
+    required LaneTask task,
+  }) {
+    assert(flowTargetFrames >= 0);
+    return _Pending(
+      key: key,
+      priority: priority,
+      seq: _seq++,
+      bucket: bucket,
+      bucketLimit: bucketLimit,
+      preemptible: preemptible,
+      flowTargetFrames: flowTargetFrames,
+      retainFlowResponse: retainFlowResponse,
+      task: task,
+      highPrioritySinceMicros:
+          priority >= highPriorityThreshold ? clock.nowMicros() : null,
+    );
+  }
+
   bool replace({
     required String key,
     required int priority,
@@ -637,17 +660,12 @@ final class _Lane {
     required LaneTask task,
   }) {
     _active[key]?.token.cancel();
-    _pending[key] = _Pending(
+    _pending[key] = _createPending(
       key: key,
       priority: priority,
-      seq: _seq++,
       bucket: bucket,
       bucketLimit: bucketLimit,
-      preemptible: true,
-      flowTargetFrames: 0,
       task: task,
-      highPrioritySinceMicros:
-          priority >= highPriorityThreshold ? clock.nowMicros() : null,
     );
     _pump();
     return true;
@@ -660,17 +678,12 @@ final class _Lane {
     int? bucketLimit,
     required LaneTask task,
   }) {
-    _pending[key] = _Pending(
+    _pending[key] = _createPending(
       key: key,
       priority: priority,
-      seq: _seq++,
       bucket: bucket,
       bucketLimit: bucketLimit,
-      preemptible: true,
-      flowTargetFrames: 0,
       task: task,
-      highPrioritySinceMicros:
-          priority >= highPriorityThreshold ? clock.nowMicros() : null,
     );
     _pump();
     return true;
