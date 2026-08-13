@@ -34,6 +34,7 @@ final class AnimatedPrefetchPolicy {
     required RoleWindow window,
     required bool active,
     required int expansionStage,
+    int readDirection = 1,
   }) {
     final current = observation.currentIndex
         .clamp(0, chapter.pages.length - 1)
@@ -54,7 +55,7 @@ final class AnimatedPrefetchPolicy {
         continue;
       }
       targets[index] = _targetFrames(
-        offset: index - current,
+        readDistance: (index - current) * (readDirection < 0 ? -1 : 1),
         expansionStage: expansionStage,
       );
     }
@@ -66,24 +67,24 @@ final class AnimatedPrefetchPolicy {
   }
 
   int _targetFrames({
-    required int offset,
+    required int readDistance,
     required int expansionStage,
   }) {
     // Near neighbors mirror the existing holder maxima that matter for a fast
     // page change. They are shallow enough to avoid pulling full 154+ frame
     // WebPs while giving the next page useful playback immediately.
-    if (offset == 1) return 5;
-    if (offset == 2) return 3;
-    if (offset == -1) return 2;
+    if (readDistance == 1) return 5;
+    if (readDistance == 2) return 3;
+    if (readDistance == -1) return 2;
 
     // All remaining positions in the stable 3/7 envelope start with one
     // complete animation frame. Existing c/n staged-waterline evidence raises
     // selected outer bands to two frames without changing their window
     // membership or opening/closing the transport task itself.
-    if ((offset == 3 || offset == 4) && expansionStage >= 1) return 2;
-    if ((offset == -2 || offset == -3) && expansionStage >= 2) return 2;
-    if ((offset == 5 || offset == 6) && expansionStage >= 3) return 2;
-    if (offset == 7 && expansionStage >= 4) return 2;
+    if ((readDistance == 3 || readDistance == 4) && expansionStage >= 1) return 2;
+    if ((readDistance == -2 || readDistance == -3) && expansionStage >= 2) return 2;
+    if ((readDistance == 5 || readDistance == 6) && expansionStage >= 3) return 2;
+    if (readDistance == 7 && expansionStage >= 4) return 2;
     return 1;
   }
 

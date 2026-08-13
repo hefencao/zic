@@ -31,7 +31,7 @@ if build >= 249:
     )
     require(
         'packages/pipeline/lib/src/animated_prefetch_policy.dart',
-        'if (offset == 1) return 5;',
+        'if (readDistance == 1) return 5;',
         "'c>4' => 1",
         "'n>2' => 2",
         "'c>6' => 3",

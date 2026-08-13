@@ -851,7 +851,7 @@ void main() {
   });
 
   test(
-      'two-page protected non-range retention ignores outer normal yield pressure',
+      'target3 near flow retention is not yieldable to outer normal pressure',
       () async {
     final trace = MemoryTraceSink();
     final bytes = _flowAnimatedWebp(List<int>.filled(24, 48));
@@ -884,29 +884,14 @@ void main() {
       chunkSize: 31,
       rangeSupported: false,
     );
-    final token = CancelToken(
-      flowTargetFrames: 3,
-      protectFlowRetentionFromNormalYield: true,
-    );
+    final token = CancelToken(flowTargetFrames: 3);
     final run = DownloadJob(transport: transport, session: session).run(
       cancel: token,
     );
 
     await _waitForFlowAction(trace, 'pseudo-retained', targetFrames: 3);
-    expect(token.protectFlowRetentionFromNormalYield, isTrue);
     expect(token.flowRetentionYieldable, isFalse);
     expect(token.requestFlowYield(640), isFalse);
-    expect(
-      trace.events.any(
-        (event) =>
-            event.kind == TraceEventKind.artifactSource &&
-            event.payload['stage'] == 'transport-flow-control' &&
-            event.payload['action'] == 'pseudo-retained' &&
-            event.payload['retentionProtectedFromNormalYield'] == true,
-      ),
-      isTrue,
-    );
-
     token.updateFlowTargetFrames(0);
     final result = await run.timeout(const Duration(seconds: 2));
     expect(result.state, DownloadState.promoted);
@@ -955,12 +940,12 @@ void main() {
       chunkSize: 31,
       rangeSupported: false,
     );
-    final token = CancelToken(flowTargetFrames: 3);
+    final token = CancelToken(flowTargetFrames: 1);
     final run = DownloadJob(transport: transport, session: session).run(
       cancel: token,
     );
 
-    await _waitForFlowAction(trace, 'pseudo-retained', targetFrames: 3);
+    await _waitForFlowAction(trace, 'pseudo-retained', targetFrames: 1);
     expect(token.flowRetentionYieldable, isTrue);
     expect(token.requestFlowYield(640), isTrue);
     await expectLater(

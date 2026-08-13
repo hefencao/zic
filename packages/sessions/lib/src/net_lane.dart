@@ -12,15 +12,12 @@ final class CancelToken implements PriorityObservableTaskControl {
     int priority = 0,
     int flowTargetFrames = 0,
     bool retainFlowResponse = false,
-    bool protectFlowRetentionFromNormalYield = false,
     MonoClock clock = const SystemClock(),
     void Function()? onSchedulingStateChanged,
   })  : assert(flowTargetFrames >= 0),
         _priority = priority,
         _flowTargetFrames = flowTargetFrames,
         _retainFlowResponse = retainFlowResponse,
-        _protectFlowRetentionFromNormalYield =
-            protectFlowRetentionFromNormalYield,
         _clock = clock,
         _onSchedulingStateChanged = onSchedulingStateChanged,
         _activatedAtMicros = clock.nowMicros();
@@ -32,7 +29,6 @@ final class CancelToken implements PriorityObservableTaskControl {
   int _priority;
   int _flowTargetFrames;
   bool _retainFlowResponse;
-  bool _protectFlowRetentionFromNormalYield;
   bool _flowRetentionYieldable = false;
   int? _flowYieldRequestedByPriority;
   Completer<void>? _flowChanged;
@@ -53,8 +49,6 @@ final class CancelToken implements PriorityObservableTaskControl {
   Stream<int> get priorityChanges => _priorityChanges.stream;
   int get flowTargetFrames => _flowTargetFrames;
   bool get retainFlowResponse => _retainFlowResponse;
-  bool get protectFlowRetentionFromNormalYield =>
-      _protectFlowRetentionFromNormalYield;
   bool get flowRetentionYieldable => _flowRetentionYieldable;
   int? get flowYieldRequestedByPriority => _flowYieldRequestedByPriority;
 
@@ -112,33 +106,18 @@ final class CancelToken implements PriorityObservableTaskControl {
     _wakeFlowWaiters();
   }
 
-  void updateProtectFlowRetentionFromNormalYield(bool protect) {
-    if (_protectFlowRetentionFromNormalYield == protect) return;
-    _protectFlowRetentionFromNormalYield = protect;
-    if (protect) {
-      _flowRetentionYieldable = false;
-      _flowYieldRequestedByPriority = null;
-    }
-    _wakeFlowWaiters();
-  }
-
   /// Reports that this task has already satisfied its bounded body credit and
-  /// is retaining the admitted response only for continuity. Reader policy may
-  /// protect a near-two-page hold from normal-pressure yield; unprotected outer
-  /// no-range holds may be marked [yieldable], allowing NetLane to reclaim the
-  /// slot cooperatively when another demanded normal task has never received a
-  /// slot. This is not cancellation and does not let normal work preempt an
-  /// actively unsatisfied transfer.
+  /// is retaining the admitted response only for continuity. DownloadJob owns
+  /// the body-credit/transport-capability decision; NetLane only consumes the
+  /// resulting [yieldable] fact and never infers Reader locality.
   void markFlowRetention({required bool yieldable}) {
     if (_cancelled) return;
-    final effectiveYieldable =
-        yieldable && !_protectFlowRetentionFromNormalYield;
-    final changed = _flowRetentionYieldable != effectiveYieldable;
-    _flowRetentionYieldable = effectiveYieldable;
-    if (!effectiveYieldable) {
+    final changed = _flowRetentionYieldable != yieldable;
+    _flowRetentionYieldable = yieldable;
+    if (!yieldable) {
       _flowYieldRequestedByPriority = null;
     }
-    if (changed && effectiveYieldable) {
+    if (changed && yieldable) {
       _onSchedulingStateChanged?.call();
     }
   }
@@ -344,7 +323,6 @@ final class NetLane implements TaskLane {
     bool preemptible = true,
     int flowTargetFrames = 0,
     bool retainFlowResponse = false,
-    bool protectFlowRetentionFromNormalYield = false,
     required LaneTask task,
   }) =>
       _core.submit(
@@ -355,8 +333,6 @@ final class NetLane implements TaskLane {
         preemptible: preemptible,
         flowTargetFrames: flowTargetFrames,
         retainFlowResponse: retainFlowResponse,
-        protectFlowRetentionFromNormalYield:
-            protectFlowRetentionFromNormalYield,
         task: task,
       );
 
@@ -379,8 +355,6 @@ final class NetLane implements TaskLane {
       _core.updateFlowTargetFrames(key, frames);
   bool updateRetainFlowResponse(String key, bool retain) =>
       _core.updateRetainFlowResponse(key, retain);
-  bool updateProtectFlowRetentionFromNormalYield(String key, bool protect) =>
-      _core.updateProtectFlowRetentionFromNormalYield(key, protect);
 
 
   @override
@@ -596,7 +570,6 @@ final class _Lane {
     bool preemptible = true,
     int flowTargetFrames = 0,
     bool retainFlowResponse = false,
-    bool protectFlowRetentionFromNormalYield = false,
     required LaneTask task,
   }) {
     assert(flowTargetFrames >= 0);
@@ -606,14 +579,9 @@ final class _Lane {
       activeTask
         ..preemptible = preemptible
         ..flowTargetFrames = flowTargetFrames
-        ..retainFlowResponse = retainFlowResponse
-        ..protectFlowRetentionFromNormalYield =
-            protectFlowRetentionFromNormalYield;
+        ..retainFlowResponse = retainFlowResponse;
       activeTask.token.updateFlowTargetFrames(flowTargetFrames);
       activeTask.token.updateRetainFlowResponse(retainFlowResponse);
-      activeTask.token.updateProtectFlowRetentionFromNormalYield(
-        protectFlowRetentionFromNormalYield,
-      );
       if (increased) _pump();
       return false;
     }
@@ -627,8 +595,6 @@ final class _Lane {
         ..preemptible = preemptible
         ..flowTargetFrames = flowTargetFrames
         ..retainFlowResponse = retainFlowResponse
-        ..protectFlowRetentionFromNormalYield =
-            protectFlowRetentionFromNormalYield
         ..task = task;
       if (increased) _pump();
       return false;
@@ -641,8 +607,6 @@ final class _Lane {
       preemptible: preemptible,
       flowTargetFrames: flowTargetFrames,
       retainFlowResponse: retainFlowResponse,
-      protectFlowRetentionFromNormalYield:
-          protectFlowRetentionFromNormalYield,
       task: task,
     );
     _pump();
@@ -692,22 +656,6 @@ final class _Lane {
     return true;
   }
 
-  bool updateProtectFlowRetentionFromNormalYield(
-    String key,
-    bool protect,
-  ) {
-    final activeTask = _active[key];
-    if (activeTask != null) {
-      activeTask.protectFlowRetentionFromNormalYield = protect;
-      activeTask.token.updateProtectFlowRetentionFromNormalYield(protect);
-      return true;
-    }
-    final pending = _pending[key];
-    if (pending == null) return false;
-    pending.protectFlowRetentionFromNormalYield = protect;
-    return true;
-  }
-
 
   void _updatePendingPriority(_Pending pending, int priority) {
     final previous = pending.priority;
@@ -736,7 +684,6 @@ final class _Lane {
     bool preemptible = true,
     int flowTargetFrames = 0,
     bool retainFlowResponse = false,
-    bool protectFlowRetentionFromNormalYield = false,
     required LaneTask task,
   }) {
     assert(flowTargetFrames >= 0);
@@ -749,8 +696,6 @@ final class _Lane {
       preemptible: preemptible,
       flowTargetFrames: flowTargetFrames,
       retainFlowResponse: retainFlowResponse,
-      protectFlowRetentionFromNormalYield:
-          protectFlowRetentionFromNormalYield,
       task: task,
       highPrioritySinceMicros:
           priority >= highPriorityThreshold ? clock.nowMicros() : null,
@@ -892,8 +837,6 @@ final class _Lane {
         priority: next.priority,
         flowTargetFrames: next.flowTargetFrames,
         retainFlowResponse: next.retainFlowResponse,
-        protectFlowRetentionFromNormalYield:
-            next.protectFlowRetentionFromNormalYield,
         clock: clock,
         onSchedulingStateChanged: _pump,
       );
@@ -905,8 +848,6 @@ final class _Lane {
         preemptible: next.preemptible,
         flowTargetFrames: next.flowTargetFrames,
         retainFlowResponse: next.retainFlowResponse,
-        protectFlowRetentionFromNormalYield:
-            next.protectFlowRetentionFromNormalYield,
       );
       final bucket = next.bucket;
       if (bucket != null) {
@@ -1180,7 +1121,6 @@ final class _Pending {
     required this.preemptible,
     required this.flowTargetFrames,
     required this.retainFlowResponse,
-    required this.protectFlowRetentionFromNormalYield,
     required this.task,
     required this.highPrioritySinceMicros,
   });
@@ -1193,7 +1133,6 @@ final class _Pending {
   bool preemptible;
   int flowTargetFrames;
   bool retainFlowResponse;
-  bool protectFlowRetentionFromNormalYield;
   LaneTask task;
   int? highPrioritySinceMicros;
 }
@@ -1207,7 +1146,6 @@ final class _ActiveTask {
     required this.preemptible,
     required this.flowTargetFrames,
     required this.retainFlowResponse,
-    required this.protectFlowRetentionFromNormalYield,
   });
 
   final CancelToken token;
@@ -1217,7 +1155,6 @@ final class _ActiveTask {
   bool preemptible;
   int flowTargetFrames;
   bool retainFlowResponse;
-  bool protectFlowRetentionFromNormalYield;
 }
 
 final class _KeyIdleWaiter {

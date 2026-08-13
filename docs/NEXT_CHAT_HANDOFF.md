@@ -1,4 +1,5 @@
-# dev.265 后续交接
+# dev.266 后续交接
+- dev.266：12:49 dev.265 Trace与`vibevenera-master.zip`只读对照证明应停止继续给retention/yield叠局部性补丁。ZIC原本把7/3、2/1、far rank、5/3/2/1永久绑定page-index正负，没有Pipeline browsing-direction事实；Vibe使用有滞后的direction predictor，并让window/rank统一消费readDirection。现PipelineController新增`BrowsingDirectionPredictor`：单次反向仅candidate，连续2次或加权趋势才切向，scrub/jump/大跳不学习；RoleResolver、HeuristicPolicy、AnimatedPrefetchPolicy统一使用readDirection。dev.265跨层`protectFlowRetentionFromNormalYield`已删除；target3 next2天然不可normal-yield，outer target1/2才可在no-Range satisfied时声明yieldable，adjacent retain仍不可yield。dev.262 non-Range continuity与dev.264 cooperative slot fairness保留为独立transport机制。下一轮真机先看`policyDecision.readDirection`、方向确认点两侧7/3 demand与detach，不再先改NetLane阈值。冻结7/3、2/1、5/3/2/1、holder7/5/3/2、NetLane5+1。
 - dev.265：12:25 dev.264真机Trace确认“仅隔一页被cancel”是dev.264 cooperative `pseudo-yielded`误伤near-two，不是destructive cancellation：全场`downloadPreempted/cancel=0`。current270时page272(next2,target3)在8.167s被yield；current267时page269(next2,priority800,target3)在13.894s为了priority640的page264(previous3)让槽。现新增`protectFlowRetentionFromNormalYield`并只对distance<=2投影，贯穿DownloadDemand→TransferDemand→NetLane token；它只禁止normal fairness回收no-Range near-two hold，不把next2/previous2强制设为`retainFlowResponse`，因此Range-capable near-two仍可正常suspend。distance>=3 outer hold继续可按dev.264让槽；近/远迁移原位更新，最后claim消失清保护。下一轮真机优先确认next2/previous2不再出现`pseudo-yielded`，其`pseudo-retained`应有`retentionProtectedFromNormalYield=true`；outer hold在真实slot pressure下仍可yield，且前进方向previous3不会重新整体饥饿。冻结3/7、5/3/2/1、decode2/1、holder7/5/3/2、NetLane5+1。
 - dev.264：11:45 dev.263真机Trace确认单向预下载失败属于normal NetLane slot starvation，不是3/7 demand缺失：下降方向page275/page274/page272/page271/page270几乎只在current后首次启动，反方向page279/page280可提前约18.9s/20.0s，page283/page284提前约4.8s/5.8s。page102等`range-resume-unproven` no-Range outer hold在flow target已满足后仍长期占normal slot。现这类`!retainFlowResponse && !rangeSupported`、positive target+playable floor已满足的optional continuity hold可标记yieldable；normal pending真实无slot时NetLane至多请求一个协作`pseudo-yielded`，不cancel、不记`downloadPreempted`、不提前释放permit。adjacent warm/current/unsatisfied body不可yield，proof变化会撤销旧request。下一轮真机优先验证前进方向previous2/3重新在current前`downloadStarted`，并看到`pseudo-yielded → pending admitted`而无normal destructive preemption。3/7、5/3/2/1、decode2/1、holder7/5/3/2、NetLane5+1不变。
 - dev.263：11:13 dev.262真机Trace确认“部分图片无法打开”发生在physical-generation rebind后的Decode→Upload依赖断裂。page98/page97在25.192s/25.872s rebind；page97新DecodeSession于31.409s已depth=7/source sealed，但retained旧UploadSession仍反复uploadStarted并waitingFrame。源码确认UploadSession生命周期内固定引用DecodeSession，而旧rebind只invalidate DecodeRegistry。现source-watch rebind先cancel decode/upload lane，再按UploadRegistry.invalidateForDownload→DecodeRegistry.invalidateForDownload顺序退休旧generation依赖；后续decode frame-ready按既有demand创建新UploadSession。trace新增invalidatedUploads/invalidatedDecodes。下一轮真机优先确认rebind后重新出现frameUploaded/firstFrameReady，且无长期waitingFrame；同时继续验证dev.262 non-range 3/7重下载闭包。冻结3/7、body5/3/2/1、decode2/1、holder7/5/3/2、NetLane5+1。
@@ -9,10 +10,10 @@
 4. `docs/SPEC.md`
 5. `docs/IMPLEMENTATION_PLAN.md`
 6. `docs/IMPLEMENTATION_STATUS.md`
-7. `docs/adr/0243-near-two-flow-retention-protection.md`
-8. `docs/audits/dev265-near-two-flow-yield-root-cause-audit.md`
-9. `docs/adr/0242-nonrange-flow-retention-slot-fairness.md`
-10. `docs/audits/dev264-directional-prefetch-starvation-root-cause-audit.md`
+7. `docs/adr/0244-pipeline-owned-browsing-direction.md`
+8. `docs/audits/dev266-direction-window-churn-root-cause-audit.md`
+9. `docs/adr/0243-near-two-flow-retention-protection.md`、`docs/audits/dev265-near-two-flow-yield-root-cause-audit.md`
+10. `docs/adr/0242-nonrange-flow-retention-slot-fairness.md`、`docs/audits/dev264-directional-prefetch-starvation-root-cause-audit.md`
 11. `docs/adr/0122-current-reader-pipeline-authority-consolidation.md`
 12. `docs/adr/0118-unified-version-stable-cache-identities-and-verified-artifact-reuse.md`
 13. `docs/adr/0140-cloudflare-browser-session-history-and-plugin-persistence.md`
@@ -76,5 +77,4 @@
 - 不恢复 FlowGate、startup-buffer、跨 Reader used texture。
 - 不在 App/Reader新增 transport、正文缓存、frame/session owner。
 - 不恢复 synthetic Mihon chapter、标题/URL启发式目录去重，也不反转回 explicit chapterList-first；不得并行/重复调用两套章节API。
-- 不恢复 presentation封面 retry/watchdog/evict/Future join。
-- 正式 ZIP 不含 `.zic-workspace.json`。Patch命令：`git apply --index "$(python3 tool/workspace_config.py patch_dir --absolute)/<patch-file>"`
+- 不恢复 presentation封面 retry/watchdog/evict/Future join。 - 正式 ZIP 不含 `.zic-workspace.json`。Patch命令：`git apply --index "$(python3 tool/workspace_config.py patch_dir --absolute)/<patch-file>"`

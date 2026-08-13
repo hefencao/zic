@@ -263,10 +263,6 @@ final class _TestClock implements MonoClock {
     expect(demandFor(14).retainFlowResponse, isFalse);
     expect(demandFor(15).retainFlowResponse, isFalse);
     expect(demandFor(12).retainFlowResponse, isFalse);
-    expect(demandFor(14).protectFlowRetentionFromNormalYield, isTrue);
-    expect(demandFor(10).protectFlowRetentionFromNormalYield, isTrue);
-    expect(demandFor(15).protectFlowRetentionFromNormalYield, isFalse);
-    expect(demandFor(9).protectFlowRetentionFromNormalYield, isFalse);
   });
 
 

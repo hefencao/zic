@@ -29,6 +29,7 @@ final class HeuristicPolicy {
     Map<int, bool> runtimeAnimatedPages = const <int, bool>{},
     bool assumeUnresolvedStatic = false,
     AnimatedPrefetchFlow? downloadFlow,
+    int readDirection = 1,
   }) {
     final downloads = <DownloadId, DownloadDemand>{};
     final decodes = <DecodeId, DecodeDemand>{};
@@ -46,6 +47,7 @@ final class HeuristicPolicy {
       decodeTarget: decodeTarget,
       runtimeAnimatedPages: runtimeAnimatedPages,
       assumeUnresolvedStatic: assumeUnresolvedStatic,
+      readDirection: readDirection,
     );
 
     for (final entry in window.roles.entries) {
@@ -74,6 +76,7 @@ final class HeuristicPolicy {
         role,
         pageIndex: entry.key,
         currentIndex: observation.currentIndex,
+        readDirection: readDirection,
       );
       if (downloadPriority > 0) {
         downloads[download] = DownloadDemand(
@@ -84,8 +87,6 @@ final class HeuristicPolicy {
           flowTargetFrames: downloadFlow?.targetFramesFor(entry.key) ?? 0,
           retainFlowResponse:
               role == PageRole.next || role == PageRole.previous,
-          protectFlowRetentionFromNormalYield:
-              (entry.key - observation.currentIndex).abs() <= 2,
         );
         keep.add(ResourceId.download(download));
       }
@@ -102,6 +103,7 @@ final class HeuristicPolicy {
                   visible: visibleStatic,
                   pageIndex: entry.key,
                   currentIndex: observation.currentIndex,
+                  readDirection: readDirection,
                 )
               : _decodePriority(role),
           targetWatermark: decodeWatermark,
@@ -132,6 +134,7 @@ final class HeuristicPolicy {
                   visible: visibleStatic,
                   pageIndex: entry.key,
                   currentIndex: observation.currentIndex,
+                  readDirection: readDirection,
                 ),
           reason: staticWarm && !primaryUpload
               ? visibleStatic
@@ -195,6 +198,7 @@ final class HeuristicPolicy {
     required DecodeTarget decodeTarget,
     required Map<int, bool> runtimeAnimatedPages,
     required bool assumeUnresolvedStatic,
+    required int readDirection,
   }) {
     final visibleIndexes = observation.visibleCoverages
         .where((coverage) => coverage.fraction > 0)
@@ -254,11 +258,13 @@ final class HeuristicPolicy {
         a.value,
         pageIndex: a.key,
         currentIndex: observation.currentIndex,
+        readDirection: readDirection,
       );
       final bPriority = _staticPriority(
         b.value,
         pageIndex: b.key,
         currentIndex: observation.currentIndex,
+        readDirection: readDirection,
       );
       final priorityOrder = bPriority.compareTo(aPriority);
       if (priorityOrder != 0) return priorityOrder;
@@ -320,11 +326,13 @@ final class HeuristicPolicy {
     required bool visible,
     required int pageIndex,
     required int currentIndex,
+    required int readDirection,
   }) {
     final base = _staticPriority(
       role,
       pageIndex: pageIndex,
       currentIndex: currentIndex,
+      readDirection: readDirection,
     );
     // A non-current page that is already on screen must beat speculative
     // next/previous output preparation without pretending to be current or a
@@ -338,6 +346,7 @@ final class HeuristicPolicy {
     PageRole role, {
     required int pageIndex,
     required int currentIndex,
+    required int readDirection,
   }) =>
       switch (role) {
         PageRole.current => 1000,
@@ -349,6 +358,7 @@ final class HeuristicPolicy {
         PageRole.near || PageRole.far => _distanceDownloadPriority(
             pageIndex: pageIndex,
             currentIndex: currentIndex,
+            readDirection: readDirection,
           ),
         PageRole.detached => 0,
       };
@@ -357,6 +367,7 @@ final class HeuristicPolicy {
     PageRole role, {
     required int pageIndex,
     required int currentIndex,
+    required int readDirection,
   }) {
     return switch (role) {
       PageRole.current => 1000,
@@ -368,6 +379,7 @@ final class HeuristicPolicy {
       PageRole.near || PageRole.far => _distanceDownloadPriority(
           pageIndex: pageIndex,
           currentIndex: currentIndex,
+          readDirection: readDirection,
         ),
       PageRole.detached => 0,
     };
@@ -376,9 +388,12 @@ final class HeuristicPolicy {
   int _distanceDownloadPriority({
     required int pageIndex,
     required int currentIndex,
+    required int readDirection,
   }) {
-    final distance = (pageIndex - currentIndex).abs();
-    if (pageIndex > currentIndex) {
+    final offset = pageIndex - currentIndex;
+    final distance = offset.abs();
+    final readDistance = offset * (readDirection < 0 ? -1 : 1);
+    if (readDistance > 0) {
       return (760 - (distance - 3).clamp(0, 10) * 20)
           .clamp(540, 760)
           .toInt();

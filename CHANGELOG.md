@@ -1,3 +1,10 @@
+## 0.31.0-dev.266：Pipeline-owned 浏览方向与3/7工作集收口
+
+- 12:49 dev.265真机Trace与`vibevenera-master.zip`只读对照确认，近几轮retention/yield补丁的共同上游缺口是Pipeline没有浏览方向事实：RoleResolver固定index +7/-3，far rank与5/3/2/1也各自按index符号解释方向。
+- 新增有滞后的`BrowsingDirectionPredictor`：单次反向只形成candidate，连续2次反向或加权趋势才确认切向；scrub/jump/abs(delta)>5不学习。RoleResolver、download/static rank、animated flow credit统一消费同一`readDirection`。
+- 删除dev.265 `protectFlowRetentionFromNormalYield`从DownloadDemand/TransferDemand/NetLane/CancelToken的整条复制链。冻结flow credit直接表达局部性：next2 target3不声明yieldable；outer shallow target<=2在no-Range且已满足时才可yield；immediate adjacent由`retainFlowResponse`继续保护。
+- dev.262 no-Range continuity与dev.264 cooperative slot fairness保留，各自只处理transport capability/slot事实；NetLane不再承载Reader页距例外。7/3、2/1、5/3/2/1、holder7/5/3/2、normal5+current reserved1均不变。
+
 ## 0.31.0-dev.265：近二页 continuity hold 与 outer slot fairness 分层
 
 - 12:25 dev.264 真机 Trace确认用户所见“只隔一页就被cancel”实际没有`downloadPreempted/cancelled`；发生的是dev.264 cooperative `pseudo-yielded`。current=270时page272仍是next2/target3却在8.167s被yield；current=267时page269是next2/priority800/target3，却在13.894s为了priority640的page264(previous3)让槽，page264随后13.911s才`downloadStarted`。

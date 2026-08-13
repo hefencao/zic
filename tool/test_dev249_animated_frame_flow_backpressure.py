@@ -30,9 +30,9 @@ require('apps/app/android/zic-version.properties', f'versionCode={m.group(1)}')
 require(
     'packages/pipeline/lib/src/animated_prefetch_policy.dart',
     'targetFramesByIndex',
-    'if (offset == 1) return 5;',
-    'if (offset == 2) return 3;',
-    'if (offset == -1) return 2;',
+    'if (readDistance == 1) return 5;',
+    'if (readDistance == 2) return 3;',
+    'if (readDistance == -1) return 2;',
     "'c>4' => 1",
     "'n>2' => 2",
     "'c>6' => 3",

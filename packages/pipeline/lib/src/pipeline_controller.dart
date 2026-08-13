@@ -2,6 +2,7 @@ import 'package:domain/domain.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'animated_prefetch_policy.dart';
+import 'browsing_direction_predictor.dart';
 import 'demand.dart';
 import 'decode_target.dart';
 import 'heuristic_policy.dart';
@@ -51,6 +52,9 @@ final class PipelineController {
   int? _previousRetainedIndex;
   int? _currentIndex;
   int? _lastCurrentIndex;
+  final BrowsingDirectionPredictor _directionPredictor =
+      BrowsingDirectionPredictor();
+  int _readDirection = 1;
   ReaderObs? _lastObservation;
   final Map<int, bool> _runtimeAnimatedPages = <int, bool>{};
   final Set<int> _runtimeWebpCostPages = <int>{};
@@ -71,9 +75,25 @@ final class PipelineController {
   }
 
   void accept(ReaderObs observation) {
-    if (_currentIndex != null && _currentIndex != observation.currentIndex) {
-      _lastCurrentIndex = _currentIndex;
+    final previousIndex = _currentIndex;
+    if (previousIndex != null && previousIndex != observation.currentIndex) {
+      _lastCurrentIndex = previousIndex;
       _animatedFlowStage = 0;
+      final delta = observation.currentIndex - previousIndex;
+      final directional = observation.interaction != Interaction.scrubbing &&
+          observation.interaction != Interaction.jumping &&
+          delta.abs() <= 5;
+      _readDirection = _directionPredictor.record(
+        delta: delta,
+        nowMicros: observation.monotonicMicros,
+        directional: directional,
+      );
+    } else if (previousIndex == null) {
+      _directionPredictor.reset(
+        direction: 1,
+        nowMicros: observation.monotonicMicros,
+      );
+      _readDirection = _directionPredictor.direction;
     }
     _currentIndex = observation.currentIndex;
     _lastObservation = observation;
@@ -189,6 +209,7 @@ final class PipelineController {
       chapter,
       observation,
       previousCurrentIndex: _lastCurrentIndex,
+      readDirection: _readDirection,
     );
     if (!force &&
         !_decodeTargetDirty &&
@@ -207,6 +228,7 @@ final class PipelineController {
       window: window,
       active: animatedFlowActive,
       expansionStage: _animatedFlowStage,
+      readDirection: _readDirection,
     );
     final proposal = policy.createPlan(
       revision: _revision,
@@ -217,6 +239,7 @@ final class PipelineController {
       runtimeAnimatedPages: _runtimeAnimatedPages,
       assumeUnresolvedStatic: _assumeUnresolvedStatic,
       downloadFlow: animatedFlow,
+      readDirection: _readDirection,
     );
     final plan = guard.enforce(proposal);
     final diff = DemandDiff.between(_previous, plan);
@@ -254,6 +277,7 @@ final class PipelineController {
               entry.key.toString(): entry.value,
           },
           'currentIndex': observation.currentIndex,
+          'readDirection': _readDirection,
           'targetIndex': observation.targetCoverage?.pageIndex,
           'retainedIndex': window.retainedIndex,
           'interaction': observation.interaction.name,

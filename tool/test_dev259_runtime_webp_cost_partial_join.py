@@ -133,8 +133,8 @@ require('tool/check.sh', 'test_dev259_runtime_webp_cost_partial_join.py')
 require('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart', 'reservedHighPrioritySlots: 1')
 require(
     'packages/pipeline/lib/src/animated_prefetch_policy.dart',
-    'if (offset == 1) return 5;',
-    'if (offset == 2) return 3;',
-    'if (offset == -1) return 2;',
+    'if (readDistance == 1) return 5;',
+    'if (readDistance == 2) return 3;',
+    'if (readDistance == -1) return 2;',
 )
 print('dev.259 runtime WebP cost / partial playable join: OK')

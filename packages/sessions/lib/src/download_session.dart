@@ -886,7 +886,6 @@ final class DownloadSession {
     int? playablePrefixFloorBytes,
     bool? responseRangeSupported,
     String? retentionReason,
-    bool? retentionProtectedFromNormalYield,
     int? yieldToPriority,
   }) {
     _emit(
@@ -909,9 +908,6 @@ final class DownloadSession {
         if (responseRangeSupported != null)
           'responseRangeSupported': responseRangeSupported,
         if (retentionReason != null) 'retentionReason': retentionReason,
-        if (retentionProtectedFromNormalYield != null)
-          'retentionProtectedFromNormalYield':
-              retentionProtectedFromNormalYield,
         if (yieldToPriority != null) 'yieldToPriority': yieldToPriority,
       },
     );

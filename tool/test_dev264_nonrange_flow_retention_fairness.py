@@ -39,7 +39,9 @@ require(
     "action: 'pseudo-yielded'",
     "retentionReason: 'netlane-unsatisfied-demand'",
     'yieldToPriority: requestedByPriority,',
-    'yieldable: !control.retainFlowResponse && !rangeSupported,',
+    'yieldable: !control.retainFlowResponse',
+    '!rangeSupported',
+    'control.flowTargetFrames <= 2',
     'throw DownloadFlowSuspended(',
 )
 require(

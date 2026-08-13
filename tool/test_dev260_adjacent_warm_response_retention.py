@@ -120,9 +120,9 @@ require('tool/check.sh', 'test_dev260_adjacent_warm_response_retention.py')
 # Stable policy limits remain frozen.
 require(
     'packages/pipeline/lib/src/animated_prefetch_policy.dart',
-    'if (offset == 1) return 5;',
-    'if (offset == 2) return 3;',
-    'if (offset == -1) return 2;',
+    'if (readDistance == 1) return 5;',
+    'if (readDistance == 2) return 3;',
+    'if (readDistance == -1) return 2;',
 )
 require(
     'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',

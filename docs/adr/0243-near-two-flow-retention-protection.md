@@ -1,7 +1,9 @@
 # ADR 0243：近二页 no-Range continuity 不得为 outer normal fairness 主动让槽
 
-- Status: Accepted
+- Status: Superseded by ADR 0244
 - Date: 2026-08-13
+
+> dev.266由ADR 0244以Pipeline-owned browsing direction与flow-credit locality取代本ADR的跨层`protectFlowRetentionFromNormalYield`实现；本文件仅保留dev.265历史根因。
 
 ## Context
 

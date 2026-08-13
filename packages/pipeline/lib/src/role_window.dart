@@ -51,6 +51,7 @@ final class RoleResolver {
     ChapterManifest chapter,
     ReaderObs observation, {
     int? previousCurrentIndex,
+    int readDirection = 1,
   }) {
     final roles = <int, PageRole>{};
     final current = observation.currentIndex
@@ -84,10 +85,11 @@ final class RoleResolver {
       _setRole(roles, target.pageIndex, PageRole.transition);
     }
 
+    final direction = readDirection < 0 ? -1 : 1;
     var forwardSlot = 0;
     for (var offset = 1; forwardSlot < forwardEncodedPages; offset++) {
-      final index = current + offset;
-      if (index >= chapter.pages.length) {
+      final index = current + direction * offset;
+      if (index < 0 || index >= chapter.pages.length) {
         break;
       }
       forwardSlot++;
@@ -108,8 +110,8 @@ final class RoleResolver {
     }
     var backwardSlot = 0;
     for (var offset = 1; backwardSlot < backwardEncodedPages; offset++) {
-      final index = current - offset;
-      if (index < 0) {
+      final index = current - direction * offset;
+      if (index < 0 || index >= chapter.pages.length) {
         break;
       }
       backwardSlot++;

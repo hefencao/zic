@@ -1192,51 +1192,6 @@ void _dev123NetLaneTests() {
     expect(pendingStarted, isTrue);
   });
 
-  test('two-page near flow retention is not reclaimed by outer normal pressure',
-      () async {
-    final lane = NetLane(maxActive: 1, highPriorityThreshold: 1000);
-    final incumbentStarted = Completer<CancelToken>();
-    final release = Completer<void>();
-    var pendingStarted = false;
-
-    lane.submitRanked(
-      key: 'near-two',
-      priority: 800,
-      bucket: 'remote:a',
-      bucketLimit: 1,
-      flowTargetFrames: 3,
-      protectFlowRetentionFromNormalYield: true,
-      task: (token) async {
-        incumbentStarted.complete(token);
-        token.markFlowRetention(yieldable: true);
-        await release.future;
-      },
-    );
-    final token = await incumbentStarted.future;
-    expect(token.protectFlowRetentionFromNormalYield, isTrue);
-    expect(token.flowRetentionYieldable, isFalse);
-
-    lane.submitRanked(
-      key: 'outer-demand',
-      priority: 640,
-      bucket: 'remote:a',
-      bucketLimit: 1,
-      flowTargetFrames: 1,
-      task: (_) async {
-        pendingStarted = true;
-      },
-    );
-    await Future<void>.delayed(Duration.zero);
-    expect(token.flowYieldRequestedByPriority, isNull);
-    expect(token.cancelled, isFalse);
-    expect(pendingStarted, isFalse);
-
-    release.complete();
-    await lane.idle();
-    expect(pendingStarted, isTrue);
-  });
-
-
   test('flow target updates reach the same active token without resubmission', () async {
     final lane = NetLane(maxActive: 1);
     final started = Completer<CancelToken>();

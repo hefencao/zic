@@ -1006,8 +1006,15 @@ final class _WebpNetworkFlowGate {
           preserveResponse = true;
         }
         if (preserveResponse) {
+          // Flow-credit magnitude already encodes the stable 5/3/2/1
+          // locality contract. Only shallow outer holds (<=2 frames) are
+          // optional enough to yield a normal NetLane slot. next2 remains at
+          // target3 and therefore cannot be sacrificed for outer fairness;
+          // immediate previous is target2 but retainFlowResponse keeps it warm.
           control.markFlowRetention(
-            yieldable: !control.retainFlowResponse && !rangeSupported,
+            yieldable: !control.retainFlowResponse &&
+                !rangeSupported &&
+                control.flowTargetFrames <= 2,
           );
           // Immediate previous/next demand explicitly asks to keep the live
           // response warm. A response that does not positively advertise
@@ -1015,9 +1022,9 @@ final class _WebpNetworkFlowGate {
           // NetLane has spare capacity: closing it here turns the authoritative
           // 3/7 partial into a known full-body prefix replay on the next role
           // promotion. Reader locality is intentionally separate from this
-          // transport fact: CancelToken protects the distance<=2 near-two set,
-          // while only an unprotected outer continuity hold may be asked to
-          // yield cooperatively for a starved normal demand.
+          // transport fact: only a shallow outer flow-credit hold may be asked
+          // to yield cooperatively for a starved normal demand. Reader distance
+          // is not duplicated into NetLane metadata.
           //
           // consumerPacing still cannot claim upstream byte backpressure, so
           // retain at the existing bounded pace (at most one body chunk per
@@ -1035,8 +1042,6 @@ final class _WebpNetworkFlowGate {
               retentionReason: control.retainFlowResponse
                   ? 'adjacent-demand'
                   : 'range-resume-unproven',
-              retentionProtectedFromNormalYield:
-                  control.protectFlowRetentionFromNormalYield,
             );
           }
           return;

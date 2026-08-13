@@ -117,8 +117,8 @@ require('tool/check.sh', 'test_dev258_decoder_playable_prefix_flow_authority.py'
 require('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart', 'reservedHighPrioritySlots: 1')
 require(
     'packages/pipeline/lib/src/animated_prefetch_policy.dart',
-    'if (offset == 1) return 5;',
-    'if (offset == 2) return 3;',
-    'if (offset == -1) return 2;',
+    'if (readDistance == 1) return 5;',
+    'if (readDistance == 2) return 3;',
+    'if (readDistance == -1) return 2;',
 )
 print('dev.258 decoder playable-prefix flow authority: OK')

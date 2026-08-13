@@ -360,8 +360,6 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             reason: entry.value.reason,
             flowTargetFrames: entry.value.flowTargetFrames,
             retainFlowResponse: entry.value.retainFlowResponse,
-            protectFlowRetentionFromNormalYield:
-                entry.value.protectFlowRetentionFromNormalYield,
           ),
       },
     );
