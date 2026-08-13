@@ -1,3 +1,9 @@
+## 0.31.0-dev.253：logical source watch physical-generation rebinding
+
+- 01:44真机Trace中`taskFailed/sourceDisabled`均为0，但page81两次current分别约3.26s/至少5s始终`firstFrameReady=false`。其new physical session已从artifact cache完整获得18,699,622 bytes并`sourceReady/promoted`，对应DecodeSession却从77.92s起一直`waitingSource`；同一logical download此前曾verified-alias到旧physical owner，旧owner完成并退休后alias被机械清理，随后该logical exact创建新physical owner。
+- 根因是`LiveCoordinator`按logical DownloadId缓存source listener，却没有记录listener实际绑定的physical session/projection；demand gap后同logical id重入时，旧listener使`_watchSource`提前返回，new physical sourceReady无人唤醒decode。现source watch显式持有logical→physical session/projection/listener binding；physical generation变化时解绑旧projection、清理source revision consumption、机械失效旧DecodeSession，并在本轮reconcile完成后从新projection重新wake。
+- `DownloadIngressProjectionRegistry`同时识别“same DownloadId但新DownloadSession对象”的physical generation，旧Reader-local ingress/source不得跨generation复用；SourcePool entry机械替换。3/7、frame credit、consumer pacing、NetLane、partial/progress/provider均不改。
+
 ## 0.31.0-dev.252：sealed ingress幂等确认与resume-safe flow pacing
 
 - 23:17真机Trace出现1次`sourceDisabled`：late Reader replay已seal native WebP后再次`expectLength`触发`reserve expected length`，native返回sealed并把Reader-local source禁用。`Ingress.expectLength`现把sealed+同长度视为幂等确认；长度不一致直接报artifact corruption，但不得再调用native reserve/disable可用source。

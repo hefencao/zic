@@ -1,5 +1,5 @@
-# dev.252 后续交接
-- dev.252：23:17 Trace确认部分图片打不开来自sealed Reader-local source被重复`expectLength -> native reserve`后disable；预下载还存在旧partial frame-credit自锁，resume attempt会在network cursor尚未追到已有committed boundary时被pause。现sealed同长度expected为幂等确认；flow gate冻结attempt起点authoritative catch-up floor并在该边界前放行resume/probe/full-body replay。rhttp direct从hard `streamBackpressure`降为`consumerPacing`，blocked时每100ms单chunk `pseudo-drain`，credit升高同response全速resume；HttpClient direct仍真backpressure。3/7、水位、NetLane与连接数未改。
+# dev.253 后续交接
+- dev.253：01:44 Trace中没有task/source failure，但page81 new physical已完整`sourceReady/promoted`仍永久`waitingSource`。根因是LiveCoordinator source listener按logical id缓存却实际绑定旧physical projection；旧owner退休/alias清理后同logical exact重建physical时未换绑。现source watch显式记录physical session/projection generation，换代时解绑旧listener、失效旧DecodeSession/source-consumption并在本轮reconcile后重新wake；Ingress registry也禁止same-id新DownloadSession复用旧Reader-local ingress/source。3/7、frame credit、consumer pacing、NetLane不改。
 `dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`

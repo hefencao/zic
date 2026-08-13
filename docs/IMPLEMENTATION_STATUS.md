@@ -2,8 +2,9 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.252` / App `0.31.0+252`。
-- dev.252：23:17真机Trace定位两条flow/source生命周期回归：sealed late-ingress在同步replay后再次`expectLength`会native reserve-after-seal并`sourceDisabled`；已有partial的resume attempt还会在`networkCursor`追到authoritative committed boundary前被旧帧数credit自锁。现sealed同长度expect为幂等确认，resume/probe/full-body catch-up在attempt起点旧partial边界前不受frame gate；rhttp direct由hard `streamBackpressure`降为`consumerPacing`并以100ms单chunk `pseudo-drain`保持单response活性，避免长暂停后两次`StreamSink is bound to a stream`。3/7、水位、NetLane与partial owner不变。
+- 当前版本：`0.31.0-dev.253` / App `0.31.0+253`。
+- dev.253：01:44 Trace中`taskFailed/sourceDisabled=0`，但page81的new physical source已从artifact cache完整获得18,699,622 bytes并promoted，DecodeSession仍从77.92s起永久`waitingSource`且两次current均无first frame。唯一命中“verified alias旧physical→旧owner退休→同logical exact新physical owner”的logical identity正是该页。现LiveCoordinator source watch从logical-id布尔缓存收为logical→physical session/projection/listener binding；generation变化机械解绑旧listener、失效旧decode source consumption/session，并在reconcile完成后从新projection重新wake。Ingress registry对same-id新DownloadSession也替换Reader-local ingress/source generation。
+- dev.252：sealed ingress幂等长度确认、resume catch-up floor与rhttp consumer pacing继续保留；3/7、水位、NetLane与partial owner不变。
 - dev.251：引入transport-owned `consumerPacing`三态capability与pseudo trace；其“无限consumer hold”等待语义已由dev.252改为bounded paced drain，runtime fallback/LoaderTransport仍使用该capability。
 - dev.250：用户本地Flutter/Dart编译暴露dev.249公共API迁移未闭合：`ByteResponse`constructor已有`flowControl`参数但类体漏`final ByteResponseFlowControl flowControl;`，同时downloads facade只导出`ByteResponse`而未导出该enum，导致artifact/source wrappers、rhttp bridge与DownloadJob均编译失败。现仅在transport补唯一instance field，并在downloads既有transport facade export中补enum；不新增extension/兼容层/第二依赖，dev.249完整3/7 frame-credit/backpressure策略不变。
 - dev.245：10:54 Trace删除normal 780/800/820/900主动preemption并让第一个current先借reserved第6槽；其victim-side 200ms demotion grace已由dev.246 incoming-candidate稳定窗口取代。

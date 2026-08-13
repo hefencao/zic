@@ -92,6 +92,16 @@ final class DecodeRegistry {
     return session != null;
   }
 
+  int invalidateForDownload(DownloadId id) {
+    final ids = _sessions.keys
+        .where((decodeId) => decodeId.download == id)
+        .toList(growable: false);
+    for (final decodeId in ids) {
+      _sessions.remove(decodeId)?.dispose();
+    }
+    return ids.length;
+  }
+
   void resetFor(DownloadId id, SourceEpoch epoch) {
     for (final entry in _sessions.entries) {
       if (entry.key.download == id) {

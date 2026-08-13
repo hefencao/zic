@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：真机验证dev.252 source/flow收口：`sourceDisabled(native source ... sealed during reserve expected length)`应归零；已有partial的resume/probe/full-body catch-up不得在`networkCursor < attemptAuthoritativeCatchupFloor`时记录pause；rhttp direct应记录`mode=consumerPacing`，blocked后出现bounded `pseudo-drain`并在变current/提credit时同一task原地`pseudo-resumed`，不应再复现长hard-pause后的`StreamSink is bound to a stream`。3/7、5/3/2/1水位、NetLane 5+1与partial/progress均保持不变。paused-connection pool仍独立，不与本轮混改。
+- P0：真机验证dev.253 source-generation闭包：同logical page若先verified-alias旧physical、经历demand gap/旧owner退休后再由新physical source提供正文，Trace应出现`reader-source-watch-rebind/physical-generation-changed`，随后new physical `sourceReady`必须触发该logical decode离开`waitingSource`并得到first frame；不得靠timeout retry。dev.252 sealed/resume/consumer-pacing规则与3/7、5/3/2/1、NetLane 5+1继续冻结。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环

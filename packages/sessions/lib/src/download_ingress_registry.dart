@@ -53,7 +53,19 @@ final class DownloadIngressProjectionRegistry {
 
   DownloadIngressProjection attach(DownloadSession session) {
     final existing = _entries[session.id];
-    if (existing != null) return existing.projection;
+    if (existing != null && identical(existing.session, session)) {
+      return existing.projection;
+    }
+    if (existing != null) {
+      existing.active = false;
+      existing.session.detachIngressProjection(existing.projection.scopeId);
+      existing.projection.detach();
+      _entries.remove(session.id);
+      // A new physical DownloadSession with the same DownloadId is a new
+      // physical generation. Its Reader-local native source must not inherit
+      // the retired session's ingress/source instance or revision timeline.
+      sources.remove(session.id);
+    }
 
     final projection = DownloadIngressProjection(
       scopeId: '$scopePrefix:physical:${session.sessionId}',

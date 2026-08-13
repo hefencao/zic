@@ -1488,6 +1488,161 @@ void main() {
     await downloads.dispose();
   });
 
+  test(
+      'logical source watch rebinds after aliased physical owner retires',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'live_source_watch_rebind_test_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final oldPhysicalId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'old',
+        pageId: 'physical-old',
+      ),
+      sourceRevision: 'old',
+      canonicalUri: Uri.parse('https://example.test/old.webp'),
+    );
+    final logicalId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'new',
+        pageId: 'logical-revisit',
+      ),
+      sourceRevision: 'new',
+      canonicalUri: Uri.parse('https://example.test/new.webp'),
+    );
+    final decodeId = DecodeId(
+      download: logicalId,
+      physicalWidth: 8,
+      physicalHeight: 8,
+      pixelFormat: PixelFormat.rgba8888,
+      renderer: RendererKind.flutterImage,
+    );
+    final clock = _Clock();
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final oldPhysical = downloads.get(oldPhysicalId);
+    downloads.aliasPhysical(id: logicalId, target: oldPhysicalId);
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'source-watch-rebind',
+    );
+    final decodes = DecodeRegistry(
+      downloads: downloads,
+      ingresses: ingresses,
+      cursors: _StaticCursorFactory(),
+      clock: clock,
+    );
+    final bytes = 'RIFF....WEBPsource-watch-rebind'.codeUnits;
+    final coordinator = LiveCoordinator(
+      registry: downloads,
+      ingresses: ingresses,
+      transportFor: (_) => _ImmediateTransport(bytes),
+      clock: clock,
+      decodes: decodes,
+      net: NetLane(maxActive: 1),
+      decode: DecodeLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await coordinator.dispose();
+      decodes.dispose();
+      ingresses.dispose();
+      sources.dispose();
+      await downloads.dispose();
+    });
+
+    const firstDownload = DownloadDemand(
+      role: PageRole.current,
+      priority: 1000,
+      reason: 'old-physical-alias',
+      expirationRevision: 2,
+    );
+    final first = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{logicalId: firstDownload},
+      decodes: const <DecodeId, DecodeDemand>{},
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{ResourceId.download(logicalId)},
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: first,
+        diff: DemandDiff.between(DemandPlan.empty(), first),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    await coordinator.idle();
+    expect(oldPhysical.state, DownloadState.promoted);
+
+    final empty = DemandPlan.empty(revision: 2);
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: empty,
+        diff: DemandDiff.between(first, empty),
+        window: RoleWindow(const <int, PageRole>{}),
+      ),
+    );
+    await coordinator.idle();
+    final retired = downloads.takeIdlePhysical(oldPhysicalId);
+    expect(retired, same(oldPhysical));
+    await retired!.dispose();
+    expect(downloads.resolvePhysicalId(logicalId), logicalId);
+
+    const currentDecode = DecodeDemand(
+      role: PageRole.current,
+      priority: 1000,
+      targetWatermark: 1,
+      reason: 'logical-revisit-current',
+      expirationRevision: 4,
+    );
+    final revisited = DemandPlan(
+      revision: 3,
+      downloads: <DownloadId, DownloadDemand>{
+        logicalId: const DownloadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'logical-revisit-current',
+          expirationRevision: 4,
+        ),
+      },
+      decodes: <DecodeId, DecodeDemand>{decodeId: currentDecode},
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{
+        ResourceId.download(logicalId),
+        ResourceId.decode(decodeId),
+      },
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: revisited,
+        diff: DemandDiff.between(empty, revisited),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    await coordinator.idle();
+
+    final newPhysical = downloads.get(logicalId);
+    expect(identical(newPhysical, oldPhysical), isFalse);
+    expect(newPhysical.state, DownloadState.promoted);
+    final decoded = decodes.find(decodeId)?.snapshot;
+    expect(decoded, isNotNull);
+    expect(decoded!.depth, greaterThanOrEqualTo(1));
+    expect(decoded.state, isNot(DecodeState.waitingSource));
+  });
+
   test('role promotion reaches an already active cursor decode request',
       () async {
     final temp = await Directory.systemTemp.createTemp(

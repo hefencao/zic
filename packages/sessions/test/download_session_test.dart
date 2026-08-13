@@ -265,6 +265,41 @@ void main() {
     expect(session.snapshot.ingressProjectionCount, 0);
   });
 
+  test('Reader ingress registry replaces a retired same-id session generation',
+      () async {
+    final clock = FakeMonoClock();
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/generation-cache'),
+      clock: clock,
+    );
+    final id = _id();
+    final firstSession = downloads.get(id);
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'reader-generation',
+    );
+    final firstProjection = ingresses.get(firstSession);
+    final retired = downloads.takeIdlePhysical(id);
+    expect(retired, same(firstSession));
+
+    final secondSession = downloads.get(id);
+    expect(identical(secondSession, firstSession), isFalse);
+    final secondProjection = ingresses.get(secondSession);
+    expect(identical(secondProjection, firstProjection), isFalse);
+    expect(secondProjection.snapshot.sourceReady, isFalse);
+    expect(secondSession.snapshot.ingressProjectionCount, 1);
+    expect(firstSession.snapshot.ingressProjectionCount, 0);
+
+    ingresses.dispose();
+    sources.dispose();
+    await retired!.dispose();
+    await downloads.dispose();
+  });
+
   test('late Reader projection stays unpublished until replay is authoritative',
       () async {
     final bytes = <int>[...'RIFF....WEBP'.codeUnits, 1, 2, 3, 4, 5, 6];

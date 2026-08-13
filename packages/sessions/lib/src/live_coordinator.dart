@@ -44,6 +44,19 @@ typedef DecodeRefillObserve = void Function(
 
 Future<void> _defaultSleep(Duration delay) => Future<void>.delayed(delay);
 
+
+final class _SourceWatchBinding {
+  const _SourceWatchBinding({
+    required this.session,
+    required this.projection,
+    required this.listener,
+  });
+
+  final DownloadSession session;
+  final DownloadIngressProjection projection;
+  final SourceListener listener;
+}
+
 final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   LiveCoordinator({
     required this.registry,
@@ -148,8 +161,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final Map<DecodeId, int> _decodeDemandRevisions = <DecodeId, int>{};
   final Map<DecodeId, UploadDemand> _uploads = <DecodeId, UploadDemand>{};
   final Map<DecodeId, int> _uploadDemandRevisions = <DecodeId, int>{};
-  final Map<DownloadId, SourceListener> _sourceListeners =
-      <DownloadId, SourceListener>{};
+  final Map<DownloadId, _SourceWatchBinding> _sourceWatches =
+      <DownloadId, _SourceWatchBinding>{};
+  final Set<DownloadId> _sourceRebindWakes = <DownloadId>{};
   final Map<DownloadId, int> _sourceRevisions = <DownloadId, int>{};
   final Map<DownloadId, int> _sourceWakeLengths = <DownloadId, int>{};
   final Map<DecodeId, int> _decodeSourceRevisions = <DecodeId, int>{};
@@ -181,7 +195,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
 
   int _availableSourceRevision(DownloadId id) {
     var available = _sourceRevisions[id] ?? -1;
-    final projectionRevision = ingresses?.find(id)?.snapshot.revision ?? -1;
+    final projectionRevision =
+        _sourceWatches[id]?.projection.snapshot.revision ?? -1;
     if (projectionRevision > available) {
       available = projectionRevision;
       _sourceRevisions[id] = projectionRevision;
@@ -201,6 +216,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _reconcileDownloads(sessionId, update.diff.downloads);
     _reconcileDecodes(sessionId, update.diff.decodes);
     _reconcileUploads(sessionId, update.diff.uploads);
+    _flushSourceRebindWakes(sessionId);
     _enforceBudget(sessionId);
   }
 
@@ -284,10 +300,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         return true;
       },
     );
-    for (final entry in _sourceListeners.entries) {
-      ingresses?.find(entry.key)?.removeSourceListener(entry.value);
+    for (final binding in _sourceWatches.values) {
+      binding.projection.removeSourceListener(binding.listener);
     }
-    _sourceListeners.clear();
+    _sourceWatches.clear();
+    _sourceRebindWakes.clear();
     _sourceRevisions.clear();
     _sourceWakeLengths.clear();
     _decodeSourceRevisions.clear();
@@ -356,9 +373,50 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     DownloadId id,
     DownloadSession session,
   ) {
-    if (_sourceListeners.containsKey(id)) {
+    final projection = ingresses?.get(session);
+    if (projection == null) {
       return;
     }
+    final existing = _sourceWatches[id];
+    if (existing != null &&
+        identical(existing.session, session) &&
+        identical(existing.projection, projection)) {
+      return;
+    }
+
+    if (existing != null) {
+      existing.projection.removeSourceListener(existing.listener);
+      _sourceRevisions.remove(id);
+      _sourceWakeLengths.remove(id);
+      for (final decodeId in _decodeSourceRevisions.keys
+          .where((decodeId) => decodeId.download == id)
+          .toList(growable: false)) {
+        _decodeSourceRevisions.remove(decodeId);
+      }
+      for (final decodeId in _decodes.keys
+          .where((decodeId) => decodeId.download == id)
+          .toList(growable: false)) {
+        decode.cancel(decodeId.key);
+      }
+      decodes?.invalidateForDownload(id);
+      _sourceRebindWakes.add(id);
+      traceSink.record(
+        traceEvent(
+          clock: clock,
+          sessionId: sessionId,
+          kind: TraceEventKind.artifactSource,
+          identityHash: id.key,
+          revision: _revision,
+          payload: <String, Object?>{
+            'stage': 'reader-source-watch-rebind',
+            'action': 'physical-generation-changed',
+            'fromPhysicalSession': existing.session.sessionId,
+            'toPhysicalSession': session.sessionId,
+          },
+        ),
+      );
+    }
+
     void listener(IngressSnap snapshot) {
       // Physical retry/terminal state is owned by DownloadTransferOwner. This
       // Reader-local listener only projects source growth into decode wakeups.
@@ -375,12 +433,23 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       _sourceWakeLengths[id] = snapshot.length;
       _wakeDecodesForSource(sessionId, id);
     }
-    final projection = ingresses?.get(session);
-    if (projection == null) {
-      return;
-    }
-    _sourceListeners[id] = listener;
+
+    final binding = _SourceWatchBinding(
+      session: session,
+      projection: projection,
+      listener: listener,
+    );
+    _sourceWatches[id] = binding;
     projection.addSourceListener(listener);
+  }
+
+  void _flushSourceRebindWakes(String sessionId) {
+    if (_sourceRebindWakes.isEmpty) return;
+    final downloads = _sourceRebindWakes.toList(growable: false);
+    _sourceRebindWakes.clear();
+    for (final id in downloads) {
+      _wakeDecodesForSource(sessionId, id);
+    }
   }
 
   void _reconcileDecodes(

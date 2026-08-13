@@ -21,7 +21,15 @@ spec = read('docs/SPEC.md')
 architecture = read('docs/ARCHITECTURE.md')
 
 require(live, 'int _availableSourceRevision(DownloadId id)', 'projection revision state lookup')
-require(live, 'ingresses?.find(id)?.snapshot.revision', 'projection revision fallback')
+pubspec = read('apps/app/pubspec.yaml')
+version_match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.MULTILINE)
+if version_match is None:
+    raise SystemExit('dev.218 app version mismatch')
+build = int(version_match.group(1))
+if build >= 253:
+    require(live, '_sourceWatches[id]?.projection.snapshot.revision', 'generation-aware projection revision fallback')
+else:
+    require(live, 'ingresses?.find(id)?.snapshot.revision', 'projection revision fallback')
 require(live, '!_decodeNeedsFill(', 'safe null-refill source consumption')
 require(live, 'sourceWake: true,', 'source-wake necessity proof')
 require(slider, 'widget.requestedIndex ?? widget.currentIndex', 'slider pending request projection')
@@ -42,11 +50,9 @@ for rel in (
     if not (ROOT / rel).is_file():
         raise SystemExit(f'dev.218 governance file missing: {rel}')
 
-pubspec = read('apps/app/pubspec.yaml')
 props = read('apps/app/android/zic-version.properties')
-version_match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.MULTILINE)
 android_match = re.search(r'^versionCode=(\d+)$', props, re.MULTILINE)
-if version_match is None or int(version_match.group(1)) < 218:
+if build < 218:
     raise SystemExit('dev.218 app version mismatch')
 if android_match is None or int(android_match.group(1)) < 218:
     raise SystemExit('dev.218 Android version mismatch')
