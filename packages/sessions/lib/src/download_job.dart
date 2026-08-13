@@ -370,6 +370,7 @@ final class DownloadJob {
                 session: session,
                 cancel: cancel,
                 capability: response.flowControl,
+                rangeSupported: response.rangeSupported,
               )
             : null;
 
@@ -874,11 +875,13 @@ final class _WebpNetworkFlowGate {
     required this.session,
     required this.cancel,
     required this.capability,
+    required this.rangeSupported,
   }) : _authoritativeCatchupFloor = session.committedLength;
 
   final DownloadSession session;
   final CancelToken? cancel;
   final ByteResponseFlowControl capability;
+  final bool rangeSupported;
   final int _authoritativeCatchupFloor;
   static const Duration _flowEvidencePollInterval = Duration(milliseconds: 100);
   WebpFramePrefixTracker? _tracker;
@@ -954,6 +957,7 @@ final class _WebpNetworkFlowGate {
         completedFrames: tracker.completedFrames,
         networkCursor: networkCursor,
         playablePrefixFloorBytes: _playablePrefixFloorBytes,
+        responseRangeSupported: rangeSupported,
       );
     }
     if (capability == ByteResponseFlowControl.consumerPacing) {
@@ -962,13 +966,24 @@ final class _WebpNetworkFlowGate {
         _flowEvidencePollInterval,
       );
       if (!creditGranted && _shouldBlock()) {
+        var preserveResponse = !rangeSupported;
         if (control.retainFlowResponse) {
-          // Adjacent previous/next pages are the most likely next foreground
-          // target. Keep their single consumer-paced response bound and allow
-          // at most one body chunk per evidence interval. This preserves the
-          // response without pretending that unsupported upstream pause saves
-          // network bytes. Once the role moves farther away, the same token is
-          // updated and the next blocked turn falls through to suspension.
+          preserveResponse = true;
+        }
+        if (preserveResponse) {
+          // Immediate previous/next demand explicitly asks to keep the live
+          // response warm. A response that does not positively advertise
+          // byte-range resume must also stay on the admitted physical task:
+          // closing it here turns the authoritative 3/7 partial into a known
+          // full-body prefix replay on the next role promotion. This restores
+          // the older non-resumable active-transfer invariant without adding a
+          // connection or changing the 5/3/2/1 body-credit target. Real NetLane
+          // preemption/cancellation remains the only authority allowed to end
+          // such an admitted response under pressure.
+          //
+          // consumerPacing still cannot claim upstream byte backpressure, so
+          // retain at the existing bounded pace (at most one body chunk per
+          // evidence interval) rather than silently draining the full body.
           if (!_warmRetentionAnnounced) {
             _warmRetentionAnnounced = true;
             session.recordFlowControl(
@@ -978,14 +993,20 @@ final class _WebpNetworkFlowGate {
               completedFrames: tracker.completedFrames,
               networkCursor: networkCursor,
               playablePrefixFloorBytes: _playablePrefixFloorBytes,
+              responseRangeSupported: rangeSupported,
+              retentionReason: control.retainFlowResponse
+                  ? 'adjacent-demand'
+                  : 'range-resume-unproven',
             );
           }
           return;
         }
         // Consumer pacing cannot promise that leaving this StreamIterator idle
-        // actually stops upstream network I/O. Non-adjacent speculative work
-        // therefore releases the response once both structural frame credit
-        // and decoder-owned playable-prefix credit are satisfied.
+        // actually stops upstream network I/O. A positively range-resumable,
+        // non-adjacent speculative response can therefore release the response
+        // once both structural frame credit and decoder-owned playable-prefix
+        // credit are satisfied; its authoritative partial can resume without
+        // replaying the prefix.
         session.recordFlowControl(
           action: 'pseudo-suspended',
           mode: capability.name,
@@ -993,6 +1014,7 @@ final class _WebpNetworkFlowGate {
           completedFrames: tracker.completedFrames,
           networkCursor: networkCursor,
           playablePrefixFloorBytes: _playablePrefixFloorBytes,
+          responseRangeSupported: rangeSupported,
         );
         throw DownloadFlowSuspended(
           targetFrames: control.flowTargetFrames,
@@ -1023,6 +1045,7 @@ final class _WebpNetworkFlowGate {
         completedFrames: tracker.completedFrames,
         networkCursor: networkCursor,
         playablePrefixFloorBytes: _playablePrefixFloorBytes,
+        responseRangeSupported: rangeSupported,
       );
     }
   }

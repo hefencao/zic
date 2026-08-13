@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：以dev.261重新真机验证dev.260相邻页warm-response闭包：编译闭包仅统一NetLane pending创建，不改变策略；next1/previous1达到5/2帧水位后仍应`pseudo-retained`，随即升current/transition必须同一task/response `pseudo-resumed`且无第二个`downloadStarted`，远离才suspend。冻结3/7、5/3/2/1、NetLane5+1。
+- P0：以dev.262真机复测09:59 Trace同类前后振荡：对`responseRangeSupported=false`的page102类identity，达到next2/near正水位后应记录`pseudo-retained(retentionReason=range-resume-unproven)`而不是policy `pseudo-suspended`；随后next2↔next1↔next2及升current只允许同一task `pseudo-resumed`，不得因flow credit出现第二次`downloadStarted/full-body-prefix-catchup`。若仍重开，必须先区分真实`downloadPreempted`/consumer cancellation与新的policy owner，不增加连接数或grace。Range-supported远端页仍必须正常suspend以维持5路轮转。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环

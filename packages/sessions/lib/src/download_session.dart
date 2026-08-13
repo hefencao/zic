@@ -884,6 +884,8 @@ final class DownloadSession {
     required int completedFrames,
     required int networkCursor,
     int? playablePrefixFloorBytes,
+    bool? responseRangeSupported,
+    String? retentionReason,
   }) {
     _emit(
       TraceEventKind.artifactSource,
@@ -902,6 +904,9 @@ final class DownloadSession {
           'playablePrefixFloorBytes': playablePrefixFloorBytes,
         if (playablePrefixFloorBytes != null)
           'playablePrefixProven': _firstPlayablePrefixBytes > 0,
+        if (responseRangeSupported != null)
+          'responseRangeSupported': responseRangeSupported,
+        if (retentionReason != null) 'retentionReason': retentionReason,
       },
     );
   }

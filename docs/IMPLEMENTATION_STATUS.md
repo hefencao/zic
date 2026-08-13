@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.261` / App `0.31.0+261`。
+- 当前版本：`0.31.0-dev.262` / App `0.31.0+262`。
+- dev.262：09:59 dev.261 Trace证明adjacent warm metadata闭包成立，但page102在next2以452,600 bytes满足target3后被policy `pseudo-suspended`，升next1后Range probe返回200并发生452,600-byte `full-body-prefix-catchup`；反向切页又在751,900 bytes再次suspend。根因是flow credit无条件拥有response终止权。现DownloadJob直接读取typed `ByteResponse.rangeSupported`：Range resume未被正面证明的consumer-paced已admit response不再因positive credit主动关闭，而用原100ms bounded `pseudo-retained`保持同task；Range-resumable远端仍照旧suspend，NetLane pressure/cancel仍可真正结束attempt。3/7、5/3/2/1、NetLane5+1不变。
 - dev.261：用户本地Dart编译暴露dev.260的NetLane metadata迁移未闭合：`_Pending.retainFlowResponse`已required，但`replace/follow`两个旧入口仍直接构造`_Pending`且漏传。现`submit/replace/follow`统一经`_createPending`创建pending task；generic replace/follow保持`flowTargetFrames=0 / retainFlowResponse=false`，warm-response/3/7/5+1策略不变。
 - dev.260：09:00 Trace确认“只隔一页就重新下载”不是5路连接淘汰：page99作为next1在target5/491,520 bytes达到水位后被consumerPacing主动`pseudo-suspended`，约99ms后变current即重新`downloadStarted`。现把body水位与response保留分离：immediate next/previous设置`retainFlowResponse`，水位满足后同response进入低速`pseudo-retained`，升foreground时同token原地resume；远离才suspend。partial retention、3/7、5/3/2/1、NetLane5+1不变。
 - dev.259：08:03 Trace确认主问题发生在连接/admission而非playable-prefix不足：59/59次policy均`animatedFlowActive=false`、3/7 target全0且无`mediaClassified`，前5个unlimited task占满normal5路，跳页后新current才通过reserved/preemption开连接。现runtime ingress sniff到WebP即只投影transport-cost evidence，提前启用既有5/3/2/1；authoritative static/animated仍由decoder覆盖。新Reader late-join已有nonresident WebP partial时先发布decoder所需最小prefix，再同source后台追平剩余partial，避免“physical进度已有但Reader-local source尚不可见”。

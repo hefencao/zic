@@ -765,6 +765,87 @@ void main() {
     );
   });
 
+  test(
+      'non-range consumer-paced flow keeps admitted response across outer-to-foreground promotion',
+      () async {
+    final trace = MemoryTraceSink();
+    final bytes = _flowAnimatedWebp(List<int>.filled(24, 48));
+    final session = DownloadSession(
+      id: DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'nonrange-flow-retained',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('runtime://nonrange-flow.webp'),
+      ),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/nonrange-flow.webp',
+        finalPath: '${temp.path}/cache/nonrange-flow.webp',
+      ),
+      clock: FakeMonoClock(),
+      traceSink: trace,
+    );
+    session.observePlayablePrefixEvidence(
+      decodedPrefixFrames: 1,
+      sourceLength: 1,
+      firstPlayablePrefixBytes: 1,
+      firstFrameRequiredSourceLength: 0,
+    );
+    final transport = _ConsumerPacedBodyTransport(
+      bytes,
+      chunkSize: 31,
+      rangeSupported: false,
+    );
+    final token = CancelToken(flowTargetFrames: 3);
+    final run = DownloadJob(transport: transport, session: session).run(
+      cancel: token,
+    );
+
+    await _waitForFlowAction(trace, 'pseudo-retained', targetFrames: 3);
+    expect(transport.openCount, 1);
+    expect(session.activeRun, isTrue);
+    expect(
+      trace.events.any(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.payload['stage'] == 'transport-flow-control' &&
+            event.payload['action'] == 'pseudo-retained' &&
+            event.payload['responseRangeSupported'] == false &&
+            event.payload['retentionReason'] == 'range-resume-unproven',
+      ),
+      isTrue,
+    );
+    expect(
+      trace.events.any(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.payload['stage'] == 'transport-flow-control' &&
+            event.payload['action'] == 'pseudo-suspended',
+      ),
+      isFalse,
+    );
+
+    // next2/near -> foreground is a metadata migration on the same physical
+    // task. A non-range response must not be closed just because its earlier
+    // positive frame credit was satisfied.
+    token.updateFlowTargetFrames(0);
+    final result = await run.timeout(const Duration(seconds: 2));
+    expect(result.state, DownloadState.promoted);
+    expect(transport.openCount, 1);
+    expect(
+      trace.events.any(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.payload['stage'] == 'transport-flow-control' &&
+            event.payload['action'] == 'pseudo-resumed',
+      ),
+      isTrue,
+    );
+  });
+
   test('consumer-paced frame credit suspends partial instead of draining forever',
       () async {
     final trace = MemoryTraceSink();
@@ -952,10 +1033,15 @@ final class _FullBodyFlowTransport implements Transport {
 }
 
 final class _ConsumerPacedBodyTransport implements Transport {
-  _ConsumerPacedBodyTransport(this.bytes, {required this.chunkSize});
+  _ConsumerPacedBodyTransport(
+    this.bytes, {
+    required this.chunkSize,
+    this.rangeSupported = true,
+  });
 
   final List<int> bytes;
   final int chunkSize;
+  final bool rangeSupported;
   int openCount = 0;
 
   @override
@@ -965,7 +1051,8 @@ final class _ConsumerPacedBodyTransport implements Transport {
     Validators? validators,
   }) async {
     openCount++;
-    final start = range?.start ?? 0;
+    final requestedStart = range?.start ?? 0;
+    final start = rangeSupported ? requestedStart : 0;
     Stream<List<int>> body() async* {
       for (var offset = start; offset < bytes.length; offset += chunkSize) {
         final end = (offset + chunkSize).clamp(0, bytes.length).toInt();
@@ -977,7 +1064,7 @@ final class _ConsumerPacedBodyTransport implements Transport {
       statusCode: start == 0 ? HttpStatus.ok : HttpStatus.partialContent,
       rangeStart: start,
       totalLength: bytes.length,
-      rangeSupported: true,
+      rangeSupported: rangeSupported,
       flowControl: ByteResponseFlowControl.consumerPacing,
       validators: const Validators(etag: 'pseudo-flow-v1'),
     );

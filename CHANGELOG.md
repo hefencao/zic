@@ -1,3 +1,10 @@
+## 0.31.0-dev.262：无可靠 Range resume 的 bounded-flow response 连续性
+
+- 09:59 真机 Trace确认dev.260/261的 immediate warm-response metadata闭包本身成立，但3/7内仍有另一条必现重开路径：page102作为next2在452,600 bytes/target3达到水位后于9.253s被`pseudo-suspended`；current从100→101后它成为next1，10.173s重新`downloadStarted`。Range probe返回HTTP 200，随后`full-body-prefix-catchup`明确记录`duplicatePrefixBytes=452600`。用户反向切页后，同一page102在751,900 bytes又因next1→next2被再次`pseudo-suspended`。
+- 根因不是partial丢失、5路驱逐或`retainFlowResponse`传递失败，而是consumer-paced bounded flow把“正frame credit满足”无条件解释为“远端response可关闭”；这只在该response已正面证明`rangeSupported=true`时才可安全成立。对未正面证明Range resume的response，关闭后下一次角色晋升只能从0/full-body prefix catch-up，形成真实重复网络字节。
+- `DownloadJob`的flow gate现接收`ByteResponse.rangeSupported`这一typed transport capability：immediate next/previous仍按既有`retainFlowResponse`保活；除此之外，`consumerPacing && !rangeSupported`的已admit response也保持同一physical task，以既有最多100ms一chunk的`pseudo-retained`节奏等待credit/foreground变化。只有正面Range-resumable且非adjacent的response继续在满足5/3/2/1后`pseudo-suspended`。真实NetLane pressure/preemption/cancellation仍可结束任何active attempt。
+- 新trace字段在flow-control事件中记录`responseRangeSupported`；non-range capability retention额外记录`retentionReason=range-resume-unproven`。这不从diagnostics反推policy，policy直接读取typed `ByteResponse.rangeSupported`。3/7、5/3/2/1、decode 2/1、holder 7/5/3/2、NetLane normal5+current reserved1均未改变，也未恢复全窗口full-body drain。
+
 ## 0.31.0-dev.261：NetLane pending metadata 构造闭包
 
 - 用户本地编译确认dev.260存在公共调度元数据迁移未闭合：`_Pending.retainFlowResponse`已改为required，但`_Lane.replace()`与`_Lane.follow()`仍直接构造`_Pending`且漏传该字段，导致Dart编译失败；warm-response策略本身不变。
