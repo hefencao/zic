@@ -1,7 +1,9 @@
 # ADR 0243：近二页 no-Range continuity 不得为 outer normal fairness 主动让槽
 
-- Status: Superseded by ADR 0244
+- Status: Superseded
 - Date: 2026-08-13
+
+> dev.267由ADR 0245回滚本轮的下游slot/near或方向-cancel耦合；本文件仅保留历史根因与失败证据。
 
 > dev.266由ADR 0244以Pipeline-owned browsing direction与flow-credit locality取代本ADR的跨层`protectFlowRetentionFromNormalYield`实现；本文件仅保留dev.265历史根因。
 

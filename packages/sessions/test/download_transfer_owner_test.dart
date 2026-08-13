@@ -139,7 +139,7 @@ void main() {
     expect(shortCircuit.payload['committedLength'], bytes.length);
   });
 
-  test('detached active pre-open work drops to rank zero and yields by NetLane policy',
+  test('detached active physical work becomes inactive and is reclaimed only under pressure',
       () async {
     final temp = await Directory.systemTemp.createTemp('transfer_owner_preopen_rank_');
     addTearDown(() async => temp.delete(recursive: true));
@@ -178,10 +178,12 @@ void main() {
     await opening.opened.future;
     final openingKey = owner.taskKeyFor(openingId)!;
     expect(net.isActive(openingKey), isTrue);
+    expect(net.demandedOf(openingKey), isTrue);
 
     a.replaceDemands('reader-opening', 2, const <DownloadId, TransferDemand>{});
     expect(net.isActive(openingKey), isTrue);
     expect(net.priorityOf(openingKey), 0);
+    expect(net.demandedOf(openingKey), isFalse);
     expect(opening.cancelled.isCompleted, isFalse);
 
     b.replaceDemands('reader-next', 1, _desired(nextId, priority: 780));
@@ -189,6 +191,62 @@ void main() {
     await b.idle();
     expect(next.opens, 1);
     expect(registry.get(nextId).state, DownloadState.promoted);
+  });
+
+  test('working-set turn out and back reuses the same active physical task', () async {
+    final temp = await Directory.systemTemp.createTemp('transfer_owner_revisit_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final net = NetLane(maxActive: 1);
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: net,
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final id = _id('turn-out-back');
+    final transport = _BlockedControlledTransport();
+    final reader = owner.attachConsumer(
+      scopeId: 'reader-turn-out-back',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+
+    reader.replaceDemands('reader-turn-out-back', 1, _desired(id, priority: 820));
+    await transport.opened.future;
+    final firstKey = owner.taskKeyFor(id)!;
+    expect(net.isActive(firstKey), isTrue);
+    expect(net.demandedOf(firstKey), isTrue);
+
+    reader.replaceDemands(
+      'reader-turn-out-back',
+      2,
+      const <DownloadId, TransferDemand>{},
+    );
+    expect(owner.taskKeyFor(id), firstKey);
+    expect(net.isActive(firstKey), isTrue);
+    expect(net.demandedOf(firstKey), isFalse);
+    expect(transport.cancelled.isCompleted, isFalse);
+
+    reader.replaceDemands('reader-turn-out-back', 3, _desired(id, priority: 800));
+    expect(owner.taskKeyFor(id), firstKey);
+    expect(net.isActive(firstKey), isTrue);
+    expect(net.demandedOf(firstKey), isTrue);
+    expect(net.priorityOf(firstKey), 800);
+    expect(transport.cancelled.isCompleted, isFalse);
+
+    // Disposal is the explicit lifetime boundary for this consumer-bound
+    // transport; ordinary working-set churn above never cancelled it.
+    await reader.dispose();
+    await transport.cancelled.future.timeout(const Duration(seconds: 1));
   });
 
   test('scheduler preemption preserves committed partial as idle state', () async {

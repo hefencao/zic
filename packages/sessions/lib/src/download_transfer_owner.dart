@@ -528,6 +528,7 @@ final class DownloadTransferOwner {
     }
     final taskKey = _networkTaskKeys[id];
     if (taskKey != null) {
+      net.updateDemanded(taskKey, true);
       _migrateDownloadPriority(
         id,
         taskKey,
@@ -552,6 +553,7 @@ final class DownloadTransferOwner {
     final taskKey = _networkTaskKeys[id];
     final taskIsActive = taskKey != null && net.isActive(taskKey);
     if (session != null && session.demanded && taskKey != null) {
+      net.updateDemanded(taskKey, true);
       _migrateDownloadPriority(
         id,
         taskKey,
@@ -559,15 +561,16 @@ final class DownloadTransferOwner {
         reason: 'remaining-consumer',
       );
     } else if (taskKey != null && taskIsActive) {
-      // Logical demand detachment never decides whether already-admitted work
-      // deserves to keep its slot. Source planning, transport open and receiving
-      // are all paid active work; lower the task to the same rank-0 background
-      // policy and let NetLane preempt it when a better-ranked candidate exists.
+      // Working-set membership and physical transport lifetime are separate.
+      // Losing the final Reader/other consumer claim never cancels an already
+      // admitted task. It becomes rank-zero inactive physical work; NetLane may
+      // reclaim it only if a genuinely demanded task is blocked by capacity.
+      net.updateDemanded(taskKey, false);
       _migrateDownloadPriority(
         id,
         taskKey,
         0,
-        reason: 'retained-background',
+        reason: 'inactive-physical-retention',
       );
     } else {
       if (taskKey != null) {
@@ -757,6 +760,7 @@ final class DownloadTransferOwner {
       // or active. Policy revisions only migrate its priority; they must not
       // manufacture a second task key for the same DownloadSession.
       if (net.priorityOf(existingTaskKey) != null) {
+        net.updateDemanded(existingTaskKey, true);
         _migrateDownloadPriority(
           id,
           existingTaskKey,
@@ -796,6 +800,7 @@ final class DownloadTransferOwner {
       bucketLimit: claim.consumer.downloadBucketLimitFor(claim.exactId),
       flowTargetFrames: claim.demand.flowTargetFrames,
       retainFlowResponse: claim.demand.retainFlowResponse,
+      demanded: true,
       task: (token) => _runDownload(id, session, taskKey, token),
     );
   }
@@ -872,6 +877,7 @@ final class DownloadTransferOwner {
           'globalLimit': net.maxActive,
           'handoffActive': net.handoffActive,
           'effectivePriority': net.priorityOf(taskKey),
+          'demanded': net.demandedOf(taskKey),
           'bucketActive': net.activeForBucket(bucket),
           'flowTargetFrames': claim.demand.flowTargetFrames,
           'retainFlowResponse': claim.demand.retainFlowResponse,
@@ -978,6 +984,7 @@ final class DownloadTransferOwner {
                         preemption.restartCostElapsedMicros,
                     'restartCostBytes': preemption.restartCostBytes,
                     'incomingWaitMicros': preemption.incomingWaitMicros,
+                    'preemptionReason': preemption.reason,
                     'committedLength': session.committedLength,
                     'partialPreserved': session.committedLength > 0,
                     'partialState': session.state.name,
@@ -1151,11 +1158,6 @@ final class DownloadTransferOwner {
         taskKey,
         claim.demand.retainFlowResponse,
       );
-    } else {
-      // A task retained after its last logical claim may keep the old bounded
-      // frame target, but warm response retention belongs to a live Reader
-      // demand. Once no claim remains it must not keep an adjacent warm claim.
-      net.updateRetainFlowResponse(taskKey, false);
     }
     final oldPriority = net.priorityOf(taskKey);
     final active = net.isActive(taskKey);
@@ -1173,6 +1175,7 @@ final class DownloadTransferOwner {
         'newPriority': priority,
         'active': active,
         'reason': reason,
+        'demanded': net.demandedOf(taskKey),
         'physicalOwner': true,
       },
     );

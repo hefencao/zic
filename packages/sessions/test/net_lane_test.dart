@@ -1110,88 +1110,6 @@ void _dev123NetLaneTests() {
     await lane.idle();
   });
 
-  test(
-      'yieldable flow retention gives a starved normal demand a real slot without cancellation',
-      () async {
-    final lane = NetLane(maxActive: 1, highPriorityThreshold: 1000);
-    final incumbentStarted = Completer<CancelToken>();
-    final allowRetention = Completer<void>();
-    final pendingStarted = Completer<void>();
-
-    lane.submitRanked(
-      key: 'retained-nonrange',
-      priority: 800,
-      bucket: 'remote:a',
-      bucketLimit: 1,
-      flowTargetFrames: 3,
-      task: (token) async {
-        incumbentStarted.complete(token);
-        await allowRetention.future;
-        token.markFlowRetention(yieldable: true);
-        expect(token.flowYieldRequestedByPriority, 640);
-        expect(token.cancelled, isFalse);
-        expect(token.preemptionSnapshot, isNull);
-      },
-    );
-    final token = await incumbentStarted.future;
-    lane.submitRanked(
-      key: 'never-admitted-previous',
-      priority: 640,
-      bucket: 'remote:a',
-      bucketLimit: 1,
-      flowTargetFrames: 1,
-      task: (_) async => pendingStarted.complete(),
-    );
-    expect(lane.active, 1);
-    expect(lane.queued, 1);
-
-    allowRetention.complete();
-    await pendingStarted.future.timeout(const Duration(seconds: 1));
-    expect(token.cancelled, isFalse);
-    expect(token.preemptionSnapshot, isNull);
-    await lane.idle();
-  });
-
-  test('explicit adjacent flow retention is not reclaimed by normal pressure',
-      () async {
-    final lane = NetLane(maxActive: 1, highPriorityThreshold: 1000);
-    final incumbentStarted = Completer<CancelToken>();
-    final release = Completer<void>();
-    var pendingStarted = false;
-
-    lane.submitRanked(
-      key: 'adjacent-warm',
-      priority: 820,
-      bucket: 'remote:a',
-      bucketLimit: 1,
-      flowTargetFrames: 5,
-      retainFlowResponse: true,
-      task: (token) async {
-        incumbentStarted.complete(token);
-        token.markFlowRetention(yieldable: false);
-        await release.future;
-      },
-    );
-    final token = await incumbentStarted.future;
-    lane.submitRanked(
-      key: 'outer-demand',
-      priority: 640,
-      bucket: 'remote:a',
-      bucketLimit: 1,
-      flowTargetFrames: 1,
-      task: (_) async {
-        pendingStarted = true;
-      },
-    );
-    await Future<void>.delayed(Duration.zero);
-    expect(token.flowYieldRequestedByPriority, isNull);
-    expect(pendingStarted, isFalse);
-
-    release.complete();
-    await lane.idle();
-    expect(pendingStarted, isTrue);
-  });
-
   test('flow target updates reach the same active token without resubmission', () async {
     final lane = NetLane(maxActive: 1);
     final started = Completer<CancelToken>();
@@ -1211,18 +1129,11 @@ void _dev123NetLaneTests() {
     final token = await started.future;
     expect(token.flowTargetFrames, 1);
     expect(token.retainFlowResponse, isFalse);
-    token.markFlowRetention(yieldable: true);
-    expect(token.requestFlowYield(640), isTrue);
-
-    // A new positive target may invalidate the old body proof. NetLane cannot
-    // keep a stale cooperative-yield request while DownloadJob re-evaluates it.
-    expect(lane.updateFlowTargetFrames('animated', 5), isTrue);
-    expect(token.flowTargetFrames, 5);
-    expect(token.flowRetentionYieldable, isFalse);
-    expect(token.flowYieldRequestedByPriority, isNull);
 
     expect(lane.updateRetainFlowResponse('animated', true), isTrue);
     expect(token.retainFlowResponse, isTrue);
+    expect(lane.updateFlowTargetFrames('animated', 5), isTrue);
+    expect(token.flowTargetFrames, 5);
     expect(lane.active, 1);
 
     expect(lane.updateFlowTargetFrames('animated', 0), isTrue);
@@ -1262,6 +1173,121 @@ void _dev123NetLaneTests() {
     final token = await started.future;
     expect(token.flowTargetFrames, 3);
     await lane.idle();
+  });
+
+  test('normal pressure never reclaims an active task that still has demand', () async {
+    final lane = NetLane(maxActive: 1);
+    final incumbentStarted = Completer<CancelToken>();
+    final incumbentRelease = Completer<void>();
+    var incomingStarted = false;
+
+    lane.submitRanked(
+      key: 'incumbent-demanded',
+      priority: 0,
+      demanded: true,
+      task: (token) async {
+        incumbentStarted.complete(token);
+        await incumbentRelease.future;
+      },
+    );
+    final incumbent = await incumbentStarted.future;
+    lane.submitRanked(
+      key: 'incoming-normal',
+      priority: 780,
+      demanded: true,
+      task: (_) async {
+        incomingStarted = true;
+      },
+    );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(incumbent.cancelled, isFalse);
+    expect(lane.demandedOf('incumbent-demanded'), isTrue);
+    expect(incomingStarted, isFalse);
+
+    incumbentRelease.complete();
+    await lane.idle();
+    expect(incomingStarted, isTrue);
+  });
+
+  test('capacity pressure reclaims only an inactive admitted physical task', () async {
+    final lane = NetLane(maxActive: 1);
+    final incumbentStarted = Completer<CancelToken>();
+    final incomingStarted = Completer<void>();
+
+    lane.submitRanked(
+      key: 'inactive-incumbent',
+      priority: 820,
+      demanded: true,
+      task: (token) async {
+        incumbentStarted.complete(token);
+        await token.whenCancelled;
+      },
+    );
+    final incumbent = await incumbentStarted.future;
+
+    // Working-set detachment changes scheduler demand state but is not itself
+    // a cancellation command. With no blocked work the physical task stays up.
+    expect(lane.updatePriority('inactive-incumbent', 0), isTrue);
+    expect(lane.updateDemanded('inactive-incumbent', false), isTrue);
+    await Future<void>.delayed(Duration.zero);
+    expect(incumbent.cancelled, isFalse);
+
+    lane.submitRanked(
+      key: 'new-demand',
+      priority: 780,
+      demanded: true,
+      task: (_) async {
+        incomingStarted.complete();
+      },
+    );
+    await incumbent.whenCancelled;
+    expect(incumbent.preemptionSnapshot?.reason, 'inactive-reclaim');
+    expect(incumbent.preemptionSnapshot?.incomingPriority, 780);
+    await incomingStarted.future;
+    await lane.idle();
+  });
+
+  test('reattaching demand protects the same admitted task from normal reclaim', () async {
+    final lane = NetLane(maxActive: 1);
+    final incumbentStarted = Completer<CancelToken>();
+    final incumbentRelease = Completer<void>();
+    var incomingStarted = false;
+
+    lane.submitRanked(
+      key: 'revisited',
+      priority: 820,
+      task: (token) async {
+        incumbentStarted.complete(token);
+        await incumbentRelease.future;
+      },
+    );
+    final incumbent = await incumbentStarted.future;
+    lane.updatePriority('revisited', 0);
+    lane.updateDemanded('revisited', false);
+
+    // A quick turn back reuses the same physical task identity instead of
+    // cancelling/reopening it.
+    lane.updateDemanded('revisited', true);
+    lane.updatePriority('revisited', 800);
+    expect(lane.demandedOf('revisited'), isTrue);
+
+    lane.submitRanked(
+      key: 'outer-normal',
+      priority: 780,
+      task: (_) async {
+        incomingStarted = true;
+      },
+    );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(incumbent.cancelled, isFalse);
+    expect(incomingStarted, isFalse);
+
+    incumbentRelease.complete();
+    await lane.idle();
+    expect(incomingStarted, isTrue);
   });
 
 }

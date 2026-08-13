@@ -1,7 +1,9 @@
 # ADR 0242：non-Range flow continuity hold 必须向未获槽的正常 demand 协作让槽
 
-- Status: Accepted
+- Status: Superseded
 - Date: 2026-08-13
+
+> dev.267由ADR 0245回滚本轮的下游slot/near或方向-cancel耦合；本文件仅保留历史根因与失败证据。
 
 ## Context
 

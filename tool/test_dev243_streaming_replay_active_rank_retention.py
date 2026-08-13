@@ -46,18 +46,28 @@ require('expect(projection.source, isNull);' in session_test and
         'expect(identical(projectionB.source, projectionBSource), isTrue);' in session_test,
         'tests must prove hidden replay and stable post-attach source identity')
 
-require('taskKey != null && taskIsActive' in owner and
-        'Logical demand detachment never decides whether already-admitted work' in owner,
-        'active admitted work must survive logical detach independently of DownloadState taxonomy')
-require("reason: 'retained-background'" in owner, 'detached active work must migrate to rank zero')
+if build >= 267:
+    require('taskKey != null && taskIsActive' in owner and
+            'Working-set membership and physical transport lifetime are separate' in owner,
+            'active admitted work must survive logical detach independently of DownloadState taxonomy')
+    require("reason: 'inactive-physical-retention'" in owner and
+            'net.updateDemanded(taskKey, false);' in owner,
+            'detached active work must become rank-zero inactive physical work')
+else:
+    require('taskKey != null && taskIsActive' in owner and
+            'Logical demand detachment never decides whether already-admitted work' in owner,
+            'active admitted work must survive logical detach independently of DownloadState taxonomy')
+    require("reason: 'retained-background'" in owner, 'detached active work must migrate to rank zero')
 require('final receiving = session?.state == DownloadState.receiving;' not in owner,
         'receiving/pre-open state taxonomy must not decide active retention')
 require('A pre-open run is not worth retaining' not in owner,
         'pre-open direct cancellation policy must be removed')
 require('net.cancelQueued(taskKey);' in owner,
         'never-admitted queued work may still be discarded without paid-work loss')
-require('detached active pre-open work drops to rank zero and yields by NetLane policy' in owner_test,
-        'physical owner regression must prove active pre-open retention then scheduler preemption')
+require((('detached active physical work becomes inactive and is reclaimed only under pressure' in owner_test)
+         if build >= 267 else
+         ('detached active pre-open work drops to rank zero and yields by NetLane policy' in owner_test)),
+        'physical owner regression must prove active pre-open retention then scheduler arbitration')
 require('expect(net.priorityOf(openingKey), 0);' in owner_test and
         'expect(opening.cancelled.isCompleted, isFalse);' in owner_test,
         'logical detach must not itself cancel an active pre-open task')

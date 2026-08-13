@@ -1,7 +1,9 @@
 # ADR 0244：浏览方向由 Pipeline 单一预测并定向 3/7 工作集
 
-- Status: Accepted
+- Status: Superseded
 - Date: 2026-08-13
+
+> dev.267由ADR 0245回滚本轮的下游slot/near或方向-cancel耦合；本文件仅保留历史根因与失败证据。
 
 ## Context
 

@@ -6,40 +6,39 @@ import 'package:test/test.dart';
 void main() {
   test('single reverse move does not flip browsing direction', () {
     final predictor = BrowsingDirectionPredictor();
-    predictor.reset(direction: 1, nowMicros: 0);
+    predictor.reset(direction: 1);
 
     expect(
-      predictor.record(delta: -1, nowMicros: 500000),
+      predictor.record(delta: -1),
       1,
     );
     expect(
-      predictor.record(delta: 1, nowMicros: 900000),
+      predictor.record(delta: 1),
       1,
     );
   });
 
   test('two consecutive reverse moves confirm browsing direction', () {
     final predictor = BrowsingDirectionPredictor();
-    predictor.reset(direction: 1, nowMicros: 0);
+    predictor.reset(direction: 1);
 
-    expect(predictor.record(delta: -1, nowMicros: 500000), 1);
-    expect(predictor.record(delta: -1, nowMicros: 1000000), -1);
+    expect(predictor.record(delta: -1), 1);
+    expect(predictor.record(delta: -1), -1);
   });
 
   test('scrub and large jump do not teach browsing direction', () {
     final predictor = BrowsingDirectionPredictor(initialDirection: -1);
-    predictor.reset(direction: -1, nowMicros: 0);
+    predictor.reset(direction: -1);
 
     expect(
       predictor.record(
         delta: 8,
-        nowMicros: 500000,
         directional: false,
       ),
       -1,
     );
     expect(
-      predictor.record(delta: 8, nowMicros: 1000000),
+      predictor.record(delta: 8),
       -1,
     );
   });

@@ -1,3 +1,12 @@
+## 0.31.0-dev.267：working set 与 physical transfer lifetime 解耦重构
+
+- 13:50 dev.266真机Trace再次证明dev.264–266仍在错误层次补偿：current 99→98仅反向一页，policy即从readDirection=+1切到-1，并在同revision连续detach page102–106五个download claim。调方向阈值只能推迟批量detach，无法解决“working-set变化为何能决定已admit physical transfer生死”的所有权错误。
+- 回滚dev.264 cooperative flow-yield、dev.265 near-two保护与dev.266 weighted-trend方向实现作为生产基础；保留dev.263与网络无关的Decode→Upload generation修复、dev.262 typed no-Range response continuity。历史ADR/audit保留并标记Superseded。
+- 参考只读VibeVenera `StreamingDownloadTask.retainWhenInactive=true` / scheduler语义，将physical task显式增加scheduler-owned `demanded`状态：queued且无claim仍可撤销；already-admitted active最后claim消失只降priority=0并标记demanded=false，不因3/7 membership变化直接cancel。
+- NetLane只有在真实normal/bucket容量被新的demanded pending work阻塞时，才可统一回收一个demanded=false active task；demanded=true active task不受normal reclaim。回收仍走既有single-flight cancellation并等待victim物理退出后释放permit，trace记录`preemptionReason=inactive-reclaim`。不再由Range、flowTarget、next2/previous3或Reader距离决定谁可让槽。
+- 浏览方向保留为纯Pipeline工作集事实但简化为连续两次committed反向页变更才确认；单次反向、scrub/jump/abs(delta)>5不切向。RoleWindow/rank/5/3/2/1消费同一readDirection，但该方向绝不拥有transport cancellation。
+- 冻结previous3/next7、decode2/1、body5/3/2/1、holder7/5/3/2、NetLane normal5+current reserved1；本轮不增加连接、grace、near flag、flow-yield flag或第二scheduler。
+
 ## 0.31.0-dev.266：Pipeline-owned 浏览方向与3/7工作集收口
 
 - 12:49 dev.265真机Trace与`vibevenera-master.zip`只读对照确认，近几轮retention/yield补丁的共同上游缺口是Pipeline没有浏览方向事实：RoleResolver固定index +7/-3，far rank与5/3/2/1也各自按index符号解释方向。

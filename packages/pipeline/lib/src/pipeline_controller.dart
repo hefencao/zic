@@ -85,14 +85,10 @@ final class PipelineController {
           delta.abs() <= 5;
       _readDirection = _directionPredictor.record(
         delta: delta,
-        nowMicros: observation.monotonicMicros,
         directional: directional,
       );
     } else if (previousIndex == null) {
-      _directionPredictor.reset(
-        direction: 1,
-        nowMicros: observation.monotonicMicros,
-      );
+      _directionPredictor.reset(direction: 1);
       _readDirection = _directionPredictor.direction;
     }
     _currentIndex = observation.currentIndex;

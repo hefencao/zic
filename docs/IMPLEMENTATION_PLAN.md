@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：以dev.266真机复测Pipeline-owned browsing direction：单次反向移动时`policyDecision.readDirection`不得翻转，原7/3朝向继续保持；连续两次稳定反向后方向才切换，新的前进侧应获得forward7/decode2与5/3 credit，身后只保backward3/decode1。重点统计方向确认点前后`demandDetached/downloadStarted/pseudo-yielded`：不得再依赖`protectFlowRetentionFromNormalYield`类局部性flag；target3 next2不可被normal fairness yield，outer shallow target1/2在真实slot pressure下仍可cooperative yield。scrub/jump不得训练方向。冻结7/3、2/1、5/3/2/1、holder7/5/3/2、NetLane5+1。
+- P0：dev.267真机优先验证working-set/physical-lifetime分离：99→98第一次反向`readDirection`必须保持原值，最多滑动一个3/7边界；任意`demandDetached`后若physical task已active且没有真实slot pressure，应继续同task且不得出现`downloadPreempted`。只有新的`demanded=true` pending因normal/bucket容量阻塞时，才允许对`demanded=false` active记录`preemptionReason=inactive-reclaim`；重新进入窗口且尚未被回收时必须复用同一task key。不得恢复dev.264 flow-yield、dev.265 near flag或通过扩大窗口/连接/grace掩盖。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环
@@ -10,7 +10,8 @@
 - dev.190 后首次本地 Flutter/Dart 构建仍需确认 `runtime_source_adapter.dart` 不再出现 `onTiming` named-parameter 半迁移；若还有 runtime source adapter 编译错误，先检查私有函数类型/constructor 注入的一致性，不把 resource-plan diagnostics 扩到通用 browse/details invoke。
 - 复测 dev.186 Venera nested pressure：外层 previous 660→780 到 `downloadStarted` 应继续维持毫秒级；若其随后被单 invocation request-plan gate挡住，780可请求取消至少低40分的 active controlled invocation，但必须等旧 JavaScript `finished(requestId)` 后才开始，`maxActive`始终1。
 - 使用plan/cache/host-open字段继续确认连接阶段；持续传输阶段新增`sourceHostHttpVersion/sourceHostRemoteIpHash/sourceRhttpProgress*/sourceRhttpBody*`与现有`sourceRead` bytes/chunks/gap。只有设备证据同时证明并发active streams损害current且底层pause能真实形成网络backpressure，才考虑NetLane-owned transfer pressure；不得建立Reader bandwidth scheduler。
-- 同时复测短时N→N+1→N与跨session跳页：already-admitted task离开demand只降rank0，normal neighbor不得主动cancel尚未满足body work；但只有已满足positive flow credit、distance>=3且no-Range的outer optional continuity hold可在真实pending normal demand无slot时协作`pseudo-yielded`；distance<=2 near-two不得被normal fairness主动让槽，且不得记录`downloadPreempted`或提前释放permit。new current先借reserved槽。reserved也满时先保持pending，只有candidate稳定100ms且没有已有preemption in-flight才允许统一rank选择一个victim；若仍出现波浪重置，必须由单次`downloadPreempted`、consumer-bound dispose或真实failure明确归因，不得恢复normal pressure floor或victim-side demotion特判。
+- 同时复测短时N→N+1→N与跨session跳页：already-admitted task离开demand只降rank0，normal neighbor不得主动cancel；new current先借reserved槽。reserved也满时先保持pending，只有candidate稳定100ms且没有已有preemption in-flight才允许统一rank选择一个victim；若仍出现波浪重置，必须由单次`downloadPreempted`、consumer-bound dispose或真实failure明确归因，不得恢复normal pressure floor或victim-side demotion特判。
+
 ## P0：Current 首帧 policy/execution 真机闭环
 
 - 首先验证 current bootstrap：动态 current 未达到3帧前，speculative next/next2/previous 不应产生实际 decode refill；current 等 source 时只允许真实 viewport transition 先取1帧。trace 应显示 staticWarm 不再把 near/far 7/3 encoded页扩成 decode/upload。

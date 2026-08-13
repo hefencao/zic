@@ -886,7 +886,6 @@ final class DownloadSession {
     int? playablePrefixFloorBytes,
     bool? responseRangeSupported,
     String? retentionReason,
-    int? yieldToPriority,
   }) {
     _emit(
       TraceEventKind.artifactSource,
@@ -908,7 +907,6 @@ final class DownloadSession {
         if (responseRangeSupported != null)
           'responseRangeSupported': responseRangeSupported,
         if (retentionReason != null) 'retentionReason': retentionReason,
-        if (yieldToPriority != null) 'yieldToPriority': yieldToPriority,
       },
     );
   }

@@ -13,24 +13,19 @@ final class CancelToken implements PriorityObservableTaskControl {
     int flowTargetFrames = 0,
     bool retainFlowResponse = false,
     MonoClock clock = const SystemClock(),
-    void Function()? onSchedulingStateChanged,
   })  : assert(flowTargetFrames >= 0),
         _priority = priority,
         _flowTargetFrames = flowTargetFrames,
         _retainFlowResponse = retainFlowResponse,
         _clock = clock,
-        _onSchedulingStateChanged = onSchedulingStateChanged,
         _activatedAtMicros = clock.nowMicros();
 
   final MonoClock _clock;
-  final void Function()? _onSchedulingStateChanged;
   final int _activatedAtMicros;
   bool _cancelled = false;
   int _priority;
   int _flowTargetFrames;
   bool _retainFlowResponse;
-  bool _flowRetentionYieldable = false;
-  int? _flowYieldRequestedByPriority;
   Completer<void>? _flowChanged;
   int? _restartCostStartedAtMicros;
   int _restartCostBytes = 0;
@@ -49,8 +44,6 @@ final class CancelToken implements PriorityObservableTaskControl {
   Stream<int> get priorityChanges => _priorityChanges.stream;
   int get flowTargetFrames => _flowTargetFrames;
   bool get retainFlowResponse => _retainFlowResponse;
-  bool get flowRetentionYieldable => _flowRetentionYieldable;
-  int? get flowYieldRequestedByPriority => _flowYieldRequestedByPriority;
 
   bool flowBlockedAt(int completedFrames) =>
       _flowTargetFrames > 0 && completedFrames >= _flowTargetFrames;
@@ -87,56 +80,13 @@ final class CancelToken implements PriorityObservableTaskControl {
     assert(frames >= 0);
     if (_flowTargetFrames == frames) return;
     _flowTargetFrames = frames;
-    // Any target migration invalidates the scheduler's prior statement that
-    // this body is only an optional continuity hold. DownloadJob owns the
-    // structural/playable proof and will mark it yieldable again on its next
-    // flow evaluation if the new target is already satisfied.
-    clearFlowRetention();
-    if (frames <= 0) return;
     _wakeFlowWaiters();
   }
 
   void updateRetainFlowResponse(bool retain) {
     if (_retainFlowResponse == retain) return;
     _retainFlowResponse = retain;
-    if (retain && _flowRetentionYieldable) {
-      _flowRetentionYieldable = false;
-      _flowYieldRequestedByPriority = null;
-    }
     _wakeFlowWaiters();
-  }
-
-  /// Reports that this task has already satisfied its bounded body credit and
-  /// is retaining the admitted response only for continuity. DownloadJob owns
-  /// the body-credit/transport-capability decision; NetLane only consumes the
-  /// resulting [yieldable] fact and never infers Reader locality.
-  void markFlowRetention({required bool yieldable}) {
-    if (_cancelled) return;
-    final changed = _flowRetentionYieldable != yieldable;
-    _flowRetentionYieldable = yieldable;
-    if (!yieldable) {
-      _flowYieldRequestedByPriority = null;
-    }
-    if (changed && yieldable) {
-      _onSchedulingStateChanged?.call();
-    }
-  }
-
-  void clearFlowRetention() {
-    final changed = _flowRetentionYieldable ||
-        _flowYieldRequestedByPriority != null;
-    _flowRetentionYieldable = false;
-    _flowYieldRequestedByPriority = null;
-    if (changed) _wakeFlowWaiters();
-  }
-
-  bool requestFlowYield(int incomingPriority) {
-    if (_cancelled || !_flowRetentionYieldable) return false;
-    final prior = _flowYieldRequestedByPriority;
-    if (prior != null && prior >= incomingPriority) return false;
-    _flowYieldRequestedByPriority = incomingPriority;
-    _wakeFlowWaiters();
-    return true;
   }
 
   void _wakeFlowWaiters() {
@@ -217,6 +167,7 @@ final class TaskPreemptionSnapshot {
     required this.restartCostElapsedMicros,
     required this.restartCostBytes,
     required this.incomingWaitMicros,
+    this.reason = 'priority',
   });
 
   final int incomingPriority;
@@ -226,6 +177,7 @@ final class TaskPreemptionSnapshot {
   final int restartCostElapsedMicros;
   final int restartCostBytes;
   final int incomingWaitMicros;
+  final String reason;
 }
 
 
@@ -323,6 +275,7 @@ final class NetLane implements TaskLane {
     bool preemptible = true,
     int flowTargetFrames = 0,
     bool retainFlowResponse = false,
+    bool demanded = true,
     required LaneTask task,
   }) =>
       _core.submit(
@@ -333,6 +286,7 @@ final class NetLane implements TaskLane {
         preemptible: preemptible,
         flowTargetFrames: flowTargetFrames,
         retainFlowResponse: retainFlowResponse,
+        demanded: demanded,
         task: task,
       );
 
@@ -355,6 +309,9 @@ final class NetLane implements TaskLane {
       _core.updateFlowTargetFrames(key, frames);
   bool updateRetainFlowResponse(String key, bool retain) =>
       _core.updateRetainFlowResponse(key, retain);
+  bool updateDemanded(String key, bool demanded) =>
+      _core.updateDemanded(key, demanded);
+  bool? demandedOf(String key) => _core.demandedOf(key);
 
 
   @override
@@ -570,6 +527,7 @@ final class _Lane {
     bool preemptible = true,
     int flowTargetFrames = 0,
     bool retainFlowResponse = false,
+    bool demanded = true,
     required LaneTask task,
   }) {
     assert(flowTargetFrames >= 0);
@@ -579,7 +537,8 @@ final class _Lane {
       activeTask
         ..preemptible = preemptible
         ..flowTargetFrames = flowTargetFrames
-        ..retainFlowResponse = retainFlowResponse;
+        ..retainFlowResponse = retainFlowResponse
+        ..demanded = demanded;
       activeTask.token.updateFlowTargetFrames(flowTargetFrames);
       activeTask.token.updateRetainFlowResponse(retainFlowResponse);
       if (increased) _pump();
@@ -595,6 +554,7 @@ final class _Lane {
         ..preemptible = preemptible
         ..flowTargetFrames = flowTargetFrames
         ..retainFlowResponse = retainFlowResponse
+        ..demanded = demanded
         ..task = task;
       if (increased) _pump();
       return false;
@@ -607,6 +567,7 @@ final class _Lane {
       preemptible: preemptible,
       flowTargetFrames: flowTargetFrames,
       retainFlowResponse: retainFlowResponse,
+      demanded: demanded,
       task: task,
     );
     _pump();
@@ -617,15 +578,19 @@ final class _Lane {
   bool updatePriority(String key, int priority) {
     final activeTask = _active[key];
     if (activeTask != null) {
-      final increased = _updateActivePriority(activeTask, priority);
-      if (increased) _pump();
+      final previous = activeTask.priority;
+      _updateActivePriority(activeTask, priority);
+      // A decrease can make an inactive physical task reclaimable, while an
+      // increase can change admission/preemption order. Both are scheduler
+      // state changes and must re-run the lane policy.
+      if (previous != priority) _pump();
       return true;
     }
     final pending = _pending[key];
     if (pending == null) return false;
-    final increased = priority > pending.priority;
+    final previous = pending.priority;
     _updatePendingPriority(pending, priority);
-    if (increased) _pump();
+    if (previous != priority) _pump();
     return true;
   }
 
@@ -656,6 +621,28 @@ final class _Lane {
     return true;
   }
 
+  bool updateDemanded(String key, bool demanded) {
+    final activeTask = _active[key];
+    if (activeTask != null) {
+      if (activeTask.demanded == demanded) return true;
+      activeTask.demanded = demanded;
+      // Losing demand can make an admitted physical task reclaimable; gaining
+      // demand makes it protected again. Neither transition is a cancellation
+      // command, but both materially change scheduler eligibility.
+      _pump();
+      return true;
+    }
+    final pending = _pending[key];
+    if (pending == null) return false;
+    if (pending.demanded == demanded) return true;
+    pending.demanded = demanded;
+    _pump();
+    return true;
+  }
+
+  bool? demandedOf(String key) =>
+      _active[key]?.demanded ?? _pending[key]?.demanded;
+
 
   void _updatePendingPriority(_Pending pending, int priority) {
     final previous = pending.priority;
@@ -684,6 +671,7 @@ final class _Lane {
     bool preemptible = true,
     int flowTargetFrames = 0,
     bool retainFlowResponse = false,
+    bool demanded = true,
     required LaneTask task,
   }) {
     assert(flowTargetFrames >= 0);
@@ -696,6 +684,7 @@ final class _Lane {
       preemptible: preemptible,
       flowTargetFrames: flowTargetFrames,
       retainFlowResponse: retainFlowResponse,
+      demanded: demanded,
       task: task,
       highPrioritySinceMicros:
           priority >= highPriorityThreshold ? clock.nowMicros() : null,
@@ -792,7 +781,7 @@ final class _Lane {
       final running = _active.length;
       final handoffCapacity = maxActive + reservedHighPrioritySlots;
       final eligible = _pending.values.where((pending) {
-        if (_active.containsKey(pending.key)) return false;
+        if (_active.containsKey(pending.key) || !pending.demanded) return false;
         final highPriority = pending.priority >= highPriorityThreshold;
         final handoff = highPriority && _needsHandoff(pending);
         if (!handoff &&
@@ -807,9 +796,8 @@ final class _Lane {
         return _bucketAvailable(pending, handoff: handoff);
       }).toList(growable: false);
       if (eligible.isEmpty) {
-        final blockedNormal = _highestBlockedNormalPending();
-        if (blockedNormal != null &&
-            _requestYieldableFlowRetentionFor(blockedNormal)) {
+        final blocked = _highestBlockedDemandedPending();
+        if (blocked != null && _reclaimInactiveRunningFor(blocked)) {
           break;
         }
         final blockedHighPriority = _highestBlockedHighPriorityPending();
@@ -817,7 +805,7 @@ final class _Lane {
           // The reserved current headroom is admission capacity, not a
           // mandatory cancellation slot. Only once normal + reserved capacity
           // is genuinely saturated may another blocked current ask the lowest
-          // effective-rank running task to unwind.
+          // effective-rank demanded task to unwind.
           if (!_preemptLowestRunningFor(blockedHighPriority)) {
             _schedulePreemptionCandidateWake(blockedHighPriority);
           }
@@ -838,7 +826,6 @@ final class _Lane {
         flowTargetFrames: next.flowTargetFrames,
         retainFlowResponse: next.retainFlowResponse,
         clock: clock,
-        onSchedulingStateChanged: _pump,
       );
       _active[next.key] = _ActiveTask(
         token: token,
@@ -848,6 +835,7 @@ final class _Lane {
         preemptible: next.preemptible,
         flowTargetFrames: next.flowTargetFrames,
         retainFlowResponse: next.retainFlowResponse,
+        demanded: next.demanded,
       );
       final bucket = next.bucket;
       if (bucket != null) {
@@ -916,14 +904,11 @@ final class _Lane {
     );
   }
 
-  _Pending? _highestBlockedNormalPending() {
+  _Pending? _highestBlockedDemandedPending() {
     _Pending? highest;
     for (final pending in _pending.values) {
-      if (_active.containsKey(pending.key) ||
-          pending.priority <= 0 ||
-          pending.priority >= highPriorityThreshold) {
-        continue;
-      }
+      if (_active.containsKey(pending.key) || !pending.demanded) continue;
+      if (!_needsHandoff(pending)) continue;
       if (highest == null ||
           pending.priority > highest.priority ||
           (pending.priority == highest.priority &&
@@ -934,31 +919,42 @@ final class _Lane {
     return highest;
   }
 
-  bool get _hasFlowYieldInFlight => _active.values.any(
-        (task) => task.token.flowYieldRequestedByPriority != null,
-      );
-
-  bool _requestYieldableFlowRetentionFor(_Pending incoming) {
-    if (_hasFlowYieldInFlight) return false;
+  bool _reclaimInactiveRunningFor(_Pending incoming) {
+    if (_hasPreemptionInFlight) return false;
     final incomingBucket = incoming.bucket;
     final incomingBucketLimit = incoming.bucketLimit;
     final bucketFull = incomingBucket != null &&
         incomingBucketLimit != null &&
         (_activeByBucket[incomingBucket] ?? 0) >= incomingBucketLimit;
-    _ActiveTask? candidate;
+    _ActiveTask? lowest;
+    var lowestRetentionPriority = 1 << 30;
     for (final task in _active.values) {
-      if (!task.preemptible ||
-          task.token.cancelled ||
-          !task.token.flowRetentionYieldable) {
-        continue;
-      }
+      if (task.demanded || !task.preemptible || task.token.cancelled) continue;
       if (bucketFull && task.bucket != incomingBucket) continue;
-      if (candidate == null || task.priority < candidate.priority) {
-        candidate = task;
+      final rank = _policyRank(task, basePriority: task.priority);
+      if (!incomingOutranks(incoming.priority, rank)) continue;
+      if (lowest == null || rank.effectivePriority < lowestRetentionPriority) {
+        lowest = task;
+        lowestRetentionPriority = rank.effectivePriority;
       }
     }
-    if (candidate == null) return false;
-    return candidate.token.requestFlowYield(incoming.priority);
+    if (lowest == null) return false;
+    final elapsed = lowest.token.restartCostElapsedMicros;
+    final bytes = lowest.token.restartCostBytes;
+    final bonus = lowestRetentionPriority - lowest.priority;
+    lowest.token.cancelForPreemption(
+      TaskPreemptionSnapshot(
+        incomingPriority: incoming.priority,
+        basePriority: lowest.priority,
+        retentionPriority: lowestRetentionPriority,
+        retentionBonus: bonus,
+        restartCostElapsedMicros: elapsed,
+        restartCostBytes: bytes,
+        incomingWaitMicros: 0,
+        reason: 'inactive-reclaim',
+      ),
+    );
+    return true;
   }
 
   _Pending? _highestBlockedHighPriorityPending() {
@@ -1022,6 +1018,7 @@ final class _Lane {
         restartCostElapsedMicros: elapsed,
         restartCostBytes: bytes,
         incomingWaitMicros: _preemptionCandidateAgeMicros(incoming),
+        reason: 'high-priority',
       ),
     );
     return true;
@@ -1121,6 +1118,7 @@ final class _Pending {
     required this.preemptible,
     required this.flowTargetFrames,
     required this.retainFlowResponse,
+    required this.demanded,
     required this.task,
     required this.highPrioritySinceMicros,
   });
@@ -1133,6 +1131,7 @@ final class _Pending {
   bool preemptible;
   int flowTargetFrames;
   bool retainFlowResponse;
+  bool demanded;
   LaneTask task;
   int? highPrioritySinceMicros;
 }
@@ -1146,6 +1145,7 @@ final class _ActiveTask {
     required this.preemptible,
     required this.flowTargetFrames,
     required this.retainFlowResponse,
+    required this.demanded,
   });
 
   final CancelToken token;
@@ -1155,6 +1155,7 @@ final class _ActiveTask {
   bool preemptible;
   int flowTargetFrames;
   bool retainFlowResponse;
+  bool demanded;
 }
 
 final class _KeyIdleWaiter {
