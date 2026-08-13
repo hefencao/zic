@@ -60,21 +60,40 @@ require(
     'throw DownloadFlowSuspended(',
 )
 reject('packages/sessions/lib/src/download_job.dart', "action: 'pseudo-drain'")
-require(
-    'packages/sessions/lib/src/download_transfer_owner.dart',
-    'final Map<DownloadId, _FlowSuspension> _downloadFlowSuspensions',
-    '} on DownloadFlowSuspended catch (suspension) {',
-    "'action': 'flow-satisfied'",
-    'flowSuspension.targetFrames == claim.demand.flowTargetFrames',
-    '!flowSatisfiedForCurrentClaims',
-)
+build = int(m.group(1))
+if build < 256:
+    require(
+        'packages/sessions/lib/src/download_transfer_owner.dart',
+        'final Map<DownloadId, _FlowSuspension> _downloadFlowSuspensions',
+        '} on DownloadFlowSuspended catch (suspension) {',
+        "'action': 'flow-satisfied'",
+        'flowSuspension.targetFrames == claim.demand.flowTargetFrames',
+        '!flowSatisfiedForCurrentClaims',
+    )
+    require(
+        'packages/sessions/test/download_transfer_owner_test.dart',
+        'consumer-paced flow suspension stays quiescent until frame target changes',
+    )
+else:
+    require(
+        'packages/sessions/lib/src/download_transfer_owner.dart',
+        'final Map<DownloadId, _FlowFrameProof> _downloadFlowFrameProofs',
+        '} on DownloadFlowSuspended catch (suspension) {',
+        "'action': 'flow-satisfied'",
+        '_flowProofSatisfies(',
+        'proof.completedFrames >= targetFrames',
+    )
+    reject(
+        'packages/sessions/lib/src/download_transfer_owner.dart',
+        'flowSuspension.targetFrames == claim.demand.flowTargetFrames',
+    )
+    require(
+        'packages/sessions/test/download_transfer_owner_test.dart',
+        'consumer-paced flow suspension stays quiescent until unmet target arrives',
+    )
 require(
     'packages/sessions/test/download_job_test.dart',
     'consumer-paced frame credit suspends partial instead of draining forever',
-)
-require(
-    'packages/sessions/test/download_transfer_owner_test.dart',
-    'consumer-paced flow suspension stays quiescent until frame target changes',
 )
 
 reject(

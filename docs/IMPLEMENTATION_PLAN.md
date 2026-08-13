@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：真机验证dev.255 cancellation/partial闭包：scheduler `downloadPreempted`仍可发生，但不得再出现紧随其后的`DownloadState.failed / Failure(cancelled)`；有committed bytes时preempt trace应显示`partialPreserved=true/partialState=idle`，相同physical exact/verified alias重新demand必须从原committedLength直接resume。继续冻结scrubbing current-only、3/7、5/3/2/1、NetLane 5+1/current candidate/restart-cost；若连接本身仍过度preempt，下一轮只审workset/demand ownership，不把partial validity重新混入rank。
+- P0：真机验证dev.256 monotonic frame-prefix proof：consumerPacing `flow-satisfied`应记录`satisfiedThroughFrames`；同一physical generation与未回退partial上，role target从5→3→2→1或demand detach/re-add后不得出现新的`downloadStarted`，只在target超过已证明帧数或current/visible target=0时resume。继续冻结3/7、5/3/2/1、NetLane 5+1/current candidate与partial validity；若仍有无效open，优先查proof generation/partial reset，不再用target-specific suspension或rank补偿。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环

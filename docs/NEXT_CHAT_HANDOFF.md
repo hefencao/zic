@@ -1,5 +1,5 @@
-# dev.255 后续交接
-- dev.255：03:19 Trace中8次preempt victim均base0，5次带partial attempt被scheduler cancel后错误写成`failed/Failure(cancelled)`，合计约35.67MiB；同一physical partial在preempt后约364ms/618ms又获1000/820 demand。现typed cancellation统一flush+pause，DownloadSession保持`idle/failure=null/committedLength`，`fail()`自身也守住该不变量；`downloadPreempted`只记录attempt事实。NetLane/3/7/scrubbing/frame credit不改；若连接仍过度preempt，先区分attempt终止与partial bytes/state，再独立审workset/demand ownership。
+# dev.256 后续交接
+- dev.256：04:31 Trace中preempt/cancelled failure/下载解码source failure均归零；剩余问题是flow-satisfied仍按精确1/2/3/5 target记忆，44次正target start中22次其实已有足够completedFrames。现TransferOwner只保留与physical DownloadSession generation绑定的frame-prefix proof（completedFrames+prefix length），正target<=proof直接满足，target=0或高于proof才resume；proof跨role target变化和短暂无demand保留，partial回退/换generation/promotion/dispose才失效。3/7、5/3/2/1、NetLane不改。
 `dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`

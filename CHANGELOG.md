@@ -1,3 +1,9 @@
+## 0.31.0-dev.256：physical frame-prefix proof 与 flow target 解耦
+
+- 04:31真机Trace中`downloadPreempted=0`、`Failure(cancelled)=0`、download/decode/source failure均为0，dev.255的attempt/partial生命周期闭包成立；剩余预下载浪费来自consumer-paced flow suspension仍按“精确target”记忆。
+- 44次正frame-target `downloadStarted`中，按此前`flow-satisfied.completedFrames + committedLength`回放有22次无需重开：同一partial已经证明的完整帧数足以覆盖后来更低/相等的1/2/3/5帧target，却因target值变化或demand detach/re-add丢失suspension状态而重新open。
+- `DownloadTransferOwner`现把该状态收成generation-aware `_FlowFrameProof`：只记录实际`completedFrames`与证明prefix，不再记录触发suspension的policy target；任意正target `<= completedFrames`且partial未回退即已满足。target=0 foreground unlimited仍必须继续，target高于proof才允许resume。proof跨role变化与短暂无demand保留，只在physical generation变化、partial回退、promotion/dispose时失效。
+
 ## 0.31.0-dev.255：scheduler cancellation 与 partial failure 解耦
 
 - 03:19真机Trace中8次`downloadPreempted`全部victim base rank=0；其中5次随后把拥有真实committed partial的`DownloadSession`写成`Failure(cancelled)`，涉及约35.67MiB authoritative partial。相同physical partial还出现preempt后约364ms/618ms重新获得priority1000/820 demand，证明scheduler attempt cancellation被错误晋升成内容failure。

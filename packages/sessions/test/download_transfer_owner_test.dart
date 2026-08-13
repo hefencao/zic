@@ -279,7 +279,7 @@ void main() {
     expect(registry.get(id).state, DownloadState.promoted);
   });
 
-  test('consumer-paced flow suspension stays quiescent until frame target changes',
+  test('consumer-paced flow suspension stays quiescent until unmet target arrives',
       () async {
     final temp = await Directory.systemTemp.createTemp(
       'transfer_owner_flow_suspension_',
@@ -333,6 +333,93 @@ void main() {
     expect(registry.get(id).state, DownloadState.promoted);
     expect(transport.opens, 2,
         reason: 'raising flow credit resumes from the preserved partial');
+  });
+
+  test(
+      'flow frame proof satisfies lower targets across role and demand changes',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_flow_frame_proof_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final id = _id('flow-frame-proof');
+    final bytes = _ownerAnimatedWebp(List<int>.filled(8, 48));
+    final transport = _FlowSuspendingTransport(bytes, chunkSize: 220);
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-flow-proof',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+
+    consumer.replaceDemands(
+      'reader-flow-proof',
+      1,
+      _desired(id, priority: 700, flowTargetFrames: 1),
+    );
+    await consumer.idle().timeout(const Duration(seconds: 2));
+    final session = registry.get(id);
+    expect(session.state, DownloadState.idle);
+    expect(transport.opens, 1);
+
+    // One transport chunk contains three complete ANMF records. The physical
+    // partial therefore proves more frames than the target that happened to
+    // trigger suspension. Lower/equal future targets must reuse that proof.
+    consumer.replaceDemands(
+      'reader-flow-proof',
+      2,
+      _desired(id, priority: 780, flowTargetFrames: 2),
+    );
+    await consumer.idle().timeout(const Duration(seconds: 2));
+    expect(transport.opens, 1);
+
+    consumer.replaceDemands(
+      'reader-flow-proof',
+      3,
+      const <DownloadId, TransferDemand>{},
+    );
+    await consumer.idle().timeout(const Duration(seconds: 2));
+    consumer.replaceDemands(
+      'reader-flow-proof',
+      4,
+      _desired(id, priority: 800, flowTargetFrames: 3),
+    );
+    await consumer.idle().timeout(const Duration(seconds: 2));
+    expect(transport.opens, 1,
+        reason: 'flow proof belongs to the partial, not to a live demand');
+
+    consumer.replaceDemands(
+      'reader-flow-proof',
+      5,
+      _desired(id, priority: 820, flowTargetFrames: 4),
+    );
+    await consumer.idle().timeout(const Duration(seconds: 2));
+    expect(transport.opens, 2,
+        reason: 'only a target above the proven frame floor may reopen');
+
+    consumer.replaceDemands(
+      'reader-flow-proof',
+      6,
+      _desired(id, priority: 1000, flowTargetFrames: 0),
+    );
+    await consumer.idle().timeout(const Duration(seconds: 2));
+    expect(registry.get(id).state, DownloadState.promoted);
+    expect(transport.opens, 3,
+        reason: 'foreground unlimited must not be satisfied by a bounded proof');
   });
 
   test('transfer checksum constraints aggregate across consumers atomically',
