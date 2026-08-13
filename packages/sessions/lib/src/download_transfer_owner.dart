@@ -30,6 +30,7 @@ final class TransferDemand {
     required this.reason,
     this.flowTargetFrames = 0,
     this.retainFlowResponse = false,
+    this.protectFlowRetentionFromNormalYield = false,
     this.expectedChecksum,
     this.completionIntent = TransferCompletionIntent.opportunistic,
   })  : assert(priority >= 0),
@@ -39,6 +40,7 @@ final class TransferDemand {
   final String reason;
   final int flowTargetFrames;
   final bool retainFlowResponse;
+  final bool protectFlowRetentionFromNormalYield;
   final String? expectedChecksum;
   final TransferCompletionIntent completionIntent;
 
@@ -49,6 +51,8 @@ final class TransferDemand {
       reason == other.reason &&
       flowTargetFrames == other.flowTargetFrames &&
       retainFlowResponse == other.retainFlowResponse &&
+      protectFlowRetentionFromNormalYield ==
+          other.protectFlowRetentionFromNormalYield &&
       expectedChecksum == other.expectedChecksum &&
       completionIntent == other.completionIntent;
 
@@ -58,6 +62,7 @@ final class TransferDemand {
         reason,
         flowTargetFrames,
         retainFlowResponse,
+        protectFlowRetentionFromNormalYield,
         expectedChecksum,
         completionIntent,
       );
@@ -428,6 +433,9 @@ final class DownloadTransferOwner {
           reason: selected.demand.reason,
           flowTargetFrames: selected.demand.flowTargetFrames,
           retainFlowResponse: selected.demand.retainFlowResponse,
+          protectFlowRetentionFromNormalYield:
+              existing.demand.protectFlowRetentionFromNormalYield ||
+                  candidate.demand.protectFlowRetentionFromNormalYield,
           expectedChecksum: leftChecksum ?? rightChecksum,
           completionIntent: required
               ? TransferCompletionIntent.required
@@ -796,6 +804,8 @@ final class DownloadTransferOwner {
       bucketLimit: claim.consumer.downloadBucketLimitFor(claim.exactId),
       flowTargetFrames: claim.demand.flowTargetFrames,
       retainFlowResponse: claim.demand.retainFlowResponse,
+      protectFlowRetentionFromNormalYield:
+          claim.demand.protectFlowRetentionFromNormalYield,
       task: (token) => _runDownload(id, session, taskKey, token),
     );
   }
@@ -875,6 +885,8 @@ final class DownloadTransferOwner {
           'bucketActive': net.activeForBucket(bucket),
           'flowTargetFrames': claim.demand.flowTargetFrames,
           'retainFlowResponse': claim.demand.retainFlowResponse,
+          'protectFlowRetentionFromNormalYield':
+              claim.demand.protectFlowRetentionFromNormalYield,
           'committedLength': session.committedLength,
           'physicalOwner': true,
           'providerScope': provider.scopeId,
@@ -1151,6 +1163,17 @@ final class DownloadTransferOwner {
         taskKey,
         claim.demand.retainFlowResponse,
       );
+      net.updateProtectFlowRetentionFromNormalYield(
+        taskKey,
+        claim.demand.protectFlowRetentionFromNormalYield,
+      );
+    } else {
+      // A task retained after its last logical claim may keep the old bounded
+      // frame target, but near/warm role protection belongs to a live Reader
+      // demand. Once no claim remains it must be eligible for the existing
+      // rank-0/background reclamation path rather than pinning a near slot.
+      net.updateRetainFlowResponse(taskKey, false);
+      net.updateProtectFlowRetentionFromNormalYield(taskKey, false);
     }
     final oldPriority = net.priorityOf(taskKey);
     final active = net.isActive(taskKey);

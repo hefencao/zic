@@ -10,6 +10,7 @@ final class DownloadDemand {
     required this.expirationRevision,
     this.flowTargetFrames = 0,
     this.retainFlowResponse = false,
+    this.protectFlowRetentionFromNormalYield = false,
     this.decisionId,
   }) : assert(flowTargetFrames >= 0);
 
@@ -28,6 +29,11 @@ final class DownloadDemand {
   /// become foreground next; it does not change the frame target itself.
   final bool retainFlowResponse;
 
+  /// Protect an already flow-satisfied no-Range continuity hold from normal
+  /// slot-fairness yield. The Reader policy uses this for the two-page near
+  /// neighborhood; it does not force a Range-capable response to stay open.
+  final bool protectFlowRetentionFromNormalYield;
+
   final String? decisionId;
 
   @override
@@ -40,6 +46,8 @@ final class DownloadDemand {
           expirationRevision == other.expirationRevision &&
           flowTargetFrames == other.flowTargetFrames &&
           retainFlowResponse == other.retainFlowResponse &&
+          protectFlowRetentionFromNormalYield ==
+              other.protectFlowRetentionFromNormalYield &&
           decisionId == other.decisionId;
 
   @override
@@ -50,6 +58,7 @@ final class DownloadDemand {
         expirationRevision,
         flowTargetFrames,
         retainFlowResponse,
+        protectFlowRetentionFromNormalYield,
         decisionId,
       );
 }

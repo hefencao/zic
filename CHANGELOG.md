@@ -1,3 +1,11 @@
+## 0.31.0-dev.265：近二页 continuity hold 与 outer slot fairness 分层
+
+- 12:25 dev.264 真机 Trace确认用户所见“只隔一页就被cancel”实际没有`downloadPreempted/cancelled`；发生的是dev.264 cooperative `pseudo-yielded`。current=270时page272仍是next2/target3却在8.167s被yield；current=267时page269是next2/priority800/target3，却在13.894s为了priority640的page264(previous3)让槽，page264随后13.911s才`downloadStarted`。
+- 根因是dev.264把所有`!retainFlowResponse` no-Range satisfied hold都视为outer optional continuity，遗漏了next2/previous2虽不是immediate adjacent但仍属于高概率近二页。slot fairness因此可以反向牺牲近页去服务更远页。
+- `DownloadDemand → TransferDemand → NetLane CancelToken`新增`protectFlowRetentionFromNormalYield`语义位，只保护与current物理距离<=2的near-two hold免受normal-pressure cooperative yield；`retainFlowResponse`仍只属于immediate next/previous，因此Range-capable next2/previous2仍可按原规则安全suspend，不会被新保护强制常驻连接。
+- no-Range outer distance>=3在credit/playable floor满足后仍可按dev.264让槽；near-two迁到outer时同physical task原位撤销保护，outer迁回near-two时可撤销尚未执行的yield request。最后一个Reader claim消失时近页保护与adjacent retain都会清除，避免rank0 retained task携带陈旧near语义。
+- previous3/next7、5/3/2/1、decode2/1、holder7/5/3/2、NetLane normal5+current reserved1全部不变。
+
 ## 0.31.0-dev.264：non-Range continuity hold 的 NetLane 槽公平性
 
 - 11:45 dev.263 真机 Trace确认单向预下载失败不是3/7 demand缺失，而是dev.262引入的 non-Range response continuity 在body target已满足后仍长期占normal NetLane slot；逻辑previous2/previous3虽持续有660/640 demand，却会被另一侧已满足的no-Range hold饿死。

@@ -1014,9 +1014,10 @@ final class _WebpNetworkFlowGate {
           // byte-range resume also stays on the admitted physical task while
           // NetLane has spare capacity: closing it here turns the authoritative
           // 3/7 partial into a known full-body prefix replay on the next role
-          // promotion. Once this hold is non-adjacent, however, it is optional
-          // continuity rather than unsatisfied body work; NetLane may ask it to
-          // yield cooperatively when another demanded normal task is starved.
+          // promotion. Reader locality is intentionally separate from this
+          // transport fact: CancelToken protects the distance<=2 near-two set,
+          // while only an unprotected outer continuity hold may be asked to
+          // yield cooperatively for a starved normal demand.
           //
           // consumerPacing still cannot claim upstream byte backpressure, so
           // retain at the existing bounded pace (at most one body chunk per
@@ -1034,6 +1035,8 @@ final class _WebpNetworkFlowGate {
               retentionReason: control.retainFlowResponse
                   ? 'adjacent-demand'
                   : 'range-resume-unproven',
+              retentionProtectedFromNormalYield:
+                  control.protectFlowRetentionFromNormalYield,
             );
           }
           return;

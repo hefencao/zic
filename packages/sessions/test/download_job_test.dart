@@ -851,6 +851,77 @@ void main() {
   });
 
   test(
+      'two-page protected non-range retention ignores outer normal yield pressure',
+      () async {
+    final trace = MemoryTraceSink();
+    final bytes = _flowAnimatedWebp(List<int>.filled(24, 48));
+    final session = DownloadSession(
+      id: DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'nonrange-flow-near-two',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('runtime://nonrange-flow-near-two.webp'),
+      ),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/nonrange-flow-near-two.webp',
+        finalPath: '${temp.path}/cache/nonrange-flow-near-two.webp',
+      ),
+      clock: FakeMonoClock(),
+      traceSink: trace,
+    );
+    session.observePlayablePrefixEvidence(
+      decodedPrefixFrames: 1,
+      sourceLength: 1,
+      firstPlayablePrefixBytes: 1,
+      firstFrameRequiredSourceLength: 0,
+    );
+    final transport = _ConsumerPacedBodyTransport(
+      bytes,
+      chunkSize: 31,
+      rangeSupported: false,
+    );
+    final token = CancelToken(
+      flowTargetFrames: 3,
+      protectFlowRetentionFromNormalYield: true,
+    );
+    final run = DownloadJob(transport: transport, session: session).run(
+      cancel: token,
+    );
+
+    await _waitForFlowAction(trace, 'pseudo-retained', targetFrames: 3);
+    expect(token.protectFlowRetentionFromNormalYield, isTrue);
+    expect(token.flowRetentionYieldable, isFalse);
+    expect(token.requestFlowYield(640), isFalse);
+    expect(
+      trace.events.any(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.payload['stage'] == 'transport-flow-control' &&
+            event.payload['action'] == 'pseudo-retained' &&
+            event.payload['retentionProtectedFromNormalYield'] == true,
+      ),
+      isTrue,
+    );
+
+    token.updateFlowTargetFrames(0);
+    final result = await run.timeout(const Duration(seconds: 2));
+    expect(result.state, DownloadState.promoted);
+    expect(transport.openCount, 1);
+    expect(
+      trace.events.any(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.payload['action'] == 'pseudo-yielded',
+      ),
+      isFalse,
+    );
+  });
+
+  test(
       'non-range retained flow cooperatively yields when NetLane requests a normal slot',
       () async {
     final trace = MemoryTraceSink();

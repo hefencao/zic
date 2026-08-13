@@ -84,6 +84,8 @@ final class HeuristicPolicy {
           flowTargetFrames: downloadFlow?.targetFramesFor(entry.key) ?? 0,
           retainFlowResponse:
               role == PageRole.next || role == PageRole.previous,
+          protectFlowRetentionFromNormalYield:
+              (entry.key - observation.currentIndex).abs() <= 2,
         );
         keep.add(ResourceId.download(download));
       }
